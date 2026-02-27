@@ -1,0 +1,19 @@
+# Base runtime dependencies
+python-chess>=1.10
+numpy>=1.24
+torch>=2.0
+tensorboard>=2.0
+pyyaml>=6.0
+
+# Optional extras (uncomment if you need them)
+# pytest>=7.0
+# ray[tune]>=2.9
+# optuna>=3.0
+# onnx>=1.15
+# onnxruntime>=1.17
+# onnxscript>=0.1.0
+# fastapi>=0.110
+# uvicorn>=0.27
+# python-multipart>=0.0.9
+# httpx>=0.26
+# requests>=2.31

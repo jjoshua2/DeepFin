@@ -1,0 +1,494 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+import os
+import uuid
+
+import torch
+from torch.utils.tensorboard import SummaryWriter
+from zclip import ZClip
+
+from chess_anti_engine.encoding.lc0 import LC0_FULL
+from chess_anti_engine.replay.buffer import ReplayBuffer
+from chess_anti_engine.replay.dataset import collate
+from chess_anti_engine.replay.augment import maybe_mirror_samples
+from .losses import compute_loss
+
+
+@dataclass
+class TrainMetrics:
+    loss: float
+    policy_loss: float
+    soft_policy_loss: float
+    future_policy_loss: float
+    wdl_loss: float
+    sf_move_loss: float
+    sf_move_acc: float
+    sf_eval_loss: float
+    categorical_loss: float
+    volatility_loss: float
+    sf_volatility_loss: float
+    moves_left_loss: float
+
+
+class Trainer:
+    def __init__(
+        self,
+        model: torch.nn.Module,
+        *,
+        device: str,
+        lr: float,
+        zclip_z_thresh: float = 2.5,
+        zclip_alpha: float = 0.97,
+        zclip_max_norm: float = 1.0,
+        log_dir: Path | None = None,
+        use_amp: bool = True,
+        feature_dropout_p: float = 0.3,
+        w_volatility: float = 0.05,
+        accum_steps: int = 1,
+        warmup_steps: int = 1500,
+        lr_eta_min: float = 1e-5,
+        lr_T0: int = 5000,
+        lr_T_mult: int = 2,
+        use_compile: bool = False,
+        optimizer: str = "nadamw",
+        swa_start: int = 0,
+        swa_freq: int = 50,
+        mirror_prob: float = 0.5,
+        # Loss weights (all tunable for Ray Tune ablations)
+        w_policy: float = 1.0,
+        w_soft: float = 0.5,
+        w_future: float = 0.15,
+        w_wdl: float = 1.0,
+        w_sf_move: float = 0.15,
+        w_sf_eval: float = 0.15,
+        w_categorical: float = 0.10,
+        w_sf_volatility: float | None = None,
+        w_moves_left: float = 0.02,
+        w_sf_wdl: float = 0.0,
+    ):
+        self.device = device
+        self.model = model.to(device)
+
+        # Selective weight decay: apply only to non-bias, non-LayerNorm parameters.
+        decay_params = []
+        no_decay_params = []
+        for name, param in self.model.named_parameters():
+            if not param.requires_grad:
+                continue
+            if param.ndim <= 1 or name.endswith(".bias"):
+                no_decay_params.append(param)
+            else:
+                decay_params.append(param)
+        param_groups = [
+            {"params": decay_params, "weight_decay": 1e-4},
+            {"params": no_decay_params, "weight_decay": 0.0},
+        ]
+
+        optimizer = str(optimizer).lower()
+        if optimizer == "nadamw":
+            # NAdam with decoupled weight decay (spec: β1=0.9, β2=0.98, ε=1e-7).
+            # PyTorch NAdam supports decoupled_weight_decay since 2.x; param-group
+            # weight_decay values are applied per-group.
+            self.opt = torch.optim.NAdam(
+                param_groups, lr=lr, betas=(0.9, 0.98), eps=1e-7,
+                decoupled_weight_decay=True,
+            )
+        elif optimizer == "adamw":
+            self.opt = torch.optim.AdamW(param_groups, lr=lr)
+        elif optimizer == "soap":
+            # SOAP: Shampoo-like second-order optimizer. Spec notes ~30% faster convergence.
+            # Install: pip install soap-optimizer  (or chess_anti_engine[soap])
+            try:
+                from soap import SOAP  # type: ignore[import]
+                self.opt = SOAP(param_groups, lr=lr)
+            except ImportError as exc:
+                raise ImportError(
+                    "SOAP optimizer requires `soap-optimizer`. "
+                    "Install with: pip install soap-optimizer"
+                ) from exc
+        else:
+            raise ValueError(
+                f"Unknown optimizer {optimizer!r}. Supported: nadamw, adamw, soap"
+            )
+        self.zclip = ZClip(mode="zscore", alpha=float(zclip_alpha), z_thresh=float(zclip_z_thresh), max_grad_norm=float(zclip_max_norm), warmup_steps=25)
+        self.writer = SummaryWriter(log_dir=str(log_dir or "tb"))
+        self.step = 0
+
+        self.use_amp = bool(use_amp)
+        self._amp_dtype = torch.bfloat16 if device.startswith("cuda") else None
+        # BF16 typically does not need GradScaler; keep scaler only for fp16 if added later.
+        self._scaler = None
+
+        self.feature_dropout_p = float(feature_dropout_p)
+        self._base_input_planes = int(LC0_FULL.num_planes)
+        self.w_volatility = float(w_volatility)
+        self.w_policy = float(w_policy)
+        self.w_soft = float(w_soft)
+        self.w_future = float(w_future)
+        self.w_wdl = float(w_wdl)
+        self.w_sf_move = float(w_sf_move)
+        self.w_sf_eval = float(w_sf_eval)
+        self.w_categorical = float(w_categorical)
+        self.w_sf_volatility = float(w_sf_volatility) if w_sf_volatility is not None else float(w_volatility)
+        self.w_moves_left = float(w_moves_left)
+        self.w_sf_wdl = float(w_sf_wdl)
+
+        # Data augmentation: mirror positions left-right (files) with given probability.
+        self.mirror_prob = float(mirror_prob)
+
+        # Optional torch.compile for training throughput.
+        if use_compile and device.startswith("cuda"):
+            try:
+                self.model = torch.compile(self.model, mode="reduce-overhead")
+            except Exception:
+                pass  # torch.compile may not be available on all platforms
+
+        # Gradient accumulation
+        self.accum_steps = max(1, int(accum_steps))
+
+        # LR schedule: linear warmup then cosine annealing with warm restarts
+        self._peak_lr = float(lr)
+        self._warmup_steps = int(warmup_steps)
+        self._scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            self.opt, T_0=int(lr_T0), T_mult=int(lr_T_mult), eta_min=float(lr_eta_min),
+        )
+
+        # Stochastic Weight Averaging (SWA): maintain a running average of model
+        # weights for smoother, more generalizable exported networks.
+        self._swa_start = int(swa_start)
+        self._swa_freq = max(1, int(swa_freq))
+        self._swa_model: torch.optim.swa_utils.AveragedModel | None = None
+        if self._swa_start > 0:
+            self._swa_model = torch.optim.swa_utils.AveragedModel(self.model)
+
+    def _update_lr(self) -> None:
+        """Apply linear warmup, then hand off to cosine schedule."""
+        if self.step < self._warmup_steps:
+            lr = self._peak_lr * self.step / max(1, self._warmup_steps)
+            for pg in self.opt.param_groups:
+                pg["lr"] = lr
+        else:
+            self._scheduler.step(self.step - self._warmup_steps)
+
+    @torch.no_grad()
+    def _compute_metrics(self, *, buf: ReplayBuffer, batch_size: int, steps: int, tag: str) -> TrainMetrics:
+        loss_sum = 0.0
+        pol_sum = 0.0
+        soft_sum = 0.0
+        fut_sum = 0.0
+        wdl_sum = 0.0
+        sf_move_sum = 0.0
+        sf_move_acc_num = 0.0
+        sf_move_acc_den = 0.0
+        sf_sum = 0.0
+        cat_sum = 0.0
+        vol_sum = 0.0
+        sf_vol_sum = 0.0
+        ml_sum = 0.0
+
+        mirror_p = self.mirror_prob if str(tag).startswith("train") else 0.0
+
+        for _ in range(int(steps)):
+            samples = buf.sample_batch(batch_size)
+            samples = maybe_mirror_samples(samples, rng=buf.rng, prob=mirror_p)
+            batch = collate(samples, device=self.device)
+
+            if self.use_amp and self.device.startswith("cuda"):
+                with torch.amp.autocast("cuda", dtype=self._amp_dtype):
+                    out = self.model(batch["x"])
+                    losses = compute_loss(out, batch, w_policy=self.w_policy, w_soft=self.w_soft, w_future=self.w_future, w_wdl=self.w_wdl, w_sf_move=self.w_sf_move, w_sf_eval=self.w_sf_eval, w_categorical=self.w_categorical, w_volatility=self.w_volatility, w_sf_volatility=self.w_sf_volatility, w_moves_left=self.w_moves_left, w_sf_wdl=self.w_sf_wdl)
+                    loss = losses["total"]
+            else:
+                out = self.model(batch["x"])
+                losses = compute_loss(out, batch, w_policy=self.w_policy, w_soft=self.w_soft, w_future=self.w_future, w_wdl=self.w_wdl, w_sf_move=self.w_sf_move, w_sf_eval=self.w_sf_eval, w_categorical=self.w_categorical, w_volatility=self.w_volatility, w_sf_volatility=self.w_sf_volatility, w_moves_left=self.w_moves_left, w_sf_wdl=self.w_sf_wdl)
+                loss = losses["total"]
+
+            # Logging (train or eval)
+            self.writer.add_scalar(f"{tag}/loss", float(loss.item()), self.step)
+            self.writer.add_scalar(f"{tag}/policy_loss", float(losses["policy_ce"].item()), self.step)
+            sp = losses.get("soft_policy_ce", None)
+            fp = losses.get("future_policy_ce", None)
+            sp_scalar = float(sp.detach().item()) if isinstance(sp, torch.Tensor) else float(sp or 0.0)
+            fp_scalar = float(fp.detach().item()) if isinstance(fp, torch.Tensor) else float(fp or 0.0)
+            self.writer.add_scalar(f"{tag}/soft_policy_loss", sp_scalar, self.step)
+            self.writer.add_scalar(f"{tag}/future_policy_loss", fp_scalar, self.step)
+            self.writer.add_scalar(f"{tag}/wdl_loss", float(losses["wdl_ce"].item()), self.step)
+            self.writer.add_scalar(f"{tag}/sf_move_loss", float(losses["sf_move_ce"].item()), self.step)
+
+            # SF move top-1 accuracy (vs SF played move index), on SF turns only.
+            with torch.no_grad():
+                sf_mask = batch.get("has_sf_move")
+                if sf_mask is not None:
+                    sf_mask = sf_mask.to(torch.float32)
+                else:
+                    sf_mask = torch.zeros((batch["x"].shape[0],), device=batch["x"].device)
+
+                sf_logits = out.get("policy_sf")
+                if sf_logits is None:
+                    acc = 0.0
+                    den = 0.0
+                else:
+                    pred = torch.argmax(sf_logits.detach(), dim=-1)
+                    correct = (pred == batch["sf_move_index"]).to(torch.float32)
+                    den = float(sf_mask.sum().item())
+                    acc = float((correct * sf_mask).sum().item()) / max(1.0, den)
+
+            self.writer.add_scalar(f"{tag}/sf_move_acc", float(acc), self.step)
+            self.writer.add_scalar(f"{tag}/sf_eval_loss", float(losses["sf_eval_ce"].item()), self.step)
+            vv = losses.get("volatility", None)
+            vv_scalar = float(vv.detach().item()) if isinstance(vv, torch.Tensor) else float(vv or 0.0)
+            self.writer.add_scalar(f"{tag}/volatility_loss", vv_scalar, self.step)
+
+            sv = losses.get("sf_volatility", None)
+            sv_scalar = float(sv.detach().item()) if isinstance(sv, torch.Tensor) else float(sv or 0.0)
+            self.writer.add_scalar(f"{tag}/sf_volatility_loss", sv_scalar, self.step)
+            cat_val = losses.get("categorical_ce", None)
+            if cat_val is None:
+                cat_scalar = 0.0
+            elif isinstance(cat_val, torch.Tensor):
+                cat_scalar = float(cat_val.detach().item())
+            else:
+                cat_scalar = float(cat_val)
+            self.writer.add_scalar(f"{tag}/categorical_loss", cat_scalar, self.step)
+            self.writer.add_scalar(f"{tag}/moves_left_loss", float(losses["moves_left"].item()), self.step)
+
+            loss_sum += float(loss.item())
+            pol_sum += float(losses["policy_ce"].detach().item())
+
+            sp = losses.get("soft_policy_ce", None)
+            fp = losses.get("future_policy_ce", None)
+            cat = losses.get("categorical_ce", None)
+            vol = losses.get("volatility", None)
+            sf_vol = losses.get("sf_volatility", None)
+
+            soft_sum += float(sp.detach().item()) if isinstance(sp, torch.Tensor) else float(sp or 0.0)
+            fut_sum += float(fp.detach().item()) if isinstance(fp, torch.Tensor) else float(fp or 0.0)
+            wdl_sum += float(losses["wdl_ce"].detach().item())
+            sf_move_sum += float(losses["sf_move_ce"].detach().item())
+            sf_sum += float(losses["sf_eval_ce"].detach().item())
+
+            # Aggregate SF move top-1 accuracy across steps
+            sf_mask = batch.get("has_sf_move")
+            if sf_mask is not None:
+                sf_mask = sf_mask.to(torch.float32)
+            else:
+                sf_mask = torch.zeros((batch["x"].shape[0],), device=batch["x"].device)
+
+            sf_logits = out.get("policy_sf")
+            if sf_logits is not None:
+                pred = torch.argmax(sf_logits.detach(), dim=-1)
+                correct = (pred == batch["sf_move_index"]).to(torch.float32)
+                sf_move_acc_num += float((correct * sf_mask).sum().item())
+                sf_move_acc_den += float(sf_mask.sum().item())
+            cat_sum += float(cat.detach().item()) if isinstance(cat, torch.Tensor) else float(cat or 0.0)
+            vol_sum += float(vol.detach().item()) if isinstance(vol, torch.Tensor) else float(vol or 0.0)
+            sf_vol_sum += float(sf_vol.detach().item()) if isinstance(sf_vol, torch.Tensor) else float(sf_vol or 0.0)
+            ml_sum += float(losses["moves_left"].detach().item())
+
+        n = float(max(1, steps))
+        return TrainMetrics(
+            loss=loss_sum / n,
+            policy_loss=pol_sum / n,
+            soft_policy_loss=soft_sum / n,
+            future_policy_loss=fut_sum / n,
+            wdl_loss=wdl_sum / n,
+            sf_move_loss=sf_move_sum / n,
+            sf_move_acc=float(sf_move_acc_num / max(1.0, sf_move_acc_den)),
+            sf_eval_loss=sf_sum / n,
+            categorical_loss=cat_sum / n,
+            volatility_loss=vol_sum / n,
+            sf_volatility_loss=sf_vol_sum / n,
+            moves_left_loss=ml_sum / n,
+        )
+
+    def train_steps(self, buf: ReplayBuffer, *, batch_size: int, steps: int) -> TrainMetrics:
+        self.model.train()
+
+        # Accumulators — collect metrics from the actual training batches to avoid
+        # a redundant second forward pass through the buffer.
+        loss_sum = 0.0
+        pol_sum = 0.0
+        soft_sum = 0.0
+        fut_sum = 0.0
+        wdl_sum = 0.0
+        sf_move_sum = 0.0
+        sf_move_acc_num = 0.0
+        sf_move_acc_den = 0.0
+        sf_sum = 0.0
+        cat_sum = 0.0
+        vol_sum = 0.0
+        sf_vol_sum = 0.0
+        ml_sum = 0.0
+        n_micro = 0
+
+        for _ in range(int(steps)):
+            self.opt.zero_grad(set_to_none=True)
+
+            for micro in range(self.accum_steps):
+                samples = buf.sample_batch(batch_size)
+                samples = maybe_mirror_samples(samples, rng=buf.rng, prob=self.mirror_prob)
+                batch = collate(samples, device=self.device)
+
+                # Spec feature dropout: randomly zero ALL extra feature planes (beyond LC0 base planes)
+                # during training. At inference/eval we keep all features.
+                p = float(self.feature_dropout_p)
+                base = int(self._base_input_planes)
+                if p > 0.0:
+                    x = batch["x"]
+                    if x.shape[1] > base:
+                        drop = (torch.rand((x.shape[0], 1, 1, 1), device=x.device) < p).to(x.dtype)
+                        x[:, base:, :, :] = x[:, base:, :, :] * (1.0 - drop)
+
+                if self.use_amp and self.device.startswith("cuda"):
+                    with torch.amp.autocast("cuda", dtype=self._amp_dtype):
+                        out = self.model(batch["x"])
+                        losses = compute_loss(out, batch, w_policy=self.w_policy, w_soft=self.w_soft, w_future=self.w_future, w_wdl=self.w_wdl, w_sf_move=self.w_sf_move, w_sf_eval=self.w_sf_eval, w_categorical=self.w_categorical, w_volatility=self.w_volatility, w_sf_volatility=self.w_sf_volatility, w_moves_left=self.w_moves_left, w_sf_wdl=self.w_sf_wdl)
+                        loss = losses["total"] / self.accum_steps
+                    loss.backward()
+                else:
+                    out = self.model(batch["x"])
+                    losses = compute_loss(out, batch, w_policy=self.w_policy, w_soft=self.w_soft, w_future=self.w_future, w_wdl=self.w_wdl, w_sf_move=self.w_sf_move, w_sf_eval=self.w_sf_eval, w_categorical=self.w_categorical, w_volatility=self.w_volatility, w_sf_volatility=self.w_sf_volatility, w_moves_left=self.w_moves_left, w_sf_wdl=self.w_sf_wdl)
+                    loss = losses["total"] / self.accum_steps
+                    loss.backward()
+
+                # Accumulate metric scalars inline (no graph kept — just .item() values).
+                sp = losses.get("soft_policy_ce", None)
+                fp = losses.get("future_policy_ce", None)
+                cat = losses.get("categorical_ce", None)
+                vol = losses.get("volatility", None)
+                sf_vol = losses.get("sf_volatility", None)
+                loss_sum += float(loss.item() * self.accum_steps)
+                pol_sum += float(losses["policy_ce"].detach().item())
+                soft_sum += float(sp.detach().item()) if isinstance(sp, torch.Tensor) else float(sp or 0.0)
+                fut_sum += float(fp.detach().item()) if isinstance(fp, torch.Tensor) else float(fp or 0.0)
+                wdl_sum += float(losses["wdl_ce"].detach().item())
+                sf_move_sum += float(losses["sf_move_ce"].detach().item())
+                sf_sum += float(losses["sf_eval_ce"].detach().item())
+                cat_sum += float(cat.detach().item()) if isinstance(cat, torch.Tensor) else float(cat or 0.0)
+                vol_sum += float(vol.detach().item()) if isinstance(vol, torch.Tensor) else float(vol or 0.0)
+                sf_vol_sum += float(sf_vol.detach().item()) if isinstance(sf_vol, torch.Tensor) else float(sf_vol or 0.0)
+                ml_sum += float(losses["moves_left"].detach().item())
+
+                with torch.no_grad():
+                    sf_mask = batch.get("has_sf_move")
+                    sf_logits = out.get("policy_sf")
+                    if sf_mask is not None and sf_logits is not None:
+                        sf_mask_f = sf_mask.to(torch.float32)
+                        pred = torch.argmax(sf_logits.detach(), dim=-1)
+                        correct = (pred == batch["sf_move_index"]).to(torch.float32)
+                        sf_move_acc_num += float((correct * sf_mask_f).sum().item())
+                        sf_move_acc_den += float(sf_mask_f.sum().item())
+
+                n_micro += 1
+
+            grad_norm = self.zclip.step(self.model)
+            self.writer.add_scalar("train/grad_norm", float(grad_norm) if grad_norm is not None else 0.0, self.step)
+            self.opt.step()
+            self._update_lr()
+
+            # SWA: update averaged model after swa_start steps, every swa_freq steps.
+            if (
+                self._swa_model is not None
+                and self.step >= self._swa_start
+                and self.step % self._swa_freq == 0
+            ):
+                self._swa_model.update_parameters(self.model)
+
+            # Step-aligned train logging (log unscaled loss from last micro-batch)
+            self.writer.add_scalar("train/loss", float(loss.item() * self.accum_steps), self.step)
+            self.writer.add_scalar("train/lr", self.opt.param_groups[0]["lr"], self.step)
+            self.step += 1
+
+        n = float(max(1, n_micro))
+        metrics = TrainMetrics(
+            loss=loss_sum / n,
+            policy_loss=pol_sum / n,
+            soft_policy_loss=soft_sum / n,
+            future_policy_loss=fut_sum / n,
+            wdl_loss=wdl_sum / n,
+            sf_move_loss=sf_move_sum / n,
+            sf_move_acc=float(sf_move_acc_num / max(1.0, sf_move_acc_den)),
+            sf_eval_loss=sf_sum / n,
+            categorical_loss=cat_sum / n,
+            volatility_loss=vol_sum / n,
+            sf_volatility_loss=sf_vol_sum / n,
+            moves_left_loss=ml_sum / n,
+        )
+        # Log aggregated metrics once (mirrors what _compute_metrics wrote under "train_avg/")
+        self.writer.add_scalar("train_avg/loss", metrics.loss, self.step)
+        self.writer.add_scalar("train_avg/policy_loss", metrics.policy_loss, self.step)
+        self.writer.add_scalar("train_avg/soft_policy_loss", metrics.soft_policy_loss, self.step)
+        self.writer.add_scalar("train_avg/future_policy_loss", metrics.future_policy_loss, self.step)
+        self.writer.add_scalar("train_avg/wdl_loss", metrics.wdl_loss, self.step)
+        self.writer.add_scalar("train_avg/sf_move_loss", metrics.sf_move_loss, self.step)
+        self.writer.add_scalar("train_avg/sf_move_acc", metrics.sf_move_acc, self.step)
+        self.writer.add_scalar("train_avg/sf_eval_loss", metrics.sf_eval_loss, self.step)
+        self.writer.add_scalar("train_avg/categorical_loss", metrics.categorical_loss, self.step)
+        self.writer.add_scalar("train_avg/volatility_loss", metrics.volatility_loss, self.step)
+        self.writer.add_scalar("train_avg/sf_volatility_loss", metrics.sf_volatility_loss, self.step)
+        self.writer.add_scalar("train_avg/moves_left_loss", metrics.moves_left_loss, self.step)
+        return metrics
+
+    @torch.no_grad()
+    def eval_steps(self, buf: ReplayBuffer, *, batch_size: int, steps: int) -> TrainMetrics:
+        self.model.eval()
+        return self._compute_metrics(buf=buf, batch_size=batch_size, steps=steps, tag="eval")
+
+    def save(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        state = {
+            "model": self.model.state_dict(),
+            "opt": self.opt.state_dict(),
+            "scheduler": self._scheduler.state_dict(),
+            "step": self.step,
+        }
+        if self._swa_model is not None:
+            state["swa_model"] = self._swa_model.state_dict()
+        torch.save(state, str(path))
+
+    def load(self, path: Path) -> None:
+        ckpt = torch.load(str(path), map_location=self.device)
+        self.model.load_state_dict(ckpt["model"])
+        self.opt.load_state_dict(ckpt["opt"])
+        if "scheduler" in ckpt:
+            self._scheduler.load_state_dict(ckpt["scheduler"])
+        if "swa_model" in ckpt and self._swa_model is not None:
+            self._swa_model.load_state_dict(ckpt["swa_model"])
+        self.step = int(ckpt.get("step", 0))
+
+    def export_swa(self, path: Path, dataloader: object = None) -> None:
+        """Export the SWA-averaged model weights.
+
+        If a dataloader is provided, batch normalization statistics are updated
+        using ``torch.optim.swa_utils.update_bn``.
+
+        This is written atomically (temp file + os.replace) to avoid race conditions
+        with workers downloading the file while the learner is writing it.
+        """
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}")
+        try:
+            if self._swa_model is None:
+                # No SWA model — just save the regular model.
+                torch.save({"model": self.model.state_dict()}, str(tmp))
+            else:
+                if dataloader is not None:
+                    torch.optim.swa_utils.update_bn(
+                        dataloader,
+                        self._swa_model,
+                        device=torch.device(self.device),
+                    )
+                torch.save({"model": self._swa_model.module.state_dict()}, str(tmp))
+
+            os.replace(str(tmp), str(path))
+        finally:
+            # Best-effort cleanup if torch.save failed before replace.
+            try:
+                if tmp.exists():
+                    tmp.unlink()
+            except Exception:
+                pass

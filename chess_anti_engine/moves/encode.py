@@ -1,0 +1,295 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import numpy as np
+import chess
+
+from chess_anti_engine.utils.bitboards import orient_square
+
+# LC0 / AlphaZero-style policy encoding: 8x8x73 = 4672.
+#
+# Indexing:
+# - First orient the move into side-to-move perspective (white-to-move).
+# - from_sq is in oriented coordinates (0..63, a1=0 .. h8=63).
+# - plane is 0..72:
+#   - 0..55 : queen-like moves = 8 directions x 7 distances
+#   - 56..63: knight moves = 8
+#   - 64..72: underpromotions = 3 piece types (N,B,R) x 3 directions (left,forward,right)
+# - flat index = from_sq * 73 + plane
+#
+# Data augmentation note:
+# We also support mirroring moves across the *vertical axis* (left-right file flip)
+# in oriented (side-to-move) coordinates.
+
+PLANE_COUNT = 73
+POLICY_SIZE = 64 * PLANE_COUNT  # 4672
+
+QUEEN_DIRS: list[tuple[int, int]] = [
+    (0, 1),
+    (1, 1),
+    (1, 0),
+    (1, -1),
+    (0, -1),
+    (-1, -1),
+    (-1, 0),
+    (-1, 1),
+]
+
+KNIGHT_DELTAS: list[tuple[int, int]] = [
+    (1, 2),
+    (2, 1),
+    (2, -1),
+    (1, -2),
+    (-1, -2),
+    (-2, -1),
+    (-2, 1),
+    (-1, 2),
+]
+
+UNDERPROMO_TO_IDX = {chess.KNIGHT: 0, chess.BISHOP: 1, chess.ROOK: 2}
+IDX_TO_UNDERPROMO = {0: chess.KNIGHT, 1: chess.BISHOP, 2: chess.ROOK}
+UNDERPROMO_DFS: list[int] = [-1, 0, 1]  # left, forward, right
+DF_TO_UNDERPROMO_DIR = {-1: 0, 0: 1, 1: 2}
+
+def _deorient_square(sq: chess.Square, turn: chess.Color) -> chess.Square:
+    return orient_square(sq, turn)
+
+
+_DELTA_TO_PLANE: dict[tuple[int, int], int] = {}
+_PLANE_TO_DELTA: dict[int, tuple[int, int]] = {}
+
+_plane = 0
+for dfi, dri in QUEEN_DIRS:
+    for dist in range(1, 8):
+        df, dr = dfi * dist, dri * dist
+        _DELTA_TO_PLANE[(df, dr)] = _plane
+        _PLANE_TO_DELTA[_plane] = (df, dr)
+        _plane += 1
+
+for i, (df, dr) in enumerate(KNIGHT_DELTAS):
+    p = 56 + i
+    _DELTA_TO_PLANE[(df, dr)] = p
+    _PLANE_TO_DELTA[p] = (df, dr)
+
+
+def mirror_oriented_square(sq: chess.Square) -> chess.Square:
+    """Mirror an *oriented* square left-right.
+
+    Oriented squares follow the policy encoding convention (side-to-move as white):
+    a1<->h1, a8<->h8.
+
+    This is distinct from python-chess's `square_mirror`, which mirrors ranks.
+    """
+    f = chess.square_file(sq)
+    r = chess.square_rank(sq)
+    return chess.square(7 - f, r)
+
+
+def mirror_policy_index(index: int) -> int:
+    """Map a policy index to the corresponding index under a left-right mirror."""
+    idx = int(index)
+    from_o = idx // PLANE_COUNT
+    plane = idx % PLANE_COUNT
+
+    # Mirror the origin square.
+    f_o = chess.Square(from_o)
+    f_m = mirror_oriented_square(f_o)
+
+    if plane >= 64:
+        # Underpromotions: mirror df direction (left<->right), keep piece type.
+        rel = plane - 64
+        piece_idx = rel // 3
+        dir_idx = rel % 3
+        dir_m = 2 - int(dir_idx)  # 0<->2, 1 stays
+        plane_m = 64 + int(piece_idx) * 3 + int(dir_m)
+        return int(f_m) * PLANE_COUNT + int(plane_m)
+
+    delta = _PLANE_TO_DELTA.get(int(plane))
+    if delta is None:
+        # Should be unreachable for valid indices.
+        return idx
+    df, dr = delta
+    plane_m = _DELTA_TO_PLANE.get((-int(df), int(dr)))
+    if plane_m is None:
+        return idx
+
+    return int(f_m) * PLANE_COUNT + int(plane_m)
+
+
+# Flat index permutations for mirroring in oriented coordinates.
+#
+# Convention:
+# - MIRROR_POLICY_MAP[old] = new
+# - MIRROR_POLICY_INV[new] = old (inverse permutation)
+MIRROR_POLICY_MAP = np.array([mirror_policy_index(i) for i in range(POLICY_SIZE)], dtype=np.int32)
+MIRROR_POLICY_INV = np.empty((POLICY_SIZE,), dtype=np.int32)
+MIRROR_POLICY_INV[MIRROR_POLICY_MAP] = np.arange(POLICY_SIZE, dtype=np.int32)
+
+
+def mirror_policy(policy: np.ndarray) -> np.ndarray:
+    """Mirror a (POLICY_SIZE,) policy vector left-right.
+
+    Accepts any float dtype; returns float32.
+    """
+    p = np.asarray(policy)
+    if p.shape != (POLICY_SIZE,):
+        raise ValueError(f"policy must be ({POLICY_SIZE},), got {p.shape}")
+    # new[j] = old[inv[j]]
+    return p[MIRROR_POLICY_INV].astype(np.float32, copy=False)
+
+
+def mirror_policy_batch(policies: np.ndarray) -> np.ndarray:
+    p = np.asarray(policies)
+    if p.ndim != 2 or int(p.shape[1]) != int(POLICY_SIZE):
+        raise ValueError(f"policies must be (N,{POLICY_SIZE}), got {p.shape}")
+    return p[:, MIRROR_POLICY_INV].astype(np.float32, copy=False)
+
+def move_to_index(move: chess.Move, board: chess.Board) -> int:
+    turn = board.turn
+    f = orient_square(move.from_square, turn)
+    t = orient_square(move.to_square, turn)
+
+    ff, fr = chess.square_file(f), chess.square_rank(f)
+    tf, tr = chess.square_file(t), chess.square_rank(t)
+    df = tf - ff
+    dr = tr - fr
+
+    if move.promotion is not None and move.promotion in UNDERPROMO_TO_IDX:
+        dir_idx = DF_TO_UNDERPROMO_DIR.get(df, 1)
+        piece_idx = UNDERPROMO_TO_IDX[move.promotion]
+        plane = 64 + piece_idx * 3 + dir_idx
+        return int(f) * PLANE_COUNT + int(plane)
+
+    plane = _DELTA_TO_PLANE.get((df, dr))
+    if plane is None:
+        raise ValueError(f"Unencodable move delta df={df}, dr={dr} for move={move}")
+
+    return int(f) * PLANE_COUNT + int(plane)
+
+
+def index_to_move(index: int, board: chess.Board) -> chess.Move:
+    idx = int(index)
+    from_o = idx // PLANE_COUNT
+    plane = idx % PLANE_COUNT
+
+    turn = board.turn
+    f_o = chess.Square(from_o)
+
+    if plane >= 64:
+        rel = plane - 64
+        piece_idx = rel // 3
+        dir_idx = rel % 3
+        df = UNDERPROMO_DFS[dir_idx]
+        dr = 1
+
+        ff, fr = chess.square_file(f_o), chess.square_rank(f_o)
+        tf, tr = ff + df, fr + dr
+        if not (0 <= tf <= 7 and 0 <= tr <= 7):
+            return next(iter(board.legal_moves))
+        t_o = chess.square(tf, tr)
+
+        f = _deorient_square(f_o, turn)
+        t = _deorient_square(t_o, turn)
+        promo = IDX_TO_UNDERPROMO.get(piece_idx, chess.KNIGHT)
+        m = chess.Move(f, t, promotion=promo)
+        if m in board.legal_moves:
+            return m
+        for lm in board.legal_moves:
+            if move_to_index(lm, board) == idx:
+                return lm
+        return next(iter(board.legal_moves))
+
+    delta = _PLANE_TO_DELTA.get(int(plane))
+    if delta is None:
+        return next(iter(board.legal_moves))
+    df, dr = delta
+
+    ff, fr = chess.square_file(f_o), chess.square_rank(f_o)
+    tf, tr = ff + df, fr + dr
+    if not (0 <= tf <= 7 and 0 <= tr <= 7):
+        return next(iter(board.legal_moves))
+
+    t_o = chess.square(tf, tr)
+    f = _deorient_square(f_o, turn)
+    t = _deorient_square(t_o, turn)
+
+    promo = None
+    piece = board.piece_at(f)
+    if piece is not None and piece.piece_type == chess.PAWN:
+        last_rank = 7 if turn == chess.WHITE else 0
+        if chess.square_rank(t) == last_rank:
+            promo = chess.QUEEN
+
+    m = chess.Move(f, t, promotion=promo)
+    if m in board.legal_moves:
+        return m
+    for lm in board.legal_moves:
+        if move_to_index(lm, board) == idx:
+            return lm
+    return next(iter(board.legal_moves))
+
+
+def legal_move_mask(board: chess.Board) -> np.ndarray:
+    mask = np.zeros((POLICY_SIZE,), dtype=np.bool_)
+    for m in board.legal_moves:
+        idx = move_to_index(m, board)
+        mask[int(idx)] = True
+    return mask
+
+
+@dataclass(frozen=True)
+class PolicyGatherTables:
+    to_sq: np.ndarray  # int64 (64,64)
+    valid: np.ndarray  # bool (64,64)
+
+
+def build_policy_gather_tables() -> PolicyGatherTables:
+    to_sq = np.zeros((64, 64), dtype=np.int64)
+    valid = np.zeros((64, 64), dtype=np.bool_)
+
+    for from_sq in range(64):
+        ff, fr = chess.square_file(from_sq), chess.square_rank(from_sq)
+
+        p = 0
+        for dfi, dri in QUEEN_DIRS:
+            for dist in range(1, 8):
+                tf, tr = ff + dfi * dist, fr + dri * dist
+                if 0 <= tf <= 7 and 0 <= tr <= 7:
+                    to_sq[from_sq, p] = chess.square(tf, tr)
+                    valid[from_sq, p] = True
+                p += 1
+
+        for i, (df, dr) in enumerate(KNIGHT_DELTAS):
+            p = 56 + i
+            tf, tr = ff + df, fr + dr
+            if 0 <= tf <= 7 and 0 <= tr <= 7:
+                to_sq[from_sq, p] = chess.square(tf, tr)
+                valid[from_sq, p] = True
+
+    return PolicyGatherTables(to_sq=to_sq, valid=valid)
+
+
+def sample_move_from_logits(
+    logits: np.ndarray,
+    mask: np.ndarray,
+    *,
+    temperature: float = 1.0,
+    rng: np.random.Generator,
+) -> int:
+    assert logits.shape == (POLICY_SIZE,)
+    legal_logits = logits.copy()
+    legal_logits[~mask] = -1e9
+
+    if temperature <= 0:
+        return int(np.argmax(legal_logits))
+
+    z = legal_logits / float(temperature)
+    z = z - np.max(z)
+    p = np.exp(z)
+    p[~mask] = 0.0
+    s = float(p.sum())
+    if s <= 0:
+        return int(np.argmax(legal_logits))
+    p /= s
+    return int(rng.choice(np.arange(POLICY_SIZE), p=p))
