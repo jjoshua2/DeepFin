@@ -20,6 +20,14 @@ from chess_anti_engine.train.targets import hlgauss_target
 import chess
 
 
+def _result_to_wdl(result: str, *, pov_white: bool) -> int:
+    """Map game result to WDL class from a side's perspective (0=W,1=D,2=L)."""
+    if result in {"1/2-1/2", "*"}:
+        return 1
+    white_won = result == "1-0"
+    return 0 if (white_won == bool(pov_white)) else 2
+
+
 def play_batch_timed(
     model: torch.nn.Module,
     *,
@@ -216,11 +224,7 @@ def play_batch_timed(
                 vol_targets[t] = np.abs(wdl_series[t6] - wdl_series[t]).astype(np.float32, copy=False)
 
         for ply_idx, (x, probs, pov_white, sf_wdl, sf_move_idx, has_policy, priority) in enumerate(samples_per_game[i]):
-            if result == "1/2-1/2":
-                wdl = 1
-            else:
-                white_won = result == "1-0"
-                wdl = 0 if (white_won == pov_white) else 2
+            wdl = _result_to_wdl(result, pov_white=bool(pov_white))
 
             moves_left = float(total_plies - ply_idx) / max(1.0, float(max_plies))
 
