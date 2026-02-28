@@ -26,6 +26,24 @@ class MatchStats:
     a_as_black: int
 
 
+def _result_from_a_pov(result: str, *, a_is_white: bool) -> int:
+    """Map game result to model-a outcome.
+
+    Returns:
+        1 for model-a win, 0 for draw, -1 for model-a loss.
+
+    python-chess returns "*" when a game is truncated before reaching a
+    terminal result (for example when max_plies is hit). Treat this as draw
+    rather than a decisive result.
+    """
+    if result in {"1/2-1/2", "*"}:
+        return 0
+
+    white_won = result == "1-0"
+    a_won = (white_won and a_is_white) or ((not white_won) and (not a_is_white))
+    return 1 if a_won else -1
+
+
 def play_match_batch(
     model_a: torch.nn.Module,
     model_b: torch.nn.Module,
@@ -136,14 +154,10 @@ def play_match_batch(
     a_win = a_draw = a_loss = 0
     for i, b in enumerate(boards):
         res = b.result(claim_draw=True)
-        if res == "1/2-1/2":
+        outcome = _result_from_a_pov(res, a_is_white=bool(a_plays_white[i]))
+        if outcome == 0:
             a_draw += 1
-            continue
-
-        a_is_white = bool(a_plays_white[i])
-        white_won = res == "1-0"
-        a_won = (white_won and a_is_white) or ((not white_won) and (not a_is_white))
-        if a_won:
+        elif outcome > 0:
             a_win += 1
         else:
             a_loss += 1
