@@ -62,7 +62,7 @@ model:
 
 stockfish:
   path: /home/josh/projects/chess/e2e_server/publish/stockfish
-  nodes: 100
+  nodes: 250
   workers: 1
   multipv: 3
 
@@ -76,7 +76,7 @@ stockfish:
   pid_ki: 0.10
   pid_kd: 0.0
   pid_integral_clamp: 1.0
-  pid_min_nodes: 50
+  pid_min_nodes: 250
   pid_max_nodes: 50000
   pid_random_move_prob_start: 1.0
   pid_random_move_prob_min: 0.0

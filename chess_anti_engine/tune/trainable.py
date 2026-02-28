@@ -344,7 +344,7 @@ def train_trial(config: dict):
             ki=float(config.get("sf_pid_ki", 0.10)),
             kd=float(config.get("sf_pid_kd", 0.0)),
             integral_clamp=float(config.get("sf_pid_integral_clamp", 1.0)),
-            min_nodes=int(config.get("sf_pid_min_nodes", 50)),
+            min_nodes=int(config.get("sf_pid_min_nodes", 250)),
             max_nodes=int(config.get("sf_pid_max_nodes", 1000000)),
             initial_random_move_prob=float(config.get("sf_pid_random_move_prob_start", 1.0)),
             random_move_prob_min=float(config.get("sf_pid_random_move_prob_min", 0.0)),

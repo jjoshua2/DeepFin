@@ -21,7 +21,7 @@ class StockfishConfig:
     pid_ki: float = 0.10
     pid_kd: float = 0.0
     pid_integral_clamp: float = 1.0
-    pid_min_nodes: int = 50
+    pid_min_nodes: int = 250
     pid_max_nodes: int = 1_000_000
 
 

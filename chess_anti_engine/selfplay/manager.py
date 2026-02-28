@@ -518,14 +518,15 @@ def play_batch(
     # to get a realistic WDL estimate. This breaks the draw-trap circular dependency
     # where value head learns "everything is a draw" and Gumbel Q≈0.
     # Use a higher node budget for more accurate position evaluation.
-    # Skill level 0 can weaken SF's WDL estimates too, so use more nodes to compensate.
-    _TERMINAL_EVAL_NODES = 1000
+    # Make it proportional to the SF strength used for training so it scales with the run.
+    base_nodes = int(getattr(stockfish, "nodes", 0) or 0)
+    terminal_eval_nodes = (5 * base_nodes) if base_nodes > 0 else 1000
     timeout_idxs = [i for i, b in enumerate(boards) if b.result(claim_draw=True) == "*"]
     terminal_results: dict[int, StockfishResult | None] = {}
     if timeout_idxs:
         try:
             if isinstance(stockfish, StockfishPool):
-                futures = {i: stockfish.submit(boards[i].fen(), nodes=_TERMINAL_EVAL_NODES) for i in timeout_idxs}
+                futures = {i: stockfish.submit(boards[i].fen(), nodes=int(terminal_eval_nodes)) for i in timeout_idxs}
                 for i, fut in futures.items():
                     try:
                         terminal_results[i] = fut.result()
@@ -534,7 +535,7 @@ def play_batch(
             else:
                 for i in timeout_idxs:
                     try:
-                        terminal_results[i] = stockfish.search(boards[i].fen(), nodes=_TERMINAL_EVAL_NODES)
+                        terminal_results[i] = stockfish.search(boards[i].fen(), nodes=int(terminal_eval_nodes))
                     except Exception:
                         terminal_results[i] = None
         except Exception:

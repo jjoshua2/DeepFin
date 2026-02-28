@@ -38,7 +38,7 @@ stockfish:
   pid_ki: 0.10
   pid_kd: 0.0
   pid_integral_clamp: 1.0
-  pid_min_nodes: 50
+  pid_min_nodes: 250
   pid_max_nodes: 1000000
 
 selfplay:

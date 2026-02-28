@@ -241,7 +241,7 @@ def main() -> None:
                     help="Network win rate the PID targets (default 0.53)")
     ap.add_argument("--pid-ema-alpha", type=float, default=0.05,
                     help="EMA smoothing factor for win rate (higher = more reactive)")
-    ap.add_argument("--pid-min-nodes", type=int, default=100)
+    ap.add_argument("--pid-min-nodes", type=int, default=250)
     ap.add_argument("--pid-max-nodes", type=int, default=500_000)
     ap.add_argument("--pid-random-move-prob-start", type=float, default=None,
                     help="Initial opponent random-move probability for PID (defaults to --recommended-opponent-random-move-prob).")

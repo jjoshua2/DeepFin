@@ -508,7 +508,7 @@ def main() -> None:
     ap.add_argument("--sf-pid-ki", type=float, default=0.10)
     ap.add_argument("--sf-pid-kd", type=float, default=0.0)
     ap.add_argument("--sf-pid-integral-clamp", type=float, default=1.0)
-    ap.add_argument("--sf-pid-min-nodes", type=int, default=50)
+    ap.add_argument("--sf-pid-min-nodes", type=int, default=250)
     ap.add_argument("--sf-pid-max-nodes", type=int, default=1000000)
     ap.add_argument("--games-per-iter", type=int, default=10)
     ap.add_argument("--selfplay-batch", type=int, default=10, help="Play games in mini-batches of this size to limit memory")
@@ -715,6 +715,7 @@ def main() -> None:
         "bootstrap_checkpoint": getattr(args, "bootstrap_checkpoint", None),
         "bootstrap_max_positions": int(getattr(args, "bootstrap_max_positions", 0)),
         "bootstrap_train_steps": int(getattr(args, "bootstrap_train_steps", 0)),
+        "shared_shards_dir": getattr(args, "shared_shards_dir", None),
         "shuffle_buffer_size": int(getattr(args, "shuffle_buffer_size", 20_000)),
         "shard_size": int(getattr(args, "shard_size", 1000)),
         "replay_window_start": int(getattr(args, "replay_window_start", 100_000)),
