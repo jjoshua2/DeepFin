@@ -1,0 +1,51 @@
+[project]
+name = "chess-anti-engine"
+version = "0.0.1"
+description = "Chess anti-engine training framework (Phase 1: Python pipeline)"
+requires-python = ">=3.10"
+dependencies = [
+  "python-chess>=1.10",
+  "numpy>=1.24",
+  "torch>=2.0",
+  "tensorboard>=2.0",
+  "pyyaml>=6.0",
+]
+
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["chess_anti_engine*"]
+exclude = ["runs*", "tests*"]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.0",
+]
+
+tune = [
+  "ray[tune]>=2.9",
+  "optuna>=3.0",
+]
+
+onnx = [
+  "onnx>=1.15",
+  "onnxruntime>=1.17",
+  "onnxscript>=0.1.0",
+]
+
+server = [
+  "fastapi>=0.110",
+  "uvicorn>=0.27",
+  "python-multipart>=0.0.9",
+  "httpx>=0.26",
+]
+
+worker = [
+  "requests>=2.31",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

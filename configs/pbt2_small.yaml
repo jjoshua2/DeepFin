@@ -1,0 +1,217 @@
+# PBT2 (PB2) search config — small model, 10 parallel trials on RTX 5090 (32 GB)
+#
+# Workflow:
+#   1. Run this config to find good hyperparameters with a small net:
+#        python -m chess_anti_engine.run --config configs/pbt2_small.yaml --mode tune
+#
+#   2. Inspect Ray Tune results (best trial's config).  Lock down everything
+#      except lr, warmup_steps, batch_size (these don't transfer across model size).
+#
+#   3. Scale up using configs/full.yaml (or your custom config), pasting the
+#      locked values into the train/selfplay sections.
+#
+# What PB2 searches (continuous, adapted continuously during training):
+#   lr, diff_focus_*, temperature, playout_cap_fraction, sf_policy_temp,
+#   sf_policy_label_smooth, feature_dropout_p, w_volatility, w_sf_move,
+#   w_sf_eval, w_categorical
+#
+# What is pinned for this run (architecture fixed so all trials are comparable):
+#   embed_dim, num_layers, num_heads, ffn_mult, use_smolgen
+#
+# What transfers well to larger model:
+#   diff_focus_*, temperature, playout_cap_fraction, sf_policy_temp,
+#   sf_policy_label_smooth, loss weight ratios, use_smolgen/use_nla choice
+#
+# What to re-tune on the large model:
+#   lr (typically lower), batch_size (typically larger), warmup_steps
+#
+# KataGo-style training:
+#   - Bootstrap: train initial net on ALL 100k random games (14.2M positions)
+#   - Selfplay: ~10k positions per iteration (100 games × ~100 pos)
+#   - Sliding window: starts at 100k, grows to 1M as net matures
+#   - Net gating: 20 games every iter, 1-sim policy-only, reject if <50%
+#
+# Data flow per iteration:
+#   100 games × ~100 pos = ~10k new positions → ~39 training steps (256 batch)
+#   Training samples from full sliding window (mix of old and new)
+
+seed: 0
+work_dir: runs/pbt2_small
+device: cuda
+iterations: 600
+replay_capacity: 1000000   # Max window size (grows from 100k to here)
+replay_window_start: 100000  # Initial window size after bootstrap
+replay_window_max: 1000000   # Grow to this over time
+replay_window_growth: 1000   # Grow window by 1k/iter (with ~10k new positions, 90% of oldest data ages off)
+
+# Bootstrap: train initial net on all random games, then discard from window
+bootstrap_dir: data/bootstrap
+bootstrap_checkpoint: /home/josh/projects/chess/data/bootstrap/bootstrap_net.pt  # Pre-trained (run scripts/train_bootstrap.py once)
+bootstrap_max_positions: 0   # 0 = load ALL positions (14.2M) — used by scripts/train_bootstrap.py
+bootstrap_train_steps: 0     # 0 = auto: train 1 epoch — used by scripts/train_bootstrap.py
+
+model:
+  kind: transformer
+  embed_dim: 128     # Small enough for 10 trials in 32 GB VRAM
+  num_layers: 4
+  num_heads: 4
+  ffn_mult: 2
+  use_smolgen: true  # Pin to true (we know smolgen helps from spec)
+  use_nla: false
+  gradient_checkpointing: false
+
+stockfish:
+  path: /home/josh/projects/chess/e2e_server/publish/stockfish
+  nodes: 100
+  workers: 1
+  multipv: 3
+
+  pid_enabled: true
+  pid_target_winrate: 0.53
+  pid_ema_alpha: 0.05
+  pid_deadzone: 0.05
+  pid_rate_limit: 0.10
+  pid_min_games_between_adjust: 100  # Fire after 1 full iteration (100 games)
+  pid_kp: 1.5
+  pid_ki: 0.10
+  pid_kd: 0.0
+  pid_integral_clamp: 1.0
+  pid_min_nodes: 50
+  pid_max_nodes: 50000
+  pid_random_move_prob_start: 1.0
+  pid_random_move_prob_min: 0.0
+  pid_random_move_prob_max: 1.0
+  pid_random_move_stage_end: 0.5
+  pid_max_rand_step: 0.01
+
+selfplay:
+  games_per_iter: 1000  # ~100k positions per iter (1000 games × ~100 pos/game)
+  selfplay_batch: 10    # Play games in mini-batches of 10 to keep memory low
+  max_plies: 120
+
+  temperature: 1.0
+  temperature_drop_plies: 0
+  temperature_after: 0.0
+  temperature_decay_start_move: 20
+  temperature_decay_moves: 60
+  temperature_endgame: 0.6
+
+  opening_book_path: /home/josh/projects/chess/data/opening_books/2moves_v2.pgn.zip
+  opening_book_max_plies: 4
+  opening_book_max_games: 200000
+  opening_book_prob: 1.0
+  random_start_plies: 2   # Fallback if book unavailable
+
+  mcts: puct
+  mcts_simulations: 64
+  mcts_start_simulations: 64  # Full budget from start (KataGo-style: 75% full, 25% fast)
+  playout_cap_fraction: 0.25
+  fast_simulations: 8
+  fpu_reduction: 1.2    # LC0/KataGo FPU for non-root nodes
+  fpu_at_root: 1.0      # FPU for root (lower — root has Dirichlet noise)
+
+  sf_policy_temp: 0.25
+  sf_policy_label_smooth: 0.05
+
+  syzygy_path: null
+  syzygy_policy: false
+
+  diff_focus_enabled: true
+  diff_focus_q_weight: 6.0   # Initial values; PB2 will adapt these
+  diff_focus_pol_scale: 3.5
+  diff_focus_slope: 3.0
+  diff_focus_min: 0.025
+
+  categorical_bins: 32
+  hlgauss_sigma: 0.04
+
+train:
+  optimizer: nadamw
+  lr: 0.0003        # Initial value; PB2 adapts this per-trial
+  batch_size: 256   # Larger batch (requires more VRAM per trial)
+  train_steps: 25   # Match data rate: 25×256=6400 samples per iter (higher replay reuse)
+  no_amp: false
+  feature_dropout_p: 0.3
+  zclip_z_thresh: 2.5
+  zclip_alpha: 0.97
+  zclip_max_norm: 1.0
+
+  w_policy: 1.0
+  w_soft: 0.5
+  w_future: 0.15
+  w_wdl: 1.0
+  w_sf_move: 0.15      # PB2 adapts this
+  w_sf_eval: 0.15      # PB2 adapts this
+  w_categorical: 0.10  # PB2 adapts this
+  w_volatility: 0.05   # PB2 adapts this
+  w_sf_volatility: 0.05
+  w_moves_left: 0.02
+  w_sf_wdl: 1.0             # Bootstrap value head from SF eval (same weight as w_wdl)
+  sf_wdl_floor: 0.1         # Decline to 10% weight once model is strong
+  sf_wdl_floor_at: 0.1      # Reach floor when random_move_prob drops to 10%
+
+  accum_steps: 1
+  warmup_steps: 500    # Shorter warmup for small model
+  lr_eta_min: 0.00001
+  lr_T0: 2000
+  lr_T_mult: 2
+  use_compile: false
+  swa_start: 0
+  swa_freq: 50
+
+puzzle_epd: null
+puzzle_interval: 0     # Disabled — too slow for 10 parallel trials
+
+tune:
+  min_replay_size: 0  # Bootstrap data pre-fills buffer; train from iter 0
+
+  # Disk usage controls
+  # NOTE: PB2/PBT needs older checkpoints to be available for cloning/exploit.
+  # Keeping too few checkpoints can cause missing-checkpoint restore errors.
+  tune_num_to_keep: 10              # keep last 10 checkpoints per trial
+  tune_keep_last_experiments: 2     # keep last 2 experiments under work_dir/tune
+
+  tune_scheduler: pb2
+  num_samples: 10
+  max_concurrent_trials: 10   # All 10 trials run simultaneously (disk-backed buffer keeps RAM low)
+  cpus_per_trial: 1
+  gpus_per_trial: 0.1         # 10 × 0.1 = 1 GPU
+
+  # Disk-backed replay buffer: keeps ~1 GB per trial instead of ~10 GB
+  shuffle_buffer_size: 20000  # In-memory shuffle buffer (samples)
+  shard_size: 1000            # Samples per on-disk shard (~1 MB compressed)
+
+  # PB2: exploit+explore every 20 iterations (was 10).
+  # Longer settling periods let models learn before being perturbed.
+  pb2_perturbation_interval: 20
+
+  tune_metric: opponent_strength
+  tune_mode: max
+
+  # Net gating (KataGo-style): play gate_games after training, reject if <50%.
+  # Uses 1-sim MCTS (raw policy) for speed — no deep search needed for gating.
+  gate_games: 100         # 100 games per gate check (less noisy)
+  gate_threshold: 0.50    # Reject if winrate < 50%
+  gate_interval: 1        # Gate every net (every iteration)
+  gate_mcts_sims: 1       # 1-sim = raw policy + value (fast gating)
+
+  # For eval: run fixed-strength eval games to get a cleaner metric than train_loss.
+  # Disabled by default to keep the small-model run fast.
+  eval_games: 0
+  eval_sf_nodes: 500
+  eval_mcts_simulations: 32
+
+  holdout_fraction: 0.05
+  holdout_capacity: 10000
+  test_steps: 5
+
+  freeze_holdout_at: 0
+  reset_holdout_on_drift: false
+  drift_threshold: 0.0
+  drift_sample_size: 128
+
+  # Binary dimensions: keep pinned during small-model search.
+  # You'll run targeted A/B comparisons for these after locking continuous params.
+  search_smolgen: false
+  search_nla: false
+  search_optimizer: false

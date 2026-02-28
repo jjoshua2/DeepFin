@@ -1,0 +1,173 @@
+# Example config for chess_anti_engine/run.py
+# Usage:
+#   python -m chess_anti_engine.run --config configs/default.yaml --mode tune
+#   python -m chess_anti_engine.run --config configs/default.yaml --mode single
+
+seed: 0
+work_dir: runs
+
+# Global runtime
+device: cuda   # or "cpu"
+iterations: 10
+replay_capacity: 200000
+
+model:
+  kind: transformer   # transformer | tiny
+  embed_dim: 256
+  num_layers: 6
+  num_heads: 8
+  ffn_mult: 2
+  use_smolgen: true
+  use_nla: false
+  gradient_checkpointing: false  # ~50% less VRAM, ~20% slower
+
+stockfish:
+  path: /path/to/stockfish
+  nodes: 2000
+  workers: 1
+  multipv: 5
+
+  # Adaptive difficulty PID (spec)
+  pid_enabled: true
+  pid_target_winrate: 0.53
+  pid_ema_alpha: 0.03
+  pid_deadzone: 0.04
+  pid_rate_limit: 0.10
+  pid_min_games_between_adjust: 30
+  pid_kp: 1.5
+  pid_ki: 0.10
+  pid_kd: 0.0
+  pid_integral_clamp: 1.0
+  pid_min_nodes: 50
+  pid_max_nodes: 1000000
+
+selfplay:
+  games_per_iter: 10
+  max_plies: 200
+
+  # AlphaZero/Leela-style temperature schedule.
+  # LC0-like default: start at 1.0, then linearly decay starting at move 20 over 60 moves down to 0.6.
+  temperature: 1.0
+
+  # Step schedule (simple): after N moves, set temperature to temperature_after (0 disables).
+  temperature_drop_plies: 0   # 0 disables
+  temperature_after: 0.0
+
+  # Linear decay schedule (LC0-like): if temperature_decay_moves > 0, it takes precedence over step schedule.
+  temperature_decay_start_move: 20
+  temperature_decay_moves: 60
+  temperature_endgame: 0.6
+
+  # Opening diversification
+  opening_book_path: null
+  opening_book_max_plies: 4
+  opening_book_max_games: 200000
+  opening_book_prob: 1.0
+  random_start_plies: 0
+
+  mcts: puct
+  mcts_simulations: 100
+  playout_cap_fraction: 0.25
+  fast_simulations: 8
+
+  # SF-policy shaping (used on SF turns)
+  sf_policy_temp: 0.25
+  sf_policy_label_smooth: 0.05
+
+  # Syzygy tablebase rescoring (null to disable)
+  syzygy_path: null
+  syzygy_policy: false  # also rescore policy with DTZ-optimal best move
+
+  # LC0-style diff focus curriculum (probabilistic skip of easy positions)
+  diff_focus_enabled: true
+  diff_focus_q_weight: 6.0
+  diff_focus_pol_scale: 3.5
+  diff_focus_slope: 3.0
+  diff_focus_min: 0.025
+
+  # Categorical value head (HL-Gauss distributional regression)
+  categorical_bins: 32   # 32 | 64 | 128 (tunable ablation)
+  hlgauss_sigma: 0.04    # Gaussian spread (tunable)
+
+train:
+  optimizer: nadamw   # nadamw | adamw | soap
+  lr: 0.0003
+  batch_size: 128
+  train_steps: 200
+  no_amp: false
+  feature_dropout_p: 0.3
+  grad_clip: 10.0
+
+  # Loss weights (all tunable via Ray Tune for ablation studies)
+  w_policy: 1.0
+  w_soft: 0.5
+  w_future: 0.15
+  w_wdl: 1.0
+  w_sf_move: 0.15
+  w_sf_eval: 0.15
+  w_categorical: 0.10
+  w_volatility: 0.05
+  w_sf_volatility: 0.05
+  w_moves_left: 0.02
+
+  # Gradient accumulation: effective_batch = batch_size * accum_steps
+  accum_steps: 1
+
+  # LR schedule: linear warmup then cosine annealing with warm restarts
+  warmup_steps: 1500
+  lr_eta_min: 0.00001
+  lr_T0: 5000
+  lr_T_mult: 2
+
+  # torch.compile for ~75% training throughput boost (requires CUDA)
+  use_compile: false
+
+  # Stochastic Weight Averaging (0 = disabled)
+  swa_start: 0
+  swa_freq: 50
+
+# Puzzle evaluation (overspecialization canary)
+puzzle_epd: null          # path to EPD file (e.g. data/wac.epd)
+puzzle_interval: 1        # run every N iterations (0 disables)
+puzzle_simulations: 200   # MCTS sims per puzzle position
+
+tune:
+  # PB2 (Population-Based Bandits 2) is the default and recommended for RL.
+  # ASHA is available for binary architecture ablations on fixed data.
+  tune_scheduler: pb2   # pb2 | asha
+
+  num_samples: 10
+  max_concurrent_trials: 10   # Must equal num_samples for PB2 to work correctly
+  cpus_per_trial: 2
+  gpus_per_trial: 0.1         # 10 trials × 0.1 = 1 full GPU (5090 with small model)
+
+  tune_metric: train_loss
+  tune_mode: null             # null → "min" for loss, "max" for winrate
+
+  # PB2 settings
+  pb2_perturbation_interval: 10   # Iterations between exploit+explore steps.
+                                   # Increase if your iterations are short.
+
+  # Optional binary dimensions to add to the PB2/ASHA search space.
+  # Pinned by default — unlock only when you have enough trials to get signal.
+  search_smolgen: false
+  search_nla: false
+  search_optimizer: false
+
+  # Optional evaluation / holdout knobs
+  eval_games: 0
+  eval_sf_nodes: null
+  eval_mcts_simulations: null
+
+  holdout_fraction: 0.02
+  holdout_capacity: 50000
+  test_steps: 10
+
+  freeze_holdout_at: 0
+  reset_holdout_on_drift: false
+  drift_threshold: 0.0
+  drift_sample_size: 256
+
+  # Legacy ASHA optional search flags (ignored when tune_scheduler=pb2)
+  search_feature_dropout_p: false
+  search_w_volatility: false

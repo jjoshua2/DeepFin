@@ -84,6 +84,7 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             "sf_pid_max_nodes",
             # selfplay
             "games_per_iter",
+            "selfplay_batch",
             "temperature",
             "temperature_drop_plies",
             "temperature_after",
@@ -247,6 +248,7 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             "hlgauss_sigma",
             "fpu_reduction",
             "fpu_at_root",
+            "selfplay_batch",
         ]:
             if k in selfplay:
                 out[k] = selfplay.get(k)
@@ -320,6 +322,8 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             "gate_threshold",
             "gate_interval",
             "gate_mcts_sims",
+            "shuffle_buffer_size",
+            "shard_size",
         ]:
             if k in tune:
                 out[k] = tune.get(k)

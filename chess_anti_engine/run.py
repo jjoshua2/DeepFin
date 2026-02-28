@@ -9,7 +9,7 @@ import torch
 
 from chess_anti_engine.config import RunConfig, StockfishConfig
 from chess_anti_engine.model import ModelConfig, build_model
-from chess_anti_engine.replay import ReplayBuffer, balance_wdl
+from chess_anti_engine.replay import DiskReplayBuffer, ReplayBuffer, balance_wdl
 from chess_anti_engine.selfplay import play_batch
 from chess_anti_engine.selfplay.budget import progressive_mcts_simulations
 from chess_anti_engine.stockfish import DifficultyPID, StockfishPool, StockfishUCI
@@ -108,7 +108,13 @@ def _run_single(args: argparse.Namespace) -> None:
     window_max = int(getattr(args, "replay_window_max", cfg.replay_capacity))
     window_growth = int(getattr(args, "replay_window_growth", 10_000))
     current_window = window_start
-    buf = ReplayBuffer(current_window, rng=rng)
+    buf = DiskReplayBuffer(
+        current_window,
+        shard_dir=cfg.work_dir / "replay_shards",
+        rng=rng,
+        shuffle_cap=int(getattr(args, "shuffle_buffer_size", 20_000)),
+        shard_size=int(getattr(args, "shard_size", 1000)),
+    )
 
     # Load pre-trained bootstrap checkpoint (trained offline via scripts/train_bootstrap.py).
     bootstrap_ckpt = getattr(args, "bootstrap_checkpoint", None)
@@ -185,12 +191,16 @@ def _run_single(args: argparse.Namespace) -> None:
                     exponent=float(getattr(args, "mcts_ramp_exponent", 2.0)),
                 )
 
-            samples, sp_stats = play_batch(
-                trainer.model,
+            # Mini-batch selfplay: play games in small batches to limit memory
+            selfplay_batch = int(getattr(args, "selfplay_batch", 10))
+            games_remaining = cfg.selfplay.games_per_iter
+            total_positions = 0
+            total_w, total_d, total_l = 0, 0, 0
+            total_sf_d6 = 0.0
+            selfplay_kwargs = dict(
                 device=cfg.train.device,
                 rng=rng,
                 stockfish=sf,
-                games=cfg.selfplay.games_per_iter,
                 temperature=cfg.selfplay.temperature,
                 temperature_drop_plies=int(cfg.selfplay.temperature_drop_plies),
                 temperature_after=float(cfg.selfplay.temperature_after),
@@ -223,10 +233,24 @@ def _run_single(args: argparse.Namespace) -> None:
                 fpu_reduction=float(getattr(args, "fpu_reduction", 1.2)),
                 fpu_at_root=float(getattr(args, "fpu_at_root", 1.0)),
             )
-            buf.add_many(samples)
+            while games_remaining > 0:
+                chunk = min(selfplay_batch, games_remaining)
+                samples, sp_stats = play_batch(
+                    trainer.model, games=chunk, **selfplay_kwargs,
+                )
+                games_remaining -= chunk
+                total_positions += sp_stats.positions
+                total_w += sp_stats.w
+                total_d += sp_stats.d
+                total_l += sp_stats.l
+                total_sf_d6 += sp_stats.sf_eval_delta6 * chunk
+                buf.add_many(samples)
+                del samples
+
+            buf.flush()
 
             # KataGo-style sliding window: train on full buffer, steps = new_positions / batch.
-            steps = max(1, len(samples) // cfg.train.batch_size)
+            steps = max(1, total_positions // cfg.train.batch_size)
             metrics = trainer.train_steps(
                 buf,
                 batch_size=cfg.train.batch_size,
@@ -265,11 +289,11 @@ def _run_single(args: argparse.Namespace) -> None:
 
             # quick eval: reuse selfplay stats at current sf nodes
             print(
-                f"iter={it} step={getattr(trainer, 'step', 0)} sims={int(sims)} replay={len(buf)} pos_added={sp_stats.positions} "
-                f"W/D/L={sp_stats.w}/{sp_stats.d}/{sp_stats.l} "
+                f"iter={it} step={getattr(trainer, 'step', 0)} sims={int(sims)} replay={len(buf)} pos_added={total_positions} "
+                f"W/D/L={total_w}/{total_d}/{total_l} "
                 f"loss={metrics.loss:.4f} best={best_loss:.4f} pol={metrics.policy_loss:.4f} soft={metrics.soft_policy_loss:.4f} "
                 f"fut={metrics.future_policy_loss:.4f} wdl={metrics.wdl_loss:.4f} "
-                f"sf_move={metrics.sf_move_loss:.4f} sf_acc={metrics.sf_move_acc:.3f} sf_eval={metrics.sf_eval_loss:.4f} sf_d6={sp_stats.sf_eval_delta6:.4f} "
+                f"sf_move={metrics.sf_move_loss:.4f} sf_acc={metrics.sf_move_acc:.3f} sf_eval={metrics.sf_eval_loss:.4f} sf_d6={total_sf_d6 / max(1, cfg.selfplay.games_per_iter):.4f} "
                 f"cat={metrics.categorical_loss:.4f} vol={metrics.volatility_loss:.4f} sf_vol={metrics.sf_volatility_loss:.4f} ml={metrics.moves_left_loss:.4f} "
                 f"rand_prob={getattr(sp_stats, 'random_move_prob', None)} skill={getattr(sp_stats, 'skill_level', None)} wr={getattr(sp_stats, 'pid_ema_winrate', None)}"
                 + puzzle_str
@@ -376,6 +400,8 @@ def main() -> None:
     ap.add_argument("--gate-threshold", type=float, default=0.50, help="Net gating: reject if winrate below this")
     ap.add_argument("--gate-interval", type=int, default=1, help="Net gating: check every N iterations")
     ap.add_argument("--gate-mcts-sims", type=int, default=1, help="MCTS sims for gate games (1=raw policy)")
+    ap.add_argument("--shuffle-buffer-size", type=int, default=20_000, help="Disk replay: in-memory shuffle buffer size")
+    ap.add_argument("--shard-size", type=int, default=1000, help="Disk replay: samples per on-disk shard")
     ap.add_argument("--replay-window-start", type=int, default=100_000, help="Initial sliding window size")
     ap.add_argument("--replay-window-max", type=int, default=1_000_000, help="Max sliding window size")
     ap.add_argument("--replay-window-growth", type=int, default=10_000, help="Window growth per iteration")
@@ -425,6 +451,7 @@ def main() -> None:
     ap.add_argument("--sf-pid-min-nodes", type=int, default=50)
     ap.add_argument("--sf-pid-max-nodes", type=int, default=1000000)
     ap.add_argument("--games-per-iter", type=int, default=10)
+    ap.add_argument("--selfplay-batch", type=int, default=10, help="Play games in mini-batches of this size to limit memory")
     ap.add_argument("--train-steps", type=int, default=200)
     ap.add_argument("--playout-cap-fraction", type=float, default=0.25)
     ap.add_argument("--fast-simulations", type=int, default=8)
@@ -571,6 +598,7 @@ def main() -> None:
         "drift_sample_size": int(args.drift_sample_size),
         "sf_workers": int(args.sf_workers),
         "games_per_iter": int(args.games_per_iter),
+        "selfplay_batch": int(args.selfplay_batch),
         "train_steps": int(args.train_steps),
         "batch_size": int(args.batch_size),
         "feature_dropout_p": float(args.feature_dropout_p),
@@ -585,6 +613,10 @@ def main() -> None:
         "grad_clip": float(args.grad_clip),
         "use_compile": bool(args.use_compile),
         "optimizer": str(args.optimizer),
+        "embed_dim": int(args.embed_dim),
+        "num_layers": int(args.num_layers),
+        "num_heads": int(args.num_heads),
+        "ffn_mult": int(args.ffn_mult),
         "use_smolgen": not bool(args.no_smolgen),
         "use_nla": bool(args.use_nla),
         "gradient_checkpointing": bool(args.gradient_checkpointing),
@@ -615,6 +647,8 @@ def main() -> None:
         "bootstrap_checkpoint": getattr(args, "bootstrap_checkpoint", None),
         "bootstrap_max_positions": int(getattr(args, "bootstrap_max_positions", 0)),
         "bootstrap_train_steps": int(getattr(args, "bootstrap_train_steps", 0)),
+        "shuffle_buffer_size": int(getattr(args, "shuffle_buffer_size", 20_000)),
+        "shard_size": int(getattr(args, "shard_size", 1000)),
         "replay_window_start": int(getattr(args, "replay_window_start", 100_000)),
         "replay_window_max": int(getattr(args, "replay_window_max", 1_000_000)),
         "replay_window_growth": int(getattr(args, "replay_window_growth", 10_000)),

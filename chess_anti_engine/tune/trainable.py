@@ -12,7 +12,7 @@ import torch
 import math
 
 from chess_anti_engine.model import ModelConfig, build_model
-from chess_anti_engine.replay import ReplayBuffer
+from chess_anti_engine.replay import DiskReplayBuffer, ReplayBuffer
 from chess_anti_engine.selfplay import play_batch
 from chess_anti_engine.selfplay.budget import progressive_mcts_simulations
 from chess_anti_engine.stockfish import DifficultyPID, StockfishPool, StockfishUCI
@@ -174,6 +174,16 @@ def train_trial(config: dict):
     work_dir = Path(config.get("work_dir", str(trial_dir)))
     work_dir.mkdir(parents=True, exist_ok=True)
 
+    # Gate match counter (so we can log gate scalars against match #, not iteration).
+    gate_state_path = work_dir / "gate_state.json"
+    gate_match_idx = 0
+    if gate_state_path.exists():
+        try:
+            d = json.loads(gate_state_path.read_text(encoding="utf-8"))
+            gate_match_idx = int(d.get("matches", 0))
+        except Exception:
+            gate_match_idx = 0
+
     # Best-model tracking (per trial)
     best_state_path = work_dir / "best.json"
     best_dir = work_dir / "best"
@@ -243,7 +253,15 @@ def train_trial(config: dict):
     window_growth = int(config.get("replay_window_growth", 10_000))
     current_window = window_start
 
-    buf = ReplayBuffer(current_window, rng=rng)
+    shuffle_cap = int(config.get("shuffle_buffer_size", 20_000))
+    shard_size = int(config.get("shard_size", 1000))
+    buf = DiskReplayBuffer(
+        current_window,
+        shard_dir=work_dir / "replay_shards",
+        rng=rng,
+        shuffle_cap=shuffle_cap,
+        shard_size=shard_size,
+    )
     holdout_buf = ReplayBuffer(int(config.get("holdout_capacity", 50_000)), rng=rng)
     holdout_frac = float(config.get("holdout_fraction", 0.02))
 
@@ -349,12 +367,24 @@ def train_trial(config: dict):
                     exponent=float(config.get("mcts_ramp_exponent", 2.0)),
                 )
 
-            samples, stats = play_batch(
-                trainer.model,
+            # Play games in mini-batches to keep memory low (each mini-batch
+            # frees its MCTS trees / board objects before the next starts).
+            total_games = int(config.get("games_per_iter", 4))
+            selfplay_batch = int(config.get("selfplay_batch", 10))
+            games_remaining = total_games
+
+            # Accumulators for stats across mini-batches.
+            all_train_samples: list = []
+            total_w = total_d = total_l = 0
+            total_positions = 0
+            total_sf_d6 = 0.0
+            total_sf_d6_n = 0
+            last_stats = None
+
+            selfplay_kwargs = dict(
                 device=device,
                 rng=rng,
                 stockfish=sf,
-                games=int(config.get("games_per_iter", 4)),
                 opponent_random_move_prob=current_rand,
                 temperature=float(config.get("temperature", 1.0)),
                 temperature_drop_plies=int(config.get("temperature_drop_plies", 0)),
@@ -378,40 +408,51 @@ def train_trial(config: dict):
                 random_start_plies=int(config.get("random_start_plies", 0)),
                 syzygy_path=config.get("syzygy_path"),
                 syzygy_policy=bool(config.get("syzygy_policy", False)),
-                # LC0-style diff focus curriculum (tunable for ablation)
                 diff_focus_enabled=bool(config.get("diff_focus_enabled", True)),
                 diff_focus_q_weight=float(config.get("diff_focus_q_weight", 6.0)),
                 diff_focus_pol_scale=float(config.get("diff_focus_pol_scale", 3.5)),
                 diff_focus_slope=float(config.get("diff_focus_slope", 3.0)),
                 diff_focus_min=float(config.get("diff_focus_min", 0.025)),
-                # Categorical value head bins and HL-Gauss sigma (tunable)
                 categorical_bins=int(config.get("categorical_bins", 32)),
                 hlgauss_sigma=float(config.get("hlgauss_sigma", 0.04)),
                 fpu_reduction=float(config.get("fpu_reduction", 1.2)),
                 fpu_at_root=float(config.get("fpu_at_root", 1.0)),
             )
+
+            while games_remaining > 0:
+                chunk = min(selfplay_batch, games_remaining)
+                samples, stats = play_batch(trainer.model, games=chunk, **selfplay_kwargs)
+                games_remaining -= chunk
+                last_stats = stats
+
+                # Accumulate stats.
+                total_w += stats.w
+                total_d += stats.d
+                total_l += stats.l
+                total_positions += stats.positions
+                total_sf_d6 += float(getattr(stats, "sf_eval_delta6", 0.0)) * int(getattr(stats, "sf_eval_delta6_n", 0))
+                total_sf_d6_n += int(getattr(stats, "sf_eval_delta6_n", 0))
+
+                # Split into train vs holdout and flush to disk immediately.
+                for s in samples:
+                    if holdout_frac > 0.0 and (not holdout_frozen) and (rng.random() < holdout_frac):
+                        holdout_buf.add_many([s])
+                    else:
+                        all_train_samples.append(s)
+                buf.add_many(all_train_samples)
+                all_train_samples = []
+                del samples  # Free memory from this mini-batch.
+
+            # Aggregate stats for reporting.
+            stats = last_stats  # Use last batch's stats for PID/misc fields.
+
             # Growing window: expand buffer capacity each iteration.
             if current_window < window_max:
                 current_window = min(current_window + window_growth, window_max)
                 if buf.capacity < current_window:
                     buf.capacity = current_window
 
-            # Split samples into train vs holdout.
-            train_samples = []
-            holdout_samples = []
-            if holdout_frac > 0.0:
-                for s in samples:
-                    if (not holdout_frozen) and (rng.random() < holdout_frac):
-                        holdout_samples.append(s)
-                    else:
-                        train_samples.append(s)
-            else:
-                train_samples = samples
-
-            if train_samples:
-                buf.add_many(train_samples)
-            if holdout_samples:
-                holdout_buf.add_many(holdout_samples)
+            train_samples = []  # Already flushed to buf above.
 
             if (not holdout_frozen) and freeze_holdout_at > 0 and len(holdout_buf) >= freeze_holdout_at:
                 holdout_frozen = True
@@ -508,7 +549,7 @@ def train_trial(config: dict):
                 # KataGo-style sliding window: sample from FULL replay buffer,
                 # but limit steps so new data is seen ~1x per iteration.
                 # steps = new_positions / batch_size (no augmentation factor for chess).
-                steps = max(1, len(train_samples) // batch_size)
+                steps = max(1, total_positions // batch_size)
 
                 # Save model state for potential rollback (net gating).
                 gate_passed = True
@@ -535,6 +576,32 @@ def train_trial(config: dict):
                         opponent_random_move_prob=current_rand,
                         config=config,
                     )
+
+                    # Gate match index is separate from iteration because gates are rare.
+                    gate_match_idx += 1
+                    try:
+                        gate_state_path.write_text(
+                            json.dumps(
+                                {"matches": int(gate_match_idx)},
+                                indent=2,
+                                sort_keys=True,
+                            ),
+                            encoding="utf-8",
+                        )
+                    except Exception:
+                        pass
+
+                    # TensorBoard logging for gating (x-axis = gate match #).
+                    # Useful when gate checks happen infrequently.
+                    try:
+                        trainer.writer.add_scalar("gate/winrate", float(gate_wr), int(gate_match_idx))
+                        trainer.writer.add_scalar("gate/win", float(gate_w), int(gate_match_idx))
+                        trainer.writer.add_scalar("gate/draw", float(gate_d), int(gate_match_idx))
+                        trainer.writer.add_scalar("gate/loss", float(gate_l), int(gate_match_idx))
+                        trainer.writer.add_scalar("gate/passed", float(1.0 if gate_wr >= gate_threshold else 0.0), int(gate_match_idx))
+                    except Exception:
+                        pass
+
                     if gate_wr < gate_threshold:
                         # Revert model — training made it worse.
                         trainer.model.load_state_dict(pre_train_state)
@@ -574,6 +641,9 @@ def train_trial(config: dict):
                     "eval_loss": eval_stats.l,
                     "eval_winrate": (float(eval_stats.w) + 0.5 * float(eval_stats.d)) / denom,
                 }
+
+            # Flush any remaining samples to disk before checkpointing.
+            buf.flush()
 
             # Save a lightweight checkpoint (model+optimizer+step only).
             ckpt_dir = work_dir / "ckpt"
@@ -655,12 +725,12 @@ def train_trial(config: dict):
                     "iter": it,
                     "replay": len(buf),
                     "test_replay": len(holdout_buf),
-                    "positions_added": stats.positions,
-                    "win": stats.w,
-                    "draw": stats.d,
-                    "loss": stats.l,
-                    "sf_eval_delta6": float(getattr(stats, "sf_eval_delta6", 0.0)),
-                    "sf_eval_delta6_n": int(getattr(stats, "sf_eval_delta6_n", 0)),
+                    "positions_added": total_positions,
+                    "win": total_w,
+                    "draw": total_d,
+                    "loss": total_l,
+                    "sf_eval_delta6": float(total_sf_d6 / max(1, total_sf_d6_n)) if total_sf_d6_n > 0 else 0.0,
+                    "sf_eval_delta6_n": total_sf_d6_n,
                     "sf_nodes": int(getattr(stats, "sf_nodes", 0) or 0),
                     "sf_nodes_next": int(getattr(stats, "sf_nodes_next", 0) or 0),
                     "pid_ema_winrate": float(getattr(stats, "pid_ema_winrate", 0.0) or 0.0),

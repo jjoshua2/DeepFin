@@ -1,0 +1,41 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+dist/
+build/
+artifacts/
+runs/
+runs_*/
+
+# Large artifacts
+*.pt
+*.ckpt
+*.bin
+*.zip
+*.pgn
+*.pgn.zip
+
+# Logs / caches
+*.log
+*.jsonl
+*.sqlite
+.pytest_cache/
+.tb/
+tb/
+.DS_Store
+
+# Local data / experiments (generated)
+data/
+e2e_*/
+server/
+
+# Local tooling
+.claude/
+.merge_ts
+
+# Local backups/merged scratch files
+*.bak
+*.merged
+*.merged.*

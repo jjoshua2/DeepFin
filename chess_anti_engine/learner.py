@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
 import os
 import shutil
 import time
@@ -20,6 +21,9 @@ from chess_anti_engine.selfplay.budget import progressive_mcts_simulations
 from chess_anti_engine.stockfish.pid import DifficultyPID
 from chess_anti_engine.train import Trainer
 from chess_anti_engine.version import PACKAGE_VERSION, PROTOCOL_VERSION
+
+
+log = logging.getLogger("chess_anti_engine.learner")
 
 
 def _sha256_file(path: Path) -> str:
@@ -77,6 +81,11 @@ def _iter_arena_results(arena_inbox_dir: Path) -> list[Path]:
 
 
 def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
     ap = argparse.ArgumentParser(description="Learner (trainer) for distributed selfplay")
 
     ap.add_argument("--server-root", type=str, default="server")
@@ -751,6 +760,21 @@ def main() -> None:
                     arena_a_draw += int(a_draw)
                     arena_a_loss += int(a_loss)
 
+                    # Log each uploaded batch (makes match progress visible in server logs).
+                    denom = float(max(1, arena_games_done))
+                    winrate = (float(arena_a_win) + 0.5 * float(arena_a_draw)) / denom
+                    log.info(
+                        "arena batch: games_done=%d/%d W/D/L=%d/%d/%d winrate=%.3f latest=%s best=%s",
+                        int(arena_games_done),
+                        int(args.arena_games_target),
+                        int(arena_a_win),
+                        int(arena_a_draw),
+                        int(arena_a_loss),
+                        float(winrate),
+                        str(arena_latest_sha)[:8],
+                        str(arena_best_sha)[:8],
+                    )
+
                 try:
                     rel = rp.relative_to(arena_inbox_dir)
                     out = arena_processed_dir / rel
@@ -767,6 +791,18 @@ def main() -> None:
                 accepted = bool(winrate >= float(args.arena_accept_winrate))
                 arena_last_winrate = float(winrate)
                 arena_last_accepted = bool(accepted)
+
+                log.info(
+                    "arena decision: %s (accept_winrate=%.3f) final W/D/L=%d/%d/%d winrate=%.3f latest=%s best=%s",
+                    "ACCEPT" if accepted else "REJECT",
+                    float(args.arena_accept_winrate),
+                    int(arena_a_win),
+                    int(arena_a_draw),
+                    int(arena_a_loss),
+                    float(winrate),
+                    str(arena_latest_sha)[:8],
+                    str(arena_best_sha)[:8],
+                )
 
                 if accepted:
                     # Promote challenger -> champion
@@ -878,6 +914,14 @@ def main() -> None:
                 arena_best_sha = str(best_model_sha)
                 arena_games_done = 0
                 arena_a_win = arena_a_draw = arena_a_loss = 0
+
+                log.info(
+                    "arena start: games_target=%d accept_winrate=%.3f latest=%s best=%s",
+                    int(args.arena_games_target),
+                    float(args.arena_accept_winrate),
+                    str(arena_latest_sha)[:8],
+                    str(arena_best_sha)[:8],
+                )
                 arena_state_path.write_text(
                     json.dumps(
                         {
