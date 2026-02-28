@@ -58,3 +58,68 @@ def test_pid_deadzone_prevents_adjustment():
     u = pid.observe(wins=11, draws=0, losses=9)
     assert u.adjusted is False
     assert u.nodes_after == 2000
+
+
+def test_pid_skill_does_not_promote_when_controller_wants_easier_opponent():
+    pid = DifficultyPID(
+        initial_nodes=240,
+        target_winrate=0.60,
+        ema_alpha=1.0,
+        deadzone=0.0,
+        rate_limit=0.10,
+        min_games_between_adjust=1,
+        kp=10.0,
+        ki=0.0,
+        kd=0.0,
+        min_nodes=100,
+        max_nodes=1_000_000,
+        initial_skill_level=1,
+        skill_min=0,
+        skill_max=20,
+        skill_promote_nodes=200,
+        skill_demote_nodes=100,
+        skill_nodes_on_promote=100,
+        skill_nodes_on_demote=150,
+        initial_random_move_prob=0.0,
+        random_move_stage_end=0.0,
+    )
+
+    # Terrible score means err < 0, so the controller is trying to make the
+    # opponent easier. That must not trigger a skill promotion just because
+    # current nodes are still above the promotion threshold.
+    upd = pid.observe(wins=0, draws=0, losses=10)
+    assert upd.adjusted is True
+    assert upd.skill_level == 1
+    assert upd.nodes_after == 216
+
+
+def test_pid_skill_demotes_at_threshold_when_controller_wants_easier_opponent():
+    pid = DifficultyPID(
+        initial_nodes=100,
+        target_winrate=0.60,
+        ema_alpha=1.0,
+        deadzone=0.0,
+        rate_limit=0.10,
+        min_games_between_adjust=1,
+        kp=10.0,
+        ki=0.0,
+        kd=0.0,
+        min_nodes=100,
+        max_nodes=1_000_000,
+        initial_skill_level=2,
+        skill_min=0,
+        skill_max=20,
+        skill_promote_nodes=200,
+        skill_demote_nodes=100,
+        skill_nodes_on_promote=100,
+        skill_nodes_on_demote=150,
+        initial_random_move_prob=0.0,
+        random_move_stage_end=0.0,
+    )
+
+    # At exact threshold and with err < 0, we should demote.
+    upd = pid.observe(wins=0, draws=0, losses=10)
+    assert upd.adjusted is True
+    assert upd.skill_level == 1
+    assert upd.skill_changed is True
+    assert upd.nodes_after == 150

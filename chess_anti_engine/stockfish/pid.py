@@ -69,6 +69,10 @@ class DifficultyPID:
         # Prevents large jumps (e.g. 1.0→0.90) when the PID fires with a big error.
         # Default 0.01 = 1% per step.
         max_rand_step: float = 0.01,
+        # If set, random-first gating re-enters only when random_move_prob rises to
+        # this level or higher. This provides hysteresis: temporary dips/recoveries
+        # around random_move_stage_end do not rapidly freeze/unfreeze node updates.
+        random_move_stage_reenter: float | None = None,
         # Skill-level ladder: PID manages both node count and SF Skill Level.
         # When nodes climb past skill_promote_nodes the difficulty tier increases;
         # when they fall below skill_demote_nodes the tier decreases (safety only).
@@ -104,6 +108,11 @@ class DifficultyPID:
         self.random_move_prob_max = float(random_move_prob_max)
         self.random_move_stage_end = float(random_move_stage_end)
         self.max_rand_step = float(max_rand_step)
+        stage_end = max(self.random_move_prob_min, min(self.random_move_prob_max, float(self.random_move_stage_end)))
+        reenter_default = min(self.random_move_prob_max, stage_end + 0.05)
+        reenter_val = reenter_default if random_move_stage_reenter is None else float(random_move_stage_reenter)
+        self.random_move_stage_reenter = max(stage_end, min(self.random_move_prob_max, reenter_val))
+        self._random_stage_complete = float(self.random_move_prob) <= float(stage_end)
 
         # Skill level ladder
         self.skill_level = max(int(skill_min), min(int(skill_max), int(initial_skill_level)))
@@ -205,16 +214,26 @@ class DifficultyPID:
 
         # Always adjust opponent random-move probability using the same control signal.
         rand_before = float(self.random_move_prob)
-        rand_delta = rand_before * (-float(u))
-        rand_delta = max(-self.max_rand_step, min(self.max_rand_step, rand_delta))
+        rand_delta = max(-self.max_rand_step, min(self.max_rand_step, -float(u)))
+
         rand_after = rand_before + rand_delta
         rand_after = max(self.random_move_prob_min, min(self.random_move_prob_max, float(rand_after)))
         self.random_move_prob = float(rand_after)
-        rand_changed = abs(rand_after - rand_before) > 1e-12
 
-        # Random-first gating: while random_move_prob is still high, keep nodes/skill fixed.
+        # Random-first gating with hysteresis:
+        # - enable nodes when random_move_prob drops to stage_end or below
+        # - re-freeze only after substantial regression to stage_reenter or above
         stage_end = max(self.random_move_prob_min, min(self.random_move_prob_max, float(self.random_move_stage_end)))
-        allow_nodes = float(self.random_move_prob) <= float(stage_end)
+        stage_reenter = max(stage_end, min(self.random_move_prob_max, float(self.random_move_stage_reenter)))
+        if self._random_stage_complete:
+            if self.random_move_prob >= stage_reenter:
+                self._random_stage_complete = False
+        else:
+            if self.random_move_prob <= stage_end:
+                self._random_stage_complete = True
+
+        rand_changed = abs(rand_after - rand_before) > 1e-12
+        allow_nodes = bool(self._random_stage_complete)
 
         nodes_after = int(self.nodes)
         skill_before = int(self.skill_level)
@@ -226,16 +245,24 @@ class DifficultyPID:
             new_nodes = max(self.min_nodes, min(self.max_nodes, new_nodes))
             self.nodes = int(new_nodes)
 
-            # Skill-level ladder: promote when nodes exceed the promote threshold;
-            # demote (rarely) when they would floor below the demote threshold.
+            # Skill-level ladder:
+            # - only promote when the controller is actively making the opponent harder (u > 0)
+            # - only demote when the controller is actively making the opponent easier (u < 0)
+            # This avoids pathological ratcheting where a still-high node count can trigger
+            # promotion even while the model is underperforming.
+            #
+            # Demotion threshold is inclusive (<=) so it still works when min_nodes equals
+            # skill_demote_nodes.
             if self.nodes >= self.skill_promote_nodes and self.skill_level < self.skill_max:
-                self.skill_level += 1
-                self.nodes = max(self.min_nodes, min(self.max_nodes, self.skill_nodes_on_promote))
-                self._integral = 0.0  # fresh start at new difficulty tier
-            elif self.nodes < self.skill_demote_nodes and self.skill_level > self.skill_min:
-                self.skill_level -= 1
-                self.nodes = max(self.min_nodes, min(self.max_nodes, self.skill_nodes_on_demote))
-                self._integral = 0.0  # fresh start at easier tier
+                if u > 0.0:
+                    self.skill_level += 1
+                    self.nodes = max(self.min_nodes, min(self.max_nodes, self.skill_nodes_on_promote))
+                    self._integral = 0.0  # fresh start at new difficulty tier
+            elif self.nodes <= self.skill_demote_nodes and self.skill_level > self.skill_min:
+                if u < 0.0:
+                    self.skill_level -= 1
+                    self.nodes = max(self.min_nodes, min(self.max_nodes, self.skill_nodes_on_demote))
+                    self._integral = 0.0  # fresh start at easier tier
 
             nodes_after = int(self.nodes)
             skill_changed = self.skill_level != skill_before
