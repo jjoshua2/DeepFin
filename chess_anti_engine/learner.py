@@ -255,6 +255,7 @@ def main() -> None:
                     help="Minimum game positions ingested before each PID adjustment")
     ap.add_argument("--recommended-sf-policy-temp", type=float, default=0.25)
     ap.add_argument("--recommended-sf-policy-label-smooth", type=float, default=0.05)
+    ap.add_argument("--recommended-timeout-adjudication-threshold", type=float, default=0.90)
     ap.add_argument("--recommended-sf-skill-level", type=int, default=None,
                     help="Stockfish Skill Level 0-20 (None = max strength). Lower = weaker/faster.")
 
@@ -537,6 +538,7 @@ def main() -> None:
             "sf_multipv": int(args.recommended_sf_multipv),
             "sf_policy_temp": float(args.recommended_sf_policy_temp),
             "sf_policy_label_smooth": float(args.recommended_sf_policy_label_smooth),
+            "timeout_adjudication_threshold": float(args.recommended_timeout_adjudication_threshold),
             "sf_skill_level": int(current_sf_skill_level) if current_sf_skill_level is not None else None,
             "opponent_random_move_prob": float(current_opponent_random_move_prob),
             "temperature": float(args.recommended_temperature),
@@ -968,6 +970,7 @@ def main() -> None:
             "sf_multipv": int(args.recommended_sf_multipv),
             "sf_policy_temp": float(args.recommended_sf_policy_temp),
             "sf_policy_label_smooth": float(args.recommended_sf_policy_label_smooth),
+            "timeout_adjudication_threshold": float(args.recommended_timeout_adjudication_threshold),
             "sf_skill_level": int(current_sf_skill_level) if current_sf_skill_level is not None else None,
             "temperature": float(args.recommended_temperature),
             "temperature_decay_start_move": int(args.recommended_temperature_decay_start_move),

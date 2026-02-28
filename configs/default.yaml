@@ -73,6 +73,7 @@ selfplay:
   # SF-policy shaping (used on SF turns)
   sf_policy_temp: 0.25
   sf_policy_label_smooth: 0.05
+  timeout_adjudication_threshold: 0.90
 
   # Syzygy tablebase rescoring (null to disable)
   syzygy_path: null

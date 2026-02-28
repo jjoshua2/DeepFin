@@ -112,6 +112,7 @@ def play_batch(
     fast_simulations: int = 8,
     sf_policy_temp: float = 0.25,
     sf_policy_label_smooth: float = 0.05,
+    timeout_adjudication_threshold: float = 0.90,
     difficulty_pid: DifficultyPID | None = None,
     opening_book_path: str | None = None,
     opening_book_max_plies: int = 4,
@@ -550,13 +551,13 @@ def play_batch(
             wdl_white = np.array([float(wdl_stm[2]), float(wdl_stm[1]), float(wdl_stm[0])], dtype=np.float32)
         else:
             wdl_white = np.asarray(wdl_stm, dtype=np.float32)
-        # Require high confidence (85%) to label a timeout as decisive.
+        # Require high confidence (timeout_adjudication_threshold) to label a timeout as decisive.
         # Random 200-ply positions often have slight material imbalances that SF
         # reads as a weak advantage at low node counts — using a high threshold
         # prevents mislabeling those as decisive and biasing the W/D/L distribution.
-        if float(wdl_white[0]) > 0.85:
+        if float(wdl_white[0]) > float(timeout_adjudication_threshold):
             return "1-0"
-        if float(wdl_white[2]) > 0.85:
+        if float(wdl_white[2]) > float(timeout_adjudication_threshold):
             return "0-1"
         return "1/2-1/2"
 

@@ -44,6 +44,7 @@ def _run_single(args: argparse.Namespace) -> None:
     cfg.selfplay.random_start_plies = int(args.random_start_plies)
     cfg.selfplay.sf_policy_temp = float(args.sf_policy_temp)
     cfg.selfplay.sf_policy_label_smooth = float(args.sf_policy_label_smooth)
+    cfg.selfplay.timeout_adjudication_threshold = float(args.timeout_adjudication_threshold)
     cfg.stockfish = StockfishConfig(path=args.stockfish_path, nodes=int(args.sf_nodes), multipv=int(args.sf_multipv))
     cfg.stockfish.pid_enabled = bool(args.sf_pid_enabled)
     cfg.stockfish.pid_target_winrate = float(args.sf_pid_target_winrate)
@@ -214,6 +215,7 @@ def _run_single(args: argparse.Namespace) -> None:
                 fast_simulations=int(args.fast_simulations),
                 sf_policy_temp=float(cfg.selfplay.sf_policy_temp),
                 sf_policy_label_smooth=float(cfg.selfplay.sf_policy_label_smooth),
+                timeout_adjudication_threshold=float(cfg.selfplay.timeout_adjudication_threshold),
                 volatility_source=str(getattr(args, "volatility_source", "raw")),
                 difficulty_pid=pid,
                 opening_book_path=cfg.selfplay.opening_book_path,
@@ -427,6 +429,8 @@ def main() -> None:
     ap.add_argument("--sf-workers", type=int, default=1)
     ap.add_argument("--sf-policy-temp", type=float, default=0.25)
     ap.add_argument("--sf-policy-label-smooth", type=float, default=0.05)
+    ap.add_argument("--timeout-adjudication-threshold", type=float, default=0.90,
+                    help="Stockfish WDL confidence required to adjudicate max_plies timeouts as decisive")
 
     ap.add_argument("--opening-book-path", type=str, default=None, help="Path to opening book (.bin polyglot, .pgn, or .pgn.zip)")
     ap.add_argument("--opening-book-max-plies", type=int, default=4)
@@ -561,6 +565,7 @@ def main() -> None:
         "sf_multipv": int(args.sf_multipv),
         "sf_policy_temp": float(args.sf_policy_temp),
         "sf_policy_label_smooth": float(args.sf_policy_label_smooth),
+        "timeout_adjudication_threshold": float(args.timeout_adjudication_threshold),
         "sf_pid_enabled": bool(args.sf_pid_enabled),
         "sf_pid_target_winrate": float(args.sf_pid_target_winrate),
         "sf_pid_ema_alpha": float(args.sf_pid_ema_alpha),

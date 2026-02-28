@@ -112,6 +112,7 @@ selfplay:
 
   sf_policy_temp: 0.25
   sf_policy_label_smooth: 0.05
+  timeout_adjudication_threshold: 0.90
 
   syzygy_path: null
   syzygy_policy: false

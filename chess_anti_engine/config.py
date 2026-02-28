@@ -60,6 +60,7 @@ class SelfPlayConfig:
     # SF-policy target shaping on SF turns (MultiPV-derived + label smoothing)
     sf_policy_temp: float = 0.25
     sf_policy_label_smooth: float = 0.05
+    timeout_adjudication_threshold: float = 0.90
 
 
 @dataclass

@@ -106,6 +106,7 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             "random_start_plies",
             "sf_policy_temp",
             "sf_policy_label_smooth",
+            "timeout_adjudication_threshold",
             "syzygy_path",
             "syzygy_policy",
             # selfplay diff focus
@@ -237,6 +238,7 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             "random_start_plies",
             "sf_policy_temp",
             "sf_policy_label_smooth",
+            "timeout_adjudication_threshold",
             "syzygy_path",
             "syzygy_policy",
             "diff_focus_enabled",

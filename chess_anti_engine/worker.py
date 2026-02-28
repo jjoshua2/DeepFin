@@ -703,6 +703,7 @@ def main() -> None:
                 "sf_multipv",
                 "sf_policy_temp",
                 "sf_policy_label_smooth",
+                "timeout_adjudication_threshold",
                 "temperature",
                 "temperature_decay_start_move",
                 "temperature_decay_moves",
@@ -773,6 +774,7 @@ def main() -> None:
                 if args.sf_policy_label_smooth is not None
                 else float(reco.get("sf_policy_label_smooth", 0.05))
             )
+            timeout_adjudication_threshold = float(reco.get("timeout_adjudication_threshold", 0.90))
 
             temperature = float(args.temperature) if args.temperature is not None else float(reco.get("temperature", 1.0))
             t_start = (
@@ -974,6 +976,7 @@ def main() -> None:
                 fast_simulations=int(fast_sims),
                 sf_policy_temp=float(sf_policy_temp),
                 sf_policy_label_smooth=float(sf_policy_label_smooth),
+                timeout_adjudication_threshold=float(timeout_adjudication_threshold),
                 opponent_random_move_prob=float(opponent_random_move_prob),
                 opening_book_path=opening_book_path,
                 opening_book_max_plies=int(opening_book_max_plies),
