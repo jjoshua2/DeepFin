@@ -44,7 +44,7 @@ def _apply_temperature(probs: np.ndarray, temperature: float) -> np.ndarray:
 
 def _is_network_turn(*, board_turn: chess.Color, network_color: chess.Color) -> bool:
     """Return True when the side to move is the network-assigned color."""
-    return bool(board_turn == network_color)
+    return board_turn == network_color
 
 
 @dataclass
