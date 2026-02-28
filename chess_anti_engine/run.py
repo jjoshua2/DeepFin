@@ -176,6 +176,13 @@ def _run_single(args: argparse.Namespace) -> None:
             integral_clamp=float(cfg.stockfish.pid_integral_clamp),
             min_nodes=int(cfg.stockfish.pid_min_nodes),
             max_nodes=int(cfg.stockfish.pid_max_nodes),
+            # Optional opponent random-move schedule (may be provided via YAML defaults
+            # even if not exposed as explicit CLI flags).
+            initial_random_move_prob=float(getattr(args, "sf_pid_random_move_prob_start", 0.0)),
+            random_move_prob_min=float(getattr(args, "sf_pid_random_move_prob_min", 0.0)),
+            random_move_prob_max=float(getattr(args, "sf_pid_random_move_prob_max", 1.0)),
+            random_move_stage_end=float(getattr(args, "sf_pid_random_move_stage_end", 0.5)),
+            max_rand_step=float(getattr(args, "sf_pid_max_rand_step", 0.01)),
         )
 
     try:
@@ -197,10 +204,13 @@ def _run_single(args: argparse.Namespace) -> None:
             total_positions = 0
             total_w, total_d, total_l = 0, 0, 0
             total_sf_d6 = 0.0
+            current_rand = float(pid.random_move_prob) if pid is not None else 0.0
+
             selfplay_kwargs = dict(
                 device=cfg.train.device,
                 rng=rng,
                 stockfish=sf,
+                opponent_random_move_prob=current_rand,
                 temperature=cfg.selfplay.temperature,
                 temperature_drop_plies=int(cfg.selfplay.temperature_drop_plies),
                 temperature_after=float(cfg.selfplay.temperature_after),
@@ -215,7 +225,6 @@ def _run_single(args: argparse.Namespace) -> None:
                 sf_policy_temp=float(cfg.selfplay.sf_policy_temp),
                 sf_policy_label_smooth=float(cfg.selfplay.sf_policy_label_smooth),
                 volatility_source=str(getattr(args, "volatility_source", "raw")),
-                difficulty_pid=pid,
                 opening_book_path=cfg.selfplay.opening_book_path,
                 opening_book_max_plies=int(cfg.selfplay.opening_book_max_plies),
                 opening_book_max_games=int(cfg.selfplay.opening_book_max_games),
@@ -257,6 +266,21 @@ def _run_single(args: argparse.Namespace) -> None:
                 steps=steps,
             )
 
+            # Update PID once per iteration (after training) so difficulty changes align
+            # to net updates rather than intra-iteration selfplay noise.
+            pid_ema = None
+            rand_next = None
+            sf_nodes_next = None
+            if pid is not None and (total_w + total_d + total_l) > 0:
+                upd = pid.observe(wins=total_w, draws=total_d, losses=total_l)
+                pid_ema = float(upd.ema_winrate)
+                rand_next = float(pid.random_move_prob)
+                sf_nodes_next = int(pid.nodes)
+                if hasattr(sf, "set_nodes"):
+                    sf.set_nodes(int(pid.nodes))
+                else:
+                    setattr(sf, "nodes", int(pid.nodes))
+
             # Best model (by train loss)
             cur_loss = float(metrics.loss)
             if cur_loss < best_loss - 1e-12:
@@ -295,7 +319,7 @@ def _run_single(args: argparse.Namespace) -> None:
                 f"fut={metrics.future_policy_loss:.4f} wdl={metrics.wdl_loss:.4f} "
                 f"sf_move={metrics.sf_move_loss:.4f} sf_acc={metrics.sf_move_acc:.3f} sf_eval={metrics.sf_eval_loss:.4f} sf_d6={total_sf_d6 / max(1, cfg.selfplay.games_per_iter):.4f} "
                 f"cat={metrics.categorical_loss:.4f} vol={metrics.volatility_loss:.4f} sf_vol={metrics.sf_volatility_loss:.4f} ml={metrics.moves_left_loss:.4f} "
-                f"rand_prob={getattr(sp_stats, 'random_move_prob', None)} skill={getattr(sp_stats, 'skill_level', None)} wr={getattr(sp_stats, 'pid_ema_winrate', None)}"
+                f"rand_prob={float(current_rand):.3f} rand_next={rand_next} sf_nodes_next={sf_nodes_next} pid_wr={pid_ema}"
                 + puzzle_str
             )
 

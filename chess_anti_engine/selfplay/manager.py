@@ -9,7 +9,6 @@ from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.utils.amp import inference_autocast
 from chess_anti_engine.stockfish.uci import StockfishUCI, StockfishResult
 from chess_anti_engine.stockfish.pool import StockfishPool
-from chess_anti_engine.stockfish.pid import DifficultyPID
 from chess_anti_engine.mcts import MCTSConfig, GumbelConfig
 from chess_anti_engine.mcts.puct import run_mcts_many
 from chess_anti_engine.mcts.gumbel import run_gumbel_root_many
@@ -112,7 +111,6 @@ def play_batch(
     fast_simulations: int = 8,
     sf_policy_temp: float = 0.25,
     sf_policy_label_smooth: float = 0.05,
-    difficulty_pid: DifficultyPID | None = None,
     opening_book_path: str | None = None,
     opening_book_max_plies: int = 4,
     opening_book_max_games: int = 200_000,
@@ -720,24 +718,12 @@ def play_batch(
                 )
             )
 
-    # Optional PID difficulty update: adjust Stockfish node limit to maintain target win rate.
+    # NOTE: PID updates are performed by the outer loop (after a new net is trained),
+    # not inside play_batch. This keeps difficulty changes aligned to model updates,
+    # and prevents multiple small PID steps per iteration when selfplay is chunked.
     sf_nodes = int(getattr(stockfish, "nodes", 0) or 0)
-    sf_nodes_next = None
-    pid_ema = None
-    rand_prob = None
-    skill_lvl = None
-    if difficulty_pid is not None:
-        upd = difficulty_pid.observe(wins=w, draws=d, losses=l)
-        pid_ema = float(upd.ema_winrate)
-        sf_nodes_next = int(upd.nodes_after)
-        rand_prob = float(upd.random_move_prob_after)
-        skill_lvl = int(upd.skill_level)
-        if upd.adjusted:
-            # Apply the new node limit for the next batch.
-            if hasattr(stockfish, "set_nodes"):
-                stockfish.set_nodes(int(upd.nodes_after))
-            else:
-                setattr(stockfish, "nodes", int(upd.nodes_after))
+    skill_lvl = getattr(stockfish, "skill_level", None)
+    skill_lvl_i = None if skill_lvl is None else int(skill_lvl)
 
     mean_sf_d6 = float(sf_d6_sum / max(1, sf_d6_n)) if sf_d6_n > 0 else 0.0
     return all_samples, BatchStats(
@@ -747,10 +733,10 @@ def play_batch(
         d=d,
         l=l,
         sf_nodes=sf_nodes if sf_nodes > 0 else None,
-        sf_nodes_next=sf_nodes_next,
-        pid_ema_winrate=pid_ema,
-        random_move_prob=rand_prob,
-        skill_level=skill_lvl,
+        sf_nodes_next=None,
+        pid_ema_winrate=None,
+        random_move_prob=float(opponent_random_move_prob),
+        skill_level=skill_lvl_i,
         sf_eval_delta6=mean_sf_d6,
         sf_eval_delta6_n=int(sf_d6_n),
     )

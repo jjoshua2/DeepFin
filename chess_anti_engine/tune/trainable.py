@@ -19,7 +19,15 @@ from chess_anti_engine.stockfish import DifficultyPID, StockfishPool, StockfishU
 from chess_anti_engine.train import Trainer
 
 
-def _opponent_strength(stats, pid) -> float:
+def _opponent_strength(
+    *,
+    random_move_prob: float,
+    sf_nodes: int,
+    skill_level: int,
+    ema_winrate: float,
+    min_nodes: int,
+    max_nodes: int,
+) -> float:
     """Composite metric capturing full difficulty progression.
 
     Returns a single scalar (higher = harder opponent = better model):
@@ -30,28 +38,21 @@ def _opponent_strength(stats, pid) -> float:
     The PID controller holds winrate at ~0.53, so the only differentiator
     between trials is how hard an opponent they can maintain that against.
     """
-    rand_prob = float(getattr(stats, "random_move_prob", 1.0) if getattr(stats, "random_move_prob", None) is not None else 1.0)
-    sf_nodes = int(getattr(stats, "sf_nodes_next", 0) or 0)
-    skill = int(getattr(stats, "skill_level", 0) if getattr(stats, "skill_level", None) is not None else 0)
+    rand_prob = float(random_move_prob)
+    nodes = int(sf_nodes)
+    skill = int(skill_level)
 
-    # Fall back to PID state if stats don't have the fields yet
-    if pid is not None:
-        if rand_prob >= 1.0:
-            rand_prob = float(pid.random_move_prob)
-        if sf_nodes <= 0:
-            sf_nodes = int(pid.nodes)
-        if skill <= 0:
-            skill = int(pid.skill_level)
-
-    min_nodes = int(getattr(pid, "min_nodes", 50)) if pid is not None else 50
-    max_nodes = int(getattr(pid, "max_nodes", 50000)) if pid is not None else 50000
+    min_nodes = int(min_nodes)
+    max_nodes = int(max_nodes)
 
     # Stage 1: random_move_prob 1.0→0.0 maps to score 0→100
     stage1 = (1.0 - rand_prob) * 100.0
 
     # Stage 2: sf_nodes on log scale, maps to score 100→200
-    if min_nodes < max_nodes and sf_nodes > 0:
-        log_frac = (math.log(max(sf_nodes, min_nodes)) - math.log(max(1, min_nodes))) / (math.log(max(1, max_nodes)) - math.log(max(1, min_nodes)))
+    if min_nodes < max_nodes and nodes > 0:
+        log_frac = (math.log(max(nodes, min_nodes)) - math.log(max(1, min_nodes))) / (
+            math.log(max(1, max_nodes)) - math.log(max(1, min_nodes))
+        )
         log_frac = max(0.0, min(1.0, log_frac))
     else:
         log_frac = 0.0
@@ -64,8 +65,7 @@ def _opponent_strength(stats, pid) -> float:
     # (e.g. everyone stuck at random_move_prob=1.0), the winrate term
     # differentiates who is closest to breaking through the PID threshold.
     # Range 0-10, negligible once opponent_strength starts climbing (0-400).
-    ema_wr = float(getattr(stats, "pid_ema_winrate", 0.0) or 0.0)
-    winrate_bonus = ema_wr * 10.0
+    winrate_bonus = float(ema_winrate) * 10.0
 
     return stage1 + stage2 + stage3 + winrate_bonus
 
@@ -353,8 +353,12 @@ def train_trial(config: dict):
     try:
         iterations = int(config.get("iterations", 10))
         for it in range(iterations):
-            # Read current random-move probability from PID (updated each iteration).
+            # Difficulty knobs used for this iteration's selfplay (kept fixed across
+            # selfplay chunks). PID is updated once per iteration AFTER training so
+            # changes align to net updates rather than chunk noise.
             current_rand = float(pid.random_move_prob) if pid is not None else float(config.get("sf_pid_random_move_prob_start", 0.0))
+            sf_nodes_used = int(getattr(sf, "nodes", 0) or 0)
+            skill_level_used = int(getattr(pid, "skill_level", 0) or 0) if pid is not None else 0
 
             base_sims = int(config.get("mcts_simulations", 50))
             sims = base_sims
@@ -400,7 +404,6 @@ def train_trial(config: dict):
                 sf_policy_temp=float(config.get("sf_policy_temp", 0.25)),
                 sf_policy_label_smooth=float(config.get("sf_policy_label_smooth", 0.05)),
                 volatility_source=str(config.get("volatility_source", "raw")),
-                difficulty_pid=pid,
                 opening_book_path=config.get("opening_book_path"),
                 opening_book_max_plies=int(config.get("opening_book_max_plies", 4)),
                 opening_book_max_games=int(config.get("opening_book_max_games", 200_000)),
@@ -706,6 +709,33 @@ def train_trial(config: dict):
                     encoding="utf-8",
                 )
 
+            # Update PID ONCE per iteration (after training) so difficulty changes
+            # line up with net updates rather than intra-iteration selfplay noise.
+            pid_update = None
+            pid_ema_wr = 0.0
+            sf_nodes_next = int(sf_nodes_used)
+            random_move_prob_next = float(current_rand)
+            skill_level_next = int(skill_level_used)
+            if pid is not None and (total_w + total_d + total_l) > 0:
+                pid_update = pid.observe(wins=total_w, draws=total_d, losses=total_l)
+                pid_ema_wr = float(pid_update.ema_winrate)
+                sf_nodes_next = int(pid.nodes)
+                random_move_prob_next = float(pid.random_move_prob)
+                skill_level_next = int(pid.skill_level)
+                if hasattr(sf, "set_nodes"):
+                    sf.set_nodes(int(sf_nodes_next))
+                else:
+                    setattr(sf, "nodes", int(sf_nodes_next))
+
+            opp_strength = _opponent_strength(
+                random_move_prob=float(current_rand),
+                sf_nodes=int(sf_nodes_used),
+                skill_level=int(skill_level_used),
+                ema_winrate=float(pid_ema_wr),
+                min_nodes=int(getattr(pid, "min_nodes", 50)) if pid is not None else 50,
+                max_nodes=int(getattr(pid, "max_nodes", 50000)) if pid is not None else 50000,
+            )
+
             # Puzzle evaluation (overspecialization canary).
             puzzle_dict = {}
             if puzzle_suite is not None and puzzle_interval > 0 and (it % puzzle_interval == 0):
@@ -731,12 +761,14 @@ def train_trial(config: dict):
                     "loss": total_l,
                     "sf_eval_delta6": float(total_sf_d6 / max(1, total_sf_d6_n)) if total_sf_d6_n > 0 else 0.0,
                     "sf_eval_delta6_n": total_sf_d6_n,
-                    "sf_nodes": int(getattr(stats, "sf_nodes", 0) or 0),
-                    "sf_nodes_next": int(getattr(stats, "sf_nodes_next", 0) or 0),
-                    "pid_ema_winrate": float(getattr(stats, "pid_ema_winrate", 0.0) or 0.0),
-                    "random_move_prob": float(getattr(stats, "random_move_prob", 1.0) if getattr(stats, "random_move_prob", None) is not None else 1.0),
-                    "skill_level": int(getattr(stats, "skill_level", 0) if getattr(stats, "skill_level", None) is not None else 0),
-                    "opponent_strength": _opponent_strength(stats, pid),
+                    "sf_nodes": int(sf_nodes_used),
+                    "sf_nodes_next": int(sf_nodes_next),
+                    "pid_ema_winrate": float(pid_ema_wr),
+                    "random_move_prob": float(current_rand),
+                    "random_move_prob_next": float(random_move_prob_next),
+                    "skill_level": int(skill_level_used),
+                    "skill_level_next": int(skill_level_next),
+                    "opponent_strength": float(opp_strength),
                     "w_sf_wdl": float(trainer.w_sf_wdl),
                     "train_loss": float(metrics.loss) if metrics is not None else 999.0,
                     "best_loss": float(best_loss),
