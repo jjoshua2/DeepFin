@@ -42,6 +42,11 @@ def _apply_temperature(probs: np.ndarray, temperature: float) -> np.ndarray:
     return p.astype(np.float32, copy=False)
 
 
+def _is_network_turn(*, board_turn: chess.Color, network_color: chess.Color) -> bool:
+    """Return True when the side to move is the network-assigned color."""
+    return bool(board_turn == network_color)
+
+
 @dataclass
 class BatchStats:
     games: int
@@ -188,7 +193,7 @@ def play_batch(
             break
 
         # Network turns: whichever color the network was assigned for this game
-        net_idxs = [i for i in active_idxs if boards[i].turn == network_color[i]]
+        net_idxs = [i for i in active_idxs if _is_network_turn(board_turn=boards[i].turn, network_color=network_color[i])]
         if net_idxs:
             xs = [encode_position(boards[i], add_features=True) for i in net_idxs]
 
@@ -589,7 +594,7 @@ def play_batch(
                 sample_idx = 0
                 for mv in move_stack[opening_len:]:
                     board_before = replay_board.copy()
-                    if replay_board.turn == chess.WHITE:
+                    if _is_network_turn(board_turn=replay_board.turn, network_color=network_color[i]):
                         if sample_idx >= len(records):
                             break
                         if _eligible(board_before):
