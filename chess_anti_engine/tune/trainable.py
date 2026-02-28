@@ -240,12 +240,20 @@ def train_trial(config: dict):
     sf_wdl_floor_at = float(config.get("sf_wdl_floor_at", 0.1))  # random_move_prob at which we hit the floor
 
     # Restore from checkpoint if provided by Ray.
+    # NOTE: we restore PID state later (after PID is constructed).
+    restored_pid_state = None
     ckpt = session.get_checkpoint()
     if ckpt is not None:
         ckpt_dir = Path(ckpt.to_directory())
         maybe = ckpt_dir / "trainer.pt"
         if maybe.exists():
             trainer.load(maybe)
+        pid_path = ckpt_dir / "pid_state.json"
+        if pid_path.exists():
+            try:
+                restored_pid_state = json.loads(pid_path.read_text(encoding="utf-8"))
+            except Exception:
+                restored_pid_state = None
 
     # Growing sliding window: start small, grow as the net matures.
     window_start = int(config.get("replay_window_start", 100_000))
@@ -262,6 +270,12 @@ def train_trial(config: dict):
         shuffle_cap=shuffle_cap,
         shard_size=shard_size,
     )
+
+    # On resume, DiskReplayBuffer discovers existing shards on disk. If the on-disk
+    # sample count already exceeds replay_window_start, keep the effective capacity
+    # large enough to avoid pruning old shards just because we restarted.
+    current_window = max(int(current_window), int(len(buf)))
+    buf.capacity = int(current_window)
     holdout_buf = ReplayBuffer(int(config.get("holdout_capacity", 50_000)), rng=rng)
     holdout_frac = float(config.get("holdout_fraction", 0.02))
 
@@ -337,6 +351,11 @@ def train_trial(config: dict):
             random_move_stage_end=float(config.get("sf_pid_random_move_stage_end", 0.5)),
             max_rand_step=float(config.get("sf_pid_max_rand_step", 0.01)),
         )
+        if restored_pid_state is not None:
+            try:
+                pid.load_state_dict(restored_pid_state)
+            except Exception:
+                pass
 
     # Optional puzzle evaluation suite.
     puzzle_suite = None
@@ -648,11 +667,19 @@ def train_trial(config: dict):
             # Flush any remaining samples to disk before checkpointing.
             buf.flush()
 
-            # Save a lightweight checkpoint (model+optimizer+step only).
+            # Save a lightweight checkpoint (model+optimizer+step + PID state).
             ckpt_dir = work_dir / "ckpt"
             ckpt_dir.mkdir(parents=True, exist_ok=True)
             ckpt_path = ckpt_dir / "trainer.pt"
             trainer.save(ckpt_path)
+            if pid is not None:
+                try:
+                    (ckpt_dir / "pid_state.json").write_text(
+                        json.dumps(pid.state_dict(), sort_keys=True, indent=2),
+                        encoding="utf-8",
+                    )
+                except Exception:
+                    pass
             checkpoint = Checkpoint.from_directory(str(ckpt_dir))
 
             test_dict = {

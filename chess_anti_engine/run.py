@@ -116,6 +116,12 @@ def _run_single(args: argparse.Namespace) -> None:
         shard_size=int(getattr(args, "shard_size", 1000)),
     )
 
+    # On resume, DiskReplayBuffer discovers existing shards on disk. If the on-disk
+    # sample count already exceeds replay_window_start, keep the effective capacity
+    # large enough to avoid pruning old shards just because we restarted.
+    current_window = max(int(current_window), int(len(buf)))
+    buf.capacity = int(current_window)
+
     # Load pre-trained bootstrap checkpoint (trained offline via scripts/train_bootstrap.py).
     bootstrap_ckpt = getattr(args, "bootstrap_checkpoint", None)
     if bootstrap_ckpt:
@@ -139,6 +145,14 @@ def _run_single(args: argparse.Namespace) -> None:
     ckpt_path = cfg.work_dir / "ckpt.pt"
     if ckpt_path.exists():
         trainer.load(ckpt_path)
+
+    pid_state_path = cfg.work_dir / "pid_state.json"
+    pid_state = None
+    if pid_state_path.exists():
+        try:
+            pid_state = json.loads(pid_state_path.read_text(encoding="utf-8"))
+        except Exception:
+            pid_state = None
 
     # Best-model tracking
     best_state_path = cfg.work_dir / "best.json"
@@ -184,6 +198,15 @@ def _run_single(args: argparse.Namespace) -> None:
             random_move_stage_end=float(getattr(args, "sf_pid_random_move_stage_end", 0.5)),
             max_rand_step=float(getattr(args, "sf_pid_max_rand_step", 0.01)),
         )
+        if pid_state is not None:
+            try:
+                pid.load_state_dict(pid_state)
+                if hasattr(sf, "set_nodes"):
+                    sf.set_nodes(int(pid.nodes))
+                else:
+                    setattr(sf, "nodes", int(pid.nodes))
+            except Exception:
+                pass
 
     try:
         for it in range(cfg.iterations):
@@ -280,6 +303,15 @@ def _run_single(args: argparse.Namespace) -> None:
                     sf.set_nodes(int(pid.nodes))
                 else:
                     setattr(sf, "nodes", int(pid.nodes))
+
+                # Persist PID state so restarts resume at the same difficulty.
+                try:
+                    pid_state_path.write_text(
+                        json.dumps(pid.state_dict(), sort_keys=True, indent=2),
+                        encoding="utf-8",
+                    )
+                except Exception:
+                    pass
 
             # Best model (by train loss)
             cur_loss = float(metrics.loss)

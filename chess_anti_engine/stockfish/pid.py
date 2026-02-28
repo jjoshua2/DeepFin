@@ -129,6 +129,59 @@ class DifficultyPID:
         self._prev_err: float | None = None
         self._games_since_adjust = 0
 
+    def state_dict(self) -> dict:
+        """Serialize controller state for checkpointing.
+
+        This intentionally captures only the minimal internal state needed to
+        resume without discontinuities.
+        """
+        return {
+            "nodes": int(self.nodes),
+            "skill_level": int(self.skill_level),
+            "random_move_prob": float(self.random_move_prob),
+            "ema_winrate": float(self.ema_winrate),
+            "integral": float(self._integral),
+            "prev_err": None if self._prev_err is None else float(self._prev_err),
+            "games_since_adjust": int(self._games_since_adjust),
+            "random_stage_complete": bool(self._random_stage_complete),
+        }
+
+    def load_state_dict(self, state: dict) -> None:
+        """Restore controller state from `state_dict()`."""
+        if not isinstance(state, dict):
+            return
+
+        # Clamp to configured bounds.
+        nodes = int(state.get("nodes", self.nodes))
+        nodes = max(int(self.min_nodes), min(int(self.max_nodes), nodes))
+        self.nodes = int(nodes)
+
+        sl = int(state.get("skill_level", self.skill_level))
+        self.skill_level = max(int(self.skill_min), min(int(self.skill_max), sl))
+
+        rp = float(state.get("random_move_prob", self.random_move_prob))
+        rp = max(float(self.random_move_prob_min), min(float(self.random_move_prob_max), rp))
+        self.random_move_prob = float(rp)
+
+        ew = float(state.get("ema_winrate", self.ema_winrate))
+        self.ema_winrate = float(ew)
+
+        self._integral = float(state.get("integral", self._integral))
+        # Respect integral clamp.
+        if self._integral > float(self.integral_clamp):
+            self._integral = float(self.integral_clamp)
+        elif self._integral < -float(self.integral_clamp):
+            self._integral = -float(self.integral_clamp)
+
+        pe = state.get("prev_err", self._prev_err)
+        self._prev_err = None if pe is None else float(pe)
+
+        self._games_since_adjust = int(state.get("games_since_adjust", self._games_since_adjust))
+
+        rsc = state.get("random_stage_complete", None)
+        if rsc is not None:
+            self._random_stage_complete = bool(rsc)
+
     def observe(self, *, wins: int, draws: int, losses: int) -> PIDUpdate:
         games = int(wins) + int(draws) + int(losses)
         if games <= 0:
