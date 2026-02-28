@@ -703,6 +703,7 @@ def main() -> None:
                 "sf_multipv",
                 "sf_policy_temp",
                 "sf_policy_label_smooth",
+                "timeout_adjudication_threshold",
                 "temperature",
                 "temperature_decay_start_move",
                 "temperature_decay_moves",
@@ -747,6 +748,7 @@ def main() -> None:
             )
             fast_sims = int(args.fast_simulations) if args.fast_simulations is not None else int(reco.get("fast_simulations", 8))
             opponent_random_move_prob = float(reco.get("opponent_random_move_prob", 0.0))
+            timeout_adjudication_threshold = float(reco.get("timeout_adjudication_threshold", 0.90))
 
             opening_book_prob = (
                 float(args.opening_book_prob) if args.opening_book_prob is not None else float(reco.get("opening_book_prob", 1.0))
@@ -974,6 +976,7 @@ def main() -> None:
                 fast_simulations=int(fast_sims),
                 sf_policy_temp=float(sf_policy_temp),
                 sf_policy_label_smooth=float(sf_policy_label_smooth),
+                timeout_adjudication_threshold=float(timeout_adjudication_threshold),
                 opponent_random_move_prob=float(opponent_random_move_prob),
                 opening_book_path=opening_book_path,
                 opening_book_max_plies=int(opening_book_max_plies),

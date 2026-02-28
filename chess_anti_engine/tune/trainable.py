@@ -102,6 +102,7 @@ def _gate_check(
         fast_simulations=0,
         sf_policy_temp=float(config.get("sf_policy_temp", 0.25)),
         sf_policy_label_smooth=float(config.get("sf_policy_label_smooth", 0.05)),
+        timeout_adjudication_threshold=float(config.get("timeout_adjudication_threshold", 0.90)),
         volatility_source=str(config.get("volatility_source", "raw")),
         opening_book_path=config.get("opening_book_path"),
         opening_book_max_plies=int(config.get("opening_book_max_plies", 4)),
@@ -422,6 +423,7 @@ def train_trial(config: dict):
                 fast_simulations=int(config.get("fast_simulations", 8)),
                 sf_policy_temp=float(config.get("sf_policy_temp", 0.25)),
                 sf_policy_label_smooth=float(config.get("sf_policy_label_smooth", 0.05)),
+                timeout_adjudication_threshold=float(config.get("timeout_adjudication_threshold", 0.90)),
                 volatility_source=str(config.get("volatility_source", "raw")),
                 opening_book_path=config.get("opening_book_path"),
                 opening_book_max_plies=int(config.get("opening_book_max_plies", 4)),
@@ -654,6 +656,7 @@ def train_trial(config: dict):
                     fast_simulations=0,
                     sf_policy_temp=float(config.get("sf_policy_temp", 0.25)),
                     sf_policy_label_smooth=float(config.get("sf_policy_label_smooth", 0.05)),
+                    timeout_adjudication_threshold=float(config.get("timeout_adjudication_threshold", 0.90)),
                     volatility_source=str(config.get("volatility_source", "raw")),
                 )
                 denom = float(max(1, eval_stats.w + eval_stats.d + eval_stats.l))

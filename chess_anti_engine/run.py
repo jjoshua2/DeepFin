@@ -44,6 +44,9 @@ def _run_single(args: argparse.Namespace) -> None:
     cfg.selfplay.random_start_plies = int(args.random_start_plies)
     cfg.selfplay.sf_policy_temp = float(args.sf_policy_temp)
     cfg.selfplay.sf_policy_label_smooth = float(args.sf_policy_label_smooth)
+    cfg.selfplay.timeout_adjudication_threshold = float(
+        getattr(args, "timeout_adjudication_threshold", cfg.selfplay.timeout_adjudication_threshold)
+    )
     cfg.stockfish = StockfishConfig(path=args.stockfish_path, nodes=int(args.sf_nodes), multipv=int(args.sf_multipv))
     cfg.stockfish.pid_enabled = bool(args.sf_pid_enabled)
     cfg.stockfish.pid_target_winrate = float(args.sf_pid_target_winrate)
@@ -247,6 +250,7 @@ def _run_single(args: argparse.Namespace) -> None:
                 fast_simulations=int(args.fast_simulations),
                 sf_policy_temp=float(cfg.selfplay.sf_policy_temp),
                 sf_policy_label_smooth=float(cfg.selfplay.sf_policy_label_smooth),
+                timeout_adjudication_threshold=float(cfg.selfplay.timeout_adjudication_threshold),
                 volatility_source=str(getattr(args, "volatility_source", "raw")),
                 opening_book_path=cfg.selfplay.opening_book_path,
                 opening_book_max_plies=int(cfg.selfplay.opening_book_max_plies),
@@ -582,6 +586,13 @@ def main() -> None:
     ap.add_argument("--syzygy-path", type=str, default=None, help="Path to Syzygy tablebase directory")
     ap.add_argument("--syzygy-policy", action="store_true",
                     help="Also rescore policy targets with DTZ-optimal best move in TB positions")
+    ap.add_argument(
+        "--timeout-adjudication-threshold",
+        dest="timeout_adjudication_threshold",
+        type=float,
+        default=0.90,
+        help="Stockfish WDL confidence required to label max_plies timeouts as decisive",
+    )
 
     # Puzzle evaluation (overspecialization canary)
     ap.add_argument("--puzzle-epd", type=str, default=None,
@@ -617,6 +628,7 @@ def main() -> None:
         "sf_multipv": int(args.sf_multipv),
         "sf_policy_temp": float(args.sf_policy_temp),
         "sf_policy_label_smooth": float(args.sf_policy_label_smooth),
+        "timeout_adjudication_threshold": float(getattr(args, "timeout_adjudication_threshold", 0.90)),
         "sf_pid_enabled": bool(args.sf_pid_enabled),
         "sf_pid_target_winrate": float(args.sf_pid_target_winrate),
         "sf_pid_ema_alpha": float(args.sf_pid_ema_alpha),

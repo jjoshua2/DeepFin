@@ -78,6 +78,9 @@ selfplay:
   syzygy_path: null
   syzygy_policy: false  # also rescore policy with DTZ-optimal best move
 
+  # Stockfish WDL confidence required to adjudicate max_plies timeouts as decisive.
+  timeout_adjudication_threshold: 0.90
+
   # LC0-style diff focus curriculum (probabilistic skip of easy positions)
   diff_focus_enabled: true
   diff_focus_q_weight: 6.0
