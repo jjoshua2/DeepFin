@@ -39,3 +39,9 @@ server/
 *.bak
 *.merged
 *.merged.*
+
+# Scratch docs (keep canonical spec.md, prompt.md, future_ideas.md tracked)
+prompt2
+prompt.md.*
+spec2
+spec.md.*
