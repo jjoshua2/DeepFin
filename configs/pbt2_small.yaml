@@ -49,6 +49,7 @@ bootstrap_dir: data/bootstrap
 bootstrap_checkpoint: /home/josh/projects/chess/data/bootstrap/bootstrap_net.pt  # Pre-trained (run scripts/train_bootstrap.py once)
 bootstrap_max_positions: 0   # 0 = load ALL positions (14.2M) — used by scripts/train_bootstrap.py
 bootstrap_train_steps: 0     # 0 = auto: train 1 epoch — used by scripts/train_bootstrap.py
+shared_shards_dir: /home/josh/projects/chess/data/iter0_shared  # Pre-generated iter-0 selfplay (run scripts/generate_iter0.py once)
 
 model:
   kind: transformer

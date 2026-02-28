@@ -53,6 +53,7 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             "bootstrap_checkpoint",
             "bootstrap_max_positions",
             "bootstrap_train_steps",
+            "shared_shards_dir",
             "replay_window_start",
             "replay_window_max",
             "replay_window_growth",

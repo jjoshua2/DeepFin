@@ -264,9 +264,26 @@ def train_trial(config: dict):
 
     shuffle_cap = int(config.get("shuffle_buffer_size", 20_000))
     shard_size = int(config.get("shard_size", 1000))
+    replay_shard_dir = work_dir / "replay_shards"
+
+    # Seed replay buffer with shared iter-0 data (played once from bootstrap net).
+    # Only copy if this is a fresh trial (no existing shards in replay_shard_dir).
+    shared_shards_dir = config.get("shared_shards_dir")
+    if shared_shards_dir and not any(replay_shard_dir.glob("shard_*.npz")):
+        src = Path(shared_shards_dir)
+        if src.is_dir():
+            replay_shard_dir.mkdir(parents=True, exist_ok=True)
+            import shutil
+            copied = 0
+            for sp in sorted(src.glob("shard_*.npz")):
+                shutil.copy2(str(sp), str(replay_shard_dir / sp.name))
+                copied += 1
+            if copied:
+                print(f"[trial] Copied {copied} shared iter-0 shards from {src}")
+
     buf = DiskReplayBuffer(
         current_window,
-        shard_dir=work_dir / "replay_shards",
+        shard_dir=replay_shard_dir,
         rng=rng,
         shuffle_cap=shuffle_cap,
         shard_size=shard_size,
