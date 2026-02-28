@@ -179,6 +179,10 @@ def play_batch(
     # Per-game scale factor for SF node budget during soft resignation playthrough.
     sf_resign_scale: list[float] = [1.0] * int(games)
 
+    # Track whether the *most recent network move* in each game used the full search budget.
+    # Used to scale Stockfish node budget on fast-search moves.
+    last_net_full: list[bool] = [True] * int(games)
+
     for _ply in range(int(max_plies)):
         active_idxs = [i for i in range(int(games)) if not done[i]]
         if not active_idxs:
@@ -228,19 +232,14 @@ def play_batch(
                     consecutive_low_winrate[idx] = 0
 
                 if consecutive_low_winrate[idx] >= SOFT_RESIGN_CONSECUTIVE:
+                    # Soft resignation affects only data retention/weighting, not search budgets.
+                    # We keep the usual fast-vs-full search mix, and rely on probabilistic skipping
+                    # downstream to reduce training impact from hopeless positions.
                     ratio = win_p / SOFT_RESIGN_THRESHOLD  # 0..1
-                    eff_full_sims[j] = max(2, int(fast_simulations + (mcts_simulations - fast_simulations) * ratio))
-                    eff_fast_sims[j] = max(2, int(2 + (fast_simulations - 2) * ratio))
                     sample_weights[j] = 0.1 + 0.9 * ratio
 
-                    # Keep a roughly constant SF-vs-network effort ratio by scaling SF nodes
-                    # similarly to how we scale the network's full-search budget.
-                    if int(mcts_simulations) > 0:
-                        min_scale = float(fast_simulations) / float(mcts_simulations)
-                        sf_resign_scale[idx] = float(min_scale + (1.0 - min_scale) * ratio)
-
-                else:
-                    sf_resign_scale[idx] = 1.0
+                # Do not scale Stockfish nodes based on soft resignation.
+                sf_resign_scale[idx] = 1.0
 
             probs_list = [None] * len(net_idxs)
             actions = [None] * len(net_idxs)
@@ -359,6 +358,9 @@ def play_batch(
                 l_search = rem - w_search
                 search_wdl_est = np.array([w_search, d_raw, l_search], dtype=np.float32)
 
+                # Remember whether this net turn used a full search budget.
+                last_net_full[idx] = bool(is_full[j])
+
                 samples_per_game[idx].append(
                     _NetRecord(
                         x=xs[j],
@@ -390,7 +392,10 @@ def play_batch(
             def _eff_nodes(idx: int) -> int | None:
                 if base_nodes <= 0:
                     return None
-                scale = float(sf_resign_scale[idx])
+                # For fast-search network turns, also reduce SF node budget to keep data generation fast.
+                # (We still compute SF targets, just with a cheaper search.)
+                fast_scale = 1.0 if bool(last_net_full[idx]) else 0.25
+                scale = float(fast_scale)
                 return max(1, int(round(float(base_nodes) * scale)))
 
             if isinstance(stockfish, StockfishPool):
@@ -668,6 +673,12 @@ def play_batch(
             # Diff-focus skip gate (LC0-style): probabilistically drop easy positions.
             # This removes both value and policy signal (position is not added to replay).
             if float(rec.keep_prob) < 1.0 and rng.random() > float(rec.keep_prob):
+                continue
+
+            # Fast-search positions are used only to make game generation faster.
+            # They are NOT uploaded/stored/trained on (policy/value/aux), since their
+            # targets are lower quality than full-search positions.
+            if not bool(rec.has_policy):
                 continue
 
             # WDL from the network's perspective (encoding is side-to-move relative,
