@@ -416,11 +416,12 @@ def play_batch(
                     return np.full_like(z, 1.0 / float(z.size))
                 return e / s
 
-            def _flip_wdl_to_white(wdl: np.ndarray) -> np.ndarray:
-                """Convert Stockfish WDL (side-to-move POV) to white POV.
+            def _flip_wdl_pov(wdl: np.ndarray) -> np.ndarray:
+                """Flip Stockfish WDL from opponent-turn POV to network-turn POV.
 
-                Stockfish UCI_ShowWDL is interpreted as probabilities for the side to move.
-                When it's black to move, [W,D,L] is for black, so we swap W/L to get white.
+                We attach SF labels from position t+1 (opponent to move) onto the
+                sample from position t (network to move). So this is always a single
+                POV flip [W,D,L] -> [L,D,W], regardless of white/black color.
                 """
                 wdl = np.asarray(wdl, dtype=np.float32)
                 if wdl.shape != (3,):
@@ -503,7 +504,7 @@ def play_batch(
                             # The network's perspective at t = flip(opponent's perspective at t+1).
                             # This single flip is always correct regardless of which color the
                             # network plays: opponent wins at t+1 ↔ network loses at t.
-                            rec.sf_wdl = _flip_wdl_to_white(res.wdl)
+                            rec.sf_wdl = _flip_wdl_pov(res.wdl)
 
                 boards[idx].push(move_to_play)
                 if boards[idx].is_game_over():
