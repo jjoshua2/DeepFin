@@ -253,57 +253,22 @@ def _build_pb2(base_config: dict, *, metric: str, mode: str):
 
     perturbation_interval = int(base_config.get("pb2_perturbation_interval", 10))
 
-    # Continuous bounds — PB2 perturbs these using GP bandits.
-    # Keep bounds wide enough to discover schedule effects but not pathological.
-    hyperparam_bounds: dict[str, list] = {
-        # Optimizer
-        "lr": [1e-5, 3e-3],
-        # Diff focus curriculum (LC0-style probabilistic skip of easy positions)
-        "diff_focus_q_weight": [2.0, 10.0],
-        "diff_focus_pol_scale": [1.0, 6.0],
-        "diff_focus_slope":    [1.0, 6.0],
-        "diff_focus_min":      [0.005, 0.15],
-        # Selfplay
-        "temperature":         [0.7, 1.8],
-        "playout_cap_fraction": [0.10, 0.50],
-        "sf_policy_temp":      [0.10, 0.90],
-        "sf_policy_label_smooth": [0.00, 0.20],
-        # Regularization
-        "feature_dropout_p":   [0.05, 0.55],
-        # Loss weights
-        "w_volatility":        [0.01, 0.20],
-        "w_sf_move":           [0.05, 0.40],
-        "w_sf_eval":           [0.05, 0.40],
-        "w_categorical":       [0.05, 0.25],
-    }
+    # Build hyperparam_bounds entirely from pb2_bounds_* config keys.
+    # Any param with a pb2_bounds_<name> entry is searched; everything else is pinned.
+    # This lets us control which params PB2 optimizes purely from YAML.
+    hyperparam_bounds: dict[str, list] = {}
+    for cfg_key, bounds in base_config.items():
+        if not str(cfg_key).startswith("pb2_bounds_"):
+            continue
+        param_name = str(cfg_key)[len("pb2_bounds_"):]
+        if isinstance(bounds, (list, tuple)) and len(bounds) == 2:
+            hyperparam_bounds[param_name] = [float(bounds[0]), float(bounds[1])]
 
-    # Allow per-run overrides from config (e.g. to narrow bounds after initial run).
-    for key in list(hyperparam_bounds):
-        cfg_key = f"pb2_bounds_{key}"
-        if cfg_key in base_config:
-            bounds = base_config[cfg_key]
-            if isinstance(bounds, (list, tuple)) and len(bounds) == 2:
-                hyperparam_bounds[key] = [float(bounds[0]), float(bounds[1])]
-
-    # Initial param_space: sample uniformly from same ranges as PB2 bounds.
-    # (PB2 needs the initial distribution to overlap with its bounds.)
-    param_space = {
-        **dict(base_config),
-        "lr": tune.uniform(*hyperparam_bounds["lr"]),
-        "diff_focus_q_weight": tune.uniform(*hyperparam_bounds["diff_focus_q_weight"]),
-        "diff_focus_pol_scale": tune.uniform(*hyperparam_bounds["diff_focus_pol_scale"]),
-        "diff_focus_slope": tune.uniform(*hyperparam_bounds["diff_focus_slope"]),
-        "diff_focus_min": tune.uniform(*hyperparam_bounds["diff_focus_min"]),
-        "temperature": tune.uniform(*hyperparam_bounds["temperature"]),
-        "playout_cap_fraction": tune.uniform(*hyperparam_bounds["playout_cap_fraction"]),
-        "sf_policy_temp": tune.uniform(*hyperparam_bounds["sf_policy_temp"]),
-        "sf_policy_label_smooth": tune.uniform(*hyperparam_bounds["sf_policy_label_smooth"]),
-        "feature_dropout_p": tune.uniform(*hyperparam_bounds["feature_dropout_p"]),
-        "w_volatility": tune.uniform(*hyperparam_bounds["w_volatility"]),
-        "w_sf_move": tune.uniform(*hyperparam_bounds["w_sf_move"]),
-        "w_sf_eval": tune.uniform(*hyperparam_bounds["w_sf_eval"]),
-        "w_categorical": tune.uniform(*hyperparam_bounds["w_categorical"]),
-    }
+    # Initial param_space: base config values for pinned params, uniform sampling
+    # for searched params. PB2 needs the initial distribution to overlap with bounds.
+    param_space = {**dict(base_config)}
+    for param_name, bounds in hyperparam_bounds.items():
+        param_space[param_name] = tune.uniform(*bounds)
 
     # Optional binary ablations: add to param_space but NOT to hyperparam_bounds
     # (PB2's GP bandit only applies to the continuous bounds).

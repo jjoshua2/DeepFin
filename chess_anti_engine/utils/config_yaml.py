@@ -330,6 +330,10 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
         ]:
             if k in tune:
                 out[k] = tune.get(k)
+        # Pass through pb2_bounds_* keys (dynamic, any number of them).
+        for k, v in tune.items():
+            if k.startswith("pb2_bounds_"):
+                out[k] = v
 
     # Keep defaults dict clean.
     return {k: v for k, v in out.items() if v is not None}

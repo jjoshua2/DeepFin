@@ -126,12 +126,15 @@ def _run_single(args: argparse.Namespace) -> None:
     buf.capacity = int(current_window)
 
     # Load pre-trained bootstrap checkpoint (trained offline via scripts/train_bootstrap.py).
+    # Only load MODEL WEIGHTS — see trainable.py comment for why we skip optimizer/scheduler.
     bootstrap_ckpt = getattr(args, "bootstrap_checkpoint", None)
     if bootstrap_ckpt:
         bp = Path(bootstrap_ckpt)
         if bp.exists():
-            print(f"Loading pre-trained bootstrap checkpoint: {bp}")
-            trainer.load(bp)
+            print(f"Loading pre-trained bootstrap model weights: {bp}")
+            ckpt_data = torch.load(str(bp), map_location=args.device)
+            trainer.model.load_state_dict(ckpt_data["model"])
+            del ckpt_data
         else:
             print(f"WARNING: bootstrap checkpoint not found: {bp}")
 
@@ -740,6 +743,10 @@ def main() -> None:
         "search_nla": bool(args.search_nla),
         "search_optimizer": bool(args.search_optimizer),
     }
+    # Forward pb2_bounds_* keys from config to base dict for PB2 scheduler.
+    for k, v in vars(args).items():
+        if k.startswith("pb2_bounds_"):
+            base[k] = v
 
     from chess_anti_engine.tune.harness import run_tune
 

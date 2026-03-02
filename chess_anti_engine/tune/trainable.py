@@ -170,9 +170,14 @@ def train_trial(config: dict):
         )
     )
 
-    # Use Ray-provided trial directory for logs/checkpoints.
+    # Use Ray-provided trial directory for ALL per-trial state (checkpoints,
+    # replay shards, gate state, best model, TensorBoard logs).
+    # IMPORTANT: Do NOT use config["work_dir"] here — it points to the shared
+    # runs/pbt2_small/ directory. Using it caused all 10 trials to write
+    # checkpoints to the same directory, making PB2 unable to clone checkpoints
+    # ("no checkpoint for trial X. Skip exploit.").
     trial_dir = Path(session.get_trial_dir())
-    work_dir = Path(config.get("work_dir", str(trial_dir)))
+    work_dir = trial_dir
     work_dir.mkdir(parents=True, exist_ok=True)
 
     # Gate match counter (so we can log gate scalars against match #, not iteration).
@@ -299,13 +304,23 @@ def train_trial(config: dict):
 
     # Load pre-trained bootstrap checkpoint (trained offline via scripts/train_bootstrap.py).
     # This gives the value head a working signal so first MCTS searches are better than random.
+    # IMPORTANT: Only load MODEL WEIGHTS — do NOT restore optimizer/scheduler/step.
+    # The bootstrap was trained for ~13k steps with its own LR schedule; carrying that
+    # state into the trainable causes: (1) step=13323 skips warmup entirely,
+    # (2) scheduler resumes mid-cosine-cycle with near-zero LR then spikes on restart,
+    # (3) optimizer momentum buffers from bootstrap's data distribution cause wrong
+    # gradient directions on selfplay data, (4) PB2's lr perturbation has no effect
+    # because scheduler's base_lr is locked to bootstrap's lr (0.0003).
     bootstrap_ckpt = config.get("bootstrap_checkpoint")
     if bootstrap_ckpt and ckpt is None:
         # Only load bootstrap if Ray didn't restore a trial checkpoint (i.e. fresh start).
         bp = Path(bootstrap_ckpt)
         if bp.exists():
-            print(f"[trial] Loading pre-trained bootstrap checkpoint: {bp}")
-            trainer.load(bp)
+            print(f"[trial] Loading pre-trained bootstrap model weights: {bp}")
+            ckpt_data = torch.load(str(bp), map_location=device)
+            trainer.model.load_state_dict(ckpt_data["model"])
+            # Deliberately skip: optimizer, scheduler, step — start fresh.
+            del ckpt_data
         else:
             print(f"[trial] WARNING: bootstrap checkpoint not found: {bp}")
 
@@ -408,11 +423,15 @@ def train_trial(config: dict):
                     exponent=float(config.get("mcts_ramp_exponent", 2.0)),
                 )
 
+            # Skip selfplay on iter 0 if shared shards were pre-loaded (the data
+            # is already in the replay buffer — no need to play redundant games).
+            skip_selfplay = (it == 0 and len(buf) > 0 and shared_shards_dir is not None)
+
             # Play games in mini-batches to keep memory low (each mini-batch
             # frees its MCTS trees / board objects before the next starts).
             total_games = int(config.get("games_per_iter", 4))
             selfplay_batch = int(config.get("selfplay_batch", 10))
-            games_remaining = total_games
+            games_remaining = 0 if skip_selfplay else total_games
 
             # Accumulators for stats across mini-batches.
             all_train_samples: list = []
@@ -421,6 +440,10 @@ def train_trial(config: dict):
             total_sf_d6 = 0.0
             total_sf_d6_n = 0
             last_stats = None
+
+            if skip_selfplay:
+                total_positions = len(buf)
+                print(f"[trial] Skipping selfplay for iter 0 — using {total_positions} pre-loaded positions")
 
             selfplay_kwargs = dict(
                 device=device,
@@ -458,6 +481,7 @@ def train_trial(config: dict):
                 hlgauss_sigma=float(config.get("hlgauss_sigma", 0.04)),
                 fpu_reduction=float(config.get("fpu_reduction", 1.2)),
                 fpu_at_root=float(config.get("fpu_at_root", 1.0)),
+                soft_policy_temp=float(config.get("soft_policy_temp", 2.0)),
             )
 
             while games_remaining > 0:
@@ -565,6 +589,16 @@ def train_trial(config: dict):
                     holdout_frozen = False
                     holdout_generation += 1
 
+            # Re-read loss weights from config each iteration so PB2 perturbations
+            # take effect immediately (PB2 mutates the config dict in-place).
+            for wk in ("w_soft", "w_future", "w_sf_move", "w_sf_eval",
+                        "w_categorical", "w_volatility", "w_sf_wdl"):
+                if wk in config:
+                    setattr(trainer, wk, float(config[wk]))
+
+            # Also update sf_wdl_start for the dynamic schedule below.
+            sf_wdl_start = float(config.get("w_sf_wdl", sf_wdl_start))
+
             # Dynamic sf_wdl weight: interpolate between sf_wdl_start and sf_wdl_floor
             # based on how far random_move_prob has dropped from 1.0.
             # At random_move_prob=1.0: full SF bootstrapping (sf_wdl_start).
@@ -587,10 +621,11 @@ def train_trial(config: dict):
                 metrics = None
                 gate_passed = True
             else:
-                # KataGo-style sliding window: sample from FULL replay buffer,
-                # but limit steps so new data is seen ~1x per iteration.
-                # steps = new_positions / batch_size (no augmentation factor for chess).
-                steps = max(1, total_positions // batch_size)
+                # Training steps: new positions / batch_size (each new sample seen ~1x),
+                # capped by train_steps config to prevent overfitting on large data loads
+                # (e.g., iter 0 loads 99k shared shards → 386 uncapped steps would overfit).
+                max_steps = int(config.get("train_steps", 25))
+                steps = min(max(1, total_positions // batch_size), max_steps)
 
                 # Save model state for potential rollback (net gating).
                 gate_passed = True

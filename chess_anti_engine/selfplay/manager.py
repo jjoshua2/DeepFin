@@ -136,6 +136,7 @@ def play_batch(
     # FPU (First Play Urgency) reduction for PUCT MCTS
     fpu_reduction: float = 1.2,
     fpu_at_root: float = 1.0,
+    soft_policy_temp: float = 2.0,
 ) -> tuple[list[ReplaySample], BatchStats]:
     """Play a batch of games.
 
@@ -700,7 +701,7 @@ def play_batch(
             # Tablebase policy override: replace policy target with DTZ-optimal move.
             eff_probs = tb_policy_overrides.get(t, rec.policy_probs)
 
-            soft = _apply_temperature(eff_probs, 2.0)
+            soft = _apply_temperature(eff_probs, soft_policy_temp)
 
             future = None
             if t + 1 < n and bool(records[t + 1].has_policy):
