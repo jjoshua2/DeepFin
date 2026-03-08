@@ -182,6 +182,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Distributed selfplay worker")
 
     ap.add_argument("--server-url", type=str, default=None)
+    ap.add_argument("--trial-id", type=str, default=None)
     ap.add_argument("--username", type=str, default=None)
     ap.add_argument("--password", type=str, default=None, help="If omitted, prompt (or loaded from config)")
     ap.add_argument(
@@ -330,6 +331,7 @@ def main() -> None:
 
     # Merge: CLI wins; config provides defaults.
     args.server_url = args.server_url or cfg.get("server_url") or "http://127.0.0.1:8000"
+    args.trial_id = args.trial_id or cfg.get("trial_id")
     args.username = args.username or cfg.get("username")
 
     # password-file: CLI wins; config can provide a default.
@@ -391,6 +393,15 @@ def main() -> None:
         cfg["password"] = str(args.password)
 
     server = str(args.server_url).rstrip("/")
+    trial_id = str(args.trial_id).strip() if args.trial_id is not None else ""
+    trial_api_prefix = f"/v1/trials/{trial_id}" if trial_id else "/v1"
+
+    def _server_url_for(endpoint: str) -> str:
+        if endpoint.startswith("http://") or endpoint.startswith("https://"):
+            return endpoint
+        if endpoint.startswith("/"):
+            return server + endpoint
+        return server + "/" + endpoint
 
     cache_dir = work_dir / "cache"
     shard_dir = work_dir / "shards"
@@ -413,6 +424,10 @@ def main() -> None:
         if not bool(args.save_config):
             return
         cfg["server_url"] = str(args.server_url)
+        if trial_id:
+            cfg["trial_id"] = trial_id
+        else:
+            cfg.pop("trial_id", None)
         cfg["username"] = str(args.username)
         cfg["self_update"] = bool(args.self_update)
         cfg["stockfish_from_server"] = bool(args.stockfish_from_server)
@@ -458,7 +473,7 @@ def main() -> None:
                 with sp.open("rb") as f:
                     files = {"file": (sp.name, f, "application/octet-stream")}
                     r = requests.post(
-                        server + "/v1/upload_shard",
+                        _server_url_for(trial_api_prefix + "/upload_shard"),
                         files=files,
                         auth=(str(args.username), str(args.password)),
                         headers=_worker_headers(),
@@ -485,7 +500,7 @@ def main() -> None:
                     continue
 
                 r = requests.post(
-                    server + "/v1/upload_arena_result",
+                    _server_url_for(trial_api_prefix + "/upload_arena_result"),
                     json=payload,
                     auth=(str(args.username), str(args.password)),
                     headers=_worker_headers(),
@@ -497,12 +512,16 @@ def main() -> None:
                     break
 
             # Poll manifest
-            r = requests.get(server + "/v1/manifest", timeout=30.0, headers=_worker_headers())
+            r = requests.get(
+                _server_url_for(trial_api_prefix + "/manifest"),
+                timeout=30.0,
+                headers=_worker_headers(),
+            )
             if r.status_code == 426:
                 # Server says "upgrade required".
                 if bool(args.self_update) and os.environ.get("CAE_SELF_UPDATED") != "1":
                     # Ask the server for minimal update info (does not require compatibility).
-                    r2 = requests.get(server + "/v1/update_info", timeout=30.0)
+                    r2 = requests.get(_server_url_for(trial_api_prefix + "/update_info"), timeout=30.0)
                     if r2.status_code != 200:
                         raise SystemExit(f"Upgrade required but could not fetch update info for self-update: {r2.text}")
                     update_info = r2.json()
@@ -527,7 +546,7 @@ def main() -> None:
                         sha,
                     )
                     _download_and_verify(
-                        server + endpoint,
+                        _server_url_for(endpoint),
                         out_path=wheel_path,
                         expected_sha256=sha,
                         headers=_worker_headers(),
@@ -586,7 +605,7 @@ def main() -> None:
                             sha,
                         )
                         _download_and_verify(
-                            server + endpoint,
+                            _server_url_for(endpoint),
                             out_path=wheel_path,
                             expected_sha256=sha,
                             headers=_worker_headers(),
@@ -620,7 +639,7 @@ def main() -> None:
                 if (not model_path.exists()) or (_sha256_file(model_path) != model_sha):
                     try:
                         _download_and_verify(
-                            server + "/v1/model",
+                            _server_url_for(str(model_info.get("endpoint") or (trial_api_prefix + "/model"))),
                             out_path=model_path,
                             expected_sha256=model_sha,
                             headers=_worker_headers(),
@@ -676,14 +695,18 @@ def main() -> None:
                     if (not ob_path.exists()) or (_sha256_file(ob_path) != sha):
                         log.info("downloading opening book sha=%s filename=%s", sha, filename)
                         _download_and_verify(
-                            server + "/v1/opening_book",
+                            _server_url_for(str(ob.get("endpoint") or "/v1/opening_book")),
                             out_path=ob_path,
                             expected_sha256=sha,
                             headers=_worker_headers(),
                         )
                 else:
                     if not ob_path.exists():
-                        _download(server + "/v1/opening_book", out_path=ob_path, headers=_worker_headers())
+                        _download(
+                            _server_url_for(str(ob.get("endpoint") or "/v1/opening_book")),
+                            out_path=ob_path,
+                            headers=_worker_headers(),
+                        )
                 opening_book_path = str(ob_path)
 
             # Resolve effective settings.
@@ -811,7 +834,7 @@ def main() -> None:
                     if (not best_path.exists()) or (_sha256_file(best_path) != best_sha):
                         try:
                             _download_and_verify(
-                                server + endpoint,
+                                _server_url_for(endpoint),
                                 out_path=best_path,
                                 expected_sha256=best_sha,
                                 headers=_worker_headers(),
@@ -921,7 +944,7 @@ def main() -> None:
                 if (not sf_cached.exists()) or (_sha256_file(sf_cached) != sf_sha):
                     log.info("downloading stockfish sha=%s filename=%s", sf_sha, sf_filename)
                     _download_and_verify(
-                        server + sf_endpoint,
+                        _server_url_for(sf_endpoint),
                         out_path=sf_cached,
                         expected_sha256=sf_sha,
                         headers=_worker_headers(),

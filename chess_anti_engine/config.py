@@ -69,7 +69,7 @@ class SelfPlayConfig:
 @dataclass
 class TrainConfig:
     device: str = "cpu"  # "cuda" if available
-    optimizer: str = "nadamw"  # nadamw | adamw (extensible for muon, soap, etc.)
+    optimizer: str = "nadamw"  # nadamw | adamw | muon | soap
     lr: float = 3e-4
     batch_size: int = 128
     train_steps_per_iter: int = 200

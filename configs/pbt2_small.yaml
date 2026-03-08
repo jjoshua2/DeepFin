@@ -75,8 +75,7 @@ stockfish:
 
 selfplay:
   games_per_iter: 150  # ~3k-5k samples per iter after filtering (150 games)
-  selfplay_batch: 12    # Play games in mini-batches of 12 to improve throughput with 2 SF workers
-  selfplay_pipelines: 2  # Split the existing 2 SF workers across two local generators to overlap SF and MCTS phases.
+  selfplay_batch: 16    # Optimize throughput; lower trial count now provides the GPU headroom.
   max_plies: 120
 
   temperature: 1.1       # Pinned: top-5 median from Run 4 (range 0.94-1.74)
@@ -120,7 +119,7 @@ selfplay:
   hlgauss_sigma: 0.04
 
 train:
-  optimizer: nadamw
+  optimizer: muon
   lr: 0.0012        # Seed near the healthier 3/6 384d fresh-trial lane; PB2 still adapts per-trial.
   batch_size: 256   # Keep microbatch small enough for VRAM; use accumulation for the larger effective batch.
   train_steps: 24  # Lower ceiling so early iterations do materially fewer optimizer updates.
@@ -172,10 +171,12 @@ tune:
   gpbt_pairwise_momentum: 0.50
   gpbt_quantile_fraction: 0.25
   gpbt_resample_probability: 0.05
-  num_samples: 8
-  max_concurrent_trials: 8    # Keep the full 8-trial population active for GPBT pairwise selection.
+  num_samples: 6
+  max_concurrent_trials: 6    # Run a true 6-trial population to cut GPU pressure from trainers + CUDA workers.
   cpus_per_trial: 2
   gpus_per_trial: 0.1         # 8 × 0.1 = 0.8 GPU
+  distributed_workers_per_trial: 4
+  distributed_worker_sf_workers: 1
 
   # Disk-backed replay buffer: keeps ~1 GB per trial instead of ~10 GB
   shuffle_buffer_size: 70000  # In-memory shuffle buffer (samples)

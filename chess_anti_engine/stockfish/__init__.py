@@ -1,5 +1,5 @@
 from .uci import StockfishPV, StockfishUCI, StockfishResult
-from .pool import StockfishPool, build_stockfish_clients
+from .pool import StockfishPool
 from .pid import DifficultyPID, PIDUpdate
 
 __all__ = [
@@ -7,7 +7,6 @@ __all__ = [
     "StockfishUCI",
     "StockfishResult",
     "StockfishPool",
-    "build_stockfish_clients",
     "DifficultyPID",
     "PIDUpdate",
 ]

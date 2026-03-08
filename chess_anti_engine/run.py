@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-from concurrent.futures import ThreadPoolExecutor
 import json
 import re
 import shutil
@@ -16,7 +15,7 @@ from chess_anti_engine.model import ModelConfig, build_model, zero_policy_head_p
 from chess_anti_engine.replay import DiskReplayBuffer, ReplayBuffer, balance_wdl
 from chess_anti_engine.selfplay import play_batch
 from chess_anti_engine.selfplay.budget import progressive_mcts_simulations
-from chess_anti_engine.stockfish import DifficultyPID, build_stockfish_clients
+from chess_anti_engine.stockfish import DifficultyPID, StockfishPool, StockfishUCI
 from chess_anti_engine.train import Trainer
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 
@@ -404,20 +403,21 @@ def _run_single(args: argparse.Namespace) -> None:
         else:
             print(f"WARNING: bootstrap checkpoint not found: {bp}")
 
-    sf_clients = build_stockfish_clients(
-        path=cfg.stockfish.path,
-        nodes=int(cfg.stockfish.nodes),
-        total_workers=int(args.sf_workers),
-        pipelines=int(getattr(args, "selfplay_pipelines", 1)),
-        multipv=int(getattr(cfg.stockfish, "multipv", 1)),
-        hash_mb=int(getattr(cfg.stockfish, "hash_mb", 16)),
-    )
-    sf = sf_clients[0]
-    pipeline_rngs = [
-        np.random.default_rng(int(rng.integers(0, 2**32, dtype=np.uint32)))
-        for _ in range(len(sf_clients))
-    ]
-    selfplay_exec = ThreadPoolExecutor(max_workers=len(sf_clients)) if len(sf_clients) > 1 else None
+    if int(args.sf_workers) > 1:
+        sf = StockfishPool(
+            path=cfg.stockfish.path,
+            nodes=cfg.stockfish.nodes,
+            num_workers=int(args.sf_workers),
+            multipv=int(getattr(cfg.stockfish, "multipv", 1)),
+            hash_mb=int(getattr(cfg.stockfish, "hash_mb", 16)),
+        )
+    else:
+        sf = StockfishUCI(
+            cfg.stockfish.path,
+            nodes=cfg.stockfish.nodes,
+            multipv=int(getattr(cfg.stockfish, "multipv", 1)),
+            hash_mb=int(getattr(cfg.stockfish, "hash_mb", 16)),
+        )
 
     ckpt_path = cfg.work_dir / "ckpt.pt"
     if ckpt_path.exists():
@@ -506,8 +506,10 @@ def _run_single(args: argparse.Namespace) -> None:
             total_sf_d6 = 0.0
             current_rand = float(pid.random_move_prob) if pid is not None else 0.0
 
-            selfplay_common_kwargs = dict(
+            selfplay_kwargs = dict(
                 device=cfg.train.device,
+                rng=rng,
+                stockfish=sf,
                 opponent_random_move_prob=current_rand,
                 temperature=cfg.selfplay.temperature,
                 temperature_drop_plies=int(cfg.selfplay.temperature_drop_plies),
@@ -542,52 +544,18 @@ def _run_single(args: argparse.Namespace) -> None:
                 fpu_at_root=float(getattr(args, "fpu_at_root", 1.0)),
             )
             while games_remaining > 0:
-                wave: list[tuple[int, int]] = []
-                for pipeline_idx in range(len(sf_clients)):
-                    if games_remaining <= 0:
-                        break
-                    chunk = min(selfplay_batch, games_remaining)
-                    games_remaining -= chunk
-                    wave.append((pipeline_idx, chunk))
-
-                if selfplay_exec is None:
-                    pipeline_idx, chunk = wave[0]
-                    samples, sp_stats = play_batch(
-                        trainer.model,
-                        games=chunk,
-                        rng=pipeline_rngs[pipeline_idx],
-                        stockfish=sf_clients[pipeline_idx],
-                        **selfplay_common_kwargs,
-                    )
-                    results = [(samples, sp_stats, chunk)]
-                else:
-                    futures = [
-                        (
-                            chunk,
-                            selfplay_exec.submit(
-                                play_batch,
-                                trainer.model,
-                                games=chunk,
-                                rng=pipeline_rngs[pipeline_idx],
-                                stockfish=sf_clients[pipeline_idx],
-                                **selfplay_common_kwargs,
-                            ),
-                        )
-                        for pipeline_idx, chunk in wave
-                    ]
-                    results = [
-                        (*future.result(), chunk)
-                        for chunk, future in futures
-                    ]
-
-                for samples, sp_stats, chunk in results:
-                    total_positions += sp_stats.positions
-                    total_w += sp_stats.w
-                    total_d += sp_stats.d
-                    total_l += sp_stats.l
-                    total_sf_d6 += sp_stats.sf_eval_delta6 * chunk
-                    buf.add_many(samples)
-                    del samples
+                chunk = min(selfplay_batch, games_remaining)
+                samples, sp_stats = play_batch(
+                    trainer.model, games=chunk, **selfplay_kwargs,
+                )
+                games_remaining -= chunk
+                total_positions += sp_stats.positions
+                total_w += sp_stats.w
+                total_d += sp_stats.d
+                total_l += sp_stats.l
+                total_sf_d6 += sp_stats.sf_eval_delta6 * chunk
+                buf.add_many(samples)
+                del samples
 
             buf.flush()
 
@@ -668,10 +636,7 @@ def _run_single(args: argparse.Namespace) -> None:
             trainer.save(ckpt_path)
 
     finally:
-        if selfplay_exec is not None:
-            selfplay_exec.shutdown(wait=True, cancel_futures=False)
-        for client in sf_clients:
-            client.close()
+        sf.close()
 
 
 def main() -> None:
@@ -726,6 +691,59 @@ def main() -> None:
     ap.add_argument("--num-samples", type=int, default=10)
     ap.add_argument("--max-concurrent-trials", type=int, default=10)
     ap.add_argument("--cpus-per-trial", type=int, default=2)
+    ap.add_argument(
+        "--distributed-workers-per-trial",
+        type=int,
+        default=0,
+        help="If >0, Tune trials launch this many real worker subprocesses against the central server instead of local in-process selfplay.",
+    )
+    ap.add_argument(
+        "--distributed-worker-sf-workers",
+        type=int,
+        default=1,
+        help="Stockfish subprocesses per distributed worker process.",
+    )
+    ap.add_argument(
+        "--distributed-worker-poll-seconds",
+        type=float,
+        default=1.0,
+        help="Manifest polling interval for distributed Tune workers.",
+    )
+    ap.add_argument(
+        "--distributed-worker-device",
+        type=str,
+        default=None,
+        help="Device for distributed Tune workers (defaults to the trial device).",
+    )
+    ap.add_argument(
+        "--distributed-worker-auto-tune",
+        action="store_true",
+        help="Enable worker-side games_per_batch auto-tuning for distributed Tune workers.",
+    )
+    ap.add_argument(
+        "--distributed-worker-target-batch-seconds",
+        type=float,
+        default=30.0,
+        help="Worker auto-tune target wall-clock seconds per batch.",
+    )
+    ap.add_argument(
+        "--distributed-worker-min-games-per-batch",
+        type=int,
+        default=1,
+        help="Worker auto-tune lower bound for games_per_batch.",
+    )
+    ap.add_argument(
+        "--distributed-worker-max-games-per-batch",
+        type=int,
+        default=64,
+        help="Worker auto-tune upper bound for games_per_batch.",
+    )
+    ap.add_argument(
+        "--distributed-server-port",
+        type=int,
+        default=0,
+        help="Central distributed Tune server port (0 = auto-pick a free local port).",
+    )
     ap.add_argument(
         "--gpus-per-trial", type=float, default=0.1,
         help="GPU fraction per trial. Use <1.0 to pack multiple trials on one GPU "
@@ -884,8 +902,6 @@ def main() -> None:
     ap.add_argument("--opening-book-max-games", type=int, default=200000)
     ap.add_argument("--opening-book-prob", type=float, default=1.0)
     ap.add_argument("--random-start-plies", type=int, default=0)
-    ap.add_argument("--selfplay-pipelines", type=int, default=1,
-                    help="Local selfplay generators per trial/run. Splits total sf_workers across pipelines.")
 
     pid_group = ap.add_mutually_exclusive_group()
     pid_group.add_argument("--sf-pid", dest="sf_pid_enabled", action="store_true", help="Enable adaptive SF PID")
@@ -964,8 +980,8 @@ def main() -> None:
                     help="Volatility target source: raw (network raw WDL) or search (search-adjusted WDL).")
     ap.add_argument("--feature-dropout-p", type=float, default=0.3)
     ap.add_argument("--work-dir", type=str, default="runs")
-    ap.add_argument("--optimizer", type=str, default="nadamw", choices=["nadamw", "adamw"],
-                    help="Optimizer: nadamw (spec default) or adamw")
+    ap.add_argument("--optimizer", type=str, default="nadamw", choices=["nadamw", "adamw", "muon", "soap"],
+                    help="Optimizer: nadamw, adamw, muon, or soap")
     ap.add_argument("--no-amp", action="store_true", help="Disable AMP (BF16 autocast on CUDA)")
     ap.add_argument("--accum-steps", type=int, default=1, help="Gradient accumulation micro-batches")
     ap.add_argument("--warmup-steps", type=int, default=1500, help="Linear LR warmup steps")
@@ -1049,7 +1065,6 @@ def main() -> None:
         "opening_book_max_games": int(args.opening_book_max_games),
         "opening_book_prob": float(args.opening_book_prob),
         "random_start_plies": int(args.random_start_plies),
-        "selfplay_pipelines": int(args.selfplay_pipelines),
         "eval_games": int(args.eval_games),
         "eval_sf_nodes": int(args.eval_sf_nodes) if args.eval_sf_nodes is not None else int(args.sf_nodes),
         "eval_mcts_simulations": (
@@ -1177,6 +1192,15 @@ def main() -> None:
         "tune_keep_last_experiments": int(args.tune_keep_last_experiments),
         "max_concurrent_trials": int(args.max_concurrent_trials),
         "cpus_per_trial": int(args.cpus_per_trial),
+        "distributed_workers_per_trial": int(args.distributed_workers_per_trial),
+        "distributed_worker_sf_workers": int(args.distributed_worker_sf_workers),
+        "distributed_worker_poll_seconds": float(args.distributed_worker_poll_seconds),
+        "distributed_worker_device": args.distributed_worker_device,
+        "distributed_worker_auto_tune": bool(args.distributed_worker_auto_tune),
+        "distributed_worker_target_batch_seconds": float(args.distributed_worker_target_batch_seconds),
+        "distributed_worker_min_games_per_batch": int(args.distributed_worker_min_games_per_batch),
+        "distributed_worker_max_games_per_batch": int(args.distributed_worker_max_games_per_batch),
+        "distributed_server_port": int(args.distributed_server_port),
         "gpus_per_trial": float(args.gpus_per_trial),
         "tune_scheduler": str(args.tune_scheduler),
         "pb2_perturbation_interval": int(args.pb2_perturbation_interval),

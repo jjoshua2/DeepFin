@@ -89,6 +89,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Learner (trainer) for distributed selfplay")
 
     ap.add_argument("--server-root", type=str, default="server")
+    ap.add_argument("--trial-id", type=str, default=None)
     ap.add_argument("--publish-dir", type=str, default="publish")
     ap.add_argument("--inbox-dir", type=str, default="inbox")
     ap.add_argument("--processed-dir", type=str, default="processed")
@@ -139,7 +140,7 @@ def main() -> None:
     ap.add_argument("--lr-eta-min", type=float, default=1e-5)
     ap.add_argument("--lr-T0", type=int, default=5000)
     ap.add_argument("--lr-T-mult", type=int, default=2)
-    ap.add_argument("--optimizer", type=str, default="nadamw", choices=["nadamw", "adamw"])
+    ap.add_argument("--optimizer", type=str, default="nadamw", choices=["nadamw", "adamw", "muon", "soap"])
 
     # Loop control
     ap.add_argument("--sleep-seconds", type=float, default=2.0)
@@ -336,12 +337,26 @@ def main() -> None:
     rng = np.random.default_rng(int(args.seed))
 
     server_root = Path(args.server_root)
-    publish_dir = server_root / str(args.publish_dir)
-    inbox_dir = server_root / str(args.inbox_dir)
-    processed_dir = server_root / str(args.processed_dir)
-    arena_inbox_dir = server_root / "arena_inbox"
-    arena_processed_dir = server_root / "arena_processed"
-    work_dir = Path(args.work_dir)
+    trial_id = str(args.trial_id).strip() if args.trial_id is not None else ""
+    trial_root = server_root / "trials" / trial_id if trial_id else server_root
+    api_prefix = f"/v1/trials/{trial_id}" if trial_id else "/v1"
+
+    def _resolve_trial_subdir(path_str: str, *, fallback_name: str | None = None) -> Path:
+        raw = Path(path_str)
+        if raw.is_absolute():
+            return raw
+        if trial_id:
+            if fallback_name is not None and raw == Path("server") / fallback_name:
+                return trial_root / fallback_name
+            return trial_root / raw
+        return server_root / raw if raw.parts[:1] != (server_root.name,) else raw
+
+    publish_dir = _resolve_trial_subdir(str(args.publish_dir))
+    inbox_dir = _resolve_trial_subdir(str(args.inbox_dir))
+    processed_dir = _resolve_trial_subdir(str(args.processed_dir))
+    arena_inbox_dir = trial_root / "arena_inbox"
+    arena_processed_dir = trial_root / "arena_processed"
+    work_dir = _resolve_trial_subdir(str(args.work_dir), fallback_name="work")
 
     publish_dir.mkdir(parents=True, exist_ok=True)
     inbox_dir.mkdir(parents=True, exist_ok=True)
@@ -550,6 +565,7 @@ def main() -> None:
             "protocol_version": int(PROTOCOL_VERSION),
             "server_version": str(PACKAGE_VERSION),
             "min_worker_version": str(args.min_worker_version),
+            "trial_id": trial_id or None,
             "trainer_step": trainer_step,
             "task": {"type": "selfplay"},
             "recommended_worker": recommended_worker,
@@ -560,7 +576,7 @@ def main() -> None:
             },
             "model": {
                 "sha256": str(model_sha),
-                "endpoint": "/v1/model",
+                "endpoint": api_prefix + "/model",
                 "filename": "latest_model.pt",
                 "format": "torch_state_dict",
             },
@@ -590,7 +606,7 @@ def main() -> None:
         if best_model_sha:
             manifest["best_model"] = {
                 "sha256": str(best_model_sha),
-                "endpoint": "/v1/best_model",
+                "endpoint": api_prefix + "/best_model",
                 "filename": "best_model.pt",
                 "format": "torch_state_dict",
             }
@@ -598,7 +614,7 @@ def main() -> None:
         # Optional: stockfish distribution
         if published_stockfish_path is not None and published_stockfish_path.exists():
             manifest["stockfish"] = {
-                "endpoint": "/v1/stockfish",
+                "endpoint": api_prefix + "/stockfish",
                 "filename": published_stockfish_path.name,
                 "sha256": _sha256_file(published_stockfish_path),
             }
@@ -606,7 +622,7 @@ def main() -> None:
         # Optional: worker self-update wheel
         if published_worker_wheel_path is not None and published_worker_wheel_path.exists():
             manifest["worker_wheel"] = {
-                "endpoint": "/v1/worker_wheel",
+                "endpoint": api_prefix + "/worker_wheel",
                 "filename": published_worker_wheel_path.name,
                 "sha256": _sha256_file(published_worker_wheel_path),
                 "version": str(PACKAGE_VERSION),
@@ -1001,6 +1017,7 @@ def main() -> None:
             "protocol_version": int(PROTOCOL_VERSION),
             "server_version": str(PACKAGE_VERSION),
             "min_worker_version": str(args.min_worker_version),
+            "trial_id": trial_id or None,
             "trainer_step": trainer_step,
             "task": task,
             "recommended_worker": recommended_worker,
@@ -1011,7 +1028,7 @@ def main() -> None:
             },
             "model": {
                 "sha256": model_sha,
-                "endpoint": "/v1/model",
+                "endpoint": api_prefix + "/model",
                 "filename": "latest_model.pt",
                 "format": "torch_state_dict",
             },
@@ -1047,7 +1064,7 @@ def main() -> None:
         if best_model_sha:
             manifest["best_model"] = {
                 "sha256": str(best_model_sha),
-                "endpoint": "/v1/best_model",
+                "endpoint": api_prefix + "/best_model",
                 "filename": "best_model.pt",
                 "format": "torch_state_dict",
             }
@@ -1079,7 +1096,7 @@ def main() -> None:
         # Optional: stockfish distribution
         if published_stockfish_path is not None and published_stockfish_path.exists():
             manifest["stockfish"] = {
-                "endpoint": "/v1/stockfish",
+                "endpoint": api_prefix + "/stockfish",
                 "filename": published_stockfish_path.name,
                 "sha256": _sha256_file(published_stockfish_path),
             }
@@ -1087,7 +1104,7 @@ def main() -> None:
         # Optional: worker self-update wheel
         if published_worker_wheel_path is not None and published_worker_wheel_path.exists():
             manifest["worker_wheel"] = {
-                "endpoint": "/v1/worker_wheel",
+                "endpoint": api_prefix + "/worker_wheel",
                 "filename": published_worker_wheel_path.name,
                 "sha256": _sha256_file(published_worker_wheel_path),
                 "version": str(PACKAGE_VERSION),

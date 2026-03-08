@@ -1,6 +1,79 @@
 from __future__ import annotations
 
 from pathlib import Path
+import secrets
+import socket
+import subprocess
+import sys
+import time
+from urllib import error as urllib_error
+from urllib import request as urllib_request
+
+
+def _pick_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        return int(s.getsockname()[1])
+
+
+def _terminate_process(proc: subprocess.Popen[bytes] | None, *, timeout_s: float = 5.0) -> None:
+    if proc is None:
+        return
+    if proc.poll() is not None:
+        return
+    try:
+        proc.terminate()
+        proc.wait(timeout=float(timeout_s))
+    except Exception:
+        try:
+            proc.kill()
+            proc.wait(timeout=2.0)
+        except Exception:
+            pass
+
+
+def _wait_for_server_ready(
+    *,
+    base_url: str,
+    proc: subprocess.Popen[bytes],
+    timeout_s: float = 20.0,
+) -> None:
+    deadline = time.time() + float(timeout_s)
+    url = str(base_url).rstrip("/") + "/v1/update_info"
+    last_err = ""
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            raise RuntimeError(f"distributed Tune server exited early with code {proc.returncode}")
+        try:
+            with urllib_request.urlopen(url, timeout=1.0) as resp:
+                if int(getattr(resp, "status", 200)) in (200, 404):
+                    return
+        except urllib_error.HTTPError as e:
+            if int(getattr(e, "code", 0)) in (200, 404):
+                return
+            last_err = f"HTTP {e.code}"
+        except Exception as e:
+            last_err = str(e)
+        time.sleep(0.25)
+    raise RuntimeError(f"distributed Tune server did not become ready at {url}: {last_err}")
+
+
+def _prepare_distributed_worker_auth(*, server_root: Path) -> tuple[str, Path]:
+    from chess_anti_engine.server.auth import ensure_user
+
+    username = f"tune_worker_{secrets.token_hex(4)}"
+    password = secrets.token_urlsafe(18)
+    users_db = server_root / "users.json"
+    ensure_user(users_db, username=username, password=password)
+
+    password_file = server_root / f"{username}.password"
+    password_file.write_text(password + "\n", encoding="utf-8")
+    try:
+        password_file.chmod(0o600)
+    except Exception:
+        pass
+    return username, password_file
 
 
 def _cleanup_old_tune_experiments(*, tune_dir: Path, keep_last: int) -> None:
@@ -138,6 +211,58 @@ def run_tune(
     from chess_anti_engine.tune.trainable import train_trial
 
     work_dir.mkdir(parents=True, exist_ok=True)
+    base_config = dict(base_config)
+
+    server_proc: subprocess.Popen[bytes] | None = None
+    if int(base_config.get("distributed_workers_per_trial", 0)) > 0:
+        server_root = work_dir.resolve() / "server"
+        server_root.mkdir(parents=True, exist_ok=True)
+        server_log = server_root / "server.log"
+        port = int(base_config.get("distributed_server_port", 0)) or _pick_free_port()
+        host = "127.0.0.1"
+        base_url = f"http://{host}:{port}"
+        username, password_file = _prepare_distributed_worker_auth(server_root=server_root)
+
+        cmd = [
+            sys.executable,
+            "-m",
+            "chess_anti_engine.server.run_server",
+            "--host",
+            host,
+            "--port",
+            str(port),
+            "--server-root",
+            str(server_root),
+        ]
+        opening_book = base_config.get("opening_book_path")
+        if isinstance(opening_book, str) and opening_book.strip():
+            cmd.extend(["--opening-book-path", opening_book.strip()])
+
+        log_fh = server_log.open("ab")
+        try:
+            server_proc = subprocess.Popen(
+                cmd,
+                cwd=str(Path(__file__).resolve().parents[2]),
+                stdout=log_fh,
+                stderr=subprocess.STDOUT,
+            )
+        finally:
+            log_fh.close()
+
+        try:
+            _wait_for_server_ready(base_url=base_url, proc=server_proc)
+        except Exception:
+            _terminate_process(server_proc)
+            raise
+
+        base_config.update(
+            {
+                "distributed_server_root": str(server_root),
+                "distributed_server_url": str(base_url),
+                "distributed_worker_username": str(username),
+                "distributed_worker_password_file": str(password_file),
+            }
+        )
 
     scheduler_name = str(base_config.get("tune_scheduler", "pb2")).lower()
     mode = str(mode)
@@ -245,7 +370,10 @@ def run_tune(
             ),
         )
 
-    return tuner.fit()
+    try:
+        return tuner.fit()
+    finally:
+        _terminate_process(server_proc)
 
 
 # ---------------------------------------------------------------------------

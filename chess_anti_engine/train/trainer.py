@@ -14,6 +14,7 @@ from chess_anti_engine.encoding.lc0 import LC0_FULL
 from chess_anti_engine.replay.buffer import ReplayBuffer
 from chess_anti_engine.replay.dataset import collate
 from chess_anti_engine.replay.augment import maybe_mirror_samples
+from .muon import MuonWithAuxAdam
 from .losses import compute_loss
 
 
@@ -74,22 +75,53 @@ class Trainer:
         self.device = device
         self.model = model.to(device)
 
-        # Selective weight decay: apply only to non-bias, non-LayerNorm parameters.
-        decay_params = []
-        no_decay_params = []
-        for name, param in self.model.named_parameters():
-            if not param.requires_grad:
-                continue
-            if param.ndim <= 1 or name.endswith(".bias"):
-                no_decay_params.append(param)
-            else:
-                decay_params.append(param)
-        param_groups = [
-            {"params": decay_params, "weight_decay": 1e-4},
-            {"params": no_decay_params, "weight_decay": 0.0},
-        ]
-
         optimizer = str(optimizer).lower()
+        if optimizer == "muon":
+            muon_decay_params = []
+            muon_no_decay_params = []
+            aux_decay_params = []
+            aux_no_decay_params = []
+            for name, param in self.model.named_parameters():
+                if not param.requires_grad:
+                    continue
+                is_no_decay = param.ndim <= 1 or name.endswith(".bias")
+                is_muon_trunk = param.ndim >= 2 and (name == "embed.weight" or name.startswith("blocks."))
+                if is_muon_trunk and not is_no_decay:
+                    muon_decay_params.append(param)
+                elif is_muon_trunk:
+                    muon_no_decay_params.append(param)
+                elif is_no_decay:
+                    aux_no_decay_params.append(param)
+                else:
+                    aux_decay_params.append(param)
+
+            # Muon is typically run with a larger LR on hidden weights than the
+            # AdamW fallback uses on heads / norms / biases. Keep one Tune LR and
+            # derive the trunk LR from it so search stays simple.
+            muon_lr = float(lr) * 20.0
+            param_groups = [
+                {"params": muon_decay_params, "weight_decay": 1e-4, "use_muon": True, "lr": muon_lr},
+                {"params": muon_no_decay_params, "weight_decay": 0.0, "use_muon": True, "lr": muon_lr},
+                {"params": aux_decay_params, "weight_decay": 1e-4, "use_muon": False, "lr": float(lr)},
+                {"params": aux_no_decay_params, "weight_decay": 0.0, "use_muon": False, "lr": float(lr)},
+            ]
+            self.opt = MuonWithAuxAdam(param_groups)
+        else:
+            # Selective weight decay: apply only to non-bias, non-LayerNorm parameters.
+            decay_params = []
+            no_decay_params = []
+            for name, param in self.model.named_parameters():
+                if not param.requires_grad:
+                    continue
+                if param.ndim <= 1 or name.endswith(".bias"):
+                    no_decay_params.append(param)
+                else:
+                    decay_params.append(param)
+            param_groups = [
+                {"params": decay_params, "weight_decay": 1e-4},
+                {"params": no_decay_params, "weight_decay": 0.0},
+            ]
+
         if optimizer == "nadamw":
             # NAdam with decoupled weight decay (spec: β1=0.9, β2=0.98, ε=1e-7).
             # PyTorch NAdam supports decoupled_weight_decay since 2.x; param-group
@@ -100,6 +132,8 @@ class Trainer:
             )
         elif optimizer == "adamw":
             self.opt = torch.optim.AdamW(param_groups, lr=lr)
+        elif optimizer == "muon":
+            pass
         elif optimizer == "soap":
             # SOAP: Shampoo-like second-order optimizer. Spec notes ~30% faster convergence.
             # Install: pip install soap-optimizer  (or chess_anti_engine[soap])
@@ -113,7 +147,7 @@ class Trainer:
                 ) from exc
         else:
             raise ValueError(
-                f"Unknown optimizer {optimizer!r}. Supported: nadamw, adamw, soap"
+                f"Unknown optimizer {optimizer!r}. Supported: nadamw, adamw, muon, soap"
             )
         self.zclip = ZClip(mode="zscore", alpha=float(zclip_alpha), z_thresh=float(zclip_z_thresh), max_grad_norm=float(zclip_max_norm), warmup_steps=25)
         self.writer = SummaryWriter(log_dir=str(log_dir or "tb"))

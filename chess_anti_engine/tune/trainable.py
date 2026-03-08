@@ -3,12 +3,13 @@ from __future__ import annotations
 # Optional dependency module (Ray Tune). Kept import-light so the core package
 # works without installing `.[tune]`.
 
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import hashlib
 import json
 import re
 import shutil
+import subprocess
+import sys
 import time
 
 import numpy as np
@@ -17,12 +18,14 @@ import torch
 import math
 
 from chess_anti_engine.model import ModelConfig, build_model, zero_policy_head_parameters_
+from chess_anti_engine.moves.encode import POLICY_SIZE
 from chess_anti_engine.replay import DiskReplayBuffer, ReplayBuffer
 from chess_anti_engine.replay.shard import load_npz
 from chess_anti_engine.selfplay import play_batch
 from chess_anti_engine.selfplay.budget import progressive_mcts_simulations
-from chess_anti_engine.stockfish import DifficultyPID, StockfishUCI, build_stockfish_clients
+from chess_anti_engine.stockfish import DifficultyPID, StockfishPool, StockfishUCI
 from chess_anti_engine.train import Trainer
+from chess_anti_engine.version import PACKAGE_VERSION, PROTOCOL_VERSION
 
 
 def _stable_seed_u32(*parts: object) -> int:
@@ -772,6 +775,358 @@ def _prune_trial_checkpoints(*, trial_dir: Path, keep_last: int) -> None:
         shutil.rmtree(p, ignore_errors=True)
 
 
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        while True:
+            b = f.read(1024 * 1024)
+            if not b:
+                break
+            h.update(b)
+    return h.hexdigest()
+
+
+def _atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.tmp.{int(time.time() * 1000)}")
+    try:
+        tmp.write_text(text, encoding=encoding)
+        tmp.replace(path)
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def _trial_server_dirs(*, server_root: Path, trial_id: str) -> dict[str, Path]:
+    trial_root = Path(server_root) / "trials" / str(trial_id)
+    return {
+        "trial_root": trial_root,
+        "publish_dir": trial_root / "publish",
+        "inbox_dir": trial_root / "inbox",
+        "processed_dir": trial_root / "processed",
+    }
+
+
+def _publish_distributed_trial_state(
+    *,
+    trainer: Trainer,
+    config: dict,
+    model_cfg: ModelConfig,
+    server_root: Path,
+    trial_id: str,
+    trainer_step: int,
+    sf_nodes: int,
+    random_move_prob: float,
+    skill_level: int,
+    mcts_simulations: int,
+) -> str:
+    dirs = _trial_server_dirs(server_root=server_root, trial_id=trial_id)
+    publish_dir = dirs["publish_dir"]
+    publish_dir.mkdir(parents=True, exist_ok=True)
+
+    model_path = publish_dir / "latest_model.pt"
+    trainer.export_swa(model_path)
+    model_sha = _sha256_file(model_path)
+    api_prefix = f"/v1/trials/{trial_id}"
+
+    recommended_worker = {
+        "games_per_batch": int(config.get("selfplay_batch", 4)),
+        "max_plies": int(config.get("max_plies", 120)),
+        "mcts": str(config.get("mcts", "puct")),
+        "mcts_simulations": int(mcts_simulations),
+        "playout_cap_fraction": float(config.get("playout_cap_fraction", 0.25)),
+        "fast_simulations": int(config.get("fast_simulations", 8)),
+        "opening_book_max_plies": int(config.get("opening_book_max_plies", 4)),
+        "opening_book_max_games": int(config.get("opening_book_max_games", 200_000)),
+        "opening_book_prob": float(config.get("opening_book_prob", 1.0)),
+        "random_start_plies": int(config.get("random_start_plies", 0)),
+        "sf_nodes": int(sf_nodes),
+        "sf_multipv": int(config.get("sf_multipv", 1)),
+        "sf_policy_temp": float(config.get("sf_policy_temp", 0.25)),
+        "sf_policy_label_smooth": float(config.get("sf_policy_label_smooth", 0.05)),
+        "sf_skill_level": int(skill_level),
+        "opponent_random_move_prob": float(random_move_prob),
+        "temperature": float(config.get("temperature", 1.0)),
+        "temperature_decay_start_move": int(config.get("temperature_decay_start_move", 20)),
+        "temperature_decay_moves": int(config.get("temperature_decay_moves", 60)),
+        "temperature_endgame": float(config.get("temperature_endgame", 0.6)),
+        "timeout_adjudication_threshold": float(config.get("timeout_adjudication_threshold", 0.90)),
+    }
+
+    manifest: dict[str, object] = {
+        "server_time_unix": int(time.time()),
+        "protocol_version": int(PROTOCOL_VERSION),
+        "server_version": str(PACKAGE_VERSION),
+        "trial_id": str(trial_id),
+        "trainer_step": int(trainer_step),
+        "task": {"type": "selfplay"},
+        "recommended_worker": recommended_worker,
+        "encoding": {
+            "input_planes": 146,
+            "policy_size": int(POLICY_SIZE),
+            "policy_encoding": "lc0_4672",
+        },
+        "model": {
+            "sha256": str(model_sha),
+            "endpoint": api_prefix + "/model",
+            "filename": "latest_model.pt",
+            "format": "torch_state_dict",
+        },
+        "model_config": {
+            "kind": str(model_cfg.kind),
+            "embed_dim": int(model_cfg.embed_dim),
+            "num_layers": int(model_cfg.num_layers),
+            "num_heads": int(model_cfg.num_heads),
+            "ffn_mult": int(model_cfg.ffn_mult),
+            "use_smolgen": bool(model_cfg.use_smolgen),
+            "use_nla": bool(model_cfg.use_nla),
+            "use_qk_rmsnorm": bool(getattr(model_cfg, "use_qk_rmsnorm", False)),
+            "gradient_checkpointing": bool(model_cfg.use_gradient_checkpointing),
+        },
+    }
+
+    opening_book_path = config.get("opening_book_path")
+    if isinstance(opening_book_path, str) and opening_book_path.strip():
+        p = Path(opening_book_path.strip())
+        if p.exists():
+            manifest["opening_book"] = {
+                "endpoint": "/v1/opening_book",
+                "filename": p.name,
+                "sha256": _sha256_file(p),
+            }
+
+    _atomic_write_text(
+        publish_dir / "manifest.json",
+        json.dumps(manifest, sort_keys=True, indent=2),
+        encoding="utf-8",
+    )
+    return model_sha
+
+
+def _launch_distributed_worker(
+    *,
+    config: dict,
+    trial_dir: Path,
+    trial_id: str,
+    worker_index: int,
+) -> subprocess.Popen[bytes]:
+    worker_root = trial_dir / "distributed_workers" / f"worker_{worker_index:02d}"
+    worker_root.mkdir(parents=True, exist_ok=True)
+    worker_log = worker_root / "worker.log"
+    worker_out = worker_root / "worker.out"
+    device = str(config.get("distributed_worker_device") or config.get("device", "cpu"))
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "chess_anti_engine.worker",
+        "--server-url",
+        str(config["distributed_server_url"]),
+        "--trial-id",
+        str(trial_id),
+        "--username",
+        str(config["distributed_worker_username"]),
+        "--password-file",
+        str(config["distributed_worker_password_file"]),
+        "--stockfish-path",
+        str(config["stockfish_path"]),
+        "--work-dir",
+        str(worker_root),
+        "--device",
+        device,
+        "--sf-workers",
+        str(int(config.get("distributed_worker_sf_workers", 1))),
+        "--poll-seconds",
+        str(float(config.get("distributed_worker_poll_seconds", 1.0))),
+        "--seed",
+        str(_stable_seed_u32("dist-worker", trial_id, worker_index, config.get("seed", 0))),
+        "--log-file",
+        str(worker_log),
+        "--log-level",
+        "info",
+    ]
+
+    if bool(config.get("distributed_worker_auto_tune", False)):
+        cmd.extend(
+            [
+                "--auto-tune",
+                "--target-batch-seconds",
+                str(float(config.get("distributed_worker_target_batch_seconds", 30.0))),
+                "--min-games-per-batch",
+                str(int(config.get("distributed_worker_min_games_per_batch", 1))),
+                "--max-games-per-batch",
+                str(int(config.get("distributed_worker_max_games_per_batch", 64))),
+            ]
+        )
+
+    out_fh = worker_out.open("ab")
+    try:
+        return subprocess.Popen(
+            cmd,
+            cwd=str(Path(__file__).resolve().parents[2]),
+            stdout=out_fh,
+            stderr=subprocess.STDOUT,
+        )
+    finally:
+        out_fh.close()
+
+
+def _stop_worker_processes(procs: list[subprocess.Popen[bytes]]) -> None:
+    for proc in procs:
+        if proc.poll() is not None:
+            continue
+        try:
+            proc.terminate()
+            proc.wait(timeout=5.0)
+        except Exception:
+            try:
+                proc.kill()
+                proc.wait(timeout=2.0)
+            except Exception:
+                pass
+
+
+def _ensure_distributed_workers(
+    *,
+    config: dict,
+    trial_dir: Path,
+    trial_id: str,
+    procs: list[subprocess.Popen[bytes]],
+) -> list[subprocess.Popen[bytes]]:
+    want = max(0, int(config.get("distributed_workers_per_trial", 0)))
+    out = list(procs)
+    for idx in range(want):
+        if idx < len(out) and out[idx].poll() is None:
+            continue
+        if idx < len(out) and out[idx].poll() is not None:
+            print(
+                f"[trial] restarting distributed worker idx={idx} "
+                f"exit_code={out[idx].returncode} trial={trial_id}"
+            )
+            out[idx] = _launch_distributed_worker(
+                config=config,
+                trial_dir=trial_dir,
+                trial_id=trial_id,
+                worker_index=idx,
+            )
+        elif idx >= len(out):
+            out.append(
+                _launch_distributed_worker(
+                    config=config,
+                    trial_dir=trial_dir,
+                    trial_id=trial_id,
+                    worker_index=idx,
+                )
+            )
+    return out[:want]
+
+
+def _ingest_distributed_selfplay(
+    *,
+    buf: DiskReplayBuffer,
+    holdout_buf: ReplayBuffer,
+    holdout_frac: float,
+    holdout_frozen: bool,
+    inbox_dir: Path,
+    processed_dir: Path,
+    target_games: int,
+    target_model_sha: str,
+    wait_timeout_s: float,
+    poll_seconds: float,
+    rng: np.random.Generator,
+) -> dict[str, int]:
+    processed_dir.mkdir(parents=True, exist_ok=True)
+    target_games = max(1, int(target_games))
+    deadline = time.time() + float(wait_timeout_s)
+    summary = {
+        "matching_games": 0,
+        "matching_positions": 0,
+        "matching_w": 0,
+        "matching_d": 0,
+        "matching_l": 0,
+        "positions_replay_added": 0,
+        "stale_games": 0,
+        "stale_positions": 0,
+        "matching_shards": 0,
+        "stale_shards": 0,
+    }
+
+    while summary["matching_games"] < target_games:
+        shard_paths = sorted(inbox_dir.glob("*/*.npz"))
+        if not shard_paths:
+            if time.time() >= deadline:
+                raise RuntimeError(
+                    f"timed out waiting for distributed selfplay shards for model {target_model_sha[:12]}"
+                )
+            time.sleep(float(poll_seconds))
+            continue
+
+        processed_any = False
+        for sp in shard_paths:
+            processed_any = True
+            rel = sp.relative_to(inbox_dir)
+            out = processed_dir / rel
+            out.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                samples, meta = load_npz(sp)
+            except Exception:
+                bad = processed_dir / "bad" / rel.name
+                bad.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    sp.replace(bad)
+                except Exception:
+                    sp.unlink(missing_ok=True)
+                continue
+
+            model_sha = str(meta.get("model_sha256") or "")
+            wins = int(meta.get("wins", 0) or 0)
+            draws = int(meta.get("draws", 0) or 0)
+            losses = int(meta.get("losses", 0) or 0)
+            games = int(meta.get("games", wins + draws + losses) or 0)
+            positions = int(meta.get("positions", len(samples)) or len(samples))
+
+            train_samples: list = []
+            for s in samples:
+                if holdout_frac > 0.0 and (not holdout_frozen) and (rng.random() < holdout_frac):
+                    holdout_buf.add_many([s])
+                else:
+                    train_samples.append(s)
+            if train_samples:
+                buf.add_many(train_samples)
+            summary["positions_replay_added"] += int(positions)
+
+            if model_sha == target_model_sha:
+                summary["matching_games"] += int(games)
+                summary["matching_positions"] += int(positions)
+                summary["matching_w"] += int(wins)
+                summary["matching_d"] += int(draws)
+                summary["matching_l"] += int(losses)
+                summary["matching_shards"] += 1
+            else:
+                summary["stale_games"] += int(games)
+                summary["stale_positions"] += int(positions)
+                summary["stale_shards"] += 1
+
+            try:
+                sp.replace(out)
+            except Exception:
+                sp.unlink(missing_ok=True)
+
+            if summary["matching_games"] >= target_games:
+                break
+
+        if not processed_any:
+            if time.time() >= deadline:
+                raise RuntimeError(
+                    f"timed out waiting for distributed selfplay shards for model {target_model_sha[:12]}"
+                )
+            time.sleep(float(poll_seconds))
+
+    return summary
+
+
 def train_trial(config: dict):
     """Ray Tune trainable.
 
@@ -792,18 +1147,17 @@ def train_trial(config: dict):
 
     device = str(config.get("device", "cuda" if torch.cuda.is_available() else "cpu"))
 
-    model = build_model(
-        ModelConfig(
-            kind=str(config.get("model", "transformer")),
-            embed_dim=int(config.get("embed_dim", 256)),
-            num_layers=int(config.get("num_layers", 6)),
-            num_heads=int(config.get("num_heads", 8)),
-            ffn_mult=int(config.get("ffn_mult", 2)),
-            use_smolgen=bool(config.get("use_smolgen", True)),
-            use_nla=bool(config.get("use_nla", False)),
-            use_gradient_checkpointing=bool(config.get("gradient_checkpointing", False)),
-        )
+    model_cfg = ModelConfig(
+        kind=str(config.get("model", "transformer")),
+        embed_dim=int(config.get("embed_dim", 256)),
+        num_layers=int(config.get("num_layers", 6)),
+        num_heads=int(config.get("num_heads", 8)),
+        ffn_mult=int(config.get("ffn_mult", 2)),
+        use_smolgen=bool(config.get("use_smolgen", True)),
+        use_nla=bool(config.get("use_nla", False)),
+        use_gradient_checkpointing=bool(config.get("gradient_checkpointing", False)),
     )
+    model = build_model(model_cfg)
 
     # Use Ray-provided trial directory for ALL per-trial state (checkpoints,
     # replay shards, gate state, best model, TensorBoard logs).
@@ -1208,24 +1562,48 @@ def train_trial(config: dict):
     holdout_frozen = False
     holdout_generation = 0
 
-    requested_selfplay_pipelines = int(config.get("selfplay_pipelines", 1))
+    distributed_workers_per_trial = max(0, int(config.get("distributed_workers_per_trial", 0)))
+    use_distributed_selfplay = (
+        distributed_workers_per_trial > 0
+        and isinstance(config.get("distributed_server_root"), str)
+        and str(config.get("distributed_server_root", "")).strip()
+        and isinstance(config.get("distributed_server_url"), str)
+        and str(config.get("distributed_server_url", "")).strip()
+    )
+
     sf_workers = int(config.get("sf_workers", 1))
     sf_multipv = int(config.get("sf_multipv", 1))
     sf_hash_mb = int(config.get("sf_hash_mb", 16))
-    sf_clients = build_stockfish_clients(
-        path=str(config["stockfish_path"]),
-        nodes=int(config.get("sf_nodes", 500)),
-        total_workers=sf_workers,
-        pipelines=requested_selfplay_pipelines,
-        multipv=sf_multipv,
-        hash_mb=sf_hash_mb,
+    need_local_sf = (not use_distributed_selfplay) or (gate_games > 0)
+    sf = None
+    if need_local_sf:
+        if sf_workers > 1:
+            sf = StockfishPool(
+                path=str(config["stockfish_path"]),
+                nodes=int(config.get("sf_nodes", 500)),
+                num_workers=sf_workers,
+                multipv=sf_multipv,
+                hash_mb=sf_hash_mb,
+            )
+        else:
+            sf = StockfishUCI(
+                str(config["stockfish_path"]),
+                nodes=int(config.get("sf_nodes", 500)),
+                multipv=sf_multipv,
+                hash_mb=sf_hash_mb,
+            )
+
+    distributed_server_root = (
+        Path(str(config["distributed_server_root"])).expanduser()
+        if use_distributed_selfplay
+        else None
     )
-    sf = sf_clients[0]
-    selfplay_exec = ThreadPoolExecutor(max_workers=len(sf_clients)) if len(sf_clients) > 1 else None
-    pipeline_rngs = [
-        np.random.default_rng(_stable_seed_u32("selfplay-pipeline", trial_id, idx))
-        for idx in range(len(sf_clients))
-    ]
+    distributed_dirs = (
+        _trial_server_dirs(server_root=distributed_server_root, trial_id=trial_id)
+        if distributed_server_root is not None
+        else None
+    )
+    distributed_worker_procs: list[subprocess.Popen[bytes]] = []
 
     eval_games = int(config.get("eval_games", 0))
     eval_sf_nodes = int(config.get("eval_sf_nodes", config.get("sf_nodes", 500)))
@@ -1283,6 +1661,42 @@ def train_trial(config: dict):
     pause_marker_path = _resolve_pause_marker_path(config=config, trial_dir=trial_dir)
     pause_poll_seconds = int(config.get("pause_poll_seconds", 60))
 
+    if use_distributed_selfplay:
+        current_rand_init = (
+            float(pid.random_move_prob)
+            if pid is not None
+            else float(config.get("sf_pid_random_move_prob_start", 0.0))
+        )
+        current_nodes_init = int(pid.nodes) if pid is not None else int(config.get("sf_nodes", 500))
+        current_skill_init = int(pid.skill_level) if pid is not None else 0
+        sims_init = int(config.get("mcts_simulations", 50))
+        if bool(config.get("progressive_mcts", True)):
+            sims_init = progressive_mcts_simulations(
+                int(getattr(trainer, "step", 0)),
+                start=int(config.get("mcts_start_simulations", 50)),
+                max_sims=int(config.get("mcts_simulations", 50)),
+                ramp_steps=int(config.get("mcts_ramp_steps", 10_000)),
+                exponent=float(config.get("mcts_ramp_exponent", 2.0)),
+            )
+        _publish_distributed_trial_state(
+            trainer=trainer,
+            config=config,
+            model_cfg=model_cfg,
+            server_root=distributed_server_root,
+            trial_id=trial_id,
+            trainer_step=int(getattr(trainer, "step", 0)),
+            sf_nodes=current_nodes_init,
+            random_move_prob=current_rand_init,
+            skill_level=current_skill_init,
+            mcts_simulations=int(sims_init),
+        )
+        distributed_worker_procs = _ensure_distributed_workers(
+            config=config,
+            trial_dir=trial_dir,
+            trial_id=trial_id,
+            procs=distributed_worker_procs,
+        )
+
     try:
         iterations = int(config.get("iterations", 10))
         for it in range(iterations):
@@ -1303,7 +1717,11 @@ def train_trial(config: dict):
             # selfplay chunks). PID is updated once per iteration AFTER training so
             # changes align to net updates rather than chunk noise.
             current_rand = float(pid.random_move_prob) if pid is not None else float(config.get("sf_pid_random_move_prob_start", 0.0))
-            sf_nodes_used = int(getattr(sf, "nodes", 0) or 0)
+            sf_nodes_used = (
+                int(getattr(sf, "nodes", 0) or 0)
+                if sf is not None
+                else (int(pid.nodes) if pid is not None else int(config.get("sf_nodes", 500)))
+            )
             skill_level_used = int(getattr(pid, "skill_level", 0) or 0) if pid is not None else 0
 
             base_sims = int(config.get("mcts_simulations", 50))
@@ -1324,87 +1742,96 @@ def train_trial(config: dict):
             games_remaining = total_games
 
             # Accumulators for stats across mini-batches.
-            all_train_samples: list = []
             total_w = total_d = total_l = 0
             total_positions = 0
             total_sf_d6 = 0.0
             total_sf_d6_n = 0
-            last_stats = None
+            distributed_stale_positions = 0
+            distributed_stale_games = 0
 
-            selfplay_common_kwargs = dict(
-                device=device,
-                opponent_random_move_prob=current_rand,
-                temperature=float(config.get("temperature", 1.0)),
-                temperature_drop_plies=int(config.get("temperature_drop_plies", 0)),
-                temperature_after=float(config.get("temperature_after", 0.0)),
-                temperature_decay_start_move=int(config.get("temperature_decay_start_move", 20)),
-                temperature_decay_moves=int(config.get("temperature_decay_moves", 60)),
-                temperature_endgame=float(config.get("temperature_endgame", 0.6)),
-                max_plies=int(config.get("max_plies", 120)),
-                mcts_simulations=int(sims),
-                mcts_type=str(config.get("mcts", "puct")),
-                playout_cap_fraction=float(config.get("playout_cap_fraction", 0.25)),
-                fast_simulations=int(config.get("fast_simulations", 8)),
-                sf_policy_temp=float(config.get("sf_policy_temp", 0.25)),
-                sf_policy_label_smooth=float(config.get("sf_policy_label_smooth", 0.05)),
-                timeout_adjudication_threshold=float(config.get("timeout_adjudication_threshold", 0.90)),
-                volatility_source=str(config.get("volatility_source", "raw")),
-                opening_book_path=config.get("opening_book_path"),
-                opening_book_max_plies=int(config.get("opening_book_max_plies", 4)),
-                opening_book_max_games=int(config.get("opening_book_max_games", 200_000)),
-                opening_book_prob=float(config.get("opening_book_prob", 1.0)),
-                random_start_plies=int(config.get("random_start_plies", 0)),
-                syzygy_path=config.get("syzygy_path"),
-                syzygy_policy=bool(config.get("syzygy_policy", False)),
-                diff_focus_enabled=bool(config.get("diff_focus_enabled", True)),
-                diff_focus_q_weight=float(config.get("diff_focus_q_weight", 6.0)),
-                diff_focus_pol_scale=float(config.get("diff_focus_pol_scale", 3.5)),
-                diff_focus_slope=float(config.get("diff_focus_slope", 3.0)),
-                diff_focus_min=float(config.get("diff_focus_min", 0.025)),
-                categorical_bins=int(config.get("categorical_bins", 32)),
-                hlgauss_sigma=float(config.get("hlgauss_sigma", 0.04)),
-                fpu_reduction=float(config.get("fpu_reduction", 1.2)),
-                fpu_at_root=float(config.get("fpu_at_root", 1.0)),
-                soft_policy_temp=float(config.get("soft_policy_temp", 2.0)),
-            )
+            if use_distributed_selfplay:
+                distributed_worker_procs = _ensure_distributed_workers(
+                    config=config,
+                    trial_dir=trial_dir,
+                    trial_id=trial_id,
+                    procs=distributed_worker_procs,
+                )
+                published_model_sha = _publish_distributed_trial_state(
+                    trainer=trainer,
+                    config=config,
+                    model_cfg=model_cfg,
+                    server_root=distributed_server_root,
+                    trial_id=trial_id,
+                    trainer_step=int(getattr(trainer, "step", 0)),
+                    sf_nodes=int(pid.nodes) if pid is not None else int(config.get("sf_nodes", 500)),
+                    random_move_prob=float(current_rand),
+                    skill_level=int(skill_level_used),
+                    mcts_simulations=int(sims),
+                )
+                ingest_summary = _ingest_distributed_selfplay(
+                    buf=buf,
+                    holdout_buf=holdout_buf,
+                    holdout_frac=float(holdout_frac),
+                    holdout_frozen=bool(holdout_frozen),
+                    inbox_dir=distributed_dirs["inbox_dir"],
+                    processed_dir=distributed_dirs["processed_dir"],
+                    target_games=int(total_games),
+                    target_model_sha=str(published_model_sha),
+                    wait_timeout_s=float(config.get("distributed_wait_timeout_seconds", 900.0)),
+                    poll_seconds=float(config.get("distributed_worker_poll_seconds", 1.0)),
+                    rng=rng,
+                )
+                total_w = int(ingest_summary["matching_w"])
+                total_d = int(ingest_summary["matching_d"])
+                total_l = int(ingest_summary["matching_l"])
+                total_positions = int(ingest_summary["positions_replay_added"])
+                distributed_stale_positions = int(ingest_summary["stale_positions"])
+                distributed_stale_games = int(ingest_summary["stale_games"])
+            else:
+                selfplay_kwargs = dict(
+                    device=device,
+                    rng=rng,
+                    stockfish=sf,
+                    opponent_random_move_prob=current_rand,
+                    temperature=float(config.get("temperature", 1.0)),
+                    temperature_drop_plies=int(config.get("temperature_drop_plies", 0)),
+                    temperature_after=float(config.get("temperature_after", 0.0)),
+                    temperature_decay_start_move=int(config.get("temperature_decay_start_move", 20)),
+                    temperature_decay_moves=int(config.get("temperature_decay_moves", 60)),
+                    temperature_endgame=float(config.get("temperature_endgame", 0.6)),
+                    max_plies=int(config.get("max_plies", 120)),
+                    mcts_simulations=int(sims),
+                    mcts_type=str(config.get("mcts", "puct")),
+                    playout_cap_fraction=float(config.get("playout_cap_fraction", 0.25)),
+                    fast_simulations=int(config.get("fast_simulations", 8)),
+                    sf_policy_temp=float(config.get("sf_policy_temp", 0.25)),
+                    sf_policy_label_smooth=float(config.get("sf_policy_label_smooth", 0.05)),
+                    timeout_adjudication_threshold=float(config.get("timeout_adjudication_threshold", 0.90)),
+                    volatility_source=str(config.get("volatility_source", "raw")),
+                    opening_book_path=config.get("opening_book_path"),
+                    opening_book_max_plies=int(config.get("opening_book_max_plies", 4)),
+                    opening_book_max_games=int(config.get("opening_book_max_games", 200_000)),
+                    opening_book_prob=float(config.get("opening_book_prob", 1.0)),
+                    random_start_plies=int(config.get("random_start_plies", 0)),
+                    syzygy_path=config.get("syzygy_path"),
+                    syzygy_policy=bool(config.get("syzygy_policy", False)),
+                    diff_focus_enabled=bool(config.get("diff_focus_enabled", True)),
+                    diff_focus_q_weight=float(config.get("diff_focus_q_weight", 6.0)),
+                    diff_focus_pol_scale=float(config.get("diff_focus_pol_scale", 3.5)),
+                    diff_focus_slope=float(config.get("diff_focus_slope", 3.0)),
+                    diff_focus_min=float(config.get("diff_focus_min", 0.025)),
+                    categorical_bins=int(config.get("categorical_bins", 32)),
+                    hlgauss_sigma=float(config.get("hlgauss_sigma", 0.04)),
+                    fpu_reduction=float(config.get("fpu_reduction", 1.2)),
+                    fpu_at_root=float(config.get("fpu_at_root", 1.0)),
+                    soft_policy_temp=float(config.get("soft_policy_temp", 2.0)),
+                )
 
-            while games_remaining > 0:
-                wave: list[tuple[int, int]] = []
-                for pipeline_idx in range(len(sf_clients)):
-                    if games_remaining <= 0:
-                        break
+                while games_remaining > 0:
                     chunk = min(selfplay_batch, games_remaining)
+                    samples, stats = play_batch(trainer.model, games=chunk, **selfplay_kwargs)
                     games_remaining -= chunk
-                    wave.append((pipeline_idx, chunk))
 
-                if selfplay_exec is None:
-                    pipeline_idx, chunk = wave[0]
-                    samples, stats = play_batch(
-                        trainer.model,
-                        games=chunk,
-                        rng=pipeline_rngs[pipeline_idx],
-                        stockfish=sf_clients[pipeline_idx],
-                        **selfplay_common_kwargs,
-                    )
-                    results = [(samples, stats)]
-                else:
-                    futures = [
-                        selfplay_exec.submit(
-                            play_batch,
-                            trainer.model,
-                            games=chunk,
-                            rng=pipeline_rngs[pipeline_idx],
-                            stockfish=sf_clients[pipeline_idx],
-                            **selfplay_common_kwargs,
-                        )
-                        for pipeline_idx, chunk in wave
-                    ]
-                    results = [future.result() for future in futures]
-
-                for samples, stats in results:
-                    last_stats = stats
-
-                    # Accumulate stats.
                     total_w += stats.w
                     total_d += stats.d
                     total_l += stats.l
@@ -1412,18 +1839,15 @@ def train_trial(config: dict):
                     total_sf_d6 += float(getattr(stats, "sf_eval_delta6", 0.0)) * int(getattr(stats, "sf_eval_delta6_n", 0))
                     total_sf_d6_n += int(getattr(stats, "sf_eval_delta6_n", 0))
 
-                    # Split into train vs holdout and flush to disk immediately.
+                    train_samples: list = []
                     for s in samples:
                         if holdout_frac > 0.0 and (not holdout_frozen) and (rng.random() < holdout_frac):
                             holdout_buf.add_many([s])
                         else:
-                            all_train_samples.append(s)
-                    buf.add_many(all_train_samples)
-                    all_train_samples = []
-                    del samples  # Free memory from this mini-batch.
-
-            # Aggregate stats for reporting.
-            stats = last_stats  # Use last batch's stats for PID/misc fields.
+                            train_samples.append(s)
+                    if train_samples:
+                        buf.add_many(train_samples)
+                    del samples
 
             # Growing window: expand buffer capacity each iteration before
             # cross-trial imports so we do not prune newly shared data against
@@ -1804,10 +2228,11 @@ def train_trial(config: dict):
                 sf_nodes_next = int(pid.nodes)
                 random_move_prob_next = float(pid.random_move_prob)
                 skill_level_next = int(pid.skill_level)
-                if hasattr(sf, "set_nodes"):
-                    sf.set_nodes(int(sf_nodes_next))
-                else:
-                    setattr(sf, "nodes", int(sf_nodes_next))
+                if sf is not None:
+                    if hasattr(sf, "set_nodes"):
+                        sf.set_nodes(int(sf_nodes_next))
+                    else:
+                        setattr(sf, "nodes", int(sf_nodes_next))
 
             # Persist PID state AFTER observe() so checkpoints/salvage carry the
             # post-iteration difficulty that produced random_move_prob_next.
@@ -1866,6 +2291,10 @@ def train_trial(config: dict):
                     "shared_trials_ingested": int(shared_summary["source_trials_ingested"]),
                     "shared_trials_skipped_repeat": int(shared_summary["source_trials_skipped_repeat"]),
                     "shared_shards_loaded": int(shared_summary["source_shards_loaded"]),
+                    "distributed_selfplay": int(1 if use_distributed_selfplay else 0),
+                    "distributed_workers_per_trial": int(distributed_workers_per_trial),
+                    "distributed_stale_games": int(distributed_stale_games),
+                    "distributed_stale_positions": int(distributed_stale_positions),
                     "startup_source": str(startup_source),
                     "salvage_warmstart_used": int(1 if seed_warmstart_used else 0),
                     "salvage_warmstart_slot": int(seed_warmstart_slot),
@@ -1922,9 +2351,8 @@ def train_trial(config: dict):
                 keep_last=int(config.get("tune_num_to_keep", 2)),
             )
     finally:
-        if selfplay_exec is not None:
-            selfplay_exec.shutdown(wait=True, cancel_futures=False)
-        for client in sf_clients:
-            client.close()
+        _stop_worker_processes(distributed_worker_procs)
+        if sf is not None:
+            sf.close()
         if eval_sf is not None:
             eval_sf.close()

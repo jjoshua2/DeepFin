@@ -298,3 +298,174 @@ The WDL head (what MCTS uses to evaluate positions) only gets ~10% of total grad
   - `salvage warmstart loaded slot=...`
   - `salvage PID overrides from manifest row: random_move_prob<-random_move_prob_next, ...`
 - Confirms patched difficulty carryover is active on this run.
+
+---
+
+## Run 12: Fresh 384d GPBT restarts and early-collapse diagnosis (2026-03-06 to 2026-03-07)
+
+**Goal**:
+- Start a fresh 384d run (not salvage) and understand why trials often opened around 55-60% raw winrate, then collapsed below 40% by iteration 2-3 against nearly random-move Stockfish.
+
+**What was tried**:
+- Switched the small-model tune path from PB2 to `gpbt_pl`.
+- Narrowed the active search to:
+  - `lr: [1.0e-3, 1.6e-3]`
+  - `w_wdl: [0.45, 0.65]`
+- Tightened PID to slow difficulty movement:
+  - `pid_max_rand_step: 0.005`
+  - `pid_ema_alpha: 0.20`
+  - `pid_random_move_prob_start: 0.995`
+- Increased effective batch gently:
+  - `batch_size=256`, `accum_steps=2`, later `accum_steps=4`
+- Disabled `w_sf_wdl` again to test whether SF-WDL auxiliary was the main failure source.
+
+**Important code/logging fixes found along the way**:
+- `run.py`: Tune config was not forwarding `sf_pid_random_move_prob_start`, `sf_pid_random_move_prob_min/max`, `sf_pid_random_move_stage_end`, or `sf_pid_max_rand_step`, so fresh tune runs silently fell back to `random_move_prob=1.0`.
+- `trainable.py`: Tune TensorBoard difficulty metrics were logging on mixed x-axes (`trainer_step_now` vs Tune iteration). Patched custom difficulty/Tune metrics to use iteration consistently.
+- `trainable.py`: step-count math now uses `batch_size * accum_steps` when estimating one pass over fresh data, so increasing accumulation no longer silently increases total data passes.
+
+**Findings**:
+- PID was **not** the main reason for the collapse. Early bad trials often fell below 40% raw winrate while still at `random_move_prob=1.0` or `0.995`.
+- Warmup length also was **not** the main problem. Even at only ~3 optimizer steps/iteration (`accum_steps=4`), some trials still collapsed early.
+- Disabling `w_sf_wdl` did **not** fix the core failure pattern.
+- The most likely cause was bootstrap initialization mismatch:
+  - bootstrap training had effectively learned **value/trunk only**
+  - policy heads (`policy_own`, `policy_soft`, `policy_sf`, `policy_future`) were left at random initialization
+  - random policy logits plus a trained trunk created accidental, inconsistent search priors
+  - some trials benefited from that random prior at iteration 1, then destabilized once early learning started
+
+**Conclusion**:
+- The early 384d failure mode was not mainly “difficulty moved too fast”.
+- The stronger hypothesis was: **bootstrap trunk/value + random policy heads** gives unstable early search/training behavior.
+
+---
+
+## Run 13: Bootstrap policy-head reset fixed the early collapse (2026-03-07)
+
+**Code changes applied**:
+- Added a helper to explicitly zero policy-head parameters after bootstrap load:
+  - `policy_own`
+  - `policy_soft`
+  - `policy_sf`
+  - `policy_future`
+- Added config flag:
+  - `bootstrap_zero_policy_heads: true`
+- Applied this in both the tune startup/bootstrap load path and the single-run path.
+
+**Rationale**:
+- Bootstrap data had not meaningfully trained the policy heads.
+- Zeroing these heads makes the initial legal-move prior close to uniform instead of arbitrary random logits from an untrained readout on a trained trunk.
+
+**Observed result**:
+- Iteration 1 looked slightly weaker than some earlier fresh runs (expected: the accidental random prior was removed).
+- But iteration 2-3 behavior improved dramatically:
+  - previous runs often dropped to ~0.40 raw WR or worse by iteration 2-3
+  - with zeroed policy heads, the floor stayed around ~0.49-0.54 instead of collapsing
+  - population median stayed healthy (~0.56-0.58), and trials were broadly learning instead of diverging immediately
+
+**Interpretation**:
+- This was the first change that clearly attacked the real problem.
+- The bootstrap checkpoint should be treated as:
+  - useful trunk/value initialization
+  - **not** trustworthy policy initialization
+
+**Operational note**:
+- After this fix, GPBT perturb/exploit behavior started looking reasonable instead of just recycling already-broken trials.
+
+---
+
+## Run 14: Central-server distributed Tune selfplay (2026-03-07)
+
+**Goal**:
+- Replace the in-process Tune selfplay loop with real multiprocess worker fanout so CPU can scale past what a single trial actor can drive.
+
+**Architecture changes**:
+- Added trial-aware namespaces to the distributed stack:
+  - `server/app.py`: `/v1/trials/<trial_id>/...`
+  - `worker.py`: `--trial-id`
+  - `learner.py`: `--trial-id`
+- `tune/harness.py` now auto-starts one central server for Tune distributed runs and provisions worker auth.
+- `tune/trainable.py` can now:
+  - publish trial-scoped manifests/models
+  - launch real `worker.py` subprocesses per trial
+  - ingest uploaded shards from the trial inbox
+  - track stale positions/games from older model SHAs
+- Added tune-side distributed config knobs:
+  - `distributed_workers_per_trial`
+  - `distributed_worker_sf_workers`
+  - `distributed_worker_poll_seconds`
+  - `distributed_worker_device`
+  - `distributed_worker_auto_tune`
+  - `distributed_worker_target_batch_seconds`
+  - `distributed_worker_min_games_per_batch`
+  - `distributed_worker_max_games_per_batch`
+  - `distributed_server_port`
+
+**Validation**:
+- 1-trial smoke test succeeded: worker downloaded manifest/model/book, uploaded shard, and trial reported `distributed_selfplay=1`.
+- This replaced the earlier failed threaded `selfplay_pipelines` experiment, which worked functionally but did not improve throughput.
+
+**Throughput experiments**:
+- Fixed layout first tested:
+  - `8` trials
+  - `3` workers/trial
+  - `1` SF process/worker
+- Measured by fresh `positions/sec`, total `positions/sec`, and stale spillover.
+
+**Batch-size results**:
+- `selfplay_batch=8`
+  - fresher data
+  - too slow (`~20.8 fresh pos/s`, `~25.2 total pos/s`)
+- `selfplay_batch=12`
+  - better balance (`~29.9 fresh pos/s`, `~37.5 total pos/s`)
+- `selfplay_batch=16`
+  - fastest of the three (`~33.3 fresh pos/s`, `~42.9 total pos/s`)
+  - but more stale spillover (~22.5% stale vs ~20.0% at batch 12)
+
+**Important caveat found**:
+- Distributed workers were defaulting to CUDA when `distributed_worker_device` was unset.
+- So `selfplay_batch` affects **VRAM**, not just CPU RAM, because:
+  - each worker keeps a model on GPU
+  - larger selfplay batches increase worker-side inference/MCTS memory
+  - training actors also share the same GPU
+- With `8` concurrent trials and CUDA workers, batch-16 runs started hitting CUDA OOM in `trainer.train_steps`.
+
+**Current direction**:
+- Keep the central-server distributed Tune path.
+- Reduce total concurrent training pressure rather than only shrinking per-worker batch.
+- Latest live experiment:
+  - `6` GPBT trials
+  - `4` workers/trial
+  - `selfplay_batch=16`
+  - `optimizer=muon`
+
+---
+
+## Run 15: Muon optimizer experiment start (2026-03-07)
+
+**Why**:
+- Once early-collapse was fixed by zeroing bootstrap policy heads, the next question became training speed/quality, not just stability.
+- Wanted to test whether Muon learns faster than the existing `nadamw` setup.
+
+**Code changes applied**:
+- Added internal plain Muon implementation:
+  - Muon on 2D trunk/hidden weights (`embed.weight`, transformer blocks)
+  - AdamW fallback on heads, norms, and biases
+- Wired `muon` through:
+  - `train/trainer.py`
+  - `run.py`
+  - `learner.py`
+  - config parsing / YAML usage
+- Added regression test:
+  - `tests/test_muon_optimizer.py`
+
+**Why plain Muon first**:
+- `MuonClip` and `NorMuon` exist, but they are newer/specialized variants.
+- Plain Muon is the lowest-risk baseline for this codebase:
+  - simpler to integrate
+  - good enough to answer “does Muon help here at all?”
+
+**Status**:
+- Muon integration compiles and unit test passes.
+- Live distributed Tune runs are now using `optimizer: muon`.
+- Need more data before concluding whether Muon is actually better than `nadamw` for this chess setup.
