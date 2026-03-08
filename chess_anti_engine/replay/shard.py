@@ -42,12 +42,22 @@ def _u8(x: np.ndarray) -> np.ndarray:
     return x.astype(np.uint8, copy=False)
 
 
+def _f16(x: np.ndarray) -> np.ndarray:
+    return x.astype(np.float16, copy=False)
+
+
+def _copy_row(arr: np.ndarray, i: int, *, dtype: np.dtype | type | None = None) -> np.ndarray:
+    if dtype is None:
+        return np.array(arr[i], copy=True, order="C")
+    return np.array(arr[i], dtype=dtype, copy=True, order="C")
+
+
 def samples_to_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
     if not samples:
         raise ValueError("cannot serialize empty shard")
 
-    x = np.stack([s.x for s in samples], axis=0).astype(np.float32, copy=False)
-    policy_target = np.stack([s.policy_target for s in samples], axis=0).astype(np.float32, copy=False)
+    x = _f16(np.stack([s.x for s in samples], axis=0))
+    policy_target = _f16(np.stack([s.policy_target for s in samples], axis=0))
     wdl_target = np.array([int(s.wdl_target) for s in samples], dtype=np.int8)
 
     # Required-ish metadata for training
@@ -55,34 +65,34 @@ def samples_to_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
     has_policy = _u8(np.array([1 if getattr(s, "has_policy", True) else 0 for s in samples], dtype=np.uint8))
 
     # Aux targets + masks (mirrors replay/dataset.py behavior)
-    sf_wdl = np.zeros((len(samples), 3), dtype=np.float32)
+    sf_wdl = np.zeros((len(samples), 3), dtype=np.float16)
     has_sf_wdl = np.zeros((len(samples),), dtype=np.uint8)
 
     sf_move_index = np.zeros((len(samples),), dtype=np.int32)
     has_sf_move = np.zeros((len(samples),), dtype=np.uint8)
 
-    sf_policy_target = np.zeros_like(policy_target, dtype=np.float32)
+    sf_policy_target = np.zeros_like(policy_target, dtype=np.float16)
     has_sf_policy = np.zeros((len(samples),), dtype=np.uint8)
 
-    moves_left = np.zeros((len(samples),), dtype=np.float32)
+    moves_left = np.zeros((len(samples),), dtype=np.float16)
     has_moves_left = np.zeros((len(samples),), dtype=np.uint8)
 
     is_network_turn = np.zeros((len(samples),), dtype=np.uint8)
     has_is_network_turn = np.zeros((len(samples),), dtype=np.uint8)
 
-    categorical_target = np.zeros((len(samples), 32), dtype=np.float32)
+    categorical_target = np.zeros((len(samples), 32), dtype=np.float16)
     has_categorical = np.zeros((len(samples),), dtype=np.uint8)
 
-    policy_soft_target = np.zeros_like(policy_target, dtype=np.float32)
+    policy_soft_target = np.zeros_like(policy_target, dtype=np.float16)
     has_policy_soft = np.zeros((len(samples),), dtype=np.uint8)
 
-    future_policy_target = np.zeros_like(policy_target, dtype=np.float32)
+    future_policy_target = np.zeros_like(policy_target, dtype=np.float16)
     has_future = np.zeros((len(samples),), dtype=np.uint8)
 
-    volatility_target = np.zeros((len(samples), 3), dtype=np.float32)
+    volatility_target = np.zeros((len(samples), 3), dtype=np.float16)
     has_volatility = np.zeros((len(samples),), dtype=np.uint8)
 
-    sf_volatility_target = np.zeros((len(samples), 3), dtype=np.float32)
+    sf_volatility_target = np.zeros((len(samples), 3), dtype=np.float16)
     has_sf_volatility = np.zeros((len(samples),), dtype=np.uint8)
 
     legal_mask = np.zeros((len(samples), POLICY_SIZE), dtype=np.uint8)
@@ -90,34 +100,34 @@ def samples_to_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
 
     for i, s in enumerate(samples):
         if s.sf_wdl is not None:
-            sf_wdl[i] = np.asarray(s.sf_wdl, dtype=np.float32)
+            sf_wdl[i] = np.asarray(s.sf_wdl, dtype=np.float16)
             has_sf_wdl[i] = 1
         if s.sf_move_index is not None:
             sf_move_index[i] = int(s.sf_move_index)
             has_sf_move[i] = 1
         if s.sf_policy_target is not None:
-            sf_policy_target[i] = np.asarray(s.sf_policy_target, dtype=np.float32)
+            sf_policy_target[i] = np.asarray(s.sf_policy_target, dtype=np.float16)
             has_sf_policy[i] = 1
         if s.moves_left is not None:
-            moves_left[i] = float(s.moves_left)
+            moves_left[i] = np.float16(float(s.moves_left))
             has_moves_left[i] = 1
         if s.is_network_turn is not None:
             is_network_turn[i] = 1 if bool(s.is_network_turn) else 0
             has_is_network_turn[i] = 1
         if s.categorical_target is not None:
-            categorical_target[i] = np.asarray(s.categorical_target, dtype=np.float32)
+            categorical_target[i] = np.asarray(s.categorical_target, dtype=np.float16)
             has_categorical[i] = 1
         if s.policy_soft_target is not None:
-            policy_soft_target[i] = np.asarray(s.policy_soft_target, dtype=np.float32)
+            policy_soft_target[i] = np.asarray(s.policy_soft_target, dtype=np.float16)
             has_policy_soft[i] = 1
         if s.future_policy_target is not None:
-            future_policy_target[i] = np.asarray(s.future_policy_target, dtype=np.float32)
+            future_policy_target[i] = np.asarray(s.future_policy_target, dtype=np.float16)
             has_future[i] = 1
         if s.volatility_target is not None:
-            volatility_target[i] = np.asarray(s.volatility_target, dtype=np.float32)
+            volatility_target[i] = np.asarray(s.volatility_target, dtype=np.float16)
             has_volatility[i] = 1
         if getattr(s, "sf_volatility_target", None) is not None:
-            sf_volatility_target[i] = np.asarray(s.sf_volatility_target, dtype=np.float32)
+            sf_volatility_target[i] = np.asarray(s.sf_volatility_target, dtype=np.float16)
             has_sf_volatility[i] = 1
         if getattr(s, "legal_mask", None) is not None:
             legal_mask[i] = np.asarray(s.legal_mask, dtype=np.uint8)
@@ -208,8 +218,8 @@ def validate_arrays(arrs: dict[str, np.ndarray]) -> None:
 def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
     validate_arrays(arrs)
 
-    x = np.asarray(arrs["x"], dtype=np.float32)
-    policy = np.asarray(arrs["policy_target"], dtype=np.float32)
+    x = np.asarray(arrs["x"])
+    policy = np.asarray(arrs["policy_target"])
     wdl = np.asarray(arrs["wdl_target"]).astype(np.int64, copy=False)
 
     n = int(x.shape[0])
@@ -217,34 +227,34 @@ def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
     priority = np.asarray(arrs.get("priority", np.ones((n,), dtype=np.float32)), dtype=np.float32)
     has_policy = np.asarray(arrs.get("has_policy", np.ones((n,), dtype=np.uint8)), dtype=np.uint8)
 
-    sf_wdl = np.asarray(arrs.get("sf_wdl", np.zeros((n, 3), dtype=np.float32)), dtype=np.float32)
+    sf_wdl = np.asarray(arrs.get("sf_wdl", np.zeros((n, 3), dtype=np.float16)))
     has_sf_wdl = np.asarray(arrs.get("has_sf_wdl", np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
 
     sf_move_index = np.asarray(arrs.get("sf_move_index", np.zeros((n,), dtype=np.int32)), dtype=np.int32)
     has_sf_move = np.asarray(arrs.get("has_sf_move", np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
 
-    sf_policy_target = np.asarray(arrs.get("sf_policy_target", np.zeros_like(policy, dtype=np.float32)), dtype=np.float32)
+    sf_policy_target = np.asarray(arrs.get("sf_policy_target", np.zeros_like(policy, dtype=np.float16)))
     has_sf_policy = np.asarray(arrs.get("has_sf_policy", np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
 
-    moves_left = np.asarray(arrs.get("moves_left", np.zeros((n,), dtype=np.float32)), dtype=np.float32)
+    moves_left = np.asarray(arrs.get("moves_left", np.zeros((n,), dtype=np.float16)))
     has_moves_left = np.asarray(arrs.get("has_moves_left", np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
 
     is_network_turn = np.asarray(arrs.get("is_network_turn", np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
     has_is_network_turn = np.asarray(arrs.get("has_is_network_turn", np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
 
-    categorical = np.asarray(arrs.get("categorical_target", np.zeros((n, 32), dtype=np.float32)), dtype=np.float32)
+    categorical = np.asarray(arrs.get("categorical_target", np.zeros((n, 32), dtype=np.float16)))
     has_categorical = np.asarray(arrs.get("has_categorical", np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
 
-    policy_soft = np.asarray(arrs.get("policy_soft_target", np.zeros_like(policy, dtype=np.float32)), dtype=np.float32)
+    policy_soft = np.asarray(arrs.get("policy_soft_target", np.zeros_like(policy, dtype=np.float16)))
     has_policy_soft = np.asarray(arrs.get("has_policy_soft", np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
 
-    future_policy = np.asarray(arrs.get("future_policy_target", np.zeros_like(policy, dtype=np.float32)), dtype=np.float32)
+    future_policy = np.asarray(arrs.get("future_policy_target", np.zeros_like(policy, dtype=np.float16)))
     has_future = np.asarray(arrs.get("has_future", np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
 
-    vol = np.asarray(arrs.get("volatility_target", np.zeros((n, 3), dtype=np.float32)), dtype=np.float32)
+    vol = np.asarray(arrs.get("volatility_target", np.zeros((n, 3), dtype=np.float16)))
     has_vol = np.asarray(arrs.get("has_volatility", np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
 
-    sf_vol = np.asarray(arrs.get("sf_volatility_target", np.zeros((n, 3), dtype=np.float32)), dtype=np.float32)
+    sf_vol = np.asarray(arrs.get("sf_volatility_target", np.zeros((n, 3), dtype=np.float16)))
     has_sf_vol = np.asarray(arrs.get("has_sf_volatility", np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
 
     legal_mask_arr = np.asarray(arrs.get("legal_mask", np.zeros((n, POLICY_SIZE), dtype=np.uint8)), dtype=np.uint8)
@@ -253,37 +263,37 @@ def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
     out: list[ReplaySample] = []
     for i in range(n):
         s = ReplaySample(
-            x=x[i],
-            policy_target=policy[i],
+            x=_copy_row(x, i),
+            policy_target=_copy_row(policy, i),
             wdl_target=int(wdl[i]),
             priority=float(priority[i]),
             has_policy=bool(int(has_policy[i]) != 0),
         )
         if bool(int(has_sf_wdl[i]) != 0):
-            s.sf_wdl = sf_wdl[i]
+            s.sf_wdl = _copy_row(sf_wdl, i)
         if bool(int(has_sf_move[i]) != 0):
             s.sf_move_index = int(sf_move_index[i])
         if bool(int(has_sf_policy[i]) != 0):
-            s.sf_policy_target = sf_policy_target[i]
+            s.sf_policy_target = _copy_row(sf_policy_target, i)
         if bool(int(has_moves_left[i]) != 0):
             s.moves_left = float(moves_left[i])
         if bool(int(has_is_network_turn[i]) != 0):
             s.is_network_turn = bool(int(is_network_turn[i]) != 0)
         if bool(int(has_categorical[i]) != 0):
-            s.categorical_target = categorical[i]
+            s.categorical_target = _copy_row(categorical, i)
         if bool(int(has_policy_soft[i]) != 0):
-            s.policy_soft_target = policy_soft[i]
+            s.policy_soft_target = _copy_row(policy_soft, i)
         if bool(int(has_future[i]) != 0):
-            s.future_policy_target = future_policy[i]
+            s.future_policy_target = _copy_row(future_policy, i)
             s.has_future = True
         if bool(int(has_vol[i]) != 0):
-            s.volatility_target = vol[i]
+            s.volatility_target = _copy_row(vol, i)
             s.has_volatility = True
         if bool(int(has_sf_vol[i]) != 0):
-            s.sf_volatility_target = sf_vol[i]
+            s.sf_volatility_target = _copy_row(sf_vol, i)
             s.has_sf_volatility = True
         if bool(int(has_legal_mask[i]) != 0):
-            s.legal_mask = legal_mask_arr[i]
+            s.legal_mask = _copy_row(legal_mask_arr, i, dtype=np.uint8)
         out.append(s)
 
     return out

@@ -49,3 +49,17 @@ def build_model(cfg: ModelConfig) -> torch.nn.Module:
         )
         return ChessNet(tcfg)
     raise ValueError(f"Unknown model kind: {cfg.kind}")
+
+
+def zero_policy_head_parameters_(model: torch.nn.Module) -> list[str]:
+    """Zero policy-head parameters so their masked softmax starts near-uniform."""
+
+    zeroed: list[str] = []
+    for name in ("policy", "policy_own", "policy_soft", "policy_sf", "policy_future"):
+        head = getattr(model, name, None)
+        if not isinstance(head, torch.nn.Module):
+            continue
+        for param in head.parameters():
+            torch.nn.init.zeros_(param)
+        zeroed.append(name)
+    return zeroed

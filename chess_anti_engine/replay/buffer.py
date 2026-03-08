@@ -6,7 +6,7 @@ from typing import Optional
 import numpy as np
 
 
-@dataclass
+@dataclass(slots=True)
 class ReplaySample:
     x: np.ndarray  # (C,8,8) float32
     policy_target: np.ndarray  # (POLICY_SIZE,) float32 distribution

@@ -51,9 +51,25 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             "replay_capacity",
             "bootstrap_dir",
             "bootstrap_checkpoint",
+            "bootstrap_zero_policy_heads",
             "bootstrap_max_positions",
             "bootstrap_train_steps",
             "shared_shards_dir",
+            "selfplay_pipelines",
+            "pause_file",
+            "pause_poll_seconds",
+            "salvage_seed_pool_dir",
+            "salvage_source_run_id",
+            "salvage_top_n",
+            "salvage_out_dir",
+            "salvage_metric",
+            "salvage_copy_replay",
+            "salvage_restore_donor_config",
+            "salvage_restore_full_trainer_state",
+            "salvage_startup_no_share_iters",
+            "salvage_startup_max_train_steps",
+            "salvage_startup_post_share_ramp_iters",
+            "salvage_startup_post_share_max_train_steps",
             "replay_window_start",
             "replay_window_max",
             "replay_window_growth",
@@ -71,6 +87,7 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             "sf_nodes",
             "sf_workers",
             "sf_multipv",
+            "sf_hash_mb",
             "sf_pid_enabled",
             "sf_pid_target_winrate",
             "sf_pid_ema_alpha",
@@ -158,6 +175,11 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             "num_samples",
             "max_concurrent_trials",
             "cpus_per_trial",
+            "pbt_synch",
+            "gpbt_pairwise_lr",
+            "gpbt_pairwise_momentum",
+            "gpbt_quantile_fraction",
+            "gpbt_resample_probability",
             "tune_metric",
             "tune_mode",
             "tune_num_to_keep",
@@ -189,6 +211,8 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             out["sf_workers"] = stockfish.get("workers")
         if "multipv" in stockfish:
             out["sf_multipv"] = stockfish.get("multipv")
+        if "hash_mb" in stockfish:
+            out["sf_hash_mb"] = stockfish.get("hash_mb")
 
         # PID parameters
         if "pid_enabled" in stockfish:
@@ -252,6 +276,7 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             "fpu_reduction",
             "fpu_at_root",
             "selfplay_batch",
+            "selfplay_pipelines",
         ]:
             if k in selfplay:
                 out[k] = selfplay.get(k)
@@ -318,6 +343,11 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             "search_nla",
             "search_optimizer",
             "tune_scheduler",
+            "pbt_synch",
+            "gpbt_pairwise_lr",
+            "gpbt_pairwise_momentum",
+            "gpbt_quantile_fraction",
+            "gpbt_resample_probability",
             "gpus_per_trial",
             "pb2_perturbation_interval",
             "min_replay_size",
@@ -327,6 +357,26 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             "gate_mcts_sims",
             "shuffle_buffer_size",
             "shard_size",
+            "exploit_replay_refresh_enabled",
+            "exploit_replay_keep_fraction",
+            "exploit_replay_donor_shards",
+            "exploit_replay_skip_newest",
+            "exploit_replay_share_top_enabled",
+            "exploit_replay_top_k_trials",
+            "exploit_replay_top_within_best_frac",
+            "exploit_replay_top_shards_per_trial",
+            "exploit_replay_top_min_metric",
+            "exploit_replay_local_keep_recent_fraction",
+            "exploit_replay_local_keep_older_fraction",
+            "pause_file",
+            "pause_poll_seconds",
+            "salvage_seed_pool_dir",
+            "salvage_restore_donor_config",
+            "salvage_restore_full_trainer_state",
+            "salvage_startup_no_share_iters",
+            "salvage_startup_max_train_steps",
+            "salvage_startup_post_share_ramp_iters",
+            "salvage_startup_post_share_max_train_steps",
         ]:
             if k in tune:
                 out[k] = tune.get(k)

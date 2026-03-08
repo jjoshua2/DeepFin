@@ -6,6 +6,206 @@ import chess
 from chess_anti_engine.utils.bitboards import bitboard_to_plane
 
 
+def _iter_bits(bb: int):
+    while bb:
+        lsb = bb & -bb
+        yield lsb.bit_length() - 1
+        bb ^= lsb
+
+
+def _ray_step(src: int, dst: int) -> int | None:
+    sf = chess.square_file(src)
+    sr = chess.square_rank(src)
+    df = chess.square_file(dst)
+    dr = chess.square_rank(dst)
+    dx = df - sf
+    dy = dr - sr
+    if dx == 0 and dy != 0:
+        return 8 if dy > 0 else -8
+    if dy == 0 and dx != 0:
+        return 1 if dx > 0 else -1
+    if abs(dx) == abs(dy) and dx != 0:
+        if dx > 0 and dy > 0:
+            return 9
+        if dx > 0 and dy < 0:
+            return -7
+        if dx < 0 and dy > 0:
+            return 7
+        return -9
+    return None
+
+
+def _is_slider_aligned(src: int, dst: int, piece_type: chess.PieceType) -> bool:
+    sf = chess.square_file(src)
+    sr = chess.square_rank(src)
+    df = chess.square_file(dst)
+    dr = chess.square_rank(dst)
+    dx = df - sf
+    dy = dr - sr
+    if piece_type == chess.BISHOP:
+        return abs(dx) == abs(dy) and dx != 0
+    if piece_type == chess.ROOK:
+        return (dx == 0) ^ (dy == 0)
+    if piece_type == chess.QUEEN:
+        return (dx == 0) ^ (dy == 0) or (abs(dx) == abs(dy) and dx != 0)
+    return False
+
+
+def _discovered_attack_mask(board: chess.Board, color: chess.Color) -> int:
+    """Squares of own pieces whose removal leaves the enemy king attacked.
+
+    This preserves the existing training signal semantics:
+    - if the enemy king is already attacked, mark all own pieces
+    - otherwise, mark the unique own blocker on any slider ray to the king
+    """
+    opp_king = board.king(not color)
+    if opp_king is None:
+        return 0
+    if board.is_attacked_by(color, opp_king):
+        discovered_mask = 0
+        for sq in _iter_bits(int(board.occupied_co[color])):
+            b2 = board.copy(stack=False)
+            b2.remove_piece_at(sq)
+            if b2.is_attacked_by(color, opp_king):
+                discovered_mask |= chess.BB_SQUARES[sq]
+        return discovered_mask
+
+    occ = int(board.occupied)
+    sliders = (
+        [(sq, chess.BISHOP) for sq in board.pieces(chess.BISHOP, color)]
+        + [(sq, chess.ROOK) for sq in board.pieces(chess.ROOK, color)]
+        + [(sq, chess.QUEEN) for sq in board.pieces(chess.QUEEN, color)]
+    )
+    discovered_mask = 0
+    for sq, piece_type in sliders:
+        if not _is_slider_aligned(sq, opp_king, piece_type):
+            continue
+        step = _ray_step(sq, opp_king)
+        if step is None:
+            continue
+        cur = sq + step
+        blocker_sq = -1
+        blocker_count = 0
+        while cur != opp_king:
+            if occ & chess.BB_SQUARES[cur]:
+                blocker_sq = cur
+                blocker_count += 1
+                if blocker_count > 1:
+                    break
+            cur += step
+        if blocker_count == 1:
+            piece = board.piece_at(blocker_sq)
+            if piece is not None and piece.color == color:
+                discovered_mask |= chess.BB_SQUARES[blocker_sq]
+    return discovered_mask
+
+
+_ADJACENT_FILE_MASKS = []
+for _file_idx in range(8):
+    _mask = 0
+    if _file_idx > 0:
+        _mask |= int(chess.BB_FILES[_file_idx - 1])
+    if _file_idx < 7:
+        _mask |= int(chess.BB_FILES[_file_idx + 1])
+    _ADJACENT_FILE_MASKS.append(_mask)
+
+_PASSED_PAWN_MASKS = {
+    chess.WHITE: [0] * 64,
+    chess.BLACK: [0] * 64,
+}
+_CONNECTED_NEIGHBOR_MASKS = [0] * 64
+_BACKWARD_SUPPORT_MASKS = {
+    chess.WHITE: [0] * 64,
+    chess.BLACK: [0] * 64,
+}
+_PAWN_ATTACKERS_TO_SQ = {
+    chess.WHITE: [0] * 64,
+    chess.BLACK: [0] * 64,
+}
+_PAWN_SINGLE_PUSH_MASK = {
+    chess.WHITE: [0] * 64,
+    chess.BLACK: [0] * 64,
+}
+_PAWN_DOUBLE_PUSH_MASK = {
+    chess.WHITE: [0] * 64,
+    chess.BLACK: [0] * 64,
+}
+_PAWN_CAPTURE_MASKS = {
+    chess.WHITE: [0] * 64,
+    chess.BLACK: [0] * 64,
+}
+_ORIENT_COORDS = {
+    chess.WHITE: [None] * 64,
+    chess.BLACK: [None] * 64,
+}
+
+for _sq in chess.SQUARES:
+    _f = chess.square_file(_sq)
+    _r = chess.square_rank(_sq)
+    _ORIENT_COORDS[chess.WHITE][_sq] = (_r, _f)
+    _ORIENT_COORDS[chess.BLACK][_sq] = (7 - _r, _f)
+
+    _conn_mask = 0
+    for _df in (-1, 1):
+        _f2 = _f + _df
+        if not (0 <= _f2 <= 7):
+            continue
+        for _dr in (-1, 0, 1):
+            _r2 = _r + _dr
+            if 0 <= _r2 <= 7:
+                _conn_mask |= chess.BB_SQUARES[chess.square(_f2, _r2)]
+    _CONNECTED_NEIGHBOR_MASKS[_sq] = int(_conn_mask)
+
+    for _color in (chess.WHITE, chess.BLACK):
+        _passed = 0
+        _support = 0
+        _direction = 1 if _color == chess.WHITE else -1
+
+        for _ff in range(max(0, _f - 1), min(7, _f + 1) + 1):
+            _rr = _r + _direction
+            while 0 <= _rr <= 7:
+                _passed |= chess.BB_SQUARES[chess.square(_ff, _rr)]
+                _rr += _direction
+
+        for _af in (_f - 1, _f + 1):
+            if not (0 <= _af <= 7):
+                continue
+            if _color == chess.WHITE:
+                for _rr in range(_r, 8):
+                    _support |= chess.BB_SQUARES[chess.square(_af, _rr)]
+            else:
+                for _rr in range(0, _r + 1):
+                    _support |= chess.BB_SQUARES[chess.square(_af, _rr)]
+
+        _PASSED_PAWN_MASKS[_color][_sq] = int(_passed)
+        _BACKWARD_SUPPORT_MASKS[_color][_sq] = int(_support)
+
+        _attackers = 0
+        _src_rank = _r - _direction
+        if 0 <= _src_rank <= 7:
+            for _src_file in (_f - 1, _f + 1):
+                if 0 <= _src_file <= 7:
+                    _attackers |= chess.BB_SQUARES[chess.square(_src_file, _src_rank)]
+        _PAWN_ATTACKERS_TO_SQ[_color][_sq] = int(_attackers)
+
+        _single = 0
+        _double = 0
+        _captures = 0
+        _r1 = _r + _direction
+        if 0 <= _r1 <= 7:
+            _single = int(chess.BB_SQUARES[chess.square(_f, _r1)])
+            _start_rank = 1 if _color == chess.WHITE else 6
+            _r2 = _r + 2 * _direction
+            if _r == _start_rank and 0 <= _r2 <= 7:
+                _double = int(chess.BB_SQUARES[chess.square(_f, _r2)])
+            for _cf in (_f - 1, _f + 1):
+                if 0 <= _cf <= 7:
+                    _captures |= chess.BB_SQUARES[chess.square(_cf, _r1)]
+        _PAWN_SINGLE_PUSH_MASK[_color][_sq] = _single
+        _PAWN_DOUBLE_PUSH_MASK[_color][_sq] = _double
+        _PAWN_CAPTURE_MASKS[_color][_sq] = int(_captures)
+
+
 def _king_zone(board: chess.Board, color: chess.Color) -> int:
     king_sq = board.king(color)
     if king_sq is None:
@@ -63,27 +263,13 @@ def pin_and_xray_planes(board: chess.Board) -> list[np.ndarray]:
         pin_ray_mask = 0
 
         # pinned pieces & rays
-        for sq in chess.SQUARES:
-            piece = board.piece_at(sq)
-            if piece is None or piece.color != color:
-                continue
+        for sq in _iter_bits(int(board.occupied_co[color])):
             pin = board.pin_mask(color, sq)
             if pin != chess.BB_ALL:
                 pinned_mask |= chess.BB_SQUARES[sq]
                 pin_ray_mask |= pin
 
-        # discovered attack/check potential (expensive but ok for phase 1)
-        discovered_mask = 0
-        opp_king = board.king(not color)
-        if opp_king is not None:
-            for sq in chess.SQUARES:
-                piece = board.piece_at(sq)
-                if piece is None or piece.color != color:
-                    continue
-                b2 = board.copy(stack=False)
-                b2.remove_piece_at(sq)
-                if b2.is_attacked_by(color, opp_king):
-                    discovered_mask |= chess.BB_SQUARES[sq]
+        discovered_mask = _discovered_attack_mask(board, color)
 
         planes.append(bitboard_to_plane(pinned_mask, turn=turn))
         planes.append(bitboard_to_plane(pin_ray_mask, turn=turn))
@@ -94,19 +280,10 @@ def pin_and_xray_planes(board: chess.Board) -> list[np.ndarray]:
 
 def _passed_pawns(board: chess.Board, color: chess.Color) -> int:
     passed = 0
-    direction = 1 if color == chess.WHITE else -1
     enemy_pawns = board.pieces_mask(chess.PAWN, not color)
 
-    for sq in board.pieces(chess.PAWN, color):
-        f0 = chess.square_file(sq)
-        r0 = chess.square_rank(sq)
-        blocking = 0
-        for f in range(max(0, f0 - 1), min(7, f0 + 1) + 1):
-            r = r0 + direction
-            while 0 <= r <= 7:
-                blocking |= chess.BB_SQUARES[chess.square(f, r)]
-                r += direction
-        if not (blocking & enemy_pawns):
+    for sq in _iter_bits(int(board.pieces_mask(chess.PAWN, color))):
+        if not (_PASSED_PAWN_MASKS[color][sq] & int(enemy_pawns)):
             passed |= chess.BB_SQUARES[sq]
 
     return passed
@@ -116,14 +293,9 @@ def _isolated_pawns(board: chess.Board, color: chess.Color) -> int:
     isolated = 0
     own_pawns = board.pieces_mask(chess.PAWN, color)
 
-    for sq in board.pieces(chess.PAWN, color):
+    for sq in _iter_bits(int(own_pawns)):
         f = chess.square_file(sq)
-        adjacent_files = 0
-        if f > 0:
-            adjacent_files |= chess.BB_FILES[f - 1]
-        if f < 7:
-            adjacent_files |= chess.BB_FILES[f + 1]
-        if not (adjacent_files & own_pawns):
+        if not (_ADJACENT_FILE_MASKS[f] & int(own_pawns)):
             isolated |= chess.BB_SQUARES[sq]
 
     return isolated
@@ -132,27 +304,10 @@ def _isolated_pawns(board: chess.Board, color: chess.Color) -> int:
 def _connected_pawns(board: chess.Board, color: chess.Color) -> int:
     """Heuristic: pawn with a friendly pawn on an adjacent file within ±1 rank."""
     connected = 0
-    own_pawns = list(board.pieces(chess.PAWN, color))
-    own_set = set(own_pawns)
+    own_pawns = int(board.pieces_mask(chess.PAWN, color))
 
-    for sq in own_pawns:
-        f = chess.square_file(sq)
-        r = chess.square_rank(sq)
-        ok = False
-        for df in (-1, 1):
-            f2 = f + df
-            if not (0 <= f2 <= 7):
-                continue
-            for dr in (-1, 0, 1):
-                r2 = r + dr
-                if not (0 <= r2 <= 7):
-                    continue
-                if chess.square(f2, r2) in own_set:
-                    ok = True
-                    break
-            if ok:
-                break
-        if ok:
+    for sq in _iter_bits(own_pawns):
+        if _CONNECTED_NEIGHBOR_MASKS[sq] & own_pawns:
             connected |= chess.BB_SQUARES[sq]
 
     return connected
@@ -169,24 +324,15 @@ def _backward_pawns(board: chess.Board, color: chess.Color) -> int:
     backward = 0
     direction = 1 if color == chess.WHITE else -1
 
-    own_pawns = list(board.pieces(chess.PAWN, color))
-    own_pawns_by_file: dict[int, list[int]] = {f: [] for f in range(8)}
-    for sq in own_pawns:
-        own_pawns_by_file[chess.square_file(sq)].append(chess.square_rank(sq))
+    own_pawns = int(board.pieces_mask(chess.PAWN, color))
+    enemy_pawns = int(board.pieces_mask(chess.PAWN, not color))
 
-    enemy_pawns = board.pieces_mask(chess.PAWN, not color)
-
-    for sq in own_pawns:
+    for sq in _iter_bits(own_pawns):
         f = chess.square_file(sq)
         r = chess.square_rank(sq)
 
         # not isolated
-        adjacent_files = []
-        if f > 0:
-            adjacent_files.append(f - 1)
-        if f < 7:
-            adjacent_files.append(f + 1)
-        if all(len(own_pawns_by_file[af]) == 0 for af in adjacent_files):
+        if not (_ADJACENT_FILE_MASKS[f] & own_pawns):
             continue
 
         # in-front square
@@ -196,34 +342,11 @@ def _backward_pawns(board: chess.Board, color: chess.Color) -> int:
         front_sq = chess.square(f, r1)
 
         # attacked by enemy pawn?
-        # enemy pawn attacks depend on enemy color
-        enemy = not color
-        attacked_by_enemy_pawn = False
-        if enemy == chess.WHITE:
-            # enemy pawn attacks upwards (to higher ranks)
-            for df in (-1, 1):
-                f2 = f + df
-                r2 = r1 - 1
-                if 0 <= f2 <= 7 and 0 <= r2 <= 7:
-                    if enemy_pawns & chess.BB_SQUARES[chess.square(f2, r2)]:
-                        attacked_by_enemy_pawn = True
-                        break
-        else:
-            for df in (-1, 1):
-                f2 = f + df
-                r2 = r1 + 1
-                if 0 <= f2 <= 7 and 0 <= r2 <= 7:
-                    if enemy_pawns & chess.BB_SQUARES[chess.square(f2, r2)]:
-                        attacked_by_enemy_pawn = True
-                        break
-        if not attacked_by_enemy_pawn:
+        if not (_PAWN_ATTACKERS_TO_SQ[not color][front_sq] & enemy_pawns):
             continue
 
         # no adjacent pawn at least as advanced
-        def is_at_least_as_advanced(rank_other: int) -> bool:
-            return rank_other >= r if color == chess.WHITE else rank_other <= r
-
-        if any(any(is_at_least_as_advanced(rr) for rr in own_pawns_by_file[af]) for af in adjacent_files):
+        if _BACKWARD_SUPPORT_MASKS[color][sq] & own_pawns:
             continue
 
         backward |= chess.BB_SQUARES[sq]
@@ -267,50 +390,38 @@ def mobility_planes(board: chess.Board) -> list[np.ndarray]:
     """
     turn = board.turn
     planes: list[np.ndarray] = []
+    orient_coords = _ORIENT_COORDS[turn]
+    occ = int(board.occupied)
+    ep_mask = int(chess.BB_SQUARES[board.ep_square]) if board.ep_square is not None else 0
 
     for pt in (chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN, chess.KING, chess.PAWN):
         plane = np.zeros((8, 8), dtype=np.float32)
         max_m = _MOBILITY_MAX[pt]
 
         for color in (chess.WHITE, chess.BLACK):
-            for sq in board.pieces(pt, color):
+            own_occ = int(board.occupied_co[color])
+            opp_occ = int(board.occupied_co[not color])
+            for sq in _iter_bits(int(board.pieces_mask(pt, color))):
                 if pt == chess.PAWN:
                     # pawn: forward (1/2) if empty + captures (+ EP)
                     mobility = 0
-                    direction = 1 if color == chess.WHITE else -1
-                    r = chess.square_rank(sq)
-                    f = chess.square_file(sq)
-                    r1 = r + direction
-                    if 0 <= r1 <= 7:
-                        sq1 = chess.square(f, r1)
-                        if board.piece_at(sq1) is None:
+                    single_mask = _PAWN_SINGLE_PUSH_MASK[color][sq]
+                    if single_mask and not (occ & single_mask):
+                        mobility += 1
+                        double_mask = _PAWN_DOUBLE_PUSH_MASK[color][sq]
+                        if double_mask and not (occ & double_mask):
                             mobility += 1
-                            start_rank = 1 if color == chess.WHITE else 6
-                            r2 = r + 2 * direction
-                            if r == start_rank and 0 <= r2 <= 7:
-                                sq2 = chess.square(f, r2)
-                                if board.piece_at(sq2) is None:
-                                    mobility += 1
-                        for df in (-1, 1):
-                            f2 = f + df
-                            if 0 <= f2 <= 7:
-                                cap_sq = chess.square(f2, r1)
-                                p = board.piece_at(cap_sq)
-                                if p is not None and p.color != color:
-                                    mobility += 1
-
-                    if board.ep_square is not None:
-                        if chess.square_rank(board.ep_square) == (r + direction):
-                            if abs(chess.square_file(board.ep_square) - f) == 1:
-                                mobility += 1
+                    capture_mask = _PAWN_CAPTURE_MASKS[color][sq]
+                    mobility += chess.popcount(capture_mask & opp_occ)
+                    if ep_mask and (capture_mask & ep_mask):
+                        mobility += 1
                 else:
                     attacks = board.attacks_mask(sq)
-                    own_occ = board.occupied_co[color]
                     mobility = chess.popcount(attacks & ~own_occ)
 
                 val = float(mobility) / max_m
-                osq = sq if turn == chess.WHITE else chess.square(chess.square_file(sq), 7 - chess.square_rank(sq))
-                plane[chess.square_rank(osq), chess.square_file(osq)] = np.float32(val)
+                row, col = orient_coords[sq]
+                plane[row, col] = np.float32(val)
 
         planes.append(plane)
 

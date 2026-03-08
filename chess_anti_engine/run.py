@@ -1,20 +1,275 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import json
+import re
+import shutil
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
 import torch
 
 from chess_anti_engine.config import RunConfig, StockfishConfig
-from chess_anti_engine.model import ModelConfig, build_model
+from chess_anti_engine.model import ModelConfig, build_model, zero_policy_head_parameters_
 from chess_anti_engine.replay import DiskReplayBuffer, ReplayBuffer, balance_wdl
 from chess_anti_engine.selfplay import play_batch
 from chess_anti_engine.selfplay.budget import progressive_mcts_simulations
-from chess_anti_engine.stockfish import DifficultyPID, StockfishPool, StockfishUCI
+from chess_anti_engine.stockfish import DifficultyPID, build_stockfish_clients
 from chess_anti_engine.train import Trainer
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
+
+
+def _read_last_jsonl_row(path: Path) -> dict | None:
+    if not path.exists():
+        return None
+    last: dict | None = None
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            for ln in f:
+                ln = ln.strip()
+                if not ln:
+                    continue
+                try:
+                    row = json.loads(ln)
+                except Exception:
+                    continue
+                if isinstance(row, dict):
+                    last = row
+    except Exception:
+        return None
+    return last
+
+
+def _read_jsonl_rows(path: Path) -> list[dict]:
+    rows: list[dict] = []
+    if not path.exists():
+        return rows
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            for ln in f:
+                ln = ln.strip()
+                if not ln:
+                    continue
+                try:
+                    row = json.loads(ln)
+                except Exception:
+                    continue
+                if isinstance(row, dict):
+                    rows.append(row)
+    except Exception:
+        return []
+    return rows
+
+
+def _trial_run_id_from_name(name: str) -> str | None:
+    m = re.match(r"^train_trial_(?P<rid>[^_]+)_", name)
+    if not m:
+        return None
+    return str(m.group("rid"))
+
+
+def _latest_tune_run_id(tune_dir: Path) -> str | None:
+    # Prefer latest PB2 policy log naming (pbt_policy_<runid>_<trial>.txt).
+    policy_files = sorted(
+        tune_dir.glob("pbt_policy_*.txt"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    for p in policy_files:
+        m = re.match(r"^pbt_policy_(?P<rid>[^_]+)_\d+\.txt$", p.name)
+        if m:
+            return str(m.group("rid"))
+
+    # Fallback: latest trial directory by mtime.
+    best: tuple[float, str] | None = None
+    for d in tune_dir.glob("train_trial_*"):
+        if not d.is_dir():
+            continue
+        rid = _trial_run_id_from_name(d.name)
+        if not rid:
+            continue
+        mt = float(d.stat().st_mtime)
+        if best is None or mt > best[0]:
+            best = (mt, rid)
+    return best[1] if best is not None else None
+
+
+def _run_salvage(args: argparse.Namespace) -> None:
+    """Export top-N trial seeds (checkpoint + replay shards) for fresh restart."""
+    tune_dir = Path(args.work_dir) / "tune"
+    if not tune_dir.exists():
+        raise SystemExit(f"Tune directory not found: {tune_dir}")
+
+    run_id = str(args.salvage_source_run_id) if args.salvage_source_run_id else _latest_tune_run_id(tune_dir)
+    if not run_id:
+        raise SystemExit(f"Could not infer run id from {tune_dir}")
+
+    metric_key = str(getattr(args, "salvage_metric", "opponent_strength"))
+    top_n = int(getattr(args, "salvage_top_n", 0))
+    if top_n <= 0:
+        top_n = int(getattr(args, "num_samples", 1))
+    top_n = max(1, top_n)
+
+    trial_dirs = sorted([d for d in tune_dir.glob(f"train_trial_{run_id}_*") if d.is_dir()])
+    scored: list[tuple[float, int, Path, dict]] = []
+    for td in trial_dirs:
+        rows = _read_jsonl_rows(td / "result.json")
+        if not rows:
+            continue
+
+        best_any: tuple[float, int, dict] | None = None
+        best_with_ckpt: tuple[float, int, dict] | None = None
+        for row in rows:
+            mv = row.get(metric_key)
+            if not isinstance(mv, (int, float)):
+                continue
+            metric = float(mv)
+            if not np.isfinite(metric):
+                continue
+            itv = row.get("training_iteration", row.get("iter", -1))
+            it = int(itv) if isinstance(itv, (int, float)) else -1
+
+            cand = (metric, it, row)
+            if best_any is None or (metric, it) > (best_any[0], best_any[1]):
+                best_any = cand
+
+            ckname = row.get("checkpoint_dir_name")
+            has_ckpt = False
+            if isinstance(ckname, str) and ckname.strip():
+                has_ckpt = (td / ckname / "trainer.pt").exists()
+            if has_ckpt and (best_with_ckpt is None or (metric, it) > (best_with_ckpt[0], best_with_ckpt[1])):
+                best_with_ckpt = cand
+
+        picked = best_with_ckpt or best_any
+        if picked is None:
+            continue
+        metric, it, row = picked
+        scored.append((float(metric), int(it), td, row))
+
+    if not scored:
+        raise SystemExit(
+            f"No trials with metric '{metric_key}' found under run_id={run_id} in {tune_dir}"
+        )
+
+    scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    selected = scored[: min(top_n, len(scored))]
+
+    out_dir_raw = getattr(args, "salvage_out_dir", None)
+    if out_dir_raw:
+        out_dir = Path(str(out_dir_raw))
+    else:
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        out_dir = Path(args.work_dir) / "salvage" / f"{run_id}_{stamp}"
+    seeds_dir = out_dir / "seeds"
+    seeds_dir.mkdir(parents=True, exist_ok=True)
+
+    copy_replay = bool(getattr(args, "salvage_copy_replay", True))
+    entries: list[dict] = []
+    for slot, (metric, it, td, row) in enumerate(selected):
+        seed_dir = seeds_dir / f"slot_{slot:03d}"
+        seed_dir.mkdir(parents=True, exist_ok=True)
+
+        row_ckpt_name = row.get("checkpoint_dir_name") if isinstance(row, dict) else None
+        row_ckpt_dir = td / str(row_ckpt_name) if isinstance(row_ckpt_name, str) and row_ckpt_name.strip() else None
+        ckpt_dir = row_ckpt_dir if (row_ckpt_dir is not None and (row_ckpt_dir / "trainer.pt").exists()) else (td / "ckpt")
+        ckpt_source = "result_row_checkpoint" if ckpt_dir is row_ckpt_dir else "mutable_ckpt_fallback"
+        if ckpt_source != "result_row_checkpoint":
+            print(
+                f"[salvage] WARNING: using fallback ckpt for {td.name} "
+                f"(row checkpoint missing: {row_ckpt_name})"
+            )
+        for fn in ("trainer.pt", "pid_state.json", "trial_meta.json", "rng_state.json"):
+            src = ckpt_dir / fn
+            if src.exists():
+                shutil.copy2(str(src), str(seed_dir / fn))
+
+        # Align salvaged PID state with the same metrics row used for ranking.
+        # This avoids stale difficulty carryover when ckpt writes and result rows
+        # are out of phase (e.g. salvaging while trials are still running).
+        pid_state_overrides: list[str] = []
+        pid_seed_path = seed_dir / "pid_state.json"
+        if pid_seed_path.exists() and isinstance(row, dict):
+            try:
+                pid_obj = json.loads(pid_seed_path.read_text(encoding="utf-8"))
+            except Exception:
+                pid_obj = None
+            if isinstance(pid_obj, dict):
+                def _set_pid(dst_key: str, src_keys: tuple[str, ...], *, as_int: bool = False) -> None:
+                    for sk in src_keys:
+                        v = row.get(sk)
+                        if not isinstance(v, (int, float)):
+                            continue
+                        fv = float(v)
+                        if not np.isfinite(fv):
+                            continue
+                        pid_obj[dst_key] = int(fv) if as_int else fv
+                        pid_state_overrides.append(f"{dst_key}<-{sk}")
+                        return
+
+                _set_pid("random_move_prob", ("random_move_prob_next", "random_move_prob"))
+                _set_pid("nodes", ("sf_nodes_next", "sf_nodes"), as_int=True)
+                _set_pid("skill_level", ("skill_level_next", "skill_level"), as_int=True)
+                _set_pid("ema_winrate", ("pid_ema_winrate",))
+
+                if pid_state_overrides:
+                    try:
+                        pid_seed_path.write_text(
+                            json.dumps(pid_obj, indent=2, sort_keys=True),
+                            encoding="utf-8",
+                        )
+                    except Exception:
+                        pass
+
+        copied_shards = 0
+        if copy_replay:
+            src_replay = td / "replay_shards"
+            if src_replay.is_dir():
+                dst_replay = seed_dir / "replay_shards"
+                dst_replay.mkdir(parents=True, exist_ok=True)
+                for sp in sorted(src_replay.glob("shard_*.npz")):
+                    shutil.copy2(str(sp), str(dst_replay / sp.name))
+                    copied_shards += 1
+
+        entries.append(
+            {
+                "slot": int(slot),
+                "metric": float(metric),
+                "training_iteration": int(it),
+                "source_trial_dir": str(td.resolve()),
+                "checkpoint_source": str(ckpt_source),
+                "checkpoint_dir_name": str(row_ckpt_name) if isinstance(row_ckpt_name, str) else "",
+                "seed_dir": str(seed_dir.relative_to(out_dir)),
+                "copied_replay_shards": int(copied_shards),
+                "pid_state_overrides": list(pid_state_overrides),
+                "result_row": row,
+            }
+        )
+
+    manifest = {
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "source_tune_dir": str(tune_dir.resolve()),
+        "source_run_id": str(run_id),
+        "metric": metric_key,
+        "top_n": int(len(entries)),
+        "entries": entries,
+    }
+    (out_dir / "manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    print(
+        f"[salvage] wrote {len(entries)} seeds from run_id={run_id} "
+        f"metric={metric_key} to {out_dir}"
+    )
+    for e in entries:
+        print(
+            f"[salvage] slot={e['slot']:02d} metric={e['metric']:.3f} "
+            f"iter={e['training_iteration']} shards={e['copied_replay_shards']} "
+            f"src={Path(e['source_trial_dir']).name}"
+        )
 
 
 def _run_single(args: argparse.Namespace) -> None:
@@ -47,7 +302,12 @@ def _run_single(args: argparse.Namespace) -> None:
     cfg.selfplay.timeout_adjudication_threshold = float(
         getattr(args, "timeout_adjudication_threshold", cfg.selfplay.timeout_adjudication_threshold)
     )
-    cfg.stockfish = StockfishConfig(path=args.stockfish_path, nodes=int(args.sf_nodes), multipv=int(args.sf_multipv))
+    cfg.stockfish = StockfishConfig(
+        path=args.stockfish_path,
+        nodes=int(args.sf_nodes),
+        multipv=int(args.sf_multipv),
+        hash_mb=int(getattr(args, "sf_hash_mb", 16)),
+    )
     cfg.stockfish.pid_enabled = bool(args.sf_pid_enabled)
     cfg.stockfish.pid_target_winrate = float(args.sf_pid_target_winrate)
     cfg.stockfish.pid_ema_alpha = float(args.sf_pid_ema_alpha)
@@ -104,6 +364,8 @@ def _run_single(args: argparse.Namespace) -> None:
         w_sf_volatility=float(getattr(args, "w_sf_volatility", getattr(args, "w_volatility", 0.05))),
         w_moves_left=float(getattr(args, "w_moves_left", 0.02)),
         w_sf_wdl=float(getattr(args, "w_sf_wdl", 1.0)),
+        sf_wdl_conf_power=float(getattr(args, "sf_wdl_conf_power", 0.0)),
+        sf_wdl_draw_scale=float(getattr(args, "sf_wdl_draw_scale", 1.0)),
     )
 
     # Growing sliding window
@@ -134,19 +396,28 @@ def _run_single(args: argparse.Namespace) -> None:
             print(f"Loading pre-trained bootstrap model weights: {bp}")
             ckpt_data = torch.load(str(bp), map_location=args.device)
             trainer.model.load_state_dict(ckpt_data["model"])
+            if bool(getattr(args, "bootstrap_zero_policy_heads", False)):
+                zeroed = zero_policy_head_parameters_(trainer.model)
+                if zeroed:
+                    print(f"Zeroed bootstrap policy heads: {', '.join(zeroed)}")
             del ckpt_data
         else:
             print(f"WARNING: bootstrap checkpoint not found: {bp}")
 
-    if int(args.sf_workers) > 1:
-        sf = StockfishPool(
-            path=cfg.stockfish.path,
-            nodes=cfg.stockfish.nodes,
-            num_workers=int(args.sf_workers),
-            multipv=int(getattr(cfg.stockfish, "multipv", 1)),
-        )
-    else:
-        sf = StockfishUCI(cfg.stockfish.path, nodes=cfg.stockfish.nodes, multipv=int(getattr(cfg.stockfish, "multipv", 1)))
+    sf_clients = build_stockfish_clients(
+        path=cfg.stockfish.path,
+        nodes=int(cfg.stockfish.nodes),
+        total_workers=int(args.sf_workers),
+        pipelines=int(getattr(args, "selfplay_pipelines", 1)),
+        multipv=int(getattr(cfg.stockfish, "multipv", 1)),
+        hash_mb=int(getattr(cfg.stockfish, "hash_mb", 16)),
+    )
+    sf = sf_clients[0]
+    pipeline_rngs = [
+        np.random.default_rng(int(rng.integers(0, 2**32, dtype=np.uint32)))
+        for _ in range(len(sf_clients))
+    ]
+    selfplay_exec = ThreadPoolExecutor(max_workers=len(sf_clients)) if len(sf_clients) > 1 else None
 
     ckpt_path = cfg.work_dir / "ckpt.pt"
     if ckpt_path.exists():
@@ -235,10 +506,8 @@ def _run_single(args: argparse.Namespace) -> None:
             total_sf_d6 = 0.0
             current_rand = float(pid.random_move_prob) if pid is not None else 0.0
 
-            selfplay_kwargs = dict(
+            selfplay_common_kwargs = dict(
                 device=cfg.train.device,
-                rng=rng,
-                stockfish=sf,
                 opponent_random_move_prob=current_rand,
                 temperature=cfg.selfplay.temperature,
                 temperature_drop_plies=int(cfg.selfplay.temperature_drop_plies),
@@ -273,18 +542,52 @@ def _run_single(args: argparse.Namespace) -> None:
                 fpu_at_root=float(getattr(args, "fpu_at_root", 1.0)),
             )
             while games_remaining > 0:
-                chunk = min(selfplay_batch, games_remaining)
-                samples, sp_stats = play_batch(
-                    trainer.model, games=chunk, **selfplay_kwargs,
-                )
-                games_remaining -= chunk
-                total_positions += sp_stats.positions
-                total_w += sp_stats.w
-                total_d += sp_stats.d
-                total_l += sp_stats.l
-                total_sf_d6 += sp_stats.sf_eval_delta6 * chunk
-                buf.add_many(samples)
-                del samples
+                wave: list[tuple[int, int]] = []
+                for pipeline_idx in range(len(sf_clients)):
+                    if games_remaining <= 0:
+                        break
+                    chunk = min(selfplay_batch, games_remaining)
+                    games_remaining -= chunk
+                    wave.append((pipeline_idx, chunk))
+
+                if selfplay_exec is None:
+                    pipeline_idx, chunk = wave[0]
+                    samples, sp_stats = play_batch(
+                        trainer.model,
+                        games=chunk,
+                        rng=pipeline_rngs[pipeline_idx],
+                        stockfish=sf_clients[pipeline_idx],
+                        **selfplay_common_kwargs,
+                    )
+                    results = [(samples, sp_stats, chunk)]
+                else:
+                    futures = [
+                        (
+                            chunk,
+                            selfplay_exec.submit(
+                                play_batch,
+                                trainer.model,
+                                games=chunk,
+                                rng=pipeline_rngs[pipeline_idx],
+                                stockfish=sf_clients[pipeline_idx],
+                                **selfplay_common_kwargs,
+                            ),
+                        )
+                        for pipeline_idx, chunk in wave
+                    ]
+                    results = [
+                        (*future.result(), chunk)
+                        for chunk, future in futures
+                    ]
+
+                for samples, sp_stats, chunk in results:
+                    total_positions += sp_stats.positions
+                    total_w += sp_stats.w
+                    total_d += sp_stats.d
+                    total_l += sp_stats.l
+                    total_sf_d6 += sp_stats.sf_eval_delta6 * chunk
+                    buf.add_many(samples)
+                    del samples
 
             buf.flush()
 
@@ -365,7 +668,10 @@ def _run_single(args: argparse.Namespace) -> None:
             trainer.save(ckpt_path)
 
     finally:
-        sf.close()
+        if selfplay_exec is not None:
+            selfplay_exec.shutdown(wait=True, cancel_futures=False)
+        for client in sf_clients:
+            client.close()
 
 
 def main() -> None:
@@ -382,12 +688,26 @@ def main() -> None:
     ap = argparse.ArgumentParser(parents=[pre])
 
     # Mandatory harness: default to Ray Tune.
-    ap.add_argument("--mode", type=str, default="tune", choices=["tune", "single"])
+    ap.add_argument("--mode", type=str, default="tune", choices=["tune", "single", "salvage"])
     ap.add_argument(
         "--resume",
         action="store_true",
         help="Resume a previous Ray Tune run (restore errored and unfinished trials)",
     )
+    ap.add_argument("--salvage-source-run-id", type=str, default=None,
+                    help="Salvage mode: source Tune run id (e.g. 7773d). Default: auto-detect latest.")
+    ap.add_argument("--salvage-top-n", type=int, default=0,
+                    help="Salvage mode: number of top trials to export (<=0 uses num_samples).")
+    ap.add_argument("--salvage-out-dir", type=str, default=None,
+                    help="Salvage mode: output directory for exported seeds (default under work_dir/salvage/).")
+    ap.add_argument("--salvage-metric", type=str, default="opponent_strength",
+                    help="Salvage mode: metric key to rank trials by.")
+    copy_group = ap.add_mutually_exclusive_group()
+    copy_group.add_argument("--salvage-copy-replay", dest="salvage_copy_replay", action="store_true",
+                            help="Salvage mode: copy replay shard windows into exported seeds (default on).")
+    copy_group.add_argument("--no-salvage-copy-replay", dest="salvage_copy_replay", action="store_false",
+                            help="Salvage mode: export checkpoints only (no replay shards).")
+    ap.set_defaults(salvage_copy_replay=True)
 
     # Disk usage controls
     ap.add_argument(
@@ -412,12 +732,37 @@ def main() -> None:
              "(e.g. 0.1 for 10 trials on a single 5090).",
     )
     ap.add_argument(
-        "--tune-scheduler", type=str, default="pb2", choices=["pb2", "asha"],
-        help="Tune scheduler: pb2 (PB2, recommended for RL) or asha (legacy, for architecture ablations).",
+        "--tune-scheduler", type=str, default="pb2", choices=["pb2", "pbt", "gpbt_pl", "asha"],
+        help=(
+            "Tune scheduler: pb2 (default, sample-efficient for RL), "
+            "pbt (vanilla population-based training), gpbt_pl (pairwise-learning "
+            "PBT variant), or asha (legacy, "
+            "for architecture ablations)."
+        ),
     )
     ap.add_argument(
         "--pb2-perturbation-interval", type=int, default=10,
-        help="PB2: iterations between exploit+explore steps.",
+        help="PB2/PBT: iterations between exploit+explore steps.",
+    )
+    ap.add_argument(
+        "--pbt-synch", action="store_true",
+        help="PBT: perturb synchronously across trials instead of asynchronously.",
+    )
+    ap.add_argument(
+        "--gpbt-pairwise-lr", type=float, default=0.35,
+        help="GPBT-PL: pairwise hyperparameter step size toward the donor config.",
+    )
+    ap.add_argument(
+        "--gpbt-pairwise-momentum", type=float, default=0.5,
+        help="GPBT-PL: momentum applied to per-trial pairwise hyperparameter velocity.",
+    )
+    ap.add_argument(
+        "--gpbt-quantile-fraction", type=float, default=0.25,
+        help="GPBT-PL: bottom/top population fraction used for exploit pairing.",
+    )
+    ap.add_argument(
+        "--gpbt-resample-probability", type=float, default=0.05,
+        help="GPBT-PL: resample probability for categorical hyperparameters.",
     )
     ap.add_argument("--search-smolgen", action="store_true",
                     help="PB2/ASHA: include smolgen on/off as a binary search dimension.")
@@ -457,6 +802,8 @@ def main() -> None:
     # Bootstrap and gating
     ap.add_argument("--bootstrap-dir", type=str, default=None, help="Directory with bootstrap NPZ shards")
     ap.add_argument("--bootstrap-checkpoint", type=str, default=None, help="Path to pre-trained bootstrap checkpoint (from scripts/train_bootstrap.py)")
+    ap.add_argument("--bootstrap-zero-policy-heads", action="store_true",
+                    help="After loading bootstrap weights, zero policy heads so priors start near-uniform.")
     ap.add_argument("--bootstrap-max-positions", type=int, default=0, help="Max bootstrap positions to load (0=unlimited)")
     ap.add_argument("--bootstrap-train-steps", type=int, default=0, help="Pre-training steps on bootstrap data (0=disabled)")
     ap.add_argument("--gate-games", type=int, default=0, help="Net gating: games to play after training (0=disabled)")
@@ -465,10 +812,50 @@ def main() -> None:
     ap.add_argument("--gate-mcts-sims", type=int, default=1, help="MCTS sims for gate games (1=raw policy)")
     ap.add_argument("--shuffle-buffer-size", type=int, default=20_000, help="Disk replay: in-memory shuffle buffer size")
     ap.add_argument("--shard-size", type=int, default=1000, help="Disk replay: samples per on-disk shard")
+    ap.add_argument("--exploit-replay-refresh-enabled", action="store_true",
+                    help="On PB2 exploit restore, refresh recipient replay shards (prune oldest + inject donor recent).")
+    ap.add_argument("--exploit-replay-keep-fraction", type=float, default=0.60,
+                    help="Fraction of newest local replay shards to keep on exploit refresh.")
+    ap.add_argument("--exploit-replay-donor-shards", type=int, default=6,
+                    help="Number of donor recent replay shards to copy into recipient on exploit refresh.")
+    ap.add_argument("--exploit-replay-skip-newest", type=int, default=1,
+                    help="Skip this many newest donor shards when injecting (avoid in-flight write races).")
+    ap.add_argument("--exploit-replay-share-top-enabled", action="store_true",
+                    help="On exploit restore, also inject recent replay shards from current top sibling trials.")
+    ap.add_argument("--exploit-replay-top-k-trials", type=int, default=0,
+                    help="How many top sibling trials to source from on exploit refresh (0 or negative means all).")
+    ap.add_argument("--exploit-replay-top-within-best-frac", type=float, default=0.10,
+                    help="Only source from trials with metric >= best*(1-frac), e.g. 0.10 keeps within 10%% of best.")
+    ap.add_argument("--exploit-replay-top-shards-per-trial", type=int, default=0,
+                    help="Deprecated/ignored: latest-generation shards are imported automatically.")
+    ap.add_argument("--exploit-replay-top-min-metric", type=float, default=-1e9,
+                    help="Minimum latest trial metric required for top-trial replay sharing.")
+    ap.add_argument("--exploit-replay-local-keep-recent-fraction", type=float, default=0.20,
+                    help="Fraction of recipient's most recent local generation to keep on exploit refresh.")
+    ap.add_argument("--exploit-replay-local-keep-older-fraction", type=float, default=0.65,
+                    help="Fraction of recipient's older local replay to keep on exploit refresh.")
+    ap.add_argument("--pause-file", type=str, default=None,
+                    help="If this file exists, each trial pauses at iteration boundaries until it is removed.")
+    ap.add_argument("--pause-poll-seconds", type=int, default=60,
+                    help="Pause gate polling interval in seconds.")
+    ap.add_argument("--salvage-seed-pool-dir", type=str, default=None,
+                    help="Optional seed pool dir (from --mode salvage) to warm-start fresh trials.")
     ap.add_argument("--replay-window-start", type=int, default=100_000, help="Initial sliding window size")
     ap.add_argument("--replay-window-max", type=int, default=1_000_000, help="Max sliding window size")
     ap.add_argument("--replay-window-growth", type=int, default=10_000, help="Window growth per iteration")
     ap.add_argument("--w-sf-wdl", type=float, default=1.0, help="SF WDL bootstrap weight for main value head")
+    ap.add_argument(
+        "--sf-wdl-conf-power",
+        type=float,
+        default=0.0,
+        help="Optional confidence damping for SF-WDL loss: weight by (1-draw_prob)^power (0=disabled).",
+    )
+    ap.add_argument(
+        "--sf-wdl-draw-scale",
+        type=float,
+        default=1.0,
+        help="Optional extra multiplier for SF-WDL on draw outcomes (1=disabled, <1 damps draws).",
+    )
     ap.add_argument("--sf-wdl-floor", type=float, default=0.1, help="SF WDL weight floor")
     ap.add_argument("--sf-wdl-floor-at", type=float, default=0.1, help="random_move_prob at which SF WDL weight reaches floor")
 
@@ -487,6 +874,7 @@ def main() -> None:
     ap.add_argument("--stockfish-path", type=str, default=None)
     ap.add_argument("--sf-nodes", type=int, default=2000)
     ap.add_argument("--sf-multipv", type=int, default=5)
+    ap.add_argument("--sf-hash-mb", type=int, default=16)
     ap.add_argument("--sf-workers", type=int, default=1)
     ap.add_argument("--sf-policy-temp", type=float, default=0.25)
     ap.add_argument("--sf-policy-label-smooth", type=float, default=0.05)
@@ -496,6 +884,8 @@ def main() -> None:
     ap.add_argument("--opening-book-max-games", type=int, default=200000)
     ap.add_argument("--opening-book-prob", type=float, default=1.0)
     ap.add_argument("--random-start-plies", type=int, default=0)
+    ap.add_argument("--selfplay-pipelines", type=int, default=1,
+                    help="Local selfplay generators per trial/run. Splits total sf_workers across pipelines.")
 
     pid_group = ap.add_mutually_exclusive_group()
     pid_group.add_argument("--sf-pid", dest="sf_pid_enabled", action="store_true", help="Enable adaptive SF PID")
@@ -608,6 +998,10 @@ def main() -> None:
     ap.set_defaults(**cfg_defaults)
     args = ap.parse_args()
 
+    if str(args.mode) == "salvage":
+        _run_salvage(args)
+        return
+
     if args.stockfish_path is None:
         raise SystemExit("--stockfish-path is required (or set stockfish.path in --config)")
 
@@ -629,6 +1023,7 @@ def main() -> None:
         "search_volatility_source": bool(args.search_volatility_source),
         "sf_nodes": int(args.sf_nodes),
         "sf_multipv": int(args.sf_multipv),
+        "sf_hash_mb": int(getattr(args, "sf_hash_mb", 16)),
         "sf_policy_temp": float(args.sf_policy_temp),
         "sf_policy_label_smooth": float(args.sf_policy_label_smooth),
         "timeout_adjudication_threshold": float(getattr(args, "timeout_adjudication_threshold", 0.90)),
@@ -644,11 +1039,17 @@ def main() -> None:
         "sf_pid_integral_clamp": float(args.sf_pid_integral_clamp),
         "sf_pid_min_nodes": int(args.sf_pid_min_nodes),
         "sf_pid_max_nodes": int(args.sf_pid_max_nodes),
+        "sf_pid_random_move_prob_start": float(getattr(args, "sf_pid_random_move_prob_start", 1.0)),
+        "sf_pid_random_move_prob_min": float(getattr(args, "sf_pid_random_move_prob_min", 0.0)),
+        "sf_pid_random_move_prob_max": float(getattr(args, "sf_pid_random_move_prob_max", 1.0)),
+        "sf_pid_random_move_stage_end": float(getattr(args, "sf_pid_random_move_stage_end", 0.5)),
+        "sf_pid_max_rand_step": float(getattr(args, "sf_pid_max_rand_step", 0.01)),
         "opening_book_path": args.opening_book_path,
         "opening_book_max_plies": int(args.opening_book_max_plies),
         "opening_book_max_games": int(args.opening_book_max_games),
         "opening_book_prob": float(args.opening_book_prob),
         "random_start_plies": int(args.random_start_plies),
+        "selfplay_pipelines": int(args.selfplay_pipelines),
         "eval_games": int(args.eval_games),
         "eval_sf_nodes": int(args.eval_sf_nodes) if args.eval_sf_nodes is not None else int(args.sf_nodes),
         "eval_mcts_simulations": (
@@ -673,6 +1074,15 @@ def main() -> None:
         "train_steps": int(args.train_steps),
         "batch_size": int(args.batch_size),
         "feature_dropout_p": float(args.feature_dropout_p),
+        "w_policy": float(getattr(args, "w_policy", 1.0)),
+        "w_soft": float(getattr(args, "w_soft", 0.5)),
+        "w_future": float(getattr(args, "w_future", 0.15)),
+        "w_wdl": float(getattr(args, "w_wdl", 1.0)),
+        "w_sf_move": float(getattr(args, "w_sf_move", 0.15)),
+        "w_sf_eval": float(getattr(args, "w_sf_eval", 0.15)),
+        "w_categorical": float(getattr(args, "w_categorical", 0.10)),
+        "w_sf_volatility": float(getattr(args, "w_sf_volatility", getattr(args, "w_volatility", 0.05))),
+        "w_moves_left": float(getattr(args, "w_moves_left", 0.02)),
         "w_volatility": float(args.w_volatility),
         "max_plies": int(args.max_plies),
         "use_amp": not bool(args.no_amp),
@@ -716,11 +1126,40 @@ def main() -> None:
         "puzzle_simulations": int(args.puzzle_simulations),
         "bootstrap_dir": getattr(args, "bootstrap_dir", None),
         "bootstrap_checkpoint": getattr(args, "bootstrap_checkpoint", None),
+        "bootstrap_zero_policy_heads": bool(getattr(args, "bootstrap_zero_policy_heads", False)),
         "bootstrap_max_positions": int(getattr(args, "bootstrap_max_positions", 0)),
         "bootstrap_train_steps": int(getattr(args, "bootstrap_train_steps", 0)),
         "shared_shards_dir": getattr(args, "shared_shards_dir", None),
         "shuffle_buffer_size": int(getattr(args, "shuffle_buffer_size", 20_000)),
         "shard_size": int(getattr(args, "shard_size", 1000)),
+        "exploit_replay_refresh_enabled": bool(getattr(args, "exploit_replay_refresh_enabled", False)),
+        "exploit_replay_keep_fraction": float(getattr(args, "exploit_replay_keep_fraction", 0.60)),
+        "exploit_replay_donor_shards": int(getattr(args, "exploit_replay_donor_shards", 6)),
+        "exploit_replay_skip_newest": int(getattr(args, "exploit_replay_skip_newest", 1)),
+        "exploit_replay_share_top_enabled": bool(getattr(args, "exploit_replay_share_top_enabled", False)),
+        "exploit_replay_top_k_trials": int(getattr(args, "exploit_replay_top_k_trials", 0)),
+        "exploit_replay_top_within_best_frac": float(getattr(args, "exploit_replay_top_within_best_frac", 0.10)),
+        "exploit_replay_top_shards_per_trial": int(getattr(args, "exploit_replay_top_shards_per_trial", 0)),
+        "exploit_replay_top_min_metric": float(getattr(args, "exploit_replay_top_min_metric", -1e9)),
+        "exploit_replay_local_keep_recent_fraction": float(
+            getattr(args, "exploit_replay_local_keep_recent_fraction", 0.20)
+        ),
+        "exploit_replay_local_keep_older_fraction": float(
+            getattr(args, "exploit_replay_local_keep_older_fraction", 0.65)
+        ),
+        "pause_file": getattr(args, "pause_file", None),
+        "pause_poll_seconds": int(getattr(args, "pause_poll_seconds", 60)),
+        "salvage_seed_pool_dir": getattr(args, "salvage_seed_pool_dir", None),
+        "salvage_restore_donor_config": bool(getattr(args, "salvage_restore_donor_config", False)),
+        "salvage_restore_full_trainer_state": bool(getattr(args, "salvage_restore_full_trainer_state", False)),
+        "salvage_startup_no_share_iters": int(getattr(args, "salvage_startup_no_share_iters", 0)),
+        "salvage_startup_max_train_steps": int(getattr(args, "salvage_startup_max_train_steps", 0)),
+        "salvage_startup_post_share_ramp_iters": int(
+            getattr(args, "salvage_startup_post_share_ramp_iters", 0)
+        ),
+        "salvage_startup_post_share_max_train_steps": int(
+            getattr(args, "salvage_startup_post_share_max_train_steps", 0)
+        ),
         "replay_window_start": int(getattr(args, "replay_window_start", 100_000)),
         "replay_window_max": int(getattr(args, "replay_window_max", 1_000_000)),
         "replay_window_growth": int(getattr(args, "replay_window_growth", 10_000)),
@@ -729,6 +1168,8 @@ def main() -> None:
         "gate_interval": int(getattr(args, "gate_interval", 1)),
         "gate_mcts_sims": int(getattr(args, "gate_mcts_sims", 1)),
         "w_sf_wdl": float(getattr(args, "w_sf_wdl", 1.0)),
+        "sf_wdl_conf_power": float(getattr(args, "sf_wdl_conf_power", 0.0)),
+        "sf_wdl_draw_scale": float(getattr(args, "sf_wdl_draw_scale", 1.0)),
         "sf_wdl_floor": float(getattr(args, "sf_wdl_floor", 0.1)),
         "sf_wdl_floor_at": float(getattr(args, "sf_wdl_floor_at", 0.1)),
         "work_dir": str(Path(args.work_dir) / "tune"),
@@ -739,6 +1180,11 @@ def main() -> None:
         "gpus_per_trial": float(args.gpus_per_trial),
         "tune_scheduler": str(args.tune_scheduler),
         "pb2_perturbation_interval": int(args.pb2_perturbation_interval),
+        "pbt_synch": bool(args.pbt_synch),
+        "gpbt_pairwise_lr": float(args.gpbt_pairwise_lr),
+        "gpbt_pairwise_momentum": float(args.gpbt_pairwise_momentum),
+        "gpbt_quantile_fraction": float(args.gpbt_quantile_fraction),
+        "gpbt_resample_probability": float(args.gpbt_resample_probability),
         "search_smolgen": bool(args.search_smolgen),
         "search_nla": bool(args.search_nla),
         "search_optimizer": bool(args.search_optimizer),

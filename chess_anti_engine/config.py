@@ -9,6 +9,7 @@ class StockfishConfig:
     path: str
     nodes: int = 2000
     multipv: int = 5
+    hash_mb: int = 16
 
     # Adaptive difficulty PID (spec)
     pid_enabled: bool = True

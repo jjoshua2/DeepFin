@@ -18,6 +18,32 @@ from .buffer import ReplaySample
 from .shard import load_npz, save_npz
 
 
+def _compact_f16(arr: np.ndarray | None) -> np.ndarray | None:
+    if arr is None:
+        return None
+    return np.array(arr, dtype=np.float16, copy=True, order="C")
+
+
+def _compact_u8(arr: np.ndarray | None) -> np.ndarray | None:
+    if arr is None:
+        return None
+    return np.array(arr, dtype=np.uint8, copy=True, order="C")
+
+
+def _compact_sample_inplace(sample: ReplaySample) -> ReplaySample:
+    sample.x = _compact_f16(sample.x)
+    sample.policy_target = _compact_f16(sample.policy_target)
+    sample.sf_wdl = _compact_f16(sample.sf_wdl)
+    sample.sf_policy_target = _compact_f16(sample.sf_policy_target)
+    sample.categorical_target = _compact_f16(sample.categorical_target)
+    sample.policy_soft_target = _compact_f16(sample.policy_soft_target)
+    sample.future_policy_target = _compact_f16(sample.future_policy_target)
+    sample.volatility_target = _compact_f16(sample.volatility_target)
+    sample.sf_volatility_target = _compact_f16(sample.sf_volatility_target)
+    sample.legal_mask = _compact_u8(sample.legal_mask)
+    return sample
+
+
 class DiskReplayBuffer:
     """Disk-backed replay buffer with small in-memory shuffle buffer."""
 
@@ -107,14 +133,15 @@ class DiskReplayBuffer:
 
     def add_many(self, samples: list[ReplaySample]) -> None:
         """Add samples: into shuffle buffer immediately, flush to disk when full."""
+        compacted = [_compact_sample_inplace(s) for s in samples]
         # Add to shuffle buffer (newest data always available for training).
-        self._shuffle_buf.extend(samples)
+        self._shuffle_buf.extend(compacted)
         if len(self._shuffle_buf) > self._shuffle_cap:
             # Keep the most recent samples.
             self._shuffle_buf = self._shuffle_buf[-self._shuffle_cap:]
 
         # Add to write buffer, flush to disk when we have enough.
-        self._write_buf.extend(samples)
+        self._write_buf.extend(compacted)
         while len(self._write_buf) >= self._shard_size:
             self._flush_shard(self._write_buf[:self._shard_size])
             self._write_buf = self._write_buf[self._shard_size:]
@@ -140,14 +167,23 @@ class DiskReplayBuffer:
 
     def _enforce_window(self) -> None:
         """Delete oldest shards when total exceeds capacity."""
+        if self._total_positions > self.capacity and not self._shard_paths:
+            print(f"[disk_buf] BUG: total_pos={self._total_positions} > cap={self.capacity} "
+                  f"but no tracked shards to delete!")
+        deleted = 0
         while self._total_positions > self.capacity and self._shard_paths:
             oldest = self._shard_paths.pop(0)
             n = self._shard_sizes.pop(0)
             self._total_positions -= n
+            deleted += 1
             try:
                 oldest.unlink(missing_ok=True)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[disk_buf] WARNING: failed to delete {oldest}: {e}")
+        if deleted:
+            print(f"[disk_buf] enforce_window: deleted {deleted} shards, "
+                  f"total_pos={self._total_positions}, cap={self.capacity}, "
+                  f"tracked={len(self._shard_paths)}")
 
     def sample_batch(self, batch_size: int, *, wdl_balance: bool = True) -> list[ReplaySample]:
         """Sample a batch from the shuffle buffer."""
@@ -303,9 +339,17 @@ class DiskReplayBuffer:
         if not new_samples:
             return
 
-        # Replace oldest half of shuffle buffer with new samples.
-        half = len(self._shuffle_buf) // 2
-        self._shuffle_buf = self._shuffle_buf[half:] + new_samples
+        # Replace only as many oldest samples as we actually loaded.
+        #
+        # Previous logic always dropped half the buffer, which could shrink the
+        # effective shuffle pool over time when `new_samples` was much smaller
+        # than half. Keeping replacement size tied to loaded data preserves the
+        # configured shuffle capacity while still rotating in fresh shards.
+        replace_n = min(len(self._shuffle_buf), len(new_samples))
+        if replace_n > 0:
+            self._shuffle_buf = self._shuffle_buf[replace_n:] + new_samples
+        else:
+            self._shuffle_buf.extend(new_samples)
 
         # Trim to capacity.
         if len(self._shuffle_buf) > self._shuffle_cap:

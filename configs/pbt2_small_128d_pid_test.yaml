@@ -7,9 +7,9 @@
 #   Trial 00005 winning config: lr=0.0016, w_soft=0.89, w_future=0.26, w_sf_move=0.01
 #   Fix: trainable uses trial_dir for per-trial state, bounds narrowed around winner
 #
-# What PB2 searches now (fresh 384d bootstrap run):
-#   lr, w_wdl, w_sf_wdl
-# We keep the search narrow until the new bootstrap proves stable.
+# What PB2 searches (6 params — value-head focused):
+#   lr [8e-4, 2.5e-3], w_soft [0.5, 1.0], w_sf_move [0.0, 0.05],
+#   w_wdl [0.3, 0.8], w_sf_wdl [0.0, 0.05], sf_wdl_draw_scale [0.4, 1.0]
 #
 # What is pinned:
 #   diff_focus_* (medians of top-5), temperature, playout_cap_fraction,
@@ -29,17 +29,23 @@ replay_window_growth: 150   # Grow window by 150/iter
 
 # Bootstrap: train initial net on all random games, then discard from window
 bootstrap_dir: data/bootstrap
-bootstrap_checkpoint: /home/josh/projects/chess/data/bootstrap/bootstrap_net.pt  # Pre-trained (run scripts/train_bootstrap.py once)
-bootstrap_zero_policy_heads: true  # Bootstrap trained value/trunk only; start policy heads near-uniform on fresh runs.
+bootstrap_checkpoint: /home/josh/projects/chess/data/bootstrap/bootstrap_net_128d.pt  # Pre-trained (run scripts/train_bootstrap.py once)
 bootstrap_max_positions: 0   # 0 = load ALL positions (14.2M) — used by scripts/train_bootstrap.py
 bootstrap_train_steps: 0     # 0 = auto: train 1 epoch — used by scripts/train_bootstrap.py
 shared_shards_dir: null  # Disabled: start trials from bootstrap weights + fresh selfplay window
+salvage_seed_pool_dir: /home/josh/projects/chess/runs/pbt2_small/salvage/f6bab_20260306_120229
+salvage_restore_donor_config: true
+salvage_restore_full_trainer_state: true
+salvage_startup_no_share_iters: 4
+salvage_startup_max_train_steps: 12
+salvage_startup_post_share_ramp_iters: 2
+salvage_startup_post_share_max_train_steps: 20
 
 model:
   kind: transformer
-  embed_dim: 384     # 15M params, ~20 GB for 8 trials in 32 GB VRAM
-  num_layers: 8
-  num_heads: 12
+  embed_dim: 128     # Keep 128d for PID test while 384d bootstrap trains
+  num_layers: 4
+  num_heads: 4
   ffn_mult: 2
   use_smolgen: true  # Pin to true (we know smolgen helps from spec)
   use_nla: false
@@ -57,8 +63,8 @@ stockfish:
 
   pid_enabled: true
   pid_target_winrate: 0.53
-  pid_ema_alpha: 0.20      # EMA half-life ~3.1 iterations; react faster while keeping per-step changes small.
-  pid_deadzone: 0.025
+  pid_ema_alpha: 0.20      # EMA half-life ~3 iterations; react within one perturb window.
+  pid_deadzone: 0.02
   pid_rate_limit: 0.10
   pid_min_games_between_adjust: 150  # Fire after 1 full iteration (150 games)
   pid_kp: 1.5
@@ -67,16 +73,15 @@ stockfish:
   pid_integral_clamp: 1.0
   pid_min_nodes: 1000        # Keep nodes fixed — difficulty via random_move_prob only
   pid_max_nodes: 1000
-  pid_random_move_prob_start: 0.995
+  pid_random_move_prob_start: 1.0
   pid_random_move_prob_min: 0.0
   pid_random_move_prob_max: 1.0
   pid_random_move_stage_end: 0.5
-  pid_max_rand_step: 0.005  # Cap difficulty changes at 0.5% per iteration to avoid early overshoots.
+  pid_max_rand_step: 0.015 # Keep per-iter change small, but not so small that PB2 outruns PID.
 
 selfplay:
   games_per_iter: 150  # ~3k-5k samples per iter after filtering (150 games)
   selfplay_batch: 12    # Play games in mini-batches of 12 to improve throughput with 2 SF workers
-  selfplay_pipelines: 2  # Split the existing 2 SF workers across two local generators to overlap SF and MCTS phases.
   max_plies: 120
 
   temperature: 1.1       # Pinned: top-5 median from Run 4 (range 0.94-1.74)
@@ -121,9 +126,9 @@ selfplay:
 
 train:
   optimizer: nadamw
-  lr: 0.0012        # Seed near the healthier 3/6 384d fresh-trial lane; PB2 still adapts per-trial.
-  batch_size: 256   # Keep microbatch small enough for VRAM; use accumulation for the larger effective batch.
-  train_steps: 24  # Lower ceiling so early iterations do materially fewer optimizer updates.
+  lr: 0.0003        # Initial value; PB2 adapts this per-trial
+  batch_size: 256   # Larger batch (requires more VRAM per trial)
+  train_steps: 48  # Higher cap so post-exploit imported top data is actually trained on.
   no_amp: false
   feature_dropout_p: 0.25  # Pinned: top-5 median from Run 4
   zclip_z_thresh: 2.5
@@ -131,22 +136,22 @@ train:
   zclip_max_norm: 1.0
 
   w_policy: 1.0             # Pinned: anchor for all other weights
-  w_soft: 0.73              # Pinned: no clear stable signal from searching this recently.
+  w_soft: 0.73              # Pinned for shared-replay run: keep policy targets closer across trials.
   w_future: 0.05            # Pinned during this run (not in pb2_bounds_*).
-  w_wdl: 0.58               # Seed between the two fresh-winner clusters seen on 2026-03-06.
-  w_sf_move: 0.03           # Pinned: earlier runs showed the high tail was harmful.
+  w_wdl: 0.50               # Initial value; PB2 adapts this in a narrower band.
+  w_sf_move: 0.03           # Pinned for shared-replay run: keep donor/recipient policy behavior closer.
   w_sf_eval: 0.10           # Pinned: top-5 median from Run 4
   w_categorical: 0.10       # Pinned: top-5 median from Run 4
   w_volatility: 0.10        # Pinned: top-5 median from Run 4
   w_sf_volatility: 0.05
   w_moves_left: 0.02
-  w_sf_wdl: 0.0             # Disable the SF-WDL auxiliary for this run; test whether it is poisoning the main WDL head.
+  w_sf_wdl: 0.02            # Small SF-WDL lane; PB2 adapts this in a narrow band.
   sf_wdl_conf_power: 1.0    # Confidence damping: scale SF-WDL by (1-draw_prob)^power.
-  sf_wdl_draw_scale: 0.55   # Pinned low-to-mid based on the healthier late-run settings.
+  sf_wdl_draw_scale: 0.60   # Pinned for shared-replay run: moderate draw damping.
   sf_wdl_floor: 0.0         # Keep floor at 0 so PB2 can disable sf_wdl if harmful.
   sf_wdl_floor_at: 0.1
 
-  accum_steps: 4    # Effective batch 1024 without the peak-memory cost of a literal 1024 microbatch.
+  accum_steps: 1
   warmup_steps: 60    # ~1 iter of bootstrap training (with 15 train steps/iter)
   lr_eta_min: 0.00001
   lr_T0: 120           # aligned with shorter iterations (~15 steps/iter)
@@ -167,13 +172,13 @@ tune:
   tune_num_to_keep: 10              # keep last 10 checkpoints per trial
   tune_keep_last_experiments: 2     # keep last 2 experiments under work_dir/tune
 
-  tune_scheduler: gpbt_pl
+  tune_scheduler: pb2
   gpbt_pairwise_lr: 0.35
   gpbt_pairwise_momentum: 0.50
   gpbt_quantile_fraction: 0.25
   gpbt_resample_probability: 0.05
   num_samples: 8
-  max_concurrent_trials: 8    # Keep the full 8-trial population active for GPBT pairwise selection.
+  max_concurrent_trials: 8    # Keep PB2 fully concurrent with 8 trials
   cpus_per_trial: 2
   gpus_per_trial: 0.1         # 8 × 0.1 = 0.8 GPU
 
@@ -184,7 +189,7 @@ tune:
   # import only latest-generation shards from strong sibling trials.
   exploit_replay_refresh_enabled: true
   exploit_replay_skip_newest: 0
-  exploit_replay_share_top_enabled: false  # Disable for the fresh 384d run; salvage tests showed this amplifies instability.
+  exploit_replay_share_top_enabled: true   # Re-enable, but only with a narrower PB2 search so trials stay closer on-policy.
   exploit_replay_top_k_trials: 3
   exploit_replay_top_within_best_frac: 0.05
   exploit_replay_top_min_metric: 0.0
@@ -228,11 +233,15 @@ tune:
   search_nla: false
   search_optimizer: false
 
-  # Fresh-bootstrap PB2 pass:
-  # - Start from the new 384d bootstrap with no salvage state and no per-iteration cross-trial replay sharing.
-  # - Search only optimizer/value-lane weights; pin policy-shaping weights until the run is stable.
-  # - Disable the SF-WDL lane entirely to test whether it is destabilizing early learning.
+  # Shared-replay PB2 pass:
+  # - Follow the PBT AlphaZero idea more closely by keeping policy-generating behavior near each other.
+  # - Search only optimizer/value-lane weights; pin policy-shaping weights and draw damping.
+  # - Share only among the top few trials within a tight strength band.
   #
   # Only pb2_bounds_* keys present here are searched; everything else is pinned.
-  pb2_bounds_lr: [1.0e-3, 1.6e-3]       # 2026-03-06 fresh 384d learners lived in roughly the 1.05e-3 to 1.59e-3 lane.
-  pb2_bounds_w_wdl: [0.45, 0.65]        # Keep both fresh-winner clusters (~0.46 and ~0.62) without re-opening the high tail.
+  pb2_bounds_lr: [8e-4, 2.5e-3]         # Match old run's search space for resume
+  pb2_bounds_w_soft: [0.5, 1.0]
+  pb2_bounds_w_sf_move: [0.0, 0.05]
+  pb2_bounds_w_wdl: [0.3, 0.8]
+  pb2_bounds_w_sf_wdl: [0.0, 0.05]
+  pb2_bounds_sf_wdl_draw_scale: [0.4, 1.0]

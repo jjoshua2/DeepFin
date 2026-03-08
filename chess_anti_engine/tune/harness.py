@@ -90,7 +90,7 @@ def run_tune(
 ):
     """Run the Ray Tune harness.
 
-    Supports two schedulers, selectable via base_config["tune_scheduler"]:
+    Supports four schedulers, selectable via base_config["tune_scheduler"]:
 
     "pb2" (default, recommended for RL)
         Population-Based Bandits 2 (Parker-Holder et al., NeurIPS 2020).
@@ -102,6 +102,17 @@ def run_tune(
 
         Requires: all trials running simultaneously (max_concurrent_trials ≥
         num_samples), otherwise PB2 degenerates to sequential random search.
+
+    "pbt"
+        Vanilla Population-Based Training. Uses the same mutable parameter
+        bounds as PB2, but perturbs them with exploit/explore heuristics rather
+        than a GP bandit. Useful when you want the same config surface as PB2
+        with simpler, fully built-in Ray behavior.
+
+    "gpbt_pl"
+        Ray-native pairwise-learning adaptation inspired by gpbt-pl. Keeps the
+        current PBT checkpoint/exploit lifecycle, but uses weighted pairwise
+        donor selection and momentum-based pairwise hyperparameter updates.
 
     "asha" (legacy)
         ASHA + Optuna search.  Assumes a stationary objective; valid for
@@ -147,9 +158,20 @@ def run_tune(
     # ------------------------------------------------------------------
     if scheduler_name == "pb2":
         param_space, scheduler = _build_pb2(base_config, metric=metric, mode=mode)
-        search_alg = None  # PB2 handles search internally
-    else:
+        search_alg = None  # Scheduler handles search internally.
+    elif scheduler_name == "pbt":
+        param_space, scheduler = _build_pbt(base_config, metric=metric, mode=mode)
+        search_alg = None  # Scheduler handles search internally.
+    elif scheduler_name == "gpbt_pl":
+        param_space, scheduler = _build_gpbt_pl(base_config, metric=metric, mode=mode)
+        search_alg = None  # Scheduler handles search internally.
+    elif scheduler_name == "asha":
         param_space, scheduler, search_alg = _build_asha(base_config, metric=metric, mode=mode)
+    else:
+        raise ValueError(
+            f"Unsupported tune_scheduler={scheduler_name!r}. "
+            "Expected one of: 'pb2', 'pbt', 'gpbt_pl', 'asha'."
+        )
 
     # ------------------------------------------------------------------
     # Assemble and run Tuner
@@ -230,48 +252,30 @@ def run_tune(
 # PB2 scheduler + search space
 # ---------------------------------------------------------------------------
 
-def _build_pb2(base_config: dict, *, metric: str, mode: str):
-    """PB2: Population-Based Bandits 2 for RL hyperparameter search.
+def _collect_mutation_bounds(base_config: dict) -> dict[str, list[float]]:
+    """Build scheduler bounds from pb2_bounds_* config keys.
 
-    Search strategy:
-    - Architecture params are PINNED from base_config (fix net size during search).
-    - RL-coupled continuous params (LR, diff_focus_*, temperature, dropout, loss
-      weights) are searched via PB2's GP bandit perturbation.
-    - Binary ablation params (smolgen, NLA) can optionally be searched.
-
-    PB2 requires the param_space and hyperparam_bounds to use the same keys and
-    ranges.  We sample the initial population uniformly, then PB2 uses GP to
-    guide subsequent perturbations.
+    We intentionally keep one scheduler-neutral bounds surface so the user can
+    switch between PB2 and vanilla PBT without maintaining separate configs.
     """
-    try:
-        from ray.tune.schedulers.pb2 import PB2
-        from ray import tune
-    except ImportError as e:
-        raise ImportError(
-            "PB2 requires `ray[tune]`. Install with: pip install -e '.[tune]'"
-        ) from e
 
-    perturbation_interval = int(base_config.get("pb2_perturbation_interval", 10))
-
-    # Build hyperparam_bounds entirely from pb2_bounds_* config keys.
-    # Any param with a pb2_bounds_<name> entry is searched; everything else is pinned.
-    # This lets us control which params PB2 optimizes purely from YAML.
-    hyperparam_bounds: dict[str, list] = {}
+    bounds_out: dict[str, list[float]] = {}
     for cfg_key, bounds in base_config.items():
         if not str(cfg_key).startswith("pb2_bounds_"):
             continue
         param_name = str(cfg_key)[len("pb2_bounds_"):]
         if isinstance(bounds, (list, tuple)) and len(bounds) == 2:
-            hyperparam_bounds[param_name] = [float(bounds[0]), float(bounds[1])]
+            bounds_out[param_name] = [float(bounds[0]), float(bounds[1])]
+    return bounds_out
 
-    # Initial param_space: base config values for pinned params, uniform sampling
-    # for searched params. PB2 needs the initial distribution to overlap with bounds.
+
+def _build_mutation_param_space(base_config: dict, *, bounds: dict[str, list[float]]):
+    from ray import tune
+
     param_space = {**dict(base_config)}
-    for param_name, bounds in hyperparam_bounds.items():
-        param_space[param_name] = tune.uniform(*bounds)
+    for param_name, param_bounds in bounds.items():
+        param_space[param_name] = tune.uniform(*param_bounds)
 
-    # Optional binary ablations: add to param_space but NOT to hyperparam_bounds
-    # (PB2's GP bandit only applies to the continuous bounds).
     if bool(base_config.get("search_smolgen", False)):
         param_space["use_smolgen"] = tune.choice([True, False])
     if bool(base_config.get("search_nla", False)):
@@ -279,12 +283,102 @@ def _build_pb2(base_config: dict, *, metric: str, mode: str):
     if bool(base_config.get("search_optimizer", False)):
         param_space["optimizer"] = tune.choice(["nadamw", "soap"])
 
+    return param_space
+
+
+def _build_pbt_mutations(base_config: dict, *, bounds: dict[str, list[float]]):
+    from ray import tune
+
+    mutations: dict[str, object] = {}
+    for param_name, param_bounds in bounds.items():
+        mutations[param_name] = tune.uniform(*param_bounds)
+
+    if bool(base_config.get("search_smolgen", False)):
+        mutations["use_smolgen"] = [True, False]
+    if bool(base_config.get("search_nla", False)):
+        mutations["use_nla"] = [True, False]
+    if bool(base_config.get("search_optimizer", False)):
+        mutations["optimizer"] = ["nadamw", "soap"]
+
+    return mutations
+
+
+def _build_pb2(base_config: dict, *, metric: str, mode: str):
+    """PB2: Population-Based Bandits 2 for RL hyperparameter search."""
+    try:
+        from ray.tune.schedulers.pb2 import PB2
+    except ImportError as e:
+        raise ImportError(
+            "PB2 requires `ray[tune]`. Install with: pip install -e '.[tune]'"
+        ) from e
+
+    perturbation_interval = int(base_config.get("pb2_perturbation_interval", 10))
+    hyperparam_bounds = _collect_mutation_bounds(base_config)
+    param_space = _build_mutation_param_space(base_config, bounds=hyperparam_bounds)
+
     scheduler = PB2(
         time_attr="training_iteration",
         metric=metric,
         mode=mode,
         perturbation_interval=perturbation_interval,
         hyperparam_bounds=hyperparam_bounds,
+    )
+
+    return param_space, scheduler
+
+
+def _build_pbt(base_config: dict, *, metric: str, mode: str):
+    """Vanilla Population-Based Training using the same mutable config surface as PB2."""
+    try:
+        from ray.tune.schedulers import PopulationBasedTraining
+    except ImportError as e:
+        raise ImportError(
+            "PBT requires `ray[tune]`. Install with: pip install -e '.[tune]'"
+        ) from e
+
+    perturbation_interval = int(base_config.get("pb2_perturbation_interval", 10))
+    hyperparam_bounds = _collect_mutation_bounds(base_config)
+    param_space = _build_mutation_param_space(base_config, bounds=hyperparam_bounds)
+    hyperparam_mutations = _build_pbt_mutations(base_config, bounds=hyperparam_bounds)
+
+    scheduler = PopulationBasedTraining(
+        time_attr="training_iteration",
+        metric=metric,
+        mode=mode,
+        perturbation_interval=perturbation_interval,
+        hyperparam_mutations=hyperparam_mutations,
+        synch=bool(base_config.get("pbt_synch", False)),
+    )
+
+    return param_space, scheduler
+
+
+def _build_gpbt_pl(base_config: dict, *, metric: str, mode: str):
+    """Pairwise-learning PBT adaptation using the same mutable config surface as PB2."""
+    try:
+        from chess_anti_engine.tune.gpbt import GPBTPairwiseScheduler
+    except ImportError as e:
+        raise ImportError(
+            "GPBT-PL scheduler could not be imported from chess_anti_engine.tune.gpbt."
+        ) from e
+
+    perturbation_interval = int(base_config.get("pb2_perturbation_interval", 10))
+    hyperparam_bounds = _collect_mutation_bounds(base_config)
+    param_space = _build_mutation_param_space(base_config, bounds=hyperparam_bounds)
+    hyperparam_mutations = _build_pbt_mutations(base_config, bounds=hyperparam_bounds)
+
+    scheduler = GPBTPairwiseScheduler(
+        time_attr="training_iteration",
+        metric=metric,
+        mode=mode,
+        perturbation_interval=perturbation_interval,
+        hyperparam_mutations=hyperparam_mutations,
+        hyperparam_bounds=hyperparam_bounds,
+        pairwise_lr=float(base_config.get("gpbt_pairwise_lr", 0.35)),
+        pairwise_momentum=float(base_config.get("gpbt_pairwise_momentum", 0.5)),
+        quantile_fraction=float(base_config.get("gpbt_quantile_fraction", 0.25)),
+        resample_probability=float(base_config.get("gpbt_resample_probability", 0.05)),
+        synch=bool(base_config.get("pbt_synch", False)),
     )
 
     return param_space, scheduler

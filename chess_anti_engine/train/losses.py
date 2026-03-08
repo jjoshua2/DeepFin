@@ -52,6 +52,8 @@ def compute_loss(
     w_sf_volatility: float | None = None,
     w_moves_left: float = 0.02,
     w_sf_wdl: float = 0.0,
+    sf_wdl_conf_power: float = 0.0,
+    sf_wdl_draw_scale: float = 1.0,
 ) -> dict[str, torch.Tensor]:
     """Compute a spec-inspired loss using whatever targets we currently record.
 
@@ -197,6 +199,19 @@ def compute_loss(
     w_sf_volatility = float(w_sf_volatility) if w_sf_volatility is not None else float(w_volatility)
     w_moves_left = float(w_moves_left)
     w_sf_wdl = float(w_sf_wdl)
+    sf_wdl_conf_power = max(0.0, float(sf_wdl_conf_power))
+    sf_wdl_draw_scale = max(0.0, float(sf_wdl_draw_scale))
+
+    # Optional confidence damping for SF-WDL auxiliary loss on the main WDL head.
+    # - confidence: (1 - draw_prob)^power (power=0 disables)
+    # - draw_scale: additional multiplier for game-outcome draws (1.0 disables)
+    sf_wdl_mask = net_mask * has_sf_wdl
+    if sf_wdl_conf_power > 0.0:
+        sf_conf = (1.0 - sf_wdl_probs[:, 1]).clamp(0.0, 1.0).pow(sf_wdl_conf_power)
+        sf_wdl_mask = sf_wdl_mask * sf_conf
+    if sf_wdl_draw_scale != 1.0:
+        draw_mask = (batch["wdl_t"] == 1).to(torch.float32)
+        sf_wdl_mask = sf_wdl_mask * (1.0 - draw_mask + draw_mask * sf_wdl_draw_scale)
 
     # Soft WDL target from SF eval: train the main WDL head with SF's position-local
     # value estimate as a soft cross-entropy target. This provides dense gradient signal
@@ -210,7 +225,7 @@ def compute_loss(
         + w_soft * masked_mean(soft_ce, net_mask * has_soft)
         + w_future * masked_mean(future_ce, net_mask * has_future)
         + w_wdl * masked_mean(wdl_ce, net_mask)
-        + w_sf_wdl * masked_mean(sf_wdl_soft_ce, net_mask * has_sf_wdl)
+        + w_sf_wdl * masked_mean(sf_wdl_soft_ce, sf_wdl_mask)
         + w_sf_move * masked_mean(sf_move_ce, net_mask * has_sf_policy)
         + w_sf_eval * masked_mean(sf_eval_ce, net_mask * has_sf_wdl)
         + w_categorical * masked_mean(cat_ce, net_mask * has_cat)
@@ -223,7 +238,7 @@ def compute_loss(
         "total": total,
         "policy_ce": masked_mean(pol_ce, net_mask * has_policy),
         "wdl_ce": masked_mean(wdl_ce, net_mask),
-        "sf_wdl_ce": masked_mean(sf_wdl_soft_ce, net_mask * has_sf_wdl),
+        "sf_wdl_ce": masked_mean(sf_wdl_soft_ce, sf_wdl_mask),
         "soft_policy_ce": masked_mean(soft_ce, net_mask * has_soft),
         "future_policy_ce": masked_mean(future_ce, net_mask * has_future),
         "sf_move_ce": masked_mean(sf_move_ce, net_mask * has_sf_policy),

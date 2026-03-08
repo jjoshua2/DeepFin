@@ -170,9 +170,131 @@ The WDL head (what MCTS uses to evaluate positions) only gets ~10% of total grad
 
 ---
 
+## Run 7: Narrowed bounds + PB2 checkpoint fix (2026-03-02 09:31, ~10 hours)
+
+**Config changes**:
+- PB2 searches 5 params: lr [8e-4, 2.5e-3], w_soft [0.5, 1.0], w_future [0.0, 0.3], w_sf_move [0.0, 0.05], soft_policy_temp [2.0, 4.0]
+- trainable.py: work_dir = trial_dir (fix PB2 checkpoint cloning)
+- soft_policy_temp made configurable (was hardcoded 2.0)
+
+**Result**: 10 trials ran 13 iterations. 4/9 original trials OK (>50% WR), 3 BAD (<35%), 2 MID. T09 was cloned from T02 at iter 8 (only perturbation that fired).
+
+**PB2 perturbation analysis**:
+- PB2 DID fire at iter 8, but only T09 was exploited (async race: lower-quantile trials that reported before upper-quantile trials had saved checkpoints got silently skipped)
+- Explore step produced ZERO perturbation: GP returned identical config, no parameter changes
+- T09's dramatic recovery (WR 0%→78%) was just T02's checkpoint restarting with fresh replay
+
+**Winners vs Losers** (excluding T09 clone):
+- OK (T02,T07,T08): wdl_loss stays >0.86, w_sf_move 0.024-0.050
+- BAD (T00,T01,T04): wdl_loss drops <0.81 (overconfident value head causes regression)
+- LR doesn't explain regression: T01 BAD at lr=0.0023, T02 OK at same lr=0.0023
+- No single parameter cleanly separates winners from losers — failure is stochastic
+
+**Learnings**:
+- w_sf_move in [0.02, 0.05] range works (was thought to want 0)
+- Value head overconfidence spiral still the failure mode but not param-driven
+- 1000 games/iter too slow — PB2 needs more frequent perturbation to accumulate GP data
+- Async PBT unreliable for cloning (checkpoint race condition), but synch would waste compute
+
+---
+
+## Run 8: 4x shorter iterations for faster PB2 (2026-03-02 20:17)
+
+**Config changes**:
+- games_per_iter: 1000 → 250 (4x shorter)
+- train_steps: 100 → 25 (4x shorter)
+- warmup_steps: 400 → 100 (proportional)
+- lr_T0: 680 → 200 (aligned with 8 iters × 25 steps)
+- w_sf_move bounds: [0.0, 0.05] → [0.02, 0.05] (narrowed from Run 7 winners)
+- pid_min_games_between_adjust: 100 → 250 (1 full iter)
+- replay_window_growth: 1000 → 250 (proportional)
+
+**Rationale**: 4x shorter iterations means PB2 reaches perturbation_interval=8 in 1/4 the wall time. More frequent perturbation → more GP data points → better explore, and more chances for async cloning to succeed.
+
+---
+
 ## Known Issues / TODO
 
 - **Gate check design flaw**: Plays model vs Stockfish instead of new model vs old model. Also uses 1-sim while selfplay uses 64-sim. Needs redesign before re-enabling.
 - **PB2 clone diversity**: When multiple trials are exploited simultaneously, they can all get identical configs. May need custom explore_fn to add noise.
 - **PID state on clone**: Mechanically transfers via pid_state.json in checkpoint. Verified it IS saved/restored correctly.
 - **opponent_strength metric**: Heavily dependent on PID dynamics. When PID is stuck at random_move_prob=1.0, opponent_strength just decays with EMA — doesn't differentiate trials well.
+
+---
+
+## Run 9: PB2 exploit replay/RNG fixes + no iter-0 skip (2026-03-03 10:38)
+
+**Code changes applied**:
+- `trainable.py`: removed iter-0 selfplay skip entirely. Every iteration now plays fresh selfplay games.
+- `trainable.py`: checkpoint now saves `rng_state.json` and `trial_meta.json`.
+- `trainable.py`: restore behavior now branches:
+  - same-trial resume: restore RNG state from checkpoint
+  - cross-trial PB2 exploit: fork RNG seed using recipient trial id + restore salt to avoid replaying donor RNG stream/opening sequence
+- `trainable.py`: on cross-trial exploit, refresh replay shards before buffer init:
+  - keep newest 60% of local shards (drop oldest 40%)
+  - copy 6 recent donor shards (skip donor newest 1 for write-safety)
+- `config_yaml.py` + `run.py`: added YAML/CLI plumbing for exploit replay refresh knobs so they are explicit run config, not hardcoded-only defaults.
+- `configs/pbt2_small.yaml`: explicit tune knobs added:
+  - `exploit_replay_refresh_enabled: true`
+  - `exploit_replay_keep_fraction: 0.60`
+  - `exploit_replay_donor_shards: 6`
+  - `exploit_replay_skip_newest: 1`
+
+**Restart**:
+- Stopped prior run process.
+- Started a **fresh non-resume** tune run at `2026-03-03 10:38`.
+- New trial prefix: `0402b`.
+
+**Expected effects to validate**:
+- No synthetic `win=draw=loss=0` rows at perturb boundaries.
+- Post-exploit recipients should train on mixed recent+donor data, not stale local-only data.
+- Less opening-sequence lockstep across exploited clones.
+
+---
+
+## Run 10: Value-head weight range retune + fresh restart (2026-03-03 21:33)
+
+**Config changes**:
+- `pb2_bounds_w_wdl`: `[0.5, 1.0]` → `[0.3, 0.8]`
+- `pb2_bounds_w_sf_wdl`: `[0.0, 0.05]` (unchanged, kept low)
+- Iteration pacing remains short/frequent:
+  - `games_per_iter: 150`
+  - `train_steps: 15`
+  - `replay_window_growth: 150`
+  - `sf_pid_min_games_between_adjust: 150`
+- `w_future` remains pinned at `0.05` (not searched)
+
+**Restart**:
+- Stopped the prior tune run.
+- Started a **fresh non-resume** run at `2026-03-03 21:33`.
+- New trial prefix: `7773d`.
+
+**Intent**:
+- Keep SF-WDL auxiliary pressure minimal.
+- Search main WDL-head weight in a lower band to reduce value-head overconfidence collapse while preserving enough value signal.
+
+---
+
+## Run 11: Salvage restart integrity fix (2026-03-05 10:14)
+
+**Issue observed**:
+- Salvage warmstarts loaded top checkpoints, but most trials still started with `random_move_prob=1.0` due stale `pid_state.json` in seed slots.
+- TensorBoard confusion came from using stale path: `/tmp/ray/session_latest` still pointed to older session.
+- Also detected two concurrent tune processes competing for resources (`1877824`, `2399046`).
+
+**Code changes applied**:
+- `trainable.py`: warmstart now reads salvage `manifest.json` entry for selected slot and merges PID fields from `result_row` (`random_move_prob_next`, `sf_nodes_next`, `skill_level_next`, `pid_ema_winrate`) as authoritative fallback.
+- `trainable.py`: added TB scalars for `difficulty/opponent_strength`, `difficulty/random_move_prob`, `difficulty/random_move_prob_next`, `meta/salvage_warmstart_used`, `meta/salvage_warmstart_slot`.
+
+**Restart actions**:
+- Force-stopped both concurrent runs and Ray workers.
+- Started a single fresh run:
+  - `python3 -m chess_anti_engine.run --config configs/pbt2_small.yaml --salvage-seed-pool-dir /home/josh/projects/chess/runs/pbt2_small/salvage/7773d_20260305_083208`
+  - New trial prefix: `09543` (8 trials).
+  - Active TB root: `/tmp/ray/session_2026-03-05_10-14-39_577500_2427274/.../driver_artifacts`
+
+**Verification**:
+- All 8 workers logged:
+  - `salvage warmstart loaded slot=...`
+  - `salvage PID overrides from manifest row: random_move_prob<-random_move_prob_next, ...`
+- Confirms patched difficulty carryover is active on this run.

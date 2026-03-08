@@ -68,6 +68,8 @@ class Trainer:
         w_sf_volatility: float | None = None,
         w_moves_left: float = 0.02,
         w_sf_wdl: float = 0.0,
+        sf_wdl_conf_power: float = 0.0,
+        sf_wdl_draw_scale: float = 1.0,
     ):
         self.device = device
         self.model = model.to(device)
@@ -135,6 +137,8 @@ class Trainer:
         self.w_sf_volatility = float(w_sf_volatility) if w_sf_volatility is not None else float(w_volatility)
         self.w_moves_left = float(w_moves_left)
         self.w_sf_wdl = float(w_sf_wdl)
+        self.sf_wdl_conf_power = float(sf_wdl_conf_power)
+        self.sf_wdl_draw_scale = float(sf_wdl_draw_scale)
 
         # Data augmentation: mirror positions left-right (files) with given probability.
         self.mirror_prob = float(mirror_prob)
@@ -173,6 +177,80 @@ class Trainer:
         else:
             self._scheduler.step(self.step - self._warmup_steps)
 
+    def set_peak_lr(self, lr: float, *, rescale_current: bool = True) -> None:
+        """Rebase LR schedule to a new peak while preserving schedule phase.
+
+        PB2 mutates `lr` in the trial config. When a trial restores from another
+        trial's checkpoint, optimizer/scheduler state is cloned too, so we need
+        to explicitly rebind the schedule to the mutated peak LR.
+        """
+        new_peak = float(lr)
+        if new_peak <= 0.0:
+            return
+
+        n_groups = len(self.opt.param_groups)
+        old_bases = []
+        if hasattr(self._scheduler, "base_lrs"):
+            old_bases = [float(v) for v in getattr(self._scheduler, "base_lrs")]
+        if not old_bases:
+            old_bases = [float(self._peak_lr)] * n_groups
+        if len(old_bases) < n_groups:
+            old_bases.extend([old_bases[-1]] * (n_groups - len(old_bases)))
+        old_bases = old_bases[:n_groups]
+
+        ref_old = old_bases[0] if old_bases[0] > 0.0 else float(self._peak_lr)
+        if ref_old <= 0.0:
+            ref_old = new_peak
+        scale = new_peak / ref_old
+
+        new_bases: list[float] = []
+        for ob in old_bases:
+            if ob > 0.0:
+                new_bases.append(ob * scale)
+            else:
+                new_bases.append(new_peak)
+
+        self._peak_lr = new_peak
+
+        # Keep scheduler phase but rebase amplitude.
+        if hasattr(self._scheduler, "base_lrs"):
+            self._scheduler.base_lrs = list(new_bases)
+
+        # Keep the scheduler's cached current LR consistent with the rebase.
+        if hasattr(self._scheduler, "_last_lr"):
+            last_lrs = getattr(self._scheduler, "_last_lr")
+            if isinstance(last_lrs, list) and last_lrs:
+                self._scheduler._last_lr = [float(v) * scale for v in last_lrs]
+
+        # Keep optimizer param-group metadata aligned.
+        for i, pg in enumerate(self.opt.param_groups):
+            ob = old_bases[i] if i < len(old_bases) else ref_old
+            nb = new_bases[i] if i < len(new_bases) else new_peak
+            if "initial_lr" in pg:
+                if ob > 0.0:
+                    pg["initial_lr"] = float(pg["initial_lr"]) * (nb / ob)
+                else:
+                    pg["initial_lr"] = nb
+
+        if not rescale_current:
+            return
+
+        # Rebase currently active optimizer LR so training continues at same phase.
+        for i, pg in enumerate(self.opt.param_groups):
+            ob = old_bases[i] if i < len(old_bases) else ref_old
+            nb = new_bases[i] if i < len(new_bases) else new_peak
+            if ob > 0.0:
+                pg["lr"] = float(pg.get("lr", 0.0)) * (nb / ob)
+            else:
+                if self.step < self._warmup_steps:
+                    pg["lr"] = nb * self.step / max(1, self._warmup_steps)
+                else:
+                    last_lrs = getattr(self._scheduler, "_last_lr", None)
+                    if isinstance(last_lrs, list) and i < len(last_lrs):
+                        pg["lr"] = float(last_lrs[i])
+                    else:
+                        pg["lr"] = nb
+
     @torch.no_grad()
     def _compute_metrics(self, *, buf: ReplayBuffer, batch_size: int, steps: int, tag: str) -> TrainMetrics:
         loss_sum = 0.0
@@ -199,11 +277,11 @@ class Trainer:
             if self.use_amp and self.device.startswith("cuda"):
                 with torch.amp.autocast("cuda", dtype=self._amp_dtype):
                     out = self.model(batch["x"])
-                    losses = compute_loss(out, batch, w_policy=self.w_policy, w_soft=self.w_soft, w_future=self.w_future, w_wdl=self.w_wdl, w_sf_move=self.w_sf_move, w_sf_eval=self.w_sf_eval, w_categorical=self.w_categorical, w_volatility=self.w_volatility, w_sf_volatility=self.w_sf_volatility, w_moves_left=self.w_moves_left, w_sf_wdl=self.w_sf_wdl)
+                    losses = compute_loss(out, batch, w_policy=self.w_policy, w_soft=self.w_soft, w_future=self.w_future, w_wdl=self.w_wdl, w_sf_move=self.w_sf_move, w_sf_eval=self.w_sf_eval, w_categorical=self.w_categorical, w_volatility=self.w_volatility, w_sf_volatility=self.w_sf_volatility, w_moves_left=self.w_moves_left, w_sf_wdl=self.w_sf_wdl, sf_wdl_conf_power=self.sf_wdl_conf_power, sf_wdl_draw_scale=self.sf_wdl_draw_scale)
                     loss = losses["total"]
             else:
                 out = self.model(batch["x"])
-                losses = compute_loss(out, batch, w_policy=self.w_policy, w_soft=self.w_soft, w_future=self.w_future, w_wdl=self.w_wdl, w_sf_move=self.w_sf_move, w_sf_eval=self.w_sf_eval, w_categorical=self.w_categorical, w_volatility=self.w_volatility, w_sf_volatility=self.w_sf_volatility, w_moves_left=self.w_moves_left, w_sf_wdl=self.w_sf_wdl)
+                losses = compute_loss(out, batch, w_policy=self.w_policy, w_soft=self.w_soft, w_future=self.w_future, w_wdl=self.w_wdl, w_sf_move=self.w_sf_move, w_sf_eval=self.w_sf_eval, w_categorical=self.w_categorical, w_volatility=self.w_volatility, w_sf_volatility=self.w_sf_volatility, w_moves_left=self.w_moves_left, w_sf_wdl=self.w_sf_wdl, sf_wdl_conf_power=self.sf_wdl_conf_power, sf_wdl_draw_scale=self.sf_wdl_draw_scale)
                 loss = losses["total"]
 
             # Logging (train or eval)
@@ -345,12 +423,12 @@ class Trainer:
                 if self.use_amp and self.device.startswith("cuda"):
                     with torch.amp.autocast("cuda", dtype=self._amp_dtype):
                         out = self.model(batch["x"])
-                        losses = compute_loss(out, batch, w_policy=self.w_policy, w_soft=self.w_soft, w_future=self.w_future, w_wdl=self.w_wdl, w_sf_move=self.w_sf_move, w_sf_eval=self.w_sf_eval, w_categorical=self.w_categorical, w_volatility=self.w_volatility, w_sf_volatility=self.w_sf_volatility, w_moves_left=self.w_moves_left, w_sf_wdl=self.w_sf_wdl)
+                        losses = compute_loss(out, batch, w_policy=self.w_policy, w_soft=self.w_soft, w_future=self.w_future, w_wdl=self.w_wdl, w_sf_move=self.w_sf_move, w_sf_eval=self.w_sf_eval, w_categorical=self.w_categorical, w_volatility=self.w_volatility, w_sf_volatility=self.w_sf_volatility, w_moves_left=self.w_moves_left, w_sf_wdl=self.w_sf_wdl, sf_wdl_conf_power=self.sf_wdl_conf_power, sf_wdl_draw_scale=self.sf_wdl_draw_scale)
                         loss = losses["total"] / self.accum_steps
                     loss.backward()
                 else:
                     out = self.model(batch["x"])
-                    losses = compute_loss(out, batch, w_policy=self.w_policy, w_soft=self.w_soft, w_future=self.w_future, w_wdl=self.w_wdl, w_sf_move=self.w_sf_move, w_sf_eval=self.w_sf_eval, w_categorical=self.w_categorical, w_volatility=self.w_volatility, w_sf_volatility=self.w_sf_volatility, w_moves_left=self.w_moves_left, w_sf_wdl=self.w_sf_wdl)
+                    losses = compute_loss(out, batch, w_policy=self.w_policy, w_soft=self.w_soft, w_future=self.w_future, w_wdl=self.w_wdl, w_sf_move=self.w_sf_move, w_sf_eval=self.w_sf_eval, w_categorical=self.w_categorical, w_volatility=self.w_volatility, w_sf_volatility=self.w_sf_volatility, w_moves_left=self.w_moves_left, w_sf_wdl=self.w_sf_wdl, sf_wdl_conf_power=self.sf_wdl_conf_power, sf_wdl_draw_scale=self.sf_wdl_draw_scale)
                     loss = losses["total"] / self.accum_steps
                     loss.backward()
 
@@ -455,6 +533,9 @@ class Trainer:
         self.opt.load_state_dict(ckpt["opt"])
         if "scheduler" in ckpt:
             self._scheduler.load_state_dict(ckpt["scheduler"])
+            if hasattr(self._scheduler, "base_lrs") and self._scheduler.base_lrs:
+                # Keep peak LR aligned with restored scheduler amplitude.
+                self._peak_lr = float(self._scheduler.base_lrs[0])
         if "swa_model" in ckpt and self._swa_model is not None:
             self._swa_model.load_state_dict(ckpt["swa_model"])
         self.step = int(ckpt.get("step", 0))
