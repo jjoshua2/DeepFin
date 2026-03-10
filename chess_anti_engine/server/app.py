@@ -52,6 +52,15 @@ def create_app(
     from chess_anti_engine.replay.shard import load_npz
 
     from .auth import load_users, record_upload, save_users, verify_password
+    from .lease import (
+        assign_trial_lease,
+        available_trial_ids,
+        load_lease,
+        normalize_trial_id,
+        pick_trial_for_lease,
+        prune_expired_leases,
+        save_lease,
+    )
 
     root = Path(server_root)
     pub = root / publish_dir
@@ -75,10 +84,8 @@ def create_app(
     _trial_id_re = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 
     def _normalize_trial_id(trial_id: str | None) -> str | None:
-        if trial_id is None:
-            return None
-        tid = str(trial_id).strip()
-        if not tid:
+        tid = normalize_trial_id(trial_id)
+        if tid is None:
             return None
         if not _trial_id_re.fullmatch(tid):
             raise HTTPException(status_code=400, detail="invalid trial_id")
@@ -112,28 +119,6 @@ def create_app(
             return dict(json.loads(mf.read_text(encoding="utf-8")))
         except Exception:
             return None
-
-    def _lease_path(lease_id: str) -> Path:
-        return leases_root / f"{lease_id}.json"
-
-    def _load_lease(lease_id: str) -> dict[str, Any] | None:
-        p = _lease_path(lease_id)
-        if not p.exists():
-            return None
-        try:
-            data = json.loads(p.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-        return data if isinstance(data, dict) else None
-
-    def _save_lease(lease: dict[str, Any]) -> None:
-        lease_id = str(lease.get("lease_id") or "").strip()
-        if not lease_id:
-            raise ValueError("lease_id required")
-        p = _lease_path(lease_id)
-        tmp = p.with_suffix(p.suffix + ".tmp")
-        tmp.write_text(json.dumps(lease, indent=2, sort_keys=True), encoding="utf-8")
-        tmp.replace(p)
 
     class _LeaseAssignLock:
         def __init__(self, path: Path, *, timeout_s: float = 10.0) -> None:
@@ -234,98 +219,6 @@ def create_app(
         entry["last_updated_unix"] = now_unix
         stats[gpu_model] = entry
         _save_throughput_stats(stats)
-
-    def _prune_expired_leases(*, now_unix: int) -> list[dict[str, Any]]:
-        active: list[dict[str, Any]] = []
-        for p in sorted(leases_root.glob("*.json")):
-            try:
-                data = json.loads(p.read_text(encoding="utf-8"))
-            except Exception:
-                p.unlink(missing_ok=True)
-                continue
-            if not isinstance(data, dict):
-                p.unlink(missing_ok=True)
-                continue
-            expires_at = int(data.get("expires_at_unix") or 0)
-            if expires_at <= now_unix:
-                p.unlink(missing_ok=True)
-                continue
-            active.append(data)
-        return active
-
-    def _available_trial_ids() -> list[str]:
-        trials_root = root / "trials"
-        entries: list[tuple[str, int]] = []
-        if not trials_root.exists():
-            return []
-        for mf in sorted(trials_root.glob("*/publish/manifest.json")):
-            try:
-                trial_id = str(mf.parent.parent.name)
-            except Exception:
-                continue
-            if _normalize_trial_id(trial_id) is None:
-                continue
-            try:
-                payload = json.loads(mf.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            if not isinstance(payload, dict):
-                continue
-            try:
-                server_time = int(payload.get("server_time_unix") or 0)
-            except Exception:
-                server_time = 0
-            entries.append((trial_id, server_time))
-        if not entries:
-            return []
-        max_server_time = max(server_time for _, server_time in entries)
-        # Only consider the freshest published trial set so historical runs do not
-        # keep attracting leased workers forever.
-        freshness_slack_s = 300
-        return [
-            trial_id
-            for trial_id, server_time in entries
-            if int(server_time) >= int(max_server_time - freshness_slack_s)
-        ]
-
-    def _lease_counts_by_trial(active_leases: list[dict[str, Any]]) -> dict[str, int]:
-        counts: dict[str, int] = {}
-        for lease in active_leases:
-            tid = _normalize_trial_id(lease.get("trial_id"))
-            if tid is None:
-                continue
-            counts[tid] = int(counts.get(tid, 0)) + 1
-        return counts
-
-    def _pick_trial_for_lease(*, available_trials: list[str], active_leases: list[dict[str, Any]]) -> str | None:
-        if not available_trials:
-            return None
-        counts = _lease_counts_by_trial(active_leases)
-        manifests: dict[str, dict[str, Any]] = {}
-        max_iter = 0
-        for tid in available_trials:
-            mf = _load_manifest(tid) or {}
-            manifests[tid] = mf
-            try:
-                max_iter = max(max_iter, int(mf.get("training_iteration") or 0))
-            except Exception:
-                pass
-
-        def _score(tid: str) -> tuple[float, int, str]:
-            mf = manifests.get(tid) or {}
-            try:
-                iter_idx = int(mf.get("training_iteration") or 0)
-            except Exception:
-                iter_idx = 0
-            lag = max(0, int(max_iter) - int(iter_idx))
-            active = int(counts.get(tid, 0))
-            # Gentle bias only: behind trials get a fractional boost, not a hard
-            # reallocation target, so lease assignment doesn't overshoot.
-            lag_bias = min(1.0, 0.25 * float(lag))
-            load_ratio = float(active) / float(1.0 + lag_bias)
-            return (load_ratio, -lag, tid)
-
-        return min(available_trials, key=_score)
 
     def _check_worker_compat(
         *,
@@ -548,64 +441,31 @@ def create_app(
         username: str = Depends(_auth_user),
     ) -> Any:
         with _LeaseAssignLock(leases_root / ".assign.lock"):
-            now_unix = int(time.time())
-            active_leases = _prune_expired_leases(now_unix=now_unix)
-
             lease_seconds = 3600
             requested_lease_id = str(payload.get("lease_id") or "").strip()
             requested_trial_id = _normalize_trial_id(payload.get("trial_id"))
             worker_info = payload.get("worker_info")
             if not isinstance(worker_info, dict):
                 worker_info = {}
-
-            if requested_lease_id:
-                existing = _load_lease(requested_lease_id)
-                if existing is not None and str(existing.get("username") or "") == str(username):
-                    existing["last_heartbeat_unix"] = now_unix
-                    existing["expires_at_unix"] = now_unix + lease_seconds
-                    existing["worker_info"] = worker_info
-                    _save_lease(existing)
-                    return {
-                        "lease_id": str(existing.get("lease_id")),
-                        "trial_id": existing.get("trial_id"),
-                        "api_prefix": str(existing.get("api_prefix") or "/v1"),
-                        "lease_seconds": lease_seconds,
-                        "expires_at_unix": int(existing.get("expires_at_unix") or 0),
-                    }
-
-            available_trials = _available_trial_ids()
-            chosen_trial_id = requested_trial_id if requested_trial_id in available_trials else None
-
-            if chosen_trial_id is None and available_trials:
-                chosen_trial_id = _pick_trial_for_lease(
-                    available_trials=available_trials,
-                    active_leases=active_leases,
-                )
-
-            api_prefix = "/v1"
-            if chosen_trial_id:
-                api_prefix = f"/v1/trials/{chosen_trial_id}"
-            elif _load_manifest(None) is None:
+            available_trials = available_trial_ids(server_root=root, publish_dir=publish_dir)
+            if not available_trials and _load_manifest(None) is None:
                 raise HTTPException(status_code=503, detail="no published trials available")
-
-            lease_id = uuid.uuid4().hex
-            lease = {
-                "lease_id": lease_id,
-                "username": str(username),
-                "trial_id": chosen_trial_id,
-                "api_prefix": api_prefix,
-                "issued_at_unix": now_unix,
-                "last_heartbeat_unix": now_unix,
-                "expires_at_unix": now_unix + lease_seconds,
-                "worker_info": worker_info,
-            }
-            _save_lease(lease)
+            lease = assign_trial_lease(
+                leases_root=leases_root,
+                username=str(username),
+                worker_info=worker_info,
+                available_trials=available_trials,
+                manifest_loader=_load_manifest,
+                requested_lease_id=requested_lease_id,
+                requested_trial_id=requested_trial_id,
+                lease_seconds=lease_seconds,
+            )
             return {
-                "lease_id": lease_id,
-                "trial_id": chosen_trial_id,
-                "api_prefix": api_prefix,
+                "lease_id": str(lease.get("lease_id")),
+                "trial_id": lease.get("trial_id"),
+                "api_prefix": str(lease.get("api_prefix") or "/v1"),
                 "lease_seconds": lease_seconds,
-                "expires_at_unix": now_unix + lease_seconds,
+                "expires_at_unix": int(lease.get("expires_at_unix") or 0),
             }
 
     async def _upload_shard_impl(
@@ -684,7 +544,7 @@ def create_app(
 
         lease = None
         if x_cae_worker_lease_id is not None:
-            lease = _load_lease(str(x_cae_worker_lease_id).strip())
+            lease = load_lease(leases_root=leases_root, lease_id=str(x_cae_worker_lease_id).strip())
         batch_elapsed_s: float | None = None
         if x_cae_batch_elapsed_s is not None:
             try:
