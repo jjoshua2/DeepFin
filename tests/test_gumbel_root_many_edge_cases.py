@@ -1,7 +1,8 @@
 import numpy as np
 import chess
 
-from chess_anti_engine.mcts.gumbel import GumbelConfig, run_gumbel_root_many
+from chess_anti_engine.mcts.gumbel import GumbelConfig, _completed_q, run_gumbel_root_many
+from chess_anti_engine.mcts.puct import Node
 from chess_anti_engine.model import ModelConfig, build_model
 
 
@@ -45,3 +46,16 @@ def test_gumbel_root_many_returns_values_for_edge_cases():
         assert probs.shape[0] > 1000
         assert float(probs.sum()) <= 1.01
         assert float(probs.sum()) >= -1e-6
+
+
+def test_completed_q_uses_parent_perspective_for_visited_child():
+    root = Node(chess.Board(), parent=None, prior=1.0)
+    child_board = root.board.copy(stack=False)
+    child_board.push(next(iter(child_board.legal_moves)))
+    child = Node(child_board, parent=root, prior=0.5)
+    child.N = 4
+    child.W = 2.0  # child.Q = +0.5 from child's side-to-move perspective
+    root.children[0] = child
+
+    q = _completed_q(root_q=0.1, root=root, action=0)
+    assert q == -0.5
