@@ -80,12 +80,12 @@ def available_trial_ids(*, server_root: Path, publish_dir: str = "publish") -> l
         entries.append((trial_id, server_time))
     if not entries:
         return []
-    max_server_time = max(server_time for _, server_time in entries)
-    freshness_slack_s = 300
+    newest_trial_id, _ = max(entries, key=lambda item: int(item[1]))
+    current_prefix = str(newest_trial_id).split("_", 1)[0]
     return [
         trial_id
-        for trial_id, server_time in entries
-        if int(server_time) >= int(max_server_time - freshness_slack_s)
+        for trial_id, _ in entries
+        if str(trial_id).split("_", 1)[0] == current_prefix
     ]
 
 

@@ -73,7 +73,7 @@ stockfish:
   pid_skill_demote_nodes: 1000
   pid_skill_nodes_on_promote: 1000
   pid_skill_nodes_on_demote: 1000
-  pid_random_move_prob_start: 0.6
+  pid_random_move_prob_start: 0.5
   pid_random_move_prob_min: 0.0
   pid_random_move_prob_max: 1.0
   pid_random_move_stage_end: 0.5
