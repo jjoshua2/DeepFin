@@ -800,6 +800,13 @@ def _atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> Non
             pass
 
 
+def _set_active_run_prefix(*, server_root: Path, trial_id: str) -> None:
+    prefix = str(trial_id).split("_", 1)[0].strip()
+    if not prefix:
+        return
+    _atomic_write_text(server_root / "active_run_prefix.txt", prefix + "\n")
+
+
 def _trial_server_dirs(*, server_root: Path, trial_id: str) -> dict[str, Path]:
     trial_root = Path(server_root) / "trials" / str(trial_id)
     return {
@@ -1714,6 +1721,8 @@ def train_trial(config: dict):
         if use_distributed_selfplay
         else None
     )
+    if distributed_server_root is not None:
+        _set_active_run_prefix(server_root=distributed_server_root, trial_id=trial_id)
     distributed_dirs = (
         _trial_server_dirs(server_root=distributed_server_root, trial_id=trial_id)
         if distributed_server_root is not None

@@ -80,8 +80,17 @@ def available_trial_ids(*, server_root: Path, publish_dir: str = "publish") -> l
         entries.append((trial_id, server_time))
     if not entries:
         return []
-    newest_trial_id, _ = max(entries, key=lambda item: int(item[1]))
-    current_prefix = str(newest_trial_id).split("_", 1)[0]
+    active_prefix_path = Path(server_root) / "active_run_prefix.txt"
+    current_prefix: str | None = None
+    try:
+        active_prefix = active_prefix_path.read_text(encoding="utf-8").strip()
+        if active_prefix:
+            current_prefix = str(active_prefix)
+    except Exception:
+        current_prefix = None
+    if not current_prefix:
+        newest_trial_id, _ = max(entries, key=lambda item: int(item[1]))
+        current_prefix = str(newest_trial_id).split("_", 1)[0]
     return [
         trial_id
         for trial_id, _ in entries
