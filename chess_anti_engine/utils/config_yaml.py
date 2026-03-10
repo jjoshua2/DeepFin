@@ -52,6 +52,7 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             "bootstrap_dir",
             "bootstrap_checkpoint",
             "bootstrap_zero_policy_heads",
+            "worker_wheel_path",
             "bootstrap_max_positions",
             "bootstrap_train_steps",
             "shared_shards_dir",
@@ -99,8 +100,17 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             "sf_pid_integral_clamp",
             "sf_pid_min_nodes",
             "sf_pid_max_nodes",
+            "sf_pid_initial_skill_level",
+            "sf_pid_skill_min",
+            "sf_pid_skill_max",
+            "sf_pid_skill_promote_nodes",
+            "sf_pid_skill_demote_nodes",
+            "sf_pid_skill_nodes_on_promote",
+            "sf_pid_skill_nodes_on_demote",
             # selfplay
             "games_per_iter",
+            "games_per_iter_start",
+            "games_per_iter_ramp_iters",
             "selfplay_batch",
             "temperature",
             "temperature_drop_plies",
@@ -137,7 +147,10 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             "hlgauss_sigma",
             # train
             "optimizer",
+            "cosmos_rank",
+            "cosmos_gamma",
             "train_steps",
+            "train_window_fraction",
             "batch_size",
             "lr",
             "no_amp",
@@ -146,6 +159,7 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             "search_w_volatility",
             "accum_steps",
             "warmup_steps",
+            "warmup_lr_start",
             "lr_eta_min",
             "lr_T0",
             "lr_T_mult",
@@ -182,7 +196,11 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             "distributed_worker_target_batch_seconds",
             "distributed_worker_min_games_per_batch",
             "distributed_worker_max_games_per_batch",
+            "distributed_worker_shared_cache_dir",
             "distributed_server_port",
+            "distributed_server_host",
+            "distributed_server_public_url",
+            "distributed_wait_timeout_seconds",
             "pbt_synch",
             "gpbt_pairwise_lr",
             "gpbt_pairwise_momentum",
@@ -205,6 +223,10 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             "search_feature_dropout_p",
             "w_volatility",
             "search_w_volatility",
+            "search_optimizer",
+            "search_optimizer_choices",
+            "asha_optimizer_only",
+            "asha_optimizer_repeats",
         }:
             out[k] = v
 
@@ -237,6 +259,13 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             "pid_integral_clamp",
             "pid_min_nodes",
             "pid_max_nodes",
+            "pid_initial_skill_level",
+            "pid_skill_min",
+            "pid_skill_max",
+            "pid_skill_promote_nodes",
+            "pid_skill_demote_nodes",
+            "pid_skill_nodes_on_promote",
+            "pid_skill_nodes_on_demote",
             "pid_random_move_prob_start",
             "pid_random_move_prob_min",
             "pid_random_move_prob_max",
@@ -250,6 +279,8 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
     if isinstance(selfplay, dict):
         for k in [
             "games_per_iter",
+            "games_per_iter_start",
+            "games_per_iter_ramp_iters",
             "temperature",
             "temperature_drop_plies",
             "temperature_after",
@@ -284,6 +315,7 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             "fpu_reduction",
             "fpu_at_root",
             "selfplay_batch",
+            "selfplay_fraction",
         ]:
             if k in selfplay:
                 out[k] = selfplay.get(k)
@@ -298,13 +330,15 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             out["batch_size"] = train.get("batch_size")
         if "train_steps" in train:
             out["train_steps"] = train.get("train_steps")
+        if "train_window_fraction" in train:
+            out["train_window_fraction"] = train.get("train_window_fraction")
         if "no_amp" in train:
             out["no_amp"] = train.get("no_amp")
         if "feature_dropout_p" in train:
             out["feature_dropout_p"] = train.get("feature_dropout_p")
         if "w_volatility" in train:
             out["w_volatility"] = train.get("w_volatility")
-        for k in ["accum_steps", "warmup_steps", "lr_eta_min", "lr_T0", "lr_T_mult", "grad_clip", "zclip_z_thresh", "zclip_alpha", "zclip_max_norm", "use_compile", "swa_start", "swa_freq", "w_policy", "w_soft", "w_future", "w_wdl", "w_sf_move", "w_sf_eval", "w_categorical", "w_sf_volatility", "w_moves_left", "w_sf_wdl", "sf_wdl_floor", "sf_wdl_floor_at"]:
+        for k in ["cosmos_rank", "cosmos_gamma", "accum_steps", "warmup_steps", "lr_eta_min", "lr_T0", "lr_T_mult", "grad_clip", "zclip_z_thresh", "zclip_alpha", "zclip_max_norm", "use_compile", "swa_start", "swa_freq", "w_policy", "w_soft", "w_future", "w_wdl", "w_sf_move", "w_sf_eval", "w_categorical", "w_sf_volatility", "w_moves_left", "w_sf_wdl", "sf_wdl_floor", "sf_wdl_floor_at"]:
             if k in train:
                 out[k] = train.get(k)
         if "device" in train and "device" not in out:
@@ -336,6 +370,9 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             "distributed_worker_min_games_per_batch",
             "distributed_worker_max_games_per_batch",
             "distributed_server_port",
+            "distributed_server_host",
+            "distributed_server_public_url",
+            "distributed_wait_timeout_seconds",
             "tune_metric",
             "tune_mode",
             "tune_num_to_keep",
@@ -358,6 +395,9 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             "search_smolgen",
             "search_nla",
             "search_optimizer",
+            "search_optimizer_choices",
+            "asha_optimizer_only",
+            "asha_optimizer_repeats",
             "tune_scheduler",
             "pbt_synch",
             "gpbt_pairwise_lr",

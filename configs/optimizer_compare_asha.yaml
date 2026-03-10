@@ -1,0 +1,183 @@
+seed: 0
+work_dir: runs/optimizer_compare_asha
+device: cuda
+iterations: 120
+replay_capacity: 1000000
+replay_window_start: 100000
+replay_window_max: 1000000
+replay_window_growth: 1000
+
+bootstrap_dir: data/bootstrap
+bootstrap_checkpoint: /home/josh/projects/chess/data/bootstrap/bootstrap_net.pt
+bootstrap_zero_policy_heads: true
+bootstrap_max_positions: 0
+bootstrap_train_steps: 0
+shared_shards_dir: null
+
+model:
+  kind: transformer
+  embed_dim: 384
+  num_layers: 8
+  num_heads: 12
+  ffn_mult: 2
+  use_smolgen: true
+  use_nla: false
+  gradient_checkpointing: false
+
+stockfish:
+  path: /home/josh/projects/chess/e2e_server/publish/stockfish
+  nodes: 1000
+  workers: 2
+  multipv: 5
+  hash_mb: 4
+
+  pid_enabled: true
+  pid_target_winrate: 0.53
+  pid_ema_alpha: 0.20
+  pid_deadzone: 0.025
+  pid_rate_limit: 0.10
+  pid_min_games_between_adjust: 150
+  pid_kp: 1.5
+  pid_ki: 0.10
+  pid_kd: 0.0
+  pid_integral_clamp: 1.0
+  pid_min_nodes: 1000
+  pid_max_nodes: 1000
+  pid_initial_skill_level: 0
+  pid_skill_min: 0
+  pid_skill_max: 20
+  pid_skill_promote_nodes: 200
+  pid_skill_demote_nodes: 100
+  pid_skill_nodes_on_promote: 100
+  pid_skill_nodes_on_demote: 150
+  pid_random_move_prob_start: 0.995
+  pid_random_move_prob_min: 0.0
+  pid_random_move_prob_max: 1.0
+  pid_random_move_stage_end: 0.5
+  pid_max_rand_step: 0.005
+
+selfplay:
+  games_per_iter: 150
+  selfplay_batch: 16
+  max_plies: 120
+
+  temperature: 1.1
+  temperature_drop_plies: 0
+  temperature_after: 0.0
+  temperature_decay_start_move: 20
+  temperature_decay_moves: 60
+  temperature_endgame: 0.6
+
+  opening_book_path: /home/josh/projects/chess/data/opening_books/2moves_v2.pgn.zip
+  opening_book_max_plies: 4
+  opening_book_max_games: 200000
+  opening_book_prob: 1.0
+  random_start_plies: 2
+
+  mcts: puct
+  mcts_simulations: 64
+  mcts_start_simulations: 64
+  playout_cap_fraction: 0.30
+  fast_simulations: 8
+  fpu_reduction: 1.2
+  fpu_at_root: 1.0
+
+  sf_policy_temp: 0.35
+  sf_policy_label_smooth: 0.10
+  soft_policy_temp: 3.0
+
+  syzygy_path: null
+  syzygy_policy: false
+  timeout_adjudication_threshold: 0.90
+
+  diff_focus_enabled: true
+  diff_focus_q_weight: 4.8
+  diff_focus_pol_scale: 3.8
+  diff_focus_slope: 4.0
+  diff_focus_min: 0.09
+
+  categorical_bins: 32
+  hlgauss_sigma: 0.04
+
+train:
+  optimizer: muon
+  lr: 0.0012
+  cosmos_rank: 64
+  cosmos_gamma: 0.2
+  batch_size: 256
+  train_steps: 24
+  no_amp: false
+  feature_dropout_p: 0.25
+  zclip_z_thresh: 2.5
+  zclip_alpha: 0.97
+  zclip_max_norm: 1.0
+
+  w_policy: 1.0
+  w_soft: 0.73
+  w_future: 0.05
+  w_wdl: 0.58
+  w_sf_move: 0.03
+  w_sf_eval: 0.10
+  w_categorical: 0.10
+  w_volatility: 0.10
+  w_sf_volatility: 0.05
+  w_moves_left: 0.02
+  w_sf_wdl: 0.02
+  sf_wdl_conf_power: 1.0
+  sf_wdl_draw_scale: 0.55
+  sf_wdl_floor: 0.0
+  sf_wdl_floor_at: 0.1
+
+  accum_steps: 4
+  warmup_steps: 60
+  lr_eta_min: 0.00001
+  lr_T0: 120
+  lr_T_mult: 1
+  use_compile: false
+  swa_start: 0
+  swa_freq: 50
+
+puzzle_epd: null
+puzzle_interval: 0
+
+tune:
+  min_replay_size: 0
+  tune_num_to_keep: 6
+  tune_keep_last_experiments: 3
+
+  tune_scheduler: asha
+  tune_metric: opponent_strength
+  tune_mode: max
+
+  num_samples: 1
+  max_concurrent_trials: 5
+  cpus_per_trial: 2
+  gpus_per_trial: 0.1
+  distributed_workers_per_trial: 3
+  distributed_worker_sf_workers: 1
+
+  shuffle_buffer_size: 70000
+  shard_size: 2000
+
+  holdout_fraction: 0.02
+  holdout_capacity: 2000
+  test_steps: 5
+  freeze_holdout_at: 0
+  reset_holdout_on_drift: false
+  drift_threshold: 0.0
+  drift_sample_size: 128
+
+  search_smolgen: false
+  search_nla: false
+  search_optimizer: true
+  asha_optimizer_only: true
+  asha_optimizer_repeats: 2
+
+  gate_games: 0
+  gate_threshold: 0.50
+  gate_interval: 1
+  gate_mcts_sims: 1
+
+  eval_games: 0
+  eval_sf_nodes: 500
+  eval_mcts_simulations: 32

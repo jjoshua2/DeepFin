@@ -284,6 +284,7 @@ def _run_single(args: argparse.Namespace) -> None:
     cfg.train.batch_size = int(args.batch_size)
     cfg.train.train_steps_per_iter = int(args.train_steps)
     cfg.selfplay.games_per_iter = int(args.games_per_iter)
+    cfg.selfplay.selfplay_fraction = float(getattr(args, "selfplay_fraction", 0.0))
     cfg.selfplay.temperature = float(args.temperature)
     cfg.selfplay.temperature_drop_plies = int(args.temperature_drop_plies)
     cfg.selfplay.temperature_after = float(args.temperature_after)
@@ -346,11 +347,14 @@ def _run_single(args: argparse.Namespace) -> None:
         w_volatility=float(args.w_volatility),
         accum_steps=int(args.accum_steps),
         warmup_steps=int(args.warmup_steps),
+        warmup_lr_start=getattr(args, "warmup_lr_start", None),
         lr_eta_min=float(args.lr_eta_min),
         lr_T0=int(args.lr_T0),
         lr_T_mult=int(args.lr_T_mult),
         use_compile=bool(args.use_compile),
         optimizer=str(args.optimizer),
+        cosmos_rank=int(getattr(args, "cosmos_rank", 64)),
+        cosmos_gamma=float(getattr(args, "cosmos_gamma", 0.2)),
         swa_start=int(args.swa_start),
         swa_freq=int(args.swa_freq),
         w_policy=float(getattr(args, "w_policy", 1.0)),
@@ -467,6 +471,13 @@ def _run_single(args: argparse.Namespace) -> None:
             integral_clamp=float(cfg.stockfish.pid_integral_clamp),
             min_nodes=int(cfg.stockfish.pid_min_nodes),
             max_nodes=int(cfg.stockfish.pid_max_nodes),
+            initial_skill_level=int(getattr(args, "sf_pid_initial_skill_level", 0)),
+            skill_min=int(getattr(args, "sf_pid_skill_min", 0)),
+            skill_max=int(getattr(args, "sf_pid_skill_max", 20)),
+            skill_promote_nodes=int(getattr(args, "sf_pid_skill_promote_nodes", 200)),
+            skill_demote_nodes=int(getattr(args, "sf_pid_skill_demote_nodes", 100)),
+            skill_nodes_on_promote=int(getattr(args, "sf_pid_skill_nodes_on_promote", 100)),
+            skill_nodes_on_demote=int(getattr(args, "sf_pid_skill_nodes_on_demote", 150)),
             # Optional opponent random-move schedule (may be provided via YAML defaults
             # even if not exposed as explicit CLI flags).
             initial_random_move_prob=float(getattr(args, "sf_pid_random_move_prob_start", 0.0)),
@@ -511,6 +522,8 @@ def _run_single(args: argparse.Namespace) -> None:
                 rng=rng,
                 stockfish=sf,
                 opponent_random_move_prob=current_rand,
+                opponent_topk_stage_end=float(getattr(args, "sf_pid_random_move_stage_end", 0.5)),
+                selfplay_fraction=float(getattr(cfg.selfplay, "selfplay_fraction", 0.0)),
                 temperature=cfg.selfplay.temperature,
                 temperature_drop_plies=int(cfg.selfplay.temperature_drop_plies),
                 temperature_after=float(cfg.selfplay.temperature_after),
@@ -739,10 +752,34 @@ def main() -> None:
         help="Worker auto-tune upper bound for games_per_batch.",
     )
     ap.add_argument(
+        "--distributed-worker-shared-cache-dir",
+        type=str,
+        default="",
+        help="Optional shared cache directory for Tune-managed local worker processes.",
+    )
+    ap.add_argument(
+        "--distributed-wait-timeout-seconds",
+        type=float,
+        default=900.0,
+        help="How long a Tune trial waits for enough distributed selfplay shards for the current model.",
+    )
+    ap.add_argument(
         "--distributed-server-port",
         type=int,
         default=0,
         help="Central distributed Tune server port (0 = auto-pick a free local port).",
+    )
+    ap.add_argument(
+        "--distributed-server-host",
+        type=str,
+        default="127.0.0.1",
+        help="Host/interface for the central distributed Tune server to bind (use 0.0.0.0 for LAN workers).",
+    )
+    ap.add_argument(
+        "--distributed-server-public-url",
+        type=str,
+        default="",
+        help="Optional externally reachable base URL for remote workers (defaults to http://<host>:<port>).",
     )
     ap.add_argument(
         "--gpus-per-trial", type=float, default=0.1,
@@ -787,7 +824,18 @@ def main() -> None:
     ap.add_argument("--search-nla", action="store_true",
                     help="PB2/ASHA: include NLA on/off as a binary search dimension.")
     ap.add_argument("--search-optimizer", action="store_true",
-                    help="PB2/ASHA: include optimizer (nadamw vs soap) as a binary search dimension.")
+                    help="Include optimizer family as a Tune search dimension.")
+    ap.add_argument(
+        "--search-optimizer-choices",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Restrict optimizer search/mutation to this subset, e.g. --search-optimizer-choices adamw cosmos_fast.",
+    )
+    ap.add_argument("--asha-optimizer-only", action="store_true",
+                    help="ASHA: isolate optimizer as the only search dimension and use a deterministic optimizer grid.")
+    ap.add_argument("--asha-optimizer-repeats", type=int, default=1,
+                    help="ASHA optimizer-only mode: number of seed repeats per optimizer.")
 
     ap.add_argument("--tune-metric", type=str, default="train_loss")
     ap.add_argument("--tune-mode", type=str, default=None, choices=["min", "max"])
@@ -822,6 +870,8 @@ def main() -> None:
     ap.add_argument("--bootstrap-checkpoint", type=str, default=None, help="Path to pre-trained bootstrap checkpoint (from scripts/train_bootstrap.py)")
     ap.add_argument("--bootstrap-zero-policy-heads", action="store_true",
                     help="After loading bootstrap weights, zero policy heads so priors start near-uniform.")
+    ap.add_argument("--worker-wheel-path", type=str, default=None,
+                    help="Optional wheel file to publish for worker self-update in Tune manifests.")
     ap.add_argument("--bootstrap-max-positions", type=int, default=0, help="Max bootstrap positions to load (0=unlimited)")
     ap.add_argument("--bootstrap-train-steps", type=int, default=0, help="Pre-training steps on bootstrap data (0=disabled)")
     ap.add_argument("--gate-games", type=int, default=0, help="Net gating: games to play after training (0=disabled)")
@@ -919,8 +969,20 @@ def main() -> None:
     ap.add_argument("--sf-pid-integral-clamp", type=float, default=1.0)
     ap.add_argument("--sf-pid-min-nodes", type=int, default=250)
     ap.add_argument("--sf-pid-max-nodes", type=int, default=1000000)
+    ap.add_argument("--sf-pid-initial-skill-level", type=int, default=0)
+    ap.add_argument("--sf-pid-skill-min", type=int, default=0)
+    ap.add_argument("--sf-pid-skill-max", type=int, default=20)
+    ap.add_argument("--sf-pid-skill-promote-nodes", type=int, default=200)
+    ap.add_argument("--sf-pid-skill-demote-nodes", type=int, default=100)
+    ap.add_argument("--sf-pid-skill-nodes-on-promote", type=int, default=100)
+    ap.add_argument("--sf-pid-skill-nodes-on-demote", type=int, default=150)
     ap.add_argument("--games-per-iter", type=int, default=10)
+    ap.add_argument("--games-per-iter-start", type=int, default=0,
+                    help="Optional starting games_per_iter for Tune ramping (0 disables).")
+    ap.add_argument("--games-per-iter-ramp-iters", type=int, default=0,
+                    help="Iterations to ramp games_per_iter_start up to games_per_iter.")
     ap.add_argument("--selfplay-batch", type=int, default=10, help="Play games in mini-batches of this size to limit memory")
+    ap.add_argument("--selfplay-fraction", type=float, default=0.0, help="Fraction of games that are true net-vs-net self-play")
     ap.add_argument("--train-steps", type=int, default=200)
     ap.add_argument("--playout-cap-fraction", type=float, default=0.25)
     ap.add_argument("--fast-simulations", type=int, default=8)
@@ -980,11 +1042,15 @@ def main() -> None:
                     help="Volatility target source: raw (network raw WDL) or search (search-adjusted WDL).")
     ap.add_argument("--feature-dropout-p", type=float, default=0.3)
     ap.add_argument("--work-dir", type=str, default="runs")
-    ap.add_argument("--optimizer", type=str, default="nadamw", choices=["nadamw", "adamw", "muon", "soap"],
-                    help="Optimizer: nadamw, adamw, muon, or soap")
+    ap.add_argument("--optimizer", type=str, default="nadamw", choices=["nadamw", "adamw", "muon", "cosmos", "cosmos_fast", "soap"],
+                    help="Optimizer: nadamw, adamw, muon, cosmos, cosmos_fast, or soap")
+    ap.add_argument("--cosmos-rank", type=int, default=64, help="COSMOS/COSMOSFast low-rank subspace rank")
+    ap.add_argument("--cosmos-gamma", type=float, default=0.2, help="COSMOS/COSMOSFast residual branch weight")
     ap.add_argument("--no-amp", action="store_true", help="Disable AMP (BF16 autocast on CUDA)")
     ap.add_argument("--accum-steps", type=int, default=1, help="Gradient accumulation micro-batches")
     ap.add_argument("--warmup-steps", type=int, default=1500, help="Linear LR warmup steps")
+    ap.add_argument("--warmup-lr-start", type=float, default=None,
+                    help="Optional warmup starting LR override (defaults to --lr-eta-min).")
     ap.add_argument("--lr-eta-min", type=float, default=1e-5, help="Cosine schedule min LR")
     ap.add_argument("--lr-T0", type=int, default=5000, help="Cosine schedule T_0")
     ap.add_argument("--lr-T-mult", type=int, default=2, help="Cosine schedule T_mult")
@@ -1055,6 +1121,13 @@ def main() -> None:
         "sf_pid_integral_clamp": float(args.sf_pid_integral_clamp),
         "sf_pid_min_nodes": int(args.sf_pid_min_nodes),
         "sf_pid_max_nodes": int(args.sf_pid_max_nodes),
+        "sf_pid_initial_skill_level": int(getattr(args, "sf_pid_initial_skill_level", 0)),
+        "sf_pid_skill_min": int(getattr(args, "sf_pid_skill_min", 0)),
+        "sf_pid_skill_max": int(getattr(args, "sf_pid_skill_max", 20)),
+        "sf_pid_skill_promote_nodes": int(getattr(args, "sf_pid_skill_promote_nodes", 200)),
+        "sf_pid_skill_demote_nodes": int(getattr(args, "sf_pid_skill_demote_nodes", 100)),
+        "sf_pid_skill_nodes_on_promote": int(getattr(args, "sf_pid_skill_nodes_on_promote", 100)),
+        "sf_pid_skill_nodes_on_demote": int(getattr(args, "sf_pid_skill_nodes_on_demote", 150)),
         "sf_pid_random_move_prob_start": float(getattr(args, "sf_pid_random_move_prob_start", 1.0)),
         "sf_pid_random_move_prob_min": float(getattr(args, "sf_pid_random_move_prob_min", 0.0)),
         "sf_pid_random_move_prob_max": float(getattr(args, "sf_pid_random_move_prob_max", 1.0)),
@@ -1085,8 +1158,12 @@ def main() -> None:
         "drift_sample_size": int(args.drift_sample_size),
         "sf_workers": int(args.sf_workers),
         "games_per_iter": int(args.games_per_iter),
+        "games_per_iter_start": int(getattr(args, "games_per_iter_start", 0)),
+        "games_per_iter_ramp_iters": int(getattr(args, "games_per_iter_ramp_iters", 0)),
         "selfplay_batch": int(args.selfplay_batch),
+        "selfplay_fraction": float(getattr(args, "selfplay_fraction", 0.0)),
         "train_steps": int(args.train_steps),
+        "train_window_fraction": float(getattr(args, "train_window_fraction", 0.0)),
         "batch_size": int(args.batch_size),
         "feature_dropout_p": float(args.feature_dropout_p),
         "w_policy": float(getattr(args, "w_policy", 1.0)),
@@ -1103,12 +1180,15 @@ def main() -> None:
         "use_amp": not bool(args.no_amp),
         "accum_steps": int(args.accum_steps),
         "warmup_steps": int(args.warmup_steps),
+        "warmup_lr_start": getattr(args, "warmup_lr_start", None),
         "lr_eta_min": float(args.lr_eta_min),
         "lr_T0": int(args.lr_T0),
         "lr_T_mult": int(args.lr_T_mult),
         "grad_clip": float(args.grad_clip),
         "use_compile": bool(args.use_compile),
         "optimizer": str(args.optimizer),
+        "cosmos_rank": int(getattr(args, "cosmos_rank", 64)),
+        "cosmos_gamma": float(getattr(args, "cosmos_gamma", 0.2)),
         "embed_dim": int(args.embed_dim),
         "num_layers": int(args.num_layers),
         "num_heads": int(args.num_heads),
@@ -1142,6 +1222,7 @@ def main() -> None:
         "bootstrap_dir": getattr(args, "bootstrap_dir", None),
         "bootstrap_checkpoint": getattr(args, "bootstrap_checkpoint", None),
         "bootstrap_zero_policy_heads": bool(getattr(args, "bootstrap_zero_policy_heads", False)),
+        "worker_wheel_path": str(getattr(args, "worker_wheel_path", "") or ""),
         "bootstrap_max_positions": int(getattr(args, "bootstrap_max_positions", 0)),
         "bootstrap_train_steps": int(getattr(args, "bootstrap_train_steps", 0)),
         "shared_shards_dir": getattr(args, "shared_shards_dir", None),
@@ -1200,7 +1281,11 @@ def main() -> None:
         "distributed_worker_target_batch_seconds": float(args.distributed_worker_target_batch_seconds),
         "distributed_worker_min_games_per_batch": int(args.distributed_worker_min_games_per_batch),
         "distributed_worker_max_games_per_batch": int(args.distributed_worker_max_games_per_batch),
+        "distributed_worker_shared_cache_dir": args.distributed_worker_shared_cache_dir,
+        "distributed_wait_timeout_seconds": float(getattr(args, "distributed_wait_timeout_seconds", 900.0)),
         "distributed_server_port": int(args.distributed_server_port),
+        "distributed_server_host": args.distributed_server_host,
+        "distributed_server_public_url": args.distributed_server_public_url,
         "gpus_per_trial": float(args.gpus_per_trial),
         "tune_scheduler": str(args.tune_scheduler),
         "pb2_perturbation_interval": int(args.pb2_perturbation_interval),
@@ -1212,6 +1297,9 @@ def main() -> None:
         "search_smolgen": bool(args.search_smolgen),
         "search_nla": bool(args.search_nla),
         "search_optimizer": bool(args.search_optimizer),
+        "search_optimizer_choices": list(args.search_optimizer_choices) if args.search_optimizer_choices else None,
+        "asha_optimizer_only": bool(args.asha_optimizer_only),
+        "asha_optimizer_repeats": int(args.asha_optimizer_repeats),
     }
     # Forward pb2_bounds_* keys from config to base dict for PB2 scheduler.
     for k, v in vars(args).items():

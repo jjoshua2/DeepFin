@@ -140,7 +140,9 @@ def main() -> None:
     ap.add_argument("--lr-eta-min", type=float, default=1e-5)
     ap.add_argument("--lr-T0", type=int, default=5000)
     ap.add_argument("--lr-T-mult", type=int, default=2)
-    ap.add_argument("--optimizer", type=str, default="nadamw", choices=["nadamw", "adamw", "muon", "soap"])
+    ap.add_argument("--optimizer", type=str, default="nadamw", choices=["nadamw", "adamw", "muon", "cosmos", "cosmos_fast", "soap"])
+    ap.add_argument("--cosmos-rank", type=int, default=64)
+    ap.add_argument("--cosmos-gamma", type=float, default=0.2)
 
     # Loop control
     ap.add_argument("--sleep-seconds", type=float, default=2.0)
@@ -440,10 +442,13 @@ def main() -> None:
         w_sf_wdl=_w_sf_wdl_start,
         accum_steps=int(args.accum_steps),
         warmup_steps=int(args.warmup_steps),
+        warmup_lr_start=getattr(args, "warmup_lr_start", None),
         lr_eta_min=float(args.lr_eta_min),
         lr_T0=int(args.lr_T0),
         lr_T_mult=int(args.lr_T_mult),
         optimizer=str(args.optimizer),
+        cosmos_rank=int(getattr(args, "cosmos_rank", 64)),
+        cosmos_gamma=float(getattr(args, "cosmos_gamma", 0.2)),
     )
 
     ckpt_path = work_dir / "trainer.pt"

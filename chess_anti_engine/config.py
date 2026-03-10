@@ -30,6 +30,7 @@ class StockfishConfig:
 class SelfPlayConfig:
     games_per_iter: int = 10
     max_plies: int = 200
+    selfplay_fraction: float = 0.0
 
     # AlphaZero/Leela-style exploration: sample from MCTS visits with temperature.
     # Optionally drop temperature after a fixed number of (full) moves.
@@ -69,10 +70,13 @@ class SelfPlayConfig:
 @dataclass
 class TrainConfig:
     device: str = "cpu"  # "cuda" if available
-    optimizer: str = "nadamw"  # nadamw | adamw | muon | soap
+    optimizer: str = "nadamw"  # nadamw | adamw | muon | cosmos | cosmos_fast | soap
     lr: float = 3e-4
+    cosmos_rank: int = 64
+    cosmos_gamma: float = 0.2
     batch_size: int = 128
     train_steps_per_iter: int = 200
+    train_window_fraction: float = 0.0
     grad_clip: float = 10.0
 
     # Gradient accumulation: effective batch = batch_size * accum_steps

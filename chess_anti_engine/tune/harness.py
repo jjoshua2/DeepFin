@@ -219,8 +219,11 @@ def run_tune(
         server_root.mkdir(parents=True, exist_ok=True)
         server_log = server_root / "server.log"
         port = int(base_config.get("distributed_server_port", 0)) or _pick_free_port()
-        host = "127.0.0.1"
-        base_url = f"http://{host}:{port}"
+        host = str(base_config.get("distributed_server_host", "127.0.0.1")).strip() or "127.0.0.1"
+        public_url = str(base_config.get("distributed_server_public_url", "")).strip()
+        ready_host = "127.0.0.1" if host == "0.0.0.0" else host
+        ready_url = f"http://{ready_host}:{port}"
+        base_url = public_url or ready_url
         username, password_file = _prepare_distributed_worker_auth(server_root=server_root)
 
         cmd = [
@@ -250,7 +253,7 @@ def run_tune(
             log_fh.close()
 
         try:
-            _wait_for_server_ready(base_url=base_url, proc=server_proc)
+            _wait_for_server_ready(base_url=ready_url, proc=server_proc)
         except Exception:
             _terminate_process(server_proc)
             raise
@@ -258,7 +261,8 @@ def run_tune(
         base_config.update(
             {
                 "distributed_server_root": str(server_root),
-                "distributed_server_url": str(base_url),
+                "distributed_server_url": str(ready_url),
+                "distributed_server_public_url": str(base_url),
                 "distributed_worker_username": str(username),
                 "distributed_worker_password_file": str(password_file),
             }
@@ -305,7 +309,10 @@ def run_tune(
         num_samples=int(num_samples),
         scheduler=scheduler,
         max_concurrent_trials=int(base_config.get("max_concurrent_trials", num_samples)),
-        reuse_actors=True,
+        # The tune path uses the function-style trainable API, which does not
+        # implement reset_config(). Reusing actors under GPBT/PBT causes Ray to
+        # error during perturb/exploit when it attempts an in-place config reset.
+        reuse_actors=False,
     )
     if search_alg is not None:
         tune_config_kwargs["search_alg"] = search_alg
@@ -397,9 +404,23 @@ def _collect_mutation_bounds(base_config: dict) -> dict[str, list[float]]:
     return bounds_out
 
 
+def _optimizer_candidates_from_config(base_config: dict, *, include_nadamw: bool = True) -> list[str]:
+    default = ["nadamw", "adamw", "muon", "cosmos", "cosmos_fast", "soap"]
+    if not include_nadamw:
+        default = ["adamw", "muon", "cosmos", "cosmos_fast", "soap"]
+    raw = base_config.get("search_optimizer_choices")
+    if isinstance(raw, (list, tuple)):
+        vals = [str(v).strip().lower() for v in raw if str(v).strip()]
+        vals = [v for i, v in enumerate(vals) if v in default and v not in vals[:i]]
+        if vals:
+            return vals
+    return list(default)
+
+
 def _build_mutation_param_space(base_config: dict, *, bounds: dict[str, list[float]]):
     from ray import tune
 
+    optimizer_candidates = _optimizer_candidates_from_config(base_config, include_nadamw=True)
     param_space = {**dict(base_config)}
     for param_name, param_bounds in bounds.items():
         param_space[param_name] = tune.uniform(*param_bounds)
@@ -409,7 +430,7 @@ def _build_mutation_param_space(base_config: dict, *, bounds: dict[str, list[flo
     if bool(base_config.get("search_nla", False)):
         param_space["use_nla"] = tune.choice([True, False])
     if bool(base_config.get("search_optimizer", False)):
-        param_space["optimizer"] = tune.choice(["nadamw", "soap"])
+        param_space["optimizer"] = tune.choice(optimizer_candidates)
 
     return param_space
 
@@ -417,6 +438,7 @@ def _build_mutation_param_space(base_config: dict, *, bounds: dict[str, list[flo
 def _build_pbt_mutations(base_config: dict, *, bounds: dict[str, list[float]]):
     from ray import tune
 
+    optimizer_candidates = _optimizer_candidates_from_config(base_config, include_nadamw=True)
     mutations: dict[str, object] = {}
     for param_name, param_bounds in bounds.items():
         mutations[param_name] = tune.uniform(*param_bounds)
@@ -426,7 +448,7 @@ def _build_pbt_mutations(base_config: dict, *, bounds: dict[str, list[float]]):
     if bool(base_config.get("search_nla", False)):
         mutations["use_nla"] = [True, False]
     if bool(base_config.get("search_optimizer", False)):
-        mutations["optimizer"] = ["nadamw", "soap"]
+        mutations["optimizer"] = list(optimizer_candidates)
 
     return mutations
 
@@ -532,27 +554,41 @@ def _build_asha(base_config: dict, *, metric: str, mode: str):
             "Install with: pip install -e '.[tune]'"
         ) from e
 
-    param_space = {
-        **dict(base_config),
-        "lr": tune.loguniform(1e-5, 3e-3),
-        "embed_dim": tune.choice([128, 192, 256, 320]),
-        "num_layers": tune.choice([4, 6, 8]),
-        "num_heads": tune.choice([4, 8]),
-        "ffn_mult": tune.choice([2, 3, 4]),
-        "use_smolgen": tune.choice([True, False]),
-        "use_nla": tune.choice([True, False]),
-        "temperature": tune.uniform(0.8, 1.6),
-        "playout_cap_fraction": tune.uniform(0.1, 0.5),
-        "sf_policy_temp": tune.uniform(0.15, 0.8),
-        "sf_policy_label_smooth": tune.uniform(0.0, 0.15),
-    }
+    optimizer_candidates = _optimizer_candidates_from_config(base_config, include_nadamw=False)
+    if bool(base_config.get("asha_optimizer_only", False)):
+        param_space = {**dict(base_config)}
+        if bool(base_config.get("search_optimizer", False)):
+            param_space["optimizer"] = tune.grid_search(list(optimizer_candidates))
+        repeats = max(1, int(base_config.get("asha_optimizer_repeats", 1)))
+        base_seed = int(base_config.get("seed", 0))
+        if repeats > 1:
+            param_space["seed"] = tune.grid_search([base_seed + i for i in range(repeats)])
+        search_alg = None
+    else:
+        param_space = {
+            **dict(base_config),
+            "lr": tune.loguniform(1e-5, 3e-3),
+            "embed_dim": tune.choice([128, 192, 256, 320]),
+            "num_layers": tune.choice([4, 6, 8]),
+            "num_heads": tune.choice([4, 8]),
+            "ffn_mult": tune.choice([2, 3, 4]),
+            "use_smolgen": tune.choice([True, False]),
+            "use_nla": tune.choice([True, False]),
+            "temperature": tune.uniform(0.8, 1.6),
+            "playout_cap_fraction": tune.uniform(0.1, 0.5),
+            "sf_policy_temp": tune.uniform(0.15, 0.8),
+            "sf_policy_label_smooth": tune.uniform(0.0, 0.15),
+        }
 
-    if bool(base_config.get("search_feature_dropout_p", False)):
-        param_space["feature_dropout_p"] = tune.choice([0.0, 0.3])
-    if bool(base_config.get("search_w_volatility", False)):
-        param_space["w_volatility"] = tune.choice([0.0, 0.05, 0.10])
-    if bool(base_config.get("search_volatility_source", False)):
-        param_space["volatility_source"] = tune.choice(["raw", "search"])
+        if bool(base_config.get("search_feature_dropout_p", False)):
+            param_space["feature_dropout_p"] = tune.choice([0.0, 0.3])
+        if bool(base_config.get("search_w_volatility", False)):
+            param_space["w_volatility"] = tune.choice([0.0, 0.05, 0.10])
+        if bool(base_config.get("search_volatility_source", False)):
+            param_space["volatility_source"] = tune.choice(["raw", "search"])
+        if bool(base_config.get("search_optimizer", False)):
+            param_space["optimizer"] = tune.choice(optimizer_candidates)
+        search_alg = OptunaSearch(metric=metric, mode=mode)
 
     scheduler = ASHAScheduler(
         metric=metric,
@@ -561,6 +597,5 @@ def _build_asha(base_config: dict, *, metric: str, mode: str):
         grace_period=max(1, int(base_config.get("iterations", 10)) // 5),
         reduction_factor=2,
     )
-    search_alg = OptunaSearch(metric=metric, mode=mode)
 
     return param_space, scheduler, search_alg

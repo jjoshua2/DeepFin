@@ -469,3 +469,74 @@ The WDL head (what MCTS uses to evaluate positions) only gets ~10% of total grad
 - Muon integration compiles and unit test passes.
 - Live distributed Tune runs are now using `optimizer: muon`.
 - Need more data before concluding whether Muon is actually better than `nadamw` for this chess setup.
+
+---
+
+## Run 16: Gumbel/search debugging and curriculum fixes (2026-03-10)
+
+**Main finding**:
+- The old low-sim Gumbel path was materially underusing the configured search budget.
+- At `64` "simulations", the previous code typically:
+  - selected a top-k root set with Gumbel noise
+  - evaluated each candidate child once
+  - then repeatedly halved cached Q values
+- So the run was not getting anything close to a true 64-search root policy improvement signal.
+
+**Confirmed bug fixed**:
+- `run_gumbel_root_many()` had already been patched to stop returning stale root Q as `values_out`.
+- Before that fix, `manager.py` saw:
+  - `orig_q ~= best_q`
+  - `q_surprise ~= 0`
+- This effectively broke the Q branch of diff-focus and made `search_wdl_est` use stale root value instead of searched child value.
+
+**Additional Gumbel fixes implemented**:
+- Reworked `chess_anti_engine/mcts/gumbel.py` so `simulations` now drives actual subtree search under root sequential halving instead of only affecting candidate count.
+- Added a full-tree Gumbel selector below the root (default on via `GumbelConfig.full_tree=True`) instead of falling back to PUCT after the forced root action.
+- Fixed completed-Q perspective in the Gumbel path:
+  - visited child action values must be interpreted from the parent/root perspective (`-child.Q`), not `child.Q`.
+- Root policy improvement now uses completed-Q style logits over searched legal actions rather than the earlier one-pass child-eval shortcut.
+
+**Validation**:
+- `python3 -m py_compile chess_anti_engine/mcts/gumbel.py`
+- `python3 -m pytest tests/test_gumbel_mcts_smoke.py tests/test_gumbel_root_many_edge_cases.py tests/test_gumbel_budget_usage.py -q`
+- `python3 -m pytest tests/test_e2e_smoke.py -q -k gumbel_selfplay_smoke`
+- Added regression tests for:
+  - budget usage / extra forward passes with higher Gumbel simulations
+  - completed-Q sign / parent-perspective action value
+
+**Policy-target investigation**:
+- Probed recent replay targets directly.
+- `policy_target` looked sane but very diffuse:
+  - top-1 mass around `0.074`
+  - top-5 mass around `0.332`
+  - support around `16` moves
+- `policy_soft_target` was almost identical to `policy_target`, suggesting that `w_soft` may be mostly redundant in this regime.
+- SF policy targets were much sharper and very different from the main search-improved policy.
+
+**Curriculum fixes / clarifications**:
+- Fixed the intended early opponent semantics:
+  - `random_move_prob` now means true random legal moves
+  - the non-random branch samples from SF `MultiPV`
+- Restored strong SF labels / teacher quality:
+  - `Skill Level 20`
+  - `MultiPV 12`
+- Mixed self-play support added:
+  - `selfplay_fraction` config knob
+  - self-play games train both sides
+  - curriculum games still drive PID
+- Added selfplay diagnostics for future restarts:
+  - `avg_game_plies`
+  - `timeout_rate`
+  - `game_draw_rate`
+
+**Replay / data-flow cleanup**:
+- Fixed replay-window startup behavior so fresh runs honor `replay_window_start` instead of always expanding to `len(buf)`.
+- Still preserve expansion on true resume or intentionally seeded replay starts (salvage/shared shards).
+
+**Interpretation**:
+- Several earlier conclusions about:
+  - diff-focus Q tuning
+  - low-sim Gumbel quality
+  - policy-target usefulness
+  should be treated cautiously because the search path itself was weaker than intended.
+- After the Gumbel fixes, `diff_focus_q_weight` became meaningful again and was re-added to the GPBT search surface.

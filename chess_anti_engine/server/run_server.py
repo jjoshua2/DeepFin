@@ -6,7 +6,7 @@ import argparse
 def main() -> None:
     ap = argparse.ArgumentParser(description="Run chess-anti-engine HTTP server")
     ap.add_argument("--host", type=str, default="0.0.0.0")
-    ap.add_argument("--port", type=int, default=8000)
+    ap.add_argument("--port", type=int, default=45453)
     ap.add_argument("--server-root", type=str, default="server")
     ap.add_argument("--opening-book-path", type=str, default=None)
     ap.add_argument("--max-upload-mb", type=int, default=256)

@@ -89,6 +89,14 @@ class DiskReplayBuffer:
         # Scan existing shards on disk (for resume).
         self._scan_existing_shards()
 
+    def _effective_shuffle_cap(self) -> int:
+        return max(1, min(int(self._shuffle_cap), int(self.capacity)))
+
+    def _trim_shuffle_buf(self) -> None:
+        cap = self._effective_shuffle_cap()
+        if len(self._shuffle_buf) > cap:
+            self._shuffle_buf = self._shuffle_buf[-cap:]
+
     def _scan_existing_shards(self) -> None:
         """Discover shards already on disk (e.g. after trial restart)."""
         existing = sorted(self._shard_dir.glob("shard_*.npz"))
@@ -120,9 +128,7 @@ class DiskReplayBuffer:
                     self._shuffle_buf.extend(samples)
                 except Exception:
                     pass
-            # Trim to capacity.
-            if len(self._shuffle_buf) > self._shuffle_cap:
-                self._shuffle_buf = self._shuffle_buf[-self._shuffle_cap:]
+            self._trim_shuffle_buf()
 
     def __len__(self) -> int:
         """Total positions on disk + in write buffer."""
@@ -136,9 +142,7 @@ class DiskReplayBuffer:
         compacted = [_compact_sample_inplace(s) for s in samples]
         # Add to shuffle buffer (newest data always available for training).
         self._shuffle_buf.extend(compacted)
-        if len(self._shuffle_buf) > self._shuffle_cap:
-            # Keep the most recent samples.
-            self._shuffle_buf = self._shuffle_buf[-self._shuffle_cap:]
+        self._trim_shuffle_buf()
 
         # Add to write buffer, flush to disk when we have enough.
         self._write_buf.extend(compacted)
@@ -187,6 +191,7 @@ class DiskReplayBuffer:
 
     def sample_batch(self, batch_size: int, *, wdl_balance: bool = True) -> list[ReplaySample]:
         """Sample a batch from the shuffle buffer."""
+        self._trim_shuffle_buf()
         n = len(self._shuffle_buf)
         if n == 0:
             raise ValueError("DiskReplayBuffer shuffle buffer is empty")
@@ -351,9 +356,7 @@ class DiskReplayBuffer:
         else:
             self._shuffle_buf.extend(new_samples)
 
-        # Trim to capacity.
-        if len(self._shuffle_buf) > self._shuffle_cap:
-            self._shuffle_buf = self._shuffle_buf[-self._shuffle_cap:]
+        self._trim_shuffle_buf()
 
     def clear(self) -> None:
         """Remove all data (disk and memory)."""

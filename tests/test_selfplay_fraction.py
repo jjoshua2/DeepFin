@@ -28,28 +28,28 @@ class _FakeStockfish:
         return StockfishResult(bestmove_uci=move.uci(), wdl=self._wdl, pvs=[])
 
 
-def test_sf_wdl_target_is_flipped_to_network_turn_pov_for_both_colors():
-    """SF eval from opponent turn should be flipped when attached to network-turn sample."""
+def test_full_selfplay_generates_both_side_samples_and_no_pid_wdl_stats():
     model = _UniformModel().eval()
     rng = np.random.default_rng(0)
 
-    samples, _stats = play_batch(
+    samples, stats = play_batch(
         model,
         device="cpu",
         rng=rng,
-        stockfish=_FakeStockfish([1.0, 0.0, 0.0]),
-        games=2,  # network plays white in game 0, black in game 1
+        stockfish=_FakeStockfish([0.6, 0.2, 0.2]),
+        games=1,
         temperature=1.0,
-        max_plies=4,
+        max_plies=2,
         mcts_simulations=1,
+        playout_cap_fraction=1.0,
+        fast_simulations=1,
+        selfplay_fraction=1.0,
         diff_focus_enabled=False,
         random_start_plies=0,
     )
 
-    sf_wdls = [s.sf_wdl for s in samples if s.sf_wdl is not None]
-    assert sf_wdls, "Expected at least one sample with sf_wdl"
-
-    # SF reports [1,0,0] for side-to-move at t+1 (opponent turn).
-    # Attached target on sample t (network turn) must be flipped => [0,0,1].
-    expected = np.array([0.0, 0.0, 1.0], dtype=np.float32)
-    assert any(np.allclose(wdl, expected) for wdl in sf_wdls)
+    assert len(samples) >= 2
+    assert stats.w == 0
+    assert stats.d == 0
+    assert stats.l == 0
+    assert any(s.sf_wdl is not None for s in samples)

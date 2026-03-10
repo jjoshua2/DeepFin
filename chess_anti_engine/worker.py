@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -72,6 +73,30 @@ def _worker_headers() -> dict[str, str]:
         "X-CAE-Worker-Version": str(PACKAGE_VERSION),
         "X-CAE-Protocol-Version": str(PROTOCOL_VERSION),
     }
+
+
+def _collect_worker_info(*, device: str) -> dict[str, object]:
+    out: dict[str, object] = {
+        "hostname": str(socket.gethostname()),
+        "device": str(device),
+    }
+
+    try:
+        out["cpu_count"] = int(os.cpu_count() or 1)
+    except Exception:
+        pass
+
+    if torch.cuda.is_available():
+        try:
+            gpu_models: list[str] = []
+            for idx in range(int(torch.cuda.device_count())):
+                props = torch.cuda.get_device_properties(idx)
+                gpu_models.append(str(props.name))
+            out["gpu_models"] = gpu_models
+        except Exception:
+            pass
+
+    return out
 
 
 def _ensure_executable(path: Path) -> None:
@@ -150,6 +175,63 @@ def _download_and_verify(
         _once()
 
 
+def _download_and_verify_shared(
+    url: str,
+    *,
+    out_path: Path,
+    expected_sha256: str | None,
+    timeout: float = 30.0,
+    headers: dict[str, str] | None = None,
+    lock_timeout_s: float = 600.0,
+) -> None:
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if out_path.exists():
+        if not expected_sha256 or _sha256_file(out_path) == str(expected_sha256):
+            return
+        out_path.unlink(missing_ok=True)
+
+    lock_path = out_path.with_suffix(out_path.suffix + ".lock")
+    deadline = time.time() + float(lock_timeout_s)
+    have_lock = False
+
+    while not have_lock:
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(f"{os.getpid()}\n")
+            have_lock = True
+        except FileExistsError:
+            if out_path.exists():
+                if not expected_sha256 or _sha256_file(out_path) == str(expected_sha256):
+                    return
+                out_path.unlink(missing_ok=True)
+            if time.time() >= deadline:
+                try:
+                    lock_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+            time.sleep(0.25)
+
+    try:
+        if out_path.exists():
+            if not expected_sha256 or _sha256_file(out_path) == str(expected_sha256):
+                return
+            out_path.unlink(missing_ok=True)
+        _download_and_verify(
+            url,
+            out_path=out_path,
+            expected_sha256=expected_sha256,
+            timeout=timeout,
+            headers=headers,
+        )
+    finally:
+        try:
+            lock_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 def _prune_cached_models(*, cache_dir: Path, keep_shas: set[str]) -> None:
     """Delete cached model checkpoints not in keep_shas.
 
@@ -223,12 +305,14 @@ def main() -> None:
 
     ap.add_argument(
         "--self-update",
+        "--update",
         action="store_true",
         help="Allow this worker to download and install a newer worker wheel from the server when required.",
     )
 
     ap.add_argument(
         "--stockfish-from-server",
+        "--binaries",
         action="store_true",
         help="Download Stockfish from the server if it is published in the manifest (instead of requiring --stockfish-path).",
     )
@@ -291,6 +375,12 @@ def main() -> None:
     ap.add_argument("--random-start-plies", type=int, default=None)
 
     ap.add_argument("--work-dir", type=str, default="worker")
+    ap.add_argument(
+        "--shared-cache-dir",
+        type=str,
+        default=None,
+        help="Optional shared cache dir for models/books/binaries across worker processes.",
+    )
     ap.add_argument("--poll-seconds", type=float, default=10.0)
 
     ap.add_argument(
@@ -330,7 +420,7 @@ def main() -> None:
     pinned_games_per_batch_cli = args.games_per_batch is not None
 
     # Merge: CLI wins; config provides defaults.
-    args.server_url = args.server_url or cfg.get("server_url") or "http://127.0.0.1:8000"
+    args.server_url = args.server_url or cfg.get("server_url") or "http://127.0.0.1:45453"
     args.trial_id = args.trial_id or cfg.get("trial_id")
     args.username = args.username or cfg.get("username")
 
@@ -345,6 +435,7 @@ def main() -> None:
         args.stockfish_from_server = True
 
     args.stockfish_path = args.stockfish_path or cfg.get("stockfish_path")
+    args.shared_cache_dir = args.shared_cache_dir or cfg.get("shared_cache_dir")
     if args.sf_workers is None:
         args.sf_workers = int(cfg.get("sf_workers", 1))
     if args.games_per_batch is None and "games_per_batch" in cfg:
@@ -394,7 +485,10 @@ def main() -> None:
 
     server = str(args.server_url).rstrip("/")
     trial_id = str(args.trial_id).strip() if args.trial_id is not None else ""
-    trial_api_prefix = f"/v1/trials/{trial_id}" if trial_id else "/v1"
+    fixed_trial_id = str(trial_id)
+    leased_trial_id = str(trial_id)
+    trial_api_prefix = f"/v1/trials/{leased_trial_id}" if leased_trial_id else "/v1"
+    lease_id = ""
 
     def _server_url_for(endpoint: str) -> str:
         if endpoint.startswith("http://") or endpoint.startswith("https://"):
@@ -403,7 +497,8 @@ def main() -> None:
             return server + endpoint
         return server + "/" + endpoint
 
-    cache_dir = work_dir / "cache"
+    cache_dir = Path(str(args.shared_cache_dir)) if args.shared_cache_dir is not None else (work_dir / "cache")
+    shared_cache_enabled = args.shared_cache_dir is not None
     shard_dir = work_dir / "shards"
     pending_dir = shard_dir / "pending"
     uploaded_dir = shard_dir / "uploaded"
@@ -439,6 +534,10 @@ def main() -> None:
             cfg["stockfish_path"] = str(args.stockfish_path)
         else:
             cfg.pop("stockfish_path", None)
+        if args.shared_cache_dir:
+            cfg["shared_cache_dir"] = str(args.shared_cache_dir)
+        else:
+            cfg.pop("shared_cache_dir", None)
         cfg["sf_workers"] = int(args.sf_workers)
         if games_per_batch_local is not None:
             cfg["games_per_batch"] = int(games_per_batch_local)
@@ -450,6 +549,9 @@ def main() -> None:
     _persist_cfg()
 
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
+    worker_info = _collect_worker_info(
+        device=str(device),
+    )
 
     rng = np.random.default_rng(int(args.seed))
 
@@ -468,6 +570,32 @@ def main() -> None:
 
     try:
         while True:
+            if not fixed_trial_id:
+                body: dict[str, object] = {"worker_info": worker_info}
+                if lease_id:
+                    body["lease_id"] = str(lease_id)
+                if leased_trial_id:
+                    body["trial_id"] = str(leased_trial_id)
+                r_lease = requests.post(
+                    _server_url_for("/v1/lease_trial"),
+                    json=body,
+                    auth=(str(args.username), str(args.password)),
+                    headers=_worker_headers(),
+                    timeout=30.0,
+                )
+                if r_lease.status_code != 200:
+                    time.sleep(float(args.poll_seconds))
+                    continue
+                lease = r_lease.json()
+                new_trial_id = str(lease.get("trial_id") or "").strip()
+                new_api_prefix = str(lease.get("api_prefix") or "/v1").strip() or "/v1"
+                new_lease_id = str(lease.get("lease_id") or "").strip()
+                if new_trial_id != leased_trial_id:
+                    log.info("leased trial assignment changed: %s -> %s", leased_trial_id or "<root>", new_trial_id or "<root>")
+                leased_trial_id = new_trial_id
+                trial_api_prefix = new_api_prefix
+                lease_id = new_lease_id
+
             # Upload any pending shards first (skip in-progress temp files).
             for sp in sorted(p for p in pending_dir.glob("*.npz") if not p.name.startswith("_tmp_")):
                 with sp.open("rb") as f:
@@ -476,7 +604,19 @@ def main() -> None:
                         _server_url_for(trial_api_prefix + "/upload_shard"),
                         files=files,
                         auth=(str(args.username), str(args.password)),
-                        headers=_worker_headers(),
+                        headers={
+                            **_worker_headers(),
+                            **(
+                                {"X-CAE-Worker-Lease-ID": str(lease_id)}
+                                if str(lease_id).strip()
+                                else {}
+                            ),
+                            **(
+                                {"X-CAE-Batch-Elapsed-S": str(float(cfg.get("_last_batch_elapsed_s", 0.0)))}
+                                if float(cfg.get("_last_batch_elapsed_s", 0.0)) > 0.0
+                                else {}
+                            ),
+                        },
                         timeout=60.0,
                     )
                 if r.status_code == 200:
@@ -545,7 +685,7 @@ def main() -> None:
                         wheel_version,
                         sha,
                     )
-                    _download_and_verify(
+                    _download_and_verify_shared(
                         _server_url_for(endpoint),
                         out_path=wheel_path,
                         expected_sha256=sha,
@@ -604,7 +744,7 @@ def main() -> None:
                             wheel_version,
                             sha,
                         )
-                        _download_and_verify(
+                        _download_and_verify_shared(
                             _server_url_for(endpoint),
                             out_path=wheel_path,
                             expected_sha256=sha,
@@ -638,7 +778,7 @@ def main() -> None:
                 # In that case, do NOT crash-loop; just re-poll the manifest next iteration.
                 if (not model_path.exists()) or (_sha256_file(model_path) != model_sha):
                     try:
-                        _download_and_verify(
+                        _download_and_verify_shared(
                             _server_url_for(str(model_info.get("endpoint") or (trial_api_prefix + "/model"))),
                             out_path=model_path,
                             expected_sha256=model_sha,
@@ -674,6 +814,11 @@ def main() -> None:
                 model.to(device)
                 model.eval()
 
+                if last_model_sha is not None and not fixed_trial_id:
+                    # Reconsider assignment at natural model-boundary checkpoints.
+                    lease_id = ""
+                    leased_trial_id = ""
+                    trial_api_prefix = "/v1"
                 last_model_sha = model_sha
 
             task = manifest.get("task") or {"type": "selfplay"}
@@ -694,7 +839,7 @@ def main() -> None:
                 if sha:
                     if (not ob_path.exists()) or (_sha256_file(ob_path) != sha):
                         log.info("downloading opening book sha=%s filename=%s", sha, filename)
-                        _download_and_verify(
+                        _download_and_verify_shared(
                             _server_url_for(str(ob.get("endpoint") or "/v1/opening_book")),
                             out_path=ob_path,
                             expected_sha256=sha,
@@ -771,6 +916,7 @@ def main() -> None:
             )
             fast_sims = int(args.fast_simulations) if args.fast_simulations is not None else int(reco.get("fast_simulations", 8))
             opponent_random_move_prob = float(reco.get("opponent_random_move_prob", 0.0))
+            selfplay_fraction = float(reco.get("selfplay_fraction", 0.0))
             timeout_adjudication_threshold = float(reco.get("timeout_adjudication_threshold", 0.90))
 
             opening_book_prob = (
@@ -833,7 +979,7 @@ def main() -> None:
                     endpoint = str(best_info.get("endpoint") or "/v1/best_model")
                     if (not best_path.exists()) or (_sha256_file(best_path) != best_sha):
                         try:
-                            _download_and_verify(
+                            _download_and_verify_shared(
                                 _server_url_for(endpoint),
                                 out_path=best_path,
                                 expected_sha256=best_sha,
@@ -920,7 +1066,8 @@ def main() -> None:
                 out = arena_pending_dir / f"{ts}_{model_sha[:8]}_vs_{best_sha[:8]}_{stats.games}g.json"
                 out.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
 
-                _prune_cached_models(cache_dir=cache_dir, keep_shas={model_sha, best_sha})
+                if not shared_cache_enabled:
+                    _prune_cached_models(cache_dir=cache_dir, keep_shas={model_sha, best_sha})
 
                 time.sleep(0.1)
                 continue
@@ -943,7 +1090,7 @@ def main() -> None:
                 sf_cached = cache_dir / f"stockfish_{sf_sha}_{sf_filename}"
                 if (not sf_cached.exists()) or (_sha256_file(sf_cached) != sf_sha):
                     log.info("downloading stockfish sha=%s filename=%s", sf_sha, sf_filename)
-                    _download_and_verify(
+                    _download_and_verify_shared(
                         _server_url_for(sf_endpoint),
                         out_path=sf_cached,
                         expected_sha256=sf_sha,
@@ -1001,6 +1148,8 @@ def main() -> None:
                 sf_policy_label_smooth=float(sf_policy_label_smooth),
                 timeout_adjudication_threshold=float(timeout_adjudication_threshold),
                 opponent_random_move_prob=float(opponent_random_move_prob),
+                opponent_topk_stage_end=float(reco.get("opponent_topk_stage_end", 0.5)),
+                selfplay_fraction=float(selfplay_fraction),
                 opening_book_path=opening_book_path,
                 opening_book_max_plies=int(opening_book_max_plies),
                 opening_book_max_games=int(opening_book_max_games),
@@ -1011,12 +1160,14 @@ def main() -> None:
 
             # Log batch outcome (only visible if --log-file is enabled).
             log.info(
-                "batch done: games=%d positions=%d W/D/L=%d/%d/%d rand=%.2f sf_nodes=%s ppg=%.1f elapsed_s=%.2f",
+                "batch done: games=%d positions=%d W/D/L=%d/%d/%d draws=%d timeouts=%d rand=%.2f sf_nodes=%s ppg=%.1f elapsed_s=%.2f",
                 int(stats.games),
                 int(stats.positions),
                 int(stats.w),
                 int(stats.d),
                 int(stats.l),
+                int(getattr(stats, "total_draw_games", 0)),
+                int(getattr(stats, "timeout_games", 0)),
                 float(opponent_random_move_prob),
                 str(stats.sf_nodes),
                 float(stats.positions) / max(1, int(stats.games)),
@@ -1045,6 +1196,7 @@ def main() -> None:
                     raise SystemExit(0)
 
             ts = int(time.time())
+            cfg["_last_batch_elapsed_s"] = float(t1 - t0)
             shard_path = pending_dir / f"{ts}_{model_sha[:8]}_{stats.games}g_{stats.positions}p.npz"
             meta = ShardMeta(
                 username=str(args.username),
@@ -1056,6 +1208,9 @@ def main() -> None:
                 wins=int(stats.w),
                 draws=int(stats.d),
                 losses=int(stats.l),
+                total_game_plies=int(getattr(stats, "total_game_plies", 0)),
+                timeout_games=int(getattr(stats, "timeout_games", 0)),
+                total_draw_games=int(getattr(stats, "total_draw_games", 0)),
             )
             # Write atomically: save to a temp file then rename so the upload
             # loop never picks up a partially-written shard.
@@ -1067,7 +1222,8 @@ def main() -> None:
             # Prune old cached models opportunistically.
             best_info = manifest.get("best_model") or {}
             best_sha = str(best_info.get("sha256") or "")
-            _prune_cached_models(cache_dir=cache_dir, keep_shas={model_sha, best_sha})
+            if not shared_cache_enabled:
+                _prune_cached_models(cache_dir=cache_dir, keep_shas={model_sha, best_sha})
 
             # Try uploading immediately next loop.
             time.sleep(0.1)

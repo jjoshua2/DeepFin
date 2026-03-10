@@ -22,15 +22,16 @@ seed: 0
 work_dir: runs/pbt2_small
 device: cuda
 iterations: 750
-replay_capacity: 1000000   # Max window size (grows from 100k to here)
-replay_window_start: 100000  # Initial window size after bootstrap
-replay_window_max: 1000000   # Grow to this over time
-replay_window_growth: 150   # Grow window by 150/iter
+replay_capacity: 1000000   # Hard cap
+replay_window_start: 20000   # Small start so early easy games evict by iter 10-15
+replay_window_max: 1000000   # Grow to full 1M
+replay_window_growth: 1500   # ~2000 pos/iter new data; growth slightly below data rate so window fills dense, reaches 1M ~iter 600
 
 # Bootstrap: train initial net on all random games, then discard from window
 bootstrap_dir: data/bootstrap
 bootstrap_checkpoint: /home/josh/projects/chess/data/bootstrap/bootstrap_net.pt  # Pre-trained (run scripts/train_bootstrap.py once)
 bootstrap_zero_policy_heads: true  # Bootstrap trained value/trunk only; start policy heads near-uniform on fresh runs.
+worker_wheel_path: null  # Optional: built wheel to publish for remote worker self-update.
 bootstrap_max_positions: 0   # 0 = load ALL positions (14.2M) — used by scripts/train_bootstrap.py
 bootstrap_train_steps: 0     # 0 = auto: train 1 epoch — used by scripts/train_bootstrap.py
 shared_shards_dir: null  # Disabled: start trials from bootstrap weights + fresh selfplay window
@@ -49,33 +50,41 @@ stockfish:
   path: /home/josh/projects/chess/e2e_server/publish/stockfish
   nodes: 1000           # Higher nodes for better SF analysis quality (was 250)
   workers: 2
-  multipv: 5
+  multipv: 12
   hash_mb: 4            # Small TT is sufficient for low-node searches; saves RAM across trials.
-  # Note: skill_level is not passed to SF engine in tune path — SF always
-  # runs at full strength (Skill Level 20). Difficulty is controlled entirely
-  # by random_move_prob via PID.
+  # Keep SF at full strength for labels and sample from MultiPV for easier played moves.
 
   pid_enabled: true
   pid_target_winrate: 0.53
-  pid_ema_alpha: 0.20      # EMA half-life ~3.1 iterations; react faster while keeping per-step changes small.
+  pid_ema_alpha: 0.37      # EMA half-life ~1.5 iterations.
   pid_deadzone: 0.025
   pid_rate_limit: 0.10
-  pid_min_games_between_adjust: 150  # Fire after 1 full iteration (150 games)
+  pid_min_games_between_adjust: 1  # Allow adjustment after the first completed iteration.
   pid_kp: 1.5
   pid_ki: 0.10
   pid_kd: 0.0
   pid_integral_clamp: 1.0
   pid_min_nodes: 1000        # Keep nodes fixed — difficulty via random_move_prob only
   pid_max_nodes: 1000
-  pid_random_move_prob_start: 0.995
+  pid_initial_skill_level: 20
+  pid_skill_min: 20
+  pid_skill_max: 20
+  pid_skill_promote_nodes: 2000
+  pid_skill_demote_nodes: 1000
+  pid_skill_nodes_on_promote: 1000
+  pid_skill_nodes_on_demote: 1000
+  pid_random_move_prob_start: 0.6
   pid_random_move_prob_min: 0.0
   pid_random_move_prob_max: 1.0
   pid_random_move_stage_end: 0.5
-  pid_max_rand_step: 0.005  # Cap difficulty changes at 0.5% per iteration to avoid early overshoots.
+  pid_max_rand_step: 0.05   # Allow difficulty to move by 5% per iteration.
 
 selfplay:
-  games_per_iter: 150  # ~3k-5k samples per iter after filtering (150 games)
-  selfplay_batch: 16    # Optimize throughput; lower trial count now provides the GPU headroom.
+  games_per_iter: 150  # Steady-state target once the early ramp finishes.
+  games_per_iter_start: 48  # Two worker rounds at 3 workers x batch 8; fast sanity check with full-tree Gumbel.
+  games_per_iter_ramp_iters: 20
+  selfplay_fraction: 0.25  # Mix in 25% true net-vs-net self-play while keeping 75% curriculum games for PID.
+  selfplay_batch: 8     # Full-tree Gumbel is much slower; smaller worker chunks reduce timeout/staleness risk.
   max_plies: 120
 
   temperature: 1.1       # Pinned: top-5 median from Run 4 (range 0.94-1.74)
@@ -107,7 +116,7 @@ selfplay:
   syzygy_policy: false
 
   # Stockfish WDL confidence required to adjudicate max_plies timeouts as decisive.
-  timeout_adjudication_threshold: 0.90
+  timeout_adjudication_threshold: 0.95
 
   diff_focus_enabled: true
   diff_focus_q_weight: 4.8   # Pinned: top-5 median from Run 4
@@ -119,10 +128,11 @@ selfplay:
   hlgauss_sigma: 0.04
 
 train:
-  optimizer: muon
+  optimizer: cosmos_fast
   lr: 0.0012        # Seed near the healthier 3/6 384d fresh-trial lane; PB2 still adapts per-trial.
   batch_size: 256   # Keep microbatch small enough for VRAM; use accumulation for the larger effective batch.
-  train_steps: 24  # Lower ceiling so early iterations do materially fewer optimizer updates.
+  train_steps: 100  # Lets the 10%-of-window target scale up to roughly a 1M-position replay with effective batch 1024.
+  train_window_fraction: 0.10  # Target at least 10% of the current replay per iteration once the window outgrows fresh data.
   no_amp: false
   feature_dropout_p: 0.25  # Pinned: top-5 median from Run 4
   zclip_z_thresh: 2.5
@@ -130,26 +140,26 @@ train:
   zclip_max_norm: 1.0
 
   w_policy: 1.0             # Pinned: anchor for all other weights
-  w_soft: 0.73              # Pinned: no clear stable signal from searching this recently.
+  w_soft: 0.73              # Seed near Run 4 median; now searched by PB2.
   w_future: 0.05            # Pinned during this run (not in pb2_bounds_*).
   w_wdl: 0.58               # Seed between the two fresh-winner clusters seen on 2026-03-06.
-  w_sf_move: 0.03           # Pinned: earlier runs showed the high tail was harmful.
+  w_sf_move: 0.03           # Seed low; now searched by PB2 (high tail was harmful, keep bounds tight).
   w_sf_eval: 0.10           # Pinned: top-5 median from Run 4
   w_categorical: 0.10       # Pinned: top-5 median from Run 4
   w_volatility: 0.10        # Pinned: top-5 median from Run 4
   w_sf_volatility: 0.05
   w_moves_left: 0.02
-  w_sf_wdl: 0.0             # Disable the SF-WDL auxiliary for this run; test whether it is poisoning the main WDL head.
+  w_sf_wdl: 0.02            # Seed low; searched by PB2 — lower bound 0 lets PB2 disable if harmful.
   sf_wdl_conf_power: 1.0    # Confidence damping: scale SF-WDL by (1-draw_prob)^power.
   sf_wdl_draw_scale: 0.55   # Pinned low-to-mid based on the healthier late-run settings.
   sf_wdl_floor: 0.0         # Keep floor at 0 so PB2 can disable sf_wdl if harmful.
   sf_wdl_floor_at: 0.1
 
   accum_steps: 4    # Effective batch 1024 without the peak-memory cost of a literal 1024 microbatch.
-  warmup_steps: 60    # ~1 iter of bootstrap training (with 15 train steps/iter)
+  warmup_steps: 36    # Slightly longer warmup for the new slower/full-Gumbel training regime.
   lr_eta_min: 0.00001
-  lr_T0: 120           # aligned with shorter iterations (~15 steps/iter)
-  lr_T_mult: 1         # constant cycle length; PB2 controls the peak each cycle
+  lr_T0: 999999        # Disable cosine cycling — PBT exploit/explore handles LR variation
+  lr_T_mult: 1
   use_compile: false
   swa_start: 0
   swa_freq: 50
@@ -171,12 +181,16 @@ tune:
   gpbt_pairwise_momentum: 0.50
   gpbt_quantile_fraction: 0.25
   gpbt_resample_probability: 0.05
-  num_samples: 6
-  max_concurrent_trials: 6    # Run a true 6-trial population to cut GPU pressure from trainers + CUDA workers.
+  num_samples: 4
+  max_concurrent_trials: 4    # Reduce aggregate CUDA pressure first; keep worker fanout and batch size fixed for a clean test.
   cpus_per_trial: 2
   gpus_per_trial: 0.1         # 8 × 0.1 = 0.8 GPU
-  distributed_workers_per_trial: 4
+  distributed_workers_per_trial: 3
   distributed_worker_sf_workers: 1
+  distributed_wait_timeout_seconds: 5400
+  distributed_server_port: 45453
+  distributed_server_host: 0.0.0.0
+  distributed_server_public_url: http://192.168.1.212:45453
 
   # Disk-backed replay buffer: keeps ~1 GB per trial instead of ~10 GB
   shuffle_buffer_size: 70000  # In-memory shuffle buffer (samples)
@@ -228,12 +242,15 @@ tune:
   search_smolgen: false
   search_nla: false
   search_optimizer: false
+  search_optimizer_choices: [cosmos_fast]
 
-  # Fresh-bootstrap PB2 pass:
-  # - Start from the new 384d bootstrap with no salvage state and no per-iteration cross-trial replay sharing.
-  # - Search only optimizer/value-lane weights; pin policy-shaping weights until the run is stable.
-  # - Disable the SF-WDL lane entirely to test whether it is destabilizing early learning.
+  # Expanded PB2 search: opponent_strength stagnated at ~18.7 for 80+ iters
+  # with only lr + w_wdl searched. Open up more dimensions to break plateau.
   #
   # Only pb2_bounds_* keys present here are searched; everything else is pinned.
-  pb2_bounds_lr: [1.0e-3, 1.6e-3]       # 2026-03-06 fresh 384d learners lived in roughly the 1.05e-3 to 1.59e-3 lane.
-  pb2_bounds_w_wdl: [0.45, 0.65]        # Keep both fresh-winner clusters (~0.46 and ~0.62) without re-opening the high tail.
+  pb2_bounds_lr: [1.0e-3, 2.5e-3]       # Floor at 1e-3 (don't go lower); upper expanded since PB2 hit 0.0008 floor last run.
+  pb2_bounds_w_wdl: [0.5, 1.0]          # Was [0.45, 0.85]; T00002 hit ceiling at 0.85 and jumped +4.6 os.
+  pb2_bounds_w_soft: [0.3, 1.2]         # PB2 hit upper bound (1.0); expand ceiling.
+  pb2_bounds_w_sf_move: [0.0, 0.15]     # PB2 hit upper bound (0.08); expand — watch for instability above 0.1.
+  pb2_bounds_w_sf_wdl: [0.0, 0.10]      # PB2 hit upper bound (0.05); expand.
+  pb2_bounds_diff_focus_q_weight: [2.0, 8.0]  # Re-open after the Gumbel searched-Q fix; old tuning saw q_surprise~=0.
