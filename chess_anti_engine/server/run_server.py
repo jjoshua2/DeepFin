@@ -10,6 +10,8 @@ def main() -> None:
     ap.add_argument("--server-root", type=str, default="server")
     ap.add_argument("--opening-book-path", type=str, default=None)
     ap.add_argument("--max-upload-mb", type=int, default=256)
+    ap.add_argument("--min-workers-per-trial", type=int, default=1)
+    ap.add_argument("--max-worker-delta-per-rebalance", type=int, default=1)
     args = ap.parse_args()
 
     try:
@@ -17,12 +19,22 @@ def main() -> None:
     except Exception as e:  # pragma: no cover
         raise RuntimeError("server requires uvicorn; install with pip install -e '.[server]' ") from e
 
+    from chess_anti_engine.server.lease import active_run_prefix, prune_non_active_run_leases
     from chess_anti_engine.server.app import create_app
 
+    server_root = str(args.server_root)
+    leases_root = str(args.server_root) + "/leases"
+    prune_non_active_run_leases(
+        leases_root=__import__("pathlib").Path(leases_root),
+        active_prefix=active_run_prefix(server_root=__import__("pathlib").Path(server_root)),
+    )
+
     app = create_app(
-        server_root=str(args.server_root),
+        server_root=server_root,
         opening_book_path=args.opening_book_path,
         max_upload_mb=int(args.max_upload_mb),
+        min_workers_per_trial=int(args.min_workers_per_trial),
+        max_worker_delta_per_rebalance=int(args.max_worker_delta_per_rebalance),
     )
 
     uvicorn.run(app, host=str(args.host), port=int(args.port), log_level="info")

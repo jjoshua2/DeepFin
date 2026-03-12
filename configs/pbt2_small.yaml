@@ -1,15 +1,12 @@
 # PBT2 (PB2) search config — small model, 10 parallel trials on RTX 5090 (32 GB)
 #
-# Run 7: Narrowed bounds + PB2 checkpoint fix
-#   Run 6: Only 1/10 trials learned (Trial 00005). Root causes of others failing:
-#     - w_sf_move > 0.1 and/or lr > 0.0018 caused value head death spiral
-#     - PB2 couldn't clone checkpoints (all trials shared work_dir for ckpt saves)
-#   Trial 00005 winning config: lr=0.0016, w_soft=0.89, w_future=0.26, w_sf_move=0.01
-#   Fix: trainable uses trial_dir for per-trial state, bounds narrowed around winner
+# Run 8: Raise w_wdl/w_soft defaults to PBT-converged values; expand high bounds.
+#   Run 7: PBT converged: w_wdl→0.95-0.98, w_soft→1.2 (ceiling). Gumbel values_out
+#   bug fixed (search Q now returned instead of stale root Q), enabling real diff-focus.
+#   New plateau: os≈278-280 (rmp≈0.27) vs old 222-224. Both weights hit upper bounds.
 #
-# What PB2 searches now (fresh 384d bootstrap run):
-#   lr, w_wdl, w_sf_wdl
-# We keep the search narrow until the new bootstrap proves stable.
+# What PB2 searches now:
+#   lr, w_wdl, w_soft, w_sf_move, w_sf_wdl, diff_focus_q_weight
 #
 # What is pinned:
 #   diff_focus_* (medians of top-5), temperature, playout_cap_fraction,
@@ -59,7 +56,7 @@ stockfish:
   pid_ema_alpha: 0.37      # EMA half-life ~1.5 iterations.
   pid_deadzone: 0.025
   pid_rate_limit: 0.10
-  pid_min_games_between_adjust: 1  # Allow adjustment after the first completed iteration.
+  pid_min_games_between_adjust: 10  # Adjust at most once per 10 completed games to reduce oscillation.
   pid_kp: 1.5
   pid_ki: 0.10
   pid_kd: 0.0
@@ -73,11 +70,11 @@ stockfish:
   pid_skill_demote_nodes: 1000
   pid_skill_nodes_on_promote: 1000
   pid_skill_nodes_on_demote: 1000
-  pid_random_move_prob_start: 0.5
+  pid_random_move_prob_start: 0.37
   pid_random_move_prob_min: 0.0
   pid_random_move_prob_max: 1.0
   pid_random_move_stage_end: 0.5
-  pid_max_rand_step: 0.05   # Allow difficulty to move by 5% per iteration.
+  pid_max_rand_step: 0.02   # Smaller 2% steps to reduce PID overshoot/oscillation.
 
 selfplay:
   games_per_iter: 150  # Steady-state target once the early ramp finishes.
@@ -129,7 +126,7 @@ selfplay:
 
 train:
   optimizer: cosmos_fast
-  lr: 0.0012        # Seed near the healthier 3/6 384d fresh-trial lane; PB2 still adapts per-trial.
+  lr: 0.002         # PBT converged to 0.0025 ceiling every trial in Run 7; raise default toward optimum.
   batch_size: 256   # Keep microbatch small enough for VRAM; use accumulation for the larger effective batch.
   train_steps: 100  # Lets the 10%-of-window target scale up to roughly a 1M-position replay with effective batch 1024.
   train_window_fraction: 0.10  # Target at least 10% of the current replay per iteration once the window outgrows fresh data.
@@ -140,10 +137,10 @@ train:
   zclip_max_norm: 1.0
 
   w_policy: 1.0             # Pinned: anchor for all other weights
-  w_soft: 0.73              # Seed near Run 4 median; now searched by PB2.
+  w_soft: 1.2               # PBT converged to ceiling (1.2) every trial in Run 7; set as default.
   w_future: 0.05            # Pinned during this run (not in pb2_bounds_*).
-  w_wdl: 0.58               # Seed between the two fresh-winner clusters seen on 2026-03-06.
-  w_sf_move: 0.03           # Seed low; now searched by PB2 (high tail was harmful, keep bounds tight).
+  w_wdl: 0.95               # PBT converged to 0.95-0.98 across all Run 7 trials.
+  w_sf_move: 0.15           # PBT converged to 0.15 ceiling every trial in Run 7; raise default.
   w_sf_eval: 0.10           # Pinned: top-5 median from Run 4
   w_categorical: 0.10       # Pinned: top-5 median from Run 4
   w_volatility: 0.10        # Pinned: top-5 median from Run 4
@@ -181,12 +178,15 @@ tune:
   gpbt_pairwise_momentum: 0.50
   gpbt_quantile_fraction: 0.25
   gpbt_resample_probability: 0.05
-  num_samples: 4
-  max_concurrent_trials: 4    # Reduce aggregate CUDA pressure first; keep worker fanout and batch size fixed for a clean test.
-  cpus_per_trial: 2
-  gpus_per_trial: 0.1         # 8 × 0.1 = 0.8 GPU
-  distributed_workers_per_trial: 3
+  num_samples: 3
+  max_concurrent_trials: 3    # 3 trials with more resources each; cross-trial sharing still helps avoid duplicate work.
+  cpus_per_trial: 3
+  gpus_per_trial: 0.30        # 3 × 0.30 = 0.9 GPU allocated; leaves some headroom for worker inference.
+  distributed_workers_per_trial: 5
   distributed_worker_sf_workers: 1
+  distributed_worker_use_compile: true
+  distributed_min_workers_per_trial: 2
+  distributed_max_worker_delta_per_rebalance: 1
   distributed_wait_timeout_seconds: 5400
   distributed_server_port: 45453
   distributed_server_host: 0.0.0.0
@@ -197,13 +197,14 @@ tune:
   shard_size: 2000            # Samples per on-disk shard (~1 MB compressed)
   # On PB2 exploit (cross-trial restore), replace most recent local bad data and
   # import only latest-generation shards from strong sibling trials.
-  exploit_replay_refresh_enabled: true
+  exploit_replay_refresh_enabled: false  # No donor import at exploit time; per-iteration sharing handles cross-trial data.
   exploit_replay_skip_newest: 0
-  exploit_replay_share_top_enabled: false  # Disable for the fresh 384d run; salvage tests showed this amplifies instability.
+  exploit_replay_donor_shards: 0         # Disabled: per-iteration sharing replaces exploit-time bulk import.
+  exploit_replay_share_top_enabled: true   # With 3 trials, cross-trial sharing still helps avoid duplicate work.
   exploit_replay_top_k_trials: 3
   exploit_replay_top_within_best_frac: 0.05
   exploit_replay_top_min_metric: 0.0
-  exploit_replay_max_unseen_iters_per_source: 1
+  exploit_replay_max_unseen_iters_per_source: 1  # Always import just the latest selfplay export from each sibling; 1 file per iter.
   exploit_replay_local_keep_recent_fraction: 0.20
   exploit_replay_local_keep_older_fraction: 0.65
 
@@ -248,9 +249,9 @@ tune:
   # with only lr + w_wdl searched. Open up more dimensions to break plateau.
   #
   # Only pb2_bounds_* keys present here are searched; everything else is pinned.
-  pb2_bounds_lr: [1.0e-3, 2.5e-3]       # Floor at 1e-3 (don't go lower); upper expanded since PB2 hit 0.0008 floor last run.
-  pb2_bounds_w_wdl: [0.5, 1.0]          # Was [0.45, 0.85]; T00002 hit ceiling at 0.85 and jumped +4.6 os.
-  pb2_bounds_w_soft: [0.3, 1.2]         # PB2 hit upper bound (1.0); expand ceiling.
-  pb2_bounds_w_sf_move: [0.0, 0.15]     # PB2 hit upper bound (0.08); expand — watch for instability above 0.1.
-  pb2_bounds_w_sf_wdl: [0.0, 0.10]      # PB2 hit upper bound (0.05); expand.
-  pb2_bounds_diff_focus_q_weight: [2.0, 8.0]  # Re-open after the Gumbel searched-Q fix; old tuning saw q_surprise~=0.
+  pb2_bounds_lr: [1.0e-3, 4.0e-3]       # Expanded ceiling (was 2.5e-3, converged to 0.0025 ceiling every trial in Run 7).
+  pb2_bounds_w_wdl: [0.75, 1.3]         # Tightened floor (was 0.5, never went below 0.74); expanded ceiling (was 1.0, converged to 0.95-0.98).
+  pb2_bounds_w_soft: [0.6, 1.2]         # Ceiling pulled back: Run 9 showed w_soft hitting 2.0 correlated with os decline.
+  pb2_bounds_w_sf_move: [0.05, 0.30]    # Expanded ceiling (was 0.15, hit by all 4 trials in Run 7); tightened floor (never below 0.03).
+  pb2_bounds_w_sf_wdl: [0.0, 0.10]      # Fine — values cluster at 0.004-0.033, well within bounds.
+  pb2_bounds_diff_focus_q_weight: [2.0, 5.0]  # Ceiling pulled back: Run 9 showed dfq climbing to 5.4 correlated with os decline.

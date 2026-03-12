@@ -115,19 +115,28 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
                 and isinstance(donor_value, (int, float))
                 and isinstance(recipient_value, (int, float))
             ):
-                proposed = self._pairwise_numeric_update(
-                    trial_id=trial.trial_id,
-                    param_name=param_name,
-                    recipient_value=float(recipient_value),
-                    donor_value=float(donor_value),
-                    gap_scale=float(gap_scale),
-                )
                 lo, hi = self._hyperparam_bounds[param_name]
+                if random.random() < self._resample_probability:
+                    # Resample uniformly from the full range.  This is the
+                    # only escape hatch when all trials converge to the same
+                    # value (e.g. all pinned at the old ceiling): pairwise
+                    # velocity is zero so the param would never move otherwise.
+                    proposed = random.uniform(float(lo), float(hi))
+                    operations[param_name] = "resample"
+                else:
+                    proposed = self._pairwise_numeric_update(
+                        trial_id=trial.trial_id,
+                        param_name=param_name,
+                        recipient_value=float(recipient_value),
+                        donor_value=float(donor_value),
+                        gap_scale=float(gap_scale),
+                    )
                 proposed = max(float(lo), min(float(hi), float(proposed)))
                 if isinstance(donor_value, int) and not isinstance(donor_value, bool):
                     proposed = int(round(proposed))
                 new_config[param_name] = proposed
-                operations[param_name] = f"pairwise(gap={gap_scale:.3f})"
+                if "resample" not in operations.get(param_name, ""):
+                    operations[param_name] = f"pairwise(gap={gap_scale:.3f})"
                 continue
 
             if isinstance(mutation, (list, tuple)):

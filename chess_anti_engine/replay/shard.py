@@ -37,8 +37,14 @@ class ShardMeta:
     draws: int | None = None
     losses: int | None = None
     total_game_plies: int | None = None
-    timeout_games: int | None = None
+    adjudicated_games: int | None = None
     total_draw_games: int | None = None
+    selfplay_games: int | None = None
+    selfplay_adjudicated_games: int | None = None
+    selfplay_draw_games: int | None = None
+    curriculum_games: int | None = None
+    curriculum_adjudicated_games: int | None = None
+    curriculum_draw_games: int | None = None
 
 
 def _u8(x: np.ndarray) -> np.ndarray:

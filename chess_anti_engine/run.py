@@ -729,6 +729,11 @@ def main() -> None:
         help="Device for distributed Tune workers (defaults to the trial device).",
     )
     ap.add_argument(
+        "--distributed-worker-use-compile",
+        action="store_true",
+        help="Enable torch.compile for distributed worker inference/search models on CUDA.",
+    )
+    ap.add_argument(
         "--distributed-worker-auto-tune",
         action="store_true",
         help="Enable worker-side games_per_batch auto-tuning for distributed Tune workers.",
@@ -756,6 +761,18 @@ def main() -> None:
         type=str,
         default="",
         help="Optional shared cache directory for Tune-managed local worker processes.",
+    )
+    ap.add_argument(
+        "--distributed-min-workers-per-trial",
+        type=int,
+        default=1,
+        help="Minimum worker floor to maintain per active trial before floating workers are reassigned.",
+    )
+    ap.add_argument(
+        "--distributed-max-worker-delta-per-rebalance",
+        type=int,
+        default=1,
+        help="Maximum worker-count lead one trial can gain over the least-served trial in one rebalance step.",
     )
     ap.add_argument(
         "--distributed-wait-timeout-seconds",
@@ -1277,11 +1294,14 @@ def main() -> None:
         "distributed_worker_sf_workers": int(args.distributed_worker_sf_workers),
         "distributed_worker_poll_seconds": float(args.distributed_worker_poll_seconds),
         "distributed_worker_device": args.distributed_worker_device,
+        "distributed_worker_use_compile": bool(args.distributed_worker_use_compile),
         "distributed_worker_auto_tune": bool(args.distributed_worker_auto_tune),
         "distributed_worker_target_batch_seconds": float(args.distributed_worker_target_batch_seconds),
         "distributed_worker_min_games_per_batch": int(args.distributed_worker_min_games_per_batch),
         "distributed_worker_max_games_per_batch": int(args.distributed_worker_max_games_per_batch),
         "distributed_worker_shared_cache_dir": args.distributed_worker_shared_cache_dir,
+        "distributed_min_workers_per_trial": int(args.distributed_min_workers_per_trial),
+        "distributed_max_worker_delta_per_rebalance": int(args.distributed_max_worker_delta_per_rebalance),
         "distributed_wait_timeout_seconds": float(getattr(args, "distributed_wait_timeout_seconds", 900.0)),
         "distributed_server_port": int(args.distributed_server_port),
         "distributed_server_host": args.distributed_server_host,

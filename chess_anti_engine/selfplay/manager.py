@@ -78,8 +78,14 @@ class BatchStats:
     d: int
     l: int
     total_game_plies: int = 0
-    timeout_games: int = 0
+    adjudicated_games: int = 0
     total_draw_games: int = 0
+    selfplay_games: int = 0
+    selfplay_adjudicated_games: int = 0
+    selfplay_draw_games: int = 0
+    curriculum_games: int = 0
+    curriculum_adjudicated_games: int = 0
+    curriculum_draw_games: int = 0
 
     # Adaptive difficulty PID diagnostics (optional)
     sf_nodes: int | None = None
@@ -544,8 +550,14 @@ def play_batch(
     all_samples: list[ReplaySample] = []
     w = d = l = 0
     total_game_plies = 0
-    timeout_games = 0
+    adjudicated_games = 0
     total_draw_games = 0
+    selfplay_games = 0
+    selfplay_adjudicated_games = 0
+    selfplay_draw_games = 0
+    curriculum_games = 0
+    curriculum_adjudicated_games = 0
+    curriculum_draw_games = 0
     sf_d6_sum = 0.0
     sf_d6_n = 0
 
@@ -606,8 +618,10 @@ def play_batch(
         total_game_plies += int(len(b.move_stack))
         # Games that reach max_plies without a decisive result return "*" (still in progress).
         # Use SF terminal eval to label these correctly rather than always calling them draws.
+        was_adjudicated = False
         if result == "*":
-            timeout_games += 1
+            adjudicated_games += 1
+            was_adjudicated = True
             result = _sf_terminal_result(b, terminal_results.get(i))
 
         records = samples_per_game[i]
@@ -654,8 +668,21 @@ def play_batch(
                         sample_idx += 1
                     replay_board.push(mv)
 
+        if bool(selfplay_game[i]):
+            selfplay_games += 1
+            if was_adjudicated:
+                selfplay_adjudicated_games += 1
+        else:
+            curriculum_games += 1
+            if was_adjudicated:
+                curriculum_adjudicated_games += 1
+
         if result == "1/2-1/2":
             total_draw_games += 1
+            if bool(selfplay_game[i]):
+                selfplay_draw_games += 1
+            else:
+                curriculum_draw_games += 1
         # PID / winrate stats are only for curriculum games, not net-vs-net self-play.
         if not selfplay_game[i]:
             net_col = network_color[i]
@@ -790,8 +817,14 @@ def play_batch(
         d=d,
         l=l,
         total_game_plies=int(total_game_plies),
-        timeout_games=int(timeout_games),
+        adjudicated_games=int(adjudicated_games),
         total_draw_games=int(total_draw_games),
+        selfplay_games=int(selfplay_games),
+        selfplay_adjudicated_games=int(selfplay_adjudicated_games),
+        selfplay_draw_games=int(selfplay_draw_games),
+        curriculum_games=int(curriculum_games),
+        curriculum_adjudicated_games=int(curriculum_adjudicated_games),
+        curriculum_draw_games=int(curriculum_draw_games),
         sf_nodes=sf_nodes if sf_nodes > 0 else None,
         sf_nodes_next=None,
         pid_ema_winrate=None,

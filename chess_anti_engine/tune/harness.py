@@ -236,6 +236,10 @@ def run_tune(
             str(port),
             "--server-root",
             str(server_root),
+            "--min-workers-per-trial",
+            str(int(base_config.get("distributed_min_workers_per_trial", 1))),
+            "--max-worker-delta-per-rebalance",
+            str(int(base_config.get("distributed_max_worker_delta_per_rebalance", 1))),
         ]
         opening_book = base_config.get("opening_book_path")
         if isinstance(opening_book, str) and opening_book.strip():
@@ -376,6 +380,24 @@ def run_tune(
                 checkpoint_config=CheckpointConfig(num_to_keep=ckpt_keep),
             ),
         )
+    else:
+        # Hotpatch scheduler bounds from current YAML config into the restored
+        # scheduler.  Ray unpickles the old scheduler (with old bounds baked in)
+        # on restore, so any pb2_bounds_* changes in the YAML are silently
+        # ignored.  We reach into the live scheduler and overwrite its bounds
+        # dict so that the very next exploit/explore step uses the updated ranges.
+        try:
+            live_sched = tuner._local_tuner._tune_config.scheduler
+            if hasattr(live_sched, "_hyperparam_bounds") and hasattr(scheduler, "_hyperparam_bounds"):
+                old = dict(live_sched._hyperparam_bounds)
+                live_sched._hyperparam_bounds = dict(scheduler._hyperparam_bounds)
+                changed = {k: (old.get(k), v) for k, v in scheduler._hyperparam_bounds.items() if old.get(k) != v}
+                if changed:
+                    print(f"[run_tune] Hotpatched scheduler bounds (old→new): {changed}")
+                else:
+                    print("[run_tune] Scheduler bounds unchanged after restore.")
+        except AttributeError as exc:
+            print(f"[run_tune] Could not hotpatch scheduler bounds (non-fatal): {exc}")
 
     try:
         return tuner.fit()

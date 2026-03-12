@@ -10,6 +10,7 @@ import socket
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 import numpy as np
@@ -260,6 +261,15 @@ def _prune_cached_models(*, cache_dir: Path, keep_shas: set[str]) -> None:
             p.unlink(missing_ok=True)
 
 
+def _maybe_compile_inference_model(model: torch.nn.Module, *, device: str) -> torch.nn.Module:
+    if not str(device).startswith("cuda"):
+        return model
+    try:
+        return torch.compile(model, mode="reduce-overhead")
+    except Exception:
+        return model
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Distributed selfplay worker")
 
@@ -333,6 +343,11 @@ def main() -> None:
 
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--device", type=str, default=None)
+    ap.add_argument(
+        "--compile-inference",
+        action="store_true",
+        help="Enable torch.compile for worker-side inference/search models on CUDA.",
+    )
 
     ap.add_argument("--stockfish-path", type=str, default=None)
 
@@ -514,6 +529,10 @@ def main() -> None:
 
     # Local throughput override that can be tuned and persisted.
     games_per_batch_local = int(args.games_per_batch) if args.games_per_batch is not None else None
+    worker_id = str(cfg.get("worker_id") or "").strip()
+    if not worker_id:
+        worker_id = uuid.uuid4().hex
+        cfg["worker_id"] = worker_id
 
     def _persist_cfg() -> None:
         if not bool(args.save_config):
@@ -552,6 +571,7 @@ def main() -> None:
     worker_info = _collect_worker_info(
         device=str(device),
     )
+    worker_info["worker_id"] = str(worker_id)
 
     rng = np.random.default_rng(int(args.seed))
 
@@ -813,6 +833,8 @@ def main() -> None:
                 model.load_state_dict(sd)
                 model.to(device)
                 model.eval()
+                if bool(args.compile_inference):
+                    model = _maybe_compile_inference_model(model, device=str(device))
 
                 if last_model_sha is not None and not fixed_trial_id:
                     # Reconsider assignment at natural model-boundary checkpoints.
@@ -1000,6 +1022,8 @@ def main() -> None:
                     best_model.load_state_dict(sd)
                     best_model.to(device)
                     best_model.eval()
+                    if bool(args.compile_inference):
+                        best_model = _maybe_compile_inference_model(best_model, device=str(device))
                     last_best_sha = best_sha
 
                 if best_model is None:
@@ -1209,8 +1233,14 @@ def main() -> None:
                 draws=int(stats.d),
                 losses=int(stats.l),
                 total_game_plies=int(getattr(stats, "total_game_plies", 0)),
-                timeout_games=int(getattr(stats, "timeout_games", 0)),
+                adjudicated_games=int(getattr(stats, "adjudicated_games", 0)),
                 total_draw_games=int(getattr(stats, "total_draw_games", 0)),
+                selfplay_games=int(getattr(stats, "selfplay_games", 0)),
+                selfplay_adjudicated_games=int(getattr(stats, "selfplay_adjudicated_games", 0)),
+                selfplay_draw_games=int(getattr(stats, "selfplay_draw_games", 0)),
+                curriculum_games=int(getattr(stats, "curriculum_games", 0)),
+                curriculum_adjudicated_games=int(getattr(stats, "curriculum_adjudicated_games", 0)),
+                curriculum_draw_games=int(getattr(stats, "curriculum_draw_games", 0)),
             )
             # Write atomically: save to a temp file then rename so the upload
             # loop never picks up a partially-written shard.

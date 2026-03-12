@@ -22,6 +22,8 @@ def create_app(
     users_db: str = "users.json",
     opening_book_path: str | None = None,
     max_upload_mb: int = 256,
+    min_workers_per_trial: int = 1,
+    max_worker_delta_per_rebalance: int = 1,
 ):
     """Create the HTTP server.
 
@@ -77,6 +79,7 @@ def create_app(
     log = logging.getLogger("chess_anti_engine.server")
     leases_root = root / "leases"
     stats_path = root / "worker_throughput_by_gpu.json"
+    trial_stats_path = root / "trial_throughput_by_trial.json"
     leases_root.mkdir(parents=True, exist_ok=True)
 
     app = FastAPI(title="chess-anti-engine server", version="0.1")
@@ -164,6 +167,20 @@ def create_app(
         tmp.write_text(json.dumps(stats, indent=2, sort_keys=True), encoding="utf-8")
         tmp.replace(stats_path)
 
+    def _load_trial_throughput_stats() -> dict[str, Any]:
+        if not trial_stats_path.exists():
+            return {}
+        try:
+            data = json.loads(trial_stats_path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _save_trial_throughput_stats(stats: dict[str, Any]) -> None:
+        tmp = trial_stats_path.with_suffix(trial_stats_path.suffix + ".tmp")
+        tmp.write_text(json.dumps(stats, indent=2, sort_keys=True), encoding="utf-8")
+        tmp.replace(trial_stats_path)
+
     def _primary_gpu_model(*, lease: dict[str, Any] | None) -> str:
         if not isinstance(lease, dict):
             return "cpu"
@@ -219,6 +236,40 @@ def create_app(
         entry["last_updated_unix"] = now_unix
         stats[gpu_model] = entry
         _save_throughput_stats(stats)
+
+    def _record_trial_throughput(
+        *,
+        trial_id: str | None,
+        positions: int,
+        games: int,
+        elapsed_s: float | None,
+    ) -> None:
+        tid = _normalize_trial_id(trial_id)
+        if tid is None or elapsed_s is None or elapsed_s <= 0.0:
+            return
+        stats = _load_trial_throughput_stats()
+        entry = stats.get(tid)
+        if not isinstance(entry, dict):
+            entry = {}
+        now_unix = int(time.time())
+        entry["trial_id"] = tid
+        entry["samples"] = int(entry.get("samples", 0)) + 1
+        entry["total_positions"] = int(entry.get("total_positions", 0)) + int(positions)
+        entry["total_games"] = int(entry.get("total_games", 0)) + int(games)
+        entry["total_elapsed_s"] = float(entry.get("total_elapsed_s", 0.0)) + float(elapsed_s)
+        total_elapsed_s = max(1e-9, float(entry["total_elapsed_s"]))
+        batch_positions_per_s = float(positions) / max(1e-9, float(elapsed_s))
+        batch_games_per_s = float(games) / max(1e-9, float(elapsed_s))
+        alpha = 0.30
+        prev_pos = float(entry.get("ema_positions_per_s", batch_positions_per_s) or batch_positions_per_s)
+        prev_games = float(entry.get("ema_games_per_s", batch_games_per_s) or batch_games_per_s)
+        entry["ema_positions_per_s"] = (1.0 - alpha) * prev_pos + alpha * batch_positions_per_s
+        entry["ema_games_per_s"] = (1.0 - alpha) * prev_games + alpha * batch_games_per_s
+        entry["avg_positions_per_s"] = float(entry["total_positions"]) / total_elapsed_s
+        entry["avg_games_per_s"] = float(entry["total_games"]) / total_elapsed_s
+        entry["last_updated_unix"] = now_unix
+        stats[tid] = entry
+        _save_trial_throughput_stats(stats)
 
     def _check_worker_compat(
         *,
@@ -421,6 +472,10 @@ def create_app(
     def get_worker_throughput() -> Any:
         return JSONResponse(content=_load_throughput_stats())
 
+    @app.get("/v1/trial_throughput")
+    def get_trial_throughput() -> Any:
+        return JSONResponse(content=_load_trial_throughput_stats())
+
     def _get_worker_wheel_impl(trial_id: str | None) -> Any:
         p = _artifact_from_publish("worker_wheel", default_name="worker.whl", trial_id=trial_id)
         if p is None:
@@ -456,9 +511,12 @@ def create_app(
                 worker_info=worker_info,
                 available_trials=available_trials,
                 manifest_loader=_load_manifest,
+                trial_throughput_loader=lambda tid: _load_trial_throughput_stats().get(str(tid), {}),
                 requested_lease_id=requested_lease_id,
                 requested_trial_id=requested_trial_id,
                 lease_seconds=lease_seconds,
+                min_workers_per_trial=int(min_workers_per_trial),
+                max_worker_delta_per_rebalance=int(max_worker_delta_per_rebalance),
             )
             return {
                 "lease_id": str(lease.get("lease_id")),
@@ -554,6 +612,12 @@ def create_app(
 
         _record_gpu_throughput(
             lease=lease,
+            trial_id=trial_id,
+            positions=int(len(samples)),
+            games=int(meta.get("games") or 0),
+            elapsed_s=batch_elapsed_s,
+        )
+        _record_trial_throughput(
             trial_id=trial_id,
             positions=int(len(samples)),
             games=int(meta.get("games") or 0),
