@@ -154,6 +154,10 @@ def play_batch(
     opening_book_max_plies: int = 4,
     opening_book_max_games: int = 200_000,
     opening_book_prob: float = 1.0,
+    opening_book_path_2: str | None = None,
+    opening_book_max_plies_2: int = 16,
+    opening_book_max_games_2: int = 200_000,
+    opening_book_mix_prob_2: float = 0.0,
     random_start_plies: int = 0,
     syzygy_path: str | None = None,
     syzygy_policy: bool = False,
@@ -188,6 +192,10 @@ def play_batch(
         opening_book_max_plies=int(opening_book_max_plies),
         opening_book_max_games=int(opening_book_max_games),
         opening_book_prob=float(opening_book_prob),
+        opening_book_path_2=opening_book_path_2,
+        opening_book_max_plies_2=int(opening_book_max_plies_2),
+        opening_book_max_games_2=int(opening_book_max_games_2),
+        opening_book_mix_prob_2=float(opening_book_mix_prob_2),
         random_start_plies=int(random_start_plies),
     )
     boards = [make_starting_board(rng=rng, cfg=op_cfg) for _ in range(int(games))]
@@ -277,7 +285,7 @@ def play_batch(
             endgame=float(temperature_endgame),
         )
 
-        def _run_mcts_group(idxs: list[int], sims_per: list[int]) -> None:
+        def _run_mcts_group(idxs: list[int], sims_per: list[int], *, add_noise: bool = True) -> None:
             if not idxs:
                 return
 
@@ -301,7 +309,7 @@ def play_batch(
                         sub_boards,
                         device=device,
                         rng=rng,
-                        cfg=GumbelConfig(simulations=int(sim_count), temperature=float(turn_temp)),
+                        cfg=GumbelConfig(simulations=int(sim_count), temperature=float(turn_temp), add_noise=add_noise),
                         pre_pol_logits=sub_pol,
                         pre_wdl_logits=sub_wdl,
                     )
@@ -325,10 +333,10 @@ def play_batch(
                     values_list[jj] = float(v)
 
         full_idxs = [j for j, v in enumerate(is_full) if bool(v)]
-        _run_mcts_group(full_idxs, eff_full_sims)
+        _run_mcts_group(full_idxs, eff_full_sims, add_noise=True)
 
         fast_idxs = [j for j, v in enumerate(is_full) if not bool(v)]
-        _run_mcts_group(fast_idxs, eff_fast_sims)
+        _run_mcts_group(fast_idxs, eff_fast_sims, add_noise=False)
 
         for j, (idx, probs, a, v) in enumerate(zip(net_idxs, probs_list, actions, values_list, strict=True)):
             assert probs is not None and a is not None and v is not None
@@ -515,7 +523,7 @@ def play_batch(
             if boards[idx].is_game_over():
                 done[idx] = True
 
-    for _ply in range(int(max_plies)):
+    for _ply in range(int(max_plies) // 2):
         active_idxs = [i for i in range(int(games)) if not done[i]]
         if not active_idxs:
             break

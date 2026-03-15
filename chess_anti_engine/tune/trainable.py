@@ -322,13 +322,20 @@ def _merge_pid_state_from_result_row(
 
 
 def _resolve_pause_marker_path(*, config: dict, trial_dir: Path) -> Path:
+    tune_root = trial_dir.parent
+    raw_work_dir = config.get("work_dir")
+    if isinstance(raw_work_dir, str) and raw_work_dir.strip():
+        work_dir = Path(raw_work_dir.strip()).expanduser()
+        if not work_dir.is_absolute():
+            work_dir = Path.cwd() / work_dir
+        tune_root = work_dir / "tune"
     raw = config.get("pause_file")
     if isinstance(raw, str) and raw.strip():
         p = Path(raw.strip())
         if not p.is_absolute():
-            p = trial_dir.parent / p
+            p = tune_root / p
         return p
-    return trial_dir.parent / "pause.txt"
+    return tune_root / "pause.txt"
 
 
 def _wait_if_paused(
@@ -538,6 +545,7 @@ def _share_top_replay_each_iteration(
     holdout_fraction: float,
     max_unseen_iters_per_source: int,
     max_shards_per_source: int = 0,
+    share_fraction: float = 1.0,
 ) -> dict[str, int]:
     """Ingest recent unseen top-trial generations into the live replay buffer."""
 
@@ -640,6 +648,9 @@ def _share_top_replay_each_iteration(
                     continue
                 if not samples:
                     continue
+                if 0.0 < share_fraction < 1.0:
+                    k = max(1, int(round(len(samples) * share_fraction)))
+                    samples = list(buf.rng.choice(samples, size=k, replace=False))
                 buf.add_many(samples)
                 summary["source_shards_loaded"] += 1
                 summary["source_samples_ingested"] += int(len(samples))
@@ -672,6 +683,7 @@ def _opponent_strength(
     ema_winrate: float,
     min_nodes: int,
     max_nodes: int,
+    pid_target_winrate: float = 0.53,
 ) -> float:
     """Composite metric capturing full difficulty progression.
 
@@ -680,8 +692,10 @@ def _opponent_strength(
       Stage 2 (score 100-200): sf_nodes min → max (log-scaled)
       Stage 3 (score 200-400): skill_level 0 → 20
 
-    The PID controller holds winrate at ~0.53, so the only differentiator
-    between trials is how hard an opponent they can maintain that against.
+    Difficulty is multiplied by (ema_winrate / target), capped at 1.0.
+    This penalises PID overshoot: a trial at rmp=0.25 with only 47% winrate
+    scores lower than one actually sustaining 53% at that difficulty.
+    High winrate is not rewarded (PID will tighten difficulty soon anyway).
     """
     rand_prob = float(random_move_prob)
     nodes = int(sf_nodes)
@@ -706,13 +720,14 @@ def _opponent_strength(
     # Stage 3: skill_level 0→20 maps to score 200→400
     stage3 = (float(skill) / 20.0) * 200.0
 
-    # Winrate tiebreaker: when all trials are at the same difficulty
-    # (e.g. everyone stuck at random_move_prob=1.0), the winrate term
-    # differentiates who is closest to breaking through the PID threshold.
-    # Range 0-10, negligible once opponent_strength starts climbing (0-400).
-    winrate_bonus = float(ema_winrate) * 10.0
+    difficulty = stage1 + stage2 + stage3
 
-    return stage1 + stage2 + stage3 + winrate_bonus
+    # Winrate scaling: penalise PID overshoot. Cap at 1.0 so above-target
+    # winrate doesn't inflate the score (PID will raise difficulty instead).
+    target = max(0.01, float(pid_target_winrate))
+    winrate_factor = min(1.0, max(0.0, float(ema_winrate)) / target)
+
+    return difficulty * winrate_factor
 
 
 
@@ -741,7 +756,7 @@ def _gate_check(
         temperature_decay_start_move=10,
         temperature_decay_moves=30,
         temperature_endgame=0.1,
-        max_plies=int(config.get("max_plies", 120)),
+        max_plies=int(config.get("max_plies", 240)),
         mcts_simulations=int(config.get("gate_mcts_sims", 1)),  # 1 = raw policy + value
         mcts_type=str(config.get("mcts", "puct")),
         playout_cap_fraction=1.0,
@@ -754,6 +769,10 @@ def _gate_check(
         opening_book_max_plies=int(config.get("opening_book_max_plies", 4)),
         opening_book_max_games=int(config.get("opening_book_max_games", 200_000)),
         opening_book_prob=float(config.get("opening_book_prob", 1.0)),
+        opening_book_path_2=config.get("opening_book_path_2"),
+        opening_book_max_plies_2=int(config.get("opening_book_max_plies_2", 16)),
+        opening_book_max_games_2=int(config.get("opening_book_max_games_2", 200_000)),
+        opening_book_mix_prob_2=float(config.get("opening_book_mix_prob_2", 0.0)),
         random_start_plies=int(config.get("random_start_plies", 0)),
         fpu_reduction=float(config.get("fpu_reduction", 1.2)),
         fpu_at_root=float(config.get("fpu_at_root", 1.0)),
@@ -827,6 +846,7 @@ def _trial_server_dirs(*, server_root: Path, trial_id: str) -> dict[str, Path]:
         "publish_dir": trial_root / "publish",
         "inbox_dir": trial_root / "inbox",
         "processed_dir": trial_root / "processed",
+        "workers_root": trial_root / "workers",
     }
 
 
@@ -852,19 +872,7 @@ def _publish_distributed_trial_state(
     trainer.export_swa(model_path)
     model_sha = _sha256_file(model_path)
     api_prefix = f"/v1/trials/{trial_id}"
-    published_stockfish_path: Path | None = None
     published_worker_wheel_path: Path | None = None
-
-    stockfish_raw = str(config.get("stockfish_path", "")).strip()
-    if stockfish_raw:
-        stockfish_src = Path(stockfish_raw)
-        if stockfish_src.exists() and stockfish_src.is_file():
-            dst = publish_dir / ("stockfish" + stockfish_src.suffix)
-            try:
-                shutil.copy2(str(stockfish_src), str(dst))
-                published_stockfish_path = dst
-            except Exception:
-                published_stockfish_path = None
 
     worker_wheel_raw = str(config.get("worker_wheel_path", "")).strip()
     if worker_wheel_raw:
@@ -879,7 +887,7 @@ def _publish_distributed_trial_state(
 
     recommended_worker = {
         "games_per_batch": int(config.get("selfplay_batch", 4)),
-        "max_plies": int(config.get("max_plies", 120)),
+        "max_plies": int(config.get("max_plies", 240)),
         "mcts": str(config.get("mcts", "puct")),
         "mcts_simulations": int(mcts_simulations),
         "playout_cap_fraction": float(config.get("playout_cap_fraction", 0.25)),
@@ -887,6 +895,10 @@ def _publish_distributed_trial_state(
         "opening_book_max_plies": int(config.get("opening_book_max_plies", 4)),
         "opening_book_max_games": int(config.get("opening_book_max_games", 200_000)),
         "opening_book_prob": float(config.get("opening_book_prob", 1.0)),
+        "opening_book_path_2": config.get("opening_book_path_2"),
+        "opening_book_max_plies_2": int(config.get("opening_book_max_plies_2", 16)),
+        "opening_book_max_games_2": int(config.get("opening_book_max_games_2", 200_000)),
+        "opening_book_mix_prob_2": float(config.get("opening_book_mix_prob_2", 0.0)),
         "random_start_plies": int(config.get("random_start_plies", 0)),
         "selfplay_fraction": float(config.get("selfplay_fraction", 0.0)),
         "sf_nodes": int(sf_nodes),
@@ -947,12 +959,15 @@ def _publish_distributed_trial_state(
                 "sha256": _sha256_file(p),
             }
 
-    if published_stockfish_path is not None and published_stockfish_path.exists():
-        manifest["stockfish"] = {
-            "endpoint": api_prefix + "/stockfish",
-            "filename": published_stockfish_path.name,
-            "sha256": _sha256_file(published_stockfish_path),
-        }
+    opening_book_path_2 = config.get("opening_book_path_2")
+    if isinstance(opening_book_path_2, str) and opening_book_path_2.strip():
+        p2 = Path(opening_book_path_2.strip())
+        if p2.exists():
+            manifest["opening_book_2"] = {
+                "endpoint": "/v1/opening_book_2",
+                "filename": p2.name,
+                "sha256": _sha256_file(p2),
+            }
 
     if published_worker_wheel_path is not None and published_worker_wheel_path.exists():
         manifest["worker_wheel"] = {
@@ -977,10 +992,20 @@ def _launch_distributed_worker(
     trial_id: str,
     worker_index: int,
 ) -> subprocess.Popen[bytes]:
-    worker_root = trial_dir / "distributed_workers" / f"worker_{worker_index:02d}"
+    worker_artifact_root = trial_dir / "distributed_workers" / f"worker_{worker_index:02d}"
+    worker_artifact_root.mkdir(parents=True, exist_ok=True)
+    worker_log = worker_artifact_root / "worker.log"
+    worker_out = worker_artifact_root / "worker.out"
+
+    server_root_raw = str(config.get("distributed_server_root") or "").strip()
+    if server_root_raw:
+        server_dirs = _trial_server_dirs(server_root=Path(server_root_raw).expanduser(), trial_id=trial_id)
+        worker_root = server_dirs["workers_root"] / f"worker_{worker_index:02d}"
+    else:
+        # Fallback for non-standard local setups: keep previous behavior.
+        worker_root = worker_artifact_root
     worker_root.mkdir(parents=True, exist_ok=True)
-    worker_log = worker_root / "worker.log"
-    worker_out = worker_root / "worker.out"
+
     cmd = _build_distributed_worker_cmd(
         config=config,
         trial_root=worker_root,
@@ -1338,6 +1363,11 @@ def train_trial(config: dict):
         log_dir=work_dir / "tb",
         use_amp=bool(config.get("use_amp", True)),
         feature_dropout_p=float(config.get("feature_dropout_p", 0.3)),
+        fdp_king_safety=config.get("fdp_king_safety"),
+        fdp_pins=config.get("fdp_pins"),
+        fdp_pawns=config.get("fdp_pawns"),
+        fdp_mobility=config.get("fdp_mobility"),
+        fdp_outposts=config.get("fdp_outposts"),
         w_volatility=float(config.get("w_volatility", 0.05)),
         accum_steps=int(config.get("accum_steps", 1)),
         warmup_steps=int(config.get("warmup_steps", 1500)),
@@ -2033,7 +2063,7 @@ def train_trial(config: dict):
                     temperature_decay_start_move=int(config.get("temperature_decay_start_move", 20)),
                     temperature_decay_moves=int(config.get("temperature_decay_moves", 60)),
                     temperature_endgame=float(config.get("temperature_endgame", 0.6)),
-                    max_plies=int(config.get("max_plies", 120)),
+                    max_plies=int(config.get("max_plies", 240)),
                     mcts_simulations=int(sims),
                     mcts_type=str(config.get("mcts", "puct")),
                     playout_cap_fraction=float(config.get("playout_cap_fraction", 0.25)),
@@ -2046,6 +2076,10 @@ def train_trial(config: dict):
                     opening_book_max_plies=int(config.get("opening_book_max_plies", 4)),
                     opening_book_max_games=int(config.get("opening_book_max_games", 200_000)),
                     opening_book_prob=float(config.get("opening_book_prob", 1.0)),
+                    opening_book_path_2=config.get("opening_book_path_2"),
+                    opening_book_max_plies_2=int(config.get("opening_book_max_plies_2", 16)),
+                    opening_book_max_games_2=int(config.get("opening_book_max_games_2", 200_000)),
+                    opening_book_mix_prob_2=float(config.get("opening_book_mix_prob_2", 0.0)),
                     random_start_plies=int(config.get("random_start_plies", 0)),
                     syzygy_path=config.get("syzygy_path"),
                     syzygy_policy=bool(config.get("syzygy_policy", False)),
@@ -2152,6 +2186,7 @@ def train_trial(config: dict):
                     holdout_fraction=float(holdout_frac),
                     max_unseen_iters_per_source=int(config.get("exploit_replay_max_unseen_iters_per_source", 2)),
                     max_shards_per_source=int(config.get("exploit_replay_top_shards_per_source", 0)),
+                    share_fraction=float(config.get("exploit_replay_share_fraction", 1.0)),
                 )
                 if shared_summary["source_samples_ingested"] > 0:
                     print(
@@ -2386,7 +2421,7 @@ def train_trial(config: dict):
                     games=eval_games,
                     opponent_topk_stage_end=float(config.get("sf_pid_random_move_stage_end", 0.5)),
                     temperature=float(config.get("eval_temperature", 0.25)),
-                    max_plies=int(config.get("eval_max_plies", config.get("max_plies", 120))),
+                    max_plies=int(config.get("eval_max_plies", config.get("max_plies", 240))),
                     mcts_simulations=eval_mcts_sims,
                     mcts_type=str(config.get("mcts", "puct")),
                     playout_cap_fraction=1.0,
@@ -2544,6 +2579,7 @@ def train_trial(config: dict):
                 ema_winrate=float(pid_ema_wr),
                 min_nodes=int(getattr(pid, "min_nodes", 50)) if pid is not None else 50,
                 max_nodes=int(getattr(pid, "max_nodes", 50000)) if pid is not None else 50000,
+                pid_target_winrate=float(config.get("sf_pid_target_winrate", 0.53)),
             )
 
             # Puzzle evaluation (overspecialization canary).
@@ -2634,6 +2670,13 @@ def train_trial(config: dict):
                     "w_sf_move": float(trainer.w_sf_move),
                     "w_sf_wdl": float(trainer.w_sf_wdl),
                     "diff_focus_q_weight": float(config.get("diff_focus_q_weight", 0.0)),
+                    "feature_dropout_p": float(config.get("feature_dropout_p", 0.0)),
+                    "fdp_king_safety": float(config.get("fdp_king_safety", -1)),
+                    "fdp_pins": float(config.get("fdp_pins", -1)),
+                    "fdp_pawns": float(config.get("fdp_pawns", -1)),
+                    "fdp_mobility": float(config.get("fdp_mobility", -1)),
+                    "fdp_outposts": float(config.get("fdp_outposts", -1)),
+                    "selfplay_fraction": float(config.get("selfplay_fraction", 0.0)),
                     "optimizer_name": str(config.get("optimizer", "adamw")),
                     "sf_wdl_conf_power": float(trainer.sf_wdl_conf_power),
                     "sf_wdl_draw_scale": float(trainer.sf_wdl_draw_scale),

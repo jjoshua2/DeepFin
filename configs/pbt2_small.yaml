@@ -19,10 +19,10 @@ seed: 0
 work_dir: runs/pbt2_small
 device: cuda
 iterations: 750
-replay_capacity: 1000000   # Hard cap
+replay_capacity: 5000000   # Hard cap
 replay_window_start: 20000   # Small start so early easy games evict by iter 10-15
-replay_window_max: 1000000   # Grow to full 1M
-replay_window_growth: 1500   # ~2000 pos/iter new data; growth slightly below data rate so window fills dense, reaches 1M ~iter 600
+replay_window_max: 5000000   # Grow to full 5M (~2.5 GB per trial on disk)
+replay_window_growth: 9000   # ~15k pos/iter total (own ~5k + ~10k shared); growth = 9k gives ~85% retention per iter, reaches 5M ~iter 554
 
 # Bootstrap: train initial net on all random games, then discard from window
 bootstrap_dir: data/bootstrap
@@ -32,6 +32,9 @@ worker_wheel_path: null  # Optional: built wheel to publish for remote worker se
 bootstrap_max_positions: 0   # 0 = load ALL positions (14.2M) — used by scripts/train_bootstrap.py
 bootstrap_train_steps: 0     # 0 = auto: train 1 epoch — used by scripts/train_bootstrap.py
 shared_shards_dir: null  # Disabled: start trials from bootstrap weights + fresh selfplay window
+salvage_seed_pool_dir: /home/josh/projects/chess/runs/pbt2_small/salvage/62323_20260314_115133
+salvage_restore_donor_config: false   # Use new PB2 hyperparams, not donor's
+salvage_restore_full_trainer_state: false  # Fresh optimizer/LR schedule
 
 model:
   kind: transformer
@@ -56,7 +59,7 @@ stockfish:
   pid_ema_alpha: 0.37      # EMA half-life ~1.5 iterations.
   pid_deadzone: 0.025
   pid_rate_limit: 0.10
-  pid_min_games_between_adjust: 10  # Adjust at most once per 10 completed games to reduce oscillation.
+  pid_min_games_between_adjust: 40  # Adjust at most once per 40 completed games to reduce oscillation.
   pid_kp: 1.5
   pid_ki: 0.10
   pid_kd: 0.0
@@ -74,17 +77,17 @@ stockfish:
   pid_random_move_prob_min: 0.0
   pid_random_move_prob_max: 1.0
   pid_random_move_stage_end: 0.5
-  pid_max_rand_step: 0.02   # Smaller 2% steps to reduce PID overshoot/oscillation.
+  pid_max_rand_step: 0.01   # Smaller 1% steps to reduce PID overshoot/oscillation.
 
 selfplay:
   games_per_iter: 150  # Steady-state target once the early ramp finishes.
   games_per_iter_start: 48  # Two worker rounds at 3 workers x batch 8; fast sanity check with full-tree Gumbel.
   games_per_iter_ramp_iters: 20
-  selfplay_fraction: 0.25  # Mix in 25% true net-vs-net self-play while keeping 75% curriculum games for PID.
+  selfplay_fraction: 0.20  # Pin near the recent good band while narrowing the search to lr + feature-group dropout.
   selfplay_batch: 8     # Full-tree Gumbel is much slower; smaller worker chunks reduce timeout/staleness risk.
-  max_plies: 120
+  max_plies: 240
 
-  temperature: 1.1       # Pinned: top-5 median from Run 4 (range 0.94-1.74)
+  temperature: 1.0       # Gumbel improved policy already provides exploration; T=1.0 avoids distorting the search target.
   temperature_drop_plies: 0
   temperature_after: 0.0
   temperature_decay_start_move: 20
@@ -95,12 +98,16 @@ selfplay:
   opening_book_max_plies: 4
   opening_book_max_games: 200000
   opening_book_prob: 1.0
+  opening_book_path_2: /home/josh/projects/chess/data/opening_books/8moves_v3.pgn.zip
+  opening_book_max_plies_2: 16
+  opening_book_max_games_2: 200000
+  opening_book_mix_prob_2: 0.75  # 75% of book games use the 8-move book, 25% use the 2-move book
   random_start_plies: 2   # Fallback if book unavailable
 
   mcts: puct
   mcts_simulations: 64
   mcts_start_simulations: 64  # Full budget from start (KataGo-style: 75% full, 25% fast)
-  playout_cap_fraction: 0.30  # Pinned: top-5 median from Run 4
+  playout_cap_fraction: 0.30  # Restore prior ratio; evaluate policy progress before spending more compute on full-search positions.
   fast_simulations: 8
   fpu_reduction: 1.2    # LC0/KataGo FPU for non-root nodes
   fpu_at_root: 1.0      # FPU for root (lower — root has Dirichlet noise)
@@ -138,9 +145,9 @@ train:
 
   w_policy: 1.0             # Pinned: anchor for all other weights
   w_soft: 1.2               # PBT converged to ceiling (1.2) every trial in Run 7; set as default.
-  w_future: 0.05            # Pinned during this run (not in pb2_bounds_*).
+  w_future: 0.01            # Keep a tiny auxiliary weight; low-risk compared with full disable.
   w_wdl: 0.95               # PBT converged to 0.95-0.98 across all Run 7 trials.
-  w_sf_move: 0.15           # PBT converged to 0.15 ceiling every trial in Run 7; raise default.
+  w_sf_move: 0.01           # Keep a tiny auxiliary weight; PB2 no longer searches this head.
   w_sf_eval: 0.10           # Pinned: top-5 median from Run 4
   w_categorical: 0.10       # Pinned: top-5 median from Run 4
   w_volatility: 0.10        # Pinned: top-5 median from Run 4
@@ -173,7 +180,7 @@ tune:
   tune_num_to_keep: 10              # keep last 10 checkpoints per trial
   tune_keep_last_experiments: 2     # keep last 2 experiments under work_dir/tune
 
-  tune_scheduler: gpbt_pl
+  tune_scheduler: pb2
   gpbt_pairwise_lr: 0.35
   gpbt_pairwise_momentum: 0.50
   gpbt_quantile_fraction: 0.25
@@ -182,15 +189,17 @@ tune:
   max_concurrent_trials: 3    # 3 trials with more resources each; cross-trial sharing still helps avoid duplicate work.
   cpus_per_trial: 3
   gpus_per_trial: 0.30        # 3 × 0.30 = 0.9 GPU allocated; leaves some headroom for worker inference.
-  distributed_workers_per_trial: 5
+  distributed_workers_per_trial: 4
   distributed_worker_sf_workers: 1
   distributed_worker_use_compile: true
+  distributed_worker_shared_cache_dir: /home/josh/projects/chess/runs/pbt2_small/server/worker_cache
   distributed_min_workers_per_trial: 2
   distributed_max_worker_delta_per_rebalance: 1
   distributed_wait_timeout_seconds: 5400
   distributed_server_port: 45453
   distributed_server_host: 0.0.0.0
   distributed_server_public_url: http://192.168.1.212:45453
+  distributed_server_root_override: /mnt/c/chess_active/pbt2_small_server
 
   # Disk-backed replay buffer: keeps ~1 GB per trial instead of ~10 GB
   shuffle_buffer_size: 70000  # In-memory shuffle buffer (samples)
@@ -205,11 +214,12 @@ tune:
   exploit_replay_top_within_best_frac: 0.05
   exploit_replay_top_min_metric: 0.0
   exploit_replay_max_unseen_iters_per_source: 1  # Always import just the latest selfplay export from each sibling; 1 file per iter.
+  exploit_replay_share_fraction: 0.5            # Import only 50% of each sibling's shard to keep trial data distributions partially independent.
   exploit_replay_local_keep_recent_fraction: 0.20
   exploit_replay_local_keep_older_fraction: 0.65
 
   # PB2: exploit+explore every X iterations (was 20).
-  pb2_perturbation_interval: 4
+  pb2_perturbation_interval: 8
 
   tune_metric: opponent_strength
   tune_mode: max
@@ -250,8 +260,8 @@ tune:
   #
   # Only pb2_bounds_* keys present here are searched; everything else is pinned.
   pb2_bounds_lr: [1.0e-3, 4.0e-3]       # Expanded ceiling (was 2.5e-3, converged to 0.0025 ceiling every trial in Run 7).
-  pb2_bounds_w_wdl: [0.75, 1.3]         # Tightened floor (was 0.5, never went below 0.74); expanded ceiling (was 1.0, converged to 0.95-0.98).
-  pb2_bounds_w_soft: [0.6, 1.2]         # Ceiling pulled back: Run 9 showed w_soft hitting 2.0 correlated with os decline.
-  pb2_bounds_w_sf_move: [0.05, 0.30]    # Expanded ceiling (was 0.15, hit by all 4 trials in Run 7); tightened floor (never below 0.03).
-  pb2_bounds_w_sf_wdl: [0.0, 0.10]      # Fine — values cluster at 0.004-0.033, well within bounds.
-  pb2_bounds_diff_focus_q_weight: [2.0, 5.0]  # Ceiling pulled back: Run 9 showed dfq climbing to 5.4 correlated with os decline.
+  pb2_bounds_fdp_king_safety: [0.0, 0.5]
+  pb2_bounds_fdp_pins: [0.0, 0.5]       # High pin-feature dropout looked harmful in the first dropout-focused run.
+  pb2_bounds_fdp_pawns: [0.0, 0.5]
+  pb2_bounds_fdp_mobility: [0.0, 0.5]   # High mobility-feature dropout also correlated with the weakest early trial.
+  pb2_bounds_fdp_outposts: [0.0, 0.5]

@@ -43,6 +43,7 @@ class GumbelConfig:
     c_puct: float = 2.5
     fpu_reduction: float = 1.2
     full_tree: bool = True
+    add_noise: bool = True  # Gumbel noise at root; disable for max-strength (non-training) search
 
 
 def _masked_priors(pol_logits: np.ndarray, board: chess.Board) -> tuple[np.ndarray, np.ndarray]:
@@ -247,7 +248,7 @@ def run_gumbel_root_many(
         # Gumbel noise → select top-m. Keep m small enough that sequential
         # halving can still allocate at least one visit per action each phase.
         log_pri = np.log(np.maximum(pri[legal], 1e-12))
-        g = _gumbel(rng, legal.size)
+        g = _gumbel(rng, legal.size) if cfg.add_noise else np.zeros(legal.size, dtype=np.float64)
         score = g + log_pri
 
         if sim_budget <= 1:

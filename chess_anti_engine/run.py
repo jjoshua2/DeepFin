@@ -296,6 +296,10 @@ def _run_single(args: argparse.Namespace) -> None:
     cfg.selfplay.opening_book_max_plies = int(args.opening_book_max_plies)
     cfg.selfplay.opening_book_max_games = int(args.opening_book_max_games)
     cfg.selfplay.opening_book_prob = float(args.opening_book_prob)
+    cfg.selfplay.opening_book_path_2 = getattr(args, "opening_book_path_2", None)
+    cfg.selfplay.opening_book_max_plies_2 = int(getattr(args, "opening_book_max_plies_2", 16))
+    cfg.selfplay.opening_book_max_games_2 = int(getattr(args, "opening_book_max_games_2", 200_000))
+    cfg.selfplay.opening_book_mix_prob_2 = float(getattr(args, "opening_book_mix_prob_2", 0.0))
     cfg.selfplay.random_start_plies = int(args.random_start_plies)
     cfg.selfplay.sf_policy_temp = float(args.sf_policy_temp)
     cfg.selfplay.sf_policy_label_smooth = float(args.sf_policy_label_smooth)
@@ -543,6 +547,10 @@ def _run_single(args: argparse.Namespace) -> None:
                 opening_book_max_plies=int(cfg.selfplay.opening_book_max_plies),
                 opening_book_max_games=int(cfg.selfplay.opening_book_max_games),
                 opening_book_prob=float(cfg.selfplay.opening_book_prob),
+                opening_book_path_2=getattr(cfg.selfplay, "opening_book_path_2", None),
+                opening_book_max_plies_2=int(getattr(cfg.selfplay, "opening_book_max_plies_2", 16)),
+                opening_book_max_games_2=int(getattr(cfg.selfplay, "opening_book_max_games_2", 200_000)),
+                opening_book_mix_prob_2=float(getattr(cfg.selfplay, "opening_book_mix_prob_2", 0.0)),
                 random_start_plies=int(cfg.selfplay.random_start_plies),
                 syzygy_path=args.syzygy_path,
                 syzygy_policy=bool(args.syzygy_policy),
@@ -799,6 +807,15 @@ def main() -> None:
         help="Optional externally reachable base URL for remote workers (defaults to http://<host>:<port>).",
     )
     ap.add_argument(
+        "--distributed-server-root-override",
+        type=str,
+        default="",
+        help=(
+            "Optional filesystem root for the Tune-managed distributed server state. "
+            "If unset, defaults to <work_dir>/server."
+        ),
+    )
+    ap.add_argument(
         "--gpus-per-trial", type=float, default=0.1,
         help="GPU fraction per trial. Use <1.0 to pack multiple trials on one GPU "
              "(e.g. 0.1 for 10 trials on a single 5090).",
@@ -968,6 +985,10 @@ def main() -> None:
     ap.add_argument("--opening-book-max-plies", type=int, default=4)
     ap.add_argument("--opening-book-max-games", type=int, default=200000)
     ap.add_argument("--opening-book-prob", type=float, default=1.0)
+    ap.add_argument("--opening-book-path-2", type=str, default=None, help="Path to second opening book")
+    ap.add_argument("--opening-book-max-plies-2", type=int, default=16)
+    ap.add_argument("--opening-book-max-games-2", type=int, default=200000)
+    ap.add_argument("--opening-book-mix-prob-2", type=float, default=0.0, help="Fraction of book games using book 2")
     ap.add_argument("--random-start-plies", type=int, default=0)
 
     pid_group = ap.add_mutually_exclusive_group()
@@ -1037,7 +1058,7 @@ def main() -> None:
         default=0.6,
         help="Linear schedule: endgame/floor temperature",
     )
-    ap.add_argument("--max-plies", type=int, default=200)
+    ap.add_argument("--max-plies", type=int, default=240)
 
     # Progressive simulation budget: start low (fast) and ramp up as training improves.
     mcts_prog = ap.add_mutually_exclusive_group()
@@ -1154,6 +1175,10 @@ def main() -> None:
         "opening_book_max_plies": int(args.opening_book_max_plies),
         "opening_book_max_games": int(args.opening_book_max_games),
         "opening_book_prob": float(args.opening_book_prob),
+        "opening_book_path_2": getattr(args, "opening_book_path_2", None),
+        "opening_book_max_plies_2": int(getattr(args, "opening_book_max_plies_2", 16)),
+        "opening_book_max_games_2": int(getattr(args, "opening_book_max_games_2", 200_000)),
+        "opening_book_mix_prob_2": float(getattr(args, "opening_book_mix_prob_2", 0.0)),
         "random_start_plies": int(args.random_start_plies),
         "eval_games": int(args.eval_games),
         "eval_sf_nodes": int(args.eval_sf_nodes) if args.eval_sf_nodes is not None else int(args.sf_nodes),
@@ -1306,6 +1331,7 @@ def main() -> None:
         "distributed_server_port": int(args.distributed_server_port),
         "distributed_server_host": args.distributed_server_host,
         "distributed_server_public_url": args.distributed_server_public_url,
+        "distributed_server_root_override": args.distributed_server_root_override,
         "gpus_per_trial": float(args.gpus_per_trial),
         "tune_scheduler": str(args.tune_scheduler),
         "pb2_perturbation_interval": int(args.pb2_perturbation_interval),

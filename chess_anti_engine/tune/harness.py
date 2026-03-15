@@ -215,7 +215,11 @@ def run_tune(
 
     server_proc: subprocess.Popen[bytes] | None = None
     if int(base_config.get("distributed_workers_per_trial", 0)) > 0:
-        server_root = work_dir.resolve() / "server"
+        server_root_override = str(base_config.get("distributed_server_root_override", "")).strip()
+        if server_root_override:
+            server_root = Path(server_root_override).expanduser().resolve()
+        else:
+            server_root = work_dir.resolve() / "server"
         server_root.mkdir(parents=True, exist_ok=True)
         server_log = server_root / "server.log"
         port = int(base_config.get("distributed_server_port", 0)) or _pick_free_port()
@@ -244,6 +248,9 @@ def run_tune(
         opening_book = base_config.get("opening_book_path")
         if isinstance(opening_book, str) and opening_book.strip():
             cmd.extend(["--opening-book-path", opening_book.strip()])
+        opening_book_2 = base_config.get("opening_book_path_2")
+        if isinstance(opening_book_2, str) and opening_book_2.strip():
+            cmd.extend(["--opening-book-path-2", opening_book_2.strip()])
 
         log_fh = server_log.open("ab")
         try:

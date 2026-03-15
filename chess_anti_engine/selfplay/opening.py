@@ -30,6 +30,13 @@ class OpeningConfig:
     # Probability of using the opening book (vs random-start plies).
     opening_book_prob: float = 1.0
 
+    # Optional second opening book (e.g. a deeper 8-move book).
+    opening_book_path_2: str | None = None
+    opening_book_max_plies_2: int = 16
+    opening_book_max_games_2: int = 200_000
+    # Fraction of book games that use book 2 (the remainder use book 1).
+    opening_book_mix_prob_2: float = 0.0
+
     # If >0, play this many random legal plies from the start position.
     random_start_plies: int = 0
 
@@ -172,27 +179,44 @@ def _sample_from_polyglot(*, rng, path: str, max_plies: int) -> chess.Board:
     return b
 
 
+def _sample_book(*, rng, path: str, max_plies: int, max_games: int) -> chess.Board:
+    p = Path(path)
+    suffixes = "".join(p.suffixes).lower()
+    if suffixes.endswith(".bin"):
+        return _sample_from_polyglot(rng=rng, path=str(p), max_plies=max_plies)
+    if suffixes.endswith(".pgn") or suffixes.endswith(".pgn.zip") or suffixes.endswith(".zip"):
+        return _sample_from_pgn(rng=rng, path=str(p), max_plies=max_plies, max_games=max_games)
+    raise ValueError(f"Unknown opening book format: {p}")
+
+
 def make_starting_board(*, rng, cfg: OpeningConfig) -> chess.Board:
     """Create a starting position according to config.
 
     Priority:
     - with probability opening_book_prob, use opening book if provided
+      - among book games, use book 2 with opening_book_mix_prob_2, else book 1
     - otherwise use random_start_plies if >0
     - otherwise startpos
     """
     if cfg.opening_book_path and float(rng.random()) < float(cfg.opening_book_prob):
-        p = Path(cfg.opening_book_path)
-        suffixes = "".join(p.suffixes).lower()
-        if suffixes.endswith(".bin"):
-            return _sample_from_polyglot(rng=rng, path=str(p), max_plies=int(cfg.opening_book_max_plies))
-        if suffixes.endswith(".pgn") or suffixes.endswith(".pgn.zip") or suffixes.endswith(".zip"):
-            return _sample_from_pgn(
+        use_book2 = (
+            cfg.opening_book_path_2
+            and float(cfg.opening_book_mix_prob_2) > 0.0
+            and float(rng.random()) < float(cfg.opening_book_mix_prob_2)
+        )
+        if use_book2:
+            return _sample_book(
                 rng=rng,
-                path=str(p),
-                max_plies=int(cfg.opening_book_max_plies),
-                max_games=int(cfg.opening_book_max_games),
+                path=str(cfg.opening_book_path_2),
+                max_plies=int(cfg.opening_book_max_plies_2),
+                max_games=int(cfg.opening_book_max_games_2),
             )
-        raise ValueError(f"Unknown opening book type: {p}")
+        return _sample_book(
+            rng=rng,
+            path=str(cfg.opening_book_path),
+            max_plies=int(cfg.opening_book_max_plies),
+            max_games=int(cfg.opening_book_max_games),
+        )
 
     if int(cfg.random_start_plies) > 0:
         return _random_playout_from_start(rng=rng, plies=int(cfg.random_start_plies))

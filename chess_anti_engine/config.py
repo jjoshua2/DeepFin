@@ -29,7 +29,7 @@ class StockfishConfig:
 @dataclass
 class SelfPlayConfig:
     games_per_iter: int = 10
-    max_plies: int = 200
+    max_plies: int = 240
     selfplay_fraction: float = 0.0
 
     # AlphaZero/Leela-style exploration: sample from MCTS visits with temperature.

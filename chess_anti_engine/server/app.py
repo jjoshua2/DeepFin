@@ -21,6 +21,7 @@ def create_app(
     quarantine_dir: str = "quarantine",
     users_db: str = "users.json",
     opening_book_path: str | None = None,
+    opening_book_path_2: str | None = None,
     max_upload_mb: int = 256,
     min_workers_per_trial: int = 1,
     max_worker_delta_per_rebalance: int = 1,
@@ -416,6 +417,15 @@ def create_app(
         p = Path(opening_book_path)
         if not p.exists():
             raise HTTPException(status_code=404, detail="opening book not found")
+        return FileResponse(str(p), media_type="application/octet-stream", filename=p.name)
+
+    @app.get("/v1/opening_book_2")
+    def get_opening_book_2() -> Any:
+        if opening_book_path_2 is None:
+            raise HTTPException(status_code=404, detail="no opening book 2 configured")
+        p = Path(opening_book_path_2)
+        if not p.exists():
+            raise HTTPException(status_code=404, detail="opening book 2 not found")
         return FileResponse(str(p), media_type="application/octet-stream", filename=p.name)
 
     def _artifact_from_publish(key: str, *, default_name: str, trial_id: str | None = None) -> Path | None:

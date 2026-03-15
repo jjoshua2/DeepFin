@@ -9,6 +9,7 @@ def main() -> None:
     ap.add_argument("--port", type=int, default=45453)
     ap.add_argument("--server-root", type=str, default="server")
     ap.add_argument("--opening-book-path", type=str, default=None)
+    ap.add_argument("--opening-book-path-2", type=str, default=None)
     ap.add_argument("--max-upload-mb", type=int, default=256)
     ap.add_argument("--min-workers-per-trial", type=int, default=1)
     ap.add_argument("--max-worker-delta-per-rebalance", type=int, default=1)
@@ -32,6 +33,7 @@ def main() -> None:
     app = create_app(
         server_root=server_root,
         opening_book_path=args.opening_book_path,
+        opening_book_path_2=getattr(args, "opening_book_path_2", None),
         max_upload_mb=int(args.max_upload_mb),
         min_workers_per_trial=int(args.min_workers_per_trial),
         max_worker_delta_per_rebalance=int(args.max_worker_delta_per_rebalance),

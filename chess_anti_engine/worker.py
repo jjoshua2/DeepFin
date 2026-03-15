@@ -641,10 +641,12 @@ def main() -> None:
                     )
                 if r.status_code == 200:
                     # Server may accept-but-reject (quarantine) invalid shards; 200 avoids retry storms.
+                    # Once the server has answered 200, keep disk usage bounded by deleting the local copy
+                    # instead of archiving every uploaded shard indefinitely.
                     try:
-                        sp.replace(uploaded_dir / sp.name)
+                        sp.unlink(missing_ok=True)
                     except OSError:
-                        # Already moved by a concurrent process or stale glob entry; skip.
+                        # Already removed by a concurrent process or stale glob entry; skip.
                         pass
                 else:
                     # Leave it for retry.
@@ -667,7 +669,7 @@ def main() -> None:
                     timeout=60.0,
                 )
                 if r.status_code == 200:
-                    jp.replace(arena_uploaded_dir / jp.name)
+                    jp.unlink(missing_ok=True)
                 else:
                     break
 
@@ -876,6 +878,36 @@ def main() -> None:
                         )
                 opening_book_path = str(ob_path)
 
+            # Opening book 2 (optional).
+            opening_book_path_2 = None
+            if "opening_book_2" in manifest:
+                ob2 = manifest.get("opening_book_2") or {}
+                filename2 = str(ob2.get("filename") or "opening_book_2")
+                sha2 = str(ob2.get("sha256") or "")
+
+                if sha2:
+                    ob2_path = cache_dir / f"opening2_{sha2}_{filename2}"
+                else:
+                    ob2_path = cache_dir / f"book2_{filename2}"
+
+                if sha2:
+                    if (not ob2_path.exists()) or (_sha256_file(ob2_path) != sha2):
+                        log.info("downloading opening book 2 sha=%s filename=%s", sha2, filename2)
+                        _download_and_verify_shared(
+                            _server_url_for(str(ob2.get("endpoint") or "/v1/opening_book_2")),
+                            out_path=ob2_path,
+                            expected_sha256=sha2,
+                            headers=_worker_headers(),
+                        )
+                else:
+                    if not ob2_path.exists():
+                        _download(
+                            _server_url_for(str(ob2.get("endpoint") or "/v1/opening_book_2")),
+                            out_path=ob2_path,
+                            headers=_worker_headers(),
+                        )
+                opening_book_path_2 = str(ob2_path)
+
             # Resolve effective settings.
             # By default we keep strength knobs server-managed for consistency.
             server_managed = [
@@ -930,7 +962,7 @@ def main() -> None:
                 else int(reco.get("games_per_batch", 8))
             )
 
-            max_plies = int(args.max_plies) if args.max_plies is not None else int(reco.get("max_plies", 200))
+            max_plies = int(args.max_plies) if args.max_plies is not None else int(reco.get("max_plies", 240))
             mcts_type = str(args.mcts) if args.mcts is not None else str(reco.get("mcts", "puct"))
             mcts_sims = int(args.mcts_simulations) if args.mcts_simulations is not None else int(reco.get("mcts_simulations", 50))
             playout_cap_fraction = (
@@ -950,6 +982,9 @@ def main() -> None:
             opening_book_max_games = (
                 int(args.opening_book_max_games) if args.opening_book_max_games is not None else int(reco.get("opening_book_max_games", 200000))
             )
+            opening_book_max_plies_2 = int(reco.get("opening_book_max_plies_2", 16))
+            opening_book_max_games_2 = int(reco.get("opening_book_max_games_2", 200000))
+            opening_book_mix_prob_2 = float(reco.get("opening_book_mix_prob_2", 0.0))
             random_start_plies = (
                 int(args.random_start_plies) if args.random_start_plies is not None else int(reco.get("random_start_plies", 0))
             )
@@ -1032,7 +1067,7 @@ def main() -> None:
 
                 arena_cfg = (task.get("arena") or {}) if isinstance(task, dict) else {}
                 batch_games = int(arena_cfg.get("batch_games", 8))
-                max_plies_arena = int(arena_cfg.get("max_plies", 200))
+                max_plies_arena = int(arena_cfg.get("max_plies", 240))
                 mcts_type_arena = str(arena_cfg.get("mcts", "puct"))
                 mcts_sims_arena = int(arena_cfg.get("mcts_simulations", 200))
                 c_puct_arena = float(arena_cfg.get("c_puct", 2.5))
@@ -1178,6 +1213,10 @@ def main() -> None:
                 opening_book_max_plies=int(opening_book_max_plies),
                 opening_book_max_games=int(opening_book_max_games),
                 opening_book_prob=float(opening_book_prob),
+                opening_book_path_2=opening_book_path_2,
+                opening_book_max_plies_2=int(opening_book_max_plies_2),
+                opening_book_max_games_2=int(opening_book_max_games_2),
+                opening_book_mix_prob_2=float(opening_book_mix_prob_2),
                 random_start_plies=int(random_start_plies),
             )
             t1 = time.time()

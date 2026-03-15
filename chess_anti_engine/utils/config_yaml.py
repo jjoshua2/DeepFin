@@ -130,6 +130,10 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             "opening_book_max_plies",
             "opening_book_max_games",
             "opening_book_prob",
+            "opening_book_path_2",
+            "opening_book_max_plies_2",
+            "opening_book_max_games_2",
+            "opening_book_mix_prob_2",
             "random_start_plies",
             "sf_policy_temp",
             "sf_policy_label_smooth",
@@ -155,6 +159,11 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             "lr",
             "no_amp",
             "feature_dropout_p",
+            "fdp_king_safety",
+            "fdp_pins",
+            "fdp_pawns",
+            "fdp_mobility",
+            "fdp_outposts",
             "w_volatility",
             "search_w_volatility",
             "accum_steps",
@@ -203,6 +212,7 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             "distributed_server_port",
             "distributed_server_host",
             "distributed_server_public_url",
+            "distributed_server_root_override",
             "distributed_wait_timeout_seconds",
             "pbt_synch",
             "gpbt_pairwise_lr",
@@ -302,6 +312,10 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             "opening_book_max_plies",
             "opening_book_max_games",
             "opening_book_prob",
+            "opening_book_path_2",
+            "opening_book_max_plies_2",
+            "opening_book_max_games_2",
+            "opening_book_mix_prob_2",
             "random_start_plies",
             "sf_policy_temp",
             "sf_policy_label_smooth",
@@ -339,6 +353,9 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             out["no_amp"] = train.get("no_amp")
         if "feature_dropout_p" in train:
             out["feature_dropout_p"] = train.get("feature_dropout_p")
+        for _fdp_k in ["fdp_king_safety", "fdp_pins", "fdp_pawns", "fdp_mobility", "fdp_outposts"]:
+            if _fdp_k in train:
+                out[_fdp_k] = train.get(_fdp_k)
         if "w_volatility" in train:
             out["w_volatility"] = train.get("w_volatility")
         for k in ["cosmos_rank", "cosmos_gamma", "accum_steps", "warmup_steps", "lr_eta_min", "lr_T0", "lr_T_mult", "grad_clip", "zclip_z_thresh", "zclip_alpha", "zclip_max_norm", "use_compile", "swa_start", "swa_freq", "w_policy", "w_soft", "w_future", "w_wdl", "w_sf_move", "w_sf_eval", "w_categorical", "w_sf_volatility", "w_moves_left", "w_sf_wdl", "sf_wdl_floor", "sf_wdl_floor_at"]:
@@ -373,11 +390,13 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             "distributed_worker_target_batch_seconds",
             "distributed_worker_min_games_per_batch",
             "distributed_worker_max_games_per_batch",
+            "distributed_worker_shared_cache_dir",
             "distributed_min_workers_per_trial",
             "distributed_max_worker_delta_per_rebalance",
             "distributed_server_port",
             "distributed_server_host",
             "distributed_server_public_url",
+            "distributed_server_root_override",
             "distributed_wait_timeout_seconds",
             "tune_metric",
             "tune_mode",
@@ -431,6 +450,7 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             "exploit_replay_top_shards_per_source",
             "exploit_replay_local_keep_recent_fraction",
             "exploit_replay_local_keep_older_fraction",
+            "exploit_replay_share_fraction",
             "pause_file",
             "pause_poll_seconds",
             "salvage_seed_pool_dir",

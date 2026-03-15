@@ -68,6 +68,11 @@ class Trainer:
         log_dir: Path | None = None,
         use_amp: bool = True,
         feature_dropout_p: float = 0.3,
+        fdp_king_safety: float | None = None,
+        fdp_pins: float | None = None,
+        fdp_pawns: float | None = None,
+        fdp_mobility: float | None = None,
+        fdp_outposts: float | None = None,
         w_volatility: float = 0.05,
         accum_steps: int = 1,
         warmup_steps: int = 1500,
@@ -226,6 +231,16 @@ class Trainer:
 
         self.feature_dropout_p = float(feature_dropout_p)
         self._base_input_planes = int(LC0_FULL.num_planes)
+        # Per-group dropout: (start_offset_from_base, num_planes, dropout_prob)
+        # Groups: king_safety(10), pins(6), pawns(8), mobility(6), outposts(4)
+        _fdp = float(feature_dropout_p)
+        self._feature_group_dropout = [
+            (0, 10, float(fdp_king_safety) if fdp_king_safety is not None else _fdp),
+            (10, 6, float(fdp_pins) if fdp_pins is not None else _fdp),
+            (16, 8, float(fdp_pawns) if fdp_pawns is not None else _fdp),
+            (24, 6, float(fdp_mobility) if fdp_mobility is not None else _fdp),
+            (30, 4, float(fdp_outposts) if fdp_outposts is not None else _fdp),
+        ]
         self.w_volatility = float(w_volatility)
         self.w_policy = float(w_policy)
         self.w_soft = float(w_soft)
@@ -543,15 +558,14 @@ class Trainer:
                     samples = maybe_mirror_samples(samples, rng=buf.rng, prob=self.mirror_prob)
                     batch = collate(samples, device=self.device)
 
-                    # Spec feature dropout: randomly zero ALL extra feature planes (beyond LC0 base planes)
-                    # during training. At inference/eval we keep all features.
-                    p = float(self.feature_dropout_p)
+                    # Per-group feature dropout: independently zero each classical feature group.
                     base = int(self._base_input_planes)
-                    if p > 0.0:
-                        x = batch["x"]
-                        if x.shape[1] > base:
-                            drop = (torch.rand((x.shape[0], 1, 1, 1), device=x.device) < p).to(x.dtype)
-                            x[:, base:, :, :] = x[:, base:, :, :] * (1.0 - drop)
+                    x = batch["x"]
+                    if x.shape[1] > base:
+                        for g_off, g_len, g_p in self._feature_group_dropout:
+                            if g_p > 0.0:
+                                drop = (torch.rand((x.shape[0], 1, 1, 1), device=x.device) < g_p).to(x.dtype)
+                                x[:, base + g_off : base + g_off + g_len, :, :] *= (1.0 - drop)
 
                     if self.use_amp and self.device.startswith("cuda"):
                         with torch.amp.autocast("cuda", dtype=self._amp_dtype):
