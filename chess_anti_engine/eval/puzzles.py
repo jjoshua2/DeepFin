@@ -190,7 +190,7 @@ def run_puzzle_eval(
         batch_puzzles = suite.puzzles[start:end]
         boards = [p.board.copy() for p in batch_puzzles]
 
-        _probs, actions, _vals = run_mcts_many(
+        _probs, actions, _vals, _masks = run_mcts_many(
             model, boards, device=device, rng=rng, cfg=cfg,
         )
 

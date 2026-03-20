@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 import numpy as np
 import chess
 import torch
 
-from chess_anti_engine.encoding import encode_position
+from chess_anti_engine.encoding import encode_position, encode_positions_batch
+from chess_anti_engine.inference import BatchEvaluator, LocalModelEvaluator
 from chess_anti_engine.moves import POLICY_SIZE, legal_move_mask, index_to_move
-from chess_anti_engine.mcts.puct import Node, _backprop, _expand, _select_child, _terminal_value
-from chess_anti_engine.utils.amp import inference_autocast
+from chess_anti_engine.moves.encode import legal_move_indices
+from chess_anti_engine.mcts.puct import Node, _backprop, _expand, _expand_sparse, _select_child, _terminal_value
 
 
 def _gumbel(rng: np.random.Generator, size: int) -> np.ndarray:
@@ -28,8 +30,14 @@ def _softmax(x: np.ndarray) -> np.ndarray:
 
 def _wdl_to_q(wdl_logits: np.ndarray) -> float:
     """WDL logits → scalar Q ∈ [-1, 1] from side-to-move perspective (W-L)."""
-    p = _softmax(wdl_logits.astype(np.float64))
-    return float(p[0] - p[2])
+    # Pure Python math is faster than numpy for 3-element arrays.
+    w, d, l = float(wdl_logits[0]), float(wdl_logits[1]), float(wdl_logits[2])
+    mx = max(w, d, l)
+    ew = math.exp(w - mx)
+    ed = math.exp(d - mx)
+    el = math.exp(l - mx)
+    s = ew + ed + el
+    return (ew - el) / s if s > 0 else 0.0
 
 
 @dataclass
@@ -46,13 +54,25 @@ class GumbelConfig:
     add_noise: bool = True  # Gumbel noise at root; disable for max-strength (non-training) search
 
 
-def _masked_priors(pol_logits: np.ndarray, board: chess.Board) -> tuple[np.ndarray, np.ndarray]:
-    mask = legal_move_mask(board)
-    pl = pol_logits.astype(np.float64, copy=True)
-    pl[~mask] = -1e9
-    pri = _softmax(pl)
-    pri[~mask] = 0.0
-    return pri, mask
+def _masked_priors(pol_logits: np.ndarray, board: chess.Board) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Returns (full_priors, mask, legal_indices)."""
+    legal_idx = legal_move_indices(board)
+    if legal_idx.size == 0:
+        return (np.zeros(POLICY_SIZE, dtype=np.float64),
+                np.zeros(POLICY_SIZE, dtype=np.bool_),
+                legal_idx)
+    # Compute softmax only over legal moves
+    legal_logits = pol_logits[legal_idx].astype(np.float64)
+    legal_logits -= legal_logits.max()
+    e = np.exp(legal_logits)
+    s = float(e.sum())
+    legal_priors = (e / s) if s > 0 else np.full_like(e, 1.0 / e.size)
+    # Scatter into full-size arrays
+    pri = np.zeros(POLICY_SIZE, dtype=np.float64)
+    pri[legal_idx] = legal_priors
+    mask = np.zeros(POLICY_SIZE, dtype=np.bool_)
+    mask[legal_idx] = True
+    return pri, mask, legal_idx
 
 
 def _sigma_scale(*, max_visit: int, cfg: GumbelConfig) -> float:
@@ -82,43 +102,49 @@ def _improved_policy_probs(
     node: Node,
     cfg: GumbelConfig,
 ) -> tuple[list[int], np.ndarray]:
-    actions = list(node.children.keys())
+    children = node.children
+    actions = list(children.keys())
     if not actions:
         return [], np.zeros((0,), dtype=np.float64)
 
-    max_visit = max((node.children[a].N for a in actions), default=0)
-    logits = np.array(
-        [np.log(max(float(node.children[a].prior), 1e-12)) for a in actions],
-        dtype=np.float64,
-    )
-    v_pi = float(node.Q)
-    completed_q = np.array(
-        [
-            float(-node.children[a].Q) if node.children[a].N > 0 else v_pi
-            for a in actions
-        ],
-        dtype=np.float64,
-    )
+    n_act = len(actions)
+    logits = np.empty(n_act, dtype=np.float64)
+    completed_q = np.empty(n_act, dtype=np.float64)
+    max_visit = 0
+    v_pi = node.Q
+
+    for i, a in enumerate(actions):
+        ch = children[a]
+        n = ch.N
+        if n > max_visit:
+            max_visit = n
+        logits[i] = math.log(max(ch.prior, 1e-12))
+        completed_q[i] = (-ch.W / n) if n > 0 else v_pi
+
     probs = _softmax(logits + _sigma_scale(max_visit=max_visit, cfg=cfg) * completed_q)
     return actions, probs
 
 
 def _select_full_gumbel_child(node: Node, *, cfg: GumbelConfig) -> tuple[int, Node]:
+    children = node.children
     actions, probs = _improved_policy_probs(node=node, cfg=cfg)
     if not actions:
         raise ValueError("Cannot select from an unexpanded node with no children")
 
-    total_visits = sum(int(node.children[a].N) for a in actions)
-    scores = np.array(
-        [
-            float(probs[i]) - (float(node.children[a].N) / float(1 + total_visits))
-            for i, a in enumerate(actions)
-        ],
-        dtype=np.float64,
-    )
-    best_idx = int(np.argmax(scores))
+    total_visits = 0
+    for a in actions:
+        total_visits += children[a].N
+    inv_total = 1.0 / float(1 + total_visits)
+
+    best_idx = 0
+    best_score = -1e30
+    for i, a in enumerate(actions):
+        score = float(probs[i]) - float(children[a].N) * inv_total
+        if score > best_score:
+            best_score = score
+            best_idx = i
     a = int(actions[best_idx])
-    return a, node.children[a]
+    return a, children[a]
 
 
 def _init_root_from_logits(
@@ -127,9 +153,15 @@ def _init_root_from_logits(
     pol_logits: np.ndarray,
     root_q: float,
 ) -> tuple[Node, np.ndarray, np.ndarray]:
-    root = Node(board.copy(stack=False), parent=None, prior=1.0)
-    pri, mask = _masked_priors(pol_logits, root.board)
-    _expand(root, pri)
+    root = Node(board.copy(stack=True), parent=None, prior=1.0)
+    if root.board.is_game_over():
+        root.N = 1
+        root.W = _terminal_value(root.board)
+        zeros = np.zeros((POLICY_SIZE,), dtype=np.float64)
+        return root, zeros, zeros.astype(np.bool_)
+    pri, mask, legal_idx = _masked_priors(pol_logits, root.board)
+    if legal_idx.size > 0:
+        _expand_sparse(root, legal_idx, pri[legal_idx])
     root.N = 1
     root.W = float(root_q)
     return root, pri, mask
@@ -153,8 +185,8 @@ def _collect_forced_leaf(
         else:
             _, node = _select_child(node, c_puct=float(cfg.c_puct), fpu_reduction=float(cfg.fpu_reduction))
         path.append(node)
-        if node.board.is_game_over():
-            return None, path, _terminal_value(node.board)
+        # Expanded nodes with children are never terminal — skip is_game_over()
+        # here. Terminal detection happens after the loop exits.
 
     if node.board.is_game_over():
         return None, path, _terminal_value(node.board)
@@ -163,15 +195,16 @@ def _collect_forced_leaf(
 
 @torch.no_grad()
 def run_gumbel_root_many(
-    model: torch.nn.Module,
+    model: torch.nn.Module | None,
     boards: list[chess.Board],
     *,
     device: str,
     rng: np.random.Generator,
     cfg: GumbelConfig,
+    evaluator: BatchEvaluator | None = None,
     pre_pol_logits: np.ndarray | None = None,
     pre_wdl_logits: np.ndarray | None = None,
-) -> tuple[list[np.ndarray], list[int], list[float]]:
+) -> tuple[list[np.ndarray], list[int], list[float], list[np.ndarray]]:
     """Root Gumbel search with sequential halving.
 
     This follows the paper's root-search structure much more closely than the
@@ -189,7 +222,7 @@ def run_gumbel_root_many(
     """
     n_boards = len(boards)
     if n_boards == 0:
-        return [], [], []
+        return [], [], [], []
 
     sim_budget = max(1, int(cfg.simulations))
 
@@ -199,13 +232,13 @@ def run_gumbel_root_many(
         pol_logits_batch = np.asarray(pre_pol_logits, dtype=np.float32)   # (B, POLICY_SIZE)
         wdl_logits_batch = np.asarray(pre_wdl_logits, dtype=np.float32)   # (B, 3)
     else:
-        xs = [encode_position(b, add_features=True) for b in boards]
-        xt = torch.from_numpy(np.stack(xs, axis=0)).to(device)
-        with inference_autocast(device=device, enabled=True, dtype="auto"):
-            root_out = model(xt)
-        policy_out = root_out["policy"] if "policy" in root_out else root_out["policy_own"]
-        pol_logits_batch = policy_out.detach().float().cpu().numpy()  # (B, POLICY_SIZE)
-        wdl_logits_batch = root_out["wdl"].detach().float().cpu().numpy()  # (B, 3)
+        xs = encode_positions_batch(boards, add_features=True)
+        eval_impl = evaluator
+        if eval_impl is None:
+            if model is None:
+                raise ValueError("run_gumbel_root_many requires model or evaluator")
+            eval_impl = LocalModelEvaluator(model, device=device)
+        pol_logits_batch, wdl_logits_batch = eval_impl.evaluate_encoded(xs)
 
     root_qs = [_wdl_to_q(wdl_logits_batch[i]) for i in range(n_boards)]
 
@@ -229,6 +262,12 @@ def run_gumbel_root_many(
         )
         roots[i] = root
         priors[i] = pri
+
+        if root.board.is_game_over():
+            probs_out[i] = np.zeros((POLICY_SIZE,), dtype=np.float32)
+            actions_out[i] = 0
+            values_out[i] = float(root.Q)
+            continue
 
         legal = np.nonzero(mask)[0]
 
@@ -318,19 +357,20 @@ def run_gumbel_root_many(
             if not leaf_nodes:
                 continue
 
-            leaf_xs = [encode_position(node.board, add_features=True) for node in leaf_nodes]
-            leaf_xt = torch.from_numpy(np.stack(leaf_xs, axis=0)).to(device)
-            with inference_autocast(device=device, enabled=True, dtype="auto"):
-                leaf_out = model(leaf_xt)
-            policy_out = leaf_out["policy"] if "policy" in leaf_out else leaf_out["policy_own"]
-            pol_logits_leaf = policy_out.detach().float().cpu().numpy()
-            wdl_logits_leaf = leaf_out["wdl"].detach().float().cpu().numpy()
+            leaf_xs = encode_positions_batch([node.board for node in leaf_nodes], add_features=True)
+            eval_impl = evaluator
+            if eval_impl is None:
+                if model is None:
+                    raise ValueError("run_gumbel_root_many requires model or evaluator")
+                eval_impl = LocalModelEvaluator(model, device=device)
+            pol_logits_leaf, wdl_logits_leaf = eval_impl.evaluate_encoded(leaf_xs)
 
             for node, path, pol_logits, wdl_logits in zip(
                 leaf_nodes, leaf_paths, pol_logits_leaf, wdl_logits_leaf, strict=True
             ):
-                pri, _ = _masked_priors(pol_logits, node.board)
-                _expand(node, pri)
+                pri, _, legal_idx = _masked_priors(pol_logits, node.board)
+                if legal_idx.size > 0:
+                    _expand_sparse(node, legal_idx, pri[legal_idx])
                 _backprop(path, _wdl_to_q(wdl_logits.reshape(-1)))
 
         for bi in active:
@@ -405,7 +445,17 @@ def run_gumbel_root_many(
 
         values_out[i] = _completed_q(root_q=float(root_qs[i]), root=root, action=best_a)
 
-    return probs_out, actions_out, values_out
+    # Build legal masks from root children
+    legal_masks_out: list[np.ndarray] = []
+    for i in range(n_boards):
+        root = roots[i]
+        mask = np.zeros((POLICY_SIZE,), dtype=np.bool_)
+        if root is not None:
+            for a in root.children:
+                mask[a] = True
+        legal_masks_out.append(mask)
+
+    return probs_out, actions_out, values_out, legal_masks_out
 
 
 @torch.no_grad()
@@ -417,5 +467,5 @@ def run_gumbel_root(
     rng: np.random.Generator,
     cfg: GumbelConfig,
 ) -> tuple[np.ndarray, int, float]:
-    probs, acts, vals = run_gumbel_root_many(model, [board], device=device, rng=rng, cfg=cfg)
+    probs, acts, vals, _masks = run_gumbel_root_many(model, [board], device=device, rng=rng, cfg=cfg)
     return probs[0], acts[0], float(vals[0])

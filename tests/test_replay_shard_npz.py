@@ -1,7 +1,18 @@
 import numpy as np
 
 from chess_anti_engine.replay import ReplaySample
-from chess_anti_engine.replay.shard import ShardMeta, load_npz, save_npz
+from chess_anti_engine.replay.shard import (
+    LOCAL_SHARD_SUFFIX,
+    ShardMeta,
+    iter_shard_paths,
+    load_npz,
+    load_npz_arrays,
+    load_shard_arrays,
+    local_shard_path,
+    save_local_shard_arrays,
+    save_npz,
+    save_npz_arrays,
+)
 
 
 def _sample(policy_size: int = 4672) -> ReplaySample:
@@ -57,3 +68,77 @@ def test_shard_rejects_empty(tmp_path):
         assert False, "expected ValueError"
     except ValueError:
         pass
+
+
+def test_save_npz_arrays_roundtrip(tmp_path):
+    samples = [_sample(), _sample()]
+    src = tmp_path / "src.npz"
+    save_npz(src, samples=samples, meta=ShardMeta(username="alice", run_id="r1", positions=len(samples)))
+
+    arrs, meta = load_npz_arrays(src)
+    dst = tmp_path / "dst.npz"
+    save_npz_arrays(dst, arrs=arrs, meta=meta)
+
+    out, meta_out = load_npz(dst)
+    assert len(out) == len(samples)
+    assert meta_out["username"] == "alice"
+
+
+def test_save_npz_arrays_uncompressed_roundtrip(tmp_path):
+    samples = [_sample(), _sample()]
+    src = tmp_path / "src_uncompressed.npz"
+    save_npz(src, samples=samples, meta=ShardMeta(username="alice", run_id="r1", positions=len(samples)), compress=False)
+
+    arrs, meta = load_npz_arrays(src)
+    assert arrs["x"].shape[0] == len(samples)
+    assert meta["username"] == "alice"
+
+
+def test_local_zarr_shard_roundtrip(tmp_path):
+    samples = [_sample(), _sample()]
+    arrs = load_npz_arrays(save_npz(tmp_path / "seed.npz", samples=samples, meta={"positions": 2}))[0]
+    path = local_shard_path(tmp_path / "replay", 3)
+    out_path = save_local_shard_arrays(path, arrs=arrs, meta={"positions": 2, "username": "alice"})
+
+    assert out_path.suffix == LOCAL_SHARD_SUFFIX
+    assert out_path.exists()
+    listed = iter_shard_paths(tmp_path / "replay")
+    assert listed == [out_path]
+
+    lazy_arrs, lazy_meta = load_shard_arrays(out_path, lazy=True)
+    assert int(lazy_arrs["x"].shape[0]) == 2
+    assert lazy_meta["username"] == "alice"
+
+    eager_arrs, eager_meta = load_shard_arrays(out_path, lazy=False)
+    assert eager_meta["positions"] == 2
+    assert eager_arrs["policy_target"].shape == (2, 4672)
+
+
+def test_save_prunes_unset_optional_arrays(tmp_path):
+    policy = np.zeros((4672,), dtype=np.float32)
+    policy[0] = 1.0
+    sample = ReplaySample(
+        x=np.zeros((146, 8, 8), dtype=np.float32),
+        policy_target=policy,
+        wdl_target=0,
+        priority=1.0,
+        has_policy=True,
+    )
+
+    path = tmp_path / "minimal.npz"
+    save_npz(path, samples=[sample], meta={"positions": 1})
+
+    with np.load(path, allow_pickle=False) as z:
+        assert "x" in z.files
+        assert "policy_target" in z.files
+        assert "wdl_target" in z.files
+        assert "sf_wdl" not in z.files
+        assert "has_sf_wdl" not in z.files
+        assert "future_policy_target" not in z.files
+        assert "has_future" not in z.files
+
+    out, meta = load_npz(path)
+    assert meta["positions"] == 1
+    assert len(out) == 1
+    assert out[0].sf_wdl is None
+    assert out[0].future_policy_target is None

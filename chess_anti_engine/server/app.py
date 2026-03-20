@@ -52,7 +52,7 @@ def create_app(
 
     import hashlib
 
-    from chess_anti_engine.replay.shard import load_npz
+    from chess_anti_engine.replay.shard import load_npz_arrays
 
     from .auth import load_users, record_upload, save_users, verify_password
     from .lease import (
@@ -577,7 +577,7 @@ def create_app(
 
         # Validate shard by parsing it.
         try:
-            samples, meta = load_npz(tmp)
+            shard_arrs, meta = load_npz_arrays(tmp)
         except Exception as e:
             # Quarantine so we can inspect bad uploads without causing worker retry storms.
             qdir = quarantine_root / "invalid"
@@ -598,6 +598,7 @@ def create_app(
                 "reason": f"invalid shard: {type(e).__name__}: {e}",
             }
 
+        positions = int(shard_arrs["x"].shape[0])
         sha = _sha256_file(tmp)
         user_dir = inbox_root / username
         user_dir.mkdir(parents=True, exist_ok=True)
@@ -623,13 +624,13 @@ def create_app(
         _record_gpu_throughput(
             lease=lease,
             trial_id=trial_id,
-            positions=int(len(samples)),
+            positions=int(positions),
             games=int(meta.get("games") or 0),
             elapsed_s=batch_elapsed_s,
         )
         _record_trial_throughput(
             trial_id=trial_id,
-            positions=int(len(samples)),
+            positions=int(positions),
             games=int(meta.get("games") or 0),
             elapsed_s=batch_elapsed_s,
         )
@@ -637,7 +638,7 @@ def create_app(
         # Update user stats.
         try:
             users = load_users(users_path)
-            record_upload(users, username=username, bytes_uploaded=int(n), positions=len(samples))
+            record_upload(users, username=username, bytes_uploaded=int(n), positions=positions)
             save_users(users_path, users)
         except Exception:
             # Stats failure should not fail the upload.
@@ -648,7 +649,7 @@ def create_app(
             "trial_id": _normalize_trial_id(trial_id),
             "sha256": sha,
             "bytes": int(n),
-            "positions": int(len(samples)),
+            "positions": int(positions),
             "meta": meta,
         }
 

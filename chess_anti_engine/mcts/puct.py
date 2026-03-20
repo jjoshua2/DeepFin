@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 import numpy as np
 import chess
 import torch
 
-from chess_anti_engine.encoding import encode_position
+from chess_anti_engine.encoding import encode_position, encode_positions_batch
+from chess_anti_engine.inference import BatchEvaluator, LocalModelEvaluator
 from chess_anti_engine.moves import POLICY_SIZE, legal_move_mask, move_to_index, index_to_move
+from chess_anti_engine.moves.encode import index_to_move_fast, legal_move_indices
 from chess_anti_engine.utils.amp import inference_autocast
 
 
@@ -22,8 +25,14 @@ def _softmax_np(x: np.ndarray) -> np.ndarray:
 
 def _value_scalar_from_wdl_logits(wdl_logits: np.ndarray) -> float:
     # Convert (3,) logits into a scalar v in [-1,1] from side-to-move perspective.
-    p = _softmax_np(wdl_logits.astype(np.float64))
-    return float(p[0] - p[2])
+    # Pure Python math is faster than numpy for 3-element arrays.
+    w, d, l = float(wdl_logits[0]), float(wdl_logits[1]), float(wdl_logits[2])
+    mx = max(w, d, l)
+    ew = math.exp(w - mx)
+    ed = math.exp(d - mx)
+    el = math.exp(l - mx)
+    s = ew + ed + el
+    return (ew - el) / s if s > 0 else 0.0
 
 
 @dataclass
@@ -48,17 +57,45 @@ class MCTSConfig:
 
 
 class Node:
-    __slots__ = ("board", "parent", "prior", "N", "W", "children", "expanded", "to_play")
+    __slots__ = ("_board", "_move", "_action_idx", "parent", "prior", "N", "W", "children", "expanded", "to_play")
 
-    def __init__(self, board: chess.Board, *, parent: Node | None, prior: float):
-        self.board = board
+    def __init__(
+        self,
+        board: chess.Board | None,
+        *,
+        parent: Node | None,
+        prior: float,
+        move: chess.Move | None = None,
+        action_idx: int | None = None,
+    ):
+        self._board = board
+        self._move = move
+        self._action_idx = action_idx
         self.parent = parent
         self.prior = float(prior)
         self.N = 0
         self.W = 0.0
         self.children: dict[int, Node] = {}
         self.expanded = False
-        self.to_play = board.turn
+        if board is not None:
+            self.to_play = board.turn
+        elif parent is not None:
+            self.to_play = not parent.to_play
+        else:
+            self.to_play = chess.WHITE
+
+    @property
+    def board(self) -> chess.Board:
+        if self._board is None:
+            assert self.parent is not None
+            if self._move is None:
+                assert self._action_idx is not None
+                self._move = index_to_move_fast(self._action_idx, self.parent.board)
+            # Preserve full history so search-time encodings keep LC0 history
+            # and repetition planes consistent with python-chess semantics.
+            self._board = self.parent.board.copy(stack=True)
+            self._board.push(self._move)
+        return self._board
 
     @property
     def Q(self) -> float:
@@ -68,18 +105,23 @@ class Node:
 def _select_child(node: Node, *, c_puct: float, fpu_reduction: float) -> tuple[int, Node]:
     # PUCT: Q_eff + c_puct * P * sqrt(N_parent) / (1 + N_child)
     # FPU: unvisited children use parent.Q - fpu_reduction * sqrt(visited_policy)
-    sqrt_n = np.sqrt(max(1, node.N))
+    c_sqrt_n = c_puct * math.sqrt(max(1, node.N))
 
     # LC0-style FPU: penalty scales with how much prior mass is already explored
-    visited_policy = sum(ch.prior for ch in node.children.values() if ch.N > 0)
-    fpu_value = node.Q - fpu_reduction * np.sqrt(visited_policy)
+    visited_policy = 0.0
+    for ch in node.children.values():
+        if ch.N > 0:
+            visited_policy += ch.prior
+    fpu_value = node.Q - fpu_reduction * math.sqrt(visited_policy)
 
     best = None
     best_score = -1e30
     for a, ch in node.children.items():
-        q = ch.Q if ch.N > 0 else fpu_value
-        u = c_puct * ch.prior * sqrt_n / (1.0 + ch.N)
-        score = q + u
+        n = ch.N
+        # Child W/Q is stored from the child's side-to-move perspective.
+        # Negate visited children so every score is compared in the parent's frame.
+        q = (-ch.W / n) if n > 0 else fpu_value
+        score = q + c_sqrt_n * ch.prior / (1.0 + n)
         if score > best_score:
             best_score = score
             best = (a, ch)
@@ -89,13 +131,19 @@ def _select_child(node: Node, *, c_puct: float, fpu_reduction: float) -> tuple[i
 
 def _expand(node: Node, priors: np.ndarray) -> None:
     # priors is (POLICY_SIZE,), already masked to legal.
+    # Boards AND moves are created lazily on first access.
     node.expanded = True
     for a_idx in np.nonzero(priors > 0)[0]:
         a = int(a_idx)
-        move = index_to_move(a, node.board)
-        b2 = node.board.copy(stack=False)
-        b2.push(move)
-        node.children[a] = Node(b2, parent=node, prior=float(priors[a]))
+        node.children[a] = Node(None, parent=node, prior=float(priors[a]), action_idx=a)
+
+
+def _expand_sparse(node: Node, legal_indices: np.ndarray, priors: np.ndarray) -> None:
+    """Expand using pre-computed legal indices and their priors (avoids 4672-bool mask)."""
+    node.expanded = True
+    for i in range(len(legal_indices)):
+        a = int(legal_indices[i])
+        node.children[a] = Node(None, parent=node, prior=float(priors[i]), action_idx=a)
 
 
 def _backprop(path: list[Node], value: float) -> None:
@@ -108,7 +156,12 @@ def _backprop(path: list[Node], value: float) -> None:
 
 
 def _init_root(model: torch.nn.Module, board: chess.Board, *, device: str, rng: np.random.Generator, cfg: MCTSConfig) -> Node:
-    root = Node(board.copy(stack=False), parent=None, prior=1.0)
+    root = Node(board.copy(stack=True), parent=None, prior=1.0)
+
+    if root.board.is_game_over():
+        root.N = 1
+        root.W = _terminal_value(root.board)
+        return root
 
     x0 = encode_position(root.board, add_features=True)
     xt = torch.from_numpy(x0[None, ...]).to(device)
@@ -118,20 +171,55 @@ def _init_root(model: torch.nn.Module, board: chess.Board, *, device: str, rng: 
     pol_logits = policy_out.detach().float().cpu().numpy().reshape(-1)
     wdl_logits = out["wdl"].detach().float().cpu().numpy().reshape(-1)
 
-    mask = legal_move_mask(root.board)
-    pol_logits = pol_logits.astype(np.float64)
-    pol_logits[~mask] = -1e9
-    pri = _softmax_np(pol_logits)
-    pri[~mask] = 0.0
+    legal_idx = legal_move_indices(root.board)
+    if legal_idx.size > 0:
+        legal_logits = pol_logits[legal_idx].astype(np.float64)
+        legal_logits -= np.max(legal_logits)
+        e = np.exp(legal_logits)
+        s = float(e.sum())
+        pri = (e / s) if s > 0 else np.full_like(e, 1.0 / e.size)
 
-    legal_idxs = np.nonzero(mask)[0]
-    if legal_idxs.size > 0 and cfg.dirichlet_eps > 0:
-        noise = rng.dirichlet([cfg.dirichlet_alpha] * int(legal_idxs.size)).astype(np.float64)
-        pri2 = pri.copy()
-        pri2[legal_idxs] = (1 - cfg.dirichlet_eps) * pri2[legal_idxs] + cfg.dirichlet_eps * noise
-        pri = pri2
+        if cfg.dirichlet_eps > 0:
+            noise = rng.dirichlet([cfg.dirichlet_alpha] * int(legal_idx.size)).astype(np.float64)
+            pri = (1 - cfg.dirichlet_eps) * pri + cfg.dirichlet_eps * noise
 
-    _expand(root, pri)
+        _expand_sparse(root, legal_idx, pri)
+
+    root.N = 1
+    root.W = _value_scalar_from_wdl_logits(wdl_logits)
+    return root
+
+
+def _init_root_from_logits(
+    board: chess.Board,
+    *,
+    pol_logits: np.ndarray,
+    wdl_logits: np.ndarray,
+    rng: np.random.Generator,
+    cfg: MCTSConfig,
+) -> Node:
+    """Create an MCTS root node from pre-computed model logits (avoids redundant forward pass)."""
+    root = Node(board.copy(stack=True), parent=None, prior=1.0)
+
+    if root.board.is_game_over():
+        root.N = 1
+        root.W = _terminal_value(root.board)
+        return root
+
+    legal_idx = legal_move_indices(root.board)
+    if legal_idx.size > 0:
+        legal_logits = pol_logits[legal_idx].astype(np.float64)
+        legal_logits -= np.max(legal_logits)
+        e = np.exp(legal_logits)
+        s = float(e.sum())
+        pri = (e / s) if s > 0 else np.full_like(e, 1.0 / e.size)
+
+        if cfg.dirichlet_eps > 0:
+            noise = rng.dirichlet([cfg.dirichlet_alpha] * int(legal_idx.size)).astype(np.float64)
+            pri = (1 - cfg.dirichlet_eps) * pri + cfg.dirichlet_eps * noise
+
+        _expand_sparse(root, legal_idx, pri)
+
     root.N = 1
     root.W = _value_scalar_from_wdl_logits(wdl_logits)
     return root
@@ -148,13 +236,16 @@ def _terminal_value(board: chess.Board) -> float:
 
 @torch.no_grad()
 def run_mcts_many(
-    model: torch.nn.Module,
+    model: torch.nn.Module | None,
     boards: list[chess.Board],
     *,
     device: str,
     rng: np.random.Generator,
     cfg: MCTSConfig,
-) -> tuple[list[np.ndarray], list[int], list[float]]:
+    evaluator: BatchEvaluator | None = None,
+    pre_pol_logits: np.ndarray | None = None,
+    pre_wdl_logits: np.ndarray | None = None,
+) -> tuple[list[np.ndarray], list[int], list[float], list[np.ndarray]]:
     """Run PUCT MCTS for multiple root boards, batching leaf evaluations.
 
     This aims to keep the GPU busy by evaluating one leaf per active root per
@@ -163,8 +254,27 @@ def run_mcts_many(
     Returns per-root:
     - policy target probs (POLICY_SIZE,)
     - selected action index
+    - root Q value
+    - legal move mask (POLICY_SIZE,) bool
     """
-    roots = [_init_root(model, b, device=device, rng=rng, cfg=cfg) for b in boards]
+    eval_impl = evaluator
+    if eval_impl is None:
+        if model is None:
+            raise ValueError("run_mcts_many requires model or evaluator")
+        eval_impl = LocalModelEvaluator(
+            model,
+            device=device,
+            use_amp=bool(cfg.use_amp),
+            amp_dtype=str(cfg.amp_dtype),
+        )
+
+    if pre_pol_logits is not None and pre_wdl_logits is not None:
+        roots = [
+            _init_root_from_logits(b, pol_logits=pre_pol_logits[i], wdl_logits=pre_wdl_logits[i], rng=rng, cfg=cfg)
+            for i, b in enumerate(boards)
+        ]
+    else:
+        roots = [_init_root(model, b, device=device, rng=rng, cfg=cfg) for b in boards]
 
     for _ in range(int(cfg.simulations)):
         leaf_nodes: list[Node] = []
@@ -180,8 +290,8 @@ def run_mcts_many(
                 _, node = _select_child(node, c_puct=cfg.c_puct, fpu_reduction=fpu)
                 path.append(node)
                 fpu = cfg.fpu_reduction  # Subsequent selections use tree FPU
-                if node.board.is_game_over():
-                    break
+                # Expanded nodes with children are never terminal — skip game-over check
+                # for them. Only check unexpanded nodes (leaves) below.
 
             if node.board.is_game_over():
                 _backprop(path, _terminal_value(node.board))
@@ -189,32 +299,32 @@ def run_mcts_many(
 
             leaf_nodes.append(node)
             leaf_paths.append(path)
-            leaf_x.append(encode_position(node.board, add_features=True))
 
         if not leaf_nodes:
             continue
 
+        leaf_x = encode_positions_batch([n.board for n in leaf_nodes], add_features=True)
+
         # Batched eval
-        xt = torch.from_numpy(np.stack(leaf_x, axis=0)).to(device)
-        with inference_autocast(device=device, enabled=bool(cfg.use_amp), dtype=str(cfg.amp_dtype)):
-            out = model(xt)
-        policy_out = out["policy"] if "policy" in out else out["policy_own"]
-        pol_logits_batch = policy_out.detach().float().cpu().numpy()
-        wdl_logits_batch = out["wdl"].detach().float().cpu().numpy()
+        pol_logits_batch, wdl_logits_batch = eval_impl.evaluate_encoded(leaf_x)
 
         for node, path, pol_logits, wdl_logits in zip(leaf_nodes, leaf_paths, pol_logits_batch, wdl_logits_batch, strict=True):
-            mask = legal_move_mask(node.board)
-            pl = pol_logits.astype(np.float64)
-            pl[~mask] = -1e9
-            pri = _softmax_np(pl)
-            pri[~mask] = 0.0
-            _expand(node, pri)
+            legal_idx = legal_move_indices(node.board)
+            if legal_idx.size > 0:
+                # Sparse softmax: only compute over legal moves
+                legal_logits = pol_logits[legal_idx].astype(np.float64)
+                legal_logits -= np.max(legal_logits)
+                e = np.exp(legal_logits)
+                s = float(e.sum())
+                legal_priors = (e / s) if s > 0 else np.full_like(e, 1.0 / e.size)
+                _expand_sparse(node, legal_idx, legal_priors)
             v = _value_scalar_from_wdl_logits(wdl_logits.reshape(-1))
             _backprop(path, v)
 
     probs_list: list[np.ndarray] = []
     actions: list[int] = []
     values: list[float] = []
+    legal_masks: list[np.ndarray] = []
 
     for root in roots:
         visits = np.zeros((POLICY_SIZE,), dtype=np.float32)
@@ -254,17 +364,24 @@ def run_mcts_many(
         actions.append(action)
         values.append(float(root.Q))
 
-    return probs_list, actions, values
+        # Build legal mask from root children (avoids redundant legal_move_mask call by caller)
+        mask = np.zeros((POLICY_SIZE,), dtype=np.bool_)
+        for a in root.children:
+            mask[a] = True
+        legal_masks.append(mask)
+
+    return probs_list, actions, values, legal_masks
 
 
 @torch.no_grad()
 def run_mcts(
-    model: torch.nn.Module,
+    model: torch.nn.Module | None,
     board: chess.Board,
     *,
     device: str,
     rng: np.random.Generator,
     cfg: MCTSConfig,
+    evaluator: BatchEvaluator | None = None,
 ) -> tuple[np.ndarray, int, float]:
-    probs_list, actions, values = run_mcts_many(model, [board], device=device, rng=rng, cfg=cfg)
+    probs_list, actions, values, _masks = run_mcts_many(model, [board], device=device, rng=rng, cfg=cfg, evaluator=evaluator)
     return probs_list[0], actions[0], float(values[0])

@@ -13,7 +13,7 @@ from chess_anti_engine.stockfish import StockfishPool, StockfishUCI
 from chess_anti_engine.mcts import MCTSConfig, GumbelConfig
 from chess_anti_engine.mcts.puct import run_mcts_many
 from chess_anti_engine.mcts.gumbel import run_gumbel_root_many
-from chess_anti_engine.encoding import encode_position
+from chess_anti_engine.encoding import encode_position, encode_positions_batch
 from chess_anti_engine.moves import POLICY_SIZE, move_to_index, index_to_move, legal_move_mask
 from chess_anti_engine.train.targets import hlgauss_target
 
@@ -78,11 +78,11 @@ def play_batch_timed(
         # Network turns (white to move)
         net_idxs = [i for i in active_idxs if boards[i].turn == chess.WHITE]
         if net_idxs:
-            xs = [encode_position(boards[i], add_features=True) for i in net_idxs]
+            xs_batch = encode_positions_batch([boards[i] for i in net_idxs], add_features=True)
 
             # policy logits for surprise priority only
             with torch.no_grad():
-                xt = torch.from_numpy(np.stack(xs, axis=0)).to(device)
+                xt = torch.from_numpy(xs_batch).to(device)
                 out = model(xt)
                 policy_out = out["policy"] if "policy" in out else out["policy_own"]
                 pol_logits = policy_out.detach().float().cpu().numpy()
@@ -96,7 +96,7 @@ def play_batch_timed(
             if full_idxs:
                 sub_boards = [boards[net_idxs[j]] for j in full_idxs]
                 if mcts_type == "gumbel":
-                    p_sub, a_sub, _v_sub = run_gumbel_root_many(
+                    p_sub, a_sub, _v_sub, _m_sub = run_gumbel_root_many(
                         model,
                         sub_boards,
                         device=device,
@@ -104,7 +104,7 @@ def play_batch_timed(
                         cfg=GumbelConfig(simulations=int(mcts_simulations), temperature=float(temperature)),
                     )
                 else:
-                    p_sub, a_sub, _v_sub = run_mcts_many(
+                    p_sub, a_sub, _v_sub, _m_sub = run_mcts_many(
                         model,
                         sub_boards,
                         device=device,
@@ -119,7 +119,7 @@ def play_batch_timed(
             if fast_idxs:
                 sub_boards = [boards[net_idxs[j]] for j in fast_idxs]
                 if mcts_type == "gumbel":
-                    p_sub, a_sub, _v_sub = run_gumbel_root_many(
+                    p_sub, a_sub, _v_sub, _m_sub = run_gumbel_root_many(
                         model,
                         sub_boards,
                         device=device,
@@ -127,7 +127,7 @@ def play_batch_timed(
                         cfg=GumbelConfig(simulations=int(fast_simulations), temperature=float(temperature)),
                     )
                 else:
-                    p_sub, a_sub, _v_sub = run_mcts_many(
+                    p_sub, a_sub, _v_sub, _m_sub = run_mcts_many(
                         model,
                         sub_boards,
                         device=device,
@@ -157,7 +157,7 @@ def play_batch_timed(
                 move = index_to_move(int(a), boards[idx])
                 boards[idx].push(move)
 
-                samples_per_game[idx].append((xs[j], probs, True, None, None, bool(is_full[j]), kl))
+                samples_per_game[idx].append((xs_batch[j], probs, True, None, None, bool(is_full[j]), kl))
 
         # Stockfish turns (black to move)
         sf_idxs = [i for i in active_idxs if boards[i].turn == chess.BLACK]

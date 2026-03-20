@@ -4,10 +4,12 @@ from __future__ import annotations
 # works without installing `.[tune]`.
 
 from pathlib import Path
+import os
 import hashlib
 import json
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -19,8 +21,21 @@ import math
 
 from chess_anti_engine.model import ModelConfig, build_model, zero_policy_head_parameters_
 from chess_anti_engine.moves.encode import POLICY_SIZE
-from chess_anti_engine.replay import DiskReplayBuffer, ReplayBuffer
-from chess_anti_engine.replay.shard import load_npz, save_npz
+from chess_anti_engine.replay import ArrayReplayBuffer, DiskReplayBuffer, ReplayBuffer
+from chess_anti_engine.replay.shard import (
+    copy_or_link_shard,
+    delete_shard_path,
+    find_shard_path,
+    iter_shard_paths,
+    load_npz_arrays,
+    load_shard_arrays,
+    local_iter_shard_path,
+    save_local_shard_arrays,
+    save_npz,
+    save_npz_arrays,
+    samples_to_arrays,
+    shard_index,
+)
 from chess_anti_engine.selfplay import play_batch
 from chess_anti_engine.selfplay.budget import progressive_mcts_simulations
 from chess_anti_engine.stockfish import DifficultyPID, StockfishPool, StockfishUCI
@@ -44,6 +59,36 @@ def _count_jsonl_rows(path: Path) -> int:
             return sum(1 for ln in f if ln.strip())
     except Exception:
         return 0
+
+def _trial_replay_shard_dir(*, config: dict, trial_dir: Path) -> Path:
+    """Return replay shard storage for a trial, optionally outside Ray artifacts."""
+    raw_root = str(config.get("tune_replay_root_override", "") or "").strip()
+    if raw_root:
+        return Path(raw_root).expanduser() / Path(trial_dir).name / "replay_shards"
+    return Path(trial_dir) / "replay_shards"
+
+
+def _link_or_copy2(src: Path, dst: Path) -> None:
+    """Symlink or hardlink immutable artifacts when possible, else copy."""
+    try:
+        rel = os.path.relpath(src, start=dst.parent)
+        os.symlink(rel, dst)
+        return
+    except FileExistsError:
+        return
+    except OSError:
+        pass
+    try:
+        os.link(src, dst)
+        return
+    except FileExistsError:
+        return
+    except OSError as exc:
+        if not getattr(_link_or_copy2, "_warned", False):
+            print("[trial] Seed link failed; falling back to copy: "
+                  f"src={src} dst={dst} errno={exc.errno} msg={exc}")
+            setattr(_link_or_copy2, "_warned", True)
+        shutil.copy2(str(src), str(dst))
 
 
 def _latest_trial_result_row(trial_dir: Path) -> dict | None:
@@ -175,22 +220,36 @@ def _estimate_recent_shard_count(
     return max(1, int(math.ceil(float(train_positions) / float(ss))))
 
 
-def _load_shard_samples_with_retry(
+def _load_shard_arrays_with_retry(
     shard_path: Path,
     *,
     retries: int = 4,
     sleep_s: float = 0.15,
-) -> list | None:
+) -> tuple[dict[str, np.ndarray], dict] | None:
     """Best-effort shard read with short retries for in-flight writes."""
     attempts = max(1, int(retries))
     for i in range(attempts):
         try:
-            samples, _meta = load_npz(shard_path)
-            return samples
+            return load_shard_arrays(shard_path, lazy=True)
         except Exception:
             if i + 1 < attempts and sleep_s > 0:
                 time.sleep(float(sleep_s))
     return None
+
+
+def _slice_array_batch(arrs: dict[str, np.ndarray], idxs: np.ndarray) -> dict[str, np.ndarray]:
+    ii = np.asarray(idxs, dtype=np.int64).reshape(-1)
+    return {k: np.array(np.asarray(v)[ii], copy=True, order="C") for k, v in arrs.items()}
+
+
+def _concat_array_batches(batches: list[dict[str, np.ndarray]]) -> dict[str, np.ndarray]:
+    if not batches:
+        raise ValueError("cannot concatenate empty replay shard list")
+    keys = tuple(batches[0].keys())
+    return {
+        k: np.concatenate([np.asarray(batch[k]) for batch in batches], axis=0)
+        for k in keys
+    }
 
 
 def _trial_index_from_name(trial_dir: Path) -> int:
@@ -410,6 +469,7 @@ def _select_top_trial_snapshots(
 
 def _refresh_replay_shards_on_exploit(
     *,
+    config: dict,
     replay_shard_dir: Path,
     recipient_trial_dir: Path,
     donor_trial_dir: Path | None,
@@ -450,7 +510,7 @@ def _refresh_replay_shards_on_exploit(
         "donor_copied": 0,
     }
 
-    local_shards = sorted(replay_shard_dir.glob("shard_*.npz"))
+    local_shards = iter_shard_paths(replay_shard_dir)
     summary["local_before"] = len(local_shards)
 
     recipient_snap = _latest_trial_snapshot(recipient_trial_dir)
@@ -486,7 +546,7 @@ def _refresh_replay_shards_on_exploit(
                 continue
             is_recent = sp in local_recent
             try:
-                sp.unlink(missing_ok=True)
+                delete_shard_path(sp)
                 summary["local_deleted"] += 1
                 if is_recent:
                     summary["local_recent_deleted"] += 1
@@ -495,13 +555,17 @@ def _refresh_replay_shards_on_exploit(
             except Exception:
                 pass
 
-    local_after_keep = sorted(replay_shard_dir.glob("shard_*.npz"))
+    local_after_keep = iter_shard_paths(replay_shard_dir)
     summary["local_after_keep"] = len(local_after_keep)
 
     donor_dir = Path(donor_trial_dir) if donor_trial_dir is not None else None
-    donor_replay_dir = (donor_dir / "replay_shards") if donor_dir is not None else None
+    donor_replay_dir = (
+        _trial_replay_shard_dir(config=config, trial_dir=donor_dir)
+        if donor_dir is not None
+        else None
+    )
     if donor_shards > 0 and donor_replay_dir is not None and donor_replay_dir.is_dir():
-        donor_files = sorted(donor_replay_dir.glob("shard_*.npz"))
+        donor_files = iter_shard_paths(donor_replay_dir)
         summary["donor_available"] = len(donor_files)
         if donor_skip_newest > 0 and len(donor_files) > donor_skip_newest:
             donor_files = donor_files[:-donor_skip_newest]
@@ -511,29 +575,29 @@ def _refresh_replay_shards_on_exploit(
             donor_files = donor_files[-donor_shards:]
             summary["donor_selected"] = len(donor_files)
 
-            existing = sorted(replay_shard_dir.glob("shard_*.npz"))
+            existing = iter_shard_paths(replay_shard_dir)
             next_idx = 0
             for sp in existing:
-                try:
-                    next_idx = max(next_idx, int(sp.stem.split("_")[1]) + 1)
-                except Exception:
-                    continue
+                idx = shard_index(sp)
+                if idx >= 0:
+                    next_idx = max(next_idx, idx + 1)
 
             for src in donor_files:
-                dst = replay_shard_dir / f"shard_{next_idx:06d}.npz"
+                dst = replay_shard_dir / f"shard_{next_idx:06d}{src.suffix}"
                 next_idx += 1
                 try:
-                    shutil.copy2(str(src), str(dst))
+                    copy_or_link_shard(src, dst)
                     summary["donor_copied"] += 1
                 except Exception:
                     pass
 
-    summary["local_final"] = len(list(replay_shard_dir.glob("shard_*.npz")))
+    summary["local_final"] = len(iter_shard_paths(replay_shard_dir))
     return summary
 
 
 def _share_top_replay_each_iteration(
     *,
+    config: dict,
     recipient_trial_dir: Path,
     replay_shard_dir: Path,
     buf: DiskReplayBuffer,
@@ -603,9 +667,9 @@ def _share_top_replay_each_iteration(
         # Prefer the clean selfplay-only export dir; fall back to replay_shards
         # (old behaviour) if selfplay_shards doesn't exist yet.
         src_dir = td / "selfplay_shards"
-        use_selfplay_export = src_dir.is_dir() and any(src_dir.glob("shard_*.npz"))
+        use_selfplay_export = src_dir.is_dir() and bool(iter_shard_paths(src_dir))
         if not use_selfplay_export:
-            src_dir = td / "replay_shards"
+            src_dir = _trial_replay_shard_dir(config=config, trial_dir=td)
         if not src_dir.is_dir():
             continue
 
@@ -621,12 +685,11 @@ def _share_top_replay_each_iteration(
                 continue
 
             if use_selfplay_export:
-                # Direct lookup: one file per global iter, named shard_{iter:06d}.npz.
-                iter_shards = [src_dir / f"shard_{snap_iter:06d}.npz"]
-                iter_shards = [p for p in iter_shards if p.exists()]
+                maybe = find_shard_path(src_dir, snap_iter)
+                iter_shards = [maybe] if maybe is not None else []
             else:
                 # Legacy fallback: estimate which shards belong to this iter.
-                shards = sorted(src_dir.glob("shard_*.npz"))
+                shards = iter_shard_paths(src_dir)
                 if source_skip_newest > 0:
                     shards = shards[:-source_skip_newest] if len(shards) > source_skip_newest else []
                 n_recent = _estimate_recent_shard_count(
@@ -643,17 +706,21 @@ def _share_top_replay_each_iteration(
                 continue
 
             for sp in iter_shards:
-                samples = _load_shard_samples_with_retry(sp, retries=5, sleep_s=0.12)
-                if samples is None:
+                loaded = _load_shard_arrays_with_retry(sp, retries=5, sleep_s=0.12)
+                if loaded is None:
                     continue
-                if not samples:
+                shard_arrs, _meta = loaded
+                n_samples = int(np.asarray(shard_arrs["x"]).shape[0])
+                if n_samples <= 0:
                     continue
                 if 0.0 < share_fraction < 1.0:
-                    k = max(1, int(round(len(samples) * share_fraction)))
-                    samples = list(buf.rng.choice(samples, size=k, replace=False))
-                buf.add_many(samples)
+                    k = max(1, int(round(n_samples * share_fraction)))
+                    chosen = buf.rng.choice(n_samples, size=k, replace=False)
+                    shard_arrs = _slice_array_batch(shard_arrs, chosen)
+                    n_samples = int(np.asarray(shard_arrs["x"]).shape[0])
+                buf.add_many_arrays(shard_arrs)
                 summary["source_shards_loaded"] += 1
-                summary["source_samples_ingested"] += int(len(samples))
+                summary["source_samples_ingested"] += int(n_samples)
                 shards_loaded_this_source += 1
                 ingested_any = True
             if ingested_any:
@@ -1079,6 +1146,24 @@ def _build_distributed_worker_cmd(
         "info",
     ]
 
+    if bool(config.get("distributed_inference_broker_enabled", False)):
+        slot_prefix = _trial_slot_prefix(trial_id=trial_id)
+        slot_name = f"{slot_prefix}-{worker_index}"
+        max_batch = int(
+            config.get(
+                "distributed_inference_max_batch_per_slot",
+                config.get("distributed_inference_max_batch_positions", 256),
+            )
+        )
+        cmd.extend(
+            [
+                "--inference-slot-name",
+                str(slot_name),
+                "--inference-slot-max-batch",
+                str(max_batch),
+            ]
+        )
+
     if bool(config.get("distributed_worker_auto_tune", False)):
         cmd.extend(
             [
@@ -1092,6 +1177,113 @@ def _build_distributed_worker_cmd(
             ]
         )
     return cmd
+
+
+def _trial_inference_endpoint(*, trial_id: str) -> str:
+    port = 46000 + (_stable_seed_u32("inference-broker", trial_id) % 10000)
+    return f"127.0.0.1:{int(port)}"
+
+
+def _trial_slot_prefix(*, trial_id: str) -> str:
+    """Deterministic shared-memory slot prefix for a trial's inference broker."""
+    h = _stable_seed_u32("slot-prefix", trial_id)
+    return f"cae-{h:08x}"
+
+
+def _launch_inference_broker(
+    *,
+    config: dict,
+    trial_id: str,
+    publish_dir: Path,
+    trial_dir: Path,
+) -> subprocess.Popen[bytes]:
+    broker_artifact_root = trial_dir / "distributed_inference"
+    broker_artifact_root.mkdir(parents=True, exist_ok=True)
+    broker_out = broker_artifact_root / "broker.out"
+    slot_prefix = _trial_slot_prefix(trial_id=trial_id)
+    num_workers = int(config.get("distributed_workers_per_trial", 2))
+    max_batch = int(
+        config.get(
+            "distributed_inference_max_batch_per_slot",
+            config.get("distributed_inference_max_batch_positions", 256),
+        )
+    )
+    shared_cache_raw = str(config.get("distributed_worker_shared_cache_dir") or "").strip()
+    if shared_cache_raw:
+        shared_cache_root = Path(shared_cache_raw).expanduser()
+    else:
+        shared_cache_root = Path(str(config["distributed_server_root"])) / "worker_cache"
+    shared_cache_root.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        sys.executable,
+        "-m",
+        "chess_anti_engine.inference",
+        "--publish-dir",
+        str(publish_dir),
+        "--slot-prefix",
+        str(slot_prefix),
+        "--num-slots",
+        str(num_workers),
+        "--max-batch-per-slot",
+        str(max_batch),
+        "--device",
+        str(config.get("distributed_worker_device") or config.get("device", "cpu")),
+        "--batch-wait-ms",
+        str(float(config.get("distributed_inference_batch_wait_ms", 5.0))),
+        "--shared-cache-dir",
+        str(shared_cache_root),
+        *(
+            ["--compile-inference"]
+            if bool(config.get("distributed_worker_use_compile", False))
+            else []
+        ),
+    ]
+    out_fh = broker_out.open("ab")
+    try:
+        return subprocess.Popen(
+            cmd,
+            cwd=str(Path(__file__).resolve().parents[2]),
+            stdout=out_fh,
+            stderr=subprocess.STDOUT,
+        )
+    finally:
+        out_fh.close()
+
+
+def _stop_process(proc: subprocess.Popen[bytes] | None) -> None:
+    if proc is None:
+        return
+    if proc.poll() is not None:
+        return
+    try:
+        proc.terminate()
+        proc.wait(timeout=10.0)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
+def _ensure_inference_broker(
+    *,
+    config: dict,
+    trial_id: str,
+    trial_dir: Path,
+    publish_dir: Path,
+    proc: subprocess.Popen[bytes] | None,
+) -> subprocess.Popen[bytes] | None:
+    if not bool(config.get("distributed_inference_broker_enabled", False)):
+        _stop_process(proc)
+        return None
+    if proc is not None and proc.poll() is None:
+        return proc
+    return _launch_inference_broker(
+        config=config,
+        trial_id=trial_id,
+        publish_dir=publish_dir,
+        trial_dir=trial_dir,
+    )
 
 
 def _stop_worker_processes(procs: list[subprocess.Popen[bytes]]) -> None:
@@ -1147,7 +1339,7 @@ def _ensure_distributed_workers(
 def _ingest_distributed_selfplay(
     *,
     buf: DiskReplayBuffer,
-    holdout_buf: ReplayBuffer,
+    holdout_buf: ArrayReplayBuffer,
     holdout_frac: float,
     holdout_frozen: bool,
     inbox_dir: Path,
@@ -1200,7 +1392,7 @@ def _ingest_distributed_selfplay(
             out = processed_dir / rel
             out.parent.mkdir(parents=True, exist_ok=True)
             try:
-                samples, meta = load_npz(sp)
+                shard_arrs, meta = load_npz_arrays(sp)
             except Exception:
                 bad = processed_dir / "bad" / rel.name
                 bad.parent.mkdir(parents=True, exist_ok=True)
@@ -1215,7 +1407,8 @@ def _ingest_distributed_selfplay(
             draws = int(meta.get("draws", 0) or 0)
             losses = int(meta.get("losses", 0) or 0)
             games = int(meta.get("games", wins + draws + losses) or 0)
-            positions = int(meta.get("positions", len(samples)) or len(samples))
+            shard_n = int(np.asarray(shard_arrs["x"]).shape[0])
+            positions = int(meta.get("positions", shard_n) or shard_n)
             total_game_plies = int(meta.get("total_game_plies", 0) or 0)
             adjudicated_games = int(meta.get("adjudicated_games", meta.get("timeout_games", 0)) or 0)
             total_draw_games = int(meta.get("total_draw_games", draws) or draws)
@@ -1226,14 +1419,19 @@ def _ingest_distributed_selfplay(
             curriculum_adjudicated_games = int(meta.get("curriculum_adjudicated_games", 0) or 0)
             curriculum_draw_games = int(meta.get("curriculum_draw_games", 0) or 0)
 
-            train_samples: list = []
-            for s in samples:
-                if holdout_frac > 0.0 and (not holdout_frozen) and (rng.random() < holdout_frac):
-                    holdout_buf.add_many([s])
-                else:
-                    train_samples.append(s)
-            if train_samples:
-                buf.add_many(train_samples)
+            if shard_n > 0:
+                holdout_mask = np.zeros((shard_n,), dtype=bool)
+                if holdout_frac > 0.0 and (not holdout_frozen):
+                    holdout_mask = rng.random(shard_n) < holdout_frac
+                    if np.any(holdout_mask):
+                        holdout_buf.add_many_arrays(
+                            _slice_array_batch(shard_arrs, np.flatnonzero(holdout_mask))
+                        )
+
+                train_mask = ~holdout_mask
+                if np.any(train_mask):
+                    train_arrs = _slice_array_batch(shard_arrs, np.flatnonzero(train_mask))
+                    buf.add_many_arrays(train_arrs)
             summary["positions_replay_added"] += int(positions)
 
             if model_sha == target_model_sha:
@@ -1271,6 +1469,124 @@ def _ingest_distributed_selfplay(
                     f"timed out waiting for distributed selfplay shards for model {target_model_sha[:12]}"
                 )
             time.sleep(float(poll_seconds))
+
+    return summary
+
+
+def _ingest_available_shards(
+    *,
+    buf: DiskReplayBuffer,
+    holdout_buf: ArrayReplayBuffer,
+    holdout_frac: float,
+    holdout_frozen: bool,
+    inbox_dir: Path,
+    processed_dir: Path,
+    accept_model_shas: set[str],
+    rng: np.random.Generator,
+) -> dict[str, int]:
+    """Non-blocking ingest: scan inbox once, process all available shards, return immediately.
+
+    Unlike ``_ingest_distributed_selfplay`` this never polls or waits.
+    Shards whose ``model_sha256`` is in *accept_model_shas* count as
+    ``matching``; all others count as ``stale`` (but are still ingested
+    into the replay buffer — one-step-stale data is fine).
+    """
+    processed_dir.mkdir(parents=True, exist_ok=True)
+    summary: dict[str, int] = {
+        "matching_games": 0,
+        "matching_positions": 0,
+        "matching_w": 0,
+        "matching_d": 0,
+        "matching_l": 0,
+        "matching_total_game_plies": 0,
+        "matching_adjudicated_games": 0,
+        "matching_total_draw_games": 0,
+        "matching_selfplay_games": 0,
+        "matching_selfplay_adjudicated_games": 0,
+        "matching_selfplay_draw_games": 0,
+        "matching_curriculum_games": 0,
+        "matching_curriculum_adjudicated_games": 0,
+        "matching_curriculum_draw_games": 0,
+        "positions_replay_added": 0,
+        "stale_games": 0,
+        "stale_positions": 0,
+        "matching_shards": 0,
+        "stale_shards": 0,
+    }
+
+    shard_paths = sorted(inbox_dir.glob("*/*.npz"))
+    for sp in shard_paths:
+        rel = sp.relative_to(inbox_dir)
+        out = processed_dir / rel
+        out.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            shard_arrs, meta = load_npz_arrays(sp)
+        except Exception:
+            bad = processed_dir / "bad" / rel.name
+            bad.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                sp.replace(bad)
+            except Exception:
+                sp.unlink(missing_ok=True)
+            continue
+
+        model_sha = str(meta.get("model_sha256") or "")
+        wins = int(meta.get("wins", 0) or 0)
+        draws = int(meta.get("draws", 0) or 0)
+        losses = int(meta.get("losses", 0) or 0)
+        games = int(meta.get("games", wins + draws + losses) or 0)
+        shard_n = int(np.asarray(shard_arrs["x"]).shape[0])
+        positions = int(meta.get("positions", shard_n) or shard_n)
+        total_game_plies = int(meta.get("total_game_plies", 0) or 0)
+        adjudicated_games = int(meta.get("adjudicated_games", meta.get("timeout_games", 0)) or 0)
+        total_draw_games = int(meta.get("total_draw_games", draws) or draws)
+        selfplay_games = int(meta.get("selfplay_games", 0) or 0)
+        selfplay_adjudicated_games = int(meta.get("selfplay_adjudicated_games", 0) or 0)
+        selfplay_draw_games = int(meta.get("selfplay_draw_games", 0) or 0)
+        curriculum_games = int(meta.get("curriculum_games", 0) or 0)
+        curriculum_adjudicated_games = int(meta.get("curriculum_adjudicated_games", 0) or 0)
+        curriculum_draw_games = int(meta.get("curriculum_draw_games", 0) or 0)
+
+        if shard_n > 0:
+            holdout_mask = np.zeros((shard_n,), dtype=bool)
+            if holdout_frac > 0.0 and (not holdout_frozen):
+                holdout_mask = rng.random(shard_n) < holdout_frac
+                if np.any(holdout_mask):
+                    holdout_buf.add_many_arrays(
+                        _slice_array_batch(shard_arrs, np.flatnonzero(holdout_mask))
+                    )
+
+            train_mask = ~holdout_mask
+            if np.any(train_mask):
+                train_arrs = _slice_array_batch(shard_arrs, np.flatnonzero(train_mask))
+                buf.add_many_arrays(train_arrs)
+        summary["positions_replay_added"] += int(positions)
+
+        if model_sha in accept_model_shas:
+            summary["matching_games"] += int(games)
+            summary["matching_positions"] += int(positions)
+            summary["matching_w"] += int(wins)
+            summary["matching_d"] += int(draws)
+            summary["matching_l"] += int(losses)
+            summary["matching_total_game_plies"] += int(total_game_plies)
+            summary["matching_adjudicated_games"] += int(adjudicated_games)
+            summary["matching_total_draw_games"] += int(total_draw_games)
+            summary["matching_selfplay_games"] += int(selfplay_games)
+            summary["matching_selfplay_adjudicated_games"] += int(selfplay_adjudicated_games)
+            summary["matching_selfplay_draw_games"] += int(selfplay_draw_games)
+            summary["matching_curriculum_games"] += int(curriculum_games)
+            summary["matching_curriculum_adjudicated_games"] += int(curriculum_adjudicated_games)
+            summary["matching_curriculum_draw_games"] += int(curriculum_draw_games)
+            summary["matching_shards"] += 1
+        else:
+            summary["stale_games"] += int(games)
+            summary["stale_positions"] += int(positions)
+            summary["stale_shards"] += 1
+
+        try:
+            sp.replace(out)
+        except Exception:
+            sp.unlink(missing_ok=True)
 
     return summary
 
@@ -1353,8 +1669,7 @@ def train_trial(config: dict):
         except Exception:
             pass
 
-    trainer = Trainer(
-        model,
+    trainer_ctor = dict(
         device=device,
         lr=float(config.get("lr", 3e-4)),
         zclip_z_thresh=float(config.get("zclip_z_thresh", 2.5)),
@@ -1381,7 +1696,6 @@ def train_trial(config: dict):
         cosmos_gamma=float(config.get("cosmos_gamma", 0.2)),
         swa_start=int(config.get("swa_start", 0)),
         swa_freq=int(config.get("swa_freq", 50)),
-        # Tunable loss weights (Ray Tune ablations)
         w_policy=float(config.get("w_policy", 1.0)),
         w_soft=float(config.get("w_soft", 0.5)),
         w_future=float(config.get("w_future", 0.15)),
@@ -1395,6 +1709,7 @@ def train_trial(config: dict):
         sf_wdl_conf_power=float(config.get("sf_wdl_conf_power", 0.0)),
         sf_wdl_draw_scale=float(config.get("sf_wdl_draw_scale", 1.0)),
     )
+    trainer = Trainer(model, **trainer_ctor)
 
     salvage_restore_donor_config = bool(config.get("salvage_restore_donor_config", False))
     salvage_restore_full_trainer_state = bool(config.get("salvage_restore_full_trainer_state", False))
@@ -1643,7 +1958,7 @@ def train_trial(config: dict):
 
     shuffle_cap = int(config.get("shuffle_buffer_size", 20_000))
     shard_size = int(config.get("shard_size", 1000))
-    replay_shard_dir = work_dir / "replay_shards"
+    replay_shard_dir = _trial_replay_shard_dir(config=config, trial_dir=trial_dir)
     selfplay_shards_dir = work_dir / "selfplay_shards"
     selfplay_shards_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1653,16 +1968,16 @@ def train_trial(config: dict):
         and (not cross_trial_restore)
         and seed_warmstart_replay_dir is not None
         and seed_warmstart_replay_dir.is_dir()
-        and (not any(replay_shard_dir.glob("shard_*.npz")))
+        and (not iter_shard_paths(replay_shard_dir))
     ):
         replay_shard_dir.mkdir(parents=True, exist_ok=True)
         copied = 0
-        for sp in sorted(seed_warmstart_replay_dir.glob("shard_*.npz")):
-            shutil.copy2(str(sp), str(replay_shard_dir / sp.name))
+        for sp in iter_shard_paths(seed_warmstart_replay_dir):
+            copy_or_link_shard(sp, replay_shard_dir / sp.name)
             copied += 1
         if copied:
             print(
-                f"[trial] Copied {copied} replay shards from salvage slot "
+                f"[trial] Seeded {copied} replay shards from salvage slot "
                 f"{seed_warmstart_slot} ({seed_warmstart_replay_dir})"
             )
 
@@ -1677,21 +1992,22 @@ def train_trial(config: dict):
     # Seed replay buffer with shared iter-0 data (played once from bootstrap net).
     # Only copy if this is a fresh trial (no existing shards in replay_shard_dir).
     shared_shards_dir = config.get("shared_shards_dir")
-    if shared_shards_dir and not any(replay_shard_dir.glob("shard_*.npz")) and (not cross_trial_restore):
+    if shared_shards_dir and not iter_shard_paths(replay_shard_dir) and (not cross_trial_restore):
         src = Path(shared_shards_dir)
         if src.is_dir():
             replay_shard_dir.mkdir(parents=True, exist_ok=True)
             copied = 0
-            for sp in sorted(src.glob("shard_*.npz")):
-                shutil.copy2(str(sp), str(replay_shard_dir / sp.name))
+            for sp in iter_shard_paths(src):
+                copy_or_link_shard(sp, replay_shard_dir / sp.name)
                 copied += 1
             if copied:
                 shared_summary["source_shards_loaded"] = int(copied)
-                print(f"[trial] Copied {copied} shared iter-0 shards from {src}")
+                print(f"[trial] Seeded {copied} shared iter-0 shards from {src}")
 
     if cross_trial_restore and bool(config.get("exploit_replay_refresh_enabled", True)):
         donor_trial_dir = Path(restored_owner_trial_dir).expanduser() if restored_owner_trial_dir else None
         refresh_summary = _refresh_replay_shards_on_exploit(
+            config=config,
             replay_shard_dir=replay_shard_dir,
             recipient_trial_dir=trial_dir,
             donor_trial_dir=donor_trial_dir,
@@ -1717,7 +2033,7 @@ def train_trial(config: dict):
         # Set current_window based on shards actually kept on disk after refresh,
         # so the DiskReplayBuffer capacity is correct from construction and
         # _enforce_window doesn't aggressively evict on first add_many.
-        kept_after_refresh = sorted(replay_shard_dir.glob("shard_*.npz"))
+        kept_after_refresh = iter_shard_paths(replay_shard_dir)
         if kept_after_refresh:
             current_window = max(int(current_window), len(kept_after_refresh) * int(shard_size))
             print(
@@ -1746,7 +2062,7 @@ def train_trial(config: dict):
         f"len(buf)={len(buf)} capacity={buf.capacity} "
         f"tracked_shards={len(buf._shard_paths)} total_pos={buf._total_positions}"
     )
-    holdout_buf = ReplayBuffer(int(config.get("holdout_capacity", 50_000)), rng=rng)
+    holdout_buf = ArrayReplayBuffer(int(config.get("holdout_capacity", 50_000)), rng=rng)
     holdout_frac = float(config.get("holdout_fraction", 0.02))
 
     # Load pre-trained bootstrap checkpoint (trained offline via scripts/train_bootstrap.py).
@@ -1833,6 +2149,7 @@ def train_trial(config: dict):
         else None
     )
     distributed_worker_procs: list[subprocess.Popen[bytes]] = []
+    distributed_inference_broker_proc: subprocess.Popen[bytes] | None = None
 
     eval_games = int(config.get("eval_games", 0))
     eval_sf_nodes = int(config.get("eval_sf_nodes", config.get("sf_nodes", 500)))
@@ -1927,6 +2244,13 @@ def train_trial(config: dict):
             skill_level=current_skill_init,
             mcts_simulations=int(sims_init),
         )
+        distributed_inference_broker_proc = _ensure_inference_broker(
+            config=config,
+            trial_id=trial_id,
+            trial_dir=trial_dir,
+            publish_dir=distributed_dirs["publish_dir"],
+            proc=distributed_inference_broker_proc,
+        )
         distributed_worker_procs = _ensure_distributed_workers(
             config=config,
             trial_dir=trial_dir,
@@ -1939,6 +2263,7 @@ def train_trial(config: dict):
         for it in range(iterations):
             iteration_idx = int(it) + 1
             global_iter += 1
+            iter_t0 = time.monotonic()
             in_salvage_startup_grace = (
                 startup_source == "salvage"
                 and bool(salvage_origin_used)
@@ -1997,6 +2322,7 @@ def train_trial(config: dict):
             distributed_stale_positions = 0
             distributed_stale_games = 0
 
+            ingest_t0 = time.monotonic()
             if use_distributed_selfplay:
                 distributed_worker_procs = _ensure_distributed_workers(
                     config=config,
@@ -2017,7 +2343,15 @@ def train_trial(config: dict):
                     skill_level=int(skill_level_used),
                     mcts_simulations=int(sims),
                 )
+                distributed_inference_broker_proc = _ensure_inference_broker(
+                    config=config,
+                    trial_id=trial_id,
+                    trial_dir=trial_dir,
+                    publish_dir=distributed_dirs["publish_dir"],
+                    proc=distributed_inference_broker_proc,
+                )
                 _shards_before_ingest = set(buf._shard_paths)
+
                 ingest_summary = _ingest_distributed_selfplay(
                     buf=buf,
                     holdout_buf=holdout_buf,
@@ -2031,6 +2365,7 @@ def train_trial(config: dict):
                     poll_seconds=float(config.get("distributed_worker_poll_seconds", 1.0)),
                     rng=rng,
                 )
+
                 buf.flush()
                 _new_selfplay_shards = [p for p in buf._shard_paths if p not in _shards_before_ingest]
                 total_w = int(ingest_summary["matching_w"])
@@ -2095,64 +2430,73 @@ def train_trial(config: dict):
                     soft_policy_temp=float(config.get("soft_policy_temp", 2.0)),
                 )
 
-                _new_selfplay_samples: list = []
-                while games_remaining > 0:
-                    chunk = min(selfplay_batch, games_remaining)
-                    samples, stats = play_batch(trainer.model, games=chunk, **selfplay_kwargs)
-                    games_remaining -= chunk
+                samples, stats = play_batch(
+                    trainer.model,
+                    games=selfplay_batch,
+                    target_games=games_remaining,
+                    **selfplay_kwargs,
+                )
 
-                    total_games_generated += int(stats.games)
-                    total_w += stats.w
-                    total_d += stats.d
-                    total_l += stats.l
-                    total_game_plies += int(getattr(stats, "total_game_plies", 0))
-                    total_adjudicated_games += int(getattr(stats, "adjudicated_games", getattr(stats, "timeout_games", 0)))
-                    total_draw_games += int(getattr(stats, "total_draw_games", 0))
-                    total_selfplay_games += int(getattr(stats, "selfplay_games", 0))
-                    total_selfplay_adjudicated_games += int(getattr(stats, "selfplay_adjudicated_games", 0))
-                    total_selfplay_draw_games += int(getattr(stats, "selfplay_draw_games", 0))
-                    total_curriculum_games += int(getattr(stats, "curriculum_games", 0))
-                    total_curriculum_adjudicated_games += int(getattr(stats, "curriculum_adjudicated_games", 0))
-                    total_curriculum_draw_games += int(getattr(stats, "curriculum_draw_games", 0))
-                    total_positions += stats.positions
-                    total_sf_d6 += float(getattr(stats, "sf_eval_delta6", 0.0)) * int(getattr(stats, "sf_eval_delta6_n", 0))
-                    total_sf_d6_n += int(getattr(stats, "sf_eval_delta6_n", 0))
+                total_games_generated += int(stats.games)
+                total_w += stats.w
+                total_d += stats.d
+                total_l += stats.l
+                total_game_plies += int(getattr(stats, "total_game_plies", 0))
+                total_adjudicated_games += int(getattr(stats, "adjudicated_games", getattr(stats, "timeout_games", 0)))
+                total_draw_games += int(getattr(stats, "total_draw_games", 0))
+                total_selfplay_games += int(getattr(stats, "selfplay_games", 0))
+                total_selfplay_adjudicated_games += int(getattr(stats, "selfplay_adjudicated_games", 0))
+                total_selfplay_draw_games += int(getattr(stats, "selfplay_draw_games", 0))
+                total_curriculum_games += int(getattr(stats, "curriculum_games", 0))
+                total_curriculum_adjudicated_games += int(getattr(stats, "curriculum_adjudicated_games", 0))
+                total_curriculum_draw_games += int(getattr(stats, "curriculum_draw_games", 0))
+                total_positions += stats.positions
+                total_sf_d6 += float(getattr(stats, "sf_eval_delta6", 0.0)) * int(getattr(stats, "sf_eval_delta6_n", 0))
+                total_sf_d6_n += int(getattr(stats, "sf_eval_delta6_n", 0))
 
-                    train_samples: list = []
-                    for s in samples:
-                        if holdout_frac > 0.0 and (not holdout_frozen) and (rng.random() < holdout_frac):
-                            holdout_buf.add_many([s])
-                        else:
-                            train_samples.append(s)
-                    if train_samples:
-                        buf.add_many(train_samples)
-                        _new_selfplay_samples.extend(train_samples)
-                    del samples
+                holdout_samples: list = []
+                train_samples: list = []
+                for s in samples:
+                    if holdout_frac > 0.0 and (not holdout_frozen) and (rng.random() < holdout_frac):
+                        holdout_samples.append(s)
+                    else:
+                        train_samples.append(s)
+                _new_selfplay_batches: list[dict[str, np.ndarray]] = []
+                if holdout_samples:
+                    holdout_buf.add_many_arrays(samples_to_arrays(holdout_samples))
+                if train_samples:
+                    train_arrs = samples_to_arrays(train_samples)
+                    buf.add_many_arrays(train_arrs)
+                    _new_selfplay_batches.append(train_arrs)
+                del samples
+
+            ingest_ms = (time.monotonic() - ingest_t0) * 1000.0
 
             # Export this iteration's own selfplay to a separate directory so
             # sibling trials can import clean data without feedback-loop contamination.
-            _selfplay_export_path = selfplay_shards_dir / f"shard_{global_iter:06d}.npz"
+            _selfplay_export_path = local_iter_shard_path(selfplay_shards_dir, global_iter)
             if use_distributed_selfplay:
                 # Distributed: new shards were identified by shard-path diff above.
                 if _new_selfplay_shards:
-                    _export_samples: list = []
+                    _export_batches: list[dict[str, np.ndarray]] = []
                     for _sp in _new_selfplay_shards:
                         try:
-                            _s, _ = load_npz(_sp)
-                            _export_samples.extend(_s)
+                            _arrs, _ = load_shard_arrays(_sp, lazy=True)
+                            if int(np.asarray(_arrs["x"]).shape[0]) > 0:
+                                _export_batches.append(_arrs)
                         except Exception:
                             pass
-                    if _export_samples:
-                        save_npz(_selfplay_export_path, samples=_export_samples)
+                    if _export_batches:
+                        save_local_shard_arrays(_selfplay_export_path, arrs=_concat_array_batches(_export_batches))
             else:
-                if _new_selfplay_samples:
-                    save_npz(_selfplay_export_path, samples=_new_selfplay_samples)
+                if _new_selfplay_batches:
+                    save_local_shard_arrays(_selfplay_export_path, arrs=_concat_array_batches(_new_selfplay_batches))
             # Roll: keep only last (max_unseen_iters_per_source + 2) selfplay export files.
             _keep_selfplay_iters = int(config.get("exploit_replay_max_unseen_iters_per_source", 1)) + 2
-            _all_selfplay_exports = sorted(selfplay_shards_dir.glob("shard_*.npz"))
+            _all_selfplay_exports = iter_shard_paths(selfplay_shards_dir)
             for _old in _all_selfplay_exports[:-_keep_selfplay_iters]:
                 try:
-                    _old.unlink(missing_ok=True)
+                    shutil.rmtree(_old) if _old.is_dir() else _old.unlink(missing_ok=True)
                 except Exception:
                     pass
 
@@ -2175,6 +2519,7 @@ def train_trial(config: dict):
             }
             if bool(config.get("exploit_replay_share_top_enabled", False)) and (not in_salvage_startup_grace):
                 shared_summary = _share_top_replay_each_iteration(
+                    config=config,
                     recipient_trial_dir=trial_dir,
                     replay_shard_dir=replay_shard_dir,
                     buf=buf,
@@ -2218,19 +2563,34 @@ def train_trial(config: dict):
             drift_policy_entropy_holdout = None
 
             if len(buf) >= drift_sample_size and len(holdout_buf) >= drift_sample_size:
-                train_batch = buf.sample_batch(drift_sample_size)
-                hold_batch = holdout_buf.sample_batch(drift_sample_size)
+                def _sample_drift_arrays(src_buf: object, n: int) -> dict[str, np.ndarray]:
+                    if hasattr(src_buf, "sample_batch_arrays"):
+                        arrs = getattr(src_buf, "sample_batch_arrays")(n, wdl_balance=False)
+                        return {
+                            "x": np.asarray(arrs["x"], dtype=np.float32),
+                            "wdl_target": np.asarray(arrs["wdl_target"], dtype=np.int64),
+                            "policy_target": np.asarray(arrs["policy_target"], dtype=np.float32),
+                        }
+
+                    samples = getattr(src_buf, "sample_batch")(n, wdl_balance=False)
+                    return {
+                        "x": np.stack([s.x for s in samples], axis=0).astype(np.float32, copy=False),
+                        "wdl_target": np.array([int(getattr(s, "wdl_target", 1)) for s in samples], dtype=np.int64),
+                        "policy_target": np.stack([s.policy_target for s in samples], axis=0).astype(np.float32, copy=False),
+                    }
+
+                train_batch = _sample_drift_arrays(buf, drift_sample_size)
+                hold_batch = _sample_drift_arrays(holdout_buf, drift_sample_size)
 
                 # (1) Input drift: L2 distance between mean input plane tensors.
-                train_x = np.stack([s.x for s in train_batch], axis=0).astype(np.float32, copy=False)
-                hold_x = np.stack([s.x for s in hold_batch], axis=0).astype(np.float32, copy=False)
+                train_x = train_batch["x"]
+                hold_x = hold_batch["x"]
                 drift_input_l2 = float(np.linalg.norm(train_x.mean(axis=0) - hold_x.mean(axis=0)))
 
                 # (2) Target drift: WDL label distribution (JS divergence).
-                def _wdl_hist(ss: list) -> np.ndarray:
+                def _wdl_hist(arrs: dict[str, np.ndarray]) -> np.ndarray:
                     h = np.zeros((3,), dtype=np.float64)
-                    for s in ss:
-                        t = int(getattr(s, "wdl_target", 1))
+                    for t in np.asarray(arrs["wdl_target"], dtype=np.int64):
                         if 0 <= t <= 2:
                             h[t] += 1.0
                     h /= max(1.0, float(h.sum()))
@@ -2246,21 +2606,17 @@ def train_trial(config: dict):
                 )
 
                 # (3) Policy drift: mean entropy of stored policy targets.
-                def _mean_entropy(ss: list) -> float:
-                    ent = 0.0
-                    n = 0
-                    for s in ss:
-                        pt = getattr(s, "policy_target", None)
-                        if pt is None:
-                            continue
-                        p = np.asarray(pt, dtype=np.float64)
-                        ps = float(p.sum())
-                        if ps <= 0:
-                            continue
-                        p = p / ps
-                        ent += float(-np.sum(p * np.log(p + eps)))
-                        n += 1
-                    return float(ent / max(1, n))
+                def _mean_entropy(arrs: dict[str, np.ndarray]) -> float:
+                    p = np.asarray(arrs["policy_target"], dtype=np.float64)
+                    if p.ndim != 2 or p.shape[0] == 0:
+                        return 0.0
+                    ps = p.sum(axis=1, keepdims=True)
+                    valid = ps[:, 0] > 0.0
+                    if not np.any(valid):
+                        return 0.0
+                    p = p[valid] / ps[valid]
+                    ent = -np.sum(p * np.log(p + eps), axis=1)
+                    return float(np.mean(ent))
 
                 drift_policy_entropy_train = _mean_entropy(train_batch)
                 drift_policy_entropy_holdout = _mean_entropy(hold_batch)
@@ -2308,6 +2664,7 @@ def train_trial(config: dict):
                     cur_sf_wdl = sf_wdl_floor + t * (sf_wdl_start - sf_wdl_floor)
                 trainer.w_sf_wdl = cur_sf_wdl
 
+            train_t0 = time.monotonic()
             batch_size = int(config.get("batch_size", 128))
             accum_steps = max(1, int(config.get("accum_steps", 1)))
             effective_batch_size = batch_size * accum_steps
@@ -2409,6 +2766,8 @@ def train_trial(config: dict):
                     batch_size=int(config.get("batch_size", 128)),
                     steps=int(config.get("test_steps", 10)),
                 )
+
+            train_ms = (time.monotonic() - train_t0) * 1000.0
 
             eval_dict = {}
             if eval_games > 0 and eval_sf is not None:
@@ -2536,7 +2895,7 @@ def train_trial(config: dict):
             # Update PID ONCE per iteration (after training) so difficulty changes
             # line up with net updates rather than intra-iteration selfplay noise.
             pid_update = None
-            pid_ema_wr = 0.0
+            pid_ema_wr = float(pid.ema_winrate) if pid is not None else 0.0
             total_games_played = max(1, int(total_w + total_d + total_l))
             selfplay_winrate_raw = (float(total_w) + 0.5 * float(total_d)) / float(total_games_played)
             avg_game_plies = float(total_game_plies) / float(max(1, int(total_games_generated)))
@@ -2601,13 +2960,14 @@ def train_trial(config: dict):
                 trainer.writer.add_scalar("difficulty/opponent_strength", float(opp_strength), iteration_step)
                 trainer.writer.add_scalar("difficulty/random_move_prob", float(current_rand), iteration_step)
                 trainer.writer.add_scalar("difficulty/random_move_prob_next", float(random_move_prob_next), iteration_step)
-                trainer.writer.add_scalar("difficulty/selfplay_winrate_raw", float(selfplay_winrate_raw), iteration_step)
                 trainer.writer.add_scalar("difficulty/pid_ema_winrate", float(pid_ema_wr), iteration_step)
-                trainer.writer.add_scalar("selfplay/avg_game_plies", float(avg_game_plies), iteration_step)
-                trainer.writer.add_scalar("selfplay/adjudication_rate", float(adjudication_rate), iteration_step)
-                trainer.writer.add_scalar("selfplay/draw_rate", float(draw_rate), iteration_step)
-                trainer.writer.add_scalar("selfplay/selfplay_adjudication_rate", float(selfplay_adjudication_rate), iteration_step)
-                trainer.writer.add_scalar("selfplay/selfplay_draw_rate", float(selfplay_draw_rate), iteration_step)
+                if total_games_generated > 0:
+                    trainer.writer.add_scalar("difficulty/selfplay_winrate_raw", float(selfplay_winrate_raw), iteration_step)
+                    trainer.writer.add_scalar("selfplay/avg_game_plies", float(avg_game_plies), iteration_step)
+                    trainer.writer.add_scalar("selfplay/adjudication_rate", float(adjudication_rate), iteration_step)
+                    trainer.writer.add_scalar("selfplay/draw_rate", float(draw_rate), iteration_step)
+                    trainer.writer.add_scalar("selfplay/selfplay_adjudication_rate", float(selfplay_adjudication_rate), iteration_step)
+                    trainer.writer.add_scalar("selfplay/selfplay_draw_rate", float(selfplay_draw_rate), iteration_step)
                 trainer.writer.add_scalar("selfplay/curriculum_adjudication_rate", float(curriculum_adjudication_rate), iteration_step)
                 trainer.writer.add_scalar("selfplay/curriculum_draw_rate", float(curriculum_draw_rate), iteration_step)
                 trainer.writer.add_scalar("meta/salvage_warmstart_used", float(1 if seed_warmstart_used else 0), iteration_step)
@@ -2707,6 +3067,9 @@ def train_trial(config: dict):
                     "sf_volatility_loss": float(metrics.sf_volatility_loss) if metrics is not None else 0.0,
                     "moves_left_loss": float(metrics.moves_left_loss) if metrics is not None else 0.0,
                     "gate_passed": int(1 if gate_passed else 0),
+                    "ingest_ms": float(ingest_ms),
+                    "train_ms": float(train_ms),
+                    "total_iter_ms": float((time.monotonic() - iter_t0) * 1000.0),
                     **eval_dict,
                     **test_dict,
                     **puzzle_dict,
@@ -2722,6 +3085,7 @@ def train_trial(config: dict):
             )
     finally:
         _stop_worker_processes(distributed_worker_procs)
+        _stop_process(distributed_inference_broker_proc)
         if sf is not None:
             sf.close()
         if eval_sf is not None:

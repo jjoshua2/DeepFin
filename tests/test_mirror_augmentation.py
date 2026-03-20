@@ -5,7 +5,7 @@ from chess_anti_engine.moves.encode import (
     MIRROR_POLICY_MAP,
     mirror_policy_index,
 )
-from chess_anti_engine.replay.augment import mirror_sample
+from chess_anti_engine.replay.augment import maybe_mirror_batch_arrays, mirror_sample
 from chess_anti_engine.replay.buffer import ReplaySample
 
 
@@ -82,3 +82,33 @@ def test_mirror_sample_is_involution():
 
     assert np.allclose(s2.sf_volatility_target, s.sf_volatility_target)
     assert bool(s2.has_sf_volatility) == bool(s.has_sf_volatility)
+
+
+def test_mirror_batch_arrays_is_involution():
+    rng = np.random.default_rng(0)
+    x = rng.normal(size=(4, 18, 8, 8)).astype(np.float32)
+
+    policy = rng.random(size=(4, POLICY_SIZE)).astype(np.float32)
+    policy /= policy.sum(axis=1, keepdims=True)
+
+    soft = rng.random(size=(4, POLICY_SIZE)).astype(np.float32)
+    soft /= soft.sum(axis=1, keepdims=True)
+
+    legal_mask = (rng.random(size=(4, POLICY_SIZE)) > 0.5).astype(np.uint8)
+    sf_move_index = rng.integers(0, POLICY_SIZE, size=(4,), dtype=np.int32)
+
+    batch = {
+        "x": x,
+        "policy_target": policy,
+        "sf_policy_target": policy.copy(),
+        "policy_soft_target": soft,
+        "future_policy_target": soft.copy(),
+        "legal_mask": legal_mask,
+        "sf_move_index": sf_move_index,
+    }
+
+    mirrored = maybe_mirror_batch_arrays(batch, rng=np.random.default_rng(1), prob=1.0)
+    unmirrored = maybe_mirror_batch_arrays(mirrored, rng=np.random.default_rng(2), prob=1.0)
+
+    for key, value in batch.items():
+        assert np.array_equal(unmirrored[key], value)

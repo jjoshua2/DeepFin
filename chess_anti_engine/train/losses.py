@@ -78,9 +78,9 @@ def compute_loss(
     def _apply_legal_mask(logits: torch.Tensor) -> torch.Tensor:
         if _legal_mask is None:
             return logits
+        mask_active = _has_legal.unsqueeze(-1) if _has_legal is not None else 1.0
         # Where has_legal_mask=1: mask illegal moves. Where has_legal_mask=0: leave unchanged.
         penalty = (1.0 - _legal_mask) * -1e9  # (B, POLICY_SIZE)
-        mask_active = _has_legal.unsqueeze(-1)  # (B, 1)
         return logits + penalty * mask_active
 
     # policy
@@ -89,6 +89,7 @@ def compute_loss(
         raise KeyError("Model outputs must include either 'policy' or 'policy_own'.")
 
     pol_ce = policy_cross_entropy(_apply_legal_mask(base_policy_logits), batch["policy_t"])  # (B,)
+    zero_loss = torch.zeros_like(pol_ce)
     has_policy = batch.get("has_policy")
     if has_policy is None:
         has_policy = torch.ones((batch["x"].shape[0],), device=batch["x"].device)
@@ -98,7 +99,11 @@ def compute_loss(
     if has_soft is None:
         has_soft = torch.zeros((batch["x"].shape[0],), device=batch["x"].device)
     soft_logits = outputs["policy_soft"] if "policy_soft" in outputs else base_policy_logits
-    soft_ce = policy_cross_entropy(_apply_legal_mask(soft_logits), batch.get("policy_soft_t", batch["policy_t"]))
+    soft_target = batch.get("policy_soft_t")
+    if soft_target is None:
+        soft_ce = zero_loss
+    else:
+        soft_ce = policy_cross_entropy(_apply_legal_mask(soft_logits), soft_target)
 
     # future policy (t+2)
     has_future = batch.get("has_future")
@@ -108,7 +113,11 @@ def compute_loss(
     # Do NOT apply legal_mask here: future_policy_t uses move indices from position t+2
     # (two plies later: network move + SF reply), so t's legal mask would incorrectly
     # treat most future moves as illegal, inflating loss to ~100M.
-    future_ce = policy_cross_entropy(future_logits, batch.get("future_policy_t", batch["policy_t"]))
+    future_target = batch.get("future_policy_t")
+    if future_target is None:
+        future_ce = zero_loss
+    else:
+        future_ce = policy_cross_entropy(future_logits, future_target)
 
     # value
     wdl_ce = wdl_cross_entropy(outputs["wdl"], batch["wdl_t"])  # (B,)
@@ -124,23 +133,27 @@ def compute_loss(
         has_sf_policy = has_sf_move
 
     sf_pol_logits = outputs.get("policy_sf")
-    if sf_pol_logits is None:
+    sf_policy_target = batch.get("sf_policy_t")
+    if sf_pol_logits is None or sf_policy_target is None:
         sf_move_ce = torch.zeros_like(wdl_ce)
     else:
         # Do NOT apply legal_mask here: sf_policy_t uses move indices from the next board
         # position (after the network moves), so the network-turn legal mask would incorrectly
         # mark most of SF's moves as "illegal", inflating loss to ~1e9.
-        sf_move_ce = soft_cross_entropy(sf_pol_logits, batch.get("sf_policy_t", batch["policy_t"]))
+        sf_move_ce = soft_cross_entropy(sf_pol_logits, sf_policy_target)
 
     # sf_eval
     has_sf_wdl = batch.get("has_sf_wdl")
     if has_sf_wdl is None:
         has_sf_wdl = torch.zeros((batch["x"].shape[0],), device=batch["x"].device)
     # SF eval: soft-target CE vs Stockfish's WDL distribution (no argmax/hardening)
-    sf_wdl_probs = batch["sf_wdl"].clamp_min(0.0)
-    sf_wdl_probs = sf_wdl_probs / sf_wdl_probs.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+    sf_wdl_raw = batch.get("sf_wdl")
+    sf_wdl_probs = None
+    if sf_wdl_raw is not None:
+        sf_wdl_probs = sf_wdl_raw.clamp_min(0.0)
+        sf_wdl_probs = sf_wdl_probs / sf_wdl_probs.sum(dim=-1, keepdim=True).clamp_min(1e-8)
     sf_eval_logits = outputs.get("sf_eval")
-    if sf_eval_logits is None:
+    if sf_eval_logits is None or sf_wdl_probs is None:
         sf_eval_ce = torch.zeros_like(wdl_ce)
     else:
         sf_eval_ce = soft_cross_entropy(sf_eval_logits, sf_wdl_probs)
@@ -150,41 +163,45 @@ def compute_loss(
     if has_moves_left is None:
         has_moves_left = torch.zeros((batch["x"].shape[0],), device=batch["x"].device)
     ml_pred = outputs.get("moves_left")
-    if ml_pred is None:
+    moves_left_t = batch.get("moves_left")
+    if ml_pred is None or moves_left_t is None:
         ml_loss = torch.zeros_like(wdl_ce)
     else:
-        ml_loss = F.smooth_l1_loss(ml_pred.squeeze(-1), batch["moves_left"], reduction="none")
+        ml_loss = F.smooth_l1_loss(ml_pred.squeeze(-1), moves_left_t, reduction="none")
 
     # categorical value
     has_cat = batch.get("has_categorical")
     if has_cat is None:
         has_cat = torch.zeros((batch["x"].shape[0],), device=batch["x"].device)
     cat_logits = outputs.get("categorical")
-    if cat_logits is None:
+    categorical_t = batch.get("categorical_t")
+    if cat_logits is None or categorical_t is None:
         cat_ce = torch.zeros_like(wdl_ce)
     else:
         logp_cat = F.log_softmax(cat_logits, dim=-1)
-        cat_ce = -(batch["categorical_t"] * logp_cat).sum(dim=-1)
+        cat_ce = -(categorical_t * logp_cat).sum(dim=-1)
 
     # volatility (network)
     has_vol = batch.get("has_volatility")
     if has_vol is None:
         has_vol = torch.zeros((batch["x"].shape[0],), device=batch["x"].device)
     vol_pred = outputs.get("volatility")
-    if vol_pred is None:
+    volatility_t = batch.get("volatility_t")
+    if vol_pred is None or volatility_t is None:
         vol_loss = torch.zeros_like(wdl_ce)
     else:
-        vol_loss = F.huber_loss(vol_pred, batch["volatility_t"], delta=0.1, reduction="none").mean(dim=-1)
+        vol_loss = F.huber_loss(vol_pred, volatility_t, delta=0.1, reduction="none").mean(dim=-1)
 
     # volatility (Stockfish)
     has_sf_vol = batch.get("has_sf_volatility")
     if has_sf_vol is None:
         has_sf_vol = torch.zeros((batch["x"].shape[0],), device=batch["x"].device)
     sf_vol_pred = outputs.get("sf_volatility")
-    if sf_vol_pred is None:
+    sf_volatility_t = batch.get("sf_volatility_t")
+    if sf_vol_pred is None or sf_volatility_t is None:
         sf_vol_loss = torch.zeros_like(wdl_ce)
     else:
-        sf_vol_loss = F.huber_loss(sf_vol_pred, batch.get("sf_volatility_t", batch["volatility_t"]), delta=0.1, reduction="none").mean(dim=-1)
+        sf_vol_loss = F.huber_loss(sf_vol_pred, sf_volatility_t, delta=0.1, reduction="none").mean(dim=-1)
 
     # Loss weights (all configurable for Ray Tune ablations)
     w_policy = float(w_policy)
@@ -206,17 +223,21 @@ def compute_loss(
     # - confidence: (1 - draw_prob)^power (power=0 disables)
     # - draw_scale: additional multiplier for game-outcome draws (1.0 disables)
     sf_wdl_mask = net_mask * has_sf_wdl
-    if sf_wdl_conf_power > 0.0:
-        sf_conf = (1.0 - sf_wdl_probs[:, 1]).clamp(0.0, 1.0).pow(sf_wdl_conf_power)
-        sf_wdl_mask = sf_wdl_mask * sf_conf
-    if sf_wdl_draw_scale != 1.0:
-        draw_mask = (batch["wdl_t"] == 1).to(torch.float32)
-        sf_wdl_mask = sf_wdl_mask * (1.0 - draw_mask + draw_mask * sf_wdl_draw_scale)
+    if sf_wdl_probs is not None:
+        if sf_wdl_conf_power > 0.0:
+            sf_conf = (1.0 - sf_wdl_probs[:, 1]).clamp(0.0, 1.0).pow(sf_wdl_conf_power)
+            sf_wdl_mask = sf_wdl_mask * sf_conf
+        if sf_wdl_draw_scale != 1.0:
+            draw_mask = (batch["wdl_t"] == 1).to(torch.float32)
+            sf_wdl_mask = sf_wdl_mask * (1.0 - draw_mask + draw_mask * sf_wdl_draw_scale)
 
     # Soft WDL target from SF eval: train the main WDL head with SF's position-local
     # value estimate as a soft cross-entropy target. This provides dense gradient signal
     # even when game outcomes are draws (e.g. max_plies reached).
-    sf_wdl_soft_ce = soft_cross_entropy(outputs["wdl"], sf_wdl_probs)
+    if sf_wdl_probs is None:
+        sf_wdl_soft_ce = torch.zeros_like(wdl_ce)
+    else:
+        sf_wdl_soft_ce = soft_cross_entropy(outputs["wdl"], sf_wdl_probs)
 
     # Train only on network turns for the main value/policy targets.
     # SF heads are also trained on network turns, but only when their targets are present.
@@ -243,8 +264,8 @@ def compute_loss(
         "future_policy_ce": masked_mean(future_ce, net_mask * has_future),
         "sf_move_ce": masked_mean(sf_move_ce, net_mask * has_sf_policy),
         "sf_eval_ce": masked_mean(sf_eval_ce, net_mask * has_sf_wdl),
-        "categorical_ce": masked_mean(cat_ce, has_cat),
+        "categorical_ce": masked_mean(cat_ce, net_mask * has_cat),
         "volatility": masked_mean(vol_loss, net_mask * has_vol),
         "sf_volatility": masked_mean(sf_vol_loss, net_mask * has_sf_vol),
-        "moves_left": masked_mean(ml_loss, has_moves_left),
+        "moves_left": masked_mean(ml_loss, net_mask * has_moves_left),
     }

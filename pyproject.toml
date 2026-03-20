@@ -8,10 +8,11 @@ dependencies = [
   "numpy>=1.24",
   "torch>=2.0",
   "pyyaml>=6.0",
+  "zarr>=2.18",
 ]
 
 [build-system]
-requires = ["setuptools>=70", "wheel"]
+requires = ["setuptools>=70", "wheel", "numpy>=1.24"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]

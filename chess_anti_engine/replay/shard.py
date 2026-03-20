@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -11,28 +12,80 @@ from chess_anti_engine.moves import POLICY_SIZE
 
 from .buffer import ReplaySample
 
+try:  # pragma: no cover - import availability is environment-dependent
+    import zarr
+    from numcodecs import Blosc
+except Exception:  # pragma: no cover
+    zarr = None
+    Blosc = None
+
 
 SHARD_VERSION = 1
+LOCAL_SHARD_SUFFIX = ".zarr"
+LEGACY_SHARD_SUFFIX = ".npz"
+_SHARD_FIELDS = (
+    "x",
+    "policy_target",
+    "wdl_target",
+    "priority",
+    "has_policy",
+    "sf_wdl",
+    "has_sf_wdl",
+    "sf_move_index",
+    "has_sf_move",
+    "sf_policy_target",
+    "has_sf_policy",
+    "moves_left",
+    "has_moves_left",
+    "is_network_turn",
+    "has_is_network_turn",
+    "categorical_target",
+    "has_categorical",
+    "policy_soft_target",
+    "has_policy_soft",
+    "future_policy_target",
+    "has_future",
+    "volatility_target",
+    "has_volatility",
+    "sf_volatility_target",
+    "has_sf_volatility",
+    "legal_mask",
+    "has_legal_mask",
+)
+
+_REQUIRED_STORAGE_FIELDS = (
+    "x",
+    "policy_target",
+    "wdl_target",
+    "priority",
+    "has_policy",
+)
+
+_OPTIONAL_STORAGE_PAIRS = (
+    ("sf_wdl", "has_sf_wdl"),
+    ("sf_move_index", "has_sf_move"),
+    ("sf_policy_target", "has_sf_policy"),
+    ("moves_left", "has_moves_left"),
+    ("is_network_turn", "has_is_network_turn"),
+    ("categorical_target", "has_categorical"),
+    ("policy_soft_target", "has_policy_soft"),
+    ("future_policy_target", "has_future"),
+    ("volatility_target", "has_volatility"),
+    ("sf_volatility_target", "has_sf_volatility"),
+    ("legal_mask", "has_legal_mask"),
+)
 
 
 @dataclass(frozen=True)
 class ShardMeta:
     version: int = SHARD_VERSION
-
-    # Optional provenance (useful for moderation / leaderboard later)
     username: str | None = None
     run_id: str | None = None
     generated_at_unix: int | None = None
-
-    # Optional model provenance
     model_sha256: str | None = None
     model_step: int | None = None
-
-    # Convenience stats
     games: int | None = None
     positions: int | None = None
-
-    # Game-level outcomes from the network's perspective (for PID difficulty control)
     wins: int | None = None
     draws: int | None = None
     losses: int | None = None
@@ -61,6 +114,123 @@ def _copy_row(arr: np.ndarray, i: int, *, dtype: np.dtype | type | None = None) 
     return np.array(arr[i], dtype=dtype, copy=True, order="C")
 
 
+def _meta_dict(meta: ShardMeta | dict[str, Any] | None, *, positions: int) -> dict[str, Any]:
+    if meta is None:
+        return asdict(ShardMeta(positions=int(positions)))
+    if isinstance(meta, ShardMeta):
+        return asdict(meta)
+    return asdict(ShardMeta(**meta))
+
+
+def prune_storage_arrays(arrs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    """Drop universally-absent optional fields before writing a shard.
+
+    The loader and replay buffers already synthesize zero defaults for missing
+    optional arrays, so persisting all-zero target tensors and has-flags wastes
+    disk, I/O, and decode CPU without changing training semantics.
+    """
+    validate_arrays(arrs)
+    out: dict[str, np.ndarray] = {name: np.asarray(arrs[name]) for name in _REQUIRED_STORAGE_FIELDS}
+    for value_name, flag_name in _OPTIONAL_STORAGE_PAIRS:
+        flag = np.asarray(arrs.get(flag_name, np.zeros((out["x"].shape[0],), dtype=np.uint8)), dtype=np.uint8)
+        if np.any(flag):
+            out[flag_name] = flag
+            if value_name in arrs:
+                out[value_name] = np.asarray(arrs[value_name])
+    return out
+
+
+def local_shard_path(shard_dir: str | Path, index: int) -> Path:
+    return Path(shard_dir) / f"shard_{int(index):06d}{LOCAL_SHARD_SUFFIX}"
+
+
+def local_iter_shard_path(shard_dir: str | Path, index: int) -> Path:
+    return local_shard_path(shard_dir, index)
+
+
+def iter_shard_paths(shard_dir: str | Path) -> list[Path]:
+    d = Path(shard_dir)
+    out = list(d.glob(f"shard_*{LOCAL_SHARD_SUFFIX}")) + list(d.glob(f"shard_*{LEGACY_SHARD_SUFFIX}"))
+    return sorted(out)
+
+
+def shard_exists(shard_dir: str | Path, index: int) -> bool:
+    return find_shard_path(shard_dir, index) is not None
+
+
+def find_shard_path(shard_dir: str | Path, index: int) -> Path | None:
+    d = Path(shard_dir)
+    stem = f"shard_{int(index):06d}"
+    for suffix in (LOCAL_SHARD_SUFFIX, LEGACY_SHARD_SUFFIX):
+        p = d / f"{stem}{suffix}"
+        if p.exists():
+            return p
+    return None
+
+
+def shard_index(path: str | Path) -> int:
+    p = Path(path)
+    name = p.name
+    if name.endswith(LOCAL_SHARD_SUFFIX):
+        name = name[: -len(LOCAL_SHARD_SUFFIX)]
+    elif name.endswith(LEGACY_SHARD_SUFFIX):
+        name = name[: -len(LEGACY_SHARD_SUFFIX)]
+    try:
+        return int(name.split("_")[1])
+    except Exception:
+        return -1
+
+
+def shard_positions(path: str | Path) -> int:
+    p = Path(path)
+    if p.suffix == LOCAL_SHARD_SUFFIX:
+        if zarr is None:
+            return 0
+        try:
+            g = zarr.open_group(str(p), mode="r")
+            return int(g["x"].shape[0])
+        except Exception:
+            return 0
+    try:
+        with np.load(str(p), allow_pickle=False) as z:
+            return int(z["x"].shape[0]) if "x" in z.files else 0
+    except Exception:
+        return 0
+
+
+def copy_or_link_shard(src: str | Path, dst: str | Path) -> Path:
+    src_p = Path(src)
+    dst_p = Path(dst)
+    dst_p.parent.mkdir(parents=True, exist_ok=True)
+    rel = None
+    try:
+        rel = Path(shutil.os.path.relpath(src_p, start=dst_p.parent))
+    except Exception:
+        rel = None
+    try:
+        shutil.os.symlink(str(rel if rel is not None else src_p), str(dst_p), target_is_directory=src_p.is_dir())
+        return dst_p
+    except FileExistsError:
+        return dst_p
+    except OSError:
+        pass
+    if src_p.is_dir():
+        if dst_p.exists():
+            shutil.rmtree(dst_p)
+        shutil.copytree(str(src_p), str(dst_p))
+    else:
+        shutil.copy2(str(src_p), str(dst_p))
+    return dst_p
+
+
+def delete_shard_path(path: str | Path) -> None:
+    p = Path(path)
+    if p.is_dir():
+        shutil.rmtree(p)
+    else:
+        p.unlink(missing_ok=True)
+
+
 def samples_to_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
     if not samples:
         raise ValueError("cannot serialize empty shard")
@@ -69,41 +239,29 @@ def samples_to_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
     policy_target = _f16(np.stack([s.policy_target for s in samples], axis=0))
     wdl_target = np.array([int(s.wdl_target) for s in samples], dtype=np.int8)
 
-    # Required-ish metadata for training
     priority = np.array([float(getattr(s, "priority", 1.0)) for s in samples], dtype=np.float32)
     has_policy = _u8(np.array([1 if getattr(s, "has_policy", True) else 0 for s in samples], dtype=np.uint8))
 
-    # Aux targets + masks (mirrors replay/dataset.py behavior)
     sf_wdl = np.zeros((len(samples), 3), dtype=np.float16)
     has_sf_wdl = np.zeros((len(samples),), dtype=np.uint8)
-
     sf_move_index = np.zeros((len(samples),), dtype=np.int32)
     has_sf_move = np.zeros((len(samples),), dtype=np.uint8)
-
     sf_policy_target = np.zeros_like(policy_target, dtype=np.float16)
     has_sf_policy = np.zeros((len(samples),), dtype=np.uint8)
-
     moves_left = np.zeros((len(samples),), dtype=np.float16)
     has_moves_left = np.zeros((len(samples),), dtype=np.uint8)
-
     is_network_turn = np.zeros((len(samples),), dtype=np.uint8)
     has_is_network_turn = np.zeros((len(samples),), dtype=np.uint8)
-
     categorical_target = np.zeros((len(samples), 32), dtype=np.float16)
     has_categorical = np.zeros((len(samples),), dtype=np.uint8)
-
     policy_soft_target = np.zeros_like(policy_target, dtype=np.float16)
     has_policy_soft = np.zeros((len(samples),), dtype=np.uint8)
-
     future_policy_target = np.zeros_like(policy_target, dtype=np.float16)
     has_future = np.zeros((len(samples),), dtype=np.uint8)
-
     volatility_target = np.zeros((len(samples), 3), dtype=np.float16)
     has_volatility = np.zeros((len(samples),), dtype=np.uint8)
-
     sf_volatility_target = np.zeros((len(samples), 3), dtype=np.float16)
     has_sf_volatility = np.zeros((len(samples),), dtype=np.uint8)
-
     legal_mask = np.zeros((len(samples), POLICY_SIZE), dtype=np.uint8)
     has_legal_mask = np.zeros((len(samples),), dtype=np.uint8)
 
@@ -143,14 +301,11 @@ def samples_to_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
             has_legal_mask[i] = 1
 
     return {
-        # required
         "x": x,
         "policy_target": policy_target,
         "wdl_target": wdl_target,
-        # priorities / masks
         "priority": priority,
         "has_policy": has_policy,
-        # aux
         "sf_wdl": sf_wdl,
         "has_sf_wdl": has_sf_wdl,
         "sf_move_index": sf_move_index,
@@ -176,13 +331,7 @@ def samples_to_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
     }
 
 
-def _require_shape(name: str, arr: np.ndarray, shape: tuple[int, ...]) -> None:
-    if tuple(arr.shape) != tuple(shape):
-        raise ValueError(f"bad shard field {name}: expected shape {shape}, got {tuple(arr.shape)}")
-
-
 def validate_arrays(arrs: dict[str, np.ndarray]) -> None:
-    # required
     if "x" not in arrs or "policy_target" not in arrs or "wdl_target" not in arrs:
         raise ValueError("shard missing required fields")
 
@@ -194,31 +343,23 @@ def validate_arrays(arrs: dict[str, np.ndarray]) -> None:
         raise ValueError(f"x must be (N,C,8,8); got {x.shape}")
     if x.shape[-2:] != (8, 8):
         raise ValueError(f"x must end with (8,8); got {x.shape}")
-
     if policy.ndim != 2:
         raise ValueError(f"policy_target must be (N,A); got {policy.shape}")
     if policy.shape[0] != x.shape[0]:
         raise ValueError("policy_target N mismatch")
     if int(policy.shape[1]) != int(POLICY_SIZE):
         raise ValueError(f"policy_target A mismatch: expected {POLICY_SIZE}, got {policy.shape[1]}")
-
     if wdl.ndim != 1 or wdl.shape[0] != x.shape[0]:
         raise ValueError("wdl_target must be (N,) matching x")
-
-    # Numeric sanity (reject NaNs/Infs and obviously broken distributions)
     if not np.isfinite(x).all():
         raise ValueError("x contains NaN/Inf")
     if not np.isfinite(policy).all():
         raise ValueError("policy_target contains NaN/Inf")
-
     if (policy < -1e-6).any():
         raise ValueError("policy_target contains negative values")
-
     row_sums = policy.astype(np.float64).sum(axis=1)
     if (row_sums <= 0).any():
         raise ValueError("policy_target has rows with non-positive sum")
-
-    # WDL labels must be in {0,1,2}
     wdl_i = wdl.astype(np.int64, copy=False)
     if ((wdl_i < 0) | (wdl_i > 2)).any():
         raise ValueError("wdl_target out of range")
@@ -230,42 +371,30 @@ def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
     x = np.asarray(arrs["x"])
     policy = np.asarray(arrs["policy_target"])
     wdl = np.asarray(arrs["wdl_target"]).astype(np.int64, copy=False)
-
     n = int(x.shape[0])
 
     priority = np.asarray(arrs.get("priority", np.ones((n,), dtype=np.float32)), dtype=np.float32)
     has_policy = np.asarray(arrs.get("has_policy", np.ones((n,), dtype=np.uint8)), dtype=np.uint8)
-
     sf_wdl = np.asarray(arrs.get("sf_wdl", np.zeros((n, 3), dtype=np.float16)))
     has_sf_wdl = np.asarray(arrs.get("has_sf_wdl", np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
-
     sf_move_index = np.asarray(arrs.get("sf_move_index", np.zeros((n,), dtype=np.int32)), dtype=np.int32)
     has_sf_move = np.asarray(arrs.get("has_sf_move", np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
-
     sf_policy_target = np.asarray(arrs.get("sf_policy_target", np.zeros_like(policy, dtype=np.float16)))
     has_sf_policy = np.asarray(arrs.get("has_sf_policy", np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
-
     moves_left = np.asarray(arrs.get("moves_left", np.zeros((n,), dtype=np.float16)))
     has_moves_left = np.asarray(arrs.get("has_moves_left", np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
-
     is_network_turn = np.asarray(arrs.get("is_network_turn", np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
     has_is_network_turn = np.asarray(arrs.get("has_is_network_turn", np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
-
     categorical = np.asarray(arrs.get("categorical_target", np.zeros((n, 32), dtype=np.float16)))
     has_categorical = np.asarray(arrs.get("has_categorical", np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
-
     policy_soft = np.asarray(arrs.get("policy_soft_target", np.zeros_like(policy, dtype=np.float16)))
     has_policy_soft = np.asarray(arrs.get("has_policy_soft", np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
-
     future_policy = np.asarray(arrs.get("future_policy_target", np.zeros_like(policy, dtype=np.float16)))
     has_future = np.asarray(arrs.get("has_future", np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
-
     vol = np.asarray(arrs.get("volatility_target", np.zeros((n, 3), dtype=np.float16)))
     has_vol = np.asarray(arrs.get("has_volatility", np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
-
     sf_vol = np.asarray(arrs.get("sf_volatility_target", np.zeros((n, 3), dtype=np.float16)))
     has_sf_vol = np.asarray(arrs.get("has_sf_volatility", np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
-
     legal_mask_arr = np.asarray(arrs.get("legal_mask", np.zeros((n, POLICY_SIZE), dtype=np.uint8)), dtype=np.uint8)
     has_legal_mask = np.asarray(arrs.get("has_legal_mask", np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
 
@@ -304,34 +433,98 @@ def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
         if bool(int(has_legal_mask[i]) != 0):
             s.legal_mask = _copy_row(legal_mask_arr, i, dtype=np.uint8)
         out.append(s)
-
     return out
 
 
-def save_npz(path: str | Path, *, samples: list[ReplaySample], meta: ShardMeta | dict[str, Any] | None = None) -> Path:
+def save_npz(
+    path: str | Path,
+    *,
+    samples: list[ReplaySample],
+    meta: ShardMeta | dict[str, Any] | None = None,
+    compress: bool = True,
+) -> Path:
+    arrs = samples_to_arrays(samples)
+    return save_npz_arrays(path, arrs=arrs, meta=meta, compress=compress)
+
+
+def save_npz_arrays(
+    path: str | Path,
+    *,
+    arrs: dict[str, np.ndarray],
+    meta: ShardMeta | dict[str, Any] | None = None,
+    compress: bool = True,
+) -> Path:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-
-    arrs = samples_to_arrays(samples)
-
-    if meta is None:
-        meta_obj = ShardMeta(positions=len(samples))
-    elif isinstance(meta, ShardMeta):
-        meta_obj = meta
+    stored = prune_storage_arrays(arrs)
+    meta_json = json.dumps(_meta_dict(meta, positions=int(np.asarray(stored["x"]).shape[0])), sort_keys=True)
+    if bool(compress):
+        np.savez_compressed(str(p), **stored, meta_json=np.array(meta_json))
     else:
-        meta_obj = ShardMeta(**meta)
-
-    meta_json = json.dumps(asdict(meta_obj), sort_keys=True)
-    np.savez_compressed(str(p), **arrs, meta_json=np.array(meta_json))
+        np.savez(str(p), **stored, meta_json=np.array(meta_json))
     return p
 
 
-def load_npz(path: str | Path) -> tuple[list[ReplaySample], dict[str, Any]]:
+def _local_chunks(arr: np.ndarray) -> tuple[int, ...]:
+    n = int(arr.shape[0])
+    lead = min(max(1, n), 512)
+    if arr.ndim == 1:
+        return (lead,)
+    return (lead, *arr.shape[1:])
+
+
+def save_local_shard_arrays(
+    path: str | Path,
+    *,
+    arrs: dict[str, np.ndarray],
+    meta: ShardMeta | dict[str, Any] | None = None,
+) -> Path:
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    stored = prune_storage_arrays(arrs)
+    if zarr is None or Blosc is None:
+        return save_npz_arrays(p.with_suffix(LEGACY_SHARD_SUFFIX), arrs=stored, meta=meta)
+    if p.exists():
+        shutil.rmtree(p) if p.is_dir() else p.unlink(missing_ok=True)
+    g = zarr.open_group(str(p), mode="w")
+    g.attrs.update(_meta_dict(meta, positions=int(np.asarray(stored["x"]).shape[0])))
+    compressor = Blosc(cname="lz4", clevel=1, shuffle=Blosc.BITSHUFFLE)
+    for name, value in stored.items():
+        arr = np.asarray(value)
+        g.create_dataset(name, data=arr, chunks=_local_chunks(arr), compressor=compressor, overwrite=True)
+    return p
+
+
+def load_npz_arrays(path: str | Path) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
     p = Path(path)
     with np.load(str(p), allow_pickle=False) as z:
-        arrs = {k: z[k] for k in z.files if k != "meta_json"}
+        arrs = {k: np.array(z[k], copy=False) for k in z.files if k != "meta_json"}
         meta_json = z["meta_json"].item() if "meta_json" in z.files else "{}"
-
     meta = json.loads(str(meta_json)) if meta_json else {}
-    samples = arrays_to_samples(arrs)
-    return samples, meta
+    validate_arrays(arrs)
+    return arrs, meta
+
+
+def load_shard_arrays(
+    path: str | Path,
+    *,
+    lazy: bool = False,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    p = Path(path)
+    if p.suffix == LOCAL_SHARD_SUFFIX:
+        if zarr is None:
+            raise RuntimeError("zarr support is not available")
+        g = zarr.open_group(str(p), mode="r")
+        meta = dict(g.attrs.asdict())
+        if lazy:
+            arrs = {name: g[name] for name in _SHARD_FIELDS if name in g}
+            return arrs, meta
+        arrs = {name: np.asarray(g[name]) for name in _SHARD_FIELDS if name in g}
+        validate_arrays(arrs)
+        return arrs, meta
+    return load_npz_arrays(p)
+
+
+def load_npz(path: str | Path) -> tuple[list[ReplaySample], dict[str, Any]]:
+    arrs, meta = load_npz_arrays(path)
+    return arrays_to_samples(arrs), meta

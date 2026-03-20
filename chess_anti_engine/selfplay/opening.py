@@ -129,10 +129,6 @@ def _sample_from_pgn(*, rng, path: str, max_plies: int, max_games: int) -> chess
     if not seqs:
         return chess.Board()
 
-    idx = int(rng.choice(len(seqs), p=None))
-    # Weighted sampling: numpy choice with weights; to avoid importing numpy here,
-    # we accept that rng is a numpy Generator in caller and supports choice with p.
-    # If caller passed a python random, it will fail loudly.
     import numpy as np
 
     p = np.array(weights, dtype=np.float64)

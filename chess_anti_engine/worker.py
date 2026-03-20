@@ -16,6 +16,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from chess_anti_engine.inference import SlotInferenceClient, ShmBatchInferenceClient
 from chess_anti_engine.model import ModelConfig, build_model
 from chess_anti_engine.moves.encode import POLICY_SIZE
 from chess_anti_engine.replay.shard import ShardMeta, save_npz
@@ -270,6 +271,17 @@ def _maybe_compile_inference_model(model: torch.nn.Module, *, device: str) -> to
         return model
 
 
+def _configure_shared_compile_cache(*, cache_dir: Path) -> None:
+    """Point TorchInductor/Triton caches at a shared worker cache root."""
+    compile_cache_root = cache_dir / "compile_cache"
+    inductor_dir = compile_cache_root / "torchinductor"
+    triton_dir = compile_cache_root / "triton"
+    inductor_dir.mkdir(parents=True, exist_ok=True)
+    triton_dir.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("TORCHINDUCTOR_CACHE_DIR", str(inductor_dir))
+    os.environ.setdefault("TRITON_CACHE_DIR", str(triton_dir))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Distributed selfplay worker")
 
@@ -343,6 +355,11 @@ def main() -> None:
 
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--device", type=str, default=None)
+    ap.add_argument("--inference-broker-socket", type=str, default=None)
+    ap.add_argument("--inference-slot-name", type=str, default=None,
+                    help="Shared-memory slot name for slot-based inference broker.")
+    ap.add_argument("--inference-slot-max-batch", type=int, default=256,
+                    help="Max batch size for inference slot (must match broker).")
     ap.add_argument(
         "--compile-inference",
         action="store_true",
@@ -514,6 +531,7 @@ def main() -> None:
 
     cache_dir = Path(str(args.shared_cache_dir)) if args.shared_cache_dir is not None else (work_dir / "cache")
     shared_cache_enabled = args.shared_cache_dir is not None
+    _configure_shared_compile_cache(cache_dir=cache_dir)
     shard_dir = work_dir / "shards"
     pending_dir = shard_dir / "pending"
     uploaded_dir = shard_dir / "uploaded"
@@ -584,12 +602,28 @@ def main() -> None:
     last_model_sha = None
     model_cfg_active: ModelConfig | None = None
     model = None
+    def _make_inference_client():
+        if str(args.inference_slot_name or "").strip():
+            return SlotInferenceClient(
+                slot_name=str(args.inference_slot_name),
+                max_batch=int(args.inference_slot_max_batch),
+            )
+        if str(args.inference_broker_socket or "").strip():
+            return ShmBatchInferenceClient(
+                endpoint=str(args.inference_broker_socket),
+            )
+        return None
+
+    inference_client = _make_inference_client()
 
     last_best_sha = None
     best_model = None
 
     try:
         while True:
+            if inference_client is None:
+                inference_client = _make_inference_client()
+
             if not fixed_trial_id:
                 body: dict[str, object] = {"worker_info": worker_info}
                 if lease_id:
@@ -782,6 +816,9 @@ def main() -> None:
                 raise SystemExit(f"Worker too old: worker={PACKAGE_VERSION} min_required={min_v}")
 
             reco = manifest.get("recommended_worker") or {}
+            task = manifest.get("task") or {"type": "selfplay"}
+            task_type = str(task.get("type", "selfplay")).lower()
+            need_local_model = inference_client is None or task_type == "arena"
 
             model_info = manifest.get("model") or {}
             model_sha = str(model_info.get("sha256") or "")
@@ -789,7 +826,7 @@ def main() -> None:
                 time.sleep(float(args.poll_seconds))
                 continue
 
-            if model_sha != last_model_sha:
+            if need_local_model and model_sha != last_model_sha:
                 log.info("switching to latest model sha=%s", model_sha)
                 model_path = cache_dir / f"model_{model_sha}.pt"
                 # Download (or re-download) and verify sha256.
@@ -844,9 +881,6 @@ def main() -> None:
                     leased_trial_id = ""
                     trial_api_prefix = "/v1"
                 last_model_sha = model_sha
-
-            task = manifest.get("task") or {"type": "selfplay"}
-            task_type = str(task.get("type", "selfplay")).lower()
 
             # Opening book (optional) — downloaded once, used by both selfplay and arena.
             opening_book_path = None
@@ -1133,7 +1167,7 @@ def main() -> None:
 
             # (opening_book_path already resolved above, shared by arena and selfplay)
 
-            if model is None:
+            if need_local_model and model is None:
                 time.sleep(float(args.poll_seconds))
                 continue
 
@@ -1188,37 +1222,62 @@ def main() -> None:
 
             # Generate a shard
             t0 = time.time()
-            samples, stats = play_batch(
-                model,
-                device=str(device),
-                rng=rng,
-                stockfish=sf,
-                games=int(games_per_batch),
-                temperature=float(temperature),
-                temperature_decay_start_move=int(t_start),
-                temperature_decay_moves=int(t_moves),
-                temperature_endgame=float(t_end),
-                max_plies=int(max_plies),
-                mcts_simulations=int(mcts_sims),
-                mcts_type=str(mcts_type),
-                playout_cap_fraction=float(playout_cap_fraction),
-                fast_simulations=int(fast_sims),
-                sf_policy_temp=float(sf_policy_temp),
-                sf_policy_label_smooth=float(sf_policy_label_smooth),
-                timeout_adjudication_threshold=float(timeout_adjudication_threshold),
-                opponent_random_move_prob=float(opponent_random_move_prob),
-                opponent_topk_stage_end=float(reco.get("opponent_topk_stage_end", 0.5)),
-                selfplay_fraction=float(selfplay_fraction),
-                opening_book_path=opening_book_path,
-                opening_book_max_plies=int(opening_book_max_plies),
-                opening_book_max_games=int(opening_book_max_games),
-                opening_book_prob=float(opening_book_prob),
-                opening_book_path_2=opening_book_path_2,
-                opening_book_max_plies_2=int(opening_book_max_plies_2),
-                opening_book_max_games_2=int(opening_book_max_games_2),
-                opening_book_mix_prob_2=float(opening_book_mix_prob_2),
-                random_start_plies=int(random_start_plies),
-            )
+            try:
+                samples, stats = play_batch(
+                    model if need_local_model else None,
+                    device=str(device),
+                    rng=rng,
+                    stockfish=sf,
+                    evaluator=inference_client,
+                    games=int(games_per_batch),
+                    temperature=float(temperature),
+                    temperature_decay_start_move=int(t_start),
+                    temperature_decay_moves=int(t_moves),
+                    temperature_endgame=float(t_end),
+                    max_plies=int(max_plies),
+                    mcts_simulations=int(mcts_sims),
+                    mcts_type=str(mcts_type),
+                    playout_cap_fraction=float(playout_cap_fraction),
+                    fast_simulations=int(fast_sims),
+                    sf_policy_temp=float(sf_policy_temp),
+                    sf_policy_label_smooth=float(sf_policy_label_smooth),
+                    timeout_adjudication_threshold=float(timeout_adjudication_threshold),
+                    opponent_random_move_prob=float(opponent_random_move_prob),
+                    opponent_topk_stage_end=float(reco.get("opponent_topk_stage_end", 0.5)),
+                    selfplay_fraction=float(selfplay_fraction),
+                    opening_book_path=opening_book_path,
+                    opening_book_max_plies=int(opening_book_max_plies),
+                    opening_book_max_games=int(opening_book_max_games),
+                    opening_book_prob=float(opening_book_prob),
+                    opening_book_path_2=opening_book_path_2,
+                    opening_book_max_plies_2=int(opening_book_max_plies_2),
+                    opening_book_max_games_2=int(opening_book_max_games_2),
+                    opening_book_mix_prob_2=float(opening_book_mix_prob_2),
+                    random_start_plies=int(random_start_plies),
+                )
+            except TimeoutError as exc:
+                if inference_client is None:
+                    raise
+                log.warning("inference broker timed out; resetting client: %s", exc)
+                try:
+                    inference_client.close()
+                except Exception:
+                    pass
+                inference_client = None
+                time.sleep(float(args.poll_seconds))
+                continue
+            except RuntimeError as exc:
+                err = str(exc).lower()
+                if inference_client is None or not any(tok in err for tok in ("inference", "broker", "slot")):
+                    raise
+                log.warning("inference broker error; resetting client: %s", exc)
+                try:
+                    inference_client.close()
+                except Exception:
+                    pass
+                inference_client = None
+                time.sleep(float(args.poll_seconds))
+                continue
             t1 = time.time()
 
             # Log batch outcome (only visible if --log-file is enabled).
@@ -1284,9 +1343,12 @@ def main() -> None:
             # Write atomically: save to a temp file then rename so the upload
             # loop never picks up a partially-written shard.
             # Temp name must end in .npz so numpy doesn't append the extension itself.
-            tmp_path = pending_dir / f"_tmp_{shard_path.name}"
-            save_npz(tmp_path, samples=samples, meta=meta)
-            tmp_path.replace(shard_path)
+            if samples:
+                tmp_path = pending_dir / f"_tmp_{shard_path.name}"
+                save_npz(tmp_path, samples=samples, meta=meta, compress=False)
+                tmp_path.replace(shard_path)
+            else:
+                log.info("batch produced no policy samples; skipping shard write")
 
             # Prune old cached models opportunistically.
             best_info = manifest.get("best_model") or {}
@@ -1298,6 +1360,11 @@ def main() -> None:
             time.sleep(0.1)
 
     finally:
+        if inference_client is not None and hasattr(inference_client, "close"):
+            try:
+                inference_client.close()
+            except Exception:
+                pass
         if sf is not None:
             sf.close()
 

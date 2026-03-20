@@ -11,6 +11,18 @@ from chess_anti_engine.mcts.puct import run_mcts_many
 from chess_anti_engine.mcts.gumbel import run_gumbel_root_many
 from chess_anti_engine.selfplay.opening import OpeningConfig, make_starting_board
 
+try:
+    from chess_anti_engine.mcts.puct_c import run_mcts_many_c as _run_mcts_many_c
+    _HAS_C_TREE = True
+except ImportError:
+    _HAS_C_TREE = False
+
+try:
+    from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c as _run_gumbel_root_many_c
+    _HAS_GUMBEL_C = True
+except ImportError:
+    _HAS_GUMBEL_C = False
+
 
 @dataclass(frozen=True)
 class MatchStats:
@@ -110,7 +122,8 @@ def play_match_batch(
 
             sub_boards = [boards[i] for i in idxs]
             if str(mcts_type) == "gumbel":
-                probs, actions, _values = run_gumbel_root_many(
+                _gumbel_fn = _run_gumbel_root_many_c if _HAS_GUMBEL_C else run_gumbel_root_many
+                probs, actions, _values, _masks = _gumbel_fn(
                     model,
                     sub_boards,
                     device=device,
@@ -118,7 +131,8 @@ def play_match_batch(
                     cfg=GumbelConfig(simulations=int(mcts_simulations), temperature=float(temperature)),
                 )
             else:
-                probs, actions, _values = run_mcts_many(
+                _puct_fn = _run_mcts_many_c if _HAS_C_TREE else run_mcts_many
+                probs, actions, _values, _masks = _puct_fn(
                     model,
                     sub_boards,
                     device=device,

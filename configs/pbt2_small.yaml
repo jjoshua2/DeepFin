@@ -32,7 +32,7 @@ worker_wheel_path: null  # Optional: built wheel to publish for remote worker se
 bootstrap_max_positions: 0   # 0 = load ALL positions (14.2M) — used by scripts/train_bootstrap.py
 bootstrap_train_steps: 0     # 0 = auto: train 1 epoch — used by scripts/train_bootstrap.py
 shared_shards_dir: null  # Disabled: start trials from bootstrap weights + fresh selfplay window
-salvage_seed_pool_dir: /home/josh/projects/chess/runs/pbt2_small/salvage/62323_20260314_115133
+salvage_seed_pool_dir: /home/josh/projects/chess/runs/pbt2_small/salvage/e4706_20260316_180846_balanced8
 salvage_restore_donor_config: false   # Use new PB2 hyperparams, not donor's
 salvage_restore_full_trainer_state: false  # Fresh optimizer/LR schedule
 
@@ -81,10 +81,10 @@ stockfish:
 
 selfplay:
   games_per_iter: 150  # Steady-state target once the early ramp finishes.
-  games_per_iter_start: 48  # Two worker rounds at 3 workers x batch 8; fast sanity check with full-tree Gumbel.
+  games_per_iter_start: 32  # One round of 8 workers × 4 games; fast sanity check.
   games_per_iter_ramp_iters: 20
   selfplay_fraction: 0.20  # Pin near the recent good band while narrowing the search to lr + feature-group dropout.
-  selfplay_batch: 8     # Full-tree Gumbel is much slower; smaller worker chunks reduce timeout/staleness risk.
+  selfplay_batch: 8     # Keep per-worker batches large enough to amortize MCTS/broker overhead.
   max_plies: 240
 
   temperature: 1.0       # Gumbel improved policy already provides exploration; T=1.0 avoids distorting the search target.
@@ -185,21 +185,25 @@ tune:
   gpbt_pairwise_momentum: 0.50
   gpbt_quantile_fraction: 0.25
   gpbt_resample_probability: 0.05
-  num_samples: 3
-  max_concurrent_trials: 3    # 3 trials with more resources each; cross-trial sharing still helps avoid duplicate work.
-  cpus_per_trial: 3
-  gpus_per_trial: 0.30        # 3 × 0.30 = 0.9 GPU allocated; leaves some headroom for worker inference.
+  num_samples: 6
+  max_concurrent_trials: 4
+  cpus_per_trial: 1
+  gpus_per_trial: 0.20
   distributed_workers_per_trial: 4
   distributed_worker_sf_workers: 1
   distributed_worker_use_compile: true
+  distributed_inference_broker_enabled: true
+  distributed_inference_batch_wait_ms: 5.0
+  distributed_inference_max_batch_per_slot: 256
   distributed_worker_shared_cache_dir: /home/josh/projects/chess/runs/pbt2_small/server/worker_cache
-  distributed_min_workers_per_trial: 2
+  distributed_min_workers_per_trial: 1
   distributed_max_worker_delta_per_rebalance: 1
   distributed_wait_timeout_seconds: 5400
   distributed_server_port: 45453
   distributed_server_host: 0.0.0.0
   distributed_server_public_url: http://192.168.1.212:45453
   distributed_server_root_override: /mnt/c/chess_active/pbt2_small_server
+  tune_replay_root_override: /mnt/c/chess_active/pbt2_small_replay
 
   # Disk-backed replay buffer: keeps ~1 GB per trial instead of ~10 GB
   shuffle_buffer_size: 70000  # In-memory shuffle buffer (samples)
@@ -209,7 +213,7 @@ tune:
   exploit_replay_refresh_enabled: false  # No donor import at exploit time; per-iteration sharing handles cross-trial data.
   exploit_replay_skip_newest: 0
   exploit_replay_donor_shards: 0         # Disabled: per-iteration sharing replaces exploit-time bulk import.
-  exploit_replay_share_top_enabled: true   # With 3 trials, cross-trial sharing still helps avoid duplicate work.
+  exploit_replay_share_top_enabled: true   # With 8 trials, still share only from a small strong subset.
   exploit_replay_top_k_trials: 3
   exploit_replay_top_within_best_frac: 0.05
   exploit_replay_top_min_metric: 0.0

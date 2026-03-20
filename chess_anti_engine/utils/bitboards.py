@@ -28,23 +28,42 @@ def orient_square(sq: chess.Square, turn: chess.Color) -> chess.Square:
 
 def write_bitboard_to_plane(dst: np.ndarray, bb: int, *, turn: chess.Color) -> np.ndarray:
     """Write an oriented bitboard mask into an existing (8,8) float32 plane."""
-    flat = dst.reshape(-1)
-    flat.fill(0.0)
     if not bb:
+        dst.fill(0.0)
         return dst
-    orient_idx = _ORIENT_FLAT_IDX[turn]
-    while bb:
-        lsb = bb & -bb
-        sq = lsb.bit_length() - 1
-        flat[orient_idx[sq]] = 1.0
-        bb ^= lsb
+    # Unpack 64-bit int to 64 binary values (MSB first from big-endian bytes).
+    # After reshape(8,8): row 0 = bits 63..56 (rank 7, files reversed).
+    # WHITE: flip rows+cols → plane[rank][file]. BLACK: flip cols only (ranks pre-flipped).
+    raw = np.unpackbits(np.frombuffer(int(bb).to_bytes(8, 'big'), dtype=np.uint8)).reshape(8, 8)
+    if turn == chess.WHITE:
+        dst[:] = raw[::-1, ::-1]
+    else:
+        dst[:] = raw[:, ::-1]
     return dst
 
 
 def bitboard_to_plane(bb: int, *, turn: chess.Color) -> np.ndarray:
     """Convert python-chess bitboard mask to an oriented 8x8 float32 plane."""
-    plane = np.zeros((8, 8), dtype=np.float32)
-    return write_bitboard_to_plane(plane, bb, turn=turn)
+    if not bb:
+        return np.zeros((8, 8), dtype=np.float32)
+    raw = np.unpackbits(np.frombuffer(int(bb).to_bytes(8, 'big'), dtype=np.uint8)).reshape(8, 8)
+    if turn == chess.WHITE:
+        return raw[::-1, ::-1].astype(np.float32)
+    else:
+        return raw[:, ::-1].astype(np.float32)
+
+
+def bitboards_to_planes(bbs: list[int], *, turn: chess.Color) -> np.ndarray:
+    """Convert multiple bitboards to oriented (N, 8, 8) float32 planes in one batch."""
+    n = len(bbs)
+    if n == 0:
+        return np.zeros((0, 8, 8), dtype=np.float32)
+    raw_bytes = b''.join(int(bb).to_bytes(8, 'big') for bb in bbs)
+    raw = np.unpackbits(np.frombuffer(raw_bytes, dtype=np.uint8)).reshape(n, 8, 8)
+    if turn == chess.WHITE:
+        return raw[:, ::-1, ::-1].astype(np.float32)
+    else:
+        return raw[:, :, ::-1].astype(np.float32)
 
 
 def file_to_plane(file_idx: int) -> np.ndarray:

@@ -97,6 +97,41 @@ def test_feature_dropout_only_zeroes_extra_planes_when_enabled(tmp_path):
     assert np.allclose(x[base:], 0.0)
 
 
+def test_feature_dropout_per_group_independence(tmp_path):
+    """Only the king_safety group (planes 112:122) should be zeroed when only
+    fdp_king_safety=1.0 and all other groups have fdp=0.0."""
+    rng = np.random.default_rng(0)
+    buf = ReplayBuffer(10, rng=rng)
+    buf.add(_make_sample(base_val=2.0, feat_val=3.0))
+
+    model = _CaptureModel()
+    trainer = _NoPostMetricsTrainer(
+        model,
+        device="cpu",
+        lr=1e-3,
+        log_dir=tmp_path,
+        use_amp=False,
+        feature_dropout_p=0.0,
+        fdp_king_safety=1.0,
+        fdp_pins=0.0,
+        fdp_pawns=0.0,
+        fdp_mobility=0.0,
+        fdp_outposts=0.0,
+    )
+
+    trainer.train_steps(buf, batch_size=1, steps=1)
+    assert model.last_x is not None
+
+    x = model.last_x[0].cpu().numpy()
+    base = int(LC0_FULL.num_planes)
+    # Base planes untouched
+    assert np.allclose(x[:base], 2.0)
+    # King safety (offset 0, length 10) zeroed
+    assert np.allclose(x[base:base + 10], 0.0)
+    # Remaining groups (pins=6, pawns=8, mobility=6, outposts=4) preserved
+    assert np.allclose(x[base + 10:], 3.0)
+
+
 def test_feature_dropout_can_be_disabled(tmp_path):
     rng = np.random.default_rng(0)
     buf = ReplayBuffer(10, rng=rng)

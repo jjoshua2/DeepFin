@@ -13,6 +13,7 @@ import torch
 from chess_anti_engine.config import RunConfig, StockfishConfig
 from chess_anti_engine.model import ModelConfig, build_model, zero_policy_head_parameters_
 from chess_anti_engine.replay import DiskReplayBuffer, ReplayBuffer, balance_wdl
+from chess_anti_engine.replay.shard import iter_shard_paths, samples_to_arrays
 from chess_anti_engine.selfplay import play_batch
 from chess_anti_engine.selfplay.budget import progressive_mcts_simulations
 from chess_anti_engine.stockfish import DifficultyPID, StockfishPool, StockfishUCI
@@ -106,6 +107,7 @@ def _run_salvage(args: argparse.Namespace) -> None:
         raise SystemExit(f"Could not infer run id from {tune_dir}")
 
     metric_key = str(getattr(args, "salvage_metric", "opponent_strength"))
+    replay_root_override = str(getattr(args, "tune_replay_root_override", "") or "").strip()
     top_n = int(getattr(args, "salvage_top_n", 0))
     if top_n <= 0:
         top_n = int(getattr(args, "num_samples", 1))
@@ -224,11 +226,17 @@ def _run_salvage(args: argparse.Namespace) -> None:
         copied_shards = 0
         if copy_replay:
             src_replay = td / "replay_shards"
+            if (not src_replay.is_dir()) and replay_root_override:
+                src_replay = Path(replay_root_override).expanduser() / td.name / "replay_shards"
             if src_replay.is_dir():
                 dst_replay = seed_dir / "replay_shards"
                 dst_replay.mkdir(parents=True, exist_ok=True)
-                for sp in sorted(src_replay.glob("shard_*.npz")):
-                    shutil.copy2(str(sp), str(dst_replay / sp.name))
+                for sp in iter_shard_paths(src_replay):
+                    dst = dst_replay / sp.name
+                    if sp.is_dir():
+                        shutil.copytree(str(sp), str(dst))
+                    else:
+                        shutil.copy2(str(sp), str(dst))
                     copied_shards += 1
 
         entries.append(
@@ -344,7 +352,7 @@ def _run_single(args: argparse.Namespace) -> None:
         model,
         device=cfg.train.device,
         lr=cfg.train.lr,
-        grad_clip=float(args.grad_clip),
+        zclip_max_norm=float(args.grad_clip),
         log_dir=cfg.work_dir / "tb",
         use_amp=not bool(args.no_amp),
         feature_dropout_p=float(args.feature_dropout_p),
@@ -515,7 +523,6 @@ def _run_single(args: argparse.Namespace) -> None:
 
             # Mini-batch selfplay: play games in small batches to limit memory
             selfplay_batch = int(getattr(args, "selfplay_batch", 10))
-            games_remaining = cfg.selfplay.games_per_iter
             total_positions = 0
             total_w, total_d, total_l = 0, 0, 0
             total_sf_d6 = 0.0
@@ -564,21 +571,29 @@ def _run_single(args: argparse.Namespace) -> None:
                 fpu_reduction=float(getattr(args, "fpu_reduction", 1.2)),
                 fpu_at_root=float(getattr(args, "fpu_at_root", 1.0)),
             )
-            while games_remaining > 0:
-                chunk = min(selfplay_batch, games_remaining)
-                samples, sp_stats = play_batch(
-                    trainer.model, games=chunk, **selfplay_kwargs,
-                )
-                games_remaining -= chunk
-                total_positions += sp_stats.positions
-                total_w += sp_stats.w
-                total_d += sp_stats.d
-                total_l += sp_stats.l
-                total_sf_d6 += sp_stats.sf_eval_delta6 * chunk
-                buf.add_many(samples)
-                del samples
+            samples, sp_stats = play_batch(
+                trainer.model,
+                games=selfplay_batch,
+                target_games=cfg.selfplay.games_per_iter,
+                **selfplay_kwargs,
+            )
+            total_positions += sp_stats.positions
+            total_w += sp_stats.w
+            total_d += sp_stats.d
+            total_l += sp_stats.l
+            total_sf_d6 += sp_stats.sf_eval_delta6 * sp_stats.games
+            if samples:
+                buf.add_many_arrays(samples_to_arrays(samples))
+            del samples
 
             buf.flush()
+
+            if len(buf) == 0:
+                print(
+                    f"iter={it} step={getattr(trainer, 'step', 0)} sims={int(sims)} replay=0 pos_added=0 "
+                    "skipping train step because selfplay produced no policy samples"
+                )
+                continue
 
             # KataGo-style sliding window: train on full buffer, steps = new_positions / batch.
             steps = max(1, total_positions // cfg.train.batch_size)
@@ -814,6 +829,33 @@ def main() -> None:
             "Optional filesystem root for the Tune-managed distributed server state. "
             "If unset, defaults to <work_dir>/server."
         ),
+    )
+    ap.add_argument(
+        "--tune-replay-root-override",
+        type=str,
+        default="",
+        help=(
+            "Optional filesystem root for per-trial replay shard storage. "
+            "If unset, replay stays under each Ray trial directory."
+        ),
+    )
+    ap.add_argument(
+        "--distributed-inference-broker-enabled",
+        action="store_true",
+        help="Launch one per-trial local inference broker and let local workers submit shared-memory eval batches to it.",
+    )
+    ap.add_argument(
+        "--distributed-inference-batch-wait-ms",
+        type=float,
+        default=3.0,
+        help="How long the per-trial inference broker waits to aggregate local worker eval requests.",
+    )
+    ap.add_argument(
+        "--distributed-inference-max-batch-per-slot",
+        "--distributed-inference-max-batch-positions",
+        type=int,
+        default=512,
+        help="Maximum encoded positions a single worker can submit in one shared-memory inference request.",
     )
     ap.add_argument(
         "--gpus-per-trial", type=float, default=0.1,
@@ -1332,6 +1374,10 @@ def main() -> None:
         "distributed_server_host": args.distributed_server_host,
         "distributed_server_public_url": args.distributed_server_public_url,
         "distributed_server_root_override": args.distributed_server_root_override,
+        "tune_replay_root_override": args.tune_replay_root_override,
+        "distributed_inference_broker_enabled": bool(args.distributed_inference_broker_enabled),
+        "distributed_inference_batch_wait_ms": float(args.distributed_inference_batch_wait_ms),
+        "distributed_inference_max_batch_per_slot": int(args.distributed_inference_max_batch_per_slot),
         "gpus_per_trial": float(args.gpus_per_trial),
         "tune_scheduler": str(args.tune_scheduler),
         "pb2_perturbation_interval": int(args.pb2_perturbation_interval),

@@ -1,6 +1,6 @@
 import numpy as np
 
-from chess_anti_engine.replay.buffer import ReplayBuffer, ReplaySample
+from chess_anti_engine.replay.buffer import ArrayReplayBuffer, ReplayBuffer, ReplaySample
 
 
 def test_surprise_sampling_batch_size():
@@ -16,6 +16,11 @@ def test_surprise_sampling_batch_size():
 
     batch = buf.sample_batch(32)
     assert len(batch) == 32
+
+    arrs = buf.sample_batch_arrays(16)
+    assert arrs["x"].shape == (16, 146, 8, 8)
+    assert arrs["policy_target"].shape == (16, 64 * 73)
+    assert arrs["wdl_target"].shape == (16,)
 
 
 def test_wdl_balance_draw_cap_and_wl_ratio():
@@ -72,3 +77,21 @@ def test_wdl_balance_falls_back_without_both_decisive_classes():
 
     # With p(draw)=0.95, we'd expect ~95 draws under raw sampling; allow some noise.
     assert n_draw >= 85
+
+
+def test_array_replay_buffer_arrays_and_capacity():
+    rng = np.random.default_rng(0)
+    buf = ArrayReplayBuffer(50, rng=rng)
+
+    x = np.zeros((146, 8, 8), dtype=np.float32)
+    p = np.zeros((64 * 73,), dtype=np.float32)
+    p[0] = 1.0
+
+    for i in range(80):
+        buf.add(ReplaySample(x=x, policy_target=p, wdl_target=i % 3, priority=float(i + 1)))
+
+    assert len(buf) == 50
+    arrs = buf.sample_batch_arrays(20)
+    assert arrs["x"].shape == (20, 146, 8, 8)
+    assert arrs["policy_target"].shape == (20, 64 * 73)
+    assert arrs["wdl_target"].shape == (20,)

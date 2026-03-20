@@ -138,7 +138,6 @@ def probe_best_move(board: chess.Board, syzygy_path: str) -> chess.Move | None:
 
 def rescore_game_samples(
     boards_history: list[chess.Board],
-    pov_whites: list[bool],
     syzygy_path: str,
 ) -> str | None:
     """Find the earliest tablebase-eligible position and return the proven game result.
@@ -149,7 +148,6 @@ def rescore_game_samples(
 
     Args:
         boards_history: Board states at each ply (after the move was played).
-        pov_whites: Whether each sample was from white's perspective.
         syzygy_path: Path to Syzygy tablebase directory.
 
     Returns:

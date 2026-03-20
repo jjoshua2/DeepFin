@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from chess_anti_engine.moves.encode import mirror_policy, mirror_policy_index
+from chess_anti_engine.moves.encode import MIRROR_POLICY_MAP, mirror_policy, mirror_policy_batch, mirror_policy_index
 
 from .buffer import ReplaySample
 
@@ -69,4 +69,41 @@ def maybe_mirror_samples(
             out.append(mirror_sample(s))
         else:
             out.append(s)
+    return out
+
+
+def maybe_mirror_batch_arrays(
+    arrs: dict[str, np.ndarray],
+    *,
+    rng: np.random.Generator,
+    prob: float,
+) -> dict[str, np.ndarray]:
+    """Apply mirroring augmentation to array-backed replay batches."""
+    p = float(prob)
+    if p <= 0.0:
+        return arrs
+
+    x = np.asarray(arrs["x"])
+    n = int(x.shape[0])
+    if n <= 0:
+        return arrs
+
+    mask = rng.random(n) < p
+    if not np.any(mask):
+        return arrs
+
+    out = dict(arrs)
+    out["x"] = np.array(arrs["x"], copy=True, order="C")
+    out["x"][mask] = out["x"][mask, :, :, ::-1].copy()
+
+    for key in ("policy_target", "sf_policy_target", "policy_soft_target", "future_policy_target", "legal_mask"):
+        if key in arrs:
+            out[key] = np.array(arrs[key], copy=True, order="C")
+            out[key][mask] = mirror_policy_batch(out[key][mask])
+
+    if "sf_move_index" in arrs:
+        out["sf_move_index"] = np.array(arrs["sf_move_index"], copy=True, order="C")
+        idx = out["sf_move_index"][mask].astype(np.int64, copy=False)
+        out["sf_move_index"][mask] = MIRROR_POLICY_MAP[idx].astype(out["sf_move_index"].dtype, copy=False)
+
     return out

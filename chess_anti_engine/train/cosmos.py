@@ -18,8 +18,7 @@ from torch import Tensor
 from torch.optim import Optimizer
 
 
-@torch.compile
-def zeropower_via_newtonschulz5(G: Tensor, steps: int = 10, eps: float = 1e-7) -> Tensor:
+def _zeropower_via_newtonschulz5(G: Tensor, steps: int = 10, eps: float = 1e-7) -> Tensor:
     assert len(G.shape) == 2
     a, b, c = (3.4445, -4.7750, 2.0315)
     X = G.bfloat16()
@@ -33,6 +32,21 @@ def zeropower_via_newtonschulz5(G: Tensor, steps: int = 10, eps: float = 1e-7) -
     if G.size(0) > G.size(1):
         X = X.T
     return X
+
+
+# Defer torch.compile to first call to avoid triggering CUDA init at import time
+# (segfaults in environments where CUDA driver is broken, e.g. WSL2).
+_zeropower_compiled: None | object = None
+
+
+def zeropower_via_newtonschulz5(G: Tensor, steps: int = 10, eps: float = 1e-7) -> Tensor:
+    global _zeropower_compiled
+    if _zeropower_compiled is None:
+        try:
+            _zeropower_compiled = torch.compile(_zeropower_via_newtonschulz5)
+        except Exception:
+            _zeropower_compiled = _zeropower_via_newtonschulz5
+    return _zeropower_compiled(G, steps=steps, eps=eps)
 
 
 def cosmos(

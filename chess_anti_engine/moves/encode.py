@@ -7,6 +7,14 @@ import chess
 
 from chess_anti_engine.utils.bitboards import orient_square
 
+try:
+    from chess_anti_engine.encoding._lc0_ext import (
+        legal_move_policy_indices as _c_legal_move_policy_indices,
+    )
+    _HAS_LC0_C_EXT = True
+except ImportError:
+    _HAS_LC0_C_EXT = False
+
 # LC0 / AlphaZero-style policy encoding: 8x8x73 = 4672.
 #
 # Indexing:
@@ -127,6 +135,73 @@ MIRROR_POLICY_INV = np.empty((POLICY_SIZE,), dtype=np.int32)
 MIRROR_POLICY_INV[MIRROR_POLICY_MAP] = np.arange(POLICY_SIZE, dtype=np.int32)
 
 
+# Precomputed reverse LUT: policy index → (from_sq, to_sq, promotion) in real coordinates.
+# Shape: (2, POLICY_SIZE, 3) — axis 0: int(turn) (0=BLACK, 1=WHITE).
+# [:,idx,0] = from_sq, [:,idx,1] = to_sq, [:,idx,2] = promotion piece type (0=none, 2=knight, 3=bishop, 4=rook, 5=queen)
+_INDEX_TO_MOVE_LUT = np.full((2, POLICY_SIZE, 3), -1, dtype=np.int16)
+
+for _turn in (chess.WHITE, chess.BLACK):
+    _ti = int(_turn)
+    for _idx in range(POLICY_SIZE):
+        _from_o = _idx // PLANE_COUNT
+        _plane = _idx % PLANE_COUNT
+        if _plane >= 64:
+            _rel = _plane - 64
+            _piece_idx = _rel // 3
+            _dir_idx = _rel % 3
+            _df = UNDERPROMO_DFS[_dir_idx]
+            _dr = 1
+            _ff, _fr = chess.square_file(_from_o), chess.square_rank(_from_o)
+            _tf, _tr = _ff + _df, _fr + _dr
+            if 0 <= _tf <= 7 and 0 <= _tr <= 7:
+                _to_o = chess.square(_tf, _tr)
+                _f_real = orient_square(_from_o, _turn)
+                _t_real = orient_square(_to_o, _turn)
+                _promo = [chess.KNIGHT, chess.BISHOP, chess.ROOK][_piece_idx]
+                _INDEX_TO_MOVE_LUT[_ti, _idx] = [_f_real, _t_real, _promo]
+        else:
+            _delta = _PLANE_TO_DELTA.get(_plane)
+            if _delta is not None:
+                _df, _dr = _delta
+                _ff, _fr = chess.square_file(_from_o), chess.square_rank(_from_o)
+                _tf, _tr = _ff + _df, _fr + _dr
+                if 0 <= _tf <= 7 and 0 <= _tr <= 7:
+                    _to_o = chess.square(_tf, _tr)
+                    _f_real = orient_square(_from_o, _turn)
+                    _t_real = orient_square(_to_o, _turn)
+                    # Check for queen promotion (pawn reaching last rank)
+                    _promo_val = 0
+                    _real_rank = chess.square_rank(_t_real)
+                    if _real_rank == 7 or _real_rank == 0:
+                        # Could be pawn promotion — mark as queen
+                        _promo_val = chess.QUEEN
+                    _INDEX_TO_MOVE_LUT[_ti, _idx] = [_f_real, _t_real, _promo_val]
+
+
+def index_to_move_fast(index: int, board: chess.Board) -> chess.Move:
+    """Fast index → move using precomputed LUT."""
+    entry = _INDEX_TO_MOVE_LUT[int(board.turn), int(index)]
+    f, t, promo = int(entry[0]), int(entry[1]), int(entry[2])
+    if f < 0:
+        return next(iter(board.legal_moves))
+
+    # Only apply promotion if a pawn is actually on the from square
+    promotion = None
+    if promo > 0:
+        piece = board.piece_at(f)
+        if piece is not None and piece.piece_type == chess.PAWN:
+            promotion = promo
+
+    m = chess.Move(f, t, promotion=promotion)
+    if m in board.legal_moves:
+        return m
+    # Fallback (rare edge cases)
+    for lm in board.legal_moves:
+        if move_to_index(lm, board) == index:
+            return lm
+    return next(iter(board.legal_moves))
+
+
 def mirror_policy(policy: np.ndarray) -> np.ndarray:
     """Mirror a (POLICY_SIZE,) policy vector left-right.
 
@@ -169,73 +244,98 @@ def move_to_index(move: chess.Move, board: chess.Board) -> int:
 
 
 def index_to_move(index: int, board: chess.Board) -> chess.Move:
-    idx = int(index)
-    from_o = idx // PLANE_COUNT
-    plane = idx % PLANE_COUNT
+    """Convert a policy index back to a chess.Move. Uses precomputed LUT."""
+    return index_to_move_fast(index, board)
 
+
+# Precomputed (from_sq, to_sq) → policy index for non-underpromotion moves.
+# Shape: (2, 64, 64) — axis 0: int(turn) (0=BLACK, 1=WHITE).
+_MOVE_INDEX_LUT = np.full((2, 64, 64), -1, dtype=np.int32)
+
+for _turn in (chess.WHITE, chess.BLACK):
+    _ti = int(_turn)
+    for _from_sq in range(64):
+        _f = orient_square(_from_sq, _turn)
+        _ff = chess.square_file(_f)
+        _fr = chess.square_rank(_f)
+        for _to_sq in range(64):
+            if _from_sq == _to_sq:
+                continue
+            _t = orient_square(_to_sq, _turn)
+            _tf = chess.square_file(_t)
+            _tr = chess.square_rank(_t)
+            _df = _tf - _ff
+            _dr = _tr - _fr
+            _p = _DELTA_TO_PLANE.get((_df, _dr))
+            if _p is not None:
+                _MOVE_INDEX_LUT[_ti][_from_sq][_to_sq] = int(_f) * PLANE_COUNT + int(_p)
+
+
+def _extract_c_legal_args(board: chess.Board) -> tuple:
+    """Extract bitboard args for C legal move generation (shared by mask + indices)."""
     turn = board.turn
-    f_o = chess.Square(from_o)
-
-    if plane >= 64:
-        rel = plane - 64
-        piece_idx = rel // 3
-        dir_idx = rel % 3
-        df = UNDERPROMO_DFS[dir_idx]
-        dr = 1
-
-        ff, fr = chess.square_file(f_o), chess.square_rank(f_o)
-        tf, tr = ff + df, fr + dr
-        if not (0 <= tf <= 7 and 0 <= tr <= 7):
-            return next(iter(board.legal_moves))
-        t_o = chess.square(tf, tr)
-
-        f = _deorient_square(f_o, turn)
-        t = _deorient_square(t_o, turn)
-        promo = IDX_TO_UNDERPROMO.get(piece_idx, chess.KNIGHT)
-        m = chess.Move(f, t, promotion=promo)
-        if m in board.legal_moves:
-            return m
-        for lm in board.legal_moves:
-            if move_to_index(lm, board) == idx:
-                return lm
-        return next(iter(board.legal_moves))
-
-    delta = _PLANE_TO_DELTA.get(int(plane))
-    if delta is None:
-        return next(iter(board.legal_moves))
-    df, dr = delta
-
-    ff, fr = chess.square_file(f_o), chess.square_rank(f_o)
-    tf, tr = ff + df, fr + dr
-    if not (0 <= tf <= 7 and 0 <= tr <= 7):
-        return next(iter(board.legal_moves))
-
-    t_o = chess.square(tf, tr)
-    f = _deorient_square(f_o, turn)
-    t = _deorient_square(t_o, turn)
-
-    promo = None
-    piece = board.piece_at(f)
-    if piece is not None and piece.piece_type == chess.PAWN:
-        last_rank = 7 if turn == chess.WHITE else 0
-        if chess.square_rank(t) == last_rank:
-            promo = chess.QUEEN
-
-    m = chess.Move(f, t, promotion=promo)
-    if m in board.legal_moves:
-        return m
-    for lm in board.legal_moves:
-        if move_to_index(lm, board) == idx:
-            return lm
-    return next(iter(board.legal_moves))
+    us_occ = int(board.occupied_co[turn])
+    them_occ = int(board.occupied_co[not turn])
+    pawns, knights, bishops = board.pawns, board.knights, board.bishops
+    rooks, queens, kings = board.rooks, board.queens, board.kings
+    return (
+        int(pawns & us_occ), int(knights & us_occ),
+        int(bishops & us_occ), int(rooks & us_occ),
+        int(queens & us_occ), int(kings & us_occ),
+        int(pawns & them_occ), int(knights & them_occ),
+        int(bishops & them_occ), int(rooks & them_occ),
+        int(queens & them_occ), int(kings & them_occ),
+        1 if turn else 0,
+        int(board.has_kingside_castling_rights(turn)),
+        int(board.has_queenside_castling_rights(turn)),
+        int(board.has_kingside_castling_rights(not turn)),
+        int(board.has_queenside_castling_rights(not turn)),
+        -1 if board.ep_square is None else board.ep_square,
+    )
 
 
 def legal_move_mask(board: chess.Board) -> np.ndarray:
     mask = np.zeros((POLICY_SIZE,), dtype=np.bool_)
+    if _HAS_LC0_C_EXT:
+        idx = _c_legal_move_policy_indices(*_extract_c_legal_args(board))
+        if idx.size > 0:
+            mask[idx] = True
+        return mask
+    lut = _MOVE_INDEX_LUT[int(board.turn)]
     for m in board.legal_moves:
-        idx = move_to_index(m, board)
-        mask[int(idx)] = True
+        if m.promotion is not None and m.promotion in UNDERPROMO_TO_IDX:
+            mask[move_to_index(m, board)] = True
+        else:
+            idx = int(lut[m.from_square, m.to_square])
+            if idx >= 0:
+                mask[idx] = True
     return mask
+
+
+def _legal_move_indices_c(board: chess.Board) -> np.ndarray:
+    """C-accelerated legal move index generation (bypasses python-chess move gen)."""
+    return _c_legal_move_policy_indices(*_extract_c_legal_args(board))
+
+
+def _legal_move_indices_py(board: chess.Board) -> np.ndarray:
+    """Python fallback for legal move index generation."""
+    lut = _MOVE_INDEX_LUT[int(board.turn)]
+    indices: list[int] = []
+    for m in board.legal_moves:
+        if m.promotion is not None and m.promotion in UNDERPROMO_TO_IDX:
+            indices.append(move_to_index(m, board))
+        else:
+            idx = int(lut[m.from_square, m.to_square])
+            if idx >= 0:
+                indices.append(idx)
+    return np.array(indices, dtype=np.int32)
+
+
+def legal_move_indices(board: chess.Board) -> np.ndarray:
+    """Return sorted int32 array of legal policy indices."""
+    if _HAS_LC0_C_EXT:
+        return _legal_move_indices_c(board)
+    return _legal_move_indices_py(board)
 
 
 @dataclass(frozen=True)
@@ -270,6 +370,9 @@ def build_policy_gather_tables() -> PolicyGatherTables:
     return PolicyGatherTables(to_sq=to_sq, valid=valid)
 
 
+_ARANGE_POLICY = np.arange(POLICY_SIZE, dtype=np.intp)
+
+
 def sample_move_from_logits(
     logits: np.ndarray,
     mask: np.ndarray,
@@ -292,4 +395,4 @@ def sample_move_from_logits(
     if s <= 0:
         return int(np.argmax(legal_logits))
     p /= s
-    return int(rng.choice(np.arange(POLICY_SIZE), p=p))
+    return int(rng.choice(_ARANGE_POLICY, p=p))

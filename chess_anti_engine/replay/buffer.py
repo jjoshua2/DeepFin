@@ -95,170 +95,254 @@ class ReplayBuffer:
     def __init__(self, capacity: int, *, rng: np.random.Generator):
         self.capacity = int(capacity)
         self.rng = rng
-        self._data: list[ReplaySample] = []
-        self._pos = 0
+        self._array = ArrayReplayBuffer(self.capacity, rng=rng)
 
-        # Surprise weighting: 50% uniform, 50% proportional to priority
+    @property
+    def surprise_mix(self) -> float:
+        return float(self._array.surprise_mix)
+
+    @surprise_mix.setter
+    def surprise_mix(self, value: float) -> None:
+        self._array.surprise_mix = float(value)
+
+    def __len__(self) -> int:
+        return len(self._array)
+
+    def clear(self) -> None:
+        self._array.clear()
+
+    def add_many(self, samples: list[ReplaySample]) -> None:
+        self._array.add_many(samples)
+
+    def add_many_arrays(self, arrs: dict[str, np.ndarray]) -> None:
+        self._array.add_many_arrays(arrs)
+
+    def add(self, sample: ReplaySample) -> None:
+        self._array.add(sample)
+
+    def sample_batch_arrays(self, batch_size: int, *, wdl_balance: bool = True) -> dict[str, np.ndarray]:
+        return self._array.sample_batch_arrays(batch_size, wdl_balance=wdl_balance)
+
+    def sample_batch(self, batch_size: int, *, wdl_balance: bool = True) -> list[ReplaySample]:
+        from .shard import arrays_to_samples
+
+        return arrays_to_samples(self.sample_batch_arrays(batch_size, wdl_balance=wdl_balance))
+
+
+class ArrayReplayBuffer:
+    def __init__(self, capacity: int, *, rng: np.random.Generator):
+        self.capacity = int(capacity)
+        self.rng = rng
+        self._chunks: list[dict[str, np.ndarray]] = []
+        self._chunk_sizes: list[int] = []
+        self._size = 0
+        self._priority = np.zeros((0,), dtype=np.float32)
+        self._wdl = np.zeros((0,), dtype=np.int8)
         self.surprise_mix = 0.5
 
     def __len__(self) -> int:
-        return len(self._data)
+        return int(self._size)
 
     def clear(self) -> None:
-        self._data = []
-        self._pos = 0
+        self._chunks = []
+        self._chunk_sizes = []
+        self._size = 0
+        self._priority = np.zeros((0,), dtype=np.float32)
+        self._wdl = np.zeros((0,), dtype=np.int8)
 
-    def add_many(self, samples: list[ReplaySample]) -> None:
-        for s in samples:
-            self.add(s)
+    def _append_arrays(self, arrs: dict[str, np.ndarray]) -> None:
+        n = int(np.asarray(arrs["x"]).shape[0])
+        if n <= 0:
+            return
+        self._chunks.append({k: np.asarray(v) for k, v in arrs.items()})
+        self._chunk_sizes.append(n)
+        self._size += n
+        self._priority = np.concatenate([self._priority, np.asarray(arrs["priority"], dtype=np.float32)], axis=0)
+        self._wdl = np.concatenate([self._wdl, np.asarray(arrs["wdl_target"], dtype=np.int8)], axis=0)
+
+    def _drop_oldest(self, count: int) -> None:
+        drop = min(max(0, int(count)), self._size)
+        if drop <= 0:
+            return
+        remaining = drop
+        while remaining > 0 and self._chunks:
+            first_n = self._chunk_sizes[0]
+            if remaining >= first_n:
+                self._chunks.pop(0)
+                self._chunk_sizes.pop(0)
+                self._size -= first_n
+                remaining -= first_n
+                continue
+            chunk = self._chunks[0]
+            for k in tuple(chunk.keys()):
+                chunk[k] = chunk[k][remaining:]
+            self._chunk_sizes[0] = first_n - remaining
+            self._size -= remaining
+            remaining = 0
+        self._priority = self._priority[drop:]
+        self._wdl = self._wdl[drop:]
+
+    def _enforce_capacity(self) -> None:
+        overflow = self._size - self.capacity
+        if overflow > 0:
+            self._drop_oldest(overflow)
 
     def add(self, sample: ReplaySample) -> None:
-        if len(self._data) < self.capacity:
-            self._data.append(sample)
-        else:
-            self._data[self._pos] = sample
-            self._pos = (self._pos + 1) % self.capacity
+        self.add_many([sample])
 
-    def sample_batch(self, batch_size: int, *, wdl_balance: bool = True) -> list[ReplaySample]:
-        n = len(self._data)
-        if n == 0:
-            raise ValueError("ReplayBuffer is empty")
+    def add_many(self, samples: list[ReplaySample]) -> None:
+        from .shard import prune_storage_arrays, samples_to_arrays
 
+        if not samples:
+            return
+        self.add_many_arrays(prune_storage_arrays(samples_to_arrays(samples)))
+
+    def add_many_arrays(self, arrs: dict[str, np.ndarray]) -> None:
+        from .shard import prune_storage_arrays
+
+        self._append_arrays(prune_storage_arrays(arrs))
+        self._enforce_capacity()
+
+    def _sample_indices(self, pool: np.ndarray, k: int) -> np.ndarray:
+        if k <= 0 or pool.size == 0:
+            return np.zeros((0,), dtype=np.int64)
+        pool = np.asarray(pool, dtype=np.int64)
+        k_uni = int(round(k * (1.0 - self.surprise_mix)))
+        k_pri = k - k_uni
+        picks: list[np.ndarray] = []
+        if k_uni > 0:
+            chosen = self.rng.choice(pool.shape[0], size=k_uni, replace=True)
+            picks.append(pool[np.asarray(chosen, dtype=np.int64)])
+        if k_pri > 0:
+            pri = np.maximum(0.0, self._priority[pool].astype(np.float64, copy=False))
+            ps = float(pri.sum())
+            if ps <= 0.0:
+                chosen = self.rng.choice(pool.shape[0], size=k_pri, replace=True)
+                picks.append(pool[np.asarray(chosen, dtype=np.int64)])
+            else:
+                p = pri / ps
+                chosen = self.rng.choice(np.arange(pool.shape[0]), size=k_pri, replace=True, p=p)
+                picks.append(pool[np.asarray(chosen, dtype=np.int64)])
+        if not picks:
+            return np.zeros((0,), dtype=np.int64)
+        if len(picks) == 1:
+            return picks[0]
+        return np.concatenate(picks, axis=0)
+
+    def _sample_all_indices(self, batch_size: int) -> np.ndarray:
+        n = int(self._size)
         bs = int(batch_size)
+        if bs <= 0 or n <= 0:
+            return np.zeros((0,), dtype=np.int64)
+        k_uni = int(round(bs * (1.0 - self.surprise_mix)))
+        k_pri = bs - k_uni
+        picks: list[np.ndarray] = []
+        if k_uni > 0:
+            picks.append(np.asarray(self.rng.integers(0, n, size=k_uni), dtype=np.int64))
+        if k_pri > 0:
+            pri = np.maximum(0.0, self._priority.astype(np.float64, copy=False))
+            ps = float(pri.sum())
+            if ps <= 0.0:
+                picks.append(np.asarray(self.rng.integers(0, n, size=k_pri), dtype=np.int64))
+            else:
+                picks.append(
+                    np.asarray(self.rng.choice(n, size=k_pri, replace=True, p=(pri / ps)), dtype=np.int64)
+                )
+        if not picks:
+            return np.zeros((0,), dtype=np.int64)
+        if len(picks) == 1:
+            return picks[0]
+        return np.concatenate(picks, axis=0)
 
+    def _gather_rows(self, indices: np.ndarray) -> dict[str, np.ndarray]:
+        idx = np.asarray(indices, dtype=np.int64).reshape(-1)
+        if not self._chunks:
+            raise ValueError("ArrayReplayBuffer is empty")
+        template = self._chunks[0]
+        if idx.size == 0:
+            return {
+                k: np.empty((0, *np.asarray(v).shape[1:]), dtype=np.asarray(v).dtype)
+                for k, v in template.items()
+                if k in ("x", "policy_target", "wdl_target", "priority", "has_policy")
+            }
+        selected: list[tuple[dict[str, np.ndarray], np.ndarray, np.ndarray]] = []
+        required = {"x", "policy_target", "wdl_target", "priority", "has_policy"}
+        present_optional: set[str] = set()
+        start = 0
+        for chunk, chunk_n in zip(self._chunks, self._chunk_sizes):
+            end = start + chunk_n
+            mask = (idx >= start) & (idx < end)
+            if np.any(mask):
+                local = idx[mask] - start
+                selected.append((chunk, mask, local))
+                present_optional.update(set(chunk.keys()) - required)
+            start = end
+        prototype = {k: np.asarray(v) for chunk in self._chunks for k, v in chunk.items()}
+        out = {
+            k: np.zeros((idx.shape[0], *prototype[k].shape[1:]), dtype=prototype[k].dtype)
+            for k in sorted(required | present_optional)
+        }
+        for chunk, mask, local in selected:
+            for k, value in chunk.items():
+                out[k][mask] = value[local]
+        return out
+
+    def _sample_raw_indices(self, batch_size: int) -> np.ndarray:
+        return self._sample_all_indices(batch_size)
+
+    def sample_batch_arrays(self, batch_size: int, *, wdl_balance: bool = True) -> dict[str, np.ndarray]:
+        if self._size <= 0:
+            raise ValueError("ArrayReplayBuffer is empty")
+        bs = int(batch_size)
         if not wdl_balance:
-            return self._sample_raw(bs)
+            return self._gather_rows(self._sample_raw_indices(bs))
 
-        # WDL balancing (light-touch):
-        # - Cap draws to avoid batches that are almost entirely drawn games.
-        # - Keep win/loss roughly balanced (cap max(win,loss) <= wl_max_ratio * min(win,loss)).
-        #
-        # This is intentionally weaker than equalizing W/D/L. The goal is to prevent
-        # value head collapse / spurious correlations (e.g. volatility => loss) while
-        # preserving the natural draw rate that self-play produces.
         draw_cap_frac = 0.90
         wl_max_ratio = 1.5
+        win_idx = np.flatnonzero(self._wdl == 0)
+        draw_idx = np.flatnonzero(self._wdl == 1)
+        loss_idx = np.flatnonzero(self._wdl == 2)
+        if win_idx.size == 0 or loss_idx.size == 0:
+            return self._gather_rows(self._sample_raw_indices(bs))
 
-        buckets: dict[int, list[int]] = {0: [], 1: [], 2: []}
-        for i, s in enumerate(self._data):
-            wdl = int(s.wdl_target)
-            if wdl in buckets:
-                buckets[wdl].append(i)
-
-        win_idx = buckets[2]
-        draw_idx = buckets[1]
-        loss_idx = buckets[0]
-
-        # Only apply balancing when we have *both* decisive outcomes available.
-        # If one of win/loss is missing, we can't enforce a ratio anyway, and capping
-        # draws could distort early training; fall back to original sampling.
-        if len(win_idx) == 0 or len(loss_idx) == 0:
-            return self._sample_raw(bs)
-
-        def _sample_from_indices(idxs: list[int], k: int) -> list[ReplaySample]:
-            if k <= 0:
-                return []
-            # Same surprise mix as _sample_raw, but restricted to a bucket.
-            k_uni = int(round(k * (1.0 - self.surprise_mix)))
-            k_pri = k - k_uni
-
-            out_local: list[ReplaySample] = []
-
-            if k_uni > 0:
-                chosen = self.rng.choice(len(idxs), size=k_uni, replace=True)
-                out_local.extend([self._data[idxs[int(i)]] for i in chosen])
-
-            if k_pri > 0:
-                pri = np.array(
-                    [max(0.0, float(self._data[j].priority)) for j in idxs],
-                    dtype=np.float64,
-                )
-                ps = float(pri.sum())
-                if ps <= 0:
-                    chosen = self.rng.choice(len(idxs), size=k_pri, replace=True)
-                    out_local.extend([self._data[idxs[int(i)]] for i in chosen])
-                else:
-                    p = pri / ps
-                    chosen = self.rng.choice(np.arange(len(idxs)), size=k_pri, replace=True, p=p)
-                    out_local.extend([self._data[idxs[int(i)]] for i in chosen])
-
-            return out_local
-
-        # (1) Decide draw count based on buffer's draw rate, with a hard cap.
-        p_draw = float(len(draw_idx)) / float(max(1, n))
+        p_draw = float(draw_idx.size) / float(max(1, self._size))
         n_draw = int(round(bs * p_draw))
-        n_draw_cap = int(np.floor(draw_cap_frac * bs))
-        n_draw = min(n_draw, n_draw_cap)
+        n_draw = min(n_draw, int(np.floor(draw_cap_frac * bs)))
         n_draw = max(0, min(bs, n_draw))
-
-        # If there are no draws in the buffer, force n_draw=0.
-        if len(draw_idx) == 0:
+        if draw_idx.size == 0:
             n_draw = 0
 
         bs_decisive = bs - n_draw
-
-        # (2) Split decisive slots into wins/losses, keeping ratio bounded.
         n_win = 0
         n_loss = 0
-        if bs_decisive > 0 and (len(win_idx) > 0 or len(loss_idx) > 0):
-            if len(win_idx) == 0:
-                n_loss = bs_decisive
-            elif len(loss_idx) == 0:
-                n_win = bs_decisive
-            else:
-                # Start from natural decisive win-rate.
-                p_win = float(len(win_idx)) / float(len(win_idx) + len(loss_idx))
-                n_win = int(round(bs_decisive * p_win))
-                n_win = max(0, min(bs_decisive, n_win))
+        if bs_decisive > 0:
+            p_win = float(win_idx.size) / float(win_idx.size + loss_idx.size)
+            n_win = int(round(bs_decisive * p_win))
+            n_win = max(0, min(bs_decisive, n_win))
+            n_loss = bs_decisive - n_win
+            r = float(wl_max_ratio)
+            if n_win > int(np.floor(r * n_loss)):
+                n_loss = int(np.ceil(bs_decisive / (1.0 + r)))
+                n_win = bs_decisive - n_loss
+            elif n_loss > int(np.floor(r * n_win)):
+                n_win = int(np.ceil(bs_decisive / (1.0 + r)))
                 n_loss = bs_decisive - n_win
 
-                # Enforce max ratio (oversample minority if needed).
-                r = float(wl_max_ratio)
-                if n_win > int(np.floor(r * n_loss)):
-                    # Wins are majority.
-                    n_loss = int(np.ceil(bs_decisive / (1.0 + r)))
-                    n_win = bs_decisive - n_loss
-                elif n_loss > int(np.floor(r * n_win)):
-                    # Losses are majority.
-                    n_win = int(np.ceil(bs_decisive / (1.0 + r)))
-                    n_loss = bs_decisive - n_win
+        picks = [
+            self._sample_indices(draw_idx, n_draw),
+            self._sample_indices(win_idx, n_win),
+            self._sample_indices(loss_idx, n_loss),
+        ]
+        chosen = np.concatenate([p for p in picks if p.size > 0], axis=0) if any(p.size > 0 for p in picks) else np.zeros((0,), dtype=np.int64)
+        if chosen.shape[0] < bs:
+            extra = self._sample_raw_indices(bs - chosen.shape[0])
+            chosen = np.concatenate([chosen, extra], axis=0) if chosen.size > 0 else extra
+        elif chosen.shape[0] > bs:
+            chosen = chosen[:bs]
+        self.rng.shuffle(chosen)
+        return self._gather_rows(chosen)
 
-        out: list[ReplaySample] = []
-        out.extend(_sample_from_indices(draw_idx, n_draw))
-        out.extend(_sample_from_indices(win_idx, n_win))
-        out.extend(_sample_from_indices(loss_idx, n_loss))
+    def sample_batch(self, batch_size: int, *, wdl_balance: bool = True) -> list[ReplaySample]:
+        from .shard import arrays_to_samples
 
-        # Any rounding issues: top up from full buffer using original sampler.
-        if len(out) < bs:
-            out.extend(self._sample_raw(bs - len(out)))
-        elif len(out) > bs:
-            out = out[:bs]
-
-        self.rng.shuffle(out)  # type: ignore[arg-type]
-        return out
-
-    def _sample_raw(self, batch_size: int) -> list[ReplaySample]:
-        """Sample without WDL balancing (original surprise-weighted method)."""
-        n = len(self._data)
-        bs = int(batch_size)
-        k_uni = int(round(bs * (1.0 - self.surprise_mix)))
-        k_pri = bs - k_uni
-
-        out: list[ReplaySample] = []
-
-        if k_uni > 0:
-            idxs = self.rng.integers(0, n, size=k_uni)
-            out.extend([self._data[int(i)] for i in idxs])
-
-        if k_pri > 0:
-            pri = np.array([max(0.0, float(s.priority)) for s in self._data], dtype=np.float64)
-            ps = float(pri.sum())
-            if ps <= 0:
-                idxs = self.rng.integers(0, n, size=k_pri)
-                out.extend([self._data[int(i)] for i in idxs])
-            else:
-                p = pri / ps
-                idxs = self.rng.choice(np.arange(n), size=k_pri, replace=True, p=p)
-                out.extend([self._data[int(i)] for i in idxs])
-
-        return out
+        return arrays_to_samples(self.sample_batch_arrays(batch_size, wdl_balance=wdl_balance))

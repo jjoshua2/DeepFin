@@ -15,8 +15,8 @@ import torch
 
 from chess_anti_engine.model import ModelConfig, build_model
 from chess_anti_engine.moves.encode import POLICY_SIZE
-from chess_anti_engine.replay import ReplayBuffer
-from chess_anti_engine.replay.shard import load_npz
+from chess_anti_engine.replay import ArrayReplayBuffer
+from chess_anti_engine.replay.shard import load_npz_arrays
 from chess_anti_engine.selfplay.budget import progressive_mcts_simulations
 from chess_anti_engine.stockfish.pid import DifficultyPID
 from chess_anti_engine.train import Trainer
@@ -517,7 +517,7 @@ def main() -> None:
         except Exception:
             pass
 
-    buf = ReplayBuffer(int(args.replay_capacity), rng=rng)
+    buf = ArrayReplayBuffer(int(args.replay_capacity), rng=rng)
 
     # Bootstrap publish: write an initial manifest + initial model weights so workers can
     # start generating shards even before the learner has enough data to train.
@@ -653,7 +653,7 @@ def main() -> None:
         iter_losses = 0
         for sp in shards[: int(args.max_shards_per_iter)]:
             try:
-                samples, meta = load_npz(sp)
+                shard_arrs, meta = load_npz_arrays(sp)
             except Exception:
                 # Bad shard; quarantine
                 qdir = processed_dir / "bad"
@@ -661,9 +661,10 @@ def main() -> None:
                 sp.replace(qdir / sp.name)
                 continue
 
-            if samples:
-                buf.add_many(samples)
-                positions += len(samples)
+            shard_positions = int(np.asarray(shard_arrs["x"]).shape[0])
+            if shard_positions > 0:
+                buf.add_many_arrays(shard_arrs)
+                positions += shard_positions
                 # Accumulate game-level win/draw/loss for PID from shard metadata.
                 # Using game counts (not position counts) keeps min_games_between_adjust
                 # meaningful and prevents long draw games from inflating the win-rate EMA.
@@ -677,17 +678,16 @@ def main() -> None:
                 else:
                     # Fallback for old shards without game-level metadata: count unique
                     # game outcomes by tracking wdl transitions across positions.
-                    prev_wdl = None
-                    for s in samples:
-                        wdl = int(s.wdl_target)
-                        if wdl != prev_wdl:
-                            if wdl == 0:
-                                iter_wins += 1
-                            elif wdl == 1:
-                                iter_draws += 1
-                            else:
-                                iter_losses += 1
-                            prev_wdl = wdl
+                    wdl = np.asarray(shard_arrs["wdl_target"], dtype=np.int8)
+                    if wdl.size > 0:
+                        run_starts = np.empty(wdl.shape[0], dtype=bool)
+                        run_starts[0] = True
+                        if wdl.shape[0] > 1:
+                            run_starts[1:] = wdl[1:] != wdl[:-1]
+                        run_values = wdl[run_starts]
+                        iter_wins += int(np.count_nonzero(run_values == 0))
+                        iter_draws += int(np.count_nonzero(run_values == 1))
+                        iter_losses += int(np.count_nonzero(run_values == 2))
 
             # Move to processed/<user>/
             rel = sp.relative_to(inbox_dir)

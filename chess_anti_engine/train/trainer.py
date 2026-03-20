@@ -7,8 +7,10 @@ import logging
 import os
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+import numpy as np
 import torch
 from zclip import ZClip
 
@@ -27,8 +29,8 @@ except Exception:  # pragma: no cover
 
 from chess_anti_engine.encoding.lc0 import LC0_FULL
 from chess_anti_engine.replay.buffer import ReplayBuffer
-from chess_anti_engine.replay.dataset import collate
-from chess_anti_engine.replay.augment import maybe_mirror_samples
+from chess_anti_engine.replay.dataset import collate, collate_arrays
+from chess_anti_engine.replay.augment import maybe_mirror_batch_arrays, maybe_mirror_samples
 from .muon import MuonWithAuxAdam
 from .cosmos import COSMOS
 from .cosmos_fast import COSMOSFast
@@ -100,6 +102,8 @@ class Trainer:
         w_sf_wdl: float = 0.0,
         sf_wdl_conf_power: float = 0.0,
         sf_wdl_draw_scale: float = 1.0,
+        tb_log_interval: int = 10,
+        prefetch_batches: bool = True,
     ):
         self.device = device
         self.model = model.to(device)
@@ -223,6 +227,8 @@ class Trainer:
         self.zclip = ZClip(mode="zscore", alpha=float(zclip_alpha), z_thresh=float(zclip_z_thresh), max_grad_norm=float(zclip_max_norm), warmup_steps=25)
         self.writer = SummaryWriter(log_dir=str(log_dir or "tb"))
         self.step = 0
+        self._tb_log_interval = max(1, int(tb_log_interval))
+        self._prefetch_batches = bool(prefetch_batches)
 
         self.use_amp = bool(use_amp)
         self._amp_dtype = torch.bfloat16 if device.startswith("cuda") else None
@@ -278,6 +284,7 @@ class Trainer:
         self._scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
             self.opt, T_0=int(lr_T0), T_mult=int(lr_T_mult), eta_min=float(lr_eta_min),
         )
+        self._set_initial_lrs()
 
         # Stochastic Weight Averaging (SWA): maintain a running average of model
         # weights for smoother, more generalizable exported networks.
@@ -287,13 +294,109 @@ class Trainer:
         if self._swa_start > 0:
             self._swa_model = torch.optim.swa_utils.AveragedModel(self.model)
 
+    def _should_log_step_scalars(self) -> bool:
+        return (self.step % self._tb_log_interval) == 0
+
+    def _sample_batch_tensors(
+        self,
+        buf: ReplayBuffer,
+        *,
+        batch_size: int,
+        mirror_prob: float,
+    ) -> dict[str, torch.Tensor]:
+        if hasattr(buf, "sample_batch_arrays"):
+            arrs = getattr(buf, "sample_batch_arrays")(batch_size)
+            arrs = maybe_mirror_batch_arrays(arrs, rng=buf.rng, prob=mirror_prob)
+            return collate_arrays(arrs, device=self.device)
+
+        samples = buf.sample_batch(batch_size)
+        samples = maybe_mirror_samples(samples, rng=buf.rng, prob=mirror_prob)
+        return collate(samples, device=self.device)
+
+    def _sample_batch_host(
+        self,
+        buf: ReplayBuffer,
+        *,
+        batch_size: int,
+        mirror_prob: float,
+    ) -> dict[str, np.ndarray] | list:
+        if hasattr(buf, "sample_batch_arrays"):
+            arrs = getattr(buf, "sample_batch_arrays")(batch_size)
+            return maybe_mirror_batch_arrays(arrs, rng=buf.rng, prob=mirror_prob)
+
+        samples = buf.sample_batch(batch_size)
+        return maybe_mirror_samples(samples, rng=buf.rng, prob=mirror_prob)
+
+    def _host_batch_to_tensors(self, batch: dict[str, np.ndarray] | list) -> dict[str, torch.Tensor]:
+        if isinstance(batch, dict):
+            return collate_arrays(batch, device=self.device)
+        return collate(batch, device=self.device)
+
+    def _iter_prefetched_batches(
+        self,
+        buf: ReplayBuffer,
+        *,
+        batch_size: int,
+        mirror_prob: float,
+        count: int,
+    ):
+        n = int(count)
+        if n <= 0:
+            return
+        if not self._prefetch_batches or n == 1:
+            for _ in range(n):
+                host_batch = self._sample_batch_host(buf, batch_size=batch_size, mirror_prob=mirror_prob)
+                yield self._host_batch_to_tensors(host_batch)
+            return
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(
+                self._sample_batch_host,
+                buf,
+                batch_size=batch_size,
+                mirror_prob=mirror_prob,
+            )
+            for idx in range(n):
+                host_batch = future.result()
+                if idx + 1 < n:
+                    future = pool.submit(
+                        self._sample_batch_host,
+                        buf,
+                        batch_size=batch_size,
+                        mirror_prob=mirror_prob,
+                    )
+                yield self._host_batch_to_tensors(host_batch)
+
+    def _base_lrs(self) -> list[float]:
+        base_lrs = list(getattr(self._scheduler, "base_lrs", []))
+        if base_lrs:
+            return [float(v) for v in base_lrs]
+        return [float(pg.get("lr", self._peak_lr)) for pg in self.opt.param_groups]
+
+    def _reference_lr_from_bases(self, base_lrs: list[float] | None = None) -> float:
+        vals = [float(v) for v in (base_lrs if base_lrs is not None else self._base_lrs()) if float(v) > 0.0]
+        if vals:
+            return min(vals)
+        return max(float(self._peak_lr), 1e-12)
+
+    def _warmup_start_lr_for(self, base_lr: float) -> float:
+        peak = max(float(self._peak_lr), 1e-12)
+        return float(self._warmup_lr_start) * float(base_lr) / peak
+
+    def _set_initial_lrs(self) -> None:
+        if self._warmup_steps <= 0:
+            return
+        for pg, base_lr in zip(self.opt.param_groups, self._base_lrs(), strict=True):
+            pg["lr"] = self._warmup_start_lr_for(float(base_lr))
+
     def _update_lr(self) -> None:
         """Apply linear warmup, then hand off to cosine schedule."""
         if self.step < self._warmup_steps:
-            frac = self.step / max(1, self._warmup_steps)
-            lr = self._warmup_lr_start + (self._peak_lr - self._warmup_lr_start) * frac
-            for pg in self.opt.param_groups:
-                pg["lr"] = lr
+            # Called after optimizer.step(); set the LR for the *next* training step.
+            next_frac = min(1.0, float(self.step + 1) / max(1, self._warmup_steps))
+            for pg, base_lr in zip(self.opt.param_groups, self._base_lrs(), strict=True):
+                start_lr = self._warmup_start_lr_for(float(base_lr))
+                pg["lr"] = start_lr + (float(base_lr) - start_lr) * next_frac
         else:
             self._scheduler.step(self.step - self._warmup_steps)
 
@@ -318,9 +421,7 @@ class Trainer:
             old_bases.extend([old_bases[-1]] * (n_groups - len(old_bases)))
         old_bases = old_bases[:n_groups]
 
-        ref_old = old_bases[0] if old_bases[0] > 0.0 else float(self._peak_lr)
-        if ref_old <= 0.0:
-            ref_old = new_peak
+        ref_old = max(float(self._peak_lr), self._reference_lr_from_bases(old_bases))
         scale = new_peak / ref_old
 
         new_bases: list[float] = []
@@ -364,7 +465,7 @@ class Trainer:
             else:
                 if self.step < self._warmup_steps:
                     frac = self.step / max(1, self._warmup_steps)
-                    warm_start = self._warmup_lr_start * (nb / max(new_peak, 1e-12))
+                    warm_start = self._warmup_start_lr_for(nb)
                     pg["lr"] = warm_start + (nb - warm_start) * frac
                 else:
                     last_lrs = getattr(self._scheduler, "_last_lr", None)
@@ -391,10 +492,12 @@ class Trainer:
 
         mirror_p = self.mirror_prob if str(tag).startswith("train") else 0.0
 
-        for _ in range(int(steps)):
-            samples = buf.sample_batch(batch_size)
-            samples = maybe_mirror_samples(samples, rng=buf.rng, prob=mirror_p)
-            batch = collate(samples, device=self.device)
+        for batch in self._iter_prefetched_batches(
+            buf,
+            batch_size=batch_size,
+            mirror_prob=mirror_p,
+            count=int(steps),
+        ):
 
             if self.use_amp and self.device.startswith("cuda"):
                 with torch.amp.autocast("cuda", dtype=self._amp_dtype):
@@ -405,55 +508,6 @@ class Trainer:
                 out = self.model(batch["x"])
                 losses = compute_loss(out, batch, w_policy=self.w_policy, w_soft=self.w_soft, w_future=self.w_future, w_wdl=self.w_wdl, w_sf_move=self.w_sf_move, w_sf_eval=self.w_sf_eval, w_categorical=self.w_categorical, w_volatility=self.w_volatility, w_sf_volatility=self.w_sf_volatility, w_moves_left=self.w_moves_left, w_sf_wdl=self.w_sf_wdl, sf_wdl_conf_power=self.sf_wdl_conf_power, sf_wdl_draw_scale=self.sf_wdl_draw_scale)
                 loss = losses["total"]
-
-            # Logging (train or eval)
-            self.writer.add_scalar(f"{tag}/loss", float(loss.item()), self.step)
-            self.writer.add_scalar(f"{tag}/policy_loss", float(losses["policy_ce"].item()), self.step)
-            sp = losses.get("soft_policy_ce", None)
-            fp = losses.get("future_policy_ce", None)
-            sp_scalar = float(sp.detach().item()) if isinstance(sp, torch.Tensor) else float(sp or 0.0)
-            fp_scalar = float(fp.detach().item()) if isinstance(fp, torch.Tensor) else float(fp or 0.0)
-            self.writer.add_scalar(f"{tag}/soft_policy_loss", sp_scalar, self.step)
-            self.writer.add_scalar(f"{tag}/future_policy_loss", fp_scalar, self.step)
-            self.writer.add_scalar(f"{tag}/wdl_loss", float(losses["wdl_ce"].item()), self.step)
-            self.writer.add_scalar(f"{tag}/sf_move_loss", float(losses["sf_move_ce"].item()), self.step)
-
-            # SF move top-1 accuracy (vs SF played move index), on SF turns only.
-            with torch.no_grad():
-                sf_mask = batch.get("has_sf_move")
-                if sf_mask is not None:
-                    sf_mask = sf_mask.to(torch.float32)
-                else:
-                    sf_mask = torch.zeros((batch["x"].shape[0],), device=batch["x"].device)
-
-                sf_logits = out.get("policy_sf")
-                if sf_logits is None:
-                    acc = 0.0
-                    den = 0.0
-                else:
-                    pred = torch.argmax(sf_logits.detach(), dim=-1)
-                    correct = (pred == batch["sf_move_index"]).to(torch.float32)
-                    den = float(sf_mask.sum().item())
-                    acc = float((correct * sf_mask).sum().item()) / max(1.0, den)
-
-            self.writer.add_scalar(f"{tag}/sf_move_acc", float(acc), self.step)
-            self.writer.add_scalar(f"{tag}/sf_eval_loss", float(losses["sf_eval_ce"].item()), self.step)
-            vv = losses.get("volatility", None)
-            vv_scalar = float(vv.detach().item()) if isinstance(vv, torch.Tensor) else float(vv or 0.0)
-            self.writer.add_scalar(f"{tag}/volatility_loss", vv_scalar, self.step)
-
-            sv = losses.get("sf_volatility", None)
-            sv_scalar = float(sv.detach().item()) if isinstance(sv, torch.Tensor) else float(sv or 0.0)
-            self.writer.add_scalar(f"{tag}/sf_volatility_loss", sv_scalar, self.step)
-            cat_val = losses.get("categorical_ce", None)
-            if cat_val is None:
-                cat_scalar = 0.0
-            elif isinstance(cat_val, torch.Tensor):
-                cat_scalar = float(cat_val.detach().item())
-            else:
-                cat_scalar = float(cat_val)
-            self.writer.add_scalar(f"{tag}/categorical_loss", cat_scalar, self.step)
-            self.writer.add_scalar(f"{tag}/moves_left_loss", float(losses["moves_left"].item()), self.step)
 
             loss_sum += float(loss.item())
             pol_sum += float(losses["policy_ce"].detach().item())
@@ -470,7 +524,6 @@ class Trainer:
             sf_move_sum += float(losses["sf_move_ce"].detach().item())
             sf_sum += float(losses["sf_eval_ce"].detach().item())
 
-            # Aggregate SF move top-1 accuracy across steps
             sf_mask = batch.get("has_sf_move")
             if sf_mask is not None:
                 sf_mask = sf_mask.to(torch.float32)
@@ -483,12 +536,29 @@ class Trainer:
                 correct = (pred == batch["sf_move_index"]).to(torch.float32)
                 sf_move_acc_num += float((correct * sf_mask).sum().item())
                 sf_move_acc_den += float(sf_mask.sum().item())
+
             cat_sum += float(cat.detach().item()) if isinstance(cat, torch.Tensor) else float(cat or 0.0)
             vol_sum += float(vol.detach().item()) if isinstance(vol, torch.Tensor) else float(vol or 0.0)
             sf_vol_sum += float(sf_vol.detach().item()) if isinstance(sf_vol, torch.Tensor) else float(sf_vol or 0.0)
             ml_sum += float(losses["moves_left"].detach().item())
 
         n = float(max(1, steps))
+
+        # Log averaged metrics once per eval call (not per-batch, which would
+        # overwrite the same self.step and keep only the last batch's value).
+        self.writer.add_scalar(f"{tag}/loss", loss_sum / n, self.step)
+        self.writer.add_scalar(f"{tag}/policy_loss", pol_sum / n, self.step)
+        self.writer.add_scalar(f"{tag}/soft_policy_loss", soft_sum / n, self.step)
+        self.writer.add_scalar(f"{tag}/future_policy_loss", fut_sum / n, self.step)
+        self.writer.add_scalar(f"{tag}/wdl_loss", wdl_sum / n, self.step)
+        self.writer.add_scalar(f"{tag}/sf_move_loss", sf_move_sum / n, self.step)
+        self.writer.add_scalar(f"{tag}/sf_move_acc", float(sf_move_acc_num / max(1.0, sf_move_acc_den)), self.step)
+        self.writer.add_scalar(f"{tag}/sf_eval_loss", sf_sum / n, self.step)
+        self.writer.add_scalar(f"{tag}/categorical_loss", cat_sum / n, self.step)
+        self.writer.add_scalar(f"{tag}/volatility_loss", vol_sum / n, self.step)
+        self.writer.add_scalar(f"{tag}/sf_volatility_loss", sf_vol_sum / n, self.step)
+        self.writer.add_scalar(f"{tag}/moves_left_loss", ml_sum / n, self.step)
+
         return TrainMetrics(
             loss=loss_sum / n,
             policy_loss=pol_sum / n,
@@ -553,10 +623,12 @@ class Trainer:
                 step_sf_acc_den = 0.0
                 step_n_micro = 0
 
-                for micro in range(self.accum_steps):
-                    samples = buf.sample_batch(batch_size)
-                    samples = maybe_mirror_samples(samples, rng=buf.rng, prob=self.mirror_prob)
-                    batch = collate(samples, device=self.device)
+                for batch in self._iter_prefetched_batches(
+                    buf,
+                    batch_size=batch_size,
+                    mirror_prob=self.mirror_prob,
+                    count=self.accum_steps,
+                ):
 
                     # Per-group feature dropout: independently zero each classical feature group.
                     base = int(self._base_input_planes)
@@ -610,7 +682,8 @@ class Trainer:
                     step_n_micro += 1
 
                 grad_norm = self.zclip.step(self.model)
-                self.writer.add_scalar("train/grad_norm", float(grad_norm) if grad_norm is not None else 0.0, self.step)
+                if self._should_log_step_scalars():
+                    self.writer.add_scalar("train/grad_norm", float(grad_norm) if grad_norm is not None else 0.0, self.step)
                 opt_step_start = time.perf_counter()
                 self.opt.step()
                 opt_step_time_s += time.perf_counter() - opt_step_start
@@ -651,8 +724,9 @@ class Trainer:
                 self._swa_model.update_parameters(self.model)
 
             # Step-aligned train logging (log unscaled loss from last micro-batch)
-            self.writer.add_scalar("train/loss", float(step_loss / max(1, step_n_micro) if step_n_micro else 0.0), self.step)
-            self.writer.add_scalar("train/lr", self.opt.param_groups[0]["lr"], self.step)
+            if self._should_log_step_scalars():
+                self.writer.add_scalar("train/loss", float(step_loss / max(1, step_n_micro) if step_n_micro else 0.0), self.step)
+                self.writer.add_scalar("train/lr", self.opt.param_groups[0]["lr"], self.step)
             self.step += 1
             train_steps_done += 1
             break
@@ -715,6 +789,7 @@ class Trainer:
             "opt": self.opt.state_dict(),
             "scheduler": self._scheduler.state_dict(),
             "step": self.step,
+            "peak_lr": float(self._peak_lr),
         }
         if self._swa_model is not None:
             state["swa_model"] = self._swa_model.state_dict()
@@ -726,9 +801,10 @@ class Trainer:
         self.opt.load_state_dict(ckpt["opt"])
         if "scheduler" in ckpt:
             self._scheduler.load_state_dict(ckpt["scheduler"])
-            if hasattr(self._scheduler, "base_lrs") and self._scheduler.base_lrs:
-                # Keep peak LR aligned with restored scheduler amplitude.
-                self._peak_lr = float(self._scheduler.base_lrs[0])
+        if "peak_lr" in ckpt:
+            self._peak_lr = float(ckpt["peak_lr"])
+        else:
+            self._peak_lr = self._reference_lr_from_bases()
         if "swa_model" in ckpt and self._swa_model is not None:
             self._swa_model.load_state_dict(ckpt["swa_model"])
         self.step = int(ckpt.get("step", 0))
