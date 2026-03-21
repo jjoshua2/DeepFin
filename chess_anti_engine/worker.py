@@ -77,6 +77,25 @@ def _worker_headers() -> dict[str, str]:
     }
 
 
+def _manifest_poll_headers(
+    *,
+    worker_id: str,
+    lease_id: str = "",
+    state: str | None = None,
+    elapsed_s: float | None = None,
+) -> dict[str, str]:
+    headers = dict(_worker_headers())
+    headers["X-CAE-Worker-ID"] = str(worker_id)
+    if str(lease_id).strip():
+        headers["X-CAE-Worker-Lease-ID"] = str(lease_id)
+    state_text = str(state or "").strip()
+    if state_text:
+        headers["X-CAE-Worker-State"] = state_text
+    if elapsed_s is not None and float(elapsed_s) > 0.0:
+        headers["X-CAE-Worker-State-Elapsed-S"] = str(float(elapsed_s))
+    return headers
+
+
 def _collect_worker_info(*, device: str) -> dict[str, object]:
     out: dict[str, object] = {
         "hostname": str(socket.gethostname()),
@@ -615,6 +634,9 @@ def main() -> None:
         return None
 
     inference_client = _make_inference_client()
+    pause_selfplay_active = False
+    manifest_state = "active"
+    manifest_state_elapsed_s: float | None = None
 
     last_best_sha = None
     best_model = None
@@ -711,8 +733,15 @@ def main() -> None:
             r = requests.get(
                 _server_url_for(trial_api_prefix + "/manifest"),
                 timeout=30.0,
-                headers=_worker_headers(),
+                headers=_manifest_poll_headers(
+                    worker_id=worker_id,
+                    lease_id=lease_id,
+                    state=manifest_state,
+                    elapsed_s=manifest_state_elapsed_s,
+                ),
             )
+            manifest_state = "active"
+            manifest_state_elapsed_s = None
             if r.status_code == 426:
                 # Server says "upgrade required".
                 if bool(args.self_update) and os.environ.get("CAE_SELF_UPDATED") != "1":
@@ -816,8 +845,32 @@ def main() -> None:
                 raise SystemExit(f"Worker too old: worker={PACKAGE_VERSION} min_required={min_v}")
 
             reco = manifest.get("recommended_worker") or {}
+            backpressure = manifest.get("backpressure") or {}
             task = manifest.get("task") or {"type": "selfplay"}
             task_type = str(task.get("type", "selfplay")).lower()
+            pause_selfplay = False
+            pause_reason = ""
+            if task_type == "selfplay":
+                pause_selfplay = bool(reco.get("pause_selfplay", False))
+                pause_reason = str(reco.get("pause_reason") or "")
+                if (not pause_selfplay) and isinstance(backpressure, dict):
+                    pause_selfplay = bool(backpressure.get("pause_selfplay", False))
+                    pause_reason = str(backpressure.get("pause_reason") or pause_reason)
+            if pause_selfplay:
+                if not pause_selfplay_active:
+                    log.info(
+                        "selfplay paused by server%s",
+                        f": {pause_reason}" if pause_reason else "",
+                    )
+                    pause_selfplay_active = True
+                sleep_s = max(0.1, float(args.poll_seconds))
+                time.sleep(sleep_s)
+                manifest_state = "paused_selfplay"
+                manifest_state_elapsed_s = sleep_s
+                continue
+            if pause_selfplay_active:
+                log.info("selfplay pause cleared by server")
+                pause_selfplay_active = False
             need_local_model = inference_client is None or task_type == "arena"
 
             model_info = manifest.get("model") or {}

@@ -60,6 +60,29 @@ def _count_jsonl_rows(path: Path) -> int:
     except Exception:
         return 0
 
+
+def _iteration_pause_metrics(
+    *,
+    iteration_started_at: float,
+    iteration_finished_at: float,
+    pause_started_at: float | None,
+    pause_active: bool,
+) -> dict[str, float]:
+    """Compute how much of an iteration was spent with selfplay paused."""
+    elapsed_s = max(0.0, float(iteration_finished_at) - float(iteration_started_at))
+    paused_s = 0.0
+    if pause_active and pause_started_at is not None:
+        paused_s = max(0.0, float(iteration_finished_at) - max(float(iteration_started_at), float(pause_started_at)))
+    paused_fraction = 0.0
+    if elapsed_s > 0.0:
+        paused_fraction = min(1.0, max(0.0, paused_s / elapsed_s))
+    return {
+        "iteration_elapsed_s": float(elapsed_s),
+        "paused_seconds": float(paused_s),
+        "paused_fraction": float(paused_fraction),
+        "paused_percent": float(paused_fraction * 100.0),
+    }
+
 def _trial_replay_shard_dir(*, config: dict, trial_dir: Path) -> Path:
     """Return replay shard storage for a trial, optionally outside Ray artifacts."""
     raw_root = str(config.get("tune_replay_root_override", "") or "").strip()
@@ -930,13 +953,18 @@ def _publish_distributed_trial_state(
     random_move_prob: float,
     skill_level: int,
     mcts_simulations: int,
+    pause_selfplay: bool = False,
+    pause_reason: str = "",
+    backpressure: dict[str, object] | None = None,
+    export_model: bool = True,
 ) -> str:
     dirs = _trial_server_dirs(server_root=server_root, trial_id=trial_id)
     publish_dir = dirs["publish_dir"]
     publish_dir.mkdir(parents=True, exist_ok=True)
 
     model_path = publish_dir / "latest_model.pt"
-    trainer.export_swa(model_path)
+    if export_model or (not model_path.exists()):
+        trainer.export_swa(model_path)
     model_sha = _sha256_file(model_path)
     api_prefix = f"/v1/trials/{trial_id}"
     published_worker_wheel_path: Path | None = None
@@ -980,6 +1008,8 @@ def _publish_distributed_trial_state(
         "temperature_decay_moves": int(config.get("temperature_decay_moves", 60)),
         "temperature_endgame": float(config.get("temperature_endgame", 0.6)),
         "timeout_adjudication_threshold": float(config.get("timeout_adjudication_threshold", 0.90)),
+        "pause_selfplay": bool(pause_selfplay),
+        "pause_reason": str(pause_reason),
     }
 
     manifest: dict[str, object] = {
@@ -991,6 +1021,11 @@ def _publish_distributed_trial_state(
         "training_iteration": int(training_iteration),
         "trainer_step": int(trainer_step),
         "task": {"type": "selfplay"},
+        "backpressure": {
+            **(dict(backpressure) if isinstance(backpressure, dict) else {}),
+            "pause_selfplay": bool(pause_selfplay),
+            "pause_reason": str(pause_reason),
+        },
         "recommended_worker": recommended_worker,
         "encoding": {
             "input_planes": 146,
@@ -2243,6 +2278,8 @@ def train_trial(config: dict):
             random_move_prob=current_rand_init,
             skill_level=current_skill_init,
             mcts_simulations=int(sims_init),
+            pause_selfplay=False,
+            pause_reason="",
         )
         distributed_inference_broker_proc = _ensure_inference_broker(
             config=config,
@@ -2257,6 +2294,8 @@ def train_trial(config: dict):
             trial_id=trial_id,
             procs=distributed_worker_procs,
         )
+    distributed_pause_active = False
+    distributed_pause_started_at: float | None = None
 
     try:
         iterations = int(config.get("iterations", 10))
@@ -2330,6 +2369,8 @@ def train_trial(config: dict):
                     trial_id=trial_id,
                     procs=distributed_worker_procs,
                 )
+                distributed_pause_active = False
+                distributed_pause_started_at = None
                 published_model_sha = _publish_distributed_trial_state(
                     trainer=trainer,
                     config=config,
@@ -2342,6 +2383,8 @@ def train_trial(config: dict):
                     random_move_prob=float(current_rand),
                     skill_level=int(skill_level_used),
                     mcts_simulations=int(sims),
+                    pause_selfplay=False,
+                    pause_reason="",
                 )
                 distributed_inference_broker_proc = _ensure_inference_broker(
                     config=config,
@@ -2664,6 +2707,34 @@ def train_trial(config: dict):
                     cur_sf_wdl = sf_wdl_floor + t * (sf_wdl_start - sf_wdl_floor)
                 trainer.w_sf_wdl = cur_sf_wdl
 
+            if use_distributed_selfplay and bool(config.get("distributed_pause_selfplay_during_training", False)):
+                _publish_distributed_trial_state(
+                    trainer=trainer,
+                    config=config,
+                    model_cfg=model_cfg,
+                    server_root=distributed_server_root,
+                    trial_id=trial_id,
+                    training_iteration=int(iteration_idx),
+                    trainer_step=int(getattr(trainer, "step", 0)),
+                    sf_nodes=int(pid.nodes) if pid is not None else int(config.get("sf_nodes", 500)),
+                    random_move_prob=float(current_rand),
+                    skill_level=int(skill_level_used),
+                    mcts_simulations=int(sims),
+                    pause_selfplay=True,
+                    pause_reason="training",
+                    backpressure={
+                        "phase": "training",
+                        "games_target": int(total_games),
+                        "games_generated": int(total_games_generated),
+                        "stale_games": int(distributed_stale_games),
+                        "stale_positions": int(distributed_stale_positions),
+                    },
+                    export_model=False,
+                )
+                if not distributed_pause_active:
+                    distributed_pause_active = True
+                    distributed_pause_started_at = time.monotonic()
+
             train_t0 = time.monotonic()
             batch_size = int(config.get("batch_size", 128))
             accum_steps = max(1, int(config.get("accum_steps", 1)))
@@ -2956,6 +3027,12 @@ def train_trial(config: dict):
                 }
 
             iteration_step = int(global_iter)
+            pause_metrics = _iteration_pause_metrics(
+                iteration_started_at=iter_t0,
+                iteration_finished_at=time.monotonic(),
+                pause_started_at=distributed_pause_started_at,
+                pause_active=distributed_pause_active,
+            )
             try:
                 trainer.writer.add_scalar("difficulty/opponent_strength", float(opp_strength), iteration_step)
                 trainer.writer.add_scalar("difficulty/random_move_prob", float(current_rand), iteration_step)
@@ -2970,6 +3047,9 @@ def train_trial(config: dict):
                     trainer.writer.add_scalar("selfplay/selfplay_draw_rate", float(selfplay_draw_rate), iteration_step)
                 trainer.writer.add_scalar("selfplay/curriculum_adjudication_rate", float(curriculum_adjudication_rate), iteration_step)
                 trainer.writer.add_scalar("selfplay/curriculum_draw_rate", float(curriculum_draw_rate), iteration_step)
+                trainer.writer.add_scalar("backpressure/paused_seconds", float(pause_metrics["paused_seconds"]), iteration_step)
+                trainer.writer.add_scalar("backpressure/paused_fraction", float(pause_metrics["paused_fraction"]), iteration_step)
+                trainer.writer.add_scalar("backpressure/paused_percent", float(pause_metrics["paused_percent"]), iteration_step)
                 trainer.writer.add_scalar("meta/salvage_warmstart_used", float(1 if seed_warmstart_used else 0), iteration_step)
                 trainer.writer.add_scalar("meta/salvage_warmstart_slot", float(seed_warmstart_slot), iteration_step)
             except Exception:
@@ -2999,6 +3079,9 @@ def train_trial(config: dict):
                     "distributed_workers_per_trial": int(distributed_workers_per_trial),
                     "distributed_stale_games": int(distributed_stale_games),
                     "distributed_stale_positions": int(distributed_stale_positions),
+                    "backpressure_paused_seconds": float(pause_metrics["paused_seconds"]),
+                    "backpressure_paused_fraction": float(pause_metrics["paused_fraction"]),
+                    "backpressure_paused_percent": float(pause_metrics["paused_percent"]),
                     "startup_source": str(startup_source),
                     "salvage_warmstart_used": int(1 if seed_warmstart_used else 0),
                     "salvage_warmstart_slot": int(seed_warmstart_slot),

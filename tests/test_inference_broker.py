@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -323,5 +324,69 @@ def test_slot_broker_honors_shutdown_while_idle(tmp_path: Path) -> None:
         broker._slots[0].state = 255
         t.join(timeout=1.0)
         assert not t.is_alive()
+    finally:
+        broker.shutdown()
+
+
+def test_slot_broker_reloads_model_immediately_after_manifest_change(tmp_path: Path) -> None:
+    publish_dir = tmp_path / "publish"
+    publish_dir.mkdir(parents=True, exist_ok=True)
+    model_path = publish_dir / "latest_model.pt"
+
+    model_cfg = ModelConfig(
+        kind="tiny",
+        embed_dim=64,
+        num_layers=1,
+        num_heads=4,
+        ffn_mult=2,
+        use_smolgen=False,
+        use_nla=False,
+    )
+
+    def _write_model_with_manifest(seed: int) -> str:
+        torch.manual_seed(seed)
+        model = build_model(model_cfg).eval()
+        torch.save({"model": model.state_dict()}, model_path)
+        model_sha = _sha256_file(model_path)
+        manifest = {
+            "model": {
+                "sha256": model_sha,
+                "filename": "latest_model.pt",
+            },
+            "model_config": {
+                "kind": model_cfg.kind,
+                "embed_dim": model_cfg.embed_dim,
+                "num_layers": model_cfg.num_layers,
+                "num_heads": model_cfg.num_heads,
+                "ffn_mult": model_cfg.ffn_mult,
+                "use_smolgen": model_cfg.use_smolgen,
+                "use_nla": model_cfg.use_nla,
+                "use_qk_rmsnorm": model_cfg.use_qk_rmsnorm,
+                "gradient_checkpointing": False,
+            },
+        }
+        manifest_path = publish_dir / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        st = manifest_path.stat()
+        os.utime(manifest_path, ns=(st.st_atime_ns, st.st_mtime_ns + 1))
+        return model_sha
+
+    broker = SlotBroker(
+        publish_dir=publish_dir,
+        num_slots=1,
+        max_batch_per_slot=8,
+        device="cpu",
+        compile_inference=False,
+        batch_wait_ms=0.0,
+        slot_prefix=f"cae-reload-{uuid.uuid4().hex}",
+    )
+    try:
+        first_sha = _write_model_with_manifest(seed=0)
+        broker._ensure_model()
+        assert broker._model_sha == first_sha
+
+        second_sha = _write_model_with_manifest(seed=1)
+        broker._ensure_model()
+        assert broker._model_sha == second_sha
     finally:
         broker.shutdown()

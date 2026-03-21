@@ -378,6 +378,8 @@ class SlotBroker:
         self._model: torch.nn.Module | None = None
         self._model_sha: str | None = None
         self._stop = False
+        self._manifest_cache: dict | None = None
+        self._manifest_cache_sig: tuple[int, int] | None = None
 
         self._layout = _SlotLayout.compute(max_batch_per_slot)
         self._slots: list[_InferenceSlot] = []
@@ -409,11 +411,22 @@ class SlotBroker:
         mf = self.publish_dir / "manifest.json"
         return dict(json.loads(mf.read_text(encoding="utf-8")))
 
+    def _load_manifest_if_changed(self) -> dict:
+        mf = self.publish_dir / "manifest.json"
+        stat = mf.stat()
+        sig = (int(stat.st_mtime_ns), int(stat.st_size))
+        if self._manifest_cache is not None and self._manifest_cache_sig == sig:
+            return self._manifest_cache
+        m = dict(json.loads(mf.read_text(encoding="utf-8")))
+        self._manifest_cache = m
+        self._manifest_cache_sig = sig
+        return m
+
     def _ensure_model(self) -> None:
         deadline = time.monotonic() + 30.0
         while True:
             try:
-                manifest = self._load_manifest()
+                manifest = self._load_manifest_if_changed()
                 break
             except FileNotFoundError:
                 if time.monotonic() >= deadline:
@@ -513,7 +526,13 @@ class SlotBroker:
             ready = [s for s in self._slots if s.state == _STATE_REQUEST]
 
             if not ready:
-                time.sleep(0.0001)  # 100µs idle poll
+                # Tight spin with occasional yield to avoid burning 100% of
+                # one core while keeping latency minimal.
+                for _ in range(200):
+                    if any(s.state == _STATE_REQUEST for s in self._slots):
+                        break
+                else:
+                    time.sleep(0.00002)  # 20µs yield
                 continue
 
             # Batching window: wait briefly for more slots to become ready
