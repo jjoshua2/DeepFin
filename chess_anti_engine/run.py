@@ -786,6 +786,18 @@ def main() -> None:
         help="Optional shared cache directory for Tune-managed local worker processes.",
     )
     ap.add_argument(
+        "--distributed-worker-username",
+        type=str,
+        default="",
+        help="Username for distributed worker server authentication.",
+    )
+    ap.add_argument(
+        "--distributed-worker-password",
+        type=str,
+        default="",
+        help="Password for distributed worker server authentication.",
+    )
+    ap.add_argument(
         "--distributed-min-workers-per-trial",
         type=int,
         default=1,
@@ -880,13 +892,16 @@ def main() -> None:
         help="PBT: perturb synchronously across trials instead of asynchronously.",
     )
     ap.add_argument(
-        "--gpbt-pairwise-lr", type=float, default=0.35,
-        help="GPBT-PL: pairwise hyperparameter step size toward the donor config.",
+        "--gpbt-inertia-weight", type=float, default=1.0,
+        help="GPBT-PL: inertia weight for per-trial velocity (multiplied by r1~U[0,1]).",
     )
     ap.add_argument(
-        "--gpbt-pairwise-momentum", type=float, default=0.5,
-        help="GPBT-PL: momentum applied to per-trial pairwise hyperparameter velocity.",
+        "--gpbt-winner-weight", type=float, default=1.0,
+        help="GPBT-PL: winner weight for attraction toward donor (multiplied by r2~U[0,1]).",
     )
+    # Legacy aliases kept for backwards compatibility with old configs
+    ap.add_argument("--gpbt-pairwise-lr", type=float, default=0.35, help=argparse.SUPPRESS)
+    ap.add_argument("--gpbt-pairwise-momentum", type=float, default=0.5, help=argparse.SUPPRESS)
     ap.add_argument(
         "--gpbt-quantile-fraction", type=float, default=0.25,
         help="GPBT-PL: bottom/top population fraction used for exploit pairing.",
@@ -1367,6 +1382,8 @@ def main() -> None:
         "distributed_worker_min_games_per_batch": int(args.distributed_worker_min_games_per_batch),
         "distributed_worker_max_games_per_batch": int(args.distributed_worker_max_games_per_batch),
         "distributed_worker_shared_cache_dir": args.distributed_worker_shared_cache_dir,
+        "distributed_worker_username": args.distributed_worker_username,
+        "distributed_worker_password": args.distributed_worker_password,
         "distributed_min_workers_per_trial": int(args.distributed_min_workers_per_trial),
         "distributed_max_worker_delta_per_rebalance": int(args.distributed_max_worker_delta_per_rebalance),
         "distributed_wait_timeout_seconds": float(getattr(args, "distributed_wait_timeout_seconds", 900.0)),
@@ -1382,8 +1399,8 @@ def main() -> None:
         "tune_scheduler": str(args.tune_scheduler),
         "pb2_perturbation_interval": int(args.pb2_perturbation_interval),
         "pbt_synch": bool(args.pbt_synch),
-        "gpbt_pairwise_lr": float(args.gpbt_pairwise_lr),
-        "gpbt_pairwise_momentum": float(args.gpbt_pairwise_momentum),
+        "gpbt_inertia_weight": float(args.gpbt_inertia_weight),
+        "gpbt_winner_weight": float(args.gpbt_winner_weight),
         "gpbt_quantile_fraction": float(args.gpbt_quantile_fraction),
         "gpbt_resample_probability": float(args.gpbt_resample_probability),
         "search_smolgen": bool(args.search_smolgen),

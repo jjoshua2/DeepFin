@@ -70,11 +70,14 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def _worker_headers() -> dict[str, str]:
-    return {
+def _worker_headers(*, machine_id: str | None = None) -> dict[str, str]:
+    headers = {
         "X-CAE-Worker-Version": str(PACKAGE_VERSION),
         "X-CAE-Protocol-Version": str(PROTOCOL_VERSION),
     }
+    if machine_id:
+        headers["X-CAE-Machine-ID"] = machine_id
+    return headers
 
 
 def _manifest_poll_headers(
@@ -492,16 +495,16 @@ def main() -> None:
     if args.games_per_batch is None and "games_per_batch" in cfg:
         args.games_per_batch = int(cfg.get("games_per_batch"))
 
-    if args.password is None:
-        args.password = cfg.get("password")
-
-    # Prefer password-file over interactive prompt.
-    if args.password is None and args.password_file:
+    # --password-file (CLI) always wins over the saved password in worker.yaml
+    # so that a fresh session with a rotated password loads correctly.
+    if args.password_file:
         try:
             p = Path(str(args.password_file))
             args.password = p.read_text(encoding="utf-8").splitlines()[0].strip()
         except Exception as e:
             raise SystemExit(f"Failed to read --password-file {args.password_file!r}: {e}")
+    elif args.password is None:
+        args.password = cfg.get("password")
 
     if args.username is None:
         raise SystemExit("--username is required (or set username in worker config)")
@@ -570,6 +573,8 @@ def main() -> None:
     if not worker_id:
         worker_id = uuid.uuid4().hex
         cfg["worker_id"] = worker_id
+
+    machine_id = str(cfg.get("machine_name") or "").strip() or socket.gethostname()
 
     def _persist_cfg() -> None:
         if not bool(args.save_config):
@@ -681,7 +686,7 @@ def main() -> None:
                         files=files,
                         auth=(str(args.username), str(args.password)),
                         headers={
-                            **_worker_headers(),
+                            **_worker_headers(machine_id=machine_id),
                             **(
                                 {"X-CAE-Worker-Lease-ID": str(lease_id)}
                                 if str(lease_id).strip()

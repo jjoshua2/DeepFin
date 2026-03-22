@@ -181,8 +181,8 @@ tune:
   tune_keep_last_experiments: 2     # keep last 2 experiments under work_dir/tune
 
   tune_scheduler: pb2
-  gpbt_pairwise_lr: 0.35
-  gpbt_pairwise_momentum: 0.50
+  gpbt_inertia_weight: 1.0
+  gpbt_winner_weight: 1.0
   gpbt_quantile_fraction: 0.25
   gpbt_resample_probability: 0.05
   num_samples: 6
@@ -191,6 +191,8 @@ tune:
   gpus_per_trial: 0.20
   distributed_workers_per_trial: 4
   distributed_worker_sf_workers: 1
+  distributed_worker_username: josh
+  distributed_worker_password: chess_worker_2026
   distributed_worker_use_compile: true
   distributed_inference_broker_enabled: true
   distributed_inference_batch_wait_ms: 5.0

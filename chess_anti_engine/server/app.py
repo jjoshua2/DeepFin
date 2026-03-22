@@ -545,6 +545,7 @@ def create_app(
         x_cae_protocol_version: str | None = Header(None, alias="X-CAE-Protocol-Version"),
         x_cae_worker_lease_id: str | None = Header(None, alias="X-CAE-Worker-Lease-ID"),
         x_cae_batch_elapsed_s: str | None = Header(None, alias="X-CAE-Batch-Elapsed-S"),
+        x_cae_machine_id: str | None = Header(None, alias="X-CAE-Machine-ID"),
     ) -> Any:
         ok, reason = _check_worker_compat(
             trial_id=trial_id,
@@ -638,7 +639,8 @@ def create_app(
         # Update user stats.
         try:
             users = load_users(users_path)
-            record_upload(users, username=username, bytes_uploaded=int(n), positions=positions)
+            machine_id = str(x_cae_machine_id).strip() if x_cae_machine_id else None
+            record_upload(users, username=username, bytes_uploaded=int(n), positions=positions, machine_id=machine_id)
             save_users(users_path, users)
         except Exception:
             # Stats failure should not fail the upload.
@@ -661,6 +663,7 @@ def create_app(
         x_cae_protocol_version: str | None = Header(None, alias="X-CAE-Protocol-Version"),
         x_cae_worker_lease_id: str | None = Header(None, alias="X-CAE-Worker-Lease-ID"),
         x_cae_batch_elapsed_s: str | None = Header(None, alias="X-CAE-Batch-Elapsed-S"),
+        x_cae_machine_id: str | None = Header(None, alias="X-CAE-Machine-ID"),
     ) -> Any:
         return await _upload_shard_impl(
             None,
@@ -670,6 +673,7 @@ def create_app(
             x_cae_protocol_version=x_cae_protocol_version,
             x_cae_worker_lease_id=x_cae_worker_lease_id,
             x_cae_batch_elapsed_s=x_cae_batch_elapsed_s,
+            x_cae_machine_id=x_cae_machine_id,
         )
 
     @app.post("/v1/trials/{trial_id}/upload_shard")
@@ -681,6 +685,7 @@ def create_app(
         x_cae_protocol_version: str | None = Header(None, alias="X-CAE-Protocol-Version"),
         x_cae_worker_lease_id: str | None = Header(None, alias="X-CAE-Worker-Lease-ID"),
         x_cae_batch_elapsed_s: str | None = Header(None, alias="X-CAE-Batch-Elapsed-S"),
+        x_cae_machine_id: str | None = Header(None, alias="X-CAE-Machine-ID"),
     ) -> Any:
         return await _upload_shard_impl(
             trial_id,
@@ -690,6 +695,7 @@ def create_app(
             x_cae_protocol_version=x_cae_protocol_version,
             x_cae_worker_lease_id=x_cae_worker_lease_id,
             x_cae_batch_elapsed_s=x_cae_batch_elapsed_s,
+            x_cae_machine_id=x_cae_machine_id,
         )
 
     async def _upload_arena_result_impl(

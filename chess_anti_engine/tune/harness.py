@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-import secrets
 import socket
 import subprocess
 import sys
 import time
 from urllib import error as urllib_error
 from urllib import request as urllib_request
+
+from chess_anti_engine.tune.process_cleanup import terminate_matching_processes
 
 
 def _pick_free_port() -> int:
@@ -59,13 +60,24 @@ def _wait_for_server_ready(
     raise RuntimeError(f"distributed Tune server did not become ready at {url}: {last_err}")
 
 
-def _prepare_distributed_worker_auth(*, server_root: Path) -> tuple[str, Path]:
-    from chess_anti_engine.server.auth import ensure_user
+def _prepare_distributed_worker_auth(
+    *, server_root: Path, config: dict | None = None
+) -> tuple[str, Path]:
+    from chess_anti_engine.server.auth import upsert_user
 
-    username = f"tune_worker_{secrets.token_hex(4)}"
-    password = secrets.token_urlsafe(18)
-    users_db = server_root / "users.json"
-    ensure_user(users_db, username=username, password=password)
+    cfg = config or {}
+    username = str(cfg.get("distributed_worker_username", "") or "").strip()
+    password = str(cfg.get("distributed_worker_password", "") or "").strip()
+
+    if not username or not password:
+        raise RuntimeError(
+            "distributed_worker_username and distributed_worker_password must be set in config. "
+            "Add a user first: python -m chess_anti_engine.server.manage_users add <username>"
+        )
+
+    # Self-register on every startup so contributors don't need a separate
+    # provisioning step — their credentials are just written to the local DB.
+    upsert_user(server_root / "users.json", username=username, password=password)
 
     password_file = server_root / f"{username}.password"
     password_file.write_text(password + "\n", encoding="utf-8")
@@ -140,6 +152,14 @@ def _cleanup_old_tune_experiments(*, tune_dir: Path, keep_last: int) -> None:
         parts = d.name.split("_", 2)
         if len(parts) >= 3:
             prefixes.add(parts[1])
+
+
+def _resolve_local_override_root(*, raw_root: object, work_dir: Path, suffix: str) -> Path:
+    root = Path(str(raw_root or "")).expanduser()
+    run_root = Path(work_dir).expanduser().resolve()
+    if root.as_posix().startswith("/mnt/c/chess_active/"):
+        return run_root.with_name(f"{run_root.name}_{suffix}")
+    return root
 
     for p in tune_dir.glob("pbt_policy_*.txt"):
         # pbt_policy_<prefix>_<trialid>.txt
@@ -217,7 +237,11 @@ def run_tune(
     if int(base_config.get("distributed_workers_per_trial", 0)) > 0:
         server_root_override = str(base_config.get("distributed_server_root_override", "")).strip()
         if server_root_override:
-            server_root = Path(server_root_override).expanduser().resolve()
+            server_root = _resolve_local_override_root(
+                raw_root=server_root_override,
+                work_dir=work_dir,
+                suffix="server",
+            ).resolve()
         else:
             server_root = work_dir.resolve() / "server"
         server_root.mkdir(parents=True, exist_ok=True)
@@ -228,7 +252,13 @@ def run_tune(
         ready_host = "127.0.0.1" if host == "0.0.0.0" else host
         ready_url = f"http://{ready_host}:{port}"
         base_url = public_url or ready_url
-        username, password_file = _prepare_distributed_worker_auth(server_root=server_root)
+        username, password_file = _prepare_distributed_worker_auth(server_root=server_root, config=base_config)
+        stale_server_pids = terminate_matching_processes(
+            module="chess_anti_engine.server.run_server",
+            required_terms=["--server-root", str(server_root)],
+        )
+        if stale_server_pids:
+            print(f"[run_tune] Reaped stale distributed server processes: {stale_server_pids}")
 
         cmd = [
             sys.executable,
@@ -553,8 +583,8 @@ def _build_gpbt_pl(base_config: dict, *, metric: str, mode: str):
         perturbation_interval=perturbation_interval,
         hyperparam_mutations=hyperparam_mutations,
         hyperparam_bounds=hyperparam_bounds,
-        pairwise_lr=float(base_config.get("gpbt_pairwise_lr", 0.35)),
-        pairwise_momentum=float(base_config.get("gpbt_pairwise_momentum", 0.5)),
+        trial_inertia_weight=float(base_config.get("gpbt_inertia_weight", 1.0)),
+        trial_winner_weight=float(base_config.get("gpbt_winner_weight", 1.0)),
         quantile_fraction=float(base_config.get("gpbt_quantile_fraction", 0.25)),
         resample_probability=float(base_config.get("gpbt_resample_probability", 0.05)),
         synch=bool(base_config.get("pbt_synch", False)),

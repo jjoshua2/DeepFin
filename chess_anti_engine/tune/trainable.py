@@ -4,6 +4,7 @@ from __future__ import annotations
 # works without installing `.[tune]`.
 
 from pathlib import Path
+import csv
 import os
 import hashlib
 import json
@@ -40,6 +41,7 @@ from chess_anti_engine.selfplay import play_batch
 from chess_anti_engine.selfplay.budget import progressive_mcts_simulations
 from chess_anti_engine.stockfish import DifficultyPID, StockfishPool, StockfishUCI
 from chess_anti_engine.train import Trainer
+from chess_anti_engine.tune.process_cleanup import terminate_matching_processes
 from chess_anti_engine.version import PACKAGE_VERSION, PROTOCOL_VERSION
 
 
@@ -83,11 +85,86 @@ def _iteration_pause_metrics(
         "paused_percent": float(paused_fraction * 100.0),
     }
 
+
+def _compute_train_step_budget(
+    *,
+    positions_added: int,
+    imported_samples: int,
+    replay_size: int,
+    batch_size: int,
+    accum_steps: int,
+    base_max_steps: int,
+    train_window_fraction: float,
+) -> dict[str, int]:
+    effective_batch_size = max(1, int(batch_size) * max(1, int(accum_steps)))
+    window_target_samples = int(math.ceil(float(train_window_fraction) * max(0, int(replay_size))))
+    target_sample_budget = max(
+        int(positions_added) + int(imported_samples),
+        int(window_target_samples),
+    )
+    target_steps = max(1, int(math.ceil(float(target_sample_budget) / float(effective_batch_size))))
+    if int(imported_samples) > 0:
+        steps = int(target_steps)
+    else:
+        steps = min(int(target_steps), max(1, int(base_max_steps)))
+    return {
+        "steps": int(steps),
+        "target_sample_budget": int(target_sample_budget),
+        "window_target_samples": int(window_target_samples),
+    }
+
+
+def _resolve_local_override_root(
+    *,
+    raw_root: object,
+    tune_work_dir: object,
+    suffix: str,
+) -> Path:
+    root = Path(str(raw_root or "")).expanduser()
+    tune_dir = Path(str(tune_work_dir)).expanduser()
+    if not tune_dir.is_absolute():
+        tune_dir = Path(__file__).resolve().parents[2] / tune_dir
+    tune_dir = tune_dir.resolve()
+    run_root = tune_dir.parent
+    if root.as_posix().startswith("/mnt/c/chess_active/"):
+        return run_root.with_name(f"{run_root.name}_{suffix}")
+    return root
+
+
+def _resolve_distributed_worker_auth(
+    *,
+    config: dict,
+    server_root: Path,
+) -> tuple[str, Path]:
+    username = str(config.get("distributed_worker_username", "") or "").strip()
+    password_file_raw = str(config.get("distributed_worker_password_file", "") or "").strip()
+    password_file = Path(password_file_raw).expanduser() if password_file_raw else (server_root / f"{username}.password")
+    if password_file.as_posix().startswith("/mnt/c/chess_active/"):
+        password_file = server_root / password_file.name
+    if username and password_file.exists():
+        return username, password_file
+
+    candidates = sorted(
+        server_root.glob("tune_worker_*.password"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if candidates:
+        password_file = candidates[0]
+        username = password_file.stem
+    return username, password_file
+
+
 def _trial_replay_shard_dir(*, config: dict, trial_dir: Path) -> Path:
     """Return replay shard storage for a trial, optionally outside Ray artifacts."""
     raw_root = str(config.get("tune_replay_root_override", "") or "").strip()
     if raw_root:
-        return Path(raw_root).expanduser() / Path(trial_dir).name / "replay_shards"
+        replay_root = _resolve_local_override_root(
+            raw_root=raw_root,
+            tune_work_dir=config.get("work_dir", trial_dir),
+            suffix="replay",
+        )
+        return replay_root / Path(trial_dir).name / "replay_shards"
     return Path(trial_dir) / "replay_shards"
 
 
@@ -268,10 +345,14 @@ def _slice_array_batch(arrs: dict[str, np.ndarray], idxs: np.ndarray) -> dict[st
 def _concat_array_batches(batches: list[dict[str, np.ndarray]]) -> dict[str, np.ndarray]:
     if not batches:
         raise ValueError("cannot concatenate empty replay shard list")
-    keys = tuple(batches[0].keys())
+    # Use intersection so shards missing optional keys (e.g. future_policy_target
+    # absent from bootstrap data) don't crash the concat.
+    keys = set(batches[0].keys())
+    for batch in batches[1:]:
+        keys &= set(batch.keys())
     return {
         k: np.concatenate([np.asarray(batch[k]) for batch in batches], axis=0)
-        for k in keys
+        for k in sorted(keys)
     }
 
 
@@ -940,6 +1021,37 @@ def _trial_server_dirs(*, server_root: Path, trial_id: str) -> dict[str, Path]:
     }
 
 
+def _quarantine_inbox_shards(
+    *,
+    inbox_dir: Path,
+    processed_dir: Path,
+    reason: str,
+) -> dict[str, int | str]:
+    """Move preexisting inbox shards out of the active intake path."""
+    inbox_dir = Path(inbox_dir)
+    processed_dir = Path(processed_dir)
+    reason_slug = re.sub(r"[^a-zA-Z0-9_.-]+", "_", str(reason).strip() or "resume")
+    quarantine_root = processed_dir / "_quarantine" / f"{reason_slug}_{int(time.time())}"
+    moved = 0
+    for sp in sorted(inbox_dir.glob("*/*.npz")):
+        rel = sp.relative_to(inbox_dir)
+        dst = quarantine_root / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            sp.replace(dst)
+        except Exception:
+            try:
+                shutil.copy2(str(sp), str(dst))
+                sp.unlink(missing_ok=True)
+            except Exception:
+                continue
+        moved += 1
+    return {
+        "moved_shards": int(moved),
+        "quarantine_root": str(quarantine_root),
+    }
+
+
 def _publish_distributed_trial_state(
     *,
     trainer: Trainer,
@@ -1101,7 +1213,12 @@ def _launch_distributed_worker(
 
     server_root_raw = str(config.get("distributed_server_root") or "").strip()
     if server_root_raw:
-        server_dirs = _trial_server_dirs(server_root=Path(server_root_raw).expanduser(), trial_id=trial_id)
+        server_root = _resolve_local_override_root(
+            raw_root=server_root_raw,
+            tune_work_dir=config.get("work_dir", trial_dir),
+            suffix="server",
+        )
+        server_dirs = _trial_server_dirs(server_root=server_root, trial_id=trial_id)
         worker_root = server_dirs["workers_root"] / f"worker_{worker_index:02d}"
     else:
         # Fallback for non-standard local setups: keep previous behavior.
@@ -1118,6 +1235,15 @@ def _launch_distributed_worker(
 
     out_fh = worker_out.open("ab")
     try:
+        stale_worker_pids = terminate_matching_processes(
+            module="chess_anti_engine.worker",
+            required_terms=["--trial-id", str(trial_id), "--work-dir", str(worker_root)],
+        )
+        if stale_worker_pids:
+            print(
+                f"[trial] reaped stale distributed workers: "
+                f"trial={trial_id} worker_index={worker_index} pids={stale_worker_pids}"
+            )
         return subprocess.Popen(
             cmd,
             cwd=str(Path(__file__).resolve().parents[2]),
@@ -1137,11 +1263,20 @@ def _build_distributed_worker_cmd(
     worker_log: Path,
 ) -> list[str]:
     device = str(config.get("distributed_worker_device") or config.get("device", "cpu"))
+    server_root = _resolve_local_override_root(
+        raw_root=config.get("distributed_server_root", ""),
+        tune_work_dir=config.get("work_dir", trial_root),
+        suffix="server",
+    )
+    worker_username, worker_password_file = _resolve_distributed_worker_auth(
+        config=config,
+        server_root=server_root,
+    )
     shared_cache_raw = str(config.get("distributed_worker_shared_cache_dir") or "").strip()
     if shared_cache_raw:
         shared_cache_root = Path(shared_cache_raw).expanduser()
     else:
-        shared_cache_root = Path(str(config["distributed_server_root"])) / "worker_cache"
+        shared_cache_root = server_root / "worker_cache"
     shared_cache_root.mkdir(parents=True, exist_ok=True)
 
     cmd = [
@@ -1153,9 +1288,9 @@ def _build_distributed_worker_cmd(
         "--trial-id",
         str(trial_id),
         "--username",
-        str(config["distributed_worker_username"]),
+        str(worker_username),
         "--password-file",
-        str(config["distributed_worker_password_file"]),
+        str(worker_password_file),
         "--stockfish-path",
         str(config["stockfish_path"]),
         "--work-dir",
@@ -1275,6 +1410,12 @@ def _launch_inference_broker(
     ]
     out_fh = broker_out.open("ab")
     try:
+        stale_broker_pids = terminate_matching_processes(
+            module="chess_anti_engine.inference",
+            required_terms=["--publish-dir", str(publish_dir), "--slot-prefix", str(slot_prefix)],
+        )
+        if stale_broker_pids:
+            print(f"[trial] reaped stale inference brokers: trial={trial_id} pids={stale_broker_pids}")
         return subprocess.Popen(
             cmd,
             cwd=str(Path(__file__).resolve().parents[2]),
@@ -1380,15 +1521,23 @@ def _ingest_distributed_selfplay(
     inbox_dir: Path,
     processed_dir: Path,
     target_games: int,
-    target_model_sha: str,
+    accepted_model_shas: set[str],
     wait_timeout_s: float,
     poll_seconds: float,
     rng: np.random.Generator,
 ) -> dict[str, int]:
+    """Poll inbox until enough games arrive, then return.
+
+    Shards whose ``model_sha256`` is in *accepted_model_shas* count as
+    ``matching`` and contribute toward *target_games*.  Typically this
+    includes both the current model SHA and the previous one so that
+    the one-generation-stale batch workers finish after a model update
+    counts toward the target instead of creating a permanent lag.
+    """
     processed_dir.mkdir(parents=True, exist_ok=True)
     target_games = max(1, int(target_games))
     deadline = time.time() + float(wait_timeout_s)
-    summary = {
+    summary: dict[str, int] = {
         "matching_games": 0,
         "matching_positions": 0,
         "matching_w": 0,
@@ -1414,9 +1563,7 @@ def _ingest_distributed_selfplay(
         shard_paths = sorted(inbox_dir.glob("*/*.npz"))
         if not shard_paths:
             if time.time() >= deadline:
-                raise RuntimeError(
-                    f"timed out waiting for distributed selfplay shards for model {target_model_sha[:12]}"
-                )
+                break  # train on whatever we have
             time.sleep(float(poll_seconds))
             continue
 
@@ -1469,7 +1616,7 @@ def _ingest_distributed_selfplay(
                     buf.add_many_arrays(train_arrs)
             summary["positions_replay_added"] += int(positions)
 
-            if model_sha == target_model_sha:
+            if model_sha in accepted_model_shas:
                 summary["matching_games"] += int(games)
                 summary["matching_positions"] += int(positions)
                 summary["matching_w"] += int(wins)
@@ -1500,9 +1647,7 @@ def _ingest_distributed_selfplay(
 
         if not processed_any:
             if time.time() >= deadline:
-                raise RuntimeError(
-                    f"timed out waiting for distributed selfplay shards for model {target_model_sha[:12]}"
-                )
+                break  # train on whatever we have
             time.sleep(float(poll_seconds))
 
     return summary
@@ -1681,6 +1826,16 @@ def train_trial(config: dict):
     work_dir = trial_dir
     work_dir.mkdir(parents=True, exist_ok=True)
 
+    # Compact status CSV — reset on each process start so checkpoint-restore rows don't accumulate.
+    _STATUS_CSV_PATH = trial_dir / "status.csv"
+    _STATUS_COLS = [
+        "iter", "global_iter", "opp", "opp_ema", "skill", "sf_nodes",
+        "ingest_s", "train_s", "iter_s", "steps", "replay", "pos_added",
+        "stale", "train_loss", "best_loss", "win", "draw", "loss", "lr", "startup",
+    ]
+    with _STATUS_CSV_PATH.open("w", newline="") as _f:
+        csv.writer(_f).writerow(_STATUS_COLS)
+
     # Gate match counter (so we can log gate scalars against match #, not iteration).
     gate_state_path = work_dir / "gate_state.json"
     gate_match_idx = 0
@@ -1697,10 +1852,13 @@ def train_trial(config: dict):
     best_dir.mkdir(parents=True, exist_ok=True)
 
     best_loss = float("inf")
+    opp_strength_ema = 0.0
+    _OPP_EMA_ALPHA = 0.3  # smoothing factor — higher = more responsive
     if best_state_path.exists():
         try:
             d = json.loads(best_state_path.read_text(encoding="utf-8"))
             best_loss = float(d.get("best_loss", d.get("loss", best_loss)))
+            opp_strength_ema = float(d.get("opp_strength_ema", 0.0))
         except Exception:
             pass
 
@@ -2172,7 +2330,11 @@ def train_trial(config: dict):
             )
 
     distributed_server_root = (
-        Path(str(config["distributed_server_root"])).expanduser()
+        _resolve_local_override_root(
+            raw_root=config["distributed_server_root"],
+            tune_work_dir=config.get("work_dir", work_dir),
+            suffix="server",
+        )
         if use_distributed_selfplay
         else None
     )
@@ -2185,6 +2347,19 @@ def train_trial(config: dict):
     )
     distributed_worker_procs: list[subprocess.Popen[bytes]] = []
     distributed_inference_broker_proc: subprocess.Popen[bytes] | None = None
+
+    if use_distributed_selfplay and ckpt is not None and distributed_dirs is not None:
+        quarantined = _quarantine_inbox_shards(
+            inbox_dir=distributed_dirs["inbox_dir"],
+            processed_dir=distributed_dirs["processed_dir"],
+            reason=f"{startup_source}_resume",
+        )
+        if int(quarantined["moved_shards"]) > 0:
+            print(
+                "[trial] quarantined preexisting inbox shards on resume: "
+                f"trial={trial_id} moved={quarantined['moved_shards']} "
+                f"dst={quarantined['quarantine_root']}"
+            )
 
     eval_games = int(config.get("eval_games", 0))
     eval_sf_nodes = int(config.get("eval_sf_nodes", config.get("sf_nodes", 500)))
@@ -2296,6 +2471,7 @@ def train_trial(config: dict):
         )
     distributed_pause_active = False
     distributed_pause_started_at: float | None = None
+    prev_published_model_sha: str = ""
 
     try:
         iterations = int(config.get("iterations", 10))
@@ -2356,6 +2532,7 @@ def train_trial(config: dict):
             total_curriculum_adjudicated_games = 0
             total_curriculum_draw_games = 0
             total_positions = 0
+            replay_positions_ingested = 0
             total_sf_d6 = 0.0
             total_sf_d6_n = 0
             distributed_stale_positions = 0
@@ -2403,7 +2580,7 @@ def train_trial(config: dict):
                     inbox_dir=distributed_dirs["inbox_dir"],
                     processed_dir=distributed_dirs["processed_dir"],
                     target_games=int(total_games),
-                    target_model_sha=str(published_model_sha),
+                    accepted_model_shas={str(published_model_sha)} | ({str(prev_published_model_sha)} if prev_published_model_sha else set()),
                     wait_timeout_s=float(config.get("distributed_wait_timeout_seconds", 900.0)),
                     poll_seconds=float(config.get("distributed_worker_poll_seconds", 1.0)),
                     rng=rng,
@@ -2424,9 +2601,11 @@ def train_trial(config: dict):
                 total_curriculum_games = int(ingest_summary["matching_curriculum_games"])
                 total_curriculum_adjudicated_games = int(ingest_summary["matching_curriculum_adjudicated_games"])
                 total_curriculum_draw_games = int(ingest_summary["matching_curriculum_draw_games"])
-                total_positions = int(ingest_summary["positions_replay_added"])
+                total_positions = int(ingest_summary["matching_positions"])
                 distributed_stale_positions = int(ingest_summary["stale_positions"])
                 distributed_stale_games = int(ingest_summary["stale_games"])
+                replay_positions_ingested = int(ingest_summary["positions_replay_added"])
+                prev_published_model_sha = str(published_model_sha)
             else:
                 selfplay_kwargs = dict(
                     device=device,
@@ -2496,6 +2675,7 @@ def train_trial(config: dict):
                 total_positions += stats.positions
                 total_sf_d6 += float(getattr(stats, "sf_eval_delta6", 0.0)) * int(getattr(stats, "sf_eval_delta6_n", 0))
                 total_sf_d6_n += int(getattr(stats, "sf_eval_delta6_n", 0))
+                replay_positions_ingested = int(total_positions)
 
                 holdout_samples: list = []
                 train_samples: list = []
@@ -2707,34 +2887,6 @@ def train_trial(config: dict):
                     cur_sf_wdl = sf_wdl_floor + t * (sf_wdl_start - sf_wdl_floor)
                 trainer.w_sf_wdl = cur_sf_wdl
 
-            if use_distributed_selfplay and bool(config.get("distributed_pause_selfplay_during_training", False)):
-                _publish_distributed_trial_state(
-                    trainer=trainer,
-                    config=config,
-                    model_cfg=model_cfg,
-                    server_root=distributed_server_root,
-                    trial_id=trial_id,
-                    training_iteration=int(iteration_idx),
-                    trainer_step=int(getattr(trainer, "step", 0)),
-                    sf_nodes=int(pid.nodes) if pid is not None else int(config.get("sf_nodes", 500)),
-                    random_move_prob=float(current_rand),
-                    skill_level=int(skill_level_used),
-                    mcts_simulations=int(sims),
-                    pause_selfplay=True,
-                    pause_reason="training",
-                    backpressure={
-                        "phase": "training",
-                        "games_target": int(total_games),
-                        "games_generated": int(total_games_generated),
-                        "stale_games": int(distributed_stale_games),
-                        "stale_positions": int(distributed_stale_positions),
-                    },
-                    export_model=False,
-                )
-                if not distributed_pause_active:
-                    distributed_pause_active = True
-                    distributed_pause_started_at = time.monotonic()
-
             train_t0 = time.monotonic()
             batch_size = int(config.get("batch_size", 128))
             accum_steps = max(1, int(config.get("accum_steps", 1)))
@@ -2754,16 +2906,18 @@ def train_trial(config: dict):
                 # upward naturally as the replay grows.
                 base_max_steps = int(config.get("train_steps", 25))
                 train_window_fraction = max(0.0, float(config.get("train_window_fraction", 0.0)))
-                effective_positions = int(total_positions) + int(imported_samples_this_iter)
-                window_target_samples = int(math.ceil(train_window_fraction * max(0, len(buf))))
-                target_sample_budget = max(int(effective_positions), int(window_target_samples))
-                target_steps = max(1, int(math.ceil(target_sample_budget / max(1, effective_batch_size))))
-                # If we imported shared games this iteration, use proportional steps
-                # so top-1 vs top-5 import volume differences are reflected.
-                if imported_samples_this_iter > 0:
-                    steps = target_steps
-                else:
-                    steps = min(target_steps, base_max_steps)
+                train_budget = _compute_train_step_budget(
+                    positions_added=int(total_positions),
+                    imported_samples=int(imported_samples_this_iter),
+                    replay_size=int(len(buf)),
+                    batch_size=int(batch_size),
+                    accum_steps=int(accum_steps),
+                    base_max_steps=int(base_max_steps),
+                    train_window_fraction=float(train_window_fraction),
+                )
+                steps = int(train_budget["steps"])
+                target_sample_budget = int(train_budget["target_sample_budget"])
+                window_target_samples = int(train_budget["window_target_samples"])
                 if startup_source == "salvage" and bool(salvage_origin_used):
                     if int(it) < salvage_startup_no_share_iters and salvage_startup_max_train_steps > 0:
                         steps = min(steps, salvage_startup_max_train_steps)
@@ -3011,6 +3165,13 @@ def train_trial(config: dict):
                 max_nodes=int(getattr(pid, "max_nodes", 50000)) if pid is not None else 50000,
                 pid_target_winrate=float(config.get("sf_pid_target_winrate", 0.53)),
             )
+            if opp_strength_ema == 0.0:
+                opp_strength_ema = float(opp_strength)
+            else:
+                opp_strength_ema = (
+                    _OPP_EMA_ALPHA * float(opp_strength)
+                    + (1.0 - _OPP_EMA_ALPHA) * opp_strength_ema
+                )
 
             # Puzzle evaluation (overspecialization canary).
             puzzle_dict = {}
@@ -3035,6 +3196,7 @@ def train_trial(config: dict):
             )
             try:
                 trainer.writer.add_scalar("difficulty/opponent_strength", float(opp_strength), iteration_step)
+                trainer.writer.add_scalar("difficulty/opponent_strength_ema", float(opp_strength_ema), iteration_step)
                 trainer.writer.add_scalar("difficulty/random_move_prob", float(current_rand), iteration_step)
                 trainer.writer.add_scalar("difficulty/random_move_prob_next", float(random_move_prob_next), iteration_step)
                 trainer.writer.add_scalar("difficulty/pid_ema_winrate", float(pid_ema_wr), iteration_step)
@@ -3062,6 +3224,7 @@ def train_trial(config: dict):
                     "replay": len(buf),
                     "test_replay": len(holdout_buf),
                     "positions_added": total_positions,
+                    "replay_positions_ingested": int(replay_positions_ingested),
                     "games_generated": int(total_games_generated),
                     "avg_game_plies": float(avg_game_plies),
                     "adjudication_rate": float(adjudication_rate),
@@ -3106,6 +3269,7 @@ def train_trial(config: dict):
                     "skill_level": int(skill_level_used),
                     "skill_level_next": int(skill_level_next),
                     "opponent_strength": float(opp_strength),
+                    "opponent_strength_ema": float(opp_strength_ema),
                     "opt_lr": float(trainer.opt.param_groups[0]["lr"]),
                     "peak_lr": float(getattr(trainer, "_peak_lr", 0.0)),
                     "w_wdl": float(trainer.w_wdl),
@@ -3159,6 +3323,35 @@ def train_trial(config: dict):
                 },
                 checkpoint=checkpoint,
             )
+
+            # Write compact status row (best-effort — never crash the trial).
+            try:
+                _iter_s = (time.monotonic() - iter_t0)
+                with _STATUS_CSV_PATH.open("a", newline="") as _f:
+                    csv.writer(_f).writerow([
+                        int(iteration_idx),
+                        int(global_iter),
+                        f"{float(opp_strength):.1f}",
+                        f"{float(opp_strength_ema):.1f}",
+                        int(skill_level_used),
+                        int(sf_nodes_used),
+                        f"{float(ingest_ms)/1000:.1f}",
+                        f"{float(train_ms)/1000:.1f}",
+                        f"{_iter_s:.1f}",
+                        int(steps),
+                        len(buf),
+                        int(total_positions),
+                        int(distributed_stale_games),
+                        f"{float(metrics.loss):.4f}" if metrics is not None else "",
+                        f"{float(best_loss):.4f}",
+                        int(total_w),
+                        int(total_d),
+                        int(total_l),
+                        f"{float(trainer.opt.param_groups[0]['lr']):.2e}",
+                        str(startup_source),
+                    ])
+            except Exception:
+                pass
 
             # Best-effort: keep disk usage bounded even when resuming an older
             # experiment that did not have checkpoint retention configured.

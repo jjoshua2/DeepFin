@@ -396,7 +396,7 @@ class DiskReplayBuffer:
             n_seed = min(len(self._shard_paths), self._refresh_shards * 2)
             for sp in self._shard_paths[-n_seed:]:
                 try:
-                    arrs, _ = load_shard_arrays(sp, lazy=True)
+                    arrs, _ = load_shard_arrays(sp, lazy=False)
                     self._append_shuffle_arrays(arrs)
                 except Exception:
                     pass
@@ -676,7 +676,7 @@ class DiskReplayBuffer:
         loaded_n = 0
         for idx in chosen_idxs:
             try:
-                arrs, _ = load_shard_arrays(self._shard_paths[int(idx)], lazy=True)
+                arrs, _ = load_shard_arrays(self._shard_paths[int(idx)], lazy=False)
                 loaded.append(arrs)
                 loaded_n += int(arrs["x"].shape[0])
             except Exception:

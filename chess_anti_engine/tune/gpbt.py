@@ -18,24 +18,36 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
 
     This keeps Ray's current PBT checkpoint/exploit lifecycle, but replaces:
     - donor selection: weighted pairwise choice among stronger trials
-    - hyperparameter updates: pairwise config interpolation with momentum
+    - hyperparameter updates: PSO-inspired pairwise velocity with momentum
 
-    It is intentionally a local adaptation for current Ray Tune, not a verbatim
-    copy of the older upstream gpbt-pl repository.
+    Velocity update (per-param, per-update):
+        v = r1 * inertia_weight * old_v + r2 * winner_weight * gap_scale * (donor - recipient)
+    Position update:
+        theta_new = theta_recipient + v
+
+    where r1, r2 ~ Uniform[0,1] (re-sampled each update), and gap_scale is the
+    normalised performance gap between donor and recipient (dampens exploitation
+    when the gap is within noise).
+
+    Based on the GPBT-PL paper (Pairwise Learning variant of Guided
+    Population-Based Training).
     """
 
     def __init__(
         self,
         *,
         hyperparam_bounds: dict[str, list[float]] | None = None,
-        pairwise_lr: float = 0.35,
-        pairwise_momentum: float = 0.5,
+        trial_inertia_weight: float = 1.0,
+        trial_winner_weight: float = 1.0,
+        # Legacy aliases (ignored if the new names are also set)
+        pairwise_lr: float | None = None,
+        pairwise_momentum: float | None = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self._hyperparam_bounds = dict(hyperparam_bounds or {})
-        self._pairwise_lr = float(pairwise_lr)
-        self._pairwise_momentum = float(pairwise_momentum)
+        self._inertia_weight = float(trial_inertia_weight)
+        self._winner_weight = float(trial_winner_weight)
         self._pairwise_velocity: dict[str, dict[str, float]] = defaultdict(dict)
         self._pending_pairwise_log: dict[str, dict] = {}
 
@@ -88,12 +100,14 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
         gap_scale: float,
     ) -> float:
         prev_vel = float(self._pairwise_velocity[trial_id].get(param_name, 0.0))
+        r1 = random.random()
+        r2 = random.random()
         velocity = (
-            self._pairwise_momentum * prev_vel
-            + self._pairwise_lr * gap_scale * (donor_value - recipient_value)
+            r1 * self._inertia_weight * prev_vel
+            + r2 * self._winner_weight * gap_scale * (donor_value - recipient_value)
         )
         self._pairwise_velocity[trial_id][param_name] = float(velocity)
-        return float(donor_value + velocity)
+        return float(recipient_value + velocity)
 
     def _get_new_config(self, trial: Trial, trial_to_clone: Trial):
         new_config = copy.deepcopy(trial_to_clone.config)
@@ -225,8 +239,8 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
             "donor_score": float(donor_state.last_score),
             "score_gap": float(score_gap),
             "gap_scale": float(gap_scale),
-            "pairwise_lr": float(self._pairwise_lr),
-            "pairwise_momentum": float(self._pairwise_momentum),
+            "inertia_weight": float(self._inertia_weight),
+            "winner_weight": float(self._winner_weight),
         }
         self._exploit(tune_controller, trial, donor)
 

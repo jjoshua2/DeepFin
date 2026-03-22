@@ -151,3 +151,45 @@ def test_flush_tracks_npz_fallback_path_when_zarr_unavailable(tmp_path, monkeypa
     assert saved_path.suffix == LEGACY_SHARD_SUFFIX
     assert saved_path.exists()
     assert iter_shard_paths(tmp_path / "replay") == [saved_path]
+
+
+def test_resumed_shuffle_cache_survives_deleted_shard_directories(tmp_path) -> None:
+    rng = np.random.default_rng(0)
+    shard_dir = tmp_path / "replay"
+    buf = DiskReplayBuffer(
+        12,
+        shard_dir=shard_dir,
+        rng=rng,
+        shuffle_cap=12,
+        shard_size=2,
+    )
+
+    buf.add_many([_sample() for _ in range(6)])
+    buf.flush()
+
+    resumed = DiskReplayBuffer(
+        12,
+        shard_dir=shard_dir,
+        rng=np.random.default_rng(1),
+        shuffle_cap=12,
+        shard_size=2,
+        refresh_shards=3,
+    )
+    assert resumed._shuffle_len() > 0
+
+    for sp in iter_shard_paths(shard_dir):
+        if sp.is_dir():
+            for child in sp.rglob("*"):
+                if child.is_file():
+                    child.unlink()
+            for child in sorted(sp.rglob("*"), reverse=True):
+                if child.is_dir():
+                    child.rmdir()
+            sp.rmdir()
+        else:
+            sp.unlink()
+
+    arrs = resumed.sample_batch_arrays(2, wdl_balance=False)
+
+    assert arrs["x"].shape == (2, 146, 8, 8)
+    assert arrs["policy_target"].shape == (2, 4672)

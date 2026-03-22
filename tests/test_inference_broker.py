@@ -247,6 +247,44 @@ def test_slot_inference_client_reconnects_after_slot_recreation() -> None:
     assert np.allclose(wdl, 6.0)
 
 
+def test_slot_inference_client_attach_does_not_unlink_broker_slot(tmp_path: Path) -> None:
+    broker = SlotBroker(
+        publish_dir=tmp_path / "publish",
+        num_slots=1,
+        max_batch_per_slot=8,
+        device="cpu",
+        compile_inference=False,
+        batch_wait_ms=0.0,
+        slot_prefix=f"cae-attach-{uuid.uuid4().hex}",
+    )
+    try:
+        slot_name = broker.slot_names[0]
+        child = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import time\n"
+                    "from chess_anti_engine.inference import SlotInferenceClient\n"
+                    f"client = SlotInferenceClient(slot_name={slot_name!r}, max_batch=8, request_timeout_s=1.0)\n"
+                    "try:\n"
+                    "    client._connect(deadline=time.monotonic() + 1.0)\n"
+                    "finally:\n"
+                    "    client.close()\n"
+                ),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert child.returncode == 0, child.stderr
+
+        probe = SharedMemory(name=slot_name, create=False)
+        probe.close()
+    finally:
+        broker.shutdown()
+
+
 def test_slot_broker_zeroes_outputs_when_model_unavailable(tmp_path: Path) -> None:
     publish_dir = tmp_path / "publish"
     publish_dir.mkdir(parents=True, exist_ok=True)

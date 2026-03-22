@@ -6,6 +6,7 @@ import os
 import struct
 import time
 from dataclasses import dataclass
+from multiprocessing import resource_tracker
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
 from typing import Protocol
@@ -42,6 +43,24 @@ def _coerce_input_batch(x: np.ndarray) -> np.ndarray:
     if arr.ndim != 4:
         raise ValueError(f"expected encoded batch shape (B,C,H,W), got {arr.shape!r}")
     return np.ascontiguousarray(arr)
+
+
+def _detach_attached_shm_from_resource_tracker(shm: SharedMemory) -> None:
+    """Prevent attach-only clients from unlinking broker-owned POSIX SHM.
+
+    Python's resource tracker registers every SharedMemory handle, including
+    create=False attachments. If a worker exits after only attaching to a
+    broker-owned slot, the worker's resource tracker can incorrectly unlink
+    that shared-memory name and wedge the live broker. The creating broker
+    remains responsible for unlinking the slot.
+    """
+    name = str(getattr(shm, "_name", "") or getattr(shm, "name", "")).strip()
+    if not name:
+        return
+    try:
+        resource_tracker.unregister(name, "shared_memory")
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -636,6 +655,7 @@ class SlotInferenceClient:
                     )
                 time.sleep(0.01)
                 continue
+            _detach_attached_shm_from_resource_tracker(shm)
             self._shm = shm
             self._slot = _InferenceSlot(shm, self._layout, owns=False)
             return self._slot

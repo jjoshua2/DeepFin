@@ -6,7 +6,7 @@ import hmac
 import json
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -21,11 +21,14 @@ class UserRecord:
 
     disabled: bool = False
 
-    # Stats (for leaderboards/moderation later)
+    # Aggregate stats
     uploads: int = 0
     total_bytes: int = 0
     total_positions: int = 0
     last_upload_at_unix: int | None = None
+
+    # Per-machine stats: machine_id -> {uploads, positions, last_upload_at_unix}
+    machines: dict = field(default_factory=dict)
 
 
 def _b64e(b: bytes) -> str:
@@ -84,16 +87,29 @@ def save_users(path: str | Path, users: dict[str, UserRecord]) -> None:
 
 
 def record_upload(
-    users: dict[str, UserRecord], *, username: str, bytes_uploaded: int, positions: int | None
+    users: dict[str, UserRecord],
+    *,
+    username: str,
+    bytes_uploaded: int,
+    positions: int | None,
+    machine_id: str | None = None,
 ) -> None:
     rec = users.get(username)
     if rec is None:
         return
+    now = int(time.time())
     rec.uploads = int(rec.uploads) + 1
     rec.total_bytes = int(rec.total_bytes) + int(bytes_uploaded)
     if positions is not None:
         rec.total_positions = int(rec.total_positions) + int(positions)
-    rec.last_upload_at_unix = int(time.time())
+    rec.last_upload_at_unix = now
+
+    if machine_id:
+        m = rec.machines.setdefault(machine_id, {"uploads": 0, "positions": 0, "last_upload_at_unix": None})
+        m["uploads"] = int(m.get("uploads", 0)) + 1
+        if positions is not None:
+            m["positions"] = int(m.get("positions", 0)) + int(positions)
+        m["last_upload_at_unix"] = now
 
 
 def ensure_user(
@@ -114,6 +130,32 @@ def ensure_user(
         iterations=iterations,
         hash_b64=hash_b64,
         disabled=bool(disabled),
+    )
+    save_users(users_path, users)
+
+
+def upsert_user(
+    users_path: str | Path,
+    *,
+    username: str,
+    password: str,
+    disabled: bool = False,
+) -> None:
+    """Create or update (re-hash) a user's password."""
+    users = load_users(users_path)
+    existing = users.get(username)
+    salt_b64, hash_b64, iterations = hash_password(password)
+    users[username] = UserRecord(
+        username=username,
+        salt_b64=salt_b64,
+        iterations=iterations,
+        hash_b64=hash_b64,
+        disabled=bool(disabled),
+        uploads=existing.uploads if existing else 0,
+        total_bytes=existing.total_bytes if existing else 0,
+        total_positions=existing.total_positions if existing else 0,
+        last_upload_at_unix=existing.last_upload_at_unix if existing else None,
+        machines=dict(existing.machines) if existing else {},
     )
     save_users(users_path, users)
 
