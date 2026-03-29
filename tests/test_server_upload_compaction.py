@@ -3,9 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from chess_anti_engine.replay import ReplaySample
 from chess_anti_engine.replay.shard import load_npz
+from chess_anti_engine.server import app as server_app
 from chess_anti_engine.server.app import (
     _BufferedUploadAccumulator,
     _buffered_upload_ready,
@@ -115,3 +117,52 @@ def test_server_compactor_atomically_replaces_temp_path(tmp_path) -> None:
     samples, meta = load_npz(out)
     assert len(samples) == 2
     assert meta["positions"] == 2
+
+
+def test_server_compactor_falls_back_when_temp_rename_path_is_missing(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    inbox_root = tmp_path / "inbox"
+    acc = _BufferedUploadAccumulator(
+        trial_id="trial_0004",
+        model_sha256="feedface",
+        created_at_unix=70.0,
+        last_update_unix=70.0,
+    )
+    acc.add_upload(
+        samples=[_sample(), _sample(), _sample()],
+        meta={"games": 3, "positions": 3, "wins": 2, "losses": 1},
+        now_unix=71.0,
+    )
+
+    original_replace = server_app.os.replace
+    original_save_npz = server_app.save_npz
+    saved_paths: list[Path] = []
+    replace_calls: list[tuple[str, str]] = []
+
+    def _recording_save_npz(path, *args, **kwargs):
+        saved_paths.append(Path(path))
+        return original_save_npz(path, *args, **kwargs)
+
+    def _replace_and_retry(src: str, dst: str) -> None:
+        replace_calls.append((src, dst))
+        if len(replace_calls) == 1:
+            Path(src).unlink(missing_ok=True)
+            raise FileNotFoundError(src)
+        original_replace(src, dst)
+
+    monkeypatch.setattr(server_app, "save_npz", _recording_save_npz)
+    monkeypatch.setattr(server_app.os, "replace", _replace_and_retry)
+    out = _flush_buffered_upload_to_inbox(
+        inbox_root=inbox_root,
+        acc=acc,
+        now_unix=72.0,
+    )
+
+    assert out is not None
+    assert out.exists()
+    assert len(saved_paths) == 2
+    assert all(path.name.startswith("._tmp_") for path in saved_paths)
+    assert len(replace_calls) == 2
+    assert not list((inbox_root / "_compacted").glob("._tmp_*.npz"))
+    samples, meta = load_npz(out)
+    assert len(samples) == 3
+    assert meta["positions"] == 3

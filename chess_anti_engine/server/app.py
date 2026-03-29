@@ -118,9 +118,20 @@ def _flush_buffered_upload_to_inbox(
         f"{int(now_unix)}_{str(acc.model_sha256)[:8]}_{int(acc.games)}g_{int(acc.positions)}p_"
         f"{secrets.token_hex(8)}.npz"
     )
-    tmp = compacted_dir / f"._tmp_{secrets.token_hex(8)}_{final.name}"
-    save_npz(tmp, samples=samples, meta=meta, compress=False)
-    os.replace(str(tmp), str(final))
+    last_exc: FileNotFoundError | None = None
+    for _attempt in range(2):
+        tmp = compacted_dir / f"._tmp_{secrets.token_hex(8)}_{final.name}"
+        save_npz(tmp, samples=samples, meta=meta, compress=False)
+        try:
+            os.replace(str(tmp), str(final))
+            return final
+        except FileNotFoundError as exc:
+            last_exc = exc
+            tmp.unlink(missing_ok=True)
+            if final.exists():
+                return final
+    if last_exc is not None:
+        raise last_exc
     return final
 
 
