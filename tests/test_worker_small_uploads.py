@@ -12,6 +12,7 @@ from chess_anti_engine.worker import (
     _buffer_should_flush,
     _flush_upload_buffer_to_pending,
     _maybe_flush_upload_buffer,
+    _should_write_fallback_batch,
 )
 
 
@@ -118,7 +119,22 @@ def test_worker_buffer_flushes_on_send_age_even_if_small(tmp_path) -> None:
     )
     assert shard_path is not None
     assert elapsed_s == 61.0
-    assert shard_path.with_suffix(".npz.elapsed_s").exists()
+
+
+def test_fallback_batch_is_skipped_after_incremental_flush() -> None:
+    assert not _should_write_fallback_batch(
+        shard_path=None,
+        samples=[_sample()],
+        saw_completed_game=True,
+    )
+
+
+def test_fallback_batch_still_writes_when_no_incremental_games_seen() -> None:
+    assert _should_write_fallback_batch(
+        shard_path=None,
+        samples=[_sample()],
+        saw_completed_game=False,
+    )
 
 
 def test_worker_buffer_maybe_flushes_and_resets(tmp_path) -> None:

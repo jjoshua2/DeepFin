@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import threading
+import time
+
 import numpy as np
 import pytest
 
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
 from chess_anti_engine.replay import shard as shard_mod
-from chess_anti_engine.replay.shard import LEGACY_SHARD_SUFFIX, iter_shard_paths
+from chess_anti_engine.replay.shard import LEGACY_SHARD_SUFFIX, delete_shard_path, iter_shard_paths, load_shard_arrays
 
 
 def _sample() -> ReplaySample:
@@ -193,3 +196,198 @@ def test_resumed_shuffle_cache_survives_deleted_shard_directories(tmp_path) -> N
 
     assert arrs["x"].shape == (2, 146, 8, 8)
     assert arrs["policy_target"].shape == (2, 4672)
+
+
+def test_resume_enforces_capacity_before_seeding_shuffle(tmp_path) -> None:
+    rng = np.random.default_rng(0)
+    shard_dir = tmp_path / "replay"
+    buf = DiskReplayBuffer(
+        6,
+        shard_dir=shard_dir,
+        rng=rng,
+        shuffle_cap=6,
+        shard_size=2,
+        refresh_shards=1,
+    )
+
+    buf.add_many([_sample() for _ in range(12)])
+    buf.flush()
+    buf.close()
+
+    resumed = DiskReplayBuffer(
+        6,
+        shard_dir=shard_dir,
+        rng=np.random.default_rng(1),
+        shuffle_cap=6,
+        shard_size=2,
+        refresh_shards=1,
+    )
+
+    assert resumed._tracked_shard_positions() <= 6
+    assert len(iter_shard_paths(shard_dir)) == 3
+    assert resumed._shuffle_len() <= 6
+    resumed.close()
+
+
+def test_delete_shard_path_unlinks_symlinked_directory(tmp_path) -> None:
+    src = tmp_path / "src_shard.zarr"
+    src.mkdir()
+    (src / "x").write_text("data", encoding="utf-8")
+    dst = tmp_path / "linked_shard.zarr"
+    dst.symlink_to(src, target_is_directory=True)
+
+    delete_shard_path(dst)
+
+    assert not dst.exists()
+    assert src.exists()
+
+
+def test_refresh_interval_controls_shuffle_refresh(monkeypatch, tmp_path) -> None:
+    rng = np.random.default_rng(0)
+    buf = DiskReplayBuffer(
+        12,
+        shard_dir=tmp_path / "replay",
+        rng=rng,
+        shuffle_cap=12,
+        shard_size=2,
+        refresh_interval=1,
+        refresh_shards=1,
+    )
+    buf.add_many([_sample() for _ in range(6)])
+    buf.flush()
+
+    calls = {"count": 0}
+
+    def _fake_schedule() -> None:
+        calls["count"] += 1
+
+    monkeypatch.setattr(buf, "_schedule_refresh_prefetch", _fake_schedule)
+    arrs = buf.sample_batch_arrays(2, wdl_balance=False)
+
+    assert arrs["x"].shape == (2, 146, 8, 8)
+    assert calls["count"] == 1
+
+
+def test_prefetched_refresh_is_consumed_before_sync_refresh(tmp_path) -> None:
+    rng = np.random.default_rng(0)
+    shard_dir = tmp_path / "replay"
+    buf = DiskReplayBuffer(
+        12,
+        shard_dir=shard_dir,
+        rng=rng,
+        shuffle_cap=12,
+        shard_size=2,
+        refresh_interval=1,
+        refresh_shards=1,
+    )
+    buf.add_many([_sample() for _ in range(6)])
+    buf.flush()
+
+    first_shard = iter_shard_paths(shard_dir)[0]
+    arrs, _ = load_shard_arrays(first_shard, lazy=False)
+    buf._prefetched_refresh = [arrs]
+
+    def _fail_refresh() -> None:
+        raise AssertionError("sync refresh should not be used when a prefetched chunk is ready")
+
+    buf._refresh_shuffle_buf = _fail_refresh  # type: ignore[method-assign]
+    sampled = buf.sample_batch_arrays(2, wdl_balance=False)
+
+    assert sampled["x"].shape == (2, 146, 8, 8)
+    assert buf._prefetched_refresh is None
+
+
+def test_background_prefetch_populates_ready_chunk(tmp_path) -> None:
+    rng = np.random.default_rng(0)
+    shard_dir = tmp_path / "replay"
+    buf = DiskReplayBuffer(
+        12,
+        shard_dir=shard_dir,
+        rng=rng,
+        shuffle_cap=12,
+        shard_size=2,
+        refresh_interval=2,
+        refresh_shards=1,
+    )
+    buf.add_many([_sample() for _ in range(6)])
+    buf.flush()
+    buf._schedule_refresh_prefetch()
+
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        if buf._prefetched_refresh is not None:
+            break
+        time.sleep(0.01)
+
+    assert buf._prefetched_refresh is not None
+    buf.close()
+
+
+def test_close_allows_prefetch_thread_restart(tmp_path) -> None:
+    rng = np.random.default_rng(0)
+    shard_dir = tmp_path / "replay"
+    buf = DiskReplayBuffer(
+        12,
+        shard_dir=shard_dir,
+        rng=rng,
+        shuffle_cap=12,
+        shard_size=2,
+        refresh_interval=2,
+        refresh_shards=1,
+    )
+    buf.add_many([_sample() for _ in range(6)])
+    buf.flush()
+
+    buf.close()
+    buf._schedule_refresh_prefetch()
+
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        if buf._prefetched_refresh is not None:
+            break
+        time.sleep(0.01)
+
+    assert buf._prefetched_refresh is not None
+    buf.close()
+
+
+def test_close_discards_late_prefetch_results(tmp_path) -> None:
+    rng = np.random.default_rng(0)
+    shard_dir = tmp_path / "replay"
+    buf = DiskReplayBuffer(
+        12,
+        shard_dir=shard_dir,
+        rng=rng,
+        shuffle_cap=12,
+        shard_size=2,
+        refresh_interval=2,
+        refresh_shards=1,
+    )
+    buf.add_many([_sample() for _ in range(6)])
+    buf.flush()
+
+    first_shard = iter_shard_paths(shard_dir)[0]
+    arrs, _ = load_shard_arrays(first_shard, lazy=False)
+    started = threading.Event()
+    release = threading.Event()
+
+    def _slow_load_refresh_chunks(*, shard_paths, refresh_shards, rng):
+        started.set()
+        release.wait(timeout=2.0)
+        return [arrs]
+
+    buf._load_refresh_chunks = _slow_load_refresh_chunks  # type: ignore[method-assign]
+    buf._schedule_refresh_prefetch()
+    assert started.wait(timeout=1.0)
+
+    buf.close()
+    release.set()
+
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        if buf._prefetched_refresh is not None:
+            break
+        time.sleep(0.01)
+
+    assert buf._prefetched_refresh is None
+    buf.close()

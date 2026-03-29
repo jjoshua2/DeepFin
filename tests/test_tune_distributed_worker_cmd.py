@@ -1,12 +1,18 @@
+import json
 from pathlib import Path
 
 import numpy as np
 
 from chess_anti_engine.tune.process_cleanup import _list_matching_pids
 from chess_anti_engine.replay.shard import save_npz_arrays
-from chess_anti_engine.tune.harness import _resolve_local_override_root as _resolve_harness_override_root
+from chess_anti_engine.tune.harness import (
+    _extract_saved_trial_config_keys,
+    _patch_experiment_state_for_resume,
+    _resolve_local_override_root as _resolve_harness_override_root,
+)
 from chess_anti_engine.tune.trainable import (
     _build_distributed_worker_cmd,
+    _launch_inference_broker,
     _refresh_replay_shards_on_exploit,
     _trial_replay_shard_dir,
 )
@@ -165,6 +171,76 @@ def test_build_distributed_worker_cmd_remaps_wsl_server_auth_paths(tmp_path: Pat
     assert cmd[cmd.index("--password-file") + 1] == str(password_file)
 
 
+def test_patch_experiment_state_for_resume_adds_new_jsonable_keys(tmp_path: Path) -> None:
+    state_file = tmp_path / "experiment_state-2026-03-29.json"
+    state_file.write_text(
+        json.dumps(
+            {
+                "trial_data": [
+                    [json.dumps({"config": {"seed": 7, "lr": 1.0e-3}}), {"meta": "ignored"}],
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    added, skipped = _patch_experiment_state_for_resume(
+        state_file=state_file,
+        param_space={
+            "seed": 7,
+            "lr": 1.0e-3,
+            "distributed_upload_compact_shard_size": 2000,
+            "distributed_upload_compact_max_age_seconds": 90.0,
+        },
+    )
+
+    assert added == {
+        "distributed_upload_compact_shard_size",
+        "distributed_upload_compact_max_age_seconds",
+    }
+    assert skipped == set()
+
+    saved_state = json.loads(state_file.read_text(encoding="utf-8"))
+    saved_trial = json.loads(saved_state["trial_data"][0][0])
+    assert saved_trial["config"]["distributed_upload_compact_shard_size"] == 2000
+    assert saved_trial["config"]["distributed_upload_compact_max_age_seconds"] == 90.0
+    assert _extract_saved_trial_config_keys(experiment_state=saved_state) == {
+        "seed",
+        "lr",
+        "distributed_upload_compact_shard_size",
+        "distributed_upload_compact_max_age_seconds",
+    }
+
+
+def test_patch_experiment_state_for_resume_skips_non_jsonable_keys(tmp_path: Path) -> None:
+    state_file = tmp_path / "experiment_state-2026-03-29.json"
+    state_file.write_text(
+        json.dumps(
+            {
+                "trial_data": [
+                    [json.dumps({"config": {"seed": 7}}), {"meta": "ignored"}],
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    added, skipped = _patch_experiment_state_for_resume(
+        state_file=state_file,
+        param_space={
+            "seed": 7,
+            "new_search_space": object(),
+        },
+    )
+
+    assert added == set()
+    assert skipped == {"new_search_space"}
+
+    saved_state = json.loads(state_file.read_text(encoding="utf-8"))
+    saved_trial = json.loads(saved_state["trial_data"][0][0])
+    assert saved_trial["config"] == {"seed": 7}
+
+
 def test_list_matching_pids_filters_by_module_terms_and_exclusions() -> None:
     ps_output = "\n".join(
         [
@@ -189,3 +265,73 @@ def test_list_matching_pids_filters_by_module_terms_and_exclusions() -> None:
         exclude_pids=[101, 202],
     )
     assert excluded == []
+
+
+def test_launch_inference_broker_does_not_inherit_worker_compile(monkeypatch, tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    class DummyProc:
+        def poll(self) -> int | None:
+            return None
+
+    def _fake_popen(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        calls.append(list(cmd))
+        return DummyProc()
+
+    monkeypatch.setattr("chess_anti_engine.tune.trainable.terminate_matching_processes", lambda **kwargs: [])
+    monkeypatch.setattr("chess_anti_engine.tune.trainable.subprocess.Popen", _fake_popen)
+
+    publish_dir = tmp_path / "publish"
+    trial_dir = tmp_path / "trial"
+    publish_dir.mkdir()
+    trial_dir.mkdir()
+
+    _launch_inference_broker(
+        config={
+            "distributed_workers_per_trial": 2,
+            "distributed_worker_device": "cuda",
+            "distributed_worker_use_compile": True,
+            "distributed_server_root": str(tmp_path / "server"),
+        },
+        trial_id="trial_00000",
+        publish_dir=publish_dir,
+        trial_dir=trial_dir,
+    )
+
+    assert calls
+    assert "--compile-inference" not in calls[0]
+
+
+def test_launch_inference_broker_respects_dedicated_compile_flag(monkeypatch, tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    class DummyProc:
+        def poll(self) -> int | None:
+            return None
+
+    def _fake_popen(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        calls.append(list(cmd))
+        return DummyProc()
+
+    monkeypatch.setattr("chess_anti_engine.tune.trainable.terminate_matching_processes", lambda **kwargs: [])
+    monkeypatch.setattr("chess_anti_engine.tune.trainable.subprocess.Popen", _fake_popen)
+
+    publish_dir = tmp_path / "publish"
+    trial_dir = tmp_path / "trial"
+    publish_dir.mkdir()
+    trial_dir.mkdir()
+
+    _launch_inference_broker(
+        config={
+            "distributed_workers_per_trial": 2,
+            "distributed_worker_device": "cuda",
+            "distributed_inference_use_compile": True,
+            "distributed_server_root": str(tmp_path / "server"),
+        },
+        trial_id="trial_00000",
+        publish_dir=publish_dir,
+        trial_dir=trial_dir,
+    )
+
+    assert calls
+    assert "--compile-inference" in calls[0]

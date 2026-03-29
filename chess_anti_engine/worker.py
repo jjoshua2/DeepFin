@@ -248,6 +248,21 @@ def _maybe_flush_upload_buffer(
     )
 
 
+def _should_write_fallback_batch(
+    *,
+    shard_path: Path | None,
+    samples: list[ReplaySample],
+    saw_completed_game: bool,
+) -> bool:
+    """Return True only when batch-level fallback is actually needed.
+
+    If incremental callbacks already observed completed games, an empty upload
+    buffer at batch end usually means those samples were already flushed and
+    uploaded earlier. Writing the full batch again would duplicate data.
+    """
+    return shard_path is None and bool(samples) and not saw_completed_game
+
+
 def _worker_headers(*, machine_id: str | None = None) -> dict[str, str]:
     headers = {
         "X-CAE-Worker-Version": str(PACKAGE_VERSION),
@@ -1529,9 +1544,11 @@ def main() -> None:
 
             # Generate a shard
             t0 = time.time()
+            saw_completed_game = False
 
             def _on_completed_game(game_batch) -> None:
-                nonlocal last_successful_send_s
+                nonlocal last_successful_send_s, saw_completed_game
+                saw_completed_game = True
                 now_s = time.time()
                 _buffer_add_completed_game(
                     buf=upload_buf,
@@ -1669,7 +1686,11 @@ def main() -> None:
                 flush_seconds=float(args.upload_flush_seconds),
                 force=True,
             )
-            if shard_path is None and samples:
+            if _should_write_fallback_batch(
+                shard_path=shard_path,
+                samples=samples,
+                saw_completed_game=saw_completed_game,
+            ):
                 log.warning(
                     "batch returned %d samples but upload buffer was empty; writing fallback batch shard",
                     int(len(samples)),

@@ -59,3 +59,33 @@ def test_make_config_overrides_nested_sections(tmp_path: Path) -> None:
     assert flat["distributed_worker_sf_workers"] == 1
     assert flat["distributed_server_root_override"] == str(module.SERVER_DIR)
     assert flat["tune_replay_root_override"] == str(module.REPLAY_DIR)
+
+
+def test_flatten_run_config_defaults_passes_shuffle_balance_knobs() -> None:
+    cfg = {
+        "tune": {
+            "shuffle_draw_cap_frac": 0.75,
+            "shuffle_wl_max_ratio": 1.2,
+        }
+    }
+
+    flat = flatten_run_config_defaults(cfg)
+
+    assert flat["shuffle_draw_cap_frac"] == 0.75
+    assert flat["shuffle_wl_max_ratio"] == 1.2
+
+
+def test_flatten_run_config_defaults_passes_curriculum_regret_knobs() -> None:
+    cfg = {
+        "stockfish": {
+            "pid_topk_min": 2,
+            "pid_suboptimal_wdl_regret_max": 0.5,
+            "pid_suboptimal_wdl_regret_min": 0.01,
+        }
+    }
+
+    flat = flatten_run_config_defaults(cfg)
+
+    assert flat["sf_pid_topk_min"] == 2
+    assert flat["sf_pid_suboptimal_wdl_regret_max"] == 0.5
+    assert flat["sf_pid_suboptimal_wdl_regret_min"] == 0.01

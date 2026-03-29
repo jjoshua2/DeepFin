@@ -225,7 +225,9 @@ def copy_or_link_shard(src: str | Path, dst: str | Path) -> Path:
 
 def delete_shard_path(path: str | Path) -> None:
     p = Path(path)
-    if p.is_dir():
+    if p.is_symlink():
+        p.unlink(missing_ok=True)
+    elif p.is_dir():
         shutil.rmtree(p)
     else:
         p.unlink(missing_ok=True)

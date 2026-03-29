@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from urllib import error as urllib_error
 from urllib import request as urllib_request
@@ -172,6 +175,104 @@ def _resolve_local_override_root(*, raw_root: object, work_dir: Path, suffix: st
                 pass
 
 
+def _load_trial_config_from_state_entry(entry: object) -> tuple[dict[str, object] | None, bool]:
+    if isinstance(entry, (list, tuple)) and entry:
+        payload = entry[0]
+    elif isinstance(entry, dict):
+        payload = entry
+    else:
+        return None, False
+    if isinstance(payload, str):
+        trial = json.loads(payload)
+        return trial if isinstance(trial, dict) else None, True
+    return payload if isinstance(payload, dict) else None, False
+
+
+def _extract_saved_trial_config_keys(*, experiment_state: dict[str, object]) -> set[str]:
+    trial_data = experiment_state.get("trial_data", [])
+    if not isinstance(trial_data, list):
+        return set()
+    for entry in trial_data:
+        trial, _ = _load_trial_config_from_state_entry(entry)
+        if not isinstance(trial, dict):
+            continue
+        cfg = trial.get("config")
+        if isinstance(cfg, dict) and cfg:
+            return set(cfg.keys())
+    return set()
+
+
+def _patch_experiment_state_for_resume(
+    *,
+    state_file: Path,
+    param_space: dict[str, object],
+) -> tuple[set[str], set[str]]:
+    with state_file.open("r", encoding="utf-8") as fh:
+        experiment_state = json.load(fh)
+
+    trial_data = experiment_state.get("trial_data", [])
+    if not isinstance(trial_data, list):
+        return set(), set()
+
+    added_keys: set[str] = set()
+    skipped_keys: set[str] = set()
+    changed = False
+    for idx, entry in enumerate(trial_data):
+        trial, payload_is_json = _load_trial_config_from_state_entry(entry)
+        if not isinstance(trial, dict):
+            continue
+        cfg = trial.get("config")
+        if not isinstance(cfg, dict):
+            continue
+
+        trial_changed = False
+        for key, value in param_space.items():
+            if key in cfg:
+                continue
+            try:
+                json.dumps(value)
+            except TypeError:
+                skipped_keys.add(str(key))
+                continue
+            cfg[key] = value
+            added_keys.add(str(key))
+            trial_changed = True
+
+        if not trial_changed:
+            continue
+        changed = True
+        if isinstance(entry, list) and entry and payload_is_json:
+            entry[0] = json.dumps(trial, separators=(",", ":"))
+        elif isinstance(entry, dict):
+            trial_data[idx] = trial
+
+    if not changed:
+        return added_keys, skipped_keys
+
+    tmp_name = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=state_file.parent,
+            prefix=f"{state_file.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as fh:
+            json.dump(experiment_state, fh)
+            fh.write("\n")
+            tmp_name = fh.name
+        os.replace(tmp_name, state_file)
+    finally:
+        if tmp_name:
+            try:
+                Path(tmp_name).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    return added_keys, skipped_keys
+
+
 def run_tune(
     *,
     base_config: dict,
@@ -274,6 +375,10 @@ def run_tune(
             str(int(base_config.get("distributed_min_workers_per_trial", 1))),
             "--max-worker-delta-per-rebalance",
             str(int(base_config.get("distributed_max_worker_delta_per_rebalance", 1))),
+            "--upload-compact-shard-size",
+            str(int(base_config.get("distributed_upload_compact_shard_size", base_config.get("shard_size", 2000)))),
+            "--upload-compact-max-age-seconds",
+            str(float(base_config.get("distributed_upload_compact_max_age_seconds", 90.0))),
         ]
         opening_book = base_config.get("opening_book_path")
         if isinstance(opening_book, str) and opening_book.strip():
@@ -380,24 +485,48 @@ def run_tune(
         import glob as _glob
         state_files = sorted(_glob.glob(str(experiment_path / "experiment_state-*.json")))
         state_ok = False
+        valid_state_file: Path | None = None
         for sf in reversed(state_files):  # try newest first
             try:
                 with open(sf, "r", encoding="utf-8") as fh:
-                    import json as _json
-                    _json.loads(fh.read())
+                    json.loads(fh.read())
                 state_ok = True
+                valid_state_file = Path(sf)
                 break
             except Exception:
-                import os
                 corrupt_name = sf + ".corrupt"
                 os.rename(sf, corrupt_name)
                 print(f"[run_tune] Renamed corrupt state file: {sf} -> {corrupt_name}")
 
-        if state_ok:
+        if state_ok and valid_state_file is not None:
+            # Ray validates that param_space keys match the saved state
+            # exactly.  When new config keys are added between runs, the
+            # mismatch causes a ValueError. Patch the saved trial configs
+            # with current literal values so resumed trials honor the YAML.
+            _restore_param_space = param_space
+            added_keys, skipped_keys = _patch_experiment_state_for_resume(
+                state_file=valid_state_file,
+                param_space=param_space,
+            )
+            if added_keys:
+                print(f"[run_tune] Added {len(added_keys)} new config keys to restored trial state: {sorted(added_keys)}")
+            if skipped_keys:
+                _restore_param_space = {k: v for k, v in param_space.items() if k not in skipped_keys}
+                print(
+                    "[run_tune] Skipping non-JSON param_space keys for resume: "
+                    f"{sorted(skipped_keys)}"
+                )
+            with valid_state_file.open("r", encoding="utf-8") as fh:
+                saved_keys = _extract_saved_trial_config_keys(experiment_state=json.load(fh))
+            extra = set(_restore_param_space.keys()) - saved_keys
+            if extra:
+                _restore_param_space = {k: v for k, v in _restore_param_space.items() if k not in extra}
+                print(f"[run_tune] Stripping unresolved param_space keys for resume: {sorted(extra)}")
+
             tuner = tune.Tuner.restore(
                 str(experiment_path),
                 trainable=trainable,
-                param_space=param_space,
+                param_space=_restore_param_space,
                 resume_errored=True,
                 resume_unfinished=True,
             )
