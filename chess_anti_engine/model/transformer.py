@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 import torch
 import torch.nn as nn
@@ -8,6 +9,14 @@ import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint as grad_checkpoint
 
 from chess_anti_engine.moves import POLICY_SIZE, build_policy_gather_tables
+
+
+_VOLATILITY_HEAD_NEUTRAL_OUTPUT = 0.01
+
+
+def _softplus_inverse(y: float) -> float:
+    y = float(max(1e-6, y))
+    return float(math.log(math.expm1(y)))
 
 
 def _rmsnorm(normalized_shape: int, *, eps: float = 1e-6) -> nn.Module:
@@ -113,8 +122,14 @@ class VolatilityHead(nn.Module):
             nn.Linear(embed_dim, 64),
             nn.Mish(),
             nn.Linear(64, 3),
-            nn.ReLU(),
+            # Keep outputs non-negative without the hard-zero dead zone of ReLU.
+            nn.Softplus(),
         )
+        self.reset_neutral_output_bias_()
+
+    def reset_neutral_output_bias_(self) -> None:
+        with torch.no_grad():
+            self.net[2].bias.fill_(_softplus_inverse(_VOLATILITY_HEAD_NEUTRAL_OUTPUT))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         pooled = x.mean(dim=1)

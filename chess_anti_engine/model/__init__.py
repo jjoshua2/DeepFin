@@ -51,15 +51,39 @@ def build_model(cfg: ModelConfig) -> torch.nn.Module:
     raise ValueError(f"Unknown model kind: {cfg.kind}")
 
 
-def zero_policy_head_parameters_(model: torch.nn.Module) -> list[str]:
-    """Zero policy-head parameters so their masked softmax starts near-uniform."""
+def _reinit_heads(model: torch.nn.Module, head_names: tuple[str, ...]) -> list[str]:
+    """Re-init named heads with small Xavier-uniform weights and zero biases.
 
-    zeroed: list[str] = []
-    for name in ("policy", "policy_own", "policy_soft", "policy_sf", "policy_future"):
+    Uses Xavier(gain=0.1) instead of zeros to avoid multiplicative dead
+    gradients in attention-based policy heads (logits = Q @ K^T — both zero
+    means d_logits/d_Q = K^T = 0).
+    """
+    reinit: list[str] = []
+    for name in head_names:
         head = getattr(model, name, None)
         if not isinstance(head, torch.nn.Module):
             continue
         for param in head.parameters():
-            torch.nn.init.zeros_(param)
-        zeroed.append(name)
-    return zeroed
+            if param.dim() >= 2:
+                torch.nn.init.xavier_uniform_(param, gain=0.1)
+            else:
+                torch.nn.init.zeros_(param)
+        reset_neutral_bias = getattr(head, "reset_neutral_output_bias_", None)
+        if callable(reset_neutral_bias):
+            reset_neutral_bias()
+        reinit.append(name)
+    return reinit
+
+
+_POLICY_HEADS = ("policy", "policy_own", "policy_soft", "policy_sf", "policy_future")
+_VOLATILITY_HEADS = ("volatility", "sf_volatility")
+
+
+def zero_policy_head_parameters_(model: torch.nn.Module) -> list[str]:
+    """Re-init policy-head parameters to small random values."""
+    return _reinit_heads(model, _POLICY_HEADS)
+
+
+def reinit_volatility_head_parameters_(model: torch.nn.Module) -> list[str]:
+    """Re-init volatility heads while leaving trunk/policy/value intact."""
+    return _reinit_heads(model, _VOLATILITY_HEADS)

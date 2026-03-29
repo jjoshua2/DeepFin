@@ -22,12 +22,24 @@ class PIDUpdate:
     random_move_prob_after: float = 0.0
     random_move_prob_changed: bool = False
 
+    # WDL regret limit: max allowed WDL-score drop when picking a suboptimal move.
+    # High regret = easy (any top-k move is fine). Low regret = hard (must be
+    # nearly best). Negative means disabled (no regret filter).
+    wdl_regret_before: float = -1.0
+    wdl_regret_after: float = -1.0
+    wdl_regret_changed: bool = False
+
 
 class DifficultyPID:
     """Adaptive difficulty controller for Stockfish node count.
 
     Tracks an exponential moving average (EMA) of the network win rate and applies a
     PID controller to adjust Stockfish nodes to maintain a target win rate.
+
+    Difficulty stages (each gates the next):
+      1. rmp stage: lower random_move_prob to stage_end
+      2. regret stage: lower wdl_regret to stage_end  (only active after rmp stage)
+      3. nodes stage: increase SF nodes                (only active after regret stage)
 
     Spec-aligned behaviors:
     - EMA win rate tracking (alpha default 0.03)
@@ -62,8 +74,8 @@ class DifficultyPID:
         random_move_prob_min: float = 0.0,
         random_move_prob_max: float = 1.0,
         # "Random-first" gating: while random_move_prob is above this threshold,
-        # we ONLY adjust random_move_prob (and keep nodes/skill fixed). This lets
-        # training bootstrap against a weak opponent before ramping SF strength.
+        # we ONLY adjust random_move_prob (and keep regret/nodes/skill fixed). This
+        # lets training bootstrap against a weak opponent before ramping SF strength.
         random_move_stage_end: float = 0.5,
         # Maximum absolute change to random_move_prob per adjustment step.
         # Prevents large jumps (e.g. 1.0→0.90) when the PID fires with a big error.
@@ -71,8 +83,19 @@ class DifficultyPID:
         max_rand_step: float = 0.01,
         # If set, random-first gating re-enters only when random_move_prob rises to
         # this level or higher. This provides hysteresis: temporary dips/recoveries
-        # around random_move_stage_end do not rapidly freeze/unfreeze node updates.
+        # around random_move_stage_end do not rapidly freeze/unfreeze regret updates.
         random_move_stage_reenter: float | None = None,
+        # WDL regret: maximum allowed WDL-score drop for suboptimal moves.
+        # High => easy (any top-k move OK), low => hard (near-best only).
+        # Negative initial value disables the regret stage entirely.
+        initial_wdl_regret: float = -1.0,
+        wdl_regret_min: float = 0.01,
+        wdl_regret_max: float = 1.0,
+        # Regret stage gating: nodes unlock only when regret drops to this level.
+        # Negative disables the gate (nodes unlock as soon as rmp stage completes).
+        wdl_regret_stage_end: float = -1.0,
+        max_regret_step: float = 0.01,
+        wdl_regret_stage_reenter: float | None = None,
         # Skill-level ladder: PID manages both node count and SF Skill Level.
         # When nodes climb past skill_promote_nodes the difficulty tier increases;
         # when they fall below skill_demote_nodes the tier decreases (safety only).
@@ -114,6 +137,39 @@ class DifficultyPID:
         self.random_move_stage_reenter = max(stage_end, min(self.random_move_prob_max, reenter_val))
         self._random_stage_complete = float(self.random_move_prob) <= float(stage_end)
 
+        # WDL regret
+        self._regret_enabled = float(initial_wdl_regret) >= 0.0
+        self._regret_gate_enabled = self._regret_enabled and float(wdl_regret_stage_end) >= 0.0
+        if self._regret_enabled:
+            self.wdl_regret = max(float(wdl_regret_min), min(float(wdl_regret_max), float(initial_wdl_regret)))
+            self.wdl_regret_min = float(wdl_regret_min)
+            self.wdl_regret_max = float(wdl_regret_max)
+            self.max_regret_step = float(max_regret_step)
+            if self._regret_gate_enabled:
+                self.wdl_regret_stage_end = max(
+                    float(wdl_regret_min), min(float(wdl_regret_max), float(wdl_regret_stage_end))
+                )
+                regret_reenter_default = min(self.wdl_regret_max, self.wdl_regret_stage_end + 0.05)
+                regret_reenter_val = (
+                    regret_reenter_default if wdl_regret_stage_reenter is None else float(wdl_regret_stage_reenter)
+                )
+                self.wdl_regret_stage_reenter = max(
+                    self.wdl_regret_stage_end, min(self.wdl_regret_max, regret_reenter_val)
+                )
+                self._regret_stage_complete = float(self.wdl_regret) <= float(self.wdl_regret_stage_end)
+            else:
+                self.wdl_regret_stage_end = float(wdl_regret_stage_end)
+                self.wdl_regret_stage_reenter = float(wdl_regret_stage_end)
+                self._regret_stage_complete = True
+        else:
+            self.wdl_regret = float(initial_wdl_regret)
+            self.wdl_regret_min = float(wdl_regret_min)
+            self.wdl_regret_max = float(wdl_regret_max)
+            self.wdl_regret_stage_end = float(wdl_regret_stage_end)
+            self.max_regret_step = float(max_regret_step)
+            self.wdl_regret_stage_reenter = float(wdl_regret_stage_end)
+            self._regret_stage_complete = True  # disabled = always complete
+
         # Skill level ladder
         self.skill_level = max(int(skill_min), min(int(skill_max), int(initial_skill_level)))
         self.skill_min = int(skill_min)
@@ -139,11 +195,13 @@ class DifficultyPID:
             "nodes": int(self.nodes),
             "skill_level": int(self.skill_level),
             "random_move_prob": float(self.random_move_prob),
+            "wdl_regret": float(self.wdl_regret),
             "ema_winrate": float(self.ema_winrate),
             "integral": float(self._integral),
             "prev_err": None if self._prev_err is None else float(self._prev_err),
             "games_since_adjust": int(self._games_since_adjust),
             "random_stage_complete": bool(self._random_stage_complete),
+            "regret_stage_complete": bool(self._regret_stage_complete),
         }
 
     def load_state_dict(self, state: dict) -> None:
@@ -162,6 +220,11 @@ class DifficultyPID:
         rp = float(state.get("random_move_prob", self.random_move_prob))
         rp = max(float(self.random_move_prob_min), min(float(self.random_move_prob_max), rp))
         self.random_move_prob = float(rp)
+
+        if self._regret_enabled:
+            wr = float(state.get("wdl_regret", self.wdl_regret))
+            wr = max(float(self.wdl_regret_min), min(float(self.wdl_regret_max), wr))
+            self.wdl_regret = float(wr)
 
         ew = float(state.get("ema_winrate", self.ema_winrate))
         self.ema_winrate = float(ew)
@@ -182,21 +245,31 @@ class DifficultyPID:
         if rsc is not None:
             self._random_stage_complete = bool(rsc)
 
+        rgc = state.get("regret_stage_complete", None)
+        if rgc is not None and self._regret_gate_enabled:
+            self._regret_stage_complete = bool(rgc)
+
+    def _no_change_update(self, err: float) -> PIDUpdate:
+        return PIDUpdate(
+            nodes_before=int(self.nodes),
+            nodes_after=int(self.nodes),
+            ema_winrate=float(self.ema_winrate),
+            err=err,
+            adjusted=False,
+            skill_level=int(self.skill_level),
+            skill_changed=False,
+            random_move_prob_before=float(self.random_move_prob),
+            random_move_prob_after=float(self.random_move_prob),
+            random_move_prob_changed=False,
+            wdl_regret_before=float(self.wdl_regret),
+            wdl_regret_after=float(self.wdl_regret),
+            wdl_regret_changed=False,
+        )
+
     def observe(self, *, wins: int, draws: int, losses: int) -> PIDUpdate:
         games = int(wins) + int(draws) + int(losses)
         if games <= 0:
-            return PIDUpdate(
-                nodes_before=int(self.nodes),
-                nodes_after=int(self.nodes),
-                ema_winrate=float(self.ema_winrate or self.target),
-                err=0.0,
-                adjusted=False,
-                skill_level=int(self.skill_level),
-                skill_changed=False,
-                random_move_prob_before=float(self.random_move_prob),
-                random_move_prob_after=float(self.random_move_prob),
-                random_move_prob_changed=False,
-            )
+            return self._no_change_update(0.0)
 
         wr = (float(wins) + 0.5 * float(draws)) / float(games)
         self.ema_winrate = (1.0 - self.alpha) * float(self.ema_winrate) + self.alpha * float(wr)
@@ -208,36 +281,13 @@ class DifficultyPID:
 
         # Wait for enough games before changing difficulty.
         if self._games_since_adjust < int(self.min_games_between_adjust):
-            return PIDUpdate(
-                nodes_before=nodes_before,
-                nodes_after=int(self.nodes),
-                ema_winrate=float(self.ema_winrate),
-                err=err,
-                adjusted=False,
-                skill_level=int(self.skill_level),
-                skill_changed=False,
-                random_move_prob_before=float(self.random_move_prob),
-                random_move_prob_after=float(self.random_move_prob),
-                random_move_prob_changed=False,
-            )
+            return self._no_change_update(err)
 
         # Deadzone: do not adjust within +/- deadzone of target.
         if abs(err) <= float(self.deadzone):
             self._games_since_adjust = 0
             self._prev_err = err
-            # Do not integrate in deadzone.
-            return PIDUpdate(
-                nodes_before=nodes_before,
-                nodes_after=int(self.nodes),
-                ema_winrate=float(self.ema_winrate),
-                err=err,
-                adjusted=False,
-                skill_level=int(self.skill_level),
-                skill_changed=False,
-                random_move_prob_before=float(self.random_move_prob),
-                random_move_prob_after=float(self.random_move_prob),
-                random_move_prob_changed=False,
-            )
+            return self._no_change_update(err)
 
         # Derivative term (per adjustment period).
         derr = 0.0 if self._prev_err is None else (err - float(self._prev_err))
@@ -248,11 +298,15 @@ class DifficultyPID:
         saturated_high = self.nodes >= self.max_nodes - 1
         saturated_rand_max = self.random_move_prob >= self.random_move_prob_max - 1e-6
         saturated_rand_min = self.random_move_prob <= self.random_move_prob_min + 1e-6
+        saturated_regret_max = self._regret_enabled and self.wdl_regret >= self.wdl_regret_max - 1e-6
+        saturated_regret_min = self._regret_enabled and self.wdl_regret <= self.wdl_regret_min + 1e-6
         if not (
             (saturated_low and err < 0.0)
             or (saturated_high and err > 0.0)
             or (saturated_rand_max and err < 0.0)
             or (saturated_rand_min and err > 0.0)
+            or (saturated_regret_max and err < 0.0)
+            or (saturated_regret_min and err > 0.0)
         ):
             self._integral += err
             if self._integral > self.integral_clamp:
@@ -265,7 +319,7 @@ class DifficultyPID:
         # Rate limit is interpreted as a fractional multiplicative change.
         u = max(-self.rate_limit, min(self.rate_limit, float(u)))
 
-        # Always adjust opponent random-move probability using the same control signal.
+        # --- Stage 1: always adjust opponent random-move probability ---
         rand_before = float(self.random_move_prob)
         rand_delta = max(-self.max_rand_step, min(self.max_rand_step, -float(u)))
 
@@ -274,7 +328,7 @@ class DifficultyPID:
         self.random_move_prob = float(rand_after)
 
         # Random-first gating with hysteresis:
-        # - enable nodes when random_move_prob drops to stage_end or below
+        # - enable regret when random_move_prob drops to stage_end or below
         # - re-freeze only after substantial regression to stage_reenter or above
         stage_end = max(self.random_move_prob_min, min(self.random_move_prob_max, float(self.random_move_stage_end)))
         stage_reenter = max(stage_end, min(self.random_move_prob_max, float(self.random_move_stage_reenter)))
@@ -286,7 +340,34 @@ class DifficultyPID:
                 self._random_stage_complete = True
 
         rand_changed = abs(rand_after - rand_before) > 1e-12
-        allow_nodes = bool(self._random_stage_complete)
+
+        # --- Stage 2: adjust WDL regret (only after rmp stage complete) ---
+        regret_before = float(self.wdl_regret)
+        regret_changed = False
+        allow_regret = bool(self._random_stage_complete) and self._regret_enabled
+
+        if allow_regret:
+            # Winning too much (u>0) → make harder → decrease regret (tighter).
+            # Losing too much (u<0) → make easier → increase regret (looser).
+            regret_delta = max(-self.max_regret_step, min(self.max_regret_step, -float(u)))
+            regret_after = regret_before + regret_delta
+            regret_after = max(self.wdl_regret_min, min(self.wdl_regret_max, float(regret_after)))
+            self.wdl_regret = float(regret_after)
+            regret_changed = abs(regret_after - regret_before) > 1e-12
+
+            # Regret stage gating with hysteresis:
+            if self._regret_gate_enabled:
+                regret_end = max(self.wdl_regret_min, min(self.wdl_regret_max, float(self.wdl_regret_stage_end)))
+                regret_reenter = max(regret_end, min(self.wdl_regret_max, float(self.wdl_regret_stage_reenter)))
+                if self._regret_stage_complete:
+                    if self.wdl_regret >= regret_reenter:
+                        self._regret_stage_complete = False
+                else:
+                    if self.wdl_regret <= regret_end:
+                        self._regret_stage_complete = True
+
+        # --- Stage 3: adjust nodes (only after both rmp + regret stages complete) ---
+        allow_nodes = bool(self._random_stage_complete) and bool(self._regret_stage_complete)
 
         nodes_after = int(self.nodes)
         skill_before = int(self.skill_level)
@@ -323,7 +404,7 @@ class DifficultyPID:
         self._games_since_adjust = 0
         self._prev_err = err
 
-        adjusted = (nodes_after != nodes_before) or bool(skill_changed) or bool(rand_changed)
+        adjusted = (nodes_after != nodes_before) or bool(skill_changed) or bool(rand_changed) or bool(regret_changed)
 
         return PIDUpdate(
             nodes_before=nodes_before,
@@ -336,4 +417,7 @@ class DifficultyPID:
             random_move_prob_before=float(rand_before),
             random_move_prob_after=float(rand_after),
             random_move_prob_changed=bool(rand_changed),
+            wdl_regret_before=float(regret_before),
+            wdl_regret_after=float(self.wdl_regret),
+            wdl_regret_changed=bool(regret_changed),
         )
