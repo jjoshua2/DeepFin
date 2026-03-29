@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import math
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Callable
 
 import numpy as np
 import torch
@@ -28,7 +30,7 @@ except ImportError:
 from chess_anti_engine.encoding import encode_position, encode_positions_batch
 from chess_anti_engine.moves import POLICY_SIZE, move_to_index, index_to_move, legal_move_mask
 from chess_anti_engine.moves.encode import legal_move_indices
-from chess_anti_engine.train.targets import hlgauss_target
+from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS, hlgauss_target
 from chess_anti_engine.selfplay.opening import OpeningConfig, make_starting_board
 from chess_anti_engine.selfplay.tablebase import rescore_game_samples, probe_best_move, _eligible
 from chess_anti_engine.selfplay.temperature import temperature_for_ply
@@ -76,8 +78,84 @@ def _effective_curriculum_topk(
     if rp >= stage:
         return int(k_max)
     frac = max(0.0, min(1.0, rp / stage))
-    k = int(round(float(k_min) + frac * float(k_max - k_min)))
+    # Log-scale interpolation: k = k_max^frac (with k_min=1, log(1)=0).
+    # This spends more time at low topk values where each step matters
+    # (top-1 vs top-3 is huge; top-8 vs top-12 is nearly indistinguishable).
+    log_k = math.log(max(1, k_min)) + frac * (math.log(max(1, k_max)) - math.log(max(1, k_min)))
+    k = int(round(math.exp(log_k)))
     return max(k_min, min(k_max, k))
+
+
+def _effective_curriculum_wdl_regret(
+    *,
+    random_move_prob: float,
+    random_move_prob_start: float,
+    random_move_prob_floor: float,
+    regret_max: float,
+    regret_min: float,
+) -> float:
+    """Map the current PID difficulty onto a max allowed WDL regret.
+
+    Returns the maximum tolerated drop in Stockfish WDL win-equivalent score
+    relative to the best PV move. Larger values allow weaker suboptimal moves.
+    Negative inputs disable the regret filter and return infinity.
+    """
+    if float(regret_max) < 0.0 or float(regret_min) < 0.0:
+        return float("inf")
+    r_min = max(0.0, min(float(regret_min), float(regret_max)))
+    r_max = max(r_min, float(regret_max))
+    floor = max(0.0, float(random_move_prob_floor))
+    start = max(floor + 1e-6, float(random_move_prob_start))
+    rp = max(floor, min(start, float(random_move_prob)))
+    frac = (rp - floor) / max(1e-6, start - floor)
+    return float(r_min + frac * (r_max - r_min))
+
+
+def _choose_curriculum_opponent_move(
+    *,
+    rng: np.random.Generator,
+    legal_moves: list[chess.Move],
+    cand_moves: list[chess.Move],
+    cand_scores: list[float],
+    curriculum_topk: int,
+    random_move_prob: float,
+    regret_limit: float,
+) -> chess.Move:
+    """Choose the curriculum opponent move from Stockfish candidates.
+
+    Both finite and infinite regret paths share the same structure:
+    - `random_move_prob` chance of a truly random legal move (blunder corruption)
+    - Otherwise, uniform pick among acceptable moves (top-k for infinite regret,
+      regret-filtered top-k for finite regret)
+    """
+    if not cand_moves:
+        return legal_moves[int(rng.integers(len(legal_moves)))]
+
+    topk_n = max(1, min(int(curriculum_topk), len(cand_moves)))
+    topk_moves = cand_moves[:topk_n]
+    topk_scores = cand_scores[:topk_n]
+    rand_p = max(0.0, float(random_move_prob))
+
+    if not math.isfinite(float(regret_limit)):
+        if rand_p > 0.0 and rng.random() < rand_p:
+            return legal_moves[int(rng.integers(len(legal_moves)))]
+        return topk_moves[int(rng.integers(len(topk_moves)))]
+
+    # Candidates are in Stockfish PV order (by centipawn eval), NOT by WDL
+    # score.  Use the max WDL score in the top-k as the reference for regret.
+    best_score = max(float(s) for s in topk_scores)
+    acceptable_moves = [
+        mv
+        for mv, score in zip(topk_moves, topk_scores, strict=False)
+        if (best_score - float(score)) <= float(regret_limit) + 1e-12
+    ]
+    if not acceptable_moves:
+        acceptable_moves = [topk_moves[0]]
+    # Random corruption: truly random legal move (like infinite-regret path)
+    if rand_p > 0.0 and rng.random() < rand_p:
+        return legal_moves[int(rng.integers(len(legal_moves)))]
+    # Non-random: uniform among acceptable moves (not always best)
+    return acceptable_moves[int(rng.integers(len(acceptable_moves)))]
 
 
 def _is_network_turn(*, board_turn: chess.Color, network_color: chess.Color) -> bool:
@@ -117,6 +195,33 @@ class BatchStats:
 
 
 @dataclass
+class CompletedGameBatch:
+    samples: list[ReplaySample]
+    games: int = 1
+    positions: int = 0
+    w: int = 0
+    d: int = 0
+    l: int = 0
+    total_game_plies: int = 0
+    adjudicated_games: int = 0
+    total_draw_games: int = 0
+    selfplay_games: int = 0
+    selfplay_adjudicated_games: int = 0
+    selfplay_draw_games: int = 0
+    curriculum_games: int = 0
+    curriculum_adjudicated_games: int = 0
+    curriculum_draw_games: int = 0
+
+
+@dataclass
+class GameBatchCollector:
+    games: list[CompletedGameBatch] = field(default_factory=list)
+
+    def on_game_complete(self, batch: CompletedGameBatch) -> None:
+        self.games.append(batch)
+
+
+@dataclass
 class _NetRecord:
     x: np.ndarray
     policy_probs: np.ndarray
@@ -151,6 +256,12 @@ def play_batch(
     temperature: float,
     opponent_random_move_prob: float = 0.0,
     opponent_topk_stage_end: float = 0.5,
+    opponent_topk_min: int = 1,
+    opponent_suboptimal_wdl_regret_max: float = -1.0,
+    opponent_suboptimal_wdl_regret_min: float = -1.0,
+    opponent_wdl_regret_limit: float | None = None,
+    opponent_random_move_prob_start: float = 1.0,
+    opponent_random_move_prob_min: float = 0.0,
     selfplay_fraction: float = 0.0,
     temperature_drop_plies: int = 0,
     temperature_after: float = 0.0,
@@ -188,13 +299,14 @@ def play_batch(
     diff_focus_slope: float = 3.0,
     diff_focus_min: float = 0.025,
     # Categorical value head settings (tunable for Ray Tune ablations)
-    categorical_bins: int = 32,
+    categorical_bins: int = DEFAULT_CATEGORICAL_BINS,
     hlgauss_sigma: float = 0.04,
     # FPU (First Play Urgency) reduction for PUCT MCTS
     fpu_reduction: float = 1.2,
     fpu_at_root: float = 1.0,
     soft_policy_temp: float = 2.0,
     target_games: int = 0,
+    on_game_complete: Callable[[CompletedGameBatch], None] | None = None,
 ) -> tuple[list[ReplaySample], BatchStats]:
     """Play a batch of games.
 
@@ -356,31 +468,52 @@ def play_batch(
                         sample_idx += 1
                     replay_board.push(mv)
 
+        game_w = 0
+        game_d = 0
+        game_l = 0
+        game_total_draws = 0
+        game_selfplay_games = 0
+        game_selfplay_adj = 0
+        game_selfplay_draws = 0
+        game_curriculum_games = 0
+        game_curriculum_adj = 0
+        game_curriculum_draws = 0
+
         # Stats
         if bool(selfplay_game[i]):
             _st_sp_games += 1
+            game_selfplay_games = 1
             if was_adjudicated:
                 _st_sp_adj += 1
+                game_selfplay_adj = 1
         else:
             _st_cur_games += 1
+            game_curriculum_games = 1
             if was_adjudicated:
                 _st_cur_adj += 1
+                game_curriculum_adj = 1
 
         if result == "1/2-1/2":
             _st_draw += 1
+            game_total_draws = 1
             if bool(selfplay_game[i]):
                 _st_sp_draw += 1
+                game_selfplay_draws = 1
             else:
                 _st_cur_draw += 1
+                game_curriculum_draws = 1
 
         if not selfplay_game[i]:
             net_col = network_color[i]
             if result == "1/2-1/2":
                 _st_d += 1
+                game_d = 1
             elif (result == "1-0" and net_col == chess.WHITE) or (result == "0-1" and net_col == chess.BLACK):
                 _st_w += 1
+                game_w = 1
             else:
                 _st_l += 1
+                game_l = 1
 
         n = len(records)
         ply_to_index = {int(rec.ply_index): idx for idx, rec in enumerate(records)}
@@ -417,6 +550,7 @@ def play_batch(
                     _st_sf_d6_n += 1
 
         # Build ReplaySample objects
+        sample_start = len(all_samples)
         for t, rec in enumerate(records):
             if float(rec.sample_weight) < 1.0 and rng.random() > float(rec.sample_weight):
                 continue
@@ -473,6 +607,28 @@ def play_batch(
                     legal_mask=rec.legal_mask,
                 )
             )
+
+        if on_game_complete is not None:
+            game_samples = list(all_samples[sample_start:])
+            if game_samples:
+                on_game_complete(
+                    CompletedGameBatch(
+                        samples=game_samples,
+                        positions=len(game_samples),
+                        w=game_w,
+                        d=game_d,
+                        l=game_l,
+                        total_game_plies=int(len(b.move_stack)),
+                        adjudicated_games=1 if was_adjudicated else 0,
+                        total_draw_games=game_total_draws,
+                        selfplay_games=game_selfplay_games,
+                        selfplay_adjudicated_games=game_selfplay_adj,
+                        selfplay_draw_games=game_selfplay_draws,
+                        curriculum_games=game_curriculum_games,
+                        curriculum_adjudicated_games=game_curriculum_adj,
+                        curriculum_draw_games=game_curriculum_draws,
+                    )
+                )
 
     # ── Slot recycling ────────────────────────────────────────────────────────
     games_started = batch_size
@@ -731,8 +887,18 @@ def play_batch(
             random_move_prob=rand_p,
             stage_end=float(opponent_topk_stage_end),
             topk_max=curriculum_topk_max,
-            topk_min=1,
+            topk_min=int(opponent_topk_min),
         )
+        if opponent_wdl_regret_limit is not None:
+            regret_limit = float(opponent_wdl_regret_limit)
+        else:
+            regret_limit = _effective_curriculum_wdl_regret(
+                random_move_prob=rand_p,
+                random_move_prob_start=float(opponent_random_move_prob_start),
+                random_move_prob_floor=float(opponent_random_move_prob_min),
+                regret_max=float(opponent_suboptimal_wdl_regret_max),
+                regret_min=float(opponent_suboptimal_wdl_regret_min),
+            )
 
         for idx in idxs:
             res = results[idx]
@@ -802,11 +968,15 @@ def play_batch(
             if not play_curriculum_moves or selfplay_game[idx]:
                 continue
 
-            if rand_p > 0.0 and rng.random() < rand_p:
-                move_to_play = legal_moves[int(rng.integers(len(legal_moves)))]
-            else:
-                topk_moves = cand_moves[: max(1, min(int(curriculum_topk), len(cand_moves)))]
-                move_to_play = topk_moves[int(rng.integers(len(topk_moves)))]
+            move_to_play = _choose_curriculum_opponent_move(
+                rng=rng,
+                legal_moves=legal_moves,
+                cand_moves=cand_moves,
+                cand_scores=cand_scores,
+                curriculum_topk=int(curriculum_topk),
+                random_move_prob=rand_p,
+                regret_limit=regret_limit,
+            )
 
             boards[idx].push(move_to_play)
             if boards[idx].is_game_over():

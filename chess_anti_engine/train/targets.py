@@ -4,10 +4,13 @@ import math
 import numpy as np
 
 
+DEFAULT_CATEGORICAL_BINS = 32
+
+
 def hlgauss_target(
     value: float,
     *,
-    num_bins: int = 32,
+    num_bins: int = DEFAULT_CATEGORICAL_BINS,
     vmin: float = -1.0,
     vmax: float = 1.0,
     sigma: float = 0.04,

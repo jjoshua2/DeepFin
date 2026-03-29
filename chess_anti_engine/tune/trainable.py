@@ -20,7 +20,12 @@ import torch
 
 import math
 
-from chess_anti_engine.model import ModelConfig, build_model, zero_policy_head_parameters_
+from chess_anti_engine.model import (
+    ModelConfig,
+    build_model,
+    reinit_volatility_head_parameters_,
+    zero_policy_head_parameters_,
+)
 from chess_anti_engine.moves.encode import POLICY_SIZE
 from chess_anti_engine.replay import ArrayReplayBuffer, DiskReplayBuffer, ReplayBuffer
 from chess_anti_engine.replay.shard import (
@@ -38,9 +43,11 @@ from chess_anti_engine.replay.shard import (
     shard_index,
 )
 from chess_anti_engine.selfplay import play_batch
+from chess_anti_engine.selfplay.manager import _effective_curriculum_topk
 from chess_anti_engine.selfplay.budget import progressive_mcts_simulations
 from chess_anti_engine.stockfish import DifficultyPID, StockfishPool, StockfishUCI
 from chess_anti_engine.train import Trainer
+from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 from chess_anti_engine.tune.process_cleanup import terminate_matching_processes
 from chess_anti_engine.version import PACKAGE_VERSION, PROTOCOL_VERSION
 
@@ -243,8 +250,9 @@ def _all_trial_result_rows(trial_dir: Path) -> list[dict]:
 
 
 def _metric_from_result_row(row: dict) -> float | None:
-    # Use the PB2 optimization metric directly.
-    v = row.get("opponent_strength")
+    # Prefer EMA-smoothed metric — less noisy for GPBT exploit/explore
+    # decisions.  Falls back to raw opponent_strength for older rows.
+    v = row.get("opponent_strength_ema", row.get("opponent_strength"))
     if isinstance(v, (int, float)):
         fv = float(v)
         if math.isfinite(fv):
@@ -855,13 +863,16 @@ def _opponent_strength(
     min_nodes: int,
     max_nodes: int,
     pid_target_winrate: float = 0.53,
+    wdl_regret: float = -1.0,
+    wdl_regret_max: float = 1.0,
 ) -> float:
     """Composite metric capturing full difficulty progression.
 
     Returns a single scalar (higher = harder opponent = better model):
       Stage 1 (score   0-100): random_move_prob 1.0 → 0.0
-      Stage 2 (score 100-200): sf_nodes min → max (log-scaled)
-      Stage 3 (score 200-400): skill_level 0 → 20
+      Stage 2 (score 100-200): wdl_regret max → 0.0 (disabled = instant 100)
+      Stage 3 (score 200-300): sf_nodes min → max (log-scaled)
+      Stage 4 (score 300-500): skill_level 0 → 20
 
     Difficulty is multiplied by (ema_winrate / target), capped at 1.0.
     This penalises PID overshoot: a trial at rmp=0.25 with only 47% winrate
@@ -878,7 +889,16 @@ def _opponent_strength(
     # Stage 1: random_move_prob 1.0→0.0 maps to score 0→100
     stage1 = (1.0 - rand_prob) * 100.0
 
-    # Stage 2: sf_nodes on log scale, maps to score 100→200
+    # Stage 2: wdl_regret max→0.0 maps to score 100→200
+    # Negative regret means disabled — treat as fully complete.
+    if float(wdl_regret) < 0.0:
+        stage2 = 100.0
+    else:
+        r_max = max(0.001, float(wdl_regret_max))
+        regret_frac = 1.0 - max(0.0, min(1.0, float(wdl_regret) / r_max))
+        stage2 = regret_frac * 100.0
+
+    # Stage 3: sf_nodes on log scale, maps to score 200→300
     if min_nodes < max_nodes and nodes > 0:
         log_frac = (math.log(max(nodes, min_nodes)) - math.log(max(1, min_nodes))) / (
             math.log(max(1, max_nodes)) - math.log(max(1, min_nodes))
@@ -886,12 +906,12 @@ def _opponent_strength(
         log_frac = max(0.0, min(1.0, log_frac))
     else:
         log_frac = 0.0
-    stage2 = log_frac * 100.0
+    stage3 = log_frac * 100.0
 
-    # Stage 3: skill_level 0→20 maps to score 200→400
-    stage3 = (float(skill) / 20.0) * 200.0
+    # Stage 4: skill_level 0→20 maps to score 300→500
+    stage4 = (float(skill) / 20.0) * 200.0
 
-    difficulty = stage1 + stage2 + stage3
+    difficulty = stage1 + stage2 + stage3 + stage4
 
     # Winrate scaling: penalise PID overshoot. Cap at 1.0 so above-target
     # winrate doesn't inflate the score (PID will raise difficulty instead).
@@ -899,6 +919,27 @@ def _opponent_strength(
     winrate_factor = min(1.0, max(0.0, float(ema_winrate)) / target)
 
     return difficulty * winrate_factor
+
+
+def _should_retry_distributed_iteration_without_games(
+    *,
+    use_distributed_selfplay: bool,
+    total_games_generated: int,
+) -> bool:
+    """Return True when a distributed iteration should wait for fresh selfplay."""
+    return bool(use_distributed_selfplay) and int(total_games_generated) <= 0
+
+
+def _selfplay_winrate_raw_or_none(
+    *,
+    wins: int,
+    draws: int,
+    losses: int,
+) -> float | None:
+    total_games_played = int(wins) + int(draws) + int(losses)
+    if total_games_played <= 0:
+        return None
+    return (float(wins) + 0.5 * float(draws)) / float(total_games_played)
 
 
 
@@ -920,7 +961,12 @@ def _gate_check(
         stockfish=sf,
         games=gate_games,
         opponent_random_move_prob=opponent_random_move_prob,
-        opponent_topk_stage_end=float(config.get("sf_pid_random_move_stage_end", 0.5)),
+        opponent_topk_stage_end=float(config.get("sf_pid_topk_stage_end", config.get("sf_pid_random_move_stage_end", 0.5))),
+        opponent_topk_min=int(config.get("sf_pid_topk_min", 1)),
+        opponent_suboptimal_wdl_regret_max=float(config.get("sf_pid_suboptimal_wdl_regret_max", -1.0)),
+        opponent_suboptimal_wdl_regret_min=float(config.get("sf_pid_suboptimal_wdl_regret_min", -1.0)),
+        opponent_random_move_prob_start=float(config.get("sf_pid_random_move_prob_start", 1.0)),
+        opponent_random_move_prob_min=float(config.get("sf_pid_random_move_prob_min", 0.0)),
         temperature=0.3,  # Low temperature for gating (exploit, don't explore)
         temperature_drop_plies=0,
         temperature_after=0.0,
@@ -1065,6 +1111,7 @@ def _publish_distributed_trial_state(
     random_move_prob: float,
     skill_level: int,
     mcts_simulations: int,
+    wdl_regret: float = -1.0,
     pause_selfplay: bool = False,
     pause_reason: str = "",
     backpressure: dict[str, object] | None = None,
@@ -1114,7 +1161,13 @@ def _publish_distributed_trial_state(
         "sf_policy_label_smooth": float(config.get("sf_policy_label_smooth", 0.05)),
         "sf_skill_level": int(skill_level),
         "opponent_random_move_prob": float(random_move_prob),
-        "opponent_topk_stage_end": float(config.get("sf_pid_random_move_stage_end", 0.5)),
+        "opponent_topk_stage_end": float(config.get("sf_pid_topk_stage_end", config.get("sf_pid_random_move_stage_end", 0.5))),
+        "opponent_topk_min": int(config.get("sf_pid_topk_min", 1)),
+        "opponent_suboptimal_wdl_regret_max": float(config.get("sf_pid_suboptimal_wdl_regret_max", -1.0)),
+        "opponent_suboptimal_wdl_regret_min": float(config.get("sf_pid_suboptimal_wdl_regret_min", -1.0)),
+        "opponent_random_move_prob_start": float(config.get("sf_pid_random_move_prob_start", 1.0)),
+        "opponent_random_move_prob_min": float(config.get("sf_pid_random_move_prob_min", 0.0)),
+        "opponent_wdl_regret_limit": float(wdl_regret) if float(wdl_regret) >= 0.0 else None,
         "temperature": float(config.get("temperature", 1.0)),
         "temperature_decay_start_move": int(config.get("temperature_decay_start_move", 20)),
         "temperature_decay_moves": int(config.get("temperature_decay_moves", 60)),
@@ -1308,6 +1361,10 @@ def _build_distributed_worker_cmd(
         str(int(config.get("distributed_worker_sf_workers", 1))),
         "--poll-seconds",
         str(float(config.get("distributed_worker_poll_seconds", 1.0))),
+        "--upload-target-positions",
+        str(int(config.get("distributed_worker_upload_target_positions", 500))),
+        "--upload-flush-seconds",
+        str(float(config.get("distributed_worker_upload_flush_seconds", 60.0))),
         "--seed",
         str(_stable_seed_u32("dist-worker", trial_id, worker_index, config.get("seed", 0))),
         "--log-file",
@@ -1384,6 +1441,7 @@ def _launch_inference_broker(
     else:
         shared_cache_root = Path(str(config["distributed_server_root"])) / "worker_cache"
     shared_cache_root.mkdir(parents=True, exist_ok=True)
+    compile_inference = bool(config.get("distributed_inference_use_compile", False))
     cmd = [
         sys.executable,
         "-m",
@@ -1402,11 +1460,7 @@ def _launch_inference_broker(
         str(float(config.get("distributed_inference_batch_wait_ms", 5.0))),
         "--shared-cache-dir",
         str(shared_cache_root),
-        *(
-            ["--compile-inference"]
-            if bool(config.get("distributed_worker_use_compile", False))
-            else []
-        ),
+        *(["--compile-inference"] if compile_inference else []),
     ]
     out_fh = broker_out.open("ab")
     try:
@@ -1525,6 +1579,7 @@ def _ingest_distributed_selfplay(
     wait_timeout_s: float,
     poll_seconds: float,
     rng: np.random.Generator,
+    min_games_fraction: float = 0.5,
 ) -> dict[str, int]:
     """Poll inbox until enough games arrive, then return.
 
@@ -1533,9 +1588,14 @@ def _ingest_distributed_selfplay(
     includes both the current model SHA and the previous one so that
     the one-generation-stale batch workers finish after a model update
     counts toward the target instead of creating a permanent lag.
+
+    The timeout only fires once at least ``min_games_fraction`` of
+    *target_games* have been collected.  This prevents pathologically
+    thin iterations that destabilise training.
     """
     processed_dir.mkdir(parents=True, exist_ok=True)
     target_games = max(1, int(target_games))
+    min_games = max(1, int(math.ceil(float(min_games_fraction) * target_games)))
     deadline = time.time() + float(wait_timeout_s)
     summary: dict[str, int] = {
         "matching_games": 0,
@@ -1562,7 +1622,7 @@ def _ingest_distributed_selfplay(
     while summary["matching_games"] < target_games:
         shard_paths = sorted(inbox_dir.glob("*/*.npz"))
         if not shard_paths:
-            if time.time() >= deadline:
+            if time.time() >= deadline and summary["matching_games"] >= min_games:
                 break  # train on whatever we have
             time.sleep(float(poll_seconds))
             continue
@@ -1646,7 +1706,7 @@ def _ingest_distributed_selfplay(
                 break
 
         if not processed_any:
-            if time.time() >= deadline:
+            if time.time() >= deadline and summary["matching_games"] >= min_games:
                 break  # train on whatever we have
             time.sleep(float(poll_seconds))
 
@@ -1829,7 +1889,7 @@ def train_trial(config: dict):
     # Compact status CSV — reset on each process start so checkpoint-restore rows don't accumulate.
     _STATUS_CSV_PATH = trial_dir / "status.csv"
     _STATUS_COLS = [
-        "iter", "global_iter", "opp", "opp_ema", "skill", "sf_nodes",
+        "iter", "global_iter", "opp", "opp_ema", "skill", "sf_nodes", "rmp", "regret",
         "ingest_s", "train_s", "iter_s", "steps", "replay", "pos_added",
         "stale", "train_loss", "best_loss", "win", "draw", "loss", "lr", "startup",
     ]
@@ -1905,6 +1965,7 @@ def train_trial(config: dict):
     trainer = Trainer(model, **trainer_ctor)
 
     salvage_restore_donor_config = bool(config.get("salvage_restore_donor_config", False))
+    salvage_restore_pid_state = bool(config.get("salvage_restore_pid_state", False))
     salvage_restore_full_trainer_state = bool(config.get("salvage_restore_full_trainer_state", False))
     salvage_startup_no_share_iters = max(0, int(config.get("salvage_startup_no_share_iters", 0)))
     salvage_startup_max_train_steps = max(0, int(config.get("salvage_startup_max_train_steps", 0)))
@@ -2072,25 +2133,30 @@ def train_trial(config: dict):
             salvage_ckpt = torch.load(str(maybe), map_location=device)
             trainer.model.load_state_dict(salvage_ckpt["model"])
             del salvage_ckpt
+        if bool(config.get("salvage_reinit_volatility_heads", False)):
+            reinit = reinit_volatility_head_parameters_(trainer.model)
+            if reinit:
+                print(f"[trial] Reinitialized salvage volatility heads: {', '.join(reinit)}")
         print(
             f"[trial] salvage warmstart loaded slot={seed_warmstart_slot} "
             f"of {seed_warmstart_slots_total} from {seed_warmstart_dir}"
         )
-        pid_path = seed_warmstart_dir / "pid_state.json"
-        if pid_path.exists():
-            try:
-                restored_pid_state = json.loads(pid_path.read_text(encoding="utf-8"))
-            except Exception:
-                restored_pid_state = None
-        restored_pid_state, pid_manifest_overrides = _merge_pid_state_from_result_row(
-            pid_state=restored_pid_state,
-            result_row=seed_warmstart_manifest_row,
-        )
-        if pid_manifest_overrides:
-            print(
-                "[trial] salvage PID overrides from manifest row: "
-                + ", ".join(pid_manifest_overrides)
+        if salvage_restore_pid_state:
+            pid_path = seed_warmstart_dir / "pid_state.json"
+            if pid_path.exists():
+                try:
+                    restored_pid_state = json.loads(pid_path.read_text(encoding="utf-8"))
+                except Exception:
+                    restored_pid_state = None
+            restored_pid_state, pid_manifest_overrides = _merge_pid_state_from_result_row(
+                pid_state=restored_pid_state,
+                result_row=seed_warmstart_manifest_row,
             )
+            if pid_manifest_overrides:
+                print(
+                    "[trial] salvage PID overrides from manifest row: "
+                    + ", ".join(pid_manifest_overrides)
+                )
 
     restored_owner_trial_id = ""
     restored_owner_trial_dir = ""
@@ -2142,6 +2208,20 @@ def train_trial(config: dict):
             f"recipient_optimizer={str(config.get('optimizer', 'nadamw')).lower()} "
             f"restore_mode={startup_source}"
         )
+        # Inherit donor's EMA so the recipient isn't ranked on stale
+        # pre-exploit history.  Falls back to raw opponent_strength if
+        # the EMA key is missing (older result rows).
+        if restored_owner_trial_dir:
+            _donor_row = _latest_trial_result_row(Path(restored_owner_trial_dir))
+            if _donor_row is not None:
+                _donor_ema = _donor_row.get(
+                    "opponent_strength_ema",
+                    _donor_row.get("opponent_strength", 0.0),
+                )
+                opp_strength_ema = float(_donor_ema)
+                print(
+                    f"[trial] exploit: inherited donor opp_strength_ema={opp_strength_ema:.1f}"
+                )
 
     # Growing sliding window: start small, grow as the net matures.
     window_start = int(config.get("replay_window_start", 100_000))
@@ -2151,6 +2231,10 @@ def train_trial(config: dict):
 
     shuffle_cap = int(config.get("shuffle_buffer_size", 20_000))
     shard_size = int(config.get("shard_size", 1000))
+    shuffle_refresh_interval = int(config.get("shuffle_refresh_interval", 5))
+    shuffle_refresh_shards = int(config.get("shuffle_refresh_shards", 3))
+    shuffle_draw_cap_frac = float(config.get("shuffle_draw_cap_frac", 0.90))
+    shuffle_wl_max_ratio = float(config.get("shuffle_wl_max_ratio", 1.5))
     replay_shard_dir = _trial_replay_shard_dir(config=config, trial_dir=trial_dir)
     selfplay_shards_dir = work_dir / "selfplay_shards"
     selfplay_shards_dir.mkdir(parents=True, exist_ok=True)
@@ -2240,6 +2324,10 @@ def train_trial(config: dict):
         rng=rng,
         shuffle_cap=shuffle_cap,
         shard_size=shard_size,
+        refresh_interval=shuffle_refresh_interval,
+        refresh_shards=shuffle_refresh_shards,
+        draw_cap_frac=shuffle_draw_cap_frac,
+        wl_max_ratio=shuffle_wl_max_ratio,
     )
 
     # Preserve intentionally seeded replay (resume, salvage warmstart, shared-shard
@@ -2279,6 +2367,10 @@ def train_trial(config: dict):
                 zeroed = zero_policy_head_parameters_(trainer.model)
                 if zeroed:
                     print(f"[trial] Zeroed bootstrap policy heads: {', '.join(zeroed)}")
+            if bool(config.get("bootstrap_reinit_volatility_heads", False)):
+                reinit = reinit_volatility_head_parameters_(trainer.model)
+                if reinit:
+                    print(f"[trial] Reinitialized bootstrap volatility heads: {', '.join(reinit)}")
             # Deliberately skip: optimizer, scheduler, step — start fresh.
             del ckpt_data
         else:
@@ -2402,6 +2494,11 @@ def train_trial(config: dict):
             random_move_prob_max=float(config.get("sf_pid_random_move_prob_max", 1.0)),
             random_move_stage_end=float(config.get("sf_pid_random_move_stage_end", 0.5)),
             max_rand_step=float(config.get("sf_pid_max_rand_step", 0.01)),
+            initial_wdl_regret=float(config.get("sf_pid_wdl_regret_start", -1.0)),
+            wdl_regret_min=float(config.get("sf_pid_wdl_regret_min", 0.01)),
+            wdl_regret_max=float(config.get("sf_pid_wdl_regret_max", 1.0)),
+            wdl_regret_stage_end=float(config.get("sf_pid_wdl_regret_stage_end", -1.0)),
+            max_regret_step=float(config.get("sf_pid_max_regret_step", 0.01)),
         )
         if restored_pid_state is not None:
             try:
@@ -2453,6 +2550,7 @@ def train_trial(config: dict):
             random_move_prob=current_rand_init,
             skill_level=current_skill_init,
             mcts_simulations=int(sims_init),
+            wdl_regret=float(pid.wdl_regret) if pid is not None else -1.0,
             pause_selfplay=False,
             pause_reason="",
         )
@@ -2475,14 +2573,15 @@ def train_trial(config: dict):
 
     try:
         iterations = int(config.get("iterations", 10))
-        for it in range(iterations):
-            iteration_idx = int(it) + 1
-            global_iter += 1
+        completed_iterations = 0
+        while completed_iterations < iterations:
+            iteration_zero_based = int(global_iter)
+            iteration_idx = iteration_zero_based + 1
             iter_t0 = time.monotonic()
             in_salvage_startup_grace = (
                 startup_source == "salvage"
                 and bool(salvage_origin_used)
-                and int(it) < salvage_startup_no_share_iters
+                and int(iteration_zero_based) < salvage_startup_no_share_iters
             )
             _wait_if_paused(
                 pause_marker_path=pause_marker_path,
@@ -2495,6 +2594,7 @@ def train_trial(config: dict):
             # selfplay chunks). PID is updated once per iteration AFTER training so
             # changes align to net updates rather than chunk noise.
             current_rand = float(pid.random_move_prob) if pid is not None else float(config.get("sf_pid_random_move_prob_start", 0.0))
+            wdl_regret_used = float(pid.wdl_regret) if pid is not None else -1.0
             sf_nodes_used = (
                 int(getattr(sf, "nodes", 0) or 0)
                 if sf is not None
@@ -2560,6 +2660,7 @@ def train_trial(config: dict):
                     random_move_prob=float(current_rand),
                     skill_level=int(skill_level_used),
                     mcts_simulations=int(sims),
+                    wdl_regret=float(pid.wdl_regret) if pid is not None else -1.0,
                     pause_selfplay=False,
                     pause_reason="",
                 )
@@ -2584,6 +2685,7 @@ def train_trial(config: dict):
                     wait_timeout_s=float(config.get("distributed_wait_timeout_seconds", 900.0)),
                     poll_seconds=float(config.get("distributed_worker_poll_seconds", 1.0)),
                     rng=rng,
+                    min_games_fraction=float(config.get("distributed_min_games_fraction", 0.5)),
                 )
 
                 buf.flush()
@@ -2612,7 +2714,12 @@ def train_trial(config: dict):
                     rng=rng,
                     stockfish=sf,
                     opponent_random_move_prob=current_rand,
-                    opponent_topk_stage_end=float(config.get("sf_pid_random_move_stage_end", 0.5)),
+                    opponent_topk_stage_end=float(config.get("sf_pid_topk_stage_end", config.get("sf_pid_random_move_stage_end", 0.5))),
+                    opponent_topk_min=int(config.get("sf_pid_topk_min", 1)),
+                    opponent_suboptimal_wdl_regret_max=float(config.get("sf_pid_suboptimal_wdl_regret_max", -1.0)),
+                    opponent_suboptimal_wdl_regret_min=float(config.get("sf_pid_suboptimal_wdl_regret_min", -1.0)),
+                    opponent_random_move_prob_start=float(config.get("sf_pid_random_move_prob_start", 1.0)),
+                    opponent_random_move_prob_min=float(config.get("sf_pid_random_move_prob_min", 0.0)),
                     selfplay_fraction=float(config.get("selfplay_fraction", 0.0)),
                     temperature=float(config.get("temperature", 1.0)),
                     temperature_drop_plies=int(config.get("temperature_drop_plies", 0)),
@@ -2645,7 +2752,7 @@ def train_trial(config: dict):
                     diff_focus_pol_scale=float(config.get("diff_focus_pol_scale", 3.5)),
                     diff_focus_slope=float(config.get("diff_focus_slope", 3.0)),
                     diff_focus_min=float(config.get("diff_focus_min", 0.025)),
-                    categorical_bins=int(config.get("categorical_bins", 32)),
+                    categorical_bins=int(config.get("categorical_bins", DEFAULT_CATEGORICAL_BINS)),
                     hlgauss_sigma=float(config.get("hlgauss_sigma", 0.04)),
                     fpu_reduction=float(config.get("fpu_reduction", 1.2)),
                     fpu_at_root=float(config.get("fpu_at_root", 1.0)),
@@ -2695,9 +2802,21 @@ def train_trial(config: dict):
 
             ingest_ms = (time.monotonic() - ingest_t0) * 1000.0
 
+            if _should_retry_distributed_iteration_without_games(
+                use_distributed_selfplay=use_distributed_selfplay,
+                total_games_generated=total_games_generated,
+            ):
+                print(
+                    "[trial] distributed iteration waiting for fresh selfplay: "
+                    f"trial={trial_id} iter={iteration_idx} replay={len(buf)} "
+                    f"timeout_s={float(config.get('distributed_wait_timeout_seconds', 900.0)):.1f}"
+                )
+                time.sleep(max(0.5, float(config.get("distributed_worker_poll_seconds", 1.0))))
+                continue
+
             # Export this iteration's own selfplay to a separate directory so
             # sibling trials can import clean data without feedback-loop contamination.
-            _selfplay_export_path = local_iter_shard_path(selfplay_shards_dir, global_iter)
+            _selfplay_export_path = local_iter_shard_path(selfplay_shards_dir, iteration_idx)
             if use_distributed_selfplay:
                 # Distributed: new shards were identified by shard-path diff above.
                 if _new_selfplay_shards:
@@ -2768,7 +2887,7 @@ def train_trial(config: dict):
             elif bool(config.get("exploit_replay_share_top_enabled", False)) and in_salvage_startup_grace:
                 print(
                     "[trial] replay share skipped during salvage startup grace: "
-                    f"iter={it} grace_iters={salvage_startup_no_share_iters}"
+                    f"iter={iteration_zero_based} grace_iters={salvage_startup_no_share_iters}"
                 )
 
             imported_samples_this_iter = int(shared_summary.get("source_samples_ingested", 0))
@@ -2868,8 +2987,11 @@ def train_trial(config: dict):
                 if wk in config:
                     setattr(trainer, wk, float(config[wk]))
 
-            # Also update sf_wdl_start for the dynamic schedule below.
+            # Re-read dynamic sf_wdl schedule params each iteration so config
+            # changes (including --resume with updated YAML) take effect.
             sf_wdl_start = float(config.get("w_sf_wdl", sf_wdl_start))
+            sf_wdl_floor = float(config.get("sf_wdl_floor", sf_wdl_floor))
+            sf_wdl_floor_at = float(config.get("sf_wdl_floor_at", sf_wdl_floor_at))
 
             # Dynamic sf_wdl weight: interpolate between sf_wdl_start and sf_wdl_floor
             # based on how far random_move_prob has dropped from 1.0.
@@ -2919,11 +3041,11 @@ def train_trial(config: dict):
                 target_sample_budget = int(train_budget["target_sample_budget"])
                 window_target_samples = int(train_budget["window_target_samples"])
                 if startup_source == "salvage" and bool(salvage_origin_used):
-                    if int(it) < salvage_startup_no_share_iters and salvage_startup_max_train_steps > 0:
+                    if int(iteration_zero_based) < salvage_startup_no_share_iters and salvage_startup_max_train_steps > 0:
                         steps = min(steps, salvage_startup_max_train_steps)
                     elif (
                         salvage_startup_post_share_ramp_iters > 0
-                        and int(it) < (salvage_startup_no_share_iters + salvage_startup_post_share_ramp_iters)
+                        and int(iteration_zero_based) < (salvage_startup_no_share_iters + salvage_startup_post_share_ramp_iters)
                         and salvage_startup_post_share_max_train_steps > 0
                     ):
                         steps = min(steps, salvage_startup_post_share_max_train_steps)
@@ -2931,7 +3053,7 @@ def train_trial(config: dict):
                 # Save model state for potential rollback (net gating).
                 gate_passed = True
                 pre_train_state = None
-                if gate_games > 0 and (it % gate_interval == 0):
+                if gate_games > 0 and (iteration_zero_based % gate_interval == 0):
                     pre_train_state = {
                         k: v.clone() for k, v in trainer.model.state_dict().items()
                     }
@@ -3003,7 +3125,12 @@ def train_trial(config: dict):
                     rng=rng,
                     stockfish=eval_sf,
                     games=eval_games,
-                    opponent_topk_stage_end=float(config.get("sf_pid_random_move_stage_end", 0.5)),
+                    opponent_topk_stage_end=float(config.get("sf_pid_topk_stage_end", config.get("sf_pid_random_move_stage_end", 0.5))),
+                    opponent_topk_min=int(config.get("sf_pid_topk_min", 1)),
+                    opponent_suboptimal_wdl_regret_max=float(config.get("sf_pid_suboptimal_wdl_regret_max", -1.0)),
+                    opponent_suboptimal_wdl_regret_min=float(config.get("sf_pid_suboptimal_wdl_regret_min", -1.0)),
+                    opponent_random_move_prob_start=float(config.get("sf_pid_random_move_prob_start", 1.0)),
+                    opponent_random_move_prob_min=float(config.get("sf_pid_random_move_prob_min", 0.0)),
                     temperature=float(config.get("eval_temperature", 0.25)),
                     max_plies=int(config.get("eval_max_plies", config.get("max_plies", 240))),
                     mcts_simulations=eval_mcts_sims,
@@ -3052,7 +3179,7 @@ def train_trial(config: dict):
                             "salvage_origin_slot": int(salvage_origin_slot),
                             "salvage_origin_slots_total": int(salvage_origin_slots_total),
                             "salvage_origin_dir": str(salvage_origin_dir),
-                            "global_iter": int(global_iter),
+                            "global_iter": int(iteration_idx),
                         },
                         sort_keys=True,
                         indent=2,
@@ -3121,8 +3248,11 @@ def train_trial(config: dict):
             # line up with net updates rather than intra-iteration selfplay noise.
             pid_update = None
             pid_ema_wr = float(pid.ema_winrate) if pid is not None else 0.0
-            total_games_played = max(1, int(total_w + total_d + total_l))
-            selfplay_winrate_raw = (float(total_w) + 0.5 * float(total_d)) / float(total_games_played)
+            selfplay_winrate_raw = _selfplay_winrate_raw_or_none(
+                wins=total_w,
+                draws=total_d,
+                losses=total_l,
+            )
             avg_game_plies = float(total_game_plies) / float(max(1, int(total_games_generated)))
             adjudication_rate = float(total_adjudicated_games) / float(max(1, int(total_games_generated)))
             draw_rate = float(total_draw_games) / float(max(1, int(total_games_generated)))
@@ -3156,6 +3286,8 @@ def train_trial(config: dict):
                 except Exception:
                     pass
 
+            wdl_regret_next = float(pid.wdl_regret) if pid is not None else -1.0
+
             opp_strength = _opponent_strength(
                 random_move_prob=float(current_rand),
                 sf_nodes=int(sf_nodes_used),
@@ -3164,6 +3296,8 @@ def train_trial(config: dict):
                 min_nodes=int(getattr(pid, "min_nodes", 50)) if pid is not None else 50,
                 max_nodes=int(getattr(pid, "max_nodes", 50000)) if pid is not None else 50000,
                 pid_target_winrate=float(config.get("sf_pid_target_winrate", 0.53)),
+                wdl_regret=float(wdl_regret_used),
+                wdl_regret_max=float(config.get("sf_pid_wdl_regret_max", 1.0)),
             )
             if opp_strength_ema == 0.0:
                 opp_strength_ema = float(opp_strength)
@@ -3175,7 +3309,7 @@ def train_trial(config: dict):
 
             # Puzzle evaluation (overspecialization canary).
             puzzle_dict = {}
-            if puzzle_suite is not None and puzzle_interval > 0 and (it % puzzle_interval == 0):
+            if puzzle_suite is not None and puzzle_interval > 0 and (iteration_zero_based % puzzle_interval == 0):
                 from chess_anti_engine.eval import run_puzzle_eval
                 pr = run_puzzle_eval(
                     trainer.model, puzzle_suite,
@@ -3187,7 +3321,7 @@ def train_trial(config: dict):
                     "puzzle_total": pr.total,
                 }
 
-            iteration_step = int(global_iter)
+            iteration_step = int(iteration_idx)
             pause_metrics = _iteration_pause_metrics(
                 iteration_started_at=iter_t0,
                 iteration_finished_at=time.monotonic(),
@@ -3199,8 +3333,22 @@ def train_trial(config: dict):
                 trainer.writer.add_scalar("difficulty/opponent_strength_ema", float(opp_strength_ema), iteration_step)
                 trainer.writer.add_scalar("difficulty/random_move_prob", float(current_rand), iteration_step)
                 trainer.writer.add_scalar("difficulty/random_move_prob_next", float(random_move_prob_next), iteration_step)
+                trainer.writer.add_scalar(
+                    "difficulty/opponent_topk",
+                    float(
+                        _effective_curriculum_topk(
+                            random_move_prob=current_rand,
+                            stage_end=float(config.get("sf_pid_topk_stage_end", config.get("sf_pid_random_move_stage_end", 0.5))),
+                            topk_max=int(config.get("sf_multipv", 12)),
+                            topk_min=int(config.get("sf_pid_topk_min", 1)),
+                        )
+                    ),
+                    iteration_step,
+                )
                 trainer.writer.add_scalar("difficulty/pid_ema_winrate", float(pid_ema_wr), iteration_step)
-                if total_games_generated > 0:
+                trainer.writer.add_scalar("difficulty/wdl_regret", float(wdl_regret_used), iteration_step)
+                trainer.writer.add_scalar("difficulty/wdl_regret_next", float(wdl_regret_next), iteration_step)
+                if selfplay_winrate_raw is not None:
                     trainer.writer.add_scalar("difficulty/selfplay_winrate_raw", float(selfplay_winrate_raw), iteration_step)
                     trainer.writer.add_scalar("selfplay/avg_game_plies", float(avg_game_plies), iteration_step)
                     trainer.writer.add_scalar("selfplay/adjudication_rate", float(adjudication_rate), iteration_step)
@@ -3217,10 +3365,23 @@ def train_trial(config: dict):
             except Exception:
                 pass
 
-            session.report(
-                {
+            report_dict = {
+                    "opponent_random_move_prob": float(current_rand),
+                    "opponent_random_move_prob_next": float(random_move_prob_next),
+                    "opponent_sf_nodes": int(sf_nodes_used),
+                    "opponent_sf_nodes_next": int(sf_nodes_next),
+                    "opponent_wdl_regret_limit": float(wdl_regret_used),
+                    "opponent_wdl_regret_limit_next": float(wdl_regret_next),
+                    "opponent_topk": int(
+                        _effective_curriculum_topk(
+                            random_move_prob=current_rand,
+                            stage_end=float(config.get("sf_pid_topk_stage_end", config.get("sf_pid_random_move_stage_end", 0.5))),
+                            topk_max=int(config.get("sf_multipv", 12)),
+                            topk_min=int(config.get("sf_pid_topk_min", 1)),
+                        )
+                    ),
                     "iter": int(iteration_idx),
-                    "global_iter": int(global_iter),
+                    "global_iter": int(iteration_idx),
                     "replay": len(buf),
                     "test_replay": len(holdout_buf),
                     "positions_added": total_positions,
@@ -3258,7 +3419,6 @@ def train_trial(config: dict):
                     "win": total_w,
                     "draw": total_d,
                     "loss": total_l,
-                    "selfplay_winrate_raw": float(selfplay_winrate_raw),
                     "sf_eval_delta6": float(total_sf_d6 / max(1, total_sf_d6_n)) if total_sf_d6_n > 0 else 0.0,
                     "sf_eval_delta6_n": total_sf_d6_n,
                     "sf_nodes": int(sf_nodes_used),
@@ -3266,6 +3426,8 @@ def train_trial(config: dict):
                     "pid_ema_winrate": float(pid_ema_wr),
                     "random_move_prob": float(current_rand),
                     "random_move_prob_next": float(random_move_prob_next),
+                    "wdl_regret": float(wdl_regret_used),
+                    "wdl_regret_next": float(wdl_regret_next),
                     "skill_level": int(skill_level_used),
                     "skill_level_next": int(skill_level_next),
                     "opponent_strength": float(opp_strength),
@@ -3274,6 +3436,7 @@ def train_trial(config: dict):
                     "peak_lr": float(getattr(trainer, "_peak_lr", 0.0)),
                     "w_wdl": float(trainer.w_wdl),
                     "w_soft": float(trainer.w_soft),
+                    "w_categorical": float(trainer.w_categorical),
                     "w_sf_move": float(trainer.w_sf_move),
                     "w_sf_wdl": float(trainer.w_sf_wdl),
                     "diff_focus_q_weight": float(config.get("diff_focus_q_weight", 0.0)),
@@ -3320,9 +3483,11 @@ def train_trial(config: dict):
                     **eval_dict,
                     **test_dict,
                     **puzzle_dict,
-                },
-                checkpoint=checkpoint,
-            )
+                }
+            if selfplay_winrate_raw is not None:
+                report_dict["selfplay_winrate_raw"] = float(selfplay_winrate_raw)
+
+            session.report(report_dict, checkpoint=checkpoint)
 
             # Write compact status row (best-effort — never crash the trial).
             try:
@@ -3330,17 +3495,19 @@ def train_trial(config: dict):
                 with _STATUS_CSV_PATH.open("a", newline="") as _f:
                     csv.writer(_f).writerow([
                         int(iteration_idx),
-                        int(global_iter),
+                        int(iteration_idx),
                         f"{float(opp_strength):.1f}",
                         f"{float(opp_strength_ema):.1f}",
                         int(skill_level_used),
                         int(sf_nodes_used),
+                        f"{float(current_rand):.3f}",
+                        f"{float(wdl_regret_used):.4f}",
                         f"{float(ingest_ms)/1000:.1f}",
                         f"{float(train_ms)/1000:.1f}",
                         f"{_iter_s:.1f}",
                         int(steps),
                         len(buf),
-                        int(total_positions),
+                        int(replay_positions_ingested),
                         int(distributed_stale_games),
                         f"{float(metrics.loss):.4f}" if metrics is not None else "",
                         f"{float(best_loss):.4f}",
@@ -3352,6 +3519,9 @@ def train_trial(config: dict):
                     ])
             except Exception:
                 pass
+
+            global_iter = int(iteration_idx)
+            completed_iterations += 1
 
             # Best-effort: keep disk usage bounded even when resuming an older
             # experiment that did not have checkpoint retention configured.

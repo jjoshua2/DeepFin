@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -19,6 +20,7 @@ import torch
 from chess_anti_engine.inference import SlotInferenceClient, ShmBatchInferenceClient
 from chess_anti_engine.model import ModelConfig, build_model
 from chess_anti_engine.moves.encode import POLICY_SIZE
+from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.shard import ShardMeta, save_npz
 from chess_anti_engine.selfplay import play_batch
 from chess_anti_engine.selfplay.match import play_match_batch
@@ -68,6 +70,182 @@ def _sha256_file(path: Path) -> str:
                 break
             h.update(b)
     return h.hexdigest()
+
+
+@dataclass
+class _BufferedUpload:
+    samples: list[ReplaySample] = field(default_factory=list)
+    model_sha: str | None = None
+    model_step: int | None = None
+    games: int = 0
+    positions: int = 0
+    w: int = 0
+    d: int = 0
+    l: int = 0
+    total_game_plies: int = 0
+    adjudicated_games: int = 0
+    total_draw_games: int = 0
+    selfplay_games: int = 0
+    selfplay_adjudicated_games: int = 0
+    selfplay_draw_games: int = 0
+    curriculum_games: int = 0
+    curriculum_adjudicated_games: int = 0
+    curriculum_draw_games: int = 0
+    first_buffered_at_s: float | None = None
+
+    def reset(self) -> None:
+        self.samples.clear()
+        self.model_sha = None
+        self.model_step = None
+        self.games = 0
+        self.positions = 0
+        self.w = 0
+        self.d = 0
+        self.l = 0
+        self.total_game_plies = 0
+        self.adjudicated_games = 0
+        self.total_draw_games = 0
+        self.selfplay_games = 0
+        self.selfplay_adjudicated_games = 0
+        self.selfplay_draw_games = 0
+        self.curriculum_games = 0
+        self.curriculum_adjudicated_games = 0
+        self.curriculum_draw_games = 0
+        self.first_buffered_at_s = None
+
+
+def _buffer_elapsed_s(*, buf: _BufferedUpload, now_s: float) -> float:
+    if buf.first_buffered_at_s is None:
+        return 0.0
+    return max(0.0, float(now_s) - float(buf.first_buffered_at_s))
+
+
+def _buffer_should_flush(
+    *,
+    buf: _BufferedUpload,
+    now_s: float,
+    last_send_s: float,
+    target_positions: int,
+    flush_seconds: float,
+) -> bool:
+    if buf.positions <= 0:
+        return False
+    if int(target_positions) > 0 and int(buf.positions) >= int(target_positions):
+        return True
+    if float(flush_seconds) > 0.0 and (float(now_s) - float(last_send_s)) >= float(flush_seconds):
+        return True
+    return False
+
+
+def _buffer_add_completed_game(
+    *,
+    buf: _BufferedUpload,
+    game_batch,
+    now_s: float,
+    model_sha: str,
+    model_step: int,
+) -> None:
+    if getattr(game_batch, "positions", 0) <= 0 or not getattr(game_batch, "samples", None):
+        return
+    if buf.positions > 0:
+        if str(buf.model_sha or "") != str(model_sha) or int(buf.model_step or 0) != int(model_step):
+            raise ValueError("buffered upload model metadata mismatch")
+    else:
+        buf.model_sha = str(model_sha)
+        buf.model_step = int(model_step)
+    if buf.first_buffered_at_s is None:
+        buf.first_buffered_at_s = float(now_s)
+    buf.samples.extend(list(game_batch.samples))
+    buf.games += int(getattr(game_batch, "games", 0))
+    buf.positions += int(getattr(game_batch, "positions", 0))
+    buf.w += int(getattr(game_batch, "w", 0))
+    buf.d += int(getattr(game_batch, "d", 0))
+    buf.l += int(getattr(game_batch, "l", 0))
+    buf.total_game_plies += int(getattr(game_batch, "total_game_plies", 0))
+    buf.adjudicated_games += int(getattr(game_batch, "adjudicated_games", 0))
+    buf.total_draw_games += int(getattr(game_batch, "total_draw_games", 0))
+    buf.selfplay_games += int(getattr(game_batch, "selfplay_games", 0))
+    buf.selfplay_adjudicated_games += int(getattr(game_batch, "selfplay_adjudicated_games", 0))
+    buf.selfplay_draw_games += int(getattr(game_batch, "selfplay_draw_games", 0))
+    buf.curriculum_games += int(getattr(game_batch, "curriculum_games", 0))
+    buf.curriculum_adjudicated_games += int(getattr(game_batch, "curriculum_adjudicated_games", 0))
+    buf.curriculum_draw_games += int(getattr(game_batch, "curriculum_draw_games", 0))
+
+
+def _pending_elapsed_path(shard_path: Path) -> Path:
+    return shard_path.with_suffix(shard_path.suffix + ".elapsed_s")
+
+
+def _flush_upload_buffer_to_pending(
+    *,
+    pending_dir: Path,
+    username: str,
+    buf: _BufferedUpload,
+    now_s: float,
+) -> tuple[Path | None, float]:
+    if buf.positions <= 0 or not buf.samples:
+        return None, 0.0
+    model_sha = str(buf.model_sha or "")
+    if not model_sha:
+        raise ValueError("buffered upload missing model sha")
+    if buf.model_step is None:
+        raise ValueError("buffered upload missing model step")
+    ts = int(now_s)
+    shard_path = pending_dir / f"{ts}_{model_sha[:8]}_{buf.games}g_{buf.positions}p.npz"
+    elapsed_s = _buffer_elapsed_s(buf=buf, now_s=now_s)
+    meta = ShardMeta(
+        username=str(username),
+        generated_at_unix=ts,
+        model_sha256=str(model_sha),
+        model_step=int(buf.model_step),
+        games=int(buf.games),
+        positions=int(buf.positions),
+        wins=int(buf.w),
+        draws=int(buf.d),
+        losses=int(buf.l),
+        total_game_plies=int(buf.total_game_plies),
+        adjudicated_games=int(buf.adjudicated_games),
+        total_draw_games=int(buf.total_draw_games),
+        selfplay_games=int(buf.selfplay_games),
+        selfplay_adjudicated_games=int(buf.selfplay_adjudicated_games),
+        selfplay_draw_games=int(buf.selfplay_draw_games),
+        curriculum_games=int(buf.curriculum_games),
+        curriculum_adjudicated_games=int(buf.curriculum_adjudicated_games),
+        curriculum_draw_games=int(buf.curriculum_draw_games),
+    )
+    tmp_path = pending_dir / f"_tmp_{shard_path.name}"
+    save_npz(tmp_path, samples=list(buf.samples), meta=meta, compress=False)
+    tmp_path.replace(shard_path)
+    _pending_elapsed_path(shard_path).write_text(f"{float(elapsed_s):.6f}\n", encoding="utf-8")
+    buf.reset()
+    return shard_path, float(elapsed_s)
+
+
+def _maybe_flush_upload_buffer(
+    *,
+    pending_dir: Path,
+    username: str,
+    buf: _BufferedUpload,
+    now_s: float,
+    last_send_s: float,
+    target_positions: int,
+    flush_seconds: float,
+    force: bool = False,
+) -> tuple[Path | None, float]:
+    if not force and not _buffer_should_flush(
+        buf=buf,
+        now_s=now_s,
+        last_send_s=last_send_s,
+        target_positions=target_positions,
+        flush_seconds=flush_seconds,
+    ):
+        return None, 0.0
+    return _flush_upload_buffer_to_pending(
+        pending_dir=pending_dir,
+        username=username,
+        buf=buf,
+        now_s=now_s,
+    )
 
 
 def _worker_headers(*, machine_id: str | None = None) -> dict[str, str]:
@@ -415,6 +593,18 @@ def main() -> None:
     ap.add_argument("--target-batch-seconds", type=float, default=30.0)
     ap.add_argument("--min-games-per-batch", type=int, default=1)
     ap.add_argument("--max-games-per-batch", type=int, default=64)
+    ap.add_argument(
+        "--upload-target-positions",
+        type=int,
+        default=500,
+        help="Flush a completed-game upload batch once at least this many positions are buffered locally.",
+    )
+    ap.add_argument(
+        "--upload-flush-seconds",
+        type=float,
+        default=60.0,
+        help="Flush/upload at the next completed game boundary once this many seconds have elapsed since the last successful send.",
+    )
 
     # Server-managed exploration knobs
     ap.add_argument("--temperature", type=float, default=None)
@@ -494,6 +684,10 @@ def main() -> None:
         args.sf_workers = int(cfg.get("sf_workers", 1))
     if args.games_per_batch is None and "games_per_batch" in cfg:
         args.games_per_batch = int(cfg.get("games_per_batch"))
+    if "upload_target_positions" in cfg:
+        args.upload_target_positions = int(cfg.get("upload_target_positions"))
+    if "upload_flush_seconds" in cfg:
+        args.upload_flush_seconds = float(cfg.get("upload_flush_seconds"))
 
     # --password-file (CLI) always wins over the saved password in worker.yaml
     # so that a fresh session with a rotated password loads correctly.
@@ -602,6 +796,8 @@ def main() -> None:
         cfg["sf_workers"] = int(args.sf_workers)
         if games_per_batch_local is not None:
             cfg["games_per_batch"] = int(games_per_batch_local)
+        cfg["upload_target_positions"] = int(args.upload_target_positions)
+        cfg["upload_flush_seconds"] = float(args.upload_flush_seconds)
         if not bool(args.save_password):
             cfg.pop("password", None)
         save_worker_config(cfg_path, cfg)
@@ -642,9 +838,55 @@ def main() -> None:
     pause_selfplay_active = False
     manifest_state = "active"
     manifest_state_elapsed_s: float | None = None
+    upload_buf = _BufferedUpload()
+    last_successful_send_s = time.time()
 
     last_best_sha = None
     best_model = None
+
+    def _upload_pending_shards(*, default_elapsed_s: float | None = None) -> float | None:
+        nonlocal last_successful_send_s
+        last_uploaded_at: float | None = None
+        for sp in sorted(p for p in pending_dir.glob("*.npz") if not p.name.startswith("_tmp_")):
+            elapsed_s = default_elapsed_s
+            elapsed_path = _pending_elapsed_path(sp)
+            if elapsed_path.exists():
+                try:
+                    elapsed_s = float(elapsed_path.read_text(encoding="utf-8").strip())
+                except Exception:
+                    elapsed_s = default_elapsed_s
+            with sp.open("rb") as f:
+                files = {"file": (sp.name, f, "application/octet-stream")}
+                r = requests.post(
+                    _server_url_for(trial_api_prefix + "/upload_shard"),
+                    files=files,
+                    auth=(str(args.username), str(args.password)),
+                    headers={
+                        **_worker_headers(machine_id=machine_id),
+                        **(
+                            {"X-CAE-Worker-Lease-ID": str(lease_id)}
+                            if str(lease_id).strip()
+                            else {}
+                        ),
+                        **(
+                            {"X-CAE-Batch-Elapsed-S": str(float(elapsed_s))}
+                            if elapsed_s is not None and float(elapsed_s) > 0.0
+                            else {}
+                        ),
+                    },
+                    timeout=60.0,
+                )
+            if r.status_code == 200:
+                try:
+                    sp.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                elapsed_path.unlink(missing_ok=True)
+                last_successful_send_s = time.time()
+                last_uploaded_at = float(last_successful_send_s)
+            else:
+                break
+        return last_uploaded_at
 
     try:
         while True:
@@ -678,40 +920,7 @@ def main() -> None:
                 lease_id = new_lease_id
 
             # Upload any pending shards first (skip in-progress temp files).
-            for sp in sorted(p for p in pending_dir.glob("*.npz") if not p.name.startswith("_tmp_")):
-                with sp.open("rb") as f:
-                    files = {"file": (sp.name, f, "application/octet-stream")}
-                    r = requests.post(
-                        _server_url_for(trial_api_prefix + "/upload_shard"),
-                        files=files,
-                        auth=(str(args.username), str(args.password)),
-                        headers={
-                            **_worker_headers(machine_id=machine_id),
-                            **(
-                                {"X-CAE-Worker-Lease-ID": str(lease_id)}
-                                if str(lease_id).strip()
-                                else {}
-                            ),
-                            **(
-                                {"X-CAE-Batch-Elapsed-S": str(float(cfg.get("_last_batch_elapsed_s", 0.0)))}
-                                if float(cfg.get("_last_batch_elapsed_s", 0.0)) > 0.0
-                                else {}
-                            ),
-                        },
-                        timeout=60.0,
-                    )
-                if r.status_code == 200:
-                    # Server may accept-but-reject (quarantine) invalid shards; 200 avoids retry storms.
-                    # Once the server has answered 200, keep disk usage bounded by deleting the local copy
-                    # instead of archiving every uploaded shard indefinitely.
-                    try:
-                        sp.unlink(missing_ok=True)
-                    except OSError:
-                        # Already removed by a concurrent process or stale glob entry; skip.
-                        pass
-                else:
-                    # Leave it for retry.
-                    break
+            _upload_pending_shards(default_elapsed_s=float(cfg.get("_last_batch_elapsed_s", 0.0) or 0.0))
 
             # Upload any pending arena results.
             for jp in sorted(arena_pending_dir.glob("*.json")):
@@ -883,6 +1092,25 @@ def main() -> None:
             if not model_sha:
                 time.sleep(float(args.poll_seconds))
                 continue
+            model_step = int(manifest.get("trainer_step") or 0)
+
+            if (
+                upload_buf.positions > 0
+                and (
+                    str(upload_buf.model_sha or "") != str(model_sha)
+                    or int(upload_buf.model_step or 0) != int(model_step)
+                )
+            ):
+                shard_path, elapsed_s = _flush_upload_buffer_to_pending(
+                    pending_dir=pending_dir,
+                    username=str(args.username),
+                    buf=upload_buf,
+                    now_s=time.time(),
+                )
+                if shard_path is not None:
+                    uploaded_at = _upload_pending_shards(default_elapsed_s=float(elapsed_s))
+                    if uploaded_at is not None:
+                        last_successful_send_s = float(uploaded_at)
 
             if need_local_model and model_sha != last_model_sha:
                 log.info("switching to latest model sha=%s", model_sha)
@@ -931,7 +1159,14 @@ def main() -> None:
                 model.to(device)
                 model.eval()
                 if bool(args.compile_inference):
+                    compile_t0 = time.time()
+                    log.info("compile starting model_sha=%s", str(model_sha)[:8])
                     model = _maybe_compile_inference_model(model, device=str(device))
+                    log.info(
+                        "compile finished model_sha=%s elapsed_s=%.2f",
+                        str(model_sha)[:8],
+                        float(time.time() - compile_t0),
+                    )
 
                 if last_model_sha is not None and not fixed_trial_id:
                     # Reconsider assignment at natural model-boundary checkpoints.
@@ -1062,6 +1297,13 @@ def main() -> None:
             )
             fast_sims = int(args.fast_simulations) if args.fast_simulations is not None else int(reco.get("fast_simulations", 8))
             opponent_random_move_prob = float(reco.get("opponent_random_move_prob", 0.0))
+            opponent_topk_min = int(reco.get("opponent_topk_min", 1))
+            opponent_suboptimal_wdl_regret_max = float(reco.get("opponent_suboptimal_wdl_regret_max", -1.0))
+            opponent_suboptimal_wdl_regret_min = float(reco.get("opponent_suboptimal_wdl_regret_min", -1.0))
+            opponent_random_move_prob_start = float(reco.get("opponent_random_move_prob_start", 1.0))
+            opponent_random_move_prob_min = float(reco.get("opponent_random_move_prob_min", 0.0))
+            opponent_wdl_regret_limit_raw = reco.get("opponent_wdl_regret_limit", None)
+            opponent_wdl_regret_limit = float(opponent_wdl_regret_limit_raw) if opponent_wdl_regret_limit_raw is not None else None
             selfplay_fraction = float(reco.get("selfplay_fraction", 0.0))
             timeout_adjudication_threshold = float(reco.get("timeout_adjudication_threshold", 0.90))
 
@@ -1150,7 +1392,14 @@ def main() -> None:
                     best_model.to(device)
                     best_model.eval()
                     if bool(args.compile_inference):
+                        compile_t0 = time.time()
+                        log.info("compile starting best_model_sha=%s", str(best_sha)[:8])
                         best_model = _maybe_compile_inference_model(best_model, device=str(device))
+                        log.info(
+                            "compile finished best_model_sha=%s elapsed_s=%.2f",
+                            str(best_sha)[:8],
+                            float(time.time() - compile_t0),
+                        )
                     last_best_sha = best_sha
 
                 if best_model is None:
@@ -1280,6 +1529,32 @@ def main() -> None:
 
             # Generate a shard
             t0 = time.time()
+
+            def _on_completed_game(game_batch) -> None:
+                nonlocal last_successful_send_s
+                now_s = time.time()
+                _buffer_add_completed_game(
+                    buf=upload_buf,
+                    game_batch=game_batch,
+                    now_s=now_s,
+                    model_sha=model_sha,
+                    model_step=model_step,
+                )
+                shard_path, elapsed_s = _maybe_flush_upload_buffer(
+                    pending_dir=pending_dir,
+                    username=str(args.username),
+                    buf=upload_buf,
+                    now_s=now_s,
+                    last_send_s=last_successful_send_s,
+                    target_positions=int(args.upload_target_positions),
+                    flush_seconds=float(args.upload_flush_seconds),
+                    force=False,
+                )
+                if shard_path is not None:
+                    uploaded_at = _upload_pending_shards(default_elapsed_s=float(elapsed_s))
+                    if uploaded_at is not None:
+                        last_successful_send_s = float(uploaded_at)
+
             try:
                 samples, stats = play_batch(
                     model if need_local_model else None,
@@ -1302,6 +1577,12 @@ def main() -> None:
                     timeout_adjudication_threshold=float(timeout_adjudication_threshold),
                     opponent_random_move_prob=float(opponent_random_move_prob),
                     opponent_topk_stage_end=float(reco.get("opponent_topk_stage_end", 0.5)),
+                    opponent_topk_min=int(opponent_topk_min),
+                    opponent_suboptimal_wdl_regret_max=float(opponent_suboptimal_wdl_regret_max),
+                    opponent_suboptimal_wdl_regret_min=float(opponent_suboptimal_wdl_regret_min),
+                    opponent_random_move_prob_start=float(opponent_random_move_prob_start),
+                    opponent_random_move_prob_min=float(opponent_random_move_prob_min),
+                    opponent_wdl_regret_limit=opponent_wdl_regret_limit,
                     selfplay_fraction=float(selfplay_fraction),
                     opening_book_path=opening_book_path,
                     opening_book_max_plies=int(opening_book_max_plies),
@@ -1312,6 +1593,7 @@ def main() -> None:
                     opening_book_max_games_2=int(opening_book_max_games_2),
                     opening_book_mix_prob_2=float(opening_book_mix_prob_2),
                     random_start_plies=int(random_start_plies),
+                    on_game_complete=_on_completed_game,
                 )
             except TimeoutError as exc:
                 if inference_client is None:
@@ -1375,37 +1657,52 @@ def main() -> None:
                     _persist_cfg()
                     raise SystemExit(0)
 
-            ts = int(time.time())
             cfg["_last_batch_elapsed_s"] = float(t1 - t0)
-            shard_path = pending_dir / f"{ts}_{model_sha[:8]}_{stats.games}g_{stats.positions}p.npz"
-            meta = ShardMeta(
+            now_s = time.time()
+            shard_path, elapsed_s = _maybe_flush_upload_buffer(
+                pending_dir=pending_dir,
                 username=str(args.username),
-                generated_at_unix=ts,
-                model_sha256=str(model_sha),
-                model_step=int(manifest.get("trainer_step") or 0),
-                games=int(stats.games),
-                positions=int(stats.positions),
-                wins=int(stats.w),
-                draws=int(stats.d),
-                losses=int(stats.l),
-                total_game_plies=int(getattr(stats, "total_game_plies", 0)),
-                adjudicated_games=int(getattr(stats, "adjudicated_games", 0)),
-                total_draw_games=int(getattr(stats, "total_draw_games", 0)),
-                selfplay_games=int(getattr(stats, "selfplay_games", 0)),
-                selfplay_adjudicated_games=int(getattr(stats, "selfplay_adjudicated_games", 0)),
-                selfplay_draw_games=int(getattr(stats, "selfplay_draw_games", 0)),
-                curriculum_games=int(getattr(stats, "curriculum_games", 0)),
-                curriculum_adjudicated_games=int(getattr(stats, "curriculum_adjudicated_games", 0)),
-                curriculum_draw_games=int(getattr(stats, "curriculum_draw_games", 0)),
+                buf=upload_buf,
+                now_s=now_s,
+                last_send_s=last_successful_send_s,
+                target_positions=int(args.upload_target_positions),
+                flush_seconds=float(args.upload_flush_seconds),
+                force=True,
             )
-            # Write atomically: save to a temp file then rename so the upload
-            # loop never picks up a partially-written shard.
-            # Temp name must end in .npz so numpy doesn't append the extension itself.
-            if samples:
+            if shard_path is None and samples:
+                log.warning(
+                    "batch returned %d samples but upload buffer was empty; writing fallback batch shard",
+                    int(len(samples)),
+                )
+                ts = int(now_s)
+                shard_path = pending_dir / f"{ts}_{model_sha[:8]}_{stats.games}g_{stats.positions}p.npz"
+                meta = ShardMeta(
+                    username=str(args.username),
+                    generated_at_unix=ts,
+                    model_sha256=str(model_sha),
+                    model_step=int(model_step),
+                    games=int(stats.games),
+                    positions=int(stats.positions),
+                    wins=int(stats.w),
+                    draws=int(stats.d),
+                    losses=int(stats.l),
+                    total_game_plies=int(getattr(stats, "total_game_plies", 0)),
+                    adjudicated_games=int(getattr(stats, "adjudicated_games", 0)),
+                    total_draw_games=int(getattr(stats, "total_draw_games", 0)),
+                    selfplay_games=int(getattr(stats, "selfplay_games", 0)),
+                    selfplay_adjudicated_games=int(getattr(stats, "selfplay_adjudicated_games", 0)),
+                    selfplay_draw_games=int(getattr(stats, "selfplay_draw_games", 0)),
+                    curriculum_games=int(getattr(stats, "curriculum_games", 0)),
+                    curriculum_adjudicated_games=int(getattr(stats, "curriculum_adjudicated_games", 0)),
+                    curriculum_draw_games=int(getattr(stats, "curriculum_draw_games", 0)),
+                )
                 tmp_path = pending_dir / f"_tmp_{shard_path.name}"
                 save_npz(tmp_path, samples=samples, meta=meta, compress=False)
                 tmp_path.replace(shard_path)
-            else:
+                elapsed_path = _pending_elapsed_path(shard_path)
+                elapsed_s = float(t1 - t0)
+                elapsed_path.write_text(f"{float(elapsed_s):.6f}\n", encoding="utf-8")
+            elif shard_path is None:
                 log.info("batch produced no policy samples; skipping shard write")
 
             # Prune old cached models opportunistically.
@@ -1413,6 +1710,11 @@ def main() -> None:
             best_sha = str(best_info.get("sha256") or "")
             if not shared_cache_enabled:
                 _prune_cached_models(cache_dir=cache_dir, keep_shas={model_sha, best_sha})
+
+            if shard_path is not None:
+                uploaded_at = _upload_pending_shards(default_elapsed_s=float(elapsed_s))
+                if uploaded_at is not None:
+                    last_successful_send_s = float(uploaded_at)
 
             # Try uploading immediately next loop.
             time.sleep(0.1)

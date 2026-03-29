@@ -11,13 +11,19 @@ import numpy as np
 import torch
 
 from chess_anti_engine.config import RunConfig, StockfishConfig
-from chess_anti_engine.model import ModelConfig, build_model, zero_policy_head_parameters_
+from chess_anti_engine.model import (
+    ModelConfig,
+    build_model,
+    reinit_volatility_head_parameters_,
+    zero_policy_head_parameters_,
+)
 from chess_anti_engine.replay import DiskReplayBuffer, ReplayBuffer, balance_wdl
 from chess_anti_engine.replay.shard import iter_shard_paths, samples_to_arrays
 from chess_anti_engine.selfplay import play_batch
 from chess_anti_engine.selfplay.budget import progressive_mcts_simulations
 from chess_anti_engine.stockfish import DifficultyPID, StockfishPool, StockfishUCI
 from chess_anti_engine.train import Trainer
+from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 
 
@@ -394,6 +400,10 @@ def _run_single(args: argparse.Namespace) -> None:
         rng=rng,
         shuffle_cap=int(getattr(args, "shuffle_buffer_size", 20_000)),
         shard_size=int(getattr(args, "shard_size", 1000)),
+        refresh_interval=int(getattr(args, "shuffle_refresh_interval", 5)),
+        refresh_shards=int(getattr(args, "shuffle_refresh_shards", 3)),
+        draw_cap_frac=float(getattr(args, "shuffle_draw_cap_frac", 0.90)),
+        wl_max_ratio=float(getattr(args, "shuffle_wl_max_ratio", 1.5)),
     )
 
     # On resume, DiskReplayBuffer discovers existing shards on disk. If the on-disk
@@ -415,6 +425,10 @@ def _run_single(args: argparse.Namespace) -> None:
                 zeroed = zero_policy_head_parameters_(trainer.model)
                 if zeroed:
                     print(f"Zeroed bootstrap policy heads: {', '.join(zeroed)}")
+            if bool(getattr(args, "bootstrap_reinit_volatility_heads", False)):
+                reinit = reinit_volatility_head_parameters_(trainer.model)
+                if reinit:
+                    print(f"Reinitialized bootstrap volatility heads: {', '.join(reinit)}")
             del ckpt_data
         else:
             print(f"WARNING: bootstrap checkpoint not found: {bp}")
@@ -497,6 +511,11 @@ def _run_single(args: argparse.Namespace) -> None:
             random_move_prob_max=float(getattr(args, "sf_pid_random_move_prob_max", 1.0)),
             random_move_stage_end=float(getattr(args, "sf_pid_random_move_stage_end", 0.5)),
             max_rand_step=float(getattr(args, "sf_pid_max_rand_step", 0.01)),
+            initial_wdl_regret=float(getattr(args, "sf_pid_wdl_regret_start", -1.0)),
+            wdl_regret_min=float(getattr(args, "sf_pid_wdl_regret_min", 0.01)),
+            wdl_regret_max=float(getattr(args, "sf_pid_wdl_regret_max", 1.0)),
+            wdl_regret_stage_end=float(getattr(args, "sf_pid_wdl_regret_stage_end", -1.0)),
+            max_regret_step=float(getattr(args, "sf_pid_max_regret_step", 0.01)),
         )
         if pid_state is not None:
             try:
@@ -533,7 +552,12 @@ def _run_single(args: argparse.Namespace) -> None:
                 rng=rng,
                 stockfish=sf,
                 opponent_random_move_prob=current_rand,
-                opponent_topk_stage_end=float(getattr(args, "sf_pid_random_move_stage_end", 0.5)),
+                opponent_topk_stage_end=float(getattr(args, "sf_pid_topk_stage_end", getattr(args, "sf_pid_random_move_stage_end", 0.5))),
+                opponent_topk_min=int(getattr(args, "sf_pid_topk_min", 1)),
+                opponent_suboptimal_wdl_regret_max=float(getattr(args, "sf_pid_suboptimal_wdl_regret_max", -1.0)),
+                opponent_suboptimal_wdl_regret_min=float(getattr(args, "sf_pid_suboptimal_wdl_regret_min", -1.0)),
+                opponent_random_move_prob_start=float(getattr(args, "sf_pid_random_move_prob_start", 1.0)),
+                opponent_random_move_prob_min=float(getattr(args, "sf_pid_random_move_prob_min", 0.0)),
                 selfplay_fraction=float(getattr(cfg.selfplay, "selfplay_fraction", 0.0)),
                 temperature=cfg.selfplay.temperature,
                 temperature_drop_plies=int(cfg.selfplay.temperature_drop_plies),
@@ -566,7 +590,7 @@ def _run_single(args: argparse.Namespace) -> None:
                 diff_focus_pol_scale=float(getattr(args, "diff_focus_pol_scale", 3.5)),
                 diff_focus_slope=float(getattr(args, "diff_focus_slope", 3.0)),
                 diff_focus_min=float(getattr(args, "diff_focus_min", 0.025)),
-                categorical_bins=int(getattr(args, "categorical_bins", 32)),
+                categorical_bins=int(getattr(args, "categorical_bins", DEFAULT_CATEGORICAL_BINS)),
                 hlgauss_sigma=float(getattr(args, "hlgauss_sigma", 0.04)),
                 fpu_reduction=float(getattr(args, "fpu_reduction", 1.2)),
                 fpu_at_root=float(getattr(args, "fpu_at_root", 1.0)),
@@ -780,6 +804,18 @@ def main() -> None:
         help="Worker auto-tune upper bound for games_per_batch.",
     )
     ap.add_argument(
+        "--distributed-worker-upload-target-positions",
+        type=int,
+        default=500,
+        help="Flush a small durable worker upload once this many positions are buffered.",
+    )
+    ap.add_argument(
+        "--distributed-worker-upload-flush-seconds",
+        type=float,
+        default=60.0,
+        help="Flush at the next completed-game boundary once this many seconds have elapsed since the last successful upload.",
+    )
+    ap.add_argument(
         "--distributed-worker-shared-cache-dir",
         type=str,
         default="",
@@ -850,6 +886,18 @@ def main() -> None:
             "Optional filesystem root for per-trial replay shard storage. "
             "If unset, replay stays under each Ray trial directory."
         ),
+    )
+    ap.add_argument(
+        "--distributed-upload-compact-shard-size",
+        type=int,
+        default=2000,
+        help="Server-side compaction target positions for learner-facing distributed selfplay shards.",
+    )
+    ap.add_argument(
+        "--distributed-upload-compact-max-age-seconds",
+        type=float,
+        default=90.0,
+        help="Age-based partial flush threshold for server-side selfplay upload compaction.",
     )
     ap.add_argument(
         "--distributed-inference-broker-enabled",
@@ -970,6 +1018,18 @@ def main() -> None:
     ap.add_argument("--gate-interval", type=int, default=1, help="Net gating: check every N iterations")
     ap.add_argument("--gate-mcts-sims", type=int, default=1, help="MCTS sims for gate games (1=raw policy)")
     ap.add_argument("--shuffle-buffer-size", type=int, default=20_000, help="Disk replay: in-memory shuffle buffer size")
+    ap.add_argument(
+        "--shuffle-draw-cap-frac",
+        type=float,
+        default=0.90,
+        help="Disk replay: cap draws to this fraction of each balanced batch.",
+    )
+    ap.add_argument(
+        "--shuffle-wl-max-ratio",
+        type=float,
+        default=1.5,
+        help="Disk replay: max allowed win/loss imbalance ratio in balanced batches.",
+    )
     ap.add_argument("--shard-size", type=int, default=1000, help="Disk replay: samples per on-disk shard")
     ap.add_argument("--exploit-replay-refresh-enabled", action="store_true",
                     help="On PB2 exploit restore, refresh recipient replay shards (prune oldest + inject donor recent).")
@@ -999,6 +1059,8 @@ def main() -> None:
                     help="Pause gate polling interval in seconds.")
     ap.add_argument("--salvage-seed-pool-dir", type=str, default=None,
                     help="Optional seed pool dir (from --mode salvage) to warm-start fresh trials.")
+    ap.add_argument("--salvage-restore-pid-state", action="store_true",
+                    help="When warm-starting from a salvage seed, also restore the donor PID difficulty state.")
     ap.add_argument("--replay-window-start", type=int, default=100_000, help="Initial sliding window size")
     ap.add_argument("--replay-window-max", type=int, default=1_000_000, help="Max sliding window size")
     ap.add_argument("--replay-window-growth", type=int, default=10_000, help="Window growth per iteration")
@@ -1071,6 +1133,25 @@ def main() -> None:
     ap.add_argument("--sf-pid-skill-demote-nodes", type=int, default=100)
     ap.add_argument("--sf-pid-skill-nodes-on-promote", type=int, default=100)
     ap.add_argument("--sf-pid-skill-nodes-on-demote", type=int, default=150)
+    ap.add_argument("--sf-pid-random-move-prob-start", type=float, default=1.0)
+    ap.add_argument("--sf-pid-random-move-prob-min", type=float, default=0.0)
+    ap.add_argument("--sf-pid-random-move-prob-max", type=float, default=1.0)
+    ap.add_argument("--sf-pid-random-move-stage-end", type=float, default=0.5)
+    ap.add_argument("--sf-pid-topk-stage-end", type=float, default=0.5)
+    ap.add_argument("--sf-pid-topk-min", type=int, default=1)
+    ap.add_argument(
+        "--sf-pid-suboptimal-wdl-regret-max",
+        type=float,
+        default=-1.0,
+        help="If >=0, treat opponent_random_move_prob as chance of choosing a non-best move within this WDL regret band at easy stage start.",
+    )
+    ap.add_argument(
+        "--sf-pid-suboptimal-wdl-regret-min",
+        type=float,
+        default=-1.0,
+        help="If >=0, WDL regret floor reached when random_move_prob hits its configured minimum.",
+    )
+    ap.add_argument("--sf-pid-max-rand-step", type=float, default=0.01)
     ap.add_argument("--games-per-iter", type=int, default=10)
     ap.add_argument("--games-per-iter-start", type=int, default=0,
                     help="Optional starting games_per_iter for Tune ramping (0 disables).")
@@ -1227,7 +1308,16 @@ def main() -> None:
         "sf_pid_random_move_prob_min": float(getattr(args, "sf_pid_random_move_prob_min", 0.0)),
         "sf_pid_random_move_prob_max": float(getattr(args, "sf_pid_random_move_prob_max", 1.0)),
         "sf_pid_random_move_stage_end": float(getattr(args, "sf_pid_random_move_stage_end", 0.5)),
+        "sf_pid_topk_stage_end": float(getattr(args, "sf_pid_topk_stage_end", getattr(args, "sf_pid_random_move_stage_end", 0.5))),
+        "sf_pid_topk_min": int(getattr(args, "sf_pid_topk_min", 1)),
+        "sf_pid_suboptimal_wdl_regret_max": float(getattr(args, "sf_pid_suboptimal_wdl_regret_max", -1.0)),
+        "sf_pid_suboptimal_wdl_regret_min": float(getattr(args, "sf_pid_suboptimal_wdl_regret_min", -1.0)),
         "sf_pid_max_rand_step": float(getattr(args, "sf_pid_max_rand_step", 0.01)),
+        "sf_pid_wdl_regret_start": float(getattr(args, "sf_pid_wdl_regret_start", -1.0)),
+        "sf_pid_wdl_regret_min": float(getattr(args, "sf_pid_wdl_regret_min", 0.01)),
+        "sf_pid_wdl_regret_max": float(getattr(args, "sf_pid_wdl_regret_max", 1.0)),
+        "sf_pid_wdl_regret_stage_end": float(getattr(args, "sf_pid_wdl_regret_stage_end", -1.0)),
+        "sf_pid_max_regret_step": float(getattr(args, "sf_pid_max_regret_step", 0.01)),
         "opening_book_path": args.opening_book_path,
         "opening_book_max_plies": int(args.opening_book_max_plies),
         "opening_book_max_games": int(args.opening_book_max_games),
@@ -1321,11 +1411,16 @@ def main() -> None:
         "bootstrap_dir": getattr(args, "bootstrap_dir", None),
         "bootstrap_checkpoint": getattr(args, "bootstrap_checkpoint", None),
         "bootstrap_zero_policy_heads": bool(getattr(args, "bootstrap_zero_policy_heads", False)),
+        "bootstrap_reinit_volatility_heads": bool(getattr(args, "bootstrap_reinit_volatility_heads", False)),
         "worker_wheel_path": str(getattr(args, "worker_wheel_path", "") or ""),
         "bootstrap_max_positions": int(getattr(args, "bootstrap_max_positions", 0)),
         "bootstrap_train_steps": int(getattr(args, "bootstrap_train_steps", 0)),
         "shared_shards_dir": getattr(args, "shared_shards_dir", None),
         "shuffle_buffer_size": int(getattr(args, "shuffle_buffer_size", 20_000)),
+        "shuffle_refresh_interval": int(getattr(args, "shuffle_refresh_interval", 5)),
+        "shuffle_refresh_shards": int(getattr(args, "shuffle_refresh_shards", 3)),
+        "shuffle_draw_cap_frac": float(getattr(args, "shuffle_draw_cap_frac", 0.90)),
+        "shuffle_wl_max_ratio": float(getattr(args, "shuffle_wl_max_ratio", 1.5)),
         "shard_size": int(getattr(args, "shard_size", 1000)),
         "exploit_replay_refresh_enabled": bool(getattr(args, "exploit_replay_refresh_enabled", False)),
         "exploit_replay_keep_fraction": float(getattr(args, "exploit_replay_keep_fraction", 0.60)),
@@ -1345,6 +1440,8 @@ def main() -> None:
         "pause_file": getattr(args, "pause_file", None),
         "pause_poll_seconds": int(getattr(args, "pause_poll_seconds", 60)),
         "salvage_seed_pool_dir": getattr(args, "salvage_seed_pool_dir", None),
+        "salvage_reinit_volatility_heads": bool(getattr(args, "salvage_reinit_volatility_heads", False)),
+        "salvage_restore_pid_state": bool(getattr(args, "salvage_restore_pid_state", False)),
         "salvage_restore_donor_config": bool(getattr(args, "salvage_restore_donor_config", False)),
         "salvage_restore_full_trainer_state": bool(getattr(args, "salvage_restore_full_trainer_state", False)),
         "salvage_startup_no_share_iters": int(getattr(args, "salvage_startup_no_share_iters", 0)),
@@ -1381,6 +1478,8 @@ def main() -> None:
         "distributed_worker_target_batch_seconds": float(args.distributed_worker_target_batch_seconds),
         "distributed_worker_min_games_per_batch": int(args.distributed_worker_min_games_per_batch),
         "distributed_worker_max_games_per_batch": int(args.distributed_worker_max_games_per_batch),
+        "distributed_worker_upload_target_positions": int(args.distributed_worker_upload_target_positions),
+        "distributed_worker_upload_flush_seconds": float(args.distributed_worker_upload_flush_seconds),
         "distributed_worker_shared_cache_dir": args.distributed_worker_shared_cache_dir,
         "distributed_worker_username": args.distributed_worker_username,
         "distributed_worker_password": args.distributed_worker_password,
@@ -1392,6 +1491,8 @@ def main() -> None:
         "distributed_server_public_url": args.distributed_server_public_url,
         "distributed_server_root_override": args.distributed_server_root_override,
         "tune_replay_root_override": args.tune_replay_root_override,
+        "distributed_upload_compact_shard_size": int(args.distributed_upload_compact_shard_size),
+        "distributed_upload_compact_max_age_seconds": float(args.distributed_upload_compact_max_age_seconds),
         "distributed_inference_broker_enabled": bool(args.distributed_inference_broker_enabled),
         "distributed_inference_batch_wait_ms": float(args.distributed_inference_batch_wait_ms),
         "distributed_inference_max_batch_per_slot": int(args.distributed_inference_max_batch_per_slot),

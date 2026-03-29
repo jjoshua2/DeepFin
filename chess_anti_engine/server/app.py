@@ -5,12 +5,123 @@ import logging
 import os
 import re
 import secrets
+import threading
 import time
 import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from chess_anti_engine.replay.buffer import ReplaySample
+from chess_anti_engine.replay.shard import ShardMeta, arrays_to_samples, save_npz
 from chess_anti_engine.utils.versioning import version_lt
+
+
+@dataclass
+class _BufferedUploadAccumulator:
+    trial_id: str | None
+    model_sha256: str
+    created_at_unix: float
+    last_update_unix: float
+    samples: list[ReplaySample] = field(default_factory=list)
+    games: int = 0
+    positions: int = 0
+    wins: int = 0
+    draws: int = 0
+    losses: int = 0
+    total_game_plies: int = 0
+    adjudicated_games: int = 0
+    total_draw_games: int = 0
+    selfplay_games: int = 0
+    selfplay_adjudicated_games: int = 0
+    selfplay_draw_games: int = 0
+    curriculum_games: int = 0
+    curriculum_adjudicated_games: int = 0
+    curriculum_draw_games: int = 0
+    model_step: int | None = None
+
+    def add_upload(
+        self,
+        *,
+        samples: list[ReplaySample],
+        meta: dict[str, Any],
+        now_unix: float,
+    ) -> None:
+        self.samples.extend(samples)
+        self.positions += len(samples)
+        self.games += int(meta.get("games") or 0)
+        self.wins += int(meta.get("wins") or 0)
+        self.draws += int(meta.get("draws") or 0)
+        self.losses += int(meta.get("losses") or 0)
+        self.total_game_plies += int(meta.get("total_game_plies") or 0)
+        self.adjudicated_games += int(meta.get("adjudicated_games") or 0)
+        self.total_draw_games += int(meta.get("total_draw_games") or 0)
+        self.selfplay_games += int(meta.get("selfplay_games") or 0)
+        self.selfplay_adjudicated_games += int(meta.get("selfplay_adjudicated_games") or 0)
+        self.selfplay_draw_games += int(meta.get("selfplay_draw_games") or 0)
+        self.curriculum_games += int(meta.get("curriculum_games") or 0)
+        self.curriculum_adjudicated_games += int(meta.get("curriculum_adjudicated_games") or 0)
+        self.curriculum_draw_games += int(meta.get("curriculum_draw_games") or 0)
+        if meta.get("model_step") is not None:
+            self.model_step = int(meta.get("model_step"))
+        self.last_update_unix = float(now_unix)
+
+
+def _buffered_upload_ready(
+    *,
+    acc: _BufferedUploadAccumulator,
+    now_unix: float,
+    target_positions: int,
+    max_age_s: float,
+) -> bool:
+    if acc.positions <= 0 or not acc.samples:
+        return False
+    if int(target_positions) > 0 and int(acc.positions) >= int(target_positions):
+        return True
+    if float(max_age_s) > 0.0 and (float(now_unix) - float(acc.created_at_unix)) >= float(max_age_s):
+        return True
+    return False
+
+
+def _flush_buffered_upload_to_inbox(
+    *,
+    inbox_root: Path,
+    acc: _BufferedUploadAccumulator,
+    now_unix: float,
+) -> Path | None:
+    if acc.positions <= 0 or not acc.samples:
+        return None
+    compacted_dir = inbox_root / "_compacted"
+    compacted_dir.mkdir(parents=True, exist_ok=True)
+    samples = list(acc.samples)
+    meta = ShardMeta(
+        username="server_compactor",
+        generated_at_unix=int(now_unix),
+        model_sha256=str(acc.model_sha256) or None,
+        model_step=acc.model_step,
+        games=int(acc.games),
+        positions=int(acc.positions),
+        wins=int(acc.wins),
+        draws=int(acc.draws),
+        losses=int(acc.losses),
+        total_game_plies=int(acc.total_game_plies),
+        adjudicated_games=int(acc.adjudicated_games),
+        total_draw_games=int(acc.total_draw_games),
+        selfplay_games=int(acc.selfplay_games),
+        selfplay_adjudicated_games=int(acc.selfplay_adjudicated_games),
+        selfplay_draw_games=int(acc.selfplay_draw_games),
+        curriculum_games=int(acc.curriculum_games),
+        curriculum_adjudicated_games=int(acc.curriculum_adjudicated_games),
+        curriculum_draw_games=int(acc.curriculum_draw_games),
+    )
+    final = compacted_dir / (
+        f"{int(now_unix)}_{str(acc.model_sha256)[:8]}_{int(acc.games)}g_{int(acc.positions)}p_"
+        f"{secrets.token_hex(8)}.npz"
+    )
+    tmp = compacted_dir / f"._tmp_{secrets.token_hex(8)}_{final.name}"
+    save_npz(tmp, samples=samples, meta=meta, compress=False)
+    os.replace(str(tmp), str(final))
+    return final
 
 
 def create_app(
@@ -25,6 +136,8 @@ def create_app(
     max_upload_mb: int = 256,
     min_workers_per_trial: int = 1,
     max_worker_delta_per_rebalance: int = 1,
+    upload_compact_shard_size: int = 2000,
+    upload_compact_max_age_seconds: float = 90.0,
 ):
     """Create the HTTP server.
 
@@ -82,6 +195,11 @@ def create_app(
     stats_path = root / "worker_throughput_by_gpu.json"
     trial_stats_path = root / "trial_throughput_by_trial.json"
     leases_root.mkdir(parents=True, exist_ok=True)
+    compact_target_positions = max(1, int(upload_compact_shard_size))
+    compact_max_age_seconds = max(1.0, float(upload_compact_max_age_seconds))
+    upload_accumulators: dict[tuple[str | None, str], _BufferedUploadAccumulator] = {}
+    recent_upload_shas: dict[tuple[str | None, str], float] = {}
+    upload_lock = threading.Lock()
 
     app = FastAPI(title="chess-anti-engine server", version="0.1")
 
@@ -114,6 +232,53 @@ def create_app(
     def _arena_inbox_root(trial_id: str | None) -> Path:
         tid = _normalize_trial_id(trial_id)
         return arena_inbox if tid is None else (_trial_root(tid) / "arena_inbox")
+
+    def _flush_ready_upload_accumulators(
+        *,
+        trial_id: str | None = None,
+        force_age: bool = True,
+        force_all: bool = False,
+    ) -> int:
+        now_unix = time.time()
+        flushed = 0
+        normalized_trial_id = _normalize_trial_id(trial_id)
+        with upload_lock:
+            stale_seen = [
+                key
+                for key, seen_at in recent_upload_shas.items()
+                if (now_unix - float(seen_at)) > 6.0 * 3600.0
+            ]
+            for key in stale_seen:
+                recent_upload_shas.pop(key, None)
+
+            ready_keys: list[tuple[str | None, str]] = []
+            for key, acc in upload_accumulators.items():
+                trial_key, _model_sha = key
+                if normalized_trial_id is not None and trial_key != normalized_trial_id:
+                    continue
+                if force_all:
+                    ready_keys.append(key)
+                    continue
+                if not force_age:
+                    continue
+                if _buffered_upload_ready(
+                    acc=acc,
+                    now_unix=now_unix,
+                    target_positions=compact_target_positions + 1,
+                    max_age_s=compact_max_age_seconds,
+                ):
+                    ready_keys.append(key)
+            for key in ready_keys:
+                acc = upload_accumulators.pop(key, None)
+                if acc is None:
+                    continue
+                _flush_buffered_upload_to_inbox(
+                    inbox_root=_inbox_root(acc.trial_id),
+                    acc=acc,
+                    now_unix=now_unix,
+                )
+                flushed += 1
+        return flushed
 
     def _load_manifest(trial_id: str | None = None) -> dict[str, Any] | None:
         mf = _publish_root(trial_id) / "manifest.json"
@@ -344,6 +509,7 @@ def create_app(
         x_cae_worker_version: str | None = Header(None, alias="X-CAE-Worker-Version"),
         x_cae_protocol_version: str | None = Header(None, alias="X-CAE-Protocol-Version"),
     ) -> Any:
+        _flush_ready_upload_accumulators(trial_id=trial_id, force_age=True, force_all=False)
         mf = _publish_root(trial_id) / "manifest.json"
         if not mf.exists():
             raise HTTPException(status_code=404, detail="manifest not published yet")
@@ -601,16 +767,43 @@ def create_app(
 
         positions = int(shard_arrs["x"].shape[0])
         sha = _sha256_file(tmp)
-        user_dir = inbox_root / username
-        user_dir.mkdir(parents=True, exist_ok=True)
-        final = user_dir / f"{sha}.npz"
-
-        if final.exists():
-            tmp.unlink(missing_ok=True)
-            stored = False
-        else:
-            tmp.replace(final)
-            stored = True
+        tmp.unlink(missing_ok=True)
+        trial_key = _normalize_trial_id(trial_id)
+        upload_seen_key = (trial_key, sha)
+        now_unix = time.time()
+        stored = False
+        with upload_lock:
+            if upload_seen_key not in recent_upload_shas:
+                model_sha = str(meta.get("model_sha256") or sha)
+                acc_key = (trial_key, model_sha)
+                acc = upload_accumulators.get(acc_key)
+                if acc is None:
+                    acc = _BufferedUploadAccumulator(
+                        trial_id=trial_key,
+                        model_sha256=model_sha,
+                        created_at_unix=now_unix,
+                        last_update_unix=now_unix,
+                    )
+                    upload_accumulators[acc_key] = acc
+                acc.add_upload(
+                    samples=arrays_to_samples(shard_arrs),
+                    meta=meta,
+                    now_unix=now_unix,
+                )
+                recent_upload_shas[upload_seen_key] = now_unix
+                stored = True
+                if _buffered_upload_ready(
+                    acc=acc,
+                    now_unix=now_unix,
+                    target_positions=compact_target_positions,
+                    max_age_s=compact_max_age_seconds,
+                ):
+                    upload_accumulators.pop(acc_key, None)
+                    _flush_buffered_upload_to_inbox(
+                        inbox_root=inbox_root,
+                        acc=acc,
+                        now_unix=now_unix,
+                    )
 
         lease = None
         if x_cae_worker_lease_id is not None:
@@ -796,5 +989,9 @@ def create_app(
             x_cae_worker_version=x_cae_worker_version,
             x_cae_protocol_version=x_cae_protocol_version,
         )
+
+    @app.on_event("shutdown")
+    def _flush_upload_accumulators_on_shutdown() -> None:
+        _flush_ready_upload_accumulators(force_age=False, force_all=True)
 
     return app

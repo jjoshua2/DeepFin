@@ -7,10 +7,14 @@ thousands of ``ReplaySample`` Python objects.
 """
 from __future__ import annotations
 
+from collections import deque
+import threading
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 
 from .buffer import ReplaySample
 from .shard import (
@@ -25,7 +29,6 @@ from .shard import (
     shard_index,
     shard_positions,
 )
-
 
 _ARRAY_FIELD_ORDER = (
     "x",
@@ -90,6 +93,7 @@ def _zeros_for_missing_field(
     n: int,
     policy_size: int,
     x_planes: int,
+    categorical_bins: int = DEFAULT_CATEGORICAL_BINS,
 ) -> np.ndarray:
     if name == "x":
         return np.zeros((n, x_planes, 8, 8), dtype=np.float16)
@@ -122,7 +126,7 @@ def _zeros_for_missing_field(
     if name == "has_is_network_turn":
         return np.zeros((n,), dtype=np.uint8)
     if name == "categorical_target":
-        return np.zeros((n, 32), dtype=np.float16)
+        return np.zeros((n, categorical_bins), dtype=np.float16)
     if name == "has_categorical":
         return np.zeros((n,), dtype=np.uint8)
     if name == "policy_soft_target":
@@ -154,6 +158,9 @@ def _normalize_arrays(arrs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
     n = int(x.shape[0])
     policy_size = int(policy_target.shape[1])
     x_planes = int(x.shape[1])
+    categorical_bins = (
+        int(arrs["categorical_target"].shape[1]) if "categorical_target" in arrs else DEFAULT_CATEGORICAL_BINS
+    )
 
     out: dict[str, np.ndarray] = {}
     for name in _ARRAY_FIELD_ORDER:
@@ -165,6 +172,7 @@ def _normalize_arrays(arrs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
                 n=n,
                 policy_size=policy_size,
                 x_planes=x_planes,
+                categorical_bins=categorical_bins,
             )
     return out
 
@@ -186,6 +194,11 @@ def _concat_sparse_batches(chunks: list[dict[str, np.ndarray]]) -> dict[str, np.
     if len(chunks) == 1:
         return chunks[0]
 
+    categorical_bins = next(
+        (int(c["categorical_target"].shape[1]) for c in chunks if "categorical_target" in c),
+        DEFAULT_CATEGORICAL_BINS,
+    )
+
     out: dict[str, np.ndarray] = {}
     for name in _ARRAY_FIELD_ORDER:
         parts: list[np.ndarray] = []
@@ -200,6 +213,7 @@ def _concat_sparse_batches(chunks: list[dict[str, np.ndarray]]) -> dict[str, np.
                         n=n,
                         policy_size=chunk_policy_size,
                         x_planes=chunk_x_planes,
+                        categorical_bins=categorical_bins,
                     )
                 )
         merged = np.concatenate(parts, axis=0)
@@ -207,36 +221,32 @@ def _concat_sparse_batches(chunks: list[dict[str, np.ndarray]]) -> dict[str, np.
         if any(name in chunk for chunk in chunks) or name in ("x", "policy_target", "wdl_target", "priority", "has_policy"):
             out[name] = merged
             continue
-        if name.startswith("has_"):
-            if np.any(merged):
-                out[name] = merged
-        else:
-            # value arrays are only needed when the corresponding has_* flag is present
-            flag_name = None
-            if name == "sf_wdl":
-                flag_name = "has_sf_wdl"
-            elif name == "sf_move_index":
-                flag_name = "has_sf_move"
-            elif name == "sf_policy_target":
-                flag_name = "has_sf_policy"
-            elif name == "moves_left":
-                flag_name = "has_moves_left"
-            elif name == "is_network_turn":
-                flag_name = "has_is_network_turn"
-            elif name == "categorical_target":
-                flag_name = "has_categorical"
-            elif name == "policy_soft_target":
-                flag_name = "has_policy_soft"
-            elif name == "future_policy_target":
-                flag_name = "has_future"
-            elif name == "volatility_target":
-                flag_name = "has_volatility"
-            elif name == "sf_volatility_target":
-                flag_name = "has_sf_volatility"
-            elif name == "legal_mask":
-                flag_name = "has_legal_mask"
-            if flag_name is not None and flag_name in out:
-                out[name] = merged
+        # value arrays are only needed when the corresponding has_* flag is present
+        flag_name = None
+        if name == "sf_wdl":
+            flag_name = "has_sf_wdl"
+        elif name == "sf_move_index":
+            flag_name = "has_sf_move"
+        elif name == "sf_policy_target":
+            flag_name = "has_sf_policy"
+        elif name == "moves_left":
+            flag_name = "has_moves_left"
+        elif name == "is_network_turn":
+            flag_name = "has_is_network_turn"
+        elif name == "categorical_target":
+            flag_name = "has_categorical"
+        elif name == "policy_soft_target":
+            flag_name = "has_policy_soft"
+        elif name == "future_policy_target":
+            flag_name = "has_future"
+        elif name == "volatility_target":
+            flag_name = "has_volatility"
+        elif name == "sf_volatility_target":
+            flag_name = "has_sf_volatility"
+        elif name == "legal_mask":
+            flag_name = "has_legal_mask"
+        if flag_name is not None and flag_name in out:
+            out[name] = merged
     return out
 
 
@@ -253,6 +263,8 @@ class DiskReplayBuffer:
         shard_size: int = 1000,
         refresh_interval: int = 5,
         refresh_shards: int = 3,
+        draw_cap_frac: float = 0.90,
+        wl_max_ratio: float = 1.5,
     ):
         self.capacity = int(capacity)
         self.rng = rng
@@ -263,14 +275,24 @@ class DiskReplayBuffer:
         self._shard_size = int(shard_size)
         self._refresh_interval = int(refresh_interval)
         self._refresh_shards = int(refresh_shards)
+        self._prefetch_rng = np.random.default_rng(int(rng.integers(0, 2**32 - 1)))
+        self._prefetch_lock = threading.Lock()
+        self._prefetch_request = threading.Event()
+        self._prefetch_stop = threading.Event()
+        self._prefetch_inflight = False
+        self._prefetched_refresh: list[dict[str, np.ndarray]] | None = None
+        self._prefetch_thread: threading.Thread | None = None
+        self._prefetch_generation = 0
 
-        # In-memory shuffle buffer as chunked arrays rather than ReplaySample objects.
-        # Optional arrays may be omitted and synthesized only when gathering a batch.
-        self._shuffle_buf: list[dict[str, np.ndarray]] = []
-        self._shuffle_sizes: list[int] = []
+        # In-memory hot replay as chunked sparse arrays with logical front offsets.
+        # Sampling stays random over the hot pool while trims avoid front-copy churn.
+        self._shuffle_buf: deque[dict[str, np.ndarray]] = deque()
+        self._shuffle_sizes: deque[int] = deque()
+        self._shuffle_offsets: deque[int] = deque()
         self._shuffle_size_total = 0
-        self._shuffle_priority = np.zeros((0,), dtype=np.float32)
-        self._shuffle_wdl = np.zeros((0,), dtype=np.int8)
+        self._shuffle_priority_store = np.zeros((0,), dtype=np.float32)
+        self._shuffle_wdl_store = np.zeros((0,), dtype=np.int8)
+        self._shuffle_head = 0
 
         # Write buffer: chunked arrays that accumulate until shard_size, then flush.
         self._write_buf: list[dict[str, np.ndarray]] = []
@@ -278,8 +300,8 @@ class DiskReplayBuffer:
         self._write_buf_rows = 0
 
         # Disk shard tracking (ordered oldest-first).
-        self._shard_paths: list[Path] = []
-        self._shard_sizes: list[int] = []
+        self._shard_paths: deque[Path] = deque()
+        self._shard_sizes: deque[int] = deque()
         self._total_positions = 0
         self._shard_index = 0
 
@@ -288,9 +310,51 @@ class DiskReplayBuffer:
 
         # KataGo-style surprise weighting: 50% uniform, 50% priority.
         self.surprise_mix = 0.5
+        self.draw_cap_frac = float(draw_cap_frac)
+        self.wl_max_ratio = float(wl_max_ratio)
 
         # Scan existing shards on disk (for resume).
         self._scan_existing_shards()
+        self._ensure_prefetch_thread()
+        self._schedule_refresh_prefetch()
+
+    def _snapshot_shards(self) -> list[Path]:
+        with self._prefetch_lock:
+            return list(self._shard_paths)
+
+    def _latest_shards(self, count: int) -> list[Path]:
+        n = max(0, int(count))
+        if n <= 0:
+            return []
+        with self._prefetch_lock:
+            return list(self._shard_paths[-n:])
+
+    def _append_shard_record(self, path: Path, n: int) -> None:
+        with self._prefetch_lock:
+            self._shard_paths.append(path)
+            self._shard_sizes.append(int(n))
+            self._total_positions += int(n)
+
+    def _pop_oldest_shard_record(self) -> tuple[Path, int] | None:
+        with self._prefetch_lock:
+            if not self._shard_paths:
+                return None
+            oldest = self._shard_paths.popleft()
+            n = int(self._shard_sizes.popleft())
+            self._total_positions -= n
+            return oldest, n
+
+    def _clear_shard_records(self) -> list[Path]:
+        with self._prefetch_lock:
+            out = list(self._shard_paths)
+            self._shard_paths = deque()
+            self._shard_sizes = deque()
+            self._total_positions = 0
+            return out
+
+    def _tracked_shard_positions(self) -> int:
+        with self._prefetch_lock:
+            return int(self._total_positions)
 
     def _effective_shuffle_cap(self) -> int:
         return max(1, min(int(self._shuffle_cap), int(self.capacity)))
@@ -304,13 +368,14 @@ class DiskReplayBuffer:
             return
         self._shuffle_buf.append(dict(arrs))
         self._shuffle_sizes.append(n)
+        self._shuffle_offsets.append(0)
         self._shuffle_size_total += n
-        self._shuffle_priority = np.concatenate(
-            [self._shuffle_priority, np.asarray(arrs["priority"], dtype=np.float32)],
+        self._shuffle_priority_store = np.concatenate(
+            [self._shuffle_priority_store, np.asarray(arrs["priority"], dtype=np.float32)],
             axis=0,
         )
-        self._shuffle_wdl = np.concatenate(
-            [self._shuffle_wdl, np.asarray(arrs["wdl_target"], dtype=np.int8)],
+        self._shuffle_wdl_store = np.concatenate(
+            [self._shuffle_wdl_store, np.asarray(arrs["wdl_target"], dtype=np.int8)],
             axis=0,
         )
 
@@ -323,19 +388,54 @@ class DiskReplayBuffer:
         while remaining > 0 and self._shuffle_buf:
             first_n = self._shuffle_sizes[0]
             if remaining >= first_n:
-                self._shuffle_buf.pop(0)
-                self._shuffle_sizes.pop(0)
+                self._shuffle_buf.popleft()
+                self._shuffle_sizes.popleft()
+                self._shuffle_offsets.popleft()
                 self._shuffle_size_total -= first_n
                 remaining -= first_n
                 continue
-            chunk = self._shuffle_buf[0]
-            for name, value in list(chunk.items()):
-                chunk[name] = value[remaining:]
+            self._shuffle_offsets[0] += remaining
             self._shuffle_sizes[0] = first_n - remaining
             self._shuffle_size_total -= remaining
             remaining = 0
-        self._shuffle_priority = self._shuffle_priority[drop:]
-        self._shuffle_wdl = self._shuffle_wdl[drop:]
+        self._shuffle_head += drop
+        self._maybe_compact_shuffle_metadata()
+
+    def _maybe_compact_shuffle_metadata(self, *, force: bool = False) -> None:
+        if self._shuffle_head <= 0 and not force:
+            return
+        active_n = int(self._shuffle_size_total)
+        if not force:
+            threshold = max(4096, self._shuffle_priority_store.shape[0] // 2)
+            if self._shuffle_head < threshold:
+                return
+        if active_n > 0:
+            start = int(self._shuffle_head)
+            end = start + active_n
+            self._shuffle_priority_store = np.array(
+                self._shuffle_priority_store[start:end],
+                copy=True,
+                order="C",
+            )
+            self._shuffle_wdl_store = np.array(
+                self._shuffle_wdl_store[start:end],
+                copy=True,
+                order="C",
+            )
+        else:
+            self._shuffle_priority_store = np.zeros((0,), dtype=np.float32)
+            self._shuffle_wdl_store = np.zeros((0,), dtype=np.int8)
+        self._shuffle_head = 0
+
+    def _active_shuffle_priority(self) -> np.ndarray:
+        start = int(self._shuffle_head)
+        end = start + int(self._shuffle_size_total)
+        return self._shuffle_priority_store[start:end]
+
+    def _active_shuffle_wdl(self) -> np.ndarray:
+        start = int(self._shuffle_head)
+        end = start + int(self._shuffle_size_total)
+        return self._shuffle_wdl_store[start:end]
 
     def _trim_shuffle_buf(self) -> None:
         cap = self._effective_shuffle_cap()
@@ -383,18 +483,26 @@ class DiskReplayBuffer:
         existing = iter_shard_paths(self._shard_dir)
         if not existing:
             return
+        sizes: list[int] = []
+        total_positions = 0
         for p in existing:
             idx = shard_index(p)
             if idx >= 0:
                 self._shard_index = max(self._shard_index, idx + 1)
             n = shard_positions(p)
-            self._shard_paths.append(p)
-            self._shard_sizes.append(n)
-            self._total_positions += n
+            sizes.append(n)
+            total_positions += n
+        with self._prefetch_lock:
+            self._shard_paths.extend(existing)
+            self._shard_sizes.extend(sizes)
+            self._total_positions += total_positions
 
-        if self._shard_paths:
-            n_seed = min(len(self._shard_paths), self._refresh_shards * 2)
-            for sp in self._shard_paths[-n_seed:]:
+        self._enforce_window()
+
+        seed_paths = self._snapshot_shards()
+        if seed_paths:
+            n_seed = min(len(seed_paths), self._refresh_shards * 2)
+            for sp in seed_paths[-n_seed:]:
                 try:
                     arrs, _ = load_shard_arrays(sp, lazy=False)
                     self._append_shuffle_arrays(arrs)
@@ -402,9 +510,112 @@ class DiskReplayBuffer:
                     pass
             self._trim_shuffle_buf()
 
+    def _ensure_prefetch_thread(self) -> None:
+        if self._refresh_interval <= 0 or self._refresh_shards <= 0:
+            return
+        if self._prefetch_thread is not None:
+            return
+        t = threading.Thread(
+            target=self._prefetch_loop,
+            args=(self._prefetch_generation, self._prefetch_stop, self._prefetch_request),
+            name=f"replay-prefetch-{id(self):x}",
+            daemon=True,
+        )
+        self._prefetch_thread = t
+        t.start()
+
+    def _prefetch_loop(
+        self,
+        generation: int,
+        stop_event: threading.Event,
+        request_event: threading.Event,
+    ) -> None:
+        while not stop_event.is_set():
+            request_event.wait(timeout=0.1)
+            if stop_event.is_set():
+                return
+            request_event.clear()
+            with self._prefetch_lock:
+                if generation != self._prefetch_generation:
+                    return
+                if self._prefetched_refresh is not None:
+                    self._prefetch_inflight = False
+                    continue
+                shard_paths = list(self._shard_paths)
+                refresh_shards = int(self._refresh_shards)
+            loaded = self._load_refresh_chunks(
+                shard_paths=shard_paths,
+                refresh_shards=refresh_shards,
+                rng=self._prefetch_rng,
+            )
+            with self._prefetch_lock:
+                if generation != self._prefetch_generation:
+                    return
+                self._prefetch_inflight = False
+                if loaded and not stop_event.is_set():
+                    self._prefetched_refresh = loaded
+
+    def _schedule_refresh_prefetch(self) -> None:
+        self._ensure_prefetch_thread()
+        if self._prefetch_thread is None:
+            return
+        with self._prefetch_lock:
+            if self._prefetch_inflight or self._prefetched_refresh is not None:
+                return
+            if not self._shard_paths or self._refresh_shards <= 0:
+                return
+            self._prefetch_inflight = True
+        self._prefetch_request.set()
+
+    def _take_prefetched_refresh(self) -> list[dict[str, np.ndarray]] | None:
+        with self._prefetch_lock:
+            loaded = self._prefetched_refresh
+            self._prefetched_refresh = None
+            return loaded
+
+    def _load_refresh_chunks(
+        self,
+        *,
+        shard_paths: list[Path],
+        refresh_shards: int,
+        rng: np.random.Generator,
+    ) -> list[dict[str, np.ndarray]]:
+        if not shard_paths:
+            return []
+
+        n_shards = len(shard_paths)
+        n_pick = min(int(refresh_shards), n_shards)
+        if n_pick <= 0:
+            return []
+
+        weights = np.arange(1, n_shards + 1, dtype=np.float64)
+        weights /= weights.sum()
+        chosen_idxs = rng.choice(n_shards, size=n_pick, replace=False, p=weights)
+
+        loaded: list[dict[str, np.ndarray]] = []
+        for idx in np.asarray(chosen_idxs, dtype=np.int64):
+            try:
+                arrs, _ = load_shard_arrays(shard_paths[int(idx)], lazy=False)
+                loaded.append(arrs)
+            except Exception:
+                pass
+        return loaded
+
+    def _apply_refresh_chunks(self, loaded: list[dict[str, np.ndarray]]) -> None:
+        loaded_n = sum(int(arrs["x"].shape[0]) for arrs in loaded if "x" in arrs)
+        if loaded_n <= 0:
+            return
+
+        replace_n = min(self._shuffle_len(), loaded_n)
+        if replace_n > 0:
+            self._drop_oldest_from_shuffle(replace_n)
+        for arrs in loaded:
+            self._append_shuffle_arrays(arrs)
+        self._trim_shuffle_buf()
+
     def __len__(self) -> int:
         """Total positions on disk + in write buffer."""
-        return self._total_positions + self._write_buf_rows
+        return self._tracked_shard_positions() + self._write_buf_rows
 
     def add(self, sample: ReplaySample) -> None:
         self.add_many([sample])
@@ -452,24 +663,25 @@ class DiskReplayBuffer:
         """Write a shard to disk."""
         path = local_shard_path(self._shard_dir, self._shard_index)
         saved_path = save_local_shard_arrays(path, arrs=arrs)
-        self._shard_paths.append(saved_path)
         n = int(arrs["x"].shape[0])
-        self._shard_sizes.append(n)
-        self._total_positions += n
+        self._append_shard_record(saved_path, n)
         self._shard_index += 1
 
     def _enforce_window(self) -> None:
         """Delete oldest shards when total exceeds capacity."""
-        if self._total_positions > self.capacity and not self._shard_paths:
+        current_total = self._tracked_shard_positions()
+        if current_total > self.capacity and not self._snapshot_shards():
             print(
-                f"[disk_buf] BUG: total_pos={self._total_positions} > cap={self.capacity} "
+                f"[disk_buf] BUG: total_pos={current_total} > cap={self.capacity} "
                 f"but no tracked shards to delete!"
             )
         deleted = 0
-        while self._total_positions > self.capacity and self._shard_paths:
-            oldest = self._shard_paths.pop(0)
-            n = self._shard_sizes.pop(0)
-            self._total_positions -= n
+        while current_total > self.capacity:
+            popped = self._pop_oldest_shard_record()
+            if popped is None:
+                break
+            oldest, n = popped
+            current_total -= n
             deleted += 1
             try:
                 delete_shard_path(oldest)
@@ -478,8 +690,8 @@ class DiskReplayBuffer:
         if deleted:
             print(
                 f"[disk_buf] enforce_window: deleted {deleted} shards, "
-                f"total_pos={self._total_positions}, cap={self.capacity}, "
-                f"tracked={len(self._shard_paths)}"
+                f"total_pos={self._tracked_shard_positions()}, cap={self.capacity}, "
+                f"tracked={len(self._snapshot_shards())}"
             )
 
     def _sample_indices(self, pool: np.ndarray, k: int) -> np.ndarray:
@@ -493,7 +705,7 @@ class DiskReplayBuffer:
             chosen = self.rng.choice(pool.shape[0], size=k_uni, replace=True)
             picks.append(pool[np.asarray(chosen, dtype=np.int64)])
         if k_pri > 0:
-            pri = np.maximum(0.0, self._shuffle_priority[pool].astype(np.float64, copy=False))
+            pri = np.maximum(0.0, self._active_shuffle_priority()[pool].astype(np.float64, copy=False))
             ps = float(pri.sum())
             if ps <= 0.0:
                 chosen = self.rng.choice(pool.shape[0], size=k_pri, replace=True)
@@ -520,7 +732,7 @@ class DiskReplayBuffer:
         if k_uni > 0:
             picks.append(np.asarray(self.rng.integers(0, n, size=k_uni), dtype=np.int64))
         if k_pri > 0:
-            pri = np.maximum(0.0, self._shuffle_priority.astype(np.float64, copy=False))
+            pri = np.maximum(0.0, self._active_shuffle_priority().astype(np.float64, copy=False))
             ps = float(pri.sum())
             if ps <= 0.0:
                 picks.append(np.asarray(self.rng.integers(0, n, size=k_pri), dtype=np.int64))
@@ -540,8 +752,12 @@ class DiskReplayBuffer:
         idx = np.asarray(indices, dtype=np.int64)
         if idx.ndim != 1:
             idx = idx.reshape(-1)
-        template = self._shuffle_buf[0]
+        template = next(iter(self._shuffle_buf))
         _, policy_size, x_planes = _batch_dims(template)
+        categorical_bins = next(
+            (int(c["categorical_target"].shape[1]) for c in self._shuffle_buf if "categorical_target" in c),
+            DEFAULT_CATEGORICAL_BINS,
+        )
         if idx.size == 0:
             return {
                 name: _zeros_for_missing_field(
@@ -560,11 +776,11 @@ class DiskReplayBuffer:
         required = {"x", "policy_target", "wdl_target", "priority", "has_policy"}
         present_optional: set[str] = set()
         start = 0
-        for chunk, chunk_n in zip(self._shuffle_buf, self._shuffle_sizes):
+        for chunk, chunk_n, chunk_off in zip(self._shuffle_buf, self._shuffle_sizes, self._shuffle_offsets):
             end = start + chunk_n
             mask = (idx >= start) & (idx < end)
             if np.any(mask):
-                local = idx[mask] - start
+                local = idx[mask] - start + chunk_off
                 selected.append((chunk, mask, local))
                 present_optional.update(set(chunk.keys()) - required)
             start = end
@@ -575,6 +791,7 @@ class DiskReplayBuffer:
                 n=int(idx.shape[0]),
                 policy_size=policy_size,
                 x_planes=x_planes,
+                categorical_bins=categorical_bins,
             )
             for name in sorted(required | present_optional)
         }
@@ -591,27 +808,30 @@ class DiskReplayBuffer:
             raise ValueError("DiskReplayBuffer shuffle buffer is empty")
 
         self._sample_count += 1
-        if (self._sample_count % self._refresh_interval == 0) and self._shard_paths:
-            self._refresh_shuffle_buf()
+        if self._refresh_interval > 0 and (self._sample_count % self._refresh_interval == 0) and self._snapshot_shards():
+            loaded = self._take_prefetched_refresh()
+            if loaded:
+                self._apply_refresh_chunks(loaded)
+            else:
+                self._refresh_shuffle_buf()
+            self._schedule_refresh_prefetch()
             n = self._shuffle_len()
 
         bs = int(batch_size)
         if not wdl_balance:
             return self._sample_raw_arrays(bs)
 
-        draw_cap_frac = 0.90
-        wl_max_ratio = 1.5
-
-        win_idx = np.flatnonzero(self._shuffle_wdl == 0)
-        draw_idx = np.flatnonzero(self._shuffle_wdl == 1)
-        loss_idx = np.flatnonzero(self._shuffle_wdl == 2)
+        active_wdl = self._active_shuffle_wdl()
+        win_idx = np.flatnonzero(active_wdl == 0)
+        draw_idx = np.flatnonzero(active_wdl == 1)
+        loss_idx = np.flatnonzero(active_wdl == 2)
 
         if win_idx.size == 0 or loss_idx.size == 0:
             return self._sample_raw_arrays(bs)
 
         p_draw = float(draw_idx.size) / float(max(1, n))
         n_draw = int(round(bs * p_draw))
-        n_draw_cap = int(np.floor(draw_cap_frac * bs))
+        n_draw_cap = int(np.floor(self.draw_cap_frac * bs))
         n_draw = min(n_draw, n_draw_cap)
         n_draw = max(0, min(bs, n_draw))
         if draw_idx.size == 0:
@@ -626,7 +846,7 @@ class DiskReplayBuffer:
             n_win = max(0, min(bs_decisive, n_win))
             n_loss = bs_decisive - n_win
 
-            r = float(wl_max_ratio)
+            r = self.wl_max_ratio
             if n_win > int(np.floor(r * n_loss)):
                 n_loss = int(np.ceil(bs_decisive / (1.0 + r)))
                 n_win = bs_decisive - n_loss
@@ -662,51 +882,50 @@ class DiskReplayBuffer:
 
     def _refresh_shuffle_buf(self) -> None:
         """Replace oldest shuffle samples with rows from randomly chosen disk shards."""
-        if not self._shard_paths:
-            return
-
-        n_shards = len(self._shard_paths)
-        n_pick = min(self._refresh_shards, n_shards)
-
-        weights = np.arange(1, n_shards + 1, dtype=np.float64)
-        weights /= weights.sum()
-        chosen_idxs = self.rng.choice(n_shards, size=n_pick, replace=False, p=weights)
-
-        loaded: list[dict[str, np.ndarray]] = []
-        loaded_n = 0
-        for idx in chosen_idxs:
-            try:
-                arrs, _ = load_shard_arrays(self._shard_paths[int(idx)], lazy=False)
-                loaded.append(arrs)
-                loaded_n += int(arrs["x"].shape[0])
-            except Exception:
-                pass
-
-        if loaded_n <= 0:
-            return
-
-        replace_n = min(self._shuffle_len(), loaded_n)
-        if replace_n > 0:
-            self._drop_oldest_from_shuffle(replace_n)
-        for arrs in loaded:
-            self._append_shuffle_arrays(arrs)
-        self._trim_shuffle_buf()
+        loaded = self._load_refresh_chunks(
+            shard_paths=self._snapshot_shards(),
+            refresh_shards=self._refresh_shards,
+            rng=self.rng,
+        )
+        self._apply_refresh_chunks(loaded)
 
     def clear(self) -> None:
         """Remove all data (disk and memory)."""
-        self._shuffle_buf = []
-        self._shuffle_sizes = []
+        self.close()
+        self._shuffle_buf = deque()
+        self._shuffle_sizes = deque()
+        self._shuffle_offsets = deque()
         self._shuffle_size_total = 0
-        self._shuffle_priority = np.zeros((0,), dtype=np.float32)
-        self._shuffle_wdl = np.zeros((0,), dtype=np.int8)
+        self._shuffle_priority_store = np.zeros((0,), dtype=np.float32)
+        self._shuffle_wdl_store = np.zeros((0,), dtype=np.int8)
+        self._shuffle_head = 0
         self._write_buf = []
         self._write_buf_sizes = []
         self._write_buf_rows = 0
-        for p in self._shard_paths:
+        for p in self._clear_shard_records():
             try:
                 delete_shard_path(p)
             except Exception:
                 pass
-        self._shard_paths = []
-        self._shard_sizes = []
-        self._total_positions = 0
+
+    def close(self) -> None:
+        t = self._prefetch_thread
+        stop_event = self._prefetch_stop
+        request_event = self._prefetch_request
+        with self._prefetch_lock:
+            self._prefetch_generation += 1
+            self._prefetch_inflight = False
+            self._prefetched_refresh = None
+        stop_event.set()
+        request_event.set()
+        if t is not None and t.is_alive():
+            t.join(timeout=1.0)
+        self._prefetch_thread = None
+        self._prefetch_stop = threading.Event()
+        self._prefetch_request = threading.Event()
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
