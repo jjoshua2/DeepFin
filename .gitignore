@@ -1,13 +1,13 @@
-.venv/
+/.venv/
 __pycache__/
 *.py[cod]
 *.so
 *.egg-info/
-dist/
-build/
-artifacts/
-runs/
-runs_*/
+/dist/
+/build/
+/artifacts/
+/runs/
+/runs_*/
 
 # Large artifacts
 *.pt
@@ -23,13 +23,13 @@ runs_*/
 *.sqlite
 .pytest_cache/
 .tb/
-tb/
+/tb/
 .DS_Store
 
 # Local data / experiments (generated)
-data/
-e2e_*/
-server/
+/data/
+/e2e_*/
+/server/
 
 # Local tooling
 .claude/
