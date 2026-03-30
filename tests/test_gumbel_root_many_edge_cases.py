@@ -60,7 +60,7 @@ def test_gumbel_root_many_returns_values_for_edge_cases():
         [b0, b1, chess.Board()],
         device="cpu",
         rng=rng,
-        cfg=GumbelConfig(simulations=8, topk=8, child_sims=2, temperature=1.0),
+        cfg=GumbelConfig(simulations=8, topk=8, temperature=1.0),
     )
 
     assert len(probs_list) == 3
@@ -82,7 +82,7 @@ def test_gumbel_root_many_empty_batch_returns_four_lists():
         [],
         device="cpu",
         rng=np.random.default_rng(0),
-        cfg=GumbelConfig(simulations=8, topk=8, child_sims=2, temperature=1.0),
+        cfg=GumbelConfig(simulations=8, topk=8, temperature=1.0),
         evaluator=lambda x: (x, x),
     )
 
@@ -111,7 +111,6 @@ def test_gumbel_root_many_precomputed_logits_matches_direct_path():
     cfg = GumbelConfig(
         simulations=8,
         topk=8,
-        child_sims=2,
         temperature=0.0,
         add_noise=False,
     )

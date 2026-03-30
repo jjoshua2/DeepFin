@@ -7,15 +7,22 @@ import numpy as np
 import chess
 import torch
 
-from chess_anti_engine.encoding import encode_position, encode_positions_batch
+from chess_anti_engine.encoding import encode_positions_batch
 from chess_anti_engine.inference import BatchEvaluator, LocalModelEvaluator
-from chess_anti_engine.moves import POLICY_SIZE, legal_move_mask, index_to_move
+from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.moves.encode import legal_move_indices
-from chess_anti_engine.mcts.puct import Node, _backprop, _expand, _expand_sparse, _select_child, _terminal_value
+from chess_anti_engine.mcts.puct import (
+    Node,
+    _backprop,
+    _expand,
+    _expand_sparse,
+    _select_child,
+    _terminal_value,
+    _value_scalar_from_wdl_logits as _wdl_to_q,
+)
 
 
 def _gumbel(rng: np.random.Generator, size: int) -> np.ndarray:
-    # Sample Gumbel(0,1): -log(-log(U))
     u = rng.random(size=size)
     u = np.clip(u, 1e-12, 1.0 - 1e-12)
     return -np.log(-np.log(u))
@@ -28,23 +35,10 @@ def _softmax(x: np.ndarray) -> np.ndarray:
     return e / s if s > 0 else np.full_like(x, 1.0 / x.size)
 
 
-def _wdl_to_q(wdl_logits: np.ndarray) -> float:
-    """WDL logits → scalar Q ∈ [-1, 1] from side-to-move perspective (W-L)."""
-    # Pure Python math is faster than numpy for 3-element arrays.
-    w, d, l = float(wdl_logits[0]), float(wdl_logits[1]), float(wdl_logits[2])
-    mx = max(w, d, l)
-    ew = math.exp(w - mx)
-    ed = math.exp(d - mx)
-    el = math.exp(l - mx)
-    s = ew + ed + el
-    return (ew - el) / s if s > 0 else 0.0
-
-
 @dataclass
 class GumbelConfig:
     simulations: int = 50
     topk: int = 16
-    child_sims: int = 8  # kept for API compat, no longer used
     temperature: float = 1.0
     c_visit: float = 50.0
     c_scale: float = 1.0
@@ -306,6 +300,11 @@ def run_gumbel_root_many(
         gumbels_per_board[i] = {int(a): float(gg) for a, gg in zip(legal.tolist(), g.tolist(), strict=True)}
 
     # ── 3. Sequential halving with real subtree simulations ──────────────────
+    # Resolve evaluator once for all leaf evaluations below.
+    leaf_eval: BatchEvaluator | None = evaluator
+    if leaf_eval is None and model is not None:
+        leaf_eval = LocalModelEvaluator(model, device=device)
+
     while True:
         active = [
             i for i in range(n_boards)
@@ -358,12 +357,9 @@ def run_gumbel_root_many(
                 continue
 
             leaf_xs = encode_positions_batch([node.board for node in leaf_nodes], add_features=True)
-            eval_impl = evaluator
-            if eval_impl is None:
-                if model is None:
-                    raise ValueError("run_gumbel_root_many requires model or evaluator")
-                eval_impl = LocalModelEvaluator(model, device=device)
-            pol_logits_leaf, wdl_logits_leaf = eval_impl.evaluate_encoded(leaf_xs)
+            if leaf_eval is None:
+                raise ValueError("run_gumbel_root_many requires model or evaluator")
+            pol_logits_leaf, wdl_logits_leaf = leaf_eval.evaluate_encoded(leaf_xs)
 
             for node, path, pol_logits, wdl_logits in zip(
                 leaf_nodes, leaf_paths, pol_logits_leaf, wdl_logits_leaf, strict=True

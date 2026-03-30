@@ -14,7 +14,7 @@ import torch
 from chess_anti_engine.encoding import encode_positions_batch
 from chess_anti_engine.inference import BatchEvaluator, LocalModelEvaluator
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
-from chess_anti_engine.mcts.puct import MCTSConfig, _value_scalar_from_wdl_logits
+from chess_anti_engine.mcts.puct import MCTSConfig, _terminal_value, _value_scalar_from_wdl_logits
 from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.moves.encode import index_to_move_fast, legal_move_indices
 
@@ -61,15 +61,6 @@ def _replay_board_cached(
             return board
     # Should not reach here — root is always cached
     raise RuntimeError("No cached ancestor found")
-
-
-def _terminal_value(board: chess.Board) -> float:
-    res = board.result(claim_draw=True)
-    if res == "1/2-1/2":
-        return 0.0
-    if res == "1-0":
-        return 1.0 if board.turn == chess.WHITE else -1.0
-    return 1.0 if board.turn == chess.BLACK else -1.0
 
 
 @torch.no_grad()
@@ -140,7 +131,7 @@ def run_mcts_many_c(
 
             # Add Dirichlet noise at root
             if cfg.dirichlet_eps > 0:
-                noise = rng.dirichlet([cfg.dirichlet_alpha] * int(legal_idx.size)).astype(np.float64)
+                noise = rng.dirichlet(np.full(int(legal_idx.size), cfg.dirichlet_alpha)).astype(np.float64)
                 priors = (1 - cfg.dirichlet_eps) * priors + cfg.dirichlet_eps * noise
 
             tree.expand(root_id, legal_idx.astype(np.int32), priors)

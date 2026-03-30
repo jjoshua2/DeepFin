@@ -9,18 +9,9 @@ import torch
 
 from chess_anti_engine.encoding import encode_position, encode_positions_batch
 from chess_anti_engine.inference import BatchEvaluator, LocalModelEvaluator
-from chess_anti_engine.moves import POLICY_SIZE, legal_move_mask, move_to_index, index_to_move
+from chess_anti_engine.moves import POLICY_SIZE, move_to_index
 from chess_anti_engine.moves.encode import index_to_move_fast, legal_move_indices
 from chess_anti_engine.utils.amp import inference_autocast
-
-
-def _softmax_np(x: np.ndarray) -> np.ndarray:
-    x = x - np.max(x)
-    e = np.exp(x)
-    s = float(e.sum())
-    if s <= 0:
-        return np.full_like(x, 1.0 / x.size)
-    return e / s
 
 
 def _value_scalar_from_wdl_logits(wdl_logits: np.ndarray) -> float:
@@ -180,7 +171,7 @@ def _init_root(model: torch.nn.Module, board: chess.Board, *, device: str, rng: 
         pri = (e / s) if s > 0 else np.full_like(e, 1.0 / e.size)
 
         if cfg.dirichlet_eps > 0:
-            noise = rng.dirichlet([cfg.dirichlet_alpha] * int(legal_idx.size)).astype(np.float64)
+            noise = rng.dirichlet(np.full(int(legal_idx.size), cfg.dirichlet_alpha)).astype(np.float64)
             pri = (1 - cfg.dirichlet_eps) * pri + cfg.dirichlet_eps * noise
 
         _expand_sparse(root, legal_idx, pri)
@@ -215,7 +206,7 @@ def _init_root_from_logits(
         pri = (e / s) if s > 0 else np.full_like(e, 1.0 / e.size)
 
         if cfg.dirichlet_eps > 0:
-            noise = rng.dirichlet([cfg.dirichlet_alpha] * int(legal_idx.size)).astype(np.float64)
+            noise = rng.dirichlet(np.full(int(legal_idx.size), cfg.dirichlet_alpha)).astype(np.float64)
             pri = (1 - cfg.dirichlet_eps) * pri + cfg.dirichlet_eps * noise
 
         _expand_sparse(root, legal_idx, pri)
@@ -327,47 +318,35 @@ def run_mcts_many(
     legal_masks: list[np.ndarray] = []
 
     for root in roots:
-        visits = np.zeros((POLICY_SIZE,), dtype=np.float32)
-        for a, ch in root.children.items():
-            visits[a] = float(ch.N)
-        s = float(visits.sum())
-        probs = (visits / s) if s > 0 else visits
+        # Build full visit distribution for the caller and legal mask.
+        visits_full = np.zeros((POLICY_SIZE,), dtype=np.float32)
+        child_actions = np.array(sorted(root.children.keys()), dtype=np.int32)
+        child_visits = np.array([float(root.children[int(a)].N) for a in child_actions], dtype=np.float64)
+        for a, v in zip(child_actions, child_visits):
+            visits_full[a] = v
+        s = float(child_visits.sum())
+        probs = (visits_full / s) if s > 0 else visits_full
 
-        if cfg.temperature <= 0:
-            action = int(np.argmax(visits))
+        if cfg.temperature <= 0 or child_actions.size == 0:
+            action = int(np.argmax(visits_full))
         else:
-            # numpy.random.Generator.choice is strict about probabilities summing to 1.
-            # "probs" is float32 and can drift far enough from 1.0 across ~4.6k entries
-            # to trigger ValueError, so always renormalize in float64.
-            p = probs.astype(np.float64, copy=True)
+            # Sample over children only (not all 4672 entries).
+            p = child_visits.copy()
             if cfg.temperature != 1.0:
-                p = np.power(p, 1.0 / float(cfg.temperature))
-
+                np.power(p, 1.0 / float(cfg.temperature), out=p)
             ps = float(p.sum())
             if not np.isfinite(ps) or ps <= 0:
-                action = int(np.argmax(visits))
+                action = int(child_actions[np.argmax(child_visits)])
             else:
                 p /= ps
-                # If any numerical weirdness causes small negative entries, clip & renormalize.
-                if np.any(p < 0):
-                    p = np.clip(p, 0.0, None)
-                    ps2 = float(p.sum())
-                    if ps2 <= 0:
-                        action = int(np.argmax(visits))
-                    else:
-                        p /= ps2
-                        action = int(rng.choice(POLICY_SIZE, p=p))
-                else:
-                    action = int(rng.choice(POLICY_SIZE, p=p))
+                action = int(child_actions[rng.choice(child_actions.size, p=p)])
 
         probs_list.append(probs.astype(np.float32, copy=False))
         actions.append(action)
         values.append(float(root.Q))
 
-        # Build legal mask from root children (avoids redundant legal_move_mask call by caller)
         mask = np.zeros((POLICY_SIZE,), dtype=np.bool_)
-        for a in root.children:
-            mask[a] = True
+        mask[child_actions] = True
         legal_masks.append(mask)
 
     return probs_list, actions, values, legal_masks

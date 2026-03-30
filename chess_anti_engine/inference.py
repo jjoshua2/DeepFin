@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import struct
 import time
@@ -16,6 +17,8 @@ import torch
 
 from chess_anti_engine.model import ModelConfig, build_model
 from chess_anti_engine.utils.amp import inference_autocast
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Protocol
@@ -393,6 +396,7 @@ class SlotBroker:
         self.publish_dir = Path(publish_dir)
         self.device = str(device)
         self.compile_inference = bool(compile_inference)
+        self._first_inference_pending = False
         self.batch_wait_ms = float(batch_wait_ms)
         self._model: torch.nn.Module | None = None
         self._model_sha: str | None = None
@@ -481,6 +485,7 @@ class SlotBroker:
             model = torch.compile(model, mode="reduce-overhead")
         self._model = model
         self._model_sha = model_sha
+        self._first_inference_pending = bool(self.compile_inference)
 
     # -- batch processing --
 
@@ -509,9 +514,18 @@ class SlotBroker:
         xb = np.concatenate(xs, axis=0)
         xt = torch.from_numpy(xb).to(self.device)
 
+        first_inf = self._first_inference_pending
+        if first_inf:
+            inf_t0 = time.time()
+
         with torch.no_grad():
             with inference_autocast(device=self.device, enabled=True, dtype="auto"):
                 out = self._model(xt)
+
+        if first_inf:
+            log.info("first inference (includes kernel compile) elapsed_s=%.2f batch=%d",
+                     time.time() - inf_t0, xt.shape[0])
+            self._first_inference_pending = False
 
         policy_key = "policy" if "policy" in out else "policy_own"
         pol = out[policy_key].detach().float().cpu().numpy()

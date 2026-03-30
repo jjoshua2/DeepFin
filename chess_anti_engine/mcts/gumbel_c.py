@@ -294,7 +294,7 @@ def run_gumbel_root_many_c(
 
             # -- Batch encode + get legal indices (CPU) ----------------
             n_leaves = len(need_eval)
-            leaf_legal: list[np.ndarray] = [None] * n_leaves
+            leaf_legal: list[np.ndarray | None] = [None] * n_leaves
             for li, qi in enumerate(need_eval):
                 _cb = leaf_cbs[qi]
                 _enc_buf[li] = _cb.encode_146()
