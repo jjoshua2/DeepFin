@@ -1,0 +1,252 @@
+# GPBT-PL run13 — faster iters, EMA metric, tighter bounds for faster exploration.
+# Changes from run12:
+#   - games_per_iter: 150 → 80 (faster iters → more perturbation cycles)
+#   - perturbation_interval: 8 → 5 (perturb more often)
+#   - tune_metric: opponent_strength_ema (smoothed, less PID noise)
+#   - pid_min_games_between_adjust: 40 → 80 (PID adjusts half as often)
+#   - pb2_bounds_fdp_pawns: [0.0, 0.5] → [0.0, 0.2] (signal from runs 10-12)
+#
+# Launch:
+#   python3 -m chess_anti_engine.run --config configs/pbt2_fresh_run13.yaml --mode tune
+#
+# Model: 384-dim, 8L, 12H (~15M params)
+# Trials: 5 total, 5 concurrent on RTX 5090 (32 GB)
+# Distributed: 2 workers/trial with inference broker
+
+seed: 0
+work_dir: runs/pbt2_fresh_run13
+device: cuda
+iterations: 750
+replay_capacity: 5000000
+replay_window_start: 20000
+replay_window_max: 5000000
+replay_window_growth: 9000
+
+# Bootstrap: start from pre-trained value/trunk, zero policy heads
+bootstrap_dir: data/bootstrap
+bootstrap_checkpoint: /home/josh/projects/chess/data/bootstrap/bootstrap_net.pt
+bootstrap_zero_policy_heads: true
+worker_wheel_path: null
+bootstrap_max_positions: 0
+bootstrap_train_steps: 0
+shared_shards_dir: null
+
+# NO salvage — fresh start
+salvage_seed_pool_dir: /home/josh/projects/chess/runs/pbt2_fresh_run13_salvage_pool
+salvage_restore_donor_config: false
+salvage_restore_full_trainer_state: false
+
+model:
+  kind: transformer
+  embed_dim: 384
+  num_layers: 8
+  num_heads: 12
+  ffn_mult: 2
+  use_smolgen: true
+  use_nla: false
+  gradient_checkpointing: false
+
+stockfish:
+  path: /home/josh/projects/chess/e2e_server/publish/stockfish
+  nodes: 1000
+  workers: 2
+  multipv: 12
+  hash_mb: 4
+
+  pid_enabled: true
+  pid_target_winrate: 0.53
+  pid_ema_alpha: 0.37
+  pid_deadzone: 0.025
+  pid_rate_limit: 0.10
+  pid_min_games_between_adjust: 80
+  pid_kp: 1.5
+  pid_ki: 0.10
+  pid_kd: 0.0
+  pid_integral_clamp: 1.0
+  pid_min_nodes: 1000
+  pid_max_nodes: 1000
+  pid_initial_skill_level: 20
+  pid_skill_min: 20
+  pid_skill_max: 20
+  pid_skill_promote_nodes: 2000
+  pid_skill_demote_nodes: 1000
+  pid_skill_nodes_on_promote: 1000
+  pid_skill_nodes_on_demote: 1000
+  pid_random_move_prob_start: 0.37
+  pid_random_move_prob_min: 0.0
+  pid_random_move_prob_max: 1.0
+  pid_random_move_stage_end: 0.5
+  pid_max_rand_step: 0.01
+
+selfplay:
+  games_per_iter: 80
+  games_per_iter_start: 32
+  games_per_iter_ramp_iters: 10
+  selfplay_fraction: 0.20
+  selfplay_batch: 64
+  max_plies: 240
+
+  temperature: 1.0
+  temperature_drop_plies: 0
+  temperature_after: 0.0
+  temperature_decay_start_move: 20
+  temperature_decay_moves: 60
+  temperature_endgame: 0.6
+
+  opening_book_path: /home/josh/projects/chess/data/opening_books/2moves_v2.pgn.zip
+  opening_book_max_plies: 4
+  opening_book_max_games: 200000
+  opening_book_prob: 1.0
+  opening_book_path_2: /home/josh/projects/chess/data/opening_books/8moves_v3.pgn.zip
+  opening_book_max_plies_2: 16
+  opening_book_max_games_2: 200000
+  opening_book_mix_prob_2: 0.75
+  random_start_plies: 2
+
+  mcts: gumbel
+  mcts_simulations: 64
+  mcts_start_simulations: 64
+  playout_cap_fraction: 0.30
+  fast_simulations: 8
+  fpu_reduction: 1.2
+  fpu_at_root: 1.0
+
+  sf_policy_temp: 0.35
+  sf_policy_label_smooth: 0.10
+  soft_policy_temp: 3.0
+
+  syzygy_path: null
+  syzygy_policy: false
+
+  timeout_adjudication_threshold: 0.95
+
+  diff_focus_enabled: true
+  diff_focus_q_weight: 4.8
+  diff_focus_pol_scale: 3.8
+  diff_focus_slope: 4.0
+  diff_focus_min: 0.09
+
+  categorical_bins: 32
+  hlgauss_sigma: 0.04
+
+train:
+  optimizer: cosmos_fast
+  lr: 3.0e-3
+  batch_size: 256
+  train_steps: 100
+  train_window_fraction: 0.10
+  no_amp: false
+  feature_dropout_p: 0.25
+  zclip_z_thresh: 2.5
+  zclip_alpha: 0.97
+  zclip_max_norm: 1.0
+
+  w_policy: 1.0
+  w_soft: 1.2
+  w_future: 0.01
+  w_wdl: 0.95
+  w_sf_move: 0.01
+  w_sf_eval: 0.10
+  w_categorical: 0.10
+  w_volatility: 0.10
+  w_sf_volatility: 0.05
+  w_moves_left: 0.02
+  w_sf_wdl: 0.02
+  sf_wdl_conf_power: 1.0
+  sf_wdl_draw_scale: 0.55
+  sf_wdl_floor: 0.0
+  sf_wdl_floor_at: 0.1
+
+  accum_steps: 4
+  warmup_steps: 36
+  lr_eta_min: 0.00001
+  lr_T0: 999999
+  lr_T_mult: 1
+  use_compile: false
+  swa_start: 0
+  swa_freq: 50
+
+puzzle_epd: null
+puzzle_interval: 0
+
+tune:
+  min_replay_size: 0
+
+  tune_num_to_keep: 10
+  tune_keep_last_experiments: 2
+
+  tune_scheduler: gpbt_pl
+  gpbt_inertia_weight: 1.0
+  gpbt_winner_weight: 1.0
+  gpbt_quantile_fraction: 0.25
+  gpbt_resample_probability: 0.20
+  num_samples: 5
+  max_concurrent_trials: 5
+  cpus_per_trial: 1
+  gpus_per_trial: 0.20
+  distributed_workers_per_trial: 2
+  distributed_worker_sf_workers: 2
+  distributed_worker_use_compile: true
+  distributed_inference_broker_enabled: true
+  distributed_inference_batch_wait_ms: 0.0
+  distributed_inference_max_batch_per_slot: 512
+  distributed_pause_selfplay_during_training: true
+  distributed_worker_shared_cache_dir: /home/josh/projects/chess/runs/pbt2_fresh_run13/worker_cache
+  distributed_min_workers_per_trial: 1
+  distributed_max_worker_delta_per_rebalance: 1
+  distributed_wait_timeout_seconds: 600
+  distributed_server_port: 45457
+  distributed_server_host: 0.0.0.0
+  distributed_server_public_url: http://192.168.1.212:45457
+  distributed_worker_username: josh
+  distributed_worker_password: chess_worker_2026
+  distributed_server_root_override: /home/josh/projects/chess/runs/pbt2_fresh_run13_server
+  tune_replay_root_override: /home/josh/projects/chess/runs/pbt2_fresh_run13_replay
+
+  shuffle_buffer_size: 70000
+  shard_size: 2000
+  exploit_replay_refresh_enabled: false
+  exploit_replay_skip_newest: 0
+  exploit_replay_donor_shards: 0
+  exploit_replay_share_top_enabled: true
+  exploit_replay_top_k_trials: 3
+  exploit_replay_top_within_best_frac: 0.05
+  exploit_replay_top_min_metric: 0.0
+  exploit_replay_max_unseen_iters_per_source: 1
+  exploit_replay_share_fraction: 0.5
+  exploit_replay_local_keep_recent_fraction: 0.20
+  exploit_replay_local_keep_older_fraction: 0.65
+
+  pb2_perturbation_interval: 5
+
+  tune_metric: opponent_strength_ema
+  tune_mode: max
+
+  gate_games: 0
+  gate_threshold: 0.50
+  gate_interval: 1
+  gate_mcts_sims: 1
+
+  eval_games: 0
+  eval_sf_nodes: 500
+  eval_mcts_simulations: 32
+
+  holdout_fraction: 0.02
+  holdout_capacity: 2000
+  test_steps: 5
+
+  freeze_holdout_at: 0
+  reset_holdout_on_drift: false
+  drift_threshold: 0.0
+  drift_sample_size: 128
+
+  search_smolgen: false
+  search_nla: false
+  search_optimizer: false
+  search_optimizer_choices: [cosmos_fast]
+
+  pb2_bounds_fdp_king_safety: [0.0, 0.5]
+  pb2_bounds_fdp_pins: [0.0, 0.5]
+  pb2_bounds_fdp_pawns: [0.0, 0.2]
+  pb2_bounds_fdp_mobility: [0.0, 0.5]
+  pb2_bounds_fdp_outposts: [0.0, 0.5]
