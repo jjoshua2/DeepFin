@@ -271,33 +271,45 @@ static inline int move_to_policy_index(int from_o, int to_o, int promotion) {
 
 
 /* ================================================================
+ * Byte-to-float lookup table for fast bitboard → plane conversion.
+ * 256 entries × 8 floats = 8 KB, fits in L1 cache.
+ * ================================================================ */
+
+static float BYTE_TO_8FLOATS[256][8];
+
+static void init_byte_to_float_lut(void) {
+    for (int b = 0; b < 256; b++)
+        for (int i = 0; i < 8; i++)
+            BYTE_TO_8FLOATS[b][i] = (float)((b >> i) & 1);
+}
+
+/* ================================================================
  * encode_piece_planes: bitboards → (n_steps*12, 8, 8) float32
  * ================================================================ */
 
 static void bitboard_to_plane_white(uint64_t bb, float *out) {
-    /* out[rank][file] = bit at (rank*8 + file) */
+    /* out[rank][file] = bit at (rank*8 + file)
+     * On little-endian x86, byte[r] of bb holds bits r*8..r*8+7,
+     * which maps directly to rank r, files 0-7. */
     if (bb == 0) {
         memset(out, 0, 64 * sizeof(float));
         return;
     }
-    for (int r = 0; r < 8; r++) {
-        for (int f = 0; f < 8; f++) {
-            out[r * 8 + f] = (float)((bb >> (r * 8 + f)) & 1);
-        }
-    }
+    const uint8_t *bytes = (const uint8_t *)&bb;
+    for (int r = 0; r < 8; r++)
+        memcpy(out + r * 8, BYTE_TO_8FLOATS[bytes[r]], 8 * sizeof(float));
 }
 
 static void bitboard_to_plane_black(uint64_t bb, float *out) {
-    /* out[r][f] = bit at ((7-r)*8 + f) — flip ranks */
+    /* out[r][f] = bit at ((7-r)*8 + f) — flip ranks.
+     * byte[7-r] holds the bits for output rank r. */
     if (bb == 0) {
         memset(out, 0, 64 * sizeof(float));
         return;
     }
-    for (int r = 0; r < 8; r++) {
-        for (int f = 0; f < 8; f++) {
-            out[r * 8 + f] = (float)((bb >> ((7 - r) * 8 + f)) & 1);
-        }
-    }
+    const uint8_t *bytes = (const uint8_t *)&bb;
+    for (int r = 0; r < 8; r++)
+        memcpy(out + r * 8, BYTE_TO_8FLOATS[bytes[7 - r]], 8 * sizeof(float));
 }
 
 /*
@@ -708,6 +720,7 @@ typedef struct {
     uint64_t hist_occ[CBOARD_HISTORY_MAX][2];  /* color occupancy */
     int8_t hist_turn[CBOARD_HISTORY_MAX];      /* side to move */
     int8_t hist_len;                           /* 0..7 valid history entries */
+    int8_t hist_head;                          /* circular buffer write index */
 } CBoard;
 
 /* Reverse LUT: policy_index → (from_sq, to_sq, promotion) in real coordinates.
@@ -816,24 +829,16 @@ static void cboard_push(CBoard *b, int from_sq, int to_sq, int promotion) {
     int is_pawn_move = (moving_piece == PAWN);
     int is_irreversible = is_pawn_move || is_capture;
 
-    /* --- Save current position to history ring buffer --- */
-    if (b->hist_len < CBOARD_HISTORY_MAX) {
-        /* Shift existing history back by 1 */
-        if (b->hist_len > 0) {
-            memmove(&b->hist_bb[1], &b->hist_bb[0], b->hist_len * 6 * sizeof(uint64_t));
-            memmove(&b->hist_occ[1], &b->hist_occ[0], b->hist_len * 2 * sizeof(uint64_t));
-            memmove(&b->hist_turn[1], &b->hist_turn[0], b->hist_len * sizeof(int8_t));
-        }
-        b->hist_len++;
-    } else {
-        /* Shift: drop oldest (index HISTORY_MAX-1), insert at 0 */
-        memmove(&b->hist_bb[1], &b->hist_bb[0], (CBOARD_HISTORY_MAX - 1) * 6 * sizeof(uint64_t));
-        memmove(&b->hist_occ[1], &b->hist_occ[0], (CBOARD_HISTORY_MAX - 1) * 2 * sizeof(uint64_t));
-        memmove(&b->hist_turn[1], &b->hist_turn[0], (CBOARD_HISTORY_MAX - 1) * sizeof(int8_t));
+    /* --- Save current position to history circular buffer --- */
+    {
+        int slot = b->hist_head;
+        memcpy(b->hist_bb[slot], b->bb, 6 * sizeof(uint64_t));
+        memcpy(b->hist_occ[slot], b->occ, 2 * sizeof(uint64_t));
+        b->hist_turn[slot] = b->turn;
+        b->hist_head = (slot + 1) % CBOARD_HISTORY_MAX;
+        if (b->hist_len < CBOARD_HISTORY_MAX)
+            b->hist_len++;
     }
-    memcpy(b->hist_bb[0], b->bb, 6 * sizeof(uint64_t));
-    memcpy(b->hist_occ[0], b->occ, 2 * sizeof(uint64_t));
-    b->hist_turn[0] = b->turn;
 
     /* --- Push current hash onto hash_stack for repetition detection --- */
     if (is_irreversible) {
@@ -1153,11 +1158,13 @@ static void cboard_fill_lc0_112(const CBoard *b, float *out) {
     /* Plane 0-11: piece planes for current position */
     cboard_encode_piece_planes(b, out);
 
-    /* Planes 12-95: history positions (7 previous positions × 12 planes each) */
+    /* Planes 12-95: history positions (7 previous positions × 12 planes each)
+     * History is stored in a circular buffer; index 0 = most recent. */
     for (int hi = 0; hi < b->hist_len && hi < CBOARD_HISTORY_MAX; hi++) {
+        int idx = (b->hist_head - 1 - hi + CBOARD_HISTORY_MAX) % CBOARD_HISTORY_MAX;
         float *dest = out + (hi + 1) * 12 * 64;
-        cboard_encode_hist_planes(b->hist_bb[hi], b->hist_occ[hi],
-                                  b->hist_turn[hi], dest);
+        cboard_encode_hist_planes(b->hist_bb[idx], b->hist_occ[idx],
+                                  b->hist_turn[idx], dest);
     }
 
     /* Castling (us-K, us-Q, them-K, them-Q) */
@@ -1352,13 +1359,19 @@ static PyObject* PyCBoard_from_board(PyTypeObject *type, PyObject *args) {
 
     /* --- Extract history from python-chess board._stack --- */
     b->hist_len = 0;
+    b->hist_head = 0;
     b->hash_stack_len = 0;
     PyObject *stack = PyObject_GetAttrString(py_board, "_stack");
     if (stack && PyList_Check(stack)) {
         Py_ssize_t stack_len = PyList_Size(stack);
 
-        /* History: last 7 entries of _stack are the 7 previous positions */
-        for (int hi = 0; hi < CBOARD_HISTORY_MAX && hi < (int)stack_len; hi++) {
+        /* History: last 7 entries of _stack are the 7 previous positions.
+         * Populate the circular buffer oldest-first so that hist_head ends
+         * up pointing past the most-recent entry. */
+        int n_hist = (int)stack_len < CBOARD_HISTORY_MAX ? (int)stack_len : CBOARD_HISTORY_MAX;
+        for (int i = 0; i < n_hist; i++) {
+            /* i=0 → oldest of the kept entries, i=n_hist-1 → most recent */
+            int hi = n_hist - 1 - i;  /* hi into _stack (hi=0 = most recent) */
             PyObject *s = PyList_GetItem(stack, stack_len - 1 - hi); /* borrowed */
             if (!s) break;
 
@@ -1381,19 +1394,21 @@ static PyObject* PyCBoard_from_board(PyTypeObject *type, PyObject *args) {
             int s_turn = (s_turn_obj && PyObject_IsTrue(s_turn_obj)) ? WHITE_C : BLACK_C;
             Py_XDECREF(s_turn_obj);
 
-            b->hist_bb[hi][PAWN]   = s_pawns;
-            b->hist_bb[hi][KNIGHT] = s_knights;
-            b->hist_bb[hi][BISHOP] = s_bishops;
-            b->hist_bb[hi][ROOK]   = s_rooks;
-            b->hist_bb[hi][QUEEN]  = s_queens;
-            b->hist_bb[hi][KING]   = s_kings;
-            b->hist_occ[hi][WHITE_C] = s_occ_w;
-            b->hist_occ[hi][BLACK_C] = s_occ_b;
-            b->hist_turn[hi] = (int8_t)s_turn;
+            int slot = i;  /* write oldest at slot 0, newest at slot n_hist-1 */
+            b->hist_bb[slot][PAWN]   = s_pawns;
+            b->hist_bb[slot][KNIGHT] = s_knights;
+            b->hist_bb[slot][BISHOP] = s_bishops;
+            b->hist_bb[slot][ROOK]   = s_rooks;
+            b->hist_bb[slot][QUEEN]  = s_queens;
+            b->hist_bb[slot][KING]   = s_kings;
+            b->hist_occ[slot][WHITE_C] = s_occ_w;
+            b->hist_occ[slot][BLACK_C] = s_occ_b;
+            b->hist_turn[slot] = (int8_t)s_turn;
             b->hist_len++;
 
             #undef READ_STATE_BB
         }
+        b->hist_head = n_hist % CBOARD_HISTORY_MAX;
 
         /* Hash stack: compute hashes for all positions since last irreversible
          * move. Walk _stack backwards from most recent. */
@@ -1646,6 +1661,7 @@ PyMODINIT_FUNC PyInit__lc0_ext(void) {
     init_policy_lut();
     init_tables_features();
     init_zobrist();
+    init_byte_to_float_lut();
 
     PyObject *m = PyModule_Create(&moduledef);
     if (!m) return NULL;
