@@ -1,0 +1,70 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
+
+
+@dataclass(frozen=True)
+class OpponentConfig:
+    random_move_prob: float = 0.0
+    topk_stage_end: float = 0.5
+    topk_min: int = 1
+    suboptimal_wdl_regret_max: float = -1.0
+    suboptimal_wdl_regret_min: float = -1.0
+    wdl_regret_limit: float | None = None
+    random_move_prob_start: float = 1.0
+    random_move_prob_min: float = 0.0
+
+
+@dataclass(frozen=True)
+class TemperatureConfig:
+    temperature: float = 1.0
+    drop_plies: int = 0
+    after: float = 0.0
+    decay_start_move: int = 20
+    decay_moves: int = 60
+    endgame: float = 0.6
+
+
+@dataclass(frozen=True)
+class SearchConfig:
+    simulations: int = 50
+    mcts_type: str = "puct"
+    playout_cap_fraction: float = 0.25
+    fast_simulations: int = 8
+    fpu_reduction: float = 1.2
+    fpu_at_root: float = 1.0
+
+
+@dataclass(frozen=True)
+class DiffFocusConfig:
+    enabled: bool = True
+    q_weight: float = 6.0
+    pol_scale: float = 3.5
+    slope: float = 3.0
+    min_keep: float = 0.025
+
+
+@dataclass(frozen=True)
+class GameConfig:
+    max_plies: int = 240
+    selfplay_fraction: float = 0.0
+    sf_policy_temp: float = 0.25
+    sf_policy_label_smooth: float = 0.05
+    soft_policy_temp: float = 2.0
+    timeout_adjudication_threshold: float = 0.90
+    volatility_source: str = "raw"
+    syzygy_path: str | None = None
+    syzygy_policy: bool = False
+    categorical_bins: int = DEFAULT_CATEGORICAL_BINS
+    hlgauss_sigma: float = 0.04
+
+
+__all__ = [
+    "DiffFocusConfig",
+    "GameConfig",
+    "OpponentConfig",
+    "SearchConfig",
+    "TemperatureConfig",
+]

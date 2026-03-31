@@ -5,60 +5,74 @@ from __future__ import annotations
 
 from pathlib import Path
 import csv
-import os
-import hashlib
+import dataclasses
 import json
-import re
+import math
 import shutil
-import socket
 import subprocess
-import sys
 import time
 
 import numpy as np
 import torch
 
-import math
-
 from chess_anti_engine.model import (
     ModelConfig,
     build_model,
+    load_state_dict_tolerant,
     reinit_volatility_head_parameters_,
     zero_policy_head_parameters_,
 )
-from chess_anti_engine.moves.encode import POLICY_SIZE
-from chess_anti_engine.replay import ArrayReplayBuffer, DiskReplayBuffer, ReplayBuffer
+from chess_anti_engine.replay import ArrayReplayBuffer, DiskReplayBuffer
 from chess_anti_engine.replay.shard import (
     copy_or_link_shard,
-    delete_shard_path,
-    find_shard_path,
     iter_shard_paths,
-    load_npz_arrays,
     load_shard_arrays,
     local_iter_shard_path,
     save_local_shard_arrays,
-    save_npz,
-    save_npz_arrays,
     samples_to_arrays,
-    shard_index,
 )
 from chess_anti_engine.selfplay import play_batch
+from chess_anti_engine.selfplay.config import (
+    DiffFocusConfig,
+    GameConfig,
+    OpponentConfig,
+    SearchConfig,
+    TemperatureConfig,
+)
 from chess_anti_engine.selfplay.manager import _effective_curriculum_topk
+from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.selfplay.budget import progressive_mcts_simulations
 from chess_anti_engine.stockfish import DifficultyPID, StockfishPool, StockfishUCI
 from chess_anti_engine.train import Trainer
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
-from chess_anti_engine.tune.process_cleanup import terminate_matching_processes
-from chess_anti_engine.version import PACKAGE_VERSION, PROTOCOL_VERSION
+from chess_anti_engine.tune._utils import (
+    concat_array_batches as _concat_array_batches,
+    resolve_local_override_root as _resolve_local_override_root,
+    stable_seed_u32 as _stable_seed_u32,
+)
+from chess_anti_engine.tune.distributed_runtime import (
+    _ensure_distributed_workers,
+    _ensure_inference_broker,
+    _ingest_distributed_selfplay,
+    _publish_distributed_trial_state,
+    _quarantine_inbox_shards,
+    _set_active_run_prefix,
+    _stop_process,
+    _stop_worker_processes,
+    _trial_server_dirs,
+)
+from chess_anti_engine.tune.recovery import (
+    _load_salvage_manifest_entry,
+    _merge_pid_state_from_result_row,
+    _select_salvage_seed_slot,
+)
+from chess_anti_engine.tune.replay_exchange import (
+    _latest_trial_result_row,
+    _refresh_replay_shards_on_exploit,
+    _share_top_replay_each_iteration,
+    _trial_replay_shard_dir,
+)
 
-
-def _stable_seed_u32(*parts: object) -> int:
-    """Deterministic 32-bit seed from arbitrary parts."""
-    h = hashlib.blake2b(digest_size=8)
-    for p in parts:
-        h.update(str(p).encode("utf-8"))
-        h.update(b"|")
-    return int.from_bytes(h.digest(), "little") & 0xFFFFFFFF
 
 
 def _count_jsonl_rows(path: Path) -> int:
@@ -120,378 +134,6 @@ def _compute_train_step_budget(
         "window_target_samples": int(window_target_samples),
     }
 
-
-def _resolve_local_override_root(
-    *,
-    raw_root: object,
-    tune_work_dir: object,
-    suffix: str,
-) -> Path:
-    root = Path(str(raw_root or "")).expanduser()
-    tune_dir = Path(str(tune_work_dir)).expanduser()
-    if not tune_dir.is_absolute():
-        tune_dir = Path(__file__).resolve().parents[2] / tune_dir
-    tune_dir = tune_dir.resolve()
-    run_root = tune_dir.parent
-    if root.as_posix().startswith("/mnt/c/chess_active/"):
-        return run_root.with_name(f"{run_root.name}_{suffix}")
-    return root
-
-
-def _resolve_distributed_worker_auth(
-    *,
-    config: dict,
-    server_root: Path,
-) -> tuple[str, Path]:
-    username = str(config.get("distributed_worker_username", "") or "").strip()
-    password_file_raw = str(config.get("distributed_worker_password_file", "") or "").strip()
-    password_file = Path(password_file_raw).expanduser() if password_file_raw else (server_root / f"{username}.password")
-    if password_file.as_posix().startswith("/mnt/c/chess_active/"):
-        password_file = server_root / password_file.name
-    if username and password_file.exists():
-        return username, password_file
-
-    candidates = sorted(
-        server_root.glob("tune_worker_*.password"),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
-    if candidates:
-        password_file = candidates[0]
-        username = password_file.stem
-    return username, password_file
-
-
-def _trial_replay_shard_dir(*, config: dict, trial_dir: Path) -> Path:
-    """Return replay shard storage for a trial, optionally outside Ray artifacts."""
-    raw_root = str(config.get("tune_replay_root_override", "") or "").strip()
-    if raw_root:
-        replay_root = _resolve_local_override_root(
-            raw_root=raw_root,
-            tune_work_dir=config.get("work_dir", trial_dir),
-            suffix="replay",
-        )
-        return replay_root / Path(trial_dir).name / "replay_shards"
-    return Path(trial_dir) / "replay_shards"
-
-
-def _link_or_copy2(src: Path, dst: Path) -> None:
-    """Symlink or hardlink immutable artifacts when possible, else copy."""
-    try:
-        rel = os.path.relpath(src, start=dst.parent)
-        os.symlink(rel, dst)
-        return
-    except FileExistsError:
-        return
-    except OSError:
-        pass
-    try:
-        os.link(src, dst)
-        return
-    except FileExistsError:
-        return
-    except OSError as exc:
-        if not getattr(_link_or_copy2, "_warned", False):
-            print("[trial] Seed link failed; falling back to copy: "
-                  f"src={src} dst={dst} errno={exc.errno} msg={exc}")
-            setattr(_link_or_copy2, "_warned", True)
-        shutil.copy2(str(src), str(dst))
-
-
-def _latest_trial_result_row(trial_dir: Path) -> dict | None:
-    """Read the latest result row from Ray Tune's JSONL stream."""
-    result_path = Path(trial_dir) / "result.json"
-    if not result_path.exists():
-        return None
-
-    last_row: dict | None = None
-    try:
-        with result_path.open("r", encoding="utf-8") as f:
-            for ln in f:
-                ln = ln.strip()
-                if not ln:
-                    continue
-                try:
-                    row = json.loads(ln)
-                except Exception:
-                    continue
-                if isinstance(row, dict):
-                    last_row = row
-    except Exception:
-        return None
-
-    if not isinstance(last_row, dict):
-        return None
-    return last_row
-
-
-def _all_trial_result_rows(trial_dir: Path) -> list[dict]:
-    """Read all result rows from Ray Tune's JSONL stream."""
-    result_path = Path(trial_dir) / "result.json"
-    if not result_path.exists():
-        return []
-
-    rows: list[dict] = []
-    try:
-        with result_path.open("r", encoding="utf-8") as f:
-            for ln in f:
-                ln = ln.strip()
-                if not ln:
-                    continue
-                try:
-                    row = json.loads(ln)
-                except Exception:
-                    continue
-                if isinstance(row, dict):
-                    rows.append(row)
-    except Exception:
-        return []
-    return rows
-
-
-def _metric_from_result_row(row: dict) -> float | None:
-    # Prefer EMA-smoothed metric — less noisy for GPBT exploit/explore
-    # decisions.  Falls back to raw opponent_strength for older rows.
-    v = row.get("opponent_strength_ema", row.get("opponent_strength"))
-    if isinstance(v, (int, float)):
-        fv = float(v)
-        if math.isfinite(fv):
-            return fv
-    return None
-
-
-def _to_nonnegative_int(v: object, default: int = 0) -> int:
-    try:
-        iv = int(v)  # type: ignore[arg-type]
-        return iv if iv >= 0 else default
-    except Exception:
-        return default
-
-
-def _latest_trial_snapshot(trial_dir: Path) -> dict | None:
-    """Best-effort latest trial snapshot with metric + generation size."""
-    row = _latest_trial_result_row(trial_dir)
-    if row is None:
-        return None
-    metric = _metric_from_result_row(row)
-    if metric is None:
-        return None
-    iter_idx = _to_nonnegative_int(row.get("training_iteration", row.get("iter", -1)), default=-1)
-    positions_added = _to_nonnegative_int(row.get("positions_added", 0), default=0)
-    return {
-        "trial_dir": Path(trial_dir),
-        "metric": float(metric),
-        "iter": int(iter_idx),
-        "positions_added": int(positions_added),
-    }
-
-
-def _all_trial_snapshots(trial_dir: Path) -> list[dict]:
-    """Best-effort per-iteration snapshots with metric + generation size."""
-    snapshots: list[dict] = []
-    seen_iters: set[int] = set()
-    for row in _all_trial_result_rows(trial_dir):
-        metric = _metric_from_result_row(row)
-        if metric is None:
-            continue
-        iter_idx = _to_nonnegative_int(row.get("training_iteration", row.get("iter", -1)), default=-1)
-        if iter_idx < 0 or iter_idx in seen_iters:
-            continue
-        seen_iters.add(iter_idx)
-        positions_added = _to_nonnegative_int(row.get("positions_added", 0), default=0)
-        snapshots.append(
-            {
-                "trial_dir": Path(trial_dir),
-                "metric": float(metric),
-                "iter": int(iter_idx),
-                "positions_added": int(positions_added),
-            }
-        )
-    snapshots.sort(key=lambda s: int(s["iter"]))
-    return snapshots
-
-
-def _estimate_recent_shard_count(
-    *,
-    positions_added: int,
-    shard_size: int,
-    holdout_fraction: float,
-) -> int:
-    """Estimate shard count for the latest generation from positions_added."""
-    pa = max(0, int(positions_added))
-    if pa <= 0:
-        return 0
-    ss = max(1, int(shard_size))
-    # Positions entering train replay are roughly (1-holdout_fraction) of total.
-    hf = max(0.0, min(0.99, float(holdout_fraction)))
-    train_positions = max(1, int(math.ceil(float(pa) * (1.0 - hf))))
-    return max(1, int(math.ceil(float(train_positions) / float(ss))))
-
-
-def _load_shard_arrays_with_retry(
-    shard_path: Path,
-    *,
-    retries: int = 4,
-    sleep_s: float = 0.15,
-) -> tuple[dict[str, np.ndarray], dict] | None:
-    """Best-effort shard read with short retries for in-flight writes."""
-    attempts = max(1, int(retries))
-    for i in range(attempts):
-        try:
-            return load_shard_arrays(shard_path, lazy=True)
-        except Exception:
-            if i + 1 < attempts and sleep_s > 0:
-                time.sleep(float(sleep_s))
-    return None
-
-
-def _slice_array_batch(arrs: dict[str, np.ndarray], idxs: np.ndarray) -> dict[str, np.ndarray]:
-    ii = np.asarray(idxs, dtype=np.int64).reshape(-1)
-    return {k: np.array(np.asarray(v)[ii], copy=True, order="C") for k, v in arrs.items()}
-
-
-def _concat_array_batches(batches: list[dict[str, np.ndarray]]) -> dict[str, np.ndarray]:
-    if not batches:
-        raise ValueError("cannot concatenate empty replay shard list")
-    # Use intersection so shards missing optional keys (e.g. future_policy_target
-    # absent from bootstrap data) don't crash the concat.
-    keys = set(batches[0].keys())
-    for batch in batches[1:]:
-        keys &= set(batch.keys())
-    return {
-        k: np.concatenate([np.asarray(batch[k]) for batch in batches], axis=0)
-        for k in sorted(keys)
-    }
-
-
-def _trial_index_from_name(trial_dir: Path) -> int:
-    """Best-effort numeric trial index from Tune trial directory name."""
-    name = str(Path(trial_dir).name)
-    # Expected: train_trial_<runid>_<trial_idx>_<params>_<timestamp>
-    # Use the explicit <trial_idx> field, not trailing timestamp digits.
-    m = re.match(r"^train_trial_[^_]+_(\d+)_", name)
-    if not m:
-        return -1
-    try:
-        return int(m.group(1))
-    except Exception:
-        return -1
-
-
-def _select_salvage_seed_slot(
-    *,
-    seed_pool_dir: Path,
-    trial_dir: Path,
-    trial_id: str,
-) -> tuple[Path | None, int, int]:
-    """Select deterministic salvage seed dir for a fresh trial."""
-    manifest_path = Path(seed_pool_dir) / "manifest.json"
-    if not manifest_path.exists():
-        return None, -1, 0
-
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except Exception:
-        return None, -1, 0
-    if not isinstance(manifest, dict):
-        return None, -1, 0
-
-    entries_raw = manifest.get("entries")
-    if not isinstance(entries_raw, list):
-        return None, -1, 0
-
-    slots: list[tuple[int, Path]] = []
-    for i, e in enumerate(entries_raw):
-        if not isinstance(e, dict):
-            continue
-        slot_v = e.get("slot", i)
-        try:
-            slot_i = int(slot_v) if isinstance(slot_v, (int, float)) else int(i)
-        except Exception:
-            slot_i = int(i)
-
-        seed_rel = e.get("seed_dir")
-        if isinstance(seed_rel, str) and seed_rel.strip():
-            sd = Path(seed_pool_dir) / seed_rel
-        else:
-            sd = Path(seed_pool_dir) / "seeds" / f"slot_{slot_i:03d}"
-        if sd.is_dir():
-            slots.append((slot_i, sd))
-
-    if not slots:
-        return None, -1, 0
-
-    slots.sort(key=lambda x: x[0])
-    num_slots = len(slots)
-    trial_idx = _trial_index_from_name(trial_dir)
-    if trial_idx < 0:
-        trial_idx = int(_stable_seed_u32("salvage", trial_id))
-    pick_idx = int(trial_idx) % int(num_slots)
-    picked_slot, picked_dir = slots[pick_idx]
-    return picked_dir, int(picked_slot), int(num_slots)
-
-
-def _load_salvage_manifest_entry(
-    *,
-    seed_pool_dir: Path,
-    slot: int,
-) -> dict | None:
-    manifest_path = Path(seed_pool_dir) / "manifest.json"
-    if not manifest_path.exists():
-        return None
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-    if not isinstance(manifest, dict):
-        return None
-    entries = manifest.get("entries")
-    if not isinstance(entries, list):
-        return None
-
-    slot_i = int(slot)
-    for i, e in enumerate(entries):
-        if not isinstance(e, dict):
-            continue
-        raw = e.get("slot", i)
-        try:
-            cur_slot = int(raw) if isinstance(raw, (int, float)) else int(i)
-        except Exception:
-            cur_slot = int(i)
-        if cur_slot == slot_i:
-            return e
-    return None
-
-
-def _merge_pid_state_from_result_row(
-    *,
-    pid_state: dict | None,
-    result_row: dict | None,
-) -> tuple[dict | None, list[str]]:
-    if not isinstance(result_row, dict):
-        return pid_state, []
-
-    out: dict = dict(pid_state) if isinstance(pid_state, dict) else {}
-    applied: list[str] = []
-
-    def _set(dst_key: str, src_keys: tuple[str, ...]) -> None:
-        nonlocal out
-        for sk in src_keys:
-            v = result_row.get(sk)
-            if isinstance(v, (int, float)):
-                fv = float(v)
-                if math.isfinite(fv):
-                    out[dst_key] = fv
-                    applied.append(f"{dst_key}<-{sk}")
-                    return
-
-    _set("random_move_prob", ("random_move_prob_next", "random_move_prob"))
-    _set("nodes", ("sf_nodes_next", "sf_nodes"))
-    _set("skill_level", ("skill_level_next", "skill_level"))
-    _set("ema_winrate", ("pid_ema_winrate",))
-    return (out if out else pid_state), applied
-
-
 def _resolve_pause_marker_path(*, config: dict, trial_dir: Path) -> Path:
     tune_root = trial_dir.parent
     raw_work_dir = config.get("work_dir")
@@ -531,328 +173,6 @@ def _wait_if_paused(
             f"[trial] pause marker cleared: {pause_marker_path} "
             f"(trial={trial_id}, resuming_iter={iteration})"
         )
-
-
-def _select_top_trial_snapshots(
-    *,
-    recipient_trial_dir: Path,
-    top_k_trials: int,
-    within_best_frac: float,
-    min_metric: float,
-) -> list[dict]:
-    """Pick top sibling trials constrained by best-relative threshold."""
-    parent = Path(recipient_trial_dir).parent
-    if not parent.is_dir():
-        return []
-
-    try:
-        recipient_resolved = recipient_trial_dir.resolve()
-    except Exception:
-        recipient_resolved = recipient_trial_dir
-
-    snapshots: list[dict] = []
-    for td in sorted(parent.glob("train_trial_*")):
-        if not td.is_dir():
-            continue
-        try:
-            td_resolved = td.resolve()
-        except Exception:
-            td_resolved = td
-        if td_resolved == recipient_resolved:
-            continue
-        snap = _latest_trial_snapshot(td)
-        if snap is None:
-            continue
-        snapshots.append(snap)
-
-    if not snapshots:
-        return []
-
-    best_metric = max(float(s["metric"]) for s in snapshots)
-    frac = max(0.0, min(1.0, float(within_best_frac)))
-    cutoff = max(float(min_metric), best_metric * (1.0 - frac))
-    eligible = [s for s in snapshots if float(s["metric"]) >= cutoff]
-    eligible.sort(key=lambda s: float(s["metric"]), reverse=True)
-
-    if top_k_trials > 0:
-        eligible = eligible[:top_k_trials]
-    return eligible
-
-
-def _refresh_replay_shards_on_exploit(
-    *,
-    config: dict,
-    replay_shard_dir: Path,
-    recipient_trial_dir: Path,
-    donor_trial_dir: Path | None,
-    keep_recent_fraction: float,
-    keep_older_fraction: float,
-    donor_shards: int,
-    donor_skip_newest: int,
-    shard_size: int,
-    holdout_fraction: float,
-) -> dict[str, int]:
-    """Refresh recipient replay after PB2 exploit.
-
-    Strategy:
-    - Keep a small fraction of recipient's *most recent* local generation
-      (likely poor just before exploit) while retaining more of older history.
-    - Copy a configurable slice of the donor's recent replay shards so exploit
-      recipients actually inherit some stronger data instead of only weights.
-    """
-    replay_shard_dir = Path(replay_shard_dir)
-    replay_shard_dir.mkdir(parents=True, exist_ok=True)
-
-    keep_recent_fraction = max(0.0, min(1.0, float(keep_recent_fraction)))
-    keep_older_fraction = max(0.0, min(1.0, float(keep_older_fraction)))
-    donor_shards = max(0, int(donor_shards))
-    donor_skip_newest = max(0, int(donor_skip_newest))
-    shard_size = max(1, int(shard_size))
-    holdout_fraction = max(0.0, min(0.99, float(holdout_fraction)))
-
-    summary = {
-        "local_before": 0,
-        "local_deleted": 0,
-        "local_recent_deleted": 0,
-        "local_older_deleted": 0,
-        "local_after_keep": 0,
-        "local_final": 0,
-        "donor_available": 0,
-        "donor_selected": 0,
-        "donor_copied": 0,
-    }
-
-    local_shards = iter_shard_paths(replay_shard_dir)
-    summary["local_before"] = len(local_shards)
-
-    recipient_snap = _latest_trial_snapshot(recipient_trial_dir)
-    recipient_recent_shards = 0
-    if recipient_snap is not None:
-        recipient_recent_shards = _estimate_recent_shard_count(
-            positions_added=int(recipient_snap.get("positions_added", 0)),
-            shard_size=shard_size,
-            holdout_fraction=holdout_fraction,
-        )
-    recipient_recent_shards = max(0, min(len(local_shards), int(recipient_recent_shards)))
-
-    if local_shards:
-        if recipient_recent_shards > 0:
-            local_recent = local_shards[-recipient_recent_shards:]
-            local_older = local_shards[:-recipient_recent_shards]
-        else:
-            local_recent = []
-            local_older = local_shards
-
-        keep_recent_n = int(math.ceil(len(local_recent) * keep_recent_fraction))
-        keep_older_n = int(math.ceil(len(local_older) * keep_older_fraction))
-        keep_recent = set(local_recent[-keep_recent_n:]) if keep_recent_n > 0 else set()
-        keep_older = set(local_older[-keep_older_n:]) if keep_older_n > 0 else set()
-        keep_set = keep_recent | keep_older
-
-        # Keep at least one local shard to avoid an empty replay on corner cases.
-        if not keep_set and local_shards:
-            keep_set.add(local_shards[-1])
-
-        for sp in local_shards:
-            if sp in keep_set:
-                continue
-            is_recent = sp in local_recent
-            try:
-                delete_shard_path(sp)
-                summary["local_deleted"] += 1
-                if is_recent:
-                    summary["local_recent_deleted"] += 1
-                else:
-                    summary["local_older_deleted"] += 1
-            except Exception:
-                pass
-
-    local_after_keep = iter_shard_paths(replay_shard_dir)
-    summary["local_after_keep"] = len(local_after_keep)
-
-    donor_dir = Path(donor_trial_dir) if donor_trial_dir is not None else None
-    donor_replay_dir = (
-        _trial_replay_shard_dir(config=config, trial_dir=donor_dir)
-        if donor_dir is not None
-        else None
-    )
-    if donor_shards > 0 and donor_replay_dir is not None and donor_replay_dir.is_dir():
-        donor_files = iter_shard_paths(donor_replay_dir)
-        summary["donor_available"] = len(donor_files)
-        if donor_skip_newest > 0 and len(donor_files) > donor_skip_newest:
-            donor_files = donor_files[:-donor_skip_newest]
-        elif donor_skip_newest > 0:
-            donor_files = []
-        if donor_files:
-            donor_files = donor_files[-donor_shards:]
-            summary["donor_selected"] = len(donor_files)
-
-            existing = iter_shard_paths(replay_shard_dir)
-            next_idx = 0
-            for sp in existing:
-                idx = shard_index(sp)
-                if idx >= 0:
-                    next_idx = max(next_idx, idx + 1)
-
-            for src in donor_files:
-                dst = replay_shard_dir / f"shard_{next_idx:06d}{src.suffix}"
-                next_idx += 1
-                try:
-                    copy_or_link_shard(src, dst)
-                    summary["donor_copied"] += 1
-                except Exception:
-                    pass
-
-    summary["local_final"] = len(iter_shard_paths(replay_shard_dir))
-    return summary
-
-
-def _share_top_replay_each_iteration(
-    *,
-    config: dict,
-    recipient_trial_dir: Path,
-    replay_shard_dir: Path,
-    buf: DiskReplayBuffer,
-    top_k_trials: int,
-    within_best_frac: float,
-    min_metric: float,
-    source_skip_newest: int,
-    shard_size: int,
-    holdout_fraction: float,
-    max_unseen_iters_per_source: int,
-    max_shards_per_source: int = 0,
-    share_fraction: float = 1.0,
-) -> dict[str, int]:
-    """Ingest recent unseen top-trial generations into the live replay buffer."""
-
-    source_skip_newest = max(0, int(source_skip_newest))
-    shard_size = max(1, int(shard_size))
-    holdout_fraction = max(0.0, min(0.99, float(holdout_fraction)))
-    max_unseen_iters_per_source = max(1, int(max_unseen_iters_per_source))
-    max_shards_per_source = max(0, int(max_shards_per_source))
-
-    source_snaps = _select_top_trial_snapshots(
-        recipient_trial_dir=recipient_trial_dir,
-        top_k_trials=int(top_k_trials),
-        within_best_frac=float(within_best_frac),
-        min_metric=float(min_metric),
-    )
-
-    summary = {
-        "source_trials_selected": len(source_snaps),
-        "source_trials_ingested": 0,
-        "source_trials_skipped_repeat": 0,
-        "source_shards_loaded": 0,
-        "source_samples_ingested": 0,
-    }
-
-    if not source_snaps:
-        return summary
-
-    import_state_path = Path(replay_shard_dir) / "_import_state.json"
-    import_state: dict[str, int] = {}
-    if import_state_path.exists():
-        try:
-            obj = json.loads(import_state_path.read_text(encoding="utf-8"))
-            if isinstance(obj, dict):
-                import_state = {
-                    str(k): int(v) for k, v in obj.items() if isinstance(v, (int, float))
-                }
-        except Exception:
-            import_state = {}
-
-    for snap in source_snaps:
-        td = Path(snap["trial_dir"])
-        source_key = str(td.resolve()) if td.exists() else str(td)
-        last_imported_iter = int(import_state.get(source_key, -1))
-
-        unseen_snaps = [
-            s for s in _all_trial_snapshots(td)
-            if int(s.get("iter", -1)) > last_imported_iter
-        ]
-        if not unseen_snaps:
-            summary["source_trials_skipped_repeat"] += 1
-            continue
-        if len(unseen_snaps) > max_unseen_iters_per_source:
-            unseen_snaps = unseen_snaps[-max_unseen_iters_per_source:]
-
-        # Prefer the clean selfplay-only export dir; fall back to replay_shards
-        # (old behaviour) if selfplay_shards doesn't exist yet.
-        src_dir = td / "selfplay_shards"
-        use_selfplay_export = src_dir.is_dir() and bool(iter_shard_paths(src_dir))
-        if not use_selfplay_export:
-            src_dir = _trial_replay_shard_dir(config=config, trial_dir=td)
-        if not src_dir.is_dir():
-            continue
-
-        ingested_any = False
-        imported_iters: list[int] = []
-        shards_loaded_this_source = 0
-
-        for unseen_snap in reversed(unseen_snaps):
-            if max_shards_per_source > 0 and shards_loaded_this_source >= max_shards_per_source:
-                break
-            snap_iter = int(unseen_snap.get("iter", -1))
-            if snap_iter < 0:
-                continue
-
-            if use_selfplay_export:
-                maybe = find_shard_path(src_dir, snap_iter)
-                iter_shards = [maybe] if maybe is not None else []
-            else:
-                # Legacy fallback: estimate which shards belong to this iter.
-                shards = iter_shard_paths(src_dir)
-                if source_skip_newest > 0:
-                    shards = shards[:-source_skip_newest] if len(shards) > source_skip_newest else []
-                n_recent = _estimate_recent_shard_count(
-                    positions_added=int(unseen_snap.get("positions_added", 0)),
-                    shard_size=shard_size,
-                    holdout_fraction=holdout_fraction,
-                )
-                iter_shards = shards[max(0, len(shards) - n_recent):] if n_recent > 0 else []
-                if max_shards_per_source > 0:
-                    remaining = max_shards_per_source - shards_loaded_this_source
-                    iter_shards = iter_shards[-remaining:]
-
-            if not iter_shards:
-                continue
-
-            for sp in iter_shards:
-                loaded = _load_shard_arrays_with_retry(sp, retries=5, sleep_s=0.12)
-                if loaded is None:
-                    continue
-                shard_arrs, _meta = loaded
-                n_samples = int(np.asarray(shard_arrs["x"]).shape[0])
-                if n_samples <= 0:
-                    continue
-                if 0.0 < share_fraction < 1.0:
-                    k = max(1, int(round(n_samples * share_fraction)))
-                    chosen = buf.rng.choice(n_samples, size=k, replace=False)
-                    shard_arrs = _slice_array_batch(shard_arrs, chosen)
-                    n_samples = int(np.asarray(shard_arrs["x"]).shape[0])
-                buf.add_many_arrays(shard_arrs)
-                summary["source_shards_loaded"] += 1
-                summary["source_samples_ingested"] += int(n_samples)
-                shards_loaded_this_source += 1
-                ingested_any = True
-            if ingested_any:
-                imported_iters.append(snap_iter)
-
-        if ingested_any:
-            summary["source_trials_ingested"] += 1
-            if imported_iters:
-                import_state[source_key] = max(imported_iters)
-
-    try:
-        import_state_path.write_text(
-            json.dumps(import_state, sort_keys=True, indent=2),
-            encoding="utf-8",
-        )
-    except Exception:
-        pass
-
-    return summary
-
 
 def _opponent_strength(
     *,
@@ -930,6 +250,70 @@ def _should_retry_distributed_iteration_without_games(
     return bool(use_distributed_selfplay) and int(total_games_generated) <= 0
 
 
+def _play_batch_kwargs_from_config(config: dict) -> dict:
+    """Extract all config-driven play_batch kwargs as dataclass instances.
+
+    Callers (selfplay, gate, eval) use dataclasses.replace() for per-site overrides.
+    This is the single source of truth for config → play_batch mapping.
+    """
+    return dict(
+        opponent=OpponentConfig(
+            topk_stage_end=float(config.get("sf_pid_topk_stage_end", config.get("sf_pid_random_move_stage_end", 0.5))),
+            topk_min=int(config.get("sf_pid_topk_min", 1)),
+            suboptimal_wdl_regret_max=float(config.get("sf_pid_suboptimal_wdl_regret_max", -1.0)),
+            suboptimal_wdl_regret_min=float(config.get("sf_pid_suboptimal_wdl_regret_min", -1.0)),
+            random_move_prob_start=float(config.get("sf_pid_random_move_prob_start", 1.0)),
+            random_move_prob_min=float(config.get("sf_pid_random_move_prob_min", 0.0)),
+        ),
+        temp=TemperatureConfig(
+            temperature=float(config.get("temperature", 1.0)),
+            drop_plies=int(config.get("temperature_drop_plies", 0)),
+            after=float(config.get("temperature_after", 0.0)),
+            decay_start_move=int(config.get("temperature_decay_start_move", 20)),
+            decay_moves=int(config.get("temperature_decay_moves", 60)),
+            endgame=float(config.get("temperature_endgame", 0.6)),
+        ),
+        search=SearchConfig(
+            mcts_type=str(config.get("mcts", "puct")),
+            playout_cap_fraction=float(config.get("playout_cap_fraction", 0.25)),
+            fast_simulations=int(config.get("fast_simulations", 8)),
+            fpu_reduction=float(config.get("fpu_reduction", 1.2)),
+            fpu_at_root=float(config.get("fpu_at_root", 1.0)),
+        ),
+        opening=OpeningConfig(
+            opening_book_path=config.get("opening_book_path"),
+            opening_book_max_plies=int(config.get("opening_book_max_plies", 4)),
+            opening_book_max_games=int(config.get("opening_book_max_games", 200_000)),
+            opening_book_prob=float(config.get("opening_book_prob", 1.0)),
+            opening_book_path_2=config.get("opening_book_path_2"),
+            opening_book_max_plies_2=int(config.get("opening_book_max_plies_2", 16)),
+            opening_book_max_games_2=int(config.get("opening_book_max_games_2", 200_000)),
+            opening_book_mix_prob_2=float(config.get("opening_book_mix_prob_2", 0.0)),
+            random_start_plies=int(config.get("random_start_plies", 0)),
+        ),
+        diff_focus=DiffFocusConfig(
+            enabled=bool(config.get("diff_focus_enabled", True)),
+            q_weight=float(config.get("diff_focus_q_weight", 6.0)),
+            pol_scale=float(config.get("diff_focus_pol_scale", 3.5)),
+            slope=float(config.get("diff_focus_slope", 3.0)),
+            min_keep=float(config.get("diff_focus_min", 0.025)),
+        ),
+        game=GameConfig(
+            max_plies=int(config.get("max_plies", 240)),
+            selfplay_fraction=float(config.get("selfplay_fraction", 0.0)),
+            sf_policy_temp=float(config.get("sf_policy_temp", 0.25)),
+            sf_policy_label_smooth=float(config.get("sf_policy_label_smooth", 0.05)),
+            soft_policy_temp=float(config.get("soft_policy_temp", 2.0)),
+            timeout_adjudication_threshold=float(config.get("timeout_adjudication_threshold", 0.90)),
+            volatility_source=str(config.get("volatility_source", "raw")),
+            syzygy_path=config.get("syzygy_path"),
+            syzygy_policy=bool(config.get("syzygy_policy", False)),
+            categorical_bins=int(config.get("categorical_bins", DEFAULT_CATEGORICAL_BINS)),
+            hlgauss_sigma=float(config.get("hlgauss_sigma", 0.04)),
+        ),
+    )
+
+
 def _selfplay_winrate_raw_or_none(
     *,
     wins: int,
@@ -954,46 +338,14 @@ def _gate_check(
     config: dict,
 ) -> tuple[float, int, int, int]:
     """Play gate games to measure winrate. Returns (winrate, W, D, L)."""
-    _gate_samples, gate_stats = play_batch(
-        model,
-        device=device,
-        rng=rng,
-        stockfish=sf,
-        games=gate_games,
-        opponent_random_move_prob=opponent_random_move_prob,
-        opponent_topk_stage_end=float(config.get("sf_pid_topk_stage_end", config.get("sf_pid_random_move_stage_end", 0.5))),
-        opponent_topk_min=int(config.get("sf_pid_topk_min", 1)),
-        opponent_suboptimal_wdl_regret_max=float(config.get("sf_pid_suboptimal_wdl_regret_max", -1.0)),
-        opponent_suboptimal_wdl_regret_min=float(config.get("sf_pid_suboptimal_wdl_regret_min", -1.0)),
-        opponent_random_move_prob_start=float(config.get("sf_pid_random_move_prob_start", 1.0)),
-        opponent_random_move_prob_min=float(config.get("sf_pid_random_move_prob_min", 0.0)),
-        temperature=0.3,  # Low temperature for gating (exploit, don't explore)
-        temperature_drop_plies=0,
-        temperature_after=0.0,
-        temperature_decay_start_move=10,
-        temperature_decay_moves=30,
-        temperature_endgame=0.1,
-        max_plies=int(config.get("max_plies", 240)),
-        mcts_simulations=int(config.get("gate_mcts_sims", 1)),  # 1 = raw policy + value
-        mcts_type=str(config.get("mcts", "puct")),
-        playout_cap_fraction=1.0,
-        fast_simulations=0,
-        sf_policy_temp=float(config.get("sf_policy_temp", 0.25)),
-        sf_policy_label_smooth=float(config.get("sf_policy_label_smooth", 0.05)),
-        timeout_adjudication_threshold=float(config.get("timeout_adjudication_threshold", 0.90)),
-        volatility_source=str(config.get("volatility_source", "raw")),
-        opening_book_path=config.get("opening_book_path"),
-        opening_book_max_plies=int(config.get("opening_book_max_plies", 4)),
-        opening_book_max_games=int(config.get("opening_book_max_games", 200_000)),
-        opening_book_prob=float(config.get("opening_book_prob", 1.0)),
-        opening_book_path_2=config.get("opening_book_path_2"),
-        opening_book_max_plies_2=int(config.get("opening_book_max_plies_2", 16)),
-        opening_book_max_games_2=int(config.get("opening_book_max_games_2", 200_000)),
-        opening_book_mix_prob_2=float(config.get("opening_book_mix_prob_2", 0.0)),
-        random_start_plies=int(config.get("random_start_plies", 0)),
-        fpu_reduction=float(config.get("fpu_reduction", 1.2)),
-        fpu_at_root=float(config.get("fpu_at_root", 1.0)),
-    )
+    kw = _play_batch_kwargs_from_config(config)
+    # Gate: exploit mode — low temperature, no playout cap, minimal search.
+    kw["opponent"] = dataclasses.replace(kw["opponent"], random_move_prob=opponent_random_move_prob)
+    kw["temp"] = TemperatureConfig(temperature=0.3, drop_plies=0, after=0.0, decay_start_move=10, decay_moves=30, endgame=0.1)
+    kw["search"] = dataclasses.replace(kw["search"], simulations=int(config.get("gate_mcts_sims", 1)), playout_cap_fraction=1.0, fast_simulations=0)
+    kw["diff_focus"] = dataclasses.replace(kw["diff_focus"], enabled=False)
+    kw["game"] = dataclasses.replace(kw["game"], selfplay_fraction=0.0)
+    _gate_samples, gate_stats = play_batch(model, device=device, rng=rng, stockfish=sf, games=gate_games, **kw)
     w, d, l = gate_stats.w, gate_stats.d, gate_stats.l
     total = max(1, w + d + l)
     winrate = (w + 0.5 * d) / total
@@ -1008,8 +360,6 @@ def _prune_trial_checkpoints(*, trial_dir: Path, keep_last: int) -> None:
     not have checkpoint retention enabled.
     """
 
-    import shutil
-
     keep_last = int(keep_last)
     if keep_last <= 0:
         return
@@ -1023,813 +373,6 @@ def _prune_trial_checkpoints(*, trial_dir: Path, keep_last: int) -> None:
 
     for p in ckpts[:-keep_last]:
         shutil.rmtree(p, ignore_errors=True)
-
-
-def _sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        while True:
-            b = f.read(1024 * 1024)
-            if not b:
-                break
-            h.update(b)
-    return h.hexdigest()
-
-
-def _atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.name}.tmp.{int(time.time() * 1000)}")
-    try:
-        tmp.write_text(text, encoding=encoding)
-        tmp.replace(path)
-    finally:
-        try:
-            tmp.unlink(missing_ok=True)
-        except Exception:
-            pass
-
-
-def _set_active_run_prefix(*, server_root: Path, trial_id: str) -> None:
-    prefix = str(trial_id).split("_", 1)[0].strip()
-    if not prefix:
-        return
-    _atomic_write_text(server_root / "active_run_prefix.txt", prefix + "\n")
-
-
-def _trial_server_dirs(*, server_root: Path, trial_id: str) -> dict[str, Path]:
-    trial_root = Path(server_root) / "trials" / str(trial_id)
-    return {
-        "trial_root": trial_root,
-        "publish_dir": trial_root / "publish",
-        "inbox_dir": trial_root / "inbox",
-        "processed_dir": trial_root / "processed",
-        "workers_root": trial_root / "workers",
-    }
-
-
-def _quarantine_inbox_shards(
-    *,
-    inbox_dir: Path,
-    processed_dir: Path,
-    reason: str,
-) -> dict[str, int | str]:
-    """Move preexisting inbox shards out of the active intake path."""
-    inbox_dir = Path(inbox_dir)
-    processed_dir = Path(processed_dir)
-    reason_slug = re.sub(r"[^a-zA-Z0-9_.-]+", "_", str(reason).strip() or "resume")
-    quarantine_root = processed_dir / "_quarantine" / f"{reason_slug}_{int(time.time())}"
-    moved = 0
-    for sp in sorted(inbox_dir.glob("*/*.npz")):
-        rel = sp.relative_to(inbox_dir)
-        dst = quarantine_root / rel
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            sp.replace(dst)
-        except Exception:
-            try:
-                shutil.copy2(str(sp), str(dst))
-                sp.unlink(missing_ok=True)
-            except Exception:
-                continue
-        moved += 1
-    return {
-        "moved_shards": int(moved),
-        "quarantine_root": str(quarantine_root),
-    }
-
-
-def _publish_distributed_trial_state(
-    *,
-    trainer: Trainer,
-    config: dict,
-    model_cfg: ModelConfig,
-    server_root: Path,
-    trial_id: str,
-    training_iteration: int,
-    trainer_step: int,
-    sf_nodes: int,
-    random_move_prob: float,
-    skill_level: int,
-    mcts_simulations: int,
-    wdl_regret: float = -1.0,
-    pause_selfplay: bool = False,
-    pause_reason: str = "",
-    backpressure: dict[str, object] | None = None,
-    export_model: bool = True,
-) -> str:
-    dirs = _trial_server_dirs(server_root=server_root, trial_id=trial_id)
-    publish_dir = dirs["publish_dir"]
-    publish_dir.mkdir(parents=True, exist_ok=True)
-
-    model_path = publish_dir / "latest_model.pt"
-    if export_model or (not model_path.exists()):
-        trainer.export_swa(model_path)
-    model_sha = _sha256_file(model_path)
-    api_prefix = f"/v1/trials/{trial_id}"
-    published_worker_wheel_path: Path | None = None
-
-    worker_wheel_raw = str(config.get("worker_wheel_path", "")).strip()
-    if worker_wheel_raw:
-        worker_wheel_src = Path(worker_wheel_raw)
-        if worker_wheel_src.exists() and worker_wheel_src.is_file():
-            dst = publish_dir / "worker.whl"
-            try:
-                shutil.copy2(str(worker_wheel_src), str(dst))
-                published_worker_wheel_path = dst
-            except Exception:
-                published_worker_wheel_path = None
-
-    recommended_worker = {
-        "games_per_batch": int(config.get("selfplay_batch", 4)),
-        "max_plies": int(config.get("max_plies", 240)),
-        "mcts": str(config.get("mcts", "puct")),
-        "mcts_simulations": int(mcts_simulations),
-        "playout_cap_fraction": float(config.get("playout_cap_fraction", 0.25)),
-        "fast_simulations": int(config.get("fast_simulations", 8)),
-        "opening_book_max_plies": int(config.get("opening_book_max_plies", 4)),
-        "opening_book_max_games": int(config.get("opening_book_max_games", 200_000)),
-        "opening_book_prob": float(config.get("opening_book_prob", 1.0)),
-        "opening_book_path_2": config.get("opening_book_path_2"),
-        "opening_book_max_plies_2": int(config.get("opening_book_max_plies_2", 16)),
-        "opening_book_max_games_2": int(config.get("opening_book_max_games_2", 200_000)),
-        "opening_book_mix_prob_2": float(config.get("opening_book_mix_prob_2", 0.0)),
-        "random_start_plies": int(config.get("random_start_plies", 0)),
-        "selfplay_fraction": float(config.get("selfplay_fraction", 0.0)),
-        "sf_nodes": int(sf_nodes),
-        "sf_multipv": int(config.get("sf_multipv", 1)),
-        "sf_policy_temp": float(config.get("sf_policy_temp", 0.25)),
-        "sf_policy_label_smooth": float(config.get("sf_policy_label_smooth", 0.05)),
-        "sf_skill_level": int(skill_level),
-        "opponent_random_move_prob": float(random_move_prob),
-        "opponent_topk_stage_end": float(config.get("sf_pid_topk_stage_end", config.get("sf_pid_random_move_stage_end", 0.5))),
-        "opponent_topk_min": int(config.get("sf_pid_topk_min", 1)),
-        "opponent_suboptimal_wdl_regret_max": float(config.get("sf_pid_suboptimal_wdl_regret_max", -1.0)),
-        "opponent_suboptimal_wdl_regret_min": float(config.get("sf_pid_suboptimal_wdl_regret_min", -1.0)),
-        "opponent_random_move_prob_start": float(config.get("sf_pid_random_move_prob_start", 1.0)),
-        "opponent_random_move_prob_min": float(config.get("sf_pid_random_move_prob_min", 0.0)),
-        "opponent_wdl_regret_limit": float(wdl_regret) if float(wdl_regret) >= 0.0 else None,
-        "temperature": float(config.get("temperature", 1.0)),
-        "temperature_decay_start_move": int(config.get("temperature_decay_start_move", 20)),
-        "temperature_decay_moves": int(config.get("temperature_decay_moves", 60)),
-        "temperature_endgame": float(config.get("temperature_endgame", 0.6)),
-        "timeout_adjudication_threshold": float(config.get("timeout_adjudication_threshold", 0.90)),
-        "pause_selfplay": bool(pause_selfplay),
-        "pause_reason": str(pause_reason),
-    }
-
-    manifest: dict[str, object] = {
-        "server_time_unix": int(time.time()),
-        "protocol_version": int(PROTOCOL_VERSION),
-        "server_version": str(PACKAGE_VERSION),
-        "min_worker_version": str(PACKAGE_VERSION),
-        "trial_id": str(trial_id),
-        "training_iteration": int(training_iteration),
-        "trainer_step": int(trainer_step),
-        "task": {"type": "selfplay"},
-        "backpressure": {
-            **(dict(backpressure) if isinstance(backpressure, dict) else {}),
-            "pause_selfplay": bool(pause_selfplay),
-            "pause_reason": str(pause_reason),
-        },
-        "recommended_worker": recommended_worker,
-        "encoding": {
-            "input_planes": 146,
-            "policy_size": int(POLICY_SIZE),
-            "policy_encoding": "lc0_4672",
-        },
-        "model": {
-            "sha256": str(model_sha),
-            "endpoint": api_prefix + "/model",
-            "filename": "latest_model.pt",
-            "format": "torch_state_dict",
-        },
-        "model_config": {
-            "kind": str(model_cfg.kind),
-            "embed_dim": int(model_cfg.embed_dim),
-            "num_layers": int(model_cfg.num_layers),
-            "num_heads": int(model_cfg.num_heads),
-            "ffn_mult": int(model_cfg.ffn_mult),
-            "use_smolgen": bool(model_cfg.use_smolgen),
-            "use_nla": bool(model_cfg.use_nla),
-            "use_qk_rmsnorm": bool(getattr(model_cfg, "use_qk_rmsnorm", False)),
-            "gradient_checkpointing": bool(model_cfg.use_gradient_checkpointing),
-        },
-    }
-
-    opening_book_path = config.get("opening_book_path")
-    if isinstance(opening_book_path, str) and opening_book_path.strip():
-        p = Path(opening_book_path.strip())
-        if p.exists():
-            manifest["opening_book"] = {
-                "endpoint": "/v1/opening_book",
-                "filename": p.name,
-                "sha256": _sha256_file(p),
-            }
-
-    opening_book_path_2 = config.get("opening_book_path_2")
-    if isinstance(opening_book_path_2, str) and opening_book_path_2.strip():
-        p2 = Path(opening_book_path_2.strip())
-        if p2.exists():
-            manifest["opening_book_2"] = {
-                "endpoint": "/v1/opening_book_2",
-                "filename": p2.name,
-                "sha256": _sha256_file(p2),
-            }
-
-    if published_worker_wheel_path is not None and published_worker_wheel_path.exists():
-        manifest["worker_wheel"] = {
-            "endpoint": api_prefix + "/worker_wheel",
-            "filename": published_worker_wheel_path.name,
-            "sha256": _sha256_file(published_worker_wheel_path),
-            "version": str(PACKAGE_VERSION),
-        }
-
-    _atomic_write_text(
-        publish_dir / "manifest.json",
-        json.dumps(manifest, sort_keys=True, indent=2),
-        encoding="utf-8",
-    )
-    return model_sha
-
-
-def _launch_distributed_worker(
-    *,
-    config: dict,
-    trial_dir: Path,
-    trial_id: str,
-    worker_index: int,
-) -> subprocess.Popen[bytes]:
-    worker_artifact_root = trial_dir / "distributed_workers" / f"worker_{worker_index:02d}"
-    worker_artifact_root.mkdir(parents=True, exist_ok=True)
-    worker_log = worker_artifact_root / "worker.log"
-    worker_out = worker_artifact_root / "worker.out"
-
-    server_root_raw = str(config.get("distributed_server_root") or "").strip()
-    if server_root_raw:
-        server_root = _resolve_local_override_root(
-            raw_root=server_root_raw,
-            tune_work_dir=config.get("work_dir", trial_dir),
-            suffix="server",
-        )
-        server_dirs = _trial_server_dirs(server_root=server_root, trial_id=trial_id)
-        worker_root = server_dirs["workers_root"] / f"worker_{worker_index:02d}"
-    else:
-        # Fallback for non-standard local setups: keep previous behavior.
-        worker_root = worker_artifact_root
-    worker_root.mkdir(parents=True, exist_ok=True)
-
-    cmd = _build_distributed_worker_cmd(
-        config=config,
-        trial_root=worker_root,
-        trial_id=trial_id,
-        worker_index=worker_index,
-        worker_log=worker_log,
-    )
-
-    out_fh = worker_out.open("ab")
-    try:
-        stale_worker_pids = terminate_matching_processes(
-            module="chess_anti_engine.worker",
-            required_terms=["--trial-id", str(trial_id), "--work-dir", str(worker_root)],
-        )
-        if stale_worker_pids:
-            print(
-                f"[trial] reaped stale distributed workers: "
-                f"trial={trial_id} worker_index={worker_index} pids={stale_worker_pids}"
-            )
-        return subprocess.Popen(
-            cmd,
-            cwd=str(Path(__file__).resolve().parents[2]),
-            stdout=out_fh,
-            stderr=subprocess.STDOUT,
-        )
-    finally:
-        out_fh.close()
-
-
-def _build_distributed_worker_cmd(
-    *,
-    config: dict,
-    trial_root: Path,
-    trial_id: str,
-    worker_index: int,
-    worker_log: Path,
-) -> list[str]:
-    device = str(config.get("distributed_worker_device") or config.get("device", "cpu"))
-    server_root = _resolve_local_override_root(
-        raw_root=config.get("distributed_server_root", ""),
-        tune_work_dir=config.get("work_dir", trial_root),
-        suffix="server",
-    )
-    worker_username, worker_password_file = _resolve_distributed_worker_auth(
-        config=config,
-        server_root=server_root,
-    )
-    shared_cache_raw = str(config.get("distributed_worker_shared_cache_dir") or "").strip()
-    if shared_cache_raw:
-        shared_cache_root = Path(shared_cache_raw).expanduser()
-    else:
-        shared_cache_root = server_root / "worker_cache"
-    shared_cache_root.mkdir(parents=True, exist_ok=True)
-
-    cmd = [
-        sys.executable,
-        "-m",
-        "chess_anti_engine.worker",
-        "--server-url",
-        str(config["distributed_server_url"]),
-        "--trial-id",
-        str(trial_id),
-        "--username",
-        str(worker_username),
-        "--password-file",
-        str(worker_password_file),
-        "--stockfish-path",
-        str(config["stockfish_path"]),
-        "--work-dir",
-        str(trial_root),
-        "--shared-cache-dir",
-        str(shared_cache_root),
-        "--device",
-        device,
-        *(
-            ["--compile-inference"]
-            if bool(config.get("distributed_worker_use_compile", False))
-            else []
-        ),
-        "--sf-workers",
-        str(int(config.get("distributed_worker_sf_workers", 1))),
-        "--poll-seconds",
-        str(float(config.get("distributed_worker_poll_seconds", 1.0))),
-        "--upload-target-positions",
-        str(int(config.get("distributed_worker_upload_target_positions", 500))),
-        "--upload-flush-seconds",
-        str(float(config.get("distributed_worker_upload_flush_seconds", 60.0))),
-        "--seed",
-        str(_stable_seed_u32("dist-worker", trial_id, worker_index, config.get("seed", 0))),
-        "--log-file",
-        str(worker_log),
-        "--log-level",
-        "info",
-    ]
-
-    if bool(config.get("distributed_inference_broker_enabled", False)):
-        slot_prefix = _trial_slot_prefix(trial_id=trial_id)
-        slot_name = f"{slot_prefix}-{worker_index}"
-        max_batch = int(
-            config.get(
-                "distributed_inference_max_batch_per_slot",
-                config.get("distributed_inference_max_batch_positions", 256),
-            )
-        )
-        cmd.extend(
-            [
-                "--inference-slot-name",
-                str(slot_name),
-                "--inference-slot-max-batch",
-                str(max_batch),
-            ]
-        )
-
-    if bool(config.get("distributed_worker_auto_tune", False)):
-        cmd.extend(
-            [
-                "--auto-tune",
-                "--target-batch-seconds",
-                str(float(config.get("distributed_worker_target_batch_seconds", 30.0))),
-                "--min-games-per-batch",
-                str(int(config.get("distributed_worker_min_games_per_batch", 1))),
-                "--max-games-per-batch",
-                str(int(config.get("distributed_worker_max_games_per_batch", 64))),
-            ]
-        )
-    return cmd
-
-
-def _trial_inference_endpoint(*, trial_id: str) -> str:
-    port = 46000 + (_stable_seed_u32("inference-broker", trial_id) % 10000)
-    return f"127.0.0.1:{int(port)}"
-
-
-def _trial_slot_prefix(*, trial_id: str) -> str:
-    """Deterministic shared-memory slot prefix for a trial's inference broker."""
-    h = _stable_seed_u32("slot-prefix", trial_id)
-    return f"cae-{h:08x}"
-
-
-def _launch_inference_broker(
-    *,
-    config: dict,
-    trial_id: str,
-    publish_dir: Path,
-    trial_dir: Path,
-) -> subprocess.Popen[bytes]:
-    broker_artifact_root = trial_dir / "distributed_inference"
-    broker_artifact_root.mkdir(parents=True, exist_ok=True)
-    broker_out = broker_artifact_root / "broker.out"
-    slot_prefix = _trial_slot_prefix(trial_id=trial_id)
-    num_workers = int(config.get("distributed_workers_per_trial", 2))
-    max_batch = int(
-        config.get(
-            "distributed_inference_max_batch_per_slot",
-            config.get("distributed_inference_max_batch_positions", 256),
-        )
-    )
-    shared_cache_raw = str(config.get("distributed_worker_shared_cache_dir") or "").strip()
-    if shared_cache_raw:
-        shared_cache_root = Path(shared_cache_raw).expanduser()
-    else:
-        shared_cache_root = Path(str(config["distributed_server_root"])) / "worker_cache"
-    shared_cache_root.mkdir(parents=True, exist_ok=True)
-    compile_inference = bool(config.get("distributed_inference_use_compile", False))
-    cmd = [
-        sys.executable,
-        "-m",
-        "chess_anti_engine.inference",
-        "--publish-dir",
-        str(publish_dir),
-        "--slot-prefix",
-        str(slot_prefix),
-        "--num-slots",
-        str(num_workers),
-        "--max-batch-per-slot",
-        str(max_batch),
-        "--device",
-        str(config.get("distributed_worker_device") or config.get("device", "cpu")),
-        "--batch-wait-ms",
-        str(float(config.get("distributed_inference_batch_wait_ms", 5.0))),
-        "--shared-cache-dir",
-        str(shared_cache_root),
-        *(["--compile-inference"] if compile_inference else []),
-    ]
-    out_fh = broker_out.open("ab")
-    try:
-        stale_broker_pids = terminate_matching_processes(
-            module="chess_anti_engine.inference",
-            required_terms=["--publish-dir", str(publish_dir), "--slot-prefix", str(slot_prefix)],
-        )
-        if stale_broker_pids:
-            print(f"[trial] reaped stale inference brokers: trial={trial_id} pids={stale_broker_pids}")
-        return subprocess.Popen(
-            cmd,
-            cwd=str(Path(__file__).resolve().parents[2]),
-            stdout=out_fh,
-            stderr=subprocess.STDOUT,
-        )
-    finally:
-        out_fh.close()
-
-
-def _stop_process(proc: subprocess.Popen[bytes] | None) -> None:
-    if proc is None:
-        return
-    if proc.poll() is not None:
-        return
-    try:
-        proc.terminate()
-        proc.wait(timeout=10.0)
-    except Exception:
-        try:
-            proc.kill()
-        except Exception:
-            pass
-
-
-def _ensure_inference_broker(
-    *,
-    config: dict,
-    trial_id: str,
-    trial_dir: Path,
-    publish_dir: Path,
-    proc: subprocess.Popen[bytes] | None,
-) -> subprocess.Popen[bytes] | None:
-    if not bool(config.get("distributed_inference_broker_enabled", False)):
-        _stop_process(proc)
-        return None
-    if proc is not None and proc.poll() is None:
-        return proc
-    return _launch_inference_broker(
-        config=config,
-        trial_id=trial_id,
-        publish_dir=publish_dir,
-        trial_dir=trial_dir,
-    )
-
-
-def _stop_worker_processes(procs: list[subprocess.Popen[bytes]]) -> None:
-    for proc in procs:
-        if proc.poll() is not None:
-            continue
-        try:
-            proc.terminate()
-            proc.wait(timeout=5.0)
-        except Exception:
-            try:
-                proc.kill()
-                proc.wait(timeout=2.0)
-            except Exception:
-                pass
-
-
-def _ensure_distributed_workers(
-    *,
-    config: dict,
-    trial_dir: Path,
-    trial_id: str,
-    procs: list[subprocess.Popen[bytes]],
-) -> list[subprocess.Popen[bytes]]:
-    want = max(0, int(config.get("distributed_workers_per_trial", 0)))
-    out = list(procs)
-    for idx in range(want):
-        if idx < len(out) and out[idx].poll() is None:
-            continue
-        if idx < len(out) and out[idx].poll() is not None:
-            print(
-                f"[trial] restarting distributed worker idx={idx} "
-                f"exit_code={out[idx].returncode} trial={trial_id}"
-            )
-            out[idx] = _launch_distributed_worker(
-                config=config,
-                trial_dir=trial_dir,
-                trial_id=trial_id,
-                worker_index=idx,
-            )
-        elif idx >= len(out):
-            out.append(
-                _launch_distributed_worker(
-                    config=config,
-                    trial_dir=trial_dir,
-                    trial_id=trial_id,
-                    worker_index=idx,
-                )
-            )
-    return out[:want]
-
-
-def _ingest_distributed_selfplay(
-    *,
-    buf: DiskReplayBuffer,
-    holdout_buf: ArrayReplayBuffer,
-    holdout_frac: float,
-    holdout_frozen: bool,
-    inbox_dir: Path,
-    processed_dir: Path,
-    target_games: int,
-    accepted_model_shas: set[str],
-    wait_timeout_s: float,
-    poll_seconds: float,
-    rng: np.random.Generator,
-    min_games_fraction: float = 0.5,
-) -> dict[str, int]:
-    """Poll inbox until enough games arrive, then return.
-
-    Shards whose ``model_sha256`` is in *accepted_model_shas* count as
-    ``matching`` and contribute toward *target_games*.  Typically this
-    includes both the current model SHA and the previous one so that
-    the one-generation-stale batch workers finish after a model update
-    counts toward the target instead of creating a permanent lag.
-
-    The timeout only fires once at least ``min_games_fraction`` of
-    *target_games* have been collected.  This prevents pathologically
-    thin iterations that destabilise training.
-    """
-    processed_dir.mkdir(parents=True, exist_ok=True)
-    target_games = max(1, int(target_games))
-    min_games = max(1, int(math.ceil(float(min_games_fraction) * target_games)))
-    deadline = time.time() + float(wait_timeout_s)
-    summary: dict[str, int] = {
-        "matching_games": 0,
-        "matching_positions": 0,
-        "matching_w": 0,
-        "matching_d": 0,
-        "matching_l": 0,
-        "matching_total_game_plies": 0,
-        "matching_adjudicated_games": 0,
-        "matching_total_draw_games": 0,
-        "matching_selfplay_games": 0,
-        "matching_selfplay_adjudicated_games": 0,
-        "matching_selfplay_draw_games": 0,
-        "matching_curriculum_games": 0,
-        "matching_curriculum_adjudicated_games": 0,
-        "matching_curriculum_draw_games": 0,
-        "positions_replay_added": 0,
-        "stale_games": 0,
-        "stale_positions": 0,
-        "matching_shards": 0,
-        "stale_shards": 0,
-    }
-
-    while summary["matching_games"] < target_games:
-        shard_paths = sorted(inbox_dir.glob("*/*.npz"))
-        if not shard_paths:
-            if time.time() >= deadline and summary["matching_games"] >= min_games:
-                break  # train on whatever we have
-            time.sleep(float(poll_seconds))
-            continue
-
-        processed_any = False
-        for sp in shard_paths:
-            processed_any = True
-            rel = sp.relative_to(inbox_dir)
-            out = processed_dir / rel
-            out.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                shard_arrs, meta = load_npz_arrays(sp)
-            except Exception:
-                bad = processed_dir / "bad" / rel.name
-                bad.parent.mkdir(parents=True, exist_ok=True)
-                try:
-                    sp.replace(bad)
-                except Exception:
-                    sp.unlink(missing_ok=True)
-                continue
-
-            model_sha = str(meta.get("model_sha256") or "")
-            wins = int(meta.get("wins", 0) or 0)
-            draws = int(meta.get("draws", 0) or 0)
-            losses = int(meta.get("losses", 0) or 0)
-            games = int(meta.get("games", wins + draws + losses) or 0)
-            shard_n = int(np.asarray(shard_arrs["x"]).shape[0])
-            positions = int(meta.get("positions", shard_n) or shard_n)
-            total_game_plies = int(meta.get("total_game_plies", 0) or 0)
-            adjudicated_games = int(meta.get("adjudicated_games", meta.get("timeout_games", 0)) or 0)
-            total_draw_games = int(meta.get("total_draw_games", draws) or draws)
-            selfplay_games = int(meta.get("selfplay_games", 0) or 0)
-            selfplay_adjudicated_games = int(meta.get("selfplay_adjudicated_games", 0) or 0)
-            selfplay_draw_games = int(meta.get("selfplay_draw_games", 0) or 0)
-            curriculum_games = int(meta.get("curriculum_games", 0) or 0)
-            curriculum_adjudicated_games = int(meta.get("curriculum_adjudicated_games", 0) or 0)
-            curriculum_draw_games = int(meta.get("curriculum_draw_games", 0) or 0)
-
-            if shard_n > 0:
-                holdout_mask = np.zeros((shard_n,), dtype=bool)
-                if holdout_frac > 0.0 and (not holdout_frozen):
-                    holdout_mask = rng.random(shard_n) < holdout_frac
-                    if np.any(holdout_mask):
-                        holdout_buf.add_many_arrays(
-                            _slice_array_batch(shard_arrs, np.flatnonzero(holdout_mask))
-                        )
-
-                train_mask = ~holdout_mask
-                if np.any(train_mask):
-                    train_arrs = _slice_array_batch(shard_arrs, np.flatnonzero(train_mask))
-                    buf.add_many_arrays(train_arrs)
-            summary["positions_replay_added"] += int(positions)
-
-            if model_sha in accepted_model_shas:
-                summary["matching_games"] += int(games)
-                summary["matching_positions"] += int(positions)
-                summary["matching_w"] += int(wins)
-                summary["matching_d"] += int(draws)
-                summary["matching_l"] += int(losses)
-                summary["matching_total_game_plies"] += int(total_game_plies)
-                summary["matching_adjudicated_games"] += int(adjudicated_games)
-                summary["matching_total_draw_games"] += int(total_draw_games)
-                summary["matching_selfplay_games"] += int(selfplay_games)
-                summary["matching_selfplay_adjudicated_games"] += int(selfplay_adjudicated_games)
-                summary["matching_selfplay_draw_games"] += int(selfplay_draw_games)
-                summary["matching_curriculum_games"] += int(curriculum_games)
-                summary["matching_curriculum_adjudicated_games"] += int(curriculum_adjudicated_games)
-                summary["matching_curriculum_draw_games"] += int(curriculum_draw_games)
-                summary["matching_shards"] += 1
-            else:
-                summary["stale_games"] += int(games)
-                summary["stale_positions"] += int(positions)
-                summary["stale_shards"] += 1
-
-            try:
-                sp.replace(out)
-            except Exception:
-                sp.unlink(missing_ok=True)
-
-            if summary["matching_games"] >= target_games:
-                break
-
-        if not processed_any:
-            if time.time() >= deadline and summary["matching_games"] >= min_games:
-                break  # train on whatever we have
-            time.sleep(float(poll_seconds))
-
-    return summary
-
-
-def _ingest_available_shards(
-    *,
-    buf: DiskReplayBuffer,
-    holdout_buf: ArrayReplayBuffer,
-    holdout_frac: float,
-    holdout_frozen: bool,
-    inbox_dir: Path,
-    processed_dir: Path,
-    accept_model_shas: set[str],
-    rng: np.random.Generator,
-) -> dict[str, int]:
-    """Non-blocking ingest: scan inbox once, process all available shards, return immediately.
-
-    Unlike ``_ingest_distributed_selfplay`` this never polls or waits.
-    Shards whose ``model_sha256`` is in *accept_model_shas* count as
-    ``matching``; all others count as ``stale`` (but are still ingested
-    into the replay buffer — one-step-stale data is fine).
-    """
-    processed_dir.mkdir(parents=True, exist_ok=True)
-    summary: dict[str, int] = {
-        "matching_games": 0,
-        "matching_positions": 0,
-        "matching_w": 0,
-        "matching_d": 0,
-        "matching_l": 0,
-        "matching_total_game_plies": 0,
-        "matching_adjudicated_games": 0,
-        "matching_total_draw_games": 0,
-        "matching_selfplay_games": 0,
-        "matching_selfplay_adjudicated_games": 0,
-        "matching_selfplay_draw_games": 0,
-        "matching_curriculum_games": 0,
-        "matching_curriculum_adjudicated_games": 0,
-        "matching_curriculum_draw_games": 0,
-        "positions_replay_added": 0,
-        "stale_games": 0,
-        "stale_positions": 0,
-        "matching_shards": 0,
-        "stale_shards": 0,
-    }
-
-    shard_paths = sorted(inbox_dir.glob("*/*.npz"))
-    for sp in shard_paths:
-        rel = sp.relative_to(inbox_dir)
-        out = processed_dir / rel
-        out.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            shard_arrs, meta = load_npz_arrays(sp)
-        except Exception:
-            bad = processed_dir / "bad" / rel.name
-            bad.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                sp.replace(bad)
-            except Exception:
-                sp.unlink(missing_ok=True)
-            continue
-
-        model_sha = str(meta.get("model_sha256") or "")
-        wins = int(meta.get("wins", 0) or 0)
-        draws = int(meta.get("draws", 0) or 0)
-        losses = int(meta.get("losses", 0) or 0)
-        games = int(meta.get("games", wins + draws + losses) or 0)
-        shard_n = int(np.asarray(shard_arrs["x"]).shape[0])
-        positions = int(meta.get("positions", shard_n) or shard_n)
-        total_game_plies = int(meta.get("total_game_plies", 0) or 0)
-        adjudicated_games = int(meta.get("adjudicated_games", meta.get("timeout_games", 0)) or 0)
-        total_draw_games = int(meta.get("total_draw_games", draws) or draws)
-        selfplay_games = int(meta.get("selfplay_games", 0) or 0)
-        selfplay_adjudicated_games = int(meta.get("selfplay_adjudicated_games", 0) or 0)
-        selfplay_draw_games = int(meta.get("selfplay_draw_games", 0) or 0)
-        curriculum_games = int(meta.get("curriculum_games", 0) or 0)
-        curriculum_adjudicated_games = int(meta.get("curriculum_adjudicated_games", 0) or 0)
-        curriculum_draw_games = int(meta.get("curriculum_draw_games", 0) or 0)
-
-        if shard_n > 0:
-            holdout_mask = np.zeros((shard_n,), dtype=bool)
-            if holdout_frac > 0.0 and (not holdout_frozen):
-                holdout_mask = rng.random(shard_n) < holdout_frac
-                if np.any(holdout_mask):
-                    holdout_buf.add_many_arrays(
-                        _slice_array_batch(shard_arrs, np.flatnonzero(holdout_mask))
-                    )
-
-            train_mask = ~holdout_mask
-            if np.any(train_mask):
-                train_arrs = _slice_array_batch(shard_arrs, np.flatnonzero(train_mask))
-                buf.add_many_arrays(train_arrs)
-        summary["positions_replay_added"] += int(positions)
-
-        if model_sha in accept_model_shas:
-            summary["matching_games"] += int(games)
-            summary["matching_positions"] += int(positions)
-            summary["matching_w"] += int(wins)
-            summary["matching_d"] += int(draws)
-            summary["matching_l"] += int(losses)
-            summary["matching_total_game_plies"] += int(total_game_plies)
-            summary["matching_adjudicated_games"] += int(adjudicated_games)
-            summary["matching_total_draw_games"] += int(total_draw_games)
-            summary["matching_selfplay_games"] += int(selfplay_games)
-            summary["matching_selfplay_adjudicated_games"] += int(selfplay_adjudicated_games)
-            summary["matching_selfplay_draw_games"] += int(selfplay_draw_games)
-            summary["matching_curriculum_games"] += int(curriculum_games)
-            summary["matching_curriculum_adjudicated_games"] += int(curriculum_adjudicated_games)
-            summary["matching_curriculum_draw_games"] += int(curriculum_draw_games)
-            summary["matching_shards"] += 1
-        else:
-            summary["stale_games"] += int(games)
-            summary["stale_positions"] += int(positions)
-            summary["stale_shards"] += 1
-
-        try:
-            sp.replace(out)
-        except Exception:
-            sp.unlink(missing_ok=True)
-
-    return summary
-
 
 def _games_per_iter_for_iteration(config: dict, iteration_idx: int) -> int:
     target = max(1, int(config.get("games_per_iter", 1)))
@@ -2038,7 +581,10 @@ def train_trial(config: dict):
                         model_only_restore = True
             if model_only_restore:
                 ckpt_data = torch.load(str(maybe), map_location=device)
-                trainer.model.load_state_dict(ckpt_data["model"])
+                load_state_dict_tolerant(
+                    trainer.model, ckpt_data["model"],
+                    label="checkpoint_model_only",
+                )
                 del ckpt_data
                 startup_source = "checkpoint_model_only"
             else:
@@ -2131,7 +677,10 @@ def train_trial(config: dict):
             # is appropriate for true in-place resume, not for a new population with
             # a copied replay window and fresh perturbation lifecycle.
             salvage_ckpt = torch.load(str(maybe), map_location=device)
-            trainer.model.load_state_dict(salvage_ckpt["model"])
+            load_state_dict_tolerant(
+                trainer.model, salvage_ckpt["model"],
+                label="salvage",
+            )
             del salvage_ckpt
         if bool(config.get("salvage_reinit_volatility_heads", False)):
             reinit = reinit_volatility_head_parameters_(trainer.model)
@@ -2362,7 +911,7 @@ def train_trial(config: dict):
         if bp.exists():
             print(f"[trial] Loading pre-trained bootstrap model weights: {bp}")
             ckpt_data = torch.load(str(bp), map_location=device)
-            trainer.model.load_state_dict(ckpt_data["model"])
+            load_state_dict_tolerant(trainer.model, ckpt_data["model"], label="bootstrap")
             if bool(config.get("bootstrap_zero_policy_heads", False)):
                 zeroed = zero_policy_head_parameters_(trainer.model)
                 if zeroed:
@@ -2571,6 +1120,9 @@ def train_trial(config: dict):
     distributed_pause_started_at: float | None = None
     prev_published_model_sha: str = ""
 
+    ckpt_dir = work_dir / "ckpt"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+
     try:
         iterations = int(config.get("iterations", 10))
         completed_iterations = 0
@@ -2709,61 +1261,16 @@ def train_trial(config: dict):
                 replay_positions_ingested = int(ingest_summary["positions_replay_added"])
                 prev_published_model_sha = str(published_model_sha)
             else:
-                selfplay_kwargs = dict(
-                    device=device,
-                    rng=rng,
-                    stockfish=sf,
-                    opponent_random_move_prob=current_rand,
-                    opponent_topk_stage_end=float(config.get("sf_pid_topk_stage_end", config.get("sf_pid_random_move_stage_end", 0.5))),
-                    opponent_topk_min=int(config.get("sf_pid_topk_min", 1)),
-                    opponent_suboptimal_wdl_regret_max=float(config.get("sf_pid_suboptimal_wdl_regret_max", -1.0)),
-                    opponent_suboptimal_wdl_regret_min=float(config.get("sf_pid_suboptimal_wdl_regret_min", -1.0)),
-                    opponent_random_move_prob_start=float(config.get("sf_pid_random_move_prob_start", 1.0)),
-                    opponent_random_move_prob_min=float(config.get("sf_pid_random_move_prob_min", 0.0)),
-                    selfplay_fraction=float(config.get("selfplay_fraction", 0.0)),
-                    temperature=float(config.get("temperature", 1.0)),
-                    temperature_drop_plies=int(config.get("temperature_drop_plies", 0)),
-                    temperature_after=float(config.get("temperature_after", 0.0)),
-                    temperature_decay_start_move=int(config.get("temperature_decay_start_move", 20)),
-                    temperature_decay_moves=int(config.get("temperature_decay_moves", 60)),
-                    temperature_endgame=float(config.get("temperature_endgame", 0.6)),
-                    max_plies=int(config.get("max_plies", 240)),
-                    mcts_simulations=int(sims),
-                    mcts_type=str(config.get("mcts", "puct")),
-                    playout_cap_fraction=float(config.get("playout_cap_fraction", 0.25)),
-                    fast_simulations=int(config.get("fast_simulations", 8)),
-                    sf_policy_temp=float(config.get("sf_policy_temp", 0.25)),
-                    sf_policy_label_smooth=float(config.get("sf_policy_label_smooth", 0.05)),
-                    timeout_adjudication_threshold=float(config.get("timeout_adjudication_threshold", 0.90)),
-                    volatility_source=str(config.get("volatility_source", "raw")),
-                    opening_book_path=config.get("opening_book_path"),
-                    opening_book_max_plies=int(config.get("opening_book_max_plies", 4)),
-                    opening_book_max_games=int(config.get("opening_book_max_games", 200_000)),
-                    opening_book_prob=float(config.get("opening_book_prob", 1.0)),
-                    opening_book_path_2=config.get("opening_book_path_2"),
-                    opening_book_max_plies_2=int(config.get("opening_book_max_plies_2", 16)),
-                    opening_book_max_games_2=int(config.get("opening_book_max_games_2", 200_000)),
-                    opening_book_mix_prob_2=float(config.get("opening_book_mix_prob_2", 0.0)),
-                    random_start_plies=int(config.get("random_start_plies", 0)),
-                    syzygy_path=config.get("syzygy_path"),
-                    syzygy_policy=bool(config.get("syzygy_policy", False)),
-                    diff_focus_enabled=bool(config.get("diff_focus_enabled", True)),
-                    diff_focus_q_weight=float(config.get("diff_focus_q_weight", 6.0)),
-                    diff_focus_pol_scale=float(config.get("diff_focus_pol_scale", 3.5)),
-                    diff_focus_slope=float(config.get("diff_focus_slope", 3.0)),
-                    diff_focus_min=float(config.get("diff_focus_min", 0.025)),
-                    categorical_bins=int(config.get("categorical_bins", DEFAULT_CATEGORICAL_BINS)),
-                    hlgauss_sigma=float(config.get("hlgauss_sigma", 0.04)),
-                    fpu_reduction=float(config.get("fpu_reduction", 1.2)),
-                    fpu_at_root=float(config.get("fpu_at_root", 1.0)),
-                    soft_policy_temp=float(config.get("soft_policy_temp", 2.0)),
-                )
+                kw = _play_batch_kwargs_from_config(config)
+                kw["opponent"] = dataclasses.replace(kw["opponent"], random_move_prob=current_rand)
+                kw["search"] = dataclasses.replace(kw["search"], simulations=int(sims))
 
                 samples, stats = play_batch(
                     trainer.model,
+                    device=device, rng=rng, stockfish=sf,
                     games=selfplay_batch,
                     target_games=games_remaining,
-                    **selfplay_kwargs,
+                    **kw,
                 )
 
                 total_games_generated += int(stats.games)
@@ -3119,28 +1626,26 @@ def train_trial(config: dict):
             eval_dict = {}
             if eval_games > 0 and eval_sf is not None:
                 # Evaluation: fixed-strength games (no training data generated, only W/D/L).
-                _eval_samples, eval_stats = play_batch(
-                    trainer.model,
-                    device=device,
-                    rng=rng,
-                    stockfish=eval_sf,
-                    games=eval_games,
-                    opponent_topk_stage_end=float(config.get("sf_pid_topk_stage_end", config.get("sf_pid_random_move_stage_end", 0.5))),
-                    opponent_topk_min=int(config.get("sf_pid_topk_min", 1)),
-                    opponent_suboptimal_wdl_regret_max=float(config.get("sf_pid_suboptimal_wdl_regret_max", -1.0)),
-                    opponent_suboptimal_wdl_regret_min=float(config.get("sf_pid_suboptimal_wdl_regret_min", -1.0)),
-                    opponent_random_move_prob_start=float(config.get("sf_pid_random_move_prob_start", 1.0)),
-                    opponent_random_move_prob_min=float(config.get("sf_pid_random_move_prob_min", 0.0)),
+                kw = _play_batch_kwargs_from_config(config)
+                kw["temp"] = TemperatureConfig(
                     temperature=float(config.get("eval_temperature", 0.25)),
-                    max_plies=int(config.get("eval_max_plies", config.get("max_plies", 240))),
-                    mcts_simulations=eval_mcts_sims,
-                    mcts_type=str(config.get("mcts", "puct")),
+                )
+                kw["search"] = dataclasses.replace(
+                    kw["search"],
+                    simulations=eval_mcts_sims,
                     playout_cap_fraction=1.0,
                     fast_simulations=0,
-                    sf_policy_temp=float(config.get("sf_policy_temp", 0.25)),
-                    sf_policy_label_smooth=float(config.get("sf_policy_label_smooth", 0.05)),
-                    timeout_adjudication_threshold=float(config.get("timeout_adjudication_threshold", 0.90)),
-                    volatility_source=str(config.get("volatility_source", "raw")),
+                )
+                kw["game"] = dataclasses.replace(
+                    kw["game"],
+                    max_plies=int(config.get("eval_max_plies", config.get("max_plies", 240))),
+                    selfplay_fraction=0.0,
+                )
+                kw["diff_focus"] = dataclasses.replace(kw["diff_focus"], enabled=False)
+                kw["opening"] = OpeningConfig()  # defaults = no book
+                _eval_samples, eval_stats = play_batch(
+                    trainer.model, device=device, rng=rng, stockfish=eval_sf,
+                    games=eval_games, **kw,
                 )
                 denom = float(max(1, eval_stats.w + eval_stats.d + eval_stats.l))
                 eval_dict = {
@@ -3154,8 +1659,6 @@ def train_trial(config: dict):
             buf.flush()
 
             # Save a lightweight checkpoint (model+optimizer+step + PID state).
-            ckpt_dir = work_dir / "ckpt"
-            ckpt_dir.mkdir(parents=True, exist_ok=True)
             ckpt_path = ckpt_dir / "trainer.pt"
             trainer.save(ckpt_path)
             try:
@@ -3237,6 +1740,7 @@ def train_trial(config: dict):
                             "iter": int(iteration_idx),
                             "trainer_step": int(getattr(trainer, "step", 0)),
                             "source": "test_loss" if test_metrics is not None else "train_loss",
+                            "opp_strength_ema": float(opp_strength_ema),
                         },
                         indent=2,
                         sort_keys=True,
@@ -3264,6 +1768,14 @@ def train_trial(config: dict):
             random_move_prob_next = float(current_rand)
             skill_level_next = int(skill_level_used)
             if pid is not None and (total_w + total_d + total_l) > 0:
+                # Use a large max_rand_step for the first N iterations so the
+                # PID can quickly find equilibrium, then switch to fine steps.
+                _step_start = float(config.get("sf_pid_max_rand_step_start", 0.0))
+                _step_ramp = int(config.get("sf_pid_max_rand_step_ramp_iters", 0))
+                if _step_start > 0 and _step_ramp > 0 and iteration_zero_based < _step_ramp:
+                    pid.max_rand_step = _step_start
+                else:
+                    pid.max_rand_step = float(config.get("sf_pid_max_rand_step", 0.01))
                 pid_update = pid.observe(wins=total_w, draws=total_d, losses=total_l)
                 pid_ema_wr = float(pid_update.ema_winrate)
                 sf_nodes_next = int(pid.nodes)
@@ -3333,18 +1845,13 @@ def train_trial(config: dict):
                 trainer.writer.add_scalar("difficulty/opponent_strength_ema", float(opp_strength_ema), iteration_step)
                 trainer.writer.add_scalar("difficulty/random_move_prob", float(current_rand), iteration_step)
                 trainer.writer.add_scalar("difficulty/random_move_prob_next", float(random_move_prob_next), iteration_step)
-                trainer.writer.add_scalar(
-                    "difficulty/opponent_topk",
-                    float(
-                        _effective_curriculum_topk(
-                            random_move_prob=current_rand,
-                            stage_end=float(config.get("sf_pid_topk_stage_end", config.get("sf_pid_random_move_stage_end", 0.5))),
-                            topk_max=int(config.get("sf_multipv", 12)),
-                            topk_min=int(config.get("sf_pid_topk_min", 1)),
-                        )
-                    ),
-                    iteration_step,
+                _curr_topk = _effective_curriculum_topk(
+                    random_move_prob=current_rand,
+                    stage_end=float(config.get("sf_pid_topk_stage_end", config.get("sf_pid_random_move_stage_end", 0.5))),
+                    topk_max=int(config.get("sf_multipv", 12)),
+                    topk_min=int(config.get("sf_pid_topk_min", 1)),
                 )
+                trainer.writer.add_scalar("difficulty/opponent_topk", float(_curr_topk), iteration_step)
                 trainer.writer.add_scalar("difficulty/pid_ema_winrate", float(pid_ema_wr), iteration_step)
                 trainer.writer.add_scalar("difficulty/wdl_regret", float(wdl_regret_used), iteration_step)
                 trainer.writer.add_scalar("difficulty/wdl_regret_next", float(wdl_regret_next), iteration_step)
@@ -3372,14 +1879,7 @@ def train_trial(config: dict):
                     "opponent_sf_nodes_next": int(sf_nodes_next),
                     "opponent_wdl_regret_limit": float(wdl_regret_used),
                     "opponent_wdl_regret_limit_next": float(wdl_regret_next),
-                    "opponent_topk": int(
-                        _effective_curriculum_topk(
-                            random_move_prob=current_rand,
-                            stage_end=float(config.get("sf_pid_topk_stage_end", config.get("sf_pid_random_move_stage_end", 0.5))),
-                            topk_max=int(config.get("sf_multipv", 12)),
-                            topk_min=int(config.get("sf_pid_topk_min", 1)),
-                        )
-                    ),
+                    "opponent_topk": int(_curr_topk),
                     "iter": int(iteration_idx),
                     "global_iter": int(iteration_idx),
                     "replay": len(buf),
@@ -3491,7 +1991,7 @@ def train_trial(config: dict):
 
             # Write compact status row (best-effort — never crash the trial).
             try:
-                _iter_s = (time.monotonic() - iter_t0)
+                _iter_s = report_dict["total_iter_ms"] / 1000.0
                 with _STATUS_CSV_PATH.open("a", newline="") as _f:
                     csv.writer(_f).writerow([
                         int(iteration_idx),
@@ -3525,10 +2025,11 @@ def train_trial(config: dict):
 
             # Best-effort: keep disk usage bounded even when resuming an older
             # experiment that did not have checkpoint retention configured.
-            _prune_trial_checkpoints(
-                trial_dir=trial_dir,
-                keep_last=int(config.get("tune_num_to_keep", 2)),
-            )
+            if completed_iterations % 5 == 0:
+                _prune_trial_checkpoints(
+                    trial_dir=trial_dir,
+                    keep_last=int(config.get("tune_num_to_keep", 2)),
+                )
     finally:
         _stop_worker_processes(distributed_worker_procs)
         _stop_process(distributed_inference_broker_proc)

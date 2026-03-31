@@ -25,6 +25,14 @@ import torch
 from chess_anti_engine.model import ModelConfig, build_model
 from chess_anti_engine.replay.shard import ShardMeta, save_npz
 from chess_anti_engine.selfplay import play_batch
+from chess_anti_engine.selfplay.config import (
+    DiffFocusConfig,
+    GameConfig,
+    OpponentConfig,
+    SearchConfig,
+    TemperatureConfig,
+)
+from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.stockfish import StockfishUCI
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 
@@ -101,42 +109,54 @@ def main() -> None:
     batch_size = max(1, int(args.batch))
     shard_size = max(1, int(args.shard_size))
 
-    selfplay_kwargs = dict(
-        device=device,
-        rng=rng,
-        stockfish=sf,
-        opponent_random_move_prob=float(flat.get("sf_pid_random_move_prob_start", 1.0)),
+    opponent_cfg = OpponentConfig(
+        random_move_prob=float(flat.get("sf_pid_random_move_prob_start", 1.0)),
+    )
+    temp_cfg = TemperatureConfig(
         temperature=float(flat.get("temperature", 1.0)),
-        temperature_drop_plies=int(flat.get("temperature_drop_plies", 0)),
-        temperature_after=float(flat.get("temperature_after", 0.0)),
-        temperature_decay_start_move=int(flat.get("temperature_decay_start_move", 20)),
-        temperature_decay_moves=int(flat.get("temperature_decay_moves", 60)),
-        temperature_endgame=float(flat.get("temperature_endgame", 0.6)),
-        max_plies=int(flat.get("max_plies", 120)),
-        mcts_simulations=int(flat.get("mcts_simulations", 64)),
+        drop_plies=int(flat.get("temperature_drop_plies", 0)),
+        after=float(flat.get("temperature_after", 0.0)),
+        decay_start_move=int(flat.get("temperature_decay_start_move", 20)),
+        decay_moves=int(flat.get("temperature_decay_moves", 60)),
+        endgame=float(flat.get("temperature_endgame", 0.6)),
+    )
+    search_cfg = SearchConfig(
+        simulations=int(flat.get("mcts_simulations", 64)),
         mcts_type=str(flat.get("mcts", "puct")),
         playout_cap_fraction=float(flat.get("playout_cap_fraction", 0.25)),
         fast_simulations=int(flat.get("fast_simulations", 8)),
-        sf_policy_temp=float(flat.get("sf_policy_temp", 0.25)),
-        sf_policy_label_smooth=float(flat.get("sf_policy_label_smooth", 0.05)),
-        timeout_adjudication_threshold=float(flat.get("timeout_adjudication_threshold", 0.90)),
-        volatility_source=str(flat.get("volatility_source", "raw")),
+        fpu_reduction=float(flat.get("fpu_reduction", 1.2)),
+        fpu_at_root=float(flat.get("fpu_at_root", 1.0)),
+    )
+    opening_cfg = OpeningConfig(
         opening_book_path=flat.get("opening_book_path"),
         opening_book_max_plies=int(flat.get("opening_book_max_plies", 4)),
         opening_book_max_games=int(flat.get("opening_book_max_games", 200_000)),
         opening_book_prob=float(flat.get("opening_book_prob", 1.0)),
         random_start_plies=int(flat.get("random_start_plies", 0)),
+    )
+    diff_focus_cfg = DiffFocusConfig(
+        enabled=bool(flat.get("diff_focus_enabled", True)),
+        q_weight=float(flat.get("diff_focus_q_weight", 6.0)),
+        pol_scale=float(flat.get("diff_focus_pol_scale", 3.5)),
+        slope=float(flat.get("diff_focus_slope", 3.0)),
+        min_keep=float(flat.get("diff_focus_min", 0.025)),
+    )
+    game_cfg = GameConfig(
+        max_plies=int(flat.get("max_plies", 120)),
+        sf_policy_temp=float(flat.get("sf_policy_temp", 0.25)),
+        sf_policy_label_smooth=float(flat.get("sf_policy_label_smooth", 0.05)),
+        timeout_adjudication_threshold=float(flat.get("timeout_adjudication_threshold", 0.90)),
+        volatility_source=str(flat.get("volatility_source", "raw")),
         syzygy_path=flat.get("syzygy_path"),
         syzygy_policy=bool(flat.get("syzygy_policy", False)),
-        diff_focus_enabled=bool(flat.get("diff_focus_enabled", True)),
-        diff_focus_q_weight=float(flat.get("diff_focus_q_weight", 6.0)),
-        diff_focus_pol_scale=float(flat.get("diff_focus_pol_scale", 3.5)),
-        diff_focus_slope=float(flat.get("diff_focus_slope", 3.0)),
-        diff_focus_min=float(flat.get("diff_focus_min", 0.025)),
         categorical_bins=int(flat.get("categorical_bins", 32)),
         hlgauss_sigma=float(flat.get("hlgauss_sigma", 0.04)),
-        fpu_reduction=float(flat.get("fpu_reduction", 1.2)),
-        fpu_at_root=float(flat.get("fpu_at_root", 1.0)),
+    )
+    selfplay_kwargs = dict(
+        device=device, rng=rng, stockfish=sf,
+        opponent=opponent_cfg, temp=temp_cfg, search=search_cfg,
+        opening=opening_cfg, diff_focus=diff_focus_cfg, game=game_cfg,
     )
 
     run_id = f"iter0_shared_seed{seed}_{int(time.time())}"
@@ -149,8 +169,8 @@ def main() -> None:
     t0 = time.time()
 
     print(
-        f"Playing {total_games} games (batch={batch_size}, sf_nodes={sf_nodes}, sims={selfplay_kwargs['mcts_simulations']}, "
-        f"random_move_prob={selfplay_kwargs['opponent_random_move_prob']:.2f})..."
+        f"Playing {total_games} games (batch={batch_size}, sf_nodes={sf_nodes}, sims={search_cfg.simulations}, "
+        f"random_move_prob={opponent_cfg.random_move_prob:.2f})..."
     )
 
     try:

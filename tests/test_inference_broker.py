@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import subprocess
@@ -24,17 +23,7 @@ from chess_anti_engine.inference import (
     _SlotLayout,
 )
 from chess_anti_engine.model import ModelConfig, build_model
-
-
-def _sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        while True:
-            chunk = f.read(1024 * 1024)
-            if not chunk:
-                break
-            h.update(chunk)
-    return h.hexdigest()
+from chess_anti_engine.utils import sha256_file as _sha256_file
 
 
 def test_slot_inference_broker_roundtrip(tmp_path: Path) -> None:

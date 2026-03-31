@@ -5,6 +5,8 @@ import numpy as np
 import torch
 
 from chess_anti_engine.selfplay import play_batch
+from chess_anti_engine.selfplay.config import TemperatureConfig, SearchConfig, DiffFocusConfig, GameConfig
+from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.stockfish.uci import StockfishResult
 
 
@@ -33,19 +35,14 @@ def test_full_selfplay_generates_both_side_samples_and_no_pid_wdl_stats():
     rng = np.random.default_rng(0)
 
     samples, stats = play_batch(
-        model,
-        device="cpu",
-        rng=rng,
+        model, device="cpu", rng=rng,
         stockfish=_FakeStockfish([0.6, 0.2, 0.2]),
         games=1,
-        temperature=1.0,
-        max_plies=2,
-        mcts_simulations=1,
-        playout_cap_fraction=1.0,
-        fast_simulations=1,
-        selfplay_fraction=1.0,
-        diff_focus_enabled=False,
-        random_start_plies=0,
+        temp=TemperatureConfig(temperature=1.0),
+        search=SearchConfig(simulations=1, playout_cap_fraction=1.0, fast_simulations=1),
+        opening=OpeningConfig(random_start_plies=0),
+        diff_focus=DiffFocusConfig(enabled=False),
+        game=GameConfig(max_plies=2, selfplay_fraction=1.0),
     )
 
     assert len(samples) >= 2
@@ -61,20 +58,14 @@ def test_target_games_recycles_slots_and_preserves_selfplay_accounting():
     target_games = 5
 
     samples, stats = play_batch(
-        model,
-        device="cpu",
-        rng=rng,
+        model, device="cpu", rng=rng,
         stockfish=_FakeStockfish([0.0, 1.0, 0.0]),
-        games=2,
-        target_games=target_games,
-        temperature=1.0,
-        max_plies=2,
-        mcts_simulations=1,
-        playout_cap_fraction=1.0,
-        fast_simulations=1,
-        selfplay_fraction=1.0,
-        diff_focus_enabled=False,
-        random_start_plies=0,
+        games=2, target_games=target_games,
+        temp=TemperatureConfig(temperature=1.0),
+        search=SearchConfig(simulations=1, playout_cap_fraction=1.0, fast_simulations=1),
+        opening=OpeningConfig(random_start_plies=0),
+        diff_focus=DiffFocusConfig(enabled=False),
+        game=GameConfig(max_plies=2, selfplay_fraction=1.0),
     )
 
     assert stats.games == target_games
@@ -97,20 +88,14 @@ def test_target_games_recycles_slots_and_preserves_curriculum_accounting():
     target_games = 5
 
     samples, stats = play_batch(
-        model,
-        device="cpu",
-        rng=rng,
+        model, device="cpu", rng=rng,
         stockfish=_FakeStockfish([0.0, 1.0, 0.0]),
-        games=2,
-        target_games=target_games,
-        temperature=1.0,
-        max_plies=2,
-        mcts_simulations=1,
-        playout_cap_fraction=1.0,
-        fast_simulations=1,
-        selfplay_fraction=0.0,
-        diff_focus_enabled=False,
-        random_start_plies=0,
+        games=2, target_games=target_games,
+        temp=TemperatureConfig(temperature=1.0),
+        search=SearchConfig(simulations=1, playout_cap_fraction=1.0, fast_simulations=1),
+        opening=OpeningConfig(random_start_plies=0),
+        diff_focus=DiffFocusConfig(enabled=False),
+        game=GameConfig(max_plies=2, selfplay_fraction=0.0),
     )
 
     assert stats.games == target_games
@@ -132,20 +117,14 @@ def test_target_games_smaller_than_batch_does_not_over_start_games():
     rng = np.random.default_rng(3)
 
     samples, stats = play_batch(
-        model,
-        device="cpu",
-        rng=rng,
+        model, device="cpu", rng=rng,
         stockfish=_FakeStockfish([0.0, 1.0, 0.0]),
-        games=8,
-        target_games=1,
-        temperature=1.0,
-        max_plies=2,
-        mcts_simulations=1,
-        playout_cap_fraction=1.0,
-        fast_simulations=1,
-        selfplay_fraction=1.0,
-        diff_focus_enabled=False,
-        random_start_plies=0,
+        games=8, target_games=1,
+        temp=TemperatureConfig(temperature=1.0),
+        search=SearchConfig(simulations=1, playout_cap_fraction=1.0, fast_simulations=1),
+        opening=OpeningConfig(random_start_plies=0),
+        diff_focus=DiffFocusConfig(enabled=False),
+        game=GameConfig(max_plies=2, selfplay_fraction=1.0),
     )
 
     assert stats.games == 1
@@ -160,20 +139,14 @@ def test_play_batch_can_return_zero_samples_when_no_full_playouts():
     rng = np.random.default_rng(4)
 
     samples, stats = play_batch(
-        model,
-        device="cpu",
-        rng=rng,
+        model, device="cpu", rng=rng,
         stockfish=_FakeStockfish([0.0, 1.0, 0.0]),
-        games=2,
-        target_games=2,
-        temperature=1.0,
-        max_plies=2,
-        mcts_simulations=1,
-        playout_cap_fraction=0.0,
-        fast_simulations=1,
-        selfplay_fraction=1.0,
-        diff_focus_enabled=False,
-        random_start_plies=0,
+        games=2, target_games=2,
+        temp=TemperatureConfig(temperature=1.0),
+        search=SearchConfig(simulations=1, playout_cap_fraction=0.0, fast_simulations=1),
+        opening=OpeningConfig(random_start_plies=0),
+        diff_focus=DiffFocusConfig(enabled=False),
+        game=GameConfig(max_plies=2, selfplay_fraction=1.0),
     )
 
     assert stats.games == 2

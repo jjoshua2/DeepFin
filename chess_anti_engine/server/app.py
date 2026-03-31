@@ -330,33 +330,19 @@ def create_app(
                 except Exception:
                     pass
 
-    def _load_throughput_stats() -> dict[str, Any]:
-        if not stats_path.exists():
+    def _load_json_stats(path: Path) -> dict[str, Any]:
+        if not path.exists():
             return {}
         try:
-            data = json.loads(stats_path.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             return {}
         return data if isinstance(data, dict) else {}
 
-    def _save_throughput_stats(stats: dict[str, Any]) -> None:
-        tmp = stats_path.with_suffix(stats_path.suffix + ".tmp")
+    def _save_json_stats(path: Path, stats: dict[str, Any]) -> None:
+        tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(json.dumps(stats, indent=2, sort_keys=True), encoding="utf-8")
-        tmp.replace(stats_path)
-
-    def _load_trial_throughput_stats() -> dict[str, Any]:
-        if not trial_stats_path.exists():
-            return {}
-        try:
-            data = json.loads(trial_stats_path.read_text(encoding="utf-8"))
-        except Exception:
-            return {}
-        return data if isinstance(data, dict) else {}
-
-    def _save_trial_throughput_stats(stats: dict[str, Any]) -> None:
-        tmp = trial_stats_path.with_suffix(trial_stats_path.suffix + ".tmp")
-        tmp.write_text(json.dumps(stats, indent=2, sort_keys=True), encoding="utf-8")
-        tmp.replace(trial_stats_path)
+        tmp.replace(path)
 
     def _primary_gpu_model(*, lease: dict[str, Any] | None) -> str:
         if not isinstance(lease, dict):
@@ -385,7 +371,7 @@ def create_app(
             return
         gpu_model = _primary_gpu_model(lease=lease)
         now_unix = int(time.time())
-        stats = _load_throughput_stats()
+        stats = _load_json_stats(stats_path)
         entry = stats.get(gpu_model)
         if not isinstance(entry, dict):
             entry = {}
@@ -412,7 +398,7 @@ def create_app(
                         pass
         entry["last_updated_unix"] = now_unix
         stats[gpu_model] = entry
-        _save_throughput_stats(stats)
+        _save_json_stats(stats_path, stats)
 
     def _record_trial_throughput(
         *,
@@ -424,7 +410,7 @@ def create_app(
         tid = _normalize_trial_id(trial_id)
         if tid is None or elapsed_s is None or elapsed_s <= 0.0:
             return
-        stats = _load_trial_throughput_stats()
+        stats = _load_json_stats(trial_stats_path)
         entry = stats.get(tid)
         if not isinstance(entry, dict):
             entry = {}
@@ -446,7 +432,7 @@ def create_app(
         entry["avg_games_per_s"] = float(entry["total_games"]) / total_elapsed_s
         entry["last_updated_unix"] = now_unix
         stats[tid] = entry
-        _save_trial_throughput_stats(stats)
+        _save_json_stats(trial_stats_path, stats)
 
     def _check_worker_compat(
         *,
@@ -493,15 +479,7 @@ def create_app(
 
     basic = HTTPBasic()
 
-    def _sha256_file(path: Path) -> str:
-        h = hashlib.sha256()
-        with path.open("rb") as f:
-            while True:
-                b = f.read(1024 * 1024)
-                if not b:
-                    break
-                h.update(b)
-        return h.hexdigest()
+    from chess_anti_engine.utils import sha256_file as _sha256_file
 
     def _auth_user(creds: HTTPBasicCredentials = Depends(basic)) -> str:
         users = load_users(users_path)
@@ -657,11 +635,11 @@ def create_app(
 
     @app.get("/v1/worker_throughput")
     def get_worker_throughput() -> Any:
-        return JSONResponse(content=_load_throughput_stats())
+        return JSONResponse(content=_load_json_stats(stats_path))
 
     @app.get("/v1/trial_throughput")
     def get_trial_throughput() -> Any:
-        return JSONResponse(content=_load_trial_throughput_stats())
+        return JSONResponse(content=_load_json_stats(trial_stats_path))
 
     def _get_worker_wheel_impl(trial_id: str | None) -> Any:
         p = _artifact_from_publish("worker_wheel", default_name="worker.whl", trial_id=trial_id)
@@ -698,7 +676,7 @@ def create_app(
                 worker_info=worker_info,
                 available_trials=available_trials,
                 manifest_loader=_load_manifest,
-                trial_throughput_loader=lambda tid: _load_trial_throughput_stats().get(str(tid), {}),
+                trial_throughput_loader=lambda tid: _load_json_stats(trial_stats_path).get(str(tid), {}),
                 requested_lease_id=requested_lease_id,
                 requested_trial_id=requested_trial_id,
                 lease_seconds=lease_seconds,

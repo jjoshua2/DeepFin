@@ -94,6 +94,7 @@ def _assert_wdl_probs(arr: np.ndarray, name: str) -> None:
 def selfplay_samples():
     """Run a tiny selfplay batch and return (samples, stats)."""
     from chess_anti_engine.selfplay import play_batch
+    from chess_anti_engine.selfplay.config import TemperatureConfig, SearchConfig, DiffFocusConfig, GameConfig
     from chess_anti_engine.stockfish import StockfishUCI
 
     model = _tiny_model().eval()
@@ -101,26 +102,11 @@ def selfplay_samples():
     sf = StockfishUCI(SF_PATH, nodes=100, multipv=3)
     try:
         samples, stats = play_batch(
-            model,
-            device="cpu",
-            rng=rng,
-            stockfish=sf,
-            games=3,
-            temperature=1.0,
-            max_plies=30,          # short games
-            mcts_simulations=4,
-            mcts_type="puct",
-            playout_cap_fraction=0.5,
-            fast_simulations=2,
-            sf_policy_temp=0.25,
-            sf_policy_label_smooth=0.05,
-            diff_focus_enabled=True,
-            diff_focus_q_weight=6.0,
-            diff_focus_pol_scale=3.5,
-            diff_focus_slope=3.0,
-            diff_focus_min=1.0,    # keep_prob=1 so all positions survive (avoid empty buffer)
-            categorical_bins=32,
-            hlgauss_sigma=0.04,
+            model, device="cpu", rng=rng, stockfish=sf, games=3,
+            temp=TemperatureConfig(temperature=1.0),
+            search=SearchConfig(simulations=4, mcts_type="puct", playout_cap_fraction=0.5, fast_simulations=2),
+            diff_focus=DiffFocusConfig(min_keep=1.0),
+            game=GameConfig(max_plies=30, sf_policy_temp=0.25, sf_policy_label_smooth=0.05, categorical_bins=32, hlgauss_sigma=0.04),
         )
     finally:
         sf.close()
@@ -228,6 +214,7 @@ def test_sample_moves_left(selfplay_samples):
 def test_gumbel_selfplay_smoke():
     """Gumbel MCTS path also produces valid samples."""
     from chess_anti_engine.selfplay import play_batch
+    from chess_anti_engine.selfplay.config import TemperatureConfig, SearchConfig, DiffFocusConfig, GameConfig
     from chess_anti_engine.stockfish import StockfishUCI
 
     model = _tiny_model().eval()
@@ -235,20 +222,11 @@ def test_gumbel_selfplay_smoke():
     sf = StockfishUCI(SF_PATH, nodes=100, multipv=1)
     try:
         samples, stats = play_batch(
-            model,
-            device="cpu",
-            rng=rng,
-            stockfish=sf,
-            games=2,
-            temperature=1.0,
-            max_plies=20,
-            mcts_simulations=8,
-            mcts_type="gumbel",
-            playout_cap_fraction=1.0,  # all full search
-            fast_simulations=2,
-            sf_policy_temp=0.25,
-            sf_policy_label_smooth=0.05,
-            diff_focus_min=1.0,  # keep all positions
+            model, device="cpu", rng=rng, stockfish=sf, games=2,
+            temp=TemperatureConfig(temperature=1.0),
+            search=SearchConfig(simulations=8, mcts_type="gumbel", playout_cap_fraction=1.0, fast_simulations=2),
+            diff_focus=DiffFocusConfig(min_keep=1.0),
+            game=GameConfig(max_plies=20, sf_policy_temp=0.25, sf_policy_label_smooth=0.05),
         )
     finally:
         sf.close()

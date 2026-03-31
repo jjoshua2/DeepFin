@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import logging
 import os
@@ -14,6 +13,8 @@ import numpy as np
 import torch
 
 from chess_anti_engine.model import ModelConfig, build_model
+from chess_anti_engine.tune._utils import atomic_write_text as _atomic_write_text
+from chess_anti_engine.utils import sha256_file as _sha256_file
 from chess_anti_engine.moves.encode import POLICY_SIZE
 from chess_anti_engine.replay import ArrayReplayBuffer
 from chess_anti_engine.replay.shard import load_npz_arrays
@@ -24,35 +25,6 @@ from chess_anti_engine.version import PACKAGE_VERSION, PROTOCOL_VERSION
 
 
 log = logging.getLogger("chess_anti_engine.learner")
-
-
-def _sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        while True:
-            b = f.read(1024 * 1024)
-            if not b:
-                break
-            h.update(b)
-    return h.hexdigest()
-
-
-def _atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> None:
-    """Write a text file atomically (temp + os.replace).
-
-    Important for files served over HTTP while the learner is running.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}")
-    try:
-        tmp.write_text(text, encoding=encoding)
-        os.replace(str(tmp), str(path))
-    finally:
-        try:
-            if tmp.exists():
-                tmp.unlink()
-        except Exception:
-            pass
 
 
 def _atomic_copy2(src: Path, dst: Path) -> None:
@@ -78,6 +50,50 @@ def _iter_shards(inbox_dir: Path) -> list[Path]:
 def _iter_arena_results(arena_inbox_dir: Path) -> list[Path]:
     # Depth: arena_inbox/<user>/<sha>.json
     return sorted(arena_inbox_dir.glob("*/*.json"))
+
+
+def _build_recommended_worker(
+    args: argparse.Namespace,
+    *,
+    trainer_step: int,
+    max_plies: int,
+    sf_nodes: int,
+    sf_skill_level: int | None,
+    opponent_random_move_prob: float,
+) -> dict[str, object]:
+    """Build the recommended_worker dict for the manifest (shared by bootstrap + main loop)."""
+    max_sims = int(args.recommended_mcts_simulations)
+    reco_sims = max_sims
+    if bool(getattr(args, "recommended_progressive_mcts", True)):
+        reco_sims = progressive_mcts_simulations(
+            trainer_step,
+            start=int(args.recommended_mcts_start_simulations),
+            max_sims=max_sims,
+            ramp_steps=int(args.recommended_mcts_ramp_steps),
+            exponent=float(args.recommended_mcts_ramp_exponent),
+        )
+    return {
+        "games_per_batch": int(args.recommended_games_per_batch),
+        "max_plies": int(max_plies),
+        "mcts": str(args.recommended_mcts),
+        "mcts_simulations": int(reco_sims),
+        "playout_cap_fraction": float(args.recommended_playout_cap_fraction),
+        "fast_simulations": int(args.recommended_fast_simulations),
+        "opponent_random_move_prob": float(opponent_random_move_prob),
+        "opening_book_max_plies": int(args.recommended_opening_book_max_plies),
+        "opening_book_max_games": int(args.recommended_opening_book_max_games),
+        "opening_book_prob": float(args.recommended_opening_book_prob),
+        "random_start_plies": int(args.recommended_random_start_plies),
+        "sf_nodes": int(sf_nodes),
+        "sf_multipv": int(args.recommended_sf_multipv),
+        "sf_policy_temp": float(args.recommended_sf_policy_temp),
+        "sf_policy_label_smooth": float(args.recommended_sf_policy_label_smooth),
+        "sf_skill_level": int(sf_skill_level) if sf_skill_level is not None else None,
+        "temperature": float(args.recommended_temperature),
+        "temperature_decay_start_move": int(args.recommended_temperature_decay_start_move),
+        "temperature_decay_moves": int(args.recommended_temperature_decay_moves),
+        "temperature_endgame": float(args.recommended_temperature_endgame),
+    }
 
 
 def main() -> None:
@@ -531,39 +547,13 @@ def main() -> None:
         best_model_sha = _sha256_file(best_model_path) if best_model_path.exists() else ""
 
         trainer_step = int(getattr(trainer, "step", 0))
-        max_sims = int(args.recommended_mcts_simulations)
-        reco_sims = max_sims
-        if bool(getattr(args, "recommended_progressive_mcts", True)):
-            reco_sims = progressive_mcts_simulations(
-                trainer_step,
-                start=int(args.recommended_mcts_start_simulations),
-                max_sims=max_sims,
-                ramp_steps=int(args.recommended_mcts_ramp_steps),
-                exponent=float(args.recommended_mcts_ramp_exponent),
-            )
-
-        recommended_worker = {
-            "games_per_batch": int(args.recommended_games_per_batch),
-            "max_plies": _compute_max_plies(trainer_step),
-            "mcts": str(args.recommended_mcts),
-            "mcts_simulations": int(reco_sims),
-            "playout_cap_fraction": float(args.recommended_playout_cap_fraction),
-            "fast_simulations": int(args.recommended_fast_simulations),
-            "opening_book_max_plies": int(args.recommended_opening_book_max_plies),
-            "opening_book_max_games": int(args.recommended_opening_book_max_games),
-            "opening_book_prob": float(args.recommended_opening_book_prob),
-            "random_start_plies": int(args.recommended_random_start_plies),
-            "sf_nodes": int(current_sf_nodes),
-            "sf_multipv": int(args.recommended_sf_multipv),
-            "sf_policy_temp": float(args.recommended_sf_policy_temp),
-            "sf_policy_label_smooth": float(args.recommended_sf_policy_label_smooth),
-            "sf_skill_level": int(current_sf_skill_level) if current_sf_skill_level is not None else None,
-            "opponent_random_move_prob": float(current_opponent_random_move_prob),
-            "temperature": float(args.recommended_temperature),
-            "temperature_decay_start_move": int(args.recommended_temperature_decay_start_move),
-            "temperature_decay_moves": int(args.recommended_temperature_decay_moves),
-            "temperature_endgame": float(args.recommended_temperature_endgame),
-        }
+        recommended_worker = _build_recommended_worker(
+            args, trainer_step=trainer_step,
+            max_plies=_compute_max_plies(trainer_step),
+            sf_nodes=int(current_sf_nodes),
+            sf_skill_level=current_sf_skill_level,
+            opponent_random_move_prob=float(current_opponent_random_move_prob),
+        )
 
         manifest = {
             "server_time_unix": int(time.time()),
@@ -962,39 +952,13 @@ def main() -> None:
                 )
 
         trainer_step = int(getattr(trainer, "step", 0))
-        max_sims = int(args.recommended_mcts_simulations)
-        reco_sims = max_sims
-        if bool(getattr(args, "recommended_progressive_mcts", True)):
-            reco_sims = progressive_mcts_simulations(
-                trainer_step,
-                start=int(args.recommended_mcts_start_simulations),
-                max_sims=max_sims,
-                ramp_steps=int(args.recommended_mcts_ramp_steps),
-                exponent=float(args.recommended_mcts_ramp_exponent),
-            )
-
-        recommended_worker = {
-            "games_per_batch": int(args.recommended_games_per_batch),
-            "max_plies": _compute_max_plies(trainer_step),
-            "mcts": str(args.recommended_mcts),
-            "mcts_simulations": int(reco_sims),
-            "playout_cap_fraction": float(args.recommended_playout_cap_fraction),
-            "fast_simulations": int(args.recommended_fast_simulations),
-            "opponent_random_move_prob": float(current_opponent_random_move_prob),
-            "opening_book_max_plies": int(args.recommended_opening_book_max_plies),
-            "opening_book_max_games": int(args.recommended_opening_book_max_games),
-            "opening_book_prob": float(args.recommended_opening_book_prob),
-            "random_start_plies": int(args.recommended_random_start_plies),
-            "sf_nodes": int(current_sf_nodes),
-            "sf_multipv": int(args.recommended_sf_multipv),
-            "sf_policy_temp": float(args.recommended_sf_policy_temp),
-            "sf_policy_label_smooth": float(args.recommended_sf_policy_label_smooth),
-            "sf_skill_level": int(current_sf_skill_level) if current_sf_skill_level is not None else None,
-            "temperature": float(args.recommended_temperature),
-            "temperature_decay_start_move": int(args.recommended_temperature_decay_start_move),
-            "temperature_decay_moves": int(args.recommended_temperature_decay_moves),
-            "temperature_endgame": float(args.recommended_temperature_endgame),
-        }
+        recommended_worker = _build_recommended_worker(
+            args, trainer_step=trainer_step,
+            max_plies=_compute_max_plies(trainer_step),
+            sf_nodes=int(current_sf_nodes),
+            sf_skill_level=current_sf_skill_level,
+            opponent_random_move_prob=float(current_opponent_random_move_prob),
+        )
 
         task: dict[str, object]
         if bool(args.arena_enabled) and arena_active and arena_latest_sha and arena_best_sha:

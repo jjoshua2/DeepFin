@@ -15,7 +15,7 @@ from typing import Protocol
 import numpy as np
 import torch
 
-from chess_anti_engine.model import ModelConfig, build_model
+from chess_anti_engine.model import ModelConfig, build_model, load_state_dict_tolerant
 from chess_anti_engine.utils.amp import inference_autocast
 
 log = logging.getLogger(__name__)
@@ -28,6 +28,11 @@ log = logging.getLogger(__name__)
 class BatchEvaluator(Protocol):
     def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         ...
+
+
+def _policy_output(out: dict[str, torch.Tensor]) -> torch.Tensor:
+    """Extract policy tensor from model output (handles both key conventions)."""
+    return out["policy"] if "policy" in out else out["policy_own"]
 
 
 def _configure_compile_cache(cache_root: Path) -> None:
@@ -92,7 +97,7 @@ class LocalModelEvaluator:
         with torch.no_grad():
             with inference_autocast(device=self.device, enabled=self._use_amp, dtype=self._amp_dtype):
                 out = self.model(xt)
-        policy_out = out["policy"] if "policy" in out else out["policy_own"]
+        policy_out = _policy_output(out)
         _cpu_f32 = torch.float32
         pol = policy_out.detach().to(dtype=_cpu_f32, device="cpu").numpy()
         wdl = out["wdl"].detach().to(dtype=_cpu_f32, device="cpu").numpy()
@@ -118,7 +123,7 @@ class LocalModelEvaluator:
             with torch.no_grad():
                 with inference_autocast(device=self.device, enabled=self._use_amp, dtype=self._amp_dtype):
                     out = self.model(xt)
-            policy_out = out["policy"] if "policy" in out else out["policy_own"]
+            policy_out = _policy_output(out)
             pol = policy_out.detach().float()
             wdl = out["wdl"].detach().float()
             return pol, wdl, None
@@ -138,7 +143,7 @@ class LocalModelEvaluator:
             with torch.no_grad():
                 with inference_autocast(device=self.device, enabled=self._use_amp, dtype=self._amp_dtype):
                     out = self.model(xt)
-            policy_out = out["policy"] if "policy" in out else out["policy_own"]
+            policy_out = _policy_output(out)
             pol = policy_out.detach().to(dtype=torch.float32, device="cpu", non_blocking=True)
             wdl = out["wdl"].detach().to(dtype=torch.float32, device="cpu", non_blocking=True)
             done = torch.cuda.Event()
@@ -173,7 +178,7 @@ class LocalModelEvaluator:
         with torch.no_grad():
             with inference_autocast(device=self.device, enabled=self._use_amp, dtype=self._amp_dtype):
                 out = self.model(xt)
-        policy_gpu = out["policy"] if "policy" in out else out["policy_own"]
+        policy_gpu = _policy_output(out)
         policy_gpu = policy_gpu.detach().float()
         wdl = out["wdl"].detach().to(dtype=torch.float32, device="cpu").numpy()
 
@@ -478,7 +483,7 @@ class SlotBroker:
         ckpt = torch.load(str(model_path), map_location="cpu")
         sd = ckpt.get("model", ckpt)
         model = build_model(model_cfg)
-        model.load_state_dict(sd)
+        load_state_dict_tolerant(model, sd, label="broker-model")
         model.to(self.device)
         model.eval()
         if self.compile_inference and self.device.startswith("cuda"):
@@ -527,8 +532,7 @@ class SlotBroker:
                      time.time() - inf_t0, xt.shape[0])
             self._first_inference_pending = False
 
-        policy_key = "policy" if "policy" in out else "policy_own"
-        pol = out[policy_key].detach().float().cpu().numpy()
+        pol = _policy_output(out).detach().float().cpu().numpy()
         wdl = out["wdl"].detach().float().cpu().numpy()
 
         # Scatter outputs back to each slot
@@ -732,106 +736,6 @@ class SlotInferenceClient:
         self._disconnect()
 
 
-# ---------------------------------------------------------------------------
-# Legacy socket-based client (kept for backwards compatibility / remote workers)
-# ---------------------------------------------------------------------------
-
-# Importing code that references ShmBatchInferenceClient will still work,
-# but new deployments should use SlotInferenceClient.
-
-try:
-    from multiprocessing.connection import Client, Listener
-except ImportError:
-    Client = None  # type: ignore[assignment,misc]
-    Listener = None  # type: ignore[assignment,misc]
-
-
-class ShmBatchInferenceClient:
-    """Legacy socket+shm client. Prefer SlotInferenceClient for local workers."""
-
-    def __init__(self, *, endpoint: str, authkey: bytes = b"cae-broker-v1") -> None:
-        self.endpoint = str(endpoint)
-        self.authkey = bytes(authkey)
-
-    def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        xb = _coerce_input_batch(x)
-        bsz = int(xb.shape[0])
-        pol_shape = (bsz, 4672)
-        wdl_shape = (bsz, 3)
-
-        in_shm = SharedMemory(create=True, size=int(xb.nbytes))
-        pol_shm = SharedMemory(
-            create=True,
-            size=int(
-                np.prod(pol_shape, dtype=np.int64) * np.dtype(np.float32).itemsize
-            ),
-        )
-        wdl_shm = SharedMemory(
-            create=True,
-            size=int(
-                np.prod(wdl_shape, dtype=np.int64) * np.dtype(np.float32).itemsize
-            ),
-        )
-        try:
-            np.ndarray(xb.shape, dtype=xb.dtype, buffer=in_shm.buf)[:] = xb
-            address, family = _broker_address(self.endpoint)
-            with Client(address=address, family=family, authkey=self.authkey) as conn:
-                conn.send(
-                    {
-                        "kind": "eval",
-                        "x": {
-                            "name": in_shm.name,
-                            "shape": tuple(int(v) for v in xb.shape),
-                            "dtype": str(xb.dtype),
-                        },
-                        "policy": {
-                            "name": pol_shm.name,
-                            "shape": pol_shape,
-                            "dtype": "float32",
-                        },
-                        "wdl": {
-                            "name": wdl_shm.name,
-                            "shape": wdl_shape,
-                            "dtype": "float32",
-                        },
-                    }
-                )
-                resp = conn.recv()
-            if not isinstance(resp, dict) or not bool(resp.get("ok", False)):
-                raise RuntimeError(
-                    str((resp or {}).get("error") or "inference broker request failed")
-                )
-            pol = np.array(
-                np.ndarray(pol_shape, dtype=np.float32, buffer=pol_shm.buf),
-                copy=True,
-                order="C",
-            )
-            wdl = np.array(
-                np.ndarray(wdl_shape, dtype=np.float32, buffer=wdl_shm.buf),
-                copy=True,
-                order="C",
-            )
-            return pol, wdl
-        finally:
-            for shm in (in_shm, pol_shm, wdl_shm):
-                try:
-                    shm.close()
-                except Exception:
-                    pass
-                try:
-                    shm.unlink()
-                except Exception:
-                    pass
-
-
-def _broker_address(endpoint: str) -> tuple[tuple[str, int] | str, str]:
-    raw = str(endpoint).strip()
-    if raw.startswith("/"):
-        return raw, "AF_UNIX"
-    host, _, port_s = raw.rpartition(":")
-    if not host or not port_s:
-        raise ValueError(f"invalid inference endpoint: {endpoint!r}")
-    return (host, int(port_s)), "AF_INET"
 
 
 # ---------------------------------------------------------------------------

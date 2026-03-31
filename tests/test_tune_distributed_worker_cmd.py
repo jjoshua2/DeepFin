@@ -10,9 +10,11 @@ from chess_anti_engine.tune.harness import (
     _patch_experiment_state_for_resume,
     _resolve_local_override_root as _resolve_harness_override_root,
 )
-from chess_anti_engine.tune.trainable import (
+from chess_anti_engine.tune.distributed_runtime import (
     _build_distributed_worker_cmd,
     _launch_inference_broker,
+)
+from chess_anti_engine.tune.replay_exchange import (
     _refresh_replay_shards_on_exploit,
     _trial_replay_shard_dir,
 )
@@ -278,8 +280,8 @@ def test_launch_inference_broker_does_not_inherit_worker_compile(monkeypatch, tm
         calls.append(list(cmd))
         return DummyProc()
 
-    monkeypatch.setattr("chess_anti_engine.tune.trainable.terminate_matching_processes", lambda **kwargs: [])
-    monkeypatch.setattr("chess_anti_engine.tune.trainable.subprocess.Popen", _fake_popen)
+    monkeypatch.setattr("chess_anti_engine.tune.distributed_runtime.terminate_matching_processes", lambda **kwargs: [])
+    monkeypatch.setattr("chess_anti_engine.tune.distributed_runtime.subprocess.Popen", _fake_popen)
 
     publish_dir = tmp_path / "publish"
     trial_dir = tmp_path / "trial"
@@ -313,8 +315,8 @@ def test_launch_inference_broker_respects_dedicated_compile_flag(monkeypatch, tm
         calls.append(list(cmd))
         return DummyProc()
 
-    monkeypatch.setattr("chess_anti_engine.tune.trainable.terminate_matching_processes", lambda **kwargs: [])
-    monkeypatch.setattr("chess_anti_engine.tune.trainable.subprocess.Popen", _fake_popen)
+    monkeypatch.setattr("chess_anti_engine.tune.distributed_runtime.terminate_matching_processes", lambda **kwargs: [])
+    monkeypatch.setattr("chess_anti_engine.tune.distributed_runtime.subprocess.Popen", _fake_popen)
 
     publish_dir = tmp_path / "publish"
     trial_dir = tmp_path / "trial"

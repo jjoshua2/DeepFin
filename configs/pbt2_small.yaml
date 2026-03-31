@@ -32,13 +32,14 @@ worker_wheel_path: null  # Optional: built wheel to publish for remote worker se
 bootstrap_max_positions: 0   # 0 = load ALL positions (14.2M) — used by scripts/train_bootstrap.py
 bootstrap_train_steps: 0     # 0 = auto: train 1 epoch — used by scripts/train_bootstrap.py
 shared_shards_dir: null  # Disabled: start trials from bootstrap weights + fresh selfplay window
-salvage_seed_pool_dir: /home/josh/projects/chess/runs/pbt2_small/salvage/e4706_20260316_180846_balanced8
+salvage_seed_pool_dir: /home/josh/projects/chess/runs/pbt2_small/salvage/run29_value_head_upgrade
 salvage_restore_donor_config: false   # Use new PB2 hyperparams, not donor's
 salvage_restore_full_trainer_state: false  # Fresh optimizer/LR schedule
+salvage_reinit_volatility_heads: true
 
 model:
   kind: transformer
-  embed_dim: 384     # 15M params, ~20 GB for 8 trials in 32 GB VRAM
+  embed_dim: 384     # 15M params, ~0.7 GB optimizer state for 4 trials in 32 GB VRAM
   num_layers: 8
   num_heads: 12
   ffn_mult: 2
@@ -55,17 +56,17 @@ stockfish:
   # Keep SF at full strength for labels and sample from MultiPV for easier played moves.
 
   pid_enabled: true
-  pid_target_winrate: 0.53
+  pid_target_winrate: 0.60
   pid_ema_alpha: 0.37      # EMA half-life ~1.5 iterations.
   pid_deadzone: 0.025
   pid_rate_limit: 0.10
-  pid_min_games_between_adjust: 40  # Adjust at most once per 40 completed games to reduce oscillation.
+  pid_min_games_between_adjust: 80  # Adjust at most once per 80 completed games to reduce oscillation.
   pid_kp: 1.5
   pid_ki: 0.10
   pid_kd: 0.0
   pid_integral_clamp: 1.0
-  pid_min_nodes: 1000        # Keep nodes fixed — difficulty via random_move_prob only
-  pid_max_nodes: 1000
+  pid_min_nodes: 1000
+  pid_max_nodes: 10000       # Allow SF to ramp nodes once random_move_prob bottoms out
   pid_initial_skill_level: 20
   pid_skill_min: 20
   pid_skill_max: 20
@@ -73,18 +74,29 @@ stockfish:
   pid_skill_demote_nodes: 1000
   pid_skill_nodes_on_promote: 1000
   pid_skill_nodes_on_demote: 1000
-  pid_random_move_prob_start: 0.37
-  pid_random_move_prob_min: 0.0
+  pid_random_move_prob_start: 0.60
+  pid_random_move_prob_min: 0.05
   pid_random_move_prob_max: 1.0
-  pid_random_move_stage_end: 0.5
+  pid_random_move_stage_end: 0.05   # Regret stage unlocks once rmp hits 5% floor
   pid_max_rand_step: 0.01   # Smaller 1% steps to reduce PID overshoot/oscillation.
+  pid_max_rand_step_start: 0.05  # Large initial step so PID finds equilibrium fast.
+  pid_max_rand_step_ramp_iters: 12  # Use 0.05 step for first 12 iters, then 0.01.
+  pid_topk_stage_end: 0.50          # topk log-shrinks over the rmp schedule
+  pid_topk_min: 2                   # do not collapse to top-1; keep top-2 available
+  pid_suboptimal_wdl_regret_max: 0.50
+  pid_suboptimal_wdl_regret_min: 0.01
+  pid_wdl_regret_start: 2.00       # start very easy — any top-2 move acceptable
+  pid_wdl_regret_min: 0.02         # hard floor
+  pid_wdl_regret_max: 2.0          # max if PID needs to ease off
+  pid_wdl_regret_stage_end: 0.05   # nodes unlock when regret reaches 5%
+  pid_max_regret_step: 0.02        # max regret change per PID step
 
 selfplay:
-  games_per_iter: 150  # Steady-state target once the early ramp finishes.
+  games_per_iter: 120  # Run 26 default.
   games_per_iter_start: 32  # One round of 8 workers × 4 games; fast sanity check.
-  games_per_iter_ramp_iters: 20
+  games_per_iter_ramp_iters: 5
   selfplay_fraction: 0.20  # Pin near the recent good band while narrowing the search to lr + feature-group dropout.
-  selfplay_batch: 8     # Keep per-worker batches large enough to amortize MCTS/broker overhead.
+  selfplay_batch: 64    # Large batches to amortize MCTS/broker overhead (run26 value).
   max_plies: 240
 
   temperature: 1.0       # Gumbel improved policy already provides exploration; T=1.0 avoids distorting the search target.
@@ -104,7 +116,7 @@ selfplay:
   opening_book_mix_prob_2: 0.75  # 75% of book games use the 8-move book, 25% use the 2-move book
   random_start_plies: 2   # Fallback if book unavailable
 
-  mcts: puct
+  mcts: gumbel
   mcts_simulations: 64
   mcts_start_simulations: 64  # Full budget from start (KataGo-style: 75% full, 25% fast)
   playout_cap_fraction: 0.30  # Restore prior ratio; evaluate policy progress before spending more compute on full-search positions.
@@ -133,12 +145,12 @@ selfplay:
 
 train:
   optimizer: cosmos_fast
-  lr: 0.002         # PBT converged to 0.0025 ceiling every trial in Run 7; raise default toward optimum.
+  lr: 0.003         # Run 26 default.
   batch_size: 256   # Keep microbatch small enough for VRAM; use accumulation for the larger effective batch.
-  train_steps: 100  # Lets the 10%-of-window target scale up to roughly a 1M-position replay with effective batch 1024.
+  train_steps: 400  # Run 26 default; more training per iteration.
   train_window_fraction: 0.10  # Target at least 10% of the current replay per iteration once the window outgrows fresh data.
   no_amp: false
-  feature_dropout_p: 0.25  # Pinned: top-5 median from Run 4
+  feature_dropout_p: 0.10  # Fixed at 0.10 (not searched).
   zclip_z_thresh: 2.5
   zclip_alpha: 0.97
   zclip_max_norm: 1.0
@@ -149,18 +161,18 @@ train:
   w_wdl: 0.95               # PBT converged to 0.95-0.98 across all Run 7 trials.
   w_sf_move: 0.01           # Keep a tiny auxiliary weight; PB2 no longer searches this head.
   w_sf_eval: 0.10           # Pinned: top-5 median from Run 4
-  w_categorical: 0.10       # Pinned: top-5 median from Run 4
+  w_categorical: 0.30       # Run 26 default.
   w_volatility: 0.10        # Pinned: top-5 median from Run 4
   w_sf_volatility: 0.05
   w_moves_left: 0.02
-  w_sf_wdl: 0.02            # Seed low; searched by PB2 — lower bound 0 lets PB2 disable if harmful.
+  w_sf_wdl: 1.7             # High start so effective weight ≈1.0 at rand_prob=0.60; decays to floor as model improves.
   sf_wdl_conf_power: 1.0    # Confidence damping: scale SF-WDL by (1-draw_prob)^power.
   sf_wdl_draw_scale: 0.55   # Pinned low-to-mid based on the healthier late-run settings.
-  sf_wdl_floor: 0.0         # Keep floor at 0 so PB2 can disable sf_wdl if harmful.
-  sf_wdl_floor_at: 0.1
+  sf_wdl_floor: 0.20        # Floor: keep 20% SF signal even at low random_move_prob (run26 value).
+  sf_wdl_floor_at: 0.5      # Run 26 value.
 
-  accum_steps: 4    # Effective batch 1024 without the peak-memory cost of a literal 1024 microbatch.
-  warmup_steps: 36    # Slightly longer warmup for the new slower/full-Gumbel training regime.
+  accum_steps: 2    # Effective batch 512 (run26 value).
+  warmup_steps: 72   # Run 26 default.
   lr_eta_min: 0.00001
   lr_T0: 999999        # Disable cosine cycling — PBT exploit/explore handles LR variation
   lr_T_mult: 1
@@ -180,35 +192,39 @@ tune:
   tune_num_to_keep: 10              # keep last 10 checkpoints per trial
   tune_keep_last_experiments: 2     # keep last 2 experiments under work_dir/tune
 
-  tune_scheduler: pb2
+  tune_scheduler: gpbt_pl
   gpbt_inertia_weight: 1.0
   gpbt_winner_weight: 1.0
   gpbt_quantile_fraction: 0.25
-  gpbt_resample_probability: 0.05
-  num_samples: 6
+  gpbt_resample_probability: 0.20
+  num_samples: 4
   max_concurrent_trials: 4
   cpus_per_trial: 1
   gpus_per_trial: 0.20
-  distributed_workers_per_trial: 4
-  distributed_worker_sf_workers: 1
+  distributed_workers_per_trial: 2
+  distributed_worker_sf_workers: 2
   distributed_worker_username: josh
   distributed_worker_password: chess_worker_2026
   distributed_worker_use_compile: true
   distributed_inference_broker_enabled: true
-  distributed_inference_batch_wait_ms: 5.0
-  distributed_inference_max_batch_per_slot: 256
+  distributed_inference_batch_wait_ms: 0.0
+  distributed_inference_max_batch_per_slot: 512
+  distributed_inference_use_compile: false
+  distributed_pause_selfplay_during_training: false
   distributed_worker_shared_cache_dir: /home/josh/projects/chess/runs/pbt2_small/server/worker_cache
   distributed_min_workers_per_trial: 1
   distributed_max_worker_delta_per_rebalance: 1
-  distributed_wait_timeout_seconds: 5400
+  distributed_wait_timeout_seconds: 1200
   distributed_server_port: 45453
   distributed_server_host: 0.0.0.0
   distributed_server_public_url: http://192.168.1.212:45453
-  distributed_server_root_override: /mnt/c/chess_active/pbt2_small_server
-  tune_replay_root_override: /mnt/c/chess_active/pbt2_small_replay
+  distributed_server_root_override: /home/josh/projects/chess/runs/pbt2_small/server
+  tune_replay_root_override: /home/josh/projects/chess/runs/pbt2_small/replay
 
   # Disk-backed replay buffer: keeps ~1 GB per trial instead of ~10 GB
-  shuffle_buffer_size: 70000  # In-memory shuffle buffer (samples)
+  shuffle_buffer_size: 25000  # In-memory shuffle buffer (run26 value)
+  shuffle_refresh_interval: 1
+  shuffle_refresh_shards: 5
   shard_size: 2000            # Samples per on-disk shard (~1 MB compressed)
   # On PB2 exploit (cross-trial restore), replace most recent local bad data and
   # import only latest-generation shards from strong sibling trials.
@@ -225,9 +241,9 @@ tune:
   exploit_replay_local_keep_older_fraction: 0.65
 
   # PB2: exploit+explore every X iterations (was 20).
-  pb2_perturbation_interval: 8
+  pb2_perturbation_interval: 15
 
-  tune_metric: opponent_strength
+  tune_metric: opponent_strength_ema
   tune_mode: max
 
   # Net gating: DISABLED — gate was using 1-sim (raw policy) while selfplay
@@ -265,9 +281,5 @@ tune:
   # with only lr + w_wdl searched. Open up more dimensions to break plateau.
   #
   # Only pb2_bounds_* keys present here are searched; everything else is pinned.
-  pb2_bounds_lr: [1.0e-3, 4.0e-3]       # Expanded ceiling (was 2.5e-3, converged to 0.0025 ceiling every trial in Run 7).
-  pb2_bounds_fdp_king_safety: [0.0, 0.5]
-  pb2_bounds_fdp_pins: [0.0, 0.5]       # High pin-feature dropout looked harmful in the first dropout-focused run.
-  pb2_bounds_fdp_pawns: [0.0, 0.5]
-  pb2_bounds_fdp_mobility: [0.0, 0.5]   # High mobility-feature dropout also correlated with the weakest early trial.
-  pb2_bounds_fdp_outposts: [0.0, 0.5]
+  pb2_bounds_lr: [1.0e-3, 4.0e-3]
+  pb2_bounds_w_wdl: [0.5, 2.0]

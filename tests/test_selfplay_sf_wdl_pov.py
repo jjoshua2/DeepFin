@@ -5,6 +5,8 @@ import numpy as np
 import torch
 
 from chess_anti_engine.selfplay import play_batch
+from chess_anti_engine.selfplay.config import TemperatureConfig, SearchConfig, DiffFocusConfig, GameConfig
+from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.stockfish.uci import StockfishResult
 
 
@@ -34,16 +36,14 @@ def test_sf_wdl_target_is_flipped_to_network_turn_pov_for_both_colors():
     rng = np.random.default_rng(0)
 
     samples, _stats = play_batch(
-        model,
-        device="cpu",
-        rng=rng,
+        model, device="cpu", rng=rng,
         stockfish=_FakeStockfish([1.0, 0.0, 0.0]),
-        games=2,  # network plays white in game 0, black in game 1
-        temperature=1.0,
-        max_plies=4,
-        mcts_simulations=1,
-        diff_focus_enabled=False,
-        random_start_plies=0,
+        games=2,
+        temp=TemperatureConfig(temperature=1.0),
+        search=SearchConfig(simulations=1),
+        opening=OpeningConfig(random_start_plies=0),
+        diff_focus=DiffFocusConfig(enabled=False),
+        game=GameConfig(max_plies=4),
     )
 
     sf_wdls = [s.sf_wdl for s in samples if s.sf_wdl is not None]

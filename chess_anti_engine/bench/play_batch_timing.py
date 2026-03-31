@@ -6,6 +6,7 @@ import time
 import numpy as np
 import torch
 
+from chess_anti_engine.inference import _policy_output
 from chess_anti_engine.model import ModelConfig, build_model
 from chess_anti_engine.selfplay.manager import _apply_temperature, BatchStats
 from chess_anti_engine.replay.buffer import ReplaySample
@@ -84,7 +85,7 @@ def play_batch_timed(
             with torch.no_grad():
                 xt = torch.from_numpy(xs_batch).to(device)
                 out = model(xt)
-                policy_out = out["policy"] if "policy" in out else out["policy_own"]
+                policy_out = _policy_output(out)
                 pol_logits = policy_out.detach().float().cpu().numpy()
 
             is_full = rng.random(size=len(net_idxs)) < float(playout_cap_fraction)

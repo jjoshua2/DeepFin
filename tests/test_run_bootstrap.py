@@ -11,9 +11,14 @@ import chess_anti_engine.run as run_module
 class _FakeModel:
     def __init__(self) -> None:
         self.loaded = None
+        self._state = {}
 
-    def load_state_dict(self, state) -> None:
+    def state_dict(self):
+        return self._state
+
+    def load_state_dict(self, state, strict=True):
         self.loaded = state
+        return [], []
 
 
 class _FakeTrainer:

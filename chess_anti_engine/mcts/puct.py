@@ -8,7 +8,7 @@ import chess
 import torch
 
 from chess_anti_engine.encoding import encode_position, encode_positions_batch
-from chess_anti_engine.inference import BatchEvaluator, LocalModelEvaluator
+from chess_anti_engine.inference import BatchEvaluator, LocalModelEvaluator, _policy_output
 from chess_anti_engine.moves import POLICY_SIZE, move_to_index
 from chess_anti_engine.moves.encode import index_to_move_fast, legal_move_indices
 from chess_anti_engine.utils.amp import inference_autocast
@@ -158,7 +158,7 @@ def _init_root(model: torch.nn.Module, board: chess.Board, *, device: str, rng: 
     xt = torch.from_numpy(x0[None, ...]).to(device)
     with inference_autocast(device=device, enabled=bool(cfg.use_amp), dtype=str(cfg.amp_dtype)):
         out = model(xt)
-    policy_out = out["policy"] if "policy" in out else out["policy_own"]
+    policy_out = _policy_output(out)
     pol_logits = policy_out.detach().float().cpu().numpy().reshape(-1)
     wdl_logits = out["wdl"].detach().float().cpu().numpy().reshape(-1)
 

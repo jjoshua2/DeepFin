@@ -7,6 +7,7 @@ import pytest
 import torch
 
 from chess_anti_engine.encoding import encode_positions_batch
+from chess_anti_engine.inference import _policy_output
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
 from chess_anti_engine.mcts.puct import MCTSConfig, run_mcts_many
 from chess_anti_engine.mcts.puct_c import run_mcts_many_c
@@ -295,7 +296,7 @@ def test_run_mcts_many_precomputed_logits_matches_direct_path(tiny_model):
         xs = encode_positions_batch([board], add_features=True)
         with torch.no_grad():
             out = tiny_model(torch.from_numpy(xs))
-        policy_out = out["policy"] if "policy" in out else out["policy_own"]
+        policy_out = _policy_output(out)
         pre_pol = policy_out.detach().float().cpu().numpy()
         pre_wdl = out["wdl"].detach().float().cpu().numpy()
 

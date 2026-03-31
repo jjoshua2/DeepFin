@@ -87,3 +87,49 @@ def zero_policy_head_parameters_(model: torch.nn.Module) -> list[str]:
 def reinit_volatility_head_parameters_(model: torch.nn.Module) -> list[str]:
     """Re-init volatility heads while leaving trunk/policy/value intact."""
     return _reinit_heads(model, _VOLATILITY_HEADS)
+
+
+_VALUE_HEAD_PREFIXES = ("value_wdl.", "value_sf_eval.", "value_categorical.")
+
+
+def load_state_dict_tolerant(
+    model: torch.nn.Module,
+    ckpt_state: dict,
+    *,
+    label: str = "checkpoint",
+) -> None:
+    """Load checkpoint into *model*, tolerating value-head shape changes.
+
+    Keys whose names start with a value-head prefix and whose shapes differ
+    between *ckpt_state* and *model* are silently dropped so the model keeps
+    its freshly-initialised value-head weights.  Any other shape mismatch or
+    unexpected missing/extra key is treated as a hard error.
+    """
+    model_state = model.state_dict()
+    filtered = {}
+    skipped: list[str] = []
+    for k, v in ckpt_state.items():
+        if k in model_state and v.shape != model_state[k].shape:
+            if any(k.startswith(p) for p in _VALUE_HEAD_PREFIXES):
+                skipped.append(k)
+                continue
+            raise RuntimeError(
+                f"[{label}] Shape mismatch for non-value-head key {k!r}: "
+                f"checkpoint {v.shape} vs model {model_state[k].shape}"
+            )
+        filtered[k] = v
+
+    missing, unexpected = model.load_state_dict(filtered, strict=False)
+    expected_missing = set(skipped)
+    bad_missing = [k for k in missing if k not in expected_missing
+                   and not any(k.startswith(p) for p in _VALUE_HEAD_PREFIXES)]
+    bad_unexpected = [k for k in unexpected
+                      if not any(k.startswith(p) for p in _VALUE_HEAD_PREFIXES)]
+    if bad_missing or bad_unexpected:
+        raise RuntimeError(
+            f"[{label}] Unexpected key mismatch — "
+            f"missing: {bad_missing}, unexpected: {bad_unexpected}"
+        )
+    if skipped or missing or unexpected:
+        print(f"[{label}] Value head keys reinit (expected): "
+              f"skipped={skipped}, missing={missing}, unexpected={unexpected}")

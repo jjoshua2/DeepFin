@@ -96,23 +96,33 @@ class AttentionPolicyHead(nn.Module):
 
 
 class ValueHead(nn.Module):
-    def __init__(self, embed_dim: int, out_dim: int):
+    """LC0-style value head: per-square projection → flatten → MLP.
+
+    Instead of mean-pooling (which discards spatial information), each of the
+    64 square tokens is projected to ``token_dim`` features and then
+    concatenated into a single vector.  This preserves which-square-has-what
+    information that is critical for position evaluation.
+    """
+
+    def __init__(self, embed_dim: int, out_dim: int, *, token_dim: int = 16):
         super().__init__()
+        self.token_proj = nn.Linear(embed_dim, token_dim)
+        flat_dim = 64 * token_dim  # 64 squares
         self.net = nn.Sequential(
-            nn.Linear(embed_dim, 128),
+            nn.Linear(flat_dim, 128),
             nn.Mish(),
             nn.Linear(128, out_dim),
         )
         # Small-scale init on the output projection so initial logits are ~0
         # (softmax → ~uniform distribution, win_p ≈ 1/3 instead of random ±1.4σ).
-        # Standard Kaiming init gives logit std ≈ 1.4, which causes ~1/3 of random
-        # inits to have win_p < 0.05 and immediately trigger soft resignation.
         nn.init.normal_(self.net[2].weight, std=0.01)
         nn.init.zeros_(self.net[2].bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        pooled = x.mean(dim=1)
-        return self.net(pooled)
+        # x: (B, 64, embed_dim)
+        projected = self.token_proj(x)       # (B, 64, token_dim)
+        flat = projected.flatten(1)          # (B, 64 * token_dim)
+        return self.net(flat)
 
 
 class VolatilityHead(nn.Module):

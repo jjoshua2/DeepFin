@@ -4,6 +4,8 @@ import numpy as np
 import torch
 
 from chess_anti_engine.selfplay import play_batch
+from chess_anti_engine.selfplay.config import TemperatureConfig, GameConfig
+from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.stockfish.uci import StockfishResult
 
 
@@ -23,15 +25,12 @@ def test_timeout_adjudication_threshold_white_to_move_win():
     rng = np.random.default_rng(0)
 
     _samples, stats = play_batch(
-        model,
-        device="cpu",
-        rng=rng,
+        model, device="cpu", rng=rng,
         stockfish=_FakeStockfish([0.95, 0.05, 0.00]),
         games=1,
-        temperature=1.0,
-        max_plies=0,
-        timeout_adjudication_threshold=0.90,
-        random_start_plies=0,
+        temp=TemperatureConfig(temperature=1.0),
+        opening=OpeningConfig(random_start_plies=0),
+        game=GameConfig(max_plies=0, timeout_adjudication_threshold=0.90),
     )
 
     assert stats.w == 1
@@ -44,15 +43,12 @@ def test_timeout_adjudication_threshold_white_to_move_draw_below_threshold():
     rng = np.random.default_rng(1)
 
     _samples, stats = play_batch(
-        model,
-        device="cpu",
-        rng=rng,
+        model, device="cpu", rng=rng,
         stockfish=_FakeStockfish([0.89, 0.11, 0.00]),
         games=1,
-        temperature=1.0,
-        max_plies=0,
-        timeout_adjudication_threshold=0.90,
-        random_start_plies=0,
+        temp=TemperatureConfig(temperature=1.0),
+        opening=OpeningConfig(random_start_plies=0),
+        game=GameConfig(max_plies=0, timeout_adjudication_threshold=0.90),
     )
 
     assert stats.w == 0
@@ -67,15 +63,12 @@ def test_timeout_adjudication_threshold_flip_when_black_to_move():
     rng = np.random.default_rng(2)
 
     _samples, stats = play_batch(
-        model,
-        device="cpu",
-        rng=rng,
+        model, device="cpu", rng=rng,
         stockfish=_FakeStockfish([0.95, 0.05, 0.00]),
         games=1,
-        temperature=1.0,
-        max_plies=0,
-        timeout_adjudication_threshold=0.90,
-        random_start_plies=1,  # makes the starting board black to move
+        temp=TemperatureConfig(temperature=1.0),
+        opening=OpeningConfig(random_start_plies=1),
+        game=GameConfig(max_plies=0, timeout_adjudication_threshold=0.90),
     )
 
     assert stats.w == 0

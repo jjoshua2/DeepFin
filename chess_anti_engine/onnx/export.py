@@ -6,6 +6,8 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
+from chess_anti_engine.inference import _policy_output
+
 
 class _OnnxWrapper(nn.Module):
     def __init__(self, model: nn.Module):
@@ -14,8 +16,7 @@ class _OnnxWrapper(nn.Module):
 
     def forward(self, x: torch.Tensor):
         out = self.model(x)
-        # Export a stable subset. (policy_own, wdl, moves_left)
-        policy = out["policy"] if "policy" in out else out["policy_own"]
+        policy = _policy_output(out)
         wdl = out["wdl"]
         moves_left = out.get("moves_left", torch.zeros((x.shape[0], 1), device=x.device, dtype=wdl.dtype))
         return policy, wdl, moves_left

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import getpass
-import hashlib
 import json
 import logging
 import os
@@ -17,12 +16,20 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from chess_anti_engine.inference import SlotInferenceClient, ShmBatchInferenceClient
-from chess_anti_engine.model import ModelConfig, build_model
+from chess_anti_engine.inference import SlotInferenceClient
+from chess_anti_engine.utils import sha256_file as _sha256_file
+from chess_anti_engine.model import ModelConfig, build_model, load_state_dict_tolerant
 from chess_anti_engine.moves.encode import POLICY_SIZE
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.shard import ShardMeta, save_npz
 from chess_anti_engine.selfplay import play_batch
+from chess_anti_engine.selfplay.config import (
+    DiffFocusConfig,
+    GameConfig,
+    OpponentConfig,
+    SearchConfig,
+    TemperatureConfig,
+)
 from chess_anti_engine.selfplay.match import play_match_batch
 from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.stockfish import StockfishPool, StockfishUCI
@@ -61,17 +68,6 @@ def tune_games_per_batch(
     return max(1, nxt)
 
 
-def _sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        while True:
-            b = f.read(1024 * 1024)
-            if not b:
-                break
-            h.update(b)
-    return h.hexdigest()
-
-
 @dataclass
 class _BufferedUpload:
     samples: list[ReplaySample] = field(default_factory=list)
@@ -94,24 +90,10 @@ class _BufferedUpload:
     first_buffered_at_s: float | None = None
 
     def reset(self) -> None:
-        self.samples.clear()
-        self.model_sha = None
-        self.model_step = None
-        self.games = 0
-        self.positions = 0
-        self.w = 0
-        self.d = 0
-        self.l = 0
-        self.total_game_plies = 0
-        self.adjudicated_games = 0
-        self.total_draw_games = 0
-        self.selfplay_games = 0
-        self.selfplay_adjudicated_games = 0
-        self.selfplay_draw_games = 0
-        self.curriculum_games = 0
-        self.curriculum_adjudicated_games = 0
-        self.curriculum_draw_games = 0
-        self.first_buffered_at_s = None
+        import dataclasses as _dc
+        fresh = _BufferedUpload()
+        for f in _dc.fields(self):
+            setattr(self, f.name, getattr(fresh, f.name))
 
 
 def _buffer_elapsed_s(*, buf: _BufferedUpload, now_s: float) -> float:
@@ -155,7 +137,7 @@ def _buffer_add_completed_game(
         buf.model_step = int(model_step)
     if buf.first_buffered_at_s is None:
         buf.first_buffered_at_s = float(now_s)
-    buf.samples.extend(list(game_batch.samples))
+    buf.samples.extend(game_batch.samples)
     buf.games += int(getattr(game_batch, "games", 0))
     buf.positions += int(getattr(game_batch, "positions", 0))
     buf.w += int(getattr(game_batch, "w", 0))
@@ -497,6 +479,65 @@ def _configure_shared_compile_cache(*, cache_dir: Path) -> None:
     os.environ.setdefault("TRITON_CACHE_DIR", str(triton_dir))
 
 
+def _cached_sha_asset_needs_refresh(*, path: Path, sha256: str, last_sha256: str | None = None) -> bool:
+    """Return True when a cached SHA-addressed asset must be refreshed.
+
+    Repeated SHAs can reuse an already-validated file, but only if the expected
+    cache path still exists. This covers local cache eviction and manifest
+    filename changes without re-hashing large assets on every poll.
+    """
+    if not path.exists():
+        return True
+    if str(sha256) == str(last_sha256 or ""):
+        return False
+    return _sha256_file(path) != str(sha256)
+
+
+def _download_opening_book(
+    manifest: dict,
+    key: str,
+    cache_dir: Path,
+    *,
+    cache_prefix: str,
+    default_endpoint: str,
+    server_url_fn,
+    headers: dict,
+    log,
+    last_sha: str | None = None,
+) -> tuple[str | None, str | None]:
+    """Download an opening book asset from the manifest.
+
+    Returns (local_path, manifest_sha).  Skips I/O when *last_sha* matches
+    the manifest SHA (the file was already verified on a prior iteration).
+    """
+    if key not in manifest:
+        return None, None
+    ob = manifest.get(key) or {}
+    filename = str(ob.get("filename") or key)
+    sha = str(ob.get("sha256") or "")
+    endpoint = str(ob.get("endpoint") or default_endpoint)
+
+    if sha:
+        ob_path = cache_dir / f"{cache_prefix}_{sha}_{filename}"
+        if _cached_sha_asset_needs_refresh(path=ob_path, sha256=sha, last_sha256=last_sha):
+            log.info("downloading %s sha=%s filename=%s", key, sha, filename)
+            _download_and_verify_shared(
+                server_url_fn(endpoint),
+                out_path=ob_path,
+                expected_sha256=sha,
+                headers=headers,
+            )
+    else:
+        ob_path = cache_dir / f"{cache_prefix}_{filename}"
+        if not ob_path.exists():
+            _download(
+                server_url_fn(endpoint),
+                out_path=ob_path,
+                headers=headers,
+            )
+    return str(ob_path), sha or None
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Distributed selfplay worker")
 
@@ -570,7 +611,6 @@ def main() -> None:
 
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--device", type=str, default=None)
-    ap.add_argument("--inference-broker-socket", type=str, default=None)
     ap.add_argument("--inference-slot-name", type=str, default=None,
                     help="Shared-memory slot name for slot-based inference broker.")
     ap.add_argument("--inference-slot-max-batch", type=int, default=256,
@@ -828,6 +868,24 @@ def main() -> None:
 
     rng = np.random.default_rng(int(args.seed))
 
+    # Validate server-managed overrides once at startup (args never change).
+    if not bool(args.allow_overrides):
+        _server_managed_keys = [
+            "max_plies", "mcts", "mcts_simulations", "playout_cap_fraction",
+            "fast_simulations", "opening_book_prob", "opening_book_max_plies",
+            "opening_book_max_games", "random_start_plies", "sf_nodes",
+            "sf_multipv", "sf_policy_temp", "sf_policy_label_smooth",
+            "timeout_adjudication_threshold", "temperature",
+            "temperature_decay_start_move", "temperature_decay_moves",
+            "temperature_endgame",
+        ]
+        overridden = [k for k in _server_managed_keys if getattr(args, k, None) is not None]
+        if overridden:
+            raise SystemExit(
+                "This worker is configured for server-managed strength knobs. "
+                f"Remove selfplay/strength flags ({', '.join(overridden)}), or pass --allow-overrides for debugging."
+            )
+
     # Engine: initialize with placeholder settings; we will align nodes from manifest each loop.
     # MultiPV and Skill Level are set at init time; reinitialize when either changes.
     sf = None
@@ -835,6 +893,9 @@ def main() -> None:
     sf_skill_level_active: int | None = None
 
     last_model_sha = None
+    last_ob_sha: str | None = None
+    last_ob2_sha: str | None = None
+    last_sf_sha: str | None = None
     model_cfg_active: ModelConfig | None = None
     model = None
     def _make_inference_client():
@@ -842,10 +903,6 @@ def main() -> None:
             return SlotInferenceClient(
                 slot_name=str(args.inference_slot_name),
                 max_batch=int(args.inference_slot_max_batch),
-            )
-        if str(args.inference_broker_socket or "").strip():
-            return ShmBatchInferenceClient(
-                endpoint=str(args.inference_broker_socket),
             )
         return None
 
@@ -1170,7 +1227,7 @@ def main() -> None:
                 model = build_model(model_cfg)
                 ckpt = torch.load(str(model_path), map_location="cpu")
                 sd = ckpt.get("model", ckpt)
-                model.load_state_dict(sd)
+                load_state_dict_tolerant(model, sd, label="worker-model")
                 model.to(device)
                 model.eval()
                 if bool(args.compile_inference):
@@ -1190,113 +1247,24 @@ def main() -> None:
                     trial_api_prefix = "/v1"
                 last_model_sha = model_sha
 
-            # Opening book (optional) — downloaded once, used by both selfplay and arena.
-            opening_book_path = None
-            if "opening_book" in manifest:
-                ob = manifest.get("opening_book") or {}
-                filename = str(ob.get("filename") or "opening_book")
-                sha = str(ob.get("sha256") or "")
+            # Opening books (optional) — downloaded once, used by both selfplay and arena.
+            opening_book_path, last_ob_sha = _download_opening_book(
+                manifest, "opening_book", cache_dir,
+                cache_prefix="opening", default_endpoint="/v1/opening_book",
+                server_url_fn=_server_url_for, headers=_worker_headers(), log=log,
+                last_sha=last_ob_sha,
+            )
+            opening_book_path_2, last_ob2_sha = _download_opening_book(
+                manifest, "opening_book_2", cache_dir,
+                cache_prefix="opening2", default_endpoint="/v1/opening_book_2",
+                server_url_fn=_server_url_for, headers=_worker_headers(), log=log,
+                last_sha=last_ob2_sha,
+            )
 
-                if sha:
-                    ob_path = cache_dir / f"opening_{sha}_{filename}"
-                else:
-                    ob_path = cache_dir / filename
-
-                if sha:
-                    if (not ob_path.exists()) or (_sha256_file(ob_path) != sha):
-                        log.info("downloading opening book sha=%s filename=%s", sha, filename)
-                        _download_and_verify_shared(
-                            _server_url_for(str(ob.get("endpoint") or "/v1/opening_book")),
-                            out_path=ob_path,
-                            expected_sha256=sha,
-                            headers=_worker_headers(),
-                        )
-                else:
-                    if not ob_path.exists():
-                        _download(
-                            _server_url_for(str(ob.get("endpoint") or "/v1/opening_book")),
-                            out_path=ob_path,
-                            headers=_worker_headers(),
-                        )
-                opening_book_path = str(ob_path)
-
-            # Opening book 2 (optional).
-            opening_book_path_2 = None
-            if "opening_book_2" in manifest:
-                ob2 = manifest.get("opening_book_2") or {}
-                filename2 = str(ob2.get("filename") or "opening_book_2")
-                sha2 = str(ob2.get("sha256") or "")
-
-                if sha2:
-                    ob2_path = cache_dir / f"opening2_{sha2}_{filename2}"
-                else:
-                    ob2_path = cache_dir / f"book2_{filename2}"
-
-                if sha2:
-                    if (not ob2_path.exists()) or (_sha256_file(ob2_path) != sha2):
-                        log.info("downloading opening book 2 sha=%s filename=%s", sha2, filename2)
-                        _download_and_verify_shared(
-                            _server_url_for(str(ob2.get("endpoint") or "/v1/opening_book_2")),
-                            out_path=ob2_path,
-                            expected_sha256=sha2,
-                            headers=_worker_headers(),
-                        )
-                else:
-                    if not ob2_path.exists():
-                        _download(
-                            _server_url_for(str(ob2.get("endpoint") or "/v1/opening_book_2")),
-                            out_path=ob2_path,
-                            headers=_worker_headers(),
-                        )
-                opening_book_path_2 = str(ob2_path)
-
-            # Resolve effective settings.
-            # By default we keep strength knobs server-managed for consistency.
-            server_managed = [
-                "max_plies",
-                "mcts",
-                "mcts_simulations",
-                "playout_cap_fraction",
-                "fast_simulations",
-                "opponent_random_move_prob",
-                "opening_book_prob",
-                "opening_book_max_plies",
-                "opening_book_max_games",
-                "random_start_plies",
-                "sf_nodes",
-                "sf_multipv",
-                "sf_policy_temp",
-                "sf_policy_label_smooth",
-                "timeout_adjudication_threshold",
-                "temperature",
-                "temperature_decay_start_move",
-                "temperature_decay_moves",
-                "temperature_endgame",
-            ]
-            if not bool(args.allow_overrides):
-                if (
-                    args.max_plies is not None
-                    or args.mcts is not None
-                    or args.mcts_simulations is not None
-                    or args.playout_cap_fraction is not None
-                    or args.fast_simulations is not None
-                    or args.opening_book_prob is not None
-                    or args.opening_book_max_plies is not None
-                    or args.opening_book_max_games is not None
-                    or args.random_start_plies is not None
-                    or args.sf_nodes is not None
-                    or args.sf_multipv is not None
-                    or args.sf_policy_temp is not None
-                    or args.sf_policy_label_smooth is not None
-                    or args.temperature is not None
-                    or args.temperature_decay_start_move is not None
-                    or args.temperature_decay_moves is not None
-                    or args.temperature_endgame is not None
-                ):
-                    raise SystemExit(
-                        "This worker is configured for server-managed strength knobs. "
-                        "Remove selfplay/strength flags (nodes/sims/etc), or pass --allow-overrides for debugging."
-                    )
+            # CLI overrides server recommendation; fall back to reco then default.
+            def _resolve(key, default, cast=float):
+                v = getattr(args, key, None)
+                return cast(v) if v is not None else cast(reco.get(key, default))
 
             games_per_batch = (
                 int(games_per_batch_local)
@@ -1304,13 +1272,11 @@ def main() -> None:
                 else int(reco.get("games_per_batch", 8))
             )
 
-            max_plies = int(args.max_plies) if args.max_plies is not None else int(reco.get("max_plies", 240))
-            mcts_type = str(args.mcts) if args.mcts is not None else str(reco.get("mcts", "puct"))
-            mcts_sims = int(args.mcts_simulations) if args.mcts_simulations is not None else int(reco.get("mcts_simulations", 50))
-            playout_cap_fraction = (
-                float(args.playout_cap_fraction) if args.playout_cap_fraction is not None else float(reco.get("playout_cap_fraction", 0.25))
-            )
-            fast_sims = int(args.fast_simulations) if args.fast_simulations is not None else int(reco.get("fast_simulations", 8))
+            max_plies = _resolve("max_plies", 240, int)
+            mcts_type = _resolve("mcts", "puct", str)
+            mcts_sims = _resolve("mcts_simulations", 50, int)
+            playout_cap_fraction = _resolve("playout_cap_fraction", 0.25)
+            fast_sims = _resolve("fast_simulations", 8, int)
             opponent_random_move_prob = float(reco.get("opponent_random_move_prob", 0.0))
             opponent_topk_min = int(reco.get("opponent_topk_min", 1))
             opponent_suboptimal_wdl_regret_max = float(reco.get("opponent_suboptimal_wdl_regret_max", -1.0))
@@ -1322,51 +1288,25 @@ def main() -> None:
             selfplay_fraction = float(reco.get("selfplay_fraction", 0.0))
             timeout_adjudication_threshold = float(reco.get("timeout_adjudication_threshold", 0.90))
 
-            opening_book_prob = (
-                float(args.opening_book_prob) if args.opening_book_prob is not None else float(reco.get("opening_book_prob", 1.0))
-            )
-            opening_book_max_plies = (
-                int(args.opening_book_max_plies) if args.opening_book_max_plies is not None else int(reco.get("opening_book_max_plies", 4))
-            )
-            opening_book_max_games = (
-                int(args.opening_book_max_games) if args.opening_book_max_games is not None else int(reco.get("opening_book_max_games", 200000))
-            )
+            opening_book_prob = _resolve("opening_book_prob", 1.0)
+            opening_book_max_plies = _resolve("opening_book_max_plies", 4, int)
+            opening_book_max_games = _resolve("opening_book_max_games", 200000, int)
             opening_book_max_plies_2 = int(reco.get("opening_book_max_plies_2", 16))
             opening_book_max_games_2 = int(reco.get("opening_book_max_games_2", 200000))
             opening_book_mix_prob_2 = float(reco.get("opening_book_mix_prob_2", 0.0))
-            random_start_plies = (
-                int(args.random_start_plies) if args.random_start_plies is not None else int(reco.get("random_start_plies", 0))
-            )
+            random_start_plies = _resolve("random_start_plies", 0, int)
 
-            sf_nodes = int(args.sf_nodes) if args.sf_nodes is not None else int(reco.get("sf_nodes", 2000))
-            sf_multipv = int(args.sf_multipv) if args.sf_multipv is not None else int(reco.get("sf_multipv", 5))
+            sf_nodes = _resolve("sf_nodes", 2000, int)
+            sf_multipv = _resolve("sf_multipv", 5, int)
             _reco_skill = reco.get("sf_skill_level")
             sf_skill_level: int | None = None if _reco_skill is None else int(_reco_skill)
-            sf_policy_temp = (
-                float(args.sf_policy_temp) if args.sf_policy_temp is not None else float(reco.get("sf_policy_temp", 0.25))
-            )
-            sf_policy_label_smooth = (
-                float(args.sf_policy_label_smooth)
-                if args.sf_policy_label_smooth is not None
-                else float(reco.get("sf_policy_label_smooth", 0.05))
-            )
+            sf_policy_temp = _resolve("sf_policy_temp", 0.25)
+            sf_policy_label_smooth = _resolve("sf_policy_label_smooth", 0.05)
 
-            temperature = float(args.temperature) if args.temperature is not None else float(reco.get("temperature", 1.0))
-            t_start = (
-                int(args.temperature_decay_start_move)
-                if args.temperature_decay_start_move is not None
-                else int(reco.get("temperature_decay_start_move", 20))
-            )
-            t_moves = (
-                int(args.temperature_decay_moves)
-                if args.temperature_decay_moves is not None
-                else int(reco.get("temperature_decay_moves", 60))
-            )
-            t_end = (
-                float(args.temperature_endgame)
-                if args.temperature_endgame is not None
-                else float(reco.get("temperature_endgame", 0.6))
-            )
+            temperature = _resolve("temperature", 1.0)
+            t_start = _resolve("temperature_decay_start_move", 20, int)
+            t_moves = _resolve("temperature_decay_moves", 60, int)
+            t_end = _resolve("temperature_endgame", 0.6)
 
             # If server requests arena matches, run those instead of selfplay.
             if task_type == "arena":
@@ -1403,7 +1343,7 @@ def main() -> None:
                     best_model = build_model(model_cfg_active)
                     ckpt = torch.load(str(best_path), map_location="cpu")
                     sd = ckpt.get("model", ckpt)
-                    best_model.load_state_dict(sd)
+                    load_state_dict_tolerant(best_model, sd, label="worker-best")
                     best_model.to(device)
                     best_model.eval()
                     if bool(args.compile_inference):
@@ -1503,7 +1443,7 @@ def main() -> None:
                 sf_endpoint = str(sf_rec.get("endpoint"))
                 sf_filename = str(sf_rec.get("filename") or "stockfish")
                 sf_cached = cache_dir / f"stockfish_{sf_sha}_{sf_filename}"
-                if (not sf_cached.exists()) or (_sha256_file(sf_cached) != sf_sha):
+                if _cached_sha_asset_needs_refresh(path=sf_cached, sha256=sf_sha, last_sha256=last_sf_sha):
                     log.info("downloading stockfish sha=%s filename=%s", sf_sha, sf_filename)
                     _download_and_verify_shared(
                         _server_url_for(sf_endpoint),
@@ -1512,6 +1452,7 @@ def main() -> None:
                         headers=_worker_headers(),
                     )
                     _ensure_executable(sf_cached)
+                last_sf_sha = sf_sha
                 stockfish_path = str(sf_cached)
 
             # (Re)initialize engine if multipv or skill_level changed (must be set at init time)
@@ -1580,37 +1521,47 @@ def main() -> None:
                     stockfish=sf,
                     evaluator=inference_client,
                     games=int(games_per_batch),
-                    temperature=float(temperature),
-                    temperature_decay_start_move=int(t_start),
-                    temperature_decay_moves=int(t_moves),
-                    temperature_endgame=float(t_end),
-                    max_plies=int(max_plies),
-                    mcts_simulations=int(mcts_sims),
-                    mcts_type=str(mcts_type),
-                    playout_cap_fraction=float(playout_cap_fraction),
-                    fast_simulations=int(fast_sims),
-                    sf_policy_temp=float(sf_policy_temp),
-                    sf_policy_label_smooth=float(sf_policy_label_smooth),
-                    timeout_adjudication_threshold=float(timeout_adjudication_threshold),
-                    opponent_random_move_prob=float(opponent_random_move_prob),
-                    opponent_topk_stage_end=float(reco.get("opponent_topk_stage_end", 0.5)),
-                    opponent_topk_min=int(opponent_topk_min),
-                    opponent_suboptimal_wdl_regret_max=float(opponent_suboptimal_wdl_regret_max),
-                    opponent_suboptimal_wdl_regret_min=float(opponent_suboptimal_wdl_regret_min),
-                    opponent_random_move_prob_start=float(opponent_random_move_prob_start),
-                    opponent_random_move_prob_min=float(opponent_random_move_prob_min),
-                    opponent_wdl_regret_limit=opponent_wdl_regret_limit,
-                    selfplay_fraction=float(selfplay_fraction),
-                    opening_book_path=opening_book_path,
-                    opening_book_max_plies=int(opening_book_max_plies),
-                    opening_book_max_games=int(opening_book_max_games),
-                    opening_book_prob=float(opening_book_prob),
-                    opening_book_path_2=opening_book_path_2,
-                    opening_book_max_plies_2=int(opening_book_max_plies_2),
-                    opening_book_max_games_2=int(opening_book_max_games_2),
-                    opening_book_mix_prob_2=float(opening_book_mix_prob_2),
-                    random_start_plies=int(random_start_plies),
                     on_game_complete=_on_completed_game,
+                    opponent=OpponentConfig(
+                        random_move_prob=float(opponent_random_move_prob),
+                        topk_stage_end=float(reco.get("opponent_topk_stage_end", 0.5)),
+                        topk_min=int(opponent_topk_min),
+                        suboptimal_wdl_regret_max=float(opponent_suboptimal_wdl_regret_max),
+                        suboptimal_wdl_regret_min=float(opponent_suboptimal_wdl_regret_min),
+                        random_move_prob_start=float(opponent_random_move_prob_start),
+                        random_move_prob_min=float(opponent_random_move_prob_min),
+                        wdl_regret_limit=opponent_wdl_regret_limit,
+                    ),
+                    temp=TemperatureConfig(
+                        temperature=float(temperature),
+                        decay_start_move=int(t_start),
+                        decay_moves=int(t_moves),
+                        endgame=float(t_end),
+                    ),
+                    search=SearchConfig(
+                        simulations=int(mcts_sims),
+                        mcts_type=str(mcts_type),
+                        playout_cap_fraction=float(playout_cap_fraction),
+                        fast_simulations=int(fast_sims),
+                    ),
+                    opening=OpeningConfig(
+                        opening_book_path=opening_book_path,
+                        opening_book_max_plies=int(opening_book_max_plies),
+                        opening_book_max_games=int(opening_book_max_games),
+                        opening_book_prob=float(opening_book_prob),
+                        opening_book_path_2=opening_book_path_2,
+                        opening_book_max_plies_2=int(opening_book_max_plies_2),
+                        opening_book_max_games_2=int(opening_book_max_games_2),
+                        opening_book_mix_prob_2=float(opening_book_mix_prob_2),
+                        random_start_plies=int(random_start_plies),
+                    ),
+                    game=GameConfig(
+                        max_plies=int(max_plies),
+                        selfplay_fraction=float(selfplay_fraction),
+                        sf_policy_temp=float(sf_policy_temp),
+                        sf_policy_label_smooth=float(sf_policy_label_smooth),
+                        timeout_adjudication_threshold=float(timeout_adjudication_threshold),
+                    ),
                 )
             except TimeoutError as exc:
                 if inference_client is None:

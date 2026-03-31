@@ -27,6 +27,172 @@ def load_yaml_file(path: str | Path) -> dict[str, Any]:
     return data
 
 
+# ---------------------------------------------------------------------------
+# Declarative section → argparse key mappings.
+#
+# Each section maps (nested_key → flat_key).  When nested_key == flat_key the
+# entry can be listed in the simpler _PASSTHROUGH tuple instead.
+# ---------------------------------------------------------------------------
+
+# Keys that pass through 1:1 from a nested section (or flat root) to argparse.
+_CORE_KEYS = (
+    "mode", "seed", "device", "iterations", "work_dir",
+    "replay_capacity", "replay_window_start", "replay_window_max", "replay_window_growth",
+    "bootstrap_dir", "bootstrap_checkpoint", "bootstrap_zero_policy_heads",
+    "bootstrap_reinit_volatility_heads", "worker_wheel_path",
+    "bootstrap_max_positions", "bootstrap_train_steps", "shared_shards_dir",
+    "pause_file", "pause_poll_seconds",
+    "salvage_seed_pool_dir", "salvage_source_run_id", "salvage_top_n",
+    "salvage_out_dir", "salvage_metric", "salvage_copy_replay",
+    "salvage_reinit_volatility_heads", "salvage_restore_pid_state",
+    "salvage_restore_donor_config", "salvage_restore_full_trainer_state",
+    "salvage_startup_no_share_iters", "salvage_startup_max_train_steps",
+    "salvage_startup_post_share_ramp_iters", "salvage_startup_post_share_max_train_steps",
+    "puzzle_epd", "puzzle_interval", "puzzle_simulations",
+)
+
+# stockfish section: nested key → flat key.
+# Most PID keys get an "sf_" prefix.
+_STOCKFISH_SPECIAL: dict[str, str] = {
+    "path": "stockfish_path",
+    "nodes": "sf_nodes",
+    "workers": "sf_workers",
+    "multipv": "sf_multipv",
+    "hash_mb": "sf_hash_mb",
+    "pid_enabled": "sf_pid_enabled",
+}
+_STOCKFISH_PID_KEYS = (
+    "pid_target_winrate", "pid_ema_alpha", "pid_deadzone", "pid_rate_limit",
+    "pid_min_games_between_adjust",
+    "pid_kp", "pid_ki", "pid_kd", "pid_integral_clamp",
+    "pid_min_nodes", "pid_max_nodes",
+    "pid_initial_skill_level", "pid_skill_min", "pid_skill_max",
+    "pid_skill_promote_nodes", "pid_skill_demote_nodes",
+    "pid_skill_nodes_on_promote", "pid_skill_nodes_on_demote",
+    "pid_random_move_prob_start", "pid_random_move_prob_min", "pid_random_move_prob_max",
+    "pid_random_move_stage_end", "pid_topk_stage_end", "pid_topk_min",
+    "pid_suboptimal_wdl_regret_max", "pid_suboptimal_wdl_regret_min",
+    "pid_max_rand_step", "pid_max_rand_step_start", "pid_max_rand_step_ramp_iters",
+    "pid_wdl_regret_start", "pid_wdl_regret_min", "pid_wdl_regret_max",
+    "pid_wdl_regret_stage_end", "pid_max_regret_step",
+)
+
+# selfplay section: all 1:1 passthrough.
+_SELFPLAY_KEYS = (
+    "games_per_iter", "games_per_iter_start", "games_per_iter_ramp_iters",
+    "selfplay_batch", "selfplay_fraction",
+    "temperature", "temperature_drop_plies", "temperature_after",
+    "temperature_decay_start_move", "temperature_decay_moves", "temperature_endgame",
+    "max_plies",
+    "mcts", "mcts_simulations", "mcts_start_simulations", "mcts_ramp_steps", "mcts_ramp_exponent",
+    "playout_cap_fraction", "fast_simulations",
+    "fpu_reduction", "fpu_at_root",
+    "opening_book_path", "opening_book_max_plies", "opening_book_max_games", "opening_book_prob",
+    "opening_book_path_2", "opening_book_max_plies_2", "opening_book_max_games_2", "opening_book_mix_prob_2",
+    "random_start_plies",
+    "sf_policy_temp", "sf_policy_label_smooth", "soft_policy_temp",
+    "syzygy_path", "syzygy_policy",
+    "timeout_adjudication_threshold",
+    "diff_focus_enabled", "diff_focus_q_weight", "diff_focus_pol_scale",
+    "diff_focus_slope", "diff_focus_min",
+    "categorical_bins", "hlgauss_sigma",
+)
+
+# model section: mostly 1:1 except kind→model and use_smolgen→no_smolgen (inverted).
+_MODEL_PASSTHROUGH = (
+    "embed_dim", "num_layers", "num_heads", "ffn_mult", "use_nla", "gradient_checkpointing",
+)
+
+# train section: all 1:1 passthrough.
+_TRAIN_KEYS = (
+    "optimizer", "cosmos_rank", "cosmos_gamma",
+    "lr", "batch_size", "train_steps", "train_window_fraction",
+    "no_amp", "feature_dropout_p",
+    "fdp_king_safety", "fdp_pins", "fdp_pawns", "fdp_mobility", "fdp_outposts",
+    "w_volatility",
+    "accum_steps", "warmup_steps", "warmup_lr_start", "lr_eta_min", "lr_T0", "lr_T_mult",
+    "grad_clip", "zclip_z_thresh", "zclip_alpha", "zclip_max_norm",
+    "use_compile", "swa_start", "swa_freq",
+    "w_policy", "w_soft", "w_future", "w_wdl", "w_sf_move", "w_sf_eval",
+    "w_categorical", "w_sf_volatility", "w_moves_left",
+    "w_sf_wdl", "sf_wdl_conf_power", "sf_wdl_draw_scale", "sf_wdl_floor", "sf_wdl_floor_at",
+)
+
+# tune section: all 1:1 passthrough.
+_TUNE_KEYS = (
+    "num_samples", "max_concurrent_trials", "cpus_per_trial", "gpus_per_trial",
+    "distributed_workers_per_trial", "distributed_worker_sf_workers",
+    "distributed_worker_poll_seconds", "distributed_worker_device",
+    "distributed_worker_use_compile", "distributed_worker_auto_tune",
+    "distributed_worker_target_batch_seconds",
+    "distributed_worker_min_games_per_batch", "distributed_worker_max_games_per_batch",
+    "distributed_worker_upload_target_positions", "distributed_worker_upload_flush_seconds",
+    "distributed_worker_shared_cache_dir",
+    "distributed_worker_username", "distributed_worker_password",
+    "distributed_min_workers_per_trial", "distributed_max_worker_delta_per_rebalance",
+    "distributed_server_port", "distributed_server_host", "distributed_server_public_url",
+    "distributed_server_root_override", "tune_replay_root_override",
+    "distributed_upload_compact_shard_size", "distributed_upload_compact_max_age_seconds",
+    "distributed_inference_broker_enabled", "distributed_inference_batch_wait_ms",
+    "distributed_inference_use_compile",
+    "distributed_inference_max_batch_per_slot",
+    "distributed_pause_selfplay_during_training", "distributed_wait_timeout_seconds",
+    "distributed_min_games_fraction",
+    "tune_metric", "tune_mode", "tune_num_to_keep", "tune_keep_last_experiments",
+    "tune_scheduler",
+    "eval_games", "eval_sf_nodes", "eval_mcts_simulations",
+    "holdout_fraction", "holdout_capacity", "test_steps",
+    "freeze_holdout_at", "reset_holdout_on_drift", "drift_threshold", "drift_sample_size",
+    "search_feature_dropout_p", "search_w_volatility",
+    "search_diff_focus", "search_loss_weights", "search_categorical_bins",
+    "search_smolgen", "search_nla",
+    "search_optimizer", "search_optimizer_choices",
+    "asha_optimizer_only", "asha_optimizer_repeats",
+    "pbt_synch",
+    "gpbt_pairwise_lr", "gpbt_pairwise_momentum",
+    "gpbt_inertia_weight", "gpbt_winner_weight",
+    "gpbt_quantile_fraction", "gpbt_resample_probability",
+    "pb2_perturbation_interval", "min_replay_size",
+    "gate_games", "gate_threshold", "gate_interval", "gate_mcts_sims",
+    "shuffle_buffer_size", "shuffle_refresh_interval", "shuffle_refresh_shards",
+    "shuffle_draw_cap_frac", "shuffle_wl_max_ratio",
+    "shard_size",
+    "exploit_replay_refresh_enabled", "exploit_replay_keep_fraction",
+    "exploit_replay_donor_shards", "exploit_replay_skip_newest",
+    "exploit_replay_share_top_enabled", "exploit_replay_top_k_trials",
+    "exploit_replay_top_within_best_frac", "exploit_replay_top_min_metric",
+    "exploit_replay_max_unseen_iters_per_source", "exploit_replay_top_shards_per_source",
+    "exploit_replay_local_keep_recent_fraction", "exploit_replay_local_keep_older_fraction",
+    "exploit_replay_share_fraction",
+    "pause_file", "pause_poll_seconds",
+    "salvage_seed_pool_dir", "salvage_reinit_volatility_heads",
+    "salvage_restore_pid_state", "salvage_restore_donor_config",
+    "salvage_restore_full_trainer_state",
+    "salvage_startup_no_share_iters", "salvage_startup_max_train_steps",
+    "salvage_startup_post_share_ramp_iters", "salvage_startup_post_share_max_train_steps",
+)
+
+
+def _build_flat_allowlist() -> frozenset[str]:
+    """Derive the set of keys accepted at the YAML root level."""
+    keys: set[str] = set(_CORE_KEYS)
+    # stockfish: special mappings use the *flat* name, PID keys get sf_ prefix
+    keys.update(_STOCKFISH_SPECIAL.values())
+    keys.update(f"sf_{k}" for k in _STOCKFISH_PID_KEYS)
+    # selfplay, train, tune: flat name == nested name
+    keys.update(_SELFPLAY_KEYS)
+    # model has special handling but these flat names are accepted
+    keys.update(_MODEL_PASSTHROUGH)
+    keys.add("model")  # kind → model
+    keys.add("no_smolgen")  # use_smolgen → no_smolgen (inverted)
+    keys.update(_TRAIN_KEYS)
+    keys.update(_TUNE_KEYS)
+    return frozenset(keys)
+
+
+_FLAT_ALLOWLIST = _build_flat_allowlist()
+
+
 def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
     """Map a nested YAML config into run.py argparse defaults.
 
@@ -37,487 +203,52 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
 
     out: dict[str, Any] = {}
 
-    # Pass through any flat keys.
+    # --- Pass 1: flat keys at the YAML root level ---
     for k, v in cfg.items():
-        if not isinstance(k, str):
-            continue
-        if k in {
-            # core
-            "mode",
-            "seed",
-            "device",
-            "iterations",
-            "work_dir",
-            "replay_capacity",
-            "bootstrap_dir",
-            "bootstrap_checkpoint",
-            "bootstrap_zero_policy_heads",
-            "bootstrap_reinit_volatility_heads",
-            "worker_wheel_path",
-            "bootstrap_max_positions",
-            "bootstrap_train_steps",
-            "shared_shards_dir",
-            "pause_file",
-            "pause_poll_seconds",
-            "salvage_seed_pool_dir",
-            "salvage_source_run_id",
-            "salvage_top_n",
-            "salvage_out_dir",
-            "salvage_metric",
-            "salvage_copy_replay",
-            "salvage_reinit_volatility_heads",
-            "salvage_restore_pid_state",
-            "salvage_restore_donor_config",
-            "salvage_restore_full_trainer_state",
-            "salvage_startup_no_share_iters",
-            "salvage_startup_max_train_steps",
-            "salvage_startup_post_share_ramp_iters",
-            "salvage_startup_post_share_max_train_steps",
-            "replay_window_start",
-            "replay_window_max",
-            "replay_window_growth",
-            # model
-            "model",
-            "embed_dim",
-            "num_layers",
-            "num_heads",
-            "ffn_mult",
-            "no_smolgen",
-            "use_nla",
-            "gradient_checkpointing",
-            # stockfish
-            "stockfish_path",
-            "sf_nodes",
-            "sf_workers",
-            "sf_multipv",
-            "sf_hash_mb",
-            "sf_pid_enabled",
-            "sf_pid_target_winrate",
-            "sf_pid_ema_alpha",
-            "sf_pid_deadzone",
-            "sf_pid_rate_limit",
-            "sf_pid_min_games_between_adjust",
-            "sf_pid_kp",
-            "sf_pid_ki",
-            "sf_pid_kd",
-            "sf_pid_integral_clamp",
-            "sf_pid_min_nodes",
-            "sf_pid_max_nodes",
-            "sf_pid_initial_skill_level",
-            "sf_pid_skill_min",
-            "sf_pid_skill_max",
-            "sf_pid_skill_promote_nodes",
-            "sf_pid_skill_demote_nodes",
-            "sf_pid_skill_nodes_on_promote",
-            "sf_pid_skill_nodes_on_demote",
-            "sf_pid_random_move_prob_start",
-            "sf_pid_random_move_prob_min",
-            "sf_pid_random_move_prob_max",
-            "sf_pid_random_move_stage_end",
-            "sf_pid_topk_stage_end",
-            "sf_pid_topk_min",
-            "sf_pid_suboptimal_wdl_regret_max",
-            "sf_pid_suboptimal_wdl_regret_min",
-            "sf_pid_max_rand_step",
-            "sf_pid_wdl_regret_start",
-            "sf_pid_wdl_regret_min",
-            "sf_pid_wdl_regret_max",
-            "sf_pid_wdl_regret_stage_end",
-            "sf_pid_max_regret_step",
-            # selfplay
-            "games_per_iter",
-            "games_per_iter_start",
-            "games_per_iter_ramp_iters",
-            "selfplay_batch",
-            "temperature",
-            "temperature_drop_plies",
-            "temperature_after",
-            "temperature_decay_start_move",
-            "temperature_decay_moves",
-            "temperature_endgame",
-            "max_plies",
-            "mcts",
-            "mcts_simulations",
-            "mcts_start_simulations",
-            "mcts_ramp_steps",
-            "mcts_ramp_exponent",
-            "playout_cap_fraction",
-            "fast_simulations",
-            "opening_book_path",
-            "opening_book_max_plies",
-            "opening_book_max_games",
-            "opening_book_prob",
-            "opening_book_path_2",
-            "opening_book_max_plies_2",
-            "opening_book_max_games_2",
-            "opening_book_mix_prob_2",
-            "random_start_plies",
-            "sf_policy_temp",
-            "sf_policy_label_smooth",
-            "syzygy_path",
-            "syzygy_policy",
-            "timeout_adjudication_threshold",
-            # selfplay diff focus
-            "diff_focus_enabled",
-            "diff_focus_q_weight",
-            "diff_focus_pol_scale",
-            "diff_focus_slope",
-            "diff_focus_min",
-            # categorical value head
-            "categorical_bins",
-            "hlgauss_sigma",
-            # train
-            "optimizer",
-            "cosmos_rank",
-            "cosmos_gamma",
-            "train_steps",
-            "train_window_fraction",
-            "batch_size",
-            "lr",
-            "no_amp",
-            "feature_dropout_p",
-            "fdp_king_safety",
-            "fdp_pins",
-            "fdp_pawns",
-            "fdp_mobility",
-            "fdp_outposts",
-            "w_volatility",
-            "search_w_volatility",
-            "accum_steps",
-            "warmup_steps",
-            "warmup_lr_start",
-            "lr_eta_min",
-            "lr_T0",
-            "lr_T_mult",
-            "grad_clip",
-            "zclip_z_thresh",
-            "zclip_alpha",
-            "zclip_max_norm",
-            "use_compile",
-            "swa_start",
-            "swa_freq",
-            # loss weights
-            "w_policy",
-            "w_soft",
-            "w_future",
-            "w_wdl",
-            "w_sf_move",
-            "w_sf_eval",
-            "w_categorical",
-            "w_sf_volatility",
-            "w_moves_left",
-            # puzzle eval
-            "puzzle_epd",
-            "puzzle_interval",
-            "puzzle_simulations",
-            # tune/eval
-            "num_samples",
-            "max_concurrent_trials",
-            "cpus_per_trial",
-            "distributed_workers_per_trial",
-            "distributed_worker_sf_workers",
-            "distributed_worker_poll_seconds",
-            "distributed_worker_device",
-            "distributed_worker_use_compile",
-            "distributed_worker_auto_tune",
-            "distributed_worker_target_batch_seconds",
-            "distributed_worker_min_games_per_batch",
-            "distributed_worker_max_games_per_batch",
-            "distributed_worker_upload_target_positions",
-            "distributed_worker_upload_flush_seconds",
-            "distributed_worker_shared_cache_dir",
-            "distributed_min_workers_per_trial",
-            "distributed_max_worker_delta_per_rebalance",
-            "distributed_server_port",
-            "distributed_server_host",
-            "distributed_server_public_url",
-            "distributed_server_root_override",
-            "tune_replay_root_override",
-            "distributed_upload_compact_shard_size",
-            "distributed_upload_compact_max_age_seconds",
-            "distributed_inference_broker_enabled",
-            "distributed_inference_batch_wait_ms",
-            "distributed_inference_max_batch_per_slot",
-            "distributed_pause_selfplay_during_training",
-            "distributed_wait_timeout_seconds",
-            "pbt_synch",
-            "gpbt_pairwise_lr",
-            "gpbt_pairwise_momentum",
-            "gpbt_inertia_weight",
-            "gpbt_winner_weight",
-            "gpbt_quantile_fraction",
-            "gpbt_resample_probability",
-            "tune_metric",
-            "tune_mode",
-            "tune_num_to_keep",
-            "tune_keep_last_experiments",
-            "eval_games",
-            "eval_sf_nodes",
-            "eval_mcts_simulations",
-            "holdout_fraction",
-            "holdout_capacity",
-            "test_steps",
-            "freeze_holdout_at",
-            "reset_holdout_on_drift",
-            "drift_threshold",
-            "drift_sample_size",
-            "search_feature_dropout_p",
-            "w_volatility",
-            "search_w_volatility",
-            "search_optimizer",
-            "search_optimizer_choices",
-            "asha_optimizer_only",
-            "asha_optimizer_repeats",
-        }:
+        if isinstance(k, str) and k in _FLAT_ALLOWLIST:
             out[k] = v
 
-    # Nested sections.
+    # --- Pass 2: nested sections (can override flat keys) ---
+
     stockfish = cfg.get("stockfish")
     if isinstance(stockfish, dict):
-        if "path" in stockfish:
-            out["stockfish_path"] = stockfish.get("path")
-        if "nodes" in stockfish:
-            out["sf_nodes"] = stockfish.get("nodes")
-        if "workers" in stockfish:
-            out["sf_workers"] = stockfish.get("workers")
-        if "multipv" in stockfish:
-            out["sf_multipv"] = stockfish.get("multipv")
-        if "hash_mb" in stockfish:
-            out["sf_hash_mb"] = stockfish.get("hash_mb")
-
-        # PID parameters
-        if "pid_enabled" in stockfish:
-            out["sf_pid_enabled"] = stockfish.get("pid_enabled")
-        for k in [
-            "pid_target_winrate",
-            "pid_ema_alpha",
-            "pid_deadzone",
-            "pid_rate_limit",
-            "pid_min_games_between_adjust",
-            "pid_kp",
-            "pid_ki",
-            "pid_kd",
-            "pid_integral_clamp",
-            "pid_min_nodes",
-            "pid_max_nodes",
-            "pid_initial_skill_level",
-            "pid_skill_min",
-            "pid_skill_max",
-            "pid_skill_promote_nodes",
-            "pid_skill_demote_nodes",
-            "pid_skill_nodes_on_promote",
-            "pid_skill_nodes_on_demote",
-            "pid_random_move_prob_start",
-            "pid_random_move_prob_min",
-            "pid_random_move_prob_max",
-            "pid_random_move_stage_end",
-            "pid_topk_stage_end",
-            "pid_topk_min",
-            "pid_suboptimal_wdl_regret_max",
-            "pid_suboptimal_wdl_regret_min",
-            "pid_max_rand_step",
-            "pid_wdl_regret_start",
-            "pid_wdl_regret_min",
-            "pid_wdl_regret_max",
-            "pid_wdl_regret_stage_end",
-            "pid_max_regret_step",
-        ]:
+        for nested_k, flat_k in _STOCKFISH_SPECIAL.items():
+            if nested_k in stockfish:
+                out[flat_k] = stockfish[nested_k]
+        for k in _STOCKFISH_PID_KEYS:
             if k in stockfish:
-                out[f"sf_{k}"] = stockfish.get(k)
+                out[f"sf_{k}"] = stockfish[k]
 
     selfplay = cfg.get("selfplay")
     if isinstance(selfplay, dict):
-        for k in [
-            "games_per_iter",
-            "games_per_iter_start",
-            "games_per_iter_ramp_iters",
-            "temperature",
-            "temperature_drop_plies",
-            "temperature_after",
-            "temperature_decay_start_move",
-            "temperature_decay_moves",
-            "temperature_endgame",
-            "max_plies",
-            "mcts",
-            "mcts_simulations",
-            "mcts_start_simulations",
-            "mcts_ramp_steps",
-            "mcts_ramp_exponent",
-            "playout_cap_fraction",
-            "fast_simulations",
-            "opening_book_path",
-            "opening_book_max_plies",
-            "opening_book_max_games",
-            "opening_book_prob",
-            "opening_book_path_2",
-            "opening_book_max_plies_2",
-            "opening_book_max_games_2",
-            "opening_book_mix_prob_2",
-            "random_start_plies",
-            "sf_policy_temp",
-            "sf_policy_label_smooth",
-            "syzygy_path",
-            "syzygy_policy",
-            "timeout_adjudication_threshold",
-            "diff_focus_enabled",
-            "diff_focus_q_weight",
-            "diff_focus_pol_scale",
-            "diff_focus_slope",
-            "diff_focus_min",
-            "categorical_bins",
-            "hlgauss_sigma",
-            "fpu_reduction",
-            "fpu_at_root",
-            "selfplay_batch",
-            "selfplay_fraction",
-        ]:
+        for k in _SELFPLAY_KEYS:
             if k in selfplay:
-                out[k] = selfplay.get(k)
+                out[k] = selfplay[k]
 
     train = cfg.get("train")
     if isinstance(train, dict):
-        if "optimizer" in train:
-            out["optimizer"] = train.get("optimizer")
-        if "lr" in train:
-            out["lr"] = train.get("lr")
-        if "batch_size" in train:
-            out["batch_size"] = train.get("batch_size")
-        if "train_steps" in train:
-            out["train_steps"] = train.get("train_steps")
-        if "train_window_fraction" in train:
-            out["train_window_fraction"] = train.get("train_window_fraction")
-        if "no_amp" in train:
-            out["no_amp"] = train.get("no_amp")
-        if "feature_dropout_p" in train:
-            out["feature_dropout_p"] = train.get("feature_dropout_p")
-        for _fdp_k in ["fdp_king_safety", "fdp_pins", "fdp_pawns", "fdp_mobility", "fdp_outposts"]:
-            if _fdp_k in train:
-                out[_fdp_k] = train.get(_fdp_k)
-        if "w_volatility" in train:
-            out["w_volatility"] = train.get("w_volatility")
-        for k in ["cosmos_rank", "cosmos_gamma", "accum_steps", "warmup_steps", "lr_eta_min", "lr_T0", "lr_T_mult", "grad_clip", "zclip_z_thresh", "zclip_alpha", "zclip_max_norm", "use_compile", "swa_start", "swa_freq", "w_policy", "w_soft", "w_future", "w_wdl", "w_sf_move", "w_sf_eval", "w_categorical", "w_sf_volatility", "w_moves_left", "w_sf_wdl", "sf_wdl_floor", "sf_wdl_floor_at"]:
+        for k in _TRAIN_KEYS:
             if k in train:
-                out[k] = train.get(k)
+                out[k] = train[k]
+        # allow train.device to set global device if the top-level key isn't present
         if "device" in train and "device" not in out:
-            # allow train.device to set global device if the top-level key isn't present
-            out["device"] = train.get("device")
+            out["device"] = train["device"]
 
     model = cfg.get("model")
     if isinstance(model, dict):
         if "kind" in model:
-            out["model"] = model.get("kind")
-        for k in ["embed_dim", "num_layers", "num_heads", "ffn_mult", "use_nla", "gradient_checkpointing"]:
+            out["model"] = model["kind"]
+        for k in _MODEL_PASSTHROUGH:
             if k in model:
-                out[k] = model.get(k)
+                out[k] = model[k]
         if "use_smolgen" in model:
-            out["no_smolgen"] = not bool(model.get("use_smolgen"))
+            out["no_smolgen"] = not bool(model["use_smolgen"])
 
     tune = cfg.get("tune")
     if isinstance(tune, dict):
-        for k in [
-            "num_samples",
-            "max_concurrent_trials",
-            "cpus_per_trial",
-            "distributed_workers_per_trial",
-            "distributed_worker_sf_workers",
-            "distributed_worker_poll_seconds",
-            "distributed_worker_device",
-            "distributed_worker_use_compile",
-            "distributed_worker_auto_tune",
-            "distributed_worker_target_batch_seconds",
-            "distributed_worker_min_games_per_batch",
-            "distributed_worker_max_games_per_batch",
-            "distributed_worker_upload_target_positions",
-            "distributed_worker_upload_flush_seconds",
-            "distributed_worker_shared_cache_dir",
-            "distributed_worker_username",
-            "distributed_worker_password",
-            "distributed_min_workers_per_trial",
-            "distributed_max_worker_delta_per_rebalance",
-            "distributed_server_port",
-            "distributed_server_host",
-            "distributed_server_public_url",
-            "distributed_server_root_override",
-            "tune_replay_root_override",
-            "distributed_upload_compact_shard_size",
-            "distributed_upload_compact_max_age_seconds",
-            "distributed_inference_broker_enabled",
-            "distributed_inference_batch_wait_ms",
-            "distributed_inference_max_batch_per_slot",
-            "distributed_pause_selfplay_during_training",
-            "distributed_wait_timeout_seconds",
-            "tune_metric",
-            "tune_mode",
-            "tune_num_to_keep",
-            "tune_keep_last_experiments",
-            "eval_games",
-            "eval_sf_nodes",
-            "eval_mcts_simulations",
-            "holdout_fraction",
-            "holdout_capacity",
-            "test_steps",
-            "freeze_holdout_at",
-            "reset_holdout_on_drift",
-            "drift_threshold",
-            "drift_sample_size",
-            "search_feature_dropout_p",
-            "search_w_volatility",
-            "search_diff_focus",
-            "search_loss_weights",
-            "search_categorical_bins",
-            "search_smolgen",
-            "search_nla",
-            "search_optimizer",
-            "search_optimizer_choices",
-            "asha_optimizer_only",
-            "asha_optimizer_repeats",
-            "tune_scheduler",
-            "pbt_synch",
-            "gpbt_pairwise_lr",
-            "gpbt_pairwise_momentum",
-            "gpbt_inertia_weight",
-            "gpbt_winner_weight",
-            "gpbt_quantile_fraction",
-            "gpbt_resample_probability",
-            "gpus_per_trial",
-            "pb2_perturbation_interval",
-            "min_replay_size",
-            "gate_games",
-            "gate_threshold",
-            "gate_interval",
-            "gate_mcts_sims",
-            "shuffle_buffer_size",
-            "shuffle_refresh_interval",
-            "shuffle_refresh_shards",
-            "shuffle_draw_cap_frac",
-            "shuffle_wl_max_ratio",
-            "shard_size",
-            "exploit_replay_refresh_enabled",
-            "exploit_replay_keep_fraction",
-            "exploit_replay_donor_shards",
-            "exploit_replay_skip_newest",
-            "exploit_replay_share_top_enabled",
-            "exploit_replay_top_k_trials",
-            "exploit_replay_top_within_best_frac",
-            "exploit_replay_top_min_metric",
-            "exploit_replay_max_unseen_iters_per_source",
-            "exploit_replay_top_shards_per_source",
-            "exploit_replay_local_keep_recent_fraction",
-            "exploit_replay_local_keep_older_fraction",
-            "exploit_replay_share_fraction",
-            "pause_file",
-            "pause_poll_seconds",
-            "salvage_seed_pool_dir",
-            "salvage_restore_pid_state",
-            "salvage_restore_donor_config",
-            "salvage_restore_full_trainer_state",
-            "salvage_startup_no_share_iters",
-            "salvage_startup_max_train_steps",
-            "salvage_startup_post_share_ramp_iters",
-            "salvage_startup_post_share_max_train_steps",
-        ]:
+        for k in _TUNE_KEYS:
             if k in tune:
-                out[k] = tune.get(k)
+                out[k] = tune[k]
         # Pass through pb2_bounds_* keys (dynamic, any number of them).
         for k, v in tune.items():
             if k.startswith("pb2_bounds_"):

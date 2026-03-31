@@ -4,6 +4,7 @@ import pytest
 import torch
 
 from chess_anti_engine.encoding import encode_positions_batch
+from chess_anti_engine.inference import _policy_output
 from chess_anti_engine.mcts.gumbel import GumbelConfig, _completed_q, run_gumbel_root_many
 from chess_anti_engine.mcts.puct import Node, _select_child
 from chess_anti_engine.moves import legal_move_mask
@@ -104,7 +105,7 @@ def test_gumbel_root_many_precomputed_logits_matches_direct_path():
     xs = encode_positions_batch(boards, add_features=True)
     with torch.no_grad():
         out = model(torch.from_numpy(xs))
-    policy_out = out["policy"] if "policy" in out else out["policy_own"]
+    policy_out = _policy_output(out)
     pre_pol = policy_out.detach().float().cpu().numpy()
     pre_wdl = out["wdl"].detach().float().cpu().numpy()
 

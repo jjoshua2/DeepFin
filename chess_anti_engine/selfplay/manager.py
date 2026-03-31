@@ -31,6 +31,13 @@ from chess_anti_engine.encoding import encode_position, encode_positions_batch
 from chess_anti_engine.moves import POLICY_SIZE, move_to_index, index_to_move, legal_move_mask
 from chess_anti_engine.moves.encode import legal_move_indices
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS, hlgauss_target
+from chess_anti_engine.selfplay.config import (
+    DiffFocusConfig,
+    GameConfig,
+    OpponentConfig,
+    SearchConfig,
+    TemperatureConfig,
+)
 from chess_anti_engine.selfplay.opening import OpeningConfig, make_starting_board
 from chess_anti_engine.selfplay.tablebase import rescore_game_samples, probe_best_move, _eligible
 from chess_anti_engine.selfplay.temperature import temperature_for_ply
@@ -253,60 +260,15 @@ def play_batch(
     stockfish: StockfishUCI | StockfishPool,
     evaluator: BatchEvaluator | None = None,
     games: int,
-    temperature: float,
-    opponent_random_move_prob: float = 0.0,
-    opponent_topk_stage_end: float = 0.5,
-    opponent_topk_min: int = 1,
-    opponent_suboptimal_wdl_regret_max: float = -1.0,
-    opponent_suboptimal_wdl_regret_min: float = -1.0,
-    opponent_wdl_regret_limit: float | None = None,
-    opponent_random_move_prob_start: float = 1.0,
-    opponent_random_move_prob_min: float = 0.0,
-    selfplay_fraction: float = 0.0,
-    temperature_drop_plies: int = 0,
-    temperature_after: float = 0.0,
-    temperature_decay_start_move: int = 20,
-    temperature_decay_moves: int = 60,
-    temperature_endgame: float = 0.6,
-    max_plies: int,
-    mcts_simulations: int = 50,
-    mcts_type: str = "puct",
-    playout_cap_fraction: float = 0.25,
-    fast_simulations: int = 8,
-    sf_policy_temp: float = 0.25,
-    sf_policy_label_smooth: float = 0.05,
-    # Stockfish WDL confidence required to adjudicate max_plies timeouts as decisive.
-    timeout_adjudication_threshold: float = 0.90,
-    opening_book_path: str | None = None,
-    opening_book_max_plies: int = 4,
-    opening_book_max_games: int = 200_000,
-    opening_book_prob: float = 1.0,
-    opening_book_path_2: str | None = None,
-    opening_book_max_plies_2: int = 16,
-    opening_book_max_games_2: int = 200_000,
-    opening_book_mix_prob_2: float = 0.0,
-    random_start_plies: int = 0,
-    syzygy_path: str | None = None,
-    syzygy_policy: bool = False,
-    # Volatility target definition (ablation):
-    # - "raw": use the network's raw WDL head output at time t
-    # - "search": use a search-adjusted WDL distribution derived from the root search value
-    volatility_source: str = "raw",
-    # LC0-style diff focus (probabilistic skip of easy positions)
-    diff_focus_enabled: bool = True,
-    diff_focus_q_weight: float = 6.0,
-    diff_focus_pol_scale: float = 3.5,
-    diff_focus_slope: float = 3.0,
-    diff_focus_min: float = 0.025,
-    # Categorical value head settings (tunable for Ray Tune ablations)
-    categorical_bins: int = DEFAULT_CATEGORICAL_BINS,
-    hlgauss_sigma: float = 0.04,
-    # FPU (First Play Urgency) reduction for PUCT MCTS
-    fpu_reduction: float = 1.2,
-    fpu_at_root: float = 1.0,
-    soft_policy_temp: float = 2.0,
     target_games: int = 0,
     on_game_complete: Callable[[CompletedGameBatch], None] | None = None,
+    # Config groups (frozen dataclasses with sensible defaults).
+    opponent: OpponentConfig = OpponentConfig(),
+    temp: TemperatureConfig = TemperatureConfig(),
+    search: SearchConfig = SearchConfig(),
+    opening: OpeningConfig = OpeningConfig(),
+    diff_focus: DiffFocusConfig = DiffFocusConfig(),
+    game: GameConfig = GameConfig(),
 ) -> tuple[list[ReplaySample], BatchStats]:
     """Play a batch of games.
 
@@ -333,20 +295,9 @@ def play_batch(
             raise ValueError("play_batch requires model or evaluator")
         eval_impl = LocalModelEvaluator(model, device=device)
 
-    op_cfg = OpeningConfig(
-        opening_book_path=opening_book_path,
-        opening_book_max_plies=int(opening_book_max_plies),
-        opening_book_max_games=int(opening_book_max_games),
-        opening_book_prob=float(opening_book_prob),
-        opening_book_path_2=opening_book_path_2,
-        opening_book_max_plies_2=int(opening_book_max_plies_2),
-        opening_book_max_games_2=int(opening_book_max_games_2),
-        opening_book_mix_prob_2=float(opening_book_mix_prob_2),
-        random_start_plies=int(random_start_plies),
-    )
-    boards = [make_starting_board(rng=rng, cfg=op_cfg) for _ in range(batch_size)]
+    boards = [make_starting_board(rng=rng, cfg=opening) for _ in range(batch_size)]
     # Keep a copy of the starting position for tablebase replay after game ends.
-    starting_boards = [b.copy() for b in boards] if syzygy_path else None
+    starting_boards = [b.copy() for b in boards] if game.syzygy_path else None
     done = [False] * batch_size
 
     # Alternate which color the network plays so it sees both perspectives.
@@ -354,7 +305,7 @@ def play_batch(
         chess.WHITE if (i % 2 == 0) else chess.BLACK for i in range(batch_size)
     ]
     selfplay_game: list[bool] = [
-        bool(rng.random() < max(0.0, min(1.0, float(selfplay_fraction))))
+        bool(rng.random() < max(0.0, min(1.0, float(game.selfplay_fraction))))
         for _ in range(batch_size)
     ]
 
@@ -380,7 +331,7 @@ def play_batch(
     base_nodes = int(getattr(stockfish, "nodes", 0) or 0)
     terminal_eval_nodes = (5 * base_nodes) if base_nodes > 0 else 1000
 
-    vs = str(volatility_source).lower().strip()
+    vs = str(game.volatility_source).lower().strip()
     if vs not in ("raw", "search"):
         vs = "raw"
 
@@ -392,9 +343,9 @@ def play_batch(
             wdl_white = np.array([float(wdl_stm[2]), float(wdl_stm[1]), float(wdl_stm[0])], dtype=np.float32)
         else:
             wdl_white = np.asarray(wdl_stm, dtype=np.float32)
-        if float(wdl_white[0]) > float(timeout_adjudication_threshold):
+        if float(wdl_white[0]) > float(game.timeout_adjudication_threshold):
             return "1-0"
-        if float(wdl_white[2]) > float(timeout_adjudication_threshold):
+        if float(wdl_white[2]) > float(game.timeout_adjudication_threshold):
             return "0-1"
         return "1/2-1/2"
 
@@ -426,7 +377,7 @@ def play_batch(
 
         # Syzygy tablebase rescoring
         tb_policy_overrides: dict[int, np.ndarray] = {}
-        if syzygy_path and starting_boards is not None:
+        if game.syzygy_path and starting_boards is not None:
             replay_board = starting_boards[i].copy()
             replay_boards: list[chess.Board] = []
             move_stack = list(b.move_stack)
@@ -436,11 +387,11 @@ def play_batch(
                 replay_board.push(mv)
                 replay_boards.append(replay_board.copy())
 
-            tb_result = rescore_game_samples(replay_boards, syzygy_path)
+            tb_result = rescore_game_samples(replay_boards, game.syzygy_path)
             if tb_result is not None:
                 result = tb_result
 
-            if syzygy_policy:
+            if game.syzygy_policy:
                 replay_board = starting_boards[i].copy()
                 sample_idx = 0
                 _is_sp = bool(selfplay_game[i])
@@ -455,7 +406,7 @@ def play_batch(
                         if sample_idx >= len(records):
                             break
                         if _eligible(board_before):
-                            best = probe_best_move(board_before, syzygy_path)
+                            best = probe_best_move(board_before, game.syzygy_path)
                             if best is not None:
                                 try:
                                     a = int(move_to_index(best, board_before))
@@ -518,7 +469,7 @@ def play_batch(
         n = len(records)
         ply_to_index = {int(rec.ply_index): idx for idx, rec in enumerate(records)}
 
-        # Volatility targets
+        # Volatility targets + SF eval delta6 metric (single pass over records).
         vol_targets: list[np.ndarray | None] = [None] * n
         sf_vol_targets: list[np.ndarray | None] = [None] * n
         for t in range(n):
@@ -536,14 +487,6 @@ def play_batch(
                 sf6 = records[th].sf_wdl
                 if (sf0 is not None) and (sf6 is not None):
                     sf_vol_targets[t] = np.abs(sf6 - sf0).astype(np.float32, copy=False)
-
-        # SF eval delta6 metric
-        for t in range(n):
-            th = ply_to_index.get(int(records[t].ply_index) + 6)
-            if th is not None:
-                sf0 = records[t].sf_wdl
-                sf6 = records[th].sf_wdl
-                if (sf0 is not None) and (sf6 is not None):
                     wr0 = float(sf0[0]) + 0.5 * float(sf0[1])
                     wr6 = float(sf6[0]) + 0.5 * float(sf6[1])
                     _st_sf_d6_sum += abs(wr6 - wr0)
@@ -568,13 +511,13 @@ def play_batch(
                 wdl = 2
 
             total_plies_played = max(1, len(b.move_stack))
-            moves_left = float(max(0, total_plies_played - int(rec.ply_index))) / max(1.0, float(max_plies))
+            moves_left = float(max(0, total_plies_played - int(rec.ply_index))) / max(1.0, float(game.max_plies))
 
             scalar_v = 1.0 if wdl == 0 else (0.0 if wdl == 1 else -1.0)
-            cat = hlgauss_target(scalar_v, num_bins=categorical_bins, sigma=hlgauss_sigma)
+            cat = hlgauss_target(scalar_v, num_bins=game.categorical_bins, sigma=game.hlgauss_sigma)
 
             eff_probs = tb_policy_overrides.get(t, rec.policy_probs)
-            soft = _apply_temperature(eff_probs, soft_policy_temp)
+            soft = _apply_temperature(eff_probs, game.soft_policy_temp)
 
             future = None
             future_idx = ply_to_index.get(int(rec.ply_index) + 2)
@@ -637,13 +580,13 @@ def play_batch(
 
     def _recycle_slot(i: int) -> None:
         nonlocal games_started
-        boards[i] = make_starting_board(rng=rng, cfg=op_cfg)
+        boards[i] = make_starting_board(rng=rng, cfg=opening)
         if starting_boards is not None:
             starting_boards[i] = boards[i].copy()
         done[i] = False
         finalized[i] = False
         network_color[i] = chess.WHITE if (games_started % 2 == 0) else chess.BLACK
-        selfplay_game[i] = bool(rng.random() < max(0.0, min(1.0, float(selfplay_fraction))))
+        selfplay_game[i] = bool(rng.random() < max(0.0, min(1.0, float(game.selfplay_fraction))))
         samples_per_game[i] = []
         consecutive_low_winrate[i] = 0
         sf_resign_scale[i] = 1.0
@@ -666,10 +609,10 @@ def play_batch(
         wdl_f /= wdl_f.sum(axis=-1, keepdims=True)
         wdl_est = wdl_f.astype(np.float32, copy=False)
 
-        is_full = rng.random(size=len(net_idxs)) < float(playout_cap_fraction)
+        is_full = rng.random(size=len(net_idxs)) < float(search.playout_cap_fraction)
 
-        eff_full_sims = [int(mcts_simulations)] * len(net_idxs)
-        eff_fast_sims = [int(fast_simulations)] * len(net_idxs)
+        eff_full_sims = [int(search.simulations)] * len(net_idxs)
+        eff_fast_sims = [int(search.fast_simulations)] * len(net_idxs)
         sample_weights = [1.0] * len(net_idxs)
         for j, idx in enumerate(net_idxs):
             win_p = float(wdl_est[j][0])
@@ -693,12 +636,12 @@ def play_batch(
         temps = [
             temperature_for_ply(
                 ply=len(boards[i].move_stack) // 2 + 1,
-                temperature=float(temperature),
-                drop_plies=int(temperature_drop_plies),
-                after=float(temperature_after),
-                decay_start_move=int(temperature_decay_start_move),
-                decay_moves=int(temperature_decay_moves),
-                endgame=float(temperature_endgame),
+                temperature=float(temp.temperature),
+                drop_plies=int(temp.drop_plies),
+                after=float(temp.after),
+                decay_start_move=int(temp.decay_start_move),
+                decay_moves=int(temp.decay_moves),
+                endgame=float(temp.endgame),
             )
             for i in net_idxs
         ]
@@ -712,12 +655,12 @@ def play_batch(
             for j in idxs:
                 by_key[(int(sims_per[j]), round(temps[j], 2))].append(j)
 
-            gumbel_low_sims = max(64, int(fast_simulations))
+            gumbel_low_sims = max(64, int(search.fast_simulations))
 
             for (sim_count, temp_bucket), group in by_key.items():
                 sub_boards = [boards[net_idxs[j]] for j in group]
 
-                use_gumbel = (str(mcts_type) == "gumbel") or (int(sim_count) <= int(gumbel_low_sims))
+                use_gumbel = (str(search.mcts_type) == "gumbel") or (int(sim_count) <= int(gumbel_low_sims))
                 if use_gumbel:
                     sub_pol = pol_logits[group, :]
                     sub_wdl = wdl_logits_raw[group, :]
@@ -744,8 +687,8 @@ def play_batch(
                         cfg=MCTSConfig(
                             simulations=int(sim_count),
                             temperature=float(temp_bucket),
-                            fpu_reduction=float(fpu_reduction),
-                            fpu_at_root=float(fpu_at_root),
+                            fpu_reduction=float(search.fpu_reduction),
+                            fpu_at_root=float(search.fpu_at_root),
                         ),
                         evaluator=eval_impl,
                         pre_pol_logits=sub_pol,
@@ -767,11 +710,11 @@ def play_batch(
         # Pre-allocate reusable buffers for per-sample computation
         _lg_buf = np.empty(POLICY_SIZE, dtype=np.float64)
         _swdl_buf = np.empty(3, dtype=np.float32)
-        _df_enabled = bool(diff_focus_enabled)
-        _df_q_w = float(diff_focus_q_weight)
-        _df_p_s = float(diff_focus_pol_scale)
-        _df_slope = float(diff_focus_slope)
-        _df_min = float(diff_focus_min)
+        _df_enabled = bool(diff_focus.enabled)
+        _df_q_w = float(diff_focus.q_weight)
+        _df_p_s = float(diff_focus.pol_scale)
+        _df_slope = float(diff_focus.slope)
+        _df_min = float(diff_focus.min_keep)
 
         for j, (idx, probs, a, v) in enumerate(zip(net_idxs, probs_list, actions, values_list, strict=True)):
             assert probs is not None and a is not None and v is not None
@@ -863,8 +806,8 @@ def play_batch(
         else:
             results = {idx: stockfish.search(boards[idx].fen(), nodes=_eff_nodes(idx)) for idx in idxs}
 
-        sf_policy_temp_local = float(sf_policy_temp)
-        sf_policy_label_smooth_local = float(sf_policy_label_smooth)
+        sf_policy_temp_local = float(game.sf_policy_temp)
+        sf_policy_label_smooth_local = float(game.sf_policy_label_smooth)
 
         def _softmax_np(x: np.ndarray) -> np.ndarray:
             z = x.astype(np.float64, copy=False)
@@ -881,23 +824,23 @@ def play_batch(
                 return wdl.astype(np.float32, copy=False)
             return np.array([float(wdl[2]), float(wdl[1]), float(wdl[0])], dtype=np.float32)
 
-        rand_p = float(opponent_random_move_prob)
+        rand_p = float(opponent.random_move_prob)
         curriculum_topk_max = max(1, int(getattr(stockfish, "multipv", 1) or 1))
         curriculum_topk = _effective_curriculum_topk(
             random_move_prob=rand_p,
-            stage_end=float(opponent_topk_stage_end),
+            stage_end=float(opponent.topk_stage_end),
             topk_max=curriculum_topk_max,
-            topk_min=int(opponent_topk_min),
+            topk_min=int(opponent.topk_min),
         )
-        if opponent_wdl_regret_limit is not None:
-            regret_limit = float(opponent_wdl_regret_limit)
+        if opponent.wdl_regret_limit is not None:
+            regret_limit = float(opponent.wdl_regret_limit)
         else:
             regret_limit = _effective_curriculum_wdl_regret(
                 random_move_prob=rand_p,
-                random_move_prob_start=float(opponent_random_move_prob_start),
-                random_move_prob_floor=float(opponent_random_move_prob_min),
-                regret_max=float(opponent_suboptimal_wdl_regret_max),
-                regret_min=float(opponent_suboptimal_wdl_regret_min),
+                random_move_prob_start=float(opponent.random_move_prob_start),
+                random_move_prob_floor=float(opponent.random_move_prob_min),
+                regret_max=float(opponent.suboptimal_wdl_regret_max),
+                regret_min=float(opponent.suboptimal_wdl_regret_min),
             )
 
         for idx in idxs:
@@ -983,7 +926,7 @@ def play_batch(
                 done[idx] = True
 
     # ── Main game loop (rolling batch) ────────────────────────────────────────
-    max_steps = int(target) * (int(max_plies) // 2 + 1)  # safety bound
+    max_steps = int(target) * (int(game.max_plies) // 2 + 1)  # safety bound
 
     for _step in range(max_steps):
         active_idxs = [i for i in range(batch_size) if not finalized[i]]
@@ -992,7 +935,7 @@ def play_batch(
 
         # Mark games that hit max_plies or are over
         for i in active_idxs:
-            if not done[i] and (boards[i].is_game_over() or len(boards[i].move_stack) >= int(max_plies)):
+            if not done[i] and (boards[i].is_game_over() or len(boards[i].move_stack) >= int(game.max_plies)):
                 done[i] = True
 
         active_idxs = [i for i in range(batch_size) if not finalized[i] and not done[i]]
@@ -1051,7 +994,7 @@ def play_batch(
         sf_nodes=sf_nodes if sf_nodes > 0 else None,
         sf_nodes_next=None,
         pid_ema_winrate=None,
-        random_move_prob=float(opponent_random_move_prob),
+        random_move_prob=float(opponent.random_move_prob),
         skill_level=skill_lvl_i,
         sf_eval_delta6=mean_sf_d6,
         sf_eval_delta6_n=int(_st_sf_d6_n),

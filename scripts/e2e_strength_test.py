@@ -13,6 +13,14 @@ from chess_anti_engine.model.transformer import ChessNet, TransformerConfig
 from chess_anti_engine.moves import POLICY_SIZE, move_to_index, index_to_move, legal_move_mask
 from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
 from chess_anti_engine.selfplay import play_batch
+from chess_anti_engine.selfplay.config import (
+    DiffFocusConfig,
+    GameConfig,
+    OpponentConfig,
+    SearchConfig,
+    TemperatureConfig,
+)
+from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.replay.shard import samples_to_arrays
 from chess_anti_engine.stockfish.uci import StockfishUCI
 from chess_anti_engine.train import Trainer
@@ -179,20 +187,24 @@ def main():
 
     sp_kw = dict(
         device=device, rng=rng, stockfish=sf,
-        opponent_random_move_prob=0.0, selfplay_fraction=0.0,
-        temperature=1.0, temperature_drop_plies=0, temperature_after=0.0,
-        temperature_decay_start_move=20, temperature_decay_moves=60,
-        temperature_endgame=0.6, max_plies=args.max_plies,
-        mcts_simulations=args.mcts_simulations, mcts_type="gumbel",
-        playout_cap_fraction=0.25, fast_simulations=8,
-        sf_policy_temp=0.25, sf_policy_label_smooth=0.05,
-        timeout_adjudication_threshold=0.995, volatility_source="raw",
-        opening_book_path=None, opening_book_max_plies=4,
-        opening_book_max_games=200000, opening_book_prob=1.0,
-        opening_book_path_2=None, opening_book_max_plies_2=16,
-        opening_book_max_games_2=200000, opening_book_mix_prob_2=0.0,
-        random_start_plies=4, fpu_reduction=1.2, fpu_at_root=1.0,
-        categorical_bins=32, hlgauss_sigma=0.04,
+        opponent=OpponentConfig(random_move_prob=0.0),
+        temp=TemperatureConfig(
+            temperature=1.0, drop_plies=0, after=0.0,
+            decay_start_move=20, decay_moves=60, endgame=0.6,
+        ),
+        search=SearchConfig(
+            simulations=args.mcts_simulations, mcts_type="gumbel",
+            playout_cap_fraction=0.25, fast_simulations=8,
+            fpu_reduction=1.2, fpu_at_root=1.0,
+        ),
+        opening=OpeningConfig(random_start_plies=4),
+        diff_focus=DiffFocusConfig(),
+        game=GameConfig(
+            max_plies=args.max_plies, selfplay_fraction=0.0,
+            sf_policy_temp=0.25, sf_policy_label_smooth=0.05,
+            timeout_adjudication_threshold=0.995, volatility_source="raw",
+            categorical_bins=32, hlgauss_sigma=0.04,
+        ),
     )
 
     log = []

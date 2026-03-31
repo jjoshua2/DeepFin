@@ -796,9 +796,19 @@ class Trainer:
         torch.save(state, str(path))
 
     def load(self, path: Path) -> None:
+        from chess_anti_engine.model import load_state_dict_tolerant
+
         ckpt = torch.load(str(path), map_location=self.device)
-        self.model.load_state_dict(ckpt["model"])
-        self.opt.load_state_dict(ckpt["opt"])
+        load_state_dict_tolerant(self.model, ckpt["model"], label="resume")
+        fresh_opt_state = self.opt.state_dict()
+        try:
+            self.opt.load_state_dict(ckpt["opt"])
+        except (ValueError, KeyError, RuntimeError) as exc:
+            logging.getLogger(__name__).warning(
+                "Optimizer state incompatible with new model layout, "
+                "reinitialising optimizer: %s", exc,
+            )
+            self.opt.load_state_dict(fresh_opt_state)
         if "scheduler" in ckpt:
             self._scheduler.load_state_dict(ckpt["scheduler"])
         if "peak_lr" in ckpt:
@@ -806,7 +816,12 @@ class Trainer:
         else:
             self._peak_lr = self._reference_lr_from_bases()
         if "swa_model" in ckpt and self._swa_model is not None:
-            self._swa_model.load_state_dict(ckpt["swa_model"])
+            try:
+                self._swa_model.load_state_dict(ckpt["swa_model"])
+            except (RuntimeError, KeyError) as exc:
+                logging.getLogger(__name__).warning(
+                    "SWA model state incompatible, reinitialising: %s", exc,
+                )
         self.step = int(ckpt.get("step", 0))
 
     def export_swa(self, path: Path, dataloader: object = None) -> None:

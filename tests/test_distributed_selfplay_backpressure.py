@@ -10,12 +10,14 @@ import torch
 from chess_anti_engine.replay import ArrayReplayBuffer
 from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
 from chess_anti_engine.replay.shard import save_npz_arrays
-from chess_anti_engine.tune.trainable import (
-    _compute_train_step_budget,
+from chess_anti_engine.tune.distributed_runtime import (
     _ingest_distributed_selfplay,
-    _iteration_pause_metrics,
     _publish_distributed_trial_state,
     _quarantine_inbox_shards,
+)
+from chess_anti_engine.tune.trainable import (
+    _compute_train_step_budget,
+    _iteration_pause_metrics,
     _selfplay_winrate_raw_or_none,
     _should_retry_distributed_iteration_without_games,
 )

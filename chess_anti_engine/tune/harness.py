@@ -11,6 +11,7 @@ import time
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
+from chess_anti_engine.tune._utils import terminate_process as _terminate_process
 from chess_anti_engine.tune.process_cleanup import terminate_matching_processes
 
 
@@ -19,22 +20,6 @@ def _pick_free_port() -> int:
         s.bind(("127.0.0.1", 0))
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         return int(s.getsockname()[1])
-
-
-def _terminate_process(proc: subprocess.Popen[bytes] | None, *, timeout_s: float = 5.0) -> None:
-    if proc is None:
-        return
-    if proc.poll() is not None:
-        return
-    try:
-        proc.terminate()
-        proc.wait(timeout=float(timeout_s))
-    except Exception:
-        try:
-            proc.kill()
-            proc.wait(timeout=2.0)
-        except Exception:
-            pass
 
 
 def _wait_for_server_ready(
@@ -156,14 +141,6 @@ def _cleanup_old_tune_experiments(*, tune_dir: Path, keep_last: int) -> None:
         if len(parts) >= 3:
             prefixes.add(parts[1])
 
-
-def _resolve_local_override_root(*, raw_root: object, work_dir: Path, suffix: str) -> Path:
-    root = Path(str(raw_root or "")).expanduser()
-    run_root = Path(work_dir).expanduser().resolve()
-    if root.as_posix().startswith("/mnt/c/chess_active/"):
-        return run_root.with_name(f"{run_root.name}_{suffix}")
-    return root
-
     for p in tune_dir.glob("pbt_policy_*.txt"):
         # pbt_policy_<prefix>_<trialid>.txt
         m = re.match(r"^pbt_policy_(?P<prefix>[^_]+)_\d+\.txt$", p.name)
@@ -173,6 +150,14 @@ def _resolve_local_override_root(*, raw_root: object, work_dir: Path, suffix: st
                 p.unlink()
             except Exception:
                 pass
+
+
+def _resolve_local_override_root(*, raw_root: object, work_dir: Path, suffix: str) -> Path:
+    root = Path(str(raw_root or "")).expanduser()
+    run_root = Path(work_dir).expanduser().resolve()
+    if root.as_posix().startswith("/mnt/c/chess_active/"):
+        return run_root.with_name(f"{run_root.name}_{suffix}")
+    return root
 
 
 def _load_trial_config_from_state_entry(entry: object) -> tuple[dict[str, object] | None, bool]:

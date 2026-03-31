@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from chess_anti_engine.model import ModelConfig, build_model
+from chess_anti_engine.model import ModelConfig, build_model, load_state_dict_tolerant
 from chess_anti_engine.selfplay.match import play_match_batch
 
 
@@ -115,12 +115,12 @@ def main() -> None:
     )
 
     latest = build_model(model_cfg)
-    latest.load_state_dict(_load_state_dict(latest_path))
+    load_state_dict_tolerant(latest, _load_state_dict(latest_path), label="arena-latest")
     latest.to(device)
     latest.eval()
 
     best = build_model(model_cfg)
-    best.load_state_dict(_load_state_dict(best_path))
+    load_state_dict_tolerant(best, _load_state_dict(best_path), label="arena-best")
     best.to(device)
     best.eval()
 
