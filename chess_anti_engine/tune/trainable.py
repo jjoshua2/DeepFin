@@ -43,7 +43,7 @@ from chess_anti_engine.selfplay.manager import _effective_curriculum_topk
 from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.selfplay.budget import progressive_mcts_simulations
 from chess_anti_engine.stockfish import DifficultyPID, StockfishPool, StockfishUCI
-from chess_anti_engine.train import Trainer
+from chess_anti_engine.train import Trainer, trainer_kwargs_from_config
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 from chess_anti_engine.tune._utils import (
     concat_array_batches as _concat_array_batches,
@@ -465,45 +465,8 @@ def train_trial(config: dict):
         except Exception:
             pass
 
-    trainer_ctor = dict(
-        device=device,
-        lr=float(config.get("lr", 3e-4)),
-        zclip_z_thresh=float(config.get("zclip_z_thresh", 2.5)),
-        zclip_alpha=float(config.get("zclip_alpha", 0.97)),
-        zclip_max_norm=float(config.get("zclip_max_norm", 1.0)),
-        log_dir=work_dir / "tb",
-        use_amp=bool(config.get("use_amp", True)),
-        feature_dropout_p=float(config.get("feature_dropout_p", 0.3)),
-        fdp_king_safety=config.get("fdp_king_safety"),
-        fdp_pins=config.get("fdp_pins"),
-        fdp_pawns=config.get("fdp_pawns"),
-        fdp_mobility=config.get("fdp_mobility"),
-        fdp_outposts=config.get("fdp_outposts"),
-        w_volatility=float(config.get("w_volatility", 0.05)),
-        accum_steps=int(config.get("accum_steps", 1)),
-        warmup_steps=int(config.get("warmup_steps", 1500)),
-        warmup_lr_start=config.get("warmup_lr_start", None),
-        lr_eta_min=float(config.get("lr_eta_min", 1e-5)),
-        lr_T0=int(config.get("lr_T0", 5000)),
-        lr_T_mult=int(config.get("lr_T_mult", 2)),
-        use_compile=bool(config.get("use_compile", False)),
-        optimizer=str(config.get("optimizer", "nadamw")),
-        cosmos_rank=int(config.get("cosmos_rank", 64)),
-        cosmos_gamma=float(config.get("cosmos_gamma", 0.2)),
-        swa_start=int(config.get("swa_start", 0)),
-        swa_freq=int(config.get("swa_freq", 50)),
-        w_policy=float(config.get("w_policy", 1.0)),
-        w_soft=float(config.get("w_soft", 0.5)),
-        w_future=float(config.get("w_future", 0.15)),
-        w_wdl=float(config.get("w_wdl", 1.0)),
-        w_sf_move=float(config.get("w_sf_move", 0.15)),
-        w_sf_eval=float(config.get("w_sf_eval", 0.15)),
-        w_categorical=float(config.get("w_categorical", 0.10)),
-        w_sf_volatility=float(config.get("w_sf_volatility", config.get("w_volatility", 0.05))),
-        w_moves_left=float(config.get("w_moves_left", 0.02)),
-        w_sf_wdl=float(config.get("w_sf_wdl", 1.0)),
-        sf_wdl_conf_power=float(config.get("sf_wdl_conf_power", 0.0)),
-        sf_wdl_draw_scale=float(config.get("sf_wdl_draw_scale", 1.0)),
+    trainer_ctor = trainer_kwargs_from_config(
+        config | {"device": device}, log_dir=work_dir / "tb",
     )
     trainer = Trainer(model, **trainer_ctor)
 

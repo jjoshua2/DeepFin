@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["Trainer"]
+__all__ = ["Trainer", "trainer_kwargs_from_config"]
 
 
 def __getattr__(name: str) -> Any:
@@ -15,4 +15,8 @@ def __getattr__(name: str) -> Any:
         from .trainer import Trainer
 
         return Trainer
+    if name == "trainer_kwargs_from_config":
+        from .trainer import trainer_kwargs_from_config
+
+        return trainer_kwargs_from_config
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

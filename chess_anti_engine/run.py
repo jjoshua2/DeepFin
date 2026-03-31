@@ -32,7 +32,7 @@ from chess_anti_engine.selfplay.config import (
 )
 from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.stockfish import DifficultyPID, StockfishPool, StockfishUCI
-from chess_anti_engine.train import Trainer
+from chess_anti_engine.train import Trainer, trainer_kwargs_from_config
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 from chess_anti_engine.tune.replay_exchange import _read_jsonl_rows
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
@@ -323,40 +323,11 @@ def _run_single(args: argparse.Namespace) -> None:
             use_gradient_checkpointing=bool(args.gradient_checkpointing),
         )
     )
-    trainer = Trainer(
-        model,
-        device=cfg.train.device,
-        lr=cfg.train.lr,
-        zclip_max_norm=float(args.grad_clip),
+    trainer_ctor = trainer_kwargs_from_config(
+        vars(args) | {"device": cfg.train.device, "use_amp": not bool(args.no_amp)},
         log_dir=cfg.work_dir / "tb",
-        use_amp=not bool(args.no_amp),
-        feature_dropout_p=float(args.feature_dropout_p),
-        w_volatility=float(args.w_volatility),
-        accum_steps=int(args.accum_steps),
-        warmup_steps=int(args.warmup_steps),
-        warmup_lr_start=getattr(args, "warmup_lr_start", None),
-        lr_eta_min=float(args.lr_eta_min),
-        lr_T0=int(args.lr_T0),
-        lr_T_mult=int(args.lr_T_mult),
-        use_compile=bool(args.use_compile),
-        optimizer=str(args.optimizer),
-        cosmos_rank=int(getattr(args, "cosmos_rank", 64)),
-        cosmos_gamma=float(getattr(args, "cosmos_gamma", 0.2)),
-        swa_start=int(args.swa_start),
-        swa_freq=int(args.swa_freq),
-        w_policy=float(getattr(args, "w_policy", 1.0)),
-        w_soft=float(getattr(args, "w_soft", 0.5)),
-        w_future=float(getattr(args, "w_future", 0.15)),
-        w_wdl=float(getattr(args, "w_wdl", 1.0)),
-        w_sf_move=float(getattr(args, "w_sf_move", 0.15)),
-        w_sf_eval=float(getattr(args, "w_sf_eval", 0.15)),
-        w_categorical=float(getattr(args, "w_categorical", 0.10)),
-        w_sf_volatility=float(getattr(args, "w_sf_volatility", getattr(args, "w_volatility", 0.05))),
-        w_moves_left=float(getattr(args, "w_moves_left", 0.02)),
-        w_sf_wdl=float(getattr(args, "w_sf_wdl", 1.0)),
-        sf_wdl_conf_power=float(getattr(args, "sf_wdl_conf_power", 0.0)),
-        sf_wdl_draw_scale=float(getattr(args, "sf_wdl_draw_scale", 1.0)),
     )
+    trainer = Trainer(model, **trainer_ctor)
 
     # Growing sliding window
     window_start = int(getattr(args, "replay_window_start", 100_000))

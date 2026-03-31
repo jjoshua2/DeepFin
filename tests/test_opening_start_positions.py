@@ -1,6 +1,7 @@
 import zipfile
 
 import numpy as np
+import pytest
 
 from chess_anti_engine.selfplay.opening import OpeningConfig, make_starting_board
 
@@ -89,3 +90,37 @@ def test_opening_book_prob_zero_falls_back_to_random(tmp_path):
     b = make_starting_board(rng=rng, cfg=cfg)
     assert len(b.move_stack) == 1
     assert b.is_valid()
+
+
+def test_selected_empty_opening_book_raises(tmp_path):
+    empty_pgn = tmp_path / "empty.pgn"
+    empty_pgn.write_text("", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="produced no usable opening moves"):
+        make_starting_board(
+            rng=np.random.default_rng(0),
+            cfg=OpeningConfig(
+                opening_book_path=str(empty_pgn),
+                opening_book_prob=1.0,
+                random_start_plies=2,
+            ),
+        )
+
+
+def test_selected_secondary_empty_opening_book_raises(tmp_path):
+    pgn_path = tmp_path / "book1.pgn"
+    _write_test_pgn(pgn_path)
+    empty_pgn = tmp_path / "book2.pgn"
+    empty_pgn.write_text("", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="produced no usable opening moves"):
+        make_starting_board(
+            rng=np.random.default_rng(0),
+            cfg=OpeningConfig(
+                opening_book_path=str(pgn_path),
+                opening_book_prob=1.0,
+                opening_book_path_2=str(empty_pgn),
+                opening_book_mix_prob_2=1.0,
+                random_start_plies=2,
+            ),
+        )

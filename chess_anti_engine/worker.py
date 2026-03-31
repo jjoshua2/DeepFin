@@ -486,10 +486,10 @@ def _cached_sha_asset_needs_refresh(*, path: Path, sha256: str, last_sha256: str
     cache path still exists. This covers local cache eviction and manifest
     filename changes without re-hashing large assets on every poll.
     """
+    if str(sha256) == str(last_sha256 or ""):
+        return not path.exists()
     if not path.exists():
         return True
-    if str(sha256) == str(last_sha256 or ""):
-        return False
     return _sha256_file(path) != str(sha256)
 
 
@@ -786,140 +786,203 @@ def main() -> None:
     if bool(args.save_config) and bool(args.save_password):
         cfg["password"] = str(args.password)
 
-    server = str(args.server_url).rstrip("/")
-    trial_id = str(args.trial_id).strip() if args.trial_id is not None else ""
-    fixed_trial_id = str(trial_id)
-    leased_trial_id = str(trial_id)
-    trial_api_prefix = f"/v1/trials/{leased_trial_id}" if leased_trial_id else "/v1"
-    lease_id = ""
+    session = WorkerSession(
+        args,
+        cfg=cfg,
+        cfg_path=cfg_path,
+        log=log,
+        pinned_games_per_batch_cli=pinned_games_per_batch_cli,
+        requests_mod=requests,
+    )
+    session.run()
 
-    def _server_url_for(endpoint: str) -> str:
+
+class WorkerSession:
+    """Manages a worker's lifecycle: poll manifest -> sync assets -> play -> upload."""
+
+    def __init__(
+        self,
+        args,
+        *,
+        cfg: dict,
+        cfg_path: Path,
+        log: logging.Logger,
+        pinned_games_per_batch_cli: bool,
+        requests_mod,
+    ) -> None:
+        self.args = args
+        self.cfg = cfg
+        self.cfg_path = cfg_path
+        self.log = log
+        self.pinned_games_per_batch_cli = pinned_games_per_batch_cli
+        self._requests = requests_mod
+
+        self.server = str(args.server_url).rstrip("/")
+        trial_id = str(args.trial_id).strip() if args.trial_id is not None else ""
+        self.fixed_trial_id = str(trial_id)
+        self.leased_trial_id = str(trial_id)
+        self.trial_api_prefix = f"/v1/trials/{self.leased_trial_id}" if self.leased_trial_id else "/v1"
+        self.lease_id = ""
+
+        work_dir = Path(args.work_dir)
+        self.cache_dir = Path(str(args.shared_cache_dir)) if args.shared_cache_dir is not None else (work_dir / "cache")
+        self.shared_cache_enabled = args.shared_cache_dir is not None
+        _configure_shared_compile_cache(cache_dir=self.cache_dir)
+        shard_dir = work_dir / "shards"
+        self.pending_dir = shard_dir / "pending"
+        self.uploaded_dir = shard_dir / "uploaded"
+
+        arena_dir = work_dir / "arena"
+        self.arena_pending_dir = arena_dir / "pending"
+        self.arena_uploaded_dir = arena_dir / "uploaded"
+
+        self.pending_dir.mkdir(parents=True, exist_ok=True)
+        self.uploaded_dir.mkdir(parents=True, exist_ok=True)
+        self.arena_pending_dir.mkdir(parents=True, exist_ok=True)
+        self.arena_uploaded_dir.mkdir(parents=True, exist_ok=True)
+
+        # Local throughput override that can be tuned and persisted.
+        self.games_per_batch_local = int(args.games_per_batch) if args.games_per_batch is not None else None
+        self.worker_id = str(cfg.get("worker_id") or "").strip()
+        if not self.worker_id:
+            self.worker_id = uuid.uuid4().hex
+            cfg["worker_id"] = self.worker_id
+
+        self.machine_id = str(cfg.get("machine_name") or "").strip() or socket.gethostname()
+
+        # Save initial config (best effort).
+        self._persist_cfg()
+
+        self.device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.worker_info = _collect_worker_info(
+            device=str(self.device),
+        )
+        self.worker_info["worker_id"] = str(self.worker_id)
+
+        self.rng = np.random.default_rng(int(args.seed))
+
+        # Validate server-managed overrides once at startup (args never change).
+        if not bool(args.allow_overrides):
+            _server_managed_keys = [
+                "max_plies", "mcts", "mcts_simulations", "playout_cap_fraction",
+                "fast_simulations", "opening_book_prob", "opening_book_max_plies",
+                "opening_book_max_games", "random_start_plies", "sf_nodes",
+                "sf_multipv", "sf_policy_temp", "sf_policy_label_smooth",
+                "timeout_adjudication_threshold", "temperature",
+                "temperature_decay_start_move", "temperature_decay_moves",
+                "temperature_endgame",
+            ]
+            overridden = [k for k in _server_managed_keys if getattr(args, k, None) is not None]
+            if overridden:
+                raise SystemExit(
+                    "This worker is configured for server-managed strength knobs. "
+                    f"Remove selfplay/strength flags ({', '.join(overridden)}), or pass --allow-overrides for debugging."
+                )
+
+        # Engine: initialize with placeholder settings; we will align nodes from manifest each loop.
+        # MultiPV and Skill Level are set at init time; reinitialize when either changes.
+        self.sf = None
+        self.sf_multipv_active = None
+        self.sf_skill_level_active: int | None = None
+
+        self.last_model_sha = None
+        self.last_ob_sha: str | None = None
+        self.last_ob2_sha: str | None = None
+        self.last_sf_sha: str | None = None
+        self.model_cfg_active: ModelConfig | None = None
+        self.model = None
+        self.inference_client = self._make_inference_client()
+        self.pause_selfplay_active = False
+        self.manifest_state = "active"
+        self.manifest_state_elapsed_s: float | None = None
+        self.upload_buf = _BufferedUpload()
+        self.last_successful_send_s = time.time()
+
+        self.last_best_sha = None
+        self.best_model = None
+
+        # Opening book paths (set by _sync_opening_books each iteration).
+        self.opening_book_path: str | None = None
+        self.opening_book_path_2: str | None = None
+
+        # Per-iteration state (set during each loop iteration).
+        self.model_sha = ""
+        self.model_step = 0
+        self._saw_completed_game = False
+
+    def run(self) -> None:
+        """Main loop."""
+        try:
+            while True:
+                manifest = self._poll_manifest()
+                if manifest is None:
+                    continue
+                self._sync_assets(manifest)
+                if not self.model_sha:
+                    # Model download failed (mid-publish race); retry next poll.
+                    time.sleep(float(self.args.poll_seconds))
+                    continue
+                task = manifest.get("task") or {"type": "selfplay"}
+                task_type = str(task.get("type", "selfplay")).lower()
+                if task_type == "arena":
+                    self._run_arena(manifest, task)
+                else:
+                    self._run_selfplay(manifest)
+        finally:
+            self._cleanup()
+
+    # -- Helper methods -------------------------------------------------------
+
+    def _server_url_for(self, endpoint: str) -> str:
         if endpoint.startswith("http://") or endpoint.startswith("https://"):
             return endpoint
         if endpoint.startswith("/"):
-            return server + endpoint
-        return server + "/" + endpoint
+            return self.server + endpoint
+        return self.server + "/" + endpoint
 
-    cache_dir = Path(str(args.shared_cache_dir)) if args.shared_cache_dir is not None else (work_dir / "cache")
-    shared_cache_enabled = args.shared_cache_dir is not None
-    _configure_shared_compile_cache(cache_dir=cache_dir)
-    shard_dir = work_dir / "shards"
-    pending_dir = shard_dir / "pending"
-    uploaded_dir = shard_dir / "uploaded"
-
-    arena_dir = work_dir / "arena"
-    arena_pending_dir = arena_dir / "pending"
-    arena_uploaded_dir = arena_dir / "uploaded"
-
-    pending_dir.mkdir(parents=True, exist_ok=True)
-    uploaded_dir.mkdir(parents=True, exist_ok=True)
-    arena_pending_dir.mkdir(parents=True, exist_ok=True)
-    arena_uploaded_dir.mkdir(parents=True, exist_ok=True)
-
-    # Local throughput override that can be tuned and persisted.
-    games_per_batch_local = int(args.games_per_batch) if args.games_per_batch is not None else None
-    worker_id = str(cfg.get("worker_id") or "").strip()
-    if not worker_id:
-        worker_id = uuid.uuid4().hex
-        cfg["worker_id"] = worker_id
-
-    machine_id = str(cfg.get("machine_name") or "").strip() or socket.gethostname()
-
-    def _persist_cfg() -> None:
-        if not bool(args.save_config):
+    def _persist_cfg(self) -> None:
+        if not bool(self.args.save_config):
             return
-        cfg["server_url"] = str(args.server_url)
-        if trial_id:
-            cfg["trial_id"] = trial_id
+        self.cfg["server_url"] = str(self.args.server_url)
+        if self.fixed_trial_id:
+            self.cfg["trial_id"] = self.fixed_trial_id
         else:
-            cfg.pop("trial_id", None)
-        cfg["username"] = str(args.username)
-        cfg["self_update"] = bool(args.self_update)
-        cfg["stockfish_from_server"] = bool(args.stockfish_from_server)
-        if args.password_file:
-            cfg["password_file"] = str(args.password_file)
+            self.cfg.pop("trial_id", None)
+        self.cfg["username"] = str(self.args.username)
+        self.cfg["self_update"] = bool(self.args.self_update)
+        self.cfg["stockfish_from_server"] = bool(self.args.stockfish_from_server)
+        if self.args.password_file:
+            self.cfg["password_file"] = str(self.args.password_file)
         else:
-            cfg.pop("password_file", None)
-        if not bool(args.stockfish_from_server):
-            cfg["stockfish_path"] = str(args.stockfish_path)
+            self.cfg.pop("password_file", None)
+        if not bool(self.args.stockfish_from_server):
+            self.cfg["stockfish_path"] = str(self.args.stockfish_path)
         else:
-            cfg.pop("stockfish_path", None)
-        if args.shared_cache_dir:
-            cfg["shared_cache_dir"] = str(args.shared_cache_dir)
+            self.cfg.pop("stockfish_path", None)
+        if self.args.shared_cache_dir:
+            self.cfg["shared_cache_dir"] = str(self.args.shared_cache_dir)
         else:
-            cfg.pop("shared_cache_dir", None)
-        cfg["sf_workers"] = int(args.sf_workers)
-        if games_per_batch_local is not None:
-            cfg["games_per_batch"] = int(games_per_batch_local)
-        cfg["upload_target_positions"] = int(args.upload_target_positions)
-        cfg["upload_flush_seconds"] = float(args.upload_flush_seconds)
-        if not bool(args.save_password):
-            cfg.pop("password", None)
-        save_worker_config(cfg_path, cfg)
+            self.cfg.pop("shared_cache_dir", None)
+        self.cfg["sf_workers"] = int(self.args.sf_workers)
+        if self.games_per_batch_local is not None:
+            self.cfg["games_per_batch"] = int(self.games_per_batch_local)
+        self.cfg["upload_target_positions"] = int(self.args.upload_target_positions)
+        self.cfg["upload_flush_seconds"] = float(self.args.upload_flush_seconds)
+        if not bool(self.args.save_password):
+            self.cfg.pop("password", None)
+        save_worker_config(self.cfg_path, self.cfg)
 
-    # Save initial config (best effort).
-    _persist_cfg()
-
-    device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
-    worker_info = _collect_worker_info(
-        device=str(device),
-    )
-    worker_info["worker_id"] = str(worker_id)
-
-    rng = np.random.default_rng(int(args.seed))
-
-    # Validate server-managed overrides once at startup (args never change).
-    if not bool(args.allow_overrides):
-        _server_managed_keys = [
-            "max_plies", "mcts", "mcts_simulations", "playout_cap_fraction",
-            "fast_simulations", "opening_book_prob", "opening_book_max_plies",
-            "opening_book_max_games", "random_start_plies", "sf_nodes",
-            "sf_multipv", "sf_policy_temp", "sf_policy_label_smooth",
-            "timeout_adjudication_threshold", "temperature",
-            "temperature_decay_start_move", "temperature_decay_moves",
-            "temperature_endgame",
-        ]
-        overridden = [k for k in _server_managed_keys if getattr(args, k, None) is not None]
-        if overridden:
-            raise SystemExit(
-                "This worker is configured for server-managed strength knobs. "
-                f"Remove selfplay/strength flags ({', '.join(overridden)}), or pass --allow-overrides for debugging."
-            )
-
-    # Engine: initialize with placeholder settings; we will align nodes from manifest each loop.
-    # MultiPV and Skill Level are set at init time; reinitialize when either changes.
-    sf = None
-    sf_multipv_active = None
-    sf_skill_level_active: int | None = None
-
-    last_model_sha = None
-    last_ob_sha: str | None = None
-    last_ob2_sha: str | None = None
-    last_sf_sha: str | None = None
-    model_cfg_active: ModelConfig | None = None
-    model = None
-    def _make_inference_client():
-        if str(args.inference_slot_name or "").strip():
+    def _make_inference_client(self):
+        if str(self.args.inference_slot_name or "").strip():
             return SlotInferenceClient(
-                slot_name=str(args.inference_slot_name),
-                max_batch=int(args.inference_slot_max_batch),
+                slot_name=str(self.args.inference_slot_name),
+                max_batch=int(self.args.inference_slot_max_batch),
             )
         return None
 
-    inference_client = _make_inference_client()
-    pause_selfplay_active = False
-    manifest_state = "active"
-    manifest_state_elapsed_s: float | None = None
-    upload_buf = _BufferedUpload()
-    last_successful_send_s = time.time()
-
-    last_best_sha = None
-    best_model = None
-
-    def _upload_pending_shards(*, default_elapsed_s: float | None = None) -> float | None:
-        nonlocal last_successful_send_s
+    def _upload_pending_shards(self, *, default_elapsed_s: float | None = None) -> float | None:
         last_uploaded_at: float | None = None
-        for sp in sorted(p for p in pending_dir.glob("*.npz") if not p.name.startswith("_tmp_")):
+        for sp in sorted(p for p in self.pending_dir.glob("*.npz") if not p.name.startswith("_tmp_")):
             elapsed_s = default_elapsed_s
             elapsed_path = _pending_elapsed_path(sp)
             if elapsed_path.exists():
@@ -929,15 +992,15 @@ def main() -> None:
                     elapsed_s = default_elapsed_s
             with sp.open("rb") as f:
                 files = {"file": (sp.name, f, "application/octet-stream")}
-                r = requests.post(
-                    _server_url_for(trial_api_prefix + "/upload_shard"),
+                r = self._requests.post(
+                    self._server_url_for(self.trial_api_prefix + "/upload_shard"),
                     files=files,
-                    auth=(str(args.username), str(args.password)),
+                    auth=(str(self.args.username), str(self.args.password)),
                     headers={
-                        **_worker_headers(machine_id=machine_id),
+                        **_worker_headers(machine_id=self.machine_id),
                         **(
-                            {"X-CAE-Worker-Lease-ID": str(lease_id)}
-                            if str(lease_id).strip()
+                            {"X-CAE-Worker-Lease-ID": str(self.lease_id)}
+                            if str(self.lease_id).strip()
                             else {}
                         ),
                         **(
@@ -954,110 +1017,221 @@ def main() -> None:
                 except OSError:
                     pass
                 elapsed_path.unlink(missing_ok=True)
-                last_successful_send_s = time.time()
-                last_uploaded_at = float(last_successful_send_s)
+                self.last_successful_send_s = time.time()
+                last_uploaded_at = float(self.last_successful_send_s)
             else:
                 break
         return last_uploaded_at
 
-    try:
-        while True:
-            if inference_client is None:
-                inference_client = _make_inference_client()
+    def _load_and_compile_model(self, path: Path, cfg: ModelConfig, *, label: str, sha_short: str) -> torch.nn.Module:
+        """Build model, load checkpoint, optionally compile."""
+        model = build_model(cfg)
+        ckpt = torch.load(str(path), map_location="cpu")
+        sd = ckpt.get("model", ckpt)
+        load_state_dict_tolerant(model, sd, label=label)
+        model.to(self.device)
+        model.eval()
+        if bool(self.args.compile_inference):
+            compile_t0 = time.time()
+            self.log.info("compile starting %s sha=%s", label, sha_short)
+            model = _maybe_compile_inference_model(model, device=str(self.device))
+            self.log.info("compile finished %s sha=%s elapsed_s=%.2f", label, sha_short, float(time.time() - compile_t0))
+        return model
 
-            if not fixed_trial_id:
-                body: dict[str, object] = {"worker_info": worker_info}
-                if lease_id:
-                    body["lease_id"] = str(lease_id)
-                if leased_trial_id:
-                    body["trial_id"] = str(leased_trial_id)
-                r_lease = requests.post(
-                    _server_url_for("/v1/lease_trial"),
-                    json=body,
-                    auth=(str(args.username), str(args.password)),
-                    headers=_worker_headers(),
-                    timeout=30.0,
-                )
-                if r_lease.status_code != 200:
-                    time.sleep(float(args.poll_seconds))
-                    continue
-                lease = r_lease.json()
-                new_trial_id = str(lease.get("trial_id") or "").strip()
-                new_api_prefix = str(lease.get("api_prefix") or "/v1").strip() or "/v1"
-                new_lease_id = str(lease.get("lease_id") or "").strip()
-                if new_trial_id != leased_trial_id:
-                    log.info("leased trial assignment changed: %s -> %s", leased_trial_id or "<root>", new_trial_id or "<root>")
-                leased_trial_id = new_trial_id
-                trial_api_prefix = new_api_prefix
-                lease_id = new_lease_id
+    def _resolve_reco(self, reco: dict, key: str, default, cast=float):
+        """CLI overrides server recommendation; fall back to reco then default."""
+        v = getattr(self.args, key, None)
+        return cast(v) if v is not None else cast(reco.get(key, default))
 
-            # Upload any pending shards first (skip in-progress temp files).
-            _upload_pending_shards(default_elapsed_s=float(cfg.get("_last_batch_elapsed_s", 0.0) or 0.0))
+    def _on_completed_game(self, game_batch) -> None:
+        now_s = time.time()
+        self._saw_completed_game = True
+        _buffer_add_completed_game(
+            buf=self.upload_buf,
+            game_batch=game_batch,
+            now_s=now_s,
+            model_sha=self.model_sha,
+            model_step=self.model_step,
+        )
+        shard_path, elapsed_s = _maybe_flush_upload_buffer(
+            pending_dir=self.pending_dir,
+            username=str(self.args.username),
+            buf=self.upload_buf,
+            now_s=now_s,
+            last_send_s=self.last_successful_send_s,
+            target_positions=int(self.args.upload_target_positions),
+            flush_seconds=float(self.args.upload_flush_seconds),
+            force=False,
+        )
+        if shard_path is not None:
+            uploaded_at = self._upload_pending_shards(default_elapsed_s=float(elapsed_s))
+            if uploaded_at is not None:
+                self.last_successful_send_s = float(uploaded_at)
 
-            # Upload any pending arena results.
-            for jp in sorted(arena_pending_dir.glob("*.json")):
-                try:
-                    payload = json.loads(jp.read_text(encoding="utf-8"))
-                except Exception:
-                    # bad local file; quarantine to uploaded to avoid retry storms
-                    jp.replace(arena_uploaded_dir / jp.name)
-                    continue
+    # -- Lifecycle methods ----------------------------------------------------
 
-                r = requests.post(
-                    _server_url_for(trial_api_prefix + "/upload_arena_result"),
-                    json=payload,
-                    auth=(str(args.username), str(args.password)),
-                    headers=_worker_headers(),
-                    timeout=60.0,
-                )
-                if r.status_code == 200:
-                    jp.unlink(missing_ok=True)
-                else:
-                    break
+    def _poll_manifest(self) -> dict | None:
+        """Lease negotiation + manifest fetch + version checks + self-update.
 
-            # Poll manifest
-            r = requests.get(
-                _server_url_for(trial_api_prefix + "/manifest"),
+        Returns the manifest dict, or None to signal 'sleep and retry'.
+        """
+        requests = self._requests
+
+        if self.inference_client is None:
+            self.inference_client = self._make_inference_client()
+
+        if not self.fixed_trial_id:
+            body: dict[str, object] = {"worker_info": self.worker_info}
+            if self.lease_id:
+                body["lease_id"] = str(self.lease_id)
+            if self.leased_trial_id:
+                body["trial_id"] = str(self.leased_trial_id)
+            r_lease = requests.post(
+                self._server_url_for("/v1/lease_trial"),
+                json=body,
+                auth=(str(self.args.username), str(self.args.password)),
+                headers=_worker_headers(),
                 timeout=30.0,
-                headers=_manifest_poll_headers(
-                    worker_id=worker_id,
-                    lease_id=lease_id,
-                    state=manifest_state,
-                    elapsed_s=manifest_state_elapsed_s,
-                ),
             )
-            manifest_state = "active"
-            manifest_state_elapsed_s = None
-            if r.status_code == 426:
-                # Server says "upgrade required".
-                if bool(args.self_update) and os.environ.get("CAE_SELF_UPDATED") != "1":
-                    # Ask the server for minimal update info (does not require compatibility).
-                    r2 = requests.get(_server_url_for(trial_api_prefix + "/update_info"), timeout=30.0)
-                    if r2.status_code != 200:
-                        raise SystemExit(f"Upgrade required but could not fetch update info for self-update: {r2.text}")
-                    update_info = r2.json()
+            if r_lease.status_code != 200:
+                time.sleep(float(self.args.poll_seconds))
+                return None
+            lease = r_lease.json()
+            new_trial_id = str(lease.get("trial_id") or "").strip()
+            new_api_prefix = str(lease.get("api_prefix") or "/v1").strip() or "/v1"
+            new_lease_id = str(lease.get("lease_id") or "").strip()
+            if new_trial_id != self.leased_trial_id:
+                self.log.info("leased trial assignment changed: %s -> %s", self.leased_trial_id or "<root>", new_trial_id or "<root>")
+            self.leased_trial_id = new_trial_id
+            self.trial_api_prefix = new_api_prefix
+            self.lease_id = new_lease_id
 
-                    ww = update_info.get("worker_wheel")
-                    if not (isinstance(ww, dict) and ww.get("endpoint") and ww.get("sha256")):
-                        try:
-                            detail = r.json().get("detail")
-                        except Exception:
-                            detail = None
-                        raise SystemExit(
-                            f"Worker is not compatible with server and no worker_wheel was published for self-update: {detail or r.text}"
-                        )
+        # Upload any pending shards first (skip in-progress temp files).
+        self._upload_pending_shards(default_elapsed_s=float(self.cfg.get("_last_batch_elapsed_s", 0.0) or 0.0))
 
-                    wheel_version = str(ww.get("version") or update_info.get("server_version") or "0.0.0")
+        # Upload any pending arena results.
+        for jp in sorted(self.arena_pending_dir.glob("*.json")):
+            try:
+                payload = json.loads(jp.read_text(encoding="utf-8"))
+            except Exception:
+                # bad local file; quarantine to uploaded to avoid retry storms
+                jp.replace(self.arena_uploaded_dir / jp.name)
+                continue
+
+            r = requests.post(
+                self._server_url_for(self.trial_api_prefix + "/upload_arena_result"),
+                json=payload,
+                auth=(str(self.args.username), str(self.args.password)),
+                headers=_worker_headers(),
+                timeout=60.0,
+            )
+            if r.status_code == 200:
+                jp.unlink(missing_ok=True)
+            else:
+                break
+
+        # Poll manifest
+        r = requests.get(
+            self._server_url_for(self.trial_api_prefix + "/manifest"),
+            timeout=30.0,
+            headers=_manifest_poll_headers(
+                worker_id=self.worker_id,
+                lease_id=self.lease_id,
+                state=self.manifest_state,
+                elapsed_s=self.manifest_state_elapsed_s,
+            ),
+        )
+        self.manifest_state = "active"
+        self.manifest_state_elapsed_s = None
+        if r.status_code == 426:
+            # Server says "upgrade required".
+            if bool(self.args.self_update) and os.environ.get("CAE_SELF_UPDATED") != "1":
+                # Ask the server for minimal update info (does not require compatibility).
+                r2 = requests.get(self._server_url_for(self.trial_api_prefix + "/update_info"), timeout=30.0)
+                if r2.status_code != 200:
+                    raise SystemExit(f"Upgrade required but could not fetch update info for self-update: {r2.text}")
+                update_info = r2.json()
+
+                ww = update_info.get("worker_wheel")
+                if not (isinstance(ww, dict) and ww.get("endpoint") and ww.get("sha256")):
+                    try:
+                        detail = r.json().get("detail")
+                    except Exception:
+                        detail = None
+                    raise SystemExit(
+                        f"Worker is not compatible with server and no worker_wheel was published for self-update: {detail or r.text}"
+                    )
+
+                wheel_version = str(ww.get("version") or update_info.get("server_version") or "0.0.0")
+                sha = str(ww.get("sha256"))
+                endpoint = str(ww.get("endpoint"))
+                wheel_path = self.cache_dir / f"worker_{sha}.whl"
+                self.log.warning(
+                    "self-update: installing worker wheel version=%s sha=%s",
+                    wheel_version,
+                    sha,
+                )
+                _download_and_verify_shared(
+                    self._server_url_for(endpoint),
+                    out_path=wheel_path,
+                    expected_sha256=sha,
+                    headers=_worker_headers(),
+                )
+                _pip_install_wheel(wheel_path)
+                _restart_process()
+
+            try:
+                detail = r.json().get("detail")
+            except Exception:
+                detail = None
+            raise SystemExit(f"Worker is not compatible with server: {detail or r.text}")
+
+        if r.status_code != 200:
+            time.sleep(float(self.args.poll_seconds))
+            return None
+
+        manifest = r.json()
+
+        # Compatibility guardrails (manifest-driven).
+        req_proto = manifest.get("protocol_version")
+        protocol_mismatch = False
+        if req_proto is not None:
+            try:
+                protocol_mismatch = int(req_proto) != int(PROTOCOL_VERSION)
+            except Exception:
+                raise SystemExit(f"Bad protocol_version in manifest: {req_proto!r}")
+
+        min_v = manifest.get("min_worker_version")
+        version_too_old = bool(min_v is not None and version_lt(str(PACKAGE_VERSION), str(min_v)))
+
+        enc = manifest.get("encoding") or {}
+        if "policy_size" in enc and int(enc.get("policy_size") or 0) != int(POLICY_SIZE):
+            raise SystemExit(f"policy_size mismatch: worker={POLICY_SIZE} server={enc.get('policy_size')}")
+        if "input_planes" in enc and int(enc.get("input_planes") or 0) != 146:
+            raise SystemExit(f"input_planes mismatch: worker expects 146, server={enc.get('input_planes')}")
+
+        # Optional self-update (manifest-driven).
+        if bool(self.args.self_update) and os.environ.get("CAE_SELF_UPDATED") != "1":
+            ww = manifest.get("worker_wheel")
+            if isinstance(ww, dict) and ww.get("endpoint") and ww.get("sha256"):
+                wheel_version = str(ww.get("version") or manifest.get("server_version") or "0.0.0")
+                need = False
+                if protocol_mismatch or version_too_old:
+                    need = True
+                elif version_lt(str(PACKAGE_VERSION), wheel_version):
+                    need = True
+
+                if need:
                     sha = str(ww.get("sha256"))
                     endpoint = str(ww.get("endpoint"))
-                    wheel_path = cache_dir / f"worker_{sha}.whl"
-                    log.warning(
+                    wheel_path = self.cache_dir / f"worker_{sha}.whl"
+                    self.log.warning(
                         "self-update: installing worker wheel version=%s sha=%s",
                         wheel_version,
                         sha,
                     )
                     _download_and_verify_shared(
-                        _server_url_for(endpoint),
+                        self._server_url_for(endpoint),
                         out_path=wheel_path,
                         expected_sha256=sha,
                         headers=_worker_headers(),
@@ -1065,640 +1239,568 @@ def main() -> None:
                     _pip_install_wheel(wheel_path)
                     _restart_process()
 
+        # Enforce after any self-update opportunity.
+        if protocol_mismatch:
+            raise SystemExit(f"Protocol mismatch: worker={PROTOCOL_VERSION} server_required={req_proto}")
+        if version_too_old:
+            raise SystemExit(f"Worker too old: worker={PACKAGE_VERSION} min_required={min_v}")
+
+        reco = manifest.get("recommended_worker") or {}
+        backpressure = manifest.get("backpressure") or {}
+        task = manifest.get("task") or {"type": "selfplay"}
+        task_type = str(task.get("type", "selfplay")).lower()
+        pause_selfplay = False
+        pause_reason = ""
+        if task_type == "selfplay":
+            pause_selfplay = bool(reco.get("pause_selfplay", False))
+            pause_reason = str(reco.get("pause_reason") or "")
+            if (not pause_selfplay) and isinstance(backpressure, dict):
+                pause_selfplay = bool(backpressure.get("pause_selfplay", False))
+                pause_reason = str(backpressure.get("pause_reason") or pause_reason)
+        if pause_selfplay:
+            if not self.pause_selfplay_active:
+                self.log.info(
+                    "selfplay paused by server%s",
+                    f": {pause_reason}" if pause_reason else "",
+                )
+                self.pause_selfplay_active = True
+            sleep_s = max(0.1, float(self.args.poll_seconds))
+            time.sleep(sleep_s)
+            self.manifest_state = "paused_selfplay"
+            self.manifest_state_elapsed_s = sleep_s
+            return None
+        if self.pause_selfplay_active:
+            self.log.info("selfplay pause cleared by server")
+            self.pause_selfplay_active = False
+
+        return manifest
+
+    def _sync_assets(self, manifest: dict) -> None:
+        """Sync model, opening books, and stockfish from manifest."""
+        self._sync_model(manifest)
+        self._sync_opening_books(manifest)
+
+    def _sync_model(self, manifest: dict) -> None:
+        """Download + build + load + compile model if SHA changed."""
+        task = manifest.get("task") or {"type": "selfplay"}
+        task_type = str(task.get("type", "selfplay")).lower()
+        need_local_model = self.inference_client is None or task_type == "arena"
+
+        model_info = manifest.get("model") or {}
+        model_sha = str(model_info.get("sha256") or "")
+        if not model_sha:
+            return
+        model_step = int(manifest.get("trainer_step") or 0)
+
+        # Store for use by other methods this iteration.
+        self.model_sha = model_sha
+        self.model_step = model_step
+
+        if (
+            self.upload_buf.positions > 0
+            and (
+                str(self.upload_buf.model_sha or "") != str(model_sha)
+                or int(self.upload_buf.model_step or 0) != int(model_step)
+            )
+        ):
+            shard_path, elapsed_s = _flush_upload_buffer_to_pending(
+                pending_dir=self.pending_dir,
+                username=str(self.args.username),
+                buf=self.upload_buf,
+                now_s=time.time(),
+            )
+            if shard_path is not None:
+                uploaded_at = self._upload_pending_shards(default_elapsed_s=float(elapsed_s))
+                if uploaded_at is not None:
+                    self.last_successful_send_s = float(uploaded_at)
+
+        if need_local_model and model_sha != self.last_model_sha:
+            self.log.info("switching to latest model sha=%s", model_sha)
+            model_path = self.cache_dir / f"model_{model_sha}.pt"
+            # Download (or re-download) and verify sha256.
+            # Note: the server serves a stable endpoint (/v1/model) whose contents can change
+            # whenever the learner publishes a new model. If we fetched a slightly stale
+            # manifest, the expected sha may not match what /v1/model returns.
+            #
+            # In that case, do NOT crash-loop; just re-poll the manifest next iteration.
+            if (not model_path.exists()) or (_sha256_file(model_path) != model_sha):
                 try:
-                    detail = r.json().get("detail")
-                except Exception:
-                    detail = None
-                raise SystemExit(f"Worker is not compatible with server: {detail or r.text}")
-
-            if r.status_code != 200:
-                time.sleep(float(args.poll_seconds))
-                continue
-
-            manifest = r.json()
-
-            # Compatibility guardrails (manifest-driven).
-            req_proto = manifest.get("protocol_version")
-            protocol_mismatch = False
-            if req_proto is not None:
-                try:
-                    protocol_mismatch = int(req_proto) != int(PROTOCOL_VERSION)
-                except Exception:
-                    raise SystemExit(f"Bad protocol_version in manifest: {req_proto!r}")
-
-            min_v = manifest.get("min_worker_version")
-            version_too_old = bool(min_v is not None and version_lt(str(PACKAGE_VERSION), str(min_v)))
-
-            enc = manifest.get("encoding") or {}
-            if "policy_size" in enc and int(enc.get("policy_size") or 0) != int(POLICY_SIZE):
-                raise SystemExit(f"policy_size mismatch: worker={POLICY_SIZE} server={enc.get('policy_size')}")
-            if "input_planes" in enc and int(enc.get("input_planes") or 0) != 146:
-                raise SystemExit(f"input_planes mismatch: worker expects 146, server={enc.get('input_planes')}")
-
-            # Optional self-update (manifest-driven).
-            if bool(args.self_update) and os.environ.get("CAE_SELF_UPDATED") != "1":
-                ww = manifest.get("worker_wheel")
-                if isinstance(ww, dict) and ww.get("endpoint") and ww.get("sha256"):
-                    wheel_version = str(ww.get("version") or manifest.get("server_version") or "0.0.0")
-                    need = False
-                    if protocol_mismatch or version_too_old:
-                        need = True
-                    elif version_lt(str(PACKAGE_VERSION), wheel_version):
-                        need = True
-
-                    if need:
-                        sha = str(ww.get("sha256"))
-                        endpoint = str(ww.get("endpoint"))
-                        wheel_path = cache_dir / f"worker_{sha}.whl"
-                        log.warning(
-                            "self-update: installing worker wheel version=%s sha=%s",
-                            wheel_version,
-                            sha,
-                        )
-                        _download_and_verify_shared(
-                            _server_url_for(endpoint),
-                            out_path=wheel_path,
-                            expected_sha256=sha,
-                            headers=_worker_headers(),
-                        )
-                        _pip_install_wheel(wheel_path)
-                        _restart_process()
-
-            # Enforce after any self-update opportunity.
-            if protocol_mismatch:
-                raise SystemExit(f"Protocol mismatch: worker={PROTOCOL_VERSION} server_required={req_proto}")
-            if version_too_old:
-                raise SystemExit(f"Worker too old: worker={PACKAGE_VERSION} min_required={min_v}")
-
-            reco = manifest.get("recommended_worker") or {}
-            backpressure = manifest.get("backpressure") or {}
-            task = manifest.get("task") or {"type": "selfplay"}
-            task_type = str(task.get("type", "selfplay")).lower()
-            pause_selfplay = False
-            pause_reason = ""
-            if task_type == "selfplay":
-                pause_selfplay = bool(reco.get("pause_selfplay", False))
-                pause_reason = str(reco.get("pause_reason") or "")
-                if (not pause_selfplay) and isinstance(backpressure, dict):
-                    pause_selfplay = bool(backpressure.get("pause_selfplay", False))
-                    pause_reason = str(backpressure.get("pause_reason") or pause_reason)
-            if pause_selfplay:
-                if not pause_selfplay_active:
-                    log.info(
-                        "selfplay paused by server%s",
-                        f": {pause_reason}" if pause_reason else "",
-                    )
-                    pause_selfplay_active = True
-                sleep_s = max(0.1, float(args.poll_seconds))
-                time.sleep(sleep_s)
-                manifest_state = "paused_selfplay"
-                manifest_state_elapsed_s = sleep_s
-                continue
-            if pause_selfplay_active:
-                log.info("selfplay pause cleared by server")
-                pause_selfplay_active = False
-            need_local_model = inference_client is None or task_type == "arena"
-
-            model_info = manifest.get("model") or {}
-            model_sha = str(model_info.get("sha256") or "")
-            if not model_sha:
-                time.sleep(float(args.poll_seconds))
-                continue
-            model_step = int(manifest.get("trainer_step") or 0)
-
-            if (
-                upload_buf.positions > 0
-                and (
-                    str(upload_buf.model_sha or "") != str(model_sha)
-                    or int(upload_buf.model_step or 0) != int(model_step)
-                )
-            ):
-                shard_path, elapsed_s = _flush_upload_buffer_to_pending(
-                    pending_dir=pending_dir,
-                    username=str(args.username),
-                    buf=upload_buf,
-                    now_s=time.time(),
-                )
-                if shard_path is not None:
-                    uploaded_at = _upload_pending_shards(default_elapsed_s=float(elapsed_s))
-                    if uploaded_at is not None:
-                        last_successful_send_s = float(uploaded_at)
-
-            if need_local_model and model_sha != last_model_sha:
-                log.info("switching to latest model sha=%s", model_sha)
-                model_path = cache_dir / f"model_{model_sha}.pt"
-                # Download (or re-download) and verify sha256.
-                # Note: the server serves a stable endpoint (/v1/model) whose contents can change
-                # whenever the learner publishes a new model. If we fetched a slightly stale
-                # manifest, the expected sha may not match what /v1/model returns.
-                #
-                # In that case, do NOT crash-loop; just re-poll the manifest next iteration.
-                if (not model_path.exists()) or (_sha256_file(model_path) != model_sha):
-                    try:
-                        _download_and_verify_shared(
-                            _server_url_for(str(model_info.get("endpoint") or (trial_api_prefix + "/model"))),
-                            out_path=model_path,
-                            expected_sha256=model_sha,
-                            headers=_worker_headers(),
-                        )
-                    except Exception as e:
-                        log.warning(
-                            "model download failed (likely mid-publish race). Will re-poll manifest: %s",
-                            e,
-                        )
-                        model_path.unlink(missing_ok=True)
-                        time.sleep(float(args.poll_seconds))
-                        continue
-
-                mc = manifest.get("model_config") or {}
-                model_cfg = ModelConfig(
-                    kind=str(mc.get("kind", "transformer")),
-                    embed_dim=int(mc.get("embed_dim", 256)),
-                    num_layers=int(mc.get("num_layers", 6)),
-                    num_heads=int(mc.get("num_heads", 8)),
-                    ffn_mult=int(mc.get("ffn_mult", 2)),
-                    use_smolgen=bool(mc.get("use_smolgen", True)),
-                    use_nla=bool(mc.get("use_nla", False)),
-                    use_qk_rmsnorm=bool(mc.get("use_qk_rmsnorm", False)),
-                    use_gradient_checkpointing=bool(mc.get("gradient_checkpointing", False)),
-                )
-                model_cfg_active = model_cfg
-
-                model = build_model(model_cfg)
-                ckpt = torch.load(str(model_path), map_location="cpu")
-                sd = ckpt.get("model", ckpt)
-                load_state_dict_tolerant(model, sd, label="worker-model")
-                model.to(device)
-                model.eval()
-                if bool(args.compile_inference):
-                    compile_t0 = time.time()
-                    log.info("compile starting model_sha=%s", str(model_sha)[:8])
-                    model = _maybe_compile_inference_model(model, device=str(device))
-                    log.info(
-                        "compile finished model_sha=%s elapsed_s=%.2f",
-                        str(model_sha)[:8],
-                        float(time.time() - compile_t0),
-                    )
-
-                if last_model_sha is not None and not fixed_trial_id:
-                    # Reconsider assignment at natural model-boundary checkpoints.
-                    lease_id = ""
-                    leased_trial_id = ""
-                    trial_api_prefix = "/v1"
-                last_model_sha = model_sha
-
-            # Opening books (optional) — downloaded once, used by both selfplay and arena.
-            opening_book_path, last_ob_sha = _download_opening_book(
-                manifest, "opening_book", cache_dir,
-                cache_prefix="opening", default_endpoint="/v1/opening_book",
-                server_url_fn=_server_url_for, headers=_worker_headers(), log=log,
-                last_sha=last_ob_sha,
-            )
-            opening_book_path_2, last_ob2_sha = _download_opening_book(
-                manifest, "opening_book_2", cache_dir,
-                cache_prefix="opening2", default_endpoint="/v1/opening_book_2",
-                server_url_fn=_server_url_for, headers=_worker_headers(), log=log,
-                last_sha=last_ob2_sha,
-            )
-
-            # CLI overrides server recommendation; fall back to reco then default.
-            def _resolve(key, default, cast=float):
-                v = getattr(args, key, None)
-                return cast(v) if v is not None else cast(reco.get(key, default))
-
-            games_per_batch = (
-                int(games_per_batch_local)
-                if games_per_batch_local is not None
-                else int(reco.get("games_per_batch", 8))
-            )
-
-            max_plies = _resolve("max_plies", 240, int)
-            mcts_type = _resolve("mcts", "puct", str)
-            mcts_sims = _resolve("mcts_simulations", 50, int)
-            playout_cap_fraction = _resolve("playout_cap_fraction", 0.25)
-            fast_sims = _resolve("fast_simulations", 8, int)
-            opponent_random_move_prob = float(reco.get("opponent_random_move_prob", 0.0))
-            opponent_topk_min = int(reco.get("opponent_topk_min", 1))
-            opponent_suboptimal_wdl_regret_max = float(reco.get("opponent_suboptimal_wdl_regret_max", -1.0))
-            opponent_suboptimal_wdl_regret_min = float(reco.get("opponent_suboptimal_wdl_regret_min", -1.0))
-            opponent_random_move_prob_start = float(reco.get("opponent_random_move_prob_start", 1.0))
-            opponent_random_move_prob_min = float(reco.get("opponent_random_move_prob_min", 0.0))
-            opponent_wdl_regret_limit_raw = reco.get("opponent_wdl_regret_limit", None)
-            opponent_wdl_regret_limit = float(opponent_wdl_regret_limit_raw) if opponent_wdl_regret_limit_raw is not None else None
-            selfplay_fraction = float(reco.get("selfplay_fraction", 0.0))
-            timeout_adjudication_threshold = float(reco.get("timeout_adjudication_threshold", 0.90))
-
-            opening_book_prob = _resolve("opening_book_prob", 1.0)
-            opening_book_max_plies = _resolve("opening_book_max_plies", 4, int)
-            opening_book_max_games = _resolve("opening_book_max_games", 200000, int)
-            opening_book_max_plies_2 = int(reco.get("opening_book_max_plies_2", 16))
-            opening_book_max_games_2 = int(reco.get("opening_book_max_games_2", 200000))
-            opening_book_mix_prob_2 = float(reco.get("opening_book_mix_prob_2", 0.0))
-            random_start_plies = _resolve("random_start_plies", 0, int)
-
-            sf_nodes = _resolve("sf_nodes", 2000, int)
-            sf_multipv = _resolve("sf_multipv", 5, int)
-            _reco_skill = reco.get("sf_skill_level")
-            sf_skill_level: int | None = None if _reco_skill is None else int(_reco_skill)
-            sf_policy_temp = _resolve("sf_policy_temp", 0.25)
-            sf_policy_label_smooth = _resolve("sf_policy_label_smooth", 0.05)
-
-            temperature = _resolve("temperature", 1.0)
-            t_start = _resolve("temperature_decay_start_move", 20, int)
-            t_moves = _resolve("temperature_decay_moves", 60, int)
-            t_end = _resolve("temperature_endgame", 0.6)
-
-            # If server requests arena matches, run those instead of selfplay.
-            if task_type == "arena":
-                best_info = manifest.get("best_model") or {}
-                best_sha = str(best_info.get("sha256") or "")
-                if not best_sha:
-                    time.sleep(float(args.poll_seconds))
-                    continue
-                if model is None or model_cfg_active is None:
-                    time.sleep(float(args.poll_seconds))
-                    continue
-
-                if best_sha != last_best_sha:
-                    log.info("arena task: loading best model sha=%s", best_sha)
-                    best_path = cache_dir / f"best_{best_sha}.pt"
-                    endpoint = str(best_info.get("endpoint") or "/v1/best_model")
-                    if (not best_path.exists()) or (_sha256_file(best_path) != best_sha):
-                        try:
-                            _download_and_verify_shared(
-                                _server_url_for(endpoint),
-                                out_path=best_path,
-                                expected_sha256=best_sha,
-                                headers=_worker_headers(),
-                            )
-                        except Exception as e:
-                            log.warning(
-                                "best model download failed (likely mid-publish race). Will retry: %s",
-                                e,
-                            )
-                            best_path.unlink(missing_ok=True)
-                            time.sleep(float(args.poll_seconds))
-                            continue
-
-                    best_model = build_model(model_cfg_active)
-                    ckpt = torch.load(str(best_path), map_location="cpu")
-                    sd = ckpt.get("model", ckpt)
-                    load_state_dict_tolerant(best_model, sd, label="worker-best")
-                    best_model.to(device)
-                    best_model.eval()
-                    if bool(args.compile_inference):
-                        compile_t0 = time.time()
-                        log.info("compile starting best_model_sha=%s", str(best_sha)[:8])
-                        best_model = _maybe_compile_inference_model(best_model, device=str(device))
-                        log.info(
-                            "compile finished best_model_sha=%s elapsed_s=%.2f",
-                            str(best_sha)[:8],
-                            float(time.time() - compile_t0),
-                        )
-                    last_best_sha = best_sha
-
-                if best_model is None:
-                    time.sleep(float(args.poll_seconds))
-                    continue
-
-                arena_cfg = (task.get("arena") or {}) if isinstance(task, dict) else {}
-                batch_games = int(arena_cfg.get("batch_games", 8))
-                max_plies_arena = int(arena_cfg.get("max_plies", 240))
-                mcts_type_arena = str(arena_cfg.get("mcts", "puct"))
-                mcts_sims_arena = int(arena_cfg.get("mcts_simulations", 200))
-                c_puct_arena = float(arena_cfg.get("c_puct", 2.5))
-                swap_sides = bool(arena_cfg.get("swap_sides", True))
-                temperature_arena = float(arena_cfg.get("temperature", 0.1))
-                random_start_plies_arena = int(arena_cfg.get("random_start_plies", 2))
-                opening_book_prob_arena = float(arena_cfg.get("opening_book_prob", 1.0))
-                opening_book_max_plies_arena = int(arena_cfg.get("opening_book_max_plies", 4))
-                opening_book_max_games_arena = int(arena_cfg.get("opening_book_max_games", 200000))
-                arena_opening_cfg = OpeningConfig(
-                    opening_book_path=opening_book_path,
-                    opening_book_prob=opening_book_prob_arena if opening_book_path else 0.0,
-                    opening_book_max_plies=opening_book_max_plies_arena,
-                    opening_book_max_games=opening_book_max_games_arena,
-                    random_start_plies=random_start_plies_arena,
-                )
-
-                g = max(1, batch_games)
-                a_plays_white = [bool(i % 2 == 0) for i in range(g)] if swap_sides else [True] * g
-
-                stats = play_match_batch(
-                    model,
-                    best_model,
-                    device=str(device),
-                    rng=rng,
-                    games=g,
-                    max_plies=max_plies_arena,
-                    a_plays_white=a_plays_white,
-                    mcts_type=mcts_type_arena,
-                    mcts_simulations=mcts_sims_arena,
-                    temperature=temperature_arena,
-                    c_puct=c_puct_arena,
-                    opening_cfg=arena_opening_cfg,
-                )
-
-                ts = int(time.time())
-                payload = {
-                    "generated_at_unix": ts,
-                    "worker_username": str(args.username),
-                    "a_sha256": str(model_sha),
-                    "b_sha256": str(best_sha),
-                    "games": int(stats.games),
-                    "a_win": int(stats.a_win),
-                    "a_draw": int(stats.a_draw),
-                    "a_loss": int(stats.a_loss),
-                    "a_as_white": int(stats.a_as_white),
-                    "a_as_black": int(stats.a_as_black),
-                    "max_plies": int(stats.max_plies),
-                    "mcts": str(mcts_type_arena),
-                    "mcts_simulations": int(mcts_sims_arena),
-                    "c_puct": float(c_puct_arena),
-                    "swap_sides": bool(swap_sides),
-                }
-
-                out = arena_pending_dir / f"{ts}_{model_sha[:8]}_vs_{best_sha[:8]}_{stats.games}g.json"
-                out.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
-
-                if not shared_cache_enabled:
-                    _prune_cached_models(cache_dir=cache_dir, keep_shas={model_sha, best_sha})
-
-                time.sleep(0.1)
-                continue
-
-            # (opening_book_path already resolved above, shared by arena and selfplay)
-
-            if need_local_model and model is None:
-                time.sleep(float(args.poll_seconds))
-                continue
-
-            # Resolve stockfish binary.
-            stockfish_path = str(args.stockfish_path) if args.stockfish_path is not None else ""
-            if bool(args.stockfish_from_server):
-                sf_rec = manifest.get("stockfish")
-                if not isinstance(sf_rec, dict) or not sf_rec.get("endpoint") or not sf_rec.get("sha256"):
-                    raise SystemExit("--stockfish-from-server enabled but server did not publish stockfish")
-                sf_sha = str(sf_rec.get("sha256"))
-                sf_endpoint = str(sf_rec.get("endpoint"))
-                sf_filename = str(sf_rec.get("filename") or "stockfish")
-                sf_cached = cache_dir / f"stockfish_{sf_sha}_{sf_filename}"
-                if _cached_sha_asset_needs_refresh(path=sf_cached, sha256=sf_sha, last_sha256=last_sf_sha):
-                    log.info("downloading stockfish sha=%s filename=%s", sf_sha, sf_filename)
                     _download_and_verify_shared(
-                        _server_url_for(sf_endpoint),
-                        out_path=sf_cached,
-                        expected_sha256=sf_sha,
+                        self._server_url_for(str(model_info.get("endpoint") or (self.trial_api_prefix + "/model"))),
+                        out_path=model_path,
+                        expected_sha256=model_sha,
                         headers=_worker_headers(),
                     )
-                    _ensure_executable(sf_cached)
-                last_sf_sha = sf_sha
-                stockfish_path = str(sf_cached)
-
-            # (Re)initialize engine if multipv or skill_level changed (must be set at init time)
-            skill_changed = sf_skill_level_active != sf_skill_level
-            multipv_changed = sf_multipv_active is None or int(sf_multipv_active) != int(sf_multipv)
-            if sf is None or multipv_changed or skill_changed:
-                if sf is not None:
-                    try:
-                        sf.close()
-                    except Exception:
-                        pass
-
-                if int(args.sf_workers) > 1:
-                    sf = StockfishPool(
-                        path=str(stockfish_path),
-                        nodes=int(sf_nodes),
-                        num_workers=int(args.sf_workers),
-                        multipv=int(sf_multipv),
-                        skill_level=sf_skill_level,
+                except Exception as e:
+                    self.log.warning(
+                        "model download failed (likely mid-publish race). Will re-poll manifest: %s",
+                        e,
                     )
-                else:
-                    sf = StockfishUCI(str(stockfish_path), nodes=int(sf_nodes), multipv=int(sf_multipv),
-                                      skill_level=sf_skill_level)
-                sf_multipv_active = int(sf_multipv)
-                sf_skill_level_active = sf_skill_level
+                    model_path.unlink(missing_ok=True)
+                    # Signal caller to sleep and retry by clearing model_sha.
+                    self.model_sha = ""
+                    return
+
+            mc = manifest.get("model_config") or {}
+            model_cfg = ModelConfig(
+                kind=str(mc.get("kind", "transformer")),
+                embed_dim=int(mc.get("embed_dim", 256)),
+                num_layers=int(mc.get("num_layers", 6)),
+                num_heads=int(mc.get("num_heads", 8)),
+                ffn_mult=int(mc.get("ffn_mult", 2)),
+                use_smolgen=bool(mc.get("use_smolgen", True)),
+                use_nla=bool(mc.get("use_nla", False)),
+                use_qk_rmsnorm=bool(mc.get("use_qk_rmsnorm", False)),
+                use_gradient_checkpointing=bool(mc.get("gradient_checkpointing", False)),
+            )
+            self.model_cfg_active = model_cfg
+
+            self.model = self._load_and_compile_model(
+                model_path, model_cfg, label="worker-model", sha_short=str(model_sha)[:8],
+            )
+
+            if self.last_model_sha is not None and not self.fixed_trial_id:
+                # Reconsider assignment at natural model-boundary checkpoints.
+                self.lease_id = ""
+                self.leased_trial_id = ""
+                self.trial_api_prefix = "/v1"
+            self.last_model_sha = model_sha
+
+    def _sync_opening_books(self, manifest: dict) -> None:
+        """Download opening books if SHA changed."""
+        hdrs = _worker_headers()
+        self.opening_book_path, self.last_ob_sha = _download_opening_book(
+            manifest, "opening_book", self.cache_dir,
+            cache_prefix="opening", default_endpoint="/v1/opening_book",
+            server_url_fn=self._server_url_for, headers=hdrs, log=self.log,
+            last_sha=self.last_ob_sha,
+        )
+        self.opening_book_path_2, self.last_ob2_sha = _download_opening_book(
+            manifest, "opening_book_2", self.cache_dir,
+            cache_prefix="opening2", default_endpoint="/v1/opening_book_2",
+            server_url_fn=self._server_url_for, headers=hdrs, log=self.log,
+            last_sha=self.last_ob2_sha,
+        )
+
+    def _sync_stockfish(self, manifest: dict, sf_nodes: int, sf_multipv: int, sf_skill_level: int | None) -> str:
+        """Download SF binary + (re)init engine if multipv/skill changed.
+
+        Returns the resolved stockfish_path.
+        """
+        stockfish_path = str(self.args.stockfish_path) if self.args.stockfish_path is not None else ""
+        if bool(self.args.stockfish_from_server):
+            sf_rec = manifest.get("stockfish")
+            if not isinstance(sf_rec, dict) or not sf_rec.get("endpoint") or not sf_rec.get("sha256"):
+                raise SystemExit("--stockfish-from-server enabled but server did not publish stockfish")
+            sf_sha = str(sf_rec.get("sha256"))
+            sf_endpoint = str(sf_rec.get("endpoint"))
+            sf_filename = str(sf_rec.get("filename") or "stockfish")
+            sf_cached = self.cache_dir / f"stockfish_{sf_sha}_{sf_filename}"
+            if _cached_sha_asset_needs_refresh(path=sf_cached, sha256=sf_sha, last_sha256=self.last_sf_sha):
+                self.log.info("downloading stockfish sha=%s filename=%s", sf_sha, sf_filename)
+                _download_and_verify_shared(
+                    self._server_url_for(sf_endpoint),
+                    out_path=sf_cached,
+                    expected_sha256=sf_sha,
+                    headers=_worker_headers(),
+                )
+                _ensure_executable(sf_cached)
+            self.last_sf_sha = sf_sha
+            stockfish_path = str(sf_cached)
+
+        # (Re)initialize engine if multipv or skill_level changed (must be set at init time)
+        skill_changed = self.sf_skill_level_active != sf_skill_level
+        multipv_changed = self.sf_multipv_active is None or int(self.sf_multipv_active) != int(sf_multipv)
+        if self.sf is None or multipv_changed or skill_changed:
+            if self.sf is not None:
+                try:
+                    self.sf.close()
+                except Exception:
+                    pass
+
+            if int(self.args.sf_workers) > 1:
+                self.sf = StockfishPool(
+                    path=str(stockfish_path),
+                    nodes=int(sf_nodes),
+                    num_workers=int(self.args.sf_workers),
+                    multipv=int(sf_multipv),
+                    skill_level=sf_skill_level,
+                )
             else:
-                # update nodes dynamically
-                if hasattr(sf, "set_nodes"):
-                    sf.set_nodes(int(sf_nodes))
+                self.sf = StockfishUCI(str(stockfish_path), nodes=int(sf_nodes), multipv=int(sf_multipv),
+                                       skill_level=sf_skill_level)
+            self.sf_multipv_active = int(sf_multipv)
+            self.sf_skill_level_active = sf_skill_level
+        else:
+            # update nodes dynamically
+            if hasattr(self.sf, "set_nodes"):
+                self.sf.set_nodes(int(sf_nodes))
 
-            # Generate a shard
-            t0 = time.time()
-            saw_completed_game = False
+        return stockfish_path
 
-            def _on_completed_game(game_batch) -> None:
-                nonlocal last_successful_send_s, saw_completed_game
-                saw_completed_game = True
-                now_s = time.time()
-                _buffer_add_completed_game(
-                    buf=upload_buf,
-                    game_batch=game_batch,
-                    now_s=now_s,
-                    model_sha=model_sha,
-                    model_step=model_step,
-                )
-                shard_path, elapsed_s = _maybe_flush_upload_buffer(
-                    pending_dir=pending_dir,
-                    username=str(args.username),
-                    buf=upload_buf,
-                    now_s=now_s,
-                    last_send_s=last_successful_send_s,
-                    target_positions=int(args.upload_target_positions),
-                    flush_seconds=float(args.upload_flush_seconds),
-                    force=False,
-                )
-                if shard_path is not None:
-                    uploaded_at = _upload_pending_shards(default_elapsed_s=float(elapsed_s))
-                    if uploaded_at is not None:
-                        last_successful_send_s = float(uploaded_at)
+    def _run_arena(self, manifest: dict, task: dict) -> None:
+        """Arena match logic."""
+        model_sha = self.model_sha
+        reco = manifest.get("recommended_worker") or {}
 
-            try:
-                samples, stats = play_batch(
-                    model if need_local_model else None,
-                    device=str(device),
-                    rng=rng,
-                    stockfish=sf,
-                    evaluator=inference_client,
-                    games=int(games_per_batch),
-                    on_game_complete=_on_completed_game,
-                    opponent=OpponentConfig(
-                        random_move_prob=float(opponent_random_move_prob),
-                        topk_stage_end=float(reco.get("opponent_topk_stage_end", 0.5)),
-                        topk_min=int(opponent_topk_min),
-                        suboptimal_wdl_regret_max=float(opponent_suboptimal_wdl_regret_max),
-                        suboptimal_wdl_regret_min=float(opponent_suboptimal_wdl_regret_min),
-                        random_move_prob_start=float(opponent_random_move_prob_start),
-                        random_move_prob_min=float(opponent_random_move_prob_min),
-                        wdl_regret_limit=opponent_wdl_regret_limit,
-                    ),
-                    temp=TemperatureConfig(
-                        temperature=float(temperature),
-                        decay_start_move=int(t_start),
-                        decay_moves=int(t_moves),
-                        endgame=float(t_end),
-                    ),
-                    search=SearchConfig(
-                        simulations=int(mcts_sims),
-                        mcts_type=str(mcts_type),
-                        playout_cap_fraction=float(playout_cap_fraction),
-                        fast_simulations=int(fast_sims),
-                    ),
-                    opening=OpeningConfig(
-                        opening_book_path=opening_book_path,
-                        opening_book_max_plies=int(opening_book_max_plies),
-                        opening_book_max_games=int(opening_book_max_games),
-                        opening_book_prob=float(opening_book_prob),
-                        opening_book_path_2=opening_book_path_2,
-                        opening_book_max_plies_2=int(opening_book_max_plies_2),
-                        opening_book_max_games_2=int(opening_book_max_games_2),
-                        opening_book_mix_prob_2=float(opening_book_mix_prob_2),
-                        random_start_plies=int(random_start_plies),
-                    ),
-                    game=GameConfig(
-                        max_plies=int(max_plies),
-                        selfplay_fraction=float(selfplay_fraction),
-                        sf_policy_temp=float(sf_policy_temp),
-                        sf_policy_label_smooth=float(sf_policy_label_smooth),
-                        timeout_adjudication_threshold=float(timeout_adjudication_threshold),
-                    ),
-                )
-            except TimeoutError as exc:
-                if inference_client is None:
-                    raise
-                log.warning("inference broker timed out; resetting client: %s", exc)
+        best_info = manifest.get("best_model") or {}
+        best_sha = str(best_info.get("sha256") or "")
+        if not best_sha:
+            time.sleep(float(self.args.poll_seconds))
+            return
+        if self.model is None or self.model_cfg_active is None:
+            time.sleep(float(self.args.poll_seconds))
+            return
+
+        if best_sha != self.last_best_sha:
+            self.log.info("arena task: loading best model sha=%s", best_sha)
+            best_path = self.cache_dir / f"best_{best_sha}.pt"
+            endpoint = str(best_info.get("endpoint") or "/v1/best_model")
+            if (not best_path.exists()) or (_sha256_file(best_path) != best_sha):
                 try:
-                    inference_client.close()
-                except Exception:
-                    pass
-                inference_client = None
-                time.sleep(float(args.poll_seconds))
-                continue
-            except RuntimeError as exc:
-                err = str(exc).lower()
-                if inference_client is None or not any(tok in err for tok in ("inference", "broker", "slot")):
-                    raise
-                log.warning("inference broker error; resetting client: %s", exc)
-                try:
-                    inference_client.close()
-                except Exception:
-                    pass
-                inference_client = None
-                time.sleep(float(args.poll_seconds))
-                continue
-            t1 = time.time()
+                    _download_and_verify_shared(
+                        self._server_url_for(endpoint),
+                        out_path=best_path,
+                        expected_sha256=best_sha,
+                        headers=_worker_headers(),
+                    )
+                except Exception as e:
+                    self.log.warning(
+                        "best model download failed (likely mid-publish race). Will retry: %s",
+                        e,
+                    )
+                    best_path.unlink(missing_ok=True)
+                    time.sleep(float(self.args.poll_seconds))
+                    return
 
-            # Log batch outcome (only visible if --log-file is enabled).
-            log.info(
-                "batch done: games=%d positions=%d W/D/L=%d/%d/%d draws=%d timeouts=%d rand=%.2f sf_nodes=%s ppg=%.1f elapsed_s=%.2f",
-                int(stats.games),
-                int(stats.positions),
-                int(stats.w),
-                int(stats.d),
-                int(stats.l),
-                int(getattr(stats, "total_draw_games", 0)),
-                int(getattr(stats, "timeout_games", 0)),
-                float(opponent_random_move_prob),
-                str(stats.sf_nodes),
-                float(stats.positions) / max(1, int(stats.games)),
-                float(t1 - t0),
+            self.best_model = self._load_and_compile_model(
+                best_path, self.model_cfg_active, label="worker-best", sha_short=str(best_sha)[:8],
             )
+            self.last_best_sha = best_sha
 
-            if bool(args.auto_tune) and not bool(pinned_games_per_batch_cli):
-                tuned = tune_games_per_batch(
-                    current=int(games_per_batch),
-                    elapsed_s=float(t1 - t0),
-                    target_s=float(args.target_batch_seconds),
-                    min_games=int(args.min_games_per_batch),
-                    max_games=int(args.max_games_per_batch),
-                )
-                games_per_batch_local = int(tuned)
+        if self.best_model is None:
+            time.sleep(float(self.args.poll_seconds))
+            return
 
-                # Persist the calibrated value if requested.
-                _persist_cfg()
+        arena_cfg = (task.get("arena") or {}) if isinstance(task, dict) else {}
+        batch_games = int(arena_cfg.get("batch_games", 8))
+        max_plies_arena = int(arena_cfg.get("max_plies", 240))
+        mcts_type_arena = str(arena_cfg.get("mcts", "puct"))
+        mcts_sims_arena = int(arena_cfg.get("mcts_simulations", 200))
+        c_puct_arena = float(arena_cfg.get("c_puct", 2.5))
+        swap_sides = bool(arena_cfg.get("swap_sides", True))
+        temperature_arena = float(arena_cfg.get("temperature", 0.1))
+        random_start_plies_arena = int(arena_cfg.get("random_start_plies", 2))
+        opening_book_prob_arena = float(arena_cfg.get("opening_book_prob", 1.0))
+        opening_book_max_plies_arena = int(arena_cfg.get("opening_book_max_plies", 4))
+        opening_book_max_games_arena = int(arena_cfg.get("opening_book_max_games", 200000))
+        arena_opening_cfg = OpeningConfig(
+            opening_book_path=self.opening_book_path,
+            opening_book_prob=opening_book_prob_arena if self.opening_book_path else 0.0,
+            opening_book_max_plies=opening_book_max_plies_arena,
+            opening_book_max_games=opening_book_max_games_arena,
+            random_start_plies=random_start_plies_arena,
+        )
 
-            if bool(args.calibrate):
-                # Count completed batches and exit once we have calibrated.
-                cfg["_calibrate_batches_done"] = int(cfg.get("_calibrate_batches_done", 0)) + 1
-                if int(cfg["_calibrate_batches_done"]) >= int(args.calibrate_batches):
-                    cfg.pop("_calibrate_batches_done", None)
-                    _persist_cfg()
-                    raise SystemExit(0)
+        g = max(1, batch_games)
+        a_plays_white = [bool(i % 2 == 0) for i in range(g)] if swap_sides else [True] * g
 
-            cfg["_last_batch_elapsed_s"] = float(t1 - t0)
-            now_s = time.time()
-            shard_path, elapsed_s = _maybe_flush_upload_buffer(
-                pending_dir=pending_dir,
-                username=str(args.username),
-                buf=upload_buf,
-                now_s=now_s,
-                last_send_s=last_successful_send_s,
-                target_positions=int(args.upload_target_positions),
-                flush_seconds=float(args.upload_flush_seconds),
-                force=True,
+        stats = play_match_batch(
+            self.model,
+            self.best_model,
+            device=str(self.device),
+            rng=self.rng,
+            games=g,
+            max_plies=max_plies_arena,
+            a_plays_white=a_plays_white,
+            mcts_type=mcts_type_arena,
+            mcts_simulations=mcts_sims_arena,
+            temperature=temperature_arena,
+            c_puct=c_puct_arena,
+            opening_cfg=arena_opening_cfg,
+        )
+
+        ts = int(time.time())
+        payload = {
+            "generated_at_unix": ts,
+            "worker_username": str(self.args.username),
+            "a_sha256": str(model_sha),
+            "b_sha256": str(best_sha),
+            "games": int(stats.games),
+            "a_win": int(stats.a_win),
+            "a_draw": int(stats.a_draw),
+            "a_loss": int(stats.a_loss),
+            "a_as_white": int(stats.a_as_white),
+            "a_as_black": int(stats.a_as_black),
+            "max_plies": int(stats.max_plies),
+            "mcts": str(mcts_type_arena),
+            "mcts_simulations": int(mcts_sims_arena),
+            "c_puct": float(c_puct_arena),
+            "swap_sides": bool(swap_sides),
+        }
+
+        out = self.arena_pending_dir / f"{ts}_{model_sha[:8]}_vs_{best_sha[:8]}_{stats.games}g.json"
+        out.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+
+        if not self.shared_cache_enabled:
+            _prune_cached_models(cache_dir=self.cache_dir, keep_shas={model_sha, best_sha})
+
+        time.sleep(0.1)
+
+    def _run_selfplay(self, manifest: dict) -> None:
+        """play_batch + buffer + upload + auto-tune."""
+        reco = manifest.get("recommended_worker") or {}
+        model_sha = self.model_sha
+        model_step = self.model_step
+
+        need_local_model = self.inference_client is None
+
+        if not model_sha:
+            time.sleep(float(self.args.poll_seconds))
+            return
+
+        if need_local_model and self.model is None:
+            time.sleep(float(self.args.poll_seconds))
+            return
+
+        games_per_batch = (
+            int(self.games_per_batch_local)
+            if self.games_per_batch_local is not None
+            else int(reco.get("games_per_batch", 8))
+        )
+
+        max_plies = self._resolve_reco(reco, "max_plies", 240, int)
+        mcts_type = self._resolve_reco(reco, "mcts", "puct", str)
+        mcts_sims = self._resolve_reco(reco, "mcts_simulations", 50, int)
+        playout_cap_fraction = self._resolve_reco(reco, "playout_cap_fraction", 0.25)
+        fast_sims = self._resolve_reco(reco, "fast_simulations", 8, int)
+        opponent_random_move_prob = float(reco.get("opponent_random_move_prob", 0.0))
+        opponent_topk_min = int(reco.get("opponent_topk_min", 1))
+        opponent_suboptimal_wdl_regret_max = float(reco.get("opponent_suboptimal_wdl_regret_max", -1.0))
+        opponent_suboptimal_wdl_regret_min = float(reco.get("opponent_suboptimal_wdl_regret_min", -1.0))
+        opponent_random_move_prob_start = float(reco.get("opponent_random_move_prob_start", 1.0))
+        opponent_random_move_prob_min = float(reco.get("opponent_random_move_prob_min", 0.0))
+        opponent_wdl_regret_limit_raw = reco.get("opponent_wdl_regret_limit", None)
+        opponent_wdl_regret_limit = float(opponent_wdl_regret_limit_raw) if opponent_wdl_regret_limit_raw is not None else None
+        selfplay_fraction = float(reco.get("selfplay_fraction", 0.0))
+        timeout_adjudication_threshold = float(reco.get("timeout_adjudication_threshold", 0.90))
+
+        opening_book_prob = self._resolve_reco(reco, "opening_book_prob", 1.0)
+        opening_book_max_plies = self._resolve_reco(reco, "opening_book_max_plies", 4, int)
+        opening_book_max_games = self._resolve_reco(reco, "opening_book_max_games", 200000, int)
+        opening_book_max_plies_2 = int(reco.get("opening_book_max_plies_2", 16))
+        opening_book_max_games_2 = int(reco.get("opening_book_max_games_2", 200000))
+        opening_book_mix_prob_2 = float(reco.get("opening_book_mix_prob_2", 0.0))
+        random_start_plies = self._resolve_reco(reco, "random_start_plies", 0, int)
+
+        sf_nodes = self._resolve_reco(reco, "sf_nodes", 2000, int)
+        sf_multipv = self._resolve_reco(reco, "sf_multipv", 5, int)
+        _reco_skill = reco.get("sf_skill_level")
+        sf_skill_level: int | None = None if _reco_skill is None else int(_reco_skill)
+        sf_policy_temp = self._resolve_reco(reco, "sf_policy_temp", 0.25)
+        sf_policy_label_smooth = self._resolve_reco(reco, "sf_policy_label_smooth", 0.05)
+
+        temperature = self._resolve_reco(reco, "temperature", 1.0)
+        t_start = self._resolve_reco(reco, "temperature_decay_start_move", 20, int)
+        t_moves = self._resolve_reco(reco, "temperature_decay_moves", 60, int)
+        t_end = self._resolve_reco(reco, "temperature_endgame", 0.6)
+
+        # Resolve stockfish binary and (re)init engine.
+        self._sync_stockfish(manifest, sf_nodes, sf_multipv, sf_skill_level)
+
+        # Generate a shard
+        t0 = time.time()
+        self._saw_completed_game = False
+
+        try:
+            samples, stats = play_batch(
+                self.model if need_local_model else None,
+                device=str(self.device),
+                rng=self.rng,
+                stockfish=self.sf,
+                evaluator=self.inference_client,
+                games=int(games_per_batch),
+                on_game_complete=self._on_completed_game,
+                opponent=OpponentConfig(
+                    random_move_prob=float(opponent_random_move_prob),
+                    topk_stage_end=float(reco.get("opponent_topk_stage_end", 0.5)),
+                    topk_min=int(opponent_topk_min),
+                    suboptimal_wdl_regret_max=float(opponent_suboptimal_wdl_regret_max),
+                    suboptimal_wdl_regret_min=float(opponent_suboptimal_wdl_regret_min),
+                    random_move_prob_start=float(opponent_random_move_prob_start),
+                    random_move_prob_min=float(opponent_random_move_prob_min),
+                    wdl_regret_limit=opponent_wdl_regret_limit,
+                ),
+                temp=TemperatureConfig(
+                    temperature=float(temperature),
+                    decay_start_move=int(t_start),
+                    decay_moves=int(t_moves),
+                    endgame=float(t_end),
+                ),
+                search=SearchConfig(
+                    simulations=int(mcts_sims),
+                    mcts_type=str(mcts_type),
+                    playout_cap_fraction=float(playout_cap_fraction),
+                    fast_simulations=int(fast_sims),
+                ),
+                opening=OpeningConfig(
+                    opening_book_path=self.opening_book_path,
+                    opening_book_max_plies=int(opening_book_max_plies),
+                    opening_book_max_games=int(opening_book_max_games),
+                    opening_book_prob=float(opening_book_prob),
+                    opening_book_path_2=self.opening_book_path_2,
+                    opening_book_max_plies_2=int(opening_book_max_plies_2),
+                    opening_book_max_games_2=int(opening_book_max_games_2),
+                    opening_book_mix_prob_2=float(opening_book_mix_prob_2),
+                    random_start_plies=int(random_start_plies),
+                ),
+                game=GameConfig(
+                    max_plies=int(max_plies),
+                    selfplay_fraction=float(selfplay_fraction),
+                    sf_policy_temp=float(sf_policy_temp),
+                    sf_policy_label_smooth=float(sf_policy_label_smooth),
+                    timeout_adjudication_threshold=float(timeout_adjudication_threshold),
+                ),
             )
-            if _should_write_fallback_batch(
-                shard_path=shard_path,
-                samples=samples,
-                saw_completed_game=saw_completed_game,
-            ):
-                log.warning(
-                    "batch returned %d samples but upload buffer was empty; writing fallback batch shard",
-                    int(len(samples)),
-                )
-                ts = int(now_s)
-                shard_path = pending_dir / f"{ts}_{model_sha[:8]}_{stats.games}g_{stats.positions}p.npz"
-                meta = ShardMeta(
-                    username=str(args.username),
-                    generated_at_unix=ts,
-                    model_sha256=str(model_sha),
-                    model_step=int(model_step),
-                    games=int(stats.games),
-                    positions=int(stats.positions),
-                    wins=int(stats.w),
-                    draws=int(stats.d),
-                    losses=int(stats.l),
-                    total_game_plies=int(getattr(stats, "total_game_plies", 0)),
-                    adjudicated_games=int(getattr(stats, "adjudicated_games", 0)),
-                    total_draw_games=int(getattr(stats, "total_draw_games", 0)),
-                    selfplay_games=int(getattr(stats, "selfplay_games", 0)),
-                    selfplay_adjudicated_games=int(getattr(stats, "selfplay_adjudicated_games", 0)),
-                    selfplay_draw_games=int(getattr(stats, "selfplay_draw_games", 0)),
-                    curriculum_games=int(getattr(stats, "curriculum_games", 0)),
-                    curriculum_adjudicated_games=int(getattr(stats, "curriculum_adjudicated_games", 0)),
-                    curriculum_draw_games=int(getattr(stats, "curriculum_draw_games", 0)),
-                )
-                tmp_path = pending_dir / f"_tmp_{shard_path.name}"
-                save_npz(tmp_path, samples=samples, meta=meta, compress=False)
-                tmp_path.replace(shard_path)
-                elapsed_path = _pending_elapsed_path(shard_path)
-                elapsed_s = float(t1 - t0)
-                elapsed_path.write_text(f"{float(elapsed_s):.6f}\n", encoding="utf-8")
-            elif shard_path is None:
-                log.info("batch produced no policy samples; skipping shard write")
-
-            # Prune old cached models opportunistically.
-            best_info = manifest.get("best_model") or {}
-            best_sha = str(best_info.get("sha256") or "")
-            if not shared_cache_enabled:
-                _prune_cached_models(cache_dir=cache_dir, keep_shas={model_sha, best_sha})
-
-            if shard_path is not None:
-                uploaded_at = _upload_pending_shards(default_elapsed_s=float(elapsed_s))
-                if uploaded_at is not None:
-                    last_successful_send_s = float(uploaded_at)
-
-            # Try uploading immediately next loop.
-            time.sleep(0.1)
-
-    finally:
-        if inference_client is not None and hasattr(inference_client, "close"):
+        except TimeoutError as exc:
+            if self.inference_client is None:
+                raise
+            self.log.warning("inference broker timed out; resetting client: %s", exc)
             try:
-                inference_client.close()
+                self.inference_client.close()
             except Exception:
                 pass
-        if sf is not None:
-            sf.close()
+            self.inference_client = None
+            time.sleep(float(self.args.poll_seconds))
+            return
+        except RuntimeError as exc:
+            err = str(exc).lower()
+            if self.inference_client is None or not any(tok in err for tok in ("inference", "broker", "slot")):
+                raise
+            self.log.warning("inference broker error; resetting client: %s", exc)
+            try:
+                self.inference_client.close()
+            except Exception:
+                pass
+            self.inference_client = None
+            time.sleep(float(self.args.poll_seconds))
+            return
+        t1 = time.time()
+
+        # Log batch outcome (only visible if --log-file is enabled).
+        self.log.info(
+            "batch done: games=%d positions=%d W/D/L=%d/%d/%d draws=%d timeouts=%d rand=%.2f sf_nodes=%s ppg=%.1f elapsed_s=%.2f",
+            int(stats.games),
+            int(stats.positions),
+            int(stats.w),
+            int(stats.d),
+            int(stats.l),
+            int(getattr(stats, "total_draw_games", 0)),
+            int(getattr(stats, "timeout_games", 0)),
+            float(opponent_random_move_prob),
+            str(stats.sf_nodes),
+            float(stats.positions) / max(1, int(stats.games)),
+            float(t1 - t0),
+        )
+
+        if bool(self.args.auto_tune) and not bool(self.pinned_games_per_batch_cli):
+            tuned = tune_games_per_batch(
+                current=int(games_per_batch),
+                elapsed_s=float(t1 - t0),
+                target_s=float(self.args.target_batch_seconds),
+                min_games=int(self.args.min_games_per_batch),
+                max_games=int(self.args.max_games_per_batch),
+            )
+            self.games_per_batch_local = int(tuned)
+
+            # Persist the calibrated value if requested.
+            self._persist_cfg()
+
+        if bool(self.args.calibrate):
+            # Count completed batches and exit once we have calibrated.
+            self.cfg["_calibrate_batches_done"] = int(self.cfg.get("_calibrate_batches_done", 0)) + 1
+            if int(self.cfg["_calibrate_batches_done"]) >= int(self.args.calibrate_batches):
+                self.cfg.pop("_calibrate_batches_done", None)
+                self._persist_cfg()
+                raise SystemExit(0)
+
+        self.cfg["_last_batch_elapsed_s"] = float(t1 - t0)
+        now_s = time.time()
+        shard_path, elapsed_s = _maybe_flush_upload_buffer(
+            pending_dir=self.pending_dir,
+            username=str(self.args.username),
+            buf=self.upload_buf,
+            now_s=now_s,
+            last_send_s=self.last_successful_send_s,
+            target_positions=int(self.args.upload_target_positions),
+            flush_seconds=float(self.args.upload_flush_seconds),
+            force=True,
+        )
+        if _should_write_fallback_batch(
+            shard_path=shard_path,
+            samples=samples,
+            saw_completed_game=self._saw_completed_game,
+        ):
+            self.log.warning(
+                "batch returned %d samples but upload buffer was empty; writing fallback batch shard",
+                int(len(samples)),
+            )
+            ts = int(now_s)
+            shard_path = self.pending_dir / f"{ts}_{model_sha[:8]}_{stats.games}g_{stats.positions}p.npz"
+            meta = ShardMeta(
+                username=str(self.args.username),
+                generated_at_unix=ts,
+                model_sha256=str(model_sha),
+                model_step=int(model_step),
+                games=int(stats.games),
+                positions=int(stats.positions),
+                wins=int(stats.w),
+                draws=int(stats.d),
+                losses=int(stats.l),
+                total_game_plies=int(getattr(stats, "total_game_plies", 0)),
+                adjudicated_games=int(getattr(stats, "adjudicated_games", 0)),
+                total_draw_games=int(getattr(stats, "total_draw_games", 0)),
+                selfplay_games=int(getattr(stats, "selfplay_games", 0)),
+                selfplay_adjudicated_games=int(getattr(stats, "selfplay_adjudicated_games", 0)),
+                selfplay_draw_games=int(getattr(stats, "selfplay_draw_games", 0)),
+                curriculum_games=int(getattr(stats, "curriculum_games", 0)),
+                curriculum_adjudicated_games=int(getattr(stats, "curriculum_adjudicated_games", 0)),
+                curriculum_draw_games=int(getattr(stats, "curriculum_draw_games", 0)),
+            )
+            tmp_path = self.pending_dir / f"_tmp_{shard_path.name}"
+            save_npz(tmp_path, samples=samples, meta=meta, compress=False)
+            tmp_path.replace(shard_path)
+            elapsed_path = _pending_elapsed_path(shard_path)
+            elapsed_s = float(t1 - t0)
+            elapsed_path.write_text(f"{float(elapsed_s):.6f}\n", encoding="utf-8")
+        elif shard_path is None:
+            self.log.info("batch produced no policy samples; skipping shard write")
+
+        # Prune old cached models opportunistically.
+        best_info = manifest.get("best_model") or {}
+        best_sha = str(best_info.get("sha256") or "")
+        if not self.shared_cache_enabled:
+            _prune_cached_models(cache_dir=self.cache_dir, keep_shas={model_sha, best_sha})
+
+        if shard_path is not None:
+            uploaded_at = self._upload_pending_shards(default_elapsed_s=float(elapsed_s))
+            if uploaded_at is not None:
+                self.last_successful_send_s = float(uploaded_at)
+
+        # Try uploading immediately next loop.
+        time.sleep(0.1)
+
+    def _cleanup(self) -> None:
+        if self.inference_client is not None and hasattr(self.inference_client, "close"):
+            try:
+                self.inference_client.close()
+            except Exception:
+                pass
+        if self.sf is not None:
+            try:
+                self.sf.close()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

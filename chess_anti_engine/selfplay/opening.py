@@ -82,6 +82,9 @@ def _load_pgn_opening_sequences(
     """Load PGN games into a weighted list of UCI move sequences.
 
     We aggregate identical prefixes into counts so large PGN books remain manageable.
+    Cache keys are path-based, so replacing a book in place requires a process
+    restart. In practice we version book filenames (`..._v2.pgn.zip`) when
+    changing assets, which keeps cache invalidation explicit.
 
     Returns (seqs, weights).
     """
@@ -179,10 +182,15 @@ def _sample_book(*, rng, path: str, max_plies: int, max_games: int) -> chess.Boa
     p = Path(path)
     suffixes = "".join(p.suffixes).lower()
     if suffixes.endswith(".bin"):
-        return _sample_from_polyglot(rng=rng, path=str(p), max_plies=max_plies)
-    if suffixes.endswith(".pgn") or suffixes.endswith(".pgn.zip") or suffixes.endswith(".zip"):
-        return _sample_from_pgn(rng=rng, path=str(p), max_plies=max_plies, max_games=max_games)
-    raise ValueError(f"Unknown opening book format: {p}")
+        board = _sample_from_polyglot(rng=rng, path=str(p), max_plies=max_plies)
+    elif suffixes.endswith(".pgn") or suffixes.endswith(".pgn.zip") or suffixes.endswith(".zip"):
+        board = _sample_from_pgn(rng=rng, path=str(p), max_plies=max_plies, max_games=max_games)
+    else:
+        raise ValueError(f"Unknown opening book format: {p}")
+
+    if not board.move_stack:
+        raise ValueError(f"Opening book produced no usable opening moves: {p}")
+    return board
 
 
 def make_starting_board(*, rng, cfg: OpeningConfig) -> chess.Board:

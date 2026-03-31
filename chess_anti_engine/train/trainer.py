@@ -57,6 +57,73 @@ class TrainMetrics:
     train_samples_seen: int = 0
 
 
+def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> dict:
+    """Extract Trainer constructor kwargs from a flat config dict.
+
+    Single source of truth for config → Trainer mapping, used by both
+    run.py (single mode) and tune/trainable.py.  Callers can override
+    individual keys in the returned dict before passing to Trainer().
+
+    Accepts ``grad_clip`` as an alias for ``zclip_max_norm`` (the argparse
+    name used in run.py).
+    """
+    def _f(key: str, default: float, typ: type = float) -> Any:
+        return typ(config.get(key, default))
+
+    # Handle grad_clip → zclip_max_norm alias
+    zclip_max_norm = float(config.get(
+        "zclip_max_norm", config.get("grad_clip", 1.0)
+    ))
+
+    # w_sf_volatility falls back to w_volatility if not explicitly set
+    w_volatility = _f("w_volatility", 0.05)
+    w_sf_volatility_raw = config.get("w_sf_volatility")
+    w_sf_volatility = float(w_sf_volatility_raw) if w_sf_volatility_raw is not None else w_volatility
+
+    kw: dict[str, Any] = dict(
+        device=str(config.get("device", "cpu")),
+        lr=_f("lr", 3e-4),
+        zclip_z_thresh=_f("zclip_z_thresh", 2.5),
+        zclip_alpha=_f("zclip_alpha", 0.97),
+        zclip_max_norm=zclip_max_norm,
+        use_amp=bool(config.get("use_amp", True)),
+        feature_dropout_p=_f("feature_dropout_p", 0.3),
+        fdp_king_safety=config.get("fdp_king_safety"),
+        fdp_pins=config.get("fdp_pins"),
+        fdp_pawns=config.get("fdp_pawns"),
+        fdp_mobility=config.get("fdp_mobility"),
+        fdp_outposts=config.get("fdp_outposts"),
+        w_volatility=w_volatility,
+        accum_steps=_f("accum_steps", 1, int),
+        warmup_steps=_f("warmup_steps", 1500, int),
+        warmup_lr_start=config.get("warmup_lr_start"),
+        lr_eta_min=_f("lr_eta_min", 1e-5),
+        lr_T0=_f("lr_T0", 5000, int),
+        lr_T_mult=_f("lr_T_mult", 2, int),
+        use_compile=bool(config.get("use_compile", False)),
+        optimizer=str(config.get("optimizer", "nadamw")),
+        cosmos_rank=_f("cosmos_rank", 64, int),
+        cosmos_gamma=_f("cosmos_gamma", 0.2),
+        swa_start=_f("swa_start", 0, int),
+        swa_freq=_f("swa_freq", 50, int),
+        w_policy=_f("w_policy", 1.0),
+        w_soft=_f("w_soft", 0.5),
+        w_future=_f("w_future", 0.15),
+        w_wdl=_f("w_wdl", 1.0),
+        w_sf_move=_f("w_sf_move", 0.15),
+        w_sf_eval=_f("w_sf_eval", 0.15),
+        w_categorical=_f("w_categorical", 0.10),
+        w_sf_volatility=w_sf_volatility,
+        w_moves_left=_f("w_moves_left", 0.02),
+        w_sf_wdl=_f("w_sf_wdl", 1.0),
+        sf_wdl_conf_power=_f("sf_wdl_conf_power", 0.0),
+        sf_wdl_draw_scale=_f("sf_wdl_draw_scale", 1.0),
+    )
+    if log_dir is not None:
+        kw["log_dir"] = log_dir
+    return kw
+
+
 class Trainer:
     def __init__(
         self,
@@ -99,7 +166,7 @@ class Trainer:
         w_categorical: float = 0.10,
         w_sf_volatility: float | None = None,
         w_moves_left: float = 0.02,
-        w_sf_wdl: float = 0.0,
+        w_sf_wdl: float = 1.0,
         sf_wdl_conf_power: float = 0.0,
         sf_wdl_draw_scale: float = 1.0,
         tb_log_interval: int = 10,
