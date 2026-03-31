@@ -511,6 +511,25 @@ static PyObject *MCTSTree_backprop_many(MCTSTreeObject *self, PyObject *args) {
 
 
 /* ================================================================
+ * Softmax helper
+ * ================================================================ */
+
+static void softmax_inplace(double *arr, int n) {
+    if (n <= 0) return;
+    double max_val = arr[0];
+    for (int i = 1; i < n; i++)
+        if (arr[i] > max_val) max_val = arr[i];
+    double sum = 0.0;
+    for (int i = 0; i < n; i++) {
+        arr[i] = exp(arr[i] - max_val);
+        sum += arr[i];
+    }
+    if (sum > 0.0)
+        for (int i = 0; i < n; i++)
+            arr[i] /= sum;
+}
+
+/* ================================================================
  * Gumbel improved-policy selection
  * ================================================================ */
 
@@ -539,27 +558,16 @@ static int32_t tree_gumbel_select_child(const TreeData *t, int32_t node_id,
 
     /* Compute logits + sigma * completed_Q, then softmax */
     double *scores = (double *)alloca(n_ch * sizeof(double));
-    double max_score = -1e30;
     for (int32_t i = 0; i < n_ch; i++) {
         int32_t cid = t->child_node[off + i];
         int32_t n = t->N[cid];
         double log_prior = log(t->prior[cid] > 1e-12 ? t->prior[cid] : 1e-12);
         double cq = (n > 0) ? (-t->W[cid] / (double)n) : parent_Q;
         scores[i] = log_prior + sigma * cq;
-        if (scores[i] > max_score) max_score = scores[i];
     }
 
     /* Softmax */
-    double sum_exp = 0.0;
-    for (int32_t i = 0; i < n_ch; i++) {
-        scores[i] = exp(scores[i] - max_score);
-        sum_exp += scores[i];
-    }
-    if (sum_exp > 0.0) {
-        double inv_sum = 1.0 / sum_exp;
-        for (int32_t i = 0; i < n_ch; i++)
-            scores[i] *= inv_sum;
-    }
+    softmax_inplace(scores, n_ch);
 
     /* Select: argmax(prob - N/(1+total_N)) */
     int32_t best_slot = 0;
@@ -964,43 +972,27 @@ static PyObject *MCTSTree_expand_from_logits(MCTSTreeObject *self, PyObject *arg
     }
 
     /* Extract legal logits and compute softmax in float64 */
-    double *priors = (double *)malloc(n_legal * sizeof(double));
+    double priors_stack[256];
+    double *priors = (n_legal <= 256) ? priors_stack : (double *)malloc(n_legal * sizeof(double));
     if (!priors) {
         Py_DECREF(legal_arr);
         Py_DECREF(logits_arr);
         return PyErr_NoMemory();
     }
 
-    double max_logit = -1e30;
-    for (int32_t i = 0; i < n_legal; i++) {
-        double v = (double)logits[legal[i]];
-        priors[i] = v;
-        if (v > max_logit) max_logit = v;
-    }
+    for (int32_t i = 0; i < n_legal; i++)
+        priors[i] = (double)logits[legal[i]];
 
-    double sum_exp = 0.0;
-    for (int32_t i = 0; i < n_legal; i++) {
-        priors[i] = exp(priors[i] - max_logit);
-        sum_exp += priors[i];
-    }
-    if (sum_exp > 0.0) {
-        double inv_sum = 1.0 / sum_exp;
-        for (int32_t i = 0; i < n_legal; i++)
-            priors[i] *= inv_sum;
-    } else {
-        double uniform = 1.0 / (double)n_legal;
-        for (int32_t i = 0; i < n_legal; i++)
-            priors[i] = uniform;
-    }
+    softmax_inplace(priors, n_legal);
 
     if (tree_expand(&self->tree, (int32_t)node_id, legal, priors, n_legal) < 0) {
-        free(priors);
+        if (priors != priors_stack) free(priors);
         Py_DECREF(legal_arr);
         Py_DECREF(logits_arr);
         return PyErr_NoMemory();
     }
 
-    free(priors);
+    if (priors != priors_stack) free(priors);
     Py_DECREF(legal_arr);
     Py_DECREF(logits_arr);
     Py_RETURN_NONE;

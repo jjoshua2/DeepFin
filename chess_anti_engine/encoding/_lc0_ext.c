@@ -189,6 +189,22 @@ static int is_attacked_by(int sq, uint64_t occ,
 }
 
 /* ================================================================
+ * Insertion sort for small int arrays
+ * ================================================================ */
+
+static void sort_int(int *arr, int n) {
+    for (int i = 1; i < n; i++) {
+        int key = arr[i];
+        int j = i - 1;
+        while (j >= 0 && arr[j] > key) {
+            arr[j + 1] = arr[j];
+            j--;
+        }
+        arr[j + 1] = key;
+    }
+}
+
+/* ================================================================
  * Policy index computation (LC0 encoding)
  * ================================================================ */
 
@@ -649,16 +665,7 @@ static PyObject* py_legal_move_policy_indices(PyObject *self, PyObject *args) {
     int count = generate_legal_move_indices(&bs, indices);
 
     /* Sort indices */
-    /* Simple insertion sort — count is small (~30) */
-    for (int i = 1; i < count; i++) {
-        int key = indices[i];
-        int j = i - 1;
-        while (j >= 0 && indices[j] > key) {
-            indices[j + 1] = indices[j];
-            j--;
-        }
-        indices[j + 1] = key;
-    }
+    sort_int(indices, count);
 
     /* Build numpy array */
     npy_intp dims[1] = {count};
@@ -1497,12 +1504,7 @@ static PyObject* PyCBoard_legal_move_indices(PyCBoard *self, PyObject *Py_UNUSED
     int indices[256];
     int count = generate_legal_move_indices(&bs, indices);
     /* Sort */
-    for (int i = 1; i < count; i++) {
-        int key = indices[i];
-        int j = i - 1;
-        while (j >= 0 && indices[j] > key) { indices[j+1] = indices[j]; j--; }
-        indices[j+1] = key;
-    }
+    sort_int(indices, count);
     npy_intp dims[1] = {count};
     PyArrayObject *arr = (PyArrayObject*)PyArray_SimpleNew(1, dims, NPY_INT32);
     if (!arr) return NULL;

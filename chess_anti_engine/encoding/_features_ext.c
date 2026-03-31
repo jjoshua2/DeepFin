@@ -58,6 +58,8 @@ static uint64_t PAWN_CAPTURE_MASKS[2][64];
 static uint64_t BB_FILES[8];
 static uint64_t BB_RANKS[8];
 
+static uint64_t KING_ZONE[2][64]; /* [color][sq], color: 0=BLACK 1=WHITE */
+
 static int tables_initialized = 0;
 
 static void init_tables(void) {
@@ -201,6 +203,30 @@ static void init_tables(void) {
         }
     }
 
+    /* King zone: king square + adjacent + 1-2 ranks forward */
+    for (int sq = 0; sq < 64; sq++) {
+        for (int color = 0; color < 2; color++) {
+            uint64_t zone = KING_ATTACKS[sq] | sq_bit(sq);
+            int kf = sq_file(sq);
+            int kr = sq_rank(sq);
+            int drs[2];
+            if (color == 1) { /* WHITE */
+                drs[0] = 1; drs[1] = 2;
+            } else {
+                drs[0] = -1; drs[1] = -2;
+            }
+            for (int di = 0; di < 2; di++) {
+                for (int df = -1; df <= 1; df++) {
+                    int f = kf + df;
+                    int r = kr + drs[di];
+                    if (f >= 0 && f <= 7 && r >= 0 && r <= 7)
+                        zone |= sq_bit(make_sq(f, r));
+                }
+            }
+            KING_ZONE[color][sq] = zone;
+        }
+    }
+
     tables_initialized = 1;
 }
 
@@ -255,22 +281,10 @@ static void bb_to_plane(float *plane, uint64_t bb, int turn_white) {
     }
 }
 
-/* King zone: king square + adjacent + 1-2 ranks forward */
+/* King zone: precomputed table lookup */
 static uint64_t king_zone(int king_sq, int color) {
     if (king_sq < 0 || king_sq > 63) return 0;
-    uint64_t zone = KING_ATTACKS[king_sq] | sq_bit(king_sq);
-    int kf = sq_file(king_sq), kr = sq_rank(king_sq);
-    int dr1 = color ? 1 : -1;
-    int dr2 = color ? 2 : -2;
-    for (int df = -1; df <= 1; df++) {
-        int f = kf + df;
-        if (f < 0 || f > 7) continue;
-        int r1 = kr + dr1;
-        if (r1 >= 0 && r1 <= 7) zone |= sq_bit(make_sq(f, r1));
-        int r2 = kr + dr2;
-        if (r2 >= 0 && r2 <= 7) zone |= sq_bit(make_sq(f, r2));
-    }
-    return zone;
+    return KING_ZONE[color][king_sq];
 }
 
 /* Ray step between two aligned squares, or 0 if not aligned */
