@@ -101,7 +101,12 @@ def run_mcts_many_c(
         pol_logits_all = np.asarray(pre_pol_logits, dtype=np.float32)
         wdl_logits_all = np.asarray(pre_wdl_logits, dtype=np.float32)
     else:
-        xs = encode_positions_batch(boards, add_features=True)
+        if use_cboard and root_cboards is not None:
+            xs = np.empty((n_boards, 146, 8, 8), dtype=np.float32)
+            for _ri, _rcb in enumerate(root_cboards):
+                xs[_ri] = _rcb.encode_146()
+        else:
+            xs = encode_positions_batch(boards, add_features=True)
         pol_logits_all, wdl_logits_all = eval_impl.evaluate_encoded(xs)
 
     # ── 2. Build C tree + init roots ─────────────────────────────────────
@@ -204,7 +209,13 @@ def run_mcts_many_c(
         if not leaf_data:
             continue
 
-        leaf_xs = encode_positions_batch([ld[2] for ld in leaf_data], add_features=True)
+        if use_cboard and all(ld[3] is not None for ld in leaf_data):
+            n_leaves = len(leaf_data)
+            leaf_xs = np.empty((n_leaves, 146, 8, 8), dtype=np.float32)
+            for _li, _ld in enumerate(leaf_data):
+                leaf_xs[_li] = _ld[3].encode_146()
+        else:
+            leaf_xs = encode_positions_batch([ld[2] for ld in leaf_data], add_features=True)
 
         pol_batch, wdl_batch = eval_impl.evaluate_encoded(leaf_xs)
         q_values = tree.batch_wdl_to_q(wdl_batch.reshape(-1, 3))

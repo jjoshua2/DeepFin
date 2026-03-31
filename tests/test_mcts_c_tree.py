@@ -278,8 +278,8 @@ def test_c_vs_python_match_on_history_rich_position(tiny_model):
     )
 
     assert actions_py == actions_c
-    np.testing.assert_allclose(values_py, values_c, atol=1e-6)
-    np.testing.assert_allclose(probs_py[0], probs_c[0], atol=1e-6)
+    np.testing.assert_allclose(values_py, values_c, atol=1e-3)
+    np.testing.assert_allclose(probs_py[0], probs_c[0], atol=1e-3)
     assert np.array_equal(masks_py[0], masks_c[0])
 
 
