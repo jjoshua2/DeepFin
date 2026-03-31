@@ -167,6 +167,9 @@ def run_gumbel_root_many_c(
 
     _max_leaves = n_boards * max(2, int(cfg.topk))
     _enc_buf = np.empty((_max_leaves, 146, 8, 8), dtype=np.float32)
+    # Second encoding buffer for pipelined GPU/CPU overlap: while the GPU
+    # reads from one buffer, the next rep's leaves are encoded into the other.
+    _enc_buf2 = np.empty((_max_leaves, 146, 8, 8), dtype=np.float32) if _has_async else None
 
     # Cache CBoard by node_id to avoid replaying full action paths from root.
     # Root CBoards are seeded; children are built from parent copy+push.
@@ -201,11 +204,19 @@ def run_gumbel_root_many_c(
             visits_per_action[bi] = max(1, vpa)
 
         max_reps = max(visits_per_action.values(), default=0)
-        for rep in range(max_reps):
-            # Build flat arrays of (root_id, forced_action) for this rep
-            all_root_ids = []
-            all_forced = []
-            all_bi = []
+
+        # ---- Helper: collect leaves + build CBoards for one rep ----
+        def _prepare_rep(rep: int, enc_buf: np.ndarray):
+            """Tree traversal + CBoard building + encoding for *rep*.
+
+            Returns None if no queries, otherwise a tuple of
+            (all_bi, leaf_ids, node_paths, need_eval, leaf_cbs,
+             leaf_legal, n_leaves, leaf_enc_slice).
+            Terminal nodes are backpropped immediately.
+            """
+            p_root_ids = []
+            p_forced = []
+            p_bi = []
             for bi in active:
                 rem = remaining_per_board[bi]
                 if rem is None or rep >= visits_per_action[bi]:
@@ -214,39 +225,34 @@ def run_gumbel_root_many_c(
                 if rid < 0:
                     continue
                 for action in rem:
-                    all_root_ids.append(rid)
-                    all_forced.append(int(action))
-                    all_bi.append(bi)
+                    p_root_ids.append(rid)
+                    p_forced.append(int(action))
+                    p_bi.append(bi)
 
-            if not all_root_ids:
-                continue
+            if not p_root_ids:
+                return None
 
-            n_queries = len(all_root_ids)
-            root_ids_arr = np.array(all_root_ids, dtype=np.int32)
-            forced_arr = np.array(all_forced, dtype=np.int32)
+            n_queries = len(p_root_ids)
+            root_ids_arr = np.array(p_root_ids, dtype=np.int32)
+            forced_arr = np.array(p_forced, dtype=np.int32)
 
-            # -- C tree traversal (all queries at once) ----------------
-            leaf_ids, node_paths, action_paths = tree.gumbel_collect_leaves(
+            p_leaf_ids, p_node_paths, p_action_paths = tree.gumbel_collect_leaves(
                 root_ids_arr, forced_arr,
                 _c_scale, _c_visit, _c_puct, _fpu_reduction, _full_tree,
             )
 
-            # -- Build leaf CBoards from cache, check terminals ---------
-            leaf_cbs: list[CBoard | None] = [None] * n_queries
-            terminal_vals: list[float | None] = [None] * n_queries
-            need_eval: list[int] = []  # indices into 0..n_queries that need GPU eval
+            p_leaf_cbs: list[CBoard | None] = [None] * n_queries
+            p_terminal_vals: list[float | None] = [None] * n_queries
+            p_need_eval: list[int] = []
 
             for qi in range(n_queries):
-                bi = all_bi[qi]
-                np_arr = node_paths[qi]
-                leaf_nid = int(leaf_ids[qi])
+                bi = p_bi[qi]
+                np_arr = p_node_paths[qi]
 
                 if np_arr.size <= 1:
-                    # Leaf is the root itself
-                    terminal_vals[qi] = float(root_qs[bi])
+                    p_terminal_vals[qi] = float(root_qs[bi])
                     continue
 
-                # Find deepest cached ancestor and replay from there
                 cached_cb = None
                 replay_start = 0
                 for di in range(np_arr.size - 2, -1, -1):
@@ -257,81 +263,126 @@ def run_gumbel_root_many_c(
                         break
 
                 if cached_cb is None:
-                    # Fallback: replay full action path from root
-                    ap = action_paths[qi]
+                    ap = p_action_paths[qi]
                     cb = root_cboards[bi].copy()
                     for a in ap:
                         cb.push_index(int(a))
                 else:
-                    # Replay only the remaining actions from cached ancestor
                     cb = cached_cb.copy()
-                    ap = action_paths[qi]
-                    # ap has one action per edge from root; we need actions
-                    # starting from replay_start-1 (0-indexed edges)
+                    ap = p_action_paths[qi]
                     for ai in range(replay_start - 1, ap.size):
                         cb.push_index(int(ap[ai]))
 
-                # Terminal check
                 if cb.is_game_over():
-                    terminal_vals[qi] = float(cb.terminal_value())
+                    p_terminal_vals[qi] = float(cb.terminal_value())
                 else:
-                    leaf_cbs[qi] = cb
-                    need_eval.append(qi)
+                    p_leaf_cbs[qi] = cb
+                    p_need_eval.append(qi)
 
-            # -- Backprop terminals in C tree --------------------------
+            # Backprop terminals immediately
             term_paths = []
             term_values = []
-            need_eval_set = set(need_eval)
+            p_need_eval_set = set(p_need_eval)
             for qi in range(n_queries):
-                if terminal_vals[qi] is not None and qi not in need_eval_set:
-                    term_paths.append(node_paths[qi])
-                    term_values.append(float(terminal_vals[qi]))
+                if p_terminal_vals[qi] is not None and qi not in p_need_eval_set:
+                    term_paths.append(p_node_paths[qi])
+                    term_values.append(float(p_terminal_vals[qi]))
             if term_paths:
                 tree.backprop_many(term_paths, term_values)
 
-            if not need_eval:
-                continue
+            if not p_need_eval:
+                return None
 
-            # -- Batch encode + get legal indices (CPU) ----------------
-            n_leaves = len(need_eval)
-            leaf_legal: list[np.ndarray | None] = [None] * n_leaves
-            for li, qi in enumerate(need_eval):
-                _cb = leaf_cbs[qi]
-                _enc_buf[li] = _cb.encode_146()
-                leaf_legal[li] = _cb.legal_move_indices()
+            n_leaves = len(p_need_eval)
+            p_leaf_legal: list[np.ndarray | None] = [None] * n_leaves
+            for li, qi in enumerate(p_need_eval):
+                _cb = p_leaf_cbs[qi]
+                enc_buf[li] = _cb.encode_146()
+                p_leaf_legal[li] = _cb.legal_move_indices()
 
-            # -- GPU forward pass (async if available) -----------------
-            _leaf_enc = _enc_buf[:n_leaves]
-            if _has_async:
-                pol_t, wdl_t, event = eval_impl.evaluate_encoded_async(_leaf_enc)
-            else:
-                pol_logits_leaf, wdl_logits_leaf = eval_impl.evaluate_encoded(_leaf_enc)
+            return (
+                p_bi, p_leaf_ids, p_node_paths, p_need_eval,
+                p_leaf_cbs, p_leaf_legal, n_leaves, enc_buf[:n_leaves],
+            )
 
-            # -- Sync GPU results --------------------------------------
-            if _has_async:
+        # ---- Helper: sync GPU results and expand+backprop ----------
+        def _finish_rep(prep, pol_logits_leaf, wdl_logits_leaf):
+            """Expand nodes and backprop values for a completed rep."""
+            (
+                f_bi, f_leaf_ids, f_node_paths, f_need_eval,
+                f_leaf_cbs, f_leaf_legal, f_n_leaves, _enc_slice,
+            ) = prep
+            q_vals = np.array(
+                tree.batch_wdl_to_q(wdl_logits_leaf), dtype=np.float64,
+            )
+            expand_paths = []
+            expand_values = []
+            for li in range(f_n_leaves):
+                qi = f_need_eval[li]
+                nid = int(f_leaf_ids[qi])
+                legal = f_leaf_legal[li]
+                if legal.size > 0 and not tree.is_expanded(nid):
+                    tree.expand_from_logits(nid, legal, pol_logits_leaf[li])
+                _cb_cache[nid] = f_leaf_cbs[qi]
+                expand_paths.append(f_node_paths[qi])
+                expand_values.append(float(q_vals[li]))
+            if expand_paths:
+                tree.backprop_many(expand_paths, expand_values)
+
+        # ---- Pipelined simulation loop --------------------------------
+        # When async GPU eval is available, overlap GPU inference for rep N
+        # with CPU work (tree traversal + CBoard + encoding) for rep N+1.
+        # The two encoding buffers alternate so the GPU can read from one
+        # while the CPU writes to the other.
+        if _has_async and _enc_buf2 is not None:
+            # Pipelined path: overlap GPU and CPU work
+            _bufs = [_enc_buf, _enc_buf2]
+            cur_buf_idx = 0
+
+            # Prepare first rep
+            cur_prep = _prepare_rep(0, _bufs[cur_buf_idx])
+            for rep in range(max_reps):
+                if cur_prep is None:
+                    # Nothing to eval this rep; prepare next
+                    cur_buf_idx ^= 1
+                    if rep + 1 < max_reps:
+                        cur_prep = _prepare_rep(rep + 1, _bufs[cur_buf_idx])
+                    else:
+                        cur_prep = None
+                    continue
+
+                # Launch async GPU eval for current rep
+                pol_t, wdl_t, event = eval_impl.evaluate_encoded_async(
+                    cur_prep[7],  # leaf_enc_slice
+                )
+
+                # While GPU works, prepare NEXT rep's CPU work
+                next_buf_idx = cur_buf_idx ^ 1
+                if rep + 1 < max_reps:
+                    next_prep = _prepare_rep(rep + 1, _bufs[next_buf_idx])
+                else:
+                    next_prep = None
+
+                # Sync GPU and finish current rep
                 if event is not None:
                     event.synchronize()
                 pol_logits_leaf = pol_t.numpy()
                 wdl_logits_leaf = wdl_t.numpy()
+                _finish_rep(cur_prep, pol_logits_leaf, wdl_logits_leaf)
 
-            # -- Batched WDL -> Q (C) ----------------------------------
-            q_vals = np.array(tree.batch_wdl_to_q(wdl_logits_leaf), dtype=np.float64)
-
-            # -- Expand + backprop in C tree ---------------------------
-            expand_paths = []
-            expand_values = []
-            for li in range(n_leaves):
-                qi = need_eval[li]
-                nid = int(leaf_ids[qi])
-                legal = leaf_legal[li]
-                if legal.size > 0 and not tree.is_expanded(nid):
-                    tree.expand_from_logits(nid, legal, pol_logits_leaf[li])
-                # Cache the leaf CBoard for future traversals
-                _cb_cache[nid] = leaf_cbs[qi]
-                expand_paths.append(node_paths[qi])
-                expand_values.append(float(q_vals[li]))
-            if expand_paths:
-                tree.backprop_many(expand_paths, expand_values)
+                # Advance pipeline
+                cur_prep = next_prep
+                cur_buf_idx = next_buf_idx
+        else:
+            # Synchronous fallback (no async support)
+            for rep in range(max_reps):
+                prep = _prepare_rep(rep, _enc_buf)
+                if prep is None:
+                    continue
+                pol_logits_leaf, wdl_logits_leaf = eval_impl.evaluate_encoded(
+                    prep[7],  # leaf_enc_slice
+                )
+                _finish_rep(prep, pol_logits_leaf, wdl_logits_leaf)
 
         # Sequential halving: score and prune candidates using C tree
         for bi in active:
