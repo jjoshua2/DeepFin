@@ -42,7 +42,7 @@ from chess_anti_engine.selfplay.config import (
 from chess_anti_engine.selfplay.manager import _effective_curriculum_topk
 from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.selfplay.budget import progressive_mcts_simulations
-from chess_anti_engine.stockfish import DifficultyPID, StockfishPool, StockfishUCI
+from chess_anti_engine.stockfish import DifficultyPID, StockfishPool, StockfishUCI, pid_from_config
 from chess_anti_engine.train import Trainer, trainer_kwargs_from_config
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 from chess_anti_engine.tune._utils import (
@@ -1145,37 +1145,7 @@ def train_trial(config: dict):
 
     pid = None
     if bool(config.get("sf_pid_enabled", True)):
-        pid = DifficultyPID(
-            initial_nodes=int(config.get("sf_nodes", 500)),
-            target_winrate=float(config.get("sf_pid_target_winrate", 0.52)),
-            ema_alpha=float(config.get("sf_pid_ema_alpha", 0.03)),
-            deadzone=float(config.get("sf_pid_deadzone", 0.05)),
-            rate_limit=float(config.get("sf_pid_rate_limit", 0.10)),
-            min_games_between_adjust=int(config.get("sf_pid_min_games_between_adjust", 30)),
-            kp=float(config.get("sf_pid_kp", 1.5)),
-            ki=float(config.get("sf_pid_ki", 0.10)),
-            kd=float(config.get("sf_pid_kd", 0.0)),
-            integral_clamp=float(config.get("sf_pid_integral_clamp", 1.0)),
-            min_nodes=int(config.get("sf_pid_min_nodes", 250)),
-            max_nodes=int(config.get("sf_pid_max_nodes", 1000000)),
-            initial_skill_level=int(config.get("sf_pid_initial_skill_level", 0)),
-            skill_min=int(config.get("sf_pid_skill_min", 0)),
-            skill_max=int(config.get("sf_pid_skill_max", 20)),
-            skill_promote_nodes=int(config.get("sf_pid_skill_promote_nodes", 200)),
-            skill_demote_nodes=int(config.get("sf_pid_skill_demote_nodes", 100)),
-            skill_nodes_on_promote=int(config.get("sf_pid_skill_nodes_on_promote", 100)),
-            skill_nodes_on_demote=int(config.get("sf_pid_skill_nodes_on_demote", 150)),
-            initial_random_move_prob=float(config.get("sf_pid_random_move_prob_start", 1.0)),
-            random_move_prob_min=float(config.get("sf_pid_random_move_prob_min", 0.0)),
-            random_move_prob_max=float(config.get("sf_pid_random_move_prob_max", 1.0)),
-            random_move_stage_end=float(config.get("sf_pid_random_move_stage_end", 0.5)),
-            max_rand_step=float(config.get("sf_pid_max_rand_step", 0.01)),
-            initial_wdl_regret=float(config.get("sf_pid_wdl_regret_start", -1.0)),
-            wdl_regret_min=float(config.get("sf_pid_wdl_regret_min", 0.01)),
-            wdl_regret_max=float(config.get("sf_pid_wdl_regret_max", 1.0)),
-            wdl_regret_stage_end=float(config.get("sf_pid_wdl_regret_stage_end", -1.0)),
-            max_regret_step=float(config.get("sf_pid_max_regret_step", 0.01)),
-        )
+        pid = pid_from_config(config)
         if restored_pid_state is not None:
             try:
                 pid.load_state_dict(restored_pid_state)

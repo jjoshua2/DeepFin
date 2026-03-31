@@ -31,7 +31,7 @@ from chess_anti_engine.selfplay.config import (
     TemperatureConfig,
 )
 from chess_anti_engine.selfplay.opening import OpeningConfig
-from chess_anti_engine.stockfish import DifficultyPID, StockfishPool, StockfishUCI
+from chess_anti_engine.stockfish import DifficultyPID, StockfishPool, StockfishUCI, pid_from_config
 from chess_anti_engine.train import Trainer, trainer_kwargs_from_config
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 from chess_anti_engine.tune.replay_exchange import _read_jsonl_rows
@@ -424,39 +424,7 @@ def _run_single(args: argparse.Namespace) -> None:
 
     pid = None
     if bool(getattr(cfg.stockfish, "pid_enabled", False)):
-        pid = DifficultyPID(
-            initial_nodes=int(cfg.stockfish.nodes),
-            target_winrate=float(cfg.stockfish.pid_target_winrate),
-            ema_alpha=float(cfg.stockfish.pid_ema_alpha),
-            deadzone=float(cfg.stockfish.pid_deadzone),
-            rate_limit=float(cfg.stockfish.pid_rate_limit),
-            min_games_between_adjust=int(cfg.stockfish.pid_min_games_between_adjust),
-            kp=float(cfg.stockfish.pid_kp),
-            ki=float(cfg.stockfish.pid_ki),
-            kd=float(cfg.stockfish.pid_kd),
-            integral_clamp=float(cfg.stockfish.pid_integral_clamp),
-            min_nodes=int(cfg.stockfish.pid_min_nodes),
-            max_nodes=int(cfg.stockfish.pid_max_nodes),
-            initial_skill_level=int(getattr(args, "sf_pid_initial_skill_level", 0)),
-            skill_min=int(getattr(args, "sf_pid_skill_min", 0)),
-            skill_max=int(getattr(args, "sf_pid_skill_max", 20)),
-            skill_promote_nodes=int(getattr(args, "sf_pid_skill_promote_nodes", 200)),
-            skill_demote_nodes=int(getattr(args, "sf_pid_skill_demote_nodes", 100)),
-            skill_nodes_on_promote=int(getattr(args, "sf_pid_skill_nodes_on_promote", 100)),
-            skill_nodes_on_demote=int(getattr(args, "sf_pid_skill_nodes_on_demote", 150)),
-            # Optional opponent random-move schedule (may be provided via YAML defaults
-            # even if not exposed as explicit CLI flags).
-            initial_random_move_prob=float(getattr(args, "sf_pid_random_move_prob_start", 0.0)),
-            random_move_prob_min=float(getattr(args, "sf_pid_random_move_prob_min", 0.0)),
-            random_move_prob_max=float(getattr(args, "sf_pid_random_move_prob_max", 1.0)),
-            random_move_stage_end=float(getattr(args, "sf_pid_random_move_stage_end", 0.5)),
-            max_rand_step=float(getattr(args, "sf_pid_max_rand_step", 0.01)),
-            initial_wdl_regret=float(getattr(args, "sf_pid_wdl_regret_start", -1.0)),
-            wdl_regret_min=float(getattr(args, "sf_pid_wdl_regret_min", 0.01)),
-            wdl_regret_max=float(getattr(args, "sf_pid_wdl_regret_max", 1.0)),
-            wdl_regret_stage_end=float(getattr(args, "sf_pid_wdl_regret_stage_end", -1.0)),
-            max_regret_step=float(getattr(args, "sf_pid_max_regret_step", 0.01)),
-        )
+        pid = pid_from_config(vars(args))
         if pid_state is not None:
             try:
                 pid.load_state_dict(pid_state)
@@ -654,264 +622,55 @@ def _run_single(args: argparse.Namespace) -> None:
         sf.close()
 
 
+# Keys that are internal to the harness or need special handling -- NOT passed
+# through to Ray Tune per-trial config.
+_TUNE_CONFIG_DENYLIST = frozenset({
+    "config",           # YAML path, not a tunable
+    "resume",           # harness control
+    "mode",             # harness control
+    "num_samples",      # tune.run parameter, not per-trial config
+    "tune_metric",      # harness-level metric selection
+    "tune_mode",        # harness-level mode (min/max)
+    # Salvage-mode CLI args (only used by _run_salvage, not per-trial config).
+    "salvage_source_run_id",
+    "salvage_top_n",
+    "salvage_out_dir",
+    "salvage_metric",
+    "salvage_copy_replay",
+    # search_optimizer_choices needs list conversion, handled explicitly below.
+    "search_optimizer_choices",
+})
+
+
 def _build_tune_config_dict(args: argparse.Namespace) -> dict:
-    """Convert parsed CLI args into the flat config dict consumed by Ray Tune."""
-    device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
-    base = {
-        "seed": int(args.seed),
-        "device": device,
-        "model": str(args.model),
-        "iterations": int(args.iterations),
-        "replay_capacity": int(args.replay_capacity),
-        "min_replay_size": int(args.min_replay_size),
-        "stockfish_path": str(args.stockfish_path),
-        "volatility_source": str(args.volatility_source),
-        "search_volatility_source": bool(args.search_volatility_source),
-        "sf_nodes": int(args.sf_nodes),
-        "sf_multipv": int(args.sf_multipv),
-        "sf_hash_mb": int(getattr(args, "sf_hash_mb", 16)),
-        "sf_policy_temp": float(args.sf_policy_temp),
-        "sf_policy_label_smooth": float(args.sf_policy_label_smooth),
-        "timeout_adjudication_threshold": float(getattr(args, "timeout_adjudication_threshold", 0.90)),
-        "sf_pid_enabled": bool(args.sf_pid_enabled),
-        "sf_pid_target_winrate": float(args.sf_pid_target_winrate),
-        "sf_pid_ema_alpha": float(args.sf_pid_ema_alpha),
-        "sf_pid_deadzone": float(args.sf_pid_deadzone),
-        "sf_pid_rate_limit": float(args.sf_pid_rate_limit),
-        "sf_pid_min_games_between_adjust": int(args.sf_pid_min_games_between_adjust),
-        "sf_pid_kp": float(args.sf_pid_kp),
-        "sf_pid_ki": float(args.sf_pid_ki),
-        "sf_pid_kd": float(args.sf_pid_kd),
-        "sf_pid_integral_clamp": float(args.sf_pid_integral_clamp),
-        "sf_pid_min_nodes": int(args.sf_pid_min_nodes),
-        "sf_pid_max_nodes": int(args.sf_pid_max_nodes),
-        "sf_pid_initial_skill_level": int(getattr(args, "sf_pid_initial_skill_level", 0)),
-        "sf_pid_skill_min": int(getattr(args, "sf_pid_skill_min", 0)),
-        "sf_pid_skill_max": int(getattr(args, "sf_pid_skill_max", 20)),
-        "sf_pid_skill_promote_nodes": int(getattr(args, "sf_pid_skill_promote_nodes", 200)),
-        "sf_pid_skill_demote_nodes": int(getattr(args, "sf_pid_skill_demote_nodes", 100)),
-        "sf_pid_skill_nodes_on_promote": int(getattr(args, "sf_pid_skill_nodes_on_promote", 100)),
-        "sf_pid_skill_nodes_on_demote": int(getattr(args, "sf_pid_skill_nodes_on_demote", 150)),
-        "sf_pid_random_move_prob_start": float(getattr(args, "sf_pid_random_move_prob_start", 1.0)),
-        "sf_pid_random_move_prob_min": float(getattr(args, "sf_pid_random_move_prob_min", 0.0)),
-        "sf_pid_random_move_prob_max": float(getattr(args, "sf_pid_random_move_prob_max", 1.0)),
-        "sf_pid_random_move_stage_end": float(getattr(args, "sf_pid_random_move_stage_end", 0.5)),
-        "sf_pid_topk_stage_end": float(getattr(args, "sf_pid_topk_stage_end", getattr(args, "sf_pid_random_move_stage_end", 0.5))),
-        "sf_pid_topk_min": int(getattr(args, "sf_pid_topk_min", 1)),
-        "sf_pid_suboptimal_wdl_regret_max": float(getattr(args, "sf_pid_suboptimal_wdl_regret_max", -1.0)),
-        "sf_pid_suboptimal_wdl_regret_min": float(getattr(args, "sf_pid_suboptimal_wdl_regret_min", -1.0)),
-        "sf_pid_max_rand_step": float(getattr(args, "sf_pid_max_rand_step", 0.01)),
-        "sf_pid_max_rand_step_start": float(getattr(args, "sf_pid_max_rand_step_start", 0.0)),
-        "sf_pid_max_rand_step_ramp_iters": int(getattr(args, "sf_pid_max_rand_step_ramp_iters", 0)),
-        "sf_pid_wdl_regret_start": float(getattr(args, "sf_pid_wdl_regret_start", -1.0)),
-        "sf_pid_wdl_regret_min": float(getattr(args, "sf_pid_wdl_regret_min", 0.01)),
-        "sf_pid_wdl_regret_max": float(getattr(args, "sf_pid_wdl_regret_max", 1.0)),
-        "sf_pid_wdl_regret_stage_end": float(getattr(args, "sf_pid_wdl_regret_stage_end", -1.0)),
-        "sf_pid_max_regret_step": float(getattr(args, "sf_pid_max_regret_step", 0.01)),
-        "opening_book_path": args.opening_book_path,
-        "opening_book_max_plies": int(args.opening_book_max_plies),
-        "opening_book_max_games": int(args.opening_book_max_games),
-        "opening_book_prob": float(args.opening_book_prob),
-        "opening_book_path_2": getattr(args, "opening_book_path_2", None),
-        "opening_book_max_plies_2": int(getattr(args, "opening_book_max_plies_2", 16)),
-        "opening_book_max_games_2": int(getattr(args, "opening_book_max_games_2", 200_000)),
-        "opening_book_mix_prob_2": float(getattr(args, "opening_book_mix_prob_2", 0.0)),
-        "random_start_plies": int(args.random_start_plies),
-        "eval_games": int(args.eval_games),
-        "eval_sf_nodes": int(args.eval_sf_nodes) if args.eval_sf_nodes is not None else int(args.sf_nodes),
-        "eval_mcts_simulations": (
-            int(args.eval_mcts_simulations)
-            if args.eval_mcts_simulations is not None
-            else (
-                int(args.mcts_start_simulations) if bool(args.progressive_mcts) else int(args.mcts_simulations)
-            )
-        ),
-        "holdout_fraction": float(args.holdout_fraction),
-        "holdout_capacity": int(args.holdout_capacity),
-        "test_steps": int(args.test_steps),
-        "freeze_holdout_at": int(args.freeze_holdout_at),
-        "search_feature_dropout_p": bool(args.search_feature_dropout_p),
-        "search_w_volatility": bool(args.search_w_volatility),
-        "reset_holdout_on_drift": bool(args.reset_holdout_on_drift),
-        "drift_threshold": float(args.drift_threshold),
-        "drift_sample_size": int(args.drift_sample_size),
-        "sf_workers": int(args.sf_workers),
-        "games_per_iter": int(args.games_per_iter),
-        "games_per_iter_start": int(getattr(args, "games_per_iter_start", 0)),
-        "games_per_iter_ramp_iters": int(getattr(args, "games_per_iter_ramp_iters", 0)),
-        "selfplay_batch": int(args.selfplay_batch),
-        "selfplay_fraction": float(getattr(args, "selfplay_fraction", 0.0)),
-        "lr": float(args.lr),
-        "train_steps": int(args.train_steps),
-        "train_window_fraction": float(getattr(args, "train_window_fraction", 0.0)),
-        "batch_size": int(args.batch_size),
-        "feature_dropout_p": float(args.feature_dropout_p),
-        "w_policy": float(getattr(args, "w_policy", 1.0)),
-        "w_soft": float(getattr(args, "w_soft", 0.5)),
-        "w_future": float(getattr(args, "w_future", 0.15)),
-        "w_wdl": float(getattr(args, "w_wdl", 1.0)),
-        "w_sf_move": float(getattr(args, "w_sf_move", 0.15)),
-        "w_sf_eval": float(getattr(args, "w_sf_eval", 0.15)),
-        "w_categorical": float(getattr(args, "w_categorical", 0.10)),
-        "w_sf_volatility": float(getattr(args, "w_sf_volatility", getattr(args, "w_volatility", 0.05))),
-        "w_moves_left": float(getattr(args, "w_moves_left", 0.02)),
-        "w_volatility": float(args.w_volatility),
-        "max_plies": int(args.max_plies),
-        "use_amp": not bool(args.no_amp),
-        "accum_steps": int(args.accum_steps),
-        "warmup_steps": int(args.warmup_steps),
-        "warmup_lr_start": getattr(args, "warmup_lr_start", None),
-        "lr_eta_min": float(args.lr_eta_min),
-        "lr_T0": int(args.lr_T0),
-        "lr_T_mult": int(args.lr_T_mult),
-        "grad_clip": float(args.grad_clip),
-        "use_compile": bool(args.use_compile),
-        "optimizer": str(args.optimizer),
-        "cosmos_rank": int(getattr(args, "cosmos_rank", 64)),
-        "cosmos_gamma": float(getattr(args, "cosmos_gamma", 0.2)),
-        "embed_dim": int(args.embed_dim),
-        "num_layers": int(args.num_layers),
-        "num_heads": int(args.num_heads),
-        "ffn_mult": int(args.ffn_mult),
-        "use_smolgen": not bool(args.no_smolgen),
-        "use_nla": bool(args.use_nla),
-        "gradient_checkpointing": bool(args.gradient_checkpointing),
-        "mcts": str(args.mcts),
-        "mcts_simulations": int(args.mcts_simulations),
-        "progressive_mcts": bool(args.progressive_mcts),
-        "mcts_start_simulations": int(args.mcts_start_simulations),
-        "mcts_ramp_steps": int(args.mcts_ramp_steps),
-        "mcts_ramp_exponent": float(args.mcts_ramp_exponent),
-        "fast_simulations": int(args.fast_simulations),
-        "playout_cap_fraction": float(args.playout_cap_fraction),
-        "fpu_reduction": float(args.fpu_reduction),
-        "fpu_at_root": float(args.fpu_at_root),
-        "soft_policy_temp": float(getattr(args, "soft_policy_temp", 2.0)),
-        "diff_focus_enabled": bool(getattr(args, "diff_focus_enabled", True)),
-        "diff_focus_q_weight": float(getattr(args, "diff_focus_q_weight", 6.0)),
-        "diff_focus_pol_scale": float(getattr(args, "diff_focus_pol_scale", 3.5)),
-        "diff_focus_slope": float(getattr(args, "diff_focus_slope", 3.0)),
-        "diff_focus_min": float(getattr(args, "diff_focus_min", 0.025)),
-        "temperature": float(args.temperature),
-        "temperature_drop_plies": int(args.temperature_drop_plies),
-        "temperature_after": float(args.temperature_after),
-        "temperature_decay_start_move": int(args.temperature_decay_start_move),
-        "temperature_decay_moves": int(args.temperature_decay_moves),
-        "temperature_endgame": float(args.temperature_endgame),
-        "swa_start": int(args.swa_start),
-        "swa_freq": int(args.swa_freq),
-        "syzygy_path": args.syzygy_path,
-        "syzygy_policy": bool(args.syzygy_policy),
-        "puzzle_epd": args.puzzle_epd,
-        "puzzle_interval": int(args.puzzle_interval),
-        "puzzle_simulations": int(args.puzzle_simulations),
-        "bootstrap_dir": getattr(args, "bootstrap_dir", None),
-        "bootstrap_checkpoint": getattr(args, "bootstrap_checkpoint", None),
-        "bootstrap_zero_policy_heads": bool(getattr(args, "bootstrap_zero_policy_heads", False)),
-        "bootstrap_reinit_volatility_heads": bool(getattr(args, "bootstrap_reinit_volatility_heads", False)),
-        "worker_wheel_path": str(getattr(args, "worker_wheel_path", "") or ""),
-        "bootstrap_max_positions": int(getattr(args, "bootstrap_max_positions", 0)),
-        "bootstrap_train_steps": int(getattr(args, "bootstrap_train_steps", 0)),
-        "shared_shards_dir": getattr(args, "shared_shards_dir", None),
-        "shuffle_buffer_size": int(getattr(args, "shuffle_buffer_size", 20_000)),
-        "shuffle_refresh_interval": int(getattr(args, "shuffle_refresh_interval", 5)),
-        "shuffle_refresh_shards": int(getattr(args, "shuffle_refresh_shards", 3)),
-        "shuffle_draw_cap_frac": float(getattr(args, "shuffle_draw_cap_frac", 0.90)),
-        "shuffle_wl_max_ratio": float(getattr(args, "shuffle_wl_max_ratio", 1.5)),
-        "shard_size": int(getattr(args, "shard_size", 1000)),
-        "exploit_replay_refresh_enabled": bool(getattr(args, "exploit_replay_refresh_enabled", False)),
-        "exploit_replay_keep_fraction": float(getattr(args, "exploit_replay_keep_fraction", 0.60)),
-        "exploit_replay_donor_shards": int(getattr(args, "exploit_replay_donor_shards", 6)),
-        "exploit_replay_skip_newest": int(getattr(args, "exploit_replay_skip_newest", 1)),
-        "exploit_replay_share_top_enabled": bool(getattr(args, "exploit_replay_share_top_enabled", False)),
-        "exploit_replay_top_k_trials": int(getattr(args, "exploit_replay_top_k_trials", 0)),
-        "exploit_replay_top_within_best_frac": float(getattr(args, "exploit_replay_top_within_best_frac", 0.10)),
-        "exploit_replay_top_shards_per_trial": int(getattr(args, "exploit_replay_top_shards_per_trial", 0)),
-        "exploit_replay_top_min_metric": float(getattr(args, "exploit_replay_top_min_metric", -1e9)),
-        "exploit_replay_local_keep_recent_fraction": float(
-            getattr(args, "exploit_replay_local_keep_recent_fraction", 0.20)
-        ),
-        "exploit_replay_local_keep_older_fraction": float(
-            getattr(args, "exploit_replay_local_keep_older_fraction", 0.65)
-        ),
-        "pause_file": getattr(args, "pause_file", None),
-        "pause_poll_seconds": int(getattr(args, "pause_poll_seconds", 60)),
-        "salvage_seed_pool_dir": getattr(args, "salvage_seed_pool_dir", None),
-        "salvage_reinit_volatility_heads": bool(getattr(args, "salvage_reinit_volatility_heads", False)),
-        "salvage_restore_pid_state": bool(getattr(args, "salvage_restore_pid_state", False)),
-        "salvage_restore_donor_config": bool(getattr(args, "salvage_restore_donor_config", False)),
-        "salvage_restore_full_trainer_state": bool(getattr(args, "salvage_restore_full_trainer_state", False)),
-        "salvage_startup_no_share_iters": int(getattr(args, "salvage_startup_no_share_iters", 0)),
-        "salvage_startup_max_train_steps": int(getattr(args, "salvage_startup_max_train_steps", 0)),
-        "salvage_startup_post_share_ramp_iters": int(
-            getattr(args, "salvage_startup_post_share_ramp_iters", 0)
-        ),
-        "salvage_startup_post_share_max_train_steps": int(
-            getattr(args, "salvage_startup_post_share_max_train_steps", 0)
-        ),
-        "replay_window_start": int(getattr(args, "replay_window_start", 100_000)),
-        "replay_window_max": int(getattr(args, "replay_window_max", 1_000_000)),
-        "replay_window_growth": int(getattr(args, "replay_window_growth", 10_000)),
-        "gate_games": int(getattr(args, "gate_games", 0)),
-        "gate_threshold": float(getattr(args, "gate_threshold", 0.50)),
-        "gate_interval": int(getattr(args, "gate_interval", 1)),
-        "gate_mcts_sims": int(getattr(args, "gate_mcts_sims", 1)),
-        "w_sf_wdl": float(getattr(args, "w_sf_wdl", 1.0)),
-        "sf_wdl_conf_power": float(getattr(args, "sf_wdl_conf_power", 0.0)),
-        "sf_wdl_draw_scale": float(getattr(args, "sf_wdl_draw_scale", 1.0)),
-        "sf_wdl_floor": float(getattr(args, "sf_wdl_floor", 0.1)),
-        "sf_wdl_floor_at": float(getattr(args, "sf_wdl_floor_at", 0.1)),
-        "work_dir": str(Path(args.work_dir) / "tune"),
-        "tune_num_to_keep": int(args.tune_num_to_keep),
-        "tune_keep_last_experiments": int(args.tune_keep_last_experiments),
-        "max_concurrent_trials": int(args.max_concurrent_trials),
-        "cpus_per_trial": int(args.cpus_per_trial),
-        "distributed_workers_per_trial": int(args.distributed_workers_per_trial),
-        "distributed_worker_sf_workers": int(args.distributed_worker_sf_workers),
-        "distributed_worker_poll_seconds": float(args.distributed_worker_poll_seconds),
-        "distributed_worker_device": args.distributed_worker_device,
-        "distributed_worker_use_compile": bool(args.distributed_worker_use_compile),
-        "distributed_worker_auto_tune": bool(args.distributed_worker_auto_tune),
-        "distributed_worker_target_batch_seconds": float(args.distributed_worker_target_batch_seconds),
-        "distributed_worker_min_games_per_batch": int(args.distributed_worker_min_games_per_batch),
-        "distributed_worker_max_games_per_batch": int(args.distributed_worker_max_games_per_batch),
-        "distributed_worker_upload_target_positions": int(args.distributed_worker_upload_target_positions),
-        "distributed_worker_upload_flush_seconds": float(args.distributed_worker_upload_flush_seconds),
-        "distributed_worker_shared_cache_dir": args.distributed_worker_shared_cache_dir,
-        "distributed_worker_username": args.distributed_worker_username,
-        "distributed_worker_password": args.distributed_worker_password,
-        "distributed_min_workers_per_trial": int(args.distributed_min_workers_per_trial),
-        "distributed_max_worker_delta_per_rebalance": int(args.distributed_max_worker_delta_per_rebalance),
-        "distributed_wait_timeout_seconds": float(getattr(args, "distributed_wait_timeout_seconds", 900.0)),
-        "distributed_server_port": int(args.distributed_server_port),
-        "distributed_server_host": args.distributed_server_host,
-        "distributed_server_public_url": args.distributed_server_public_url,
-        "distributed_server_root_override": args.distributed_server_root_override,
-        "tune_replay_root_override": args.tune_replay_root_override,
-        "distributed_upload_compact_shard_size": int(args.distributed_upload_compact_shard_size),
-        "distributed_upload_compact_max_age_seconds": float(args.distributed_upload_compact_max_age_seconds),
-        "distributed_inference_broker_enabled": bool(args.distributed_inference_broker_enabled),
-        "distributed_inference_batch_wait_ms": float(args.distributed_inference_batch_wait_ms),
-        "distributed_inference_max_batch_per_slot": int(args.distributed_inference_max_batch_per_slot),
-        "gpus_per_trial": float(args.gpus_per_trial),
-        "tune_scheduler": str(args.tune_scheduler),
-        "pb2_perturbation_interval": int(args.pb2_perturbation_interval),
-        "pbt_synch": bool(args.pbt_synch),
-        "gpbt_inertia_weight": float(args.gpbt_inertia_weight),
-        "gpbt_winner_weight": float(args.gpbt_winner_weight),
-        "gpbt_quantile_fraction": float(args.gpbt_quantile_fraction),
-        "gpbt_resample_probability": float(args.gpbt_resample_probability),
-        "search_smolgen": bool(args.search_smolgen),
-        "search_nla": bool(args.search_nla),
-        "search_optimizer": bool(args.search_optimizer),
-        "search_optimizer_choices": list(args.search_optimizer_choices) if args.search_optimizer_choices else None,
-        "asha_optimizer_only": bool(args.asha_optimizer_only),
-        "asha_optimizer_repeats": int(args.asha_optimizer_repeats),
-    }
-    # Forward pb2_bounds_* keys from config to base dict for PB2 scheduler.
-    for k, v in vars(args).items():
-        if k.startswith("pb2_bounds_"):
-            base[k] = v
+    """Convert parsed CLI args into the flat config dict consumed by Ray Tune.
+
+    Uses ``vars(args)`` as the base so any new argparse key is automatically
+    forwarded.  A small denylist excludes harness-internal keys that should not
+    be per-trial config.
+    """
+    base = {k: v for k, v in vars(args).items() if k not in _TUNE_CONFIG_DENYLIST}
+
+    # Derived values that differ from the raw argparse value.
+    base["device"] = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
+    base["use_amp"] = not bool(args.no_amp)
+    base["use_smolgen"] = not bool(args.no_smolgen)
+    base["work_dir"] = str(Path(args.work_dir) / "tune")
+
+    # eval_mcts_simulations: default to start sims if progressive, else base sims.
+    if args.eval_mcts_simulations is None:
+        base["eval_mcts_simulations"] = (
+            int(args.mcts_start_simulations) if bool(args.progressive_mcts) else int(args.mcts_simulations)
+        )
+
+    # eval_sf_nodes: default to sf_nodes if not explicitly set.
+    if args.eval_sf_nodes is None:
+        base["eval_sf_nodes"] = int(args.sf_nodes)
+
+    # search_optimizer_choices: convert to list.
+    choices = args.search_optimizer_choices
+    base["search_optimizer_choices"] = list(choices) if choices else None
+
     return base
 
 
@@ -1261,7 +1020,7 @@ def main() -> None:
                     help="How many top sibling trials to source from on exploit refresh (0 or negative means all).")
     ap.add_argument("--exploit-replay-top-within-best-frac", type=float, default=0.10,
                     help="Only source from trials with metric >= best*(1-frac), e.g. 0.10 keeps within 10%% of best.")
-    ap.add_argument("--exploit-replay-top-shards-per-trial", type=int, default=0,
+    ap.add_argument("--exploit-replay-top-shards-per-source", type=int, default=0,
                     help="Deprecated/ignored: latest-generation shards are imported automatically.")
     ap.add_argument("--exploit-replay-top-min-metric", type=float, default=-1e9,
                     help="Minimum latest trial metric required for top-trial replay sharing.")

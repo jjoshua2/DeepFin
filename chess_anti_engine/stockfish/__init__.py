@@ -1,6 +1,6 @@
 from .uci import StockfishPV, StockfishUCI, StockfishResult
 from .pool import StockfishPool
-from .pid import DifficultyPID, PIDUpdate
+from .pid import DifficultyPID, PIDUpdate, pid_from_config
 
 __all__ = [
     "StockfishPV",
@@ -9,4 +9,5 @@ __all__ = [
     "StockfishPool",
     "DifficultyPID",
     "PIDUpdate",
+    "pid_from_config",
 ]
