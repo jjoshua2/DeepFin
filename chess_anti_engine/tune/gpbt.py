@@ -6,8 +6,9 @@ import logging
 import os
 import random
 from collections import defaultdict
+from typing import Dict
 from ray.tune.experiment import Trial
-from ray.tune.schedulers import PopulationBasedTraining
+from ray.tune.schedulers import PopulationBasedTraining, TrialScheduler
 from ray.tune.schedulers.pbt import SafeFallbackEncoder, _FutureTrainingResult
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,35 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
         self._winner_weight = float(trial_winner_weight)
         self._pairwise_velocity: dict[str, dict[str, float]] = defaultdict(dict)
         self._pending_pairwise_log: dict[str, dict] = {}
+
+    def on_trial_result(
+        self, tune_controller: "TuneController", trial: Trial, result: Dict
+    ) -> str:
+        """Override to keep last_score fresh on every result.
+
+        Ray's default PBT only updates last_score when a trial reaches the
+        perturbation boundary.  This means _quantiles() can't see trials that
+        haven't reached the boundary yet, so the first trial to arrive finds
+        itself alone and no perturbation happens.
+
+        Fix: always update last_score (and last_train_time) so _quantiles()
+        sees all live trials.  The perturbation-interval gate still controls
+        when exploit/explore actually fires.
+        """
+        if self._time_attr not in result or self._metric not in result:
+            return super().on_trial_result(tune_controller, trial, result)
+
+        # Always keep score fresh so _quantiles() sees all live trials,
+        # even those that haven't reached the perturbation boundary yet.
+        # Only touch last_score — leave last_train_time and last_result
+        # to the parent's _save_trial_state at the actual boundary, since
+        # last_train_time is used as a sync-mode readiness watermark.
+        state = self._trial_state[trial]
+        score = self._metric_op * result[self._metric]
+        state.last_score = score
+
+        # Delegate to parent for the actual perturbation-interval gate
+        return super().on_trial_result(tune_controller, trial, result)
 
     def _live_score_span(self) -> float:
         scores = [
@@ -179,6 +209,24 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
         lower_quantile: list[Trial],
     ):
         state = self._trial_state[trial]
+
+        # Debug: log every perturbation-boundary decision
+        scores = {
+            t.trial_id: (float(self._trial_state[t].last_score) if self._trial_state[t].last_score is not None else None)
+            for t in tune_controller.get_live_trials()
+        }
+        logger.warning(
+            "[GPBT-PL] _checkpoint_or_exploit called: trial=%s score=%.4f "
+            "in_upper=%s in_lower=%s scores=%s upper=[%s] lower=[%s]",
+            trial.trial_id,
+            float(state.last_score) if state.last_score is not None else -1,
+            trial in upper_quantile,
+            trial in lower_quantile,
+            scores,
+            ",".join(t.trial_id for t in upper_quantile),
+            ",".join(t.trial_id for t in lower_quantile),
+        )
+
         if trial in upper_quantile:
             # Always use the most recent committed checkpoint from train.report().
             # Avoids creating a new async _FutureTrainingResult that may not resolve
@@ -193,6 +241,11 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
 
         donor = self._select_pairwise_donor(trial=trial, upper_quantile=upper_quantile)
         if donor is None:
+            logger.warning(
+                "[GPBT-PL] No donor found for trial=%s. upper_quantile=%s",
+                trial.trial_id,
+                [t.trial_id for t in upper_quantile],
+            )
             return
 
         donor_state = self._trial_state[donor]

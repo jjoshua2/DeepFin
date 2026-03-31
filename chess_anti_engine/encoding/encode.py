@@ -8,7 +8,7 @@ import chess
 from .lc0 import encode_lc0_full, encode_lc0_reduced, _HAS_LC0_C_EXT
 if _HAS_LC0_C_EXT:
     from .lc0 import encode_lc0_full_c
-from .features import extra_feature_planes, extra_feature_planes_fast, _HAS_C_EXT
+from .features import extra_feature_planes_fast, _HAS_C_EXT
 if _HAS_C_EXT:
     from .features import extra_feature_planes_c
 

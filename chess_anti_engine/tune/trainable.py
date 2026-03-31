@@ -1839,7 +1839,7 @@ def train_trial(config: dict):
                     pid.max_rand_step = _step_start
                 else:
                     pid.max_rand_step = float(config.get("sf_pid_max_rand_step", 0.01))
-                pid_update = pid.observe(wins=total_w, draws=total_d, losses=total_l)
+                pid_update = pid.observe(wins=total_w, draws=total_d, losses=total_l, force=True)
                 pid_ema_wr = float(pid_update.ema_winrate)
                 sf_nodes_next = int(pid.nodes)
                 random_move_prob_next = float(pid.random_move_prob)

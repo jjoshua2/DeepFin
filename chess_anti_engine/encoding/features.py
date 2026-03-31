@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import chess
 
-from chess_anti_engine.utils.bitboards import bitboard_to_plane
+from chess_anti_engine.utils.bitboards import bitboard_to_plane, bitboards_to_planes
 
 try:
     from chess_anti_engine.encoding._features_ext import compute_extra_features as _c_compute
@@ -11,12 +11,6 @@ try:
 except ImportError:
     _HAS_C_EXT = False
 
-
-def _iter_bits(bb: int):
-    while bb:
-        lsb = bb & -bb
-        yield lsb.bit_length() - 1
-        bb ^= lsb
 
 
 def _ray_step(src: int, dst: int) -> int | None:
@@ -144,19 +138,11 @@ _BACKWARD_SUPPORT_MASKS = {
     chess.WHITE: [0] * 64,
     chess.BLACK: [0] * 64,
 }
-_PAWN_ATTACKERS_TO_SQ = {
-    chess.WHITE: [0] * 64,
-    chess.BLACK: [0] * 64,
-}
 _PAWN_SINGLE_PUSH_MASK = {
     chess.WHITE: [0] * 64,
     chess.BLACK: [0] * 64,
 }
 _PAWN_DOUBLE_PUSH_MASK = {
-    chess.WHITE: [0] * 64,
-    chess.BLACK: [0] * 64,
-}
-_PAWN_CAPTURE_MASKS = {
     chess.WHITE: [0] * 64,
     chess.BLACK: [0] * 64,
 }
@@ -206,17 +192,8 @@ for _sq in chess.SQUARES:
         _PASSED_PAWN_MASKS[_color][_sq] = int(_passed)
         _BACKWARD_SUPPORT_MASKS[_color][_sq] = int(_support)
 
-        _attackers = 0
-        _src_rank = _r - _direction
-        if 0 <= _src_rank <= 7:
-            for _src_file in (_f - 1, _f + 1):
-                if 0 <= _src_file <= 7:
-                    _attackers |= chess.BB_SQUARES[chess.square(_src_file, _src_rank)]
-        _PAWN_ATTACKERS_TO_SQ[_color][_sq] = int(_attackers)
-
         _single = 0
         _double = 0
-        _captures = 0
         _r1 = _r + _direction
         if 0 <= _r1 <= 7:
             _single = int(chess.BB_SQUARES[chess.square(_f, _r1)])
@@ -224,12 +201,15 @@ for _sq in chess.SQUARES:
             _r2 = _r + 2 * _direction
             if _r == _start_rank and 0 <= _r2 <= 7:
                 _double = int(chess.BB_SQUARES[chess.square(_f, _r2)])
-            for _cf in (_f - 1, _f + 1):
-                if 0 <= _cf <= 7:
-                    _captures |= chess.BB_SQUARES[chess.square(_cf, _r1)]
         _PAWN_SINGLE_PUSH_MASK[_color][_sq] = _single
         _PAWN_DOUBLE_PUSH_MASK[_color][_sq] = _double
-        _PAWN_CAPTURE_MASKS[_color][_sq] = int(_captures)
+
+del _sq, _f, _r, _color, _direction, _passed, _support, _conn_mask
+del _df, _dr, _f2, _r2, _ff, _rr, _af
+del _single, _double, _r1, _start_rank
+del _file_idx, _mask
+
+_CENTER_FILES = frozenset({2, 3, 4, 5})
 
 
 def _king_zone(board: chess.Board, color: chess.Color) -> int:
@@ -256,57 +236,12 @@ def _king_zone(board: chess.Board, color: chess.Color) -> int:
     return zone
 
 
-def king_safety_planes(board: chess.Board) -> list[np.ndarray]:
-    """10 planes: for (us, them): king zone (1) + attacks on zone by N,B,R,Q (4)."""
-    turn = board.turn
-    us, them = turn, not turn
-    planes: list[np.ndarray] = []
-
-    for color in (us, them):
-        kz = _king_zone(board, color)
-        planes.append(bitboard_to_plane(kz, turn=turn))
-
-        opp = not color
-        for pt in (chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN):
-            overlap = 0
-            for sq in board.pieces(pt, opp):
-                overlap |= board.attacks_mask(sq) & kz
-            planes.append(bitboard_to_plane(overlap, turn=turn))
-
-    return planes
-
-
-def pin_and_xray_planes(board: chess.Board) -> list[np.ndarray]:
-    """6 planes: for (us, them): pinned pieces mask, pin ray mask, discovered-check potential."""
-    turn = board.turn
-    us, them = turn, not turn
-
-    planes: list[np.ndarray] = []
-
-    for color in (us, them):
-        pinned_mask = 0
-        pin_ray_mask = 0
-
-        for sq in _iter_bits(int(board.occupied_co[color])):
-            pin = board.pin_mask(color, sq)
-            if pin != chess.BB_ALL:
-                pinned_mask |= chess.BB_SQUARES[sq]
-                pin_ray_mask |= pin
-
-        discovered_mask = _discovered_attack_mask(board, color)
-
-        planes.append(bitboard_to_plane(pinned_mask, turn=turn))
-        planes.append(bitboard_to_plane(pin_ray_mask, turn=turn))
-        planes.append(bitboard_to_plane(discovered_mask, turn=turn))
-
-    return planes
-
 
 def _passed_pawns(board: chess.Board, color: chess.Color) -> int:
     passed = 0
     enemy_pawns = board.pieces_mask(chess.PAWN, not color)
 
-    for sq in _iter_bits(int(board.pieces_mask(chess.PAWN, color))):
+    for sq in chess.scan_forward(int(board.pieces_mask(chess.PAWN, color))):
         if not (_PASSED_PAWN_MASKS[color][sq] & int(enemy_pawns)):
             passed |= chess.BB_SQUARES[sq]
 
@@ -317,7 +252,7 @@ def _isolated_pawns(board: chess.Board, color: chess.Color) -> int:
     isolated = 0
     own_pawns = board.pieces_mask(chess.PAWN, color)
 
-    for sq in _iter_bits(int(own_pawns)):
+    for sq in chess.scan_forward(int(own_pawns)):
         f = chess.square_file(sq)
         if not (_ADJACENT_FILE_MASKS[f] & int(own_pawns)):
             isolated |= chess.BB_SQUARES[sq]
@@ -330,7 +265,7 @@ def _connected_pawns(board: chess.Board, color: chess.Color) -> int:
     connected = 0
     own_pawns = int(board.pieces_mask(chess.PAWN, color))
 
-    for sq in _iter_bits(own_pawns):
+    for sq in chess.scan_forward(own_pawns):
         if _CONNECTED_NEIGHBOR_MASKS[sq] & own_pawns:
             connected |= chess.BB_SQUARES[sq]
 
@@ -351,7 +286,7 @@ def _backward_pawns(board: chess.Board, color: chess.Color) -> int:
     own_pawns = int(board.pieces_mask(chess.PAWN, color))
     enemy_pawns = int(board.pieces_mask(chess.PAWN, not color))
 
-    for sq in _iter_bits(own_pawns):
+    for sq in chess.scan_forward(own_pawns):
         f = chess.square_file(sq)
         r = chess.square_rank(sq)
 
@@ -366,7 +301,7 @@ def _backward_pawns(board: chess.Board, color: chess.Color) -> int:
         front_sq = chess.square(f, r1)
 
         # attacked by enemy pawn?
-        if not (_PAWN_ATTACKERS_TO_SQ[not color][front_sq] & enemy_pawns):
+        if not (chess.BB_PAWN_ATTACKS[color][front_sq] & enemy_pawns):
             continue
 
         # no adjacent pawn at least as advanced
@@ -378,20 +313,6 @@ def _backward_pawns(board: chess.Board, color: chess.Color) -> int:
     return backward
 
 
-def pawn_structure_planes(board: chess.Board) -> list[np.ndarray]:
-    """8 planes: passed/isolated/backward/connected × (us, them)."""
-    turn = board.turn
-    us, them = turn, not turn
-
-    planes: list[np.ndarray] = []
-    for color in (us, them):
-        planes.append(bitboard_to_plane(_passed_pawns(board, color), turn=turn))
-        planes.append(bitboard_to_plane(_isolated_pawns(board, color), turn=turn))
-        planes.append(bitboard_to_plane(_backward_pawns(board, color), turn=turn))
-        planes.append(bitboard_to_plane(_connected_pawns(board, color), turn=turn))
-
-    return planes
-
 
 _MOBILITY_MAX = {
     chess.PAWN: 4.0,
@@ -402,115 +323,6 @@ _MOBILITY_MAX = {
     chess.KING: 8.0,
 }
 
-
-def mobility_planes(board: chess.Board) -> list[np.ndarray]:
-    """6 planes: per piece type mobility.
-
-    For each piece of a given type (both colors), put a normalized mobility value
-    on the piece's square.
-
-    Note: mobility is computed against the current occupancy, and excludes
-    destinations occupied by same-color pieces.
-    """
-    turn = board.turn
-    planes: list[np.ndarray] = []
-    orient_coords = _ORIENT_COORDS[turn]
-    occ = int(board.occupied)
-    ep_mask = int(chess.BB_SQUARES[board.ep_square]) if board.ep_square is not None else 0
-
-    for pt in (chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN, chess.KING, chess.PAWN):
-        plane = np.zeros((8, 8), dtype=np.float32)
-        max_m = _MOBILITY_MAX[pt]
-
-        for color in (chess.WHITE, chess.BLACK):
-            own_occ = int(board.occupied_co[color])
-            opp_occ = int(board.occupied_co[not color])
-            for sq in _iter_bits(int(board.pieces_mask(pt, color))):
-                if pt == chess.PAWN:
-                    # pawn: forward (1/2) if empty + captures (+ EP)
-                    mobility = 0
-                    single_mask = _PAWN_SINGLE_PUSH_MASK[color][sq]
-                    if single_mask and not (occ & single_mask):
-                        mobility += 1
-                        double_mask = _PAWN_DOUBLE_PUSH_MASK[color][sq]
-                        if double_mask and not (occ & double_mask):
-                            mobility += 1
-                    capture_mask = _PAWN_CAPTURE_MASKS[color][sq]
-                    mobility += chess.popcount(capture_mask & opp_occ)
-                    if ep_mask and (capture_mask & ep_mask):
-                        mobility += 1
-                else:
-                    attacks = board.attacks_mask(sq)
-                    mobility = chess.popcount(attacks & ~own_occ)
-
-                val = float(mobility) / max_m
-                row, col = orient_coords[sq]
-                plane[row, col] = np.float32(val)
-
-        planes.append(plane)
-
-    return planes
-
-
-def outpost_and_space_planes(board: chess.Board) -> list[np.ndarray]:
-    """4 planes: outpost and space for (us, them).
-
-    Outpost heuristic:
-    - square supported by own pawn attack
-    - square not attacked by enemy pawn attack
-
-    Space heuristic:
-    - squares behind own pawns on center files (c-f), 1-2 ranks behind.
-    """
-    turn = board.turn
-    us, them = turn, not turn
-    planes: list[np.ndarray] = []
-
-    for color in (us, them):
-        own_att = 0
-        for sq in board.pieces(chess.PAWN, color):
-            own_att |= chess.BB_PAWN_ATTACKS[color][sq]
-        enemy_att = 0
-        for sq in board.pieces(chess.PAWN, not color):
-            enemy_att |= chess.BB_PAWN_ATTACKS[not color][sq]
-
-        outpost = own_att & ~enemy_att
-        planes.append(bitboard_to_plane(outpost, turn=turn))
-
-        space = 0
-        center_files = {2, 3, 4, 5}
-        direction = -1 if color == chess.WHITE else 1
-        for sq in board.pieces(chess.PAWN, color):
-            f = chess.square_file(sq)
-            if f not in center_files:
-                continue
-            r = chess.square_rank(sq)
-            for dr in (direction, 2 * direction):
-                r2 = r + dr
-                if 0 <= r2 <= 7:
-                    space |= chess.BB_SQUARES[chess.square(f, r2)]
-        planes.append(bitboard_to_plane(space, turn=turn))
-
-    return planes
-
-
-def extra_feature_planes(board: chess.Board) -> list[np.ndarray]:
-    """Return the additional classical feature planes.
-
-    Target count: 34 planes.
-    - King safety: 10
-    - Pins/x-rays/discovered: 6
-    - Pawn structure: 8
-    - Mobility: 6
-    - Outpost/space: 4
-    """
-    planes: list[np.ndarray] = []
-    planes.extend(king_safety_planes(board))          # 10
-    planes.extend(pin_and_xray_planes(board))         # 6
-    planes.extend(pawn_structure_planes(board))       # 8
-    planes.extend(mobility_planes(board))             # 6
-    planes.extend(outpost_and_space_planes(board))    # 4
-    return planes
 
 
 def extra_feature_planes_c(board: chess.Board) -> np.ndarray:
@@ -571,7 +383,7 @@ def extra_feature_planes_fast(board: chess.Board) -> np.ndarray:
     for color in (us, them):
         pinned_mask = 0
         pin_ray_mask = 0
-        for sq in _iter_bits(int(board.occupied_co[color])):
+        for sq in chess.scan_forward(int(board.occupied_co[color])):
             pin = board.pin_mask(color, sq)
             if pin != chess.BB_ALL:
                 pinned_mask |= chess.BB_SQUARES[sq]
@@ -590,14 +402,7 @@ def extra_feature_planes_fast(board: chess.Board) -> np.ndarray:
 
     # Convert first 24 bitboard planes in one batch → out[0:24]
     assert len(bbs) == 24
-    raw_bytes = b''.join(int(bb).to_bytes(8, 'big') for bb in bbs)
-    raw = np.unpackbits(
-        np.frombuffer(raw_bytes, dtype=np.uint8)
-    ).reshape(24, 8, 8)
-    if turn == chess.WHITE:
-        out[:24] = raw[:, ::-1, ::-1]
-    else:
-        out[:24] = raw[:, :, ::-1]
+    out[:24] = bitboards_to_planes(bbs, turn=turn)
 
     # --- Mobility: 6 planes [24:30] (float values, not bitboard) ---
     orient_coords = _ORIENT_COORDS[turn]
@@ -610,7 +415,7 @@ def extra_feature_planes_fast(board: chess.Board) -> np.ndarray:
         for color in (chess.WHITE, chess.BLACK):
             own_occ = int(board.occupied_co[color])
             opp_occ = int(board.occupied_co[not color])
-            for sq in _iter_bits(int(board.pieces_mask(pt, color))):
+            for sq in chess.scan_forward(int(board.pieces_mask(pt, color))):
                 if pt == chess.PAWN:
                     mobility = 0
                     single_mask = _PAWN_SINGLE_PUSH_MASK[color][sq]
@@ -619,7 +424,7 @@ def extra_feature_planes_fast(board: chess.Board) -> np.ndarray:
                         double_mask = _PAWN_DOUBLE_PUSH_MASK[color][sq]
                         if double_mask and not (occ & double_mask):
                             mobility += 1
-                    capture_mask = _PAWN_CAPTURE_MASKS[color][sq]
+                    capture_mask = chess.BB_PAWN_ATTACKS[color][sq]
                     mobility += chess.popcount(capture_mask & opp_occ)
                     if ep_mask and (capture_mask & ep_mask):
                         mobility += 1
@@ -641,11 +446,10 @@ def extra_feature_planes_fast(board: chess.Board) -> np.ndarray:
         outpost_bbs.append(own_att & ~enemy_att)
 
         space = 0
-        center_files = {2, 3, 4, 5}
         direction = -1 if color == chess.WHITE else 1
         for sq in board.pieces(chess.PAWN, color):
             f = chess.square_file(sq)
-            if f not in center_files:
+            if f not in _CENTER_FILES:
                 continue
             r = chess.square_rank(sq)
             for dr in (direction, 2 * direction):
@@ -654,13 +458,6 @@ def extra_feature_planes_fast(board: chess.Board) -> np.ndarray:
                     space |= chess.BB_SQUARES[chess.square(f, r2)]
         outpost_bbs.append(space)
 
-    raw_bytes = b''.join(int(bb).to_bytes(8, 'big') for bb in outpost_bbs)
-    raw = np.unpackbits(
-        np.frombuffer(raw_bytes, dtype=np.uint8)
-    ).reshape(4, 8, 8)
-    if turn == chess.WHITE:
-        out[30:34] = raw[:, ::-1, ::-1]
-    else:
-        out[30:34] = raw[:, :, ::-1]
+    out[30:34] = bitboards_to_planes(outpost_bbs, turn=turn)
 
     return out

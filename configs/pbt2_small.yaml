@@ -60,7 +60,7 @@ stockfish:
   pid_ema_alpha: 0.37      # EMA half-life ~1.5 iterations.
   pid_deadzone: 0.025
   pid_rate_limit: 0.10
-  pid_min_games_between_adjust: 80  # Adjust at most once per 80 completed games to reduce oscillation.
+  pid_min_games_between_adjust: 80  # For intra-iteration stability; iteration boundary always forces an adjustment.
   pid_kp: 1.5
   pid_ki: 0.10
   pid_kd: 0.0
@@ -74,7 +74,7 @@ stockfish:
   pid_skill_demote_nodes: 1000
   pid_skill_nodes_on_promote: 1000
   pid_skill_nodes_on_demote: 1000
-  pid_random_move_prob_start: 0.60
+  pid_random_move_prob_start: 0.35
   pid_random_move_prob_min: 0.05
   pid_random_move_prob_max: 1.0
   pid_random_move_stage_end: 0.05   # Regret stage unlocks once rmp hits 5% floor

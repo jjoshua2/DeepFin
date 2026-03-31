@@ -266,7 +266,7 @@ class DifficultyPID:
             wdl_regret_changed=False,
         )
 
-    def observe(self, *, wins: int, draws: int, losses: int) -> PIDUpdate:
+    def observe(self, *, wins: int, draws: int, losses: int, force: bool = False) -> PIDUpdate:
         games = int(wins) + int(draws) + int(losses)
         if games <= 0:
             return self._no_change_update(0.0)
@@ -279,8 +279,9 @@ class DifficultyPID:
         err = float(self.ema_winrate) - float(self.target)
         nodes_before = int(self.nodes)
 
-        # Wait for enough games before changing difficulty.
-        if self._games_since_adjust < int(self.min_games_between_adjust):
+        # Wait for enough games before changing difficulty,
+        # unless force=True (iteration boundary).
+        if not force and self._games_since_adjust < int(self.min_games_between_adjust):
             return self._no_change_update(err)
 
         # Deadzone: do not adjust within +/- deadzone of target.

@@ -556,7 +556,7 @@ def _run_single(args: argparse.Namespace) -> None:
             rand_next = None
             sf_nodes_next = None
             if pid is not None and (total_w + total_d + total_l) > 0:
-                upd = pid.observe(wins=total_w, draws=total_d, losses=total_l)
+                upd = pid.observe(wins=total_w, draws=total_d, losses=total_l, force=True)
                 pid_ema = float(upd.ema_winrate)
                 rand_next = float(pid.random_move_prob)
                 sf_nodes_next = int(pid.nodes)
