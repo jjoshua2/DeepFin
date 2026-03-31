@@ -96,6 +96,403 @@ def _build_recommended_worker(
     }
 
 
+def _ingest_shards(
+    inbox_dir: Path,
+    processed_dir: Path,
+    buf: ArrayReplayBuffer,
+    *,
+    max_shards: int,
+) -> tuple[int, int, int, int, int]:
+    """Load selfplay shards from inbox into replay buffer.
+
+    Returns (ingested, positions, wins, draws, losses).
+    """
+    shards = _iter_shards(inbox_dir)
+    ingested = 0
+    positions = 0
+    iter_wins = 0
+    iter_draws = 0
+    iter_losses = 0
+    for sp in shards[:max_shards]:
+        try:
+            shard_arrs, meta = load_npz_arrays(sp)
+        except Exception:
+            # Bad shard; quarantine
+            qdir = processed_dir / "bad"
+            qdir.mkdir(parents=True, exist_ok=True)
+            sp.replace(qdir / sp.name)
+            continue
+
+        shard_positions = int(np.asarray(shard_arrs["x"]).shape[0])
+        if shard_positions > 0:
+            buf.add_many_arrays(shard_arrs)
+            positions += shard_positions
+            # Accumulate game-level win/draw/loss for PID from shard metadata.
+            # Using game counts (not position counts) keeps min_games_between_adjust
+            # meaningful and prevents long draw games from inflating the win-rate EMA.
+            _mw = meta.get("wins")
+            _md = meta.get("draws")
+            _ml = meta.get("losses")
+            if _mw is not None and _md is not None and _ml is not None:
+                iter_wins += int(_mw)
+                iter_draws += int(_md)
+                iter_losses += int(_ml)
+            else:
+                # Fallback for old shards without game-level metadata: count unique
+                # game outcomes by tracking wdl transitions across positions.
+                wdl = np.asarray(shard_arrs["wdl_target"], dtype=np.int8)
+                if wdl.size > 0:
+                    run_starts = np.empty(wdl.shape[0], dtype=bool)
+                    run_starts[0] = True
+                    if wdl.shape[0] > 1:
+                        run_starts[1:] = wdl[1:] != wdl[:-1]
+                    run_values = wdl[run_starts]
+                    iter_wins += int(np.count_nonzero(run_values == 0))
+                    iter_draws += int(np.count_nonzero(run_values == 1))
+                    iter_losses += int(np.count_nonzero(run_values == 2))
+
+        # Move to processed/<user>/
+        rel = sp.relative_to(inbox_dir)
+        out = processed_dir / rel
+        out.parent.mkdir(parents=True, exist_ok=True)
+        sp.replace(out)
+        ingested += 1
+
+    return ingested, positions, iter_wins, iter_draws, iter_losses
+
+
+def _update_pid(
+    pid: DifficultyPID,
+    trainer: Trainer,
+    *,
+    wins: int,
+    draws: int,
+    losses: int,
+    w_sf_wdl_start: float,
+    w_sf_wdl_end: float,
+    sf_bootstrap_ramp_fn,
+    pid_state_path: Path,
+) -> tuple[int, int | None, float]:
+    """Update PID difficulty. Returns (sf_nodes, sf_skill_level, random_move_prob)."""
+    pid.observe(wins=wins, draws=draws, losses=losses)
+    sf_nodes = pid.nodes
+    sf_skill_level: int | None = pid.skill_level
+    random_move_prob = float(pid.random_move_prob)
+
+    trainer_step_now = int(getattr(trainer, "step", 0))
+    trainer.writer.add_scalar("difficulty/sf_nodes", float(sf_nodes), trainer_step_now)
+    trainer.writer.add_scalar("difficulty/pid_ema_winrate", float(pid.ema_winrate), trainer_step_now)
+    trainer.writer.add_scalar("difficulty/skill_level", float(sf_skill_level), trainer_step_now)
+    trainer.writer.add_scalar(
+        "difficulty/opponent_random_move_prob",
+        random_move_prob,
+        trainer_step_now,
+    )
+
+    # Ramp down SF bootstrap weights as the opponent gets harder.
+    # w_soft (MCTS temperature-2 policy) is NOT ramped -- independent of opponent strength.
+    _ramp = sf_bootstrap_ramp_fn(random_move_prob)
+    trainer.w_sf_wdl = w_sf_wdl_start + _ramp * (w_sf_wdl_end - w_sf_wdl_start)
+    trainer.writer.add_scalar("loss_weights/w_sf_wdl", trainer.w_sf_wdl, trainer_step_now)
+
+    # Persist so restarts resume from same difficulty.
+    try:
+        pid_state_path.write_text(
+            json.dumps(
+                {
+                    "nodes": int(pid.nodes),
+                    "skill_level": int(pid.skill_level),
+                    "random_move_prob": float(pid.random_move_prob),
+                    "ema_winrate": pid.ema_winrate,
+                    "integral": float(pid._integral),
+                    "updated_at_unix": int(time.time()),
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+    return sf_nodes, sf_skill_level, random_move_prob
+
+
+def _process_arena_results(
+    args: argparse.Namespace,
+    trainer: Trainer,
+    *,
+    arena_inbox_dir: Path,
+    arena_processed_dir: Path,
+    arena_state_path: Path,
+    model_path: Path,
+    best_model_path: Path,
+    champion_ckpt_path: Path,
+    ckpt_path: Path,
+    arena_state: dict,
+) -> tuple[str, str]:
+    """Process arena results. Returns (model_sha, best_model_sha).
+
+    *arena_state* is a mutable dict with keys: active, latest_sha, best_sha,
+    games_done, a_win, a_draw, a_loss, last_winrate, last_accepted.
+    """
+    results = _iter_arena_results(arena_inbox_dir)
+    for rp in results[: int(args.max_shards_per_iter)]:
+        try:
+            payload = json.loads(rp.read_text(encoding="utf-8"))
+        except Exception:
+            qdir = arena_processed_dir / "bad"
+            qdir.mkdir(parents=True, exist_ok=True)
+            rp.replace(qdir / rp.name)
+            continue
+
+        try:
+            a_sha = str(payload.get("a_sha256") or "")
+            b_sha = str(payload.get("b_sha256") or "")
+            games = int(payload.get("games") or 0)
+            a_win = int(payload.get("a_win") or 0)
+            a_draw = int(payload.get("a_draw") or 0)
+            a_loss = int(payload.get("a_loss") or 0)
+        except Exception:
+            a_sha = b_sha = ""
+            games = 0
+            a_win = a_draw = a_loss = 0
+
+        if a_sha == arena_state["latest_sha"] and b_sha == arena_state["best_sha"] and games > 0 and (a_win + a_draw + a_loss == games):
+            arena_state["games_done"] += int(games)
+            arena_state["a_win"] += int(a_win)
+            arena_state["a_draw"] += int(a_draw)
+            arena_state["a_loss"] += int(a_loss)
+
+            # Log each uploaded batch (makes match progress visible in server logs).
+            denom = float(max(1, arena_state["games_done"]))
+            winrate = (float(arena_state["a_win"]) + 0.5 * float(arena_state["a_draw"])) / denom
+            log.info(
+                "arena batch: games_done=%d/%d W/D/L=%d/%d/%d winrate=%.3f latest=%s best=%s",
+                int(arena_state["games_done"]),
+                int(args.arena_games_target),
+                int(arena_state["a_win"]),
+                int(arena_state["a_draw"]),
+                int(arena_state["a_loss"]),
+                float(winrate),
+                str(arena_state["latest_sha"])[:8],
+                str(arena_state["best_sha"])[:8],
+            )
+
+        try:
+            rel = rp.relative_to(arena_inbox_dir)
+            out = arena_processed_dir / rel
+            out.parent.mkdir(parents=True, exist_ok=True)
+            rp.replace(out)
+        except Exception:
+            rp.unlink(missing_ok=True)
+
+    # Completion / gating
+    denom = float(max(1, arena_state["games_done"]))
+    winrate = (float(arena_state["a_win"]) + 0.5 * float(arena_state["a_draw"])) / denom
+
+    best_model_sha = _sha256_file(best_model_path) if best_model_path.exists() else ""
+
+    if arena_state["games_done"] >= int(args.arena_games_target):
+        accepted = bool(winrate >= float(args.arena_accept_winrate))
+        arena_state["last_winrate"] = float(winrate)
+        arena_state["last_accepted"] = bool(accepted)
+
+        log.info(
+            "arena decision: %s (accept_winrate=%.3f) final W/D/L=%d/%d/%d winrate=%.3f latest=%s best=%s",
+            "ACCEPT" if accepted else "REJECT",
+            float(args.arena_accept_winrate),
+            int(arena_state["a_win"]),
+            int(arena_state["a_draw"]),
+            int(arena_state["a_loss"]),
+            float(winrate),
+            str(arena_state["latest_sha"])[:8],
+            str(arena_state["best_sha"])[:8],
+        )
+
+        if accepted:
+            # Promote challenger -> champion
+            if model_path.exists():
+                _atomic_copy2(model_path, best_model_path)
+                best_model_sha = _sha256_file(best_model_path)
+                # Save champion trainer state for potential rollback.
+                trainer.save(champion_ckpt_path)
+        else:
+            # Revert to champion if available (discard challenger).
+            if champion_ckpt_path.exists():
+                trainer.load(champion_ckpt_path)
+                trainer.save(ckpt_path)
+                trainer.export_swa(model_path)
+
+        # End arena
+        arena_state["active"] = False
+        arena_state["latest_sha"] = ""
+        arena_state["best_sha"] = ""
+        arena_state["games_done"] = 0
+        arena_state["a_win"] = 0
+        arena_state["a_draw"] = 0
+        arena_state["a_loss"] = 0
+
+    # Persist arena state
+    arena_state_path.write_text(
+        json.dumps(
+            {
+                "active": bool(arena_state["active"]),
+                "latest_sha": str(arena_state["latest_sha"]),
+                "best_sha": str(arena_state["best_sha"]),
+                "games_done": int(arena_state["games_done"]),
+                "a_win": int(arena_state["a_win"]),
+                "a_draw": int(arena_state["a_draw"]),
+                "a_loss": int(arena_state["a_loss"]),
+                "last_winrate": arena_state["last_winrate"],
+                "last_accepted": arena_state["last_accepted"],
+                "updated_at_unix": int(time.time()),
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
+    # Update shas for manifest
+    model_sha = _sha256_file(model_path) if model_path.exists() else ""
+    best_model_sha = _sha256_file(best_model_path) if best_model_path.exists() else ""
+
+    return model_sha, best_model_sha
+
+
+def _build_manifest(
+    args: argparse.Namespace,
+    *,
+    trainer_step: int,
+    recommended_worker: dict,
+    task: dict,
+    model_sha: str,
+    best_model_sha: str,
+    buf: ArrayReplayBuffer,
+    ingested: int,
+    positions: int,
+    train_loss,
+    train_policy_loss,
+    train_wdl_loss,
+    best_loss: float,
+    best_loss_trainer_step: int,
+    arena_active: bool,
+    arena_latest_sha: str,
+    arena_best_sha: str,
+    arena_games_done: int,
+    arena_a_win: int,
+    arena_a_draw: int,
+    arena_a_loss: int,
+    arena_last_winrate: float | None,
+    arena_last_accepted: bool | None,
+    api_prefix: str,
+    trial_id: str,
+    published_stockfish_path: Path | None,
+    published_worker_wheel_path: Path | None,
+) -> dict:
+    """Build the full manifest dict."""
+    manifest: dict = {
+        "server_time_unix": int(time.time()),
+        "protocol_version": int(PROTOCOL_VERSION),
+        "server_version": str(PACKAGE_VERSION),
+        "min_worker_version": str(args.min_worker_version),
+        "trial_id": trial_id or None,
+        "trainer_step": trainer_step,
+        "task": task,
+        "recommended_worker": recommended_worker,
+        "encoding": {
+            "input_planes": 146,
+            "policy_size": int(POLICY_SIZE),
+            "policy_encoding": "lc0_4672",
+        },
+        "model": {
+            "sha256": model_sha,
+            "endpoint": api_prefix + "/model",
+            "filename": "latest_model.pt",
+            "format": "torch_state_dict",
+        },
+        "model_config": {
+            "kind": str(args.model),
+            "embed_dim": int(args.embed_dim),
+            "num_layers": int(args.num_layers),
+            "num_heads": int(args.num_heads),
+            "ffn_mult": int(args.ffn_mult),
+            "use_smolgen": not bool(args.no_smolgen),
+            "use_nla": bool(args.use_nla),
+            "use_qk_rmsnorm": bool(args.use_qk_rmsnorm),
+            "gradient_checkpointing": bool(args.gradient_checkpointing),
+        },
+        "data": {
+            "replay_size": int(len(buf)),
+            "shards_ingested": int(ingested),
+            "positions_ingested": int(positions),
+        },
+        "train": {
+            "loss": None if train_loss is None else float(train_loss),
+            "policy_loss": None if train_policy_loss is None else float(train_policy_loss),
+            "wdl_loss": None if train_wdl_loss is None else float(train_wdl_loss),
+        },
+    }
+
+    if best_loss < float("inf") and best_loss_trainer_step >= 0:
+        manifest["best_loss"] = {
+            "loss": float(best_loss),
+            "trainer_step": int(best_loss_trainer_step),
+        }
+
+    if best_model_sha:
+        manifest["best_model"] = {
+            "sha256": str(best_model_sha),
+            "endpoint": api_prefix + "/best_model",
+            "filename": "best_model.pt",
+            "format": "torch_state_dict",
+        }
+
+    if bool(args.arena_enabled):
+        manifest["arena"] = {
+            "active": bool(arena_active),
+            "latest_sha256": str(arena_latest_sha),
+            "best_sha256": str(arena_best_sha),
+            "games_done": int(arena_games_done),
+            "games_target": int(args.arena_games_target),
+            "a_win": int(arena_a_win),
+            "a_draw": int(arena_a_draw),
+            "a_loss": int(arena_a_loss),
+            "last_winrate": arena_last_winrate,
+            "last_accepted": arena_last_accepted,
+            "accept_winrate": float(args.arena_accept_winrate),
+        }
+
+    if args.opening_book_path:
+        p = Path(args.opening_book_path)
+        if p.exists():
+            manifest["opening_book"] = {
+                "endpoint": "/v1/opening_book",
+                "filename": p.name,
+                "sha256": _sha256_file(p),
+            }
+
+    # Optional: stockfish distribution
+    if published_stockfish_path is not None and published_stockfish_path.exists():
+        manifest["stockfish"] = {
+            "endpoint": api_prefix + "/stockfish",
+            "filename": published_stockfish_path.name,
+            "sha256": _sha256_file(published_stockfish_path),
+        }
+
+    # Optional: worker self-update wheel
+    if published_worker_wheel_path is not None and published_worker_wheel_path.exists():
+        manifest["worker_wheel"] = {
+            "endpoint": api_prefix + "/worker_wheel",
+            "filename": published_worker_wheel_path.name,
+            "sha256": _sha256_file(published_worker_wheel_path),
+            "version": str(PACKAGE_VERSION),
+        }
+
+    return manifest
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -317,9 +714,6 @@ def main() -> None:
             return 1.0
         return max(0.0, min(1.0, (_rand_prob_ramp_start - rand_prob) / span))
 
-    def _lerp(a: float, b: float, t: float) -> float:
-        return a + t * (b - a)
-
     # Mutable difficulty knobs. PID may update these over time.
     current_sf_nodes: int = int(args.recommended_sf_nodes)
     current_sf_skill_level: int | None = (
@@ -506,30 +900,32 @@ def main() -> None:
         except Exception:
             pass
 
-    # Arena state
+    # Arena state (mutable dict passed to helpers)
     arena_state_path = work_dir / "arena_state.json"
-    arena_active = False
-    arena_latest_sha = ""
-    arena_best_sha = ""
-    arena_games_done = 0
-    arena_a_win = 0
-    arena_a_draw = 0
-    arena_a_loss = 0
-    arena_last_winrate = None
-    arena_last_accepted = None
+    arena_state: dict = {
+        "active": False,
+        "latest_sha": "",
+        "best_sha": "",
+        "games_done": 0,
+        "a_win": 0,
+        "a_draw": 0,
+        "a_loss": 0,
+        "last_winrate": None,
+        "last_accepted": None,
+    }
 
     if arena_state_path.exists():
         try:
             s = json.loads(arena_state_path.read_text(encoding="utf-8"))
-            arena_active = bool(s.get("active", False))
-            arena_latest_sha = str(s.get("latest_sha", ""))
-            arena_best_sha = str(s.get("best_sha", ""))
-            arena_games_done = int(s.get("games_done", 0))
-            arena_a_win = int(s.get("a_win", 0))
-            arena_a_draw = int(s.get("a_draw", 0))
-            arena_a_loss = int(s.get("a_loss", 0))
-            arena_last_winrate = s.get("last_winrate")
-            arena_last_accepted = s.get("last_accepted")
+            arena_state["active"] = bool(s.get("active", False))
+            arena_state["latest_sha"] = str(s.get("latest_sha", ""))
+            arena_state["best_sha"] = str(s.get("best_sha", ""))
+            arena_state["games_done"] = int(s.get("games_done", 0))
+            arena_state["a_win"] = int(s.get("a_win", 0))
+            arena_state["a_draw"] = int(s.get("a_draw", 0))
+            arena_state["a_loss"] = int(s.get("a_loss", 0))
+            arena_state["last_winrate"] = s.get("last_winrate")
+            arena_state["last_accepted"] = s.get("last_accepted")
         except Exception:
             pass
 
@@ -634,105 +1030,26 @@ def main() -> None:
 
     # Main loop
     while True:
-        # Ingest shards
-        shards = _iter_shards(inbox_dir)
-        ingested = 0
-        positions = 0
-        iter_wins = 0
-        iter_draws = 0
-        iter_losses = 0
-        for sp in shards[: int(args.max_shards_per_iter)]:
-            try:
-                shard_arrs, meta = load_npz_arrays(sp)
-            except Exception:
-                # Bad shard; quarantine
-                qdir = processed_dir / "bad"
-                qdir.mkdir(parents=True, exist_ok=True)
-                sp.replace(qdir / sp.name)
-                continue
+        # Phase 1: Shard ingestion
+        ingested, positions, iter_wins, iter_draws, iter_losses = _ingest_shards(
+            inbox_dir, processed_dir, buf, max_shards=int(args.max_shards_per_iter),
+        )
 
-            shard_positions = int(np.asarray(shard_arrs["x"]).shape[0])
-            if shard_positions > 0:
-                buf.add_many_arrays(shard_arrs)
-                positions += shard_positions
-                # Accumulate game-level win/draw/loss for PID from shard metadata.
-                # Using game counts (not position counts) keeps min_games_between_adjust
-                # meaningful and prevents long draw games from inflating the win-rate EMA.
-                _mw = meta.get("wins")
-                _md = meta.get("draws")
-                _ml = meta.get("losses")
-                if _mw is not None and _md is not None and _ml is not None:
-                    iter_wins += int(_mw)
-                    iter_draws += int(_md)
-                    iter_losses += int(_ml)
-                else:
-                    # Fallback for old shards without game-level metadata: count unique
-                    # game outcomes by tracking wdl transitions across positions.
-                    wdl = np.asarray(shard_arrs["wdl_target"], dtype=np.int8)
-                    if wdl.size > 0:
-                        run_starts = np.empty(wdl.shape[0], dtype=bool)
-                        run_starts[0] = True
-                        if wdl.shape[0] > 1:
-                            run_starts[1:] = wdl[1:] != wdl[:-1]
-                        run_values = wdl[run_starts]
-                        iter_wins += int(np.count_nonzero(run_values == 0))
-                        iter_draws += int(np.count_nonzero(run_values == 1))
-                        iter_losses += int(np.count_nonzero(run_values == 2))
-
-            # Move to processed/<user>/
-            rel = sp.relative_to(inbox_dir)
-            out = processed_dir / rel
-            out.parent.mkdir(parents=True, exist_ok=True)
-            sp.replace(out)
-            ingested += 1
-
-        # Run PID on positions ingested this iteration.
+        # Phase 2: PID update
         if pid is not None and (iter_wins + iter_draws + iter_losses) > 0:
-            pid_update = pid.observe(wins=iter_wins, draws=iter_draws, losses=iter_losses)
-            current_sf_nodes = pid.nodes
-            current_sf_skill_level = pid.skill_level
-            current_opponent_random_move_prob = float(pid.random_move_prob)
-            trainer_step_now = int(getattr(trainer, "step", 0))
-            trainer.writer.add_scalar("difficulty/sf_nodes", float(current_sf_nodes), trainer_step_now)
-            trainer.writer.add_scalar("difficulty/pid_ema_winrate", float(pid_update.ema_winrate), trainer_step_now)
-            trainer.writer.add_scalar("difficulty/skill_level", float(current_sf_skill_level), trainer_step_now)
-            trainer.writer.add_scalar(
-                "difficulty/opponent_random_move_prob",
-                float(current_opponent_random_move_prob),
-                trainer_step_now,
+            current_sf_nodes, current_sf_skill_level, current_opponent_random_move_prob = _update_pid(
+                pid, trainer,
+                wins=iter_wins, draws=iter_draws, losses=iter_losses,
+                w_sf_wdl_start=_w_sf_wdl_start, w_sf_wdl_end=_w_sf_wdl_end,
+                sf_bootstrap_ramp_fn=_sf_bootstrap_ramp_frac,
+                pid_state_path=pid_state_path,
             )
-
-            # Ramp down SF bootstrap weights as the opponent gets harder.
-            # w_soft (MCTS temperature-2 policy) is NOT ramped — independent of opponent strength.
-            _ramp = _sf_bootstrap_ramp_frac(current_opponent_random_move_prob)
-            trainer.w_sf_wdl = _lerp(_w_sf_wdl_start, _w_sf_wdl_end, _ramp)
-            trainer.writer.add_scalar("loss_weights/w_sf_wdl", trainer.w_sf_wdl, trainer_step_now)
-
-            # Persist so restarts resume from same difficulty.
-            try:
-                pid_state_path.write_text(
-                    json.dumps(
-                        {
-                            "nodes": int(pid.nodes),
-                            "skill_level": int(pid.skill_level),
-                            "random_move_prob": float(pid.random_move_prob),
-                            "ema_winrate": pid.ema_winrate,
-                            "integral": float(pid._integral),
-                            "updated_at_unix": int(time.time()),
-                        },
-                        indent=2,
-                        sort_keys=True,
-                    ),
-                    encoding="utf-8",
-                )
-            except Exception:
-                pass
 
         if len(buf) < int(args.min_replay_size):
             time.sleep(float(args.sleep_seconds))
             continue
 
-        in_arena = bool(args.arena_enabled) and bool(arena_active)
+        in_arena = bool(args.arena_enabled) and bool(arena_state["active"])
 
         # Defaults for manifest train metrics (updated if we actually train this loop)
         train_loss = last_train.get("loss")
@@ -742,127 +1059,21 @@ def main() -> None:
         model_path = publish_dir / "latest_model.pt"
 
         if in_arena:
-            # Ingest arena results; do NOT train or touch model weights on disk.
-            results = _iter_arena_results(arena_inbox_dir)
-            for rp in results[: int(args.max_shards_per_iter)]:
-                try:
-                    payload = json.loads(rp.read_text(encoding="utf-8"))
-                except Exception:
-                    qdir = arena_processed_dir / "bad"
-                    qdir.mkdir(parents=True, exist_ok=True)
-                    rp.replace(qdir / rp.name)
-                    continue
-
-                try:
-                    a_sha = str(payload.get("a_sha256") or "")
-                    b_sha = str(payload.get("b_sha256") or "")
-                    games = int(payload.get("games") or 0)
-                    a_win = int(payload.get("a_win") or 0)
-                    a_draw = int(payload.get("a_draw") or 0)
-                    a_loss = int(payload.get("a_loss") or 0)
-                except Exception:
-                    a_sha = b_sha = ""
-                    games = 0
-                    a_win = a_draw = a_loss = 0
-
-                if a_sha == arena_latest_sha and b_sha == arena_best_sha and games > 0 and (a_win + a_draw + a_loss == games):
-                    arena_games_done += int(games)
-                    arena_a_win += int(a_win)
-                    arena_a_draw += int(a_draw)
-                    arena_a_loss += int(a_loss)
-
-                    # Log each uploaded batch (makes match progress visible in server logs).
-                    denom = float(max(1, arena_games_done))
-                    winrate = (float(arena_a_win) + 0.5 * float(arena_a_draw)) / denom
-                    log.info(
-                        "arena batch: games_done=%d/%d W/D/L=%d/%d/%d winrate=%.3f latest=%s best=%s",
-                        int(arena_games_done),
-                        int(args.arena_games_target),
-                        int(arena_a_win),
-                        int(arena_a_draw),
-                        int(arena_a_loss),
-                        float(winrate),
-                        str(arena_latest_sha)[:8],
-                        str(arena_best_sha)[:8],
-                    )
-
-                try:
-                    rel = rp.relative_to(arena_inbox_dir)
-                    out = arena_processed_dir / rel
-                    out.parent.mkdir(parents=True, exist_ok=True)
-                    rp.replace(out)
-                except Exception:
-                    rp.unlink(missing_ok=True)
-
-            # Completion / gating
-            denom = float(max(1, arena_games_done))
-            winrate = (float(arena_a_win) + 0.5 * float(arena_a_draw)) / denom
-
-            if arena_games_done >= int(args.arena_games_target):
-                accepted = bool(winrate >= float(args.arena_accept_winrate))
-                arena_last_winrate = float(winrate)
-                arena_last_accepted = bool(accepted)
-
-                log.info(
-                    "arena decision: %s (accept_winrate=%.3f) final W/D/L=%d/%d/%d winrate=%.3f latest=%s best=%s",
-                    "ACCEPT" if accepted else "REJECT",
-                    float(args.arena_accept_winrate),
-                    int(arena_a_win),
-                    int(arena_a_draw),
-                    int(arena_a_loss),
-                    float(winrate),
-                    str(arena_latest_sha)[:8],
-                    str(arena_best_sha)[:8],
-                )
-
-                if accepted:
-                    # Promote challenger -> champion
-                    if model_path.exists():
-                        _atomic_copy2(model_path, best_model_path)
-                        best_model_sha = _sha256_file(best_model_path)
-                        # Save champion trainer state for potential rollback.
-                        trainer.save(champion_ckpt_path)
-                else:
-                    # Revert to champion if available (discard challenger).
-                    if champion_ckpt_path.exists():
-                        trainer.load(champion_ckpt_path)
-                        trainer.save(ckpt_path)
-                        trainer.export_swa(model_path)
-
-                # End arena
-                arena_active = False
-                arena_latest_sha = ""
-                arena_best_sha = ""
-                arena_games_done = 0
-                arena_a_win = arena_a_draw = arena_a_loss = 0
-
-            # Persist arena state
-            arena_state_path.write_text(
-                json.dumps(
-                    {
-                        "active": bool(arena_active),
-                        "latest_sha": str(arena_latest_sha),
-                        "best_sha": str(arena_best_sha),
-                        "games_done": int(arena_games_done),
-                        "a_win": int(arena_a_win),
-                        "a_draw": int(arena_a_draw),
-                        "a_loss": int(arena_a_loss),
-                        "last_winrate": arena_last_winrate,
-                        "last_accepted": arena_last_accepted,
-                        "updated_at_unix": int(time.time()),
-                    },
-                    indent=2,
-                    sort_keys=True,
-                ),
-                encoding="utf-8",
+            # Phase 3: Arena processing
+            model_sha, best_model_sha = _process_arena_results(
+                args, trainer,
+                arena_inbox_dir=arena_inbox_dir,
+                arena_processed_dir=arena_processed_dir,
+                arena_state_path=arena_state_path,
+                model_path=model_path,
+                best_model_path=best_model_path,
+                champion_ckpt_path=champion_ckpt_path,
+                ckpt_path=ckpt_path,
+                arena_state=arena_state,
             )
 
-            # Update shas for manifest
-            model_sha = _sha256_file(model_path) if model_path.exists() else ""
-            best_model_sha = _sha256_file(best_model_path) if best_model_path.exists() else ""
-
         else:
-            # Train a bit
+            # Phase 4: Training
             metrics = trainer.train_steps(buf, batch_size=int(args.batch_size), steps=int(args.train_steps))
             trainer.save(ckpt_path)
 
@@ -919,26 +1130,28 @@ def main() -> None:
             # Start arena for this challenger (once), throttled by --arena-every-n-steps.
             _arena_step = int(getattr(trainer, "step", 0))
             _arena_due = (_arena_step % int(args.arena_every_n_steps)) < int(args.train_steps)
-            if bool(args.arena_enabled) and (not arena_active) and best_model_sha and model_sha and best_model_sha != model_sha and _arena_due:
-                arena_active = True
-                arena_latest_sha = str(model_sha)
-                arena_best_sha = str(best_model_sha)
-                arena_games_done = 0
-                arena_a_win = arena_a_draw = arena_a_loss = 0
+            if bool(args.arena_enabled) and (not arena_state["active"]) and best_model_sha and model_sha and best_model_sha != model_sha and _arena_due:
+                arena_state["active"] = True
+                arena_state["latest_sha"] = str(model_sha)
+                arena_state["best_sha"] = str(best_model_sha)
+                arena_state["games_done"] = 0
+                arena_state["a_win"] = 0
+                arena_state["a_draw"] = 0
+                arena_state["a_loss"] = 0
 
                 log.info(
                     "arena start: games_target=%d accept_winrate=%.3f latest=%s best=%s",
                     int(args.arena_games_target),
                     float(args.arena_accept_winrate),
-                    str(arena_latest_sha)[:8],
-                    str(arena_best_sha)[:8],
+                    str(arena_state["latest_sha"])[:8],
+                    str(arena_state["best_sha"])[:8],
                 )
                 arena_state_path.write_text(
                     json.dumps(
                         {
                             "active": True,
-                            "latest_sha": str(arena_latest_sha),
-                            "best_sha": str(arena_best_sha),
+                            "latest_sha": str(arena_state["latest_sha"]),
+                            "best_sha": str(arena_state["best_sha"]),
                             "games_done": 0,
                             "a_win": 0,
                             "a_draw": 0,
@@ -951,6 +1164,7 @@ def main() -> None:
                     encoding="utf-8",
                 )
 
+        # Phase 5: Build and publish manifest
         trainer_step = int(getattr(trainer, "step", 0))
         recommended_worker = _build_recommended_worker(
             args, trainer_step=trainer_step,
@@ -961,7 +1175,7 @@ def main() -> None:
         )
 
         task: dict[str, object]
-        if bool(args.arena_enabled) and arena_active and arena_latest_sha and arena_best_sha:
+        if bool(args.arena_enabled) and arena_state["active"] and arena_state["latest_sha"] and arena_state["best_sha"]:
             task = {
                 "type": "arena",
                 "arena": {
@@ -973,111 +1187,43 @@ def main() -> None:
                     "swap_sides": bool(args.arena_swap_sides),
                     "temperature": float(args.arena_temperature),
                     "random_start_plies": int(args.arena_random_start_plies),
-                    "a_sha256": str(arena_latest_sha),
-                    "b_sha256": str(arena_best_sha),
+                    "a_sha256": str(arena_state["latest_sha"]),
+                    "b_sha256": str(arena_state["best_sha"]),
                     "games_target": int(args.arena_games_target),
                 },
             }
         else:
             task = {"type": "selfplay"}
 
-        manifest = {
-            "server_time_unix": int(time.time()),
-            "protocol_version": int(PROTOCOL_VERSION),
-            "server_version": str(PACKAGE_VERSION),
-            "min_worker_version": str(args.min_worker_version),
-            "trial_id": trial_id or None,
-            "trainer_step": trainer_step,
-            "task": task,
-            "recommended_worker": recommended_worker,
-            "encoding": {
-                "input_planes": 146,
-                "policy_size": int(POLICY_SIZE),
-                "policy_encoding": "lc0_4672",
-            },
-            "model": {
-                "sha256": model_sha,
-                "endpoint": api_prefix + "/model",
-                "filename": "latest_model.pt",
-                "format": "torch_state_dict",
-            },
-            "model_config": {
-                "kind": str(args.model),
-                "embed_dim": int(args.embed_dim),
-                "num_layers": int(args.num_layers),
-                "num_heads": int(args.num_heads),
-                "ffn_mult": int(args.ffn_mult),
-                "use_smolgen": not bool(args.no_smolgen),
-                "use_nla": bool(args.use_nla),
-                "use_qk_rmsnorm": bool(args.use_qk_rmsnorm),
-                "gradient_checkpointing": bool(args.gradient_checkpointing),
-            },
-            "data": {
-                "replay_size": int(len(buf)),
-                "shards_ingested": int(ingested),
-                "positions_ingested": int(positions),
-            },
-            "train": {
-                "loss": None if train_loss is None else float(train_loss),
-                "policy_loss": None if train_policy_loss is None else float(train_policy_loss),
-                "wdl_loss": None if train_wdl_loss is None else float(train_wdl_loss),
-            },
-        }
-
-        if best_loss < float("inf") and best_loss_trainer_step >= 0:
-            manifest["best_loss"] = {
-                "loss": float(best_loss),
-                "trainer_step": int(best_loss_trainer_step),
-            }
-
-        if best_model_sha:
-            manifest["best_model"] = {
-                "sha256": str(best_model_sha),
-                "endpoint": api_prefix + "/best_model",
-                "filename": "best_model.pt",
-                "format": "torch_state_dict",
-            }
-
-        if bool(args.arena_enabled):
-            manifest["arena"] = {
-                "active": bool(arena_active),
-                "latest_sha256": str(arena_latest_sha),
-                "best_sha256": str(arena_best_sha),
-                "games_done": int(arena_games_done),
-                "games_target": int(args.arena_games_target),
-                "a_win": int(arena_a_win),
-                "a_draw": int(arena_a_draw),
-                "a_loss": int(arena_a_loss),
-                "last_winrate": arena_last_winrate,
-                "last_accepted": arena_last_accepted,
-                "accept_winrate": float(args.arena_accept_winrate),
-            }
-
-        if args.opening_book_path:
-            p = Path(args.opening_book_path)
-            if p.exists():
-                manifest["opening_book"] = {
-                    "endpoint": "/v1/opening_book",
-                    "filename": p.name,
-                    "sha256": _sha256_file(p),
-                }
-
-        # Optional: stockfish distribution
-        if published_stockfish_path is not None and published_stockfish_path.exists():
-            manifest["stockfish"] = {
-                "endpoint": api_prefix + "/stockfish",
-                "filename": published_stockfish_path.name,
-                "sha256": _sha256_file(published_stockfish_path),
-            }
-
-        # Optional: worker self-update wheel
-        if published_worker_wheel_path is not None and published_worker_wheel_path.exists():
-            manifest["worker_wheel"] = {
-                "endpoint": api_prefix + "/worker_wheel",
-                "filename": published_worker_wheel_path.name,
-                "sha256": _sha256_file(published_worker_wheel_path),
-                "version": str(PACKAGE_VERSION),
-            }
+        manifest = _build_manifest(
+            args,
+            trainer_step=trainer_step,
+            recommended_worker=recommended_worker,
+            task=task,
+            model_sha=model_sha,
+            best_model_sha=best_model_sha,
+            buf=buf,
+            ingested=ingested,
+            positions=positions,
+            train_loss=train_loss,
+            train_policy_loss=train_policy_loss,
+            train_wdl_loss=train_wdl_loss,
+            best_loss=best_loss,
+            best_loss_trainer_step=best_loss_trainer_step,
+            arena_active=bool(arena_state["active"]),
+            arena_latest_sha=str(arena_state["latest_sha"]),
+            arena_best_sha=str(arena_state["best_sha"]),
+            arena_games_done=int(arena_state["games_done"]),
+            arena_a_win=int(arena_state["a_win"]),
+            arena_a_draw=int(arena_state["a_draw"]),
+            arena_a_loss=int(arena_state["a_loss"]),
+            arena_last_winrate=arena_state["last_winrate"],
+            arena_last_accepted=arena_state["last_accepted"],
+            api_prefix=api_prefix,
+            trial_id=trial_id,
+            published_stockfish_path=published_stockfish_path,
+            published_worker_wheel_path=published_worker_wheel_path,
+        )
 
         _atomic_write_text(
             publish_dir / "manifest.json",
