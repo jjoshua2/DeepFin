@@ -80,7 +80,7 @@ stockfish:
   pid_random_move_stage_end: 0.05   # Regret stage unlocks once rmp hits 5% floor
   pid_max_rand_step: 0.01   # Smaller 1% steps to reduce PID overshoot/oscillation.
   pid_max_rand_step_start: 0.05  # Large initial step so PID finds equilibrium fast.
-  pid_max_rand_step_ramp_iters: 12  # Use 0.05 step for first 12 iters, then 0.01.
+  pid_max_rand_step_ramp_iters: 4  # Use 0.05 step for first 4 iters, then 0.01.
   pid_topk_stage_end: 0.50          # topk log-shrinks over the rmp schedule
   pid_topk_min: 2                   # do not collapse to top-1; keep top-2 available
   pid_suboptimal_wdl_regret_max: 0.50

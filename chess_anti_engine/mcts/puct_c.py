@@ -209,7 +209,7 @@ def run_mcts_many_c(
         if not leaf_data:
             continue
 
-        if use_cboard and all(ld[3] is not None for ld in leaf_data):
+        if use_cboard:
             n_leaves = len(leaf_data)
             leaf_xs = np.empty((n_leaves, 146, 8, 8), dtype=np.float32)
             for _li, _ld in enumerate(leaf_data):
