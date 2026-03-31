@@ -287,29 +287,48 @@ static void init_byte_to_float_lut(void) {
  * encode_piece_planes: bitboards → (n_steps*12, 8, 8) float32
  * ================================================================ */
 
+/* Compile-time endianness detection. The LUT path reinterprets uint64_t
+ * memory bytes directly and is only correct on little-endian hosts. */
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+#define BB_PLANE_USE_LUT 1
+#elif defined(_WIN32) || defined(__x86_64__) || defined(__i386__) || \
+      defined(__aarch64__) || defined(__arm__)
+/* All common desktop/server targets are LE. */
+#define BB_PLANE_USE_LUT 1
+#else
+#define BB_PLANE_USE_LUT 0
+#endif
+
 static void bitboard_to_plane_white(uint64_t bb, float *out) {
-    /* out[rank][file] = bit at (rank*8 + file)
-     * On little-endian x86, byte[r] of bb holds bits r*8..r*8+7,
-     * which maps directly to rank r, files 0-7. */
     if (bb == 0) {
         memset(out, 0, 64 * sizeof(float));
         return;
     }
+#if BB_PLANE_USE_LUT
     const uint8_t *bytes = (const uint8_t *)&bb;
     for (int r = 0; r < 8; r++)
         memcpy(out + r * 8, BYTE_TO_8FLOATS[bytes[r]], 8 * sizeof(float));
+#else
+    for (int r = 0; r < 8; r++)
+        for (int f = 0; f < 8; f++)
+            out[r * 8 + f] = (float)((bb >> (r * 8 + f)) & 1);
+#endif
 }
 
 static void bitboard_to_plane_black(uint64_t bb, float *out) {
-    /* out[r][f] = bit at ((7-r)*8 + f) — flip ranks.
-     * byte[7-r] holds the bits for output rank r. */
     if (bb == 0) {
         memset(out, 0, 64 * sizeof(float));
         return;
     }
+#if BB_PLANE_USE_LUT
     const uint8_t *bytes = (const uint8_t *)&bb;
     for (int r = 0; r < 8; r++)
         memcpy(out + r * 8, BYTE_TO_8FLOATS[bytes[7 - r]], 8 * sizeof(float));
+#else
+    for (int r = 0; r < 8; r++)
+        for (int f = 0; f < 8; f++)
+            out[r * 8 + f] = (float)((bb >> ((7 - r) * 8 + f)) & 1);
+#endif
 }
 
 /*
