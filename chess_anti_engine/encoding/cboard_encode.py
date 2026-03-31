@@ -1,6 +1,7 @@
 """Encoding helpers for CBoard objects (C-accelerated chess boards)."""
 from __future__ import annotations
 
+import chess
 import numpy as np
 
 try:
@@ -8,6 +9,32 @@ try:
     _HAS_CBOARD = True
 except ImportError:
     _HAS_CBOARD = False
+
+
+def cboard_from_board_fast(board: chess.Board) -> CBoard:
+    """Fast CBoard construction from python-chess Board via from_raw.
+
+    Extracts board state as raw integers on the Python side, then passes
+    them to CBoard.from_raw() which skips all Python attribute access in C.
+    History is not populated — use for MCTS hot paths where history is built
+    incrementally via copy() + push_index().
+    """
+    cr = int(board.castling_rights)
+    castling = 0
+    if cr & (1 << 7):  castling |= 1   # WK_CASTLE — H1
+    if cr & (1 << 0):  castling |= 2   # WQ_CASTLE — A1
+    if cr & (1 << 63): castling |= 4   # BK_CASTLE — H8
+    if cr & (1 << 56): castling |= 8   # BQ_CASTLE — A8
+    return CBoard.from_raw(
+        int(board.pawns), int(board.knights), int(board.bishops),
+        int(board.rooks), int(board.queens), int(board.kings),
+        int(board.occupied_co[chess.WHITE]),
+        int(board.occupied_co[chess.BLACK]),
+        1 if board.turn else 0,
+        castling,
+        -1 if board.ep_square is None else int(board.ep_square),
+        int(board.halfmove_clock),
+    )
 
 try:
     from chess_anti_engine.encoding._features_ext import compute_extra_features as _c_compute

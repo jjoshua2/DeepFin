@@ -20,6 +20,7 @@ from chess_anti_engine.moves.encode import index_to_move_fast, legal_move_indice
 
 try:
     from chess_anti_engine.encoding._lc0_ext import CBoard
+    from chess_anti_engine.encoding.cboard_encode import cboard_from_board_fast
     _HAS_CBOARD = True
 except ImportError:
     _HAS_CBOARD = False
@@ -96,7 +97,7 @@ def run_mcts_many_c(
 
     # ── 1. Root evaluation ───────────────────────────────────────────────
     use_cboard = _HAS_CBOARD
-    root_cboards: list[CBoard] | None = [CBoard.from_board(b) for b in boards] if use_cboard else None
+    root_cboards: list[CBoard] | None = [cboard_from_board_fast(b) for b in boards] if use_cboard else None
     if pre_pol_logits is not None and pre_wdl_logits is not None:
         pol_logits_all = np.asarray(pre_pol_logits, dtype=np.float32)
         wdl_logits_all = np.asarray(pre_wdl_logits, dtype=np.float32)
@@ -125,7 +126,7 @@ def run_mcts_many_c(
         board_cache[root_id] = root_board
 
         if use_cboard:
-            root_cb = root_cboards[i] if root_cboards is not None else CBoard.from_board(b)
+            root_cb = root_cboards[i] if root_cboards is not None else cboard_from_board_fast(b)
             cb_cache[root_id] = root_cb
             legal_idx = root_cb.legal_move_indices()
         else:
@@ -195,7 +196,7 @@ def run_mcts_many_c(
                     if cb is not None:
                         cb = cb.copy()
                     else:
-                        cb = CBoard.from_board(board)
+                        cb = cboard_from_board_fast(board)
             else:
                 cb = None
             leaf_data.append((leaf_id, node_path, board, cb))

@@ -31,6 +31,7 @@ from chess_anti_engine.mcts.gumbel import (
 from chess_anti_engine.moves import POLICY_SIZE
 
 from chess_anti_engine.encoding._lc0_ext import CBoard
+from chess_anti_engine.encoding.cboard_encode import cboard_from_board_fast
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
 
 
@@ -63,7 +64,7 @@ def run_gumbel_root_many_c(
         eval_impl = LocalModelEvaluator(model, device=device)
 
     # -- 1. Batch root evaluation ------------------------------------------
-    root_cboards = [CBoard.from_board(b) for b in boards]
+    root_cboards = [cboard_from_board_fast(b) for b in boards]
 
     _has_async = hasattr(eval_impl, 'evaluate_encoded_async')
 

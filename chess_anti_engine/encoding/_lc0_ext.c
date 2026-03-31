@@ -1336,27 +1336,19 @@ static PyObject* PyCBoard_from_board(PyTypeObject *type, PyObject *args) {
     b->turn = PyObject_IsTrue(val) ? WHITE_C : BLACK_C;
     Py_DECREF(val);
 
-    /* Castling rights */
+    /* Castling rights: read bitmask directly instead of 4 method calls */
     b->castling = 0;
-    PyObject *chess_mod = PyImport_ImportModule("chess");
-    if (!chess_mod) { Py_DECREF(self); return NULL; }
-    PyObject *py_true = PyBool_FromLong(1);
-    PyObject *py_false = PyBool_FromLong(0);
-
-    /* has_kingside_castling_rights(WHITE), etc. */
-    val = PyObject_CallMethod(py_board, "has_kingside_castling_rights", "O", py_true);
-    if (val && PyObject_IsTrue(val)) b->castling |= WK_CASTLE;
-    Py_XDECREF(val);
-    val = PyObject_CallMethod(py_board, "has_queenside_castling_rights", "O", py_true);
-    if (val && PyObject_IsTrue(val)) b->castling |= WQ_CASTLE;
-    Py_XDECREF(val);
-    val = PyObject_CallMethod(py_board, "has_kingside_castling_rights", "O", py_false);
-    if (val && PyObject_IsTrue(val)) b->castling |= BK_CASTLE;
-    Py_XDECREF(val);
-    val = PyObject_CallMethod(py_board, "has_queenside_castling_rights", "O", py_false);
-    if (val && PyObject_IsTrue(val)) b->castling |= BQ_CASTLE;
-    Py_XDECREF(val);
-    Py_DECREF(chess_mod);
+    val = PyObject_GetAttrString(py_board, "castling_rights");
+    if (!val) { Py_DECREF(self); return NULL; }
+    {
+        uint64_t cr = PyLong_AsUnsignedLongLong(val);
+        Py_DECREF(val);
+        if (cr == (uint64_t)-1 && PyErr_Occurred()) { Py_DECREF(self); return NULL; }
+        if (cr & (1ULL << 7))  b->castling |= WK_CASTLE;  /* H1 */
+        if (cr & (1ULL << 0))  b->castling |= WQ_CASTLE;  /* A1 */
+        if (cr & (1ULL << 63)) b->castling |= BK_CASTLE;  /* H8 */
+        if (cr & (1ULL << 56)) b->castling |= BQ_CASTLE;  /* A8 */
+    }
 
     /* EP square */
     val = PyObject_GetAttrString(py_board, "ep_square");
@@ -1497,6 +1489,48 @@ static PyObject* PyCBoard_from_board(PyTypeObject *type, PyObject *args) {
     return (PyObject*)self;
 }
 
+/* Constructor: CBoard.from_raw(pawns, knights, bishops, rooks, queens, kings,
+ *                               occ_white, occ_black, turn, castling,
+ *                               ep_square, halfmove_clock)
+ * Accepts pre-extracted integers — no Python attribute access needed. */
+static PyObject* PyCBoard_from_raw(PyTypeObject *type, PyObject *args) {
+    uint64_t pawns, knights, bishops, rooks, queens, kings;
+    uint64_t occ_w, occ_b;
+    int turn_int, castling_int, ep_sq, hmc;
+
+    if (!PyArg_ParseTuple(args, "KKKKKKKKiiii",
+        &pawns, &knights, &bishops, &rooks, &queens, &kings,
+        &occ_w, &occ_b, &turn_int, &castling_int, &ep_sq, &hmc))
+        return NULL;
+
+    PyCBoard *self = (PyCBoard*)type->tp_alloc(type, 0);
+    if (!self) return NULL;
+    CBoard *b = &self->board;
+    memset(b, 0, sizeof(CBoard));
+
+    b->bb[PAWN]   = pawns;
+    b->bb[KNIGHT] = knights;
+    b->bb[BISHOP] = bishops;
+    b->bb[ROOK]   = rooks;
+    b->bb[QUEEN]  = queens;
+    b->bb[KING]   = kings;
+    b->occ[WHITE_C] = occ_w;
+    b->occ[BLACK_C] = occ_b;
+    b->turn = turn_int ? WHITE_C : BLACK_C;
+    b->castling = (uint8_t)castling_int;
+    b->ep_square = (int8_t)ep_sq;
+    b->halfmove_clock = (uint8_t)(hmc > 255 ? 255 : hmc);
+
+    init_zobrist();
+    b->hash = cboard_compute_hash(b);
+
+    b->hist_len = 0;
+    b->hist_head = 0;
+    b->hash_stack_len = 0;
+
+    return (PyObject*)self;
+}
+
 /* copy() → new CBoard */
 static PyObject* PyCBoard_copy(PyCBoard *self, PyObject *Py_UNUSED(args)) {
     PyCBoard *cp = (PyCBoard*)PyCBoardType.tp_alloc(&PyCBoardType, 0);
@@ -1607,6 +1641,8 @@ static PyObject* PyCBoard_get_hash_stack_len(PyCBoard *self, void *closure) {
 static PyMethodDef PyCBoard_methods[] = {
     {"from_board", (PyCFunction)PyCBoard_from_board, METH_VARARGS | METH_CLASS,
      "Create CBoard from a python-chess Board"},
+    {"from_raw", (PyCFunction)PyCBoard_from_raw, METH_VARARGS | METH_CLASS,
+     "Create CBoard from raw integer arguments (no Python attribute access)"},
     {"copy", (PyCFunction)PyCBoard_copy, METH_NOARGS, "Copy board"},
     {"push_index", (PyCFunction)PyCBoard_push_index, METH_VARARGS,
      "Apply move by policy index (in-place)"},
