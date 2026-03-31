@@ -387,6 +387,170 @@ def _games_per_iter_for_iteration(config: dict, iteration_idx: int) -> int:
     return max(1, int(round(value)))
 
 
+def _run_puzzle_eval_if_due(
+    model: torch.nn.Module,
+    puzzle_suite,
+    *,
+    device: str,
+    rng,
+    puzzle_interval: int,
+    puzzle_sims: int,
+    iteration_zero_based: int,
+) -> dict:
+    """Run puzzle evaluation if due this iteration. Returns metrics dict."""
+    if puzzle_suite is None or puzzle_interval <= 0:
+        return {}
+    if iteration_zero_based % puzzle_interval != 0:
+        return {}
+    from chess_anti_engine.eval import run_puzzle_eval
+    pr = run_puzzle_eval(model, puzzle_suite, device=device, mcts_simulations=puzzle_sims, rng=rng)
+    return {
+        "puzzle_accuracy": pr.accuracy,
+        "puzzle_correct": pr.correct,
+        "puzzle_total": pr.total,
+    }
+
+
+def _write_status_csv_row(
+    path: Path,
+    *,
+    iteration_idx: int,
+    opp_strength: float,
+    opp_strength_ema: float,
+    skill_level: int,
+    sf_nodes: int,
+    current_rand: float,
+    wdl_regret: float,
+    ingest_ms: float,
+    train_ms: float,
+    total_iter_ms: float,
+    steps: int,
+    replay_size: int,
+    positions_ingested: int,
+    stale_games: int,
+    train_loss: float | None,
+    best_loss: float,
+    total_w: int,
+    total_d: int,
+    total_l: int,
+    opt_lr: float,
+    startup_source: str,
+) -> None:
+    """Append a compact status CSV row (best-effort)."""
+    try:
+        with path.open("a", newline="") as f:
+            csv.writer(f).writerow([
+                int(iteration_idx),
+                int(iteration_idx),
+                f"{float(opp_strength):.1f}",
+                f"{float(opp_strength_ema):.1f}",
+                int(skill_level),
+                int(sf_nodes),
+                f"{float(current_rand):.3f}",
+                f"{float(wdl_regret):.4f}",
+                f"{float(ingest_ms)/1000:.1f}",
+                f"{float(train_ms)/1000:.1f}",
+                f"{float(total_iter_ms)/1000:.1f}",
+                int(steps),
+                int(replay_size),
+                int(positions_ingested),
+                int(stale_games),
+                f"{float(train_loss):.4f}" if train_loss is not None else "",
+                f"{float(best_loss):.4f}",
+                int(total_w),
+                int(total_d),
+                int(total_l),
+                f"{float(opt_lr):.2e}",
+                str(startup_source),
+            ])
+    except Exception:
+        pass
+
+
+def _save_trial_checkpoint(
+    *,
+    trainer,
+    buf,
+    ckpt_dir: Path,
+    rng,
+    trial_id: str,
+    trial_dir: Path,
+    config: dict,
+    base_seed: int,
+    active_seed: int,
+    startup_source: str,
+    salvage_origin_used: bool,
+    salvage_origin_slot: int,
+    salvage_origin_slots_total: int,
+    salvage_origin_dir: str,
+    iteration_idx: int,
+    Checkpoint,
+):
+    """Flush replay buffer and save a lightweight checkpoint."""
+    buf.flush()
+    trainer.save(ckpt_dir / "trainer.pt")
+    try:
+        (ckpt_dir / "rng_state.json").write_text(
+            json.dumps(rng.bit_generator.state, sort_keys=True),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+    try:
+        (ckpt_dir / "trial_meta.json").write_text(
+            json.dumps({
+                "owner_trial_id": str(trial_id),
+                "owner_trial_dir": str(trial_dir.resolve()),
+                "optimizer": str(config.get("optimizer", "nadamw")).lower(),
+                "base_seed": int(base_seed),
+                "active_seed": int(active_seed),
+                "startup_source": str(startup_source),
+                "salvage_origin_used": bool(salvage_origin_used),
+                "salvage_origin_slot": int(salvage_origin_slot),
+                "salvage_origin_slots_total": int(salvage_origin_slots_total),
+                "salvage_origin_dir": str(salvage_origin_dir),
+                "global_iter": int(iteration_idx),
+            }, sort_keys=True, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+    return Checkpoint.from_directory(str(ckpt_dir))
+
+
+def _update_best_model(
+    *,
+    trainer,
+    test_metrics,
+    train_metrics,
+    best_loss: float,
+    best_dir: Path,
+    best_state_path: Path,
+    iteration_idx: int,
+    opp_strength_ema: float,
+) -> float:
+    """Update best model if current loss improved. Returns updated best_loss."""
+    cur_loss = (
+        float(test_metrics.loss) if test_metrics is not None
+        else (float(train_metrics.loss) if train_metrics is not None else float("inf"))
+    )
+    if cur_loss < best_loss - 1e-12:
+        best_loss = cur_loss
+        trainer.save(best_dir / "trainer.pt")
+        trainer.export_swa(best_dir / "best_model.pt")
+        best_state_path.write_text(
+            json.dumps({
+                "best_loss": float(best_loss),
+                "iter": int(iteration_idx),
+                "trainer_step": int(getattr(trainer, "step", 0)),
+                "source": "test_loss" if test_metrics is not None else "train_loss",
+                "opp_strength_ema": float(opp_strength_ema),
+            }, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+    return best_loss
+
+
 def train_trial(config: dict):
     """Ray Tune trainable.
 
@@ -1401,10 +1565,9 @@ def train_trial(config: dict):
 
                 # (2) Target drift: WDL label distribution (JS divergence).
                 def _wdl_hist(arrs: dict[str, np.ndarray]) -> np.ndarray:
-                    h = np.zeros((3,), dtype=np.float64)
-                    for t in np.asarray(arrs["wdl_target"], dtype=np.int64):
-                        if 0 <= t <= 2:
-                            h[t] += 1.0
+                    arr = np.asarray(arrs["wdl_target"], dtype=np.int64)
+                    valid = arr[(arr >= 0) & (arr <= 2)]
+                    h = np.bincount(valid, minlength=3).astype(np.float64)
                     h /= max(1.0, float(h.sum()))
                     return h
 
@@ -1482,7 +1645,6 @@ def train_trial(config: dict):
             train_t0 = time.monotonic()
             batch_size = int(config.get("batch_size", 128))
             accum_steps = max(1, int(config.get("accum_steps", 1)))
-            effective_batch_size = batch_size * accum_steps
             skip_train = len(buf) < batch_size
             steps = 0
             target_sample_budget = 0
@@ -1618,43 +1780,25 @@ def train_trial(config: dict):
                     "eval_winrate": (float(eval_stats.w) + 0.5 * float(eval_stats.d)) / denom,
                 }
 
-            # Flush any remaining samples to disk before checkpointing.
-            buf.flush()
-
-            # Save a lightweight checkpoint (model+optimizer+step + PID state).
-            ckpt_path = ckpt_dir / "trainer.pt"
-            trainer.save(ckpt_path)
-            try:
-                (ckpt_dir / "rng_state.json").write_text(
-                    json.dumps(rng.bit_generator.state, sort_keys=True),
-                    encoding="utf-8",
-                )
-            except Exception:
-                pass
-            try:
-                (ckpt_dir / "trial_meta.json").write_text(
-                    json.dumps(
-                        {
-                            "owner_trial_id": str(trial_id),
-                            "owner_trial_dir": str(trial_dir.resolve()),
-                            "optimizer": str(config.get("optimizer", "nadamw")).lower(),
-                            "base_seed": int(base_seed),
-                            "active_seed": int(active_seed),
-                            "startup_source": str(startup_source),
-                            "salvage_origin_used": bool(salvage_origin_used),
-                            "salvage_origin_slot": int(salvage_origin_slot),
-                            "salvage_origin_slots_total": int(salvage_origin_slots_total),
-                            "salvage_origin_dir": str(salvage_origin_dir),
-                            "global_iter": int(iteration_idx),
-                        },
-                        sort_keys=True,
-                        indent=2,
-                    ),
-                    encoding="utf-8",
-                )
-            except Exception:
-                pass
-            checkpoint = Checkpoint.from_directory(str(ckpt_dir))
+            # Flush replay + save checkpoint (model+optimizer+step + PID state).
+            checkpoint = _save_trial_checkpoint(
+                trainer=trainer,
+                buf=buf,
+                ckpt_dir=ckpt_dir,
+                rng=rng,
+                trial_id=trial_id,
+                trial_dir=trial_dir,
+                config=config,
+                base_seed=base_seed,
+                active_seed=active_seed,
+                startup_source=startup_source,
+                salvage_origin_used=salvage_origin_used,
+                salvage_origin_slot=salvage_origin_slot,
+                salvage_origin_slots_total=salvage_origin_slots_total,
+                salvage_origin_dir=salvage_origin_dir,
+                iteration_idx=iteration_idx,
+                Checkpoint=Checkpoint,
+            )
 
             test_dict = {
                 "holdout_frozen": int(1 if holdout_frozen else 0),
@@ -1691,25 +1835,11 @@ def train_trial(config: dict):
                 )
 
             # Best-model tracking: prefer holdout loss when available, skip if no training yet.
-            cur_loss = float(test_metrics.loss) if test_metrics is not None else (float(metrics.loss) if metrics is not None else float("inf"))
-            if cur_loss < best_loss - 1e-12:
-                best_loss = cur_loss
-                trainer.save(best_dir / "trainer.pt")
-                trainer.export_swa(best_dir / "best_model.pt")
-                best_state_path.write_text(
-                    json.dumps(
-                        {
-                            "best_loss": float(best_loss),
-                            "iter": int(iteration_idx),
-                            "trainer_step": int(getattr(trainer, "step", 0)),
-                            "source": "test_loss" if test_metrics is not None else "train_loss",
-                            "opp_strength_ema": float(opp_strength_ema),
-                        },
-                        indent=2,
-                        sort_keys=True,
-                    ),
-                    encoding="utf-8",
-                )
+            best_loss = _update_best_model(
+                trainer=trainer, test_metrics=test_metrics, train_metrics=metrics,
+                best_loss=best_loss, best_dir=best_dir, best_state_path=best_state_path,
+                iteration_idx=iteration_idx, opp_strength_ema=opp_strength_ema,
+            )
 
             # Update PID ONCE per iteration (after training) so difficulty changes
             # line up with net updates rather than intra-iteration selfplay noise.
@@ -1750,7 +1880,7 @@ def train_trial(config: dict):
                     else:
                         setattr(sf, "nodes", int(sf_nodes_next))
 
-            # Persist PID state AFTER observe() so checkpoints/salvage carry the
+            # Persist PID state AFTER observe() so checkpoints carry the
             # post-iteration difficulty that produced random_move_prob_next.
             if pid is not None:
                 try:
@@ -1783,18 +1913,11 @@ def train_trial(config: dict):
                 )
 
             # Puzzle evaluation (overspecialization canary).
-            puzzle_dict = {}
-            if puzzle_suite is not None and puzzle_interval > 0 and (iteration_zero_based % puzzle_interval == 0):
-                from chess_anti_engine.eval import run_puzzle_eval
-                pr = run_puzzle_eval(
-                    trainer.model, puzzle_suite,
-                    device=device, mcts_simulations=puzzle_sims, rng=rng,
-                )
-                puzzle_dict = {
-                    "puzzle_accuracy": pr.accuracy,
-                    "puzzle_correct": pr.correct,
-                    "puzzle_total": pr.total,
-                }
+            puzzle_dict = _run_puzzle_eval_if_due(
+                trainer.model, puzzle_suite,
+                device=device, rng=rng, puzzle_interval=puzzle_interval,
+                puzzle_sims=puzzle_sims, iteration_zero_based=iteration_zero_based,
+            )
 
             iteration_step = int(iteration_idx)
             pause_metrics = _iteration_pause_metrics(
@@ -1803,17 +1926,17 @@ def train_trial(config: dict):
                 pause_started_at=distributed_pause_started_at,
                 pause_active=distributed_pause_active,
             )
+            _curr_topk = _effective_curriculum_topk(
+                random_move_prob=current_rand,
+                stage_end=float(config.get("sf_pid_topk_stage_end", config.get("sf_pid_random_move_stage_end", 0.5))),
+                topk_max=int(config.get("sf_multipv", 12)),
+                topk_min=int(config.get("sf_pid_topk_min", 1)),
+            )
             try:
                 trainer.writer.add_scalar("difficulty/opponent_strength", float(opp_strength), iteration_step)
                 trainer.writer.add_scalar("difficulty/opponent_strength_ema", float(opp_strength_ema), iteration_step)
                 trainer.writer.add_scalar("difficulty/random_move_prob", float(current_rand), iteration_step)
                 trainer.writer.add_scalar("difficulty/random_move_prob_next", float(random_move_prob_next), iteration_step)
-                _curr_topk = _effective_curriculum_topk(
-                    random_move_prob=current_rand,
-                    stage_end=float(config.get("sf_pid_topk_stage_end", config.get("sf_pid_random_move_stage_end", 0.5))),
-                    topk_max=int(config.get("sf_multipv", 12)),
-                    topk_min=int(config.get("sf_pid_topk_min", 1)),
-                )
                 trainer.writer.add_scalar("difficulty/opponent_topk", float(_curr_topk), iteration_step)
                 trainer.writer.add_scalar("difficulty/pid_ema_winrate", float(pid_ema_wr), iteration_step)
                 trainer.writer.add_scalar("difficulty/wdl_regret", float(wdl_regret_used), iteration_step)
@@ -1953,35 +2076,30 @@ def train_trial(config: dict):
             session.report(report_dict, checkpoint=checkpoint)
 
             # Write compact status row (best-effort — never crash the trial).
-            try:
-                _iter_s = report_dict["total_iter_ms"] / 1000.0
-                with _STATUS_CSV_PATH.open("a", newline="") as _f:
-                    csv.writer(_f).writerow([
-                        int(iteration_idx),
-                        int(iteration_idx),
-                        f"{float(opp_strength):.1f}",
-                        f"{float(opp_strength_ema):.1f}",
-                        int(skill_level_used),
-                        int(sf_nodes_used),
-                        f"{float(current_rand):.3f}",
-                        f"{float(wdl_regret_used):.4f}",
-                        f"{float(ingest_ms)/1000:.1f}",
-                        f"{float(train_ms)/1000:.1f}",
-                        f"{_iter_s:.1f}",
-                        int(steps),
-                        len(buf),
-                        int(replay_positions_ingested),
-                        int(distributed_stale_games),
-                        f"{float(metrics.loss):.4f}" if metrics is not None else "",
-                        f"{float(best_loss):.4f}",
-                        int(total_w),
-                        int(total_d),
-                        int(total_l),
-                        f"{float(trainer.opt.param_groups[0]['lr']):.2e}",
-                        str(startup_source),
-                    ])
-            except Exception:
-                pass
+            _write_status_csv_row(
+                _STATUS_CSV_PATH,
+                iteration_idx=iteration_idx,
+                opp_strength=opp_strength,
+                opp_strength_ema=opp_strength_ema,
+                skill_level=skill_level_used,
+                sf_nodes=sf_nodes_used,
+                current_rand=current_rand,
+                wdl_regret=wdl_regret_used,
+                ingest_ms=ingest_ms,
+                train_ms=train_ms,
+                total_iter_ms=report_dict["total_iter_ms"],
+                steps=steps,
+                replay_size=len(buf),
+                positions_ingested=replay_positions_ingested,
+                stale_games=distributed_stale_games,
+                train_loss=float(metrics.loss) if metrics is not None else None,
+                best_loss=best_loss,
+                total_w=total_w,
+                total_d=total_d,
+                total_l=total_l,
+                opt_lr=float(trainer.opt.param_groups[0]["lr"]),
+                startup_source=startup_source,
+            )
 
             global_iter = int(iteration_idx)
             completed_iterations += 1
