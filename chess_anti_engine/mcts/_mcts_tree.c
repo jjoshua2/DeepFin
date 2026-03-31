@@ -519,14 +519,24 @@ static void softmax_inplace(double *arr, int n) {
     double max_val = arr[0];
     for (int i = 1; i < n; i++)
         if (arr[i] > max_val) max_val = arr[i];
+    /* Fall back to uniform if inputs are non-finite (e.g. all -inf). */
+    if (!isfinite(max_val)) {
+        double u = 1.0 / (double)n;
+        for (int i = 0; i < n; i++) arr[i] = u;
+        return;
+    }
     double sum = 0.0;
     for (int i = 0; i < n; i++) {
         arr[i] = exp(arr[i] - max_val);
         sum += arr[i];
     }
-    if (sum > 0.0)
+    if (sum > 0.0 && isfinite(sum)) {
         for (int i = 0; i < n; i++)
             arr[i] /= sum;
+    } else {
+        double u = 1.0 / (double)n;
+        for (int i = 0; i < n; i++) arr[i] = u;
+    }
 }
 
 /* ================================================================
