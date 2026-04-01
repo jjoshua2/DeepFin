@@ -230,13 +230,17 @@ def encode_lc0_full(board: chess.Board, *, history_len: int = 8) -> np.ndarray:
     rep_base = 103  # 96 piece + 4 castling + 1 EP + 1 turn + 1 rule50
     _check_repetitions(board, stack, stack_len, n_steps, out, rep_base)
 
-    # Metadata planes (from CURRENT position's perspective)
+    _write_metadata_planes(out, board)
+    return out
+
+
+def _write_metadata_planes(out: np.ndarray, board: chess.Board) -> None:
+    """Write castling, EP, turn, rule50, and ones-bias planes starting at index 96."""
     turn = board.turn
     us = turn
     them = not turn
     meta_idx = 96
 
-    # Castling rights: us-K, us-Q, them-K, them-Q
     for has in (
         board.has_kingside_castling_rights(us),
         board.has_queenside_castling_rights(us),
@@ -247,23 +251,17 @@ def encode_lc0_full(board: chess.Board, *, history_len: int = 8) -> np.ndarray:
             out[meta_idx, :, :] = 1.0
         meta_idx += 1
 
-    # En passant file
     if board.ep_square is not None:
         out[meta_idx, :, chess.square_file(board.ep_square)] = 1.0
     meta_idx += 1
 
-    # Color to move plane
-    out[meta_idx, :, :] = 1.0
+    out[meta_idx, :, :] = 1.0  # color to move
     meta_idx += 1
 
-    # Rule50
     out[meta_idx, :, :] = min(float(board.halfmove_clock), 100.0) / 100.0
     meta_idx += 1
 
-    # All-ones bias
-    out[111, :, :] = 1.0
-
-    return out
+    out[111, :, :] = 1.0  # all-ones bias
 
 
 def encode_lc0_full_c(board: chess.Board, *, history_len: int = 8) -> np.ndarray:
@@ -319,34 +317,7 @@ def encode_lc0_full_c(board: chess.Board, *, history_len: int = 8) -> np.ndarray
     rep_base = 103
     _check_repetitions(board, stack, stack_len, n_steps, out, rep_base)
 
-    # Metadata planes (same as encode_lc0_full)
-    turn = board.turn
-    us = turn
-    them = not turn
-    meta_idx = 96
-
-    for has in (
-        board.has_kingside_castling_rights(us),
-        board.has_queenside_castling_rights(us),
-        board.has_kingside_castling_rights(them),
-        board.has_queenside_castling_rights(them),
-    ):
-        if has:
-            out[meta_idx, :, :] = 1.0
-        meta_idx += 1
-
-    if board.ep_square is not None:
-        out[meta_idx, :, chess.square_file(board.ep_square)] = 1.0
-    meta_idx += 1
-
-    out[meta_idx, :, :] = 1.0
-    meta_idx += 1
-
-    out[meta_idx, :, :] = min(float(board.halfmove_clock), 100.0) / 100.0
-    meta_idx += 1
-
-    out[111, :, :] = 1.0
-
+    _write_metadata_planes(out, board)
     return out
 
 

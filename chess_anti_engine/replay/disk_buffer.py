@@ -18,6 +18,8 @@ from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 
 from .buffer import ReplaySample
 from .shard import (
+    _OPTIONAL_STORAGE_PAIRS,
+    _SHARD_FIELDS,
     arrays_to_samples,
     delete_shard_path,
     iter_shard_paths,
@@ -30,61 +32,10 @@ from .shard import (
     shard_positions,
 )
 
-_ARRAY_FIELD_ORDER = (
-    "x",
-    "policy_target",
-    "wdl_target",
-    "priority",
-    "has_policy",
-    "sf_wdl",
-    "has_sf_wdl",
-    "sf_move_index",
-    "has_sf_move",
-    "sf_policy_target",
-    "has_sf_policy",
-    "moves_left",
-    "has_moves_left",
-    "is_network_turn",
-    "has_is_network_turn",
-    "categorical_target",
-    "has_categorical",
-    "policy_soft_target",
-    "has_policy_soft",
-    "future_policy_target",
-    "has_future",
-    "volatility_target",
-    "has_volatility",
-    "sf_volatility_target",
-    "has_sf_volatility",
-    "legal_mask",
-    "has_legal_mask",
-)
+_ARRAY_FIELD_ORDER = _SHARD_FIELDS
 
-
-def _compact_f16(arr: np.ndarray | None) -> np.ndarray | None:
-    if arr is None:
-        return None
-    return np.array(arr, dtype=np.float16, copy=True, order="C")
-
-
-def _compact_u8(arr: np.ndarray | None) -> np.ndarray | None:
-    if arr is None:
-        return None
-    return np.array(arr, dtype=np.uint8, copy=True, order="C")
-
-
-def _compact_sample_inplace(sample: ReplaySample) -> ReplaySample:
-    sample.x = _compact_f16(sample.x)
-    sample.policy_target = _compact_f16(sample.policy_target)
-    sample.sf_wdl = _compact_f16(sample.sf_wdl)
-    sample.sf_policy_target = _compact_f16(sample.sf_policy_target)
-    sample.categorical_target = _compact_f16(sample.categorical_target)
-    sample.policy_soft_target = _compact_f16(sample.policy_soft_target)
-    sample.future_policy_target = _compact_f16(sample.future_policy_target)
-    sample.volatility_target = _compact_f16(sample.volatility_target)
-    sample.sf_volatility_target = _compact_f16(sample.sf_volatility_target)
-    sample.legal_mask = _compact_u8(sample.legal_mask)
-    return sample
+# Lookup: value field name → has-flag field name (derived from shard.py's canonical pairs).
+_VALUE_TO_FLAG = {value: flag for value, flag in _OPTIONAL_STORAGE_PAIRS}
 
 
 def _zeros_for_missing_field(
@@ -221,30 +172,8 @@ def _concat_sparse_batches(chunks: list[dict[str, np.ndarray]]) -> dict[str, np.
         if any(name in chunk for chunk in chunks) or name in ("x", "policy_target", "wdl_target", "priority", "has_policy"):
             out[name] = merged
             continue
-        # value arrays are only needed when the corresponding has_* flag is present
-        flag_name = None
-        if name == "sf_wdl":
-            flag_name = "has_sf_wdl"
-        elif name == "sf_move_index":
-            flag_name = "has_sf_move"
-        elif name == "sf_policy_target":
-            flag_name = "has_sf_policy"
-        elif name == "moves_left":
-            flag_name = "has_moves_left"
-        elif name == "is_network_turn":
-            flag_name = "has_is_network_turn"
-        elif name == "categorical_target":
-            flag_name = "has_categorical"
-        elif name == "policy_soft_target":
-            flag_name = "has_policy_soft"
-        elif name == "future_policy_target":
-            flag_name = "has_future"
-        elif name == "volatility_target":
-            flag_name = "has_volatility"
-        elif name == "sf_volatility_target":
-            flag_name = "has_sf_volatility"
-        elif name == "legal_mask":
-            flag_name = "has_legal_mask"
+        # Value arrays are only needed when the corresponding has_* flag is present.
+        flag_name = _VALUE_TO_FLAG.get(name)
         if flag_name is not None and flag_name in out:
             out[name] = merged
     return out
@@ -624,8 +553,7 @@ class DiskReplayBuffer:
         """Add samples: into shuffle buffer immediately, flush to disk when full."""
         if not samples:
             return
-        compacted = [_compact_sample_inplace(s) for s in samples]
-        arrs = prune_storage_arrays(samples_to_arrays(compacted))
+        arrs = prune_storage_arrays(samples_to_arrays(samples))
 
         # Keep newest data available for training immediately in the hot buffer.
         self._append_shuffle_arrays(arrs)

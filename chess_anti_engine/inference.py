@@ -47,10 +47,10 @@ def _configure_compile_cache(cache_root: Path) -> None:
 
 
 def _coerce_input_batch(x: np.ndarray) -> np.ndarray:
-    arr = np.asarray(x, dtype=np.float32)
+    arr = np.ascontiguousarray(x, dtype=np.float32)
     if arr.ndim != 4:
         raise ValueError(f"expected encoded batch shape (B,C,H,W), got {arr.shape!r}")
-    return np.ascontiguousarray(arr)
+    return arr
 
 
 def _detach_attached_shm_from_resource_tracker(shm: SharedMemory) -> None:

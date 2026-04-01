@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 from typing import Optional
 
@@ -133,8 +134,8 @@ class ArrayReplayBuffer:
     def __init__(self, capacity: int, *, rng: np.random.Generator):
         self.capacity = int(capacity)
         self.rng = rng
-        self._chunks: list[dict[str, np.ndarray]] = []
-        self._chunk_sizes: list[int] = []
+        self._chunks: deque[dict[str, np.ndarray]] = deque()
+        self._chunk_sizes: deque[int] = deque()
         self._size = 0
         self._priority = np.zeros((0,), dtype=np.float32)
         self._wdl = np.zeros((0,), dtype=np.int8)
@@ -144,8 +145,8 @@ class ArrayReplayBuffer:
         return int(self._size)
 
     def clear(self) -> None:
-        self._chunks = []
-        self._chunk_sizes = []
+        self._chunks = deque()
+        self._chunk_sizes = deque()
         self._size = 0
         self._priority = np.zeros((0,), dtype=np.float32)
         self._wdl = np.zeros((0,), dtype=np.int8)
@@ -168,8 +169,8 @@ class ArrayReplayBuffer:
         while remaining > 0 and self._chunks:
             first_n = self._chunk_sizes[0]
             if remaining >= first_n:
-                self._chunks.pop(0)
-                self._chunk_sizes.pop(0)
+                self._chunks.popleft()
+                self._chunk_sizes.popleft()
                 self._size -= first_n
                 remaining -= first_n
                 continue
@@ -277,7 +278,12 @@ class ArrayReplayBuffer:
                 selected.append((chunk, mask, local))
                 present_optional.update(set(chunk.keys()) - required)
             start = end
-        prototype = {k: np.asarray(v) for chunk in self._chunks for k, v in chunk.items()}
+        # Build prototype from the selected chunks (only those with matching indices).
+        prototype: dict[str, np.ndarray] = {}
+        for chunk, _, _ in selected:
+            for k, v in chunk.items():
+                if k not in prototype:
+                    prototype[k] = np.asarray(v)
         out = {
             k: np.zeros((idx.shape[0], *prototype[k].shape[1:]), dtype=prototype[k].dtype)
             for k in sorted(required | present_optional)

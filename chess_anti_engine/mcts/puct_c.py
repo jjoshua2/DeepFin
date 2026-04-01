@@ -14,7 +14,7 @@ import torch
 from chess_anti_engine.encoding import encode_positions_batch
 from chess_anti_engine.inference import BatchEvaluator, LocalModelEvaluator
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
-from chess_anti_engine.mcts.puct import MCTSConfig, _terminal_value, _value_scalar_from_wdl_logits
+from chess_anti_engine.mcts.puct import MCTSConfig, _softmax_legal, _terminal_value, _value_scalar_from_wdl_logits
 from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.moves.encode import index_to_move_fast, legal_move_indices
 
@@ -24,15 +24,6 @@ try:
     _HAS_CBOARD = True
 except ImportError:
     _HAS_CBOARD = False
-
-
-def _softmax_legal(logits: np.ndarray, legal_idx: np.ndarray) -> np.ndarray:
-    """Softmax over legal moves only. Returns priors for each legal index."""
-    ll = logits[legal_idx].astype(np.float64)
-    ll -= np.max(ll)
-    e = np.exp(ll)
-    s = float(e.sum())
-    return (e / s) if s > 0 else np.full_like(e, 1.0 / e.size)
 
 
 def _replay_board(root_board: chess.Board, action_path: np.ndarray) -> chess.Board:

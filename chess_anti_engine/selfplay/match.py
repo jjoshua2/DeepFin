@@ -9,6 +9,7 @@ import torch
 from chess_anti_engine.mcts import MCTSConfig, GumbelConfig
 from chess_anti_engine.mcts.puct import run_mcts_many
 from chess_anti_engine.mcts.gumbel import run_gumbel_root_many
+from chess_anti_engine.moves import index_to_move
 from chess_anti_engine.selfplay.opening import OpeningConfig, make_starting_board
 
 try:
@@ -94,17 +95,40 @@ def play_match_batch(
     boards = [make_starting_board(rng=rng, cfg=opening_cfg) for _ in range(g)]
     done = [False] * g
 
+    def _pick_moves(model: torch.nn.Module, idxs: list[int]) -> list[int]:
+        if not idxs:
+            return []
+        sub_boards = [boards[i] for i in idxs]
+        if str(mcts_type) == "gumbel":
+            _gumbel_fn = _run_gumbel_root_many_c if _HAS_GUMBEL_C else run_gumbel_root_many
+            _probs, actions, _values, _masks = _gumbel_fn(
+                model, sub_boards, device=device, rng=rng,
+                cfg=GumbelConfig(simulations=int(mcts_simulations), temperature=float(temperature)),
+            )
+        else:
+            _puct_fn = _run_mcts_many_c if _HAS_C_TREE else run_mcts_many
+            _probs, actions, _values, _masks = _puct_fn(
+                model, sub_boards, device=device, rng=rng,
+                cfg=MCTSConfig(
+                    simulations=int(mcts_simulations), temperature=float(temperature),
+                    c_puct=float(c_puct), dirichlet_eps=0.0,
+                ),
+            )
+        return [int(a) for a in actions]
+
+    def _apply_moves(idxs: list[int], actions: list[int]) -> None:
+        for i, a in zip(idxs, actions, strict=True):
+            mv = index_to_move(int(a), boards[i])
+            if mv not in boards[i].legal_moves:
+                mv = next(iter(boards[i].legal_moves))
+            boards[i].push(mv)
+
     # Main play loop
     for _ply in range(int(max_plies)):
-        active = [i for i in range(g) if not done[i]]
-        if not active:
-            break
-
-        for i in active:
-            if boards[i].is_game_over(claim_draw=True):
+        active = [i for i in range(g) if not done[i] and not boards[i].is_game_over(claim_draw=True)]
+        for i in range(g):
+            if not done[i] and boards[i].is_game_over(claim_draw=True):
                 done[i] = True
-
-        active = [i for i in range(g) if not done[i]]
         if not active:
             break
 
@@ -116,53 +140,8 @@ def play_match_batch(
             a_moves_now = (boards[i].turn == chess.WHITE and a_is_white) or (boards[i].turn == chess.BLACK and not a_is_white)
             (a_to_move if a_moves_now else b_to_move).append(i)
 
-        def _pick_moves(model: torch.nn.Module, idxs: list[int]) -> list[int]:
-            if not idxs:
-                return []
-
-            sub_boards = [boards[i] for i in idxs]
-            if str(mcts_type) == "gumbel":
-                _gumbel_fn = _run_gumbel_root_many_c if _HAS_GUMBEL_C else run_gumbel_root_many
-                probs, actions, _values, _masks = _gumbel_fn(
-                    model,
-                    sub_boards,
-                    device=device,
-                    rng=rng,
-                    cfg=GumbelConfig(simulations=int(mcts_simulations), temperature=float(temperature)),
-                )
-            else:
-                _puct_fn = _run_mcts_many_c if _HAS_C_TREE else run_mcts_many
-                probs, actions, _values, _masks = _puct_fn(
-                    model,
-                    sub_boards,
-                    device=device,
-                    rng=rng,
-                    cfg=MCTSConfig(
-                        simulations=int(mcts_simulations),
-                        temperature=float(temperature),
-                        c_puct=float(c_puct),
-                        dirichlet_eps=0.0,
-                    ),
-                )
-            return [int(a) for a in actions]
-
-        a_actions = _pick_moves(model_a, a_to_move)
-        b_actions = _pick_moves(model_b, b_to_move)
-
-        # Apply chosen moves.
-        from chess_anti_engine.moves import index_to_move
-
-        for i, a in zip(a_to_move, a_actions, strict=True):
-            mv = index_to_move(int(a), boards[i])
-            if mv not in boards[i].legal_moves:
-                mv = next(iter(boards[i].legal_moves))
-            boards[i].push(mv)
-
-        for i, a in zip(b_to_move, b_actions, strict=True):
-            mv = index_to_move(int(a), boards[i])
-            if mv not in boards[i].legal_moves:
-                mv = next(iter(boards[i].legal_moves))
-            boards[i].push(mv)
+        _apply_moves(a_to_move, _pick_moves(model_a, a_to_move))
+        _apply_moves(b_to_move, _pick_moves(model_b, b_to_move))
 
     # Score from model_a perspective.
     a_win = a_draw = a_loss = 0

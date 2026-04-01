@@ -14,6 +14,15 @@ from chess_anti_engine.moves.encode import index_to_move_fast, legal_move_indice
 from chess_anti_engine.utils.amp import inference_autocast
 
 
+def _softmax_legal(logits: np.ndarray, legal_idx: np.ndarray) -> np.ndarray:
+    """Softmax over legal moves only. Returns priors for each legal index."""
+    ll = logits[legal_idx].astype(np.float64)
+    ll -= np.max(ll)
+    e = np.exp(ll)
+    s = float(e.sum())
+    return (e / s) if s > 0 else np.full_like(e, 1.0 / e.size)
+
+
 def _value_scalar_from_wdl_logits(wdl_logits: np.ndarray) -> float:
     # Convert (3,) logits into a scalar v in [-1,1] from side-to-move perspective.
     # Pure Python math is faster than numpy for 3-element arrays.
@@ -146,41 +155,6 @@ def _backprop(path: list[Node], value: float) -> None:
         v = -v  # switch perspective each ply
 
 
-def _init_root(model: torch.nn.Module, board: chess.Board, *, device: str, rng: np.random.Generator, cfg: MCTSConfig) -> Node:
-    root = Node(board.copy(stack=True), parent=None, prior=1.0)
-
-    if root.board.is_game_over():
-        root.N = 1
-        root.W = _terminal_value(root.board)
-        return root
-
-    x0 = encode_position(root.board, add_features=True)
-    xt = torch.from_numpy(x0[None, ...]).to(device)
-    with inference_autocast(device=device, enabled=bool(cfg.use_amp), dtype=str(cfg.amp_dtype)):
-        out = model(xt)
-    policy_out = _policy_output(out)
-    pol_logits = policy_out.detach().float().cpu().numpy().reshape(-1)
-    wdl_logits = out["wdl"].detach().float().cpu().numpy().reshape(-1)
-
-    legal_idx = legal_move_indices(root.board)
-    if legal_idx.size > 0:
-        legal_logits = pol_logits[legal_idx].astype(np.float64)
-        legal_logits -= np.max(legal_logits)
-        e = np.exp(legal_logits)
-        s = float(e.sum())
-        pri = (e / s) if s > 0 else np.full_like(e, 1.0 / e.size)
-
-        if cfg.dirichlet_eps > 0:
-            noise = rng.dirichlet(np.full(int(legal_idx.size), cfg.dirichlet_alpha)).astype(np.float64)
-            pri = (1 - cfg.dirichlet_eps) * pri + cfg.dirichlet_eps * noise
-
-        _expand_sparse(root, legal_idx, pri)
-
-    root.N = 1
-    root.W = _value_scalar_from_wdl_logits(wdl_logits)
-    return root
-
-
 def _init_root_from_logits(
     board: chess.Board,
     *,
@@ -189,7 +163,7 @@ def _init_root_from_logits(
     rng: np.random.Generator,
     cfg: MCTSConfig,
 ) -> Node:
-    """Create an MCTS root node from pre-computed model logits (avoids redundant forward pass)."""
+    """Create an MCTS root node from pre-computed model logits."""
     root = Node(board.copy(stack=True), parent=None, prior=1.0)
 
     if root.board.is_game_over():
@@ -199,11 +173,7 @@ def _init_root_from_logits(
 
     legal_idx = legal_move_indices(root.board)
     if legal_idx.size > 0:
-        legal_logits = pol_logits[legal_idx].astype(np.float64)
-        legal_logits -= np.max(legal_logits)
-        e = np.exp(legal_logits)
-        s = float(e.sum())
-        pri = (e / s) if s > 0 else np.full_like(e, 1.0 / e.size)
+        pri = _softmax_legal(pol_logits, legal_idx)
 
         if cfg.dirichlet_eps > 0:
             noise = rng.dirichlet(np.full(int(legal_idx.size), cfg.dirichlet_alpha)).astype(np.float64)
@@ -214,6 +184,17 @@ def _init_root_from_logits(
     root.N = 1
     root.W = _value_scalar_from_wdl_logits(wdl_logits)
     return root
+
+
+def _init_root(model: torch.nn.Module, board: chess.Board, *, device: str, rng: np.random.Generator, cfg: MCTSConfig) -> Node:
+    """Create root node by running a forward pass then delegating to _init_root_from_logits."""
+    x0 = encode_position(board, add_features=True)
+    xt = torch.from_numpy(x0[None, ...]).to(device)
+    with inference_autocast(device=device, enabled=bool(cfg.use_amp), dtype=str(cfg.amp_dtype)):
+        out = model(xt)
+    pol_logits = _policy_output(out).detach().float().cpu().numpy().reshape(-1)
+    wdl_logits = out["wdl"].detach().float().cpu().numpy().reshape(-1)
+    return _init_root_from_logits(board, pol_logits=pol_logits, wdl_logits=wdl_logits, rng=rng, cfg=cfg)
 
 
 def _terminal_value(board: chess.Board) -> float:
@@ -302,13 +283,7 @@ def run_mcts_many(
         for node, path, pol_logits, wdl_logits in zip(leaf_nodes, leaf_paths, pol_logits_batch, wdl_logits_batch, strict=True):
             legal_idx = legal_move_indices(node.board)
             if legal_idx.size > 0:
-                # Sparse softmax: only compute over legal moves
-                legal_logits = pol_logits[legal_idx].astype(np.float64)
-                legal_logits -= np.max(legal_logits)
-                e = np.exp(legal_logits)
-                s = float(e.sum())
-                legal_priors = (e / s) if s > 0 else np.full_like(e, 1.0 / e.size)
-                _expand_sparse(node, legal_idx, legal_priors)
+                _expand_sparse(node, legal_idx, _softmax_legal(pol_logits, legal_idx))
             v = _value_scalar_from_wdl_logits(wdl_logits.reshape(-1))
             _backprop(path, v)
 
@@ -331,7 +306,7 @@ def run_mcts_many(
             action = int(np.argmax(visits_full))
         else:
             # Sample over children only (not all 4672 entries).
-            p = child_visits.copy()
+            p = np.maximum(child_visits, 0.0)
             if cfg.temperature != 1.0:
                 np.power(p, 1.0 / float(cfg.temperature), out=p)
             ps = float(p.sum())

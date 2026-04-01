@@ -14,7 +14,7 @@ if _HAS_C_EXT:
 
 # Module-level imports for fused C path (avoid per-call import overhead)
 if _HAS_LC0_C_EXT:
-    from .lc0 import _c_encode_piece_planes, _check_repetitions
+    from .lc0 import _c_encode_piece_planes, _check_repetitions, _write_metadata_planes
 if _HAS_C_EXT:
     from .features import _c_compute
 
@@ -203,28 +203,7 @@ def _encode_fused_c(
     _check_repetitions(board, stack, stack_len, n_steps, out, 103)
 
     # ── Metadata planes ──
-    meta_idx = 96
-    for has in (
-        board.has_kingside_castling_rights(us),
-        board.has_queenside_castling_rights(us),
-        board.has_kingside_castling_rights(them),
-        board.has_queenside_castling_rights(them),
-    ):
-        if has:
-            out[meta_idx, :, :] = 1.0
-        meta_idx += 1
-
-    if ep_square is not None:
-        out[meta_idx, :, chess.square_file(ep_square)] = 1.0
-    meta_idx += 1
-
-    out[meta_idx, :, :] = 1.0
-    meta_idx += 1
-
-    out[meta_idx, :, :] = min(float(halfmove_clock), 100.0) / 100.0
-    meta_idx += 1
-
-    out[111, :, :] = 1.0
+    _write_metadata_planes(out, board)
 
     # ── Feature planes (reuse already-extracted bitboards) ──
     us_occ_cur = occ_w if us == chess.WHITE else occ_b

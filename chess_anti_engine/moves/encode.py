@@ -60,10 +60,6 @@ IDX_TO_UNDERPROMO = {0: chess.KNIGHT, 1: chess.BISHOP, 2: chess.ROOK}
 UNDERPROMO_DFS: list[int] = [-1, 0, 1]  # left, forward, right
 DF_TO_UNDERPROMO_DIR = {-1: 0, 0: 1, 1: 2}
 
-def _deorient_square(sq: chess.Square, turn: chess.Color) -> chess.Square:
-    return orient_square(sq, turn)
-
-
 _DELTA_TO_PLANE: dict[tuple[int, int], int] = {}
 _PLANE_TO_DELTA: dict[int, tuple[int, int]] = {}
 
