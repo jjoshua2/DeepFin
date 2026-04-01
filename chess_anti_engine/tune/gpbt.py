@@ -210,13 +210,12 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
     ):
         state = self._trial_state[trial]
 
-        # Debug: log every perturbation-boundary decision
         scores = {
             t.trial_id: (float(self._trial_state[t].last_score) if self._trial_state[t].last_score is not None else None)
             for t in tune_controller.get_live_trials()
         }
-        logger.warning(
-            "[GPBT-PL] _checkpoint_or_exploit called: trial=%s score=%.4f "
+        logger.info(
+            "[GPBT-PL] _checkpoint_or_exploit: trial=%s score=%.4f "
             "in_upper=%s in_lower=%s scores=%s upper=[%s] lower=[%s]",
             trial.trial_id,
             float(state.last_score) if state.last_score is not None else -1,

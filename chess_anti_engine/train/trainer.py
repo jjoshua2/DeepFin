@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -51,6 +53,7 @@ class TrainMetrics:
     volatility_loss: float
     sf_volatility_loss: float
     moves_left_loss: float
+    sf_wdl_loss: float = 0.0
     train_time_s: float = 0.0
     opt_step_time_s: float = 0.0
     train_steps_done: int = 0
@@ -314,7 +317,6 @@ class Trainer:
             (24, 6, float(fdp_mobility) if fdp_mobility is not None else _fdp),
             (30, 4, float(fdp_outposts) if fdp_outposts is not None else _fdp),
         ]
-        self.w_volatility = float(w_volatility)
         self.w_policy = float(w_policy)
         self.w_soft = float(w_soft)
         self.w_future = float(w_future)
@@ -322,6 +324,7 @@ class Trainer:
         self.w_sf_move = float(w_sf_move)
         self.w_sf_eval = float(w_sf_eval)
         self.w_categorical = float(w_categorical)
+        self.w_volatility = float(w_volatility)
         self.w_sf_volatility = float(w_sf_volatility) if w_sf_volatility is not None else float(w_volatility)
         self.w_moves_left = float(w_moves_left)
         self.w_sf_wdl = float(w_sf_wdl)
@@ -363,6 +366,41 @@ class Trainer:
 
     def _should_log_step_scalars(self) -> bool:
         return (self.step % self._tb_log_interval) == 0
+
+    @property
+    def _loss_kwargs(self) -> dict[str, float]:
+        return dict(
+            w_policy=self.w_policy, w_soft=self.w_soft, w_future=self.w_future,
+            w_wdl=self.w_wdl, w_sf_move=self.w_sf_move, w_sf_eval=self.w_sf_eval,
+            w_categorical=self.w_categorical, w_volatility=self.w_volatility,
+            w_sf_volatility=self.w_sf_volatility, w_moves_left=self.w_moves_left,
+            w_sf_wdl=self.w_sf_wdl, sf_wdl_conf_power=self.sf_wdl_conf_power,
+            sf_wdl_draw_scale=self.sf_wdl_draw_scale,
+        )
+
+    def _amp_context(self):
+        if self.use_amp and self.device.startswith("cuda"):
+            return torch.amp.autocast("cuda", dtype=self._amp_dtype)
+        return contextlib.nullcontext()
+
+    @staticmethod
+    def _extract_loss_scalars(losses: dict[str, torch.Tensor]) -> dict[str, float]:
+        """Extract all loss component scalars from compute_loss output."""
+        result = {}
+        for key in ("policy_ce", "wdl_ce", "sf_move_ce", "sf_eval_ce", "moves_left",
+                     "soft_policy_ce", "future_policy_ce", "categorical_ce",
+                     "volatility", "sf_volatility", "sf_wdl_ce"):
+            v = losses.get(key)
+            if isinstance(v, torch.Tensor):
+                result[key] = float(v.detach().item())
+            else:
+                result[key] = float(v or 0.0)
+        return result
+
+    def _log_metrics(self, metrics: TrainMetrics, tag: str) -> None:
+        """Log all TrainMetrics fields to TensorBoard under the given tag."""
+        for field_name, value in dataclasses.asdict(metrics).items():
+            self.writer.add_scalar(f"{tag}/{field_name}", float(value), self.step)
 
     def _sample_batch_tensors(
         self,
@@ -541,129 +579,68 @@ class Trainer:
                     else:
                         pg["lr"] = nb
 
+    @staticmethod
+    def _sf_move_accuracy(out: dict, batch: dict) -> tuple[float, float]:
+        """Compute SF move prediction accuracy (numerator, denominator)."""
+        sf_mask = batch.get("has_sf_move")
+        sf_logits = out.get("policy_sf")
+        if sf_mask is None or sf_logits is None:
+            return 0.0, 0.0
+        sf_mask_f = sf_mask.to(torch.float32)
+        pred = torch.argmax(sf_logits.detach(), dim=-1)
+        correct = (pred == batch["sf_move_index"]).to(torch.float32)
+        return float((correct * sf_mask_f).sum().item()), float(sf_mask_f.sum().item())
+
     @torch.no_grad()
     def _compute_metrics(self, *, buf: ReplayBuffer, batch_size: int, steps: int, tag: str) -> TrainMetrics:
-        loss_sum = 0.0
-        pol_sum = 0.0
-        soft_sum = 0.0
-        fut_sum = 0.0
-        wdl_sum = 0.0
-        sf_move_sum = 0.0
-        sf_move_acc_num = 0.0
-        sf_move_acc_den = 0.0
-        sf_sum = 0.0
-        cat_sum = 0.0
-        vol_sum = 0.0
-        sf_vol_sum = 0.0
-        ml_sum = 0.0
+        sums: dict[str, float] = {}
+        sf_acc_num = 0.0
+        sf_acc_den = 0.0
 
         mirror_p = self.mirror_prob if str(tag).startswith("train") else 0.0
 
         for batch in self._iter_prefetched_batches(
-            buf,
-            batch_size=batch_size,
-            mirror_prob=mirror_p,
-            count=int(steps),
+            buf, batch_size=batch_size, mirror_prob=mirror_p, count=int(steps),
         ):
-
-            if self.use_amp and self.device.startswith("cuda"):
-                with torch.amp.autocast("cuda", dtype=self._amp_dtype):
-                    out = self.model(batch["x"])
-                    losses = compute_loss(out, batch, w_policy=self.w_policy, w_soft=self.w_soft, w_future=self.w_future, w_wdl=self.w_wdl, w_sf_move=self.w_sf_move, w_sf_eval=self.w_sf_eval, w_categorical=self.w_categorical, w_volatility=self.w_volatility, w_sf_volatility=self.w_sf_volatility, w_moves_left=self.w_moves_left, w_sf_wdl=self.w_sf_wdl, sf_wdl_conf_power=self.sf_wdl_conf_power, sf_wdl_draw_scale=self.sf_wdl_draw_scale)
-                    loss = losses["total"]
-            else:
+            with self._amp_context():
                 out = self.model(batch["x"])
-                losses = compute_loss(out, batch, w_policy=self.w_policy, w_soft=self.w_soft, w_future=self.w_future, w_wdl=self.w_wdl, w_sf_move=self.w_sf_move, w_sf_eval=self.w_sf_eval, w_categorical=self.w_categorical, w_volatility=self.w_volatility, w_sf_volatility=self.w_sf_volatility, w_moves_left=self.w_moves_left, w_sf_wdl=self.w_sf_wdl, sf_wdl_conf_power=self.sf_wdl_conf_power, sf_wdl_draw_scale=self.sf_wdl_draw_scale)
-                loss = losses["total"]
+                losses = compute_loss(out, batch, **self._loss_kwargs)
 
-            loss_sum += float(loss.item())
-            pol_sum += float(losses["policy_ce"].detach().item())
+            scalars = self._extract_loss_scalars(losses)
+            scalars["loss"] = float(losses["total"].item())
+            for k, v in scalars.items():
+                sums[k] = sums.get(k, 0.0) + v
 
-            sp = losses.get("soft_policy_ce", None)
-            fp = losses.get("future_policy_ce", None)
-            cat = losses.get("categorical_ce", None)
-            vol = losses.get("volatility", None)
-            sf_vol = losses.get("sf_volatility", None)
-
-            soft_sum += float(sp.detach().item()) if isinstance(sp, torch.Tensor) else float(sp or 0.0)
-            fut_sum += float(fp.detach().item()) if isinstance(fp, torch.Tensor) else float(fp or 0.0)
-            wdl_sum += float(losses["wdl_ce"].detach().item())
-            sf_move_sum += float(losses["sf_move_ce"].detach().item())
-            sf_sum += float(losses["sf_eval_ce"].detach().item())
-
-            sf_mask = batch.get("has_sf_move")
-            if sf_mask is not None:
-                sf_mask = sf_mask.to(torch.float32)
-            else:
-                sf_mask = torch.zeros((batch["x"].shape[0],), device=batch["x"].device)
-
-            sf_logits = out.get("policy_sf")
-            if sf_logits is not None:
-                pred = torch.argmax(sf_logits.detach(), dim=-1)
-                correct = (pred == batch["sf_move_index"]).to(torch.float32)
-                sf_move_acc_num += float((correct * sf_mask).sum().item())
-                sf_move_acc_den += float(sf_mask.sum().item())
-
-            cat_sum += float(cat.detach().item()) if isinstance(cat, torch.Tensor) else float(cat or 0.0)
-            vol_sum += float(vol.detach().item()) if isinstance(vol, torch.Tensor) else float(vol or 0.0)
-            sf_vol_sum += float(sf_vol.detach().item()) if isinstance(sf_vol, torch.Tensor) else float(sf_vol or 0.0)
-            ml_sum += float(losses["moves_left"].detach().item())
+            acc_n, acc_d = self._sf_move_accuracy(out, batch)
+            sf_acc_num += acc_n
+            sf_acc_den += acc_d
 
         n = float(max(1, steps))
-
-        # Log averaged metrics once per eval call (not per-batch, which would
-        # overwrite the same self.step and keep only the last batch's value).
-        self.writer.add_scalar(f"{tag}/loss", loss_sum / n, self.step)
-        self.writer.add_scalar(f"{tag}/policy_loss", pol_sum / n, self.step)
-        self.writer.add_scalar(f"{tag}/soft_policy_loss", soft_sum / n, self.step)
-        self.writer.add_scalar(f"{tag}/future_policy_loss", fut_sum / n, self.step)
-        self.writer.add_scalar(f"{tag}/wdl_loss", wdl_sum / n, self.step)
-        self.writer.add_scalar(f"{tag}/sf_move_loss", sf_move_sum / n, self.step)
-        self.writer.add_scalar(f"{tag}/sf_move_acc", float(sf_move_acc_num / max(1.0, sf_move_acc_den)), self.step)
-        self.writer.add_scalar(f"{tag}/sf_eval_loss", sf_sum / n, self.step)
-        self.writer.add_scalar(f"{tag}/categorical_loss", cat_sum / n, self.step)
-        self.writer.add_scalar(f"{tag}/volatility_loss", vol_sum / n, self.step)
-        self.writer.add_scalar(f"{tag}/sf_volatility_loss", sf_vol_sum / n, self.step)
-        self.writer.add_scalar(f"{tag}/moves_left_loss", ml_sum / n, self.step)
-
-        return TrainMetrics(
-            loss=loss_sum / n,
-            policy_loss=pol_sum / n,
-            soft_policy_loss=soft_sum / n,
-            future_policy_loss=fut_sum / n,
-            wdl_loss=wdl_sum / n,
-            sf_move_loss=sf_move_sum / n,
-            sf_move_acc=float(sf_move_acc_num / max(1.0, sf_move_acc_den)),
-            sf_eval_loss=sf_sum / n,
-            categorical_loss=cat_sum / n,
-            volatility_loss=vol_sum / n,
-            sf_volatility_loss=sf_vol_sum / n,
-            moves_left_loss=ml_sum / n,
-            train_time_s=0.0,
-            opt_step_time_s=0.0,
-            train_steps_done=0,
-            train_samples_seen=0,
+        metrics = TrainMetrics(
+            loss=sums.get("loss", 0.0) / n,
+            policy_loss=sums.get("policy_ce", 0.0) / n,
+            soft_policy_loss=sums.get("soft_policy_ce", 0.0) / n,
+            future_policy_loss=sums.get("future_policy_ce", 0.0) / n,
+            wdl_loss=sums.get("wdl_ce", 0.0) / n,
+            sf_move_loss=sums.get("sf_move_ce", 0.0) / n,
+            sf_move_acc=float(sf_acc_num / max(1.0, sf_acc_den)),
+            sf_eval_loss=sums.get("sf_eval_ce", 0.0) / n,
+            categorical_loss=sums.get("categorical_ce", 0.0) / n,
+            volatility_loss=sums.get("volatility", 0.0) / n,
+            sf_volatility_loss=sums.get("sf_volatility", 0.0) / n,
+            moves_left_loss=sums.get("moves_left", 0.0) / n,
+            sf_wdl_loss=sums.get("sf_wdl_ce", 0.0) / n,
         )
+        self._log_metrics(metrics, tag)
+        return metrics
 
     def train_steps(self, buf: ReplayBuffer, *, batch_size: int, steps: int) -> TrainMetrics:
         self.model.train()
         train_wall_start = time.perf_counter()
 
-        # Accumulators — collect metrics from the actual training batches to avoid
-        # a redundant second forward pass through the buffer.
-        loss_sum = 0.0
-        pol_sum = 0.0
-        soft_sum = 0.0
-        fut_sum = 0.0
-        wdl_sum = 0.0
-        sf_move_sum = 0.0
-        sf_move_acc_num = 0.0
-        sf_move_acc_den = 0.0
-        sf_sum = 0.0
-        cat_sum = 0.0
-        vol_sum = 0.0
-        sf_vol_sum = 0.0
-        ml_sum = 0.0
+        sums: dict[str, float] = {}
+        sf_acc_num = 0.0
+        sf_acc_den = 0.0
         n_micro = 0
         opt_step_time_s = 0.0
         train_steps_done = 0
@@ -674,29 +651,15 @@ class Trainer:
           for _attempt in range(3):
             try:
                 self.opt.zero_grad(set_to_none=True)
-
-                step_loss = 0.0
-                step_pol = 0.0
-                step_soft = 0.0
-                step_fut = 0.0
-                step_wdl = 0.0
-                step_sf_move = 0.0
-                step_sf = 0.0
-                step_cat = 0.0
-                step_vol = 0.0
-                step_sf_vol = 0.0
-                step_ml = 0.0
+                step_sums: dict[str, float] = {}
                 step_sf_acc_num = 0.0
                 step_sf_acc_den = 0.0
                 step_n_micro = 0
 
                 for batch in self._iter_prefetched_batches(
-                    buf,
-                    batch_size=batch_size,
-                    mirror_prob=self.mirror_prob,
-                    count=self.accum_steps,
+                    buf, batch_size=batch_size,
+                    mirror_prob=self.mirror_prob, count=self.accum_steps,
                 ):
-
                     # Per-group feature dropout: independently zero each classical feature group.
                     base = int(self._base_input_planes)
                     x = batch["x"]
@@ -706,45 +669,22 @@ class Trainer:
                                 drop = (torch.rand((x.shape[0], 1, 1, 1), device=x.device) < g_p).to(x.dtype)
                                 x[:, base + g_off : base + g_off + g_len, :, :] *= (1.0 - drop)
 
-                    if self.use_amp and self.device.startswith("cuda"):
-                        with torch.amp.autocast("cuda", dtype=self._amp_dtype):
-                            out = self.model(batch["x"])
-                            losses = compute_loss(out, batch, w_policy=self.w_policy, w_soft=self.w_soft, w_future=self.w_future, w_wdl=self.w_wdl, w_sf_move=self.w_sf_move, w_sf_eval=self.w_sf_eval, w_categorical=self.w_categorical, w_volatility=self.w_volatility, w_sf_volatility=self.w_sf_volatility, w_moves_left=self.w_moves_left, w_sf_wdl=self.w_sf_wdl, sf_wdl_conf_power=self.sf_wdl_conf_power, sf_wdl_draw_scale=self.sf_wdl_draw_scale)
-                            loss = losses["total"] / self.accum_steps
-                        loss.backward()
-                    else:
-                        out = self.model(batch["x"])
-                        losses = compute_loss(out, batch, w_policy=self.w_policy, w_soft=self.w_soft, w_future=self.w_future, w_wdl=self.w_wdl, w_sf_move=self.w_sf_move, w_sf_eval=self.w_sf_eval, w_categorical=self.w_categorical, w_volatility=self.w_volatility, w_sf_volatility=self.w_sf_volatility, w_moves_left=self.w_moves_left, w_sf_wdl=self.w_sf_wdl, sf_wdl_conf_power=self.sf_wdl_conf_power, sf_wdl_draw_scale=self.sf_wdl_draw_scale)
+                    with self._amp_context():
+                        out = self.model(x)
+                        losses = compute_loss(out, batch, **self._loss_kwargs)
                         loss = losses["total"] / self.accum_steps
-                        loss.backward()
+                    loss.backward()
 
-                    # Accumulate metric scalars inline (no graph kept — just .item() values).
-                    sp = losses.get("soft_policy_ce", None)
-                    fp = losses.get("future_policy_ce", None)
-                    cat = losses.get("categorical_ce", None)
-                    vol = losses.get("volatility", None)
-                    sf_vol = losses.get("sf_volatility", None)
-                    step_loss += float(loss.item() * self.accum_steps)
-                    step_pol += float(losses["policy_ce"].detach().item())
-                    step_soft += float(sp.detach().item()) if isinstance(sp, torch.Tensor) else float(sp or 0.0)
-                    step_fut += float(fp.detach().item()) if isinstance(fp, torch.Tensor) else float(fp or 0.0)
-                    step_wdl += float(losses["wdl_ce"].detach().item())
-                    step_sf_move += float(losses["sf_move_ce"].detach().item())
-                    step_sf += float(losses["sf_eval_ce"].detach().item())
-                    step_cat += float(cat.detach().item()) if isinstance(cat, torch.Tensor) else float(cat or 0.0)
-                    step_vol += float(vol.detach().item()) if isinstance(vol, torch.Tensor) else float(vol or 0.0)
-                    step_sf_vol += float(sf_vol.detach().item()) if isinstance(sf_vol, torch.Tensor) else float(sf_vol or 0.0)
-                    step_ml += float(losses["moves_left"].detach().item())
+                    # Accumulate metric scalars (no graph kept).
+                    scalars = self._extract_loss_scalars(losses)
+                    scalars["loss"] = float(loss.item() * self.accum_steps)
+                    for k, v in scalars.items():
+                        step_sums[k] = step_sums.get(k, 0.0) + v
 
                     with torch.no_grad():
-                        sf_mask = batch.get("has_sf_move")
-                        sf_logits = out.get("policy_sf")
-                        if sf_mask is not None and sf_logits is not None:
-                            sf_mask_f = sf_mask.to(torch.float32)
-                            pred = torch.argmax(sf_logits.detach(), dim=-1)
-                            correct = (pred == batch["sf_move_index"]).to(torch.float32)
-                            step_sf_acc_num += float((correct * sf_mask_f).sum().item())
-                            step_sf_acc_den += float(sf_mask_f.sum().item())
+                        acc_n, acc_d = self._sf_move_accuracy(out, batch)
+                        step_sf_acc_num += acc_n
+                        step_sf_acc_den += acc_d
 
                     step_n_micro += 1
 
@@ -767,22 +707,12 @@ class Trainer:
                 continue
 
             # Success — commit metrics from this step.
-            loss_sum += step_loss
-            pol_sum += step_pol
-            soft_sum += step_soft
-            fut_sum += step_fut
-            wdl_sum += step_wdl
-            sf_move_sum += step_sf_move
-            sf_sum += step_sf
-            cat_sum += step_cat
-            vol_sum += step_vol
-            sf_vol_sum += step_sf_vol
-            ml_sum += step_ml
-            sf_move_acc_num += step_sf_acc_num
-            sf_move_acc_den += step_sf_acc_den
+            for k, v in step_sums.items():
+                sums[k] = sums.get(k, 0.0) + v
+            sf_acc_num += step_sf_acc_num
+            sf_acc_den += step_sf_acc_den
             n_micro += step_n_micro
 
-            # SWA: update averaged model after swa_start steps, every swa_freq steps.
             if (
                 self._swa_model is not None
                 and self.step >= self._swa_start
@@ -790,9 +720,8 @@ class Trainer:
             ):
                 self._swa_model.update_parameters(self.model)
 
-            # Step-aligned train logging (log unscaled loss from last micro-batch)
             if self._should_log_step_scalars():
-                self.writer.add_scalar("train/loss", float(step_loss / max(1, step_n_micro) if step_n_micro else 0.0), self.step)
+                self.writer.add_scalar("train/loss", float(step_sums.get("loss", 0.0) / max(1, step_n_micro)), self.step)
                 self.writer.add_scalar("train/lr", self.opt.param_groups[0]["lr"], self.step)
             self.step += 1
             train_steps_done += 1
@@ -800,48 +729,31 @@ class Trainer:
 
         train_time_s = time.perf_counter() - train_wall_start
         train_samples_seen = int(n_micro * batch_size)
-        train_steps_per_s = float(train_steps_done / max(train_time_s, 1e-9))
-        train_samples_per_s = float(train_samples_seen / max(train_time_s, 1e-9))
-        opt_steps_per_s = float(train_steps_done / max(opt_step_time_s, 1e-9)) if opt_step_time_s > 0.0 else 0.0
         n = float(max(1, n_micro))
         metrics = TrainMetrics(
-            loss=loss_sum / n,
-            policy_loss=pol_sum / n,
-            soft_policy_loss=soft_sum / n,
-            future_policy_loss=fut_sum / n,
-            wdl_loss=wdl_sum / n,
-            sf_move_loss=sf_move_sum / n,
-            sf_move_acc=float(sf_move_acc_num / max(1.0, sf_move_acc_den)),
-            sf_eval_loss=sf_sum / n,
-            categorical_loss=cat_sum / n,
-            volatility_loss=vol_sum / n,
-            sf_volatility_loss=sf_vol_sum / n,
-            moves_left_loss=ml_sum / n,
+            loss=sums.get("loss", 0.0) / n,
+            policy_loss=sums.get("policy_ce", 0.0) / n,
+            soft_policy_loss=sums.get("soft_policy_ce", 0.0) / n,
+            future_policy_loss=sums.get("future_policy_ce", 0.0) / n,
+            wdl_loss=sums.get("wdl_ce", 0.0) / n,
+            sf_move_loss=sums.get("sf_move_ce", 0.0) / n,
+            sf_move_acc=float(sf_acc_num / max(1.0, sf_acc_den)),
+            sf_eval_loss=sums.get("sf_eval_ce", 0.0) / n,
+            categorical_loss=sums.get("categorical_ce", 0.0) / n,
+            volatility_loss=sums.get("volatility", 0.0) / n,
+            sf_volatility_loss=sums.get("sf_volatility", 0.0) / n,
+            moves_left_loss=sums.get("moves_left", 0.0) / n,
+            sf_wdl_loss=sums.get("sf_wdl_ce", 0.0) / n,
             train_time_s=float(train_time_s),
             opt_step_time_s=float(opt_step_time_s),
             train_steps_done=int(train_steps_done),
             train_samples_seen=int(train_samples_seen),
         )
-        # Log aggregated metrics once (mirrors what _compute_metrics wrote under "train_avg/")
-        self.writer.add_scalar("train_avg/loss", metrics.loss, self.step)
-        self.writer.add_scalar("train_avg/policy_loss", metrics.policy_loss, self.step)
-        self.writer.add_scalar("train_avg/soft_policy_loss", metrics.soft_policy_loss, self.step)
-        self.writer.add_scalar("train_avg/future_policy_loss", metrics.future_policy_loss, self.step)
-        self.writer.add_scalar("train_avg/wdl_loss", metrics.wdl_loss, self.step)
-        self.writer.add_scalar("train_avg/sf_move_loss", metrics.sf_move_loss, self.step)
-        self.writer.add_scalar("train_avg/sf_move_acc", metrics.sf_move_acc, self.step)
-        self.writer.add_scalar("train_avg/sf_eval_loss", metrics.sf_eval_loss, self.step)
-        self.writer.add_scalar("train_avg/categorical_loss", metrics.categorical_loss, self.step)
-        self.writer.add_scalar("train_avg/volatility_loss", metrics.volatility_loss, self.step)
-        self.writer.add_scalar("train_avg/sf_volatility_loss", metrics.sf_volatility_loss, self.step)
-        self.writer.add_scalar("train_avg/moves_left_loss", metrics.moves_left_loss, self.step)
-        self.writer.add_scalar("train_avg/time_s", float(train_time_s), self.step)
-        self.writer.add_scalar("train_avg/opt_step_time_s", float(opt_step_time_s), self.step)
-        self.writer.add_scalar("train_avg/steps_done", float(train_steps_done), self.step)
-        self.writer.add_scalar("train_avg/samples_seen", float(train_samples_seen), self.step)
-        self.writer.add_scalar("train_avg/steps_per_s", float(train_steps_per_s), self.step)
-        self.writer.add_scalar("train_avg/samples_per_s", float(train_samples_per_s), self.step)
-        self.writer.add_scalar("train_avg/opt_steps_per_s", float(opt_steps_per_s), self.step)
+        self._log_metrics(metrics, "train_avg")
+        # Log throughput stats that aren't in TrainMetrics
+        self.writer.add_scalar("train_avg/steps_per_s", float(train_steps_done / max(train_time_s, 1e-9)), self.step)
+        self.writer.add_scalar("train_avg/samples_per_s", float(train_samples_seen / max(train_time_s, 1e-9)), self.step)
+        self.writer.add_scalar("train_avg/opt_steps_per_s", float(train_steps_done / max(opt_step_time_s, 1e-9)) if opt_step_time_s > 0.0 else 0.0, self.step)
         return metrics
 
     @torch.no_grad()

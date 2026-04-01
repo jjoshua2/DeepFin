@@ -115,7 +115,7 @@ _TRAIN_KEYS = (
     "use_compile", "swa_start", "swa_freq",
     "w_policy", "w_soft", "w_future", "w_wdl", "w_sf_move", "w_sf_eval",
     "w_categorical", "w_sf_volatility", "w_moves_left",
-    "w_sf_wdl", "sf_wdl_conf_power", "sf_wdl_draw_scale", "sf_wdl_floor", "sf_wdl_floor_at",
+    "w_sf_wdl", "sf_wdl_conf_power", "sf_wdl_draw_scale", "sf_wdl_floor", "sf_wdl_floor_at", "sf_wdl_floor_at_regret",
 )
 
 # tune section: all 1:1 passthrough.

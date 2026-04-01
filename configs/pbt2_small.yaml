@@ -32,7 +32,7 @@ worker_wheel_path: null  # Optional: built wheel to publish for remote worker se
 bootstrap_max_positions: 0   # 0 = load ALL positions (14.2M) — used by scripts/train_bootstrap.py
 bootstrap_train_steps: 0     # 0 = auto: train 1 epoch — used by scripts/train_bootstrap.py
 shared_shards_dir: null  # Disabled: start trials from bootstrap weights + fresh selfplay window
-salvage_seed_pool_dir: /home/josh/projects/chess/runs/pbt2_small/salvage/run30_sf_wdl_search
+salvage_seed_pool_dir: /home/josh/projects/chess/runs/pbt2_small/salvage/run33_regret_only
 salvage_restore_donor_config: false   # Use new PB2 hyperparams, not donor's
 salvage_restore_full_trainer_state: false  # Fresh optimizer/LR schedule
 salvage_reinit_volatility_heads: true
@@ -74,20 +74,20 @@ stockfish:
   pid_skill_demote_nodes: 1000
   pid_skill_nodes_on_promote: 1000
   pid_skill_nodes_on_demote: 1000
-  pid_random_move_prob_start: 0.35
-  pid_random_move_prob_min: 0.05
-  pid_random_move_prob_max: 1.0
-  pid_random_move_stage_end: 0.05   # Regret stage unlocks once rmp hits 5% floor
-  pid_max_rand_step: 0.01   # Smaller 1% steps to reduce PID overshoot/oscillation.
-  pid_max_rand_step_start: 0.05  # Large initial step so PID finds equilibrium fast.
-  pid_max_rand_step_ramp_iters: 4  # Use 0.05 step for first 4 iters, then 0.01.
-  pid_topk_stage_end: 0.50          # topk log-shrinks over the rmp schedule
-  pid_topk_min: 2                   # do not collapse to top-1; keep top-2 available
-  pid_suboptimal_wdl_regret_max: 0.50
+  pid_random_move_prob_start: 0.01   # Tiny fixed exploration (not PID-controlled)
+  pid_random_move_prob_min: 0.01    # Locked: rmp stage instantly complete
+  pid_random_move_prob_max: 0.01    # Locked
+  pid_random_move_stage_end: 0.01   # rmp stage instantly complete → PID jumps to regret
+  pid_max_rand_step: 0.01
+  pid_max_rand_step_start: 0.01
+  pid_max_rand_step_ramp_iters: 0
+  pid_topk_stage_end: 1.0
+  pid_topk_min: 12                  # Always full multipv — regret band is the sole difficulty lever
+  pid_suboptimal_wdl_regret_max: 1.0   # Wide enough to ease off, but not wastefully wide
   pid_suboptimal_wdl_regret_min: 0.01
-  pid_wdl_regret_start: 2.00       # start very easy — any top-2 move acceptable
+  pid_wdl_regret_start: 0.50       # start in the interesting range — regret 0.5 filters ~half of multipv moves
   pid_wdl_regret_min: 0.02         # hard floor
-  pid_wdl_regret_max: 2.0          # max if PID needs to ease off
+  pid_wdl_regret_max: 1.0          # max if PID needs to ease off
   pid_wdl_regret_stage_end: 0.05   # nodes unlock when regret reaches 5%
   pid_max_regret_step: 0.02        # max regret change per PID step
 
@@ -165,11 +165,11 @@ train:
   w_volatility: 0.10        # Pinned: top-5 median from Run 4
   w_sf_volatility: 0.05
   w_moves_left: 0.02
-  w_sf_wdl: 1.7             # High start so effective weight ≈1.0 at rand_prob=0.60; decays to floor as model improves.
+  w_sf_wdl: 1.7             # SF WDL weight at wide regret (easy opponent); decays to floor as regret tightens.
   sf_wdl_conf_power: 1.0    # Confidence damping: scale SF-WDL by (1-draw_prob)^power.
   sf_wdl_draw_scale: 0.55   # Pinned low-to-mid based on the healthier late-run settings.
-  sf_wdl_floor: 0.20        # Floor: keep 20% SF signal even at low random_move_prob (run26 value).
-  sf_wdl_floor_at: 0.5      # Run 26 value.
+  sf_wdl_floor: 0.20        # Floor: keep 20% SF signal even at tight regret.
+  sf_wdl_floor_at_regret: 0.10  # Regret value at which SF WDL weight hits the floor.
 
   accum_steps: 2    # Effective batch 512 (run26 value).
   warmup_steps: 72   # Run 26 default.
@@ -281,4 +281,4 @@ tune:
   # with only lr + w_wdl searched. Open up more dimensions to break plateau.
   #
   # Only pb2_bounds_* keys present here are searched; everything else is pinned.
-  pb2_bounds_sf_wdl_floor: [0.05, 0.5]
+  pb2_bounds_sf_wdl_floor: [0.20, 0.60]

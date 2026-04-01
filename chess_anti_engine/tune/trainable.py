@@ -174,6 +174,15 @@ def _wait_if_paused(
             f"(trial={trial_id}, resuming_iter={iteration})"
         )
 
+# Default weights for regret-only mode (rmp/topk pinned).
+# When regret is disabled, rmp/topk weights are restored automatically.
+_W_RMP = 0.0
+_W_TOPK = 0.0
+_W_REGRET = 350.0
+_W_NODES = 100.0
+_W_SKILL = 50.0
+
+
 def _opponent_strength(
     *,
     random_move_prob: float,
@@ -185,53 +194,77 @@ def _opponent_strength(
     pid_target_winrate: float = 0.53,
     wdl_regret: float = -1.0,
     wdl_regret_max: float = 1.0,
+    topk: int = -1,
+    topk_max: int = 12,
+    topk_min: int = 2,
 ) -> float:
-    """Composite metric capturing full difficulty progression.
+    """Composite metric: weighted sum of normalised difficulty factors.
 
-    Returns a single scalar (higher = harder opponent = better model):
-      Stage 1 (score   0-100): random_move_prob 1.0 → 0.0
-      Stage 2 (score 100-200): wdl_regret max → 0.0 (disabled = instant 100)
-      Stage 3 (score 200-300): sf_nodes min → max (log-scaled)
-      Stage 4 (score 300-500): skill_level 0 → 20
+    Each factor maps to 0.0 (easiest) → 1.0 (hardest), then scaled by its
+    weight.  All factors contribute independently — no sequential stages.
 
-    Difficulty is multiplied by (ema_winrate / target), capped at 1.0.
-    This penalises PID overshoot: a trial at rmp=0.25 with only 47% winrate
-    scores lower than one actually sustaining 53% at that difficulty.
-    High winrate is not rewarded (PID will tighten difficulty soon anyway).
+    Factors & weights (total max ≈ 500):
+      wdl_regret        ×350   — primary difficulty lever (regret-only mode)
+      sf_nodes          ×100   — search depth (log-scaled, secondary)
+      skill_level        ×50   — usually pinned at 20
+      random_move_prob    ×0   — pinned at 0.01, not a lever
+      topk                ×0   — pinned at multipv, not a lever
+
+    Final score multiplied by min(1, ema_winrate / target) to penalise
+    PID overshoot without rewarding above-target winrate.
     """
     rand_prob = float(random_move_prob)
     nodes = int(sf_nodes)
     skill = int(skill_level)
-
     min_nodes = int(min_nodes)
     max_nodes = int(max_nodes)
 
-    # Stage 1: random_move_prob 1.0→0.0 maps to score 0→100
-    stage1 = (1.0 - rand_prob) * 100.0
+    # rmp: 1.0→0.0 maps to 0→1
+    rmp_score = 1.0 - max(0.0, min(1.0, rand_prob))
 
-    # Stage 2: wdl_regret max→0.0 maps to score 100→200
-    # Negative regret means disabled — treat as fully complete.
-    if float(wdl_regret) < 0.0:
-        stage2 = 100.0
+    # topk: max→min maps to 0→1
+    k = int(topk)
+    k_max = max(1, int(topk_max))
+    k_min = max(1, int(topk_min))
+    if k < 0 or k_max <= k_min:
+        topk_score = 1.0  # not available — assume full difficulty
+    else:
+        k = max(k_min, min(k_max, k))
+        topk_score = 1.0 - (k - k_min) / max(1, k_max - k_min)
+
+    # regret: max→0 maps to 0→1 (negative = disabled = no contribution)
+    regret_enabled = float(wdl_regret) >= 0.0
+    if not regret_enabled:
+        regret_score = 0.0
     else:
         r_max = max(0.001, float(wdl_regret_max))
-        regret_frac = 1.0 - max(0.0, min(1.0, float(wdl_regret) / r_max))
-        stage2 = regret_frac * 100.0
+        regret_score = 1.0 - max(0.0, min(1.0, float(wdl_regret) / r_max))
 
-    # Stage 3: sf_nodes on log scale, maps to score 200→300
+    # nodes: log-scaled, min→max maps to 0→1
     if min_nodes < max_nodes and nodes > 0:
         log_frac = (math.log(max(nodes, min_nodes)) - math.log(max(1, min_nodes))) / (
             math.log(max(1, max_nodes)) - math.log(max(1, min_nodes))
         )
-        log_frac = max(0.0, min(1.0, log_frac))
+        nodes_score = max(0.0, min(1.0, log_frac))
     else:
-        log_frac = 0.0
-    stage3 = log_frac * 100.0
+        nodes_score = 0.0
 
-    # Stage 4: skill_level 0→20 maps to score 300→500
-    stage4 = (float(skill) / 20.0) * 200.0
+    # skill: 0→20 maps to 0→1
+    skill_score = max(0.0, min(1.0, float(skill) / 20.0))
 
-    difficulty = stage1 + stage2 + stage3 + stage4
+    # When regret is disabled, restore rmp/topk weights so the old
+    # multi-stage curriculum is reflected in opponent_strength.
+    w_rmp = 200.0 if not regret_enabled else _W_RMP
+    w_topk = 150.0 if not regret_enabled else _W_TOPK
+    w_regret = _W_REGRET if regret_enabled else 0.0
+
+    difficulty = (
+        w_rmp * rmp_score
+        + w_topk * topk_score
+        + w_regret * regret_score
+        + _W_NODES * nodes_score
+        + _W_SKILL * skill_score
+    )
 
     # Winrate scaling: penalise PID overshoot. Cap at 1.0 so above-target
     # winrate doesn't inflate the score (PID will raise difficulty instead).
@@ -646,14 +679,10 @@ def train_trial(config: dict):
         0, int(config.get("salvage_startup_post_share_max_train_steps", 0))
     )
 
-    # Dynamic sf_wdl weight schedule: start at w_sf_wdl (default 1.0, equal to w_wdl)
-    # and decline linearly as random_move_prob drops.  When random_move_prob reaches
-    # sf_wdl_floor_at (default 0.1), the weight is sf_wdl_floor (default 0.1).
-    # This bootstraps the value head from SF evaluations early on, then fades to
-    # game-outcome WDL once the model is strong enough to generate meaningful games.
+    # Dynamic sf_wdl weight schedule: start at w_sf_wdl when regret is wide (easy
+    # opponent), decline to sf_wdl_floor as regret tightens (hard opponent).
     sf_wdl_start = float(config.get("w_sf_wdl", 1.0))
     sf_wdl_floor = float(config.get("sf_wdl_floor", 0.1))
-    sf_wdl_floor_at = float(config.get("sf_wdl_floor_at", 0.1))  # random_move_prob at which we hit the floor
 
     # Restore from checkpoint if provided by Ray.
     # NOTE: we restore PID state later (after PID is constructed).
@@ -1594,22 +1623,38 @@ def train_trial(config: dict):
             # changes (including --resume with updated YAML) take effect.
             sf_wdl_start = float(config.get("w_sf_wdl", sf_wdl_start))
             sf_wdl_floor = float(config.get("sf_wdl_floor", sf_wdl_floor))
-            sf_wdl_floor_at = float(config.get("sf_wdl_floor_at", sf_wdl_floor_at))
+            sf_wdl_floor_at_regret = float(config.get(
+                "sf_wdl_floor_at_regret",
+                config.get("sf_wdl_floor_at", 0.10),  # fallback to old key
+            ))
+            regret_max = float(config.get("sf_pid_wdl_regret_max", 2.0))
 
-            # Dynamic sf_wdl weight: interpolate between sf_wdl_start and sf_wdl_floor
-            # based on how far random_move_prob has dropped from 1.0.
-            # At random_move_prob=1.0: full SF bootstrapping (sf_wdl_start).
-            # At random_move_prob=sf_wdl_floor_at: SF weight reaches sf_wdl_floor.
+            # Dynamic sf_wdl weight: interpolate based on difficulty proxy.
+            # Easy opponent → sf_wdl_start (high SF signal).
+            # Hard opponent → sf_wdl_floor.
             if sf_wdl_start > 0:
-                rp = current_rand  # 1.0 → 0.0 as model improves
-                # Linear interp: rp=1.0 → sf_wdl_start, rp=sf_wdl_floor_at → sf_wdl_floor
-                if rp >= 1.0:
-                    cur_sf_wdl = sf_wdl_start
-                elif rp <= sf_wdl_floor_at:
-                    cur_sf_wdl = sf_wdl_floor
+                if float(wdl_regret_used) >= 0.0:
+                    # Regret-based: wide regret (easy) → tight regret (hard).
+                    regret = float(wdl_regret_used)
+                    if regret >= regret_max:
+                        cur_sf_wdl = sf_wdl_start
+                    elif regret <= sf_wdl_floor_at_regret:
+                        cur_sf_wdl = sf_wdl_floor
+                    else:
+                        t = (regret - sf_wdl_floor_at_regret) / (regret_max - sf_wdl_floor_at_regret)
+                        cur_sf_wdl = sf_wdl_floor + t * (sf_wdl_start - sf_wdl_floor)
                 else:
-                    t = (rp - sf_wdl_floor_at) / (1.0 - sf_wdl_floor_at)
-                    cur_sf_wdl = sf_wdl_floor + t * (sf_wdl_start - sf_wdl_floor)
+                    # Regret disabled: fall back to rmp-based decay.
+                    # High rmp (easy) → sf_wdl_start, low rmp → sf_wdl_floor.
+                    sf_wdl_floor_at_rmp = float(config.get("sf_wdl_floor_at", 0.10))
+                    rmp = float(current_rand)
+                    if rmp >= 1.0:
+                        cur_sf_wdl = sf_wdl_start
+                    elif rmp <= sf_wdl_floor_at_rmp:
+                        cur_sf_wdl = sf_wdl_floor
+                    else:
+                        t = (rmp - sf_wdl_floor_at_rmp) / (1.0 - sf_wdl_floor_at_rmp)
+                        cur_sf_wdl = sf_wdl_floor + t * (sf_wdl_start - sf_wdl_floor)
                 trainer.w_sf_wdl = cur_sf_wdl
 
             train_t0 = time.monotonic()
@@ -1863,6 +1908,13 @@ def train_trial(config: dict):
 
             wdl_regret_next = float(pid.wdl_regret) if pid is not None else -1.0
 
+            _curr_topk = _effective_curriculum_topk(
+                random_move_prob=current_rand,
+                stage_end=float(config.get("sf_pid_topk_stage_end", config.get("sf_pid_random_move_stage_end", 0.5))),
+                topk_max=int(config.get("sf_multipv", 12)),
+                topk_min=int(config.get("sf_pid_topk_min", 1)),
+            )
+
             opp_strength = _opponent_strength(
                 random_move_prob=float(current_rand),
                 sf_nodes=int(sf_nodes_used),
@@ -1873,6 +1925,9 @@ def train_trial(config: dict):
                 pid_target_winrate=float(config.get("sf_pid_target_winrate", 0.53)),
                 wdl_regret=float(wdl_regret_used),
                 wdl_regret_max=float(config.get("sf_pid_wdl_regret_max", 1.0)),
+                topk=int(_curr_topk),
+                topk_max=int(config.get("sf_multipv", 12)),
+                topk_min=int(config.get("sf_pid_topk_min", 1)),
             )
             if opp_strength_ema == 0.0:
                 opp_strength_ema = float(opp_strength)
@@ -1895,12 +1950,6 @@ def train_trial(config: dict):
                 iteration_finished_at=time.monotonic(),
                 pause_started_at=distributed_pause_started_at,
                 pause_active=distributed_pause_active,
-            )
-            _curr_topk = _effective_curriculum_topk(
-                random_move_prob=current_rand,
-                stage_end=float(config.get("sf_pid_topk_stage_end", config.get("sf_pid_random_move_stage_end", 0.5))),
-                topk_max=int(config.get("sf_multipv", 12)),
-                topk_min=int(config.get("sf_pid_topk_min", 1)),
             )
             try:
                 trainer.writer.add_scalar("difficulty/opponent_strength", float(opp_strength), iteration_step)

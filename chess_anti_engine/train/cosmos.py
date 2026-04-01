@@ -11,7 +11,6 @@ other tensors (embeddings, biases, large matrices).
 from __future__ import annotations
 
 import math
-from typing import List
 
 import torch
 from torch import Tensor
@@ -50,14 +49,14 @@ def zeropower_via_newtonschulz5(G: Tensor, steps: int = 10, eps: float = 1e-7) -
 
 
 def cosmos(
-    params: List[Tensor],
-    grads: List[Tensor],
-    exp_avgs: List[Tensor],
-    exp_avg_sqs: List[Tensor],
-    exp_avgs_GG: List[Tensor],
-    exp_avgs_P: List[Tensor],
-    max_exp_avg_sqs: List[Tensor],
-    state_steps: List[int],
+    params: list[Tensor],
+    grads: list[Tensor],
+    exp_avgs: list[Tensor],
+    exp_avg_sqs: list[Tensor],
+    exp_avgs_GG: list[Tensor],
+    exp_avgs_P: list[Tensor],
+    max_exp_avg_sqs: list[Tensor],
+    state_steps: list[int],
     *,
     amsgrad: bool,
     beta1: float,
@@ -68,7 +67,7 @@ def cosmos(
     maximize: bool,
     ratio: float,
     gamma: float,
-    nestrov: bool,
+    nesterov: bool,
 ) -> None:
     for i, param in enumerate(params):
         grad = grads[i] if not maximize else -grads[i]
@@ -94,7 +93,7 @@ def cosmos(
                     torch.matmul(grad, exp_avg_p),
                 ) * (1 - beta2)
             else:
-                t = exp_avg_p.detach().clone().T
+                t = exp_avg_p.T
                 exp_avg_p = (
                     beta2 * torch.matmul(exp_avg_p, exp_avg_gg)
                     + (1 - beta2) * torch.matmul(grad.T, torch.matmul(grad, exp_avg_p))
@@ -111,7 +110,7 @@ def cosmos(
             low_rank_grad = torch.matmul(grad, exp_avg_p)
             exp_avg_sq.mul_(beta2).addcmul_(low_rank_grad, low_rank_grad.conj(), value=1 - beta2)
 
-            if nestrov:
+            if nesterov:
                 grad.add_(exp_avg, alpha=beta1)
                 grad.mul_(1 / (1 + beta1 * bias_correction1))
             else:
@@ -137,8 +136,8 @@ def cosmos(
 
         else:
             # AdamW fallback for 1D params, biases, embeddings, large matrices.
-            bias_correction1_adam = 1 - 0.9 ** step
-            exp_avg.mul_(beta1).add_(grad, alpha=0.1)
+            bias_correction1_adam = 1 - beta1 ** step
+            exp_avg.mul_(beta1).add_(grad, alpha=1.0 - beta1)
             exp_avg_sq.mul_(beta2).addcmul_(grad, grad.conj(), value=1 - beta2)
 
             if amsgrad:
@@ -167,7 +166,7 @@ class COSMOS(Optimizer):
         rank: Low-rank subspace dimension (default: 64).
         weight_decay: Weight decay coefficient (default: 0).
         gamma: Weight of the Muon (Newton-Schulz) component (default: 0.2).
-        nestrov: Use Nesterov momentum (default: True).
+        nesterov: Use Nesterov momentum (default: True).
         amsgrad: Use AMSGrad variant (default: False).
     """
 
@@ -181,7 +180,7 @@ class COSMOS(Optimizer):
         rank: int = 64,
         weight_decay: float = 0,
         gamma: float = 0.2,
-        nestrov: bool = True,
+        nesterov: bool = True,
         amsgrad: bool = False,
         *,
         maximize: bool = False,
@@ -200,7 +199,7 @@ class COSMOS(Optimizer):
         super().__init__(params, defaults)
         self.lr_ratio = lr_ratio
         self.rank = rank
-        self.nestrov = nestrov
+        self.nesterov = nesterov
         self.gamma = gamma
 
     def __setstate__(self, state: dict) -> None:
@@ -279,7 +278,7 @@ class COSMOS(Optimizer):
                 maximize=group['maximize'],
                 ratio=self.lr_ratio,
                 gamma=self.gamma,
-                nestrov=self.nestrov,
+                nesterov=self.nesterov,
             )
 
         return loss
