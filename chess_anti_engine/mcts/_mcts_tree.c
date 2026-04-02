@@ -437,11 +437,13 @@ static PyObject *MCTSTree_select_leaves(MCTSTreeObject *self, PyObject *args) {
 
         PyObject *is_exp = self->tree.expanded[leaf_id] ? Py_True : Py_False;
         Py_INCREF(is_exp);
+        PyObject *leaf_id_obj = PyLong_FromLong(leaf_id);
         PyObject *tup = PyTuple_Pack(4,
-            PyLong_FromLong(leaf_id),
+            leaf_id_obj,
             action_path ? action_path : Py_None,
             node_path ? node_path : Py_None,
             is_exp);
+        Py_XDECREF(leaf_id_obj);
         Py_XDECREF(action_path);
         Py_XDECREF(node_path);
         Py_DECREF(is_exp);
