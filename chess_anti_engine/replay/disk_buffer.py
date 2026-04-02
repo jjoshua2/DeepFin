@@ -14,6 +14,7 @@ from typing import Any
 
 import numpy as np
 
+from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 
 from .buffer import ReplaySample
@@ -22,6 +23,7 @@ from .shard import (
     _SHARD_FIELDS,
     arrays_to_samples,
     delete_shard_path,
+    densify_chunk,
     iter_shard_paths,
     load_shard_arrays,
     local_shard_path,
@@ -30,6 +32,7 @@ from .shard import (
     save_local_shard_arrays,
     shard_index,
     shard_positions,
+    sparsify_chunk,
 )
 
 _ARRAY_FIELD_ORDER = _SHARD_FIELDS
@@ -295,7 +298,7 @@ class DiskReplayBuffer:
         n, _, _ = _batch_dims(arrs)
         if n <= 0:
             return
-        self._shuffle_buf.append(dict(arrs))
+        self._shuffle_buf.append(sparsify_chunk(arrs))
         self._shuffle_sizes.append(n)
         self._shuffle_offsets.append(0)
         self._shuffle_size_total += n
@@ -680,19 +683,12 @@ class DiskReplayBuffer:
         idx = np.asarray(indices, dtype=np.int64)
         if idx.ndim != 1:
             idx = idx.reshape(-1)
-        template = next(iter(self._shuffle_buf))
-        _, policy_size, x_planes = _batch_dims(template)
-        categorical_bins = next(
-            (int(c["categorical_target"].shape[1]) for c in self._shuffle_buf if "categorical_target" in c),
-            DEFAULT_CATEGORICAL_BINS,
-        )
+        x_planes = int(next(iter(self._shuffle_buf))["x"].shape[1])
+        policy_size = POLICY_SIZE
         if idx.size == 0:
             return {
                 name: _zeros_for_missing_field(
-                    name,
-                    n=0,
-                    policy_size=policy_size,
-                    x_planes=x_planes,
+                    name, n=0, policy_size=policy_size, x_planes=x_planes,
                 )
                 for name in ("x", "policy_target", "wdl_target", "priority", "has_policy")
             }
@@ -700,32 +696,38 @@ class DiskReplayBuffer:
         if np.any(idx < 0) or np.any(idx >= self._shuffle_len()):
             raise IndexError("sample index out of shuffle-buffer range")
 
-        selected: list[tuple[dict[str, np.ndarray], np.ndarray, np.ndarray]] = []
-        required = {"x", "policy_target", "wdl_target", "priority", "has_policy"}
-        present_optional: set[str] = set()
+        # Densify each chunk's selected rows, then merge into output.
+        # This avoids shape mismatches when chunks have different sparse K values.
+        selected: list[tuple[dict[str, np.ndarray], np.ndarray]] = []
+        all_keys: set[str] = set()
         start = 0
         for chunk, chunk_n, chunk_off in zip(self._shuffle_buf, self._shuffle_sizes, self._shuffle_offsets):
             end = start + chunk_n
             mask = (idx >= start) & (idx < end)
             if np.any(mask):
                 local = idx[mask] - start + chunk_off
-                selected.append((chunk, mask, local))
-                present_optional.update(set(chunk.keys()) - required)
+                rows = {k: v[local] for k, v in chunk.items()}
+                dense_rows = densify_chunk(rows, policy_size=policy_size)
+                selected.append((dense_rows, mask))
+                all_keys.update(dense_rows.keys())
             start = end
 
-        out = {
-            name: _zeros_for_missing_field(
-                name,
-                n=int(idx.shape[0]),
-                policy_size=policy_size,
-                x_planes=x_planes,
-                categorical_bins=categorical_bins,
-            )
-            for name in sorted(required | present_optional)
-        }
-        for chunk, mask, local in selected:
-            for name, value in chunk.items():
-                out[name][mask] = value[local]
+        # Build prototype from ALL selected chunks so optional fields present
+        # in any chunk are allocated (not just those in the first chunk).
+        proto: dict[str, np.ndarray] = {}
+        for dense_rows, _ in selected:
+            for k, v in dense_rows.items():
+                if k not in proto:
+                    proto[k] = v
+        n_out = int(idx.shape[0])
+        out: dict[str, np.ndarray] = {}
+        for k in sorted(all_keys):
+            if k in proto:
+                out[k] = np.zeros((n_out, *proto[k].shape[1:]), dtype=proto[k].dtype)
+        for dense_rows, mask in selected:
+            for name, value in dense_rows.items():
+                if name in out:
+                    out[name][mask] = value
         return out
 
     def sample_batch_arrays(self, batch_size: int, *, wdl_balance: bool = True) -> dict[str, np.ndarray]:

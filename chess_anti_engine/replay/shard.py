@@ -76,6 +76,118 @@ _OPTIONAL_STORAGE_PAIRS = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Sparse policy storage for in-memory shuffle buffers
+# ---------------------------------------------------------------------------
+# Policy arrays are (N, 4672) but only ~30-40 entries are non-zero per row.
+# Storing as padded-sparse (values + column indices + lengths) saves ~10x
+# memory per policy field in the shuffle buffer.
+
+_POLICY_SPARSE_FIELDS = ("policy_target", "sf_policy_target", "policy_soft_target", "future_policy_target")
+
+
+def _padded_positions(nnz: np.ndarray, rows: np.ndarray, N: int) -> np.ndarray:
+    """Compute within-row position for each nonzero element (for padded-sparse layout)."""
+    row_starts = np.zeros(N + 1, dtype=np.int64)
+    np.cumsum(nnz, out=row_starts[1:])
+    return np.arange(len(rows), dtype=np.int64) - row_starts[rows]
+
+
+def _sparsify_policy(dense: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Convert (N, P) float16 dense policy → padded sparse (vals, cols, nnz)."""
+    N = dense.shape[0]
+    nz_mask = dense != 0
+    nnz = nz_mask.sum(axis=1).astype(np.uint16)
+    K = int(nnz.max()) if N > 0 else 0
+    if K == 0:
+        return (np.zeros((N, 0), dtype=dense.dtype),
+                np.zeros((N, 0), dtype=np.uint16),
+                nnz)
+    rows, col_idxs = np.nonzero(nz_mask)
+    vals_flat = dense[rows, col_idxs]
+    positions = _padded_positions(nnz, rows, N)
+    out_vals = np.zeros((N, K), dtype=dense.dtype)
+    out_cols = np.zeros((N, K), dtype=np.uint16)
+    out_vals[rows, positions] = vals_flat
+    out_cols[rows, positions] = col_idxs.astype(np.uint16)
+    return out_vals, out_cols, nnz
+
+
+def _densify_policy(vals: np.ndarray, cols: np.ndarray, nnz: np.ndarray,
+                    policy_size: int) -> np.ndarray:
+    """Convert padded sparse (vals, cols, nnz) → (N, P) dense."""
+    N = vals.shape[0]
+    K = vals.shape[1] if vals.ndim == 2 else 0
+    out = np.zeros((N, policy_size), dtype=vals.dtype)
+    if K == 0 or N == 0:
+        return out
+    valid = np.arange(K, dtype=np.uint16)[None, :] < nnz[:, None]
+    rows, ks = np.nonzero(valid)
+    out[rows, cols[rows, ks]] = vals[rows, ks]
+    return out
+
+
+def sparsify_chunk(arrs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    """Convert dense policy arrays in a chunk dict to padded-sparse format."""
+    out = dict(arrs)
+    for key in _POLICY_SPARSE_FIELDS:
+        if key not in out:
+            continue
+        dense = out[key]
+        if dense.ndim != 2 or dense.shape[1] <= 0:
+            continue
+        vals, cols, nnz = _sparsify_policy(dense)
+        out[key] = vals
+        out[f"{key}_cols"] = cols
+        out[f"{key}_nnz"] = nnz
+    # legal_mask: store as indices only (values are always 1)
+    if "legal_mask" in out:
+        mask = out["legal_mask"]
+        if mask.ndim == 2 and mask.shape[1] > 0:
+            N = mask.shape[0]
+            nz_mask = mask != 0
+            nnz = nz_mask.sum(axis=1).astype(np.uint16)
+            K = int(nnz.max()) if N > 0 else 0
+            if K > 0:
+                rows, col_idxs = np.nonzero(nz_mask)
+                positions = _padded_positions(nnz, rows, N)
+                idx_arr = np.zeros((N, K), dtype=np.uint16)
+                idx_arr[rows, positions] = col_idxs.astype(np.uint16)
+            else:
+                idx_arr = np.zeros((N, 0), dtype=np.uint16)
+            out["legal_mask"] = idx_arr
+            out["legal_mask_nnz"] = nnz
+    return out
+
+
+def densify_chunk(arrs: dict[str, np.ndarray], policy_size: int = POLICY_SIZE) -> dict[str, np.ndarray]:
+    """Convert padded-sparse policy arrays back to dense format."""
+    out = dict(arrs)
+    for key in _POLICY_SPARSE_FIELDS:
+        cols_key = f"{key}_cols"
+        nnz_key = f"{key}_nnz"
+        if cols_key not in out:
+            continue
+        dense = _densify_policy(out[key], out[cols_key], out[nnz_key], policy_size)
+        out[key] = dense
+        del out[cols_key]
+        del out[nnz_key]
+    # legal_mask
+    if "legal_mask_nnz" in out:
+        idx_arr = out["legal_mask"]
+        nnz = out["legal_mask_nnz"]
+        N = idx_arr.shape[0]
+        K = idx_arr.shape[1] if idx_arr.ndim == 2 else 0
+        mask = np.zeros((N, policy_size), dtype=np.uint8)
+        if K > 0 and N > 0:
+            valid = np.arange(K, dtype=np.uint16)[None, :] < nnz[:, None]
+            rows, ks = np.nonzero(valid)
+            mask[rows, idx_arr[rows, ks]] = 1
+        out["legal_mask"] = mask
+        del out["legal_mask_nnz"]
+    return out
+
+
 @dataclass(frozen=True)
 class ShardMeta:
     version: int = SHARD_VERSION

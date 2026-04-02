@@ -473,7 +473,7 @@ class SlotBroker:
             embed_dim=int(mc.get("embed_dim", 256)),
             num_layers=int(mc.get("num_layers", 6)),
             num_heads=int(mc.get("num_heads", 8)),
-            ffn_mult=int(mc.get("ffn_mult", 2)),
+            ffn_mult=float(mc.get("ffn_mult", 2)),
             use_smolgen=bool(mc.get("use_smolgen", True)),
             use_nla=bool(mc.get("use_nla", False)),
             use_qk_rmsnorm=bool(mc.get("use_qk_rmsnorm", False)),

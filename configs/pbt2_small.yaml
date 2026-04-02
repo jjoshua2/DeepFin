@@ -39,10 +39,10 @@ salvage_reinit_volatility_heads: true
 
 model:
   kind: transformer
-  embed_dim: 384     # 15M params, ~0.7 GB optimizer state for 4 trials in 32 GB VRAM
-  num_layers: 8
+  embed_dim: 384     # ~15M params, ~0.7 GB optimizer state for 4 trials in 32 GB VRAM
+  num_layers: 9
   num_heads: 12
-  ffn_mult: 2
+  ffn_mult: 1.5
   use_smolgen: true  # Pin to true (we know smolgen helps from spec)
   use_nla: false
   gradient_checkpointing: false

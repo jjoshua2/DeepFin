@@ -41,7 +41,7 @@ def build_model(cfg: ModelConfig) -> torch.nn.Module:
             embed_dim=int(cfg.embed_dim),
             num_layers=int(cfg.num_layers),
             num_heads=int(cfg.num_heads),
-            ffn_mult=int(cfg.ffn_mult),
+            ffn_mult=float(cfg.ffn_mult),
             use_smolgen=bool(cfg.use_smolgen),
             use_nla=bool(cfg.use_nla),
             use_qk_rmsnorm=bool(cfg.use_qk_rmsnorm),
@@ -98,38 +98,23 @@ def load_state_dict_tolerant(
     *,
     label: str = "checkpoint",
 ) -> None:
-    """Load checkpoint into *model*, tolerating value-head shape changes.
+    """Load checkpoint into *model*, tolerating shape and key mismatches.
 
-    Keys whose names start with a value-head prefix and whose shapes differ
-    between *ckpt_state* and *model* are silently dropped so the model keeps
-    its freshly-initialised value-head weights.  Any other shape mismatch or
-    unexpected missing/extra key is treated as a hard error.
+    Any key whose shape differs between checkpoint and model is silently
+    dropped (model keeps its freshly-initialised weights for that layer).
+    Missing and unexpected keys are logged but not fatal, allowing
+    architecture changes (new layers, renamed modules) to load gracefully.
     """
     model_state = model.state_dict()
     filtered = {}
     skipped: list[str] = []
     for k, v in ckpt_state.items():
         if k in model_state and v.shape != model_state[k].shape:
-            if any(k.startswith(p) for p in _VALUE_HEAD_PREFIXES):
-                skipped.append(k)
-                continue
-            raise RuntimeError(
-                f"[{label}] Shape mismatch for non-value-head key {k!r}: "
-                f"checkpoint {v.shape} vs model {model_state[k].shape}"
-            )
+            skipped.append(k)
+            continue
         filtered[k] = v
 
     missing, unexpected = model.load_state_dict(filtered, strict=False)
-    expected_missing = set(skipped)
-    bad_missing = [k for k in missing if k not in expected_missing
-                   and not any(k.startswith(p) for p in _VALUE_HEAD_PREFIXES)]
-    bad_unexpected = [k for k in unexpected
-                      if not any(k.startswith(p) for p in _VALUE_HEAD_PREFIXES)]
-    if bad_missing or bad_unexpected:
-        raise RuntimeError(
-            f"[{label}] Unexpected key mismatch — "
-            f"missing: {bad_missing}, unexpected: {bad_unexpected}"
-        )
     if skipped or missing or unexpected:
-        print(f"[{label}] Value head keys reinit (expected): "
-              f"skipped={skipped}, missing={missing}, unexpected={unexpected}")
+        print(f"[{label}] Tolerant load — shape_skipped={skipped}, "
+              f"missing={missing}, unexpected={unexpected}")

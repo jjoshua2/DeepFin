@@ -152,10 +152,11 @@ class ArrayReplayBuffer:
         self._wdl = np.zeros((0,), dtype=np.int8)
 
     def _append_arrays(self, arrs: dict[str, np.ndarray]) -> None:
+        from .shard import sparsify_chunk
         n = int(np.asarray(arrs["x"]).shape[0])
         if n <= 0:
             return
-        self._chunks.append({k: np.asarray(v) for k, v in arrs.items()})
+        self._chunks.append(sparsify_chunk({k: np.asarray(v) for k, v in arrs.items()}))
         self._chunk_sizes.append(n)
         self._size += n
         self._priority = np.concatenate([self._priority, np.asarray(arrs["priority"], dtype=np.float32)], axis=0)
@@ -256,6 +257,8 @@ class ArrayReplayBuffer:
         return np.concatenate(picks, axis=0)
 
     def _gather_rows(self, indices: np.ndarray) -> dict[str, np.ndarray]:
+        from .shard import densify_chunk
+        from chess_anti_engine.moves import POLICY_SIZE
         idx = np.asarray(indices, dtype=np.int64).reshape(-1)
         if not self._chunks:
             raise ValueError("ArrayReplayBuffer is empty")
@@ -266,31 +269,36 @@ class ArrayReplayBuffer:
                 for k, v in template.items()
                 if k in ("x", "policy_target", "wdl_target", "priority", "has_policy")
             }
-        selected: list[tuple[dict[str, np.ndarray], np.ndarray, np.ndarray]] = []
-        required = {"x", "policy_target", "wdl_target", "priority", "has_policy"}
-        present_optional: set[str] = set()
+        # Densify each chunk's selected rows, then merge into output.
+        # This avoids shape mismatches when chunks have different sparse K values.
+        selected: list[tuple[dict[str, np.ndarray], np.ndarray]] = []
+        all_keys: set[str] = set()
         start = 0
         for chunk, chunk_n in zip(self._chunks, self._chunk_sizes):
             end = start + chunk_n
             mask = (idx >= start) & (idx < end)
             if np.any(mask):
                 local = idx[mask] - start
-                selected.append((chunk, mask, local))
-                present_optional.update(set(chunk.keys()) - required)
+                rows = {k: v[local] for k, v in chunk.items()}
+                dense_rows = densify_chunk(rows, policy_size=POLICY_SIZE)
+                selected.append((dense_rows, mask))
+                all_keys.update(dense_rows.keys())
             start = end
-        # Build prototype from the selected chunks (only those with matching indices).
-        prototype: dict[str, np.ndarray] = {}
-        for chunk, _, _ in selected:
-            for k, v in chunk.items():
-                if k not in prototype:
-                    prototype[k] = np.asarray(v)
+        # Build prototype from ALL selected chunks so optional fields present
+        # in any chunk are allocated (not just those in the first chunk).
+        proto: dict[str, np.ndarray] = {}
+        for dense_rows, _ in selected:
+            for k, v in dense_rows.items():
+                if k not in proto:
+                    proto[k] = v
         out = {
-            k: np.zeros((idx.shape[0], *prototype[k].shape[1:]), dtype=prototype[k].dtype)
-            for k in sorted(required | present_optional)
+            k: np.zeros((idx.shape[0], *proto[k].shape[1:]), dtype=proto[k].dtype)
+            for k in sorted(all_keys) if k in proto
         }
-        for chunk, mask, local in selected:
-            for k, value in chunk.items():
-                out[k][mask] = value[local]
+        for dense_rows, mask in selected:
+            for k, value in dense_rows.items():
+                if k in out:
+                    out[k][mask] = value
         return out
 
     def _sample_raw_indices(self, batch_size: int) -> np.ndarray:

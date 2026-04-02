@@ -53,7 +53,7 @@ def main() -> None:
     ap.add_argument("--embed-dim", type=int, default=256)
     ap.add_argument("--num-layers", type=int, default=6)
     ap.add_argument("--num-heads", type=int, default=8)
-    ap.add_argument("--ffn-mult", type=int, default=2)
+    ap.add_argument("--ffn-mult", type=float, default=2)
     ap.add_argument("--use-smolgen", action="store_true")
     ap.add_argument("--use-nla", action="store_true")
     ap.add_argument("--gradient-checkpointing", action="store_true")
@@ -97,7 +97,7 @@ def main() -> None:
             "embed_dim": int(args.embed_dim),
             "num_layers": int(args.num_layers),
             "num_heads": int(args.num_heads),
-            "ffn_mult": int(args.ffn_mult),
+            "ffn_mult": float(args.ffn_mult),
             "use_smolgen": bool(args.use_smolgen),
             "use_nla": bool(args.use_nla),
             "gradient_checkpointing": bool(args.gradient_checkpointing),
@@ -108,7 +108,7 @@ def main() -> None:
         embed_dim=int(mc.get("embed_dim", 256)),
         num_layers=int(mc.get("num_layers", 6)),
         num_heads=int(mc.get("num_heads", 8)),
-        ffn_mult=int(mc.get("ffn_mult", 2)),
+        ffn_mult=float(mc.get("ffn_mult", 2)),
         use_smolgen=bool(mc.get("use_smolgen", True)),
         use_nla=bool(mc.get("use_nla", False)),
         use_gradient_checkpointing=bool(mc.get("gradient_checkpointing", False)),

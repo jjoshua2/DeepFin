@@ -230,7 +230,7 @@ def _publish_distributed_trial_state(
             "embed_dim": int(model_cfg.embed_dim),
             "num_layers": int(model_cfg.num_layers),
             "num_heads": int(model_cfg.num_heads),
-            "ffn_mult": int(model_cfg.ffn_mult),
+            "ffn_mult": float(model_cfg.ffn_mult),
             "use_smolgen": bool(model_cfg.use_smolgen),
             "use_nla": bool(model_cfg.use_nla),
             "use_qk_rmsnorm": bool(getattr(model_cfg, "use_qk_rmsnorm", False)),

@@ -609,7 +609,7 @@ def train_trial(config: dict):
         embed_dim=int(config.get("embed_dim", 256)),
         num_layers=int(config.get("num_layers", 6)),
         num_heads=int(config.get("num_heads", 8)),
-        ffn_mult=int(config.get("ffn_mult", 2)),
+        ffn_mult=float(config.get("ffn_mult", 2)),
         use_smolgen=bool(config.get("use_smolgen", True)),
         use_nla=bool(config.get("use_nla", False)),
         use_gradient_checkpointing=bool(config.get("gradient_checkpointing", False)),

@@ -317,7 +317,7 @@ def main() -> None:
     ap.add_argument("--embed-dim", type=int, default=256)
     ap.add_argument("--num-layers", type=int, default=6)
     ap.add_argument("--num-heads", type=int, default=8)
-    ap.add_argument("--ffn-mult", type=int, default=2)
+    ap.add_argument("--ffn-mult", type=float, default=2)
     ap.add_argument("--simulations", type=int, default=64)
     ap.add_argument("--boards", type=int, default=64)
     ap.add_argument("--mcts", type=str, default="gumbel_c", choices=["puct", "puct_c", "gumbel", "gumbel_c"])

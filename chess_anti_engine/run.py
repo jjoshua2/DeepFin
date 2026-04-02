@@ -317,7 +317,7 @@ def _run_single(args: argparse.Namespace) -> None:
             embed_dim=int(args.embed_dim),
             num_layers=int(args.num_layers),
             num_heads=int(args.num_heads),
-            ffn_mult=int(args.ffn_mult),
+            ffn_mult=float(args.ffn_mult),
             use_smolgen=not bool(args.no_smolgen),
             use_nla=bool(args.use_nla),
             use_gradient_checkpointing=bool(args.gradient_checkpointing),
@@ -1062,7 +1062,7 @@ def main() -> None:
     ap.add_argument("--embed-dim", type=int, default=256)
     ap.add_argument("--num-layers", type=int, default=6)
     ap.add_argument("--num-heads", type=int, default=8)
-    ap.add_argument("--ffn-mult", type=int, default=2)
+    ap.add_argument("--ffn-mult", type=float, default=2)
     ap.add_argument("--no-smolgen", action="store_true")
     ap.add_argument("--use-nla", action="store_true")
     ap.add_argument("--gradient-checkpointing", action="store_true",
