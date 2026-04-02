@@ -1231,13 +1231,25 @@ static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *
         return PyErr_NoMemory();
     }
 
+    /* Validate root_ids are within tree bounds */
+    for (int32_t qi = 0; qi < n_queries; qi++) {
+        if (root_ids[qi] < 0 || root_ids[qi] >= self->tree.node_count) {
+            PyErr_Format(PyExc_IndexError,
+                "root_ids[%d]=%d out of range [0, %d)",
+                qi, root_ids[qi], self->tree.node_count);
+            Py_DECREF(board_idx_arr); Py_DECREF(root_ids_arr);
+            Py_DECREF(forced_arr); Py_DECREF(enc_arr); Py_DECREF(root_qs_arr);
+            return NULL;
+        }
+    }
+
     /* Ensure CBoard cache covers existing nodes (not full capacity) */
     tree_ensure_cb_cache(&self->tree, self->tree.node_count);
 
-    /* Seed cache with root CBoards */
+    /* Seed cache with root CBoards (always overwrite to avoid stale entries) */
     for (int32_t qi = 0; qi < n_queries; qi++) {
         int32_t rid = root_ids[qi];
-        if (rid >= 0 && rid < self->tree.cb_cache_cap && !self->tree.cb_valid[rid]) {
+        if (rid >= 0 && rid < self->tree.cb_cache_cap) {
             int32_t bi = board_indices[qi];
             PyCBoard *root_pycb = (PyCBoard *)PyList_GET_ITEM(root_cbs_list, bi);
             self->tree.cb_cache[rid] = root_pycb->board;
