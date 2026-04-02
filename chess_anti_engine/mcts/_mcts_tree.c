@@ -1313,6 +1313,96 @@ static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *
 }
 
 
+/*
+ * finish_gumbel_rep(leaf_ids_int32, legal_list, pol_logits_float32,
+ *                   wdl_logits_float32, node_paths_list) -> None
+ *
+ * Fused expand + backprop after GPU eval:
+ * 1. batch_wdl_to_q (WDL logits → Q values)
+ * 2. expand_from_logits for each non-expanded leaf
+ * 3. backprop_many with Q values along node paths
+ */
+static PyObject *MCTSTree_finish_gumbel_rep(MCTSTreeObject *self, PyObject *args) {
+    PyObject *leaf_ids_obj, *legal_list, *pol_obj, *wdl_obj, *paths_list;
+    if (!PyArg_ParseTuple(args, "OOOOO",
+                          &leaf_ids_obj, &legal_list, &pol_obj, &wdl_obj, &paths_list))
+        return NULL;
+
+    PyArrayObject *leaf_ids_arr = (PyArrayObject *)PyArray_FROMANY(
+        leaf_ids_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *pol_arr = (PyArrayObject *)PyArray_FROMANY(
+        pol_obj, NPY_FLOAT32, 2, 2, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *wdl_arr = (PyArrayObject *)PyArray_FROMANY(
+        wdl_obj, NPY_FLOAT32, 2, 2, NPY_ARRAY_C_CONTIGUOUS);
+
+    if (!leaf_ids_arr || !pol_arr || !wdl_arr) {
+        Py_XDECREF(leaf_ids_arr); Py_XDECREF(pol_arr); Py_XDECREF(wdl_arr);
+        return NULL;
+    }
+
+    int32_t n_leaves = (int32_t)PyArray_SIZE(leaf_ids_arr);
+    const int32_t *leaf_ids = (const int32_t *)PyArray_DATA(leaf_ids_arr);
+    const float *pol_data = (const float *)PyArray_DATA(pol_arr);
+    const float *wdl_data = (const float *)PyArray_DATA(wdl_arr);
+
+    TreeData *t = &self->tree;
+
+    for (int32_t li = 0; li < n_leaves; li++) {
+        int32_t nid = leaf_ids[li];
+
+        /* Expand if not already expanded */
+        if (!t->expanded[nid]) {
+            PyObject *legal_arr_obj = PyList_GET_ITEM(legal_list, li);
+            PyArrayObject *legal_arr = (PyArrayObject *)PyArray_FROMANY(
+                legal_arr_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+            if (legal_arr) {
+                int32_t n_legal = (int32_t)PyArray_SIZE(legal_arr);
+                if (n_legal > 0) {
+                    const int32_t *legal = (const int32_t *)PyArray_DATA(legal_arr);
+                    const float *logits = pol_data + li * 4672;
+
+                    /* Softmax over legal moves */
+                    double priors_stack[256];
+                    double *priors = (n_legal <= 256) ? priors_stack
+                                                      : (double *)malloc(n_legal * sizeof(double));
+                    if (priors) {
+                        for (int32_t j = 0; j < n_legal; j++)
+                            priors[j] = (double)logits[legal[j]];
+                        softmax_inplace(priors, n_legal);
+                        tree_expand(t, nid, legal, priors, n_legal);
+                        if (priors != priors_stack) free(priors);
+                    }
+                }
+                Py_DECREF(legal_arr);
+            }
+        }
+
+        /* Compute Q from WDL logits */
+        double w = (double)wdl_data[li * 3 + 0];
+        double d = (double)wdl_data[li * 3 + 1];
+        double l = (double)wdl_data[li * 3 + 2];
+        double mx = w; if (d > mx) mx = d; if (l > mx) mx = l;
+        double ew = exp(w - mx), ed = exp(d - mx), el = exp(l - mx);
+        double s = ew + ed + el;
+        double q_val = (s > 0.0) ? ((ew - el) / s) : 0.0;
+
+        /* Backprop along node path */
+        PyObject *path_obj = PyList_GET_ITEM(paths_list, li);
+        PyArrayObject *path_arr = (PyArrayObject *)PyArray_FROMANY(
+            path_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+        if (path_arr) {
+            int32_t path_len = (int32_t)PyArray_SIZE(path_arr);
+            const int32_t *path = (const int32_t *)PyArray_DATA(path_arr);
+            tree_backprop(t, path, path_len, q_val);
+            Py_DECREF(path_arr);
+        }
+    }
+
+    Py_DECREF(leaf_ids_arr); Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
+    Py_RETURN_NONE;
+}
+
+
 static PyMethodDef MCTSTree_methods[] = {
     {"add_root", (PyCFunction)MCTSTree_add_root, METH_VARARGS,
      "add_root(N, W) -> int node_id"},
@@ -1332,6 +1422,8 @@ static PyMethodDef MCTSTree_methods[] = {
      "gumbel_collect_leaves(root_ids, forced_actions, c_scale, c_visit, c_puct, fpu_reduction, full_tree)"},
     {"prepare_gumbel_leaves", (PyCFunction)MCTSTree_prepare_gumbel_leaves, METH_VARARGS,
      "prepare_gumbel_leaves(root_cbs, board_idx, root_ids, forced, c_scale, c_visit, c_puct, fpu, full_tree, enc_buf, root_qs)"},
+    {"finish_gumbel_rep", (PyCFunction)MCTSTree_finish_gumbel_rep, METH_VARARGS,
+     "finish_gumbel_rep(leaf_ids, legal_list, pol_logits, wdl_logits, node_paths)"},
     {"gumbel_score_candidates", (PyCFunction)MCTSTree_gumbel_score_candidates, METH_VARARGS,
      "gumbel_score_candidates(root_id, cands, gumbels, priors, c_scale, c_visit)"},
     {"get_children_visits", (PyCFunction)MCTSTree_get_children_visits, METH_VARARGS,

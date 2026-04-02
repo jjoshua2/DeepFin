@@ -172,14 +172,6 @@ def run_gumbel_root_many_c(
     # reads from one buffer, the next rep's leaves are encoded into the other.
     _enc_buf2 = np.empty((_max_leaves, 146, 8, 8), dtype=np.float32) if _has_async else None
 
-    # Cache CBoard by node_id to avoid replaying full action paths from root.
-    # Root CBoards are seeded; children are built from parent copy+push.
-    _cb_cache: dict[int, CBoard] = {}
-    for i in range(n_boards):
-        rid = root_ids[i]
-        if rid >= 0:
-            _cb_cache[rid] = root_cboards[i]
-
     while True:
         active = [
             i for i in range(n_boards)
@@ -206,105 +198,7 @@ def run_gumbel_root_many_c(
 
         max_reps = max(visits_per_action.values(), default=0)
 
-        # ---- Helper: collect leaves + build CBoards for one rep ----
-        def _prepare_rep_c(rep: int, enc_buf: np.ndarray):
-            """Tree traversal + CBoard building + encoding for *rep*.
-
-            Returns None if no queries, otherwise a tuple of
-            (all_bi, leaf_ids, node_paths, need_eval, leaf_cbs,
-             leaf_legal, n_leaves, leaf_enc_slice).
-            Terminal nodes are backpropped immediately.
-            """
-            p_root_ids = []
-            p_forced = []
-            p_bi = []
-            for bi in active:
-                rem = remaining_per_board[bi]
-                if rem is None or rep >= visits_per_action[bi]:
-                    continue
-                rid = root_ids[bi]
-                if rid < 0:
-                    continue
-                for action in rem:
-                    p_root_ids.append(rid)
-                    p_forced.append(int(action))
-                    p_bi.append(bi)
-
-            if not p_root_ids:
-                return None
-
-            n_queries = len(p_root_ids)
-            root_ids_arr = np.array(p_root_ids, dtype=np.int32)
-            forced_arr = np.array(p_forced, dtype=np.int32)
-
-            p_leaf_ids, p_node_paths, p_action_paths = tree.gumbel_collect_leaves(
-                root_ids_arr, forced_arr,
-                _c_scale, _c_visit, _c_puct, _fpu_reduction, _full_tree,
-            )
-
-            p_leaf_cbs: list[CBoard | None] = [None] * n_queries
-            p_terminal_vals: list[float | None] = [None] * n_queries
-            p_need_eval: list[int] = []
-
-            for qi in range(n_queries):
-                bi = p_bi[qi]
-                np_arr = p_node_paths[qi]
-
-                if np_arr.size <= 1:
-                    p_terminal_vals[qi] = float(root_qs[bi])
-                    continue
-
-                cached_cb = None
-                replay_start = 0
-                for di in range(np_arr.size - 2, -1, -1):
-                    anc = int(np_arr[di])
-                    if anc in _cb_cache:
-                        cached_cb = _cb_cache[anc]
-                        replay_start = di + 1
-                        break
-
-                if cached_cb is None:
-                    ap = p_action_paths[qi]
-                    cb = root_cboards[bi].copy()
-                    for a in ap:
-                        cb.push_index(int(a))
-                else:
-                    cb = cached_cb.copy()
-                    ap = p_action_paths[qi]
-                    for ai in range(replay_start - 1, ap.size):
-                        cb.push_index(int(ap[ai]))
-
-                if cb.is_game_over():
-                    p_terminal_vals[qi] = float(cb.terminal_value())
-                else:
-                    p_leaf_cbs[qi] = cb
-                    p_need_eval.append(qi)
-
-            # Backprop terminals immediately
-            term_paths = []
-            term_values = []
-            p_need_eval_set = set(p_need_eval)
-            for qi in range(n_queries):
-                if p_terminal_vals[qi] is not None and qi not in p_need_eval_set:
-                    term_paths.append(p_node_paths[qi])
-                    term_values.append(float(p_terminal_vals[qi]))
-            if term_paths:
-                tree.backprop_many(term_paths, term_values)
-
-            if not p_need_eval:
-                return None
-
-            n_leaves = len(p_need_eval)
-            p_leaf_legal: list[np.ndarray | None] = [None] * n_leaves
-            for li, qi in enumerate(p_need_eval):
-                enc_buf[li], p_leaf_legal[li] = p_leaf_cbs[qi].encode_146_and_legal()
-
-            return (
-                p_bi, p_leaf_ids, p_node_paths, p_need_eval,
-                p_leaf_cbs, p_leaf_legal, n_leaves, enc_buf[:n_leaves],
-            )
-
-        # ---- C-accelerated variant: one C call replaces per-leaf Python loop ----
+        # ---- C-accelerated: one C call for tree traversal + CBoard + encode ----
         def _prepare_rep_c(rep: int, enc_buf: np.ndarray):
             """Same as _prepare_rep but uses tree.prepare_gumbel_leaves C function."""
             p_root_ids = []
@@ -346,27 +240,16 @@ def run_gumbel_root_many_c(
 
         # ---- Helper: sync GPU results and expand+backprop ----------
         def _finish_rep(prep, pol_logits_leaf, wdl_logits_leaf):
-            """Expand nodes and backprop values for a completed rep."""
+            """Expand nodes and backprop values for a completed rep (single C call)."""
             (
-                f_bi, f_leaf_ids, f_node_paths, f_need_eval,
-                f_leaf_cbs, f_leaf_legal, f_n_leaves, _enc_slice,
+                _f_bi, f_leaf_ids, f_node_paths, f_need_eval,
+                _f_leaf_cbs, f_leaf_legal, f_n_leaves, _enc_slice,
             ) = prep
-            q_vals = np.array(
-                tree.batch_wdl_to_q(wdl_logits_leaf), dtype=np.float64,
+            tree.finish_gumbel_rep(
+                f_leaf_ids, f_leaf_legal,
+                pol_logits_leaf[:f_n_leaves], wdl_logits_leaf[:f_n_leaves],
+                f_node_paths,
             )
-            expand_paths = []
-            expand_values = []
-            for li in range(f_n_leaves):
-                qi = f_need_eval[li]
-                nid = int(f_leaf_ids[qi])
-                legal = f_leaf_legal[li]
-                if legal.size > 0 and not tree.is_expanded(nid):
-                    tree.expand_from_logits(nid, legal, pol_logits_leaf[li])
-                _cb_cache[nid] = f_leaf_cbs[qi]
-                expand_paths.append(f_node_paths[qi])
-                expand_values.append(float(q_vals[li]))
-            if expand_paths:
-                tree.backprop_many(expand_paths, expand_values)
 
         # ---- Pipelined simulation loop --------------------------------
         # When async GPU eval is available, overlap GPU inference for rep N
