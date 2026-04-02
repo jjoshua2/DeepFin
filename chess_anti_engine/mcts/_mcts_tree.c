@@ -1198,18 +1198,23 @@ static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *
         return NULL;
     }
 
-    /* Validate root_cbs_list contains CBoard objects */
-    if (n_roots > 0) {
-        PyObject *first = PyList_GET_ITEM(root_cbs_list, 0);
-        /* Check that the object has a 'board' member at the expected CBoard offset.
-         * We verify the type name contains "CBoard" as a lightweight guard. */
-        const char *tp_name = Py_TYPE(first)->tp_name;
-        if (!tp_name || !strstr(tp_name, "CBoard")) {
-            PyErr_SetString(PyExc_TypeError,
-                "root_cbs_list must contain CBoard objects");
-            Py_DECREF(board_idx_arr); Py_DECREF(root_ids_arr);
-            Py_DECREF(forced_arr); Py_DECREF(enc_arr); Py_DECREF(root_qs_arr);
-            return NULL;
+    /* Validate root_cbs_list contains CBoard objects.
+     * Check every element that board_indices references (not just the first). */
+    {
+        PyTypeObject *cboard_type = NULL;
+        for (int32_t qi = 0; qi < n_queries; qi++) {
+            int32_t bi = board_indices[qi];
+            PyObject *item = PyList_GET_ITEM(root_cbs_list, bi);
+            const char *tp_name = Py_TYPE(item)->tp_name;
+            if (!tp_name || !strstr(tp_name, "CBoard")) {
+                PyErr_Format(PyExc_TypeError,
+                    "root_cbs_list[%d] is not a CBoard (got %s)", bi,
+                    tp_name ? tp_name : "NULL");
+                Py_DECREF(board_idx_arr); Py_DECREF(root_ids_arr);
+                Py_DECREF(forced_arr); Py_DECREF(enc_arr); Py_DECREF(root_qs_arr);
+                return NULL;
+            }
+            if (!cboard_type) cboard_type = Py_TYPE(item);
         }
     }
 
@@ -1510,9 +1515,10 @@ static PyObject *MCTSTree_finish_gumbel_rep(MCTSTreeObject *self, PyObject *args
         Py_DECREF(leaf_ids_arr); Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
         return NULL;
     }
-    if (PyArray_DIM(pol_arr, 0) < n_leaves || PyArray_DIM(wdl_arr, 0) < n_leaves) {
+    if (PyArray_DIM(pol_arr, 0) < n_leaves || PyArray_DIM(pol_arr, 1) != 4672 ||
+        PyArray_DIM(wdl_arr, 0) < n_leaves) {
         PyErr_SetString(PyExc_ValueError,
-            "pol_logits and wdl_logits must have at least n_leaves rows");
+            "pol_logits must be (n_leaves, 4672), wdl_logits (n_leaves, 3)");
         Py_DECREF(leaf_ids_arr); Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
         return NULL;
     }
