@@ -1190,6 +1190,29 @@ static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *
     Py_ssize_t n_root_qs = PyArray_SIZE(root_qs_arr);
     int32_t enc_capacity = (int32_t)PyArray_DIM(enc_arr, 0);
 
+    /* Validate enc_buf shape: (N, 146, 8, 8) */
+    if (PyArray_DIM(enc_arr, 1) != 146 || PyArray_DIM(enc_arr, 2) != 8 || PyArray_DIM(enc_arr, 3) != 8) {
+        PyErr_SetString(PyExc_ValueError, "enc_buf must have shape (N, 146, 8, 8)");
+        Py_DECREF(board_idx_arr); Py_DECREF(root_ids_arr);
+        Py_DECREF(forced_arr); Py_DECREF(enc_arr); Py_DECREF(root_qs_arr);
+        return NULL;
+    }
+
+    /* Validate root_cbs_list contains CBoard objects */
+    if (n_roots > 0) {
+        PyObject *first = PyList_GET_ITEM(root_cbs_list, 0);
+        /* Check that the object has a 'board' member at the expected CBoard offset.
+         * We verify the type name contains "CBoard" as a lightweight guard. */
+        const char *tp_name = Py_TYPE(first)->tp_name;
+        if (!tp_name || !strstr(tp_name, "CBoard")) {
+            PyErr_SetString(PyExc_TypeError,
+                "root_cbs_list must contain CBoard objects");
+            Py_DECREF(board_idx_arr); Py_DECREF(root_ids_arr);
+            Py_DECREF(forced_arr); Py_DECREF(enc_arr); Py_DECREF(root_qs_arr);
+            return NULL;
+        }
+    }
+
     const int32_t *board_indices = (const int32_t *)PyArray_DATA(board_idx_arr);
     const int32_t *root_ids = (const int32_t *)PyArray_DATA(root_ids_arr);
     const int32_t *forced_actions = (const int32_t *)PyArray_DATA(forced_arr);
@@ -1479,6 +1502,33 @@ static PyObject *MCTSTree_finish_gumbel_rep(MCTSTreeObject *self, PyObject *args
     const float *wdl_data = (const float *)PyArray_DATA(wdl_arr);
 
     TreeData *t = &self->tree;
+
+    /* Validate shapes and bounds */
+    if (PyList_Size(legal_list) < n_leaves || PyList_Size(paths_list) < n_leaves) {
+        PyErr_SetString(PyExc_ValueError,
+            "legal_list and paths_list must have at least n_leaves entries");
+        Py_DECREF(leaf_ids_arr); Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
+        return NULL;
+    }
+    if (PyArray_DIM(pol_arr, 0) < n_leaves || PyArray_DIM(wdl_arr, 0) < n_leaves) {
+        PyErr_SetString(PyExc_ValueError,
+            "pol_logits and wdl_logits must have at least n_leaves rows");
+        Py_DECREF(leaf_ids_arr); Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
+        return NULL;
+    }
+    if (PyArray_DIM(wdl_arr, 1) != 3) {
+        PyErr_SetString(PyExc_ValueError, "wdl_logits must have 3 columns");
+        Py_DECREF(leaf_ids_arr); Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
+        return NULL;
+    }
+    for (int32_t li = 0; li < n_leaves; li++) {
+        if (leaf_ids[li] < 0 || leaf_ids[li] >= t->node_count) {
+            PyErr_Format(PyExc_IndexError,
+                "leaf_ids[%d]=%d out of range [0, %d)", li, leaf_ids[li], t->node_count);
+            Py_DECREF(leaf_ids_arr); Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
+            return NULL;
+        }
+    }
 
     for (int32_t li = 0; li < n_leaves; li++) {
         int32_t nid = leaf_ids[li];
