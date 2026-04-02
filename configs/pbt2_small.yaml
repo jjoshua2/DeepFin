@@ -26,13 +26,13 @@ replay_window_growth: 9000   # ~15k pos/iter total (own ~5k + ~10k shared); grow
 
 # Bootstrap: train initial net on all random games, then discard from window
 bootstrap_dir: data/bootstrap
-bootstrap_checkpoint: /home/josh/projects/chess/data/bootstrap/bootstrap_net.pt  # Pre-trained (run scripts/train_bootstrap.py once)
+bootstrap_checkpoint: /home/josh/projects/chess/data/bootstrap/bootstrap_net_v2.pt  # LC0-aligned arch, trained on 2M bootstrap positions
 bootstrap_zero_policy_heads: true  # Bootstrap trained value/trunk only; start policy heads near-uniform on fresh runs.
 worker_wheel_path: null  # Optional: built wheel to publish for remote worker self-update.
 bootstrap_max_positions: 0   # 0 = load ALL positions (14.2M) — used by scripts/train_bootstrap.py
 bootstrap_train_steps: 0     # 0 = auto: train 1 epoch — used by scripts/train_bootstrap.py
 shared_shards_dir: null  # Disabled: start trials from bootstrap weights + fresh selfplay window
-salvage_seed_pool_dir: /home/josh/projects/chess/runs/pbt2_small/salvage/run33_regret_only
+salvage_seed_pool_dir: ""  # Disabled — fresh start with new arch
 salvage_restore_donor_config: false   # Use new PB2 hyperparams, not donor's
 salvage_restore_full_trainer_state: false  # Fresh optimizer/LR schedule
 salvage_reinit_volatility_heads: true
@@ -85,7 +85,7 @@ stockfish:
   pid_topk_min: 12                  # Always full multipv — regret band is the sole difficulty lever
   pid_suboptimal_wdl_regret_max: 1.0   # Wide enough to ease off, but not wastefully wide
   pid_suboptimal_wdl_regret_min: 0.01
-  pid_wdl_regret_start: 0.50       # start in the interesting range — regret 0.5 filters ~half of multipv moves
+  pid_wdl_regret_start: 0.75       # start easy for bootstrap model — PID will tighten as it improves
   pid_wdl_regret_min: 0.02         # hard floor
   pid_wdl_regret_max: 1.0          # max if PID needs to ease off
   pid_wdl_regret_stage_end: 0.05   # nodes unlock when regret reaches 5%
