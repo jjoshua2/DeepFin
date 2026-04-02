@@ -171,13 +171,11 @@ static int tree_ensure_cb_cache(TreeData *t, int32_t need) {
     int32_t new_cap = t->cb_cache_cap ? t->cb_cache_cap : 256;
     while (new_cap < need) new_cap *= 2;
     CBoard *new_cb = (CBoard *)realloc(t->cb_cache, new_cap * sizeof(CBoard));
+    if (!new_cb) return -1;
+    t->cb_cache = new_cb;
     int8_t *new_valid = (int8_t *)realloc(t->cb_valid, new_cap * sizeof(int8_t));
-    if (!new_cb || !new_valid) {
-        /* realloc failure — keep old pointers if non-NULL */
-        if (new_cb && new_cb != t->cb_cache) t->cb_cache = new_cb;
-        if (new_valid && new_valid != t->cb_valid) t->cb_valid = new_valid;
-        return -1;
-    }
+    if (!new_valid) return -1;
+    t->cb_valid = new_valid;
     memset(new_valid + t->cb_cache_cap, 0, (new_cap - t->cb_cache_cap) * sizeof(int8_t));
     t->cb_cache = new_cb;
     t->cb_valid = new_valid;
@@ -1277,35 +1275,39 @@ static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *
             continue;
         }
 
-        /* Replay CBoard: find closest cached ancestor, then push remaining moves */
+        /* Replay CBoard: chase parent pointers to find closest cached ancestor,
+         * then push moves from there to leaf. O(depth) hops, typically 1-3. */
         CBoard cb;
-        int32_t replay_from = 0;  /* index into node_path to start replaying from */
         TreeData *t = &self->tree;
         int cache_ok = (t->cb_cache != NULL);
+        int32_t replay_actions[512];
+        int32_t n_replay = 0;
+        int32_t found_cached = 0;
 
         if (cache_ok) {
-            /* Walk backward through node_path for cached ancestor */
-            for (int32_t di = path_len - 2; di >= 0; di--) {
-                int32_t anc = path_buf[di];
-                if (anc < t->cb_cache_cap && t->cb_valid[anc]) {
-                    cb = t->cb_cache[anc];
-                    replay_from = di + 1;
+            /* Walk from leaf's parent toward root via parent pointers */
+            int32_t nid = leaf_id;
+            while (nid >= 0 && n_replay < 512) {
+                if (nid < t->cb_cache_cap && t->cb_valid[nid]) {
+                    cb = t->cb_cache[nid];
+                    found_cached = 1;
                     break;
                 }
+                int32_t act = t->action_from_parent[nid];
+                if (act >= 0) replay_actions[n_replay++] = act;
+                nid = t->parent[nid];
             }
         }
-        if (replay_from == 0) {
+        if (!found_cached) {
             /* No cache hit — start from root */
             int32_t bi = board_indices[qi];
             PyCBoard *root_pycb = (PyCBoard *)PyList_GET_ITEM(root_cbs_list, bi);
             cb = root_pycb->board;
+            /* Replay all moves from root (action_from_parent chain already collected) */
         }
-        /* Push moves from replay_from to leaf using action_from_parent */
-        for (int32_t di = replay_from; di < path_len; di++) {
-            int32_t nid = path_buf[di];
-            int32_t act = t->action_from_parent[nid];
-            if (act >= 0) cboard_push_index(&cb, act);
-        }
+        /* Push collected actions in reverse (root→leaf order) */
+        for (int32_t ri = n_replay - 1; ri >= 0; ri--)
+            cboard_push_index(&cb, replay_actions[ri]);
 
         if (cboard_is_game_over(&cb)) {
             term_paths[n_terminals] = all_node_paths[qi];
