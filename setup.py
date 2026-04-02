@@ -30,7 +30,7 @@ lc0_ext = Extension(
 mcts_tree_ext = Extension(
     "chess_anti_engine.mcts._mcts_tree",
     sources=["chess_anti_engine/mcts/_mcts_tree.c"],
-    include_dirs=[np.get_include()],
+    include_dirs=[np.get_include(), "chess_anti_engine/encoding"],
     extra_compile_args=_ext_compile_args(),
 )
 

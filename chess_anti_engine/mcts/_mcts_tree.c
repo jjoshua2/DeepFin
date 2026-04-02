@@ -24,6 +24,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Pure-C CBoard implementation (bitboard utilities, attack tables, move gen, CBoard) */
+#include "../encoding/_cboard_impl.h"
+
 /* ================================================================
  * Tree data structure
  * ================================================================ */
@@ -1130,6 +1133,7 @@ static struct PyModuleDef mcts_tree_module = {
 
 PyMODINIT_FUNC PyInit__mcts_tree(void) {
     import_array();
+    cboard_init_all();
 
     if (PyType_Ready(&MCTSTreeType) < 0)
         return NULL;

@@ -83,13 +83,13 @@ stockfish:
   pid_max_rand_step_ramp_iters: 0
   pid_topk_stage_end: 1.0
   pid_topk_min: 12                  # Always full multipv — regret band is the sole difficulty lever
-  pid_suboptimal_wdl_regret_max: 1.0   # Wide enough to ease off, but not wastefully wide
+  pid_suboptimal_wdl_regret_max: 2.0   # Allow very wide regret for bootstrap warmup
   pid_suboptimal_wdl_regret_min: 0.01
-  pid_wdl_regret_start: 0.75       # start easy for bootstrap model — PID will tighten as it improves
+  pid_wdl_regret_start: 1.50       # start very easy for bootstrap model — PID tightens as it improves
   pid_wdl_regret_min: 0.02         # hard floor
-  pid_wdl_regret_max: 1.0          # max if PID needs to ease off
+  pid_wdl_regret_max: 2.0          # max if PID needs to ease off
   pid_wdl_regret_stage_end: 0.05   # nodes unlock when regret reaches 5%
-  pid_max_regret_step: 0.02        # max regret change per PID step
+  pid_max_regret_step: 0.04        # larger steps for faster PID response during bootstrap warmup
 
 selfplay:
   games_per_iter: 120  # Run 26 default.
