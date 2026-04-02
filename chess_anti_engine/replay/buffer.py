@@ -262,12 +262,14 @@ class ArrayReplayBuffer:
         idx = np.asarray(indices, dtype=np.int64).reshape(-1)
         if not self._chunks:
             raise ValueError("ArrayReplayBuffer is empty")
-        template = self._chunks[0]
         if idx.size == 0:
+            x_planes = int(np.asarray(self._chunks[0]["x"]).shape[1])
             return {
-                k: np.empty((0, *np.asarray(v).shape[1:]), dtype=np.asarray(v).dtype)
-                for k, v in template.items()
-                if k in ("x", "policy_target", "wdl_target", "priority", "has_policy")
+                "x": np.empty((0, x_planes, 8, 8), dtype=np.float16),
+                "policy_target": np.empty((0, POLICY_SIZE), dtype=np.float16),
+                "wdl_target": np.empty((0,), dtype=np.int8),
+                "priority": np.empty((0,), dtype=np.float32),
+                "has_policy": np.empty((0,), dtype=np.uint8),
             }
         # Densify each chunk's selected rows, then merge into output.
         # This avoids shape mismatches when chunks have different sparse K values.
