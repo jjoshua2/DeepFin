@@ -1143,11 +1143,39 @@ static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *
     }
 
     int32_t n_queries = (int32_t)PyArray_SIZE(root_ids_arr);
+
+    /* Validate input lengths match */
+    if ((int32_t)PyArray_SIZE(board_idx_arr) != n_queries ||
+        (int32_t)PyArray_SIZE(forced_arr) != n_queries) {
+        PyErr_SetString(PyExc_ValueError,
+            "board_indices, root_ids, and forced_actions must have equal length");
+        Py_DECREF(board_idx_arr); Py_DECREF(root_ids_arr);
+        Py_DECREF(forced_arr); Py_DECREF(enc_arr); Py_DECREF(root_qs_arr);
+        return NULL;
+    }
+
+    Py_ssize_t n_roots = PyList_Size(root_cbs_list);
+    Py_ssize_t n_root_qs = PyArray_SIZE(root_qs_arr);
+    int32_t enc_capacity = (int32_t)PyArray_DIM(enc_arr, 0);
+
     const int32_t *board_indices = (const int32_t *)PyArray_DATA(board_idx_arr);
     const int32_t *root_ids = (const int32_t *)PyArray_DATA(root_ids_arr);
     const int32_t *forced_actions = (const int32_t *)PyArray_DATA(forced_arr);
     float *enc_data = (float *)PyArray_DATA(enc_arr);
     const double *root_qs = (const double *)PyArray_DATA(root_qs_arr);
+
+    /* Bounds-check board_indices against root_cbs_list and root_qs */
+    for (int32_t qi = 0; qi < n_queries; qi++) {
+        if (board_indices[qi] < 0 || board_indices[qi] >= (int32_t)n_roots ||
+            board_indices[qi] >= (int32_t)n_root_qs) {
+            PyErr_Format(PyExc_IndexError,
+                "board_indices[%d]=%d out of range [0, %zd)",
+                qi, board_indices[qi], n_roots);
+            Py_DECREF(board_idx_arr); Py_DECREF(root_ids_arr);
+            Py_DECREF(forced_arr); Py_DECREF(enc_arr); Py_DECREF(root_qs_arr);
+            return NULL;
+        }
+    }
 
     /* Step 1: tree traversal (reuse existing C function) */
     int32_t path_buf[512];
@@ -1218,7 +1246,15 @@ static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *
             term_values[n_terminals] = (double)cboard_terminal_value(&cb);
             n_terminals++;
         } else {
-            /* Encode into pre-allocated buffer */
+            /* Encode into pre-allocated buffer (bounds-checked) */
+            if (n_leaves >= enc_capacity) {
+                /* Buffer full — treat remaining as terminal (skip encoding) */
+                term_paths[n_terminals] = all_node_paths[qi];
+                term_path_lens[n_terminals] = path_len;
+                term_values[n_terminals] = 0.0;
+                n_terminals++;
+                continue;
+            }
             cboard_encode_146_into(&cb, enc_data + n_leaves * 146 * 64);
             leaf_boards[n_leaves] = cb;
             need_eval[n_leaves] = qi;
@@ -1226,18 +1262,11 @@ static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *
         }
     }
 
-    /* Backprop terminals */
-    for (int32_t ti = 0; ti < n_terminals; ti++) {
-        tree_backprop(&self->tree, term_paths[ti], term_path_lens[ti], term_values[ti]);
-    }
-
-    /* Clean up terminal-only storage */
-    free(term_paths);
-    free(term_path_lens);
-    free(term_values);
-
     if (n_leaves == 0) {
-        /* Free everything, return None */
+        /* Backprop terminals and return None */
+        for (int32_t ti = 0; ti < n_terminals; ti++)
+            tree_backprop(&self->tree, term_paths[ti], term_path_lens[ti], term_values[ti]);
+        free(term_paths); free(term_path_lens); free(term_values);
         for (int32_t qi = 0; qi < n_queries; qi++) free(all_node_paths[qi]);
         free(all_node_paths); free(all_path_lens);
         free(need_eval); free(leaf_boards); free(leaf_ids_data);
@@ -1246,7 +1275,8 @@ static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *
         Py_RETURN_NONE;
     }
 
-    /* Build Python return values */
+    /* Build Python return values BEFORE committing tree mutations,
+     * so allocation failures leave the tree untouched. */
 
     /* need_eval array */
     npy_intp ne_dims[1] = {n_leaves};
@@ -1299,7 +1329,12 @@ static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *
         PyList_SET_ITEM(cb_list, li, (PyObject *)pycb);
     }
 
+    /* All Python objects built successfully — now commit tree mutations. */
+    for (int32_t ti = 0; ti < n_terminals; ti++)
+        tree_backprop(&self->tree, term_paths[ti], term_path_lens[ti], term_values[ti]);
+
     /* Cleanup */
+    free(term_paths); free(term_path_lens); free(term_values);
     for (int32_t qi = 0; qi < n_queries; qi++) free(all_node_paths[qi]);
     free(all_node_paths); free(all_path_lens);
     free(need_eval); free(leaf_boards); free(leaf_ids_data);
