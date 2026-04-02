@@ -207,7 +207,7 @@ def run_gumbel_root_many_c(
         max_reps = max(visits_per_action.values(), default=0)
 
         # ---- Helper: collect leaves + build CBoards for one rep ----
-        def _prepare_rep(rep: int, enc_buf: np.ndarray):
+        def _prepare_rep_c(rep: int, enc_buf: np.ndarray):
             """Tree traversal + CBoard building + encoding for *rep*.
 
             Returns None if no queries, otherwise a tuple of
@@ -304,6 +304,46 @@ def run_gumbel_root_many_c(
                 p_leaf_cbs, p_leaf_legal, n_leaves, enc_buf[:n_leaves],
             )
 
+        # ---- C-accelerated variant: one C call replaces per-leaf Python loop ----
+        def _prepare_rep_c(rep: int, enc_buf: np.ndarray):
+            """Same as _prepare_rep but uses tree.prepare_gumbel_leaves C function."""
+            p_root_ids = []
+            p_forced = []
+            p_bi = []
+            for bi in active:
+                rem = remaining_per_board[bi]
+                if rem is None or rep >= visits_per_action[bi]:
+                    continue
+                rid = root_ids[bi]
+                if rid < 0:
+                    continue
+                for action in rem:
+                    p_root_ids.append(rid)
+                    p_forced.append(int(action))
+                    p_bi.append(bi)
+
+            if not p_root_ids:
+                return None
+
+            board_idx_arr = np.array(p_bi, dtype=np.int32)
+            root_ids_arr = np.array(p_root_ids, dtype=np.int32)
+            forced_arr = np.array(p_forced, dtype=np.int32)
+
+            result = tree.prepare_gumbel_leaves(
+                root_cboards, board_idx_arr, root_ids_arr, forced_arr,
+                _c_scale, _c_visit, _c_puct, _fpu_reduction, _full_tree,
+                enc_buf, np.array(root_qs, dtype=np.float64),
+            )
+
+            if result is None:
+                return None
+
+            n_leaves, need_eval, legal_list, leaf_ids, node_paths, leaf_cbs = result
+            return (
+                p_bi, leaf_ids, node_paths, list(range(n_leaves)),
+                leaf_cbs, legal_list, n_leaves, enc_buf[:n_leaves],
+            )
+
         # ---- Helper: sync GPU results and expand+backprop ----------
         def _finish_rep(prep, pol_logits_leaf, wdl_logits_leaf):
             """Expand nodes and backprop values for a completed rep."""
@@ -339,13 +379,13 @@ def run_gumbel_root_many_c(
             cur_buf_idx = 0
 
             # Prepare first rep
-            cur_prep = _prepare_rep(0, _bufs[cur_buf_idx])
+            cur_prep = _prepare_rep_c(0, _bufs[cur_buf_idx])
             for rep in range(max_reps):
                 if cur_prep is None:
                     # Nothing to eval this rep; prepare next
                     cur_buf_idx ^= 1
                     if rep + 1 < max_reps:
-                        cur_prep = _prepare_rep(rep + 1, _bufs[cur_buf_idx])
+                        cur_prep = _prepare_rep_c(rep + 1, _bufs[cur_buf_idx])
                     else:
                         cur_prep = None
                     continue
@@ -358,7 +398,7 @@ def run_gumbel_root_many_c(
                 # While GPU works, prepare NEXT rep's CPU work
                 next_buf_idx = cur_buf_idx ^ 1
                 if rep + 1 < max_reps:
-                    next_prep = _prepare_rep(rep + 1, _bufs[next_buf_idx])
+                    next_prep = _prepare_rep_c(rep + 1, _bufs[next_buf_idx])
                 else:
                     next_prep = None
 
@@ -375,7 +415,7 @@ def run_gumbel_root_many_c(
         else:
             # Synchronous fallback (no async support)
             for rep in range(max_reps):
-                prep = _prepare_rep(rep, _enc_buf)
+                prep = _prepare_rep_c(rep, _enc_buf)
                 if prep is None:
                     continue
                 pol_logits_leaf, wdl_logits_leaf = eval_impl.evaluate_encoded(

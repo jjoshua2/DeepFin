@@ -26,6 +26,11 @@
 
 /* Pure-C CBoard implementation (bitboard utilities, attack tables, move gen, CBoard) */
 #include "../encoding/_cboard_impl.h"
+/* Feature planes for fused encode_146 */
+#include "../encoding/_features_impl.h"
+
+/* PyCBoard layout — must match _lc0_ext.c's typedef exactly. */
+typedef struct { PyObject_HEAD CBoard board; } PyCBoard;
 
 /* ================================================================
  * Tree data structure
@@ -1066,6 +1071,248 @@ static PyObject *MCTSTree_batch_wdl_to_q(MCTSTreeObject *self, PyObject *args) {
 }
 
 
+/*
+ * Encode a CBoard into 146 float32 planes (112 LC0 + 34 features).
+ * Writes into a pre-allocated buffer — no Python/numpy allocation.
+ */
+static void cboard_encode_146_into(const CBoard *b, float *out) {
+    memset(out, 0, 146 * 64 * sizeof(float));
+    cboard_fill_lc0_112(b, out);
+    int us = b->turn, them = 1 - us;
+    uint64_t us_pieces[6], them_pieces[6];
+    for (int i = 0; i < 6; i++) {
+        us_pieces[i] = b->bb[i] & b->occ[us];
+        them_pieces[i] = b->bb[i] & b->occ[them];
+    }
+    uint64_t us_king = b->bb[KING] & b->occ[us];
+    uint64_t them_king = b->bb[KING] & b->occ[them];
+    int king_sq_us = us_king ? lsb64(us_king) : -1;
+    int king_sq_them = them_king ? lsb64(them_king) : -1;
+    uint64_t occupied = b->occ[0] | b->occ[1];
+    int turn_white = (b->turn == WHITE_C) ? 1 : 0;
+    compute_features_34(us_pieces, them_pieces, occupied,
+                        king_sq_us, king_sq_them, turn_white,
+                        (int)b->ep_square, out + 112 * 64);
+}
+
+
+/*
+ * prepare_gumbel_leaves(root_cboards, board_indices, root_ids, forced_actions,
+ *                       c_scale, c_visit, c_puct, fpu_reduction, full_tree,
+ *                       enc_buf, root_qs)
+ *
+ * Fused C implementation of the _prepare_rep hot loop:
+ * 1. gumbel_collect_leaves (tree traversal)
+ * 2. CBoard replay from root via action paths
+ * 3. Terminal detection + immediate backprop
+ * 4. Encode non-terminal positions into enc_buf
+ * 5. Generate legal moves for non-terminals
+ *
+ * Returns: (n_leaves, need_eval_int32, legal_list, leaf_ids_int32,
+ *           node_paths_list, leaf_cboard_list)
+ *   or None if no queries need GPU eval.
+ */
+static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *args) {
+    PyObject *root_cbs_list, *enc_buf_obj, *root_qs_obj;
+    PyObject *board_idx_obj, *root_ids_obj, *forced_obj;
+    double c_scale, c_visit, c_puct, fpu_reduction;
+    int full_tree;
+
+    if (!PyArg_ParseTuple(args, "OOOOddddpOO",
+                          &root_cbs_list, &board_idx_obj, &root_ids_obj, &forced_obj,
+                          &c_scale, &c_visit, &c_puct, &fpu_reduction, &full_tree,
+                          &enc_buf_obj, &root_qs_obj))
+        return NULL;
+
+    /* Parse numpy arrays */
+    PyArrayObject *board_idx_arr = (PyArrayObject *)PyArray_FROMANY(
+        board_idx_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *root_ids_arr = (PyArrayObject *)PyArray_FROMANY(
+        root_ids_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *forced_arr = (PyArrayObject *)PyArray_FROMANY(
+        forced_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *enc_arr = (PyArrayObject *)PyArray_FROMANY(
+        enc_buf_obj, NPY_FLOAT32, 4, 4, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE);
+    PyArrayObject *root_qs_arr = (PyArrayObject *)PyArray_FROMANY(
+        root_qs_obj, NPY_FLOAT64, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+
+    if (!board_idx_arr || !root_ids_arr || !forced_arr || !enc_arr || !root_qs_arr) {
+        Py_XDECREF(board_idx_arr); Py_XDECREF(root_ids_arr);
+        Py_XDECREF(forced_arr); Py_XDECREF(enc_arr); Py_XDECREF(root_qs_arr);
+        return NULL;
+    }
+
+    int32_t n_queries = (int32_t)PyArray_SIZE(root_ids_arr);
+    const int32_t *board_indices = (const int32_t *)PyArray_DATA(board_idx_arr);
+    const int32_t *root_ids = (const int32_t *)PyArray_DATA(root_ids_arr);
+    const int32_t *forced_actions = (const int32_t *)PyArray_DATA(forced_arr);
+    float *enc_data = (float *)PyArray_DATA(enc_arr);
+    const double *root_qs = (const double *)PyArray_DATA(root_qs_arr);
+
+    /* Step 1: tree traversal (reuse existing C function) */
+    int32_t path_buf[512];
+    int32_t action_buf[512];
+
+    /* Collect all leaves, build CBoards, encode */
+    int32_t n_leaves = 0;
+    int32_t *need_eval = (int32_t *)malloc(n_queries * sizeof(int32_t));
+    CBoard *leaf_boards = (CBoard *)malloc(n_queries * sizeof(CBoard));
+    int32_t *leaf_ids_data = (int32_t *)malloc(n_queries * sizeof(int32_t));
+
+    /* Per-query storage for node paths (for backprop) */
+    int32_t **all_node_paths = (int32_t **)malloc(n_queries * sizeof(int32_t *));
+    int32_t *all_path_lens = (int32_t *)malloc(n_queries * sizeof(int32_t));
+
+    if (!need_eval || !leaf_boards || !leaf_ids_data || !all_node_paths || !all_path_lens) {
+        free(need_eval); free(leaf_boards); free(leaf_ids_data);
+        free(all_node_paths); free(all_path_lens);
+        Py_DECREF(board_idx_arr); Py_DECREF(root_ids_arr);
+        Py_DECREF(forced_arr); Py_DECREF(enc_arr); Py_DECREF(root_qs_arr);
+        return PyErr_NoMemory();
+    }
+
+    /* Terminal backprop lists */
+    int32_t n_terminals = 0;
+    int32_t **term_paths = (int32_t **)malloc(n_queries * sizeof(int32_t *));
+    int32_t *term_path_lens = (int32_t *)malloc(n_queries * sizeof(int32_t));
+    double *term_values = (double *)malloc(n_queries * sizeof(double));
+
+    for (int32_t qi = 0; qi < n_queries; qi++) {
+        /* Tree traversal for this query */
+        int32_t path_len = tree_gumbel_collect_leaf(
+            &self->tree, root_ids[qi], forced_actions[qi],
+            c_scale, c_visit, c_puct, fpu_reduction, full_tree,
+            path_buf, 512);
+
+        /* Save node path */
+        all_path_lens[qi] = path_len;
+        all_node_paths[qi] = (int32_t *)malloc(path_len * sizeof(int32_t));
+        memcpy(all_node_paths[qi], path_buf, path_len * sizeof(int32_t));
+
+        int32_t leaf_id = path_buf[path_len - 1];
+        leaf_ids_data[qi] = leaf_id;
+
+        /* Single-node path = root itself, use root Q */
+        if (path_len <= 1) {
+            term_paths[n_terminals] = all_node_paths[qi];
+            term_path_lens[n_terminals] = path_len;
+            term_values[n_terminals] = root_qs[board_indices[qi]];
+            n_terminals++;
+            continue;
+        }
+
+        /* Get action path for board replay */
+        int32_t action_len = tree_action_path(&self->tree, leaf_id, action_buf, 512);
+        if (action_len < 0) action_len = 0;
+
+        /* Replay CBoard from root */
+        int32_t bi = board_indices[qi];
+        PyCBoard *root_pycb = (PyCBoard *)PyList_GET_ITEM(root_cbs_list, bi);
+        CBoard cb = root_pycb->board;  /* struct copy */
+        for (int32_t ai = 0; ai < action_len; ai++)
+            cboard_push_index(&cb, action_buf[ai]);
+
+        if (cboard_is_game_over(&cb)) {
+            term_paths[n_terminals] = all_node_paths[qi];
+            term_path_lens[n_terminals] = path_len;
+            term_values[n_terminals] = (double)cboard_terminal_value(&cb);
+            n_terminals++;
+        } else {
+            /* Encode into pre-allocated buffer */
+            cboard_encode_146_into(&cb, enc_data + n_leaves * 146 * 64);
+            leaf_boards[n_leaves] = cb;
+            need_eval[n_leaves] = qi;
+            n_leaves++;
+        }
+    }
+
+    /* Backprop terminals */
+    for (int32_t ti = 0; ti < n_terminals; ti++) {
+        tree_backprop(&self->tree, term_paths[ti], term_path_lens[ti], term_values[ti]);
+    }
+
+    /* Clean up terminal-only storage */
+    free(term_paths);
+    free(term_path_lens);
+    free(term_values);
+
+    if (n_leaves == 0) {
+        /* Free everything, return None */
+        for (int32_t qi = 0; qi < n_queries; qi++) free(all_node_paths[qi]);
+        free(all_node_paths); free(all_path_lens);
+        free(need_eval); free(leaf_boards); free(leaf_ids_data);
+        Py_DECREF(board_idx_arr); Py_DECREF(root_ids_arr);
+        Py_DECREF(forced_arr); Py_DECREF(enc_arr); Py_DECREF(root_qs_arr);
+        Py_RETURN_NONE;
+    }
+
+    /* Build Python return values */
+
+    /* need_eval array */
+    npy_intp ne_dims[1] = {n_leaves};
+    PyObject *ne_arr = PyArray_SimpleNew(1, ne_dims, NPY_INT32);
+    memcpy(PyArray_DATA((PyArrayObject *)ne_arr), need_eval, n_leaves * sizeof(int32_t));
+
+    /* leaf_ids array */
+    PyObject *lid_arr = PyArray_SimpleNew(1, ne_dims, NPY_INT32);
+    {
+        int32_t *lid_data = (int32_t *)PyArray_DATA((PyArrayObject *)lid_arr);
+        for (int32_t li = 0; li < n_leaves; li++)
+            lid_data[li] = leaf_ids_data[need_eval[li]];
+    }
+
+    /* legal moves list */
+    PyObject *legal_list = PyList_New(n_leaves);
+    for (int32_t li = 0; li < n_leaves; li++) {
+        BoardState bs;
+        cboard_to_boardstate(&leaf_boards[li], &bs);
+        int indices[256];
+        int count = 0;
+        if (bs.king_sq >= 0) {
+            count = generate_legal_move_indices(&bs, indices);
+            sort_int(indices, count);
+        }
+        npy_intp dims[1] = {count};
+        PyObject *larr = PyArray_SimpleNew(1, dims, NPY_INT32);
+        if (count > 0)
+            memcpy(PyArray_DATA((PyArrayObject *)larr), indices, count * sizeof(int));
+        PyList_SET_ITEM(legal_list, li, larr);
+    }
+
+    /* node_paths list (only for need_eval queries) */
+    PyObject *paths_list = PyList_New(n_leaves);
+    for (int32_t li = 0; li < n_leaves; li++) {
+        int32_t qi = need_eval[li];
+        npy_intp pdims[1] = {all_path_lens[qi]};
+        PyObject *parr = PyArray_SimpleNew(1, pdims, NPY_INT32);
+        memcpy(PyArray_DATA((PyArrayObject *)parr), all_node_paths[qi],
+               all_path_lens[qi] * sizeof(int32_t));
+        PyList_SET_ITEM(paths_list, li, parr);
+    }
+
+    /* leaf CBoard list (as PyCBoard objects) */
+    PyObject *cboard_type = (PyObject *)Py_TYPE(PyList_GET_ITEM(root_cbs_list, 0));
+    PyObject *cb_list = PyList_New(n_leaves);
+    for (int32_t li = 0; li < n_leaves; li++) {
+        PyCBoard *pycb = PyObject_New(PyCBoard, (PyTypeObject *)cboard_type);
+        if (pycb) pycb->board = leaf_boards[li];
+        PyList_SET_ITEM(cb_list, li, (PyObject *)pycb);
+    }
+
+    /* Cleanup */
+    for (int32_t qi = 0; qi < n_queries; qi++) free(all_node_paths[qi]);
+    free(all_node_paths); free(all_path_lens);
+    free(need_eval); free(leaf_boards); free(leaf_ids_data);
+    Py_DECREF(board_idx_arr); Py_DECREF(root_ids_arr);
+    Py_DECREF(forced_arr); Py_DECREF(enc_arr); Py_DECREF(root_qs_arr);
+
+    /* Return (n_leaves, need_eval, legal_list, leaf_ids, node_paths, leaf_cboards) */
+    PyObject *result = Py_BuildValue("(iNNNNN)",
+        (int)n_leaves, ne_arr, legal_list, lid_arr, paths_list, cb_list);
+    return result;
+}
+
+
 static PyMethodDef MCTSTree_methods[] = {
     {"add_root", (PyCFunction)MCTSTree_add_root, METH_VARARGS,
      "add_root(N, W) -> int node_id"},
@@ -1083,6 +1330,8 @@ static PyMethodDef MCTSTree_methods[] = {
      "backprop_many([node_paths], [values]) -> None"},
     {"gumbel_collect_leaves", (PyCFunction)MCTSTree_gumbel_collect_leaves, METH_VARARGS,
      "gumbel_collect_leaves(root_ids, forced_actions, c_scale, c_visit, c_puct, fpu_reduction, full_tree)"},
+    {"prepare_gumbel_leaves", (PyCFunction)MCTSTree_prepare_gumbel_leaves, METH_VARARGS,
+     "prepare_gumbel_leaves(root_cbs, board_idx, root_ids, forced, c_scale, c_visit, c_puct, fpu, full_tree, enc_buf, root_qs)"},
     {"gumbel_score_candidates", (PyCFunction)MCTSTree_gumbel_score_candidates, METH_VARARGS,
      "gumbel_score_candidates(root_id, cands, gumbels, priors, c_scale, c_visit)"},
     {"get_children_visits", (PyCFunction)MCTSTree_get_children_visits, METH_VARARGS,
