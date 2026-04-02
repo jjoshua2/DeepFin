@@ -1233,8 +1233,8 @@ static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *
         return PyErr_NoMemory();
     }
 
-    /* Ensure CBoard cache is large enough for the current tree */
-    tree_ensure_cb_cache(&self->tree, self->tree.node_cap);
+    /* Ensure CBoard cache covers existing nodes (not full capacity) */
+    tree_ensure_cb_cache(&self->tree, self->tree.node_count);
 
     /* Seed cache with root CBoards */
     for (int32_t qi = 0; qi < n_queries; qi++) {
@@ -1326,9 +1326,13 @@ static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *
             leaf_boards[n_leaves] = cb;
             need_eval[n_leaves] = qi;
             /* Cache this leaf's CBoard for future reps */
-            if (cache_ok && leaf_id < t->cb_cache_cap) {
-                t->cb_cache[leaf_id] = cb;
-                t->cb_valid[leaf_id] = 1;
+            if (cache_ok) {
+                if (leaf_id >= t->cb_cache_cap)
+                    tree_ensure_cb_cache(t, leaf_id + 1);
+                if (leaf_id < t->cb_cache_cap) {
+                    t->cb_cache[leaf_id] = cb;
+                    t->cb_valid[leaf_id] = 1;
+                }
             }
             n_leaves++;
         }
