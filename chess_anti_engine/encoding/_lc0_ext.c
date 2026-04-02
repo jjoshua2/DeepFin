@@ -1590,6 +1590,31 @@ static PyObject* PyCBoard_encode_146(PyCBoard *self, PyObject *Py_UNUSED(args)) 
     return cboard_encode_146(&self->board);
 }
 
+/* encode_146_and_legal() → (numpy(146,8,8), numpy(N,) int32)
+ * Fused encode + legal move generation: one Python→C call instead of two,
+ * avoids redundant cboard_to_boardstate construction. */
+static PyObject* PyCBoard_encode_146_and_legal(PyCBoard *self, PyObject *Py_UNUSED(args)) {
+    PyObject *enc = cboard_encode_146(&self->board);
+    if (!enc) return NULL;
+    BoardState bs;
+    cboard_to_boardstate(&self->board, &bs);
+    int indices[256];
+    int count = 0;
+    if (bs.king_sq >= 0) {
+        count = generate_legal_move_indices(&bs, indices);
+        sort_int(indices, count);
+    }
+    npy_intp dims[1] = {count};
+    PyArrayObject *legal = (PyArrayObject*)PyArray_SimpleNew(1, dims, NPY_INT32);
+    if (!legal) { Py_DECREF(enc); return NULL; }
+    if (count > 0)
+        memcpy(PyArray_DATA(legal), indices, count * sizeof(int));
+    PyObject *result = PyTuple_Pack(2, enc, (PyObject*)legal);
+    Py_DECREF(enc);
+    Py_DECREF(legal);
+    return result;
+}
+
 /* Properties: turn, ep_square, halfmove_clock, castling, and bitboards */
 static PyObject* PyCBoard_get_turn(PyCBoard *self, void *closure) {
     return PyBool_FromLong(self->board.turn == WHITE_C);
@@ -1656,6 +1681,8 @@ static PyMethodDef PyCBoard_methods[] = {
      "Encode as (112, 8, 8) float32 LC0 planes"},
     {"encode_146", (PyCFunction)PyCBoard_encode_146, METH_NOARGS,
      "Encode as (146, 8, 8) float32 LC0+feature planes"},
+    {"encode_146_and_legal", (PyCFunction)PyCBoard_encode_146_and_legal, METH_NOARGS,
+     "Encode (146,8,8) and return legal move indices in one call"},
     {NULL}
 };
 

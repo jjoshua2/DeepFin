@@ -297,9 +297,7 @@ def run_gumbel_root_many_c(
             n_leaves = len(p_need_eval)
             p_leaf_legal: list[np.ndarray | None] = [None] * n_leaves
             for li, qi in enumerate(p_need_eval):
-                _cb = p_leaf_cbs[qi]
-                enc_buf[li] = _cb.encode_146()
-                p_leaf_legal[li] = _cb.legal_move_indices()
+                enc_buf[li], p_leaf_legal[li] = p_leaf_cbs[qi].encode_146_and_legal()
 
             return (
                 p_bi, p_leaf_ids, p_node_paths, p_need_eval,
