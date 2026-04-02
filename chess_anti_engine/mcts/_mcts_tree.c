@@ -59,6 +59,11 @@ typedef struct {
 
     int32_t child_count;
     int32_t child_cap;
+
+    /* Optional CBoard cache for prepare_gumbel_leaves (lazily allocated) */
+    CBoard  *cb_cache;      /* one CBoard per node (indexed by node_id) */
+    int8_t  *cb_valid;      /* 1 if cb_cache[node_id] is populated */
+    int32_t  cb_cache_cap;  /* allocated capacity */
 } TreeData;
 
 
@@ -79,6 +84,10 @@ static int tree_init(TreeData *t) {
 
     t->child_action = (int32_t *)malloc(t->child_cap * sizeof(int32_t));
     t->child_node = (int32_t *)malloc(t->child_cap * sizeof(int32_t));
+
+    t->cb_cache = NULL;
+    t->cb_valid = NULL;
+    t->cb_cache_cap = 0;
 
     if (!t->N || !t->W || !t->prior || !t->expanded || !t->parent ||
         !t->action_from_parent || !t->num_children || !t->children_offset ||
@@ -102,6 +111,8 @@ static void tree_free(TreeData *t) {
     free(t->children_offset);
     free(t->child_action);
     free(t->child_node);
+    free(t->cb_cache);
+    free(t->cb_valid);
     memset(t, 0, sizeof(TreeData));
 }
 
@@ -153,6 +164,26 @@ static int tree_grow_children(TreeData *t, int32_t need) {
     return 0;
 }
 
+
+/* Ensure CBoard cache can hold at least `need` entries. */
+static int tree_ensure_cb_cache(TreeData *t, int32_t need) {
+    if (need <= t->cb_cache_cap) return 0;
+    int32_t new_cap = t->cb_cache_cap ? t->cb_cache_cap : 256;
+    while (new_cap < need) new_cap *= 2;
+    CBoard *new_cb = (CBoard *)realloc(t->cb_cache, new_cap * sizeof(CBoard));
+    int8_t *new_valid = (int8_t *)realloc(t->cb_valid, new_cap * sizeof(int8_t));
+    if (!new_cb || !new_valid) {
+        /* realloc failure — keep old pointers if non-NULL */
+        if (new_cb && new_cb != t->cb_cache) t->cb_cache = new_cb;
+        if (new_valid && new_valid != t->cb_valid) t->cb_valid = new_valid;
+        return -1;
+    }
+    memset(new_valid + t->cb_cache_cap, 0, (new_cap - t->cb_cache_cap) * sizeof(int8_t));
+    t->cb_cache = new_cb;
+    t->cb_valid = new_valid;
+    t->cb_cache_cap = new_cap;
+    return 0;
+}
 
 /* Add a new node. Returns node id. */
 static int32_t tree_add_node(TreeData *t, int32_t parent_id, int32_t action, double prior_val) {
@@ -951,6 +982,9 @@ static PyObject *MCTSTree_node_count(MCTSTreeObject *self, PyObject *Py_UNUSED(a
 static PyObject *MCTSTree_reset(MCTSTreeObject *self, PyObject *Py_UNUSED(args)) {
     self->tree.node_count = 0;
     self->tree.child_count = 0;
+    /* Invalidate CBoard cache */
+    if (self->tree.cb_valid && self->tree.cb_cache_cap > 0)
+        memset(self->tree.cb_valid, 0, self->tree.cb_cache_cap * sizeof(int8_t));
     Py_RETURN_NONE;
 }
 
@@ -1199,6 +1233,20 @@ static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *
         return PyErr_NoMemory();
     }
 
+    /* Ensure CBoard cache is large enough for the current tree */
+    tree_ensure_cb_cache(&self->tree, self->tree.node_cap);
+
+    /* Seed cache with root CBoards */
+    for (int32_t qi = 0; qi < n_queries; qi++) {
+        int32_t rid = root_ids[qi];
+        if (rid >= 0 && rid < self->tree.cb_cache_cap && !self->tree.cb_valid[rid]) {
+            int32_t bi = board_indices[qi];
+            PyCBoard *root_pycb = (PyCBoard *)PyList_GET_ITEM(root_cbs_list, bi);
+            self->tree.cb_cache[rid] = root_pycb->board;
+            self->tree.cb_valid[rid] = 1;
+        }
+    }
+
     /* Terminal backprop lists */
     int32_t n_terminals = 0;
     int32_t **term_paths = (int32_t **)malloc(n_queries * sizeof(int32_t *));
@@ -1229,16 +1277,35 @@ static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *
             continue;
         }
 
-        /* Get action path for board replay */
-        int32_t action_len = tree_action_path(&self->tree, leaf_id, action_buf, 512);
-        if (action_len < 0) action_len = 0;
+        /* Replay CBoard: find closest cached ancestor, then push remaining moves */
+        CBoard cb;
+        int32_t replay_from = 0;  /* index into node_path to start replaying from */
+        TreeData *t = &self->tree;
+        int cache_ok = (t->cb_cache != NULL);
 
-        /* Replay CBoard from root */
-        int32_t bi = board_indices[qi];
-        PyCBoard *root_pycb = (PyCBoard *)PyList_GET_ITEM(root_cbs_list, bi);
-        CBoard cb = root_pycb->board;  /* struct copy */
-        for (int32_t ai = 0; ai < action_len; ai++)
-            cboard_push_index(&cb, action_buf[ai]);
+        if (cache_ok) {
+            /* Walk backward through node_path for cached ancestor */
+            for (int32_t di = path_len - 2; di >= 0; di--) {
+                int32_t anc = path_buf[di];
+                if (anc < t->cb_cache_cap && t->cb_valid[anc]) {
+                    cb = t->cb_cache[anc];
+                    replay_from = di + 1;
+                    break;
+                }
+            }
+        }
+        if (replay_from == 0) {
+            /* No cache hit — start from root */
+            int32_t bi = board_indices[qi];
+            PyCBoard *root_pycb = (PyCBoard *)PyList_GET_ITEM(root_cbs_list, bi);
+            cb = root_pycb->board;
+        }
+        /* Push moves from replay_from to leaf using action_from_parent */
+        for (int32_t di = replay_from; di < path_len; di++) {
+            int32_t nid = path_buf[di];
+            int32_t act = t->action_from_parent[nid];
+            if (act >= 0) cboard_push_index(&cb, act);
+        }
 
         if (cboard_is_game_over(&cb)) {
             term_paths[n_terminals] = all_node_paths[qi];
@@ -1258,6 +1325,11 @@ static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *
             cboard_encode_146_into(&cb, enc_data + n_leaves * 146 * 64);
             leaf_boards[n_leaves] = cb;
             need_eval[n_leaves] = qi;
+            /* Cache this leaf's CBoard for future reps */
+            if (cache_ok && leaf_id < t->cb_cache_cap) {
+                t->cb_cache[leaf_id] = cb;
+                t->cb_valid[leaf_id] = 1;
+            }
             n_leaves++;
         }
     }
