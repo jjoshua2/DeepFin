@@ -1285,9 +1285,11 @@ static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *
         int32_t found_cached = 0;
 
         if (cache_ok) {
-            /* Walk from leaf's parent toward root via parent pointers */
+            /* Walk from leaf toward this query's root via parent pointers.
+             * Stop at root_ids[qi] to avoid crossing into another subtree. */
+            int32_t root_id = root_ids[qi];
             int32_t nid = leaf_id;
-            while (nid >= 0 && n_replay < 512) {
+            while (nid >= 0 && nid != root_id && n_replay < 512) {
                 if (nid < t->cb_cache_cap && t->cb_valid[nid]) {
                     cb = t->cb_cache[nid];
                     found_cached = 1;
@@ -1296,6 +1298,12 @@ static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *
                 int32_t act = t->action_from_parent[nid];
                 if (act >= 0) replay_actions[n_replay++] = act;
                 nid = t->parent[nid];
+            }
+            /* Also check the root itself (seeded at start) */
+            if (!found_cached && nid == root_id &&
+                nid < t->cb_cache_cap && t->cb_valid[nid]) {
+                cb = t->cb_cache[nid];
+                found_cached = 1;
             }
         }
         if (!found_cached) {
