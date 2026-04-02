@@ -1190,6 +1190,12 @@ static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *
     Py_ssize_t n_root_qs = PyArray_SIZE(root_qs_arr);
     int32_t enc_capacity = (int32_t)PyArray_DIM(enc_arr, 0);
 
+    const int32_t *board_indices = (const int32_t *)PyArray_DATA(board_idx_arr);
+    const int32_t *root_ids = (const int32_t *)PyArray_DATA(root_ids_arr);
+    const int32_t *forced_actions = (const int32_t *)PyArray_DATA(forced_arr);
+    float *enc_data = (float *)PyArray_DATA(enc_arr);
+    const double *root_qs = (const double *)PyArray_DATA(root_qs_arr);
+
     /* Validate enc_buf shape: (N, 146, 8, 8) */
     if (PyArray_DIM(enc_arr, 1) != 146 || PyArray_DIM(enc_arr, 2) != 8 || PyArray_DIM(enc_arr, 3) != 8) {
         PyErr_SetString(PyExc_ValueError, "enc_buf must have shape (N, 146, 8, 8)");
@@ -1217,12 +1223,6 @@ static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *
             if (!cboard_type) cboard_type = Py_TYPE(item);
         }
     }
-
-    const int32_t *board_indices = (const int32_t *)PyArray_DATA(board_idx_arr);
-    const int32_t *root_ids = (const int32_t *)PyArray_DATA(root_ids_arr);
-    const int32_t *forced_actions = (const int32_t *)PyArray_DATA(forced_arr);
-    float *enc_data = (float *)PyArray_DATA(enc_arr);
-    const double *root_qs = (const double *)PyArray_DATA(root_qs_arr);
 
     /* Bounds-check board_indices against root_cbs_list and root_qs */
     for (int32_t qi = 0; qi < n_queries; qi++) {
