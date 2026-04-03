@@ -106,7 +106,7 @@ class ValueHead(nn.Module):
     information that is critical for position evaluation.
     """
 
-    def __init__(self, embed_dim: int, out_dim: int, *, token_dim: int = 32):
+    def __init__(self, embed_dim: int, out_dim: int, *, token_dim: int = 128):
         super().__init__()
         self.token_proj = nn.Linear(embed_dim, token_dim)
         flat_dim = 64 * token_dim  # 64 squares
@@ -163,11 +163,11 @@ class ScalarHead(nn.Module):
 
 
 class Smolgen(nn.Module):
-    """LC0 BT4-style smolgen: per-square compress → flatten → MLP → full 64x64 bias.
+    """LC0 BT4 smolgen: per-square compress → flatten → bottleneck MLP → gen weight.
 
-    Unlike the rank-1 outer-product variant, this generates arbitrary 64x64
-    attention bias matrices per head via a learned dense mapping, matching the
-    LC0 reference implementation.
+    BT4 reference: compress to 64×hidden_channels, flatten, project down to
+    hidden_sz bottleneck, then up to H×gen_sz, reshape, and final gen_sz→4096
+    projection per head.  hidden_channels=32, hidden_sz=256, gen_sz=256 in BT4.
     """
 
     def __init__(
@@ -175,7 +175,8 @@ class Smolgen(nn.Module):
         embed_dim: int,
         num_heads: int,
         hidden_channels: int = 32,
-        gen_sz: int = 64,
+        hidden_sz: int = 256,
+        gen_sz: int = 256,
     ):
         super().__init__()
         self.num_heads = int(num_heads)
@@ -183,10 +184,10 @@ class Smolgen(nn.Module):
         # Per-square compression (no bias, matching LC0).
         self.compress = nn.Linear(embed_dim, hidden_channels, bias=False)
         flat_dim = 64 * hidden_channels
-        # Hidden MLP with LayerNorm + SiLU (swish), matching LC0.
-        self.dense1 = nn.Linear(flat_dim, flat_dim)
-        self.ln1 = nn.LayerNorm(flat_dim)
-        self.dense2 = nn.Linear(flat_dim, num_heads * gen_sz)
+        # Bottleneck MLP: flatten → hidden_sz → H*gen_sz (LC0 BT4 topology).
+        self.dense1 = nn.Linear(flat_dim, hidden_sz)
+        self.ln1 = nn.LayerNorm(hidden_sz)
+        self.dense2 = nn.Linear(hidden_sz, num_heads * gen_sz)
         self.ln2 = nn.LayerNorm(num_heads * gen_sz)
         # Per-head weight generation: gen_sz → 64*64 (no bias, matching LC0).
         self.gen_weight = nn.Linear(gen_sz, 64 * 64, bias=False)
@@ -196,8 +197,8 @@ class Smolgen(nn.Module):
         b = x.shape[0]
         h = self.compress(x)               # (B, 64, hidden_channels)
         h = h.flatten(1)                    # (B, 64 * hidden_channels)
-        h = F.silu(self.ln1(self.dense1(h)))  # (B, 64 * hidden_channels)
-        h = F.silu(self.ln2(self.dense2(h)))  # (B, H * gen_sz)
+        h = self.ln1(F.silu(self.dense1(h)))  # (B, hidden_sz)
+        h = self.ln2(F.silu(self.dense2(h)))  # (B, H * gen_sz)
         h = h.view(b, self.num_heads, self.gen_sz)  # (B, H, gen_sz)
         bias = self.gen_weight(h)           # (B, H, 64*64)
         return bias.view(b, self.num_heads, 64, 64)
@@ -338,18 +339,12 @@ class ChessNet(nn.Module):
         self.cfg = cfg
         self._use_grad_ckpt = bool(cfg.use_gradient_checkpointing)
 
-        # LC0 BT4-style input embedding with gating and post-FFN.
+        # LC0 BT4 input block: Dense(activation) → mult_gate → add_gate
         self.embed = nn.Linear(cfg.in_planes, cfg.embed_dim)
-        self.embed_ln = nn.LayerNorm(cfg.embed_dim)
-        self.embed_gate_mul = nn.Parameter(torch.ones(cfg.embed_dim))
+        # ma_gating: multiplicative gate (init 1, non-negative) then additive gate (init 0)
+        # Store raw param; apply softplus in forward to enforce non-negativity (LC0 uses NonNeg constraint).
+        self._embed_gate_mul_raw = nn.Parameter(torch.full((cfg.embed_dim,), _softplus_inverse(1.0)))
         self.embed_gate_add = nn.Parameter(torch.zeros(cfg.embed_dim))
-        embed_ffn_hidden = int(cfg.embed_dim * cfg.ffn_mult)
-        self.embed_ffn = nn.Sequential(
-            nn.Linear(cfg.embed_dim, embed_ffn_hidden),
-            nn.Mish(),
-            nn.Linear(embed_ffn_hidden, cfg.embed_dim),
-        )
-        self.embed_ffn_ln = nn.LayerNorm(cfg.embed_dim)
         # Shared smolgen: one instance, bias reused by every encoder layer (LC0 BT4).
         self.smolgen = Smolgen(cfg.embed_dim, cfg.num_heads) if cfg.use_smolgen else None
         self.blocks = nn.ModuleList(
@@ -385,10 +380,9 @@ class ChessNet(nn.Module):
         assert (h, w) == (8, 8)
         tokens = x.reshape(b, c, 64).transpose(1, 2)  # (B,64,C)
 
-        t = self.embed(tokens)
-        t = self.embed_ln(t)
-        t = t * self.embed_gate_mul + self.embed_gate_add
-        t = self.embed_ffn_ln(t + self.embed_ffn(t))
+        # BT4 input: Dense(mish) → mult_gate(non-neg) → add_gate
+        t = F.mish(self.embed(tokens))
+        t = t * F.softplus(self._embed_gate_mul_raw) + self.embed_gate_add
         # Compute smolgen bias once, shared across all layers (LC0 BT4).
         smolgen_bias = self.smolgen(t) if self.smolgen is not None else None
         for blk in self.blocks:
