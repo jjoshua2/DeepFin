@@ -600,7 +600,41 @@ def launch_shared_inference_broker(
             stderr=subprocess.STDOUT,
         )
         print(f"[tune] launched shared inference broker: pid={proc.pid}")
+
+        # Store the launch command so the harness can restart if needed
+        proc._shared_broker_cmd = cmd  # type: ignore[attr-defined]
+        proc._shared_broker_server_root = str(server_root)  # type: ignore[attr-defined]
         return proc
+    finally:
+        out_fh.close()
+
+
+def ensure_shared_inference_broker(
+    proc: subprocess.Popen[bytes] | None,
+) -> subprocess.Popen[bytes] | None:
+    """Restart the shared broker if it has exited. Called periodically from harness."""
+    if proc is None:
+        return None
+    if proc.poll() is None:
+        return proc  # still running
+    cmd = getattr(proc, "_shared_broker_cmd", None)
+    server_root = getattr(proc, "_shared_broker_server_root", None)
+    if not cmd:
+        return None
+    print(f"[tune] shared inference broker exited with code {proc.returncode}, restarting...")
+    out_path = Path(server_root) / "shared_broker.out" if server_root else Path("/dev/null")
+    out_fh = out_path.open("ab")
+    try:
+        new_proc = subprocess.Popen(
+            cmd,
+            cwd=str(Path(__file__).resolve().parents[2]),
+            stdout=out_fh,
+            stderr=subprocess.STDOUT,
+        )
+        new_proc._shared_broker_cmd = cmd  # type: ignore[attr-defined]
+        new_proc._shared_broker_server_root = server_root  # type: ignore[attr-defined]
+        print(f"[tune] restarted shared inference broker: pid={new_proc.pid}")
+        return new_proc
     finally:
         out_fh.close()
 
