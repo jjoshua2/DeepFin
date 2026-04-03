@@ -776,6 +776,7 @@ class SharedSlotBroker:
         # Compiled model (shared across all trials, weights swapped)
         self._model: torch.nn.Module | None = None
         self._model_compiled = False
+        self._model_config_key: tuple | None = None  # for cross-trial config validation
         self._active_trial_sha: str | None = None
         self._first_inference_pending = False
 
@@ -836,6 +837,21 @@ class SharedSlotBroker:
             log.info("shared broker: registered trial %s with %d slots (prefix=%s)",
                      trial_id, len(slots), slot_prefix)
 
+        # Clean up trials that no longer have a publish dir
+        stale = [tid for tid in self._trial_slots
+                 if not (trials_root / tid / "publish" / "manifest.json").exists()
+                 or (active_prefix and not tid.startswith(active_prefix))]
+        for tid in stale:
+            for slot in self._trial_slots[tid]:
+                slot.close()
+            self._all_slots = [(t, s) for t, s in self._all_slots if t != tid]
+            del self._trial_slots[tid]
+            self._trial_weights.pop(tid, None)
+            self._trial_shas.pop(tid, None)
+            self._trial_manifest_sigs.pop(tid, None)
+            if stale:
+                log.info("shared broker: deregistered stale trial %s", tid)
+
     def _load_trial_weights(self, trial_id: str) -> bool:
         """Load/refresh weights for a trial if the manifest changed. Returns True if loaded."""
         publish_dir = self.server_root / "trials" / trial_id / "publish"
@@ -860,18 +876,33 @@ class SharedSlotBroker:
             self._trial_manifest_sigs[trial_id] = sig
             return trial_id in self._trial_weights
 
-        # Build model if first time
+        # Build model if first time, or validate config matches
+        mc = manifest.get("model_config") or {}
+        config_key = (
+            str(mc.get("kind", "transformer")),
+            int(mc.get("embed_dim", 256)),
+            int(mc.get("num_layers", 6)),
+            int(mc.get("num_heads", 8)),
+            float(mc.get("ffn_mult", 2)),
+            bool(mc.get("use_smolgen", True)),
+            bool(mc.get("use_nla", False)),
+            bool(mc.get("use_qk_rmsnorm", False)),
+        )
+        if self._model_config_key is not None and config_key != self._model_config_key:
+            log.warning("shared broker: trial %s has different model config, skipping "
+                        "(got %s, expected %s)", trial_id, config_key, self._model_config_key)
+            return False
+
         if self._model is None:
-            mc = manifest.get("model_config") or {}
             model_cfg = ModelConfig(
-                kind=str(mc.get("kind", "transformer")),
-                embed_dim=int(mc.get("embed_dim", 256)),
-                num_layers=int(mc.get("num_layers", 6)),
-                num_heads=int(mc.get("num_heads", 8)),
-                ffn_mult=float(mc.get("ffn_mult", 2)),
-                use_smolgen=bool(mc.get("use_smolgen", True)),
-                use_nla=bool(mc.get("use_nla", False)),
-                use_qk_rmsnorm=bool(mc.get("use_qk_rmsnorm", False)),
+                kind=config_key[0],
+                embed_dim=config_key[1],
+                num_layers=config_key[2],
+                num_heads=config_key[3],
+                ffn_mult=config_key[4],
+                use_smolgen=config_key[5],
+                use_nla=config_key[6],
+                use_qk_rmsnorm=config_key[7],
                 use_gradient_checkpointing=False,
             )
             model = build_model(model_cfg)
@@ -882,6 +913,7 @@ class SharedSlotBroker:
                 self._first_inference_pending = True
             self._model = model
             self._model_compiled = True
+            self._model_config_key = config_key
 
         # Load weights to CPU cache
         model_path = publish_dir / "latest_model.pt"
@@ -907,7 +939,11 @@ class SharedSlotBroker:
         if sd is None or self._model is None:
             return False
 
-        load_state_dict_tolerant(self._model, sd, label=f"shared-broker-{trial_id}")
+        # Load into the underlying module, not the torch.compile wrapper.
+        # OptimizedModule wraps the real model under _orig_mod, and its
+        # state_dict uses _orig_mod.* prefixed keys that won't match checkpoints.
+        target = getattr(self._model, "_orig_mod", self._model)
+        load_state_dict_tolerant(target, sd, label=f"shared-broker-{trial_id}")
         self._active_trial_sha = self._trial_shas[trial_id]
         return True
 
