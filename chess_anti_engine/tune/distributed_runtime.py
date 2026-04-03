@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import shutil
 import subprocess
@@ -463,7 +464,12 @@ def _launch_inference_broker(
     else:
         shared_cache_root = Path(str(config["distributed_server_root"])) / "worker_cache"
     shared_cache_root.mkdir(parents=True, exist_ok=True)
-    compile_inference = bool(config.get("distributed_inference_use_compile", False))
+    # Env var override so --resume picks up changes without re-baking tuner config.
+    _env = os.environ.get("CAE_INFERENCE_COMPILE")
+    compile_inference = bool(
+        _env == "1" if _env is not None
+        else config.get("distributed_inference_use_compile", False)
+    )
     cmd = [
         sys.executable,
         "-m",
@@ -513,6 +519,10 @@ def _ensure_inference_broker(
     if not bool(config.get("distributed_inference_broker_enabled", False)):
         _stop_process(proc)
         return None
+    # Skip per-trial broker when shared broker is enabled
+    if bool(config.get("distributed_inference_shared_broker", False)):
+        _stop_process(proc)
+        return None
     if proc is not None and proc.poll() is None:
         return proc
     return _launch_inference_broker(
@@ -521,6 +531,79 @@ def _ensure_inference_broker(
         publish_dir=publish_dir,
         trial_dir=trial_dir,
     )
+
+
+def launch_shared_inference_broker(
+    *,
+    config: dict,
+    server_root: Path,
+) -> subprocess.Popen[bytes] | None:
+    """Launch a single shared inference broker for all trials."""
+    if not bool(config.get("distributed_inference_broker_enabled", False)):
+        return None
+    if not bool(config.get("distributed_inference_shared_broker", False)):
+        return None
+
+    import os
+    broker_out = server_root / "shared_broker.out"
+    num_workers = int(config.get("distributed_workers_per_trial", 2))
+    max_batch = int(
+        config.get(
+            "distributed_inference_max_batch_per_slot",
+            config.get("distributed_inference_max_batch_positions", 256),
+        )
+    )
+    shared_cache_raw = str(config.get("distributed_worker_shared_cache_dir") or "").strip()
+    if shared_cache_raw:
+        shared_cache_root = Path(shared_cache_raw).expanduser()
+    else:
+        shared_cache_root = server_root / "worker_cache"
+    shared_cache_root.mkdir(parents=True, exist_ok=True)
+
+    _env = os.environ.get("CAE_INFERENCE_COMPILE")
+    compile_inference = bool(
+        _env == "1" if _env is not None
+        else config.get("distributed_inference_use_compile", False)
+    )
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "chess_anti_engine.inference",
+        "shared",
+        "--server-root",
+        str(server_root),
+        "--slots-per-trial",
+        str(num_workers),
+        "--max-batch-per-slot",
+        str(max_batch),
+        "--device",
+        str(config.get("distributed_worker_device") or config.get("device", "cpu")),
+        "--batch-wait-ms",
+        str(float(config.get("distributed_inference_batch_wait_ms", 0.0))),
+        "--shared-cache-dir",
+        str(shared_cache_root),
+        *(["--compile-inference"] if compile_inference else []),
+    ]
+
+    out_fh = broker_out.open("ab")
+    try:
+        stale_pids = terminate_matching_processes(
+            module="chess_anti_engine.inference",
+            required_terms=["shared", "--server-root", str(server_root)],
+        )
+        if stale_pids:
+            print(f"[tune] reaped stale shared inference broker: pids={stale_pids}")
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(Path(__file__).resolve().parents[2]),
+            stdout=out_fh,
+            stderr=subprocess.STDOUT,
+        )
+        print(f"[tune] launched shared inference broker: pid={proc.pid}")
+        return proc
+    finally:
+        out_fh.close()
 
 
 def _stop_worker_processes(procs: list[subprocess.Popen[bytes]]) -> None:

@@ -307,8 +307,7 @@ def run_tune(
     try:
         import ray
         from ray import tune
-        from ray.air import RunConfig
-        from ray.air.config import CheckpointConfig
+        from ray.tune import RunConfig, CheckpointConfig
     except Exception as e:  # pragma: no cover
         raise RuntimeError(
             "Ray Tune is required. Install with `pip install -e '.[tune]'`."
@@ -397,6 +396,17 @@ def run_tune(
                 "distributed_worker_username": str(username),
                 "distributed_worker_password_file": str(password_file),
             }
+        )
+
+    # Launch shared inference broker if configured
+    shared_broker_proc: subprocess.Popen[bytes] | None = None
+    if (int(base_config.get("distributed_workers_per_trial", 0)) > 0
+            and bool(base_config.get("distributed_inference_broker_enabled", False))
+            and bool(base_config.get("distributed_inference_shared_broker", False))):
+        from chess_anti_engine.tune.distributed_runtime import launch_shared_inference_broker
+        shared_broker_proc = launch_shared_inference_broker(
+            config=base_config,
+            server_root=Path(base_config.get("distributed_server_root", str(work_dir / "server"))),
         )
 
     scheduler_name = str(base_config.get("tune_scheduler", "pb2")).lower()
@@ -553,6 +563,7 @@ def run_tune(
     try:
         return tuner.fit()
     finally:
+        _terminate_process(shared_broker_proc)
         _terminate_process(server_proc)
 
 

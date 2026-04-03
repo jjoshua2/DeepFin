@@ -739,28 +739,363 @@ class SlotInferenceClient:
 
 
 # ---------------------------------------------------------------------------
+# Shared broker: one process serves all trials, swaps weights per-trial
+# ---------------------------------------------------------------------------
+
+
+class SharedSlotBroker:
+    """Multi-trial inference broker sharing one compiled model.
+
+    Instead of N separate broker processes (each ~15GB for CUDA + torch.compile),
+    one shared broker holds the compiled model once and swaps weights when
+    serving different trials.  Saves ~(N-1)*14GB RAM.
+
+    Watches a server_root/trials/ directory for trial publish dirs.
+    Each trial gets `slots_per_trial` shared memory slots.
+    """
+
+    def __init__(
+        self,
+        *,
+        server_root: Path,
+        slots_per_trial: int,
+        max_batch_per_slot: int,
+        device: str,
+        compile_inference: bool,
+        batch_wait_ms: float,
+    ) -> None:
+        self.server_root = Path(server_root)
+        self.slots_per_trial = int(slots_per_trial)
+        self.device = str(device)
+        self.compile_inference = bool(compile_inference)
+        self.batch_wait_ms = float(batch_wait_ms)
+        self._stop = False
+
+        self._layout = _SlotLayout.compute(max_batch_per_slot)
+
+        # Compiled model (shared across all trials, weights swapped)
+        self._model: torch.nn.Module | None = None
+        self._model_compiled = False
+        self._active_trial_sha: str | None = None
+        self._first_inference_pending = False
+
+        # Per-trial state
+        self._trial_slots: dict[str, list[_InferenceSlot]] = {}  # trial_id → slots
+        self._trial_shas: dict[str, str] = {}  # trial_id → latest model sha
+        self._trial_weights: dict[str, dict] = {}  # trial_id → state_dict (CPU)
+        self._trial_manifest_sigs: dict[str, tuple[int, int]] = {}  # trial_id → (mtime_ns, size)
+        self._all_slots: list[tuple[str, _InferenceSlot]] = []  # (trial_id, slot) flat list
+
+    def _scan_trials(self) -> None:
+        """Discover new trials and create slots for them."""
+        trials_root = self.server_root / "trials"
+        if not trials_root.exists():
+            return
+        active_prefix_path = self.server_root / "active_run_prefix.txt"
+        try:
+            active_prefix = active_prefix_path.read_text(encoding="utf-8").strip()
+        except Exception:
+            active_prefix = ""
+
+        for trial_dir in sorted(trials_root.iterdir()):
+            if not trial_dir.is_dir():
+                continue
+            trial_id = trial_dir.name
+            if active_prefix and not trial_id.startswith(active_prefix):
+                continue
+            if trial_id in self._trial_slots:
+                continue
+            publish_dir = trial_dir / "publish"
+            manifest = publish_dir / "manifest.json"
+            if not manifest.exists():
+                continue
+
+            # Create slots for this trial
+            from chess_anti_engine.tune._utils import stable_seed_u32
+            h = stable_seed_u32("slot-prefix", trial_id)
+            slot_prefix = f"cae-{h:08x}"
+
+            slots: list[_InferenceSlot] = []
+            for i in range(self.slots_per_trial):
+                name = f"{slot_prefix}-{i}"
+                try:
+                    old = SharedMemory(name=name, create=False)
+                    old.close()
+                    old.unlink()
+                except FileNotFoundError:
+                    pass
+                shm = SharedMemory(name=name, create=True, size=self._layout.total_bytes)
+                slot = _InferenceSlot(shm, self._layout, owns=True)
+                slot.state = _STATE_IDLE
+                slot.batch_size = 0
+                slots.append(slot)
+
+            self._trial_slots[trial_id] = slots
+            for slot in slots:
+                self._all_slots.append((trial_id, slot))
+            log.info("shared broker: registered trial %s with %d slots (prefix=%s)",
+                     trial_id, len(slots), slot_prefix)
+
+    def _load_trial_weights(self, trial_id: str) -> bool:
+        """Load/refresh weights for a trial if the manifest changed. Returns True if loaded."""
+        publish_dir = self.server_root / "trials" / trial_id / "publish"
+        manifest_path = publish_dir / "manifest.json"
+        try:
+            stat = manifest_path.stat()
+            sig = (int(stat.st_mtime_ns), int(stat.st_size))
+        except FileNotFoundError:
+            return False
+
+        if self._trial_manifest_sigs.get(trial_id) == sig:
+            return trial_id in self._trial_weights
+
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            return False
+
+        model_info = manifest.get("model") or {}
+        model_sha = str(model_info.get("sha256") or "")
+        if not model_sha or model_sha == self._trial_shas.get(trial_id):
+            self._trial_manifest_sigs[trial_id] = sig
+            return trial_id in self._trial_weights
+
+        # Build model if first time
+        if self._model is None:
+            mc = manifest.get("model_config") or {}
+            model_cfg = ModelConfig(
+                kind=str(mc.get("kind", "transformer")),
+                embed_dim=int(mc.get("embed_dim", 256)),
+                num_layers=int(mc.get("num_layers", 6)),
+                num_heads=int(mc.get("num_heads", 8)),
+                ffn_mult=float(mc.get("ffn_mult", 2)),
+                use_smolgen=bool(mc.get("use_smolgen", True)),
+                use_nla=bool(mc.get("use_nla", False)),
+                use_qk_rmsnorm=bool(mc.get("use_qk_rmsnorm", False)),
+                use_gradient_checkpointing=False,
+            )
+            model = build_model(model_cfg)
+            model.to(self.device)
+            model.eval()
+            if self.compile_inference and self.device.startswith("cuda"):
+                model = torch.compile(model, mode="reduce-overhead")
+                self._first_inference_pending = True
+            self._model = model
+            self._model_compiled = True
+
+        # Load weights to CPU cache
+        model_path = publish_dir / "latest_model.pt"
+        try:
+            ckpt = torch.load(str(model_path), map_location="cpu")
+            sd = ckpt.get("model", ckpt)
+        except Exception:
+            return False
+
+        self._trial_weights[trial_id] = sd
+        self._trial_shas[trial_id] = model_sha
+        self._trial_manifest_sigs[trial_id] = sig
+        log.info("shared broker: loaded weights for trial %s (sha=%s)",
+                 trial_id, model_sha[:8])
+        return True
+
+    def _swap_to_trial(self, trial_id: str) -> bool:
+        """Swap model weights to serve a specific trial. Returns True if ready."""
+        if self._active_trial_sha == self._trial_shas.get(trial_id):
+            return self._model is not None
+
+        sd = self._trial_weights.get(trial_id)
+        if sd is None or self._model is None:
+            return False
+
+        load_state_dict_tolerant(self._model, sd, label=f"shared-broker-{trial_id}")
+        self._active_trial_sha = self._trial_shas[trial_id]
+        return True
+
+    def _process_trial_batch(self, trial_id: str, ready: list[_InferenceSlot]) -> None:
+        """Process a batch of requests for one trial."""
+        if not self._swap_to_trial(trial_id):
+            # Model not ready — return zeros
+            for slot in ready:
+                bsz = max(0, min(int(slot.batch_size), self._layout.max_batch))
+                slot.policy[:bsz].fill(0.0)
+                slot.wdl[:bsz].fill(0.0)
+                slot.state = _STATE_RESPONSE
+            return
+
+        batch_sizes: list[int] = []
+        xs: list[np.ndarray] = []
+        for slot in ready:
+            bsz = slot.batch_size
+            batch_sizes.append(bsz)
+            xs.append(np.array(slot.input[:bsz], copy=True, order="C"))
+
+        xb = np.concatenate(xs, axis=0)
+        xt = torch.from_numpy(xb).to(self.device)
+
+        if self._first_inference_pending:
+            inf_t0 = time.time()
+
+        with torch.no_grad():
+            with inference_autocast(device=self.device, enabled=True, dtype="auto"):
+                out = self._model(xt)
+
+        if self._first_inference_pending:
+            log.info("shared broker: first inference elapsed_s=%.2f batch=%d",
+                     time.time() - inf_t0, xt.shape[0])
+            self._first_inference_pending = False
+
+        pol = _policy_output(out).detach().float().cpu().numpy()
+        wdl = out["wdl"].detach().float().cpu().numpy()
+
+        start = 0
+        for slot, bsz in zip(ready, batch_sizes):
+            end = start + bsz
+            slot.policy[:bsz] = pol[start:end]
+            slot.wdl[:bsz] = wdl[start:end]
+            slot.state = _STATE_RESPONSE
+            start = end
+
+    def serve_forever(self) -> None:
+        _batch_count = 0
+        _total_positions = 0
+        _last_report = time.monotonic()
+        _last_scan = 0.0
+        _report_interval = 10.0
+        _scan_interval = 5.0
+
+        while not self._stop:
+            now = time.monotonic()
+
+            # Periodically scan for new trials
+            if now - _last_scan >= _scan_interval:
+                self._scan_trials()
+                # Refresh weights for all known trials
+                for tid in list(self._trial_slots.keys()):
+                    self._load_trial_weights(tid)
+                _last_scan = now
+
+            if not self._all_slots:
+                time.sleep(0.5)
+                continue
+
+            if any(s.state == _STATE_SHUTDOWN for _, s in self._all_slots):
+                self._stop = True
+                break
+
+            # Collect ready slots grouped by trial
+            ready_by_trial: dict[str, list[_InferenceSlot]] = {}
+            for trial_id, slot in self._all_slots:
+                if slot.state == _STATE_REQUEST:
+                    ready_by_trial.setdefault(trial_id, []).append(slot)
+
+            if not ready_by_trial:
+                for _ in range(200):
+                    if any(s.state == _STATE_REQUEST for _, s in self._all_slots):
+                        break
+                else:
+                    time.sleep(0.00002)
+                continue
+
+            # Batching window
+            if self.batch_wait_ms > 0:
+                deadline = time.monotonic() + (self.batch_wait_ms / 1000.0)
+                while time.monotonic() < deadline:
+                    for trial_id, slot in self._all_slots:
+                        if slot.state == _STATE_REQUEST and slot not in ready_by_trial.get(trial_id, []):
+                            ready_by_trial.setdefault(trial_id, []).append(slot)
+                    if all(s.state != _STATE_IDLE for _, s in self._all_slots):
+                        break
+                    time.sleep(0.0001)
+
+            # Re-collect
+            ready_by_trial = {}
+            for trial_id, slot in self._all_slots:
+                if slot.state == _STATE_REQUEST:
+                    ready_by_trial.setdefault(trial_id, []).append(slot)
+
+            # Process each trial's batch
+            for trial_id, ready in ready_by_trial.items():
+                total_pos = sum(s.batch_size for s in ready)
+                _batch_count += 1
+                _total_positions += total_pos
+                self._process_trial_batch(trial_id, ready)
+
+            # Periodic metrics
+            now = time.monotonic()
+            if now - _last_report >= _report_interval and _batch_count > 0:
+                avg_pos = _total_positions / _batch_count
+                n_trials = len(self._trial_slots)
+                print(
+                    f"[shared-broker] {_batch_count} batches in {now - _last_report:.1f}s | "
+                    f"avg {avg_pos:.1f} pos/batch | "
+                    f"{_total_positions / (now - _last_report):.0f} pos/s | "
+                    f"{n_trials} trials",
+                    flush=True,
+                )
+                _batch_count = 0
+                _total_positions = 0
+                _last_report = now
+
+    def shutdown(self) -> None:
+        self._stop = True
+        for _, slot in self._all_slots:
+            slot.close()
+
+
+# ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(
-        description="Per-trial shared-memory inference broker"
-    )
-    ap.add_argument("--publish-dir", type=str, required=True)
-    ap.add_argument("--device", type=str, default="cuda")
-    ap.add_argument("--compile-inference", action="store_true")
-    ap.add_argument("--batch-wait-ms", type=float, default=5.0)
-    ap.add_argument("--num-slots", type=int, default=2)
-    ap.add_argument("--max-batch-per-slot", type=int, default=256)
-    ap.add_argument("--slot-prefix", type=str, required=True)
-    ap.add_argument("--shared-cache-dir", type=str, default=None)
-    args = ap.parse_args()
+    # Detect mode from argv: "shared" subcommand or legacy per-trial flags
+    import sys as _sys
+    if len(_sys.argv) > 1 and _sys.argv[1] == "shared":
+        ap = argparse.ArgumentParser(description="Shared inference broker for all trials")
+        ap.add_argument("mode", choices=["shared"])
+        ap.add_argument("--server-root", type=str, required=True)
+        ap.add_argument("--device", type=str, default="cuda")
+        ap.add_argument("--compile-inference", action="store_true")
+        ap.add_argument("--batch-wait-ms", type=float, default=0.0)
+        ap.add_argument("--slots-per-trial", type=int, default=2)
+        ap.add_argument("--max-batch-per-slot", type=int, default=256)
+        ap.add_argument("--shared-cache-dir", type=str, default=None)
+        args = ap.parse_args()
+    else:
+        ap = argparse.ArgumentParser(description="Per-trial shared-memory inference broker")
+        ap.add_argument("--publish-dir", type=str, required=True)
+        ap.add_argument("--device", type=str, default="cuda")
+        ap.add_argument("--compile-inference", action="store_true")
+        ap.add_argument("--batch-wait-ms", type=float, default=5.0)
+        ap.add_argument("--num-slots", type=int, default=2)
+        ap.add_argument("--max-batch-per-slot", type=int, default=256)
+        ap.add_argument("--slot-prefix", type=str, required=True)
+        ap.add_argument("--shared-cache-dir", type=str, default=None)
+        args = ap.parse_args()
+        args.mode = "per-trial"
 
-    shared_cache_raw = str(args.shared_cache_dir or "").strip()
+    shared_cache_raw = str(getattr(args, "shared_cache_dir", "") or "").strip()
     if shared_cache_raw:
         _configure_compile_cache(Path(shared_cache_raw).expanduser())
 
+    if args.mode == "shared":
+        broker = SharedSlotBroker(
+            server_root=Path(args.server_root).expanduser(),
+            slots_per_trial=int(args.slots_per_trial),
+            max_batch_per_slot=int(args.max_batch_per_slot),
+            device=str(args.device),
+            compile_inference=bool(args.compile_inference),
+            batch_wait_ms=float(args.batch_wait_ms),
+        )
+        try:
+            broker.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            broker.shutdown()
+        return 0
+
+    # Per-trial mode
     broker = SlotBroker(
         publish_dir=Path(args.publish_dir).expanduser(),
         num_slots=int(args.num_slots),
@@ -771,7 +1106,6 @@ def main() -> int:
         slot_prefix=str(args.slot_prefix),
     )
 
-    # Write slot manifest so workers can discover slot names
     manifest_path = Path(args.publish_dir).expanduser() / "broker_slots.json"
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(
