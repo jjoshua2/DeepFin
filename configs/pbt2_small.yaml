@@ -26,13 +26,13 @@ replay_window_growth: 9000   # ~15k pos/iter total (own ~5k + ~10k shared); grow
 
 # Bootstrap: train initial net on all random games, then discard from window
 bootstrap_dir: data/bootstrap
-bootstrap_checkpoint: /home/josh/projects/chess/data/bootstrap/bootstrap_net_v2.pt  # LC0-aligned arch, trained on 2M bootstrap positions
+bootstrap_checkpoint: /home/josh/projects/chess/data/bootstrap/bootstrap_net_v3.pt  # LC0 BT4 arch v3: token_dim=128, bottleneck smolgen, pos embed
 bootstrap_zero_policy_heads: true  # Bootstrap trained value/trunk only; start policy heads near-uniform on fresh runs.
 worker_wheel_path: null  # Optional: built wheel to publish for remote worker self-update.
 bootstrap_max_positions: 0   # 0 = load ALL positions (14.2M) — used by scripts/train_bootstrap.py
 bootstrap_train_steps: 0     # 0 = auto: train 1 epoch — used by scripts/train_bootstrap.py
 shared_shards_dir: null  # Disabled: start trials from bootstrap weights + fresh selfplay window
-salvage_seed_pool_dir: ""  # Disabled — fresh start with new arch
+salvage_seed_pool_dir: /home/josh/projects/chess/runs/pbt2_small/salvage/run38_t0only
 salvage_restore_donor_config: false   # Use new PB2 hyperparams, not donor's
 salvage_restore_full_trainer_state: false  # Fresh optimizer/LR schedule
 salvage_reinit_volatility_heads: true
@@ -57,10 +57,10 @@ stockfish:
 
   pid_enabled: true
   pid_target_winrate: 0.60
-  pid_ema_alpha: 0.37      # EMA half-life ~1.5 iterations.
+  pid_ema_alpha: 0.20      # EMA half-life ~3 iterations — smoother signal from noisy WR.
   pid_deadzone: 0.025
   pid_rate_limit: 0.10
-  pid_min_games_between_adjust: 80  # For intra-iteration stability; iteration boundary always forces an adjustment.
+  pid_min_games_between_adjust: 200  # Higher than games_per_iter so only the forced iteration-boundary adjust fires.
   pid_kp: 1.5
   pid_ki: 0.10
   pid_kd: 0.0
@@ -85,11 +85,11 @@ stockfish:
   pid_topk_min: 12                  # Always full multipv — regret band is the sole difficulty lever
   pid_suboptimal_wdl_regret_max: 2.0   # Allow very wide regret for bootstrap warmup
   pid_suboptimal_wdl_regret_min: 0.01
-  pid_wdl_regret_start: 1.50       # start very easy for bootstrap model — PID tightens as it improves
+  pid_wdl_regret_start: 1.08       # T0 was stable here with 59% WR
   pid_wdl_regret_min: 0.02         # hard floor
   pid_wdl_regret_max: 2.0          # max if PID needs to ease off
   pid_wdl_regret_stage_end: 0.05   # nodes unlock when regret reaches 5%
-  pid_max_regret_step: 0.04        # larger steps for faster PID response during bootstrap warmup
+  pid_max_regret_step: 0.01        # very fine steps near equilibrium
 
 selfplay:
   games_per_iter: 120  # Run 26 default.
@@ -145,7 +145,7 @@ selfplay:
 
 train:
   optimizer: cosmos_fast
-  lr: 0.0035        # Pinned near best trial from run30.
+  lr: 0.002         # LR search (run36) found 0.0022 best; 0.0035 caused plateau by iter 7.
   batch_size: 256   # Keep microbatch small enough for VRAM; use accumulation for the larger effective batch.
   train_steps: 400  # Run 26 default; more training per iteration.
   train_window_fraction: 0.10  # Target at least 10% of the current replay per iteration once the window outgrows fresh data.
@@ -171,7 +171,7 @@ train:
   sf_wdl_floor: 0.20        # Floor: keep 20% SF signal even at tight regret.
   sf_wdl_floor_at_regret: 0.10  # Regret value at which SF WDL weight hits the floor.
 
-  accum_steps: 2    # Effective batch 512 (run26 value).
+  accum_steps: 1    # More gradient steps per iteration; effective batch = 256.
   warmup_steps: 72   # Run 26 default.
   lr_eta_min: 0.00001
   lr_T0: 999999        # Disable cosine cycling — PBT exploit/explore handles LR variation
@@ -207,9 +207,10 @@ tune:
   distributed_worker_password: chess_worker_2026
   distributed_worker_use_compile: true
   distributed_inference_broker_enabled: true
+  distributed_inference_shared_broker: true  # One broker for all trials (~45GB RAM savings)
   distributed_inference_batch_wait_ms: 0.0
   distributed_inference_max_batch_per_slot: 512
-  distributed_inference_use_compile: false
+  distributed_inference_use_compile: true
   distributed_pause_selfplay_during_training: false
   distributed_worker_shared_cache_dir: /home/josh/projects/chess/runs/pbt2_small/server/worker_cache
   distributed_min_workers_per_trial: 1
@@ -241,7 +242,7 @@ tune:
   exploit_replay_local_keep_older_fraction: 0.65
 
   # PB2: exploit+explore every X iterations (was 20).
-  pb2_perturbation_interval: 15
+  pb2_perturbation_interval: 8
 
   tune_metric: opponent_strength_ema
   tune_mode: max
@@ -281,4 +282,4 @@ tune:
   # with only lr + w_wdl searched. Open up more dimensions to break plateau.
   #
   # Only pb2_bounds_* keys present here are searched; everything else is pinned.
-  pb2_bounds_sf_wdl_floor: [0.20, 0.60]
+  pb2_bounds_lr: [0.0005, 0.002]
