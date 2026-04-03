@@ -544,7 +544,6 @@ def launch_shared_inference_broker(
     if not bool(config.get("distributed_inference_shared_broker", False)):
         return None
 
-    import os
     broker_out = server_root / "shared_broker.out"
     num_workers = int(config.get("distributed_workers_per_trial", 2))
     max_batch = int(

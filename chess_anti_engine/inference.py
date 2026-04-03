@@ -812,7 +812,7 @@ class SharedSlotBroker:
                 continue
 
             # Create slots for this trial
-            from chess_anti_engine.tune._utils import stable_seed_u32
+            from chess_anti_engine.tune._utils import stable_seed_u32  # deferred: avoids circular import
             h = stable_seed_u32("slot-prefix", trial_id)
             slot_prefix = f"cae-{h:08x}"
 
@@ -849,8 +849,7 @@ class SharedSlotBroker:
             self._trial_weights.pop(tid, None)
             self._trial_shas.pop(tid, None)
             self._trial_manifest_sigs.pop(tid, None)
-            if stale:
-                log.info("shared broker: deregistered stale trial %s", tid)
+            log.info("shared broker: deregistered stale trial %s", tid)
 
     def _load_trial_weights(self, trial_id: str) -> bool:
         """Load/refresh weights for a trial if the manifest changed. Returns True if loaded."""
@@ -932,7 +931,9 @@ class SharedSlotBroker:
 
     def _swap_to_trial(self, trial_id: str) -> bool:
         """Swap model weights to serve a specific trial. Returns True if ready."""
-        if self._active_trial_sha == self._trial_shas.get(trial_id):
+        # Use (trial_id, sha) to avoid collisions when PBT exploit copies weights
+        trial_sha = (trial_id, self._trial_shas.get(trial_id))
+        if self._active_trial_sha == trial_sha:
             return self._model is not None
 
         sd = self._trial_weights.get(trial_id)
@@ -944,7 +945,7 @@ class SharedSlotBroker:
         # state_dict uses _orig_mod.* prefixed keys that won't match checkpoints.
         target = getattr(self._model, "_orig_mod", self._model)
         load_state_dict_tolerant(target, sd, label=f"shared-broker-{trial_id}")
-        self._active_trial_sha = self._trial_shas[trial_id]
+        self._active_trial_sha = trial_sha
         return True
 
     def _process_trial_batch(self, trial_id: str, ready: list[_InferenceSlot]) -> None:
@@ -1018,7 +1019,9 @@ class SharedSlotBroker:
                 self._stop = True
                 break
 
-            # Collect ready slots grouped by trial
+            # Collect ready slots grouped by trial.
+            # No batching window: cross-trial batching isn't possible (different weights),
+            # so delaying fast trials to wait for slow ones only adds latency.
             ready_by_trial: dict[str, list[_InferenceSlot]] = {}
             for trial_id, slot in self._all_slots:
                 if slot.state == _STATE_REQUEST:
@@ -1031,23 +1034,6 @@ class SharedSlotBroker:
                 else:
                     time.sleep(0.00002)
                 continue
-
-            # Batching window
-            if self.batch_wait_ms > 0:
-                deadline = time.monotonic() + (self.batch_wait_ms / 1000.0)
-                while time.monotonic() < deadline:
-                    for trial_id, slot in self._all_slots:
-                        if slot.state == _STATE_REQUEST and slot not in ready_by_trial.get(trial_id, []):
-                            ready_by_trial.setdefault(trial_id, []).append(slot)
-                    if all(s.state != _STATE_IDLE for _, s in self._all_slots):
-                        break
-                    time.sleep(0.0001)
-
-            # Re-collect
-            ready_by_trial = {}
-            for trial_id, slot in self._all_slots:
-                if slot.state == _STATE_REQUEST:
-                    ready_by_trial.setdefault(trial_id, []).append(slot)
 
             # Process each trial's batch
             for trial_id, ready in ready_by_trial.items():
