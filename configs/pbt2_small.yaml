@@ -32,9 +32,9 @@ worker_wheel_path: null  # Optional: built wheel to publish for remote worker se
 bootstrap_max_positions: 0   # 0 = load ALL positions (14.2M) — used by scripts/train_bootstrap.py
 bootstrap_train_steps: 0     # 0 = auto: train 1 epoch — used by scripts/train_bootstrap.py
 shared_shards_dir: null  # Disabled: start trials from bootstrap weights + fresh selfplay window
-salvage_seed_pool_dir: /home/josh/projects/chess/runs/pbt2_small/salvage/run38_t0only
+salvage_seed_pool_dir: /home/josh/projects/chess/runs/pbt2_small/salvage/run39_t3best
 salvage_restore_donor_config: false   # Use new PB2 hyperparams, not donor's
-salvage_restore_full_trainer_state: false  # Fresh optimizer/LR schedule
+salvage_restore_full_trainer_state: true   # Restore optimizer momentum/variance + scheduler for smooth continuation
 salvage_reinit_volatility_heads: true
 
 model:
@@ -85,7 +85,7 @@ stockfish:
   pid_topk_min: 12                  # Always full multipv — regret band is the sole difficulty lever
   pid_suboptimal_wdl_regret_max: 2.0   # Allow very wide regret for bootstrap warmup
   pid_suboptimal_wdl_regret_min: 0.01
-  pid_wdl_regret_start: 1.08       # T0 was stable here with 59% WR
+  pid_wdl_regret_start: 0.64       # T3 was at 0.64 regret, EMA 284, wdl 0.966
   pid_wdl_regret_min: 0.02         # hard floor
   pid_wdl_regret_max: 2.0          # max if PID needs to ease off
   pid_wdl_regret_stage_end: 0.05   # nodes unlock when regret reaches 5%
