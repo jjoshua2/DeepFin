@@ -229,17 +229,17 @@ tune:
   shard_size: 2000            # Samples per on-disk shard (~1 MB compressed)
   # On PB2 exploit (cross-trial restore), replace most recent local bad data and
   # import only latest-generation shards from strong sibling trials.
-  exploit_replay_refresh_enabled: false  # No donor import at exploit time; per-iteration sharing handles cross-trial data.
+  exploit_replay_refresh_enabled: true   # Flush old data + copy donor data on exploit
   exploit_replay_skip_newest: 0
-  exploit_replay_donor_shards: 0         # Disabled: per-iteration sharing replaces exploit-time bulk import.
-  exploit_replay_share_top_enabled: true   # With 8 trials, still share only from a small strong subset.
+  exploit_replay_donor_shards: 50        # Copy last 50 shards from donor (full recent history)
+  exploit_replay_share_top_enabled: true
   exploit_replay_top_k_trials: 3
   exploit_replay_top_within_best_frac: 0.05
   exploit_replay_top_min_metric: 0.0
-  exploit_replay_max_unseen_iters_per_source: 1  # Always import just the latest selfplay export from each sibling; 1 file per iter.
-  exploit_replay_share_fraction: 0.5            # Import only 50% of each sibling's shard to keep trial data distributions partially independent.
-  exploit_replay_local_keep_recent_fraction: 0.20
-  exploit_replay_local_keep_older_fraction: 0.65
+  exploit_replay_max_unseen_iters_per_source: 1
+  exploit_replay_share_fraction: 0.5
+  exploit_replay_local_keep_recent_fraction: 0.0   # Flush ALL old data on exploit
+  exploit_replay_local_keep_older_fraction: 0.0    # Flush ALL old data on exploit
 
   # PB2: exploit+explore every X iterations (was 20).
   pb2_perturbation_interval: 8
