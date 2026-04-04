@@ -32,9 +32,9 @@ worker_wheel_path: null  # Optional: built wheel to publish for remote worker se
 bootstrap_max_positions: 0   # 0 = load ALL positions (14.2M) — used by scripts/train_bootstrap.py
 bootstrap_train_steps: 0     # 0 = auto: train 1 epoch — used by scripts/train_bootstrap.py
 shared_shards_dir: null  # Disabled: start trials from bootstrap weights + fresh selfplay window
-salvage_seed_pool_dir: /home/josh/projects/chess/runs/pbt2_small/salvage/run39_t3best
-salvage_restore_donor_config: false   # Use new PB2 hyperparams, not donor's
-salvage_restore_full_trainer_state: true   # Restore optimizer momentum/variance + scheduler for smooth continuation
+salvage_seed_pool_dir: ""  # Disabled — restart from bootstrap
+salvage_restore_donor_config: false
+salvage_restore_full_trainer_state: false
 salvage_reinit_volatility_heads: true
 
 model:
