@@ -85,7 +85,7 @@ stockfish:
   pid_topk_min: 12                  # Always full multipv — regret band is the sole difficulty lever
   pid_suboptimal_wdl_regret_max: 2.0   # Allow very wide regret for bootstrap warmup
   pid_suboptimal_wdl_regret_min: 0.01
-  pid_wdl_regret_start: 0.80       # Start easier than donor (0.64) — let model establish winrate before tightening
+  pid_wdl_regret_start: 1.50       # Start very easy — model needs >60% wr to generate good training data, PID tightens naturally
   pid_wdl_regret_min: 0.02         # hard floor
   pid_wdl_regret_max: 2.0          # max if PID needs to ease off
   pid_wdl_regret_stage_end: 0.05   # nodes unlock when regret reaches 5%
