@@ -850,7 +850,7 @@ class SharedSlotBroker:
             self._trial_streams.pop(tid, None)
             self._trial_shas.pop(tid, None)
             self._trial_manifest_sigs.pop(tid, None)
-            log.info("shared broker: deregistered stale trial %s", tid)
+            print(f"[shared-broker] deregistered stale trial {tid}", flush=True)
 
     def _load_trial_weights(self, trial_id: str) -> bool:
         """Load/refresh model for a trial. Each trial gets its own model instance + CUDA stream."""
@@ -889,7 +889,7 @@ class SharedSlotBroker:
             bool(mc.get("use_qk_rmsnorm", False)),
         )
         if self._model_config_key is not None and config_key != self._model_config_key:
-            log.warning("shared broker: trial %s has different model config, skipping", trial_id)
+            print(f"[shared-broker] WARNING: trial {trial_id} has different model config, skipping", flush=True)
             return False
         if self._model_config_key is None:
             self._model_config_key = config_key
@@ -922,13 +922,13 @@ class SharedSlotBroker:
             self._trial_models[trial_id] = model
             if self.device.startswith("cuda"):
                 self._trial_streams[trial_id] = torch.cuda.Stream(device=self.device)
-            log.info("shared broker: created model for trial %s (sha=%s)", trial_id, model_sha[:8])
+            print(f"[shared-broker] created model for trial {trial_id} (sha={model_sha[:8]})", flush=True)
         else:
             # Existing trial: update weights
             model = self._trial_models[trial_id]
             target = getattr(model, "_orig_mod", model)
             load_state_dict_tolerant(target, sd, label=f"shared-broker-{trial_id}")
-            log.info("shared broker: updated weights for trial %s (sha=%s)", trial_id, model_sha[:8])
+            print(f"[shared-broker] updated weights for trial {trial_id} (sha={model_sha[:8]})", flush=True)
 
         self._trial_shas[trial_id] = model_sha
         self._trial_manifest_sigs[trial_id] = sig
