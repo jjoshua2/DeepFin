@@ -773,19 +773,19 @@ class SharedSlotBroker:
 
         self._layout = _SlotLayout.compute(max_batch_per_slot)
 
-        # Compiled model (shared across all trials, weights swapped)
-        self._model: torch.nn.Module | None = None
-        self._model_compiled = False
-        self._model_config_key: tuple | None = None  # for cross-trial config validation
-        self._active_trial_sha: str | None = None
-        self._first_inference_pending = False
+        # Per-trial model instances on separate CUDA streams for parallel execution.
+        # All share one CUDA context + compiled kernel cache (~13GB total)
+        # instead of N separate processes (~15GB each).
+        self._model_config_key: tuple | None = None
+        self._first_inference_done = False
 
         # Per-trial state
-        self._trial_slots: dict[str, list[_InferenceSlot]] = {}  # trial_id → slots
-        self._trial_shas: dict[str, str] = {}  # trial_id → latest model sha
-        self._trial_weights: dict[str, dict] = {}  # trial_id → state_dict (CPU)
-        self._trial_manifest_sigs: dict[str, tuple[int, int]] = {}  # trial_id → (mtime_ns, size)
-        self._all_slots: list[tuple[str, _InferenceSlot]] = []  # (trial_id, slot) flat list
+        self._trial_slots: dict[str, list[_InferenceSlot]] = {}
+        self._trial_shas: dict[str, str] = {}
+        self._trial_models: dict[str, torch.nn.Module] = {}  # per-trial model on GPU
+        self._trial_streams: dict[str, object] = {}  # per-trial CUDA stream
+        self._trial_manifest_sigs: dict[str, tuple[int, int]] = {}
+        self._all_slots: list[tuple[str, _InferenceSlot]] = []
 
     def _scan_trials(self) -> None:
         """Discover new trials and create slots for them."""
@@ -846,13 +846,14 @@ class SharedSlotBroker:
                 slot.close()
             self._all_slots = [(t, s) for t, s in self._all_slots if t != tid]
             del self._trial_slots[tid]
-            self._trial_weights.pop(tid, None)
+            self._trial_models.pop(tid, None)
+            self._trial_streams.pop(tid, None)
             self._trial_shas.pop(tid, None)
             self._trial_manifest_sigs.pop(tid, None)
             log.info("shared broker: deregistered stale trial %s", tid)
 
     def _load_trial_weights(self, trial_id: str) -> bool:
-        """Load/refresh weights for a trial if the manifest changed. Returns True if loaded."""
+        """Load/refresh model for a trial. Each trial gets its own model instance + CUDA stream."""
         publish_dir = self.server_root / "trials" / trial_id / "publish"
         manifest_path = publish_dir / "manifest.json"
         try:
@@ -862,7 +863,7 @@ class SharedSlotBroker:
             return False
 
         if self._trial_manifest_sigs.get(trial_id) == sig:
-            return trial_id in self._trial_weights
+            return trial_id in self._trial_models
 
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -873,9 +874,9 @@ class SharedSlotBroker:
         model_sha = str(model_info.get("sha256") or "")
         if not model_sha or model_sha == self._trial_shas.get(trial_id):
             self._trial_manifest_sigs[trial_id] = sig
-            return trial_id in self._trial_weights
+            return trial_id in self._trial_models
 
-        # Build model if first time, or validate config matches
+        # Validate config matches
         mc = manifest.get("model_config") or {}
         config_key = (
             str(mc.get("kind", "transformer")),
@@ -888,33 +889,12 @@ class SharedSlotBroker:
             bool(mc.get("use_qk_rmsnorm", False)),
         )
         if self._model_config_key is not None and config_key != self._model_config_key:
-            log.warning("shared broker: trial %s has different model config, skipping "
-                        "(got %s, expected %s)", trial_id, config_key, self._model_config_key)
+            log.warning("shared broker: trial %s has different model config, skipping", trial_id)
             return False
-
-        if self._model is None:
-            model_cfg = ModelConfig(
-                kind=config_key[0],
-                embed_dim=config_key[1],
-                num_layers=config_key[2],
-                num_heads=config_key[3],
-                ffn_mult=config_key[4],
-                use_smolgen=config_key[5],
-                use_nla=config_key[6],
-                use_qk_rmsnorm=config_key[7],
-                use_gradient_checkpointing=False,
-            )
-            model = build_model(model_cfg)
-            model.to(self.device)
-            model.eval()
-            if self.compile_inference and self.device.startswith("cuda"):
-                model = torch.compile(model, mode="reduce-overhead")
-                self._first_inference_pending = True
-            self._model = model
-            self._model_compiled = True
+        if self._model_config_key is None:
             self._model_config_key = config_key
 
-        # Load weights to CPU cache
+        # Load checkpoint
         model_path = publish_dir / "latest_model.pt"
         try:
             ckpt = torch.load(str(model_path), map_location="cpu")
@@ -922,75 +902,106 @@ class SharedSlotBroker:
         except Exception:
             return False
 
-        self._trial_weights[trial_id] = sd
+        # Build or update model instance for this trial
+        model_cfg = ModelConfig(
+            kind=config_key[0], embed_dim=config_key[1],
+            num_layers=config_key[2], num_heads=config_key[3],
+            ffn_mult=config_key[4], use_smolgen=config_key[5],
+            use_nla=config_key[6], use_qk_rmsnorm=config_key[7],
+            use_gradient_checkpointing=False,
+        )
+
+        if trial_id not in self._trial_models:
+            # New trial: build fresh model instance
+            model = build_model(model_cfg)
+            model.to(self.device)
+            model.eval()
+            load_state_dict_tolerant(model, sd, label=f"shared-broker-{trial_id}")
+            if self.compile_inference and self.device.startswith("cuda"):
+                model = torch.compile(model, mode="reduce-overhead")
+            self._trial_models[trial_id] = model
+            if self.device.startswith("cuda"):
+                self._trial_streams[trial_id] = torch.cuda.Stream(device=self.device)
+            log.info("shared broker: created model for trial %s (sha=%s)", trial_id, model_sha[:8])
+        else:
+            # Existing trial: update weights
+            model = self._trial_models[trial_id]
+            target = getattr(model, "_orig_mod", model)
+            load_state_dict_tolerant(target, sd, label=f"shared-broker-{trial_id}")
+            log.info("shared broker: updated weights for trial %s (sha=%s)", trial_id, model_sha[:8])
+
         self._trial_shas[trial_id] = model_sha
         self._trial_manifest_sigs[trial_id] = sig
-        log.info("shared broker: loaded weights for trial %s (sha=%s)",
-                 trial_id, model_sha[:8])
         return True
 
-    def _swap_to_trial(self, trial_id: str) -> bool:
-        """Swap model weights to serve a specific trial. Returns True if ready."""
-        # Use (trial_id, sha) to avoid collisions when PBT exploit copies weights
-        trial_sha = (trial_id, self._trial_shas.get(trial_id))
-        if self._active_trial_sha == trial_sha:
-            return self._model is not None
+    def _process_parallel(self, ready_by_trial: dict[str, list[_InferenceSlot]]) -> None:
+        """Process all trials' batches in parallel using per-trial CUDA streams."""
+        use_cuda = self.device.startswith("cuda")
 
-        sd = self._trial_weights.get(trial_id)
-        if sd is None or self._model is None:
-            return False
+        # Prepare inputs for each trial
+        trial_data: list[tuple[str, list[_InferenceSlot], list[int], torch.Tensor]] = []
+        for trial_id, ready in ready_by_trial.items():
+            model = self._trial_models.get(trial_id)
+            if model is None:
+                for slot in ready:
+                    bsz = max(0, min(int(slot.batch_size), self._layout.max_batch))
+                    slot.policy[:bsz].fill(0.0)
+                    slot.wdl[:bsz].fill(0.0)
+                    slot.state = _STATE_RESPONSE
+                continue
+            batch_sizes = [slot.batch_size for slot in ready]
+            xs = [np.array(slot.input[:bsz], copy=True, order="C") for slot, bsz in zip(ready, batch_sizes)]
+            xb = np.concatenate(xs, axis=0)
+            xt = torch.from_numpy(xb).to(self.device, non_blocking=True)
+            trial_data.append((trial_id, ready, batch_sizes, xt))
 
-        # Load into the underlying module, not the torch.compile wrapper.
-        # OptimizedModule wraps the real model under _orig_mod, and its
-        # state_dict uses _orig_mod.* prefixed keys that won't match checkpoints.
-        target = getattr(self._model, "_orig_mod", self._model)
-        load_state_dict_tolerant(target, sd, label=f"shared-broker-{trial_id}")
-        self._active_trial_sha = trial_sha
-        return True
-
-    def _process_trial_batch(self, trial_id: str, ready: list[_InferenceSlot]) -> None:
-        """Process a batch of requests for one trial."""
-        if not self._swap_to_trial(trial_id):
-            # Model not ready — return zeros
-            for slot in ready:
-                bsz = max(0, min(int(slot.batch_size), self._layout.max_batch))
-                slot.policy[:bsz].fill(0.0)
-                slot.wdl[:bsz].fill(0.0)
-                slot.state = _STATE_RESPONSE
+        if not trial_data:
             return
 
-        batch_sizes: list[int] = []
-        xs: list[np.ndarray] = []
-        for slot in ready:
-            bsz = slot.batch_size
-            batch_sizes.append(bsz)
-            xs.append(np.array(slot.input[:bsz], copy=True, order="C"))
+        # Launch forward passes in parallel on separate streams
+        results: list[tuple[str, list[_InferenceSlot], list[int], torch.Tensor, torch.Tensor]] = []
+        for trial_id, ready, batch_sizes, xt in trial_data:
+            model = self._trial_models[trial_id]
+            stream = self._trial_streams.get(trial_id)
 
-        xb = np.concatenate(xs, axis=0)
-        xt = torch.from_numpy(xb).to(self.device)
+            if use_cuda and stream is not None:
+                with torch.cuda.stream(stream):
+                    with torch.no_grad():
+                        with inference_autocast(device=self.device, enabled=True, dtype="auto"):
+                            out = model(xt)
+                    pol = _policy_output(out).detach().float().to("cpu", non_blocking=True)
+                    wdl = out["wdl"].detach().float().to("cpu", non_blocking=True)
+            else:
+                with torch.no_grad():
+                    with inference_autocast(device=self.device, enabled=True, dtype="auto"):
+                        out = model(xt)
+                pol = _policy_output(out).detach().float().cpu()
+                wdl = out["wdl"].detach().float().cpu()
 
-        if self._first_inference_pending:
-            inf_t0 = time.time()
+            results.append((trial_id, ready, batch_sizes, pol, wdl))
 
-        with torch.no_grad():
-            with inference_autocast(device=self.device, enabled=True, dtype="auto"):
-                out = self._model(xt)
+        # Synchronize all streams
+        if use_cuda:
+            for trial_id in ready_by_trial:
+                stream = self._trial_streams.get(trial_id)
+                if stream is not None:
+                    stream.synchronize()
 
-        if self._first_inference_pending:
-            log.info("shared broker: first inference elapsed_s=%.2f batch=%d",
-                     time.time() - inf_t0, xt.shape[0])
-            self._first_inference_pending = False
+        if not self._first_inference_done and results:
+            self._first_inference_done = True
+            log.info("shared broker: first parallel inference complete (%d trials)", len(results))
 
-        pol = _policy_output(out).detach().float().cpu().numpy()
-        wdl = out["wdl"].detach().float().cpu().numpy()
-
-        start = 0
-        for slot, bsz in zip(ready, batch_sizes):
-            end = start + bsz
-            slot.policy[:bsz] = pol[start:end]
-            slot.wdl[:bsz] = wdl[start:end]
-            slot.state = _STATE_RESPONSE
-            start = end
+        # Scatter results back to slots
+        for trial_id, ready, batch_sizes, pol, wdl in results:
+            pol_np = pol.numpy()
+            wdl_np = wdl.numpy()
+            start = 0
+            for slot, bsz in zip(ready, batch_sizes):
+                end = start + bsz
+                slot.policy[:bsz] = pol_np[start:end]
+                slot.wdl[:bsz] = wdl_np[start:end]
+                slot.state = _STATE_RESPONSE
+                start = end
 
     def serve_forever(self) -> None:
         _batch_count = 0
@@ -1035,12 +1046,11 @@ class SharedSlotBroker:
                     time.sleep(0.00002)
                 continue
 
-            # Process each trial's batch
-            for trial_id, ready in ready_by_trial.items():
-                total_pos = sum(s.batch_size for s in ready)
+            # Process all trials' batches in parallel on separate CUDA streams
+            for ready in ready_by_trial.values():
                 _batch_count += 1
-                _total_positions += total_pos
-                self._process_trial_batch(trial_id, ready)
+                _total_positions += sum(s.batch_size for s in ready)
+            self._process_parallel(ready_by_trial)
 
             # Periodic metrics
             now = time.monotonic()
