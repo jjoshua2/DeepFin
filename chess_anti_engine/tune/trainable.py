@@ -762,6 +762,7 @@ def train_trial(config: dict):
                     label="checkpoint_model_only",
                 )
                 del ckpt_data
+                trainer._init_swa()  # Re-sync SWA with loaded weights
                 startup_source = "checkpoint_model_only"
             else:
                 trainer.load(maybe)
@@ -1096,6 +1097,8 @@ def train_trial(config: dict):
                 reinit = reinit_volatility_head_parameters_(trainer.model)
                 if reinit:
                     print(f"[trial] Reinitialized bootstrap volatility heads: {', '.join(reinit)}")
+            # Re-sync SWA with the newly loaded weights (AveragedModel deep-copies at init).
+            trainer._init_swa()
             # Deliberately skip: optimizer, scheduler, step — start fresh.
             del ckpt_data
         else:

@@ -361,8 +361,18 @@ class Trainer:
         self._swa_start = int(swa_start)
         self._swa_freq = max(1, int(swa_freq))
         self._swa_model: torch.optim.swa_utils.AveragedModel | None = None
+        self._init_swa()
+
+    def _init_swa(self) -> None:
+        """(Re)initialize SWA from current model weights.
+
+        Must be called after any external weight load (bootstrap, salvage)
+        because AveragedModel deep-copies at creation time.
+        """
         if self._swa_start >= 0:  # 0 = start immediately, <0 = disabled
             self._swa_model = torch.optim.swa_utils.AveragedModel(self.model)
+        else:
+            self._swa_model = None
 
     def _should_log_step_scalars(self) -> bool:
         return (self.step % self._tb_log_interval) == 0

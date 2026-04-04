@@ -207,7 +207,7 @@ tune:
   distributed_worker_password: chess_worker_2026
   distributed_worker_use_compile: true
   distributed_inference_broker_enabled: true
-  distributed_inference_shared_broker: true  # One broker for all trials (~45GB RAM savings)
+  distributed_inference_shared_broker: true
   distributed_inference_batch_wait_ms: 0.0
   distributed_inference_max_batch_per_slot: 512
   distributed_inference_use_compile: true
