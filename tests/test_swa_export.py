@@ -70,7 +70,7 @@ def test_swa_export_differs_from_raw_model(tmp_path):
 
 
 def test_swa_export_without_swa_returns_raw_model(tmp_path):
-    """When SWA is disabled (swa_start=0), export_swa should save raw model weights."""
+    """When SWA is disabled (swa_start=-1), export_swa should save raw model weights."""
     cfg = TransformerConfig(in_planes=146, embed_dim=32, num_layers=1, num_heads=2,
                             use_smolgen=False, use_nla=False)
     model = ChessNet(cfg)
@@ -87,7 +87,7 @@ def test_swa_export_without_swa_returns_raw_model(tmp_path):
         log_dir=tmp_path / "tb",
         use_amp=False,
         feature_dropout_p=0.0,
-        swa_start=0,
+        swa_start=-1,  # negative = disabled
     )
 
     trainer.train_steps(buf, batch_size=4, steps=3)

@@ -361,7 +361,7 @@ class Trainer:
         self._swa_start = int(swa_start)
         self._swa_freq = max(1, int(swa_freq))
         self._swa_model: torch.optim.swa_utils.AveragedModel | None = None
-        if self._swa_start > 0:
+        if self._swa_start >= 0:  # 0 = start immediately, <0 = disabled
             self._swa_model = torch.optim.swa_utils.AveragedModel(self.model)
 
     def _should_log_step_scalars(self) -> bool:
