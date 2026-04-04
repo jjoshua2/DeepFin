@@ -587,14 +587,34 @@ def _update_best_model(
 def train_trial(config: dict):
     """Ray Tune trainable.
 
-    Reports metrics per outer-loop iteration. Supports Ray AIR checkpoint restore.
+    Reports metrics per outer-loop iteration. Supports checkpoint restore.
     """
 
-    from ray.air import session
-    from ray.train import Checkpoint
+    from ray.tune import report as _tune_report, get_checkpoint as _tune_get_checkpoint
+    from ray.tune import Checkpoint, get_context as _tune_get_context
 
+    # Re-read YAML and overlay all keys EXCEPT those PB2 is actively searching.
+    # This lets --resume pick up config changes without clobbering tuned hyperparams.
+    _yaml_path = config.get("_yaml_config_path")
+    if _yaml_path:
+        try:
+            from chess_anti_engine.utils import load_yaml_file, flatten_run_config_defaults
+            fresh = flatten_run_config_defaults(load_yaml_file(_yaml_path))
+            # Keys PB2 is searching — identified by pb2_bounds_* entries.
+            searched_keys = {
+                k.removeprefix("pb2_bounds_")
+                for k in fresh
+                if k.startswith("pb2_bounds_")
+            }
+            for k, v in fresh.items():
+                if k not in searched_keys and not k.startswith("pb2_bounds_"):
+                    config[k] = v
+        except Exception:
+            pass
+
+    _ctx = _tune_get_context()
     base_seed = int(config.get("seed", 0))
-    trial_id = str(getattr(session, "get_trial_id", lambda: "trial")())
+    trial_id = str(_ctx.get_trial_id() or "trial")
     trial_seed = _stable_seed_u32(base_seed, trial_id)
     active_seed = int(trial_seed)
     rng = np.random.default_rng(active_seed)
@@ -622,7 +642,7 @@ def train_trial(config: dict):
     # runs/pbt2_small/ directory. Using it caused all 10 trials to write
     # checkpoints to the same directory, making PB2 unable to clone checkpoints
     # ("no checkpoint for trial X. Skip exploit.").
-    trial_dir = Path(session.get_trial_dir())
+    trial_dir = Path(_ctx.get_trial_dir())
     work_dir = trial_dir
     work_dir.mkdir(parents=True, exist_ok=True)
 
@@ -701,7 +721,7 @@ def train_trial(config: dict):
     salvage_origin_dir = ""
     startup_source = "fresh"
     restored_owner_optimizer = ""
-    ckpt = session.get_checkpoint()
+    ckpt = _tune_get_checkpoint()
     if ckpt is not None:
         ckpt_dir = Path(ckpt.to_directory())
         maybe = ckpt_dir / "trainer.pt"
@@ -1213,7 +1233,7 @@ def train_trial(config: dict):
                 ramp_steps=int(config.get("mcts_ramp_steps", 10_000)),
                 exponent=float(config.get("mcts_ramp_exponent", 2.0)),
             )
-        _publish_distributed_trial_state(
+        prev_published_model_sha = _publish_distributed_trial_state(
             trainer=trainer,
             config=config,
             model_cfg=model_cfg,
@@ -1884,6 +1904,12 @@ def train_trial(config: dict):
                     pid.max_rand_step = _step_start
                 else:
                     pid.max_rand_step = float(config.get("sf_pid_max_rand_step", 0.01))
+                # Re-read tunable PID params from config (YAML overlay) each iteration.
+                pid.max_regret_step = float(config.get("sf_pid_max_regret_step", pid.max_regret_step))
+                pid.target = float(config.get("sf_pid_target_winrate", pid.target))
+                pid.kp = float(config.get("sf_pid_kp", pid.kp))
+                pid.ki = float(config.get("sf_pid_ki", pid.ki))
+                pid.alpha = float(config.get("sf_pid_ema_alpha", pid.alpha))
                 pid_update = pid.observe(wins=total_w, draws=total_d, losses=total_l, force=True)
                 pid_ema_wr = float(pid_update.ema_winrate)
                 sf_nodes_next = int(pid.nodes)
@@ -2092,7 +2118,7 @@ def train_trial(config: dict):
             if selfplay_winrate_raw is not None:
                 report_dict["selfplay_winrate_raw"] = float(selfplay_winrate_raw)
 
-            session.report(report_dict, checkpoint=checkpoint)
+            _tune_report(report_dict, checkpoint=checkpoint)
 
             # Write compact status row (best-effort — never crash the trial).
             _write_status_csv_row(
