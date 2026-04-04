@@ -177,7 +177,7 @@ train:
   lr_T0: 999999        # Disable cosine cycling — PBT exploit/explore handles LR variation
   lr_T_mult: 1
   use_compile: false
-  swa_start: 0
+  swa_start: -1  # Disabled: SWA averaging hurts early training. Enable after model stabilizes.
   swa_freq: 50
 
 puzzle_epd: null
