@@ -282,4 +282,4 @@ tune:
   # with only lr + w_wdl searched. Open up more dimensions to break plateau.
   #
   # Only pb2_bounds_* keys present here are searched; everything else is pinned.
-  pb2_bounds_lr: [0.0005, 0.002]
+  pb2_bounds_lr: [0.0005, 0.005]
