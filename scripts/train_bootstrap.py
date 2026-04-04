@@ -97,7 +97,7 @@ def main() -> None:
 
     # ── Phase 1: threaded loading into buffer ──
     t0 = time.time()
-    buf_cap = max_pos if max_pos > 0 else 50_000_000  # large enough to hold all bootstrap data
+    buf_cap = max_pos if max_pos > 0 else 2_000_000  # ~120GB at 60KB/sample; fits in memory
     buf = ReplayBuffer(buf_cap, rng=rng)
     total_loaded = 0
     shard_count = 0
