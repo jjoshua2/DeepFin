@@ -749,6 +749,8 @@ def play_batch(
             q_surprise = abs(best_q - orig_q)
 
             difficulty = q_surprise * _df_q_w + kl * _df_p_s
+            if not math.isfinite(difficulty):
+                difficulty = 1.0  # safe default — NaN from model output or KL overflow
             if not _df_enabled:
                 keep_prob = 1.0
             else:
@@ -766,6 +768,8 @@ def play_batch(
             _swdl_buf[1] = d_raw
             _swdl_buf[2] = rem - w_search
             search_wdl_est = _swdl_buf.copy()
+            if not np.all(np.isfinite(search_wdl_est)):
+                search_wdl_est = np.array([0.0, 1.0, 0.0], dtype=np.float32)  # draw prior
 
             last_net_full[idx] = bool(is_full[j])
 
@@ -773,7 +777,7 @@ def play_batch(
                 _NetRecord(
                     x=xs_batch[j],
                     policy_probs=probs,
-                    net_wdl_est=wdl_est[j],
+                    net_wdl_est=wdl_est[j] if np.all(np.isfinite(wdl_est[j])) else np.array([0.0, 1.0, 0.0], dtype=np.float32),
                     search_wdl_est=search_wdl_est,
                     pov_color=pov_color,
                     ply_index=ply_index,

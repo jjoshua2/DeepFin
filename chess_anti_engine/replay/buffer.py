@@ -216,9 +216,11 @@ class ArrayReplayBuffer:
             chosen = self.rng.choice(pool.shape[0], size=k_uni, replace=True)
             picks.append(pool[np.asarray(chosen, dtype=np.int64)])
         if k_pri > 0:
-            pri = np.maximum(0.0, self._priority[pool].astype(np.float64, copy=False))
+            pri = self._priority[pool].astype(np.float64, copy=True)
+            np.nan_to_num(pri, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+            np.maximum(pri, 0.0, out=pri)
             ps = float(pri.sum())
-            if ps <= 0.0:
+            if ps <= 0.0 or not np.isfinite(ps):
                 chosen = self.rng.choice(pool.shape[0], size=k_pri, replace=True)
                 picks.append(pool[np.asarray(chosen, dtype=np.int64)])
             else:
@@ -242,9 +244,11 @@ class ArrayReplayBuffer:
         if k_uni > 0:
             picks.append(np.asarray(self.rng.integers(0, n, size=k_uni), dtype=np.int64))
         if k_pri > 0:
-            pri = np.maximum(0.0, self._priority.astype(np.float64, copy=False))
+            pri = self._priority.astype(np.float64, copy=True)
+            np.nan_to_num(pri, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+            np.maximum(pri, 0.0, out=pri)
             ps = float(pri.sum())
-            if ps <= 0.0:
+            if ps <= 0.0 or not np.isfinite(ps):
                 picks.append(np.asarray(self.rng.integers(0, n, size=k_pri), dtype=np.int64))
             else:
                 picks.append(

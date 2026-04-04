@@ -302,9 +302,13 @@ class DiskReplayBuffer:
         self._shuffle_sizes.append(n)
         self._shuffle_offsets.append(0)
         self._shuffle_size_total += n
+        raw_pri = np.asarray(arrs["priority"], dtype=np.float32)
+        bad = ~np.isfinite(raw_pri)
+        if bad.any():
+            raw_pri = raw_pri.copy()
+            raw_pri[bad] = 1.0
         self._shuffle_priority_store = np.concatenate(
-            [self._shuffle_priority_store, np.asarray(arrs["priority"], dtype=np.float32)],
-            axis=0,
+            [self._shuffle_priority_store, raw_pri], axis=0,
         )
         self._shuffle_wdl_store = np.concatenate(
             [self._shuffle_wdl_store, np.asarray(arrs["wdl_target"], dtype=np.int8)],
@@ -636,9 +640,11 @@ class DiskReplayBuffer:
             chosen = self.rng.choice(pool.shape[0], size=k_uni, replace=True)
             picks.append(pool[np.asarray(chosen, dtype=np.int64)])
         if k_pri > 0:
-            pri = np.maximum(0.0, self._active_shuffle_priority()[pool].astype(np.float64, copy=False))
+            pri = self._active_shuffle_priority()[pool].astype(np.float64, copy=True)
+            np.nan_to_num(pri, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+            np.maximum(pri, 0.0, out=pri)
             ps = float(pri.sum())
-            if ps <= 0.0:
+            if ps <= 0.0 or not np.isfinite(ps):
                 chosen = self.rng.choice(pool.shape[0], size=k_pri, replace=True)
                 picks.append(pool[np.asarray(chosen, dtype=np.int64)])
             else:
@@ -663,9 +669,11 @@ class DiskReplayBuffer:
         if k_uni > 0:
             picks.append(np.asarray(self.rng.integers(0, n, size=k_uni), dtype=np.int64))
         if k_pri > 0:
-            pri = np.maximum(0.0, self._active_shuffle_priority().astype(np.float64, copy=False))
+            pri = self._active_shuffle_priority().astype(np.float64, copy=True)
+            np.nan_to_num(pri, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+            np.maximum(pri, 0.0, out=pri)
             ps = float(pri.sum())
-            if ps <= 0.0:
+            if ps <= 0.0 or not np.isfinite(ps):
                 picks.append(np.asarray(self.rng.integers(0, n, size=k_pri), dtype=np.int64))
             else:
                 picks.append(
