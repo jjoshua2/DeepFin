@@ -44,7 +44,12 @@ def _atomic_copy2(src: Path, dst: Path) -> None:
 
 def _iter_shards(inbox_dir: Path) -> list[Path]:
     # Depth: inbox/<user>/<sha>.npz
-    return sorted(inbox_dir.glob("*/*.npz"))
+    # Skip server compaction temp files (._tmp_ prefix) to avoid races with
+    # _flush_buffered_upload_to_inbox's write-then-rename pattern.
+    return sorted(
+        sp for sp in inbox_dir.glob("*/*.npz")
+        if not sp.name.startswith("._tmp_")
+    )
 
 
 def _iter_arena_results(arena_inbox_dir: Path) -> list[Path]:

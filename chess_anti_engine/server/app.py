@@ -120,6 +120,7 @@ def _flush_buffered_upload_to_inbox(
     )
     last_exc: FileNotFoundError | None = None
     for _attempt in range(2):
+        compacted_dir.mkdir(parents=True, exist_ok=True)
         tmp = compacted_dir / f"._tmp_{secrets.token_hex(8)}_{final.name}"
         save_npz(tmp, samples=samples, meta=meta, compress=False)
         try:

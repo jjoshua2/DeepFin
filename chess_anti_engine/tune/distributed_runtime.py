@@ -99,6 +99,9 @@ def _quarantine_inbox_shards(
     quarantine_root = processed_dir / "_quarantine" / f"{reason_slug}_{int(time.time())}"
     moved = 0
     for sp in sorted(inbox_dir.glob("*/*.npz")):
+        # Skip in-progress temp files — moving them causes races.
+        if sp.name.startswith("._tmp_"):
+            continue
         rel = sp.relative_to(inbox_dir)
         dst = quarantine_root / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -115,6 +118,36 @@ def _quarantine_inbox_shards(
         "moved_shards": int(moved),
         "quarantine_root": str(quarantine_root),
     }
+
+
+def _prune_processed_shards(
+    *,
+    processed_dir: Path,
+    max_age_seconds: float = 86400.0,
+) -> int:
+    """Delete processed shards older than *max_age_seconds*.
+
+    Returns the number of files deleted.
+    """
+    if max_age_seconds <= 0 or not processed_dir.is_dir():
+        return 0
+    cutoff = time.time() - float(max_age_seconds)
+    deleted = 0
+    for sp in processed_dir.glob("*/*.npz"):
+        try:
+            if sp.stat().st_mtime < cutoff:
+                sp.unlink(missing_ok=True)
+                deleted += 1
+        except Exception:
+            continue
+    # Remove empty subdirectories.
+    for d in processed_dir.iterdir():
+        if d.is_dir() and not any(d.iterdir()):
+            try:
+                d.rmdir()
+            except Exception:
+                pass
+    return deleted
 
 
 def _publish_distributed_trial_state(
@@ -830,7 +863,10 @@ def _ingest_distributed_selfplay(
     )
 
     while summary["matching_games"] < target_games:
-        shard_paths = sorted(inbox_dir.glob("*/*.npz"))
+        shard_paths = sorted(
+            sp for sp in inbox_dir.glob("*/*.npz")
+            if not sp.name.startswith("._tmp_")
+        )
         if not shard_paths:
             if time.time() >= deadline and summary["matching_games"] >= min_games:
                 break
@@ -875,6 +911,8 @@ def _ingest_available_shards(
     summary = _empty_ingest_summary()
 
     for sp in sorted(inbox_dir.glob("*/*.npz")):
+        if sp.name.startswith("._tmp_"):
+            continue
         _process_shard(
             sp,
             inbox_dir=inbox_dir, processed_dir=processed_dir,

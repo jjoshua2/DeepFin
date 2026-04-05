@@ -22,7 +22,7 @@ iterations: 750
 replay_capacity: 5000000   # Hard cap
 replay_window_start: 20000   # Small start so early easy games evict by iter 10-15
 replay_window_max: 5000000   # Grow to full 5M (~2.5 GB per trial on disk)
-replay_window_growth: 9000   # ~15k pos/iter total (own ~5k + ~10k shared); growth = 9k gives ~85% retention per iter, reaches 5M ~iter 554
+replay_window_growth: 2500   # ~3k pos/iter with 1 trial (no sharing); grow slightly slower so old data evicts naturally
 
 # Bootstrap: train initial net on all random games, then discard from window
 bootstrap_dir: data/bootstrap
@@ -32,10 +32,11 @@ worker_wheel_path: null  # Optional: built wheel to publish for remote worker se
 bootstrap_max_positions: 0   # 0 = load ALL positions (14.2M) — used by scripts/train_bootstrap.py
 bootstrap_train_steps: 0     # 0 = auto: train 1 epoch — used by scripts/train_bootstrap.py
 shared_shards_dir: null  # Disabled: start trials from bootstrap weights + fresh selfplay window
-salvage_seed_pool_dir: ""  # Disabled — restart from bootstrap
-salvage_restore_donor_config: false
-salvage_restore_full_trainer_state: false
-salvage_reinit_volatility_heads: true
+salvage_seed_pool_dir: /home/josh/projects/chess/data/salvage_trial3  # Trial 3 iter 67: os_ema=210, step=6950
+salvage_restore_donor_config: true    # Copy donor LR (0.001) — single trial, no PBT perturbation needed
+salvage_restore_full_trainer_state: true  # Full optimizer + scheduler + step state
+salvage_restore_pid_state: true  # Copy PID controller state (regret, ema_winrate)
+salvage_reinit_volatility_heads: false  # Keep volatility heads from trial 3
 
 model:
   kind: transformer
@@ -57,7 +58,7 @@ stockfish:
 
   pid_enabled: true
   pid_target_winrate: 0.60
-  pid_ema_alpha: 0.20      # EMA half-life ~3 iterations — smoother signal from noisy WR.
+  pid_ema_alpha: 0.35      # EMA half-life ~1.5 iters — faster reaction to regime changes (salvage/exploit).
   pid_deadzone: 0.025
   pid_rate_limit: 0.10
   pid_min_games_between_adjust: 200  # Higher than games_per_iter so only the forced iteration-boundary adjust fires.
@@ -89,14 +90,14 @@ stockfish:
   pid_wdl_regret_min: 0.02         # hard floor
   pid_wdl_regret_max: 2.0          # max if PID needs to ease off
   pid_wdl_regret_stage_end: 0.05   # nodes unlock when regret reaches 5%
-  pid_max_regret_step: 0.01        # very fine steps near equilibrium
+  pid_max_regret_step: 0.0025      # 0.25% steps: fine-grained for the flat winrate-vs-regret slope near equilibrium
 
 selfplay:
-  games_per_iter: 120  # Run 26 default.
+  games_per_iter: 200  # 16 workers can sustain ~200 games/iter at ~2-3 min/iter.
   games_per_iter_start: 32  # One round of 8 workers × 4 games; fast sanity check.
   games_per_iter_ramp_iters: 5
   selfplay_fraction: 0.20  # Pin near the recent good band while narrowing the search to lr + feature-group dropout.
-  selfplay_batch: 64    # Large batches to amortize MCTS/broker overhead (run26 value).
+  selfplay_batch: 128   # Bigger batches = better GPU utilization (12k pos/s at 128 vs 3k at 64).
   max_plies: 240
 
   temperature: 1.0       # Gumbel improved policy already provides exploration; T=1.0 avoids distorting the search target.
@@ -145,7 +146,7 @@ selfplay:
 
 train:
   optimizer: cosmos_fast
-  lr: 0.002         # LR search (run36) found 0.0022 best; 0.0035 caused plateau by iter 7.
+  lr: 0.001         # Trial 3 converged here; 0.002+ causes regression post-exploit.
   batch_size: 256   # Keep microbatch small enough for VRAM; use accumulation for the larger effective batch.
   train_steps: 400  # Run 26 default; more training per iteration.
   train_window_fraction: 0.10  # Target at least 10% of the current replay per iteration once the window outgrows fresh data.
@@ -197,19 +198,20 @@ tune:
   gpbt_winner_weight: 1.0
   gpbt_quantile_fraction: 0.25
   gpbt_resample_probability: 0.20
-  num_samples: 4
-  max_concurrent_trials: 4
+  num_samples: 1
+  max_concurrent_trials: 1
   cpus_per_trial: 1
-  gpus_per_trial: 0.20
-  distributed_workers_per_trial: 2
-  distributed_worker_sf_workers: 2
+  gpus_per_trial: 1.0
+  distributed_workers_per_trial: 16
+  distributed_worker_sf_workers: 1
+  distributed_worker_max_games_per_batch: 128
   distributed_worker_username: josh
   distributed_worker_password: chess_worker_2026
   distributed_worker_use_compile: true
   distributed_inference_broker_enabled: true
   distributed_inference_shared_broker: true
-  distributed_inference_batch_wait_ms: 0.0
-  distributed_inference_max_batch_per_slot: 512
+  distributed_inference_batch_wait_ms: 5.0
+  distributed_inference_max_batch_per_slot: 2048
   distributed_inference_use_compile: true
   distributed_pause_selfplay_during_training: false
   distributed_worker_shared_cache_dir: /home/josh/projects/chess/runs/pbt2_small/server/worker_cache
@@ -231,7 +233,7 @@ tune:
   # import only latest-generation shards from strong sibling trials.
   exploit_replay_refresh_enabled: true   # Flush old data + copy donor data on exploit
   exploit_replay_skip_newest: 0
-  exploit_replay_donor_shards: 50        # Copy last 50 shards from donor (full recent history)
+  exploit_replay_donor_shards: -1          # -1 = copy ALL donor shards; 0 = disabled; N = last N shards
   exploit_replay_share_top_enabled: true
   exploit_replay_top_k_trials: 3
   exploit_replay_top_within_best_frac: 0.05
@@ -282,4 +284,4 @@ tune:
   # with only lr + w_wdl searched. Open up more dimensions to break plateau.
   #
   # Only pb2_bounds_* keys present here are searched; everything else is pinned.
-  pb2_bounds_lr: [0.0005, 0.005]
+  pb2_bounds_lr: [0.0005, 0.002]  # Upper was 0.005; LR >0.003 destroys model in 1-2 iters post-exploit

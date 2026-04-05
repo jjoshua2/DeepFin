@@ -413,6 +413,24 @@ class SlotBroker:
         self._slots: list[_InferenceSlot] = []
         self._slot_names: list[str] = []
 
+        # Pre-allocated pinned buffers for zero-copy GPU transfer.
+        _total_cap = num_slots * max_batch_per_slot
+        _pin = torch.cuda.is_available()
+        self._pinned_input = torch.empty(
+            (_total_cap, _CHANNELS, _BOARD_H, _BOARD_W),
+            dtype=torch.float32, pin_memory=_pin,
+        )
+        self._pinned_pol = torch.empty(
+            (_total_cap, _POLICY_SIZE), dtype=torch.float32, pin_memory=_pin,
+        )
+        self._pinned_wdl = torch.empty(
+            (_total_cap, _WDL_SIZE), dtype=torch.float32, pin_memory=_pin,
+        )
+        # Pinned tensors need force=True for numpy conversion.
+        self._pinned_input_np = self._pinned_input.numpy(force=True)
+        self._pinned_pol_np = self._pinned_pol.numpy(force=True)
+        self._pinned_wdl_np = self._pinned_wdl.numpy(force=True)
+
         for i in range(num_slots):
             name = f"{slot_prefix}-{i}"
             # Clean up stale shm with the same name
@@ -497,8 +515,6 @@ class SlotBroker:
     def _process_batch(self, ready: list[_InferenceSlot]) -> None:
         self._ensure_model()
         if self._model is None:
-            # No model yet — return explicit zero outputs so workers don't
-            # consume stale shared-memory contents from a prior response.
             for slot in ready:
                 bsz = max(0, min(int(slot.batch_size), self._layout.max_batch))
                 slot.policy[:bsz].fill(0.0)
@@ -506,18 +522,17 @@ class SlotBroker:
                 slot.state = _STATE_RESPONSE
             return
 
-        # Gather inputs from all ready slots
+        # Gather inputs directly into pre-allocated pinned buffer (one memcpy
+        # from shm → pinned, then async DMA to GPU — no intermediate allocs).
         batch_sizes: list[int] = []
-        xs: list[np.ndarray] = []
+        total = 0
         for slot in ready:
-            bsz = slot.batch_size
+            bsz = max(0, min(int(slot.batch_size), self._layout.max_batch))
             batch_sizes.append(bsz)
-            # Copy from shm to contiguous array (avoids stale-data issues
-            # and ensures the tensor is backed by process-local memory).
-            xs.append(np.array(slot.input[:bsz], copy=True, order="C"))
+            self._pinned_input_np[total:total + bsz] = slot.input[:bsz]
+            total += bsz
 
-        xb = np.concatenate(xs, axis=0)
-        xt = torch.from_numpy(xb).to(self.device)
+        xt = self._pinned_input[:total].to(self.device, non_blocking=True)
 
         first_inf = self._first_inference_pending
         if first_inf:
@@ -532,15 +547,20 @@ class SlotBroker:
                      time.time() - inf_t0, xt.shape[0])
             self._first_inference_pending = False
 
-        pol = _policy_output(out).detach().float().cpu().numpy()
-        wdl = out["wdl"].detach().float().cpu().numpy()
+        # Copy results to pinned buffer (async GPU→pinned), then to shm.
+        pol_gpu = _policy_output(out).detach().float()
+        wdl_gpu = out["wdl"].detach().float()
+        self._pinned_pol[:total].copy_(pol_gpu, non_blocking=True)
+        self._pinned_wdl[:total].copy_(wdl_gpu, non_blocking=True)
+        if self.device.startswith("cuda"):
+            torch.cuda.current_stream(torch.device(self.device)).synchronize()
 
-        # Scatter outputs back to each slot
+        # Scatter from pinned buffer to worker slots
         start = 0
         for slot, bsz in zip(ready, batch_sizes):
             end = start + bsz
-            slot.policy[:bsz] = pol[start:end]
-            slot.wdl[:bsz] = wdl[start:end]
+            slot.policy[:bsz] = self._pinned_pol_np[start:end]
+            slot.wdl[:bsz] = self._pinned_wdl_np[start:end]
             slot.state = _STATE_RESPONSE
             start = end
 

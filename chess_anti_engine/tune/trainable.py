@@ -7,10 +7,13 @@ from pathlib import Path
 import csv
 import dataclasses
 import json
+import logging
 import math
 import shutil
 import subprocess
 import time
+
+log = logging.getLogger(__name__)
 
 import numpy as np
 import torch
@@ -54,6 +57,7 @@ from chess_anti_engine.tune.distributed_runtime import (
     _ensure_distributed_workers,
     _ensure_inference_broker,
     _ingest_distributed_selfplay,
+    _prune_processed_shards,
     _publish_distributed_trial_state,
     _quarantine_inbox_shards,
     _set_active_run_prefix,
@@ -191,7 +195,7 @@ def _opponent_strength(
     ema_winrate: float,
     min_nodes: int,
     max_nodes: int,
-    pid_target_winrate: float = 0.53,
+    pid_target_winrate: float = 0.60,
     wdl_regret: float = -1.0,
     wdl_regret_max: float = 1.0,
     topk: int = -1,
@@ -202,6 +206,10 @@ def _opponent_strength(
 
     Each factor maps to 0.0 (easiest) → 1.0 (hardest), then scaled by its
     weight.  All factors contribute independently — no sequential stages.
+
+    Winrate scaling with floor: penalises below-target winrate by at most 50%
+    to avoid death spirals after exploit, while still ranking trials that are
+    losing worse than those that are winning at equal difficulty.
 
     Factors & weights (total max ≈ 500):
       wdl_regret        ×350   — primary difficulty lever (regret-only mode)
@@ -266,10 +274,11 @@ def _opponent_strength(
         + _W_SKILL * skill_score
     )
 
-    # Winrate scaling: penalise PID overshoot. Cap at 1.0 so above-target
-    # winrate doesn't inflate the score (PID will raise difficulty instead).
+    # Winrate scaling with floor: cap penalty at 50% so a single bad batch
+    # can't crater the metric (old death spiral), but still penalise trials
+    # that are consistently losing at their difficulty level.
     target = max(0.01, float(pid_target_winrate))
-    winrate_factor = min(1.0, max(0.0, float(ema_winrate)) / target)
+    winrate_factor = max(0.5, min(1.0, max(0.0, float(ema_winrate)) / target))
 
     return difficulty * winrate_factor
 
@@ -584,6 +593,59 @@ def _update_best_model(
     return best_loss
 
 
+# Keys that affect broker/worker topology — changing these mid-run requires
+# a restart because the broker's shared-memory layout and worker processes
+# are configured at launch time.
+_TOPOLOGY_KEYS = frozenset({
+    "distributed_workers_per_trial",
+    "distributed_inference_max_batch_per_slot",
+    "distributed_inference_batch_wait_ms",
+    "distributed_inference_use_compile",
+    "distributed_inference_broker_enabled",
+    "distributed_inference_shared_broker",
+    "distributed_worker_use_compile",
+    "distributed_worker_sf_workers",
+    "distributed_worker_max_games_per_batch",
+    "num_samples",
+    "max_concurrent_trials",
+    "gpus_per_trial",
+})
+
+
+def _reload_yaml_into_config(config: dict, yaml_path: str | None) -> None:
+    """Overlay YAML values into *config*, preserving PB2-searched keys.
+
+    Topology keys that require a broker/worker restart are detected and
+    logged as warnings instead of being silently applied.
+
+    PB2-searched keys are determined from the *existing* config (which has
+    the baked-in bounds from trial creation), not from the YAML being loaded.
+    This prevents YAML edits from accidentally overriding tuned hyperparams.
+    """
+    if not yaml_path:
+        return
+    try:
+        from chess_anti_engine.utils import load_yaml_file, flatten_run_config_defaults
+        fresh = flatten_run_config_defaults(load_yaml_file(yaml_path))
+        # Derive searched keys from the config's own bounds (stable), not YAML.
+        searched = {
+            k.removeprefix("pb2_bounds_")
+            for k in config if k.startswith("pb2_bounds_")
+        }
+        for k, v in fresh.items():
+            if k in searched or k.startswith("pb2_bounds_"):
+                continue
+            if k in _TOPOLOGY_KEYS and k in config and config[k] != v:
+                log.warning(
+                    "YAML reload: %s changed (%s -> %s) but requires restart — skipping",
+                    k, config[k], v,
+                )
+                continue
+            config[k] = v
+    except Exception as exc:
+        log.warning("YAML reload failed (%s): %s", yaml_path, exc)
+
+
 def train_trial(config: dict):
     """Ray Tune trainable.
 
@@ -596,21 +658,7 @@ def train_trial(config: dict):
     # Re-read YAML and overlay all keys EXCEPT those PB2 is actively searching.
     # This lets --resume pick up config changes without clobbering tuned hyperparams.
     _yaml_path = config.get("_yaml_config_path")
-    if _yaml_path:
-        try:
-            from chess_anti_engine.utils import load_yaml_file, flatten_run_config_defaults
-            fresh = flatten_run_config_defaults(load_yaml_file(_yaml_path))
-            # Keys PB2 is searching — identified by pb2_bounds_* entries.
-            searched_keys = {
-                k.removeprefix("pb2_bounds_")
-                for k in fresh
-                if k.startswith("pb2_bounds_")
-            }
-            for k, v in fresh.items():
-                if k not in searched_keys and not k.startswith("pb2_bounds_"):
-                    config[k] = v
-        except Exception:
-            pass
+    _reload_yaml_into_config(config, _yaml_path)
 
     _ctx = _tune_get_context()
     base_seed = int(config.get("seed", 0))
@@ -1016,7 +1064,7 @@ def train_trial(config: dict):
             donor_trial_dir=donor_trial_dir,
             keep_recent_fraction=float(config.get("exploit_replay_local_keep_recent_fraction", 0.20)),
             keep_older_fraction=float(config.get("exploit_replay_local_keep_older_fraction", 0.65)),
-            donor_shards=int(config.get("exploit_replay_donor_shards", 0)),
+            donor_shards=int(config.get("exploit_replay_donor_shards", -1)),
             donor_skip_newest=int(config.get("exploit_replay_skip_newest", 0)),
             shard_size=int(shard_size),
             holdout_fraction=float(config.get("holdout_fraction", 0.02)),
@@ -1279,6 +1327,10 @@ def train_trial(config: dict):
             iteration_zero_based = int(global_iter)
             iteration_idx = iteration_zero_based + 1
             iter_t0 = time.monotonic()
+
+            # Live-reload YAML config each iteration so changes apply without restart.
+            _reload_yaml_into_config(config, _yaml_path)
+
             in_salvage_startup_grace = (
                 startup_source == "salvage"
                 and bool(salvage_origin_used)
@@ -1409,6 +1461,14 @@ def train_trial(config: dict):
                 distributed_stale_games = int(ingest_summary["stale_games"])
                 replay_positions_ingested = int(ingest_summary["positions_replay_added"])
                 prev_published_model_sha = str(published_model_sha)
+
+                # Prune old processed shards every 10 iterations to avoid
+                # walking the directory tree on every iteration.
+                if iteration_zero_based % 10 == 0:
+                    _prune_processed_shards(
+                        processed_dir=distributed_dirs["processed_dir"],
+                        max_age_seconds=float(config.get("processed_max_age_seconds", 43200.0)),
+                    )
             else:
                 kw = _play_batch_kwargs_from_config(config)
                 kw["opponent"] = dataclasses.replace(kw["opponent"], random_move_prob=current_rand)
@@ -1951,7 +2011,7 @@ def train_trial(config: dict):
                 ema_winrate=float(pid_ema_wr),
                 min_nodes=int(getattr(pid, "min_nodes", 50)) if pid is not None else 50,
                 max_nodes=int(getattr(pid, "max_nodes", 50000)) if pid is not None else 50000,
-                pid_target_winrate=float(config.get("sf_pid_target_winrate", 0.53)),
+                pid_target_winrate=float(config.get("sf_pid_target_winrate", 0.60)),
                 wdl_regret=float(wdl_regret_used),
                 wdl_regret_max=float(config.get("sf_pid_wdl_regret_max", 1.0)),
                 topk=int(_curr_topk),

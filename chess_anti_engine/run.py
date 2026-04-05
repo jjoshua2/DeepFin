@@ -1244,6 +1244,8 @@ def main() -> None:
 
     # Tune mode (default)
     base = _build_tune_config_dict(args)
+    # Store YAML path so trainable can re-read config on --resume.
+    base["_yaml_config_path"] = str(Path(args.config).resolve())
 
     from chess_anti_engine.tune.harness import run_tune
 

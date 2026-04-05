@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import time
 from pathlib import Path
 
 import numpy as np
+
+log = logging.getLogger(__name__)
 
 from chess_anti_engine.replay import DiskReplayBuffer
 from chess_anti_engine.replay.shard import (
@@ -249,7 +252,7 @@ def _refresh_replay_shards_on_exploit(
 
     keep_recent_fraction = max(0.0, min(1.0, float(keep_recent_fraction)))
     keep_older_fraction = max(0.0, min(1.0, float(keep_older_fraction)))
-    donor_shards = max(0, int(donor_shards))
+    donor_shards = int(donor_shards)  # -1 = copy all, 0 = disabled, N = last N
     donor_skip_newest = max(0, int(donor_skip_newest))
     shard_size = max(1, int(shard_size))
     holdout_fraction = max(0.0, min(0.99, float(holdout_fraction)))
@@ -320,7 +323,13 @@ def _refresh_replay_shards_on_exploit(
         if donor_dir is not None
         else None
     )
-    if donor_shards > 0 and donor_replay_dir is not None and donor_replay_dir.is_dir():
+    log.info(
+        "exploit replay donor lookup: donor_replay_dir=%s is_dir=%s donor_shards=%d",
+        donor_replay_dir,
+        donor_replay_dir.is_dir() if donor_replay_dir else None,
+        donor_shards,
+    )
+    if donor_shards != 0 and donor_replay_dir is not None and donor_replay_dir.is_dir():
         from chess_anti_engine.replay.shard import shard_index
 
         donor_files = iter_shard_paths(donor_replay_dir)
@@ -330,7 +339,8 @@ def _refresh_replay_shards_on_exploit(
         elif donor_skip_newest > 0:
             donor_files = []
         if donor_files:
-            donor_files = donor_files[-donor_shards:]
+            if donor_shards > 0:
+                donor_files = donor_files[-donor_shards:]
             summary["donor_selected"] = len(donor_files)
 
             existing = iter_shard_paths(replay_shard_dir)
