@@ -50,10 +50,10 @@ model:
 
 stockfish:
   path: /home/josh/projects/chess/e2e_server/publish/stockfish
-  nodes: 1000           # Higher nodes for better SF analysis quality (was 250)
+  nodes: 5000           # 5k nodes: wider WDL spread so regret actually filters moves (was 1k where all 12 passed)
   workers: 2
   multipv: 12
-  hash_mb: 4            # Small TT is sufficient for low-node searches; saves RAM across trials.
+  hash_mb: 16           # Larger TT helps at higher node counts
   # Keep SF at full strength for labels and sample from MultiPV for easier played moves.
 
   pid_enabled: true
@@ -66,8 +66,8 @@ stockfish:
   pid_ki: 0.10
   pid_kd: 0.0
   pid_integral_clamp: 1.0
-  pid_min_nodes: 1000
-  pid_max_nodes: 10000       # Allow SF to ramp nodes once random_move_prob bottoms out
+  pid_min_nodes: 5000         # 5k nodes: wider WDL spread so regret filter actually works
+  pid_max_nodes: 10000
   pid_initial_skill_level: 20
   pid_skill_min: 20
   pid_skill_max: 20
@@ -86,18 +86,18 @@ stockfish:
   pid_topk_min: 12                  # Always full multipv — regret band is the sole difficulty lever
   pid_suboptimal_wdl_regret_max: 2.0   # Allow very wide regret for bootstrap warmup
   pid_suboptimal_wdl_regret_min: 0.01
-  pid_wdl_regret_start: 1.50       # Start very easy — model needs >60% wr to generate good training data, PID tightens naturally
+  pid_wdl_regret_start: 0.80       # Start at 0.80 with 5k nodes ≈ same difficulty as 0.48 with 1k nodes, but better SF evals
   pid_wdl_regret_min: 0.02         # hard floor
   pid_wdl_regret_max: 2.0          # max if PID needs to ease off
   pid_wdl_regret_stage_end: 0.05   # nodes unlock when regret reaches 5%
-  pid_max_regret_step: 0.0025      # 0.25% steps: prevent PID from tightening too fast when 100-sim search boosts winrate
+  pid_max_regret_step: 0.001       # 0.1% steps: slow and steady
 
 selfplay:
   games_per_iter: 200  # 16 workers can sustain ~200 games/iter at ~2-3 min/iter.
   games_per_iter_start: 32  # One round of 8 workers × 4 games; fast sanity check.
   games_per_iter_ramp_iters: 5
   selfplay_fraction: 0.20  # Pin near the recent good band while narrowing the search to lr + feature-group dropout.
-  selfplay_batch: 128   # Bigger batches = better GPU utilization (12k pos/s at 128 vs 3k at 64).
+  selfplay_batch: 256   # 2 workers × 256 games each.
   max_plies: 240
 
   temperature: 1.0       # Gumbel improved policy already provides exploration; T=1.0 avoids distorting the search target.
@@ -202,13 +202,14 @@ tune:
   max_concurrent_trials: 1
   cpus_per_trial: 1
   gpus_per_trial: 1.0
-  distributed_workers_per_trial: 8  # 16 fills VRAM (31.5/34.2GB); 8 leaves headroom for training
-  distributed_worker_sf_workers: 1
-  distributed_worker_max_games_per_batch: 128
+  distributed_workers_per_trial: 2  # 2 compiled DirectGPU: optimal for single GPU (no contention, 175s/iter)
+  distributed_worker_sf_workers: 6  # 6 SF per worker = 12 total; more to compensate for 5x node increase
+  distributed_worker_max_games_per_batch: 512
   distributed_worker_username: josh
   distributed_worker_password: chess_worker_2026
   distributed_worker_use_compile: true
-  distributed_inference_broker_enabled: false  # Workers use DirectGPUEvaluator (in-process compiled, 130k+ pos/s)
+  distributed_worker_compile_mode: reduce-overhead
+  distributed_inference_broker_enabled: false  # Single worker uses DirectGPU (39k pos/s compiled, no contention)
   distributed_inference_shared_broker: true
   distributed_inference_batch_wait_ms: 5.0
   distributed_inference_max_batch_per_slot: 2048

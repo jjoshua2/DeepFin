@@ -409,7 +409,7 @@ def _build_distributed_worker_cmd(
         "--device",
         device,
         *(
-            ["--compile-inference"]
+            ["--compile-inference", "--compile-mode", str(config.get("distributed_worker_compile_mode", "reduce-overhead"))]
             if bool(config.get("distributed_worker_use_compile", False))
             else []
         ),

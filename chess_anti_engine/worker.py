@@ -459,24 +459,33 @@ def _prune_cached_models(*, cache_dir: Path, keep_shas: set[str]) -> None:
             p.unlink(missing_ok=True)
 
 
-def _maybe_compile_inference_model(model: torch.nn.Module, *, device: str) -> torch.nn.Module:
+def _maybe_compile_inference_model(
+    model: torch.nn.Module, *, device: str, mode: str = "reduce-overhead",
+) -> torch.nn.Module:
     if not str(device).startswith("cuda"):
         return model
     try:
-        return torch.compile(model, mode="reduce-overhead")
+        return torch.compile(model, mode=mode)
     except Exception:
         return model
 
 
 def _configure_shared_compile_cache(*, cache_dir: Path) -> None:
-    """Point TorchInductor/Triton caches at a shared worker cache root."""
+    """Point TorchInductor/Triton caches at a shared worker cache root.
+
+    Uses forced env var assignment (not setdefault) so it overrides the
+    system default /tmp location.  All workers sharing the same cache_dir
+    reuse autotuned kernels and FX graph compilations.
+    """
     compile_cache_root = cache_dir / "compile_cache"
     inductor_dir = compile_cache_root / "torchinductor"
     triton_dir = compile_cache_root / "triton"
     inductor_dir.mkdir(parents=True, exist_ok=True)
     triton_dir.mkdir(parents=True, exist_ok=True)
-    os.environ.setdefault("TORCHINDUCTOR_CACHE_DIR", str(inductor_dir))
-    os.environ.setdefault("TRITON_CACHE_DIR", str(triton_dir))
+    os.environ["TORCHINDUCTOR_CACHE_DIR"] = str(inductor_dir)
+    os.environ["TRITON_CACHE_DIR"] = str(triton_dir)
+    # Enable FX graph cache so compiled graphs persist across restarts.
+    os.environ["TORCHINDUCTOR_FX_GRAPH_CACHE"] = "1"
 
 
 def _cached_sha_asset_needs_refresh(*, path: Path, sha256: str, last_sha256: str | None = None) -> bool:
@@ -619,6 +628,12 @@ def main() -> None:
         "--compile-inference",
         action="store_true",
         help="Enable torch.compile for worker-side inference/search models on CUDA.",
+    )
+    ap.add_argument(
+        "--compile-mode",
+        type=str,
+        default="reduce-overhead",
+        help="torch.compile mode (reduce-overhead, max-autotune, default).",
     )
 
     ap.add_argument("--stockfish-path", type=str, default=None)
@@ -1035,7 +1050,8 @@ class WorkerSession:
         if bool(self.args.compile_inference):
             compile_t0 = time.time()
             self.log.info("compile starting %s sha=%s", label, sha_short)
-            model = _maybe_compile_inference_model(model, device=str(self.device))
+            _compile_mode = str(getattr(self.args, "compile_mode", "reduce-overhead") or "reduce-overhead")
+            model = _maybe_compile_inference_model(model, device=str(self.device), mode=_compile_mode)
             self.log.info("compile finished %s sha=%s elapsed_s=%.2f", label, sha_short, float(time.time() - compile_t0))
         return model
 

@@ -99,6 +99,7 @@ class DifficultyPID:
         # Negative disables the gate (nodes unlock as soon as rmp stage completes).
         wdl_regret_stage_end: float = -1.0,
         max_regret_step: float = 0.01,
+        max_regret_ease_step: float | None = None,  # Ease rate; defaults to 5x tighten
         wdl_regret_stage_reenter: float | None = None,
         # Skill-level ladder: PID manages both node count and SF Skill Level.
         # When nodes climb past skill_promote_nodes the difficulty tier increases;
@@ -148,6 +149,7 @@ class DifficultyPID:
             self.wdl_regret_min = float(wdl_regret_min)
             self.wdl_regret_max = float(wdl_regret_max)
             self.max_regret_step = float(max_regret_step)
+            self.max_regret_ease_step = float(max_regret_ease_step) if max_regret_ease_step is not None else float(max_regret_step) * 5
             if self._regret_gate_enabled:
                 self.wdl_regret_stage_end = _clamp(
                     float(wdl_regret_stage_end), float(wdl_regret_min), float(wdl_regret_max)
@@ -170,6 +172,7 @@ class DifficultyPID:
             self.wdl_regret_max = float(wdl_regret_max)
             self.wdl_regret_stage_end = float(wdl_regret_stage_end)
             self.max_regret_step = float(max_regret_step)
+            self.max_regret_ease_step = float(max_regret_ease_step) if max_regret_ease_step is not None else float(max_regret_step) * 5
             self.wdl_regret_stage_reenter = float(wdl_regret_stage_end)
             self._regret_stage_complete = True  # disabled = always complete
 
@@ -347,7 +350,11 @@ class DifficultyPID:
         if allow_regret:
             # Winning too much (u>0) → make harder → decrease regret (tighter).
             # Losing too much (u<0) → make easier → increase regret (looser).
-            regret_delta = _clamp(-u, -self.max_regret_step, self.max_regret_step)
+            # Asymmetric: tighten slow, ease fast. Model improves slowly
+            # but can collapse quickly — PID should mirror that.
+            ease_step = getattr(self, "max_regret_ease_step", self.max_regret_step * 5)
+            tighten_step = self.max_regret_step
+            regret_delta = _clamp(-u, -tighten_step, ease_step)
             regret_after = _clamp(regret_before + regret_delta, self.wdl_regret_min, self.wdl_regret_max)
             self.wdl_regret = float(regret_after)
             regret_changed = abs(regret_after - regret_before) > 1e-12

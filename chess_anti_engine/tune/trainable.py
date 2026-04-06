@@ -1969,6 +1969,7 @@ def train_trial(config: dict):
                     pid.max_rand_step = float(config.get("sf_pid_max_rand_step", 0.01))
                 # Re-read tunable PID params from config (YAML overlay) each iteration.
                 pid.max_regret_step = float(config.get("sf_pid_max_regret_step", pid.max_regret_step))
+                pid.max_regret_ease_step = float(config.get("sf_pid_max_regret_ease_step", pid.max_regret_ease_step))
                 pid.target = float(config.get("sf_pid_target_winrate", pid.target))
                 pid.kp = float(config.get("sf_pid_kp", pid.kp))
                 pid.ki = float(config.get("sf_pid_ki", pid.ki))
