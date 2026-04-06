@@ -90,7 +90,7 @@ stockfish:
   pid_wdl_regret_min: 0.02         # hard floor
   pid_wdl_regret_max: 2.0          # max if PID needs to ease off
   pid_wdl_regret_stage_end: 0.05   # nodes unlock when regret reaches 5%
-  pid_max_regret_step: 0.0025      # 0.25% steps: fine-grained for the flat winrate-vs-regret slope near equilibrium
+  pid_max_regret_step: 0.0025      # 0.25% steps: prevent PID from tightening too fast when 100-sim search boosts winrate
 
 selfplay:
   games_per_iter: 200  # 16 workers can sustain ~200 games/iter at ~2-3 min/iter.
@@ -118,10 +118,10 @@ selfplay:
   random_start_plies: 2   # Fallback if book unavailable
 
   mcts: gumbel
-  mcts_simulations: 64
-  mcts_start_simulations: 64  # Full budget from start (KataGo-style: 75% full, 25% fast)
-  playout_cap_fraction: 0.30  # Restore prior ratio; evaluate policy progress before spending more compute on full-search positions.
-  fast_simulations: 8
+  mcts_simulations: 100
+  mcts_start_simulations: 100  # Full budget from start (KataGo-style: 75% full, 25% fast)
+  playout_cap_fraction: 0.25  # 25% get full sims, 75% get fast
+  fast_simulations: 25
   fpu_reduction: 1.2    # LC0/KataGo FPU for non-root nodes
   fpu_at_root: 1.0      # FPU for root (lower — root has Dirichlet noise)
 
@@ -202,13 +202,13 @@ tune:
   max_concurrent_trials: 1
   cpus_per_trial: 1
   gpus_per_trial: 1.0
-  distributed_workers_per_trial: 16
+  distributed_workers_per_trial: 8  # 16 fills VRAM (31.5/34.2GB); 8 leaves headroom for training
   distributed_worker_sf_workers: 1
   distributed_worker_max_games_per_batch: 128
   distributed_worker_username: josh
   distributed_worker_password: chess_worker_2026
   distributed_worker_use_compile: true
-  distributed_inference_broker_enabled: true
+  distributed_inference_broker_enabled: false  # Workers use DirectGPUEvaluator (in-process compiled, 130k+ pos/s)
   distributed_inference_shared_broker: true
   distributed_inference_batch_wait_ms: 5.0
   distributed_inference_max_batch_per_slot: 2048

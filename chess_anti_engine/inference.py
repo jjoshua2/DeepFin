@@ -246,6 +246,82 @@ class LocalModelEvaluator:
         return priors_list, wdl
 
 
+class DirectGPUEvaluator(LocalModelEvaluator):
+    """LocalModelEvaluator with pre-allocated pinned buffers.
+
+    Eliminates per-call allocations by reusing pinned host tensors for
+    input gather and output scatter.  Inherits ``evaluate_encoded_async``
+    and ``evaluate_for_expand`` from the base class.
+
+    The sync path copies output by default (``copy_out=True``).  Pass
+    ``copy_out=False`` to return views into pinned buffers — the caller
+    must consume results before the next ``evaluate_encoded`` call.
+    """
+
+    def __init__(
+        self,
+        model: torch.nn.Module,
+        *,
+        device: str,
+        max_batch: int = 512,
+        use_amp: bool = True,
+        amp_dtype: str = "auto",
+    ) -> None:
+        super().__init__(model, device=device, use_amp=use_amp, amp_dtype=amp_dtype)
+        self._max_batch = int(max_batch)
+
+        _pin = self._use_cuda
+        self._pinned_input = torch.empty(
+            (self._max_batch, _CHANNELS, _BOARD_H, _BOARD_W),
+            dtype=torch.float32, pin_memory=_pin,
+        )
+        self._pinned_pol = torch.empty(
+            (self._max_batch, _POLICY_SIZE),
+            dtype=torch.float32, pin_memory=_pin,
+        )
+        self._pinned_wdl = torch.empty(
+            (self._max_batch, _WDL_SIZE),
+            dtype=torch.float32, pin_memory=_pin,
+        )
+        self._pinned_input_np = self._pinned_input.numpy(force=True)
+        self._pinned_pol_np = self._pinned_pol.numpy(force=True)
+        self._pinned_wdl_np = self._pinned_wdl.numpy(force=True)
+
+    def evaluate_encoded(
+        self, x: np.ndarray, *, copy_out: bool = True,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        if x.ndim != 4:
+            raise ValueError(f"expected 4D input, got {x.ndim}D")
+        bsz = x.shape[0]
+        if bsz > self._max_batch:
+            raise ValueError(f"batch {bsz} > max {self._max_batch}")
+
+        self._pinned_input_np[:bsz] = x
+
+        if not self._use_cuda:
+            xt = self._pinned_input[:bsz]
+            with torch.no_grad():
+                with inference_autocast(device=self.device, enabled=self._use_amp, dtype=self._amp_dtype):
+                    out = self.model(xt)
+            return _policy_output(out).detach().float().numpy(), out["wdl"].detach().float().numpy()
+
+        xt = self._pinned_input[:bsz].to(self.device, non_blocking=True)
+        with torch.no_grad():
+            with inference_autocast(device=self.device, enabled=self._use_amp, dtype=self._amp_dtype):
+                out = self.model(xt)
+        self._pinned_pol[:bsz].copy_(_policy_output(out).detach().float(), non_blocking=True)
+        self._pinned_wdl[:bsz].copy_(out["wdl"].detach().float(), non_blocking=True)
+        done = torch.cuda.Event()
+        done.record(torch.cuda.current_stream(torch.device(self.device)))
+        done.synchronize()
+
+        pol_np = self._pinned_pol_np[:bsz]
+        wdl_np = self._pinned_wdl_np[:bsz]
+        if copy_out:
+            return pol_np.copy(), wdl_np.copy()
+        return pol_np, wdl_np
+
+
 # ---------------------------------------------------------------------------
 # Slot-based shared memory inference
 # ---------------------------------------------------------------------------
@@ -532,6 +608,9 @@ class SlotBroker:
             self._pinned_input_np[total:total + bsz] = slot.input[:bsz]
             total += bsz
 
+        assert total <= self._pinned_input.shape[0], (
+            f"gather overflow: {total} > {self._pinned_input.shape[0]}"
+        )
         xt = self._pinned_input[:total].to(self.device, non_blocking=True)
 
         first_inf = self._first_inference_pending

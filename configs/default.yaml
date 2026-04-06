@@ -13,10 +13,10 @@ replay_capacity: 200000
 
 model:
   kind: transformer   # transformer | tiny
-  embed_dim: 256
-  num_layers: 6
-  num_heads: 8
-  ffn_mult: 2
+  embed_dim: 768
+  num_layers: 15
+  num_heads: 24
+  ffn_mult: 1.5
   use_smolgen: true
   use_nla: false
   gradient_checkpointing: false  # ~50% less VRAM, ~20% slower

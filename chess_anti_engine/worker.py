@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from chess_anti_engine.inference import SlotInferenceClient
+from chess_anti_engine.inference import DirectGPUEvaluator, SlotInferenceClient
 from chess_anti_engine.utils import sha256_file as _sha256_file
 from chess_anti_engine.model import ModelConfig, build_model, load_state_dict_tolerant
 from chess_anti_engine.moves.encode import POLICY_SIZE
@@ -891,6 +891,7 @@ class WorkerSession:
         self.last_sf_sha: str | None = None
         self.model_cfg_active: ModelConfig | None = None
         self.model = None
+        self._direct_evaluator: DirectGPUEvaluator | None = None
         self.inference_client = self._make_inference_client()
         self.pause_selfplay_active = False
         self.manifest_state = "active"
@@ -1563,6 +1564,16 @@ class WorkerSession:
             time.sleep(float(self.args.poll_seconds))
             return
 
+        # Use DirectGPUEvaluator for in-process inference (no broker IPC).
+        if need_local_model:
+            if self._direct_evaluator is None:
+                # MCTS sends up to games_per_batch * topk positions per call.
+                self._direct_evaluator = DirectGPUEvaluator(
+                    self.model, device=str(self.device), max_batch=2048,
+                )
+            elif self._direct_evaluator.model is not self.model:
+                self._direct_evaluator.model = self.model
+
         games_per_batch = (
             int(self.games_per_batch_local)
             if self.games_per_batch_local is not None
@@ -1613,12 +1624,13 @@ class WorkerSession:
         self._saw_completed_game = False
 
         try:
+            _eval = self.inference_client or self._direct_evaluator
             samples, stats = play_batch(
-                self.model if need_local_model else None,
+                self.model if (need_local_model and _eval is None) else None,
                 device=str(self.device),
                 rng=self.rng,
                 stockfish=self.sf,
-                evaluator=self.inference_client,
+                evaluator=_eval,
                 games=int(games_per_batch),
                 on_game_complete=self._on_completed_game,
                 opponent=OpponentConfig(
