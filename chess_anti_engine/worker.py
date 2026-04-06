@@ -1050,7 +1050,7 @@ class WorkerSession:
         if bool(self.args.compile_inference):
             compile_t0 = time.time()
             self.log.info("compile starting %s sha=%s", label, sha_short)
-            _compile_mode = str(getattr(self.args, "compile_mode", "reduce-overhead") or "reduce-overhead")
+            _compile_mode = str(self.args.compile_mode)
             model = _maybe_compile_inference_model(model, device=str(self.device), mode=_compile_mode)
             self.log.info("compile finished %s sha=%s elapsed_s=%.2f", label, sha_short, float(time.time() - compile_t0))
         return model

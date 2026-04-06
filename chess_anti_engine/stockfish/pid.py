@@ -352,7 +352,7 @@ class DifficultyPID:
             # Losing too much (u<0) → make easier → increase regret (looser).
             # Asymmetric: tighten slow, ease fast. Model improves slowly
             # but can collapse quickly — PID should mirror that.
-            ease_step = getattr(self, "max_regret_ease_step", self.max_regret_step * 5)
+            ease_step = self.max_regret_ease_step
             tighten_step = self.max_regret_step
             regret_delta = _clamp(-u, -tighten_step, ease_step)
             regret_after = _clamp(regret_before + regret_delta, self.wdl_regret_min, self.wdl_regret_max)
