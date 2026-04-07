@@ -748,8 +748,11 @@ def _process_shard(
     accepted_model_shas: set[str],
     rng: np.random.Generator,
     summary: dict[str, int],
-) -> None:
-    """Load one shard from inbox, ingest into replay buffer, update summary."""
+) -> str:
+    """Load one shard from inbox, ingest into replay buffer, update summary.
+
+    Returns the shard's model_sha256 (empty string if unknown).
+    """
     rel = sp.relative_to(inbox_dir)
     out = processed_dir / rel
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -762,7 +765,7 @@ def _process_shard(
             sp.replace(bad)
         except Exception:
             sp.unlink(missing_ok=True)
-        return
+        return ""
 
     model_sha = str(meta.get("model_sha256") or "")
     wins = int(meta.get("wins", 0) or 0)
@@ -821,6 +824,7 @@ def _process_shard(
         sp.replace(out)
     except Exception:
         sp.unlink(missing_ok=True)
+    return model_sha
 
 
 def _ingest_distributed_selfplay(
@@ -837,6 +841,8 @@ def _ingest_distributed_selfplay(
     poll_seconds: float,
     rng: np.random.Generator,
     min_games_fraction: float = 0.5,
+    prev_model_sha: str | None = None,
+    prev_model_max_fraction: float = 1.0,
 ) -> dict[str, int]:
     """Poll inbox until enough games arrive, then return.
 
@@ -855,11 +861,20 @@ def _ingest_distributed_selfplay(
     min_games = max(1, int(math.ceil(float(min_games_fraction) * target_games)))
     deadline = time.time() + float(wait_timeout_s)
     summary = _empty_ingest_summary()
+
+    # Cap prev-model games at a fraction of target.  Once reached, demote
+    # the prev SHA so further prev-model shards count as stale.
+    # Skip if prev == current (discarding would remove the only accepted SHA).
+    _cap_prev = bool(prev_model_sha) and len(accepted_model_shas) > 1
+    prev_max_games = int(math.ceil(float(prev_model_max_fraction) * target_games)) if _cap_prev else 0
+    prev_matching_games = 0
+    effective_accepted = set(accepted_model_shas)
+
     _shard_kw = dict(
         inbox_dir=inbox_dir, processed_dir=processed_dir,
         buf=buf, holdout_buf=holdout_buf,
         holdout_frac=holdout_frac, holdout_frozen=holdout_frozen,
-        accepted_model_shas=accepted_model_shas, rng=rng, summary=summary,
+        accepted_model_shas=effective_accepted, rng=rng, summary=summary,
     )
 
     while summary["matching_games"] < target_games:
@@ -876,7 +891,20 @@ def _ingest_distributed_selfplay(
         processed_any = False
         for sp in shard_paths:
             processed_any = True
-            _process_shard(sp, **_shard_kw)
+            games_before = summary["matching_games"]
+            shard_sha = _process_shard(sp, **_shard_kw)
+            games_added = summary["matching_games"] - games_before
+
+            # Track prev-model matching games and demote once capped.
+            if (
+                _cap_prev
+                and prev_model_sha in effective_accepted
+                and shard_sha == prev_model_sha
+                and games_added > 0
+            ):
+                prev_matching_games += games_added
+                if prev_matching_games >= prev_max_games:
+                    effective_accepted.discard(prev_model_sha)
 
             if summary["matching_games"] >= target_games:
                 break
