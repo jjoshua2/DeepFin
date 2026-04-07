@@ -1434,7 +1434,7 @@ def train_trial(config: dict):
                     inbox_dir=distributed_dirs["inbox_dir"],
                     processed_dir=distributed_dirs["processed_dir"],
                     target_games=int(total_games),
-                    accepted_model_shas={str(published_model_sha)} | ({str(prev_published_model_sha)} if prev_published_model_sha else set()),
+                    accepted_model_shas={str(published_model_sha)},
                     wait_timeout_s=float(config.get("distributed_wait_timeout_seconds", 900.0)),
                     poll_seconds=float(config.get("distributed_worker_poll_seconds", 1.0)),
                     rng=rng,

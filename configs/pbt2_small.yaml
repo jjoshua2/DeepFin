@@ -59,7 +59,7 @@ stockfish:
   pid_enabled: true
   pid_target_winrate: 0.60
   pid_ema_alpha: 0.35      # EMA half-life ~1.5 iters — faster reaction to regime changes (salvage/exploit).
-  pid_deadzone: 0.025
+  pid_deadzone: 0.10            # Only tighten when pid_wr > 0.70; only ease when pid_wr < 0.50. Wide stability band.
   pid_rate_limit: 0.10
   pid_min_games_between_adjust: 200  # Higher than games_per_iter so only the forced iteration-boundary adjust fires.
   pid_kp: 1.5
@@ -86,14 +86,14 @@ stockfish:
   pid_topk_min: 12                  # Always full multipv — regret band is the sole difficulty lever
   pid_suboptimal_wdl_regret_max: 2.0   # Allow very wide regret for bootstrap warmup
   pid_suboptimal_wdl_regret_min: 0.01
-  pid_wdl_regret_start: 0.80       # Start at 0.80 with 5k nodes ≈ same difficulty as 0.48 with 1k nodes, but better SF evals
+  pid_wdl_regret_start: 0.50       # Start near equilibrium for 5k nodes; model stable here
   pid_wdl_regret_min: 0.02         # hard floor
   pid_wdl_regret_max: 2.0          # max if PID needs to ease off
   pid_wdl_regret_stage_end: 0.05   # nodes unlock when regret reaches 5%
-  pid_max_regret_step: 0.001       # 0.1% steps: slow and steady
+  pid_max_regret_step: 0.001       # 0.1% steps: in new territory past old plateau, go careful
 
 selfplay:
-  games_per_iter: 200  # 16 workers can sustain ~200 games/iter at ~2-3 min/iter.
+  games_per_iter: 200
   games_per_iter_start: 32  # One round of 8 workers × 4 games; fast sanity check.
   games_per_iter_ramp_iters: 5
   selfplay_fraction: 0.20  # Pin near the recent good band while narrowing the search to lr + feature-group dropout.
@@ -202,8 +202,8 @@ tune:
   max_concurrent_trials: 1
   cpus_per_trial: 1
   gpus_per_trial: 1.0
-  distributed_workers_per_trial: 2  # 2 compiled DirectGPU: optimal for single GPU (no contention, 175s/iter)
-  distributed_worker_sf_workers: 6  # 6 SF per worker = 12 total; more to compensate for 5x node increase
+  distributed_workers_per_trial: 4  # Testing 4 with stable PID (wide deadzone + asymmetric step)
+  distributed_worker_sf_workers: 8  # 8 SF per worker = 16 total; SF is the bottleneck at 5k nodes
   distributed_worker_max_games_per_batch: 512
   distributed_worker_username: josh
   distributed_worker_password: chess_worker_2026
