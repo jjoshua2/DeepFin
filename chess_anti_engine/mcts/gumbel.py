@@ -198,6 +198,8 @@ def run_gumbel_root_many(
     evaluator: BatchEvaluator | None = None,
     pre_pol_logits: np.ndarray | None = None,
     pre_wdl_logits: np.ndarray | None = None,
+    per_game_simulations: list[int] | None = None,
+    per_game_add_noise: list[bool] | None = None,
 ) -> tuple[list[np.ndarray], list[int], list[float], list[np.ndarray]]:
     """Root Gumbel search with sequential halving.
 

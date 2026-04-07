@@ -287,15 +287,11 @@ class TransformerBlock(nn.Module):
             q = self.q_norm(q)
             k = self.k_norm(k)
 
-        attn_logits = (q @ k.transpose(-1, -2)) * (self.head_dim**-0.5)  # (B,H,T,T)
-        if smolgen_bias is not None:
-            attn_logits = attn_logits + smolgen_bias
-
-        attn = F.softmax(attn_logits, dim=-1)
-        if self.dropout > 0:
-            attn = F.dropout(attn, p=self.dropout, training=self.training)
-
-        out = attn @ v  # (B,H,T,hd)
+        out = F.scaled_dot_product_attention(
+            q, k, v,
+            attn_mask=smolgen_bias,
+            dropout_p=self.dropout if self.training else 0.0,
+        )  # (B,H,T,hd)
         out = out.transpose(1, 2).contiguous().view(b, t, d)  # (B,T,D)
         out = self.out_proj(out)
 

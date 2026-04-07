@@ -646,66 +646,89 @@ def play_batch(
             for i in net_idxs
         ]
 
-        def _run_mcts_group(idxs: list[int], sims_per: list[int], *, add_noise: bool = True) -> None:
+        def _run_mcts_group(idxs: list[int], sims_per: list[int], *, per_game_noise: list[bool] | None = None) -> None:
             if not idxs:
                 return
 
-            # Group by (sim_count, temperature_bucket) to support per-game temps.
-            by_key: dict[tuple[int, float], list[int]] = defaultdict(list)
-            for j in idxs:
-                by_key[(int(sims_per[j]), round(temps[j], 2))].append(j)
+            # All games share one MCTS call with per-game sim budgets and
+            # temperature applied after search.  Maximizes GPU batch size.
+            group = idxs
+            sub_boards = [boards[net_idxs[j]] for j in group]
+            sub_temps = [temps[j] for j in group]
+            sub_sims = [int(sims_per[j]) for j in group]
+            sim_count = max(sub_sims)
 
             gumbel_low_sims = max(64, int(search.fast_simulations))
+            use_gumbel = (str(search.mcts_type) == "gumbel") or (int(sim_count) <= int(gumbel_low_sims))
+            sub_pol = pol_logits[group, :]
+            sub_wdl = wdl_logits_raw[group, :]
 
-            for (sim_count, temp_bucket), group in by_key.items():
-                sub_boards = [boards[net_idxs[j]] for j in group]
+            if use_gumbel:
+                _gumbel_fn = _run_gumbel_root_many_c if _HAS_GUMBEL_C else run_gumbel_root_many
+                sub_noise = [per_game_noise[j] for j in group] if per_game_noise is not None else None
+                p_sub, a_sub, v_sub, m_sub = _gumbel_fn(
+                    model,
+                    sub_boards,
+                    device=device,
+                    rng=rng,
+                    cfg=GumbelConfig(simulations=int(sim_count), temperature=1.0, add_noise=True),
+                    evaluator=eval_impl,
+                    pre_pol_logits=sub_pol,
+                    pre_wdl_logits=sub_wdl,
+                    per_game_simulations=sub_sims,
+                    per_game_add_noise=sub_noise,
+                )
+            else:
+                _puct_fn = _run_mcts_many_c if _HAS_C_TREE else run_mcts_many
+                p_sub, a_sub, v_sub, m_sub = _puct_fn(
+                    model,
+                    sub_boards,
+                    device=device,
+                    rng=rng,
+                    cfg=MCTSConfig(
+                        simulations=int(sim_count),
+                        temperature=1.0,
+                        fpu_reduction=float(search.fpu_reduction),
+                        fpu_at_root=float(search.fpu_at_root),
+                    ),
+                    evaluator=eval_impl,
+                    pre_pol_logits=sub_pol,
+                    pre_wdl_logits=sub_wdl,
+                )
 
-                use_gumbel = (str(search.mcts_type) == "gumbel") or (int(sim_count) <= int(gumbel_low_sims))
-                if use_gumbel:
-                    sub_pol = pol_logits[group, :]
-                    sub_wdl = wdl_logits_raw[group, :]
-                    _gumbel_fn = _run_gumbel_root_many_c if _HAS_GUMBEL_C else run_gumbel_root_many
-                    p_sub, a_sub, v_sub, m_sub = _gumbel_fn(
-                        model,
-                        sub_boards,
-                        device=device,
-                        rng=rng,
-                        cfg=GumbelConfig(simulations=int(sim_count), temperature=float(temp_bucket), add_noise=add_noise),
-                        evaluator=eval_impl,
-                        pre_pol_logits=sub_pol,
-                        pre_wdl_logits=sub_wdl,
-                    )
+            # Re-select actions with per-game temperature from the
+            # improved policy (probs are temperature-independent).
+            for gi, (p, t) in enumerate(zip(p_sub, sub_temps)):
+                if t == 1.0:
+                    continue
+                legal = np.flatnonzero(p > 0)
+                if len(legal) == 0:
+                    continue
+                if t <= 0:
+                    a_sub[gi] = int(legal[np.argmax(p[legal])])
                 else:
-                    sub_pol = pol_logits[group, :]
-                    sub_wdl = wdl_logits_raw[group, :]
-                    _puct_fn = _run_mcts_many_c if _HAS_C_TREE else run_mcts_many
-                    p_sub, a_sub, v_sub, m_sub = _puct_fn(
-                        model,
-                        sub_boards,
-                        device=device,
-                        rng=rng,
-                        cfg=MCTSConfig(
-                            simulations=int(sim_count),
-                            temperature=float(temp_bucket),
-                            fpu_reduction=float(search.fpu_reduction),
-                            fpu_at_root=float(search.fpu_at_root),
-                        ),
-                        evaluator=eval_impl,
-                        pre_pol_logits=sub_pol,
-                        pre_wdl_logits=sub_wdl,
-                    )
+                    pw = np.power(p[legal], 1.0 / float(t))
+                    ps = float(pw.sum())
+                    if ps > 0:
+                        pw /= ps
+                        a_sub[gi] = int(rng.choice(legal, p=pw))
 
-                for jj, p, a, v, m in zip(group, p_sub, a_sub, v_sub, m_sub, strict=True):
-                    probs_list[jj] = p
-                    actions[jj] = a
-                    values_list[jj] = float(v)
-                    masks_list[jj] = m
+            for jj, p, a, v, m in zip(group, p_sub, a_sub, v_sub, m_sub, strict=True):
+                probs_list[jj] = p
+                actions[jj] = a
+                values_list[jj] = float(v)
+                masks_list[jj] = m
 
-        full_idxs = [j for j, v in enumerate(is_full) if bool(v)]
-        _run_mcts_group(full_idxs, eff_full_sims, add_noise=True)
-
-        fast_idxs = [j for j, v in enumerate(is_full) if not bool(v)]
-        _run_mcts_group(fast_idxs, eff_fast_sims, add_noise=False)
+        # Run all games in one MCTS call with per-game sim budgets and noise.
+        # Full-sim games get Gumbel noise for exploration; fast games don't
+        # (KataGo playout cap convention).
+        all_idxs = list(range(len(net_idxs)))
+        combined_sims = [
+            int(eff_full_sims[j]) if bool(is_full[j]) else int(eff_fast_sims[j])
+            for j in all_idxs
+        ]
+        noise_flags = [bool(is_full[j]) for j in all_idxs]
+        _run_mcts_group(all_idxs, combined_sims, per_game_noise=noise_flags)
 
         # Pre-allocate reusable buffers for per-sample computation
         _lg_buf = np.empty(POLICY_SIZE, dtype=np.float64)

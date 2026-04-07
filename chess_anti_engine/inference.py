@@ -322,6 +322,135 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         return pol_np, wdl_np
 
 
+# Batch size buckets for AOT-compiled inference models.
+# Only sizes with a corresponding chess_b{N}.pt2 in the AOT dir are loaded.
+_BATCH_BUCKETS = (
+    1, 2, 3, 4, 6, 8, 10, 12, 14, 16, 20, 24, 32, 48, 64, 96,
+    128, 132, 136, 140, 144, 148, 152, 156, 160, 164, 170,
+    192, 224, 228, 232, 236, 240, 244, 248, 256, 288, 340,
+    384, 448, 512, 768, 1024, 1536, 2048, 3072, 4096,
+)
+
+
+class AOTEvaluator:
+    """Evaluator using pre-compiled AOTInductor models for fixed bucket sizes.
+
+    Each bucket size has a separate .pt2 package compiled with max-autotune.
+    At inference time, the input is padded to the next bucket and dispatched
+    to the matching pre-compiled model.  No torch.compile or CUDA graph
+    capture at runtime.
+    """
+
+    def __init__(
+        self,
+        aot_dir: str | Path,
+        *,
+        device: str = "cuda",
+        max_batch: int = 512,
+    ) -> None:
+        self.device = str(device)
+        self._max_batch = int(max_batch)
+        aot_dir = Path(aot_dir)
+
+        # Load compiled models in parallel (CUDA driver is thread-safe for loading).
+        from concurrent.futures import ThreadPoolExecutor
+        pkgs: dict[int, Path] = {}
+        for b in _BATCH_BUCKETS:
+            if b > self._max_batch:
+                break
+            pkg = aot_dir / f"chess_b{b}.pt2"
+            if pkg.exists():
+                pkgs[b] = pkg
+        if not pkgs:
+            raise FileNotFoundError(f"No .pt2 packages found in {aot_dir}")
+
+        def _load(item: tuple[int, Path]) -> tuple[int, object]:
+            return item[0], torch._inductor.aoti_load_package(str(item[1]))
+
+        with ThreadPoolExecutor(max_workers=min(4, len(pkgs))) as pool:
+            self._models = dict(pool.map(_load, pkgs.items()))
+        self._sorted_buckets = sorted(self._models.keys())
+        self._constant_fqns = list(next(iter(self._models.values())).get_constant_fqns())
+
+        # Pre-allocate pinned buffers
+        _pin = self.device.startswith("cuda")
+        self._pinned_input = torch.empty(
+            (self._max_batch, _CHANNELS, _BOARD_H, _BOARD_W),
+            dtype=torch.bfloat16, pin_memory=_pin,
+        )
+        self._pinned_input_np = np.empty(
+            (self._max_batch, _CHANNELS, _BOARD_H, _BOARD_W),
+            dtype=np.float32,
+        )
+
+    def load_weights(self, state_dict: dict[str, torch.Tensor]) -> None:
+        """Update all bucket models with new weights from a state_dict."""
+        constants = {
+            fqn: state_dict[fqn].to(device=self.device, dtype=torch.bfloat16).contiguous()
+            for fqn in self._constant_fqns
+            if fqn in state_dict
+        }
+        for model in self._models.values():
+            model.load_constants(constants, check_full_update=False)
+
+    def _pick_bucket(self, bsz: int) -> int:
+        for b in self._sorted_buckets:
+            if b >= bsz:
+                return b
+        return self._sorted_buckets[-1]
+
+    def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        if x.ndim != 4:
+            raise ValueError(f"expected 4D input, got {x.ndim}D")
+        bsz = x.shape[0]
+        if bsz > self._max_batch:
+            raise ValueError(f"batch {bsz} > max {self._max_batch}")
+        bucket = self._pick_bucket(bsz)
+        model = self._models[bucket]
+
+        # Copy into pinned buffer and convert to BF16 on GPU
+        self._pinned_input_np[:bsz] = x
+        xt = torch.from_numpy(self._pinned_input_np[:bucket]).to(
+            device=self.device, dtype=torch.bfloat16, non_blocking=True,
+        )
+
+        with torch.no_grad():
+            out = model(xt)
+
+        pol = _policy_output(out)[:bsz].detach().float().cpu().numpy()
+        wdl = out["wdl"][:bsz].detach().float().cpu().numpy()
+        return pol, wdl
+
+    def evaluate_encoded_async(
+        self, x: np.ndarray,
+    ) -> tuple[torch.Tensor, torch.Tensor, "torch.cuda.Event | None"]:
+        if x.ndim != 4:
+            raise ValueError(f"expected 4D input, got {x.ndim}D")
+        bsz = x.shape[0]
+        if bsz > self._max_batch:
+            raise ValueError(f"batch {bsz} > max {self._max_batch}")
+        bucket = self._pick_bucket(bsz)
+        model = self._models[bucket]
+
+        self._pinned_input_np[:bsz] = x
+        xt = torch.from_numpy(self._pinned_input_np[:bucket]).to(
+            device=self.device, dtype=torch.bfloat16, non_blocking=True,
+        )
+
+        with torch.no_grad():
+            out = model(xt)
+
+        pol = _policy_output(out)[:bsz].detach().to(
+            dtype=torch.float32, device="cpu", non_blocking=True,
+        )
+        wdl = out["wdl"][:bsz].detach().to(
+            dtype=torch.float32, device="cpu", non_blocking=True,
+        )
+        done = torch.cuda.Event()
+        done.record(torch.cuda.current_stream(torch.device(self.device)))
+        return pol, wdl, done
+
+
 # ---------------------------------------------------------------------------
 # Slot-based shared memory inference
 # ---------------------------------------------------------------------------

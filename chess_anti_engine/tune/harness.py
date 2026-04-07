@@ -458,6 +458,9 @@ def run_tune(
     if search_alg is not None:
         tune_config_kwargs["search_alg"] = search_alg
 
+    os.environ.setdefault("RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO", "0")
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
     ray.init(ignore_reinit_error=True, include_dashboard=False)
 
     experiment_path = work_dir.resolve() / "tune"

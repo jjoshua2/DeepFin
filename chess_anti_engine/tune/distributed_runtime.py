@@ -409,9 +409,13 @@ def _build_distributed_worker_cmd(
         "--device",
         device,
         *(
-            ["--compile-inference", "--compile-mode", str(config.get("distributed_worker_compile_mode", "reduce-overhead"))]
-            if bool(config.get("distributed_worker_use_compile", False))
-            else []
+            ["--aot-dir", str(config.get("distributed_worker_aot_dir", ""))]
+            if str(config.get("distributed_worker_aot_dir", "")).strip()
+            else (
+                ["--compile-inference", "--compile-mode", str(config.get("distributed_worker_compile_mode", "reduce-overhead"))]
+                if bool(config.get("distributed_worker_use_compile", False))
+                else []
+            )
         ),
         "--sf-workers",
         str(int(config.get("distributed_worker_sf_workers", 1))),

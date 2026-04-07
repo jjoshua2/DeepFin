@@ -548,6 +548,12 @@ def _download_opening_book(
 
 
 def main() -> None:
+    # Let PyTorch return unused CUDA memory to the driver instead of hoarding
+    # it in the caching allocator.  Reduces peak VRAM when multiple compiled
+    # workers share one GPU.
+    import os
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
     ap = argparse.ArgumentParser(description="Distributed selfplay worker")
 
     ap.add_argument("--server-url", type=str, default=None)
@@ -634,6 +640,14 @@ def main() -> None:
         type=str,
         default="reduce-overhead",
         help="torch.compile mode (reduce-overhead, max-autotune, default).",
+    )
+
+    ap.add_argument(
+        "--aot-dir",
+        type=str,
+        default=None,
+        help="Directory with pre-compiled AOTInductor .pt2 packages. "
+             "If set, uses AOTEvaluator instead of torch.compile.",
     )
 
     ap.add_argument("--stockfish-path", type=str, default=None)
@@ -1580,13 +1594,24 @@ class WorkerSession:
             time.sleep(float(self.args.poll_seconds))
             return
 
-        # Use DirectGPUEvaluator for in-process inference (no broker IPC).
+        # Use AOTEvaluator (pre-compiled) or DirectGPUEvaluator for in-process inference.
         if need_local_model:
             if self._direct_evaluator is None:
-                # MCTS sends up to games_per_batch * topk positions per call.
-                self._direct_evaluator = DirectGPUEvaluator(
-                    self.model, device=str(self.device), max_batch=2048,
-                )
+                if self.args.aot_dir:
+                    from chess_anti_engine.inference import AOTEvaluator
+                    self._direct_evaluator = AOTEvaluator(
+                        self.args.aot_dir, device=str(self.device), max_batch=4096,
+                    )
+                    self._direct_evaluator.load_weights(self.model.state_dict())
+                    self._aot_model_id = id(self.model)
+                else:
+                    self._direct_evaluator = DirectGPUEvaluator(
+                        self.model, device=str(self.device), max_batch=2048,
+                    )
+            if self.args.aot_dir:
+                if getattr(self, "_aot_model_id", None) != id(self.model):
+                    self._direct_evaluator.load_weights(self.model.state_dict())
+                    self._aot_model_id = id(self.model)
             elif self._direct_evaluator.model is not self.model:
                 self._direct_evaluator.model = self.model
 

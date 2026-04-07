@@ -46,6 +46,8 @@ def run_gumbel_root_many_c(
     evaluator: BatchEvaluator | None = None,
     pre_pol_logits: np.ndarray | None = None,
     pre_wdl_logits: np.ndarray | None = None,
+    per_game_simulations: list[int] | None = None,
+    per_game_add_noise: list[bool] | None = None,
 ) -> tuple[list[np.ndarray], list[int], list[float], list[np.ndarray]]:
     """Gumbel root search with MCTSTree C tree + CBoard.
 
@@ -97,7 +99,10 @@ def run_gumbel_root_many_c(
     root_legal: list[np.ndarray | None] = [None] * n_boards
     root_pri: list[np.ndarray | None] = [None] * n_boards
     remaining_per_board: list[list[int] | None] = [None] * n_boards
-    budget_remaining: list[int] = [sim_budget] * n_boards
+    if per_game_simulations is not None:
+        budget_remaining: list[int] = [max(1, int(s)) for s in per_game_simulations]
+    else:
+        budget_remaining: list[int] = [sim_budget] * n_boards
     gumbels_per_board: list[np.ndarray | None] = [None] * n_boards
 
     _full_tree = bool(cfg.full_tree)
@@ -144,13 +149,15 @@ def run_gumbel_root_many_c(
 
         # Gumbel noise -> select top-m
         log_pri = np.log(np.maximum(pri[legal_idx], 1e-12))
-        g = _gumbel(rng, legal_idx.size) if cfg.add_noise else np.zeros(legal_idx.size, dtype=np.float64)
+        _noise_this = per_game_add_noise[i] if per_game_add_noise is not None else cfg.add_noise
+        g = _gumbel(rng, legal_idx.size) if _noise_this else np.zeros(legal_idx.size, dtype=np.float64)
         score = g + log_pri
 
-        if sim_budget <= 1:
+        _game_budget = budget_remaining[i]
+        if _game_budget <= 1:
             m = 1
         else:
-            m_cap = max(2, (sim_budget + 1) // 2)
+            m_cap = max(2, (_game_budget + 1) // 2)
             m = int(min(int(cfg.topk), int(legal_idx.size), int(m_cap)))
             m = max(2, m)
 
@@ -166,11 +173,11 @@ def run_gumbel_root_many_c(
 
     # -- 3. Sequential halving with C tree ---------------------------------
 
-    _max_leaves = n_boards * max(2, int(cfg.topk))
-    _enc_buf = np.empty((_max_leaves, 146, 8, 8), dtype=np.float32)
-    # Second encoding buffer for pipelined GPU/CPU overlap: while the GPU
-    # reads from one buffer, the next rep's leaves are encoded into the other.
-    _enc_buf2 = np.empty((_max_leaves, 146, 8, 8), dtype=np.float32) if _has_async else None
+    _max_leaves_per_rep = n_boards * max(2, int(cfg.topk))
+    # Buffer must hold leaves accumulated across multiple reps before flush.
+    # Worst case: first rep fills _max_leaves_per_rep, plus accumulated small
+    # reps up to _MIN_BATCH.  Use 2x single-rep size as a safe upper bound.
+    _enc_buf = np.empty((_max_leaves_per_rep * 2, 146, 8, 8), dtype=np.float32)
 
     while True:
         active = [
@@ -251,60 +258,53 @@ def run_gumbel_root_many_c(
                 f_node_paths,
             )
 
-        # ---- Pipelined simulation loop --------------------------------
-        # When async GPU eval is available, overlap GPU inference for rep N
-        # with CPU work (tree traversal + CBoard + encoding) for rep N+1.
-        # The two encoding buffers alternate so the GPU can read from one
-        # while the CPU writes to the other.
-        if _has_async and _enc_buf2 is not None:
-            # Pipelined path: overlap GPU and CPU work
-            _bufs = [_enc_buf, _enc_buf2]
-            cur_buf_idx = 0
+        # ---- Accumulating simulation loop --------------------------------
+        # Gather leaves from multiple reps
+        # into one GPU call when individual reps produce few leaves.
+        # Rep 0 typically has many leaves (all games × candidates), but
+        # later reps often have only 2-6 leaves.  Accumulating avoids
+        # GPU kernel launch overhead dominating tiny batches.
+        _MIN_BATCH = 128  # accumulate until at least this many leaves
+        _accumulated: list[tuple] = []  # list of (prep, offset, count)
+        _acc_total = 0
+        _acc_enc = _enc_buf  # single encoding buffer
 
-            # Prepare first rep
-            cur_prep = _prepare_rep_c(0, _bufs[cur_buf_idx])
-            for rep in range(max_reps):
-                if cur_prep is None:
-                    # Nothing to eval this rep; prepare next
-                    cur_buf_idx ^= 1
-                    if rep + 1 < max_reps:
-                        cur_prep = _prepare_rep_c(rep + 1, _bufs[cur_buf_idx])
-                    else:
-                        cur_prep = None
-                    continue
-
-                # Launch async GPU eval for current rep
-                pol_t, wdl_t, event = eval_impl.evaluate_encoded_async(
-                    cur_prep[7],  # leaf_enc_slice
-                )
-
-                # While GPU works, prepare NEXT rep's CPU work
-                next_buf_idx = cur_buf_idx ^ 1
-                if rep + 1 < max_reps:
-                    next_prep = _prepare_rep_c(rep + 1, _bufs[next_buf_idx])
-                else:
-                    next_prep = None
-
-                # Sync GPU and finish current rep
+        def _flush_accumulated():
+            nonlocal _acc_total
+            if not _accumulated or _acc_total == 0:
+                _accumulated.clear()
+                _acc_total = 0
+                return
+            # Single GPU call for all accumulated leaves
+            enc_slice = _acc_enc[:_acc_total]
+            if _has_async:
+                pol_t, wdl_t, event = eval_impl.evaluate_encoded_async(enc_slice)
                 if event is not None:
                     event.synchronize()
-                pol_logits_leaf = pol_t.numpy()
-                wdl_logits_leaf = wdl_t.numpy()
-                _finish_rep(cur_prep, pol_logits_leaf, wdl_logits_leaf)
+                pol_all = pol_t.numpy()
+                wdl_all = wdl_t.numpy()
+            else:
+                pol_all, wdl_all = eval_impl.evaluate_encoded(enc_slice)
+            # Dispatch results back to each rep's finish
+            for prep, offset, count in _accumulated:
+                _finish_rep(prep, pol_all[offset:offset + count], wdl_all[offset:offset + count])
+            _accumulated.clear()
+            _acc_total = 0
 
-                # Advance pipeline
-                cur_prep = next_prep
-                cur_buf_idx = next_buf_idx
-        else:
-            # Synchronous fallback (no async support)
-            for rep in range(max_reps):
-                prep = _prepare_rep_c(rep, _enc_buf)
-                if prep is None:
-                    continue
-                pol_logits_leaf, wdl_logits_leaf = eval_impl.evaluate_encoded(
-                    prep[7],  # leaf_enc_slice
-                )
-                _finish_rep(prep, pol_logits_leaf, wdl_logits_leaf)
+        for rep in range(max_reps):
+            prep = _prepare_rep_c(rep, _acc_enc[_acc_total:])
+            if prep is None:
+                continue
+            n = prep[6]  # n_leaves
+            # Rewrite the prep's enc_slice to point at correct offset
+            prep = (*prep[:7], _acc_enc[_acc_total:_acc_total + n])
+            _accumulated.append((prep, _acc_total, n))
+            _acc_total += n
+            # Flush when we have enough leaves, the last rep, or near buffer capacity
+            if _acc_total >= _MIN_BATCH or rep == max_reps - 1 or _acc_total + _max_leaves_per_rep > len(_acc_enc):
+                _flush_accumulated()
+
+        _flush_accumulated()  # any remaining
 
         # Sequential halving: score and prune candidates using C tree
         for bi in active:
