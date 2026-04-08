@@ -17,16 +17,9 @@ from chess_anti_engine.mcts.gumbel import run_gumbel_root_many
 from chess_anti_engine.encoding import encode_position, encode_positions_batch
 from chess_anti_engine.moves import POLICY_SIZE, move_to_index, index_to_move, legal_move_mask
 from chess_anti_engine.train.targets import hlgauss_target
+from chess_anti_engine.selfplay.game import _result_to_wdl
 
 import chess
-
-
-def _result_to_wdl(result: str, *, pov_white: bool) -> int:
-    """Map game result to WDL class from a side's perspective (0=W,1=D,2=L)."""
-    if result in {"1/2-1/2", "*"}:
-        return 1
-    white_won = result == "1-0"
-    return 0 if (white_won == bool(pov_white)) else 2
 
 
 def play_batch_timed(

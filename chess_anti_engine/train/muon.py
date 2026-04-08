@@ -42,24 +42,8 @@ class MuonWithAuxAdam(torch.optim.Optimizer):
 
     @staticmethod
     def _zeropower_via_newton_schulz5(mat: torch.Tensor, *, steps: int) -> torch.Tensor:
-        if mat.ndim != 2:
-            raise ValueError(f"Muon expects a matrix update, got shape={tuple(mat.shape)}")
-
-        transposed = mat.shape[0] > mat.shape[1]
-        x = mat.transpose(0, 1) if transposed else mat
-        x = x.to(dtype=torch.float32)
-        x = x / (x.norm() + 1e-7)
-
-        a = 3.4445
-        b = -4.7750
-        c = 2.0315
-        for _ in range(max(1, int(steps))):
-            xx_t = x @ x.transpose(0, 1)
-            x = a * x + (b * xx_t + c * (xx_t @ xx_t)) @ x
-
-        if transposed:
-            x = x.transpose(0, 1)
-        return x.to(dtype=mat.dtype)
+        from chess_anti_engine.train.cosmos_fast import _zeropower_via_newton_schulz5
+        return _zeropower_via_newton_schulz5(mat, steps=steps)
 
     @torch.no_grad()
     def step(self, closure=None):
