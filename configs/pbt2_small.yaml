@@ -59,7 +59,7 @@ stockfish:
   pid_enabled: true
   pid_target_winrate: 0.60
   pid_ema_alpha: 0.35      # EMA half-life ~1.5 iters — faster reaction to regime changes (salvage/exploit).
-  pid_deadzone: 0.10            # Only tighten when pid_wr > 0.70; only ease when pid_wr < 0.50. Wide stability band.
+  pid_deadzone: 0.05            # Tighten when pid_wr > 0.65; ease when pid_wr < 0.55.
   pid_rate_limit: 0.10
   pid_min_games_between_adjust: 200  # Higher than games_per_iter so only the forced iteration-boundary adjust fires.
   pid_kp: 1.5
@@ -90,13 +90,13 @@ stockfish:
   pid_wdl_regret_min: 0.02         # hard floor
   pid_wdl_regret_max: 2.0          # max if PID needs to ease off
   pid_wdl_regret_stage_end: 0.05   # nodes unlock when regret reaches 5%
-  pid_max_regret_step: 0.001       # 0.1% steps: in new territory past old plateau, go careful
+  pid_max_regret_step: 0.002       # Moderate tightening — model needs time to adapt
 
 selfplay:
-  games_per_iter: 200
+  games_per_iter: 400
   games_per_iter_start: 32  # One round of 8 workers × 4 games; fast sanity check.
   games_per_iter_ramp_iters: 5
-  selfplay_fraction: 0.20  # Pin near the recent good band while narrowing the search to lr + feature-group dropout.
+  selfplay_fraction: 0.70  # More selfplay = more robust learning, less dependence on SF difficulty
   selfplay_batch: 256   # 2 workers × 256 games each.
   max_plies: 240
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -328,7 +329,7 @@ def copy_or_link_shard(src: str | Path, dst: str | Path) -> Path:
         pass
     if src_p.is_dir():
         if dst_p.exists():
-            shutil.rmtree(dst_p)
+            shutil.rmtree(dst_p, ignore_errors=True)
         shutil.copytree(str(src_p), str(dst_p))
     else:
         shutil.copy2(str(src_p), str(dst_p))
@@ -340,7 +341,7 @@ def delete_shard_path(path: str | Path) -> None:
     if p.is_symlink():
         p.unlink(missing_ok=True)
     elif p.is_dir():
-        shutil.rmtree(p)
+        shutil.rmtree(p, ignore_errors=True)
     else:
         p.unlink(missing_ok=True)
 
@@ -598,14 +599,23 @@ def save_local_shard_arrays(
     stored = prune_storage_arrays(arrs)
     if zarr is None or Blosc is None:
         return save_npz_arrays(p.with_suffix(LEGACY_SHARD_SUFFIX), arrs=stored, meta=meta)
-    if p.exists():
-        shutil.rmtree(p) if p.is_dir() else p.unlink(missing_ok=True)
-    g = zarr.open_group(str(p), mode="w")
-    g.attrs.update(_meta_dict(meta, positions=int(np.asarray(stored["x"]).shape[0])))
-    compressor = Blosc(cname="lz4", clevel=1, shuffle=Blosc.BITSHUFFLE)
-    for name, value in stored.items():
-        arr = np.asarray(value)
-        g.create_dataset(name, data=arr, chunks=_local_chunks(arr), compressor=compressor, overwrite=True)
+    # Write to a temp path then atomic-rename to avoid races with concurrent
+    # readers/writers that can cause "Directory not empty" on rmtree.
+    tmp = p.with_name(f"._{os.getpid()}_{p.name}")
+    try:
+        g = zarr.open_group(str(tmp), mode="w")
+        g.attrs.update(_meta_dict(meta, positions=int(np.asarray(stored["x"]).shape[0])))
+        compressor = Blosc(cname="lz4", clevel=1, shuffle=Blosc.BITSHUFFLE)
+        for name, value in stored.items():
+            arr = np.asarray(value)
+            g.create_dataset(name, data=arr, chunks=_local_chunks(arr), compressor=compressor, overwrite=True)
+        # Atomic replace: remove old, rename new.
+        if p.exists():
+            shutil.rmtree(p, ignore_errors=True) if p.is_dir() else p.unlink(missing_ok=True)
+        tmp.rename(p)
+    except BaseException:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
     return p
 
 
