@@ -1084,25 +1084,22 @@ class WorkerSession:
         1. Every call: stat() the local manifest file mtime (~1µs)
         2. Only if mtime changed: read manifest, download model, swap
         """
-        # Tier 1: cheap mtime check
+        # Tier 1: cheap mtime check on local manifest file
         manifest_path = getattr(self, "_manifest_path", None)
         if manifest_path is None:
-            # Build path from server root + trial publish dir
-            server_root = getattr(self, "_server_root_path", None)
-            if server_root is None:
-                # Extract from work_dir: .../trials/{trial_id}/workers/worker_XX
-                try:
-                    trials_dir = Path(self.args.work_dir).parent.parent
-                    server_root = trials_dir.parent
-                    self._server_root_path = server_root
-                except Exception:
+            try:
+                # work_dir is .../trials/{trial_id}/workers/worker_XX
+                trials_dir = Path(self.args.work_dir).parent.parent.parent
+                tid = self.leased_trial_id or self.fixed_trial_id or ""
+                if not tid:
                     return
-            tid = self.leased_trial_id or self.fixed_trial_id or ""
-            if not tid:
+                manifest_path = trials_dir / tid / "publish" / "manifest.json"
+                if not manifest_path.parent.exists():
+                    return  # Not a local worker — fall back to between-batch polling
+                self._manifest_path = manifest_path
+                self._manifest_mtime = 0.0
+            except Exception:
                 return
-            manifest_path = server_root / "trials" / tid / "publish" / "manifest.json"
-            self._manifest_path = manifest_path
-            self._manifest_mtime = 0.0
 
         try:
             mtime = manifest_path.stat().st_mtime
