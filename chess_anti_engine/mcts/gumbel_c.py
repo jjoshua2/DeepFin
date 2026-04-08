@@ -275,16 +275,25 @@ def run_gumbel_root_many_c(
                 _accumulated.clear()
                 _acc_total = 0
                 return
-            # Single GPU call for all accumulated leaves
-            enc_slice = _acc_enc[:_acc_total]
+            # Pad to a bucket size so torch.compile sees few unique shapes,
+            # reducing CUDA graph recordings and compile-worker memory growth.
+            _BUCKETS = (128, 256, 384, 512, 768, 1024, 1536, 2048, 4096)
+            padded = _acc_total
+            for _b in _BUCKETS:
+                if _b >= _acc_total:
+                    padded = _b
+                    break
+            enc_slice = _acc_enc[:padded]
             if _has_async:
                 pol_t, wdl_t, event = eval_impl.evaluate_encoded_async(enc_slice)
                 if event is not None:
                     event.synchronize()
-                pol_all = pol_t.numpy()
-                wdl_all = wdl_t.numpy()
+                pol_all = pol_t[:_acc_total].numpy()
+                wdl_all = wdl_t[:_acc_total].numpy()
             else:
                 pol_all, wdl_all = eval_impl.evaluate_encoded(enc_slice)
+                pol_all = pol_all[:_acc_total]
+                wdl_all = wdl_all[:_acc_total]
             # Dispatch results back to each rep's finish
             for prep, offset, count in _accumulated:
                 _finish_rep(prep, pol_all[offset:offset + count], wdl_all[offset:offset + count])

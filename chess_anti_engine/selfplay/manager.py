@@ -602,8 +602,23 @@ def play_batch(
             return
 
         xs_batch = encode_positions_batch([boards[i] for i in net_idxs], add_features=True)
+        # Pad to bucket size to limit unique shapes for torch.compile
+        _bsz = xs_batch.shape[0]
+        _ROOT_BUCKETS = (32, 64, 128, 256, 512)
+        _padded_bsz = _bsz
+        for _b in _ROOT_BUCKETS:
+            if _b >= _bsz:
+                _padded_bsz = _b
+                break
+        if _padded_bsz > _bsz:
+            _pad = np.zeros((_padded_bsz - _bsz, *xs_batch.shape[1:]), dtype=xs_batch.dtype)
+            xs_padded = np.concatenate([xs_batch, _pad], axis=0)
+        else:
+            xs_padded = xs_batch
 
-        pol_logits, wdl_logits_raw = eval_impl.evaluate_encoded(xs_batch)
+        pol_logits_padded, wdl_logits_raw_padded = eval_impl.evaluate_encoded(xs_padded)
+        pol_logits = pol_logits_padded[:_bsz]
+        wdl_logits_raw = wdl_logits_raw_padded[:_bsz]
         # Pure numpy softmax (avoids torch tensor creation roundtrip for small arrays)
         wdl_f = wdl_logits_raw.astype(np.float64, copy=True)
         wdl_f -= wdl_f.max(axis=-1, keepdims=True)
