@@ -281,7 +281,7 @@ def run_gumbel_root_many_c(
             padded = _acc_total
             for _b in _BUCKETS:
                 if _b >= _acc_total:
-                    padded = _b
+                    padded = min(_b, len(_acc_enc))
                     break
             enc_slice = _acc_enc[:padded]
             if _has_async:
