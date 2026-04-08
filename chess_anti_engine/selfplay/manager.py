@@ -264,6 +264,7 @@ def play_batch(
     games: int,
     target_games: int = 0,
     on_game_complete: Callable[[CompletedGameBatch], None] | None = None,
+    on_step: Callable[[], None] | None = None,
     # Config groups (frozen dataclasses with sensible defaults).
     opponent: OpponentConfig = OpponentConfig(),
     temp: TemperatureConfig = TemperatureConfig(),
@@ -998,6 +999,10 @@ def play_batch(
         active_idxs = [i for i in range(batch_size) if not finalized[i]]
         if not active_idxs:
             break
+
+        # Allow caller to update model/evaluator between moves.
+        if on_step is not None:
+            on_step()
 
         # Mark games that hit max_plies or are over
         for i in active_idxs:

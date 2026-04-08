@@ -1077,6 +1077,61 @@ class WorkerSession:
         v = getattr(self.args, key, None)
         return cast(v) if v is not None else cast(reco.get(key, default))
 
+    def _check_model_update(self) -> None:
+        """Check for new model between moves (called every ply by play_batch).
+
+        Lightweight: only polls manifest every 30s, and only downloads
+        the model if the SHA changed.  Compilation is instant (cached).
+        """
+        now = time.time()
+        if now - getattr(self, "_last_model_check", 0) < 30.0:
+            return
+        self._last_model_check = now
+        try:
+            r = self._requests.get(
+                self._server_url_for(self.trial_api_prefix + "/manifest"),
+                timeout=5.0,
+            )
+            if r.status_code != 200:
+                return
+            manifest = r.json()
+            new_sha = str(manifest.get("model", {}).get("sha256", ""))
+            if not new_sha or new_sha == self.model_sha:
+                return
+            model_info = manifest.get("model") or {}
+            model_path = self.cache_dir / f"model_{new_sha}.pt"
+            if (not model_path.exists()) or (_sha256_file(model_path) != new_sha):
+                _download_and_verify_shared(
+                    self._server_url_for(str(model_info.get("endpoint") or (self.trial_api_prefix + "/model"))),
+                    out_path=model_path,
+                    expected_sha256=new_sha,
+                    headers=_worker_headers(),
+                )
+            mc = manifest.get("model_config") or self.model_cfg_active
+            self.model = self._load_and_compile_model(
+                model_path, mc if isinstance(mc, ModelConfig) else self.model_cfg_active,
+                label="worker-model", sha_short=str(new_sha)[:8],
+            )
+            self.model_sha = new_sha
+            self.model_step = int(manifest.get("trainer_step") or 0)
+            self.last_model_sha = new_sha
+            # Update evaluator
+            if self._direct_evaluator is not None:
+                if hasattr(self._direct_evaluator, "model"):
+                    self._direct_evaluator.model = self.model
+                elif hasattr(self._direct_evaluator, "load_weights"):
+                    self._direct_evaluator.load_weights(self.model.state_dict())
+            # Flush upload buffer tagged with old SHA
+            if self.upload_buf.positions > 0:
+                _flush_upload_buffer_to_pending(
+                    pending_dir=self.pending_dir, username=str(self.args.username),
+                    buf=self.upload_buf, now_s=now,
+                )
+                self._upload_pending_shards(default_elapsed_s=0.0)
+            self.log.info("mid-batch model switch sha=%s", str(new_sha)[:8])
+        except Exception:
+            pass  # Non-fatal — will retry next check
+
     def _on_completed_game(self, game_batch) -> None:
         now_s = time.time()
         self._saw_completed_game = True
@@ -1677,6 +1732,7 @@ class WorkerSession:
                 evaluator=_eval,
                 games=int(games_per_batch),
                 on_game_complete=self._on_completed_game,
+                on_step=self._check_model_update,
                 opponent=OpponentConfig(
                     random_move_prob=float(opponent_random_move_prob),
                     topk_stage_end=float(reco.get("opponent_topk_stage_end", 0.5)),
