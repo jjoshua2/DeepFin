@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Callable
@@ -817,21 +818,41 @@ def play_batch(
 
     # ── Stockfish annotation + opponent moves ─────────────────────────────────
 
-    def _run_sf_annotation_and_moves(idxs: list[int], *, play_curriculum_moves: bool) -> None:
+    def _eff_nodes(idx: int) -> int | None:
+        if base_nodes <= 0:
+            return None
+        fast_scale = 1.0 if bool(last_net_full[idx]) else 0.25
+        return max(1, int(round(float(base_nodes) * float(fast_scale))))
+
+    def _submit_sf_queries(idxs: list[int]) -> dict[int, object]:
+        """Submit SF queries to pool without blocking. Returns futures dict."""
+        return {idx: stockfish.submit(boards[idx].fen(), nodes=_eff_nodes(idx)) for idx in idxs}
+
+    def _finish_sf_annotation_and_moves(
+        idxs: list[int], *, play_curriculum_moves: bool,
+        futures: dict[int, object] | None = None,
+    ) -> None:
+        """Collect SF results (from futures or synchronous) and process."""
         if not idxs:
             return
-
-        def _eff_nodes(idx: int) -> int | None:
-            if base_nodes <= 0:
-                return None
-            fast_scale = 1.0 if bool(last_net_full[idx]) else 0.25
-            return max(1, int(round(float(base_nodes) * float(fast_scale))))
-
-        if isinstance(stockfish, StockfishPool):
-            futures = {idx: stockfish.submit(boards[idx].fen(), nodes=_eff_nodes(idx)) for idx in idxs}
-            results = {idx: fut.result() for idx, fut in futures.items()}
+        if futures is not None:
+            results = {idx: futures[idx].result() for idx in idxs if idx in futures}
+        elif isinstance(stockfish, StockfishPool):
+            futs = {idx: stockfish.submit(boards[idx].fen(), nodes=_eff_nodes(idx)) for idx in idxs}
+            results = {idx: fut.result() for idx, fut in futs.items()}
         else:
             results = {idx: stockfish.search(boards[idx].fen(), nodes=_eff_nodes(idx)) for idx in idxs}
+        _process_sf_results(idxs, results=results, play_curriculum_moves=play_curriculum_moves)
+
+    def _run_sf_annotation_and_moves(idxs: list[int], *, play_curriculum_moves: bool) -> None:
+        """Submit + collect SF results in one blocking call."""
+        _finish_sf_annotation_and_moves(idxs, play_curriculum_moves=play_curriculum_moves)
+
+    def _process_sf_results(
+        idxs: list[int], *, results: dict, play_curriculum_moves: bool,
+    ) -> None:
+        if not idxs:
+            return
 
         sf_policy_temp_local = float(game.sf_policy_temp)
         sf_policy_label_smooth_local = float(game.sf_policy_label_smooth)
@@ -954,6 +975,8 @@ def play_batch(
 
     # ── Main game loop (rolling batch) ────────────────────────────────────────
     max_steps = int(target) * (int(game.max_plies) // 2 + 1)  # safety bound
+    _t_net = 0.0
+    _t_sf = 0.0
 
     for _step in range(max_steps):
         active_idxs = [i for i in range(batch_size) if not finalized[i]]
@@ -972,21 +995,43 @@ def play_batch(
 
         net_idxs = [i for i in active_idxs if _is_network_turn(board_turn=boards[i].turn, network_color=network_color[i])]
         if net_idxs:
+            _t0 = time.time()
             _run_network_turn(net_idxs)
+            _t_net += time.time() - _t0
 
         all_opp_idxs = [i for i in active_idxs if (not done[i]) and boards[i].turn != network_color[i]]
-        if all_opp_idxs:
-            _run_sf_annotation_and_moves(all_opp_idxs, play_curriculum_moves=True)
 
+        # Submit SF queries asynchronously (CPU), then overlap with
+        # selfplay network turns while SF processes run.
+        _sf_futures: dict[int, object] | None = None
+        if all_opp_idxs and isinstance(stockfish, StockfishPool):
+            _t0 = time.time()
+            _sf_futures = _submit_sf_queries(all_opp_idxs)
+            _t_sf += time.time() - _t0
+
+        # While SF is running, do the selfplay opponent network turn
         selfplay_opp_idxs = [
             i for i in all_opp_idxs
             if selfplay_game[i] and (not done[i]) and boards[i].turn != network_color[i]
         ]
         if selfplay_opp_idxs:
+            _t0 = time.time()
             _run_network_turn(selfplay_opp_idxs)
+            _t_net += time.time() - _t0
+
+        # Collect SF results and process them
+        if all_opp_idxs:
+            _t0 = time.time()
+            _finish_sf_annotation_and_moves(all_opp_idxs, play_curriculum_moves=True, futures=_sf_futures)
+            _t_sf += time.time() - _t0
+
+        # SF annotation for selfplay label (no move playing)
+        if selfplay_opp_idxs:
             selfplay_label_idxs = [i for i in selfplay_opp_idxs if not done[i]]
             if selfplay_label_idxs:
+                _t0 = time.time()
                 _run_sf_annotation_and_moves(selfplay_label_idxs, play_curriculum_moves=False)
+                _t_sf += time.time() - _t0
 
         # Finalize completed games and optionally recycle slots
         for i in range(batch_size):
@@ -996,6 +1041,15 @@ def play_batch(
                 games_completed += 1
                 if games_started < target:
                     _recycle_slot(i)
+
+    # ── Timing summary ─────────────────────────────────────────────────────────
+    import logging as _logging
+    _logging.getLogger("chess_anti_engine.worker").info(
+        "play_batch timing: net=%.1fs sf=%.1fs other=%.1fs (net %.0f%%, sf %.0f%%)",
+        _t_net, _t_sf, max(0, batch_elapsed - _t_net - _t_sf) if (batch_elapsed := _t_net + _t_sf) else 0,
+        _t_net / max(0.001, _t_net + _t_sf) * 100,
+        _t_sf / max(0.001, _t_net + _t_sf) * 100,
+    )
 
     # ── Return results ────────────────────────────────────────────────────────
     sf_nodes = int(getattr(stockfish, "nodes", 0) or 0)
