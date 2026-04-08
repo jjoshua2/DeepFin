@@ -1080,21 +1080,42 @@ class WorkerSession:
     def _check_model_update(self) -> None:
         """Check for new model between moves (called every ply by play_batch).
 
-        Lightweight: only polls manifest every 30s, and only downloads
-        the model if the SHA changed.  Compilation is instant (cached).
+        Two-tier check:
+        1. Every call: stat() the local manifest file mtime (~1µs)
+        2. Only if mtime changed: read manifest, download model, swap
         """
-        now = time.time()
-        if now - getattr(self, "_last_model_check", 0) < 30.0:
-            return
-        self._last_model_check = now
-        try:
-            r = self._requests.get(
-                self._server_url_for(self.trial_api_prefix + "/manifest"),
-                timeout=5.0,
-            )
-            if r.status_code != 200:
+        # Tier 1: cheap mtime check
+        manifest_path = getattr(self, "_manifest_path", None)
+        if manifest_path is None:
+            # Build path from server root + trial publish dir
+            server_root = getattr(self, "_server_root_path", None)
+            if server_root is None:
+                # Extract from work_dir: .../trials/{trial_id}/workers/worker_XX
+                try:
+                    trials_dir = Path(self.args.work_dir).parent.parent
+                    server_root = trials_dir.parent
+                    self._server_root_path = server_root
+                except Exception:
+                    return
+            tid = self.leased_trial_id or self.fixed_trial_id or ""
+            if not tid:
                 return
-            manifest = r.json()
+            manifest_path = server_root / "trials" / tid / "publish" / "manifest.json"
+            self._manifest_path = manifest_path
+            self._manifest_mtime = 0.0
+
+        try:
+            mtime = manifest_path.stat().st_mtime
+        except OSError:
+            return
+        if mtime == self._manifest_mtime:
+            return
+        self._manifest_mtime = mtime
+
+        # Tier 2: mtime changed — read and potentially swap model
+        try:
+            import json as _json
+            manifest = _json.loads(manifest_path.read_text(encoding="utf-8"))
             new_sha = str(manifest.get("model", {}).get("sha256", ""))
             if not new_sha or new_sha == self.model_sha:
                 return
@@ -1122,6 +1143,7 @@ class WorkerSession:
                 elif hasattr(self._direct_evaluator, "load_weights"):
                     self._direct_evaluator.load_weights(self.model.state_dict())
             # Flush upload buffer tagged with old SHA
+            now = time.time()
             if self.upload_buf.positions > 0:
                 _flush_upload_buffer_to_pending(
                     pending_dir=self.pending_dir, username=str(self.args.username),
@@ -1129,8 +1151,8 @@ class WorkerSession:
                 )
                 self._upload_pending_shards(default_elapsed_s=0.0)
             self.log.info("mid-batch model switch sha=%s", str(new_sha)[:8])
-        except Exception:
-            pass  # Non-fatal — will retry next check
+        except Exception as _exc:
+            self.log.debug("mid-batch model check failed: %s", _exc)
 
     def _on_completed_game(self, game_batch) -> None:
         now_s = time.time()
