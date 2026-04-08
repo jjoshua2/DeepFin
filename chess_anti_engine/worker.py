@@ -553,6 +553,9 @@ def main() -> None:
     # workers share one GPU.
     import os
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    # Limit inductor compile workers to reduce memory — each worker subprocess
+    # accumulates compiled kernels and can grow to >1GB.
+    os.environ.setdefault("TORCH_COMPILE_THREADS", "1")
 
     ap = argparse.ArgumentParser(description="Distributed selfplay worker")
 
