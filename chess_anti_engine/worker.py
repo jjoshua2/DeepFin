@@ -1097,7 +1097,7 @@ class WorkerSession:
                 if not manifest_path.parent.exists():
                     return  # Not a local worker — fall back to between-batch polling
                 self._manifest_path = manifest_path
-                self._manifest_mtime = 0.0
+                self._manifest_mtime: float | None = None
             except Exception:
                 return
 
@@ -1111,8 +1111,7 @@ class WorkerSession:
 
         # Tier 2: mtime changed — read and potentially swap model
         try:
-            import json as _json
-            manifest = _json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             new_sha = str(manifest.get("model", {}).get("sha256", ""))
             if not new_sha or new_sha == self.model_sha:
                 return
