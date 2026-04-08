@@ -1790,6 +1790,23 @@ def train_trial(config: dict):
                         k: v.clone() for k, v in trainer.model.state_dict().items()
                     }
 
+                _pause_during_train = bool(config.get("distributed_pause_selfplay_during_training", False))
+                if _pause_during_train and use_distributed_selfplay and distributed_dirs is not None:
+                    _publish_distributed_trial_state(
+                        trainer=trainer, config=config, model_cfg=model_cfg,
+                        server_root=distributed_server_root, trial_id=trial_id,
+                        training_iteration=int(iteration_idx),
+                        trainer_step=int(getattr(trainer, "step", 0)),
+                        sf_nodes=int(pid.nodes) if pid is not None else int(config.get("sf_nodes", 500)),
+                        random_move_prob=float(current_rand),
+                        skill_level=int(skill_level_used),
+                        mcts_simulations=int(sims),
+                        wdl_regret=float(pid.wdl_regret) if pid is not None else -1.0,
+                        pause_selfplay=True,
+                        pause_reason="training",
+                        export_model=False,
+                    )
+
                 metrics = trainer.train_steps(
                     buf,
                     batch_size=batch_size,

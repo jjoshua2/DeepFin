@@ -26,7 +26,7 @@ replay_window_growth: 2500   # ~3k pos/iter with 1 trial (no sharing); grow slig
 
 # Bootstrap: train initial net on all random games, then discard from window
 bootstrap_dir: data/bootstrap
-bootstrap_checkpoint: /home/josh/projects/chess/data/bootstrap/bootstrap_net_v3.pt  # LC0 BT4 arch v3: token_dim=128, bottleneck smolgen, pos embed
+bootstrap_checkpoint: /home/josh/projects/chess/data/bootstrap/bootstrap_net_v4_iter34.pt  # Best model from iter 34 (os=318.6)
 bootstrap_zero_policy_heads: true  # Bootstrap trained value/trunk only; start policy heads near-uniform on fresh runs.
 worker_wheel_path: null  # Optional: built wheel to publish for remote worker self-update.
 bootstrap_max_positions: 0   # 0 = load ALL positions (14.2M) — used by scripts/train_bootstrap.py
@@ -90,7 +90,7 @@ stockfish:
   pid_wdl_regret_min: 0.02         # hard floor
   pid_wdl_regret_max: 2.0          # max if PID needs to ease off
   pid_wdl_regret_stage_end: 0.05   # nodes unlock when regret reaches 5%
-  pid_max_regret_step: 0.002       # Moderate tightening — model needs time to adapt
+  pid_max_regret_step: 0.001       # Gentle tightening — let model fully adapt before increasing difficulty
 
 selfplay:
   games_per_iter: 400
@@ -216,7 +216,7 @@ tune:
   distributed_inference_batch_wait_ms: 5.0
   distributed_inference_max_batch_per_slot: 2048
   distributed_inference_use_compile: true
-  distributed_pause_selfplay_during_training: true  # Pause workers during training so they don't generate stale games
+  distributed_pause_selfplay_during_training: false  # Not used — pause is hardcoded off in trainable
   distributed_worker_shared_cache_dir: /home/josh/projects/chess/runs/pbt2_small/server/worker_cache
   distributed_min_workers_per_trial: 1
   distributed_max_worker_delta_per_rebalance: 1
