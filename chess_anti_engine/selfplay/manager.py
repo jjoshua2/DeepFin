@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 import time
 from collections import defaultdict
@@ -1000,33 +1001,35 @@ def play_batch(
             _t_net += time.time() - _t0
 
         all_opp_idxs = [i for i in active_idxs if (not done[i]) and boards[i].turn != network_color[i]]
+        selfplay_opp_idxs = [i for i in all_opp_idxs if selfplay_game[i] and not done[i]]
+        curriculum_opp_idxs = [i for i in all_opp_idxs if not selfplay_game[i] and not done[i]]
 
-        # Submit SF queries asynchronously (CPU), then overlap with
-        # selfplay network turns while SF processes run.
+        # Submit SF queries for curriculum games asynchronously — these
+        # boards won't be modified until SF results are processed.
         _sf_futures: dict[int, object] | None = None
-        if all_opp_idxs and isinstance(stockfish, StockfishPool):
+        if curriculum_opp_idxs and isinstance(stockfish, StockfishPool):
             _t0 = time.time()
-            _sf_futures = _submit_sf_queries(all_opp_idxs)
+            _sf_futures = _submit_sf_queries(curriculum_opp_idxs)
             _t_sf += time.time() - _t0
 
-        # While SF is running, do the selfplay opponent network turn
-        selfplay_opp_idxs = [
-            i for i in all_opp_idxs
-            if selfplay_game[i] and (not done[i]) and boards[i].turn != network_color[i]
-        ]
+        # While curriculum SF runs, do selfplay opponent network turn.
+        # (Selfplay boards are safe — their SF annotation happens after.)
         if selfplay_opp_idxs:
             _t0 = time.time()
             _run_network_turn(selfplay_opp_idxs)
             _t_net += time.time() - _t0
 
-        # Collect SF results and process them
-        if all_opp_idxs:
+        # Collect curriculum SF results (overlapped with selfplay net turn)
+        if curriculum_opp_idxs:
             _t0 = time.time()
-            _finish_sf_annotation_and_moves(all_opp_idxs, play_curriculum_moves=True, futures=_sf_futures)
+            _finish_sf_annotation_and_moves(curriculum_opp_idxs, play_curriculum_moves=True, futures=_sf_futures)
             _t_sf += time.time() - _t0
 
-        # SF annotation for selfplay label (no move playing)
+        # Selfplay SF annotation (board already advanced by network turn)
         if selfplay_opp_idxs:
+            _t0 = time.time()
+            _run_sf_annotation_and_moves(selfplay_opp_idxs, play_curriculum_moves=True)
+            _t_sf += time.time() - _t0
             selfplay_label_idxs = [i for i in selfplay_opp_idxs if not done[i]]
             if selfplay_label_idxs:
                 _t0 = time.time()
@@ -1043,10 +1046,9 @@ def play_batch(
                     _recycle_slot(i)
 
     # ── Timing summary ─────────────────────────────────────────────────────────
-    import logging as _logging
-    _logging.getLogger("chess_anti_engine.worker").info(
-        "play_batch timing: net=%.1fs sf=%.1fs other=%.1fs (net %.0f%%, sf %.0f%%)",
-        _t_net, _t_sf, max(0, batch_elapsed - _t_net - _t_sf) if (batch_elapsed := _t_net + _t_sf) else 0,
+    logging.getLogger("chess_anti_engine.worker").info(
+        "play_batch timing: net=%.1fs sf=%.1fs (net %.0f%%, sf %.0f%%)",
+        _t_net, _t_sf,
         _t_net / max(0.001, _t_net + _t_sf) * 100,
         _t_sf / max(0.001, _t_net + _t_sf) * 100,
     )
