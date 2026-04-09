@@ -322,6 +322,158 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         return pol_np, wdl_np
 
 
+class ThreadedBatchEvaluator:
+    """Thread-safe batched evaluator for multi-threaded selfplay.
+
+    Multiple selfplay threads submit inference requests via evaluate_encoded().
+    A dedicated GPU thread accumulates submissions into large batches and runs
+    a single GPU forward pass, then scatters results back to waiting threads.
+
+    Only the GPU thread ever touches the model or CUDA — safe with torch.compile.
+    """
+
+    def __init__(
+        self,
+        model: torch.nn.Module,
+        *,
+        device: str = "cuda",
+        max_batch: int = 4096,
+        min_batch: int = 256,
+        accumulation_timeout_s: float = 0.001,
+        use_amp: bool = True,
+        amp_dtype: str = "auto",
+    ) -> None:
+        import queue as _queue
+        import threading as _threading
+
+        self.device = str(device)
+        self._min_batch = int(min_batch)
+        self._max_batch = int(max_batch)
+        self._timeout = float(accumulation_timeout_s)
+        self._queue: _queue.Queue = _queue.Queue()
+        self._stop = False
+
+        # GPU evaluator created on the GPU thread to ensure CUDA context ownership.
+        self._model = model
+        self._use_amp = bool(use_amp)
+        self._amp_dtype = str(amp_dtype)
+        self._gpu_eval: DirectGPUEvaluator | None = None
+        self._gpu_ready = _threading.Event()
+
+        self._gpu_thread = _threading.Thread(target=self._gpu_loop, daemon=True)
+        self._gpu_thread.start()
+        self._gpu_ready.wait()  # Block until GPU eval is initialized
+
+    def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Submit a batch from a selfplay thread, block until GPU results ready."""
+        import threading as _threading
+        event = _threading.Event()
+        result: dict = {}
+        self._queue.put((x, event, result))
+        event.wait()
+        if "error" in result:
+            raise RuntimeError(result["error"])
+        return result["pol"], result["wdl"]
+
+    def update_model(self, model: torch.nn.Module) -> None:
+        """Swap the model (called from main thread between iterations)."""
+        import threading as _threading
+        event = _threading.Event()
+        self._queue.put(("_update_model", model, event))
+        event.wait()
+
+    def shutdown(self) -> None:
+        self._stop = True
+        self._queue.put(None)
+        self._gpu_thread.join(timeout=5.0)
+
+    def _gpu_loop(self) -> None:
+        """Dedicated GPU thread: accumulate requests, run batched inference."""
+        import queue as _queue
+
+        self._gpu_eval = DirectGPUEvaluator(
+            self._model, device=self.device, max_batch=self._max_batch,
+            use_amp=self._use_amp, amp_dtype=self._amp_dtype,
+        )
+        self._gpu_ready.set()
+
+        while not self._stop:
+            # Wait for first request
+            try:
+                first = self._queue.get(timeout=0.1)
+            except _queue.Empty:
+                continue
+            if first is None:
+                break
+
+            # Handle model update (sentinel: string tag, not numpy array)
+            if isinstance(first, tuple) and len(first) == 3 and isinstance(first[0], str):
+                _, new_model, event = first
+                self._gpu_eval.model = new_model
+                event.set()
+                continue
+
+            pending = [first]
+            total = first[0].shape[0]
+
+            # Accumulate more requests up to min_batch or timeout
+            deadline = time.monotonic() + self._timeout
+            while total < self._min_batch and time.monotonic() < deadline:
+                try:
+                    item = self._queue.get(timeout=max(0.0001, deadline - time.monotonic()))
+                except _queue.Empty:
+                    break
+                if item is None:
+                    break
+                if isinstance(item, tuple) and len(item) == 3 and isinstance(item[0], str):
+                    _, new_model, event = item
+                    self._gpu_eval.model = new_model
+                    event.set()
+                    continue
+                pending.append(item)
+                total += item[0].shape[0]
+
+            if not pending:
+                continue
+
+            # Concatenate all inputs
+            if len(pending) == 1:
+                combined = pending[0][0]
+            else:
+                combined = np.concatenate([p[0] for p in pending], axis=0)
+
+            # Bucket-pad to reduce CUDA graph count
+            _BUCKETS = (128, 256, 384, 512, 768, 1024, 1536, 2048, 4096)
+            padded_size = total
+            for b in _BUCKETS:
+                if b >= total:
+                    padded_size = min(b, self._max_batch)
+                    break
+            if padded_size > total:
+                pad = np.zeros((padded_size - total, *combined.shape[1:]), dtype=combined.dtype)
+                combined = np.concatenate([combined, pad], axis=0)
+
+            # Single GPU call
+            try:
+                pol_all, wdl_all = self._gpu_eval.evaluate_encoded(combined)
+                pol_all = pol_all[:total]
+                wdl_all = wdl_all[:total]
+            except Exception as exc:
+                for _, event, result in pending:
+                    result["error"] = str(exc)
+                    event.set()
+                continue
+
+            # Scatter results back to each thread
+            offset = 0
+            for x, event, result in pending:
+                n = x.shape[0]
+                result["pol"] = pol_all[offset:offset + n].copy()
+                result["wdl"] = wdl_all[offset:offset + n].copy()
+                offset += n
+                event.set()
+
+
 # Batch size buckets for AOT-compiled inference models.
 # Only sizes with a corresponding chess_b{N}.pt2 in the AOT dir are loaded.
 _BATCH_BUCKETS = (
