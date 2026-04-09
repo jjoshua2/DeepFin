@@ -205,7 +205,7 @@ tune:
   max_concurrent_trials: 1
   cpus_per_trial: 1
   gpus_per_trial: 1.0
-  distributed_workers_per_trial: 4  # 4 workers, non-threaded (proven fastest)
+  distributed_workers_per_trial: 2  # 2 workers × 8 threads  # 4 workers, non-threaded (proven fastest)
   distributed_worker_sf_workers: 8  # 8 SF per worker = 16 total; SF is the bottleneck at 5k nodes
   distributed_worker_min_games_per_batch: 128  # GPU needs large batches for utilization
   distributed_worker_max_games_per_batch: 512
@@ -213,7 +213,8 @@ tune:
   distributed_worker_password: chess_worker_2026
   distributed_worker_use_compile: true
   distributed_worker_compile_mode: reduce-overhead
-  # distributed_worker_threaded: true  # Disabled: GIL limits threading benefit; needs C game loop
+  distributed_worker_threaded: true  # C per-ply enables effective threading
+  distributed_worker_selfplay_threads: 8
   # distributed_worker_selfplay_threads: 8
   # distributed_worker_aot_dir: data/aot_models  # AOT: same VRAM, slower with contention
   distributed_inference_broker_enabled: false  # Single worker uses DirectGPU (39k pos/s compiled, no contention)
