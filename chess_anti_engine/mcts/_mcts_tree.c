@@ -1274,13 +1274,29 @@ static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *
     /* Ensure CBoard cache covers existing nodes (not full capacity) */
     tree_ensure_cb_cache(&self->tree, self->tree.node_count);
 
+    /* Pre-extract root CBoards into a C array so the main loop can run
+     * without the GIL.  We copy the CBoard structs (value types, ~2KB each)
+     * rather than holding Python object pointers. */
+    int32_t n_unique_roots = (int32_t)n_roots;
+    CBoard *root_cboards_c = (CBoard *)malloc(n_unique_roots * sizeof(CBoard));
+    if (!root_cboards_c) {
+        free(need_eval); free(leaf_boards); free(leaf_ids_data);
+        free(all_node_paths); free(all_path_lens);
+        Py_DECREF(board_idx_arr); Py_DECREF(root_ids_arr);
+        Py_DECREF(forced_arr); Py_DECREF(enc_arr); Py_DECREF(root_qs_arr);
+        return PyErr_NoMemory();
+    }
+    for (int32_t bi = 0; bi < n_unique_roots; bi++) {
+        PyCBoard *root_pycb = (PyCBoard *)PyList_GET_ITEM(root_cbs_list, bi);
+        root_cboards_c[bi] = root_pycb->board;
+    }
+
     /* Seed cache with root CBoards (always overwrite to avoid stale entries) */
     for (int32_t qi = 0; qi < n_queries; qi++) {
         int32_t rid = root_ids[qi];
         if (rid >= 0 && rid < self->tree.cb_cache_cap) {
             int32_t bi = board_indices[qi];
-            PyCBoard *root_pycb = (PyCBoard *)PyList_GET_ITEM(root_cbs_list, bi);
-            self->tree.cb_cache[rid] = root_pycb->board;
+            self->tree.cb_cache[rid] = root_cboards_c[bi];
             self->tree.cb_valid[rid] = 1;
         }
     }
@@ -1290,6 +1306,11 @@ static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *
     int32_t **term_paths = (int32_t **)malloc(n_queries * sizeof(int32_t *));
     int32_t *term_path_lens = (int32_t *)malloc(n_queries * sizeof(int32_t));
     double *term_values = (double *)malloc(n_queries * sizeof(double));
+
+    /* Release GIL for the main computation loop.  All Python objects have
+     * been pre-extracted into C arrays above.  The loop only touches
+     * TreeData (per-instance), CBoard structs, and float/int arrays. */
+    Py_BEGIN_ALLOW_THREADS
 
     for (int32_t qi = 0; qi < n_queries; qi++) {
         /* Tree traversal for this query */
@@ -1347,11 +1368,9 @@ static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *
             }
         }
         if (!found_cached) {
-            /* No cache hit — start from root */
+            /* No cache hit — start from pre-extracted root CBoard (no GIL needed) */
             int32_t bi = board_indices[qi];
-            PyCBoard *root_pycb = (PyCBoard *)PyList_GET_ITEM(root_cbs_list, bi);
-            cb = root_pycb->board;
-            /* Replay all moves from root (action_from_parent chain already collected) */
+            cb = root_cboards_c[bi];
         }
         /* Push collected actions in reverse (root→leaf order) */
         for (int32_t ri = n_replay - 1; ri >= 0; ri--)
@@ -1388,6 +1407,8 @@ static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *
         }
     }
 
+    Py_END_ALLOW_THREADS
+
     if (n_leaves == 0) {
         /* Backprop terminals and return None */
         for (int32_t ti = 0; ti < n_terminals; ti++)
@@ -1396,6 +1417,7 @@ static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *
         for (int32_t qi = 0; qi < n_queries; qi++) free(all_node_paths[qi]);
         free(all_node_paths); free(all_path_lens);
         free(need_eval); free(leaf_boards); free(leaf_ids_data);
+        free(root_cboards_c);
         Py_DECREF(board_idx_arr); Py_DECREF(root_ids_arr);
         Py_DECREF(forced_arr); Py_DECREF(enc_arr); Py_DECREF(root_qs_arr);
         Py_RETURN_NONE;
@@ -1464,6 +1486,7 @@ static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *
     for (int32_t qi = 0; qi < n_queries; qi++) free(all_node_paths[qi]);
     free(all_node_paths); free(all_path_lens);
     free(need_eval); free(leaf_boards); free(leaf_ids_data);
+    free(root_cboards_c);
     Py_DECREF(board_idx_arr); Py_DECREF(root_ids_arr);
     Py_DECREF(forced_arr); Py_DECREF(enc_arr); Py_DECREF(root_qs_arr);
 
@@ -1536,33 +1559,71 @@ static PyObject *MCTSTree_finish_gumbel_rep(MCTSTreeObject *self, PyObject *args
         }
     }
 
+    /* Pre-extract legal arrays and node paths from Python lists into C arrays
+     * so the inner loop can run without the GIL. */
+    const int32_t **pre_legal = (const int32_t **)malloc(n_leaves * sizeof(int32_t *));
+    int32_t *pre_legal_n = (int32_t *)malloc(n_leaves * sizeof(int32_t));
+    const int32_t **pre_paths = (const int32_t **)malloc(n_leaves * sizeof(int32_t *));
+    int32_t *pre_path_lens = (int32_t *)malloc(n_leaves * sizeof(int32_t));
+    PyArrayObject **legal_refs = (PyArrayObject **)calloc(n_leaves, sizeof(PyArrayObject *));
+    PyArrayObject **path_refs = (PyArrayObject **)calloc(n_leaves, sizeof(PyArrayObject *));
+
+    if (!pre_legal || !pre_legal_n || !pre_paths || !pre_path_lens || !legal_refs || !path_refs) {
+        free(pre_legal); free(pre_legal_n); free(pre_paths);
+        free(pre_path_lens); free(legal_refs); free(path_refs);
+        Py_DECREF(leaf_ids_arr); Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
+        return PyErr_NoMemory();
+    }
+
+    for (int32_t li = 0; li < n_leaves; li++) {
+        /* Legal moves */
+        PyObject *legal_arr_obj = PyList_GET_ITEM(legal_list, li);
+        PyArrayObject *la = (PyArrayObject *)PyArray_FROMANY(
+            legal_arr_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+        if (la) {
+            legal_refs[li] = la;
+            pre_legal[li] = (const int32_t *)PyArray_DATA(la);
+            pre_legal_n[li] = (int32_t)PyArray_SIZE(la);
+        } else {
+            pre_legal[li] = NULL;
+            pre_legal_n[li] = 0;
+        }
+        /* Node paths */
+        PyObject *path_obj = PyList_GET_ITEM(paths_list, li);
+        PyArrayObject *pa = (PyArrayObject *)PyArray_FROMANY(
+            path_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+        if (pa) {
+            path_refs[li] = pa;
+            pre_paths[li] = (const int32_t *)PyArray_DATA(pa);
+            pre_path_lens[li] = (int32_t)PyArray_SIZE(pa);
+        } else {
+            pre_paths[li] = NULL;
+            pre_path_lens[li] = 0;
+        }
+    }
+
+    /* Release GIL for the pure-C expand + backprop loop. */
+    Py_BEGIN_ALLOW_THREADS
+
     for (int32_t li = 0; li < n_leaves; li++) {
         int32_t nid = leaf_ids[li];
 
         /* Expand if not already expanded */
-        if (!t->expanded[nid]) {
-            PyObject *legal_arr_obj = PyList_GET_ITEM(legal_list, li);
-            PyArrayObject *legal_arr = (PyArrayObject *)PyArray_FROMANY(
-                legal_arr_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
-            if (legal_arr) {
-                int32_t n_legal = (int32_t)PyArray_SIZE(legal_arr);
-                if (n_legal > 0) {
-                    const int32_t *legal = (const int32_t *)PyArray_DATA(legal_arr);
-                    const float *logits = pol_data + li * 4672;
+        if (!t->expanded[nid] && pre_legal[li] && pre_legal_n[li] > 0) {
+            const int32_t *legal = pre_legal[li];
+            int32_t n_legal = pre_legal_n[li];
+            const float *logits = pol_data + li * 4672;
 
-                    /* Softmax over legal moves */
-                    double priors_stack[256];
-                    double *priors = (n_legal <= 256) ? priors_stack
-                                                      : (double *)malloc(n_legal * sizeof(double));
-                    if (priors) {
-                        for (int32_t j = 0; j < n_legal; j++)
-                            priors[j] = (double)logits[legal[j]];
-                        softmax_inplace(priors, n_legal);
-                        tree_expand(t, nid, legal, priors, n_legal);
-                        if (priors != priors_stack) free(priors);
-                    }
-                }
-                Py_DECREF(legal_arr);
+            /* Softmax over legal moves */
+            double priors_stack[256];
+            double *priors = (n_legal <= 256) ? priors_stack
+                                              : (double *)malloc(n_legal * sizeof(double));
+            if (priors) {
+                for (int32_t j = 0; j < n_legal; j++)
+                    priors[j] = (double)logits[legal[j]];
+                softmax_inplace(priors, n_legal);
+                tree_expand(t, nid, legal, priors, n_legal);
+                if (priors != priors_stack) free(priors);
             }
         }
 
@@ -1576,16 +1637,20 @@ static PyObject *MCTSTree_finish_gumbel_rep(MCTSTreeObject *self, PyObject *args
         double q_val = (s > 0.0) ? ((ew - el) / s) : 0.0;
 
         /* Backprop along node path */
-        PyObject *path_obj = PyList_GET_ITEM(paths_list, li);
-        PyArrayObject *path_arr = (PyArrayObject *)PyArray_FROMANY(
-            path_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
-        if (path_arr) {
-            int32_t path_len = (int32_t)PyArray_SIZE(path_arr);
-            const int32_t *path = (const int32_t *)PyArray_DATA(path_arr);
-            tree_backprop(t, path, path_len, q_val);
-            Py_DECREF(path_arr);
+        if (pre_paths[li] && pre_path_lens[li] > 0) {
+            tree_backprop(t, pre_paths[li], pre_path_lens[li], q_val);
         }
     }
+
+    Py_END_ALLOW_THREADS
+
+    /* Cleanup pre-extracted arrays */
+    for (int32_t li = 0; li < n_leaves; li++) {
+        Py_XDECREF(legal_refs[li]);
+        Py_XDECREF(path_refs[li]);
+    }
+    free(pre_legal); free(pre_legal_n); free(pre_paths);
+    free(pre_path_lens); free(legal_refs); free(path_refs);
 
     Py_DECREF(leaf_ids_arr); Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
     Py_RETURN_NONE;
