@@ -4,7 +4,9 @@ import argparse
 import json
 import logging
 import os
+import queue
 import struct
+import threading
 import time
 from dataclasses import dataclass
 from multiprocessing import resource_tracker
@@ -343,14 +345,12 @@ class ThreadedBatchEvaluator:
         use_amp: bool = True,
         amp_dtype: str = "auto",
     ) -> None:
-        import queue as _queue
-        import threading as _threading
 
         self.device = str(device)
         self._min_batch = int(min_batch)
         self._max_batch = int(max_batch)
         self._timeout = float(accumulation_timeout_s)
-        self._queue: _queue.Queue = _queue.Queue()
+        self._queue: queue.Queue = queue.Queue()
         self._stop = False
 
         # GPU evaluator created on the GPU thread to ensure CUDA context ownership.
@@ -358,18 +358,17 @@ class ThreadedBatchEvaluator:
         self._use_amp = bool(use_amp)
         self._amp_dtype = str(amp_dtype)
         self._gpu_eval: DirectGPUEvaluator | None = None
-        self._gpu_ready = _threading.Event()
+        self._gpu_ready = threading.Event()
 
-        self._gpu_thread = _threading.Thread(target=self._gpu_loop, daemon=True)
+        self._gpu_thread = threading.Thread(target=self._gpu_loop, daemon=True)
         self._gpu_thread.start()
         self._gpu_ready.wait()  # Block until GPU eval is initialized
 
     def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Submit a batch from a selfplay thread, block until GPU results ready."""
-        import threading as _threading
         if not self._gpu_thread.is_alive():
             raise RuntimeError("GPU thread died")
-        event = _threading.Event()
+        event = threading.Event()
         result: dict = {}
         self._queue.put((x, event, result))
         # Wait with timeout and check GPU thread health
@@ -382,10 +381,9 @@ class ThreadedBatchEvaluator:
 
     def update_model(self, model: torch.nn.Module) -> None:
         """Swap the model (called from main thread between iterations)."""
-        import threading as _threading
         if not self._gpu_thread.is_alive():
             raise RuntimeError("GPU thread died")
-        event = _threading.Event()
+        event = threading.Event()
         self._queue.put(("_update_model", model, event))
         while not event.wait(timeout=5.0):
             if not self._gpu_thread.is_alive():
@@ -412,7 +410,7 @@ class ThreadedBatchEvaluator:
             # Wait for first request
             try:
                 first = self._queue.get(timeout=0.1)
-            except _queue.Empty:
+            except queue.Empty:
                 continue
             if first is None:
                 break
@@ -432,7 +430,7 @@ class ThreadedBatchEvaluator:
             while total < self._min_batch and total < self._max_batch and time.monotonic() < deadline:
                 try:
                     item = self._queue.get(timeout=max(0.0001, deadline - time.monotonic()))
-                except _queue.Empty:
+                except queue.Empty:
                     break
                 if item is None:
                     break
@@ -471,7 +469,7 @@ class ThreadedBatchEvaluator:
 
             # Single GPU call — catch any error and propagate to all waiting threads
             try:
-                pol_all, wdl_all = self._gpu_eval.evaluate_encoded(combined)
+                pol_all, wdl_all = self._gpu_eval.evaluate_encoded(combined, copy_out=False)
                 pol_all = pol_all[:total]
                 wdl_all = wdl_all[:total]
             except Exception as exc:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import getpass
 import json
 import logging
@@ -8,8 +9,10 @@ import os
 import socket
 import subprocess
 import sys
+import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -1814,13 +1817,11 @@ class WorkerSession:
 
             if self.args.threaded_selfplay:
                 # Multi-threaded selfplay: N threads share one GPU evaluator
-                import threading as _th
-                from concurrent.futures import ThreadPoolExecutor
                 n_threads = min(int(self.args.selfplay_threads), int(games_per_batch))
                 base_games, remainder = divmod(int(games_per_batch), n_threads)
                 # Thread i gets base_games + 1 if i < remainder
                 _thread_games = [base_games + (1 if i < remainder else 0) for i in range(n_threads)]
-                _lock = _th.Lock()
+                _lock = threading.Lock()
 
                 def _on_game_thread_safe(game_batch):
                     with _lock:
@@ -1851,10 +1852,9 @@ class WorkerSession:
                         all_stats.append(st)
                     # Aggregate stats: sum integer fields from all threads
                     from chess_anti_engine.selfplay.manager import BatchStats
-                    import dataclasses as _dc
                     first = all_stats[0]
                     agg = {}
-                    for fld in _dc.fields(first):
+                    for fld in dataclasses.fields(first):
                         vals = [getattr(st, fld.name) for st in all_stats]
                         if all(isinstance(v, int) for v in vals):
                             agg[fld.name] = sum(vals)
