@@ -1817,9 +1817,9 @@ class WorkerSession:
                 import threading as _th
                 from concurrent.futures import ThreadPoolExecutor
                 n_threads = min(int(self.args.selfplay_threads), int(games_per_batch))
-                games_per_thread = max(1, int(games_per_batch) // n_threads)
-                # Adjust n_threads down so total games ≈ games_per_batch
-                n_threads = min(n_threads, max(1, int(games_per_batch) // games_per_thread))
+                base_games, remainder = divmod(int(games_per_batch), n_threads)
+                # Thread i gets base_games + 1 if i < remainder
+                _thread_games = [base_games + (1 if i < remainder else 0) for i in range(n_threads)]
                 _lock = _th.Lock()
 
                 def _on_game_thread_safe(game_batch):
@@ -1833,7 +1833,7 @@ class WorkerSession:
                     return play_batch(
                         None, device=str(self.device), rng=thread_rng,
                         stockfish=self.sf, evaluator=_eval,
-                        games=games_per_thread,
+                        games=_thread_games[tid],
                         on_game_complete=_on_game_thread_safe,
                         on_step=self._check_model_update if tid == 0 else None,
                         opponent=_opponent_cfg, temp=_temp_cfg,
@@ -1843,15 +1843,27 @@ class WorkerSession:
 
                 with ThreadPoolExecutor(max_workers=n_threads) as pool:
                     futures = [pool.submit(_run_one_thread, i) for i in range(n_threads)]
-                    # Collect first completed result for stats
                     all_samples = []
-                    combined_stats = None
+                    all_stats = []
                     for f in futures:
                         s, st = f.result()
                         all_samples.extend(s)
-                        if combined_stats is None:
-                            combined_stats = st
-                samples, stats = all_samples, combined_stats
+                        all_stats.append(st)
+                    # Aggregate stats: sum integer fields from all threads
+                    from chess_anti_engine.selfplay.manager import BatchStats
+                    import dataclasses as _dc
+                    first = all_stats[0]
+                    agg = {}
+                    for fld in _dc.fields(first):
+                        vals = [getattr(st, fld.name) for st in all_stats]
+                        if all(isinstance(v, int) for v in vals):
+                            agg[fld.name] = sum(vals)
+                        elif all(isinstance(v, float) for v in vals):
+                            agg[fld.name] = sum(vals) / len(vals)  # average
+                        else:
+                            agg[fld.name] = vals[0]  # first thread's value
+                    stats = BatchStats(**agg)
+                samples = all_samples
             else:
                 samples, stats = play_batch(
                     self.model if (need_local_model and _eval is None) else None,

@@ -383,9 +383,13 @@ class ThreadedBatchEvaluator:
     def update_model(self, model: torch.nn.Module) -> None:
         """Swap the model (called from main thread between iterations)."""
         import threading as _threading
+        if not self._gpu_thread.is_alive():
+            raise RuntimeError("GPU thread died")
         event = _threading.Event()
         self._queue.put(("_update_model", model, event))
-        event.wait()
+        while not event.wait(timeout=5.0):
+            if not self._gpu_thread.is_alive():
+                raise RuntimeError("GPU thread died during model update")
 
     def shutdown(self) -> None:
         self._stop = True
