@@ -719,6 +719,11 @@ def _ensure_distributed_workers(
                     worker_index=idx,
                 )
             )
+    # Kill excess workers if count decreased
+    for p in out[want:]:
+        if p.poll() is None:
+            print(f"[trial] stopping excess worker pid={p.pid} trial={trial_id}")
+            p.terminate()
     return out[:want]
 
 

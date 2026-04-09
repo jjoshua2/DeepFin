@@ -597,15 +597,14 @@ def _update_best_model(
 # a restart because the broker's shared-memory layout and worker processes
 # are configured at launch time.
 _TOPOLOGY_KEYS = frozenset({
-    "distributed_workers_per_trial",
+    # Worker-level keys (workers_per_trial, use_compile, sf_workers, threaded,
+    # selfplay_threads) removed — _ensure_distributed_workers spawns new workers
+    # with updated config each iteration.
     "distributed_inference_max_batch_per_slot",
     "distributed_inference_batch_wait_ms",
     "distributed_inference_use_compile",
     "distributed_inference_broker_enabled",
     "distributed_inference_shared_broker",
-    "distributed_worker_use_compile",
-    "distributed_worker_sf_workers",
-    "distributed_worker_max_games_per_batch",
     "num_samples",
     "max_concurrent_trials",
     "gpus_per_trial",
