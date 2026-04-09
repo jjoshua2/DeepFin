@@ -58,8 +58,8 @@ stockfish:
 
   pid_enabled: true
   pid_target_winrate: 0.60
-  pid_ema_alpha: 0.35      # EMA half-life ~1.5 iters — faster reaction to regime changes (salvage/exploit).
-  pid_deadzone: 0.05            # Tighten when pid_wr > 0.65; ease when pid_wr < 0.55.
+  pid_ema_alpha: 0.50      # EMA half-life ~1 iter — faster reaction with shorter iters
+  pid_deadzone: 0.10            # Tighten when pid_wr > 0.70; ease when pid_wr < 0.50.
   pid_rate_limit: 0.10
   pid_min_games_between_adjust: 200  # Higher than games_per_iter so only the forced iteration-boundary adjust fires.
   pid_kp: 1.5
@@ -90,7 +90,8 @@ stockfish:
   pid_wdl_regret_min: 0.02         # hard floor
   pid_wdl_regret_max: 2.0          # max if PID needs to ease off
   pid_wdl_regret_stage_end: 0.05   # nodes unlock when regret reaches 5%
-  pid_max_regret_step: 0.001       # Gentle tightening — let model fully adapt before increasing difficulty
+  pid_max_regret_step: 0.001       # Slow tightening — model crashes at 0.003
+  pid_max_regret_ease_step: 0.002  # 2x tighten (was 5x) — minimal asymmetry, less oscillation
 
 selfplay:
   games_per_iter: 400
@@ -220,7 +221,9 @@ tune:
   distributed_worker_shared_cache_dir: /home/josh/projects/chess/runs/pbt2_small/server/worker_cache
   distributed_min_workers_per_trial: 1
   distributed_max_worker_delta_per_rebalance: 1
-  distributed_wait_timeout_seconds: 1200
+  distributed_wait_timeout_seconds: 400  # ~1.5 batch cycles; don't wait forever for stale workers
+  distributed_prev_model_max_fraction: 0.50  # Accept more prev-model games to reduce wait
+  distributed_min_games_fraction: 0.40  # Allow timeout at 40% target if games are slow
   distributed_server_port: 45453
   distributed_server_host: 0.0.0.0
   distributed_server_public_url: http://192.168.1.212:45453

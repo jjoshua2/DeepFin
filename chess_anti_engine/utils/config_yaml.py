@@ -74,7 +74,7 @@ _STOCKFISH_PID_KEYS = (
     "pid_suboptimal_wdl_regret_max", "pid_suboptimal_wdl_regret_min",
     "pid_max_rand_step", "pid_max_rand_step_start", "pid_max_rand_step_ramp_iters",
     "pid_wdl_regret_start", "pid_wdl_regret_min", "pid_wdl_regret_max",
-    "pid_wdl_regret_stage_end", "pid_max_regret_step",
+    "pid_wdl_regret_stage_end", "pid_max_regret_step", "pid_max_regret_ease_step",
 )
 
 # selfplay section: all 1:1 passthrough.
