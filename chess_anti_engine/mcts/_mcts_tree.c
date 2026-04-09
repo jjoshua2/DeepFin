@@ -1716,7 +1716,250 @@ static PyTypeObject MCTSTreeType = {
  * Module definition
  * ================================================================ */
 
+/*
+ * batch_process_ply(cboards_list, pol_logits, wdl_logits, actions, values,
+ *                   mcts_probs, is_full, sample_weights,
+ *                   df_enabled, df_q_weight, df_pol_scale, df_min, df_slope)
+ *   -> (sample_x, sample_probs, sample_wdl_net, sample_wdl_search,
+ *       sample_priority, sample_keep_prob, sample_legal_mask,
+ *       sample_ply, sample_pov, game_over)
+ *
+ * Fused per-ply processing: legal mask, masked softmax, KL divergence,
+ * Q-surprise, search WDL, push move, game-over check, position encoding.
+ * Runs with GIL released for thread parallelism.
+ */
+static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
+    PyObject *cboards_list;
+    PyObject *pol_obj, *wdl_obj, *actions_obj, *values_obj;
+    PyObject *mcts_probs_obj, *is_full_obj, *weights_obj;
+    int df_enabled;
+    double df_q_weight, df_pol_scale, df_min, df_slope;
+
+    if (!PyArg_ParseTuple(args, "OOOOOOOOidddd",
+                          &cboards_list, &pol_obj, &wdl_obj, &actions_obj,
+                          &values_obj, &mcts_probs_obj, &is_full_obj, &weights_obj,
+                          &df_enabled, &df_q_weight, &df_pol_scale, &df_min, &df_slope))
+        return NULL;
+
+    PyArrayObject *pol_arr = (PyArrayObject *)PyArray_FROMANY(pol_obj, NPY_FLOAT32, 2, 2, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *wdl_arr = (PyArrayObject *)PyArray_FROMANY(wdl_obj, NPY_FLOAT32, 2, 2, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *act_arr = (PyArrayObject *)PyArray_FROMANY(actions_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *val_arr = (PyArrayObject *)PyArray_FROMANY(values_obj, NPY_FLOAT64, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *probs_arr = (PyArrayObject *)PyArray_FROMANY(mcts_probs_obj, NPY_FLOAT32, 2, 2, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *full_arr = (PyArrayObject *)PyArray_FROMANY(is_full_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *wt_arr = (PyArrayObject *)PyArray_FROMANY(weights_obj, NPY_FLOAT64, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+
+    if (!pol_arr || !wdl_arr || !act_arr || !val_arr || !probs_arr || !full_arr || !wt_arr) {
+        Py_XDECREF(pol_arr); Py_XDECREF(wdl_arr); Py_XDECREF(act_arr);
+        Py_XDECREF(val_arr); Py_XDECREF(probs_arr); Py_XDECREF(full_arr); Py_XDECREF(wt_arr);
+        return NULL;
+    }
+
+    int32_t n = (int32_t)PyArray_DIM(pol_arr, 0);
+    if (PyList_Size(cboards_list) < n) {
+        PyErr_SetString(PyExc_ValueError, "cboards_list too short");
+        goto fail;
+    }
+
+    /* Extract data pointers */
+    const float *pol_data = (const float *)PyArray_DATA(pol_arr);
+    const float *wdl_data = (const float *)PyArray_DATA(wdl_arr);
+    const int32_t *actions = (const int32_t *)PyArray_DATA(act_arr);
+    const double *values = (const double *)PyArray_DATA(val_arr);
+    const float *mcts_probs = (const float *)PyArray_DATA(probs_arr);
+    const int32_t *is_full = (const int32_t *)PyArray_DATA(full_arr);
+    const double *sample_wts = (const double *)PyArray_DATA(wt_arr);
+
+    /* Pre-extract CBoard pointers */
+    CBoard *boards = (CBoard *)malloc(n * sizeof(CBoard));
+    if (!boards) { PyErr_NoMemory(); goto fail; }
+    for (int32_t i = 0; i < n; i++) {
+        PyCBoard *pcb = (PyCBoard *)PyList_GET_ITEM(cboards_list, i);
+        boards[i] = pcb->board;
+    }
+
+    /* Allocate output arrays */
+    npy_intp dims_x[4] = {n, 146, 8, 8};
+    npy_intp dims_p[2] = {n, 4672};
+    npy_intp dims_w[2] = {n, 3};
+    npy_intp dims_n[1] = {n};
+    npy_intp dims_m[2] = {n, 4672};
+
+    PyArrayObject *out_x = (PyArrayObject *)PyArray_ZEROS(4, dims_x, NPY_FLOAT32, 0);
+    PyArrayObject *out_probs = (PyArrayObject *)PyArray_SimpleNew(2, dims_p, NPY_FLOAT32);
+    PyArrayObject *out_wdl_net = (PyArrayObject *)PyArray_SimpleNew(2, dims_w, NPY_FLOAT32);
+    PyArrayObject *out_wdl_search = (PyArrayObject *)PyArray_SimpleNew(2, dims_w, NPY_FLOAT32);
+    PyArrayObject *out_priority = (PyArrayObject *)PyArray_SimpleNew(1, dims_n, NPY_FLOAT32);
+    PyArrayObject *out_keep = (PyArrayObject *)PyArray_SimpleNew(1, dims_n, NPY_FLOAT32);
+    PyArrayObject *out_mask = (PyArrayObject *)PyArray_ZEROS(2, dims_m, NPY_UINT8, 0);
+    PyArrayObject *out_ply = (PyArrayObject *)PyArray_SimpleNew(1, dims_n, NPY_INT32);
+    PyArrayObject *out_pov = (PyArrayObject *)PyArray_SimpleNew(1, dims_n, NPY_INT32);
+    PyArrayObject *out_over = (PyArrayObject *)PyArray_SimpleNew(1, dims_n, NPY_INT32);
+
+    if (!out_x || !out_probs || !out_wdl_net || !out_wdl_search ||
+        !out_priority || !out_keep || !out_mask || !out_ply || !out_pov || !out_over) {
+        free(boards);
+        Py_XDECREF(out_x); Py_XDECREF(out_probs); Py_XDECREF(out_wdl_net);
+        Py_XDECREF(out_wdl_search); Py_XDECREF(out_priority); Py_XDECREF(out_keep);
+        Py_XDECREF(out_mask); Py_XDECREF(out_ply); Py_XDECREF(out_pov); Py_XDECREF(out_over);
+        goto fail;
+    }
+
+    float *x_data = (float *)PyArray_DATA(out_x);
+    float *probs_out = (float *)PyArray_DATA(out_probs);
+    float *wdl_net_out = (float *)PyArray_DATA(out_wdl_net);
+    float *wdl_search_out = (float *)PyArray_DATA(out_wdl_search);
+    float *priority_out = (float *)PyArray_DATA(out_priority);
+    float *keep_out = (float *)PyArray_DATA(out_keep);
+    uint8_t *mask_out = (uint8_t *)PyArray_DATA(out_mask);
+    int32_t *ply_out = (int32_t *)PyArray_DATA(out_ply);
+    int32_t *pov_out = (int32_t *)PyArray_DATA(out_pov);
+    int32_t *over_out = (int32_t *)PyArray_DATA(out_over);
+
+    /* ── Release GIL for the main computation loop ── */
+    float *raw_buf = (float *)malloc(4672 * sizeof(float));
+    if (!raw_buf) { free(boards); Py_XDECREF(out_x); Py_XDECREF(out_probs); Py_XDECREF(out_wdl_net);
+        Py_XDECREF(out_wdl_search); Py_XDECREF(out_priority); Py_XDECREF(out_keep);
+        Py_XDECREF(out_mask); Py_XDECREF(out_ply); Py_XDECREF(out_pov); Py_XDECREF(out_over);
+        goto fail; }
+
+    Py_BEGIN_ALLOW_THREADS
+
+    for (int32_t i = 0; i < n; i++) {
+        CBoard *cb = &boards[i];
+        const float *pol = pol_data + i * 4672;
+        const float *wdl = wdl_data + i * 3;
+        const float *mprobs = mcts_probs + i * 4672;
+        int32_t action = actions[i];
+        double value = values[i];
+
+        /* Ply index and POV */
+        ply_out[i] = (int32_t)cb->hist_len;
+        pov_out[i] = (int32_t)cb->turn;
+
+        /* Legal mask */
+        BoardState bs;
+        cboard_to_boardstate(cb, &bs);
+        int legal_indices[256];
+        int n_legal = 0;
+        if (bs.king_sq >= 0)
+            n_legal = generate_legal_move_indices(&bs, legal_indices);
+
+        uint8_t *mask = mask_out + i * 4672;
+        for (int j = 0; j < n_legal; j++)
+            mask[legal_indices[j]] = 1;
+
+        /* Masked softmax on raw policy */
+        float *raw = raw_buf;
+        float max_val = -1e30f;
+        for (int j = 0; j < 4672; j++) {
+            raw[j] = mask[j] ? pol[j] : -1e9f;
+            if (raw[j] > max_val) max_val = raw[j];
+        }
+        float sum = 0.0f;
+        for (int j = 0; j < 4672; j++) {
+            raw[j] = mask[j] ? expf(raw[j] - max_val) : 0.0f;
+            sum += raw[j];
+        }
+        if (sum > 0.0f) {
+            for (int j = 0; j < 4672; j++) raw[j] /= sum;
+        } else if (n_legal > 0) {
+            float u = 1.0f / (float)n_legal;
+            for (int j = 0; j < n_legal; j++) raw[legal_indices[j]] = u;
+        }
+
+        /* KL divergence: raw vs MCTS-improved policy */
+        float kl = 0.0f;
+        for (int j = 0; j < 4672; j++) {
+            if (raw[j] > 1e-12f && mprobs[j] > 1e-12f) {
+                kl += raw[j] * (logf(raw[j]) - logf(mprobs[j]));
+            }
+        }
+
+        /* Q-surprise */
+        float wdl_w = wdl[0], wdl_d = wdl[1], wdl_l = wdl[2];
+        /* Softmax on WDL logits */
+        float wdl_max = wdl_w; if (wdl_d > wdl_max) wdl_max = wdl_d; if (wdl_l > wdl_max) wdl_max = wdl_l;
+        float ew = expf(wdl_w - wdl_max), ed = expf(wdl_d - wdl_max), el = expf(wdl_l - wdl_max);
+        float ws = ew + ed + el;
+        float wdl_net[3];
+        if (ws > 0.0f) { wdl_net[0] = ew/ws; wdl_net[1] = ed/ws; wdl_net[2] = el/ws; }
+        else { wdl_net[0] = 0.0f; wdl_net[1] = 1.0f; wdl_net[2] = 0.0f; }
+
+        float orig_q = wdl_net[0] - wdl_net[2];
+        float best_q = (float)value;
+        float q_surprise = fabsf(best_q - orig_q);
+
+        /* Difficulty / keep_prob */
+        float difficulty = q_surprise * (float)df_q_weight + kl * (float)df_pol_scale;
+        if (!isfinite(difficulty)) difficulty = 1.0f;
+        float keep_prob = 1.0f;
+        if (df_enabled)
+            keep_prob = fmaxf((float)df_min, fminf(1.0f, difficulty * (float)df_slope));
+
+        priority_out[i] = difficulty;
+        keep_out[i] = keep_prob;
+
+        /* Store net WDL */
+        wdl_net_out[i * 3 + 0] = wdl_net[0];
+        wdl_net_out[i * 3 + 1] = wdl_net[1];
+        wdl_net_out[i * 3 + 2] = wdl_net[2];
+
+        /* Search WDL estimate from MCTS value */
+        float d_raw = wdl_net[1];
+        float rem = fmaxf(0.0f, 1.0f - d_raw);
+        float q_clamped = fmaxf(-rem, fminf(rem, best_q));
+        float w_search = 0.5f * (rem + q_clamped);
+        wdl_search_out[i * 3 + 0] = w_search;
+        wdl_search_out[i * 3 + 1] = d_raw;
+        wdl_search_out[i * 3 + 2] = rem - w_search;
+        if (!isfinite(wdl_search_out[i*3]) || !isfinite(wdl_search_out[i*3+1]) || !isfinite(wdl_search_out[i*3+2])) {
+            wdl_search_out[i * 3 + 0] = 0.0f;
+            wdl_search_out[i * 3 + 1] = 1.0f;
+            wdl_search_out[i * 3 + 2] = 0.0f;
+        }
+
+        /* Copy MCTS probs to output */
+        memcpy(probs_out + i * 4672, mprobs, 4672 * sizeof(float));
+
+        /* Encode position BEFORE pushing move */
+        cboard_encode_146_into(cb, x_data + i * 146 * 64);
+
+        /* Push move */
+        cboard_push_index(cb, action);
+
+        /* Game over check */
+        over_out[i] = cboard_is_game_over(cb) ? 1 : 0;
+    }
+
+    Py_END_ALLOW_THREADS
+
+    free(raw_buf);
+
+    /* Write back CBoard states to Python objects */
+    for (int32_t i = 0; i < n; i++) {
+        PyCBoard *pcb = (PyCBoard *)PyList_GET_ITEM(cboards_list, i);
+        pcb->board = boards[i];
+    }
+    free(boards);
+
+    Py_DECREF(pol_arr); Py_DECREF(wdl_arr); Py_DECREF(act_arr);
+    Py_DECREF(val_arr); Py_DECREF(probs_arr); Py_DECREF(full_arr); Py_DECREF(wt_arr);
+
+    return Py_BuildValue("(NNNNNNNNNN)",
+        out_x, out_probs, out_wdl_net, out_wdl_search,
+        out_priority, out_keep, out_mask, out_ply, out_pov, out_over);
+
+fail:
+    Py_XDECREF(pol_arr); Py_XDECREF(wdl_arr); Py_XDECREF(act_arr);
+    Py_XDECREF(val_arr); Py_XDECREF(probs_arr); Py_XDECREF(full_arr); Py_XDECREF(wt_arr);
+    return NULL;
+}
+
 static PyMethodDef module_methods[] = {
+    {"batch_process_ply", py_batch_process_ply, METH_VARARGS,
+     "batch_process_ply(cboards, pol, wdl, actions, values, probs, is_full, weights, "
+     "df_enabled, df_q_w, df_pol_s, df_min, df_slope) -> tuple of arrays"},
     {NULL}
 };
 
