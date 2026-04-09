@@ -1145,9 +1145,11 @@ class WorkerSession:
             self.model_sha = new_sha
             self.model_step = int(manifest.get("trainer_step") or 0)
             self.last_model_sha = new_sha
-            # Update evaluator
+            # Update evaluator with new model
             if self._direct_evaluator is not None:
-                if hasattr(self._direct_evaluator, "model"):
+                if hasattr(self._direct_evaluator, "update_model"):
+                    self._direct_evaluator.update_model(self.model)
+                elif hasattr(self._direct_evaluator, "model"):
                     self._direct_evaluator.model = self.model
                 elif hasattr(self._direct_evaluator, "load_weights"):
                     self._direct_evaluator.load_weights(self.model.state_dict())
@@ -1814,8 +1816,10 @@ class WorkerSession:
                 # Multi-threaded selfplay: N threads share one GPU evaluator
                 import threading as _th
                 from concurrent.futures import ThreadPoolExecutor
-                n_threads = int(self.args.selfplay_threads)
+                n_threads = min(int(self.args.selfplay_threads), int(games_per_batch))
                 games_per_thread = max(1, int(games_per_batch) // n_threads)
+                # Adjust n_threads down so total games ≈ games_per_batch
+                n_threads = min(n_threads, max(1, int(games_per_batch) // games_per_thread))
                 _lock = _th.Lock()
 
                 def _on_game_thread_safe(game_batch):

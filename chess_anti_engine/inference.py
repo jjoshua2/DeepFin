@@ -367,10 +367,15 @@ class ThreadedBatchEvaluator:
     def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Submit a batch from a selfplay thread, block until GPU results ready."""
         import threading as _threading
+        if not self._gpu_thread.is_alive():
+            raise RuntimeError("GPU thread died")
         event = _threading.Event()
         result: dict = {}
         self._queue.put((x, event, result))
-        event.wait()
+        # Wait with timeout and check GPU thread health
+        while not event.wait(timeout=5.0):
+            if not self._gpu_thread.is_alive():
+                raise RuntimeError("GPU thread died while waiting for results")
         if "error" in result:
             raise RuntimeError(result["error"])
         return result["pol"], result["wdl"]
@@ -418,9 +423,9 @@ class ThreadedBatchEvaluator:
             pending = [first]
             total = first[0].shape[0]
 
-            # Accumulate more requests up to min_batch or timeout
+            # Accumulate more requests up to min_batch or timeout (cap at max_batch)
             deadline = time.monotonic() + self._timeout
-            while total < self._min_batch and time.monotonic() < deadline:
+            while total < self._min_batch and total < self._max_batch and time.monotonic() < deadline:
                 try:
                     item = self._queue.get(timeout=max(0.0001, deadline - time.monotonic()))
                 except _queue.Empty:
@@ -432,8 +437,13 @@ class ThreadedBatchEvaluator:
                     self._gpu_eval.model = new_model
                     event.set()
                     continue
+                item_size = item[0].shape[0]
+                if total + item_size > self._max_batch:
+                    # Would exceed max — put back for next round
+                    self._queue.put(item)
+                    break
                 pending.append(item)
-                total += item[0].shape[0]
+                total += item_size
 
             if not pending:
                 continue
