@@ -26,7 +26,7 @@ replay_window_growth: 2500   # ~17 iters in buffer; LC0/AlphaZero use large wind
 
 # Bootstrap: train initial net on all random games, then discard from window
 bootstrap_dir: data/bootstrap
-bootstrap_checkpoint: /home/josh/projects/chess/data/bootstrap/bootstrap_net_v4_iter34.pt  # Best model from iter 34 (os=318.6)
+bootstrap_checkpoint: /home/josh/projects/chess/data/bootstrap/bootstrap_net_v5_iter239.pt  # os=334, reg=0.375
 bootstrap_zero_policy_heads: true  # Bootstrap trained value/trunk only; start policy heads near-uniform on fresh runs.
 worker_wheel_path: null  # Optional: built wheel to publish for remote worker self-update.
 bootstrap_max_positions: 0   # 0 = load ALL positions (14.2M) — used by scripts/train_bootstrap.py
@@ -98,7 +98,7 @@ selfplay:
   games_per_iter_start: 32  # One round of 8 workers × 4 games; fast sanity check.
   games_per_iter_ramp_iters: 5
   selfplay_fraction: 0.70  # More selfplay = more robust learning, less dependence on SF difficulty
-  selfplay_batch: 256   # 2 workers × 256 games each.
+  selfplay_batch: 256   # 4 workers × 256 games each.
   max_plies: 240
 
   temperature: 1.0       # Gumbel improved policy already provides exploration; T=1.0 avoids distorting the search target.
@@ -205,7 +205,7 @@ tune:
   max_concurrent_trials: 1
   cpus_per_trial: 1
   gpus_per_trial: 1.0
-  distributed_workers_per_trial: 4  # 4 workers optimal for single GPU
+  distributed_workers_per_trial: 4  # 4 workers, non-threaded (proven fastest)
   distributed_worker_sf_workers: 8  # 8 SF per worker = 16 total; SF is the bottleneck at 5k nodes
   distributed_worker_min_games_per_batch: 128  # GPU needs large batches for utilization
   distributed_worker_max_games_per_batch: 512
@@ -213,6 +213,8 @@ tune:
   distributed_worker_password: chess_worker_2026
   distributed_worker_use_compile: true
   distributed_worker_compile_mode: reduce-overhead
+  # distributed_worker_threaded: true  # Disabled: GIL limits threading benefit; needs C game loop
+  # distributed_worker_selfplay_threads: 8
   # distributed_worker_aot_dir: data/aot_models  # AOT: same VRAM, slower with contention
   distributed_inference_broker_enabled: false  # Single worker uses DirectGPU (39k pos/s compiled, no contention)
   distributed_inference_shared_broker: true
