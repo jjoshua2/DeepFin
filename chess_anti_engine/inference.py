@@ -435,10 +435,10 @@ class ThreadedBatchEvaluator:
                 if item is None:
                     break
                 if isinstance(item, tuple) and len(item) == 3 and isinstance(item[0], str):
-                    _, new_model, event = item
-                    self._gpu_eval.model = new_model
-                    event.set()
-                    continue
+                    # Model update — put it back and break so pending requests
+                    # get processed with the current model first.
+                    self._queue.put(item)
+                    break
                 item_size = item[0].shape[0]
                 if total + item_size > self._max_batch:
                     # Would exceed max — put back for next round
