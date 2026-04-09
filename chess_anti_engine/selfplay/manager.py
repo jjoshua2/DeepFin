@@ -299,6 +299,10 @@ def play_batch(
         eval_impl = LocalModelEvaluator(model, device=device)
 
     boards = [make_starting_board(rng=rng, cfg=opening) for _ in range(batch_size)]
+    # Parallel CBoard state for C per-ply processing (Phase 2).
+    # Kept in sync with python-chess boards; used by batch_process_ply.
+    from chess_anti_engine.encoding.cboard_encode import cboard_from_board_fast as _cb_fast
+    cboards = [_cb_fast(b) for b in boards]
     # Keep a copy of the starting position for tablebase replay after game ends.
     starting_boards = [b.copy() for b in boards] if game.syzygy_path else None
     done = [False] * batch_size
@@ -584,6 +588,7 @@ def play_batch(
     def _recycle_slot(i: int) -> None:
         nonlocal games_started
         boards[i] = make_starting_board(rng=rng, cfg=opening)
+        cboards[i] = _cb_fast(boards[i])
         if starting_boards is not None:
             starting_boards[i] = boards[i].copy()
         done[i] = False
@@ -757,81 +762,130 @@ def play_batch(
         _df_slope = float(diff_focus.slope)
         _df_min = float(diff_focus.min_keep)
 
-        for j, (idx, probs, a, v) in enumerate(zip(net_idxs, probs_list, actions, values_list, strict=True)):
-            assert probs is not None and a is not None and v is not None
+        # ── C-accelerated per-ply processing (GIL released) ──────────
+        try:
+            from chess_anti_engine.mcts._mcts_tree import batch_process_ply as _c_process_ply
+            _has_c_ply = True
+        except ImportError:
+            _has_c_ply = False
 
-            board_before = boards[idx]
-            ply_index = int(len(board_before.move_stack))
-            pov_color = board_before.turn
+        if _has_c_ply and len(net_idxs) > 0:
+            _cb_list = [cboards[net_idxs[j]] for j in range(len(net_idxs))]
+            _actions_arr = np.array([int(a) for a in actions], dtype=np.int32)
+            _values_arr = np.array([float(v) for v in values_list], dtype=np.float64)
+            _probs_arr = np.stack([p for p in probs_list], axis=0).astype(np.float32)
+            _is_full_arr = np.array([1 if bool(is_full[j]) else 0 for j in range(len(net_idxs))], dtype=np.int32)
+            _weights_arr = np.array([float(sample_weights[j]) for j in range(len(net_idxs))], dtype=np.float64)
 
-            mask = masks_list[j]
-            if mask is None:
-                mask = legal_move_mask(board_before)
-
-            # Raw network policy (masked softmax) — reuse buffer
-            np.copyto(_lg_buf, pol_logits[j])
-            _lg_buf[~mask] = -1e9
-            _lg_buf -= float(np.max(_lg_buf))
-            np.exp(_lg_buf, out=_lg_buf)
-            _lg_buf[~mask] = 0.0
-            s = float(_lg_buf.sum())
-            if s > 0:
-                raw = (_lg_buf / s).astype(np.float32, copy=False)
-            else:
-                raw = mask.astype(np.float32) / float(mask.sum())
-
-            # KL divergence (diff focus)
-            imp = np.maximum(probs.astype(np.float32, copy=False), 1e-12)
-            raw_c = np.maximum(raw, 1e-12)
-            kl = float(np.sum(raw_c * (np.log(raw_c) - np.log(imp))))
-
-            orig_q = float(wdl_est[j][0] - wdl_est[j][2])
-            best_q = float(v)
-            q_surprise = abs(best_q - orig_q)
-
-            difficulty = q_surprise * _df_q_w + kl * _df_p_s
-            if not math.isfinite(difficulty):
-                difficulty = 1.0  # safe default — NaN from model output or KL overflow
-            if not _df_enabled:
-                keep_prob = 1.0
-            else:
-                keep_prob = max(_df_min, min(1.0, difficulty * _df_slope))
-
-            move = index_to_move(int(a), board_before)
-            board_before.push(move)
-
-            # Search WDL estimate — reuse buffer, copy to new array for storage
-            d_raw = float(wdl_est[j][1])
-            rem = max(0.0, 1.0 - d_raw)
-            q = float(max(-rem, min(rem, best_q)))
-            w_search = 0.5 * (rem + q)
-            _swdl_buf[0] = w_search
-            _swdl_buf[1] = d_raw
-            _swdl_buf[2] = rem - w_search
-            search_wdl_est = _swdl_buf.copy()
-            if not np.all(np.isfinite(search_wdl_est)):
-                search_wdl_est = np.array([0.0, 1.0, 0.0], dtype=np.float32)  # draw prior
-
-            last_net_full[idx] = bool(is_full[j])
-
-            samples_per_game[idx].append(
-                _NetRecord(
-                    x=xs_batch[j],
-                    policy_probs=probs,
-                    net_wdl_est=wdl_est[j] if np.all(np.isfinite(wdl_est[j])) else np.array([0.0, 1.0, 0.0], dtype=np.float32),
-                    search_wdl_est=search_wdl_est,
-                    pov_color=pov_color,
-                    ply_index=ply_index,
-                    has_policy=bool(is_full[j]),
-                    priority=float(difficulty),
-                    sample_weight=float(sample_weights[j]),
-                    keep_prob=float(keep_prob),
-                    legal_mask=mask.view(np.uint8),
-                )
+            (c_x, c_probs, c_wdl_net, c_wdl_search, c_priority,
+             c_keep, c_mask, c_ply, c_pov, c_over) = _c_process_ply(
+                _cb_list, pol_logits[list(range(len(net_idxs)))],
+                wdl_logits_raw[list(range(len(net_idxs)))],
+                _actions_arr, _values_arr, _probs_arr, _is_full_arr, _weights_arr,
+                int(_df_enabled), float(_df_q_w), float(_df_p_s), float(_df_min), float(_df_slope),
             )
 
-            if boards[idx].is_game_over():
-                done[idx] = True
+            for j in range(len(net_idxs)):
+                idx = net_idxs[j]
+                # Sync python-chess board with CBoard (push the same move)
+                move = index_to_move(int(actions[j]), boards[idx])
+                boards[idx].push(move)
+
+                last_net_full[idx] = bool(is_full[j])
+
+                samples_per_game[idx].append(
+                    _NetRecord(
+                        x=c_x[j],
+                        policy_probs=c_probs[j],
+                        net_wdl_est=c_wdl_net[j],
+                        search_wdl_est=c_wdl_search[j],
+                        pov_color=chess.WHITE if c_pov[j] else chess.BLACK,
+                        ply_index=int(c_ply[j]),
+                        has_policy=bool(is_full[j]),
+                        priority=float(c_priority[j]),
+                        sample_weight=float(sample_weights[j]),
+                        keep_prob=float(c_keep[j]),
+                        legal_mask=c_mask[j],
+                    )
+                )
+
+                if c_over[j]:
+                    done[idx] = True
+
+        else:
+            # Python fallback (original per-ply loop)
+            for j, (idx, probs, a, v) in enumerate(zip(net_idxs, probs_list, actions, values_list, strict=True)):
+                assert probs is not None and a is not None and v is not None
+
+                board_before = boards[idx]
+                ply_index = int(len(board_before.move_stack))
+                pov_color = board_before.turn
+
+                mask = masks_list[j]
+                if mask is None:
+                    mask = legal_move_mask(board_before)
+
+                np.copyto(_lg_buf, pol_logits[j])
+                _lg_buf[~mask] = -1e9
+                _lg_buf -= float(np.max(_lg_buf))
+                np.exp(_lg_buf, out=_lg_buf)
+                _lg_buf[~mask] = 0.0
+                s = float(_lg_buf.sum())
+                if s > 0:
+                    raw = (_lg_buf / s).astype(np.float32, copy=False)
+                else:
+                    raw = mask.astype(np.float32) / float(mask.sum())
+
+                imp = np.maximum(probs.astype(np.float32, copy=False), 1e-12)
+                raw_c = np.maximum(raw, 1e-12)
+                kl = float(np.sum(raw_c * (np.log(raw_c) - np.log(imp))))
+
+                orig_q = float(wdl_est[j][0] - wdl_est[j][2])
+                best_q = float(v)
+                q_surprise = abs(best_q - orig_q)
+
+                difficulty = q_surprise * _df_q_w + kl * _df_p_s
+                if not math.isfinite(difficulty):
+                    difficulty = 1.0
+                if not _df_enabled:
+                    keep_prob = 1.0
+                else:
+                    keep_prob = max(_df_min, min(1.0, difficulty * _df_slope))
+
+                move = index_to_move(int(a), board_before)
+                board_before.push(move)
+
+                d_raw = float(wdl_est[j][1])
+                rem = max(0.0, 1.0 - d_raw)
+                q = float(max(-rem, min(rem, best_q)))
+                w_search = 0.5 * (rem + q)
+                _swdl_buf[0] = w_search
+                _swdl_buf[1] = d_raw
+                _swdl_buf[2] = rem - w_search
+                search_wdl_est = _swdl_buf.copy()
+                if not np.all(np.isfinite(search_wdl_est)):
+                    search_wdl_est = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+
+                last_net_full[idx] = bool(is_full[j])
+
+                samples_per_game[idx].append(
+                    _NetRecord(
+                        x=xs_batch[j],
+                        policy_probs=probs,
+                        net_wdl_est=wdl_est[j] if np.all(np.isfinite(wdl_est[j])) else np.array([0.0, 1.0, 0.0], dtype=np.float32),
+                        search_wdl_est=search_wdl_est,
+                        pov_color=pov_color,
+                        ply_index=ply_index,
+                        has_policy=bool(is_full[j]),
+                        priority=float(difficulty),
+                        sample_weight=float(sample_weights[j]),
+                        keep_prob=float(keep_prob),
+                        legal_mask=mask.view(np.uint8),
+                    )
+                )
+
+                if boards[idx].is_game_over():
+                    done[idx] = True
 
     # ── Stockfish annotation + opponent moves ─────────────────────────────────
 
@@ -986,6 +1040,12 @@ def play_batch(
                 regret_limit=regret_limit,
             )
 
+            # Sync CBoard BEFORE push (move_to_index needs pre-push board)
+            try:
+                _opp_move_idx = int(move_to_index(move_to_play, boards[idx]))
+                cboards[idx].push_index(_opp_move_idx)
+            except Exception:
+                pass  # CBoard will be re-synced on recycle
             boards[idx].push(move_to_play)
             if boards[idx].is_game_over():
                 done[idx] = True
