@@ -417,6 +417,12 @@ def _build_distributed_worker_cmd(
                 else []
             )
         ),
+        *(
+            ["--threaded-selfplay", "--selfplay-threads",
+             str(int(config.get("distributed_worker_selfplay_threads", 16)))]
+            if bool(config.get("distributed_worker_threaded", False))
+            else []
+        ),
         "--sf-workers",
         str(int(config.get("distributed_worker_sf_workers", 1))),
         "--poll-seconds",

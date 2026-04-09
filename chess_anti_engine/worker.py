@@ -653,6 +653,19 @@ def main() -> None:
              "If set, uses AOTEvaluator instead of torch.compile.",
     )
 
+    ap.add_argument(
+        "--threaded-selfplay",
+        action="store_true",
+        help="Use multi-threaded selfplay with shared GPU. "
+             "N threads run play_batch() concurrently, one GPU thread batches inference.",
+    )
+    ap.add_argument(
+        "--selfplay-threads",
+        type=int,
+        default=16,
+        help="Number of selfplay threads (with --threaded-selfplay).",
+    )
+
     ap.add_argument("--stockfish-path", type=str, default=None)
 
     # Server-managed strength knobs (defaults come from manifest recommended_worker).
@@ -1670,10 +1683,17 @@ class WorkerSession:
             time.sleep(float(self.args.poll_seconds))
             return
 
-        # Use AOTEvaluator (pre-compiled) or DirectGPUEvaluator for in-process inference.
+        # Use ThreadedBatchEvaluator, AOTEvaluator, or DirectGPUEvaluator.
         if need_local_model:
             if self._direct_evaluator is None:
-                if self.args.aot_dir:
+                if self.args.threaded_selfplay:
+                    from chess_anti_engine.inference import ThreadedBatchEvaluator
+                    self._direct_evaluator = ThreadedBatchEvaluator(
+                        self.model, device=str(self.device), max_batch=4096,
+                        min_batch=256,
+                    )
+                    self._threaded_model_id = id(self.model)
+                elif self.args.aot_dir:
                     from chess_anti_engine.inference import AOTEvaluator
                     self._direct_evaluator = AOTEvaluator(
                         self.args.aot_dir, device=str(self.device), max_batch=4096,
@@ -1684,7 +1704,12 @@ class WorkerSession:
                     self._direct_evaluator = DirectGPUEvaluator(
                         self.model, device=str(self.device), max_batch=2048,
                     )
-            if self.args.aot_dir:
+            # Model update handling
+            if self.args.threaded_selfplay:
+                if getattr(self, "_threaded_model_id", None) != id(self.model):
+                    self._direct_evaluator.update_model(self.model)
+                    self._threaded_model_id = id(self.model)
+            elif self.args.aot_dir:
                 if getattr(self, "_aot_model_id", None) != id(self.model):
                     self._direct_evaluator.load_weights(self.model.state_dict())
                     self._aot_model_id = id(self.model)
@@ -1742,56 +1767,97 @@ class WorkerSession:
 
         try:
             _eval = self.inference_client or self._direct_evaluator
-            samples, stats = play_batch(
-                self.model if (need_local_model and _eval is None) else None,
-                device=str(self.device),
-                rng=self.rng,
-                stockfish=self.sf,
-                evaluator=_eval,
-                games=int(games_per_batch),
-                on_game_complete=self._on_completed_game,
-                on_step=self._check_model_update,
-                opponent=OpponentConfig(
-                    random_move_prob=float(opponent_random_move_prob),
-                    topk_stage_end=float(reco.get("opponent_topk_stage_end", 0.5)),
-                    topk_min=int(opponent_topk_min),
-                    suboptimal_wdl_regret_max=float(opponent_suboptimal_wdl_regret_max),
-                    suboptimal_wdl_regret_min=float(opponent_suboptimal_wdl_regret_min),
-                    random_move_prob_start=float(opponent_random_move_prob_start),
-                    random_move_prob_min=float(opponent_random_move_prob_min),
-                    wdl_regret_limit=opponent_wdl_regret_limit,
-                ),
-                temp=TemperatureConfig(
-                    temperature=float(temperature),
-                    decay_start_move=int(t_start),
-                    decay_moves=int(t_moves),
-                    endgame=float(t_end),
-                ),
-                search=SearchConfig(
-                    simulations=int(mcts_sims),
-                    mcts_type=str(mcts_type),
-                    playout_cap_fraction=float(playout_cap_fraction),
-                    fast_simulations=int(fast_sims),
-                ),
-                opening=OpeningConfig(
-                    opening_book_path=self.opening_book_path,
-                    opening_book_max_plies=int(opening_book_max_plies),
-                    opening_book_max_games=int(opening_book_max_games),
-                    opening_book_prob=float(opening_book_prob),
-                    opening_book_path_2=self.opening_book_path_2,
-                    opening_book_max_plies_2=int(opening_book_max_plies_2),
-                    opening_book_max_games_2=int(opening_book_max_games_2),
-                    opening_book_mix_prob_2=float(opening_book_mix_prob_2),
-                    random_start_plies=int(random_start_plies),
-                ),
-                game=GameConfig(
-                    max_plies=int(max_plies),
-                    selfplay_fraction=float(selfplay_fraction),
-                    sf_policy_temp=float(sf_policy_temp),
-                    sf_policy_label_smooth=float(sf_policy_label_smooth),
-                    timeout_adjudication_threshold=float(timeout_adjudication_threshold),
-                ),
+
+            # Build shared config objects (frozen dataclasses, thread-safe)
+            _opponent_cfg = OpponentConfig(
+                random_move_prob=float(opponent_random_move_prob),
+                topk_stage_end=float(reco.get("opponent_topk_stage_end", 0.5)),
+                topk_min=int(opponent_topk_min),
+                suboptimal_wdl_regret_max=float(opponent_suboptimal_wdl_regret_max),
+                suboptimal_wdl_regret_min=float(opponent_suboptimal_wdl_regret_min),
+                random_move_prob_start=float(opponent_random_move_prob_start),
+                random_move_prob_min=float(opponent_random_move_prob_min),
+                wdl_regret_limit=opponent_wdl_regret_limit,
             )
+            _temp_cfg = TemperatureConfig(
+                temperature=float(temperature),
+                decay_start_move=int(t_start),
+                decay_moves=int(t_moves),
+                endgame=float(t_end),
+            )
+            _search_cfg = SearchConfig(
+                simulations=int(mcts_sims),
+                mcts_type=str(mcts_type),
+                playout_cap_fraction=float(playout_cap_fraction),
+                fast_simulations=int(fast_sims),
+            )
+            _opening_cfg = OpeningConfig(
+                opening_book_path=self.opening_book_path,
+                opening_book_max_plies=int(opening_book_max_plies),
+                opening_book_max_games=int(opening_book_max_games),
+                opening_book_prob=float(opening_book_prob),
+                opening_book_path_2=self.opening_book_path_2,
+                opening_book_max_plies_2=int(opening_book_max_plies_2),
+                opening_book_max_games_2=int(opening_book_max_games_2),
+                opening_book_mix_prob_2=float(opening_book_mix_prob_2),
+                random_start_plies=int(random_start_plies),
+            )
+            _game_cfg = GameConfig(
+                max_plies=int(max_plies),
+                selfplay_fraction=float(selfplay_fraction),
+                sf_policy_temp=float(sf_policy_temp),
+                sf_policy_label_smooth=float(sf_policy_label_smooth),
+                timeout_adjudication_threshold=float(timeout_adjudication_threshold),
+            )
+
+            if self.args.threaded_selfplay:
+                # Multi-threaded selfplay: N threads share one GPU evaluator
+                import threading as _th
+                from concurrent.futures import ThreadPoolExecutor
+                n_threads = int(self.args.selfplay_threads)
+                games_per_thread = max(1, int(games_per_batch) // n_threads)
+                _lock = _th.Lock()
+
+                def _on_game_thread_safe(game_batch):
+                    with _lock:
+                        self._on_completed_game(game_batch)
+
+                def _run_one_thread(tid):
+                    thread_rng = np.random.default_rng(self.rng.integers(2**63))
+                    return play_batch(
+                        None, device=str(self.device), rng=thread_rng,
+                        stockfish=self.sf, evaluator=_eval,
+                        games=games_per_thread,
+                        on_game_complete=_on_game_thread_safe,
+                        on_step=self._check_model_update if tid == 0 else None,
+                        opponent=_opponent_cfg, temp=_temp_cfg,
+                        search=_search_cfg, opening=_opening_cfg,
+                        game=_game_cfg,
+                    )
+
+                with ThreadPoolExecutor(max_workers=n_threads) as pool:
+                    futures = [pool.submit(_run_one_thread, i) for i in range(n_threads)]
+                    # Collect first completed result for stats
+                    all_samples = []
+                    combined_stats = None
+                    for f in futures:
+                        s, st = f.result()
+                        all_samples.extend(s)
+                        if combined_stats is None:
+                            combined_stats = st
+                samples, stats = all_samples, combined_stats
+            else:
+                samples, stats = play_batch(
+                    self.model if (need_local_model and _eval is None) else None,
+                    device=str(self.device), rng=self.rng,
+                    stockfish=self.sf, evaluator=_eval,
+                    games=int(games_per_batch),
+                    on_game_complete=self._on_completed_game,
+                    on_step=self._check_model_update,
+                    opponent=_opponent_cfg, temp=_temp_cfg,
+                    search=_search_cfg, opening=_opening_cfg,
+                    game=_game_cfg,
+                )
         except TimeoutError as exc:
             if self.inference_client is None:
                 raise
