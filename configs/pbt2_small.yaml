@@ -150,7 +150,9 @@ train:
   lr: 0.001         # Trial 3 converged here; 0.002+ causes regression post-exploit.
   batch_size: 256   # Keep microbatch small enough for VRAM; use accumulation for the larger effective batch.
   train_steps: 400  # Run 26 default; more training per iteration.
-  train_window_fraction: 0.10  # Target at least 10% of the current replay per iteration once the window outgrows fresh data.
+  train_window_fraction: 0.10  # Train on 10% of replay buffer per iter (steps = replay * 0.10 / batch_size).
+  # With ~10k new positions/iter and buffer growing by 2500/iter, each position
+  # survives ~50 iters in the buffer and gets trained ~5 times before eviction.
   no_amp: false
   feature_dropout_p: 0.10  # Fixed at 0.10 (not searched).
   zclip_z_thresh: 2.5
