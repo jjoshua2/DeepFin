@@ -1585,6 +1585,7 @@ static PyObject *MCTSTree_finish_gumbel_rep(MCTSTreeObject *self, PyObject *args
             pre_legal[li] = (const int32_t *)PyArray_DATA(la);
             pre_legal_n[li] = (int32_t)PyArray_SIZE(la);
         } else {
+            PyErr_Clear();
             pre_legal[li] = NULL;
             pre_legal_n[li] = 0;
         }
@@ -1597,6 +1598,7 @@ static PyObject *MCTSTree_finish_gumbel_rep(MCTSTreeObject *self, PyObject *args
             pre_paths[li] = (const int32_t *)PyArray_DATA(pa);
             pre_path_lens[li] = (int32_t)PyArray_SIZE(pa);
         } else {
+            PyErr_Clear();
             pre_paths[li] = NULL;
             pre_path_lens[li] = 0;
         }

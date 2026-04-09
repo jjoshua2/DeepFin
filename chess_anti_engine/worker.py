@@ -1822,8 +1822,10 @@ class WorkerSession:
                     with _lock:
                         self._on_completed_game(game_batch)
 
+                _seeds = [int(self.rng.integers(2**63)) for _ in range(n_threads)]
+
                 def _run_one_thread(tid):
-                    thread_rng = np.random.default_rng(self.rng.integers(2**63))
+                    thread_rng = np.random.default_rng(_seeds[tid])
                     return play_batch(
                         None, device=str(self.device), rng=thread_rng,
                         stockfish=self.sf, evaluator=_eval,

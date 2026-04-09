@@ -391,11 +391,13 @@ class ThreadedBatchEvaluator:
         """Dedicated GPU thread: accumulate requests, run batched inference."""
         import queue as _queue
 
-        self._gpu_eval = DirectGPUEvaluator(
-            self._model, device=self.device, max_batch=self._max_batch,
-            use_amp=self._use_amp, amp_dtype=self._amp_dtype,
-        )
-        self._gpu_ready.set()
+        try:
+            self._gpu_eval = DirectGPUEvaluator(
+                self._model, device=self.device, max_batch=self._max_batch,
+                use_amp=self._use_amp, amp_dtype=self._amp_dtype,
+            )
+        finally:
+            self._gpu_ready.set()  # Unblock constructor even on failure
 
         while not self._stop:
             # Wait for first request
@@ -453,16 +455,22 @@ class ThreadedBatchEvaluator:
                 pad = np.zeros((padded_size - total, *combined.shape[1:]), dtype=combined.dtype)
                 combined = np.concatenate([combined, pad], axis=0)
 
-            # Single GPU call
+            # Single GPU call — catch any error and propagate to all waiting threads
             try:
                 pol_all, wdl_all = self._gpu_eval.evaluate_encoded(combined)
                 pol_all = pol_all[:total]
                 wdl_all = wdl_all[:total]
             except Exception as exc:
-                for _, event, result in pending:
+                for _x, event, result in pending:
                     result["error"] = str(exc)
                     event.set()
                 continue
+            except BaseException as exc:
+                # Fatal (KeyboardInterrupt, SystemExit) — unblock all threads
+                for _x, event, result in pending:
+                    result["error"] = str(exc)
+                    event.set()
+                raise
 
             # Scatter results back to each thread
             offset = 0
