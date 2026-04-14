@@ -814,6 +814,10 @@ def train_trial(config: dict):
             else:
                 trainer.load(maybe)
                 startup_source = "checkpoint"
+            # Always sync optimizer LR to the config value after restore,
+            # in case the checkpoint carried a different LR.
+            if "lr" in config:
+                trainer.set_peak_lr(float(config["lr"]), rescale_current=False)
     elif isinstance(config.get("salvage_seed_pool_dir"), str) and str(config.get("salvage_seed_pool_dir", "")).strip():
         seed_pool_dir = Path(str(config.get("salvage_seed_pool_dir"))).expanduser()
         if not seed_pool_dir.is_dir():
@@ -1383,6 +1387,11 @@ def train_trial(config: dict):
             total_curriculum_games = 0
             total_curriculum_adjudicated_games = 0
             total_curriculum_draw_games = 0
+            total_checkmate_games = 0
+            total_stalemate_games = 0
+            total_plies_win = 0
+            total_plies_draw = 0
+            total_plies_loss = 0
             total_positions = 0
             replay_positions_ingested = 0
             total_sf_d6 = 0.0
@@ -1458,6 +1467,11 @@ def train_trial(config: dict):
                 total_curriculum_adjudicated_games = int(ingest_summary["matching_curriculum_adjudicated_games"])
                 total_curriculum_draw_games = int(ingest_summary["matching_curriculum_draw_games"])
                 total_positions = int(ingest_summary["matching_positions"])
+                total_plies_win = int(ingest_summary.get("matching_plies_win", 0))
+                total_plies_draw = int(ingest_summary.get("matching_plies_draw", 0))
+                total_plies_loss = int(ingest_summary.get("matching_plies_loss", 0))
+                total_checkmate_games = int(ingest_summary.get("matching_checkmate_games", 0))
+                total_stalemate_games = int(ingest_summary.get("matching_stalemate_games", 0))
                 distributed_stale_positions = int(ingest_summary["stale_positions"])
                 distributed_stale_games = int(ingest_summary["stale_games"])
                 replay_positions_ingested = int(ingest_summary["positions_replay_added"])
@@ -1496,6 +1510,11 @@ def train_trial(config: dict):
                 total_curriculum_games += int(getattr(stats, "curriculum_games", 0))
                 total_curriculum_adjudicated_games += int(getattr(stats, "curriculum_adjudicated_games", 0))
                 total_curriculum_draw_games += int(getattr(stats, "curriculum_draw_games", 0))
+                total_checkmate_games += int(getattr(stats, "checkmate_games", 0))
+                total_stalemate_games += int(getattr(stats, "stalemate_games", 0))
+                total_plies_win += int(getattr(stats, "plies_win", 0))
+                total_plies_draw += int(getattr(stats, "plies_draw", 0))
+                total_plies_loss += int(getattr(stats, "plies_loss", 0))
                 total_positions += stats.positions
                 total_sf_d6 += float(getattr(stats, "sf_eval_delta6", 0.0)) * int(getattr(stats, "sf_eval_delta6_n", 0))
                 total_sf_d6_n += int(getattr(stats, "sf_eval_delta6_n", 0))
@@ -1615,81 +1634,103 @@ def train_trial(config: dict):
                 holdout_frozen = True
 
             # Drift estimates (cheap heuristics for monitoring when data distribution moves).
-            drift_input_l2 = None
-            drift_wdl_js = None
-            drift_policy_entropy_diff = None
-            drift_policy_entropy_train = None
-            drift_policy_entropy_holdout = None
+            drift_input_l2 = 0.0
+            drift_wdl_js = 0.0
+            drift_policy_entropy_diff = 0.0
+            drift_policy_entropy_train = 0.0
+            drift_policy_entropy_holdout = 0.0
 
-            if len(buf) >= drift_sample_size and len(holdout_buf) >= drift_sample_size:
-                def _sample_drift_arrays(src_buf: object, n: int) -> dict[str, np.ndarray]:
-                    if hasattr(src_buf, "sample_batch_arrays"):
-                        arrs = getattr(src_buf, "sample_batch_arrays")(n, wdl_balance=False)
-                        return {
-                            "x": np.asarray(arrs["x"], dtype=np.float32),
-                            "wdl_target": np.asarray(arrs["wdl_target"], dtype=np.int64),
-                            "policy_target": np.asarray(arrs["policy_target"], dtype=np.float32),
-                        }
-
-                    samples = getattr(src_buf, "sample_batch")(n, wdl_balance=False)
+            def _sample_drift_arrays(src_buf: object, n: int) -> dict[str, np.ndarray]:
+                if hasattr(src_buf, "sample_batch_arrays"):
+                    arrs = getattr(src_buf, "sample_batch_arrays")(n, wdl_balance=False)
                     return {
-                        "x": np.stack([s.x for s in samples], axis=0).astype(np.float32, copy=False),
-                        "wdl_target": np.array([int(getattr(s, "wdl_target", 1)) for s in samples], dtype=np.int64),
-                        "policy_target": np.stack([s.policy_target for s in samples], axis=0).astype(np.float32, copy=False),
+                        "x": np.asarray(arrs["x"], dtype=np.float32),
+                        "wdl_target": np.asarray(arrs["wdl_target"], dtype=np.int64),
+                        "policy_target": np.asarray(arrs["policy_target"], dtype=np.float32),
                     }
 
+                samples = getattr(src_buf, "sample_batch")(n, wdl_balance=False)
+                return {
+                    "x": np.stack([s.x for s in samples], axis=0).astype(np.float32, copy=False),
+                    "wdl_target": np.array([int(getattr(s, "wdl_target", 1)) for s in samples], dtype=np.int64),
+                    "policy_target": np.stack([s.policy_target for s in samples], axis=0).astype(np.float32, copy=False),
+                }
+
+            eps = 1e-12
+
+            def _mean_entropy(arrs: dict[str, np.ndarray]) -> float:
+                p = np.asarray(arrs["policy_target"], dtype=np.float64)
+                if p.ndim != 2 or p.shape[0] == 0:
+                    return 0.0
+                ps = p.sum(axis=1, keepdims=True)
+                valid = ps[:, 0] > 0.0
+                if not np.any(valid):
+                    return 0.0
+                p = p[valid] / ps[valid]
+                ent = -np.sum(p * np.log(p + eps), axis=1)
+                return float(np.mean(ent))
+
+            # --- Always-on diversity metrics (from training buffer only) ---
+            data_policy_entropy = 0.0
+            data_unique_positions = 0.0
+            data_wdl_balance = 0.0
+
+            if len(buf) >= drift_sample_size:
                 train_batch = _sample_drift_arrays(buf, drift_sample_size)
-                hold_batch = _sample_drift_arrays(holdout_buf, drift_sample_size)
 
-                # (1) Input drift: L2 distance between mean input plane tensors.
+                # Policy entropy: higher = more diverse move distributions.
+                data_policy_entropy = _mean_entropy(train_batch)
+
+                # Unique positions: hash x tensors, count distinct.
+                # Use a fast row hash (sum of bytes) for approximate uniqueness.
                 train_x = train_batch["x"]
-                hold_x = hold_batch["x"]
-                drift_input_l2 = float(np.linalg.norm(train_x.mean(axis=0) - hold_x.mean(axis=0)))
+                x_flat = train_x.reshape(train_x.shape[0], -1)
+                row_sums = x_flat.view(np.uint32).reshape(x_flat.shape[0], -1).sum(axis=1)
+                data_unique_positions = float(np.unique(row_sums).shape[0]) / float(max(1, train_x.shape[0]))
 
-                # (2) Target drift: WDL label distribution (JS divergence).
-                def _wdl_hist(arrs: dict[str, np.ndarray]) -> np.ndarray:
-                    arr = np.asarray(arrs["wdl_target"], dtype=np.int64)
-                    valid = arr[(arr >= 0) & (arr <= 2)]
-                    h = np.bincount(valid, minlength=3).astype(np.float64)
+                # WDL balance: entropy of WDL distribution (max ~1.1 for uniform).
+                wdl_arr = np.asarray(train_batch["wdl_target"], dtype=np.int64)
+                wdl_valid = wdl_arr[(wdl_arr >= 0) & (wdl_arr <= 2)]
+                if wdl_valid.size > 0:
+                    h = np.bincount(wdl_valid, minlength=3).astype(np.float64)
                     h /= max(1.0, float(h.sum()))
-                    return h
+                    data_wdl_balance = float(-np.sum(h * np.log(h + eps)))
 
-                p = _wdl_hist(train_batch)
-                q = _wdl_hist(hold_batch)
-                m = 0.5 * (p + q)
-                eps = 1e-12
-                drift_wdl_js = float(
-                    0.5 * np.sum(p * (np.log(p + eps) - np.log(m + eps)))
-                    + 0.5 * np.sum(q * (np.log(q + eps) - np.log(m + eps)))
-                )
+                # --- Drift metrics (train vs holdout) ---
+                if len(holdout_buf) >= drift_sample_size:
+                    hold_batch = _sample_drift_arrays(holdout_buf, drift_sample_size)
 
-                # (3) Policy drift: mean entropy of stored policy targets.
-                def _mean_entropy(arrs: dict[str, np.ndarray]) -> float:
-                    p = np.asarray(arrs["policy_target"], dtype=np.float64)
-                    if p.ndim != 2 or p.shape[0] == 0:
-                        return 0.0
-                    ps = p.sum(axis=1, keepdims=True)
-                    valid = ps[:, 0] > 0.0
-                    if not np.any(valid):
-                        return 0.0
-                    p = p[valid] / ps[valid]
-                    ent = -np.sum(p * np.log(p + eps), axis=1)
-                    return float(np.mean(ent))
+                    hold_x = hold_batch["x"]
+                    drift_input_l2 = float(np.linalg.norm(train_x.mean(axis=0) - hold_x.mean(axis=0)))
 
-                drift_policy_entropy_train = _mean_entropy(train_batch)
-                drift_policy_entropy_holdout = _mean_entropy(hold_batch)
-                drift_policy_entropy_diff = float(drift_policy_entropy_train - drift_policy_entropy_holdout)
+                    def _wdl_hist(arrs: dict[str, np.ndarray]) -> np.ndarray:
+                        arr = np.asarray(arrs["wdl_target"], dtype=np.int64)
+                        valid = arr[(arr >= 0) & (arr <= 2)]
+                        hst = np.bincount(valid, minlength=3).astype(np.float64)
+                        hst /= max(1.0, float(hst.sum()))
+                        return hst
 
-                # Optional holdout reset based on input drift threshold.
-                if (
-                    reset_holdout_on_drift
-                    and (drift_threshold > 0.0)
-                    and (drift_input_l2 is not None)
-                    and (drift_input_l2 > drift_threshold)
-                ):
-                    holdout_buf.clear()
-                    holdout_frozen = False
-                    holdout_generation += 1
+                    p = _wdl_hist(train_batch)
+                    q = _wdl_hist(hold_batch)
+                    m = 0.5 * (p + q)
+                    drift_wdl_js = float(
+                        0.5 * np.sum(p * (np.log(p + eps) - np.log(m + eps)))
+                        + 0.5 * np.sum(q * (np.log(q + eps) - np.log(m + eps)))
+                    )
+
+                    drift_policy_entropy_train = data_policy_entropy
+                    drift_policy_entropy_holdout = _mean_entropy(hold_batch)
+                    drift_policy_entropy_diff = float(drift_policy_entropy_train - drift_policy_entropy_holdout)
+
+                    # Optional holdout reset based on input drift threshold.
+                    if (
+                        reset_holdout_on_drift
+                        and (drift_threshold > 0.0)
+                        and (drift_input_l2 > drift_threshold)
+                    ):
+                        holdout_buf.clear()
+                        holdout_frozen = False
+                        holdout_generation += 1
 
             # Re-read loss weights from config each iteration so PB2 perturbations
             # take effect immediately (PB2 mutates the config dict in-place).
@@ -1919,17 +1960,15 @@ def train_trial(config: dict):
             test_dict = {
                 "holdout_frozen": int(1 if holdout_frozen else 0),
                 "holdout_generation": int(holdout_generation),
+                "data_drift_input_l2": float(drift_input_l2),
+                "data_drift_wdl_js": float(drift_wdl_js),
+                "data_drift_policy_entropy_diff": float(drift_policy_entropy_diff),
+                "data_drift_policy_entropy_train": float(drift_policy_entropy_train),
+                "data_drift_policy_entropy_holdout": float(drift_policy_entropy_holdout),
+                "data_policy_entropy": float(data_policy_entropy),
+                "data_unique_positions": float(data_unique_positions),
+                "data_wdl_balance": float(data_wdl_balance),
             }
-            if drift_input_l2 is not None:
-                test_dict["data_drift_input_l2"] = float(drift_input_l2)
-            if drift_wdl_js is not None:
-                test_dict["data_drift_wdl_js"] = float(drift_wdl_js)
-            if drift_policy_entropy_diff is not None:
-                test_dict["data_drift_policy_entropy_diff"] = float(drift_policy_entropy_diff)
-            if drift_policy_entropy_train is not None:
-                test_dict["data_drift_policy_entropy_train"] = float(drift_policy_entropy_train)
-            if drift_policy_entropy_holdout is not None:
-                test_dict["data_drift_policy_entropy_holdout"] = float(drift_policy_entropy_holdout)
 
             if test_metrics is not None:
                 test_dict.update(
@@ -1973,6 +2012,11 @@ def train_trial(config: dict):
             selfplay_draw_rate = float(total_selfplay_draw_games) / float(max(1, int(total_selfplay_games)))
             curriculum_adjudication_rate = float(total_curriculum_adjudicated_games) / float(max(1, int(total_curriculum_games)))
             curriculum_draw_rate = float(total_curriculum_draw_games) / float(max(1, int(total_curriculum_games)))
+            checkmate_rate = float(total_checkmate_games) / float(max(1, int(total_games_generated)))
+            stalemate_rate = float(total_stalemate_games) / float(max(1, int(total_games_generated)))
+            avg_plies_win = float(total_plies_win) / float(max(1, total_w)) if total_w > 0 else 0.0
+            avg_plies_draw = float(total_plies_draw) / float(max(1, total_d)) if total_d > 0 else 0.0
+            avg_plies_loss = float(total_plies_loss) / float(max(1, total_l)) if total_l > 0 else 0.0
             sf_nodes_next = int(sf_nodes_used)
             random_move_prob_next = float(current_rand)
             skill_level_next = int(skill_level_used)
@@ -2071,6 +2115,12 @@ def train_trial(config: dict):
                 if selfplay_winrate_raw is not None:
                     trainer.writer.add_scalar("difficulty/selfplay_winrate_raw", float(selfplay_winrate_raw), iteration_step)
                     trainer.writer.add_scalar("selfplay/avg_game_plies", float(avg_game_plies), iteration_step)
+                    if avg_plies_win > 0:
+                        trainer.writer.add_scalar("selfplay/avg_plies_win", float(avg_plies_win), iteration_step)
+                    if avg_plies_draw > 0:
+                        trainer.writer.add_scalar("selfplay/avg_plies_draw", float(avg_plies_draw), iteration_step)
+                    if avg_plies_loss > 0:
+                        trainer.writer.add_scalar("selfplay/avg_plies_loss", float(avg_plies_loss), iteration_step)
                     trainer.writer.add_scalar("selfplay/adjudication_rate", float(adjudication_rate), iteration_step)
                     trainer.writer.add_scalar("selfplay/draw_rate", float(draw_rate), iteration_step)
                     trainer.writer.add_scalar("selfplay/selfplay_adjudication_rate", float(selfplay_adjudication_rate), iteration_step)
@@ -2107,6 +2157,11 @@ def train_trial(config: dict):
                     "selfplay_draw_rate": float(selfplay_draw_rate),
                     "curriculum_adjudication_rate": float(curriculum_adjudication_rate),
                     "curriculum_draw_rate": float(curriculum_draw_rate),
+                    "checkmate_rate": float(checkmate_rate),
+                    "stalemate_rate": float(stalemate_rate),
+                    "avg_plies_win": float(avg_plies_win),
+                    "avg_plies_draw": float(avg_plies_draw),
+                    "avg_plies_loss": float(avg_plies_loss),
                     "shared_samples_ingested": int(imported_samples_this_iter),
                     "shared_trials_selected": int(shared_summary["source_trials_selected"]),
                     "shared_trials_ingested": int(shared_summary["source_trials_ingested"]),

@@ -37,7 +37,7 @@ def test_single_thread(evaluator):
     """Basic sanity: one thread produces valid actions."""
     boards = [chess.Board() for _ in range(4)]
     rng = np.random.default_rng(42)
-    probs, actions, values, masks = _gumbel_fn(
+    probs, actions, values, masks, *_ = _gumbel_fn(
         None, boards, device="cuda", evaluator=evaluator,
         cfg=GumbelConfig(simulations=10, topk=8), rng=rng,
     )
@@ -56,7 +56,7 @@ def test_concurrent_threads(evaluator):
         try:
             boards = [chess.Board() for _ in range(4)]
             rng = np.random.default_rng(100 + tid)
-            probs, actions, values, masks = _gumbel_fn(
+            probs, actions, values, masks, *_ = _gumbel_fn(
                 None, boards, device="cuda", evaluator=evaluator,
                 cfg=GumbelConfig(simulations=10, topk=8), rng=rng,
             )
@@ -85,7 +85,7 @@ def test_model_update(evaluator):
     # Verify inference still works after swap
     boards = [chess.Board() for _ in range(2)]
     rng = np.random.default_rng(99)
-    probs, actions, values, masks = _gumbel_fn(
+    probs, actions, values, masks, *_ = _gumbel_fn(
         None, boards, device="cuda", evaluator=evaluator,
         cfg=GumbelConfig(simulations=5, topk=4), rng=rng,
     )

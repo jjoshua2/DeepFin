@@ -211,6 +211,11 @@ class ShardMeta:
     curriculum_games: int | None = None
     curriculum_adjudicated_games: int | None = None
     curriculum_draw_games: int | None = None
+    plies_win: int | None = None
+    plies_draw: int | None = None
+    plies_loss: int | None = None
+    checkmate_games: int | None = None
+    stalemate_games: int | None = None
 
 
 def _u8(x: np.ndarray) -> np.ndarray:

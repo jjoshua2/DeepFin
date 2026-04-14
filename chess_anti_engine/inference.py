@@ -323,6 +323,43 @@ class DirectGPUEvaluator(LocalModelEvaluator):
             return pol_np.copy(), wdl_np.copy()
         return pol_np, wdl_np
 
+    def evaluate_encoded_async(
+        self,
+        x: np.ndarray,
+    ) -> tuple[torch.Tensor, torch.Tensor, "torch.cuda.Event | None"]:
+        """Pinned-memory async eval: H2D via DMA, non-blocking D2H."""
+        if x.ndim != 4:
+            raise ValueError(f"expected 4D input, got {x.ndim}D")
+        bsz = x.shape[0]
+        if bsz > self._max_batch:
+            raise ValueError(f"batch {bsz} > max {self._max_batch}")
+
+        if not self._use_cuda:
+            return super().evaluate_encoded_async(x)
+
+        self._pinned_input_np[:bsz] = x
+
+        stream = getattr(self, "_stream", None)
+        if stream is None:
+            stream = torch.cuda.Stream(device=self.device)
+            self._stream = stream
+
+        event_default = torch.cuda.Event()
+        event_default.record(torch.cuda.current_stream(self.device))
+
+        with torch.cuda.stream(stream):
+            stream.wait_event(event_default)
+            xt = self._pinned_input[:bsz].to(self.device, non_blocking=True)
+            with torch.no_grad():
+                with inference_autocast(device=self.device, enabled=self._use_amp, dtype=self._amp_dtype):
+                    out = self.model(xt)
+            self._pinned_pol[:bsz].copy_(_policy_output(out).detach().float(), non_blocking=True)
+            self._pinned_wdl[:bsz].copy_(out["wdl"].detach().float(), non_blocking=True)
+            done = torch.cuda.Event()
+            done.record(stream)
+
+        return self._pinned_pol[:bsz], self._pinned_wdl[:bsz], done
+
 
 class ThreadedBatchEvaluator:
     """Thread-safe batched evaluator for multi-threaded selfplay.

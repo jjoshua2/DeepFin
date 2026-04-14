@@ -41,7 +41,7 @@ def _zeropower_via_newton_schulz5(
     return x.to(dtype=grad.dtype)
 
 
-def _nesterov_momentum(
+def _cosmos_momentum_direction(
     grad: Tensor,
     exp_avg: Tensor,
     beta1: float,
@@ -49,11 +49,15 @@ def _nesterov_momentum(
     *,
     use_nesterov: bool,
 ) -> Tensor:
-    bias_correction1 = 1.0 - beta1 ** max(1, int(step))
-    m_hat = exp_avg / max(bias_correction1, 1e-12)
-    if not use_nesterov:
-        return m_hat
-    return beta1 * m_hat + (1.0 - beta1) * grad
+    step = max(1, int(step))
+    if use_nesterov:
+        # Match COSMOS paper/reference implementation:
+        # grad <- (grad + beta1 * exp_avg) / (1 + beta1 * ((1 - beta1^t) / (1 - beta1)))
+        bias_correction1 = (1.0 - beta1**step) / max(1.0 - beta1, 1e-12)
+        denom = 1.0 + beta1 * bias_correction1
+        return (grad + beta1 * exp_avg) / max(denom, 1e-12)
+    bias_correction1 = 1.0 - beta1**step
+    return exp_avg / max(bias_correction1, 1e-12)
 
 
 def _init_orthobasis_from_grad(
@@ -199,8 +203,9 @@ class COSMOSFast(Optimizer):
                     if weight_decay != 0.0:
                         param.mul_(1.0 - lr * weight_decay)
 
-                    exp_avg.mul_(beta1).add_(grad, alpha=1.0 - beta1)
-                    momentum = _nesterov_momentum(
+                    # Keep low-rank branch consistent with COSMOS reference update.
+                    exp_avg.mul_(beta1).add_(grad)
+                    momentum = _cosmos_momentum_direction(
                         grad,
                         exp_avg,
                         beta1,

@@ -743,6 +743,11 @@ def _empty_ingest_summary() -> dict[str, int]:
         "matching_curriculum_games": 0,
         "matching_curriculum_adjudicated_games": 0,
         "matching_curriculum_draw_games": 0,
+        "matching_plies_win": 0,
+        "matching_plies_draw": 0,
+        "matching_plies_loss": 0,
+        "matching_checkmate_games": 0,
+        "matching_stalemate_games": 0,
         "positions_replay_added": 0,
         "stale_games": 0,
         "stale_positions": 0,
@@ -798,6 +803,11 @@ def _process_shard(
     curriculum_games = int(meta.get("curriculum_games", 0) or 0)
     curriculum_adjudicated_games = int(meta.get("curriculum_adjudicated_games", 0) or 0)
     curriculum_draw_games = int(meta.get("curriculum_draw_games", 0) or 0)
+    plies_win = int(meta.get("plies_win", 0) or 0)
+    plies_draw = int(meta.get("plies_draw", 0) or 0)
+    plies_loss = int(meta.get("plies_loss", 0) or 0)
+    checkmate_games = int(meta.get("checkmate_games", 0) or 0)
+    stalemate_games = int(meta.get("stalemate_games", 0) or 0)
 
     if shard_n > 0:
         holdout_mask = np.zeros((shard_n,), dtype=bool)
@@ -829,6 +839,11 @@ def _process_shard(
         summary["matching_curriculum_games"] += curriculum_games
         summary["matching_curriculum_adjudicated_games"] += curriculum_adjudicated_games
         summary["matching_curriculum_draw_games"] += curriculum_draw_games
+        summary["matching_plies_win"] += plies_win
+        summary["matching_plies_draw"] += plies_draw
+        summary["matching_plies_loss"] += plies_loss
+        summary["matching_checkmate_games"] += checkmate_games
+        summary["matching_stalemate_games"] += stalemate_games
         summary["matching_shards"] += 1
     else:
         summary["stale_games"] += games

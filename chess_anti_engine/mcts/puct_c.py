@@ -66,6 +66,7 @@ def run_mcts_many_c(
     evaluator: BatchEvaluator | None = None,
     pre_pol_logits: np.ndarray | None = None,
     pre_wdl_logits: np.ndarray | None = None,
+    cboards: list | None = None,
 ) -> tuple[list[np.ndarray], list[int], list[float], list[np.ndarray]]:
     """Run PUCT MCTS using C-accelerated tree.
 
@@ -88,7 +89,7 @@ def run_mcts_many_c(
 
     # ── 1. Root evaluation ───────────────────────────────────────────────
     use_cboard = _HAS_CBOARD
-    root_cboards: list[CBoard] | None = [cboard_from_board_fast(b) for b in boards] if use_cboard else None
+    root_cboards: list[CBoard] | None = (cboards if cboards is not None else [CBoard.from_board(b) for b in boards]) if use_cboard else None
     if pre_pol_logits is not None and pre_wdl_logits is not None:
         pol_logits_all = np.asarray(pre_pol_logits, dtype=np.float32)
         wdl_logits_all = np.asarray(pre_wdl_logits, dtype=np.float32)

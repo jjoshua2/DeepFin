@@ -38,6 +38,11 @@ class _BufferedUploadAccumulator:
     curriculum_games: int = 0
     curriculum_adjudicated_games: int = 0
     curriculum_draw_games: int = 0
+    plies_win: int = 0
+    plies_draw: int = 0
+    plies_loss: int = 0
+    checkmate_games: int = 0
+    stalemate_games: int = 0
     model_step: int | None = None
 
     def add_upload(
@@ -62,6 +67,11 @@ class _BufferedUploadAccumulator:
         self.curriculum_games += int(meta.get("curriculum_games") or 0)
         self.curriculum_adjudicated_games += int(meta.get("curriculum_adjudicated_games") or 0)
         self.curriculum_draw_games += int(meta.get("curriculum_draw_games") or 0)
+        self.plies_win += int(meta.get("plies_win") or 0)
+        self.plies_draw += int(meta.get("plies_draw") or 0)
+        self.plies_loss += int(meta.get("plies_loss") or 0)
+        self.checkmate_games += int(meta.get("checkmate_games") or 0)
+        self.stalemate_games += int(meta.get("stalemate_games") or 0)
         if meta.get("model_step") is not None:
             self.model_step = int(meta.get("model_step"))
         self.last_update_unix = float(now_unix)
@@ -113,6 +123,11 @@ def _flush_buffered_upload_to_inbox(
         curriculum_games=int(acc.curriculum_games),
         curriculum_adjudicated_games=int(acc.curriculum_adjudicated_games),
         curriculum_draw_games=int(acc.curriculum_draw_games),
+        plies_win=int(acc.plies_win),
+        plies_draw=int(acc.plies_draw),
+        plies_loss=int(acc.plies_loss),
+        checkmate_games=int(acc.checkmate_games),
+        stalemate_games=int(acc.stalemate_games),
     )
     final = compacted_dir / (
         f"{int(now_unix)}_{str(acc.model_sha256)[:8]}_{int(acc.games)}g_{int(acc.positions)}p_"

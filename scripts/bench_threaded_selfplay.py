@@ -50,7 +50,7 @@ def _run_config(
     if n_threads > 1:
         evaluator = ThreadedBatchEvaluator(model, device="cuda", max_batch=4096)
     else:
-        evaluator = DirectGPUEvaluator(model, device="cuda", max_batch=512)
+        evaluator = DirectGPUEvaluator(model, device="cuda", max_batch=4096)
 
     sf = StockfishPool(path=stockfish_path, num_workers=sf_workers, nodes=sf_nodes, multipv=1)
     rng = np.random.default_rng(42)

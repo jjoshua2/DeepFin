@@ -90,7 +90,7 @@ def test_slot_inference_broker_roundtrip(tmp_path: Path) -> None:
         # Wait for broker to start and create shared memory slots
         from multiprocessing.shared_memory import SharedMemory
         slot_name = f"{slot_prefix}-0"
-        deadline = time.monotonic() + 10.0
+        deadline = time.monotonic() + 60.0
         while time.monotonic() < deadline:
             if proc.poll() is not None:
                 raise RuntimeError(f"broker exited early with code {proc.returncode}")

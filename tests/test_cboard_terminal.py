@@ -62,34 +62,49 @@ class TestFiftyMoveRule:
 
 class TestRepetition:
     def test_repetition_in_game_history(self):
-        """Position that appeared in game history should be detected."""
+        """Threefold repetition (3 occurrences) triggers game over."""
         b = chess.Board()
-        # Nf3 Nf6 Ng1 Ng8 — returns to starting position
-        for m in ["g1f3", "g8f6", "f3g1", "f6g8"]:
+        # Two round-trips: start→A→start→A→start = 3-fold of starting pos
+        for m in ["g1f3", "g8f6", "f3g1", "f6g8",
+                   "g1f3", "g8f6", "f3g1", "f6g8"]:
             b.push(chess.Move.from_uci(m))
         cb = CBoard.from_board(b)
-        # Current position matches starting position in hash_stack
         assert cb.is_game_over()
         assert cb.terminal_value() == 0.0
 
+    def test_twofold_not_game_over(self):
+        """Two-fold repetition should NOT trigger game over (only threefold does)."""
+        b = chess.Board()
+        for m in ["g1f3", "g8f6", "f3g1", "f6g8"]:
+            b.push(chess.Move.from_uci(m))
+        cb = CBoard.from_board(b)
+        assert not cb.is_game_over()
+        # But fast repetition check (used in search) should detect it
+        assert cb.terminal_value() == 0.0
+
     def test_repetition_in_search_tree(self):
-        """Repetition created by CBoard push within search tree."""
+        """Threefold repetition created by CBoard push within search tree."""
         from chess_anti_engine.moves.encode import move_to_index
         b = chess.Board()
-        b.push(chess.Move.from_uci("g1f3"))
-        b.push(chess.Move.from_uci("g8f6"))
+        # First round-trip via python-chess (builds history)
+        for m in ["g1f3", "g8f6", "f3g1", "f6g8"]:
+            b.push(chess.Move.from_uci(m))
         cb = CBoard.from_board(b)
-        # Nf3 back to g1
-        idx_ng1 = move_to_index(chess.Move.from_uci("f3g1"), b)
-        cb2 = cb.copy()
-        cb2.push_index(idx_ng1)
-        # Now push Nf6 back to g8
+        # Second round-trip via push_index (search tree path)
         b2 = b.copy()
+        idx_nf3 = move_to_index(chess.Move.from_uci("g1f3"), b2)
+        cb.push_index(idx_nf3)
+        b2.push(chess.Move.from_uci("g1f3"))
+        idx_nf6 = move_to_index(chess.Move.from_uci("g8f6"), b2)
+        cb.push_index(idx_nf6)
+        b2.push(chess.Move.from_uci("g8f6"))
+        idx_ng1 = move_to_index(chess.Move.from_uci("f3g1"), b2)
+        cb.push_index(idx_ng1)
         b2.push(chess.Move.from_uci("f3g1"))
         idx_ng8 = move_to_index(chess.Move.from_uci("f6g8"), b2)
-        cb2.push_index(idx_ng8)
-        # Position should match the starting position in hash_stack
-        assert cb2.is_game_over()
+        cb.push_index(idx_ng8)
+        # Now 3-fold: start pos appeared at ply 0, 4, 8
+        assert cb.is_game_over()
 
     def test_no_false_repetition(self):
         """Different positions should not trigger repetition."""

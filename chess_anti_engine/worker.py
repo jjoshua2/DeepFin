@@ -90,6 +90,11 @@ class _BufferedUpload:
     curriculum_games: int = 0
     curriculum_adjudicated_games: int = 0
     curriculum_draw_games: int = 0
+    plies_win: int = 0
+    plies_draw: int = 0
+    plies_loss: int = 0
+    checkmate_games: int = 0
+    stalemate_games: int = 0
     first_buffered_at_s: float | None = None
 
     def reset(self) -> None:
@@ -155,6 +160,11 @@ def _buffer_add_completed_game(
     buf.curriculum_games += int(getattr(game_batch, "curriculum_games", 0))
     buf.curriculum_adjudicated_games += int(getattr(game_batch, "curriculum_adjudicated_games", 0))
     buf.curriculum_draw_games += int(getattr(game_batch, "curriculum_draw_games", 0))
+    buf.plies_win += int(getattr(game_batch, "plies_win", 0))
+    buf.plies_draw += int(getattr(game_batch, "plies_draw", 0))
+    buf.plies_loss += int(getattr(game_batch, "plies_loss", 0))
+    buf.checkmate_games += int(getattr(game_batch, "checkmate_games", 0))
+    buf.stalemate_games += int(getattr(game_batch, "stalemate_games", 0))
 
 
 def _pending_elapsed_path(shard_path: Path) -> Path:
@@ -197,6 +207,11 @@ def _flush_upload_buffer_to_pending(
         curriculum_games=int(buf.curriculum_games),
         curriculum_adjudicated_games=int(buf.curriculum_adjudicated_games),
         curriculum_draw_games=int(buf.curriculum_draw_games),
+        plies_win=int(buf.plies_win),
+        plies_draw=int(buf.plies_draw),
+        plies_loss=int(buf.plies_loss),
+        checkmate_games=int(buf.checkmate_games),
+        stalemate_games=int(buf.stalemate_games),
     )
     tmp_path = pending_dir / f"_tmp_{shard_path.name}"
     save_npz(tmp_path, samples=list(buf.samples), meta=meta, compress=False)
@@ -1707,7 +1722,7 @@ class WorkerSession:
                     self._aot_model_id = id(self.model)
                 else:
                     self._direct_evaluator = DirectGPUEvaluator(
-                        self.model, device=str(self.device), max_batch=2048,
+                        self.model, device=str(self.device), max_batch=4096,
                     )
             # Model update handling
             if self.args.threaded_selfplay:

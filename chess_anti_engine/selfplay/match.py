@@ -101,10 +101,11 @@ def play_match_batch(
         sub_boards = [boards[i] for i in idxs]
         if str(mcts_type) == "gumbel":
             _gumbel_fn = _run_gumbel_root_many_c if _HAS_GUMBEL_C else run_gumbel_root_many
-            _probs, actions, _values, _masks = _gumbel_fn(
+            _gumbel_result = _gumbel_fn(
                 model, sub_boards, device=device, rng=rng,
                 cfg=GumbelConfig(simulations=int(mcts_simulations), temperature=float(temperature)),
             )
+            _probs, actions, _values, _masks = _gumbel_result[:4]
         else:
             _puct_fn = _run_mcts_many_c if _HAS_C_TREE else run_mcts_many
             _probs, actions, _values, _masks = _puct_fn(

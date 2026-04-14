@@ -24,6 +24,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 /* Pure-C CBoard implementation (bitboard utilities, attack tables, move gen, CBoard) */
 #include "../encoding/_cboard_impl.h"
 /* Feature planes for fused encode_146 */
@@ -31,6 +35,67 @@
 
 /* PyCBoard layout — must match _lc0_ext.c's typedef exactly. */
 typedef struct { PyObject_HEAD CBoard board; } PyCBoard;
+
+/* ================================================================
+ * NN evaluation cache (position hash → expanded node data)
+ * ================================================================ */
+
+#define NNCACHE_MAX_LEGAL  256  /* max legal moves in chess is 218 */
+
+typedef struct {
+    uint64_t key;           /* zobrist hash */
+    int32_t  legal[NNCACHE_MAX_LEGAL];
+    double   priors[NNCACHE_MAX_LEGAL]; /* softmaxed */
+    int32_t  n_legal;
+    double   q_value;       /* from WDL logits */
+    uint32_t generation;    /* matches NNCacheData.generation when valid */
+} NNCacheEntry;
+
+typedef struct {
+    NNCacheEntry *entries;
+    int32_t cap;            /* power of 2 */
+    int32_t mask;           /* cap - 1 */
+    int32_t count;
+    uint32_t generation;    /* bumped on clear — avoids memset */
+} NNCacheData;
+
+static int nncache_init(NNCacheData *c, int32_t cap) {
+    c->cap = cap;
+    c->mask = cap - 1;
+    c->count = 0;
+    c->generation = 1;
+    c->entries = (NNCacheEntry *)calloc(cap, sizeof(NNCacheEntry));
+    return c->entries ? 0 : -1;
+}
+
+static void nncache_free(NNCacheData *c) {
+    free(c->entries);
+    c->entries = NULL;
+    c->count = 0;
+}
+
+/* Probe cache. Returns pointer to entry if hit, NULL if miss. */
+static NNCacheEntry *nncache_probe(NNCacheData *c, uint64_t hash) {
+    int32_t slot = (int32_t)(hash & (uint64_t)c->mask);
+    NNCacheEntry *e = &c->entries[slot];
+    if (e->generation == c->generation && e->key == hash)
+        return e;
+    return NULL;
+}
+
+/* Insert into cache (direct-mapped, keeps existing same-generation entry).
+ * Returns entry pointer to fill, or NULL if slot is occupied by a
+ * same-generation entry with a different key (preserve older entry). */
+static NNCacheEntry *nncache_insert(NNCacheData *c, uint64_t hash) {
+    int32_t slot = (int32_t)(hash & (uint64_t)c->mask);
+    NNCacheEntry *e = &c->entries[slot];
+    if (e->generation == c->generation && e->key != hash)
+        return NULL;  /* keep existing entry (older = more useful) */
+    if (e->generation != c->generation) c->count++;
+    e->key = hash;
+    e->generation = c->generation;
+    return e;
+}
 
 /* ================================================================
  * Tree data structure
@@ -64,6 +129,14 @@ typedef struct {
     CBoard  *cb_cache;      /* one CBoard per node (indexed by node_id) */
     int8_t  *cb_valid;      /* 1 if cb_cache[node_id] is populated */
     int32_t  cb_cache_cap;  /* allocated capacity */
+
+    /* Per-node Zobrist hash (for DAG transposition detection) */
+    uint64_t *node_hash;    /* hash per node_id */
+
+    /* Hash table: zobrist_hash → node_id (direct-mapped, -1 = empty) */
+    int32_t  *hash_table;
+    int32_t   ht_cap;       /* power of 2 */
+    int32_t   ht_mask;      /* ht_cap - 1 */
 } TreeData;
 
 
@@ -89,13 +162,20 @@ static int tree_init(TreeData *t) {
     t->cb_valid = NULL;
     t->cb_cache_cap = 0;
 
+    /* Per-node hash + hash table for DAG transposition detection */
+    t->node_hash = (uint64_t *)calloc(t->node_cap, sizeof(uint64_t));
+    t->ht_cap = 1 << 17;  /* 131072 */
+    t->ht_mask = t->ht_cap - 1;
+    t->hash_table = (int32_t *)malloc(t->ht_cap * sizeof(int32_t));
+
     if (!t->N || !t->W || !t->prior || !t->expanded || !t->parent ||
         !t->action_from_parent || !t->num_children || !t->children_offset ||
-        !t->child_action || !t->child_node) {
+        !t->child_action || !t->child_node || !t->node_hash || !t->hash_table) {
         return -1;
     }
     memset(t->parent, -1, t->node_cap * sizeof(int32_t));
     memset(t->action_from_parent, -1, t->node_cap * sizeof(int32_t));
+    memset(t->hash_table, -1, t->ht_cap * sizeof(int32_t));
     return 0;
 }
 
@@ -113,6 +193,8 @@ static void tree_free(TreeData *t) {
     free(t->child_node);
     free(t->cb_cache);
     free(t->cb_valid);
+    free(t->node_hash);
+    free(t->hash_table);
     memset(t, 0, sizeof(TreeData));
 }
 
@@ -128,9 +210,10 @@ static int tree_grow_nodes(TreeData *t) {
     t->action_from_parent = (int32_t *)realloc(t->action_from_parent, new_cap * sizeof(int32_t));
     t->num_children = (int32_t *)realloc(t->num_children, new_cap * sizeof(int32_t));
     t->children_offset = (int32_t *)realloc(t->children_offset, new_cap * sizeof(int32_t));
+    t->node_hash = (uint64_t *)realloc(t->node_hash, new_cap * sizeof(uint64_t));
 
     if (!t->N || !t->W || !t->prior || !t->expanded || !t->parent ||
-        !t->action_from_parent || !t->num_children || !t->children_offset) {
+        !t->action_from_parent || !t->num_children || !t->children_offset || !t->node_hash) {
         return -1;
     }
 
@@ -144,9 +227,31 @@ static int tree_grow_nodes(TreeData *t) {
     memset(t->action_from_parent + old_cap, -1, (new_cap - old_cap) * sizeof(int32_t));
     memset(t->num_children + old_cap, 0, (new_cap - old_cap) * sizeof(int32_t));
     memset(t->children_offset + old_cap, 0, (new_cap - old_cap) * sizeof(int32_t));
+    memset(t->node_hash + old_cap, 0, (new_cap - old_cap) * sizeof(uint64_t));
 
     t->node_cap = new_cap;
     return 0;
+}
+
+
+/* Hash table: probe for existing node with given Zobrist hash. Returns node_id or -1. */
+static int32_t tree_ht_probe(const TreeData *t, uint64_t hash) {
+    int32_t slot = (int32_t)(hash & (uint64_t)t->ht_mask);
+    int32_t nid = t->hash_table[slot];
+    if (nid >= 0 && t->node_hash[nid] == hash)
+        return nid;
+    return -1;
+}
+
+/* Hash table: register node_id for given hash (direct-mapped, overwrites on collision). */
+static void tree_ht_insert(TreeData *t, uint64_t hash, int32_t node_id) {
+    int32_t slot = (int32_t)(hash & (uint64_t)t->ht_mask);
+    /* Don't overwrite an existing exact-hash entry (keep canonical node) */
+    int32_t existing = t->hash_table[slot];
+    if (existing >= 0 && existing < t->node_count && t->node_hash[existing] == hash)
+        return;
+    t->hash_table[slot] = node_id;
+    t->node_hash[node_id] = hash;
 }
 
 
@@ -172,10 +277,8 @@ static int tree_ensure_cb_cache(TreeData *t, int32_t need) {
     while (new_cap < need) new_cap *= 2;
     CBoard *new_cb = (CBoard *)realloc(t->cb_cache, new_cap * sizeof(CBoard));
     if (!new_cb) return -1;
-    t->cb_cache = new_cb;
     int8_t *new_valid = (int8_t *)realloc(t->cb_valid, new_cap * sizeof(int8_t));
-    if (!new_valid) return -1;
-    t->cb_valid = new_valid;
+    if (!new_valid) { t->cb_cache = new_cb; return -1; }
     memset(new_valid + t->cb_cache_cap, 0, (new_cap - t->cb_cache_cap) * sizeof(int8_t));
     t->cb_cache = new_cb;
     t->cb_valid = new_valid;
@@ -332,13 +435,639 @@ static int32_t tree_action_path(const TreeData *t, int32_t node_id,
  * Python wrapper: MCTSTree
  * ================================================================ */
 
+/* Stored state for prepare_and_store / finish_stored workflow.
+ * Keeps intermediate data in C memory to avoid expensive Python object creation. */
+typedef struct {
+    int32_t n_leaves;
+    int32_t n_terminals;
+    int32_t cap;          /* allocated capacity for per-leaf arrays */
+
+    int32_t *leaf_ids;
+    uint64_t *hashes;
+    CBoard  *leaf_cboards;   /* saved CBoards for deferred parallel encoding */
+
+    /* Legal moves per leaf: flat buffer + per-leaf offset/count */
+    int32_t *legal_flat;
+    int32_t *legal_offset;
+    int32_t *legal_count;
+    int32_t  legal_flat_used;
+    int32_t  legal_flat_cap;
+
+    /* Node paths per leaf: flat buffer + per-leaf offset/count */
+    int32_t *path_flat;
+    int32_t *path_offset;
+    int32_t *path_count;
+    int32_t  path_flat_used;
+    int32_t  path_flat_cap;
+
+    /* Terminal backprop info */
+    int32_t *term_path_flat;
+    int32_t *term_path_offset;
+    int32_t *term_path_count;
+    double  *term_values;
+    int32_t  term_path_flat_used;
+    int32_t  term_path_flat_cap;
+    int32_t  term_cap;
+} StoredPrepState;
+
+/* Forward declarations for functions used by GumbelSimState helpers */
+static int stored_ensure_cap(StoredPrepState *s, int32_t leaf_cap, int32_t term_cap);
+static int stored_ensure_legal_flat(StoredPrepState *s, int32_t need);
+static int stored_ensure_path_flat(StoredPrepState *s, int32_t need);
+static int stored_ensure_term_path_flat(StoredPrepState *s, int32_t need);
+static int32_t tree_gumbel_collect_leaf(const TreeData *t, int32_t root_id,
+    int32_t forced_action, double c_scale, double c_visit, double c_puct,
+    double fpu_reduction, int full_tree, int32_t *path_buf, int32_t path_cap);
+static void cboard_encode_146_into(const CBoard *b, float *out);
+
+/* ---- Gumbel simulation state machine ------------------------------------ */
+#define GSS_POLICY_SIZE 4672
+
+typedef struct {
+    /* Configuration */
+    int32_t n_boards;
+    double c_scale, c_visit, c_puct, fpu_reduction;
+    int full_tree;
+
+    /* Per-board state (owned by this struct) */
+    int32_t *root_ids;           /* [n_boards] */
+    int32_t *budget_remaining;   /* [n_boards] */
+    int32_t *visits_per_action;  /* [n_boards] */
+    CBoard  *root_cboards;       /* [n_boards] */
+    double  *root_qs;            /* [n_boards] */
+    double  *root_priors;        /* [n_boards * POLICY_SIZE] */
+    double  *gumbels;            /* [n_boards * POLICY_SIZE] */
+
+    /* Per-board candidate lists: flat array + offset/count */
+    int32_t *cands_flat;
+    int32_t *cands_offset;       /* [n_boards] */
+    int32_t *cands_count;        /* [n_boards] */
+    int32_t  cands_flat_cap;
+
+    /* Active board indices */
+    int32_t *active;             /* [n_boards] */
+    int32_t  n_active;
+
+    /* Iteration state */
+    int32_t max_reps;
+    int32_t current_rep;
+
+    /* Encoding buffer (borrowed pointer — owned by Python) */
+    float *enc_data;
+    int32_t enc_capacity;
+    PyObject *enc_arr_ref;       /* Strong ref to keep enc buffer alive */
+
+    /* Query arrays for prepare_and_store (owned) */
+    int32_t *q_board_idx;
+    int32_t *q_root_ids;
+    int32_t *q_forced;
+    int32_t  q_cap;
+
+    /* NNCache pointer (borrowed, valid for lifetime of sim) */
+    NNCacheData *nncache;
+    PyObject *nncache_ref;       /* Strong ref to keep NNCache alive */
+
+    /* State machine phase */
+    int phase;    /* 0=not started, 1=needs_eval, 2=done */
+    int allocated;
+} GumbelSimState;
+
+static void gss_free(GumbelSimState *g) {
+    if (!g->allocated) return;
+    free(g->root_ids); free(g->budget_remaining); free(g->visits_per_action);
+    free(g->root_cboards); free(g->root_qs); free(g->root_priors);
+    free(g->gumbels);
+    free(g->cands_flat); free(g->cands_offset); free(g->cands_count);
+    free(g->active);
+    free(g->q_board_idx); free(g->q_root_ids); free(g->q_forced);
+    Py_XDECREF(g->enc_arr_ref);
+    Py_XDECREF(g->nncache_ref);
+    memset(g, 0, sizeof(*g));
+}
+
+/* Compute active boards and visits_per_action for current halving round.
+ * Returns max_reps (0 if nothing to do). */
+static int32_t gss_begin_round(GumbelSimState *g) {
+    g->n_active = 0;
+    g->max_reps = 0;
+    for (int32_t i = 0; i < g->n_boards; i++) {
+        if (g->budget_remaining[i] <= 0 || g->cands_count[i] == 0)
+            continue;
+        g->active[g->n_active++] = i;
+        int32_t rem_count = g->cands_count[i];
+        if (rem_count <= 1) {
+            g->visits_per_action[i] = g->budget_remaining[i];
+        } else {
+            int32_t rounds_left = 0;
+            int32_t tmp = rem_count;
+            while (tmp > 1) { rounds_left++; tmp = (tmp + 1) / 2; }
+            int32_t vpa = g->budget_remaining[i] / (rem_count * rounds_left);
+            if (vpa < 1) vpa = 1;
+            g->visits_per_action[i] = vpa;
+        }
+        if (g->visits_per_action[i] > g->max_reps)
+            g->max_reps = g->visits_per_action[i];
+    }
+    g->current_rep = 0;
+    return g->max_reps;
+}
+
+/* Score candidates and halve: keep top half for each active board.
+ * Pure C, no Python. */
+static void gss_score_and_halve(GumbelSimState *g, TreeData *t) {
+    for (int32_t ai = 0; ai < g->n_active; ai++) {
+        int32_t bi = g->active[ai];
+        int32_t n_cands = g->cands_count[bi];
+
+        /* Always deduct budget, even for 1 candidate */
+        g->budget_remaining[bi] -= g->visits_per_action[bi] * n_cands;
+        if (g->budget_remaining[bi] < 0) g->budget_remaining[bi] = 0;
+
+        if (n_cands <= 1) continue;
+        if (n_cands > 64) n_cands = 64;  /* defensive clamp */
+
+        int32_t rid = g->root_ids[bi];
+        double root_Q = (t->N[rid] > 0) ? (t->W[rid] / (double)t->N[rid]) : 0.0;
+
+        /* Find max visit among root's children */
+        int32_t n_ch = t->num_children[rid];
+        int32_t off = t->children_offset[rid];
+        int32_t max_visit = 0;
+        for (int32_t j = 0; j < n_ch; j++) {
+            int32_t n = t->N[t->child_node[off + j]];
+            if (n > max_visit) max_visit = n;
+        }
+        double sigma = g->c_scale * (g->c_visit + (double)max_visit);
+
+        int32_t coff = g->cands_offset[bi];
+        double scores_buf[64];
+        double *scores = scores_buf;
+        for (int32_t ci = 0; ci < n_cands; ci++) {
+            int32_t action = g->cands_flat[coff + ci];
+            double log_prior = log(g->root_priors[bi * GSS_POLICY_SIZE + action] > 1e-12
+                                   ? g->root_priors[bi * GSS_POLICY_SIZE + action] : 1e-12);
+            double q_hat = root_Q;
+            for (int32_t j = 0; j < n_ch; j++) {
+                if (t->child_action[off + j] == action) {
+                    int32_t cid = t->child_node[off + j];
+                    if (t->N[cid] > 0) q_hat = -t->W[cid] / (double)t->N[cid];
+                    break;
+                }
+            }
+            scores[ci] = g->gumbels[bi * GSS_POLICY_SIZE + action] + log_prior + sigma * q_hat;
+        }
+
+        /* Simple selection sort to find top half (n_cands is small, <=12) */
+        int32_t keep = (n_cands + 1) / 2;
+        if (keep < 1) keep = 1;
+        for (int32_t k = 0; k < keep; k++) {
+            int32_t best = k;
+            for (int32_t j = k + 1; j < n_cands; j++) {
+                if (scores[j] > scores[best]) best = j;
+            }
+            if (best != k) {
+                double tmp_s = scores[k]; scores[k] = scores[best]; scores[best] = tmp_s;
+                int32_t tmp_c = g->cands_flat[coff + k];
+                g->cands_flat[coff + k] = g->cands_flat[coff + best];
+                g->cands_flat[coff + best] = tmp_c;
+            }
+        }
+        g->cands_count[bi] = keep;
+    }
+}
+
+/* Build query arrays for one batch of reps. Returns number of queries built.
+ * Advances current_rep. Fills q_board_idx, q_root_ids, q_forced. */
+static int32_t gss_build_queries(GumbelSimState *g, int32_t min_batch) {
+    int32_t n = 0;
+    while (g->current_rep < g->max_reps) {
+        int32_t rep_n = 0;
+        for (int32_t ai = 0; ai < g->n_active; ai++) {
+            int32_t bi = g->active[ai];
+            if (g->current_rep >= g->visits_per_action[bi]) continue;
+            int32_t rid = g->root_ids[bi];
+            if (rid < 0) continue;
+            int32_t coff = g->cands_offset[bi];
+            int32_t ccount = g->cands_count[bi];
+            /* Ensure query arrays have space */
+            if (n + rep_n + ccount > g->q_cap) {
+                int32_t new_cap = (n + rep_n + ccount) * 2;
+                if (new_cap < 4096) new_cap = 4096;
+                int32_t *nb = realloc(g->q_board_idx, new_cap * sizeof(int32_t));
+                if (nb) g->q_board_idx = nb;
+                int32_t *nr = realloc(g->q_root_ids, new_cap * sizeof(int32_t));
+                if (nr) g->q_root_ids = nr;
+                int32_t *nf = realloc(g->q_forced, new_cap * sizeof(int32_t));
+                if (nf) g->q_forced = nf;
+                if (!nb || !nr || !nf) return n;  /* OOM: return what we have */
+                g->q_cap = new_cap;
+            }
+            for (int32_t ci = 0; ci < ccount; ci++) {
+                g->q_board_idx[n + rep_n] = bi;
+                g->q_root_ids[n + rep_n] = rid;
+                g->q_forced[n + rep_n] = g->cands_flat[coff + ci];
+                rep_n++;
+            }
+        }
+        n += rep_n;
+        g->current_rep++;
+        if (n >= min_batch || g->current_rep >= g->max_reps)
+            break;
+    }
+    return n;
+}
+
+/* Run one batch of tree queries (tree walk + replay + encode) using the
+ * gumbel sim state's query arrays.  Pure C, no GIL needed.
+ * Appends to StoredPrepState, writes encoded positions to enc_data.
+ * Returns the number of new leaves that need GPU eval. */
+static int32_t gss_prepare_batch(
+    TreeData *t, StoredPrepState *s, GumbelSimState *g,
+    int32_t n_queries, float *enc_data)
+{
+    int cache_ok = (t->cb_cache != NULL);
+    int32_t path_buf[512];
+    int32_t old_n_leaves = s->n_leaves;
+
+    for (int32_t qi = 0; qi < n_queries; qi++) {
+        int32_t bi = g->q_board_idx[qi];
+        int32_t rid = g->q_root_ids[qi];
+        int32_t forced = g->q_forced[qi];
+
+        int32_t path_len = tree_gumbel_collect_leaf(
+            t, rid, forced,
+            g->c_scale, g->c_visit, g->c_puct, g->fpu_reduction, g->full_tree,
+            path_buf, 512);
+
+        int32_t leaf_id = path_buf[path_len - 1];
+
+        if (path_len <= 1) {
+            int32_t ti = s->n_terminals;
+            stored_ensure_term_path_flat(s, s->term_path_flat_used + path_len);
+            s->term_path_offset[ti] = s->term_path_flat_used;
+            s->term_path_count[ti] = path_len;
+            memcpy(s->term_path_flat + s->term_path_flat_used, path_buf, path_len * sizeof(int32_t));
+            s->term_path_flat_used += path_len;
+            s->term_values[ti] = g->root_qs[bi];
+            s->n_terminals++;
+            continue;
+        }
+
+        /* CBoard replay */
+        CBoard cb;
+        int32_t replay_actions[512];
+        int32_t n_replay = 0;
+        int32_t found_cached = 0;
+
+        if (cache_ok) {
+            int32_t nid = leaf_id;
+            while (nid >= 0 && nid != rid && n_replay < 512) {
+                if (nid < t->cb_cache_cap && t->cb_valid[nid]) {
+                    cb = t->cb_cache[nid];
+                    found_cached = 1;
+                    break;
+                }
+                int32_t act = t->action_from_parent[nid];
+                if (act >= 0) replay_actions[n_replay++] = act;
+                nid = t->parent[nid];
+            }
+            if (!found_cached && nid == rid &&
+                nid < t->cb_cache_cap && t->cb_valid[nid]) {
+                cb = t->cb_cache[nid];
+                found_cached = 1;
+            }
+        }
+        if (!found_cached) {
+            cb = g->root_cboards[bi];
+        }
+        for (int32_t ri = n_replay - 1; ri >= 0; ri--)
+            cboard_push_index(&cb, replay_actions[ri]);
+
+        if (cboard_is_game_over(&cb)) {
+            int32_t ti = s->n_terminals;
+            stored_ensure_term_path_flat(s, s->term_path_flat_used + path_len);
+            s->term_path_offset[ti] = s->term_path_flat_used;
+            s->term_path_count[ti] = path_len;
+            memcpy(s->term_path_flat + s->term_path_flat_used, path_buf, path_len * sizeof(int32_t));
+            s->term_path_flat_used += path_len;
+            s->term_values[ti] = (double)cboard_terminal_value(&cb);
+            s->n_terminals++;
+            continue;
+        }
+
+        /* Transposition / NNCache check */
+        if (!t->expanded[leaf_id]) {
+            int32_t existing = tree_ht_probe(t, cb.hash);
+            if (existing >= 0 && existing != leaf_id && t->expanded[existing]) {
+                int32_t n_ch = t->num_children[existing];
+                if (n_ch > 0) {
+                    int32_t ex_off = t->children_offset[existing];
+                    int32_t legal_buf[256];
+                    double prior_buf[256];
+                    int32_t n_copy = (n_ch <= 256) ? n_ch : 256;
+                    for (int32_t c = 0; c < n_copy; c++) {
+                        legal_buf[c] = t->child_action[ex_off + c];
+                        prior_buf[c] = t->prior[t->child_node[ex_off + c]];
+                    }
+                    tree_expand(t, leaf_id, legal_buf, prior_buf, n_copy);
+                } else {
+                    t->expanded[leaf_id] = 1;
+                }
+                double q = (t->N[existing] > 0) ? (t->W[existing] / (double)t->N[existing]) : 0.0;
+                tree_backprop(t, path_buf, path_len, q);
+                tree_ht_insert(t, cb.hash, leaf_id);
+                if (cache_ok) {
+                    if (leaf_id >= t->cb_cache_cap) tree_ensure_cb_cache(t, leaf_id + 1);
+                    if (leaf_id < t->cb_cache_cap) { t->cb_cache[leaf_id] = cb; t->cb_valid[leaf_id] = 1; }
+                }
+                continue;
+            }
+            if (g->nncache) {
+                NNCacheEntry *ce = nncache_probe(g->nncache, cb.hash);
+                if (ce) {
+                    tree_expand(t, leaf_id, ce->legal, ce->priors, ce->n_legal);
+                    tree_backprop(t, path_buf, path_len, ce->q_value);
+                    tree_ht_insert(t, cb.hash, leaf_id);
+                    if (cache_ok) {
+                        if (leaf_id >= t->cb_cache_cap) tree_ensure_cb_cache(t, leaf_id + 1);
+                        if (leaf_id < t->cb_cache_cap) { t->cb_cache[leaf_id] = cb; t->cb_valid[leaf_id] = 1; }
+                    }
+                    continue;
+                }
+            }
+        }
+
+        if (s->n_leaves >= g->enc_capacity) {
+            /* Buffer full — use root Q as fallback (not 0.0 which biases toward draws) */
+            int32_t ti = s->n_terminals;
+            stored_ensure_term_path_flat(s, s->term_path_flat_used + path_len);
+            s->term_path_offset[ti] = s->term_path_flat_used;
+            s->term_path_count[ti] = path_len;
+            memcpy(s->term_path_flat + s->term_path_flat_used, path_buf, path_len * sizeof(int32_t));
+            s->term_path_flat_used += path_len;
+            s->term_values[ti] = g->root_qs[bi];
+            s->n_terminals++;
+            continue;
+        }
+
+        /* Save leaf for deferred encoding */
+        int32_t li = s->n_leaves;
+        s->leaf_cboards[li] = cb;
+        s->leaf_ids[li] = leaf_id;
+        s->hashes[li] = cb.hash;
+
+        BoardState bs;
+        cboard_to_boardstate(&cb, &bs);
+        int indices[256];
+        int count = 0;
+        if (bs.king_sq >= 0)
+            count = generate_legal_move_indices(&bs, indices);
+        stored_ensure_legal_flat(s, s->legal_flat_used + count);
+        s->legal_offset[li] = s->legal_flat_used;
+        s->legal_count[li] = count;
+        for (int32_t j = 0; j < count; j++)
+            s->legal_flat[s->legal_flat_used + j] = indices[j];
+        s->legal_flat_used += count;
+
+        stored_ensure_path_flat(s, s->path_flat_used + path_len);
+        s->path_offset[li] = s->path_flat_used;
+        s->path_count[li] = path_len;
+        memcpy(s->path_flat + s->path_flat_used, path_buf, path_len * sizeof(int32_t));
+        s->path_flat_used += path_len;
+
+        if (cache_ok) {
+            if (leaf_id >= t->cb_cache_cap) tree_ensure_cb_cache(t, leaf_id + 1);
+            if (leaf_id < t->cb_cache_cap) { t->cb_cache[leaf_id] = cb; t->cb_valid[leaf_id] = 1; }
+        }
+
+        s->n_leaves++;
+    }
+
+    /* Backprop terminals */
+    for (int32_t ti = 0; ti < s->n_terminals; ti++) {
+        tree_backprop(t, s->term_path_flat + s->term_path_offset[ti],
+                      s->term_path_count[ti], s->term_values[ti]);
+    }
+    /* Reset terminal count since we've backpropped them */
+    s->n_terminals = 0;
+    s->term_path_flat_used = 0;
+
+    /* Parallel encoding */
+    {
+        int32_t n_to_encode = s->n_leaves - old_n_leaves;
+        int32_t base = old_n_leaves;
+#ifdef _OPENMP
+        #pragma omp parallel for schedule(static) if(n_to_encode > 64)
+#endif
+        for (int32_t i = 0; i < n_to_encode; i++) {
+            int32_t li = base + i;
+            cboard_encode_146_into(&s->leaf_cboards[li], enc_data + li * 146 * 64);
+        }
+    }
+
+    return s->n_leaves - old_n_leaves;
+}
+
+/* Run expand + backprop for all stored leaves using GPU eval results.
+ * Pure C, no GIL needed. */
+static void gss_finish_batch(
+    TreeData *t, StoredPrepState *s, NNCacheData *nncache,
+    const float *pol_data, const float *wdl_data)
+{
+    for (int32_t li = 0; li < s->n_leaves; li++) {
+        int32_t nid = s->leaf_ids[li];
+        const int32_t *legal = s->legal_flat + s->legal_offset[li];
+        int32_t n_legal = s->legal_count[li];
+        const int32_t *path = s->path_flat + s->path_offset[li];
+        int32_t path_len = s->path_count[li];
+
+        if (!t->expanded[nid] && n_legal > 0) {
+            const float *logits = pol_data + li * 4672;
+            double priors_stack[256];
+            double *priors = (n_legal <= 256) ? priors_stack
+                                               : (double *)malloc(n_legal * sizeof(double));
+            if (priors) {
+                double max_l = -1e30;
+                for (int32_t j = 0; j < n_legal; j++) {
+                    double v = (double)logits[legal[j]];
+                    if (v > max_l) max_l = v;
+                }
+                double sum = 0;
+                for (int32_t j = 0; j < n_legal; j++) {
+                    priors[j] = exp((double)logits[legal[j]] - max_l);
+                    sum += priors[j];
+                }
+                if (sum > 0) {
+                    double inv_sum = 1.0 / sum;
+                    for (int32_t j = 0; j < n_legal; j++) priors[j] *= inv_sum;
+                }
+                tree_expand(t, nid, legal, priors, n_legal);
+                if (nncache && n_legal <= NNCACHE_MAX_LEGAL) {
+                    NNCacheEntry *ce = nncache_insert(nncache, s->hashes[li]);
+                    if (ce) {
+                        ce->n_legal = n_legal;
+                        memcpy(ce->legal, legal, n_legal * sizeof(int32_t));
+                        memcpy(ce->priors, priors, n_legal * sizeof(double));
+                        const float *wdl = wdl_data + li * 3;
+                        double wm = fmax(fmax((double)wdl[0], (double)wdl[1]), (double)wdl[2]);
+                        double ew = exp((double)wdl[0] - wm), ed = exp((double)wdl[1] - wm), el = exp((double)wdl[2] - wm);
+                        double ws = ew + ed + el;
+                        ce->q_value = (ws > 0) ? (ew - el) / ws : 0.0;
+                    }
+                }
+                if (priors != priors_stack) free(priors);
+            }
+        }
+
+        const float *wdl = wdl_data + li * 3;
+        double wm = fmax(fmax((double)wdl[0], (double)wdl[1]), (double)wdl[2]);
+        double ew = exp((double)wdl[0] - wm), ed = exp((double)wdl[1] - wm), el = exp((double)wdl[2] - wm);
+        double ws = ew + ed + el;
+        double q = (ws > 0) ? (ew - el) / ws : 0.0;
+        tree_backprop(t, path, path_len, q);
+        tree_ht_insert(t, s->hashes[li], nid);
+    }
+}
+
+/* Core simulation loop: build queries → prepare → return for GPU eval,
+ * or do scoring/halving and continue to next round.
+ * Returns number of leaves needing eval (>0), or 0 if simulation is done. */
+static int32_t gss_step(TreeData *t, StoredPrepState *s, GumbelSimState *g, float *enc_data)
+{
+    /* Accumulate leaves across multiple reps before returning for GPU eval.
+     * This reduces Python↔C round trips. */
+    /* Batch size tuning: smaller = more GPU calls but fresher tree state.
+     * Production GPU: 1024-2048 is good. CPU/TinyNet: 256-512. */
+    int32_t target_batch = 1024;
+
+    for (;;) {
+        /* Build queries for one rep at a time */
+        int32_t n_queries = gss_build_queries(g, 1);
+
+        if (n_queries > 0) {
+            /* Ensure stored capacity */
+            stored_ensure_cap(s, s->n_leaves + n_queries, s->n_terminals + n_queries);
+            stored_ensure_legal_flat(s, s->legal_flat_used + n_queries * 40);
+            stored_ensure_path_flat(s, s->path_flat_used + n_queries * 8);
+            stored_ensure_term_path_flat(s, s->term_path_flat_used + n_queries * 8);
+
+            /* Seed CBoard cache with roots for any new board indices */
+            for (int32_t qi = 0; qi < n_queries; qi++) {
+                int32_t rid = g->q_root_ids[qi];
+                int32_t bi = g->q_board_idx[qi];
+                if (rid >= 0 && rid < t->cb_cache_cap) {
+                    if (!t->cb_valid[rid]) {
+                        t->cb_cache[rid] = g->root_cboards[bi];
+                        t->cb_valid[rid] = 1;
+                    }
+                }
+            }
+
+            gss_prepare_batch(t, s, g, n_queries, enc_data);
+
+            /* Accumulate more leaves before returning, unless:
+             * - We've hit the target batch size
+             * - Buffer is getting full
+             * - No more reps to build */
+            if (s->n_leaves >= target_batch ||
+                s->n_leaves + n_queries * 2 > g->enc_capacity ||
+                g->current_rep >= g->max_reps) {
+                if (s->n_leaves > 0) {
+                    return s->n_leaves;
+                }
+            }
+            continue;
+        }
+
+        /* Reps exhausted for this round — flush any accumulated leaves first */
+        if (s->n_leaves > 0) {
+            return s->n_leaves;
+        }
+
+        /* Do scoring and halving */
+        gss_score_and_halve(g, t);
+
+        /* Start next halving round */
+        if (gss_begin_round(g) == 0) {
+            g->phase = 2;
+            return 0;
+        }
+    }
+}
+
 typedef struct {
     PyObject_HEAD
     TreeData tree;
+    StoredPrepState stored;
+    GumbelSimState gsim;
 } MCTSTreeObject;
 
 
+static void stored_free(StoredPrepState *s) {
+    free(s->leaf_ids); free(s->hashes); free(s->leaf_cboards);
+    free(s->legal_flat); free(s->legal_offset); free(s->legal_count);
+    free(s->path_flat); free(s->path_offset); free(s->path_count);
+    free(s->term_path_flat); free(s->term_path_offset); free(s->term_path_count);
+    free(s->term_values);
+    memset(s, 0, sizeof(*s));
+}
+
+static int stored_ensure_cap(StoredPrepState *s, int32_t leaf_cap, int32_t term_cap) {
+    if (leaf_cap > s->cap) {
+        s->leaf_ids = (int32_t *)realloc(s->leaf_ids, leaf_cap * sizeof(int32_t));
+        s->hashes = (uint64_t *)realloc(s->hashes, leaf_cap * sizeof(uint64_t));
+        s->leaf_cboards = (CBoard *)realloc(s->leaf_cboards, leaf_cap * sizeof(CBoard));
+        s->legal_offset = (int32_t *)realloc(s->legal_offset, leaf_cap * sizeof(int32_t));
+        s->legal_count = (int32_t *)realloc(s->legal_count, leaf_cap * sizeof(int32_t));
+        s->path_offset = (int32_t *)realloc(s->path_offset, leaf_cap * sizeof(int32_t));
+        s->path_count = (int32_t *)realloc(s->path_count, leaf_cap * sizeof(int32_t));
+        if (!s->leaf_ids || !s->hashes || !s->leaf_cboards || !s->legal_offset ||
+            !s->legal_count || !s->path_offset || !s->path_count) return -1;
+        s->cap = leaf_cap;
+    }
+    if (term_cap > s->term_cap) {
+        s->term_path_offset = (int32_t *)realloc(s->term_path_offset, term_cap * sizeof(int32_t));
+        s->term_path_count = (int32_t *)realloc(s->term_path_count, term_cap * sizeof(int32_t));
+        s->term_values = (double *)realloc(s->term_values, term_cap * sizeof(double));
+        if (!s->term_path_offset || !s->term_path_count || !s->term_values) return -1;
+        s->term_cap = term_cap;
+    }
+    return 0;
+}
+
+static int stored_ensure_legal_flat(StoredPrepState *s, int32_t needed) {
+    if (needed > s->legal_flat_cap) {
+        int32_t new_cap = (needed > s->legal_flat_cap * 2) ? needed : s->legal_flat_cap * 2;
+        s->legal_flat = (int32_t *)realloc(s->legal_flat, new_cap * sizeof(int32_t));
+        if (!s->legal_flat) return -1;
+        s->legal_flat_cap = new_cap;
+    }
+    return 0;
+}
+
+static int stored_ensure_path_flat(StoredPrepState *s, int32_t needed) {
+    if (needed > s->path_flat_cap) {
+        int32_t new_cap = (needed > s->path_flat_cap * 2) ? needed : s->path_flat_cap * 2;
+        s->path_flat = (int32_t *)realloc(s->path_flat, new_cap * sizeof(int32_t));
+        if (!s->path_flat) return -1;
+        s->path_flat_cap = new_cap;
+    }
+    return 0;
+}
+
+static int stored_ensure_term_path_flat(StoredPrepState *s, int32_t needed) {
+    if (needed > s->term_path_flat_cap) {
+        int32_t new_cap = (needed > s->term_path_flat_cap * 2) ? needed : s->term_path_flat_cap * 2;
+        s->term_path_flat = (int32_t *)realloc(s->term_path_flat, new_cap * sizeof(int32_t));
+        if (!s->term_path_flat) return -1;
+        s->term_path_flat_cap = new_cap;
+    }
+    return 0;
+}
+
 static void MCTSTree_dealloc(MCTSTreeObject *self) {
+    gss_free(&self->gsim);
+    stored_free(&self->stored);
     tree_free(&self->tree);
     Py_TYPE(self)->tp_free((PyObject *)self);
 }
@@ -347,12 +1076,105 @@ static void MCTSTree_dealloc(MCTSTreeObject *self) {
 static int MCTSTree_init(MCTSTreeObject *self, PyObject *args, PyObject *kwds) {
     (void)args;
     (void)kwds;
+    memset(&self->stored, 0, sizeof(self->stored));
     if (tree_init(&self->tree) < 0) {
         PyErr_SetString(PyExc_MemoryError, "Failed to allocate MCTS tree");
         return -1;
     }
     return 0;
 }
+
+
+/* ================================================================
+ * Python wrapper: NNCache
+ * ================================================================ */
+
+typedef struct {
+    PyObject_HEAD
+    NNCacheData cache;
+} PyNNCacheObject;
+
+static void PyNNCache_dealloc(PyNNCacheObject *self) {
+    nncache_free(&self->cache);
+    Py_TYPE(self)->tp_free((PyObject *)self);
+}
+
+static int PyNNCache_init(PyNNCacheObject *self, PyObject *args, PyObject *kwds) {
+    static char *kwlist[] = {"capacity", NULL};
+    int cap = 1 << 17;  /* 131072 default */
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "|i", kwlist, &cap))
+        return -1;
+    /* Round up to power of 2 */
+    int p = 1;
+    while (p < cap) p <<= 1;
+    if (nncache_init(&self->cache, p) < 0) {
+        PyErr_SetString(PyExc_MemoryError, "Failed to allocate NNCache");
+        return -1;
+    }
+    return 0;
+}
+
+static PyObject *PyNNCache_count(PyNNCacheObject *self, PyObject *Py_UNUSED(ignored)) {
+    return PyLong_FromLong(self->cache.count);
+}
+
+static PyObject *PyNNCache_clear(PyNNCacheObject *self, PyObject *Py_UNUSED(ignored)) {
+    self->cache.generation++;
+    self->cache.count = 0;
+    Py_RETURN_NONE;
+}
+
+static PyObject *PyNNCache_probe(PyNNCacheObject *self, PyObject *args) {
+    unsigned long long hash;
+    if (!PyArg_ParseTuple(args, "K", &hash))
+        return NULL;
+    NNCacheEntry *e = nncache_probe(&self->cache, (uint64_t)hash);
+    if (!e)
+        Py_RETURN_NONE;
+    /* Return (legal_indices, priors, q_value) */
+    npy_intp dims[1] = {e->n_legal};
+    PyObject *legal_arr = PyArray_SimpleNew(1, dims, NPY_INT32);
+    PyObject *prior_arr = PyArray_SimpleNew(1, dims, NPY_FLOAT64);
+    memcpy(PyArray_DATA((PyArrayObject *)legal_arr), e->legal, e->n_legal * sizeof(int32_t));
+    memcpy(PyArray_DATA((PyArrayObject *)prior_arr), e->priors, e->n_legal * sizeof(double));
+    return Py_BuildValue("(NNd)", legal_arr, prior_arr, e->q_value);
+}
+
+static PyObject *PyNNCache_keys(PyNNCacheObject *self, PyObject *Py_UNUSED(ignored)) {
+    NNCacheData *c = &self->cache;
+    PyObject *list = PyList_New(0);
+    if (!list) return NULL;
+    for (int32_t i = 0; i < c->cap; i++) {
+        NNCacheEntry *e = &c->entries[i];
+        if (e->generation == c->generation) {
+            PyObject *val = PyLong_FromUnsignedLongLong(e->key);
+            PyList_Append(list, val);
+            Py_DECREF(val);
+        }
+    }
+    return list;
+}
+
+static PyMethodDef PyNNCache_methods[] = {
+    {"count", (PyCFunction)PyNNCache_count, METH_NOARGS, "count() -> int"},
+    {"clear", (PyCFunction)PyNNCache_clear, METH_NOARGS, "clear() -> None"},
+    {"probe", (PyCFunction)PyNNCache_probe, METH_VARARGS, "probe(hash) -> (q, n_legal) or None"},
+    {"keys", (PyCFunction)PyNNCache_keys, METH_NOARGS, "keys() -> list of cached hashes"},
+    {NULL}
+};
+
+static PyTypeObject PyNNCacheType = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    .tp_name = "_mcts_tree.NNCache",
+    .tp_doc = "C-level NN evaluation cache keyed by Zobrist hash.",
+    .tp_basicsize = sizeof(PyNNCacheObject),
+    .tp_itemsize = 0,
+    .tp_flags = Py_TPFLAGS_DEFAULT,
+    .tp_new = PyType_GenericNew,
+    .tp_init = (initproc)PyNNCache_init,
+    .tp_dealloc = (destructor)PyNNCache_dealloc,
+    .tp_methods = PyNNCache_methods,
+};
 
 
 /* add_root(N, W) -> int (root node id) */
@@ -966,6 +1788,8 @@ static PyObject *MCTSTree_is_expanded(MCTSTreeObject *self, PyObject *args) {
     int node_id;
     if (!PyArg_ParseTuple(args, "i", &node_id))
         return NULL;
+    if (node_id < 0 || node_id >= self->tree.node_count)
+        Py_RETURN_FALSE;
     return PyBool_FromLong(self->tree.expanded[node_id]);
 }
 
@@ -983,6 +1807,9 @@ static PyObject *MCTSTree_reset(MCTSTreeObject *self, PyObject *Py_UNUSED(args))
     /* Invalidate CBoard cache */
     if (self->tree.cb_valid && self->tree.cb_cache_cap > 0)
         memset(self->tree.cb_valid, 0, self->tree.cb_cache_cap * sizeof(int8_t));
+    /* Clear transposition hash table to prevent stale lookups */
+    if (self->tree.hash_table && self->tree.ht_cap > 0)
+        memset(self->tree.hash_table, -1, self->tree.ht_cap * sizeof(int32_t));
     Py_RETURN_NONE;
 }
 
@@ -1108,7 +1935,24 @@ static PyObject *MCTSTree_batch_wdl_to_q(MCTSTreeObject *self, PyObject *args) {
  * Writes into a pre-allocated buffer — no Python/numpy allocation.
  */
 static void cboard_encode_146_into(const CBoard *b, float *out) {
-    memset(out, 0, 146 * 64 * sizeof(float));
+    /* Targeted zeroing instead of full 146-plane memset.
+     * Planes 0-11: overwritten by bitboard_to_plane (handles zero BBs internally)
+     * Planes 12..12+hist*12-1: overwritten by history encoder
+     * Planes 12+hist*12..95: unused history — need zeroing
+     * Planes 96-102,111: overwritten by fill_lc0_112
+     * Planes 103-110: repetition planes — need zeroing (only 103 may be set)
+     * Planes 112-145: feature planes — need zeroing (feat_bb_to_plane adds 1.0f) */
+    int hist = b->hist_len < CBOARD_HISTORY_MAX ? b->hist_len : CBOARD_HISTORY_MAX;
+    int first_unused_hist = (1 + hist) * 12;  /* plane index of first unused history */
+    if (first_unused_hist < 96) {
+        memset(out + first_unused_hist * 64, 0,
+               (96 - first_unused_hist) * 64 * sizeof(float));
+    }
+    /* Repetition planes 103-110 (8 planes) */
+    memset(out + 103 * 64, 0, 8 * 64 * sizeof(float));
+    /* Feature planes 112-145 (34 planes) */
+    memset(out + 112 * 64, 0, 34 * 64 * sizeof(float));
+
     cboard_fill_lc0_112(b, out);
     int us = b->turn, them = 1 - us;
     uint64_t us_pieces[6], them_pieces[6];
@@ -1149,11 +1993,12 @@ static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *
     PyObject *board_idx_obj, *root_ids_obj, *forced_obj;
     double c_scale, c_visit, c_puct, fpu_reduction;
     int full_tree;
+    PyObject *nn_cache_obj = NULL;
 
-    if (!PyArg_ParseTuple(args, "OOOOddddpOO",
+    if (!PyArg_ParseTuple(args, "OOOOddddpOO|O",
                           &root_cbs_list, &board_idx_obj, &root_ids_obj, &forced_obj,
                           &c_scale, &c_visit, &c_puct, &fpu_reduction, &full_tree,
-                          &enc_buf_obj, &root_qs_obj))
+                          &enc_buf_obj, &root_qs_obj, &nn_cache_obj))
         return NULL;
 
     /* Parse numpy arrays */
@@ -1301,6 +2146,13 @@ static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *
         }
     }
 
+    /* Extract NNCache pointer (if provided) */
+    NNCacheData *nncache = NULL;
+    if (nn_cache_obj != NULL && nn_cache_obj != Py_None &&
+        Py_TYPE(nn_cache_obj) == &PyNNCacheType) {
+        nncache = &((PyNNCacheObject *)nn_cache_obj)->cache;
+    }
+
     /* Terminal backprop lists */
     int32_t n_terminals = 0;
     int32_t **term_paths = (int32_t **)malloc(n_queries * sizeof(int32_t *));
@@ -1382,12 +2234,71 @@ static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *
             term_values[n_terminals] = (double)cboard_terminal_value(&cb);
             n_terminals++;
         } else {
+            /* DAG transposition detection: check if this position was
+             * already expanded elsewhere in the tree. If so, copy its
+             * priors/children structure and backprop its Q, skip GPU eval. */
+            if (!t->expanded[leaf_id]) {
+                int32_t existing = tree_ht_probe(t, cb.hash);
+                if (existing >= 0 && existing != leaf_id && t->expanded[existing]) {
+                    /* Transposition hit — copy expansion from existing node */
+                    int32_t n_ch = t->num_children[existing];
+                    if (n_ch > 0) {
+                        int32_t ex_off = t->children_offset[existing];
+                        /* Rebuild priors + legal arrays from existing children */
+                        int32_t legal_buf[256];
+                        double prior_buf[256];
+                        int32_t n_copy = (n_ch <= 256) ? n_ch : 256;
+                        for (int32_t c = 0; c < n_copy; c++) {
+                            int32_t child_nid = t->child_node[ex_off + c];
+                            legal_buf[c] = t->child_action[ex_off + c];
+                            prior_buf[c] = t->prior[child_nid];
+                        }
+                        tree_expand(t, leaf_id, legal_buf, prior_buf, n_copy);
+                    } else {
+                        t->expanded[leaf_id] = 1;
+                    }
+                    /* Backprop existing Q */
+                    double q = (t->N[existing] > 0)
+                        ? (t->W[existing] / (double)t->N[existing]) : 0.0;
+                    tree_backprop(t, all_node_paths[qi], path_len, q);
+                    /* Register this node in hash table too + CBoard cache */
+                    tree_ht_insert(t, cb.hash, leaf_id);
+                    if (cache_ok) {
+                        if (leaf_id >= t->cb_cache_cap)
+                            tree_ensure_cb_cache(t, leaf_id + 1);
+                        if (leaf_id < t->cb_cache_cap) {
+                            t->cb_cache[leaf_id] = cb;
+                            t->cb_valid[leaf_id] = 1;
+                        }
+                    }
+                    continue;
+                }
+                /* Also check NNCache as fallback */
+                if (nncache) {
+                    NNCacheEntry *ce = nncache_probe(nncache, cb.hash);
+                    if (ce) {
+
+                        tree_expand(t, leaf_id, ce->legal, ce->priors, ce->n_legal);
+                        tree_backprop(t, all_node_paths[qi], path_len, ce->q_value);
+                        tree_ht_insert(t, cb.hash, leaf_id);
+                        if (cache_ok) {
+                            if (leaf_id >= t->cb_cache_cap)
+                                tree_ensure_cb_cache(t, leaf_id + 1);
+                            if (leaf_id < t->cb_cache_cap) {
+                                t->cb_cache[leaf_id] = cb;
+                                t->cb_valid[leaf_id] = 1;
+                            }
+                        }
+                        continue;
+                    }
+                }
+            }
             /* Encode into pre-allocated buffer (bounds-checked) */
             if (n_leaves >= enc_capacity) {
-                /* Buffer full — treat remaining as terminal (skip encoding) */
+                /* Buffer full — use root Q as fallback (not 0.0 which biases toward draws) */
                 term_paths[n_terminals] = all_node_paths[qi];
                 term_path_lens[n_terminals] = path_len;
-                term_values[n_terminals] = 0.0;
+                term_values[n_terminals] = root_qs[board_indices[qi]];
                 n_terminals++;
                 continue;
             }
@@ -1468,13 +2379,17 @@ static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *
         PyList_SET_ITEM(paths_list, li, parr);
     }
 
-    /* leaf CBoard list (as PyCBoard objects) */
+    /* leaf CBoard list (as PyCBoard objects) + hash array */
     PyObject *cboard_type = (PyObject *)Py_TYPE(PyList_GET_ITEM(root_cbs_list, 0));
     PyObject *cb_list = PyList_New(n_leaves);
+    npy_intp hash_dims[1] = {n_leaves};
+    PyObject *hash_arr = PyArray_SimpleNew(1, hash_dims, NPY_UINT64);
+    uint64_t *hash_data = (uint64_t *)PyArray_DATA((PyArrayObject *)hash_arr);
     for (int32_t li = 0; li < n_leaves; li++) {
         PyCBoard *pycb = PyObject_New(PyCBoard, (PyTypeObject *)cboard_type);
         if (pycb) pycb->board = leaf_boards[li];
         PyList_SET_ITEM(cb_list, li, (PyObject *)pycb);
+        hash_data[li] = leaf_boards[li].hash;
     }
 
     /* All Python objects built successfully — now commit tree mutations. */
@@ -1490,10 +2405,457 @@ static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *
     Py_DECREF(board_idx_arr); Py_DECREF(root_ids_arr);
     Py_DECREF(forced_arr); Py_DECREF(enc_arr); Py_DECREF(root_qs_arr);
 
-    /* Return (n_leaves, need_eval, legal_list, leaf_ids, node_paths, leaf_cboards) */
-    PyObject *result = Py_BuildValue("(iNNNNN)",
-        (int)n_leaves, ne_arr, legal_list, lid_arr, paths_list, cb_list);
+    /* Return (n_leaves, need_eval, legal_list, leaf_ids, node_paths, leaf_cboards, leaf_hashes) */
+    PyObject *result = Py_BuildValue("(iNNNNNN)",
+        (int)n_leaves, ne_arr, legal_list, lid_arr, paths_list, cb_list, hash_arr);
     return result;
+}
+
+
+/*
+ * prepare_and_store(root_cbs, board_idx, root_ids, forced, c_scale, c_visit,
+ *                   c_puct, fpu_reduction, full_tree, enc_buf, root_qs[, nn_cache])
+ *
+ * Like prepare_gumbel_leaves but stores intermediate data (legal moves, node
+ * paths, hashes) in the tree object's StoredPrepState instead of building
+ * Python objects.  Returns just n_leaves (int).  Call finish_stored() after
+ * GPU eval to complete the expand+backprop step.
+ */
+static PyObject *MCTSTree_clear_stored(MCTSTreeObject *self, PyObject *Py_UNUSED(args)) {
+    StoredPrepState *s = &self->stored;
+    s->n_leaves = 0;
+    s->n_terminals = 0;
+    s->legal_flat_used = 0;
+    s->path_flat_used = 0;
+    s->term_path_flat_used = 0;
+    Py_RETURN_NONE;
+}
+
+static PyObject *MCTSTree_prepare_and_store(MCTSTreeObject *self, PyObject *args) {
+    PyObject *root_cbs_list, *enc_buf_obj, *root_qs_obj;
+    PyObject *board_idx_obj, *root_ids_obj, *forced_obj;
+    double c_scale, c_visit, c_puct, fpu_reduction;
+    int full_tree;
+    PyObject *nn_cache_obj = NULL;
+
+    if (!PyArg_ParseTuple(args, "OOOOddddpOO|O",
+                          &root_cbs_list, &board_idx_obj, &root_ids_obj, &forced_obj,
+                          &c_scale, &c_visit, &c_puct, &fpu_reduction, &full_tree,
+                          &enc_buf_obj, &root_qs_obj, &nn_cache_obj))
+        return NULL;
+
+    /* Parse numpy arrays */
+    PyArrayObject *board_idx_arr = (PyArrayObject *)PyArray_FROMANY(
+        board_idx_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *root_ids_arr = (PyArrayObject *)PyArray_FROMANY(
+        root_ids_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *forced_arr = (PyArrayObject *)PyArray_FROMANY(
+        forced_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *enc_arr = (PyArrayObject *)PyArray_FROMANY(
+        enc_buf_obj, NPY_FLOAT32, 4, 4, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE);
+    PyArrayObject *root_qs_arr = (PyArrayObject *)PyArray_FROMANY(
+        root_qs_obj, NPY_FLOAT64, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+
+    if (!board_idx_arr || !root_ids_arr || !forced_arr || !enc_arr || !root_qs_arr) {
+        Py_XDECREF(board_idx_arr); Py_XDECREF(root_ids_arr);
+        Py_XDECREF(forced_arr); Py_XDECREF(enc_arr); Py_XDECREF(root_qs_arr);
+        return NULL;
+    }
+
+    int32_t n_queries = (int32_t)PyArray_SIZE(root_ids_arr);
+    if ((int32_t)PyArray_SIZE(board_idx_arr) != n_queries ||
+        (int32_t)PyArray_SIZE(forced_arr) != n_queries) {
+        PyErr_SetString(PyExc_ValueError,
+            "board_indices, root_ids, and forced_actions must have equal length");
+        goto fail_parse;
+    }
+
+    Py_ssize_t n_roots = PyList_Size(root_cbs_list);
+    int32_t enc_capacity = (int32_t)PyArray_DIM(enc_arr, 0);
+    if (PyArray_DIM(enc_arr, 1) != 146 || PyArray_DIM(enc_arr, 2) != 8 || PyArray_DIM(enc_arr, 3) != 8) {
+        PyErr_SetString(PyExc_ValueError, "enc_buf must have shape (N, 146, 8, 8)");
+        goto fail_parse;
+    }
+
+    const int32_t *board_indices = (const int32_t *)PyArray_DATA(board_idx_arr);
+    const int32_t *root_ids = (const int32_t *)PyArray_DATA(root_ids_arr);
+    const int32_t *forced_actions = (const int32_t *)PyArray_DATA(forced_arr);
+    float *enc_data = (float *)PyArray_DATA(enc_arr);
+    const double *root_qs = (const double *)PyArray_DATA(root_qs_arr);
+
+    /* Bounds checks */
+    for (int32_t qi = 0; qi < n_queries; qi++) {
+        if (board_indices[qi] < 0 || board_indices[qi] >= (int32_t)n_roots) {
+            PyErr_Format(PyExc_IndexError, "board_indices[%d]=%d out of range", qi, board_indices[qi]);
+            goto fail_parse;
+        }
+        if (root_ids[qi] < 0 || root_ids[qi] >= self->tree.node_count) {
+            PyErr_Format(PyExc_IndexError, "root_ids[%d]=%d out of range", qi, root_ids[qi]);
+            goto fail_parse;
+        }
+    }
+
+    /* Pre-extract root CBoards */
+    CBoard *root_cboards_c = (CBoard *)malloc(n_roots * sizeof(CBoard));
+    if (!root_cboards_c) { PyErr_NoMemory(); goto fail_parse; }
+    for (int32_t bi = 0; bi < (int32_t)n_roots; bi++) {
+        PyCBoard *root_pycb = (PyCBoard *)PyList_GET_ITEM(root_cbs_list, bi);
+        root_cboards_c[bi] = root_pycb->board;
+    }
+
+    /* Seed CBoard cache with roots */
+    tree_ensure_cb_cache(&self->tree, self->tree.node_count);
+    for (int32_t qi = 0; qi < n_queries; qi++) {
+        int32_t rid = root_ids[qi];
+        if (rid >= 0 && rid < self->tree.cb_cache_cap) {
+            self->tree.cb_cache[rid] = root_cboards_c[board_indices[qi]];
+            self->tree.cb_valid[rid] = 1;
+        }
+    }
+
+    /* Extract NNCache */
+    NNCacheData *nncache = NULL;
+    if (nn_cache_obj != NULL && nn_cache_obj != Py_None &&
+        Py_TYPE(nn_cache_obj) == &PyNNCacheType)
+        nncache = &((PyNNCacheObject *)nn_cache_obj)->cache;
+
+    /* Ensure stored state has capacity */
+    StoredPrepState *s = &self->stored;
+    if (stored_ensure_cap(s, n_queries, n_queries) < 0) {
+        free(root_cboards_c); PyErr_NoMemory(); goto fail_parse;
+    }
+    /* Ensure flat buffers have reasonable initial capacity */
+    if (stored_ensure_legal_flat(s, n_queries * 40) < 0 ||
+        stored_ensure_path_flat(s, n_queries * 8) < 0 ||
+        stored_ensure_term_path_flat(s, n_queries * 8) < 0) {
+        free(root_cboards_c); PyErr_NoMemory(); goto fail_parse;
+    }
+
+    /* NOTE: we do NOT reset s->n_leaves etc here — this function appends
+     * to the stored state.  Call clear_stored() before starting a new batch. */
+
+    int32_t path_buf[512];
+    int32_t old_n_leaves = s->n_leaves;
+
+    /* Release GIL */
+    Py_BEGIN_ALLOW_THREADS
+
+    TreeData *t = &self->tree;
+    int cache_ok = (t->cb_cache != NULL);
+
+    for (int32_t qi = 0; qi < n_queries; qi++) {
+        int32_t path_len = tree_gumbel_collect_leaf(
+            t, root_ids[qi], forced_actions[qi],
+            c_scale, c_visit, c_puct, fpu_reduction, full_tree,
+            path_buf, 512);
+
+        int32_t leaf_id = path_buf[path_len - 1];
+
+        if (path_len <= 1) {
+            /* Terminal: root with no children */
+            int32_t ti = s->n_terminals;
+            stored_ensure_term_path_flat(s, s->term_path_flat_used + path_len);
+            s->term_path_offset[ti] = s->term_path_flat_used;
+            s->term_path_count[ti] = path_len;
+            memcpy(s->term_path_flat + s->term_path_flat_used, path_buf, path_len * sizeof(int32_t));
+            s->term_path_flat_used += path_len;
+            s->term_values[ti] = root_qs[board_indices[qi]];
+            s->n_terminals++;
+            continue;
+        }
+
+        /* CBoard replay */
+        CBoard cb;
+        int32_t replay_actions[512];
+        int32_t n_replay = 0;
+        int32_t found_cached = 0;
+
+        if (cache_ok) {
+            int32_t root_id = root_ids[qi];
+            int32_t nid = leaf_id;
+            while (nid >= 0 && nid != root_id && n_replay < 512) {
+                if (nid < t->cb_cache_cap && t->cb_valid[nid]) {
+                    cb = t->cb_cache[nid];
+                    found_cached = 1;
+                    break;
+                }
+                int32_t act = t->action_from_parent[nid];
+                if (act >= 0) replay_actions[n_replay++] = act;
+                nid = t->parent[nid];
+            }
+            if (!found_cached && nid == root_id &&
+                nid < t->cb_cache_cap && t->cb_valid[nid]) {
+                cb = t->cb_cache[nid];
+                found_cached = 1;
+            }
+        }
+        if (!found_cached) {
+            cb = root_cboards_c[board_indices[qi]];
+        }
+        for (int32_t ri = n_replay - 1; ri >= 0; ri--)
+            cboard_push_index(&cb, replay_actions[ri]);
+
+        if (cboard_is_game_over(&cb)) {
+            int32_t ti = s->n_terminals;
+            stored_ensure_term_path_flat(s, s->term_path_flat_used + path_len);
+            s->term_path_offset[ti] = s->term_path_flat_used;
+            s->term_path_count[ti] = path_len;
+            memcpy(s->term_path_flat + s->term_path_flat_used, path_buf, path_len * sizeof(int32_t));
+            s->term_path_flat_used += path_len;
+            s->term_values[ti] = (double)cboard_terminal_value(&cb);
+            s->n_terminals++;
+            continue;
+        }
+
+        /* Check transposition / NNCache */
+        if (!t->expanded[leaf_id]) {
+            int32_t existing = tree_ht_probe(t, cb.hash);
+            if (existing >= 0 && existing != leaf_id && t->expanded[existing]) {
+                int32_t n_ch = t->num_children[existing];
+                if (n_ch > 0) {
+                    int32_t ex_off = t->children_offset[existing];
+                    int32_t legal_buf[256];
+                    double prior_buf[256];
+                    int32_t n_copy = (n_ch <= 256) ? n_ch : 256;
+                    for (int32_t c = 0; c < n_copy; c++) {
+                        legal_buf[c] = t->child_action[ex_off + c];
+                        prior_buf[c] = t->prior[t->child_node[ex_off + c]];
+                    }
+                    tree_expand(t, leaf_id, legal_buf, prior_buf, n_copy);
+                } else {
+                    t->expanded[leaf_id] = 1;
+                }
+                double q = (t->N[existing] > 0) ? (t->W[existing] / (double)t->N[existing]) : 0.0;
+                tree_backprop(t, path_buf, path_len, q);
+                tree_ht_insert(t, cb.hash, leaf_id);
+                if (cache_ok) {
+                    if (leaf_id >= t->cb_cache_cap) tree_ensure_cb_cache(t, leaf_id + 1);
+                    if (leaf_id < t->cb_cache_cap) { t->cb_cache[leaf_id] = cb; t->cb_valid[leaf_id] = 1; }
+                }
+                continue;
+            }
+            if (nncache) {
+                NNCacheEntry *ce = nncache_probe(nncache, cb.hash);
+                if (ce) {
+                    tree_expand(t, leaf_id, ce->legal, ce->priors, ce->n_legal);
+                    tree_backprop(t, path_buf, path_len, ce->q_value);
+                    tree_ht_insert(t, cb.hash, leaf_id);
+                    if (cache_ok) {
+                        if (leaf_id >= t->cb_cache_cap) tree_ensure_cb_cache(t, leaf_id + 1);
+                        if (leaf_id < t->cb_cache_cap) { t->cb_cache[leaf_id] = cb; t->cb_valid[leaf_id] = 1; }
+                    }
+                    continue;
+                }
+            }
+        }
+
+        if (s->n_leaves >= enc_capacity) {
+            /* Buffer full — use root Q as fallback (not 0.0 which biases toward draws) */
+            int32_t ti = s->n_terminals;
+            stored_ensure_term_path_flat(s, s->term_path_flat_used + path_len);
+            s->term_path_offset[ti] = s->term_path_flat_used;
+            s->term_path_count[ti] = path_len;
+            memcpy(s->term_path_flat + s->term_path_flat_used, path_buf, path_len * sizeof(int32_t));
+            s->term_path_flat_used += path_len;
+            s->term_values[ti] = root_qs[board_indices[qi]];
+            s->n_terminals++;
+            continue;
+        }
+
+        /* Phase 1: save CBoard + metadata (defer encoding to parallel phase) */
+        int32_t li = s->n_leaves;
+        s->leaf_cboards[li] = cb;
+        s->leaf_ids[li] = leaf_id;
+        s->hashes[li] = cb.hash;
+
+        /* Generate legal moves and store flat */
+        BoardState bs;
+        cboard_to_boardstate(&cb, &bs);
+        int indices[256];
+        int count = 0;
+        if (bs.king_sq >= 0)
+            count = generate_legal_move_indices(&bs, indices);
+        stored_ensure_legal_flat(s, s->legal_flat_used + count);
+        s->legal_offset[li] = s->legal_flat_used;
+        s->legal_count[li] = count;
+        for (int32_t j = 0; j < count; j++)
+            s->legal_flat[s->legal_flat_used + j] = indices[j];
+        s->legal_flat_used += count;
+
+        /* Store node path flat */
+        stored_ensure_path_flat(s, s->path_flat_used + path_len);
+        s->path_offset[li] = s->path_flat_used;
+        s->path_count[li] = path_len;
+        memcpy(s->path_flat + s->path_flat_used, path_buf, path_len * sizeof(int32_t));
+        s->path_flat_used += path_len;
+
+        /* Cache CBoard */
+        if (cache_ok) {
+            if (leaf_id >= t->cb_cache_cap) tree_ensure_cb_cache(t, leaf_id + 1);
+            if (leaf_id < t->cb_cache_cap) { t->cb_cache[leaf_id] = cb; t->cb_valid[leaf_id] = 1; }
+        }
+
+        s->n_leaves++;
+    }
+
+    /* Backprop terminals */
+    for (int32_t ti = 0; ti < s->n_terminals; ti++) {
+        tree_backprop(t, s->term_path_flat + s->term_path_offset[ti],
+                      s->term_path_count[ti], s->term_values[ti]);
+    }
+
+    /* Phase 2: parallel encoding of all collected CBoards.
+     * Each position writes to a disjoint region of enc_data, so no sync needed. */
+    {
+        int32_t n_to_encode = s->n_leaves - old_n_leaves;
+        int32_t base = old_n_leaves;
+#ifdef _OPENMP
+        #pragma omp parallel for schedule(static) if(n_to_encode > 64)
+#endif
+        for (int32_t i = 0; i < n_to_encode; i++) {
+            int32_t li = base + i;
+            cboard_encode_146_into(&s->leaf_cboards[li], enc_data + li * 146 * 64);
+        }
+    }
+
+    Py_END_ALLOW_THREADS
+
+    free(root_cboards_c);
+    Py_DECREF(board_idx_arr); Py_DECREF(root_ids_arr);
+    Py_DECREF(forced_arr); Py_DECREF(enc_arr); Py_DECREF(root_qs_arr);
+
+    if (s->n_leaves == 0)
+        Py_RETURN_NONE;
+
+    return PyLong_FromLong(s->n_leaves);
+
+fail_parse:
+    Py_XDECREF(board_idx_arr); Py_XDECREF(root_ids_arr);
+    Py_XDECREF(forced_arr); Py_XDECREF(enc_arr); Py_XDECREF(root_qs_arr);
+    return NULL;
+}
+
+
+/*
+ * finish_stored(pol_logits_float32, wdl_logits_float32[, nn_cache])
+ *
+ * Uses stored state from prepare_and_store to do expand + backprop.
+ * Much faster than finish_gumbel_rep because no Python list parsing needed.
+ */
+static PyObject *MCTSTree_finish_stored(MCTSTreeObject *self, PyObject *args) {
+    PyObject *pol_obj, *wdl_obj;
+    PyObject *nn_cache_obj = NULL;
+
+    if (!PyArg_ParseTuple(args, "OO|O", &pol_obj, &wdl_obj, &nn_cache_obj))
+        return NULL;
+
+    PyArrayObject *pol_arr = (PyArrayObject *)PyArray_FROMANY(
+        pol_obj, NPY_FLOAT32, 2, 2, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *wdl_arr = (PyArrayObject *)PyArray_FROMANY(
+        wdl_obj, NPY_FLOAT32, 2, 2, NPY_ARRAY_C_CONTIGUOUS);
+
+    if (!pol_arr || !wdl_arr) {
+        Py_XDECREF(pol_arr); Py_XDECREF(wdl_arr);
+        return NULL;
+    }
+
+    StoredPrepState *s = &self->stored;
+    int32_t n_leaves = s->n_leaves;
+
+    if (n_leaves == 0) {
+        Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
+        Py_RETURN_NONE;
+    }
+
+    if (PyArray_DIM(pol_arr, 0) < n_leaves || PyArray_DIM(pol_arr, 1) != 4672 ||
+        PyArray_DIM(wdl_arr, 0) < n_leaves || PyArray_DIM(wdl_arr, 1) != 3) {
+        PyErr_SetString(PyExc_ValueError, "pol/wdl shape mismatch with stored n_leaves");
+        Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
+        return NULL;
+    }
+
+    const float *pol_data = (const float *)PyArray_DATA(pol_arr);
+    const float *wdl_data = (const float *)PyArray_DATA(wdl_arr);
+
+    NNCacheData *nncache = NULL;
+    if (nn_cache_obj != NULL && nn_cache_obj != Py_None &&
+        Py_TYPE(nn_cache_obj) == &PyNNCacheType)
+        nncache = &((PyNNCacheObject *)nn_cache_obj)->cache;
+
+    TreeData *t = &self->tree;
+
+    /* Release GIL for expand + backprop */
+    Py_BEGIN_ALLOW_THREADS
+
+    for (int32_t li = 0; li < n_leaves; li++) {
+        int32_t nid = s->leaf_ids[li];
+        const int32_t *legal = s->legal_flat + s->legal_offset[li];
+        int32_t n_legal = s->legal_count[li];
+        const int32_t *path = s->path_flat + s->path_offset[li];
+        int32_t path_len = s->path_count[li];
+
+        /* Expand if not already expanded */
+        if (!t->expanded[nid] && n_legal > 0) {
+            const float *logits = pol_data + li * 4672;
+
+            /* Softmax over legal moves */
+            double priors_stack[256];
+            double *priors = (n_legal <= 256) ? priors_stack
+                                               : (double *)malloc(n_legal * sizeof(double));
+            if (priors) {
+                double max_l = -1e30;
+                for (int32_t j = 0; j < n_legal; j++) {
+                    double v = (double)logits[legal[j]];
+                    if (v > max_l) max_l = v;
+                }
+                double sum = 0;
+                for (int32_t j = 0; j < n_legal; j++) {
+                    priors[j] = exp((double)logits[legal[j]] - max_l);
+                    sum += priors[j];
+                }
+                if (sum > 0) {
+                    double inv_sum = 1.0 / sum;
+                    for (int32_t j = 0; j < n_legal; j++) priors[j] *= inv_sum;
+                }
+
+                tree_expand(t, nid, legal, priors, n_legal);
+
+                /* Populate NNCache */
+                if (nncache && n_legal <= NNCACHE_MAX_LEGAL) {
+                    NNCacheEntry *ce = nncache_insert(nncache, s->hashes[li]);
+                    if (ce) {
+                        ce->n_legal = n_legal;
+                        memcpy(ce->legal, legal, n_legal * sizeof(int32_t));
+                        memcpy(ce->priors, priors, n_legal * sizeof(double));
+                        /* Compute Q from WDL */
+                        const float *wdl = wdl_data + li * 3;
+                        double wm2 = fmax(fmax((double)wdl[0], (double)wdl[1]), (double)wdl[2]);
+                        double ew = exp((double)wdl[0] - wm2), ed = exp((double)wdl[1] - wm2), el = exp((double)wdl[2] - wm2);
+                        double ws = ew + ed + el;
+                        ce->q_value = (ws > 0) ? (ew - el) / ws : 0.0;
+                    }
+                }
+
+                if (priors != priors_stack) free(priors);
+            }
+        }
+
+        /* Compute Q from WDL and backprop */
+        const float *wdl = wdl_data + li * 3;
+        double wm2 = fmax(fmax((double)wdl[0], (double)wdl[1]), (double)wdl[2]);
+        double ew = exp((double)wdl[0] - wm2), ed = exp((double)wdl[1] - wm2), el = exp((double)wdl[2] - wm2);
+        double ws = ew + ed + el;
+        double q = (ws > 0) ? (ew - el) / ws : 0.0;
+        tree_backprop(t, path, path_len, q);
+
+        /* Register in hash table */
+        tree_ht_insert(t, s->hashes[li], nid);
+    }
+
+    Py_END_ALLOW_THREADS
+
+    Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
+    Py_RETURN_NONE;
 }
 
 
@@ -1508,8 +2870,10 @@ static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *
  */
 static PyObject *MCTSTree_finish_gumbel_rep(MCTSTreeObject *self, PyObject *args) {
     PyObject *leaf_ids_obj, *legal_list, *pol_obj, *wdl_obj, *paths_list;
-    if (!PyArg_ParseTuple(args, "OOOOO",
-                          &leaf_ids_obj, &legal_list, &pol_obj, &wdl_obj, &paths_list))
+    PyObject *nn_cache_obj = NULL, *hashes_obj = NULL;
+    if (!PyArg_ParseTuple(args, "OOOOO|OO",
+                          &leaf_ids_obj, &legal_list, &pol_obj, &wdl_obj, &paths_list,
+                          &nn_cache_obj, &hashes_obj))
         return NULL;
 
     PyArrayObject *leaf_ids_arr = (PyArrayObject *)PyArray_FROMANY(
@@ -1604,6 +2968,21 @@ static PyObject *MCTSTree_finish_gumbel_rep(MCTSTreeObject *self, PyObject *args
         }
     }
 
+    /* Extract NN cache and hashes for population */
+    NNCacheData *nncache = NULL;
+    const uint64_t *leaf_hashes = NULL;
+    PyArrayObject *hashes_arr = NULL;
+    if (nn_cache_obj != NULL && nn_cache_obj != Py_None &&
+        Py_TYPE(nn_cache_obj) == &PyNNCacheType) {
+        nncache = &((PyNNCacheObject *)nn_cache_obj)->cache;
+    }
+    if (hashes_obj != NULL && hashes_obj != Py_None) {
+        hashes_arr = (PyArrayObject *)PyArray_FROMANY(
+            hashes_obj, NPY_UINT64, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+        if (hashes_arr)
+            leaf_hashes = (const uint64_t *)PyArray_DATA(hashes_arr);
+    }
+
     /* Release GIL for the pure-C expand + backprop loop. */
     Py_BEGIN_ALLOW_THREADS
 
@@ -1611,21 +2990,26 @@ static PyObject *MCTSTree_finish_gumbel_rep(MCTSTreeObject *self, PyObject *args
         int32_t nid = leaf_ids[li];
 
         /* Expand if not already expanded */
+        double priors_stack[256];
+        double *priors = NULL;
+        int32_t n_legal_expanded = 0;
+        const int32_t *legal_expanded = NULL;
+
         if (!t->expanded[nid] && pre_legal[li] && pre_legal_n[li] > 0) {
             const int32_t *legal = pre_legal[li];
             int32_t n_legal = pre_legal_n[li];
             const float *logits = pol_data + li * 4672;
 
             /* Softmax over legal moves */
-            double priors_stack[256];
-            double *priors = (n_legal <= 256) ? priors_stack
-                                              : (double *)malloc(n_legal * sizeof(double));
+            priors = (n_legal <= 256) ? priors_stack
+                                      : (double *)malloc(n_legal * sizeof(double));
             if (priors) {
                 for (int32_t j = 0; j < n_legal; j++)
                     priors[j] = (double)logits[legal[j]];
                 softmax_inplace(priors, n_legal);
                 tree_expand(t, nid, legal, priors, n_legal);
-                if (priors != priors_stack) free(priors);
+                legal_expanded = legal;
+                n_legal_expanded = n_legal;
             }
         }
 
@@ -1637,6 +3021,25 @@ static PyObject *MCTSTree_finish_gumbel_rep(MCTSTreeObject *self, PyObject *args
         double ew = exp(w - mx), ed = exp(d - mx), el = exp(l - mx);
         double s = ew + ed + el;
         double q_val = (s > 0.0) ? ((ew - el) / s) : 0.0;
+
+        /* Register in hash table for DAG transposition detection */
+        if (leaf_hashes) {
+            tree_ht_insert(t, leaf_hashes[li], nid);
+        }
+
+        /* Populate NN cache */
+        if (nncache && leaf_hashes && legal_expanded && n_legal_expanded > 0
+            && n_legal_expanded <= NNCACHE_MAX_LEGAL) {
+            NNCacheEntry *ce = nncache_insert(nncache, leaf_hashes[li]);
+            if (ce) {
+                memcpy(ce->legal, legal_expanded, n_legal_expanded * sizeof(int32_t));
+                memcpy(ce->priors, priors, n_legal_expanded * sizeof(double));
+                ce->n_legal = n_legal_expanded;
+                ce->q_value = q_val;
+            }
+        }
+
+        if (priors && priors != priors_stack) free(priors);
 
         /* Backprop along node path */
         if (pre_paths[li] && pre_path_lens[li] > 0) {
@@ -1655,11 +3058,320 @@ static PyObject *MCTSTree_finish_gumbel_rep(MCTSTreeObject *self, PyObject *args
     free(pre_path_lens); free(legal_refs); free(path_refs);
 
     Py_DECREF(leaf_ids_arr); Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
+    Py_XDECREF(hashes_arr);
     Py_RETURN_NONE;
 }
 
 
+/*
+ * start_gumbel_sims(root_cboards, root_ids, remaining_per_board,
+ *                   gumbels_per_board, root_priors, budget_remaining,
+ *                   root_qs, c_scale, c_visit, c_puct, fpu_reduction,
+ *                   full_tree, enc_buf[, nn_cache])
+ *
+ * Initializes the gumbel simulation state machine and runs until
+ * the first batch of positions needs GPU eval.
+ * Returns n_leaves (int) or None if simulation completed immediately.
+ */
+static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args) {
+    PyObject *root_cbs_list, *root_ids_obj, *remaining_list, *gumbels_list;
+    PyObject *priors_list, *budget_obj, *root_qs_obj, *enc_buf_obj;
+    double c_scale, c_visit, c_puct, fpu_reduction;
+    int full_tree;
+    PyObject *nn_cache_obj = NULL;
+
+    if (!PyArg_ParseTuple(args, "OOOOOOOddddpO|O",
+                          &root_cbs_list, &root_ids_obj, &remaining_list,
+                          &gumbels_list, &priors_list, &budget_obj, &root_qs_obj,
+                          &c_scale, &c_visit, &c_puct, &fpu_reduction, &full_tree,
+                          &enc_buf_obj, &nn_cache_obj))
+        return NULL;
+
+    int32_t n_boards = (int32_t)PyList_Size(root_cbs_list);
+
+    /* Parse numpy arrays */
+    PyArrayObject *root_ids_arr = (PyArrayObject *)PyArray_FROMANY(
+        root_ids_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *budget_arr = (PyArrayObject *)PyArray_FROMANY(
+        budget_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *root_qs_arr = (PyArrayObject *)PyArray_FROMANY(
+        root_qs_obj, NPY_FLOAT64, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *enc_arr = (PyArrayObject *)PyArray_FROMANY(
+        enc_buf_obj, NPY_FLOAT32, 4, 4, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE);
+
+    if (!root_ids_arr || !budget_arr || !root_qs_arr || !enc_arr) {
+        Py_XDECREF(root_ids_arr); Py_XDECREF(budget_arr);
+        Py_XDECREF(root_qs_arr); Py_XDECREF(enc_arr);
+        return NULL;
+    }
+
+    /* Free previous sim state */
+    GumbelSimState *g = &self->gsim;
+    gss_free(g);
+
+    /* Initialize */
+    g->n_boards = n_boards;
+    g->c_scale = c_scale;
+    g->c_visit = c_visit;
+    g->c_puct = c_puct;
+    g->fpu_reduction = fpu_reduction;
+    g->full_tree = full_tree;
+    g->allocated = 1;
+
+    /* Copy root_ids */
+    g->root_ids = (int32_t *)malloc(n_boards * sizeof(int32_t));
+    memcpy(g->root_ids, PyArray_DATA(root_ids_arr), n_boards * sizeof(int32_t));
+
+    /* Copy budget_remaining */
+    g->budget_remaining = (int32_t *)malloc(n_boards * sizeof(int32_t));
+    memcpy(g->budget_remaining, PyArray_DATA(budget_arr), n_boards * sizeof(int32_t));
+
+    /* Copy root_qs */
+    g->root_qs = (double *)malloc(n_boards * sizeof(double));
+    memcpy(g->root_qs, PyArray_DATA(root_qs_arr), n_boards * sizeof(double));
+
+    /* Copy root CBoards */
+    g->root_cboards = (CBoard *)malloc(n_boards * sizeof(CBoard));
+    for (int32_t i = 0; i < n_boards; i++) {
+        PyCBoard *pycb = (PyCBoard *)PyList_GET_ITEM(root_cbs_list, i);
+        g->root_cboards[i] = pycb->board;
+    }
+
+    /* Copy root priors (n_boards * POLICY_SIZE) */
+    g->root_priors = (double *)calloc(n_boards * GSS_POLICY_SIZE, sizeof(double));
+    for (int32_t i = 0; i < n_boards; i++) {
+        PyArrayObject *pri = (PyArrayObject *)PyArray_FROMANY(
+            PyList_GET_ITEM(priors_list, i), NPY_FLOAT64, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+        if (pri) {
+            memcpy(g->root_priors + i * GSS_POLICY_SIZE, PyArray_DATA(pri),
+                   GSS_POLICY_SIZE * sizeof(double));
+            Py_DECREF(pri);
+        }
+    }
+
+    /* Copy gumbels (n_boards * POLICY_SIZE) */
+    g->gumbels = (double *)calloc(n_boards * GSS_POLICY_SIZE, sizeof(double));
+    for (int32_t i = 0; i < n_boards; i++) {
+        PyObject *item = PyList_GET_ITEM(gumbels_list, i);
+        if (item != Py_None) {
+            PyArrayObject *garr = (PyArrayObject *)PyArray_FROMANY(
+                item, NPY_FLOAT64, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+            if (garr) {
+                memcpy(g->gumbels + i * GSS_POLICY_SIZE, PyArray_DATA(garr),
+                       GSS_POLICY_SIZE * sizeof(double));
+                Py_DECREF(garr);
+            }
+        }
+    }
+
+    /* Parse remaining_per_board into flat array */
+    g->cands_offset = (int32_t *)malloc(n_boards * sizeof(int32_t));
+    g->cands_count = (int32_t *)malloc(n_boards * sizeof(int32_t));
+    int32_t total_cands = 0;
+    for (int32_t i = 0; i < n_boards; i++) {
+        PyObject *item = PyList_GET_ITEM(remaining_list, i);
+        if (item == Py_None) {
+            g->cands_offset[i] = total_cands;
+            g->cands_count[i] = 0;
+        } else {
+            Py_ssize_t len = PyList_Size(item);
+            g->cands_offset[i] = total_cands;
+            g->cands_count[i] = (int32_t)len;
+            total_cands += (int32_t)len;
+        }
+    }
+    g->cands_flat_cap = total_cands > 0 ? total_cands : 1;
+    g->cands_flat = (int32_t *)malloc(g->cands_flat_cap * sizeof(int32_t));
+    for (int32_t i = 0; i < n_boards; i++) {
+        PyObject *item = PyList_GET_ITEM(remaining_list, i);
+        if (item != Py_None) {
+            int32_t off = g->cands_offset[i];
+            for (Py_ssize_t j = 0; j < PyList_Size(item); j++) {
+                g->cands_flat[off + j] = (int32_t)PyLong_AsLong(PyList_GET_ITEM(item, j));
+            }
+        }
+    }
+
+    /* Allocate helper arrays */
+    g->visits_per_action = (int32_t *)calloc(n_boards, sizeof(int32_t));
+    g->active = (int32_t *)malloc(n_boards * sizeof(int32_t));
+    g->q_board_idx = NULL;
+    g->q_root_ids = NULL;
+    g->q_forced = NULL;
+    g->q_cap = 0;
+
+    /* Encoding buffer (strong ref to keep alive) */
+    g->enc_data = (float *)PyArray_DATA(enc_arr);
+    g->enc_capacity = (int32_t)PyArray_DIM(enc_arr, 0);
+    Py_INCREF(enc_arr);
+    g->enc_arr_ref = (PyObject *)enc_arr;
+
+    /* NNCache (strong ref to keep alive) */
+    g->nncache = NULL;
+    g->nncache_ref = NULL;
+    if (nn_cache_obj != NULL && nn_cache_obj != Py_None &&
+        Py_TYPE(nn_cache_obj) == &PyNNCacheType) {
+        g->nncache = &((PyNNCacheObject *)nn_cache_obj)->cache;
+        Py_INCREF(nn_cache_obj);
+        g->nncache_ref = nn_cache_obj;
+    }
+
+    /* Seed CBoard cache */
+    tree_ensure_cb_cache(&self->tree, self->tree.node_count);
+    for (int32_t i = 0; i < n_boards; i++) {
+        int32_t rid = g->root_ids[i];
+        if (rid >= 0 && rid < self->tree.cb_cache_cap) {
+            self->tree.cb_cache[rid] = g->root_cboards[i];
+            self->tree.cb_valid[rid] = 1;
+        }
+    }
+
+    Py_DECREF(root_ids_arr);
+    Py_DECREF(budget_arr);
+    Py_DECREF(root_qs_arr);
+    Py_DECREF(enc_arr);  /* PyArray_FROMANY ref; strong ref held in g->enc_arr_ref */
+
+    /* Reset stored state */
+    StoredPrepState *s = &self->stored;
+    s->n_leaves = 0;
+    s->n_terminals = 0;
+    s->legal_flat_used = 0;
+    s->path_flat_used = 0;
+    s->term_path_flat_used = 0;
+
+    /* Begin first halving round */
+    g->phase = 1;
+    if (gss_begin_round(g) == 0) {
+        g->phase = 2;
+        Py_RETURN_NONE;
+    }
+
+    /* Run simulation until GPU eval needed */
+    int32_t n_leaves_start;
+    Py_BEGIN_ALLOW_THREADS
+    n_leaves_start = gss_step(&self->tree, s, g, g->enc_data);
+    Py_END_ALLOW_THREADS
+
+    if (n_leaves_start == 0) {
+        g->phase = 2;
+        Py_RETURN_NONE;
+    }
+
+    return PyLong_FromLong(n_leaves_start);
+}
+
+
+/*
+ * continue_gumbel_sims(pol_logits, wdl_logits)
+ *
+ * Feed GPU eval results back and continue simulation.
+ * Returns n_leaves (int) for next GPU eval, or None if done.
+ */
+static PyObject *MCTSTree_continue_gumbel_sims(MCTSTreeObject *self, PyObject *args) {
+    PyObject *pol_obj, *wdl_obj;
+
+    if (!PyArg_ParseTuple(args, "OO", &pol_obj, &wdl_obj))
+        return NULL;
+
+    PyArrayObject *pol_arr = (PyArrayObject *)PyArray_FROMANY(
+        pol_obj, NPY_FLOAT32, 2, 2, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *wdl_arr = (PyArrayObject *)PyArray_FROMANY(
+        wdl_obj, NPY_FLOAT32, 2, 2, NPY_ARRAY_C_CONTIGUOUS);
+
+    if (!pol_arr || !wdl_arr) {
+        Py_XDECREF(pol_arr); Py_XDECREF(wdl_arr);
+        return NULL;
+    }
+
+    GumbelSimState *g = &self->gsim;
+    StoredPrepState *s = &self->stored;
+
+    if (g->phase != 1) {
+        PyErr_SetString(PyExc_RuntimeError, "continue_gumbel_sims called but simulation not in needs_eval state");
+        Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
+        return NULL;
+    }
+
+    const float *pol_data = (const float *)PyArray_DATA(pol_arr);
+    const float *wdl_data = (const float *)PyArray_DATA(wdl_arr);
+
+    /* Finish batch (expand + backprop) and continue simulation */
+    Py_BEGIN_ALLOW_THREADS
+
+    gss_finish_batch(&self->tree, s, g->nncache, pol_data, wdl_data);
+
+    /* Reset stored state for next batch */
+    s->n_leaves = 0;
+    s->n_terminals = 0;
+    s->legal_flat_used = 0;
+    s->path_flat_used = 0;
+    s->term_path_flat_used = 0;
+
+    Py_END_ALLOW_THREADS
+
+    Py_DECREF(pol_arr);
+    Py_DECREF(wdl_arr);
+
+    /* Continue simulation */
+    int32_t n_leaves_cont;
+    Py_BEGIN_ALLOW_THREADS
+    n_leaves_cont = gss_step(&self->tree, s, g, g->enc_data);
+    Py_END_ALLOW_THREADS
+
+    if (n_leaves_cont == 0) {
+        g->phase = 2;
+        Py_RETURN_NONE;
+    }
+
+    return PyLong_FromLong(n_leaves_cont);
+}
+
+
+/*
+ * get_gumbel_remaining() -> list[list[int]]
+ *
+ * After simulation completes, get the remaining candidates per board.
+ */
+static PyObject *MCTSTree_get_gumbel_remaining(MCTSTreeObject *self, PyObject *Py_UNUSED(args)) {
+    GumbelSimState *g = &self->gsim;
+    if (!g->allocated) {
+        PyErr_SetString(PyExc_RuntimeError, "No gumbel simulation state");
+        return NULL;
+    }
+    PyObject *result = PyList_New(g->n_boards);
+    for (int32_t i = 0; i < g->n_boards; i++) {
+        int32_t off = g->cands_offset[i];
+        int32_t cnt = g->cands_count[i];
+        PyObject *lst = PyList_New(cnt);
+        for (int32_t j = 0; j < cnt; j++) {
+            PyList_SET_ITEM(lst, j, PyLong_FromLong(g->cands_flat[off + j]));
+        }
+        PyList_SET_ITEM(result, i, lst);
+    }
+    return result;
+}
+
+
+/* find_child(node_id, action) -> child_node_id or -1 */
+static PyObject *MCTSTree_find_child(MCTSTreeObject *self, PyObject *args) {
+    int32_t node_id, action;
+    if (!PyArg_ParseTuple(args, "ii", &node_id, &action))
+        return NULL;
+    TreeData *t = &self->tree;
+    if (node_id < 0 || node_id >= t->node_count)
+        return PyLong_FromLong(-1);
+    int32_t n_ch = t->num_children[node_id];
+    int32_t off = t->children_offset[node_id];
+    for (int32_t i = 0; i < n_ch; i++) {
+        if (t->child_action[off + i] == action)
+            return PyLong_FromLong(t->child_node[off + i]);
+    }
+    return PyLong_FromLong(-1);
+}
+
 static PyMethodDef MCTSTree_methods[] = {
+    {"find_child", (PyCFunction)MCTSTree_find_child, METH_VARARGS,
+     "find_child(node_id, action) -> child_node_id or -1"},
     {"add_root", (PyCFunction)MCTSTree_add_root, METH_VARARGS,
      "add_root(N, W) -> int node_id"},
     {"expand", (PyCFunction)MCTSTree_expand, METH_VARARGS,
@@ -1678,8 +3390,20 @@ static PyMethodDef MCTSTree_methods[] = {
      "gumbel_collect_leaves(root_ids, forced_actions, c_scale, c_visit, c_puct, fpu_reduction, full_tree)"},
     {"prepare_gumbel_leaves", (PyCFunction)MCTSTree_prepare_gumbel_leaves, METH_VARARGS,
      "prepare_gumbel_leaves(root_cbs, board_idx, root_ids, forced, c_scale, c_visit, c_puct, fpu, full_tree, enc_buf, root_qs)"},
+    {"clear_stored", (PyCFunction)MCTSTree_clear_stored, METH_NOARGS,
+     "clear_stored() -> None. Reset stored state for prepare_and_store."},
+    {"prepare_and_store", (PyCFunction)MCTSTree_prepare_and_store, METH_VARARGS,
+     "prepare_and_store(...) -> n_leaves or None. Appends to stored state for finish_stored."},
+    {"finish_stored", (PyCFunction)MCTSTree_finish_stored, METH_VARARGS,
+     "finish_stored(pol, wdl[, nn_cache]) -> None. Uses stored state from prepare_and_store."},
     {"finish_gumbel_rep", (PyCFunction)MCTSTree_finish_gumbel_rep, METH_VARARGS,
      "finish_gumbel_rep(leaf_ids, legal_list, pol_logits, wdl_logits, node_paths)"},
+    {"start_gumbel_sims", (PyCFunction)MCTSTree_start_gumbel_sims, METH_VARARGS,
+     "start_gumbel_sims(...) -> n_leaves or None. Start gumbel simulation state machine."},
+    {"continue_gumbel_sims", (PyCFunction)MCTSTree_continue_gumbel_sims, METH_VARARGS,
+     "continue_gumbel_sims(pol, wdl) -> n_leaves or None. Feed GPU results, continue sim."},
+    {"get_gumbel_remaining", (PyCFunction)MCTSTree_get_gumbel_remaining, METH_NOARGS,
+     "get_gumbel_remaining() -> list[list[int]]. Get remaining candidates after sim."},
     {"gumbel_score_candidates", (PyCFunction)MCTSTree_gumbel_score_candidates, METH_VARARGS,
      "gumbel_score_candidates(root_id, cands, gumbels, priors, c_scale, c_visit)"},
     {"get_children_visits", (PyCFunction)MCTSTree_get_children_visits, METH_VARARGS,
@@ -1977,6 +3701,8 @@ PyMODINIT_FUNC PyInit__mcts_tree(void) {
 
     if (PyType_Ready(&MCTSTreeType) < 0)
         return NULL;
+    if (PyType_Ready(&PyNNCacheType) < 0)
+        return NULL;
 
     PyObject *m = PyModule_Create(&mcts_tree_module);
     if (!m) return NULL;
@@ -1984,6 +3710,13 @@ PyMODINIT_FUNC PyInit__mcts_tree(void) {
     Py_INCREF(&MCTSTreeType);
     if (PyModule_AddObject(m, "MCTSTree", (PyObject *)&MCTSTreeType) < 0) {
         Py_DECREF(&MCTSTreeType);
+        Py_DECREF(m);
+        return NULL;
+    }
+
+    Py_INCREF(&PyNNCacheType);
+    if (PyModule_AddObject(m, "NNCache", (PyObject *)&PyNNCacheType) < 0) {
+        Py_DECREF(&PyNNCacheType);
         Py_DECREF(m);
         return NULL;
     }

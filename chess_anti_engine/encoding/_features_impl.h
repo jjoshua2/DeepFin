@@ -212,6 +212,15 @@ static uint64_t feat_piece_attacks(int sq, int piece_type, uint64_t occ) {
  * ================================================================ */
 
 static void feat_bb_to_plane(float *plane, uint64_t bb, int turn_white) {
+    /* Plane must be pre-zeroed. This only sets 1.0f bits. */
+    if (bb == 0) return;
+#if defined(__AVX2__)
+    /* Use the AVX2 bitboard→plane path (writes all 64 floats, not just set bits).
+     * This overwrites the pre-zeroed plane, which is fine — and avoids
+     * branch-heavy scalar bit extraction. */
+    if (turn_white) bitboard_to_plane_white(bb, plane);
+    else            bitboard_to_plane_black(bb, plane);
+#else
     int sq;
     for (uint64_t _bb = (bb); _bb; _bb &= _bb - 1) {
         sq = __builtin_ctzll(_bb);
@@ -219,6 +228,7 @@ static void feat_bb_to_plane(float *plane, uint64_t bb, int turn_white) {
         int row = turn_white ? r : (7 - r);
         plane[row * 8 + f] = 1.0f;
     }
+#endif
 }
 
 static uint64_t feat_king_zone(int king_sq, int color) {

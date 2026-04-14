@@ -292,6 +292,66 @@ static void init_byte_to_float_lut(void) {
 #define BB_PLANE_USE_LUT 0
 #endif
 
+#ifdef __AVX2__
+#include <immintrin.h>
+#define BB_PLANE_USE_AVX2 1
+#else
+#define BB_PLANE_USE_AVX2 0
+#endif
+
+#if BB_PLANE_USE_AVX2
+/* AVX2: expand one byte to 8 floats (0.0f or 1.0f) using SIMD.
+ * Processes the entire 64-float plane in 8 iterations of pure SIMD ops. */
+static const int32_t _avx2_bit_masks[8] __attribute__((aligned(32))) =
+    {1, 2, 4, 8, 16, 32, 64, 128};
+
+static inline void _avx2_byte_to_8floats(uint8_t byte, float *out) {
+    __m256i masks = _mm256_load_si256((const __m256i *)_avx2_bit_masks);
+    __m256i val = _mm256_set1_epi32(byte);
+    __m256i and_r = _mm256_and_si256(val, masks);
+    /* non-zero → all-ones mask */
+    __m256i cmp = _mm256_cmpeq_epi32(and_r, _mm256_setzero_si256());
+    __m256 result = _mm256_andnot_ps(_mm256_castsi256_ps(cmp),
+                                      _mm256_set1_ps(1.0f));
+    _mm256_storeu_ps(out, result);
+}
+
+static void bitboard_to_plane_white(uint64_t bb, float *out) {
+    if (bb == 0) {
+        _mm256_storeu_ps(out,      _mm256_setzero_ps());
+        _mm256_storeu_ps(out + 8,  _mm256_setzero_ps());
+        _mm256_storeu_ps(out + 16, _mm256_setzero_ps());
+        _mm256_storeu_ps(out + 24, _mm256_setzero_ps());
+        _mm256_storeu_ps(out + 32, _mm256_setzero_ps());
+        _mm256_storeu_ps(out + 40, _mm256_setzero_ps());
+        _mm256_storeu_ps(out + 48, _mm256_setzero_ps());
+        _mm256_storeu_ps(out + 56, _mm256_setzero_ps());
+        return;
+    }
+    const uint8_t *bytes = (const uint8_t *)&bb;
+    for (int r = 0; r < 8; r++)
+        _avx2_byte_to_8floats(bytes[r], out + r * 8);
+}
+
+static void bitboard_to_plane_black(uint64_t bb, float *out) {
+    if (bb == 0) {
+        _mm256_storeu_ps(out,      _mm256_setzero_ps());
+        _mm256_storeu_ps(out + 8,  _mm256_setzero_ps());
+        _mm256_storeu_ps(out + 16, _mm256_setzero_ps());
+        _mm256_storeu_ps(out + 24, _mm256_setzero_ps());
+        _mm256_storeu_ps(out + 32, _mm256_setzero_ps());
+        _mm256_storeu_ps(out + 40, _mm256_setzero_ps());
+        _mm256_storeu_ps(out + 48, _mm256_setzero_ps());
+        _mm256_storeu_ps(out + 56, _mm256_setzero_ps());
+        return;
+    }
+    const uint8_t *bytes = (const uint8_t *)&bb;
+    for (int r = 0; r < 8; r++)
+        _avx2_byte_to_8floats(bytes[7 - r], out + r * 8);
+}
+
+#else /* non-AVX2 path */
+
 static void bitboard_to_plane_white(uint64_t bb, float *out) {
     if (bb == 0) {
         memset(out, 0, 64 * sizeof(float));
@@ -323,6 +383,8 @@ static void bitboard_to_plane_black(uint64_t bb, float *out) {
             out[r * 8 + f] = (float)((bb >> ((7 - r) * 8 + f)) & 1);
 #endif
 }
+
+#endif /* BB_PLANE_USE_AVX2 */
 
 
 /* ================================================================
@@ -612,6 +674,7 @@ typedef struct {
     int8_t hist_turn[CBOARD_HISTORY_MAX];      /* side to move */
     int8_t hist_len;                           /* 0..7 valid history entries */
     int8_t hist_head;                          /* circular buffer write index */
+    uint16_t ply;                              /* total half-moves from game start */
 } CBoard;
 
 /* Reverse LUT: policy_index -> (from_sq, to_sq, promotion) in real coordinates.
@@ -679,6 +742,27 @@ static void init_policy_lut(void) {
 }
 
 /* Compute full Zobrist hash from CBoard state (for init, not incremental) */
+/* Check if EP capture is actually legal (enemy pawn adjacent to double-pushed pawn) */
+static int cboard_has_legal_ep(const CBoard *b) {
+    if (b->ep_square < 0) return 0;
+    /* The captured pawn is on the same rank as the side-to-move's pawns that could capture.
+     * EP square is where the capturing pawn lands.
+     * For white EP (ep on rank 5): captured pawn is on rank 4, capturing pawns on rank 4.
+     * For black EP (ep on rank 2): captured pawn is on rank 3, capturing pawns on rank 3. */
+    int ep = b->ep_square;
+    int capture_rank_sq = (b->turn == WHITE_C) ? (ep - 8) : (ep + 8);
+    /* Enemy pawns that could capture are on capture_rank_sq ± 1 file */
+    /* Actually: the capturing side is b->turn. Their pawns must be adjacent to the
+     * double-pushed pawn (which is at capture_rank_sq on the same file as ep). */
+    int ep_file = sq_file(ep);
+    /* Side-to-move pawns on the same rank as the captured pawn, adjacent file */
+    uint64_t our_pawns = b->bb[PAWN] & b->occ[b->turn];
+    uint64_t adjacent = 0;
+    if (ep_file > 0) adjacent |= sq_bit(capture_rank_sq - 1);
+    if (ep_file < 7) adjacent |= sq_bit(capture_rank_sq + 1);
+    return (our_pawns & adjacent) ? 1 : 0;
+}
+
 static uint64_t cboard_compute_hash(const CBoard *b) {
     uint64_t h = 0;
     for (int color = 0; color < 2; color++) {
@@ -692,7 +776,8 @@ static uint64_t cboard_compute_hash(const CBoard *b) {
     }
     if (b->turn == BLACK_C) h ^= ZOBRIST_TURN;
     h ^= ZOBRIST_CASTLING[b->castling & 0xF];
-    if (b->ep_square >= 0) h ^= ZOBRIST_EP[sq_file(b->ep_square)];
+    /* EP excluded from hash — improves transposition/cache hit rate.
+     * Repetition detection already strips EP separately. */
     return h;
 }
 
@@ -736,11 +821,8 @@ static void cboard_push(CBoard *b, int from_sq, int to_sq, int promotion) {
         /* Irreversible move: clear the hash stack (no repetition possible across these) */
         b->hash_stack_len = 0;
     } else {
-        /* Strip EP from the hash for repetition comparison -- matches python-chess
-         * is_repetition() which ignores EP, and from_board() hash_stack which
-         * omits EP.  The full hash (with EP) is kept in b->hash for Zobrist. */
+        /* Hash already excludes EP, so use it directly for repetition detection. */
         uint64_t rep_hash = b->hash;
-        if (b->ep_square >= 0) rep_hash ^= ZOBRIST_EP[sq_file(b->ep_square)];
         if (b->hash_stack_len < CBOARD_HASH_STACK_MAX)
             b->hash_stack[b->hash_stack_len++] = rep_hash;
     }
@@ -847,24 +929,21 @@ static void cboard_push(CBoard *b, int from_sq, int to_sq, int promotion) {
     h ^= ZOBRIST_CASTLING[old_castling & 0xF];
     h ^= ZOBRIST_CASTLING[b->castling & 0xF];
 
-    /* --- Hash: update EP --- */
-    if (old_ep >= 0) h ^= ZOBRIST_EP[sq_file(old_ep)];
+    /* EP excluded from hash for better transposition detection */
 
-    /* Update EP square */
+    /* Update EP square (always store for encoding, but hash only if legal) */
     b->ep_square = -1;
     if (is_pawn_move) {
         int diff = to_sq - from_sq;
         if (diff == 16 || diff == -16)
             b->ep_square = (int8_t)(from_sq + diff / 2);
     }
-    if (b->ep_square >= 0) h ^= ZOBRIST_EP[sq_file(b->ep_square)];
-
-    /* --- Hash: flip turn --- */
+    /* --- Hash: flip turn (do this before EP legal check since turn affects it) --- */
     h ^= ZOBRIST_TURN;
-    b->hash = h;
-
-    /* Flip turn */
     b->turn = (int8_t)them;
+
+    b->hash = h;
+    b->ply++;
 }
 
 /* Push by policy index -- decode index to move, then push */
@@ -934,44 +1013,65 @@ static int cboard_insufficient_material(const CBoard *b) {
     return 0;
 }
 
-/* Check for repetition: current hash (without EP) appears in hash_stack.
- * EP is excluded to match python-chess is_repetition() semantics. */
+/* Fast repetition: any prior occurrence (2-fold). Good for search pruning.
+ * Hash already excludes EP, matching python-chess is_repetition() semantics. */
 static int cboard_is_repetition(const CBoard *b) {
     uint64_t h = b->hash;
-    if (b->ep_square >= 0) h ^= ZOBRIST_EP[sq_file(b->ep_square)];
     for (int i = 0; i < b->hash_stack_len; i++) {
         if (b->hash_stack[i] == h) return 1;
     }
     return 0;
 }
 
-/* Check if game is over: no legal moves, 50-move rule, repetition, insufficient material */
+/* Strict repetition: 3-fold (current + 2 prior). Matches FIDE/python-chess rules. */
+static int cboard_is_threefold_repetition(const CBoard *b) {
+    uint64_t h = b->hash;
+    int count = 0;
+    for (int i = 0; i < b->hash_stack_len; i++) {
+        if (b->hash_stack[i] == h) {
+            count++;
+            if (count >= 2) return 1;  /* current + 2 prior = 3-fold */
+        }
+    }
+    return 0;
+}
+
+/* Check if game is over: no legal moves, 50-move rule, 3-fold repetition, insufficient material.
+ * Uses strict 3-fold (not 2-fold) to match FIDE/python-chess claim_draw rules. */
 static int cboard_is_game_over(const CBoard *b) {
     if (b->halfmove_clock >= 100) return 1; /* 50-move rule (claim draw) */
-    if (cboard_is_repetition(b)) return 1;  /* repetition draw */
+    if (cboard_is_threefold_repetition(b)) return 1;  /* 3-fold repetition */
     if (cboard_insufficient_material(b)) return 1;
     return !cboard_has_legal_moves(b);
 }
 
-/* Terminal value from side-to-move perspective.
- * Returns: 0.0 for draw, -1.0 for loss (checkmate). */
-static float cboard_terminal_value(const CBoard *b) {
-    /* Draw conditions */
-    if (b->halfmove_clock >= 100) return 0.0f;
-    if (cboard_is_repetition(b)) return 0.0f;
-    if (cboard_insufficient_material(b)) return 0.0f;
-    /* If no legal moves: check if king in check -> checkmate, else stalemate */
+/* Is the side-to-move's king in check? */
+static int cboard_in_check(const CBoard *b) {
     int us = b->turn, them = 1 - us;
     uint64_t us_kings = b->bb[KING] & b->occ[us];
-    if (!us_kings) return 0.0f;
+    if (!us_kings) return 0;
     int king_sq = lsb64(us_kings);
     uint64_t all = b->occ[0] | b->occ[1];
-    int in_check = is_attacked_by(king_sq, all,
+    return is_attacked_by(king_sq, all,
         b->bb[PAWN] & b->occ[them], b->bb[KNIGHT] & b->occ[them],
         b->bb[BISHOP] & b->occ[them], b->bb[ROOK] & b->occ[them],
         b->bb[QUEEN] & b->occ[them], b->bb[KING] & b->occ[them],
         them);
-    return in_check ? -1.0f : 0.0f; /* checkmate or stalemate */
+}
+
+static int cboard_is_checkmate(const CBoard *b) {
+    return !cboard_has_legal_moves(b) && cboard_in_check(b);
+}
+
+static int cboard_is_stalemate(const CBoard *b) {
+    return !cboard_has_legal_moves(b) && !cboard_in_check(b);
+}
+
+/* Terminal value from side-to-move perspective.
+ * Safe to call on any position — returns 0.0 if game is not over. */
+static float cboard_terminal_value(const CBoard *b) {
+    if (!cboard_is_game_over(b)) return 0.0f;
+    return cboard_is_checkmate(b) ? -1.0f : 0.0f;
 }
 
 /* Encode piece planes for current position only (no history).
@@ -1100,6 +1200,90 @@ static void cboard_fill_lc0_112(const CBoard *b, float *out) {
 
     /* All-ones bias */
     for (int i = 0; i < 64; i++) out[111*64 + i] = 1.0f;
+}
+
+/* Generate FEN string from board state.
+ * buf must be at least 100 bytes. Returns length written (excluding NUL). */
+static int cboard_to_fen(const CBoard *b, char *buf, int buf_size) {
+    const char *piece_chars = "PNBRQKpnbrqk";
+    int pos = 0;
+    for (int rank = 7; rank >= 0; rank--) {
+        int empty = 0;
+        for (int file = 0; file < 8; file++) {
+            int sq = rank * 8 + file;
+            uint64_t bit = 1ULL << sq;
+            int found = 0;
+            for (int color = 1; color >= 0; color--) {
+                if (!(b->occ[color] & bit)) continue;
+                for (int pt = 0; pt < 6; pt++) {
+                    if (b->bb[pt] & bit) {
+                        if (empty > 0) { buf[pos++] = '0' + empty; empty = 0; }
+                        buf[pos++] = piece_chars[pt + (color == BLACK_C ? 6 : 0)];
+                        found = 1;
+                        break;
+                    }
+                }
+                if (found) break;
+            }
+            if (!found) empty++;
+        }
+        if (empty > 0) buf[pos++] = '0' + empty;
+        if (rank > 0) buf[pos++] = '/';
+    }
+    buf[pos++] = ' ';
+    buf[pos++] = (b->turn == WHITE_C) ? 'w' : 'b';
+    buf[pos++] = ' ';
+    if (b->castling == 0) {
+        buf[pos++] = '-';
+    } else {
+        if (b->castling & 1) buf[pos++] = 'K';
+        if (b->castling & 2) buf[pos++] = 'Q';
+        if (b->castling & 4) buf[pos++] = 'k';
+        if (b->castling & 8) buf[pos++] = 'q';
+    }
+    buf[pos++] = ' ';
+    if (b->ep_square >= 0) {
+        /* Only emit EP if an enemy pawn can actually capture there */
+        int ep = b->ep_square;
+        uint64_t ep_bit = 1ULL << ep;
+        /* Pawns that could capture on ep_square: for white pawns attacking up,
+         * black pawns attacking down */
+        uint64_t attackers;
+        if (b->turn == WHITE_C) {
+            /* White to move, so black just pushed. White pawns capture ep. */
+            attackers = ((ep_bit >> 7) & 0xFEFEFEFEFEFEFEFEULL)
+                      | ((ep_bit >> 9) & 0x7F7F7F7F7F7F7F7FULL);
+        } else {
+            /* Black to move, white just pushed. Black pawns capture ep. */
+            attackers = ((ep_bit << 7) & 0x7F7F7F7F7F7F7F7FULL)
+                      | ((ep_bit << 9) & 0xFEFEFEFEFEFEFEFEULL);
+        }
+        /* "them" is the side that just moved; "turn" side has pawns that capture */
+        uint64_t our_pawns = b->bb[PAWN] & b->occ[b->turn];
+        if (our_pawns & attackers) {
+            buf[pos++] = 'a' + sq_file(ep);
+            buf[pos++] = '1' + sq_rank(ep);
+        } else {
+            buf[pos++] = '-';
+        }
+    } else {
+        buf[pos++] = '-';
+    }
+    int fullmove = b->ply / 2 + 1;
+    pos += snprintf(buf + pos, buf_size - pos, " %d %d", (int)b->halfmove_clock, fullmove);
+    buf[pos] = '\0';
+    return pos;
+}
+
+/* Return game result string: "1-0", "0-1", "1/2-1/2", or "*".
+ * buf must be at least 8 bytes. */
+static void cboard_result(const CBoard *b, char *buf) {
+    if (!cboard_is_game_over(b)) { strcpy(buf, "*"); return; }
+    if (cboard_is_checkmate(b)) {
+        strcpy(buf, (b->turn == WHITE_C) ? "0-1" : "1-0");
+        return;
+    }
+    strcpy(buf, "1/2-1/2");
 }
 
 /* ================================================================

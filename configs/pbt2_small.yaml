@@ -21,7 +21,7 @@ device: cuda
 iterations: 750
 replay_capacity: 5000000   # Hard cap
 replay_window_start: 20000   # Small start so early easy games evict by iter 10-15
-replay_window_max: 5000000   # Grow to full 5M (~2.5 GB per trial on disk)
+replay_window_max: 2000000
 replay_window_growth: 2500   # ~17 iters in buffer; LC0/AlphaZero use large windows for stability
 
 # Bootstrap: train initial net on all random games, then discard from window
@@ -32,8 +32,8 @@ worker_wheel_path: null  # Optional: built wheel to publish for remote worker se
 bootstrap_max_positions: 0   # 0 = load ALL positions (14.2M) — used by scripts/train_bootstrap.py
 bootstrap_train_steps: 0     # 0 = auto: train 1 epoch — used by scripts/train_bootstrap.py
 shared_shards_dir: null  # Disabled: start trials from bootstrap weights + fresh selfplay window
-salvage_seed_pool_dir: /home/josh/projects/chess/data/salvage_trial3  # Trial 3 iter 67: os_ema=210, step=6950
-salvage_restore_donor_config: true    # Copy donor LR (0.001) — single trial, no PBT perturbation needed
+salvage_seed_pool_dir: /home/josh/projects/chess/data/salvage_iter37  # Iter 37: os=328, 66 shards
+salvage_restore_donor_config: false   # Disabled: use GPBT-sampled LR (0.0003) not donor's 0.001
 salvage_restore_full_trainer_state: true  # Full optimizer + scheduler + step state
 salvage_restore_pid_state: true  # Copy PID controller state (regret, ema_winrate)
 salvage_reinit_volatility_heads: false  # Keep volatility heads from trial 3
@@ -59,7 +59,7 @@ stockfish:
   pid_enabled: true
   pid_target_winrate: 0.60
   pid_ema_alpha: 0.50      # EMA half-life ~1 iter — faster reaction with shorter iters
-  pid_deadzone: 0.10            # Tighten when pid_wr > 0.70; ease when pid_wr < 0.50.
+  pid_deadzone: 0.05            # Tighten when pid_wr > 0.65; ease when pid_wr < 0.55.
   pid_rate_limit: 0.10
   pid_min_games_between_adjust: 200  # Higher than games_per_iter so only the forced iteration-boundary adjust fires.
   pid_kp: 1.5
@@ -94,12 +94,12 @@ stockfish:
   pid_max_regret_ease_step: 0.002  # 2x tighten (was 5x) — minimal asymmetry, less oscillation
 
 selfplay:
-  games_per_iter: 400
+  games_per_iter: 800
   games_per_iter_start: 32  # One round of 8 workers × 4 games; fast sanity check.
   games_per_iter_ramp_iters: 5
-  selfplay_fraction: 0.70  # More selfplay = more robust learning, less dependence on SF difficulty
+  selfplay_fraction: 0.50  # 50/50 selfplay vs curriculum for stronger WDL signal
   selfplay_batch: 256   # 2 workers × 256 games each.
-  max_plies: 240
+  max_plies: 450
 
   temperature: 1.0       # Gumbel improved policy already provides exploration; T=1.0 avoids distorting the search target.
   temperature_drop_plies: 0
@@ -119,8 +119,8 @@ selfplay:
   random_start_plies: 2   # Fallback if book unavailable
 
   mcts: gumbel
-  mcts_simulations: 128
-  mcts_start_simulations: 128  # Full budget from start (KataGo-style: 75% full, 25% fast)
+  mcts_simulations: 256
+  mcts_start_simulations: 256  # Full budget from start (KataGo-style: 75% full, 25% fast)
   playout_cap_fraction: 0.25  # 25% get full sims, 75% get fast
   fast_simulations: 32
   fpu_reduction: 1.2    # LC0/KataGo FPU for non-root nodes
@@ -134,7 +134,7 @@ selfplay:
   syzygy_policy: false
 
   # Stockfish WDL confidence required to adjudicate max_plies timeouts as decisive.
-  timeout_adjudication_threshold: 0.95
+  timeout_adjudication_threshold: 0.99
 
   diff_focus_enabled: true
   diff_focus_q_weight: 4.8   # Pinned: top-5 median from Run 4
@@ -146,10 +146,10 @@ selfplay:
   hlgauss_sigma: 0.04
 
 train:
-  optimizer: cosmos_fast
-  lr: 0.001         # Trial 3 converged here; 0.002+ causes regression post-exploit.
+  optimizer: adamw
+  lr: 0.0003        # AdamW needs lower LR than cosmos_fast (which had lr_ratio=0.1).
   batch_size: 256   # Keep microbatch small enough for VRAM; use accumulation for the larger effective batch.
-  train_steps: 400  # Run 26 default; more training per iteration.
+  train_steps: 800  # Raised for 2M buffer; window_fraction gives ~781 steps at full size.
   train_window_fraction: 0.10  # Train on 10% of replay buffer per iter (steps = replay * 0.10 / batch_size).
   # With ~10k new positions/iter and buffer growing by 2500/iter, each position
   # survives ~50 iters in the buffer and gets trained ~5 times before eviction.
@@ -193,7 +193,7 @@ tune:
   # Disk usage controls
   # NOTE: PB2/PBT needs older checkpoints to be available for cloning/exploit.
   # Keeping too few checkpoints can cause missing-checkpoint restore errors.
-  tune_num_to_keep: 10              # keep last 10 checkpoints per trial
+  tune_num_to_keep: 3               # keep last 3 checkpoints per trial (disk space)
   tune_keep_last_experiments: 2     # keep last 2 experiments under work_dir/tune
 
   tune_scheduler: gpbt_pl
@@ -221,7 +221,7 @@ tune:
   distributed_inference_batch_wait_ms: 5.0
   distributed_inference_max_batch_per_slot: 2048
   distributed_inference_use_compile: true
-  distributed_pause_selfplay_during_training: true  # Alternate GPU: selfplay then training, no contention
+  distributed_pause_selfplay_during_training: false  # Overlap selfplay + training for ~20-30% wall-clock speedup
   distributed_worker_shared_cache_dir: /home/josh/projects/chess/runs/pbt2_small/server/worker_cache
   distributed_min_workers_per_trial: 1
   distributed_max_worker_delta_per_rebalance: 1
@@ -294,4 +294,4 @@ tune:
   # with only lr + w_wdl searched. Open up more dimensions to break plateau.
   #
   # Only pb2_bounds_* keys present here are searched; everything else is pinned.
-  pb2_bounds_lr: [0.0005, 0.002]  # Upper was 0.005; LR >0.003 destroys model in 1-2 iters post-exploit
+  pb2_bounds_lr: [0.0003, 0.0003]  # Pinned at 0.0003 for AdamW

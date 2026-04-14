@@ -276,6 +276,15 @@ static PyObject* PyCBoard_from_board(PyTypeObject *type, PyObject *args) {
     b->halfmove_clock = (uint8_t)(hmc > 255 ? 255 : hmc);
     Py_DECREF(val);
 
+    /* Fullmove number -> ply (matches python-chess Board.ply()) */
+    val = PyObject_GetAttrString(py_board, "fullmove_number");
+    if (!val) { Py_DECREF(self); return NULL; }
+    {
+        int fmn = (int)PyLong_AsLong(val);
+        Py_DECREF(val);
+        b->ply = (uint16_t)((fmn - 1) * 2 + (b->turn == BLACK_C ? 1 : 0));
+    }
+
     /* --- Compute Zobrist hash --- */
     b->hash = cboard_compute_hash(b);
 
@@ -471,6 +480,30 @@ static PyObject* PyCBoard_terminal_value(PyCBoard *self, PyObject *Py_UNUSED(arg
     return PyFloat_FromDouble((double)cboard_terminal_value(&self->board));
 }
 
+/* fen() -> str */
+static PyObject* PyCBoard_fen(PyCBoard *self, PyObject *Py_UNUSED(args)) {
+    char buf[128];
+    cboard_to_fen(&self->board, buf, sizeof(buf));
+    return PyUnicode_FromString(buf);
+}
+
+/* result() -> str */
+static PyObject* PyCBoard_result(PyCBoard *self, PyObject *Py_UNUSED(args)) {
+    char buf[16];
+    cboard_result(&self->board, buf);
+    return PyUnicode_FromString(buf);
+}
+
+/* is_checkmate() -> bool */
+static PyObject* PyCBoard_is_checkmate(PyCBoard *self, PyObject *Py_UNUSED(args)) {
+    return PyBool_FromLong(cboard_is_checkmate(&self->board));
+}
+
+/* is_stalemate() -> bool */
+static PyObject* PyCBoard_is_stalemate(PyCBoard *self, PyObject *Py_UNUSED(args)) {
+    return PyBool_FromLong(cboard_is_stalemate(&self->board));
+}
+
 /* legal_move_indices() -> numpy int32 array */
 static PyObject* PyCBoard_legal_move_indices(PyCBoard *self, PyObject *Py_UNUSED(args)) {
     BoardState bs;
@@ -572,6 +605,9 @@ static PyObject* PyCBoard_get_hist_len(PyCBoard *self, void *closure) {
 static PyObject* PyCBoard_get_hash_stack_len(PyCBoard *self, void *closure) {
     return PyLong_FromLong(self->board.hash_stack_len);
 }
+static PyObject* PyCBoard_get_ply(PyCBoard *self, void *closure) {
+    return PyLong_FromLong(self->board.ply);
+}
 
 static PyMethodDef PyCBoard_methods[] = {
     {"from_board", (PyCFunction)PyCBoard_from_board, METH_VARARGS | METH_CLASS,
@@ -587,6 +623,10 @@ static PyMethodDef PyCBoard_methods[] = {
      "Get terminal value (-1, 0)"},
     {"legal_move_indices", (PyCFunction)PyCBoard_legal_move_indices, METH_NOARGS,
      "Get sorted legal move policy indices"},
+    {"fen", (PyCFunction)PyCBoard_fen, METH_NOARGS, "FEN string"},
+    {"result", (PyCFunction)PyCBoard_result, METH_NOARGS, "Game result string"},
+    {"is_checkmate", (PyCFunction)PyCBoard_is_checkmate, METH_NOARGS, "Check if checkmate"},
+    {"is_stalemate", (PyCFunction)PyCBoard_is_stalemate, METH_NOARGS, "Check if stalemate"},
     {"encode_planes", (PyCFunction)PyCBoard_encode_planes, METH_NOARGS,
      "Encode as (112, 8, 8) float32 LC0 planes"},
     {"encode_146", (PyCFunction)PyCBoard_encode_146, METH_NOARGS,
@@ -612,6 +652,7 @@ static PyGetSetDef PyCBoard_getset[] = {
     {"zobrist_hash", (getter)PyCBoard_get_zobrist_hash, NULL, "Zobrist hash of current position", NULL},
     {"hist_len", (getter)PyCBoard_get_hist_len, NULL, "Number of history entries", NULL},
     {"hash_stack_len", (getter)PyCBoard_get_hash_stack_len, NULL, "Number of hash stack entries", NULL},
+    {"ply", (getter)PyCBoard_get_ply, NULL, "Half-moves from game start", NULL},
     {NULL}
 };
 

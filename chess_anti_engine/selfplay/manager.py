@@ -29,7 +29,6 @@ try:
     _HAS_GUMBEL_C = True
 except ImportError:
     _HAS_GUMBEL_C = False
-from chess_anti_engine.encoding import encode_position, encode_positions_batch
 from chess_anti_engine.moves import POLICY_SIZE, move_to_index, index_to_move, legal_move_mask
 from chess_anti_engine.moves.encode import legal_move_indices
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS, hlgauss_target
@@ -188,6 +187,11 @@ class BatchStats:
     curriculum_games: int = 0
     curriculum_adjudicated_games: int = 0
     curriculum_draw_games: int = 0
+    checkmate_games: int = 0
+    stalemate_games: int = 0
+    plies_win: int = 0
+    plies_draw: int = 0
+    plies_loss: int = 0
 
     # Adaptive difficulty PID diagnostics (optional)
     sf_nodes: int | None = None
@@ -220,6 +224,11 @@ class CompletedGameBatch:
     curriculum_games: int = 0
     curriculum_adjudicated_games: int = 0
     curriculum_draw_games: int = 0
+    checkmate_games: int = 0
+    stalemate_games: int = 0
+    plies_win: int = 0
+    plies_draw: int = 0
+    plies_loss: int = 0
 
 
 @dataclass
@@ -299,10 +308,11 @@ def play_batch(
         eval_impl = LocalModelEvaluator(model, device=device)
 
     boards = [make_starting_board(rng=rng, cfg=opening) for _ in range(batch_size)]
-    # Parallel CBoard state for C per-ply processing (Phase 2).
-    # Kept in sync with python-chess boards; used by batch_process_ply.
+    # Parallel CBoard state — primary board for hot-path ops (fen, game_over, ply, encoding).
+    # Use from_board (not from_raw) to preserve ply count and history from openings.
+    from chess_anti_engine.encoding._lc0_ext import CBoard as _CBoard
     from chess_anti_engine.encoding.cboard_encode import cboard_from_board_fast as _cb_fast
-    cboards = [_cb_fast(b) for b in boards]
+    cboards = [_CBoard.from_board(b) for b in boards]
     # Keep a copy of the starting position for tablebase replay after game ends.
     starting_boards = [b.copy() for b in boards] if game.syzygy_path else None
     done = [False] * batch_size
@@ -318,6 +328,15 @@ def play_batch(
 
     samples_per_game: list[list[_NetRecord]] = [[] for _ in range(batch_size)]
 
+    # NN eval cache — avoids redundant GPU evals for positions seen in MCTS
+    _nn_cache = None
+    _mcts_tree = None  # Persistent tree for cross-ply reuse
+    _root_ids: list[int] = [-1] * batch_size  # Per-game root node IDs
+    if _HAS_GUMBEL_C:
+        from chess_anti_engine.mcts._mcts_tree import NNCache as _NNCache, MCTSTree as _MCTSTree
+        _nn_cache = _NNCache(1 << 17)  # 131072 slots
+        _mcts_tree = _MCTSTree()
+
     SOFT_RESIGN_THRESHOLD = 0.05
     SOFT_RESIGN_CONSECUTIVE = 5
     consecutive_low_winrate: list[int] = [0] * batch_size
@@ -332,8 +351,11 @@ def play_batch(
     _st_draw = 0
     _st_sp_games = _st_sp_adj = _st_sp_draw = 0
     _st_cur_games = _st_cur_adj = _st_cur_draw = 0
+    _st_plies_win = _st_plies_draw = _st_plies_loss = 0
     _st_sf_d6_sum = 0.0
     _st_sf_d6_n = 0
+    _st_checkmate = 0
+    _st_stalemate = 0
 
     base_nodes = int(getattr(stockfish, "nodes", 0) or 0)
     terminal_eval_nodes = (5 * base_nodes) if base_nodes > 0 else 1000
@@ -342,11 +364,11 @@ def play_batch(
     if vs not in ("raw", "search"):
         vs = "raw"
 
-    def _sf_terminal_result(board: chess.Board, sf_res: StockfishResult | None) -> str:
+    def _sf_terminal_result(turn_is_white: bool, sf_res: StockfishResult | None) -> str:
         if sf_res is None or sf_res.wdl is None:
             return "1/2-1/2"
         wdl_stm = sf_res.wdl
-        if board.turn == chess.BLACK:
+        if not turn_is_white:
             wdl_white = np.array([float(wdl_stm[2]), float(wdl_stm[1]), float(wdl_stm[0])], dtype=np.float32)
         else:
             wdl_white = np.asarray(wdl_stm, dtype=np.float32)
@@ -361,11 +383,20 @@ def play_batch(
         nonlocal _st_w, _st_d, _st_l, _st_game_plies, _st_adjudicated, _st_draw
         nonlocal _st_sp_games, _st_sp_adj, _st_sp_draw
         nonlocal _st_cur_games, _st_cur_adj, _st_cur_draw
-        nonlocal _st_sf_d6_sum, _st_sf_d6_n
+        nonlocal _st_sf_d6_sum, _st_sf_d6_n, _st_checkmate, _st_stalemate
+        nonlocal _st_plies_win, _st_plies_draw, _st_plies_loss
 
         b = boards[i]
-        result = b.result(claim_draw=True)
-        _st_game_plies += int(len(b.move_stack))
+        cb = cboards[i]
+        result = cb.result()
+        _game_plies = int(cb.ply)
+        _st_game_plies += _game_plies
+        _is_cm = cb.is_checkmate()
+        _is_sm = cb.is_stalemate()
+        if _is_cm:
+            _st_checkmate += 1
+        elif _is_sm:
+            _st_stalemate += 1
 
         was_adjudicated = False
         if result == "*":
@@ -373,12 +404,23 @@ def play_batch(
             was_adjudicated = True
             try:
                 if isinstance(stockfish, StockfishPool):
-                    sf_res = stockfish.submit(b.fen(), nodes=int(terminal_eval_nodes)).result()
+                    sf_res = stockfish.submit(cb.fen(), nodes=int(terminal_eval_nodes)).result()
                 else:
-                    sf_res = stockfish.search(b.fen(), nodes=int(terminal_eval_nodes))
+                    sf_res = stockfish.search(cb.fen(), nodes=int(terminal_eval_nodes))
             except Exception:
                 sf_res = None
-            result = _sf_terminal_result(b, sf_res)
+            result = _sf_terminal_result(bool(cb.turn), sf_res)
+
+        # Debug: log unexpected short wins
+        if not selfplay_game[i] and result in ("1-0", "0-1") and _game_plies < int(game.max_plies) - 10:
+            outcome = b.outcome(claim_draw=True)
+            _term = outcome.termination.name if outcome else "adjudicated"
+            _log = logging.getLogger("chess_anti_engine.selfplay")
+            _log.warning(
+                "Short win: %s at %d plies (max=%d), term=%s, adj=%s, is_over=%s",
+                result, _game_plies, int(game.max_plies), _term,
+                was_adjudicated, cb.is_game_over(),
+            )
 
         records = samples_per_game[i]
 
@@ -473,6 +515,14 @@ def play_batch(
                 _st_l += 1
                 game_l = 1
 
+        if not selfplay_game[i]:
+            if game_w:
+                _st_plies_win += _game_plies
+            elif game_d:
+                _st_plies_draw += _game_plies
+            elif game_l:
+                _st_plies_loss += _game_plies
+
         n = len(records)
         ply_to_index = {int(rec.ply_index): idx for idx, rec in enumerate(records)}
 
@@ -517,7 +567,7 @@ def play_batch(
             else:
                 wdl = 2
 
-            total_plies_played = max(1, len(b.move_stack))
+            total_plies_played = max(1, int(cb.ply))
             moves_left = float(max(0, total_plies_played - int(rec.ply_index))) / max(1.0, float(game.max_plies))
 
             scalar_v = 1.0 if wdl == 0 else (0.0 if wdl == 1 else -1.0)
@@ -568,7 +618,7 @@ def play_batch(
                         w=game_w,
                         d=game_d,
                         l=game_l,
-                        total_game_plies=int(len(b.move_stack)),
+                        total_game_plies=_game_plies,
                         adjudicated_games=1 if was_adjudicated else 0,
                         total_draw_games=game_total_draws,
                         selfplay_games=game_selfplay_games,
@@ -577,6 +627,11 @@ def play_batch(
                         curriculum_games=game_curriculum_games,
                         curriculum_adjudicated_games=game_curriculum_adj,
                         curriculum_draw_games=game_curriculum_draws,
+                        checkmate_games=1 if _is_cm else 0,
+                        stalemate_games=1 if _is_sm else 0,
+                        plies_win=_game_plies if game_w else 0,
+                        plies_draw=_game_plies if game_d else 0,
+                        plies_loss=_game_plies if game_l else 0,
                     )
                 )
 
@@ -588,7 +643,7 @@ def play_batch(
     def _recycle_slot(i: int) -> None:
         nonlocal games_started
         boards[i] = make_starting_board(rng=rng, cfg=opening)
-        cboards[i] = _cb_fast(boards[i])
+        cboards[i] = _CBoard.from_board(boards[i])
         if starting_boards is not None:
             starting_boards[i] = boards[i].copy()
         done[i] = False
@@ -599,6 +654,7 @@ def play_batch(
         consecutive_low_winrate[i] = 0
         sf_resign_scale[i] = 1.0
         last_net_full[i] = True
+        _root_ids[i] = -1  # Reset tree reuse for new game
         games_started += 1
 
     # ── Network turn ──────────────────────────────────────────────────────────
@@ -607,7 +663,9 @@ def play_batch(
         if not net_idxs:
             return
 
-        xs_batch = encode_positions_batch([boards[i] for i in net_idxs], add_features=True)
+        xs_batch = np.empty((len(net_idxs), 146, 8, 8), dtype=np.float32)
+        for _j, _idx in enumerate(net_idxs):
+            xs_batch[_j] = cboards[_idx].encode_146()
         # Pad to bucket size to limit unique shapes for torch.compile
         _bsz = xs_batch.shape[0]
         _ROOT_BUCKETS = (32, 64, 128, 256, 512)
@@ -658,7 +716,7 @@ def play_batch(
         # Per-game temperature based on each game's own ply count.
         temps = [
             temperature_for_ply(
-                ply=len(boards[i].move_stack) // 2 + 1,
+                ply=cboards[i].ply // 2 + 1,
                 temperature=float(temp.temperature),
                 drop_plies=int(temp.drop_plies),
                 after=float(temp.after),
@@ -677,6 +735,7 @@ def play_batch(
             # temperature applied after search.  Maximizes GPU batch size.
             group = idxs
             sub_boards = [boards[net_idxs[j]] for j in group]
+            sub_cboards = [cboards[net_idxs[j]] for j in group]
             sub_temps = [temps[j] for j in group]
             sub_sims = [int(sims_per[j]) for j in group]
             sim_count = max(sub_sims)
@@ -689,7 +748,9 @@ def play_batch(
             if use_gumbel:
                 _gumbel_fn = _run_gumbel_root_many_c if _HAS_GUMBEL_C else run_gumbel_root_many
                 sub_noise = [per_game_noise[j] for j in group] if per_game_noise is not None else None
-                p_sub, a_sub, v_sub, m_sub = _gumbel_fn(
+                # Map group indices to game-level root IDs for tree reuse
+                sub_root_ids = [_root_ids[net_idxs[j]] for j in group] if _mcts_tree is not None else None
+                _gumbel_result = _gumbel_fn(
                     model,
                     sub_boards,
                     device=device,
@@ -700,7 +761,18 @@ def play_batch(
                     pre_wdl_logits=sub_wdl,
                     per_game_simulations=sub_sims,
                     per_game_add_noise=sub_noise,
+                    cboards=sub_cboards,
+                    nn_cache=_nn_cache,
+                    tree=_mcts_tree,
+                    root_node_ids=sub_root_ids,
                 )
+                # C version returns 6-tuple (with tree, root_ids), Python returns 4-tuple
+                p_sub, a_sub, v_sub, m_sub = _gumbel_result[:4]
+                # Store returned root IDs for tree reuse
+                if _mcts_tree is not None and len(_gumbel_result) >= 6:
+                    _ret_root_ids = _gumbel_result[5]
+                    for gi, jj in enumerate(group):
+                        _root_ids[net_idxs[jj]] = _ret_root_ids[gi]
             else:
                 _puct_fn = _run_mcts_many_c if _HAS_C_TREE else run_mcts_many
                 p_sub, a_sub, v_sub, m_sub = _puct_fn(
@@ -717,6 +789,7 @@ def play_batch(
                     evaluator=eval_impl,
                     pre_pol_logits=sub_pol,
                     pre_wdl_logits=sub_wdl,
+                    cboards=sub_cboards,
                 )
 
             # Re-select actions with per-game temperature from the
@@ -741,6 +814,13 @@ def play_batch(
                 actions[jj] = a
                 values_list[jj] = float(v)
                 masks_list[jj] = m
+                # Advance tree root to chosen move's child for next-ply reuse
+                if _mcts_tree is not None:
+                    game_idx = net_idxs[jj]
+                    rid = _root_ids[game_idx]
+                    if rid >= 0:
+                        child = _mcts_tree.find_child(rid, int(a))
+                        _root_ids[game_idx] = child  # -1 if not found
 
         # Run all games in one MCTS call with per-game sim budgets and noise.
         # Full-sim games get Gumbel noise for exploration; fast games don't
@@ -854,6 +934,7 @@ def play_batch(
 
                 move = index_to_move(int(a), board_before)
                 board_before.push(move)
+                cboards[idx].push_index(int(a))
 
                 d_raw = float(wdl_est[j][1])
                 rem = max(0.0, 1.0 - d_raw)
@@ -884,7 +965,7 @@ def play_batch(
                     )
                 )
 
-                if boards[idx].is_game_over():
+                if cboards[idx].is_game_over():
                     done[idx] = True
 
     # ── Stockfish annotation + opponent moves ─────────────────────────────────
@@ -897,7 +978,7 @@ def play_batch(
 
     def _submit_sf_queries(idxs: list[int]) -> dict[int, object]:
         """Submit SF queries to pool without blocking. Returns futures dict."""
-        return {idx: stockfish.submit(boards[idx].fen(), nodes=_eff_nodes(idx)) for idx in idxs}
+        return {idx: stockfish.submit(cboards[idx].fen(), nodes=_eff_nodes(idx)) for idx in idxs}
 
     def _finish_sf_annotation_and_moves(
         idxs: list[int], *, play_curriculum_moves: bool,
@@ -909,10 +990,10 @@ def play_batch(
         if futures is not None:
             results = {idx: futures[idx].result() for idx in idxs if idx in futures}
         elif isinstance(stockfish, StockfishPool):
-            futs = {idx: stockfish.submit(boards[idx].fen(), nodes=_eff_nodes(idx)) for idx in idxs}
+            futs = {idx: stockfish.submit(cboards[idx].fen(), nodes=_eff_nodes(idx)) for idx in idxs}
             results = {idx: fut.result() for idx, fut in futs.items()}
         else:
-            results = {idx: stockfish.search(boards[idx].fen(), nodes=_eff_nodes(idx)) for idx in idxs}
+            results = {idx: stockfish.search(cboards[idx].fen(), nodes=_eff_nodes(idx)) for idx in idxs}
         _process_sf_results(idxs, results=results, play_curriculum_moves=play_curriculum_moves)
 
     def _run_sf_annotation_and_moves(idxs: list[int], *, play_curriculum_moves: bool) -> None:
@@ -1040,14 +1121,22 @@ def play_batch(
                 regret_limit=regret_limit,
             )
 
-            # Sync CBoard BEFORE push (move_to_index needs pre-push board)
+            # Sync CBoard with opponent move
+            _opp_push_ok = False
             try:
                 _opp_move_idx = int(move_to_index(move_to_play, boards[idx]))
                 cboards[idx].push_index(_opp_move_idx)
+                _opp_push_ok = True
+                # Advance tree root through opponent's move
+                if _mcts_tree is not None and _root_ids[idx] >= 0:
+                    _root_ids[idx] = _mcts_tree.find_child(_root_ids[idx], _opp_move_idx)
             except Exception:
-                pass  # CBoard will be re-synced on recycle
+                pass
             boards[idx].push(move_to_play)
-            if boards[idx].is_game_over():
+            if not _opp_push_ok:
+                cboards[idx] = _CBoard.from_board(boards[idx])
+                _root_ids[idx] = -1  # Can't track tree through fallback
+            if cboards[idx].is_game_over():
                 done[idx] = True
 
     # ── Main game loop (rolling batch) ────────────────────────────────────────
@@ -1066,7 +1155,7 @@ def play_batch(
 
         # Mark games that hit max_plies or are over
         for i in active_idxs:
-            if not done[i] and (boards[i].is_game_over() or len(boards[i].move_stack) >= int(game.max_plies)):
+            if not done[i] and (cboards[i].is_game_over() or cboards[i].ply >= int(game.max_plies)):
                 done[i] = True
 
         active_idxs = [i for i in range(batch_size) if not finalized[i] and not done[i]]
@@ -1074,13 +1163,13 @@ def play_batch(
             # All active games are done — finalize them below, then check if we need more
             pass
 
-        net_idxs = [i for i in active_idxs if _is_network_turn(board_turn=boards[i].turn, network_color=network_color[i])]
+        net_idxs = [i for i in active_idxs if _is_network_turn(board_turn=cboards[i].turn, network_color=network_color[i])]
         if net_idxs:
             _t0 = time.time()
             _run_network_turn(net_idxs)
             _t_net += time.time() - _t0
 
-        all_opp_idxs = [i for i in active_idxs if (not done[i]) and boards[i].turn != network_color[i]]
+        all_opp_idxs = [i for i in active_idxs if (not done[i]) and cboards[i].turn != network_color[i]]
         selfplay_opp_idxs = [i for i in all_opp_idxs if selfplay_game[i] and not done[i]]
         curriculum_opp_idxs = [i for i in all_opp_idxs if not selfplay_game[i] and not done[i]]
 
@@ -1125,6 +1214,11 @@ def play_batch(
                 if games_started < target:
                     _recycle_slot(i)
 
+        # Reset tree when it gets too large and no roots reference old nodes
+        if _mcts_tree is not None and _mcts_tree.node_count() > 500_000:
+            if all(rid < 0 for rid in _root_ids):
+                _mcts_tree.reset()
+
     # ── Timing summary ─────────────────────────────────────────────────────────
     logging.getLogger("chess_anti_engine.worker").info(
         "play_batch timing: net=%.1fs sf=%.1fs (net %.0f%%, sf %.0f%%)",
@@ -1154,6 +1248,11 @@ def play_batch(
         curriculum_games=int(_st_cur_games),
         curriculum_adjudicated_games=int(_st_cur_adj),
         curriculum_draw_games=int(_st_cur_draw),
+        checkmate_games=int(_st_checkmate),
+        stalemate_games=int(_st_stalemate),
+        plies_win=int(_st_plies_win),
+        plies_draw=int(_st_plies_draw),
+        plies_loss=int(_st_plies_loss),
         sf_nodes=sf_nodes if sf_nodes > 0 else None,
         sf_nodes_next=None,
         pid_ema_winrate=None,
