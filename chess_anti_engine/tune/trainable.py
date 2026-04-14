@@ -142,10 +142,9 @@ def _resolve_pause_marker_path(*, config: dict, trial_dir: Path) -> Path:
     tune_root = trial_dir.parent
     raw_work_dir = config.get("work_dir")
     if isinstance(raw_work_dir, str) and raw_work_dir.strip():
-        work_dir = Path(raw_work_dir.strip()).expanduser()
-        if not work_dir.is_absolute():
-            work_dir = Path.cwd() / work_dir
-        tune_root = work_dir / "tune"
+        tune_root = Path(raw_work_dir.strip()).expanduser()
+        if not tune_root.is_absolute():
+            tune_root = Path.cwd() / tune_root
     raw = config.get("pause_file")
     if isinstance(raw, str) and raw.strip():
         p = Path(raw.strip())
