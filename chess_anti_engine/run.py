@@ -10,8 +10,6 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from chess_anti_engine.config import RunConfig, StockfishConfig
-
 from chess_anti_engine.model import (
     ModelConfig,
     build_model,
@@ -19,10 +17,7 @@ from chess_anti_engine.model import (
     reinit_volatility_head_parameters_,
     zero_policy_head_parameters_,
 )
-from chess_anti_engine.replay import DiskReplayBuffer, ReplayBuffer, balance_wdl
-from chess_anti_engine.replay.shard import iter_shard_paths, samples_to_arrays
-from chess_anti_engine.selfplay import play_batch
-from chess_anti_engine.selfplay.budget import progressive_mcts_simulations
+from chess_anti_engine.replay.shard import iter_shard_paths
 from chess_anti_engine.selfplay.config import (
     DiffFocusConfig,
     GameConfig,
@@ -30,10 +25,6 @@ from chess_anti_engine.selfplay.config import (
     SearchConfig,
     TemperatureConfig,
 )
-from chess_anti_engine.selfplay.opening import OpeningConfig
-from chess_anti_engine.stockfish import DifficultyPID, StockfishPool, StockfishUCI, pid_from_config
-from chess_anti_engine.train import Trainer, trainer_kwargs_from_config
-from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 from chess_anti_engine.tune.replay_exchange import _read_jsonl_rows
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 
@@ -254,377 +245,7 @@ def _run_salvage(args: argparse.Namespace) -> None:
         )
 
 
-def _run_single(args: argparse.Namespace) -> None:
-    device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
-    cfg = RunConfig(
-        iterations=int(args.iterations),
-        replay_capacity=int(args.replay_capacity),
-    )
-    cfg.work_dir = Path(args.work_dir)
-    cfg.seed = int(args.seed)
-    cfg.train.device = device
-    cfg.train.lr = float(args.lr)
-    cfg.train.batch_size = int(args.batch_size)
-    cfg.train.train_steps_per_iter = int(args.train_steps)
-    cfg.selfplay.games_per_iter = int(args.games_per_iter)
-    cfg.selfplay.selfplay_fraction = float(getattr(args, "selfplay_fraction", 0.0))
-    cfg.selfplay.temperature = float(args.temperature)
-    cfg.selfplay.temperature_drop_plies = int(args.temperature_drop_plies)
-    cfg.selfplay.temperature_after = float(args.temperature_after)
-    cfg.selfplay.temperature_decay_start_move = int(args.temperature_decay_start_move)
-    cfg.selfplay.temperature_decay_moves = int(args.temperature_decay_moves)
-    cfg.selfplay.temperature_endgame = float(args.temperature_endgame)
-    cfg.selfplay.max_plies = int(args.max_plies)
-    cfg.selfplay.opening_book_path = args.opening_book_path
-    cfg.selfplay.opening_book_max_plies = int(args.opening_book_max_plies)
-    cfg.selfplay.opening_book_max_games = int(args.opening_book_max_games)
-    cfg.selfplay.opening_book_prob = float(args.opening_book_prob)
-    cfg.selfplay.opening_book_path_2 = getattr(args, "opening_book_path_2", None)
-    cfg.selfplay.opening_book_max_plies_2 = int(getattr(args, "opening_book_max_plies_2", 16))
-    cfg.selfplay.opening_book_max_games_2 = int(getattr(args, "opening_book_max_games_2", 200_000))
-    cfg.selfplay.opening_book_mix_prob_2 = float(getattr(args, "opening_book_mix_prob_2", 0.0))
-    cfg.selfplay.random_start_plies = int(args.random_start_plies)
-    cfg.selfplay.sf_policy_temp = float(args.sf_policy_temp)
-    cfg.selfplay.sf_policy_label_smooth = float(args.sf_policy_label_smooth)
-    cfg.selfplay.timeout_adjudication_threshold = float(
-        getattr(args, "timeout_adjudication_threshold", cfg.selfplay.timeout_adjudication_threshold)
-    )
-    cfg.stockfish = StockfishConfig(
-        path=args.stockfish_path,
-        nodes=int(args.sf_nodes),
-        multipv=int(args.sf_multipv),
-        hash_mb=int(getattr(args, "sf_hash_mb", 16)),
-    )
-    cfg.stockfish.pid_enabled = bool(args.sf_pid_enabled)
-    cfg.stockfish.pid_target_winrate = float(args.sf_pid_target_winrate)
-    cfg.stockfish.pid_ema_alpha = float(args.sf_pid_ema_alpha)
-    cfg.stockfish.pid_deadzone = float(args.sf_pid_deadzone)
-    cfg.stockfish.pid_rate_limit = float(args.sf_pid_rate_limit)
-    cfg.stockfish.pid_min_games_between_adjust = int(args.sf_pid_min_games_between_adjust)
-    cfg.stockfish.pid_kp = float(args.sf_pid_kp)
-    cfg.stockfish.pid_ki = float(args.sf_pid_ki)
-    cfg.stockfish.pid_kd = float(args.sf_pid_kd)
-    cfg.stockfish.pid_integral_clamp = float(args.sf_pid_integral_clamp)
-    cfg.stockfish.pid_min_nodes = int(args.sf_pid_min_nodes)
-    cfg.stockfish.pid_max_nodes = int(args.sf_pid_max_nodes)
 
-    cfg.work_dir.mkdir(parents=True, exist_ok=True)
-    rng = np.random.default_rng(int(cfg.seed))
-
-    model = build_model(
-        ModelConfig(
-            kind=str(args.model),
-            embed_dim=int(args.embed_dim),
-            num_layers=int(args.num_layers),
-            num_heads=int(args.num_heads),
-            ffn_mult=float(args.ffn_mult),
-            use_smolgen=not bool(args.no_smolgen),
-            use_nla=bool(args.use_nla),
-            use_gradient_checkpointing=bool(args.gradient_checkpointing),
-        )
-    )
-    trainer_ctor = trainer_kwargs_from_config(
-        vars(args) | {"device": cfg.train.device, "use_amp": not bool(args.no_amp)},
-        log_dir=cfg.work_dir / "tb",
-    )
-    trainer = Trainer(model, **trainer_ctor)
-
-    # Growing sliding window
-    window_start = int(getattr(args, "replay_window_start", 100_000))
-    window_max = int(getattr(args, "replay_window_max", cfg.replay_capacity))
-    window_growth = int(getattr(args, "replay_window_growth", 10_000))
-    current_window = window_start
-    buf = DiskReplayBuffer(
-        current_window,
-        shard_dir=cfg.work_dir / "replay_shards",
-        rng=rng,
-        shuffle_cap=int(getattr(args, "shuffle_buffer_size", 20_000)),
-        shard_size=int(getattr(args, "shard_size", 1000)),
-        refresh_interval=int(getattr(args, "shuffle_refresh_interval", 5)),
-        refresh_shards=int(getattr(args, "shuffle_refresh_shards", 3)),
-        draw_cap_frac=float(getattr(args, "shuffle_draw_cap_frac", 0.90)),
-        wl_max_ratio=float(getattr(args, "shuffle_wl_max_ratio", 1.5)),
-    )
-
-    # On resume, DiskReplayBuffer discovers existing shards on disk. If the on-disk
-    # sample count already exceeds replay_window_start, keep the effective capacity
-    # large enough to avoid pruning old shards just because we restarted.
-    current_window = max(int(current_window), int(len(buf)))
-    buf.capacity = int(current_window)
-
-    # Load pre-trained bootstrap checkpoint (trained offline via scripts/train_bootstrap.py).
-    # Only load MODEL WEIGHTS — see trainable.py comment for why we skip optimizer/scheduler.
-    bootstrap_ckpt = getattr(args, "bootstrap_checkpoint", None)
-    if bootstrap_ckpt:
-        bp = Path(bootstrap_ckpt)
-        if bp.exists():
-            print(f"Loading pre-trained bootstrap model weights: {bp}")
-            ckpt_data = torch.load(str(bp), map_location=args.device)
-            model_sd = ckpt_data.get("model") or ckpt_data.get("model_state_dict") or ckpt_data
-            load_state_dict_tolerant(trainer.model, model_sd, label="bootstrap")
-            if bool(getattr(args, "bootstrap_zero_policy_heads", False)):
-                zeroed = zero_policy_head_parameters_(trainer.model)
-                if zeroed:
-                    print(f"Zeroed bootstrap policy heads: {', '.join(zeroed)}")
-            if bool(getattr(args, "bootstrap_reinit_volatility_heads", False)):
-                reinit = reinit_volatility_head_parameters_(trainer.model)
-                if reinit:
-                    print(f"Reinitialized bootstrap volatility heads: {', '.join(reinit)}")
-            del ckpt_data
-        else:
-            print(f"WARNING: bootstrap checkpoint not found: {bp}")
-
-    if int(args.sf_workers) > 1:
-        sf = StockfishPool(
-            path=cfg.stockfish.path,
-            nodes=cfg.stockfish.nodes,
-            num_workers=int(args.sf_workers),
-            multipv=int(getattr(cfg.stockfish, "multipv", 1)),
-            hash_mb=int(getattr(cfg.stockfish, "hash_mb", 16)),
-        )
-    else:
-        sf = StockfishUCI(
-            cfg.stockfish.path,
-            nodes=cfg.stockfish.nodes,
-            multipv=int(getattr(cfg.stockfish, "multipv", 1)),
-            hash_mb=int(getattr(cfg.stockfish, "hash_mb", 16)),
-        )
-
-    ckpt_path = cfg.work_dir / "ckpt.pt"
-    if ckpt_path.exists():
-        trainer.load(ckpt_path)
-
-    pid_state_path = cfg.work_dir / "pid_state.json"
-    pid_state = None
-    if pid_state_path.exists():
-        try:
-            pid_state = json.loads(pid_state_path.read_text(encoding="utf-8"))
-        except Exception:
-            pid_state = None
-
-    # Best-model tracking
-    best_state_path = cfg.work_dir / "best.json"
-    best_ckpt_path = cfg.work_dir / "best_ckpt.pt"
-    best_model_path = cfg.work_dir / "best_model.pt"
-
-    best_loss = float("inf")
-    if best_state_path.exists():
-        try:
-            d = json.loads(best_state_path.read_text(encoding="utf-8"))
-            best_loss = float(d.get("best_loss", d.get("loss", best_loss)))
-        except Exception:
-            pass
-
-    # Puzzle evaluation suite (optional overspecialization canary).
-    puzzle_suite = None
-    puzzle_interval = int(getattr(args, "puzzle_interval", 1))
-    puzzle_sims = int(getattr(args, "puzzle_simulations", 200))
-    if getattr(args, "puzzle_epd", None) and puzzle_interval > 0:
-        from chess_anti_engine.eval import load_epd
-        puzzle_suite = load_epd(args.puzzle_epd)
-
-    pid = None
-    if bool(getattr(cfg.stockfish, "pid_enabled", False)):
-        pid = pid_from_config(vars(args))
-        if pid_state is not None:
-            try:
-                pid.load_state_dict(pid_state)
-                if hasattr(sf, "set_nodes"):
-                    sf.set_nodes(int(pid.nodes))
-                else:
-                    setattr(sf, "nodes", int(pid.nodes))
-            except Exception:
-                pass
-
-    try:
-        for it in range(cfg.iterations):
-            base_sims = int(args.mcts_simulations)
-            sims = base_sims
-            if bool(getattr(args, "progressive_mcts", True)):
-                sims = progressive_mcts_simulations(
-                    int(getattr(trainer, "step", 0)),
-                    start=int(getattr(args, "mcts_start_simulations", 50)),
-                    max_sims=base_sims,
-                    ramp_steps=int(getattr(args, "mcts_ramp_steps", 10_000)),
-                    exponent=float(getattr(args, "mcts_ramp_exponent", 2.0)),
-                )
-
-            # Mini-batch selfplay: play games in small batches to limit memory
-            selfplay_batch = int(getattr(args, "selfplay_batch", 10))
-            total_positions = 0
-            total_w, total_d, total_l = 0, 0, 0
-            total_sf_d6 = 0.0
-            current_rand = float(pid.random_move_prob) if pid is not None else 0.0
-
-            opponent = OpponentConfig(
-                random_move_prob=current_rand,
-                topk_stage_end=float(getattr(args, "sf_pid_topk_stage_end", getattr(args, "sf_pid_random_move_stage_end", 0.5))),
-                topk_min=int(getattr(args, "sf_pid_topk_min", 1)),
-                suboptimal_wdl_regret_max=float(getattr(args, "sf_pid_suboptimal_wdl_regret_max", -1.0)),
-                suboptimal_wdl_regret_min=float(getattr(args, "sf_pid_suboptimal_wdl_regret_min", -1.0)),
-                random_move_prob_start=float(getattr(args, "sf_pid_random_move_prob_start", 1.0)),
-                random_move_prob_min=float(getattr(args, "sf_pid_random_move_prob_min", 0.0)),
-            )
-            temp_cfg = TemperatureConfig(
-                temperature=cfg.selfplay.temperature,
-                drop_plies=int(cfg.selfplay.temperature_drop_plies),
-                after=float(cfg.selfplay.temperature_after),
-                decay_start_move=int(cfg.selfplay.temperature_decay_start_move),
-                decay_moves=int(cfg.selfplay.temperature_decay_moves),
-                endgame=float(cfg.selfplay.temperature_endgame),
-            )
-            search_cfg = SearchConfig(
-                simulations=int(sims),
-                mcts_type=str(args.mcts),
-                playout_cap_fraction=float(args.playout_cap_fraction),
-                fast_simulations=int(args.fast_simulations),
-                fpu_reduction=float(getattr(args, "fpu_reduction", 1.2)),
-                fpu_at_root=float(getattr(args, "fpu_at_root", 1.0)),
-            )
-            opening_cfg = OpeningConfig(
-                opening_book_path=cfg.selfplay.opening_book_path,
-                opening_book_max_plies=int(cfg.selfplay.opening_book_max_plies),
-                opening_book_max_games=int(cfg.selfplay.opening_book_max_games),
-                opening_book_prob=float(cfg.selfplay.opening_book_prob),
-                opening_book_path_2=getattr(cfg.selfplay, "opening_book_path_2", None),
-                opening_book_max_plies_2=int(getattr(cfg.selfplay, "opening_book_max_plies_2", 16)),
-                opening_book_max_games_2=int(getattr(cfg.selfplay, "opening_book_max_games_2", 200_000)),
-                opening_book_mix_prob_2=float(getattr(cfg.selfplay, "opening_book_mix_prob_2", 0.0)),
-                random_start_plies=int(cfg.selfplay.random_start_plies),
-            )
-            diff_focus_cfg = DiffFocusConfig(
-                enabled=bool(getattr(args, "diff_focus_enabled", True)),
-                q_weight=float(getattr(args, "diff_focus_q_weight", 6.0)),
-                pol_scale=float(getattr(args, "diff_focus_pol_scale", 3.5)),
-                slope=float(getattr(args, "diff_focus_slope", 3.0)),
-                min_keep=float(getattr(args, "diff_focus_min", 0.025)),
-            )
-            game_cfg = GameConfig(
-                max_plies=cfg.selfplay.max_plies,
-                selfplay_fraction=float(getattr(cfg.selfplay, "selfplay_fraction", 0.0)),
-                sf_policy_temp=float(cfg.selfplay.sf_policy_temp),
-                sf_policy_label_smooth=float(cfg.selfplay.sf_policy_label_smooth),
-                timeout_adjudication_threshold=float(cfg.selfplay.timeout_adjudication_threshold),
-                volatility_source=str(getattr(args, "volatility_source", "raw")),
-                syzygy_path=args.syzygy_path,
-                syzygy_policy=bool(args.syzygy_policy),
-                categorical_bins=int(getattr(args, "categorical_bins", DEFAULT_CATEGORICAL_BINS)),
-                hlgauss_sigma=float(getattr(args, "hlgauss_sigma", 0.04)),
-            )
-            samples, sp_stats = play_batch(
-                trainer.model,
-                device=cfg.train.device,
-                rng=rng,
-                stockfish=sf,
-                games=selfplay_batch,
-                target_games=cfg.selfplay.games_per_iter,
-                opponent=opponent,
-                temp=temp_cfg,
-                search=search_cfg,
-                opening=opening_cfg,
-                diff_focus=diff_focus_cfg,
-                game=game_cfg,
-            )
-            total_positions += sp_stats.positions
-            total_w += sp_stats.w
-            total_d += sp_stats.d
-            total_l += sp_stats.l
-            total_sf_d6 += sp_stats.sf_eval_delta6 * sp_stats.games
-            if samples:
-                buf.add_many_arrays(samples_to_arrays(samples))
-            del samples
-
-            buf.flush()
-
-            if len(buf) == 0:
-                print(
-                    f"iter={it} step={getattr(trainer, 'step', 0)} sims={int(sims)} replay=0 pos_added=0 "
-                    "skipping train step because selfplay produced no policy samples"
-                )
-                continue
-
-            # KataGo-style sliding window: train on full buffer, steps = new_positions / batch.
-            steps = max(1, total_positions // cfg.train.batch_size)
-            metrics = trainer.train_steps(
-                buf,
-                batch_size=cfg.train.batch_size,
-                steps=steps,
-            )
-
-            # Update PID once per iteration (after training) so difficulty changes align
-            # to net updates rather than intra-iteration selfplay noise.
-            pid_ema = None
-            rand_next = None
-            sf_nodes_next = None
-            if pid is not None and (total_w + total_d + total_l) > 0:
-                upd = pid.observe(wins=total_w, draws=total_d, losses=total_l, force=True)
-                pid_ema = float(upd.ema_winrate)
-                rand_next = float(pid.random_move_prob)
-                sf_nodes_next = int(pid.nodes)
-                if hasattr(sf, "set_nodes"):
-                    sf.set_nodes(int(pid.nodes))
-                else:
-                    setattr(sf, "nodes", int(pid.nodes))
-
-                # Persist PID state so restarts resume at the same difficulty.
-                try:
-                    pid_state_path.write_text(
-                        json.dumps(pid.state_dict(), sort_keys=True, indent=2),
-                        encoding="utf-8",
-                    )
-                except Exception:
-                    pass
-
-            # Best model (by train loss)
-            cur_loss = float(metrics.loss)
-            if cur_loss < best_loss - 1e-12:
-                best_loss = cur_loss
-                trainer.save(best_ckpt_path)
-                trainer.export_swa(best_model_path)
-                best_state_path.write_text(
-                    json.dumps(
-                        {
-                            "best_loss": float(best_loss),
-                            "iter": int(it),
-                            "trainer_step": int(getattr(trainer, "step", 0)),
-                        },
-                        indent=2,
-                        sort_keys=True,
-                    ),
-                    encoding="utf-8",
-                )
-
-            # Puzzle evaluation (periodic overspecialization canary).
-            puzzle_str = ""
-            if puzzle_suite is not None and puzzle_interval > 0 and (it % puzzle_interval == 0):
-                from chess_anti_engine.eval import run_puzzle_eval
-                pr = run_puzzle_eval(
-                    trainer.model, puzzle_suite,
-                    device=cfg.train.device, mcts_simulations=puzzle_sims, rng=rng,
-                )
-                puzzle_str = f" puzzle={pr.correct}/{pr.total}({pr.accuracy:.1%})"
-                trainer.writer.add_scalar("eval/puzzle_accuracy", pr.accuracy, trainer.step)
-
-            # quick eval: reuse selfplay stats at current sf nodes
-            print(
-                f"iter={it} step={getattr(trainer, 'step', 0)} sims={int(sims)} replay={len(buf)} pos_added={total_positions} "
-                f"W/D/L={total_w}/{total_d}/{total_l} "
-                f"loss={metrics.loss:.4f} best={best_loss:.4f} pol={metrics.policy_loss:.4f} soft={metrics.soft_policy_loss:.4f} "
-                f"fut={metrics.future_policy_loss:.4f} wdl={metrics.wdl_loss:.4f} "
-                f"sf_move={metrics.sf_move_loss:.4f} sf_acc={metrics.sf_move_acc:.3f} sf_eval={metrics.sf_eval_loss:.4f} sf_d6={total_sf_d6 / max(1, cfg.selfplay.games_per_iter):.4f} "
-                f"cat={metrics.categorical_loss:.4f} vol={metrics.volatility_loss:.4f} sf_vol={metrics.sf_volatility_loss:.4f} ml={metrics.moves_left_loss:.4f} "
-                f"rand_prob={float(current_rand):.3f} rand_next={rand_next} sf_nodes_next={sf_nodes_next} pid_wr={pid_ema}"
-                + puzzle_str
-            )
-
-            trainer.save(ckpt_path)
-
-    finally:
-        sf.close()
-
-
-# Keys that are internal to the harness or need special handling -- NOT passed
-# through to Ray Tune per-trial config.
 _TUNE_CONFIG_DENYLIST = frozenset({
     "config",           # YAML path, not a tunable
     "resume",           # harness control
@@ -899,7 +520,7 @@ def main() -> None:
              "(e.g. 0.1 for 10 trials on a single 5090).",
     )
     ap.add_argument(
-        "--tune-scheduler", type=str, default="pb2", choices=["pb2", "pbt", "gpbt_pl", "asha"],
+        "--tune-scheduler", type=str, default="pb2", choices=["pb2", "pbt", "gpbt_pl", "asha", "none"],
         help=(
             "Tune scheduler: pb2 (default, sample-efficient for RL), "
             "pbt (vanilla population-based training), gpbt_pl (pairwise-learning "
@@ -1239,14 +860,13 @@ def main() -> None:
     if args.stockfish_path is None:
         raise SystemExit("--stockfish-path is required (or set stockfish.path in --config)")
 
-    if str(args.mode) == "single":
-        _run_single(args)
-        return
-
-    # Tune mode (default)
+    # Both "single" and "tune" go through run_tune — "single" just forces
+    # scheduler=none and num_samples=1 so there's no hyperparameter search.
     base = _build_tune_config_dict(args)
-    # Store YAML path so trainable can re-read config on --resume.
-    base["_yaml_config_path"] = str(Path(args.config).resolve())
+    base["_yaml_config_path"] = str(Path(args.config).resolve()) if args.config else None
+
+    if str(args.mode) == "single":
+        base["tune_scheduler"] = "none"
 
     from chess_anti_engine.tune.harness import run_tune
 
@@ -1256,7 +876,7 @@ def main() -> None:
     run_tune(
         base_config=base,
         work_dir=Path(args.work_dir),
-        num_samples=int(args.num_samples),
+        num_samples=1 if str(args.mode) == "single" else int(args.num_samples),
         metric=metric,
         mode=mode,
         resume=bool(args.resume),

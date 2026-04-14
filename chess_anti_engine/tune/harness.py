@@ -437,10 +437,14 @@ def run_tune(
         search_alg = None  # Scheduler handles search internally.
     elif scheduler_name == "asha":
         param_space, scheduler, search_alg = _build_asha(base_config, metric=metric, mode=mode)
+    elif scheduler_name == "none":
+        param_space = {**base_config}
+        scheduler = None
+        search_alg = None
     else:
         raise ValueError(
             f"Unsupported tune_scheduler={scheduler_name!r}. "
-            "Expected one of: 'pb2', 'pbt', 'gpbt_pl', 'asha'."
+            "Expected one of: 'pb2', 'pbt', 'gpbt_pl', 'asha', 'none'."
         )
 
     # ------------------------------------------------------------------

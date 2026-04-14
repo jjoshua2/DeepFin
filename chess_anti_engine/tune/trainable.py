@@ -1139,7 +1139,8 @@ def train_trial(config: dict):
         if bp.exists():
             print(f"[trial] Loading pre-trained bootstrap model weights: {bp}")
             ckpt_data = torch.load(str(bp), map_location=device)
-            load_state_dict_tolerant(trainer.model, ckpt_data["model"], label="bootstrap")
+            model_sd = ckpt_data.get("model") or ckpt_data.get("model_state_dict") or ckpt_data
+            load_state_dict_tolerant(trainer.model, model_sd, label="bootstrap")
             if bool(config.get("bootstrap_zero_policy_heads", False)):
                 zeroed = zero_policy_head_parameters_(trainer.model)
                 if zeroed:

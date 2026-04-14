@@ -221,7 +221,7 @@ tune:
   distributed_inference_batch_wait_ms: 5.0
   distributed_inference_max_batch_per_slot: 2048
   distributed_inference_use_compile: true
-  distributed_pause_selfplay_during_training: false  # Overlap selfplay + training for ~20-30% wall-clock speedup
+  distributed_pause_selfplay_during_training: false  # Compile done; overlap for speed
   distributed_worker_shared_cache_dir: /home/josh/projects/chess/runs/pbt2_small/server/worker_cache
   distributed_min_workers_per_trial: 1
   distributed_max_worker_delta_per_rebalance: 1
