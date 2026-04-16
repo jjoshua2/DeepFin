@@ -53,3 +53,7 @@ worker = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+filterwarnings = [
+    "ignore::DeprecationWarning:torch.jit",
+    "ignore::FutureWarning:copyreg",
+]

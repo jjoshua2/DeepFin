@@ -3,7 +3,6 @@ from __future__ import annotations
 import subprocess
 import threading
 from dataclasses import dataclass
-from typing import Optional
 
 import numpy as np
 
@@ -11,13 +10,13 @@ import numpy as np
 @dataclass
 class StockfishPV:
     move_uci: str
-    wdl: Optional[np.ndarray]  # (3,) float32 or None
+    wdl: np.ndarray | None  # (3,) float32 or None
 
 
 @dataclass
 class StockfishResult:
     bestmove_uci: str
-    wdl: Optional[np.ndarray]  # (3,) float32 or None (PV1)
+    wdl: np.ndarray | None  # (3,) float32 or None (PV1)
     pvs: list[StockfishPV]
 
 
@@ -66,8 +65,17 @@ class StockfishUCI:
                 self._send("quit")
             except Exception:
                 pass
+            for stream in (self.proc.stdin, self.proc.stdout):
+                try:
+                    stream.close()
+                except Exception:
+                    pass
             try:
                 self.proc.kill()
+            except Exception:
+                pass
+            try:
+                self.proc.wait(timeout=5)
             except Exception:
                 pass
 

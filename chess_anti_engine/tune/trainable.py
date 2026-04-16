@@ -1250,6 +1250,489 @@ def _run_pid_and_eval(
     )
 
 
+def _run_selfplay_phase(
+    *,
+    tc: TrialConfig,
+    config: dict,
+    trainer,
+    model_cfg,
+    buf,
+    holdout_buf,
+    holdout_frac: float,
+    holdout_frozen: bool,
+    device: str,
+    rng,
+    sf,
+    pid,
+    use_distributed_selfplay: bool,
+    distributed_dirs: dict | None,
+    distributed_server_root: str | None,
+    distributed_worker_procs: list,
+    distributed_inference_broker_proc,
+    prev_published_model_sha: str,
+    current_rand: float,
+    skill_level_used: int,
+    sims: int,
+    iteration_idx: int,
+    iteration_zero_based: int,
+    trial_id: str,
+    trial_dir: Path,
+    selfplay_shards_dir: Path,
+    replay_shard_dir: Path,
+    current_window: int,
+    window_max: int,
+    window_growth: int,
+    in_salvage_startup_grace: bool,
+    salvage_startup_no_share_iters: int,
+) -> tuple[SelfplayResult, str, int, object | None]:
+    """Run selfplay, ingest, export shards, grow window, cross-trial share.
+
+    Mutates *buf*, *holdout_buf*, *distributed_worker_procs* in place.
+    Returns ``(sp_result, prev_published_model_sha, current_window,
+    distributed_inference_broker_proc)``.
+    """
+    total_games = _games_per_iter_for_iteration(tc, iteration_idx)
+    selfplay_batch = tc.selfplay_batch
+    games_remaining = total_games
+
+    # --- Play games (distributed or local) ---
+    ingest_t0 = time.monotonic()
+    _new_selfplay_shards: list = []
+    _new_selfplay_batches: list[dict[str, np.ndarray]] = []
+
+    # Accumulators (populated by either branch, bundled into SelfplayResult at end).
+    total_w = total_d = total_l = 0
+    total_games_generated = 0
+    total_game_plies = 0
+    total_adjudicated_games = 0
+    total_draw_games = 0
+    total_selfplay_games = 0
+    total_selfplay_adjudicated_games = 0
+    total_selfplay_draw_games = 0
+    total_curriculum_games = 0
+    total_curriculum_adjudicated_games = 0
+    total_curriculum_draw_games = 0
+    total_checkmate_games = 0
+    total_stalemate_games = 0
+    total_plies_win = 0
+    total_plies_draw = 0
+    total_plies_loss = 0
+    total_positions = 0
+    replay_positions_ingested = 0
+    total_sf_d6 = 0.0
+    total_sf_d6_n = 0
+    distributed_stale_positions = 0
+    distributed_stale_games = 0
+
+    if use_distributed_selfplay:
+        distributed_worker_procs[:] = _ensure_distributed_workers(
+            config=config,
+            trial_dir=trial_dir,
+            trial_id=trial_id,
+            procs=distributed_worker_procs,
+        )
+        published_model_sha = _publish_distributed_trial_state(
+            trainer=trainer,
+            config=config,
+            model_cfg=model_cfg,
+            server_root=distributed_server_root,
+            trial_id=trial_id,
+            training_iteration=int(iteration_idx),
+            trainer_step=int(getattr(trainer, "step", 0)),
+            sf_nodes=int(pid.nodes) if pid is not None else tc.sf_nodes,
+            random_move_prob=float(current_rand),
+            skill_level=int(skill_level_used),
+            mcts_simulations=int(sims),
+            wdl_regret=float(pid.wdl_regret) if pid is not None else -1.0,
+            pause_selfplay=False,
+            pause_reason="",
+        )
+        distributed_inference_broker_proc = _ensure_inference_broker(
+            config=config,
+            trial_id=trial_id,
+            trial_dir=trial_dir,
+            publish_dir=distributed_dirs["publish_dir"],
+            proc=distributed_inference_broker_proc,
+        )
+        _shards_before_ingest = set(buf._shard_paths)
+
+        ingest_summary = _ingest_distributed_selfplay(
+            buf=buf,
+            holdout_buf=holdout_buf,
+            holdout_frac=float(holdout_frac),
+            holdout_frozen=bool(holdout_frozen),
+            inbox_dir=distributed_dirs["inbox_dir"],
+            processed_dir=distributed_dirs["processed_dir"],
+            target_games=int(total_games),
+            accepted_model_shas={str(published_model_sha)} | ({str(prev_published_model_sha)} if prev_published_model_sha else set()),
+            prev_model_sha=str(prev_published_model_sha) if prev_published_model_sha else None,
+            prev_model_max_fraction=tc.distributed_prev_model_max_fraction,
+            wait_timeout_s=tc.distributed_wait_timeout_seconds,
+            poll_seconds=tc.distributed_worker_poll_seconds,
+            rng=rng,
+            min_games_fraction=tc.distributed_min_games_fraction,
+        )
+
+        buf.flush()
+        _new_selfplay_shards = [p for p in buf._shard_paths if p not in _shards_before_ingest]
+        total_w = int(ingest_summary["matching_w"])
+        total_d = int(ingest_summary["matching_d"])
+        total_l = int(ingest_summary["matching_l"])
+        total_games_generated = int(ingest_summary["matching_games"])
+        total_game_plies = int(ingest_summary["matching_total_game_plies"])
+        total_adjudicated_games = int(ingest_summary["matching_adjudicated_games"])
+        total_draw_games = int(ingest_summary["matching_total_draw_games"])
+        total_selfplay_games = int(ingest_summary["matching_selfplay_games"])
+        total_selfplay_adjudicated_games = int(ingest_summary["matching_selfplay_adjudicated_games"])
+        total_selfplay_draw_games = int(ingest_summary["matching_selfplay_draw_games"])
+        total_curriculum_games = int(ingest_summary["matching_curriculum_games"])
+        total_curriculum_adjudicated_games = int(ingest_summary["matching_curriculum_adjudicated_games"])
+        total_curriculum_draw_games = int(ingest_summary["matching_curriculum_draw_games"])
+        total_positions = int(ingest_summary["matching_positions"])
+        total_plies_win = int(ingest_summary.get("matching_plies_win", 0))
+        total_plies_draw = int(ingest_summary.get("matching_plies_draw", 0))
+        total_plies_loss = int(ingest_summary.get("matching_plies_loss", 0))
+        total_checkmate_games = int(ingest_summary.get("matching_checkmate_games", 0))
+        total_stalemate_games = int(ingest_summary.get("matching_stalemate_games", 0))
+        distributed_stale_positions = int(ingest_summary["stale_positions"])
+        distributed_stale_games = int(ingest_summary["stale_games"])
+        replay_positions_ingested = int(ingest_summary["positions_replay_added"])
+        prev_published_model_sha = str(published_model_sha)
+
+        if iteration_zero_based % 10 == 0:
+            _prune_processed_shards(
+                processed_dir=distributed_dirs["processed_dir"],
+                max_age_seconds=tc.processed_max_age_seconds,
+            )
+    else:
+        kw = _play_batch_kwargs(tc)
+        kw["opponent"] = dataclasses.replace(kw["opponent"], random_move_prob=current_rand)
+        kw["search"] = dataclasses.replace(kw["search"], simulations=int(sims))
+
+        samples, stats = play_batch(
+            trainer.model,
+            device=device, rng=rng, stockfish=sf,
+            games=selfplay_batch,
+            target_games=games_remaining,
+            **kw,
+        )
+
+        total_games_generated += int(stats.games)
+        total_w += stats.w
+        total_d += stats.d
+        total_l += stats.l
+        total_game_plies += int(getattr(stats, "total_game_plies", 0))
+        total_adjudicated_games += int(getattr(stats, "adjudicated_games", getattr(stats, "timeout_games", 0)))
+        total_draw_games += int(getattr(stats, "total_draw_games", 0))
+        total_selfplay_games += int(getattr(stats, "selfplay_games", 0))
+        total_selfplay_adjudicated_games += int(getattr(stats, "selfplay_adjudicated_games", 0))
+        total_selfplay_draw_games += int(getattr(stats, "selfplay_draw_games", 0))
+        total_curriculum_games += int(getattr(stats, "curriculum_games", 0))
+        total_curriculum_adjudicated_games += int(getattr(stats, "curriculum_adjudicated_games", 0))
+        total_curriculum_draw_games += int(getattr(stats, "curriculum_draw_games", 0))
+        total_checkmate_games += int(getattr(stats, "checkmate_games", 0))
+        total_stalemate_games += int(getattr(stats, "stalemate_games", 0))
+        total_plies_win += int(getattr(stats, "plies_win", 0))
+        total_plies_draw += int(getattr(stats, "plies_draw", 0))
+        total_plies_loss += int(getattr(stats, "plies_loss", 0))
+        total_positions += stats.positions
+        total_sf_d6 += float(getattr(stats, "sf_eval_delta6", 0.0)) * int(getattr(stats, "sf_eval_delta6_n", 0))
+        total_sf_d6_n += int(getattr(stats, "sf_eval_delta6_n", 0))
+        replay_positions_ingested = int(total_positions)
+
+        holdout_samples: list = []
+        train_samples: list = []
+        for s in samples:
+            if holdout_frac > 0.0 and (not holdout_frozen) and (rng.random() < holdout_frac):
+                holdout_samples.append(s)
+            else:
+                train_samples.append(s)
+        if holdout_samples:
+            holdout_buf.add_many_arrays(samples_to_arrays(holdout_samples))
+        if train_samples:
+            train_arrs = samples_to_arrays(train_samples)
+            buf.add_many_arrays(train_arrs)
+            _new_selfplay_batches.append(train_arrs)
+        del samples
+
+    ingest_ms = (time.monotonic() - ingest_t0) * 1000.0
+
+    # --- Retry if distributed returned no games ---
+    if _should_retry_distributed_iteration_without_games(
+        use_distributed_selfplay=use_distributed_selfplay,
+        total_games_generated=total_games_generated,
+    ):
+        print(
+            "[trial] distributed iteration waiting for fresh selfplay: "
+            f"trial={trial_id} iter={iteration_idx} replay={len(buf)} "
+            f"timeout_s={tc.distributed_wait_timeout_seconds:.1f}"
+        )
+        time.sleep(max(0.5, tc.distributed_worker_poll_seconds))
+        return (
+            SelfplayResult(should_retry=True, ingest_ms=ingest_ms),
+            prev_published_model_sha,
+            current_window,
+            distributed_inference_broker_proc,
+        )
+
+    # --- Export selfplay shards for sibling trials ---
+    _selfplay_export_path = local_iter_shard_path(selfplay_shards_dir, iteration_idx)
+    if use_distributed_selfplay:
+        if _new_selfplay_shards:
+            _export_batches: list[dict[str, np.ndarray]] = []
+            for _sp_path in _new_selfplay_shards:
+                try:
+                    _arrs, _ = load_shard_arrays(_sp_path, lazy=True)
+                    if int(np.asarray(_arrs["x"]).shape[0]) > 0:
+                        _export_batches.append(_arrs)
+                except Exception:
+                    pass
+            if _export_batches:
+                save_local_shard_arrays(_selfplay_export_path, arrs=_concat_array_batches(_export_batches))
+    else:
+        if _new_selfplay_batches:
+            save_local_shard_arrays(_selfplay_export_path, arrs=_concat_array_batches(_new_selfplay_batches))
+    _keep_selfplay_iters = tc.exploit_replay_max_unseen_iters_per_source + 2
+    _all_selfplay_exports = iter_shard_paths(selfplay_shards_dir)
+    for _old in _all_selfplay_exports[:-_keep_selfplay_iters]:
+        try:
+            shutil.rmtree(_old) if _old.is_dir() else _old.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    # --- Growing window ---
+    if current_window < window_max:
+        current_window = min(current_window + window_growth, window_max)
+        if buf.capacity < current_window:
+            buf.capacity = current_window
+
+    # --- Cross-trial replay sharing ---
+    shared_summary: dict = {
+        "source_trials_selected": 0,
+        "source_trials_ingested": 0,
+        "source_trials_skipped_repeat": 0,
+        "source_shards_loaded": 0,
+        "source_samples_ingested": 0,
+    }
+    if tc.exploit_replay_share_top_enabled and (not in_salvage_startup_grace):
+        shared_summary = _share_top_replay_each_iteration(
+            config=config,
+            recipient_trial_dir=trial_dir,
+            replay_shard_dir=replay_shard_dir,
+            buf=buf,
+            top_k_trials=tc.exploit_replay_top_k_trials,
+            within_best_frac=tc.exploit_replay_top_within_best_frac,
+            min_metric=tc.exploit_replay_top_min_metric,
+            source_skip_newest=tc.exploit_replay_skip_newest,
+            shard_size=tc.shard_size,
+            holdout_fraction=tc.holdout_fraction,
+            max_unseen_iters_per_source=tc.exploit_replay_max_unseen_iters_per_source,
+            max_shards_per_source=tc.exploit_replay_top_shards_per_source,
+            share_fraction=tc.exploit_replay_share_fraction,
+        )
+        if shared_summary["source_samples_ingested"] > 0:
+            print(
+                "[trial] replay share this iter: "
+                f"sources_selected={shared_summary['source_trials_selected']} "
+                f"sources_ingested={shared_summary['source_trials_ingested']} "
+                f"sources_skipped_repeat={shared_summary['source_trials_skipped_repeat']} "
+                f"source_shards_loaded={shared_summary['source_shards_loaded']} "
+                f"source_samples_ingested={shared_summary['source_samples_ingested']}"
+            )
+    elif tc.exploit_replay_share_top_enabled and in_salvage_startup_grace:
+        print(
+            "[trial] replay share skipped during salvage startup grace: "
+            f"iter={iteration_zero_based} grace_iters={salvage_startup_no_share_iters}"
+        )
+
+    imported_samples_this_iter = int(shared_summary.get("source_samples_ingested", 0))
+
+    sp = SelfplayResult(
+        total_w=total_w, total_d=total_d, total_l=total_l,
+        total_games_generated=total_games_generated,
+        total_game_plies=total_game_plies,
+        total_adjudicated_games=total_adjudicated_games,
+        total_draw_games=total_draw_games,
+        total_selfplay_games=total_selfplay_games,
+        total_selfplay_adjudicated_games=total_selfplay_adjudicated_games,
+        total_selfplay_draw_games=total_selfplay_draw_games,
+        total_curriculum_games=total_curriculum_games,
+        total_curriculum_adjudicated_games=total_curriculum_adjudicated_games,
+        total_curriculum_draw_games=total_curriculum_draw_games,
+        total_checkmate_games=total_checkmate_games,
+        total_stalemate_games=total_stalemate_games,
+        total_plies_win=total_plies_win,
+        total_plies_draw=total_plies_draw,
+        total_plies_loss=total_plies_loss,
+        total_positions=total_positions,
+        replay_positions_ingested=replay_positions_ingested,
+        total_sf_d6=total_sf_d6,
+        total_sf_d6_n=total_sf_d6_n,
+        distributed_stale_positions=distributed_stale_positions,
+        distributed_stale_games=distributed_stale_games,
+        shared_summary=shared_summary,
+        imported_samples_this_iter=imported_samples_this_iter,
+        ingest_ms=ingest_ms,
+    )
+    return sp, prev_published_model_sha, current_window, distributed_inference_broker_proc
+
+
+def _finalize_iteration(
+    *,
+    tc: TrialConfig,
+    trainer,
+    pid,
+    sp: SelfplayResult,
+    tr: TrainingResult,
+    drift: DriftMetrics,
+    pid_result: PidResult,
+    eval_dict: dict,
+    checkpoint,
+    best_loss: float,
+    opp_strength_ema: float,
+    ckpt_dir: Path,
+    work_dir: Path,
+    trial_dir: Path,
+    puzzle_suite,
+    puzzle_interval: int,
+    puzzle_sims: int,
+    current_rand: float,
+    wdl_regret_used: float,
+    sf_nodes_used: int,
+    skill_level_used: int,
+    use_distributed_selfplay: bool,
+    distributed_workers_per_trial: int,
+    distributed_pause_started_at: float | None,
+    distributed_pause_active: bool,
+    startup_source: str,
+    seed_warmstart_used: str,
+    seed_warmstart_slot: int,
+    seed_warmstart_slots_total: int,
+    salvage_origin_used: str,
+    salvage_origin_slot: int,
+    salvage_origin_slots_total: int,
+    holdout_frozen: bool,
+    holdout_generation: int,
+    buf_size: int,
+    holdout_buf_size: int,
+    iter_t0: float,
+    iteration_idx: int,
+    iteration_zero_based: int,
+    completed_iterations: int,
+    device: str,
+    rng,
+) -> None:
+    """End-of-iteration bookkeeping: PID persist, reporting, CSV, prune."""
+    # Persist PID state AFTER observe() so checkpoints carry the
+    # post-iteration difficulty that produced random_move_prob_next.
+    if pid is not None:
+        try:
+            (ckpt_dir / "pid_state.json").write_text(
+                json.dumps(pid.state_dict(), sort_keys=True, indent=2),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+
+    # Save top-3 checkpoints by lowest regret (best-effort).
+    try:
+        _update_best_regret_checkpoints(
+            trainer=trainer, pid=pid,
+            best_regret_dir=work_dir / "best_regret",
+            iteration_idx=iteration_idx,
+            opp_strength_ema=opp_strength_ema,
+            best_loss=best_loss,
+        )
+    except Exception:
+        pass
+
+    # Puzzle evaluation (overspecialization canary).
+    puzzle_dict = _run_puzzle_eval_if_due(
+        trainer.model, puzzle_suite,
+        device=device, rng=rng, puzzle_interval=puzzle_interval,
+        puzzle_sims=puzzle_sims, iteration_zero_based=iteration_zero_based,
+    )
+
+    pause_metrics = _iteration_pause_metrics(
+        iteration_started_at=iter_t0,
+        iteration_finished_at=time.monotonic(),
+        pause_started_at=distributed_pause_started_at,
+        pause_active=distributed_pause_active,
+    )
+    _log_iteration_scalars(
+        writer=trainer.writer,
+        pid_result=pid_result,
+        current_rand=current_rand,
+        wdl_regret_used=wdl_regret_used,
+        pause_metrics=pause_metrics,
+        seed_warmstart_used=seed_warmstart_used,
+        seed_warmstart_slot=seed_warmstart_slot,
+        iteration_step=int(iteration_idx),
+    )
+
+    report_dict = _build_report_dict(
+        tc=tc, trainer=trainer,
+        pr=pid_result, sp=sp, tr=tr, drift=drift,
+        eval_dict=eval_dict, puzzle_dict=puzzle_dict,
+        current_rand=current_rand,
+        wdl_regret_used=wdl_regret_used,
+        sf_nodes_used=sf_nodes_used,
+        skill_level_used=skill_level_used,
+        use_distributed_selfplay=use_distributed_selfplay,
+        distributed_workers_per_trial=distributed_workers_per_trial,
+        pause_metrics=pause_metrics,
+        startup_source=startup_source,
+        seed_warmstart_used=seed_warmstart_used,
+        seed_warmstart_slot=seed_warmstart_slot,
+        seed_warmstart_slots_total=seed_warmstart_slots_total,
+        salvage_origin_used=salvage_origin_used,
+        salvage_origin_slot=salvage_origin_slot,
+        salvage_origin_slots_total=salvage_origin_slots_total,
+        best_loss=best_loss,
+        iter_t0=iter_t0,
+        iteration_idx=iteration_idx,
+        buf_size=buf_size,
+        holdout_buf_size=holdout_buf_size,
+        holdout_frozen=holdout_frozen,
+        holdout_generation=holdout_generation,
+    )
+
+    _tune_report(report_dict, checkpoint=checkpoint)
+
+    # Write compact status row (best-effort — never crash the trial).
+    _write_status_csv_row(
+        _STATUS_CSV_PATH,
+        iteration_idx=iteration_idx,
+        opp_strength=pid_result.opp_strength,
+        opp_strength_ema=pid_result.opp_strength_ema,
+        skill_level=skill_level_used,
+        sf_nodes=sf_nodes_used,
+        current_rand=current_rand,
+        wdl_regret=wdl_regret_used,
+        ingest_ms=sp.ingest_ms,
+        train_ms=tr.train_ms,
+        total_iter_ms=report_dict["total_iter_ms"],
+        steps=tr.steps,
+        replay_size=buf_size,
+        positions_ingested=sp.replay_positions_ingested,
+        stale_games=sp.distributed_stale_games,
+        train_loss=float(tr.metrics.loss) if tr.metrics is not None else None,
+        best_loss=best_loss,
+        total_w=sp.total_w,
+        total_d=sp.total_d,
+        total_l=sp.total_l,
+        opt_lr=float(trainer.opt.param_groups[0]["lr"]),
+        startup_source=startup_source,
+    )
+
+    # Best-effort: keep disk usage bounded.
+    if (completed_iterations + 1) % 5 == 0:
+        _prune_trial_checkpoints(
+            trial_dir=trial_dir,
+            keep_last=tc.tune_num_to_keep,
+        )
+
+
 def _build_report_dict(
     *,
     tc: TrialConfig,
@@ -2182,294 +2665,36 @@ def train_trial(config: dict):
                     exponent=tc.mcts_ramp_exponent,
                 )
 
-            # Play games in mini-batches to keep memory low (each mini-batch
-            # frees its MCTS trees / board objects before the next starts).
-            total_games = _games_per_iter_for_iteration(tc, iteration_idx)
-            selfplay_batch = tc.selfplay_batch
-            games_remaining = total_games
-
-            # Accumulators for stats across mini-batches.
-            total_w = total_d = total_l = 0
-            total_games_generated = 0
-            total_game_plies = 0
-            total_adjudicated_games = 0
-            total_draw_games = 0
-            total_selfplay_games = 0
-            total_selfplay_adjudicated_games = 0
-            total_selfplay_draw_games = 0
-            total_curriculum_games = 0
-            total_curriculum_adjudicated_games = 0
-            total_curriculum_draw_games = 0
-            total_checkmate_games = 0
-            total_stalemate_games = 0
-            total_plies_win = 0
-            total_plies_draw = 0
-            total_plies_loss = 0
-            total_positions = 0
-            replay_positions_ingested = 0
-            total_sf_d6 = 0.0
-            total_sf_d6_n = 0
-            distributed_stale_positions = 0
-            distributed_stale_games = 0
-
-            ingest_t0 = time.monotonic()
-            if use_distributed_selfplay:
-                distributed_worker_procs = _ensure_distributed_workers(
-                    config=config,
-                    trial_dir=trial_dir,
-                    trial_id=trial_id,
-                    procs=distributed_worker_procs,
-                )
-                distributed_pause_active = False
-                distributed_pause_started_at = None
-                published_model_sha = _publish_distributed_trial_state(
-                    trainer=trainer,
-                    config=config,
-                    model_cfg=model_cfg,
-                    server_root=distributed_server_root,
-                    trial_id=trial_id,
-                    training_iteration=int(iteration_idx),
-                    trainer_step=int(getattr(trainer, "step", 0)),
-                    sf_nodes=int(pid.nodes) if pid is not None else tc.sf_nodes,
-                    random_move_prob=float(current_rand),
-                    skill_level=int(skill_level_used),
-                    mcts_simulations=int(sims),
-                    wdl_regret=float(pid.wdl_regret) if pid is not None else -1.0,
-                    pause_selfplay=False,
-                    pause_reason="",
-                )
-                distributed_inference_broker_proc = _ensure_inference_broker(
-                    config=config,
-                    trial_id=trial_id,
-                    trial_dir=trial_dir,
-                    publish_dir=distributed_dirs["publish_dir"],
-                    proc=distributed_inference_broker_proc,
-                )
-                _shards_before_ingest = set(buf._shard_paths)
-
-                ingest_summary = _ingest_distributed_selfplay(
-                    buf=buf,
-                    holdout_buf=holdout_buf,
-                    holdout_frac=float(holdout_frac),
-                    holdout_frozen=bool(holdout_frozen),
-                    inbox_dir=distributed_dirs["inbox_dir"],
-                    processed_dir=distributed_dirs["processed_dir"],
-                    target_games=int(total_games),
-                    accepted_model_shas={str(published_model_sha)} | ({str(prev_published_model_sha)} if prev_published_model_sha else set()),
-                    prev_model_sha=str(prev_published_model_sha) if prev_published_model_sha else None,
-                    prev_model_max_fraction=tc.distributed_prev_model_max_fraction,
-                    wait_timeout_s=tc.distributed_wait_timeout_seconds,
-                    poll_seconds=tc.distributed_worker_poll_seconds,
-                    rng=rng,
-                    min_games_fraction=tc.distributed_min_games_fraction,
-                )
-
-                buf.flush()
-                _new_selfplay_shards = [p for p in buf._shard_paths if p not in _shards_before_ingest]
-                total_w = int(ingest_summary["matching_w"])
-                total_d = int(ingest_summary["matching_d"])
-                total_l = int(ingest_summary["matching_l"])
-                total_games_generated = int(ingest_summary["matching_games"])
-                total_game_plies = int(ingest_summary["matching_total_game_plies"])
-                total_adjudicated_games = int(ingest_summary["matching_adjudicated_games"])
-                total_draw_games = int(ingest_summary["matching_total_draw_games"])
-                total_selfplay_games = int(ingest_summary["matching_selfplay_games"])
-                total_selfplay_adjudicated_games = int(ingest_summary["matching_selfplay_adjudicated_games"])
-                total_selfplay_draw_games = int(ingest_summary["matching_selfplay_draw_games"])
-                total_curriculum_games = int(ingest_summary["matching_curriculum_games"])
-                total_curriculum_adjudicated_games = int(ingest_summary["matching_curriculum_adjudicated_games"])
-                total_curriculum_draw_games = int(ingest_summary["matching_curriculum_draw_games"])
-                total_positions = int(ingest_summary["matching_positions"])
-                total_plies_win = int(ingest_summary.get("matching_plies_win", 0))
-                total_plies_draw = int(ingest_summary.get("matching_plies_draw", 0))
-                total_plies_loss = int(ingest_summary.get("matching_plies_loss", 0))
-                total_checkmate_games = int(ingest_summary.get("matching_checkmate_games", 0))
-                total_stalemate_games = int(ingest_summary.get("matching_stalemate_games", 0))
-                distributed_stale_positions = int(ingest_summary["stale_positions"])
-                distributed_stale_games = int(ingest_summary["stale_games"])
-                replay_positions_ingested = int(ingest_summary["positions_replay_added"])
-                prev_published_model_sha = str(published_model_sha)
-
-                # Prune old processed shards every 10 iterations to avoid
-                # walking the directory tree on every iteration.
-                if iteration_zero_based % 10 == 0:
-                    _prune_processed_shards(
-                        processed_dir=distributed_dirs["processed_dir"],
-                        max_age_seconds=tc.processed_max_age_seconds,
-                    )
-            else:
-                kw = _play_batch_kwargs(tc)
-                kw["opponent"] = dataclasses.replace(kw["opponent"], random_move_prob=current_rand)
-                kw["search"] = dataclasses.replace(kw["search"], simulations=int(sims))
-
-                samples, stats = play_batch(
-                    trainer.model,
-                    device=device, rng=rng, stockfish=sf,
-                    games=selfplay_batch,
-                    target_games=games_remaining,
-                    **kw,
-                )
-
-                total_games_generated += int(stats.games)
-                total_w += stats.w
-                total_d += stats.d
-                total_l += stats.l
-                total_game_plies += int(getattr(stats, "total_game_plies", 0))
-                total_adjudicated_games += int(getattr(stats, "adjudicated_games", getattr(stats, "timeout_games", 0)))
-                total_draw_games += int(getattr(stats, "total_draw_games", 0))
-                total_selfplay_games += int(getattr(stats, "selfplay_games", 0))
-                total_selfplay_adjudicated_games += int(getattr(stats, "selfplay_adjudicated_games", 0))
-                total_selfplay_draw_games += int(getattr(stats, "selfplay_draw_games", 0))
-                total_curriculum_games += int(getattr(stats, "curriculum_games", 0))
-                total_curriculum_adjudicated_games += int(getattr(stats, "curriculum_adjudicated_games", 0))
-                total_curriculum_draw_games += int(getattr(stats, "curriculum_draw_games", 0))
-                total_checkmate_games += int(getattr(stats, "checkmate_games", 0))
-                total_stalemate_games += int(getattr(stats, "stalemate_games", 0))
-                total_plies_win += int(getattr(stats, "plies_win", 0))
-                total_plies_draw += int(getattr(stats, "plies_draw", 0))
-                total_plies_loss += int(getattr(stats, "plies_loss", 0))
-                total_positions += stats.positions
-                total_sf_d6 += float(getattr(stats, "sf_eval_delta6", 0.0)) * int(getattr(stats, "sf_eval_delta6_n", 0))
-                total_sf_d6_n += int(getattr(stats, "sf_eval_delta6_n", 0))
-                replay_positions_ingested = int(total_positions)
-
-                holdout_samples: list = []
-                train_samples: list = []
-                for s in samples:
-                    if holdout_frac > 0.0 and (not holdout_frozen) and (rng.random() < holdout_frac):
-                        holdout_samples.append(s)
-                    else:
-                        train_samples.append(s)
-                _new_selfplay_batches: list[dict[str, np.ndarray]] = []
-                if holdout_samples:
-                    holdout_buf.add_many_arrays(samples_to_arrays(holdout_samples))
-                if train_samples:
-                    train_arrs = samples_to_arrays(train_samples)
-                    buf.add_many_arrays(train_arrs)
-                    _new_selfplay_batches.append(train_arrs)
-                del samples
-
-            ingest_ms = (time.monotonic() - ingest_t0) * 1000.0
-
-            if _should_retry_distributed_iteration_without_games(
+            sp, prev_published_model_sha, current_window, distributed_inference_broker_proc = _run_selfplay_phase(
+                tc=tc, config=config, trainer=trainer, model_cfg=model_cfg,
+                buf=buf, holdout_buf=holdout_buf,
+                holdout_frac=holdout_frac, holdout_frozen=holdout_frozen,
+                device=device, rng=rng, sf=sf, pid=pid,
                 use_distributed_selfplay=use_distributed_selfplay,
-                total_games_generated=total_games_generated,
-            ):
-                print(
-                    "[trial] distributed iteration waiting for fresh selfplay: "
-                    f"trial={trial_id} iter={iteration_idx} replay={len(buf)} "
-                    f"timeout_s={tc.distributed_wait_timeout_seconds:.1f}"
-                )
-                time.sleep(max(0.5, tc.distributed_worker_poll_seconds))
-                continue
-
-            # Export this iteration's own selfplay to a separate directory so
-            # sibling trials can import clean data without feedback-loop contamination.
-            _selfplay_export_path = local_iter_shard_path(selfplay_shards_dir, iteration_idx)
-            if use_distributed_selfplay:
-                # Distributed: new shards were identified by shard-path diff above.
-                if _new_selfplay_shards:
-                    _export_batches: list[dict[str, np.ndarray]] = []
-                    for _sp in _new_selfplay_shards:
-                        try:
-                            _arrs, _ = load_shard_arrays(_sp, lazy=True)
-                            if int(np.asarray(_arrs["x"]).shape[0]) > 0:
-                                _export_batches.append(_arrs)
-                        except Exception:
-                            pass
-                    if _export_batches:
-                        save_local_shard_arrays(_selfplay_export_path, arrs=_concat_array_batches(_export_batches))
-            else:
-                if _new_selfplay_batches:
-                    save_local_shard_arrays(_selfplay_export_path, arrs=_concat_array_batches(_new_selfplay_batches))
-            # Roll: keep only last (max_unseen_iters_per_source + 2) selfplay export files.
-            _keep_selfplay_iters = tc.exploit_replay_max_unseen_iters_per_source + 2
-            _all_selfplay_exports = iter_shard_paths(selfplay_shards_dir)
-            for _old in _all_selfplay_exports[:-_keep_selfplay_iters]:
-                try:
-                    shutil.rmtree(_old) if _old.is_dir() else _old.unlink(missing_ok=True)
-                except Exception:
-                    pass
-
-            # Growing window: expand buffer capacity each iteration before
-            # cross-trial imports so we do not prune newly shared data against
-            # the previous (smaller) capacity.
-            if current_window < window_max:
-                current_window = min(current_window + window_growth, window_max)
-                if buf.capacity < current_window:
-                    buf.capacity = current_window
-
-            # Pull fresh top-trial data after selfplay so we train on the
-            # newest available generations in asynchronous runs.
-            shared_summary = {
-                "source_trials_selected": 0,
-                "source_trials_ingested": 0,
-                "source_trials_skipped_repeat": 0,
-                "source_shards_loaded": 0,
-                "source_samples_ingested": 0,
-            }
-            if tc.exploit_replay_share_top_enabled and (not in_salvage_startup_grace):
-                shared_summary = _share_top_replay_each_iteration(
-                    config=config,
-                    recipient_trial_dir=trial_dir,
-                    replay_shard_dir=replay_shard_dir,
-                    buf=buf,
-                    top_k_trials=tc.exploit_replay_top_k_trials,
-                    within_best_frac=tc.exploit_replay_top_within_best_frac,
-                    min_metric=tc.exploit_replay_top_min_metric,
-                    source_skip_newest=tc.exploit_replay_skip_newest,
-                    shard_size=tc.shard_size,
-                    holdout_fraction=tc.holdout_fraction,
-                    max_unseen_iters_per_source=tc.exploit_replay_max_unseen_iters_per_source,
-                    max_shards_per_source=tc.exploit_replay_top_shards_per_source,
-                    share_fraction=tc.exploit_replay_share_fraction,
-                )
-                if shared_summary["source_samples_ingested"] > 0:
-                    print(
-                        "[trial] replay share this iter: "
-                        f"sources_selected={shared_summary['source_trials_selected']} "
-                        f"sources_ingested={shared_summary['source_trials_ingested']} "
-                        f"sources_skipped_repeat={shared_summary['source_trials_skipped_repeat']} "
-                        f"source_shards_loaded={shared_summary['source_shards_loaded']} "
-                        f"source_samples_ingested={shared_summary['source_samples_ingested']}"
-                    )
-            elif tc.exploit_replay_share_top_enabled and in_salvage_startup_grace:
-                print(
-                    "[trial] replay share skipped during salvage startup grace: "
-                    f"iter={iteration_zero_based} grace_iters={salvage_startup_no_share_iters}"
-                )
-
-            imported_samples_this_iter = int(shared_summary.get("source_samples_ingested", 0))
-
-            sp = SelfplayResult(
-                total_w=total_w, total_d=total_d, total_l=total_l,
-                total_games_generated=total_games_generated,
-                total_game_plies=total_game_plies,
-                total_adjudicated_games=total_adjudicated_games,
-                total_draw_games=total_draw_games,
-                total_selfplay_games=total_selfplay_games,
-                total_selfplay_adjudicated_games=total_selfplay_adjudicated_games,
-                total_selfplay_draw_games=total_selfplay_draw_games,
-                total_curriculum_games=total_curriculum_games,
-                total_curriculum_adjudicated_games=total_curriculum_adjudicated_games,
-                total_curriculum_draw_games=total_curriculum_draw_games,
-                total_checkmate_games=total_checkmate_games,
-                total_stalemate_games=total_stalemate_games,
-                total_plies_win=total_plies_win,
-                total_plies_draw=total_plies_draw,
-                total_plies_loss=total_plies_loss,
-                total_positions=total_positions,
-                replay_positions_ingested=replay_positions_ingested,
-                total_sf_d6=total_sf_d6,
-                total_sf_d6_n=total_sf_d6_n,
-                distributed_stale_positions=distributed_stale_positions,
-                distributed_stale_games=distributed_stale_games,
-                shared_summary=shared_summary,
-                imported_samples_this_iter=imported_samples_this_iter,
-                ingest_ms=ingest_ms,
+                distributed_dirs=distributed_dirs,
+                distributed_server_root=distributed_server_root,
+                distributed_worker_procs=distributed_worker_procs,
+                distributed_inference_broker_proc=distributed_inference_broker_proc,
+                prev_published_model_sha=prev_published_model_sha,
+                current_rand=current_rand,
+                skill_level_used=skill_level_used,
+                sims=sims,
+                iteration_idx=iteration_idx,
+                iteration_zero_based=iteration_zero_based,
+                trial_id=trial_id,
+                trial_dir=trial_dir,
+                selfplay_shards_dir=selfplay_shards_dir,
+                replay_shard_dir=replay_shard_dir,
+                current_window=current_window,
+                window_max=window_max,
+                window_growth=window_growth,
+                in_salvage_startup_grace=in_salvage_startup_grace,
+                salvage_startup_no_share_iters=salvage_startup_no_share_iters,
             )
-
-            train_samples = []  # Already flushed to buf above.
+            distributed_pause_active = False
+            distributed_pause_started_at = None
+            if sp.should_retry:
+                continue
 
             if (not holdout_frozen) and freeze_holdout_at > 0 and len(holdout_buf) >= freeze_holdout_at:
                 holdout_frozen = True
@@ -2512,13 +2737,6 @@ def train_trial(config: dict):
                 startup_source=startup_source,
                 salvage_origin_used=salvage_origin_used,
             )
-            metrics = tr.metrics
-            test_metrics = tr.test_metrics
-            gate_passed = tr.gate_passed
-            steps = tr.steps
-            target_sample_budget = tr.target_sample_budget
-            window_target_samples = tr.window_target_samples
-            train_ms = tr.train_ms
             gate_match_idx = tr.gate_match_idx
 
             eval_dict = _run_eval_games(
@@ -2548,7 +2766,7 @@ def train_trial(config: dict):
 
             # Best-model tracking: prefer holdout loss when available, skip if no training yet.
             best_loss = _update_best_model(
-                trainer=trainer, test_metrics=test_metrics, train_metrics=metrics,
+                trainer=trainer, test_metrics=tr.test_metrics, train_metrics=tr.metrics,
                 best_loss=best_loss, best_dir=best_dir, best_state_path=best_state_path,
                 iteration_idx=iteration_idx, opp_strength_ema=opp_strength_ema,
             )
@@ -2566,64 +2784,28 @@ def train_trial(config: dict):
             )
             opp_strength_ema = pid_result.opp_strength_ema
 
-            # Persist PID state AFTER observe() so checkpoints carry the
-            # post-iteration difficulty that produced random_move_prob_next.
-            if pid is not None:
-                try:
-                    (ckpt_dir / "pid_state.json").write_text(
-                        json.dumps(pid.state_dict(), sort_keys=True, indent=2),
-                        encoding="utf-8",
-                    )
-                except Exception:
-                    pass
-
-            # Save top-3 checkpoints by lowest regret (best-effort).
-            try:
-                _update_best_regret_checkpoints(
-                    trainer=trainer, pid=pid,
-                    best_regret_dir=work_dir / "best_regret",
-                    iteration_idx=iteration_idx,
-                    opp_strength_ema=opp_strength_ema,
-                    best_loss=best_loss,
-                )
-            except Exception:
-                pass
-
-            # Puzzle evaluation (overspecialization canary).
-            puzzle_dict = _run_puzzle_eval_if_due(
-                trainer.model, puzzle_suite,
-                device=device, rng=rng, puzzle_interval=puzzle_interval,
-                puzzle_sims=puzzle_sims, iteration_zero_based=iteration_zero_based,
-            )
-
-            pause_metrics = _iteration_pause_metrics(
-                iteration_started_at=iter_t0,
-                iteration_finished_at=time.monotonic(),
-                pause_started_at=distributed_pause_started_at,
-                pause_active=distributed_pause_active,
-            )
-            _log_iteration_scalars(
-                writer=trainer.writer,
+            _finalize_iteration(
+                tc=tc, trainer=trainer, pid=pid,
+                sp=sp, tr=tr, drift=drift,
                 pid_result=pid_result,
-                current_rand=current_rand,
-                wdl_regret_used=wdl_regret_used,
-                pause_metrics=pause_metrics,
-                seed_warmstart_used=seed_warmstart_used,
-                seed_warmstart_slot=seed_warmstart_slot,
-                iteration_step=int(iteration_idx),
-            )
-
-            report_dict = _build_report_dict(
-                tc=tc, trainer=trainer,
-                pr=pid_result, sp=sp, tr=tr, drift=drift,
-                eval_dict=eval_dict, puzzle_dict=puzzle_dict,
+                eval_dict=eval_dict,
+                checkpoint=checkpoint,
+                best_loss=best_loss,
+                opp_strength_ema=opp_strength_ema,
+                ckpt_dir=ckpt_dir,
+                work_dir=work_dir,
+                trial_dir=trial_dir,
+                puzzle_suite=puzzle_suite,
+                puzzle_interval=puzzle_interval,
+                puzzle_sims=puzzle_sims,
                 current_rand=current_rand,
                 wdl_regret_used=wdl_regret_used,
                 sf_nodes_used=sf_nodes_used,
                 skill_level_used=skill_level_used,
                 use_distributed_selfplay=use_distributed_selfplay,
                 distributed_workers_per_trial=distributed_workers_per_trial,
-                pause_metrics=pause_metrics,
+                distributed_pause_started_at=distributed_pause_started_at,
+                distributed_pause_active=distributed_pause_active,
                 startup_source=startup_source,
                 seed_warmstart_used=seed_warmstart_used,
                 seed_warmstart_slot=seed_warmstart_slot,
@@ -2631,54 +2813,20 @@ def train_trial(config: dict):
                 salvage_origin_used=salvage_origin_used,
                 salvage_origin_slot=salvage_origin_slot,
                 salvage_origin_slots_total=salvage_origin_slots_total,
-                best_loss=best_loss,
-                iter_t0=iter_t0,
-                iteration_idx=iteration_idx,
-                buf_size=len(buf),
-                holdout_buf_size=len(holdout_buf),
                 holdout_frozen=holdout_frozen,
                 holdout_generation=holdout_generation,
-            )
-
-            _tune_report(report_dict, checkpoint=checkpoint)
-
-            # Write compact status row (best-effort — never crash the trial).
-            pr = pid_result
-            _write_status_csv_row(
-                _STATUS_CSV_PATH,
+                buf_size=len(buf),
+                holdout_buf_size=len(holdout_buf),
+                iter_t0=iter_t0,
                 iteration_idx=iteration_idx,
-                opp_strength=pr.opp_strength,
-                opp_strength_ema=pr.opp_strength_ema,
-                skill_level=skill_level_used,
-                sf_nodes=sf_nodes_used,
-                current_rand=current_rand,
-                wdl_regret=wdl_regret_used,
-                ingest_ms=sp.ingest_ms,
-                train_ms=tr.train_ms,
-                total_iter_ms=report_dict["total_iter_ms"],
-                steps=tr.steps,
-                replay_size=len(buf),
-                positions_ingested=sp.replay_positions_ingested,
-                stale_games=sp.distributed_stale_games,
-                train_loss=float(metrics.loss) if metrics is not None else None,
-                best_loss=best_loss,
-                total_w=sp.total_w,
-                total_d=sp.total_d,
-                total_l=sp.total_l,
-                opt_lr=float(trainer.opt.param_groups[0]["lr"]),
-                startup_source=startup_source,
+                iteration_zero_based=iteration_zero_based,
+                completed_iterations=completed_iterations,
+                device=device,
+                rng=rng,
             )
 
             global_iter = int(iteration_idx)
             completed_iterations += 1
-
-            # Best-effort: keep disk usage bounded even when resuming an older
-            # experiment that did not have checkpoint retention configured.
-            if completed_iterations % 5 == 0:
-                _prune_trial_checkpoints(
-                    trial_dir=trial_dir,
-                    keep_last=tc.tune_num_to_keep,
-                )
     finally:
         _stop_worker_processes(distributed_worker_procs)
         _stop_process(distributed_inference_broker_proc)

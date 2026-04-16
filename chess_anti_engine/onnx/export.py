@@ -5,6 +5,7 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
+from torch.export import Dim
 
 from chess_anti_engine.inference import _policy_output
 
@@ -50,13 +51,14 @@ def export_onnx(model: nn.Module, *, out_path: Path, device: str = "cpu", cfg: O
 
     dummy = torch.randn(1, 146, 8, 8, device=device)
 
+    batch = Dim("batch", min=1)
     torch.onnx.export(
         wrapper,
         dummy,
         str(out_path),
         input_names=["input_planes"],
         output_names=["policy", "wdl", "moves_left"],
-        dynamic_axes={"input_planes": {0: "batch"}},
+        dynamic_shapes={"x": {0: batch}},
         opset_version=int(cfg.opset),
     )
 
