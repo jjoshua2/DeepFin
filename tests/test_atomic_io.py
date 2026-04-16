@@ -25,7 +25,22 @@ def test_atomic_write_text_creates_file(tmp_path: Path) -> None:
     assert dst.read_text() == "line\n"
 
 
-def test_atomic_write_tmp_preserves_suffix(tmp_path: Path) -> None:
+def test_atomic_write_default_tmp_is_invisible_to_source_suffix_glob(tmp_path: Path) -> None:
+    # Regression: suffix-preserving tmp names leak into *.json / *.npz
+    # globs used by prune_expired_leases and _upload_pending_shards.
+    dst = tmp_path / "lease.json"
+
+    def writer(tmp: Path) -> None:
+        # Concurrent scanner simulation — during the write, no .json file
+        # (neither the final nor the tmp) must match *.json yet.
+        assert list(tmp.parent.glob("*.json")) == []
+        tmp.write_text("{}")
+
+    atomic_write(dst, writer)
+    assert dst.read_text() == "{}"
+
+
+def test_atomic_write_preserve_suffix_keeps_source_extension(tmp_path: Path) -> None:
     dst = tmp_path / "shard.npz"
     seen: dict[str, str] = {}
 
@@ -33,7 +48,7 @@ def test_atomic_write_tmp_preserves_suffix(tmp_path: Path) -> None:
         seen["suffix"] = tmp.suffix
         tmp.write_bytes(b"x")
 
-    atomic_write(dst, writer)
+    atomic_write(dst, writer, preserve_suffix=True)
     assert seen["suffix"] == ".npz"
 
 

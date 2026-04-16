@@ -167,6 +167,7 @@ def _flush_upload_buffer_to_pending(
     atomic_write(
         shard_path,
         lambda tmp: save_npz(tmp, samples=list(buf.samples), meta=meta, compress=False),
+        preserve_suffix=True,  # np.savez appends ".npz" if absent
     )
     _pending_elapsed_path(shard_path).write_text(f"{float(elapsed_s):.6f}\n", encoding="utf-8")
     buf.reset()
