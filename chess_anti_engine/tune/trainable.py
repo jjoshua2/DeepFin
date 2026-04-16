@@ -995,8 +995,7 @@ def _run_training_and_gating(
     iteration_idx: int,
     iteration_zero_based: int,
     trial_id: str,
-    startup_source: str,
-    salvage_origin_used: bool,
+    restore: RestoreResult,
 ) -> TrainingResult:
     """Compute step budget, run training, net gating, and holdout eval."""
     train_t0 = time.monotonic()
@@ -1023,7 +1022,7 @@ def _run_training_and_gating(
         target_sample_budget = int(train_budget["target_sample_budget"])
         window_target_samples = int(train_budget["window_target_samples"])
 
-        if startup_source == "salvage" and bool(salvage_origin_used):
+        if restore.startup_source == "salvage" and bool(restore.salvage_origin_used):
             if int(iteration_zero_based) < tc.salvage_startup_no_share_iters and tc.salvage_startup_max_train_steps > 0:
                 steps = min(steps, tc.salvage_startup_max_train_steps)
             elif (
@@ -2657,8 +2656,7 @@ def train_trial(config: dict):
                 iteration_idx=iteration_idx,
                 iteration_zero_based=iteration_zero_based,
                 trial_id=trial_id,
-                startup_source=restore.startup_source,
-                salvage_origin_used=restore.salvage_origin_used,
+                restore=restore,
             )
             gate_match_idx = tr.gate_match_idx
 
