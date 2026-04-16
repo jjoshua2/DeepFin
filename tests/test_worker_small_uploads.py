@@ -175,6 +175,47 @@ def test_worker_buffer_force_flushes_even_below_threshold(tmp_path) -> None:
     assert elapsed_s == 1.0
 
 
+def test_worker_buffer_drops_new_games_above_max_positions_cap(caplog) -> None:
+    buf = _BufferedUpload()
+    _buffer_add_completed_game(
+        buf=buf,
+        game_batch=_game_batch(3),
+        now_s=100.0,
+        model_sha="cap123",
+        model_step=5,
+        max_positions=5,
+    )
+    assert buf.positions == 3
+
+    with caplog.at_level("WARNING"):
+        _buffer_add_completed_game(
+            buf=buf,
+            game_batch=_game_batch(3),
+            now_s=101.0,
+            model_sha="cap123",
+            model_step=5,
+            max_positions=5,
+        )
+
+    assert buf.positions == 3
+    assert len(buf.samples) == 3
+    assert any("dropping" in rec.message for rec in caplog.records)
+
+
+def test_worker_buffer_no_cap_when_max_positions_is_zero() -> None:
+    buf = _BufferedUpload()
+    for _ in range(5):
+        _buffer_add_completed_game(
+            buf=buf,
+            game_batch=_game_batch(10),
+            now_s=100.0,
+            model_sha="nocap",
+            model_step=7,
+            max_positions=0,
+        )
+    assert buf.positions == 50
+
+
 def test_worker_buffer_preserves_original_model_metadata_across_retries(tmp_path) -> None:
     buf = _BufferedUpload()
     _buffer_add_completed_game(

@@ -6,15 +6,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import logging
-import os
 import time
-import uuid
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import torch
 from zclip import ZClip
+
+from chess_anti_engine.utils.atomic import atomic_write
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -176,7 +176,11 @@ class Trainer:
         prefetch_batches: bool = True,
     ):
         self.device = device
-        self.model = model.to(device)
+        # Declared as nn.Module; torch.compile (below) wraps it in a Module
+        # subclass at runtime, but its stub types return Callable — cast on
+        # assignment there to keep attribute access (.train/.eval/.state_dict)
+        # type-checked here.
+        self.model: torch.nn.Module = model.to(device)
 
         optimizer = str(optimizer).lower()
         if optimizer == "muon":
@@ -337,7 +341,7 @@ class Trainer:
         # Optional torch.compile for training throughput.
         if use_compile and device.startswith("cuda"):
             try:
-                self.model = torch.compile(self.model, mode="reduce-overhead")
+                self.model = cast("torch.nn.Module", torch.compile(self.model, mode="reduce-overhead"))
             except Exception:
                 pass  # torch.compile may not be available on all platforms
 
@@ -819,30 +823,18 @@ class Trainer:
         If a dataloader is provided, batch normalization statistics are updated
         using ``torch.optim.swa_utils.update_bn``.
 
-        This is written atomically (temp file + os.replace) to avoid race conditions
-        with workers downloading the file while the learner is writing it.
+        Written atomically to avoid races with workers downloading the file
+        while the learner is writing it.
         """
-        path.parent.mkdir(parents=True, exist_ok=True)
-
-        tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}")
-        try:
-            if self._swa_model is None:
-                # No SWA model — just save the regular model.
-                torch.save({"model": self.model.state_dict()}, str(tmp))
-            else:
-                if dataloader is not None:
-                    torch.optim.swa_utils.update_bn(
-                        dataloader,
-                        self._swa_model,
-                        device=torch.device(self.device),
-                    )
-                torch.save({"model": self._swa_model.module.state_dict()}, str(tmp))
-
-            os.replace(str(tmp), str(path))
-        finally:
-            # Best-effort cleanup if torch.save failed before replace.
-            try:
-                if tmp.exists():
-                    tmp.unlink()
-            except Exception:
-                pass
+        if self._swa_model is not None and dataloader is not None:
+            torch.optim.swa_utils.update_bn(
+                dataloader,
+                self._swa_model,
+                device=torch.device(self.device),
+            )
+        state_dict = (
+            self.model.state_dict()
+            if self._swa_model is None
+            else self._swa_model.module.state_dict()
+        )
+        atomic_write(path, lambda tmp: torch.save({"model": state_dict}, str(tmp)))

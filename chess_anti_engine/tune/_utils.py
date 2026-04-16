@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import subprocess
 from pathlib import Path
 
 import numpy as np
 
 from chess_anti_engine.utils import sha256_file  # re-export from canonical location
+from chess_anti_engine.utils.atomic import atomic_write_text  # re-export from canonical location
 
 
 def stable_seed_u32(*parts: object) -> int:
@@ -44,19 +44,6 @@ def to_nonnegative_int(v: object, default: int = 0) -> int:
         return iv if iv >= 0 else default
     except Exception:
         return default
-
-
-def atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}.{os.urandom(4).hex()}")
-    try:
-        tmp.write_text(text, encoding=encoding)
-        tmp.replace(path)
-    finally:
-        try:
-            tmp.unlink(missing_ok=True)
-        except Exception:
-            pass
 
 
 def terminate_process(proc: subprocess.Popen[bytes] | None, *, timeout_s: float = 5.0) -> None:

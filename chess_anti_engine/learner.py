@@ -4,10 +4,8 @@ import argparse
 import functools
 import json
 import logging
-import os
 import shutil
 import time
-import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,8 +13,8 @@ import numpy as np
 import torch
 
 from chess_anti_engine.model import ModelConfig, build_model
-from chess_anti_engine.tune._utils import atomic_write_text as _atomic_write_text
 from chess_anti_engine.utils import sha256_file as _sha256_file
+from chess_anti_engine.utils.atomic import atomic_copy2 as _atomic_copy2, atomic_write_text as _atomic_write_text
 from chess_anti_engine.moves.encode import POLICY_SIZE
 from chess_anti_engine.replay import ArrayReplayBuffer
 from chess_anti_engine.replay.shard import load_npz_arrays
@@ -27,21 +25,6 @@ from chess_anti_engine.version import PACKAGE_VERSION, PROTOCOL_VERSION
 
 
 log = logging.getLogger("chess_anti_engine.learner")
-
-
-def _atomic_copy2(src: Path, dst: Path) -> None:
-    """shutil.copy2, but atomically replace dst."""
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dst.with_name(f"{dst.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}")
-    try:
-        shutil.copy2(src, tmp)
-        os.replace(str(tmp), str(dst))
-    finally:
-        try:
-            if tmp.exists():
-                tmp.unlink()
-        except Exception:
-            pass
 
 
 def _iter_shards(inbox_dir: Path) -> list[Path]:

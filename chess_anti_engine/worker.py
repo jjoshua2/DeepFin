@@ -353,6 +353,12 @@ def main() -> None:
         default=60.0,
         help="Flush/upload at the next completed game boundary once this many seconds have elapsed since the last successful send.",
     )
+    ap.add_argument(
+        "--upload-max-buffered-positions",
+        type=int,
+        default=5000,
+        help="Hard cap on in-memory buffered positions. New game batches are dropped with a warning once this is exceeded — a backstop for when disk flush keeps failing.",
+    )
 
     # Server-managed exploration knobs
     ap.add_argument("--temperature", type=float, default=None)
@@ -893,6 +899,7 @@ class WorkerSession:
             now_s=now_s,
             model_sha=self.model_sha,
             model_step=self.model_step,
+            max_positions=int(self.args.upload_max_buffered_positions),
         )
         shard_path, elapsed_s = _maybe_flush_upload_buffer(
             pending_dir=self.pending_dir,

@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.shard import ShardMeta, save_npz
+from chess_anti_engine.utils.atomic import atomic_write
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -70,8 +74,19 @@ def _buffer_add_completed_game(
     now_s: float,
     model_sha: str,
     model_step: int,
+    max_positions: int = 0,
 ) -> None:
     if getattr(game_batch, "positions", 0) <= 0 or not getattr(game_batch, "samples", None):
+        return
+    new_positions = int(getattr(game_batch, "positions", 0))
+    if max_positions > 0 and int(buf.positions) + new_positions > int(max_positions):
+        # Backstop: if flush-to-disk has been failing, drop rather than OOM.
+        # Normal flow flushes at upload_target_positions; this cap only bites
+        # when something is wrong (disk full, permissions, etc.).
+        log.warning(
+            "upload buffer at %d positions; dropping %d-position game batch (cap=%d)",
+            int(buf.positions), new_positions, int(max_positions),
+        )
         return
     if buf.positions > 0:
         if str(buf.model_sha or "") != str(model_sha) or int(buf.model_step or 0) != int(model_step):
@@ -149,9 +164,10 @@ def _flush_upload_buffer_to_pending(
         checkmate_games=int(buf.checkmate_games),
         stalemate_games=int(buf.stalemate_games),
     )
-    tmp_path = pending_dir / f"_tmp_{shard_path.name}"
-    save_npz(tmp_path, samples=list(buf.samples), meta=meta, compress=False)
-    tmp_path.replace(shard_path)
+    atomic_write(
+        shard_path,
+        lambda tmp: save_npz(tmp, samples=list(buf.samples), meta=meta, compress=False),
+    )
     _pending_elapsed_path(shard_path).write_text(f"{float(elapsed_s):.6f}\n", encoding="utf-8")
     buf.reset()
     return shard_path, float(elapsed_s)
