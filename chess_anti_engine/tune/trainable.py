@@ -1292,8 +1292,6 @@ def _run_selfplay_phase(
     distributed_inference_broker_proc)``.
     """
     total_games = _games_per_iter_for_iteration(tc, iteration_idx)
-    selfplay_batch = tc.selfplay_batch
-    games_remaining = total_games
 
     # --- Play games (distributed or local) ---
     ingest_t0 = time.monotonic()
@@ -1412,8 +1410,8 @@ def _run_selfplay_phase(
         samples, stats = play_batch(
             trainer.model,
             device=device, rng=rng, stockfish=sf,
-            games=selfplay_batch,
-            target_games=games_remaining,
+            games=tc.selfplay_batch,
+            target_games=total_games,
             **kw,
         )
 
@@ -1589,10 +1587,11 @@ def _finalize_iteration(
     eval_dict: dict,
     checkpoint,
     best_loss: float,
-    opp_strength_ema: float,
     ckpt_dir: Path,
     work_dir: Path,
     trial_dir: Path,
+    status_csv_path: Path,
+    tune_report_fn,
     puzzle_suite,
     puzzle_interval: int,
     puzzle_sims: int,
@@ -1640,7 +1639,7 @@ def _finalize_iteration(
             trainer=trainer, pid=pid,
             best_regret_dir=work_dir / "best_regret",
             iteration_idx=iteration_idx,
-            opp_strength_ema=opp_strength_ema,
+            opp_strength_ema=pid_result.opp_strength_ema,
             best_loss=best_loss,
         )
     except Exception:
@@ -1697,11 +1696,11 @@ def _finalize_iteration(
         holdout_generation=holdout_generation,
     )
 
-    _tune_report(report_dict, checkpoint=checkpoint)
+    tune_report_fn(report_dict, checkpoint=checkpoint)
 
     # Write compact status row (best-effort — never crash the trial).
     _write_status_csv_row(
-        _STATUS_CSV_PATH,
+        status_csv_path,
         iteration_idx=iteration_idx,
         opp_strength=pid_result.opp_strength,
         opp_strength_ema=pid_result.opp_strength_ema,
@@ -2791,10 +2790,11 @@ def train_trial(config: dict):
                 eval_dict=eval_dict,
                 checkpoint=checkpoint,
                 best_loss=best_loss,
-                opp_strength_ema=opp_strength_ema,
                 ckpt_dir=ckpt_dir,
                 work_dir=work_dir,
                 trial_dir=trial_dir,
+                status_csv_path=_STATUS_CSV_PATH,
+                tune_report_fn=_tune_report,
                 puzzle_suite=puzzle_suite,
                 puzzle_interval=puzzle_interval,
                 puzzle_sims=puzzle_sims,
