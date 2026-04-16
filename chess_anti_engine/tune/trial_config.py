@@ -524,3 +524,36 @@ class TrainingResult:
     window_target_samples: int = 0
     train_ms: float = 0.0
     drift: DriftMetrics = field(default_factory=DriftMetrics)
+
+
+@dataclass
+class PidResult:
+    """Output of the PID update + eval games + opponent strength phase."""
+
+    # PID outputs (next-iteration values)
+    sf_nodes_next: int = 0
+    random_move_prob_next: float = 0.0
+    skill_level_next: int = 0
+    wdl_regret_next: float = -1.0
+    pid_ema_wr: float = 0.0
+    pid_update: object | None = None
+
+    # Derived game stats
+    blended_winrate_raw: float | None = None
+    avg_game_plies: float = 0.0
+    adjudication_rate: float = 0.0
+    draw_rate: float = 0.0
+    selfplay_adjudication_rate: float = 0.0
+    selfplay_draw_rate: float = 0.0
+    curriculum_adjudication_rate: float = 0.0
+    curriculum_draw_rate: float = 0.0
+    checkmate_rate: float = 0.0
+    stalemate_rate: float = 0.0
+    avg_plies_win: float = 0.0
+    avg_plies_draw: float = 0.0
+    avg_plies_loss: float = 0.0
+
+    # Opponent strength
+    opp_strength: float = 0.0
+    opp_strength_ema: float = 0.0
+    curr_topk: int = 1

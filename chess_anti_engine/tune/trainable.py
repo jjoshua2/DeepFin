@@ -48,7 +48,7 @@ from chess_anti_engine.selfplay.budget import progressive_mcts_simulations
 from chess_anti_engine.stockfish import DifficultyPID, StockfishPool, StockfishUCI, pid_from_config
 from chess_anti_engine.train import Trainer, trainer_kwargs_from_config
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
-from chess_anti_engine.tune.trial_config import TrialConfig
+from chess_anti_engine.tune.trial_config import PidResult, TrialConfig
 from chess_anti_engine.tune._utils import (
     concat_array_batches as _concat_array_batches,
     resolve_local_override_root as _resolve_local_override_root,
@@ -762,6 +762,184 @@ def _wdl_hist(arrs: dict[str, np.ndarray]) -> np.ndarray:
     hst = np.bincount(valid, minlength=3).astype(np.float64)
     hst /= max(1.0, float(hst.sum()))
     return hst
+
+
+def _run_eval_games(
+    *,
+    tc: TrialConfig,
+    trainer: object,
+    device: str,
+    rng: np.random.Generator,
+    eval_sf: object | None,
+    eval_games: int,
+    eval_mcts_sims: int,
+) -> dict:
+    """Run fixed-strength evaluation games (no training data generated)."""
+    eval_dict: dict = {
+        "eval_win": 0, "eval_draw": 0, "eval_loss": 0, "eval_winrate": 0.0,
+    }
+    if eval_games <= 0 or eval_sf is None:
+        return eval_dict
+    kw = _play_batch_kwargs(tc)
+    kw["temp"] = TemperatureConfig(temperature=tc.eval_temperature)
+    kw["search"] = dataclasses.replace(
+        kw["search"],
+        simulations=eval_mcts_sims,
+        playout_cap_fraction=1.0,
+        fast_simulations=0,
+    )
+    kw["game"] = dataclasses.replace(
+        kw["game"],
+        max_plies=tc.eval_max_plies,
+        selfplay_fraction=0.0,
+    )
+    kw["diff_focus"] = dataclasses.replace(kw["diff_focus"], enabled=False)
+    kw["opening"] = OpeningConfig()
+    _eval_samples, eval_stats = play_batch(
+        trainer.model, device=device, rng=rng, stockfish=eval_sf,
+        games=eval_games, **kw,
+    )
+    denom = float(max(1, eval_stats.w + eval_stats.d + eval_stats.l))
+    eval_dict.update({
+        "eval_win": eval_stats.w,
+        "eval_draw": eval_stats.d,
+        "eval_loss": eval_stats.l,
+        "eval_winrate": (float(eval_stats.w) + 0.5 * float(eval_stats.d)) / denom,
+    })
+    return eval_dict
+
+
+def _run_pid_and_eval(
+    *,
+    tc: TrialConfig,
+    pid: DifficultyPID | None,
+    sf: object | None,
+    iteration_zero_based: int,
+    opp_strength_ema: float,
+    opp_ema_alpha: float,
+    # Selfplay stats
+    total_w: int,
+    total_d: int,
+    total_l: int,
+    total_games_generated: int,
+    total_game_plies: int,
+    total_adjudicated_games: int,
+    total_draw_games: int,
+    total_selfplay_games: int,
+    total_selfplay_adjudicated_games: int,
+    total_selfplay_draw_games: int,
+    total_curriculum_games: int,
+    total_curriculum_adjudicated_games: int,
+    total_curriculum_draw_games: int,
+    total_checkmate_games: int,
+    total_stalemate_games: int,
+    total_plies_win: int,
+    total_plies_draw: int,
+    total_plies_loss: int,
+    current_rand: float,
+    sf_nodes_used: int,
+    skill_level_used: int,
+    wdl_regret_used: float,
+) -> PidResult:
+    """Update PID, compute opponent strength and derived game stats.
+
+    Mutates *pid* (observe + param refresh) and *sf* (set_nodes) in place.
+    """
+    # --- Derived game stats ---
+    gen = float(max(1, int(total_games_generated)))
+    sp = float(max(1, int(total_selfplay_games)))
+    cur = float(max(1, int(total_curriculum_games)))
+
+    blended_winrate_raw = _blended_winrate_raw_or_none(
+        wins=total_w, draws=total_d, losses=total_l,
+    )
+
+    # --- PID update ---
+    pid_update = None
+    pid_ema_wr = float(pid.ema_winrate) if pid is not None else 0.0
+    sf_nodes_next = int(sf_nodes_used)
+    random_move_prob_next = float(current_rand)
+    skill_level_next = int(skill_level_used)
+
+    if pid is not None and (total_w + total_d + total_l) > 0:
+        _step_start = tc.sf_pid_max_rand_step_start
+        _step_ramp = tc.sf_pid_max_rand_step_ramp_iters
+        if _step_start > 0 and _step_ramp > 0 and iteration_zero_based < _step_ramp:
+            pid.max_rand_step = _step_start
+        else:
+            pid.max_rand_step = tc.sf_pid_max_rand_step
+        pid.max_regret_step = tc.sf_pid_max_regret_step
+        pid.max_regret_ease_step = tc.sf_pid_max_regret_ease_step
+        pid.target = tc.sf_pid_target_winrate
+        pid.kp = tc.sf_pid_kp
+        pid.ki = tc.sf_pid_ki
+        pid.alpha = tc.sf_pid_ema_alpha
+        pid_update = pid.observe(wins=total_w, draws=total_d, losses=total_l, force=True)
+        pid_ema_wr = float(pid_update.ema_winrate)
+        sf_nodes_next = int(pid.nodes)
+        random_move_prob_next = float(pid.random_move_prob)
+        skill_level_next = int(pid.skill_level)
+        if sf is not None:
+            if hasattr(sf, "set_nodes"):
+                sf.set_nodes(int(sf_nodes_next))
+            else:
+                setattr(sf, "nodes", int(sf_nodes_next))
+
+    wdl_regret_next = float(pid.wdl_regret) if pid is not None else -1.0
+
+    # --- Opponent strength ---
+    _curr_topk = _effective_curriculum_topk(
+        random_move_prob=current_rand,
+        stage_end=tc.sf_pid_topk_stage_end,
+        topk_max=tc.sf_multipv,
+        topk_min=tc.sf_pid_topk_min,
+    )
+    opp_strength = _opponent_strength(
+        random_move_prob=float(current_rand),
+        sf_nodes=int(sf_nodes_used),
+        skill_level=int(skill_level_used),
+        ema_winrate=float(pid_ema_wr),
+        min_nodes=int(getattr(pid, "min_nodes", 50)) if pid is not None else 50,
+        max_nodes=int(getattr(pid, "max_nodes", 50000)) if pid is not None else 50000,
+        pid_target_winrate=tc.sf_pid_target_winrate,
+        wdl_regret=float(wdl_regret_used),
+        wdl_regret_max=tc.sf_pid_wdl_regret_max,
+        topk=int(_curr_topk),
+        topk_max=tc.sf_multipv,
+        topk_min=tc.sf_pid_topk_min,
+    )
+    if opp_strength_ema == 0.0:
+        opp_strength_ema = float(opp_strength)
+    else:
+        opp_strength_ema = (
+            opp_ema_alpha * float(opp_strength)
+            + (1.0 - opp_ema_alpha) * opp_strength_ema
+        )
+
+    return PidResult(
+        sf_nodes_next=sf_nodes_next,
+        random_move_prob_next=random_move_prob_next,
+        skill_level_next=skill_level_next,
+        wdl_regret_next=wdl_regret_next,
+        pid_ema_wr=pid_ema_wr,
+        pid_update=pid_update,
+        blended_winrate_raw=blended_winrate_raw,
+        avg_game_plies=float(total_game_plies) / gen,
+        adjudication_rate=float(total_adjudicated_games) / gen,
+        draw_rate=float(total_draw_games) / gen,
+        selfplay_adjudication_rate=float(total_selfplay_adjudicated_games) / sp,
+        selfplay_draw_rate=float(total_selfplay_draw_games) / sp,
+        curriculum_adjudication_rate=float(total_curriculum_adjudicated_games) / cur,
+        curriculum_draw_rate=float(total_curriculum_draw_games) / cur,
+        checkmate_rate=float(total_checkmate_games) / gen,
+        stalemate_rate=float(total_stalemate_games) / gen,
+        avg_plies_win=float(total_plies_win) / float(max(1, total_w)) if total_w > 0 else 0.0,
+        avg_plies_draw=float(total_plies_draw) / float(max(1, total_d)) if total_d > 0 else 0.0,
+        avg_plies_loss=float(total_plies_loss) / float(max(1, total_l)) if total_l > 0 else 0.0,
+        opp_strength=opp_strength,
+        opp_strength_ema=opp_strength_ema,
+        curr_topk=int(_curr_topk),
+    )
 
 
 def train_trial(config: dict):
@@ -1988,42 +2166,10 @@ def train_trial(config: dict):
 
             train_ms = (time.monotonic() - train_t0) * 1000.0
 
-            eval_dict: dict = {
-                "eval_win": 0,
-                "eval_draw": 0,
-                "eval_loss": 0,
-                "eval_winrate": 0.0,
-            }
-            if eval_games > 0 and eval_sf is not None:
-                # Evaluation: fixed-strength games (no training data generated, only W/D/L).
-                kw = _play_batch_kwargs(tc)
-                kw["temp"] = TemperatureConfig(
-                    temperature=tc.eval_temperature,
-                )
-                kw["search"] = dataclasses.replace(
-                    kw["search"],
-                    simulations=eval_mcts_sims,
-                    playout_cap_fraction=1.0,
-                    fast_simulations=0,
-                )
-                kw["game"] = dataclasses.replace(
-                    kw["game"],
-                    max_plies=tc.eval_max_plies,
-                    selfplay_fraction=0.0,
-                )
-                kw["diff_focus"] = dataclasses.replace(kw["diff_focus"], enabled=False)
-                kw["opening"] = OpeningConfig()  # defaults = no book
-                _eval_samples, eval_stats = play_batch(
-                    trainer.model, device=device, rng=rng, stockfish=eval_sf,
-                    games=eval_games, **kw,
-                )
-                denom = float(max(1, eval_stats.w + eval_stats.d + eval_stats.l))
-                eval_dict.update({
-                    "eval_win": eval_stats.w,
-                    "eval_draw": eval_stats.d,
-                    "eval_loss": eval_stats.l,
-                    "eval_winrate": (float(eval_stats.w) + 0.5 * float(eval_stats.d)) / denom,
-                })
+            eval_dict = _run_eval_games(
+                tc=tc, trainer=trainer, device=device, rng=rng,
+                eval_sf=eval_sf, eval_games=eval_games, eval_mcts_sims=eval_mcts_sims,
+            )
 
             # Flush replay + save checkpoint (model+optimizer+step + PID state).
             checkpoint = _save_trial_checkpoint(
@@ -2097,66 +2243,33 @@ def train_trial(config: dict):
                 iteration_idx=iteration_idx, opp_strength_ema=opp_strength_ema,
             )
 
-            # Update PID ONCE per iteration (after training) so difficulty changes
-            # line up with net updates rather than intra-iteration selfplay noise.
-            pid_update = None
-            pid_ema_wr = float(pid.ema_winrate) if pid is not None else 0.0
-            # Defaults for PID W/D/L (overwritten below when pid is not None).
-            _pid_w = total_w
-            _pid_d = total_d
-            _pid_l = total_l
-            blended_winrate_raw = _blended_winrate_raw_or_none(
-                wins=total_w,
-                draws=total_d,
-                losses=total_l,
+            pid_result = _run_pid_and_eval(
+                tc=tc, pid=pid, sf=sf,
+                iteration_zero_based=iteration_zero_based,
+                opp_strength_ema=opp_strength_ema,
+                opp_ema_alpha=_OPP_EMA_ALPHA,
+                total_w=total_w, total_d=total_d, total_l=total_l,
+                total_games_generated=total_games_generated,
+                total_game_plies=total_game_plies,
+                total_adjudicated_games=total_adjudicated_games,
+                total_draw_games=total_draw_games,
+                total_selfplay_games=total_selfplay_games,
+                total_selfplay_adjudicated_games=total_selfplay_adjudicated_games,
+                total_selfplay_draw_games=total_selfplay_draw_games,
+                total_curriculum_games=total_curriculum_games,
+                total_curriculum_adjudicated_games=total_curriculum_adjudicated_games,
+                total_curriculum_draw_games=total_curriculum_draw_games,
+                total_checkmate_games=total_checkmate_games,
+                total_stalemate_games=total_stalemate_games,
+                total_plies_win=total_plies_win,
+                total_plies_draw=total_plies_draw,
+                total_plies_loss=total_plies_loss,
+                current_rand=current_rand,
+                sf_nodes_used=sf_nodes_used,
+                skill_level_used=skill_level_used,
+                wdl_regret_used=wdl_regret_used,
             )
-            avg_game_plies = float(total_game_plies) / float(max(1, int(total_games_generated)))
-            adjudication_rate = float(total_adjudicated_games) / float(max(1, int(total_games_generated)))
-            draw_rate = float(total_draw_games) / float(max(1, int(total_games_generated)))
-            selfplay_adjudication_rate = float(total_selfplay_adjudicated_games) / float(max(1, int(total_selfplay_games)))
-            selfplay_draw_rate = float(total_selfplay_draw_games) / float(max(1, int(total_selfplay_games)))
-            curriculum_adjudication_rate = float(total_curriculum_adjudicated_games) / float(max(1, int(total_curriculum_games)))
-            curriculum_draw_rate = float(total_curriculum_draw_games) / float(max(1, int(total_curriculum_games)))
-            checkmate_rate = float(total_checkmate_games) / float(max(1, int(total_games_generated)))
-            stalemate_rate = float(total_stalemate_games) / float(max(1, int(total_games_generated)))
-            avg_plies_win = float(total_plies_win) / float(max(1, total_w)) if total_w > 0 else 0.0
-            avg_plies_draw = float(total_plies_draw) / float(max(1, total_d)) if total_d > 0 else 0.0
-            avg_plies_loss = float(total_plies_loss) / float(max(1, total_l)) if total_l > 0 else 0.0
-            sf_nodes_next = int(sf_nodes_used)
-            random_move_prob_next = float(current_rand)
-            skill_level_next = int(skill_level_used)
-            if pid is not None and (total_w + total_d + total_l) > 0:
-                # Use a large max_rand_step for the first N iterations so the
-                # PID can quickly find equilibrium, then switch to fine steps.
-                _step_start = tc.sf_pid_max_rand_step_start
-                _step_ramp = tc.sf_pid_max_rand_step_ramp_iters
-                if _step_start > 0 and _step_ramp > 0 and iteration_zero_based < _step_ramp:
-                    pid.max_rand_step = _step_start
-                else:
-                    pid.max_rand_step = tc.sf_pid_max_rand_step
-                # Re-read tunable PID params from config each iteration
-                # (supports live YAML reload and PBT mutations).
-                pid.max_regret_step = tc.sf_pid_max_regret_step
-                pid.max_regret_ease_step = tc.sf_pid_max_regret_ease_step
-                pid.target = tc.sf_pid_target_winrate
-                pid.kp = tc.sf_pid_kp
-                pid.ki = tc.sf_pid_ki
-                pid.alpha = tc.sf_pid_ema_alpha
-                # total_w/d/l are already curriculum-only (selfplay games
-                # are excluded in play_batch's _finalize_game stats).
-                _pid_w = total_w
-                _pid_d = total_d
-                _pid_l = total_l
-                pid_update = pid.observe(wins=_pid_w, draws=_pid_d, losses=_pid_l, force=True)
-                pid_ema_wr = float(pid_update.ema_winrate)
-                sf_nodes_next = int(pid.nodes)
-                random_move_prob_next = float(pid.random_move_prob)
-                skill_level_next = int(pid.skill_level)
-                if sf is not None:
-                    if hasattr(sf, "set_nodes"):
-                        sf.set_nodes(int(sf_nodes_next))
-                    else:
-                        setattr(sf, "nodes", int(sf_nodes_next))
+            opp_strength_ema = pid_result.opp_strength_ema
 
             # Persist PID state AFTER observe() so checkpoints carry the
             # post-iteration difficulty that produced random_move_prob_next.
@@ -2181,37 +2294,6 @@ def train_trial(config: dict):
             except Exception:
                 pass
 
-            wdl_regret_next = float(pid.wdl_regret) if pid is not None else -1.0
-
-            _curr_topk = _effective_curriculum_topk(
-                random_move_prob=current_rand,
-                stage_end=tc.sf_pid_topk_stage_end,
-                topk_max=tc.sf_multipv,
-                topk_min=tc.sf_pid_topk_min,
-            )
-
-            opp_strength = _opponent_strength(
-                random_move_prob=float(current_rand),
-                sf_nodes=int(sf_nodes_used),
-                skill_level=int(skill_level_used),
-                ema_winrate=float(pid_ema_wr),
-                min_nodes=int(getattr(pid, "min_nodes", 50)) if pid is not None else 50,
-                max_nodes=int(getattr(pid, "max_nodes", 50000)) if pid is not None else 50000,
-                pid_target_winrate=tc.sf_pid_target_winrate,
-                wdl_regret=float(wdl_regret_used),
-                wdl_regret_max=tc.sf_pid_wdl_regret_max,
-                topk=int(_curr_topk),
-                topk_max=tc.sf_multipv,
-                topk_min=tc.sf_pid_topk_min,
-            )
-            if opp_strength_ema == 0.0:
-                opp_strength_ema = float(opp_strength)
-            else:
-                opp_strength_ema = (
-                    _OPP_EMA_ALPHA * float(opp_strength)
-                    + (1.0 - _OPP_EMA_ALPHA) * opp_strength_ema
-                )
-
             # Puzzle evaluation (overspecialization canary).
             puzzle_dict = _run_puzzle_eval_if_due(
                 trainer.model, puzzle_suite,
@@ -2227,29 +2309,30 @@ def train_trial(config: dict):
                 pause_active=distributed_pause_active,
             )
             try:
-                trainer.writer.add_scalar("difficulty/opponent_strength", float(opp_strength), iteration_step)
-                trainer.writer.add_scalar("difficulty/opponent_strength_ema", float(opp_strength_ema), iteration_step)
+                pr = pid_result  # shorthand for TensorBoard scalars
+                trainer.writer.add_scalar("difficulty/opponent_strength", float(pr.opp_strength), iteration_step)
+                trainer.writer.add_scalar("difficulty/opponent_strength_ema", float(pr.opp_strength_ema), iteration_step)
                 trainer.writer.add_scalar("difficulty/random_move_prob", float(current_rand), iteration_step)
-                trainer.writer.add_scalar("difficulty/random_move_prob_next", float(random_move_prob_next), iteration_step)
-                trainer.writer.add_scalar("difficulty/opponent_topk", float(_curr_topk), iteration_step)
-                trainer.writer.add_scalar("difficulty/pid_ema_winrate", float(pid_ema_wr), iteration_step)
+                trainer.writer.add_scalar("difficulty/random_move_prob_next", float(pr.random_move_prob_next), iteration_step)
+                trainer.writer.add_scalar("difficulty/opponent_topk", float(pr.curr_topk), iteration_step)
+                trainer.writer.add_scalar("difficulty/pid_ema_winrate", float(pr.pid_ema_wr), iteration_step)
                 trainer.writer.add_scalar("difficulty/wdl_regret", float(wdl_regret_used), iteration_step)
-                trainer.writer.add_scalar("difficulty/wdl_regret_next", float(wdl_regret_next), iteration_step)
-                if blended_winrate_raw is not None:
-                    trainer.writer.add_scalar("difficulty/blended_winrate_raw", float(blended_winrate_raw), iteration_step)
-                    trainer.writer.add_scalar("selfplay/avg_game_plies", float(avg_game_plies), iteration_step)
-                    if avg_plies_win > 0:
-                        trainer.writer.add_scalar("selfplay/avg_plies_win", float(avg_plies_win), iteration_step)
-                    if avg_plies_draw > 0:
-                        trainer.writer.add_scalar("selfplay/avg_plies_draw", float(avg_plies_draw), iteration_step)
-                    if avg_plies_loss > 0:
-                        trainer.writer.add_scalar("selfplay/avg_plies_loss", float(avg_plies_loss), iteration_step)
-                    trainer.writer.add_scalar("selfplay/adjudication_rate", float(adjudication_rate), iteration_step)
-                    trainer.writer.add_scalar("selfplay/draw_rate", float(draw_rate), iteration_step)
-                    trainer.writer.add_scalar("selfplay/selfplay_adjudication_rate", float(selfplay_adjudication_rate), iteration_step)
-                    trainer.writer.add_scalar("selfplay/selfplay_draw_rate", float(selfplay_draw_rate), iteration_step)
-                trainer.writer.add_scalar("selfplay/curriculum_adjudication_rate", float(curriculum_adjudication_rate), iteration_step)
-                trainer.writer.add_scalar("selfplay/curriculum_draw_rate", float(curriculum_draw_rate), iteration_step)
+                trainer.writer.add_scalar("difficulty/wdl_regret_next", float(pr.wdl_regret_next), iteration_step)
+                if pr.blended_winrate_raw is not None:
+                    trainer.writer.add_scalar("difficulty/blended_winrate_raw", float(pr.blended_winrate_raw), iteration_step)
+                    trainer.writer.add_scalar("selfplay/avg_game_plies", float(pr.avg_game_plies), iteration_step)
+                    if pr.avg_plies_win > 0:
+                        trainer.writer.add_scalar("selfplay/avg_plies_win", float(pr.avg_plies_win), iteration_step)
+                    if pr.avg_plies_draw > 0:
+                        trainer.writer.add_scalar("selfplay/avg_plies_draw", float(pr.avg_plies_draw), iteration_step)
+                    if pr.avg_plies_loss > 0:
+                        trainer.writer.add_scalar("selfplay/avg_plies_loss", float(pr.avg_plies_loss), iteration_step)
+                    trainer.writer.add_scalar("selfplay/adjudication_rate", float(pr.adjudication_rate), iteration_step)
+                    trainer.writer.add_scalar("selfplay/draw_rate", float(pr.draw_rate), iteration_step)
+                    trainer.writer.add_scalar("selfplay/selfplay_adjudication_rate", float(pr.selfplay_adjudication_rate), iteration_step)
+                    trainer.writer.add_scalar("selfplay/selfplay_draw_rate", float(pr.selfplay_draw_rate), iteration_step)
+                trainer.writer.add_scalar("selfplay/curriculum_adjudication_rate", float(pr.curriculum_adjudication_rate), iteration_step)
+                trainer.writer.add_scalar("selfplay/curriculum_draw_rate", float(pr.curriculum_draw_rate), iteration_step)
                 trainer.writer.add_scalar("backpressure/paused_seconds", float(pause_metrics["paused_seconds"]), iteration_step)
                 trainer.writer.add_scalar("backpressure/paused_fraction", float(pause_metrics["paused_fraction"]), iteration_step)
                 trainer.writer.add_scalar("backpressure/paused_percent", float(pause_metrics["paused_percent"]), iteration_step)
@@ -2258,14 +2341,15 @@ def train_trial(config: dict):
             except Exception:
                 pass
 
+            pr = pid_result
             report_dict = {
                     "opponent_random_move_prob": float(current_rand),
-                    "opponent_random_move_prob_next": float(random_move_prob_next),
+                    "opponent_random_move_prob_next": float(pr.random_move_prob_next),
                     "opponent_sf_nodes": int(sf_nodes_used),
-                    "opponent_sf_nodes_next": int(sf_nodes_next),
+                    "opponent_sf_nodes_next": int(pr.sf_nodes_next),
                     "opponent_wdl_regret_limit": float(wdl_regret_used),
-                    "opponent_wdl_regret_limit_next": float(wdl_regret_next),
-                    "opponent_topk": int(_curr_topk),
+                    "opponent_wdl_regret_limit_next": float(pr.wdl_regret_next),
+                    "opponent_topk": int(pr.curr_topk),
                     "iter": int(iteration_idx),
                     "global_iter": int(iteration_idx),
                     "replay": len(buf),
@@ -2273,18 +2357,18 @@ def train_trial(config: dict):
                     "positions_added": total_positions,
                     "replay_positions_ingested": int(replay_positions_ingested),
                     "games_generated": int(total_games_generated),
-                    "avg_game_plies": float(avg_game_plies),
-                    "adjudication_rate": float(adjudication_rate),
-                    "draw_rate": float(draw_rate),
-                    "selfplay_adjudication_rate": float(selfplay_adjudication_rate),
-                    "selfplay_draw_rate": float(selfplay_draw_rate),
-                    "curriculum_adjudication_rate": float(curriculum_adjudication_rate),
-                    "curriculum_draw_rate": float(curriculum_draw_rate),
-                    "checkmate_rate": float(checkmate_rate),
-                    "stalemate_rate": float(stalemate_rate),
-                    "avg_plies_win": float(avg_plies_win),
-                    "avg_plies_draw": float(avg_plies_draw),
-                    "avg_plies_loss": float(avg_plies_loss),
+                    "avg_game_plies": float(pr.avg_game_plies),
+                    "adjudication_rate": float(pr.adjudication_rate),
+                    "draw_rate": float(pr.draw_rate),
+                    "selfplay_adjudication_rate": float(pr.selfplay_adjudication_rate),
+                    "selfplay_draw_rate": float(pr.selfplay_draw_rate),
+                    "curriculum_adjudication_rate": float(pr.curriculum_adjudication_rate),
+                    "curriculum_draw_rate": float(pr.curriculum_draw_rate),
+                    "checkmate_rate": float(pr.checkmate_rate),
+                    "stalemate_rate": float(pr.stalemate_rate),
+                    "avg_plies_win": float(pr.avg_plies_win),
+                    "avg_plies_draw": float(pr.avg_plies_draw),
+                    "avg_plies_loss": float(pr.avg_plies_loss),
                     "shared_samples_ingested": int(imported_samples_this_iter),
                     "shared_trials_selected": int(shared_summary["source_trials_selected"]),
                     "shared_trials_ingested": int(shared_summary["source_trials_ingested"]),
@@ -2313,21 +2397,21 @@ def train_trial(config: dict):
                     "sf_eval_delta6": float(total_sf_d6 / max(1, total_sf_d6_n)) if total_sf_d6_n > 0 else 0.0,
                     "sf_eval_delta6_n": total_sf_d6_n,
                     "sf_nodes": int(sf_nodes_used),
-                    "sf_nodes_next": int(sf_nodes_next),
-                    "pid_ema_winrate": float(pid_ema_wr),
-                    "pid_curriculum_w": int(_pid_w),
-                    "pid_curriculum_d": int(_pid_d),
-                    "pid_curriculum_l": int(_pid_l),
+                    "sf_nodes_next": int(pr.sf_nodes_next),
+                    "pid_ema_winrate": float(pr.pid_ema_wr),
+                    "pid_curriculum_w": int(total_w),
+                    "pid_curriculum_d": int(total_d),
+                    "pid_curriculum_l": int(total_l),
                     "selfplay_games": int(total_selfplay_games),
                     "selfplay_draw_games": int(total_selfplay_draw_games),
                     "random_move_prob": float(current_rand),
-                    "random_move_prob_next": float(random_move_prob_next),
+                    "random_move_prob_next": float(pr.random_move_prob_next),
                     "wdl_regret": float(wdl_regret_used),
-                    "wdl_regret_next": float(wdl_regret_next),
+                    "wdl_regret_next": float(pr.wdl_regret_next),
                     "skill_level": int(skill_level_used),
-                    "skill_level_next": int(skill_level_next),
-                    "opponent_strength": float(opp_strength),
-                    "opponent_strength_ema": float(opp_strength_ema),
+                    "skill_level_next": int(pr.skill_level_next),
+                    "opponent_strength": float(pr.opp_strength),
+                    "opponent_strength_ema": float(pr.opp_strength_ema),
                     "opt_lr": float(trainer.opt.param_groups[0]["lr"]),
                     "peak_lr": float(getattr(trainer, "_peak_lr", 0.0)),
                     "w_wdl": float(trainer.w_wdl),
@@ -2379,7 +2463,7 @@ def train_trial(config: dict):
                     **eval_dict,
                     **test_dict,
                     **puzzle_dict,
-                    "blended_winrate_raw": float(blended_winrate_raw) if blended_winrate_raw is not None else 0.0,
+                    "blended_winrate_raw": float(pr.blended_winrate_raw) if pr.blended_winrate_raw is not None else 0.0,
                 }
 
             _tune_report(report_dict, checkpoint=checkpoint)
@@ -2388,8 +2472,8 @@ def train_trial(config: dict):
             _write_status_csv_row(
                 _STATUS_CSV_PATH,
                 iteration_idx=iteration_idx,
-                opp_strength=opp_strength,
-                opp_strength_ema=opp_strength_ema,
+                opp_strength=pr.opp_strength,
+                opp_strength_ema=pr.opp_strength_ema,
                 skill_level=skill_level_used,
                 sf_nodes=sf_nodes_used,
                 current_rand=current_rand,
