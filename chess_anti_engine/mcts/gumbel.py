@@ -14,7 +14,6 @@ from chess_anti_engine.moves.encode import legal_move_indices
 from chess_anti_engine.mcts.puct import (
     Node,
     _backprop,
-    _expand,
     _expand_sparse,
     _select_child,
     _terminal_value,

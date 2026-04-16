@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
-from typing import Optional
 
 import numpy as np
 
@@ -22,28 +21,28 @@ class ReplaySample:
     # NOTE: With the "train on network turns only" scheme, SF targets (policy + eval)
     # are attached to the *network-turn* sample, representing Stockfish's reply to the
     # network's move and the evaluation after that reply.
-    sf_wdl: Optional[np.ndarray] = None  # (3,) float32
-    sf_move_index: Optional[int] = None  # action index for SF chosen move
-    sf_policy_target: Optional[np.ndarray] = None  # (POLICY_SIZE,) float32 SF reply distribution
-    moves_left: Optional[float] = None
-    is_network_turn: Optional[bool] = None
+    sf_wdl: np.ndarray | None = None  # (3,) float32
+    sf_move_index: int | None = None  # action index for SF chosen move
+    sf_policy_target: np.ndarray | None = None  # (POLICY_SIZE,) float32 SF reply distribution
+    moves_left: float | None = None
+    is_network_turn: bool | None = None
 
-    categorical_target: Optional[np.ndarray] = None  # (num_bins,) float32
+    categorical_target: np.ndarray | None = None  # (num_bins,) float32
 
-    policy_soft_target: Optional[np.ndarray] = None  # (POLICY_SIZE,) float32
-    future_policy_target: Optional[np.ndarray] = None  # (POLICY_SIZE,) float32
-    has_future: Optional[bool] = None
+    policy_soft_target: np.ndarray | None = None  # (POLICY_SIZE,) float32
+    future_policy_target: np.ndarray | None = None  # (POLICY_SIZE,) float32
+    has_future: bool | None = None
 
-    volatility_target: Optional[np.ndarray] = None  # (3,) float32
-    has_volatility: Optional[bool] = None
+    volatility_target: np.ndarray | None = None  # (3,) float32
+    has_volatility: bool | None = None
 
-    sf_volatility_target: Optional[np.ndarray] = None  # (3,) float32
-    has_sf_volatility: Optional[bool] = None
+    sf_volatility_target: np.ndarray | None = None  # (3,) float32
+    has_sf_volatility: bool | None = None
 
     # LC0-style illegal move masking: 1=legal, 0=illegal, shape (POLICY_SIZE,).
     # Applied to policy logits before softmax during training to avoid wasting
     # probability mass on illegal moves. None for old shards (masking skipped).
-    legal_mask: Optional[np.ndarray] = None  # (POLICY_SIZE,) bool/uint8
+    legal_mask: np.ndarray | None = None  # (POLICY_SIZE,) bool/uint8
 
 
 def balance_wdl(

@@ -420,7 +420,7 @@ class Trainer:
         mirror_prob: float,
     ) -> dict[str, torch.Tensor]:
         if hasattr(buf, "sample_batch_arrays"):
-            arrs = getattr(buf, "sample_batch_arrays")(batch_size)
+            arrs = buf.sample_batch_arrays(batch_size)
             arrs = maybe_mirror_batch_arrays(arrs, rng=buf.rng, prob=mirror_prob)
             return collate_arrays(arrs, device=self.device)
 
@@ -436,7 +436,7 @@ class Trainer:
         mirror_prob: float,
     ) -> dict[str, np.ndarray] | list:
         if hasattr(buf, "sample_batch_arrays"):
-            arrs = getattr(buf, "sample_batch_arrays")(batch_size)
+            arrs = buf.sample_batch_arrays(batch_size)
             return maybe_mirror_batch_arrays(arrs, rng=buf.rng, prob=mirror_prob)
 
         samples = buf.sample_batch(batch_size)
@@ -529,7 +529,7 @@ class Trainer:
         n_groups = len(self.opt.param_groups)
         old_bases = []
         if hasattr(self._scheduler, "base_lrs"):
-            old_bases = [float(v) for v in getattr(self._scheduler, "base_lrs")]
+            old_bases = [float(v) for v in self._scheduler.base_lrs]
         if not old_bases:
             old_bases = [float(self._peak_lr)] * n_groups
         if len(old_bases) < n_groups:
@@ -554,7 +554,7 @@ class Trainer:
 
         # Keep the scheduler's cached current LR consistent with the rebase.
         if hasattr(self._scheduler, "_last_lr"):
-            last_lrs = getattr(self._scheduler, "_last_lr")
+            last_lrs = self._scheduler._last_lr
             if isinstance(last_lrs, list) and last_lrs:
                 self._scheduler._last_lr = [float(v) * scale for v in last_lrs]
 

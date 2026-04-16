@@ -7,7 +7,6 @@ import re
 import secrets
 import threading
 import time
-import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -200,9 +199,6 @@ def create_app(
         available_trial_ids,
         load_lease,
         normalize_trial_id,
-        pick_trial_for_lease,
-        prune_expired_leases,
-        save_lease,
     )
 
     root = Path(server_root)
@@ -322,7 +318,7 @@ def create_app(
             self.timeout_s = float(timeout_s)
             self._held = False
 
-        def __enter__(self) -> "_LeaseAssignLock":
+        def __enter__(self) -> _LeaseAssignLock:
             deadline = time.time() + float(self.timeout_s)
             while True:
                 try:
@@ -946,7 +942,6 @@ def create_app(
         user_dir.mkdir(parents=True, exist_ok=True)
 
         body = json.dumps(payload, sort_keys=True).encode("utf-8")
-        import hashlib
 
         sha = hashlib.sha256(body).hexdigest()
         out = user_dir / f"{sha}.json"

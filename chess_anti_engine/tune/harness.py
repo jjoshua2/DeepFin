@@ -491,7 +491,7 @@ def run_tune(
         valid_state_file: Path | None = None
         for sf in reversed(state_files):  # try newest first
             try:
-                with open(sf, "r", encoding="utf-8") as fh:
+                with open(sf, encoding="utf-8") as fh:
                     json.loads(fh.read())
                 state_ok = True
                 valid_state_file = Path(sf)

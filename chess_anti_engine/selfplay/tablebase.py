@@ -11,14 +11,13 @@ policy target with 100% weight on the DTZ-optimal move.
 """
 from __future__ import annotations
 
-from typing import Optional
 
 import chess
 import chess.syzygy
 
 
-_tablebase: Optional[chess.syzygy.Tablebase] = None
-_tablebase_path: Optional[str] = None
+_tablebase: chess.syzygy.Tablebase | None = None
+_tablebase_path: str | None = None
 
 
 def _get_tablebase(path: str) -> chess.syzygy.Tablebase | None:
@@ -70,10 +69,9 @@ def probe_wdl(board: chess.Board, syzygy_path: str) -> int | None:
     # We use a simple mapping: positive = win, 0 = draw, negative = loss.
     if wdl > 0:
         return 2  # win for side to move
-    elif wdl < 0:
+    if wdl < 0:
         return 0  # loss for side to move
-    else:
-        return 1  # draw
+    return 1  # draw
 
 
 def probe_best_move(board: chess.Board, syzygy_path: str) -> chess.Move | None:
@@ -162,17 +160,14 @@ def rescore_game_samples(
         # Convert side-to-move WDL to absolute result.
         if wdl == 1:
             return "1/2-1/2"
-        elif wdl == 2:
+        if wdl == 2:
             # Win for side to move
             if board.turn == chess.WHITE:
                 return "1-0"
-            else:
-                return "0-1"
-        else:
-            # Loss for side to move
-            if board.turn == chess.WHITE:
-                return "0-1"
-            else:
-                return "1-0"
+            return "0-1"
+        # Loss for side to move
+        if board.turn == chess.WHITE:
+            return "0-1"
+        return "1-0"
 
     return None

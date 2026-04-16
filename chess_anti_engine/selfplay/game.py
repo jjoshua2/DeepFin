@@ -10,8 +10,6 @@ from chess_anti_engine.encoding import encode_position
 from chess_anti_engine.moves import (
     POLICY_SIZE,
     index_to_move,
-    legal_move_mask,
-    sample_move_from_logits,
     move_to_index,
 )
 from chess_anti_engine.mcts import MCTSConfig, run_mcts

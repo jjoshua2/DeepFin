@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import signal
 import subprocess
 import time
-from typing import Iterable
+from collections.abc import Iterable
 
 
 def _list_matching_pids(

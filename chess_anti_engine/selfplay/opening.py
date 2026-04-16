@@ -5,7 +5,7 @@ import zipfile
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Iterable
+from collections.abc import Iterable
 
 import chess
 import chess.pgn

@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import chess
 
-from chess_anti_engine.utils.bitboards import bitboard_to_plane, bitboards_to_planes
+from chess_anti_engine.utils.bitboards import bitboards_to_planes
 
 try:
     from chess_anti_engine.encoding._features_ext import compute_extra_features as _c_compute
@@ -82,8 +82,7 @@ def _discovered_attack_mask(board: chess.Board, color: chess.Color) -> int:
         b2.remove_piece_at(attacker_sq)
         if b2.is_attacked_by(color, opp_king):
             return all_own  # hidden slider revealed
-        else:
-            return all_own & ~int(attackers)
+        return all_own & ~int(attackers)
 
     # No sliders → no discovered attacks possible.
     has_sliders = (
@@ -186,7 +185,7 @@ for _sq in chess.SQUARES:
                 for _rr in range(_r, 8):
                     _support |= chess.BB_SQUARES[chess.square(_af, _rr)]
             else:
-                for _rr in range(0, _r + 1):
+                for _rr in range(_r + 1):
                     _support |= chess.BB_SQUARES[chess.square(_af, _rr)]
 
         _PASSED_PAWN_MASKS[_color][_sq] = int(_passed)

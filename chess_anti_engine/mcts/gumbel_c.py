@@ -15,7 +15,6 @@ Architecture:
 from __future__ import annotations
 
 import logging as _logging
-import math
 
 import numpy as np
 import chess
@@ -32,7 +31,6 @@ from chess_anti_engine.mcts.gumbel import (
 from chess_anti_engine.moves import POLICY_SIZE
 
 from chess_anti_engine.encoding._lc0_ext import CBoard
-from chess_anti_engine.encoding.cboard_encode import cboard_from_board_fast
 from chess_anti_engine.mcts._mcts_tree import MCTSTree, NNCache
 
 _log = _logging.getLogger(__name__)
@@ -52,10 +50,10 @@ def run_gumbel_root_many_c(
     per_game_simulations: list[int] | None = None,
     per_game_add_noise: list[bool] | None = None,
     cboards: list | None = None,
-    nn_cache: "NNCache | None" = None,
-    tree: "MCTSTree | None" = None,
+    nn_cache: NNCache | None = None,
+    tree: MCTSTree | None = None,
     root_node_ids: list[int] | None = None,
-) -> tuple[list[np.ndarray], list[int], list[float], list[np.ndarray], "MCTSTree", list[int]]:
+) -> tuple[list[np.ndarray], list[int], list[float], list[np.ndarray], MCTSTree, list[int]]:
     """Gumbel root search with MCTSTree C tree + CBoard.
 
     Same API as ``run_gumbel_root_many`` -- drop-in replacement.
@@ -216,7 +214,7 @@ def run_gumbel_root_many_c(
 
     if _use_pipeline:
         mid = n_boards // 2
-        _grp = [list(range(0, mid)), list(range(mid, n_boards))]
+        _grp = [list(range(mid)), list(range(mid, n_boards))]
         _trees = [MCTSTree(), MCTSTree()]
         _max_grp = max(mid, n_boards - mid)  # ceil half for odd splits
         _leaf_cap = _max_grp * max(2, int(cfg.topk)) * 2

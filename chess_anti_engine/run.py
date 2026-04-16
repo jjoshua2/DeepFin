@@ -10,21 +10,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from chess_anti_engine.model import (
-    ModelConfig,
-    build_model,
-    load_state_dict_tolerant,
-    reinit_volatility_head_parameters_,
-    zero_policy_head_parameters_,
-)
 from chess_anti_engine.replay.shard import iter_shard_paths
-from chess_anti_engine.selfplay.config import (
-    DiffFocusConfig,
-    GameConfig,
-    OpponentConfig,
-    SearchConfig,
-    TemperatureConfig,
-)
 from chess_anti_engine.tune.replay_exchange import _read_jsonl_rows
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 
@@ -163,16 +149,24 @@ def _run_salvage(args: argparse.Namespace) -> None:
             except Exception:
                 pid_obj = None
             if isinstance(pid_obj, dict):
-                def _set_pid(dst_key: str, src_keys: tuple[str, ...], *, as_int: bool = False) -> None:
+                def _set_pid(
+                    dst_key: str,
+                    src_keys: tuple[str, ...],
+                    *,
+                    as_int: bool = False,
+                    _row: dict = row,
+                    _pid_obj: dict = pid_obj,
+                    _overrides: list[str] = pid_state_overrides,
+                ) -> None:
                     for sk in src_keys:
-                        v = row.get(sk)
+                        v = _row.get(sk)
                         if not isinstance(v, (int, float)):
                             continue
                         fv = float(v)
                         if not np.isfinite(fv):
                             continue
-                        pid_obj[dst_key] = int(fv) if as_int else fv
-                        pid_state_overrides.append(f"{dst_key}<-{sk}")
+                        _pid_obj[dst_key] = int(fv) if as_int else fv
+                        _overrides.append(f"{dst_key}<-{sk}")
                         return
 
                 _set_pid("random_move_prob", ("random_move_prob_next", "random_move_prob"))

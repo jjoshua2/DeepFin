@@ -108,7 +108,7 @@ class LocalModelEvaluator:
     def evaluate_encoded_async(
         self,
         x: np.ndarray,
-    ) -> tuple[torch.Tensor, torch.Tensor, "torch.cuda.Event | None"]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
         """Launch GPU forward pass and non-blocking D2H transfer.
 
         Returns (pol_cpu_tensor, wdl_cpu_tensor, event).  The tensors
@@ -355,7 +355,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
     def evaluate_encoded_async(
         self,
         x: np.ndarray,
-    ) -> tuple[torch.Tensor, torch.Tensor, "torch.cuda.Event | None"]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
         """Pinned-memory async eval: H2D via DMA, non-blocking D2H."""
         if x.ndim != 4:
             raise ValueError(f"expected 4D input, got {x.ndim}D")
@@ -462,7 +462,6 @@ class ThreadedBatchEvaluator:
 
     def _gpu_loop(self) -> None:
         """Dedicated GPU thread: accumulate requests, run batched inference."""
-        import queue as _queue
 
         try:
             self._gpu_eval = DirectGPUEvaluator(
@@ -661,7 +660,7 @@ class AOTEvaluator:
 
     def evaluate_encoded_async(
         self, x: np.ndarray,
-    ) -> tuple[torch.Tensor, torch.Tensor, "torch.cuda.Event | None"]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
         if x.ndim != 4:
             raise ValueError(f"expected 4D input, got {x.ndim}D")
         bsz = x.shape[0]

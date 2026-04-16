@@ -3,9 +3,8 @@ from __future__ import annotations
 import logging
 import math
 import time
-from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Callable
+from collections.abc import Callable
 
 import numpy as np
 import torch
@@ -30,8 +29,8 @@ try:
 except ImportError:
     _HAS_GUMBEL_C = False
 from chess_anti_engine.moves import POLICY_SIZE, move_to_index, index_to_move, legal_move_mask
-from chess_anti_engine.moves.encode import legal_move_indices, uci_to_policy_index
-from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS, hlgauss_target
+from chess_anti_engine.moves.encode import uci_to_policy_index
+from chess_anti_engine.train.targets import hlgauss_target
 from chess_anti_engine.selfplay.config import (
     DiffFocusConfig,
     GameConfig,
@@ -321,7 +320,6 @@ def play_batch(
     # Parallel CBoard state — primary board for hot-path ops (fen, game_over, ply, encoding).
     # Use from_board (not from_raw) to preserve ply count and history from openings.
     from chess_anti_engine.encoding._lc0_ext import CBoard as _CBoard
-    from chess_anti_engine.encoding.cboard_encode import cboard_from_board_fast as _cb_fast
     cboards = [_CBoard.from_board(b) for b in boards]
     # Keep a copy of the starting position for tablebase replay after game ends.
     starting_boards = [b.copy() for b in boards] if game.syzygy_path else None

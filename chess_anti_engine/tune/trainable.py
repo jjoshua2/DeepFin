@@ -2200,11 +2200,14 @@ def train_trial(config: dict):
 
     # Re-read YAML and overlay all keys EXCEPT those PB2 is actively searching.
     # This lets --resume pick up config changes without clobbering tuned hyperparams.
-    _yaml_path = config.get("_yaml_config_path")
-    _reload_yaml_into_config(config, _yaml_path)
+    _reload_yaml_into_config(config, config.get("_yaml_config_path"))
+    if "device" not in config:
+        config["device"] = "cuda" if torch.cuda.is_available() else "cpu"
+    tc = TrialConfig.from_dict(config)
+    _yaml_path = tc._yaml_config_path
 
     _ctx = _tune_get_context()
-    base_seed = int(config.get("seed", 0))
+    base_seed = tc.seed
     trial_id = str(_ctx.get_trial_id() or "trial")
     trial_seed = _stable_seed_u32(base_seed, trial_id)
     active_seed = int(trial_seed)
@@ -2213,17 +2216,17 @@ def train_trial(config: dict):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(active_seed)
 
-    device = str(config.get("device", "cuda" if torch.cuda.is_available() else "cpu"))
+    device = tc.device
 
     model_cfg = ModelConfig(
-        kind=str(config.get("model", "transformer")),
-        embed_dim=int(config.get("embed_dim", 256)),
-        num_layers=int(config.get("num_layers", 6)),
-        num_heads=int(config.get("num_heads", 8)),
-        ffn_mult=float(config.get("ffn_mult", 2)),
-        use_smolgen=bool(config.get("use_smolgen", True)),
-        use_nla=bool(config.get("use_nla", False)),
-        use_gradient_checkpointing=bool(config.get("gradient_checkpointing", False)),
+        kind=tc.model,
+        embed_dim=tc.embed_dim,
+        num_layers=tc.num_layers,
+        num_heads=tc.num_heads,
+        ffn_mult=tc.ffn_mult,
+        use_smolgen=tc.use_smolgen,
+        use_nla=tc.use_nla,
+        use_gradient_checkpointing=tc.gradient_checkpointing,
     )
     model = build_model(model_cfg)
 
@@ -2278,19 +2281,7 @@ def train_trial(config: dict):
     )
     trainer = Trainer(model, **trainer_ctor)
 
-    salvage_startup_no_share_iters = max(0, int(config.get("salvage_startup_no_share_iters", 0)))
-    salvage_startup_max_train_steps = max(0, int(config.get("salvage_startup_max_train_steps", 0)))
-    salvage_startup_post_share_ramp_iters = max(
-        0, int(config.get("salvage_startup_post_share_ramp_iters", 0))
-    )
-    salvage_startup_post_share_max_train_steps = max(
-        0, int(config.get("salvage_startup_post_share_max_train_steps", 0))
-    )
-
-    # Dynamic sf_wdl weight schedule: start at w_sf_wdl when regret is wide (easy
-    # opponent), decline to sf_wdl_floor as regret tightens (hard opponent).
-    sf_wdl_start = float(config.get("w_sf_wdl", 1.0))
-    sf_wdl_floor = float(config.get("sf_wdl_floor", 0.1))
+    salvage_startup_no_share_iters = max(0, tc.salvage_startup_no_share_iters)
 
     ckpt = _tune_get_checkpoint()
     restore, rng = _restore_checkpoint_or_salvage(
@@ -2315,18 +2306,13 @@ def train_trial(config: dict):
     salvage_origin_dir = restore.salvage_origin_dir
     cross_trial_restore = restore.cross_trial_restore
 
-    # Growing sliding window: start small, grow as the net matures.
-    window_start = int(config.get("replay_window_start", 100_000))
-    window_max = int(config.get("replay_window_max", int(config.get("replay_capacity", 1_000_000))))
-    window_growth = int(config.get("replay_window_growth", 10_000))
-    current_window = window_start
+    # Rebuild tc — _restore_checkpoint_or_salvage may overlay donor config.
+    tc = TrialConfig.from_dict(config)
 
-    shuffle_cap = int(config.get("shuffle_buffer_size", 20_000))
-    shard_size = int(config.get("shard_size", 1000))
-    shuffle_refresh_interval = int(config.get("shuffle_refresh_interval", 5))
-    shuffle_refresh_shards = int(config.get("shuffle_refresh_shards", 3))
-    shuffle_draw_cap_frac = float(config.get("shuffle_draw_cap_frac", 0.90))
-    shuffle_wl_max_ratio = float(config.get("shuffle_wl_max_ratio", 1.5))
+    # Growing sliding window: start small, grow as the net matures.
+    window_max = tc.replay_window_max
+    window_growth = tc.replay_window_growth
+    current_window = tc.replay_window_start
     replay_shard_dir = _trial_replay_shard_dir(config=config, trial_dir=trial_dir)
     selfplay_shards_dir = work_dir / "selfplay_shards"
     selfplay_shards_dir.mkdir(parents=True, exist_ok=True)
@@ -2360,9 +2346,8 @@ def train_trial(config: dict):
 
     # Seed replay buffer with shared iter-0 data (played once from bootstrap net).
     # Only copy if this is a fresh trial (no existing shards in replay_shard_dir).
-    shared_shards_dir = config.get("shared_shards_dir")
-    if shared_shards_dir and not iter_shard_paths(replay_shard_dir) and (not cross_trial_restore):
-        src = Path(shared_shards_dir)
+    if tc.shared_shards_dir and not iter_shard_paths(replay_shard_dir) and (not cross_trial_restore):
+        src = Path(tc.shared_shards_dir)
         if src.is_dir():
             replay_shard_dir.mkdir(parents=True, exist_ok=True)
             copied = 0
@@ -2373,19 +2358,19 @@ def train_trial(config: dict):
                 shared_summary["source_shards_loaded"] = int(copied)
                 print(f"[trial] Seeded {copied} shared iter-0 shards from {src}")
 
-    if cross_trial_restore and bool(config.get("exploit_replay_refresh_enabled", True)):
+    if cross_trial_restore and tc.exploit_replay_refresh_enabled:
         donor_trial_dir = Path(restore.restored_owner_trial_dir).expanduser() if restore.restored_owner_trial_dir else None
         refresh_summary = _refresh_replay_shards_on_exploit(
             config=config,
             replay_shard_dir=replay_shard_dir,
             recipient_trial_dir=trial_dir,
             donor_trial_dir=donor_trial_dir,
-            keep_recent_fraction=float(config.get("exploit_replay_local_keep_recent_fraction", 0.20)),
-            keep_older_fraction=float(config.get("exploit_replay_local_keep_older_fraction", 0.65)),
-            donor_shards=int(config.get("exploit_replay_donor_shards", -1)),
-            donor_skip_newest=int(config.get("exploit_replay_skip_newest", 0)),
-            shard_size=int(shard_size),
-            holdout_fraction=float(config.get("holdout_fraction", 0.02)),
+            keep_recent_fraction=tc.exploit_replay_local_keep_recent_fraction,
+            keep_older_fraction=tc.exploit_replay_local_keep_older_fraction,
+            donor_shards=tc.exploit_replay_donor_shards,
+            donor_skip_newest=tc.exploit_replay_skip_newest,
+            shard_size=tc.shard_size,
+            holdout_fraction=tc.holdout_fraction,
         )
         print(
             "[trial] replay refresh after exploit: "
@@ -2404,7 +2389,7 @@ def train_trial(config: dict):
         # _enforce_window doesn't aggressively evict on first add_many.
         kept_after_refresh = iter_shard_paths(replay_shard_dir)
         if kept_after_refresh:
-            current_window = max(int(current_window), len(kept_after_refresh) * int(shard_size))
+            current_window = max(int(current_window), len(kept_after_refresh) * tc.shard_size)
             print(
                 f"[trial] exploit restore: pre-set window={current_window} "
                 f"for {len(kept_after_refresh)} kept shards"
@@ -2414,12 +2399,12 @@ def train_trial(config: dict):
         current_window,
         shard_dir=replay_shard_dir,
         rng=rng,
-        shuffle_cap=shuffle_cap,
-        shard_size=shard_size,
-        refresh_interval=shuffle_refresh_interval,
-        refresh_shards=shuffle_refresh_shards,
-        draw_cap_frac=shuffle_draw_cap_frac,
-        wl_max_ratio=shuffle_wl_max_ratio,
+        shuffle_cap=tc.shuffle_buffer_size,
+        shard_size=tc.shard_size,
+        refresh_interval=tc.shuffle_refresh_interval,
+        refresh_shards=tc.shuffle_refresh_shards,
+        draw_cap_frac=tc.shuffle_draw_cap_frac,
+        wl_max_ratio=tc.shuffle_wl_max_ratio,
     )
 
     # Preserve intentionally seeded replay (resume, salvage warmstart, shared-shard
@@ -2435,8 +2420,8 @@ def train_trial(config: dict):
         f"len(buf)={len(buf)} capacity={buf.capacity} "
         f"tracked_shards={len(buf._shard_paths)} total_pos={buf._total_positions}"
     )
-    holdout_buf = ArrayReplayBuffer(int(config.get("holdout_capacity", 50_000)), rng=rng)
-    holdout_frac = float(config.get("holdout_fraction", 0.02))
+    holdout_buf = ArrayReplayBuffer(tc.holdout_capacity, rng=rng)
+    holdout_frac = tc.holdout_fraction
 
     # Load pre-trained bootstrap checkpoint (trained offline via scripts/train_bootstrap.py).
     # This gives the value head a working signal so first MCTS searches are better than random.
@@ -2447,20 +2432,19 @@ def train_trial(config: dict):
     # (3) optimizer momentum buffers from bootstrap's data distribution cause wrong
     # gradient directions on selfplay data, (4) PB2's lr perturbation has no effect
     # because scheduler's base_lr is locked to bootstrap's lr (0.0003).
-    bootstrap_ckpt = config.get("bootstrap_checkpoint")
-    if bootstrap_ckpt and ckpt is None and (not seed_warmstart_used):
+    if tc.bootstrap_checkpoint and ckpt is None and (not seed_warmstart_used):
         # Only load bootstrap if Ray didn't restore a trial checkpoint (i.e. fresh start).
-        bp = Path(bootstrap_ckpt)
+        bp = Path(tc.bootstrap_checkpoint)
         if bp.exists():
             print(f"[trial] Loading pre-trained bootstrap model weights: {bp}")
             ckpt_data = torch.load(str(bp), map_location=device)
             model_sd = ckpt_data.get("model") or ckpt_data.get("model_state_dict") or ckpt_data
             load_state_dict_tolerant(trainer.model, model_sd, label="bootstrap")
-            if bool(config.get("bootstrap_zero_policy_heads", False)):
+            if tc.bootstrap_zero_policy_heads:
                 zeroed = zero_policy_head_parameters_(trainer.model)
                 if zeroed:
                     print(f"[trial] Zeroed bootstrap policy heads: {', '.join(zeroed)}")
-            if bool(config.get("bootstrap_reinit_volatility_heads", False)):
+            if tc.bootstrap_reinit_volatility_heads:
                 reinit = reinit_volatility_head_parameters_(trainer.model)
                 if reinit:
                     print(f"[trial] Reinitialized bootstrap volatility heads: {', '.join(reinit)}")
@@ -2471,55 +2455,45 @@ def train_trial(config: dict):
         else:
             print(f"[trial] WARNING: bootstrap checkpoint not found: {bp}")
 
-    # Net gating config
-    gate_games = int(config.get("gate_games", 0))  # 0 = disabled
-    gate_threshold = float(config.get("gate_threshold", 0.50))
-    gate_interval = int(config.get("gate_interval", 1))  # gate every N iters
-
     # Holdout management: optionally freeze once it reaches a target size, and optionally
     # reset it if the training distribution drifts too far.
-    freeze_holdout_at = int(config.get("freeze_holdout_at", 0))
-    reset_holdout_on_drift = bool(config.get("reset_holdout_on_drift", False))
-    drift_threshold = float(config.get("drift_threshold", 0.0))
-    drift_sample_size = int(config.get("drift_sample_size", 256))
+    freeze_holdout_at = tc.freeze_holdout_at
+    reset_holdout_on_drift = tc.reset_holdout_on_drift
+    drift_threshold = tc.drift_threshold
+    drift_sample_size = tc.drift_sample_size
     holdout_frozen = False
     holdout_generation = 0
 
-    distributed_workers_per_trial = max(0, int(config.get("distributed_workers_per_trial", 0)))
+    distributed_workers_per_trial = max(0, tc.distributed_workers_per_trial)
     use_distributed_selfplay = (
         distributed_workers_per_trial > 0
-        and isinstance(config.get("distributed_server_root"), str)
-        and str(config.get("distributed_server_root", "")).strip()
-        and isinstance(config.get("distributed_server_url"), str)
-        and str(config.get("distributed_server_url", "")).strip()
+        and bool((tc.distributed_server_root or "").strip())
+        and bool((tc.distributed_server_url or "").strip())
     )
 
-    sf_workers = int(config.get("sf_workers", 1))
-    sf_multipv = int(config.get("sf_multipv", 1))
-    sf_hash_mb = int(config.get("sf_hash_mb", 16))
-    need_local_sf = (not use_distributed_selfplay) or (gate_games > 0)
+    need_local_sf = (not use_distributed_selfplay) or (tc.gate_games > 0)
     sf = None
     if need_local_sf:
-        if sf_workers > 1:
+        if tc.sf_workers > 1:
             sf = StockfishPool(
-                path=str(config["stockfish_path"]),
-                nodes=int(config.get("sf_nodes", 500)),
-                num_workers=sf_workers,
-                multipv=sf_multipv,
-                hash_mb=sf_hash_mb,
+                path=tc.stockfish_path,
+                nodes=tc.sf_nodes,
+                num_workers=tc.sf_workers,
+                multipv=tc.sf_multipv,
+                hash_mb=tc.sf_hash_mb,
             )
         else:
             sf = StockfishUCI(
-                str(config["stockfish_path"]),
-                nodes=int(config.get("sf_nodes", 500)),
-                multipv=sf_multipv,
-                hash_mb=sf_hash_mb,
+                tc.stockfish_path,
+                nodes=tc.sf_nodes,
+                multipv=tc.sf_multipv,
+                hash_mb=tc.sf_hash_mb,
             )
 
     distributed_server_root = (
         _resolve_local_override_root(
-            raw_root=config["distributed_server_root"],
-            tune_work_dir=config.get("work_dir", work_dir),
+            raw_root=str(tc.distributed_server_root),
+            tune_work_dir=tc.work_dir or str(work_dir),
             suffix="server",
         )
         if use_distributed_selfplay
@@ -2548,7 +2522,6 @@ def train_trial(config: dict):
                 f"dst={quarantined['quarantine_root']}"
             )
 
-    tc = TrialConfig.from_dict(config)
     eval_games = tc.eval_games
     eval_sf_nodes = tc.eval_sf_nodes
     eval_mcts_sims = tc.eval_mcts_simulations
@@ -2557,14 +2530,14 @@ def train_trial(config: dict):
     if eval_games > 0:
         # For fixed-strength evaluation, use a dedicated engine instance with its own node limit.
         eval_sf = StockfishUCI(
-            str(config["stockfish_path"]),
+            tc.stockfish_path,
             nodes=eval_sf_nodes,
             multipv=1,
-            hash_mb=sf_hash_mb,
+            hash_mb=tc.sf_hash_mb,
         )
 
     pid = None
-    if bool(config.get("sf_pid_enabled", True)):
+    if tc.sf_pid_enabled:
         pid = pid_from_config(config)
         if restored_pid_state is not None:
             try:
@@ -2574,13 +2547,12 @@ def train_trial(config: dict):
 
     # Optional puzzle evaluation suite.
     puzzle_suite = None
-    puzzle_interval = int(config.get("puzzle_interval", 1))
-    puzzle_sims = int(config.get("puzzle_simulations", 200))
-    _puzzle_epd = config.get("puzzle_epd")
-    if _puzzle_epd and puzzle_interval > 0:
+    puzzle_interval = tc.puzzle_interval
+    puzzle_sims = tc.puzzle_simulations
+    if tc.puzzle_epd and puzzle_interval > 0:
         from chess_anti_engine.eval import load_epd
         try:
-            puzzle_suite = load_epd(_puzzle_epd)
+            puzzle_suite = load_epd(tc.puzzle_epd)
         except FileNotFoundError:
             puzzle_suite = None
 
@@ -2591,18 +2563,18 @@ def train_trial(config: dict):
         current_rand_init = (
             float(pid.random_move_prob)
             if pid is not None
-            else float(config.get("sf_pid_random_move_prob_start", 0.0))
+            else tc.sf_pid_random_move_prob_start
         )
-        current_nodes_init = int(pid.nodes) if pid is not None else int(config.get("sf_nodes", 500))
+        current_nodes_init = int(pid.nodes) if pid is not None else tc.sf_nodes
         current_skill_init = int(pid.skill_level) if pid is not None else 0
-        sims_init = int(config.get("mcts_simulations", 50))
-        if bool(config.get("progressive_mcts", True)):
+        sims_init = tc.mcts_simulations
+        if tc.progressive_mcts:
             sims_init = progressive_mcts_simulations(
                 int(getattr(trainer, "step", 0)),
-                start=int(config.get("mcts_start_simulations", 50)),
-                max_sims=int(config.get("mcts_simulations", 50)),
-                ramp_steps=int(config.get("mcts_ramp_steps", 10_000)),
-                exponent=float(config.get("mcts_ramp_exponent", 2.0)),
+                start=tc.mcts_start_simulations,
+                max_sims=tc.mcts_simulations,
+                ramp_steps=tc.mcts_ramp_steps,
+                exponent=tc.mcts_ramp_exponent,
             )
         prev_published_model_sha = _publish_distributed_trial_state(
             trainer=trainer,
@@ -2641,7 +2613,7 @@ def train_trial(config: dict):
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        iterations = int(config.get("iterations", 10))
+        iterations = tc.iterations
         completed_iterations = 0
         while completed_iterations < iterations:
             iteration_zero_based = int(global_iter)

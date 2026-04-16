@@ -49,8 +49,7 @@ def bitboard_to_plane(bb: int, *, turn: chess.Color) -> np.ndarray:
     raw = np.unpackbits(np.frombuffer(int(bb).to_bytes(8, 'big'), dtype=np.uint8)).reshape(8, 8)
     if turn == chess.WHITE:
         return raw[::-1, ::-1].astype(np.float32)
-    else:
-        return raw[:, ::-1].astype(np.float32)
+    return raw[:, ::-1].astype(np.float32)
 
 
 def bitboards_to_planes(bbs: list[int], *, turn: chess.Color) -> np.ndarray:
@@ -62,8 +61,7 @@ def bitboards_to_planes(bbs: list[int], *, turn: chess.Color) -> np.ndarray:
     raw = np.unpackbits(np.frombuffer(raw_bytes, dtype=np.uint8)).reshape(n, 8, 8)
     if turn == chess.WHITE:
         return raw[:, ::-1, ::-1].astype(np.float32)
-    else:
-        return raw[:, :, ::-1].astype(np.float32)
+    return raw[:, :, ::-1].astype(np.float32)
 
 
 def file_to_plane(file_idx: int) -> np.ndarray:

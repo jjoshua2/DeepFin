@@ -9,7 +9,7 @@ import torch
 
 from chess_anti_engine.encoding import encode_position, encode_positions_batch
 from chess_anti_engine.inference import BatchEvaluator, LocalModelEvaluator, _policy_output
-from chess_anti_engine.moves import POLICY_SIZE, move_to_index
+from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.moves.encode import index_to_move_fast, legal_move_indices
 from chess_anti_engine.utils.amp import inference_autocast
 

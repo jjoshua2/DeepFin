@@ -260,7 +260,6 @@ def uci_to_policy_index(uci: str, turn: bool) -> int:
         f = from_sq if turn else (from_sq ^ 56)
         t = to_sq if turn else (to_sq ^ 56)
         ff, tf = f % 8, t % 8
-        fr, tr = f // 8, t // 8
         df = tf - ff
         dir_idx = DF_TO_UNDERPROMO_DIR.get(df, 1)
         piece_idx = _UNDERPROMO_CHAR_TO_IDX[promo_char]

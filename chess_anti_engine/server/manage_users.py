@@ -4,7 +4,7 @@ import argparse
 import getpass
 from pathlib import Path
 
-from .auth import ensure_user, load_users, save_users, set_disabled, upsert_user
+from .auth import ensure_user, load_users, set_disabled, upsert_user
 
 
 def _prompt_password() -> str:

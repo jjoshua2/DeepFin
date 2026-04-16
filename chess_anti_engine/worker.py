@@ -27,7 +27,6 @@ from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.shard import ShardMeta, save_npz
 from chess_anti_engine.selfplay import play_batch
 from chess_anti_engine.selfplay.config import (
-    DiffFocusConfig,
     GameConfig,
     OpponentConfig,
     SearchConfig,
@@ -1430,9 +1429,7 @@ class WorkerSession:
             if isinstance(ww, dict) and ww.get("endpoint") and ww.get("sha256"):
                 wheel_version = str(ww.get("version") or manifest.get("server_version") or "0.0.0")
                 need = False
-                if protocol_mismatch or version_too_old:
-                    need = True
-                elif version_lt(str(PACKAGE_VERSION), wheel_version):
+                if protocol_mismatch or version_too_old or version_lt(str(PACKAGE_VERSION), wheel_version):
                     need = True
 
                 if need:
@@ -1655,7 +1652,6 @@ class WorkerSession:
     def _run_arena(self, manifest: dict, task: dict) -> None:
         """Arena match logic."""
         model_sha = self.model_sha
-        reco = manifest.get("recommended_worker") or {}
 
         best_info = manifest.get("best_model") or {}
         best_sha = str(best_info.get("sha256") or "")
@@ -1776,7 +1772,6 @@ class WorkerSession:
         reco = manifest.get("recommended_worker") or {}
         self._active_reco = {k: reco.get(k) for k in self._RECO_RESTART_KEYS}
         model_sha = self.model_sha
-        model_step = self.model_step
 
         need_local_model = self.inference_client is None
 
@@ -1965,7 +1960,6 @@ class WorkerSession:
                         else:
                             agg[fld.name] = vals[0]  # first thread's value
                     stats = BatchStats(**agg)
-                samples = all_samples
             else:
                 # Continuous selfplay: 256 slots always full, games recycled
                 # on completion.  Runs until _stop_selfplay is set (task change,

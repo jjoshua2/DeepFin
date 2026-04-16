@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import numpy as np
 import chess
 
-from chess_anti_engine.utils.bitboards import bitboard_to_plane, file_to_plane, write_bitboard_to_plane
+from chess_anti_engine.utils.bitboards import file_to_plane
 
 try:
     from chess_anti_engine.encoding._lc0_ext import encode_piece_planes as _c_encode_piece_planes

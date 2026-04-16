@@ -10,7 +10,6 @@ from __future__ import annotations
 from collections import deque
 import threading
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 

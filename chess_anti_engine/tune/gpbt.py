@@ -6,10 +6,13 @@ import logging
 import os
 import random
 from collections import defaultdict
-from typing import Dict
+from typing import TYPE_CHECKING
 from ray.tune.experiment import Trial
-from ray.tune.schedulers import PopulationBasedTraining, TrialScheduler
+from ray.tune.schedulers import PopulationBasedTraining
 from ray.tune.schedulers.pbt import SafeFallbackEncoder, _FutureTrainingResult
+
+if TYPE_CHECKING:
+    from ray.tune.execution.tune_controller import TuneController
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +56,7 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
         self._pending_pairwise_log: dict[str, dict] = {}
 
     def on_trial_result(
-        self, tune_controller: "TuneController", trial: Trial, result: Dict
+        self, tune_controller: TuneController, trial: Trial, result: dict
     ) -> str:
         """Override to keep last_score fresh on every result.
 

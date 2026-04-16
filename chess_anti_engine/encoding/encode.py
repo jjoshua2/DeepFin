@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import Optional
 
 import numpy as np
 import chess
@@ -24,7 +23,7 @@ def encode_position(
     *,
     add_features: bool = True,
     feature_dropout_p: float = 0.0,
-    rng: Optional[np.random.Generator] = None,
+    rng: np.random.Generator | None = None,
     use_full_lc0: bool = True,
 ) -> np.ndarray:
     """Encode a position into (C, 8, 8) float32.
@@ -64,7 +63,7 @@ def encode_position_into(
     *,
     add_features: bool = True,
     feature_dropout_p: float = 0.0,
-    rng: Optional[np.random.Generator] = None,
+    rng: np.random.Generator | None = None,
     use_full_lc0: bool = True,
 ) -> None:
     """Encode a position directly into a pre-allocated (146, 8, 8) buffer.
@@ -115,7 +114,7 @@ def encode_positions_batch(
     *,
     add_features: bool = True,
     feature_dropout_p: float = 0.0,
-    rng: Optional[np.random.Generator] = None,
+    rng: np.random.Generator | None = None,
 ) -> np.ndarray:
     """Encode multiple positions into a single pre-allocated (N, C, 8, 8) array.
 
@@ -139,7 +138,7 @@ def _encode_fused_c(
     out: np.ndarray,
     *,
     feature_dropout_p: float = 0.0,
-    rng: Optional[np.random.Generator] = None,
+    rng: np.random.Generator | None = None,
 ) -> None:
     """Fused C-accelerated encoding: extract bitboards once for both LC0 + features.
 
@@ -147,7 +146,6 @@ def _encode_fused_c(
     """
     turn = board.turn
     us = turn
-    them = not turn
 
     # ── Extract bitboards once for current position ──
     occ_w = int(board.occupied_co[chess.WHITE])
@@ -159,7 +157,6 @@ def _encode_fused_c(
     queens = board.queens
     kings = board.kings
     ep_square = board.ep_square
-    halfmove_clock = board.halfmove_clock
 
     stack = board._stack
     stack_len = len(stack)
