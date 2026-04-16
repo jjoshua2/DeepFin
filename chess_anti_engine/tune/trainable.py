@@ -841,8 +841,7 @@ def _log_iteration_scalars(
     current_rand: float,
     wdl_regret_used: float,
     pause_metrics: dict,
-    seed_warmstart_used: bool,
-    seed_warmstart_slot: int,
+    restore: RestoreResult,
     iteration_step: int,
 ) -> None:
     """Write per-iteration TensorBoard scalars (best-effort)."""
@@ -874,8 +873,8 @@ def _log_iteration_scalars(
         writer.add_scalar("backpressure/paused_seconds", float(pause_metrics["paused_seconds"]), iteration_step)
         writer.add_scalar("backpressure/paused_fraction", float(pause_metrics["paused_fraction"]), iteration_step)
         writer.add_scalar("backpressure/paused_percent", float(pause_metrics["paused_percent"]), iteration_step)
-        writer.add_scalar("meta/salvage_warmstart_used", float(1 if seed_warmstart_used else 0), iteration_step)
-        writer.add_scalar("meta/salvage_warmstart_slot", float(seed_warmstart_slot), iteration_step)
+        writer.add_scalar("meta/salvage_warmstart_used", float(1 if restore.seed_warmstart_used else 0), iteration_step)
+        writer.add_scalar("meta/salvage_warmstart_slot", float(restore.seed_warmstart_slot), iteration_step)
     except Exception:
         pass
 
@@ -1593,13 +1592,7 @@ def _finalize_iteration(
     use_distributed_selfplay: bool,
     distributed_pause_started_at: float | None,
     distributed_pause_active: bool,
-    startup_source: str,
-    seed_warmstart_used: str,
-    seed_warmstart_slot: int,
-    seed_warmstart_slots_total: int,
-    salvage_origin_used: str,
-    salvage_origin_slot: int,
-    salvage_origin_slots_total: int,
+    restore: RestoreResult,
     holdout_frozen: bool,
     holdout_generation: int,
     buf_size: int,
@@ -1654,8 +1647,7 @@ def _finalize_iteration(
         current_rand=current_rand,
         wdl_regret_used=wdl_regret_used,
         pause_metrics=pause_metrics,
-        seed_warmstart_used=seed_warmstart_used,
-        seed_warmstart_slot=seed_warmstart_slot,
+        restore=restore,
         iteration_step=int(iteration_idx),
     )
 
@@ -1669,13 +1661,7 @@ def _finalize_iteration(
         skill_level_used=skill_level_used,
         use_distributed_selfplay=use_distributed_selfplay,
         pause_metrics=pause_metrics,
-        startup_source=startup_source,
-        seed_warmstart_used=seed_warmstart_used,
-        seed_warmstart_slot=seed_warmstart_slot,
-        seed_warmstart_slots_total=seed_warmstart_slots_total,
-        salvage_origin_used=salvage_origin_used,
-        salvage_origin_slot=salvage_origin_slot,
-        salvage_origin_slots_total=salvage_origin_slots_total,
+        restore=restore,
         best_loss=best_loss,
         iter_t0=iter_t0,
         iteration_idx=iteration_idx,
@@ -1710,7 +1696,7 @@ def _finalize_iteration(
         total_d=sp.total_d,
         total_l=sp.total_l,
         opt_lr=float(trainer.opt.param_groups[0]["lr"]),
-        startup_source=startup_source,
+        startup_source=restore.startup_source,
     )
 
     # Best-effort: keep disk usage bounded.
@@ -1738,13 +1724,7 @@ def _build_report_dict(
     skill_level_used: int,
     use_distributed_selfplay: bool,
     pause_metrics: dict,
-    startup_source: str,
-    seed_warmstart_used: bool,
-    seed_warmstart_slot: int,
-    seed_warmstart_slots_total: int,
-    salvage_origin_used: bool,
-    salvage_origin_slot: int,
-    salvage_origin_slots_total: int,
+    restore: RestoreResult,
     best_loss: float,
     iter_t0: float,
     iteration_idx: int,
@@ -1839,13 +1819,13 @@ def _build_report_dict(
         "backpressure_paused_seconds": float(pause_metrics["paused_seconds"]),
         "backpressure_paused_fraction": float(pause_metrics["paused_fraction"]),
         "backpressure_paused_percent": float(pause_metrics["paused_percent"]),
-        "startup_source": str(startup_source),
-        "salvage_warmstart_used": int(1 if seed_warmstart_used else 0),
-        "salvage_warmstart_slot": int(seed_warmstart_slot),
-        "salvage_warmstart_slots_total": int(seed_warmstart_slots_total),
-        "salvage_origin_used": int(1 if salvage_origin_used else 0),
-        "salvage_origin_slot": int(salvage_origin_slot),
-        "salvage_origin_slots_total": int(salvage_origin_slots_total),
+        "startup_source": str(restore.startup_source),
+        "salvage_warmstart_used": int(1 if restore.seed_warmstart_used else 0),
+        "salvage_warmstart_slot": int(restore.seed_warmstart_slot),
+        "salvage_warmstart_slots_total": int(restore.seed_warmstart_slots_total),
+        "salvage_origin_used": int(1 if restore.salvage_origin_used else 0),
+        "salvage_origin_slot": int(restore.salvage_origin_slot),
+        "salvage_origin_slots_total": int(restore.salvage_origin_slots_total),
         "train_steps_used": int(tr.steps),
         "train_target_samples": int(tr.target_sample_budget),
         "train_window_target_samples": int(tr.window_target_samples),
@@ -2276,20 +2256,9 @@ def train_trial(config: dict):
         base_seed=base_seed, active_seed=active_seed,
         rng=rng, ckpt=ckpt, Checkpoint=Checkpoint,
     )
-    startup_source = restore.startup_source
     restored_pid_state = restore.restored_pid_state
     global_iter = restore.global_iter
     opp_strength_ema = restore.opp_strength_ema
-    active_seed = restore.active_seed
-    seed_warmstart_used = restore.seed_warmstart_used
-    seed_warmstart_slot = restore.seed_warmstart_slot
-    seed_warmstart_slots_total = restore.seed_warmstart_slots_total
-    seed_warmstart_replay_dir = restore.seed_warmstart_replay_dir
-    salvage_origin_used = restore.salvage_origin_used
-    salvage_origin_slot = restore.salvage_origin_slot
-    salvage_origin_slots_total = restore.salvage_origin_slots_total
-    salvage_origin_dir = restore.salvage_origin_dir
-    cross_trial_restore = restore.cross_trial_restore
 
     # Rebuild tc — _restore_checkpoint_or_salvage may overlay donor config.
     tc = TrialConfig.from_dict(config)
@@ -2302,21 +2271,21 @@ def train_trial(config: dict):
 
     # Optional warmstart replay from salvage seed slot (fresh trials only).
     if (
-        seed_warmstart_used
-        and (not cross_trial_restore)
-        and seed_warmstart_replay_dir is not None
-        and seed_warmstart_replay_dir.is_dir()
+        restore.seed_warmstart_used
+        and (not restore.cross_trial_restore)
+        and restore.seed_warmstart_replay_dir is not None
+        and restore.seed_warmstart_replay_dir.is_dir()
         and (not iter_shard_paths(replay_shard_dir))
     ):
         replay_shard_dir.mkdir(parents=True, exist_ok=True)
         copied = 0
-        for sp in iter_shard_paths(seed_warmstart_replay_dir):
+        for sp in iter_shard_paths(restore.seed_warmstart_replay_dir):
             copy_or_link_shard(sp, replay_shard_dir / sp.name)
             copied += 1
         if copied:
             print(
                 f"[trial] Seeded {copied} replay shards from salvage slot "
-                f"{seed_warmstart_slot} ({seed_warmstart_replay_dir})"
+                f"{restore.seed_warmstart_slot} ({restore.seed_warmstart_replay_dir})"
             )
 
     shared_summary = {
@@ -2393,13 +2362,13 @@ def train_trial(config: dict):
     # Preserve intentionally seeded replay (resume, salvage warmstart, shared-shard
     # bootstrap), but keep plain fresh starts at replay_window_start so easy early
     # games evict promptly instead of inheriting stale local shards.
-    seeded_replay_start = bool(ckpt is not None or seed_warmstart_used or shared_summary["source_shards_loaded"] > 0)
+    seeded_replay_start = bool(ckpt is not None or restore.seed_warmstart_used or shared_summary["source_shards_loaded"] > 0)
     if seeded_replay_start:
         current_window = max(int(current_window), int(len(buf)))
     buf.capacity = int(current_window)
     print(
-        f"[trial] buffer init: startup_source={startup_source} "
-        f"seeded={seeded_replay_start} cross_trial={cross_trial_restore} "
+        f"[trial] buffer init: startup_source={restore.startup_source} "
+        f"seeded={seeded_replay_start} cross_trial={restore.cross_trial_restore} "
         f"len(buf)={len(buf)} capacity={buf.capacity} "
         f"tracked_shards={len(buf._shard_paths)} total_pos={buf._total_positions}"
     )
@@ -2414,7 +2383,7 @@ def train_trial(config: dict):
     # (3) optimizer momentum buffers from bootstrap's data distribution cause wrong
     # gradient directions on selfplay data, (4) PB2's lr perturbation has no effect
     # because scheduler's base_lr is locked to bootstrap's lr (0.0003).
-    if tc.bootstrap_checkpoint and ckpt is None and (not seed_warmstart_used):
+    if tc.bootstrap_checkpoint and ckpt is None and (not restore.seed_warmstart_used):
         # Only load bootstrap if Ray didn't restore a trial checkpoint (i.e. fresh start).
         bp = Path(tc.bootstrap_checkpoint)
         if bp.exists():
@@ -2488,7 +2457,7 @@ def train_trial(config: dict):
         quarantined = _quarantine_inbox_shards(
             inbox_dir=distributed_dirs["inbox_dir"],
             processed_dir=distributed_dirs["processed_dir"],
-            reason=f"{startup_source}_resume",
+            reason=f"{restore.startup_source}_resume",
         )
         if int(quarantined["moved_shards"]) > 0:
             print(
@@ -2593,8 +2562,8 @@ def train_trial(config: dict):
             tc = TrialConfig.from_dict(config)
 
             in_salvage_startup_grace = (
-                startup_source == "salvage"
-                and bool(salvage_origin_used)
+                restore.startup_source == "salvage"
+                and bool(restore.salvage_origin_used)
                 and int(iteration_zero_based) < tc.salvage_startup_no_share_iters
             )
             _wait_if_paused(
@@ -2693,8 +2662,8 @@ def train_trial(config: dict):
                 iteration_idx=iteration_idx,
                 iteration_zero_based=iteration_zero_based,
                 trial_id=trial_id,
-                startup_source=startup_source,
-                salvage_origin_used=salvage_origin_used,
+                startup_source=restore.startup_source,
+                salvage_origin_used=restore.salvage_origin_used,
             )
             gate_match_idx = tr.gate_match_idx
 
@@ -2713,12 +2682,12 @@ def train_trial(config: dict):
                 trial_dir=trial_dir,
                 config=config,
                 base_seed=base_seed,
-                active_seed=active_seed,
-                startup_source=startup_source,
-                salvage_origin_used=salvage_origin_used,
-                salvage_origin_slot=salvage_origin_slot,
-                salvage_origin_slots_total=salvage_origin_slots_total,
-                salvage_origin_dir=salvage_origin_dir,
+                active_seed=restore.active_seed,
+                startup_source=restore.startup_source,
+                salvage_origin_used=restore.salvage_origin_used,
+                salvage_origin_slot=restore.salvage_origin_slot,
+                salvage_origin_slots_total=restore.salvage_origin_slots_total,
+                salvage_origin_dir=restore.salvage_origin_dir,
                 iteration_idx=iteration_idx,
                 Checkpoint=Checkpoint,
             )
@@ -2763,13 +2732,7 @@ def train_trial(config: dict):
                 use_distributed_selfplay=use_distributed_selfplay,
                 distributed_pause_started_at=distributed_pause_started_at,
                 distributed_pause_active=distributed_pause_active,
-                startup_source=startup_source,
-                seed_warmstart_used=seed_warmstart_used,
-                seed_warmstart_slot=seed_warmstart_slot,
-                seed_warmstart_slots_total=seed_warmstart_slots_total,
-                salvage_origin_used=salvage_origin_used,
-                salvage_origin_slot=salvage_origin_slot,
-                salvage_origin_slots_total=salvage_origin_slots_total,
+                restore=restore,
                 holdout_frozen=holdout_frozen,
                 holdout_generation=holdout_generation,
                 buf_size=len(buf),
