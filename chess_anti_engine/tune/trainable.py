@@ -38,7 +38,6 @@ from chess_anti_engine.selfplay import play_batch
 from chess_anti_engine.selfplay.config import TemperatureConfig
 from chess_anti_engine.selfplay.manager import _effective_curriculum_topk
 from chess_anti_engine.selfplay.opening import OpeningConfig
-from chess_anti_engine.selfplay.budget import progressive_mcts_simulations
 from chess_anti_engine.stockfish import DifficultyPID, StockfishPool, StockfishUCI, pid_from_config
 from chess_anti_engine.train import Trainer, trainer_kwargs_from_config
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
@@ -67,9 +66,11 @@ from chess_anti_engine.tune.trainable_report import (
     _write_status_csv_row,
 )
 from chess_anti_engine.tune.trainable_config_ops import (
+    _TRAINER_WEIGHT_KEYS,
     _play_batch_kwargs,
     _reload_yaml_into_config,
     _resolve_pause_marker_path,
+    _resolve_sims,
     _sync_trainer_weights,
     _wait_if_paused,
 )
@@ -1045,38 +1046,14 @@ def _restore_checkpoint_or_salvage(
                 if salvage_restore_donor_config:
                     donor_cfg = result_row.get("config")
                     if isinstance(donor_cfg, dict):
-                        for k in (
-                            "lr",
-                            "cosmos_gamma",
-                            "w_soft",
-                            "w_future",
-                            "w_wdl",
-                            "w_sf_move",
-                            "w_sf_eval",
-                            "w_categorical",
-                            "w_volatility",
-                            "w_sf_wdl",
-                            "sf_wdl_conf_power",
-                            "sf_wdl_draw_scale",
-                        ):
+                        for k in ("lr", "cosmos_gamma", *_TRAINER_WEIGHT_KEYS):
                             if k in donor_cfg:
                                 config[k] = donor_cfg[k]
                         if "lr" in config:
                             trainer.set_peak_lr(float(config["lr"]), rescale_current=False)
                         if "cosmos_gamma" in config and hasattr(trainer.opt, "gamma"):
                             trainer.opt.gamma = float(config["cosmos_gamma"])
-                        for wk in (
-                            "w_soft",
-                            "w_future",
-                            "w_wdl",
-                            "w_sf_move",
-                            "w_sf_eval",
-                            "w_categorical",
-                            "w_volatility",
-                            "w_sf_wdl",
-                            "sf_wdl_conf_power",
-                            "sf_wdl_draw_scale",
-                        ):
+                        for wk in _TRAINER_WEIGHT_KEYS:
                             if wk in config:
                                 setattr(trainer, wk, float(config[wk]))
 
@@ -1555,15 +1532,7 @@ def train_trial(config: dict):
         )
         current_nodes_init = int(pid.nodes) if pid is not None else tc.sf_nodes
         current_skill_init = int(pid.skill_level) if pid is not None else 0
-        sims_init = tc.mcts_simulations
-        if tc.progressive_mcts:
-            sims_init = progressive_mcts_simulations(
-                int(getattr(trainer, "step", 0)),
-                start=tc.mcts_start_simulations,
-                max_sims=tc.mcts_simulations,
-                ramp_steps=tc.mcts_ramp_steps,
-                exponent=tc.mcts_ramp_exponent,
-            )
+        sims_init = _resolve_sims(tc, trainer, max_sims=tc.mcts_simulations)
         prev_published_model_sha = _publish_distributed_trial_state(
             trainer=trainer,
             config=config,
@@ -1637,15 +1606,7 @@ def train_trial(config: dict):
             skill_level_used = int(getattr(pid, "skill_level", 0) or 0) if pid is not None else 0
 
             base_sims = tc.mcts_simulations
-            sims = base_sims
-            if tc.progressive_mcts:
-                sims = progressive_mcts_simulations(
-                    int(getattr(trainer, "step", 0)),
-                    start=tc.mcts_start_simulations,
-                    max_sims=base_sims,
-                    ramp_steps=tc.mcts_ramp_steps,
-                    exponent=tc.mcts_ramp_exponent,
-                )
+            sims = _resolve_sims(tc, trainer, max_sims=base_sims)
 
             sp, prev_published_model_sha, current_window, distributed_inference_broker_proc = _run_selfplay_phase(
                 tc=tc, config=config, trainer=trainer, model_cfg=model_cfg,

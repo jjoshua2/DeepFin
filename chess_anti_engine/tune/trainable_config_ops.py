@@ -10,6 +10,7 @@ import logging
 import time
 from pathlib import Path
 
+from chess_anti_engine.selfplay.budget import progressive_mcts_simulations
 from chess_anti_engine.selfplay.config import (
     DiffFocusConfig,
     GameConfig,
@@ -23,6 +24,36 @@ from chess_anti_engine.tune.trainable_metrics import _dynamic_sf_wdl_weight
 from chess_anti_engine.tune.trial_config import TrialConfig
 
 log = logging.getLogger(__name__)
+
+
+# Runtime-mutable trainer attributes sourced from config each iteration.
+# Used by _sync_trainer_weights (primary) and by the salvage-donor overlay
+# in _restore_checkpoint_or_salvage. Keeping one tuple prevents drift.
+_TRAINER_WEIGHT_KEYS: tuple[str, ...] = (
+    "w_soft",
+    "w_future",
+    "w_wdl",
+    "w_sf_move",
+    "w_sf_eval",
+    "w_categorical",
+    "w_volatility",
+    "w_sf_wdl",
+    "sf_wdl_conf_power",
+    "sf_wdl_draw_scale",
+)
+
+
+def _resolve_sims(tc: TrialConfig, trainer, *, max_sims: int) -> int:
+    """Resolve MCTS simulation count, honouring progressive ramp if enabled."""
+    if not tc.progressive_mcts:
+        return int(max_sims)
+    return progressive_mcts_simulations(
+        int(getattr(trainer, "step", 0)),
+        start=tc.mcts_start_simulations,
+        max_sims=int(max_sims),
+        ramp_steps=tc.mcts_ramp_steps,
+        exponent=tc.mcts_ramp_exponent,
+    )
 
 
 def _resolve_pause_marker_path(*, tc: TrialConfig, trial_dir: Path) -> Path:
@@ -197,9 +228,7 @@ def _sync_trainer_weights(
         trainer.set_peak_lr(float(config["lr"]), rescale_current=True)
     if "cosmos_gamma" in config and hasattr(trainer.opt, "gamma"):
         trainer.opt.gamma = float(config["cosmos_gamma"])
-    for wk in ("w_soft", "w_future", "w_wdl", "w_sf_move", "w_sf_eval",
-                "w_categorical", "w_volatility", "w_sf_wdl",
-                "sf_wdl_conf_power", "sf_wdl_draw_scale"):
+    for wk in _TRAINER_WEIGHT_KEYS:
         if wk in config:
             setattr(trainer, wk, float(config[wk]))
 
