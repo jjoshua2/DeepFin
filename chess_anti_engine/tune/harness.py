@@ -6,12 +6,12 @@ from pathlib import Path
 import socket
 import subprocess
 import sys
-import tempfile
 import time
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 from chess_anti_engine.tune._utils import terminate_process as _terminate_process
+from chess_anti_engine.utils.atomic import atomic_write_text
 from chess_anti_engine.tune.process_cleanup import terminate_matching_processes
 
 
@@ -234,27 +234,7 @@ def _patch_experiment_state_for_resume(
     if not changed:
         return added_keys, skipped_keys
 
-    tmp_name = ""
-    try:
-        with tempfile.NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-            dir=state_file.parent,
-            prefix=f"{state_file.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as fh:
-            json.dump(experiment_state, fh)
-            fh.write("\n")
-            tmp_name = fh.name
-        os.replace(tmp_name, state_file)
-    finally:
-        if tmp_name:
-            try:
-                Path(tmp_name).unlink(missing_ok=True)
-            except Exception:
-                pass
-
+    atomic_write_text(state_file, json.dumps(experiment_state) + "\n")
     return added_keys, skipped_keys
 
 
@@ -556,11 +536,11 @@ def run_tune(
         # ignored.  We reach into the live scheduler and overwrite its bounds
         # dict so that the very next exploit/explore step uses the updated ranges.
         try:
-            live_sched = tuner._local_tuner._tune_config.scheduler
+            live_sched = tuner._local_tuner._tune_config.scheduler  # type: ignore[possibly-unbound]
             if hasattr(live_sched, "_hyperparam_bounds") and hasattr(scheduler, "_hyperparam_bounds"):
-                old = dict(live_sched._hyperparam_bounds)
-                live_sched._hyperparam_bounds = dict(scheduler._hyperparam_bounds)
-                changed = {k: (old.get(k), v) for k, v in scheduler._hyperparam_bounds.items() if old.get(k) != v}
+                old = dict(live_sched._hyperparam_bounds)  # type: ignore[union-attr]
+                live_sched._hyperparam_bounds = dict(scheduler._hyperparam_bounds)  # type: ignore[union-attr]
+                changed = {k: (old.get(k), v) for k, v in scheduler._hyperparam_bounds.items() if old.get(k) != v}  # type: ignore[union-attr]
                 if changed:
                     print(f"[run_tune] Hotpatched scheduler bounds (old→new): {changed}")
                 else:
@@ -569,7 +549,7 @@ def run_tune(
             print(f"[run_tune] Could not hotpatch scheduler bounds (non-fatal): {exc}")
 
     try:
-        return tuner.fit()
+        return tuner.fit()  # type: ignore[possibly-unbound]
     finally:
         _terminate_process(shared_broker_proc)
         _terminate_process(server_proc)
@@ -663,7 +643,7 @@ def _build_pb2(base_config: dict, *, metric: str, mode: str):
         metric=metric,
         mode=mode,
         perturbation_interval=perturbation_interval,
-        hyperparam_bounds=hyperparam_bounds,
+        hyperparam_bounds=hyperparam_bounds,  # type: ignore[arg-type]
     )
 
     return param_space, scheduler
@@ -688,7 +668,7 @@ def _build_pbt(base_config: dict, *, metric: str, mode: str):
         metric=metric,
         mode=mode,
         perturbation_interval=perturbation_interval,
-        hyperparam_mutations=hyperparam_mutations,
+        hyperparam_mutations=hyperparam_mutations,  # type: ignore[arg-type]
         synch=bool(base_config.get("pbt_synch", False)),
     )
 

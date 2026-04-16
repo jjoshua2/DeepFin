@@ -13,6 +13,7 @@ from typing import Any
 
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.shard import ShardMeta, arrays_to_samples, save_npz
+from chess_anti_engine.utils.atomic import atomic_write_text
 from chess_anti_engine.utils.versioning import version_lt
 
 
@@ -71,8 +72,9 @@ class _BufferedUploadAccumulator:
         self.plies_loss += int(meta.get("plies_loss") or 0)
         self.checkmate_games += int(meta.get("checkmate_games") or 0)
         self.stalemate_games += int(meta.get("stalemate_games") or 0)
-        if meta.get("model_step") is not None:
-            self.model_step = int(meta.get("model_step"))
+        _step_raw = meta.get("model_step")
+        if _step_raw is not None:
+            self.model_step = int(_step_raw)
         self.last_update_unix = float(now_unix)
 
 
@@ -351,11 +353,6 @@ def create_app(
             return {}
         return data if isinstance(data, dict) else {}
 
-    def _save_json_stats(path: Path, stats: dict[str, Any]) -> None:
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(json.dumps(stats, indent=2, sort_keys=True), encoding="utf-8")
-        tmp.replace(path)
-
     def _primary_gpu_model(*, lease: dict[str, Any] | None) -> str:
         if not isinstance(lease, dict):
             return "cpu"
@@ -410,7 +407,7 @@ def create_app(
                         pass
         entry["last_updated_unix"] = now_unix
         stats[gpu_model] = entry
-        _save_json_stats(stats_path, stats)
+        atomic_write_text(stats_path, json.dumps(stats, indent=2, sort_keys=True))
 
     def _record_trial_throughput(
         *,
@@ -444,7 +441,7 @@ def create_app(
         entry["avg_games_per_s"] = float(entry["total_games"]) / total_elapsed_s
         entry["last_updated_unix"] = now_unix
         stats[tid] = entry
-        _save_json_stats(trial_stats_path, stats)
+        atomic_write_text(trial_stats_path, json.dumps(stats, indent=2, sort_keys=True))
 
     def _check_worker_compat(
         *,

@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from chess_anti_engine.utils.atomic import atomic_write_text
+
 
 @dataclass
 class UserRecord:
@@ -73,17 +75,13 @@ def load_users(path: str | Path) -> dict[str, UserRecord]:
 
 
 def save_users(path: str | Path, users: dict[str, UserRecord]) -> None:
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(p.suffix + ".tmp")
     data: dict[str, Any] = {}
     for u, rec in users.items():
         # exclude username field (key is username)
         d = rec.__dict__.copy()
         d.pop("username", None)
         data[u] = d
-    tmp.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
-    tmp.replace(p)
+    atomic_write_text(Path(path), json.dumps(data, indent=2, sort_keys=True))
 
 
 def record_upload(

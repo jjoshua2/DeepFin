@@ -6,6 +6,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from chess_anti_engine.utils.atomic import atomic_write_text
+
 
 def normalize_trial_id(trial_id: str | None) -> str | None:
     if trial_id is None:
@@ -34,9 +36,7 @@ def save_lease(*, leases_root: Path, lease: dict[str, Any]) -> None:
     if not lease_id:
         raise ValueError("lease_id required")
     p = lease_path(leases_root=leases_root, lease_id=lease_id)
-    tmp = p.with_suffix(p.suffix + ".tmp")
-    tmp.write_text(json.dumps(lease, indent=2, sort_keys=True), encoding="utf-8")
-    tmp.replace(p)
+    atomic_write_text(p, json.dumps(lease, indent=2, sort_keys=True))
 
 
 def prune_expired_leases(*, leases_root: Path, now_unix: int) -> list[dict[str, Any]]:
