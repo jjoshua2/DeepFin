@@ -41,36 +41,6 @@ from chess_anti_engine.version import PACKAGE_NAME, PACKAGE_VERSION, PROTOCOL_VE
 from chess_anti_engine.worker_config import load_worker_config, save_worker_config
 
 
-def tune_games_per_batch(
-    *,
-    current: int,
-    elapsed_s: float,
-    target_s: float,
-    min_games: int,
-    max_games: int,
-    max_change_factor: float = 1.5,
-) -> int:
-    """Heuristic auto-tune for worker throughput.
-
-    Adjusts games_per_batch so batches trend toward `target_s` wall-clock time.
-
-    This keeps slow clients from taking excessively long batches, and allows fast
-    clients to scale up without manual flags.
-    """
-    cur = max(1, int(current))
-    if elapsed_s <= 0:
-        return cur
-
-    tgt = max(1e-6, float(target_s))
-    ratio = tgt / float(elapsed_s)
-    # Clamp adjustment magnitude to avoid oscillations.
-    ratio = max(1.0 / float(max_change_factor), min(float(max_change_factor), float(ratio)))
-
-    nxt = int(round(float(cur) * float(ratio)))
-    nxt = max(int(min_games), min(int(max_games), int(nxt)))
-    return max(1, nxt)
-
-
 @dataclass
 class _BufferedUpload:
     samples: list[ReplaySample] = field(default_factory=list)
@@ -246,21 +216,6 @@ def _maybe_flush_upload_buffer(
         buf=buf,
         now_s=now_s,
     )
-
-
-def _should_write_fallback_batch(
-    *,
-    shard_path: Path | None,
-    samples: list[ReplaySample],
-    saw_completed_game: bool,
-) -> bool:
-    """Return True only when batch-level fallback is actually needed.
-
-    If incremental callbacks already observed completed games, an empty upload
-    buffer at batch end usually means those samples were already flushed and
-    uploaded earlier. Writing the full batch again would duplicate data.
-    """
-    return shard_path is None and bool(samples) and not saw_completed_game
 
 
 def _worker_headers(*, machine_id: str | None = None) -> dict[str, str]:
@@ -477,11 +432,49 @@ def _prune_cached_models(*, cache_dir: Path, keep_shas: set[str]) -> None:
             p.unlink(missing_ok=True)
 
 
+def _maybe_apply_fp8_inference(model: torch.nn.Module) -> torch.nn.Module:
+    """Quantize eligible Linear layers to FP8 (dynamic activation, FP8 weight).
+
+    Skips layers where FP8 hurts accuracy or speed: Smolgen (small batch dim),
+    non-16-aligned dims (tensor core requirement), tiny output heads.
+    Requires torch.compile afterwards for actual speedup.
+    """
+    try:
+        from torchao.quantization import (
+            Float8DynamicActivationFloat8WeightConfig,
+            PerRow,
+            quantize_,
+        )
+    except ImportError:
+        return model
+
+    def _fp8_filter(mod: torch.nn.Module, fqn: str) -> bool:
+        if not isinstance(mod, torch.nn.Linear):
+            return False
+        if mod.in_features % 16 != 0 or mod.out_features % 16 != 0:
+            return False
+        if "smolgen" in fqn:
+            return False
+        if fqn.endswith(".net.2") and mod.out_features <= 32:
+            return False
+        return True
+
+    try:
+        quantize_(model, Float8DynamicActivationFloat8WeightConfig(granularity=PerRow()), filter_fn=_fp8_filter)
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("FP8 quantization failed, continuing with BF16: %s", exc)
+    return model
+
+
 def _maybe_compile_inference_model(
     model: torch.nn.Module, *, device: str, mode: str = "reduce-overhead",
+    use_fp8: bool = False,
 ) -> torch.nn.Module:
     if not str(device).startswith("cuda"):
         return model
+    if use_fp8:
+        model = _maybe_apply_fp8_inference(model)
     try:
         return torch.compile(model, mode=mode)
     except Exception:
@@ -571,6 +564,11 @@ def main() -> None:
     # workers share one GPU.
     import os
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
+    # Enable TF32 for any float32 ops that remain outside autocast BF16 scope.
+    import torch
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
     # Limit inductor compile workers to reduce memory — each worker subprocess
     # accumulates compiled kernels and can grow to >1GB.
     os.environ.setdefault("TORCH_COMPILE_THREADS", "1")
@@ -661,6 +659,11 @@ def main() -> None:
         type=str,
         default="reduce-overhead",
         help="torch.compile mode (reduce-overhead, max-autotune, default).",
+    )
+    ap.add_argument(
+        "--inference-fp8",
+        action="store_true",
+        help="Quantize transformer block linears to FP8 before compile (requires torchao).",
     )
 
     ap.add_argument(
@@ -973,6 +976,13 @@ class WorkerSession:
         self.model_sha = ""
         self.model_step = 0
         self._saw_completed_game = False
+        self._stop_selfplay = False
+        self._upload_buf_lock: threading.Lock | None = None  # set when threaded
+        self._last_manifest_poll_s: float = 0.0
+
+    def _stop_fn(self) -> bool:
+        """Called every ply by play_batch.  Return True to exit continuous selfplay."""
+        return self._stop_selfplay
 
     def run(self) -> None:
         """Main loop."""
@@ -1095,11 +1105,14 @@ class WorkerSession:
         load_state_dict_tolerant(model, sd, label=label)
         model.to(self.device)
         model.eval()
+        # Selfplay only needs policy_own + wdl; skip 8 unused heads.
+        if hasattr(model, "_inference_only"):
+            model._inference_only = True
         if bool(self.args.compile_inference):
             compile_t0 = time.time()
             self.log.info("compile starting %s sha=%s", label, sha_short)
             _compile_mode = str(self.args.compile_mode)
-            model = _maybe_compile_inference_model(model, device=str(self.device), mode=_compile_mode)
+            model = _maybe_compile_inference_model(model, device=str(self.device), mode=_compile_mode, use_fp8=bool(getattr(self.args, "inference_fp8", False)))
             self.log.info("compile finished %s sha=%s elapsed_s=%.2f", label, sha_short, float(time.time() - compile_t0))
         return model
 
@@ -1111,10 +1124,52 @@ class WorkerSession:
     def _check_model_update(self) -> None:
         """Check for new model between moves (called every ply by play_batch).
 
-        Two-tier check:
-        1. Every call: stat() the local manifest file mtime (~1µs)
-        2. Only if mtime changed: read manifest, download model, swap
+        Three-tier check:
+        1. Every 30s: re-poll manifest for task/pause changes (sets _stop_selfplay)
+        2. Every call: stat() the local manifest file mtime (~1µs)
+        3. Only if mtime changed: read manifest, download model, swap
         """
+        # Tier 0: periodic manifest poll for task changes / pause
+        _now = time.time()
+        if _now - self._last_manifest_poll_s > 30.0:
+            self._last_manifest_poll_s = _now
+            try:
+                _old_tid = self.leased_trial_id
+                manifest = self._poll_manifest()
+                if manifest is None:
+                    # _poll_manifest returns None on pause or transient failure.
+                    # If paused, stop continuous selfplay so the outer loop can
+                    # re-poll properly.  Transient failures are retried next cycle.
+                    if self.pause_selfplay_active:
+                        self._stop_selfplay = True
+                    return
+                task = manifest.get("task") or {"type": "selfplay"}
+                task_type = str(task.get("type", "selfplay")).lower()
+                if task_type != "selfplay":
+                    self._stop_selfplay = True
+                    return
+                # Trial reassignment: stop selfplay so the outer loop can
+                # re-lease and start a clean session with the new trial context.
+                if self.leased_trial_id != _old_tid:
+                    self._stop_selfplay = True
+                    return
+                # Difficulty knob changes: if the trainer updated sf_nodes,
+                # random_move_prob, etc. we need to restart the session so
+                # _run_selfplay rebuilds the frozen config dataclasses.
+                _new_reco = manifest.get("recommended_worker") or {}
+                _active = getattr(self, "_active_reco", None)
+                if _active is not None:
+                    _new_snap = {k: _new_reco.get(k) for k in self._RECO_RESTART_KEYS}
+                    if _new_snap != _active:
+                        self.log.info(
+                            "recommended_worker changed, restarting selfplay session"
+                        )
+                        self._stop_selfplay = True
+                        return
+                self._sync_assets(manifest)
+            except Exception:
+                pass
+
         # Tier 1: cheap mtime check on local manifest file
         manifest_path = getattr(self, "_manifest_path", None)
         if manifest_path is None:
@@ -1140,9 +1195,20 @@ class WorkerSession:
             return
         self._manifest_mtime = mtime
 
-        # Tier 2: mtime changed — read and potentially swap model
+        # Tier 2: mtime changed — read and potentially swap model / reco
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            # Check for reco changes (difficulty knobs updated by trainer).
+            _new_reco = manifest.get("recommended_worker") or {}
+            _active = getattr(self, "_active_reco", None)
+            if _active is not None:
+                _new_snap = {k: _new_reco.get(k) for k in self._RECO_RESTART_KEYS}
+                if _new_snap != _active:
+                    self.log.info(
+                        "recommended_worker changed (mtime), restarting selfplay"
+                    )
+                    self._stop_selfplay = True
+                    return
             new_sha = str(manifest.get("model", {}).get("sha256", ""))
             if not new_sha or new_sha == self.model_sha:
                 return
@@ -1160,9 +1226,6 @@ class WorkerSession:
                 model_path, mc if isinstance(mc, ModelConfig) else self.model_cfg_active,
                 label="worker-model", sha_short=str(new_sha)[:8],
             )
-            self.model_sha = new_sha
-            self.model_step = int(manifest.get("trainer_step") or 0)
-            self.last_model_sha = new_sha
             # Update evaluator with new model
             if self._direct_evaluator is not None:
                 if hasattr(self._direct_evaluator, "update_model"):
@@ -1171,14 +1234,25 @@ class WorkerSession:
                     self._direct_evaluator.model = self.model
                 elif hasattr(self._direct_evaluator, "load_weights"):
                     self._direct_evaluator.load_weights(self.model.state_dict())
-            # Flush upload buffer tagged with old SHA
+            # Flush upload buffer tagged with old SHA (lock protects against
+            # concurrent _on_completed_game calls in threaded selfplay)
+            _buf_lock = self._upload_buf_lock
             now = time.time()
-            if self.upload_buf.positions > 0:
-                _flush_upload_buffer_to_pending(
-                    pending_dir=self.pending_dir, username=str(self.args.username),
-                    buf=self.upload_buf, now_s=now,
-                )
-                self._upload_pending_shards(default_elapsed_s=0.0)
+            if _buf_lock is not None:
+                _buf_lock.acquire()
+            try:
+                if self.upload_buf.positions > 0:
+                    _flush_upload_buffer_to_pending(
+                        pending_dir=self.pending_dir, username=str(self.args.username),
+                        buf=self.upload_buf, now_s=now,
+                    )
+                    self._upload_pending_shards(default_elapsed_s=0.0)
+                self.model_sha = new_sha
+                self.model_step = int(manifest.get("trainer_step") or 0)
+                self.last_model_sha = new_sha
+            finally:
+                if _buf_lock is not None:
+                    _buf_lock.release()
             self.log.info("mid-batch model switch sha=%s", str(new_sha)[:8])
         except Exception as _exc:
             self.log.debug("mid-batch model check failed: %s", _exc)
@@ -1687,9 +1761,20 @@ class WorkerSession:
 
         time.sleep(0.1)
 
+    # Fields in recommended_worker that affect gameplay and should trigger
+    # a session restart when the trainer updates them between iterations.
+    _RECO_RESTART_KEYS = (
+        "sf_nodes", "sf_skill_level", "opponent_random_move_prob",
+        "opponent_wdl_regret_limit", "mcts_simulations", "fast_simulations",
+        "selfplay_fraction",
+    )
+
     def _run_selfplay(self, manifest: dict) -> None:
-        """play_batch + buffer + upload + auto-tune."""
+        """Continuous selfplay — runs until stop signal (task change/pause/shutdown)."""
+        self._stop_selfplay = False
+        self._last_manifest_poll_s = time.time()
         reco = manifest.get("recommended_worker") or {}
+        self._active_reco = {k: reco.get(k) for k in self._RECO_RESTART_KEYS}
         model_sha = self.model_sha
         model_step = self.model_step
 
@@ -1837,6 +1922,7 @@ class WorkerSession:
                 # Thread i gets base_games + 1 if i < remainder
                 _thread_games = [base_games + (1 if i < remainder else 0) for i in range(n_threads)]
                 _lock = threading.Lock()
+                self._upload_buf_lock = _lock  # shared with _check_model_update
 
                 def _on_game_thread_safe(game_batch):
                     with _lock:
@@ -1852,6 +1938,7 @@ class WorkerSession:
                         games=_thread_games[tid],
                         on_game_complete=_on_game_thread_safe,
                         on_step=self._check_model_update if tid == 0 else None,
+                        stop_fn=self._stop_fn,
                         opponent=_opponent_cfg, temp=_temp_cfg,
                         search=_search_cfg, opening=_opening_cfg,
                         game=_game_cfg,
@@ -1880,13 +1967,17 @@ class WorkerSession:
                     stats = BatchStats(**agg)
                 samples = all_samples
             else:
-                samples, stats = play_batch(
+                # Continuous selfplay: 256 slots always full, games recycled
+                # on completion.  Runs until _stop_selfplay is set (task change,
+                # pause, or shutdown).  Samples flow via _on_completed_game.
+                _samples, stats = play_batch(
                     self.model if (need_local_model and _eval is None) else None,
                     device=str(self.device), rng=self.rng,
                     stockfish=self.sf, evaluator=_eval,
                     games=int(games_per_batch),
                     on_game_complete=self._on_completed_game,
                     on_step=self._check_model_update,
+                    stop_fn=self._stop_fn,
                     opponent=_opponent_cfg, temp=_temp_cfg,
                     search=_search_cfg, opening=_opening_cfg,
                     game=_game_cfg,
@@ -1916,94 +2007,24 @@ class WorkerSession:
             return
         t1 = time.time()
 
-        # Log batch outcome (only visible if --log-file is enabled).
+        # Log session outcome.
         self.log.info(
-            "batch done: games=%d positions=%d W/D/L=%d/%d/%d draws=%d timeouts=%d rand=%.2f sf_nodes=%s ppg=%.1f elapsed_s=%.2f",
+            "selfplay stopped: games=%d positions=%d W/D/L=%d/%d/%d elapsed_s=%.1f",
             int(stats.games),
             int(stats.positions),
             int(stats.w),
             int(stats.d),
             int(stats.l),
-            int(getattr(stats, "total_draw_games", 0)),
-            int(getattr(stats, "timeout_games", 0)),
-            float(opponent_random_move_prob),
-            str(stats.sf_nodes),
-            float(stats.positions) / max(1, int(stats.games)),
             float(t1 - t0),
         )
 
-        if bool(self.args.auto_tune) and not bool(self.pinned_games_per_batch_cli):
-            tuned = tune_games_per_batch(
-                current=int(games_per_batch),
-                elapsed_s=float(t1 - t0),
-                target_s=float(self.args.target_batch_seconds),
-                min_games=int(self.args.min_games_per_batch),
-                max_games=int(self.args.max_games_per_batch),
+        # Flush any remaining buffered samples.
+        if self.upload_buf.positions > 0:
+            _flush_upload_buffer_to_pending(
+                pending_dir=self.pending_dir, username=str(self.args.username),
+                buf=self.upload_buf, now_s=time.time(),
             )
-            self.games_per_batch_local = int(tuned)
-
-            # Persist the calibrated value if requested.
-            self._persist_cfg()
-
-        if bool(self.args.calibrate):
-            # Count completed batches and exit once we have calibrated.
-            self.cfg["_calibrate_batches_done"] = int(self.cfg.get("_calibrate_batches_done", 0)) + 1
-            if int(self.cfg["_calibrate_batches_done"]) >= int(self.args.calibrate_batches):
-                self.cfg.pop("_calibrate_batches_done", None)
-                self._persist_cfg()
-                raise SystemExit(0)
-
-        self.cfg["_last_batch_elapsed_s"] = float(t1 - t0)
-        now_s = time.time()
-        shard_path, elapsed_s = _maybe_flush_upload_buffer(
-            pending_dir=self.pending_dir,
-            username=str(self.args.username),
-            buf=self.upload_buf,
-            now_s=now_s,
-            last_send_s=self.last_successful_send_s,
-            target_positions=int(self.args.upload_target_positions),
-            flush_seconds=float(self.args.upload_flush_seconds),
-            force=True,
-        )
-        if _should_write_fallback_batch(
-            shard_path=shard_path,
-            samples=samples,
-            saw_completed_game=self._saw_completed_game,
-        ):
-            self.log.warning(
-                "batch returned %d samples but upload buffer was empty; writing fallback batch shard",
-                int(len(samples)),
-            )
-            ts = int(now_s)
-            shard_path = self.pending_dir / f"{ts}_{model_sha[:8]}_{stats.games}g_{stats.positions}p.npz"
-            meta = ShardMeta(
-                username=str(self.args.username),
-                generated_at_unix=ts,
-                model_sha256=str(model_sha),
-                model_step=int(model_step),
-                games=int(stats.games),
-                positions=int(stats.positions),
-                wins=int(stats.w),
-                draws=int(stats.d),
-                losses=int(stats.l),
-                total_game_plies=int(getattr(stats, "total_game_plies", 0)),
-                adjudicated_games=int(getattr(stats, "adjudicated_games", 0)),
-                total_draw_games=int(getattr(stats, "total_draw_games", 0)),
-                selfplay_games=int(getattr(stats, "selfplay_games", 0)),
-                selfplay_adjudicated_games=int(getattr(stats, "selfplay_adjudicated_games", 0)),
-                selfplay_draw_games=int(getattr(stats, "selfplay_draw_games", 0)),
-                curriculum_games=int(getattr(stats, "curriculum_games", 0)),
-                curriculum_adjudicated_games=int(getattr(stats, "curriculum_adjudicated_games", 0)),
-                curriculum_draw_games=int(getattr(stats, "curriculum_draw_games", 0)),
-            )
-            tmp_path = self.pending_dir / f"_tmp_{shard_path.name}"
-            save_npz(tmp_path, samples=samples, meta=meta, compress=False)
-            tmp_path.replace(shard_path)
-            elapsed_path = _pending_elapsed_path(shard_path)
-            elapsed_s = float(t1 - t0)
-            elapsed_path.write_text(f"{float(elapsed_s):.6f}\n", encoding="utf-8")
-        elif shard_path is None:
-            self.log.info("batch produced no policy samples; skipping shard write")
+            self._upload_pending_shards(default_elapsed_s=0.0)
 
         # Prune old cached models opportunistically.
         best_info = manifest.get("best_model") or {}
@@ -2011,13 +2032,7 @@ class WorkerSession:
         if not self.shared_cache_enabled:
             _prune_cached_models(cache_dir=self.cache_dir, keep_shas={model_sha, best_sha})
 
-        if shard_path is not None:
-            uploaded_at = self._upload_pending_shards(default_elapsed_s=float(elapsed_s))
-            if uploaded_at is not None:
-                self.last_successful_send_s = float(uploaded_at)
-
-        # Try uploading immediately next loop.
-        time.sleep(0.1)
+        self._upload_pending_shards(default_elapsed_s=0.0)
 
     def _cleanup(self) -> None:
         if self.inference_client is not None and hasattr(self.inference_client, "close"):

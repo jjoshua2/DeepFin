@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import chess
 import numpy as np
 
+from chess_anti_engine.moves.encode import uci_to_policy_index
 from chess_anti_engine.selfplay.manager import (
     _choose_curriculum_opponent_move,
     _effective_curriculum_topk,
@@ -41,53 +41,70 @@ def test_effective_curriculum_wdl_regret_tightens_with_pid() -> None:
     ) == 0.01
 
 
+# Helper: build legal_indices array for the starting position (white to move).
+def _starting_legal_indices() -> np.ndarray:
+    import chess
+    from chess_anti_engine.encoding._lc0_ext import CBoard
+    cb = CBoard.from_board(chess.Board())
+    return cb.legal_move_indices()
+
+
 def test_choose_curriculum_opponent_move_regret_filter_non_random() -> None:
     """Non-random path picks uniformly among moves within the regret band."""
-    board = chess.Board()
-    legal_moves = list(board.legal_moves)
-    cand_moves = [chess.Move.from_uci("e2e4"), chess.Move.from_uci("d2d4"), chess.Move.from_uci("g1f3")]
+    legal_indices = _starting_legal_indices()
+    turn = True  # white
+    cand_indices = [
+        uci_to_policy_index("e2e4", turn),
+        uci_to_policy_index("d2d4", turn),
+        uci_to_policy_index("g1f3", turn),
+    ]
     cand_scores = [0.80, 0.795, 0.60]
     rng = np.random.default_rng(0)
 
     picked = {
         _choose_curriculum_opponent_move(
             rng=rng,
-            legal_moves=legal_moves,
-            cand_moves=cand_moves,
+            legal_indices=legal_indices,
+            cand_indices=cand_indices,
             cand_scores=cand_scores,
             curriculum_topk=3,
-            random_move_prob=0.0,  # no random corruption
+            random_move_prob=0.0,
             regret_limit=0.01,
-        ).uci()
+        )
         for _ in range(200)
     }
 
-    # Only e2e4 and d2d4 are within 0.01 regret of the best
-    assert picked <= {"e2e4", "d2d4"}
-    assert "g1f3" not in picked
-    # Should sample both, not just the best
-    assert "e2e4" in picked
-    assert "d2d4" in picked
+    e2e4 = uci_to_policy_index("e2e4", turn)
+    d2d4 = uci_to_policy_index("d2d4", turn)
+    g1f3 = uci_to_policy_index("g1f3", turn)
+
+    assert picked <= {e2e4, d2d4}
+    assert g1f3 not in picked
+    assert e2e4 in picked
+    assert d2d4 in picked
 
 
 def test_choose_curriculum_opponent_move_random_is_truly_random() -> None:
     """Random corruption picks a truly random legal move (not just acceptable ones)."""
-    board = chess.Board()
-    legal_moves = list(board.legal_moves)
-    cand_moves = [chess.Move.from_uci("e2e4"), chess.Move.from_uci("d2d4")]
+    legal_indices = _starting_legal_indices()
+    turn = True
+    cand_indices = [
+        uci_to_policy_index("e2e4", turn),
+        uci_to_policy_index("d2d4", turn),
+    ]
     cand_scores = [0.80, 0.795]
     rng = np.random.default_rng(42)
 
     picked = {
         _choose_curriculum_opponent_move(
             rng=rng,
-            legal_moves=legal_moves,
-            cand_moves=cand_moves,
+            legal_indices=legal_indices,
+            cand_indices=cand_indices,
             cand_scores=cand_scores,
             curriculum_topk=2,
-            random_move_prob=1.0,  # always random
+            random_move_prob=1.0,
             regret_limit=0.01,
-        ).uci()
+        )
         for _ in range(500)
     }
 
@@ -97,25 +114,28 @@ def test_choose_curriculum_opponent_move_random_is_truly_random() -> None:
 
 def test_choose_curriculum_opponent_move_regret_pv_order_not_wdl_order() -> None:
     """When PV order differs from WDL score order, regret uses max WDL score."""
-    board = chess.Board()
-    legal_moves = list(board.legal_moves)
-    # Simulate SF PV order ≠ WDL order: PV1 has LOWER WDL than PV3
-    cand_moves = [chess.Move.from_uci("e2e4"), chess.Move.from_uci("d2d4"), chess.Move.from_uci("g1f3")]
+    legal_indices = _starting_legal_indices()
+    turn = True
+    cand_indices = [
+        uci_to_policy_index("e2e4", turn),
+        uci_to_policy_index("d2d4", turn),
+        uci_to_policy_index("g1f3", turn),
+    ]
     cand_scores = [0.60, 0.595, 0.80]  # PV3 has highest WDL
     rng = np.random.default_rng(0)
 
     picked = {
         _choose_curriculum_opponent_move(
             rng=rng,
-            legal_moves=legal_moves,
-            cand_moves=cand_moves,
+            legal_indices=legal_indices,
+            cand_indices=cand_indices,
             cand_scores=cand_scores,
             curriculum_topk=3,
             random_move_prob=0.0,
             regret_limit=0.01,
-        ).uci()
+        )
         for _ in range(200)
     }
 
-    # Only g1f3 (0.80) is within 0.01 of max score (0.80)
-    assert picked == {"g1f3"}
+    g1f3 = uci_to_policy_index("g1f3", turn)
+    assert picked == {g1f3}

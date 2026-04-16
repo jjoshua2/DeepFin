@@ -355,7 +355,7 @@ def _play_batch_kwargs_from_config(config: dict) -> dict:
     )
 
 
-def _selfplay_winrate_raw_or_none(
+def _blended_winrate_raw_or_none(
     *,
     wins: int,
     draws: int,
@@ -439,10 +439,11 @@ def _run_puzzle_eval_if_due(
     iteration_zero_based: int,
 ) -> dict:
     """Run puzzle evaluation if due this iteration. Returns metrics dict."""
+    _defaults = {"puzzle_accuracy": float("nan"), "puzzle_correct": 0, "puzzle_total": 0}
     if puzzle_suite is None or puzzle_interval <= 0:
-        return {}
+        return _defaults
     if iteration_zero_based % puzzle_interval != 0:
-        return {}
+        return _defaults
     from chess_anti_engine.eval import run_puzzle_eval
     pr = run_puzzle_eval(model, puzzle_suite, device=device, mcts_simulations=puzzle_sims, rng=rng)
     return {
@@ -590,6 +591,84 @@ def _update_best_model(
             encoding="utf-8",
         )
     return best_loss
+
+
+_BEST_REGRET_KEEP = 3  # Keep top-N checkpoints by lowest regret
+
+
+def _update_best_regret_checkpoints(
+    *,
+    trainer,
+    pid,
+    best_regret_dir: Path,
+    iteration_idx: int,
+    opp_strength_ema: float,
+    best_loss: float,
+) -> None:
+    """Save checkpoint if current regret is in the top-N lowest seen."""
+    if pid is None:
+        return
+    regret = float(pid.wdl_regret)
+    if regret < 0:
+        return
+    ema_wr = float(pid.ema_winrate)
+    step = int(getattr(trainer, "step", 0))
+
+    best_regret_dir.mkdir(parents=True, exist_ok=True)
+
+    # Read existing entries
+    index_path = best_regret_dir / "index.json"
+    entries: list[dict] = []
+    if index_path.exists():
+        try:
+            entries = json.loads(index_path.read_text(encoding="utf-8"))
+        except Exception:
+            entries = []
+
+    # Check if this regret qualifies
+    if len(entries) >= _BEST_REGRET_KEEP:
+        worst = max(entries, key=lambda e: e["regret"])
+        if regret >= worst["regret"]:
+            return  # Not in top-N
+
+    # Save checkpoint
+    tag = f"regret_{regret:.4f}_step{step}_iter{iteration_idx}"
+    slot_dir = best_regret_dir / tag
+    slot_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        trainer.save(slot_dir / "trainer.pt")
+        pid_state = pid.state_dict()
+        (slot_dir / "pid_state.json").write_text(
+            json.dumps(pid_state, sort_keys=True, indent=2), encoding="utf-8",
+        )
+        (slot_dir / "meta.json").write_text(
+            json.dumps({
+                "regret": regret, "step": step, "iter": iteration_idx,
+                "ema_winrate": ema_wr, "best_loss": best_loss,
+                "opp_strength_ema": opp_strength_ema,
+            }, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:
+        return
+
+    entries.append({"regret": regret, "step": step, "iter": iteration_idx, "tag": tag})
+
+    # Prune to top-N (lowest regret)
+    entries.sort(key=lambda e: e["regret"])
+    evicted = entries[_BEST_REGRET_KEEP:]
+    entries = entries[:_BEST_REGRET_KEEP]
+
+    for ev in evicted:
+        ev_dir = best_regret_dir / ev["tag"]
+        if ev_dir.exists():
+            try:
+                import shutil
+                shutil.rmtree(ev_dir)
+            except Exception:
+                pass
+
+    index_path.write_text(json.dumps(entries, indent=2), encoding="utf-8")
 
 
 # Keys that affect broker/worker topology — changing these mid-run requires
@@ -1905,7 +1984,12 @@ def train_trial(config: dict):
 
             train_ms = (time.monotonic() - train_t0) * 1000.0
 
-            eval_dict = {}
+            eval_dict: dict = {
+                "eval_win": 0,
+                "eval_draw": 0,
+                "eval_loss": 0,
+                "eval_winrate": 0.0,
+            }
             if eval_games > 0 and eval_sf is not None:
                 # Evaluation: fixed-strength games (no training data generated, only W/D/L).
                 kw = _play_batch_kwargs_from_config(config)
@@ -1930,12 +2014,12 @@ def train_trial(config: dict):
                     games=eval_games, **kw,
                 )
                 denom = float(max(1, eval_stats.w + eval_stats.d + eval_stats.l))
-                eval_dict = {
+                eval_dict.update({
                     "eval_win": eval_stats.w,
                     "eval_draw": eval_stats.d,
                     "eval_loss": eval_stats.l,
                     "eval_winrate": (float(eval_stats.w) + 0.5 * float(eval_stats.d)) / denom,
-                }
+                })
 
             # Flush replay + save checkpoint (model+optimizer+step + PID state).
             checkpoint = _save_trial_checkpoint(
@@ -1957,7 +2041,7 @@ def train_trial(config: dict):
                 Checkpoint=Checkpoint,
             )
 
-            test_dict = {
+            test_dict: dict = {
                 "holdout_frozen": int(1 if holdout_frozen else 0),
                 "holdout_generation": int(holdout_generation),
                 "data_drift_input_l2": float(drift_input_l2),
@@ -1968,6 +2052,19 @@ def train_trial(config: dict):
                 "data_policy_entropy": float(data_policy_entropy),
                 "data_unique_positions": float(data_unique_positions),
                 "data_wdl_balance": float(data_wdl_balance),
+                "test_size": 0,
+                "test_loss": float("nan"),
+                "test_policy_loss": float("nan"),
+                "test_soft_policy_loss": float("nan"),
+                "test_future_policy_loss": float("nan"),
+                "test_wdl_loss": float("nan"),
+                "test_sf_move_loss": float("nan"),
+                "test_sf_move_acc": float("nan"),
+                "test_sf_eval_loss": float("nan"),
+                "test_categorical_loss": float("nan"),
+                "test_volatility_loss": float("nan"),
+                "test_sf_volatility_loss": float("nan"),
+                "test_moves_left_loss": float("nan"),
             }
 
             if test_metrics is not None:
@@ -2000,7 +2097,11 @@ def train_trial(config: dict):
             # line up with net updates rather than intra-iteration selfplay noise.
             pid_update = None
             pid_ema_wr = float(pid.ema_winrate) if pid is not None else 0.0
-            selfplay_winrate_raw = _selfplay_winrate_raw_or_none(
+            # Defaults for PID W/D/L (overwritten below when pid is not None).
+            _pid_w = total_w
+            _pid_d = total_d
+            _pid_l = total_l
+            blended_winrate_raw = _blended_winrate_raw_or_none(
                 wins=total_w,
                 draws=total_d,
                 losses=total_l,
@@ -2036,7 +2137,12 @@ def train_trial(config: dict):
                 pid.kp = float(config.get("sf_pid_kp", pid.kp))
                 pid.ki = float(config.get("sf_pid_ki", pid.ki))
                 pid.alpha = float(config.get("sf_pid_ema_alpha", pid.alpha))
-                pid_update = pid.observe(wins=total_w, draws=total_d, losses=total_l, force=True)
+                # total_w/d/l are already curriculum-only (selfplay games
+                # are excluded in play_batch's _finalize_game stats).
+                _pid_w = total_w
+                _pid_d = total_d
+                _pid_l = total_l
+                pid_update = pid.observe(wins=_pid_w, draws=_pid_d, losses=_pid_l, force=True)
                 pid_ema_wr = float(pid_update.ema_winrate)
                 sf_nodes_next = int(pid.nodes)
                 random_move_prob_next = float(pid.random_move_prob)
@@ -2057,6 +2163,18 @@ def train_trial(config: dict):
                     )
                 except Exception:
                     pass
+
+            # Save top-3 checkpoints by lowest regret (best-effort).
+            try:
+                _update_best_regret_checkpoints(
+                    trainer=trainer, pid=pid,
+                    best_regret_dir=work_dir / "best_regret",
+                    iteration_idx=iteration_idx,
+                    opp_strength_ema=opp_strength_ema,
+                    best_loss=best_loss,
+                )
+            except Exception:
+                pass
 
             wdl_regret_next = float(pid.wdl_regret) if pid is not None else -1.0
 
@@ -2112,8 +2230,8 @@ def train_trial(config: dict):
                 trainer.writer.add_scalar("difficulty/pid_ema_winrate", float(pid_ema_wr), iteration_step)
                 trainer.writer.add_scalar("difficulty/wdl_regret", float(wdl_regret_used), iteration_step)
                 trainer.writer.add_scalar("difficulty/wdl_regret_next", float(wdl_regret_next), iteration_step)
-                if selfplay_winrate_raw is not None:
-                    trainer.writer.add_scalar("difficulty/selfplay_winrate_raw", float(selfplay_winrate_raw), iteration_step)
+                if blended_winrate_raw is not None:
+                    trainer.writer.add_scalar("difficulty/blended_winrate_raw", float(blended_winrate_raw), iteration_step)
                     trainer.writer.add_scalar("selfplay/avg_game_plies", float(avg_game_plies), iteration_step)
                     if avg_plies_win > 0:
                         trainer.writer.add_scalar("selfplay/avg_plies_win", float(avg_plies_win), iteration_step)
@@ -2192,6 +2310,11 @@ def train_trial(config: dict):
                     "sf_nodes": int(sf_nodes_used),
                     "sf_nodes_next": int(sf_nodes_next),
                     "pid_ema_winrate": float(pid_ema_wr),
+                    "pid_curriculum_w": int(_pid_w),
+                    "pid_curriculum_d": int(_pid_d),
+                    "pid_curriculum_l": int(_pid_l),
+                    "selfplay_games": int(total_selfplay_games),
+                    "selfplay_draw_games": int(total_selfplay_draw_games),
                     "random_move_prob": float(current_rand),
                     "random_move_prob_next": float(random_move_prob_next),
                     "wdl_regret": float(wdl_regret_used),
@@ -2251,9 +2374,8 @@ def train_trial(config: dict):
                     **eval_dict,
                     **test_dict,
                     **puzzle_dict,
+                    "blended_winrate_raw": float(blended_winrate_raw) if blended_winrate_raw is not None else 0.0,
                 }
-            if selfplay_winrate_raw is not None:
-                report_dict["selfplay_winrate_raw"] = float(selfplay_winrate_raw)
 
             _tune_report(report_dict, checkpoint=checkpoint)
 

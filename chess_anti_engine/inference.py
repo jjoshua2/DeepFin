@@ -289,6 +289,31 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         self._pinned_pol_np = self._pinned_pol.numpy(force=True)
         self._pinned_wdl_np = self._pinned_wdl.numpy(force=True)
 
+    def get_input_buffer(self, bsz: int) -> np.ndarray:
+        """Return a writable (bsz, C, H, W) view into the pinned input buffer.
+
+        Caller can write encoded positions directly into this buffer,
+        avoiding a separate allocation + copy.  The view is valid until
+        the next ``evaluate_encoded`` or ``get_input_buffer`` call.
+        """
+        if bsz > self._max_batch:
+            raise ValueError(f"batch {bsz} > max {self._max_batch}")
+        return self._pinned_input_np[:bsz]
+
+    def evaluate_inplace(
+        self, bsz: int, *, copy_out: bool = True,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Run inference on data already written to ``get_input_buffer()``.
+
+        Same as ``evaluate_encoded`` but skips the input copy — caller must
+        have already written ``bsz`` positions into the pinned input buffer.
+        """
+        if bsz <= 0:
+            return np.empty((0, _POLICY_SIZE), dtype=np.float32), np.empty((0, _WDL_SIZE), dtype=np.float32)
+        if bsz > self._max_batch:
+            raise ValueError(f"batch {bsz} > max {self._max_batch}")
+        return self._run_forward(bsz, copy_out=copy_out)
+
     def evaluate_encoded(
         self, x: np.ndarray, *, copy_out: bool = True,
     ) -> tuple[np.ndarray, np.ndarray]:
@@ -299,7 +324,11 @@ class DirectGPUEvaluator(LocalModelEvaluator):
             raise ValueError(f"batch {bsz} > max {self._max_batch}")
 
         self._pinned_input_np[:bsz] = x
+        return self._run_forward(bsz, copy_out=copy_out)
 
+    def _run_forward(
+        self, bsz: int, *, copy_out: bool = True,
+    ) -> tuple[np.ndarray, np.ndarray]:
         if not self._use_cuda:
             xt = self._pinned_input[:bsz]
             with torch.no_grad():
@@ -829,7 +858,7 @@ class SlotBroker:
 
         # Pre-allocated pinned buffers for zero-copy GPU transfer.
         _total_cap = num_slots * max_batch_per_slot
-        _pin = torch.cuda.is_available()
+        _pin = "cuda" in self.device and torch.cuda.is_available()
         self._pinned_input = torch.empty(
             (_total_cap, _CHANNELS, _BOARD_H, _BOARD_W),
             dtype=torch.float32, pin_memory=_pin,
@@ -918,6 +947,8 @@ class SlotBroker:
         load_state_dict_tolerant(model, sd, label="broker-model")
         model.to(self.device)
         model.eval()
+        if hasattr(model, "_inference_only"):
+            model._inference_only = True
         if self.compile_inference and self.device.startswith("cuda"):
             model = torch.compile(model, mode="reduce-overhead")
         self._model = model
@@ -1353,6 +1384,8 @@ class SharedSlotBroker:
             model = build_model(model_cfg)
             model.to(self.device)
             model.eval()
+            if hasattr(model, "_inference_only"):
+                model._inference_only = True
             load_state_dict_tolerant(model, sd, label=f"shared-broker-{trial_id}")
             if self.compile_inference and self.device.startswith("cuda"):
                 model = torch.compile(model, mode="reduce-overhead")

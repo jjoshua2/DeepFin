@@ -14,6 +14,7 @@ Architecture:
 """
 from __future__ import annotations
 
+import logging as _logging
 import math
 
 import numpy as np
@@ -33,6 +34,8 @@ from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.encoding.cboard_encode import cboard_from_board_fast
 from chess_anti_engine.mcts._mcts_tree import MCTSTree, NNCache
+
+_log = _logging.getLogger(__name__)
 
 
 @torch.no_grad()
@@ -79,6 +82,7 @@ def run_gumbel_root_many_c(
     root_cboards = cboards if cboards is not None else [CBoard.from_board(b) for b in boards]
 
     _has_async = hasattr(eval_impl, 'evaluate_encoded_async')
+    _use_pipeline = _has_async and n_boards >= 64
 
     if pre_pol_logits is not None and pre_wdl_logits is not None:
         pol_logits_batch = np.asarray(pre_pol_logits, dtype=np.float32)
@@ -147,18 +151,20 @@ def run_gumbel_root_many_c(
         pri[legal_idx] = priors
         root_pri[i] = pri
 
-        # Reuse existing root from persistent tree, or create new one
-        _reused = False
-        if root_node_ids is not None and root_node_ids[i] >= 0:
-            rid = root_node_ids[i]
-            if tree.is_expanded(rid):
-                root_ids[i] = rid
-                _reused = True
+        # Reuse existing root from persistent tree, or create new one.
+        # Skip when pipelining — pipeline creates its own sub-trees.
+        if not _use_pipeline:
+            _reused = False
+            if root_node_ids is not None and root_node_ids[i] >= 0:
+                rid = root_node_ids[i]
+                if tree.is_expanded(rid):
+                    root_ids[i] = rid
+                    _reused = True
 
-        if not _reused:
-            rid = tree.add_root(1, float(root_qs[i]))
-            root_ids[i] = rid
-            tree.expand(rid, legal_idx.astype(np.int32), priors)
+            if not _reused:
+                rid = tree.add_root(1, float(root_qs[i]))
+                root_ids[i] = rid
+                tree.expand(rid, legal_idx.astype(np.int32), priors)
 
         if legal_idx.size == 1:
             a0 = int(legal_idx[0])
@@ -197,53 +203,242 @@ def run_gumbel_root_many_c(
 
     _max_leaves_per_rep = n_boards * max(2, int(cfg.topk))
     _BUCKETS = (128, 256, 384, 512, 768, 1024, 1536, 2048, 4096)
-    _enc_buf = np.empty((_max_leaves_per_rep * 2, 146, 8, 8), dtype=np.float32)
 
-    # ---- Fused C simulation loop -----------------------------------------
-    # Uses start_gumbel_sims/continue_gumbel_sims to run the entire
-    # sequential halving loop in C, only returning to Python for GPU eval.
-    _root_ids_arr = np.array(root_ids, dtype=np.int32)
-    _budget_arr = np.array(budget_remaining, dtype=np.int32)
-    _root_qs_arr = np.array(root_qs, dtype=np.float64)
+    # ---- Pipelined simulation: split games into 2 groups ----------------
+    # While GPU evaluates group A's leaves, C does tree walks for group B,
+    # and vice versa.  CPU (C tree walks) and GPU overlap on separate hardware.
 
-    _tp0 = _time.perf_counter()
-    n_leaves = tree.start_gumbel_sims(
-        root_cboards, _root_ids_arr, remaining_per_board,
-        gumbels_per_board, root_pri, _budget_arr, _root_qs_arr,
-        _c_scale, _c_visit, _c_puct, _fpu_reduction, _full_tree,
-        _enc_buf, nn_cache,
-    )
-    _t_prepare += _time.perf_counter() - _tp0
-
-    while n_leaves is not None:
-        n_leaves = int(n_leaves)
-        padded = n_leaves
+    def _pad_for_bucket(nl, buf_len):
         for _b in _BUCKETS:
-            if _b >= n_leaves:
-                padded = min(_b, len(_enc_buf))
-                break
-        enc_slice = _enc_buf[:padded]
-        _tg0 = _time.perf_counter()
-        if _has_async:
-            pol_t, wdl_t, event = eval_impl.evaluate_encoded_async(enc_slice)
-            if event is not None:
-                event.synchronize()
-            pol_all = pol_t[:n_leaves].numpy()
-            wdl_all = wdl_t[:n_leaves].numpy()
-        else:
-            pol_all, wdl_all = eval_impl.evaluate_encoded(enc_slice)
-            pol_all = pol_all[:n_leaves]
-            wdl_all = wdl_all[:n_leaves]
-        _t_gpu += _time.perf_counter() - _tg0
-        _n_gpu_calls += 1
-        _n_gpu_positions += n_leaves
+            if _b >= nl:
+                return min(_b, buf_len)
+        return min(nl, buf_len)
 
+    if _use_pipeline:
+        mid = n_boards // 2
+        _grp = [list(range(0, mid)), list(range(mid, n_boards))]
+        _trees = [MCTSTree(), MCTSTree()]
+        _max_grp = max(mid, n_boards - mid)  # ceil half for odd splits
+        _leaf_cap = _max_grp * max(2, int(cfg.topk)) * 2
+        _enc_bufs = [
+            np.empty((_leaf_cap, 146, 8, 8), dtype=np.float32)
+            for _ in range(2)
+        ]
+
+        # Create fresh root nodes in each sub-tree and build local root_ids
+        _sub_root_ids: list[list[int]] = [[], []]
+        for g in range(2):
+            for i in _grp[g]:
+                if root_pri[i] is None or root_legal[i] is None:
+                    _sub_root_ids[g].append(-1)
+                    continue
+                legal_idx = root_legal[i]
+                priors = root_pri[i][legal_idx].astype(np.float64)
+                rid = _trees[g].add_root(1, float(root_qs[i]))
+                _trees[g].expand(rid, legal_idx.astype(np.int32), priors)
+                _sub_root_ids[g].append(rid)
+
+        # Start both groups
+        _n_leaves = [None, None]
         _tp0 = _time.perf_counter()
-        n_leaves = tree.continue_gumbel_sims(pol_all, wdl_all)
+        for g in range(2):
+            idx = _grp[g]
+            ng = len(idx)
+            if ng == 0:
+                continue
+            _cb_g = [root_cboards[i] for i in idx]
+            _rid_g = np.array(_sub_root_ids[g], dtype=np.int32)
+            _rem_g = [remaining_per_board[i] for i in idx]
+            _gum_g = [gumbels_per_board[i] for i in idx]
+            _pri_g = [root_pri[i] for i in idx]
+            _bud_g = np.array([budget_remaining[i] for i in idx], dtype=np.int32)
+            _rqs_g = np.array([root_qs[i] for i in idx], dtype=np.float64)
+
+            _n_leaves[g] = _trees[g].start_gumbel_sims(
+                _cb_g, _rid_g, _rem_g, _gum_g, _pri_g, _bud_g, _rqs_g,
+                _c_scale, _c_visit, _c_puct, _fpu_reduction, _full_tree,
+                _enc_bufs[g], nn_cache,
+            )
         _t_prepare += _time.perf_counter() - _tp0
 
-    # Retrieve final remaining candidates from C state
-    remaining_per_board = tree.get_gumbel_remaining()
+        # Pipeline loop --------------------------------------------------
+        # Each group independently cycles: GPU eval → C tree walks → GPU eval → ...
+        # We overlap GPU(A) with C(B) by launching async GPU for one group,
+        # then doing continue_gumbel_sims for the other.
+
+        def _drain_sequential(g):
+            """Drain remaining simulation for group g without pipelining."""
+            nonlocal _t_gpu, _t_prepare, _n_gpu_calls, _n_gpu_positions
+            while _n_leaves[g] is not None:
+                nl = int(_n_leaves[g])
+                padded = _pad_for_bucket(nl, len(_enc_bufs[g]))
+                _tg0 = _time.perf_counter()
+                pol_t, wdl_t, ev = eval_impl.evaluate_encoded_async(_enc_bufs[g][:padded])
+                if ev is not None:
+                    ev.synchronize()
+                _t_gpu += _time.perf_counter() - _tg0
+                _n_gpu_calls += 1
+                _n_gpu_positions += nl
+                _tp0 = _time.perf_counter()
+                _n_leaves[g] = _trees[g].continue_gumbel_sims(
+                    pol_t[:nl].numpy(), wdl_t[:nl].numpy())
+                _t_prepare += _time.perf_counter() - _tp0
+
+        # Main pipelined loop: GPU(g) overlaps with C tree walks(other).
+        # The first iteration runs asymmetrically (no pending group 1 results
+        # yet), then settles into a steady-state pattern:
+        #   1. Submit GPU(0) async
+        #   2. C tree walks for group 1 using previous GPU(1) results
+        #   3. Sync GPU(0), copy results out of pinned buffers
+        #   4. Submit GPU(1) async
+        #   5. C tree walks for group 0 using copied GPU(0) results
+        #   6. Sync GPU(1), copy results → _pending_g1 for next iteration
+        #
+        # We copy results from pinned buffers immediately after sync because
+        # the next evaluate_encoded_async reuses the same _pinned_pol /
+        # _pinned_wdl buffers, invalidating any views.
+        _pending_g1 = None  # (pol_np, wdl_np) — synced + copied numpy
+
+        _max_iters = n_boards * max(max(budget_remaining), 1) + 100
+        for _pipe_iter in range(_max_iters):
+            if _n_leaves[0] is None and _n_leaves[1] is None:
+                break
+
+            # Only one group active → flush pending, then drain
+            if _n_leaves[0] is None:
+                if _pending_g1 is not None:
+                    _tp0 = _time.perf_counter()
+                    _n_leaves[1] = _trees[1].continue_gumbel_sims(*_pending_g1)
+                    _t_prepare += _time.perf_counter() - _tp0
+                    _pending_g1 = None
+                _drain_sequential(1)
+                break
+            if _n_leaves[1] is None and _pending_g1 is None:
+                _drain_sequential(0)
+                break
+
+            # Both active — one pipelined iteration:
+
+            # 1) Submit GPU for group 0 (async — GPU starts working)
+            nl0 = int(_n_leaves[0])
+            padded0 = _pad_for_bucket(nl0, len(_enc_bufs[0]))
+            _tg0 = _time.perf_counter()
+            pol_t0, wdl_t0, ev0 = eval_impl.evaluate_encoded_async(_enc_bufs[0][:padded0])
+
+            # 2) While GPU processes group 0, do C tree walks for group 1
+            #    (continue_gumbel_sims releases GIL; CPU and GPU run in parallel)
+            if _pending_g1 is not None:
+                _tp0 = _time.perf_counter()
+                _n_leaves[1] = _trees[1].continue_gumbel_sims(*_pending_g1)
+                _t_prepare += _time.perf_counter() - _tp0
+                _pending_g1 = None
+
+                if _n_leaves[1] is None:
+                    # Group 1 finished — wait for GPU(0) and drain group 0
+                    if ev0 is not None:
+                        ev0.synchronize()
+                    _t_gpu += _time.perf_counter() - _tg0
+                    _n_gpu_calls += 1; _n_gpu_positions += nl0
+                    _tp0 = _time.perf_counter()
+                    _n_leaves[0] = _trees[0].continue_gumbel_sims(
+                        pol_t0[:nl0].numpy(), wdl_t0[:nl0].numpy())
+                    _t_prepare += _time.perf_counter() - _tp0
+                    _drain_sequential(0)
+                    break
+
+            # 3) Wait for GPU(0) and copy results before next async submit
+            if ev0 is not None:
+                ev0.synchronize()
+            _t_gpu += _time.perf_counter() - _tg0
+            _n_gpu_calls += 1; _n_gpu_positions += nl0
+            pol_np0 = pol_t0[:nl0].numpy().copy()
+            wdl_np0 = wdl_t0[:nl0].numpy().copy()
+
+            # 4) Submit GPU for group 1 (async — safe: group 0 results copied)
+            if _n_leaves[1] is not None:
+                nl1 = int(_n_leaves[1])
+                padded1 = _pad_for_bucket(nl1, len(_enc_bufs[1]))
+                _tg1 = _time.perf_counter()
+                pol_t1, wdl_t1, ev1 = eval_impl.evaluate_encoded_async(_enc_bufs[1][:padded1])
+
+            # 5) While GPU processes group 1, do C tree walks for group 0
+            #    (uses copied numpy arrays — safe from pinned buffer reuse)
+            _tp0 = _time.perf_counter()
+            _n_leaves[0] = _trees[0].continue_gumbel_sims(pol_np0, wdl_np0)
+            _t_prepare += _time.perf_counter() - _tp0
+
+            # 6) Sync GPU(1), copy results for next iteration's step 2
+            if _n_leaves[1] is not None:
+                if ev1 is not None:
+                    ev1.synchronize()
+                _t_gpu += _time.perf_counter() - _tg1
+                _n_gpu_calls += 1; _n_gpu_positions += nl1
+                _pending_g1 = (
+                    pol_t1[:nl1].numpy().copy(),
+                    wdl_t1[:nl1].numpy().copy(),
+                )
+        else:
+            raise RuntimeError(f"pipeline loop did not converge in {_max_iters} iterations")
+
+        # Retrieve remaining candidates from both trees, merge back
+        _rem_a = _trees[0].get_gumbel_remaining()
+        _rem_b = _trees[1].get_gumbel_remaining()
+        remaining_per_board = [None] * n_boards
+        for gi, i in enumerate(_grp[0]):
+            remaining_per_board[i] = _rem_a[gi] if gi < len(_rem_a) else None
+        for gi, i in enumerate(_grp[1]):
+            remaining_per_board[i] = _rem_b[gi] if gi < len(_rem_b) else None
+
+        # Store tree refs + root IDs for policy extraction
+        _tree_for_board = [None] * n_boards
+        _rid_for_board = [0] * n_boards
+        for g in range(2):
+            for gi, i in enumerate(_grp[g]):
+                _tree_for_board[i] = _trees[g]
+                _rid_for_board[i] = _sub_root_ids[g][gi]
+
+    else:
+        # Non-pipelined fallback (small batches or no async)
+        _enc_buf = np.empty((_max_leaves_per_rep * 2, 146, 8, 8), dtype=np.float32)
+        _root_ids_arr = np.array(root_ids, dtype=np.int32)
+        _budget_arr = np.array(budget_remaining, dtype=np.int32)
+        _root_qs_arr = np.array(root_qs, dtype=np.float64)
+
+        _tp0 = _time.perf_counter()
+        n_leaves = tree.start_gumbel_sims(
+            root_cboards, _root_ids_arr, remaining_per_board,
+            gumbels_per_board, root_pri, _budget_arr, _root_qs_arr,
+            _c_scale, _c_visit, _c_puct, _fpu_reduction, _full_tree,
+            _enc_buf, nn_cache,
+        )
+        _t_prepare += _time.perf_counter() - _tp0
+
+        while n_leaves is not None:
+            n_leaves = int(n_leaves)
+            padded = _pad_for_bucket(n_leaves, len(_enc_buf))
+            enc_slice = _enc_buf[:padded]
+            _tg0 = _time.perf_counter()
+            if _has_async:
+                pol_t, wdl_t, event = eval_impl.evaluate_encoded_async(enc_slice)
+                if event is not None:
+                    event.synchronize()
+                pol_all = pol_t[:n_leaves].numpy()
+                wdl_all = wdl_t[:n_leaves].numpy()
+            else:
+                pol_all, wdl_all = eval_impl.evaluate_encoded(enc_slice)
+                pol_all = pol_all[:n_leaves]
+                wdl_all = wdl_all[:n_leaves]
+            _t_gpu += _time.perf_counter() - _tg0
+            _n_gpu_calls += 1
+            _n_gpu_positions += n_leaves
+
+            _tp0 = _time.perf_counter()
+            n_leaves = tree.continue_gumbel_sims(pol_all, wdl_all)
+            _t_prepare += _time.perf_counter() - _tp0
+
+        remaining_per_board = tree.get_gumbel_remaining()
+        _tree_for_board = None  # signal to use single tree
+        _rid_for_board = None
 
     # -- 4. Build improved policies from C tree ----------------------------
     _tp0 = _time.perf_counter()
@@ -253,7 +448,12 @@ def run_gumbel_root_many_c(
 
         pri = root_pri[i]
         remaining = remaining_per_board[i]
-        rid = root_ids[i]
+        if _tree_for_board is not None:
+            _qtree = _tree_for_board[i]
+            rid = _rid_for_board[i]
+        else:
+            _qtree = tree
+            rid = root_ids[i]
         if pri is None or remaining is None or rid < 0:
             probs_out[i] = np.zeros((POLICY_SIZE,), dtype=np.float32)
             actions_out[i] = 0
@@ -263,7 +463,7 @@ def run_gumbel_root_many_c(
         root_q_i = float(root_qs[i])
 
         # Get children stats from C tree (completed_q already negated)
-        child_actions, child_visits, child_q = tree.get_children_q(rid, root_q_i)
+        child_actions, child_visits, child_q = _qtree.get_children_q(rid, root_q_i)
         action_to_slot = {}
         for j in range(child_actions.size):
             action_to_slot[int(child_actions[j])] = j
@@ -326,15 +526,20 @@ def run_gumbel_root_many_c(
     _t_policy = _time.perf_counter() - _tp0
     _t_total = _time.perf_counter() - _t_func_start
     _t_python_glue = _t_total - _t_init - _t_prepare - _t_gpu - _t_finish - _t_score - _t_policy
-    if n_boards >= 64:  # only log for realistic batches
-        import sys
-        print(
-            f"gumbel profile: total={_t_total:.3f}s init={_t_init:.3f} prep={_t_prepare:.3f} "
-            f"gpu={_t_gpu:.3f}({_n_gpu_calls}calls,{_n_gpu_positions}pos) "
-            f"finish={_t_finish:.3f} score={_t_score:.3f} policy={_t_policy:.3f} glue={_t_python_glue:.3f}",
-            file=sys.stderr, flush=True,
+    if n_boards >= 64 and _log.isEnabledFor(_logging.DEBUG):
+        _log.debug(
+            "gumbel profile: total=%.3fs init=%.3f prep=%.3f "
+            "gpu=%.3f(%dcalls,%dpos) "
+            "finish=%.3f score=%.3f policy=%.3f glue=%.3f%s",
+            _t_total, _t_init, _t_prepare,
+            _t_gpu, _n_gpu_calls, _n_gpu_positions,
+            _t_finish, _t_score, _t_policy, _t_python_glue,
+            " PIPELINE" if _use_pipeline else "",
         )
-    return probs_out, actions_out, values_out, legal_masks_out, tree, root_ids
+    # When pipelining, sub-trees are ephemeral — invalidate root IDs so
+    # the caller doesn't try to reuse nodes that don't exist in the main tree.
+    _ret_root_ids = root_ids if not _use_pipeline else [-1] * n_boards
+    return probs_out, actions_out, values_out, legal_masks_out, tree, _ret_root_ids
 
 
 @torch.no_grad()

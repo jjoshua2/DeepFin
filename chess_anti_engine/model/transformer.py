@@ -245,15 +245,14 @@ class TransformerBlock(nn.Module):
         self.head_dim = self.embed_dim // self.num_heads
         self.dropout = float(dropout)
 
-        # QKV projections
+        # QKV projections (fused into single linear for non-NLA path)
+        self.use_nla = bool(use_nla)
         if use_nla:
             self.q_proj = _NLAProjection(self.embed_dim, self.embed_dim)
             self.k_proj = _NLAProjection(self.embed_dim, self.embed_dim)
             self.v_proj = _NLAProjection(self.embed_dim, self.embed_dim)
         else:
-            self.q_proj = nn.Linear(self.embed_dim, self.embed_dim)
-            self.k_proj = nn.Linear(self.embed_dim, self.embed_dim)
-            self.v_proj = nn.Linear(self.embed_dim, self.embed_dim)
+            self.qkv_proj = nn.Linear(self.embed_dim, 3 * self.embed_dim)
 
         self.out_proj = nn.Linear(self.embed_dim, self.embed_dim)
 
@@ -274,14 +273,23 @@ class TransformerBlock(nn.Module):
     def forward(self, x: torch.Tensor, smolgen_bias: torch.Tensor | None = None) -> torch.Tensor:
         # x: (B,64,D), smolgen_bias: (B,H,64,64) or None
         b, t, d = x.shape
-        q = self.q_proj(x)
-        k = self.k_proj(x)
-        v = self.v_proj(x)
+        if self.use_nla:
+            q = self.q_proj(x)
+            k = self.k_proj(x)
+            v = self.v_proj(x)
+        else:
+            qkv = self.qkv_proj(x).view(b, t, 3, self.num_heads, self.head_dim)
+            q, k, v = qkv.unbind(dim=2)
 
         # (B,H,T,hd)
-        q = q.view(b, t, self.num_heads, self.head_dim).transpose(1, 2)
-        k = k.view(b, t, self.num_heads, self.head_dim).transpose(1, 2)
-        v = v.view(b, t, self.num_heads, self.head_dim).transpose(1, 2)
+        if self.use_nla:
+            q = q.view(b, t, self.num_heads, self.head_dim).transpose(1, 2)
+            k = k.view(b, t, self.num_heads, self.head_dim).transpose(1, 2)
+            v = v.view(b, t, self.num_heads, self.head_dim).transpose(1, 2)
+        else:
+            q = q.transpose(1, 2)  # already (B,T,H,hd) from unbind
+            k = k.transpose(1, 2)
+            v = v.transpose(1, 2)
 
         if self.q_norm is not None and self.k_norm is not None:
             q = self.q_norm(q)
@@ -334,6 +342,7 @@ class ChessNet(nn.Module):
         super().__init__()
         self.cfg = cfg
         self._use_grad_ckpt = bool(cfg.use_gradient_checkpointing)
+        self._inference_only = False
 
         # LC0 BT4 input block: Dense(activation) → mult_gate → add_gate
         self.embed = nn.Linear(cfg.in_planes, cfg.embed_dim)
@@ -374,7 +383,7 @@ class ChessNet(nn.Module):
         # x: (B,C,8,8) -> (B,64,C)
         b, c, h, w = x.shape
         assert (h, w) == (8, 8)
-        tokens = x.reshape(b, c, 64).transpose(1, 2)  # (B,64,C)
+        tokens = x.reshape(b, c, 64).permute(0, 2, 1).contiguous()  # (B,64,C)
 
         # BT4 input: Dense(mish) → mult_gate(non-neg) → add_gate
         t = F.mish(self.embed(tokens))
@@ -386,6 +395,12 @@ class ChessNet(nn.Module):
                 t = grad_checkpoint(blk, t, smolgen_bias, use_reentrant=False)
             else:
                 t = blk(t, smolgen_bias)
+
+        if self._inference_only:
+            return {
+                "policy_own": self.policy_own(t),
+                "wdl": self.value_wdl(t),
+            }
 
         return {
             "policy_own": self.policy_own(t),

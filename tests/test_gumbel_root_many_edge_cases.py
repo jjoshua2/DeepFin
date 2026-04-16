@@ -265,3 +265,65 @@ def test_gumbel_c_matches_python_on_history_and_terminal_draws():
         s = float(p2.sum())
         if s > 0:
             assert abs(s - 1.0) < 0.01
+
+
+@pytest.mark.skipif(run_gumbel_root_many_c is None, reason="gumbel_c extension not available")
+def test_gumbel_c_pipeline_path():
+    """Test the pipelined simulation path using a mock async evaluator."""
+    model = _tiny_model()
+
+    boards = [chess.Board() for _ in range(64)]
+    # Add some variety
+    for i, san_seq in enumerate([
+        ["e4"], ["d4", "d5"], ["Nf3", "d5", "c4"],
+        ["e4", "e5", "Nf3", "Nc6"],
+    ]):
+        b = chess.Board()
+        for san in san_seq:
+            b.push_san(san)
+        boards[i] = b
+
+    cfg = GumbelConfig(simulations=16, temperature=1.0, add_noise=True)
+
+    # Sequential path (sync evaluator)
+    probs_seq, act_seq, val_seq, masks_seq = run_gumbel_root_many_c(
+        model, boards, device="cpu", rng=np.random.default_rng(42), cfg=cfg,
+    )[:4]
+
+    # Mock async evaluator that wraps sync eval but exposes evaluate_encoded_async
+    from chess_anti_engine.inference import LocalModelEvaluator
+
+    class MockAsyncEvaluator:
+        def __init__(self, m):
+            self._inner = LocalModelEvaluator(m, device="cpu")
+
+        def evaluate_encoded(self, x):
+            return self._inner.evaluate_encoded(x)
+
+        def evaluate_encoded_async(self, x):
+            pol, wdl = self._inner.evaluate_encoded(x)
+            import torch
+            return torch.from_numpy(pol), torch.from_numpy(wdl), None
+
+    async_ev = MockAsyncEvaluator(model)
+
+    # Pipeline path (async evaluator + >=64 boards triggers pipeline)
+    probs_pipe, act_pipe, val_pipe, masks_pipe = run_gumbel_root_many_c(
+        model, boards, device="cpu", rng=np.random.default_rng(42),
+        cfg=cfg, evaluator=async_ev,
+    )[:4]
+
+    # Both must produce valid results
+    assert len(probs_pipe) == 64
+    assert len(act_pipe) == 64
+
+    for i in range(32):
+        assert probs_pipe[i].shape == (4672,)
+        s = float(probs_pipe[i].sum())
+        if s > 0:
+            assert abs(s - 1.0) < 0.01, f"game {i}: probs sum = {s}"
+        assert probs_pipe[i][act_pipe[i]] > 0 or s == 0, f"game {i}: action not in probs"
+
+    # Masks must agree (legal moves don't depend on path)
+    for i in range(32):
+        assert np.array_equal(masks_seq[i], masks_pipe[i]), f"game {i}: mask mismatch"

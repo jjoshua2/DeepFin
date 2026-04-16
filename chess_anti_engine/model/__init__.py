@@ -105,6 +105,32 @@ def load_state_dict_tolerant(
     Missing and unexpected keys are logged but not fatal, allowing
     architecture changes (new layers, renamed modules) to load gracefully.
     """
+    # Migrate separate q_proj/k_proj/v_proj -> fused qkv_proj
+    migrated_keys: list[str] = []
+    extra = {}
+    prefixes_seen: set[str] = set()
+    for k in list(ckpt_state.keys()):
+        for proj in ("q_proj", "k_proj", "v_proj"):
+            if k.endswith(f".{proj}.weight") or k.endswith(f".{proj}.bias"):
+                prefix = k.rsplit(f".{proj}.", 1)[0]
+                suffix = k.rsplit(f".{proj}.", 1)[1]  # "weight" or "bias"
+                fused_key = f"{prefix}.qkv_proj.{suffix}"
+                if fused_key not in ckpt_state and prefix not in prefixes_seen:
+                    prefixes_seen.add(prefix)
+                break
+    for prefix in prefixes_seen:
+        for suffix in ("weight", "bias"):
+            q_k = f"{prefix}.q_proj.{suffix}"
+            k_k = f"{prefix}.k_proj.{suffix}"
+            v_k = f"{prefix}.v_proj.{suffix}"
+            fused_k = f"{prefix}.qkv_proj.{suffix}"
+            if q_k in ckpt_state and k_k in ckpt_state and v_k in ckpt_state and fused_k not in ckpt_state:
+                extra[fused_k] = torch.cat([ckpt_state[q_k], ckpt_state[k_k], ckpt_state[v_k]], dim=0)
+                migrated_keys.extend([q_k, k_k, v_k])
+    if migrated_keys:
+        print(f"[{label}] Migrated {len(migrated_keys)} separate q/k/v keys -> fused qkv_proj")
+    ckpt_state = {**ckpt_state, **extra}
+
     model_state = model.state_dict()
     filtered = {}
     skipped: list[str] = []

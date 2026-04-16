@@ -89,3 +89,35 @@ def test_flatten_run_config_defaults_passes_curriculum_regret_knobs() -> None:
     assert flat["sf_pid_topk_min"] == 2
     assert flat["sf_pid_suboptimal_wdl_regret_max"] == 0.5
     assert flat["sf_pid_suboptimal_wdl_regret_min"] == 0.01
+
+
+def test_flatten_stockfish_new_style_flat_keys() -> None:
+    """New-style YAML: keys inside stockfish: match flat config names directly."""
+    cfg = {
+        "stockfish": {
+            "stockfish_path": "/usr/bin/stockfish",
+            "sf_nodes": 5000,
+            "sf_pid_ema_alpha": 0.50,
+            "sf_pid_topk_min": 3,
+        }
+    }
+    flat = flatten_run_config_defaults(cfg)
+    assert flat["stockfish_path"] == "/usr/bin/stockfish"
+    assert flat["sf_nodes"] == 5000
+    assert flat["sf_pid_ema_alpha"] == 0.50
+    assert flat["sf_pid_topk_min"] == 3
+
+
+def test_flatten_stockfish_new_key_overrides_legacy() -> None:
+    """When both old and new key names are present, new-style wins."""
+    cfg = {
+        "stockfish": {
+            "nodes": 1000,       # legacy
+            "sf_nodes": 5000,    # new style — should win
+            "pid_ema_alpha": 0.03,  # legacy
+            "sf_pid_ema_alpha": 0.50,  # new style — should win
+        }
+    }
+    flat = flatten_run_config_defaults(cfg)
+    assert flat["sf_nodes"] == 5000
+    assert flat["sf_pid_ema_alpha"] == 0.50

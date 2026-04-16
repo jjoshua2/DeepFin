@@ -239,6 +239,39 @@ def move_to_index(move: chess.Move, board: chess.Board) -> int:
     return int(f) * PLANE_COUNT + int(plane)
 
 
+_UNDERPROMO_CHAR_TO_IDX = {"n": 0, "b": 1, "r": 2}
+
+
+def uci_to_policy_index(uci: str, turn: bool) -> int:
+    """Convert a UCI move string to a policy index without python-chess.
+
+    ``turn`` is True for White, False for Black (same as chess.WHITE/BLACK).
+    Returns -1 if the move is unencodable.
+    """
+    if len(uci) < 4 or not uci[0].isalpha():
+        return -1
+    from_sq = (ord(uci[0]) - ord("a")) + (ord(uci[1]) - ord("1")) * 8
+    to_sq = (ord(uci[2]) - ord("a")) + (ord(uci[3]) - ord("1")) * 8
+
+    # Underpromotion: 5-char UCI like "a7a8n"
+    promo_char = uci[4].lower() if len(uci) == 5 else ""
+    if promo_char in _UNDERPROMO_CHAR_TO_IDX:
+        # Orient squares
+        f = from_sq if turn else (from_sq ^ 56)
+        t = to_sq if turn else (to_sq ^ 56)
+        ff, tf = f % 8, t % 8
+        fr, tr = f // 8, t // 8
+        df = tf - ff
+        dir_idx = DF_TO_UNDERPROMO_DIR.get(df, 1)
+        piece_idx = _UNDERPROMO_CHAR_TO_IDX[promo_char]
+        plane = 64 + piece_idx * 3 + dir_idx
+        return int(f) * PLANE_COUNT + int(plane)
+
+    # Queen promotion or normal move — use precomputed LUT
+    idx = int(_MOVE_INDEX_LUT[int(turn)][from_sq][to_sq])
+    return idx
+
+
 def index_to_move(index: int, board: chess.Board) -> chess.Move:
     """Convert a policy index back to a chess.Move. Uses precomputed LUT."""
     return index_to_move_fast(index, board)

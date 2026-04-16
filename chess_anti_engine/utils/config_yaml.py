@@ -51,31 +51,49 @@ _CORE_KEYS = (
     "puzzle_epd", "puzzle_interval", "puzzle_simulations",
 )
 
-# stockfish section: nested key → flat key.
-# Most PID keys get an "sf_" prefix.
-_STOCKFISH_SPECIAL: dict[str, str] = {
+# stockfish section: 1:1 passthrough (YAML key == flat config key).
+# The section is just visual grouping — keys use the same names as code.
+_STOCKFISH_KEYS = (
+    "stockfish_path", "sf_nodes", "sf_workers", "sf_multipv", "sf_hash_mb",
+    "sf_pid_enabled",
+    "sf_pid_target_winrate", "sf_pid_ema_alpha", "sf_pid_deadzone", "sf_pid_rate_limit",
+    "sf_pid_min_games_between_adjust",
+    "sf_pid_kp", "sf_pid_ki", "sf_pid_kd", "sf_pid_integral_clamp",
+    "sf_pid_min_nodes", "sf_pid_max_nodes",
+    "sf_pid_initial_skill_level", "sf_pid_skill_min", "sf_pid_skill_max",
+    "sf_pid_skill_promote_nodes", "sf_pid_skill_demote_nodes",
+    "sf_pid_skill_nodes_on_promote", "sf_pid_skill_nodes_on_demote",
+    "sf_pid_random_move_prob_start", "sf_pid_random_move_prob_min", "sf_pid_random_move_prob_max",
+    "sf_pid_random_move_stage_end", "sf_pid_topk_stage_end", "sf_pid_topk_min",
+    "sf_pid_suboptimal_wdl_regret_max", "sf_pid_suboptimal_wdl_regret_min",
+    "sf_pid_max_rand_step", "sf_pid_max_rand_step_start", "sf_pid_max_rand_step_ramp_iters",
+    "sf_pid_wdl_regret_start", "sf_pid_wdl_regret_min", "sf_pid_wdl_regret_max",
+    "sf_pid_wdl_regret_stage_end", "sf_pid_max_regret_step", "sf_pid_max_regret_ease_step",
+)
+# Backwards compat: old short YAML names still work inside stockfish: section.
+_STOCKFISH_LEGACY: dict[str, str] = {
     "path": "stockfish_path",
     "nodes": "sf_nodes",
     "workers": "sf_workers",
     "multipv": "sf_multipv",
     "hash_mb": "sf_hash_mb",
     "pid_enabled": "sf_pid_enabled",
+    **{f"pid_{k}": f"sf_pid_{k}" for k in (
+        "target_winrate", "ema_alpha", "deadzone", "rate_limit",
+        "min_games_between_adjust",
+        "kp", "ki", "kd", "integral_clamp",
+        "min_nodes", "max_nodes",
+        "initial_skill_level", "skill_min", "skill_max",
+        "skill_promote_nodes", "skill_demote_nodes",
+        "skill_nodes_on_promote", "skill_nodes_on_demote",
+        "random_move_prob_start", "random_move_prob_min", "random_move_prob_max",
+        "random_move_stage_end", "topk_stage_end", "topk_min",
+        "suboptimal_wdl_regret_max", "suboptimal_wdl_regret_min",
+        "max_rand_step", "max_rand_step_start", "max_rand_step_ramp_iters",
+        "wdl_regret_start", "wdl_regret_min", "wdl_regret_max",
+        "wdl_regret_stage_end", "max_regret_step", "max_regret_ease_step",
+    )},
 }
-_STOCKFISH_PID_KEYS = (
-    "pid_target_winrate", "pid_ema_alpha", "pid_deadzone", "pid_rate_limit",
-    "pid_min_games_between_adjust",
-    "pid_kp", "pid_ki", "pid_kd", "pid_integral_clamp",
-    "pid_min_nodes", "pid_max_nodes",
-    "pid_initial_skill_level", "pid_skill_min", "pid_skill_max",
-    "pid_skill_promote_nodes", "pid_skill_demote_nodes",
-    "pid_skill_nodes_on_promote", "pid_skill_nodes_on_demote",
-    "pid_random_move_prob_start", "pid_random_move_prob_min", "pid_random_move_prob_max",
-    "pid_random_move_stage_end", "pid_topk_stage_end", "pid_topk_min",
-    "pid_suboptimal_wdl_regret_max", "pid_suboptimal_wdl_regret_min",
-    "pid_max_rand_step", "pid_max_rand_step_start", "pid_max_rand_step_ramp_iters",
-    "pid_wdl_regret_start", "pid_wdl_regret_min", "pid_wdl_regret_max",
-    "pid_wdl_regret_stage_end", "pid_max_regret_step", "pid_max_regret_ease_step",
-)
 
 # selfplay section: all 1:1 passthrough.
 _SELFPLAY_KEYS = (
@@ -179,9 +197,7 @@ _TUNE_KEYS = (
 def _build_flat_allowlist() -> frozenset[str]:
     """Derive the set of keys accepted at the YAML root level."""
     keys: set[str] = set(_CORE_KEYS)
-    # stockfish: special mappings use the *flat* name, PID keys get sf_ prefix
-    keys.update(_STOCKFISH_SPECIAL.values())
-    keys.update(f"sf_{k}" for k in _STOCKFISH_PID_KEYS)
+    keys.update(_STOCKFISH_KEYS)
     # selfplay, train, tune: flat name == nested name
     keys.update(_SELFPLAY_KEYS)
     # model has special handling but these flat names are accepted
@@ -215,12 +231,14 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
 
     stockfish = cfg.get("stockfish")
     if isinstance(stockfish, dict):
-        for nested_k, flat_k in _STOCKFISH_SPECIAL.items():
-            if nested_k in stockfish:
-                out[flat_k] = stockfish[nested_k]
-        for k in _STOCKFISH_PID_KEYS:
+        for k in _STOCKFISH_KEYS:
             if k in stockfish:
-                out[f"sf_{k}"] = stockfish[k]
+                out[k] = stockfish[k]
+        # Backwards compat: accept old short names (e.g. "path" -> "stockfish_path").
+        # New-style key wins if both are present.
+        for old_k, new_k in _STOCKFISH_LEGACY.items():
+            if old_k in stockfish and new_k not in stockfish:
+                out[new_k] = stockfish[old_k]
 
     selfplay = cfg.get("selfplay")
     if isinstance(selfplay, dict):

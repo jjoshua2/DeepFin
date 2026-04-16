@@ -36,6 +36,31 @@
 /* PyCBoard layout — must match _lc0_ext.c's typedef exactly. */
 typedef struct { PyObject_HEAD CBoard board; } PyCBoard;
 
+/* Validate and extract CBoard pointers from a Python list.
+ * Returns 0 on success, -1 on error (Python exception set).
+ * mode=0: copy boards into out_boards (caller provides CBoard[n])
+ * mode=1: store pointers into out_ptrs (caller provides const CBoard*[n]) */
+static int extract_cboards(PyObject *list, int32_t n,
+                           CBoard *out_boards, const CBoard **out_ptrs) {
+    if (n <= 0) return 0;
+    PyTypeObject *cb_type = Py_TYPE(PyList_GET_ITEM(list, 0));
+    if (strstr(cb_type->tp_name, "CBoard") == NULL) {
+        PyErr_SetString(PyExc_TypeError, "list elements must be CBoard objects");
+        return -1;
+    }
+    for (int32_t i = 0; i < n; i++) {
+        PyObject *item = PyList_GET_ITEM(list, i);
+        if (Py_TYPE(item) != cb_type) {
+            PyErr_SetString(PyExc_TypeError, "all list elements must be CBoard objects");
+            return -1;
+        }
+        PyCBoard *pcb = (PyCBoard *)item;
+        if (out_boards) out_boards[i] = pcb->board;
+        if (out_ptrs) out_ptrs[i] = &pcb->board;
+    }
+    return 0;
+}
+
 /* ================================================================
  * NN evaluation cache (position hash → expanded node data)
  * ================================================================ */
@@ -3494,13 +3519,15 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
     const int32_t *is_full = (const int32_t *)PyArray_DATA(full_arr);
     const double *sample_wts = (const double *)PyArray_DATA(wt_arr);
 
-    /* Pre-extract CBoard pointers */
-    CBoard *boards = (CBoard *)malloc(n * sizeof(CBoard));
+    /* Pre-extract CBoard structs (validated).
+     * Both heap pointers are NULL-initialised so the common fail: label
+     * can free() them unconditionally (free(NULL) is a no-op). */
+    CBoard *boards = NULL;
+    float  *raw_buf = NULL;
+
+    boards = (CBoard *)malloc(n * sizeof(CBoard));
     if (!boards) { PyErr_NoMemory(); goto fail; }
-    for (int32_t i = 0; i < n; i++) {
-        PyCBoard *pcb = (PyCBoard *)PyList_GET_ITEM(cboards_list, i);
-        boards[i] = pcb->board;
-    }
+    if (extract_cboards(cboards_list, n, boards, NULL) < 0) goto fail;
 
     /* Allocate output arrays */
     npy_intp dims_x[4] = {n, 146, 8, 8};
@@ -3541,7 +3568,7 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
     int32_t *over_out = (int32_t *)PyArray_DATA(out_over);
 
     /* ── Release GIL for the main computation loop ── */
-    float *raw_buf = (float *)malloc(4672 * sizeof(float));
+    raw_buf = (float *)malloc(4672 * sizeof(float));
     if (!raw_buf) { free(boards); Py_XDECREF(out_x); Py_XDECREF(out_probs); Py_XDECREF(out_wdl_net);
         Py_XDECREF(out_wdl_search); Py_XDECREF(out_priority); Py_XDECREF(out_keep);
         Py_XDECREF(out_mask); Py_XDECREF(out_ply); Py_XDECREF(out_pov); Py_XDECREF(out_over);
@@ -3675,15 +3702,351 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
         out_priority, out_keep, out_mask, out_ply, out_pov, out_over);
 
 fail:
+    free(boards);   /* NULL-safe */
+    free(raw_buf);  /* NULL-safe */
     Py_XDECREF(pol_arr); Py_XDECREF(wdl_arr); Py_XDECREF(act_arr);
     Py_XDECREF(val_arr); Py_XDECREF(probs_arr); Py_XDECREF(full_arr); Py_XDECREF(wt_arr);
     return NULL;
 }
 
+/* batch_encode_146(cboards_list, out_array)
+ * Encode N CBoards into a pre-allocated (N, 146, 8, 8) float32 array.
+ * GIL released during encoding for thread parallelism. */
+static PyObject *py_batch_encode_146(PyObject *self, PyObject *args) {
+    PyObject *cboards_list;
+    PyObject *out_obj;
+
+    if (!PyArg_ParseTuple(args, "OO", &cboards_list, &out_obj))
+        return NULL;
+
+    if (!PyList_Check(cboards_list)) {
+        PyErr_SetString(PyExc_TypeError, "cboards_list must be a list");
+        return NULL;
+    }
+
+    PyArrayObject *out_arr = (PyArrayObject *)PyArray_FROMANY(
+        out_obj, NPY_FLOAT32, 4, 4, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE);
+    if (!out_arr) return NULL;
+
+    int32_t n = (int32_t)PyList_Size(cboards_list);
+    if (n <= 0) { Py_DECREF(out_arr); Py_RETURN_NONE; }
+
+    /* Verify output array is large enough */
+    if (PyArray_DIM(out_arr, 0) < n || PyArray_DIM(out_arr, 1) != 146 ||
+        PyArray_DIM(out_arr, 2) != 8 || PyArray_DIM(out_arr, 3) != 8) {
+        Py_DECREF(out_arr);
+        PyErr_SetString(PyExc_ValueError,
+            "out_array must have shape (>=N, 146, 8, 8)");
+        return NULL;
+    }
+
+    /* Pre-extract CBoard structs (validated) */
+    CBoard *boards = (CBoard *)malloc(n * sizeof(CBoard));
+    if (!boards) { Py_DECREF(out_arr); return PyErr_NoMemory(); }
+    if (extract_cboards(cboards_list, n, boards, NULL) < 0) {
+        free(boards); Py_DECREF(out_arr); return NULL;
+    }
+
+    float *out_data = (float *)PyArray_DATA(out_arr);
+
+    Py_BEGIN_ALLOW_THREADS
+    /* Zero entire buffer first — cboard_encode_146_into uses targeted zeroing
+     * that assumes some planes are pre-zeroed (current piece planes 0-11). */
+    memset(out_data, 0, (size_t)n * 146 * 64 * sizeof(float));
+    for (int32_t i = 0; i < n; i++) {
+        cboard_encode_146_into(&boards[i], out_data + i * 146 * 64);
+    }
+    Py_END_ALLOW_THREADS
+
+    free(boards);
+    Py_DECREF(out_arr);
+    Py_RETURN_NONE;
+}
+
+/* ================================================================
+ * classify_games — classify active games into net / opp groups.
+ *
+ * Replaces 5 Python list comprehensions + game-over loop in the
+ * main selfplay step.  Runs with GIL released.
+ *
+ * Python signature:
+ *   classify_games(cboards: list[CBoard],
+ *                  network_color: ndarray[int8],   # 1=WHITE, 0=BLACK
+ *                  done: ndarray[int8],            # mutable
+ *                  finalized: ndarray[int8],       # read-only
+ *                  selfplay_game: ndarray[int8],   # read-only
+ *                  max_plies: int)
+ *   -> (net_idxs, selfplay_opp_idxs, curriculum_opp_idxs)  int32 arrays
+ * ================================================================ */
+static PyObject *py_classify_games(PyObject *self, PyObject *args) {
+    PyObject *cboards_list;
+    PyObject *net_color_obj, *done_obj, *final_obj, *sp_obj;
+    int max_plies;
+
+    if (!PyArg_ParseTuple(args, "OOOOOi",
+            &cboards_list, &net_color_obj, &done_obj, &final_obj,
+            &sp_obj, &max_plies))
+        return NULL;
+
+    if (!PyList_Check(cboards_list)) {
+        PyErr_SetString(PyExc_TypeError, "cboards must be a list");
+        return NULL;
+    }
+
+    int32_t n = (int32_t)PyList_Size(cboards_list);
+    if (n <= 0)
+        return Py_BuildValue("(NNN)",
+            PyArray_EMPTY(1, (npy_intp[]){0}, NPY_INT32, 0),
+            PyArray_EMPTY(1, (npy_intp[]){0}, NPY_INT32, 0),
+            PyArray_EMPTY(1, (npy_intp[]){0}, NPY_INT32, 0));
+
+    PyArrayObject *net_color_arr = (PyArrayObject *)PyArray_FROMANY(
+        net_color_obj, NPY_INT8, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *done_arr = (PyArrayObject *)PyArray_FROMANY(
+        done_obj, NPY_INT8, 1, 1, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE);
+    PyArrayObject *final_arr = (PyArrayObject *)PyArray_FROMANY(
+        final_obj, NPY_INT8, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *sp_arr = (PyArrayObject *)PyArray_FROMANY(
+        sp_obj, NPY_INT8, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+
+    if (!net_color_arr || !done_arr || !final_arr || !sp_arr) {
+        Py_XDECREF(net_color_arr); Py_XDECREF(done_arr);
+        Py_XDECREF(final_arr); Py_XDECREF(sp_arr);
+        return NULL;
+    }
+
+    /* Validate companion array lengths match n */
+    if (PyArray_DIM(net_color_arr, 0) < n || PyArray_DIM(done_arr, 0) < n ||
+        PyArray_DIM(final_arr, 0) < n || PyArray_DIM(sp_arr, 0) < n) {
+        Py_DECREF(net_color_arr); Py_DECREF(done_arr);
+        Py_DECREF(final_arr); Py_DECREF(sp_arr);
+        PyErr_SetString(PyExc_ValueError, "arrays must be at least as long as cboards list");
+        return NULL;
+    }
+
+    /* Extract CBoard pointers (GIL held here).
+     * We store pointers, not copies — safe because the list holds
+     * references to all PyCBoard objects, preventing GC. */
+    const CBoard **boards = (const CBoard **)malloc(n * sizeof(CBoard *));
+    if (!boards) {
+        Py_DECREF(net_color_arr); Py_DECREF(done_arr);
+        Py_DECREF(final_arr); Py_DECREF(sp_arr);
+        return PyErr_NoMemory();
+    }
+    if (extract_cboards(cboards_list, n, NULL, boards) < 0) {
+        free(boards);
+        Py_DECREF(net_color_arr); Py_DECREF(done_arr);
+        Py_DECREF(final_arr); Py_DECREF(sp_arr);
+        return NULL;
+    }
+
+    int8_t *net_color = (int8_t *)PyArray_DATA(net_color_arr);
+    int8_t *done_data = (int8_t *)PyArray_DATA(done_arr);
+    int8_t *final_data = (int8_t *)PyArray_DATA(final_arr);
+    int8_t *sp_data = (int8_t *)PyArray_DATA(sp_arr);
+
+    /* Output buffers (worst case: all games in one group) */
+    int32_t *net_buf = (int32_t *)malloc(n * sizeof(int32_t));
+    int32_t *sp_opp_buf = (int32_t *)malloc(n * sizeof(int32_t));
+    int32_t *cur_opp_buf = (int32_t *)malloc(n * sizeof(int32_t));
+    if (!net_buf || !sp_opp_buf || !cur_opp_buf) {
+        free(boards); free(net_buf); free(sp_opp_buf); free(cur_opp_buf);
+        Py_DECREF(net_color_arr); Py_DECREF(done_arr);
+        Py_DECREF(final_arr); Py_DECREF(sp_arr);
+        return PyErr_NoMemory();
+    }
+
+    int32_t n_net = 0, n_sp_opp = 0, n_cur_opp = 0;
+
+    Py_BEGIN_ALLOW_THREADS
+
+    /* 1) Mark games that hit max_plies or are over */
+    for (int32_t i = 0; i < n; i++) {
+        if (final_data[i]) continue;
+        if (!done_data[i]) {
+            if (cboard_is_game_over(boards[i]) || boards[i]->ply >= (uint16_t)max_plies)
+                done_data[i] = 1;
+        }
+    }
+
+    /* 2) Classify active (not finalized, not done) games */
+    for (int32_t i = 0; i < n; i++) {
+        if (final_data[i] || done_data[i]) continue;
+        if (boards[i]->turn == net_color[i]) {
+            net_buf[n_net++] = i;
+        } else {
+            if (sp_data[i])
+                sp_opp_buf[n_sp_opp++] = i;
+            else
+                cur_opp_buf[n_cur_opp++] = i;
+        }
+    }
+
+    Py_END_ALLOW_THREADS
+
+    free(boards);
+    Py_DECREF(net_color_arr);
+    /* done_arr was modified in-place — keep it alive via caller's reference */
+    Py_DECREF(done_arr);
+    Py_DECREF(final_arr);
+    Py_DECREF(sp_arr);
+
+    /* Build output arrays by copying from temp buffers */
+    npy_intp dims_net[1] = {n_net};
+    npy_intp dims_sp[1]  = {n_sp_opp};
+    npy_intp dims_cur[1] = {n_cur_opp};
+
+    PyArrayObject *net_out = (PyArrayObject *)PyArray_SimpleNew(1, dims_net, NPY_INT32);
+    PyArrayObject *sp_out  = (PyArrayObject *)PyArray_SimpleNew(1, dims_sp, NPY_INT32);
+    PyArrayObject *cur_out = (PyArrayObject *)PyArray_SimpleNew(1, dims_cur, NPY_INT32);
+    if (!net_out || !sp_out || !cur_out) {
+        free(net_buf); free(sp_opp_buf); free(cur_opp_buf);
+        Py_XDECREF(net_out); Py_XDECREF(sp_out); Py_XDECREF(cur_out);
+        return NULL;
+    }
+    if (n_net > 0) memcpy(PyArray_DATA(net_out), net_buf, n_net * sizeof(int32_t));
+    if (n_sp_opp > 0) memcpy(PyArray_DATA(sp_out), sp_opp_buf, n_sp_opp * sizeof(int32_t));
+    if (n_cur_opp > 0) memcpy(PyArray_DATA(cur_out), cur_opp_buf, n_cur_opp * sizeof(int32_t));
+
+    free(net_buf); free(sp_opp_buf); free(cur_opp_buf);
+
+    return Py_BuildValue("(NNN)", net_out, sp_out, cur_out);
+}
+
+
+/* ================================================================
+ * temperature_resample — apply per-game temperature to MCTS
+ * improved policies and resample actions.
+ *
+ * Runs with GIL released.
+ *
+ * Python signature:
+ *   temperature_resample(probs: ndarray[float32, (N,4672)],
+ *                        temps: ndarray[float64, (N,)],
+ *                        actions: ndarray[int32, (N,)],  # mutable
+ *                        rand_vals: ndarray[float64, (N,)])
+ *   -> None
+ * ================================================================ */
+static PyObject *py_temperature_resample(PyObject *self, PyObject *args) {
+    PyObject *probs_obj, *temps_obj, *actions_obj, *rand_obj;
+
+    if (!PyArg_ParseTuple(args, "OOOO",
+            &probs_obj, &temps_obj, &actions_obj, &rand_obj))
+        return NULL;
+
+    PyArrayObject *probs_arr = (PyArrayObject *)PyArray_FROMANY(
+        probs_obj, NPY_FLOAT32, 2, 2, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *temps_arr = (PyArrayObject *)PyArray_FROMANY(
+        temps_obj, NPY_FLOAT64, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *actions_arr = (PyArrayObject *)PyArray_FROMANY(
+        actions_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE);
+    PyArrayObject *rand_arr = (PyArrayObject *)PyArray_FROMANY(
+        rand_obj, NPY_FLOAT64, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+
+    if (!probs_arr || !temps_arr || !actions_arr || !rand_arr) {
+        Py_XDECREF(probs_arr); Py_XDECREF(temps_arr);
+        Py_XDECREF(actions_arr); Py_XDECREF(rand_arr);
+        return NULL;
+    }
+
+    int32_t n = (int32_t)PyArray_DIM(probs_arr, 0);
+    int32_t policy_size = (int32_t)PyArray_DIM(probs_arr, 1);
+
+    /* Validate companion arrays match n */
+    if (PyArray_DIM(temps_arr, 0) < n || PyArray_DIM(actions_arr, 0) < n ||
+        PyArray_DIM(rand_arr, 0) < n) {
+        Py_DECREF(probs_arr); Py_DECREF(temps_arr);
+        Py_DECREF(actions_arr); Py_DECREF(rand_arr);
+        PyErr_SetString(PyExc_ValueError, "temps, actions, rand_vals must be at least as long as probs");
+        return NULL;
+    }
+
+    float *probs_data    = (float *)PyArray_DATA(probs_arr);
+    double *temps_data   = (double *)PyArray_DATA(temps_arr);
+    int32_t *actions_data = (int32_t *)PyArray_DATA(actions_arr);
+    double *rand_data    = (double *)PyArray_DATA(rand_arr);
+
+    Py_BEGIN_ALLOW_THREADS
+
+    /* Compact legal-move buffers — max ~218 legal moves in chess */
+    int32_t legal_idx[256];
+    double  legal_pw[256];
+
+    for (int32_t i = 0; i < n; i++) {
+        double t = temps_data[i];
+        if (t == 1.0) continue;
+
+        float *p = probs_data + i * policy_size;
+
+        /* Collect legal moves (p[j] > 0) into compact arrays */
+        int32_t n_legal = 0;
+        for (int32_t j = 0; j < policy_size; j++) {
+            if (p[j] > 0.0f) {
+                legal_idx[n_legal] = j;
+                legal_pw[n_legal]  = (double)p[j];
+                n_legal++;
+                if (n_legal >= 256) break;
+            }
+        }
+        if (n_legal == 0) continue;
+
+        if (t <= 0.0) {
+            /* Greedy: pick legal move with highest prob */
+            int32_t best = 0;
+            for (int32_t k = 1; k < n_legal; k++) {
+                if (legal_pw[k] > legal_pw[best]) best = k;
+            }
+            actions_data[i] = legal_idx[best];
+            continue;
+        }
+
+        /* Apply temperature: pw[k] = pow(p[k], 1/t) */
+        double inv_t = 1.0 / t;
+        double sum = 0.0;
+        for (int32_t k = 0; k < n_legal; k++) {
+            legal_pw[k] = pow(legal_pw[k], inv_t);
+            sum += legal_pw[k];
+        }
+        if (sum <= 0.0) continue;
+
+        /* Sample: cumulative search over compact legal moves */
+        double threshold = rand_data[i] * sum;
+        double cumsum = 0.0;
+        int32_t chosen = legal_idx[n_legal - 1]; /* fallback: last legal */
+        for (int32_t k = 0; k < n_legal; k++) {
+            cumsum += legal_pw[k];
+            if (cumsum >= threshold) {
+                chosen = legal_idx[k];
+                break;
+            }
+        }
+        actions_data[i] = chosen;
+    }
+
+    Py_END_ALLOW_THREADS
+
+    Py_DECREF(probs_arr);
+    Py_DECREF(temps_arr);
+    Py_DECREF(actions_arr);
+    Py_DECREF(rand_arr);
+
+    Py_RETURN_NONE;
+}
+
+
 static PyMethodDef module_methods[] = {
     {"batch_process_ply", py_batch_process_ply, METH_VARARGS,
      "batch_process_ply(cboards, pol, wdl, actions, values, probs, is_full, weights, "
      "df_enabled, df_q_w, df_pol_s, df_min, df_slope) -> tuple of arrays"},
+    {"batch_encode_146", py_batch_encode_146, METH_VARARGS,
+     "batch_encode_146(cboards_list, out_array) -> None. "
+     "Encode CBoards into pre-allocated (N,146,8,8) float32 array. GIL released."},
+    {"classify_games", py_classify_games, METH_VARARGS,
+     "classify_games(cboards, net_color, done, finalized, selfplay, max_plies) "
+     "-> (net_idxs, selfplay_opp_idxs, curriculum_opp_idxs). GIL released."},
+    {"temperature_resample", py_temperature_resample, METH_VARARGS,
+     "temperature_resample(probs, temps, actions, rand_vals) -> None. "
+     "Apply per-game temperature and resample actions in-place. GIL released."},
     {NULL}
 };
 

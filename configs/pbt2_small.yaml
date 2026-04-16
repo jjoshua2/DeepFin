@@ -49,56 +49,56 @@ model:
   gradient_checkpointing: false
 
 stockfish:
-  path: /home/josh/projects/chess/e2e_server/publish/stockfish
-  nodes: 5000           # 5k nodes: wider WDL spread so regret actually filters moves (was 1k where all 12 passed)
-  workers: 2
-  multipv: 12
-  hash_mb: 16           # Larger TT helps at higher node counts
+  stockfish_path: /home/josh/projects/chess/e2e_server/publish/stockfish
+  sf_nodes: 5000           # 5k nodes: wider WDL spread so regret actually filters moves (was 1k where all 12 passed)
+  sf_workers: 2
+  sf_multipv: 12
+  sf_hash_mb: 16           # Larger TT helps at higher node counts
   # Keep SF at full strength for labels and sample from MultiPV for easier played moves.
 
-  pid_enabled: true
-  pid_target_winrate: 0.60
-  pid_ema_alpha: 0.50      # EMA half-life ~1 iter — faster reaction with shorter iters
-  pid_deadzone: 0.05            # Tighten when pid_wr > 0.65; ease when pid_wr < 0.55.
-  pid_rate_limit: 0.10
-  pid_min_games_between_adjust: 200  # Higher than games_per_iter so only the forced iteration-boundary adjust fires.
-  pid_kp: 1.5
-  pid_ki: 0.10
-  pid_kd: 0.0
-  pid_integral_clamp: 1.0
-  pid_min_nodes: 5000         # 5k nodes: wider WDL spread so regret filter actually works
-  pid_max_nodes: 10000
-  pid_initial_skill_level: 20
-  pid_skill_min: 20
-  pid_skill_max: 20
-  pid_skill_promote_nodes: 2000
-  pid_skill_demote_nodes: 1000
-  pid_skill_nodes_on_promote: 1000
-  pid_skill_nodes_on_demote: 1000
-  pid_random_move_prob_start: 0.01   # Tiny fixed exploration (not PID-controlled)
-  pid_random_move_prob_min: 0.01    # Locked: rmp stage instantly complete
-  pid_random_move_prob_max: 0.01    # Locked
-  pid_random_move_stage_end: 0.01   # rmp stage instantly complete → PID jumps to regret
-  pid_max_rand_step: 0.01
-  pid_max_rand_step_start: 0.01
-  pid_max_rand_step_ramp_iters: 0
-  pid_topk_stage_end: 1.0
-  pid_topk_min: 12                  # Always full multipv — regret band is the sole difficulty lever
-  pid_suboptimal_wdl_regret_max: 2.0   # Allow very wide regret for bootstrap warmup
-  pid_suboptimal_wdl_regret_min: 0.01
-  pid_wdl_regret_start: 0.50       # Start near equilibrium for 5k nodes; model stable here
-  pid_wdl_regret_min: 0.02         # hard floor
-  pid_wdl_regret_max: 2.0          # max if PID needs to ease off
-  pid_wdl_regret_stage_end: 0.05   # nodes unlock when regret reaches 5%
-  pid_max_regret_step: 0.001       # Slow tightening — model crashes at 0.003
-  pid_max_regret_ease_step: 0.002  # 2x tighten (was 5x) — minimal asymmetry, less oscillation
+  sf_pid_enabled: true
+  sf_pid_target_winrate: 0.60
+  sf_pid_ema_alpha: 0.50      # EMA half-life ~1 iter — faster reaction with shorter iters
+  sf_pid_deadzone: 0.05            # Tighten when pid_wr > 0.65; ease when pid_wr < 0.55.
+  sf_pid_rate_limit: 0.10
+  sf_pid_min_games_between_adjust: 200  # Higher than games_per_iter so only the forced iteration-boundary adjust fires.
+  sf_pid_kp: 1.5
+  sf_pid_ki: 0.10
+  sf_pid_kd: 0.0
+  sf_pid_integral_clamp: 1.0
+  sf_pid_min_nodes: 5000         # 5k nodes: wider WDL spread so regret filter actually works
+  sf_pid_max_nodes: 10000
+  sf_pid_initial_skill_level: 20
+  sf_pid_skill_min: 20
+  sf_pid_skill_max: 20
+  sf_pid_skill_promote_nodes: 2000
+  sf_pid_skill_demote_nodes: 1000
+  sf_pid_skill_nodes_on_promote: 1000
+  sf_pid_skill_nodes_on_demote: 1000
+  sf_pid_random_move_prob_start: 0.01   # Tiny fixed exploration (not PID-controlled)
+  sf_pid_random_move_prob_min: 0.01    # Locked: rmp stage instantly complete
+  sf_pid_random_move_prob_max: 0.01    # Locked
+  sf_pid_random_move_stage_end: 0.01   # rmp stage instantly complete → PID jumps to regret
+  sf_pid_max_rand_step: 0.01
+  sf_pid_max_rand_step_start: 0.01
+  sf_pid_max_rand_step_ramp_iters: 0
+  sf_pid_topk_stage_end: 1.0
+  sf_pid_topk_min: 12                  # Always full multipv — regret band is the sole difficulty lever
+  sf_pid_suboptimal_wdl_regret_max: 2.0   # Allow very wide regret for bootstrap warmup
+  sf_pid_suboptimal_wdl_regret_min: 0.01
+  sf_pid_wdl_regret_start: 0.50       # Start near equilibrium for 5k nodes; model stable here
+  sf_pid_wdl_regret_min: 0.02         # hard floor
+  sf_pid_wdl_regret_max: 2.0          # max if PID needs to ease off
+  sf_pid_wdl_regret_stage_end: 0.05   # nodes unlock when regret reaches 5%
+  sf_pid_max_regret_step: 0.001       # Slow tightening — model crashes at 0.003
+  sf_pid_max_regret_ease_step: 0.002  # 2x tighten (was 5x) — minimal asymmetry, less oscillation
 
 selfplay:
   games_per_iter: 800
   games_per_iter_start: 32  # One round of 8 workers × 4 games; fast sanity check.
   games_per_iter_ramp_iters: 5
   selfplay_fraction: 0.50  # 50/50 selfplay vs curriculum for stronger WDL signal
-  selfplay_batch: 256   # 2 workers × 256 games each.
+  selfplay_batch: 256   # Concurrent game slots per worker (always full via continuous recycling).
   max_plies: 450
 
   temperature: 1.0       # Gumbel improved policy already provides exploration; T=1.0 avoids distorting the search target.
@@ -212,7 +212,8 @@ tune:
   distributed_worker_username: josh
   distributed_worker_password: chess_worker_2026
   distributed_worker_use_compile: true
-  distributed_worker_compile_mode: reduce-overhead
+  distributed_worker_compile_mode: max-autotune
+  distributed_worker_inference_fp8: false  # FP8 quantized inference (RTX 5090 native)
   distributed_worker_threaded: false  # Compiled 2w×1t: proven ~170s/iter, AOT threading slower in prod
   distributed_worker_selfplay_threads: 1
   # distributed_worker_aot_dir: data/aot_models  # Auto-detected by _worker_inference_args when threaded=true

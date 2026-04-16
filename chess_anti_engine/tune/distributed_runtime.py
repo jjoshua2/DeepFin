@@ -417,6 +417,7 @@ def _build_distributed_worker_cmd(
                 else []
             )
         ),
+        *(["--inference-fp8"] if bool(config.get("distributed_worker_inference_fp8", False)) else []),
         *(
             ["--threaded-selfplay", "--selfplay-threads",
              str(int(config.get("distributed_worker_selfplay_threads", 16)))]

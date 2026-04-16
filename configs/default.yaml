@@ -22,24 +22,24 @@ model:
   gradient_checkpointing: false  # ~50% less VRAM, ~20% slower
 
 stockfish:
-  path: /path/to/stockfish
-  nodes: 2000
-  workers: 1
-  multipv: 5
+  stockfish_path: /path/to/stockfish
+  sf_nodes: 2000
+  sf_workers: 1
+  sf_multipv: 5
 
   # Adaptive difficulty PID (spec)
-  pid_enabled: true
-  pid_target_winrate: 0.53
-  pid_ema_alpha: 0.03
-  pid_deadzone: 0.04
-  pid_rate_limit: 0.10
-  pid_min_games_between_adjust: 30
-  pid_kp: 1.5
-  pid_ki: 0.10
-  pid_kd: 0.0
-  pid_integral_clamp: 1.0
-  pid_min_nodes: 250
-  pid_max_nodes: 1000000
+  sf_pid_enabled: true
+  sf_pid_target_winrate: 0.53
+  sf_pid_ema_alpha: 0.03
+  sf_pid_deadzone: 0.04
+  sf_pid_rate_limit: 0.10
+  sf_pid_min_games_between_adjust: 30
+  sf_pid_kp: 1.5
+  sf_pid_ki: 0.10
+  sf_pid_kd: 0.0
+  sf_pid_integral_clamp: 1.0
+  sf_pid_min_nodes: 250
+  sf_pid_max_nodes: 1000000
 
 selfplay:
   games_per_iter: 10
