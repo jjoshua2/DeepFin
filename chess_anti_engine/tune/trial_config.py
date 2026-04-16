@@ -578,3 +578,4 @@ class RestoreResult:
     salvage_origin_slots_total: int = 0
     salvage_origin_dir: str = ""
     cross_trial_restore: bool = False
+    restored_owner_trial_dir: str = ""

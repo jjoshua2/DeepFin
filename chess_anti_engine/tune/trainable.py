@@ -2125,10 +2125,9 @@ def _restore_checkpoint_or_salvage(
 
     # Post-restore metadata fixups.
     restored_owner_trial_id = ""
-    restored_owner_trial_dir = ""
     if isinstance(restored_trial_meta, dict):
         restored_owner_trial_id = str(restored_trial_meta.get("owner_trial_id", ""))
-        restored_owner_trial_dir = str(restored_trial_meta.get("owner_trial_dir", ""))
+        rr.restored_owner_trial_dir = str(restored_trial_meta.get("owner_trial_dir", ""))
         restored_owner_optimizer = str(restored_trial_meta.get("optimizer", restored_owner_optimizer))
         rr.salvage_origin_used = bool(restored_trial_meta.get("salvage_origin_used", rr.salvage_origin_used))
         rr.salvage_origin_slot = int(restored_trial_meta.get("salvage_origin_slot", rr.salvage_origin_slot))
@@ -2175,8 +2174,8 @@ def _restore_checkpoint_or_salvage(
         )
         # Inherit donor's EMA so the recipient isn't ranked on stale
         # pre-exploit history.
-        if restored_owner_trial_dir:
-            _donor_row = _latest_trial_result_row(Path(restored_owner_trial_dir))
+        if rr.restored_owner_trial_dir:
+            _donor_row = _latest_trial_result_row(Path(rr.restored_owner_trial_dir))
             if _donor_row is not None:
                 _donor_ema = _donor_row.get(
                     "opponent_strength_ema",
@@ -2375,7 +2374,7 @@ def train_trial(config: dict):
                 print(f"[trial] Seeded {copied} shared iter-0 shards from {src}")
 
     if cross_trial_restore and bool(config.get("exploit_replay_refresh_enabled", True)):
-        donor_trial_dir = Path(restored_owner_trial_dir).expanduser() if restored_owner_trial_dir else None
+        donor_trial_dir = Path(restore.restored_owner_trial_dir).expanduser() if restore.restored_owner_trial_dir else None
         refresh_summary = _refresh_replay_shards_on_exploit(
             config=config,
             replay_shard_dir=replay_shard_dir,
