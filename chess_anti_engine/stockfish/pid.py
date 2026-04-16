@@ -61,12 +61,12 @@ class DifficultyPID:
         self,
         *,
         initial_nodes: int,
-        target_winrate: float = 0.53,
+        target_winrate: float = 0.60,
         ema_alpha: float = 0.03,
         deadzone: float = 0.04,
         rate_limit: float = 0.10,
         min_games_between_adjust: int = 30,
-        kp: float = 1.5,
+        kp: float = 1.0,
         ki: float = 0.10,
         kd: float = 0.0,
         integral_clamp: float = 1.0,
@@ -98,7 +98,7 @@ class DifficultyPID:
         # Regret stage gating: nodes unlock only when regret drops to this level.
         # Negative disables the gate (nodes unlock as soon as rmp stage completes).
         wdl_regret_stage_end: float = -1.0,
-        max_regret_step: float = 0.01,
+        max_regret_step: float = 0.001,
         max_regret_ease_step: float | None = None,  # Ease rate; defaults to 5x tighten
         wdl_regret_stage_reenter: float | None = None,
         # Skill-level ladder: PID manages both node count and SF Skill Level.
@@ -242,11 +242,11 @@ class DifficultyPID:
 
         self._games_since_adjust = int(state.get("games_since_adjust", self._games_since_adjust))
 
-        rsc = state.get("random_stage_complete", None)
+        rsc = state.get("random_stage_complete")
         if rsc is not None:
             self._random_stage_complete = bool(rsc)
 
-        rgc = state.get("regret_stage_complete", None)
+        rgc = state.get("regret_stage_complete")
         if rgc is not None and self._regret_gate_enabled:
             self._regret_stage_complete = bool(rgc)
 
@@ -435,8 +435,8 @@ def pid_from_config(config: dict) -> DifficultyPID:
     argparse definitions in ``run.py``.
     """
     return DifficultyPID(
-        initial_nodes=int(config.get("sf_nodes", 2000)),
-        target_winrate=float(config.get("sf_pid_target_winrate", 0.53)),
+        initial_nodes=int(config.get("sf_nodes", 500)),
+        target_winrate=float(config.get("sf_pid_target_winrate", 0.60)),
         ema_alpha=float(config.get("sf_pid_ema_alpha", 0.03)),
         deadzone=float(config.get("sf_pid_deadzone", 0.0)),
         rate_limit=float(config.get("sf_pid_rate_limit", 0)),
@@ -463,5 +463,5 @@ def pid_from_config(config: dict) -> DifficultyPID:
         wdl_regret_min=float(config.get("sf_pid_wdl_regret_min", 0.01)),
         wdl_regret_max=float(config.get("sf_pid_wdl_regret_max", 1.0)),
         wdl_regret_stage_end=float(config.get("sf_pid_wdl_regret_stage_end", -1.0)),
-        max_regret_step=float(config.get("sf_pid_max_regret_step", 0.01)),
+        max_regret_step=float(config.get("sf_pid_max_regret_step", 0.001)),
     )

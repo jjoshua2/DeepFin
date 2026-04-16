@@ -62,7 +62,7 @@ stockfish:
   sf_pid_deadzone: 0.05            # Tighten when pid_wr > 0.65; ease when pid_wr < 0.55.
   sf_pid_rate_limit: 0.10
   sf_pid_min_games_between_adjust: 200  # Higher than games_per_iter so only the forced iteration-boundary adjust fires.
-  sf_pid_kp: 1.5
+  sf_pid_kp: 1.0
   sf_pid_ki: 0.10
   sf_pid_kd: 0.0
   sf_pid_integral_clamp: 1.0

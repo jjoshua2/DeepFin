@@ -48,6 +48,7 @@ from chess_anti_engine.selfplay.budget import progressive_mcts_simulations
 from chess_anti_engine.stockfish import DifficultyPID, StockfishPool, StockfishUCI, pid_from_config
 from chess_anti_engine.train import Trainer, trainer_kwargs_from_config
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
+from chess_anti_engine.tune.trial_config import TrialConfig
 from chess_anti_engine.tune._utils import (
     concat_array_batches as _concat_array_batches,
     resolve_local_override_root as _resolve_local_override_root,
@@ -138,15 +139,15 @@ def _compute_train_step_budget(
         "window_target_samples": int(window_target_samples),
     }
 
-def _resolve_pause_marker_path(*, config: dict, trial_dir: Path) -> Path:
+def _resolve_pause_marker_path(*, tc: TrialConfig, trial_dir: Path) -> Path:
     tune_root = trial_dir.parent
-    raw_work_dir = config.get("work_dir")
-    if isinstance(raw_work_dir, str) and raw_work_dir.strip():
+    raw_work_dir = tc.work_dir
+    if raw_work_dir and raw_work_dir.strip():
         tune_root = Path(raw_work_dir.strip()).expanduser()
         if not tune_root.is_absolute():
             tune_root = Path.cwd() / tune_root
-    raw = config.get("pause_file")
-    if isinstance(raw, str) and raw.strip():
+    raw = tc.pause_file
+    if raw and raw.strip():
         p = Path(raw.strip())
         if not p.is_absolute():
             p = tune_root / p
@@ -291,7 +292,7 @@ def _should_retry_distributed_iteration_without_games(
     return bool(use_distributed_selfplay) and int(total_games_generated) <= 0
 
 
-def _play_batch_kwargs_from_config(config: dict) -> dict:
+def _play_batch_kwargs(tc: TrialConfig) -> dict:
     """Extract all config-driven play_batch kwargs as dataclass instances.
 
     Callers (selfplay, gate, eval) use dataclasses.replace() for per-site overrides.
@@ -299,58 +300,58 @@ def _play_batch_kwargs_from_config(config: dict) -> dict:
     """
     return dict(
         opponent=OpponentConfig(
-            topk_stage_end=float(config.get("sf_pid_topk_stage_end", config.get("sf_pid_random_move_stage_end", 0.5))),
-            topk_min=int(config.get("sf_pid_topk_min", 1)),
-            suboptimal_wdl_regret_max=float(config.get("sf_pid_suboptimal_wdl_regret_max", -1.0)),
-            suboptimal_wdl_regret_min=float(config.get("sf_pid_suboptimal_wdl_regret_min", -1.0)),
-            random_move_prob_start=float(config.get("sf_pid_random_move_prob_start", 1.0)),
-            random_move_prob_min=float(config.get("sf_pid_random_move_prob_min", 0.0)),
+            topk_stage_end=tc.sf_pid_topk_stage_end,
+            topk_min=tc.sf_pid_topk_min,
+            suboptimal_wdl_regret_max=tc.sf_pid_suboptimal_wdl_regret_max,
+            suboptimal_wdl_regret_min=tc.sf_pid_suboptimal_wdl_regret_min,
+            random_move_prob_start=tc.sf_pid_random_move_prob_start,
+            random_move_prob_min=tc.sf_pid_random_move_prob_min,
         ),
         temp=TemperatureConfig(
-            temperature=float(config.get("temperature", 1.0)),
-            drop_plies=int(config.get("temperature_drop_plies", 0)),
-            after=float(config.get("temperature_after", 0.0)),
-            decay_start_move=int(config.get("temperature_decay_start_move", 20)),
-            decay_moves=int(config.get("temperature_decay_moves", 60)),
-            endgame=float(config.get("temperature_endgame", 0.6)),
+            temperature=tc.temperature,
+            drop_plies=tc.temperature_drop_plies,
+            after=tc.temperature_after,
+            decay_start_move=tc.temperature_decay_start_move,
+            decay_moves=tc.temperature_decay_moves,
+            endgame=tc.temperature_endgame,
         ),
         search=SearchConfig(
-            mcts_type=str(config.get("mcts", "puct")),
-            playout_cap_fraction=float(config.get("playout_cap_fraction", 0.25)),
-            fast_simulations=int(config.get("fast_simulations", 8)),
-            fpu_reduction=float(config.get("fpu_reduction", 1.2)),
-            fpu_at_root=float(config.get("fpu_at_root", 1.0)),
+            mcts_type=tc.mcts,
+            playout_cap_fraction=tc.playout_cap_fraction,
+            fast_simulations=tc.fast_simulations,
+            fpu_reduction=tc.fpu_reduction,
+            fpu_at_root=tc.fpu_at_root,
         ),
         opening=OpeningConfig(
-            opening_book_path=config.get("opening_book_path"),
-            opening_book_max_plies=int(config.get("opening_book_max_plies", 4)),
-            opening_book_max_games=int(config.get("opening_book_max_games", 200_000)),
-            opening_book_prob=float(config.get("opening_book_prob", 1.0)),
-            opening_book_path_2=config.get("opening_book_path_2"),
-            opening_book_max_plies_2=int(config.get("opening_book_max_plies_2", 16)),
-            opening_book_max_games_2=int(config.get("opening_book_max_games_2", 200_000)),
-            opening_book_mix_prob_2=float(config.get("opening_book_mix_prob_2", 0.0)),
-            random_start_plies=int(config.get("random_start_plies", 0)),
+            opening_book_path=tc.opening_book_path,
+            opening_book_max_plies=tc.opening_book_max_plies,
+            opening_book_max_games=tc.opening_book_max_games,
+            opening_book_prob=tc.opening_book_prob,
+            opening_book_path_2=tc.opening_book_path_2,
+            opening_book_max_plies_2=tc.opening_book_max_plies_2,
+            opening_book_max_games_2=tc.opening_book_max_games_2,
+            opening_book_mix_prob_2=tc.opening_book_mix_prob_2,
+            random_start_plies=tc.random_start_plies,
         ),
         diff_focus=DiffFocusConfig(
-            enabled=bool(config.get("diff_focus_enabled", True)),
-            q_weight=float(config.get("diff_focus_q_weight", 6.0)),
-            pol_scale=float(config.get("diff_focus_pol_scale", 3.5)),
-            slope=float(config.get("diff_focus_slope", 3.0)),
-            min_keep=float(config.get("diff_focus_min", 0.025)),
+            enabled=tc.diff_focus_enabled,
+            q_weight=tc.diff_focus_q_weight,
+            pol_scale=tc.diff_focus_pol_scale,
+            slope=tc.diff_focus_slope,
+            min_keep=tc.diff_focus_min,
         ),
         game=GameConfig(
-            max_plies=int(config.get("max_plies", 240)),
-            selfplay_fraction=float(config.get("selfplay_fraction", 0.0)),
-            sf_policy_temp=float(config.get("sf_policy_temp", 0.25)),
-            sf_policy_label_smooth=float(config.get("sf_policy_label_smooth", 0.05)),
-            soft_policy_temp=float(config.get("soft_policy_temp", 2.0)),
-            timeout_adjudication_threshold=float(config.get("timeout_adjudication_threshold", 0.90)),
-            volatility_source=str(config.get("volatility_source", "raw")),
-            syzygy_path=config.get("syzygy_path"),
-            syzygy_policy=bool(config.get("syzygy_policy", False)),
-            categorical_bins=int(config.get("categorical_bins", DEFAULT_CATEGORICAL_BINS)),
-            hlgauss_sigma=float(config.get("hlgauss_sigma", 0.04)),
+            max_plies=tc.max_plies,
+            selfplay_fraction=tc.selfplay_fraction,
+            sf_policy_temp=tc.sf_policy_temp,
+            sf_policy_label_smooth=tc.sf_policy_label_smooth,
+            soft_policy_temp=tc.soft_policy_temp,
+            timeout_adjudication_threshold=tc.timeout_adjudication_threshold,
+            volatility_source=tc.volatility_source,
+            syzygy_path=tc.syzygy_path,
+            syzygy_policy=tc.syzygy_policy,
+            categorical_bins=tc.categorical_bins,
+            hlgauss_sigma=tc.hlgauss_sigma,
         ),
     )
 
@@ -376,14 +377,14 @@ def _gate_check(
     sf: object,
     gate_games: int,
     opponent_random_move_prob: float,
-    config: dict,
+    tc: TrialConfig,
 ) -> tuple[float, int, int, int]:
     """Play gate games to measure winrate. Returns (winrate, W, D, L)."""
-    kw = _play_batch_kwargs_from_config(config)
+    kw = _play_batch_kwargs(tc)
     # Gate: exploit mode — low temperature, no playout cap, minimal search.
     kw["opponent"] = dataclasses.replace(kw["opponent"], random_move_prob=opponent_random_move_prob)
     kw["temp"] = TemperatureConfig(temperature=0.3, drop_plies=0, after=0.0, decay_start_move=10, decay_moves=30, endgame=0.1)
-    kw["search"] = dataclasses.replace(kw["search"], simulations=int(config.get("gate_mcts_sims", 1)), playout_cap_fraction=1.0, fast_simulations=0)
+    kw["search"] = dataclasses.replace(kw["search"], simulations=tc.gate_mcts_sims, playout_cap_fraction=1.0, fast_simulations=0)
     kw["diff_focus"] = dataclasses.replace(kw["diff_focus"], enabled=False)
     kw["game"] = dataclasses.replace(kw["game"], selfplay_fraction=0.0)
     _gate_samples, gate_stats = play_batch(model, device=device, rng=rng, stockfish=sf, games=gate_games, **kw)
@@ -415,10 +416,10 @@ def _prune_trial_checkpoints(*, trial_dir: Path, keep_last: int) -> None:
     for p in ckpts[:-keep_last]:
         shutil.rmtree(p, ignore_errors=True)
 
-def _games_per_iter_for_iteration(config: dict, iteration_idx: int) -> int:
-    target = max(1, int(config.get("games_per_iter", 1)))
-    start = int(config.get("games_per_iter_start", target))
-    ramp_iters = max(0, int(config.get("games_per_iter_ramp_iters", 0)))
+def _games_per_iter_for_iteration(tc: TrialConfig, iteration_idx: int) -> int:
+    target = max(1, tc.games_per_iter)
+    start = tc.games_per_iter_start
+    ramp_iters = max(0, tc.games_per_iter_ramp_iters)
 
     if ramp_iters <= 0 or iteration_idx >= ramp_iters:
         return int(target)
@@ -721,6 +722,46 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None) -> None:
             config[k] = v
     except Exception as exc:
         log.warning("YAML reload failed (%s): %s", yaml_path, exc)
+
+
+def _sample_drift_arrays(src_buf: object, n: int) -> dict[str, np.ndarray]:
+    """Sample x, wdl_target, policy_target arrays for drift computation."""
+    if hasattr(src_buf, "sample_batch_arrays"):
+        arrs = getattr(src_buf, "sample_batch_arrays")(n, wdl_balance=False)
+        return {
+            "x": np.asarray(arrs["x"], dtype=np.float32),
+            "wdl_target": np.asarray(arrs["wdl_target"], dtype=np.int64),
+            "policy_target": np.asarray(arrs["policy_target"], dtype=np.float32),
+        }
+    samples = getattr(src_buf, "sample_batch")(n, wdl_balance=False)
+    return {
+        "x": np.stack([s.x for s in samples], axis=0).astype(np.float32, copy=False),
+        "wdl_target": np.array([int(getattr(s, "wdl_target", 1)) for s in samples], dtype=np.int64),
+        "policy_target": np.stack([s.policy_target for s in samples], axis=0).astype(np.float32, copy=False),
+    }
+
+
+def _mean_entropy(arrs: dict[str, np.ndarray], eps: float = 1e-12) -> float:
+    """Mean per-sample policy entropy across the batch."""
+    p = np.asarray(arrs["policy_target"], dtype=np.float64)
+    if p.ndim != 2 or p.shape[0] == 0:
+        return 0.0
+    ps = p.sum(axis=1, keepdims=True)
+    valid = ps[:, 0] > 0.0
+    if not np.any(valid):
+        return 0.0
+    p = p[valid] / ps[valid]
+    ent = -np.sum(p * np.log(p + eps), axis=1)
+    return float(np.mean(ent))
+
+
+def _wdl_hist(arrs: dict[str, np.ndarray]) -> np.ndarray:
+    """Normalised WDL histogram from sample arrays."""
+    arr = np.asarray(arrs["wdl_target"], dtype=np.int64)
+    valid = arr[(arr >= 0) & (arr <= 2)]
+    hst = np.bincount(valid, minlength=3).astype(np.float64)
+    hst /= max(1.0, float(hst.sum()))
+    return hst
 
 
 def train_trial(config: dict):
@@ -1311,9 +1352,10 @@ def train_trial(config: dict):
                 f"dst={quarantined['quarantine_root']}"
             )
 
-    eval_games = int(config.get("eval_games", 0))
-    eval_sf_nodes = int(config.get("eval_sf_nodes", config.get("sf_nodes", 500)))
-    eval_mcts_sims = int(config.get("eval_mcts_simulations", config.get("mcts_simulations", 50)))
+    tc = TrialConfig.from_dict(config)
+    eval_games = tc.eval_games
+    eval_sf_nodes = tc.eval_sf_nodes
+    eval_mcts_sims = tc.eval_mcts_simulations
 
     eval_sf = None
     if eval_games > 0:
@@ -1346,8 +1388,8 @@ def train_trial(config: dict):
         except FileNotFoundError:
             puzzle_suite = None
 
-    pause_marker_path = _resolve_pause_marker_path(config=config, trial_dir=trial_dir)
-    pause_poll_seconds = int(config.get("pause_poll_seconds", 60))
+    pause_marker_path = _resolve_pause_marker_path(tc=tc, trial_dir=trial_dir)
+    pause_poll_seconds = tc.pause_poll_seconds
 
     if use_distributed_selfplay:
         current_rand_init = (
@@ -1412,6 +1454,7 @@ def train_trial(config: dict):
 
             # Live-reload YAML config each iteration so changes apply without restart.
             _reload_yaml_into_config(config, _yaml_path)
+            tc = TrialConfig.from_dict(config)
 
             in_salvage_startup_grace = (
                 startup_source == "salvage"
@@ -1428,30 +1471,30 @@ def train_trial(config: dict):
             # Difficulty knobs used for this iteration's selfplay (kept fixed across
             # selfplay chunks). PID is updated once per iteration AFTER training so
             # changes align to net updates rather than chunk noise.
-            current_rand = float(pid.random_move_prob) if pid is not None else float(config.get("sf_pid_random_move_prob_start", 0.0))
+            current_rand = float(pid.random_move_prob) if pid is not None else tc.sf_pid_random_move_prob_start
             wdl_regret_used = float(pid.wdl_regret) if pid is not None else -1.0
             sf_nodes_used = (
                 int(getattr(sf, "nodes", 0) or 0)
                 if sf is not None
-                else (int(pid.nodes) if pid is not None else int(config.get("sf_nodes", 500)))
+                else (int(pid.nodes) if pid is not None else tc.sf_nodes)
             )
             skill_level_used = int(getattr(pid, "skill_level", 0) or 0) if pid is not None else 0
 
-            base_sims = int(config.get("mcts_simulations", 50))
+            base_sims = tc.mcts_simulations
             sims = base_sims
-            if bool(config.get("progressive_mcts", True)):
+            if tc.progressive_mcts:
                 sims = progressive_mcts_simulations(
                     int(getattr(trainer, "step", 0)),
-                    start=int(config.get("mcts_start_simulations", 50)),
+                    start=tc.mcts_start_simulations,
                     max_sims=base_sims,
-                    ramp_steps=int(config.get("mcts_ramp_steps", 10_000)),
-                    exponent=float(config.get("mcts_ramp_exponent", 2.0)),
+                    ramp_steps=tc.mcts_ramp_steps,
+                    exponent=tc.mcts_ramp_exponent,
                 )
 
             # Play games in mini-batches to keep memory low (each mini-batch
             # frees its MCTS trees / board objects before the next starts).
-            total_games = _games_per_iter_for_iteration(config, iteration_idx)
-            selfplay_batch = int(config.get("selfplay_batch", 10))
+            total_games = _games_per_iter_for_iteration(tc, iteration_idx)
+            selfplay_batch = tc.selfplay_batch
             games_remaining = total_games
 
             # Accumulators for stats across mini-batches.
@@ -1496,7 +1539,7 @@ def train_trial(config: dict):
                     trial_id=trial_id,
                     training_iteration=int(iteration_idx),
                     trainer_step=int(getattr(trainer, "step", 0)),
-                    sf_nodes=int(pid.nodes) if pid is not None else int(config.get("sf_nodes", 500)),
+                    sf_nodes=int(pid.nodes) if pid is not None else tc.sf_nodes,
                     random_move_prob=float(current_rand),
                     skill_level=int(skill_level_used),
                     mcts_simulations=int(sims),
@@ -1523,11 +1566,11 @@ def train_trial(config: dict):
                     target_games=int(total_games),
                     accepted_model_shas={str(published_model_sha)} | ({str(prev_published_model_sha)} if prev_published_model_sha else set()),
                     prev_model_sha=str(prev_published_model_sha) if prev_published_model_sha else None,
-                    prev_model_max_fraction=float(config.get("distributed_prev_model_max_fraction", 0.33)),
-                    wait_timeout_s=float(config.get("distributed_wait_timeout_seconds", 900.0)),
-                    poll_seconds=float(config.get("distributed_worker_poll_seconds", 1.0)),
+                    prev_model_max_fraction=tc.distributed_prev_model_max_fraction,
+                    wait_timeout_s=tc.distributed_wait_timeout_seconds,
+                    poll_seconds=tc.distributed_worker_poll_seconds,
                     rng=rng,
-                    min_games_fraction=float(config.get("distributed_min_games_fraction", 0.5)),
+                    min_games_fraction=tc.distributed_min_games_fraction,
                 )
 
                 buf.flush()
@@ -1561,10 +1604,10 @@ def train_trial(config: dict):
                 if iteration_zero_based % 10 == 0:
                     _prune_processed_shards(
                         processed_dir=distributed_dirs["processed_dir"],
-                        max_age_seconds=float(config.get("processed_max_age_seconds", 43200.0)),
+                        max_age_seconds=tc.processed_max_age_seconds,
                     )
             else:
-                kw = _play_batch_kwargs_from_config(config)
+                kw = _play_batch_kwargs(tc)
                 kw["opponent"] = dataclasses.replace(kw["opponent"], random_move_prob=current_rand)
                 kw["search"] = dataclasses.replace(kw["search"], simulations=int(sims))
 
@@ -1624,9 +1667,9 @@ def train_trial(config: dict):
                 print(
                     "[trial] distributed iteration waiting for fresh selfplay: "
                     f"trial={trial_id} iter={iteration_idx} replay={len(buf)} "
-                    f"timeout_s={float(config.get('distributed_wait_timeout_seconds', 900.0)):.1f}"
+                    f"timeout_s={tc.distributed_wait_timeout_seconds:.1f}"
                 )
-                time.sleep(max(0.5, float(config.get("distributed_worker_poll_seconds", 1.0))))
+                time.sleep(max(0.5, tc.distributed_worker_poll_seconds))
                 continue
 
             # Export this iteration's own selfplay to a separate directory so
@@ -1649,7 +1692,7 @@ def train_trial(config: dict):
                 if _new_selfplay_batches:
                     save_local_shard_arrays(_selfplay_export_path, arrs=_concat_array_batches(_new_selfplay_batches))
             # Roll: keep only last (max_unseen_iters_per_source + 2) selfplay export files.
-            _keep_selfplay_iters = int(config.get("exploit_replay_max_unseen_iters_per_source", 1)) + 2
+            _keep_selfplay_iters = tc.exploit_replay_max_unseen_iters_per_source + 2
             _all_selfplay_exports = iter_shard_paths(selfplay_shards_dir)
             for _old in _all_selfplay_exports[:-_keep_selfplay_iters]:
                 try:
@@ -1674,21 +1717,21 @@ def train_trial(config: dict):
                 "source_shards_loaded": 0,
                 "source_samples_ingested": 0,
             }
-            if bool(config.get("exploit_replay_share_top_enabled", False)) and (not in_salvage_startup_grace):
+            if tc.exploit_replay_share_top_enabled and (not in_salvage_startup_grace):
                 shared_summary = _share_top_replay_each_iteration(
                     config=config,
                     recipient_trial_dir=trial_dir,
                     replay_shard_dir=replay_shard_dir,
                     buf=buf,
-                    top_k_trials=int(config.get("exploit_replay_top_k_trials", 5)),
-                    within_best_frac=float(config.get("exploit_replay_top_within_best_frac", 0.10)),
-                    min_metric=float(config.get("exploit_replay_top_min_metric", -1e9)),
-                    source_skip_newest=int(config.get("exploit_replay_skip_newest", 1)),
-                    shard_size=int(shard_size),
-                    holdout_fraction=float(holdout_frac),
-                    max_unseen_iters_per_source=int(config.get("exploit_replay_max_unseen_iters_per_source", 2)),
-                    max_shards_per_source=int(config.get("exploit_replay_top_shards_per_source", 0)),
-                    share_fraction=float(config.get("exploit_replay_share_fraction", 1.0)),
+                    top_k_trials=tc.exploit_replay_top_k_trials,
+                    within_best_frac=tc.exploit_replay_top_within_best_frac,
+                    min_metric=tc.exploit_replay_top_min_metric,
+                    source_skip_newest=tc.exploit_replay_skip_newest,
+                    shard_size=tc.shard_size,
+                    holdout_fraction=tc.holdout_fraction,
+                    max_unseen_iters_per_source=tc.exploit_replay_max_unseen_iters_per_source,
+                    max_shards_per_source=tc.exploit_replay_top_shards_per_source,
+                    share_fraction=tc.exploit_replay_share_fraction,
                 )
                 if shared_summary["source_samples_ingested"] > 0:
                     print(
@@ -1699,7 +1742,7 @@ def train_trial(config: dict):
                         f"source_shards_loaded={shared_summary['source_shards_loaded']} "
                         f"source_samples_ingested={shared_summary['source_samples_ingested']}"
                     )
-            elif bool(config.get("exploit_replay_share_top_enabled", False)) and in_salvage_startup_grace:
+            elif tc.exploit_replay_share_top_enabled and in_salvage_startup_grace:
                 print(
                     "[trial] replay share skipped during salvage startup grace: "
                     f"iter={iteration_zero_based} grace_iters={salvage_startup_no_share_iters}"
@@ -1719,41 +1762,12 @@ def train_trial(config: dict):
             drift_policy_entropy_train = 0.0
             drift_policy_entropy_holdout = 0.0
 
-            def _sample_drift_arrays(src_buf: object, n: int) -> dict[str, np.ndarray]:
-                if hasattr(src_buf, "sample_batch_arrays"):
-                    arrs = getattr(src_buf, "sample_batch_arrays")(n, wdl_balance=False)
-                    return {
-                        "x": np.asarray(arrs["x"], dtype=np.float32),
-                        "wdl_target": np.asarray(arrs["wdl_target"], dtype=np.int64),
-                        "policy_target": np.asarray(arrs["policy_target"], dtype=np.float32),
-                    }
-
-                samples = getattr(src_buf, "sample_batch")(n, wdl_balance=False)
-                return {
-                    "x": np.stack([s.x for s in samples], axis=0).astype(np.float32, copy=False),
-                    "wdl_target": np.array([int(getattr(s, "wdl_target", 1)) for s in samples], dtype=np.int64),
-                    "policy_target": np.stack([s.policy_target for s in samples], axis=0).astype(np.float32, copy=False),
-                }
-
-            eps = 1e-12
-
-            def _mean_entropy(arrs: dict[str, np.ndarray]) -> float:
-                p = np.asarray(arrs["policy_target"], dtype=np.float64)
-                if p.ndim != 2 or p.shape[0] == 0:
-                    return 0.0
-                ps = p.sum(axis=1, keepdims=True)
-                valid = ps[:, 0] > 0.0
-                if not np.any(valid):
-                    return 0.0
-                p = p[valid] / ps[valid]
-                ent = -np.sum(p * np.log(p + eps), axis=1)
-                return float(np.mean(ent))
-
             # --- Always-on diversity metrics (from training buffer only) ---
             data_policy_entropy = 0.0
             data_unique_positions = 0.0
             data_wdl_balance = 0.0
 
+            eps = 1e-12
             if len(buf) >= drift_sample_size:
                 train_batch = _sample_drift_arrays(buf, drift_sample_size)
 
@@ -1781,13 +1795,6 @@ def train_trial(config: dict):
 
                     hold_x = hold_batch["x"]
                     drift_input_l2 = float(np.linalg.norm(train_x.mean(axis=0) - hold_x.mean(axis=0)))
-
-                    def _wdl_hist(arrs: dict[str, np.ndarray]) -> np.ndarray:
-                        arr = np.asarray(arrs["wdl_target"], dtype=np.int64)
-                        valid = arr[(arr >= 0) & (arr <= 2)]
-                        hst = np.bincount(valid, minlength=3).astype(np.float64)
-                        hst /= max(1.0, float(hst.sum()))
-                        return hst
 
                     p = _wdl_hist(train_batch)
                     q = _wdl_hist(hold_batch)
@@ -1825,13 +1832,10 @@ def train_trial(config: dict):
 
             # Re-read dynamic sf_wdl schedule params each iteration so config
             # changes (including --resume with updated YAML) take effect.
-            sf_wdl_start = float(config.get("w_sf_wdl", sf_wdl_start))
-            sf_wdl_floor = float(config.get("sf_wdl_floor", sf_wdl_floor))
-            sf_wdl_floor_at_regret = float(config.get(
-                "sf_wdl_floor_at_regret",
-                config.get("sf_wdl_floor_at", 0.10),  # fallback to old key
-            ))
-            regret_max = float(config.get("sf_pid_wdl_regret_max", 2.0))
+            sf_wdl_start = tc.w_sf_wdl
+            sf_wdl_floor = tc.sf_wdl_floor
+            sf_wdl_floor_at_regret = tc.sf_wdl_floor_at_regret
+            regret_max = tc.sf_pid_wdl_regret_max
 
             # Dynamic sf_wdl weight: interpolate based on difficulty proxy.
             # Easy opponent → sf_wdl_start (high SF signal).
@@ -1850,7 +1854,7 @@ def train_trial(config: dict):
                 else:
                     # Regret disabled: fall back to rmp-based decay.
                     # High rmp (easy) → sf_wdl_start, low rmp → sf_wdl_floor.
-                    sf_wdl_floor_at_rmp = float(config.get("sf_wdl_floor_at", 0.10))
+                    sf_wdl_floor_at_rmp = tc.sf_wdl_floor_at
                     rmp = float(current_rand)
                     if rmp >= 1.0:
                         cur_sf_wdl = sf_wdl_start
@@ -1862,8 +1866,8 @@ def train_trial(config: dict):
                 trainer.w_sf_wdl = cur_sf_wdl
 
             train_t0 = time.monotonic()
-            batch_size = int(config.get("batch_size", 128))
-            accum_steps = max(1, int(config.get("accum_steps", 1)))
+            batch_size = tc.batch_size
+            accum_steps = max(1, tc.accum_steps)
             skip_train = len(buf) < batch_size
             steps = 0
             target_sample_budget = 0
@@ -1877,8 +1881,8 @@ def train_trial(config: dict):
                 #   (2) a configured fraction of the current replay size.
                 # This keeps early training conservative while scaling updates
                 # upward naturally as the replay grows.
-                base_max_steps = int(config.get("train_steps", 25))
-                train_window_fraction = max(0.0, float(config.get("train_window_fraction", 0.0)))
+                base_max_steps = tc.train_steps
+                train_window_fraction = max(0.0, tc.train_window_fraction)
                 train_budget = _compute_train_step_budget(
                     positions_added=int(total_positions),
                     imported_samples=int(imported_samples_this_iter),
@@ -1909,14 +1913,14 @@ def train_trial(config: dict):
                         k: v.clone() for k, v in trainer.model.state_dict().items()
                     }
 
-                _pause_during_train = bool(config.get("distributed_pause_selfplay_during_training", False))
+                _pause_during_train = tc.distributed_pause_selfplay_during_training
                 if _pause_during_train and use_distributed_selfplay and distributed_dirs is not None:
                     _publish_distributed_trial_state(
                         trainer=trainer, config=config, model_cfg=model_cfg,
                         server_root=distributed_server_root, trial_id=trial_id,
                         training_iteration=int(iteration_idx),
                         trainer_step=int(getattr(trainer, "step", 0)),
-                        sf_nodes=int(pid.nodes) if pid is not None else int(config.get("sf_nodes", 500)),
+                        sf_nodes=int(pid.nodes) if pid is not None else tc.sf_nodes,
                         random_move_prob=float(current_rand),
                         skill_level=int(skill_level_used),
                         mcts_simulations=int(sims),
@@ -1941,7 +1945,7 @@ def train_trial(config: dict):
                         sf=sf,
                         gate_games=gate_games,
                         opponent_random_move_prob=current_rand,
-                        config=config,
+                        tc=tc,
                     )
 
                     # Gate match index is separate from iteration because gates are rare.
@@ -1975,11 +1979,11 @@ def train_trial(config: dict):
                         gate_passed = False
 
             test_metrics = None
-            if len(holdout_buf) >= int(config.get("batch_size", 128)):
+            if len(holdout_buf) >= tc.batch_size:
                 test_metrics = trainer.eval_steps(
                     holdout_buf,
-                    batch_size=int(config.get("batch_size", 128)),
-                    steps=int(config.get("test_steps", 10)),
+                    batch_size=tc.batch_size,
+                    steps=tc.test_steps,
                 )
 
             train_ms = (time.monotonic() - train_t0) * 1000.0
@@ -1992,9 +1996,9 @@ def train_trial(config: dict):
             }
             if eval_games > 0 and eval_sf is not None:
                 # Evaluation: fixed-strength games (no training data generated, only W/D/L).
-                kw = _play_batch_kwargs_from_config(config)
+                kw = _play_batch_kwargs(tc)
                 kw["temp"] = TemperatureConfig(
-                    temperature=float(config.get("eval_temperature", 0.25)),
+                    temperature=tc.eval_temperature,
                 )
                 kw["search"] = dataclasses.replace(
                     kw["search"],
@@ -2004,7 +2008,7 @@ def train_trial(config: dict):
                 )
                 kw["game"] = dataclasses.replace(
                     kw["game"],
-                    max_plies=int(config.get("eval_max_plies", config.get("max_plies", 240))),
+                    max_plies=tc.eval_max_plies,
                     selfplay_fraction=0.0,
                 )
                 kw["diff_focus"] = dataclasses.replace(kw["diff_focus"], enabled=False)
@@ -2124,19 +2128,20 @@ def train_trial(config: dict):
             if pid is not None and (total_w + total_d + total_l) > 0:
                 # Use a large max_rand_step for the first N iterations so the
                 # PID can quickly find equilibrium, then switch to fine steps.
-                _step_start = float(config.get("sf_pid_max_rand_step_start", 0.0))
-                _step_ramp = int(config.get("sf_pid_max_rand_step_ramp_iters", 0))
+                _step_start = tc.sf_pid_max_rand_step_start
+                _step_ramp = tc.sf_pid_max_rand_step_ramp_iters
                 if _step_start > 0 and _step_ramp > 0 and iteration_zero_based < _step_ramp:
                     pid.max_rand_step = _step_start
                 else:
-                    pid.max_rand_step = float(config.get("sf_pid_max_rand_step", 0.01))
-                # Re-read tunable PID params from config (YAML overlay) each iteration.
-                pid.max_regret_step = float(config.get("sf_pid_max_regret_step", pid.max_regret_step))
-                pid.max_regret_ease_step = float(config.get("sf_pid_max_regret_ease_step", pid.max_regret_ease_step))
-                pid.target = float(config.get("sf_pid_target_winrate", pid.target))
-                pid.kp = float(config.get("sf_pid_kp", pid.kp))
-                pid.ki = float(config.get("sf_pid_ki", pid.ki))
-                pid.alpha = float(config.get("sf_pid_ema_alpha", pid.alpha))
+                    pid.max_rand_step = tc.sf_pid_max_rand_step
+                # Re-read tunable PID params from config each iteration
+                # (supports live YAML reload and PBT mutations).
+                pid.max_regret_step = tc.sf_pid_max_regret_step
+                pid.max_regret_ease_step = tc.sf_pid_max_regret_ease_step
+                pid.target = tc.sf_pid_target_winrate
+                pid.kp = tc.sf_pid_kp
+                pid.ki = tc.sf_pid_ki
+                pid.alpha = tc.sf_pid_ema_alpha
                 # total_w/d/l are already curriculum-only (selfplay games
                 # are excluded in play_batch's _finalize_game stats).
                 _pid_w = total_w
@@ -2180,9 +2185,9 @@ def train_trial(config: dict):
 
             _curr_topk = _effective_curriculum_topk(
                 random_move_prob=current_rand,
-                stage_end=float(config.get("sf_pid_topk_stage_end", config.get("sf_pid_random_move_stage_end", 0.5))),
-                topk_max=int(config.get("sf_multipv", 12)),
-                topk_min=int(config.get("sf_pid_topk_min", 1)),
+                stage_end=tc.sf_pid_topk_stage_end,
+                topk_max=tc.sf_multipv,
+                topk_min=tc.sf_pid_topk_min,
             )
 
             opp_strength = _opponent_strength(
@@ -2192,12 +2197,12 @@ def train_trial(config: dict):
                 ema_winrate=float(pid_ema_wr),
                 min_nodes=int(getattr(pid, "min_nodes", 50)) if pid is not None else 50,
                 max_nodes=int(getattr(pid, "max_nodes", 50000)) if pid is not None else 50000,
-                pid_target_winrate=float(config.get("sf_pid_target_winrate", 0.60)),
+                pid_target_winrate=tc.sf_pid_target_winrate,
                 wdl_regret=float(wdl_regret_used),
-                wdl_regret_max=float(config.get("sf_pid_wdl_regret_max", 1.0)),
+                wdl_regret_max=tc.sf_pid_wdl_regret_max,
                 topk=int(_curr_topk),
-                topk_max=int(config.get("sf_multipv", 12)),
-                topk_min=int(config.get("sf_pid_topk_min", 1)),
+                topk_max=tc.sf_multipv,
+                topk_min=tc.sf_pid_topk_min,
             )
             if opp_strength_ema == 0.0:
                 opp_strength_ema = float(opp_strength)
@@ -2330,15 +2335,15 @@ def train_trial(config: dict):
                     "w_categorical": float(trainer.w_categorical),
                     "w_sf_move": float(trainer.w_sf_move),
                     "w_sf_wdl": float(trainer.w_sf_wdl),
-                    "diff_focus_q_weight": float(config.get("diff_focus_q_weight", 0.0)),
-                    "feature_dropout_p": float(config.get("feature_dropout_p", 0.0)),
-                    "fdp_king_safety": float(config.get("fdp_king_safety", -1)),
-                    "fdp_pins": float(config.get("fdp_pins", -1)),
-                    "fdp_pawns": float(config.get("fdp_pawns", -1)),
-                    "fdp_mobility": float(config.get("fdp_mobility", -1)),
-                    "fdp_outposts": float(config.get("fdp_outposts", -1)),
-                    "selfplay_fraction": float(config.get("selfplay_fraction", 0.0)),
-                    "optimizer_name": str(config.get("optimizer", "adamw")),
+                    "diff_focus_q_weight": tc.diff_focus_q_weight,
+                    "feature_dropout_p": tc.feature_dropout_p,
+                    "fdp_king_safety": tc.fdp_king_safety,
+                    "fdp_pins": tc.fdp_pins,
+                    "fdp_pawns": tc.fdp_pawns,
+                    "fdp_mobility": tc.fdp_mobility,
+                    "fdp_outposts": tc.fdp_outposts,
+                    "selfplay_fraction": tc.selfplay_fraction,
+                    "optimizer_name": tc.optimizer,
                     "sf_wdl_conf_power": float(trainer.sf_wdl_conf_power),
                     "sf_wdl_draw_scale": float(trainer.sf_wdl_draw_scale),
                     "train_loss": float(metrics.loss) if metrics is not None else 999.0,
@@ -2413,7 +2418,7 @@ def train_trial(config: dict):
             if completed_iterations % 5 == 0:
                 _prune_trial_checkpoints(
                     trial_dir=trial_dir,
-                    keep_last=int(config.get("tune_num_to_keep", 2)),
+                    keep_last=tc.tune_num_to_keep,
                 )
     finally:
         _stop_worker_processes(distributed_worker_procs)
