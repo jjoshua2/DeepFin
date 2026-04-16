@@ -2298,7 +2298,7 @@ def train_trial(config: dict):
 
     # Seed replay buffer with shared iter-0 data (played once from bootstrap net).
     # Only copy if this is a fresh trial (no existing shards in replay_shard_dir).
-    if tc.shared_shards_dir and not iter_shard_paths(replay_shard_dir) and (not cross_trial_restore):
+    if tc.shared_shards_dir and not iter_shard_paths(replay_shard_dir) and (not restore.cross_trial_restore):
         src = Path(tc.shared_shards_dir)
         if src.is_dir():
             replay_shard_dir.mkdir(parents=True, exist_ok=True)
@@ -2310,7 +2310,7 @@ def train_trial(config: dict):
                 shared_summary["source_shards_loaded"] = int(copied)
                 print(f"[trial] Seeded {copied} shared iter-0 shards from {src}")
 
-    if cross_trial_restore and tc.exploit_replay_refresh_enabled:
+    if restore.cross_trial_restore and tc.exploit_replay_refresh_enabled:
         donor_trial_dir = Path(restore.restored_owner_trial_dir).expanduser() if restore.restored_owner_trial_dir else None
         refresh_summary = _refresh_replay_shards_on_exploit(
             config=config,
