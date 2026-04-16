@@ -48,7 +48,7 @@ from chess_anti_engine.selfplay.budget import progressive_mcts_simulations
 from chess_anti_engine.stockfish import DifficultyPID, StockfishPool, StockfishUCI, pid_from_config
 from chess_anti_engine.train import Trainer, trainer_kwargs_from_config
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
-from chess_anti_engine.tune.trial_config import PidResult, TrialConfig
+from chess_anti_engine.tune.trial_config import DriftMetrics, PidResult, TrialConfig
 from chess_anti_engine.tune._utils import (
     concat_array_batches as _concat_array_batches,
     resolve_local_override_root as _resolve_local_override_root,
@@ -762,6 +762,58 @@ def _wdl_hist(arrs: dict[str, np.ndarray]) -> np.ndarray:
     hst = np.bincount(valid, minlength=3).astype(np.float64)
     hst /= max(1.0, float(hst.sum()))
     return hst
+
+
+def _compute_drift_metrics(
+    *,
+    buf: object,
+    holdout_buf: object,
+    drift_sample_size: int,
+) -> DriftMetrics:
+    """Compute drift and data diversity metrics from training and holdout buffers."""
+    dm = DriftMetrics()
+    eps = 1e-12
+
+    if len(buf) < drift_sample_size:
+        return dm, False
+
+    train_batch = _sample_drift_arrays(buf, drift_sample_size)
+
+    dm.data_policy_entropy = _mean_entropy(train_batch)
+
+    # Unique positions (approximate via row-hash).
+    train_x = train_batch["x"]
+    x_flat = train_x.reshape(train_x.shape[0], -1)
+    row_sums = x_flat.view(np.uint32).reshape(x_flat.shape[0], -1).sum(axis=1)
+    dm.data_unique_positions = float(np.unique(row_sums).shape[0]) / float(max(1, train_x.shape[0]))
+
+    # WDL balance: entropy of WDL distribution.
+    wdl_arr = np.asarray(train_batch["wdl_target"], dtype=np.int64)
+    wdl_valid = wdl_arr[(wdl_arr >= 0) & (wdl_arr <= 2)]
+    if wdl_valid.size > 0:
+        h = np.bincount(wdl_valid, minlength=3).astype(np.float64)
+        h /= max(1.0, float(h.sum()))
+        dm.data_wdl_balance = float(-np.sum(h * np.log(h + eps)))
+
+    # Drift metrics (train vs holdout).
+    if len(holdout_buf) >= drift_sample_size:
+        hold_batch = _sample_drift_arrays(holdout_buf, drift_sample_size)
+        hold_x = hold_batch["x"]
+        dm.drift_input_l2 = float(np.linalg.norm(train_x.mean(axis=0) - hold_x.mean(axis=0)))
+
+        p = _wdl_hist(train_batch)
+        q = _wdl_hist(hold_batch)
+        m = 0.5 * (p + q)
+        dm.drift_wdl_js = float(
+            0.5 * np.sum(p * (np.log(p + eps) - np.log(m + eps)))
+            + 0.5 * np.sum(q * (np.log(q + eps) - np.log(m + eps)))
+        )
+
+        dm.drift_policy_entropy_train = dm.data_policy_entropy
+        dm.drift_policy_entropy_holdout = _mean_entropy(hold_batch)
+        dm.drift_policy_entropy_diff = float(dm.drift_policy_entropy_train - dm.drift_policy_entropy_holdout)
+
+    return dm
 
 
 def _run_eval_games(
@@ -1933,68 +1985,20 @@ def train_trial(config: dict):
             if (not holdout_frozen) and freeze_holdout_at > 0 and len(holdout_buf) >= freeze_holdout_at:
                 holdout_frozen = True
 
-            # Drift estimates (cheap heuristics for monitoring when data distribution moves).
-            drift_input_l2 = 0.0
-            drift_wdl_js = 0.0
-            drift_policy_entropy_diff = 0.0
-            drift_policy_entropy_train = 0.0
-            drift_policy_entropy_holdout = 0.0
+            drift = _compute_drift_metrics(
+                buf=buf, holdout_buf=holdout_buf,
+                drift_sample_size=drift_sample_size,
+            )
 
-            # --- Always-on diversity metrics (from training buffer only) ---
-            data_policy_entropy = 0.0
-            data_unique_positions = 0.0
-            data_wdl_balance = 0.0
-
-            eps = 1e-12
-            if len(buf) >= drift_sample_size:
-                train_batch = _sample_drift_arrays(buf, drift_sample_size)
-
-                # Policy entropy: higher = more diverse move distributions.
-                data_policy_entropy = _mean_entropy(train_batch)
-
-                # Unique positions: hash x tensors, count distinct.
-                # Use a fast row hash (sum of bytes) for approximate uniqueness.
-                train_x = train_batch["x"]
-                x_flat = train_x.reshape(train_x.shape[0], -1)
-                row_sums = x_flat.view(np.uint32).reshape(x_flat.shape[0], -1).sum(axis=1)
-                data_unique_positions = float(np.unique(row_sums).shape[0]) / float(max(1, train_x.shape[0]))
-
-                # WDL balance: entropy of WDL distribution (max ~1.1 for uniform).
-                wdl_arr = np.asarray(train_batch["wdl_target"], dtype=np.int64)
-                wdl_valid = wdl_arr[(wdl_arr >= 0) & (wdl_arr <= 2)]
-                if wdl_valid.size > 0:
-                    h = np.bincount(wdl_valid, minlength=3).astype(np.float64)
-                    h /= max(1.0, float(h.sum()))
-                    data_wdl_balance = float(-np.sum(h * np.log(h + eps)))
-
-                # --- Drift metrics (train vs holdout) ---
-                if len(holdout_buf) >= drift_sample_size:
-                    hold_batch = _sample_drift_arrays(holdout_buf, drift_sample_size)
-
-                    hold_x = hold_batch["x"]
-                    drift_input_l2 = float(np.linalg.norm(train_x.mean(axis=0) - hold_x.mean(axis=0)))
-
-                    p = _wdl_hist(train_batch)
-                    q = _wdl_hist(hold_batch)
-                    m = 0.5 * (p + q)
-                    drift_wdl_js = float(
-                        0.5 * np.sum(p * (np.log(p + eps) - np.log(m + eps)))
-                        + 0.5 * np.sum(q * (np.log(q + eps) - np.log(m + eps)))
-                    )
-
-                    drift_policy_entropy_train = data_policy_entropy
-                    drift_policy_entropy_holdout = _mean_entropy(hold_batch)
-                    drift_policy_entropy_diff = float(drift_policy_entropy_train - drift_policy_entropy_holdout)
-
-                    # Optional holdout reset based on input drift threshold.
-                    if (
-                        reset_holdout_on_drift
-                        and (drift_threshold > 0.0)
-                        and (drift_input_l2 > drift_threshold)
-                    ):
-                        holdout_buf.clear()
-                        holdout_frozen = False
-                        holdout_generation += 1
+            # Optional holdout reset based on input drift threshold.
+            if (
+                reset_holdout_on_drift
+                and (drift_threshold > 0.0)
+                and (drift.drift_input_l2 > drift_threshold)
+            ):
+                holdout_buf.clear()
+                holdout_frozen = False
+                holdout_generation += 1
 
             # Re-read loss weights from config each iteration so PB2 perturbations
             # take effect immediately (PB2 mutates the config dict in-place).
@@ -2194,14 +2198,14 @@ def train_trial(config: dict):
             test_dict: dict = {
                 "holdout_frozen": int(1 if holdout_frozen else 0),
                 "holdout_generation": int(holdout_generation),
-                "data_drift_input_l2": float(drift_input_l2),
-                "data_drift_wdl_js": float(drift_wdl_js),
-                "data_drift_policy_entropy_diff": float(drift_policy_entropy_diff),
-                "data_drift_policy_entropy_train": float(drift_policy_entropy_train),
-                "data_drift_policy_entropy_holdout": float(drift_policy_entropy_holdout),
-                "data_policy_entropy": float(data_policy_entropy),
-                "data_unique_positions": float(data_unique_positions),
-                "data_wdl_balance": float(data_wdl_balance),
+                "data_drift_input_l2": float(drift.drift_input_l2),
+                "data_drift_wdl_js": float(drift.drift_wdl_js),
+                "data_drift_policy_entropy_diff": float(drift.drift_policy_entropy_diff),
+                "data_drift_policy_entropy_train": float(drift.drift_policy_entropy_train),
+                "data_drift_policy_entropy_holdout": float(drift.drift_policy_entropy_holdout),
+                "data_policy_entropy": float(drift.data_policy_entropy),
+                "data_unique_positions": float(drift.data_unique_positions),
+                "data_wdl_balance": float(drift.data_wdl_balance),
                 "test_size": 0,
                 "test_loss": float("nan"),
                 "test_policy_loss": float("nan"),
