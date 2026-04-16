@@ -764,6 +764,123 @@ def _wdl_hist(arrs: dict[str, np.ndarray]) -> np.ndarray:
     return hst
 
 
+def _dynamic_sf_wdl_weight(
+    *,
+    sf_wdl_start: float,
+    sf_wdl_floor: float,
+    sf_wdl_floor_at_regret: float,
+    sf_wdl_floor_at_rmp: float,
+    regret_max: float,
+    wdl_regret_used: float,
+    current_rand: float,
+) -> float | None:
+    """Compute the dynamic sf_wdl weight based on difficulty proxy.
+
+    Returns the interpolated weight, or None if sf_wdl_start <= 0 (disabled).
+    """
+    if sf_wdl_start <= 0:
+        return None
+    if float(wdl_regret_used) >= 0.0:
+        regret = float(wdl_regret_used)
+        if regret >= regret_max:
+            return sf_wdl_start
+        elif regret <= sf_wdl_floor_at_regret:
+            return sf_wdl_floor
+        else:
+            t = (regret - sf_wdl_floor_at_regret) / (regret_max - sf_wdl_floor_at_regret)
+            return sf_wdl_floor + t * (sf_wdl_start - sf_wdl_floor)
+    else:
+        rmp = float(current_rand)
+        if rmp >= 1.0:
+            return sf_wdl_start
+        elif rmp <= sf_wdl_floor_at_rmp:
+            return sf_wdl_floor
+        else:
+            t = (rmp - sf_wdl_floor_at_rmp) / (1.0 - sf_wdl_floor_at_rmp)
+            return sf_wdl_floor + t * (sf_wdl_start - sf_wdl_floor)
+
+
+def _sync_trainer_weights(
+    trainer: object,
+    config: dict,
+    tc: TrialConfig,
+    wdl_regret_used: float,
+    current_rand: float,
+) -> None:
+    """Re-read loss weights and LR from config into trainer.
+
+    Called each iteration so PB2 perturbations and live YAML changes
+    take effect immediately.
+    """
+    if "lr" in config:
+        trainer.set_peak_lr(float(config["lr"]), rescale_current=True)
+    if "cosmos_gamma" in config and hasattr(trainer.opt, "gamma"):
+        trainer.opt.gamma = float(config["cosmos_gamma"])
+    for wk in ("w_soft", "w_future", "w_wdl", "w_sf_move", "w_sf_eval",
+                "w_categorical", "w_volatility", "w_sf_wdl",
+                "sf_wdl_conf_power", "sf_wdl_draw_scale"):
+        if wk in config:
+            setattr(trainer, wk, float(config[wk]))
+
+    cur_sf_wdl = _dynamic_sf_wdl_weight(
+        sf_wdl_start=tc.w_sf_wdl,
+        sf_wdl_floor=tc.sf_wdl_floor,
+        sf_wdl_floor_at_regret=tc.sf_wdl_floor_at_regret,
+        sf_wdl_floor_at_rmp=tc.sf_wdl_floor_at,
+        regret_max=tc.sf_pid_wdl_regret_max,
+        wdl_regret_used=wdl_regret_used,
+        current_rand=current_rand,
+    )
+    if cur_sf_wdl is not None:
+        trainer.w_sf_wdl = cur_sf_wdl
+
+
+def _log_iteration_scalars(
+    *,
+    writer: object,
+    pid_result: PidResult,
+    current_rand: float,
+    wdl_regret_used: float,
+    pause_metrics: dict,
+    seed_warmstart_used: bool,
+    seed_warmstart_slot: int,
+    iteration_step: int,
+) -> None:
+    """Write per-iteration TensorBoard scalars (best-effort)."""
+    try:
+        pr = pid_result
+        writer.add_scalar("difficulty/opponent_strength", float(pr.opp_strength), iteration_step)
+        writer.add_scalar("difficulty/opponent_strength_ema", float(pr.opp_strength_ema), iteration_step)
+        writer.add_scalar("difficulty/random_move_prob", float(current_rand), iteration_step)
+        writer.add_scalar("difficulty/random_move_prob_next", float(pr.random_move_prob_next), iteration_step)
+        writer.add_scalar("difficulty/opponent_topk", float(pr.curr_topk), iteration_step)
+        writer.add_scalar("difficulty/pid_ema_winrate", float(pr.pid_ema_wr), iteration_step)
+        writer.add_scalar("difficulty/wdl_regret", float(wdl_regret_used), iteration_step)
+        writer.add_scalar("difficulty/wdl_regret_next", float(pr.wdl_regret_next), iteration_step)
+        if pr.blended_winrate_raw is not None:
+            writer.add_scalar("difficulty/blended_winrate_raw", float(pr.blended_winrate_raw), iteration_step)
+            writer.add_scalar("selfplay/avg_game_plies", float(pr.avg_game_plies), iteration_step)
+            if pr.avg_plies_win > 0:
+                writer.add_scalar("selfplay/avg_plies_win", float(pr.avg_plies_win), iteration_step)
+            if pr.avg_plies_draw > 0:
+                writer.add_scalar("selfplay/avg_plies_draw", float(pr.avg_plies_draw), iteration_step)
+            if pr.avg_plies_loss > 0:
+                writer.add_scalar("selfplay/avg_plies_loss", float(pr.avg_plies_loss), iteration_step)
+            writer.add_scalar("selfplay/adjudication_rate", float(pr.adjudication_rate), iteration_step)
+            writer.add_scalar("selfplay/draw_rate", float(pr.draw_rate), iteration_step)
+            writer.add_scalar("selfplay/selfplay_adjudication_rate", float(pr.selfplay_adjudication_rate), iteration_step)
+            writer.add_scalar("selfplay/selfplay_draw_rate", float(pr.selfplay_draw_rate), iteration_step)
+        writer.add_scalar("selfplay/curriculum_adjudication_rate", float(pr.curriculum_adjudication_rate), iteration_step)
+        writer.add_scalar("selfplay/curriculum_draw_rate", float(pr.curriculum_draw_rate), iteration_step)
+        writer.add_scalar("backpressure/paused_seconds", float(pause_metrics["paused_seconds"]), iteration_step)
+        writer.add_scalar("backpressure/paused_fraction", float(pause_metrics["paused_fraction"]), iteration_step)
+        writer.add_scalar("backpressure/paused_percent", float(pause_metrics["paused_percent"]), iteration_step)
+        writer.add_scalar("meta/salvage_warmstart_used", float(1 if seed_warmstart_used else 0), iteration_step)
+        writer.add_scalar("meta/salvage_warmstart_slot", float(seed_warmstart_slot), iteration_step)
+    except Exception:
+        pass
+
+
 def _compute_drift_metrics(
     *,
     buf: object,
@@ -2000,52 +2117,7 @@ def train_trial(config: dict):
                 holdout_frozen = False
                 holdout_generation += 1
 
-            # Re-read loss weights from config each iteration so PB2 perturbations
-            # take effect immediately (PB2 mutates the config dict in-place).
-            if "lr" in config:
-                trainer.set_peak_lr(float(config["lr"]), rescale_current=True)
-            if "cosmos_gamma" in config and hasattr(trainer.opt, "gamma"):
-                trainer.opt.gamma = float(config["cosmos_gamma"])
-            for wk in ("w_soft", "w_future", "w_wdl", "w_sf_move", "w_sf_eval",
-                        "w_categorical", "w_volatility", "w_sf_wdl",
-                        "sf_wdl_conf_power", "sf_wdl_draw_scale"):
-                if wk in config:
-                    setattr(trainer, wk, float(config[wk]))
-
-            # Re-read dynamic sf_wdl schedule params each iteration so config
-            # changes (including --resume with updated YAML) take effect.
-            sf_wdl_start = tc.w_sf_wdl
-            sf_wdl_floor = tc.sf_wdl_floor
-            sf_wdl_floor_at_regret = tc.sf_wdl_floor_at_regret
-            regret_max = tc.sf_pid_wdl_regret_max
-
-            # Dynamic sf_wdl weight: interpolate based on difficulty proxy.
-            # Easy opponent → sf_wdl_start (high SF signal).
-            # Hard opponent → sf_wdl_floor.
-            if sf_wdl_start > 0:
-                if float(wdl_regret_used) >= 0.0:
-                    # Regret-based: wide regret (easy) → tight regret (hard).
-                    regret = float(wdl_regret_used)
-                    if regret >= regret_max:
-                        cur_sf_wdl = sf_wdl_start
-                    elif regret <= sf_wdl_floor_at_regret:
-                        cur_sf_wdl = sf_wdl_floor
-                    else:
-                        t = (regret - sf_wdl_floor_at_regret) / (regret_max - sf_wdl_floor_at_regret)
-                        cur_sf_wdl = sf_wdl_floor + t * (sf_wdl_start - sf_wdl_floor)
-                else:
-                    # Regret disabled: fall back to rmp-based decay.
-                    # High rmp (easy) → sf_wdl_start, low rmp → sf_wdl_floor.
-                    sf_wdl_floor_at_rmp = tc.sf_wdl_floor_at
-                    rmp = float(current_rand)
-                    if rmp >= 1.0:
-                        cur_sf_wdl = sf_wdl_start
-                    elif rmp <= sf_wdl_floor_at_rmp:
-                        cur_sf_wdl = sf_wdl_floor
-                    else:
-                        t = (rmp - sf_wdl_floor_at_rmp) / (1.0 - sf_wdl_floor_at_rmp)
-                        cur_sf_wdl = sf_wdl_floor + t * (sf_wdl_start - sf_wdl_floor)
-                trainer.w_sf_wdl = cur_sf_wdl
+            _sync_trainer_weights(trainer, config, tc, wdl_regret_used, current_rand)
 
             train_t0 = time.monotonic()
             batch_size = tc.batch_size
@@ -2312,38 +2384,16 @@ def train_trial(config: dict):
                 pause_started_at=distributed_pause_started_at,
                 pause_active=distributed_pause_active,
             )
-            try:
-                pr = pid_result  # shorthand for TensorBoard scalars
-                trainer.writer.add_scalar("difficulty/opponent_strength", float(pr.opp_strength), iteration_step)
-                trainer.writer.add_scalar("difficulty/opponent_strength_ema", float(pr.opp_strength_ema), iteration_step)
-                trainer.writer.add_scalar("difficulty/random_move_prob", float(current_rand), iteration_step)
-                trainer.writer.add_scalar("difficulty/random_move_prob_next", float(pr.random_move_prob_next), iteration_step)
-                trainer.writer.add_scalar("difficulty/opponent_topk", float(pr.curr_topk), iteration_step)
-                trainer.writer.add_scalar("difficulty/pid_ema_winrate", float(pr.pid_ema_wr), iteration_step)
-                trainer.writer.add_scalar("difficulty/wdl_regret", float(wdl_regret_used), iteration_step)
-                trainer.writer.add_scalar("difficulty/wdl_regret_next", float(pr.wdl_regret_next), iteration_step)
-                if pr.blended_winrate_raw is not None:
-                    trainer.writer.add_scalar("difficulty/blended_winrate_raw", float(pr.blended_winrate_raw), iteration_step)
-                    trainer.writer.add_scalar("selfplay/avg_game_plies", float(pr.avg_game_plies), iteration_step)
-                    if pr.avg_plies_win > 0:
-                        trainer.writer.add_scalar("selfplay/avg_plies_win", float(pr.avg_plies_win), iteration_step)
-                    if pr.avg_plies_draw > 0:
-                        trainer.writer.add_scalar("selfplay/avg_plies_draw", float(pr.avg_plies_draw), iteration_step)
-                    if pr.avg_plies_loss > 0:
-                        trainer.writer.add_scalar("selfplay/avg_plies_loss", float(pr.avg_plies_loss), iteration_step)
-                    trainer.writer.add_scalar("selfplay/adjudication_rate", float(pr.adjudication_rate), iteration_step)
-                    trainer.writer.add_scalar("selfplay/draw_rate", float(pr.draw_rate), iteration_step)
-                    trainer.writer.add_scalar("selfplay/selfplay_adjudication_rate", float(pr.selfplay_adjudication_rate), iteration_step)
-                    trainer.writer.add_scalar("selfplay/selfplay_draw_rate", float(pr.selfplay_draw_rate), iteration_step)
-                trainer.writer.add_scalar("selfplay/curriculum_adjudication_rate", float(pr.curriculum_adjudication_rate), iteration_step)
-                trainer.writer.add_scalar("selfplay/curriculum_draw_rate", float(pr.curriculum_draw_rate), iteration_step)
-                trainer.writer.add_scalar("backpressure/paused_seconds", float(pause_metrics["paused_seconds"]), iteration_step)
-                trainer.writer.add_scalar("backpressure/paused_fraction", float(pause_metrics["paused_fraction"]), iteration_step)
-                trainer.writer.add_scalar("backpressure/paused_percent", float(pause_metrics["paused_percent"]), iteration_step)
-                trainer.writer.add_scalar("meta/salvage_warmstart_used", float(1 if seed_warmstart_used else 0), iteration_step)
-                trainer.writer.add_scalar("meta/salvage_warmstart_slot", float(seed_warmstart_slot), iteration_step)
-            except Exception:
-                pass
+            _log_iteration_scalars(
+                writer=trainer.writer,
+                pid_result=pid_result,
+                current_rand=current_rand,
+                wdl_regret_used=wdl_regret_used,
+                pause_metrics=pause_metrics,
+                seed_warmstart_used=seed_warmstart_used,
+                seed_warmstart_slot=seed_warmstart_slot,
+                iteration_step=iteration_step,
+            )
 
             pr = pid_result
             report_dict = {
