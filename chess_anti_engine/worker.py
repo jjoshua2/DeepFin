@@ -13,7 +13,6 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -23,8 +22,6 @@ from chess_anti_engine.inference import DirectGPUEvaluator, SlotInferenceClient
 from chess_anti_engine.utils import sha256_file as _sha256_file
 from chess_anti_engine.model import ModelConfig, build_model, load_state_dict_tolerant
 from chess_anti_engine.moves.encode import POLICY_SIZE
-from chess_anti_engine.replay.buffer import ReplaySample
-from chess_anti_engine.replay.shard import ShardMeta, save_npz
 from chess_anti_engine.selfplay import play_batch
 from chess_anti_engine.selfplay.config import (
     GameConfig,
@@ -37,184 +34,21 @@ from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.stockfish import StockfishPool, StockfishUCI
 from chess_anti_engine.utils.versioning import version_lt
 from chess_anti_engine.version import PACKAGE_NAME, PACKAGE_VERSION, PROTOCOL_VERSION
+from chess_anti_engine.worker_assets import (
+    _cached_sha_asset_needs_refresh,
+    _download_and_verify_shared,
+    _download_opening_book,
+    _ensure_executable,
+    _prune_cached_models,
+)
+from chess_anti_engine.worker_buffer import (
+    _BufferedUpload,
+    _buffer_add_completed_game,
+    _flush_upload_buffer_to_pending,
+    _maybe_flush_upload_buffer,
+    _pending_elapsed_path,
+)
 from chess_anti_engine.worker_config import load_worker_config, save_worker_config
-
-
-@dataclass
-class _BufferedUpload:
-    samples: list[ReplaySample] = field(default_factory=list)
-    model_sha: str | None = None
-    model_step: int | None = None
-    games: int = 0
-    positions: int = 0
-    w: int = 0
-    d: int = 0
-    l: int = 0
-    total_game_plies: int = 0
-    adjudicated_games: int = 0
-    total_draw_games: int = 0
-    selfplay_games: int = 0
-    selfplay_adjudicated_games: int = 0
-    selfplay_draw_games: int = 0
-    curriculum_games: int = 0
-    curriculum_adjudicated_games: int = 0
-    curriculum_draw_games: int = 0
-    plies_win: int = 0
-    plies_draw: int = 0
-    plies_loss: int = 0
-    checkmate_games: int = 0
-    stalemate_games: int = 0
-    first_buffered_at_s: float | None = None
-
-    def reset(self) -> None:
-        import dataclasses as _dc
-        fresh = _BufferedUpload()
-        for f in _dc.fields(self):
-            setattr(self, f.name, getattr(fresh, f.name))
-
-
-def _buffer_elapsed_s(*, buf: _BufferedUpload, now_s: float) -> float:
-    if buf.first_buffered_at_s is None:
-        return 0.0
-    return max(0.0, float(now_s) - float(buf.first_buffered_at_s))
-
-
-def _buffer_should_flush(
-    *,
-    buf: _BufferedUpload,
-    now_s: float,
-    last_send_s: float,
-    target_positions: int,
-    flush_seconds: float,
-) -> bool:
-    if buf.positions <= 0:
-        return False
-    if int(target_positions) > 0 and int(buf.positions) >= int(target_positions):
-        return True
-    if float(flush_seconds) > 0.0 and (float(now_s) - float(last_send_s)) >= float(flush_seconds):
-        return True
-    return False
-
-
-def _buffer_add_completed_game(
-    *,
-    buf: _BufferedUpload,
-    game_batch,
-    now_s: float,
-    model_sha: str,
-    model_step: int,
-) -> None:
-    if getattr(game_batch, "positions", 0) <= 0 or not getattr(game_batch, "samples", None):
-        return
-    if buf.positions > 0:
-        if str(buf.model_sha or "") != str(model_sha) or int(buf.model_step or 0) != int(model_step):
-            raise ValueError("buffered upload model metadata mismatch")
-    else:
-        buf.model_sha = str(model_sha)
-        buf.model_step = int(model_step)
-    if buf.first_buffered_at_s is None:
-        buf.first_buffered_at_s = float(now_s)
-    buf.samples.extend(game_batch.samples)
-    buf.games += int(getattr(game_batch, "games", 0))
-    buf.positions += int(getattr(game_batch, "positions", 0))
-    buf.w += int(getattr(game_batch, "w", 0))
-    buf.d += int(getattr(game_batch, "d", 0))
-    buf.l += int(getattr(game_batch, "l", 0))
-    buf.total_game_plies += int(getattr(game_batch, "total_game_plies", 0))
-    buf.adjudicated_games += int(getattr(game_batch, "adjudicated_games", 0))
-    buf.total_draw_games += int(getattr(game_batch, "total_draw_games", 0))
-    buf.selfplay_games += int(getattr(game_batch, "selfplay_games", 0))
-    buf.selfplay_adjudicated_games += int(getattr(game_batch, "selfplay_adjudicated_games", 0))
-    buf.selfplay_draw_games += int(getattr(game_batch, "selfplay_draw_games", 0))
-    buf.curriculum_games += int(getattr(game_batch, "curriculum_games", 0))
-    buf.curriculum_adjudicated_games += int(getattr(game_batch, "curriculum_adjudicated_games", 0))
-    buf.curriculum_draw_games += int(getattr(game_batch, "curriculum_draw_games", 0))
-    buf.plies_win += int(getattr(game_batch, "plies_win", 0))
-    buf.plies_draw += int(getattr(game_batch, "plies_draw", 0))
-    buf.plies_loss += int(getattr(game_batch, "plies_loss", 0))
-    buf.checkmate_games += int(getattr(game_batch, "checkmate_games", 0))
-    buf.stalemate_games += int(getattr(game_batch, "stalemate_games", 0))
-
-
-def _pending_elapsed_path(shard_path: Path) -> Path:
-    return shard_path.with_suffix(shard_path.suffix + ".elapsed_s")
-
-
-def _flush_upload_buffer_to_pending(
-    *,
-    pending_dir: Path,
-    username: str,
-    buf: _BufferedUpload,
-    now_s: float,
-) -> tuple[Path | None, float]:
-    if buf.positions <= 0 or not buf.samples:
-        return None, 0.0
-    model_sha = str(buf.model_sha or "")
-    if not model_sha:
-        raise ValueError("buffered upload missing model sha")
-    if buf.model_step is None:
-        raise ValueError("buffered upload missing model step")
-    ts = int(now_s)
-    shard_path = pending_dir / f"{ts}_{model_sha[:8]}_{buf.games}g_{buf.positions}p.npz"
-    elapsed_s = _buffer_elapsed_s(buf=buf, now_s=now_s)
-    meta = ShardMeta(
-        username=str(username),
-        generated_at_unix=ts,
-        model_sha256=str(model_sha),
-        model_step=int(buf.model_step),
-        games=int(buf.games),
-        positions=int(buf.positions),
-        wins=int(buf.w),
-        draws=int(buf.d),
-        losses=int(buf.l),
-        total_game_plies=int(buf.total_game_plies),
-        adjudicated_games=int(buf.adjudicated_games),
-        total_draw_games=int(buf.total_draw_games),
-        selfplay_games=int(buf.selfplay_games),
-        selfplay_adjudicated_games=int(buf.selfplay_adjudicated_games),
-        selfplay_draw_games=int(buf.selfplay_draw_games),
-        curriculum_games=int(buf.curriculum_games),
-        curriculum_adjudicated_games=int(buf.curriculum_adjudicated_games),
-        curriculum_draw_games=int(buf.curriculum_draw_games),
-        plies_win=int(buf.plies_win),
-        plies_draw=int(buf.plies_draw),
-        plies_loss=int(buf.plies_loss),
-        checkmate_games=int(buf.checkmate_games),
-        stalemate_games=int(buf.stalemate_games),
-    )
-    tmp_path = pending_dir / f"_tmp_{shard_path.name}"
-    save_npz(tmp_path, samples=list(buf.samples), meta=meta, compress=False)
-    tmp_path.replace(shard_path)
-    _pending_elapsed_path(shard_path).write_text(f"{float(elapsed_s):.6f}\n", encoding="utf-8")
-    buf.reset()
-    return shard_path, float(elapsed_s)
-
-
-def _maybe_flush_upload_buffer(
-    *,
-    pending_dir: Path,
-    username: str,
-    buf: _BufferedUpload,
-    now_s: float,
-    last_send_s: float,
-    target_positions: int,
-    flush_seconds: float,
-    force: bool = False,
-) -> tuple[Path | None, float]:
-    if not force and not _buffer_should_flush(
-        buf=buf,
-        now_s=now_s,
-        last_send_s=last_send_s,
-        target_positions=target_positions,
-        flush_seconds=flush_seconds,
-    ):
-        return None, 0.0
-    return _flush_upload_buffer_to_pending(
-        pending_dir=pending_dir,
-        username=username,
-        buf=buf,
-        now_s=now_s,
-    )
 
 
 def _worker_headers(*, machine_id: str | None = None) -> dict[str, str]:
@@ -270,16 +104,6 @@ def _collect_worker_info(*, device: str) -> dict[str, object]:
     return out
 
 
-def _ensure_executable(path: Path) -> None:
-    """Best-effort chmod +x for POSIX systems."""
-    try:
-        if os.name != "nt":
-            st = os.stat(path)
-            os.chmod(path, st.st_mode | 0o111)
-    except Exception:
-        pass
-
-
 def _pip_install_wheel(wheel_path: Path) -> None:
     # Use a PEP508 direct reference so we can request extras (installs worker deps like requests).
     uri = wheel_path.resolve().as_uri()
@@ -292,143 +116,6 @@ def _restart_process() -> None:
     # Avoid infinite update loops.
     os.environ["CAE_SELF_UPDATED"] = "1"
     os.execv(sys.executable, [sys.executable] + sys.argv)
-
-
-def _download(
-    url: str,
-    *,
-    out_path: Path,
-    timeout: float = 30.0,
-    headers: dict[str, str] | None = None,
-) -> None:
-    try:
-        import requests  # type: ignore
-    except Exception as e:  # pragma: no cover
-        raise RuntimeError("worker requires requests; install with pip install -e '.[worker]' ") from e
-
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = out_path.with_suffix(out_path.suffix + ".tmp")
-    with requests.get(url, stream=True, timeout=timeout, headers=headers) as r:
-        r.raise_for_status()
-        with tmp.open("wb") as f:
-            for chunk in r.iter_content(chunk_size=1024 * 1024):
-                if not chunk:
-                    continue
-                f.write(chunk)
-    tmp.replace(out_path)
-
-
-def _download_and_verify(
-    url: str,
-    *,
-    out_path: Path,
-    expected_sha256: str | None,
-    timeout: float = 30.0,
-    headers: dict[str, str] | None = None,
-) -> None:
-    """Download a file and verify its sha256 if provided.
-
-    If verification fails, we delete and retry once.
-    """
-    exp = str(expected_sha256 or "")
-
-    def _once() -> None:
-        _download(url, out_path=out_path, timeout=timeout, headers=headers)
-        if exp:
-            got = _sha256_file(out_path)
-            if got != exp:
-                raise RuntimeError(f"sha256 mismatch for {out_path.name}: got={got} expected={exp}")
-
-    try:
-        _once()
-    except Exception:
-        out_path.unlink(missing_ok=True)
-        _once()
-
-
-def _download_and_verify_shared(
-    url: str,
-    *,
-    out_path: Path,
-    expected_sha256: str | None,
-    timeout: float = 30.0,
-    headers: dict[str, str] | None = None,
-    lock_timeout_s: float = 600.0,
-) -> None:
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-
-    if out_path.exists():
-        if not expected_sha256 or _sha256_file(out_path) == str(expected_sha256):
-            return
-        out_path.unlink(missing_ok=True)
-
-    lock_path = out_path.with_suffix(out_path.suffix + ".lock")
-    deadline = time.time() + float(lock_timeout_s)
-    have_lock = False
-
-    while not have_lock:
-        try:
-            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(f"{os.getpid()}\n")
-            have_lock = True
-        except FileExistsError:
-            if out_path.exists():
-                if not expected_sha256 or _sha256_file(out_path) == str(expected_sha256):
-                    return
-                out_path.unlink(missing_ok=True)
-            if time.time() >= deadline:
-                try:
-                    lock_path.unlink(missing_ok=True)
-                except Exception:
-                    pass
-            time.sleep(0.25)
-
-    try:
-        if out_path.exists():
-            if not expected_sha256 or _sha256_file(out_path) == str(expected_sha256):
-                return
-            out_path.unlink(missing_ok=True)
-        _download_and_verify(
-            url,
-            out_path=out_path,
-            expected_sha256=expected_sha256,
-            timeout=timeout,
-            headers=headers,
-        )
-    finally:
-        try:
-            lock_path.unlink(missing_ok=True)
-        except Exception:
-            pass
-
-
-def _prune_cached_models(*, cache_dir: Path, keep_shas: set[str]) -> None:
-    """Delete cached model checkpoints not in keep_shas.
-
-    Files:
-    - model_<sha>.pt (downloaded from /v1/model)
-    - best_<sha>.pt (downloaded from /v1/best_model)
-
-    This keeps worker disk usage bounded as best/latest advance over time.
-    """
-    keep = {str(s) for s in keep_shas if str(s)}
-
-    for p in cache_dir.glob("model_*.pt"):
-        name = p.name
-        if not name.startswith("model_") or not name.endswith(".pt"):
-            continue
-        sha = name[len("model_") : -len(".pt")]
-        if sha and sha not in keep:
-            p.unlink(missing_ok=True)
-
-    for p in cache_dir.glob("best_*.pt"):
-        name = p.name
-        if not name.startswith("best_") or not name.endswith(".pt"):
-            continue
-        sha = name[len("best_") : -len(".pt")]
-        if sha and sha not in keep:
-            p.unlink(missing_ok=True)
 
 
 def _maybe_apply_fp8_inference(model: torch.nn.Module) -> torch.nn.Module:
@@ -496,65 +183,6 @@ def _configure_shared_compile_cache(*, cache_dir: Path) -> None:
     os.environ["TRITON_CACHE_DIR"] = str(triton_dir)
     # Enable FX graph cache so compiled graphs persist across restarts.
     os.environ["TORCHINDUCTOR_FX_GRAPH_CACHE"] = "1"
-
-
-def _cached_sha_asset_needs_refresh(*, path: Path, sha256: str, last_sha256: str | None = None) -> bool:
-    """Return True when a cached SHA-addressed asset must be refreshed.
-
-    Repeated SHAs can reuse an already-validated file, but only if the expected
-    cache path still exists. This covers local cache eviction and manifest
-    filename changes without re-hashing large assets on every poll.
-    """
-    if str(sha256) == str(last_sha256 or ""):
-        return not path.exists()
-    if not path.exists():
-        return True
-    return _sha256_file(path) != str(sha256)
-
-
-def _download_opening_book(
-    manifest: dict,
-    key: str,
-    cache_dir: Path,
-    *,
-    cache_prefix: str,
-    default_endpoint: str,
-    server_url_fn,
-    headers: dict,
-    log,
-    last_sha: str | None = None,
-) -> tuple[str | None, str | None]:
-    """Download an opening book asset from the manifest.
-
-    Returns (local_path, manifest_sha).  Skips I/O when *last_sha* matches
-    the manifest SHA (the file was already verified on a prior iteration).
-    """
-    if key not in manifest:
-        return None, None
-    ob = manifest.get(key) or {}
-    filename = str(ob.get("filename") or key)
-    sha = str(ob.get("sha256") or "")
-    endpoint = str(ob.get("endpoint") or default_endpoint)
-
-    if sha:
-        ob_path = cache_dir / f"{cache_prefix}_{sha}_{filename}"
-        if _cached_sha_asset_needs_refresh(path=ob_path, sha256=sha, last_sha256=last_sha):
-            log.info("downloading %s sha=%s filename=%s", key, sha, filename)
-            _download_and_verify_shared(
-                server_url_fn(endpoint),
-                out_path=ob_path,
-                expected_sha256=sha,
-                headers=headers,
-            )
-    else:
-        ob_path = cache_dir / f"{cache_prefix}_{filename}"
-        if not ob_path.exists():
-            _download(
-                server_url_fn(endpoint),
-                out_path=ob_path,
-                headers=headers,
-            )
-    return str(ob_path), sha or None
 
 
 def main() -> None:

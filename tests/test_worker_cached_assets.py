@@ -4,7 +4,7 @@ import hashlib
 import logging
 from pathlib import Path
 
-from chess_anti_engine.worker import _cached_sha_asset_needs_refresh, _download_opening_book
+from chess_anti_engine.worker_assets import _cached_sha_asset_needs_refresh, _download_opening_book
 
 
 def _sha256_bytes(data: bytes) -> str:
@@ -48,7 +48,7 @@ def test_download_opening_book_redownloads_when_same_sha_uses_new_filename(
         downloads.append(out_path)
         out_path.write_bytes(book_bytes)
 
-    monkeypatch.setattr("chess_anti_engine.worker._download_and_verify_shared", _fake_download_and_verify_shared)
+    monkeypatch.setattr("chess_anti_engine.worker_assets._download_and_verify_shared", _fake_download_and_verify_shared)
 
     path, returned_sha = _download_opening_book(
         {

@@ -6,7 +6,7 @@ import numpy as np
 
 from chess_anti_engine.replay import ReplaySample
 from chess_anti_engine.replay.shard import load_npz
-from chess_anti_engine.worker import (
+from chess_anti_engine.worker_buffer import (
     _BufferedUpload,
     _buffer_add_completed_game,
     _buffer_should_flush,

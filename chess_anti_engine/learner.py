@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import logging
 import os
 import shutil
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -55,6 +57,179 @@ def _iter_shards(inbox_dir: Path) -> list[Path]:
 def _iter_arena_results(arena_inbox_dir: Path) -> list[Path]:
     # Depth: arena_inbox/<user>/<sha>.json
     return sorted(arena_inbox_dir.glob("*/*.json"))
+
+
+def _compute_max_plies(step: int, *, start: int, end: int, ramp_steps: int) -> int:
+    if ramp_steps <= 0 or start >= end:
+        return end
+    frac = min(1.0, step / ramp_steps)
+    return int(start + frac * (end - start))
+
+
+def _sf_bootstrap_ramp_frac(
+    rand_prob: float,
+    *,
+    ramp_start: float,
+    ramp_end_threshold: float,
+) -> float:
+    """Returns 0.0 at ramp start (full SF bootstrap) -> 1.0 when rand_prob <= threshold."""
+    span = ramp_start - ramp_end_threshold
+    if span <= 0.0:
+        return 1.0
+    return max(0.0, min(1.0, (ramp_start - rand_prob) / span))
+
+
+def _resolve_trial_subdir(
+    path_str: str,
+    trial_id: str,
+    server_root: Path,
+    trial_root: Path,
+    *,
+    fallback_name: str | None = None,
+) -> Path:
+    raw = Path(path_str)
+    if raw.is_absolute():
+        return raw
+    if trial_id:
+        if fallback_name is not None and raw == Path("server") / fallback_name:
+            return trial_root / fallback_name
+        return trial_root / raw
+    return server_root / raw if raw.parts[:1] != (server_root.name,) else raw
+
+
+@dataclass
+class TrainStepResult:
+    train_loss: float
+    train_policy_loss: float
+    train_wdl_loss: float
+    model_sha: str
+    best_model_sha: str
+    best_loss: float
+    best_loss_trainer_step: int
+
+
+def _run_train_step(
+    args: argparse.Namespace,
+    trainer: Trainer,
+    buf: ArrayReplayBuffer,
+    *,
+    model_path: Path,
+    best_model_path: Path,
+    champion_ckpt_path: Path,
+    ckpt_path: Path,
+    best_loss_ckpt_path: Path,
+    best_loss_model_path: Path,
+    best_loss_state_path: Path,
+    arena_state_path: Path,
+    arena_state: dict,
+    best_loss: float,
+    best_loss_trainer_step: int,
+    last_train: dict,
+    last_train_path: Path,
+) -> TrainStepResult:
+    """Run training steps, update best-loss tracking, optionally start arena.
+
+    Mutates arena_state and last_train dicts in-place.
+    """
+    metrics = trainer.train_steps(buf, batch_size=int(args.batch_size), steps=int(args.train_steps))
+    trainer.save(ckpt_path)
+
+    train_loss = float(metrics.loss)
+    train_policy_loss = float(metrics.policy_loss)
+    train_wdl_loss = float(metrics.wdl_loss)
+    last_train_path.write_text(
+        json.dumps(
+            {
+                "loss": float(train_loss),
+                "policy_loss": float(train_policy_loss),
+                "wdl_loss": float(train_wdl_loss),
+                "updated_at_unix": int(time.time()),
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    last_train.update({"loss": train_loss, "policy_loss": train_policy_loss, "wdl_loss": train_wdl_loss})
+
+    # Best-by-loss tracking (local only)
+    cur_loss = float(metrics.loss)
+    if cur_loss < best_loss - 1e-12:
+        best_loss = cur_loss
+        best_loss_trainer_step = int(getattr(trainer, "step", 0))
+        trainer.save(best_loss_ckpt_path)
+        trainer.export_swa(best_loss_model_path)
+        best_loss_state_path.write_text(
+            json.dumps(
+                {
+                    "best_loss": float(best_loss),
+                    "trainer_step": int(best_loss_trainer_step),
+                    "updated_at_unix": int(time.time()),
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+
+    # Publish latest model weights
+    trainer.export_swa(model_path)
+    model_sha = _sha256_file(model_path)
+
+    # Initialize champion model if missing.
+    if not best_model_path.exists():
+        shutil.copy2(model_path, best_model_path)
+        best_model_sha = _sha256_file(best_model_path)
+        trainer.save(champion_ckpt_path)
+    else:
+        best_model_sha = _sha256_file(best_model_path)
+
+    # Start arena for this challenger (once), throttled by --arena-every-n-steps.
+    _arena_step = int(getattr(trainer, "step", 0))
+    _arena_due = (_arena_step % int(args.arena_every_n_steps)) < int(args.train_steps)
+    if bool(args.arena_enabled) and (not arena_state["active"]) and best_model_sha and model_sha and best_model_sha != model_sha and _arena_due:
+        arena_state["active"] = True
+        arena_state["latest_sha"] = str(model_sha)
+        arena_state["best_sha"] = str(best_model_sha)
+        arena_state["games_done"] = 0
+        arena_state["a_win"] = 0
+        arena_state["a_draw"] = 0
+        arena_state["a_loss"] = 0
+
+        log.info(
+            "arena start: games_target=%d accept_winrate=%.3f latest=%s best=%s",
+            int(args.arena_games_target),
+            float(args.arena_accept_winrate),
+            str(arena_state["latest_sha"])[:8],
+            str(arena_state["best_sha"])[:8],
+        )
+        arena_state_path.write_text(
+            json.dumps(
+                {
+                    "active": True,
+                    "latest_sha": str(arena_state["latest_sha"]),
+                    "best_sha": str(arena_state["best_sha"]),
+                    "games_done": 0,
+                    "a_win": 0,
+                    "a_draw": 0,
+                    "a_loss": 0,
+                    "updated_at_unix": int(time.time()),
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+
+    return TrainStepResult(
+        train_loss=train_loss,
+        train_policy_loss=train_policy_loss,
+        train_wdl_loss=train_wdl_loss,
+        model_sha=model_sha,
+        best_model_sha=best_model_sha,
+        best_loss=best_loss,
+        best_loss_trainer_step=best_loss_trainer_step,
+    )
 
 
 def _build_recommended_worker(
@@ -187,7 +362,7 @@ def _update_pid(
     trainer_step_now = int(getattr(trainer, "step", 0))
     trainer.writer.add_scalar("difficulty/sf_nodes", float(sf_nodes), trainer_step_now)
     trainer.writer.add_scalar("difficulty/pid_ema_winrate", float(pid.ema_winrate), trainer_step_now)
-    trainer.writer.add_scalar("difficulty/skill_level", float(sf_skill_level), trainer_step_now)
+    trainer.writer.add_scalar("difficulty/skill_level", float(sf_skill_level if sf_skill_level is not None else -1), trainer_step_now)
     trainer.writer.add_scalar(
         "difficulty/opponent_random_move_prob",
         random_move_prob,
@@ -697,12 +872,6 @@ def main() -> None:
     _max_plies_end: int = int(args.recommended_max_plies)
     _max_plies_ramp_steps: int = int(args.max_plies_ramp_steps)
 
-    def _compute_max_plies(step: int) -> int:
-        if _max_plies_ramp_steps <= 0 or _max_plies_start >= _max_plies_end:
-            return _max_plies_end
-        frac = min(1.0, step / _max_plies_ramp_steps)
-        return int(_max_plies_start + frac * (_max_plies_end - _max_plies_start))
-
     # SF-bootstrap loss weight ramp: as the opponent gets harder (random_move_prob → 0),
     # gradually reduce reliance on SF eval (wdl + sf_move) as training targets.
     # NOTE: w_soft is the MCTS temperature-2 policy target (not SF) and is NOT ramped.
@@ -711,13 +880,11 @@ def main() -> None:
     _rand_prob_ramp_start: float = float(args.pid_random_move_prob_start) if args.pid_random_move_prob_start is not None else float(args.recommended_opponent_random_move_prob)
     # Ramp completes (SF weights reach end value) once random_move_prob falls to this threshold.
     _rand_prob_ramp_end_threshold: float = 0.10
-
-    def _sf_bootstrap_ramp_frac(rand_prob: float) -> float:
-        """Returns 0.0 at ramp start (full SF bootstrap) → 1.0 when rand_prob ≤ 10% random."""
-        span = _rand_prob_ramp_start - _rand_prob_ramp_end_threshold
-        if span <= 0.0:
-            return 1.0
-        return max(0.0, min(1.0, (_rand_prob_ramp_start - rand_prob) / span))
+    _sf_ramp_fn = functools.partial(
+        _sf_bootstrap_ramp_frac,
+        ramp_start=_rand_prob_ramp_start,
+        ramp_end_threshold=_rand_prob_ramp_end_threshold,
+    )
 
     # Mutable difficulty knobs. PID may update these over time.
     current_sf_nodes: int = int(args.recommended_sf_nodes)
@@ -758,22 +925,12 @@ def main() -> None:
     trial_root = server_root / "trials" / trial_id if trial_id else server_root
     api_prefix = f"/v1/trials/{trial_id}" if trial_id else "/v1"
 
-    def _resolve_trial_subdir(path_str: str, *, fallback_name: str | None = None) -> Path:
-        raw = Path(path_str)
-        if raw.is_absolute():
-            return raw
-        if trial_id:
-            if fallback_name is not None and raw == Path("server") / fallback_name:
-                return trial_root / fallback_name
-            return trial_root / raw
-        return server_root / raw if raw.parts[:1] != (server_root.name,) else raw
-
-    publish_dir = _resolve_trial_subdir(str(args.publish_dir))
-    inbox_dir = _resolve_trial_subdir(str(args.inbox_dir))
-    processed_dir = _resolve_trial_subdir(str(args.processed_dir))
+    publish_dir = _resolve_trial_subdir(str(args.publish_dir), trial_id, server_root, trial_root)
+    inbox_dir = _resolve_trial_subdir(str(args.inbox_dir), trial_id, server_root, trial_root)
+    processed_dir = _resolve_trial_subdir(str(args.processed_dir), trial_id, server_root, trial_root)
     arena_inbox_dir = trial_root / "arena_inbox"
     arena_processed_dir = trial_root / "arena_processed"
-    work_dir = _resolve_trial_subdir(str(args.work_dir), fallback_name="work")
+    work_dir = _resolve_trial_subdir(str(args.work_dir), trial_id, server_root, trial_root, fallback_name="work")
 
     publish_dir.mkdir(parents=True, exist_ok=True)
     inbox_dir.mkdir(parents=True, exist_ok=True)
@@ -814,7 +971,8 @@ def main() -> None:
             pd = json.loads(pid_state_path.read_text(encoding="utf-8"))
             pid.nodes = int(pd.get("nodes", current_sf_nodes))
             raw_ema = pd.get("ema_winrate")
-            pid.ema_winrate = float(raw_ema) if raw_ema is not None else None
+            if raw_ema is not None:
+                pid.ema_winrate = float(raw_ema)
             pid._integral = float(pd.get("integral", 0.0))
             raw_skill = pd.get("skill_level")
             if raw_skill is not None:
@@ -893,7 +1051,7 @@ def main() -> None:
 
     # Last-known training metrics (used for manifest while arena is running)
     last_train_path = work_dir / "last_train.json"
-    last_train = {
+    last_train: dict[str, float | None] = {
         "loss": None,
         "policy_loss": None,
         "wdl_loss": None,
@@ -950,79 +1108,41 @@ def main() -> None:
         trainer_step = int(getattr(trainer, "step", 0))
         recommended_worker = _build_recommended_worker(
             args, trainer_step=trainer_step,
-            max_plies=_compute_max_plies(trainer_step),
+            max_plies=_compute_max_plies(trainer_step, start=_max_plies_start, end=_max_plies_end, ramp_steps=_max_plies_ramp_steps),
             sf_nodes=int(current_sf_nodes),
             sf_skill_level=current_sf_skill_level,
             opponent_random_move_prob=float(current_opponent_random_move_prob),
         )
 
-        manifest = {
-            "server_time_unix": int(time.time()),
-            "protocol_version": int(PROTOCOL_VERSION),
-            "server_version": str(PACKAGE_VERSION),
-            "min_worker_version": str(args.min_worker_version),
-            "trial_id": trial_id or None,
-            "trainer_step": trainer_step,
-            "task": {"type": "selfplay"},
-            "recommended_worker": recommended_worker,
-            "encoding": {
-                "input_planes": 146,
-                "policy_size": int(POLICY_SIZE),
-                "policy_encoding": "lc0_4672",
-            },
-            "model": {
-                "sha256": str(model_sha),
-                "endpoint": api_prefix + "/model",
-                "filename": "latest_model.pt",
-                "format": "torch_state_dict",
-            },
-            "model_config": {
-                "kind": str(args.model),
-                "embed_dim": int(args.embed_dim),
-                "num_layers": int(args.num_layers),
-                "num_heads": int(args.num_heads),
-                "ffn_mult": float(args.ffn_mult),
-                "use_smolgen": not bool(args.no_smolgen),
-                "use_nla": bool(args.use_nla),
-                "use_qk_rmsnorm": bool(args.use_qk_rmsnorm),
-                "gradient_checkpointing": bool(args.gradient_checkpointing),
-            },
-            "data": {
-                "replay_size": int(len(buf)),
-                "shards_ingested": 0,
-                "positions_ingested": 0,
-            },
-            "train": {
-                "loss": None,
-                "policy_loss": None,
-                "wdl_loss": None,
-            },
-        }
-
-        if best_model_sha:
-            manifest["best_model"] = {
-                "sha256": str(best_model_sha),
-                "endpoint": api_prefix + "/best_model",
-                "filename": "best_model.pt",
-                "format": "torch_state_dict",
-            }
-
-        # Optional: stockfish distribution
-        if published_stockfish_path is not None and published_stockfish_path.exists():
-            manifest["stockfish"] = {
-                "endpoint": api_prefix + "/stockfish",
-                "filename": published_stockfish_path.name,
-                "sha256": _sha256_file(published_stockfish_path),
-            }
-
-        # Optional: worker self-update wheel
-        if published_worker_wheel_path is not None and published_worker_wheel_path.exists():
-            manifest["worker_wheel"] = {
-                "endpoint": api_prefix + "/worker_wheel",
-                "filename": published_worker_wheel_path.name,
-                "sha256": _sha256_file(published_worker_wheel_path),
-                "version": str(PACKAGE_VERSION),
-            }
+        manifest = _build_manifest(
+            args,
+            trainer_step=trainer_step,
+            recommended_worker=recommended_worker,
+            task={"type": "selfplay"},
+            model_sha=model_sha,
+            best_model_sha=best_model_sha,
+            buf=buf,
+            ingested=0,
+            positions=0,
+            train_loss=None,
+            train_policy_loss=None,
+            train_wdl_loss=None,
+            best_loss=best_loss,
+            best_loss_trainer_step=best_loss_trainer_step,
+            arena_active=False,
+            arena_latest_sha="",
+            arena_best_sha="",
+            arena_games_done=0,
+            arena_a_win=0,
+            arena_a_draw=0,
+            arena_a_loss=0,
+            arena_last_winrate=None,
+            arena_last_accepted=None,
+            api_prefix=api_prefix,
+            trial_id=trial_id,
+            published_stockfish_path=published_stockfish_path,
+            published_worker_wheel_path=published_worker_wheel_path,
+        )
 
         _atomic_write_text(
             publish_dir / "manifest.json",
@@ -1046,7 +1166,7 @@ def main() -> None:
                 pid, trainer,
                 wins=iter_wins, draws=iter_draws, losses=iter_losses,
                 w_sf_wdl_start=_w_sf_wdl_start, w_sf_wdl_end=_w_sf_wdl_end,
-                sf_bootstrap_ramp_fn=_sf_bootstrap_ramp_frac,
+                sf_bootstrap_ramp_fn=_sf_ramp_fn,
                 pid_state_path=pid_state_path,
             )
 
@@ -1079,101 +1199,35 @@ def main() -> None:
 
         else:
             # Phase 4: Training
-            metrics = trainer.train_steps(buf, batch_size=int(args.batch_size), steps=int(args.train_steps))
-            trainer.save(ckpt_path)
-
-            train_loss = float(metrics.loss)
-            train_policy_loss = float(metrics.policy_loss)
-            train_wdl_loss = float(metrics.wdl_loss)
-            last_train_path.write_text(
-                json.dumps(
-                    {
-                        "loss": float(train_loss),
-                        "policy_loss": float(train_policy_loss),
-                        "wdl_loss": float(train_wdl_loss),
-                        "updated_at_unix": int(time.time()),
-                    },
-                    indent=2,
-                    sort_keys=True,
-                ),
-                encoding="utf-8",
+            result = _run_train_step(
+                args, trainer, buf,
+                model_path=model_path,
+                best_model_path=best_model_path,
+                champion_ckpt_path=champion_ckpt_path,
+                ckpt_path=ckpt_path,
+                best_loss_ckpt_path=best_loss_ckpt_path,
+                best_loss_model_path=best_loss_model_path,
+                best_loss_state_path=best_loss_state_path,
+                arena_state_path=arena_state_path,
+                arena_state=arena_state,
+                best_loss=best_loss,
+                best_loss_trainer_step=best_loss_trainer_step,
+                last_train=last_train,
+                last_train_path=last_train_path,
             )
-            last_train.update({"loss": train_loss, "policy_loss": train_policy_loss, "wdl_loss": train_wdl_loss})
-
-            # Best-by-loss tracking (local only)
-            cur_loss = float(metrics.loss)
-            if cur_loss < best_loss - 1e-12:
-                best_loss = cur_loss
-                best_loss_trainer_step = int(getattr(trainer, "step", 0))
-                trainer.save(best_loss_ckpt_path)
-                trainer.export_swa(best_loss_model_path)
-                best_loss_state_path.write_text(
-                    json.dumps(
-                        {
-                            "best_loss": float(best_loss),
-                            "trainer_step": int(best_loss_trainer_step),
-                            "updated_at_unix": int(time.time()),
-                        },
-                        indent=2,
-                        sort_keys=True,
-                    ),
-                    encoding="utf-8",
-                )
-
-            # Publish latest model weights
-            trainer.export_swa(model_path)
-            model_sha = _sha256_file(model_path)
-
-            # Initialize champion model if missing.
-            if not best_model_path.exists():
-                shutil.copy2(model_path, best_model_path)
-                best_model_sha = _sha256_file(best_model_path)
-                trainer.save(champion_ckpt_path)
-            else:
-                best_model_sha = _sha256_file(best_model_path)
-
-            # Start arena for this challenger (once), throttled by --arena-every-n-steps.
-            _arena_step = int(getattr(trainer, "step", 0))
-            _arena_due = (_arena_step % int(args.arena_every_n_steps)) < int(args.train_steps)
-            if bool(args.arena_enabled) and (not arena_state["active"]) and best_model_sha and model_sha and best_model_sha != model_sha and _arena_due:
-                arena_state["active"] = True
-                arena_state["latest_sha"] = str(model_sha)
-                arena_state["best_sha"] = str(best_model_sha)
-                arena_state["games_done"] = 0
-                arena_state["a_win"] = 0
-                arena_state["a_draw"] = 0
-                arena_state["a_loss"] = 0
-
-                log.info(
-                    "arena start: games_target=%d accept_winrate=%.3f latest=%s best=%s",
-                    int(args.arena_games_target),
-                    float(args.arena_accept_winrate),
-                    str(arena_state["latest_sha"])[:8],
-                    str(arena_state["best_sha"])[:8],
-                )
-                arena_state_path.write_text(
-                    json.dumps(
-                        {
-                            "active": True,
-                            "latest_sha": str(arena_state["latest_sha"]),
-                            "best_sha": str(arena_state["best_sha"]),
-                            "games_done": 0,
-                            "a_win": 0,
-                            "a_draw": 0,
-                            "a_loss": 0,
-                            "updated_at_unix": int(time.time()),
-                        },
-                        indent=2,
-                        sort_keys=True,
-                    ),
-                    encoding="utf-8",
-                )
+            train_loss = result.train_loss
+            train_policy_loss = result.train_policy_loss
+            train_wdl_loss = result.train_wdl_loss
+            model_sha = result.model_sha
+            best_model_sha = result.best_model_sha
+            best_loss = result.best_loss
+            best_loss_trainer_step = result.best_loss_trainer_step
 
         # Phase 5: Build and publish manifest
         trainer_step = int(getattr(trainer, "step", 0))
         recommended_worker = _build_recommended_worker(
             args, trainer_step=trainer_step,
-            max_plies=_compute_max_plies(trainer_step),
+            max_plies=_compute_max_plies(trainer_step, start=_max_plies_start, end=_max_plies_end, ramp_steps=_max_plies_ramp_steps),
             sf_nodes=int(current_sf_nodes),
             sf_skill_level=current_sf_skill_level,
             opponent_random_move_prob=float(current_opponent_random_move_prob),
