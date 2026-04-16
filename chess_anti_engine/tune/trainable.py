@@ -2151,6 +2151,168 @@ def _restore_checkpoint_or_salvage(
     return rr, rng
 
 
+def _maybe_load_bootstrap(
+    *,
+    tc: TrialConfig,
+    trainer,
+    device: str,
+    ckpt,
+    restore: RestoreResult,
+) -> None:
+    """Load pre-trained bootstrap model weights on fresh start (no checkpoint/warmstart).
+
+    IMPORTANT: Only loads MODEL WEIGHTS — skips optimizer/scheduler/step.
+    The bootstrap was trained for ~13k steps with its own LR schedule; carrying that
+    state causes: (1) step=13323 skips warmup entirely, (2) scheduler resumes
+    mid-cosine-cycle with near-zero LR then spikes on restart, (3) optimizer momentum
+    buffers from bootstrap data cause wrong gradient directions on selfplay data,
+    (4) PB2's lr perturbation has no effect because scheduler's base_lr is locked.
+    """
+    if not (tc.bootstrap_checkpoint and ckpt is None and (not restore.seed_warmstart_used)):
+        return
+    bp = Path(tc.bootstrap_checkpoint)
+    if not bp.exists():
+        print(f"[trial] WARNING: bootstrap checkpoint not found: {bp}")
+        return
+    print(f"[trial] Loading pre-trained bootstrap model weights: {bp}")
+    ckpt_data = torch.load(str(bp), map_location=device)
+    model_sd = ckpt_data.get("model") or ckpt_data.get("model_state_dict") or ckpt_data
+    load_state_dict_tolerant(trainer.model, model_sd, label="bootstrap")
+    if tc.bootstrap_zero_policy_heads:
+        zeroed = zero_policy_head_parameters_(trainer.model)
+        if zeroed:
+            print(f"[trial] Zeroed bootstrap policy heads: {', '.join(zeroed)}")
+    if tc.bootstrap_reinit_volatility_heads:
+        reinit = reinit_volatility_head_parameters_(trainer.model)
+        if reinit:
+            print(f"[trial] Reinitialized bootstrap volatility heads: {', '.join(reinit)}")
+    # Re-sync SWA with the newly loaded weights (AveragedModel deep-copies at init).
+    trainer._init_swa()
+    del ckpt_data
+
+
+def _init_replay_buffers(
+    *,
+    tc: TrialConfig,
+    config: dict,
+    restore: RestoreResult,
+    trial_dir: Path,
+    work_dir: Path,
+    rng,
+    ckpt,
+) -> tuple:
+    """Set up replay + holdout buffers, seeding shards from warmstart/shared/exploit.
+
+    Returns ``(buf, holdout_buf, current_window, replay_shard_dir,
+    selfplay_shards_dir)``.
+    """
+    current_window = tc.replay_window_start
+    replay_shard_dir = _trial_replay_shard_dir(config=config, trial_dir=trial_dir)
+    selfplay_shards_dir = work_dir / "selfplay_shards"
+    selfplay_shards_dir.mkdir(parents=True, exist_ok=True)
+
+    # Optional warmstart replay from salvage seed slot (fresh trials only).
+    if (
+        restore.seed_warmstart_used
+        and (not restore.cross_trial_restore)
+        and restore.seed_warmstart_replay_dir is not None
+        and restore.seed_warmstart_replay_dir.is_dir()
+        and (not iter_shard_paths(replay_shard_dir))
+    ):
+        replay_shard_dir.mkdir(parents=True, exist_ok=True)
+        copied = 0
+        for sp in iter_shard_paths(restore.seed_warmstart_replay_dir):
+            copy_or_link_shard(sp, replay_shard_dir / sp.name)
+            copied += 1
+        if copied:
+            print(
+                f"[trial] Seeded {copied} replay shards from salvage slot "
+                f"{restore.seed_warmstart_slot} ({restore.seed_warmstart_replay_dir})"
+            )
+
+    shared_shards_loaded = 0
+
+    # Seed replay buffer with shared iter-0 data (played once from bootstrap net).
+    # Only copy if this is a fresh trial (no existing shards in replay_shard_dir).
+    if tc.shared_shards_dir and not iter_shard_paths(replay_shard_dir) and (not restore.cross_trial_restore):
+        src = Path(tc.shared_shards_dir)
+        if src.is_dir():
+            replay_shard_dir.mkdir(parents=True, exist_ok=True)
+            copied = 0
+            for sp in iter_shard_paths(src):
+                copy_or_link_shard(sp, replay_shard_dir / sp.name)
+                copied += 1
+            if copied:
+                shared_shards_loaded = int(copied)
+                print(f"[trial] Seeded {copied} shared iter-0 shards from {src}")
+
+    if restore.cross_trial_restore and tc.exploit_replay_refresh_enabled:
+        donor_trial_dir = Path(restore.restored_owner_trial_dir).expanduser() if restore.restored_owner_trial_dir else None
+        refresh_summary = _refresh_replay_shards_on_exploit(
+            config=config,
+            replay_shard_dir=replay_shard_dir,
+            recipient_trial_dir=trial_dir,
+            donor_trial_dir=donor_trial_dir,
+            keep_recent_fraction=tc.exploit_replay_local_keep_recent_fraction,
+            keep_older_fraction=tc.exploit_replay_local_keep_older_fraction,
+            donor_shards=tc.exploit_replay_donor_shards,
+            donor_skip_newest=tc.exploit_replay_skip_newest,
+            shard_size=tc.shard_size,
+            holdout_fraction=tc.holdout_fraction,
+        )
+        print(
+            "[trial] replay refresh after exploit: "
+            f"local_before={refresh_summary['local_before']} "
+            f"deleted={refresh_summary['local_deleted']} "
+            f"local_recent_deleted={refresh_summary['local_recent_deleted']} "
+            f"local_older_deleted={refresh_summary['local_older_deleted']} "
+            f"after_keep={refresh_summary['local_after_keep']} "
+            f"donor_available={refresh_summary['donor_available']} "
+            f"donor_selected={refresh_summary['donor_selected']} "
+            f"donor_copied={refresh_summary['donor_copied']} "
+            f"final={refresh_summary['local_final']}"
+        )
+        # Set current_window based on shards actually kept on disk after refresh,
+        # so the DiskReplayBuffer capacity is correct from construction and
+        # _enforce_window doesn't aggressively evict on first add_many.
+        kept_after_refresh = iter_shard_paths(replay_shard_dir)
+        if kept_after_refresh:
+            current_window = max(int(current_window), len(kept_after_refresh) * tc.shard_size)
+            print(
+                f"[trial] exploit restore: pre-set window={current_window} "
+                f"for {len(kept_after_refresh)} kept shards"
+            )
+
+    buf = DiskReplayBuffer(
+        current_window,
+        shard_dir=replay_shard_dir,
+        rng=rng,
+        shuffle_cap=tc.shuffle_buffer_size,
+        shard_size=tc.shard_size,
+        refresh_interval=tc.shuffle_refresh_interval,
+        refresh_shards=tc.shuffle_refresh_shards,
+        draw_cap_frac=tc.shuffle_draw_cap_frac,
+        wl_max_ratio=tc.shuffle_wl_max_ratio,
+    )
+
+    # Preserve intentionally seeded replay (resume, salvage warmstart, shared-shard
+    # bootstrap), but keep plain fresh starts at replay_window_start so easy early
+    # games evict promptly instead of inheriting stale local shards.
+    seeded_replay_start = bool(ckpt is not None or restore.seed_warmstart_used or shared_shards_loaded > 0)
+    if seeded_replay_start:
+        current_window = max(int(current_window), int(len(buf)))
+    buf.capacity = int(current_window)
+    print(
+        f"[trial] buffer init: startup_source={restore.startup_source} "
+        f"seeded={seeded_replay_start} cross_trial={restore.cross_trial_restore} "
+        f"len(buf)={len(buf)} capacity={buf.capacity} "
+        f"tracked_shards={len(buf._shard_paths)} total_pos={buf._total_positions}"
+    )
+    holdout_buf = ArrayReplayBuffer(tc.holdout_capacity, rng=rng)
+
+    return buf, holdout_buf, current_window, replay_shard_dir, selfplay_shards_dir
+
+
 def train_trial(config: dict):
     """Ray Tune trainable.
 
@@ -2257,148 +2419,12 @@ def train_trial(config: dict):
     # Rebuild tc — _restore_checkpoint_or_salvage may overlay donor config.
     tc = TrialConfig.from_dict(config)
 
-    # Growing sliding window: start small, grow as the net matures.
-    current_window = tc.replay_window_start
-    replay_shard_dir = _trial_replay_shard_dir(config=config, trial_dir=trial_dir)
-    selfplay_shards_dir = work_dir / "selfplay_shards"
-    selfplay_shards_dir.mkdir(parents=True, exist_ok=True)
-
-    # Optional warmstart replay from salvage seed slot (fresh trials only).
-    if (
-        restore.seed_warmstart_used
-        and (not restore.cross_trial_restore)
-        and restore.seed_warmstart_replay_dir is not None
-        and restore.seed_warmstart_replay_dir.is_dir()
-        and (not iter_shard_paths(replay_shard_dir))
-    ):
-        replay_shard_dir.mkdir(parents=True, exist_ok=True)
-        copied = 0
-        for sp in iter_shard_paths(restore.seed_warmstart_replay_dir):
-            copy_or_link_shard(sp, replay_shard_dir / sp.name)
-            copied += 1
-        if copied:
-            print(
-                f"[trial] Seeded {copied} replay shards from salvage slot "
-                f"{restore.seed_warmstart_slot} ({restore.seed_warmstart_replay_dir})"
-            )
-
-    shared_summary = {
-        "source_trials_selected": 0,
-        "source_trials_ingested": 0,
-        "source_trials_skipped_repeat": 0,
-        "source_shards_loaded": 0,
-        "source_samples_ingested": 0,
-    }
-
-    # Seed replay buffer with shared iter-0 data (played once from bootstrap net).
-    # Only copy if this is a fresh trial (no existing shards in replay_shard_dir).
-    if tc.shared_shards_dir and not iter_shard_paths(replay_shard_dir) and (not restore.cross_trial_restore):
-        src = Path(tc.shared_shards_dir)
-        if src.is_dir():
-            replay_shard_dir.mkdir(parents=True, exist_ok=True)
-            copied = 0
-            for sp in iter_shard_paths(src):
-                copy_or_link_shard(sp, replay_shard_dir / sp.name)
-                copied += 1
-            if copied:
-                shared_summary["source_shards_loaded"] = int(copied)
-                print(f"[trial] Seeded {copied} shared iter-0 shards from {src}")
-
-    if restore.cross_trial_restore and tc.exploit_replay_refresh_enabled:
-        donor_trial_dir = Path(restore.restored_owner_trial_dir).expanduser() if restore.restored_owner_trial_dir else None
-        refresh_summary = _refresh_replay_shards_on_exploit(
-            config=config,
-            replay_shard_dir=replay_shard_dir,
-            recipient_trial_dir=trial_dir,
-            donor_trial_dir=donor_trial_dir,
-            keep_recent_fraction=tc.exploit_replay_local_keep_recent_fraction,
-            keep_older_fraction=tc.exploit_replay_local_keep_older_fraction,
-            donor_shards=tc.exploit_replay_donor_shards,
-            donor_skip_newest=tc.exploit_replay_skip_newest,
-            shard_size=tc.shard_size,
-            holdout_fraction=tc.holdout_fraction,
-        )
-        print(
-            "[trial] replay refresh after exploit: "
-            f"local_before={refresh_summary['local_before']} "
-            f"deleted={refresh_summary['local_deleted']} "
-            f"local_recent_deleted={refresh_summary['local_recent_deleted']} "
-            f"local_older_deleted={refresh_summary['local_older_deleted']} "
-            f"after_keep={refresh_summary['local_after_keep']} "
-            f"donor_available={refresh_summary['donor_available']} "
-            f"donor_selected={refresh_summary['donor_selected']} "
-            f"donor_copied={refresh_summary['donor_copied']} "
-            f"final={refresh_summary['local_final']}"
-        )
-        # Set current_window based on shards actually kept on disk after refresh,
-        # so the DiskReplayBuffer capacity is correct from construction and
-        # _enforce_window doesn't aggressively evict on first add_many.
-        kept_after_refresh = iter_shard_paths(replay_shard_dir)
-        if kept_after_refresh:
-            current_window = max(int(current_window), len(kept_after_refresh) * tc.shard_size)
-            print(
-                f"[trial] exploit restore: pre-set window={current_window} "
-                f"for {len(kept_after_refresh)} kept shards"
-            )
-
-    buf = DiskReplayBuffer(
-        current_window,
-        shard_dir=replay_shard_dir,
-        rng=rng,
-        shuffle_cap=tc.shuffle_buffer_size,
-        shard_size=tc.shard_size,
-        refresh_interval=tc.shuffle_refresh_interval,
-        refresh_shards=tc.shuffle_refresh_shards,
-        draw_cap_frac=tc.shuffle_draw_cap_frac,
-        wl_max_ratio=tc.shuffle_wl_max_ratio,
+    buf, holdout_buf, current_window, replay_shard_dir, selfplay_shards_dir = _init_replay_buffers(
+        tc=tc, config=config, restore=restore,
+        trial_dir=trial_dir, work_dir=work_dir, rng=rng, ckpt=ckpt,
     )
 
-    # Preserve intentionally seeded replay (resume, salvage warmstart, shared-shard
-    # bootstrap), but keep plain fresh starts at replay_window_start so easy early
-    # games evict promptly instead of inheriting stale local shards.
-    seeded_replay_start = bool(ckpt is not None or restore.seed_warmstart_used or shared_summary["source_shards_loaded"] > 0)
-    if seeded_replay_start:
-        current_window = max(int(current_window), int(len(buf)))
-    buf.capacity = int(current_window)
-    print(
-        f"[trial] buffer init: startup_source={restore.startup_source} "
-        f"seeded={seeded_replay_start} cross_trial={restore.cross_trial_restore} "
-        f"len(buf)={len(buf)} capacity={buf.capacity} "
-        f"tracked_shards={len(buf._shard_paths)} total_pos={buf._total_positions}"
-    )
-    holdout_buf = ArrayReplayBuffer(tc.holdout_capacity, rng=rng)
-
-    # Load pre-trained bootstrap checkpoint (trained offline via scripts/train_bootstrap.py).
-    # This gives the value head a working signal so first MCTS searches are better than random.
-    # IMPORTANT: Only load MODEL WEIGHTS — do NOT restore optimizer/scheduler/step.
-    # The bootstrap was trained for ~13k steps with its own LR schedule; carrying that
-    # state into the trainable causes: (1) step=13323 skips warmup entirely,
-    # (2) scheduler resumes mid-cosine-cycle with near-zero LR then spikes on restart,
-    # (3) optimizer momentum buffers from bootstrap's data distribution cause wrong
-    # gradient directions on selfplay data, (4) PB2's lr perturbation has no effect
-    # because scheduler's base_lr is locked to bootstrap's lr (0.0003).
-    if tc.bootstrap_checkpoint and ckpt is None and (not restore.seed_warmstart_used):
-        # Only load bootstrap if Ray didn't restore a trial checkpoint (i.e. fresh start).
-        bp = Path(tc.bootstrap_checkpoint)
-        if bp.exists():
-            print(f"[trial] Loading pre-trained bootstrap model weights: {bp}")
-            ckpt_data = torch.load(str(bp), map_location=device)
-            model_sd = ckpt_data.get("model") or ckpt_data.get("model_state_dict") or ckpt_data
-            load_state_dict_tolerant(trainer.model, model_sd, label="bootstrap")
-            if tc.bootstrap_zero_policy_heads:
-                zeroed = zero_policy_head_parameters_(trainer.model)
-                if zeroed:
-                    print(f"[trial] Zeroed bootstrap policy heads: {', '.join(zeroed)}")
-            if tc.bootstrap_reinit_volatility_heads:
-                reinit = reinit_volatility_head_parameters_(trainer.model)
-                if reinit:
-                    print(f"[trial] Reinitialized bootstrap volatility heads: {', '.join(reinit)}")
-            # Re-sync SWA with the newly loaded weights (AveragedModel deep-copies at init).
-            trainer._init_swa()
-            # Deliberately skip: optimizer, scheduler, step — start fresh.
-            del ckpt_data
-        else:
-            print(f"[trial] WARNING: bootstrap checkpoint not found: {bp}")
+    _maybe_load_bootstrap(tc=tc, trainer=trainer, device=device, ckpt=ckpt, restore=restore)
 
     holdout_frozen = False
     holdout_generation = 0
