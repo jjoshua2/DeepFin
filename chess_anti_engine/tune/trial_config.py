@@ -514,7 +514,7 @@ class DriftMetrics:
 
 @dataclass
 class TrainingResult:
-    """Output of the drift-measurement + training + gating phase."""
+    """Output of the training + gating phase."""
 
     metrics: object | None = None
     test_metrics: object | None = None
@@ -523,7 +523,7 @@ class TrainingResult:
     target_sample_budget: int = 0
     window_target_samples: int = 0
     train_ms: float = 0.0
-    drift: DriftMetrics = field(default_factory=DriftMetrics)
+    gate_match_idx: int = 0
 
 
 @dataclass

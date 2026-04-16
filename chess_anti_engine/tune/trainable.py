@@ -48,7 +48,7 @@ from chess_anti_engine.selfplay.budget import progressive_mcts_simulations
 from chess_anti_engine.stockfish import DifficultyPID, StockfishPool, StockfishUCI, pid_from_config
 from chess_anti_engine.train import Trainer, trainer_kwargs_from_config
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
-from chess_anti_engine.tune.trial_config import DriftMetrics, PidResult, TrialConfig
+from chess_anti_engine.tune.trial_config import DriftMetrics, PidResult, SelfplayResult, TrainingResult, TrialConfig
 from chess_anti_engine.tune._utils import (
     concat_array_batches as _concat_array_batches,
     resolve_local_override_root as _resolve_local_override_root,
@@ -978,33 +978,168 @@ def _run_eval_games(
     return eval_dict
 
 
+def _run_training_and_gating(
+    *,
+    tc: TrialConfig,
+    trainer,
+    buf,
+    holdout_buf,
+    config: dict,
+    model_cfg,
+    device: str,
+    rng,
+    pid,
+    sf,
+    current_rand: float,
+    skill_level_used: int,
+    sims: int,
+    wdl_regret_used: float,
+    total_positions: int,
+    imported_samples_this_iter: int,
+    gate_match_idx: int,
+    gate_state_path: Path,
+    use_distributed_selfplay: bool,
+    distributed_server_root: str | None,
+    distributed_dirs: dict | None,
+    iteration_idx: int,
+    iteration_zero_based: int,
+    trial_id: str,
+    startup_source: str,
+    salvage_origin_used: bool,
+) -> TrainingResult:
+    """Compute step budget, run training, net gating, and holdout eval."""
+    train_t0 = time.monotonic()
+    batch_size = tc.batch_size
+    accum_steps = max(1, tc.accum_steps)
+    skip_train = len(buf) < batch_size
+    steps = 0
+    target_sample_budget = 0
+    window_target_samples = 0
+    gate_passed = True
+    metrics = None
+
+    if not skip_train:
+        train_budget = _compute_train_step_budget(
+            positions_added=int(total_positions),
+            imported_samples=int(imported_samples_this_iter),
+            replay_size=int(len(buf)),
+            batch_size=int(batch_size),
+            accum_steps=int(accum_steps),
+            base_max_steps=int(tc.train_steps),
+            train_window_fraction=float(max(0.0, tc.train_window_fraction)),
+        )
+        steps = int(train_budget["steps"])
+        target_sample_budget = int(train_budget["target_sample_budget"])
+        window_target_samples = int(train_budget["window_target_samples"])
+
+        if startup_source == "salvage" and bool(salvage_origin_used):
+            if int(iteration_zero_based) < tc.salvage_startup_no_share_iters and tc.salvage_startup_max_train_steps > 0:
+                steps = min(steps, tc.salvage_startup_max_train_steps)
+            elif (
+                tc.salvage_startup_post_share_ramp_iters > 0
+                and int(iteration_zero_based) < (tc.salvage_startup_no_share_iters + tc.salvage_startup_post_share_ramp_iters)
+                and tc.salvage_startup_post_share_max_train_steps > 0
+            ):
+                steps = min(steps, tc.salvage_startup_post_share_max_train_steps)
+
+        # Save model state for potential rollback (net gating).
+        pre_train_state = None
+        if tc.gate_games > 0 and (iteration_zero_based % tc.gate_interval == 0):
+            pre_train_state = {
+                k: v.clone() for k, v in trainer.model.state_dict().items()
+            }
+
+        if tc.distributed_pause_selfplay_during_training and use_distributed_selfplay and distributed_dirs is not None:
+            _publish_distributed_trial_state(
+                trainer=trainer, config=config, model_cfg=model_cfg,
+                server_root=distributed_server_root, trial_id=trial_id,
+                training_iteration=int(iteration_idx),
+                trainer_step=int(getattr(trainer, "step", 0)),
+                sf_nodes=int(pid.nodes) if pid is not None else tc.sf_nodes,
+                random_move_prob=float(current_rand),
+                skill_level=int(skill_level_used),
+                mcts_simulations=int(sims),
+                wdl_regret=float(pid.wdl_regret) if pid is not None else -1.0,
+                pause_selfplay=True,
+                pause_reason="training",
+                export_model=False,
+            )
+
+        metrics = trainer.train_steps(
+            buf,
+            batch_size=batch_size,
+            steps=steps,
+        )
+
+        # Net gating: play gate_games and reject if winrate < threshold.
+        if pre_train_state is not None and tc.gate_games > 0:
+            gate_wr, gate_w, gate_d, gate_l = _gate_check(
+                trainer.model,
+                device=device,
+                rng=rng,
+                sf=sf,
+                gate_games=tc.gate_games,
+                opponent_random_move_prob=current_rand,
+                tc=tc,
+            )
+
+            gate_match_idx += 1
+            try:
+                gate_state_path.write_text(
+                    json.dumps(
+                        {"matches": int(gate_match_idx)},
+                        indent=2,
+                        sort_keys=True,
+                    ),
+                    encoding="utf-8",
+                )
+            except Exception:
+                pass
+
+            try:
+                trainer.writer.add_scalar("gate/winrate", float(gate_wr), int(gate_match_idx))
+                trainer.writer.add_scalar("gate/win", float(gate_w), int(gate_match_idx))
+                trainer.writer.add_scalar("gate/draw", float(gate_d), int(gate_match_idx))
+                trainer.writer.add_scalar("gate/loss", float(gate_l), int(gate_match_idx))
+                trainer.writer.add_scalar("gate/passed", float(1.0 if gate_wr >= tc.gate_threshold else 0.0), int(gate_match_idx))
+            except Exception:
+                pass
+
+            if gate_wr < tc.gate_threshold:
+                trainer.model.load_state_dict(pre_train_state)
+                gate_passed = False
+
+    test_metrics = None
+    if len(holdout_buf) >= tc.batch_size:
+        test_metrics = trainer.eval_steps(
+            holdout_buf,
+            batch_size=tc.batch_size,
+            steps=tc.test_steps,
+        )
+
+    train_ms = (time.monotonic() - train_t0) * 1000.0
+
+    return TrainingResult(
+        metrics=metrics,
+        test_metrics=test_metrics,
+        gate_passed=gate_passed,
+        steps=steps,
+        target_sample_budget=target_sample_budget,
+        window_target_samples=window_target_samples,
+        train_ms=train_ms,
+        gate_match_idx=gate_match_idx,
+    )
+
+
 def _run_pid_and_eval(
     *,
     tc: TrialConfig,
     pid: DifficultyPID | None,
     sf: object | None,
+    sp_result: SelfplayResult,
     iteration_zero_based: int,
     opp_strength_ema: float,
     opp_ema_alpha: float,
-    # Selfplay stats
-    total_w: int,
-    total_d: int,
-    total_l: int,
-    total_games_generated: int,
-    total_game_plies: int,
-    total_adjudicated_games: int,
-    total_draw_games: int,
-    total_selfplay_games: int,
-    total_selfplay_adjudicated_games: int,
-    total_selfplay_draw_games: int,
-    total_curriculum_games: int,
-    total_curriculum_adjudicated_games: int,
-    total_curriculum_draw_games: int,
-    total_checkmate_games: int,
-    total_stalemate_games: int,
-    total_plies_win: int,
-    total_plies_draw: int,
-    total_plies_loss: int,
     current_rand: float,
     sf_nodes_used: int,
     skill_level_used: int,
@@ -1014,10 +1149,14 @@ def _run_pid_and_eval(
 
     Mutates *pid* (observe + param refresh) and *sf* (set_nodes) in place.
     """
+    total_w = sp_result.total_w
+    total_d = sp_result.total_d
+    total_l = sp_result.total_l
+
     # --- Derived game stats ---
-    gen = float(max(1, int(total_games_generated)))
-    sp = float(max(1, int(total_selfplay_games)))
-    cur = float(max(1, int(total_curriculum_games)))
+    gen = float(max(1, int(sp_result.total_games_generated)))
+    sp = float(max(1, int(sp_result.total_selfplay_games)))
+    cur = float(max(1, int(sp_result.total_curriculum_games)))
 
     blended_winrate_raw = _blended_winrate_raw_or_none(
         wins=total_w, draws=total_d, losses=total_l,
@@ -1093,18 +1232,18 @@ def _run_pid_and_eval(
         pid_ema_wr=pid_ema_wr,
         pid_update=pid_update,
         blended_winrate_raw=blended_winrate_raw,
-        avg_game_plies=float(total_game_plies) / gen,
-        adjudication_rate=float(total_adjudicated_games) / gen,
-        draw_rate=float(total_draw_games) / gen,
-        selfplay_adjudication_rate=float(total_selfplay_adjudicated_games) / sp,
-        selfplay_draw_rate=float(total_selfplay_draw_games) / sp,
-        curriculum_adjudication_rate=float(total_curriculum_adjudicated_games) / cur,
-        curriculum_draw_rate=float(total_curriculum_draw_games) / cur,
-        checkmate_rate=float(total_checkmate_games) / gen,
-        stalemate_rate=float(total_stalemate_games) / gen,
-        avg_plies_win=float(total_plies_win) / float(max(1, total_w)) if total_w > 0 else 0.0,
-        avg_plies_draw=float(total_plies_draw) / float(max(1, total_d)) if total_d > 0 else 0.0,
-        avg_plies_loss=float(total_plies_loss) / float(max(1, total_l)) if total_l > 0 else 0.0,
+        avg_game_plies=float(sp_result.total_game_plies) / gen,
+        adjudication_rate=float(sp_result.total_adjudicated_games) / gen,
+        draw_rate=float(sp_result.total_draw_games) / gen,
+        selfplay_adjudication_rate=float(sp_result.total_selfplay_adjudicated_games) / sp,
+        selfplay_draw_rate=float(sp_result.total_selfplay_draw_games) / sp,
+        curriculum_adjudication_rate=float(sp_result.total_curriculum_adjudicated_games) / cur,
+        curriculum_draw_rate=float(sp_result.total_curriculum_draw_games) / cur,
+        checkmate_rate=float(sp_result.total_checkmate_games) / gen,
+        stalemate_rate=float(sp_result.total_stalemate_games) / gen,
+        avg_plies_win=float(sp_result.total_plies_win) / float(max(1, total_w)) if total_w > 0 else 0.0,
+        avg_plies_draw=float(sp_result.total_plies_draw) / float(max(1, total_d)) if total_d > 0 else 0.0,
+        avg_plies_loss=float(sp_result.total_plies_loss) / float(max(1, total_l)) if total_l > 0 else 0.0,
         opp_strength=opp_strength,
         opp_strength_ema=opp_strength_ema,
         curr_topk=int(_curr_topk),
@@ -2097,6 +2236,34 @@ def train_trial(config: dict):
 
             imported_samples_this_iter = int(shared_summary.get("source_samples_ingested", 0))
 
+            sp = SelfplayResult(
+                total_w=total_w, total_d=total_d, total_l=total_l,
+                total_games_generated=total_games_generated,
+                total_game_plies=total_game_plies,
+                total_adjudicated_games=total_adjudicated_games,
+                total_draw_games=total_draw_games,
+                total_selfplay_games=total_selfplay_games,
+                total_selfplay_adjudicated_games=total_selfplay_adjudicated_games,
+                total_selfplay_draw_games=total_selfplay_draw_games,
+                total_curriculum_games=total_curriculum_games,
+                total_curriculum_adjudicated_games=total_curriculum_adjudicated_games,
+                total_curriculum_draw_games=total_curriculum_draw_games,
+                total_checkmate_games=total_checkmate_games,
+                total_stalemate_games=total_stalemate_games,
+                total_plies_win=total_plies_win,
+                total_plies_draw=total_plies_draw,
+                total_plies_loss=total_plies_loss,
+                total_positions=total_positions,
+                replay_positions_ingested=replay_positions_ingested,
+                total_sf_d6=total_sf_d6,
+                total_sf_d6_n=total_sf_d6_n,
+                distributed_stale_positions=distributed_stale_positions,
+                distributed_stale_games=distributed_stale_games,
+                shared_summary=shared_summary,
+                imported_samples_this_iter=imported_samples_this_iter,
+                ingest_ms=ingest_ms,
+            )
+
             train_samples = []  # Already flushed to buf above.
 
             if (not holdout_frozen) and freeze_holdout_at > 0 and len(holdout_buf) >= freeze_holdout_at:
@@ -2119,128 +2286,35 @@ def train_trial(config: dict):
 
             _sync_trainer_weights(trainer, config, tc, wdl_regret_used, current_rand)
 
-            train_t0 = time.monotonic()
-            batch_size = tc.batch_size
-            accum_steps = max(1, tc.accum_steps)
-            skip_train = len(buf) < batch_size
-            steps = 0
-            target_sample_budget = 0
-            window_target_samples = 0
-            if skip_train:
-                metrics = None
-                gate_passed = True
-            else:
-                # Training steps: target the larger of:
-                #   (1) newly-added positions this iteration, and
-                #   (2) a configured fraction of the current replay size.
-                # This keeps early training conservative while scaling updates
-                # upward naturally as the replay grows.
-                base_max_steps = tc.train_steps
-                train_window_fraction = max(0.0, tc.train_window_fraction)
-                train_budget = _compute_train_step_budget(
-                    positions_added=int(total_positions),
-                    imported_samples=int(imported_samples_this_iter),
-                    replay_size=int(len(buf)),
-                    batch_size=int(batch_size),
-                    accum_steps=int(accum_steps),
-                    base_max_steps=int(base_max_steps),
-                    train_window_fraction=float(train_window_fraction),
-                )
-                steps = int(train_budget["steps"])
-                target_sample_budget = int(train_budget["target_sample_budget"])
-                window_target_samples = int(train_budget["window_target_samples"])
-                if startup_source == "salvage" and bool(salvage_origin_used):
-                    if int(iteration_zero_based) < salvage_startup_no_share_iters and salvage_startup_max_train_steps > 0:
-                        steps = min(steps, salvage_startup_max_train_steps)
-                    elif (
-                        salvage_startup_post_share_ramp_iters > 0
-                        and int(iteration_zero_based) < (salvage_startup_no_share_iters + salvage_startup_post_share_ramp_iters)
-                        and salvage_startup_post_share_max_train_steps > 0
-                    ):
-                        steps = min(steps, salvage_startup_post_share_max_train_steps)
-
-                # Save model state for potential rollback (net gating).
-                gate_passed = True
-                pre_train_state = None
-                if gate_games > 0 and (iteration_zero_based % gate_interval == 0):
-                    pre_train_state = {
-                        k: v.clone() for k, v in trainer.model.state_dict().items()
-                    }
-
-                _pause_during_train = tc.distributed_pause_selfplay_during_training
-                if _pause_during_train and use_distributed_selfplay and distributed_dirs is not None:
-                    _publish_distributed_trial_state(
-                        trainer=trainer, config=config, model_cfg=model_cfg,
-                        server_root=distributed_server_root, trial_id=trial_id,
-                        training_iteration=int(iteration_idx),
-                        trainer_step=int(getattr(trainer, "step", 0)),
-                        sf_nodes=int(pid.nodes) if pid is not None else tc.sf_nodes,
-                        random_move_prob=float(current_rand),
-                        skill_level=int(skill_level_used),
-                        mcts_simulations=int(sims),
-                        wdl_regret=float(pid.wdl_regret) if pid is not None else -1.0,
-                        pause_selfplay=True,
-                        pause_reason="training",
-                        export_model=False,
-                    )
-
-                metrics = trainer.train_steps(
-                    buf,
-                    batch_size=batch_size,
-                    steps=steps,
-                )
-
-                # Net gating: play gate_games and reject if winrate < threshold.
-                if pre_train_state is not None and gate_games > 0:
-                    gate_wr, gate_w, gate_d, gate_l = _gate_check(
-                        trainer.model,
-                        device=device,
-                        rng=rng,
-                        sf=sf,
-                        gate_games=gate_games,
-                        opponent_random_move_prob=current_rand,
-                        tc=tc,
-                    )
-
-                    # Gate match index is separate from iteration because gates are rare.
-                    gate_match_idx += 1
-                    try:
-                        gate_state_path.write_text(
-                            json.dumps(
-                                {"matches": int(gate_match_idx)},
-                                indent=2,
-                                sort_keys=True,
-                            ),
-                            encoding="utf-8",
-                        )
-                    except Exception:
-                        pass
-
-                    # TensorBoard logging for gating (x-axis = gate match #).
-                    # Useful when gate checks happen infrequently.
-                    try:
-                        trainer.writer.add_scalar("gate/winrate", float(gate_wr), int(gate_match_idx))
-                        trainer.writer.add_scalar("gate/win", float(gate_w), int(gate_match_idx))
-                        trainer.writer.add_scalar("gate/draw", float(gate_d), int(gate_match_idx))
-                        trainer.writer.add_scalar("gate/loss", float(gate_l), int(gate_match_idx))
-                        trainer.writer.add_scalar("gate/passed", float(1.0 if gate_wr >= gate_threshold else 0.0), int(gate_match_idx))
-                    except Exception:
-                        pass
-
-                    if gate_wr < gate_threshold:
-                        # Revert model — training made it worse.
-                        trainer.model.load_state_dict(pre_train_state)
-                        gate_passed = False
-
-            test_metrics = None
-            if len(holdout_buf) >= tc.batch_size:
-                test_metrics = trainer.eval_steps(
-                    holdout_buf,
-                    batch_size=tc.batch_size,
-                    steps=tc.test_steps,
-                )
-
-            train_ms = (time.monotonic() - train_t0) * 1000.0
+            tr = _run_training_and_gating(
+                tc=tc, trainer=trainer, buf=buf, holdout_buf=holdout_buf,
+                config=config, model_cfg=model_cfg,
+                device=device, rng=rng, pid=pid, sf=sf,
+                current_rand=current_rand,
+                skill_level_used=skill_level_used,
+                sims=sims,
+                wdl_regret_used=wdl_regret_used,
+                total_positions=sp.total_positions,
+                imported_samples_this_iter=sp.imported_samples_this_iter,
+                gate_match_idx=gate_match_idx,
+                gate_state_path=gate_state_path,
+                use_distributed_selfplay=use_distributed_selfplay,
+                distributed_server_root=distributed_server_root,
+                distributed_dirs=distributed_dirs,
+                iteration_idx=iteration_idx,
+                iteration_zero_based=iteration_zero_based,
+                trial_id=trial_id,
+                startup_source=startup_source,
+                salvage_origin_used=salvage_origin_used,
+            )
+            metrics = tr.metrics
+            test_metrics = tr.test_metrics
+            gate_passed = tr.gate_passed
+            steps = tr.steps
+            target_sample_budget = tr.target_sample_budget
+            window_target_samples = tr.window_target_samples
+            train_ms = tr.train_ms
+            gate_match_idx = tr.gate_match_idx
 
             eval_dict = _run_eval_games(
                 tc=tc, trainer=trainer, device=device, rng=rng,
@@ -2321,25 +2395,10 @@ def train_trial(config: dict):
 
             pid_result = _run_pid_and_eval(
                 tc=tc, pid=pid, sf=sf,
+                sp_result=sp,
                 iteration_zero_based=iteration_zero_based,
                 opp_strength_ema=opp_strength_ema,
                 opp_ema_alpha=_OPP_EMA_ALPHA,
-                total_w=total_w, total_d=total_d, total_l=total_l,
-                total_games_generated=total_games_generated,
-                total_game_plies=total_game_plies,
-                total_adjudicated_games=total_adjudicated_games,
-                total_draw_games=total_draw_games,
-                total_selfplay_games=total_selfplay_games,
-                total_selfplay_adjudicated_games=total_selfplay_adjudicated_games,
-                total_selfplay_draw_games=total_selfplay_draw_games,
-                total_curriculum_games=total_curriculum_games,
-                total_curriculum_adjudicated_games=total_curriculum_adjudicated_games,
-                total_curriculum_draw_games=total_curriculum_draw_games,
-                total_checkmate_games=total_checkmate_games,
-                total_stalemate_games=total_stalemate_games,
-                total_plies_win=total_plies_win,
-                total_plies_draw=total_plies_draw,
-                total_plies_loss=total_plies_loss,
                 current_rand=current_rand,
                 sf_nodes_used=sf_nodes_used,
                 skill_level_used=skill_level_used,
