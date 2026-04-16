@@ -1,7 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
+
+StartupSource = Literal[
+    "fresh",
+    "checkpoint",
+    "checkpoint_model_only",
+    "salvage",
+    "exploit_restore",
+    "exploit_restore_model_only",
+]
 
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 
@@ -566,7 +575,7 @@ class PidResult:
 class RestoreResult:
     """Output of checkpoint / salvage / fresh-start restore logic."""
 
-    startup_source: str = "fresh"
+    startup_source: StartupSource = "fresh"
     restored_pid_state: dict | None = None
     global_iter: int = 0
     opp_strength_ema: float = 0.0

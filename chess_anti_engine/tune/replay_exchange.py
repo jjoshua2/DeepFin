@@ -18,6 +18,7 @@ from chess_anti_engine.replay.shard import (
     iter_shard_paths,
     load_shard_arrays,
 )
+from chess_anti_engine.utils.atomic import atomic_write_text
 from chess_anti_engine.tune._utils import (
     resolve_local_override_root,
     slice_array_batch,
@@ -500,9 +501,9 @@ def _share_top_replay_each_iteration(
                 import_state[source_key] = max(imported_iters)
 
     try:
-        import_state_path.write_text(
+        atomic_write_text(
+            import_state_path,
             json.dumps(import_state, sort_keys=True, indent=2),
-            encoding="utf-8",
         )
     except Exception:
         pass

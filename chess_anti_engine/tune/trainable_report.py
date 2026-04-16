@@ -2,8 +2,6 @@
 
 Writers and builders: CSV rows, TensorBoard scalars, best-model tracking,
 Ray checkpoint directories, and the per-iteration Ray report dict.
-Extracted from trainable.py to keep the orchestration module focused on
-lifecycle.
 """
 from __future__ import annotations
 
@@ -14,6 +12,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from chess_anti_engine.utils.atomic import atomic_write_text
 from chess_anti_engine.tune.trial_config import (
     DriftMetrics,
     PidResult,
@@ -121,14 +120,15 @@ def _save_trial_checkpoint(
     buf.flush()
     trainer.save(ckpt_dir / "trainer.pt")
     try:
-        (ckpt_dir / "rng_state.json").write_text(
+        atomic_write_text(
+            ckpt_dir / "rng_state.json",
             json.dumps(rng.bit_generator.state, sort_keys=True),
-            encoding="utf-8",
         )
     except Exception:
         pass
     try:
-        (ckpt_dir / "trial_meta.json").write_text(
+        atomic_write_text(
+            ckpt_dir / "trial_meta.json",
             json.dumps({
                 "owner_trial_id": str(trial_id),
                 "owner_trial_dir": str(trial_dir.resolve()),
@@ -142,7 +142,6 @@ def _save_trial_checkpoint(
                 "salvage_origin_dir": str(restore.salvage_origin_dir),
                 "global_iter": int(iteration_idx),
             }, sort_keys=True, indent=2),
-            encoding="utf-8",
         )
     except Exception:
         pass
@@ -169,7 +168,8 @@ def _update_best_model(
         best_loss = cur_loss
         trainer.save(best_dir / "trainer.pt")
         trainer.export_swa(best_dir / "best_model.pt")
-        best_state_path.write_text(
+        atomic_write_text(
+            best_state_path,
             json.dumps({
                 "best_loss": float(best_loss),
                 "iter": int(iteration_idx),
@@ -177,7 +177,6 @@ def _update_best_model(
                 "source": "test_loss" if test_metrics is not None else "train_loss",
                 "opp_strength_ema": float(opp_strength_ema),
             }, indent=2, sort_keys=True),
-            encoding="utf-8",
         )
     return best_loss
 
@@ -227,16 +226,17 @@ def _update_best_regret_checkpoints(
     try:
         trainer.save(slot_dir / "trainer.pt")
         pid_state = pid.state_dict()
-        (slot_dir / "pid_state.json").write_text(
-            json.dumps(pid_state, sort_keys=True, indent=2), encoding="utf-8",
+        atomic_write_text(
+            slot_dir / "pid_state.json",
+            json.dumps(pid_state, sort_keys=True, indent=2),
         )
-        (slot_dir / "meta.json").write_text(
+        atomic_write_text(
+            slot_dir / "meta.json",
             json.dumps({
                 "regret": regret, "step": step, "iter": iteration_idx,
                 "ema_winrate": ema_wr, "best_loss": best_loss,
                 "opp_strength_ema": opp_strength_ema,
             }, indent=2),
-            encoding="utf-8",
         )
     except Exception:
         return
@@ -256,7 +256,7 @@ def _update_best_regret_checkpoints(
             except Exception:
                 pass
 
-    index_path.write_text(json.dumps(entries, indent=2), encoding="utf-8")
+    atomic_write_text(index_path, json.dumps(entries, indent=2))
 
 
 def _log_iteration_scalars(

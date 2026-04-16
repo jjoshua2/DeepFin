@@ -8,9 +8,6 @@ Each function represents one phase of the main trial loop:
   * _run_pid_and_eval      — PID observe + opponent-strength compute
   * _run_selfplay_phase    — selfplay (dist. or local) + ingest + export
   * _finalize_iteration    — end-of-iter reporting / CSV / prune
-
-Extracted from trainable.py. Each is a pure free function with explicit
-kwargs; state mutation is localized to the objects passed in.
 """
 from __future__ import annotations
 
@@ -47,6 +44,7 @@ from chess_anti_engine.tune.distributed_runtime import (
     _publish_distributed_trial_state,
 )
 from chess_anti_engine.tune.replay_exchange import _share_top_replay_each_iteration
+from chess_anti_engine.utils.atomic import atomic_write_text
 from chess_anti_engine.tune.trainable_config_ops import _play_batch_kwargs
 from chess_anti_engine.tune.trainable_metrics import (
     _blended_winrate_raw_or_none,
@@ -272,13 +270,13 @@ def _run_training_and_gating(
 
             gate_match_idx += 1
             try:
-                gate_state_path.write_text(
+                atomic_write_text(
+                    gate_state_path,
                     json.dumps(
                         {"matches": int(gate_match_idx)},
                         indent=2,
                         sort_keys=True,
                     ),
-                    encoding="utf-8",
                 )
             except Exception:
                 pass
@@ -799,9 +797,9 @@ def _finalize_iteration(
     # post-iteration difficulty that produced random_move_prob_next.
     if pid is not None:
         try:
-            (ckpt_dir / "pid_state.json").write_text(
+            atomic_write_text(
+                ckpt_dir / "pid_state.json",
                 json.dumps(pid.state_dict(), sort_keys=True, indent=2),
-                encoding="utf-8",
             )
         except Exception:
             pass

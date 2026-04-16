@@ -6,17 +6,14 @@ from __future__ import annotations
 from pathlib import Path
 import csv
 import json
-import logging
 import subprocess
 import time
-
-log = logging.getLogger(__name__)
 
 import numpy as np
 import torch
 
 from chess_anti_engine.model import ModelConfig, build_model
-from chess_anti_engine.stockfish import DifficultyPID, StockfishPool, StockfishUCI, pid_from_config
+from chess_anti_engine.stockfish import StockfishPool, StockfishUCI, pid_from_config
 from chess_anti_engine.train import Trainer, trainer_kwargs_from_config
 from chess_anti_engine.tune.trial_config import TrialConfig
 from chess_anti_engine.tune.trainable_metrics import _compute_drift_metrics

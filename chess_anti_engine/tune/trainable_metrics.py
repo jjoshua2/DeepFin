@@ -1,8 +1,7 @@
 """Pure numeric/metric helpers for the Ray Tune trainable.
 
 All functions here are pure: no filesystem mutation, no Ray, no torch
-model mutation. Extracted from trainable.py to keep the orchestration
-module focused on lifecycle.
+model mutation.
 """
 from __future__ import annotations
 
@@ -314,12 +313,9 @@ def _compute_drift_metrics(
     dm.data_unique_positions = float(np.unique(row_sums).shape[0]) / float(max(1, train_x.shape[0]))
 
     # WDL balance: entropy of WDL distribution.
-    wdl_arr = np.asarray(train_batch["wdl_target"], dtype=np.int64)
-    wdl_valid = wdl_arr[(wdl_arr >= 0) & (wdl_arr <= 2)]
-    if wdl_valid.size > 0:
-        h = np.bincount(wdl_valid, minlength=3).astype(np.float64)
-        h /= max(1.0, float(h.sum()))
-        dm.data_wdl_balance = float(-np.sum(h * np.log(h + eps)))
+    p = _wdl_hist(train_batch)
+    if p.sum() > 0:
+        dm.data_wdl_balance = float(-np.sum(p * np.log(p + eps)))
 
     # Drift metrics (train vs holdout).
     if len(holdout_buf) >= drift_sample_size:
@@ -327,7 +323,6 @@ def _compute_drift_metrics(
         hold_x = hold_batch["x"]
         dm.drift_input_l2 = float(np.linalg.norm(train_x.mean(axis=0) - hold_x.mean(axis=0)))
 
-        p = _wdl_hist(train_batch)
         q = _wdl_hist(hold_batch)
         m = 0.5 * (p + q)
         dm.drift_wdl_js = float(
