@@ -48,7 +48,7 @@ from chess_anti_engine.selfplay.budget import progressive_mcts_simulations
 from chess_anti_engine.stockfish import DifficultyPID, StockfishPool, StockfishUCI, pid_from_config
 from chess_anti_engine.train import Trainer, trainer_kwargs_from_config
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
-from chess_anti_engine.tune.trial_config import DriftMetrics, PidResult, SelfplayResult, TrainingResult, TrialConfig
+from chess_anti_engine.tune.trial_config import DriftMetrics, PidResult, RestoreResult, SelfplayResult, TrainingResult, TrialConfig
 from chess_anti_engine.tune._utils import (
     concat_array_batches as _concat_array_batches,
     resolve_local_override_root as _resolve_local_override_root,
@@ -1937,6 +1937,259 @@ def _build_report_dict(
     }
 
 
+def _restore_checkpoint_or_salvage(
+    *,
+    config: dict,
+    trainer,
+    device: str,
+    trial_id: str,
+    trial_dir: Path,
+    base_seed: int,
+    active_seed: int,
+    rng,
+    ckpt,
+    Checkpoint,
+) -> tuple[RestoreResult, object]:
+    """Restore from Ray checkpoint, salvage seed pool, or start fresh.
+
+    Mutates *trainer* (model/optimizer load), *config* (donor config overlay),
+    and may reseed *rng* on exploit clone.  Returns ``(restore_result, rng)``.
+    """
+    salvage_restore_donor_config = bool(config.get("salvage_restore_donor_config", False))
+    salvage_restore_pid_state = bool(config.get("salvage_restore_pid_state", False))
+    salvage_restore_full_trainer_state = bool(config.get("salvage_restore_full_trainer_state", False))
+
+    rr = RestoreResult(active_seed=active_seed)
+
+    restored_rng_state = None
+    restored_trial_meta = None
+    restored_owner_optimizer = ""
+
+    if ckpt is not None:
+        ckpt_dir = Path(ckpt.to_directory())
+        maybe = ckpt_dir / "trainer.pt"
+        pid_path = ckpt_dir / "pid_state.json"
+        if pid_path.exists():
+            try:
+                rr.restored_pid_state = json.loads(pid_path.read_text(encoding="utf-8"))
+            except Exception:
+                rr.restored_pid_state = None
+        rng_path = ckpt_dir / "rng_state.json"
+        if rng_path.exists():
+            try:
+                restored_rng_state = json.loads(rng_path.read_text(encoding="utf-8"))
+            except Exception:
+                restored_rng_state = None
+        trial_meta_path = ckpt_dir / "trial_meta.json"
+        if trial_meta_path.exists():
+            try:
+                restored_trial_meta = json.loads(trial_meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                restored_trial_meta = None
+        if isinstance(restored_trial_meta, dict):
+            restored_owner_optimizer = str(restored_trial_meta.get("optimizer", "") or "")
+        current_optimizer = str(config.get("optimizer", "nadamw")).lower()
+        if maybe.exists():
+            model_only_restore = False
+            if isinstance(restored_trial_meta, dict):
+                owner_trial_id = str(restored_trial_meta.get("owner_trial_id", ""))
+                if owner_trial_id and owner_trial_id != trial_id:
+                    if restored_owner_optimizer:
+                        model_only_restore = restored_owner_optimizer.lower() != current_optimizer
+                    elif bool(config.get("search_optimizer", False)):
+                        model_only_restore = True
+            if model_only_restore:
+                ckpt_data = torch.load(str(maybe), map_location=device)
+                load_state_dict_tolerant(
+                    trainer.model, ckpt_data["model"],
+                    label="checkpoint_model_only",
+                )
+                del ckpt_data
+                trainer._init_swa()
+                rr.startup_source = "checkpoint_model_only"
+            else:
+                trainer.load(maybe)
+                rr.startup_source = "checkpoint"
+            if "lr" in config:
+                trainer.set_peak_lr(float(config["lr"]), rescale_current=False)
+    elif isinstance(config.get("salvage_seed_pool_dir"), str) and str(config.get("salvage_seed_pool_dir", "")).strip():
+        seed_pool_dir = Path(str(config.get("salvage_seed_pool_dir"))).expanduser()
+        if not seed_pool_dir.is_dir():
+            raise RuntimeError(f"salvage_seed_pool_dir not found: {seed_pool_dir}")
+
+        picked_dir, picked_slot, num_slots = _select_salvage_seed_slot(
+            seed_pool_dir=seed_pool_dir,
+            trial_dir=trial_dir,
+            trial_id=trial_id,
+        )
+        if picked_dir is None:
+            raise RuntimeError(
+                f"salvage requested but no seed slot could be selected for "
+                f"trial_id={trial_id} from {seed_pool_dir}"
+            )
+
+        maybe = Path(picked_dir) / "trainer.pt"
+        if not maybe.exists():
+            raise RuntimeError(f"salvage seed missing trainer.pt: {maybe}")
+
+        rr.startup_source = "salvage"
+        rr.seed_warmstart_used = True
+        rr.seed_warmstart_slot = int(picked_slot)
+        rr.seed_warmstart_slots_total = int(num_slots)
+        rr.seed_warmstart_dir = Path(picked_dir)
+        rr.seed_warmstart_replay_dir = rr.seed_warmstart_dir / "replay_shards"
+        rr.salvage_origin_used = True
+        rr.salvage_origin_slot = int(rr.seed_warmstart_slot)
+        rr.salvage_origin_slots_total = int(rr.seed_warmstart_slots_total)
+        rr.salvage_origin_dir = str(rr.seed_warmstart_dir.resolve())
+        seed_entry = _load_salvage_manifest_entry(
+            seed_pool_dir=seed_pool_dir,
+            slot=rr.seed_warmstart_slot,
+        )
+        seed_warmstart_manifest_row: dict | None = None
+        if isinstance(seed_entry, dict):
+            result_row = seed_entry.get("result_row")
+            if isinstance(result_row, dict):
+                seed_warmstart_manifest_row = result_row
+                if salvage_restore_donor_config:
+                    donor_cfg = result_row.get("config")
+                    if isinstance(donor_cfg, dict):
+                        for k in (
+                            "lr",
+                            "cosmos_gamma",
+                            "w_soft",
+                            "w_future",
+                            "w_wdl",
+                            "w_sf_move",
+                            "w_sf_eval",
+                            "w_categorical",
+                            "w_volatility",
+                            "w_sf_wdl",
+                            "sf_wdl_conf_power",
+                            "sf_wdl_draw_scale",
+                        ):
+                            if k in donor_cfg:
+                                config[k] = donor_cfg[k]
+                        if "lr" in config:
+                            trainer.set_peak_lr(float(config["lr"]), rescale_current=False)
+                        if "cosmos_gamma" in config and hasattr(trainer.opt, "gamma"):
+                            trainer.opt.gamma = float(config["cosmos_gamma"])
+                        for wk in (
+                            "w_soft",
+                            "w_future",
+                            "w_wdl",
+                            "w_sf_move",
+                            "w_sf_eval",
+                            "w_categorical",
+                            "w_volatility",
+                            "w_sf_wdl",
+                            "sf_wdl_conf_power",
+                            "sf_wdl_draw_scale",
+                        ):
+                            if wk in config:
+                                setattr(trainer, wk, float(config[wk]))
+
+        if salvage_restore_full_trainer_state:
+            trainer.load(maybe)
+        else:
+            salvage_ckpt = torch.load(str(maybe), map_location=device)
+            load_state_dict_tolerant(
+                trainer.model, salvage_ckpt["model"],
+                label="salvage",
+            )
+            del salvage_ckpt
+        if bool(config.get("salvage_reinit_volatility_heads", False)):
+            reinit = reinit_volatility_head_parameters_(trainer.model)
+            if reinit:
+                print(f"[trial] Reinitialized salvage volatility heads: {', '.join(reinit)}")
+        print(
+            f"[trial] salvage warmstart loaded slot={rr.seed_warmstart_slot} "
+            f"of {rr.seed_warmstart_slots_total} from {rr.seed_warmstart_dir}"
+        )
+        if salvage_restore_pid_state:
+            pid_path = rr.seed_warmstart_dir / "pid_state.json"
+            if pid_path.exists():
+                try:
+                    rr.restored_pid_state = json.loads(pid_path.read_text(encoding="utf-8"))
+                except Exception:
+                    rr.restored_pid_state = None
+            rr.restored_pid_state, pid_manifest_overrides = _merge_pid_state_from_result_row(
+                pid_state=rr.restored_pid_state,
+                result_row=seed_warmstart_manifest_row,
+            )
+            if pid_manifest_overrides:
+                print(
+                    "[trial] salvage PID overrides from manifest row: "
+                    + ", ".join(pid_manifest_overrides)
+                )
+
+    # Post-restore metadata fixups.
+    restored_owner_trial_id = ""
+    restored_owner_trial_dir = ""
+    if isinstance(restored_trial_meta, dict):
+        restored_owner_trial_id = str(restored_trial_meta.get("owner_trial_id", ""))
+        restored_owner_trial_dir = str(restored_trial_meta.get("owner_trial_dir", ""))
+        restored_owner_optimizer = str(restored_trial_meta.get("optimizer", restored_owner_optimizer))
+        rr.salvage_origin_used = bool(restored_trial_meta.get("salvage_origin_used", rr.salvage_origin_used))
+        rr.salvage_origin_slot = int(restored_trial_meta.get("salvage_origin_slot", rr.salvage_origin_slot))
+        rr.salvage_origin_slots_total = int(
+            restored_trial_meta.get("salvage_origin_slots_total", rr.salvage_origin_slots_total)
+        )
+        rr.salvage_origin_dir = str(restored_trial_meta.get("salvage_origin_dir", rr.salvage_origin_dir or ""))
+        rr.global_iter = int(restored_trial_meta.get("global_iter", 0))
+    rr.cross_trial_restore = bool(
+        ckpt is not None and restored_owner_trial_id and restored_owner_trial_id != trial_id
+    )
+    if rr.cross_trial_restore and rr.startup_source == "checkpoint":
+        rr.startup_source = "exploit_restore"
+    elif rr.cross_trial_restore and rr.startup_source == "checkpoint_model_only":
+        rr.startup_source = "exploit_restore_model_only"
+
+    if restored_rng_state is not None and not rr.cross_trial_restore:
+        try:
+            rng.bit_generator.state = restored_rng_state
+        except Exception:
+            pass
+
+    if ckpt is not None and rr.cross_trial_restore:
+        # PB2 exploit clone: fork RNG stream so recipients do not replay donor opening sequences.
+        restore_rows = _count_jsonl_rows(trial_dir / "result.json")
+        fork_seed = _stable_seed_u32(
+            base_seed,
+            trial_id,
+            "exploit",
+            restore_rows,
+            int(getattr(trainer, "step", 0)),
+        )
+        rr.active_seed = int(fork_seed)
+        rng = np.random.default_rng(rr.active_seed)
+        torch.manual_seed(rr.active_seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(rr.active_seed)
+        print(
+            f"[trial] PB2 exploit restore detected: owner={restored_owner_trial_id} "
+            f"recipient={trial_id} fork_seed={rr.active_seed} "
+            f"owner_optimizer={restored_owner_optimizer or 'unknown'} "
+            f"recipient_optimizer={str(config.get('optimizer', 'nadamw')).lower()} "
+            f"restore_mode={rr.startup_source}"
+        )
+        # Inherit donor's EMA so the recipient isn't ranked on stale
+        # pre-exploit history.
+        if restored_owner_trial_dir:
+            _donor_row = _latest_trial_result_row(Path(restored_owner_trial_dir))
+            if _donor_row is not None:
+                _donor_ema = _donor_row.get(
+                    "opponent_strength_ema",
+                    _donor_row.get("opponent_strength", 0.0),
+                )
+                rr.opp_strength_ema = float(_donor_ema)
+                print(
+                    f"[trial] exploit: inherited donor opp_strength_ema={rr.opp_strength_ema:.1f}"
+                )
+
+    return rr, rng
+
+
 def train_trial(config: dict):
     """Ray Tune trainable.
 
@@ -2026,9 +2279,6 @@ def train_trial(config: dict):
     )
     trainer = Trainer(model, **trainer_ctor)
 
-    salvage_restore_donor_config = bool(config.get("salvage_restore_donor_config", False))
-    salvage_restore_pid_state = bool(config.get("salvage_restore_pid_state", False))
-    salvage_restore_full_trainer_state = bool(config.get("salvage_restore_full_trainer_state", False))
     salvage_startup_no_share_iters = max(0, int(config.get("salvage_startup_no_share_iters", 0)))
     salvage_startup_max_train_steps = max(0, int(config.get("salvage_startup_max_train_steps", 0)))
     salvage_startup_post_share_ramp_iters = max(
@@ -2043,254 +2293,28 @@ def train_trial(config: dict):
     sf_wdl_start = float(config.get("w_sf_wdl", 1.0))
     sf_wdl_floor = float(config.get("sf_wdl_floor", 0.1))
 
-    # Restore from checkpoint if provided by Ray.
-    # NOTE: we restore PID state later (after PID is constructed).
-    restored_pid_state = None
-    restored_rng_state = None
-    restored_trial_meta = None
-    seed_warmstart_used = False
-    seed_warmstart_slot = -1
-    seed_warmstart_slots_total = 0
-    seed_warmstart_dir: Path | None = None
-    seed_warmstart_replay_dir: Path | None = None
-    seed_warmstart_manifest_row: dict | None = None
-    salvage_origin_used = False
-    salvage_origin_slot = -1
-    salvage_origin_slots_total = 0
-    salvage_origin_dir = ""
-    startup_source = "fresh"
-    restored_owner_optimizer = ""
     ckpt = _tune_get_checkpoint()
-    if ckpt is not None:
-        ckpt_dir = Path(ckpt.to_directory())
-        maybe = ckpt_dir / "trainer.pt"
-        pid_path = ckpt_dir / "pid_state.json"
-        if pid_path.exists():
-            try:
-                restored_pid_state = json.loads(pid_path.read_text(encoding="utf-8"))
-            except Exception:
-                restored_pid_state = None
-        rng_path = ckpt_dir / "rng_state.json"
-        if rng_path.exists():
-            try:
-                restored_rng_state = json.loads(rng_path.read_text(encoding="utf-8"))
-            except Exception:
-                restored_rng_state = None
-        trial_meta_path = ckpt_dir / "trial_meta.json"
-        if trial_meta_path.exists():
-            try:
-                restored_trial_meta = json.loads(trial_meta_path.read_text(encoding="utf-8"))
-            except Exception:
-                restored_trial_meta = None
-        if isinstance(restored_trial_meta, dict):
-            restored_owner_optimizer = str(restored_trial_meta.get("optimizer", "") or "")
-        current_optimizer = str(config.get("optimizer", "nadamw")).lower()
-        if maybe.exists():
-            model_only_restore = False
-            if isinstance(restored_trial_meta, dict):
-                owner_trial_id = str(restored_trial_meta.get("owner_trial_id", ""))
-                if owner_trial_id and owner_trial_id != trial_id:
-                    if restored_owner_optimizer:
-                        model_only_restore = restored_owner_optimizer.lower() != current_optimizer
-                    elif bool(config.get("search_optimizer", False)):
-                        model_only_restore = True
-            if model_only_restore:
-                ckpt_data = torch.load(str(maybe), map_location=device)
-                load_state_dict_tolerant(
-                    trainer.model, ckpt_data["model"],
-                    label="checkpoint_model_only",
-                )
-                del ckpt_data
-                trainer._init_swa()  # Re-sync SWA with loaded weights
-                startup_source = "checkpoint_model_only"
-            else:
-                trainer.load(maybe)
-                startup_source = "checkpoint"
-            # Always sync optimizer LR to the config value after restore,
-            # in case the checkpoint carried a different LR.
-            if "lr" in config:
-                trainer.set_peak_lr(float(config["lr"]), rescale_current=False)
-    elif isinstance(config.get("salvage_seed_pool_dir"), str) and str(config.get("salvage_seed_pool_dir", "")).strip():
-        seed_pool_dir = Path(str(config.get("salvage_seed_pool_dir"))).expanduser()
-        if not seed_pool_dir.is_dir():
-            raise RuntimeError(f"salvage_seed_pool_dir not found: {seed_pool_dir}")
-
-        picked_dir, picked_slot, num_slots = _select_salvage_seed_slot(
-            seed_pool_dir=seed_pool_dir,
-            trial_dir=trial_dir,
-            trial_id=trial_id,
-        )
-        if picked_dir is None:
-            raise RuntimeError(
-                f"salvage requested but no seed slot could be selected for "
-                f"trial_id={trial_id} from {seed_pool_dir}"
-            )
-
-        maybe = Path(picked_dir) / "trainer.pt"
-        if not maybe.exists():
-            raise RuntimeError(f"salvage seed missing trainer.pt: {maybe}")
-
-        startup_source = "salvage"
-        seed_warmstart_used = True
-        seed_warmstart_slot = int(picked_slot)
-        seed_warmstart_slots_total = int(num_slots)
-        seed_warmstart_dir = Path(picked_dir)
-        seed_warmstart_replay_dir = seed_warmstart_dir / "replay_shards"
-        salvage_origin_used = True
-        salvage_origin_slot = int(seed_warmstart_slot)
-        salvage_origin_slots_total = int(seed_warmstart_slots_total)
-        salvage_origin_dir = str(seed_warmstart_dir.resolve())
-        seed_entry = _load_salvage_manifest_entry(
-            seed_pool_dir=seed_pool_dir,
-            slot=seed_warmstart_slot,
-        )
-        if isinstance(seed_entry, dict):
-            rr = seed_entry.get("result_row")
-            if isinstance(rr, dict):
-                seed_warmstart_manifest_row = rr
-                if salvage_restore_donor_config:
-                    donor_cfg = rr.get("config")
-                    if isinstance(donor_cfg, dict):
-                        # Start this fresh lineage from the donor's effective
-                        # tunable trainer settings rather than the new run's
-                        # freshly sampled values.
-                        for k in (
-                            "lr",
-                            "cosmos_gamma",
-                            "w_soft",
-                            "w_future",
-                            "w_wdl",
-                            "w_sf_move",
-                            "w_sf_eval",
-                            "w_categorical",
-                            "w_volatility",
-                            "w_sf_wdl",
-                            "sf_wdl_conf_power",
-                            "sf_wdl_draw_scale",
-                        ):
-                            if k in donor_cfg:
-                                config[k] = donor_cfg[k]
-                        if "lr" in config:
-                            trainer.set_peak_lr(float(config["lr"]), rescale_current=False)
-                        if "cosmos_gamma" in config and hasattr(trainer.opt, "gamma"):
-                            trainer.opt.gamma = float(config["cosmos_gamma"])
-                        for wk in (
-                            "w_soft",
-                            "w_future",
-                            "w_wdl",
-                            "w_sf_move",
-                            "w_sf_eval",
-                            "w_categorical",
-                            "w_volatility",
-                            "w_sf_wdl",
-                            "sf_wdl_conf_power",
-                            "sf_wdl_draw_scale",
-                        ):
-                            if wk in config:
-                                setattr(trainer, wk, float(config[wk]))
-
-        if salvage_restore_full_trainer_state:
-            trainer.load(maybe)
-        else:
-            # Salvage starts a fresh Tune population from strong model weights, but
-            # not from the old optimizer/scheduler/step state. Carrying those over
-            # is appropriate for true in-place resume, not for a new population with
-            # a copied replay window and fresh perturbation lifecycle.
-            salvage_ckpt = torch.load(str(maybe), map_location=device)
-            load_state_dict_tolerant(
-                trainer.model, salvage_ckpt["model"],
-                label="salvage",
-            )
-            del salvage_ckpt
-        if bool(config.get("salvage_reinit_volatility_heads", False)):
-            reinit = reinit_volatility_head_parameters_(trainer.model)
-            if reinit:
-                print(f"[trial] Reinitialized salvage volatility heads: {', '.join(reinit)}")
-        print(
-            f"[trial] salvage warmstart loaded slot={seed_warmstart_slot} "
-            f"of {seed_warmstart_slots_total} from {seed_warmstart_dir}"
-        )
-        if salvage_restore_pid_state:
-            pid_path = seed_warmstart_dir / "pid_state.json"
-            if pid_path.exists():
-                try:
-                    restored_pid_state = json.loads(pid_path.read_text(encoding="utf-8"))
-                except Exception:
-                    restored_pid_state = None
-            restored_pid_state, pid_manifest_overrides = _merge_pid_state_from_result_row(
-                pid_state=restored_pid_state,
-                result_row=seed_warmstart_manifest_row,
-            )
-            if pid_manifest_overrides:
-                print(
-                    "[trial] salvage PID overrides from manifest row: "
-                    + ", ".join(pid_manifest_overrides)
-                )
-
-    restored_owner_trial_id = ""
-    restored_owner_trial_dir = ""
-    global_iter = 0
-    if isinstance(restored_trial_meta, dict):
-        restored_owner_trial_id = str(restored_trial_meta.get("owner_trial_id", ""))
-        restored_owner_trial_dir = str(restored_trial_meta.get("owner_trial_dir", ""))
-        restored_owner_optimizer = str(restored_trial_meta.get("optimizer", restored_owner_optimizer))
-        salvage_origin_used = bool(restored_trial_meta.get("salvage_origin_used", salvage_origin_used))
-        salvage_origin_slot = int(restored_trial_meta.get("salvage_origin_slot", salvage_origin_slot))
-        salvage_origin_slots_total = int(
-            restored_trial_meta.get("salvage_origin_slots_total", salvage_origin_slots_total)
-        )
-        salvage_origin_dir = str(restored_trial_meta.get("salvage_origin_dir", salvage_origin_dir or ""))
-        global_iter = int(restored_trial_meta.get("global_iter", 0))
-    cross_trial_restore = bool(
-        ckpt is not None and restored_owner_trial_id and restored_owner_trial_id != trial_id
+    restore, rng = _restore_checkpoint_or_salvage(
+        config=config, trainer=trainer, device=device,
+        trial_id=trial_id, trial_dir=trial_dir,
+        base_seed=base_seed, active_seed=active_seed,
+        rng=rng, ckpt=ckpt, Checkpoint=Checkpoint,
     )
-    if cross_trial_restore and startup_source == "checkpoint":
-        startup_source = "exploit_restore"
-    elif cross_trial_restore and startup_source == "checkpoint_model_only":
-        startup_source = "exploit_restore_model_only"
-
-    if restored_rng_state is not None and not cross_trial_restore:
-        try:
-            rng.bit_generator.state = restored_rng_state
-        except Exception:
-            pass
-
-    if ckpt is not None and cross_trial_restore:
-        # PB2 exploit clone: fork RNG stream so recipients do not replay donor opening sequences.
-        restore_rows = _count_jsonl_rows(trial_dir / "result.json")
-        fork_seed = _stable_seed_u32(
-            base_seed,
-            trial_id,
-            "exploit",
-            restore_rows,
-            int(getattr(trainer, "step", 0)),
-        )
-        active_seed = int(fork_seed)
-        rng = np.random.default_rng(active_seed)
-        torch.manual_seed(active_seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(active_seed)
-        print(
-            f"[trial] PB2 exploit restore detected: owner={restored_owner_trial_id} "
-            f"recipient={trial_id} fork_seed={active_seed} "
-            f"owner_optimizer={restored_owner_optimizer or 'unknown'} "
-            f"recipient_optimizer={str(config.get('optimizer', 'nadamw')).lower()} "
-            f"restore_mode={startup_source}"
-        )
-        # Inherit donor's EMA so the recipient isn't ranked on stale
-        # pre-exploit history.  Falls back to raw opponent_strength if
-        # the EMA key is missing (older result rows).
-        if restored_owner_trial_dir:
-            _donor_row = _latest_trial_result_row(Path(restored_owner_trial_dir))
-            if _donor_row is not None:
-                _donor_ema = _donor_row.get(
-                    "opponent_strength_ema",
-                    _donor_row.get("opponent_strength", 0.0),
-                )
-                opp_strength_ema = float(_donor_ema)
-                print(
-                    f"[trial] exploit: inherited donor opp_strength_ema={opp_strength_ema:.1f}"
-                )
+    startup_source = restore.startup_source
+    restored_pid_state = restore.restored_pid_state
+    global_iter = restore.global_iter
+    opp_strength_ema = restore.opp_strength_ema
+    active_seed = restore.active_seed
+    seed_warmstart_used = restore.seed_warmstart_used
+    seed_warmstart_slot = restore.seed_warmstart_slot
+    seed_warmstart_slots_total = restore.seed_warmstart_slots_total
+    seed_warmstart_dir = restore.seed_warmstart_dir
+    seed_warmstart_replay_dir = restore.seed_warmstart_replay_dir
+    salvage_origin_used = restore.salvage_origin_used
+    salvage_origin_slot = restore.salvage_origin_slot
+    salvage_origin_slots_total = restore.salvage_origin_slots_total
+    salvage_origin_dir = restore.salvage_origin_dir
+    cross_trial_restore = restore.cross_trial_restore
 
     # Growing sliding window: start small, grow as the net matures.
     window_start = int(config.get("replay_window_start", 100_000))

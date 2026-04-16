@@ -557,3 +557,24 @@ class PidResult:
     opp_strength: float = 0.0
     opp_strength_ema: float = 0.0
     curr_topk: int = 1
+
+
+@dataclass
+class RestoreResult:
+    """Output of checkpoint / salvage / fresh-start restore logic."""
+
+    startup_source: str = "fresh"
+    restored_pid_state: dict | None = None
+    global_iter: int = 0
+    opp_strength_ema: float = 0.0
+    active_seed: int = 0
+    seed_warmstart_used: bool = False
+    seed_warmstart_slot: int = -1
+    seed_warmstart_slots_total: int = 0
+    seed_warmstart_dir: Any = None
+    seed_warmstart_replay_dir: Any = None
+    salvage_origin_used: bool = False
+    salvage_origin_slot: int = -1
+    salvage_origin_slots_total: int = 0
+    salvage_origin_dir: str = ""
+    cross_trial_restore: bool = False
