@@ -15,10 +15,10 @@ from chess_anti_engine.tune.distributed_runtime import (
     _publish_distributed_trial_state,
     _quarantine_inbox_shards,
 )
-from chess_anti_engine.tune.trainable import (
+from chess_anti_engine.tune.trainable_metrics import (
+    _blended_winrate_raw_or_none,
     _compute_train_step_budget,
     _iteration_pause_metrics,
-    _blended_winrate_raw_or_none,
     _should_retry_distributed_iteration_without_games,
 )
 from chess_anti_engine.worker import _manifest_poll_headers
