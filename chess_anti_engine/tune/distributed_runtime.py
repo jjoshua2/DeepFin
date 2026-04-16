@@ -901,13 +901,6 @@ def _ingest_distributed_selfplay(
     prev_matching_games = 0
     effective_accepted = set(accepted_model_shas)
 
-    _shard_kw = dict(
-        inbox_dir=inbox_dir, processed_dir=processed_dir,
-        buf=buf, holdout_buf=holdout_buf,
-        holdout_frac=holdout_frac, holdout_frozen=holdout_frozen,
-        accepted_model_shas=effective_accepted, rng=rng, summary=summary,
-    )
-
     while summary["matching_games"] < target_games:
         shard_paths = sorted(
             sp for sp in inbox_dir.glob("*/*.npz")
@@ -923,7 +916,18 @@ def _ingest_distributed_selfplay(
         for sp in shard_paths:
             processed_any = True
             games_before = summary["matching_games"]
-            shard_sha = _process_shard(sp, **_shard_kw)
+            shard_sha = _process_shard(
+                sp,
+                inbox_dir=inbox_dir,
+                processed_dir=processed_dir,
+                buf=buf,
+                holdout_buf=holdout_buf,
+                holdout_frac=holdout_frac,
+                holdout_frozen=holdout_frozen,
+                accepted_model_shas=effective_accepted,
+                rng=rng,
+                summary=summary,
+            )
             games_added = summary["matching_games"] - games_before
 
             # Track prev-model matching games and demote once capped.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+from typing import cast
 
 import numpy as np
 import chess
@@ -283,7 +284,7 @@ def run_gumbel_root_many(
         # halving can still allocate at least one visit per action each phase.
         log_pri = np.log(np.maximum(pri[legal], 1e-12))
         g = _gumbel(rng, legal.size) if cfg.add_noise else np.zeros(legal.size, dtype=np.float64)
-        score = g + log_pri
+        score: np.ndarray = g + log_pri
 
         if sim_budget <= 1:
             m = 1
@@ -307,15 +308,16 @@ def run_gumbel_root_many(
         leaf_eval = LocalModelEvaluator(model, device=device)
 
     while True:
-        active = [
-            i for i in range(n_boards)
+        active = []
+        for i in range(n_boards):
+            rem_i = remaining_per_board[i]
             if (
                 probs_out[i] is None
-                and remaining_per_board[i] is not None
-                and len(remaining_per_board[i]) >= 1
+                and rem_i is not None
+                and len(rem_i) >= 1
                 and budget_remaining[i] > 0
-            )
-        ]
+            ):
+                active.append(i)
         if not active:
             break
 
@@ -377,17 +379,21 @@ def run_gumbel_root_many(
             gmap = gumbels_per_board[bi]
             if rem is None or root is None or pri is None or gmap is None:
                 continue
+            # Re-bind as non-Optional locals so pyright narrows inside the lambda below.
+            pri_nn = pri
+            gmap_nn = gmap
+            root_nn = root
 
             budget_remaining[bi] = max(0, int(budget_remaining[bi] - visits_per_action[bi] * len(rem)))
             if len(rem) <= 1:
                 continue
 
-            max_visit = max((root.children[int(a)].N for a in rem if int(a) in root.children), default=0)
+            max_visit = max((root_nn.children[int(a)].N for a in rem if int(a) in root_nn.children), default=0)
             rem.sort(
                 key=lambda a: _root_score(
-                    log_prior=float(np.log(max(float(pri[int(a)]), 1e-12))),
-                    gumbel=float(gmap.get(int(a), 0.0)),
-                    q_hat=_completed_q(root_q=float(root_qs[bi]), root=root, action=int(a)),
+                    log_prior=float(np.log(max(float(pri_nn[int(a)]), 1e-12))),
+                    gumbel=float(gmap_nn.get(int(a), 0.0)),
+                    q_hat=_completed_q(root_q=float(root_qs[bi]), root=root_nn, action=int(a)),
                     max_visit=int(max_visit),
                     cfg=cfg,
                 ),
@@ -452,7 +458,13 @@ def run_gumbel_root_many(
                 mask[a] = True
         legal_masks_out.append(mask)
 
-    return probs_out, actions_out, values_out, legal_masks_out
+    # Every slot of probs_out/actions_out is set above (terminal/fallback/main paths).
+    return (
+        cast(list[np.ndarray], probs_out),
+        cast(list[int], actions_out),
+        values_out,
+        legal_masks_out,
+    )
 
 
 @torch.no_grad()

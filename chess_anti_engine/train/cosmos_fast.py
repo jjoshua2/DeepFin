@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 
 import torch
 from torch import Tensor
@@ -152,7 +153,7 @@ class COSMOSFast(Optimizer):
             group.setdefault("use_cosmos_fast", False)
 
     @torch.no_grad()
-    def step(self, closure=None):
+    def step(self, closure: Callable[[], float] | None = None) -> float | None:  # type: ignore[override]
         loss = None
         if closure is not None:
             with torch.enable_grad():

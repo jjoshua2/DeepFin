@@ -17,9 +17,9 @@ from zclip import ZClip
 from chess_anti_engine.utils.atomic import atomic_write
 
 try:
-    from torch.utils.tensorboard import SummaryWriter
+    from torch.utils.tensorboard import SummaryWriter  # type: ignore[assignment]
 except Exception:  # pragma: no cover
-    class SummaryWriter:  # type: ignore[override]
+    class SummaryWriter:  # type: ignore[no-redef]
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             pass
 
@@ -817,7 +817,7 @@ class Trainer:
                 )
         self.step = int(ckpt.get("step", 0))
 
-    def export_swa(self, path: Path, dataloader: object = None) -> None:
+    def export_swa(self, path: Path, dataloader: Any = None) -> None:
         """Export the SWA-averaged model weights.
 
         If a dataloader is provided, batch normalization statistics are updated

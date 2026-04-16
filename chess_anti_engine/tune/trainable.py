@@ -4,6 +4,7 @@ from __future__ import annotations
 # works without installing `.[tune]`.
 
 from pathlib import Path
+from typing import Any
 import csv
 import dataclasses
 import json
@@ -374,7 +375,7 @@ def _gate_check(
     *,
     device: str,
     rng: np.random.Generator,
-    sf: object,
+    sf: StockfishUCI | StockfishPool,
     gate_games: int,
     opponent_random_move_prob: float,
     tc: TrialConfig,
@@ -795,7 +796,7 @@ def _dynamic_sf_wdl_weight(
 
 
 def _sync_trainer_weights(
-    trainer: object,
+    trainer: Trainer,
     config: dict,
     tc: TrialConfig,
     wdl_regret_used: float,
@@ -831,7 +832,7 @@ def _sync_trainer_weights(
 
 def _log_iteration_scalars(
     *,
-    writer: object,
+    writer: Any,
     pid_result: PidResult,
     current_rand: float,
     wdl_regret_used: float,
@@ -876,8 +877,8 @@ def _log_iteration_scalars(
 
 def _compute_drift_metrics(
     *,
-    buf: object,
-    holdout_buf: object,
+    buf: DiskReplayBuffer,
+    holdout_buf: ArrayReplayBuffer,
     drift_sample_size: int,
 ) -> DriftMetrics:
     """Compute drift and data diversity metrics from training and holdout buffers."""
@@ -885,7 +886,7 @@ def _compute_drift_metrics(
     eps = 1e-12
 
     if len(buf) < drift_sample_size:
-        return dm, False
+        return dm
 
     train_batch = _sample_drift_arrays(buf, drift_sample_size)
 
@@ -929,10 +930,10 @@ def _compute_drift_metrics(
 def _run_eval_games(
     *,
     tc: TrialConfig,
-    trainer: object,
+    trainer: Trainer,
     device: str,
     rng: np.random.Generator,
-    eval_sf: object | None,
+    eval_sf: Any | None,
 ) -> dict:
     """Run fixed-strength evaluation games (no training data generated)."""
     eval_dict: dict = {
@@ -978,7 +979,7 @@ def _run_training_and_gating(
     config: dict,
     model_cfg,
     device: str,
-    rng,
+    rng: np.random.Generator,
     pid,
     sf,
     current_rand: float,
@@ -990,7 +991,7 @@ def _run_training_and_gating(
     gate_match_idx: int,
     gate_state_path: Path,
     use_distributed_selfplay: bool,
-    distributed_server_root: str | None,
+    distributed_server_root: Path | None,
     distributed_dirs: dict | None,
     iteration_idx: int,
     iteration_zero_based: int,
@@ -1040,6 +1041,7 @@ def _run_training_and_gating(
             }
 
         if tc.distributed_pause_selfplay_during_training and use_distributed_selfplay and distributed_dirs is not None:
+            assert distributed_server_root is not None
             _publish_distributed_trial_state(
                 trainer=trainer, config=config, model_cfg=model_cfg,
                 server_root=distributed_server_root, trial_id=trial_id,
@@ -1125,7 +1127,7 @@ def _run_pid_and_eval(
     *,
     tc: TrialConfig,
     pid: DifficultyPID | None,
-    sf: object | None,
+    sf: StockfishUCI | StockfishPool | None,
     sp_result: SelfplayResult,
     iteration_zero_based: int,
     opp_strength_ema: float,
@@ -1178,10 +1180,7 @@ def _run_pid_and_eval(
         random_move_prob_next = float(pid.random_move_prob)
         skill_level_next = int(pid.skill_level)
         if sf is not None:
-            if hasattr(sf, "set_nodes"):
-                sf.set_nodes(int(sf_nodes_next))
-            else:
-                setattr(sf, "nodes", int(sf_nodes_next))
+            sf.set_nodes(int(sf_nodes_next))
 
     wdl_regret_next = float(pid.wdl_regret) if pid is not None else -1.0
 
@@ -1255,7 +1254,7 @@ def _run_selfplay_phase(
     pid,
     use_distributed_selfplay: bool,
     distributed_dirs: dict | None,
-    distributed_server_root: str | None,
+    distributed_server_root: Path | None,
     distributed_worker_procs: list,
     distributed_inference_broker_proc,
     prev_published_model_sha: str,
@@ -1270,7 +1269,7 @@ def _run_selfplay_phase(
     replay_shard_dir: Path,
     current_window: int,
     in_salvage_startup_grace: bool,
-) -> tuple[SelfplayResult, str, int, object | None]:
+) -> tuple[SelfplayResult, str, int, subprocess.Popen[bytes] | None]:
     """Run selfplay, ingest, export shards, grow window, cross-trial share.
 
     Mutates *buf*, *holdout_buf*, *distributed_worker_procs* in place.
@@ -1309,6 +1308,8 @@ def _run_selfplay_phase(
     distributed_stale_games = 0
 
     if use_distributed_selfplay:
+        assert distributed_server_root is not None
+        assert distributed_dirs is not None
         distributed_worker_procs[:] = _ensure_distributed_workers(
             config=config,
             trial_dir=trial_dir,
@@ -1908,10 +1909,10 @@ def _restore_checkpoint_or_salvage(
     trial_dir: Path,
     base_seed: int,
     active_seed: int,
-    rng,
+    rng: np.random.Generator,
     ckpt,
     Checkpoint,
-) -> tuple[RestoreResult, object]:
+) -> tuple[RestoreResult, np.random.Generator]:
     """Restore from Ray checkpoint, salvage seed pool, or start fresh.
 
     Mutates *trainer* (model/optimizer load), *config* (donor config overlay),
@@ -2517,6 +2518,8 @@ def train_trial(config: dict):
     pause_marker_path = _resolve_pause_marker_path(tc=tc, trial_dir=trial_dir)
 
     if use_distributed_selfplay:
+        assert distributed_server_root is not None
+        assert distributed_dirs is not None
         current_rand_init = (
             float(pid.random_move_prob)
             if pid is not None

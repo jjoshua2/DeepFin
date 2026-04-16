@@ -15,7 +15,7 @@ class ModelConfig:
     embed_dim: int = 256
     num_layers: int = 6
     num_heads: int = 8
-    ffn_mult: int = 2
+    ffn_mult: float = 2.0
     use_smolgen: bool = True
     use_nla: bool = False
     use_qk_rmsnorm: bool = False

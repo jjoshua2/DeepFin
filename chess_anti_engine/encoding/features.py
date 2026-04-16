@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 import chess
 
@@ -10,6 +12,9 @@ try:
     _HAS_C_EXT = True
 except ImportError:
     _HAS_C_EXT = False
+
+if TYPE_CHECKING:
+    from chess_anti_engine.encoding._features_ext import compute_extra_features as _c_compute  # noqa: F401,F811
 
 
 
@@ -119,14 +124,19 @@ def _discovered_attack_mask(board: chess.Board, color: chess.Color) -> int:
     return discovered_mask
 
 
-_ADJACENT_FILE_MASKS = []
-for _file_idx in range(8):
-    _mask = 0
-    if _file_idx > 0:
-        _mask |= int(chess.BB_FILES[_file_idx - 1])
-    if _file_idx < 7:
-        _mask |= int(chess.BB_FILES[_file_idx + 1])
-    _ADJACENT_FILE_MASKS.append(_mask)
+def _build_adjacent_file_masks() -> list[int]:
+    out: list[int] = []
+    for file_idx in range(8):
+        mask = 0
+        if file_idx > 0:
+            mask |= int(chess.BB_FILES[file_idx - 1])
+        if file_idx < 7:
+            mask |= int(chess.BB_FILES[file_idx + 1])
+        out.append(mask)
+    return out
+
+
+_ADJACENT_FILE_MASKS = _build_adjacent_file_masks()
 
 _PASSED_PAWN_MASKS = {
     chess.WHITE: [0] * 64,
@@ -145,68 +155,69 @@ _PAWN_DOUBLE_PUSH_MASK = {
     chess.WHITE: [0] * 64,
     chess.BLACK: [0] * 64,
 }
-_ORIENT_COORDS = {
-    chess.WHITE: [None] * 64,
-    chess.BLACK: [None] * 64,
+_ORIENT_COORDS: dict[bool, list[tuple[int, int]]] = {
+    # Out-of-range sentinel: uninitialized accesses surface-fault rather than
+    # silently returning a plausible square. _build_square_tables() fills every slot.
+    chess.WHITE: [(-1, -1)] * 64,
+    chess.BLACK: [(-1, -1)] * 64,
 }
 
-for _sq in chess.SQUARES:
-    _f = chess.square_file(_sq)
-    _r = chess.square_rank(_sq)
-    _ORIENT_COORDS[chess.WHITE][_sq] = (_r, _f)
-    _ORIENT_COORDS[chess.BLACK][_sq] = (7 - _r, _f)
+def _build_square_tables() -> None:
+    for sq in chess.SQUARES:
+        f = chess.square_file(sq)
+        r = chess.square_rank(sq)
+        _ORIENT_COORDS[chess.WHITE][sq] = (r, f)
+        _ORIENT_COORDS[chess.BLACK][sq] = (7 - r, f)
 
-    _conn_mask = 0
-    for _df in (-1, 1):
-        _f2 = _f + _df
-        if not (0 <= _f2 <= 7):
-            continue
-        for _dr in (-1, 0, 1):
-            _r2 = _r + _dr
-            if 0 <= _r2 <= 7:
-                _conn_mask |= chess.BB_SQUARES[chess.square(_f2, _r2)]
-    _CONNECTED_NEIGHBOR_MASKS[_sq] = int(_conn_mask)
-
-    for _color in (chess.WHITE, chess.BLACK):
-        _passed = 0
-        _support = 0
-        _direction = 1 if _color == chess.WHITE else -1
-
-        for _ff in range(max(0, _f - 1), min(7, _f + 1) + 1):
-            _rr = _r + _direction
-            while 0 <= _rr <= 7:
-                _passed |= chess.BB_SQUARES[chess.square(_ff, _rr)]
-                _rr += _direction
-
-        for _af in (_f - 1, _f + 1):
-            if not (0 <= _af <= 7):
+        conn_mask = 0
+        for df in (-1, 1):
+            f2 = f + df
+            if not (0 <= f2 <= 7):
                 continue
-            if _color == chess.WHITE:
-                for _rr in range(_r, 8):
-                    _support |= chess.BB_SQUARES[chess.square(_af, _rr)]
-            else:
-                for _rr in range(_r + 1):
-                    _support |= chess.BB_SQUARES[chess.square(_af, _rr)]
+            for dr in (-1, 0, 1):
+                r2 = r + dr
+                if 0 <= r2 <= 7:
+                    conn_mask |= chess.BB_SQUARES[chess.square(f2, r2)]
+        _CONNECTED_NEIGHBOR_MASKS[sq] = int(conn_mask)
 
-        _PASSED_PAWN_MASKS[_color][_sq] = int(_passed)
-        _BACKWARD_SUPPORT_MASKS[_color][_sq] = int(_support)
+        for color in (chess.WHITE, chess.BLACK):
+            passed = 0
+            support = 0
+            direction = 1 if color == chess.WHITE else -1
 
-        _single = 0
-        _double = 0
-        _r1 = _r + _direction
-        if 0 <= _r1 <= 7:
-            _single = int(chess.BB_SQUARES[chess.square(_f, _r1)])
-            _start_rank = 1 if _color == chess.WHITE else 6
-            _r2 = _r + 2 * _direction
-            if _r == _start_rank and 0 <= _r2 <= 7:
-                _double = int(chess.BB_SQUARES[chess.square(_f, _r2)])
-        _PAWN_SINGLE_PUSH_MASK[_color][_sq] = _single
-        _PAWN_DOUBLE_PUSH_MASK[_color][_sq] = _double
+            for ff in range(max(0, f - 1), min(7, f + 1) + 1):
+                rr = r + direction
+                while 0 <= rr <= 7:
+                    passed |= chess.BB_SQUARES[chess.square(ff, rr)]
+                    rr += direction
 
-del _sq, _f, _r, _color, _direction, _passed, _support, _conn_mask
-del _df, _dr, _f2, _r2, _ff, _rr, _af
-del _single, _double, _r1, _start_rank
-del _file_idx, _mask
+            for af in (f - 1, f + 1):
+                if not (0 <= af <= 7):
+                    continue
+                if color == chess.WHITE:
+                    for rr in range(r, 8):
+                        support |= chess.BB_SQUARES[chess.square(af, rr)]
+                else:
+                    for rr in range(r + 1):
+                        support |= chess.BB_SQUARES[chess.square(af, rr)]
+
+            _PASSED_PAWN_MASKS[color][sq] = int(passed)
+            _BACKWARD_SUPPORT_MASKS[color][sq] = int(support)
+
+            single = 0
+            double = 0
+            r1 = r + direction
+            if 0 <= r1 <= 7:
+                single = int(chess.BB_SQUARES[chess.square(f, r1)])
+                start_rank = 1 if color == chess.WHITE else 6
+                r2 = r + 2 * direction
+                if r == start_rank and 0 <= r2 <= 7:
+                    double = int(chess.BB_SQUARES[chess.square(f, r2)])
+            _PAWN_SINGLE_PUSH_MASK[color][sq] = single
+            _PAWN_DOUBLE_PUSH_MASK[color][sq] = double
+
+
+_build_square_tables()
 
 _CENTER_FILES = frozenset({2, 3, 4, 5})
 
@@ -343,8 +354,10 @@ def extra_feature_planes_c(board: chess.Board) -> np.ndarray:
     )
 
     occupied = int(board.occupied)
-    king_sq_us = board.king(us) if board.king(us) is not None else -1
-    king_sq_them = board.king(them) if board.king(them) is not None else -1
+    _ks_us = board.king(us)
+    king_sq_us = _ks_us if _ks_us is not None else -1
+    _ks_them = board.king(them)
+    king_sq_them = _ks_them if _ks_them is not None else -1
     turn_white = turn == chess.WHITE
     ep_square = board.ep_square if board.ep_square is not None else -1
 

@@ -15,10 +15,19 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from typing import Any, Callable, TypeVar, cast, overload
+
 import numpy as np
 import torch
 
-from chess_anti_engine.inference import DirectGPUEvaluator, SlotInferenceClient
+_ResolveT = TypeVar("_ResolveT")
+
+from chess_anti_engine.inference import (
+    AOTEvaluator,
+    DirectGPUEvaluator,
+    SlotInferenceClient,
+    ThreadedBatchEvaluator,
+)
 from chess_anti_engine.utils import sha256_file as _sha256_file
 from chess_anti_engine.model import ModelConfig, build_model, load_state_dict_tolerant
 from chess_anti_engine.moves.encode import POLICY_SIZE
@@ -162,7 +171,7 @@ def _maybe_compile_inference_model(
     if use_fp8:
         model = _maybe_apply_fp8_inference(model)
     try:
-        return torch.compile(model, mode=mode)
+        return cast("torch.nn.Module", torch.compile(model, mode=mode))
     except Exception:
         return model
 
@@ -437,11 +446,11 @@ def main() -> None:
     if args.sf_workers is None:
         args.sf_workers = int(cfg.get("sf_workers", 1))
     if args.games_per_batch is None and "games_per_batch" in cfg:
-        args.games_per_batch = int(cfg.get("games_per_batch"))
+        args.games_per_batch = int(cfg["games_per_batch"])
     if "upload_target_positions" in cfg:
-        args.upload_target_positions = int(cfg.get("upload_target_positions"))
+        args.upload_target_positions = int(cfg["upload_target_positions"])
     if "upload_flush_seconds" in cfg:
-        args.upload_flush_seconds = float(cfg.get("upload_flush_seconds"))
+        args.upload_flush_seconds = float(cfg["upload_flush_seconds"])
 
     # --password-file (CLI) always wins over the saved password in worker.yaml
     # so that a fresh session with a rotated password loads correctly.
@@ -580,8 +589,8 @@ class WorkerSession:
 
         # Engine: initialize with placeholder settings; we will align nodes from manifest each loop.
         # MultiPV and Skill Level are set at init time; reinitialize when either changes.
-        self.sf = None
-        self.sf_multipv_active = None
+        self.sf: StockfishPool | StockfishUCI | None = None
+        self.sf_multipv_active: int | None = None
         self.sf_skill_level_active: int | None = None
 
         self.last_model_sha = None
@@ -590,7 +599,7 @@ class WorkerSession:
         self.last_sf_sha: str | None = None
         self.model_cfg_active: ModelConfig | None = None
         self.model = None
-        self._direct_evaluator: DirectGPUEvaluator | None = None
+        self._direct_evaluator: DirectGPUEvaluator | ThreadedBatchEvaluator | AOTEvaluator | None = None
         self.inference_client = self._make_inference_client()
         self.pause_selfplay_active = False
         self.manifest_state = "active"
@@ -740,7 +749,7 @@ class WorkerSession:
         model.eval()
         # Selfplay only needs policy_own + wdl; skip 8 unused heads.
         if hasattr(model, "_inference_only"):
-            model._inference_only = True
+            setattr(model, "_inference_only", True)
         if bool(self.args.compile_inference):
             compile_t0 = time.time()
             self.log.info("compile starting %s sha=%s", label, sha_short)
@@ -749,7 +758,11 @@ class WorkerSession:
             self.log.info("compile finished %s sha=%s elapsed_s=%.2f", label, sha_short, float(time.time() - compile_t0))
         return model
 
-    def _resolve_reco(self, reco: dict, key: str, default, cast=float):
+    @overload
+    def _resolve_reco(self, reco: dict, key: str, default: Any) -> float: ...
+    @overload
+    def _resolve_reco(self, reco: dict, key: str, default: Any, cast: Callable[[Any], _ResolveT]) -> _ResolveT: ...
+    def _resolve_reco(self, reco: dict, key: str, default: Any, cast: Callable[[Any], Any] = float) -> Any:
         """CLI overrides server recommendation; fall back to reco then default."""
         v = getattr(self.args, key, None)
         return cast(v) if v is not None else cast(reco.get(key, default))
@@ -855,18 +868,20 @@ class WorkerSession:
                     headers=_worker_headers(),
                 )
             mc = manifest.get("model_config") or self.model_cfg_active
+            _cfg = mc if isinstance(mc, ModelConfig) else self.model_cfg_active
+            if _cfg is None:
+                raise RuntimeError("no model_config available for worker-model load")
             self.model = self._load_and_compile_model(
-                model_path, mc if isinstance(mc, ModelConfig) else self.model_cfg_active,
+                model_path, _cfg,
                 label="worker-model", sha_short=str(new_sha)[:8],
             )
             # Update evaluator with new model
-            if self._direct_evaluator is not None:
-                if hasattr(self._direct_evaluator, "update_model"):
-                    self._direct_evaluator.update_model(self.model)
-                elif hasattr(self._direct_evaluator, "model"):
-                    self._direct_evaluator.model = self.model
-                elif hasattr(self._direct_evaluator, "load_weights"):
-                    self._direct_evaluator.load_weights(self.model.state_dict())
+            if isinstance(self._direct_evaluator, ThreadedBatchEvaluator):
+                self._direct_evaluator.update_model(self.model)
+            elif isinstance(self._direct_evaluator, DirectGPUEvaluator):
+                self._direct_evaluator.model = self.model
+            elif isinstance(self._direct_evaluator, AOTEvaluator):
+                self._direct_evaluator.load_weights(self.model.state_dict())
             # Flush upload buffer tagged with old SHA (lock protects against
             # concurrent _on_completed_game calls in threaded selfplay)
             _buf_lock = self._upload_buf_lock
@@ -1420,20 +1435,20 @@ class WorkerSession:
 
         # Use ThreadedBatchEvaluator, AOTEvaluator, or DirectGPUEvaluator.
         if need_local_model:
+            assert self.model is not None  # guarded above by need_local_model check
             if self._direct_evaluator is None:
                 if self.args.threaded_selfplay:
-                    from chess_anti_engine.inference import ThreadedBatchEvaluator
                     self._direct_evaluator = ThreadedBatchEvaluator(
                         self.model, device=str(self.device), max_batch=4096,
                         min_batch=256,
                     )
                     self._threaded_model_id = id(self.model)
                 elif self.args.aot_dir:
-                    from chess_anti_engine.inference import AOTEvaluator
-                    self._direct_evaluator = AOTEvaluator(
+                    _aot = AOTEvaluator(
                         self.args.aot_dir, device=str(self.device), max_batch=4096,
                     )
-                    self._direct_evaluator.load_weights(self.model.state_dict())
+                    _aot.load_weights(self.model.state_dict())
+                    self._direct_evaluator = _aot
                     self._aot_model_id = id(self.model)
                 else:
                     self._direct_evaluator = DirectGPUEvaluator(
@@ -1441,15 +1456,19 @@ class WorkerSession:
                     )
             # Model update handling
             if self.args.threaded_selfplay:
+                assert isinstance(self._direct_evaluator, ThreadedBatchEvaluator)
                 if getattr(self, "_threaded_model_id", None) != id(self.model):
                     self._direct_evaluator.update_model(self.model)
                     self._threaded_model_id = id(self.model)
             elif self.args.aot_dir:
+                assert isinstance(self._direct_evaluator, AOTEvaluator)
                 if getattr(self, "_aot_model_id", None) != id(self.model):
                     self._direct_evaluator.load_weights(self.model.state_dict())
                     self._aot_model_id = id(self.model)
-            elif self._direct_evaluator.model is not self.model:
-                self._direct_evaluator.model = self.model
+            else:
+                assert isinstance(self._direct_evaluator, DirectGPUEvaluator)
+                if self._direct_evaluator.model is not self.model:
+                    self._direct_evaluator.model = self.model
 
         games_per_batch = (
             int(self.games_per_batch_local)
@@ -1495,6 +1514,8 @@ class WorkerSession:
 
         # Resolve stockfish binary and (re)init engine.
         self._sync_stockfish(manifest, sf_nodes, sf_multipv, sf_skill_level)
+        assert self.sf is not None  # _sync_stockfish always assigns
+        _sf = self.sf
 
         # Generate a shard
         t0 = time.time()
@@ -1564,7 +1585,7 @@ class WorkerSession:
                     thread_rng = np.random.default_rng(_seeds[tid])
                     return play_batch(
                         None, device=str(self.device), rng=thread_rng,
-                        stockfish=self.sf, evaluator=_eval,
+                        stockfish=_sf, evaluator=_eval,
                         games=_thread_games[tid],
                         on_game_complete=_on_game_thread_safe,
                         on_step=self._check_model_update if tid == 0 else None,

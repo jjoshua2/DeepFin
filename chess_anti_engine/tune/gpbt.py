@@ -84,6 +84,14 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
         # Delegate to parent for the actual perturbation-interval gate
         return super().on_trial_result(tune_controller, trial, result)
 
+    @staticmethod
+    def _require_score(state) -> float:
+        """Return ``state.last_score`` asserted non-None — callers that reach this
+        point have already filtered out trials without a reported score."""
+        s = state.last_score
+        assert s is not None
+        return float(s)
+
     def _live_score_span(self) -> float:
         scores = [
             float(state.last_score)
@@ -101,8 +109,7 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
         trial: Trial,
         upper_quantile: list[Trial],
     ) -> Trial | None:
-        recipient_state = self._trial_state[trial]
-        recipient_score = float(recipient_state.last_score)
+        recipient_score = self._require_score(self._trial_state[trial])
         candidates: list[Trial] = []
         weights: list[float] = []
         score_span = self._live_score_span()
@@ -144,8 +151,8 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
 
     def _get_new_config(self, trial: Trial, trial_to_clone: Trial):
         new_config = copy.deepcopy(trial_to_clone.config)
-        recipient_score = float(self._trial_state[trial].last_score)
-        donor_score = float(self._trial_state[trial_to_clone].last_score)
+        recipient_score = self._require_score(self._trial_state[trial])
+        donor_score = self._require_score(self._trial_state[trial_to_clone])
         score_span = self._live_score_span()
         gap_scale = max(0.0, min(1.0, (donor_score - recipient_score) / score_span))
         operations: dict[str, str] = {}
@@ -213,15 +220,16 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
     ):
         state = self._trial_state[trial]
 
-        scores = {
-            t.trial_id: (float(self._trial_state[t].last_score) if self._trial_state[t].last_score is not None else None)
-            for t in tune_controller.get_live_trials()
-        }
+        scores: dict[str, float | None] = {}
+        for t in tune_controller.get_live_trials():
+            _ls = self._trial_state[t].last_score
+            scores[t.trial_id] = float(_ls) if _ls is not None else None
+        _state_ls = state.last_score
         logger.info(
             "[GPBT-PL] _checkpoint_or_exploit: trial=%s score=%.4f "
             "in_upper=%s in_lower=%s scores=%s upper=[%s] lower=[%s]",
             trial.trial_id,
-            float(state.last_score) if state.last_score is not None else -1,
+            float(_state_ls) if _state_ls is not None else -1,
             trial in upper_quantile,
             trial in lower_quantile,
             scores,
@@ -253,11 +261,13 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
         donor_state = self._trial_state[donor]
         last_checkpoint = donor_state.last_checkpoint
 
+        donor_score = self._require_score(donor_state)
+        state_score = self._require_score(state)
         logger.info(
             "[GPBT-PL] Pairwise exploit: recipient=%s donor=%s gap=%.6f",
             trial.trial_id,
             donor.trial_id,
-            float(donor_state.last_score) - float(state.last_score),
+            donor_score - state_score,
         )
 
         if isinstance(last_checkpoint, _FutureTrainingResult):
@@ -290,13 +300,13 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
             return
 
         score_span = self._live_score_span()
-        score_gap = float(donor_state.last_score) - float(state.last_score)
+        score_gap = donor_score - state_score
         gap_scale = max(0.0, min(1.0, score_gap / score_span))
         self._pending_pairwise_log[trial.trial_id] = {
             "recipient_trial_id": str(trial.trial_id),
             "donor_trial_id": str(donor.trial_id),
-            "recipient_score": float(state.last_score),
-            "donor_score": float(donor_state.last_score),
+            "recipient_score": state_score,
+            "donor_score": donor_score,
             "score_gap": float(score_gap),
             "gap_scale": float(gap_scale),
             "inertia_weight": float(self._inertia_weight),

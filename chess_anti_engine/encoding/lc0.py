@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import struct
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 import chess
@@ -13,6 +14,9 @@ try:
     _HAS_LC0_C_EXT = True
 except ImportError:
     _HAS_LC0_C_EXT = False
+
+if TYPE_CHECKING:
+    from chess_anti_engine.encoding._lc0_ext import encode_piece_planes as _c_encode_piece_planes  # noqa: F401,F811
 
 
 PIECE_TYPES = [

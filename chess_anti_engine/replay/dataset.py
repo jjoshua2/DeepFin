@@ -83,8 +83,9 @@ def collate(samples: list[ReplaySample], *, device: str) -> dict[str, torch.Tens
         if s.sf_move_index is not None:
             sf_move_index[i] = int(s.sf_move_index)
             has_sf_move[i] = 1.0
-        if getattr(s, "sf_policy_target", None) is not None:
-            sf_policy_t[i] = s.sf_policy_target.astype(np.float32, copy=False)
+        _sf_pol_tgt = getattr(s, "sf_policy_target", None)
+        if _sf_pol_tgt is not None:
+            sf_policy_t[i] = _sf_pol_tgt.astype(np.float32, copy=False)
             has_sf_policy[i] = 1.0
         if s.moves_left is not None:
             moves_left[i] = float(s.moves_left)
@@ -103,11 +104,13 @@ def collate(samples: list[ReplaySample], *, device: str) -> dict[str, torch.Tens
         if s.volatility_target is not None:
             volatility_t[i] = s.volatility_target.astype(np.float32, copy=False)
             has_volatility[i] = 1.0
-        if getattr(s, "sf_volatility_target", None) is not None:
-            sf_volatility_t[i] = s.sf_volatility_target.astype(np.float32, copy=False)
+        _sf_vol_tgt = getattr(s, "sf_volatility_target", None)
+        if _sf_vol_tgt is not None:
+            sf_volatility_t[i] = _sf_vol_tgt.astype(np.float32, copy=False)
             has_sf_volatility[i] = 1.0
-        if getattr(s, "legal_mask", None) is not None:
-            legal_mask_t[i] = s.legal_mask.astype(np.float32, copy=False)
+        _legal_mask = getattr(s, "legal_mask", None)
+        if _legal_mask is not None:
+            legal_mask_t[i] = _legal_mask.astype(np.float32, copy=False)
             has_legal_mask[i] = 1.0
 
     return {

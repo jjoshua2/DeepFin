@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -54,7 +55,7 @@ def export_onnx(model: nn.Module, *, out_path: Path, device: str = "cpu", cfg: O
     batch = Dim("batch", min=1)
     torch.onnx.export(
         wrapper,
-        dummy,
+        (dummy,),
         str(out_path),
         input_names=["input_planes"],
         output_names=["policy", "wdl", "moves_left"],
@@ -83,7 +84,7 @@ def _quantize_dynamic_ort(
     else:
         weight_type = QuantType.QInt8
 
-    extra_options = {"MatMulConstBOnly": True}
+    extra_options: dict[str, Any] = {"MatMulConstBOnly": True}
 
     # ORT quantization runs ONNX shape inference internally. Some PyTorch-exported models
     # include intermediate ValueInfo shapes that can conflict with ONNX's inferred shapes

@@ -306,7 +306,7 @@ def shard_positions(path: str | Path) -> int:
             return 0
         try:
             g = zarr.open_group(str(p), mode="r")
-            return int(g["x"].shape[0])
+            return int(g["x"].shape[0])  # type: ignore[arg-type,union-attr]
         except Exception:
             return 0
     try:
@@ -322,11 +322,11 @@ def copy_or_link_shard(src: str | Path, dst: str | Path) -> Path:
     dst_p.parent.mkdir(parents=True, exist_ok=True)
     rel = None
     try:
-        rel = Path(shutil.os.path.relpath(src_p, start=dst_p.parent))
+        rel = Path(os.path.relpath(src_p, start=dst_p.parent))
     except Exception:
         rel = None
     try:
-        shutil.os.symlink(str(rel if rel is not None else src_p), str(dst_p), target_is_directory=src_p.is_dir())
+        os.symlink(str(rel if rel is not None else src_p), str(dst_p), target_is_directory=src_p.is_dir())
         return dst_p
     except FileExistsError:
         return dst_p

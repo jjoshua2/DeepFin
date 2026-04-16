@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import cast
 import math
 
 import torch
@@ -54,6 +55,10 @@ class AttentionPolicyHead(nn.Module):
 
     Output is a flat `(B, 4672)` tensor, indexed as `from_sq * 73 + plane`.
     """
+
+    to_sq: torch.Tensor
+    to_valid: torch.Tensor
+    promo_from: torch.Tensor
 
     def __init__(self, embed_dim: int, policy_dim: int | None = None):
         super().__init__()
@@ -117,8 +122,9 @@ class ValueHead(nn.Module):
         )
         # Small-scale init on the output projection so initial logits are ~0
         # (softmax → ~uniform distribution, win_p ≈ 1/3 instead of random ±1.4σ).
-        nn.init.normal_(self.net[2].weight, std=0.01)
-        nn.init.zeros_(self.net[2].bias)
+        out = cast("nn.Linear", self.net[2])
+        nn.init.normal_(out.weight, std=0.01)
+        nn.init.zeros_(out.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (B, 64, embed_dim)
@@ -141,7 +147,8 @@ class VolatilityHead(nn.Module):
 
     def reset_neutral_output_bias_(self) -> None:
         with torch.no_grad():
-            self.net[2].bias.fill_(_softplus_inverse(_VOLATILITY_HEAD_NEUTRAL_OUTPUT))
+            out = cast("nn.Linear", self.net[2])
+            out.bias.fill_(_softplus_inverse(_VOLATILITY_HEAD_NEUTRAL_OUTPUT))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         pooled = x.mean(dim=1)

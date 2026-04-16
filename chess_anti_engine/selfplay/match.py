@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 import chess
@@ -23,6 +24,10 @@ try:
     _HAS_GUMBEL_C = True
 except ImportError:
     _HAS_GUMBEL_C = False
+
+if TYPE_CHECKING:
+    from chess_anti_engine.mcts.puct_c import run_mcts_many_c as _run_mcts_many_c  # noqa: F401,F811
+    from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c as _run_gumbel_root_many_c  # noqa: F401,F811
 
 
 @dataclass(frozen=True)

@@ -253,13 +253,6 @@ class DiskReplayBuffer:
         with self._prefetch_lock:
             return list(self._shard_paths)
 
-    def _latest_shards(self, count: int) -> list[Path]:
-        n = max(0, int(count))
-        if n <= 0:
-            return []
-        with self._prefetch_lock:
-            return list(self._shard_paths[-n:])
-
     def _append_shard_record(self, path: Path, n: int) -> None:
         with self._prefetch_lock:
             self._shard_paths.append(path)

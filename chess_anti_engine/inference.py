@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from multiprocessing import resource_tracker
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol, cast
 
 import numpy as np
 import torch
@@ -29,6 +29,15 @@ log = logging.getLogger(__name__)
 
 class BatchEvaluator(Protocol):
     def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        ...
+
+
+class AsyncBatchEvaluator(BatchEvaluator, Protocol):
+    """Evaluators that also expose a non-blocking GPU path (for MCTS pipelining)."""
+
+    def evaluate_encoded_async(
+        self, x: np.ndarray,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
         ...
 
 
@@ -601,7 +610,7 @@ class AOTEvaluator:
         if not pkgs:
             raise FileNotFoundError(f"No .pt2 packages found in {aot_dir}")
 
-        def _load(item: tuple[int, Path]) -> tuple[int, object]:
+        def _load(item: tuple[int, Path]) -> tuple[int, Any]:
             return item[0], torch._inductor.aoti_load_package(str(item[1]))
 
         with ThreadPoolExecutor(max_workers=min(4, len(pkgs))) as pool:
@@ -759,11 +768,13 @@ class _InferenceSlot:
     """Numpy-backed view into a pre-allocated shared memory slot."""
 
     __slots__ = ("_shm", "_layout", "_owns", "_buf", "input", "policy", "wdl")
+    _buf: memoryview
 
     def __init__(self, shm: SharedMemory, layout: _SlotLayout, *, owns: bool = False):
         self._shm = shm
         self._layout = layout
         self._owns = owns
+        assert shm.buf is not None  # attached SharedMemory always has a buffer
         self._buf = shm.buf
         self.input: np.ndarray = np.ndarray(
             (layout.max_batch, _CHANNELS, _BOARD_H, _BOARD_W),
@@ -947,9 +958,9 @@ class SlotBroker:
         model.to(self.device)
         model.eval()
         if hasattr(model, "_inference_only"):
-            model._inference_only = True
+            setattr(model, "_inference_only", True)
         if self.compile_inference and self.device.startswith("cuda"):
-            model = torch.compile(model, mode="reduce-overhead")
+            model = cast("torch.nn.Module", torch.compile(model, mode="reduce-overhead"))
         self._model = model
         self._model_sha = model_sha
         self._first_inference_pending = bool(self.compile_inference)
@@ -991,7 +1002,7 @@ class SlotBroker:
 
         if first_inf:
             log.info("first inference (includes kernel compile) elapsed_s=%.2f batch=%d",
-                     time.time() - inf_t0, xt.shape[0])
+                     time.time() - inf_t0, xt.shape[0])  # pyright: ignore[reportPossiblyUnboundVariable]
             self._first_inference_pending = False
 
         # Copy results to pinned buffer (async GPU→pinned), then to shm.
@@ -1250,7 +1261,7 @@ class SharedSlotBroker:
         self._trial_slots: dict[str, list[_InferenceSlot]] = {}
         self._trial_shas: dict[str, str] = {}
         self._trial_models: dict[str, torch.nn.Module] = {}  # per-trial model on GPU
-        self._trial_streams: dict[str, object] = {}  # per-trial CUDA stream
+        self._trial_streams: dict[str, torch.cuda.Stream] = {}  # per-trial CUDA stream
         self._trial_manifest_sigs: dict[str, tuple[int, int]] = {}
         self._all_slots: list[tuple[str, _InferenceSlot]] = []
 
@@ -1384,10 +1395,10 @@ class SharedSlotBroker:
             model.to(self.device)
             model.eval()
             if hasattr(model, "_inference_only"):
-                model._inference_only = True
+                setattr(model, "_inference_only", True)
             load_state_dict_tolerant(model, sd, label=f"shared-broker-{trial_id}")
             if self.compile_inference and self.device.startswith("cuda"):
-                model = torch.compile(model, mode="reduce-overhead")
+                model = cast("torch.nn.Module", torch.compile(model, mode="reduce-overhead"))
             self._trial_models[trial_id] = model
             if self.device.startswith("cuda"):
                 self._trial_streams[trial_id] = torch.cuda.Stream(device=self.device)

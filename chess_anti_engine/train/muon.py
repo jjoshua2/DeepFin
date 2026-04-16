@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 
 import torch
 
@@ -46,7 +47,7 @@ class MuonWithAuxAdam(torch.optim.Optimizer):
         return _zeropower_via_newton_schulz5(mat, steps=steps)
 
     @torch.no_grad()
-    def step(self, closure=None):
+    def step(self, closure: Callable[[], float] | None = None) -> float | None:  # type: ignore[override]
         loss = None
         if closure is not None:
             with torch.enable_grad():

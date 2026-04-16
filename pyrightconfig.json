@@ -1,0 +1,6 @@
+{
+    "include": ["chess_anti_engine"],
+    "exclude": ["chess_anti_engine/bench"],
+    "reportUnsupportedDunderAll": false,
+    "reportPrivateImportUsage": false
+}

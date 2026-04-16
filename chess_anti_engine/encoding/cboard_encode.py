@@ -1,6 +1,8 @@
 """Encoding helpers for CBoard objects (C-accelerated chess boards)."""
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import chess
 import numpy as np
 
@@ -9,6 +11,9 @@ try:
     _HAS_CBOARD = True
 except ImportError:
     _HAS_CBOARD = False
+
+if TYPE_CHECKING:
+    from chess_anti_engine.encoding._lc0_ext import CBoard  # noqa: F811
 
 
 def cboard_from_board_fast(board: chess.Board) -> CBoard:
@@ -41,6 +46,9 @@ try:
     _HAS_FEATURES_C = True
 except ImportError:
     _HAS_FEATURES_C = False
+
+if TYPE_CHECKING:
+    from chess_anti_engine.encoding._features_ext import compute_extra_features as _c_compute  # noqa: F401,F811
 
 
 def encode_cboard(cb: CBoard) -> np.ndarray:

@@ -59,6 +59,17 @@ class MCTSConfig:
 class Node:
     __slots__ = ("_board", "_move", "_action_idx", "parent", "prior", "N", "W", "children", "expanded", "to_play")
 
+    _board: chess.Board | None
+    _move: chess.Move | None
+    _action_idx: int | None
+    parent: Node | None
+    prior: float
+    N: int
+    W: float
+    children: dict[int, Node]
+    expanded: bool
+    to_play: chess.Color
+
     def __init__(
         self,
         board: chess.Board | None,
@@ -246,12 +257,13 @@ def run_mcts_many(
             for i, b in enumerate(boards)
         ]
     else:
+        # _init_root runs the model itself — caller must provide it when pre-logits aren't given.
+        assert model is not None
         roots = [_init_root(model, b, device=device, rng=rng, cfg=cfg) for b in boards]
 
     for _ in range(int(cfg.simulations)):
         leaf_nodes: list[Node] = []
         leaf_paths: list[list[Node]] = []
-        leaf_x: list[np.ndarray] = []
 
         # Select one leaf per root
         for root in roots:

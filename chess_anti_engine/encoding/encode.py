@@ -1,20 +1,21 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 
 import numpy as np
 import chess
 
 from .lc0 import encode_lc0_full, encode_lc0_reduced, _HAS_LC0_C_EXT
-if _HAS_LC0_C_EXT:
+if TYPE_CHECKING or _HAS_LC0_C_EXT:
     from .lc0 import encode_lc0_full_c
 from .features import extra_feature_planes_fast, _HAS_C_EXT
-if _HAS_C_EXT:
+if TYPE_CHECKING or _HAS_C_EXT:
     from .features import extra_feature_planes_c
 
 # Module-level imports for fused C path (avoid per-call import overhead)
-if _HAS_LC0_C_EXT:
+if TYPE_CHECKING or _HAS_LC0_C_EXT:
     from .lc0 import _c_encode_piece_planes, _check_repetitions, _write_metadata_planes
-if _HAS_C_EXT:
+if TYPE_CHECKING or _HAS_C_EXT:
     from .features import _c_compute
 
 

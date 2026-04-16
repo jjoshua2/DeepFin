@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
+
+if TYPE_CHECKING:
+    from chess_anti_engine.train.trainer import TrainMetrics
 
 
 @dataclass
@@ -516,8 +519,8 @@ class DriftMetrics:
 class TrainingResult:
     """Output of the training + gating phase."""
 
-    metrics: object | None = None
-    test_metrics: object | None = None
+    metrics: TrainMetrics | None = None
+    test_metrics: TrainMetrics | None = None
     gate_passed: bool = True
     steps: int = 0
     target_sample_budget: int = 0

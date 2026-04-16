@@ -114,7 +114,7 @@ class DifficultyPID:
         skill_nodes_on_demote: int = 150,
     ):
         init = int(initial_nodes)
-        self.nodes = _clamp(init, int(min_nodes), int(max_nodes))
+        self.nodes = int(_clamp(init, int(min_nodes), int(max_nodes)))
         self.target = float(target_winrate)
         self.alpha = float(ema_alpha)
         self.deadzone = float(deadzone)
@@ -177,7 +177,7 @@ class DifficultyPID:
             self._regret_stage_complete = True  # disabled = always complete
 
         # Skill level ladder
-        self.skill_level = _clamp(int(initial_skill_level), int(skill_min), int(skill_max))
+        self.skill_level = int(_clamp(int(initial_skill_level), int(skill_min), int(skill_max)))
         self.skill_min = int(skill_min)
         self.skill_max = int(skill_max)
         self.skill_promote_nodes = int(skill_promote_nodes)
@@ -216,8 +216,8 @@ class DifficultyPID:
             return
 
         # Clamp to configured bounds.
-        self.nodes = _clamp(int(state.get("nodes", self.nodes)), self.min_nodes, self.max_nodes)
-        self.skill_level = _clamp(int(state.get("skill_level", self.skill_level)), self.skill_min, self.skill_max)
+        self.nodes = int(_clamp(int(state.get("nodes", self.nodes)), self.min_nodes, self.max_nodes))
+        self.skill_level = int(_clamp(int(state.get("skill_level", self.skill_level)), self.skill_min, self.skill_max))
         self.random_move_prob = _clamp(
             float(state.get("random_move_prob", self.random_move_prob)),
             self.random_move_prob_min, self.random_move_prob_max,
@@ -380,7 +380,7 @@ class DifficultyPID:
         if allow_nodes:
             # Apply multiplicative update.
             new_nodes = int(round(float(self.nodes) * (1.0 + u)))
-            self.nodes = _clamp(new_nodes, self.min_nodes, self.max_nodes)
+            self.nodes = int(_clamp(new_nodes, self.min_nodes, self.max_nodes))
 
             # Skill-level ladder:
             # - only promote when the controller is actively making the opponent harder (u > 0)
@@ -393,12 +393,12 @@ class DifficultyPID:
             if self.nodes >= self.skill_promote_nodes and self.skill_level < self.skill_max:
                 if u > 0.0:
                     self.skill_level += 1
-                    self.nodes = _clamp(self.skill_nodes_on_promote, self.min_nodes, self.max_nodes)
+                    self.nodes = int(_clamp(self.skill_nodes_on_promote, self.min_nodes, self.max_nodes))
                     self._integral = 0.0  # fresh start at new difficulty tier
             elif self.nodes <= self.skill_demote_nodes and self.skill_level > self.skill_min:
                 if u < 0.0:
                     self.skill_level -= 1
-                    self.nodes = _clamp(self.skill_nodes_on_demote, self.min_nodes, self.max_nodes)
+                    self.nodes = int(_clamp(self.skill_nodes_on_demote, self.min_nodes, self.max_nodes))
                     self._integral = 0.0  # fresh start at easier tier
 
             nodes_after = int(self.nodes)

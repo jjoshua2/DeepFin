@@ -7,6 +7,8 @@ position encoding, and GPU evaluation.
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 import chess
 import torch
@@ -24,6 +26,10 @@ try:
     _HAS_CBOARD = True
 except ImportError:
     _HAS_CBOARD = False
+
+if TYPE_CHECKING:
+    from chess_anti_engine.encoding._lc0_ext import CBoard  # noqa: F401,F811
+    from chess_anti_engine.encoding.cboard_encode import cboard_from_board_fast  # noqa: F401,F811
 
 
 def _replay_board(root_board: chess.Board, action_path: np.ndarray) -> chess.Board:
@@ -107,8 +113,7 @@ def run_mcts_many_c(
     root_ids = np.empty(n_boards, dtype=np.int32)
     board_cache: dict[int, chess.Board] = {}
 
-    if use_cboard:
-        cb_cache: dict[int, CBoard] = {}
+    cb_cache: dict[int, CBoard] = {}
 
     for i, b in enumerate(boards):
         root_board = b.copy(stack=True)
@@ -206,7 +211,9 @@ def run_mcts_many_c(
             n_leaves = len(leaf_data)
             leaf_xs = np.empty((n_leaves, 146, 8, 8), dtype=np.float32)
             for _li, _ld in enumerate(leaf_data):
-                leaf_xs[_li] = _ld[3].encode_146()
+                _cb = _ld[3]
+                assert _cb is not None  # use_cboard branch always populates cb
+                leaf_xs[_li] = _cb.encode_146()
         else:
             leaf_xs = encode_positions_batch([ld[2] for ld in leaf_data], add_features=True)
 
@@ -251,8 +258,8 @@ def run_mcts_many_c(
         probs = np.zeros((POLICY_SIZE,), dtype=np.float32)
         mask = np.zeros((POLICY_SIZE,), dtype=np.bool_)
 
+        visits_f = child_visits.astype(np.float32)
         if child_actions.size > 0:
-            visits_f = child_visits.astype(np.float32)
             s = float(visits_f.sum())
             if s > 0:
                 probs[child_actions] = visits_f / s

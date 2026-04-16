@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 import chess
@@ -14,6 +15,11 @@ try:
     _HAS_LC0_C_EXT = True
 except ImportError:
     _HAS_LC0_C_EXT = False
+
+if TYPE_CHECKING:
+    from chess_anti_engine.encoding._lc0_ext import (  # noqa: F401,F811
+        legal_move_policy_indices as _c_legal_move_policy_indices,
+    )
 
 # LC0 / AlphaZero-style policy encoding: 8x8x73 = 4672.
 #

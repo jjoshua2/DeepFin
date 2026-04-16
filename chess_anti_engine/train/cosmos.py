@@ -11,6 +11,7 @@ other tensors (embeddings, biases, large matrices).
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 
 import torch
 from torch import Tensor
@@ -35,7 +36,7 @@ def _zeropower_via_newtonschulz5(G: Tensor, steps: int = 10, eps: float = 1e-7) 
 
 # Defer torch.compile to first call to avoid triggering CUDA init at import time
 # (segfaults in environments where CUDA driver is broken, e.g. WSL2).
-_zeropower_compiled: None | object = None
+_zeropower_compiled: Callable[..., Tensor] | None = None
 
 
 def zeropower_via_newtonschulz5(G: Tensor, steps: int = 10, eps: float = 1e-7) -> Tensor:
@@ -209,7 +210,7 @@ class COSMOS(Optimizer):
             group.setdefault('maximize', False)
 
     @torch.no_grad()
-    def step(self, closure=None):
+    def step(self, closure: Callable[[], float] | None = None) -> float | None:  # type: ignore[override]
         loss = None
         if closure is not None:
             with torch.enable_grad():

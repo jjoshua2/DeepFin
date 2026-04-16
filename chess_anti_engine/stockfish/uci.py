@@ -66,6 +66,8 @@ class StockfishUCI:
             except Exception:
                 pass
             for stream in (self.proc.stdin, self.proc.stdout):
+                if stream is None:
+                    continue
                 try:
                     stream.close()
                 except Exception:
