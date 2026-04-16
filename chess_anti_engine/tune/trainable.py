@@ -433,20 +433,19 @@ def _run_puzzle_eval_if_due(
     model: torch.nn.Module,
     puzzle_suite,
     *,
+    tc: TrialConfig,
     device: str,
     rng,
-    puzzle_interval: int,
-    puzzle_sims: int,
     iteration_zero_based: int,
 ) -> dict:
     """Run puzzle evaluation if due this iteration. Returns metrics dict."""
     _defaults = {"puzzle_accuracy": float("nan"), "puzzle_correct": 0, "puzzle_total": 0}
-    if puzzle_suite is None or puzzle_interval <= 0:
+    if puzzle_suite is None or tc.puzzle_interval <= 0:
         return _defaults
-    if iteration_zero_based % puzzle_interval != 0:
+    if iteration_zero_based % tc.puzzle_interval != 0:
         return _defaults
     from chess_anti_engine.eval import run_puzzle_eval
-    pr = run_puzzle_eval(model, puzzle_suite, device=device, mcts_simulations=puzzle_sims, rng=rng)
+    pr = run_puzzle_eval(model, puzzle_suite, device=device, mcts_simulations=tc.puzzle_simulations, rng=rng)
     return {
         "puzzle_accuracy": pr.accuracy,
         "puzzle_correct": pr.correct,
@@ -940,20 +939,18 @@ def _run_eval_games(
     device: str,
     rng: np.random.Generator,
     eval_sf: object | None,
-    eval_games: int,
-    eval_mcts_sims: int,
 ) -> dict:
     """Run fixed-strength evaluation games (no training data generated)."""
     eval_dict: dict = {
         "eval_win": 0, "eval_draw": 0, "eval_loss": 0, "eval_winrate": 0.0,
     }
-    if eval_games <= 0 or eval_sf is None:
+    if tc.eval_games <= 0 or eval_sf is None:
         return eval_dict
     kw = _play_batch_kwargs(tc)
     kw["temp"] = TemperatureConfig(temperature=tc.eval_temperature)
     kw["search"] = dataclasses.replace(
         kw["search"],
-        simulations=eval_mcts_sims,
+        simulations=tc.eval_mcts_simulations,
         playout_cap_fraction=1.0,
         fast_simulations=0,
     )
@@ -966,7 +963,7 @@ def _run_eval_games(
     kw["opening"] = OpeningConfig()
     _eval_samples, eval_stats = play_batch(
         trainer.model, device=device, rng=rng, stockfish=eval_sf,
-        games=eval_games, **kw,
+        games=tc.eval_games, **kw,
     )
     denom = float(max(1, eval_stats.w + eval_stats.d + eval_stats.l))
     eval_dict.update({
@@ -1258,7 +1255,6 @@ def _run_selfplay_phase(
     model_cfg,
     buf,
     holdout_buf,
-    holdout_frac: float,
     holdout_frozen: bool,
     device: str,
     rng,
@@ -1280,10 +1276,7 @@ def _run_selfplay_phase(
     selfplay_shards_dir: Path,
     replay_shard_dir: Path,
     current_window: int,
-    window_max: int,
-    window_growth: int,
     in_salvage_startup_grace: bool,
-    salvage_startup_no_share_iters: int,
 ) -> tuple[SelfplayResult, str, int, object | None]:
     """Run selfplay, ingest, export shards, grow window, cross-trial share.
 
@@ -1357,7 +1350,7 @@ def _run_selfplay_phase(
         ingest_summary = _ingest_distributed_selfplay(
             buf=buf,
             holdout_buf=holdout_buf,
-            holdout_frac=float(holdout_frac),
+            holdout_frac=tc.holdout_fraction,
             holdout_frozen=bool(holdout_frozen),
             inbox_dir=distributed_dirs["inbox_dir"],
             processed_dir=distributed_dirs["processed_dir"],
@@ -1441,7 +1434,7 @@ def _run_selfplay_phase(
         holdout_samples: list = []
         train_samples: list = []
         for s in samples:
-            if holdout_frac > 0.0 and (not holdout_frozen) and (rng.random() < holdout_frac):
+            if tc.holdout_fraction > 0.0 and (not holdout_frozen) and (rng.random() < tc.holdout_fraction):
                 holdout_samples.append(s)
             else:
                 train_samples.append(s)
@@ -1499,8 +1492,8 @@ def _run_selfplay_phase(
             pass
 
     # --- Growing window ---
-    if current_window < window_max:
-        current_window = min(current_window + window_growth, window_max)
+    if current_window < tc.replay_window_max:
+        current_window = min(current_window + tc.replay_window_growth, tc.replay_window_max)
         if buf.capacity < current_window:
             buf.capacity = current_window
 
@@ -1540,7 +1533,7 @@ def _run_selfplay_phase(
     elif tc.exploit_replay_share_top_enabled and in_salvage_startup_grace:
         print(
             "[trial] replay share skipped during salvage startup grace: "
-            f"iter={iteration_zero_based} grace_iters={salvage_startup_no_share_iters}"
+            f"iter={iteration_zero_based} grace_iters={tc.salvage_startup_no_share_iters}"
         )
 
     imported_samples_this_iter = int(shared_summary.get("source_samples_ingested", 0))
@@ -1593,14 +1586,11 @@ def _finalize_iteration(
     status_csv_path: Path,
     tune_report_fn,
     puzzle_suite,
-    puzzle_interval: int,
-    puzzle_sims: int,
     current_rand: float,
     wdl_regret_used: float,
     sf_nodes_used: int,
     skill_level_used: int,
     use_distributed_selfplay: bool,
-    distributed_workers_per_trial: int,
     distributed_pause_started_at: float | None,
     distributed_pause_active: bool,
     startup_source: str,
@@ -1648,8 +1638,8 @@ def _finalize_iteration(
     # Puzzle evaluation (overspecialization canary).
     puzzle_dict = _run_puzzle_eval_if_due(
         trainer.model, puzzle_suite,
-        device=device, rng=rng, puzzle_interval=puzzle_interval,
-        puzzle_sims=puzzle_sims, iteration_zero_based=iteration_zero_based,
+        tc=tc, device=device, rng=rng,
+        iteration_zero_based=iteration_zero_based,
     )
 
     pause_metrics = _iteration_pause_metrics(
@@ -1678,7 +1668,6 @@ def _finalize_iteration(
         sf_nodes_used=sf_nodes_used,
         skill_level_used=skill_level_used,
         use_distributed_selfplay=use_distributed_selfplay,
-        distributed_workers_per_trial=distributed_workers_per_trial,
         pause_metrics=pause_metrics,
         startup_source=startup_source,
         seed_warmstart_used=seed_warmstart_used,
@@ -1748,7 +1737,6 @@ def _build_report_dict(
     sf_nodes_used: int,
     skill_level_used: int,
     use_distributed_selfplay: bool,
-    distributed_workers_per_trial: int,
     pause_metrics: dict,
     startup_source: str,
     seed_warmstart_used: bool,
@@ -1845,7 +1833,7 @@ def _build_report_dict(
         "shared_trials_skipped_repeat": int(sp.shared_summary.get("source_trials_skipped_repeat", 0)),
         "shared_shards_loaded": int(sp.shared_summary.get("source_shards_loaded", 0)),
         "distributed_selfplay": int(1 if use_distributed_selfplay else 0),
-        "distributed_workers_per_trial": int(distributed_workers_per_trial),
+        "distributed_workers_per_trial": int(tc.distributed_workers_per_trial),
         "distributed_stale_games": int(sp.distributed_stale_games),
         "distributed_stale_positions": int(sp.distributed_stale_positions),
         "backpressure_paused_seconds": float(pause_metrics["paused_seconds"]),
@@ -2281,8 +2269,6 @@ def train_trial(config: dict):
     )
     trainer = Trainer(model, **trainer_ctor)
 
-    salvage_startup_no_share_iters = max(0, tc.salvage_startup_no_share_iters)
-
     ckpt = _tune_get_checkpoint()
     restore, rng = _restore_checkpoint_or_salvage(
         config=config, trainer=trainer, device=device,
@@ -2298,7 +2284,6 @@ def train_trial(config: dict):
     seed_warmstart_used = restore.seed_warmstart_used
     seed_warmstart_slot = restore.seed_warmstart_slot
     seed_warmstart_slots_total = restore.seed_warmstart_slots_total
-    seed_warmstart_dir = restore.seed_warmstart_dir
     seed_warmstart_replay_dir = restore.seed_warmstart_replay_dir
     salvage_origin_used = restore.salvage_origin_used
     salvage_origin_slot = restore.salvage_origin_slot
@@ -2310,8 +2295,6 @@ def train_trial(config: dict):
     tc = TrialConfig.from_dict(config)
 
     # Growing sliding window: start small, grow as the net matures.
-    window_max = tc.replay_window_max
-    window_growth = tc.replay_window_growth
     current_window = tc.replay_window_start
     replay_shard_dir = _trial_replay_shard_dir(config=config, trial_dir=trial_dir)
     selfplay_shards_dir = work_dir / "selfplay_shards"
@@ -2421,7 +2404,6 @@ def train_trial(config: dict):
         f"tracked_shards={len(buf._shard_paths)} total_pos={buf._total_positions}"
     )
     holdout_buf = ArrayReplayBuffer(tc.holdout_capacity, rng=rng)
-    holdout_frac = tc.holdout_fraction
 
     # Load pre-trained bootstrap checkpoint (trained offline via scripts/train_bootstrap.py).
     # This gives the value head a working signal so first MCTS searches are better than random.
@@ -2455,18 +2437,11 @@ def train_trial(config: dict):
         else:
             print(f"[trial] WARNING: bootstrap checkpoint not found: {bp}")
 
-    # Holdout management: optionally freeze once it reaches a target size, and optionally
-    # reset it if the training distribution drifts too far.
-    freeze_holdout_at = tc.freeze_holdout_at
-    reset_holdout_on_drift = tc.reset_holdout_on_drift
-    drift_threshold = tc.drift_threshold
-    drift_sample_size = tc.drift_sample_size
     holdout_frozen = False
     holdout_generation = 0
 
-    distributed_workers_per_trial = max(0, tc.distributed_workers_per_trial)
     use_distributed_selfplay = (
-        distributed_workers_per_trial > 0
+        tc.distributed_workers_per_trial > 0
         and bool((tc.distributed_server_root or "").strip())
         and bool((tc.distributed_server_url or "").strip())
     )
@@ -2522,16 +2497,12 @@ def train_trial(config: dict):
                 f"dst={quarantined['quarantine_root']}"
             )
 
-    eval_games = tc.eval_games
-    eval_sf_nodes = tc.eval_sf_nodes
-    eval_mcts_sims = tc.eval_mcts_simulations
-
     eval_sf = None
-    if eval_games > 0:
+    if tc.eval_games > 0:
         # For fixed-strength evaluation, use a dedicated engine instance with its own node limit.
         eval_sf = StockfishUCI(
             tc.stockfish_path,
-            nodes=eval_sf_nodes,
+            nodes=tc.eval_sf_nodes,
             multipv=1,
             hash_mb=tc.sf_hash_mb,
         )
@@ -2547,9 +2518,7 @@ def train_trial(config: dict):
 
     # Optional puzzle evaluation suite.
     puzzle_suite = None
-    puzzle_interval = tc.puzzle_interval
-    puzzle_sims = tc.puzzle_simulations
-    if tc.puzzle_epd and puzzle_interval > 0:
+    if tc.puzzle_epd and tc.puzzle_interval > 0:
         from chess_anti_engine.eval import load_epd
         try:
             puzzle_suite = load_epd(tc.puzzle_epd)
@@ -2557,7 +2526,6 @@ def train_trial(config: dict):
             puzzle_suite = None
 
     pause_marker_path = _resolve_pause_marker_path(tc=tc, trial_dir=trial_dir)
-    pause_poll_seconds = tc.pause_poll_seconds
 
     if use_distributed_selfplay:
         current_rand_init = (
@@ -2627,11 +2595,11 @@ def train_trial(config: dict):
             in_salvage_startup_grace = (
                 startup_source == "salvage"
                 and bool(salvage_origin_used)
-                and int(iteration_zero_based) < salvage_startup_no_share_iters
+                and int(iteration_zero_based) < tc.salvage_startup_no_share_iters
             )
             _wait_if_paused(
                 pause_marker_path=pause_marker_path,
-                poll_seconds=pause_poll_seconds,
+                poll_seconds=tc.pause_poll_seconds,
                 trial_id=trial_id,
                 iteration=iteration_idx,
             )
@@ -2662,7 +2630,7 @@ def train_trial(config: dict):
             sp, prev_published_model_sha, current_window, distributed_inference_broker_proc = _run_selfplay_phase(
                 tc=tc, config=config, trainer=trainer, model_cfg=model_cfg,
                 buf=buf, holdout_buf=holdout_buf,
-                holdout_frac=holdout_frac, holdout_frozen=holdout_frozen,
+                holdout_frozen=holdout_frozen,
                 device=device, rng=rng, sf=sf, pid=pid,
                 use_distributed_selfplay=use_distributed_selfplay,
                 distributed_dirs=distributed_dirs,
@@ -2680,29 +2648,26 @@ def train_trial(config: dict):
                 selfplay_shards_dir=selfplay_shards_dir,
                 replay_shard_dir=replay_shard_dir,
                 current_window=current_window,
-                window_max=window_max,
-                window_growth=window_growth,
                 in_salvage_startup_grace=in_salvage_startup_grace,
-                salvage_startup_no_share_iters=salvage_startup_no_share_iters,
             )
             distributed_pause_active = False
             distributed_pause_started_at = None
             if sp.should_retry:
                 continue
 
-            if (not holdout_frozen) and freeze_holdout_at > 0 and len(holdout_buf) >= freeze_holdout_at:
+            if (not holdout_frozen) and tc.freeze_holdout_at > 0 and len(holdout_buf) >= tc.freeze_holdout_at:
                 holdout_frozen = True
 
             drift = _compute_drift_metrics(
                 buf=buf, holdout_buf=holdout_buf,
-                drift_sample_size=drift_sample_size,
+                drift_sample_size=tc.drift_sample_size,
             )
 
             # Optional holdout reset based on input drift threshold.
             if (
-                reset_holdout_on_drift
-                and (drift_threshold > 0.0)
-                and (drift.drift_input_l2 > drift_threshold)
+                tc.reset_holdout_on_drift
+                and (tc.drift_threshold > 0.0)
+                and (drift.drift_input_l2 > tc.drift_threshold)
             ):
                 holdout_buf.clear()
                 holdout_frozen = False
@@ -2735,7 +2700,7 @@ def train_trial(config: dict):
 
             eval_dict = _run_eval_games(
                 tc=tc, trainer=trainer, device=device, rng=rng,
-                eval_sf=eval_sf, eval_games=eval_games, eval_mcts_sims=eval_mcts_sims,
+                eval_sf=eval_sf,
             )
 
             # Flush replay + save checkpoint (model+optimizer+step + PID state).
@@ -2791,14 +2756,11 @@ def train_trial(config: dict):
                 status_csv_path=_STATUS_CSV_PATH,
                 tune_report_fn=_tune_report,
                 puzzle_suite=puzzle_suite,
-                puzzle_interval=puzzle_interval,
-                puzzle_sims=puzzle_sims,
                 current_rand=current_rand,
                 wdl_regret_used=wdl_regret_used,
                 sf_nodes_used=sf_nodes_used,
                 skill_level_used=skill_level_used,
                 use_distributed_selfplay=use_distributed_selfplay,
-                distributed_workers_per_trial=distributed_workers_per_trial,
                 distributed_pause_started_at=distributed_pause_started_at,
                 distributed_pause_active=distributed_pause_active,
                 startup_source=startup_source,

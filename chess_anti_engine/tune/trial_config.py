@@ -394,7 +394,7 @@ class TrialConfig:
             puzzle_simulations=int(config.get("puzzle_simulations", 200)),
 
             # --- Distributed ---
-            distributed_workers_per_trial=int(config.get("distributed_workers_per_trial", 0)),
+            distributed_workers_per_trial=max(0, int(config.get("distributed_workers_per_trial", 0))),
             distributed_server_root=_get("distributed_server_root", None),
             distributed_server_url=_get("distributed_server_url", None),
             distributed_wait_timeout_seconds=float(config.get("distributed_wait_timeout_seconds", 900.0)),
@@ -424,7 +424,7 @@ class TrialConfig:
             salvage_restore_donor_config=bool(config.get("salvage_restore_donor_config", False)),
             salvage_restore_pid_state=bool(config.get("salvage_restore_pid_state", False)),
             salvage_restore_full_trainer_state=bool(config.get("salvage_restore_full_trainer_state", False)),
-            salvage_startup_no_share_iters=int(config.get("salvage_startup_no_share_iters", 0)),
+            salvage_startup_no_share_iters=max(0, int(config.get("salvage_startup_no_share_iters", 0))),
             salvage_startup_max_train_steps=int(config.get("salvage_startup_max_train_steps", 0)),
             salvage_startup_post_share_ramp_iters=int(config.get("salvage_startup_post_share_ramp_iters", 0)),
             salvage_startup_post_share_max_train_steps=int(config.get("salvage_startup_post_share_max_train_steps", 0)),
