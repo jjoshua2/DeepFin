@@ -338,17 +338,7 @@ def train_trial(config: dict):
             # Difficulty knobs used for this iteration's selfplay (kept fixed across
             # selfplay chunks). PID is updated once per iteration AFTER training so
             # changes align to net updates rather than chunk noise.
-            ds = DifficultyState(
-                random_move_prob=(
-                    float(pid.random_move_prob) if pid is not None else tc.sf_pid_random_move_prob_start
-                ),
-                wdl_regret=float(pid.wdl_regret) if pid is not None else -1.0,
-                sf_nodes=(
-                    int(pid.nodes) if pid is not None
-                    else (int(getattr(sf, "nodes", 0) or 0) if sf is not None else tc.sf_nodes)
-                ),
-                skill_level=int(getattr(pid, "skill_level", 0) or 0) if pid is not None else 0,
-            )
+            ds = DifficultyState.from_pid(pid, sf, tc)
 
             base_sims = tc.mcts_simulations
             sims = _resolve_sims(tc, trainer, max_sims=base_sims)

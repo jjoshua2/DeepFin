@@ -192,7 +192,6 @@ def _run_training_and_gating(
 ) -> TrainingResult:
     """Compute step budget, run training, net gating, and holdout eval."""
     current_rand = ds.random_move_prob
-    skill_level_used = ds.skill_level
     train_t0 = time.monotonic()
     batch_size = tc.batch_size
     accum_steps = max(1, tc.accum_steps)
@@ -471,7 +470,6 @@ def _run_selfplay_phase(
     distributed_inference_broker_proc)``.
     """
     current_rand = ds.random_move_prob
-    skill_level_used = ds.skill_level
     total_games = _games_per_iter_for_iteration(tc, iteration_idx)
 
     # --- Play games (distributed or local) ---

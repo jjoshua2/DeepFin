@@ -551,6 +551,29 @@ class DifficultyState:
     sf_nodes: int
     skill_level: int
 
+    @classmethod
+    def from_pid(cls, pid: Any, sf: Any, tc: TrialConfig) -> DifficultyState:
+        """Build the per-iteration difficulty snapshot.
+
+        PID is the source of truth when present; sf is a fallback for gate-only
+        configurations where no PID exists. After PID restore, the caller is
+        expected to sync ``sf.set_nodes(pid.nodes)`` so sf.nodes == pid.nodes;
+        this method still prefers pid.nodes to make divergence impossible.
+        """
+        if pid is not None:
+            return cls(
+                random_move_prob=float(pid.random_move_prob),
+                wdl_regret=float(pid.wdl_regret),
+                sf_nodes=int(pid.nodes),
+                skill_level=int(getattr(pid, "skill_level", 0) or 0),
+            )
+        return cls(
+            random_move_prob=tc.sf_pid_random_move_prob_start,
+            wdl_regret=-1.0,
+            sf_nodes=int(getattr(sf, "nodes", 0) or 0) if sf is not None else tc.sf_nodes,
+            skill_level=0,
+        )
+
 
 @dataclass
 class PidResult:

@@ -6,10 +6,6 @@ from pathlib import Path
 
 import numpy as np
 
-from chess_anti_engine.utils import sha256_file  # re-export from canonical location
-from chess_anti_engine.utils.atomic import atomic_write_text  # re-export from canonical location
-
-
 def stable_seed_u32(*parts: object) -> int:
     """Deterministic 32-bit seed from arbitrary parts."""
     h = hashlib.blake2b(digest_size=8)

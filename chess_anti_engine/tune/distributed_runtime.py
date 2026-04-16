@@ -18,13 +18,13 @@ from chess_anti_engine.replay import ArrayReplayBuffer, DiskReplayBuffer
 from chess_anti_engine.replay.shard import load_npz_arrays
 from chess_anti_engine.train import Trainer
 from chess_anti_engine.tune._utils import (
-    atomic_write_text,
     resolve_local_override_root,
-    sha256_file,
     slice_array_batch,
     stable_seed_u32,
     terminate_process as _stop_process,
 )
+from chess_anti_engine.utils import sha256_file
+from chess_anti_engine.utils.atomic import atomic_write_text
 from chess_anti_engine.tune.process_cleanup import terminate_matching_processes
 from chess_anti_engine.version import PACKAGE_VERSION, PROTOCOL_VERSION
 
