@@ -62,6 +62,7 @@ from chess_anti_engine.tune.trainable_report import (
     _write_status_csv_row,
 )
 from chess_anti_engine.tune.trial_config import (
+    DifficultyState,
     DriftMetrics,
     PidResult,
     RestoreResult,
@@ -175,10 +176,8 @@ def _run_training_and_gating(
     rng: np.random.Generator,
     pid,
     sf,
-    current_rand: float,
-    skill_level_used: int,
+    ds: DifficultyState,
     sims: int,
-    wdl_regret_used: float,
     total_positions: int,
     imported_samples_this_iter: int,
     gate_match_idx: int,
@@ -192,6 +191,8 @@ def _run_training_and_gating(
     restore: RestoreResult,
 ) -> TrainingResult:
     """Compute step budget, run training, net gating, and holdout eval."""
+    current_rand = ds.random_move_prob
+    skill_level_used = ds.skill_level
     train_t0 = time.monotonic()
     batch_size = tc.batch_size
     accum_steps = max(1, tc.accum_steps)
@@ -240,11 +241,11 @@ def _run_training_and_gating(
                 server_root=distributed_server_root, trial_id=trial_id,
                 training_iteration=int(iteration_idx),
                 trainer_step=int(getattr(trainer, "step", 0)),
-                sf_nodes=int(pid.nodes) if pid is not None else tc.sf_nodes,
-                random_move_prob=float(current_rand),
-                skill_level=int(skill_level_used),
+                sf_nodes=int(ds.sf_nodes),
+                random_move_prob=float(ds.random_move_prob),
+                skill_level=int(ds.skill_level),
                 mcts_simulations=int(sims),
-                wdl_regret=float(pid.wdl_regret) if pid is not None else -1.0,
+                wdl_regret=float(ds.wdl_regret),
                 pause_selfplay=True,
                 pause_reason="training",
                 export_model=False,
@@ -325,15 +326,16 @@ def _run_pid_and_eval(
     iteration_zero_based: int,
     opp_strength_ema: float,
     opp_ema_alpha: float,
-    current_rand: float,
-    sf_nodes_used: int,
-    skill_level_used: int,
-    wdl_regret_used: float,
+    ds: DifficultyState,
 ) -> PidResult:
     """Update PID, compute opponent strength and derived game stats.
 
     Mutates *pid* (observe + param refresh) and *sf* (set_nodes) in place.
     """
+    current_rand = ds.random_move_prob
+    wdl_regret_used = ds.wdl_regret
+    sf_nodes_used = ds.sf_nodes
+    skill_level_used = ds.skill_level
     total_w = sp_result.total_w
     total_d = sp_result.total_d
     total_l = sp_result.total_l
@@ -451,8 +453,7 @@ def _run_selfplay_phase(
     distributed_worker_procs: list,
     distributed_inference_broker_proc,
     prev_published_model_sha: str,
-    current_rand: float,
-    skill_level_used: int,
+    ds: DifficultyState,
     sims: int,
     iteration_idx: int,
     iteration_zero_based: int,
@@ -469,6 +470,8 @@ def _run_selfplay_phase(
     Returns ``(sp_result, prev_published_model_sha, current_window,
     distributed_inference_broker_proc)``.
     """
+    current_rand = ds.random_move_prob
+    skill_level_used = ds.skill_level
     total_games = _games_per_iter_for_iteration(tc, iteration_idx)
 
     # --- Play games (distributed or local) ---
@@ -517,11 +520,11 @@ def _run_selfplay_phase(
             trial_id=trial_id,
             training_iteration=int(iteration_idx),
             trainer_step=int(getattr(trainer, "step", 0)),
-            sf_nodes=int(pid.nodes) if pid is not None else tc.sf_nodes,
-            random_move_prob=float(current_rand),
-            skill_level=int(skill_level_used),
+            sf_nodes=int(ds.sf_nodes),
+            random_move_prob=float(ds.random_move_prob),
+            skill_level=int(ds.skill_level),
             mcts_simulations=int(sims),
-            wdl_regret=float(pid.wdl_regret) if pid is not None else -1.0,
+            wdl_regret=float(ds.wdl_regret),
             pause_selfplay=False,
             pause_reason="",
         )
@@ -773,10 +776,7 @@ def _finalize_iteration(
     status_csv_path: Path,
     tune_report_fn,
     puzzle_suite,
-    current_rand: float,
-    wdl_regret_used: float,
-    sf_nodes_used: int,
-    skill_level_used: int,
+    ds: DifficultyState,
     use_distributed_selfplay: bool,
     distributed_pause_started_at: float | None,
     distributed_pause_active: bool,
@@ -793,6 +793,10 @@ def _finalize_iteration(
     rng,
 ) -> None:
     """End-of-iteration bookkeeping: PID persist, reporting, CSV, prune."""
+    current_rand = ds.random_move_prob
+    wdl_regret_used = ds.wdl_regret
+    sf_nodes_used = ds.sf_nodes
+    skill_level_used = ds.skill_level
     # Persist PID state AFTER observe() so checkpoints carry the
     # post-iteration difficulty that produced random_move_prob_next.
     if pid is not None:

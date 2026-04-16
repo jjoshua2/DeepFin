@@ -21,7 +21,7 @@ from chess_anti_engine.selfplay.config import (
 from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.train import Trainer
 from chess_anti_engine.tune.trainable_metrics import _dynamic_sf_wdl_weight
-from chess_anti_engine.tune.trial_config import TrialConfig
+from chess_anti_engine.tune.trial_config import DifficultyState, TrialConfig
 
 log = logging.getLogger(__name__)
 
@@ -216,8 +216,7 @@ def _sync_trainer_weights(
     trainer: Trainer,
     config: dict,
     tc: TrialConfig,
-    wdl_regret_used: float,
-    current_rand: float,
+    ds: DifficultyState,
 ) -> None:
     """Re-read loss weights and LR from config into trainer.
 
@@ -238,8 +237,8 @@ def _sync_trainer_weights(
         sf_wdl_floor_at_regret=tc.sf_wdl_floor_at_regret,
         sf_wdl_floor_at_rmp=tc.sf_wdl_floor_at,
         regret_max=tc.sf_pid_wdl_regret_max,
-        wdl_regret_used=wdl_regret_used,
-        current_rand=current_rand,
+        wdl_regret_used=ds.wdl_regret,
+        current_rand=ds.random_move_prob,
     )
     if cur_sf_wdl is not None:
         trainer.w_sf_wdl = cur_sf_wdl

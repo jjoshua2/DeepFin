@@ -538,6 +538,20 @@ class TrainingResult:
     gate_match_idx: int = 0
 
 
+@dataclass(frozen=True)
+class DifficultyState:
+    """Opponent difficulty at the start of an iteration (pre-observe).
+
+    Snapshot of PID/SF state used to drive selfplay, training weights,
+    reporting, and PID observation for this iteration.
+    """
+
+    random_move_prob: float
+    wdl_regret: float
+    sf_nodes: int
+    skill_level: int
+
+
 @dataclass
 class PidResult:
     """Output of the PID update + eval games + opponent strength phase."""

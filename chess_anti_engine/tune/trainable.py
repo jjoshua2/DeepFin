@@ -15,7 +15,7 @@ import torch
 from chess_anti_engine.model import ModelConfig, build_model
 from chess_anti_engine.stockfish import StockfishPool, StockfishUCI, pid_from_config
 from chess_anti_engine.train import Trainer, trainer_kwargs_from_config
-from chess_anti_engine.tune.trial_config import TrialConfig
+from chess_anti_engine.tune.trial_config import DifficultyState, TrialConfig
 from chess_anti_engine.tune.trainable_metrics import _compute_drift_metrics
 from chess_anti_engine.tune.trainable_report import _save_trial_checkpoint, _update_best_model
 from chess_anti_engine.tune.trainable_config_ops import (
@@ -245,6 +245,13 @@ def train_trial(config: dict):
                 pid.load_state_dict(restored_pid_state)
             except Exception:
                 pass
+        # Keep local sf in lock-step with restored PID nodes so gate games
+        # on resume play at the same difficulty as distributed workers.
+        if sf is not None:
+            try:
+                sf.set_nodes(int(pid.nodes))
+            except Exception:
+                pass
 
     # Optional puzzle evaluation suite.
     puzzle_suite = None
@@ -331,14 +338,17 @@ def train_trial(config: dict):
             # Difficulty knobs used for this iteration's selfplay (kept fixed across
             # selfplay chunks). PID is updated once per iteration AFTER training so
             # changes align to net updates rather than chunk noise.
-            current_rand = float(pid.random_move_prob) if pid is not None else tc.sf_pid_random_move_prob_start
-            wdl_regret_used = float(pid.wdl_regret) if pid is not None else -1.0
-            sf_nodes_used = (
-                int(getattr(sf, "nodes", 0) or 0)
-                if sf is not None
-                else (int(pid.nodes) if pid is not None else tc.sf_nodes)
+            ds = DifficultyState(
+                random_move_prob=(
+                    float(pid.random_move_prob) if pid is not None else tc.sf_pid_random_move_prob_start
+                ),
+                wdl_regret=float(pid.wdl_regret) if pid is not None else -1.0,
+                sf_nodes=(
+                    int(pid.nodes) if pid is not None
+                    else (int(getattr(sf, "nodes", 0) or 0) if sf is not None else tc.sf_nodes)
+                ),
+                skill_level=int(getattr(pid, "skill_level", 0) or 0) if pid is not None else 0,
             )
-            skill_level_used = int(getattr(pid, "skill_level", 0) or 0) if pid is not None else 0
 
             base_sims = tc.mcts_simulations
             sims = _resolve_sims(tc, trainer, max_sims=base_sims)
@@ -354,8 +364,7 @@ def train_trial(config: dict):
                 distributed_worker_procs=distributed_worker_procs,
                 distributed_inference_broker_proc=distributed_inference_broker_proc,
                 prev_published_model_sha=prev_published_model_sha,
-                current_rand=current_rand,
-                skill_level_used=skill_level_used,
+                ds=ds,
                 sims=sims,
                 iteration_idx=iteration_idx,
                 iteration_zero_based=iteration_zero_based,
@@ -389,16 +398,14 @@ def train_trial(config: dict):
                 holdout_frozen = False
                 holdout_generation += 1
 
-            _sync_trainer_weights(trainer, config, tc, wdl_regret_used, current_rand)
+            _sync_trainer_weights(trainer, config, tc, ds)
 
             tr = _run_training_and_gating(
                 tc=tc, trainer=trainer, buf=buf, holdout_buf=holdout_buf,
                 config=config, model_cfg=model_cfg,
                 device=device, rng=rng, pid=pid, sf=sf,
-                current_rand=current_rand,
-                skill_level_used=skill_level_used,
+                ds=ds,
                 sims=sims,
-                wdl_regret_used=wdl_regret_used,
                 total_positions=sp.total_positions,
                 imported_samples_this_iter=sp.imported_samples_this_iter,
                 gate_match_idx=gate_match_idx,
@@ -446,10 +453,7 @@ def train_trial(config: dict):
                 iteration_zero_based=iteration_zero_based,
                 opp_strength_ema=opp_strength_ema,
                 opp_ema_alpha=_OPP_EMA_ALPHA,
-                current_rand=current_rand,
-                sf_nodes_used=sf_nodes_used,
-                skill_level_used=skill_level_used,
-                wdl_regret_used=wdl_regret_used,
+                ds=ds,
             )
             opp_strength_ema = pid_result.opp_strength_ema
 
@@ -466,10 +470,7 @@ def train_trial(config: dict):
                 status_csv_path=_STATUS_CSV_PATH,
                 tune_report_fn=_tune_report,
                 puzzle_suite=puzzle_suite,
-                current_rand=current_rand,
-                wdl_regret_used=wdl_regret_used,
-                sf_nodes_used=sf_nodes_used,
-                skill_level_used=skill_level_used,
+                ds=ds,
                 use_distributed_selfplay=use_distributed_selfplay,
                 distributed_pause_started_at=distributed_pause_started_at,
                 distributed_pause_active=distributed_pause_active,
