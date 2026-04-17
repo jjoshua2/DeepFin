@@ -292,7 +292,6 @@ static uint64_t feat_discovered_attack_mask(
     if (feat_is_attacked_by(own_pieces, color, occ, opp_king_sq)) {
         int n_attackers = 0;
         uint64_t attackers = 0;
-        int sq;
 
         uint64_t ka = FEAT_KNIGHT_ATTACKS[opp_king_sq] & own_pieces[1];
         n_attackers += __builtin_popcountll(ka); attackers |= ka;

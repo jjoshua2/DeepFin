@@ -29,9 +29,13 @@ static inline int orient_sq(int sq, int is_white) {
     return is_white ? sq : (sq ^ 56);
 }
 
-#define FOR_EACH_BIT(bb, sq) \
-    for (uint64_t _bb = (bb); _bb; _bb &= _bb - 1) \
-        if (((sq) = lsb64(_bb)), 1)
+/* Token-paste __COUNTER__ so every expansion gets a unique iterator name.
+ * Without this, nesting FOR_EACH_BIT inside itself triggers -Wshadow. */
+#define _FOR_EACH_BIT_IMPL(bb, sq, n) \
+    for (uint64_t _bb##n = (bb); _bb##n; _bb##n &= _bb##n - 1) \
+        if (((sq) = lsb64(_bb##n)), 1)
+#define _FOR_EACH_BIT_CAT(bb, sq, n) _FOR_EACH_BIT_IMPL(bb, sq, n)
+#define FOR_EACH_BIT(bb, sq) _FOR_EACH_BIT_CAT(bb, sq, __COUNTER__)
 
 /* ================================================================
  * Attack tables (initialized once)
@@ -829,7 +833,6 @@ static void cboard_push(CBoard *b, int from_sq, int to_sq, int promotion) {
 
     /* --- Save old state for incremental hash update --- */
     uint8_t old_castling = b->castling;
-    int8_t old_ep = b->ep_square;
     uint64_t h = b->hash;
 
     /* --- Halfmove clock --- */

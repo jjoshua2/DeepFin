@@ -2109,7 +2109,6 @@ static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *
 
     /* Step 1: tree traversal (reuse existing C function) */
     int32_t path_buf[512];
-    int32_t action_buf[512];
 
     /* Collect all leaves, build CBoards, encode */
     int32_t n_leaves = 0;
@@ -3504,6 +3503,12 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
         return NULL;
     }
 
+    /* Heap pointers declared first so the common fail: label can free()
+     * them unconditionally (free(NULL) is a no-op) even if we goto fail
+     * before allocation. */
+    CBoard *boards = NULL;
+    float  *raw_buf = NULL;
+
     int32_t n = (int32_t)PyArray_DIM(pol_arr, 0);
     if (PyList_Size(cboards_list) < n) {
         PyErr_SetString(PyExc_ValueError, "cboards_list too short");
@@ -3516,14 +3521,6 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
     const int32_t *actions = (const int32_t *)PyArray_DATA(act_arr);
     const double *values = (const double *)PyArray_DATA(val_arr);
     const float *mcts_probs = (const float *)PyArray_DATA(probs_arr);
-    const int32_t *is_full = (const int32_t *)PyArray_DATA(full_arr);
-    const double *sample_wts = (const double *)PyArray_DATA(wt_arr);
-
-    /* Pre-extract CBoard structs (validated).
-     * Both heap pointers are NULL-initialised so the common fail: label
-     * can free() them unconditionally (free(NULL) is a no-op). */
-    CBoard *boards = NULL;
-    float  *raw_buf = NULL;
 
     boards = (CBoard *)malloc(n * sizeof(CBoard));
     if (!boards) { PyErr_NoMemory(); goto fail; }

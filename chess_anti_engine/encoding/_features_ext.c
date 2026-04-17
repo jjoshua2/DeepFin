@@ -339,7 +339,6 @@ static int walk_ray_blockers(int src, int dst, int step, uint64_t occ, int *bloc
 /* Check if color attacks target_sq (for discovered attack in-check path) */
 static int is_attacked_by(uint64_t pieces[6], int color_idx, uint64_t occ, int target_sq) {
     /* pieces[0..5] = PAWN..KING for this color */
-    int sq;
     /* Knights */
     if (KNIGHT_ATTACKS[target_sq] & pieces[1]) return 1;
     /* Bishops + Queens (diagonal) */
@@ -371,7 +370,6 @@ static uint64_t discovered_attack_mask(
         /* Count attackers */
         int n_attackers = 0;
         uint64_t attackers = 0;
-        int sq;
 
         /* Knight attackers */
         uint64_t ka = KNIGHT_ATTACKS[opp_king_sq] & own_pieces[1];
