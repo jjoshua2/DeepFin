@@ -31,9 +31,11 @@ dev = [
   "pyright>=1.1.400",
   "skylos>=4.0",
   "pylint>=3.0",
-  # C extension static analysis (all pip-installable, no sudo required)
+  # C extension static analysis (pip-installable, no sudo required)
   "cppcheck>=1.5",     # general C static analyzer (bundles cppcheck binary)
-  "flawfinder>=2.0",   # security-oriented C scanner (strcpy, gets, etc.)
+  # For deeper interprocedural analysis, install Facebook infer separately:
+  #   curl -L https://github.com/facebook/infer/releases/download/v1.2.0/infer-linux-x86_64-v1.2.0.tar.xz | tar -C ~/.local -xJ
+  #   ~/.local/infer-linux-x86_64-v1.2.0/bin/infer run -- python3 setup.py build_ext --inplace
 ]
 
 tune = [

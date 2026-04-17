@@ -3546,11 +3546,10 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
 
     if (!out_x || !out_probs || !out_wdl_net || !out_wdl_search ||
         !out_priority || !out_keep || !out_mask || !out_ply || !out_pov || !out_over) {
-        free(boards);
         Py_XDECREF(out_x); Py_XDECREF(out_probs); Py_XDECREF(out_wdl_net);
         Py_XDECREF(out_wdl_search); Py_XDECREF(out_priority); Py_XDECREF(out_keep);
         Py_XDECREF(out_mask); Py_XDECREF(out_ply); Py_XDECREF(out_pov); Py_XDECREF(out_over);
-        goto fail;
+        goto fail;  /* fail: handles free(boards) + free(raw_buf) + array DECREFs */
     }
 
     float *x_data = (float *)PyArray_DATA(out_x);
@@ -3566,10 +3565,12 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
 
     /* ── Release GIL for the main computation loop ── */
     raw_buf = (float *)malloc(4672 * sizeof(float));
-    if (!raw_buf) { free(boards); Py_XDECREF(out_x); Py_XDECREF(out_probs); Py_XDECREF(out_wdl_net);
+    if (!raw_buf) {
+        Py_XDECREF(out_x); Py_XDECREF(out_probs); Py_XDECREF(out_wdl_net);
         Py_XDECREF(out_wdl_search); Py_XDECREF(out_priority); Py_XDECREF(out_keep);
         Py_XDECREF(out_mask); Py_XDECREF(out_ply); Py_XDECREF(out_pov); Py_XDECREF(out_over);
-        goto fail; }
+        goto fail;  /* fail: handles free(boards) + free(raw_buf) + array DECREFs */
+    }
 
     Py_BEGIN_ALLOW_THREADS
 
