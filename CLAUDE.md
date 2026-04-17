@@ -88,6 +88,8 @@ Adaptive opponent strength via WDL regret-based difficulty. PID controller targe
 ### Training (`train/`)
 `Trainer` class runs training steps with `torch.amp` (BF16 on CUDA). Multi-component loss computed in `losses.py`. Optimizer is configurable (`nadamw` / `adamw` / `cosmos` / `cosmos_fast`); current production config uses `adamw`. Gradient clipping via z-clip (`zclip_max_norm` hard cap + z-score outlier clip).
 
+**`w_sf_wdl` is load-bearing, not a conflicting dual target.** The main `value_wdl` head is trained on both the hard game-outcome CE (`w_wdl`) and soft CE against Stockfish's WDL eval (`w_sf_wdl`). The two targets disagree often (~63% of samples) because selfplay game outcomes reflect the opponent's handicap level (PID-controlled SF regret), while sf_wdl is SF's objective eval at 5k nodes. That disagreement is the *point*: sf_wdl injects search-horizon bootstrap that pure selfplay outcomes cannot carry. Zeroing `w_sf_wdl` was tried 2026-04-17 (reverted in commit 52ab9c0) — winrate crashed 0.64 → 0.40 in 4 iters. The separate `value_sf_eval` head exists as a weak auxiliary channel (`w_sf_eval`) but does not substitute for main-head SF supervision.
+
 ### Replay Buffer (`replay/`)
 Disk-backed replay buffer (`DiskReplayBuffer`) with zarr shard storage. Growing sliding window: starts small, expands as training progresses. KataGo-style surprise weighting for sampling.
 
