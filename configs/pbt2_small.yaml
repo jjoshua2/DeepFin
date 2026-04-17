@@ -157,7 +157,7 @@ train:
   feature_dropout_p: 0.10  # Fixed at 0.10 (not searched).
   zclip_z_thresh: 2.5
   zclip_alpha: 0.97
-  zclip_max_norm: 1.0
+  zclip_max_norm: 5.0  # was 1.0; raised because raw grad norms median ~2.2 meant every step was hard-clipped, dampening effective LR by ~55%. Z-score clipping still handles outliers.
 
   w_policy: 1.0             # Pinned: anchor for all other weights
   w_soft: 1.2               # PBT converged to ceiling (1.2) every trial in Run 7; set as default.

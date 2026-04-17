@@ -67,6 +67,8 @@ class AttentionPolicyHead(nn.Module):
         self.q = nn.Linear(embed_dim, policy_dim)
         self.k = nn.Linear(embed_dim, policy_dim)
         self.scale = policy_dim**-0.5
+        # Learnable sharpness multiplier: 1/√d squashes terminal-head logits below sharp MCTS targets.
+        self.log_temp = nn.Parameter(torch.zeros(1))
 
         # Underpromotion planes: 9 logits per from-square (N,B,R) x (left,forward,right).
         self.underpromo = nn.Linear(embed_dim, 9)
@@ -85,7 +87,7 @@ class AttentionPolicyHead(nn.Module):
         b = x.shape[0]
         q = self.q(x)
         k = self.k(x)
-        logits_ft = (q @ k.transpose(-1, -2)) * self.scale  # (B,64,64)
+        logits_ft = (q @ k.transpose(-1, -2)) * self.scale * torch.exp(self.log_temp)  # (B,64,64)
 
         gather_idx = self.to_sq.unsqueeze(0).expand(b, -1, -1)
         logits_64 = torch.gather(logits_ft, dim=-1, index=gather_idx)  # (B,64,64)
