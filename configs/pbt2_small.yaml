@@ -91,7 +91,7 @@ stockfish:
   sf_pid_wdl_regret_min: 0.02         # hard floor
   sf_pid_wdl_regret_max: 2.0          # max if PID needs to ease off
   sf_pid_wdl_regret_stage_end: 0.05   # nodes unlock when regret reaches 5%
-  sf_pid_max_regret_step: 0.002       # TEMP: raised 0.001→0.002 to let PID catch up when winrate >> target. Revert after regret stabilizes near target winrate.
+  sf_pid_max_regret_step: 0.003       # TEMP: raised 0.001→0.002→0.003 to let PID catch up when winrate >> target. Model is outpacing rate limit (winrate drifted up 0.75→0.79 while regret tightened). Revert after regret stabilizes near target winrate.
   sf_pid_max_regret_ease_step: 0.002  # 2x tighten (was 5x) — minimal asymmetry, less oscillation
 
 selfplay:
