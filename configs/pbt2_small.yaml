@@ -169,10 +169,10 @@ train:
   w_volatility: 0.10        # Pinned: top-5 median from Run 4
   w_sf_volatility: 0.05
   w_moves_left: 0.02
-  w_sf_wdl: 1.7             # SF WDL weight at wide regret (easy opponent); decays to floor as regret tightens. Tried zeroing 2026-04-17 (commit 916114a) to resolve a 62.8% conflict with game outcome target — winrate crashed 0.64→0.40 in 4 iters. sf_wdl is providing useful search-horizon bootstrap despite being 89% one-hot.
+  w_sf_wdl: 0.85            # Halved from 1.7 (2026-04-17): lighter SF pressure while keeping the search-horizon bootstrap. Full zero crashed winrate 0.64→0.40 in 4 iters (see commit 52ab9c0 for details).
   sf_wdl_conf_power: 1.0    # Confidence damping: scale SF-WDL by (1-draw_prob)^power.
   sf_wdl_draw_scale: 0.55   # Pinned low-to-mid based on the healthier late-run settings.
-  sf_wdl_floor: 0.20        # Floor: keep 20% SF signal even at tight regret.
+  sf_wdl_floor: 0.10        # Halved from 0.20: less residual SF pressure at tight regret.
   sf_wdl_floor_at_regret: 0.10  # Regret value at which SF WDL weight hits the floor.
 
   accum_steps: 1    # More gradient steps per iteration; effective batch = 256.
