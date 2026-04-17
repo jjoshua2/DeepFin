@@ -26,6 +26,14 @@ train = [
 
 dev = [
   "pytest>=7.0",
+  # Static analysis
+  "ruff>=0.5",
+  "pyright>=1.1.400",
+  "skylos>=4.0",
+  "pylint>=3.0",
+  # C extension static analysis (all pip-installable, no sudo required)
+  "cppcheck>=1.5",     # general C static analyzer (bundles cppcheck binary)
+  "flawfinder>=2.0",   # security-oriented C scanner (strcpy, gets, etc.)
 ]
 
 tune = [
