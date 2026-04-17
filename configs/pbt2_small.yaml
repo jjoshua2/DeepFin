@@ -32,7 +32,8 @@ worker_wheel_path: null  # Optional: built wheel to publish for remote worker se
 bootstrap_max_positions: 0   # 0 = load ALL positions (14.2M) — used by scripts/train_bootstrap.py
 bootstrap_train_steps: 0     # 0 = auto: train 1 epoch — used by scripts/train_bootstrap.py
 shared_shards_dir: null  # Disabled: start trials from bootstrap weights + fresh selfplay window
-salvage_seed_pool_dir: /home/josh/projects/chess/data/salvage_iter37  # Iter 37: os=328, 66 shards
+# salvage_seed_pool_dir: intentionally omitted — set via CLI --salvage-seed-pool-dir.
+# If set here, the live YAML reload at trainable.py:68 clobbers any CLI-provided value.
 salvage_restore_donor_config: false   # Disabled: use GPBT-sampled LR (0.0003) not donor's 0.001
 salvage_restore_full_trainer_state: true  # Full optimizer + scheduler + step state
 salvage_restore_pid_state: true  # Copy PID controller state (regret, ema_winrate)
@@ -57,7 +58,7 @@ stockfish:
   # Keep SF at full strength for labels and sample from MultiPV for easier played moves.
 
   sf_pid_enabled: true
-  sf_pid_target_winrate: 0.60
+  sf_pid_target_winrate: 0.57
   sf_pid_ema_alpha: 0.50      # EMA half-life ~1 iter — faster reaction with shorter iters
   sf_pid_deadzone: 0.05            # Tighten when pid_wr > 0.65; ease when pid_wr < 0.55.
   sf_pid_rate_limit: 0.10
@@ -169,10 +170,10 @@ train:
   w_volatility: 0.10        # Pinned: top-5 median from Run 4
   w_sf_volatility: 0.05
   w_moves_left: 0.02
-  w_sf_wdl: 0.85            # Halved from 1.7 (2026-04-17): lighter SF pressure while keeping the search-horizon bootstrap. Full zero crashed winrate 0.64→0.40 in 4 iters (see commit 52ab9c0 for details).
+  w_sf_wdl: 1.7             # Load-bearing SF-eval bootstrap. Halving to 0.85 underperformed the snapshot we restarted from; zeroing crashed 0.64→0.40 in 4 iters (commit 52ab9c0).
   sf_wdl_conf_power: 1.0    # Confidence damping: scale SF-WDL by (1-draw_prob)^power.
   sf_wdl_draw_scale: 0.55   # Pinned low-to-mid based on the healthier late-run settings.
-  sf_wdl_floor: 0.10        # Halved from 0.20: less residual SF pressure at tight regret.
+  sf_wdl_floor: 0.20        # Residual SF-eval pressure at tight regret.
   sf_wdl_floor_at_regret: 0.10  # Regret value at which SF WDL weight hits the floor.
 
   accum_steps: 1    # More gradient steps per iteration; effective batch = 256.
