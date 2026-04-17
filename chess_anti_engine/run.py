@@ -654,9 +654,16 @@ def main() -> None:
     ap.add_argument("--pause-poll-seconds", type=int, default=60,
                     help="Pause gate polling interval in seconds.")
     ap.add_argument("--salvage-seed-pool-dir", type=str, default=None,
-                    help="Optional seed pool dir (from --mode salvage) to warm-start fresh trials.")
-    ap.add_argument("--salvage-restore-pid-state", action="store_true",
-                    help="When warm-starting from a salvage seed, also restore the donor PID difficulty state.")
+                    help="Optional seed pool dir (from --mode salvage) to warm-start fresh trials. "
+                         "Pass an empty string to disable a pool set in YAML.")
+    ap.add_argument("--salvage-restore-pid-state", default=None, action=argparse.BooleanOptionalAction,
+                    help="Restore the donor PID difficulty state when warm-starting from a salvage seed.")
+    ap.add_argument("--salvage-restore-donor-config", default=None, action=argparse.BooleanOptionalAction,
+                    help="Apply the donor trial's config (LR, etc.) instead of the GPBT-sampled values.")
+    ap.add_argument("--salvage-restore-full-trainer-state", default=None, action=argparse.BooleanOptionalAction,
+                    help="Restore full trainer state (optimizer + scheduler + step) from the salvage seed.")
+    ap.add_argument("--salvage-reinit-volatility-heads", default=None, action=argparse.BooleanOptionalAction,
+                    help="Reinitialize volatility heads after loading the salvage seed.")
     ap.add_argument("--replay-window-start", type=int, default=100_000, help="Initial sliding window size")
     ap.add_argument("--replay-window-max", type=int, default=1_000_000, help="Max sliding window size")
     ap.add_argument("--replay-window-growth", type=int, default=10_000, help="Window growth per iteration")
