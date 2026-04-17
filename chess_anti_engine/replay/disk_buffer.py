@@ -105,31 +105,6 @@ def _zeros_for_missing_field(
     raise KeyError(f"unknown replay field {name!r}")
 
 
-def _normalize_arrays(arrs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
-    x = arrs["x"]
-    policy_target = arrs["policy_target"]
-    n = int(x.shape[0])
-    policy_size = int(policy_target.shape[1])
-    x_planes = int(x.shape[1])
-    categorical_bins = (
-        int(arrs["categorical_target"].shape[1]) if "categorical_target" in arrs else DEFAULT_CATEGORICAL_BINS
-    )
-
-    out: dict[str, np.ndarray] = {}
-    for name in _ARRAY_FIELD_ORDER:
-        if name in arrs:
-            out[name] = arrs[name]
-        else:
-            out[name] = _zeros_for_missing_field(
-                name,
-                n=n,
-                policy_size=policy_size,
-                x_planes=x_planes,
-                categorical_bins=categorical_bins,
-            )
-    return out
-
-
 def _batch_dims(arrs: dict[str, np.ndarray]) -> tuple[int, int, int]:
     x = arrs["x"]
     policy_target = arrs["policy_target"]

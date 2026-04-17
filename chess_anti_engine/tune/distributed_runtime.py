@@ -473,11 +473,6 @@ def _build_distributed_worker_cmd(
     return cmd
 
 
-def _trial_inference_endpoint(*, trial_id: str) -> str:
-    port = 46000 + (stable_seed_u32("inference-broker", trial_id) % 10000)
-    return f"127.0.0.1:{int(port)}"
-
-
 def _trial_slot_prefix(*, trial_id: str) -> str:
     """Deterministic shared-memory slot prefix for a trial's inference broker."""
     h = stable_seed_u32("slot-prefix", trial_id)
@@ -649,36 +644,6 @@ def launch_shared_inference_broker(
         proc._shared_broker_cmd = cmd  # type: ignore[attr-defined]
         proc._shared_broker_server_root = str(server_root)  # type: ignore[attr-defined]
         return proc
-    finally:
-        out_fh.close()
-
-
-def ensure_shared_inference_broker(
-    proc: subprocess.Popen[bytes] | None,
-) -> subprocess.Popen[bytes] | None:
-    """Restart the shared broker if it has exited. Called periodically from harness."""
-    if proc is None:
-        return None
-    if proc.poll() is None:
-        return proc  # still running
-    cmd = getattr(proc, "_shared_broker_cmd", None)
-    server_root = getattr(proc, "_shared_broker_server_root", None)
-    if not cmd:
-        return None
-    print(f"[tune] shared inference broker exited with code {proc.returncode}, restarting...")
-    out_path = Path(server_root) / "shared_broker.out" if server_root else Path("/dev/null")
-    out_fh = out_path.open("ab")
-    try:
-        new_proc = subprocess.Popen(
-            cmd,
-            cwd=str(Path(__file__).resolve().parents[2]),
-            stdout=out_fh,
-            stderr=subprocess.STDOUT,
-        )
-        new_proc._shared_broker_cmd = cmd  # type: ignore[attr-defined]
-        new_proc._shared_broker_server_root = server_root  # type: ignore[attr-defined]
-        print(f"[tune] restarted shared inference broker: pid={new_proc.pid}")
-        return new_proc
     finally:
         out_fh.close()
 
@@ -952,36 +917,3 @@ def _ingest_distributed_selfplay(
     return summary
 
 
-def _ingest_available_shards(
-    *,
-    buf: DiskReplayBuffer,
-    holdout_buf: ArrayReplayBuffer,
-    holdout_frac: float,
-    holdout_frozen: bool,
-    inbox_dir: Path,
-    processed_dir: Path,
-    accept_model_shas: set[str],
-    rng: np.random.Generator,
-) -> dict[str, int]:
-    """Non-blocking ingest: scan inbox once, process all available shards, return immediately.
-
-    Unlike ``_ingest_distributed_selfplay`` this never polls or waits.
-    Shards whose ``model_sha256`` is in *accept_model_shas* count as
-    ``matching``; all others count as ``stale`` (but are still ingested
-    into the replay buffer — one-step-stale data is fine).
-    """
-    processed_dir.mkdir(parents=True, exist_ok=True)
-    summary = _empty_ingest_summary()
-
-    for sp in sorted(inbox_dir.glob("*/*.npz")):
-        if sp.name.startswith("._tmp_"):
-            continue
-        _process_shard(
-            sp,
-            inbox_dir=inbox_dir, processed_dir=processed_dir,
-            buf=buf, holdout_buf=holdout_buf,
-            holdout_frac=holdout_frac, holdout_frozen=holdout_frozen,
-            accepted_model_shas=accept_model_shas, rng=rng, summary=summary,
-        )
-
-    return summary

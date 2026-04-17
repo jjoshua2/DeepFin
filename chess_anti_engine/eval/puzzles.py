@@ -91,7 +91,7 @@ def load_epd(path: str | Path) -> PuzzleSuite:
         raise FileNotFoundError(f"Puzzle file not found: {p}")
 
     puzzles: list[Puzzle] = []
-    for line_no, raw in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
+    for raw in p.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue

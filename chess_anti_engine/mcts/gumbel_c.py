@@ -303,7 +303,7 @@ def run_gumbel_root_many_c(
         _pending_g1 = None  # (pol_np, wdl_np) — synced + copied numpy
 
         _max_iters = n_boards * max(max(budget_remaining), 1) + 100
-        for _pipe_iter in range(_max_iters):
+        for _ in range(_max_iters):
             if _n_leaves[0] is None and _n_leaves[1] is None:
                 break
 
@@ -562,16 +562,3 @@ def run_gumbel_root_many_c(
     )
 
 
-@torch.no_grad()
-def run_gumbel_root_c(
-    model: torch.nn.Module,
-    board: chess.Board,
-    *,
-    device: str,
-    rng: np.random.Generator,
-    cfg: GumbelConfig,
-) -> tuple[np.ndarray, int, float]:
-    probs, acts, vals, _masks, _tree, _rids = run_gumbel_root_many_c(
-        model, [board], device=device, rng=rng, cfg=cfg,
-    )
-    return probs[0], acts[0], float(vals[0])

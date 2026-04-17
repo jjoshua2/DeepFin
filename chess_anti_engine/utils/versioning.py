@@ -23,11 +23,3 @@ def parse_version(v: str) -> tuple[int, int, int]:
 
 def version_lt(a: str, b: str) -> bool:
     return parse_version(a) < parse_version(b)
-
-
-def version_gt(a: str, b: str) -> bool:
-    return parse_version(a) > parse_version(b)
-
-
-def version_eq(a: str, b: str) -> bool:
-    return parse_version(a) == parse_version(b)

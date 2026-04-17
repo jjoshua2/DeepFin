@@ -416,22 +416,6 @@ class Trainer:
         for field_name, value in dataclasses.asdict(metrics).items():
             self.writer.add_scalar(f"{tag}/{field_name}", float(value), self.step)
 
-    def _sample_batch_tensors(
-        self,
-        buf: ReplayBuffer,
-        *,
-        batch_size: int,
-        mirror_prob: float,
-    ) -> dict[str, torch.Tensor]:
-        if hasattr(buf, "sample_batch_arrays"):
-            arrs = buf.sample_batch_arrays(batch_size)
-            arrs = maybe_mirror_batch_arrays(arrs, rng=buf.rng, prob=mirror_prob)
-            return collate_arrays(arrs, device=self.device)
-
-        samples = buf.sample_batch(batch_size)
-        samples = maybe_mirror_samples(samples, rng=buf.rng, prob=mirror_prob)
-        return collate(samples, device=self.device)
-
     def _sample_batch_host(
         self,
         buf: ReplayBuffer,

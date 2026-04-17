@@ -233,14 +233,6 @@ class CompletedGameBatch:
     plies_loss: int = 0
 
 
-@dataclass
-class GameBatchCollector:
-    games: list[CompletedGameBatch] = field(default_factory=list)
-
-    def on_game_complete(self, batch: CompletedGameBatch) -> None:
-        self.games.append(batch)
-
-
 class _NetRecord:
     """Per-ply sample record.  Uses __slots__ to avoid dict overhead."""
     __slots__ = (
@@ -1116,10 +1108,6 @@ def play_batch(
         else:
             results = {idx: stockfish.search(cboards[idx].fen(), nodes=_eff_nodes(idx)) for idx in idxs}
         _process_sf_results(idxs, results=results, play_curriculum_moves=play_curriculum_moves)
-
-    def _run_sf_annotation_and_moves(idxs: list[int], *, play_curriculum_moves: bool) -> None:
-        """Submit + collect SF results in one blocking call."""
-        _finish_sf_annotation_and_moves(idxs, play_curriculum_moves=play_curriculum_moves)
 
     def _process_sf_results(
         idxs: list[int], *, results: dict, play_curriculum_moves: bool,

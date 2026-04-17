@@ -140,15 +140,6 @@ def _select_child(node: Node, *, c_puct: float, fpu_reduction: float) -> tuple[i
     return best
 
 
-def _expand(node: Node, priors: np.ndarray) -> None:
-    # priors is (POLICY_SIZE,), already masked to legal.
-    # Boards AND moves are created lazily on first access.
-    node.expanded = True
-    for a_idx in np.nonzero(priors > 0)[0]:
-        a = int(a_idx)
-        node.children[a] = Node(None, parent=node, prior=float(priors[a]), action_idx=a)
-
-
 def _expand_sparse(node: Node, legal_indices: np.ndarray, priors: np.ndarray) -> None:
     """Expand using pre-computed legal indices and their priors (avoids 4672-bool mask)."""
     node.expanded = True

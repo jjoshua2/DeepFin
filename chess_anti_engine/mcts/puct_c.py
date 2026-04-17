@@ -32,15 +32,6 @@ if TYPE_CHECKING:
     from chess_anti_engine.encoding.cboard_encode import cboard_from_board_fast  # noqa: F401,F811
 
 
-def _replay_board(root_board: chess.Board, action_path: np.ndarray) -> chess.Board:
-    """Replay action path on root board to get leaf board."""
-    board = root_board.copy(stack=True)
-    for a in action_path:
-        move = index_to_move_fast(int(a), board)
-        board.push(move)
-    return board
-
-
 def _replay_board_cached(
     board_cache: dict[int, chess.Board],
     node_path: np.ndarray,
@@ -289,17 +280,3 @@ def run_mcts_many_c(
     return probs_list, actions, values, legal_masks
 
 
-@torch.no_grad()
-def run_mcts_c(
-    model: torch.nn.Module | None,
-    board: chess.Board,
-    *,
-    device: str,
-    rng: np.random.Generator,
-    cfg: MCTSConfig,
-    evaluator: BatchEvaluator | None = None,
-) -> tuple[np.ndarray, int, float]:
-    probs_list, actions, values, _masks = run_mcts_many_c(
-        model, [board], device=device, rng=rng, cfg=cfg, evaluator=evaluator,
-    )
-    return probs_list[0], actions[0], float(values[0])
