@@ -1,9 +1,10 @@
 """Profile time breakdown within a single play_batch call."""
 from __future__ import annotations
-import time, sys, os
+import time
+import sys
+import os
 sys.path.insert(0, os.getcwd())
 
-import numpy as np
 import torch
 
 # Minimal setup

@@ -18,8 +18,6 @@ What is verified:
 from __future__ import annotations
 
 import math
-import tempfile
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -36,7 +34,8 @@ SF_CANDIDATES = [
 ]
 
 def _find_stockfish() -> str | None:
-    import os, sys
+    import os
+    import sys
     if sys.platform != "linux":
         return None  # E2E tests only run inside WSL/Linux
     for p in SF_CANDIDATES:

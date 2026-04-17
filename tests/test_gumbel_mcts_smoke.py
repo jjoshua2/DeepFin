@@ -1,6 +1,5 @@
 import numpy as np
 import chess
-import torch
 
 from chess_anti_engine.model.transformer import ChessNet, TransformerConfig
 from chess_anti_engine.mcts.gumbel import run_gumbel_root, GumbelConfig

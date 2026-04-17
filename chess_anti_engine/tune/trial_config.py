@@ -3,6 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
+from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
+
+if TYPE_CHECKING:
+    from chess_anti_engine.train.trainer import TrainMetrics
+
 StartupSource = Literal[
     "fresh",
     "checkpoint",
@@ -11,11 +16,6 @@ StartupSource = Literal[
     "exploit_restore",
     "exploit_restore_model_only",
 ]
-
-from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
-
-if TYPE_CHECKING:
-    from chess_anti_engine.train.trainer import TrainMetrics
 
 
 @dataclass

@@ -5,12 +5,16 @@ Measures: policy accuracy vs SF, game length, value-SF correlation, W/D/L.
 Usage: python scripts/e2e_strength_test.py [--hours 1.0]
 """
 from __future__ import annotations
-import argparse, json, sys, time
+import argparse
+import json
+import time
 from pathlib import Path
-import chess, numpy as np, torch
+import chess
+import numpy as np
+import torch
 from chess_anti_engine.encoding import encode_position
 from chess_anti_engine.model.transformer import ChessNet, TransformerConfig
-from chess_anti_engine.moves import POLICY_SIZE, move_to_index, index_to_move, legal_move_mask
+from chess_anti_engine.moves import move_to_index, legal_move_mask
 from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
 from chess_anti_engine.selfplay import play_batch
 from chess_anti_engine.selfplay.config import (
@@ -66,7 +70,7 @@ def _build_eval_set(sf):
             # Derive centipawn-like score from WDL: score = 400*log10(W/L)
             score_cp = None
             if wdl is not None:
-                w, d, l = float(wdl[0]), float(wdl[1]), float(wdl[2])
+                w, _d, l = float(wdl[0]), float(wdl[1]), float(wdl[2])
                 if w > 0.001 and l > 0.001:
                     score_cp = 400.0 * np.log10(w / l)
                 elif w > l:
@@ -216,8 +220,11 @@ def main():
 
             samples, stats = play_batch(trainer.model, games=args.selfplay_batch,
                                         target_games=args.games_per_iter, **sp_kw)
-            cum_w += stats.w; cum_d += stats.d; cum_l += stats.l
-            cum_games += stats.games; cum_plies += stats.positions
+            cum_w += stats.w
+            cum_d += stats.d
+            cum_l += stats.l
+            cum_games += stats.games
+            cum_plies += stats.positions
 
             if samples:
                 buf.add_many_arrays(samples_to_arrays(samples))

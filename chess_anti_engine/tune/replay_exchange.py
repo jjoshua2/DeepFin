@@ -8,8 +8,6 @@ from pathlib import Path
 
 import numpy as np
 
-log = logging.getLogger(__name__)
-
 from chess_anti_engine.replay import DiskReplayBuffer
 from chess_anti_engine.replay.shard import (
     copy_or_link_shard,
@@ -24,6 +22,8 @@ from chess_anti_engine.tune._utils import (
     slice_array_batch,
     to_nonnegative_int,
 )
+
+log = logging.getLogger(__name__)
 
 
 def _trial_replay_shard_dir(*, config: dict, trial_dir: Path) -> Path:

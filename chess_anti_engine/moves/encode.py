@@ -62,7 +62,6 @@ KNIGHT_DELTAS: list[tuple[int, int]] = [
 ]
 
 UNDERPROMO_TO_IDX = {chess.KNIGHT: 0, chess.BISHOP: 1, chess.ROOK: 2}
-IDX_TO_UNDERPROMO = {0: chess.KNIGHT, 1: chess.BISHOP, 2: chess.ROOK}
 UNDERPROMO_DFS: list[int] = [-1, 0, 1]  # left, forward, right
 DF_TO_UNDERPROMO_DIR = {-1: 0, 0: 1, 1: 2}
 

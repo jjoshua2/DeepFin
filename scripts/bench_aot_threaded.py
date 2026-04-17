@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import argparse
 import multiprocessing as mp
-import os
 import time
 
 
@@ -26,7 +25,7 @@ def _run_config(
     import torch
 
     from chess_anti_engine.model import ModelConfig, build_model, load_state_dict_tolerant
-    from chess_anti_engine.inference import AOTEvaluator, DirectGPUEvaluator
+    from chess_anti_engine.inference import DirectGPUEvaluator
     from chess_anti_engine.selfplay import play_batch
     from chess_anti_engine.selfplay.config import (
         OpponentConfig, TemperatureConfig, SearchConfig, GameConfig,
@@ -69,7 +68,6 @@ def _run_config(
     print(f"  Warming up (threads={n_threads}, {'AOT' if n_threads > 1 else 'compiled'})...", flush=True)
     if n_threads > 1:
         from concurrent.futures import ThreadPoolExecutor
-        import threading
 
         def _run_warmup(tid):
             return play_batch(

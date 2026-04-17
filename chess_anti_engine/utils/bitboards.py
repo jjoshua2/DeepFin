@@ -3,11 +3,6 @@ from __future__ import annotations
 import numpy as np
 import chess
 
-_ORIENT_FLAT_IDX = {
-    chess.WHITE: tuple(range(64)),
-    chess.BLACK: tuple((7 - chess.square_rank(sq)) * 8 + chess.square_file(sq) for sq in chess.SQUARES),
-}
-
 
 def orient_square(sq: chess.Square, turn: chess.Color) -> chess.Square:
     """Map a square into side-to-move perspective.

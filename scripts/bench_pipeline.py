@@ -16,7 +16,6 @@ import chess
 import numpy as np
 import torch
 
-from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.encoding.cboard_encode import cboard_from_board_fast
 from chess_anti_engine.inference import DirectGPUEvaluator
 from chess_anti_engine.mcts.gumbel import GumbelConfig

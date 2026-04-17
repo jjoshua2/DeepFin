@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import torch
-import pytest
 
 from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.train.losses import compute_loss
@@ -131,7 +130,7 @@ def test_has_flag_masking():
     batch = _full_batch(b)
     # Zero out half the has_sf_wdl flags
     batch["has_sf_wdl"] = torch.tensor([1.0, 0.0, 1.0, 0.0])
-    losses_half = compute_loss(_fake_outputs(b), batch)
+    compute_loss(_fake_outputs(b), batch)
 
     batch["has_sf_wdl"] = torch.zeros((b,))
     losses_none = compute_loss(_fake_outputs(b), batch)

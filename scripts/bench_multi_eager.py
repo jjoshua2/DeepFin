@@ -7,7 +7,6 @@ import time
 
 
 def worker_fn(worker_id, results_dict, batch_size=256, n_iters=30):
-    import torch
     from chess_anti_engine.model import ModelConfig, build_model
     from chess_anti_engine.inference import DirectGPUEvaluator
 

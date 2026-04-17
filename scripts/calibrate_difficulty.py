@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 import numpy as np
 import torch
-from pathlib import Path
 
 from chess_anti_engine.model import ModelConfig, build_model
 from chess_anti_engine.selfplay.manager import play_batch
@@ -93,9 +92,6 @@ def main():
     )
 
     results = []
-
-    # Baseline: our current operating point
-    baseline = {"rmp": 0.17, "topk": 3, "nodes": 1000}
 
     # Test 1: Vary rmp at low range (topk=3, nodes=1000)
     print("\n=== Vary rmp (topk=3, nodes=1000) ===")

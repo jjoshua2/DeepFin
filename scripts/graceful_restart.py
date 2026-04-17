@@ -122,7 +122,7 @@ def main() -> None:
     else:
         pause_file.write_text("graceful restart in progress\n")
         print(f"[graceful_restart] Created {pause_file}")
-        print(f"[graceful_restart] Trials will pause after their current iteration.")
+        print("[graceful_restart] Trials will pause after their current iteration.")
 
     print(f"[graceful_restart] Waiting for {args.wait} of the active trials to go idle "
           f"(>{args.idle_secs}s without a progress.csv update)...")
@@ -138,7 +138,6 @@ def main() -> None:
 
         idle = [(csv, _idle_seconds(csv)) for csv in csvs]
         idle_trials = [(csv, age) for csv, age in idle if age >= args.idle_secs]
-        active_trials = [(csv, age) for csv, age in idle if age < args.idle_secs]
 
         # Print status
         elapsed = int(time.time() - start)

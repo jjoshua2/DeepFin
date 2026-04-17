@@ -121,7 +121,7 @@ def test_e2e_training_loop_smoke(tmp_path):
     phase2_s = t2 - t1
     total_steps = 20
     total_s = phase2_s + phase1_s
-    print(f"\n[profiling] 20 train steps on CPU (embed=64, 2L, 4H):")
+    print("\n[profiling] 20 train steps on CPU (embed=64, 2L, 4H):")
     print(f"  phase 1 (10 steps): {phase1_s:.3f}s ({10/phase1_s:.1f} steps/s)")
     print(f"  phase 2 (10 steps): {phase2_s:.3f}s ({10/phase2_s:.1f} steps/s)")
     print(f"  total: {total_s:.3f}s ({total_steps/total_s:.1f} steps/s)")

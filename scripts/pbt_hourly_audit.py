@@ -5,7 +5,6 @@ import csv
 import json
 import math
 import re
-import statistics
 import time
 from pathlib import Path
 from typing import Any

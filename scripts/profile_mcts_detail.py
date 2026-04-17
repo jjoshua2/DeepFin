@@ -23,7 +23,6 @@ from chess_anti_engine.mcts.puct import MCTSConfig, _value_scalar_from_wdl_logit
 from chess_anti_engine.mcts.puct_c import _softmax_legal, _terminal_value
 from chess_anti_engine.model import ModelConfig, build_model
 from chess_anti_engine.moves.encode import index_to_move_fast, legal_move_indices
-from chess_anti_engine.utils.amp import inference_autocast
 
 try:
     from chess_anti_engine.encoding._lc0_ext import CBoard

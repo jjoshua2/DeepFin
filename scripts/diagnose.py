@@ -17,7 +17,11 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import torch.nn.functional as F
+
+from chess_anti_engine.model import ModelConfig, build_model
+from chess_anti_engine.replay import DiskReplayBuffer
+from chess_anti_engine.train import Trainer, trainer_kwargs_from_config
+from chess_anti_engine.utils import load_yaml_file, flatten_run_config_defaults
 
 TRIAL_DIR = sorted(
     Path("runs/pbt2_small/tune").glob("train_trial_*"),
@@ -34,13 +38,9 @@ ckpt_dir = ckpts[-1]
 print(f"Checkpoint: {ckpt_dir.name}")
 
 # --- Load config ---
-from chess_anti_engine.utils import load_yaml_file, flatten_run_config_defaults
 cfg = flatten_run_config_defaults(load_yaml_file("configs/pbt2_small.yaml"))
 
 # --- Build model ---
-from chess_anti_engine.model import ModelConfig, build_model
-from chess_anti_engine.train import Trainer, trainer_kwargs_from_config
-
 model_cfg = ModelConfig(
     kind=str(cfg.get("model", "transformer")),
     embed_dim=int(cfg.get("embed_dim", 384)),
@@ -62,9 +62,6 @@ device = trainer.device
 print(f"Device: {device}")
 
 # --- Load replay buffer ---
-from chess_anti_engine.replay import DiskReplayBuffer
-import numpy as np
-
 shard_dir = TRIAL_DIR / "selfplay_shards"
 buf = DiskReplayBuffer(
     capacity=200_000,
@@ -97,7 +94,7 @@ wdl_pred = wdl_probs.argmax(axis=1)
 
 valid = (wdl_target >= 0) & (wdl_target <= 2)
 acc = (wdl_pred[valid] == wdl_target[valid]).mean()
-print(f"\n=== WDL Head ===")
+print("\n=== WDL Head ===")
 print(f"Accuracy (top-1):      {acc*100:.1f}%")
 
 # Calibration: mean predicted prob for each true class
@@ -129,7 +126,7 @@ if hp.sum() > 0:
     pt = pt / pt.sum(axis=1, keepdims=True)
     target_entropy = -(pt * np.log(pt + eps)).sum(axis=1).mean()
 
-print(f"\n=== Policy Head ===")
+print("\n=== Policy Head ===")
 print(f"Model prediction entropy:  {model_entropy:.3f}  (lower = sharper)")
 print(f"Target entropy:            {target_entropy:.3f}  (MCTS improved policy)")
 print(f"Entropy ratio (m/t):       {model_entropy/max(target_entropy,eps):.2f}  (1.0 = matched, >1 = too diffuse)")

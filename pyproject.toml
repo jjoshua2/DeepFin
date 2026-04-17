@@ -57,3 +57,9 @@ filterwarnings = [
     "ignore::DeprecationWarning:torch.jit",
     "ignore::FutureWarning:copyreg",
 ]
+
+[tool.ruff.lint]
+# E741: allow single-letter `l` — we use `w/d/l` for win/draw/loss counters
+#       throughout the stats code, and renaming to `losses` would collide with
+#       loss-function variables.
+ignore = ["E741"]

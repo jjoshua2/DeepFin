@@ -89,9 +89,6 @@ def reinit_volatility_head_parameters_(model: torch.nn.Module) -> list[str]:
     return _reinit_heads(model, _VOLATILITY_HEADS)
 
 
-_VALUE_HEAD_PREFIXES = ("value_wdl.", "value_sf_eval.", "value_categorical.")
-
-
 def load_state_dict_tolerant(
     model: torch.nn.Module,
     ckpt_state: dict,

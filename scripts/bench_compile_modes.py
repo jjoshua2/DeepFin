@@ -4,7 +4,6 @@ from __future__ import annotations
 import multiprocessing as mp
 import numpy as np
 import time
-import sys
 
 
 def worker_fn(worker_id, results_dict, compile_mode, batch_size=170, n_iters=30):

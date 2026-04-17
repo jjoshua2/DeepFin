@@ -60,9 +60,15 @@ def run_gumbel_root_many_c(
     Same API as ``run_gumbel_root_many`` -- drop-in replacement.
     """
     import time as _time
-    _t_init = 0.0; _t_prepare = 0.0; _t_gpu = 0.0; _t_finish = 0.0
-    _t_score = 0.0; _t_policy = 0.0; _t_python_glue = 0.0
-    _n_gpu_calls = 0; _n_gpu_positions = 0
+    _t_init = 0.0
+    _t_prepare = 0.0
+    _t_gpu = 0.0
+    _t_finish = 0.0
+    _t_score = 0.0
+    _t_policy = 0.0
+    _t_python_glue = 0.0
+    _n_gpu_calls = 0
+    _n_gpu_positions = 0
     _t_func_start = _time.perf_counter()
 
     n_boards = len(boards)
@@ -341,7 +347,8 @@ def run_gumbel_root_many_c(
                     if ev0 is not None:
                         ev0.synchronize()
                     _t_gpu += _time.perf_counter() - _tg0
-                    _n_gpu_calls += 1; _n_gpu_positions += nl0
+                    _n_gpu_calls += 1
+                    _n_gpu_positions += nl0
                     _tp0 = _time.perf_counter()
                     _n_leaves[0] = _trees[0].continue_gumbel_sims(
                         pol_t0[:nl0].numpy(), wdl_t0[:nl0].numpy())
@@ -353,7 +360,8 @@ def run_gumbel_root_many_c(
             if ev0 is not None:
                 ev0.synchronize()
             _t_gpu += _time.perf_counter() - _tg0
-            _n_gpu_calls += 1; _n_gpu_positions += nl0
+            _n_gpu_calls += 1
+            _n_gpu_positions += nl0
             pol_np0 = pol_t0[:nl0].numpy().copy()
             wdl_np0 = wdl_t0[:nl0].numpy().copy()
 
@@ -377,7 +385,8 @@ def run_gumbel_root_many_c(
                 if ev1 is not None:  # pyright: ignore[reportPossiblyUnboundVariable]
                     ev1.synchronize()  # pyright: ignore[reportPossiblyUnboundVariable]
                 _t_gpu += _time.perf_counter() - _tg1  # pyright: ignore[reportPossiblyUnboundVariable]
-                _n_gpu_calls += 1; _n_gpu_positions += nl1  # pyright: ignore[reportPossiblyUnboundVariable]
+                _n_gpu_calls += 1
+                _n_gpu_positions += nl1  # pyright: ignore[reportPossiblyUnboundVariable]
                 _pending_g1 = (
                     pol_t1[:nl1].numpy().copy(),  # pyright: ignore[reportPossiblyUnboundVariable]
                     wdl_t1[:nl1].numpy().copy(),  # pyright: ignore[reportPossiblyUnboundVariable]

@@ -143,7 +143,7 @@ def main() -> None:
         torch.cuda.synchronize()
         torch.cuda.reset_peak_memory_stats()
 
-    print(f"\nWarmup step...")
+    print("\nWarmup step...")
     t0 = time.perf_counter()
     trainer.train_steps(buf, batch_size=args.batch_size, steps=1)
     if device == "cuda":
@@ -177,7 +177,7 @@ def main() -> None:
     opt_ms_per_step = metrics.opt_step_time_s * 1000 / max(args.steps, 1)
 
     print(f"\n{'='*60}")
-    print(f"TRAINING PROFILING RESULTS")
+    print("TRAINING PROFILING RESULTS")
     print(f"{'='*60}")
     print(f"Steps:           {args.steps}")
     print(f"Batch size:      {args.batch_size} (× {args.accum_steps} accum = {args.batch_size * args.accum_steps} eff)")

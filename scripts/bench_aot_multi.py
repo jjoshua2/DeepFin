@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Benchmark multi-process × multi-thread AOT selfplay."""
 from __future__ import annotations
-import argparse, multiprocessing as mp, os, time
+import argparse
+import multiprocessing as mp
+import time
 
 
 def _worker_fn(worker_id, n_threads, batch_per_thread, sf_workers,
                mcts_sims, sf_nodes, aot_dir, stockfish_path, bootstrap_path,
                result_dict, barrier):
-    import numpy as np, torch
+    import numpy as np
+    import torch
     from chess_anti_engine.model import ModelConfig, build_model, load_state_dict_tolerant
     from chess_anti_engine.inference import ThreadedAOTEvaluator
     from chess_anti_engine.selfplay import play_batch
@@ -133,7 +136,7 @@ def main():
         print(f"\n--- {label} (sf={sf}/w) ---")
         r = run_config(workers, threads, bpt, sf, args)
         if r is None:
-            print(f"  => FAILED")
+            print("  => FAILED")
             continue
         results.append(r)
         print(f"  => {r['games_per_sec']:.2f} games/s, {r['pos_per_sec']:.0f} pos/s, "

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import chess
 import numpy as np
-import pytest
 
 from chess_anti_engine.encoding._lc0_ext import CBoard
 
@@ -124,10 +123,7 @@ class TestCheckmateStalemate:
         assert cb.terminal_value() == -1.0  # STM (black) is checkmated
 
     def test_stalemate(self):
-        cb = CBoard.from_board(chess.Board("k7/8/1K6/8/8/8/8/8 b - - 0 1"))
-        # Black king on a8, white king on b6. Black has Kb8.
-        # Actually this is NOT stalemate (Kb8 is legal).
-        # Use a real stalemate position:
+        # Use a real stalemate position (k7/2K5/1Q6):
         cb2 = CBoard.from_board(chess.Board("k7/8/2K5/8/8/8/8/1Q6 b - - 0 1"))
         # Check if this is actually stalemate
         if cb2.is_game_over():

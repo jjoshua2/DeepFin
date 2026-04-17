@@ -22,7 +22,7 @@ import chess
 import numpy as np
 
 from chess_anti_engine.encoding.encode import encode_position
-from chess_anti_engine.moves.encode import POLICY_SIZE, legal_move_mask, move_to_index
+from chess_anti_engine.moves.encode import legal_move_mask
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.shard import ShardMeta, save_npz
 

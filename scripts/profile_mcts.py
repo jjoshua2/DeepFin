@@ -3,7 +3,6 @@ from __future__ import annotations
 import numpy as np
 import chess
 import time
-from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.encoding.cboard_encode import cboard_from_board_fast
 from chess_anti_engine.mcts._mcts_tree import MCTSTree, NNCache
 from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
@@ -74,7 +73,7 @@ for ply in range(N_PLIES):
                 m = index_to_move(actions[i], boards[i])
                 boards[i].push(m)
                 cboards[i] = cboard_from_board_fast(boards[i])
-            except:
+            except Exception:
                 pass
 
     # Re-eval for next ply

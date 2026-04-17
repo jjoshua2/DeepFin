@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import multiprocessing as mp
-import os
 import time
 
 
@@ -158,7 +157,7 @@ def main():
 
         r = run_config(workers, batch, sf, compile, args)
         if r is None:
-            print(f"  => FAILED")
+            print("  => FAILED")
             continue
 
         results.append(r)

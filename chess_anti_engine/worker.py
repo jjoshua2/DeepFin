@@ -20,8 +20,6 @@ from typing import Any, Callable, TypeVar, cast, overload
 import numpy as np
 import torch
 
-_ResolveT = TypeVar("_ResolveT")
-
 from chess_anti_engine.inference import (
     AOTEvaluator,
     DirectGPUEvaluator,
@@ -58,6 +56,8 @@ from chess_anti_engine.worker_buffer import (
     _pending_elapsed_path,
 )
 from chess_anti_engine.worker_config import load_worker_config, save_worker_config
+
+_ResolveT = TypeVar("_ResolveT")
 
 
 def _worker_headers(*, machine_id: str | None = None) -> dict[str, str]:

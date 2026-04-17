@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import numpy as np
-import torch
 
 from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.replay import ReplayBuffer
