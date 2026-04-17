@@ -36,6 +36,7 @@ __pycache__/
 .codex
 .skylos/
 .merge_ts
+infer-out/
 
 # Scratch review/report files
 /.review_diff.txt
