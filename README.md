@@ -59,13 +59,35 @@ Outputs:
 python -m chess_anti_engine.run --config configs/default.yaml --mode single
 ```
 
-## Ray Tune harness (Optuna + ASHA)
+## Ray Tune harness
+Multiple schedulers are supported (Optuna + ASHA, PB2, vanilla PBT, pairwise PBT). Pick one via the config — the production config `configs/pbt2_small.yaml` uses PB2.
+
 ```bash
 python -m chess_anti_engine.run \
   --config configs/default.yaml \
   --mode tune \
   --num-samples 8
 ```
+
+## Managing a long training run
+`scripts/train.sh` is a thin wrapper around `chess_anti_engine.run --mode tune` that tracks a PID file, collects stdout to `/tmp/chess_training.log`, and cleans up Ray workers on stop.
+
+```bash
+./scripts/train.sh start | stop | restart | status | log
+```
+
+Override the config with `TRAIN_CONFIG=configs/other.yaml ./scripts/train.sh start`.
+
+**Graceful pause before a restart.** `python3 scripts/graceful_restart.py --wait N` creates `pause.txt` in the tune dir so each trial finishes its current iteration before holding. Useful when you want to restart PBT without orphaning mid-iteration trials.
+
+**Salvage: warm-start fresh trials from past checkpoints.** When a PBT run has regressed or you want to rebase on an earlier high-water-mark checkpoint, export a salvage pool (top-N trials' `trainer.pt` + `pid_state.json` + replay shards) and restart pointing at it:
+
+```bash
+./scripts/train.sh salvage-export --top-n 3           # → data/salvage/<run>_<ts>/
+./scripts/train.sh salvage-restart data/salvage_iter37 # stop + start pointing at pool
+```
+
+`salvage-restart` defaults to restoring the donor PID state and full trainer state while keeping the GPBT-sampled LR. Flip with `--no-pid`, `--no-optimizer`, `--reinit-volatility`, `--donor-config`. The pool seeds each fresh trial once at startup; past that point it plays no role in training.
 
 ## Opening diversification
 In YAML:

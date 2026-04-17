@@ -33,7 +33,14 @@ __pycache__/
 
 # Local tooling
 .claude/
+.codex
+.skylos/
 .merge_ts
+
+# Scratch review/report files
+/.review_diff.txt
+/cc_report.txt
+/review_plan.md
 
 # Local backups/merged scratch files
 *.bak
