@@ -806,11 +806,20 @@ def _finalize_iteration(
         except Exception:
             pass
 
-    # Save top-3 checkpoints by lowest regret (best-effort).
+    # Save top-3 checkpoints by lowest regret (best-effort). Write to a
+    # persistent cross-trial location so Ray's --tune-keep-last-experiments
+    # rotation doesn't take them out with the trial dir.
     try:
+        cross_trial_dir = getattr(tc, "best_regret_checkpoints_dir", None)
+        if cross_trial_dir and str(cross_trial_dir).strip():
+            _best_regret_dir = Path(str(cross_trial_dir)).expanduser()
+            if not _best_regret_dir.is_absolute():
+                _best_regret_dir = Path.cwd() / _best_regret_dir
+        else:
+            _best_regret_dir = work_dir / "best_regret"
         _update_best_regret_checkpoints(
             trainer=trainer, pid=pid,
-            best_regret_dir=work_dir / "best_regret",
+            best_regret_dir=_best_regret_dir,
             iteration_idx=iteration_idx,
             opp_strength_ema=pid_result.opp_strength_ema,
             best_loss=best_loss,

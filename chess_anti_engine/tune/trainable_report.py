@@ -241,7 +241,10 @@ def _update_best_regret_checkpoints(
     except Exception:
         return
 
-    entries.append({"regret": regret, "step": step, "iter": iteration_idx, "tag": tag})
+    entries.append({
+        "regret": regret, "step": step, "iter": iteration_idx, "tag": tag,
+        "ema_winrate": ema_wr, "opp_strength_ema": opp_strength_ema,
+    })
 
     # Prune to top-N (lowest regret)
     entries.sort(key=lambda e: e["regret"])
@@ -257,6 +260,38 @@ def _update_best_regret_checkpoints(
                 pass
 
     atomic_write_text(index_path, json.dumps(entries, indent=2))
+
+    # Also emit a salvage-pool-compatible manifest.json so this directory can be
+    # consumed directly by `train.sh salvage-restart` without further packaging.
+    try:
+        import time
+        manifest = {
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "label": "auto_best_regret",
+            "metric": "wdl_regret",
+            "top_n": len(entries),
+            "entries": [
+                {
+                    "slot": i,
+                    "metric": float(e["regret"]),
+                    "training_iteration": int(e["iter"]),
+                    "seed_dir": e["tag"],
+                    "copied_replay_shards": 0,
+                    "result_row": {
+                        "wdl_regret": float(e["regret"]),
+                        "pid_ema_winrate": float(e.get("ema_winrate", -1)),
+                        "opponent_strength": float(e.get("opp_strength_ema", -1)),
+                    },
+                }
+                for i, e in enumerate(entries)
+            ],
+        }
+        atomic_write_text(
+            best_regret_dir / "manifest.json",
+            json.dumps(manifest, indent=2, sort_keys=True),
+        )
+    except Exception:
+        pass
 
 
 def _log_iteration_scalars(

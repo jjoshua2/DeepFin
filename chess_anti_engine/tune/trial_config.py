@@ -211,6 +211,11 @@ class TrialConfig:
     exploit_replay_max_unseen_iters_per_source: int = 2
     exploit_replay_share_fraction: float = 1.0
 
+    # --- Persistent best-regret snapshots (cross-trial, cross-experiment) ---
+    # None means write in-trial at work_dir / "best_regret" (legacy). A path makes the
+    # top-N snapshots persist even after Ray rotates the trial dir.
+    best_regret_checkpoints_dir: str | None = "data/best_regret_checkpoints"
+
     # --- Salvage / bootstrap ---
     salvage_seed_pool_dir: str | None = None
     salvage_reinit_volatility_heads: bool = False
@@ -429,6 +434,9 @@ class TrialConfig:
             exploit_replay_top_shards_per_source=int(config.get("exploit_replay_top_shards_per_source", 0)),
             exploit_replay_max_unseen_iters_per_source=int(config.get("exploit_replay_max_unseen_iters_per_source", 2)),
             exploit_replay_share_fraction=float(config.get("exploit_replay_share_fraction", 1.0)),
+
+            # --- Persistent best-regret snapshots ---
+            best_regret_checkpoints_dir=_get("best_regret_checkpoints_dir", "data/best_regret_checkpoints"),
 
             # --- Salvage / bootstrap ---
             salvage_seed_pool_dir=_get("salvage_seed_pool_dir", None),
