@@ -164,15 +164,15 @@ train:
   w_future: 0.01            # Keep a tiny auxiliary weight; low-risk compared with full disable.
   w_wdl: 0.95               # Pinned near best trial from run30.
   w_sf_move: 0.01           # Keep a tiny auxiliary weight; PB2 no longer searches this head.
-  w_sf_eval: 0.10           # Pinned: top-5 median from Run 4
+  w_sf_eval: 0.20           # Doubled from 0.10: sf_eval is now the sole SF-WDL channel (w_sf_wdl zeroed).
   w_categorical: 0.30       # Run 26 default.
   w_volatility: 0.10        # Pinned: top-5 median from Run 4
   w_sf_volatility: 0.05
   w_moves_left: 0.02
-  w_sf_wdl: 1.7             # SF WDL weight at wide regret (easy opponent); decays to floor as regret tightens.
-  sf_wdl_conf_power: 1.0    # Confidence damping: scale SF-WDL by (1-draw_prob)^power.
-  sf_wdl_draw_scale: 0.55   # Pinned low-to-mid based on the healthier late-run settings.
-  sf_wdl_floor: 0.20        # Floor: keep 20% SF signal even at tight regret.
+  w_sf_wdl: 0.0             # Zeroed: sf_wdl (89% one-hot) conflicted with hard game-outcome target on the main wdl head 62.8% of the time. SF supervision now runs only through the separate sf_eval head (w_sf_eval above).
+  sf_wdl_conf_power: 1.0    # Retained for symmetry; has no effect while w_sf_wdl=0.
+  sf_wdl_draw_scale: 0.55   # Retained for symmetry; has no effect while w_sf_wdl=0.
+  sf_wdl_floor: 0.0         # Floor also zeroed — no residual SF pressure on the main wdl head.
   sf_wdl_floor_at_regret: 0.10  # Regret value at which SF WDL weight hits the floor.
 
   accum_steps: 1    # More gradient steps per iteration; effective batch = 256.
