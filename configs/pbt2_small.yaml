@@ -53,7 +53,7 @@ stockfish:
   stockfish_path: /home/josh/projects/chess/e2e_server/publish/stockfish
   sf_nodes: 5000           # 5k nodes: wider WDL spread so regret actually filters moves (was 1k where all 12 passed)
   sf_workers: 2
-  sf_multipv: 12
+  sf_multipv: 20            # Covers ~80% of positions' full legal-move set; reduces reliance on label smoothing.
   sf_hash_mb: 16           # Larger TT helps at higher node counts
   # Keep SF at full strength for labels and sample from MultiPV for easier played moves.
 
@@ -84,14 +84,14 @@ stockfish:
   sf_pid_max_rand_step_start: 0.01
   sf_pid_max_rand_step_ramp_iters: 0
   sf_pid_topk_stage_end: 1.0
-  sf_pid_topk_min: 12                  # Always full multipv — regret band is the sole difficulty lever
+  sf_pid_topk_min: 20                  # Always full multipv — regret band is the sole difficulty lever
   sf_pid_suboptimal_wdl_regret_max: 2.0   # Allow very wide regret for bootstrap warmup
   sf_pid_suboptimal_wdl_regret_min: 0.01
   sf_pid_wdl_regret_start: 0.50       # Start near equilibrium for 5k nodes; model stable here
   sf_pid_wdl_regret_min: 0.02         # hard floor
   sf_pid_wdl_regret_max: 2.0          # max if PID needs to ease off
   sf_pid_wdl_regret_stage_end: 0.05   # nodes unlock when regret reaches 5%
-  sf_pid_max_regret_step: 0.001       # Slow tightening — model crashes at 0.003
+  sf_pid_max_regret_step: 0.002       # TEMP: raised 0.001→0.002 to let PID catch up when winrate >> target. Revert after regret stabilizes near target winrate.
   sf_pid_max_regret_ease_step: 0.002  # 2x tighten (was 5x) — minimal asymmetry, less oscillation
 
 selfplay:
@@ -128,7 +128,7 @@ selfplay:
   fpu_at_root: 1.0      # FPU for root (lower — root has Dirichlet noise)
 
   sf_policy_temp: 0.35       # Pinned: top-5 median from Run 4
-  sf_policy_label_smooth: 0.10  # Pinned: top-5 median from Run 4
+  sf_policy_label_smooth: 0.05  # Halved from 0.10 to complement sf_multipv=20; less need to hallucinate tail coverage.
   soft_policy_temp: 3.0     # Temperature for soft policy target (LC0 uses 3, was hardcoded 2)
 
   syzygy_path: null

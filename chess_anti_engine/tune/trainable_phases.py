@@ -814,7 +814,16 @@ def _finalize_iteration(
         if cross_trial_dir and str(cross_trial_dir).strip():
             _best_regret_dir = Path(str(cross_trial_dir)).expanduser()
             if not _best_regret_dir.is_absolute():
-                _best_regret_dir = Path.cwd() / _best_regret_dir
+                # Ray workers run with cwd set to a per-trial tmp dir, so
+                # Path.cwd() would silently write to /tmp/ray/... which gets
+                # wiped on process restart. Anchor relative paths to the
+                # project root (yaml file's grandparent, since yaml lives in
+                # <project>/configs/).
+                _yaml = getattr(tc, "_yaml_config_path", None)
+                if _yaml:
+                    _best_regret_dir = Path(_yaml).resolve().parent.parent / _best_regret_dir
+                else:
+                    _best_regret_dir = Path.cwd() / _best_regret_dir
         else:
             _best_regret_dir = work_dir / "best_regret"
         _update_best_regret_checkpoints(

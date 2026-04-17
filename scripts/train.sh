@@ -116,6 +116,9 @@ salvage_restart() {
         echo "Not a salvage pool: $pool_dir (missing manifest.json)"
         return 1
     fi
+    # Ray trial workers run with cwd set to a per-trial tmp dir, so relative
+    # paths break salvage loading. Resolve to absolute before passing to CLI.
+    pool_dir="$(realpath "$pool_dir")"
 
     # Defaults: restore pid + full trainer, keep GPBT-sampled config, don't reinit volatility.
     local pid_flag="--salvage-restore-pid-state"
