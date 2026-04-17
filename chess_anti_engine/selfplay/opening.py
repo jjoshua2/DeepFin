@@ -62,14 +62,14 @@ def _iter_pgn_bytes_from_path(path: Path) -> Iterable[bytes]:
         return
 
     if suffixes.endswith(".pgn.zip") or suffixes.endswith(".zip"):
-        z = zipfile.ZipFile(path)
-        # Heuristic: read all members ending in .pgn
-        pgn_members = [n for n in z.namelist() if n.lower().endswith(".pgn")]
-        if not pgn_members:
-            raise ValueError(f"No .pgn files found in zip: {path}")
-        for name in pgn_members:
-            with z.open(name, "r") as f:
-                yield f.read()
+        with zipfile.ZipFile(path) as z:
+            # Heuristic: read all members ending in .pgn
+            pgn_members = [n for n in z.namelist() if n.lower().endswith(".pgn")]
+            if not pgn_members:
+                raise ValueError(f"No .pgn files found in zip: {path}")
+            for name in pgn_members:
+                with z.open(name, "r") as f:
+                    yield f.read()
         return
 
     raise ValueError(f"Unsupported opening book format: {path}")

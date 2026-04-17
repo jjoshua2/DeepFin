@@ -887,7 +887,7 @@ class WorkerSession:
             _buf_lock = self._upload_buf_lock
             now = time.time()
             if _buf_lock is not None:
-                _buf_lock.acquire()
+                _buf_lock.acquire()  # pylint: disable=consider-using-with  # try/finally below releases across the whole flush block
             try:
                 if self.upload_buf.positions > 0:
                     _flush_upload_buffer_to_pending(

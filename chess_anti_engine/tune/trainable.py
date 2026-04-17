@@ -347,7 +347,7 @@ def train_trial(config: dict):
                 tc=tc, config=config, trainer=trainer, model_cfg=model_cfg,
                 buf=buf, holdout_buf=holdout_buf,
                 holdout_frozen=holdout_frozen,
-                device=device, rng=rng, sf=sf, pid=pid,
+                device=device, rng=rng, sf=sf,
                 use_distributed_selfplay=use_distributed_selfplay,
                 distributed_dirs=distributed_dirs,
                 distributed_server_root=distributed_server_root,
@@ -393,7 +393,7 @@ def train_trial(config: dict):
             tr = _run_training_and_gating(
                 tc=tc, trainer=trainer, buf=buf, holdout_buf=holdout_buf,
                 config=config, model_cfg=model_cfg,
-                device=device, rng=rng, pid=pid, sf=sf,
+                device=device, rng=rng, sf=sf,
                 ds=ds,
                 sims=sims,
                 total_positions=sp.total_positions,

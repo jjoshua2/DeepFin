@@ -632,7 +632,7 @@ def launch_shared_inference_broker(
         )
         if stale_pids:
             print(f"[tune] reaped stale shared inference broker: pids={stale_pids}")
-        proc = subprocess.Popen(
+        proc = subprocess.Popen(  # pylint: disable=consider-using-with  # broker runs for the trial lifetime
             cmd,
             cwd=str(Path(__file__).resolve().parents[2]),
             stdout=out_fh,

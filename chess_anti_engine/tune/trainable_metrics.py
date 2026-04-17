@@ -315,7 +315,7 @@ def _compute_drift_metrics(
     # WDL balance: entropy of WDL distribution.
     p = _wdl_hist(train_batch)
     if p.sum() > 0:
-        dm.data_wdl_balance = float(-np.sum(p * np.log(p + eps)))
+        dm.data_wdl_balance = -float(np.sum(p * np.log(p + eps)))
 
     # Drift metrics (train vs holdout).
     if len(holdout_buf) >= drift_sample_size:

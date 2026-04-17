@@ -44,8 +44,8 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
         trial_inertia_weight: float = 1.0,
         trial_winner_weight: float = 1.0,
         # Legacy aliases (ignored if the new names are also set)
-        pairwise_lr: float | None = None,
-        pairwise_momentum: float | None = None,
+        pairwise_lr: float | None = None,  # pylint: disable=unused-argument
+        pairwise_momentum: float | None = None,  # pylint: disable=unused-argument
         **kwargs,
     ):
         super().__init__(**kwargs)

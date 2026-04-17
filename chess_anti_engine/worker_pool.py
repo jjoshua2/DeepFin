@@ -93,7 +93,7 @@ def main() -> None:
 
     stop = False
 
-    def _handle_stop(signum: int, frame: object) -> None:  # skylos: ignore (signal handler signature)
+    def _handle_stop(signum: int, frame: object) -> None:  # skylos: ignore  # pylint: disable=unused-argument  # signal handler signature
         nonlocal stop
         stop = True
 
@@ -111,7 +111,7 @@ def main() -> None:
             shared_cache_dir=shared_cache_dir,
         )
         commands.append(cmd)
-        proc = subprocess.Popen(cmd, cwd=str(Path(__file__).resolve().parents[1]))
+        proc = subprocess.Popen(cmd, cwd=str(Path(__file__).resolve().parents[1]))  # pylint: disable=consider-using-with  # long-lived child process
         children.append(proc)
         if idx + 1 < num_workers and float(args.stagger_seconds) > 0.0:
             time.sleep(float(args.stagger_seconds))
@@ -131,7 +131,7 @@ def main() -> None:
                 time.sleep(float(args.restart_delay_seconds))
                 if stop:
                     break
-                children[idx] = subprocess.Popen(commands[idx], cwd=str(Path(__file__).resolve().parents[1]))
+                children[idx] = subprocess.Popen(commands[idx], cwd=str(Path(__file__).resolve().parents[1]))  # pylint: disable=consider-using-with  # long-lived child process
     finally:
         _terminate_children(children)
 

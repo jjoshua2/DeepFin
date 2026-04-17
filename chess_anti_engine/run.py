@@ -149,6 +149,7 @@ def _run_salvage(args: argparse.Namespace) -> None:
             except Exception:
                 pid_obj = None
             if isinstance(pid_obj, dict):
+                # pylint: disable=dangerous-default-value  # closure-via-default captures outer-scope refs by design
                 def _set_pid(
                     dst_key: str,
                     src_keys: tuple[str, ...],

@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+# pylint: disable=possibly-used-before-assignment
+# C extensions are imported under `if TYPE_CHECKING or _HAS_*_C_EXT:` guards.
+# Every call site re-checks the matching `_HAS_*_C_EXT` flag — pylint cannot
+# model this coupled invariant.
+
 from typing import TYPE_CHECKING
 
 import numpy as np

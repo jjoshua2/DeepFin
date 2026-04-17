@@ -37,7 +37,7 @@ class StockfishUCI:
         self.hash_mb = None if hash_mb is None else max(1, int(hash_mb))
         self._lock = threading.Lock()
 
-        self.proc = subprocess.Popen(
+        self.proc = subprocess.Popen(  # pylint: disable=consider-using-with  # process outlives __init__ (closed in .close())
             [self.path],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,

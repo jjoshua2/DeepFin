@@ -63,3 +63,19 @@ filterwarnings = [
 #       throughout the stats code, and renaming to `losses` would collide with
 #       loss-function variables.
 ignore = ["E741"]
+
+[tool.pylint.main]
+# Narrow pylint scope: disable everything, enable only the semantic checks
+# that ruff and skylos don't cover well. Style/convention noise is left to
+# ruff. Stub files (.pyi) are signatures-only — args are always "unused".
+ignore-patterns = ["^.*\\.pyi$"]
+disable = ["all"]
+enable = [
+  "unused-argument",
+  "possibly-used-before-assignment",
+  "consider-using-with",
+  "logging-fstring-interpolation",
+  "dangerous-default-value",
+  "unreachable",
+  "f-string-without-interpolation",
+]

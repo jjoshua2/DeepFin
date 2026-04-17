@@ -154,7 +154,7 @@ def run_puzzle_eval(
     *,
     device: str,
     mcts_simulations: int = 200,
-    mcts_type: str = "puct",
+    mcts_type: str = "puct",  # pylint: disable=unused-argument  # reserved for gumbel variant
     batch_size: int = 32,
     rng: np.random.Generator | None = None,
 ) -> PuzzleResult:

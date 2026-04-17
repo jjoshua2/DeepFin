@@ -353,6 +353,7 @@ def run_tune(
 
         log_fh = server_log.open("ab")
         try:
+            # pylint: disable=consider-using-with  # server_proc outlives this function
             server_proc = subprocess.Popen(
                 cmd,
                 cwd=str(Path(__file__).resolve().parents[2]),

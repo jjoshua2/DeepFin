@@ -48,7 +48,7 @@ def _restore_checkpoint_or_salvage(
     active_seed: int,
     rng: np.random.Generator,
     ckpt,
-    Checkpoint,  # skylos: ignore (ray.train.Checkpoint class, injected via caller)
+    Checkpoint,  # skylos: ignore  # pylint: disable=unused-argument  # ray.train.Checkpoint class, injected via caller
 ) -> tuple[RestoreResult, np.random.Generator]:
     """Restore from Ray checkpoint, salvage seed pool, or start fresh.
 
