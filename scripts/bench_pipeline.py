@@ -46,7 +46,7 @@ def make_boards(n: int, rng: np.random.Generator):
     return boards, cboards
 
 
-def bench(label: str, model, evaluator, boards, cboards, rng, simulations, pipeline: bool):
+def bench(label: str, model, evaluator, boards, cboards, rng, simulations, pipeline: bool):  # skylos: ignore (pipeline kept for API parity with other benches)
     cfg = GumbelConfig(simulations=simulations, temperature=1.0, add_noise=True)
 
     # Warm up

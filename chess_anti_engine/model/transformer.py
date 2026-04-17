@@ -36,7 +36,7 @@ def _rmsnorm(normalized_shape: int, *, eps: float = 1e-6) -> nn.Module:
             self.eps = float(eps)
             self.weight = nn.Parameter(torch.ones((int(d),)))
 
-        def forward(self, x: torch.Tensor) -> torch.Tensor:
+        def forward(self, x: torch.Tensor) -> torch.Tensor:  # skylos: ignore (nn.Module dispatch via __call__)
             # x: (..., d)
             rms = torch.sqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
             return (x / rms) * self.weight

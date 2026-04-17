@@ -41,7 +41,6 @@ CONFIGS = [
 
 # How long to let each config run (seconds) — enough for selfplay to start
 WARMUP_SECONDS = 45
-SAMPLE_SECONDS = 30
 GPU_SAMPLES = 6
 GPU_SAMPLE_INTERVAL = 5
 

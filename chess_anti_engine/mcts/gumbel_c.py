@@ -21,7 +21,7 @@ import numpy as np
 import chess
 import torch
 
-from chess_anti_engine.inference import AsyncBatchEvaluator, BatchEvaluator, LocalModelEvaluator
+from chess_anti_engine.inference import AsyncBatchEvaluator, BatchEvaluator, LocalModelEvaluator  # skylos: ignore (AsyncBatchEvaluator used via stringified cast)
 from chess_anti_engine.mcts.gumbel import (
     GumbelConfig,
     _gumbel,

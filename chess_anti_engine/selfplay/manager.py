@@ -1237,7 +1237,7 @@ def play_batch(
     _t_net = 0.0
     _t_sf = 0.0
 
-    for _step in range(max_steps):
+    for _step in range(max_steps):  # skylos: ignore (_step loop var unused by convention)
         # Allow caller to update model/evaluator between moves.
         if on_step is not None:
             on_step()

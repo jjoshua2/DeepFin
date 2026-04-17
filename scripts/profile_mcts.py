@@ -85,7 +85,6 @@ for ply in range(N_PLIES):
         wdl_logits = out["wdl"].numpy()
 
 avg = np.mean(times[1:])  # skip first (cold)
-evals_per_ply = N_GAMES * SIMS * 0.75 + N_GAMES * SIMS * 0.25 * (32/256)  # playout cap
 print(f"Avg time per ply ({N_GAMES} games, {SIMS} sims): {avg:.3f}s")
 print(f"Estimated evals: ~{N_GAMES * SIMS:.0f}")
 print(f"Effective NPS: {N_GAMES * SIMS / avg:.0f}")

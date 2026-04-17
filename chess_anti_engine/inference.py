@@ -162,107 +162,13 @@ class LocalModelEvaluator:
 
         return pol, wdl, done
 
-    def evaluate_for_expand(
-        self,
-        x: np.ndarray,
-        legal_indices: list[np.ndarray],
-    ) -> tuple[list[np.ndarray], np.ndarray]:
-        """Forward pass that keeps policy on GPU and extracts priors there.
-
-        Instead of transferring the full (batch, 4672) policy tensor to CPU,
-        this gathers only the legal-move logits on GPU, computes softmax, and
-        transfers the small prior vectors (~30 floats each) back.
-
-        Parameters
-        ----------
-        x : encoded positions, shape (B, C, H, W)
-        legal_indices : list of B int32 arrays, each containing legal move
-            indices for the corresponding position.
-
-        Returns
-        -------
-        priors_list : list of B float64 arrays, each softmaxed over legal moves
-        wdl : (B, 3) float32 numpy array
-        """
-        xb = _coerce_input_batch(x)
-        xt = torch.from_numpy(xb).to(self.device)
-        with torch.no_grad():
-            with inference_autocast(device=self.device, enabled=self._use_amp, dtype=self._amp_dtype):
-                out = self.model(xt)
-        policy_gpu = _policy_output(out)
-        policy_gpu = policy_gpu.detach().float()
-        wdl = out["wdl"].detach().to(dtype=torch.float32, device="cpu").numpy()
-
-        # Extract priors on GPU: batched gather + softmax
-        batch = xb.shape[0]
-        if not self._use_cuda or batch == 0:
-            # CPU fallback: just do it in numpy
-            pol_cpu = policy_gpu.cpu().numpy()
-            priors_list = []
-            for i in range(batch):
-                idx = legal_indices[i]
-                if idx.size == 0:
-                    priors_list.append(np.empty(0, dtype=np.float64))
-                    continue
-                ll = pol_cpu[i][idx].astype(np.float64)
-                ll -= ll.max()
-                e = np.exp(ll)
-                s = float(e.sum())
-                priors_list.append((e / s) if s > 0 else np.full_like(e, 1.0 / e.size))
-            return priors_list, wdl
-
-        # GPU path: pad legal indices, gather, softmax on GPU
-        max_legal = max(idx.size for idx in legal_indices) if legal_indices else 0
-        if max_legal == 0:
-            return [np.empty(0, dtype=np.float64)] * batch, wdl
-
-        # Build padded index tensor and mask on CPU, then send to GPU
-        gather_idx = torch.zeros(batch, max_legal, dtype=torch.long)
-        mask = torch.zeros(batch, max_legal, dtype=torch.bool)
-        lengths = np.empty(batch, dtype=np.int32)
-        for i in range(batch):
-            idx = legal_indices[i]
-            n = idx.size
-            lengths[i] = n
-            if n > 0:
-                gather_idx[i, :n] = torch.from_numpy(idx.astype(np.int64))
-                mask[i, :n] = True
-
-        gather_idx = gather_idx.to(self.device)
-        mask = mask.to(self.device)
-
-        # Gather legal logits and apply masked softmax
-        gathered = policy_gpu.gather(1, gather_idx)  # (batch, max_legal)
-        gathered[~mask] = -1e30
-        # Stable softmax
-        gathered_max = gathered.max(dim=1, keepdim=True).values
-        gathered = gathered - gathered_max
-        gathered_exp = gathered.exp()
-        gathered_exp[~mask] = 0.0
-        gathered_sum = gathered_exp.sum(dim=1, keepdim=True).clamp(min=1e-12)
-        priors_gpu = gathered_exp / gathered_sum  # (batch, max_legal)
-
-        # Transfer only the small priors tensor to CPU
-        priors_cpu = priors_gpu.to(dtype=torch.float64, device="cpu").numpy()
-
-        # Split into per-position arrays (trimmed to actual legal count)
-        priors_list = []
-        for i in range(batch):
-            n = int(lengths[i])
-            if n > 0:
-                priors_list.append(priors_cpu[i, :n].copy())
-            else:
-                priors_list.append(np.empty(0, dtype=np.float64))
-
-        return priors_list, wdl
-
 
 class DirectGPUEvaluator(LocalModelEvaluator):
     """LocalModelEvaluator with pre-allocated pinned buffers.
 
     Eliminates per-call allocations by reusing pinned host tensors for
     input gather and output scatter.  Inherits ``evaluate_encoded_async``
-    and ``evaluate_for_expand`` from the base class.
+    from the base class.
 
     The sync path copies output by default (``copy_out=True``).  Pass
     ``copy_out=False`` to return views into pinned buffers — the caller
@@ -547,13 +453,13 @@ class ThreadedBatchEvaluator:
                 pol_all = pol_all[:total]
                 wdl_all = wdl_all[:total]
             except Exception as exc:
-                for _x, event, result in pending:
+                for _x, event, result in pending:  # skylos: ignore (_x unpacked but unused by convention)
                     result["error"] = str(exc)
                     event.set()
                 continue
             except BaseException as exc:
                 # Fatal (KeyboardInterrupt, SystemExit) — unblock all threads
-                for _x, event, result in pending:
+                for _x, event, result in pending:  # skylos: ignore (_x unpacked but unused by convention)
                     result["error"] = str(exc)
                     event.set()
                 raise
@@ -905,10 +811,6 @@ class SlotBroker:
         return list(self._slot_names)
 
     # -- model loading (same logic as before) --
-
-    def _load_manifest(self) -> dict:
-        mf = self.publish_dir / "manifest.json"
-        return dict(json.loads(mf.read_text(encoding="utf-8")))
 
     def _load_manifest_if_changed(self) -> dict:
         mf = self.publish_dir / "manifest.json"

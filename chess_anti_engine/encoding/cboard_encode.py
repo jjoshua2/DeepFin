@@ -6,14 +6,7 @@ from typing import TYPE_CHECKING
 import chess
 import numpy as np
 
-try:
-    from chess_anti_engine.encoding._lc0_ext import CBoard
-    _HAS_CBOARD = True
-except ImportError:
-    _HAS_CBOARD = False
-
-if TYPE_CHECKING:
-    from chess_anti_engine.encoding._lc0_ext import CBoard  # noqa: F811
+from chess_anti_engine.encoding._lc0_ext import CBoard
 
 
 def cboard_from_board_fast(board: chess.Board) -> CBoard:

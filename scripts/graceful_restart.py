@@ -27,13 +27,6 @@ import time
 from pathlib import Path
 
 
-def _find_tune_dir(work_dir: Path) -> Path:
-    p = work_dir / "tune"
-    if p.is_dir():
-        return p
-    raise FileNotFoundError(f"Could not find tune dir at {p}")
-
-
 def _active_trials(tune_dir: Path) -> list[Path]:
     """Return progress.csv paths for all trials that have at least one row."""
     csvs = []

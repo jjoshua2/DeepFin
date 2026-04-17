@@ -93,7 +93,7 @@ def main() -> None:
 
     stop = False
 
-    def _handle_stop(signum: int, frame: object) -> None:
+    def _handle_stop(signum: int, frame: object) -> None:  # skylos: ignore (signal handler signature)
         nonlocal stop
         stop = True
 

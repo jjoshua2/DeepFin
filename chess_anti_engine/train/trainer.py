@@ -17,13 +17,13 @@ from zclip import ZClip
 from chess_anti_engine.utils.atomic import atomic_write
 
 try:
-    from torch.utils.tensorboard import SummaryWriter  # type: ignore[assignment]
+    from torch.utils.tensorboard import SummaryWriter  # type: ignore[assignment]  # skylos: ignore (used via runtime fallback)
 except Exception:  # pragma: no cover
     class SummaryWriter:  # type: ignore[no-redef]
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:  # skylos: ignore (stub signature parity)
             pass
 
-        def add_scalar(self, *args: Any, **kwargs: Any) -> None:
+        def add_scalar(self, *args: Any, **kwargs: Any) -> None:  # skylos: ignore (stub signature parity)
             pass
 
         def close(self) -> None:
