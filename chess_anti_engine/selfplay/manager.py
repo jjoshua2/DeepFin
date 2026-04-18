@@ -275,7 +275,7 @@ class CompletedGameBatch:
     plies_loss: int = 0
 
 
-@dataclass
+@dataclass(kw_only=True)
 class _PlayBatchState:
     """Mutable state accumulated by :func:`play_batch` across its main loop.
 
@@ -296,10 +296,10 @@ class _PlayBatchState:
     cboards: list[Any] = field(default_factory=list)
     starting_boards: list[Any] | None = None
     move_idx_history: list[list[int]] = field(default_factory=list)
-    done_arr: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.int8))
-    finalized_arr: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.int8))
-    net_color_arr: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.int8))
-    selfplay_arr: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.int8))
+    done_arr: np.ndarray
+    finalized_arr: np.ndarray
+    net_color_arr: np.ndarray
+    selfplay_arr: np.ndarray
 
     # MCTS tree reuse (None when the C Gumbel extension is unavailable)
     mcts_tree: Any = None
