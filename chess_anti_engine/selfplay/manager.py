@@ -1,9 +1,51 @@
+"""Self-play batch orchestration.
+
+The public entry point is :func:`play_batch`, which drives a rolling-batch of
+selfplay + curriculum games against Stockfish. This module is organized
+around an explicit state object + a handful of module-scope helpers so the
+non-trivial pieces can be unit-tested without spinning up a full
+``play_batch`` call.
+
+Architecture
+------------
+
+* ``_PlayBatchState`` (dataclass) owns all the mutable state that the
+  per-ply pipeline reads/writes: per-slot ``cboards`` / ``boards`` /
+  ``move_idx_history``, in-flight ``samples_per_game``, selfplay vs
+  curriculum flags, tree / cache / root-id arrays for MCTS reuse, C
+  fast-path handles, and all ``st_*`` stats accumulators.
+
+* ``_init_play_batch_state(...)`` builds the initial state from the
+  caller-supplied ``game`` / ``opponent`` / ``opening`` / ``vs`` args and
+  resolves the C fast-path imports (``batch_process_ply`` etc.) once.
+
+* ``_sf_terminal_result``, ``_finalize_game``, ``_process_sf_results``, and
+  ``_run_network_turn`` are module-scope helpers that accept the state
+  (plus whichever config groups they need) as explicit arguments and
+  mutate ``state`` in place. They do *not* capture ``play_batch`` locals
+  via closures.
+
+* ``play_batch`` itself is now a thin orchestrator: it calls
+  ``_init_play_batch_state`` once, then drives the rolling-batch loop by
+  calling the module-scope helpers, keeping only the per-iteration
+  bookkeeping (combined_net_idxs, SF-query routing, slot recycling, timing
+  accumulators) as true locals.
+
+Hot-path note
+-------------
+
+The helpers unpack the ``state`` fields they touch into local names at the
+top of the function (``cboards = state.cboards`` etc.), so the inner loops
+still hit local-variable lookups rather than attribute loads. The state
+object is the *structural* boundary; it is not in the per-ply hot path.
+"""
+
 from __future__ import annotations
 
 import logging
 import math
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
@@ -233,6 +275,1068 @@ class CompletedGameBatch:
     plies_loss: int = 0
 
 
+@dataclass(kw_only=True)
+class _PlayBatchState:
+    """Mutable state accumulated by :func:`play_batch` across its main loop.
+
+    Holds per-slot arrays (boards, done flags, etc.), stats counters, MCTS
+    tree/cache references, and cached C fast-path handles. Created once by
+    :func:`_init_play_batch_state` and threaded through the helpers invoked
+    by :func:`play_batch`. Making the state boundary explicit lets helpers
+    be lifted to module scope and unit-tested independently.
+    """
+
+    # Batch sizing / mode flags
+    batch_size: int
+    continuous: bool
+    target: int
+
+    # Per-slot parallel arrays
+    boards: list[Any] = field(default_factory=list)
+    cboards: list[Any] = field(default_factory=list)
+    starting_boards: list[Any] | None = None
+    move_idx_history: list[list[int]] = field(default_factory=list)
+    done_arr: np.ndarray
+    finalized_arr: np.ndarray
+    net_color_arr: np.ndarray
+    selfplay_arr: np.ndarray
+
+    # MCTS tree reuse (None when the C Gumbel extension is unavailable)
+    mcts_tree: Any = None
+    nn_cache: Any = None
+    root_ids: list[int] = field(default_factory=list)
+
+    # Resignation / soft-resign tracking
+    consecutive_low_winrate: list[int] = field(default_factory=list)
+    sf_resign_scale: list[float] = field(default_factory=list)
+    last_net_full: list[bool] = field(default_factory=list)
+
+    # Per-game sample accumulation
+    samples_per_game: list[list[Any]] = field(default_factory=list)
+    all_samples: list[ReplaySample] = field(default_factory=list)
+
+    # C fast-path handles (None when the extension is unavailable)
+    has_c_ply: bool = False
+    c_process_ply: Any = None
+    batch_enc_146: Any = None
+    has_classify_c: bool = False
+    c_classify: Any = None
+    c_temp_resample: Any = None
+    cboard_cls: Any = None  # _CBoard class reference for slot recycling
+
+    # Normalized volatility source ("raw" or "search")
+    vs: str = "raw"
+
+    # Stockfish terminal-eval node budget
+    terminal_eval_nodes: int = 1000
+
+    # Slot lifecycle counters
+    games_started: int = 0
+    games_completed: int = 0
+
+    # Stats accumulators (populated by finalize)
+    st_w: int = 0
+    st_d: int = 0
+    st_l: int = 0
+    st_game_plies: int = 0
+    st_adjudicated: int = 0
+    st_draw: int = 0
+    st_sp_games: int = 0
+    st_sp_adj: int = 0
+    st_sp_draw: int = 0
+    st_cur_games: int = 0
+    st_cur_adj: int = 0
+    st_cur_draw: int = 0
+    st_plies_win: int = 0
+    st_plies_draw: int = 0
+    st_plies_loss: int = 0
+    st_sf_d6_sum: float = 0.0
+    st_sf_d6_n: int = 0
+    st_checkmate: int = 0
+    st_stalemate: int = 0
+
+
+def _init_play_batch_state(
+    *,
+    batch_size: int,
+    continuous: bool,
+    target: int,
+    rng: np.random.Generator,
+    stockfish: StockfishUCI | StockfishPool,
+    opening: OpeningConfig,
+    game: GameConfig,
+) -> _PlayBatchState:
+    """Build the mutable state container used by :func:`play_batch`.
+
+    Creates per-slot arrays, imports optional C fast-path handles, and
+    initializes MCTS tree reuse state when the C Gumbel extension is
+    available. Kept as a free function so it can be unit-tested separately
+    from :func:`play_batch`.
+    """
+    boards = [make_starting_board(rng=rng, cfg=opening) for _ in range(batch_size)]
+    # Parallel CBoard state — primary board for hot-path ops (fen, game_over, ply, encoding).
+    # Use from_board (not from_raw) to preserve ply count and history from openings.
+    from chess_anti_engine.encoding._lc0_ext import CBoard as _CBoard
+    cboards = [_CBoard.from_board(b) for b in boards]
+    starting_boards = [b.copy() for b in boards] if game.syzygy_path else None
+    move_idx_history: list[list[int]] = [[] for _ in range(batch_size)]
+
+    # Per-game flags as numpy int8 arrays (single source of truth).
+    # Used directly by C classify_games and by Python logic (truthy checks work for 0/1).
+    done_arr = np.zeros(batch_size, dtype=np.int8)
+    finalized_arr = np.zeros(batch_size, dtype=np.int8)
+    # Alternate which color the network plays so it sees both perspectives.
+    # 1 = WHITE, 0 = BLACK.
+    net_color_arr = np.array(
+        [1 if (i % 2 == 0) else 0 for i in range(batch_size)], dtype=np.int8,
+    )
+    selfplay_arr = np.array(
+        [
+            1 if rng.random() < max(0.0, min(1.0, float(game.selfplay_fraction))) else 0
+            for _ in range(batch_size)
+        ],
+        dtype=np.int8,
+    )
+
+    # Optional C classifier / temperature-resample (GIL-released hot path).
+    has_classify_c = False
+    c_classify = None
+    c_temp_resample = None
+    try:
+        from chess_anti_engine.mcts._mcts_tree import (
+            classify_games as _c_classify,
+            temperature_resample as _c_temp_resample,
+        )
+        c_classify = _c_classify
+        c_temp_resample = _c_temp_resample
+        has_classify_c = True
+    except ImportError:
+        pass
+
+    # NN eval cache + persistent MCTS tree for cross-ply reuse.
+    nn_cache = None
+    mcts_tree = None
+    if _HAS_GUMBEL_C:
+        from chess_anti_engine.mcts._mcts_tree import (
+            NNCache as _NNCache,
+            MCTSTree as _MCTSTree,
+        )
+        nn_cache = _NNCache(1 << 17)  # 131072 slots
+        mcts_tree = _MCTSTree()
+
+    # Check C per-ply availability once. `batch_process_ply` and `batch_encode_146`
+    # live in the same C module; importing together keeps the two `None`-fallback
+    # paths coupled (prevents drift where only one is available, which would
+    # break the xs_batch invariant in _run_network_turn).
+    has_c_ply = False
+    c_process_ply = None
+    batch_enc_146 = None
+    try:
+        from chess_anti_engine.mcts._mcts_tree import (
+            batch_process_ply as _c_process_ply,
+            batch_encode_146 as _batch_enc_146,
+        )
+        c_process_ply = _c_process_ply
+        batch_enc_146 = _batch_enc_146
+        has_c_ply = True
+    except ImportError:
+        logging.getLogger("chess_anti_engine.selfplay").warning(
+            "C per-ply fast path unavailable (batch_process_ply/batch_encode_146 not importable "
+            "from _mcts_tree); falling back to Python. Rebuild the C extension for production."
+        )
+
+    base_nodes = int(getattr(stockfish, "nodes", 0) or 0)
+    terminal_eval_nodes = (5 * base_nodes) if base_nodes > 0 else 1000
+
+    vs = str(game.volatility_source).lower().strip()
+    if vs not in ("raw", "search"):
+        vs = "raw"
+
+    return _PlayBatchState(
+        batch_size=batch_size,
+        continuous=continuous,
+        target=target,
+        boards=boards,
+        cboards=cboards,
+        starting_boards=starting_boards,
+        move_idx_history=move_idx_history,
+        done_arr=done_arr,
+        finalized_arr=finalized_arr,
+        net_color_arr=net_color_arr,
+        selfplay_arr=selfplay_arr,
+        mcts_tree=mcts_tree,
+        nn_cache=nn_cache,
+        root_ids=[-1] * batch_size,
+        consecutive_low_winrate=[0] * batch_size,
+        sf_resign_scale=[1.0] * batch_size,
+        last_net_full=[True] * batch_size,
+        samples_per_game=[[] for _ in range(batch_size)],
+        all_samples=[],
+        has_c_ply=has_c_ply,
+        c_process_ply=c_process_ply,
+        batch_enc_146=batch_enc_146,
+        has_classify_c=has_classify_c,
+        c_classify=c_classify,
+        c_temp_resample=c_temp_resample,
+        cboard_cls=_CBoard,
+        vs=vs,
+        terminal_eval_nodes=terminal_eval_nodes,
+        games_started=batch_size,
+        games_completed=0,
+    )
+
+
+def _sf_terminal_result(
+    *,
+    turn_is_white: bool,
+    sf_res: StockfishResult | None,
+    adjudication_threshold: float,
+) -> str:
+    """Adjudicate an unfinished position using Stockfish's WDL estimate."""
+    if sf_res is None or sf_res.wdl is None:
+        return "1/2-1/2"
+    wdl_stm = sf_res.wdl
+    if not turn_is_white:
+        wdl_white = np.array(
+            [float(wdl_stm[2]), float(wdl_stm[1]), float(wdl_stm[0])], dtype=np.float32,
+        )
+    else:
+        wdl_white = np.asarray(wdl_stm, dtype=np.float32)
+    if float(wdl_white[0]) > float(adjudication_threshold):
+        return "1-0"
+    if float(wdl_white[2]) > float(adjudication_threshold):
+        return "0-1"
+    return "1/2-1/2"
+
+
+def _finalize_game(
+    state: _PlayBatchState,
+    i: int,
+    *,
+    game: GameConfig,
+    rng: np.random.Generator,
+    stockfish: StockfishUCI | StockfishPool,
+    on_game_complete: Callable[[CompletedGameBatch], None] | None,
+) -> None:
+    """Finalize a completed game slot: compute labels, build samples, update stats.
+
+    Mutates ``state`` in-place (samples, stats counters, per-game sample lists).
+    When ``on_game_complete`` is provided, the per-game sample batch is delivered
+    via the callback. In continuous mode, ``state.all_samples`` is cleared after
+    each finalization to bound memory growth.
+    """
+    cboards = state.cboards
+    boards = state.boards
+    starting_boards = state.starting_boards
+    move_idx_history = state.move_idx_history
+    samples_per_game = state.samples_per_game
+    all_samples = state.all_samples
+
+    cb = cboards[i]
+    # When C per-ply is active, boards[i] is the starting position —
+    # reconstruct by replaying move_idx_history.  When Python fallback
+    # is active, boards[i] is already the final position (pushed each ply).
+    if state.has_c_ply:
+        b = boards[i].copy(stack=False)
+        for _mi in move_idx_history[i]:
+            _mv = index_to_move(_mi, b)
+            b.push(_mv)
+    else:
+        b = boards[i]
+    result = cb.result()
+    _game_plies = int(cb.ply)
+    state.st_game_plies += _game_plies
+    _is_cm = cb.is_checkmate()
+    _is_sm = cb.is_stalemate()
+    if _is_cm:
+        state.st_checkmate += 1
+    elif _is_sm:
+        state.st_stalemate += 1
+
+    was_adjudicated = False
+    if result == "*":
+        state.st_adjudicated += 1
+        was_adjudicated = True
+        try:
+            if isinstance(stockfish, StockfishPool):
+                sf_res = stockfish.submit(cb.fen(), nodes=int(state.terminal_eval_nodes)).result()
+            else:
+                sf_res = stockfish.search(cb.fen(), nodes=int(state.terminal_eval_nodes))
+        except Exception:
+            sf_res = None
+        result = _sf_terminal_result(
+            turn_is_white=bool(cb.turn),
+            sf_res=sf_res,
+            adjudication_threshold=float(game.timeout_adjudication_threshold),
+        )
+
+    # Debug: log unexpected short wins
+    if not state.selfplay_arr[i] and result in ("1-0", "0-1") and _game_plies < int(game.max_plies) - 10:
+        outcome = b.outcome(claim_draw=True)
+        _term = outcome.termination.name if outcome else "adjudicated"
+        _log = logging.getLogger("chess_anti_engine.selfplay")
+        _log.warning(
+            "Short win: %s at %d plies (max=%d), term=%s, adj=%s, is_over=%s",
+            result, _game_plies, int(game.max_plies), _term,
+            was_adjudicated, cb.is_game_over(),
+        )
+
+    records = samples_per_game[i]
+
+    # Syzygy tablebase rescoring
+    tb_policy_overrides: dict[int, np.ndarray] = {}
+    if game.syzygy_path and starting_boards is not None:
+        replay_board = starting_boards[i].copy()
+        replay_boards: list[chess.Board] = []
+        move_stack = list(b.move_stack)
+        opening_len = len(starting_boards[i].move_stack)
+
+        for mv in move_stack[opening_len:]:
+            replay_board.push(mv)
+            replay_boards.append(replay_board.copy())
+
+        tb_result = rescore_game_samples(replay_boards, game.syzygy_path)
+        if tb_result is not None:
+            result = tb_result
+
+        if game.syzygy_policy:
+            replay_board = starting_boards[i].copy()
+            sample_idx = 0
+            _is_sp = bool(state.selfplay_arr[i])
+            for mv in move_stack[opening_len:]:
+                board_before = replay_board.copy()
+                is_net = _is_network_turn(
+                    board_turn=replay_board.turn,
+                    network_color=_net_color(state.net_color_arr, i),
+                )
+                # In selfplay games the network plays both sides, so every
+                # ply produces a sample.  In curriculum games only the
+                # network-color turns produce samples.
+                is_sample_turn = is_net or _is_sp
+                if is_sample_turn:
+                    if sample_idx >= len(records):
+                        break
+                    if _eligible(board_before):
+                        best = probe_best_move(board_before, game.syzygy_path)
+                        if best is not None:
+                            try:
+                                a = int(move_to_index(best, board_before))
+                            except Exception:
+                                a = -1
+                            if a >= 0:
+                                p = np.zeros((POLICY_SIZE,), dtype=np.float32)
+                                p[a] = 1.0
+                                tb_policy_overrides[sample_idx] = p
+                    sample_idx += 1
+                replay_board.push(mv)
+
+    game_w = 0
+    game_d = 0
+    game_l = 0
+    game_total_draws = 0
+    game_selfplay_games = 0
+    game_selfplay_adj = 0
+    game_selfplay_draws = 0
+    game_curriculum_games = 0
+    game_curriculum_adj = 0
+    game_curriculum_draws = 0
+
+    # Stats
+    if state.selfplay_arr[i]:
+        state.st_sp_games += 1
+        game_selfplay_games = 1
+        if was_adjudicated:
+            state.st_sp_adj += 1
+            game_selfplay_adj = 1
+    else:
+        state.st_cur_games += 1
+        game_curriculum_games = 1
+        if was_adjudicated:
+            state.st_cur_adj += 1
+            game_curriculum_adj = 1
+
+    if result == "1/2-1/2":
+        state.st_draw += 1
+        game_total_draws = 1
+        if state.selfplay_arr[i]:
+            state.st_sp_draw += 1
+            game_selfplay_draws = 1
+        else:
+            state.st_cur_draw += 1
+            game_curriculum_draws = 1
+
+    if not state.selfplay_arr[i]:
+        net_col = _net_color(state.net_color_arr, i)
+        if result == "1/2-1/2":
+            state.st_d += 1
+            game_d = 1
+        elif (result == "1-0" and net_col == chess.WHITE) or (result == "0-1" and net_col == chess.BLACK):
+            state.st_w += 1
+            game_w = 1
+        else:
+            state.st_l += 1
+            game_l = 1
+
+    if not state.selfplay_arr[i]:
+        if game_w:
+            state.st_plies_win += _game_plies
+        elif game_d:
+            state.st_plies_draw += _game_plies
+        elif game_l:
+            state.st_plies_loss += _game_plies
+
+    n = len(records)
+    ply_to_index = {int(rec.ply_index): idx for idx, rec in enumerate(records)}
+
+    # Volatility targets + SF eval delta6 metric (single pass over records).
+    vol_targets: list[np.ndarray | None] = [None] * n
+    sf_vol_targets: list[np.ndarray | None] = [None] * n
+    for t in range(n):
+        th = ply_to_index.get(int(records[t].ply_index) + 6)
+        if th is not None:
+            if state.vs == "search":
+                w0 = records[t].search_wdl_est
+                w6 = records[th].search_wdl_est
+            else:
+                w0 = records[t].net_wdl_est
+                w6 = records[th].net_wdl_est
+            vol_targets[t] = np.abs(w6 - w0).astype(np.float32, copy=False)
+
+            sf0 = records[t].sf_wdl
+            sf6 = records[th].sf_wdl
+            if (sf0 is not None) and (sf6 is not None):
+                sf_vol_targets[t] = np.abs(sf6 - sf0).astype(np.float32, copy=False)
+                wr0 = float(sf0[0]) + 0.5 * float(sf0[1])
+                wr6 = float(sf6[0]) + 0.5 * float(sf6[1])
+                state.st_sf_d6_sum += abs(wr6 - wr0)
+                state.st_sf_d6_n += 1
+
+    # Build ReplaySample objects
+    sample_start = len(all_samples)
+    for t, rec in enumerate(records):
+        if float(rec.sample_weight) < 1.0 and rng.random() > float(rec.sample_weight):
+            continue
+        if float(rec.keep_prob) < 1.0 and rng.random() > float(rec.keep_prob):
+            continue
+        if not bool(rec.has_policy):
+            continue
+
+        if result == "1/2-1/2":
+            wdl = 1
+        elif (result == "1-0" and rec.pov_color == chess.WHITE) or \
+             (result == "0-1" and rec.pov_color == chess.BLACK):
+            wdl = 0
+        else:
+            wdl = 2
+
+        total_plies_played = max(1, int(cb.ply))
+        moves_left = float(max(0, total_plies_played - int(rec.ply_index))) / max(1.0, float(game.max_plies))
+
+        scalar_v = 1.0 if wdl == 0 else (0.0 if wdl == 1 else -1.0)
+        cat = hlgauss_target(scalar_v, num_bins=game.categorical_bins, sigma=game.hlgauss_sigma)
+
+        eff_probs = tb_policy_overrides.get(t, rec.policy_probs)
+        soft = _apply_temperature(eff_probs, game.soft_policy_temp)
+
+        future = None
+        future_idx = ply_to_index.get(int(rec.ply_index) + 2)
+        if future_idx is not None and bool(records[future_idx].has_policy):
+            future = records[future_idx].policy_probs
+
+        vol = vol_targets[t]
+        sf_vol = sf_vol_targets[t]
+
+        all_samples.append(
+            ReplaySample(
+                x=rec.x,
+                policy_target=eff_probs,
+                wdl_target=int(wdl),
+                priority=float(rec.priority),
+                has_policy=bool(rec.has_policy),
+                sf_wdl=rec.sf_wdl,
+                sf_move_index=rec.sf_move_index,
+                sf_policy_target=rec.sf_policy_target,
+                moves_left=moves_left,
+                is_network_turn=True,
+                categorical_target=cat,
+                policy_soft_target=soft,
+                future_policy_target=future,
+                has_future=(future is not None),
+                volatility_target=vol,
+                has_volatility=(vol is not None),
+                sf_volatility_target=sf_vol,
+                has_sf_volatility=(sf_vol is not None),
+                legal_mask=rec.legal_mask,
+            )
+        )
+
+    if on_game_complete is not None:
+        game_samples = list(all_samples[sample_start:])
+        if game_samples:
+            on_game_complete(
+                CompletedGameBatch(
+                    samples=game_samples,
+                    positions=len(game_samples),
+                    w=game_w,
+                    d=game_d,
+                    l=game_l,
+                    total_game_plies=_game_plies,
+                    adjudicated_games=1 if was_adjudicated else 0,
+                    total_draw_games=game_total_draws,
+                    selfplay_games=game_selfplay_games,
+                    selfplay_adjudicated_games=game_selfplay_adj,
+                    selfplay_draw_games=game_selfplay_draws,
+                    curriculum_games=game_curriculum_games,
+                    curriculum_adjudicated_games=game_curriculum_adj,
+                    curriculum_draw_games=game_curriculum_draws,
+                    checkmate_games=1 if _is_cm else 0,
+                    stalemate_games=1 if _is_sm else 0,
+                    plies_win=_game_plies if game_w else 0,
+                    plies_draw=_game_plies if game_d else 0,
+                    plies_loss=_game_plies if game_l else 0,
+                )
+            )
+    # In continuous mode, samples are delivered via on_game_complete;
+    # clear the list to prevent unbounded memory growth.
+    if state.continuous:
+        all_samples.clear()
+
+
+def _process_sf_results(
+    state: _PlayBatchState,
+    idxs: list[int],
+    *,
+    results: dict,
+    play_curriculum_moves: bool,
+    stockfish: StockfishUCI | StockfishPool,
+    game: GameConfig,
+    opponent: OpponentConfig,
+    rng: np.random.Generator,
+) -> None:
+    """Attach SF policy/WDL labels to the last sample of each slot and, when
+    ``play_curriculum_moves`` is true, push an opponent move for curriculum
+    (non-selfplay) slots. Mutates ``state`` in-place.
+    """
+    if not idxs:
+        return
+
+    cboards = state.cboards
+    samples_per_game = state.samples_per_game
+    move_idx_history = state.move_idx_history
+
+    sf_policy_temp_local = float(game.sf_policy_temp)
+    sf_policy_label_smooth_local = float(game.sf_policy_label_smooth)
+
+    def _softmax_np(x: np.ndarray) -> np.ndarray:
+        z = x.astype(np.float64, copy=False)
+        z = z - float(np.max(z))
+        e = np.exp(z)
+        s = float(e.sum())
+        if s <= 0:
+            return np.full_like(z, 1.0 / float(z.size))
+        return e / s
+
+    def _flip_wdl_pov(wdl: np.ndarray) -> np.ndarray:
+        wdl = np.asarray(wdl, dtype=np.float32)
+        if wdl.shape != (3,):
+            return wdl.astype(np.float32, copy=False)
+        return np.array([float(wdl[2]), float(wdl[1]), float(wdl[0])], dtype=np.float32)
+
+    rand_p = float(opponent.random_move_prob)
+    curriculum_topk_max = max(1, int(getattr(stockfish, "multipv", 1) or 1))
+    curriculum_topk = _effective_curriculum_topk(
+        random_move_prob=rand_p,
+        stage_end=float(opponent.topk_stage_end),
+        topk_max=curriculum_topk_max,
+        topk_min=int(opponent.topk_min),
+    )
+    if opponent.wdl_regret_limit is not None:
+        regret_limit = float(opponent.wdl_regret_limit)
+    else:
+        regret_limit = _effective_curriculum_wdl_regret(
+            random_move_prob=rand_p,
+            random_move_prob_start=float(opponent.random_move_prob_start),
+            random_move_prob_floor=float(opponent.random_move_prob_min),
+            regret_max=float(opponent.suboptimal_wdl_regret_max),
+            regret_min=float(opponent.suboptimal_wdl_regret_min),
+        )
+
+    for idx in idxs:
+        res = results[idx]
+        legal_indices = cboards[idx].legal_move_indices()
+        if legal_indices.size == 0:
+            state.done_arr[idx] = 1
+            continue
+
+        _turn = bool(cboards[idx].turn)
+        legal_set = set(int(x) for x in legal_indices)
+
+        a_idx = uci_to_policy_index(res.bestmove_uci, _turn)
+        if a_idx < 0 or a_idx not in legal_set:
+            a_idx = int(legal_indices[0])
+
+        cand_idxs: list[int] = []
+        cand_scores: list[float] = []
+        if getattr(res, "pvs", None):
+            for pv in res.pvs:
+                if pv.wdl is None:
+                    continue
+                a = uci_to_policy_index(pv.move_uci, _turn)
+                if a < 0 or a not in legal_set:
+                    continue
+                w_sf, d_sf = float(pv.wdl[0]), float(pv.wdl[1])
+                cand_idxs.append(a)
+                cand_scores.append(w_sf + 0.5 * d_sf)
+
+        if not cand_idxs:
+            cand_idxs = [a_idx]
+            cand_scores = [0.0]
+
+        scores = np.array(cand_scores, dtype=np.float64) / max(1e-6, sf_policy_temp_local)
+        p_top = _softmax_np(scores).astype(np.float32, copy=False)
+
+        p_sf = np.zeros((POLICY_SIZE,), dtype=np.float32)
+        for a, p in zip(cand_idxs, p_top, strict=False):
+            p_sf[int(a)] += float(p)
+
+        if sf_policy_label_smooth_local > 0.0:
+            n_legal = legal_indices.size
+            if n_legal > 0:
+                p_sf *= (1.0 - sf_policy_label_smooth_local)
+                p_sf[legal_indices] += sf_policy_label_smooth_local / float(n_legal)
+
+        ps = float(p_sf.sum())
+        if ps > 0:
+            p_sf /= ps
+
+        if samples_per_game[idx]:
+            rec = samples_per_game[idx][-1]
+            if rec.sf_policy_target is None and rec.sf_move_index is None:
+                rec.sf_policy_target = p_sf
+                rec.sf_move_index = a_idx
+                if res.wdl is not None:
+                    rec.sf_wdl = _flip_wdl_pov(res.wdl)
+
+        if not play_curriculum_moves or state.selfplay_arr[idx]:
+            continue
+
+        _opp_move_idx = _choose_curriculum_opponent_move(
+            rng=rng,
+            legal_indices=legal_indices,
+            cand_indices=cand_idxs,
+            cand_scores=cand_scores,
+            curriculum_topk=int(curriculum_topk),
+            random_move_prob=rand_p,
+            regret_limit=regret_limit,
+        )
+
+        cboards[idx].push_index(_opp_move_idx)
+        move_idx_history[idx].append(_opp_move_idx)
+        # Advance tree root through opponent's move
+        if state.mcts_tree is not None and state.root_ids[idx] >= 0:
+            state.root_ids[idx] = state.mcts_tree.find_child(state.root_ids[idx], _opp_move_idx)
+        if cboards[idx].is_game_over():
+            state.done_arr[idx] = 1
+
+
+# Soft-resign detection: N consecutive plies with network win prob below
+# SOFT_RESIGN_THRESHOLD triggers a sample_weight decay so the network
+# does not over-train on hopeless positions. Kept as module-level
+# constants so ``_run_network_turn`` can be unit-tested without
+# instantiating ``play_batch``.
+SOFT_RESIGN_THRESHOLD = 0.05
+SOFT_RESIGN_CONSECUTIVE = 5
+
+
+def _run_network_turn(
+    state: _PlayBatchState,
+    net_idxs: list[int],
+    *,
+    model: torch.nn.Module | None,
+    eval_impl: BatchEvaluator,
+    device: str,
+    rng: np.random.Generator,
+    search: SearchConfig,
+    temp: TemperatureConfig,
+    diff_focus: DiffFocusConfig,
+) -> None:
+    """Run the network move for each slot in ``net_idxs``.
+
+    - Encodes current positions (via C fast path when available).
+    - Calls the evaluator to get pol/wdl logits in one batched forward.
+    - Runs MCTS (Gumbel or PUCT, C fast path when available) in a single
+      grouped call so all slots share one GPU batch.
+    - Applies per-slot temperature resampling to pick the played action.
+    - Pushes the chosen move into ``state.cboards[idx]`` (and
+      ``state.boards[idx]`` in the Python fallback path).
+    - Appends a ``_NetRecord`` to ``state.samples_per_game[idx]`` and
+      flags ``state.done_arr[idx]`` when the game ends.
+    """
+    if not net_idxs:
+        return
+
+    cboards = state.cboards
+    boards = state.boards
+    move_idx_history = state.move_idx_history
+    samples_per_game = state.samples_per_game
+
+    _bsz = len(net_idxs)
+    # Bucket size for torch.compile shape stability
+    _ROOT_BUCKETS = (32, 64, 128, 256, 512)
+    _padded_bsz = _bsz
+    for _b in _ROOT_BUCKETS:
+        if _b >= _bsz:
+            _padded_bsz = _b
+            break
+
+    _cb_encode_list = [cboards[_idx] for _idx in net_idxs]
+
+    # Fast path: encode directly into evaluator's pinned buffer (zero-copy H2D)
+    _use_inplace = state.batch_enc_146 is not None and hasattr(eval_impl, "get_input_buffer")
+    if _use_inplace:
+        # get_input_buffer + evaluate_inplace exist only on DirectGPU-style evaluators;
+        # _use_inplace is the runtime guard.
+        _buf = eval_impl.get_input_buffer(_padded_bsz)  # type: ignore[attr-defined]
+        # batch_encode_146 memsets + encodes into first _bsz slots;
+        # remaining slots are zero-padded by get_input_buffer's pinned memory.
+        assert state.batch_enc_146 is not None
+        state.batch_enc_146(_cb_encode_list, _buf)
+        pol_logits_padded, wdl_logits_raw_padded = eval_impl.evaluate_inplace(  # type: ignore[attr-defined]
+            _padded_bsz, copy_out=True,
+        )
+    else:
+        xs_batch = np.empty((_bsz, 146, 8, 8), dtype=np.float32)
+        if state.batch_enc_146 is not None:
+            state.batch_enc_146(_cb_encode_list, xs_batch)
+        else:
+            for _j, _idx in enumerate(net_idxs):
+                xs_batch[_j] = cboards[_idx].encode_146()
+        if _padded_bsz > _bsz:
+            _pad = np.zeros((_padded_bsz - _bsz, *xs_batch.shape[1:]), dtype=xs_batch.dtype)
+            xs_padded = np.concatenate([xs_batch, _pad], axis=0)
+        else:
+            xs_padded = xs_batch
+        pol_logits_padded, wdl_logits_raw_padded = eval_impl.evaluate_encoded(xs_padded)
+
+    pol_logits = pol_logits_padded[:_bsz]
+    wdl_logits_raw = wdl_logits_raw_padded[:_bsz]
+    # Pure numpy softmax (avoids torch tensor creation roundtrip for small arrays)
+    wdl_f = wdl_logits_raw.astype(np.float64, copy=True)
+    wdl_f -= wdl_f.max(axis=-1, keepdims=True)
+    np.exp(wdl_f, out=wdl_f)
+    wdl_f /= wdl_f.sum(axis=-1, keepdims=True)
+    wdl_est = wdl_f.astype(np.float32, copy=False)
+
+    is_full = rng.random(size=len(net_idxs)) < float(search.playout_cap_fraction)
+
+    eff_full_sims = [int(search.simulations)] * len(net_idxs)
+    eff_fast_sims = [int(search.fast_simulations)] * len(net_idxs)
+    sample_weights = [1.0] * len(net_idxs)
+    for j, idx in enumerate(net_idxs):
+        win_p = float(wdl_est[j][0])
+        if win_p < SOFT_RESIGN_THRESHOLD:
+            state.consecutive_low_winrate[idx] += 1
+        else:
+            state.consecutive_low_winrate[idx] = 0
+
+        if state.consecutive_low_winrate[idx] >= SOFT_RESIGN_CONSECUTIVE:
+            ratio = win_p / SOFT_RESIGN_THRESHOLD
+            sample_weights[j] = 0.1 + 0.9 * ratio
+
+        state.sf_resign_scale[idx] = 1.0
+
+    probs_list: list[np.ndarray | None] = [None] * len(net_idxs)
+    actions: list[int | None] = [None] * len(net_idxs)
+    values_list: list[float | None] = [None] * len(net_idxs)
+    masks_list: list[np.ndarray | None] = [None] * len(net_idxs)
+
+    # Per-game temperature based on each game's own ply count.
+    temps = [
+        temperature_for_ply(
+            ply=cboards[i].ply // 2 + 1,
+            temperature=float(temp.temperature),
+            drop_plies=int(temp.drop_plies),
+            after=float(temp.after),
+            decay_start_move=int(temp.decay_start_move),
+            decay_moves=int(temp.decay_moves),
+            endgame=float(temp.endgame),
+        )
+        for i in net_idxs
+    ]
+
+    def _run_mcts_group(idxs: list[int], sims_per: list[int], *, per_game_noise: list[bool] | None = None) -> None:
+        if not idxs:
+            return
+
+        # All games share one MCTS call with per-game sim budgets and
+        # temperature applied after search.  Maximizes GPU batch size.
+        group = idxs
+        sub_cboards = [cboards[net_idxs[j]] for j in group]
+        sub_temps = [temps[j] for j in group]
+        sub_sims = [int(sims_per[j]) for j in group]
+        sim_count = max(sub_sims)
+
+        gumbel_low_sims = max(64, int(search.fast_simulations))
+        use_gumbel = (str(search.mcts_type) == "gumbel") or (int(sim_count) <= int(gumbel_low_sims))
+        sub_pol = pol_logits[group, :]
+        sub_wdl = wdl_logits_raw[group, :]
+
+        if use_gumbel:
+            _gumbel_fn = _run_gumbel_root_many_c if _HAS_GUMBEL_C else run_gumbel_root_many
+            # C gumbel only uses cboards; Python fallback needs python-chess boards
+            sub_boards = sub_cboards if _HAS_GUMBEL_C else [boards[net_idxs[j]] for j in group]
+            sub_noise = [per_game_noise[j] for j in group] if per_game_noise is not None else None
+            # Map group indices to game-level root IDs for tree reuse
+            sub_root_ids = [state.root_ids[net_idxs[j]] for j in group] if state.mcts_tree is not None else None
+            _gumbel_result = _gumbel_fn(
+                model,
+                sub_boards,  # type: ignore[arg-type]
+                device=device,
+                rng=rng,
+                cfg=GumbelConfig(simulations=int(sim_count), temperature=1.0, add_noise=True),
+                evaluator=eval_impl,
+                pre_pol_logits=sub_pol,
+                pre_wdl_logits=sub_wdl,
+                per_game_simulations=sub_sims,
+                per_game_add_noise=sub_noise,
+                cboards=sub_cboards,  # type: ignore[call-arg]
+                nn_cache=state.nn_cache,  # type: ignore[call-arg]
+                tree=state.mcts_tree,  # type: ignore[call-arg]
+                root_node_ids=sub_root_ids,  # type: ignore[call-arg]
+            )
+            # C version returns 6-tuple (with tree, root_ids), Python returns 4-tuple
+            p_sub, a_sub, v_sub, m_sub = _gumbel_result[:4]
+            # Store returned root IDs for tree reuse
+            if state.mcts_tree is not None and len(_gumbel_result) >= 6:
+                _ret_root_ids = _gumbel_result[5]
+                for gi, jj in enumerate(group):
+                    state.root_ids[net_idxs[jj]] = _ret_root_ids[gi]
+        else:
+            # PUCT needs python-chess boards.  When the C fast path is
+            # active, boards[idx] stays at the starting position — rebuild
+            # current state from move_idx_history (same as _finalize_game).
+            if state.has_c_ply:
+                sub_boards = []
+                for j in group:
+                    idx = net_idxs[j]
+                    b = boards[idx].copy(stack=False)
+                    for _mi in move_idx_history[idx]:
+                        b.push(index_to_move(_mi, b))
+                    sub_boards.append(b)
+            else:
+                sub_boards = [boards[net_idxs[j]] for j in group]
+            _puct_fn = _run_mcts_many_c if _HAS_C_TREE else run_mcts_many
+            p_sub, a_sub, v_sub, m_sub = _puct_fn(
+                model,
+                sub_boards,
+                device=device,
+                rng=rng,
+                cfg=MCTSConfig(
+                    simulations=int(sim_count),
+                    temperature=1.0,
+                    fpu_reduction=float(search.fpu_reduction),
+                    fpu_at_root=float(search.fpu_at_root),
+                ),
+                evaluator=eval_impl,
+                pre_pol_logits=sub_pol,
+                pre_wdl_logits=sub_wdl,
+                cboards=sub_cboards,  # type: ignore[call-arg]
+            )
+
+        # Re-select actions with per-game temperature from the
+        # improved policy (probs are temperature-independent).
+        _temps_arr = np.array(sub_temps, dtype=np.float64)
+        _need_resample = _temps_arr != 1.0
+        if _need_resample.any():
+            _p_stack = np.stack(p_sub)  # (G, 4672)
+            if state.has_classify_c:
+                # C path: GIL released during pow/sample
+                _a_arr = np.array(a_sub, dtype=np.int32)
+                _rand_arr = rng.random(len(sub_temps))
+                state.c_temp_resample(_p_stack, _temps_arr, _a_arr, _rand_arr)
+                for gi in range(len(a_sub)):
+                    a_sub[gi] = int(_a_arr[gi])
+            else:
+                _nonzero = _need_resample.nonzero()[0]
+                for gi in _nonzero:
+                    p = _p_stack[gi]
+                    t = _temps_arr[gi]
+                    legal = np.flatnonzero(p > 0)
+                    if len(legal) == 0:
+                        continue
+                    if t <= 0:
+                        a_sub[gi] = int(legal[np.argmax(p[legal])])
+                    else:
+                        pw = np.power(p[legal], 1.0 / t)
+                        ps = float(pw.sum())
+                        if ps > 0:
+                            pw /= ps
+                            a_sub[gi] = int(rng.choice(legal, p=pw))
+
+        for jj, p, a, v, m in zip(group, p_sub, a_sub, v_sub, m_sub, strict=True):
+            probs_list[jj] = p
+            actions[jj] = a
+            values_list[jj] = float(v)
+            masks_list[jj] = m
+            # Advance tree root to chosen move's child for next-ply reuse
+            if state.mcts_tree is not None:
+                game_idx = net_idxs[jj]
+                rid = state.root_ids[game_idx]
+                if rid >= 0:
+                    child = state.mcts_tree.find_child(rid, int(a))
+                    state.root_ids[game_idx] = child  # -1 if not found
+
+    # Run all games in one MCTS call with per-game sim budgets and noise.
+    # Full-sim games get Gumbel noise for exploration; fast games don't
+    # (KataGo playout cap convention).
+    all_idxs = list(range(len(net_idxs)))
+    combined_sims = [
+        int(eff_full_sims[j]) if bool(is_full[j]) else int(eff_fast_sims[j])
+        for j in all_idxs
+    ]
+    noise_flags = [bool(is_full[j]) for j in all_idxs]
+    _run_mcts_group(all_idxs, combined_sims, per_game_noise=noise_flags)
+
+    # Pre-allocate reusable buffers for per-sample computation
+    _lg_buf = np.empty(POLICY_SIZE, dtype=np.float64)
+    _swdl_buf = np.empty(3, dtype=np.float32)
+    _df_enabled = bool(diff_focus.enabled)
+    _df_q_w = float(diff_focus.q_weight)
+    _df_p_s = float(diff_focus.pol_scale)
+    _df_slope = float(diff_focus.slope)
+    _df_min = float(diff_focus.min_keep)
+
+    # ── C-accelerated per-ply processing (GIL released) ──────────
+    if state.has_c_ply and len(net_idxs) > 0:
+        _n = len(net_idxs)
+        _cb_list = [cboards[net_idxs[j]] for j in range(_n)]
+        _actions_arr = np.array(actions, dtype=np.int32)
+        _values_arr = np.array(values_list, dtype=np.float64)
+        # All slots filled by _run_mcts_group above; cast for np.stack's strict ArrayLike protocol.
+        _probs_arr = np.stack(cast("list[np.ndarray]", probs_list)).astype(np.float32, copy=False)
+
+        assert state.c_process_ply is not None
+        # is_full / sample_weights are *not* passed to C: they only affect
+        # the per-sample book-keeping applied below in pure Python
+        # (``state.last_net_full[idx]``, ``_NetRecord.sample_weight``), so
+        # the C function has no need to see them. Matches main's 11-arg
+        # ``batch_process_ply`` signature.
+        (c_x, c_probs, c_wdl_net, c_wdl_search, c_priority,
+         c_keep, c_mask, c_ply, c_pov, c_over) = state.c_process_ply(
+            _cb_list, pol_logits[:_n], wdl_logits_raw[:_n],
+            _actions_arr, _values_arr, _probs_arr,
+            int(_df_enabled), float(_df_q_w), float(_df_p_s), float(_df_min), float(_df_slope),
+        )
+
+        # Pre-extract Python scalars from numpy arrays (batch conversion
+        # is cheaper than per-element conversion in the loop).
+        _c_ply_list = c_ply.tolist()
+        _c_pov_list = c_pov.tolist()
+        _c_priority_list = c_priority.tolist()
+        _c_keep_list = c_keep.tolist()
+        _c_over_list = c_over.tolist()
+        _is_full_list = is_full.tolist()
+        _sw_list = sample_weights if isinstance(sample_weights, list) else list(sample_weights)
+        _act_list = _actions_arr.tolist()
+
+        for j in range(_n):
+            idx = net_idxs[j]
+            move_idx_history[idx].append(_act_list[j])
+            state.last_net_full[idx] = _is_full_list[j]
+
+            samples_per_game[idx].append(
+                _NetRecord(
+                    c_x[j], c_probs[j], c_wdl_net[j], c_wdl_search[j],
+                    chess.WHITE if _c_pov_list[j] else chess.BLACK,
+                    _c_ply_list[j], _is_full_list[j],
+                    _c_priority_list[j], _sw_list[j], _c_keep_list[j],
+                    c_mask[j],
+                )
+            )
+
+            if _c_over_list[j]:
+                state.done_arr[idx] = 1
+
+    else:
+        # Python fallback (original per-ply loop)
+        for j, (idx, probs, a, v) in enumerate(zip(net_idxs, probs_list, actions, values_list, strict=True)):
+            assert probs is not None and a is not None and v is not None
+
+            board_before = boards[idx]
+            ply_index = int(len(board_before.move_stack))
+            pov_color = board_before.turn
+
+            mask = masks_list[j]
+            if mask is None:
+                mask = legal_move_mask(board_before)
+
+            np.copyto(_lg_buf, pol_logits[j])
+            _lg_buf[~mask] = -1e9
+            _lg_buf -= float(np.max(_lg_buf))
+            np.exp(_lg_buf, out=_lg_buf)
+            _lg_buf[~mask] = 0.0
+            s = float(_lg_buf.sum())
+            if s > 0:
+                raw = (_lg_buf / s).astype(np.float32, copy=False)
+            else:
+                raw = mask.astype(np.float32) / float(mask.sum())
+
+            imp = np.maximum(probs.astype(np.float32, copy=False), 1e-12)
+            raw_c = np.maximum(raw, 1e-12)
+            kl = float(np.sum(raw_c * (np.log(raw_c) - np.log(imp))))
+
+            orig_q = float(wdl_est[j][0] - wdl_est[j][2])
+            best_q = float(v)
+            q_surprise = abs(best_q - orig_q)
+
+            difficulty = q_surprise * _df_q_w + kl * _df_p_s
+            if not math.isfinite(difficulty):
+                difficulty = 1.0
+            if not _df_enabled:
+                keep_prob = 1.0
+            else:
+                keep_prob = max(_df_min, min(1.0, difficulty * _df_slope))
+
+            move = index_to_move(int(a), board_before)
+            board_before.push(move)
+            cboards[idx].push_index(int(a))
+            move_idx_history[idx].append(int(a))
+
+            d_raw = float(wdl_est[j][1])
+            rem = max(0.0, 1.0 - d_raw)
+            q = float(max(-rem, min(rem, best_q)))
+            w_search = 0.5 * (rem + q)
+            _swdl_buf[0] = w_search
+            _swdl_buf[1] = d_raw
+            _swdl_buf[2] = rem - w_search
+            search_wdl_est = _swdl_buf.copy()
+            if not np.all(np.isfinite(search_wdl_est)):
+                search_wdl_est = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+
+            state.last_net_full[idx] = bool(is_full[j])
+
+            # `not state.has_c_ply` ⇒ `state.batch_enc_146 is None` (coupled import in init)
+            # ⇒ `_use_inplace is False` ⇒ `xs_batch` was set in the else-branch.
+            samples_per_game[idx].append(
+                _NetRecord(
+                    x=xs_batch[j],  # pyright: ignore[reportPossiblyUnboundVariable]
+                    policy_probs=probs,
+                    net_wdl_est=wdl_est[j] if np.all(np.isfinite(wdl_est[j])) else np.array([0.0, 1.0, 0.0], dtype=np.float32),
+                    search_wdl_est=search_wdl_est,
+                    pov_color=pov_color,
+                    ply_index=ply_index,
+                    has_policy=bool(is_full[j]),
+                    priority=float(difficulty),
+                    sample_weight=float(sample_weights[j]),
+                    keep_prob=float(keep_prob),
+                    legal_mask=mask.view(np.uint8),
+                )
+            )
+
+            if cboards[idx].is_game_over():
+                state.done_arr[idx] = 1
+
+
 class _NetRecord:
     """Per-ply sample record.  Uses __slots__ to avoid dict overhead."""
     __slots__ = (
@@ -328,374 +1432,42 @@ def play_batch(
             raise ValueError("play_batch requires model or evaluator")
         eval_impl = LocalModelEvaluator(model, device=device)
 
-    boards = [make_starting_board(rng=rng, cfg=opening) for _ in range(batch_size)]
-    # Parallel CBoard state — primary board for hot-path ops (fen, game_over, ply, encoding).
-    # Use from_board (not from_raw) to preserve ply count and history from openings.
-    from chess_anti_engine.encoding._lc0_ext import CBoard as _CBoard
-    cboards = [_CBoard.from_board(b) for b in boards]
-    # Keep a copy of the starting position for tablebase replay after game ends.
-    starting_boards = [b.copy() for b in boards] if game.syzygy_path else None
-    # Move index history per game — used to reconstruct python-chess boards at
-    # finalization (cold path only). Hot-path uses CBoard exclusively.
-    move_idx_history: list[list[int]] = [[] for _ in range(batch_size)]
-    # Per-game flags as numpy int8 arrays (single source of truth).
-    # Used directly by C classify_games and by Python logic (truthy checks work for 0/1).
-    _done_arr = np.zeros(batch_size, dtype=np.int8)
-    _finalized_arr = np.zeros(batch_size, dtype=np.int8)
-    # Alternate which color the network plays so it sees both perspectives.
-    # 1 = WHITE, 0 = BLACK.
-    _net_color_arr = np.array([1 if (i % 2 == 0) else 0 for i in range(batch_size)], dtype=np.int8)
-    _selfplay_arr = np.array([
-        1 if rng.random() < max(0.0, min(1.0, float(game.selfplay_fraction))) else 0
-        for _ in range(batch_size)
-    ], dtype=np.int8)
-    _has_classify_c = False
-    try:
-        from chess_anti_engine.mcts._mcts_tree import classify_games as _c_classify, temperature_resample as _c_temp_resample
-        _has_classify_c = True
-    except ImportError:
-        pass
+    # Build mutable state (boards, arrays, MCTS tree, C fast-path handles, etc.)
+    _state = _init_play_batch_state(
+        batch_size=batch_size, continuous=continuous, target=target,
+        rng=rng, stockfish=stockfish, opening=opening, game=game,
+    )
 
-    samples_per_game: list[list[_NetRecord]] = [[] for _ in range(batch_size)]
+    # Unpack state into local aliases so the nested helpers below can
+    # continue to reference them unchanged. List/array aliases share the
+    # same underlying objects as ``_state.*``, so mutations via either
+    # path are visible everywhere. Scalar/flag fields are read-only after
+    # init and kept as locals for hot-path clarity.
+    boards = _state.boards
+    cboards = _state.cboards
+    starting_boards = _state.starting_boards
+    move_idx_history = _state.move_idx_history
+    _done_arr = _state.done_arr
+    _finalized_arr = _state.finalized_arr
+    _net_color_arr = _state.net_color_arr
+    _selfplay_arr = _state.selfplay_arr
+    _mcts_tree = _state.mcts_tree
+    _root_ids = _state.root_ids
+    consecutive_low_winrate = _state.consecutive_low_winrate
+    sf_resign_scale = _state.sf_resign_scale
+    last_net_full = _state.last_net_full
+    samples_per_game = _state.samples_per_game
+    all_samples = _state.all_samples
+    _has_classify_c = _state.has_classify_c
+    _c_classify = _state.c_classify
+    _CBoard = _state.cboard_cls
+    # Fields read directly from ``_state`` by the lifted helpers (no local
+    # alias needed here): ``vs``, ``terminal_eval_nodes``, ``nn_cache``,
+    # ``has_c_ply``, ``c_process_ply``, ``batch_enc_146``, ``c_temp_resample``.
 
-    # NN eval cache — avoids redundant GPU evals for positions seen in MCTS
-    _nn_cache = None
-    _mcts_tree = None  # Persistent tree for cross-ply reuse
-    _root_ids: list[int] = [-1] * batch_size  # Per-game root node IDs
-    if _HAS_GUMBEL_C:
-        from chess_anti_engine.mcts._mcts_tree import NNCache as _NNCache, MCTSTree as _MCTSTree
-        _nn_cache = _NNCache(1 << 17)  # 131072 slots
-        _mcts_tree = _MCTSTree()
-
-    # Check C per-ply availability once. `batch_process_ply` and `batch_encode_146`
-    # live in the same C module; importing together keeps the two `None`-fallback
-    # paths coupled (prevents drift where only one is available, which would
-    # break the xs_batch invariant in _run_network_turn).
-    try:
-        from chess_anti_engine.mcts._mcts_tree import (
-            batch_process_ply as _c_process_ply,
-            batch_encode_146 as _batch_enc_146,
-        )
-        _has_c_ply = True
-    except ImportError:
-        _c_process_ply = None
-        _batch_enc_146 = None
-        _has_c_ply = False
-        logging.getLogger("chess_anti_engine.selfplay").warning(
-            "C per-ply fast path unavailable (batch_process_ply/batch_encode_146 not importable "
-            "from _mcts_tree); falling back to Python. Rebuild the C extension for production."
-        )
-
-    SOFT_RESIGN_THRESHOLD = 0.05
-    SOFT_RESIGN_CONSECUTIVE = 5
-    consecutive_low_winrate: list[int] = [0] * batch_size
-    sf_resign_scale: list[float] = [1.0] * batch_size
-    last_net_full: list[bool] = [True] * batch_size
-
-    # ── Stats accumulators (updated by _finalize_game) ────────────────────────
-    all_samples: list[ReplaySample] = []
-    _st_w = _st_d = _st_l = 0
-    _st_game_plies = 0
-    _st_adjudicated = 0
-    _st_draw = 0
-    _st_sp_games = _st_sp_adj = _st_sp_draw = 0
-    _st_cur_games = _st_cur_adj = _st_cur_draw = 0
-    _st_plies_win = _st_plies_draw = _st_plies_loss = 0
-    _st_sf_d6_sum = 0.0
-    _st_sf_d6_n = 0
-    _st_checkmate = 0
-    _st_stalemate = 0
-
+    # Raw Stockfish node budget (read once, used by ``_eff_nodes`` below to
+    # scale SF queries for fast-vs-full playout games).
     base_nodes = int(getattr(stockfish, "nodes", 0) or 0)
-    terminal_eval_nodes = (5 * base_nodes) if base_nodes > 0 else 1000
-
-    vs = str(game.volatility_source).lower().strip()
-    if vs not in ("raw", "search"):
-        vs = "raw"
-
-    def _sf_terminal_result(turn_is_white: bool, sf_res: StockfishResult | None) -> str:
-        if sf_res is None or sf_res.wdl is None:
-            return "1/2-1/2"
-        wdl_stm = sf_res.wdl
-        if not turn_is_white:
-            wdl_white = np.array([float(wdl_stm[2]), float(wdl_stm[1]), float(wdl_stm[0])], dtype=np.float32)
-        else:
-            wdl_white = np.asarray(wdl_stm, dtype=np.float32)
-        if float(wdl_white[0]) > float(game.timeout_adjudication_threshold):
-            return "1-0"
-        if float(wdl_white[2]) > float(game.timeout_adjudication_threshold):
-            return "0-1"
-        return "1/2-1/2"
-
-    def _finalize_game(i: int) -> None:
-        """Finalize a completed game: compute labels, build samples, update stats."""
-        nonlocal _st_w, _st_d, _st_l, _st_game_plies, _st_adjudicated, _st_draw
-        nonlocal _st_sp_games, _st_sp_adj, _st_sp_draw
-        nonlocal _st_cur_games, _st_cur_adj, _st_cur_draw
-        nonlocal _st_sf_d6_sum, _st_sf_d6_n, _st_checkmate, _st_stalemate
-        nonlocal _st_plies_win, _st_plies_draw, _st_plies_loss
-
-        cb = cboards[i]
-        # When C per-ply is active, boards[i] is the starting position —
-        # reconstruct by replaying move_idx_history.  When Python fallback
-        # is active, boards[i] is already the final position (pushed each ply).
-        if _has_c_ply:
-            b = boards[i].copy(stack=False)
-            for _mi in move_idx_history[i]:
-                _mv = index_to_move(_mi, b)
-                b.push(_mv)
-        else:
-            b = boards[i]
-        result = cb.result()
-        _game_plies = int(cb.ply)
-        _st_game_plies += _game_plies
-        _is_cm = cb.is_checkmate()
-        _is_sm = cb.is_stalemate()
-        if _is_cm:
-            _st_checkmate += 1
-        elif _is_sm:
-            _st_stalemate += 1
-
-        was_adjudicated = False
-        if result == "*":
-            _st_adjudicated += 1
-            was_adjudicated = True
-            try:
-                if isinstance(stockfish, StockfishPool):
-                    sf_res = stockfish.submit(cb.fen(), nodes=int(terminal_eval_nodes)).result()
-                else:
-                    sf_res = stockfish.search(cb.fen(), nodes=int(terminal_eval_nodes))
-            except Exception:
-                sf_res = None
-            result = _sf_terminal_result(bool(cb.turn), sf_res)
-
-        # Debug: log unexpected short wins
-        if not _selfplay_arr[i] and result in ("1-0", "0-1") and _game_plies < int(game.max_plies) - 10:
-            outcome = b.outcome(claim_draw=True)
-            _term = outcome.termination.name if outcome else "adjudicated"
-            _log = logging.getLogger("chess_anti_engine.selfplay")
-            _log.warning(
-                "Short win: %s at %d plies (max=%d), term=%s, adj=%s, is_over=%s",
-                result, _game_plies, int(game.max_plies), _term,
-                was_adjudicated, cb.is_game_over(),
-            )
-
-        records = samples_per_game[i]
-
-        # Syzygy tablebase rescoring
-        tb_policy_overrides: dict[int, np.ndarray] = {}
-        if game.syzygy_path and starting_boards is not None:
-            replay_board = starting_boards[i].copy()
-            replay_boards: list[chess.Board] = []
-            move_stack = list(b.move_stack)
-            opening_len = len(starting_boards[i].move_stack)
-
-            for mv in move_stack[opening_len:]:
-                replay_board.push(mv)
-                replay_boards.append(replay_board.copy())
-
-            tb_result = rescore_game_samples(replay_boards, game.syzygy_path)
-            if tb_result is not None:
-                result = tb_result
-
-            if game.syzygy_policy:
-                replay_board = starting_boards[i].copy()
-                sample_idx = 0
-                _is_sp = bool(_selfplay_arr[i])
-                for mv in move_stack[opening_len:]:
-                    board_before = replay_board.copy()
-                    is_net = _is_network_turn(board_turn=replay_board.turn, network_color=_net_color(_net_color_arr, i))
-                    # In selfplay games the network plays both sides, so every
-                    # ply produces a sample.  In curriculum games only the
-                    # network-color turns produce samples.
-                    is_sample_turn = is_net or _is_sp
-                    if is_sample_turn:
-                        if sample_idx >= len(records):
-                            break
-                        if _eligible(board_before):
-                            best = probe_best_move(board_before, game.syzygy_path)
-                            if best is not None:
-                                try:
-                                    a = int(move_to_index(best, board_before))
-                                except Exception:
-                                    a = -1
-                                if a >= 0:
-                                    p = np.zeros((POLICY_SIZE,), dtype=np.float32)
-                                    p[a] = 1.0
-                                    tb_policy_overrides[sample_idx] = p
-                        sample_idx += 1
-                    replay_board.push(mv)
-
-        game_w = 0
-        game_d = 0
-        game_l = 0
-        game_total_draws = 0
-        game_selfplay_games = 0
-        game_selfplay_adj = 0
-        game_selfplay_draws = 0
-        game_curriculum_games = 0
-        game_curriculum_adj = 0
-        game_curriculum_draws = 0
-
-        # Stats
-        if _selfplay_arr[i]:
-            _st_sp_games += 1
-            game_selfplay_games = 1
-            if was_adjudicated:
-                _st_sp_adj += 1
-                game_selfplay_adj = 1
-        else:
-            _st_cur_games += 1
-            game_curriculum_games = 1
-            if was_adjudicated:
-                _st_cur_adj += 1
-                game_curriculum_adj = 1
-
-        if result == "1/2-1/2":
-            _st_draw += 1
-            game_total_draws = 1
-            if _selfplay_arr[i]:
-                _st_sp_draw += 1
-                game_selfplay_draws = 1
-            else:
-                _st_cur_draw += 1
-                game_curriculum_draws = 1
-
-        if not _selfplay_arr[i]:
-            net_col = _net_color(_net_color_arr, i)
-            if result == "1/2-1/2":
-                _st_d += 1
-                game_d = 1
-            elif (result == "1-0" and net_col == chess.WHITE) or (result == "0-1" and net_col == chess.BLACK):
-                _st_w += 1
-                game_w = 1
-            else:
-                _st_l += 1
-                game_l = 1
-
-        if not _selfplay_arr[i]:
-            if game_w:
-                _st_plies_win += _game_plies
-            elif game_d:
-                _st_plies_draw += _game_plies
-            elif game_l:
-                _st_plies_loss += _game_plies
-
-        n = len(records)
-        ply_to_index = {int(rec.ply_index): idx for idx, rec in enumerate(records)}
-
-        # Volatility targets + SF eval delta6 metric (single pass over records).
-        vol_targets: list[np.ndarray | None] = [None] * n
-        sf_vol_targets: list[np.ndarray | None] = [None] * n
-        for t in range(n):
-            th = ply_to_index.get(int(records[t].ply_index) + 6)
-            if th is not None:
-                if vs == "search":
-                    w0 = records[t].search_wdl_est
-                    w6 = records[th].search_wdl_est
-                else:
-                    w0 = records[t].net_wdl_est
-                    w6 = records[th].net_wdl_est
-                vol_targets[t] = np.abs(w6 - w0).astype(np.float32, copy=False)
-
-                sf0 = records[t].sf_wdl
-                sf6 = records[th].sf_wdl
-                if (sf0 is not None) and (sf6 is not None):
-                    sf_vol_targets[t] = np.abs(sf6 - sf0).astype(np.float32, copy=False)
-                    wr0 = float(sf0[0]) + 0.5 * float(sf0[1])
-                    wr6 = float(sf6[0]) + 0.5 * float(sf6[1])
-                    _st_sf_d6_sum += abs(wr6 - wr0)
-                    _st_sf_d6_n += 1
-
-        # Build ReplaySample objects
-        sample_start = len(all_samples)
-        for t, rec in enumerate(records):
-            if float(rec.sample_weight) < 1.0 and rng.random() > float(rec.sample_weight):
-                continue
-            if float(rec.keep_prob) < 1.0 and rng.random() > float(rec.keep_prob):
-                continue
-            if not bool(rec.has_policy):
-                continue
-
-            if result == "1/2-1/2":
-                wdl = 1
-            elif (result == "1-0" and rec.pov_color == chess.WHITE) or \
-                 (result == "0-1" and rec.pov_color == chess.BLACK):
-                wdl = 0
-            else:
-                wdl = 2
-
-            total_plies_played = max(1, int(cb.ply))
-            moves_left = float(max(0, total_plies_played - int(rec.ply_index))) / max(1.0, float(game.max_plies))
-
-            scalar_v = 1.0 if wdl == 0 else (0.0 if wdl == 1 else -1.0)
-            cat = hlgauss_target(scalar_v, num_bins=game.categorical_bins, sigma=game.hlgauss_sigma)
-
-            eff_probs = tb_policy_overrides.get(t, rec.policy_probs)
-            soft = _apply_temperature(eff_probs, game.soft_policy_temp)
-
-            future = None
-            future_idx = ply_to_index.get(int(rec.ply_index) + 2)
-            if future_idx is not None and bool(records[future_idx].has_policy):
-                future = records[future_idx].policy_probs
-
-            vol = vol_targets[t]
-            sf_vol = sf_vol_targets[t]
-
-            all_samples.append(
-                ReplaySample(
-                    x=rec.x,
-                    policy_target=eff_probs,
-                    wdl_target=int(wdl),
-                    priority=float(rec.priority),
-                    has_policy=bool(rec.has_policy),
-                    sf_wdl=rec.sf_wdl,
-                    sf_move_index=rec.sf_move_index,
-                    sf_policy_target=rec.sf_policy_target,
-                    moves_left=moves_left,
-                    is_network_turn=True,
-                    categorical_target=cat,
-                    policy_soft_target=soft,
-                    future_policy_target=future,
-                    has_future=(future is not None),
-                    volatility_target=vol,
-                    has_volatility=(vol is not None),
-                    sf_volatility_target=sf_vol,
-                    has_sf_volatility=(sf_vol is not None),
-                    legal_mask=rec.legal_mask,
-                )
-            )
-
-        if on_game_complete is not None:
-            game_samples = list(all_samples[sample_start:])
-            if game_samples:
-                on_game_complete(
-                    CompletedGameBatch(
-                        samples=game_samples,
-                        positions=len(game_samples),
-                        w=game_w,
-                        d=game_d,
-                        l=game_l,
-                        total_game_plies=_game_plies,
-                        adjudicated_games=1 if was_adjudicated else 0,
-                        total_draw_games=game_total_draws,
-                        selfplay_games=game_selfplay_games,
-                        selfplay_adjudicated_games=game_selfplay_adj,
-                        selfplay_draw_games=game_selfplay_draws,
-                        curriculum_games=game_curriculum_games,
-                        curriculum_adjudicated_games=game_curriculum_adj,
-                        curriculum_draw_games=game_curriculum_draws,
-                        checkmate_games=1 if _is_cm else 0,
-                        stalemate_games=1 if _is_sm else 0,
-                        plies_win=_game_plies if game_w else 0,
-                        plies_draw=_game_plies if game_d else 0,
-                        plies_loss=_game_plies if game_l else 0,
-                    )
-                )
-        # In continuous mode, samples are delivered via on_game_complete;
-        # clear the list to prevent unbounded memory growth.
-        if continuous:
-            all_samples.clear()
 
     # ── Slot recycling ────────────────────────────────────────────────────────
     games_started = batch_size
@@ -717,363 +1489,6 @@ def play_batch(
         last_net_full[i] = True
         _root_ids[i] = -1  # Reset tree reuse for new game
         games_started += 1
-
-    # ── Network turn ──────────────────────────────────────────────────────────
-
-    def _run_network_turn(net_idxs: list[int]) -> None:
-        if not net_idxs:
-            return
-
-        _bsz = len(net_idxs)
-        # Bucket size for torch.compile shape stability
-        _ROOT_BUCKETS = (32, 64, 128, 256, 512)
-        _padded_bsz = _bsz
-        for _b in _ROOT_BUCKETS:
-            if _b >= _bsz:
-                _padded_bsz = _b
-                break
-
-        _cb_encode_list = [cboards[_idx] for _idx in net_idxs]
-
-        # Fast path: encode directly into evaluator's pinned buffer (zero-copy H2D)
-        _use_inplace = _batch_enc_146 is not None and hasattr(eval_impl, "get_input_buffer")
-        if _use_inplace:
-            # get_input_buffer + evaluate_inplace exist only on DirectGPU-style evaluators;
-            # _use_inplace is the runtime guard.
-            _buf = eval_impl.get_input_buffer(_padded_bsz)  # type: ignore[attr-defined]
-            # batch_encode_146 memsets + encodes into first _bsz slots;
-            # remaining slots are zero-padded by get_input_buffer's pinned memory.
-            assert _batch_enc_146 is not None
-            _batch_enc_146(_cb_encode_list, _buf)
-            pol_logits_padded, wdl_logits_raw_padded = eval_impl.evaluate_inplace(  # type: ignore[attr-defined]
-                _padded_bsz, copy_out=True,
-            )
-        else:
-            xs_batch = np.empty((_bsz, 146, 8, 8), dtype=np.float32)
-            if _batch_enc_146 is not None:
-                _batch_enc_146(_cb_encode_list, xs_batch)
-            else:
-                for _j, _idx in enumerate(net_idxs):
-                    xs_batch[_j] = cboards[_idx].encode_146()
-            if _padded_bsz > _bsz:
-                _pad = np.zeros((_padded_bsz - _bsz, *xs_batch.shape[1:]), dtype=xs_batch.dtype)
-                xs_padded = np.concatenate([xs_batch, _pad], axis=0)
-            else:
-                xs_padded = xs_batch
-            pol_logits_padded, wdl_logits_raw_padded = eval_impl.evaluate_encoded(xs_padded)
-
-        pol_logits = pol_logits_padded[:_bsz]
-        wdl_logits_raw = wdl_logits_raw_padded[:_bsz]
-        # Pure numpy softmax (avoids torch tensor creation roundtrip for small arrays)
-        wdl_f = wdl_logits_raw.astype(np.float64, copy=True)
-        wdl_f -= wdl_f.max(axis=-1, keepdims=True)
-        np.exp(wdl_f, out=wdl_f)
-        wdl_f /= wdl_f.sum(axis=-1, keepdims=True)
-        wdl_est = wdl_f.astype(np.float32, copy=False)
-
-        is_full = rng.random(size=len(net_idxs)) < float(search.playout_cap_fraction)
-
-        eff_full_sims = [int(search.simulations)] * len(net_idxs)
-        eff_fast_sims = [int(search.fast_simulations)] * len(net_idxs)
-        sample_weights = [1.0] * len(net_idxs)
-        for j, idx in enumerate(net_idxs):
-            win_p = float(wdl_est[j][0])
-            if win_p < SOFT_RESIGN_THRESHOLD:
-                consecutive_low_winrate[idx] += 1
-            else:
-                consecutive_low_winrate[idx] = 0
-
-            if consecutive_low_winrate[idx] >= SOFT_RESIGN_CONSECUTIVE:
-                ratio = win_p / SOFT_RESIGN_THRESHOLD
-                sample_weights[j] = 0.1 + 0.9 * ratio
-
-            sf_resign_scale[idx] = 1.0
-
-        probs_list: list[np.ndarray | None] = [None] * len(net_idxs)
-        actions: list[int | None] = [None] * len(net_idxs)
-        values_list: list[float | None] = [None] * len(net_idxs)
-        masks_list: list[np.ndarray | None] = [None] * len(net_idxs)
-
-        # Per-game temperature based on each game's own ply count.
-        temps = [
-            temperature_for_ply(
-                ply=cboards[i].ply // 2 + 1,
-                temperature=float(temp.temperature),
-                drop_plies=int(temp.drop_plies),
-                after=float(temp.after),
-                decay_start_move=int(temp.decay_start_move),
-                decay_moves=int(temp.decay_moves),
-                endgame=float(temp.endgame),
-            )
-            for i in net_idxs
-        ]
-
-        def _run_mcts_group(idxs: list[int], sims_per: list[int], *, per_game_noise: list[bool] | None = None) -> None:
-            if not idxs:
-                return
-
-            # All games share one MCTS call with per-game sim budgets and
-            # temperature applied after search.  Maximizes GPU batch size.
-            group = idxs
-            sub_cboards = [cboards[net_idxs[j]] for j in group]
-            sub_temps = [temps[j] for j in group]
-            sub_sims = [int(sims_per[j]) for j in group]
-            sim_count = max(sub_sims)
-
-            gumbel_low_sims = max(64, int(search.fast_simulations))
-            use_gumbel = (str(search.mcts_type) == "gumbel") or (int(sim_count) <= int(gumbel_low_sims))
-            sub_pol = pol_logits[group, :]
-            sub_wdl = wdl_logits_raw[group, :]
-
-            if use_gumbel:
-                _gumbel_fn = _run_gumbel_root_many_c if _HAS_GUMBEL_C else run_gumbel_root_many
-                # C gumbel only uses cboards; Python fallback needs python-chess boards
-                sub_boards = sub_cboards if _HAS_GUMBEL_C else [boards[net_idxs[j]] for j in group]
-                sub_noise = [per_game_noise[j] for j in group] if per_game_noise is not None else None
-                # Map group indices to game-level root IDs for tree reuse
-                sub_root_ids = [_root_ids[net_idxs[j]] for j in group] if _mcts_tree is not None else None
-                _gumbel_result = _gumbel_fn(
-                    model,
-                    sub_boards,  # type: ignore[arg-type]
-                    device=device,
-                    rng=rng,
-                    cfg=GumbelConfig(simulations=int(sim_count), temperature=1.0, add_noise=True),
-                    evaluator=eval_impl,
-                    pre_pol_logits=sub_pol,
-                    pre_wdl_logits=sub_wdl,
-                    per_game_simulations=sub_sims,
-                    per_game_add_noise=sub_noise,
-                    cboards=sub_cboards,  # type: ignore[call-arg]
-                    nn_cache=_nn_cache,  # type: ignore[call-arg]
-                    tree=_mcts_tree,  # type: ignore[call-arg]
-                    root_node_ids=sub_root_ids,  # type: ignore[call-arg]
-                )
-                # C version returns 6-tuple (with tree, root_ids), Python returns 4-tuple
-                p_sub, a_sub, v_sub, m_sub = _gumbel_result[:4]
-                # Store returned root IDs for tree reuse
-                if _mcts_tree is not None and len(_gumbel_result) >= 6:
-                    _ret_root_ids = _gumbel_result[5]
-                    for gi, jj in enumerate(group):
-                        _root_ids[net_idxs[jj]] = _ret_root_ids[gi]
-            else:
-                # PUCT needs python-chess boards.  When the C fast path is
-                # active, boards[idx] stays at the starting position — rebuild
-                # current state from move_idx_history (same as _finalize_game).
-                if _has_c_ply:
-                    sub_boards = []
-                    for j in group:
-                        idx = net_idxs[j]
-                        b = boards[idx].copy(stack=False)
-                        for _mi in move_idx_history[idx]:
-                            b.push(index_to_move(_mi, b))
-                        sub_boards.append(b)
-                else:
-                    sub_boards = [boards[net_idxs[j]] for j in group]
-                _puct_fn = _run_mcts_many_c if _HAS_C_TREE else run_mcts_many
-                p_sub, a_sub, v_sub, m_sub = _puct_fn(
-                    model,
-                    sub_boards,
-                    device=device,
-                    rng=rng,
-                    cfg=MCTSConfig(
-                        simulations=int(sim_count),
-                        temperature=1.0,
-                        fpu_reduction=float(search.fpu_reduction),
-                        fpu_at_root=float(search.fpu_at_root),
-                    ),
-                    evaluator=eval_impl,
-                    pre_pol_logits=sub_pol,
-                    pre_wdl_logits=sub_wdl,
-                    cboards=sub_cboards,  # type: ignore[call-arg]
-                )
-
-            # Re-select actions with per-game temperature from the
-            # improved policy (probs are temperature-independent).
-            _temps_arr = np.array(sub_temps, dtype=np.float64)
-            _need_resample = _temps_arr != 1.0
-            if _need_resample.any():
-                _p_stack = np.stack(p_sub)  # (G, 4672)
-                if _has_classify_c:
-                    # C path: GIL released during pow/sample
-                    _a_arr = np.array(a_sub, dtype=np.int32)
-                    _rand_arr = rng.random(len(sub_temps))
-                    _c_temp_resample(_p_stack, _temps_arr, _a_arr, _rand_arr)  # pyright: ignore[reportPossiblyUnboundVariable]
-                    for gi in range(len(a_sub)):
-                        a_sub[gi] = int(_a_arr[gi])
-                else:
-                    _nonzero = _need_resample.nonzero()[0]
-                    for gi in _nonzero:
-                        p = _p_stack[gi]
-                        t = _temps_arr[gi]
-                        legal = np.flatnonzero(p > 0)
-                        if len(legal) == 0:
-                            continue
-                        if t <= 0:
-                            a_sub[gi] = int(legal[np.argmax(p[legal])])
-                        else:
-                            pw = np.power(p[legal], 1.0 / t)
-                            ps = float(pw.sum())
-                            if ps > 0:
-                                pw /= ps
-                                a_sub[gi] = int(rng.choice(legal, p=pw))
-
-            for jj, p, a, v, m in zip(group, p_sub, a_sub, v_sub, m_sub, strict=True):
-                probs_list[jj] = p
-                actions[jj] = a
-                values_list[jj] = float(v)
-                masks_list[jj] = m
-                # Advance tree root to chosen move's child for next-ply reuse
-                if _mcts_tree is not None:
-                    game_idx = net_idxs[jj]
-                    rid = _root_ids[game_idx]
-                    if rid >= 0:
-                        child = _mcts_tree.find_child(rid, int(a))
-                        _root_ids[game_idx] = child  # -1 if not found
-
-        # Run all games in one MCTS call with per-game sim budgets and noise.
-        # Full-sim games get Gumbel noise for exploration; fast games don't
-        # (KataGo playout cap convention).
-        all_idxs = list(range(len(net_idxs)))
-        combined_sims = [
-            int(eff_full_sims[j]) if bool(is_full[j]) else int(eff_fast_sims[j])
-            for j in all_idxs
-        ]
-        noise_flags = [bool(is_full[j]) for j in all_idxs]
-        _run_mcts_group(all_idxs, combined_sims, per_game_noise=noise_flags)
-
-        # Pre-allocate reusable buffers for per-sample computation
-        _lg_buf = np.empty(POLICY_SIZE, dtype=np.float64)
-        _swdl_buf = np.empty(3, dtype=np.float32)
-        _df_enabled = bool(diff_focus.enabled)
-        _df_q_w = float(diff_focus.q_weight)
-        _df_p_s = float(diff_focus.pol_scale)
-        _df_slope = float(diff_focus.slope)
-        _df_min = float(diff_focus.min_keep)
-
-        # ── C-accelerated per-ply processing (GIL released) ──────────
-        if _has_c_ply and len(net_idxs) > 0:
-            _n = len(net_idxs)
-            _cb_list = [cboards[net_idxs[j]] for j in range(_n)]
-            _actions_arr = np.array(actions, dtype=np.int32)
-            _values_arr = np.array(values_list, dtype=np.float64)
-            # All slots filled by _run_mcts_group above; cast for np.stack's strict ArrayLike protocol.
-            _probs_arr = np.stack(cast("list[np.ndarray]", probs_list)).astype(np.float32, copy=False)
-
-            assert _c_process_ply is not None
-            (c_x, c_probs, c_wdl_net, c_wdl_search, c_priority,
-             c_keep, c_mask, c_ply, c_pov, c_over) = _c_process_ply(
-                _cb_list, pol_logits[:_n], wdl_logits_raw[:_n],
-                _actions_arr, _values_arr, _probs_arr,
-                int(_df_enabled), float(_df_q_w), float(_df_p_s), float(_df_min), float(_df_slope),
-            )
-
-            # Pre-extract Python scalars from numpy arrays (batch conversion
-            # is cheaper than per-element conversion in the loop).
-            _c_ply_list = c_ply.tolist()
-            _c_pov_list = c_pov.tolist()
-            _c_priority_list = c_priority.tolist()
-            _c_keep_list = c_keep.tolist()
-            _c_over_list = c_over.tolist()
-            _is_full_list = is_full.tolist()
-            _sw_list = sample_weights if isinstance(sample_weights, list) else list(sample_weights)
-            _act_list = _actions_arr.tolist()
-
-            for j in range(_n):
-                idx = net_idxs[j]
-                move_idx_history[idx].append(_act_list[j])
-                last_net_full[idx] = _is_full_list[j]
-
-                samples_per_game[idx].append(
-                    _NetRecord(
-                        c_x[j], c_probs[j], c_wdl_net[j], c_wdl_search[j],
-                        chess.WHITE if _c_pov_list[j] else chess.BLACK,
-                        _c_ply_list[j], _is_full_list[j],
-                        _c_priority_list[j], _sw_list[j], _c_keep_list[j],
-                        c_mask[j],
-                    )
-                )
-
-                if _c_over_list[j]:
-                    _done_arr[idx] = 1
-
-        else:
-            # Python fallback (original per-ply loop)
-            for j, (idx, probs, a, v) in enumerate(zip(net_idxs, probs_list, actions, values_list, strict=True)):
-                assert probs is not None and a is not None and v is not None
-
-                board_before = boards[idx]
-                ply_index = int(len(board_before.move_stack))
-                pov_color = board_before.turn
-
-                mask = masks_list[j]
-                if mask is None:
-                    mask = legal_move_mask(board_before)
-
-                np.copyto(_lg_buf, pol_logits[j])
-                _lg_buf[~mask] = -1e9
-                _lg_buf -= float(np.max(_lg_buf))
-                np.exp(_lg_buf, out=_lg_buf)
-                _lg_buf[~mask] = 0.0
-                s = float(_lg_buf.sum())
-                if s > 0:
-                    raw = (_lg_buf / s).astype(np.float32, copy=False)
-                else:
-                    raw = mask.astype(np.float32) / float(mask.sum())
-
-                imp = np.maximum(probs.astype(np.float32, copy=False), 1e-12)
-                raw_c = np.maximum(raw, 1e-12)
-                kl = float(np.sum(raw_c * (np.log(raw_c) - np.log(imp))))
-
-                orig_q = float(wdl_est[j][0] - wdl_est[j][2])
-                best_q = float(v)
-                q_surprise = abs(best_q - orig_q)
-
-                difficulty = q_surprise * _df_q_w + kl * _df_p_s
-                if not math.isfinite(difficulty):
-                    difficulty = 1.0
-                if not _df_enabled:
-                    keep_prob = 1.0
-                else:
-                    keep_prob = max(_df_min, min(1.0, difficulty * _df_slope))
-
-                move = index_to_move(int(a), board_before)
-                board_before.push(move)
-                cboards[idx].push_index(int(a))
-                move_idx_history[idx].append(int(a))
-
-                d_raw = float(wdl_est[j][1])
-                rem = max(0.0, 1.0 - d_raw)
-                q = float(max(-rem, min(rem, best_q)))
-                w_search = 0.5 * (rem + q)
-                _swdl_buf[0] = w_search
-                _swdl_buf[1] = d_raw
-                _swdl_buf[2] = rem - w_search
-                search_wdl_est = _swdl_buf.copy()
-                if not np.all(np.isfinite(search_wdl_est)):
-                    search_wdl_est = np.array([0.0, 1.0, 0.0], dtype=np.float32)
-
-                last_net_full[idx] = bool(is_full[j])
-
-                # `not _has_c_ply` ⇒ `_batch_enc_146 is None` (coupled import above)
-                # ⇒ `_use_inplace is False` ⇒ `xs_batch` was set in the else-branch.
-                samples_per_game[idx].append(
-                    _NetRecord(
-                        x=xs_batch[j],  # pyright: ignore[reportPossiblyUnboundVariable]
-                        policy_probs=probs,
-                        net_wdl_est=wdl_est[j] if np.all(np.isfinite(wdl_est[j])) else np.array([0.0, 1.0, 0.0], dtype=np.float32),
-                        search_wdl_est=search_wdl_est,
-                        pov_color=pov_color,
-                        ply_index=ply_index,
-                        has_policy=bool(is_full[j]),
-                        priority=float(difficulty),
-                        sample_weight=float(sample_weights[j]),
-                        keep_prob=float(keep_prob),
-                        legal_mask=mask.view(np.uint8),
-                    )
-                )
-
-                if cboards[idx].is_game_over():
-                    _done_arr[idx] = 1
 
     # ── Stockfish annotation + opponent moves ─────────────────────────────────
 
@@ -1105,127 +1520,11 @@ def play_batch(
             results = {idx: fut.result() for idx, fut in futs.items()}
         else:
             results = {idx: stockfish.search(cboards[idx].fen(), nodes=_eff_nodes(idx)) for idx in idxs}
-        _process_sf_results(idxs, results=results, play_curriculum_moves=play_curriculum_moves)
-
-    def _process_sf_results(
-        idxs: list[int], *, results: dict, play_curriculum_moves: bool,
-    ) -> None:
-        if not idxs:
-            return
-
-        sf_policy_temp_local = float(game.sf_policy_temp)
-        sf_policy_label_smooth_local = float(game.sf_policy_label_smooth)
-
-        def _softmax_np(x: np.ndarray) -> np.ndarray:
-            z = x.astype(np.float64, copy=False)
-            z = z - float(np.max(z))
-            e = np.exp(z)
-            s = float(e.sum())
-            if s <= 0:
-                return np.full_like(z, 1.0 / float(z.size))
-            return e / s
-
-        def _flip_wdl_pov(wdl: np.ndarray) -> np.ndarray:
-            wdl = np.asarray(wdl, dtype=np.float32)
-            if wdl.shape != (3,):
-                return wdl.astype(np.float32, copy=False)
-            return np.array([float(wdl[2]), float(wdl[1]), float(wdl[0])], dtype=np.float32)
-
-        rand_p = float(opponent.random_move_prob)
-        curriculum_topk_max = max(1, int(getattr(stockfish, "multipv", 1) or 1))
-        curriculum_topk = _effective_curriculum_topk(
-            random_move_prob=rand_p,
-            stage_end=float(opponent.topk_stage_end),
-            topk_max=curriculum_topk_max,
-            topk_min=int(opponent.topk_min),
+        _process_sf_results(
+            _state, idxs,
+            results=results, play_curriculum_moves=play_curriculum_moves,
+            stockfish=stockfish, game=game, opponent=opponent, rng=rng,
         )
-        if opponent.wdl_regret_limit is not None:
-            regret_limit = float(opponent.wdl_regret_limit)
-        else:
-            regret_limit = _effective_curriculum_wdl_regret(
-                random_move_prob=rand_p,
-                random_move_prob_start=float(opponent.random_move_prob_start),
-                random_move_prob_floor=float(opponent.random_move_prob_min),
-                regret_max=float(opponent.suboptimal_wdl_regret_max),
-                regret_min=float(opponent.suboptimal_wdl_regret_min),
-            )
-
-        for idx in idxs:
-            res = results[idx]
-            legal_indices = cboards[idx].legal_move_indices()
-            if legal_indices.size == 0:
-                _done_arr[idx] = 1
-                continue
-
-            _turn = bool(cboards[idx].turn)
-            legal_set = set(int(x) for x in legal_indices)
-
-            a_idx = uci_to_policy_index(res.bestmove_uci, _turn)
-            if a_idx < 0 or a_idx not in legal_set:
-                a_idx = int(legal_indices[0])
-
-            cand_idxs: list[int] = []
-            cand_scores: list[float] = []
-            if getattr(res, "pvs", None):
-                for pv in res.pvs:
-                    if pv.wdl is None:
-                        continue
-                    a = uci_to_policy_index(pv.move_uci, _turn)
-                    if a < 0 or a not in legal_set:
-                        continue
-                    w_sf, d_sf = float(pv.wdl[0]), float(pv.wdl[1])
-                    cand_idxs.append(a)
-                    cand_scores.append(w_sf + 0.5 * d_sf)
-
-            if not cand_idxs:
-                cand_idxs = [a_idx]
-                cand_scores = [0.0]
-
-            scores = np.array(cand_scores, dtype=np.float64) / max(1e-6, sf_policy_temp_local)
-            p_top = _softmax_np(scores).astype(np.float32, copy=False)
-
-            p_sf = np.zeros((POLICY_SIZE,), dtype=np.float32)
-            for a, p in zip(cand_idxs, p_top, strict=False):
-                p_sf[int(a)] += float(p)
-
-            if sf_policy_label_smooth_local > 0.0:
-                n_legal = legal_indices.size
-                if n_legal > 0:
-                    p_sf *= (1.0 - sf_policy_label_smooth_local)
-                    p_sf[legal_indices] += sf_policy_label_smooth_local / float(n_legal)
-
-            ps = float(p_sf.sum())
-            if ps > 0:
-                p_sf /= ps
-
-            if samples_per_game[idx]:
-                rec = samples_per_game[idx][-1]
-                if rec.sf_policy_target is None and rec.sf_move_index is None:
-                    rec.sf_policy_target = p_sf
-                    rec.sf_move_index = a_idx
-                    if res.wdl is not None:
-                        rec.sf_wdl = _flip_wdl_pov(res.wdl)
-
-            if not play_curriculum_moves or _selfplay_arr[idx]:
-                continue
-
-            _opp_move_idx = _choose_curriculum_opponent_move(
-                rng=rng,
-                legal_indices=legal_indices,
-                cand_indices=cand_idxs,
-                cand_scores=cand_scores,
-                curriculum_topk=int(curriculum_topk),
-                random_move_prob=rand_p,
-                regret_limit=regret_limit,
-            )
-
-            cboards[idx].push_index(_opp_move_idx)
-            move_idx_history[idx].append(_opp_move_idx)
-            # Advance tree root through opponent's move
-            if _mcts_tree is not None and _root_ids[idx] >= 0:
-                _root_ids[idx] = _mcts_tree.find_child(_root_ids[idx], _opp_move_idx)
-            if cboards[idx].is_game_over():
-                _done_arr[idx] = 1
 
     # ── Main game loop (rolling batch) ────────────────────────────────────────
     if continuous:
@@ -1235,7 +1534,7 @@ def play_batch(
     _t_net = 0.0
     _t_sf = 0.0
 
-    for _step in range(max_steps):  # skylos: ignore (_step loop var unused by convention)
+    for _step in range(max_steps):
         # Allow caller to update model/evaluator between moves.
         if on_step is not None:
             on_step()
@@ -1283,7 +1582,11 @@ def play_batch(
         _combined_net_idxs = net_idxs + selfplay_opp_idxs
         if _combined_net_idxs:
             _t0 = time.time()
-            _run_network_turn(_combined_net_idxs)
+            _run_network_turn(
+                _state, _combined_net_idxs,
+                model=model, eval_impl=eval_impl, device=device, rng=rng,
+                search=search, temp=temp, diff_focus=diff_focus,
+            )
             _t_net += time.time() - _t0
 
         # Submit selfplay SF queries immediately after network turn
@@ -1322,7 +1625,11 @@ def play_batch(
         # Finalize completed games and optionally recycle slots
         for i in range(batch_size):
             if _done_arr[i] and not _finalized_arr[i]:
-                _finalize_game(i)
+                _finalize_game(
+                    _state, i,
+                    game=game, rng=rng, stockfish=stockfish,
+                    on_game_complete=on_game_complete,
+                )
                 _finalized_arr[i] = 1
                 games_completed += 1
                 if continuous or games_started < target:
@@ -1346,32 +1653,35 @@ def play_batch(
     skill_lvl = getattr(stockfish, "skill_level", None)
     skill_lvl_i = None if skill_lvl is None else int(skill_lvl)
 
-    mean_sf_d6 = float(_st_sf_d6_sum / max(1, _st_sf_d6_n)) if _st_sf_d6_n > 0 else 0.0
+    mean_sf_d6 = (
+        float(_state.st_sf_d6_sum / max(1, _state.st_sf_d6_n))
+        if _state.st_sf_d6_n > 0 else 0.0
+    )
     return all_samples, BatchStats(
         games=int(games_completed),
         positions=len(all_samples),
-        w=_st_w,
-        d=_st_d,
-        l=_st_l,
-        total_game_plies=int(_st_game_plies),
-        adjudicated_games=int(_st_adjudicated),
-        total_draw_games=int(_st_draw),
-        selfplay_games=int(_st_sp_games),
-        selfplay_adjudicated_games=int(_st_sp_adj),
-        selfplay_draw_games=int(_st_sp_draw),
-        curriculum_games=int(_st_cur_games),
-        curriculum_adjudicated_games=int(_st_cur_adj),
-        curriculum_draw_games=int(_st_cur_draw),
-        checkmate_games=int(_st_checkmate),
-        stalemate_games=int(_st_stalemate),
-        plies_win=int(_st_plies_win),
-        plies_draw=int(_st_plies_draw),
-        plies_loss=int(_st_plies_loss),
+        w=_state.st_w,
+        d=_state.st_d,
+        l=_state.st_l,
+        total_game_plies=int(_state.st_game_plies),
+        adjudicated_games=int(_state.st_adjudicated),
+        total_draw_games=int(_state.st_draw),
+        selfplay_games=int(_state.st_sp_games),
+        selfplay_adjudicated_games=int(_state.st_sp_adj),
+        selfplay_draw_games=int(_state.st_sp_draw),
+        curriculum_games=int(_state.st_cur_games),
+        curriculum_adjudicated_games=int(_state.st_cur_adj),
+        curriculum_draw_games=int(_state.st_cur_draw),
+        checkmate_games=int(_state.st_checkmate),
+        stalemate_games=int(_state.st_stalemate),
+        plies_win=int(_state.st_plies_win),
+        plies_draw=int(_state.st_plies_draw),
+        plies_loss=int(_state.st_plies_loss),
         sf_nodes=sf_nodes if sf_nodes > 0 else None,
         sf_nodes_next=None,
         pid_ema_winrate=None,
         random_move_prob=float(opponent.random_move_prob),
         skill_level=skill_lvl_i,
         sf_eval_delta6=mean_sf_d6,
-        sf_eval_delta6_n=int(_st_sf_d6_n),
+        sf_eval_delta6_n=int(_state.st_sf_d6_n),
     )
