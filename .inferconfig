@@ -5,6 +5,12 @@
             "procedure_name": "gss_prepare_batch",
             "file": "chess_anti_engine/mcts/_mcts_tree.c",
             "comment": "OpenMP blind spot: n_to_encode and base ARE used inside #pragma omp parallel for, but infer can't see into OpenMP pragmas."
+        },
+        {
+            "bug_type": "DEAD_STORE",
+            "procedure_name": "py_batch_process_ply",
+            "file": "chess_anti_engine/mcts/_mcts_tree.c",
+            "comment": "OpenMP blind spot: pol_data/wdl_data/actions/values/mcts_probs and the 10 PyArray_DATA output pointers ARE used inside the `#pragma omp parallel for` loop that infer cannot parse."
         }
     ]
 }
