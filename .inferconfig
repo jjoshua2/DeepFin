@@ -5,12 +5,6 @@
             "procedure_name": "gss_prepare_batch",
             "file": "chess_anti_engine/mcts/_mcts_tree.c",
             "comment": "OpenMP blind spot: n_to_encode and base ARE used inside #pragma omp parallel for, but infer can't see into OpenMP pragmas."
-        },
-        {
-            "bug_type": "DEAD_STORE",
-            "procedure_name": "MCTSTree_prepare_and_store",
-            "file": "chess_anti_engine/mcts/_mcts_tree.c",
-            "comment": "OpenMP blind spot: enc_data/n_to_encode/base are all used inside #pragma omp parallel for."
         }
     ]
 }

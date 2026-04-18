@@ -7,10 +7,10 @@ eliminating Python interpreter overhead that was the dominant CPU bottleneck.
 Architecture:
   - MCTSTree: array-based C tree holding N/W/prior/children per node
   - CBoard: C chess board for encoding, legal moves, terminal detection
-  - Tree traversal: C gumbel_collect_leaves (improved-policy selection)
+  - Gumbel simulation: C start_gumbel_sims / continue_gumbel_sims state machine
+    (tree traversal + sequential-halving scoring all in C).
   - Expand: C expand_from_logits (softmax + tree insert)
   - Backprop: C backprop_many (batched value propagation)
-  - Sequential halving scoring: C gumbel_score_candidates
 """
 from __future__ import annotations
 

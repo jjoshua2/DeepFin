@@ -36,6 +36,32 @@
 /* PyCBoard layout — must match _lc0_ext.c's typedef exactly. */
 typedef struct { PyObject_HEAD CBoard board; } PyCBoard;
 
+/* WDL logits → Q value: softmax([w,d,l]) then (p_w - p_l). */
+static inline double wdl_logits_to_q(double w, double d, double l) {
+    double mx = fmax(fmax(w, d), l);
+    double ew = exp(w - mx), ed = exp(d - mx), el = exp(l - mx);
+    double ws = ew + ed + el;
+    return (ws > 0.0) ? ((ew - el) / ws) : 0.0;
+}
+
+/* PyArray_FROMANY wrappers: shorten the repeated C-contiguous-array coercion
+ * boilerplate at the Python-binding boundaries. Each returns a new reference
+ * (or NULL on failure) that the caller must DECREF. */
+#define FROMANY_1D(obj, dtype) \
+    ((PyArrayObject *)PyArray_FROMANY((obj), (dtype), 1, 1, NPY_ARRAY_C_CONTIGUOUS))
+#define FROMANY_1D_RW(obj, dtype) \
+    ((PyArrayObject *)PyArray_FROMANY((obj), (dtype), 1, 1, \
+        NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE))
+#define FROMANY_2D(obj, dtype) \
+    ((PyArrayObject *)PyArray_FROMANY((obj), (dtype), 2, 2, NPY_ARRAY_C_CONTIGUOUS))
+#define FROMANY_4D_RW(obj, dtype) \
+    ((PyArrayObject *)PyArray_FROMANY((obj), (dtype), 4, 4, \
+        NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE))
+
+/* Cached PyCBoard type pointer — resolved lazily on first use so we don't
+ * need a compile-time dependency on the _lc0_ext module's type object. */
+static PyTypeObject *_cached_cboard_type = NULL;
+
 /* Validate and extract CBoard pointers from a Python list.
  * Returns 0 on success, -1 on error (Python exception set).
  * mode=0: copy boards into out_boards (caller provides CBoard[n])
@@ -43,10 +69,14 @@ typedef struct { PyObject_HEAD CBoard board; } PyCBoard;
 static int extract_cboards(PyObject *list, int32_t n,
                            CBoard *out_boards, const CBoard **out_ptrs) {
     if (n <= 0) return 0;
-    PyTypeObject *cb_type = Py_TYPE(PyList_GET_ITEM(list, 0));
-    if (strstr(cb_type->tp_name, "CBoard") == NULL) {
-        PyErr_SetString(PyExc_TypeError, "list elements must be CBoard objects");
-        return -1;
+    PyTypeObject *cb_type = _cached_cboard_type;
+    if (!cb_type) {
+        cb_type = Py_TYPE(PyList_GET_ITEM(list, 0));
+        if (strstr(cb_type->tp_name, "CBoard") == NULL) {
+            PyErr_SetString(PyExc_TypeError, "list elements must be CBoard objects");
+            return -1;
+        }
+        _cached_cboard_type = cb_type;
     }
     for (int32_t i = 0; i < n; i++) {
         PyObject *item = PyList_GET_ITEM(list, i);
@@ -66,6 +96,7 @@ static int extract_cboards(PyObject *list, int32_t n,
  * ================================================================ */
 
 #define NNCACHE_MAX_LEGAL  256  /* max legal moves in chess is 218 */
+#define MCTS_MAX_PATH      512  /* max tree-traversal depth per query */
 
 typedef struct {
     uint64_t key;           /* zobrist hash */
@@ -495,15 +526,38 @@ typedef struct {
     int32_t  term_cap;
 } StoredPrepState;
 
+/* Scoring / selection tunables shared across the improved-policy descent. */
+typedef struct {
+    double c_scale;
+    double c_visit;
+    double c_puct;
+    double fpu_reduction;
+    int full_tree;
+} GumbelSelectParams;
+
 /* Forward declarations for functions used by GumbelSimState helpers */
 static int stored_ensure_cap(StoredPrepState *s, int32_t leaf_cap, int32_t term_cap);
 static int stored_ensure_legal_flat(StoredPrepState *s, int32_t need);
 static int stored_ensure_path_flat(StoredPrepState *s, int32_t need);
 static int stored_ensure_term_path_flat(StoredPrepState *s, int32_t need);
+static inline int32_t stored_append_leaf(StoredPrepState *s, TreeData *t,
+                                         const CBoard *cb, int32_t leaf_id,
+                                         const int32_t *path_buf, int32_t path_len,
+                                         int cache_ok);
 static int32_t tree_gumbel_collect_leaf(const TreeData *t, int32_t root_id,
-    int32_t forced_action, double c_scale, double c_visit, double c_puct,
-    double fpu_reduction, int full_tree, int32_t *path_buf, int32_t path_cap);
+    int32_t forced_action, const GumbelSelectParams *sel,
+    int32_t *path_buf, int32_t path_cap);
 static void cboard_encode_146_into(const CBoard *b, float *out);
+static void softmax_inplace(double *arr, int n);
+
+/* Store a CBoard into the tree's per-node cache slot, growing if needed. */
+static inline void tree_cb_cache_put(TreeData *t, int32_t leaf_id, const CBoard *cb) {
+    if (leaf_id >= t->cb_cache_cap) tree_ensure_cb_cache(t, leaf_id + 1);
+    if (leaf_id < t->cb_cache_cap) {
+        t->cb_cache[leaf_id] = *cb;
+        t->cb_valid[leaf_id] = 1;
+    }
+}
 
 /* ---- Gumbel simulation state machine ------------------------------------ */
 #define GSS_POLICY_SIZE 4672
@@ -511,8 +565,7 @@ static void cboard_encode_146_into(const CBoard *b, float *out);
 typedef struct {
     /* Configuration */
     int32_t n_boards;
-    double c_scale, c_visit, c_puct, fpu_reduction;
-    int full_tree;
+    GumbelSelectParams sel;
 
     /* Per-board state (owned by this struct) */
     int32_t *root_ids;           /* [n_boards] */
@@ -600,6 +653,11 @@ static int32_t gss_begin_round(GumbelSimState *g) {
 /* Score candidates and halve: keep top half for each active board.
  * Pure C, no Python. */
 static void gss_score_and_halve(GumbelSimState *g, TreeData *t) {
+    /* Reusable action->child-slot map (sentinel -1). Allocated once, dirty
+     * entries are cleared after each board so subsequent boards start clean. */
+    int16_t action_to_slot[GSS_POLICY_SIZE];
+    memset(action_to_slot, 0xFF, sizeof(action_to_slot));
+
     for (int32_t ai = 0; ai < g->n_active; ai++) {
         int32_t bi = g->active[ai];
         int32_t n_cands = g->cands_count[bi];
@@ -614,15 +672,16 @@ static void gss_score_and_halve(GumbelSimState *g, TreeData *t) {
         int32_t rid = g->root_ids[bi];
         double root_Q = (t->N[rid] > 0) ? (t->W[rid] / (double)t->N[rid]) : 0.0;
 
-        /* Find max visit among root's children */
+        /* Single pass over children: max_visit + populate action_to_slot map */
         int32_t n_ch = t->num_children[rid];
         int32_t off = t->children_offset[rid];
         int32_t max_visit = 0;
         for (int32_t j = 0; j < n_ch; j++) {
             int32_t n = t->N[t->child_node[off + j]];
             if (n > max_visit) max_visit = n;
+            action_to_slot[t->child_action[off + j]] = (int16_t)j;
         }
-        double sigma = g->c_scale * (g->c_visit + (double)max_visit);
+        double sigma = g->sel.c_scale * (g->sel.c_visit + (double)max_visit);
 
         int32_t coff = g->cands_offset[bi];
         double scores_buf[64];
@@ -632,12 +691,10 @@ static void gss_score_and_halve(GumbelSimState *g, TreeData *t) {
             double log_prior = log(g->root_priors[bi * GSS_POLICY_SIZE + action] > 1e-12
                                    ? g->root_priors[bi * GSS_POLICY_SIZE + action] : 1e-12);
             double q_hat = root_Q;
-            for (int32_t j = 0; j < n_ch; j++) {
-                if (t->child_action[off + j] == action) {
-                    int32_t cid = t->child_node[off + j];
-                    if (t->N[cid] > 0) q_hat = -t->W[cid] / (double)t->N[cid];
-                    break;
-                }
+            int16_t slot = action_to_slot[action];
+            if (slot >= 0) {
+                int32_t cid = t->child_node[off + slot];
+                if (t->N[cid] > 0) q_hat = -t->W[cid] / (double)t->N[cid];
             }
             scores[ci] = g->gumbels[bi * GSS_POLICY_SIZE + action] + log_prior + sigma * q_hat;
         }
@@ -658,6 +715,11 @@ static void gss_score_and_halve(GumbelSimState *g, TreeData *t) {
             }
         }
         g->cands_count[bi] = keep;
+
+        /* Clear the dirty slots we wrote so the map stays -1 for next board. */
+        for (int32_t j = 0; j < n_ch; j++) {
+            action_to_slot[t->child_action[off + j]] = -1;
+        }
     }
 }
 
@@ -711,7 +773,7 @@ static int32_t gss_prepare_batch(
     int32_t n_queries, float *enc_data)
 {
     int cache_ok = (t->cb_cache != NULL);
-    int32_t path_buf[512];
+    int32_t path_buf[MCTS_MAX_PATH];
     int32_t old_n_leaves = s->n_leaves;
 
     for (int32_t qi = 0; qi < n_queries; qi++) {
@@ -720,9 +782,7 @@ static int32_t gss_prepare_batch(
         int32_t forced = g->q_forced[qi];
 
         int32_t path_len = tree_gumbel_collect_leaf(
-            t, rid, forced,
-            g->c_scale, g->c_visit, g->c_puct, g->fpu_reduction, g->full_tree,
-            path_buf, 512);
+            t, rid, forced, &g->sel, path_buf, MCTS_MAX_PATH);
 
         int32_t leaf_id = path_buf[path_len - 1];
 
@@ -740,13 +800,13 @@ static int32_t gss_prepare_batch(
 
         /* CBoard replay */
         CBoard cb;
-        int32_t replay_actions[512];
+        int32_t replay_actions[MCTS_MAX_PATH];
         int32_t n_replay = 0;
         int32_t found_cached = 0;
 
         if (cache_ok) {
             int32_t nid = leaf_id;
-            while (nid >= 0 && nid != rid && n_replay < 512) {
+            while (nid >= 0 && nid != rid && n_replay < MCTS_MAX_PATH) {
                 if (nid < t->cb_cache_cap && t->cb_valid[nid]) {
                     cb = t->cb_cache[nid];
                     found_cached = 1;
@@ -801,10 +861,7 @@ static int32_t gss_prepare_batch(
                 double q = (t->N[existing] > 0) ? (t->W[existing] / (double)t->N[existing]) : 0.0;
                 tree_backprop(t, path_buf, path_len, q);
                 tree_ht_insert(t, cb.hash, leaf_id);
-                if (cache_ok) {
-                    if (leaf_id >= t->cb_cache_cap) tree_ensure_cb_cache(t, leaf_id + 1);
-                    if (leaf_id < t->cb_cache_cap) { t->cb_cache[leaf_id] = cb; t->cb_valid[leaf_id] = 1; }
-                }
+                if (cache_ok) tree_cb_cache_put(t, leaf_id, &cb);
                 continue;
             }
             if (g->nncache) {
@@ -813,10 +870,7 @@ static int32_t gss_prepare_batch(
                     tree_expand(t, leaf_id, ce->legal, ce->priors, ce->n_legal);
                     tree_backprop(t, path_buf, path_len, ce->q_value);
                     tree_ht_insert(t, cb.hash, leaf_id);
-                    if (cache_ok) {
-                        if (leaf_id >= t->cb_cache_cap) tree_ensure_cb_cache(t, leaf_id + 1);
-                        if (leaf_id < t->cb_cache_cap) { t->cb_cache[leaf_id] = cb; t->cb_valid[leaf_id] = 1; }
-                    }
+                    if (cache_ok) tree_cb_cache_put(t, leaf_id, &cb);
                     continue;
                 }
             }
@@ -836,36 +890,7 @@ static int32_t gss_prepare_batch(
         }
 
         /* Save leaf for deferred encoding */
-        int32_t li = s->n_leaves;
-        s->leaf_cboards[li] = cb;
-        s->leaf_ids[li] = leaf_id;
-        s->hashes[li] = cb.hash;
-
-        BoardState bs;
-        cboard_to_boardstate(&cb, &bs);
-        int indices[256];
-        int count = 0;
-        if (bs.king_sq >= 0)
-            count = generate_legal_move_indices(&bs, indices);
-        stored_ensure_legal_flat(s, s->legal_flat_used + count);
-        s->legal_offset[li] = s->legal_flat_used;
-        s->legal_count[li] = count;
-        for (int32_t j = 0; j < count; j++)
-            s->legal_flat[s->legal_flat_used + j] = indices[j];
-        s->legal_flat_used += count;
-
-        stored_ensure_path_flat(s, s->path_flat_used + path_len);
-        s->path_offset[li] = s->path_flat_used;
-        s->path_count[li] = path_len;
-        memcpy(s->path_flat + s->path_flat_used, path_buf, path_len * sizeof(int32_t));
-        s->path_flat_used += path_len;
-
-        if (cache_ok) {
-            if (leaf_id >= t->cb_cache_cap) tree_ensure_cb_cache(t, leaf_id + 1);
-            if (leaf_id < t->cb_cache_cap) { t->cb_cache[leaf_id] = cb; t->cb_valid[leaf_id] = 1; }
-        }
-
-        s->n_leaves++;
+        stored_append_leaf(s, t, &cb, leaf_id, path_buf, path_len, cache_ok);
     }
 
     /* Backprop terminals */
@@ -905,6 +930,8 @@ static void gss_finish_batch(
         int32_t n_legal = s->legal_count[li];
         const int32_t *path = s->path_flat + s->path_offset[li];
         int32_t path_len = s->path_count[li];
+        const float *wdl = wdl_data + li * 3;
+        double q = wdl_logits_to_q((double)wdl[0], (double)wdl[1], (double)wdl[2]);
 
         if (!t->expanded[nid] && n_legal > 0) {
             const float *logits = pol_data + li * 4672;
@@ -912,20 +939,9 @@ static void gss_finish_batch(
             double *priors = (n_legal <= 256) ? priors_stack
                                                : (double *)malloc(n_legal * sizeof(double));
             if (priors) {
-                double max_l = -1e30;
-                for (int32_t j = 0; j < n_legal; j++) {
-                    double v = (double)logits[legal[j]];
-                    if (v > max_l) max_l = v;
-                }
-                double sum = 0;
-                for (int32_t j = 0; j < n_legal; j++) {
-                    priors[j] = exp((double)logits[legal[j]] - max_l);
-                    sum += priors[j];
-                }
-                if (sum > 0) {
-                    double inv_sum = 1.0 / sum;
-                    for (int32_t j = 0; j < n_legal; j++) priors[j] *= inv_sum;
-                }
+                for (int32_t j = 0; j < n_legal; j++)
+                    priors[j] = (double)logits[legal[j]];
+                softmax_inplace(priors, n_legal);
                 tree_expand(t, nid, legal, priors, n_legal);
                 if (nncache && n_legal <= NNCACHE_MAX_LEGAL) {
                     NNCacheEntry *ce = nncache_insert(nncache, s->hashes[li]);
@@ -933,22 +949,13 @@ static void gss_finish_batch(
                         ce->n_legal = n_legal;
                         memcpy(ce->legal, legal, n_legal * sizeof(int32_t));
                         memcpy(ce->priors, priors, n_legal * sizeof(double));
-                        const float *wdl = wdl_data + li * 3;
-                        double wm = fmax(fmax((double)wdl[0], (double)wdl[1]), (double)wdl[2]);
-                        double ew = exp((double)wdl[0] - wm), ed = exp((double)wdl[1] - wm), el = exp((double)wdl[2] - wm);
-                        double ws = ew + ed + el;
-                        ce->q_value = (ws > 0) ? (ew - el) / ws : 0.0;
+                        ce->q_value = q;
                     }
                 }
                 if (priors != priors_stack) free(priors);
             }
         }
 
-        const float *wdl = wdl_data + li * 3;
-        double wm = fmax(fmax((double)wdl[0], (double)wdl[1]), (double)wdl[2]);
-        double ew = exp((double)wdl[0] - wm), ed = exp((double)wdl[1] - wm), el = exp((double)wdl[2] - wm);
-        double ws = ew + ed + el;
-        double q = (ws > 0) ? (ew - el) / ws : 0.0;
         tree_backprop(t, path, path_len, q);
         tree_ht_insert(t, s->hashes[li], nid);
     }
@@ -1060,34 +1067,65 @@ static int stored_ensure_cap(StoredPrepState *s, int32_t leaf_cap, int32_t term_
     return 0;
 }
 
-static int stored_ensure_legal_flat(StoredPrepState *s, int32_t needed) {
-    if (needed > s->legal_flat_cap) {
-        int32_t new_cap = (needed > s->legal_flat_cap * 2) ? needed : s->legal_flat_cap * 2;
-        s->legal_flat = (int32_t *)realloc(s->legal_flat, new_cap * sizeof(int32_t));
-        if (!s->legal_flat) return -1;
-        s->legal_flat_cap = new_cap;
-    }
+/* Grow a flat int32 buffer to `needed` with amortized 2x expansion.
+ * Returns 0 on success, -1 on OOM. */
+static int flat_buffer_grow(int32_t **buf, int32_t *cap, int32_t needed) {
+    if (needed <= *cap) return 0;
+    int32_t new_cap = (needed > *cap * 2) ? needed : *cap * 2;
+    int32_t *p = (int32_t *)realloc(*buf, new_cap * sizeof(int32_t));
+    if (!p) return -1;
+    *buf = p;
+    *cap = new_cap;
     return 0;
+}
+
+static int stored_ensure_legal_flat(StoredPrepState *s, int32_t needed) {
+    return flat_buffer_grow(&s->legal_flat, &s->legal_flat_cap, needed);
 }
 
 static int stored_ensure_path_flat(StoredPrepState *s, int32_t needed) {
-    if (needed > s->path_flat_cap) {
-        int32_t new_cap = (needed > s->path_flat_cap * 2) ? needed : s->path_flat_cap * 2;
-        s->path_flat = (int32_t *)realloc(s->path_flat, new_cap * sizeof(int32_t));
-        if (!s->path_flat) return -1;
-        s->path_flat_cap = new_cap;
-    }
-    return 0;
+    return flat_buffer_grow(&s->path_flat, &s->path_flat_cap, needed);
 }
 
 static int stored_ensure_term_path_flat(StoredPrepState *s, int32_t needed) {
-    if (needed > s->term_path_flat_cap) {
-        int32_t new_cap = (needed > s->term_path_flat_cap * 2) ? needed : s->term_path_flat_cap * 2;
-        s->term_path_flat = (int32_t *)realloc(s->term_path_flat, new_cap * sizeof(int32_t));
-        if (!s->term_path_flat) return -1;
-        s->term_path_flat_cap = new_cap;
-    }
-    return 0;
+    return flat_buffer_grow(&s->term_path_flat, &s->term_path_flat_cap, needed);
+}
+
+/* Append one leaf to the stored prep state: record its CBoard, legal moves,
+ * and search path into flat buffers, optionally cache the CBoard on the tree,
+ * and bump n_leaves. Returns the leaf's slot index (pre-increment). */
+static inline int32_t stored_append_leaf(StoredPrepState *s, TreeData *t,
+                                         const CBoard *cb, int32_t leaf_id,
+                                         const int32_t *path_buf, int32_t path_len,
+                                         int cache_ok) {
+    int32_t li = s->n_leaves;
+    s->leaf_cboards[li] = *cb;
+    s->leaf_ids[li] = leaf_id;
+    s->hashes[li] = cb->hash;
+
+    BoardState bs;
+    cboard_to_boardstate(cb, &bs);
+    int indices[256];
+    int count = 0;
+    if (bs.king_sq >= 0)
+        count = generate_legal_move_indices(&bs, indices);
+    stored_ensure_legal_flat(s, s->legal_flat_used + count);
+    s->legal_offset[li] = s->legal_flat_used;
+    s->legal_count[li] = count;
+    for (int32_t j = 0; j < count; j++)
+        s->legal_flat[s->legal_flat_used + j] = indices[j];
+    s->legal_flat_used += count;
+
+    stored_ensure_path_flat(s, s->path_flat_used + path_len);
+    s->path_offset[li] = s->path_flat_used;
+    s->path_count[li] = path_len;
+    memcpy(s->path_flat + s->path_flat_used, path_buf, path_len * sizeof(int32_t));
+    s->path_flat_used += path_len;
+
+    if (cache_ok) tree_cb_cache_put(t, leaf_id, cb);
+
+    s->n_leaves++;
+    return li;
 }
 
 static void MCTSTree_dealloc(MCTSTreeObject *self) {
@@ -1228,10 +1266,8 @@ static PyObject *MCTSTree_expand(MCTSTreeObject *self, PyObject *args) {
     if (!PyArg_ParseTuple(args, "iOO", &node_id, &actions_obj, &priors_obj))
         return NULL;
 
-    PyArrayObject *actions_arr = (PyArrayObject *)PyArray_FROMANY(
-        actions_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
-    PyArrayObject *priors_arr = (PyArrayObject *)PyArray_FROMANY(
-        priors_obj, NPY_FLOAT64, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *actions_arr = FROMANY_1D(actions_obj, NPY_INT32);
+    PyArrayObject *priors_arr = FROMANY_1D(priors_obj, NPY_FLOAT64);
 
     if (!actions_arr || !priors_arr) {
         Py_XDECREF(actions_arr);
@@ -1275,15 +1311,13 @@ static PyObject *MCTSTree_select_leaves(MCTSTreeObject *self, PyObject *args) {
     if (!PyArg_ParseTuple(args, "Oddd", &root_ids_obj, &c_puct, &fpu_at_root, &fpu_reduction))
         return NULL;
 
-    PyArrayObject *root_ids_arr = (PyArrayObject *)PyArray_FROMANY(
-        root_ids_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *root_ids_arr = FROMANY_1D(root_ids_obj, NPY_INT32);
     if (!root_ids_arr) return NULL;
 
     int32_t n_roots = (int32_t)PyArray_SIZE(root_ids_arr);
     const int32_t *root_ids = (const int32_t *)PyArray_DATA(root_ids_arr);
 
-    /* Max path depth 512 should be plenty for any chess game tree */
-    int32_t path_buf[512];
+    int32_t path_buf[MCTS_MAX_PATH];
 
     PyObject *result = PyList_New(n_roots);
     if (!result) {
@@ -1295,13 +1329,13 @@ static PyObject *MCTSTree_select_leaves(MCTSTreeObject *self, PyObject *args) {
         int32_t root_id = root_ids[i];
         int32_t path_len = tree_select_leaf(&self->tree, root_id,
                                              c_puct, fpu_at_root, fpu_reduction,
-                                             path_buf, 512);
+                                             path_buf, MCTS_MAX_PATH);
 
         int32_t leaf_id = path_buf[path_len - 1];
 
         /* Build action path from root to leaf */
-        int32_t action_buf[512];
-        int32_t action_len = tree_action_path(&self->tree, leaf_id, action_buf, 512);
+        int32_t action_buf[MCTS_MAX_PATH];
+        int32_t action_len = tree_action_path(&self->tree, leaf_id, action_buf, MCTS_MAX_PATH);
         if (action_len < 0) action_len = 0;
 
         /* Build Python tuple: (leaf_id, path_as_int32_array, node_path_as_int32_array) */
@@ -1349,8 +1383,7 @@ static PyObject *MCTSTree_backprop(MCTSTreeObject *self, PyObject *args) {
     if (!PyArg_ParseTuple(args, "Od", &path_obj, &value))
         return NULL;
 
-    PyArrayObject *path_arr = (PyArrayObject *)PyArray_FROMANY(
-        path_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *path_arr = FROMANY_1D(path_obj, NPY_INT32);
     if (!path_arr) return NULL;
 
     int32_t path_len = (int32_t)PyArray_SIZE(path_arr);
@@ -1381,8 +1414,7 @@ static PyObject *MCTSTree_backprop_many(MCTSTreeObject *self, PyObject *args) {
         double value = PyFloat_AsDouble(PyList_GET_ITEM(values_list, i));
         if (value == -1.0 && PyErr_Occurred()) return NULL;
 
-        PyArrayObject *path_arr = (PyArrayObject *)PyArray_FROMANY(
-            path_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+        PyArrayObject *path_arr = FROMANY_1D(path_obj, NPY_INT32);
         if (!path_arr) return NULL;
 
         int32_t path_len = (int32_t)PyArray_SIZE(path_arr);
@@ -1440,7 +1472,10 @@ static int32_t tree_gumbel_select_child(const TreeData *t, int32_t node_id,
     double parent_N = (double)t->N[node_id];
     double parent_Q = (parent_N > 0) ? (t->W[node_id] / parent_N) : 0.0;
 
-    /* Find max visit count for sigma */
+    /* Two arrays — log_prior and completed_Q — precomputed in the same pass
+     * that computes max_visit + total_visits. Avoids re-reading child arrays. */
+    double *log_priors = (double *)alloca(n_ch * sizeof(double));
+    double *cqs        = (double *)alloca(n_ch * sizeof(double));
     int32_t max_visit = 0;
     int32_t total_visits = 0;
     for (int32_t i = 0; i < n_ch; i++) {
@@ -1448,29 +1483,38 @@ static int32_t tree_gumbel_select_child(const TreeData *t, int32_t node_id,
         int32_t n = t->N[cid];
         if (n > max_visit) max_visit = n;
         total_visits += n;
+        log_priors[i] = log(t->prior[cid] > 1e-12 ? t->prior[cid] : 1e-12);
+        cqs[i] = (n > 0) ? (-t->W[cid] / (double)n) : parent_Q;
     }
     double sigma = c_scale * (c_visit + (double)max_visit);
     double inv_total = 1.0 / (1.0 + (double)total_visits);
 
-    /* Compute logits + sigma * completed_Q, then softmax */
+    /* Fuse score-compute with softmax-max tracking. */
     double *scores = (double *)alloca(n_ch * sizeof(double));
+    double max_score = -INFINITY;
     for (int32_t i = 0; i < n_ch; i++) {
-        int32_t cid = t->child_node[off + i];
-        int32_t n = t->N[cid];
-        double log_prior = log(t->prior[cid] > 1e-12 ? t->prior[cid] : 1e-12);
-        double cq = (n > 0) ? (-t->W[cid] / (double)n) : parent_Q;
-        scores[i] = log_prior + sigma * cq;
+        double s = log_priors[i] + sigma * cqs[i];
+        scores[i] = s;
+        if (s > max_score) max_score = s;
     }
 
-    /* Softmax */
-    softmax_inplace(scores, n_ch);
+    /* exp + sum, with fallback to uniform if all inputs are non-finite. */
+    double sum = 0.0;
+    if (isfinite(max_score)) {
+        for (int32_t i = 0; i < n_ch; i++) {
+            scores[i] = exp(scores[i] - max_score);
+            sum += scores[i];
+        }
+    }
+    int uniform_fallback = !(sum > 0.0 && isfinite(sum));
+    double inv_sum = uniform_fallback ? (1.0 / (double)n_ch) : (1.0 / sum);
 
-    /* Select: argmax(prob - N/(1+total_N)) */
+    /* Fused normalize + argmax(prob - N/(1+total_N)). */
     int32_t best_slot = 0;
     double best_val = -1e30;
     for (int32_t i = 0; i < n_ch; i++) {
-        int32_t cid = t->child_node[off + i];
-        double target = scores[i] - (double)t->N[cid] * inv_total;
+        double p = uniform_fallback ? inv_sum : (scores[i] * inv_sum);
+        double target = p - (double)t->N[t->child_node[off + i]] * inv_total;
         if (target > best_val) {
             best_val = target;
             best_slot = i;
@@ -1485,14 +1529,11 @@ static int32_t tree_gumbel_select_child(const TreeData *t, int32_t node_id,
  * If leaf is terminal (no children, not expanded with 0 visits), sets *is_leaf=1. */
 static int32_t tree_gumbel_collect_leaf(const TreeData *t, int32_t root_id,
                                          int32_t forced_action,
-                                         double c_scale, double c_visit,
-                                         double c_puct, double fpu_reduction,
-                                         int full_tree,
+                                         const GumbelSelectParams *sel,
                                          int32_t *path, int32_t max_path) {
     int32_t depth = 0;
     path[depth++] = root_id;
 
-    /* Step 1: follow forced_action from root */
     int32_t n_ch = t->num_children[root_id];
     int32_t off = t->children_offset[root_id];
     int32_t child_id = -1;
@@ -1502,39 +1543,39 @@ static int32_t tree_gumbel_collect_leaf(const TreeData *t, int32_t root_id,
             break;
         }
     }
-    if (child_id < 0) return depth; /* forced action not found */
+    if (child_id < 0) return depth;
 
     path[depth++] = child_id;
     int32_t node = child_id;
 
-    /* Step 2: traverse using improved-policy (or PUCT) below */
     while (t->expanded[node] && t->num_children[node] > 0) {
         if (depth >= max_path) break;
 
-        /* Check if any children have been visited */
         int32_t n_ch2 = t->num_children[node];
         int32_t off2 = t->children_offset[node];
+        /* Fused scan: find any visited child; if none, track best-prior slot.
+         * Early exit as soon as a visited child is found — prior tracking
+         * only matters on the frontier path. */
         int32_t any_visited = 0;
+        int32_t best_prior_slot = 0;
+        double best_pri = -1.0;
         for (int32_t i = 0; i < n_ch2; i++) {
-            if (t->N[t->child_node[off2 + i]] > 0) { any_visited = 1; break; }
+            int32_t cid = t->child_node[off2 + i];
+            if (t->N[cid] > 0) { any_visited = 1; break; }
+            if (t->prior[cid] > best_pri) {
+                best_pri = t->prior[cid];
+                best_prior_slot = i;
+            }
         }
 
         int32_t slot;
         if (!any_visited) {
-            /* Frontier: all children unvisited — select highest prior */
-            slot = 0;
-            double best_pri = -1.0;
-            for (int32_t i = 0; i < n_ch2; i++) {
-                int32_t cid = t->child_node[off2 + i];
-                if (t->prior[cid] > best_pri) {
-                    best_pri = t->prior[cid];
-                    slot = i;
-                }
-            }
-        } else if (full_tree) {
-            slot = tree_gumbel_select_child(t, node, c_scale, c_visit);
+            /* Frontier: all children unvisited — highest prior wins */
+            slot = best_prior_slot;
+        } else if (sel->full_tree) {
+            slot = tree_gumbel_select_child(t, node, sel->c_scale, sel->c_visit);
         } else {
-            slot = tree_select_child(t, node, c_puct, fpu_reduction);
+            slot = tree_select_child(t, node, sel->c_puct, sel->fpu_reduction);
         }
         node = t->child_node[t->children_offset[node] + slot];
         path[depth++] = node;
@@ -1543,178 +1584,6 @@ static int32_t tree_gumbel_collect_leaf(const TreeData *t, int32_t root_id,
     return depth;
 }
 
-
-/*
- * gumbel_collect_leaves(root_ids, forced_actions, c_scale, c_visit,
- *                       c_puct, fpu_reduction, full_tree)
- *   -> (leaf_ids: int32[], node_paths: list[int32[]], action_paths: list[int32[]])
- *
- * Batch collect one leaf per (root, forced_action) pair using Gumbel traversal.
- * Returns leaf node IDs, node paths (for backprop), and action paths (for board replay).
- */
-static PyObject *MCTSTree_gumbel_collect_leaves(MCTSTreeObject *self, PyObject *args) {
-    PyObject *root_ids_obj, *forced_actions_obj;
-    double c_scale, c_visit, c_puct, fpu_reduction;
-    int full_tree;
-    if (!PyArg_ParseTuple(args, "OOddddp",
-                          &root_ids_obj, &forced_actions_obj,
-                          &c_scale, &c_visit, &c_puct, &fpu_reduction, &full_tree))
-        return NULL;
-
-    PyArrayObject *root_ids_arr = (PyArrayObject *)PyArray_FROMANY(
-        root_ids_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
-    PyArrayObject *forced_arr = (PyArrayObject *)PyArray_FROMANY(
-        forced_actions_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
-
-    if (!root_ids_arr || !forced_arr) {
-        Py_XDECREF(root_ids_arr);
-        Py_XDECREF(forced_arr);
-        return NULL;
-    }
-
-    int32_t n = (int32_t)PyArray_SIZE(root_ids_arr);
-    const int32_t *root_ids = (const int32_t *)PyArray_DATA(root_ids_arr);
-    const int32_t *forced_actions = (const int32_t *)PyArray_DATA(forced_arr);
-
-    int32_t path_buf[512];
-
-    /* Output arrays */
-    npy_intp dims[1] = {n};
-    PyObject *leaf_ids = PyArray_SimpleNew(1, dims, NPY_INT32);
-    PyObject *node_paths_list = PyList_New(n);
-    PyObject *action_paths_list = PyList_New(n);
-
-    if (!leaf_ids || !node_paths_list || !action_paths_list) {
-        Py_XDECREF(leaf_ids);
-        Py_XDECREF(node_paths_list);
-        Py_XDECREF(action_paths_list);
-        Py_DECREF(root_ids_arr);
-        Py_DECREF(forced_arr);
-        return NULL;
-    }
-
-    int32_t *leaf_data = (int32_t *)PyArray_DATA((PyArrayObject *)leaf_ids);
-
-    for (int32_t i = 0; i < n; i++) {
-        int32_t path_len = tree_gumbel_collect_leaf(
-            &self->tree, root_ids[i], forced_actions[i],
-            c_scale, c_visit, c_puct, fpu_reduction, full_tree,
-            path_buf, 512);
-
-        int32_t leaf_id = path_buf[path_len - 1];
-        leaf_data[i] = leaf_id;
-
-        /* Node path */
-        npy_intp pdims[1] = {path_len};
-        PyObject *np_arr = PyArray_SimpleNew(1, pdims, NPY_INT32);
-        if (np_arr) {
-            memcpy(PyArray_DATA((PyArrayObject *)np_arr),
-                   path_buf, path_len * sizeof(int32_t));
-        }
-        if (!np_arr) { Py_INCREF(Py_None); np_arr = Py_None; }
-        PyList_SET_ITEM(node_paths_list, i, np_arr);
-
-        /* Action path (from root to leaf) */
-        int32_t action_buf[512];
-        int32_t action_len = tree_action_path(&self->tree, leaf_id, action_buf, 512);
-        if (action_len < 0) action_len = 0;
-        npy_intp adims[1] = {action_len};
-        PyObject *ap_arr = PyArray_SimpleNew(1, adims, NPY_INT32);
-        if (ap_arr) {
-            memcpy(PyArray_DATA((PyArrayObject *)ap_arr),
-                   action_buf, action_len * sizeof(int32_t));
-        }
-        if (!ap_arr) { Py_INCREF(Py_None); ap_arr = Py_None; }
-        PyList_SET_ITEM(action_paths_list, i, ap_arr);
-    }
-
-    Py_DECREF(root_ids_arr);
-    Py_DECREF(forced_arr);
-    PyObject *result = PyTuple_Pack(3, leaf_ids, node_paths_list, action_paths_list);
-    Py_DECREF(leaf_ids);
-    Py_DECREF(node_paths_list);
-    Py_DECREF(action_paths_list);
-    return result;
-}
-
-
-/*
- * gumbel_score_candidates(root_id, candidate_actions, gumbel_values,
- *                         root_priors_full, c_scale, c_visit)
- *   -> float64 array of scores per candidate
- *
- * For sequential halving: compute sigma_scale * completed_Q + log_prior + gumbel.
- */
-static PyObject *MCTSTree_gumbel_score_candidates(MCTSTreeObject *self, PyObject *args) {
-    int root_id;
-    PyObject *cands_obj, *gumbels_obj, *priors_obj;
-    double c_scale, c_visit;
-    if (!PyArg_ParseTuple(args, "iOOOdd",
-                          &root_id, &cands_obj, &gumbels_obj, &priors_obj,
-                          &c_scale, &c_visit))
-        return NULL;
-
-    PyArrayObject *cands_arr = (PyArrayObject *)PyArray_FROMANY(
-        cands_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
-    PyArrayObject *gumbels_arr = (PyArrayObject *)PyArray_FROMANY(
-        gumbels_obj, NPY_FLOAT64, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
-    PyArrayObject *priors_arr = (PyArrayObject *)PyArray_FROMANY(
-        priors_obj, NPY_FLOAT64, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
-
-    if (!cands_arr || !gumbels_arr || !priors_arr) {
-        Py_XDECREF(cands_arr); Py_XDECREF(gumbels_arr); Py_XDECREF(priors_arr);
-        return NULL;
-    }
-
-    int32_t n_cands = (int32_t)PyArray_SIZE(cands_arr);
-    const int32_t *cands = (const int32_t *)PyArray_DATA(cands_arr);
-    const double *gumbels = (const double *)PyArray_DATA(gumbels_arr);
-    const double *priors_full = (const double *)PyArray_DATA(priors_arr);
-
-    TreeData *t = &self->tree;
-    double root_Q = (t->N[root_id] > 0) ? (t->W[root_id] / (double)t->N[root_id]) : 0.0;
-
-    /* Find max visit among root's children */
-    int32_t n_ch = t->num_children[root_id];
-    int32_t off = t->children_offset[root_id];
-    int32_t max_visit = 0;
-    for (int32_t i = 0; i < n_ch; i++) {
-        int32_t n = t->N[t->child_node[off + i]];
-        if (n > max_visit) max_visit = n;
-    }
-    double sigma = c_scale * (c_visit + (double)max_visit);
-
-    /* Build a fast lookup: action → child node id */
-    /* Since n_ch is small (~20), linear scan is fine */
-
-    npy_intp out_dims[1] = {n_cands};
-    PyObject *out = PyArray_SimpleNew(1, out_dims, NPY_FLOAT64);
-    if (!out) {
-        Py_DECREF(cands_arr); Py_DECREF(gumbels_arr); Py_DECREF(priors_arr);
-        return NULL;
-    }
-    double *out_data = (double *)PyArray_DATA((PyArrayObject *)out);
-
-    for (int32_t ci = 0; ci < n_cands; ci++) {
-        int32_t action = cands[ci];
-        double log_prior = log(priors_full[action] > 1e-12 ? priors_full[action] : 1e-12);
-
-        /* Find child for this action */
-        double q_hat = root_Q;
-        for (int32_t j = 0; j < n_ch; j++) {
-            if (t->child_action[off + j] == action) {
-                int32_t cid = t->child_node[off + j];
-                int32_t n = t->N[cid];
-                if (n > 0) q_hat = -t->W[cid] / (double)n;
-                break;
-            }
-        }
-        out_data[ci] = gumbels[ci] + log_prior + sigma * q_hat;
-    }
-
-    Py_DECREF(cands_arr); Py_DECREF(gumbels_arr); Py_DECREF(priors_arr);
-    return out;
-}
 
 
 /* get_children_visits(node_id) -> (actions: int32[], visits: int32[]) */
@@ -1853,10 +1722,8 @@ static PyObject *MCTSTree_expand_from_logits(MCTSTreeObject *self, PyObject *arg
     if (!PyArg_ParseTuple(args, "iOO", &node_id, &legal_obj, &logits_obj))
         return NULL;
 
-    PyArrayObject *legal_arr = (PyArrayObject *)PyArray_FROMANY(
-        legal_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
-    PyArrayObject *logits_arr = (PyArrayObject *)PyArray_FROMANY(
-        logits_obj, NPY_FLOAT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *legal_arr = FROMANY_1D(legal_obj, NPY_INT32);
+    PyArrayObject *logits_arr = FROMANY_1D(logits_obj, NPY_FLOAT32);
 
     if (!legal_arr || !logits_arr) {
         Py_XDECREF(legal_arr);
@@ -1915,8 +1782,7 @@ static PyObject *MCTSTree_batch_wdl_to_q(MCTSTreeObject *self, PyObject *args) {
     if (!PyArg_ParseTuple(args, "O", &wdl_obj))
         return NULL;
 
-    PyArrayObject *wdl_arr = (PyArrayObject *)PyArray_FROMANY(
-        wdl_obj, NPY_FLOAT32, 2, 2, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *wdl_arr = FROMANY_2D(wdl_obj, NPY_FLOAT32);
     if (!wdl_arr) return NULL;
 
     npy_intp batch = PyArray_DIM(wdl_arr, 0);
@@ -1937,17 +1803,9 @@ static PyObject *MCTSTree_batch_wdl_to_q(MCTSTreeObject *self, PyObject *args) {
     double *q = (double *)PyArray_DATA((PyArrayObject *)out);
 
     for (npy_intp i = 0; i < batch; i++) {
-        double w = (double)wdl[i * 3 + 0];
-        double d = (double)wdl[i * 3 + 1];
-        double l = (double)wdl[i * 3 + 2];
-        double mx = w;
-        if (d > mx) mx = d;
-        if (l > mx) mx = l;
-        double ew = exp(w - mx);
-        double ed = exp(d - mx);
-        double el = exp(l - mx);
-        double s = ew + ed + el;
-        q[i] = (s > 0.0) ? ((ew - el) / s) : 0.0;
+        q[i] = wdl_logits_to_q((double)wdl[i * 3 + 0],
+                               (double)wdl[i * 3 + 1],
+                               (double)wdl[i * 3 + 2]);
     }
 
     Py_DECREF(wdl_arr);
@@ -1979,1112 +1837,10 @@ static void cboard_encode_146_into(const CBoard *b, float *out) {
     memset(out + 112 * 64, 0, 34 * 64 * sizeof(float));
 
     cboard_fill_lc0_112(b, out);
-    int us = b->turn, them = 1 - us;
-    uint64_t us_pieces[6], them_pieces[6];
-    for (int i = 0; i < 6; i++) {
-        us_pieces[i] = b->bb[i] & b->occ[us];
-        them_pieces[i] = b->bb[i] & b->occ[them];
-    }
-    uint64_t us_king = b->bb[KING] & b->occ[us];
-    uint64_t them_king = b->bb[KING] & b->occ[them];
-    int king_sq_us = us_king ? lsb64(us_king) : -1;
-    int king_sq_them = them_king ? lsb64(them_king) : -1;
-    uint64_t occupied = b->occ[0] | b->occ[1];
-    int turn_white = (b->turn == WHITE_C) ? 1 : 0;
-    compute_features_34(us_pieces, them_pieces, occupied,
-                        king_sq_us, king_sq_them, turn_white,
-                        (int)b->ep_square, out + 112 * 64);
+    cboard_compute_features_34(b, out + 112 * 64);
 }
 
 
-/*
- * prepare_gumbel_leaves(root_cboards, board_indices, root_ids, forced_actions,
- *                       c_scale, c_visit, c_puct, fpu_reduction, full_tree,
- *                       enc_buf, root_qs)
- *
- * Fused C implementation of the _prepare_rep hot loop:
- * 1. gumbel_collect_leaves (tree traversal)
- * 2. CBoard replay from root via action paths
- * 3. Terminal detection + immediate backprop
- * 4. Encode non-terminal positions into enc_buf
- * 5. Generate legal moves for non-terminals
- *
- * Returns: (n_leaves, need_eval_int32, legal_list, leaf_ids_int32,
- *           node_paths_list, leaf_cboard_list)
- *   or None if no queries need GPU eval.
- */
-static PyObject *MCTSTree_prepare_gumbel_leaves(MCTSTreeObject *self, PyObject *args) {
-    PyObject *root_cbs_list, *enc_buf_obj, *root_qs_obj;
-    PyObject *board_idx_obj, *root_ids_obj, *forced_obj;
-    double c_scale, c_visit, c_puct, fpu_reduction;
-    int full_tree;
-    PyObject *nn_cache_obj = NULL;
-
-    if (!PyArg_ParseTuple(args, "OOOOddddpOO|O",
-                          &root_cbs_list, &board_idx_obj, &root_ids_obj, &forced_obj,
-                          &c_scale, &c_visit, &c_puct, &fpu_reduction, &full_tree,
-                          &enc_buf_obj, &root_qs_obj, &nn_cache_obj))
-        return NULL;
-
-    /* Parse numpy arrays */
-    PyArrayObject *board_idx_arr = (PyArrayObject *)PyArray_FROMANY(
-        board_idx_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
-    PyArrayObject *root_ids_arr = (PyArrayObject *)PyArray_FROMANY(
-        root_ids_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
-    PyArrayObject *forced_arr = (PyArrayObject *)PyArray_FROMANY(
-        forced_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
-    PyArrayObject *enc_arr = (PyArrayObject *)PyArray_FROMANY(
-        enc_buf_obj, NPY_FLOAT32, 4, 4, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE);
-    PyArrayObject *root_qs_arr = (PyArrayObject *)PyArray_FROMANY(
-        root_qs_obj, NPY_FLOAT64, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
-
-    if (!board_idx_arr || !root_ids_arr || !forced_arr || !enc_arr || !root_qs_arr) {
-        Py_XDECREF(board_idx_arr); Py_XDECREF(root_ids_arr);
-        Py_XDECREF(forced_arr); Py_XDECREF(enc_arr); Py_XDECREF(root_qs_arr);
-        return NULL;
-    }
-
-    int32_t n_queries = (int32_t)PyArray_SIZE(root_ids_arr);
-
-    /* Validate input lengths match */
-    if ((int32_t)PyArray_SIZE(board_idx_arr) != n_queries ||
-        (int32_t)PyArray_SIZE(forced_arr) != n_queries) {
-        PyErr_SetString(PyExc_ValueError,
-            "board_indices, root_ids, and forced_actions must have equal length");
-        Py_DECREF(board_idx_arr); Py_DECREF(root_ids_arr);
-        Py_DECREF(forced_arr); Py_DECREF(enc_arr); Py_DECREF(root_qs_arr);
-        return NULL;
-    }
-
-    Py_ssize_t n_roots = PyList_Size(root_cbs_list);
-    Py_ssize_t n_root_qs = PyArray_SIZE(root_qs_arr);
-    int32_t enc_capacity = (int32_t)PyArray_DIM(enc_arr, 0);
-
-    const int32_t *board_indices = (const int32_t *)PyArray_DATA(board_idx_arr);
-    const int32_t *root_ids = (const int32_t *)PyArray_DATA(root_ids_arr);
-    const int32_t *forced_actions = (const int32_t *)PyArray_DATA(forced_arr);
-    float *enc_data = (float *)PyArray_DATA(enc_arr);
-    const double *root_qs = (const double *)PyArray_DATA(root_qs_arr);
-
-    /* Validate enc_buf shape: (N, 146, 8, 8) */
-    if (PyArray_DIM(enc_arr, 1) != 146 || PyArray_DIM(enc_arr, 2) != 8 || PyArray_DIM(enc_arr, 3) != 8) {
-        PyErr_SetString(PyExc_ValueError, "enc_buf must have shape (N, 146, 8, 8)");
-        Py_DECREF(board_idx_arr); Py_DECREF(root_ids_arr);
-        Py_DECREF(forced_arr); Py_DECREF(enc_arr); Py_DECREF(root_qs_arr);
-        return NULL;
-    }
-
-    /* Validate root_cbs_list contains CBoard objects.
-     * Check every element that board_indices references (not just the first). */
-    {
-        PyTypeObject *cboard_type = NULL;
-        for (int32_t qi = 0; qi < n_queries; qi++) {
-            int32_t bi = board_indices[qi];
-            PyObject *item = PyList_GET_ITEM(root_cbs_list, bi);
-            const char *tp_name = Py_TYPE(item)->tp_name;
-            if (!tp_name || !strstr(tp_name, "CBoard")) {
-                PyErr_Format(PyExc_TypeError,
-                    "root_cbs_list[%d] is not a CBoard (got %s)", bi,
-                    tp_name ? tp_name : "NULL");
-                Py_DECREF(board_idx_arr); Py_DECREF(root_ids_arr);
-                Py_DECREF(forced_arr); Py_DECREF(enc_arr); Py_DECREF(root_qs_arr);
-                return NULL;
-            }
-            if (!cboard_type) cboard_type = Py_TYPE(item);
-        }
-    }
-
-    /* Bounds-check board_indices against root_cbs_list and root_qs */
-    for (int32_t qi = 0; qi < n_queries; qi++) {
-        if (board_indices[qi] < 0 || board_indices[qi] >= (int32_t)n_roots ||
-            board_indices[qi] >= (int32_t)n_root_qs) {
-            PyErr_Format(PyExc_IndexError,
-                "board_indices[%d]=%d out of range [0, %zd)",
-                qi, board_indices[qi], n_roots);
-            Py_DECREF(board_idx_arr); Py_DECREF(root_ids_arr);
-            Py_DECREF(forced_arr); Py_DECREF(enc_arr); Py_DECREF(root_qs_arr);
-            return NULL;
-        }
-    }
-
-    /* Step 1: tree traversal (reuse existing C function) */
-    int32_t path_buf[512];
-
-    /* Collect all leaves, build CBoards, encode */
-    int32_t n_leaves = 0;
-    int32_t *need_eval = (int32_t *)malloc(n_queries * sizeof(int32_t));
-    CBoard *leaf_boards = (CBoard *)malloc(n_queries * sizeof(CBoard));
-    int32_t *leaf_ids_data = (int32_t *)malloc(n_queries * sizeof(int32_t));
-
-    /* Per-query storage for node paths (for backprop) */
-    int32_t **all_node_paths = (int32_t **)malloc(n_queries * sizeof(int32_t *));
-    int32_t *all_path_lens = (int32_t *)malloc(n_queries * sizeof(int32_t));
-
-    if (!need_eval || !leaf_boards || !leaf_ids_data || !all_node_paths || !all_path_lens) {
-        free(need_eval); free(leaf_boards); free(leaf_ids_data);
-        free(all_node_paths); free(all_path_lens);
-        Py_DECREF(board_idx_arr); Py_DECREF(root_ids_arr);
-        Py_DECREF(forced_arr); Py_DECREF(enc_arr); Py_DECREF(root_qs_arr);
-        return PyErr_NoMemory();
-    }
-
-    /* Validate root_ids are within tree bounds */
-    for (int32_t qi = 0; qi < n_queries; qi++) {
-        if (root_ids[qi] < 0 || root_ids[qi] >= self->tree.node_count) {
-            PyErr_Format(PyExc_IndexError,
-                "root_ids[%d]=%d out of range [0, %d)",
-                qi, root_ids[qi], self->tree.node_count);
-            Py_DECREF(board_idx_arr); Py_DECREF(root_ids_arr);
-            Py_DECREF(forced_arr); Py_DECREF(enc_arr); Py_DECREF(root_qs_arr);
-            return NULL;
-        }
-    }
-
-    /* Ensure CBoard cache covers existing nodes (not full capacity) */
-    tree_ensure_cb_cache(&self->tree, self->tree.node_count);
-
-    /* Pre-extract root CBoards into a C array so the main loop can run
-     * without the GIL.  We copy the CBoard structs (value types, ~2KB each)
-     * rather than holding Python object pointers. */
-    int32_t n_unique_roots = (int32_t)n_roots;
-    CBoard *root_cboards_c = (CBoard *)malloc(n_unique_roots * sizeof(CBoard));
-    if (!root_cboards_c) {
-        free(need_eval); free(leaf_boards); free(leaf_ids_data);
-        free(all_node_paths); free(all_path_lens);
-        Py_DECREF(board_idx_arr); Py_DECREF(root_ids_arr);
-        Py_DECREF(forced_arr); Py_DECREF(enc_arr); Py_DECREF(root_qs_arr);
-        return PyErr_NoMemory();
-    }
-    for (int32_t bi = 0; bi < n_unique_roots; bi++) {
-        PyCBoard *root_pycb = (PyCBoard *)PyList_GET_ITEM(root_cbs_list, bi);
-        root_cboards_c[bi] = root_pycb->board;
-    }
-
-    /* Seed cache with root CBoards (always overwrite to avoid stale entries) */
-    for (int32_t qi = 0; qi < n_queries; qi++) {
-        int32_t rid = root_ids[qi];
-        if (rid >= 0 && rid < self->tree.cb_cache_cap) {
-            int32_t bi = board_indices[qi];
-            self->tree.cb_cache[rid] = root_cboards_c[bi];
-            self->tree.cb_valid[rid] = 1;
-        }
-    }
-
-    /* Extract NNCache pointer (if provided) */
-    NNCacheData *nncache = NULL;
-    if (nn_cache_obj != NULL && nn_cache_obj != Py_None &&
-        Py_TYPE(nn_cache_obj) == &PyNNCacheType) {
-        nncache = &((PyNNCacheObject *)nn_cache_obj)->cache;
-    }
-
-    /* Terminal backprop lists */
-    int32_t n_terminals = 0;
-    int32_t **term_paths = (int32_t **)malloc(n_queries * sizeof(int32_t *));
-    int32_t *term_path_lens = (int32_t *)malloc(n_queries * sizeof(int32_t));
-    double *term_values = (double *)malloc(n_queries * sizeof(double));
-
-    /* Release GIL for the main computation loop.  All Python objects have
-     * been pre-extracted into C arrays above.  The loop only touches
-     * TreeData (per-instance), CBoard structs, and float/int arrays. */
-    Py_BEGIN_ALLOW_THREADS
-
-    for (int32_t qi = 0; qi < n_queries; qi++) {
-        /* Tree traversal for this query */
-        int32_t path_len = tree_gumbel_collect_leaf(
-            &self->tree, root_ids[qi], forced_actions[qi],
-            c_scale, c_visit, c_puct, fpu_reduction, full_tree,
-            path_buf, 512);
-
-        /* Save node path */
-        all_path_lens[qi] = path_len;
-        all_node_paths[qi] = (int32_t *)malloc(path_len * sizeof(int32_t));
-        memcpy(all_node_paths[qi], path_buf, path_len * sizeof(int32_t));
-
-        int32_t leaf_id = path_buf[path_len - 1];
-        leaf_ids_data[qi] = leaf_id;
-
-        /* Single-node path = root itself, use root Q */
-        if (path_len <= 1) {
-            term_paths[n_terminals] = all_node_paths[qi];
-            term_path_lens[n_terminals] = path_len;
-            term_values[n_terminals] = root_qs[board_indices[qi]];
-            n_terminals++;
-            continue;
-        }
-
-        /* Replay CBoard: chase parent pointers to find closest cached ancestor,
-         * then push moves from there to leaf. O(depth) hops, typically 1-3. */
-        CBoard cb;
-        TreeData *t = &self->tree;
-        int cache_ok = (t->cb_cache != NULL);
-        int32_t replay_actions[512];
-        int32_t n_replay = 0;
-        int32_t found_cached = 0;
-
-        if (cache_ok) {
-            /* Walk from leaf toward this query's root via parent pointers.
-             * Stop at root_ids[qi] to avoid crossing into another subtree. */
-            int32_t root_id = root_ids[qi];
-            int32_t nid = leaf_id;
-            while (nid >= 0 && nid != root_id && n_replay < 512) {
-                if (nid < t->cb_cache_cap && t->cb_valid[nid]) {
-                    cb = t->cb_cache[nid];
-                    found_cached = 1;
-                    break;
-                }
-                int32_t act = t->action_from_parent[nid];
-                if (act >= 0) replay_actions[n_replay++] = act;
-                nid = t->parent[nid];
-            }
-            /* Also check the root itself (seeded at start) */
-            if (!found_cached && nid == root_id &&
-                nid < t->cb_cache_cap && t->cb_valid[nid]) {
-                cb = t->cb_cache[nid];
-                found_cached = 1;
-            }
-        }
-        if (!found_cached) {
-            /* No cache hit — start from pre-extracted root CBoard (no GIL needed) */
-            int32_t bi = board_indices[qi];
-            cb = root_cboards_c[bi];
-        }
-        /* Push collected actions in reverse (root→leaf order) */
-        for (int32_t ri = n_replay - 1; ri >= 0; ri--)
-            cboard_push_index(&cb, replay_actions[ri]);
-
-        if (cboard_is_game_over(&cb)) {
-            term_paths[n_terminals] = all_node_paths[qi];
-            term_path_lens[n_terminals] = path_len;
-            term_values[n_terminals] = (double)cboard_terminal_value(&cb);
-            n_terminals++;
-        } else {
-            /* DAG transposition detection: check if this position was
-             * already expanded elsewhere in the tree. If so, copy its
-             * priors/children structure and backprop its Q, skip GPU eval. */
-            if (!t->expanded[leaf_id]) {
-                int32_t existing = tree_ht_probe(t, cb.hash);
-                if (existing >= 0 && existing != leaf_id && t->expanded[existing]) {
-                    /* Transposition hit — copy expansion from existing node */
-                    int32_t n_ch = t->num_children[existing];
-                    if (n_ch > 0) {
-                        int32_t ex_off = t->children_offset[existing];
-                        /* Rebuild priors + legal arrays from existing children */
-                        int32_t legal_buf[256];
-                        double prior_buf[256];
-                        int32_t n_copy = (n_ch <= 256) ? n_ch : 256;
-                        for (int32_t c = 0; c < n_copy; c++) {
-                            int32_t child_nid = t->child_node[ex_off + c];
-                            legal_buf[c] = t->child_action[ex_off + c];
-                            prior_buf[c] = t->prior[child_nid];
-                        }
-                        tree_expand(t, leaf_id, legal_buf, prior_buf, n_copy);
-                    } else {
-                        t->expanded[leaf_id] = 1;
-                    }
-                    /* Backprop existing Q */
-                    double q = (t->N[existing] > 0)
-                        ? (t->W[existing] / (double)t->N[existing]) : 0.0;
-                    tree_backprop(t, all_node_paths[qi], path_len, q);
-                    /* Register this node in hash table too + CBoard cache */
-                    tree_ht_insert(t, cb.hash, leaf_id);
-                    if (cache_ok) {
-                        if (leaf_id >= t->cb_cache_cap)
-                            tree_ensure_cb_cache(t, leaf_id + 1);
-                        if (leaf_id < t->cb_cache_cap) {
-                            t->cb_cache[leaf_id] = cb;
-                            t->cb_valid[leaf_id] = 1;
-                        }
-                    }
-                    continue;
-                }
-                /* Also check NNCache as fallback */
-                if (nncache) {
-                    NNCacheEntry *ce = nncache_probe(nncache, cb.hash);
-                    if (ce) {
-
-                        tree_expand(t, leaf_id, ce->legal, ce->priors, ce->n_legal);
-                        tree_backprop(t, all_node_paths[qi], path_len, ce->q_value);
-                        tree_ht_insert(t, cb.hash, leaf_id);
-                        if (cache_ok) {
-                            if (leaf_id >= t->cb_cache_cap)
-                                tree_ensure_cb_cache(t, leaf_id + 1);
-                            if (leaf_id < t->cb_cache_cap) {
-                                t->cb_cache[leaf_id] = cb;
-                                t->cb_valid[leaf_id] = 1;
-                            }
-                        }
-                        continue;
-                    }
-                }
-            }
-            /* Encode into pre-allocated buffer (bounds-checked) */
-            if (n_leaves >= enc_capacity) {
-                /* Buffer full — use root Q as fallback (not 0.0 which biases toward draws) */
-                term_paths[n_terminals] = all_node_paths[qi];
-                term_path_lens[n_terminals] = path_len;
-                term_values[n_terminals] = root_qs[board_indices[qi]];
-                n_terminals++;
-                continue;
-            }
-            cboard_encode_146_into(&cb, enc_data + n_leaves * 146 * 64);
-            leaf_boards[n_leaves] = cb;
-            need_eval[n_leaves] = qi;
-            /* Cache this leaf's CBoard for future reps */
-            if (cache_ok) {
-                if (leaf_id >= t->cb_cache_cap)
-                    tree_ensure_cb_cache(t, leaf_id + 1);
-                if (leaf_id < t->cb_cache_cap) {
-                    t->cb_cache[leaf_id] = cb;
-                    t->cb_valid[leaf_id] = 1;
-                }
-            }
-            n_leaves++;
-        }
-    }
-
-    Py_END_ALLOW_THREADS
-
-    if (n_leaves == 0) {
-        /* Backprop terminals and return None */
-        for (int32_t ti = 0; ti < n_terminals; ti++)
-            tree_backprop(&self->tree, term_paths[ti], term_path_lens[ti], term_values[ti]);
-        free(term_paths); free(term_path_lens); free(term_values);
-        for (int32_t qi = 0; qi < n_queries; qi++) free(all_node_paths[qi]);
-        free(all_node_paths); free(all_path_lens);
-        free(need_eval); free(leaf_boards); free(leaf_ids_data);
-        free(root_cboards_c);
-        Py_DECREF(board_idx_arr); Py_DECREF(root_ids_arr);
-        Py_DECREF(forced_arr); Py_DECREF(enc_arr); Py_DECREF(root_qs_arr);
-        Py_RETURN_NONE;
-    }
-
-    /* Build Python return values BEFORE committing tree mutations,
-     * so allocation failures leave the tree untouched. */
-
-    /* need_eval array */
-    npy_intp ne_dims[1] = {n_leaves};
-    PyObject *ne_arr = PyArray_SimpleNew(1, ne_dims, NPY_INT32);
-    memcpy(PyArray_DATA((PyArrayObject *)ne_arr), need_eval, n_leaves * sizeof(int32_t));
-
-    /* leaf_ids array */
-    PyObject *lid_arr = PyArray_SimpleNew(1, ne_dims, NPY_INT32);
-    {
-        int32_t *lid_data = (int32_t *)PyArray_DATA((PyArrayObject *)lid_arr);
-        for (int32_t li = 0; li < n_leaves; li++)
-            lid_data[li] = leaf_ids_data[need_eval[li]];
-    }
-
-    /* legal moves list */
-    PyObject *legal_list = PyList_New(n_leaves);
-    for (int32_t li = 0; li < n_leaves; li++) {
-        BoardState bs;
-        cboard_to_boardstate(&leaf_boards[li], &bs);
-        int indices[256];
-        int count = 0;
-        if (bs.king_sq >= 0) {
-            count = generate_legal_move_indices(&bs, indices);
-            sort_int(indices, count);
-        }
-        npy_intp dims[1] = {count};
-        PyObject *larr = PyArray_SimpleNew(1, dims, NPY_INT32);
-        if (count > 0)
-            memcpy(PyArray_DATA((PyArrayObject *)larr), indices, count * sizeof(int));
-        PyList_SET_ITEM(legal_list, li, larr);
-    }
-
-    /* node_paths list (only for need_eval queries) */
-    PyObject *paths_list = PyList_New(n_leaves);
-    for (int32_t li = 0; li < n_leaves; li++) {
-        int32_t qi = need_eval[li];
-        npy_intp pdims[1] = {all_path_lens[qi]};
-        PyObject *parr = PyArray_SimpleNew(1, pdims, NPY_INT32);
-        memcpy(PyArray_DATA((PyArrayObject *)parr), all_node_paths[qi],
-               all_path_lens[qi] * sizeof(int32_t));
-        PyList_SET_ITEM(paths_list, li, parr);
-    }
-
-    /* leaf CBoard list (as PyCBoard objects) + hash array */
-    PyObject *cboard_type = (PyObject *)Py_TYPE(PyList_GET_ITEM(root_cbs_list, 0));
-    PyObject *cb_list = PyList_New(n_leaves);
-    npy_intp hash_dims[1] = {n_leaves};
-    PyObject *hash_arr = PyArray_SimpleNew(1, hash_dims, NPY_UINT64);
-    uint64_t *hash_data = (uint64_t *)PyArray_DATA((PyArrayObject *)hash_arr);
-    for (int32_t li = 0; li < n_leaves; li++) {
-        PyCBoard *pycb = PyObject_New(PyCBoard, (PyTypeObject *)cboard_type);
-        if (pycb) pycb->board = leaf_boards[li];
-        PyList_SET_ITEM(cb_list, li, (PyObject *)pycb);
-        hash_data[li] = leaf_boards[li].hash;
-    }
-
-    /* All Python objects built successfully — now commit tree mutations. */
-    for (int32_t ti = 0; ti < n_terminals; ti++)
-        tree_backprop(&self->tree, term_paths[ti], term_path_lens[ti], term_values[ti]);
-
-    /* Cleanup */
-    free(term_paths); free(term_path_lens); free(term_values);
-    for (int32_t qi = 0; qi < n_queries; qi++) free(all_node_paths[qi]);
-    free(all_node_paths); free(all_path_lens);
-    free(need_eval); free(leaf_boards); free(leaf_ids_data);
-    free(root_cboards_c);
-    Py_DECREF(board_idx_arr); Py_DECREF(root_ids_arr);
-    Py_DECREF(forced_arr); Py_DECREF(enc_arr); Py_DECREF(root_qs_arr);
-
-    /* Return (n_leaves, need_eval, legal_list, leaf_ids, node_paths, leaf_cboards, leaf_hashes) */
-    PyObject *result = Py_BuildValue("(iNNNNNN)",
-        (int)n_leaves, ne_arr, legal_list, lid_arr, paths_list, cb_list, hash_arr);
-    return result;
-}
-
-
-/*
- * prepare_and_store(root_cbs, board_idx, root_ids, forced, c_scale, c_visit,
- *                   c_puct, fpu_reduction, full_tree, enc_buf, root_qs[, nn_cache])
- *
- * Like prepare_gumbel_leaves but stores intermediate data (legal moves, node
- * paths, hashes) in the tree object's StoredPrepState instead of building
- * Python objects.  Returns just n_leaves (int).  Call finish_stored() after
- * GPU eval to complete the expand+backprop step.
- */
-static PyObject *MCTSTree_clear_stored(MCTSTreeObject *self, PyObject *Py_UNUSED(args)) {
-    StoredPrepState *s = &self->stored;
-    s->n_leaves = 0;
-    s->n_terminals = 0;
-    s->legal_flat_used = 0;
-    s->path_flat_used = 0;
-    s->term_path_flat_used = 0;
-    Py_RETURN_NONE;
-}
-
-static PyObject *MCTSTree_prepare_and_store(MCTSTreeObject *self, PyObject *args) {
-    PyObject *root_cbs_list, *enc_buf_obj, *root_qs_obj;
-    PyObject *board_idx_obj, *root_ids_obj, *forced_obj;
-    double c_scale, c_visit, c_puct, fpu_reduction;
-    int full_tree;
-    PyObject *nn_cache_obj = NULL;
-
-    if (!PyArg_ParseTuple(args, "OOOOddddpOO|O",
-                          &root_cbs_list, &board_idx_obj, &root_ids_obj, &forced_obj,
-                          &c_scale, &c_visit, &c_puct, &fpu_reduction, &full_tree,
-                          &enc_buf_obj, &root_qs_obj, &nn_cache_obj))
-        return NULL;
-
-    /* Parse numpy arrays */
-    PyArrayObject *board_idx_arr = (PyArrayObject *)PyArray_FROMANY(
-        board_idx_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
-    PyArrayObject *root_ids_arr = (PyArrayObject *)PyArray_FROMANY(
-        root_ids_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
-    PyArrayObject *forced_arr = (PyArrayObject *)PyArray_FROMANY(
-        forced_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
-    PyArrayObject *enc_arr = (PyArrayObject *)PyArray_FROMANY(
-        enc_buf_obj, NPY_FLOAT32, 4, 4, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE);
-    PyArrayObject *root_qs_arr = (PyArrayObject *)PyArray_FROMANY(
-        root_qs_obj, NPY_FLOAT64, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
-
-    if (!board_idx_arr || !root_ids_arr || !forced_arr || !enc_arr || !root_qs_arr) {
-        Py_XDECREF(board_idx_arr); Py_XDECREF(root_ids_arr);
-        Py_XDECREF(forced_arr); Py_XDECREF(enc_arr); Py_XDECREF(root_qs_arr);
-        return NULL;
-    }
-
-    int32_t n_queries = (int32_t)PyArray_SIZE(root_ids_arr);
-    if ((int32_t)PyArray_SIZE(board_idx_arr) != n_queries ||
-        (int32_t)PyArray_SIZE(forced_arr) != n_queries) {
-        PyErr_SetString(PyExc_ValueError,
-            "board_indices, root_ids, and forced_actions must have equal length");
-        goto fail_parse;
-    }
-
-    Py_ssize_t n_roots = PyList_Size(root_cbs_list);
-    int32_t enc_capacity = (int32_t)PyArray_DIM(enc_arr, 0);
-    if (PyArray_DIM(enc_arr, 1) != 146 || PyArray_DIM(enc_arr, 2) != 8 || PyArray_DIM(enc_arr, 3) != 8) {
-        PyErr_SetString(PyExc_ValueError, "enc_buf must have shape (N, 146, 8, 8)");
-        goto fail_parse;
-    }
-
-    const int32_t *board_indices = (const int32_t *)PyArray_DATA(board_idx_arr);
-    const int32_t *root_ids = (const int32_t *)PyArray_DATA(root_ids_arr);
-    const int32_t *forced_actions = (const int32_t *)PyArray_DATA(forced_arr);
-    float *enc_data = (float *)PyArray_DATA(enc_arr);
-    const double *root_qs = (const double *)PyArray_DATA(root_qs_arr);
-
-    /* Bounds checks */
-    for (int32_t qi = 0; qi < n_queries; qi++) {
-        if (board_indices[qi] < 0 || board_indices[qi] >= (int32_t)n_roots) {
-            PyErr_Format(PyExc_IndexError, "board_indices[%d]=%d out of range", qi, board_indices[qi]);
-            goto fail_parse;
-        }
-        if (root_ids[qi] < 0 || root_ids[qi] >= self->tree.node_count) {
-            PyErr_Format(PyExc_IndexError, "root_ids[%d]=%d out of range", qi, root_ids[qi]);
-            goto fail_parse;
-        }
-    }
-
-    /* Pre-extract root CBoards */
-    CBoard *root_cboards_c = (CBoard *)malloc(n_roots * sizeof(CBoard));
-    if (!root_cboards_c) { PyErr_NoMemory(); goto fail_parse; }
-    for (int32_t bi = 0; bi < (int32_t)n_roots; bi++) {
-        PyCBoard *root_pycb = (PyCBoard *)PyList_GET_ITEM(root_cbs_list, bi);
-        root_cboards_c[bi] = root_pycb->board;
-    }
-
-    /* Seed CBoard cache with roots */
-    tree_ensure_cb_cache(&self->tree, self->tree.node_count);
-    for (int32_t qi = 0; qi < n_queries; qi++) {
-        int32_t rid = root_ids[qi];
-        if (rid >= 0 && rid < self->tree.cb_cache_cap) {
-            self->tree.cb_cache[rid] = root_cboards_c[board_indices[qi]];
-            self->tree.cb_valid[rid] = 1;
-        }
-    }
-
-    /* Extract NNCache */
-    NNCacheData *nncache = NULL;
-    if (nn_cache_obj != NULL && nn_cache_obj != Py_None &&
-        Py_TYPE(nn_cache_obj) == &PyNNCacheType)
-        nncache = &((PyNNCacheObject *)nn_cache_obj)->cache;
-
-    /* Ensure stored state has capacity */
-    StoredPrepState *s = &self->stored;
-    if (stored_ensure_cap(s, n_queries, n_queries) < 0) {
-        free(root_cboards_c); PyErr_NoMemory(); goto fail_parse;
-    }
-    /* Ensure flat buffers have reasonable initial capacity */
-    if (stored_ensure_legal_flat(s, n_queries * 40) < 0 ||
-        stored_ensure_path_flat(s, n_queries * 8) < 0 ||
-        stored_ensure_term_path_flat(s, n_queries * 8) < 0) {
-        free(root_cboards_c); PyErr_NoMemory(); goto fail_parse;
-    }
-
-    /* NOTE: we do NOT reset s->n_leaves etc here — this function appends
-     * to the stored state.  Call clear_stored() before starting a new batch. */
-
-    int32_t path_buf[512];
-    int32_t old_n_leaves = s->n_leaves;
-
-    /* Release GIL */
-    Py_BEGIN_ALLOW_THREADS
-
-    TreeData *t = &self->tree;
-    int cache_ok = (t->cb_cache != NULL);
-
-    for (int32_t qi = 0; qi < n_queries; qi++) {
-        int32_t path_len = tree_gumbel_collect_leaf(
-            t, root_ids[qi], forced_actions[qi],
-            c_scale, c_visit, c_puct, fpu_reduction, full_tree,
-            path_buf, 512);
-
-        int32_t leaf_id = path_buf[path_len - 1];
-
-        if (path_len <= 1) {
-            /* Terminal: root with no children */
-            int32_t ti = s->n_terminals;
-            stored_ensure_term_path_flat(s, s->term_path_flat_used + path_len);
-            s->term_path_offset[ti] = s->term_path_flat_used;
-            s->term_path_count[ti] = path_len;
-            memcpy(s->term_path_flat + s->term_path_flat_used, path_buf, path_len * sizeof(int32_t));
-            s->term_path_flat_used += path_len;
-            s->term_values[ti] = root_qs[board_indices[qi]];
-            s->n_terminals++;
-            continue;
-        }
-
-        /* CBoard replay */
-        CBoard cb;
-        int32_t replay_actions[512];
-        int32_t n_replay = 0;
-        int32_t found_cached = 0;
-
-        if (cache_ok) {
-            int32_t root_id = root_ids[qi];
-            int32_t nid = leaf_id;
-            while (nid >= 0 && nid != root_id && n_replay < 512) {
-                if (nid < t->cb_cache_cap && t->cb_valid[nid]) {
-                    cb = t->cb_cache[nid];
-                    found_cached = 1;
-                    break;
-                }
-                int32_t act = t->action_from_parent[nid];
-                if (act >= 0) replay_actions[n_replay++] = act;
-                nid = t->parent[nid];
-            }
-            if (!found_cached && nid == root_id &&
-                nid < t->cb_cache_cap && t->cb_valid[nid]) {
-                cb = t->cb_cache[nid];
-                found_cached = 1;
-            }
-        }
-        if (!found_cached) {
-            cb = root_cboards_c[board_indices[qi]];
-        }
-        for (int32_t ri = n_replay - 1; ri >= 0; ri--)
-            cboard_push_index(&cb, replay_actions[ri]);
-
-        if (cboard_is_game_over(&cb)) {
-            int32_t ti = s->n_terminals;
-            stored_ensure_term_path_flat(s, s->term_path_flat_used + path_len);
-            s->term_path_offset[ti] = s->term_path_flat_used;
-            s->term_path_count[ti] = path_len;
-            memcpy(s->term_path_flat + s->term_path_flat_used, path_buf, path_len * sizeof(int32_t));
-            s->term_path_flat_used += path_len;
-            s->term_values[ti] = (double)cboard_terminal_value(&cb);
-            s->n_terminals++;
-            continue;
-        }
-
-        /* Check transposition / NNCache */
-        if (!t->expanded[leaf_id]) {
-            int32_t existing = tree_ht_probe(t, cb.hash);
-            if (existing >= 0 && existing != leaf_id && t->expanded[existing]) {
-                int32_t n_ch = t->num_children[existing];
-                if (n_ch > 0) {
-                    int32_t ex_off = t->children_offset[existing];
-                    int32_t legal_buf[256];
-                    double prior_buf[256];
-                    int32_t n_copy = (n_ch <= 256) ? n_ch : 256;
-                    for (int32_t c = 0; c < n_copy; c++) {
-                        legal_buf[c] = t->child_action[ex_off + c];
-                        prior_buf[c] = t->prior[t->child_node[ex_off + c]];
-                    }
-                    tree_expand(t, leaf_id, legal_buf, prior_buf, n_copy);
-                } else {
-                    t->expanded[leaf_id] = 1;
-                }
-                double q = (t->N[existing] > 0) ? (t->W[existing] / (double)t->N[existing]) : 0.0;
-                tree_backprop(t, path_buf, path_len, q);
-                tree_ht_insert(t, cb.hash, leaf_id);
-                if (cache_ok) {
-                    if (leaf_id >= t->cb_cache_cap) tree_ensure_cb_cache(t, leaf_id + 1);
-                    if (leaf_id < t->cb_cache_cap) { t->cb_cache[leaf_id] = cb; t->cb_valid[leaf_id] = 1; }
-                }
-                continue;
-            }
-            if (nncache) {
-                NNCacheEntry *ce = nncache_probe(nncache, cb.hash);
-                if (ce) {
-                    tree_expand(t, leaf_id, ce->legal, ce->priors, ce->n_legal);
-                    tree_backprop(t, path_buf, path_len, ce->q_value);
-                    tree_ht_insert(t, cb.hash, leaf_id);
-                    if (cache_ok) {
-                        if (leaf_id >= t->cb_cache_cap) tree_ensure_cb_cache(t, leaf_id + 1);
-                        if (leaf_id < t->cb_cache_cap) { t->cb_cache[leaf_id] = cb; t->cb_valid[leaf_id] = 1; }
-                    }
-                    continue;
-                }
-            }
-        }
-
-        if (s->n_leaves >= enc_capacity) {
-            /* Buffer full — use root Q as fallback (not 0.0 which biases toward draws) */
-            int32_t ti = s->n_terminals;
-            stored_ensure_term_path_flat(s, s->term_path_flat_used + path_len);
-            s->term_path_offset[ti] = s->term_path_flat_used;
-            s->term_path_count[ti] = path_len;
-            memcpy(s->term_path_flat + s->term_path_flat_used, path_buf, path_len * sizeof(int32_t));
-            s->term_path_flat_used += path_len;
-            s->term_values[ti] = root_qs[board_indices[qi]];
-            s->n_terminals++;
-            continue;
-        }
-
-        /* Phase 1: save CBoard + metadata (defer encoding to parallel phase) */
-        int32_t li = s->n_leaves;
-        s->leaf_cboards[li] = cb;
-        s->leaf_ids[li] = leaf_id;
-        s->hashes[li] = cb.hash;
-
-        /* Generate legal moves and store flat */
-        BoardState bs;
-        cboard_to_boardstate(&cb, &bs);
-        int indices[256];
-        int count = 0;
-        if (bs.king_sq >= 0)
-            count = generate_legal_move_indices(&bs, indices);
-        stored_ensure_legal_flat(s, s->legal_flat_used + count);
-        s->legal_offset[li] = s->legal_flat_used;
-        s->legal_count[li] = count;
-        for (int32_t j = 0; j < count; j++)
-            s->legal_flat[s->legal_flat_used + j] = indices[j];
-        s->legal_flat_used += count;
-
-        /* Store node path flat */
-        stored_ensure_path_flat(s, s->path_flat_used + path_len);
-        s->path_offset[li] = s->path_flat_used;
-        s->path_count[li] = path_len;
-        memcpy(s->path_flat + s->path_flat_used, path_buf, path_len * sizeof(int32_t));
-        s->path_flat_used += path_len;
-
-        /* Cache CBoard */
-        if (cache_ok) {
-            if (leaf_id >= t->cb_cache_cap) tree_ensure_cb_cache(t, leaf_id + 1);
-            if (leaf_id < t->cb_cache_cap) { t->cb_cache[leaf_id] = cb; t->cb_valid[leaf_id] = 1; }
-        }
-
-        s->n_leaves++;
-    }
-
-    /* Backprop terminals */
-    for (int32_t ti = 0; ti < s->n_terminals; ti++) {
-        tree_backprop(t, s->term_path_flat + s->term_path_offset[ti],
-                      s->term_path_count[ti], s->term_values[ti]);
-    }
-
-    /* Phase 2: parallel encoding of all collected CBoards.
-     * Each position writes to a disjoint region of enc_data, so no sync needed. */
-    {
-        int32_t n_to_encode = s->n_leaves - old_n_leaves;
-        int32_t base = old_n_leaves;
-#ifdef _OPENMP
-        #pragma omp parallel for schedule(static) if(n_to_encode > 64)
-#endif
-        for (int32_t i = 0; i < n_to_encode; i++) {
-            int32_t li = base + i;
-            cboard_encode_146_into(&s->leaf_cboards[li], enc_data + li * 146 * 64);
-        }
-    }
-
-    Py_END_ALLOW_THREADS
-
-    free(root_cboards_c);
-    Py_DECREF(board_idx_arr); Py_DECREF(root_ids_arr);
-    Py_DECREF(forced_arr); Py_DECREF(enc_arr); Py_DECREF(root_qs_arr);
-
-    if (s->n_leaves == 0)
-        Py_RETURN_NONE;
-
-    return PyLong_FromLong(s->n_leaves);
-
-fail_parse:
-    Py_XDECREF(board_idx_arr); Py_XDECREF(root_ids_arr);
-    Py_XDECREF(forced_arr); Py_XDECREF(enc_arr); Py_XDECREF(root_qs_arr);
-    return NULL;
-}
-
-
-/*
- * finish_stored(pol_logits_float32, wdl_logits_float32[, nn_cache])
- *
- * Uses stored state from prepare_and_store to do expand + backprop.
- * Much faster than finish_gumbel_rep because no Python list parsing needed.
- */
-static PyObject *MCTSTree_finish_stored(MCTSTreeObject *self, PyObject *args) {
-    PyObject *pol_obj, *wdl_obj;
-    PyObject *nn_cache_obj = NULL;
-
-    if (!PyArg_ParseTuple(args, "OO|O", &pol_obj, &wdl_obj, &nn_cache_obj))
-        return NULL;
-
-    PyArrayObject *pol_arr = (PyArrayObject *)PyArray_FROMANY(
-        pol_obj, NPY_FLOAT32, 2, 2, NPY_ARRAY_C_CONTIGUOUS);
-    PyArrayObject *wdl_arr = (PyArrayObject *)PyArray_FROMANY(
-        wdl_obj, NPY_FLOAT32, 2, 2, NPY_ARRAY_C_CONTIGUOUS);
-
-    if (!pol_arr || !wdl_arr) {
-        Py_XDECREF(pol_arr); Py_XDECREF(wdl_arr);
-        return NULL;
-    }
-
-    StoredPrepState *s = &self->stored;
-    int32_t n_leaves = s->n_leaves;
-
-    if (n_leaves == 0) {
-        Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
-        Py_RETURN_NONE;
-    }
-
-    if (PyArray_DIM(pol_arr, 0) < n_leaves || PyArray_DIM(pol_arr, 1) != 4672 ||
-        PyArray_DIM(wdl_arr, 0) < n_leaves || PyArray_DIM(wdl_arr, 1) != 3) {
-        PyErr_SetString(PyExc_ValueError, "pol/wdl shape mismatch with stored n_leaves");
-        Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
-        return NULL;
-    }
-
-    const float *pol_data = (const float *)PyArray_DATA(pol_arr);
-    const float *wdl_data = (const float *)PyArray_DATA(wdl_arr);
-
-    NNCacheData *nncache = NULL;
-    if (nn_cache_obj != NULL && nn_cache_obj != Py_None &&
-        Py_TYPE(nn_cache_obj) == &PyNNCacheType)
-        nncache = &((PyNNCacheObject *)nn_cache_obj)->cache;
-
-    TreeData *t = &self->tree;
-
-    /* Release GIL for expand + backprop */
-    Py_BEGIN_ALLOW_THREADS
-
-    for (int32_t li = 0; li < n_leaves; li++) {
-        int32_t nid = s->leaf_ids[li];
-        const int32_t *legal = s->legal_flat + s->legal_offset[li];
-        int32_t n_legal = s->legal_count[li];
-        const int32_t *path = s->path_flat + s->path_offset[li];
-        int32_t path_len = s->path_count[li];
-
-        /* Expand if not already expanded */
-        if (!t->expanded[nid] && n_legal > 0) {
-            const float *logits = pol_data + li * 4672;
-
-            /* Softmax over legal moves */
-            double priors_stack[256];
-            double *priors = (n_legal <= 256) ? priors_stack
-                                               : (double *)malloc(n_legal * sizeof(double));
-            if (priors) {
-                double max_l = -1e30;
-                for (int32_t j = 0; j < n_legal; j++) {
-                    double v = (double)logits[legal[j]];
-                    if (v > max_l) max_l = v;
-                }
-                double sum = 0;
-                for (int32_t j = 0; j < n_legal; j++) {
-                    priors[j] = exp((double)logits[legal[j]] - max_l);
-                    sum += priors[j];
-                }
-                if (sum > 0) {
-                    double inv_sum = 1.0 / sum;
-                    for (int32_t j = 0; j < n_legal; j++) priors[j] *= inv_sum;
-                }
-
-                tree_expand(t, nid, legal, priors, n_legal);
-
-                /* Populate NNCache */
-                if (nncache && n_legal <= NNCACHE_MAX_LEGAL) {
-                    NNCacheEntry *ce = nncache_insert(nncache, s->hashes[li]);
-                    if (ce) {
-                        ce->n_legal = n_legal;
-                        memcpy(ce->legal, legal, n_legal * sizeof(int32_t));
-                        memcpy(ce->priors, priors, n_legal * sizeof(double));
-                        /* Compute Q from WDL */
-                        const float *wdl = wdl_data + li * 3;
-                        double wm2 = fmax(fmax((double)wdl[0], (double)wdl[1]), (double)wdl[2]);
-                        double ew = exp((double)wdl[0] - wm2), ed = exp((double)wdl[1] - wm2), el = exp((double)wdl[2] - wm2);
-                        double ws = ew + ed + el;
-                        ce->q_value = (ws > 0) ? (ew - el) / ws : 0.0;
-                    }
-                }
-
-                if (priors != priors_stack) free(priors);
-            }
-        }
-
-        /* Compute Q from WDL and backprop */
-        const float *wdl = wdl_data + li * 3;
-        double wm2 = fmax(fmax((double)wdl[0], (double)wdl[1]), (double)wdl[2]);
-        double ew = exp((double)wdl[0] - wm2), ed = exp((double)wdl[1] - wm2), el = exp((double)wdl[2] - wm2);
-        double ws = ew + ed + el;
-        double q = (ws > 0) ? (ew - el) / ws : 0.0;
-        tree_backprop(t, path, path_len, q);
-
-        /* Register in hash table */
-        tree_ht_insert(t, s->hashes[li], nid);
-    }
-
-    Py_END_ALLOW_THREADS
-
-    Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
-    Py_RETURN_NONE;
-}
-
-
-/*
- * finish_gumbel_rep(leaf_ids_int32, legal_list, pol_logits_float32,
- *                   wdl_logits_float32, node_paths_list) -> None
- *
- * Fused expand + backprop after GPU eval:
- * 1. batch_wdl_to_q (WDL logits → Q values)
- * 2. expand_from_logits for each non-expanded leaf
- * 3. backprop_many with Q values along node paths
- */
-static PyObject *MCTSTree_finish_gumbel_rep(MCTSTreeObject *self, PyObject *args) {
-    PyObject *leaf_ids_obj, *legal_list, *pol_obj, *wdl_obj, *paths_list;
-    PyObject *nn_cache_obj = NULL, *hashes_obj = NULL;
-    if (!PyArg_ParseTuple(args, "OOOOO|OO",
-                          &leaf_ids_obj, &legal_list, &pol_obj, &wdl_obj, &paths_list,
-                          &nn_cache_obj, &hashes_obj))
-        return NULL;
-
-    PyArrayObject *leaf_ids_arr = (PyArrayObject *)PyArray_FROMANY(
-        leaf_ids_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
-    PyArrayObject *pol_arr = (PyArrayObject *)PyArray_FROMANY(
-        pol_obj, NPY_FLOAT32, 2, 2, NPY_ARRAY_C_CONTIGUOUS);
-    PyArrayObject *wdl_arr = (PyArrayObject *)PyArray_FROMANY(
-        wdl_obj, NPY_FLOAT32, 2, 2, NPY_ARRAY_C_CONTIGUOUS);
-
-    if (!leaf_ids_arr || !pol_arr || !wdl_arr) {
-        Py_XDECREF(leaf_ids_arr); Py_XDECREF(pol_arr); Py_XDECREF(wdl_arr);
-        return NULL;
-    }
-
-    int32_t n_leaves = (int32_t)PyArray_SIZE(leaf_ids_arr);
-    const int32_t *leaf_ids = (const int32_t *)PyArray_DATA(leaf_ids_arr);
-    const float *pol_data = (const float *)PyArray_DATA(pol_arr);
-    const float *wdl_data = (const float *)PyArray_DATA(wdl_arr);
-
-    TreeData *t = &self->tree;
-
-    /* Validate shapes and bounds */
-    if (PyList_Size(legal_list) < n_leaves || PyList_Size(paths_list) < n_leaves) {
-        PyErr_SetString(PyExc_ValueError,
-            "legal_list and paths_list must have at least n_leaves entries");
-        Py_DECREF(leaf_ids_arr); Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
-        return NULL;
-    }
-    if (PyArray_DIM(pol_arr, 0) < n_leaves || PyArray_DIM(pol_arr, 1) != 4672 ||
-        PyArray_DIM(wdl_arr, 0) < n_leaves) {
-        PyErr_SetString(PyExc_ValueError,
-            "pol_logits must be (n_leaves, 4672), wdl_logits (n_leaves, 3)");
-        Py_DECREF(leaf_ids_arr); Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
-        return NULL;
-    }
-    if (PyArray_DIM(wdl_arr, 1) != 3) {
-        PyErr_SetString(PyExc_ValueError, "wdl_logits must have 3 columns");
-        Py_DECREF(leaf_ids_arr); Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
-        return NULL;
-    }
-    for (int32_t li = 0; li < n_leaves; li++) {
-        if (leaf_ids[li] < 0 || leaf_ids[li] >= t->node_count) {
-            PyErr_Format(PyExc_IndexError,
-                "leaf_ids[%d]=%d out of range [0, %d)", li, leaf_ids[li], t->node_count);
-            Py_DECREF(leaf_ids_arr); Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
-            return NULL;
-        }
-    }
-
-    /* Pre-extract legal arrays and node paths from Python lists into C arrays
-     * so the inner loop can run without the GIL. */
-    const int32_t **pre_legal = (const int32_t **)malloc(n_leaves * sizeof(int32_t *));
-    int32_t *pre_legal_n = (int32_t *)malloc(n_leaves * sizeof(int32_t));
-    const int32_t **pre_paths = (const int32_t **)malloc(n_leaves * sizeof(int32_t *));
-    int32_t *pre_path_lens = (int32_t *)malloc(n_leaves * sizeof(int32_t));
-    PyArrayObject **legal_refs = (PyArrayObject **)calloc(n_leaves, sizeof(PyArrayObject *));
-    PyArrayObject **path_refs = (PyArrayObject **)calloc(n_leaves, sizeof(PyArrayObject *));
-
-    if (!pre_legal || !pre_legal_n || !pre_paths || !pre_path_lens || !legal_refs || !path_refs) {
-        free(pre_legal); free(pre_legal_n); free(pre_paths);
-        free(pre_path_lens); free(legal_refs); free(path_refs);
-        Py_DECREF(leaf_ids_arr); Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
-        return PyErr_NoMemory();
-    }
-
-    for (int32_t li = 0; li < n_leaves; li++) {
-        /* Legal moves */
-        PyObject *legal_arr_obj = PyList_GET_ITEM(legal_list, li);
-        PyArrayObject *la = (PyArrayObject *)PyArray_FROMANY(
-            legal_arr_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
-        if (la) {
-            legal_refs[li] = la;
-            pre_legal[li] = (const int32_t *)PyArray_DATA(la);
-            pre_legal_n[li] = (int32_t)PyArray_SIZE(la);
-        } else {
-            PyErr_Clear();
-            pre_legal[li] = NULL;
-            pre_legal_n[li] = 0;
-        }
-        /* Node paths */
-        PyObject *path_obj = PyList_GET_ITEM(paths_list, li);
-        PyArrayObject *pa = (PyArrayObject *)PyArray_FROMANY(
-            path_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
-        if (pa) {
-            path_refs[li] = pa;
-            pre_paths[li] = (const int32_t *)PyArray_DATA(pa);
-            pre_path_lens[li] = (int32_t)PyArray_SIZE(pa);
-        } else {
-            PyErr_Clear();
-            pre_paths[li] = NULL;
-            pre_path_lens[li] = 0;
-        }
-    }
-
-    /* Extract NN cache and hashes for population */
-    NNCacheData *nncache = NULL;
-    const uint64_t *leaf_hashes = NULL;
-    PyArrayObject *hashes_arr = NULL;
-    if (nn_cache_obj != NULL && nn_cache_obj != Py_None &&
-        Py_TYPE(nn_cache_obj) == &PyNNCacheType) {
-        nncache = &((PyNNCacheObject *)nn_cache_obj)->cache;
-    }
-    if (hashes_obj != NULL && hashes_obj != Py_None) {
-        hashes_arr = (PyArrayObject *)PyArray_FROMANY(
-            hashes_obj, NPY_UINT64, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
-        if (hashes_arr)
-            leaf_hashes = (const uint64_t *)PyArray_DATA(hashes_arr);
-    }
-
-    /* Release GIL for the pure-C expand + backprop loop. */
-    Py_BEGIN_ALLOW_THREADS
-
-    for (int32_t li = 0; li < n_leaves; li++) {
-        int32_t nid = leaf_ids[li];
-
-        /* Expand if not already expanded */
-        double priors_stack[256];
-        double *priors = NULL;
-        int32_t n_legal_expanded = 0;
-        const int32_t *legal_expanded = NULL;
-
-        if (!t->expanded[nid] && pre_legal[li] && pre_legal_n[li] > 0) {
-            const int32_t *legal = pre_legal[li];
-            int32_t n_legal = pre_legal_n[li];
-            const float *logits = pol_data + li * 4672;
-
-            /* Softmax over legal moves */
-            priors = (n_legal <= 256) ? priors_stack
-                                      : (double *)malloc(n_legal * sizeof(double));
-            if (priors) {
-                for (int32_t j = 0; j < n_legal; j++)
-                    priors[j] = (double)logits[legal[j]];
-                softmax_inplace(priors, n_legal);
-                tree_expand(t, nid, legal, priors, n_legal);
-                legal_expanded = legal;
-                n_legal_expanded = n_legal;
-            }
-        }
-
-        /* Compute Q from WDL logits */
-        double w = (double)wdl_data[li * 3 + 0];
-        double d = (double)wdl_data[li * 3 + 1];
-        double l = (double)wdl_data[li * 3 + 2];
-        double mx = w; if (d > mx) mx = d; if (l > mx) mx = l;
-        double ew = exp(w - mx), ed = exp(d - mx), el = exp(l - mx);
-        double s = ew + ed + el;
-        double q_val = (s > 0.0) ? ((ew - el) / s) : 0.0;
-
-        /* Register in hash table for DAG transposition detection */
-        if (leaf_hashes) {
-            tree_ht_insert(t, leaf_hashes[li], nid);
-        }
-
-        /* Populate NN cache */
-        if (nncache && leaf_hashes && legal_expanded && n_legal_expanded > 0
-            && n_legal_expanded <= NNCACHE_MAX_LEGAL) {
-            NNCacheEntry *ce = nncache_insert(nncache, leaf_hashes[li]);
-            if (ce) {
-                memcpy(ce->legal, legal_expanded, n_legal_expanded * sizeof(int32_t));
-                memcpy(ce->priors, priors, n_legal_expanded * sizeof(double));
-                ce->n_legal = n_legal_expanded;
-                ce->q_value = q_val;
-            }
-        }
-
-        if (priors && priors != priors_stack) free(priors);
-
-        /* Backprop along node path */
-        if (pre_paths[li] && pre_path_lens[li] > 0) {
-            tree_backprop(t, pre_paths[li], pre_path_lens[li], q_val);
-        }
-    }
-
-    Py_END_ALLOW_THREADS
-
-    /* Cleanup pre-extracted arrays */
-    for (int32_t li = 0; li < n_leaves; li++) {
-        Py_XDECREF(legal_refs[li]);
-        Py_XDECREF(path_refs[li]);
-    }
-    free(pre_legal); free(pre_legal_n); free(pre_paths);
-    free(pre_path_lens); free(legal_refs); free(path_refs);
-
-    Py_DECREF(leaf_ids_arr); Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
-    Py_XDECREF(hashes_arr);
-    Py_RETURN_NONE;
-}
 
 
 /*
@@ -3114,14 +1870,10 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
     int32_t n_boards = (int32_t)PyList_Size(root_cbs_list);
 
     /* Parse numpy arrays */
-    PyArrayObject *root_ids_arr = (PyArrayObject *)PyArray_FROMANY(
-        root_ids_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
-    PyArrayObject *budget_arr = (PyArrayObject *)PyArray_FROMANY(
-        budget_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
-    PyArrayObject *root_qs_arr = (PyArrayObject *)PyArray_FROMANY(
-        root_qs_obj, NPY_FLOAT64, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
-    PyArrayObject *enc_arr = (PyArrayObject *)PyArray_FROMANY(
-        enc_buf_obj, NPY_FLOAT32, 4, 4, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE);
+    PyArrayObject *root_ids_arr = FROMANY_1D(root_ids_obj, NPY_INT32);
+    PyArrayObject *budget_arr = FROMANY_1D(budget_obj, NPY_INT32);
+    PyArrayObject *root_qs_arr = FROMANY_1D(root_qs_obj, NPY_FLOAT64);
+    PyArrayObject *enc_arr = FROMANY_4D_RW(enc_buf_obj, NPY_FLOAT32);
 
     if (!root_ids_arr || !budget_arr || !root_qs_arr || !enc_arr) {
         Py_XDECREF(root_ids_arr); Py_XDECREF(budget_arr);
@@ -3135,37 +1887,47 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
 
     /* Initialize */
     g->n_boards = n_boards;
-    g->c_scale = c_scale;
-    g->c_visit = c_visit;
-    g->c_puct = c_puct;
-    g->fpu_reduction = fpu_reduction;
-    g->full_tree = full_tree;
+    g->sel.c_scale = c_scale;
+    g->sel.c_visit = c_visit;
+    g->sel.c_puct = c_puct;
+    g->sel.fpu_reduction = fpu_reduction;
+    g->sel.full_tree = full_tree;
     g->allocated = 1;
 
-    /* Copy root_ids */
     g->root_ids = (int32_t *)malloc(n_boards * sizeof(int32_t));
-    memcpy(g->root_ids, PyArray_DATA(root_ids_arr), n_boards * sizeof(int32_t));
-
-    /* Copy budget_remaining */
     g->budget_remaining = (int32_t *)malloc(n_boards * sizeof(int32_t));
-    memcpy(g->budget_remaining, PyArray_DATA(budget_arr), n_boards * sizeof(int32_t));
-
-    /* Copy root_qs */
     g->root_qs = (double *)malloc(n_boards * sizeof(double));
-    memcpy(g->root_qs, PyArray_DATA(root_qs_arr), n_boards * sizeof(double));
-
-    /* Copy root CBoards */
     g->root_cboards = (CBoard *)malloc(n_boards * sizeof(CBoard));
+    g->root_priors = (double *)calloc((size_t)n_boards * GSS_POLICY_SIZE, sizeof(double));
+    g->gumbels = (double *)calloc((size_t)n_boards * GSS_POLICY_SIZE, sizeof(double));
+    g->cands_offset = (int32_t *)malloc(n_boards * sizeof(int32_t));
+    g->cands_count = (int32_t *)malloc(n_boards * sizeof(int32_t));
+    g->visits_per_action = (int32_t *)calloc(n_boards, sizeof(int32_t));
+    g->active = (int32_t *)malloc(n_boards * sizeof(int32_t));
+    g->q_board_idx = NULL;
+    g->q_root_ids = NULL;
+    g->q_forced = NULL;
+    g->q_cap = 0;
+
+    if (!g->root_ids || !g->budget_remaining || !g->root_qs || !g->root_cboards ||
+        !g->root_priors || !g->gumbels || !g->cands_offset || !g->cands_count ||
+        !g->visits_per_action || !g->active) {
+        gss_free(g);
+        Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
+        Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
+        return PyErr_NoMemory();
+    }
+
+    memcpy(g->root_ids, PyArray_DATA(root_ids_arr), n_boards * sizeof(int32_t));
+    memcpy(g->budget_remaining, PyArray_DATA(budget_arr), n_boards * sizeof(int32_t));
+    memcpy(g->root_qs, PyArray_DATA(root_qs_arr), n_boards * sizeof(double));
     for (int32_t i = 0; i < n_boards; i++) {
         PyCBoard *pycb = (PyCBoard *)PyList_GET_ITEM(root_cbs_list, i);
         g->root_cboards[i] = pycb->board;
     }
 
-    /* Copy root priors (n_boards * POLICY_SIZE) */
-    g->root_priors = (double *)calloc(n_boards * GSS_POLICY_SIZE, sizeof(double));
     for (int32_t i = 0; i < n_boards; i++) {
-        PyArrayObject *pri = (PyArrayObject *)PyArray_FROMANY(
-            PyList_GET_ITEM(priors_list, i), NPY_FLOAT64, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+        PyArrayObject *pri = FROMANY_1D(PyList_GET_ITEM(priors_list, i), NPY_FLOAT64);
         if (pri) {
             memcpy(g->root_priors + i * GSS_POLICY_SIZE, PyArray_DATA(pri),
                    GSS_POLICY_SIZE * sizeof(double));
@@ -3173,13 +1935,10 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
         }
     }
 
-    /* Copy gumbels (n_boards * POLICY_SIZE) */
-    g->gumbels = (double *)calloc(n_boards * GSS_POLICY_SIZE, sizeof(double));
     for (int32_t i = 0; i < n_boards; i++) {
         PyObject *item = PyList_GET_ITEM(gumbels_list, i);
         if (item != Py_None) {
-            PyArrayObject *garr = (PyArrayObject *)PyArray_FROMANY(
-                item, NPY_FLOAT64, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+            PyArrayObject *garr = FROMANY_1D(item, NPY_FLOAT64);
             if (garr) {
                 memcpy(g->gumbels + i * GSS_POLICY_SIZE, PyArray_DATA(garr),
                        GSS_POLICY_SIZE * sizeof(double));
@@ -3188,9 +1947,6 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
         }
     }
 
-    /* Parse remaining_per_board into flat array */
-    g->cands_offset = (int32_t *)malloc(n_boards * sizeof(int32_t));
-    g->cands_count = (int32_t *)malloc(n_boards * sizeof(int32_t));
     int32_t total_cands = 0;
     for (int32_t i = 0; i < n_boards; i++) {
         PyObject *item = PyList_GET_ITEM(remaining_list, i);
@@ -3206,6 +1962,12 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
     }
     g->cands_flat_cap = total_cands > 0 ? total_cands : 1;
     g->cands_flat = (int32_t *)malloc(g->cands_flat_cap * sizeof(int32_t));
+    if (!g->cands_flat) {
+        gss_free(g);
+        Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
+        Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
+        return PyErr_NoMemory();
+    }
     for (int32_t i = 0; i < n_boards; i++) {
         PyObject *item = PyList_GET_ITEM(remaining_list, i);
         if (item != Py_None) {
@@ -3215,14 +1977,6 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
             }
         }
     }
-
-    /* Allocate helper arrays */
-    g->visits_per_action = (int32_t *)calloc(n_boards, sizeof(int32_t));
-    g->active = (int32_t *)malloc(n_boards * sizeof(int32_t));
-    g->q_board_idx = NULL;
-    g->q_root_ids = NULL;
-    g->q_forced = NULL;
-    g->q_cap = 0;
 
     /* Encoding buffer (strong ref to keep alive) */
     g->enc_data = (float *)PyArray_DATA(enc_arr);
@@ -3297,10 +2051,8 @@ static PyObject *MCTSTree_continue_gumbel_sims(MCTSTreeObject *self, PyObject *a
     if (!PyArg_ParseTuple(args, "OO", &pol_obj, &wdl_obj))
         return NULL;
 
-    PyArrayObject *pol_arr = (PyArrayObject *)PyArray_FROMANY(
-        pol_obj, NPY_FLOAT32, 2, 2, NPY_ARRAY_C_CONTIGUOUS);
-    PyArrayObject *wdl_arr = (PyArrayObject *)PyArray_FROMANY(
-        wdl_obj, NPY_FLOAT32, 2, 2, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *pol_arr = FROMANY_2D(pol_obj, NPY_FLOAT32);
+    PyArrayObject *wdl_arr = FROMANY_2D(wdl_obj, NPY_FLOAT32);
 
     if (!pol_arr || !wdl_arr) {
         Py_XDECREF(pol_arr); Py_XDECREF(wdl_arr);
@@ -3410,26 +2162,12 @@ static PyMethodDef MCTSTree_methods[] = {
      "backprop(node_path_int32, value) -> None"},
     {"backprop_many", (PyCFunction)MCTSTree_backprop_many, METH_VARARGS,
      "backprop_many([node_paths], [values]) -> None"},
-    {"gumbel_collect_leaves", (PyCFunction)MCTSTree_gumbel_collect_leaves, METH_VARARGS,
-     "gumbel_collect_leaves(root_ids, forced_actions, c_scale, c_visit, c_puct, fpu_reduction, full_tree)"},
-    {"prepare_gumbel_leaves", (PyCFunction)MCTSTree_prepare_gumbel_leaves, METH_VARARGS,
-     "prepare_gumbel_leaves(root_cbs, board_idx, root_ids, forced, c_scale, c_visit, c_puct, fpu, full_tree, enc_buf, root_qs)"},
-    {"clear_stored", (PyCFunction)MCTSTree_clear_stored, METH_NOARGS,
-     "clear_stored() -> None. Reset stored state for prepare_and_store."},
-    {"prepare_and_store", (PyCFunction)MCTSTree_prepare_and_store, METH_VARARGS,
-     "prepare_and_store(...) -> n_leaves or None. Appends to stored state for finish_stored."},
-    {"finish_stored", (PyCFunction)MCTSTree_finish_stored, METH_VARARGS,
-     "finish_stored(pol, wdl[, nn_cache]) -> None. Uses stored state from prepare_and_store."},
-    {"finish_gumbel_rep", (PyCFunction)MCTSTree_finish_gumbel_rep, METH_VARARGS,
-     "finish_gumbel_rep(leaf_ids, legal_list, pol_logits, wdl_logits, node_paths)"},
     {"start_gumbel_sims", (PyCFunction)MCTSTree_start_gumbel_sims, METH_VARARGS,
      "start_gumbel_sims(...) -> n_leaves or None. Start gumbel simulation state machine."},
     {"continue_gumbel_sims", (PyCFunction)MCTSTree_continue_gumbel_sims, METH_VARARGS,
      "continue_gumbel_sims(pol, wdl) -> n_leaves or None. Feed GPU results, continue sim."},
     {"get_gumbel_remaining", (PyCFunction)MCTSTree_get_gumbel_remaining, METH_NOARGS,
      "get_gumbel_remaining() -> list[list[int]]. Get remaining candidates after sim."},
-    {"gumbel_score_candidates", (PyCFunction)MCTSTree_gumbel_score_candidates, METH_VARARGS,
-     "gumbel_score_candidates(root_id, cands, gumbels, priors, c_scale, c_visit)"},
     {"get_children_visits", (PyCFunction)MCTSTree_get_children_visits, METH_VARARGS,
      "get_children_visits(node_id) -> (actions_int32, visits_int32)"},
     {"get_children_q", (PyCFunction)MCTSTree_get_children_q, METH_VARARGS,
@@ -3489,13 +2227,13 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
                           &df_enabled, &df_q_weight, &df_pol_scale, &df_min, &df_slope))
         return NULL;
 
-    PyArrayObject *pol_arr = (PyArrayObject *)PyArray_FROMANY(pol_obj, NPY_FLOAT32, 2, 2, NPY_ARRAY_C_CONTIGUOUS);
-    PyArrayObject *wdl_arr = (PyArrayObject *)PyArray_FROMANY(wdl_obj, NPY_FLOAT32, 2, 2, NPY_ARRAY_C_CONTIGUOUS);
-    PyArrayObject *act_arr = (PyArrayObject *)PyArray_FROMANY(actions_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
-    PyArrayObject *val_arr = (PyArrayObject *)PyArray_FROMANY(values_obj, NPY_FLOAT64, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
-    PyArrayObject *probs_arr = (PyArrayObject *)PyArray_FROMANY(mcts_probs_obj, NPY_FLOAT32, 2, 2, NPY_ARRAY_C_CONTIGUOUS);
-    PyArrayObject *full_arr = (PyArrayObject *)PyArray_FROMANY(is_full_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
-    PyArrayObject *wt_arr = (PyArrayObject *)PyArray_FROMANY(weights_obj, NPY_FLOAT64, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *pol_arr = FROMANY_2D(pol_obj, NPY_FLOAT32);
+    PyArrayObject *wdl_arr = FROMANY_2D(wdl_obj, NPY_FLOAT32);
+    PyArrayObject *act_arr = FROMANY_1D(actions_obj, NPY_INT32);
+    PyArrayObject *val_arr = FROMANY_1D(values_obj, NPY_FLOAT64);
+    PyArrayObject *probs_arr = FROMANY_2D(mcts_probs_obj, NPY_FLOAT32);
+    PyArrayObject *full_arr = FROMANY_1D(is_full_obj, NPY_INT32);
+    PyArrayObject *wt_arr = FROMANY_1D(weights_obj, NPY_FLOAT64);
 
     if (!pol_arr || !wdl_arr || !act_arr || !val_arr || !probs_arr || !full_arr || !wt_arr) {
         Py_XDECREF(pol_arr); Py_XDECREF(wdl_arr); Py_XDECREF(act_arr);
@@ -3503,11 +2241,10 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
         return NULL;
     }
 
-    /* Heap pointers declared first so the common fail: label can free()
-     * them unconditionally (free(NULL) is a no-op) even if we goto fail
+    /* Heap pointer declared first so the common fail: label can free()
+     * unconditionally (free(NULL) is a no-op) even if we goto fail
      * before allocation. */
     CBoard *boards = NULL;
-    float  *raw_buf = NULL;
 
     int32_t n = (int32_t)PyArray_DIM(pol_arr, 0);
     if (PyList_Size(cboards_list) < n) {
@@ -3549,7 +2286,7 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
         Py_XDECREF(out_x); Py_XDECREF(out_probs); Py_XDECREF(out_wdl_net);
         Py_XDECREF(out_wdl_search); Py_XDECREF(out_priority); Py_XDECREF(out_keep);
         Py_XDECREF(out_mask); Py_XDECREF(out_ply); Py_XDECREF(out_pov); Py_XDECREF(out_over);
-        goto fail;  /* fail: handles free(boards) + free(raw_buf) + array DECREFs */
+        goto fail;
     }
 
     float *x_data = (float *)PyArray_DATA(out_x);
@@ -3564,16 +2301,16 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
     int32_t *over_out = (int32_t *)PyArray_DATA(out_over);
 
     /* ── Release GIL for the main computation loop ── */
-    raw_buf = (float *)malloc(4672 * sizeof(float));
-    if (!raw_buf) {
-        Py_XDECREF(out_x); Py_XDECREF(out_probs); Py_XDECREF(out_wdl_net);
-        Py_XDECREF(out_wdl_search); Py_XDECREF(out_priority); Py_XDECREF(out_keep);
-        Py_XDECREF(out_mask); Py_XDECREF(out_ply); Py_XDECREF(out_pov); Py_XDECREF(out_over);
-        goto fail;  /* fail: handles free(boards) + free(raw_buf) + array DECREFs */
-    }
-
     Py_BEGIN_ALLOW_THREADS
 
+#ifdef _OPENMP
+    #pragma omp parallel if(n >= 32)
+#endif
+    {
+        float raw_buf[4672];
+#ifdef _OPENMP
+        #pragma omp for schedule(static)
+#endif
     for (int32_t i = 0; i < n; i++) {
         CBoard *cb = &boards[i];
         const float *pol = pol_data + i * 4672;
@@ -3680,10 +2417,9 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
         /* Game over check */
         over_out[i] = cboard_is_game_over(cb) ? 1 : 0;
     }
+    }  /* omp parallel */
 
     Py_END_ALLOW_THREADS
-
-    free(raw_buf);
 
     /* Write back CBoard states to Python objects */
     for (int32_t i = 0; i < n; i++) {
@@ -3701,7 +2437,6 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
 
 fail:
     free(boards);   /* NULL-safe */
-    free(raw_buf);  /* NULL-safe */
     Py_XDECREF(pol_arr); Py_XDECREF(wdl_arr); Py_XDECREF(act_arr);
     Py_XDECREF(val_arr); Py_XDECREF(probs_arr); Py_XDECREF(full_arr); Py_XDECREF(wt_arr);
     return NULL;
@@ -3722,8 +2457,7 @@ static PyObject *py_batch_encode_146(PyObject *self, PyObject *args) {
         return NULL;
     }
 
-    PyArrayObject *out_arr = (PyArrayObject *)PyArray_FROMANY(
-        out_obj, NPY_FLOAT32, 4, 4, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE);
+    PyArrayObject *out_arr = FROMANY_4D_RW(out_obj, NPY_FLOAT32);
     if (!out_arr) return NULL;
 
     int32_t n = (int32_t)PyList_Size(cboards_list);
@@ -3798,14 +2532,10 @@ static PyObject *py_classify_games(PyObject *self, PyObject *args) {
             PyArray_EMPTY(1, (npy_intp[]){0}, NPY_INT32, 0),
             PyArray_EMPTY(1, (npy_intp[]){0}, NPY_INT32, 0));
 
-    PyArrayObject *net_color_arr = (PyArrayObject *)PyArray_FROMANY(
-        net_color_obj, NPY_INT8, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
-    PyArrayObject *done_arr = (PyArrayObject *)PyArray_FROMANY(
-        done_obj, NPY_INT8, 1, 1, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE);
-    PyArrayObject *final_arr = (PyArrayObject *)PyArray_FROMANY(
-        final_obj, NPY_INT8, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
-    PyArrayObject *sp_arr = (PyArrayObject *)PyArray_FROMANY(
-        sp_obj, NPY_INT8, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *net_color_arr = FROMANY_1D(net_color_obj, NPY_INT8);
+    PyArrayObject *done_arr = FROMANY_1D_RW(done_obj, NPY_INT8);
+    PyArrayObject *final_arr = FROMANY_1D(final_obj, NPY_INT8);
+    PyArrayObject *sp_arr = FROMANY_1D(sp_obj, NPY_INT8);
 
     if (!net_color_arr || !done_arr || !final_arr || !sp_arr) {
         Py_XDECREF(net_color_arr); Py_XDECREF(done_arr);
@@ -3932,14 +2662,10 @@ static PyObject *py_temperature_resample(PyObject *self, PyObject *args) {
             &probs_obj, &temps_obj, &actions_obj, &rand_obj))
         return NULL;
 
-    PyArrayObject *probs_arr = (PyArrayObject *)PyArray_FROMANY(
-        probs_obj, NPY_FLOAT32, 2, 2, NPY_ARRAY_C_CONTIGUOUS);
-    PyArrayObject *temps_arr = (PyArrayObject *)PyArray_FROMANY(
-        temps_obj, NPY_FLOAT64, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
-    PyArrayObject *actions_arr = (PyArrayObject *)PyArray_FROMANY(
-        actions_obj, NPY_INT32, 1, 1, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE);
-    PyArrayObject *rand_arr = (PyArrayObject *)PyArray_FROMANY(
-        rand_obj, NPY_FLOAT64, 1, 1, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *probs_arr = FROMANY_2D(probs_obj, NPY_FLOAT32);
+    PyArrayObject *temps_arr = FROMANY_1D(temps_obj, NPY_FLOAT64);
+    PyArrayObject *actions_arr = FROMANY_1D_RW(actions_obj, NPY_INT32);
+    PyArrayObject *rand_arr = FROMANY_1D(rand_obj, NPY_FLOAT64);
 
     if (!probs_arr || !temps_arr || !actions_arr || !rand_arr) {
         Py_XDECREF(probs_arr); Py_XDECREF(temps_arr);

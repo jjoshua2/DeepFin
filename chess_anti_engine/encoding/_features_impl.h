@@ -663,4 +663,26 @@ static void compute_features_34(
     }
 }
 
+/* CBoard → 34 feature planes. Only available when _cboard_impl.h was also
+ * included beforehand (i.e., in _lc0_ext.c / _mcts_tree.c, not _features_ext.c). */
+#ifdef _CBOARD_IMPL_H
+static inline void cboard_compute_features_34(const CBoard *b, float *out) {
+    int us = b->turn, them = 1 - us;
+    uint64_t us_pieces[6], them_pieces[6];
+    for (int i = 0; i < 6; i++) {
+        us_pieces[i] = b->bb[i] & b->occ[us];
+        them_pieces[i] = b->bb[i] & b->occ[them];
+    }
+    uint64_t us_king = b->bb[KING] & b->occ[us];
+    uint64_t them_king = b->bb[KING] & b->occ[them];
+    int king_sq_us = us_king ? lsb64(us_king) : -1;
+    int king_sq_them = them_king ? lsb64(them_king) : -1;
+    uint64_t occupied = b->occ[0] | b->occ[1];
+    int turn_white = (b->turn == WHITE_C) ? 1 : 0;
+    compute_features_34(us_pieces, them_pieces, occupied,
+                        king_sq_us, king_sq_them, turn_white,
+                        (int)b->ep_square, out);
+}
+#endif  /* _CBOARD_IMPL_H */
+
 #endif /* FEATURES_IMPL_H */

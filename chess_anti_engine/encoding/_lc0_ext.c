@@ -123,10 +123,7 @@ static PyObject* py_legal_move_policy_indices(PyObject *self, PyObject *args) {
 
     /* Max possible legal moves in chess is ~218 */
     int indices[256];
-    int count = generate_legal_move_indices(&bs, indices);
-
-    /* Sort indices */
-    sort_int(indices, count);
+    int count = generate_legal_move_indices_sorted(&bs, indices);
 
     /* Build numpy array */
     npy_intp dims[1] = {count};
@@ -149,26 +146,7 @@ static PyObject* cboard_encode_146(const CBoard *b) {
     float *out = (float*)PyArray_DATA(arr);
 
     cboard_fill_lc0_112(b, out);
-
-    /* Compute 34 feature planes directly in C (no Python callback) */
-    int us = b->turn;
-    int them = 1 - us;
-    uint64_t us_pieces[6], them_pieces[6];
-    for (int i = 0; i < 6; i++) {
-        us_pieces[i] = b->bb[i] & b->occ[us];
-        them_pieces[i] = b->bb[i] & b->occ[them];
-    }
-
-    uint64_t us_king = b->bb[KING] & b->occ[us];
-    uint64_t them_king = b->bb[KING] & b->occ[them];
-    int king_sq_us = us_king ? __builtin_ctzll(us_king) : -1;
-    int king_sq_them = them_king ? __builtin_ctzll(them_king) : -1;
-    uint64_t occupied = b->occ[WHITE_C] | b->occ[BLACK_C];
-    int turn_white = (b->turn == WHITE_C) ? 1 : 0;
-
-    compute_features_34(us_pieces, them_pieces, occupied,
-                        king_sq_us, king_sq_them, turn_white,
-                        (int)b->ep_square, out + 112 * 64);
+    cboard_compute_features_34(b, out + 112 * 64);
 
     return (PyObject*)arr;
 }
@@ -513,9 +491,7 @@ static PyObject* PyCBoard_legal_move_indices(PyCBoard *self, PyObject *Py_UNUSED
         return (PyObject*)PyArray_SimpleNew(1, dims, NPY_INT32);
     }
     int indices[256];
-    int count = generate_legal_move_indices(&bs, indices);
-    /* Sort */
-    sort_int(indices, count);
+    int count = generate_legal_move_indices_sorted(&bs, indices);
     npy_intp dims[1] = {count};
     PyArrayObject *arr = (PyArrayObject*)PyArray_SimpleNew(1, dims, NPY_INT32);
     if (!arr) return NULL;
@@ -544,8 +520,7 @@ static PyObject* PyCBoard_encode_146_and_legal(PyCBoard *self, PyObject *Py_UNUS
     int indices[256];
     int count = 0;
     if (bs.king_sq >= 0) {
-        count = generate_legal_move_indices(&bs, indices);
-        sort_int(indices, count);
+        count = generate_legal_move_indices_sorted(&bs, indices);
     }
     npy_intp dims[1] = {count};
     PyArrayObject *legal = (PyArrayObject*)PyArray_SimpleNew(1, dims, NPY_INT32);

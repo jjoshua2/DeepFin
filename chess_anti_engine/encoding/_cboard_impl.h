@@ -645,6 +645,14 @@ static int generate_legal_move_indices(const BoardState *bs, int *indices) {
     return count;
 }
 
+/* Same as generate_legal_move_indices, but sorts the output in-place.
+ * Policy-index order matters whenever callers compare across encodings. */
+static inline int generate_legal_move_indices_sorted(const BoardState *bs, int *indices) {
+    int count = generate_legal_move_indices(bs, indices);
+    sort_int(indices, count);
+    return count;
+}
+
 
 /* ================================================================
  * CBoard: lightweight C chess board for MCTS hot loop

@@ -74,7 +74,7 @@ def _ext_link_args(*, openmp: bool = False) -> list[str]:
 features_ext = Extension(
     "chess_anti_engine.encoding._features_ext",
     sources=["chess_anti_engine/encoding/_features_ext.c"],
-    include_dirs=[np.get_include()],
+    include_dirs=[np.get_include(), "chess_anti_engine/encoding"],
     extra_compile_args=_ext_compile_args(),
     extra_link_args=_ext_link_args(),
 )

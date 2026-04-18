@@ -25,58 +25,6 @@ class MCTSTree:
     ) -> list[tuple[int, NDArray[np.int32], NDArray[np.int32], bool]]: ...
     def backprop(self, node_path: NDArray[np.int32], value: float) -> None: ...
     def backprop_many(self, paths: list[NDArray[np.int32]], values: list[float]) -> None: ...
-    def gumbel_collect_leaves(
-        self,
-        root_ids: NDArray[np.int32],
-        forced_actions: NDArray[np.int32],
-        c_scale: float,
-        c_visit: float,
-        c_puct: float,
-        fpu_reduction: float,
-        full_tree: bool | int,
-    ) -> tuple[NDArray[np.int32], list[NDArray[np.int32]], list[NDArray[np.int32]]]: ...
-    def prepare_gumbel_leaves(
-        self,
-        root_cbs: list[CBoard],
-        board_indices: NDArray[np.int32],
-        root_ids: NDArray[np.int32],
-        forced_actions: NDArray[np.int32],
-        c_scale: float,
-        c_visit: float,
-        c_puct: float,
-        fpu_reduction: float,
-        full_tree: bool | int,
-        enc_buf: NDArray[np.float32],
-        root_qs: NDArray[np.float64],
-        nn_cache: NNCache | None = ...,
-    ) -> tuple[int, NDArray[np.int32], list[Any], NDArray[np.int32], list[NDArray[np.int32]], list[CBoard], NDArray[np.uint64]]: ...
-    def clear_stored(self) -> None: ...
-    def prepare_and_store(
-        self,
-        root_cbs: list[CBoard],
-        board_indices: NDArray[np.int32],
-        root_ids: NDArray[np.int32],
-        forced_actions: NDArray[np.int32],
-        c_scale: float,
-        c_visit: float,
-        c_puct: float,
-        fpu_reduction: float,
-        full_tree: bool | int,
-        enc_buf: NDArray[np.float32],
-        root_qs: NDArray[np.float64],
-        nn_cache: NNCache | None = ...,
-    ) -> int | None: ...
-    def finish_stored(self, pol: NDArray[np.float32], wdl: NDArray[np.float32], nn_cache: NNCache | None = ...) -> None: ...
-    def finish_gumbel_rep(
-        self,
-        leaf_ids: NDArray[np.int32],
-        legal_list: list[NDArray[np.int32]],
-        pol_logits: NDArray[np.float32],
-        wdl_logits: NDArray[np.float32],
-        node_paths: list[NDArray[np.int32]],
-        nn_cache: NNCache | None = ...,
-        hashes: NDArray[np.uint64] | None = ...,
-    ) -> None: ...
     def start_gumbel_sims(
         self,
         root_cbs: list[CBoard],
@@ -96,15 +44,6 @@ class MCTSTree:
     ) -> int | None: ...
     def continue_gumbel_sims(self, pol: NDArray[np.float32], wdl: NDArray[np.float32]) -> int | None: ...
     def get_gumbel_remaining(self) -> list[list[int]]: ...
-    def gumbel_score_candidates(
-        self,
-        root_id: int,
-        candidate_actions: NDArray[np.int32],
-        gumbel_values: NDArray[np.float64],
-        root_priors_full: NDArray[np.float64],
-        c_scale: float,
-        c_visit: float,
-    ) -> NDArray[np.float64]: ...
     def get_children_visits(self, node_id: int) -> tuple[NDArray[np.int32], NDArray[np.int32]]: ...
     def get_children_q(self, node_id: int, default_q: float) -> tuple[NDArray[np.int32], NDArray[np.int32], NDArray[np.float64]]: ...
     def node_q(self, node_id: int) -> float: ...
