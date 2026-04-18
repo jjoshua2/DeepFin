@@ -569,6 +569,7 @@ static int stored_ensure_cap(StoredPrepState *s, int32_t leaf_cap, int32_t term_
 static int stored_ensure_legal_flat(StoredPrepState *s, int32_t need);
 static int stored_ensure_path_flat(StoredPrepState *s, int32_t need);
 static int stored_ensure_term_path_flat(StoredPrepState *s, int32_t need);
+/* Returns the appended leaf index on success, -1 on OOM (state left unchanged). */
 static inline int32_t stored_append_leaf(StoredPrepState *s, TreeData *t,
                                          const CBoard *cb, int32_t leaf_id,
                                          const int32_t *path_buf, int32_t path_len,
@@ -588,18 +589,23 @@ static inline void tree_cb_cache_put(TreeData *t, int32_t leaf_id, const CBoard 
     }
 }
 
-/* Append a terminal leaf (path + value) to StoredPrepState. */
-static inline void stored_append_terminal(StoredPrepState *s,
-                                          const int32_t *path_buf, int32_t path_len,
-                                          double value) {
+/* Append a terminal leaf (path + value) to StoredPrepState.
+ * Returns 0 on success, -1 on OOM (state left unchanged). The ensure_*
+ * fast path (needed <= cap) is branchless and compiles away; the -1
+ * branch only fires when realloc actually runs and fails, so this adds
+ * no measurable hot-path cost. */
+static inline int stored_append_terminal(StoredPrepState *s,
+                                         const int32_t *path_buf, int32_t path_len,
+                                         double value) {
+    if (stored_ensure_term_path_flat(s, s->term_path_flat_used + path_len) < 0) return -1;
     int32_t ti = s->n_terminals;
-    stored_ensure_term_path_flat(s, s->term_path_flat_used + path_len);
     s->term_path_offset[ti] = s->term_path_flat_used;
     s->term_path_count[ti] = path_len;
     memcpy(s->term_path_flat + s->term_path_flat_used, path_buf, path_len * sizeof(int32_t));
     s->term_path_flat_used += path_len;
     s->term_values[ti] = value;
     s->n_terminals++;
+    return 0;
 }
 
 /* ---- Gumbel simulation state machine ------------------------------------ */
@@ -828,7 +834,8 @@ static int32_t gss_build_queries(GumbelSimState *g) {
 /* Run one batch of tree queries (tree walk + replay + encode) using the
  * gumbel sim state's query arrays.  Pure C, no GIL needed.
  * Appends to StoredPrepState, writes encoded positions to enc_data.
- * Returns the number of new leaves that need GPU eval. */
+ * Returns the number of new leaves that need GPU eval, or -1 on OOM
+ * (StoredPrepState left in its pre-call state — caller should abort). */
 static int32_t gss_prepare_batch(
     TreeData *t, StoredPrepState *s, GumbelSimState *g,
     int32_t n_queries, float *enc_data)
@@ -848,7 +855,7 @@ static int32_t gss_prepare_batch(
         int32_t leaf_id = path_buf[path_len - 1];
 
         if (path_len <= 1) {
-            stored_append_terminal(s, path_buf, path_len, g->root_qs[bi]);
+            if (stored_append_terminal(s, path_buf, path_len, g->root_qs[bi]) < 0) return -1;
             continue;
         }
 
@@ -883,7 +890,7 @@ static int32_t gss_prepare_batch(
             cboard_push_index(&cb, replay_actions[ri]);
 
         if (cboard_is_game_over(&cb)) {
-            stored_append_terminal(s, path_buf, path_len, (double)cboard_terminal_value(&cb));
+            if (stored_append_terminal(s, path_buf, path_len, (double)cboard_terminal_value(&cb)) < 0) return -1;
             continue;
         }
 
@@ -925,12 +932,12 @@ static int32_t gss_prepare_batch(
 
         if (s->n_leaves >= g->enc_capacity) {
             /* Buffer full — fall back to root Q (not 0.0 which biases toward draws). */
-            stored_append_terminal(s, path_buf, path_len, g->root_qs[bi]);
+            if (stored_append_terminal(s, path_buf, path_len, g->root_qs[bi]) < 0) return -1;
             continue;
         }
 
         /* Save leaf for deferred encoding */
-        stored_append_leaf(s, t, &cb, leaf_id, path_buf, path_len, cache_ok);
+        if (stored_append_leaf(s, t, &cb, leaf_id, path_buf, path_len, cache_ok) < 0) return -1;
     }
 
     /* Backprop terminals */
@@ -1017,11 +1024,12 @@ static int32_t gss_step(TreeData *t, StoredPrepState *s, GumbelSimState *g, floa
         int32_t n_queries = gss_build_queries(g);
 
         if (n_queries > 0) {
-            /* Ensure stored capacity */
-            stored_ensure_cap(s, s->n_leaves + n_queries, s->n_terminals + n_queries);
-            stored_ensure_legal_flat(s, s->legal_flat_used + n_queries * 40);
-            stored_ensure_path_flat(s, s->path_flat_used + n_queries * 8);
-            stored_ensure_term_path_flat(s, s->term_path_flat_used + n_queries * 8);
+            /* Ensure stored capacity. A failed realloc stops the whole step
+             * so the caller sees OOM as -1 instead of corrupted writes. */
+            if (stored_ensure_cap(s, s->n_leaves + n_queries, s->n_terminals + n_queries) < 0) return -1;
+            if (stored_ensure_legal_flat(s, s->legal_flat_used + n_queries * 40) < 0) return -1;
+            if (stored_ensure_path_flat(s, s->path_flat_used + n_queries * 8) < 0) return -1;
+            if (stored_ensure_term_path_flat(s, s->term_path_flat_used + n_queries * 8) < 0) return -1;
 
             /* Seed CBoard cache with roots for any new board indices */
             for (int32_t qi = 0; qi < n_queries; qi++) {
@@ -1035,7 +1043,7 @@ static int32_t gss_step(TreeData *t, StoredPrepState *s, GumbelSimState *g, floa
                 }
             }
 
-            gss_prepare_batch(t, s, g, n_queries, enc_data);
+            if (gss_prepare_batch(t, s, g, n_queries, enc_data) < 0) return -1;
 
             /* Accumulate more leaves before returning, unless:
              * - We've hit the target batch size
@@ -1144,21 +1152,25 @@ static inline int32_t stored_append_leaf(StoredPrepState *s, TreeData *t,
                                          const CBoard *cb, int32_t leaf_id,
                                          const int32_t *path_buf, int32_t path_len,
                                          int cache_ok) {
+    /* Compute legals into stack buffer first so we can grow capacity before
+     * committing anything to s->*. On OOM, return -1 with s unchanged. */
+    int indices[256];
+    int count = cboard_legal_move_indices(cb, indices, /*sorted=*/0);
+
+    if (stored_ensure_legal_flat(s, s->legal_flat_used + count) < 0) return -1;
+    if (stored_ensure_path_flat(s, s->path_flat_used + path_len) < 0) return -1;
+
     int32_t li = s->n_leaves;
     s->leaf_cboards[li] = *cb;
     s->leaf_ids[li] = leaf_id;
     s->hashes[li] = cb->hash;
 
-    int indices[256];
-    int count = cboard_legal_move_indices(cb, indices, /*sorted=*/0);
-    stored_ensure_legal_flat(s, s->legal_flat_used + count);
     s->legal_offset[li] = s->legal_flat_used;
     s->legal_count[li] = count;
     for (int32_t j = 0; j < count; j++)
         s->legal_flat[s->legal_flat_used + j] = indices[j];
     s->legal_flat_used += count;
 
-    stored_ensure_path_flat(s, s->path_flat_used + path_len);
     s->path_offset[li] = s->path_flat_used;
     s->path_count[li] = path_len;
     memcpy(s->path_flat + s->path_flat_used, path_buf, path_len * sizeof(int32_t));
@@ -1908,7 +1920,27 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
                           &enc_buf_obj, &nn_cache_obj))
         return NULL;
 
+    /* Validate list args before any indexing — PyList_GET_ITEM has no
+     * bounds check, and a mismatched companion list would silently read
+     * past the last element into arbitrary PyObject pointers. */
+    if (!PyList_Check(root_cbs_list) || !PyList_Check(remaining_list) ||
+        !PyList_Check(gumbels_list) || !PyList_Check(priors_list)) {
+        PyErr_SetString(PyExc_TypeError,
+            "root_cbs / remaining / gumbels / priors must be lists");
+        return NULL;
+    }
     int32_t n_boards = (int32_t)PyList_Size(root_cbs_list);
+    if (n_boards <= 0) {
+        PyErr_SetString(PyExc_ValueError, "root_cbs_list must be non-empty");
+        return NULL;
+    }
+    if (PyList_Size(remaining_list) != n_boards ||
+        PyList_Size(gumbels_list)   != n_boards ||
+        PyList_Size(priors_list)    != n_boards) {
+        PyErr_SetString(PyExc_ValueError,
+            "remaining/gumbels/priors lists must match root_cbs_list length");
+        return NULL;
+    }
 
     /* Parse numpy arrays */
     PyArrayObject *root_ids_arr = FROMANY_1D(root_ids_obj, NPY_INT32);
@@ -1919,6 +1951,16 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
     if (!root_ids_arr || !budget_arr || !root_qs_arr || !enc_arr) {
         Py_XDECREF(root_ids_arr); Py_XDECREF(budget_arr);
         Py_XDECREF(root_qs_arr); Py_XDECREF(enc_arr);
+        return NULL;
+    }
+
+    if (PyArray_DIM(root_ids_arr, 0) < n_boards ||
+        PyArray_DIM(budget_arr, 0)   < n_boards ||
+        PyArray_DIM(root_qs_arr, 0)  < n_boards) {
+        Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
+        Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
+        PyErr_SetString(PyExc_ValueError,
+            "root_ids/budget/root_qs must have at least n_boards elements");
         return NULL;
     }
 
@@ -1962,9 +2004,30 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
     memcpy(g->root_ids, PyArray_DATA(root_ids_arr), n_boards * sizeof(int32_t));
     memcpy(g->budget_remaining, PyArray_DATA(budget_arr), n_boards * sizeof(int32_t));
     memcpy(g->root_qs, PyArray_DATA(root_qs_arr), n_boards * sizeof(double));
+
+    /* Validate root_id is -1 (inactive sentinel, used by dual-tree PBT) or
+     * a real in-range node, before any blind indexing of tree arrays. */
+    int32_t node_count = self->tree.node_count;
     for (int32_t i = 0; i < n_boards; i++) {
-        PyCBoard *pycb = (PyCBoard *)PyList_GET_ITEM(root_cbs_list, i);
-        g->root_cboards[i] = pycb->board;
+        int32_t rid = g->root_ids[i];
+        if (rid != -1 && (rid < 0 || rid >= node_count)) {
+            gss_free(g);
+            Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
+            Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
+            PyErr_Format(PyExc_ValueError, "root_id[%d]=%d out of range [-1, %d)",
+                         i, rid, node_count);
+            return NULL;
+        }
+    }
+
+    /* Validate root_cbs_list items — extract_cboards caches the PyCBoard
+     * type pointer and rejects anything else. Do it before dereferencing
+     * raw pcb->board through PyList_GET_ITEM. */
+    if (extract_cboards(root_cbs_list, n_boards, g->root_cboards, NULL) < 0) {
+        gss_free(g);
+        Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
+        Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
+        return NULL;
     }
 
     for (int32_t i = 0; i < n_boards; i++) {
@@ -2032,6 +2095,9 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
         Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
         return PyErr_NoMemory();
     }
+    /* Validate candidate actions at ingest so the hot path (gss_score_and_halve)
+     * can index root_priors[bi * 4672 + action] / gumbels[...] / action_to_slot
+     * without per-use range checks. Cost is paid once here, not per halving. */
     for (int32_t i = 0; i < n_boards; i++) {
         PyObject *item = PyList_GET_ITEM(remaining_list, i);
         if (item == Py_None) continue;
@@ -2042,6 +2108,15 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
                 gss_free(g);
                 Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
                 Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
+                return NULL;
+            }
+            if (v < 0 || v >= GSS_POLICY_SIZE) {
+                gss_free(g);
+                Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
+                Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
+                PyErr_Format(PyExc_ValueError,
+                    "remaining_list[%d][%zd]=%ld out of range [0, %d)",
+                    i, (Py_ssize_t)j, v, GSS_POLICY_SIZE);
                 return NULL;
             }
             g->cands_flat[off + j] = (int32_t)v;
@@ -2100,6 +2175,7 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
     n_leaves_start = gss_step(&self->tree, s, g, g->enc_data);
     Py_END_ALLOW_THREADS
 
+    if (n_leaves_start < 0) return PyErr_NoMemory();
     if (n_leaves_start == 0) {
         g->phase = 2;
         Py_RETURN_NONE;
@@ -2164,6 +2240,7 @@ static PyObject *MCTSTree_continue_gumbel_sims(MCTSTreeObject *self, PyObject *a
     n_leaves_cont = gss_step(&self->tree, s, g, g->enc_data);
     Py_END_ALLOW_THREADS
 
+    if (n_leaves_cont < 0) return PyErr_NoMemory();
     if (n_leaves_cont == 0) {
         g->phase = 2;
         Py_RETURN_NONE;
