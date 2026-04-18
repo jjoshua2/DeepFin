@@ -110,8 +110,6 @@ def test_single_game_parity():
         np.array([action], dtype=np.int32),
         np.array([value], dtype=np.float64),
         probs.reshape(1, -1),
-        np.array([1], dtype=np.int32),
-        np.array([1.0], dtype=np.float64),
         1, df_q_w, df_pol_s, df_min, df_slope,
     )
 
@@ -142,7 +140,6 @@ def test_multi_game():
 
     result = batch_process_ply(
         cboards, pol, wdl, actions, values, probs,
-        np.ones(n, dtype=np.int32), np.ones(n, dtype=np.float64),
         1, 4.8, 3.8, 0.09, 1.0,
     )
     x, p, wn, ws, pri, keep, mask, ply, pov, over = result
@@ -178,7 +175,6 @@ def test_game_over_detection():
         np.array([action], dtype=np.int32),
         np.array([0.9], dtype=np.float64),
         probs,
-        np.array([1], dtype=np.int32), np.array([1.0], dtype=np.float64),
         0, 4.8, 3.8, 0.09, 1.0,
     )
     assert result[9][0] == 1  # game_over = True

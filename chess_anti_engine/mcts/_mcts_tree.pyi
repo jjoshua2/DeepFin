@@ -58,8 +58,6 @@ def batch_process_ply(
     actions: NDArray[np.int32],
     values: NDArray[np.float64],
     mcts_probs: NDArray[np.float32],
-    is_full: NDArray[np.int32],
-    weights: NDArray[np.float64],
     df_enabled: int,
     df_q_weight: float,
     df_pol_scale: float,

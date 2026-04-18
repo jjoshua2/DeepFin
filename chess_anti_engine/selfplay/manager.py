@@ -958,14 +958,12 @@ def play_batch(
             _values_arr = np.array(values_list, dtype=np.float64)
             # All slots filled by _run_mcts_group above; cast for np.stack's strict ArrayLike protocol.
             _probs_arr = np.stack(cast("list[np.ndarray]", probs_list)).astype(np.float32, copy=False)
-            _is_full_arr = is_full.astype(np.int32)
-            _weights_arr = np.array(sample_weights, dtype=np.float64)
 
             assert _c_process_ply is not None
             (c_x, c_probs, c_wdl_net, c_wdl_search, c_priority,
              c_keep, c_mask, c_ply, c_pov, c_over) = _c_process_ply(
                 _cb_list, pol_logits[:_n], wdl_logits_raw[:_n],
-                _actions_arr, _values_arr, _probs_arr, _is_full_arr, _weights_arr,
+                _actions_arr, _values_arr, _probs_arr,
                 int(_df_enabled), float(_df_q_w), float(_df_p_s), float(_df_min), float(_df_slope),
             )
 

@@ -1,17 +1,9 @@
 /*
- * _features_ext.c — Python binding for 34 extra feature planes.
+ * _features_ext.c — Python binding for the 34 extra feature planes.
  *
  * All bitboard tables, attack helpers, pin/pawn-structure logic, and the
- * compute_features_34() driver live in _features_impl.h, which is shared
- * with _lc0_ext.c and _mcts_tree.c. This file just exposes the driver to
- * Python.
- *
- * Layout (34 planes, 8x8 float32):
- *   [0:10]  king safety
- *   [10:16] pins / x-rays / discovered attacks
- *   [16:24] pawn structure
- *   [24:30] mobility
- *   [30:34] outpost / space
+ * compute_features_34() driver live in _features_impl.h (shared with
+ * _lc0_ext.c and _mcts_tree.c). This file only exposes the driver to Python.
  */
 
 #define PY_SSIZE_T_CLEAN

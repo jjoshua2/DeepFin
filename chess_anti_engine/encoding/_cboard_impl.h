@@ -753,28 +753,7 @@ static void init_policy_lut(void) {
     policy_lut_ready = 1;
 }
 
-/* Compute full Zobrist hash from CBoard state (for init, not incremental) */
-/* Check if EP capture is actually legal (enemy pawn adjacent to double-pushed pawn) */
-static int cboard_has_legal_ep(const CBoard *b) {
-    if (b->ep_square < 0) return 0;
-    /* The captured pawn is on the same rank as the side-to-move's pawns that could capture.
-     * EP square is where the capturing pawn lands.
-     * For white EP (ep on rank 5): captured pawn is on rank 4, capturing pawns on rank 4.
-     * For black EP (ep on rank 2): captured pawn is on rank 3, capturing pawns on rank 3. */
-    int ep = b->ep_square;
-    int capture_rank_sq = (b->turn == WHITE_C) ? (ep - 8) : (ep + 8);
-    /* Enemy pawns that could capture are on capture_rank_sq ± 1 file */
-    /* Actually: the capturing side is b->turn. Their pawns must be adjacent to the
-     * double-pushed pawn (which is at capture_rank_sq on the same file as ep). */
-    int ep_file = sq_file(ep);
-    /* Side-to-move pawns on the same rank as the captured pawn, adjacent file */
-    uint64_t our_pawns = b->bb[PAWN] & b->occ[b->turn];
-    uint64_t adjacent = 0;
-    if (ep_file > 0) adjacent |= sq_bit(capture_rank_sq - 1);
-    if (ep_file < 7) adjacent |= sq_bit(capture_rank_sq + 1);
-    return (our_pawns & adjacent) ? 1 : 0;
-}
-
+/* Compute full Zobrist hash from CBoard state (for init, not incremental). */
 static uint64_t cboard_compute_hash(const CBoard *b) {
     uint64_t h = 0;
     for (int color = 0; color < 2; color++) {
@@ -1008,6 +987,17 @@ static int cboard_has_legal_moves(const CBoard *b) {
     return generate_legal_move_indices(&bs, indices) > 0;
 }
 
+/* Fill indices[] with legal policy indices for `b`. Returns count, or 0 if
+ * the side to move has no king (malformed position). `sorted != 0` produces
+ * ascending indices. The indices buffer must have room for 256 entries. */
+static inline int cboard_legal_move_indices(const CBoard *b, int *indices, int sorted) {
+    BoardState bs;
+    cboard_to_boardstate(b, &bs);
+    if (bs.king_sq < 0) return 0;
+    return sorted ? generate_legal_move_indices_sorted(&bs, indices)
+                  : generate_legal_move_indices(&bs, indices);
+}
+
 /* Check for insufficient material (KK, KNK, KBK, KBKB same-color) */
 static int cboard_insufficient_material(const CBoard *b) {
     if (b->bb[PAWN] || b->bb[ROOK] || b->bb[QUEEN]) return 0;
@@ -1156,7 +1146,7 @@ static uint64_t cboard_hist_hash(const uint64_t hist_bb[6],
     return h;
 }
 
-static void cboard_fill_lc0_112(const CBoard *b, float *out) {
+static void cboard_fill_lc0_112(const CBoard *b, float * restrict out) {
     /* Plane 0-11: piece planes for current position */
     cboard_encode_piece_planes(b, out);
 

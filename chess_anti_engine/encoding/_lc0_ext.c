@@ -19,6 +19,19 @@
 /* Shared feature computation (pure C, no Python callbacks) */
 #include "_features_impl.h"
 
+/* Read a uint64 attribute from a python-chess object. On error, returns 0
+ * and (if err != NULL) sets *err = 1; the Python exception is left in place.
+ * Pass err = NULL for silent fallback (used when reading history snapshots
+ * where missing attrs should just zero out). */
+static inline uint64_t py_attr_u64(PyObject *obj, const char *attr, int *err) {
+    PyObject *v = PyObject_GetAttrString(obj, attr);
+    if (!v) { if (err) *err = 1; return 0; }
+    uint64_t r = PyLong_AsUnsignedLongLong(v);
+    Py_DECREF(v);
+    if (err && r == (uint64_t)-1 && PyErr_Occurred()) *err = 1;
+    return r;
+}
+
 
 /* ================================================================
  * encode_piece_planes: bitboards -> (n_steps*12, 8, 8) float32
@@ -189,15 +202,14 @@ static PyObject* PyCBoard_from_board(PyTypeObject *type, PyObject *args) {
     CBoard *b = &self->board;
     memset(b, 0, sizeof(CBoard));
 
-    /* Read bitboards from python-chess board */
-    PyObject *val;
+    /* Read bitboards from python-chess board. On any attr-miss or conversion
+     * failure, DECREF self and propagate the Python exception. */
+    PyObject *val;  /* reused by the per-attr blocks further below */
     #define READ_UINT64(attr) ({ \
-        val = PyObject_GetAttrString(py_board, attr); \
-        if (!val) { Py_DECREF(self); return NULL; } \
-        uint64_t v = PyLong_AsUnsignedLongLong(val); \
-        Py_DECREF(val); \
-        if (v == (uint64_t)-1 && PyErr_Occurred()) { Py_DECREF(self); return NULL; } \
-        v; })
+        int _err = 0; \
+        uint64_t _v = py_attr_u64(py_board, attr, &_err); \
+        if (_err) { Py_DECREF(self); return NULL; } \
+        _v; })
 
     b->bb[PAWN]   = READ_UINT64("pawns");
     b->bb[KNIGHT] = READ_UINT64("knights");
@@ -284,20 +296,14 @@ static PyObject* PyCBoard_from_board(PyTypeObject *type, PyObject *args) {
             PyObject *s = PyList_GetItem(stack, stack_len - 1 - hi); /* borrowed */
             if (!s) break;
 
-            #define READ_STATE_BB(obj, attr) ({ \
-                PyObject *_v = PyObject_GetAttrString(obj, attr); \
-                uint64_t _r = 0; \
-                if (_v) { _r = PyLong_AsUnsignedLongLong(_v); Py_DECREF(_v); } \
-                _r; })
-
-            uint64_t s_pawns   = READ_STATE_BB(s, "pawns");
-            uint64_t s_knights = READ_STATE_BB(s, "knights");
-            uint64_t s_bishops = READ_STATE_BB(s, "bishops");
-            uint64_t s_rooks   = READ_STATE_BB(s, "rooks");
-            uint64_t s_queens  = READ_STATE_BB(s, "queens");
-            uint64_t s_kings   = READ_STATE_BB(s, "kings");
-            uint64_t s_occ_w   = READ_STATE_BB(s, "occupied_w");
-            uint64_t s_occ_b   = READ_STATE_BB(s, "occupied_b");
+            uint64_t s_pawns   = py_attr_u64(s, "pawns",      NULL);
+            uint64_t s_knights = py_attr_u64(s, "knights",    NULL);
+            uint64_t s_bishops = py_attr_u64(s, "bishops",    NULL);
+            uint64_t s_rooks   = py_attr_u64(s, "rooks",      NULL);
+            uint64_t s_queens  = py_attr_u64(s, "queens",     NULL);
+            uint64_t s_kings   = py_attr_u64(s, "kings",      NULL);
+            uint64_t s_occ_w   = py_attr_u64(s, "occupied_w", NULL);
+            uint64_t s_occ_b   = py_attr_u64(s, "occupied_b", NULL);
 
             PyObject *s_turn_obj = PyObject_GetAttrString(s, "turn");
             int s_turn = (s_turn_obj && PyObject_IsTrue(s_turn_obj)) ? WHITE_C : BLACK_C;
@@ -315,7 +321,6 @@ static PyObject* PyCBoard_from_board(PyTypeObject *type, PyObject *args) {
             b->hist_turn[slot] = (int8_t)s_turn;
             b->hist_len++;
 
-            #undef READ_STATE_BB
         }
         b->hist_head = n_hist % CBOARD_HISTORY_MAX;
 
@@ -325,25 +330,17 @@ static PyObject* PyCBoard_from_board(PyTypeObject *type, PyObject *args) {
             PyObject *s = PyList_GetItem(stack, si); /* borrowed */
             if (!s) break;
 
-            /* Check if this was an irreversible move by reading halfmove_clock
-             * from the NEXT state (or the current board for the most recent).
-             * Simpler: just read castling_rights and piece data to compute hash,
-             * and stop when we hit the halfmove_clock limit. */
-            #define READ_S_U64(obj, attr) ({ \
-                PyObject *_v2 = PyObject_GetAttrString(obj, attr); \
-                uint64_t _r2 = 0; \
-                if (_v2) { _r2 = PyLong_AsUnsignedLongLong(_v2); Py_DECREF(_v2); } \
-                _r2; })
-
+            /* Read piece data and castling_rights to compute the hash; stop
+             * when we've walked past the halfmove_clock limit below. */
             uint64_t h_bb[6], h_occ[2];
-            h_bb[PAWN]   = READ_S_U64(s, "pawns");
-            h_bb[KNIGHT] = READ_S_U64(s, "knights");
-            h_bb[BISHOP] = READ_S_U64(s, "bishops");
-            h_bb[ROOK]   = READ_S_U64(s, "rooks");
-            h_bb[QUEEN]  = READ_S_U64(s, "queens");
-            h_bb[KING]   = READ_S_U64(s, "kings");
-            h_occ[WHITE_C] = READ_S_U64(s, "occupied_w");
-            h_occ[BLACK_C] = READ_S_U64(s, "occupied_b");
+            h_bb[PAWN]   = py_attr_u64(s, "pawns",      NULL);
+            h_bb[KNIGHT] = py_attr_u64(s, "knights",    NULL);
+            h_bb[BISHOP] = py_attr_u64(s, "bishops",    NULL);
+            h_bb[ROOK]   = py_attr_u64(s, "rooks",      NULL);
+            h_bb[QUEEN]  = py_attr_u64(s, "queens",     NULL);
+            h_bb[KING]   = py_attr_u64(s, "kings",      NULL);
+            h_occ[WHITE_C] = py_attr_u64(s, "occupied_w", NULL);
+            h_occ[BLACK_C] = py_attr_u64(s, "occupied_b", NULL);
 
             PyObject *t_obj = PyObject_GetAttrString(s, "turn");
             int h_turn = (t_obj && PyObject_IsTrue(t_obj)) ? WHITE_C : BLACK_C;
@@ -372,8 +369,6 @@ static PyObject* PyCBoard_from_board(PyTypeObject *type, PyObject *args) {
 
             if (b->hash_stack_len < CBOARD_HASH_STACK_MAX)
                 b->hash_stack[b->hash_stack_len++] = h_hash;
-
-            #undef READ_S_U64
 
             /* Stop at irreversible boundary: if this state's halfmove was 0,
              * no repetition can cross it */
@@ -484,18 +479,12 @@ static PyObject* PyCBoard_is_stalemate(PyCBoard *self, PyObject *Py_UNUSED(args)
 
 /* legal_move_indices() -> numpy int32 array */
 static PyObject* PyCBoard_legal_move_indices(PyCBoard *self, PyObject *Py_UNUSED(args)) {
-    BoardState bs;
-    cboard_to_boardstate(&self->board, &bs);
-    if (bs.king_sq < 0) {
-        npy_intp dims[1] = {0};
-        return (PyObject*)PyArray_SimpleNew(1, dims, NPY_INT32);
-    }
     int indices[256];
-    int count = generate_legal_move_indices_sorted(&bs, indices);
+    int count = cboard_legal_move_indices(&self->board, indices, /*sorted=*/1);
     npy_intp dims[1] = {count};
     PyArrayObject *arr = (PyArrayObject*)PyArray_SimpleNew(1, dims, NPY_INT32);
     if (!arr) return NULL;
-    memcpy(PyArray_DATA(arr), indices, count * sizeof(int));
+    if (count > 0) memcpy(PyArray_DATA(arr), indices, count * sizeof(int));
     return (PyObject*)arr;
 }
 
@@ -515,13 +504,8 @@ static PyObject* PyCBoard_encode_146(PyCBoard *self, PyObject *Py_UNUSED(args)) 
 static PyObject* PyCBoard_encode_146_and_legal(PyCBoard *self, PyObject *Py_UNUSED(args)) {
     PyObject *enc = cboard_encode_146(&self->board);
     if (!enc) return NULL;
-    BoardState bs;
-    cboard_to_boardstate(&self->board, &bs);
     int indices[256];
-    int count = 0;
-    if (bs.king_sq >= 0) {
-        count = generate_legal_move_indices_sorted(&bs, indices);
-    }
+    int count = cboard_legal_move_indices(&self->board, indices, /*sorted=*/1);
     npy_intp dims[1] = {count};
     PyArrayObject *legal = (PyArrayObject*)PyArray_SimpleNew(1, dims, NPY_INT32);
     if (!legal) { Py_DECREF(enc); return NULL; }

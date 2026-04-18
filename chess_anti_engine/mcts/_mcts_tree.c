@@ -401,31 +401,40 @@ static int32_t tree_select_child(const TreeData *t, int32_t node_id,
     double parent_Q = (parent_N > 0) ? (t->W[node_id] / parent_N) : 0.0;
     double c_sqrt_n = c_puct * sqrt(parent_N > 1.0 ? parent_N : 1.0);
 
-    /* FPU: compute visited policy mass */
+    /* Single pass: track best visited score, best unvisited prior, and
+     * visited_policy for FPU. All unvisited children share fpu_value, so
+     * argmax among them collapses to argmax by prior — compare the two
+     * winners after the loop. Child W is in the child's side-to-move frame;
+     * negate for the parent-frame score. */
     double visited_policy = 0.0;
-    for (int32_t i = 0; i < n_ch; i++) {
-        int32_t cid = t->child_node[off + i];
-        if (t->N[cid] > 0)
-            visited_policy += t->prior[cid];
-    }
-    double fpu_value = parent_Q - fpu_reduction * sqrt(visited_policy);
-
-    int32_t best_slot = 0;
-    double best_score = -1e30;
+    int32_t best_visited_slot = -1;
+    double best_visited_score = -1e30;
+    int32_t best_unvisited_slot = -1;
+    double best_unvisited_prior = -1.0;
 
     for (int32_t i = 0; i < n_ch; i++) {
         int32_t cid = t->child_node[off + i];
         int32_t n = t->N[cid];
-        /* Child W/Q is stored from the child's side-to-move perspective.
-         * Negate visited children so all scores are compared in the parent frame. */
-        double q = (n > 0) ? (-t->W[cid] / (double)n) : fpu_value;
-        double score = q + c_sqrt_n * t->prior[cid] / (1.0 + (double)n);
-        if (score > best_score) {
-            best_score = score;
-            best_slot = i;
+        double prior = t->prior[cid];
+        if (n > 0) {
+            visited_policy += prior;
+            double score = -t->W[cid] / (double)n + c_sqrt_n * prior / (1.0 + (double)n);
+            if (score > best_visited_score) {
+                best_visited_score = score;
+                best_visited_slot = i;
+            }
+        } else if (prior > best_unvisited_prior) {
+            best_unvisited_prior = prior;
+            best_unvisited_slot = i;
         }
     }
-    return best_slot;
+
+    if (best_unvisited_slot < 0) return best_visited_slot >= 0 ? best_visited_slot : 0;
+    if (best_visited_slot  < 0) return best_unvisited_slot;
+
+    double fpu_value = parent_Q - fpu_reduction * sqrt(visited_policy);
+    double best_unvisited_score = fpu_value + c_sqrt_n * best_unvisited_prior;
+    return (best_unvisited_score > best_visited_score) ? best_unvisited_slot : best_visited_slot;
 }
 
 
@@ -547,7 +556,7 @@ static inline int32_t stored_append_leaf(StoredPrepState *s, TreeData *t,
 static int32_t tree_gumbel_collect_leaf(const TreeData *t, int32_t root_id,
     int32_t forced_action, const GumbelSelectParams *sel,
     int32_t *path_buf, int32_t path_cap);
-static void cboard_encode_146_into(const CBoard *b, float *out);
+static void cboard_encode_146_into(const CBoard *b, float * restrict out);
 static void softmax_inplace(double *arr, int n);
 
 /* Store a CBoard into the tree's per-node cache slot, growing if needed. */
@@ -557,6 +566,20 @@ static inline void tree_cb_cache_put(TreeData *t, int32_t leaf_id, const CBoard 
         t->cb_cache[leaf_id] = *cb;
         t->cb_valid[leaf_id] = 1;
     }
+}
+
+/* Append a terminal leaf (path + value) to StoredPrepState. */
+static inline void stored_append_terminal(StoredPrepState *s,
+                                          const int32_t *path_buf, int32_t path_len,
+                                          double value) {
+    int32_t ti = s->n_terminals;
+    stored_ensure_term_path_flat(s, s->term_path_flat_used + path_len);
+    s->term_path_offset[ti] = s->term_path_flat_used;
+    s->term_path_count[ti] = path_len;
+    memcpy(s->term_path_flat + s->term_path_flat_used, path_buf, path_len * sizeof(int32_t));
+    s->term_path_flat_used += path_len;
+    s->term_values[ti] = value;
+    s->n_terminals++;
 }
 
 /* ---- Gumbel simulation state machine ------------------------------------ */
@@ -724,8 +747,9 @@ static void gss_score_and_halve(GumbelSimState *g, TreeData *t) {
 }
 
 /* Build query arrays for one batch of reps. Returns number of queries built.
- * Advances current_rep. Fills q_board_idx, q_root_ids, q_forced. */
-static int32_t gss_build_queries(GumbelSimState *g, int32_t min_batch) {
+ * Advances current_rep. Fills q_board_idx, q_root_ids, q_forced. Breaks as
+ * soon as any queries are built (caller decides when to accumulate more). */
+static int32_t gss_build_queries(GumbelSimState *g) {
     int32_t n = 0;
     while (g->current_rep < g->max_reps) {
         int32_t rep_n = 0;
@@ -736,17 +760,24 @@ static int32_t gss_build_queries(GumbelSimState *g, int32_t min_batch) {
             if (rid < 0) continue;
             int32_t coff = g->cands_offset[bi];
             int32_t ccount = g->cands_count[bi];
-            /* Ensure query arrays have space */
+            /* Ensure query arrays have space — commit all three buffers
+             * atomically so q_cap and the three pointers never drift. */
             if (n + rep_n + ccount > g->q_cap) {
                 int32_t new_cap = (n + rep_n + ccount) * 2;
                 if (new_cap < 4096) new_cap = 4096;
                 int32_t *nb = realloc(g->q_board_idx, new_cap * sizeof(int32_t));
-                if (nb) g->q_board_idx = nb;
-                int32_t *nr = realloc(g->q_root_ids, new_cap * sizeof(int32_t));
-                if (nr) g->q_root_ids = nr;
-                int32_t *nf = realloc(g->q_forced, new_cap * sizeof(int32_t));
-                if (nf) g->q_forced = nf;
-                if (!nb || !nr || !nf) return n;  /* OOM: return what we have */
+                int32_t *nr = nb ? realloc(g->q_root_ids, new_cap * sizeof(int32_t)) : NULL;
+                int32_t *nf = nr ? realloc(g->q_forced,   new_cap * sizeof(int32_t)) : NULL;
+                if (!nb || !nr || !nf) {
+                    /* Commit whatever succeeded (prevents leaking the grown buffers)
+                     * but leave q_cap at its old value so next call retries growth. */
+                    if (nb) g->q_board_idx = nb;
+                    if (nr) g->q_root_ids  = nr;
+                    return n;
+                }
+                g->q_board_idx = nb;
+                g->q_root_ids  = nr;
+                g->q_forced    = nf;
                 g->q_cap = new_cap;
             }
             for (int32_t ci = 0; ci < ccount; ci++) {
@@ -758,7 +789,7 @@ static int32_t gss_build_queries(GumbelSimState *g, int32_t min_batch) {
         }
         n += rep_n;
         g->current_rep++;
-        if (n >= min_batch || g->current_rep >= g->max_reps)
+        if (n > 0 || g->current_rep >= g->max_reps)
             break;
     }
     return n;
@@ -787,14 +818,7 @@ static int32_t gss_prepare_batch(
         int32_t leaf_id = path_buf[path_len - 1];
 
         if (path_len <= 1) {
-            int32_t ti = s->n_terminals;
-            stored_ensure_term_path_flat(s, s->term_path_flat_used + path_len);
-            s->term_path_offset[ti] = s->term_path_flat_used;
-            s->term_path_count[ti] = path_len;
-            memcpy(s->term_path_flat + s->term_path_flat_used, path_buf, path_len * sizeof(int32_t));
-            s->term_path_flat_used += path_len;
-            s->term_values[ti] = g->root_qs[bi];
-            s->n_terminals++;
+            stored_append_terminal(s, path_buf, path_len, g->root_qs[bi]);
             continue;
         }
 
@@ -829,14 +853,7 @@ static int32_t gss_prepare_batch(
             cboard_push_index(&cb, replay_actions[ri]);
 
         if (cboard_is_game_over(&cb)) {
-            int32_t ti = s->n_terminals;
-            stored_ensure_term_path_flat(s, s->term_path_flat_used + path_len);
-            s->term_path_offset[ti] = s->term_path_flat_used;
-            s->term_path_count[ti] = path_len;
-            memcpy(s->term_path_flat + s->term_path_flat_used, path_buf, path_len * sizeof(int32_t));
-            s->term_path_flat_used += path_len;
-            s->term_values[ti] = (double)cboard_terminal_value(&cb);
-            s->n_terminals++;
+            stored_append_terminal(s, path_buf, path_len, (double)cboard_terminal_value(&cb));
             continue;
         }
 
@@ -877,15 +894,8 @@ static int32_t gss_prepare_batch(
         }
 
         if (s->n_leaves >= g->enc_capacity) {
-            /* Buffer full — use root Q as fallback (not 0.0 which biases toward draws) */
-            int32_t ti = s->n_terminals;
-            stored_ensure_term_path_flat(s, s->term_path_flat_used + path_len);
-            s->term_path_offset[ti] = s->term_path_flat_used;
-            s->term_path_count[ti] = path_len;
-            memcpy(s->term_path_flat + s->term_path_flat_used, path_buf, path_len * sizeof(int32_t));
-            s->term_path_flat_used += path_len;
-            s->term_values[ti] = g->root_qs[bi];
-            s->n_terminals++;
+            /* Buffer full — fall back to root Q (not 0.0 which biases toward draws). */
+            stored_append_terminal(s, path_buf, path_len, g->root_qs[bi]);
             continue;
         }
 
@@ -974,7 +984,7 @@ static int32_t gss_step(TreeData *t, StoredPrepState *s, GumbelSimState *g, floa
 
     for (;;) {
         /* Build queries for one rep at a time */
-        int32_t n_queries = gss_build_queries(g, 1);
+        int32_t n_queries = gss_build_queries(g);
 
         if (n_queries > 0) {
             /* Ensure stored capacity */
@@ -1103,12 +1113,8 @@ static inline int32_t stored_append_leaf(StoredPrepState *s, TreeData *t,
     s->leaf_ids[li] = leaf_id;
     s->hashes[li] = cb->hash;
 
-    BoardState bs;
-    cboard_to_boardstate(cb, &bs);
     int indices[256];
-    int count = 0;
-    if (bs.king_sq >= 0)
-        count = generate_legal_move_indices(&bs, indices);
+    int count = cboard_legal_move_indices(cb, indices, /*sorted=*/0);
     stored_ensure_legal_flat(s, s->legal_flat_used + count);
     s->legal_offset[li] = s->legal_flat_used;
     s->legal_count[li] = count;
@@ -1525,8 +1531,7 @@ static int32_t tree_gumbel_select_child(const TreeData *t, int32_t node_id,
 
 
 /* Traverse: follow forced_action from root, then improved-policy below.
- * Returns path length. path[0]=root, path[len-1]=leaf.
- * If leaf is terminal (no children, not expanded with 0 visits), sets *is_leaf=1. */
+ * Returns path length. path[0]=root, path[len-1]=leaf. */
 static int32_t tree_gumbel_collect_leaf(const TreeData *t, int32_t root_id,
                                          int32_t forced_action,
                                          const GumbelSelectParams *sel,
@@ -1817,7 +1822,7 @@ static PyObject *MCTSTree_batch_wdl_to_q(MCTSTreeObject *self, PyObject *args) {
  * Encode a CBoard into 146 float32 planes (112 LC0 + 34 features).
  * Writes into a pre-allocated buffer — no Python/numpy allocation.
  */
-static void cboard_encode_146_into(const CBoard *b, float *out) {
+static void cboard_encode_146_into(const CBoard *b, float * restrict out) {
     /* Targeted zeroing instead of full 146-plane memset.
      * Planes 0-11: overwritten by bitboard_to_plane (handles zero BBs internally)
      * Planes 12..12+hist*12-1: overwritten by history encoder
@@ -2204,7 +2209,7 @@ static PyTypeObject MCTSTreeType = {
 
 /*
  * batch_process_ply(cboards_list, pol_logits, wdl_logits, actions, values,
- *                   mcts_probs, is_full, sample_weights,
+ *                   mcts_probs,
  *                   df_enabled, df_q_weight, df_pol_scale, df_min, df_slope)
  *   -> (sample_x, sample_probs, sample_wdl_net, sample_wdl_search,
  *       sample_priority, sample_keep_prob, sample_legal_mask,
@@ -2217,13 +2222,13 @@ static PyTypeObject MCTSTreeType = {
 static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
     PyObject *cboards_list;
     PyObject *pol_obj, *wdl_obj, *actions_obj, *values_obj;
-    PyObject *mcts_probs_obj, *is_full_obj, *weights_obj;
+    PyObject *mcts_probs_obj;
     int df_enabled;
     double df_q_weight, df_pol_scale, df_min, df_slope;
 
-    if (!PyArg_ParseTuple(args, "OOOOOOOOidddd",
+    if (!PyArg_ParseTuple(args, "OOOOOOidddd",
                           &cboards_list, &pol_obj, &wdl_obj, &actions_obj,
-                          &values_obj, &mcts_probs_obj, &is_full_obj, &weights_obj,
+                          &values_obj, &mcts_probs_obj,
                           &df_enabled, &df_q_weight, &df_pol_scale, &df_min, &df_slope))
         return NULL;
 
@@ -2232,12 +2237,10 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
     PyArrayObject *act_arr = FROMANY_1D(actions_obj, NPY_INT32);
     PyArrayObject *val_arr = FROMANY_1D(values_obj, NPY_FLOAT64);
     PyArrayObject *probs_arr = FROMANY_2D(mcts_probs_obj, NPY_FLOAT32);
-    PyArrayObject *full_arr = FROMANY_1D(is_full_obj, NPY_INT32);
-    PyArrayObject *wt_arr = FROMANY_1D(weights_obj, NPY_FLOAT64);
 
-    if (!pol_arr || !wdl_arr || !act_arr || !val_arr || !probs_arr || !full_arr || !wt_arr) {
+    if (!pol_arr || !wdl_arr || !act_arr || !val_arr || !probs_arr) {
         Py_XDECREF(pol_arr); Py_XDECREF(wdl_arr); Py_XDECREF(act_arr);
-        Py_XDECREF(val_arr); Py_XDECREF(probs_arr); Py_XDECREF(full_arr); Py_XDECREF(wt_arr);
+        Py_XDECREF(val_arr); Py_XDECREF(probs_arr);
         return NULL;
     }
 
@@ -2324,12 +2327,8 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
         pov_out[i] = (int32_t)cb->turn;
 
         /* Legal mask */
-        BoardState bs;
-        cboard_to_boardstate(cb, &bs);
         int legal_indices[256];
-        int n_legal = 0;
-        if (bs.king_sq >= 0)
-            n_legal = generate_legal_move_indices(&bs, legal_indices);
+        int n_legal = cboard_legal_move_indices(cb, legal_indices, /*sorted=*/0);
 
         uint8_t *mask = mask_out + i * 4672;
         for (int j = 0; j < n_legal; j++)
@@ -2429,7 +2428,7 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
     free(boards);
 
     Py_DECREF(pol_arr); Py_DECREF(wdl_arr); Py_DECREF(act_arr);
-    Py_DECREF(val_arr); Py_DECREF(probs_arr); Py_DECREF(full_arr); Py_DECREF(wt_arr);
+    Py_DECREF(val_arr); Py_DECREF(probs_arr);
 
     return Py_BuildValue("(NNNNNNNNNN)",
         out_x, out_probs, out_wdl_net, out_wdl_search,
@@ -2438,7 +2437,7 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
 fail:
     free(boards);   /* NULL-safe */
     Py_XDECREF(pol_arr); Py_XDECREF(wdl_arr); Py_XDECREF(act_arr);
-    Py_XDECREF(val_arr); Py_XDECREF(probs_arr); Py_XDECREF(full_arr); Py_XDECREF(wt_arr);
+    Py_XDECREF(val_arr); Py_XDECREF(probs_arr);
     return NULL;
 }
 
@@ -2760,7 +2759,7 @@ static PyObject *py_temperature_resample(PyObject *self, PyObject *args) {
 
 static PyMethodDef module_methods[] = {
     {"batch_process_ply", py_batch_process_ply, METH_VARARGS,
-     "batch_process_ply(cboards, pol, wdl, actions, values, probs, is_full, weights, "
+     "batch_process_ply(cboards, pol, wdl, actions, values, probs, "
      "df_enabled, df_q_w, df_pol_s, df_min, df_slope) -> tuple of arrays"},
     {"batch_encode_146", py_batch_encode_146, METH_VARARGS,
      "batch_encode_146(cboards_list, out_array) -> None. "

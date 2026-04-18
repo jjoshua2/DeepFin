@@ -289,32 +289,32 @@ static uint64_t feat_discovered_attack_mask(
 ) {
     if (opp_king_sq < 0 || opp_king_sq > 63) return 0;
 
-    if (feat_is_attacked_by(own_pieces, color, occ, opp_king_sq)) {
-        int n_attackers = 0;
-        uint64_t attackers = 0;
+    /* Compute attacker masks once and reuse for both the "is king attacked"
+     * test and the follow-up attacker enumeration — avoids the redundant
+     * bishop/rook ray walks that the feat_is_attacked_by + recompute pattern
+     * incurred on the in-check branch. */
+    uint64_t sliders_dr = own_pieces[2] | own_pieces[4];  /* bishops + queens */
+    uint64_t sliders_or = own_pieces[3] | own_pieces[4];  /* rooks + queens */
 
-        uint64_t ka = FEAT_KNIGHT_ATTACKS[opp_king_sq] & own_pieces[1];
-        n_attackers += __builtin_popcountll(ka); attackers |= ka;
+    uint64_t ka = FEAT_KNIGHT_ATTACKS[opp_king_sq] & own_pieces[1];
+    uint64_t diag = feat_bishop_attacks(opp_king_sq, occ);
+    uint64_t da = diag & sliders_dr;
+    uint64_t orth = feat_rook_attacks(opp_king_sq, occ);
+    uint64_t ra = orth & sliders_or;
+    uint64_t pa = FEAT_PAWN_ATTACKERS_TO_SQ[color][opp_king_sq] & own_pieces[0];
 
-        uint64_t diag = feat_bishop_attacks(opp_king_sq, occ);
-        uint64_t da = diag & (own_pieces[2] | own_pieces[4]);
-        n_attackers += __builtin_popcountll(da); attackers |= da;
+    uint64_t attackers = ka | da | ra | pa;
 
-        uint64_t orth = feat_rook_attacks(opp_king_sq, occ);
-        uint64_t ra = orth & (own_pieces[3] | own_pieces[4]);
-        n_attackers += __builtin_popcountll(ra); attackers |= ra;
-
-        uint64_t pa = FEAT_PAWN_ATTACKERS_TO_SQ[color][opp_king_sq] & own_pieces[0];
-        n_attackers += __builtin_popcountll(pa); attackers |= pa;
-
+    if (attackers) {
+        int n_attackers = __builtin_popcountll(attackers);
         if (n_attackers >= 2) return all_own;
 
         int attacker_sq = __builtin_ctzll(attackers);
-        uint64_t occ_without = occ & ~((uint64_t)1 << attacker_sq);
+        uint64_t att_bit = (uint64_t)1 << attacker_sq;
+        uint64_t occ_without = occ & ~att_bit;
         uint64_t diag2 = feat_bishop_attacks(opp_king_sq, occ_without);
         uint64_t orth2 = feat_rook_attacks(opp_king_sq, occ_without);
-        if ((diag2 & (own_pieces[2] | own_pieces[4]) & ~((uint64_t)1 << attacker_sq)) ||
-            (orth2 & (own_pieces[3] | own_pieces[4]) & ~((uint64_t)1 << attacker_sq)))
+        if ((diag2 & sliders_dr & ~att_bit) || (orth2 & sliders_or & ~att_bit))
             return all_own;
         return all_own & ~attackers;
     }
@@ -500,7 +500,7 @@ static void compute_features_34(
     uint64_t occupied,
     int king_sq_us, int king_sq_them,
     int turn_white, int ep_square,
-    float *out
+    float * restrict out
 ) {
     init_tables_features();
 
@@ -666,7 +666,7 @@ static void compute_features_34(
 /* CBoard → 34 feature planes. Only available when _cboard_impl.h was also
  * included beforehand (i.e., in _lc0_ext.c / _mcts_tree.c, not _features_ext.c). */
 #ifdef _CBOARD_IMPL_H
-static inline void cboard_compute_features_34(const CBoard *b, float *out) {
+static inline void cboard_compute_features_34(const CBoard *b, float * restrict out) {
     int us = b->turn, them = 1 - us;
     uint64_t us_pieces[6], them_pieces[6];
     for (int i = 0; i < 6; i++) {
