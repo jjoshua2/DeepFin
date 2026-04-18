@@ -143,8 +143,7 @@ static uint64_t slider_attacks(int sq, uint64_t occupied, int bishop_like) {
     uint64_t attacks = 0;
     /* bishop: dirs 1,3,5,7; rook: dirs 0,2,4,6 */
     int start = bishop_like ? 1 : 0;
-    int step = bishop_like ? 2 : 2;
-    for (int d = start; d < 8; d += step) {
+    for (int d = start; d < 8; d += 2) {
         int f = sq_file(sq), r = sq_rank(sq);
         for (;;) {
             f += RAY_DF[d];
@@ -265,19 +264,6 @@ static inline int move_to_policy_index(int from_o, int to_o, int promotion) {
 
 
 /* ================================================================
- * Byte-to-float lookup table for fast bitboard -> plane conversion.
- * 256 entries x 8 floats = 8 KB, fits in L1 cache.
- * ================================================================ */
-
-static float BYTE_TO_8FLOATS[256][8];
-
-static void init_byte_to_float_lut(void) {
-    for (int b = 0; b < 256; b++)
-        for (int i = 0; i < 8; i++)
-            BYTE_TO_8FLOATS[b][i] = (float)((b >> i) & 1);
-}
-
-/* ================================================================
  * Bitboard -> plane conversion
  * ================================================================ */
 
@@ -300,6 +286,21 @@ static void init_byte_to_float_lut(void) {
 #define BB_PLANE_USE_AVX2 0
 #endif
 
+/* BYTE_TO_8FLOATS is the scalar-path LUT (8 KB, 256 entries × 8 floats).
+ * AVX2 builds use _avx2_byte_to_8floats instead, so the table is dead
+ * weight there — only emit it on non-AVX2. */
+#if !BB_PLANE_USE_AVX2
+static float BYTE_TO_8FLOATS[256][8];
+
+static void init_byte_to_float_lut(void) {
+    for (int b = 0; b < 256; b++)
+        for (int i = 0; i < 8; i++)
+            BYTE_TO_8FLOATS[b][i] = (float)((b >> i) & 1);
+}
+#else
+static inline void init_byte_to_float_lut(void) { /* no-op on AVX2 */ }
+#endif
+
 #if BB_PLANE_USE_AVX2
 /* AVX2: expand one byte to 8 floats (0.0f or 1.0f) using SIMD.
  * Processes the entire 64-float plane in 8 iterations of pure SIMD ops. */
@@ -318,34 +319,14 @@ static inline void _avx2_byte_to_8floats(uint8_t byte, float *out) {
 }
 
 static void bitboard_to_plane_white(uint64_t bb, float *out) {
-    if (bb == 0) {
-        _mm256_storeu_ps(out,      _mm256_setzero_ps());
-        _mm256_storeu_ps(out + 8,  _mm256_setzero_ps());
-        _mm256_storeu_ps(out + 16, _mm256_setzero_ps());
-        _mm256_storeu_ps(out + 24, _mm256_setzero_ps());
-        _mm256_storeu_ps(out + 32, _mm256_setzero_ps());
-        _mm256_storeu_ps(out + 40, _mm256_setzero_ps());
-        _mm256_storeu_ps(out + 48, _mm256_setzero_ps());
-        _mm256_storeu_ps(out + 56, _mm256_setzero_ps());
-        return;
-    }
+    if (bb == 0) { memset(out, 0, 64 * sizeof(float)); return; }
     const uint8_t *bytes = (const uint8_t *)&bb;
     for (int r = 0; r < 8; r++)
         _avx2_byte_to_8floats(bytes[r], out + r * 8);
 }
 
 static void bitboard_to_plane_black(uint64_t bb, float *out) {
-    if (bb == 0) {
-        _mm256_storeu_ps(out,      _mm256_setzero_ps());
-        _mm256_storeu_ps(out + 8,  _mm256_setzero_ps());
-        _mm256_storeu_ps(out + 16, _mm256_setzero_ps());
-        _mm256_storeu_ps(out + 24, _mm256_setzero_ps());
-        _mm256_storeu_ps(out + 32, _mm256_setzero_ps());
-        _mm256_storeu_ps(out + 40, _mm256_setzero_ps());
-        _mm256_storeu_ps(out + 48, _mm256_setzero_ps());
-        _mm256_storeu_ps(out + 56, _mm256_setzero_ps());
-        return;
-    }
+    if (bb == 0) { memset(out, 0, 64 * sizeof(float)); return; }
     const uint8_t *bytes = (const uint8_t *)&bb;
     for (int r = 0; r < 8; r++)
         _avx2_byte_to_8floats(bytes[7 - r], out + r * 8);
@@ -923,9 +904,8 @@ static void cboard_push(CBoard *b, int from_sq, int to_sq, int promotion) {
     h ^= ZOBRIST_CASTLING[old_castling & 0xF];
     h ^= ZOBRIST_CASTLING[b->castling & 0xF];
 
-    /* EP excluded from hash for better transposition detection */
-
-    /* Update EP square (always store for encoding, but hash only if legal) */
+    /* EP square is stored for encoding but excluded from the Zobrist hash
+     * (better transposition detection, and _check_repetitions does the same). */
     b->ep_square = -1;
     if (is_pawn_move) {
         int diff = to_sq - from_sq;

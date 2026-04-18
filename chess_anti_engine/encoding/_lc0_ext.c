@@ -21,15 +21,65 @@
 
 /* Read a uint64 attribute from a python-chess object. On error, returns 0
  * and (if err != NULL) sets *err = 1; the Python exception is left in place.
- * Pass err = NULL for silent fallback (used when reading history snapshots
- * where missing attrs should just zero out). */
+ * Pass err = NULL for silent fallback (history snapshots where missing attrs
+ * should zero out) — in that mode any pending Python exception is cleared so
+ * it cannot surface later from unrelated code. */
 static inline uint64_t py_attr_u64(PyObject *obj, const char *attr, int *err) {
     PyObject *v = PyObject_GetAttrString(obj, attr);
-    if (!v) { if (err) *err = 1; return 0; }
+    if (!v) {
+        if (err) *err = 1;
+        else     PyErr_Clear();
+        return 0;
+    }
     uint64_t r = PyLong_AsUnsignedLongLong(v);
     Py_DECREF(v);
-    if (err && r == (uint64_t)-1 && PyErr_Occurred()) *err = 1;
+    if (r == (uint64_t)-1 && PyErr_Occurred()) {
+        if (err) *err = 1;
+        else   { PyErr_Clear(); r = 0; }
+    }
     return r;
+}
+
+/* Convert python-chess castling_rights bitmask (A1/H1/A8/H8 bits) to our
+ * 4-bit WK/WQ/BK/BQ encoding. Sets *out and returns 0 on success; on error
+ * leaves *out unchanged and returns -1 with the Python exception set. */
+static inline int py_read_castling_mask(PyObject *state, uint8_t *out) {
+    PyObject *cr_obj = PyObject_GetAttrString(state, "castling_rights");
+    if (!cr_obj) return -1;
+    unsigned long cr = PyLong_AsUnsignedLong(cr_obj);
+    Py_DECREF(cr_obj);
+    if (cr == (unsigned long)-1 && PyErr_Occurred()) return -1;
+    uint8_t c = 0;
+    if (cr & (1ULL << 7))  c |= WK_CASTLE;  /* H1 */
+    if (cr & (1ULL << 0))  c |= WQ_CASTLE;  /* A1 */
+    if (cr & (1ULL << 63)) c |= BK_CASTLE;  /* H8 */
+    if (cr & (1ULL << 56)) c |= BQ_CASTLE;  /* A8 */
+    *out = c;
+    return 0;
+}
+
+/* Read the 6 piece bitboards + 2 occupancy bitboards + turn from a
+ * python-chess snapshot (Board or _BoardState). Missing attrs silently
+ * zero out — these snapshots sometimes lack occupied_w/b on older
+ * python-chess versions, and zeroing them is preferable to aborting
+ * CBoard construction. */
+static inline void py_read_hist_bitboards(PyObject *state,
+                                          uint64_t bb[6],
+                                          uint64_t occ[2],
+                                          int *turn_out) {
+    bb[PAWN]   = py_attr_u64(state, "pawns",      NULL);
+    bb[KNIGHT] = py_attr_u64(state, "knights",    NULL);
+    bb[BISHOP] = py_attr_u64(state, "bishops",    NULL);
+    bb[ROOK]   = py_attr_u64(state, "rooks",      NULL);
+    bb[QUEEN]  = py_attr_u64(state, "queens",     NULL);
+    bb[KING]   = py_attr_u64(state, "kings",      NULL);
+    occ[WHITE_C] = py_attr_u64(state, "occupied_w", NULL);
+    occ[BLACK_C] = py_attr_u64(state, "occupied_b", NULL);
+
+    PyObject *t_obj = PyObject_GetAttrString(state, "turn");
+    *turn_out = (t_obj && PyObject_IsTrue(t_obj)) ? WHITE_C : BLACK_C;
+    Py_XDECREF(t_obj);
+    if (!t_obj) PyErr_Clear();  /* silent fallback like the attr reads above */
 }
 
 
@@ -231,6 +281,7 @@ static PyObject* PyCBoard_from_board(PyTypeObject *type, PyObject *args) {
     b->occ[WHITE_C] = (uint64_t)PyLong_AsUnsignedLongLong(occ_w);
     b->occ[BLACK_C] = (uint64_t)PyLong_AsUnsignedLongLong(occ_b);
     Py_DECREF(occ_w); Py_DECREF(occ_b);
+    if (PyErr_Occurred()) { Py_DECREF(self); return NULL; }
 
     /* Turn: True=WHITE, False=BLACK */
     val = PyObject_GetAttrString(py_board, "turn");
@@ -238,42 +289,38 @@ static PyObject* PyCBoard_from_board(PyTypeObject *type, PyObject *args) {
     b->turn = PyObject_IsTrue(val) ? WHITE_C : BLACK_C;
     Py_DECREF(val);
 
-    /* Castling rights: read bitmask directly instead of 4 method calls */
-    b->castling = 0;
-    val = PyObject_GetAttrString(py_board, "castling_rights");
-    if (!val) { Py_DECREF(self); return NULL; }
-    {
-        uint64_t cr = PyLong_AsUnsignedLongLong(val);
-        Py_DECREF(val);
-        if (cr == (uint64_t)-1 && PyErr_Occurred()) { Py_DECREF(self); return NULL; }
-        if (cr & (1ULL << 7))  b->castling |= WK_CASTLE;  /* H1 */
-        if (cr & (1ULL << 0))  b->castling |= WQ_CASTLE;  /* A1 */
-        if (cr & (1ULL << 63)) b->castling |= BK_CASTLE;  /* H8 */
-        if (cr & (1ULL << 56)) b->castling |= BQ_CASTLE;  /* A8 */
+    /* Castling rights */
+    if (py_read_castling_mask(py_board, &b->castling) < 0) {
+        Py_DECREF(self); return NULL;
     }
 
     /* EP square */
     val = PyObject_GetAttrString(py_board, "ep_square");
     if (!val) { Py_DECREF(self); return NULL; }
-    if (val == Py_None) b->ep_square = -1;
-    else b->ep_square = (int8_t)PyLong_AsLong(val);
+    if (val == Py_None) {
+        b->ep_square = -1;
+    } else {
+        long ep = PyLong_AsLong(val);
+        if (ep == -1 && PyErr_Occurred()) { Py_DECREF(val); Py_DECREF(self); return NULL; }
+        b->ep_square = (int8_t)ep;
+    }
     Py_DECREF(val);
 
     /* Halfmove clock */
     val = PyObject_GetAttrString(py_board, "halfmove_clock");
     if (!val) { Py_DECREF(self); return NULL; }
-    int hmc = (int)PyLong_AsLong(val);
-    b->halfmove_clock = (uint8_t)(hmc > 255 ? 255 : hmc);
+    long hmc = PyLong_AsLong(val);
     Py_DECREF(val);
+    if (hmc == -1 && PyErr_Occurred()) { Py_DECREF(self); return NULL; }
+    b->halfmove_clock = (uint8_t)(hmc > 255 ? 255 : (hmc < 0 ? 0 : hmc));
 
     /* Fullmove number -> ply (matches python-chess Board.ply()) */
     val = PyObject_GetAttrString(py_board, "fullmove_number");
     if (!val) { Py_DECREF(self); return NULL; }
-    {
-        int fmn = (int)PyLong_AsLong(val);
-        Py_DECREF(val);
-        b->ply = (uint16_t)((fmn - 1) * 2 + (b->turn == BLACK_C ? 1 : 0));
-    }
+    long fmn = PyLong_AsLong(val);
+    Py_DECREF(val);
+    if (fmn == -1 && PyErr_Occurred()) { Py_DECREF(self); return NULL; }
+    b->ply = (uint16_t)((fmn - 1) * 2 + (b->turn == BLACK_C ? 1 : 0));
 
     /* --- Compute Zobrist hash --- */
     b->hash = cboard_compute_hash(b);
@@ -296,31 +343,11 @@ static PyObject* PyCBoard_from_board(PyTypeObject *type, PyObject *args) {
             PyObject *s = PyList_GetItem(stack, stack_len - 1 - hi); /* borrowed */
             if (!s) break;
 
-            uint64_t s_pawns   = py_attr_u64(s, "pawns",      NULL);
-            uint64_t s_knights = py_attr_u64(s, "knights",    NULL);
-            uint64_t s_bishops = py_attr_u64(s, "bishops",    NULL);
-            uint64_t s_rooks   = py_attr_u64(s, "rooks",      NULL);
-            uint64_t s_queens  = py_attr_u64(s, "queens",     NULL);
-            uint64_t s_kings   = py_attr_u64(s, "kings",      NULL);
-            uint64_t s_occ_w   = py_attr_u64(s, "occupied_w", NULL);
-            uint64_t s_occ_b   = py_attr_u64(s, "occupied_b", NULL);
-
-            PyObject *s_turn_obj = PyObject_GetAttrString(s, "turn");
-            int s_turn = (s_turn_obj && PyObject_IsTrue(s_turn_obj)) ? WHITE_C : BLACK_C;
-            Py_XDECREF(s_turn_obj);
-
-            int slot = i;  /* write oldest at slot 0, newest at slot n_hist-1 */
-            b->hist_bb[slot][PAWN]   = s_pawns;
-            b->hist_bb[slot][KNIGHT] = s_knights;
-            b->hist_bb[slot][BISHOP] = s_bishops;
-            b->hist_bb[slot][ROOK]   = s_rooks;
-            b->hist_bb[slot][QUEEN]  = s_queens;
-            b->hist_bb[slot][KING]   = s_kings;
-            b->hist_occ[slot][WHITE_C] = s_occ_w;
-            b->hist_occ[slot][BLACK_C] = s_occ_b;
+            int slot = i;  /* oldest at slot 0, newest at slot n_hist-1 */
+            int s_turn;
+            py_read_hist_bitboards(s, b->hist_bb[slot], b->hist_occ[slot], &s_turn);
             b->hist_turn[slot] = (int8_t)s_turn;
             b->hist_len++;
-
         }
         b->hist_head = n_hist % CBOARD_HISTORY_MAX;
 
@@ -330,38 +357,12 @@ static PyObject* PyCBoard_from_board(PyTypeObject *type, PyObject *args) {
             PyObject *s = PyList_GetItem(stack, si); /* borrowed */
             if (!s) break;
 
-            /* Read piece data and castling_rights to compute the hash; stop
-             * when we've walked past the halfmove_clock limit below. */
             uint64_t h_bb[6], h_occ[2];
-            h_bb[PAWN]   = py_attr_u64(s, "pawns",      NULL);
-            h_bb[KNIGHT] = py_attr_u64(s, "knights",    NULL);
-            h_bb[BISHOP] = py_attr_u64(s, "bishops",    NULL);
-            h_bb[ROOK]   = py_attr_u64(s, "rooks",      NULL);
-            h_bb[QUEEN]  = py_attr_u64(s, "queens",     NULL);
-            h_bb[KING]   = py_attr_u64(s, "kings",      NULL);
-            h_occ[WHITE_C] = py_attr_u64(s, "occupied_w", NULL);
-            h_occ[BLACK_C] = py_attr_u64(s, "occupied_b", NULL);
+            int h_turn;
+            py_read_hist_bitboards(s, h_bb, h_occ, &h_turn);
 
-            PyObject *t_obj = PyObject_GetAttrString(s, "turn");
-            int h_turn = (t_obj && PyObject_IsTrue(t_obj)) ? WHITE_C : BLACK_C;
-            Py_XDECREF(t_obj);
-
-            /* Read castling_rights (int) */
-            PyObject *cr_obj = PyObject_GetAttrString(s, "castling_rights");
             uint8_t h_castling = 0;
-            if (cr_obj) {
-                unsigned long cr = PyLong_AsUnsignedLong(cr_obj);
-                Py_DECREF(cr_obj);
-                /* python-chess castling_rights uses chess.BB_* bitmask:
-                 * BB_H1=128, BB_A1=1, BB_H8=..., BB_A8=...
-                 * We need to convert to our WK/WQ/BK/BQ bits.
-                 * chess.BB_H1=128 -> WK, chess.BB_A1=1 -> WQ,
-                 * chess.BB_H8=... -> BK, chess.BB_A8=... -> BQ */
-                if (cr & (1ULL << 7))  h_castling |= WK_CASTLE;  /* H1 */
-                if (cr & (1ULL << 0))  h_castling |= WQ_CASTLE;  /* A1 */
-                if (cr & (1ULL << 63)) h_castling |= BK_CASTLE;  /* H8 */
-                if (cr & (1ULL << 56)) h_castling |= BQ_CASTLE;  /* A8 */
-            }
+            if (py_read_castling_mask(s, &h_castling) < 0) PyErr_Clear();
 
             uint64_t h_hash = cboard_hist_hash(h_bb, h_occ, h_turn, h_castling);
 

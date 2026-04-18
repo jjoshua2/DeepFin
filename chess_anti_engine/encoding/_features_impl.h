@@ -375,6 +375,52 @@ static uint64_t feat_discovered_attack_mask(
     return discovered;
 }
 
+/* Sweep the four directions given by df[]/dr[] around king_sq looking for
+ * pin patterns (king, own blocker, opposing slider along the ray). When
+ * found, set the blocker in *pinned_out and extend the full through-ray
+ * (both directions) into *pin_ray_out. Used once per slider family
+ * (diagonal bishops/queens, orthogonal rooks/queens). */
+static inline void feat_scan_pin_dirs(
+    const int df[4], const int dr[4],
+    uint64_t color_occ, uint64_t occ, int king_sq, uint64_t sliders,
+    uint64_t *pinned_out, uint64_t *pin_ray_out
+) {
+    int kf = (king_sq & 7), kr = (king_sq >> 3);
+    for (int d = 0; d < 4; d++) {
+        int own_blocker = -1;
+        uint64_t ray = 0;
+        int found_pinner = 0;
+        for (int dist = 1; dist <= 7; dist++) {
+            int f = kf + df[d] * dist;
+            int r = kr + dr[d] * dist;
+            if (f < 0 || f > 7 || r < 0 || r > 7) break;
+            int sq = r * 8 + f;
+            ray |= ((uint64_t)1 << sq);
+            if (found_pinner) continue;
+            if (occ & ((uint64_t)1 << sq)) {
+                if (color_occ & ((uint64_t)1 << sq)) {
+                    if (own_blocker >= 0) break;
+                    own_blocker = sq;
+                } else {
+                    if ((sliders & ((uint64_t)1 << sq)) && own_blocker >= 0) {
+                        *pinned_out |= ((uint64_t)1 << own_blocker);
+                        found_pinner = 1;
+                    } else break;
+                }
+            }
+        }
+        if (found_pinner) {
+            for (int dist = 1; dist <= 7; dist++) {
+                int f = kf - df[d] * dist;
+                int r = kr - dr[d] * dist;
+                if (f < 0 || f > 7 || r < 0 || r > 7) break;
+                ray |= ((uint64_t)1 << (r * 8 + f));
+            }
+            *pin_ray_out |= ray | ((uint64_t)1 << king_sq);
+        }
+    }
+}
+
 static void feat_compute_pins(
     uint64_t color_occ, uint64_t occ, int king_sq,
     uint64_t opp_bishops, uint64_t opp_rooks, uint64_t opp_queens,
@@ -384,83 +430,15 @@ static void feat_compute_pins(
     *pin_ray_out = 0;
     if (king_sq < 0 || king_sq > 63) return;
 
-    uint64_t diag_sliders = opp_bishops | opp_queens;
-    uint64_t orth_sliders = opp_rooks | opp_queens;
-
     static const int diag_df[4] = {1, 1, -1, -1};
     static const int diag_dr[4] = {1, -1, 1, -1};
     static const int orth_df[4] = {1, -1, 0, 0};
     static const int orth_dr[4] = {0, 0, 1, -1};
 
-    for (int d = 0; d < 4; d++) {
-        int kf = (king_sq & 7), kr = (king_sq >> 3);
-        int own_blocker = -1;
-        uint64_t ray = 0;
-        int found_pinner = 0;
-        for (int dist = 1; dist <= 7; dist++) {
-            int f = kf + diag_df[d] * dist;
-            int r = kr + diag_dr[d] * dist;
-            if (f < 0 || f > 7 || r < 0 || r > 7) break;
-            int sq = r * 8 + f;
-            ray |= ((uint64_t)1 << sq);
-            if (found_pinner) continue;
-            if (occ & ((uint64_t)1 << sq)) {
-                if (color_occ & ((uint64_t)1 << sq)) {
-                    if (own_blocker >= 0) break;
-                    own_blocker = sq;
-                } else {
-                    if ((diag_sliders & ((uint64_t)1 << sq)) && own_blocker >= 0) {
-                        *pinned_out |= ((uint64_t)1 << own_blocker);
-                        found_pinner = 1;
-                    } else break;
-                }
-            }
-        }
-        if (found_pinner) {
-            for (int dist = 1; dist <= 7; dist++) {
-                int f = kf - diag_df[d] * dist;
-                int r = kr - diag_dr[d] * dist;
-                if (f < 0 || f > 7 || r < 0 || r > 7) break;
-                ray |= ((uint64_t)1 << (r * 8 + f));
-            }
-            *pin_ray_out |= ray | ((uint64_t)1 << king_sq);
-        }
-    }
-
-    for (int d = 0; d < 4; d++) {
-        int kf = (king_sq & 7), kr = (king_sq >> 3);
-        int own_blocker = -1;
-        uint64_t ray = 0;
-        int found_pinner = 0;
-        for (int dist = 1; dist <= 7; dist++) {
-            int f = kf + orth_df[d] * dist;
-            int r = kr + orth_dr[d] * dist;
-            if (f < 0 || f > 7 || r < 0 || r > 7) break;
-            int sq = r * 8 + f;
-            ray |= ((uint64_t)1 << sq);
-            if (found_pinner) continue;
-            if (occ & ((uint64_t)1 << sq)) {
-                if (color_occ & ((uint64_t)1 << sq)) {
-                    if (own_blocker >= 0) break;
-                    own_blocker = sq;
-                } else {
-                    if ((orth_sliders & ((uint64_t)1 << sq)) && own_blocker >= 0) {
-                        *pinned_out |= ((uint64_t)1 << own_blocker);
-                        found_pinner = 1;
-                    } else break;
-                }
-            }
-        }
-        if (found_pinner) {
-            for (int dist = 1; dist <= 7; dist++) {
-                int f = kf - orth_df[d] * dist;
-                int r = kr - orth_dr[d] * dist;
-                if (f < 0 || f > 7 || r < 0 || r > 7) break;
-                ray |= ((uint64_t)1 << (r * 8 + f));
-            }
-            *pin_ray_out |= ray | ((uint64_t)1 << king_sq);
-        }
-    }
+    feat_scan_pin_dirs(diag_df, diag_dr, color_occ, occ, king_sq,
+                       opp_bishops | opp_queens, pinned_out, pin_ray_out);
+    feat_scan_pin_dirs(orth_df, orth_dr, color_occ, occ, king_sq,
+                       opp_rooks | opp_queens, pinned_out, pin_ray_out);
 }
 
 static uint64_t feat_passed_pawns(uint64_t own_pawns, uint64_t enemy_pawns, int color) {

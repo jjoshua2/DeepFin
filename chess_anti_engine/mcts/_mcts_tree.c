@@ -323,27 +323,32 @@ static int tree_grow_children(TreeData *t, int32_t need) {
         new_cap *= 2;
     if (new_cap == t->child_cap) return 0;
 
-    t->child_action = (int32_t *)realloc(t->child_action, new_cap * sizeof(int32_t));
-    t->child_node = (int32_t *)realloc(t->child_node, new_cap * sizeof(int32_t));
-    if (!t->child_action || !t->child_node) return -1;
+    /* Commit each realloc only on success — leaves t->* valid on OOM. */
+    int32_t *new_action = (int32_t *)realloc(t->child_action, new_cap * sizeof(int32_t));
+    if (!new_action) return -1;
+    t->child_action = new_action;
+    int32_t *new_node = (int32_t *)realloc(t->child_node, new_cap * sizeof(int32_t));
+    if (!new_node) return -1;
+    t->child_node = new_node;
 
     t->child_cap = new_cap;
     return 0;
 }
 
 
-/* Ensure CBoard cache can hold at least `need` entries. */
+/* Ensure CBoard cache can hold at least `need` entries. All-or-nothing: on
+ * any failure t->cb_cache/cb_valid/cb_cache_cap remain mutually consistent. */
 static int tree_ensure_cb_cache(TreeData *t, int32_t need) {
     if (need <= t->cb_cache_cap) return 0;
     int32_t new_cap = t->cb_cache_cap ? t->cb_cache_cap : 256;
     while (new_cap < need) new_cap *= 2;
     CBoard *new_cb = (CBoard *)realloc(t->cb_cache, new_cap * sizeof(CBoard));
     if (!new_cb) return -1;
-    int8_t *new_valid = (int8_t *)realloc(t->cb_valid, new_cap * sizeof(int8_t));
-    if (!new_valid) { t->cb_cache = new_cb; return -1; }
-    memset(new_valid + t->cb_cache_cap, 0, (new_cap - t->cb_cache_cap) * sizeof(int8_t));
     t->cb_cache = new_cb;
+    int8_t *new_valid = (int8_t *)realloc(t->cb_valid, new_cap * sizeof(int8_t));
+    if (!new_valid) return -1;
     t->cb_valid = new_valid;
+    memset(t->cb_valid + t->cb_cache_cap, 0, (new_cap - t->cb_cache_cap) * sizeof(int8_t));
     t->cb_cache_cap = new_cap;
     return 0;
 }
@@ -366,7 +371,9 @@ static int32_t tree_add_node(TreeData *t, int32_t parent_id, int32_t action, dou
 }
 
 
-/* Expand a node: add children for each (action, prior) pair. */
+/* Expand a node: add children for each (action, prior) pair.
+ * All-or-nothing: if any tree_add_node fails, the node is left unexpanded
+ * and any partially-allocated child nodes are rolled back. */
 static int tree_expand(TreeData *t, int32_t node_id,
                        const int32_t *actions, const double *priors, int32_t n_children) {
     if (n_children <= 0) {
@@ -377,16 +384,23 @@ static int tree_expand(TreeData *t, int32_t node_id,
     if (tree_grow_children(t, n_children) < 0) return -1;
 
     int32_t offset = t->child_count;
-    t->children_offset[node_id] = offset;
-    t->num_children[node_id] = n_children;
-    t->expanded[node_id] = 1;
+    int32_t saved_node_count = t->node_count;
 
     for (int32_t i = 0; i < n_children; i++) {
         int32_t child_id = tree_add_node(t, node_id, actions[i], priors[i]);
-        if (child_id < 0) return -1;
+        if (child_id < 0) {
+            /* Roll back: children added so far revert; node stays unexpanded. */
+            t->node_count = saved_node_count;
+            return -1;
+        }
         t->child_action[offset + i] = actions[i];
         t->child_node[offset + i] = child_id;
     }
+
+    /* Commit only after all children exist. */
+    t->children_offset[node_id] = offset;
+    t->num_children[node_id] = n_children;
+    t->expanded[node_id] = 1;
     t->child_count += n_children;
     return 0;
 }
@@ -1071,25 +1085,31 @@ static void stored_free(StoredPrepState *s) {
 }
 
 static int stored_ensure_cap(StoredPrepState *s, int32_t leaf_cap, int32_t term_cap) {
+    /* Commit each realloc only on success so OOM mid-growth leaves s->*
+     * pointing at the previous (still-valid) buffers. */
+    #define SGROW(field, type, cap) do { \
+        type *_p = (type *)realloc(s->field, (cap) * sizeof(type)); \
+        if (!_p) return -1; \
+        s->field = _p; \
+    } while (0)
+
     if (leaf_cap > s->cap) {
-        s->leaf_ids = (int32_t *)realloc(s->leaf_ids, leaf_cap * sizeof(int32_t));
-        s->hashes = (uint64_t *)realloc(s->hashes, leaf_cap * sizeof(uint64_t));
-        s->leaf_cboards = (CBoard *)realloc(s->leaf_cboards, leaf_cap * sizeof(CBoard));
-        s->legal_offset = (int32_t *)realloc(s->legal_offset, leaf_cap * sizeof(int32_t));
-        s->legal_count = (int32_t *)realloc(s->legal_count, leaf_cap * sizeof(int32_t));
-        s->path_offset = (int32_t *)realloc(s->path_offset, leaf_cap * sizeof(int32_t));
-        s->path_count = (int32_t *)realloc(s->path_count, leaf_cap * sizeof(int32_t));
-        if (!s->leaf_ids || !s->hashes || !s->leaf_cboards || !s->legal_offset ||
-            !s->legal_count || !s->path_offset || !s->path_count) return -1;
+        SGROW(leaf_ids,     int32_t,  leaf_cap);
+        SGROW(hashes,       uint64_t, leaf_cap);
+        SGROW(leaf_cboards, CBoard,   leaf_cap);
+        SGROW(legal_offset, int32_t,  leaf_cap);
+        SGROW(legal_count,  int32_t,  leaf_cap);
+        SGROW(path_offset,  int32_t,  leaf_cap);
+        SGROW(path_count,   int32_t,  leaf_cap);
         s->cap = leaf_cap;
     }
     if (term_cap > s->term_cap) {
-        s->term_path_offset = (int32_t *)realloc(s->term_path_offset, term_cap * sizeof(int32_t));
-        s->term_path_count = (int32_t *)realloc(s->term_path_count, term_cap * sizeof(int32_t));
-        s->term_values = (double *)realloc(s->term_values, term_cap * sizeof(double));
-        if (!s->term_path_offset || !s->term_path_count || !s->term_values) return -1;
+        SGROW(term_path_offset, int32_t, term_cap);
+        SGROW(term_path_count,  int32_t, term_cap);
+        SGROW(term_values,      double,  term_cap);
         s->term_cap = term_cap;
     }
+    #undef SGROW
     return 0;
 }
 
@@ -1949,23 +1969,46 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
 
     for (int32_t i = 0; i < n_boards; i++) {
         PyArrayObject *pri = FROMANY_1D(PyList_GET_ITEM(priors_list, i), NPY_FLOAT64);
-        if (pri) {
-            memcpy(g->root_priors + i * GSS_POLICY_SIZE, PyArray_DATA(pri),
-                   GSS_POLICY_SIZE * sizeof(double));
-            Py_DECREF(pri);
+        if (!pri) {
+            gss_free(g);
+            Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
+            Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
+            return NULL;
         }
+        if (PyArray_DIM(pri, 0) < GSS_POLICY_SIZE) {
+            Py_DECREF(pri);
+            gss_free(g);
+            Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
+            Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
+            PyErr_SetString(PyExc_ValueError, "priors array must have at least GSS_POLICY_SIZE elements");
+            return NULL;
+        }
+        memcpy(g->root_priors + i * GSS_POLICY_SIZE, PyArray_DATA(pri),
+               GSS_POLICY_SIZE * sizeof(double));
+        Py_DECREF(pri);
     }
 
     for (int32_t i = 0; i < n_boards; i++) {
         PyObject *item = PyList_GET_ITEM(gumbels_list, i);
-        if (item != Py_None) {
-            PyArrayObject *garr = FROMANY_1D(item, NPY_FLOAT64);
-            if (garr) {
-                memcpy(g->gumbels + i * GSS_POLICY_SIZE, PyArray_DATA(garr),
-                       GSS_POLICY_SIZE * sizeof(double));
-                Py_DECREF(garr);
-            }
+        if (item == Py_None) continue;
+        PyArrayObject *garr = FROMANY_1D(item, NPY_FLOAT64);
+        if (!garr) {
+            gss_free(g);
+            Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
+            Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
+            return NULL;
         }
+        if (PyArray_DIM(garr, 0) < GSS_POLICY_SIZE) {
+            Py_DECREF(garr);
+            gss_free(g);
+            Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
+            Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
+            PyErr_SetString(PyExc_ValueError, "gumbels array must have at least GSS_POLICY_SIZE elements");
+            return NULL;
+        }
+        memcpy(g->gumbels + i * GSS_POLICY_SIZE, PyArray_DATA(garr),
+               GSS_POLICY_SIZE * sizeof(double));
+        Py_DECREF(garr);
     }
 
     int32_t total_cands = 0;
@@ -1991,11 +2034,17 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
     }
     for (int32_t i = 0; i < n_boards; i++) {
         PyObject *item = PyList_GET_ITEM(remaining_list, i);
-        if (item != Py_None) {
-            int32_t off = g->cands_offset[i];
-            for (Py_ssize_t j = 0; j < PyList_Size(item); j++) {
-                g->cands_flat[off + j] = (int32_t)PyLong_AsLong(PyList_GET_ITEM(item, j));
+        if (item == Py_None) continue;
+        int32_t off = g->cands_offset[i];
+        for (Py_ssize_t j = 0; j < PyList_Size(item); j++) {
+            long v = PyLong_AsLong(PyList_GET_ITEM(item, j));
+            if (v == -1 && PyErr_Occurred()) {
+                gss_free(g);
+                Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
+                Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
+                return NULL;
             }
+            g->cands_flat[off + j] = (int32_t)v;
         }
     }
 
@@ -2268,6 +2317,28 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
     int32_t n = (int32_t)PyArray_DIM(pol_arr, 0);
     if (PyList_Size(cboards_list) < n) {
         PyErr_SetString(PyExc_ValueError, "cboards_list too short");
+        goto fail;
+    }
+    /* Validate companion arrays. pol_arr is the source of truth for n;
+     * all others (and their trailing dims for 2D) must match. */
+    if (PyArray_DIM(pol_arr, 1) != 4672) {
+        PyErr_SetString(PyExc_ValueError, "pol must have shape (n, 4672)");
+        goto fail;
+    }
+    if (PyArray_DIM(wdl_arr, 0) < n || PyArray_DIM(wdl_arr, 1) != 3) {
+        PyErr_SetString(PyExc_ValueError, "wdl must have shape (>=n, 3)");
+        goto fail;
+    }
+    if (PyArray_DIM(act_arr, 0) < n) {
+        PyErr_SetString(PyExc_ValueError, "actions too short");
+        goto fail;
+    }
+    if (PyArray_DIM(val_arr, 0) < n) {
+        PyErr_SetString(PyExc_ValueError, "values too short");
+        goto fail;
+    }
+    if (PyArray_DIM(probs_arr, 0) < n || PyArray_DIM(probs_arr, 1) != 4672) {
+        PyErr_SetString(PyExc_ValueError, "mcts_probs must have shape (>=n, 4672)");
         goto fail;
     }
 
