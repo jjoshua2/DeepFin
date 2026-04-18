@@ -258,20 +258,26 @@ static void tree_free(TreeData *t) {
 static int tree_grow_nodes(TreeData *t) {
     int32_t new_cap = t->node_cap * 2;
 
-    t->N = (int32_t *)realloc(t->N, new_cap * sizeof(int32_t));
-    t->W = (double *)realloc(t->W, new_cap * sizeof(double));
-    t->prior = (double *)realloc(t->prior, new_cap * sizeof(double));
-    t->expanded = (int8_t *)realloc(t->expanded, new_cap * sizeof(int8_t));
-    t->parent = (int32_t *)realloc(t->parent, new_cap * sizeof(int32_t));
-    t->action_from_parent = (int32_t *)realloc(t->action_from_parent, new_cap * sizeof(int32_t));
-    t->num_children = (int32_t *)realloc(t->num_children, new_cap * sizeof(int32_t));
-    t->children_offset = (int32_t *)realloc(t->children_offset, new_cap * sizeof(int32_t));
-    t->node_hash = (uint64_t *)realloc(t->node_hash, new_cap * sizeof(uint64_t));
+    /* Each realloc is committed to the struct only on success so that an
+     * OOM mid-growth leaves t->* pointing at the still-valid old buffers
+     * (realloc keeps the original allocation live when it returns NULL). */
+    #define GROW(field, type) do { \
+        type *_p = (type *)realloc(t->field, new_cap * sizeof(type)); \
+        if (!_p) return -1; \
+        t->field = _p; \
+    } while (0)
 
-    if (!t->N || !t->W || !t->prior || !t->expanded || !t->parent ||
-        !t->action_from_parent || !t->num_children || !t->children_offset || !t->node_hash) {
-        return -1;
-    }
+    GROW(N, int32_t);
+    GROW(W, double);
+    GROW(prior, double);
+    GROW(expanded, int8_t);
+    GROW(parent, int32_t);
+    GROW(action_from_parent, int32_t);
+    GROW(num_children, int32_t);
+    GROW(children_offset, int32_t);
+    GROW(node_hash, uint64_t);
+
+    #undef GROW
 
     /* Zero-init new region */
     int32_t old_cap = t->node_cap;
@@ -584,6 +590,13 @@ static inline void stored_append_terminal(StoredPrepState *s,
 
 /* ---- Gumbel simulation state machine ------------------------------------ */
 #define GSS_POLICY_SIZE 4672
+/* Maximum candidates per root per halving round (Gumbel sim). Defined by the
+ * score_buf[64] in gss_score_and_halve; raise both if the Gumbel sampler
+ * ever needs wider candidate sets. */
+#define GSS_MAX_CANDS 64
+/* Target leaves per GPU eval batch. Production GPU pipelines run best at
+ * 1024-2048 per flush; CPU/TinyNet paths would prefer 256-512. */
+#define GSS_GPU_BATCH 1024
 
 typedef struct {
     /* Configuration */
@@ -690,7 +703,10 @@ static void gss_score_and_halve(GumbelSimState *g, TreeData *t) {
         if (g->budget_remaining[bi] < 0) g->budget_remaining[bi] = 0;
 
         if (n_cands <= 1) continue;
-        if (n_cands > 64) n_cands = 64;  /* defensive clamp */
+        /* Clamp here rather than assert — an upstream bug producing >64 cands
+         * would otherwise corrupt scores_buf below. The clamp preserves the
+         * top GSS_MAX_CANDS without crashing, and is a no-op in practice. */
+        if (n_cands > GSS_MAX_CANDS) n_cands = GSS_MAX_CANDS;
 
         int32_t rid = g->root_ids[bi];
         double root_Q = (t->N[rid] > 0) ? (t->W[rid] / (double)t->N[rid]) : 0.0;
@@ -707,7 +723,7 @@ static void gss_score_and_halve(GumbelSimState *g, TreeData *t) {
         double sigma = g->sel.c_scale * (g->sel.c_visit + (double)max_visit);
 
         int32_t coff = g->cands_offset[bi];
-        double scores_buf[64];
+        double scores_buf[GSS_MAX_CANDS];
         double *scores = scores_buf;
         for (int32_t ci = 0; ci < n_cands; ci++) {
             int32_t action = g->cands_flat[coff + ci];
@@ -976,11 +992,11 @@ static void gss_finish_batch(
  * Returns number of leaves needing eval (>0), or 0 if simulation is done. */
 static int32_t gss_step(TreeData *t, StoredPrepState *s, GumbelSimState *g, float *enc_data)
 {
-    /* Accumulate leaves across multiple reps before returning for GPU eval.
-     * This reduces Python↔C round trips. */
-    /* Batch size tuning: smaller = more GPU calls but fresher tree state.
-     * Production GPU: 1024-2048 is good. CPU/TinyNet: 256-512. */
-    int32_t target_batch = 1024;
+    /* Accumulate leaves across multiple reps before returning for GPU eval:
+     * reduces Python↔C round trips at the cost of slightly staler tree state
+     * on later leaves in the batch. See GSS_GPU_BATCH definition for tuning
+     * guidance. */
+    int32_t target_batch = GSS_GPU_BATCH;
 
     for (;;) {
         /* Build queries for one rep at a time */
@@ -2307,12 +2323,7 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
     Py_BEGIN_ALLOW_THREADS
 
 #ifdef _OPENMP
-    #pragma omp parallel if(n >= 32)
-#endif
-    {
-        float raw_buf[4672];
-#ifdef _OPENMP
-        #pragma omp for schedule(static)
+    #pragma omp parallel for schedule(static) if(n >= 32)
 #endif
     for (int32_t i = 0; i < n; i++) {
         CBoard *cb = &boards[i];
@@ -2334,31 +2345,32 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
         for (int j = 0; j < n_legal; j++)
             mask[legal_indices[j]] = 1;
 
-        /* Masked softmax on raw policy */
-        float *raw = raw_buf;
+        /* Masked softmax + KL. Operating on compact legal_logits instead of
+         * the full 4672 drops ~3 full-width passes (~14k ops) to ~3 passes
+         * of n_legal (~100 ops) — ~130× fewer iterations for typical ~35
+         * legal moves. Illegal indices stay zero since the KL accumulator
+         * would skip them anyway. */
+        float legal_logits[256];
         float max_val = -1e30f;
-        for (int j = 0; j < 4672; j++) {
-            raw[j] = mask[j] ? pol[j] : -1e9f;
-            if (raw[j] > max_val) max_val = raw[j];
+        for (int j = 0; j < n_legal; j++) {
+            float v = pol[legal_indices[j]];
+            legal_logits[j] = v;
+            if (v > max_val) max_val = v;
         }
         float sum = 0.0f;
-        for (int j = 0; j < 4672; j++) {
-            raw[j] = mask[j] ? expf(raw[j] - max_val) : 0.0f;
-            sum += raw[j];
+        for (int j = 0; j < n_legal; j++) {
+            legal_logits[j] = expf(legal_logits[j] - max_val);
+            sum += legal_logits[j];
         }
-        if (sum > 0.0f) {
-            for (int j = 0; j < 4672; j++) raw[j] /= sum;
-        } else if (n_legal > 0) {
-            float u = 1.0f / (float)n_legal;
-            for (int j = 0; j < n_legal; j++) raw[legal_indices[j]] = u;
-        }
+        int uniform = !(sum > 0.0f) && n_legal > 0;
+        float inv_sum = uniform ? (1.0f / (float)n_legal) : (sum > 0.0f ? 1.0f / sum : 0.0f);
 
-        /* KL divergence: raw vs MCTS-improved policy */
         float kl = 0.0f;
-        for (int j = 0; j < 4672; j++) {
-            if (raw[j] > 1e-12f && mprobs[j] > 1e-12f) {
-                kl += raw[j] * (logf(raw[j]) - logf(mprobs[j]));
-            }
+        for (int j = 0; j < n_legal; j++) {
+            float p = uniform ? inv_sum : (legal_logits[j] * inv_sum);
+            float mp = mprobs[legal_indices[j]];
+            if (p > 1e-12f && mp > 1e-12f)
+                kl += p * (logf(p) - logf(mp));
         }
 
         /* Q-surprise */
@@ -2415,8 +2427,7 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
 
         /* Game over check */
         over_out[i] = cboard_is_game_over(cb) ? 1 : 0;
-    }
-    }  /* omp parallel */
+    }  /* omp parallel for */
 
     Py_END_ALLOW_THREADS
 

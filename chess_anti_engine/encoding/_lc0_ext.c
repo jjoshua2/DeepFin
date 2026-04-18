@@ -363,9 +363,7 @@ static PyObject* PyCBoard_from_board(PyTypeObject *type, PyObject *args) {
                 if (cr & (1ULL << 56)) h_castling |= BQ_CASTLE;  /* A8 */
             }
 
-            /* EP square -- not stored directly on _BoardState, skip for hash
-             * (matches _check_repetitions which omits EP) */
-            uint64_t h_hash = cboard_hist_hash(h_bb, h_occ, h_turn, h_castling, -1);
+            uint64_t h_hash = cboard_hist_hash(h_bb, h_occ, h_turn, h_castling);
 
             if (b->hash_stack_len < CBOARD_HASH_STACK_MAX)
                 b->hash_stack[b->hash_stack_len++] = h_hash;

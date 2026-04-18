@@ -97,11 +97,10 @@ static void init_attack_tables(void) {
  * Zobrist hashing tables (for repetition detection)
  * ================================================================ */
 
-/* 12 piece-color types x 64 squares, plus turn, castling, ep file */
+/* 12 piece-color types x 64 squares, plus turn, castling */
 static uint64_t ZOBRIST_PIECE[12][64];  /* [piece_color_idx][sq] */
 static uint64_t ZOBRIST_TURN;
 static uint64_t ZOBRIST_CASTLING[16];   /* indexed by 4-bit castling */
-static uint64_t ZOBRIST_EP[8];          /* indexed by ep file 0..7 */
 static int zobrist_initialized = 0;
 
 /* Simple xorshift64 PRNG for deterministic Zobrist values */
@@ -124,8 +123,6 @@ static void init_zobrist(void) {
     ZOBRIST_TURN = zobrist_rand64();
     for (int c = 0; c < 16; c++)
         ZOBRIST_CASTLING[c] = zobrist_rand64();
-    for (int f = 0; f < 8; f++)
-        ZOBRIST_EP[f] = zobrist_rand64();
     zobrist_initialized = 1;
 }
 
@@ -663,6 +660,13 @@ static inline int generate_legal_move_indices_sorted(const BoardState *bs, int *
 
 enum { PAWN=0, KNIGHT=1, BISHOP=2, ROOK=3, QUEEN=4, KING=5 };
 enum { BLACK_C=0, WHITE_C=1 };
+
+/* Tri-state flag in POLICY_LUT entries: init_policy_lut speculatively marks
+ * pawn moves that *might* promote (based on the un-oriented target rank)
+ * with promotion=PROMO_MAYBE_QUEEN. cboard_push then checks the real
+ * destination rank and either applies a queen promotion or treats it as a
+ * regular pawn move. Explicit underpromotion uses KNIGHT/BISHOP/ROOK (1..3). */
+#define PROMO_MAYBE_QUEEN 5
 /* Castling bits */
 enum { WK_CASTLE=1, WQ_CASTLE=2, BK_CASTLE=4, BQ_CASTLE=8 };
 
@@ -742,7 +746,7 @@ static void init_policy_lut(void) {
             if (promo == 0) {
                 int real_to_rank = sq_rank(to_real);
                 if (real_to_rank == 0 || real_to_rank == 7)
-                    promo = 5; /* mark as potential queen promo -- confirmed in push */
+                    promo = PROMO_MAYBE_QUEEN;  /* confirmed in cboard_push */
             }
 
             POLICY_LUT[turn][idx].from_sq = (int8_t)from_real;
@@ -869,11 +873,11 @@ static void cboard_push(CBoard *b, int from_sq, int to_sq, int promotion) {
 
     /* Promotion: replace pawn with promoted piece */
     int final_piece = moving_piece;
-    if (promotion > 0 && promotion != 5 && is_pawn_move) {
+    if (promotion > 0 && promotion != PROMO_MAYBE_QUEEN && is_pawn_move) {
         b->bb[PAWN] &= ~to_bit;
         b->bb[promotion - 1] |= to_bit;
         final_piece = promotion - 1;
-    } else if (promotion == 5 && is_pawn_move) {
+    } else if (promotion == PROMO_MAYBE_QUEEN && is_pawn_move) {
         int to_rank = sq_rank(to_sq);
         if (to_rank == 0 || to_rank == 7) {
             b->bb[PAWN] &= ~to_bit;
@@ -1125,11 +1129,11 @@ static void cboard_encode_hist_planes(const uint64_t hist_bb[6],
 }
 
 /* Compute a position key for repetition detection (from bitboards + meta).
- * Uses Zobrist hash -- matches cboard_compute_hash semantics. */
+ * Matches _check_repetitions which omits EP square from the key, so EP is
+ * not mixed in here either. */
 static uint64_t cboard_hist_hash(const uint64_t hist_bb[6],
                                   const uint64_t hist_occ[2],
-                                  int hist_turn, uint8_t castling,
-                                  int8_t ep_square) {
+                                  int hist_turn, uint8_t castling) {
     uint64_t h = 0;
     for (int color = 0; color < 2; color++) {
         for (int pt = 0; pt < 6; pt++) {
@@ -1142,7 +1146,6 @@ static uint64_t cboard_hist_hash(const uint64_t hist_bb[6],
     }
     if (hist_turn == BLACK_C) h ^= ZOBRIST_TURN;
     h ^= ZOBRIST_CASTLING[castling & 0xF];
-    if (ep_square >= 0) h ^= ZOBRIST_EP[sq_file(ep_square)];
     return h;
 }
 

@@ -20,9 +20,23 @@
  * Precomputed tables
  * ================================================================ */
 
+/* Knight/king/pawn attack tables + slider ray helpers are also defined
+ * by _cboard_impl.h. When it's been included first (in _lc0_ext.c and
+ * _mcts_tree.c) alias to those copies instead of carrying a second set —
+ * eliminates ~5 KB of duplicate tables and two duplicate ray walks per .so.
+ * When _features_ext.c includes this header alone, the FEAT_-prefixed
+ * standalone versions below are compiled in. */
+#ifdef _CBOARD_IMPL_H
+#define FEAT_KNIGHT_ATTACKS  KNIGHT_ATTACKS
+#define FEAT_KING_ATTACKS    KING_ATTACKS
+#define FEAT_PAWN_ATTACKS    PAWN_ATTACKS
+#define feat_rook_attacks    rook_attacks
+#define feat_bishop_attacks  bishop_attacks
+#else
 static uint64_t FEAT_KNIGHT_ATTACKS[64];
 static uint64_t FEAT_KING_ATTACKS[64];
 static uint64_t FEAT_PAWN_ATTACKS[2][64];   /* [color][sq], color: 0=BLACK 1=WHITE */
+#endif
 
 static uint64_t FEAT_ADJACENT_FILE_MASKS[8];
 static uint64_t FEAT_PASSED_PAWN_MASKS[2][64];
@@ -40,6 +54,11 @@ static int feat_tables_initialized = 0;
 
 static void init_tables_features(void) {
     if (feat_tables_initialized) return;
+
+#ifdef _CBOARD_IMPL_H
+    /* Shared attack tables are populated by cboard's init (idempotent). */
+    init_attack_tables();
+#endif
 
     for (int f = 0; f < 8; f++) {
         uint64_t mask = 0;
@@ -59,6 +78,9 @@ static void init_tables_features(void) {
         FEAT_ADJACENT_FILE_MASKS[f] = m;
     }
 
+#ifndef _CBOARD_IMPL_H
+    /* Standalone mode: build KNIGHT/KING/PAWN attack tables ourselves.
+     * In shared mode init_attack_tables() above already populated them. */
     static const int knight_deltas[8][2] = {
         {-2,-1},{-2,1},{-1,-2},{-1,2},{1,-2},{1,2},{2,-1},{2,1}
     };
@@ -101,6 +123,7 @@ static void init_tables_features(void) {
         FEAT_PAWN_ATTACKS[1][sq] = w;
         FEAT_PAWN_ATTACKS[0][sq] = b;
     }
+#endif  /* !_CBOARD_IMPL_H */
 
     for (int sq = 0; sq < 64; sq++) {
         int f = (sq & 7), r = (sq >> 3);
@@ -172,9 +195,11 @@ static void init_tables_features(void) {
 }
 
 /* ================================================================
- * Sliding piece attacks
+ * Sliding piece attacks (standalone copy; shared mode aliases to
+ * _cboard_impl.h's rook_attacks/bishop_attacks via #define above).
  * ================================================================ */
 
+#ifndef _CBOARD_IMPL_H
 static uint64_t feat_rook_attacks(int sq, uint64_t occ) {
     uint64_t attacks = 0;
     int f = (sq & 7), r = (sq >> 3);
@@ -194,6 +219,7 @@ static uint64_t feat_bishop_attacks(int sq, uint64_t occ) {
     for (int d=1; f-d>=0&&r-d>=0; d++) { int s=(r-d)*8+f-d; attacks|=((uint64_t)1<<s); if(occ&((uint64_t)1<<s)) break; }
     return attacks;
 }
+#endif  /* !_CBOARD_IMPL_H */
 
 static uint64_t feat_piece_attacks(int sq, int piece_type, uint64_t occ) {
     switch (piece_type) {
