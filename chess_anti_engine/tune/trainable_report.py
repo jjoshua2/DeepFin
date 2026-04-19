@@ -323,8 +323,8 @@ def _log_iteration_scalars(
         writer.add_scalar("difficulty/pid_ema_winrate", float(pr.pid_ema_wr), iteration_step)
         writer.add_scalar("difficulty/wdl_regret", float(wdl_regret_used), iteration_step)
         writer.add_scalar("difficulty/wdl_regret_next", float(pr.wdl_regret_next), iteration_step)
-        if pr.blended_winrate_raw is not None:
-            writer.add_scalar("difficulty/blended_winrate_raw", float(pr.blended_winrate_raw), iteration_step)
+        if pr.curriculum_winrate_raw is not None:
+            writer.add_scalar("difficulty/curriculum_winrate_raw", float(pr.curriculum_winrate_raw), iteration_step)
             writer.add_scalar("selfplay/avg_game_plies", float(pr.avg_game_plies), iteration_step)
             if pr.avg_plies_win > 0:
                 writer.add_scalar("selfplay/avg_plies_win", float(pr.avg_plies_win), iteration_step)
@@ -530,5 +530,5 @@ def _build_report_dict(
         **eval_dict,
         **test_dict,
         **puzzle_dict,
-        "blended_winrate_raw": float(pr.blended_winrate_raw) if pr.blended_winrate_raw is not None else 0.0,
+        "curriculum_winrate_raw": float(pr.curriculum_winrate_raw) if pr.curriculum_winrate_raw is not None else 0.0,
     }

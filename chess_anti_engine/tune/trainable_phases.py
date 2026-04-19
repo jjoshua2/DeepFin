@@ -46,7 +46,7 @@ from chess_anti_engine.tune.replay_exchange import _share_top_replay_each_iterat
 from chess_anti_engine.utils.atomic import atomic_write_text
 from chess_anti_engine.tune.trainable_config_ops import _play_batch_kwargs
 from chess_anti_engine.tune.trainable_metrics import (
-    _blended_winrate_raw_or_none,
+    _curriculum_winrate_raw_or_none,
     _compute_train_step_budget,
     _games_per_iter_for_iteration,
     _iteration_pause_metrics,
@@ -342,7 +342,7 @@ def _run_pid_and_eval(
     sp = float(max(1, int(sp_result.total_selfplay_games)))
     cur = float(max(1, int(sp_result.total_curriculum_games)))
 
-    blended_winrate_raw = _blended_winrate_raw_or_none(
+    curriculum_winrate_raw = _curriculum_winrate_raw_or_none(
         wins=total_w, draws=total_d, losses=total_l,
     )
 
@@ -384,7 +384,7 @@ def _run_pid_and_eval(
         wdl_regret_next=wdl_regret_next,
         pid_ema_wr=pid_ema_wr,
         pid_update=pid_update,
-        blended_winrate_raw=blended_winrate_raw,
+        curriculum_winrate_raw=curriculum_winrate_raw,
         avg_game_plies=float(sp_result.total_game_plies) / gen,
         adjudication_rate=float(sp_result.total_adjudicated_games) / gen,
         draw_rate=float(sp_result.total_draw_games) / gen,

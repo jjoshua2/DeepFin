@@ -554,7 +554,7 @@ class PidResult:
     pid_update: object | None = None
 
     # Derived game stats
-    blended_winrate_raw: float | None = None
+    curriculum_winrate_raw: float | None = None
     avg_game_plies: float = 0.0
     adjudication_rate: float = 0.0
     draw_rate: float = 0.0

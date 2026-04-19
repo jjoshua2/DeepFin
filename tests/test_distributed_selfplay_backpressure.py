@@ -16,7 +16,7 @@ from chess_anti_engine.tune.distributed_runtime import (
     _quarantine_inbox_shards,
 )
 from chess_anti_engine.tune.trainable_metrics import (
-    _blended_winrate_raw_or_none,
+    _curriculum_winrate_raw_or_none,
     _compute_train_step_budget,
     _iteration_pause_metrics,
     _should_retry_iteration_without_games,
@@ -104,8 +104,8 @@ def test_distributed_iteration_retries_without_fresh_games() -> None:
 
 
 def test_selfplay_winrate_raw_is_none_without_games() -> None:
-    assert _blended_winrate_raw_or_none(wins=0, draws=0, losses=0) is None
-    assert _blended_winrate_raw_or_none(wins=3, draws=1, losses=0) == 0.875
+    assert _curriculum_winrate_raw_or_none(wins=0, draws=0, losses=0) is None
+    assert _curriculum_winrate_raw_or_none(wins=3, draws=1, losses=0) == 0.875
 
 
 def test_manifest_poll_headers_include_worker_state() -> None:

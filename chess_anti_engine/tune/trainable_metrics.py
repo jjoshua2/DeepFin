@@ -146,12 +146,18 @@ def _should_retry_iteration_without_games(
     return int(total_games_generated) <= 0
 
 
-def _blended_winrate_raw_or_none(
+def _curriculum_winrate_raw_or_none(
     *,
     wins: int,
     draws: int,
     losses: int,
 ) -> float | None:
+    """Per-iter raw winrate vs Stockfish (curriculum games only).
+
+    Selfplay games never increment w/d/l in selfplay/manager.py (the
+    `if not _selfplay_arr[i]` guard), so total_w/d/l passed in here is
+    strictly curriculum. The PID feeds on this directly.
+    """
     total_games_played = int(wins) + int(draws) + int(losses)
     if total_games_played <= 0:
         return None
