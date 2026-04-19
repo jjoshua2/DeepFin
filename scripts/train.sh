@@ -27,6 +27,9 @@ LOG="/tmp/chess_training.log"
 PIDFILE="/tmp/chess_training.pid"
 WORK_DIR="${TRAIN_WORK_DIR:-runs/pbt2_small}"
 BEST_POOLS_DIR="${TRAIN_BEST_POOLS_DIR:-data/best_pools}"
+# Rolling top-N auto-save written by _update_best_regret_checkpoints. Matches
+# TrialConfig.best_regret_checkpoints_dir default in trial_config.py.
+AUTO_BEST_REGRET_DIR="${TRAIN_AUTO_BEST_REGRET_DIR:-data/best_regret_checkpoints}"
 
 cd "$(dirname "$0")/.."
 
@@ -181,21 +184,24 @@ best_save() {
     local trial_dir
     trial_dir="$(_active_trial_dir)"
     if [ -z "$trial_dir" ] || [ ! -d "$trial_dir" ]; then
-        echo "No active trial dir under $WORK_DIR/tune/"
+        echo "No active trial dir under $WORK_DIR/tune/ (needed for replay-shard copy)"
         return 1
     fi
+    # Snapshots live under AUTO_BEST_REGRET_DIR (cross-trial, survives Ray rotation).
+    # best-save promotes one of those auto-saved rolling snapshots into a permanent
+    # pool and additionally copies the current replay shards alongside.
     local best_src=""
     if [ -n "$want_iter" ]; then
-        best_src="$(ls -d "$trial_dir/best_regret"/regret_*_iter"$want_iter" 2>/dev/null | head -1)"
+        best_src="$(ls -d "$AUTO_BEST_REGRET_DIR"/regret_*_iter"$want_iter" 2>/dev/null | head -1)"
         if [ -z "$best_src" ]; then
-            echo "No best_regret snapshot with iter=$want_iter in $trial_dir/best_regret/"
+            echo "No best_regret snapshot with iter=$want_iter in $AUTO_BEST_REGRET_DIR/"
             return 1
         fi
     else
-        # Pick the lowest-regret entry (ls sort treats regret_0.xxx_... lexicographically, which matches numeric for the 4-digit fixed format)
-        best_src="$(ls -d "$trial_dir/best_regret"/regret_* 2>/dev/null | sort | head -1)"
+        # Pick the lowest-regret entry (ls sort treats regret_0.xxxx_... lexicographically, which matches numeric for the 4-digit fixed format)
+        best_src="$(ls -d "$AUTO_BEST_REGRET_DIR"/regret_* 2>/dev/null | sort | head -1)"
         if [ -z "$best_src" ]; then
-            echo "No best_regret snapshots in $trial_dir/best_regret/"
+            echo "No best_regret snapshots in $AUTO_BEST_REGRET_DIR/"
             return 1
         fi
     fi
@@ -264,19 +270,18 @@ PY
 }
 
 best_list() {
-    if [ ! -d "$BEST_POOLS_DIR" ]; then
-        echo "No pools yet ($BEST_POOLS_DIR does not exist)."
-        return 0
-    fi
     local any=0
-    for pool in "$BEST_POOLS_DIR"/*/; do
-        [ -d "$pool" ] || continue
-        any=1
-        local label size
-        label="$(basename "$pool")"
-        size="$(du -sh "$pool" 2>/dev/null | awk '{print $1}')"
-        if [ -f "$pool/manifest.json" ]; then
-            python3 - <<PY
+    # Permanent pools (manually promoted via best-save).
+    if [ -d "$BEST_POOLS_DIR" ]; then
+        echo "=== $BEST_POOLS_DIR (permanent pools, with replay shards) ==="
+        for pool in "$BEST_POOLS_DIR"/*/; do
+            [ -d "$pool" ] || continue
+            any=1
+            local label size
+            label="$(basename "$pool")"
+            size="$(du -sh "$pool" 2>/dev/null | awk '{print $1}')"
+            if [ -f "$pool/manifest.json" ]; then
+                python3 - <<PY
 import json
 m = json.load(open("$pool/manifest.json"))
 e = (m.get("entries") or [{}])[0]
@@ -287,14 +292,39 @@ rr = e.get("result_row") or {}
 winrate = rr.get("pid_ema_winrate")
 print(f"  regret={regret}  iter={it}  winrate={winrate}  shards={shards}")
 PY
-        else
-            echo "  (no manifest.json)"
-        fi
-        printf '%-30s %s\n' "$label" "$size"
-    done
-    if [ "$any" = "0" ]; then
-        echo "No pools in $BEST_POOLS_DIR"
+            else
+                echo "  (no manifest.json)"
+            fi
+            printf '%-30s %s\n' "$label" "$size"
+        done
     fi
+
+    # Rolling auto-save (top-N lowest regret, written every iter, no replay).
+    # Usable directly with salvage-restart; its manifest.json lists all slots.
+    if [ -d "$AUTO_BEST_REGRET_DIR" ] && [ -f "$AUTO_BEST_REGRET_DIR/manifest.json" ]; then
+        any=1
+        local size
+        size="$(du -sh "$AUTO_BEST_REGRET_DIR" 2>/dev/null | awk '{print $1}')"
+        echo
+        echo "=== $AUTO_BEST_REGRET_DIR (rolling top-N auto-save, no replay shards) ==="
+        python3 - <<PY
+import json
+m = json.load(open("$AUTO_BEST_REGRET_DIR/manifest.json"))
+for e in (m.get("entries") or []):
+    regret = e.get("metric")
+    it = e.get("training_iteration")
+    rr = e.get("result_row") or {}
+    winrate = rr.get("pid_ema_winrate")
+    seed = e.get("seed_dir") or "?"
+    print(f"  regret={regret}  iter={it}  winrate={winrate}  slot={seed}")
+PY
+        printf '%-30s %s\n' "(auto-save dir)" "$size"
+    fi
+
+    if [ "$any" = "0" ]; then
+        echo "No pools under $BEST_POOLS_DIR or $AUTO_BEST_REGRET_DIR"
+    fi
+    return 0
 }
 
 case "${1:-status}" in
