@@ -41,7 +41,6 @@ def _fit_inverse_regret(
     history: list[tuple[float, float, float]],
     *,
     target_wr: float,
-    min_regret_span: float,
     recency_half_life: float = 0.0,
 ) -> tuple[float, float, float] | None:
     """Weighted least-squares fit winrate = a + b*regret, solve for r* at target.
@@ -51,16 +50,16 @@ def _fit_inverse_regret(
     dominate — necessary because training drifts the regret→winrate curve
     upward over iterations, so a stationary-weight fit chases a stale target.
 
-    Returns (predicted_regret, sigma_predicted_wr, slope) or None if degenerate.
+    Returns (predicted_regret, sigma_predicted_wr, slope), or None if the fit
+    is degenerate (fewer than 3 points, zero regret variance, or physically
+    implausible negative slope). Callers handle None by falling back to an
+    exploration step.
     """
     if len(history) < 3:
         return None
     r_vals = [float(h[0]) for h in history]
     w_vals = [float(h[1]) for h in history]
     se_vals = [max(float(h[2]), _OBSERVATION_SE_FLOOR) for h in history]
-    span = max(r_vals) - min(r_vals)
-    if span < float(min_regret_span):
-        return None
     weights = [1.0 / (s * s) for s in se_vals]
     if recency_half_life > 0.0:
         n = len(history)
@@ -142,13 +141,13 @@ class DifficultyPID:
         wdl_regret_stage_reenter: float | None = None,
         # --- Inverse-model regret controller ---
         inverse_regret_window: int = 20,
-        inverse_regret_min_span: float = 0.005,
         inverse_regret_sigma_tolerance: float = 0.02,
         inverse_regret_max_step: float = 0.01,
         inverse_regret_safety_floor: float = 0.50,
         inverse_regret_safety_band: float = 0.05,
         inverse_regret_emergency_ease_step: float = 0.01,
         inverse_regret_recency_half_life: float = 0.0,
+        inverse_regret_target_deadband: float = 0.02,
     ):
         init = int(initial_nodes)
         self.nodes = int(_clamp(init, int(min_nodes), int(max_nodes)))
@@ -188,13 +187,13 @@ class DifficultyPID:
         self._games_since_adjust = 0
 
         self.inverse_regret_window = int(inverse_regret_window)
-        self.inverse_regret_min_span = float(inverse_regret_min_span)
         self.inverse_regret_sigma_tolerance = float(inverse_regret_sigma_tolerance)
         self.inverse_regret_max_step = float(inverse_regret_max_step)
         self.inverse_regret_safety_floor = float(inverse_regret_safety_floor)
         self.inverse_regret_safety_band = float(inverse_regret_safety_band)
         self.inverse_regret_emergency_ease_step = float(inverse_regret_emergency_ease_step)
         self.inverse_regret_recency_half_life = float(inverse_regret_recency_half_life)
+        self.inverse_regret_target_deadband = float(inverse_regret_target_deadband)
         self._inverse_history: deque[tuple[float, float, float]] = deque(
             maxlen=max(3, self.inverse_regret_window)
         )
@@ -230,8 +229,6 @@ class DifficultyPID:
             self.wdl_regret_stage_reenter = _clamp(
                 self.wdl_regret_stage_reenter, stage_end, self.wdl_regret_max,
             )
-        if "sf_pid_inverse_regret_min_span" in config:
-            self.inverse_regret_min_span = float(config["sf_pid_inverse_regret_min_span"])
         if "sf_pid_inverse_regret_sigma_tolerance" in config:
             self.inverse_regret_sigma_tolerance = float(
                 config["sf_pid_inverse_regret_sigma_tolerance"]
@@ -253,6 +250,10 @@ class DifficultyPID:
         if "sf_pid_inverse_regret_recency_half_life" in config:
             self.inverse_regret_recency_half_life = float(
                 config["sf_pid_inverse_regret_recency_half_life"]
+            )
+        if "sf_pid_inverse_regret_target_deadband" in config:
+            self.inverse_regret_target_deadband = float(
+                config["sf_pid_inverse_regret_target_deadband"]
             )
 
     def state_dict(self) -> dict:
@@ -341,6 +342,8 @@ class DifficultyPID:
             regret_after = float(regret_before)
             floor = self.inverse_regret_safety_floor
             band = max(1e-6, self.inverse_regret_safety_band)
+            deadband = max(0.0, self.inverse_regret_target_deadband)
+            err = self.target - raw_wr_this_batch
             if raw_wr_this_batch < floor + band:
                 # Safety airbag — emergency ease proportional to distance below
                 # floor, capped at inverse_regret_max_step so one bad batch
@@ -352,11 +355,14 @@ class DifficultyPID:
                 regret_after = _clamp(
                     regret_before + ease, self.wdl_regret_min, self.wdl_regret_max
                 )
+            elif abs(err) <= deadband:
+                # Within deadband of target — hold regret steady so the model
+                # gets stable training data at the current difficulty.
+                pass
             else:
                 fit = _fit_inverse_regret(
                     list(self._inverse_history),
                     target_wr=self.target,
-                    min_regret_span=self.inverse_regret_min_span,
                     recency_half_life=self.inverse_regret_recency_half_life,
                 )
                 if fit is not None:
@@ -371,6 +377,18 @@ class DifficultyPID:
                     step_cap = self.inverse_regret_max_step * confidence
                     desired_delta = predicted_regret - regret_before
                     delta = _clamp(desired_delta, -step_cap, step_cap)
+                    regret_after = _clamp(
+                        regret_before + delta,
+                        self.wdl_regret_min,
+                        self.wdl_regret_max,
+                    )
+                else:
+                    # Fit degenerate (history span < min_span, or other).
+                    # We're outside the deadband (checked above) so we know the
+                    # direction to move. Step sign(err) * max_step to explore
+                    # and widen history for the next iteration's fit.
+                    step_sign = 1.0 if err > 0 else -1.0
+                    delta = step_sign * self.inverse_regret_max_step
                     regret_after = _clamp(
                         regret_before + delta,
                         self.wdl_regret_min,
@@ -427,7 +445,6 @@ def pid_from_config(config: dict) -> DifficultyPID:
         wdl_regret_max=float(config.get("sf_pid_wdl_regret_max", 1.0)),
         wdl_regret_stage_end=float(config.get("sf_pid_wdl_regret_stage_end", -1.0)),
         inverse_regret_window=int(config.get("sf_pid_inverse_regret_window", 20)),
-        inverse_regret_min_span=float(config.get("sf_pid_inverse_regret_min_span", 0.005)),
         inverse_regret_sigma_tolerance=float(
             config.get("sf_pid_inverse_regret_sigma_tolerance", 0.02)
         ),
@@ -443,5 +460,8 @@ def pid_from_config(config: dict) -> DifficultyPID:
         ),
         inverse_regret_recency_half_life=float(
             config.get("sf_pid_inverse_regret_recency_half_life", 0.0)
+        ),
+        inverse_regret_target_deadband=float(
+            config.get("sf_pid_inverse_regret_target_deadband", 0.02)
         ),
     )

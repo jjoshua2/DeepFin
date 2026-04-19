@@ -22,7 +22,6 @@ def _mk_pid(**overrides) -> DifficultyPID:
         wdl_regret_min=0.02,
         wdl_regret_max=1.0,
         inverse_regret_window=10,
-        inverse_regret_min_span=0.005,
         inverse_regret_sigma_tolerance=0.02,
         inverse_regret_max_step=0.01,
         inverse_regret_safety_floor=0.50,
@@ -69,7 +68,7 @@ def test_fit_recovers_linear_relationship():
         (0.16, 0.72, 0.018),
         (0.18, 0.76, 0.018),
     ]
-    fit = _fit_inverse_regret(history, target_wr=0.70, min_regret_span=0.005)
+    fit = _fit_inverse_regret(history, target_wr=0.70)
     assert fit is not None
     predicted_r, sigma_pred, slope = fit
     # Target 0.70 should map to regret 0.15 (slope 2, intercept 0.4)
@@ -81,7 +80,7 @@ def test_fit_recovers_linear_relationship():
 def test_fit_rejects_insufficient_span():
     # All regret values identical → span=0, fit should reject
     history = [(0.15, 0.60, 0.018)] * 5
-    fit = _fit_inverse_regret(history, target_wr=0.60, min_regret_span=0.005)
+    fit = _fit_inverse_regret(history, target_wr=0.60)
     assert fit is None
 
 
@@ -92,7 +91,7 @@ def test_fit_rejects_wrong_sign_slope():
         (0.15, 0.65, 0.018),
         (0.20, 0.55, 0.018),
     ]
-    fit = _fit_inverse_regret(history, target_wr=0.60, min_regret_span=0.005)
+    fit = _fit_inverse_regret(history, target_wr=0.60)
     assert fit is None
 
 
@@ -161,8 +160,8 @@ def test_sigma_pred_reflects_residual_variance():
         (0.14, 0.80, 0.018),
         (0.16, 0.55, 0.018),
     ]
-    tight = _fit_inverse_regret(tight_history, target_wr=0.66, min_regret_span=0.005)
-    noisy = _fit_inverse_regret(noisy_history, target_wr=0.66, min_regret_span=0.005)
+    tight = _fit_inverse_regret(tight_history, target_wr=0.66)
+    noisy = _fit_inverse_regret(noisy_history, target_wr=0.66)
     assert tight is not None
     # Noisy fit may return None (sign-check reject) or very high sigma_pred.
     # If it returned a fit, sigma_pred should exceed the tight fit's.
@@ -286,7 +285,7 @@ def test_inverse_model_handles_noisy_data():
         true_wr = true_intercept + true_slope * regret
         noisy_wr = true_wr + random.gauss(0, 0.018)
         history.append((regret, noisy_wr, 0.018))
-    fit = _fit_inverse_regret(history, target_wr=0.70, min_regret_span=0.005)
+    fit = _fit_inverse_regret(history, target_wr=0.70)
     assert fit is not None
     predicted_r, sigma_pred, slope = fit
     # Target 0.70: true r* = 0.15. Noise should allow fit within ±0.02

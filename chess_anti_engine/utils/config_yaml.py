@@ -62,11 +62,12 @@ _STOCKFISH_KEYS = (
     "sf_pid_min_nodes", "sf_pid_max_nodes",
     "sf_pid_wdl_regret_start", "sf_pid_wdl_regret_min", "sf_pid_wdl_regret_max",
     "sf_pid_wdl_regret_stage_end",
-    "sf_pid_inverse_regret_window", "sf_pid_inverse_regret_min_span",
+    "sf_pid_inverse_regret_window",
     "sf_pid_inverse_regret_sigma_tolerance", "sf_pid_inverse_regret_max_step",
     "sf_pid_inverse_regret_safety_floor", "sf_pid_inverse_regret_safety_band",
     "sf_pid_inverse_regret_emergency_ease_step",
     "sf_pid_inverse_regret_recency_half_life",
+    "sf_pid_inverse_regret_target_deadband",
 )
 # Backwards compat: old short YAML names still work inside stockfish: section.
 _STOCKFISH_LEGACY: dict[str, str] = {
