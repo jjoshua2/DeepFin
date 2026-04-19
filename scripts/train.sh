@@ -35,7 +35,26 @@ start() {
         echo "Already running (PID $(cat "$PIDFILE"))"
         return 1
     fi
-    local extra_args=("$@")
+    # Strip our own --fresh flag (not passed to run.py) and detect --resume /
+    # --salvage-seed-pool-dir so auto-resume only kicks in when the caller
+    # didn't specify intent. This prevents silently starting a fresh trial and
+    # dropping a live one when restarting after a stop.
+    local extra_args=() has_resume=0 has_salvage=0 fresh=0
+    for a in "$@"; do
+        case "$a" in
+            --fresh)                 fresh=1 ;;
+            --resume)                has_resume=1; extra_args+=("$a") ;;
+            --salvage-seed-pool-dir) has_salvage=1; extra_args+=("$a") ;;
+            *)                       extra_args+=("$a") ;;
+        esac
+    done
+    if [ "$fresh" = "0" ] && [ "$has_resume" = "0" ] && [ "$has_salvage" = "0" ]; then
+        if ls "$WORK_DIR"/tune/experiment_state-*.json >/dev/null 2>&1; then
+            echo "Detected prior tune state under $WORK_DIR/tune — auto-resuming."
+            echo "  To start fresh instead, pass --fresh or rm -rf $WORK_DIR/tune."
+            extra_args+=("--resume")
+        fi
+    fi
     echo "Starting training with $CONFIG ${extra_args[*]:+(extra: ${extra_args[*]})}..."
     PYTHONPATH=. nohup python3 -m chess_anti_engine.run \
         --config "$CONFIG" --mode tune "${extra_args[@]}" \

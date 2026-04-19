@@ -28,11 +28,14 @@ PYTHONPATH=. python3 -m chess_anti_engine.run --config configs/default.yaml --mo
 Use `scripts/train.sh` to drive training; it manages the PID file, log, and Ray cleanup.
 
 ```bash
-./scripts/train.sh start                   # foreground-fork, PID → /tmp/chess_training.pid
+./scripts/train.sh start                   # auto-resumes if $WORK_DIR/tune state exists; else fresh
+./scripts/train.sh start --fresh           # force a fresh run (ignore prior tune state)
 ./scripts/train.sh stop                    # SIGTERM + ray stop + orphan worker sweep
-./scripts/train.sh restart                 # stop + start
+./scripts/train.sh restart                 # stop + start (auto-resume same as start)
 ./scripts/train.sh status | log            # status / tail -f log
 ```
+
+`start` auto-passes `--resume` when `$WORK_DIR/tune/experiment_state-*.json` exists. Without that behavior, restarting after a stop silently drops the running trial and spawns a random-init one. If you want to abandon the current trial's state, either pass `--fresh` or use `salvage-restart` from a good pool; never `rm` the tune dir while a run is live.
 
 **Graceful pause before killing PBT**: `python3 scripts/graceful_restart.py --wait N` creates `pause.txt` in the tune dir; trials finish the current iteration then hold. Useful before a restart that would otherwise orphan a mid-iteration trial.
 
