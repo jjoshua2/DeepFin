@@ -94,7 +94,7 @@ selfplay:
   temperature_after: 0.0
   temperature_decay_start_move: 20
   temperature_decay_moves: 60
-  temperature_endgame: 0.6
+  temperature_endgame: 0.85   # Raised 0.6→0.85 at iter ~160 to break draw-seeking plateau (drawn games avg 284 plies).
 
   opening_book_path: /home/josh/projects/chess/data/opening_books/2moves_v2.pgn.zip
   opening_book_max_plies: 4

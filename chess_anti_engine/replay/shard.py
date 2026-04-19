@@ -610,7 +610,7 @@ def save_local_shard_arrays(
     try:
         g = zarr.open_group(str(tmp), mode="w")
         g.attrs.update(_meta_dict(meta, positions=int(np.asarray(stored["x"]).shape[0])))
-        compressor = Blosc(cname="lz4", clevel=1, shuffle=Blosc.BITSHUFFLE)
+        compressor = Blosc(cname="zstd", clevel=3, shuffle=Blosc.SHUFFLE)
         for name, value in stored.items():
             arr = np.asarray(value)
             g.create_dataset(name, data=arr, chunks=_local_chunks(arr), compressor=compressor, overwrite=True)
