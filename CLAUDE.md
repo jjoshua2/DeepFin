@@ -66,10 +66,25 @@ Salvage is driven entirely by CLI flags (`--salvage-seed-pool-dir`, `--salvage-r
 146-plane 8x8 input: 112 LC0 history planes + 34 classical feature planes (king safety, pins/xrays, pawn structure, mobility, outposts). `encode_position()` is the main entry point. C extension `_lc0_ext` provides `CBoard` for fast board operations (push, encode, legal moves).
 
 ### Model (`model/`)
-Transformer encoder-only backbone (`ChessNet` in `transformer.py`). BT4-aligned architecture with Smolgen attention bias, gating, configurable embed dim/layers/heads. Multi-task output heads:
-- **Policy**: Four separate `AttentionPolicyHead`s (`policy_own`, `policy_soft`, `policy_sf`, `policy_future`), each 4672 logits (LC0 from→to encoding). Uses Q@K^T with `1/√d` scaling plus a learnable `log_temp` scalar per head (added Apr 2026 to let the model sharpen logits; the `1/√d` scale alone squashed output sharpness below what MCTS targets required).
-- **Value**: Three heads — `value_wdl` (3 logits), `value_sf_eval` (3 logits, aux), `value_categorical` (32-bin HL-Gauss). Only `value_wdl` is used in MCTS; `value_sf_eval` is auxiliary.
-- **Auxiliary**: `volatility` (position-volatility head), `moves_left` (scalar).
+Transformer encoder-only backbone (`ChessNet` in `transformer.py`). BT4-aligned architecture with Smolgen attention bias, gating, configurable embed dim/layers/heads. Multi-task output heads — each head and its training target (see `train/losses.py`):
+
+| Head output | Shape | Training target | Target source | Loss | Weight knob |
+|---|---|---|---|---|---|
+| `policy` / `policy_own` | 4672 logits | `policy_t` (**1-hot**) | Move actually played by net (MCTS argmax/sample) | CE, legal-masked | `w_policy` |
+| `policy_soft` | 4672 logits | `policy_soft_t` (soft) | MCTS visit-count distribution at softmax temp | CE, legal-masked | `w_soft` |
+| `policy_future` | 4672 logits | `future_policy_t` (1-hot) | Move played at position t+2 (predict-own-reply) | CE, **no** mask | `w_future` |
+| `policy_sf` | 4672 logits | `sf_policy_t` (soft) | Softmax over SF's MultiPV candidate WDL scores + label smoothing. `sf_move_index` is stored as the bestmove index but **not** used as a target — `policy_sf` trains on the soft distribution. **WDL saturation in decided positions can flatten this target**. | CE (soft), no mask | `w_sf_move` |
+| `wdl` | 3 logits | `wdl_t` (hard 0=W/1=D/2=L) + `sf_wdl` (soft SF eval) | Game outcome (hard) blended with SF's WDL eval. Both target the **same** head — load-bearing, see w_sf_wdl note below | CE + soft CE | `w_wdl`, `w_sf_wdl` |
+| `sf_eval` | 3 logits | `sf_wdl` (soft) | SF's WDL eval only (auxiliary, **not** used in MCTS) | Soft CE | `w_sf_eval` |
+| `categorical` | 32 logits | `categorical_t` (HL-Gauss) | Game outcome as 32-bin Gaussian distribution (distributional value) | CE | `w_categorical` |
+| `volatility` | N scalars | `volatility_t` | Net-derived position volatility signal | Huber (δ=0.1) | `w_volatility` |
+| `sf_volatility` | N scalars | `sf_volatility_t` | SF-derived position volatility signal | Huber (δ=0.1) | `w_sf_volatility` |
+| `moves_left` | 1 scalar | `moves_left` | Plies remaining in the game | smooth L1 | `w_moves_left` |
+
+Implementation details:
+- Each of the 4 policy heads is a separate `AttentionPolicyHead` (Q/K/underpromo projections) that shares the trunk. Uses `Q@K^T` with `1/√d` scaling plus a learnable `log_temp` scalar per head (added Apr 2026 — the `1/√d` scale alone squashed output sharpness below what MCTS targets required).
+- `wdl` is the ONLY value head used in MCTS search. `sf_eval` and `categorical` are auxiliary supervision signals that share the trunk but don't feed the search.
+- `sf_move_index` in the shard is the stored "SF's best move" pointer; training does not use it as a 1-hot target — `policy_sf` trains on the soft `sf_policy_t` distribution instead.
 
 `TinyNet` in `tiny.py` is a small reference model for testing.
 
