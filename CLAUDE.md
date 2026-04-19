@@ -84,7 +84,7 @@ Transformer encoder-only backbone (`ChessNet` in `transformer.py`). BT4-aligned 
 Implementation details:
 - Each of the 4 policy heads is a separate `AttentionPolicyHead` (Q/K/underpromo projections) that shares the trunk. Uses `Q@K^T` with `1/√d` scaling plus a learnable `log_temp` scalar per head (added Apr 2026 — the `1/√d` scale alone squashed output sharpness below what MCTS targets required).
 - `wdl` is the ONLY value head used in MCTS search. `sf_eval` and `categorical` are auxiliary supervision signals that share the trunk but don't feed the search.
-- `sf_move_index` in the shard is the stored "SF's best move" pointer; training does not use it as a 1-hot target — `policy_sf` trains on the soft `sf_policy_t` distribution instead.
+- `sf_move_index` in the shard is the stored "SF's best move" pointer; training does not use it as a 1-hot target — `policy_sf` trains on the soft `sf_policy_t` distribution instead. But it IS used by the `sf_move_acc` metric (top-1 accuracy: `argmax(policy_sf) == sf_move_index`), reported on TensorBoard as `sf_move_acc` / `test_sf_move_acc`. So: train-on-soft, evaluate-top-1-against-bestmove.
 
 `TinyNet` in `tiny.py` is a small reference model for testing.
 
