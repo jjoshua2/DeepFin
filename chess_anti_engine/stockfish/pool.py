@@ -19,14 +19,12 @@ class StockfishPool:
         nodes: int,
         num_workers: int,
         multipv: int = 1,
-        skill_level: int | None = None,
         hash_mb: int | None = None,
     ):
         self.path = path
         self.nodes = int(nodes)
         self.num_workers = int(num_workers)
         self.multipv = int(multipv)
-        self.skill_level = skill_level
         self.hash_mb = None if hash_mb is None else max(1, int(hash_mb))
 
         self._exec = ThreadPoolExecutor(max_workers=self.num_workers)
@@ -35,12 +33,10 @@ class StockfishPool:
                 self.path,
                 nodes=self.nodes,
                 multipv=self.multipv,
-                skill_level=self.skill_level,
                 hash_mb=self.hash_mb,
             )
             for _ in range(self.num_workers)
         ]
-        self._next = 0
         self._next = 0
 
     def close(self) -> None:

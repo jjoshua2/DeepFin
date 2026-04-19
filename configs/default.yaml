@@ -1,7 +1,7 @@
 # Example config for chess_anti_engine/run.py
 # Usage:
-#   python -m chess_anti_engine.run --config configs/default.yaml --mode tune
-#   python -m chess_anti_engine.run --config configs/default.yaml --mode single
+#   python -m chess_anti_engine.run --config configs/default.yaml --mode train  # single trial
+#   python -m chess_anti_engine.run --config configs/default.yaml --mode tune   # + PBT search
 
 seed: 0
 work_dir: runs
@@ -27,17 +27,13 @@ stockfish:
   sf_workers: 1
   sf_multipv: 5
 
-  # Adaptive difficulty PID (spec)
+  # Adaptive difficulty PID (inverse-regret controller).
+  # Classic PID knobs (kp/ki/kd, deadzone, rate_limit, integral_clamp) were
+  # retired 2026-04-18; difficulty is regret + nodes only.
   sf_pid_enabled: true
   sf_pid_target_winrate: 0.53
   sf_pid_ema_alpha: 0.03
-  sf_pid_deadzone: 0.04
-  sf_pid_rate_limit: 0.10
   sf_pid_min_games_between_adjust: 30
-  sf_pid_kp: 1.5
-  sf_pid_ki: 0.10
-  sf_pid_kd: 0.0
-  sf_pid_integral_clamp: 1.0
   sf_pid_min_nodes: 250
   sf_pid_max_nodes: 1000000
 

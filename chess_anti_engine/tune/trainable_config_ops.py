@@ -96,21 +96,24 @@ def _wait_if_paused(
         )
 
 
-def _play_batch_kwargs(tc: TrialConfig) -> dict:
+def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> dict:
     """Extract all config-driven play_batch kwargs as dataclass instances.
 
     Callers (selfplay, gate, eval) use dataclasses.replace() for per-site overrides.
     This is the single source of truth for config → play_batch mapping.
+
+    When ``ds`` is provided and carries a non-sentinel regret value (>=0), the
+    PID-controlled ``wdl_regret_limit`` is threaded into ``OpponentConfig`` so
+    that gate matches and local selfplay train against the same opponent the
+    distributed workers see (which read the same value off the server manifest).
+    ``ds=None`` is for fixed-strength eval, where PID regret deliberately
+    does not apply.
     """
+    wdl_regret_limit: float | None = None
+    if ds is not None and float(ds.wdl_regret) >= 0.0:
+        wdl_regret_limit = float(ds.wdl_regret)
     return dict(
-        opponent=OpponentConfig(
-            topk_stage_end=tc.sf_pid_topk_stage_end,
-            topk_min=tc.sf_pid_topk_min,
-            suboptimal_wdl_regret_max=tc.sf_pid_suboptimal_wdl_regret_max,
-            suboptimal_wdl_regret_min=tc.sf_pid_suboptimal_wdl_regret_min,
-            random_move_prob_start=tc.sf_pid_random_move_prob_start,
-            random_move_prob_min=tc.sf_pid_random_move_prob_min,
-        ),
+        opponent=OpponentConfig(wdl_regret_limit=wdl_regret_limit),
         temp=TemperatureConfig(
             temperature=tc.temperature,
             drop_plies=tc.temperature_drop_plies,
@@ -235,10 +238,8 @@ def _sync_trainer_weights(
         sf_wdl_start=tc.w_sf_wdl,
         sf_wdl_floor=tc.sf_wdl_floor,
         sf_wdl_floor_at_regret=tc.sf_wdl_floor_at_regret,
-        sf_wdl_floor_at_rmp=tc.sf_wdl_floor_at,
         regret_max=tc.sf_pid_wdl_regret_max,
         wdl_regret_used=ds.wdl_regret,
-        current_rand=ds.random_move_prob,
     )
     if cur_sf_wdl is not None:
         trainer.w_sf_wdl = cur_sf_wdl

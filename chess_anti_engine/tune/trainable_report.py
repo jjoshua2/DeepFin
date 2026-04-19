@@ -9,6 +9,7 @@ import csv
 import json
 import shutil
 import time
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -52,9 +53,7 @@ def _write_status_csv_row(
     iteration_idx: int,
     opp_strength: float,
     opp_strength_ema: float,
-    skill_level: int,
     sf_nodes: int,
-    current_rand: float,
     wdl_regret: float,
     ingest_ms: float,
     train_ms: float,
@@ -79,9 +78,7 @@ def _write_status_csv_row(
                 int(iteration_idx),
                 f"{float(opp_strength):.1f}",
                 f"{float(opp_strength_ema):.1f}",
-                int(skill_level),
                 int(sf_nodes),
-                f"{float(current_rand):.3f}",
                 f"{float(wdl_regret):.4f}",
                 f"{float(ingest_ms)/1000:.1f}",
                 f"{float(train_ms)/1000:.1f}",
@@ -239,6 +236,16 @@ def _update_best_regret_checkpoints(
             }, indent=2),
         )
     except Exception:
+        print(
+            f"[best_regret] WARN: failed to save checkpoint tag={tag} "
+            f"regret={regret:.4f} iter={iteration_idx}; skipping entry",
+            flush=True,
+        )
+        traceback.print_exc()
+        try:
+            shutil.rmtree(slot_dir, ignore_errors=True)
+        except Exception:
+            pass
         return
 
     entries.append({
@@ -291,14 +298,18 @@ def _update_best_regret_checkpoints(
             json.dumps(manifest, indent=2, sort_keys=True),
         )
     except Exception:
-        pass
+        print(
+            f"[best_regret] WARN: failed to emit manifest at "
+            f"{best_regret_dir}/manifest.json (index still updated)",
+            flush=True,
+        )
+        traceback.print_exc()
 
 
 def _log_iteration_scalars(
     *,
     writer: Any,
     pid_result: PidResult,
-    current_rand: float,
     wdl_regret_used: float,
     pause_metrics: dict,
     restore: RestoreResult,
@@ -309,9 +320,6 @@ def _log_iteration_scalars(
         pr = pid_result
         writer.add_scalar("difficulty/opponent_strength", float(pr.opp_strength), iteration_step)
         writer.add_scalar("difficulty/opponent_strength_ema", float(pr.opp_strength_ema), iteration_step)
-        writer.add_scalar("difficulty/random_move_prob", float(current_rand), iteration_step)
-        writer.add_scalar("difficulty/random_move_prob_next", float(pr.random_move_prob_next), iteration_step)
-        writer.add_scalar("difficulty/opponent_topk", float(pr.curr_topk), iteration_step)
         writer.add_scalar("difficulty/pid_ema_winrate", float(pr.pid_ema_wr), iteration_step)
         writer.add_scalar("difficulty/wdl_regret", float(wdl_regret_used), iteration_step)
         writer.add_scalar("difficulty/wdl_regret_next", float(pr.wdl_regret_next), iteration_step)
@@ -350,11 +358,8 @@ def _build_report_dict(
     eval_dict: dict,
     puzzle_dict: dict,
     # Iteration context
-    current_rand: float,
     wdl_regret_used: float,
     sf_nodes_used: int,
-    skill_level_used: int,
-    use_distributed_selfplay: bool,
     pause_metrics: dict,
     restore: RestoreResult,
     best_loss: float,
@@ -413,13 +418,10 @@ def _build_report_dict(
         })
 
     return {
-        "opponent_random_move_prob": float(current_rand),
-        "opponent_random_move_prob_next": float(pr.random_move_prob_next),
         "opponent_sf_nodes": int(sf_nodes_used),
         "opponent_sf_nodes_next": int(pr.sf_nodes_next),
         "opponent_wdl_regret_limit": float(wdl_regret_used),
         "opponent_wdl_regret_limit_next": float(pr.wdl_regret_next),
-        "opponent_topk": int(pr.curr_topk),
         "iter": int(iteration_idx),
         "global_iter": int(iteration_idx),
         "replay": int(buf_size),
@@ -444,7 +446,6 @@ def _build_report_dict(
         "shared_trials_ingested": int(sp.shared_summary.get("source_trials_ingested", 0)),
         "shared_trials_skipped_repeat": int(sp.shared_summary.get("source_trials_skipped_repeat", 0)),
         "shared_shards_loaded": int(sp.shared_summary.get("source_shards_loaded", 0)),
-        "distributed_selfplay": int(1 if use_distributed_selfplay else 0),
         "distributed_workers_per_trial": int(tc.distributed_workers_per_trial),
         "distributed_stale_games": int(sp.distributed_stale_games),
         "distributed_stale_positions": int(sp.distributed_stale_positions),
@@ -474,12 +475,8 @@ def _build_report_dict(
         "pid_curriculum_l": int(sp.total_l),
         "selfplay_games": int(sp.total_selfplay_games),
         "selfplay_draw_games": int(sp.total_selfplay_draw_games),
-        "random_move_prob": float(current_rand),
-        "random_move_prob_next": float(pr.random_move_prob_next),
         "wdl_regret": float(wdl_regret_used),
         "wdl_regret_next": float(pr.wdl_regret_next),
-        "skill_level": int(skill_level_used),
-        "skill_level_next": int(pr.skill_level_next),
         "opponent_strength": float(pr.opp_strength),
         "opponent_strength_ema": float(pr.opp_strength_ema),
         "opt_lr": float(trainer.opt.param_groups[0]["lr"]),

@@ -74,67 +74,40 @@ def _compute_train_step_budget(
     }
 
 
-# Default weights for regret-only mode (rmp/topk pinned).
-# When regret is disabled, rmp/topk weights are restored automatically.
-_W_RMP = 0.0
-_W_TOPK = 0.0
+# Weights for regret+nodes composite difficulty score.
 _W_REGRET = 350.0
 _W_NODES = 100.0
-_W_SKILL = 50.0
 
 
 def _opponent_strength(
     *,
-    random_move_prob: float,
     sf_nodes: int,
-    skill_level: int,
     ema_winrate: float,
     min_nodes: int,
     max_nodes: int,
     pid_target_winrate: float = 0.60,
     wdl_regret: float = -1.0,
     wdl_regret_max: float = 1.0,
-    topk: int = -1,
-    topk_max: int = 12,
-    topk_min: int = 2,
 ) -> float:
     """Composite metric: weighted sum of normalised difficulty factors.
 
     Each factor maps to 0.0 (easiest) → 1.0 (hardest), then scaled by its
-    weight.  All factors contribute independently — no sequential stages.
+    weight.
 
     Winrate scaling with floor: penalises below-target winrate by at most 50%
     to avoid death spirals after exploit, while still ranking trials that are
     losing worse than those that are winning at equal difficulty.
 
-    Factors & weights (total max ≈ 500):
-      wdl_regret        ×350   — primary difficulty lever (regret-only mode)
-      sf_nodes          ×100   — search depth (log-scaled, secondary)
-      skill_level        ×50   — usually pinned at 20
-      random_move_prob    ×0   — pinned at 0.01, not a lever
-      topk                ×0   — pinned at multipv, not a lever
+    Factors & weights:
+      wdl_regret  ×350  — primary difficulty lever
+      sf_nodes    ×100  — search depth (log-scaled, secondary)
 
     Final score multiplied by min(1, ema_winrate / target) to penalise
     PID overshoot without rewarding above-target winrate.
     """
-    rand_prob = float(random_move_prob)
     nodes = int(sf_nodes)
-    skill = int(skill_level)
     min_nodes = int(min_nodes)
     max_nodes = int(max_nodes)
-
-    # rmp: 1.0→0.0 maps to 0→1
-    rmp_score = 1.0 - max(0.0, min(1.0, rand_prob))
-
-    # topk: max→min maps to 0→1
-    k = int(topk)
-    k_max = max(1, int(topk_max))
-    k_min = max(1, int(topk_min))
-    if k < 0 or k_max <= k_min:
-        topk_score = 1.0  # not available — assume full difficulty
-    else:
-        k = max(k_min, min(k_max, k))
-        topk_score = 1.0 - (k - k_min) / max(1, k_max - k_min)
 
     # regret: max→0 maps to 0→1 (negative = disabled = no contribution)
     regret_enabled = float(wdl_regret) >= 0.0
@@ -153,22 +126,8 @@ def _opponent_strength(
     else:
         nodes_score = 0.0
 
-    # skill: 0→20 maps to 0→1
-    skill_score = max(0.0, min(1.0, float(skill) / 20.0))
-
-    # When regret is disabled, restore rmp/topk weights so the old
-    # multi-stage curriculum is reflected in opponent_strength.
-    w_rmp = 200.0 if not regret_enabled else _W_RMP
-    w_topk = 150.0 if not regret_enabled else _W_TOPK
     w_regret = _W_REGRET if regret_enabled else 0.0
-
-    difficulty = (
-        w_rmp * rmp_score
-        + w_topk * topk_score
-        + w_regret * regret_score
-        + _W_NODES * nodes_score
-        + _W_SKILL * skill_score
-    )
+    difficulty = w_regret * regret_score + _W_NODES * nodes_score
 
     # Winrate scaling with floor: cap penalty at 50% so a single bad batch
     # can't crater the metric (old death spiral), but still penalise trials
@@ -179,13 +138,12 @@ def _opponent_strength(
     return difficulty * winrate_factor
 
 
-def _should_retry_distributed_iteration_without_games(
+def _should_retry_iteration_without_games(
     *,
-    use_distributed_selfplay: bool,
     total_games_generated: int,
 ) -> bool:
     """Return True when a distributed iteration should wait for fresh selfplay."""
-    return bool(use_distributed_selfplay) and int(total_games_generated) <= 0
+    return int(total_games_generated) <= 0
 
 
 def _blended_winrate_raw_or_none(
@@ -258,35 +216,25 @@ def _dynamic_sf_wdl_weight(
     sf_wdl_start: float,
     sf_wdl_floor: float,
     sf_wdl_floor_at_regret: float,
-    sf_wdl_floor_at_rmp: float,
     regret_max: float,
     wdl_regret_used: float,
-    current_rand: float,
 ) -> float | None:
-    """Compute the dynamic sf_wdl weight based on difficulty proxy.
+    """Compute the dynamic sf_wdl weight based on regret.
 
-    Returns the interpolated weight, or None if sf_wdl_start <= 0 (disabled).
+    Returns the interpolated weight, or None if sf_wdl_start <= 0 (disabled)
+    or regret is negative (regret controller disabled).
     """
     if sf_wdl_start <= 0:
         return None
-    if float(wdl_regret_used) >= 0.0:
-        regret = float(wdl_regret_used)
-        if regret >= regret_max:
-            return sf_wdl_start
-        elif regret <= sf_wdl_floor_at_regret:
-            return sf_wdl_floor
-        else:
-            t = (regret - sf_wdl_floor_at_regret) / (regret_max - sf_wdl_floor_at_regret)
-            return sf_wdl_floor + t * (sf_wdl_start - sf_wdl_floor)
-    else:
-        rmp = float(current_rand)
-        if rmp >= 1.0:
-            return sf_wdl_start
-        elif rmp <= sf_wdl_floor_at_rmp:
-            return sf_wdl_floor
-        else:
-            t = (rmp - sf_wdl_floor_at_rmp) / (1.0 - sf_wdl_floor_at_rmp)
-            return sf_wdl_floor + t * (sf_wdl_start - sf_wdl_floor)
+    if float(wdl_regret_used) < 0.0:
+        return None
+    regret = float(wdl_regret_used)
+    if regret >= regret_max:
+        return sf_wdl_start
+    if regret <= sf_wdl_floor_at_regret:
+        return sf_wdl_floor
+    t = (regret - sf_wdl_floor_at_regret) / (regret_max - sf_wdl_floor_at_regret)
+    return sf_wdl_floor + t * (sf_wdl_start - sf_wdl_floor)
 
 
 def _compute_drift_metrics(

@@ -16,6 +16,7 @@ import json
 import shutil
 import subprocess
 import time
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -26,12 +27,10 @@ from chess_anti_engine.replay.shard import (
     iter_shard_paths,
     load_shard_arrays,
     local_iter_shard_path,
-    samples_to_arrays,
     save_local_shard_arrays,
 )
 from chess_anti_engine.selfplay import play_batch
 from chess_anti_engine.selfplay.config import TemperatureConfig
-from chess_anti_engine.selfplay.manager import _effective_curriculum_topk
 from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.stockfish import DifficultyPID, StockfishPool, StockfishUCI
 from chess_anti_engine.train import Trainer
@@ -52,7 +51,7 @@ from chess_anti_engine.tune.trainable_metrics import (
     _games_per_iter_for_iteration,
     _iteration_pause_metrics,
     _opponent_strength,
-    _should_retry_distributed_iteration_without_games,
+    _should_retry_iteration_without_games,
 )
 from chess_anti_engine.tune.trainable_report import (
     _build_report_dict,
@@ -79,13 +78,17 @@ def _gate_check(
     rng: np.random.Generator,
     sf: StockfishUCI | StockfishPool,
     gate_games: int,
-    opponent_random_move_prob: float,
     tc: TrialConfig,
+    ds: DifficultyState,
 ) -> tuple[float, int, int, int]:
-    """Play gate games to measure winrate. Returns (winrate, W, D, L)."""
-    kw = _play_batch_kwargs(tc)
+    """Play gate games to measure winrate. Returns (winrate, W, D, L).
+
+    Uses the current PID regret setting so the acceptance gate measures against
+    the same opponent strength the trainer actually trained against; otherwise
+    gate can admit regressions by testing against an unrestricted opponent.
+    """
+    kw = _play_batch_kwargs(tc, ds=ds)
     # Gate: exploit mode — low temperature, no playout cap, minimal search.
-    kw["opponent"] = dataclasses.replace(kw["opponent"], random_move_prob=opponent_random_move_prob)
     kw["temp"] = TemperatureConfig(temperature=0.3, drop_plies=0, after=0.0, decay_start_move=10, decay_moves=30, endgame=0.1)
     kw["search"] = dataclasses.replace(kw["search"], simulations=tc.gate_mcts_sims, playout_cap_fraction=1.0, fast_simulations=0)
     kw["diff_focus"] = dataclasses.replace(kw["diff_focus"], enabled=False)
@@ -181,16 +184,14 @@ def _run_training_and_gating(
     imported_samples_this_iter: int,
     gate_match_idx: int,
     gate_state_path: Path,
-    use_distributed_selfplay: bool,
-    distributed_server_root: Path | None,
-    distributed_dirs: dict | None,
+    distributed_server_root: Path,
+    distributed_dirs: dict,
     iteration_idx: int,
     iteration_zero_based: int,
     trial_id: str,
     restore: RestoreResult,
 ) -> TrainingResult:
     """Compute step budget, run training, net gating, and holdout eval."""
-    current_rand = ds.random_move_prob
     train_t0 = time.monotonic()
     batch_size = tc.batch_size
     accum_steps = max(1, tc.accum_steps)
@@ -232,16 +233,13 @@ def _run_training_and_gating(
                 k: v.clone() for k, v in trainer.model.state_dict().items()
             }
 
-        if tc.distributed_pause_selfplay_during_training and use_distributed_selfplay and distributed_dirs is not None:
-            assert distributed_server_root is not None
+        if tc.distributed_pause_selfplay_during_training:
             _publish_distributed_trial_state(
                 trainer=trainer, config=config, model_cfg=model_cfg,
                 server_root=distributed_server_root, trial_id=trial_id,
                 training_iteration=int(iteration_idx),
                 trainer_step=int(getattr(trainer, "step", 0)),
                 sf_nodes=int(ds.sf_nodes),
-                random_move_prob=float(ds.random_move_prob),
-                skill_level=int(ds.skill_level),
                 mcts_simulations=int(sims),
                 wdl_regret=float(ds.wdl_regret),
                 pause_selfplay=True,
@@ -263,8 +261,8 @@ def _run_training_and_gating(
                 rng=rng,
                 sf=sf,
                 gate_games=tc.gate_games,
-                opponent_random_move_prob=current_rand,
                 tc=tc,
+                ds=ds,
             )
 
             gate_match_idx += 1
@@ -318,6 +316,7 @@ def _run_training_and_gating(
 def _run_pid_and_eval(
     *,
     tc: TrialConfig,
+    config: dict,
     pid: DifficultyPID | None,
     sf: StockfishUCI | StockfishPool | None,
     sp_result: SelfplayResult,
@@ -329,11 +328,11 @@ def _run_pid_and_eval(
     """Update PID, compute opponent strength and derived game stats.
 
     Mutates *pid* (observe + param refresh) and *sf* (set_nodes) in place.
+    Applies the full set of live-reloadable PID knobs from *config* each
+    iteration so yaml edits reach the running controller.
     """
-    current_rand = ds.random_move_prob
     wdl_regret_used = ds.wdl_regret
     sf_nodes_used = ds.sf_nodes
-    skill_level_used = ds.skill_level
     total_w = sp_result.total_w
     total_d = sp_result.total_d
     total_l = sp_result.total_l
@@ -351,52 +350,26 @@ def _run_pid_and_eval(
     pid_update = None
     pid_ema_wr = float(pid.ema_winrate) if pid is not None else 0.0
     sf_nodes_next = int(sf_nodes_used)
-    random_move_prob_next = float(current_rand)
-    skill_level_next = int(skill_level_used)
 
     if pid is not None and (total_w + total_d + total_l) > 0:
-        _step_start = tc.sf_pid_max_rand_step_start
-        _step_ramp = tc.sf_pid_max_rand_step_ramp_iters
-        if _step_start > 0 and _step_ramp > 0 and iteration_zero_based < _step_ramp:
-            pid.max_rand_step = _step_start
-        else:
-            pid.max_rand_step = tc.sf_pid_max_rand_step
-        pid.max_regret_step = tc.sf_pid_max_regret_step
-        pid.max_regret_ease_step = tc.sf_pid_max_regret_ease_step
-        pid.target = tc.sf_pid_target_winrate
-        pid.kp = tc.sf_pid_kp
-        pid.ki = tc.sf_pid_ki
-        pid.alpha = tc.sf_pid_ema_alpha
+        pid.refresh_live_params(config)
         pid_update = pid.observe(wins=total_w, draws=total_d, losses=total_l, force=True)
         pid_ema_wr = float(pid_update.ema_winrate)
         sf_nodes_next = int(pid.nodes)
-        random_move_prob_next = float(pid.random_move_prob)
-        skill_level_next = int(pid.skill_level)
         if sf is not None:
             sf.set_nodes(int(sf_nodes_next))
 
     wdl_regret_next = float(pid.wdl_regret) if pid is not None else -1.0
 
     # --- Opponent strength ---
-    _curr_topk = _effective_curriculum_topk(
-        random_move_prob=current_rand,
-        stage_end=tc.sf_pid_topk_stage_end,
-        topk_max=tc.sf_multipv,
-        topk_min=tc.sf_pid_topk_min,
-    )
     opp_strength = _opponent_strength(
-        random_move_prob=float(current_rand),
         sf_nodes=int(sf_nodes_used),
-        skill_level=int(skill_level_used),
         ema_winrate=float(pid_ema_wr),
         min_nodes=int(getattr(pid, "min_nodes", 50)) if pid is not None else 50,
         max_nodes=int(getattr(pid, "max_nodes", 50000)) if pid is not None else 50000,
         pid_target_winrate=tc.sf_pid_target_winrate,
         wdl_regret=float(wdl_regret_used),
         wdl_regret_max=tc.sf_pid_wdl_regret_max,
-        topk=int(_curr_topk),
-        topk_max=tc.sf_multipv,
-        topk_min=tc.sf_pid_topk_min,
     )
     if opp_strength_ema == 0.0:
         opp_strength_ema = float(opp_strength)
@@ -408,8 +381,6 @@ def _run_pid_and_eval(
 
     return PidResult(
         sf_nodes_next=sf_nodes_next,
-        random_move_prob_next=random_move_prob_next,
-        skill_level_next=skill_level_next,
         wdl_regret_next=wdl_regret_next,
         pid_ema_wr=pid_ema_wr,
         pid_update=pid_update,
@@ -428,7 +399,6 @@ def _run_pid_and_eval(
         avg_plies_loss=float(sp_result.total_plies_loss) / float(max(1, total_l)) if total_l > 0 else 0.0,
         opp_strength=opp_strength,
         opp_strength_ema=opp_strength_ema,
-        curr_topk=int(_curr_topk),
     )
 
 
@@ -444,9 +414,8 @@ def _run_selfplay_phase(
     device: str,
     rng,
     sf,
-    use_distributed_selfplay: bool,
-    distributed_dirs: dict | None,
-    distributed_server_root: Path | None,
+    distributed_dirs: dict,
+    distributed_server_root: Path,
     distributed_worker_procs: list,
     distributed_inference_broker_proc,
     prev_published_model_sha: str,
@@ -461,184 +430,101 @@ def _run_selfplay_phase(
     current_window: int,
     in_salvage_startup_grace: bool,
 ) -> tuple[SelfplayResult, str, int, subprocess.Popen[bytes] | None]:
-    """Run selfplay, ingest, export shards, grow window, cross-trial share.
+    """Run distributed selfplay, ingest, export shards, grow window, cross-trial share.
 
     Mutates *buf*, *holdout_buf*, *distributed_worker_procs* in place.
     Returns ``(sp_result, prev_published_model_sha, current_window,
     distributed_inference_broker_proc)``.
     """
-    current_rand = ds.random_move_prob
     total_games = _games_per_iter_for_iteration(tc, iteration_idx)
 
-    # --- Play games (distributed or local) ---
+    # --- Play games (distributed workers upload shards; we ingest) ---
     ingest_t0 = time.monotonic()
-    _new_selfplay_shards: list = []
-    _new_selfplay_batches: list[dict[str, np.ndarray]] = []
-
-    # Accumulators (populated by either branch, bundled into SelfplayResult at end).
-    total_w = total_d = total_l = 0
-    total_games_generated = 0
-    total_game_plies = 0
-    total_adjudicated_games = 0
-    total_draw_games = 0
-    total_selfplay_games = 0
-    total_selfplay_adjudicated_games = 0
-    total_selfplay_draw_games = 0
-    total_curriculum_games = 0
-    total_curriculum_adjudicated_games = 0
-    total_curriculum_draw_games = 0
-    total_checkmate_games = 0
-    total_stalemate_games = 0
-    total_plies_win = 0
-    total_plies_draw = 0
-    total_plies_loss = 0
-    total_positions = 0
-    replay_positions_ingested = 0
     total_sf_d6 = 0.0
     total_sf_d6_n = 0
-    distributed_stale_positions = 0
-    distributed_stale_games = 0
 
-    if use_distributed_selfplay:
-        assert distributed_server_root is not None
-        assert distributed_dirs is not None
-        distributed_worker_procs[:] = _ensure_distributed_workers(
-            config=config,
-            trial_dir=trial_dir,
-            trial_id=trial_id,
-            procs=distributed_worker_procs,
-        )
-        published_model_sha = _publish_distributed_trial_state(
-            trainer=trainer,
-            config=config,
-            model_cfg=model_cfg,
-            server_root=distributed_server_root,
-            trial_id=trial_id,
-            training_iteration=int(iteration_idx),
-            trainer_step=int(getattr(trainer, "step", 0)),
-            sf_nodes=int(ds.sf_nodes),
-            random_move_prob=float(ds.random_move_prob),
-            skill_level=int(ds.skill_level),
-            mcts_simulations=int(sims),
-            wdl_regret=float(ds.wdl_regret),
-            pause_selfplay=False,
-            pause_reason="",
-        )
-        distributed_inference_broker_proc = _ensure_inference_broker(
-            config=config,
-            trial_id=trial_id,
-            trial_dir=trial_dir,
-            publish_dir=distributed_dirs["publish_dir"],
-            proc=distributed_inference_broker_proc,
-        )
-        _shards_before_ingest = set(buf._shard_paths)
+    distributed_worker_procs[:] = _ensure_distributed_workers(
+        config=config,
+        trial_dir=trial_dir,
+        trial_id=trial_id,
+        procs=distributed_worker_procs,
+    )
+    published_model_sha = _publish_distributed_trial_state(
+        trainer=trainer,
+        config=config,
+        model_cfg=model_cfg,
+        server_root=distributed_server_root,
+        trial_id=trial_id,
+        training_iteration=int(iteration_idx),
+        trainer_step=int(getattr(trainer, "step", 0)),
+        sf_nodes=int(ds.sf_nodes),
+        mcts_simulations=int(sims),
+        wdl_regret=float(ds.wdl_regret),
+        pause_selfplay=False,
+        pause_reason="",
+    )
+    distributed_inference_broker_proc = _ensure_inference_broker(
+        config=config,
+        trial_id=trial_id,
+        trial_dir=trial_dir,
+        publish_dir=distributed_dirs["publish_dir"],
+        proc=distributed_inference_broker_proc,
+    )
+    _shards_before_ingest = set(buf._shard_paths)
 
-        ingest_summary = _ingest_distributed_selfplay(
-            buf=buf,
-            holdout_buf=holdout_buf,
-            holdout_frac=tc.holdout_fraction,
-            holdout_frozen=bool(holdout_frozen),
-            inbox_dir=distributed_dirs["inbox_dir"],
+    ingest_summary = _ingest_distributed_selfplay(
+        buf=buf,
+        holdout_buf=holdout_buf,
+        holdout_frac=tc.holdout_fraction,
+        holdout_frozen=bool(holdout_frozen),
+        inbox_dir=distributed_dirs["inbox_dir"],
+        processed_dir=distributed_dirs["processed_dir"],
+        target_games=int(total_games),
+        accepted_model_shas={str(published_model_sha)} | ({str(prev_published_model_sha)} if prev_published_model_sha else set()),
+        prev_model_sha=str(prev_published_model_sha) if prev_published_model_sha else None,
+        prev_model_max_fraction=tc.distributed_prev_model_max_fraction,
+        wait_timeout_s=tc.distributed_wait_timeout_seconds,
+        poll_seconds=tc.distributed_worker_poll_seconds,
+        rng=rng,
+        min_games_fraction=tc.distributed_min_games_fraction,
+    )
+
+    buf.flush()
+    _new_selfplay_shards = [p for p in buf._shard_paths if p not in _shards_before_ingest]
+    total_w = int(ingest_summary["matching_w"])
+    total_d = int(ingest_summary["matching_d"])
+    total_l = int(ingest_summary["matching_l"])
+    total_games_generated = int(ingest_summary["matching_games"])
+    total_game_plies = int(ingest_summary["matching_total_game_plies"])
+    total_adjudicated_games = int(ingest_summary["matching_adjudicated_games"])
+    total_draw_games = int(ingest_summary["matching_total_draw_games"])
+    total_selfplay_games = int(ingest_summary["matching_selfplay_games"])
+    total_selfplay_adjudicated_games = int(ingest_summary["matching_selfplay_adjudicated_games"])
+    total_selfplay_draw_games = int(ingest_summary["matching_selfplay_draw_games"])
+    total_curriculum_games = int(ingest_summary["matching_curriculum_games"])
+    total_curriculum_adjudicated_games = int(ingest_summary["matching_curriculum_adjudicated_games"])
+    total_curriculum_draw_games = int(ingest_summary["matching_curriculum_draw_games"])
+    total_positions = int(ingest_summary["matching_positions"])
+    total_plies_win = int(ingest_summary.get("matching_plies_win", 0))
+    total_plies_draw = int(ingest_summary.get("matching_plies_draw", 0))
+    total_plies_loss = int(ingest_summary.get("matching_plies_loss", 0))
+    total_checkmate_games = int(ingest_summary.get("matching_checkmate_games", 0))
+    total_stalemate_games = int(ingest_summary.get("matching_stalemate_games", 0))
+    distributed_stale_positions = int(ingest_summary["stale_positions"])
+    distributed_stale_games = int(ingest_summary["stale_games"])
+    replay_positions_ingested = int(ingest_summary["positions_replay_added"])
+    prev_published_model_sha = str(published_model_sha)
+
+    if iteration_zero_based % 10 == 0:
+        _prune_processed_shards(
             processed_dir=distributed_dirs["processed_dir"],
-            target_games=int(total_games),
-            accepted_model_shas={str(published_model_sha)} | ({str(prev_published_model_sha)} if prev_published_model_sha else set()),
-            prev_model_sha=str(prev_published_model_sha) if prev_published_model_sha else None,
-            prev_model_max_fraction=tc.distributed_prev_model_max_fraction,
-            wait_timeout_s=tc.distributed_wait_timeout_seconds,
-            poll_seconds=tc.distributed_worker_poll_seconds,
-            rng=rng,
-            min_games_fraction=tc.distributed_min_games_fraction,
+            max_age_seconds=tc.processed_max_age_seconds,
         )
-
-        buf.flush()
-        _new_selfplay_shards = [p for p in buf._shard_paths if p not in _shards_before_ingest]
-        total_w = int(ingest_summary["matching_w"])
-        total_d = int(ingest_summary["matching_d"])
-        total_l = int(ingest_summary["matching_l"])
-        total_games_generated = int(ingest_summary["matching_games"])
-        total_game_plies = int(ingest_summary["matching_total_game_plies"])
-        total_adjudicated_games = int(ingest_summary["matching_adjudicated_games"])
-        total_draw_games = int(ingest_summary["matching_total_draw_games"])
-        total_selfplay_games = int(ingest_summary["matching_selfplay_games"])
-        total_selfplay_adjudicated_games = int(ingest_summary["matching_selfplay_adjudicated_games"])
-        total_selfplay_draw_games = int(ingest_summary["matching_selfplay_draw_games"])
-        total_curriculum_games = int(ingest_summary["matching_curriculum_games"])
-        total_curriculum_adjudicated_games = int(ingest_summary["matching_curriculum_adjudicated_games"])
-        total_curriculum_draw_games = int(ingest_summary["matching_curriculum_draw_games"])
-        total_positions = int(ingest_summary["matching_positions"])
-        total_plies_win = int(ingest_summary.get("matching_plies_win", 0))
-        total_plies_draw = int(ingest_summary.get("matching_plies_draw", 0))
-        total_plies_loss = int(ingest_summary.get("matching_plies_loss", 0))
-        total_checkmate_games = int(ingest_summary.get("matching_checkmate_games", 0))
-        total_stalemate_games = int(ingest_summary.get("matching_stalemate_games", 0))
-        distributed_stale_positions = int(ingest_summary["stale_positions"])
-        distributed_stale_games = int(ingest_summary["stale_games"])
-        replay_positions_ingested = int(ingest_summary["positions_replay_added"])
-        prev_published_model_sha = str(published_model_sha)
-
-        if iteration_zero_based % 10 == 0:
-            _prune_processed_shards(
-                processed_dir=distributed_dirs["processed_dir"],
-                max_age_seconds=tc.processed_max_age_seconds,
-            )
-    else:
-        kw = _play_batch_kwargs(tc)
-        kw["opponent"] = dataclasses.replace(kw["opponent"], random_move_prob=current_rand)
-        kw["search"] = dataclasses.replace(kw["search"], simulations=int(sims))
-
-        samples, stats = play_batch(
-            trainer.model,
-            device=device, rng=rng, stockfish=sf,
-            games=tc.selfplay_batch,
-            target_games=total_games,
-            **kw,
-        )
-
-        total_games_generated += int(stats.games)
-        total_w += stats.w
-        total_d += stats.d
-        total_l += stats.l
-        total_game_plies += int(getattr(stats, "total_game_plies", 0))
-        total_adjudicated_games += int(getattr(stats, "adjudicated_games", getattr(stats, "timeout_games", 0)))
-        total_draw_games += int(getattr(stats, "total_draw_games", 0))
-        total_selfplay_games += int(getattr(stats, "selfplay_games", 0))
-        total_selfplay_adjudicated_games += int(getattr(stats, "selfplay_adjudicated_games", 0))
-        total_selfplay_draw_games += int(getattr(stats, "selfplay_draw_games", 0))
-        total_curriculum_games += int(getattr(stats, "curriculum_games", 0))
-        total_curriculum_adjudicated_games += int(getattr(stats, "curriculum_adjudicated_games", 0))
-        total_curriculum_draw_games += int(getattr(stats, "curriculum_draw_games", 0))
-        total_checkmate_games += int(getattr(stats, "checkmate_games", 0))
-        total_stalemate_games += int(getattr(stats, "stalemate_games", 0))
-        total_plies_win += int(getattr(stats, "plies_win", 0))
-        total_plies_draw += int(getattr(stats, "plies_draw", 0))
-        total_plies_loss += int(getattr(stats, "plies_loss", 0))
-        total_positions += stats.positions
-        total_sf_d6 += float(getattr(stats, "sf_eval_delta6", 0.0)) * int(getattr(stats, "sf_eval_delta6_n", 0))
-        total_sf_d6_n += int(getattr(stats, "sf_eval_delta6_n", 0))
-        replay_positions_ingested = int(total_positions)
-
-        holdout_samples: list = []
-        train_samples: list = []
-        for s in samples:
-            if tc.holdout_fraction > 0.0 and (not holdout_frozen) and (rng.random() < tc.holdout_fraction):
-                holdout_samples.append(s)
-            else:
-                train_samples.append(s)
-        if holdout_samples:
-            holdout_buf.add_many_arrays(samples_to_arrays(holdout_samples))
-        if train_samples:
-            train_arrs = samples_to_arrays(train_samples)
-            buf.add_many_arrays(train_arrs)
-            _new_selfplay_batches.append(train_arrs)
-        del samples
 
     ingest_ms = (time.monotonic() - ingest_t0) * 1000.0
 
     # --- Retry if distributed returned no games ---
-    if _should_retry_distributed_iteration_without_games(
-        use_distributed_selfplay=use_distributed_selfplay,
-        total_games_generated=total_games_generated,
-    ):
+    if _should_retry_iteration_without_games(total_games_generated=total_games_generated):
         print(
             "[trial] distributed iteration waiting for fresh selfplay: "
             f"trial={trial_id} iter={iteration_idx} replay={len(buf)} "
@@ -654,21 +540,17 @@ def _run_selfplay_phase(
 
     # --- Export selfplay shards for sibling trials ---
     _selfplay_export_path = local_iter_shard_path(selfplay_shards_dir, iteration_idx)
-    if use_distributed_selfplay:
-        if _new_selfplay_shards:
-            _export_batches: list[dict[str, np.ndarray]] = []
-            for _sp_path in _new_selfplay_shards:
-                try:
-                    _arrs, _ = load_shard_arrays(_sp_path, lazy=True)
-                    if int(np.asarray(_arrs["x"]).shape[0]) > 0:
-                        _export_batches.append(_arrs)
-                except Exception:
-                    pass
-            if _export_batches:
-                save_local_shard_arrays(_selfplay_export_path, arrs=_concat_array_batches(_export_batches))
-    else:
-        if _new_selfplay_batches:
-            save_local_shard_arrays(_selfplay_export_path, arrs=_concat_array_batches(_new_selfplay_batches))
+    if _new_selfplay_shards:
+        _export_batches: list[dict[str, np.ndarray]] = []
+        for _sp_path in _new_selfplay_shards:
+            try:
+                _arrs, _ = load_shard_arrays(_sp_path, lazy=True)
+                if int(np.asarray(_arrs["x"]).shape[0]) > 0:
+                    _export_batches.append(_arrs)
+            except Exception:
+                pass
+        if _export_batches:
+            save_local_shard_arrays(_selfplay_export_path, arrs=_concat_array_batches(_export_batches))
     _keep_selfplay_iters = tc.exploit_replay_max_unseen_iters_per_source + 2
     _all_selfplay_exports = iter_shard_paths(selfplay_shards_dir)
     for _old in _all_selfplay_exports[:-_keep_selfplay_iters]:
@@ -773,7 +655,6 @@ def _finalize_iteration(
     tune_report_fn,
     puzzle_suite,
     ds: DifficultyState,
-    use_distributed_selfplay: bool,
     distributed_pause_started_at: float | None,
     distributed_pause_active: bool,
     restore: RestoreResult,
@@ -789,12 +670,10 @@ def _finalize_iteration(
     rng,
 ) -> None:
     """End-of-iteration bookkeeping: PID persist, reporting, CSV, prune."""
-    current_rand = ds.random_move_prob
     wdl_regret_used = ds.wdl_regret
     sf_nodes_used = ds.sf_nodes
-    skill_level_used = ds.skill_level
     # Persist PID state AFTER observe() so checkpoints carry the
-    # post-iteration difficulty that produced random_move_prob_next.
+    # post-iteration difficulty.
     if pid is not None:
         try:
             atomic_write_text(
@@ -832,7 +711,12 @@ def _finalize_iteration(
             best_loss=best_loss,
         )
     except Exception:
-        pass
+        print(
+            f"[best_regret] WARN: outer wrapper caught exception at iter "
+            f"{iteration_idx}; best-regret auto-save skipped this iter",
+            flush=True,
+        )
+        traceback.print_exc()
 
     # Puzzle evaluation (overspecialization canary).
     puzzle_dict = _run_puzzle_eval_if_due(
@@ -850,7 +734,6 @@ def _finalize_iteration(
     _log_iteration_scalars(
         writer=trainer.writer,
         pid_result=pid_result,
-        current_rand=current_rand,
         wdl_regret_used=wdl_regret_used,
         pause_metrics=pause_metrics,
         restore=restore,
@@ -861,11 +744,8 @@ def _finalize_iteration(
         tc=tc, trainer=trainer,
         pr=pid_result, sp=sp, tr=tr, drift=drift,
         eval_dict=eval_dict, puzzle_dict=puzzle_dict,
-        current_rand=current_rand,
         wdl_regret_used=wdl_regret_used,
         sf_nodes_used=sf_nodes_used,
-        skill_level_used=skill_level_used,
-        use_distributed_selfplay=use_distributed_selfplay,
         pause_metrics=pause_metrics,
         restore=restore,
         best_loss=best_loss,
@@ -885,9 +765,7 @@ def _finalize_iteration(
         iteration_idx=iteration_idx,
         opp_strength=pid_result.opp_strength,
         opp_strength_ema=pid_result.opp_strength_ema,
-        skill_level=skill_level_used,
         sf_nodes=sf_nodes_used,
-        current_rand=current_rand,
         wdl_regret=wdl_regret_used,
         ingest_ms=sp.ingest_ms,
         train_ms=tr.train_ms,

@@ -30,18 +30,10 @@ def _build_pid(initial_nodes: int) -> DifficultyPID:
         min_games_between_adjust=1,
         target_winrate=0.60,
         ema_alpha=0.35,
-        deadzone=0.0,
-        rate_limit=0.10,
-        initial_skill_level=0,
-        skill_min=0,
-        skill_max=20,
-        initial_random_move_prob=0.7,
-        random_move_stage_end=0.0,
         initial_wdl_regret=0.3,
         wdl_regret_min=0.01,
         wdl_regret_max=1.0,
         wdl_regret_stage_end=0.0,
-        max_regret_step=0.01,
     )
 
 
@@ -58,9 +50,7 @@ def test_difficulty_state_prefers_pid_over_sf() -> None:
     ds = DifficultyState.from_pid(pid, sf, tc)
 
     assert ds.sf_nodes == 1234
-    assert ds.random_move_prob == 0.7
     assert ds.wdl_regret == 0.3
-    assert ds.skill_level == 0
 
 
 def test_difficulty_state_falls_back_to_sf_when_no_pid() -> None:
@@ -72,8 +62,6 @@ def test_difficulty_state_falls_back_to_sf_when_no_pid() -> None:
 
     assert ds.sf_nodes == 2000
     assert ds.wdl_regret == -1.0
-    assert ds.random_move_prob == tc.sf_pid_random_move_prob_start
-    assert ds.skill_level == 0
 
 
 def test_difficulty_state_falls_back_to_tc_when_no_pid_no_sf() -> None:

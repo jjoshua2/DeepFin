@@ -27,13 +27,11 @@ class StockfishUCI:
         *,
         nodes: int = 2000,
         multipv: int = 1,
-        skill_level: int | None = None,
         hash_mb: int | None = None,
     ):
         self.path = path
         self.nodes = int(nodes)
         self.multipv = int(multipv)
-        self.skill_level = None if skill_level is None else max(0, min(20, int(skill_level)))
         self.hash_mb = None if hash_mb is None else max(1, int(hash_mb))
         self._lock = threading.Lock()
 
@@ -54,8 +52,6 @@ class StockfishUCI:
             self._send(f"setoption name Hash value {self.hash_mb}")
         if self.multipv > 1:
             self._send(f"setoption name MultiPV value {self.multipv}")
-        if self.skill_level is not None:
-            self._send(f"setoption name Skill Level value {self.skill_level}")
         self._send("isready")
         self._wait_for("readyok")
 

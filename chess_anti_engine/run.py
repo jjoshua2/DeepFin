@@ -170,9 +170,7 @@ def _run_salvage(args: argparse.Namespace) -> None:
                         _overrides.append(f"{dst_key}<-{sk}")
                         return
 
-                _set_pid("random_move_prob", ("random_move_prob_next", "random_move_prob"))
                 _set_pid("nodes", ("sf_nodes_next", "sf_nodes"), as_int=True)
-                _set_pid("skill_level", ("skill_level_next", "skill_level"), as_int=True)
                 _set_pid("ema_winrate", ("pid_ema_winrate",))
 
                 if pid_state_overrides:
@@ -309,8 +307,9 @@ def main() -> None:
 
     ap = argparse.ArgumentParser(parents=[pre])
 
-    # Mandatory harness: default to Ray Tune.
-    ap.add_argument("--mode", type=str, default="tune", choices=["tune", "single", "salvage"])
+    # Harness: train (one trial, distributed, no PBT) is the default.
+    # tune = PBT/PB2 hyperparameter search. salvage = export seed pool.
+    ap.add_argument("--mode", type=str, default="train", choices=["train", "tune", "salvage"])
     ap.add_argument(
         "--resume",
         action="store_true",
@@ -682,7 +681,6 @@ def main() -> None:
         help="Optional extra multiplier for SF-WDL on draw outcomes (1=disabled, <1 damps draws).",
     )
     ap.add_argument("--sf-wdl-floor", type=float, default=0.1, help="SF WDL weight floor")
-    ap.add_argument("--sf-wdl-floor-at", type=float, default=0.1, help="random_move_prob at which SF WDL weight reaches floor")
 
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--iterations", type=int, default=10)
@@ -730,32 +728,6 @@ def main() -> None:
     ap.add_argument("--sf-pid-integral-clamp", type=float, default=1.0)
     ap.add_argument("--sf-pid-min-nodes", type=int, default=250)
     ap.add_argument("--sf-pid-max-nodes", type=int, default=1000000)
-    ap.add_argument("--sf-pid-initial-skill-level", type=int, default=0)
-    ap.add_argument("--sf-pid-skill-min", type=int, default=0)
-    ap.add_argument("--sf-pid-skill-max", type=int, default=20)
-    ap.add_argument("--sf-pid-skill-promote-nodes", type=int, default=200)
-    ap.add_argument("--sf-pid-skill-demote-nodes", type=int, default=100)
-    ap.add_argument("--sf-pid-skill-nodes-on-promote", type=int, default=100)
-    ap.add_argument("--sf-pid-skill-nodes-on-demote", type=int, default=150)
-    ap.add_argument("--sf-pid-random-move-prob-start", type=float, default=1.0)
-    ap.add_argument("--sf-pid-random-move-prob-min", type=float, default=0.0)
-    ap.add_argument("--sf-pid-random-move-prob-max", type=float, default=1.0)
-    ap.add_argument("--sf-pid-random-move-stage-end", type=float, default=0.5)
-    ap.add_argument("--sf-pid-topk-stage-end", type=float, default=0.5)
-    ap.add_argument("--sf-pid-topk-min", type=int, default=1)
-    ap.add_argument(
-        "--sf-pid-suboptimal-wdl-regret-max",
-        type=float,
-        default=-1.0,
-        help="If >=0, treat opponent_random_move_prob as chance of choosing a non-best move within this WDL regret band at easy stage start.",
-    )
-    ap.add_argument(
-        "--sf-pid-suboptimal-wdl-regret-min",
-        type=float,
-        default=-1.0,
-        help="If >=0, WDL regret floor reached when random_move_prob hits its configured minimum.",
-    )
-    ap.add_argument("--sf-pid-max-rand-step", type=float, default=0.01)
     ap.add_argument("--games-per-iter", type=int, default=10)
     ap.add_argument("--games-per-iter-start", type=int, default=0,
                     help="Optional starting games_per_iter for Tune ramping (0 disables).")
@@ -867,12 +839,18 @@ def main() -> None:
     if args.stockfish_path is None:
         raise SystemExit("--stockfish-path is required (or set stockfish.path in --config)")
 
-    # Both "single" and "tune" go through run_tune — "single" just forces
+    # Both train and tune modes go through run_tune — train just forces
     # scheduler=none and num_samples=1 so there's no hyperparameter search.
     base = _build_tune_config_dict(args)
     base["_yaml_config_path"] = str(Path(args.config).resolve()) if args.config else None
 
-    if str(args.mode) == "single":
+    # Distributed is the only selfplay path; ensure at least 1 local worker so
+    # harness.run_tune() boots the server/broker. Applies to both --mode train
+    # and --mode tune — configs that omit the key must still work.
+    if int(base.get("distributed_workers_per_trial", 0) or 0) <= 0:
+        base["distributed_workers_per_trial"] = 1
+
+    if str(args.mode) == "train":
         base["tune_scheduler"] = "none"
 
     from chess_anti_engine.tune.harness import run_tune
@@ -883,7 +861,7 @@ def main() -> None:
     run_tune(
         base_config=base,
         work_dir=Path(args.work_dir),
-        num_samples=1 if str(args.mode) == "single" else int(args.num_samples),
+        num_samples=1 if str(args.mode) == "train" else int(args.num_samples),
         metric=metric,
         mode=mode,
         resume=bool(args.resume),

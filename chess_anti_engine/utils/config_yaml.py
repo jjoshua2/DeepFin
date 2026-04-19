@@ -57,19 +57,16 @@ _CORE_KEYS = (
 _STOCKFISH_KEYS = (
     "stockfish_path", "sf_nodes", "sf_workers", "sf_multipv", "sf_hash_mb",
     "sf_pid_enabled",
-    "sf_pid_target_winrate", "sf_pid_ema_alpha", "sf_pid_deadzone", "sf_pid_rate_limit",
+    "sf_pid_target_winrate", "sf_pid_ema_alpha",
     "sf_pid_min_games_between_adjust",
-    "sf_pid_kp", "sf_pid_ki", "sf_pid_kd", "sf_pid_integral_clamp",
     "sf_pid_min_nodes", "sf_pid_max_nodes",
-    "sf_pid_initial_skill_level", "sf_pid_skill_min", "sf_pid_skill_max",
-    "sf_pid_skill_promote_nodes", "sf_pid_skill_demote_nodes",
-    "sf_pid_skill_nodes_on_promote", "sf_pid_skill_nodes_on_demote",
-    "sf_pid_random_move_prob_start", "sf_pid_random_move_prob_min", "sf_pid_random_move_prob_max",
-    "sf_pid_random_move_stage_end", "sf_pid_topk_stage_end", "sf_pid_topk_min",
-    "sf_pid_suboptimal_wdl_regret_max", "sf_pid_suboptimal_wdl_regret_min",
-    "sf_pid_max_rand_step", "sf_pid_max_rand_step_start", "sf_pid_max_rand_step_ramp_iters",
     "sf_pid_wdl_regret_start", "sf_pid_wdl_regret_min", "sf_pid_wdl_regret_max",
-    "sf_pid_wdl_regret_stage_end", "sf_pid_max_regret_step", "sf_pid_max_regret_ease_step",
+    "sf_pid_wdl_regret_stage_end",
+    "sf_pid_inverse_regret_window", "sf_pid_inverse_regret_min_span",
+    "sf_pid_inverse_regret_sigma_tolerance", "sf_pid_inverse_regret_max_step",
+    "sf_pid_inverse_regret_safety_floor", "sf_pid_inverse_regret_safety_band",
+    "sf_pid_inverse_regret_emergency_ease_step",
+    "sf_pid_inverse_regret_recency_half_life",
 )
 # Backwards compat: old short YAML names still work inside stockfish: section.
 _STOCKFISH_LEGACY: dict[str, str] = {
@@ -80,19 +77,11 @@ _STOCKFISH_LEGACY: dict[str, str] = {
     "hash_mb": "sf_hash_mb",
     "pid_enabled": "sf_pid_enabled",
     **{f"pid_{k}": f"sf_pid_{k}" for k in (
-        "target_winrate", "ema_alpha", "deadzone", "rate_limit",
+        "target_winrate", "ema_alpha",
         "min_games_between_adjust",
-        "kp", "ki", "kd", "integral_clamp",
         "min_nodes", "max_nodes",
-        "initial_skill_level", "skill_min", "skill_max",
-        "skill_promote_nodes", "skill_demote_nodes",
-        "skill_nodes_on_promote", "skill_nodes_on_demote",
-        "random_move_prob_start", "random_move_prob_min", "random_move_prob_max",
-        "random_move_stage_end", "topk_stage_end", "topk_min",
-        "suboptimal_wdl_regret_max", "suboptimal_wdl_regret_min",
-        "max_rand_step", "max_rand_step_start", "max_rand_step_ramp_iters",
         "wdl_regret_start", "wdl_regret_min", "wdl_regret_max",
-        "wdl_regret_stage_end", "max_regret_step", "max_regret_ease_step",
+        "wdl_regret_stage_end",
     )},
 }
 
@@ -134,7 +123,7 @@ _TRAIN_KEYS = (
     "use_compile", "swa_start", "swa_freq",
     "w_policy", "w_soft", "w_future", "w_wdl", "w_sf_move", "w_sf_eval",
     "w_categorical", "w_sf_volatility", "w_moves_left",
-    "w_sf_wdl", "sf_wdl_conf_power", "sf_wdl_draw_scale", "sf_wdl_floor", "sf_wdl_floor_at", "sf_wdl_floor_at_regret",
+    "w_sf_wdl", "sf_wdl_conf_power", "sf_wdl_draw_scale", "sf_wdl_floor", "sf_wdl_floor_at_regret",
 )
 
 # tune section: all 1:1 passthrough.
@@ -143,6 +132,7 @@ _TUNE_KEYS = (
     "distributed_workers_per_trial", "distributed_worker_sf_workers",
     "distributed_worker_poll_seconds", "distributed_worker_device",
     "distributed_worker_use_compile", "distributed_worker_compile_mode",
+    "distributed_worker_inference_fp8",
     "distributed_worker_aot_dir", "distributed_worker_threaded",
     "distributed_worker_selfplay_threads", "distributed_worker_auto_tune",
     "distributed_worker_target_batch_seconds",
@@ -160,6 +150,7 @@ _TUNE_KEYS = (
     "distributed_inference_max_batch_per_slot",
     "distributed_pause_selfplay_during_training", "distributed_wait_timeout_seconds",
     "distributed_min_games_fraction",
+    "distributed_prev_model_max_fraction",
     "tune_metric", "tune_mode", "tune_num_to_keep", "tune_keep_last_experiments",
     "tune_scheduler",
     "eval_games", "eval_sf_nodes", "eval_mcts_simulations",
@@ -214,25 +205,58 @@ def _build_flat_allowlist() -> frozenset[str]:
 _FLAT_ALLOWLIST = _build_flat_allowlist()
 
 
+def _check_unknown(section: str, section_cfg: dict, allowed: set[str]) -> None:
+    """Raise ValueError listing YAML keys that are not in the allowlist.
+
+    Fail-loud beats silently dropping keys; stale configs from before a
+    simplification would otherwise run with surprising defaults.
+    """
+    unknown = sorted(k for k in section_cfg if k not in allowed)
+    if unknown:
+        raise ValueError(
+            f"Unknown keys in yaml '{section}:' section: {unknown}. "
+            "These are typically leftovers from a prior config schema; "
+            "delete them or update to the current names."
+        )
+
+
 def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
     """Map a nested YAML config into run.py argparse defaults.
 
     Supports both:
     - flat keys matching argparse destinations (e.g. sf_nodes, sf_policy_temp)
     - nested sections: stockfish/selfplay/train/model/tune
+
+    Raises ValueError if a recognized section contains unknown keys.
     """
 
     out: dict[str, Any] = {}
 
     # --- Pass 1: flat keys at the YAML root level ---
+    _SECTION_NAMES = frozenset({"stockfish", "selfplay", "train", "model", "tune"})
+    root_unknown: list[str] = []
     for k, v in cfg.items():
-        if isinstance(k, str) and k in _FLAT_ALLOWLIST:
+        if not isinstance(k, str):
+            continue
+        if k in _SECTION_NAMES:
+            continue
+        if k in _FLAT_ALLOWLIST:
             out[k] = v
+        else:
+            root_unknown.append(k)
+    if root_unknown:
+        raise ValueError(
+            f"Unknown yaml root-level keys: {sorted(root_unknown)}. "
+            "Nest them under stockfish/selfplay/train/model/tune, rename to "
+            "a current flat key, or delete if retired."
+        )
 
     # --- Pass 2: nested sections (can override flat keys) ---
 
     stockfish = cfg.get("stockfish")
     if isinstance(stockfish, dict):
+        allowed = set(_STOCKFISH_KEYS) | set(_STOCKFISH_LEGACY.keys())
+        _check_unknown("stockfish", stockfish, allowed)
         for k in _STOCKFISH_KEYS:
             if k in stockfish:
                 out[k] = stockfish[k]
@@ -244,12 +268,14 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
 
     selfplay = cfg.get("selfplay")
     if isinstance(selfplay, dict):
+        _check_unknown("selfplay", selfplay, set(_SELFPLAY_KEYS))
         for k in _SELFPLAY_KEYS:
             if k in selfplay:
                 out[k] = selfplay[k]
 
     train = cfg.get("train")
     if isinstance(train, dict):
+        _check_unknown("train", train, set(_TRAIN_KEYS) | {"device"})
         for k in _TRAIN_KEYS:
             if k in train:
                 out[k] = train[k]
@@ -259,6 +285,7 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
 
     model = cfg.get("model")
     if isinstance(model, dict):
+        _check_unknown("model", model, set(_MODEL_PASSTHROUGH) | {"kind", "use_smolgen"})
         if "kind" in model:
             out["model"] = model["kind"]
         for k in _MODEL_PASSTHROUGH:
@@ -269,6 +296,17 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
 
     tune = cfg.get("tune")
     if isinstance(tune, dict):
+        # pb2_bounds_* are dynamic; allow any number of them.
+        unknown_tune = sorted(
+            k for k in tune
+            if k not in _TUNE_KEYS and not k.startswith("pb2_bounds_")
+        )
+        if unknown_tune:
+            raise ValueError(
+                f"Unknown keys in yaml 'tune:' section: {unknown_tune}. "
+                "These are typically leftovers from a prior config schema; "
+                "delete them or update to the current names."
+            )
         for k in _TUNE_KEYS:
             if k in tune:
                 out[k] = tune[k]

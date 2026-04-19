@@ -75,22 +75,6 @@ def test_flatten_run_config_defaults_passes_shuffle_balance_knobs() -> None:
     assert flat["shuffle_wl_max_ratio"] == 1.2
 
 
-def test_flatten_run_config_defaults_passes_curriculum_regret_knobs() -> None:
-    cfg = {
-        "stockfish": {
-            "pid_topk_min": 2,
-            "pid_suboptimal_wdl_regret_max": 0.5,
-            "pid_suboptimal_wdl_regret_min": 0.01,
-        }
-    }
-
-    flat = flatten_run_config_defaults(cfg)
-
-    assert flat["sf_pid_topk_min"] == 2
-    assert flat["sf_pid_suboptimal_wdl_regret_max"] == 0.5
-    assert flat["sf_pid_suboptimal_wdl_regret_min"] == 0.01
-
-
 def test_flatten_stockfish_new_style_flat_keys() -> None:
     """New-style YAML: keys inside stockfish: match flat config names directly."""
     cfg = {
@@ -98,14 +82,14 @@ def test_flatten_stockfish_new_style_flat_keys() -> None:
             "stockfish_path": "/usr/bin/stockfish",
             "sf_nodes": 5000,
             "sf_pid_ema_alpha": 0.50,
-            "sf_pid_topk_min": 3,
+            "sf_pid_wdl_regret_max": 0.9,
         }
     }
     flat = flatten_run_config_defaults(cfg)
     assert flat["stockfish_path"] == "/usr/bin/stockfish"
     assert flat["sf_nodes"] == 5000
     assert flat["sf_pid_ema_alpha"] == 0.50
-    assert flat["sf_pid_topk_min"] == 3
+    assert flat["sf_pid_wdl_regret_max"] == 0.9
 
 
 def test_flatten_stockfish_new_key_overrides_legacy() -> None:

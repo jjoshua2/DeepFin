@@ -70,67 +70,12 @@ def _apply_temperature(probs: np.ndarray, temperature: float) -> np.ndarray:
     return p.astype(np.float32, copy=False)
 
 
-def _effective_curriculum_topk(
-    *,
-    random_move_prob: float,
-    stage_end: float,
-    topk_max: int,
-    topk_min: int = 1,
-) -> int:
-    """Map the easy-stage random-move curriculum onto a top-k SF sampler.
-
-    While random_move_prob is above `stage_end`, keep the full top-k sampler.
-    As random_move_prob falls from `stage_end` to 0, shrink the sampler from
-    `topk_max` to `topk_min`.
-    """
-    k_max = max(int(topk_min), int(topk_max))
-    k_min = max(1, min(int(topk_min), k_max))
-    stage = max(1e-6, float(stage_end))
-    rp = max(0.0, float(random_move_prob))
-    if rp >= stage:
-        return int(k_max)
-    frac = max(0.0, min(1.0, rp / stage))
-    # Log-scale interpolation: k = k_max^frac (with k_min=1, log(1)=0).
-    # This spends more time at low topk values where each step matters
-    # (top-1 vs top-3 is huge; top-8 vs top-12 is nearly indistinguishable).
-    log_k = math.log(max(1, k_min)) + frac * (math.log(max(1, k_max)) - math.log(max(1, k_min)))
-    k = int(round(math.exp(log_k)))
-    return max(k_min, min(k_max, k))
-
-
-def _effective_curriculum_wdl_regret(
-    *,
-    random_move_prob: float,
-    random_move_prob_start: float,
-    random_move_prob_floor: float,
-    regret_max: float,
-    regret_min: float,
-) -> float:
-    """Map the current PID difficulty onto a max allowed WDL regret.
-
-    Returns the maximum tolerated drop in Stockfish WDL win-equivalent score
-    relative to the best PV move. Larger values allow weaker suboptimal moves.
-    Negative inputs disable the regret filter and return infinity.
-    """
-    if float(regret_max) < 0.0 or float(regret_min) < 0.0:
-        return float("inf")
-    r_min = max(0.0, min(float(regret_min), float(regret_max)))
-    r_max = max(r_min, float(regret_max))
-    floor = max(0.0, float(random_move_prob_floor))
-    start = max(floor + 1e-6, float(random_move_prob_start))
-    rp = max(floor, min(start, float(random_move_prob)))
-    frac = (rp - floor) / max(1e-6, start - floor)
-    return float(r_min + frac * (r_max - r_min))
-
-
 def _choose_curriculum_opponent_move(
     *,
     rng: np.random.Generator,
     legal_indices: np.ndarray,
     cand_indices: list[int],
     cand_scores: list[float],
-    curriculum_topk: int,
-    random_move_prob: float,
     regret_limit: float,
 ) -> int:
     """Choose the curriculum opponent move index from Stockfish candidates.
@@ -140,26 +85,19 @@ def _choose_curriculum_opponent_move(
     if not cand_indices:
         return int(legal_indices[int(rng.integers(len(legal_indices)))])
 
-    topk_n = max(1, min(int(curriculum_topk), len(cand_indices)))
-    topk_indices = cand_indices[:topk_n]
-    topk_scores = cand_scores[:topk_n]
-    rand_p = max(0.0, float(random_move_prob))
-
     if not math.isfinite(float(regret_limit)):
-        if rand_p > 0.0 and rng.random() < rand_p:
-            return int(legal_indices[int(rng.integers(len(legal_indices)))])
-        return topk_indices[int(rng.integers(len(topk_indices)))]
+        # No regret filter = full-strength SF. MultiPV lists PVs in rank order
+        # so cand_indices[0] is SF's best move. Used by eval / gate matches.
+        return cand_indices[0]
 
-    best_score = max(float(s) for s in topk_scores)
+    best_score = max(float(s) for s in cand_scores)
     acceptable = [
         idx
-        for idx, score in zip(topk_indices, topk_scores, strict=False)
+        for idx, score in zip(cand_indices, cand_scores, strict=False)
         if (best_score - float(score)) <= float(regret_limit) + 1e-12
     ]
     if not acceptable:
-        acceptable = [topk_indices[0]]
-    if rand_p > 0.0 and rng.random() < rand_p:
-        return int(legal_indices[int(rng.integers(len(legal_indices)))])
+        acceptable = [cand_indices[0]]
     return acceptable[int(rng.integers(len(acceptable)))]
 
 
@@ -199,8 +137,6 @@ class BatchStats:
     sf_nodes: int | None = None
     sf_nodes_next: int | None = None
     pid_ema_winrate: float | None = None
-    random_move_prob: float | None = None
-    skill_level: int | None = None
 
     # Log-only: mean abs delta of SF's winrate-like eval over 6 plies.
     # When training only on network turns, this is computed between SF reply evals
@@ -1131,24 +1067,11 @@ def play_batch(
                 return wdl.astype(np.float32, copy=False)
             return np.array([float(wdl[2]), float(wdl[1]), float(wdl[0])], dtype=np.float32)
 
-        rand_p = float(opponent.random_move_prob)
-        curriculum_topk_max = max(1, int(getattr(stockfish, "multipv", 1) or 1))
-        curriculum_topk = _effective_curriculum_topk(
-            random_move_prob=rand_p,
-            stage_end=float(opponent.topk_stage_end),
-            topk_max=curriculum_topk_max,
-            topk_min=int(opponent.topk_min),
+        regret_limit = (
+            float(opponent.wdl_regret_limit)
+            if opponent.wdl_regret_limit is not None
+            else float("inf")
         )
-        if opponent.wdl_regret_limit is not None:
-            regret_limit = float(opponent.wdl_regret_limit)
-        else:
-            regret_limit = _effective_curriculum_wdl_regret(
-                random_move_prob=rand_p,
-                random_move_prob_start=float(opponent.random_move_prob_start),
-                random_move_prob_floor=float(opponent.random_move_prob_min),
-                regret_max=float(opponent.suboptimal_wdl_regret_max),
-                regret_min=float(opponent.suboptimal_wdl_regret_min),
-            )
 
         for idx in idxs:
             res = results[idx]
@@ -1214,8 +1137,6 @@ def play_batch(
                 legal_indices=legal_indices,
                 cand_indices=cand_idxs,
                 cand_scores=cand_scores,
-                curriculum_topk=int(curriculum_topk),
-                random_move_prob=rand_p,
                 regret_limit=regret_limit,
             )
 
@@ -1343,8 +1264,6 @@ def play_batch(
 
     # ── Return results ────────────────────────────────────────────────────────
     sf_nodes = int(getattr(stockfish, "nodes", 0) or 0)
-    skill_lvl = getattr(stockfish, "skill_level", None)
-    skill_lvl_i = None if skill_lvl is None else int(skill_lvl)
 
     mean_sf_d6 = float(_st_sf_d6_sum / max(1, _st_sf_d6_n)) if _st_sf_d6_n > 0 else 0.0
     return all_samples, BatchStats(
@@ -1370,8 +1289,6 @@ def play_batch(
         sf_nodes=sf_nodes if sf_nodes > 0 else None,
         sf_nodes_next=None,
         pid_ema_winrate=None,
-        random_move_prob=float(opponent.random_move_prob),
-        skill_level=skill_lvl_i,
         sf_eval_delta6=mean_sf_d6,
         sf_eval_delta6_n=int(_st_sf_d6_n),
     )

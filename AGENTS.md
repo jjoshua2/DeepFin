@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `chess_anti_engine/` is the main package. Core areas: `encoding/` + `moves/` (input/policy encoding), `model/` + `mcts/` + `selfplay/` + `train/` + `replay/` (training loop), and `stockfish/` + `server/` + `worker.py` + `learner.py` (distributed pipeline).
+- `chess_anti_engine/` is the main package. Core areas: `encoding/` + `moves/` (input/policy encoding), `model/` + `mcts/` + `selfplay/` + `train/` + `replay/` (training loop), and `stockfish/` + `server/` + `worker.py` + `tune/` (distributed pipeline).
 - `tests/` contains pytest coverage for units and smoke flows (`test_*.py`).
 - `configs/` stores YAML presets (for example, `default.yaml`, `pbt2_small.yaml`).
 - `scripts/` contains automation for smoke/e2e runs and monitoring.
@@ -17,11 +17,10 @@ pip install -e ".[onnx]"     # ONNX export/runtime support
 ```bash
 python -m pytest
 python -m pytest tests/test_transformer_forward.py
-python -m chess_anti_engine.run --config configs/default.yaml --mode single
+python -m chess_anti_engine.run --config configs/default.yaml --mode train
 python -m chess_anti_engine.run --config configs/default.yaml --mode tune
-./scripts/e2e_distributed_smoke_gumbel.sh
 ```
-- Use `--mode single` for local training loops, `--mode tune` for hyperparameter search, and the smoke script for server/learner/worker integration checks.
+- Use `--mode train` for a single distributed trial (no PBT); `--mode tune` adds population-based search on top of the same pipeline. There is no non-distributed selfplay path — `--mode train` still boots the local server + at least one worker.
 
 ## Coding Style & Naming Conventions
 - Target Python 3.10+, 4-space indentation, and explicit type hints.

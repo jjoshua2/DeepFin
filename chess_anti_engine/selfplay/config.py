@@ -7,14 +7,7 @@ from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 
 @dataclass(frozen=True)
 class OpponentConfig:
-    random_move_prob: float = 0.0
-    topk_stage_end: float = 0.5
-    topk_min: int = 1
-    suboptimal_wdl_regret_max: float = -1.0
-    suboptimal_wdl_regret_min: float = -1.0
     wdl_regret_limit: float | None = None
-    random_move_prob_start: float = 1.0
-    random_move_prob_min: float = 0.0
 
 
 @dataclass(frozen=True)

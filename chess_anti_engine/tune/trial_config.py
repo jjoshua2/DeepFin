@@ -129,26 +129,12 @@ class TrialConfig:
     # --- PID controller ---
     sf_pid_target_winrate: float = 0.60
     sf_pid_ema_alpha: float = 0.03
-    sf_pid_kp: float = 1.0
-    sf_pid_ki: float = 0.10
-    sf_pid_random_move_prob_start: float = 1.0
-    sf_pid_random_move_prob_min: float = 0.0
-    sf_pid_max_rand_step: float = 0.01
-    sf_pid_max_rand_step_start: float = 0.0
-    sf_pid_max_rand_step_ramp_iters: int = 0
-    sf_pid_max_regret_step: float = 0.001
-    sf_pid_max_regret_ease_step: float = 0.005
-    sf_pid_topk_stage_end: float = 0.5
-    sf_pid_topk_min: int = 1
-    sf_pid_suboptimal_wdl_regret_max: float = -1.0
-    sf_pid_suboptimal_wdl_regret_min: float = -1.0
     sf_pid_wdl_regret_max: float = 1.0
 
     # --- Loss weights ---
     w_sf_wdl: float = 1.0
     sf_wdl_floor: float = 0.1
-    sf_wdl_floor_at: float = 0.10
-    sf_wdl_floor_at_regret: float = 0.0  # 0 means fallback to sf_wdl_floor_at
+    sf_wdl_floor_at_regret: float = 0.0
 
     # --- Replay buffer ---
     replay_window_start: int = 100_000
@@ -187,7 +173,7 @@ class TrialConfig:
     puzzle_simulations: int = 200
 
     # --- Distributed ---
-    distributed_workers_per_trial: int = 0
+    distributed_workers_per_trial: int = 1
     distributed_server_root: str | None = None
     distributed_server_url: str | None = None
     distributed_wait_timeout_seconds: float = 900.0
@@ -347,32 +333,12 @@ class TrialConfig:
             # --- PID ---
             sf_pid_target_winrate=float(config.get("sf_pid_target_winrate", 0.60)),
             sf_pid_ema_alpha=float(config.get("sf_pid_ema_alpha", 0.03)),
-            sf_pid_kp=float(config.get("sf_pid_kp", 1.0)),
-            sf_pid_ki=float(config.get("sf_pid_ki", 0.10)),
-            sf_pid_random_move_prob_start=float(config.get("sf_pid_random_move_prob_start", 1.0)),
-            sf_pid_random_move_prob_min=float(config.get("sf_pid_random_move_prob_min", 0.0)),
-            sf_pid_max_rand_step=float(config.get("sf_pid_max_rand_step", 0.01)),
-            sf_pid_max_rand_step_start=float(config.get("sf_pid_max_rand_step_start", 0.0)),
-            sf_pid_max_rand_step_ramp_iters=int(config.get("sf_pid_max_rand_step_ramp_iters", 0)),
-            sf_pid_max_regret_step=float(config.get("sf_pid_max_regret_step", 0.001)),
-            sf_pid_max_regret_ease_step=float(config.get("sf_pid_max_regret_ease_step", 0.005)),
-            sf_pid_topk_stage_end=float(config.get(
-                "sf_pid_topk_stage_end",
-                config.get("sf_pid_random_move_stage_end", 0.5),
-            )),
-            sf_pid_topk_min=int(config.get("sf_pid_topk_min", 1)),
-            sf_pid_suboptimal_wdl_regret_max=float(config.get("sf_pid_suboptimal_wdl_regret_max", -1.0)),
-            sf_pid_suboptimal_wdl_regret_min=float(config.get("sf_pid_suboptimal_wdl_regret_min", -1.0)),
             sf_pid_wdl_regret_max=float(config.get("sf_pid_wdl_regret_max", 1.0)),
 
             # --- Loss weights ---
             w_sf_wdl=float(config.get("w_sf_wdl", 1.0)),
             sf_wdl_floor=float(config.get("sf_wdl_floor", 0.1)),
-            sf_wdl_floor_at=float(config.get("sf_wdl_floor_at", 0.10)),
-            sf_wdl_floor_at_regret=float(config.get(
-                "sf_wdl_floor_at_regret",
-                config.get("sf_wdl_floor_at", 0.10),
-            )),
+            sf_wdl_floor_at_regret=float(config.get("sf_wdl_floor_at_regret", 0.0)),
 
             # --- Replay buffer ---
             replay_window_start=int(config.get("replay_window_start", 100_000)),
@@ -411,7 +377,7 @@ class TrialConfig:
             puzzle_simulations=int(config.get("puzzle_simulations", 200)),
 
             # --- Distributed ---
-            distributed_workers_per_trial=max(0, int(config.get("distributed_workers_per_trial", 0))),
+            distributed_workers_per_trial=max(1, int(config.get("distributed_workers_per_trial", 1))),
             distributed_server_root=_get("distributed_server_root", None),
             distributed_server_url=_get("distributed_server_url", None),
             distributed_wait_timeout_seconds=float(config.get("distributed_wait_timeout_seconds", 900.0)),
@@ -554,10 +520,8 @@ class DifficultyState:
     reporting, and PID observation for this iteration.
     """
 
-    random_move_prob: float
     wdl_regret: float
     sf_nodes: int
-    skill_level: int
 
     @classmethod
     def from_pid(cls, pid: Any, sf: Any, tc: TrialConfig) -> DifficultyState:
@@ -570,16 +534,12 @@ class DifficultyState:
         """
         if pid is not None:
             return cls(
-                random_move_prob=float(pid.random_move_prob),
                 wdl_regret=float(pid.wdl_regret),
                 sf_nodes=int(pid.nodes),
-                skill_level=int(getattr(pid, "skill_level", 0) or 0),
             )
         return cls(
-            random_move_prob=tc.sf_pid_random_move_prob_start,
             wdl_regret=-1.0,
             sf_nodes=int(getattr(sf, "nodes", 0) or 0) if sf is not None else tc.sf_nodes,
-            skill_level=0,
         )
 
 
@@ -589,8 +549,6 @@ class PidResult:
 
     # PID outputs (next-iteration values)
     sf_nodes_next: int = 0
-    random_move_prob_next: float = 0.0
-    skill_level_next: int = 0
     wdl_regret_next: float = -1.0
     pid_ema_wr: float = 0.0
     pid_update: object | None = None
@@ -613,7 +571,6 @@ class PidResult:
     # Opponent strength
     opp_strength: float = 0.0
     opp_strength_ema: float = 0.0
-    curr_topk: int = 1
 
 
 @dataclass

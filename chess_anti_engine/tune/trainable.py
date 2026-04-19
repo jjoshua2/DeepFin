@@ -108,7 +108,7 @@ def train_trial(config: dict):
     # Compact status CSV — reset on each process start so checkpoint-restore rows don't accumulate.
     _STATUS_CSV_PATH = trial_dir / "status.csv"
     _STATUS_COLS = [
-        "iter", "global_iter", "opp", "opp_ema", "skill", "sf_nodes", "rmp", "regret",
+        "iter", "global_iter", "opp", "opp_ema", "sf_nodes", "regret",
         "ingest_s", "train_s", "iter_s", "steps", "replay", "pos_added",
         "stale", "train_loss", "best_loss", "win", "draw", "loss", "lr", "startup",
     ]
@@ -170,15 +170,23 @@ def train_trial(config: dict):
     holdout_frozen = False
     holdout_generation = 0
 
-    use_distributed_selfplay = (
+    if not (
         tc.distributed_workers_per_trial > 0
         and bool((tc.distributed_server_root or "").strip())
         and bool((tc.distributed_server_url or "").strip())
-    )
+    ):
+        raise RuntimeError(
+            "Trainable requires distributed selfplay to be configured: "
+            "distributed_workers_per_trial>0 plus server_root/server_url. "
+            "run.py auto-enables this for --mode train; if you see this from "
+            "a direct trainable invocation, call run.py --mode train (or tune) "
+            "or populate the distributed_* keys."
+        )
 
-    need_local_sf = (not use_distributed_selfplay) or (tc.gate_games > 0)
+    # Local SF is only needed for gate-check games; distributed workers run
+    # their own SF subprocesses.
     sf = None
-    if need_local_sf:
+    if tc.gate_games > 0:
         if tc.sf_workers > 1:
             sf = StockfishPool(
                 path=tc.stockfish_path,
@@ -195,26 +203,17 @@ def train_trial(config: dict):
                 hash_mb=tc.sf_hash_mb,
             )
 
-    distributed_server_root = (
-        _resolve_local_override_root(
-            raw_root=str(tc.distributed_server_root),
-            tune_work_dir=tc.work_dir or str(work_dir),
-            suffix="server",
-        )
-        if use_distributed_selfplay
-        else None
+    distributed_server_root = _resolve_local_override_root(
+        raw_root=str(tc.distributed_server_root),
+        tune_work_dir=tc.work_dir or str(work_dir),
+        suffix="server",
     )
-    if distributed_server_root is not None:
-        _set_active_run_prefix(server_root=distributed_server_root, trial_id=trial_id)
-    distributed_dirs = (
-        _trial_server_dirs(server_root=distributed_server_root, trial_id=trial_id)
-        if distributed_server_root is not None
-        else None
-    )
+    _set_active_run_prefix(server_root=distributed_server_root, trial_id=trial_id)
+    distributed_dirs = _trial_server_dirs(server_root=distributed_server_root, trial_id=trial_id)
     distributed_worker_procs: list[subprocess.Popen[bytes]] = []
     distributed_inference_broker_proc: subprocess.Popen[bytes] | None = None
 
-    if use_distributed_selfplay and ckpt is not None and distributed_dirs is not None:
+    if ckpt is not None:
         quarantined = _quarantine_inbox_shards(
             inbox_dir=distributed_dirs["inbox_dir"],
             processed_dir=distributed_dirs["processed_dir"],
@@ -264,49 +263,37 @@ def train_trial(config: dict):
 
     pause_marker_path = _resolve_pause_marker_path(tc=tc, trial_dir=trial_dir)
 
-    if use_distributed_selfplay:
-        assert distributed_server_root is not None
-        assert distributed_dirs is not None
-        current_rand_init = (
-            float(pid.random_move_prob)
-            if pid is not None
-            else tc.sf_pid_random_move_prob_start
-        )
-        current_nodes_init = int(pid.nodes) if pid is not None else tc.sf_nodes
-        current_skill_init = int(pid.skill_level) if pid is not None else 0
-        sims_init = _resolve_sims(tc, trainer, max_sims=tc.mcts_simulations)
-        prev_published_model_sha = _publish_distributed_trial_state(
-            trainer=trainer,
-            config=config,
-            model_cfg=model_cfg,
-            server_root=distributed_server_root,
-            trial_id=trial_id,
-            training_iteration=0,
-            trainer_step=int(getattr(trainer, "step", 0)),
-            sf_nodes=current_nodes_init,
-            random_move_prob=current_rand_init,
-            skill_level=current_skill_init,
-            mcts_simulations=int(sims_init),
-            wdl_regret=float(pid.wdl_regret) if pid is not None else -1.0,
-            pause_selfplay=False,
-            pause_reason="",
-        )
-        distributed_inference_broker_proc = _ensure_inference_broker(
-            config=config,
-            trial_id=trial_id,
-            trial_dir=trial_dir,
-            publish_dir=distributed_dirs["publish_dir"],
-            proc=distributed_inference_broker_proc,
-        )
-        distributed_worker_procs = _ensure_distributed_workers(
-            config=config,
-            trial_dir=trial_dir,
-            trial_id=trial_id,
-            procs=distributed_worker_procs,
-        )
+    current_nodes_init = int(pid.nodes) if pid is not None else tc.sf_nodes
+    sims_init = _resolve_sims(tc, trainer, max_sims=tc.mcts_simulations)
+    prev_published_model_sha = _publish_distributed_trial_state(
+        trainer=trainer,
+        config=config,
+        model_cfg=model_cfg,
+        server_root=distributed_server_root,
+        trial_id=trial_id,
+        training_iteration=0,
+        trainer_step=int(getattr(trainer, "step", 0)),
+        sf_nodes=current_nodes_init,
+        mcts_simulations=int(sims_init),
+        wdl_regret=float(pid.wdl_regret) if pid is not None else -1.0,
+        pause_selfplay=False,
+        pause_reason="",
+    )
+    distributed_inference_broker_proc = _ensure_inference_broker(
+        config=config,
+        trial_id=trial_id,
+        trial_dir=trial_dir,
+        publish_dir=distributed_dirs["publish_dir"],
+        proc=distributed_inference_broker_proc,
+    )
+    distributed_worker_procs = _ensure_distributed_workers(
+        config=config,
+        trial_dir=trial_dir,
+        trial_id=trial_id,
+        procs=distributed_worker_procs,
+    )
     distributed_pause_active = False
     distributed_pause_started_at: float | None = None
-    prev_published_model_sha: str = ""
 
     ckpt_dir = work_dir / "ckpt"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
@@ -348,7 +335,6 @@ def train_trial(config: dict):
                 buf=buf, holdout_buf=holdout_buf,
                 holdout_frozen=holdout_frozen,
                 device=device, rng=rng, sf=sf,
-                use_distributed_selfplay=use_distributed_selfplay,
                 distributed_dirs=distributed_dirs,
                 distributed_server_root=distributed_server_root,
                 distributed_worker_procs=distributed_worker_procs,
@@ -400,7 +386,6 @@ def train_trial(config: dict):
                 imported_samples_this_iter=sp.imported_samples_this_iter,
                 gate_match_idx=gate_match_idx,
                 gate_state_path=gate_state_path,
-                use_distributed_selfplay=use_distributed_selfplay,
                 distributed_server_root=distributed_server_root,
                 distributed_dirs=distributed_dirs,
                 iteration_idx=iteration_idx,
@@ -438,7 +423,7 @@ def train_trial(config: dict):
             )
 
             pid_result = _run_pid_and_eval(
-                tc=tc, pid=pid, sf=sf,
+                tc=tc, config=config, pid=pid, sf=sf,
                 sp_result=sp,
                 iteration_zero_based=iteration_zero_based,
                 opp_strength_ema=opp_strength_ema,
@@ -461,7 +446,6 @@ def train_trial(config: dict):
                 tune_report_fn=_tune_report,
                 puzzle_suite=puzzle_suite,
                 ds=ds,
-                use_distributed_selfplay=use_distributed_selfplay,
                 distributed_pause_started_at=distributed_pause_started_at,
                 distributed_pause_active=distributed_pause_active,
                 restore=restore,

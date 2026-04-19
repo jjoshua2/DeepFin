@@ -89,30 +89,6 @@ def test_games_per_iter_start_fallback() -> None:
     assert tc.games_per_iter_start == 32
 
 
-def test_topk_stage_end_fallback() -> None:
-    """sf_pid_topk_stage_end falls back to sf_pid_random_move_stage_end."""
-    tc = TrialConfig.from_dict({"sf_pid_random_move_stage_end": 0.3})
-    assert tc.sf_pid_topk_stage_end == 0.3
-
-    tc = TrialConfig.from_dict({
-        "sf_pid_random_move_stage_end": 0.3,
-        "sf_pid_topk_stage_end": 0.7,
-    })
-    assert tc.sf_pid_topk_stage_end == 0.7
-
-
-def test_sf_wdl_floor_at_regret_fallback() -> None:
-    """sf_wdl_floor_at_regret falls back to sf_wdl_floor_at."""
-    tc = TrialConfig.from_dict({"sf_wdl_floor_at": 0.20})
-    assert tc.sf_wdl_floor_at_regret == 0.20
-
-    tc = TrialConfig.from_dict({
-        "sf_wdl_floor_at": 0.20,
-        "sf_wdl_floor_at_regret": 0.05,
-    })
-    assert tc.sf_wdl_floor_at_regret == 0.05
-
-
 def test_from_real_config() -> None:
     """Load from a real YAML config to verify no crashes."""
     from chess_anti_engine.utils.config_yaml import load_yaml_file, flatten_run_config_defaults

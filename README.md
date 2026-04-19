@@ -35,12 +35,12 @@ Common minimal installs:
 - trainer/tune machine: `pip install -e ".[train,tune,server]"`
 - worker/client machine: `pip install -e ".[worker]"`
 
-## Quickstart: single run (selfplay + train loop)
-You must point at a Stockfish binary.
+## Quickstart: single-trial run (selfplay + train loop, no PBT)
+You must point at a Stockfish binary. `--mode train` runs a single trial through the same distributed selfplay pipeline as tune mode, but without population-based hyperparameter search — one worker process, no search, no exploits.
 
 ```bash
 python -m chess_anti_engine.run \
-  --mode single \
+  --mode train \
   --stockfish-path /path/to/stockfish \
   --iterations 10
 ```
@@ -56,11 +56,11 @@ Outputs:
 2) Run:
 
 ```bash
-python -m chess_anti_engine.run --config configs/default.yaml --mode single
+python -m chess_anti_engine.run --config configs/default.yaml --mode train
 ```
 
-## Ray Tune harness
-Multiple schedulers are supported (Optuna + ASHA, PB2, vanilla PBT, pairwise PBT). Pick one via the config — the production config `configs/pbt2_small.yaml` uses PB2.
+## Ray Tune harness (PBT / GPBT search)
+`--mode tune` adds population-based training on top of the same distributed pipeline. The production config `configs/pbt2_small.yaml` uses GPBT-pairwise by default.
 
 ```bash
 python -m chess_anti_engine.run \
@@ -108,14 +108,14 @@ Knobs:
 - `selfplay.temperature_decay_moves`
 - `selfplay.temperature_endgame`
 
-## Distributed pipeline (server + learner + many workers)
-This repo now supports a simple server/client setup:
-- the **learner** trains continuously by ingesting uploaded selfplay shards from disk
+## Distributed pipeline (server + trainer + many workers)
+This repo supports a simple server/client setup:
+- the **trainer** (Ray Tune trainable) trains continuously by ingesting uploaded selfplay shards from disk and publishes the latest model
 - the **HTTP server** serves the latest model + opening book and accepts shard uploads
 - many **workers** run selfplay locally vs Stockfish and upload shards back
 
 ### Install
-On the server/learner machine:
+On the server/trainer machine:
 ```bash
 pip install -e ".[train,server]"
 ```
@@ -131,24 +131,10 @@ The upload endpoint uses HTTP Basic auth (username/password) backed by `server/u
 python -m chess_anti_engine.server.manage_users --users-db server/users.json add alice
 ```
 
-### 2) Run the learner
-The learner watches `server/inbox/` for `*.npz` shards, trains, and publishes:
+### 2) Run the trainer
+Use `scripts/train.sh` to drive the Ray Tune trainable (see *Operations* above for full CLI). The trainable watches the server inbox for `*.npz` shards, trains, and publishes:
 - `server/publish/latest_model.pt`
 - `server/publish/manifest.json`
-
-By default, the learner runs an **arena gate** (latest vs best) and only promotes `best_model.pt` when the challenger scores above the configured threshold.
-
-Optional worker artifacts you can publish:
-- `--stockfish-binary-path /path/to/stockfish` publishes Stockfish for workers to download.
-- `--worker-wheel-path /path/to/chess_anti_engine.whl` publishes a worker wheel so workers can self-update.
-
-```bash
-python -m chess_anti_engine.learner \
-  --server-root server \
-  --work-dir server/work \
-  --stockfish-binary-path /path/to/stockfish \
-  --worker-wheel-path /path/to/chess_anti_engine.whl
-```
 
 ### 3) Run the HTTP server
 ```bash

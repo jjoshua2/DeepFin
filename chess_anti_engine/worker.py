@@ -588,10 +588,9 @@ class WorkerSession:
                 )
 
         # Engine: initialize with placeholder settings; we will align nodes from manifest each loop.
-        # MultiPV and Skill Level are set at init time; reinitialize when either changes.
+        # MultiPV is set at init time; reinitialize when it changes.
         self.sf: StockfishPool | StockfishUCI | None = None
         self.sf_multipv_active: int | None = None
-        self.sf_skill_level_active: int | None = None
 
         self.last_model_sha = None
         self.last_ob_sha: str | None = None
@@ -1243,8 +1242,8 @@ class WorkerSession:
             last_sha=self.last_ob2_sha,
         )
 
-    def _sync_stockfish(self, manifest: dict, sf_nodes: int, sf_multipv: int, sf_skill_level: int | None) -> str:
-        """Download SF binary + (re)init engine if multipv/skill changed.
+    def _sync_stockfish(self, manifest: dict, sf_nodes: int, sf_multipv: int) -> str:
+        """Download SF binary + (re)init engine if multipv changed.
 
         Returns the resolved stockfish_path.
         """
@@ -1269,10 +1268,9 @@ class WorkerSession:
             self.last_sf_sha = sf_sha
             stockfish_path = str(sf_cached)
 
-        # (Re)initialize engine if multipv or skill_level changed (must be set at init time)
-        skill_changed = self.sf_skill_level_active != sf_skill_level
+        # (Re)initialize engine if multipv changed (must be set at init time)
         multipv_changed = self.sf_multipv_active is None or int(self.sf_multipv_active) != int(sf_multipv)
-        if self.sf is None or multipv_changed or skill_changed:
+        if self.sf is None or multipv_changed:
             if self.sf is not None:
                 try:
                     self.sf.close()
@@ -1285,13 +1283,10 @@ class WorkerSession:
                     nodes=int(sf_nodes),
                     num_workers=int(self.args.sf_workers),
                     multipv=int(sf_multipv),
-                    skill_level=sf_skill_level,
                 )
             else:
-                self.sf = StockfishUCI(str(stockfish_path), nodes=int(sf_nodes), multipv=int(sf_multipv),
-                                       skill_level=sf_skill_level)
+                self.sf = StockfishUCI(str(stockfish_path), nodes=int(sf_nodes), multipv=int(sf_multipv))
             self.sf_multipv_active = int(sf_multipv)
-            self.sf_skill_level_active = sf_skill_level
         else:
             # update nodes dynamically
             if hasattr(self.sf, "set_nodes"):
@@ -1410,7 +1405,7 @@ class WorkerSession:
     # Fields in recommended_worker that affect gameplay and should trigger
     # a session restart when the trainer updates them between iterations.
     _RECO_RESTART_KEYS = (
-        "sf_nodes", "sf_skill_level", "opponent_random_move_prob",
+        "sf_nodes",
         "opponent_wdl_regret_limit", "mcts_simulations", "fast_simulations",
         "selfplay_fraction",
     )
@@ -1481,12 +1476,6 @@ class WorkerSession:
         mcts_sims = self._resolve_reco(reco, "mcts_simulations", 50, int)
         playout_cap_fraction = self._resolve_reco(reco, "playout_cap_fraction", 0.25)
         fast_sims = self._resolve_reco(reco, "fast_simulations", 8, int)
-        opponent_random_move_prob = float(reco.get("opponent_random_move_prob", 0.0))
-        opponent_topk_min = int(reco.get("opponent_topk_min", 1))
-        opponent_suboptimal_wdl_regret_max = float(reco.get("opponent_suboptimal_wdl_regret_max", -1.0))
-        opponent_suboptimal_wdl_regret_min = float(reco.get("opponent_suboptimal_wdl_regret_min", -1.0))
-        opponent_random_move_prob_start = float(reco.get("opponent_random_move_prob_start", 1.0))
-        opponent_random_move_prob_min = float(reco.get("opponent_random_move_prob_min", 0.0))
         opponent_wdl_regret_limit_raw = reco.get("opponent_wdl_regret_limit", None)
         opponent_wdl_regret_limit = float(opponent_wdl_regret_limit_raw) if opponent_wdl_regret_limit_raw is not None else None
         selfplay_fraction = float(reco.get("selfplay_fraction", 0.0))
@@ -1502,8 +1491,6 @@ class WorkerSession:
 
         sf_nodes = self._resolve_reco(reco, "sf_nodes", 2000, int)
         sf_multipv = self._resolve_reco(reco, "sf_multipv", 5, int)
-        _reco_skill = reco.get("sf_skill_level")
-        sf_skill_level: int | None = None if _reco_skill is None else int(_reco_skill)
         sf_policy_temp = self._resolve_reco(reco, "sf_policy_temp", 0.25)
         sf_policy_label_smooth = self._resolve_reco(reco, "sf_policy_label_smooth", 0.05)
 
@@ -1513,7 +1500,7 @@ class WorkerSession:
         t_end = self._resolve_reco(reco, "temperature_endgame", 0.6)
 
         # Resolve stockfish binary and (re)init engine.
-        self._sync_stockfish(manifest, sf_nodes, sf_multipv, sf_skill_level)
+        self._sync_stockfish(manifest, sf_nodes, sf_multipv)
         assert self.sf is not None  # _sync_stockfish always assigns
         _sf = self.sf
 
@@ -1526,13 +1513,6 @@ class WorkerSession:
 
             # Build shared config objects (frozen dataclasses, thread-safe)
             _opponent_cfg = OpponentConfig(
-                random_move_prob=float(opponent_random_move_prob),
-                topk_stage_end=float(reco.get("opponent_topk_stage_end", 0.5)),
-                topk_min=int(opponent_topk_min),
-                suboptimal_wdl_regret_max=float(opponent_suboptimal_wdl_regret_max),
-                suboptimal_wdl_regret_min=float(opponent_suboptimal_wdl_regret_min),
-                random_move_prob_start=float(opponent_random_move_prob_start),
-                random_move_prob_min=float(opponent_random_move_prob_min),
                 wdl_regret_limit=opponent_wdl_regret_limit,
             )
             _temp_cfg = TemperatureConfig(

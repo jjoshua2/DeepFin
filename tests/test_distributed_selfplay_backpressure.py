@@ -19,7 +19,7 @@ from chess_anti_engine.tune.trainable_metrics import (
     _blended_winrate_raw_or_none,
     _compute_train_step_budget,
     _iteration_pause_metrics,
-    _should_retry_distributed_iteration_without_games,
+    _should_retry_iteration_without_games,
 )
 from chess_anti_engine.worker import _manifest_poll_headers
 
@@ -58,8 +58,6 @@ def test_publish_distributed_trial_state_includes_pause_selfplay(tmp_path: Path)
         training_iteration=7,
         trainer_step=123,
         sf_nodes=1000,
-        random_move_prob=0.25,
-        skill_level=20,
         mcts_simulations=64,
         pause_selfplay=True,
         pause_reason="training",
@@ -73,58 +71,6 @@ def test_publish_distributed_trial_state_includes_pause_selfplay(tmp_path: Path)
     assert manifest["backpressure"]["pause_selfplay"] is True
     assert manifest["backpressure"]["pause_reason"] == "training"
     assert manifest["backpressure"]["stale_games"] == 96
-
-
-def test_publish_distributed_trial_state_includes_curriculum_regret_controls(tmp_path: Path) -> None:
-    trainer = _FakeTrainer()
-    model_cfg = SimpleNamespace(
-        kind="transformer",
-        embed_dim=64,
-        num_layers=2,
-        num_heads=4,
-        ffn_mult=2,
-        use_smolgen=False,
-        use_nla=False,
-        use_qk_rmsnorm=False,
-        use_gradient_checkpointing=False,
-    )
-
-    _publish_distributed_trial_state(
-        trainer=trainer,
-        config={
-            "selfplay_batch": 16,
-            "max_plies": 240,
-            "mcts": "gumbel",
-            "fast_simulations": 8,
-            "sf_pid_topk_stage_end": 0.5,
-            "sf_pid_topk_min": 2,
-            "sf_pid_suboptimal_wdl_regret_max": 0.5,
-            "sf_pid_suboptimal_wdl_regret_min": 0.01,
-            "sf_pid_random_move_prob_start": 0.32,
-            "sf_pid_random_move_prob_min": 0.05,
-        },
-        model_cfg=model_cfg,
-        server_root=tmp_path,
-        trial_id="trial_00000",
-        training_iteration=7,
-        trainer_step=123,
-        sf_nodes=1000,
-        random_move_prob=0.15,
-        skill_level=20,
-        mcts_simulations=64,
-        pause_selfplay=False,
-        pause_reason="",
-        backpressure={},
-    )
-
-    manifest_path = tmp_path / "trials" / "trial_00000" / "publish" / "manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    reco = manifest["recommended_worker"]
-    assert reco["opponent_topk_min"] == 2
-    assert reco["opponent_suboptimal_wdl_regret_max"] == 0.5
-    assert reco["opponent_suboptimal_wdl_regret_min"] == 0.01
-    assert reco["opponent_random_move_prob_start"] == 0.32
-    assert reco["opponent_random_move_prob_min"] == 0.05
 
 
 def test_iteration_pause_metrics_reports_percent_paused() -> None:
@@ -153,18 +99,8 @@ def test_iteration_pause_metrics_zero_when_not_paused() -> None:
 
 
 def test_distributed_iteration_retries_without_fresh_games() -> None:
-    assert _should_retry_distributed_iteration_without_games(
-        use_distributed_selfplay=True,
-        total_games_generated=0,
-    )
-    assert not _should_retry_distributed_iteration_without_games(
-        use_distributed_selfplay=False,
-        total_games_generated=0,
-    )
-    assert not _should_retry_distributed_iteration_without_games(
-        use_distributed_selfplay=True,
-        total_games_generated=1,
-    )
+    assert _should_retry_iteration_without_games(total_games_generated=0)
+    assert not _should_retry_iteration_without_games(total_games_generated=1)
 
 
 def test_selfplay_winrate_raw_is_none_without_games() -> None:

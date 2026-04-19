@@ -60,39 +60,26 @@ stockfish:
   sf_pid_enabled: true
   sf_pid_target_winrate: 0.57
   sf_pid_ema_alpha: 0.50      # EMA half-life ~1 iter — faster reaction with shorter iters
-  sf_pid_deadzone: 0.05            # Tighten when pid_wr > 0.65; ease when pid_wr < 0.55.
-  sf_pid_rate_limit: 0.10
   sf_pid_min_games_between_adjust: 200  # Higher than games_per_iter so only the forced iteration-boundary adjust fires.
-  sf_pid_kp: 1.0
-  sf_pid_ki: 0.10
-  sf_pid_kd: 0.0
-  sf_pid_integral_clamp: 1.0
   sf_pid_min_nodes: 5000         # 5k nodes: wider WDL spread so regret filter actually works
-  sf_pid_max_nodes: 10000
-  sf_pid_initial_skill_level: 20
-  sf_pid_skill_min: 20
-  sf_pid_skill_max: 20
-  sf_pid_skill_promote_nodes: 2000
-  sf_pid_skill_demote_nodes: 1000
-  sf_pid_skill_nodes_on_promote: 1000
-  sf_pid_skill_nodes_on_demote: 1000
-  sf_pid_random_move_prob_start: 0.01   # Tiny fixed exploration (not PID-controlled)
-  sf_pid_random_move_prob_min: 0.01    # Locked: rmp stage instantly complete
-  sf_pid_random_move_prob_max: 0.01    # Locked
-  sf_pid_random_move_stage_end: 0.01   # rmp stage instantly complete → PID jumps to regret
-  sf_pid_max_rand_step: 0.01
-  sf_pid_max_rand_step_start: 0.01
-  sf_pid_max_rand_step_ramp_iters: 0
-  sf_pid_topk_stage_end: 1.0
-  sf_pid_topk_min: 20                  # Always full multipv — regret band is the sole difficulty lever
-  sf_pid_suboptimal_wdl_regret_max: 2.0   # Allow very wide regret for bootstrap warmup
-  sf_pid_suboptimal_wdl_regret_min: 0.01
+  sf_pid_max_nodes: 25000        # Raised 10k→25k 2026-04-18: headroom for node stage when regret hits 0.05 gate (not live-reloadable, needs restart)
   sf_pid_wdl_regret_start: 0.50       # Start near equilibrium for 5k nodes; model stable here
   sf_pid_wdl_regret_min: 0.02         # hard floor
   sf_pid_wdl_regret_max: 2.0          # max if PID needs to ease off
   sf_pid_wdl_regret_stage_end: 0.05   # nodes unlock when regret reaches 5%
-  sf_pid_max_regret_step: 0.003       # TEMP: raised 0.001→0.002→0.003→0.004, now back to 0.003. At 0.004 plateau broke (winrate 0.72→0.69 in 2 iters), so reverted to 0.003 to let descent toward 0.57 target continue more gently. Revert further to 0.002 once winrate settles near target.
-  sf_pid_max_regret_ease_step: 0.002  # 2x tighten (was 5x) — minimal asymmetry, less oscillation
+
+  # Inverse-model regret controller: fits observed (regret, winrate) history via
+  # weighted least squares and moves toward the regret that predicts target
+  # winrate. Weights are 1/SE² where SE is computed from the actual W/D/L
+  # distribution per iter.
+  sf_pid_inverse_regret_window: 20            # rolling history length
+  sf_pid_inverse_regret_min_span: 0.005       # require this much regret variation to trust fit
+  sf_pid_inverse_regret_sigma_tolerance: 0.02 # prediction SE at which step-cap applies at full magnitude
+  sf_pid_inverse_regret_max_step: 0.003       # hard step cap per iter (was 0.01 = 10x pre-simplify tighten step; 0.003 is between old tighten 0.001 and old ease 0.005)
+  sf_pid_inverse_regret_safety_floor: 0.50    # below this raw winrate → emergency ease
+  sf_pid_inverse_regret_safety_band: 0.05     # urgency zone between floor and floor+band
+  sf_pid_inverse_regret_emergency_ease_step: 0.01  # base emergency ease; scales up to ~5x near floor
+  sf_pid_inverse_regret_recency_half_life: 5.0     # exp-decay weight on history (0 = off). ~5-iter half-life tracks training drift while keeping fit stable.
 
 selfplay:
   games_per_iter: 800

@@ -129,8 +129,6 @@ def _merge_pid_state_from_result_row(
                     applied.append(f"{dst_key}<-{sk}")
                     return
 
-    _set("random_move_prob", ("random_move_prob_next", "random_move_prob"))
     _set("nodes", ("sf_nodes_next", "sf_nodes"))
-    _set("skill_level", ("skill_level_next", "skill_level"))
     _set("ema_winrate", ("pid_ema_winrate",))
     return (out if out else pid_state), applied
