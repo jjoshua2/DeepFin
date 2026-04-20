@@ -26,7 +26,7 @@ import torch
 from chess_anti_engine.replay.shard import (
     iter_shard_paths,
     load_shard_arrays,
-    local_iter_shard_path,
+    local_shard_path,
     save_local_shard_arrays,
 )
 from chess_anti_engine.selfplay import play_batch
@@ -539,7 +539,7 @@ def _run_selfplay_phase(
         )
 
     # --- Export selfplay shards for sibling trials ---
-    _selfplay_export_path = local_iter_shard_path(selfplay_shards_dir, iteration_idx)
+    _selfplay_export_path = local_shard_path(selfplay_shards_dir, iteration_idx)
     if _new_selfplay_shards:
         _export_batches: list[dict[str, np.ndarray]] = []
         for _sp_path in _new_selfplay_shards:

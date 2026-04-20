@@ -94,7 +94,7 @@ selfplay:
   temperature_after: 0.0
   temperature_decay_start_move: 20
   temperature_decay_moves: 60
-  temperature_endgame: 0.85   # Raised 0.6→0.85 at iter ~160 to break draw-seeking plateau (drawn games avg 284 plies).
+  temperature_endgame: 0.6    # Middle-ground after 0.85 vs 0.5 inconclusive. Held for value-head reinit experiment (2026-04-20).
 
   opening_book_path: /home/josh/projects/chess/data/opening_books/2moves_v2.pgn.zip
   opening_book_max_plies: 4
@@ -143,7 +143,7 @@ train:
   # survives ~50 iters in the buffer and gets trained ~5 times before eviction.
   no_amp: false
   feature_dropout_p: 0.10  # Fixed at 0.10 (not searched).
-  zclip_z_thresh: 2.5
+  zclip_z_thresh: 2.0  # was 2.5; tighten top grad tail during flat-loss plateau (Apr 20). Last-100 median grad norm 1.81, max 3.65 — hard cap 5.0 inert, z-clip ~1% → ~5-8% of steps at 2.0.
   zclip_alpha: 0.97
   zclip_max_norm: 5.0  # was 1.0; raised because raw grad norms median ~2.2 meant every step was hard-clipped, dampening effective LR by ~55%. Z-score clipping still handles outliers.
 

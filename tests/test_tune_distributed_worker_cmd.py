@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 
 from chess_anti_engine.tune.process_cleanup import _list_matching_pids
-from chess_anti_engine.replay.shard import save_npz_arrays
+from chess_anti_engine.replay.shard import LOCAL_SHARD_SUFFIX, save_local_shard_arrays
 from chess_anti_engine.tune.harness import (
     _extract_saved_trial_config_keys,
     _patch_experiment_state_for_resume,
@@ -85,8 +85,8 @@ def test_refresh_replay_shards_uses_override_root_for_donor(tmp_path: Path) -> N
     donor_replay = override_root / donor_trial.name / "replay_shards"
     donor_replay.mkdir(parents=True)
 
-    save_npz_arrays(
-        donor_replay / "shard_000000.npz",
+    save_local_shard_arrays(
+        donor_replay / f"shard_000000{LOCAL_SHARD_SUFFIX}",
         arrs={
             "x": np.zeros((1, 146, 8, 8), dtype=np.float32),
             "policy_target": np.ones((1, 4672), dtype=np.float32),
@@ -113,7 +113,7 @@ def test_refresh_replay_shards_uses_override_root_for_donor(tmp_path: Path) -> N
     assert summary["donor_copied"] == 1
     copied = sorted(recipient_replay.iterdir())
     assert len(copied) == 1
-    assert copied[0].suffix == ".npz"
+    assert copied[0].suffix == LOCAL_SHARD_SUFFIX
 
 
 def test_replay_override_under_wsl_remaps_to_linux_run_sidecar(tmp_path: Path) -> None:

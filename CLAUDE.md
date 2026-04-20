@@ -131,3 +131,11 @@ Ray Tune with GPBT (Gaussian Process Bandit PBT) scheduler. Pairwise velocity-ba
 - No configured linter; no formatter config
 - Tests in `tests/`
 - PYTHONPATH=. required for scripts
+
+## Code Review Protocol
+
+Optimize for end-state quality, not for the cheapest diff. When a review surfaces an improvement:
+
+- **Decide, don't defer.** Either do it now or decide it's not worth doing — "deferred to later" is just an unresolved decision rotting in a comment or a summary. If it's the right end state, the extra edits are worth it even when the change isn't small. If it isn't, say so and move on.
+- **The metric is the code you'd want to land, not the one that's easiest to type.** "Premature abstraction" is a valid reason to skip a change; "it touches more files than I expected" is not.
+- State the decision explicitly: "doing X because Y" / "not doing X because Y". Record the reasoning, not a TODO.

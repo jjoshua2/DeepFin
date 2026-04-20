@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from chess_anti_engine.replay import ReplaySample
-from chess_anti_engine.replay.shard import load_npz
+from chess_anti_engine.replay.shard import arrays_to_samples, load_shard_arrays
 from chess_anti_engine.worker_buffer import (
     _BufferedUpload,
     _buffer_add_completed_game,
@@ -83,7 +83,8 @@ def test_worker_buffer_flushes_on_position_target(tmp_path) -> None:
 
     assert shard_path is not None
     assert elapsed_s == 2.0
-    samples, meta = load_npz(shard_path)
+    _arrs, meta = load_shard_arrays(shard_path)
+    samples = arrays_to_samples(_arrs)
     assert len(samples) == 4
     assert meta["games"] == 2
     assert meta["positions"] == 4
@@ -143,7 +144,8 @@ def test_worker_buffer_maybe_flushes_and_resets(tmp_path) -> None:
 
     assert shard_path is not None
     assert elapsed_s == 61.0
-    samples, meta = load_npz(shard_path)
+    _arrs, meta = load_shard_arrays(shard_path)
+    samples = arrays_to_samples(_arrs)
     assert len(samples) == 3
     assert meta["positions"] == 3
     assert buf.positions == 0
@@ -234,6 +236,6 @@ def test_worker_buffer_preserves_original_model_metadata_across_retries(tmp_path
     )
 
     assert shard_path is not None
-    _, meta = load_npz(shard_path)
+    _, meta = load_shard_arrays(shard_path)
     assert meta["model_sha256"] == "oldmodel"
     assert meta["model_step"] == 21

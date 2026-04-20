@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import hashlib
 import secrets
 import threading
 import time
@@ -12,7 +13,16 @@ from pathlib import Path
 from typing import Any
 
 from chess_anti_engine.replay.buffer import ReplaySample
-from chess_anti_engine.replay.shard import ShardMeta, arrays_to_samples, save_npz
+from chess_anti_engine.replay.shard import (
+    LOCAL_SHARD_SUFFIX,
+    UPLOAD_TAR_SUFFIX,
+    ShardMeta,
+    arrays_to_samples,
+    delete_shard_path,
+    extract_uploaded_shard_tar,
+    samples_to_arrays,
+    save_local_shard_arrays,
+)
 from chess_anti_engine.utils.atomic import atomic_write_text
 from chess_anti_engine.utils.versioning import version_lt
 
@@ -132,23 +142,11 @@ def _flush_buffered_upload_to_inbox(
     )
     final = compacted_dir / (
         f"{int(now_unix)}_{str(acc.model_sha256)[:8]}_{int(acc.games)}g_{int(acc.positions)}p_"
-        f"{secrets.token_hex(8)}.npz"
+        f"{secrets.token_hex(8)}{LOCAL_SHARD_SUFFIX}"
     )
-    last_exc: FileNotFoundError | None = None
-    for _attempt in range(2):
-        compacted_dir.mkdir(parents=True, exist_ok=True)
-        tmp = compacted_dir / f"._tmp_{secrets.token_hex(8)}_{final.name}"
-        save_npz(tmp, samples=samples, meta=meta, compress=False)
-        try:
-            os.replace(str(tmp), str(final))
-            return final
-        except FileNotFoundError as exc:
-            last_exc = exc
-            tmp.unlink(missing_ok=True)
-            if final.exists():
-                return final
-    if last_exc is not None:
-        raise last_exc
+    compacted_dir.mkdir(parents=True, exist_ok=True)
+    arrs = samples_to_arrays(samples)
+    save_local_shard_arrays(final, arrs=arrs, meta=meta)
     return final
 
 
@@ -172,7 +170,7 @@ def create_app(
     Layout under server_root:
     - publish/manifest.json
     - publish/latest_model.pt
-    - inbox/<username>/<sha256>.npz
+    - inbox/<username>/<sha256>.zarr
     - users.json
     """
 
@@ -191,9 +189,7 @@ def create_app(
             "FastAPI server requires optional dependencies. Install with: pip install -e '.[server]'"
         ) from e
 
-    import hashlib
-
-    from chess_anti_engine.replay.shard import load_npz_arrays
+    from chess_anti_engine.replay.shard import load_shard_arrays
 
     from .auth import load_users, record_upload, save_users, verify_password
     from .lease import (
@@ -258,6 +254,29 @@ def create_app(
         tid = _normalize_trial_id(trial_id)
         return arena_inbox if tid is None else (_trial_root(tid) / "arena_inbox")
 
+    def _try_flush_and_pop(acc_key, *, inbox_root: Path, acc, now_unix: float) -> bool:
+        """Flush an accumulator to disk; on success pop it, on failure leave it.
+
+        Transactional: dedup state has already recorded the uploaded shas, so
+        dropping the accumulator on a transient write error would silently lose
+        replay samples the worker can't resend. Returning False keeps the acc
+        in memory for the next upload or periodic tick to retry.
+        """
+        try:
+            _flush_buffered_upload_to_inbox(
+                inbox_root=inbox_root,
+                acc=acc,
+                now_unix=now_unix,
+            )
+        except Exception:
+            log.exception(
+                "compaction flush failed for key=%r; keeping accumulator (%d samples) for retry",
+                acc_key, int(getattr(acc, "positions", 0)),
+            )
+            return False
+        upload_accumulators.pop(acc_key, None)
+        return True
+
     def _flush_ready_upload_accumulators(
         *,
         trial_id: str | None = None,
@@ -294,15 +313,11 @@ def create_app(
                 ):
                     ready_keys.append(key)
             for key in ready_keys:
-                acc = upload_accumulators.pop(key, None)
+                acc = upload_accumulators.get(key)
                 if acc is None:
                     continue
-                _flush_buffered_upload_to_inbox(
-                    inbox_root=_inbox_root(acc.trial_id),
-                    acc=acc,
-                    now_unix=now_unix,
-                )
-                flushed += 1
+                if _try_flush_and_pop(key, inbox_root=_inbox_root(acc.trial_id), acc=acc, now_unix=now_unix):
+                    flushed += 1
         return flushed
 
     def _load_manifest(trial_id: str | None = None) -> dict[str, Any] | None:
@@ -487,8 +502,6 @@ def create_app(
         return True, ""
 
     basic = HTTPBasic()
-
-    from chess_anti_engine.utils import sha256_file as _sha256_file
 
     def _auth_user(creds: HTTPBasicCredentials = Depends(basic)) -> str:
         users = load_users(users_path)
@@ -726,8 +739,19 @@ def create_app(
         inbox_root.mkdir(parents=True, exist_ok=True)
         quarantine_root.mkdir(parents=True, exist_ok=True)
 
-        # Write to a temp file first.
-        tmp = inbox_root / f"tmp_{os.getpid()}_{secrets.token_hex(8)}.npz"
+        upload_name = str(file.filename or "")
+        if not upload_name.endswith(UPLOAD_TAR_SUFFIX):
+            # Workers only produce zarr-tar uploads; reject anything else so
+            # stale clients fail fast rather than writing a partial file.
+            return {
+                "stored": False,
+                "rejected": True,
+                "reason": f"unsupported upload suffix: expected {UPLOAD_TAR_SUFFIX}",
+            }
+        tmp = inbox_root / f"tmp_{os.getpid()}_{secrets.token_hex(8)}{UPLOAD_TAR_SUFFIX}"
+        # Stream upload to disk and hash it in the same pass; rehashing the
+        # file after validation would re-read the full shard from disk.
+        h = hashlib.sha256()
         n = 0
         with tmp.open("wb") as f:
             while True:
@@ -738,11 +762,15 @@ def create_app(
                 if n > max_bytes:
                     tmp.unlink(missing_ok=True)
                     raise HTTPException(status_code=413, detail="upload too large")
+                h.update(chunk)
                 f.write(chunk)
+        sha = h.hexdigest()
 
-        # Validate shard by parsing it.
+        tmp_zarr: Path | None = None
         try:
-            shard_arrs, meta = load_npz_arrays(tmp)
+            tmp_zarr = inbox_root / f"tmp_{os.getpid()}_{secrets.token_hex(8)}{LOCAL_SHARD_SUFFIX}"
+            zarr_root = extract_uploaded_shard_tar(tmp, tmp_zarr)
+            shard_arrs, meta = load_shard_arrays(zarr_root)
         except Exception as e:
             # Quarantine so we can inspect bad uploads without causing worker retry storms.
             qdir = quarantine_root / "invalid"
@@ -755,8 +783,9 @@ def create_app(
                 )
             except Exception:
                 tmp.unlink(missing_ok=True)
+            if tmp_zarr is not None:
+                delete_shard_path(tmp_zarr)
 
-            # Return 200 so well-behaved workers can move on; mark as rejected.
             return {
                 "stored": False,
                 "rejected": True,
@@ -764,8 +793,9 @@ def create_app(
             }
 
         positions = int(shard_arrs["x"].shape[0])
-        sha = _sha256_file(tmp)
         tmp.unlink(missing_ok=True)
+        if tmp_zarr is not None:
+            delete_shard_path(tmp_zarr)
         trial_key = _normalize_trial_id(trial_id)
         upload_seen_key = (trial_key, sha)
         now_unix = time.time()
@@ -796,12 +826,7 @@ def create_app(
                     target_positions=compact_target_positions,
                     max_age_s=compact_max_age_seconds,
                 ):
-                    upload_accumulators.pop(acc_key, None)
-                    _flush_buffered_upload_to_inbox(
-                        inbox_root=inbox_root,
-                        acc=acc,
-                        now_unix=now_unix,
-                    )
+                    _try_flush_and_pop(acc_key, inbox_root=inbox_root, acc=acc, now_unix=now_unix)
 
         lease = None
         if x_cae_worker_lease_id is not None:

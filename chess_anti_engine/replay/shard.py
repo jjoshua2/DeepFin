@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import shutil
+import tarfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -13,12 +15,8 @@ from chess_anti_engine.moves import POLICY_SIZE
 
 from .buffer import ReplaySample
 
-try:  # pragma: no cover - import availability is environment-dependent
-    import zarr
-    from numcodecs import Blosc
-except Exception:  # pragma: no cover
-    zarr = None
-    Blosc = None
+import zarr
+from numcodecs import Blosc
 
 
 SHARD_VERSION = 1
@@ -262,56 +260,29 @@ def local_shard_path(shard_dir: str | Path, index: int) -> Path:
     return Path(shard_dir) / f"shard_{int(index):06d}{LOCAL_SHARD_SUFFIX}"
 
 
-def local_iter_shard_path(shard_dir: str | Path, index: int) -> Path:
-    return local_shard_path(shard_dir, index)
-
-
 def iter_shard_paths(shard_dir: str | Path) -> list[Path]:
-    d = Path(shard_dir)
-    out = list(d.glob(f"shard_*{LOCAL_SHARD_SUFFIX}")) + list(d.glob(f"shard_*{LEGACY_SHARD_SUFFIX}"))
-    return sorted(out)
-
-
-def shard_exists(shard_dir: str | Path, index: int) -> bool:
-    return find_shard_path(shard_dir, index) is not None
+    """List local replay shards (``shard_NNNNNN.zarr``) under *shard_dir*."""
+    return sorted(Path(shard_dir).glob(f"shard_*{LOCAL_SHARD_SUFFIX}"))
 
 
 def find_shard_path(shard_dir: str | Path, index: int) -> Path | None:
-    d = Path(shard_dir)
-    stem = f"shard_{int(index):06d}"
-    for suffix in (LOCAL_SHARD_SUFFIX, LEGACY_SHARD_SUFFIX):
-        p = d / f"{stem}{suffix}"
-        if p.exists():
-            return p
-    return None
+    p = local_shard_path(shard_dir, index)
+    return p if p.exists() else None
 
 
 def shard_index(path: str | Path) -> int:
-    p = Path(path)
-    name = p.name
-    if name.endswith(LOCAL_SHARD_SUFFIX):
-        name = name[: -len(LOCAL_SHARD_SUFFIX)]
-    elif name.endswith(LEGACY_SHARD_SUFFIX):
-        name = name[: -len(LEGACY_SHARD_SUFFIX)]
+    stem = Path(path).stem
     try:
-        return int(name.split("_")[1])
+        return int(stem.split("_")[1])
     except Exception:
         return -1
 
 
 def shard_positions(path: str | Path) -> int:
     p = Path(path)
-    if p.suffix == LOCAL_SHARD_SUFFIX:
-        if zarr is None:
-            return 0
-        try:
-            g = zarr.open_group(str(p), mode="r")
-            return int(g["x"].shape[0])  # type: ignore[arg-type,union-attr]
-        except Exception:
-            return 0
     try:
-        with np.load(str(p), allow_pickle=False) as z:
-            return int(z["x"].shape[0]) if "x" in z.files else 0
+        g = zarr.open_group(str(p), mode="r")
+        return int(g["x"].shape[0])  # type: ignore[arg-type,union-attr]
     except Exception:
         return 0
 
@@ -349,6 +320,73 @@ def delete_shard_path(path: str | Path) -> None:
         shutil.rmtree(p, ignore_errors=True)
     else:
         p.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# Worker → server upload wire format
+# ---------------------------------------------------------------------------
+# Workers tar their local zarr shard directory and POST the bytes as a single
+# upload. The server detects the .zarr.tar filename, extracts safely, and
+# parses with load_shard_arrays. These two functions own that wire format so
+# it stays in sync across producer, consumer, and tests.
+
+UPLOAD_TAR_SUFFIX = LOCAL_SHARD_SUFFIX + ".tar"
+
+
+def pack_shard_for_upload(shard_path: str | Path) -> tuple[str, io.BytesIO]:
+    """Tar a local zarr shard directory for HTTP upload.
+
+    Returns ``(upload_filename, stream)``. The filename carries
+    ``UPLOAD_TAR_SUFFIX`` so the server can dispatch by name.
+    """
+    p = Path(shard_path)
+    if p.suffix != LOCAL_SHARD_SUFFIX or not p.is_dir():
+        raise ValueError(f"expected a {LOCAL_SHARD_SUFFIX} directory, got {p}")
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tf:
+        tf.add(str(p), arcname=p.name)
+    buf.seek(0)
+    return p.stem + UPLOAD_TAR_SUFFIX, buf
+
+
+def extract_uploaded_shard_tar(tar_path: str | Path, dest: str | Path) -> Path:
+    """Safely extract a worker-uploaded zarr tarball at *tar_path* into *dest*.
+
+    *dest* must not already exist; it is created by this function. Raises
+    ``ValueError`` on any tar member that would escape the extract dir — links
+    (sym or hard), absolute paths, ``..`` traversal, non-regular files, or
+    resolved paths outside *dest*. On success, returns the zarr group root
+    (either *dest* itself or a single nested child dir containing ``.zgroup``).
+
+    Defense in depth: the manual member walk rejects link-based escape attacks
+    before any bytes touch the filesystem; ``tarfile.extractall(filter="data")``
+    strips mode/uid/gid bits and catches anything the walk missed.
+    """
+    dest = Path(dest)
+    dest.mkdir(parents=True, exist_ok=False)
+    dest_resolved = dest.resolve()
+    with tarfile.open(str(tar_path), mode="r:") as tf:
+        for member in tf.getmembers():
+            if member.issym() or member.islnk():
+                raise ValueError(f"rejected link member: {member.name!r}")
+            if not (member.isreg() or member.isdir()):
+                raise ValueError(f"rejected non-regular member: {member.name!r}")
+            name = member.name
+            if not name:
+                raise ValueError("rejected empty member name")
+            parts = Path(name).parts
+            if Path(name).is_absolute() or any(p == ".." for p in parts):
+                raise ValueError(f"rejected traversal path: {name!r}")
+            resolved = (dest / name).resolve()
+            if resolved != dest_resolved and not str(resolved).startswith(
+                str(dest_resolved) + os.sep
+            ):
+                raise ValueError(f"tar member escapes extract dir: {name!r}")
+        tf.extractall(str(dest), filter="data")
+    entries = list(dest.iterdir())
+    if len(entries) == 1 and entries[0].is_dir() and (entries[0] / ".zgroup").exists():
+        return entries[0]
+    return dest
 
 
 def samples_to_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
@@ -563,25 +601,18 @@ def save_npz(
     meta: ShardMeta | dict[str, Any] | None = None,
     compress: bool = True,
 ) -> Path:
-    arrs = samples_to_arrays(samples)
-    return save_npz_arrays(path, arrs=arrs, meta=meta, compress=compress)
+    """Write *samples* as a legacy ``.npz`` shard.
 
-
-def save_npz_arrays(
-    path: str | Path,
-    *,
-    arrs: dict[str, np.ndarray],
-    meta: ShardMeta | dict[str, Any] | None = None,
-    compress: bool = True,
-) -> Path:
+    Used by the bootstrap tooling (``scripts/generate_bootstrap.py`` /
+    ``scripts/train_bootstrap.py``) only. The production pipeline writes
+    zarr via ``save_local_shard_arrays``.
+    """
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    stored = prune_storage_arrays(arrs)
+    stored = prune_storage_arrays(samples_to_arrays(samples))
     meta_json = json.dumps(_meta_dict(meta, positions=int(np.asarray(stored["x"]).shape[0])), sort_keys=True)
-    if bool(compress):
-        np.savez_compressed(str(p), **stored, meta_json=np.array(meta_json))
-    else:
-        np.savez(str(p), **stored, meta_json=np.array(meta_json))
+    saver = np.savez_compressed if compress else np.savez
+    saver(str(p), **stored, meta_json=np.array(meta_json))
     return p
 
 
@@ -602,8 +633,6 @@ def save_local_shard_arrays(
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     stored = prune_storage_arrays(arrs)
-    if zarr is None or Blosc is None:
-        return save_npz_arrays(p.with_suffix(LEGACY_SHARD_SUFFIX), arrs=stored, meta=meta)
     # Write to a temp path then atomic-rename to avoid races with concurrent
     # readers/writers that can cause "Directory not empty" on rmtree.
     tmp = p.with_name(f"._{os.getpid()}_{p.name}")
@@ -624,36 +653,41 @@ def save_local_shard_arrays(
     return p
 
 
-def load_npz_arrays(path: str | Path) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
-    p = Path(path)
-    with np.load(str(p), allow_pickle=False) as z:
-        arrs = {k: np.array(z[k], copy=False) for k in z.files if k != "meta_json"}
-        meta_json = z["meta_json"].item() if "meta_json" in z.files else "{}"
-    meta = json.loads(str(meta_json)) if meta_json else {}
-    validate_arrays(arrs)
-    return arrs, meta
-
-
 def load_shard_arrays(
     path: str | Path,
     *,
     lazy: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Load a shard's arrays + meta, dispatching on suffix.
+
+    Handles current ``.zarr`` shards (lazy or eager) and legacy ``.npz`` files
+    (always eager). ``.npz`` support exists for the bootstrap pipeline and
+    as a defensive read path for archival shards; the production writer is
+    ``save_local_shard_arrays``.
+    """
     p = Path(path)
-    if p.suffix == LOCAL_SHARD_SUFFIX:
-        if zarr is None:
-            raise RuntimeError("zarr support is not available")
-        g = zarr.open_group(str(p), mode="r")
-        meta = dict(g.attrs.asdict())
-        if lazy:
-            arrs = {name: g[name] for name in _SHARD_FIELDS if name in g}
-            return arrs, meta
-        arrs = {name: np.asarray(g[name]) for name in _SHARD_FIELDS if name in g}
+    if p.suffix == LEGACY_SHARD_SUFFIX:
+        with np.load(str(p), allow_pickle=False) as z:
+            arrs = {k: np.array(z[k], copy=False) for k in z.files if k != "meta_json"}
+            meta_json = z["meta_json"].item() if "meta_json" in z.files else "{}"
+        meta = json.loads(str(meta_json)) if meta_json else {}
         validate_arrays(arrs)
         return arrs, meta
-    return load_npz_arrays(p)
+    g = zarr.open_group(str(p), mode="r")
+    meta = dict(g.attrs.asdict())
+    if lazy:
+        arrs = {name: g[name] for name in _SHARD_FIELDS if name in g}
+        return arrs, meta
+    arrs = {name: np.asarray(g[name]) for name in _SHARD_FIELDS if name in g}
+    validate_arrays(arrs)
+    return arrs, meta
 
 
 def load_npz(path: str | Path) -> tuple[list[ReplaySample], dict[str, Any]]:
-    arrs, meta = load_npz_arrays(path)
+    """Read a legacy ``.npz`` shard into ``ReplaySample`` objects.
+
+    Used by ``scripts/train_bootstrap.py``; prefer ``load_shard_arrays`` for
+    everything else.
+    """
+    arrs, meta = load_shard_arrays(path)
     return arrays_to_samples(arrs), meta

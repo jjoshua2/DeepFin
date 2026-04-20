@@ -29,6 +29,11 @@ from chess_anti_engine.inference import (
 from chess_anti_engine.utils import sha256_file as _sha256_file
 from chess_anti_engine.model import ModelConfig, build_model, load_state_dict_tolerant
 from chess_anti_engine.moves.encode import POLICY_SIZE
+from chess_anti_engine.replay.shard import (
+    LOCAL_SHARD_SUFFIX,
+    delete_shard_path,
+    pack_shard_for_upload,
+)
 from chess_anti_engine.selfplay import play_batch
 from chess_anti_engine.selfplay.config import (
     GameConfig,
@@ -697,7 +702,13 @@ class WorkerSession:
 
     def _upload_pending_shards(self, *, default_elapsed_s: float | None = None) -> float | None:
         last_uploaded_at: float | None = None
-        for sp in sorted(p for p in self.pending_dir.glob("*.npz") if not p.name.startswith("_tmp_")):
+        pending: list[Path] = [
+            p for p in self.pending_dir.iterdir()
+            if not p.name.startswith("_tmp_")
+            and not p.name.startswith("._")
+            and p.suffix == LOCAL_SHARD_SUFFIX
+        ]
+        for sp in sorted(pending):
             elapsed_s = default_elapsed_s
             elapsed_path = _pending_elapsed_path(sp)
             if elapsed_path.exists():
@@ -705,8 +716,9 @@ class WorkerSession:
                     elapsed_s = float(elapsed_path.read_text(encoding="utf-8").strip())
                 except Exception:
                     elapsed_s = default_elapsed_s
-            with sp.open("rb") as f:
-                files = {"file": (sp.name, f, "application/octet-stream")}
+            upload_name, payload = pack_shard_for_upload(sp)
+            files = {"file": (upload_name, payload, "application/x-tar")}
+            try:
                 r = self._requests.post(
                     self._server_url_for(self.trial_api_prefix + "/upload_shard"),
                     files=files,
@@ -726,11 +738,10 @@ class WorkerSession:
                     },
                     timeout=60.0,
                 )
+            finally:
+                payload.close()
             if r.status_code == 200:
-                try:
-                    sp.unlink(missing_ok=True)
-                except OSError:
-                    pass
+                delete_shard_path(sp)
                 elapsed_path.unlink(missing_ok=True)
                 self.last_successful_send_s = time.time()
                 last_uploaded_at = float(self.last_successful_send_s)

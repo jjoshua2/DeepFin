@@ -5,8 +5,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from chess_anti_engine.replay.buffer import ReplaySample
-from chess_anti_engine.replay.shard import ShardMeta, save_npz
-from chess_anti_engine.utils.atomic import atomic_write
+from chess_anti_engine.replay.shard import (
+    LOCAL_SHARD_SUFFIX,
+    ShardMeta,
+    samples_to_arrays,
+    save_local_shard_arrays,
+)
 
 log = logging.getLogger(__name__)
 
@@ -137,7 +141,7 @@ def _flush_upload_buffer_to_pending(
     if buf.model_step is None:
         raise ValueError("buffered upload missing model step")
     ts = int(now_s)
-    shard_path = pending_dir / f"{ts}_{model_sha[:8]}_{buf.games}g_{buf.positions}p.npz"
+    shard_path = pending_dir / f"{ts}_{model_sha[:8]}_{buf.games}g_{buf.positions}p{LOCAL_SHARD_SUFFIX}"
     elapsed_s = _buffer_elapsed_s(buf=buf, now_s=now_s)
     meta = ShardMeta(
         username=str(username),
@@ -164,11 +168,8 @@ def _flush_upload_buffer_to_pending(
         checkmate_games=int(buf.checkmate_games),
         stalemate_games=int(buf.stalemate_games),
     )
-    atomic_write(
-        shard_path,
-        lambda tmp: save_npz(tmp, samples=list(buf.samples), meta=meta, compress=False),
-        preserve_suffix=True,  # np.savez appends ".npz" if absent
-    )
+    arrs = samples_to_arrays(list(buf.samples))
+    save_local_shard_arrays(shard_path, arrs=arrs, meta=meta)
     _pending_elapsed_path(shard_path).write_text(f"{float(elapsed_s):.6f}\n", encoding="utf-8")
     buf.reset()
     return shard_path, float(elapsed_s)

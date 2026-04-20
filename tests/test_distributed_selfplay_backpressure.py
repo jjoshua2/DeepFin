@@ -9,7 +9,7 @@ import torch
 
 from chess_anti_engine.replay import ArrayReplayBuffer
 from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
-from chess_anti_engine.replay.shard import save_npz_arrays
+from chess_anti_engine.replay.shard import LOCAL_SHARD_SUFFIX, save_local_shard_arrays
 from chess_anti_engine.tune.distributed_runtime import (
     _ingest_distributed_selfplay,
     _publish_distributed_trial_state,
@@ -127,8 +127,8 @@ def test_distributed_ingest_budget_uses_matching_positions_not_stale_backlog(tmp
     worker_dir = inbox_dir / "worker_00"
     worker_dir.mkdir(parents=True)
 
-    stale_path = worker_dir / "00_stale.npz"
-    save_npz_arrays(
+    stale_path = worker_dir / f"00_stale{LOCAL_SHARD_SUFFIX}"
+    save_local_shard_arrays(
         stale_path,
         arrs={
             "x": np.zeros((2, 146, 8, 8), dtype=np.float32),
@@ -146,8 +146,8 @@ def test_distributed_ingest_budget_uses_matching_positions_not_stale_backlog(tmp
             "positions": 120_000,
         },
     )
-    fresh_path = worker_dir / "99_fresh.npz"
-    save_npz_arrays(
+    fresh_path = worker_dir / f"99_fresh{LOCAL_SHARD_SUFFIX}"
+    save_local_shard_arrays(
         fresh_path,
         arrs={
             "x": np.zeros((2, 146, 8, 8), dtype=np.float32),
@@ -210,8 +210,8 @@ def test_distributed_ingest_budget_uses_matching_positions_not_stale_backlog(tmp
 def test_quarantine_inbox_shards_moves_preexisting_resume_backlog(tmp_path: Path) -> None:
     inbox_dir = tmp_path / "inbox" / "worker_00"
     inbox_dir.mkdir(parents=True)
-    shard_path = inbox_dir / "leftover.npz"
-    save_npz_arrays(
+    shard_path = inbox_dir / f"leftover{LOCAL_SHARD_SUFFIX}"
+    save_local_shard_arrays(
         shard_path,
         arrs={
             "x": np.zeros((1, 146, 8, 8), dtype=np.float32),
@@ -232,6 +232,6 @@ def test_quarantine_inbox_shards_moves_preexisting_resume_backlog(tmp_path: Path
     )
 
     assert result["moved_shards"] == 1
-    moved = list((tmp_path / "processed" / "_quarantine").glob("checkpoint_resume_*/*/*.npz"))
+    moved = list((tmp_path / "processed" / "_quarantine").glob(f"checkpoint_resume_*/*/*{LOCAL_SHARD_SUFFIX}"))
     assert len(moved) == 1
     assert not shard_path.exists()

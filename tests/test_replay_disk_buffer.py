@@ -8,8 +8,7 @@ import pytest
 
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
-from chess_anti_engine.replay import shard as shard_mod
-from chess_anti_engine.replay.shard import LEGACY_SHARD_SUFFIX, delete_shard_path, iter_shard_paths, load_shard_arrays
+from chess_anti_engine.replay.shard import delete_shard_path, iter_shard_paths, load_shard_arrays
 
 
 def _sample() -> ReplaySample:
@@ -131,29 +130,6 @@ def test_window_enforcement_deletes_directory_backed_local_shards(tmp_path) -> N
     assert len(buf._shard_paths) == 2
     assert len(shard_paths) == 2
     assert [p.name for p in shard_paths] == [p.name for p in buf._shard_paths]
-
-
-def test_flush_tracks_npz_fallback_path_when_zarr_unavailable(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(shard_mod, "zarr", None)
-    monkeypatch.setattr(shard_mod, "Blosc", None)
-
-    rng = np.random.default_rng(0)
-    buf = DiskReplayBuffer(
-        10,
-        shard_dir=tmp_path / "replay",
-        rng=rng,
-        shuffle_cap=10,
-        shard_size=4,
-    )
-
-    buf.add_many([_sample() for _ in range(4)])
-    buf.flush()
-
-    assert len(buf._shard_paths) == 1
-    saved_path = buf._shard_paths[0]
-    assert saved_path.suffix == LEGACY_SHARD_SUFFIX
-    assert saved_path.exists()
-    assert iter_shard_paths(tmp_path / "replay") == [saved_path]
 
 
 def test_resumed_shuffle_cache_survives_deleted_shard_directories(tmp_path) -> None:

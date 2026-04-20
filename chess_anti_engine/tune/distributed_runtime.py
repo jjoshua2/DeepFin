@@ -15,7 +15,12 @@ import numpy as np
 from chess_anti_engine.model import ModelConfig
 from chess_anti_engine.moves.encode import POLICY_SIZE
 from chess_anti_engine.replay import ArrayReplayBuffer, DiskReplayBuffer
-from chess_anti_engine.replay.shard import load_npz_arrays
+from chess_anti_engine.replay.shard import (
+    LEGACY_SHARD_SUFFIX,
+    LOCAL_SHARD_SUFFIX,
+    delete_shard_path,
+    load_shard_arrays,
+)
 from chess_anti_engine.train import Trainer
 from chess_anti_engine.tune._utils import (
     resolve_local_override_root,
@@ -86,6 +91,21 @@ def _trial_server_dirs(*, server_root: Path, trial_id: str) -> dict[str, Path]:
     }
 
 
+def _iter_shard_paths_nested(root: Path) -> list[Path]:
+    """List shard paths under a two-level inbox/processed layout
+    (``root/<user>/<shard>``).
+
+    Returns both current ``.zarr`` and legacy ``.npz`` entries. The archival
+    ``.npz`` support is load-bearing for ``_prune_processed_shards``, which
+    ages out old uploads from pre-zarr runs in ``processed/_compacted``.
+    Includes in-progress temp files; callers filter by name when they care.
+    """
+    return sorted(
+        list(root.glob(f"*/*{LOCAL_SHARD_SUFFIX}"))
+        + list(root.glob(f"*/*{LEGACY_SHARD_SUFFIX}"))
+    )
+
+
 def _quarantine_inbox_shards(
     *,
     inbox_dir: Path,
@@ -98,9 +118,9 @@ def _quarantine_inbox_shards(
     reason_slug = re.sub(r"[^a-zA-Z0-9_.-]+", "_", str(reason).strip() or "resume")
     quarantine_root = processed_dir / "_quarantine" / f"{reason_slug}_{int(time.time())}"
     moved = 0
-    for sp in sorted(inbox_dir.glob("*/*.npz")):
+    for sp in _iter_shard_paths_nested(inbox_dir):
         # Skip in-progress temp files — moving them causes races.
-        if sp.name.startswith("._tmp_"):
+        if sp.name.startswith("._tmp_") or sp.name.startswith("._"):
             continue
         rel = sp.relative_to(inbox_dir)
         dst = quarantine_root / rel
@@ -133,10 +153,10 @@ def _prune_processed_shards(
         return 0
     cutoff = time.time() - float(max_age_seconds)
     deleted = 0
-    for sp in processed_dir.glob("*/*.npz"):
+    for sp in _iter_shard_paths_nested(processed_dir):
         try:
             if sp.stat().st_mtime < cutoff:
-                sp.unlink(missing_ok=True)
+                delete_shard_path(sp)
                 deleted += 1
         except Exception:
             continue
@@ -733,14 +753,14 @@ def _process_shard(
     out = processed_dir / rel
     out.parent.mkdir(parents=True, exist_ok=True)
     try:
-        shard_arrs, meta = load_npz_arrays(sp)
+        shard_arrs, meta = load_shard_arrays(sp)
     except Exception:
         bad = processed_dir / "bad" / rel.name
         bad.parent.mkdir(parents=True, exist_ok=True)
         try:
             sp.replace(bad)
         except Exception:
-            sp.unlink(missing_ok=True)
+            delete_shard_path(sp)
         return ""
 
     model_sha = str(meta.get("model_sha256") or "")
@@ -809,7 +829,7 @@ def _process_shard(
     try:
         sp.replace(out)
     except Exception:
-        sp.unlink(missing_ok=True)
+        delete_shard_path(sp)
     return model_sha
 
 
@@ -857,10 +877,10 @@ def _ingest_distributed_selfplay(
     effective_accepted = set(accepted_model_shas)
 
     while summary["matching_games"] < target_games:
-        shard_paths = sorted(
-            sp for sp in inbox_dir.glob("*/*.npz")
-            if not sp.name.startswith("._tmp_")
-        )
+        shard_paths = [
+            sp for sp in _iter_shard_paths_nested(inbox_dir)
+            if not sp.name.startswith("._tmp_") and not sp.name.startswith("._")
+        ]
         if not shard_paths:
             if time.time() >= deadline and summary["matching_games"] >= min_games:
                 break

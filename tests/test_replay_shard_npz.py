@@ -6,12 +6,10 @@ from chess_anti_engine.replay.shard import (
     ShardMeta,
     iter_shard_paths,
     load_npz,
-    load_npz_arrays,
     load_shard_arrays,
     local_shard_path,
     save_local_shard_arrays,
     save_npz,
-    save_npz_arrays,
 )
 
 
@@ -37,7 +35,7 @@ def _sample(policy_size: int = 4672) -> ReplaySample:
     return s
 
 
-def test_shard_roundtrip(tmp_path):
+def test_npz_shard_roundtrip(tmp_path):
     samples = [_sample(), _sample()]
     meta = ShardMeta(username="alice", run_id="r1", positions=len(samples))
 
@@ -61,7 +59,7 @@ def test_shard_roundtrip(tmp_path):
     assert s0.sf_volatility_target is not None
 
 
-def test_shard_rejects_empty(tmp_path):
+def test_npz_shard_rejects_empty(tmp_path):
     p = tmp_path / "empty.npz"
     try:
         save_npz(p, samples=[], meta=None)
@@ -70,33 +68,31 @@ def test_shard_rejects_empty(tmp_path):
         pass
 
 
-def test_save_npz_arrays_roundtrip(tmp_path):
-    samples = [_sample(), _sample()]
-    src = tmp_path / "src.npz"
-    save_npz(src, samples=samples, meta=ShardMeta(username="alice", run_id="r1", positions=len(samples)))
-
-    arrs, meta = load_npz_arrays(src)
-    dst = tmp_path / "dst.npz"
-    save_npz_arrays(dst, arrs=arrs, meta=meta)
-
-    out, meta_out = load_npz(dst)
-    assert len(out) == len(samples)
-    assert meta_out["username"] == "alice"
-
-
-def test_save_npz_arrays_uncompressed_roundtrip(tmp_path):
+def test_npz_shard_uncompressed_roundtrip(tmp_path):
     samples = [_sample(), _sample()]
     src = tmp_path / "src_uncompressed.npz"
     save_npz(src, samples=samples, meta=ShardMeta(username="alice", run_id="r1", positions=len(samples)), compress=False)
 
-    arrs, meta = load_npz_arrays(src)
+    arrs, meta = load_shard_arrays(src)
+    assert arrs["x"].shape[0] == len(samples)
+    assert meta["username"] == "alice"
+
+
+def test_load_shard_arrays_reads_legacy_npz(tmp_path):
+    """The archival read path for pre-zarr shards still works through
+    ``load_shard_arrays``; the suffix dispatch handles both formats."""
+    samples = [_sample(), _sample()]
+    src = tmp_path / "legacy.npz"
+    save_npz(src, samples=samples, meta=ShardMeta(username="alice", positions=len(samples)))
+
+    arrs, meta = load_shard_arrays(src)
     assert arrs["x"].shape[0] == len(samples)
     assert meta["username"] == "alice"
 
 
 def test_local_zarr_shard_roundtrip(tmp_path):
     samples = [_sample(), _sample()]
-    arrs = load_npz_arrays(save_npz(tmp_path / "seed.npz", samples=samples, meta={"positions": 2}))[0]
+    arrs, _ = load_shard_arrays(save_npz(tmp_path / "seed.npz", samples=samples, meta={"positions": 2}))
     path = local_shard_path(tmp_path / "replay", 3)
     out_path = save_local_shard_arrays(path, arrs=arrs, meta={"positions": 2, "username": "alice"})
 
