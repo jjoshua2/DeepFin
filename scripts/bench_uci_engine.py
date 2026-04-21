@@ -1,0 +1,208 @@
+"""Benchmark the UCI engine on a set of positions.
+
+Use: run during a training stop-and-resume window to measure current search
+throughput without training contention on the GPU. Loads a checkpoint via
+the real UCI path so we're benchmarking what actually ships, not a synthetic
+harness.
+
+Reports per-position sims/sec + wall-clock for a fixed node budget, so we can
+track how throughput changes when we tune topk / chunk_sims / evaluator
+settings. Runs on whatever device the machine has (cpu/cuda); pass --device
+explicitly to pin.
+
+Example:
+  PYTHONPATH=. python3 scripts/bench_uci_engine.py \\
+      --checkpoint runs/pbt2_small/tune/train_trial_*/checkpoint_NNN \\
+      --nodes 1024 --repeats 3
+"""
+from __future__ import annotations
+
+import argparse
+import queue
+import subprocess
+import sys
+import threading
+import time
+
+
+# Representative positions covering the main phases + one tactical spike.
+# UCI spec: every position is a full FEN, startpos handled specially.
+_POSITIONS: list[tuple[str, str]] = [
+    ("startpos", "startpos"),
+    ("mid_game_open", "r1bq1rk1/ppp2ppp/2np1n2/2b1p3/2B1P3/2NP1N2/PPP2PPP/R1BQ1RK1 w - - 0 6"),
+    ("mid_game_closed", "r2q1rk1/pppnbppp/3pbn2/4p3/4P3/1NNPB3/PPPQBPPP/R4RK1 w - - 0 9"),
+    ("tactical", "r1bqk2r/ppp2ppp/2n2n2/2bpp3/2B1P3/2NP1N2/PPP2PPP/R1BQK2R w KQkq - 0 5"),
+    ("endgame_kp", "8/8/8/4k3/8/4K3/4P3/8 w - - 0 1"),
+]
+
+
+class _LineReader:
+    """Background-pumped reader for subprocess stdout (see test_uci_smoke)."""
+
+    def __init__(self, proc: subprocess.Popen[str]) -> None:
+        self._q: queue.Queue[str | None] = queue.Queue()
+        self._proc = proc
+        self._t = threading.Thread(target=self._pump, daemon=True)
+        self._t.start()
+
+    def _pump(self) -> None:
+        assert self._proc.stdout is not None
+        for line in iter(self._proc.stdout.readline, ""):
+            self._q.put(line.rstrip("\n"))
+        self._q.put(None)
+
+    def read_until(self, needle: str, *, timeout_s: float) -> list[str]:
+        lines: list[str] = []
+        deadline = time.monotonic() + timeout_s
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"timeout waiting for {needle!r}; got:\n" + "\n".join(lines[-20:]))
+            try:
+                line = self._q.get(timeout=min(remaining, 1.0))
+            except queue.Empty:
+                continue
+            if line is None:
+                raise RuntimeError(f"engine died before {needle!r}; got:\n" + "\n".join(lines[-20:]))
+            lines.append(line)
+            if needle in line:
+                return lines
+
+
+def _send(proc: subprocess.Popen[str], s: str) -> None:
+    assert proc.stdin is not None
+    proc.stdin.write(s + "\n")
+    proc.stdin.flush()
+
+
+def _spawn(checkpoint: str, device: str, *,
+           chunk_sims: int, topk: int, max_batch: int) -> subprocess.Popen[str]:
+    return subprocess.Popen(
+        [sys.executable, "-u", "-m", "chess_anti_engine.uci",
+         "--checkpoint", checkpoint, "--device", device,
+         "--chunk-sims", str(chunk_sims),
+         "--topk", str(topk),
+         "--max-batch", str(max_batch)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, bufsize=1,
+    )
+
+
+def _run_one(proc: subprocess.Popen[str], reader: _LineReader, *,
+             fen: str, nodes: int, timeout_s: float) -> dict[str, float | int | str]:
+    _send(proc, f"position {fen}" if fen == "startpos" else f"position fen {fen}")
+    _send(proc, f"go nodes {nodes}")
+    t0 = time.monotonic()
+    lines = reader.read_until("bestmove", timeout_s=timeout_s)
+    elapsed = time.monotonic() - t0
+
+    # Parse last info line for nps, nodes, depth, etc.
+    last_info = next((l for l in reversed(lines) if l.startswith("info ")), "")
+    tokens = last_info.split()
+    info: dict[str, str] = {}
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok in ("depth", "nodes", "nps", "time", "score", "seldepth", "hashfull"):
+            if tok == "score":
+                info["score_kind"] = tokens[i + 1]
+                info["score_val"] = tokens[i + 2]
+                i += 3
+            else:
+                info[tok] = tokens[i + 1]
+                i += 2
+        else:
+            i += 1
+
+    return {
+        "wall_s": round(elapsed, 3),
+        "sims_per_s": round(nodes / elapsed, 1) if elapsed > 0 else 0,
+        "info_nodes": int(info.get("nodes", 0) or 0),
+        "info_nps": int(info.get("nps", 0) or 0),
+        "info_time_ms": int(info.get("time", 0) or 0),
+        "info_depth": int(info.get("depth", 0) or 0),
+        "bestmove": next((l.split()[1] for l in lines if l.startswith("bestmove ")), ""),
+    }
+
+
+def _run_config(
+    checkpoint: str, device: str, *,
+    nodes: int, repeats: int, timeout_s: float,
+    chunk_sims: int, topk: int, max_batch: int,
+    label: str,
+) -> None:
+    proc = _spawn(checkpoint, device,
+                  chunk_sims=chunk_sims, topk=topk, max_batch=max_batch)
+    reader = _LineReader(proc)
+    _send(proc, "uci")
+    reader.read_until("uciok", timeout_s=60.0)
+    _send(proc, "isready")
+    reader.read_until("readyok", timeout_s=60.0)
+
+    print(f"\n## {label}  chunk_sims={chunk_sims}  topk={topk}  max_batch={max_batch}")
+    try:
+        position_stats: dict[str, list[float]] = {}
+        for pos_label, fen in _POSITIONS:
+            _send(proc, "ucinewgame")
+            for _ in range(repeats):
+                result = _run_one(proc, reader, fen=fen, nodes=nodes, timeout_s=timeout_s)
+                position_stats.setdefault(pos_label, []).append(float(result["sims_per_s"]))  # type: ignore[arg-type]
+        for pos_label, vals in position_stats.items():
+            mean = sum(vals) / len(vals)
+            print(f"  {pos_label:<20} sims/s avg={mean:>7.1f}  runs={vals}")
+    finally:
+        _send(proc, "quit")
+        try:
+            proc.wait(timeout=10)
+        except Exception:
+            proc.kill()
+
+
+def main() -> int:
+    p = argparse.ArgumentParser()
+    p.add_argument("--checkpoint", required=True)
+    p.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
+    p.add_argument("--nodes", type=int, default=1024)
+    p.add_argument("--repeats", type=int, default=3)
+    p.add_argument("--timeout-s", type=float, default=120.0)
+    p.add_argument("--sweep", action="store_true",
+                   help="sweep predefined (chunk_sims, topk, max_batch) configs")
+    p.add_argument("--chunk-sims", type=int, default=32)
+    p.add_argument("--topk", type=int, default=16)
+    p.add_argument("--max-batch", type=int, default=32)
+    args = p.parse_args()
+
+    print(f"# checkpoint={args.checkpoint}  device={args.device}  nodes={args.nodes}  repeats={args.repeats}")
+
+    if args.sweep:
+        # One variable at a time; first row is baseline so we can A/B against it.
+        configs = [
+            ("baseline",                      32,   16,  32),
+            ("chunk_sims=128",                128,  16,  32),
+            ("chunk_sims=512",                512,  16,  32),
+            ("chunk_sims=nodes",              args.nodes, 16, args.nodes),  # one shot
+            ("topk=8",                        32,    8,  32),
+            ("topk=32",                       32,   32,  64),   # max_batch must accommodate topk
+            ("max_batch=128",                 32,   16, 128),
+            ("max_batch=512",                 32,   16, 512),
+            ("chunk=nodes + topk=32 + mb=512", args.nodes, 32, max(512, args.nodes)),
+        ]
+        for label, cs, tk, mb in configs:
+            _run_config(
+                args.checkpoint, args.device,
+                nodes=args.nodes, repeats=args.repeats, timeout_s=args.timeout_s,
+                chunk_sims=cs, topk=tk, max_batch=mb, label=label,
+            )
+    else:
+        _run_config(
+            args.checkpoint, args.device,
+            nodes=args.nodes, repeats=args.repeats, timeout_s=args.timeout_s,
+            chunk_sims=args.chunk_sims, topk=args.topk, max_batch=args.max_batch,
+            label="single",
+        )
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

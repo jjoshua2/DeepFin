@@ -78,11 +78,18 @@ class SearchWorker:
         self._tree: MCTSTree | None = None
         self._root_ids: list[int] | None = None
         self._tree_board_key: tuple[str, ...] | None = None
+        # Cache of the root's policy + WDL logits. Valid for as long as the
+        # tree is valid (same position). Lets chunks after the first skip
+        # the ~1ms root GPU call.
+        self._root_pol_logits: np.ndarray | None = None
+        self._root_wdl_logits: np.ndarray | None = None
 
     def reset_tree(self) -> None:
         self._tree = None
         self._root_ids = None
         self._tree_board_key = None
+        self._root_pol_logits = None
+        self._root_wdl_logits = None
 
     def _tree_key(self, board: chess.Board) -> tuple[str, ...]:
         return (board.fen(),)
@@ -113,10 +120,23 @@ class SearchWorker:
             self._tree = None
             self._root_ids = None
             self._tree_board_key = key
+            self._root_pol_logits = None
+            self._root_wdl_logits = None
 
         total_nodes = 0
         last_info_ms = -1
         last_values: list[float] = [0.0]
+
+        # Root eval is the same every chunk (same position, same net). Do it
+        # once here and pass pre_pol_logits/pre_wdl_logits into each chunk so
+        # the C path skips its own root GPU call. Saves ~1ms × (chunks-1) per
+        # search and lets us hand-share the encoding across chunks for free.
+        if self._root_pol_logits is None or self._root_wdl_logits is None:
+            xs = np.empty((1, 146, 8, 8), dtype=np.float32)
+            xs[0] = CBoard.from_board(board).encode_146()
+            pol, wdl = self._evaluator.evaluate_encoded(xs)
+            self._root_pol_logits = np.asarray(pol, dtype=np.float32)
+            self._root_wdl_logits = np.asarray(wdl, dtype=np.float32)
 
         while True:
             chunk = self._chunk_sims
@@ -143,6 +163,8 @@ class SearchWorker:
                     add_noise=False,
                 ),
                 evaluator=self._evaluator,
+                pre_pol_logits=self._root_pol_logits,
+                pre_wdl_logits=self._root_wdl_logits,
                 tree=self._tree,
                 root_node_ids=self._root_ids,
             )

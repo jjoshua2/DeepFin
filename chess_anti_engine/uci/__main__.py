@@ -9,6 +9,7 @@ import argparse
 import sys
 
 from chess_anti_engine.inference import DirectGPUEvaluator
+from chess_anti_engine.mcts.gumbel import GumbelConfig
 
 from .engine import Engine
 from .model_loader import load_model_from_checkpoint
@@ -16,10 +17,22 @@ from .protocol import parse_command
 from .search import SearchWorker
 
 
-def _build_engine(*, checkpoint: str, device: str) -> Engine:
+def _build_engine(
+    *,
+    checkpoint: str,
+    device: str,
+    chunk_sims: int,
+    topk: int,
+    max_batch: int,
+) -> Engine:
     model = load_model_from_checkpoint(checkpoint, device=device)
-    evaluator = DirectGPUEvaluator(model, device=device, max_batch=32)
-    worker = SearchWorker(evaluator, device=device)
+    evaluator = DirectGPUEvaluator(model, device=device, max_batch=max_batch)
+    worker = SearchWorker(
+        evaluator,
+        device=device,
+        gumbel_cfg=GumbelConfig(simulations=chunk_sims, topk=topk, add_noise=False),
+        chunk_sims=chunk_sims,
+    )
     return Engine(worker)
 
 
@@ -37,6 +50,15 @@ def main() -> int:
     p = argparse.ArgumentParser(prog="chess-anti-engine-uci")
     p.add_argument("--checkpoint", required=True, help="path to trainer.pt or checkpoint dir")
     p.add_argument("--device", default="auto", help="cpu|cuda|cuda:N (default: auto)")
+    # Defaults from the 2026-04-21 bench sweep (bench_uci_engine.py --sweep):
+    # chunk=512/topk=32/mb=1024 gave ~7.3x startpos nps vs 32/16/32. Chunk cap
+    # of 512 (not the full node budget) keeps `stop` latency under ~400ms on
+    # single-game CUDA searches.
+    p.add_argument("--chunk-sims", type=int, default=512,
+                   help="sims per start_gumbel_sims call (default: 512). Higher = fewer Python-C roundtrips, coarser stop latency.")
+    p.add_argument("--topk", type=int, default=32, help="Gumbel root candidates (default: 32)")
+    p.add_argument("--max-batch", type=int, default=1024,
+                   help="DirectGPUEvaluator max batch (default: 1024). Must be >= expected leaf count per wavefront.")
     args = p.parse_args()
 
     # UCI assumes line-buffered I/O. When a GUI pipes stdout, Python defaults
@@ -47,7 +69,10 @@ def main() -> int:
         pass
 
     device = _pick_device(args.device)
-    engine = _build_engine(checkpoint=args.checkpoint, device=device)
+    engine = _build_engine(
+        checkpoint=args.checkpoint, device=device,
+        chunk_sims=args.chunk_sims, topk=args.topk, max_batch=args.max_batch,
+    )
 
     for raw in sys.stdin:
         engine.dispatch(parse_command(raw))
