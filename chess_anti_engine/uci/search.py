@@ -35,6 +35,10 @@ _DEFAULT_CHUNK_SIMS = 32
 
 _PV_MAX_DEPTH = 12
 
+# Safety ceiling for `go depth`: MCTS has no true depth — we terminate on
+# PV length, but a shallow tree could stall forever, so cap total sims too.
+_DEPTH_NODE_SAFETY_CAP = 200_000
+
 
 @dataclass
 class SearchResult:
@@ -90,13 +94,20 @@ class SearchWorker:
         stop_event: threading.Event,
         deadline: Deadline,
         max_nodes: int | None,
+        max_depth: int | None = None,
         info_cb: InfoCallback | None = None,
     ) -> SearchResult:
-        """Search until any of: stop_event set, deadline expired, max_nodes hit.
+        """Search until any of: stop_event set, deadline expired, max_nodes hit,
+        PV length ≥ max_depth.
 
         Returns when at least one chunk has run (so bestmove is always
         backed by MCTS data, never a raw priors pick).
         """
+        # UCI depth has no clean MCTS analog; we stop when the tree's PV
+        # reaches that ply count, with a hard node ceiling so a shallow
+        # tree can't stall forever.
+        if max_depth is not None and max_nodes is None:
+            max_nodes = _DEPTH_NODE_SAFETY_CAP
         key = self._tree_key(board)
         if self._tree is None or self._tree_board_key != key:
             self._tree = None
@@ -160,6 +171,8 @@ class SearchWorker:
             if stop_event.is_set() or deadline.expired():
                 break
             if max_nodes is not None and total_nodes >= max_nodes:
+                break
+            if max_depth is not None and len(pv_indices) >= max_depth:
                 break
 
         # Final snapshot using whatever the tree knows now.

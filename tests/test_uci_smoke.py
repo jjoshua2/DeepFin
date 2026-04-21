@@ -222,6 +222,27 @@ def test_stop_during_ponder(tiny_checkpoint: Path) -> None:
             proc.kill()
 
 
+def test_go_depth_terminates(tiny_checkpoint: Path) -> None:
+    """`go depth N` used to hang; depth now either terminates on PV length
+    or on the safety node cap. Either way a bestmove must arrive."""
+    proc = _spawn_engine(tiny_checkpoint)
+    reader = _LineReader(proc)
+    try:
+        _send(proc, "uci")
+        reader.read_until("uciok")
+        _send(proc, "isready")
+        reader.read_until("readyok")
+        _send(proc, "position startpos")
+        _send(proc, "go depth 2")
+        lines = reader.read_until("bestmove", timeout_s=30.0)
+        assert any(l.startswith("bestmove ") for l in lines)
+        _send(proc, "quit")
+        proc.wait(timeout=5)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+
 def test_stop_interrupts_search(tiny_checkpoint: Path) -> None:
     proc = _spawn_engine(tiny_checkpoint)
     reader = _LineReader(proc)

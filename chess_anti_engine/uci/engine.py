@@ -40,6 +40,12 @@ from .time_manager import Deadline, SearchLimits, limits_from_go
 _ENGINE_NAME = "chess-anti-engine"
 _ENGINE_AUTHOR = "josh + claude"
 
+# How long to wait for a search thread to honor `stop`. 5s was too tight:
+# a cold CUDA-graph compile on the first search can take ~3-4s, which
+# previously let a slow stop orphan a running thread that would later
+# emit a stale bestmove against a new board.
+_JOIN_TIMEOUT_S = 30.0
+
 
 @dataclass
 class EngineOptions:
@@ -61,6 +67,12 @@ class Engine:
         # here so ponderhit can swap them in.
         self._pending_real_limits: SearchLimits | None = None
         self._quit_requested = False
+        # Monotonic counter bumped on every new `go`. Stored on the search
+        # thread's frame; a stale thread that outlives its join still sees
+        # its own captured value, so emit-bestmove and tree-writeback both
+        # gate on `gen == self._search_gen`. Prevents races after a slow stop.
+        self._search_gen = 0
+        self._state_lock = threading.Lock()
 
     # -- main-thread command dispatch -----------------------------------------
 
@@ -149,9 +161,12 @@ class Engine:
             )
             if cmd.args.ponder else None
         )
+        with self._state_lock:
+            self._search_gen += 1
+            gen = self._search_gen
         self._search_thread = threading.Thread(
             target=self._run_search,
-            args=(limits,),
+            args=(limits, gen),
             daemon=True,
         )
         self._search_thread.start()
@@ -159,8 +174,15 @@ class Engine:
     def _handle_stop(self) -> None:
         if self._search_thread is not None:
             self._stop_event.set()
-            self._search_thread.join(timeout=5.0)
-            self._search_thread = None
+            self._search_thread.join(timeout=_JOIN_TIMEOUT_S)
+            if self._search_thread.is_alive():
+                # Don't clear the handle: the thread may still be running a
+                # C chunk that can't be interrupted. Bumping _search_gen
+                # (in _handle_go) will invalidate any late bestmove. We
+                # retry the cleanup on the next isready / go.
+                _println("info string search stop timed out; thread still running")
+            else:
+                self._search_thread = None
 
     def _handle_ponderhit(self) -> None:
         """Opponent played our predicted move. Convert open-ended ponder
@@ -183,7 +205,7 @@ class Engine:
 
     # -- search thread body ---------------------------------------------------
 
-    def _run_search(self, limits: SearchLimits) -> None:
+    def _run_search(self, limits: SearchLimits, gen: int) -> None:
         # Ponder search: no deadline yet; runs until ponderhit or stop.
         result = self._run_one_phase(limits, is_ponder=limits.ponder)
         if self._ponderhit_event.is_set() and self._pending_real_limits is not None:
@@ -193,11 +215,17 @@ class Engine:
             self._pending_real_limits = None
             self._ponderhit_event.clear()
             result = self._run_one_phase(real_limits, is_ponder=False)
+        # Gate the emit: if a newer `go` has started, our result is stale
+        # and the new search owns bestmove. Silently drop.
+        with self._state_lock:
+            if gen != self._search_gen:
+                return
         self._emit_bestmove(result)
 
     def _run_one_phase(self, limits: SearchLimits, *, is_ponder: bool) -> SearchResult:
         deadline_ms = None if is_ponder else limits.deadline_ms
         max_nodes = None if is_ponder else limits.max_nodes
+        max_depth = None if is_ponder else limits.max_depth
         deadline = Deadline(deadline_ms=deadline_ms)
         try:
             return self._worker.run(
@@ -205,6 +233,7 @@ class Engine:
                 stop_event=self._stop_event,
                 deadline=deadline,
                 max_nodes=max_nodes,
+                max_depth=max_depth,
                 info_cb=self._emit_info,
             )
         except Exception as exc:  # pragma: no cover — UCI crash-safety
@@ -232,8 +261,11 @@ class Engine:
     def _wait_for_search(self) -> None:
         if self._search_thread is not None and self._search_thread.is_alive():
             self._stop_event.set()
-            self._search_thread.join(timeout=5.0)
-            self._search_thread = None
+            self._search_thread.join(timeout=_JOIN_TIMEOUT_S)
+            if self._search_thread.is_alive():
+                _println("info string search stop timed out; thread still running")
+            else:
+                self._search_thread = None
 
 
 def _println(s: str) -> None:

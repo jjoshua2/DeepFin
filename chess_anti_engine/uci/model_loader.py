@@ -84,7 +84,9 @@ def load_model_from_checkpoint(
         model_config = _model_config_from_params(params)
 
     model = build_model(model_config)
-    ckpt = torch.load(trainer_pt, map_location=device, weights_only=False)
+    # weights_only=True blocks arbitrary pickle execution — our trainer only
+    # writes tensors + primitives, so this is strictly safer with no loss.
+    ckpt = torch.load(trainer_pt, map_location=device, weights_only=True)
     state = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
     load_state_dict_tolerant(model, state, label="uci-load")
     model.to(device).eval()
