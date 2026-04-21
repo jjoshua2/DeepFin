@@ -424,9 +424,14 @@ class DifficultyPID:
                         self._regret_stage_complete = True
 
         # --- Stage 2: nodes (only once regret stage is complete) ---
+        # Use ema − target here (NOT the regret-stage-local err, which is
+        # target − raw and has the opposite sign). Positive ema_err = model
+        # winning too much → raise nodes. Shadowing caused a positive-feedback
+        # loop where nodes climbed while wr dropped.
         nodes_after = int(self.nodes)
         if self._regret_stage_complete:
-            delta_frac = _clamp(err, -_NODES_STEP_CAP, _NODES_STEP_CAP)
+            ema_err = float(self.ema_winrate) - float(self.target)
+            delta_frac = _clamp(ema_err, -_NODES_STEP_CAP, _NODES_STEP_CAP)
             new_nodes = int(round(float(self.nodes) * (1.0 + delta_frac)))
             self.nodes = int(_clamp(new_nodes, self.min_nodes, self.max_nodes))
             nodes_after = int(self.nodes)
