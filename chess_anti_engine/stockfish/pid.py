@@ -378,23 +378,21 @@ class DifficultyPID:
                 )
                 if fit is not None:
                     predicted_regret, sigma_pred, _ = fit
-                    # Confidence-weighted blend toward current regret, not a
-                    # hard clamp to observed range. Noisy fit (large sigma_pred)
-                    # → effective_pred ≈ regret_before → tiny step. Clean fit →
-                    # move toward predicted_regret. This replaces the prior
-                    # clamp-to-[min_obs, max_obs] that pinned predictions to
+                    # Scale the step by prediction confidence instead of
+                    # clamping to the observed [min, max]. Noisy fit (large
+                    # sigma_pred) → tiny step; clean fit → full step toward
+                    # predicted_regret. The old clamp pinned predictions to
                     # the range edge when slope ≈ 0, causing edge-to-edge
                     # zigzag each window.
                     confidence = min(
                         1.0,
                         self.inverse_regret_sigma_tolerance / max(sigma_pred, 1e-6),
                     )
-                    effective_pred = (
-                        confidence * predicted_regret
-                        + (1.0 - confidence) * regret_before
+                    delta = _clamp(
+                        confidence * (predicted_regret - regret_before),
+                        -abs_max_step,
+                        abs_max_step,
                     )
-                    desired_delta = effective_pred - regret_before
-                    delta = _clamp(desired_delta, -abs_max_step, abs_max_step)
                     regret_after = _clamp(
                         regret_before + delta,
                         self.wdl_regret_min,

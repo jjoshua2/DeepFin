@@ -74,8 +74,8 @@ stockfish:
   # distribution per iter.
   sf_pid_inverse_regret_window: 20            # rolling history length
   sf_pid_inverse_regret_sigma_tolerance: 0.02 # prediction SE at which step-cap applies at full magnitude
-  sf_pid_inverse_regret_max_step: 0.003            # absolute step cap (safety airbag). Used when max_step_frac=0 or as a ceiling.
-  sf_pid_inverse_regret_max_step_frac: 0.02        # relative step cap = frac × current_regret. If >0, overrides absolute max_step. 0.02 @ regret=0.07 → ±0.0014/iter; scales naturally as regret falls.
+  sf_pid_inverse_regret_max_step: 0.003            # absolute step cap. Used only when max_step_frac == 0.
+  sf_pid_inverse_regret_max_step_frac: 0.02        # relative step cap = frac × current_regret. If >0, overrides max_step. 0.02 @ regret=0.07 → ±0.0014/iter; scales naturally as regret falls.
   sf_pid_inverse_regret_safety_floor: 0.50         # below this raw winrate → emergency ease
   sf_pid_inverse_regret_safety_band: 0.05          # urgency zone between floor and floor+band
   sf_pid_inverse_regret_emergency_ease_step: 0.01  # base emergency ease; scales up to ~5x near floor

@@ -91,6 +91,11 @@ def _trial_server_dirs(*, server_root: Path, trial_id: str) -> dict[str, Path]:
     }
 
 
+def _is_tmp_shard_name(name: str) -> bool:
+    """In-progress upload staging name — see ``_iter_shard_paths_nested``."""
+    return name.startswith("tmp_") or name.startswith("._tmp_")
+
+
 def _iter_shard_paths_nested(root: Path) -> list[Path]:
     """List shard paths under a two-level inbox/processed layout
     (``root/<user>/<shard>``).
@@ -106,21 +111,18 @@ def _iter_shard_paths_nested(root: Path) -> list[Path]:
     FileNotFoundError. Any dir that vanishes mid-iteration is also skipped;
     its contents will be picked up on a later call once the rename lands.
     """
-    def _is_tmp(name: str) -> bool:
-        return name.startswith("tmp_") or name.startswith("._tmp_")
-
     paths: list[Path] = []
     try:
         user_dirs = list(root.iterdir())
     except FileNotFoundError:
         return paths
     for user_dir in user_dirs:
-        if not user_dir.is_dir() or _is_tmp(user_dir.name):
+        if not user_dir.is_dir() or _is_tmp_shard_name(user_dir.name):
             continue
         try:
             for entry in user_dir.iterdir():
                 name = entry.name
-                if _is_tmp(name):
+                if _is_tmp_shard_name(name):
                     continue
                 if name.endswith(LOCAL_SHARD_SUFFIX) or name.endswith(LEGACY_SHARD_SUFFIX):
                     paths.append(entry)
@@ -142,9 +144,6 @@ def _quarantine_inbox_shards(
     quarantine_root = processed_dir / "_quarantine" / f"{reason_slug}_{int(time.time())}"
     moved = 0
     for sp in _iter_shard_paths_nested(inbox_dir):
-        # Skip in-progress temp files — moving them causes races.
-        if sp.name.startswith("._tmp_") or sp.name.startswith("._"):
-            continue
         rel = sp.relative_to(inbox_dir)
         dst = quarantine_root / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -900,10 +899,7 @@ def _ingest_distributed_selfplay(
     effective_accepted = set(accepted_model_shas)
 
     while summary["matching_games"] < target_games:
-        shard_paths = [
-            sp for sp in _iter_shard_paths_nested(inbox_dir)
-            if not sp.name.startswith("._tmp_") and not sp.name.startswith("._")
-        ]
+        shard_paths = _iter_shard_paths_nested(inbox_dir)
         if not shard_paths:
             if time.time() >= deadline and summary["matching_games"] >= min_games:
                 break

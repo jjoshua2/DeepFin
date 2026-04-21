@@ -1,11 +1,5 @@
-"""Regression tests for _iter_shard_paths_nested.
-
-The overnight run crashed because the helper globbed ``*/*.npz`` across nested
-user dirs, descending into in-progress ``tmp_*.zarr`` upload directories that
-the server then atomically renamed mid-scan, raising FileNotFoundError. The
-fix skips tmp-prefixed entries at both levels and swallows FileNotFoundError
-on the inner scandir.
-"""
+"""Regression tests for _iter_shard_paths_nested: tmp-dir skipping and
+FileNotFoundError tolerance under concurrent rename."""
 from __future__ import annotations
 
 from pathlib import Path
