@@ -6,6 +6,7 @@ CPU otherwise), and runs the UCI stdin loop until ``quit``.
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 
 from chess_anti_engine.inference import DirectGPUEvaluator
@@ -59,7 +60,16 @@ def main() -> int:
     p.add_argument("--topk", type=int, default=32, help="Gumbel root candidates (default: 32)")
     p.add_argument("--max-batch", type=int, default=1024,
                    help="DirectGPUEvaluator max batch (default: 1024). Must be >= expected leaf count per wavefront.")
+    p.add_argument("--log-level", default="WARNING",
+                   help="stderr log level (DEBUG|INFO|WARNING). DEBUG enables per-search gumbel profile with GPU-calls/avg-batch.")
     args = p.parse_args()
+
+    # Logs must go to stderr — stdout is reserved for UCI protocol.
+    logging.basicConfig(
+        level=getattr(logging, args.log_level.upper(), logging.WARNING),
+        stream=sys.stderr,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    )
 
     # UCI assumes line-buffered I/O. When a GUI pipes stdout, Python defaults
     # to block-buffered, which swallows our responses until the buffer fills.

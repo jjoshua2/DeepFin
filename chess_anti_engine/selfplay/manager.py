@@ -1261,6 +1261,18 @@ def play_batch(
         _t_net / max(0.001, _t_net + _t_sf) * 100,
         _t_sf / max(0.001, _t_net + _t_sf) * 100,
     )
+    if _nn_cache is not None:
+        _nc_stats = _nn_cache.stats()
+        _nc_total = _nc_stats["hits"] + _nc_stats["misses"]
+        _nc_hit_rate = _nc_stats["hits"] / _nc_total if _nc_total > 0 else 0.0
+        logging.getLogger("chess_anti_engine.worker").info(
+            "nncache: hits=%d misses=%d (hit_rate=%.1f%%)  "
+            "inserts=%d collisions=%d  count=%d/%d (%.1f%% full)",
+            _nc_stats["hits"], _nc_stats["misses"], 100.0 * _nc_hit_rate,
+            _nc_stats["inserts"], _nc_stats["insert_collisions"],
+            _nc_stats["count"], _nc_stats["cap"],
+            100.0 * _nc_stats["count"] / max(1, _nc_stats["cap"]),
+        )
 
     # ── Return results ────────────────────────────────────────────────────────
     sf_nodes = int(getattr(stockfish, "nodes", 0) or 0)

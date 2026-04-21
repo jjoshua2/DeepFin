@@ -113,6 +113,13 @@ typedef struct {
     int32_t mask;           /* cap - 1 */
     int32_t count;
     uint32_t generation;    /* bumped on clear — avoids memset */
+    /* Lifetime counters — not reset on clear(), so stats span restarts of
+     * the gumbel sim but are reset-on-process-start. Used to decide whether
+     * NNCache earns its 131k×entry memory footprint. */
+    uint64_t stat_hits;
+    uint64_t stat_misses;
+    uint64_t stat_inserts;
+    uint64_t stat_insert_collisions;
 } NNCacheData;
 
 static int nncache_init(NNCacheData *c, int32_t cap) {
@@ -120,6 +127,10 @@ static int nncache_init(NNCacheData *c, int32_t cap) {
     c->mask = cap - 1;
     c->count = 0;
     c->generation = 1;
+    c->stat_hits = 0;
+    c->stat_misses = 0;
+    c->stat_inserts = 0;
+    c->stat_insert_collisions = 0;
     c->entries = (NNCacheEntry *)calloc(cap, sizeof(NNCacheEntry));
     return c->entries ? 0 : -1;
 }
@@ -134,8 +145,11 @@ static void nncache_free(NNCacheData *c) {
 static NNCacheEntry *nncache_probe(NNCacheData *c, uint64_t hash) {
     int32_t slot = (int32_t)(hash & (uint64_t)c->mask);
     NNCacheEntry *e = &c->entries[slot];
-    if (e->generation == c->generation && e->key == hash)
+    if (e->generation == c->generation && e->key == hash) {
+        c->stat_hits++;
         return e;
+    }
+    c->stat_misses++;
     return NULL;
 }
 
@@ -145,9 +159,12 @@ static NNCacheEntry *nncache_probe(NNCacheData *c, uint64_t hash) {
 static NNCacheEntry *nncache_insert(NNCacheData *c, uint64_t hash) {
     int32_t slot = (int32_t)(hash & (uint64_t)c->mask);
     NNCacheEntry *e = &c->entries[slot];
-    if (e->generation == c->generation && e->key != hash)
+    if (e->generation == c->generation && e->key != hash) {
+        c->stat_insert_collisions++;
         return NULL;  /* keep existing entry (older = more useful) */
+    }
     if (e->generation != c->generation) c->count++;
+    c->stat_inserts++;
     e->key = hash;
     e->generation = c->generation;
     return e;
@@ -1257,6 +1274,28 @@ static PyObject *PyNNCache_probe(PyNNCacheObject *self, PyObject *args) {
     return Py_BuildValue("(NNd)", legal_arr, prior_arr, e->q_value);
 }
 
+static PyObject *PyNNCache_stats(PyNNCacheObject *self, PyObject *Py_UNUSED(ignored)) {
+    NNCacheData *c = &self->cache;
+    return Py_BuildValue(
+        "{s:K,s:K,s:K,s:K,s:i,s:i}",
+        "hits", (unsigned long long)c->stat_hits,
+        "misses", (unsigned long long)c->stat_misses,
+        "inserts", (unsigned long long)c->stat_inserts,
+        "insert_collisions", (unsigned long long)c->stat_insert_collisions,
+        "count", c->count,
+        "cap", c->cap
+    );
+}
+
+static PyObject *PyNNCache_reset_stats(PyNNCacheObject *self, PyObject *Py_UNUSED(ignored)) {
+    NNCacheData *c = &self->cache;
+    c->stat_hits = 0;
+    c->stat_misses = 0;
+    c->stat_inserts = 0;
+    c->stat_insert_collisions = 0;
+    Py_RETURN_NONE;
+}
+
 static PyObject *PyNNCache_keys(PyNNCacheObject *self, PyObject *Py_UNUSED(ignored)) {
     NNCacheData *c = &self->cache;
     PyObject *list = PyList_New(0);
@@ -1277,6 +1316,8 @@ static PyMethodDef PyNNCache_methods[] = {
     {"clear", (PyCFunction)PyNNCache_clear, METH_NOARGS, "clear() -> None"},
     {"probe", (PyCFunction)PyNNCache_probe, METH_VARARGS, "probe(hash) -> (q, n_legal) or None"},
     {"keys", (PyCFunction)PyNNCache_keys, METH_NOARGS, "keys() -> list of cached hashes"},
+    {"stats", (PyCFunction)PyNNCache_stats, METH_NOARGS, "stats() -> {hits, misses, inserts, insert_collisions, count, cap}"},
+    {"reset_stats", (PyCFunction)PyNNCache_reset_stats, METH_NOARGS, "reset_stats() -> None"},
     {NULL}
 };
 

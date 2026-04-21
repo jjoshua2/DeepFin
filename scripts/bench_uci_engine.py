@@ -18,11 +18,24 @@ Example:
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import sys
 import time
 
 from chess_anti_engine.uci.subprocess_client import LineReader as _LineReader, send_line as _send
+
+
+# Matches the DEBUG profile line from gumbel_c.py. Parses out fields we care
+# about for the bench summary: GPU call count, total positions fed to GPU,
+# and wall-time split between tree/GPU/glue.
+_PROFILE_RE = re.compile(
+    r"gumbel profile \(n_boards=(?P<n_boards>\d+)\): "
+    r"total=(?P<total>[\d.]+)s "
+    r"init=(?P<init>[\d.]+) prep=(?P<prep>[\d.]+) "
+    r"gpu=(?P<gpu>[\d.]+)\((?P<gpu_calls>\d+)calls,(?P<gpu_pos>\d+)pos,avg=(?P<avg_batch>[\d.]+)\) "
+    r"finish=(?P<finish>[\d.]+) score=(?P<score>[\d.]+) policy=(?P<policy>[\d.]+) glue=(?P<glue>[-\d.]+)"
+)
 
 
 # Representative positions covering the main phases + one tactical spike.
@@ -37,20 +50,22 @@ _POSITIONS: list[tuple[str, str]] = [
 
 
 def _spawn(checkpoint: str, device: str, *,
-           chunk_sims: int, topk: int, max_batch: int) -> subprocess.Popen[str]:
+           chunk_sims: int, topk: int, max_batch: int,
+           log_level: str = "WARNING") -> subprocess.Popen[str]:
     return subprocess.Popen(
         [sys.executable, "-u", "-m", "chess_anti_engine.uci",
          "--checkpoint", checkpoint, "--device", device,
          "--chunk-sims", str(chunk_sims),
          "--topk", str(topk),
-         "--max-batch", str(max_batch)],
+         "--max-batch", str(max_batch),
+         "--log-level", log_level],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, bufsize=1,
     )
 
 
 def _run_one(proc: subprocess.Popen[str], reader: _LineReader, *,
-             fen: str, nodes: int, timeout_s: float) -> dict[str, float | int | str]:
+             fen: str, nodes: int, timeout_s: float) -> dict[str, object]:
     _send(proc, f"position {fen}" if fen == "startpos" else f"position fen {fen}")
     _send(proc, f"go nodes {nodes}")
     t0 = time.monotonic()
@@ -75,6 +90,20 @@ def _run_one(proc: subprocess.Popen[str], reader: _LineReader, *,
         else:
             i += 1
 
+    # Aggregate any gumbel DEBUG profile lines this search emitted.
+    profiles = [_PROFILE_RE.search(l) for l in lines]
+    profiles = [p for p in profiles if p is not None]
+    prof_agg: dict[str, float] = {}
+    if profiles:
+        prof_agg["n_searches"] = float(len(profiles))
+        prof_agg["gpu_calls"] = sum(float(p["gpu_calls"]) for p in profiles)
+        prof_agg["gpu_pos"] = sum(float(p["gpu_pos"]) for p in profiles)
+        prof_agg["total_s"] = sum(float(p["total"]) for p in profiles)
+        prof_agg["gpu_s"] = sum(float(p["gpu"]) for p in profiles)
+        prof_agg["prep_s"] = sum(float(p["prep"]) for p in profiles)
+        prof_agg["finish_s"] = sum(float(p["finish"]) for p in profiles)
+        prof_agg["avg_batch"] = prof_agg["gpu_pos"] / max(1.0, prof_agg["gpu_calls"])
+
     return {
         "wall_s": round(elapsed, 3),
         "sims_per_s": round(nodes / elapsed, 1) if elapsed > 0 else 0,
@@ -83,6 +112,7 @@ def _run_one(proc: subprocess.Popen[str], reader: _LineReader, *,
         "info_time_ms": int(info.get("time", 0) or 0),
         "info_depth": int(info.get("depth", 0) or 0),
         "bestmove": next((l.split()[1] for l in lines if l.startswith("bestmove ")), ""),
+        "profile": prof_agg,
     }
 
 
@@ -91,9 +121,11 @@ def _run_config(
     nodes: int, repeats: int, timeout_s: float,
     chunk_sims: int, topk: int, max_batch: int,
     label: str,
+    log_level: str = "WARNING",
 ) -> None:
     proc = _spawn(checkpoint, device,
-                  chunk_sims=chunk_sims, topk=topk, max_batch=max_batch)
+                  chunk_sims=chunk_sims, topk=topk, max_batch=max_batch,
+                  log_level=log_level)
     reader = _LineReader(proc)
     _send(proc, "uci")
     reader.read_until("uciok", timeout_s=60.0)
@@ -103,14 +135,34 @@ def _run_config(
     print(f"\n## {label}  chunk_sims={chunk_sims}  topk={topk}  max_batch={max_batch}")
     try:
         position_stats: dict[str, list[float]] = {}
+        profile_runs: list[dict[str, float]] = []
         for pos_label, fen in _POSITIONS:
             _send(proc, "ucinewgame")
             for _ in range(repeats):
                 result = _run_one(proc, reader, fen=fen, nodes=nodes, timeout_s=timeout_s)
                 position_stats.setdefault(pos_label, []).append(float(result["sims_per_s"]))  # type: ignore[arg-type]
+                prof = result.get("profile") or {}
+                if isinstance(prof, dict) and prof:
+                    profile_runs.append(prof)
         for pos_label, vals in position_stats.items():
             mean = sum(vals) / len(vals)
             print(f"  {pos_label:<20} sims/s avg={mean:>7.1f}  runs={vals}")
+        if profile_runs:
+            agg_calls = sum(p.get("gpu_calls", 0.0) for p in profile_runs)
+            agg_pos = sum(p.get("gpu_pos", 0.0) for p in profile_runs)
+            agg_total = sum(p.get("total_s", 0.0) for p in profile_runs)
+            agg_gpu = sum(p.get("gpu_s", 0.0) for p in profile_runs)
+            agg_prep = sum(p.get("prep_s", 0.0) for p in profile_runs)
+            agg_finish = sum(p.get("finish_s", 0.0) for p in profile_runs)
+            avg_batch = agg_pos / max(1.0, agg_calls)
+            gpu_pct = 100.0 * agg_gpu / max(1e-9, agg_total)
+            prep_pct = 100.0 * agg_prep / max(1e-9, agg_total)
+            finish_pct = 100.0 * agg_finish / max(1e-9, agg_total)
+            print(
+                f"  profile: gpu_calls={int(agg_calls)}  gpu_pos={int(agg_pos)}  "
+                f"avg_batch={avg_batch:.1f}  gpu={gpu_pct:.1f}%  "
+                f"tree_prep={prep_pct:.1f}%  finish={finish_pct:.1f}%"
+            )
     finally:
         _send(proc, "quit")
         try:
@@ -131,6 +183,8 @@ def main() -> int:
     p.add_argument("--chunk-sims", type=int, default=32)
     p.add_argument("--topk", type=int, default=16)
     p.add_argument("--max-batch", type=int, default=32)
+    p.add_argument("--log-level", default="WARNING",
+                   help="DEBUG to see per-search gumbel profile (GPU calls, avg batch, time breakdown).")
     args = p.parse_args()
 
     print(f"# checkpoint={args.checkpoint}  device={args.device}  nodes={args.nodes}  repeats={args.repeats}")
@@ -153,6 +207,7 @@ def main() -> int:
                 args.checkpoint, args.device,
                 nodes=args.nodes, repeats=args.repeats, timeout_s=args.timeout_s,
                 chunk_sims=cs, topk=tk, max_batch=mb, label=label,
+                log_level=args.log_level,
             )
     else:
         _run_config(
@@ -160,6 +215,7 @@ def main() -> int:
             nodes=args.nodes, repeats=args.repeats, timeout_s=args.timeout_s,
             chunk_sims=args.chunk_sims, topk=args.topk, max_batch=args.max_batch,
             label="single",
+            log_level=args.log_level,
         )
 
     return 0

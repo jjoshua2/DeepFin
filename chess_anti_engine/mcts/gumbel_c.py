@@ -547,13 +547,14 @@ def run_gumbel_root_many_c(
     _t_policy = _time.perf_counter() - _tp0
     _t_total = _time.perf_counter() - _t_func_start
     _t_python_glue = _t_total - _t_init - _t_prepare - _t_gpu - _t_finish - _t_score - _t_policy
-    if n_boards >= 64 and _log.isEnabledFor(_logging.DEBUG):
+    if _log.isEnabledFor(_logging.DEBUG):
+        _avg_batch = _n_gpu_positions / max(1, _n_gpu_calls)
         _log.debug(
-            "gumbel profile: total=%.3fs init=%.3f prep=%.3f "
-            "gpu=%.3f(%dcalls,%dpos) "
+            "gumbel profile (n_boards=%d): total=%.3fs init=%.3f prep=%.3f "
+            "gpu=%.3f(%dcalls,%dpos,avg=%.1f) "
             "finish=%.3f score=%.3f policy=%.3f glue=%.3f%s",
-            _t_total, _t_init, _t_prepare,
-            _t_gpu, _n_gpu_calls, _n_gpu_positions,
+            n_boards, _t_total, _t_init, _t_prepare,
+            _t_gpu, _n_gpu_calls, _n_gpu_positions, _avg_batch,
             _t_finish, _t_score, _t_policy, _t_python_glue,
             " PIPELINE" if _use_pipeline else "",
         )
