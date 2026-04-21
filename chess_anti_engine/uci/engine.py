@@ -73,12 +73,21 @@ class Engine:
         # gate on `gen == self._search_gen`. Prevents races after a slow stop.
         self._search_gen = 0
         self._state_lock = threading.Lock()
-        # Track the last position as (fen_or_None, moves_uci). When the next
-        # `position` command extends this by N plies against the same start,
-        # we descend the tree instead of rebuilding — the tree's subtree at
-        # our chosen move already has accumulated visits worth keeping.
-        self._prev_fen: str | None = None
-        self._prev_moves: tuple[str, ...] = ()
+        # `position` commands go here; the tree isn't advanced until `go` so
+        # ponder mode can choose to back off one ply (see _handle_go).
+        self._pending_fen: str | None = None
+        self._pending_moves: list[chess.Move] = []
+        # What we actually descended the tree through. On the next `position`+
+        # `go` pair, if pending-moves extend applied-moves we descend the
+        # extras instead of rebuilding. On ponder, applied-moves is one ply
+        # short of pending-moves.
+        self._applied_fen: str | None = None
+        self._applied_moves: tuple[chess.Move, ...] = ()
+        # Set on `go ponder`: the last move of the position command, which
+        # the opponent will play if we predicted correctly. On ponderhit, the
+        # search thread advances the tree root by this move before switching
+        # to time-bounded search.
+        self._popped_ponder_move: chess.Move | None = None
 
     # -- main-thread command dispatch -----------------------------------------
 
@@ -125,8 +134,11 @@ class Engine:
         self._wait_for_search()
         self._worker.reset_tree()
         self._board = chess.Board()
-        self._prev_fen = None
-        self._prev_moves = ()
+        self._pending_fen = None
+        self._pending_moves = []
+        self._applied_fen = None
+        self._applied_moves = ()
+        self._popped_ponder_move = None
 
     def _handle_position(self, cmd: CmdPosition) -> None:
         self._wait_for_search()
@@ -140,7 +152,6 @@ class Engine:
                 return
         new_board = start.copy(stack=False)
         parsed: list[chess.Move] = []
-        valid_uci: list[str] = []
         for uci in cmd.moves:
             try:
                 mv = chess.Move.from_uci(uci)
@@ -150,31 +161,60 @@ class Engine:
                 break
             new_board.push(mv)
             parsed.append(mv)
-            valid_uci.append(uci)
         self._board = new_board
-        # Reuse the tree when the new position extends the previous by N plies.
-        prev_len = len(self._prev_moves)
+        # Record intent; the tree is advanced in _handle_go so ponder mode
+        # can choose to stop one ply short.
+        self._pending_fen = cmd.fen
+        self._pending_moves = parsed
+        # Any popped-ponder state from a prior `go ponder` is invalid now.
+        self._popped_ponder_move = None
+
+    def _sync_tree_root(self, target_moves: list[chess.Move]) -> None:
+        """Descend (or reset) the worker's tree so its root matches
+        ``self._pending_fen`` plus ``target_moves``. Updates ``_applied_*`` to
+        reflect the post-sync state."""
         reused = (
-            cmd.fen == self._prev_fen
-            and len(valid_uci) >= prev_len
-            and tuple(valid_uci[:prev_len]) == self._prev_moves
+            self._applied_fen == self._pending_fen
+            and len(target_moves) >= len(self._applied_moves)
+            and tuple(target_moves[:len(self._applied_moves)]) == self._applied_moves
         )
         if reused:
-            prev_board = start.copy(stack=False)
-            for uci in self._prev_moves:
-                prev_board.push(chess.Move.from_uci(uci))
-            reused = self._worker.advance_root(prev_board, parsed[prev_len:])
+            if self._pending_fen is None:
+                from_board = chess.Board()
+            else:
+                from_board = chess.Board(self._pending_fen)
+            for mv in self._applied_moves:
+                from_board.push(mv)
+            extras = target_moves[len(self._applied_moves):]
+            reused = self._worker.advance_root(from_board, extras)
         if not reused:
             self._worker.reset_tree()
-        self._prev_fen = cmd.fen
-        self._prev_moves = tuple(valid_uci)
+        self._applied_fen = self._pending_fen
+        self._applied_moves = tuple(target_moves)
 
     def _handle_go(self, cmd: CmdGo) -> None:
         if self._search_thread is not None and self._search_thread.is_alive():
             # UCI says you should `stop` before issuing another `go`. Be
             # forgiving: stop the current one first.
             self._handle_stop()
-        limits = limits_from_go(cmd.args, side_to_move_is_white=(self._board.turn == chess.WHITE))
+        # Ponder mode: search at the position BEFORE opponent's predicted
+        # reply. That node's root expansion creates a child for every legal
+        # opponent move, so whichever one they play — predicted or not — we
+        # already have sims proportional to the Gumbel prior. Ponder-hit
+        # advances the root by one ply; ponder-miss advances by the actually-
+        # played move, which is still a root child, so it descends cleanly.
+        if cmd.args.ponder and len(self._pending_moves) >= 1:
+            target_moves = self._pending_moves[:-1]
+            self._popped_ponder_move = self._pending_moves[-1]
+            search_board = chess.Board() if self._pending_fen is None else chess.Board(self._pending_fen)
+            for mv in target_moves:
+                search_board.push(mv)
+        else:
+            target_moves = self._pending_moves
+            self._popped_ponder_move = None
+            search_board = self._board
+        self._sync_tree_root(target_moves)
+        limits = limits_from_go(cmd.args, side_to_move_is_white=(search_board.turn == chess.WHITE))
         self._stop_event = threading.Event()
         self._ponderhit_event = threading.Event()
         # For `go ponder`, the ponder phase runs open-ended; ponderhit
@@ -184,7 +224,7 @@ class Engine:
         self._pending_real_limits = (
             limits_from_go(
                 replace(cmd.args, ponder=False),
-                side_to_move_is_white=(self._board.turn == chess.WHITE),
+                side_to_move_is_white=(search_board.turn == chess.WHITE),
             )
             if cmd.args.ponder else None
         )
@@ -193,7 +233,7 @@ class Engine:
             gen = self._search_gen
         self._search_thread = threading.Thread(
             target=self._run_search,
-            args=(limits, gen),
+            args=(limits, gen, search_board),
             daemon=True,
         )
         self._search_thread.start()
@@ -232,16 +272,29 @@ class Engine:
 
     # -- search thread body ---------------------------------------------------
 
-    def _run_search(self, limits: SearchLimits, gen: int) -> None:
+    def _run_search(self, limits: SearchLimits, gen: int, board: chess.Board) -> None:
         # Ponder search: no deadline yet; runs until ponderhit or stop.
-        result = self._run_one_phase(limits, is_ponder=limits.ponder)
+        result = self._run_one_phase(limits, is_ponder=limits.ponder, board=board)
         if self._ponderhit_event.is_set() and self._pending_real_limits is not None:
-            # Ponderhit arrived: resume the same tree with real limits.
+            # Ponderhit: opponent played our predicted move. Advance root by
+            # one ply (the popped move) so the real phase searches at the
+            # actual current position, reusing sims the ponder accumulated
+            # below that child.
             self._stop_event = threading.Event()
             real_limits = self._pending_real_limits
             self._pending_real_limits = None
             self._ponderhit_event.clear()
-            result = self._run_one_phase(real_limits, is_ponder=False)
+            real_board = board.copy(stack=False)
+            popped = self._popped_ponder_move
+            self._popped_ponder_move = None
+            if popped is not None:
+                if not self._worker.advance_root(board, [popped]):
+                    # Defensive: ponder-at-M root-expanded the popped child, so
+                    # this shouldn't fail. Reset rather than search stale tree.
+                    self._worker.reset_tree()
+                self._applied_moves = self._applied_moves + (popped,)
+                real_board.push(popped)
+            result = self._run_one_phase(real_limits, is_ponder=False, board=real_board)
         # Gate the emit: if a newer `go` has started, our result is stale
         # and the new search owns bestmove. Silently drop.
         with self._state_lock:
@@ -249,14 +302,16 @@ class Engine:
                 return
         self._emit_bestmove(result)
 
-    def _run_one_phase(self, limits: SearchLimits, *, is_ponder: bool) -> SearchResult:
+    def _run_one_phase(
+        self, limits: SearchLimits, *, is_ponder: bool, board: chess.Board,
+    ) -> SearchResult:
         deadline_ms = None if is_ponder else limits.deadline_ms
         max_nodes = None if is_ponder else limits.max_nodes
         max_depth = None if is_ponder else limits.max_depth
         deadline = Deadline(deadline_ms=deadline_ms)
         try:
             return self._worker.run(
-                self._board,
+                board,
                 stop_event=self._stop_event,
                 deadline=deadline,
                 max_nodes=max_nodes,
