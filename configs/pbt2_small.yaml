@@ -74,11 +74,12 @@ stockfish:
   # distribution per iter.
   sf_pid_inverse_regret_window: 20            # rolling history length
   sf_pid_inverse_regret_sigma_tolerance: 0.02 # prediction SE at which step-cap applies at full magnitude
-  sf_pid_inverse_regret_max_step: 0.003       # hard step cap per iter (was 0.01 = 10x pre-simplify tighten step; 0.003 is between old tighten 0.001 and old ease 0.005)
-  sf_pid_inverse_regret_safety_floor: 0.50    # below this raw winrate → emergency ease
-  sf_pid_inverse_regret_safety_band: 0.05     # urgency zone between floor and floor+band
+  sf_pid_inverse_regret_max_step: 0.003            # absolute step cap (safety airbag). Used when max_step_frac=0 or as a ceiling.
+  sf_pid_inverse_regret_max_step_frac: 0.02        # relative step cap = frac × current_regret. If >0, overrides absolute max_step. 0.02 @ regret=0.07 → ±0.0014/iter; scales naturally as regret falls.
+  sf_pid_inverse_regret_safety_floor: 0.50         # below this raw winrate → emergency ease
+  sf_pid_inverse_regret_safety_band: 0.05          # urgency zone between floor and floor+band
   sf_pid_inverse_regret_emergency_ease_step: 0.01  # base emergency ease; scales up to ~5x near floor
-  sf_pid_inverse_regret_recency_half_life: 5.0     # exp-decay weight on history (0 = off). ~5-iter half-life tracks training drift while keeping fit stable.
+  sf_pid_inverse_regret_recency_half_life: 15.0    # exp-decay on history. 15-iter half-life → ~85% effective weight on 20-point window, keeps fit stable while still tracking slow drift.
   sf_pid_inverse_regret_target_deadband: 0.02      # abs(raw_wr - target) below this → hold regret (let model settle); above → adjust. Replaces min_span as the "act vs hold" gate.
 
 selfplay:
