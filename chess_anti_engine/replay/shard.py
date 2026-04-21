@@ -645,7 +645,9 @@ def save_local_shard_arrays(
     stored = prune_storage_arrays(arrs)
     # Write to a temp path then atomic-rename to avoid races with concurrent
     # readers/writers that can cause "Directory not empty" on rmtree.
-    tmp = p.with_name(f"._{os.getpid()}_{p.name}")
+    # Prefix matches the ingest-side tmp filter (_is_tmp_shard_name) so a
+    # crashed-mid-write tmp dir isn't mistaken for a real shard on resume.
+    tmp = p.with_name(f"._tmp_{os.getpid()}_{p.name}")
     try:
         g = zarr.open_group(str(tmp), mode="w")
         g.attrs.update(_meta_dict(meta, positions=int(np.asarray(stored["x"]).shape[0])))
