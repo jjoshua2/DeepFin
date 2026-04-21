@@ -150,6 +150,78 @@ def test_position_fen_and_search(tiny_checkpoint: Path) -> None:
             proc.kill()
 
 
+def test_bestmove_emits_ponder_suffix(tiny_checkpoint: Path) -> None:
+    proc = _spawn_engine(tiny_checkpoint)
+    reader = _LineReader(proc)
+    try:
+        _send(proc, "uci")
+        reader.read_until("uciok")
+        _send(proc, "isready")
+        reader.read_until("readyok")
+        _send(proc, "position startpos")
+        _send(proc, "go nodes 16")
+        lines = reader.read_until("bestmove")
+        bestmove_line = next(l for l in lines if l.startswith("bestmove "))
+        tokens = bestmove_line.split()
+        assert tokens[0] == "bestmove"
+        assert len(tokens[1]) >= 4
+        # With 16 sims the tree almost always has at least one grandchild
+        # (opponent's reply), so ponder should be present.
+        if len(tokens) >= 4:
+            assert tokens[2] == "ponder"
+            assert len(tokens[3]) >= 4
+        _send(proc, "quit")
+        proc.wait(timeout=5)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+
+def test_ponderhit_converts_to_timed_search(tiny_checkpoint: Path) -> None:
+    proc = _spawn_engine(tiny_checkpoint)
+    reader = _LineReader(proc)
+    try:
+        _send(proc, "uci")
+        reader.read_until("uciok")
+        _send(proc, "isready")
+        reader.read_until("readyok")
+        # Simulate: played e2e4, predicted opponent plays e7e5
+        _send(proc, "position startpos moves e2e4 e7e5")
+        _send(proc, "go ponder wtime 1000 btime 1000")
+        time.sleep(0.3)
+        _send(proc, "ponderhit")
+        lines = reader.read_until("bestmove", timeout_s=15.0)
+        assert any(l.startswith("bestmove ") for l in lines)
+        _send(proc, "quit")
+        proc.wait(timeout=5)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+
+def test_stop_during_ponder(tiny_checkpoint: Path) -> None:
+    """Opponent played differently: GUI sends `stop` without `ponderhit`.
+    We should still emit a bestmove so UCI state machine stays sane."""
+    proc = _spawn_engine(tiny_checkpoint)
+    reader = _LineReader(proc)
+    try:
+        _send(proc, "uci")
+        reader.read_until("uciok")
+        _send(proc, "isready")
+        reader.read_until("readyok")
+        _send(proc, "position startpos moves e2e4 e7e5")
+        _send(proc, "go ponder wtime 1000 btime 1000")
+        time.sleep(0.3)
+        _send(proc, "stop")
+        lines = reader.read_until("bestmove", timeout_s=15.0)
+        assert any(l.startswith("bestmove ") for l in lines)
+        _send(proc, "quit")
+        proc.wait(timeout=5)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+
 def test_stop_interrupts_search(tiny_checkpoint: Path) -> None:
     proc = _spawn_engine(tiny_checkpoint)
     reader = _LineReader(proc)

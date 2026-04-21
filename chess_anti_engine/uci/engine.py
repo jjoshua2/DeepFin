@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import sys
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import chess
 
@@ -56,6 +56,10 @@ class Engine:
         self._board = chess.Board()
         self._search_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
+        self._ponderhit_event = threading.Event()
+        # While the current search is a `go ponder`, hold the "real" limits
+        # here so ponderhit can swap them in.
+        self._pending_real_limits: SearchLimits | None = None
         self._quit_requested = False
 
     # -- main-thread command dispatch -----------------------------------------
@@ -74,9 +78,7 @@ class Engine:
         elif isinstance(cmd, CmdStop):
             self._handle_stop()
         elif isinstance(cmd, CmdPonderHit):
-            # v1: no pondering — treat as stop (emits bestmove from whatever
-            # search we have in flight, which is none, so no-op).
-            self._handle_stop()
+            self._handle_ponderhit()
         elif isinstance(cmd, CmdSetOption):
             self._handle_setoption(cmd)
         elif isinstance(cmd, CmdQuit):
@@ -135,6 +137,18 @@ class Engine:
             self._handle_stop()
         limits = limits_from_go(cmd.args, side_to_move_is_white=(self._board.turn == chess.WHITE))
         self._stop_event = threading.Event()
+        self._ponderhit_event = threading.Event()
+        # For `go ponder`, the ponder phase runs open-ended; ponderhit
+        # converts to a real-deadline phase using the SAME underlying clock
+        # args. We re-derive the "real" limits here by synthesizing a
+        # non-ponder copy of the args.
+        self._pending_real_limits = (
+            limits_from_go(
+                replace(cmd.args, ponder=False),
+                side_to_move_is_white=(self._board.turn == chess.WHITE),
+            )
+            if cmd.args.ponder else None
+        )
         self._search_thread = threading.Thread(
             target=self._run_search,
             args=(limits,),
@@ -148,6 +162,17 @@ class Engine:
             self._search_thread.join(timeout=5.0)
             self._search_thread = None
 
+    def _handle_ponderhit(self) -> None:
+        """Opponent played our predicted move. Convert open-ended ponder
+        search into a time-bounded real search, keeping the MCTS tree.
+        """
+        if self._search_thread is None or not self._search_thread.is_alive():
+            return
+        # Signal the search loop: next iteration, swap ponder-deadline
+        # for real-deadline.
+        self._ponderhit_event.set()
+        self._stop_event.set()
+
     def _handle_setoption(self, cmd: CmdSetOption) -> None:
         if cmd.name.lower() == "hash" and cmd.value is not None:
             try:
@@ -159,21 +184,34 @@ class Engine:
     # -- search thread body ---------------------------------------------------
 
     def _run_search(self, limits: SearchLimits) -> None:
-        deadline = Deadline(deadline_ms=limits.deadline_ms)
+        # Ponder search: no deadline yet; runs until ponderhit or stop.
+        result = self._run_one_phase(limits, is_ponder=limits.ponder)
+        if self._ponderhit_event.is_set() and self._pending_real_limits is not None:
+            # Ponderhit arrived: resume the same tree with real limits.
+            self._stop_event = threading.Event()
+            real_limits = self._pending_real_limits
+            self._pending_real_limits = None
+            self._ponderhit_event.clear()
+            result = self._run_one_phase(real_limits, is_ponder=False)
+        self._emit_bestmove(result)
+
+    def _run_one_phase(self, limits: SearchLimits, *, is_ponder: bool) -> SearchResult:
+        deadline_ms = None if is_ponder else limits.deadline_ms
+        max_nodes = None if is_ponder else limits.max_nodes
+        deadline = Deadline(deadline_ms=deadline_ms)
         try:
-            result = self._worker.run(
+            return self._worker.run(
                 self._board,
                 stop_event=self._stop_event,
                 deadline=deadline,
-                max_nodes=limits.max_nodes if not limits.is_open_ended() else None,
+                max_nodes=max_nodes,
                 info_cb=self._emit_info,
             )
         except Exception as exc:  # pragma: no cover — UCI crash-safety
             _println(f"info string search error: {exc!r}")
-            result = SearchResult(
+            return SearchResult(
                 bestmove_uci="0000", ponder_uci=None, nodes=0, pv=(), score_cp=0,
             )
-        self._emit_bestmove(result)
 
     def _emit_info(self, *, nodes: int, elapsed_ms: int, score_cp: int, pv: tuple[str, ...]) -> None:
         nps = int(nodes * 1000 / max(1, elapsed_ms))
@@ -187,7 +225,7 @@ class Engine:
         )))
 
     def _emit_bestmove(self, result: SearchResult) -> None:
-        _println(format_bestmove(result.bestmove_uci, ponder=None))
+        _println(format_bestmove(result.bestmove_uci, ponder=result.ponder_uci))
 
     # -- helpers --------------------------------------------------------------
 
