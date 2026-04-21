@@ -244,9 +244,19 @@ def prune_storage_arrays(arrs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
     The loader and replay buffers already synthesize zero defaults for missing
     optional arrays, so persisting all-zero target tensors and has-flags wastes
     disk, I/O, and decode CPU without changing training semantics.
+
+    ``priority`` is required downstream but legacy/partial shards may be missing
+    it; synthesize ones to match the ``arrs.get("priority", ones)`` default at
+    line ~534 rather than crashing ingest.
     """
     validate_arrays(arrs)
-    out: dict[str, np.ndarray] = {name: np.asarray(arrs[name]) for name in _REQUIRED_STORAGE_FIELDS}
+    n = int(np.asarray(arrs["x"]).shape[0])
+    out: dict[str, np.ndarray] = {}
+    for name in _REQUIRED_STORAGE_FIELDS:
+        if name == "priority" and name not in arrs:
+            out[name] = np.ones((n,), dtype=np.float32)
+        else:
+            out[name] = np.asarray(arrs[name])
     for value_name, flag_name in _OPTIONAL_STORAGE_PAIRS:
         flag = np.asarray(arrs.get(flag_name, np.zeros((out["x"].shape[0],), dtype=np.uint8)), dtype=np.uint8)
         if np.any(flag):
