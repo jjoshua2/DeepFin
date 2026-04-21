@@ -98,12 +98,35 @@ def _iter_shard_paths_nested(root: Path) -> list[Path]:
     Returns both current ``.zarr`` and legacy ``.npz`` entries. The archival
     ``.npz`` support is load-bearing for ``_prune_processed_shards``, which
     ages out old uploads from pre-zarr runs in ``processed/_compacted``.
-    Includes in-progress temp files; callers filter by name when they care.
+
+    Skips in-progress temp directories (``tmp_*`` / ``._tmp_*``) at both
+    levels: these are mid-upload .zarr dirs the server will atomically
+    rename to their final names. Descending into one with ``glob("*/*.npz")``
+    would scandir its internals and race with that rename, raising
+    FileNotFoundError. Any dir that vanishes mid-iteration is also skipped;
+    its contents will be picked up on a later call once the rename lands.
     """
-    return sorted(
-        list(root.glob(f"*/*{LOCAL_SHARD_SUFFIX}"))
-        + list(root.glob(f"*/*{LEGACY_SHARD_SUFFIX}"))
-    )
+    def _is_tmp(name: str) -> bool:
+        return name.startswith("tmp_") or name.startswith("._tmp_")
+
+    paths: list[Path] = []
+    try:
+        user_dirs = list(root.iterdir())
+    except FileNotFoundError:
+        return paths
+    for user_dir in user_dirs:
+        if not user_dir.is_dir() or _is_tmp(user_dir.name):
+            continue
+        try:
+            for entry in user_dir.iterdir():
+                name = entry.name
+                if _is_tmp(name):
+                    continue
+                if name.endswith(LOCAL_SHARD_SUFFIX) or name.endswith(LEGACY_SHARD_SUFFIX):
+                    paths.append(entry)
+        except FileNotFoundError:
+            continue
+    return sorted(paths)
 
 
 def _quarantine_inbox_shards(

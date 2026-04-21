@@ -64,7 +64,7 @@ stockfish:
   sf_pid_min_nodes: 5000         # 5k nodes: wider WDL spread so regret filter actually works
   sf_pid_max_nodes: 25000        # Raised 10k→25k 2026-04-18: headroom for node stage when regret hits 0.05 gate (not live-reloadable, needs restart)
   sf_pid_wdl_regret_start: 0.50       # Start near equilibrium for 5k nodes; model stable here
-  sf_pid_wdl_regret_min: 0.02         # hard floor
+  sf_pid_wdl_regret_min: 0.01         # hard floor (tightened 0.02→0.01 2026-04-21: current trial reached 0.025, floor needs headroom)
   sf_pid_wdl_regret_max: 2.0          # max if PID needs to ease off
   sf_pid_wdl_regret_stage_end: 0.05   # nodes unlock when regret reaches 5%
 
