@@ -73,6 +73,12 @@ class Engine:
         # gate on `gen == self._search_gen`. Prevents races after a slow stop.
         self._search_gen = 0
         self._state_lock = threading.Lock()
+        # Track the last position as (fen_or_None, moves_uci). When the next
+        # `position` command extends this by N plies against the same start,
+        # we descend the tree instead of rebuilding — the tree's subtree at
+        # our chosen move already has accumulated visits worth keeping.
+        self._prev_fen: str | None = None
+        self._prev_moves: tuple[str, ...] = ()
 
     # -- main-thread command dispatch -----------------------------------------
 
@@ -119,27 +125,49 @@ class Engine:
         self._wait_for_search()
         self._worker.reset_tree()
         self._board = chess.Board()
+        self._prev_fen = None
+        self._prev_moves = ()
 
     def _handle_position(self, cmd: CmdPosition) -> None:
         self._wait_for_search()
         if cmd.fen is None:
-            self._board = chess.Board()
+            start = chess.Board()
         else:
             try:
-                self._board = chess.Board(cmd.fen)
+                start = chess.Board(cmd.fen)
             except ValueError:
                 self._board = chess.Board()
                 return
+        new_board = start.copy(stack=False)
+        parsed: list[chess.Move] = []
+        valid_uci: list[str] = []
         for uci in cmd.moves:
             try:
                 mv = chess.Move.from_uci(uci)
             except ValueError:
                 break
-            if mv not in self._board.legal_moves:
+            if mv not in new_board.legal_moves:
                 break
-            self._board.push(mv)
-        # Different position from the last search — tree must be rebuilt.
-        self._worker.reset_tree()
+            new_board.push(mv)
+            parsed.append(mv)
+            valid_uci.append(uci)
+        self._board = new_board
+        # Reuse the tree when the new position extends the previous by N plies.
+        prev_len = len(self._prev_moves)
+        reused = (
+            cmd.fen == self._prev_fen
+            and len(valid_uci) >= prev_len
+            and tuple(valid_uci[:prev_len]) == self._prev_moves
+        )
+        if reused:
+            prev_board = start.copy(stack=False)
+            for uci in self._prev_moves:
+                prev_board.push(chess.Move.from_uci(uci))
+            reused = self._worker.advance_root(prev_board, parsed[prev_len:])
+        if not reused:
+            self._worker.reset_tree()
+        self._prev_fen = cmd.fen
+        self._prev_moves = tuple(valid_uci)
 
     def _handle_go(self, cmd: CmdGo) -> None:
         if self._search_thread is not None and self._search_thread.is_alive():

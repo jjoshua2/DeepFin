@@ -194,6 +194,32 @@ def test_go_depth_terminates(tiny_checkpoint: Path) -> None:
             proc.kill()
 
 
+def test_position_extension_reuses_tree(tiny_checkpoint: Path) -> None:
+    """Two successive `position` commands where the second extends the first
+    by two plies. Tree-reuse path in `advance_root` must not crash and must
+    still produce a legal bestmove."""
+    proc = _spawn_engine(tiny_checkpoint)
+    reader = _LineReader(proc)
+    try:
+        _send(proc, "uci")
+        reader.read_until("uciok")
+        _send(proc, "isready")
+        reader.read_until("readyok")
+        _send(proc, "position startpos moves e2e4 e7e5")
+        _send(proc, "go nodes 16")
+        reader.read_until("bestmove")
+        # Extend by two plies; exercises advance_root twice.
+        _send(proc, "position startpos moves e2e4 e7e5 g1f3 b8c6")
+        _send(proc, "go nodes 16")
+        lines = reader.read_until("bestmove")
+        assert any(l.startswith("bestmove ") for l in lines)
+        _send(proc, "quit")
+        proc.wait(timeout=5)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+
 def test_stop_interrupts_search(tiny_checkpoint: Path) -> None:
     proc = _spawn_engine(tiny_checkpoint)
     reader = _LineReader(proc)

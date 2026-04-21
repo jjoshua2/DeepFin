@@ -22,7 +22,7 @@ from chess_anti_engine.inference import BatchEvaluator
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
 from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
-from chess_anti_engine.moves import index_to_move
+from chess_anti_engine.moves import index_to_move, move_to_index
 
 from .score import q_to_cp
 from .time_manager import Deadline
@@ -90,6 +90,31 @@ class SearchWorker:
         self._tree_fen = None
         self._root_pol_logits = None
         self._root_wdl_logits = None
+
+    def advance_root(self, board: chess.Board, moves: list[chess.Move]) -> bool:
+        """Descend the current tree by ``moves`` plies, making the last-reached
+        node the new root. ``board`` is the position BEFORE the first move;
+        we push each move onto a local copy to compute its policy index.
+
+        Returns True if the whole walk succeeded (tree reusable), False if any
+        step fell off the expanded tree (caller must call ``reset_tree``).
+        """
+        if self._tree is None or self._root_id is None or self._root_id < 0:
+            return False
+        b = board.copy(stack=False)
+        rid = self._root_id
+        for mv in moves:
+            idx = move_to_index(mv, b)
+            rid = self._tree.find_child(rid, int(idx))
+            if rid < 0:
+                return False
+            b.push(mv)
+        self._root_id = rid
+        self._tree_fen = b.fen()
+        # Root position changed — logits cache was for the old root.
+        self._root_pol_logits = None
+        self._root_wdl_logits = None
+        return True
 
     def run(
         self,
