@@ -24,7 +24,7 @@ from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
 from chess_anti_engine.moves import index_to_move
 
-from .score import wdl_probs_to_cp
+from .score import q_to_cp
 from .time_manager import Deadline
 
 
@@ -76,8 +76,8 @@ class SearchWorker:
 
         # Persistent tree across calls within a game. Reset on new position.
         self._tree: MCTSTree | None = None
-        self._root_ids: list[int] | None = None
-        self._tree_board_key: tuple[str, ...] | None = None
+        self._root_id: int | None = None
+        self._tree_fen: str | None = None
         # Cache of the root's policy + WDL logits. Valid for as long as the
         # tree is valid (same position). Lets chunks after the first skip
         # the ~1ms root GPU call.
@@ -86,13 +86,10 @@ class SearchWorker:
 
     def reset_tree(self) -> None:
         self._tree = None
-        self._root_ids = None
-        self._tree_board_key = None
+        self._root_id = None
+        self._tree_fen = None
         self._root_pol_logits = None
         self._root_wdl_logits = None
-
-    def _tree_key(self, board: chess.Board) -> tuple[str, ...]:
-        return (board.fen(),)
 
     def run(
         self,
@@ -115,17 +112,18 @@ class SearchWorker:
         # tree can't stall forever.
         if max_depth is not None and max_nodes is None:
             max_nodes = _DEPTH_NODE_SAFETY_CAP
-        key = self._tree_key(board)
-        if self._tree is None or self._tree_board_key != key:
+        fen = board.fen()
+        if self._tree is None or self._tree_fen != fen:
             self._tree = None
-            self._root_ids = None
-            self._tree_board_key = key
+            self._root_id = None
+            self._tree_fen = fen
             self._root_pol_logits = None
             self._root_wdl_logits = None
 
         total_nodes = 0
         last_info_ms = -1
-        last_values: list[float] = [0.0]
+        last_value = 0.0
+        pv_indices: list[int] = []
 
         # Root eval is the same every chunk (same position, same net). Do it
         # once here and pass pre_pol_logits/pre_wdl_logits into each chunk so
@@ -166,27 +164,29 @@ class SearchWorker:
                 pre_pol_logits=self._root_pol_logits,
                 pre_wdl_logits=self._root_wdl_logits,
                 tree=self._tree,
-                root_node_ids=self._root_ids,
+                root_node_ids=[self._root_id] if self._root_id is not None else None,
             )
             self._tree = tree
-            self._root_ids = root_ids
-            last_values = list(values)
+            self._root_id = int(root_ids[0])
+            last_value = float(values[0])
             total_nodes += int(chunk)
 
-            root_id = root_ids[0]
-            _, pv_indices = _best_move_and_pv(tree, root_id)
-            score_cp = int(wdl_probs_to_cp(*_values_to_wdl(last_values[0])))
-            pv_moves = _uci_pv(board, pv_indices)
-
-            if info_cb is not None:
-                elapsed = deadline.elapsed_ms()
-                # Rate-limit info lines to 5 per second to avoid flooding the GUI.
-                if elapsed - last_info_ms >= 200:
+            # PV extraction is only needed for info emission (rate-limited
+            # to 5/sec) and for max_depth termination. Skip otherwise —
+            # saves a handful of tree walks per second on chunk=512 at ~5 nps/chunk.
+            elapsed = deadline.elapsed_ms() if info_cb is not None else 0
+            need_pv = (
+                (info_cb is not None and elapsed - last_info_ms >= 200)
+                or max_depth is not None
+            )
+            if need_pv:
+                _, pv_indices = _best_move_and_pv(tree, self._root_id)
+                if info_cb is not None and elapsed - last_info_ms >= 200:
                     info_cb(
                         nodes=total_nodes,
                         elapsed_ms=elapsed,
-                        score_cp=score_cp,
-                        pv=pv_moves,
+                        score_cp=q_to_cp(0.5 * (last_value + 1.0)),
+                        pv=_uci_pv(board, pv_indices),
                     )
                     last_info_ms = elapsed
 
@@ -198,10 +198,9 @@ class SearchWorker:
                 break
 
         # Final snapshot using whatever the tree knows now.
-        assert self._tree is not None and self._root_ids is not None
-        root_id = self._root_ids[0]
-        bestmove_idx, pv_indices = _best_move_and_pv(self._tree, root_id)
-        ponder_idx = _predicted_opponent_reply(self._tree, root_id)
+        assert self._tree is not None and self._root_id is not None
+        bestmove_idx, pv_indices = _best_move_and_pv(self._tree, self._root_id)
+        ponder_idx = _predicted_opponent_reply(self._tree, self._root_id)
         bestmove = _index_to_uci(board, bestmove_idx)
         ponder = (
             _index_to_uci(_board_after(board, bestmove_idx), ponder_idx)
@@ -213,7 +212,7 @@ class SearchWorker:
             ponder_uci=ponder,
             nodes=total_nodes,
             pv=pv,
-            score_cp=int(wdl_probs_to_cp(*_values_to_wdl(last_values[0]))),
+            score_cp=q_to_cp(0.5 * (last_value + 1.0)),
         )
 
 
@@ -294,25 +293,3 @@ def _board_after(board: chess.Board, idx: int) -> chess.Board:
     return b
 
 
-def _values_to_wdl(value: float | np.ndarray) -> tuple[float, float, float]:
-    """``run_gumbel_root_many_c`` returns the root's scalar value (expected
-    score in [-1, 1] or [0, 1] depending on convention). The C tree stores
-    the expected score as Q in [-1, 1] from the side-to-move's perspective.
-    Map to (W, D, L) with a conservative draw share so ``wdl_probs_to_cp``
-    behaves the same as if we'd read the value head directly."""
-    q = float(value)
-    # Map Q in [-1, 1] → WDL triplet. Assume 20% draw baseline, symmetric
-    # around Q=0. This is a crude but monotone mapping; the cp conversion
-    # only cares about the resulting expected score so the draw allocation
-    # doesn't change the output cp.
-    draw = 0.2
-    win = max(0.0, min(1.0 - draw, 0.5 * (q + 1.0) * (1.0 - draw) + 0.5 * draw))
-    loss = 1.0 - draw - win
-    return (win, draw, loss)
-
-
-# --- CBoard helper (exported for engine) -------------------------------------
-
-
-def cboard_from_board(board: chess.Board) -> CBoard:
-    return CBoard.from_board(board)

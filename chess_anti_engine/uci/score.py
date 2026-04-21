@@ -21,10 +21,3 @@ def q_to_cp(q: float) -> int:
     arg = _CP_K * (2.0 * q - 1.0)
     cp = _CP_A * math.tan(arg)
     return int(round(cp))
-
-
-def wdl_probs_to_cp(w: float, d: float, l: float) -> int:
-    q = float(w) + 0.5 * float(d)
-    # Guard against slight over-1.0 from floating softmax.
-    total = max(1e-9, float(w) + float(d) + float(l))
-    return q_to_cp(q / total)

@@ -74,18 +74,13 @@ class CmdSetOption:
 
 
 @dataclass(frozen=True)
-class CmdDebug:
-    on: bool
-
-
-@dataclass(frozen=True)
 class CmdUnknown:
     raw: str
 
 
 Command = (
     CmdUci | CmdIsReady | CmdUciNewGame | CmdPosition | CmdGo | CmdPonderHit
-    | CmdStop | CmdQuit | CmdSetOption | CmdDebug | CmdUnknown
+    | CmdStop | CmdQuit | CmdSetOption | CmdUnknown
 )
 
 
@@ -200,8 +195,6 @@ def parse_command(line: str) -> Command:
             return CmdQuit()
         case "setoption":
             return _parse_setoption(rest)
-        case "debug":
-            return CmdDebug(on=(len(rest) > 0 and rest[0] == "on"))
         case _:
             return CmdUnknown(raw=line)
 

@@ -18,11 +18,11 @@ Example:
 from __future__ import annotations
 
 import argparse
-import queue
 import subprocess
 import sys
-import threading
 import time
+
+from chess_anti_engine.uci.subprocess_client import LineReader as _LineReader, send_line as _send
 
 
 # Representative positions covering the main phases + one tactical spike.
@@ -34,45 +34,6 @@ _POSITIONS: list[tuple[str, str]] = [
     ("tactical", "r1bqk2r/ppp2ppp/2n2n2/2bpp3/2B1P3/2NP1N2/PPP2PPP/R1BQK2R w KQkq - 0 5"),
     ("endgame_kp", "8/8/8/4k3/8/4K3/4P3/8 w - - 0 1"),
 ]
-
-
-class _LineReader:
-    """Background-pumped reader for subprocess stdout (see test_uci_smoke)."""
-
-    def __init__(self, proc: subprocess.Popen[str]) -> None:
-        self._q: queue.Queue[str | None] = queue.Queue()
-        self._proc = proc
-        self._t = threading.Thread(target=self._pump, daemon=True)
-        self._t.start()
-
-    def _pump(self) -> None:
-        assert self._proc.stdout is not None
-        for line in iter(self._proc.stdout.readline, ""):
-            self._q.put(line.rstrip("\n"))
-        self._q.put(None)
-
-    def read_until(self, needle: str, *, timeout_s: float) -> list[str]:
-        lines: list[str] = []
-        deadline = time.monotonic() + timeout_s
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise TimeoutError(f"timeout waiting for {needle!r}; got:\n" + "\n".join(lines[-20:]))
-            try:
-                line = self._q.get(timeout=min(remaining, 1.0))
-            except queue.Empty:
-                continue
-            if line is None:
-                raise RuntimeError(f"engine died before {needle!r}; got:\n" + "\n".join(lines[-20:]))
-            lines.append(line)
-            if needle in line:
-                return lines
-
-
-def _send(proc: subprocess.Popen[str], s: str) -> None:
-    assert proc.stdin is not None
-    proc.stdin.write(s + "\n")
-    proc.stdin.flush()
 
 
 def _spawn(checkpoint: str, device: str, *,

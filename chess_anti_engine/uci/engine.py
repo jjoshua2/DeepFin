@@ -96,7 +96,6 @@ class Engine:
         elif isinstance(cmd, CmdQuit):
             self._quit_requested = True
             self._handle_stop()
-        # Anything else (CmdUnknown, CmdDebug) is silently ignored.
 
     @property
     def quit_requested(self) -> bool:

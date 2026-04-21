@@ -3,7 +3,6 @@ from __future__ import annotations
 import pytest
 
 from chess_anti_engine.uci.protocol import (
-    CmdDebug,
     CmdGo,
     CmdIsReady,
     CmdPonderHit,
@@ -141,10 +140,9 @@ def test_setoption_multiword_name() -> None:
     assert cmd.value == "20"
 
 
-def test_debug_on_off() -> None:
-    assert isinstance(parse_command("debug on"), CmdDebug)
-    assert parse_command("debug on").on is True  # type: ignore[union-attr]
-    assert parse_command("debug off").on is False  # type: ignore[union-attr]
+def test_debug_is_ignored() -> None:
+    assert isinstance(parse_command("debug on"), CmdUnknown)
+    assert isinstance(parse_command("debug off"), CmdUnknown)
 
 
 def test_format_bestmove() -> None:
