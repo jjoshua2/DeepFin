@@ -136,9 +136,11 @@ def main() -> int:
                    help="stderr log level (DEBUG|INFO|WARNING). DEBUG enables per-search gumbel profile with GPU-calls/avg-batch.")
     # --walkers > 1 switches from the Gumbel-chunked path to a PUCT walker
     # pool with virtual loss. Better dispatch-bound throughput, no
-    # sequential-halving semantics.
-    p.add_argument("--walkers", type=int, default=1,
-                   help="number of PUCT walker threads (default: 1 = classic Gumbel path; >1 = pool)")
+    # sequential-halving semantics. walkers=2 is ~10x the baseline on CUDA
+    # (bench_uci_engine --walker-sweep, 2026-04-22) — we default to 2 so the
+    # ship path gets the win. --walkers 1 opts into the classic Gumbel path.
+    p.add_argument("--walkers", type=int, default=2,
+                   help="PUCT walker threads (default: 2; 1 = classic Gumbel; >2 = noisy scaling)")
     p.add_argument("--vloss-weight", type=int, default=3,
                    help="virtual-loss weight in walker mode (default: 3, lc0 default)")
     # Coalesce concurrent walker calls into batched submits. On by default
