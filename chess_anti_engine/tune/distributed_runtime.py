@@ -261,6 +261,15 @@ def _publish_distributed_trial_state(
         "temperature_decay_moves": int(config.get("temperature_decay_moves", 60)),
         "temperature_endgame": float(config.get("temperature_endgame", 0.6)),
         "timeout_adjudication_threshold": float(config.get("timeout_adjudication_threshold", 0.90)),
+        # Syzygy. `path` must be a filesystem location visible to workers
+        # (same layout on all nodes in a multi-node deployment). Server
+        # operators can edit these directly in publish/manifest.json to
+        # change endgame adjudication behavior without restarting anyone.
+        "syzygy_path": config.get("syzygy_path") or None,
+        "syzygy_policy": bool(config.get("syzygy_policy", False)),
+        "syzygy_adjudicate": bool(config.get("syzygy_adjudicate", False)),
+        "syzygy_adjudicate_fraction": float(config.get("syzygy_adjudicate_fraction", 1.0)),
+        "syzygy_in_search": bool(config.get("syzygy_in_search", False)),
         "pause_selfplay": bool(pause_selfplay),
         "pause_reason": str(pause_reason),
     }

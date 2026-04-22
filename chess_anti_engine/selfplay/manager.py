@@ -293,6 +293,16 @@ def play_batch(
     if game.syzygy_path and (game.syzygy_adjudicate or game.syzygy_in_search):
         _tb_probe = SyzygyProbe(game.syzygy_path)
     _tb_result_arr: list[str | None] = [None] * batch_size
+    # Per-game adjudication roll. 1 = this game gets TB-adjudicated when
+    # eligible; 0 = play through. Re-rolled on slot recycle below from
+    # `syzygy_adjudicate_fraction`, which lets the NN keep training on
+    # endgame positions instead of silently losing endgame skill.
+    _tb_adj_roll_arr = np.zeros(batch_size, dtype=np.int8)
+    if _tb_probe is not None and game.syzygy_adjudicate:
+        _tb_adj_frac = max(0.0, min(1.0, float(game.syzygy_adjudicate_fraction)))
+        for _i in range(batch_size):
+            if rng.random() < _tb_adj_frac:
+                _tb_adj_roll_arr[_i] = 1
     # Alternate which color the network plays so it sees both perspectives.
     # 1 = WHITE, 0 = BLACK.
     _net_color_arr = np.array([1 if (i % 2 == 0) else 0 for i in range(batch_size)], dtype=np.int8)
@@ -666,6 +676,15 @@ def play_batch(
         _finalized_arr[i] = 0
         _net_color_arr[i] = 1 if (games_started % 2 == 0) else 0
         _selfplay_arr[i] = 1 if rng.random() < max(0.0, min(1.0, float(game.selfplay_fraction))) else 0
+        # Clear TB adjudication stash from the previous game in this slot;
+        # without this, the stale non-None value would make the adjudicator
+        # skip the new game forever. Re-roll the per-game "do I adjudicate"
+        # flag from the configured fraction.
+        _tb_result_arr[i] = None
+        if _tb_probe is not None and game.syzygy_adjudicate:
+            _tb_adj_roll_arr[i] = 1 if rng.random() < max(
+                0.0, min(1.0, float(game.syzygy_adjudicate_fraction))
+            ) else 0
         samples_per_game[i] = []
         consecutive_low_winrate[i] = 0
         sf_resign_scale[i] = 1.0
@@ -1176,15 +1195,23 @@ def play_batch(
 
     def _tb_adjudicate_active_games() -> int:
         """Scan active games; if any current position is TB-eligible and
-        probable, mark the game done and stash the TB-proven result.
-        Called once per step — cost is ~10µs per active game after the
-        popcount prefilter rejects non-endgame positions.
-        Returns the number of games adjudicated this call."""
+        probable AND this game's per-game roll said "adjudicate", mark the
+        game done and stash the TB-proven result. Runs once per step;
+        per-active-game cost is ~10µs after the popcount prefilter rejects
+        non-endgame positions.
+
+        Games whose roll landed on "play through" (controlled by
+        ``syzygy_adjudicate_fraction``) are skipped here and finish
+        naturally, so the NN continues training on endgame positions with
+        its own labels rather than losing endgame skill entirely.
+        """
         assert _tb_probe is not None and game.syzygy_path is not None
         max_p = _tb_probe.max_pieces
         adjudicated = 0
         for i in range(batch_size):
             if _done_arr[i] or _finalized_arr[i] or _tb_result_arr[i] is not None:
+                continue
+            if not _tb_adj_roll_arr[i]:
                 continue
             cb = cboards[i]
             occ = int(cb.occ_white) | int(cb.occ_black)

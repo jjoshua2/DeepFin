@@ -584,6 +584,8 @@ class WorkerSession:
                 "timeout_adjudication_threshold", "temperature",
                 "temperature_decay_start_move", "temperature_decay_moves",
                 "temperature_endgame",
+                "syzygy_path", "syzygy_policy", "syzygy_adjudicate",
+                "syzygy_adjudicate_fraction", "syzygy_in_search",
             ]
             overridden = [k for k in _server_managed_keys if getattr(args, k, None) is not None]
             if overridden:
@@ -1510,6 +1512,15 @@ class WorkerSession:
         t_moves = self._resolve_reco(reco, "temperature_decay_moves", 60, int)
         t_end = self._resolve_reco(reco, "temperature_endgame", 0.6)
 
+        # Syzygy is fully manifest-driven so the server operator can tune
+        # adjudication behavior live by editing publish/manifest.json. None
+        # for path = disabled; fraction 1.0 = always adjudicate when on.
+        syzygy_path = reco.get("syzygy_path") or None
+        syzygy_policy = bool(reco.get("syzygy_policy", False))
+        syzygy_adjudicate = bool(reco.get("syzygy_adjudicate", False))
+        syzygy_adjudicate_fraction = float(reco.get("syzygy_adjudicate_fraction", 1.0))
+        syzygy_in_search = bool(reco.get("syzygy_in_search", False))
+
         # Resolve stockfish binary and (re)init engine.
         self._sync_stockfish(manifest, sf_nodes, sf_multipv)
         assert self.sf is not None  # _sync_stockfish always assigns
@@ -1555,6 +1566,11 @@ class WorkerSession:
                 sf_policy_temp=float(sf_policy_temp),
                 sf_policy_label_smooth=float(sf_policy_label_smooth),
                 timeout_adjudication_threshold=float(timeout_adjudication_threshold),
+                syzygy_path=syzygy_path,
+                syzygy_policy=syzygy_policy,
+                syzygy_adjudicate=syzygy_adjudicate,
+                syzygy_adjudicate_fraction=syzygy_adjudicate_fraction,
+                syzygy_in_search=syzygy_in_search,
             )
 
             if self.args.threaded_selfplay:

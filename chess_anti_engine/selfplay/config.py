@@ -54,6 +54,12 @@ class GameConfig:
     # use the TB-proven WDL as the outcome. Saves the rest of the MCTS work
     # that would have been spent playing out a known-result endgame.
     syzygy_adjudicate: bool = False
+    # Fraction of games that actually adjudicate when syzygy_adjudicate is
+    # on. 1.0 = always (max compute savings). < 1.0 lets some games play
+    # through the endgame so the NN keeps training on endgame samples with
+    # its own labels — prevents it from silently losing endgame skill while
+    # the TB does the work.
+    syzygy_adjudicate_fraction: float = 1.0
     # If true, override leaf WDL logits during MCTS with TB truth (UCI-style
     # in-tree probing). Pinned Q values collapse noisy endgame search paths.
     syzygy_in_search: bool = False
