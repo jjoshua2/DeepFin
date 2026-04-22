@@ -43,9 +43,11 @@ _TB_LOSS_CP = -41890
 # amortized. 32 sims/chunk works well as a starting point.
 _DEFAULT_CHUNK_SIMS = 32
 
-# Info-line emission cadence. 2 Hz keeps GUI output readable without flooding
-# the log, and PV extraction (a handful of tree walks) runs only at this rate.
-_INFO_EMIT_INTERVAL_MS = 500
+# Info-line emission cadence. 1 Hz matches Lc0/Stockfish real-world behavior
+# and avoids flooding terminal GUIs (cutechess-cli, engine logs) — at
+# MultiPV=N this expands to N lines per tick, so 2Hz × MultiPV 5 = 10 lines/s
+# gets noisy fast. PV extraction (tree walks) runs only on the tick.
+_INFO_EMIT_INTERVAL_MS = 1000
 
 
 @dataclass
