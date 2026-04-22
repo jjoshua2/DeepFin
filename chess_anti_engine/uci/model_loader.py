@@ -119,27 +119,37 @@ def load_model_from_checkpoint(
 ) -> torch.nn.Module:
     """Load a trained ChessNet in eval mode.
 
-    ``path`` may be a trainer.pt file or a checkpoint directory. When
-    ``model_config`` is omitted, it's inferred from the sibling/parent
-    ``params.json``; raise if neither is available (we can't guess
-    the architecture).
+    ``path`` may be a trainer.pt file or a checkpoint directory. Resolution
+    order for the architecture (when ``model_config`` is not explicitly
+    passed):
+      1. ``ckpt["arch"]`` — embedded by ``Trainer.save()``. Self-describing
+         checkpoint; no sidecar files needed. New checkpoints use this.
+      2. Sibling / walked-up ``params.json`` — the Ray trial layout.
+      3. Most-recent ``params.json`` under ``<project_root>/runs/`` — a
+         noisy fallback for ``data/best_pools/`` checkpoints that predate
+         the embedded arch. Emits a WARNING.
     """
     trainer_pt = _resolve_trainer_pt(Path(path))
+    # weights_only=True blocks arbitrary pickle execution — our trainer only
+    # writes tensors + primitives (including the `arch` dict), so this stays
+    # safe with no loss.
+    ckpt = torch.load(trainer_pt, map_location=device, weights_only=True)
 
     if model_config is None:
-        params_path = _find_params_json(trainer_pt)
-        if params_path is None:
-            raise FileNotFoundError(
-                f"no params.json near {trainer_pt}; pass model_config explicitly"
-            )
-        with params_path.open() as fh:
-            params = json.load(fh)
-        model_config = _model_config_from_params(params)
+        if isinstance(ckpt, dict) and isinstance(ckpt.get("arch"), dict):
+            model_config = _model_config_from_params(ckpt["arch"])
+        else:
+            params_path = _find_params_json(trainer_pt)
+            if params_path is None:
+                raise FileNotFoundError(
+                    f"no arch key in {trainer_pt} and no params.json nearby; "
+                    "pass model_config explicitly"
+                )
+            with params_path.open() as fh:
+                params = json.load(fh)
+            model_config = _model_config_from_params(params)
 
     model = build_model(model_config)
-    # weights_only=True blocks arbitrary pickle execution — our trainer only
-    # writes tensors + primitives, so this is strictly safer with no loss.
-    ckpt = torch.load(trainer_pt, map_location=device, weights_only=True)
     state = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
     load_state_dict_tolerant(model, state, label="uci-load")
     model.to(device).eval()

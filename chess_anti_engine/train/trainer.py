@@ -30,6 +30,7 @@ except Exception:  # pragma: no cover
             pass
 
 from chess_anti_engine.encoding.lc0 import LC0_FULL
+from chess_anti_engine.model import ModelConfig
 from chess_anti_engine.replay.buffer import ReplayBuffer
 from chess_anti_engine.replay.dataset import collate, collate_arrays
 from chess_anti_engine.replay.augment import maybe_mirror_batch_arrays, maybe_mirror_samples
@@ -174,6 +175,7 @@ class Trainer:
         sf_wdl_draw_scale: float = 1.0,
         tb_log_interval: int = 10,
         prefetch_batches: bool = True,
+        model_config: ModelConfig | None = None,
     ):
         self.device = device
         # Declared as nn.Module; torch.compile (below) wraps it in a Module
@@ -181,6 +183,11 @@ class Trainer:
         # assignment there to keep attribute access (.train/.eval/.state_dict)
         # type-checked here.
         self.model: torch.nn.Module = model.to(device)
+        # Optional — when provided, `save()` and the SWA export embed it
+        # into the checkpoint so standalone loaders (UCI engine) don't need
+        # a sibling params.json. Kept optional for backward compatibility
+        # with direct Trainer() construction in tests.
+        self._model_config = model_config
 
         optimizer = str(optimizer).lower()
         if optimizer == "muon":
@@ -761,13 +768,15 @@ class Trainer:
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        state = {
+        state: dict[str, Any] = {
             "model": self.model.state_dict(),
             "opt": self.opt.state_dict(),
             "scheduler": self._scheduler.state_dict(),
             "step": self.step,
             "peak_lr": float(self._peak_lr),
         }
+        if self._model_config is not None:
+            state["arch"] = dataclasses.asdict(self._model_config)
         if self._swa_model is not None:
             state["swa_model"] = self._swa_model.state_dict()
         torch.save(state, str(path))
@@ -821,4 +830,7 @@ class Trainer:
             if self._swa_model is None
             else self._swa_model.module.state_dict()
         )
-        atomic_write(path, lambda tmp: torch.save({"model": state_dict}, str(tmp)))
+        export: dict[str, Any] = {"model": state_dict}
+        if self._model_config is not None:
+            export["arch"] = dataclasses.asdict(self._model_config)
+        atomic_write(path, lambda tmp: torch.save(export, str(tmp)))

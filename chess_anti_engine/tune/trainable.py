@@ -144,7 +144,7 @@ def train_trial(config: dict):
     trainer_ctor = trainer_kwargs_from_config(
         config | {"device": device}, log_dir=work_dir / "tb",
     )
-    trainer = Trainer(model, **trainer_ctor)
+    trainer = Trainer(model, model_config=model_cfg, **trainer_ctor)
 
     ckpt = _tune_get_checkpoint()
     restore, rng = _restore_checkpoint_or_salvage(
