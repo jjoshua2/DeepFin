@@ -5,9 +5,19 @@
 # The project location is resolved from this script's path, so the wrapper
 # is relocatable — no edits needed after cloning to a different directory.
 #
-# DEEPFIN_CKPT is REQUIRED: point it at your trainer.pt. Set it in your
-# shell profile so GUIs (which don't inject env vars) can find it, e.g.:
-#   echo 'export DEEPFIN_CKPT=$HOME/ckpts/deepfin.pt' >> ~/.bashrc
+# DEEPFIN_CKPT is REQUIRED: point it at your trainer.pt. Options for GUI
+# launches (non-interactive shells don't source ~/.bashrc):
+#
+#   Linux/macOS GUI: set it in ~/.profile (login shell) or pass via a
+#     wrapper, e.g.:
+#       echo 'export DEEPFIN_CKPT=$HOME/ckpts/deepfin.pt' >> ~/.profile
+#
+#   Windows GUI via WSL: set it as a Windows user environment variable
+#     OR edit the `set` line in scripts/deepfin.bat. The .bat uses WSLENV
+#     to forward it into WSL, so no WSL shell profile is involved.
+#
+#   Direct invocation: pass explicitly —
+#     DEEPFIN_CKPT=/path/to/trainer.pt scripts/deepfin
 
 set -euo pipefail
 

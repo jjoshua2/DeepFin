@@ -30,7 +30,7 @@ except Exception:  # pragma: no cover
             pass
 
 from chess_anti_engine.encoding.lc0 import LC0_FULL
-from chess_anti_engine.model import ModelConfig
+from chess_anti_engine.model import ARCH_SCHEMA_VERSION, ModelConfig
 from chess_anti_engine.replay.buffer import ReplayBuffer
 from chess_anti_engine.replay.dataset import collate, collate_arrays
 from chess_anti_engine.replay.augment import maybe_mirror_batch_arrays, maybe_mirror_samples
@@ -776,7 +776,10 @@ class Trainer:
             "peak_lr": float(self._peak_lr),
         }
         if self._model_config is not None:
-            state["arch"] = dataclasses.asdict(self._model_config)
+            state["arch"] = {
+                "_schema_version": ARCH_SCHEMA_VERSION,
+                **dataclasses.asdict(self._model_config),
+            }
         if self._swa_model is not None:
             state["swa_model"] = self._swa_model.state_dict()
         torch.save(state, str(path))
@@ -832,5 +835,8 @@ class Trainer:
         )
         export: dict[str, Any] = {"model": state_dict}
         if self._model_config is not None:
-            export["arch"] = dataclasses.asdict(self._model_config)
+            export["arch"] = {
+                "_schema_version": ARCH_SCHEMA_VERSION,
+                **dataclasses.asdict(self._model_config),
+            }
         atomic_write(path, lambda tmp: torch.save(export, str(tmp)))

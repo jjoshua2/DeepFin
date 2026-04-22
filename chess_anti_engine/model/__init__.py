@@ -9,6 +9,13 @@ from .tiny import TinyNet
 from .transformer import ChessNet, TransformerConfig
 
 
+# Bump this when ModelConfig gains a field that a defaulted value would
+# misrepresent. Trainer embeds this version when saving; the UCI loader
+# rejects checkpoints with a higher version AND rejects unknown keys at
+# the same version — both prevent silent architecture mismatch on skew.
+ARCH_SCHEMA_VERSION = 1
+
+
 @dataclass
 class ModelConfig:
     kind: str = "transformer"  # tiny|transformer

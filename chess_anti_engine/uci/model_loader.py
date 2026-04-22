@@ -11,20 +11,17 @@ subprocess with nothing but the package importable.
 from __future__ import annotations
 
 import json
-import logging
 from dataclasses import fields
 from pathlib import Path
 
 import torch
 
 from chess_anti_engine.model import (
+    ARCH_SCHEMA_VERSION,
     ModelConfig,
     build_model,
     load_state_dict_tolerant,
 )
-
-
-_log = logging.getLogger(__name__)
 
 
 def _resolve_trainer_pt(path: Path) -> Path:
@@ -37,28 +34,17 @@ def _resolve_trainer_pt(path: Path) -> Path:
     raise FileNotFoundError(f"no trainer.pt at {path}")
 
 
-def _find_project_root(p: Path) -> Path | None:
-    """Walk up from ``p`` until we hit a directory with pyproject.toml."""
-    for parent in [p, *p.parents]:
-        if (parent / "pyproject.toml").is_file():
-            return parent
-    return None
-
-
 def _find_params_json(trainer_pt: Path) -> Path | None:
-    """Locate a ``params.json`` that describes this checkpoint's architecture.
+    """Walk up from ``trainer.pt`` looking for a sibling ``params.json``.
 
-    Tries in order:
-      1. Sibling / parent up to 6 levels — the Ray trial layout
-         ``<trial_dir>/{params.json, checkpoint_NNNN/trainer.pt}`` and a few
-         deeper nested salvage layouts.
-      2. Fallback: most-recent ``params.json`` anywhere under the project's
-         ``runs/`` directory. Used for ``data/best_pools/`` checkpoints,
-         which don't carry their own params.json but share architecture with
-         training runs (the pbt2_small config is stable across time). If
-         architecture has drifted between the salvaged checkpoint and the
-         active training run, this fallback will silently pick the wrong
-         params — caller gets a noisy warning so the user notices.
+    Only searches within the checkpoint's own ancestor chain — a params.json
+    from a different training run would describe a different architecture,
+    and ``load_state_dict_tolerant`` would then silently accept shape
+    mismatches. New checkpoints should carry their architecture embedded
+    under the ``arch`` key (see ``load_model_from_checkpoint``); this walk
+    exists for the Ray trial layout
+    ``<trial_dir>/{params.json, checkpoint_NNNN/trainer.pt}`` and a few
+    nested salvage variants.
     """
     current = trainer_pt.parent
     for _ in range(6):
@@ -68,31 +54,7 @@ def _find_params_json(trainer_pt: Path) -> Path | None:
         if current.parent == current:  # filesystem root
             break
         current = current.parent
-
-    project_root = _find_project_root(trainer_pt)
-    if project_root is None:
-        return None
-    runs_dir = project_root / "runs"
-    if not runs_dir.is_dir():
-        return None
-    try:
-        candidates = sorted(
-            runs_dir.rglob("params.json"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
-    except OSError:
-        return None
-    if not candidates:
-        return None
-    found = candidates[0]
-    _log.warning(
-        "no params.json near %s; falling back to %s (most recent training "
-        "run). Assumes architecture matches — if you've changed model topology "
-        "since this checkpoint was saved, the state_dict load will fail.",
-        trainer_pt, found,
-    )
-    return found
+    return None
 
 
 def _model_config_from_params(params: dict) -> ModelConfig:
@@ -111,6 +73,37 @@ def _model_config_from_params(params: dict) -> ModelConfig:
     return ModelConfig(**filtered)  # type: ignore[arg-type]
 
 
+def _model_config_from_arch(arch: dict) -> ModelConfig:
+    """Strict construction from the embedded ``arch`` payload.
+
+    Unlike ``_model_config_from_params`` (which filters unknown keys
+    because it's fed a noisy superset from Ray Tune), this path refuses
+    to default-past anything it doesn't understand. A newer checkpoint
+    with a new ModelConfig field would otherwise silently build a
+    defaulted model and then hide the mismatch behind the tolerant
+    state-dict loader — exactly the silent-corruption failure mode the
+    schema version is meant to catch.
+    """
+    if not isinstance(arch.get("_schema_version"), int):
+        raise ValueError("embedded arch is missing an integer _schema_version")
+    version = int(arch["_schema_version"])
+    if version > ARCH_SCHEMA_VERSION:
+        raise ValueError(
+            f"checkpoint arch schema v{version} is newer than this loader "
+            f"(v{ARCH_SCHEMA_VERSION}); upgrade chess_anti_engine"
+        )
+    valid = {f.name for f in fields(ModelConfig)}
+    payload = {k: v for k, v in arch.items() if k != "_schema_version"}
+    unknown = set(payload) - valid
+    if unknown:
+        raise ValueError(
+            f"embedded arch has unknown keys {sorted(unknown)}; this loader "
+            "does not recognise them and would silently default them away. "
+            "Upgrade the package or re-save the checkpoint."
+        )
+    return ModelConfig(**payload)  # type: ignore[arg-type]
+
+
 def load_model_from_checkpoint(
     path: str | Path,
     *,
@@ -122,12 +115,15 @@ def load_model_from_checkpoint(
     ``path`` may be a trainer.pt file or a checkpoint directory. Resolution
     order for the architecture (when ``model_config`` is not explicitly
     passed):
-      1. ``ckpt["arch"]`` — embedded by ``Trainer.save()``. Self-describing
-         checkpoint; no sidecar files needed. New checkpoints use this.
-      2. Sibling / walked-up ``params.json`` — the Ray trial layout.
-      3. Most-recent ``params.json`` under ``<project_root>/runs/`` — a
-         noisy fallback for ``data/best_pools/`` checkpoints that predate
-         the embedded arch. Emits a WARNING.
+      1. ``ckpt["arch"]`` embedded by ``Trainer.save()``. Self-describing
+         checkpoint; strict schema-version check.
+      2. A ``params.json`` sibling / walked-up-from the checkpoint directory
+         (Ray trial layout). Not scanned across unrelated training runs —
+         that silently misloads on architecture drift.
+
+    Raises if neither is available. ``load_state_dict_tolerant`` will
+    otherwise accept shape-mismatched tensors silently, so we fail loud
+    here rather than start a partly-random model.
     """
     trainer_pt = _resolve_trainer_pt(Path(path))
     # weights_only=True blocks arbitrary pickle execution — our trainer only
@@ -137,13 +133,15 @@ def load_model_from_checkpoint(
 
     if model_config is None:
         if isinstance(ckpt, dict) and isinstance(ckpt.get("arch"), dict):
-            model_config = _model_config_from_params(ckpt["arch"])
+            model_config = _model_config_from_arch(ckpt["arch"])
         else:
             params_path = _find_params_json(trainer_pt)
             if params_path is None:
                 raise FileNotFoundError(
-                    f"no arch key in {trainer_pt} and no params.json nearby; "
-                    "pass model_config explicitly"
+                    f"{trainer_pt} has no embedded arch and no params.json "
+                    "in its own directory tree. Re-save with the current "
+                    "Trainer to embed the arch key, or pass model_config "
+                    "explicitly."
                 )
             with params_path.open() as fh:
                 params = json.load(fh)
