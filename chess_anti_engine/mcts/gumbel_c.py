@@ -63,6 +63,7 @@ def run_gumbel_root_many_c(
     tree: MCTSTree | None = None,
     root_node_ids: list[int] | None = None,
     tb_probe=None,
+    target_batch: int = 0,
 ) -> tuple[list[np.ndarray], list[int], list[float], list[np.ndarray], MCTSTree, list[int]]:
     """Gumbel root search with MCTSTree C tree + CBoard.
 
@@ -286,7 +287,7 @@ def run_gumbel_root_many_c(
             _n_leaves[g] = _trees[g].start_gumbel_sims(
                 _cb_g, _rid_g, _rem_g, _gum_g, _pri_g, _bud_g, _rqs_g,
                 _c_scale, _c_visit, _c_puct, _fpu_reduction, _full_tree,
-                _enc_bufs[g], nn_cache,
+                _enc_bufs[g], nn_cache, 0, int(target_batch),
             )
         _t_prepare += _time.perf_counter() - _tp0
 
@@ -455,7 +456,7 @@ def run_gumbel_root_many_c(
             cast("list[np.ndarray]", root_pri),
             _budget_arr, _root_qs_arr,
             _c_scale, _c_visit, _c_puct, _fpu_reduction, _full_tree,
-            _enc_buf, nn_cache,
+            _enc_buf, nn_cache, 0, int(target_batch),
         )
         _t_prepare += _time.perf_counter() - _tp0
 

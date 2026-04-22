@@ -116,6 +116,11 @@ class SearchWorker:
         # this. 0 / None = unbounded. Not a hash table — tree growth is all
         # or nothing, we stop adding rather than evicting.
         self._max_tree_bytes: int = 0
+        # Minibatch target for the C gumbel state machine. 0 = use the
+        # C-side GSS_GPU_BATCH default. Higher = better GPU util on large
+        # batches; lower = faster stop latency + fresher tree state on
+        # each leaf. Set via UCI `MinibatchSize`.
+        self._minibatch_size: int = 0
 
     def _build_walker_pool(self, n: int) -> WalkerPool | None:
         if n <= 1:
@@ -130,6 +135,13 @@ class SearchWorker:
             ),
             self._evaluator,
         )
+
+    def set_minibatch_size(self, n: int) -> None:
+        """Set the minibatch accumulation target for the C gumbel state
+        machine. 0 means fall back to the C-side default. Takes effect
+        on the next ``run_gumbel_root_many_c`` call — no rebuild, no
+        tree reset. Just read next time."""
+        self._minibatch_size = max(0, int(n))
 
     def set_evaluator(self, evaluator: BatchEvaluator) -> None:
         """Swap in a freshly-built (and warmed-up) evaluator. Rebuilds the
@@ -397,6 +409,7 @@ class SearchWorker:
             tree=self._tree,
             root_node_ids=[self._root_id] if self._root_id is not None else None,
             tb_probe=tb_probe,
+            target_batch=self._minibatch_size,
         )
         self._tree = tree
         self._root_id = int(root_ids[0])

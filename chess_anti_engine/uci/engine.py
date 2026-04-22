@@ -54,6 +54,7 @@ def emit_handshake(options: "EngineOptions") -> None:
     _println(f"option name Hash type spin default {options.hash_mb} min 1024 max 524288")
     _println(f"option name Threads type spin default {options.threads} min 1 max 64")
     _println(f"option name MaxBatch type spin default {options.max_batch} min 64 max 8192")
+    _println(f"option name MinibatchSize type spin default {options.minibatch_size} min 0 max 8192")
     _println("option name SyzygyPath type string default <empty>")
     _println(f"option name Ponder type check default {'true' if options.ponder else 'false'}")
     _println(format_uciok())
@@ -79,6 +80,10 @@ class EngineOptions:
     # allocates buffers + CUDA-graph captures for. Changing it rebuilds
     # the evaluator + re-warmup (5-10s stall). Set via UCI `MaxBatch`.
     max_batch: int = 1024
+    # Minibatch target the C gumbel state machine aims for before flushing
+    # leaves to GPU eval. 0 = C-side default (GSS_GPU_BATCH = 1024). Live
+    # update; takes effect on the next chunk.
+    minibatch_size: int = 0
     # Syzygy tablebase directory path(s). Multiple paths separated by
     # OS-conventional separators (';' on Windows, ':' elsewhere) per the
     # de-facto UCI convention. Empty means disabled.
@@ -330,6 +335,17 @@ class Engine:
             _println(
                 f"info string Threads set to {n} "
                 f"({'walker pool' if n > 1 else 'classic Gumbel path'})"
+            )
+        elif name == "minibatchsize" and cmd.value is not None:
+            try:
+                n = max(0, int(cmd.value))
+            except ValueError:
+                return
+            self._options.minibatch_size = n
+            self._worker.set_minibatch_size(n)
+            _println(
+                f"info string MinibatchSize set to {n} "
+                f"({'default' if n == 0 else f'{n} leaves per GPU flush'})"
             )
         elif name == "maxbatch" and cmd.value is not None:
             try:

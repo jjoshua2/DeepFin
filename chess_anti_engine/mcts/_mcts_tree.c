@@ -832,6 +832,12 @@ typedef struct {
     NNCacheData *nncache;
     PyObject *nncache_ref;       /* Strong ref to keep NNCache alive */
 
+    /* Minibatch-size target: gss_step accumulates up to this many leaves
+     * before returning for GPU eval. Large = better GPU util, slightly
+     * staler tree state on later leaves + higher stop-latency. Small =
+     * the reverse. Set by start_gumbel_sims; falls back to GSS_GPU_BATCH. */
+    int32_t target_batch;
+
     /* State machine phase */
     int phase;    /* 0=not started, 1=needs_eval, 2=done */
     int allocated;
@@ -1197,9 +1203,9 @@ static int32_t gss_step(TreeData *t, StoredPrepState *s, GumbelSimState *g, floa
 {
     /* Accumulate leaves across multiple reps before returning for GPU eval:
      * reduces Python↔C round trips at the cost of slightly staler tree state
-     * on later leaves in the batch. See GSS_GPU_BATCH definition for tuning
-     * guidance. */
-    int32_t target_batch = GSS_GPU_BATCH;
+     * on later leaves in the batch. Driven by g->target_batch (set by
+     * start_gumbel_sims); fall back to GSS_GPU_BATCH when unset. */
+    int32_t target_batch = (g->target_batch > 0) ? g->target_batch : GSS_GPU_BATCH;
 
     for (;;) {
         /* Build queries for one rep at a time */
@@ -2508,12 +2514,13 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
     int full_tree;
     PyObject *nn_cache_obj = NULL;
     int vloss_weight = 0;
+    int target_batch = 0;  /* 0 => use GSS_GPU_BATCH default in gss_step */
 
-    if (!PyArg_ParseTuple(args, "OOOOOOOddddpO|Oi",
+    if (!PyArg_ParseTuple(args, "OOOOOOOddddpO|Oii",
                           &root_cbs_list, &root_ids_obj, &remaining_list,
                           &gumbels_list, &priors_list, &budget_obj, &root_qs_obj,
                           &c_scale, &c_visit, &c_puct, &fpu_reduction, &full_tree,
-                          &enc_buf_obj, &nn_cache_obj, &vloss_weight))
+                          &enc_buf_obj, &nn_cache_obj, &vloss_weight, &target_batch))
         return NULL;
 
     /* Validate list args before any indexing — PyList_GET_ITEM has no
@@ -2725,6 +2732,9 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
     g->enc_capacity = (int32_t)PyArray_DIM(enc_arr, 0);
     Py_INCREF(enc_arr);
     g->enc_arr_ref = (PyObject *)enc_arr;
+
+    /* Minibatch target (0 => fall back to GSS_GPU_BATCH in gss_step) */
+    g->target_batch = (int32_t)target_batch;
 
     /* NNCache (strong ref to keep alive) */
     g->nncache = NULL;
