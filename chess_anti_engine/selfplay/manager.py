@@ -44,7 +44,7 @@ from chess_anti_engine.selfplay.config import (
     TemperatureConfig,
 )
 from chess_anti_engine.selfplay.opening import OpeningConfig, make_starting_board
-from chess_anti_engine.selfplay.tablebase import rescore_game_samples, probe_best_move, _eligible
+from chess_anti_engine.tablebase import rescore_game_samples, probe_best_move, is_tb_eligible
 from chess_anti_engine.selfplay.temperature import temperature_for_ply
 import chess
 
@@ -448,7 +448,7 @@ def play_batch(
                     if is_sample_turn:
                         if sample_idx >= len(records):
                             break
-                        if _eligible(board_before):
+                        if is_tb_eligible(board_before):
                             best = probe_best_move(board_before, game.syzygy_path)
                             if best is not None:
                                 try:
