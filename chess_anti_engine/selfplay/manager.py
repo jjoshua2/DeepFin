@@ -460,7 +460,11 @@ def play_batch(
             replay_board = starting_boards[i].copy()
             replay_boards: list[chess.Board] = []
             move_stack = list(b.move_stack)
-            opening_len = len(starting_boards[i].move_stack)
+            # With _has_c_ply, b was rebuilt via copy(stack=False) + replayed
+            # network moves, so b.move_stack contains only network moves.
+            # In the Python path b was pushed in-place, so its stack contains
+            # opening + network moves.
+            opening_len = 0 if _has_c_ply else len(starting_boards[i].move_stack)
 
             for mv in move_stack[opening_len:]:
                 replay_board.push(mv)

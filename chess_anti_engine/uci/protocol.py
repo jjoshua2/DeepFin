@@ -206,6 +206,7 @@ def parse_command(line: str) -> Command:
 class InfoFields:
     depth: int | None = None
     seldepth: int | None = None
+    multipv: int | None = None
     nodes: int | None = None
     nps: int | None = None
     time_ms: int | None = None
@@ -223,6 +224,8 @@ def format_info(f: InfoFields) -> str:
         parts += ["depth", str(f.depth)]
     if f.seldepth is not None:
         parts += ["seldepth", str(f.seldepth)]
+    if f.multipv is not None:
+        parts += ["multipv", str(f.multipv)]
     if f.nodes is not None:
         parts += ["nodes", str(f.nodes)]
     if f.nps is not None:

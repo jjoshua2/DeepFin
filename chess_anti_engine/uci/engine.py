@@ -55,6 +55,7 @@ def emit_handshake(options: "EngineOptions") -> None:
     _println(f"option name Threads type spin default {options.threads} min 1 max 64")
     _println(f"option name MaxBatch type spin default {options.max_batch} min 64 max 8192")
     _println(f"option name MinibatchSize type spin default {options.minibatch_size} min 0 max 8192")
+    _println(f"option name MultiPV type spin default {options.multi_pv} min 1 max 256")
     _println("option name SyzygyPath type string default <empty>")
     _println(f"option name Ponder type check default {'true' if options.ponder else 'false'}")
     _println(format_uciok())
@@ -84,6 +85,9 @@ class EngineOptions:
     # leaves to GPU eval. 0 = C-side default (GSS_GPU_BATCH = 1024). Live
     # update; takes effect on the next chunk.
     minibatch_size: int = 0
+    # Number of top-ranked lines to emit per info tick. 1 = classic single
+    # PV (no `multipv` field). >1 emits N lines each tagged `multipv k`.
+    multi_pv: int = 1
     # Syzygy tablebase directory path(s). Multiple paths separated by
     # OS-conventional separators (';' on Windows, ':' elsewhere) per the
     # de-facto UCI convention. Empty means disabled.
@@ -336,6 +340,13 @@ class Engine:
                 f"info string Threads set to {n} "
                 f"({'walker pool' if n > 1 else 'classic Gumbel path'})"
             )
+        elif name == "multipv" and cmd.value is not None:
+            try:
+                n = max(1, int(cmd.value))
+            except ValueError:
+                return
+            self._options.multi_pv = n
+            self._worker.set_multi_pv(n)
         elif name == "minibatchsize" and cmd.value is not None:
             try:
                 n = max(0, int(cmd.value))
@@ -457,11 +468,12 @@ class Engine:
     def _emit_info(
         self, *,
         nodes: int, elapsed_ms: int, score_cp: int, pv: tuple[str, ...],
-        tbhits: int, score_mate: int | None,
+        tbhits: int, score_mate: int | None, multipv: int | None,
     ) -> None:
         nps = int(nodes * 1000 / max(1, elapsed_ms))
         _println(format_info(InfoFields(
             depth=len(pv),
+            multipv=multipv,
             nodes=nodes,
             nps=nps,
             time_ms=elapsed_ms,

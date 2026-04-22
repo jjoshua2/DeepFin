@@ -66,7 +66,7 @@ class InfoCallback(Protocol):
     def __call__(
         self, *,
         nodes: int, elapsed_ms: int, score_cp: int, pv: tuple[str, ...],
-        tbhits: int, score_mate: int | None,
+        tbhits: int, score_mate: int | None, multipv: int | None,
     ) -> None:
         ...
 
@@ -121,6 +121,11 @@ class SearchWorker:
         # batches; lower = faster stop latency + fresher tree state on
         # each leaf. Set via UCI `MinibatchSize`.
         self._minibatch_size: int = 0
+        # MultiPV: emit this many top-ranked lines per info tick. 1 = one PV
+        # (classic behavior). >1 triggers a loop that extracts each of the
+        # top-N root children by visits, walks a most-visited PV from each,
+        # and emits them all with ``multipv N`` fields.
+        self._multi_pv: int = 1
 
     def _build_walker_pool(self, n: int) -> WalkerPool | None:
         if n <= 1:
@@ -135,6 +140,12 @@ class SearchWorker:
             ),
             self._evaluator,
         )
+
+    def set_multi_pv(self, n: int) -> None:
+        """Number of top-ranked lines to emit per info tick. 1 = classic
+        single-PV behavior. Takes effect on the next info emission —
+        no rebuild, no tree reset."""
+        self._multi_pv = max(1, int(n))
 
     def set_minibatch_size(self, n: int) -> None:
         """Set the minibatch accumulation target for the C gumbel state
@@ -265,6 +276,7 @@ class SearchWorker:
                         pv=short.pv,
                         tbhits=short.tbhits,
                         score_mate=short.score_mate,
+                        multipv=1 if self._multi_pv > 1 else None,
                     )
                 return short
 
@@ -316,15 +328,22 @@ class SearchWorker:
             )
             if need_pv:
                 assert self._tree is not None and self._root_id is not None
+                # Extract the PV we use for max_depth termination first —
+                # that's just the single most-visited line regardless of
+                # multi_pv setting.
                 _, pv_indices = _best_move_and_pv(self._tree, self._root_id)
                 if info_cb is not None and elapsed - last_info_ms >= _INFO_EMIT_INTERVAL_MS:
-                    info_cb(
-                        nodes=total_nodes,
+                    _tbhits = tb_probe.hits if tb_probe is not None else 0
+                    _emit_multipv_info(
+                        info_cb=info_cb,
+                        tree=self._tree,
+                        root_id=self._root_id,
+                        board=board,
+                        n=self._multi_pv,
+                        root_q=float(last_value),
+                        total_nodes=total_nodes,
                         elapsed_ms=elapsed,
-                        score_cp=q_to_cp(0.5 * (last_value + 1.0)),
-                        pv=_uci_pv(board, pv_indices),
-                        tbhits=tb_probe.hits if tb_probe is not None else 0,
-                        score_mate=_pv_mate_moves(board, pv_indices),
+                        tbhits=_tbhits,
                     )
                     last_info_ms = elapsed
 
@@ -340,13 +359,17 @@ class SearchWorker:
                 # Don't try to grow into swap; halt with the best move we have.
                 # Info-string so GUIs/logs surface the reason.
                 if info_cb is not None:
-                    info_cb(
-                        nodes=total_nodes,
+                    assert self._root_id is not None
+                    _emit_multipv_info(
+                        info_cb=info_cb,
+                        tree=self._tree,
+                        root_id=self._root_id,
+                        board=board,
+                        n=self._multi_pv,
+                        root_q=float(last_value),
+                        total_nodes=total_nodes,
                         elapsed_ms=elapsed,
-                        score_cp=q_to_cp(0.5 * (last_value + 1.0)),
-                        pv=_uci_pv(board, pv_indices),
                         tbhits=tb_probe.hits if tb_probe is not None else 0,
-                        score_mate=_pv_mate_moves(board, pv_indices),
                     )
                 break
 
@@ -435,14 +458,83 @@ class SearchWorker:
         if not self._tree.is_expanded(self._root_id):
             legal_idx = self._walker_cboard.legal_move_indices()
             if legal_idx.size > 0:
+                # _root_pol_logits is shape (1, 4672) — we cache the
+                # batched eval output. expand_from_logits wants 1D.
                 self._tree.expand_from_logits(
                     self._root_id,
                     legal_idx.astype(np.int32),
-                    self._root_pol_logits,
+                    self._root_pol_logits[0],
                 )
 
 
 # --- tree + move helpers -----------------------------------------------------
+
+
+def _multipv_lines(
+    tree: MCTSTree, root_id: int, n: int, root_q_default: float,
+) -> list[tuple[int, float, list[int]]]:
+    """Return up to ``n`` (rank, q, pv_indices) triples for the top-visited
+    root children. Rank is 1-based (UCI convention: ``multipv 1`` = best).
+    Each pv_indices walks the most-visited path from that root child.
+
+    At n=1 this is equivalent to ``_best_move_and_pv`` plus a Q read,
+    so callers can always route through this helper.
+    """
+    actions, visits, qs = tree.get_children_q(root_id, root_q_default)
+    if actions.size == 0:
+        return []
+    # Sort descending by visits; ties tolerated — argsort is stable in numpy.
+    order = np.argsort(-visits)[:max(1, int(n))]
+    out: list[tuple[int, float, list[int]]] = []
+    for rank, i in enumerate(order.tolist(), start=1):
+        move = int(actions[i])
+        q = float(qs[i])
+        pv = [move]
+        cid = tree.find_child(root_id, move)
+        while cid != -1:
+            a, vs = tree.get_children_visits(cid)
+            if a.size == 0:
+                break
+            nxt = int(a[int(np.argmax(vs))])
+            pv.append(nxt)
+            cid = tree.find_child(cid, nxt)
+        out.append((rank, q, pv))
+    return out
+
+
+def _emit_multipv_info(
+    *,
+    info_cb: InfoCallback,
+    tree: MCTSTree,
+    root_id: int,
+    board: chess.Board,
+    n: int,
+    root_q: float,
+    total_nodes: int,
+    elapsed_ms: int,
+    tbhits: int,
+) -> None:
+    """Emit one or more ``info`` lines, one per top-ranked PV.
+
+    When n == 1 the ``multipv`` field is omitted (classic single-PV UCI).
+    When n > 1 each line gets ``multipv 1..N`` to tell the GUI which rank
+    it is; score and PV are each computed per-line.
+    """
+    lines = _multipv_lines(tree, root_id, n, root_q)
+    if not lines:
+        return
+    emit_multipv = n > 1
+    for rank, q, pv_idx in lines:
+        uci_pv = _uci_pv(board, pv_idx)
+        info_cb(
+            nodes=total_nodes,
+            elapsed_ms=elapsed_ms,
+            score_cp=q_to_cp(0.5 * (q + 1.0)),
+            pv=uci_pv,
+            tbhits=tbhits,
+            score_mate=_pv_mate_moves(board, pv_idx),
+            multipv=rank if emit_multipv else None,
+        )
 
 
 def _try_tb_root_bestmove(
