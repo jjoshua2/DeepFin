@@ -743,6 +743,7 @@ def _empty_ingest_summary() -> dict[str, int]:
         "matching_l": 0,
         "matching_total_game_plies": 0,
         "matching_adjudicated_games": 0,
+        "matching_tb_adjudicated_games": 0,
         "matching_total_draw_games": 0,
         "matching_selfplay_games": 0,
         "matching_selfplay_adjudicated_games": 0,
@@ -803,6 +804,7 @@ def _process_shard(
     positions = int(meta.get("positions", shard_n) or shard_n)
     total_game_plies = int(meta.get("total_game_plies", 0) or 0)
     adjudicated_games = int(meta.get("adjudicated_games", meta.get("timeout_games", 0)) or 0)
+    tb_adjudicated_games = int(meta.get("tb_adjudicated_games", 0) or 0)
     total_draw_games = int(meta.get("total_draw_games", draws) or draws)
     selfplay_games = int(meta.get("selfplay_games", 0) or 0)
     selfplay_adjudicated_games = int(meta.get("selfplay_adjudicated_games", 0) or 0)
@@ -839,6 +841,7 @@ def _process_shard(
         summary["matching_l"] += losses
         summary["matching_total_game_plies"] += total_game_plies
         summary["matching_adjudicated_games"] += adjudicated_games
+        summary["matching_tb_adjudicated_games"] += tb_adjudicated_games
         summary["matching_total_draw_games"] += total_draw_games
         summary["matching_selfplay_games"] += selfplay_games
         summary["matching_selfplay_adjudicated_games"] += selfplay_adjudicated_games

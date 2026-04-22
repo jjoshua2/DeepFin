@@ -126,6 +126,7 @@ class BatchStats:
     l: int
     total_game_plies: int = 0
     adjudicated_games: int = 0
+    tb_adjudicated_games: int = 0
     total_draw_games: int = 0
     selfplay_games: int = 0
     selfplay_adjudicated_games: int = 0
@@ -161,6 +162,7 @@ class CompletedGameBatch:
     l: int = 0
     total_game_plies: int = 0
     adjudicated_games: int = 0
+    tb_adjudicated_games: int = 0
     total_draw_games: int = 0
     selfplay_games: int = 0
     selfplay_adjudicated_games: int = 0
@@ -358,6 +360,7 @@ def play_batch(
     _st_w = _st_d = _st_l = 0
     _st_game_plies = 0
     _st_adjudicated = 0
+    _st_tb_adjudicated = 0
     _st_draw = 0
     _st_sp_games = _st_sp_adj = _st_sp_draw = 0
     _st_cur_games = _st_cur_adj = _st_cur_draw = 0
@@ -390,7 +393,7 @@ def play_batch(
 
     def _finalize_game(i: int) -> None:
         """Finalize a completed game: compute labels, build samples, update stats."""
-        nonlocal _st_w, _st_d, _st_l, _st_game_plies, _st_adjudicated, _st_draw
+        nonlocal _st_w, _st_d, _st_l, _st_game_plies, _st_adjudicated, _st_tb_adjudicated, _st_draw
         nonlocal _st_sp_games, _st_sp_adj, _st_sp_draw
         nonlocal _st_cur_games, _st_cur_adj, _st_cur_draw
         nonlocal _st_sf_d6_sum, _st_sf_d6_n, _st_checkmate, _st_stalemate
@@ -420,6 +423,10 @@ def play_batch(
             _st_checkmate += 1
         elif _is_sm:
             _st_stalemate += 1
+
+        was_tb_adjudicated = _tb_stash is not None
+        if was_tb_adjudicated:
+            _st_tb_adjudicated += 1
 
         was_adjudicated = False
         if result == "*":
@@ -643,6 +650,7 @@ def play_batch(
                         l=game_l,
                         total_game_plies=_game_plies,
                         adjudicated_games=1 if was_adjudicated else 0,
+                        tb_adjudicated_games=1 if was_tb_adjudicated else 0,
                         total_draw_games=game_total_draws,
                         selfplay_games=game_selfplay_games,
                         selfplay_adjudicated_games=game_selfplay_adj,
@@ -1364,6 +1372,7 @@ def play_batch(
         l=_st_l,
         total_game_plies=int(_st_game_plies),
         adjudicated_games=int(_st_adjudicated),
+        tb_adjudicated_games=int(_st_tb_adjudicated),
         total_draw_games=int(_st_draw),
         selfplay_games=int(_st_sp_games),
         selfplay_adjudicated_games=int(_st_sp_adj),

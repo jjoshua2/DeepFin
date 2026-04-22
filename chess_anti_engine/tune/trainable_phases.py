@@ -387,6 +387,7 @@ def _run_pid_and_eval(
         curriculum_winrate_raw=curriculum_winrate_raw,
         avg_game_plies=float(sp_result.total_game_plies) / gen,
         adjudication_rate=float(sp_result.total_adjudicated_games) / gen,
+        tb_adjudication_rate=float(sp_result.total_tb_adjudicated_games) / gen,
         draw_rate=float(sp_result.total_draw_games) / gen,
         selfplay_adjudication_rate=float(sp_result.total_selfplay_adjudicated_games) / sp,
         selfplay_draw_rate=float(sp_result.total_selfplay_draw_games) / sp,
@@ -497,6 +498,7 @@ def _run_selfplay_phase(
     total_games_generated = int(ingest_summary["matching_games"])
     total_game_plies = int(ingest_summary["matching_total_game_plies"])
     total_adjudicated_games = int(ingest_summary["matching_adjudicated_games"])
+    total_tb_adjudicated_games = int(ingest_summary.get("matching_tb_adjudicated_games", 0))
     total_draw_games = int(ingest_summary["matching_total_draw_games"])
     total_selfplay_games = int(ingest_summary["matching_selfplay_games"])
     total_selfplay_adjudicated_games = int(ingest_summary["matching_selfplay_adjudicated_games"])
@@ -611,6 +613,7 @@ def _run_selfplay_phase(
         total_games_generated=total_games_generated,
         total_game_plies=total_game_plies,
         total_adjudicated_games=total_adjudicated_games,
+        total_tb_adjudicated_games=total_tb_adjudicated_games,
         total_draw_games=total_draw_games,
         total_selfplay_games=total_selfplay_games,
         total_selfplay_adjudicated_games=total_selfplay_adjudicated_games,

@@ -27,6 +27,7 @@ class _BufferedUpload:
     l: int = 0
     total_game_plies: int = 0
     adjudicated_games: int = 0
+    tb_adjudicated_games: int = 0
     total_draw_games: int = 0
     selfplay_games: int = 0
     selfplay_adjudicated_games: int = 0
@@ -108,6 +109,7 @@ def _buffer_add_completed_game(
     buf.l += int(getattr(game_batch, "l", 0))
     buf.total_game_plies += int(getattr(game_batch, "total_game_plies", 0))
     buf.adjudicated_games += int(getattr(game_batch, "adjudicated_games", 0))
+    buf.tb_adjudicated_games += int(getattr(game_batch, "tb_adjudicated_games", 0))
     buf.total_draw_games += int(getattr(game_batch, "total_draw_games", 0))
     buf.selfplay_games += int(getattr(game_batch, "selfplay_games", 0))
     buf.selfplay_adjudicated_games += int(getattr(game_batch, "selfplay_adjudicated_games", 0))
@@ -155,6 +157,7 @@ def _flush_upload_buffer_to_pending(
         losses=int(buf.l),
         total_game_plies=int(buf.total_game_plies),
         adjudicated_games=int(buf.adjudicated_games),
+        tb_adjudicated_games=int(buf.tb_adjudicated_games),
         total_draw_games=int(buf.total_draw_games),
         selfplay_games=int(buf.selfplay_games),
         selfplay_adjudicated_games=int(buf.selfplay_adjudicated_games),

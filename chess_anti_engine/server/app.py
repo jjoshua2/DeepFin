@@ -41,6 +41,7 @@ class _BufferedUploadAccumulator:
     losses: int = 0
     total_game_plies: int = 0
     adjudicated_games: int = 0
+    tb_adjudicated_games: int = 0
     total_draw_games: int = 0
     selfplay_games: int = 0
     selfplay_adjudicated_games: int = 0
@@ -70,6 +71,7 @@ class _BufferedUploadAccumulator:
         self.losses += int(meta.get("losses") or 0)
         self.total_game_plies += int(meta.get("total_game_plies") or 0)
         self.adjudicated_games += int(meta.get("adjudicated_games") or 0)
+        self.tb_adjudicated_games += int(meta.get("tb_adjudicated_games") or 0)
         self.total_draw_games += int(meta.get("total_draw_games") or 0)
         self.selfplay_games += int(meta.get("selfplay_games") or 0)
         self.selfplay_adjudicated_games += int(meta.get("selfplay_adjudicated_games") or 0)

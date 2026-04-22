@@ -333,6 +333,7 @@ def _log_iteration_scalars(
             if pr.avg_plies_loss > 0:
                 writer.add_scalar("selfplay/avg_plies_loss", float(pr.avg_plies_loss), iteration_step)
             writer.add_scalar("selfplay/adjudication_rate", float(pr.adjudication_rate), iteration_step)
+            writer.add_scalar("selfplay/tb_adjudication_rate", float(pr.tb_adjudication_rate), iteration_step)
             writer.add_scalar("selfplay/draw_rate", float(pr.draw_rate), iteration_step)
             writer.add_scalar("selfplay/selfplay_adjudication_rate", float(pr.selfplay_adjudication_rate), iteration_step)
             writer.add_scalar("selfplay/selfplay_draw_rate", float(pr.selfplay_draw_rate), iteration_step)
@@ -431,6 +432,7 @@ def _build_report_dict(
         "games_generated": int(sp.total_games_generated),
         "avg_game_plies": float(pr.avg_game_plies),
         "adjudication_rate": float(pr.adjudication_rate),
+        "tb_adjudication_rate": float(pr.tb_adjudication_rate),
         "draw_rate": float(pr.draw_rate),
         "selfplay_adjudication_rate": float(pr.selfplay_adjudication_rate),
         "selfplay_draw_rate": float(pr.selfplay_draw_rate),

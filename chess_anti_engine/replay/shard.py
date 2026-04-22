@@ -202,6 +202,7 @@ class ShardMeta:
     losses: int | None = None
     total_game_plies: int | None = None
     adjudicated_games: int | None = None
+    tb_adjudicated_games: int | None = None
     total_draw_games: int | None = None
     selfplay_games: int | None = None
     selfplay_adjudicated_games: int | None = None

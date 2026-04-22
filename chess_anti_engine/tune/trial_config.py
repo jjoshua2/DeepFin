@@ -440,6 +440,7 @@ class SelfplayResult:
     total_games_generated: int = 0
     total_game_plies: int = 0
     total_adjudicated_games: int = 0
+    total_tb_adjudicated_games: int = 0
     total_draw_games: int = 0
 
     # Selfplay-only subset
@@ -557,6 +558,7 @@ class PidResult:
     curriculum_winrate_raw: float | None = None
     avg_game_plies: float = 0.0
     adjudication_rate: float = 0.0
+    tb_adjudication_rate: float = 0.0
     draw_rate: float = 0.0
     selfplay_adjudication_rate: float = 0.0
     selfplay_draw_rate: float = 0.0
