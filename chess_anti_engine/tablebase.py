@@ -142,7 +142,7 @@ def probe_best_move(board: chess.Board, syzygy_path: str) -> chess.Move | None:
         return None
 
     best_move: chess.Move | None = None
-    best_score: int | None = None
+    best_dtz: int | None = None
 
     for move in board.legal_moves:
         board.push(move)
@@ -153,20 +153,25 @@ def probe_best_move(board: chess.Board, syzygy_path: str) -> chess.Move | None:
             continue
         board.pop()
 
-        # After our move the signs flip: child_dtz is from the opponent's
-        # POV. We want the highest "score for us", which is -child_dtz.
-        # Filter by WDL class so a winning move must still leave opp losing,
-        # etc.
+        # After our move, it's opponent's turn. ``child_dtz`` is DTZ from
+        # their perspective: negative if they're losing (we're winning),
+        # positive if they're winning (we're losing), 0 on draw.
+        #
+        # We always MAXIMIZE child_dtz, regardless of WDL class:
+        #   * winning: child_dtz ∈ (-∞, 0). Largest = least negative =
+        #     smallest |dtz| = opponent converts fastest = we win fastest.
+        #   * drawing: child_dtz == 0 (filter), trivially max.
+        #   * losing: child_dtz ∈ (0, +∞). Largest = most plies before
+        #     opponent can zero = we survive longest.
         if root_wdl > 0 and child_dtz >= 0:
-            continue  # winning move must leave opponent at dtz<0
+            continue  # winning move must leave opponent in a lost position
         if root_wdl == 0 and child_dtz != 0:
             continue  # drawing move must leave opponent at dtz=0
         if root_wdl < 0 and child_dtz <= 0:
-            continue  # from a loss, only care about largest positive (longest survival)
+            continue  # from a loss, only care about longer-survival options
 
-        score = -child_dtz
-        if best_score is None or score > best_score:
-            best_score = score
+        if best_dtz is None or child_dtz > best_dtz:
+            best_dtz = child_dtz
             best_move = move
 
     return best_move
