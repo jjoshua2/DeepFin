@@ -40,7 +40,11 @@ class SearchLimits:
         )
 
 
-def limits_from_go(args: GoArgs, *, side_to_move_is_white: bool) -> SearchLimits:
+def limits_from_go(
+    args: GoArgs, *,
+    side_to_move_is_white: bool,
+    move_overhead_ms: int = 0,
+) -> SearchLimits:
     if args.infinite:
         return SearchLimits(infinite=True)
     if args.ponder:
@@ -58,6 +62,11 @@ def limits_from_go(args: GoArgs, *, side_to_move_is_white: bool) -> SearchLimits
             budget = remaining / moves_left + (inc or 0)
             ceiling = remaining * _MAX_FRACTION_OF_REMAINING
             deadline_ms = max(_MIN_DEADLINE_MS, int(min(budget, ceiling)))
+
+    # Reserve time for UCI command + GUI overhead (bestmove emission, pipe
+    # latency). Without this, engines lose on time in fast games.
+    if deadline_ms is not None and move_overhead_ms > 0:
+        deadline_ms = max(_MIN_DEADLINE_MS, deadline_ms - int(move_overhead_ms))
 
     return SearchLimits(
         deadline_ms=deadline_ms,

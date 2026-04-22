@@ -215,6 +215,9 @@ class InfoFields:
     pv: tuple[str, ...] = field(default_factory=tuple)
     hashfull_per_mille: int | None = None
     tbhits: int | None = None
+    # Per-mille (W, D, L) from the stm's perspective. When set, emitted as
+    # `wdl W D L` after the score field per UCI_ShowWDL convention.
+    wdl: tuple[int, int, int] | None = None
     string: str | None = None
 
 
@@ -240,6 +243,9 @@ def format_info(f: InfoFields) -> str:
         parts += ["score", "mate", str(f.score_mate)]
     elif f.score_cp is not None:
         parts += ["score", "cp", str(f.score_cp)]
+    if f.wdl is not None:
+        w, d, l = f.wdl
+        parts += ["wdl", str(w), str(d), str(l)]
     if f.pv:
         parts.append("pv")
         parts.extend(f.pv)

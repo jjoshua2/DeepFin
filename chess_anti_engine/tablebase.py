@@ -270,12 +270,25 @@ class SyzygyProbe:
     probes against the same path share one open instance.
     """
 
-    def __init__(self, syzygy_path: str, max_pieces: int | None = None) -> None:
+    def __init__(
+        self,
+        syzygy_path: str,
+        max_pieces: int | None = None,
+        *,
+        cursed_as_draw: bool = True,
+    ) -> None:
         """``max_pieces`` caps the filter piece-count; if None (default) we
         detect it from the opened tables' material keys so a user with only
         3–5-man files gets 5 and we don't waste probes on 6–7-piece leaves
-        that would always miss. Explicit values clamp lower."""
+        that would always miss. Explicit values clamp lower.
+
+        ``cursed_as_draw``: when True (default), cursed-win (+1) /
+        blessed-loss (-1) results are treated as draws — correct for
+        50-move-rule play. When False, they count as decisive — useful
+        for analysis / correspondence positions without the 50-move rule.
+        """
         self._path = syzygy_path
+        self._cursed_as_draw = bool(cursed_as_draw)
         tb = get_tablebase(syzygy_path)
         if tb is not None:
             self.n_wdl = len(tb.wdl)
@@ -338,12 +351,16 @@ class SyzygyProbe:
             except Exception as exc:
                 _log.debug("syzygy probe failed on %s: %r", cb.fen(), exc)
                 continue
-            if wdl_val >= 2:
+            # Decisive threshold depends on 50-move-rule semantics:
+            # cursed_as_draw=True (default) => only ±2 counts as decisive;
+            # cursed_as_draw=False          => ±1 counts too.
+            win_thresh = 2 if self._cursed_as_draw else 1
+            loss_thresh = -win_thresh
+            if wdl_val >= win_thresh:
                 wdl[i] = _WIN_LOGITS
-            elif wdl_val <= -2:
+            elif wdl_val <= loss_thresh:
                 wdl[i] = _LOSS_LOGITS
             else:
-                # Draw, cursed-win (+1), or blessed-loss (-1).
                 wdl[i] = _DRAW_LOGITS
             hits += 1
         self.hits += hits

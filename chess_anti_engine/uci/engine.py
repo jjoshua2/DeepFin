@@ -44,6 +44,36 @@ _ENGINE_NAME = "DeepFin"
 _ENGINE_AUTHOR = "jjosh"
 
 
+def _attach_log_file(path: str) -> None:
+    """Tee stderr-bound logs into ``path``. Empty path is a no-op (any
+    existing FileHandler stays attached — UCI spec has no 'clear' command
+    for string options, so we treat empty as 'leave as-is'). Non-empty
+    replaces any prior DeepFin file handler."""
+    import logging
+    root = logging.getLogger()
+    # Tag our handlers so repeat setoption doesn't stack duplicates.
+    for h in list(root.handlers):
+        if getattr(h, "_deepfin_logfile", False):
+            root.removeHandler(h)
+            try:
+                h.close()
+            except Exception:
+                pass
+    if not path:
+        return
+    try:
+        fh = logging.FileHandler(path, mode="a")
+    except OSError as exc:
+        _println(f"info string LogFile could not open {path!r}: {exc!r}")
+        return
+    fh.setFormatter(logging.Formatter(
+        "%(asctime)s %(name)s %(levelname)s %(message)s"
+    ))
+    fh._deepfin_logfile = True  # type: ignore[attr-defined]
+    root.addHandler(fh)
+    _println(f"info string LogFile attached: {path!r}")
+
+
 def emit_handshake(options: "EngineOptions") -> None:
     """Print the UCI `uci` response — id, options, uciok — using ``options``
     defaults. Kept out of the Engine class so ``__main__`` can reply to the
@@ -56,7 +86,11 @@ def emit_handshake(options: "EngineOptions") -> None:
     _println(f"option name MaxBatch type spin default {options.max_batch} min 64 max 8192")
     _println(f"option name MinibatchSize type spin default {options.minibatch_size} min 0 max 8192")
     _println(f"option name MultiPV type spin default {options.multi_pv} min 1 max 256")
+    _println(f"option name UCI_ShowWDL type check default {'true' if options.show_wdl else 'false'}")
+    _println(f"option name MoveOverheadMs type spin default {options.move_overhead_ms} min 0 max 5000")
     _println("option name SyzygyPath type string default <empty>")
+    _println(f"option name Syzygy50MoveRule type check default {'true' if options.syzygy_50_move_rule else 'false'}")
+    _println("option name LogFile type string default <empty>")
     _println(f"option name Ponder type check default {'true' if options.ponder else 'false'}")
     _println(format_uciok())
 
@@ -88,6 +122,21 @@ class EngineOptions:
     # Number of top-ranked lines to emit per info tick. 1 = classic single
     # PV (no `multipv` field). >1 emits N lines each tagged `multipv k`.
     multi_pv: int = 1
+    # Emit a `wdl W D L` field (per-mille) on each info line. Derived
+    # per-line from that line's Q plus a shared draw-rate estimate from
+    # the root NN evaluation. Off by default to keep info strings compact.
+    show_wdl: bool = False
+    # Milliseconds reserved per move for UCI/GUI overhead. Subtracted from
+    # the computed deadline before search starts; keeps us off the clock
+    # in fast games.
+    move_overhead_ms: int = 30
+    # Syzygy semantics: when true, cursed-win/blessed-loss count as draws
+    # (matches 50-move-rule play). When false, treat them as decisive
+    # (theoretical result — useful for correspondence / analysis).
+    syzygy_50_move_rule: bool = True
+    # Optional log-file path. When set, stderr logs are mirrored to this
+    # file so Windows GUIs (which swallow stderr) can surface diagnostics.
+    log_file: str = ""
     # Syzygy tablebase directory path(s). Multiple paths separated by
     # OS-conventional separators (';' on Windows, ':' elsewhere) per the
     # de-facto UCI convention. Empty means disabled.
@@ -266,7 +315,12 @@ class Engine:
             self._popped_ponder_move = None
             search_board = self._board
         self._sync_tree_root(target_moves)
-        limits = limits_from_go(cmd.args, side_to_move_is_white=(search_board.turn == chess.WHITE))
+        overhead = self._options.move_overhead_ms
+        limits = limits_from_go(
+            cmd.args,
+            side_to_move_is_white=(search_board.turn == chess.WHITE),
+            move_overhead_ms=overhead,
+        )
         self._stop_event = threading.Event()
         self._ponderhit_event = threading.Event()
         # For `go ponder`, the ponder phase runs open-ended; ponderhit
@@ -277,6 +331,7 @@ class Engine:
             limits_from_go(
                 replace(cmd.args, ponder=False),
                 side_to_move_is_white=(search_board.turn == chess.WHITE),
+                move_overhead_ms=overhead,
             )
             if cmd.args.ponder else None
         )
@@ -347,6 +402,25 @@ class Engine:
                 return
             self._options.multi_pv = n
             self._worker.set_multi_pv(n)
+        elif name == "uci_showwdl" and cmd.value is not None:
+            self._options.show_wdl = cmd.value.strip().lower() == "true"
+            self._worker.set_show_wdl(self._options.show_wdl)
+        elif name == "moveoverheadms" and cmd.value is not None:
+            try:
+                self._options.move_overhead_ms = max(0, int(cmd.value))
+            except ValueError:
+                pass
+        elif name == "syzygy50moverule" and cmd.value is not None:
+            self._options.syzygy_50_move_rule = cmd.value.strip().lower() == "true"
+            # Re-install probe so the new semantics take effect for the
+            # next search. Cheap — just wraps the same path with different
+            # cursed/blessed handling.
+            if self._options.syzygy_path:
+                self._install_tablebase(self._options.syzygy_path)
+        elif name == "logfile" and cmd.value is not None:
+            path = cmd.value.strip()
+            self._options.log_file = path
+            _attach_log_file(path)
         elif name == "minibatchsize" and cmd.value is not None:
             try:
                 n = max(0, int(cmd.value))
@@ -403,7 +477,9 @@ class Engine:
             self._worker.set_tb_probe(None)
             _println(f"info string SyzygyPath {path!r} did not open any tablebase directories")
             return
-        probe = SyzygyProbe(path)
+        probe = SyzygyProbe(
+            path, cursed_as_draw=self._options.syzygy_50_move_rule,
+        )
         self._worker.set_tb_probe(probe)
         _println(
             f"info string SyzygyPath loaded from {path!r}: "
@@ -469,6 +545,7 @@ class Engine:
         self, *,
         nodes: int, elapsed_ms: int, score_cp: int, pv: tuple[str, ...],
         tbhits: int, score_mate: int | None, multipv: int | None,
+        wdl: tuple[int, int, int] | None,
     ) -> None:
         nps = int(nodes * 1000 / max(1, elapsed_ms))
         _println(format_info(InfoFields(
@@ -481,6 +558,7 @@ class Engine:
             score_mate=score_mate,
             pv=pv,
             tbhits=tbhits,
+            wdl=wdl,
         )))
 
     def _emit_bestmove(self, result: SearchResult) -> None:

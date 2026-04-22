@@ -69,6 +69,7 @@ class InfoCallback(Protocol):
         self, *,
         nodes: int, elapsed_ms: int, score_cp: int, pv: tuple[str, ...],
         tbhits: int, score_mate: int | None, multipv: int | None,
+        wdl: tuple[int, int, int] | None,
     ) -> None:
         ...
 
@@ -128,6 +129,11 @@ class SearchWorker:
         # top-N root children by visits, walks a most-visited PV from each,
         # and emits them all with ``multipv N`` fields.
         self._multi_pv: int = 1
+        # Emit `wdl W D L` per-mille alongside score_cp. Derived per-line
+        # from that line's Q plus a draw-rate estimate from the root NN
+        # evaluation (all lines share the same draw rate — they're
+        # different continuations of the same root position).
+        self._show_wdl: bool = False
 
     def _build_walker_pool(self, n: int) -> WalkerPool | None:
         if n <= 1:
@@ -142,6 +148,10 @@ class SearchWorker:
             ),
             self._evaluator,
         )
+
+    def set_show_wdl(self, enabled: bool) -> None:
+        """Toggle WDL emission on info lines. Takes effect next emit."""
+        self._show_wdl = bool(enabled)
 
     def set_multi_pv(self, n: int) -> None:
         """Number of top-ranked lines to emit per info tick. 1 = classic
@@ -271,6 +281,9 @@ class SearchWorker:
             short = _try_tb_root_bestmove(board, tb_probe)
             if short is not None:
                 if info_cb is not None:
+                    # TB root shortcut emits one line; no per-line q to
+                    # derive a wdl from, so we skip the wdl field here.
+                    # (TB-decisive positions get saturated cp anyway.)
                     info_cb(
                         nodes=short.nodes,
                         elapsed_ms=deadline.elapsed_ms(),
@@ -279,6 +292,7 @@ class SearchWorker:
                         tbhits=short.tbhits,
                         score_mate=short.score_mate,
                         multipv=1 if self._multi_pv > 1 else None,
+                        wdl=None,
                     )
                 return short
 
@@ -346,6 +360,8 @@ class SearchWorker:
                         total_nodes=total_nodes,
                         elapsed_ms=elapsed,
                         tbhits=_tbhits,
+                        show_wdl=self._show_wdl,
+                        root_wdl_logits=self._root_wdl_logits,
                     )
                     last_info_ms = elapsed
 
@@ -372,6 +388,8 @@ class SearchWorker:
                         total_nodes=total_nodes,
                         elapsed_ms=elapsed,
                         tbhits=tb_probe.hits if tb_probe is not None else 0,
+                        show_wdl=self._show_wdl,
+                        root_wdl_logits=self._root_wdl_logits,
                     )
                 break
 
@@ -472,6 +490,32 @@ class SearchWorker:
 # --- tree + move helpers -----------------------------------------------------
 
 
+def _root_draw_rate(wdl_logits: np.ndarray) -> float:
+    """Softmax the root's raw NN [w, d, l] logits and return the draw
+    probability. Used by UCI_ShowWDL to derive per-line WDL from per-line
+    Q — the draw rate is shared across all multipv lines since they're
+    all continuations of the same root position."""
+    z = np.asarray(wdl_logits, dtype=np.float64).ravel()
+    z = z - z.max()
+    e = np.exp(z)
+    return float(e[1] / e.sum())
+
+
+def _q_to_wdl_permille(q: float, draw_rate: float) -> tuple[int, int, int]:
+    """Split Q ∈ [-1, 1] into (W, D, L) per-mille using a fixed draw rate.
+    Q = W - L after expected draws are removed. Clamps draw so W and L
+    stay non-negative."""
+    q = max(-1.0, min(1.0, float(q)))
+    d = max(0.0, min(1.0 - abs(q), float(draw_rate)))
+    w = (q + 1.0 - d) / 2.0
+    l = (1.0 - q - d) / 2.0
+    return (
+        int(round(w * 1000)),
+        int(round(d * 1000)),
+        int(round(l * 1000)),
+    )
+
+
 def _multipv_lines(
     tree: MCTSTree, root_id: int, n: int, root_q_default: float,
 ) -> list[tuple[int, float, list[int]]]:
@@ -515,19 +559,27 @@ def _emit_multipv_info(
     total_nodes: int,
     elapsed_ms: int,
     tbhits: int,
+    show_wdl: bool = False,
+    root_wdl_logits: np.ndarray | None = None,
 ) -> None:
     """Emit one or more ``info`` lines, one per top-ranked PV.
 
     When n == 1 the ``multipv`` field is omitted (classic single-PV UCI).
-    When n > 1 each line gets ``multipv 1..N`` to tell the GUI which rank
-    it is; score and PV are each computed per-line.
+    When n > 1 each line gets ``multipv 1..N``. When ``show_wdl`` is True
+    and root logits are available, each line also gets a ``wdl W D L``
+    field derived from its Q plus the root's NN draw-rate estimate.
     """
     lines = _multipv_lines(tree, root_id, n, root_q)
     if not lines:
         return
     emit_multipv = n > 1
+    draw_rate = (
+        _root_draw_rate(root_wdl_logits[0]) if show_wdl and root_wdl_logits is not None
+        else 0.0
+    )
     for rank, q, pv_idx in lines:
         uci_pv = _uci_pv(board, pv_idx)
+        wdl = _q_to_wdl_permille(q, draw_rate) if show_wdl else None
         info_cb(
             nodes=total_nodes,
             elapsed_ms=elapsed_ms,
@@ -536,6 +588,7 @@ def _emit_multipv_info(
             tbhits=tbhits,
             score_mate=_pv_mate_moves(board, pv_idx),
             multipv=rank if emit_multipv else None,
+            wdl=wdl,
         )
 
 
