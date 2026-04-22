@@ -516,6 +516,34 @@ static void tree_backprop(TreeData *t, const int32_t *path, int32_t path_len, do
 }
 
 
+/* Apply one unit of virtual loss to every non-root node on `path`.
+ * Walkers call this right after descending to a leaf and before requesting
+ * GPU eval; the increment keeps other walkers off the same subtree until
+ * the real eval result arrives. Root is skipped — all walkers share it.
+ *
+ * Uses __atomic_fetch_add so concurrent walkers on different paths don't
+ * lose updates when they touch a shared interior node. */
+static void tree_apply_vloss_path(TreeData *t, const int32_t *path, int32_t path_len) {
+    for (int32_t i = 1; i < path_len; i++) {
+        __atomic_fetch_add(&t->virtual_loss[path[i]], 1, __ATOMIC_RELAXED);
+    }
+}
+
+
+/* Remove one unit of virtual loss from every non-root node on `path`. Paired
+ * with tree_apply_vloss_path — called just before the real backprop, so the
+ * net visit count on the path ends at (+1) not (0). Floors at zero so a
+ * miscounted decrement can't flip the field negative. */
+static void tree_remove_vloss_path(TreeData *t, const int32_t *path, int32_t path_len) {
+    for (int32_t i = 1; i < path_len; i++) {
+        int32_t prev = __atomic_fetch_sub(&t->virtual_loss[path[i]], 1, __ATOMIC_RELAXED);
+        if (prev <= 0) {
+            __atomic_store_n(&t->virtual_loss[path[i]], 0, __ATOMIC_RELAXED);
+        }
+    }
+}
+
+
 /* Get action path from root to node (for replaying moves on a chess.Board).
  * Writes actions into `out` in order from root→node. Returns path length. */
 static int32_t tree_action_path(const TreeData *t, int32_t node_id,
@@ -585,6 +613,11 @@ typedef struct {
     double c_puct;
     double fpu_reduction;
     int full_tree;
+    /* Virtual-loss weight: when >0, in-flight walkers along a node's path
+     * are treated as visits with a penalty (N += vl, W += vl per unit). Keeps
+     * concurrent walkers from collapsing onto the same PUCT-best leaf. At 0
+     * descent is bit-identical to the pre-vloss implementation. */
+    int vloss_weight;
 } GumbelSelectParams;
 
 /* Forward declarations for functions used by GumbelSimState helpers */
@@ -1563,29 +1596,44 @@ static void softmax_inplace(double *arr, int n) {
  * ================================================================ */
 
 /* Select best child using Gumbel improved-policy.
- * Returns slot index (offset from children_offset). */
+ * Returns slot index (offset from children_offset).
+ * When vloss_weight > 0, child virtual_loss counts like visits (with a
+ * penalty on Q) so concurrent walkers diverge. */
 static int32_t tree_gumbel_select_child(const TreeData *t, int32_t node_id,
-                                         double c_scale, double c_visit) {
+                                         double c_scale, double c_visit,
+                                         int vloss_weight) {
     int32_t n_ch = t->num_children[node_id];
     int32_t off = t->children_offset[node_id];
     if (n_ch <= 0) return 0;
 
-    double parent_N = (double)t->N[node_id];
-    double parent_Q = (parent_N > 0) ? (t->W[node_id] / parent_N) : 0.0;
+    /* Parent's effective N also includes its own in-flight visits so
+     * completed_Q for unvisited children reflects the penalized parent. */
+    int32_t parent_vl = (vloss_weight > 0) ? t->virtual_loss[node_id] : 0;
+    double parent_N = (double)(t->N[node_id] + vloss_weight * parent_vl);
+    double parent_W = t->W[node_id] + (double)(vloss_weight * parent_vl);
+    double parent_Q = (parent_N > 0) ? (parent_W / parent_N) : 0.0;
 
     /* Two arrays — log_prior and completed_Q — precomputed in the same pass
      * that computes max_visit + total_visits. Avoids re-reading child arrays. */
     double *log_priors = (double *)alloca(n_ch * sizeof(double));
     double *cqs        = (double *)alloca(n_ch * sizeof(double));
+    int32_t *eff_ns    = (int32_t *)alloca(n_ch * sizeof(int32_t));
     int32_t max_visit = 0;
     int32_t total_visits = 0;
     for (int32_t i = 0; i < n_ch; i++) {
         int32_t cid = t->child_node[off + i];
-        int32_t n = t->N[cid];
-        if (n > max_visit) max_visit = n;
-        total_visits += n;
+        int32_t vl = (vloss_weight > 0) ? t->virtual_loss[cid] : 0;
+        int32_t eff_n = t->N[cid] + vloss_weight * vl;
+        eff_ns[i] = eff_n;
+        if (eff_n > max_visit) max_visit = eff_n;
+        total_visits += eff_n;
         log_priors[i] = log(t->prior[cid] > 1e-12 ? t->prior[cid] : 1e-12);
-        cqs[i] = (n > 0) ? (-t->W[cid] / (double)n) : parent_Q;
+        /* Virtual loss adds vloss_weight per in-flight walker to both N and
+         * W from the child's parent perspective; child-perspective Q inverts
+         * the sign on W (parent and child alternate sides). */
+        cqs[i] = (eff_n > 0)
+            ? (-(t->W[cid] + (double)(vloss_weight * vl)) / (double)eff_n)
+            : parent_Q;
     }
     double sigma = c_scale * (c_visit + (double)max_visit);
     double inv_total = 1.0 / (1.0 + (double)total_visits);
@@ -1615,7 +1663,7 @@ static int32_t tree_gumbel_select_child(const TreeData *t, int32_t node_id,
     double best_val = -1e30;
     for (int32_t i = 0; i < n_ch; i++) {
         double p = uniform_fallback ? inv_sum : (scores[i] * inv_sum);
-        double target = p - (double)t->N[t->child_node[off + i]] * inv_total;
+        double target = p - (double)eff_ns[i] * inv_total;
         if (target > best_val) {
             best_val = target;
             best_slot = i;
@@ -1661,7 +1709,12 @@ static int32_t tree_gumbel_collect_leaf(const TreeData *t, int32_t root_id,
         double best_pri = -1.0;
         for (int32_t i = 0; i < n_ch2; i++) {
             int32_t cid = t->child_node[off2 + i];
-            if (t->N[cid] > 0) { any_visited = 1; break; }
+            /* In-flight walkers count as visits for divergence: if vloss>0
+             * on an unvisited child, PUCT still has enough signal to pick a
+             * different child for this walker. */
+            int32_t eff_n = t->N[cid];
+            if (sel->vloss_weight > 0) eff_n += t->virtual_loss[cid];
+            if (eff_n > 0) { any_visited = 1; break; }
             if (t->prior[cid] > best_pri) {
                 best_pri = t->prior[cid];
                 best_prior_slot = i;
@@ -1673,7 +1726,8 @@ static int32_t tree_gumbel_collect_leaf(const TreeData *t, int32_t root_id,
             /* Frontier: all children unvisited — highest prior wins */
             slot = best_prior_slot;
         } else if (sel->full_tree) {
-            slot = tree_gumbel_select_child(t, node, sel->c_scale, sel->c_visit);
+            slot = tree_gumbel_select_child(t, node, sel->c_scale, sel->c_visit,
+                                            sel->vloss_weight);
         } else {
             slot = tree_select_child(t, node, sel->c_puct, sel->fpu_reduction);
         }
@@ -1794,6 +1848,39 @@ static PyObject *MCTSTree_node_count(MCTSTreeObject *self, PyObject *Py_UNUSED(a
 }
 
 
+/* memory_bytes() -> int — rough total bytes allocated for the tree's own
+ * buffers. Sums the realloc'd node arrays (sized to node_cap), the children
+ * pool (child_cap), the lazy CBoard cache (cb_cache_cap, a big per-entry
+ * cost because CBoard contains history stacks), per-node hashes, and the
+ * transposition hash table. Enough for a "halt before OOM" safety check. */
+static PyObject *MCTSTree_memory_bytes(MCTSTreeObject *self, PyObject *Py_UNUSED(args)) {
+    const TreeData *t = &self->tree;
+    int64_t bytes = 0;
+    /* Per-node arrays sized to node_cap. */
+    bytes += (int64_t)t->node_cap * (
+        sizeof(int32_t)   /* N */
+      + sizeof(double)    /* W */
+      + sizeof(double)    /* prior */
+      + sizeof(int8_t)    /* expanded */
+      + sizeof(int32_t)   /* parent */
+      + sizeof(int32_t)   /* action_from_parent */
+      + sizeof(int32_t)   /* num_children */
+      + sizeof(int32_t)   /* children_offset */
+      + sizeof(int32_t)   /* virtual_loss */
+      + sizeof(uint64_t)  /* node_hash */
+    );
+    /* Children pool. */
+    bytes += (int64_t)t->child_cap * (sizeof(int32_t) + sizeof(int32_t));
+    /* CBoard cache (only if lazily allocated). */
+    if (t->cb_cache) {
+        bytes += (int64_t)t->cb_cache_cap * (sizeof(CBoard) + sizeof(int8_t));
+    }
+    /* Transposition hash table. */
+    bytes += (int64_t)t->ht_cap * sizeof(int32_t);
+    return PyLong_FromLongLong(bytes);
+}
+
+
 /* reset() -> None  (clear tree for reuse) */
 static PyObject *MCTSTree_reset(MCTSTreeObject *self, PyObject *Py_UNUSED(args)) {
     self->tree.node_count = 0;
@@ -1818,6 +1905,60 @@ static PyObject *MCTSTree_get_virtual_loss(MCTSTreeObject *self, PyObject *args)
     if (node_id < 0 || node_id >= self->tree.node_count)
         return PyLong_FromLong(0);
     return PyLong_FromLong(self->tree.virtual_loss[node_id]);
+}
+
+
+/* Shared parser for apply/remove_vloss_path(path_int32).
+ * On success returns a borrowed pointer to path data + length; on failure
+ * sets a Python error and returns NULL. Caller owns the returned
+ * PyArrayObject reference in *out_arr — must Py_DECREF it. */
+static int32_t *MCTSTree_parse_vloss_path_args(
+    PyObject *args, int32_t node_count, int32_t *out_len, PyArrayObject **out_arr
+) {
+    PyObject *path_obj;
+    if (!PyArg_ParseTuple(args, "O", &path_obj)) return NULL;
+    PyArrayObject *path_arr = FROMANY_1D(path_obj, NPY_INT32);
+    if (!path_arr) return NULL;
+    int32_t path_len = (int32_t)PyArray_DIM(path_arr, 0);
+    int32_t *path_data = (int32_t *)PyArray_DATA(path_arr);
+    for (int32_t i = 0; i < path_len; i++) {
+        if (path_data[i] < 0 || path_data[i] >= node_count) {
+            Py_DECREF(path_arr);
+            PyErr_SetString(PyExc_ValueError, "path contains out-of-range node id");
+            return NULL;
+        }
+    }
+    *out_len = path_len;
+    *out_arr = path_arr;
+    return path_data;
+}
+
+
+/* apply_vloss_path(path_int32) -> None.
+ * Path[0] is treated as the root and skipped (walker-pool design: all
+ * walkers share the root, so vloss there doesn't steer them apart). */
+static PyObject *MCTSTree_apply_vloss_path(MCTSTreeObject *self, PyObject *args) {
+    int32_t path_len;
+    PyArrayObject *path_arr;
+    int32_t *path_data = MCTSTree_parse_vloss_path_args(
+        args, self->tree.node_count, &path_len, &path_arr);
+    if (!path_data) return NULL;
+    tree_apply_vloss_path(&self->tree, path_data, path_len);
+    Py_DECREF(path_arr);
+    Py_RETURN_NONE;
+}
+
+
+/* remove_vloss_path(path_int32) -> None. Pairs with apply_vloss_path. */
+static PyObject *MCTSTree_remove_vloss_path(MCTSTreeObject *self, PyObject *args) {
+    int32_t path_len;
+    PyArrayObject *path_arr;
+    int32_t *path_data = MCTSTree_parse_vloss_path_args(
+        args, self->tree.node_count, &path_len, &path_arr);
+    if (!path_data) return NULL;
+    tree_remove_vloss_path(&self->tree, path_data, path_len);
+    Py_DECREF(path_arr);
+    Py_RETURN_NONE;
 }
 
 
@@ -1960,11 +2101,15 @@ static void cboard_encode_146_into(const CBoard *b, float * restrict out) {
  * start_gumbel_sims(root_cboards, root_ids, remaining_per_board,
  *                   gumbels_per_board, root_priors, budget_remaining,
  *                   root_qs, c_scale, c_visit, c_puct, fpu_reduction,
- *                   full_tree, enc_buf[, nn_cache])
+ *                   full_tree, enc_buf[, nn_cache, vloss_weight])
  *
  * Initializes the gumbel simulation state machine and runs until
  * the first batch of positions needs GPU eval.
  * Returns n_leaves (int) or None if simulation completed immediately.
+ *
+ * vloss_weight (default 0): penalty applied to in-flight child paths during
+ * PUCT descent. Only matters when walker threads are running concurrent
+ * descends; 0 keeps behavior bit-identical to the pre-vloss code path.
  */
 static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args) {
     PyObject *root_cbs_list, *root_ids_obj, *remaining_list, *gumbels_list;
@@ -1972,12 +2117,13 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
     double c_scale, c_visit, c_puct, fpu_reduction;
     int full_tree;
     PyObject *nn_cache_obj = NULL;
+    int vloss_weight = 0;
 
-    if (!PyArg_ParseTuple(args, "OOOOOOOddddpO|O",
+    if (!PyArg_ParseTuple(args, "OOOOOOOddddpO|Oi",
                           &root_cbs_list, &root_ids_obj, &remaining_list,
                           &gumbels_list, &priors_list, &budget_obj, &root_qs_obj,
                           &c_scale, &c_visit, &c_puct, &fpu_reduction, &full_tree,
-                          &enc_buf_obj, &nn_cache_obj))
+                          &enc_buf_obj, &nn_cache_obj, &vloss_weight))
         return NULL;
 
     /* Validate list args before any indexing — PyList_GET_ITEM has no
@@ -2035,6 +2181,7 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
     g->sel.c_puct = c_puct;
     g->sel.fpu_reduction = fpu_reduction;
     g->sel.full_tree = full_tree;
+    g->sel.vloss_weight = (vloss_weight > 0) ? vloss_weight : 0;
     g->allocated = 1;
 
     g->root_ids = (int32_t *)malloc(n_boards * sizeof(int32_t));
@@ -2451,12 +2598,18 @@ static PyMethodDef MCTSTree_methods[] = {
      "node_q(node_id) -> float"},
     {"is_expanded", (PyCFunction)MCTSTree_is_expanded, METH_VARARGS,
      "is_expanded(node_id) -> bool"},
+    {"memory_bytes", (PyCFunction)MCTSTree_memory_bytes, METH_NOARGS,
+     "memory_bytes() -> int. Approximate total bytes allocated for tree buffers."},
     {"node_count", (PyCFunction)MCTSTree_node_count, METH_NOARGS,
      "node_count() -> int"},
     {"reset", (PyCFunction)MCTSTree_reset, METH_NOARGS,
      "reset() -> None"},
     {"get_virtual_loss", (PyCFunction)MCTSTree_get_virtual_loss, METH_VARARGS,
-     "get_virtual_loss(node_id) -> int (walker-pool scaffolding; 0 until phase 2+3 wires descent/backprop)"},
+     "get_virtual_loss(node_id) -> int"},
+    {"apply_vloss_path", (PyCFunction)MCTSTree_apply_vloss_path, METH_VARARGS,
+     "apply_vloss_path(path: int32[]) -> None (skips path[0] = root)"},
+    {"remove_vloss_path", (PyCFunction)MCTSTree_remove_vloss_path, METH_VARARGS,
+     "remove_vloss_path(path: int32[]) -> None (floors at 0; pair with apply_vloss_path)"},
     {NULL}
 };
 
