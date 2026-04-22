@@ -10,6 +10,7 @@ import logging
 import sys
 
 from chess_anti_engine.inference import DirectGPUEvaluator
+from chess_anti_engine.inference_dispatcher import ThreadSafeGPUDispatcher
 from chess_anti_engine.mcts.gumbel import GumbelConfig
 
 from .engine import Engine
@@ -25,9 +26,14 @@ def _build_engine(
     chunk_sims: int,
     topk: int,
     max_batch: int,
+    thread_safe: bool,
 ) -> Engine:
     model = load_model_from_checkpoint(checkpoint, device=device)
-    evaluator = DirectGPUEvaluator(model, device=device, max_batch=max_batch)
+    evaluator: DirectGPUEvaluator | ThreadSafeGPUDispatcher = DirectGPUEvaluator(
+        model, device=device, max_batch=max_batch,
+    )
+    if thread_safe:
+        evaluator = ThreadSafeGPUDispatcher(evaluator)
     worker = SearchWorker(
         evaluator,
         device=device,
@@ -62,6 +68,10 @@ def main() -> int:
                    help="DirectGPUEvaluator max batch (default: 1024). Must be >= expected leaf count per wavefront.")
     p.add_argument("--log-level", default="WARNING",
                    help="stderr log level (DEBUG|INFO|WARNING). DEBUG enables per-search gumbel profile with GPU-calls/avg-batch.")
+    # Phase 1 of the walker-pool plan. Opt-in for now; once walkers land
+    # (Phase 5) this becomes the default since walkers require thread safety.
+    p.add_argument("--thread-safe-eval", action="store_true",
+                   help="Wrap GPU evaluator in a thread-safe dispatcher (forward-compat for walker pool)")
     args = p.parse_args()
 
     # Logs must go to stderr — stdout is reserved for UCI protocol.
@@ -82,6 +92,7 @@ def main() -> int:
     engine = _build_engine(
         checkpoint=args.checkpoint, device=device,
         chunk_sims=args.chunk_sims, topk=args.topk, max_batch=args.max_batch,
+        thread_safe=args.thread_safe_eval,
     )
 
     for raw in sys.stdin:
