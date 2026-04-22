@@ -119,11 +119,15 @@ selfplay:
   sf_policy_label_smooth: 0.05  # Halved from 0.10 to complement sf_multipv=20; less need to hallucinate tail coverage.
   soft_policy_temp: 3.0     # Temperature for soft policy target (LC0 uses 3, was hardcoded 2)
 
-  syzygy_path: /home/josh/projects/chess/data/syzygy_3-4man
+  syzygy_path: /home/josh/projects/chess/data/syzygy_3-4-5
   # End games at the first TB-eligible position and use the TB-proven result
   # as the outcome. Skips MCTS compute on the endgame tail (~25% of replay
   # positions are in <=7-man range — see the piece-count audit).
   syzygy_adjudicate: true
+  # Fraction of games that actually adjudicate. 0.95 leaves 5% playing
+  # through the endgame so the NN keeps generating endgame samples with
+  # its own labels — guards against losing endgame skill entirely.
+  syzygy_adjudicate_fraction: 0.95
   # Override NN wdl logits at MCTS leaves when TB-eligible (UCI-style
   # in-tree probing). Pins Q to TB truth for endgame leaves.
   syzygy_in_search: true
