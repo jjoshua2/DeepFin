@@ -20,6 +20,7 @@ import numpy as np
 from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.inference import DirectGPUEvaluator
 from chess_anti_engine.inference_dispatcher import (
+    BatchCoalescingDispatcher,
     MultiGPUDispatcher,
     ThreadSafeGPUDispatcher,
 )
@@ -61,6 +62,7 @@ def _build_engine(
     thread_safe: bool,
     n_walkers: int,
     vloss_weight: int,
+    coalesce: bool,
 ) -> Engine:
     # Multi-GPU (phase 7): one evaluator per device — each holds its own
     # compiled model + pinned buffers, no sharing. MultiGPUDispatcher does
@@ -87,6 +89,11 @@ def _build_engine(
         # Walkers share the evaluator across threads; it must be wrapped.
         if thread_safe or n_walkers > 1:
             evaluator = ThreadSafeGPUDispatcher(evaluator)
+    # Phase 6: coalesce concurrent walker calls into batched GPU submits.
+    # Only useful with multiple walkers; for single-walker, batch=1 is all
+    # you'll ever submit anyway.
+    if coalesce and n_walkers > 1:
+        evaluator = BatchCoalescingDispatcher(evaluator, max_batch=max_batch)
     worker = SearchWorker(
         evaluator,
         device=primary_device,
@@ -140,6 +147,11 @@ def main() -> int:
                    help="number of PUCT walker threads (default: 1 = classic Gumbel path; >1 = pool)")
     p.add_argument("--vloss-weight", type=int, default=3,
                    help="virtual-loss weight in walker mode (default: 3, lc0 default)")
+    # Phase 6: coalesce concurrent walker calls into batched submits. On by
+    # default when walkers > 1 since batch=1 per walker wastes GPU.
+    p.add_argument("--no-coalesce", dest="coalesce", action="store_false",
+                   help="disable walker-call coalescing (debug / A-B bench only)")
+    p.set_defaults(coalesce=True)
     args = p.parse_args()
 
     if not args.checkpoint:
@@ -184,6 +196,7 @@ def main() -> int:
                 thread_safe=args.thread_safe_eval,
                 n_walkers=max(1, int(args.walkers)),
                 vloss_weight=int(args.vloss_weight),
+                coalesce=bool(args.coalesce),
             )
             _warmup_evaluator(eng)
             engine_ref[0] = eng
