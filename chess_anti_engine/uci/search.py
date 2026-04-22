@@ -84,9 +84,9 @@ class SearchWorker:
         )
         self._chunk_sims = int(chunk_sims)
         self._rng = np.random.default_rng()
-        # Walker-pool mode (phase 5): n_walkers > 1 swaps the Gumbel chunked
-        # path for pure PUCT with virtual loss, run concurrently. evaluator
-        # must be thread-safe (wrap with ThreadSafeGPUDispatcher).
+        # n_walkers > 1 → PUCT pool with vloss, sequential halving dropped.
+        # evaluator MUST be thread-safe (caller wraps with Thread/MultiGPU
+        # dispatcher or BatchCoalescingDispatcher).
         self._n_walkers = max(1, int(n_walkers))
         if self._n_walkers > 1:
             self._walker_pool: WalkerPool | None = WalkerPool(
@@ -101,8 +101,6 @@ class SearchWorker:
             )
         else:
             self._walker_pool = None
-        # CBoard for the walker path. Rebuilt on FEN change. Only populated
-        # when walkers are active — the classic path gets its own board.
         self._walker_cboard: CBoard | None = None
 
         # Persistent tree across calls within a game. Reset on new position.
@@ -126,6 +124,9 @@ class SearchWorker:
         self._tree = None
         self._root_id = None
         self._tree_fen = None
+        self._invalidate_root_caches()
+
+    def _invalidate_root_caches(self) -> None:
         self._root_pol_logits = None
         self._root_wdl_logits = None
         self._walker_cboard = None
@@ -166,10 +167,7 @@ class SearchWorker:
             b.push(mv)
         self._root_id = rid
         self._tree_fen = b.fen()
-        # Root position changed — logits cache was for the old root.
-        self._root_pol_logits = None
-        self._root_wdl_logits = None
-        self._walker_cboard = None
+        self._invalidate_root_caches()
         return True
 
     def run(
@@ -193,9 +191,7 @@ class SearchWorker:
             self._tree = None
             self._root_id = None
             self._tree_fen = fen
-            self._root_pol_logits = None
-            self._root_wdl_logits = None
-            self._walker_cboard = None
+            self._invalidate_root_caches()
 
         total_nodes = 0
         last_info_ms = -1
@@ -238,45 +234,10 @@ class SearchWorker:
                 chunk = min(chunk, remaining)
 
             if self._walker_pool is not None:
-                assert self._tree is not None and self._root_id is not None
-                assert self._walker_cboard is not None
-                self._walker_pool.run(
-                    tree=self._tree,
-                    root_id=self._root_id,
-                    root_cboard=self._walker_cboard,
-                    target_sims=chunk,
-                    stop_event=stop_event,
-                )
-                last_value = self._tree.node_q(self._root_id)
-                total_nodes += int(chunk)
+                last_value = self._run_walker_chunk(chunk, stop_event)
             else:
-                _, _, values, _, tree, root_ids = run_gumbel_root_many_c(
-                    model=None,
-                    boards=[board],
-                    device=self._device,
-                    rng=self._rng,
-                    cfg=GumbelConfig(
-                        simulations=chunk,
-                        topk=self._cfg.topk,
-                        temperature=self._cfg.temperature,
-                        c_visit=self._cfg.c_visit,
-                        c_scale=self._cfg.c_scale,
-                        c_puct=self._cfg.c_puct,
-                        fpu_reduction=self._cfg.fpu_reduction,
-                        full_tree=self._cfg.full_tree,
-                        add_noise=False,
-                    ),
-                    evaluator=self._evaluator,
-                    pre_pol_logits=self._root_pol_logits,
-                    pre_wdl_logits=self._root_wdl_logits,
-                    tree=self._tree,
-                    root_node_ids=[self._root_id] if self._root_id is not None else None,
-                    tb_probe=tb_probe,
-                )
-                self._tree = tree
-                self._root_id = int(root_ids[0])
-                last_value = float(values[0])
-                total_nodes += int(chunk)
+                last_value = self._run_gumbel_chunk(chunk, board, tb_probe)
+            total_nodes += int(chunk)
 
             # PV extraction is only needed for info emission (rate-limited)
             # and for max_depth termination. Skip otherwise — saves a handful
@@ -342,28 +303,67 @@ class SearchWorker:
             score_mate=_pv_mate_moves(board, pv_indices),
         )
 
+    def _run_walker_chunk(
+        self, chunk: int, stop_event: threading.Event,
+    ) -> float:
+        assert self._tree is not None and self._root_id is not None
+        assert self._walker_pool is not None and self._walker_cboard is not None
+        self._walker_pool.run(
+            tree=self._tree,
+            root_id=self._root_id,
+            root_cboard=self._walker_cboard,
+            target_sims=chunk,
+            stop_event=stop_event,
+        )
+        return self._tree.node_q(self._root_id)
+
+    def _run_gumbel_chunk(
+        self, chunk: int, board: chess.Board, tb_probe,
+    ) -> float:
+        _, _, values, _, tree, root_ids = run_gumbel_root_many_c(
+            model=None,
+            boards=[board],
+            device=self._device,
+            rng=self._rng,
+            cfg=GumbelConfig(
+                simulations=chunk,
+                topk=self._cfg.topk,
+                temperature=self._cfg.temperature,
+                c_visit=self._cfg.c_visit,
+                c_scale=self._cfg.c_scale,
+                c_puct=self._cfg.c_puct,
+                fpu_reduction=self._cfg.fpu_reduction,
+                full_tree=self._cfg.full_tree,
+                add_noise=False,
+            ),
+            evaluator=self._evaluator,
+            pre_pol_logits=self._root_pol_logits,
+            pre_wdl_logits=self._root_wdl_logits,
+            tree=self._tree,
+            root_node_ids=[self._root_id] if self._root_id is not None else None,
+            tb_probe=tb_probe,
+        )
+        self._tree = tree
+        self._root_id = int(root_ids[0])
+        return float(values[0])
+
     def _ensure_walker_root_expanded(self, board: chess.Board) -> None:
-        """Walker path needs the root pre-expanded before workers start so
-        they don't all race on the same unexpanded root. Uses the cached
-        root pol/wdl logits from the run() preamble."""
+        """Walker path needs the root pre-expanded before workers start;
+        otherwise all N walkers hit the same unexpanded leaf and waste
+        N-1 NN evals on the first sim."""
         assert self._root_pol_logits is not None
         if self._tree is None:
             self._tree = MCTSTree()
-            # Reserve capacity upfront; concurrent descents cannot trigger
-            # a realloc. 50k nodes + 500k child slots matches the phase-4
-            # stress harness and covers all but the longest UCI chunks.
+            # Pre-size so concurrent descents can't trigger a realloc.
             self._tree.reserve(50_000, 500_000)
             self._root_id = None
         if self._root_id is None:
             assert self._root_wdl_logits is not None
             root_q = float(_value_scalar_from_wdl_logits(
-                self._root_wdl_logits.reshape(-1)))
+                self._root_wdl_logits[0]))
             self._root_id = int(self._tree.add_root(0, root_q))
         if self._walker_cboard is None:
             self._walker_cboard = CBoard.from_board(board)
-        # Expand root if not already. The walker pool's first tick would
-        # otherwise re-evaluate the same root across all N walkers and
-        # only one of the expansions would stick.
         if not self._tree.is_expanded(self._root_id):
             legal_idx = self._walker_cboard.legal_move_indices()
             if legal_idx.size > 0:

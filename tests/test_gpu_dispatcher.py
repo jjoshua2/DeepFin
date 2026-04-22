@@ -72,21 +72,18 @@ def test_dispatcher_concurrent_callers_get_correct_results():
         assert r is not None
 
 
-def test_dispatcher_has_no_async_attribute():
+def test_dispatcher_hides_async_attribute():
     # gumbel_c.py gates its pipelined path on hasattr(eval, 'evaluate_encoded_async').
-    # The dispatcher intentionally doesn't expose async so single-game UCI stays
-    # on the sync path (where the walker-pool semantics will apply).
+    # Dispatchers deliberately don't expose it (no __getattr__ proxy) so the
+    # pipelined path never activates through a wrapped evaluator — that path
+    # would bypass our serialization/coalescing logic.
     evaluator = _make_evaluator()
     dispatcher = ThreadSafeGPUDispatcher(evaluator)
-    # __getattr__ proxies to the wrapped evaluator, which DOES have it, so
-    # plain hasattr would pass through. That's acceptable for phase 1 — the
-    # wrapped evaluator is still thread-safe via the lock on evaluate_encoded,
-    # and the pipelined path requires n_boards >= 64 which UCI never produces.
-    # The important invariant is that evaluate_encoded itself is serialized.
+    assert not hasattr(dispatcher, "evaluate_encoded_async")
     assert hasattr(dispatcher, "evaluate_encoded")
 
 
-def test_dispatcher_proxies_max_batch_attr():
+def test_dispatcher_exposes_max_batch():
     evaluator = _make_evaluator()
     dispatcher = ThreadSafeGPUDispatcher(evaluator)
-    assert dispatcher._max_batch == 16  # type: ignore[attr-defined]
+    assert dispatcher.max_batch == 16

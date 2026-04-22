@@ -9,6 +9,7 @@ engine is actually ready.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import logging
 import os
 import sys
@@ -32,14 +33,13 @@ from .protocol import CmdQuit, CmdUci, parse_command
 from .search import SearchWorker
 
 
-def _warmup_evaluator(engine: Engine) -> None:
+def _warmup_evaluator(evaluator) -> None:
     """Trigger torch.compile + CUDA graph capture for the shapes the UCI
     search will hit, so the first `go` doesn't pay that cost. Runs one
     forward at batch=1 (root eval) and one at bucket size 128 (typical
     single-game leaf batch from gumbel_c._BUCKETS). Both are no-ops if
     the model path doesn't graph-capture, but the compile itself is
     shape-keyed under torch.compile reduce-overhead mode."""
-    evaluator = engine._worker._evaluator  # pyright: ignore[reportPrivateUsage]
     cb = CBoard.from_board(chess.Board())
     encoded = cb.encode_146()
     for batch in (1, 128):
@@ -52,48 +52,46 @@ def _warmup_evaluator(engine: Engine) -> None:
             break
 
 
-def _build_engine(
+def _build_evaluator(
     *,
     checkpoint: str,
     devices: list[str],
-    chunk_sims: int,
-    topk: int,
     max_batch: int,
-    thread_safe: bool,
     n_walkers: int,
-    vloss_weight: int,
     coalesce: bool,
-) -> Engine:
-    # Multi-GPU (phase 7): one evaluator per device — each holds its own
-    # compiled model + pinned buffers, no sharing. MultiGPUDispatcher does
-    # least-loaded routing. For N=1 we keep the simpler code path (one
-    # DirectGPUEvaluator, optional ThreadSafeGPUDispatcher).
+):
     if len(devices) > 1:
+        # Load all device models in parallel — each load is hundreds of MB
+        # of weight copy + CUDA init, cheap to overlap.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(devices)) as pool:
+            models = list(pool.map(
+                lambda d: load_model_from_checkpoint(checkpoint, device=d),
+                devices,
+            ))
         evaluators = [
-            DirectGPUEvaluator(
-                load_model_from_checkpoint(checkpoint, device=d),
-                device=d, max_batch=max_batch,
-            )
-            for d in devices
+            DirectGPUEvaluator(m, device=d, max_batch=max_batch)
+            for m, d in zip(models, devices)
         ]
-        evaluator: DirectGPUEvaluator | ThreadSafeGPUDispatcher | MultiGPUDispatcher = (
-            MultiGPUDispatcher(evaluators)
-        )
-        primary_device = devices[0]
+        evaluator = MultiGPUDispatcher(evaluators)
     else:
-        primary_device = devices[0]
-        model = load_model_from_checkpoint(checkpoint, device=primary_device)
-        evaluator = DirectGPUEvaluator(
-            model, device=primary_device, max_batch=max_batch,
-        )
-        # Walkers share the evaluator across threads; it must be wrapped.
-        if thread_safe or n_walkers > 1:
+        model = load_model_from_checkpoint(checkpoint, device=devices[0])
+        evaluator = DirectGPUEvaluator(model, device=devices[0], max_batch=max_batch)
+        if n_walkers > 1:
             evaluator = ThreadSafeGPUDispatcher(evaluator)
-    # Phase 6: coalesce concurrent walker calls into batched GPU submits.
-    # Only useful with multiple walkers; for single-walker, batch=1 is all
-    # you'll ever submit anyway.
     if coalesce and n_walkers > 1:
         evaluator = BatchCoalescingDispatcher(evaluator, max_batch=max_batch)
+    return evaluator
+
+
+def _build_engine(
+    *,
+    evaluator,
+    primary_device: str,
+    chunk_sims: int,
+    topk: int,
+    n_walkers: int,
+    vloss_weight: int,
+) -> Engine:
     worker = SearchWorker(
         evaluator,
         device=primary_device,
@@ -136,19 +134,15 @@ def main() -> int:
                    help="DirectGPUEvaluator max batch (default: 1024). Must be >= expected leaf count per wavefront.")
     p.add_argument("--log-level", default="WARNING",
                    help="stderr log level (DEBUG|INFO|WARNING). DEBUG enables per-search gumbel profile with GPU-calls/avg-batch.")
-    # Phase 1 of the walker-pool plan. Opt-in for single-walker searches;
-    # forced on by --walkers > 1 since walkers share the evaluator.
-    p.add_argument("--thread-safe-eval", action="store_true",
-                   help="Wrap GPU evaluator in a thread-safe dispatcher (implied by --walkers > 1)")
-    # Phase 5 of the walker-pool plan. --walkers > 1 switches from the
-    # Gumbel-chunked path to a PUCT walker pool with virtual loss. Better
-    # dispatch-bound throughput, no sequential-halving semantics.
+    # --walkers > 1 switches from the Gumbel-chunked path to a PUCT walker
+    # pool with virtual loss. Better dispatch-bound throughput, no
+    # sequential-halving semantics.
     p.add_argument("--walkers", type=int, default=1,
                    help="number of PUCT walker threads (default: 1 = classic Gumbel path; >1 = pool)")
     p.add_argument("--vloss-weight", type=int, default=3,
                    help="virtual-loss weight in walker mode (default: 3, lc0 default)")
-    # Phase 6: coalesce concurrent walker calls into batched submits. On by
-    # default when walkers > 1 since batch=1 per walker wastes GPU.
+    # Coalesce concurrent walker calls into batched submits. On by default
+    # when walkers > 1 since batch=1 per walker wastes GPU.
     p.add_argument("--no-coalesce", dest="coalesce", action="store_false",
                    help="disable walker-call coalescing (debug / A-B bench only)")
     p.set_defaults(coalesce=True)
@@ -190,16 +184,18 @@ def main() -> int:
 
     def _build() -> None:
         try:
-            eng = _build_engine(
+            n_walkers = max(1, int(args.walkers))
+            evaluator = _build_evaluator(
                 checkpoint=args.checkpoint, devices=devices,
-                chunk_sims=args.chunk_sims, topk=args.topk, max_batch=args.max_batch,
-                thread_safe=args.thread_safe_eval,
-                n_walkers=max(1, int(args.walkers)),
-                vloss_weight=int(args.vloss_weight),
+                max_batch=args.max_batch, n_walkers=n_walkers,
                 coalesce=bool(args.coalesce),
             )
-            _warmup_evaluator(eng)
-            engine_ref[0] = eng
+            _warmup_evaluator(evaluator)
+            engine_ref[0] = _build_engine(
+                evaluator=evaluator, primary_device=devices[0],
+                chunk_sims=args.chunk_sims, topk=args.topk,
+                n_walkers=n_walkers, vloss_weight=int(args.vloss_weight),
+            )
         except BaseException as exc:  # pragma: no cover — surfaced via readyok
             engine_error[0] = exc
         finally:
