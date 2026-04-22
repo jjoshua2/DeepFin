@@ -52,37 +52,44 @@ def _warmup_evaluator(evaluator) -> None:
             break
 
 
-def _build_evaluator(
-    *,
-    checkpoint: str,
-    devices: list[str],
-    max_batch: int,
-    n_walkers: int,
-    coalesce: bool,
-):
+def _load_models(checkpoint: str, devices: list[str]):
+    """Load one model per device. Cached at startup and reused across
+    evaluator rebuilds (e.g., when the UCI ``MaxBatch`` option changes)."""
     if len(devices) > 1:
-        # Load all device models in parallel — each load is hundreds of MB
-        # of weight copy + CUDA init, cheap to overlap.
+        # Parallel load — each is hundreds of MB of weight copy + CUDA init.
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(devices)) as pool:
-            models = list(pool.map(
+            return list(pool.map(
                 lambda d: load_model_from_checkpoint(checkpoint, device=d),
                 devices,
             ))
-        evaluators = [
-            DirectGPUEvaluator(m, device=d, max_batch=max_batch)
-            for m, d in zip(models, devices)
-        ]
-        evaluator = MultiGPUDispatcher(evaluators)
-    else:
-        model = load_model_from_checkpoint(checkpoint, device=devices[0])
-        evaluator = DirectGPUEvaluator(model, device=devices[0], max_batch=max_batch)
-        # Always wrap in ThreadSafeGPUDispatcher so the UCI `Threads` option
-        # can bump walker count at runtime without a race. Lock is
-        # uncontended at 1 thread — overhead is ~10ns.
-        evaluator = ThreadSafeGPUDispatcher(evaluator)
-    if coalesce and n_walkers > 1:
-        evaluator = BatchCoalescingDispatcher(evaluator, max_batch=max_batch)
-    return evaluator
+    return [load_model_from_checkpoint(checkpoint, device=devices[0])]
+
+
+def _make_evaluator_factory(models, devices, coalesce):
+    """Return a ``build(max_batch) -> evaluator`` closure. The models are
+    captured once at startup; each call constructs fresh evaluator
+    wrappers at the new max_batch and warms them so the next ``go``
+    doesn't pay compile latency."""
+    def build(max_batch: int):
+        if len(devices) > 1:
+            evaluators = [
+                DirectGPUEvaluator(m, device=d, max_batch=max_batch)
+                for m, d in zip(models, devices)
+            ]
+            evaluator = MultiGPUDispatcher(evaluators)
+        else:
+            evaluator = DirectGPUEvaluator(
+                models[0], device=devices[0], max_batch=max_batch,
+            )
+            # Always wrap in ThreadSafeGPUDispatcher so the UCI `Threads`
+            # option can bump walker count at runtime without a race. Lock
+            # is uncontended at 1 thread — overhead is ~10ns.
+            evaluator = ThreadSafeGPUDispatcher(evaluator)
+        if coalesce:
+            evaluator = BatchCoalescingDispatcher(evaluator, max_batch=max_batch)
+        _warmup_evaluator(evaluator)
+        return evaluator
+    return build
 
 
 def _build_engine(
@@ -93,6 +100,7 @@ def _build_engine(
     topk: int,
     n_walkers: int,
     vloss_weight: int,
+    rebuild_evaluator=None,
 ) -> Engine:
     worker = SearchWorker(
         evaluator,
@@ -102,7 +110,7 @@ def _build_engine(
         n_walkers=n_walkers,
         vloss_weight=vloss_weight,
     )
-    return Engine(worker)
+    return Engine(worker, rebuild_evaluator=rebuild_evaluator)
 
 
 def _pick_device(arg: str) -> str:
@@ -189,16 +197,17 @@ def main() -> int:
     def _build() -> None:
         try:
             n_walkers = max(1, int(args.walkers))
-            evaluator = _build_evaluator(
-                checkpoint=args.checkpoint, devices=devices,
-                max_batch=args.max_batch, n_walkers=n_walkers,
-                coalesce=bool(args.coalesce),
+            models = _load_models(args.checkpoint, devices)
+            build_eval = _make_evaluator_factory(
+                models, devices, coalesce=bool(args.coalesce),
             )
-            _warmup_evaluator(evaluator)
+            # Initial build: warms the evaluator too (see factory body).
+            evaluator = build_eval(args.max_batch)
             engine_ref[0] = _build_engine(
                 evaluator=evaluator, primary_device=devices[0],
                 chunk_sims=args.chunk_sims, topk=args.topk,
                 n_walkers=n_walkers, vloss_weight=int(args.vloss_weight),
+                rebuild_evaluator=build_eval,
             )
         except BaseException as exc:  # pragma: no cover — surfaced via readyok
             engine_error[0] = exc

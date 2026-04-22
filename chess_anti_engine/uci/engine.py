@@ -12,6 +12,7 @@ from __future__ import annotations
 import sys
 import threading
 from dataclasses import dataclass, replace
+from typing import Callable
 
 import chess
 
@@ -52,6 +53,7 @@ def emit_handshake(options: "EngineOptions") -> None:
         _println(line)
     _println(f"option name Hash type spin default {options.hash_mb} min 1024 max 524288")
     _println(f"option name Threads type spin default {options.threads} min 1 max 64")
+    _println(f"option name MaxBatch type spin default {options.max_batch} min 64 max 8192")
     _println("option name SyzygyPath type string default <empty>")
     _println(f"option name Ponder type check default {'true' if options.ponder else 'false'}")
     _println(format_uciok())
@@ -73,6 +75,10 @@ class EngineOptions:
     # Number of MCTS walker threads. 1 = classic Gumbel path; >1 = PUCT
     # walker pool with virtual loss. Set via UCI `Threads`.
     threads: int = 2
+    # Hardware-side max batch: the largest leaf-batch shape the evaluator
+    # allocates buffers + CUDA-graph captures for. Changing it rebuilds
+    # the evaluator + re-warmup (5-10s stall). Set via UCI `MaxBatch`.
+    max_batch: int = 1024
     # Syzygy tablebase directory path(s). Multiple paths separated by
     # OS-conventional separators (';' on Windows, ':' elsewhere) per the
     # de-facto UCI convention. Empty means disabled.
@@ -85,8 +91,18 @@ class EngineOptions:
 
 
 class Engine:
-    def __init__(self, worker: SearchWorker) -> None:
+    def __init__(
+        self,
+        worker: SearchWorker,
+        *,
+        rebuild_evaluator: "Callable[[int], object] | None" = None,
+    ) -> None:
         self._worker = worker
+        # Factory handed in by __main__. Captures the model, devices, and
+        # coalesce flag; takes a max_batch and returns a warmed-up
+        # evaluator. When None, the MaxBatch setoption silently no-ops
+        # (e.g., in unit-test harnesses that don't build a real evaluator).
+        self._rebuild_evaluator = rebuild_evaluator
         self._options = EngineOptions()
         self._worker.set_max_tree_mb(self._options.hash_mb)
         self._board = chess.Board()
@@ -315,6 +331,23 @@ class Engine:
                 f"info string Threads set to {n} "
                 f"({'walker pool' if n > 1 else 'classic Gumbel path'})"
             )
+        elif name == "maxbatch" and cmd.value is not None:
+            try:
+                mb = max(64, int(cmd.value))
+            except ValueError:
+                return
+            if self._rebuild_evaluator is None:
+                _println("info string MaxBatch ignored — no evaluator factory wired")
+                return
+            if mb == self._options.max_batch:
+                return
+            # Rebuild is 5-10s (CUDA graph recapture on first forward).
+            # User sees the stall only if they poll isready soon after.
+            _println(f"info string MaxBatch rebuilding evaluator at {mb}…")
+            new_eval = self._rebuild_evaluator(mb)
+            self._options.max_batch = mb
+            self._worker.set_evaluator(new_eval)
+            _println(f"info string MaxBatch set to {mb}; evaluator rebuilt + warmed")
         elif name == "syzygypath":
             value = (cmd.value or "").strip()
             # Conventional UCI sentinel for "unset".

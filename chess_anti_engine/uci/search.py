@@ -131,6 +131,17 @@ class SearchWorker:
             self._evaluator,
         )
 
+    def set_evaluator(self, evaluator: BatchEvaluator) -> None:
+        """Swap in a freshly-built (and warmed-up) evaluator. Rebuilds the
+        walker pool so it sees the new reference, resets the tree since
+        cached Q values were computed through the old evaluator. Caller
+        holds the search barrier (same pattern as ``set_num_threads`` /
+        ``set_tb_probe``).
+        """
+        self._evaluator = evaluator
+        self._walker_pool = self._build_walker_pool(self._n_walkers)
+        self.reset_tree()
+
     def set_num_threads(self, n: int) -> None:
         """Rebuild the walker pool at thread count ``n`` (1 = classic Gumbel
         path, no pool). Drops the persistent tree because walker-pool Q/N
