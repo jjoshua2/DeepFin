@@ -494,8 +494,25 @@ def run_tune(
             )
             if added_keys:
                 print(f"[run_tune] Added {len(added_keys)} new config keys to restored trial state: {sorted(added_keys)}")
+            # Ray's _validate_param_space_on_restore reads
+            # `__flattened_param_space_keys` from tuner.pkl (not the
+            # experiment_state-*.json we patched above). Any key we pass that
+            # isn't in that pickle triggers ValueError. Strip them; trainable
+            # reads the YAML each iter and re-applies values, so this only
+            # affects Ray's hyperparameter-tracking view, not runtime behavior.
+            try:
+                import pickle as _pickle
+                with (experiment_path / "tuner.pkl").open("rb") as _fh:
+                    _tuner_state = _pickle.load(_fh)
+                _ray_keys = set(_tuner_state.get("__flattened_param_space_keys") or [])
+                _drop = set(_restore_param_space.keys()) - _ray_keys
+                if _drop and _ray_keys:  # only strip if pkl was readable
+                    _restore_param_space = {k: v for k, v in _restore_param_space.items() if k not in _drop}
+                    print(f"[run_tune] Stripping keys absent from tuner.pkl for Ray validation: {sorted(_drop)}")
+            except (FileNotFoundError, _pickle.UnpicklingError, EOFError) as exc:
+                print(f"[run_tune] Could not read tuner.pkl for key filtering (non-fatal): {exc}")
             if skipped_keys:
-                _restore_param_space = {k: v for k, v in param_space.items() if k not in skipped_keys}
+                _restore_param_space = {k: v for k, v in _restore_param_space.items() if k not in skipped_keys}
                 print(
                     "[run_tune] Skipping non-JSON param_space keys for resume: "
                     f"{sorted(skipped_keys)}"
