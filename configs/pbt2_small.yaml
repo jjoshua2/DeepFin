@@ -119,8 +119,18 @@ selfplay:
   sf_policy_label_smooth: 0.05  # Halved from 0.10 to complement sf_multipv=20; less need to hallucinate tail coverage.
   soft_policy_temp: 3.0     # Temperature for soft policy target (LC0 uses 3, was hardcoded 2)
 
-  syzygy_path: null
-  syzygy_policy: false
+  syzygy_path: /home/josh/projects/chess/data/syzygy_3-4man
+  # End games at the first TB-eligible position and use the TB-proven result
+  # as the outcome. Skips MCTS compute on the endgame tail (~25% of replay
+  # positions are in <=7-man range — see the piece-count audit).
+  syzygy_adjudicate: true
+  # Override NN wdl logits at MCTS leaves when TB-eligible (UCI-style
+  # in-tree probing). Pins Q to TB truth for endgame leaves.
+  syzygy_in_search: true
+  # Override policy targets with DTZ-optimal moves at TB-eligible positions.
+  # Pairs with syzygy_adjudicate — eligible positions get both labels right
+  # (outcome from WDL, policy from DTZ).
+  syzygy_policy: true
 
   # Stockfish WDL confidence required to adjudicate max_plies timeouts as decisive.
   timeout_adjudication_threshold: 0.99
