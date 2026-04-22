@@ -208,7 +208,11 @@ def run_gumbel_root_many_c(
     _t_init = _time.perf_counter() - _t0
     # -- 3. Sequential halving with C tree ---------------------------------
 
-    _max_leaves_per_rep = n_boards * max(2, int(cfg.topk))
+    # Floor at 256 so single-game UCI (n_boards=1) gets a usefully-sized GPU
+    # batch. _enc_buf is _max_leaves_per_rep*2, so this gives a 512-slot buffer
+    # minimum (~19 MB). Without the floor, 1 board × topk=32 caps at 64 slots
+    # and gss_step flushes the halving round across 4-5 tiny GPU calls.
+    _max_leaves_per_rep = max(256, n_boards * max(2, int(cfg.topk)))
     _BUCKETS = (128, 256, 384, 512, 768, 1024, 1536, 2048, 4096)
 
     # ---- Pipelined simulation: split games into 2 groups ----------------
@@ -226,7 +230,7 @@ def run_gumbel_root_many_c(
         _grp = [list(range(mid)), list(range(mid, n_boards))]
         _trees = [MCTSTree(), MCTSTree()]
         _max_grp = max(mid, n_boards - mid)  # ceil half for odd splits
-        _leaf_cap = _max_grp * max(2, int(cfg.topk)) * 2
+        _leaf_cap = max(512, _max_grp * max(2, int(cfg.topk)) * 2)
         _enc_bufs = [
             np.empty((_leaf_cap, 146, 8, 8), dtype=np.float32)
             for _ in range(2)
