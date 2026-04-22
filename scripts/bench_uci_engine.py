@@ -51,14 +51,19 @@ _POSITIONS: list[tuple[str, str]] = [
 
 def _spawn(checkpoint: str, device: str, *,
            chunk_sims: int, topk: int, max_batch: int,
+           walkers: int = 1, coalesce: bool = True,
            log_level: str = "WARNING") -> subprocess.Popen[str]:
+    cmd = [sys.executable, "-u", "-m", "chess_anti_engine.uci",
+           "--checkpoint", checkpoint, "--device", device,
+           "--chunk-sims", str(chunk_sims),
+           "--topk", str(topk),
+           "--max-batch", str(max_batch),
+           "--walkers", str(walkers),
+           "--log-level", log_level]
+    if not coalesce:
+        cmd.append("--no-coalesce")
     return subprocess.Popen(
-        [sys.executable, "-u", "-m", "chess_anti_engine.uci",
-         "--checkpoint", checkpoint, "--device", device,
-         "--chunk-sims", str(chunk_sims),
-         "--topk", str(topk),
-         "--max-batch", str(max_batch),
-         "--log-level", log_level],
+        cmd,
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, bufsize=1,
     )
@@ -121,10 +126,12 @@ def _run_config(
     nodes: int, repeats: int, timeout_s: float,
     chunk_sims: int, topk: int, max_batch: int,
     label: str,
+    walkers: int = 1, coalesce: bool = True,
     log_level: str = "WARNING",
 ) -> None:
     proc = _spawn(checkpoint, device,
                   chunk_sims=chunk_sims, topk=topk, max_batch=max_batch,
+                  walkers=walkers, coalesce=coalesce,
                   log_level=log_level)
     reader = _LineReader(proc)
     _send(proc, "uci")
@@ -132,7 +139,8 @@ def _run_config(
     _send(proc, "isready")
     reader.read_until("readyok", timeout_s=60.0)
 
-    print(f"\n## {label}  chunk_sims={chunk_sims}  topk={topk}  max_batch={max_batch}")
+    coal_str = "" if walkers == 1 else f"  walkers={walkers}  coalesce={coalesce}"
+    print(f"\n## {label}  chunk_sims={chunk_sims}  topk={topk}  max_batch={max_batch}{coal_str}")
     try:
         position_stats: dict[str, list[float]] = {}
         profile_runs: list[dict[str, float]] = []
@@ -180,9 +188,17 @@ def main() -> int:
     p.add_argument("--timeout-s", type=float, default=120.0)
     p.add_argument("--sweep", action="store_true",
                    help="sweep predefined (chunk_sims, topk, max_batch) configs")
+    p.add_argument("--walker-sweep", action="store_true",
+                   help="sweep --walkers {1,2,4,8} at the production chunk=512/topk=32/mb=1024 config. "
+                        "Single-walker uses classic Gumbel; >1 switches to PUCT walker pool.")
     p.add_argument("--chunk-sims", type=int, default=32)
     p.add_argument("--topk", type=int, default=16)
     p.add_argument("--max-batch", type=int, default=32)
+    p.add_argument("--walkers", type=int, default=1,
+                   help="PUCT walker threads for a single --walkers config run (default 1 = Gumbel).")
+    p.add_argument("--no-coalesce", dest="coalesce", action="store_false",
+                   help="disable walker-call coalescing (only meaningful with --walkers > 1)")
+    p.set_defaults(coalesce=True)
     p.add_argument("--log-level", default="WARNING",
                    help="DEBUG to see per-search gumbel profile (GPU calls, avg batch, time breakdown).")
     args = p.parse_args()
@@ -209,11 +225,31 @@ def main() -> int:
                 chunk_sims=cs, topk=tk, max_batch=mb, label=label,
                 log_level=args.log_level,
             )
+    elif args.walker_sweep:
+        # Production chunk/topk/mb (2026-04-21 sweep winners). Vary walkers only.
+        # walkers=1 runs the classic Gumbel path; >1 switches to PUCT walker
+        # pool with virtual loss + batch coalescing.
+        walker_configs = [
+            ("walkers=1 (Gumbel)",         1,  True),
+            ("walkers=2 + coalesce",       2,  True),
+            ("walkers=4 + coalesce",       4,  True),
+            ("walkers=8 + coalesce",       8,  True),
+            ("walkers=4 no-coalesce",      4,  False),
+        ]
+        for label, w, coal in walker_configs:
+            _run_config(
+                args.checkpoint, args.device,
+                nodes=args.nodes, repeats=args.repeats, timeout_s=args.timeout_s,
+                chunk_sims=512, topk=32, max_batch=1024,
+                walkers=w, coalesce=coal, label=label,
+                log_level=args.log_level,
+            )
     else:
         _run_config(
             args.checkpoint, args.device,
             nodes=args.nodes, repeats=args.repeats, timeout_s=args.timeout_s,
             chunk_sims=args.chunk_sims, topk=args.topk, max_batch=args.max_batch,
+            walkers=args.walkers, coalesce=args.coalesce,
             label="single",
             log_level=args.log_level,
         )
