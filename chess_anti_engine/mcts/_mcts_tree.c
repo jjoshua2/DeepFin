@@ -23,6 +23,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -120,7 +121,12 @@ typedef struct {
     uint64_t stat_misses;
     uint64_t stat_inserts;
     uint64_t stat_insert_collisions;
+    /* Thread-safety (phase 4): sharded locks keyed by hash & (NCACHE_SHARDS-1).
+     * Walker pool probe/insert holds the shard lock. Uncontended x86 cost
+     * is ~10ns; sharding keeps contention sub-linear in walker count. */
+    pthread_mutex_t shard_locks[16];
 } NNCacheData;
+#define NCACHE_SHARDS 16
 
 static int nncache_init(NNCacheData *c, int32_t cap) {
     c->cap = cap;
@@ -132,42 +138,74 @@ static int nncache_init(NNCacheData *c, int32_t cap) {
     c->stat_inserts = 0;
     c->stat_insert_collisions = 0;
     c->entries = (NNCacheEntry *)calloc(cap, sizeof(NNCacheEntry));
-    return c->entries ? 0 : -1;
+    if (!c->entries) return -1;
+    for (int i = 0; i < NCACHE_SHARDS; i++) {
+        if (pthread_mutex_init(&c->shard_locks[i], NULL) != 0) {
+            for (int j = 0; j < i; j++) pthread_mutex_destroy(&c->shard_locks[j]);
+            free(c->entries);
+            c->entries = NULL;
+            return -1;
+        }
+    }
+    return 0;
 }
 
 static void nncache_free(NNCacheData *c) {
+    if (c->entries) {
+        for (int i = 0; i < NCACHE_SHARDS; i++) pthread_mutex_destroy(&c->shard_locks[i]);
+    }
     free(c->entries);
     c->entries = NULL;
     c->count = 0;
 }
 
-/* Probe cache. Returns pointer to entry if hit, NULL if miss. */
+static inline pthread_mutex_t *nncache_shard(NNCacheData *c, uint64_t hash) {
+    return &c->shard_locks[hash & (NCACHE_SHARDS - 1)];
+}
+
+/* Probe cache (thread-safe). Returns locked pointer to entry on hit, NULL on
+ * miss. On hit the caller OWNS the shard lock and MUST call nncache_release
+ * after reading entry fields. Keeps priors/legal arrays stable against a
+ * concurrent insert racing in on the same shard.
+ *
+ * Serial callers still get correct behavior — lock/unlock is ~10ns. */
 static NNCacheEntry *nncache_probe(NNCacheData *c, uint64_t hash) {
     int32_t slot = (int32_t)(hash & (uint64_t)c->mask);
+    pthread_mutex_t *lk = nncache_shard(c, hash);
+    pthread_mutex_lock(lk);
     NNCacheEntry *e = &c->entries[slot];
     if (e->generation == c->generation && e->key == hash) {
         c->stat_hits++;
-        return e;
+        return e;  /* caller owns the shard lock */
     }
     c->stat_misses++;
+    pthread_mutex_unlock(lk);
     return NULL;
 }
 
-/* Insert into cache (direct-mapped, keeps existing same-generation entry).
- * Returns entry pointer to fill, or NULL if slot is occupied by a
- * same-generation entry with a different key (preserve older entry). */
+/* Release the shard lock returned by a successful nncache_probe hit. */
+static inline void nncache_release(NNCacheData *c, uint64_t hash) {
+    pthread_mutex_unlock(nncache_shard(c, hash));
+}
+
+/* Insert into cache (thread-safe). Caller must call nncache_release on
+ * the same hash after writing entry fields. Returns NULL (with lock
+ * already released) if slot collides with another live entry. */
 static NNCacheEntry *nncache_insert(NNCacheData *c, uint64_t hash) {
     int32_t slot = (int32_t)(hash & (uint64_t)c->mask);
+    pthread_mutex_t *lk = nncache_shard(c, hash);
+    pthread_mutex_lock(lk);
     NNCacheEntry *e = &c->entries[slot];
     if (e->generation == c->generation && e->key != hash) {
         c->stat_insert_collisions++;
+        pthread_mutex_unlock(lk);
         return NULL;  /* keep existing entry (older = more useful) */
     }
     if (e->generation != c->generation) c->count++;
     c->stat_inserts++;
     e->key = hash;
     e->generation = c->generation;
-    return e;
+    return e;  /* caller owns the shard lock */
 }
 
 /* ================================================================
@@ -211,6 +249,24 @@ typedef struct {
     int32_t  *hash_table;
     int32_t   ht_cap;       /* power of 2 */
     int32_t   ht_mask;      /* ht_cap - 1 */
+
+    /* Structure-mutation lock (phase 4): held during tree_expand (which can
+     * trigger tree_grow_nodes/tree_grow_children realloc), tree_ht_insert,
+     * and other writes that could race with concurrent walkers.
+     *
+     * Readers (descent, backprop) do NOT hold this lock on the hot path:
+     *   - N[] is atomically incremented in tree_backprop
+     *   - expanded[] uses acquire/release atomics so "expanded==1" implies
+     *     children[] / children_offset[] / num_children[] are fully visible
+     *   - W[] is read racily (torn double is theoretically possible on
+     *     non-x86; on x86_64 aligned 8-byte reads are atomic); stale Q is
+     *     tolerated, matching the lc0 MCTS concurrency model.
+     *
+     * Realloc (tree_grow_nodes) is the only scenario where readers can
+     * segfault on a stale pointer. Callers that expect multi-walker use
+     * MUST call MCTSTree.reserve(max_nodes) upfront so no realloc fires
+     * during concurrent descent. */
+    pthread_mutex_t tree_lock;
 } TreeData;
 
 
@@ -252,11 +308,16 @@ static int tree_init(TreeData *t) {
     memset(t->parent, -1, t->node_cap * sizeof(int32_t));
     memset(t->action_from_parent, -1, t->node_cap * sizeof(int32_t));
     memset(t->hash_table, -1, t->ht_cap * sizeof(int32_t));
+    if (pthread_mutex_init(&t->tree_lock, NULL) != 0) return -1;
     return 0;
 }
 
 
 static void tree_free(TreeData *t) {
+    /* Destroy the mutex only if the struct was actually initialized —
+     * callers that hit OOM mid-tree_init bail before the mutex is set up,
+     * and zeroing pthread_mutex_t + destroying is undefined on glibc. */
+    if (t->N) pthread_mutex_destroy(&t->tree_lock);
     free(t->N);
     free(t->W);
     free(t->prior);
@@ -319,24 +380,38 @@ static int tree_grow_nodes(TreeData *t) {
 }
 
 
-/* Hash table: probe for existing node with given Zobrist hash. Returns node_id or -1. */
+/* Hash table: probe for existing node with given Zobrist hash. Returns node_id or -1.
+ *
+ * Thread-safety: acquire-load on hash_table[slot] pairs with release-store
+ * in tree_ht_insert so that if we see a nid, node_hash[nid] is also visible. */
 static int32_t tree_ht_probe(const TreeData *t, uint64_t hash) {
     int32_t slot = (int32_t)(hash & (uint64_t)t->ht_mask);
-    int32_t nid = t->hash_table[slot];
+    int32_t nid = __atomic_load_n(&t->hash_table[slot], __ATOMIC_ACQUIRE);
     if (nid >= 0 && t->node_hash[nid] == hash)
         return nid;
     return -1;
 }
 
-/* Hash table: register node_id for given hash (direct-mapped, overwrites on collision). */
-static void tree_ht_insert(TreeData *t, uint64_t hash, int32_t node_id) {
+/* Hash table: register node_id for given hash. Must be called under
+ * tree_lock (guaranteed by tree_ht_insert wrapper below or by direct
+ * callers that already hold the lock). Uses release-store on the slot
+ * so probers that do an acquire-load see a coherent (slot, node_hash) pair. */
+static void tree_ht_insert_locked(TreeData *t, uint64_t hash, int32_t node_id) {
     int32_t slot = (int32_t)(hash & (uint64_t)t->ht_mask);
-    /* Don't overwrite an existing exact-hash entry (keep canonical node) */
     int32_t existing = t->hash_table[slot];
     if (existing >= 0 && existing < t->node_count && t->node_hash[existing] == hash)
         return;
-    t->hash_table[slot] = node_id;
+    /* Write node_hash BEFORE publishing into the slot — probers that read
+     * nid via acquire-load and then check node_hash[nid] must see the
+     * correct hash, not a stale one. */
     t->node_hash[node_id] = hash;
+    __atomic_store_n(&t->hash_table[slot], node_id, __ATOMIC_RELEASE);
+}
+
+static void tree_ht_insert(TreeData *t, uint64_t hash, int32_t node_id) {
+    pthread_mutex_lock(&t->tree_lock);
+    tree_ht_insert_locked(t, hash, node_id);
+    pthread_mutex_unlock(&t->tree_lock);
 }
 
 
@@ -396,15 +471,31 @@ static int32_t tree_add_node(TreeData *t, int32_t parent_id, int32_t action, dou
 
 /* Expand a node: add children for each (action, prior) pair.
  * All-or-nothing: if any tree_add_node fails, the node is left unexpanded
- * and any partially-allocated child nodes are rolled back. */
+ * and any partially-allocated child nodes are rolled back.
+ *
+ * Thread-safety: holds tree_lock for the critical section (alloc + realloc
+ * + children writes). Publishes expanded[node_id] = 1 with release semantics
+ * so acquire-loading readers see a fully-populated (children_offset,
+ * num_children, child_action, child_node) view. */
 static int tree_expand(TreeData *t, int32_t node_id,
                        const int32_t *actions, const double *priors, int32_t n_children) {
+    pthread_mutex_lock(&t->tree_lock);
+    /* Re-check under the lock: another walker may have already expanded
+     * this node between our descent and acquiring the lock. Idempotent. */
+    if (__atomic_load_n(&t->expanded[node_id], __ATOMIC_RELAXED)) {
+        pthread_mutex_unlock(&t->tree_lock);
+        return 0;
+    }
     if (n_children <= 0) {
-        t->expanded[node_id] = 1;
+        __atomic_store_n(&t->expanded[node_id], 1, __ATOMIC_RELEASE);
+        pthread_mutex_unlock(&t->tree_lock);
         return 0;
     }
 
-    if (tree_grow_children(t, n_children) < 0) return -1;
+    if (tree_grow_children(t, n_children) < 0) {
+        pthread_mutex_unlock(&t->tree_lock);
+        return -1;
+    }
 
     int32_t offset = t->child_count;
     int32_t saved_node_count = t->node_count;
@@ -412,19 +503,20 @@ static int tree_expand(TreeData *t, int32_t node_id,
     for (int32_t i = 0; i < n_children; i++) {
         int32_t child_id = tree_add_node(t, node_id, actions[i], priors[i]);
         if (child_id < 0) {
-            /* Roll back: children added so far revert; node stays unexpanded. */
             t->node_count = saved_node_count;
+            pthread_mutex_unlock(&t->tree_lock);
             return -1;
         }
         t->child_action[offset + i] = actions[i];
         t->child_node[offset + i] = child_id;
     }
 
-    /* Commit only after all children exist. */
     t->children_offset[node_id] = offset;
     t->num_children[node_id] = n_children;
-    t->expanded[node_id] = 1;
     t->child_count += n_children;
+    /* Release publishes the whole children payload to acquire-loaders. */
+    __atomic_store_n(&t->expanded[node_id], 1, __ATOMIC_RELEASE);
+    pthread_mutex_unlock(&t->tree_lock);
     return 0;
 }
 
@@ -491,7 +583,10 @@ static int32_t tree_select_leaf(const TreeData *t, int32_t root_id,
     path[depth++] = node;
 
     double fpu = fpu_at_root;
-    while (t->expanded[node] && t->num_children[node] > 0) {
+    /* Acquire-load pairs with release-store in tree_expand: when we see
+     * expanded==1, the full children_offset/num_children/child_node view
+     * is visible. */
+    while (__atomic_load_n(&t->expanded[node], __ATOMIC_ACQUIRE) && t->num_children[node] > 0) {
         if (depth >= max_path) break;
         int32_t slot = tree_select_child(t, node, c_puct, fpu);
         int32_t off = t->children_offset[node];
@@ -504,12 +599,19 @@ static int32_t tree_select_leaf(const TreeData *t, int32_t root_id,
 
 
 /* Backprop value up the path. Value is from leaf's side-to-move perspective.
- * Alternates sign at each level. */
+ * Alternates sign at each level.
+ *
+ * Thread-safety: N is atomically incremented (RELAXED is fine — we don't
+ * need to order backprop against any particular external event). W is
+ * non-atomic: on x86_64 aligned 8-byte writes are atomic at the ISA level,
+ * and concurrent walkers reading Q can tolerate one-cycle stale W — this
+ * is the standard lc0/KataGo concurrency model. Torn-double on non-x86
+ * would produce slightly nonsense Q for one walker's select, not a crash. */
 static void tree_backprop(TreeData *t, const int32_t *path, int32_t path_len, double value) {
     double v = value;
     for (int32_t i = path_len - 1; i >= 0; i--) {
         int32_t nid = path[i];
-        t->N[nid] += 1;
+        __atomic_fetch_add(&t->N[nid], 1, __ATOMIC_RELAXED);
         t->W[nid] += v;
         v = -v;
     }
@@ -951,9 +1053,10 @@ static int32_t gss_prepare_batch(
         }
 
         /* Transposition / NNCache check */
-        if (!t->expanded[leaf_id]) {
+        if (!__atomic_load_n(&t->expanded[leaf_id], __ATOMIC_ACQUIRE)) {
             int32_t existing = tree_ht_probe(t, cb.hash);
-            if (existing >= 0 && existing != leaf_id && t->expanded[existing]) {
+            if (existing >= 0 && existing != leaf_id &&
+                __atomic_load_n(&t->expanded[existing], __ATOMIC_ACQUIRE)) {
                 int32_t n_ch = t->num_children[existing];
                 if (n_ch > 0) {
                     int32_t ex_off = t->children_offset[existing];
@@ -966,7 +1069,7 @@ static int32_t gss_prepare_batch(
                     }
                     tree_expand(t, leaf_id, legal_buf, prior_buf, n_copy);
                 } else {
-                    t->expanded[leaf_id] = 1;
+                    __atomic_store_n(&t->expanded[leaf_id], 1, __ATOMIC_RELEASE);
                 }
                 double q = (t->N[existing] > 0) ? (t->W[existing] / (double)t->N[existing]) : 0.0;
                 tree_backprop(t, path_buf, path_len, q);
@@ -977,8 +1080,17 @@ static int32_t gss_prepare_batch(
             if (g->nncache) {
                 NNCacheEntry *ce = nncache_probe(g->nncache, cb.hash);
                 if (ce) {
-                    tree_expand(t, leaf_id, ce->legal, ce->priors, ce->n_legal);
-                    tree_backprop(t, path_buf, path_len, ce->q_value);
+                    /* Copy fields under the shard lock, then release before
+                     * calling tree_expand (which takes its own lock). */
+                    int32_t legal_copy[NNCACHE_MAX_LEGAL];
+                    double  prior_copy[NNCACHE_MAX_LEGAL];
+                    int32_t n_legal_copy = ce->n_legal;
+                    double  q_copy = ce->q_value;
+                    memcpy(legal_copy, ce->legal, n_legal_copy * sizeof(int32_t));
+                    memcpy(prior_copy, ce->priors, n_legal_copy * sizeof(double));
+                    nncache_release(g->nncache, cb.hash);
+                    tree_expand(t, leaf_id, legal_copy, prior_copy, n_legal_copy);
+                    tree_backprop(t, path_buf, path_len, q_copy);
                     tree_ht_insert(t, cb.hash, leaf_id);
                     if (cache_ok) tree_cb_cache_put(t, leaf_id, &cb);
                     continue;
@@ -1036,7 +1148,7 @@ static void gss_finish_batch(
         const float *wdl = wdl_data + li * 3;
         double q = wdl_logits_to_q((double)wdl[0], (double)wdl[1], (double)wdl[2]);
 
-        if (!t->expanded[nid] && n_legal > 0) {
+        if (!__atomic_load_n(&t->expanded[nid], __ATOMIC_ACQUIRE) && n_legal > 0) {
             const float *logits = pol_data + li * 4672;
             double priors_stack[256];
             double *priors = (n_legal <= 256) ? priors_stack
@@ -1053,6 +1165,7 @@ static void gss_finish_batch(
                         memcpy(ce->legal, legal, n_legal * sizeof(int32_t));
                         memcpy(ce->priors, priors, n_legal * sizeof(double));
                         ce->q_value = q;
+                        nncache_release(nncache, s->hashes[li]);
                     }
                 }
                 if (priors != priors_stack) free(priors);
@@ -1304,13 +1417,27 @@ static PyObject *PyNNCache_probe(PyNNCacheObject *self, PyObject *args) {
     NNCacheEntry *e = nncache_probe(&self->cache, (uint64_t)hash);
     if (!e)
         Py_RETURN_NONE;
-    /* Return (legal_indices, priors, q_value) */
-    npy_intp dims[1] = {e->n_legal};
+    /* Copy fields into stack buffers while the shard lock is held, then
+     * release before doing Python allocation (which can arbitrarily long-tail
+     * on GC and would block other walkers on this shard). */
+    int32_t n_legal = e->n_legal;
+    int32_t legal_buf[NNCACHE_MAX_LEGAL];
+    double  prior_buf[NNCACHE_MAX_LEGAL];
+    double  q_copy = e->q_value;
+    memcpy(legal_buf, e->legal, n_legal * sizeof(int32_t));
+    memcpy(prior_buf, e->priors, n_legal * sizeof(double));
+    nncache_release(&self->cache, (uint64_t)hash);
+
+    npy_intp dims[1] = {n_legal};
     PyObject *legal_arr = PyArray_SimpleNew(1, dims, NPY_INT32);
     PyObject *prior_arr = PyArray_SimpleNew(1, dims, NPY_FLOAT64);
-    memcpy(PyArray_DATA((PyArrayObject *)legal_arr), e->legal, e->n_legal * sizeof(int32_t));
-    memcpy(PyArray_DATA((PyArrayObject *)prior_arr), e->priors, e->n_legal * sizeof(double));
-    return Py_BuildValue("(NNd)", legal_arr, prior_arr, e->q_value);
+    if (!legal_arr || !prior_arr) {
+        Py_XDECREF(legal_arr); Py_XDECREF(prior_arr);
+        return NULL;
+    }
+    memcpy(PyArray_DATA((PyArrayObject *)legal_arr), legal_buf, n_legal * sizeof(int32_t));
+    memcpy(PyArray_DATA((PyArrayObject *)prior_arr), prior_buf, n_legal * sizeof(double));
+    return Py_BuildValue("(NNd)", legal_arr, prior_arr, q_copy);
 }
 
 static PyObject *PyNNCache_stats(PyNNCacheObject *self, PyObject *Py_UNUSED(ignored)) {
@@ -1696,7 +1823,8 @@ static int32_t tree_gumbel_collect_leaf(const TreeData *t, int32_t root_id,
     path[depth++] = child_id;
     int32_t node = child_id;
 
-    while (t->expanded[node] && t->num_children[node] > 0) {
+    /* Acquire-load pairs with release-store in tree_expand. */
+    while (__atomic_load_n(&t->expanded[node], __ATOMIC_ACQUIRE) && t->num_children[node] > 0) {
         if (depth >= max_path) break;
 
         int32_t n_ch2 = t->num_children[node];
@@ -1895,6 +2023,40 @@ static PyObject *MCTSTree_reset(MCTSTreeObject *self, PyObject *Py_UNUSED(args))
 }
 
 
+/* reserve(node_cap, child_cap=0) -> None.
+ *
+ * Pre-grows the tree's per-node arrays (and child arrays if child_cap>0)
+ * so that no tree_grow_nodes / tree_grow_children realloc fires during
+ * subsequent concurrent descent. Required before running multiple walkers
+ * against one tree — otherwise a reader can dereference a stale pointer
+ * after a mid-descent realloc. Safe to call at any time.
+ *
+ * Idempotent: shrinking not supported (calls with smaller caps are no-ops). */
+static PyObject *MCTSTree_reserve(MCTSTreeObject *self, PyObject *args) {
+    int node_cap, child_cap = 0;
+    if (!PyArg_ParseTuple(args, "i|i", &node_cap, &child_cap)) return NULL;
+    TreeData *t = &self->tree;
+    pthread_mutex_lock(&t->tree_lock);
+    while (t->node_cap < node_cap) {
+        if (tree_grow_nodes(t) < 0) {
+            pthread_mutex_unlock(&t->tree_lock);
+            PyErr_NoMemory();
+            return NULL;
+        }
+    }
+    if (child_cap > t->child_count) {
+        int32_t need = child_cap - t->child_count;
+        if (tree_grow_children(t, need) < 0) {
+            pthread_mutex_unlock(&t->tree_lock);
+            PyErr_NoMemory();
+            return NULL;
+        }
+    }
+    pthread_mutex_unlock(&t->tree_lock);
+    Py_RETURN_NONE;
+}
+
+
 /* get_virtual_loss(node_id) -> int. Accessor for tests of the walker-pool
  * vloss scaffolding (phase 2+3). Returns 0 for out-of-range ids rather than
  * raising — matches is_expanded() / node_q() behavior on bad ids. */
@@ -1990,7 +2152,7 @@ static PyObject *MCTSTree_expand_from_logits(MCTSTreeObject *self, PyObject *arg
     const float *logits = (const float *)PyArray_DATA(logits_arr);
 
     if (n_legal <= 0) {
-        self->tree.expanded[node_id] = 1;
+        __atomic_store_n(&self->tree.expanded[node_id], 1, __ATOMIC_RELEASE);
         Py_DECREF(legal_arr);
         Py_DECREF(logits_arr);
         Py_RETURN_NONE;
@@ -2604,6 +2766,8 @@ static PyMethodDef MCTSTree_methods[] = {
      "node_count() -> int"},
     {"reset", (PyCFunction)MCTSTree_reset, METH_NOARGS,
      "reset() -> None"},
+    {"reserve", (PyCFunction)MCTSTree_reserve, METH_VARARGS,
+     "reserve(node_cap, child_cap=0) -> None (pre-grow for concurrent use)"},
     {"get_virtual_loss", (PyCFunction)MCTSTree_get_virtual_loss, METH_VARARGS,
      "get_virtual_loss(node_id) -> int"},
     {"apply_vloss_path", (PyCFunction)MCTSTree_apply_vloss_path, METH_VARARGS,
