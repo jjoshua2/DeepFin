@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import threading
 
@@ -109,7 +110,11 @@ def _pick_device(arg: str) -> str:
 
 def main() -> int:
     p = argparse.ArgumentParser(prog="chess-anti-engine-uci")
-    p.add_argument("--checkpoint", required=True, help="path to trainer.pt or checkpoint dir")
+    # --checkpoint is required, but we accept DEEPFIN_CKPT as the default so
+    # the `deepfin` console-script entry point (from pyproject.toml) can be
+    # launched as a bare executable by chess GUIs that don't pass CLI args.
+    p.add_argument("--checkpoint", default=os.environ.get("DEEPFIN_CKPT"),
+                   help="path to trainer.pt or checkpoint dir (falls back to $DEEPFIN_CKPT)")
     p.add_argument("--device", default="auto", help="cpu|cuda|cuda:N (default: auto)")
     p.add_argument("--devices", default=None,
                    help="comma-separated device list for multi-GPU (e.g. 'cuda:0,cuda:1'). Overrides --device.")
@@ -136,6 +141,12 @@ def main() -> int:
     p.add_argument("--vloss-weight", type=int, default=3,
                    help="virtual-loss weight in walker mode (default: 3, lc0 default)")
     args = p.parse_args()
+
+    if not args.checkpoint:
+        p.error(
+            "--checkpoint is required (or set DEEPFIN_CKPT in the environment). "
+            "GUI launchers typically set DEEPFIN_CKPT in the shell profile."
+        )
 
     # Logs must go to stderr — stdout is reserved for UCI protocol.
     logging.basicConfig(

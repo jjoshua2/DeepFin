@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# DeepFin UCI entry point. Launchable directly on Linux/macOS/WSL, or via
+# scripts/deepfin.bat on Windows (which bridges into WSL).
+#
+# The project location is resolved from this script's path, so the wrapper
+# is relocatable — no edits needed after cloning to a different directory.
+#
+# DEEPFIN_CKPT is REQUIRED: point it at your trainer.pt. Set it in your
+# shell profile so GUIs (which don't inject env vars) can find it, e.g.:
+#   echo 'export DEEPFIN_CKPT=$HOME/ckpts/deepfin.pt' >> ~/.bashrc
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="${DEEPFIN_PROJECT_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+
+if [ -z "${DEEPFIN_CKPT:-}" ]; then
+    echo "DeepFin: DEEPFIN_CKPT is not set." >&2
+    echo "Set it to your trainer.pt path, e.g. in ~/.bashrc:" >&2
+    echo "    export DEEPFIN_CKPT=\$HOME/ckpts/deepfin.pt" >&2
+    exit 1
+fi
+if [ ! -f "$DEEPFIN_CKPT" ]; then
+    echo "DeepFin: checkpoint not found: $DEEPFIN_CKPT" >&2
+    exit 1
+fi
+
+cd "$PROJECT_DIR"
+exec env PYTHONPATH=. python3 -m chess_anti_engine.uci \
+    --checkpoint "$DEEPFIN_CKPT" "$@"

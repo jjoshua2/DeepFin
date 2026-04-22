@@ -43,6 +43,19 @@ from .time_manager import Deadline, SearchLimits, limits_from_go
 _ENGINE_NAME = "DeepFin"
 _ENGINE_AUTHOR = "jjosh"
 
+
+def emit_handshake(options: "EngineOptions") -> None:
+    """Print the UCI `uci` response — id, options, uciok — using ``options``
+    defaults. Kept out of the Engine class so ``__main__`` can reply to the
+    GUI before model load finishes (standard Lc0 pattern: the handshake is
+    static, ``readyok`` still waits for real readiness)."""
+    for line in format_id_lines(_ENGINE_NAME, _ENGINE_AUTHOR):
+        _println(line)
+    _println(f"option name Hash type spin default {options.hash_mb} min 1024 max 524288")
+    _println("option name SyzygyPath type string default <empty>")
+    _println(f"option name Ponder type check default {'true' if options.ponder else 'false'}")
+    _println(format_uciok())
+
 # How long to wait for a search thread to honor `stop`. 5s was too tight:
 # a cold CUDA-graph compile on the first search can take ~3-4s, which
 # previously let a slow stop orphan a running thread that would later
@@ -133,12 +146,7 @@ class Engine:
     # -- handlers -------------------------------------------------------------
 
     def _handle_uci(self) -> None:
-        for line in format_id_lines(_ENGINE_NAME, _ENGINE_AUTHOR):
-            _println(line)
-        _println(f"option name Hash type spin default {self._options.hash_mb} min 1024 max 524288")
-        _println("option name SyzygyPath type string default <empty>")
-        _println(f"option name Ponder type check default {'true' if self._options.ponder else 'false'}")
-        _println(format_uciok())
+        emit_handshake(self._options)
 
     def _handle_isready(self) -> None:
         # Block until any running search has responded to a stop. Simpler

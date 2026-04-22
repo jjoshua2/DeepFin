@@ -11,6 +11,9 @@ dependencies = [
   "zarr>=2.18",
 ]
 
+[project.scripts]
+deepfin = "chess_anti_engine.uci.__main__:main"
+
 [build-system]
 requires = ["setuptools>=70", "wheel", "numpy>=1.24"]
 build-backend = "setuptools.build_meta"
