@@ -3002,6 +3002,10 @@ static PyMethodDef MCTSTree_methods[] = {
      "apply_vloss_path(path: int32[]) -> None (skips path[0] = root)"},
     {"remove_vloss_path", (PyCFunction)MCTSTree_remove_vloss_path, METH_VARARGS,
      "remove_vloss_path(path: int32[]) -> None (floors at 0; pair with apply_vloss_path)"},
+    {"walker_descend_puct", (PyCFunction)MCTSTree_walker_descend_puct, METH_VARARGS,
+     "walker_descend_puct(root_id, root_cboard, c_puct, fpu_root, fpu_reduction, vloss_weight, enc_out) -> (leaf_id, node_path, legal, terminal_q_or_None)"},
+    {"walker_integrate_leaf", (PyCFunction)MCTSTree_walker_integrate_leaf, METH_VARARGS,
+     "walker_integrate_leaf(node_path, legal, pol_logits, wdl_logits, vloss_weight) -> None"},
     {NULL}
 };
 

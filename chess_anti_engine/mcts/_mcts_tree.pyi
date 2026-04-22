@@ -59,6 +59,24 @@ class MCTSTree:
     def get_virtual_loss(self, node_id: int) -> int: ...
     def apply_vloss_path(self, path: NDArray[np.int32]) -> None: ...
     def remove_vloss_path(self, path: NDArray[np.int32]) -> None: ...
+    def walker_descend_puct(
+        self,
+        root_id: int,
+        root_cboard: CBoard,
+        c_puct: float,
+        fpu_root: float,
+        fpu_reduction: float,
+        vloss_weight: int,
+        enc_out: NDArray[np.float32],
+    ) -> tuple[int, NDArray[np.int32], NDArray[np.int32], float | None]: ...
+    def walker_integrate_leaf(
+        self,
+        node_path: NDArray[np.int32],
+        legal: NDArray[np.int32],
+        pol_logits: NDArray[np.float32],
+        wdl_logits: NDArray[np.float32],
+        vloss_weight: int,
+    ) -> None: ...
 
 def batch_process_ply(
     cboards: list[CBoard],
