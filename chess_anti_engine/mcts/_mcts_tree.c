@@ -187,6 +187,7 @@ typedef struct {
     int32_t *action_from_parent; /* action index that led here from parent */
     int32_t *num_children;     /* number of children */
     int32_t *children_offset;  /* offset into children pool */
+    int32_t *virtual_loss;     /* vloss count per node (walker-pool scaffolding, phase 2+3). */
 
     int32_t node_count;
     int32_t node_cap;
@@ -227,6 +228,7 @@ static int tree_init(TreeData *t) {
     t->action_from_parent = (int32_t *)malloc(t->node_cap * sizeof(int32_t));
     t->num_children = (int32_t *)calloc(t->node_cap, sizeof(int32_t));
     t->children_offset = (int32_t *)calloc(t->node_cap, sizeof(int32_t));
+    t->virtual_loss = (int32_t *)calloc(t->node_cap, sizeof(int32_t));
 
     t->child_action = (int32_t *)malloc(t->child_cap * sizeof(int32_t));
     t->child_node = (int32_t *)malloc(t->child_cap * sizeof(int32_t));
@@ -243,6 +245,7 @@ static int tree_init(TreeData *t) {
 
     if (!t->N || !t->W || !t->prior || !t->expanded || !t->parent ||
         !t->action_from_parent || !t->num_children || !t->children_offset ||
+        !t->virtual_loss ||
         !t->child_action || !t->child_node || !t->node_hash || !t->hash_table) {
         return -1;
     }
@@ -262,6 +265,7 @@ static void tree_free(TreeData *t) {
     free(t->action_from_parent);
     free(t->num_children);
     free(t->children_offset);
+    free(t->virtual_loss);
     free(t->child_action);
     free(t->child_node);
     free(t->cb_cache);
@@ -292,6 +296,7 @@ static int tree_grow_nodes(TreeData *t) {
     GROW(action_from_parent, int32_t);
     GROW(num_children, int32_t);
     GROW(children_offset, int32_t);
+    GROW(virtual_loss, int32_t);
     GROW(node_hash, uint64_t);
 
     #undef GROW
@@ -306,6 +311,7 @@ static int tree_grow_nodes(TreeData *t) {
     memset(t->action_from_parent + old_cap, -1, (new_cap - old_cap) * sizeof(int32_t));
     memset(t->num_children + old_cap, 0, (new_cap - old_cap) * sizeof(int32_t));
     memset(t->children_offset + old_cap, 0, (new_cap - old_cap) * sizeof(int32_t));
+    memset(t->virtual_loss + old_cap, 0, (new_cap - old_cap) * sizeof(int32_t));
     memset(t->node_hash + old_cap, 0, (new_cap - old_cap) * sizeof(uint64_t));
 
     t->node_cap = new_cap;
@@ -1802,6 +1808,19 @@ static PyObject *MCTSTree_reset(MCTSTreeObject *self, PyObject *Py_UNUSED(args))
 }
 
 
+/* get_virtual_loss(node_id) -> int. Accessor for tests of the walker-pool
+ * vloss scaffolding (phase 2+3). Returns 0 for out-of-range ids rather than
+ * raising — matches is_expanded() / node_q() behavior on bad ids. */
+static PyObject *MCTSTree_get_virtual_loss(MCTSTreeObject *self, PyObject *args) {
+    int node_id;
+    if (!PyArg_ParseTuple(args, "i", &node_id))
+        return NULL;
+    if (node_id < 0 || node_id >= self->tree.node_count)
+        return PyLong_FromLong(0);
+    return PyLong_FromLong(self->tree.virtual_loss[node_id]);
+}
+
+
 /*
  * expand_from_logits(node_id, legal_indices_int32, logits_float32_4672)
  *   -> None
@@ -2292,6 +2311,72 @@ static PyObject *MCTSTree_continue_gumbel_sims(MCTSTreeObject *self, PyObject *a
 
 
 /*
+ * get_pending_tb_leaves(max_pieces) -> (indices: np.int32, list[CBoard])
+ *
+ * Between start/continue_gumbel_sims returning n_leaves > 0 and the caller
+ * calling continue_gumbel_sims with NN outputs, StoredPrepState holds the
+ * leaf CBoards corresponding to rows [0..n_leaves-1] of the encoded-planes
+ * buffer. This method returns the Syzygy-eligible subset (popcount(occ) ≤
+ * max_pieces AND castling == 0), paired with their original indices.
+ *
+ * Filtering in C skips the PyCBoard alloc + Python iteration for ineligible
+ * leaves — during opening/middlegame almost every leaf fails the popcount
+ * check, so the per-batch cost drops to a single popcount loop.
+ */
+static PyObject *MCTSTree_get_pending_tb_leaves(MCTSTreeObject *self, PyObject *args) {
+    int max_pieces;
+    if (!PyArg_ParseTuple(args, "i", &max_pieces))
+        return NULL;
+    StoredPrepState *s = &self->stored;
+    GumbelSimState *g = &self->gsim;
+    if (g->phase != 1) {
+        PyErr_SetString(PyExc_RuntimeError,
+            "get_pending_tb_leaves: no batch pending (phase != 1)");
+        return NULL;
+    }
+    PyTypeObject *cb_type = _cached_cboard_type;
+    if (!cb_type) {
+        PyErr_SetString(PyExc_RuntimeError,
+            "CBoard type not cached; call start_gumbel_sims first");
+        return NULL;
+    }
+    int32_t n = s->n_leaves;
+
+    /* Stack buffer sized for max MCTS batch; n_leaves ≤ GSS_GPU_BATCH which
+     * is O(few hundred), so a fixed-size alloca-style array is fine. */
+    int32_t elig_idx[4096];
+    int32_t n_elig = 0;
+    int32_t n_scan = (n < 4096) ? n : 4096;
+    for (int32_t i = 0; i < n_scan; i++) {
+        const CBoard *cb = &s->leaf_cboards[i];
+        if (cb->castling != 0) continue;
+        uint64_t occ = cb->occ[0] | cb->occ[1];
+        if (popcount64(occ) > max_pieces) continue;
+        elig_idx[n_elig++] = i;
+    }
+
+    npy_intp dims[1] = { n_elig };
+    PyArrayObject *idx_arr = (PyArrayObject *)PyArray_SimpleNew(1, dims, NPY_INT32);
+    if (!idx_arr) return NULL;
+    if (n_elig > 0) {
+        memcpy(PyArray_DATA(idx_arr), elig_idx, n_elig * sizeof(int32_t));
+    }
+    PyObject *lst = PyList_New(n_elig);
+    if (!lst) { Py_DECREF(idx_arr); return NULL; }
+    for (int32_t j = 0; j < n_elig; j++) {
+        PyCBoard *cp = (PyCBoard *)cb_type->tp_alloc(cb_type, 0);
+        if (!cp) { Py_DECREF(idx_arr); Py_DECREF(lst); return NULL; }
+        cp->board = s->leaf_cboards[elig_idx[j]];
+        PyList_SET_ITEM(lst, j, (PyObject *)cp);
+    }
+    PyObject *tup = PyTuple_Pack(2, (PyObject *)idx_arr, lst);
+    Py_DECREF(idx_arr);
+    Py_DECREF(lst);
+    return tup;
+}
+
+
+/*
  * get_gumbel_remaining() -> list[list[int]]
  *
  * After simulation completes, get the remaining candidates per board.
@@ -2354,6 +2439,8 @@ static PyMethodDef MCTSTree_methods[] = {
      "start_gumbel_sims(...) -> n_leaves or None. Start gumbel simulation state machine."},
     {"continue_gumbel_sims", (PyCFunction)MCTSTree_continue_gumbel_sims, METH_VARARGS,
      "continue_gumbel_sims(pol, wdl) -> n_leaves or None. Feed GPU results, continue sim."},
+    {"get_pending_tb_leaves", (PyCFunction)MCTSTree_get_pending_tb_leaves, METH_VARARGS,
+     "get_pending_tb_leaves(max_pieces) -> (np.int32 indices, list[CBoard]). Syzygy-eligible subset of the current pending batch."},
     {"get_gumbel_remaining", (PyCFunction)MCTSTree_get_gumbel_remaining, METH_NOARGS,
      "get_gumbel_remaining() -> list[list[int]]. Get remaining candidates after sim."},
     {"get_children_visits", (PyCFunction)MCTSTree_get_children_visits, METH_VARARGS,
@@ -2368,6 +2455,8 @@ static PyMethodDef MCTSTree_methods[] = {
      "node_count() -> int"},
     {"reset", (PyCFunction)MCTSTree_reset, METH_NOARGS,
      "reset() -> None"},
+    {"get_virtual_loss", (PyCFunction)MCTSTree_get_virtual_loss, METH_VARARGS,
+     "get_virtual_loss(node_id) -> int (walker-pool scaffolding; 0 until phase 2+3 wires descent/backprop)"},
     {NULL}
 };
 
