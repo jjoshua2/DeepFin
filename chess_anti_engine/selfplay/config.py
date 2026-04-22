@@ -50,6 +50,13 @@ class GameConfig:
     volatility_source: str = "raw"
     syzygy_path: str | None = None
     syzygy_policy: bool = False
+    # If true, end the game as soon as the position becomes TB-eligible and
+    # use the TB-proven WDL as the outcome. Saves the rest of the MCTS work
+    # that would have been spent playing out a known-result endgame.
+    syzygy_adjudicate: bool = False
+    # If true, override leaf WDL logits during MCTS with TB truth (UCI-style
+    # in-tree probing). Pinned Q values collapse noisy endgame search paths.
+    syzygy_in_search: bool = False
     categorical_bins: int = DEFAULT_CATEGORICAL_BINS
     hlgauss_sigma: float = 0.04
 

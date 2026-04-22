@@ -44,7 +44,13 @@ from chess_anti_engine.selfplay.config import (
     TemperatureConfig,
 )
 from chess_anti_engine.selfplay.opening import OpeningConfig, make_starting_board
-from chess_anti_engine.tablebase import rescore_game_samples, probe_best_move, is_tb_eligible
+from chess_anti_engine.tablebase import (
+    SyzygyProbe,
+    is_tb_eligible,
+    probe_best_move,
+    rescore_game_samples,
+    tb_adjudicate_result,
+)
 from chess_anti_engine.selfplay.temperature import temperature_for_ply
 import chess
 
@@ -278,6 +284,15 @@ def play_batch(
     # Used directly by C classify_games and by Python logic (truthy checks work for 0/1).
     _done_arr = np.zeros(batch_size, dtype=np.int8)
     _finalized_arr = np.zeros(batch_size, dtype=np.int8)
+    # TB state. When `syzygy_adjudicate` is on, we end games early at the
+    # first TB-eligible position and stash the TB-proven result — saves the
+    # compute that would otherwise be spent on MCTS sims through a
+    # known-result endgame. When `syzygy_in_search` is on, the probe is
+    # also passed to MCTS to override NN wdl logits at TB-eligible leaves.
+    _tb_probe: SyzygyProbe | None = None
+    if game.syzygy_path and (game.syzygy_adjudicate or game.syzygy_in_search):
+        _tb_probe = SyzygyProbe(game.syzygy_path)
+    _tb_result_arr: list[str | None] = [None] * batch_size
     # Alternate which color the network plays so it sees both perspectives.
     # 1 = WHITE, 0 = BLACK.
     _net_color_arr = np.array([1 if (i % 2 == 0) else 0 for i in range(batch_size)], dtype=np.int8)
@@ -382,7 +397,11 @@ def play_batch(
                 b.push(_mv)
         else:
             b = boards[i]
-        result = cb.result()
+        # TB adjudication (if enabled) short-circuits cb.result() — this game
+        # was ended early at a known-result endgame position. Skip the SF
+        # terminal eval branch below and use the stashed TB result directly.
+        _tb_stash = _tb_result_arr[i]
+        result = _tb_stash if _tb_stash is not None else cb.result()
         _game_plies = int(cb.ply)
         _st_game_plies += _game_plies
         _is_cm = cb.is_checkmate()
@@ -783,6 +802,7 @@ def play_batch(
                     nn_cache=_nn_cache,  # type: ignore[call-arg]
                     tree=_mcts_tree,  # type: ignore[call-arg]
                     root_node_ids=sub_root_ids,  # type: ignore[call-arg]
+                    tb_probe=_tb_probe if game.syzygy_in_search else None,  # type: ignore[call-arg]
                 )
                 # C version returns 6-tuple (with tree, root_ids), Python returns 4-tuple
                 p_sub, a_sub, v_sub, m_sub = _gumbel_result[:4]
@@ -1153,6 +1173,30 @@ def play_batch(
         max_steps = 2**62  # effectively infinite; stop_fn controls exit
     else:
         max_steps = int(target) * (int(game.max_plies) // 2 + 2)  # safety bound
+
+    def _tb_adjudicate_active_games() -> int:
+        """Scan active games; if any current position is TB-eligible and
+        probable, mark the game done and stash the TB-proven result.
+        Called once per step — cost is ~10µs per active game after the
+        popcount prefilter rejects non-endgame positions.
+        Returns the number of games adjudicated this call."""
+        assert _tb_probe is not None and game.syzygy_path is not None
+        max_p = _tb_probe.max_pieces
+        adjudicated = 0
+        for i in range(batch_size):
+            if _done_arr[i] or _finalized_arr[i] or _tb_result_arr[i] is not None:
+                continue
+            cb = cboards[i]
+            occ = int(cb.occ_white) | int(cb.occ_black)
+            if occ.bit_count() > max_p or int(cb.castling) != 0:
+                continue
+            board = chess.Board(cb.fen())
+            result = tb_adjudicate_result(board, game.syzygy_path)
+            if result is not None:
+                _tb_result_arr[i] = result
+                _done_arr[i] = 1
+                adjudicated += 1
+        return adjudicated
     _t_net = 0.0
     _t_sf = 0.0
 
@@ -1162,6 +1206,13 @@ def play_batch(
             on_step()
         if stop_fn is not None and stop_fn():
             break
+
+        # Tablebase adjudication before the classify pass. Any game that's
+        # now TB-eligible gets marked done; the classify will then skip it
+        # and the finalize path uses the stashed TB result. Runs at most
+        # once per game — the `_tb_result_arr` stash is the idempotency key.
+        if _tb_probe is not None and game.syzygy_adjudicate:
+            _tb_adjudicate_active_games()
 
         # C path: classify games + check game-over with GIL released.
         if _has_classify_c:

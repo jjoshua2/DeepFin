@@ -24,10 +24,18 @@ from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
 from chess_anti_engine.mcts.puct import _value_scalar_from_wdl_logits
 from chess_anti_engine.moves import index_to_move, move_to_index
+from chess_anti_engine.tablebase import SyzygyProbe, try_tb_root_move
 
 from .score import q_to_cp
 from .time_manager import Deadline
 from .walker_pool import WalkerPool, WalkerPoolConfig
+
+
+# Saturated cp for TB-decisive positions. Matches what the NN-backed path
+# naturally emits when Q is pinned to ±1 by the SyzygyProbe's wdl override,
+# so the two code paths report consistently.
+_TB_WIN_CP = 41890
+_TB_LOSS_CP = -41890
 
 
 # Keep chunks small enough that a ``stop`` arriving mid-search is answered
@@ -200,6 +208,25 @@ class SearchWorker:
         tb_probe = self._tb_probe
         if tb_probe is not None:
             tb_probe.reset_counts()
+
+        # TB root shortcut: if the root position is TB-eligible, the tables
+        # know the move exactly (DTZ-optimal for decisive; any for drawn).
+        # MCTS adds nothing and, worse, picks by visits — which in a TB-win
+        # with Q=1.0 everywhere reduces to "most-popular NN prior", yielding
+        # a valid but DTZ-sub-optimal sequence. Skip straight to the answer.
+        if tb_probe is not None:
+            short = _try_tb_root_bestmove(board, tb_probe)
+            if short is not None:
+                if info_cb is not None:
+                    info_cb(
+                        nodes=short.nodes,
+                        elapsed_ms=deadline.elapsed_ms(),
+                        score_cp=short.score_cp,
+                        pv=short.pv,
+                        tbhits=short.tbhits,
+                        score_mate=short.score_mate,
+                    )
+                return short
 
         # Root eval is the same every chunk (same position, same net). Do it
         # once here and pass pre_pol_logits/pre_wdl_logits into each chunk so
@@ -375,6 +402,46 @@ class SearchWorker:
 
 
 # --- tree + move helpers -----------------------------------------------------
+
+
+def _try_tb_root_bestmove(
+    board: chess.Board, tb_probe: SyzygyProbe,
+) -> SearchResult | None:
+    """Return a SearchResult built from the TB's DTZ-optimal move at root,
+    or None if the position isn't TB-eligible (or the probe fails)."""
+    root = try_tb_root_move(board, tb_probe._path)  # pyright: ignore[reportPrivateUsage]
+    if root is None:
+        return None
+    best, wdl_val = root
+
+    # Count the root probe toward tbhits so downstream info emission shows
+    # a non-zero hit count (MCTS path isn't run in the shortcut).
+    tb_probe.probes += 1
+    tb_probe.hits += 1
+
+    if wdl_val >= 2:
+        score_cp = _TB_WIN_CP
+    elif wdl_val <= -2:
+        score_cp = _TB_LOSS_CP
+    else:
+        score_cp = 0  # draw (includes cursed/blessed in our convention)
+
+    # Ponder move: after our best, what's the opponent's DTZ-optimal reply?
+    # Re-runs try_tb_root_move; still cheap (a few legal-move probes).
+    board_after = board.copy(stack=False)
+    board_after.push(best)
+    ponder = try_tb_root_move(board_after, tb_probe._path)  # pyright: ignore[reportPrivateUsage]
+    ponder_uci = ponder[0].uci() if ponder is not None else None
+
+    return SearchResult(
+        bestmove_uci=best.uci(),
+        ponder_uci=ponder_uci,
+        nodes=1,
+        pv=(best.uci(),),
+        score_cp=score_cp,
+        tbhits=1,
+        score_mate=None,
+    )
 
 
 def _pv_mate_moves(root_board: chess.Board, pv_indices: list[int]) -> int | None:

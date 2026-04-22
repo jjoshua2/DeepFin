@@ -33,10 +33,9 @@ from .protocol import (
     format_readyok,
     format_uciok,
 )
-from chess_anti_engine.tablebase import get_tablebase
+from chess_anti_engine.tablebase import SyzygyProbe, get_tablebase
 
 from .search import SearchResult, SearchWorker
-from .tablebase import SyzygyProbe
 from .time_manager import Deadline, SearchLimits, limits_from_go
 
 
