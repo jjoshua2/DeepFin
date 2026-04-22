@@ -129,6 +129,7 @@ def _flush_buffered_upload_to_inbox(
         losses=int(acc.losses),
         total_game_plies=int(acc.total_game_plies),
         adjudicated_games=int(acc.adjudicated_games),
+        tb_adjudicated_games=int(acc.tb_adjudicated_games),
         total_draw_games=int(acc.total_draw_games),
         selfplay_games=int(acc.selfplay_games),
         selfplay_adjudicated_games=int(acc.selfplay_adjudicated_games),
