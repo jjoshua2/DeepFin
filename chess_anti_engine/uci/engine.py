@@ -51,6 +51,7 @@ def emit_handshake(options: "EngineOptions") -> None:
     for line in format_id_lines(_ENGINE_NAME, _ENGINE_AUTHOR):
         _println(line)
     _println(f"option name Hash type spin default {options.hash_mb} min 1024 max 524288")
+    _println(f"option name Threads type spin default {options.threads} min 1 max 64")
     _println("option name SyzygyPath type string default <empty>")
     _println(f"option name Ponder type check default {'true' if options.ponder else 'false'}")
     _println(format_uciok())
@@ -69,6 +70,9 @@ class EngineOptions:
     # pushing the process into swap on long analysis. It is NOT a bounded
     # transposition table; we stop adding nodes rather than evicting.
     hash_mb: int = 4096
+    # Number of MCTS walker threads. 1 = classic Gumbel path; >1 = PUCT
+    # walker pool with virtual loss. Set via UCI `Threads`.
+    threads: int = 2
     # Syzygy tablebase directory path(s). Multiple paths separated by
     # OS-conventional separators (';' on Windows, ':' elsewhere) per the
     # de-facto UCI convention. Empty means disabled.
@@ -300,6 +304,17 @@ class Engine:
                 pass
         elif name == "ponder" and cmd.value is not None:
             self._options.ponder = cmd.value.strip().lower() == "true"
+        elif name == "threads" and cmd.value is not None:
+            try:
+                n = max(1, int(cmd.value))
+            except ValueError:
+                return
+            self._options.threads = n
+            self._worker.set_num_threads(n)
+            _println(
+                f"info string Threads set to {n} "
+                f"({'walker pool' if n > 1 else 'classic Gumbel path'})"
+            )
         elif name == "syzygypath":
             value = (cmd.value or "").strip()
             # Conventional UCI sentinel for "unset".

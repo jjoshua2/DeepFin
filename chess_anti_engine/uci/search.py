@@ -95,20 +95,9 @@ class SearchWorker:
         # n_walkers > 1 → PUCT pool with vloss, sequential halving dropped.
         # evaluator MUST be thread-safe (caller wraps with Thread/MultiGPU
         # dispatcher or BatchCoalescingDispatcher).
+        self._vloss_weight = int(vloss_weight)
         self._n_walkers = max(1, int(n_walkers))
-        if self._n_walkers > 1:
-            self._walker_pool: WalkerPool | None = WalkerPool(
-                WalkerPoolConfig(
-                    n_walkers=self._n_walkers,
-                    c_puct=float(self._cfg.c_puct),
-                    fpu_at_root=0.0,
-                    fpu_reduction=float(self._cfg.fpu_reduction),
-                    vloss_weight=int(vloss_weight),
-                ),
-                evaluator,
-            )
-        else:
-            self._walker_pool = None
+        self._walker_pool: WalkerPool | None = self._build_walker_pool(self._n_walkers)
         self._walker_cboard: CBoard | None = None
 
         # Persistent tree across calls within a game. Reset on new position.
@@ -127,6 +116,34 @@ class SearchWorker:
         # this. 0 / None = unbounded. Not a hash table — tree growth is all
         # or nothing, we stop adding rather than evicting.
         self._max_tree_bytes: int = 0
+
+    def _build_walker_pool(self, n: int) -> WalkerPool | None:
+        if n <= 1:
+            return None
+        return WalkerPool(
+            WalkerPoolConfig(
+                n_walkers=n,
+                c_puct=float(self._cfg.c_puct),
+                fpu_at_root=0.0,
+                fpu_reduction=float(self._cfg.fpu_reduction),
+                vloss_weight=self._vloss_weight,
+            ),
+            self._evaluator,
+        )
+
+    def set_num_threads(self, n: int) -> None:
+        """Rebuild the walker pool at thread count ``n`` (1 = classic Gumbel
+        path, no pool). Drops the persistent tree because walker-pool Q/N
+        stats accumulate with vloss adjustments that depend on thread count.
+        Caller should hold the search barrier — same pattern as
+        ``set_tb_probe``.
+        """
+        n = max(1, int(n))
+        if n == self._n_walkers:
+            return
+        self._n_walkers = n
+        self._walker_pool = self._build_walker_pool(n)
+        self.reset_tree()
 
     def reset_tree(self) -> None:
         self._tree = None

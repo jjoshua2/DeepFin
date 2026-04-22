@@ -76,8 +76,10 @@ def _build_evaluator(
     else:
         model = load_model_from_checkpoint(checkpoint, device=devices[0])
         evaluator = DirectGPUEvaluator(model, device=devices[0], max_batch=max_batch)
-        if n_walkers > 1:
-            evaluator = ThreadSafeGPUDispatcher(evaluator)
+        # Always wrap in ThreadSafeGPUDispatcher so the UCI `Threads` option
+        # can bump walker count at runtime without a race. Lock is
+        # uncontended at 1 thread — overhead is ~10ns.
+        evaluator = ThreadSafeGPUDispatcher(evaluator)
     if coalesce and n_walkers > 1:
         evaluator = BatchCoalescingDispatcher(evaluator, max_batch=max_batch)
     return evaluator
