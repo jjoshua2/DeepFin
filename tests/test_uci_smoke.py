@@ -174,8 +174,7 @@ def test_stop_during_ponder(tiny_checkpoint: Path) -> None:
 
 
 def test_go_depth_terminates(tiny_checkpoint: Path) -> None:
-    """`go depth N` used to hang; depth now either terminates on PV length
-    or on the safety node cap. Either way a bestmove must arrive."""
+    """`go depth N` terminates when the most-visited PV reaches N plies."""
     proc = _spawn_engine(tiny_checkpoint)
     reader = _LineReader(proc)
     try:

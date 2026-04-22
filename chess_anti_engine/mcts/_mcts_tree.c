@@ -526,14 +526,22 @@ static int tree_expand(TreeData *t, int32_t node_id,
  * ================================================================ */
 
 /* Select best child of `node_id` using PUCT formula with FPU.
- * Returns index into children pool (children_offset[node_id] + best_slot). */
+ * Returns index into children pool (children_offset[node_id] + best_slot).
+ *
+ * When vloss_weight > 0, in-flight walkers are treated as visits with a
+ * losing Q from the child's own side-to-move frame: effective N = N + vl
+ * and effective W = W + vl (so -W/N swings toward +loss). This matches
+ * what tree_gumbel_select_child does for Gumbel descent. */
 static int32_t tree_select_child(const TreeData *t, int32_t node_id,
-                                  double c_puct, double fpu_reduction) {
+                                  double c_puct, double fpu_reduction,
+                                  int vloss_weight) {
     int32_t n_ch = t->num_children[node_id];
     int32_t off = t->children_offset[node_id];
 
-    double parent_N = (double)t->N[node_id];
-    double parent_Q = (parent_N > 0) ? (t->W[node_id] / parent_N) : 0.0;
+    int32_t parent_vl = (vloss_weight > 0) ? t->virtual_loss[node_id] : 0;
+    double parent_N = (double)(t->N[node_id] + vloss_weight * parent_vl);
+    double parent_W = t->W[node_id] + (double)(vloss_weight * parent_vl);
+    double parent_Q = (parent_N > 0) ? (parent_W / parent_N) : 0.0;
     double c_sqrt_n = c_puct * sqrt(parent_N > 1.0 ? parent_N : 1.0);
 
     /* Single pass: track best visited score, best unvisited prior, and
@@ -549,11 +557,13 @@ static int32_t tree_select_child(const TreeData *t, int32_t node_id,
 
     for (int32_t i = 0; i < n_ch; i++) {
         int32_t cid = t->child_node[off + i];
-        int32_t n = t->N[cid];
+        int32_t vl = (vloss_weight > 0) ? t->virtual_loss[cid] : 0;
+        int32_t n = t->N[cid] + vloss_weight * vl;
+        double w = t->W[cid] + (double)(vloss_weight * vl);
         double prior = t->prior[cid];
         if (n > 0) {
             visited_policy += prior;
-            double score = -t->W[cid] / (double)n + c_sqrt_n * prior / (1.0 + (double)n);
+            double score = -w / (double)n + c_sqrt_n * prior / (1.0 + (double)n);
             if (score > best_visited_score) {
                 best_visited_score = score;
                 best_visited_slot = i;
@@ -574,9 +584,12 @@ static int32_t tree_select_child(const TreeData *t, int32_t node_id,
 
 
 /* Select leaf from root, following PUCT. Writes path of node ids into `path`.
- * Returns path length. path[0] = root, path[len-1] = leaf. */
+ * Returns path length. path[0] = root, path[len-1] = leaf.
+ *
+ * vloss_weight=0 keeps descent bit-identical to the pre-walker code path. */
 static int32_t tree_select_leaf(const TreeData *t, int32_t root_id,
                                  double c_puct, double fpu_at_root, double fpu_reduction,
+                                 int vloss_weight,
                                  int32_t *path, int32_t max_path) {
     int32_t node = root_id;
     int32_t depth = 0;
@@ -588,7 +601,7 @@ static int32_t tree_select_leaf(const TreeData *t, int32_t root_id,
      * is visible. */
     while (__atomic_load_n(&t->expanded[node], __ATOMIC_ACQUIRE) && t->num_children[node] > 0) {
         if (depth >= max_path) break;
-        int32_t slot = tree_select_child(t, node, c_puct, fpu);
+        int32_t slot = tree_select_child(t, node, c_puct, fpu, vloss_weight);
         int32_t off = t->children_offset[node];
         node = t->child_node[off + slot];
         path[depth++] = node;
@@ -1590,6 +1603,7 @@ static PyObject *MCTSTree_select_leaves(MCTSTreeObject *self, PyObject *args) {
         int32_t root_id = root_ids[i];
         int32_t path_len = tree_select_leaf(&self->tree, root_id,
                                              c_puct, fpu_at_root, fpu_reduction,
+                                             0,
                                              path_buf, MCTS_MAX_PATH);
 
         int32_t leaf_id = path_buf[path_len - 1];
@@ -1653,6 +1667,219 @@ static PyObject *MCTSTree_backprop(MCTSTreeObject *self, PyObject *args) {
     tree_backprop(&self->tree, path, path_len, value);
 
     Py_DECREF(path_arr);
+    Py_RETURN_NONE;
+}
+
+
+/* ================================================================
+ * Walker-pool reentrant API (Phase 5)
+ *
+ * Each walker thread drives ONE simulation at a time:
+ *     leaf, path, legal, terminal_q = tree.walker_descend_puct(...)
+ *     if terminal_q is None:
+ *         pol, wdl = evaluator.evaluate_encoded(enc_buf)
+ *         tree.walker_integrate_leaf(path, legal, pol, wdl, vloss_weight)
+ *     else:
+ *         tree.backprop(path, terminal_q)
+ *
+ * Safe for concurrent callers against the same tree provided:
+ *   - tree.reserve(cap) called upfront so tree_grow_nodes cannot realloc
+ *   - All concurrent callers pass the same vloss_weight (semantic mismatch
+ *     between walkers is a design bug, not a crash; checked at your level)
+ * ================================================================ */
+
+/* walker_descend_puct(root_id, root_cboard, c_puct, fpu_root, fpu_reduction,
+ *                     vloss_weight, enc_out)
+ *   -> (leaf_id, node_path: int32[], legal: int32[], terminal_q: float | None)
+ *
+ * Descends from root using PUCT with virtual loss, replays moves on a fresh
+ * CBoard, and either:
+ *   - returns terminal_q set to the leaf's terminal value (no vloss applied,
+ *     no encoding performed — caller just backprops) OR
+ *   - applies vloss along path[1:], encodes the leaf into enc_out[0], and
+ *     returns terminal_q = None plus the legal-move indices at the leaf.
+ *
+ * enc_out must be a writable float32 array of shape (>=1, 146, 8, 8). Only
+ * enc_out[0] is written. */
+static PyObject *MCTSTree_walker_descend_puct(MCTSTreeObject *self, PyObject *args) {
+    int root_id;
+    PyObject *root_cb_obj, *enc_obj;
+    double c_puct, fpu_root, fpu_reduction;
+    int vloss_weight;
+    if (!PyArg_ParseTuple(args, "iOdddiO",
+                          &root_id, &root_cb_obj,
+                          &c_puct, &fpu_root, &fpu_reduction,
+                          &vloss_weight, &enc_obj))
+        return NULL;
+
+    TreeData *t = &self->tree;
+    if (root_id < 0 || root_id >= t->node_count) {
+        PyErr_SetString(PyExc_ValueError, "root_id out of range");
+        return NULL;
+    }
+
+    /* Type-check the CBoard without adding a reference (we only read). */
+    PyTypeObject *cb_type = _cached_cboard_type;
+    if (!cb_type) {
+        cb_type = Py_TYPE(root_cb_obj);
+        if (strstr(cb_type->tp_name, "CBoard") == NULL) {
+            PyErr_SetString(PyExc_TypeError, "root_cboard must be a CBoard");
+            return NULL;
+        }
+        _cached_cboard_type = cb_type;
+    } else if (Py_TYPE(root_cb_obj) != cb_type) {
+        PyErr_SetString(PyExc_TypeError, "root_cboard must be a CBoard");
+        return NULL;
+    }
+    const CBoard *root_cb = &((PyCBoard *)root_cb_obj)->board;
+
+    PyArrayObject *enc_arr = FROMANY_4D_RW(enc_obj, NPY_FLOAT32);
+    if (!enc_arr) return NULL;
+    if (PyArray_DIM(enc_arr, 0) < 1 ||
+        PyArray_DIM(enc_arr, 1) != 146 ||
+        PyArray_DIM(enc_arr, 2) != 8 ||
+        PyArray_DIM(enc_arr, 3) != 8) {
+        Py_DECREF(enc_arr);
+        PyErr_SetString(PyExc_ValueError, "enc_out must be shape (>=1, 146, 8, 8) float32");
+        return NULL;
+    }
+    float *enc_data = (float *)PyArray_DATA(enc_arr);
+
+    /* Descend. */
+    int32_t path_buf[MCTS_MAX_PATH];
+    int32_t path_len = tree_select_leaf(t, root_id, c_puct, fpu_root, fpu_reduction,
+                                        vloss_weight, path_buf, MCTS_MAX_PATH);
+    int32_t leaf_id = path_buf[path_len - 1];
+
+    /* Replay moves root → leaf by walking parent pointers and reversing. */
+    int32_t actions[MCTS_MAX_PATH];
+    int32_t n_actions = 0;
+    {
+        int32_t nid = leaf_id;
+        while (nid != root_id && t->parent[nid] >= 0 && n_actions < MCTS_MAX_PATH) {
+            int32_t act = t->action_from_parent[nid];
+            if (act >= 0) actions[n_actions++] = act;
+            nid = t->parent[nid];
+        }
+    }
+    CBoard cb = *root_cb;
+    for (int32_t i = n_actions - 1; i >= 0; i--) {
+        cboard_push_index(&cb, actions[i]);
+    }
+
+    /* Build path output array (shared by terminal + non-terminal branches). */
+    npy_intp pdims[1] = {path_len};
+    PyObject *node_path = PyArray_SimpleNew(1, pdims, NPY_INT32);
+    if (!node_path) { Py_DECREF(enc_arr); return NULL; }
+    memcpy(PyArray_DATA((PyArrayObject *)node_path), path_buf,
+           path_len * sizeof(int32_t));
+
+    if (cboard_is_game_over(&cb)) {
+        /* Terminal: no vloss (caller backprops immediately), no encoding,
+         * empty legal array. */
+        Py_DECREF(enc_arr);
+        npy_intp ldims[1] = {0};
+        PyObject *legal_arr = PyArray_SimpleNew(1, ldims, NPY_INT32);
+        if (!legal_arr) { Py_DECREF(node_path); return NULL; }
+        double term_q = (double)cboard_terminal_value(&cb);
+        return Py_BuildValue("(iNNd)", leaf_id, node_path, legal_arr, term_q);
+    }
+
+    /* Non-terminal: apply vloss along path[1:] before exposing the leaf to
+     * other walkers — ensures the next walker that races in picks a
+     * different child. */
+    if (vloss_weight > 0) {
+        tree_apply_vloss_path(t, path_buf, path_len);
+    }
+
+    /* Encode into enc_out[0]. */
+    cboard_encode_146_into(&cb, enc_data);
+    Py_DECREF(enc_arr);
+
+    /* Legal move indices at the leaf (caller needs them for softmax). */
+    int legal_tmp[256];
+    int n_legal_i = cboard_legal_move_indices(&cb, legal_tmp, 0);
+    if (n_legal_i < 0) n_legal_i = 0;
+    npy_intp ldims[1] = {n_legal_i};
+    PyObject *legal_arr = PyArray_SimpleNew(1, ldims, NPY_INT32);
+    if (!legal_arr) {
+        if (vloss_weight > 0) tree_remove_vloss_path(t, path_buf, path_len);
+        Py_DECREF(node_path);
+        return NULL;
+    }
+    int32_t *legal_out = (int32_t *)PyArray_DATA((PyArrayObject *)legal_arr);
+    for (int i = 0; i < n_legal_i; i++) legal_out[i] = legal_tmp[i];
+
+    return Py_BuildValue("(iNNO)", leaf_id, node_path, legal_arr, Py_None);
+}
+
+
+/* walker_integrate_leaf(node_path, legal, pol_logits, wdl_logits, vloss_weight)
+ *   -> None
+ *
+ * Expands the leaf (if not already expanded), removes virtual loss along
+ * path[1:], and backprops the WDL-derived Q up the path. Pairs with
+ * walker_descend_puct. Safe for concurrent callers. */
+static PyObject *MCTSTree_walker_integrate_leaf(MCTSTreeObject *self, PyObject *args) {
+    PyObject *path_obj, *legal_obj, *pol_obj, *wdl_obj;
+    int vloss_weight;
+    if (!PyArg_ParseTuple(args, "OOOOi",
+                          &path_obj, &legal_obj, &pol_obj, &wdl_obj, &vloss_weight))
+        return NULL;
+
+    PyArrayObject *path_arr = FROMANY_1D(path_obj, NPY_INT32);
+    PyArrayObject *legal_arr = FROMANY_1D(legal_obj, NPY_INT32);
+    PyArrayObject *pol_arr = FROMANY_1D(pol_obj, NPY_FLOAT32);
+    PyArrayObject *wdl_arr = FROMANY_1D(wdl_obj, NPY_FLOAT32);
+    if (!path_arr || !legal_arr || !pol_arr || !wdl_arr) {
+        Py_XDECREF(path_arr); Py_XDECREF(legal_arr);
+        Py_XDECREF(pol_arr); Py_XDECREF(wdl_arr);
+        return NULL;
+    }
+    if (PyArray_DIM(pol_arr, 0) < 4672 || PyArray_DIM(wdl_arr, 0) < 3) {
+        Py_DECREF(path_arr); Py_DECREF(legal_arr);
+        Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
+        PyErr_SetString(PyExc_ValueError, "pol must be >=4672, wdl must be >=3");
+        return NULL;
+    }
+
+    TreeData *t = &self->tree;
+    int32_t path_len = (int32_t)PyArray_DIM(path_arr, 0);
+    const int32_t *path = (const int32_t *)PyArray_DATA(path_arr);
+    int32_t leaf_id = path[path_len - 1];
+    int32_t n_legal = (int32_t)PyArray_DIM(legal_arr, 0);
+    const int32_t *legal = (const int32_t *)PyArray_DATA(legal_arr);
+    const float *pol = (const float *)PyArray_DATA(pol_arr);
+    const float *wdl = (const float *)PyArray_DATA(wdl_arr);
+    double q = wdl_logits_to_q((double)wdl[0], (double)wdl[1], (double)wdl[2]);
+
+    /* Expand if not already. tree_expand is idempotent under the tree_lock
+     * so a racing walker's expansion is absorbed here as a no-op. */
+    if (n_legal > 0 &&
+        !__atomic_load_n(&t->expanded[leaf_id], __ATOMIC_ACQUIRE)) {
+        double priors_stack[256];
+        double *priors = (n_legal <= 256) ? priors_stack
+                                          : (double *)malloc(n_legal * sizeof(double));
+        if (!priors) {
+            Py_DECREF(path_arr); Py_DECREF(legal_arr);
+            Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
+            return PyErr_NoMemory();
+        }
+        for (int32_t j = 0; j < n_legal; j++) priors[j] = (double)pol[legal[j]];
+        softmax_inplace(priors, n_legal);
+        tree_expand(t, leaf_id, legal, priors, n_legal);
+        if (priors != priors_stack) free(priors);
+    }
+
+    /* Remove vloss BEFORE backprop so the vloss unwind and the real +1
+     * visit can coalesce: every node on path ends at N += 1, vl unchanged. */
+    if (vloss_weight > 0) {
+        tree_remove_vloss_path(t, path, path_len);
+    }
+    tree_backprop(t, path, path_len, q);
+
+    Py_DECREF(path_arr); Py_DECREF(legal_arr);
+    Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
     Py_RETURN_NONE;
 }
 
@@ -1857,7 +2084,8 @@ static int32_t tree_gumbel_collect_leaf(const TreeData *t, int32_t root_id,
             slot = tree_gumbel_select_child(t, node, sel->c_scale, sel->c_visit,
                                             sel->vloss_weight);
         } else {
-            slot = tree_select_child(t, node, sel->c_puct, sel->fpu_reduction);
+            slot = tree_select_child(t, node, sel->c_puct, sel->fpu_reduction,
+                                     sel->vloss_weight);
         }
         node = t->child_node[t->children_offset[node] + slot];
         path[depth++] = node;

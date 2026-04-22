@@ -33,11 +33,9 @@ from .time_manager import Deadline
 # amortized. 32 sims/chunk works well as a starting point.
 _DEFAULT_CHUNK_SIMS = 32
 
-_PV_MAX_DEPTH = 12
-
-# Safety ceiling for `go depth`: MCTS has no true depth — we terminate on
-# PV length, but a shallow tree could stall forever, so cap total sims too.
-_DEPTH_NODE_SAFETY_CAP = 200_000
+# Info-line emission cadence. 2 Hz keeps GUI output readable without flooding
+# the log, and PV extraction (a handful of tree walks) runs only at this rate.
+_INFO_EMIT_INTERVAL_MS = 500
 
 
 @dataclass
@@ -47,10 +45,19 @@ class SearchResult:
     nodes: int
     pv: tuple[str, ...]
     score_cp: int
+    tbhits: int = 0
+    # When set, the PV terminates in checkmate; emit `score mate N` instead
+    # of `score cp`. Sign: positive = root STM mates, negative = gets mated.
+    # Units: UCI moves (ceil(plies/2) with sign).
+    score_mate: int | None = None
 
 
 class InfoCallback(Protocol):
-    def __call__(self, *, nodes: int, elapsed_ms: int, score_cp: int, pv: tuple[str, ...]) -> None:
+    def __call__(
+        self, *,
+        nodes: int, elapsed_ms: int, score_cp: int, pv: tuple[str, ...],
+        tbhits: int, score_mate: int | None,
+    ) -> None:
         ...
 
 
@@ -83,6 +90,13 @@ class SearchWorker:
         # the ~1ms root GPU call.
         self._root_pol_logits: np.ndarray | None = None
         self._root_wdl_logits: np.ndarray | None = None
+        # Optional Syzygy probe. When set, MCTS leaves in the TB range get
+        # their NN wdl overridden with the TB-truth distribution.
+        self._tb_probe = None
+        # Soft memory cap: search halts between chunks if tree size exceeds
+        # this. 0 / None = unbounded. Not a hash table — tree growth is all
+        # or nothing, we stop adding rather than evicting.
+        self._max_tree_bytes: int = 0
 
     def reset_tree(self) -> None:
         self._tree = None
@@ -90,6 +104,22 @@ class SearchWorker:
         self._tree_fen = None
         self._root_pol_logits = None
         self._root_wdl_logits = None
+
+    def set_max_tree_mb(self, mb: int) -> None:
+        """Soft cap on tree memory; 0 disables. Checked between chunks."""
+        self._max_tree_bytes = max(0, int(mb)) * 1024 * 1024
+
+    def set_tb_probe(self, probe) -> None:
+        """Install (or replace, or clear with None) the Syzygy probe used for
+        leaf-batch WDL overrides.
+
+        Changing the probe invalidates the persistent MCTS tree wholesale —
+        Q/N stats along every path were computed under the old evaluation
+        source (NN-only vs TB-corrected), so reusing the tree would mix
+        regimes and could back-propagate stale values. Simpler and correct
+        to reset and let the next search rebuild from scratch."""
+        self._tb_probe = probe
+        self.reset_tree()
 
     def advance_root(self, board: chess.Board, moves: list[chess.Move]) -> bool:
         """Descend the current tree by ``moves`` plies, making the last-reached
@@ -132,11 +162,6 @@ class SearchWorker:
         Returns when at least one chunk has run (so bestmove is always
         backed by MCTS data, never a raw priors pick).
         """
-        # UCI depth has no clean MCTS analog; we stop when the tree's PV
-        # reaches that ply count, with a hard node ceiling so a shallow
-        # tree can't stall forever.
-        if max_depth is not None and max_nodes is None:
-            max_nodes = _DEPTH_NODE_SAFETY_CAP
         fen = board.fen()
         if self._tree is None or self._tree_fen != fen:
             self._tree = None
@@ -149,6 +174,9 @@ class SearchWorker:
         last_info_ms = -1
         last_value = 0.0
         pv_indices: list[int] = []
+        tb_probe = self._tb_probe
+        if tb_probe is not None:
+            tb_probe.reset_counts()
 
         # Root eval is the same every chunk (same position, same net). Do it
         # once here and pass pre_pol_logits/pre_wdl_logits into each chunk so
@@ -156,10 +184,17 @@ class SearchWorker:
         # search and lets us hand-share the encoding across chunks for free.
         if self._root_pol_logits is None or self._root_wdl_logits is None:
             xs = np.empty((1, 146, 8, 8), dtype=np.float32)
-            xs[0] = CBoard.from_board(board).encode_146()
+            root_cb = CBoard.from_board(board)
+            xs[0] = root_cb.encode_146()
             pol, wdl = self._evaluator.evaluate_encoded(xs)
-            self._root_pol_logits = np.asarray(pol, dtype=np.float32)
-            self._root_wdl_logits = np.asarray(wdl, dtype=np.float32)
+            pol_np = np.asarray(pol, dtype=np.float32)
+            wdl_np = np.asarray(wdl, dtype=np.float32).copy()
+            # Probe at root so score_cp reflects TB truth on the very first
+            # chunk's info emission, before MCTS has back-propagated it.
+            if tb_probe is not None:
+                tb_probe.apply([root_cb], wdl_np)
+            self._root_pol_logits = pol_np
+            self._root_wdl_logits = wdl_np
 
         while True:
             chunk = self._chunk_sims
@@ -190,28 +225,31 @@ class SearchWorker:
                 pre_wdl_logits=self._root_wdl_logits,
                 tree=self._tree,
                 root_node_ids=[self._root_id] if self._root_id is not None else None,
+                tb_probe=tb_probe,
             )
             self._tree = tree
             self._root_id = int(root_ids[0])
             last_value = float(values[0])
             total_nodes += int(chunk)
 
-            # PV extraction is only needed for info emission (rate-limited
-            # to 5/sec) and for max_depth termination. Skip otherwise —
-            # saves a handful of tree walks per second on chunk=512 at ~5 nps/chunk.
+            # PV extraction is only needed for info emission (rate-limited)
+            # and for max_depth termination. Skip otherwise — saves a handful
+            # of tree walks per second on chunk=512 at ~5 nps/chunk.
             elapsed = deadline.elapsed_ms() if info_cb is not None else 0
             need_pv = (
-                (info_cb is not None and elapsed - last_info_ms >= 200)
+                (info_cb is not None and elapsed - last_info_ms >= _INFO_EMIT_INTERVAL_MS)
                 or max_depth is not None
             )
             if need_pv:
                 _, pv_indices = _best_move_and_pv(tree, self._root_id)
-                if info_cb is not None and elapsed - last_info_ms >= 200:
+                if info_cb is not None and elapsed - last_info_ms >= _INFO_EMIT_INTERVAL_MS:
                     info_cb(
                         nodes=total_nodes,
                         elapsed_ms=elapsed,
                         score_cp=q_to_cp(0.5 * (last_value + 1.0)),
                         pv=_uci_pv(board, pv_indices),
+                        tbhits=tb_probe.hits if tb_probe is not None else 0,
+                        score_mate=_pv_mate_moves(board, pv_indices),
                     )
                     last_info_ms = elapsed
 
@@ -220,6 +258,21 @@ class SearchWorker:
             if max_nodes is not None and total_nodes >= max_nodes:
                 break
             if max_depth is not None and len(pv_indices) >= max_depth:
+                break
+            if (self._max_tree_bytes > 0
+                    and self._tree is not None
+                    and self._tree.memory_bytes() >= self._max_tree_bytes):
+                # Don't try to grow into swap; halt with the best move we have.
+                # Info-string so GUIs/logs surface the reason.
+                if info_cb is not None:
+                    info_cb(
+                        nodes=total_nodes,
+                        elapsed_ms=elapsed,
+                        score_cp=q_to_cp(0.5 * (last_value + 1.0)),
+                        pv=_uci_pv(board, pv_indices),
+                        tbhits=tb_probe.hits if tb_probe is not None else 0,
+                        score_mate=_pv_mate_moves(board, pv_indices),
+                    )
                 break
 
         # Final snapshot using whatever the tree knows now.
@@ -238,10 +291,42 @@ class SearchWorker:
             nodes=total_nodes,
             pv=pv,
             score_cp=q_to_cp(0.5 * (last_value + 1.0)),
+            tbhits=tb_probe.hits if tb_probe is not None else 0,
+            score_mate=_pv_mate_moves(board, pv_indices),
         )
 
 
 # --- tree + move helpers -----------------------------------------------------
+
+
+def _pv_mate_moves(root_board: chess.Board, pv_indices: list[int]) -> int | None:
+    """If the PV terminates in checkmate, return signed mate-in-N *moves*
+    (UCI convention); otherwise None. Positive = root STM mates, negative
+    = root STM gets mated.
+
+    Walks the PV onto a local copy of the board — O(len(pv)). Only emits
+    mate when the PV actually ends in a checkmate, so the number is real,
+    not a Q-saturation artifact (Syzygy wins still go out as high cp)."""
+    if not pv_indices:
+        return None
+    b = root_board.copy(stack=False)
+    for idx in pv_indices:
+        try:
+            mv = index_to_move(int(idx), b)
+        except Exception:
+            return None
+        if mv not in b.legal_moves:
+            return None
+        b.push(mv)
+    if not b.is_checkmate():
+        return None
+    # After pushing all PV moves, b.turn is the side that has no legal moves
+    # (the mated side). Mating side = opposite. Convert plies → UCI moves
+    # with ceil(plies/2) so odd plies (STM delivers mate) round up correctly.
+    plies = len(pv_indices)
+    mating_side = not b.turn
+    moves = (plies + 1) // 2
+    return moves if mating_side == root_board.turn else -moves
 
 
 def _best_move_and_pv(tree: MCTSTree, root_id: int) -> tuple[int, list[int]]:
@@ -251,15 +336,15 @@ def _best_move_and_pv(tree: MCTSTree, root_id: int) -> tuple[int, list[int]]:
     best = int(actions[int(np.argmax(visits))])
     pv = [best]
     current_id = tree.find_child(root_id, best)
-    depth = 1
-    while current_id != -1 and depth < _PV_MAX_DEPTH:
+    # Tree walks from root are acyclic by construction of MCTSTree, and the
+    # first unexpanded node naturally terminates the descent. No depth cap.
+    while current_id != -1:
         a, vs = tree.get_children_visits(current_id)
         if a.size == 0:
             break
         nxt = int(a[int(np.argmax(vs))])
         pv.append(nxt)
         current_id = tree.find_child(current_id, nxt)
-        depth += 1
     return best, pv
 
 

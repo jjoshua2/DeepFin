@@ -33,12 +33,15 @@ from .protocol import (
     format_readyok,
     format_uciok,
 )
+from chess_anti_engine.tablebase import get_tablebase
+
 from .search import SearchResult, SearchWorker
+from .tablebase import SyzygyProbe
 from .time_manager import Deadline, SearchLimits, limits_from_go
 
 
-_ENGINE_NAME = "chess-anti-engine"
-_ENGINE_AUTHOR = "josh + claude"
+_ENGINE_NAME = "DeepFin"
+_ENGINE_AUTHOR = "jjosh"
 
 # How long to wait for a search thread to honor `stop`. 5s was too tight:
 # a cold CUDA-graph compile on the first search can take ~3-4s, which
@@ -49,16 +52,27 @@ _JOIN_TIMEOUT_S = 30.0
 
 @dataclass
 class EngineOptions:
-    # Declared UCI options are reported on `uci` but have no effect yet.
-    # Hash is the obvious one GUIs poke; we ignore the value but accept it
-    # cleanly so cutechess-cli doesn't complain.
-    hash_mb: int = 256
+    # Soft cap on MCTS tree memory in MB. Search halts between chunks when
+    # the tree's own allocations exceed this — prevents runaway growth from
+    # pushing the process into swap on long analysis. It is NOT a bounded
+    # transposition table; we stop adding nodes rather than evicting.
+    hash_mb: int = 4096
+    # Syzygy tablebase directory path(s). Multiple paths separated by
+    # OS-conventional separators (';' on Windows, ':' elsewhere) per the
+    # de-facto UCI convention. Empty means disabled.
+    syzygy_path: str = ""
+    # Ponder is a signal to the GUI about whether to issue `go ponder`
+    # commands; the engine itself honors `go ponder` regardless, since
+    # ignoring it would break cutechess/Arena if the user forgets to flip
+    # the option. Default off — safer for fixed-time match play.
+    ponder: bool = False
 
 
 class Engine:
     def __init__(self, worker: SearchWorker) -> None:
         self._worker = worker
         self._options = EngineOptions()
+        self._worker.set_max_tree_mb(self._options.hash_mb)
         self._board = chess.Board()
         self._search_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -121,7 +135,9 @@ class Engine:
     def _handle_uci(self) -> None:
         for line in format_id_lines(_ENGINE_NAME, _ENGINE_AUTHOR):
             _println(line)
-        _println(f"option name Hash type spin default {self._options.hash_mb} min 1 max 65536")
+        _println(f"option name Hash type spin default {self._options.hash_mb} min 1024 max 524288")
+        _println("option name SyzygyPath type string default <empty>")
+        _println(f"option name Ponder type check default {'true' if self._options.ponder else 'false'}")
         _println(format_uciok())
 
     def _handle_isready(self) -> None:
@@ -263,12 +279,55 @@ class Engine:
         self._stop_event.set()
 
     def _handle_setoption(self, cmd: CmdSetOption) -> None:
-        if cmd.name.lower() == "hash" and cmd.value is not None:
+        # Same barrier as _handle_position / _handle_newgame / _handle_isready:
+        # options must not mutate while a search thread is still reading them.
+        # In particular SyzygyPath swaps the shared tablebase cache, which the
+        # search thread probes through on every leaf batch.
+        self._wait_for_search()
+        name = cmd.name.lower()
+        if name == "hash" and cmd.value is not None:
             try:
                 self._options.hash_mb = int(cmd.value)
+                self._worker.set_max_tree_mb(self._options.hash_mb)
             except ValueError:
                 pass
+        elif name == "ponder" and cmd.value is not None:
+            self._options.ponder = cmd.value.strip().lower() == "true"
+        elif name == "syzygypath":
+            value = (cmd.value or "").strip()
+            # Conventional UCI sentinel for "unset".
+            if value.lower() in ("", "<empty>"):
+                value = ""
+            self._options.syzygy_path = value
+            self._install_tablebase(value)
         # All other options silently accepted — we don't expose any yet.
+
+    def _install_tablebase(self, path: str) -> None:
+        """Validate ``path`` by opening the tablebase once, then install a
+        path-backed SyzygyProbe on the worker (or clear it if ``path`` is
+        empty). The open handle is cached in ``chess_anti_engine.tablebase``
+        and shared with training-time rescoring.
+
+        Calling ``get_tablebase`` unconditionally — including for empty paths
+        — is what closes any previously-cached handle when the user clears
+        or swaps SyzygyPath.
+        """
+        tb = get_tablebase(path)
+        if not path:
+            self._worker.set_tb_probe(None)
+            _println("info string SyzygyPath cleared; tablebase probing disabled")
+            return
+        if tb is None:
+            self._worker.set_tb_probe(None)
+            _println(f"info string SyzygyPath {path!r} did not open any tablebase directories")
+            return
+        probe = SyzygyProbe(path)
+        self._worker.set_tb_probe(probe)
+        _println(
+            f"info string SyzygyPath loaded from {path!r}: "
+            f"{probe.n_wdl} WDL + {probe.n_dtz} DTZ tables, "
+            f"up to {probe.max_pieces}-piece positions"
+        )
 
     # -- search thread body ---------------------------------------------------
 
@@ -321,10 +380,14 @@ class Engine:
         except Exception as exc:  # pragma: no cover — UCI crash-safety
             _println(f"info string search error: {exc!r}")
             return SearchResult(
-                bestmove_uci="0000", ponder_uci=None, nodes=0, pv=(), score_cp=0,
+                bestmove_uci="0000", ponder_uci=None, nodes=0, pv=(), score_cp=0, tbhits=0,
             )
 
-    def _emit_info(self, *, nodes: int, elapsed_ms: int, score_cp: int, pv: tuple[str, ...]) -> None:
+    def _emit_info(
+        self, *,
+        nodes: int, elapsed_ms: int, score_cp: int, pv: tuple[str, ...],
+        tbhits: int, score_mate: int | None,
+    ) -> None:
         nps = int(nodes * 1000 / max(1, elapsed_ms))
         _println(format_info(InfoFields(
             depth=len(pv),
@@ -332,7 +395,9 @@ class Engine:
             nps=nps,
             time_ms=elapsed_ms,
             score_cp=score_cp,
+            score_mate=score_mate,
             pv=pv,
+            tbhits=tbhits,
         )))
 
     def _emit_bestmove(self, result: SearchResult) -> None:

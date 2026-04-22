@@ -213,6 +213,7 @@ class InfoFields:
     score_mate: int | None = None
     pv: tuple[str, ...] = field(default_factory=tuple)
     hashfull_per_mille: int | None = None
+    tbhits: int | None = None
     string: str | None = None
 
 
@@ -230,6 +231,8 @@ def format_info(f: InfoFields) -> str:
         parts += ["time", str(f.time_ms)]
     if f.hashfull_per_mille is not None:
         parts += ["hashfull", str(f.hashfull_per_mille)]
+    if f.tbhits is not None:
+        parts += ["tbhits", str(f.tbhits)]
     if f.score_mate is not None:
         parts += ["score", "mate", str(f.score_mate)]
     elif f.score_cp is not None:

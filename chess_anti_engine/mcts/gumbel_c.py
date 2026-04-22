@@ -37,6 +37,14 @@ from chess_anti_engine.mcts._mcts_tree import MCTSTree, NNCache
 _log = _logging.getLogger(__name__)
 
 
+def _tb_override(tree: MCTSTree | None, probe, wdl: np.ndarray) -> None:
+    if probe is None or tree is None:
+        return
+    indices, leaves = tree.get_pending_tb_leaves(probe.max_pieces)
+    if leaves:
+        probe.apply(leaves, wdl, indices=indices)
+
+
 @torch.no_grad()
 def run_gumbel_root_many_c(
     model: torch.nn.Module | None,
@@ -54,6 +62,7 @@ def run_gumbel_root_many_c(
     nn_cache: NNCache | None = None,
     tree: MCTSTree | None = None,
     root_node_ids: list[int] | None = None,
+    tb_probe=None,
 ) -> tuple[list[np.ndarray], list[int], list[float], list[np.ndarray], MCTSTree, list[int]]:
     """Gumbel root search with MCTSTree C tree + CBoard.
 
@@ -106,6 +115,13 @@ def run_gumbel_root_many_c(
             wdl_logits_batch = wdl_t.numpy()
         else:
             pol_logits_batch, wdl_logits_batch = eval_impl.evaluate_encoded(xs)
+
+    # Override root wdl_logits before root_qs is derived (root_qs seeds FPU
+    # and the values_out initial pass). Skip when pre_* logits were provided
+    # — the caller already probed the root once and is reusing the cached
+    # eval across chunks, so re-probing here would double-count tbhits.
+    if tb_probe is not None and pre_pol_logits is None:
+        tb_probe.apply(root_cboards, wdl_logits_batch)
 
     root_qs = [_wdl_to_q(wdl_logits_batch[i]) for i in range(n_boards)]
 
@@ -293,8 +309,10 @@ def run_gumbel_root_many_c(
                 _n_gpu_calls += 1
                 _n_gpu_positions += nl
                 _tp0 = _time.perf_counter()
+                _wdl_slice = wdl_t[:nl].numpy()
+                _tb_override(_trees[g], tb_probe, _wdl_slice)
                 _n_leaves[g] = _trees[g].continue_gumbel_sims(
-                    pol_t[:nl].numpy(), wdl_t[:nl].numpy())
+                    pol_t[:nl].numpy(), _wdl_slice)
                 _t_prepare += _time.perf_counter() - _tp0
 
         # Main pipelined loop: GPU(g) overlaps with C tree walks(other).
@@ -321,6 +339,7 @@ def run_gumbel_root_many_c(
             if _n_leaves[0] is None:
                 if _pending_g1 is not None:
                     _tp0 = _time.perf_counter()
+                    _tb_override(_trees[1], tb_probe, _pending_g1[1])
                     _n_leaves[1] = _trees[1].continue_gumbel_sims(*_pending_g1)
                     _t_prepare += _time.perf_counter() - _tp0
                     _pending_g1 = None
@@ -342,6 +361,7 @@ def run_gumbel_root_many_c(
             #    (continue_gumbel_sims releases GIL; CPU and GPU run in parallel)
             if _pending_g1 is not None:
                 _tp0 = _time.perf_counter()
+                _tb_override(_trees[1], tb_probe, _pending_g1[1])
                 _n_leaves[1] = _trees[1].continue_gumbel_sims(*_pending_g1)
                 _t_prepare += _time.perf_counter() - _tp0
                 _pending_g1 = None
@@ -354,8 +374,10 @@ def run_gumbel_root_many_c(
                     _n_gpu_calls += 1
                     _n_gpu_positions += nl0
                     _tp0 = _time.perf_counter()
+                    _wdl0 = wdl_t0[:nl0].numpy()
+                    _tb_override(_trees[0], tb_probe, _wdl0)
                     _n_leaves[0] = _trees[0].continue_gumbel_sims(
-                        pol_t0[:nl0].numpy(), wdl_t0[:nl0].numpy())
+                        pol_t0[:nl0].numpy(), _wdl0)
                     _t_prepare += _time.perf_counter() - _tp0
                     _drain_sequential(0)
                     break
@@ -379,6 +401,7 @@ def run_gumbel_root_many_c(
             # 5) While GPU processes group 1, do C tree walks for group 0
             #    (uses copied numpy arrays — safe from pinned buffer reuse)
             _tp0 = _time.perf_counter()
+            _tb_override(_trees[0], tb_probe, wdl_np0)
             _n_leaves[0] = _trees[0].continue_gumbel_sims(pol_np0, wdl_np0)
             _t_prepare += _time.perf_counter() - _tp0
 
@@ -456,6 +479,7 @@ def run_gumbel_root_many_c(
             _n_gpu_positions += n_leaves
 
             _tp0 = _time.perf_counter()
+            _tb_override(tree, tb_probe, wdl_all)
             n_leaves = tree.continue_gumbel_sims(pol_all, wdl_all)
             _t_prepare += _time.perf_counter() - _tp0
 
