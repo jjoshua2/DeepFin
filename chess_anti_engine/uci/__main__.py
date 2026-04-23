@@ -230,18 +230,6 @@ def main() -> int:
 
     threading.Thread(target=_build, daemon=True, name="deepfin-build").start()
 
-    evaluator_for_shutdown = [None]
-
-    def _capture_evaluator() -> None:
-        """Once the engine builds, remember the evaluator so the quit path
-        can close any non-daemon threads inside it (notably
-        BatchCoalescingDispatcher's submitter). Without this, a walker
-        search that leaves pending CUDA work in the coalescer triggers
-        ``terminate called without an active exception`` when Python's
-        interpreter shutdown yanks threads out from under torch."""
-        if engine_ref[0] is not None:
-            evaluator_for_shutdown[0] = engine_ref[0]._worker._evaluator  # pyright: ignore[reportPrivateUsage]
-
     try:
         for raw in sys.stdin:
             cmd = parse_command(raw)
@@ -257,19 +245,25 @@ def main() -> int:
                 raise engine_error[0]
             engine = engine_ref[0]
             assert engine is not None
-            if evaluator_for_shutdown[0] is None:
-                _capture_evaluator()
             engine.dispatch(cmd)
             if engine.quit_requested:
                 break
     finally:
-        ev = evaluator_for_shutdown[0]
-        close = getattr(ev, "close", None) if ev is not None else None
-        if callable(close):
-            try:
-                close()
-            except Exception:
-                pass
+        # Close whatever evaluator is CURRENT at shutdown time, not a
+        # one-shot snapshot — ``MaxBatch`` setoption rebuilds the evaluator
+        # via ``SearchWorker.set_evaluator``, which already closes the old
+        # one; this closes the live one. Guarantees the non-daemon
+        # submitter thread joins before Python's interpreter shutdown
+        # starts tearing down PyTorch's CUDA context.
+        eng = engine_ref[0]
+        if eng is not None:
+            ev = eng._worker._evaluator  # pyright: ignore[reportPrivateUsage]
+            close = getattr(ev, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
     return 0
 
 

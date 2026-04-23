@@ -68,26 +68,44 @@ class BatchCoalescingDispatcher:
         self._pending: list[tuple[np.ndarray, threading.Event, list]] = []
         self._wake = threading.Event()
         self._shutdown = threading.Event()
-        # Non-daemon so ``close()`` can join cleanly before Python
-        # interpreter shutdown starts tearing down PyTorch's CUDA context.
-        # A daemon here led to "terminate called without an active
-        # exception" on quit: the submitter was killed mid-forward, leaving
-        # pending CUDA work that the C++ runtime couldn't resolve.
+        # Daemon so tests / scripts that forget ``close()`` don't hang at
+        # interpreter shutdown. The UCI main loop calls ``close()`` in a
+        # ``finally`` before returning, so the CUDA-owning path still drains
+        # deterministically before Python tears down torch's C++ context
+        # (which was the original ``terminate called without an active
+        # exception`` failure mode).
         self._submitter = threading.Thread(
             target=self._submitter_loop,
             name="coalesce-submitter",
-            daemon=False,
+            daemon=True,
         )
         self._submitter.start()
 
     def close(self) -> None:
-        """Stop the submitter thread cleanly. Idempotent."""
-        if self._shutdown.is_set():
-            return
-        self._shutdown.set()
+        """Stop the submitter thread and fail any in-flight or pending
+        submits with a ``RuntimeError``. Idempotent.
+
+        Shutdown is atomic: under ``_lock`` we flip ``_shutdown`` and snapshot
+        ``_pending`` into a local. Every waiter (in the snapshot) has its
+        result set to the shutdown error and its Event released before we
+        signal the submitter to exit. That removes the race where a caller
+        appends right before close and then blocks forever on an already-
+        exited submitter. After ``close()`` returns, no new submits are
+        accepted (see ``evaluate_encoded``).
+        """
+        with self._lock:
+            if self._shutdown.is_set():
+                return
+            self._shutdown.set()
+            stranded = self._pending
+            self._pending = []
+        err = RuntimeError("BatchCoalescingDispatcher is closed")
+        for _, ev, res in stranded:
+            res[0] = err
+            ev.set()
         self._wake.set()
         if self._submitter.is_alive():
-            self._submitter.join(timeout=5.0)
+            self._submitter.join(timeout=30.0)
 
     def __del__(self) -> None:
         # Best-effort close on GC, in case caller forgets.
@@ -100,6 +118,10 @@ class BatchCoalescingDispatcher:
         done = threading.Event()
         result: list[tuple[np.ndarray, np.ndarray] | BaseException | None] = [None]
         with self._lock:
+            # Reject new work after close() rather than silently waiting on
+            # a submitter thread that's about to exit.
+            if self._shutdown.is_set():
+                raise RuntimeError("BatchCoalescingDispatcher is closed")
             self._pending.append((x, done, result))
         self._wake.set()
         done.wait()
@@ -110,11 +132,14 @@ class BatchCoalescingDispatcher:
         return got
 
     def _submitter_loop(self) -> None:
-        while not self._shutdown.is_set():
+        while True:
             self._wake.wait()
             self._wake.clear()
-            if self._shutdown.is_set():
-                break
+            # Drain any work that landed before shutdown AND while the
+            # submitter was busy on the prior batch — so a caller that
+            # appended in the window between our wake.clear and our lock
+            # acquire isn't left stranded (close() also drains, but only
+            # sees items at shutdown time).
             while True:
                 with self._lock:
                     if not self._pending:
@@ -144,6 +169,11 @@ class BatchCoalescingDispatcher:
                     res[0] = (pol[offset:offset + n], wdl[offset:offset + n])
                     ev.set()
                     offset += n
+            # Exit only after pending is fully drained — ``close()`` already
+            # emptied pending into stranded-err waiters, so at this point
+            # there's nothing the submitter can do except leave.
+            if self._shutdown.is_set():
+                return
 
     @property
     def max_batch(self) -> int:

@@ -172,10 +172,22 @@ class SearchWorker:
         cached Q values were computed through the old evaluator. Caller
         holds the search barrier (same pattern as ``set_num_threads`` /
         ``set_tb_probe``).
+
+        Closes the outgoing evaluator to release its background threads
+        (notably ``BatchCoalescingDispatcher``'s non-daemon submitter).
+        Without this, ``setoption MaxBatch`` repeatedly would leak one
+        submitter per rebuild and block process shutdown.
         """
+        old = self._evaluator
         self._evaluator = evaluator
         self._walker_pool = self._build_walker_pool(self._n_walkers)
         self.reset_tree()
+        close = getattr(old, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                pass
 
     def set_num_threads(self, n: int) -> None:
         """Rebuild the walker pool at thread count ``n`` (1 = classic Gumbel

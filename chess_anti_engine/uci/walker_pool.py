@@ -75,11 +75,17 @@ class WalkerPool:
         # returns False. Also serves as the "done" counter via target - value.
         budget = threading.Semaphore(target_sims)
 
+        # Per-pool exception capture. First worker to fail pushes here and
+        # sets ``stop_event`` so siblings exit early instead of running a
+        # full sim budget against a broken evaluator / tree. CPython
+        # list.append is GIL-atomic so no explicit lock needed.
+        errors: list[BaseException] = []
+
         threads = [
             threading.Thread(
                 target=_worker_loop,
                 args=(tree, root_id, root_cboard, self._evaluator,
-                      cfg, budget, stop_event),
+                      cfg, budget, stop_event, errors),
                 name=f"walker-{i}",
                 daemon=True,
             )
@@ -89,6 +95,12 @@ class WalkerPool:
             th.start()
         for th in threads:
             th.join()
+        if errors:
+            # Re-raise the first one; a dead walker means the search
+            # tree is underfilled and any bestmove would be based on
+            # partial data. Caller (Engine._run_one_phase) catches and
+            # surfaces via ``info string search error``.
+            raise errors[0]
         # Semaphore's internal counter is target - claimed; we cannot read
         # it portably, so return target_sims as the best-effort count. The
         # caller only uses this for progress logging.
@@ -103,6 +115,7 @@ def _worker_loop(
     cfg: WalkerPoolConfig,
     budget: threading.Semaphore,
     stop_event: threading.Event,
+    errors: list[BaseException],
 ) -> None:
     import logging as _logging
     _log = _logging.getLogger(__name__)
@@ -124,11 +137,13 @@ def _worker_loop(
                 continue
             pol, wdl = evaluator.evaluate_encoded(enc)
             tree.walker_integrate_leaf(path, legal, pol[0], wdl[0], vloss)
-    except BaseException:
-        # Log and swallow so the join() in WalkerPool.run doesn't see a
-        # dangling thread — Python's threading re-raises nothing to the
-        # parent anyway, but the silent-exit path corrupted state in PyTorch's
-        # C++ CUDA layer on release (manifesting as ``terminate called
-        # without an active exception`` on shutdown). Explicit trap here
-        # surfaces the root cause and keeps cleanup deterministic.
-        _log.exception("walker thread raised; exiting worker loop")
+    except Exception as exc:
+        # Record the failure so ``WalkerPool.run`` can re-raise after join,
+        # and signal siblings to stop — running a full sim budget against
+        # a broken evaluator would just produce N identical failures and
+        # delay the error surfacing. ``KeyboardInterrupt`` / ``SystemExit``
+        # deliberately propagate out of the thread (daemon, so Python
+        # lets them die without join).
+        _log.exception("walker thread raised; requesting pool stop")
+        errors.append(exc)
+        stop_event.set()

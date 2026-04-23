@@ -153,3 +153,89 @@ def test_exception_propagates_to_waiters() -> None:
     # is stuck alive (deadlock check).
     for t in threads:
         assert not t.is_alive(), "worker hung (no exception propagation)"
+
+
+def test_close_rejects_new_submits() -> None:
+    """After close(), evaluate_encoded raises immediately rather than
+    hanging on an exited submitter."""
+    inner = _RecordingInner(submit_sleep=0.0)
+    coalesce = BatchCoalescingDispatcher(inner, max_batch=128)
+    coalesce.close()
+    import pytest
+    with pytest.raises(RuntimeError, match="closed"):
+        coalesce.evaluate_encoded(np.zeros((1, 146, 8, 8), dtype=np.float32))
+
+
+def test_close_unblocks_pending_waiters() -> None:
+    """If close() fires while a caller has work pending (the race that
+    previously stranded the caller on done.wait() forever), the waiter
+    must be released with a shutdown error instead."""
+
+    class _SlowInner:
+        """Blocks forever on first call — simulates a submitter stuck in
+        the middle of a slow forward when close() is invoked."""
+        def __init__(self) -> None:
+            self.started = threading.Event()
+            self.release = threading.Event()
+
+        def evaluate_encoded(self, x):
+            del x
+            self.started.set()
+            # Block until test allows — by the time we unblock, close()
+            # should have run. Return a valid result for the first caller
+            # (which was in-flight when close() ran) so we exercise the
+            # post-forward path, not the error path.
+            self.release.wait(timeout=5.0)
+            return (np.zeros((1, 4672), dtype=np.float32),
+                    np.zeros((1, 3), dtype=np.float32))
+
+    inner = _SlowInner()
+    coalesce = BatchCoalescingDispatcher(inner, max_batch=128)
+
+    # Caller A: kicks off the submit, will block on inner.
+    errors_a: list[BaseException] = []
+
+    def caller_a() -> None:
+        try:
+            coalesce.evaluate_encoded(np.zeros((1, 146, 8, 8), dtype=np.float32))
+        except BaseException as e:
+            errors_a.append(e)
+
+    ta = threading.Thread(target=caller_a)
+    ta.start()
+    assert inner.started.wait(timeout=2.0), "submitter never started first forward"
+
+    # Caller B: arrives while A's forward is running — its item sits in
+    # pending. This is the race that used to strand: if close() fires now,
+    # B's done.wait() should return with an error, not hang.
+    errors_b: list[BaseException] = []
+
+    def caller_b() -> None:
+        try:
+            coalesce.evaluate_encoded(np.zeros((1, 146, 8, 8), dtype=np.float32))
+        except BaseException as e:
+            errors_b.append(e)
+
+    tb = threading.Thread(target=caller_b)
+    tb.start()
+    time.sleep(0.05)  # give B time to enqueue
+
+    # Fire close() while A is mid-forward and B is pending.
+    inner.release.set()  # let A's forward complete (A returns normally)
+    coalesce.close()
+
+    ta.join(timeout=5.0)
+    tb.join(timeout=5.0)
+    assert not ta.is_alive(), "caller A hung across close"
+    assert not tb.is_alive(), "caller B hung across close — the close-race bug"
+    # A completed normally (its forward returned before close drained).
+    # B was stranded in pending when close ran; must see RuntimeError.
+    assert len(errors_b) == 1 and isinstance(errors_b[0], RuntimeError), (
+        f"caller B should get RuntimeError from close(), got {errors_b}")
+
+
+def test_close_is_idempotent() -> None:
+    """Calling close() a second time is a no-op, not a deadlock."""
+    coalesce = BatchCoalescingDispatcher(_RecordingInner(), max_batch=128)
+    coalesce.close()
+    coalesce.close()  # must not hang or raise
