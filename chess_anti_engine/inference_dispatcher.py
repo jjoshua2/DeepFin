@@ -40,13 +40,21 @@ class ThreadSafeGPUDispatcher:
 class BatchCoalescingDispatcher:
     """Merge concurrent ``evaluate_encoded`` calls into one GPU submit.
 
-    With a walker pool, N threads submit batch=1 in a tight loop. Any
-    caller finding no submit in flight becomes the submitter: drains the
-    pending queue into one ``np.concatenate``, submits to the inner
-    dispatcher, and distributes result slices back via per-caller Events.
-    Callers arriving during a submit accumulate in pending for the next
-    iteration. No artificial timer — the submit window IS the time the
-    current submitter spends preparing and executing.
+    With a walker pool, N threads submit batch=1 in a tight loop. Callers
+    push their x into a pending queue + wait on a per-call Event. A single
+    persistent **submitter thread** drains the queue, coalesces into one
+    ``np.concatenate``, submits to the inner dispatcher, and distributes
+    result slices back via Events. Callers arriving during a submit
+    accumulate in pending for the next round.
+
+    Why a dedicated thread (rather than whichever caller wins the "I'll
+    submit" race): torch.compile in reduce-overhead mode captures CUDA
+    graphs that are thread-local in practice (stream context + cached
+    autograd state). When submits come from varying threads, the capture
+    state drifts, and the mismatched cleanup on interpreter shutdown
+    shows up as ``terminate called without an active exception``.
+    Pinning the submit to one thread makes torch.compile's internal
+    state deterministic.
 
     Observed coalescing factor equals the number of walker threads whose
     CPU descend completes within one GPU call's wall time. At 4 walkers
@@ -58,21 +66,42 @@ class BatchCoalescingDispatcher:
         self._max_batch = int(max_batch)
         self._lock = threading.Lock()
         self._pending: list[tuple[np.ndarray, threading.Event, list]] = []
-        self._busy = False
+        self._wake = threading.Event()
+        self._shutdown = threading.Event()
+        # Non-daemon so ``close()`` can join cleanly before Python
+        # interpreter shutdown starts tearing down PyTorch's CUDA context.
+        # A daemon here led to "terminate called without an active
+        # exception" on quit: the submitter was killed mid-forward, leaving
+        # pending CUDA work that the C++ runtime couldn't resolve.
+        self._submitter = threading.Thread(
+            target=self._submitter_loop,
+            name="coalesce-submitter",
+            daemon=False,
+        )
+        self._submitter.start()
+
+    def close(self) -> None:
+        """Stop the submitter thread cleanly. Idempotent."""
+        if self._shutdown.is_set():
+            return
+        self._shutdown.set()
+        self._wake.set()
+        if self._submitter.is_alive():
+            self._submitter.join(timeout=5.0)
+
+    def __del__(self) -> None:
+        # Best-effort close on GC, in case caller forgets.
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         done = threading.Event()
         result: list[tuple[np.ndarray, np.ndarray] | BaseException | None] = [None]
-        claim: list[tuple[np.ndarray, threading.Event, list]] | None = None
         with self._lock:
             self._pending.append((x, done, result))
-            if not self._busy:
-                self._busy = True
-                claim = self._pending[:self._max_batch]
-                self._pending = self._pending[self._max_batch:]
-
-        if claim is not None:
-            self._run_submitter_loop(claim)
+        self._wake.set()
         done.wait()
         got = result[0]
         if isinstance(got, BaseException):
@@ -80,42 +109,41 @@ class BatchCoalescingDispatcher:
         assert got is not None
         return got
 
-    def _run_submitter_loop(
-        self,
-        batch: list[tuple[np.ndarray, threading.Event, list]],
-    ) -> None:
-        while batch:
-            xs = np.concatenate([entry[0] for entry in batch], axis=0)
-            try:
-                pol, wdl = self._inner.evaluate_encoded(xs)
-            except BaseException as exc:
-                # Propagate to every waiter so no walker hangs on its Event.
-                # Also drain pending: callers that arrived after our claim
-                # but before this failure are stuck on done.wait() too.
-                for _, ev, res in batch:
-                    res[0] = exc
-                    ev.set()
+    def _submitter_loop(self) -> None:
+        while not self._shutdown.is_set():
+            self._wake.wait()
+            self._wake.clear()
+            if self._shutdown.is_set():
+                break
+            while True:
                 with self._lock:
-                    pending = self._pending
-                    self._pending = []
-                    self._busy = False
-                for _, ev, res in pending:
-                    res[0] = exc
-                    ev.set()
-                raise
-            offset = 0
-            for x, ev, res in batch:
-                n = x.shape[0]
-                res[0] = (pol[offset:offset + n], wdl[offset:offset + n])
-                ev.set()
-                offset += n
-            with self._lock:
-                if not self._pending:
-                    self._busy = False
-                    batch = []
-                else:
+                    if not self._pending:
+                        break
                     batch = self._pending[:self._max_batch]
                     self._pending = self._pending[self._max_batch:]
+                xs = np.concatenate([entry[0] for entry in batch], axis=0)
+                try:
+                    pol, wdl = self._inner.evaluate_encoded(xs)
+                except BaseException as exc:
+                    # Wake every waiter with the exception so no walker
+                    # hangs, then drain anything that arrived during the
+                    # failed submit too.
+                    for _, ev, res in batch:
+                        res[0] = exc
+                        ev.set()
+                    with self._lock:
+                        pending = self._pending
+                        self._pending = []
+                    for _, ev, res in pending:
+                        res[0] = exc
+                        ev.set()
+                    continue
+                offset = 0
+                for x, ev, res in batch:
+                    n = x.shape[0]
+                    res[0] = (pol[offset:offset + n], wdl[offset:offset + n])
+                    ev.set()
+                    offset += n
 
     @property
     def max_batch(self) -> int:

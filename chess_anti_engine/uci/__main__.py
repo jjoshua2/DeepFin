@@ -33,22 +33,35 @@ from .protocol import CmdQuit, CmdUci, parse_command
 from .search import SearchWorker
 
 
-def _warmup_evaluator(evaluator) -> None:
+def _warmup_evaluator(evaluator, *, n_walkers: int = 1) -> None:
     """Trigger torch.compile + CUDA graph capture for the shapes the UCI
-    search will hit, so the first `go` doesn't pay that cost. Runs one
-    forward at batch=1 (root eval) and one at bucket size 128 (typical
-    single-game leaf batch from gumbel_c._BUCKETS). Both are no-ops if
-    the model path doesn't graph-capture, but the compile itself is
-    shape-keyed under torch.compile reduce-overhead mode."""
+    search will actually hit, so the first `go` doesn't pay compile
+    latency (~3-5s per new shape).
+
+    Shapes the search touches:
+      * batch=1 — root eval and single-walker leaves
+      * batch=N — walker pool at ``--walkers N`` coalesces concurrent
+        worker calls into one submit of size up to N, so shapes 2..N
+        are common on first sims
+      * batch=128 — gumbel path's single-game bucket (gumbel_c._BUCKETS)
+
+    Warmup is skipped silently on failure — the real ``go`` will see
+    the same error and surface it there.
+    """
     cb = CBoard.from_board(chess.Board())
     encoded = cb.encode_146()
-    for batch in (1, 128):
+    # Walker-path batches are tiny, often non-power-of-2; cap at the
+    # walker count rather than enumerating every size (each compile costs
+    # ~3-5s).  1 and the walker count cover most of the distribution.
+    walker_sizes = {1}
+    if n_walkers > 1:
+        walker_sizes.add(int(n_walkers))
+    batches = sorted(walker_sizes | {128})
+    for batch in batches:
         xs = np.broadcast_to(encoded, (batch, 146, 8, 8)).astype(np.float32, copy=True)
         try:
             evaluator.evaluate_encoded(xs)
         except Exception:
-            # Don't let a warmup failure block readyok — the real path would
-            # raise the same error and the user would see it there.
             break
 
 
@@ -65,11 +78,11 @@ def _load_models(checkpoint: str, devices: list[str]):
     return [load_model_from_checkpoint(checkpoint, device=devices[0])]
 
 
-def _make_evaluator_factory(models, devices, coalesce):
+def _make_evaluator_factory(models, devices, coalesce, n_walkers):
     """Return a ``build(max_batch) -> evaluator`` closure. The models are
     captured once at startup; each call constructs fresh evaluator
-    wrappers at the new max_batch and warms them so the next ``go``
-    doesn't pay compile latency."""
+    wrappers at the new max_batch and warms them at the shapes the
+    walker count + gumbel bucket will actually hit."""
     def build(max_batch: int):
         if len(devices) > 1:
             evaluators = [
@@ -87,7 +100,7 @@ def _make_evaluator_factory(models, devices, coalesce):
             evaluator = ThreadSafeGPUDispatcher(evaluator)
         if coalesce:
             evaluator = BatchCoalescingDispatcher(evaluator, max_batch=max_batch)
-        _warmup_evaluator(evaluator)
+        _warmup_evaluator(evaluator, n_walkers=n_walkers)
         return evaluator
     return build
 
@@ -200,6 +213,7 @@ def main() -> int:
             models = _load_models(args.checkpoint, devices)
             build_eval = _make_evaluator_factory(
                 models, devices, coalesce=bool(args.coalesce),
+                n_walkers=n_walkers,
             )
             # Initial build: warms the evaluator too (see factory body).
             evaluator = build_eval(args.max_batch)
@@ -216,23 +230,46 @@ def main() -> int:
 
     threading.Thread(target=_build, daemon=True, name="deepfin-build").start()
 
-    for raw in sys.stdin:
-        cmd = parse_command(raw)
-        if isinstance(cmd, CmdUci):
-            emit_handshake(EngineOptions())
-            continue
-        if isinstance(cmd, CmdQuit):
-            break
-        if not engine_ready.is_set():
-            engine_ready.wait()
-        if engine_error[0] is not None:
-            print(f"info string engine load failed: {engine_error[0]!r}", flush=True)
-            raise engine_error[0]
-        engine = engine_ref[0]
-        assert engine is not None
-        engine.dispatch(cmd)
-        if engine.quit_requested:
-            break
+    evaluator_for_shutdown = [None]
+
+    def _capture_evaluator() -> None:
+        """Once the engine builds, remember the evaluator so the quit path
+        can close any non-daemon threads inside it (notably
+        BatchCoalescingDispatcher's submitter). Without this, a walker
+        search that leaves pending CUDA work in the coalescer triggers
+        ``terminate called without an active exception`` when Python's
+        interpreter shutdown yanks threads out from under torch."""
+        if engine_ref[0] is not None:
+            evaluator_for_shutdown[0] = engine_ref[0]._worker._evaluator  # pyright: ignore[reportPrivateUsage]
+
+    try:
+        for raw in sys.stdin:
+            cmd = parse_command(raw)
+            if isinstance(cmd, CmdUci):
+                emit_handshake(EngineOptions())
+                continue
+            if isinstance(cmd, CmdQuit):
+                break
+            if not engine_ready.is_set():
+                engine_ready.wait()
+            if engine_error[0] is not None:
+                print(f"info string engine load failed: {engine_error[0]!r}", flush=True)
+                raise engine_error[0]
+            engine = engine_ref[0]
+            assert engine is not None
+            if evaluator_for_shutdown[0] is None:
+                _capture_evaluator()
+            engine.dispatch(cmd)
+            if engine.quit_requested:
+                break
+    finally:
+        ev = evaluator_for_shutdown[0]
+        close = getattr(ev, "close", None) if ev is not None else None
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                pass
     return 0
 
 
