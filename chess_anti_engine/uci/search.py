@@ -30,7 +30,6 @@ from .score import q_to_cp
 from .time_manager import Deadline
 from .walker_pool import WalkerPool, WalkerPoolConfig
 
-
 # Saturated cp for TB-decisive positions. Matches what the NN-backed path
 # naturally emits when Q is pinned to ±1 by the SyzygyProbe's wdl override,
 # so the two code paths report consistently.
@@ -58,9 +57,9 @@ class SearchResult:
     pv: tuple[str, ...]
     score_cp: int
     tbhits: int = 0
-    # When set, the PV terminates in checkmate; emit `score mate N` instead
-    # of `score cp`. Sign: positive = root STM mates, negative = gets mated.
-    # Units: UCI moves (ceil(plies/2) with sign).
+  # When set, the PV terminates in checkmate; emit `score mate N` instead
+  # of `score cp`. Sign: positive = root STM mates, negative = gets mated.
+  # Units: UCI moves (ceil(plies/2) with sign).
     score_mate: int | None = None
 
 
@@ -86,6 +85,7 @@ class SearchWorker:
         chunk_sims: int = _DEFAULT_CHUNK_SIMS,
         n_walkers: int = 1,
         vloss_weight: int = 3,
+        walker_gather: int = 1,
     ) -> None:
         self._evaluator = evaluator
         self._device = device
@@ -95,44 +95,49 @@ class SearchWorker:
         )
         self._chunk_sims = int(chunk_sims)
         self._rng = np.random.default_rng()
-        # n_walkers > 1 → PUCT pool with vloss, sequential halving dropped.
-        # evaluator MUST be thread-safe (caller wraps with Thread/MultiGPU
-        # dispatcher or BatchCoalescingDispatcher).
+  # n_walkers > 1 → PUCT pool with vloss, sequential halving dropped.
+  # evaluator MUST be thread-safe (caller wraps with Thread/MultiGPU
+  # dispatcher or BatchCoalescingDispatcher).
         self._vloss_weight = int(vloss_weight)
         self._n_walkers = max(1, int(n_walkers))
+  # Per-walker leaf gather: each walker collects up to this many
+  # descents before submitting one NN batch. 1 = classic batch=1
+  # per walker; higher amplifies the effective submit batch without
+  # spawning more threads. Set via UCI `LeafGather`.
+        self._walker_gather = max(1, int(walker_gather))
         self._walker_pool: WalkerPool | None = self._build_walker_pool(self._n_walkers)
         self._walker_cboard: CBoard | None = None
 
-        # Persistent tree across calls within a game. Reset on new position.
+  # Persistent tree across calls within a game. Reset on new position.
         self._tree: MCTSTree | None = None
         self._root_id: int | None = None
         self._tree_fen: str | None = None
-        # Cache of the root's policy + WDL logits. Valid for as long as the
-        # tree is valid (same position). Lets chunks after the first skip
-        # the ~1ms root GPU call.
+  # Cache of the root's policy + WDL logits. Valid for as long as the
+  # tree is valid (same position). Lets chunks after the first skip
+  # the ~1ms root GPU call.
         self._root_pol_logits: np.ndarray | None = None
         self._root_wdl_logits: np.ndarray | None = None
-        # Optional Syzygy probe. When set, MCTS leaves in the TB range get
-        # their NN wdl overridden with the TB-truth distribution.
+  # Optional Syzygy probe. When set, MCTS leaves in the TB range get
+  # their NN wdl overridden with the TB-truth distribution.
         self._tb_probe = None
-        # Soft memory cap: search halts between chunks if tree size exceeds
-        # this. 0 / None = unbounded. Not a hash table — tree growth is all
-        # or nothing, we stop adding rather than evicting.
+  # Soft memory cap: search halts between chunks if tree size exceeds
+  # this. 0 / None = unbounded. Not a hash table — tree growth is all
+  # or nothing, we stop adding rather than evicting.
         self._max_tree_bytes: int = 0
-        # Minibatch target for the C gumbel state machine. 0 = use the
-        # C-side GSS_GPU_BATCH default. Higher = better GPU util on large
-        # batches; lower = faster stop latency + fresher tree state on
-        # each leaf. Set via UCI `MinibatchSize`.
+  # Minibatch target for the C gumbel state machine. 0 = use the
+  # C-side GSS_GPU_BATCH default. Higher = better GPU util on large
+  # batches; lower = faster stop latency + fresher tree state on
+  # each leaf. Set via UCI `MinibatchSize`.
         self._minibatch_size: int = 0
-        # MultiPV: emit this many top-ranked lines per info tick. 1 = one PV
-        # (classic behavior). >1 triggers a loop that extracts each of the
-        # top-N root children by visits, walks a most-visited PV from each,
-        # and emits them all with ``multipv N`` fields.
+  # MultiPV: emit this many top-ranked lines per info tick. 1 = one PV
+  # (classic behavior). >1 triggers a loop that extracts each of the
+  # top-N root children by visits, walks a most-visited PV from each,
+  # and emits them all with ``multipv N`` fields.
         self._multi_pv: int = 1
-        # Emit `wdl W D L` per-mille alongside score_cp. Derived per-line
-        # from that line's Q plus a draw-rate estimate from the root NN
-        # evaluation (all lines share the same draw rate — they're
-        # different continuations of the same root position).
+  # Emit `wdl W D L` per-mille alongside score_cp. Derived per-line
+  # from that line's Q plus a draw-rate estimate from the root NN
+  # evaluation (all lines share the same draw rate — they're
+  # different continuations of the same root position).
         self._show_wdl: bool = False
 
     def _build_walker_pool(self, n: int) -> WalkerPool | None:
@@ -145,6 +150,7 @@ class SearchWorker:
                 fpu_at_root=0.0,
                 fpu_reduction=float(self._cfg.fpu_reduction),
                 vloss_weight=self._vloss_weight,
+                gather=self._walker_gather,
             ),
             self._evaluator,
         )
@@ -159,12 +165,38 @@ class SearchWorker:
         no rebuild, no tree reset."""
         self._multi_pv = max(1, int(n))
 
+    def set_walker_gather(self, n: int) -> None:
+        """Set per-walker leaf gather. Rebuilds the walker pool (cheap —
+        pool is stateless between runs) and resets the tree only when
+        walker pool exists; at n_walkers=1 the option is accepted but
+        has no runtime effect until threads are raised. Caller holds the
+        search barrier."""
+        n = max(1, int(n))
+        if n == self._walker_gather:
+            return
+        self._walker_gather = n
+        if self._walker_pool is not None:
+            self._walker_pool = self._build_walker_pool(self._n_walkers)
+
     def set_minibatch_size(self, n: int) -> None:
         """Set the minibatch accumulation target for the C gumbel state
         machine. 0 means fall back to the C-side default. Takes effect
         on the next ``run_gumbel_root_many_c`` call — no rebuild, no
         tree reset. Just read next time."""
         self._minibatch_size = max(0, int(n))
+
+    def close(self) -> None:
+        """Close the current evaluator. Safe to call multiple times; no-op
+        if the evaluator has no ``close`` method. Used at process shutdown
+        to drain ``BatchCoalescingDispatcher``'s submitter thread before
+        Python tears down PyTorch's CUDA context."""
+        ev = self._evaluator
+        close = getattr(ev, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                pass
 
     def set_evaluator(self, evaluator: BatchEvaluator) -> None:
         """Swap in a freshly-built (and warmed-up) evaluator. Rebuilds the
@@ -213,6 +245,48 @@ class SearchWorker:
         self._root_pol_logits = None
         self._root_wdl_logits = None
         self._walker_cboard = None
+
+    def _emit_pv_info(
+        self,
+        info_cb: InfoCallback,
+        board: chess.Board,
+        root_q: float,
+        total_nodes: int,
+        elapsed_ms: int,
+        tb_probe,
+    ) -> None:
+        """Emit one or more ``info`` lines, one per top-ranked PV.
+
+        When ``self._multi_pv`` == 1 the ``multipv`` field is omitted
+        (classic single-PV UCI). When > 1 each line gets ``multipv 1..N``.
+        When ``self._show_wdl`` is on and the root NN eval has been cached,
+        each line also gets a ``wdl W D L`` field derived from its Q plus
+        the root's NN draw-rate estimate.
+        """
+        assert self._tree is not None and self._root_id is not None
+        lines = _multipv_lines(self._tree, self._root_id, self._multi_pv, root_q)
+        if not lines:
+            return
+        emit_multipv = self._multi_pv > 1
+        tbhits = tb_probe.hits if tb_probe is not None else 0
+        draw_rate = (
+            _root_draw_rate(self._root_wdl_logits[0])
+            if self._show_wdl and self._root_wdl_logits is not None
+            else 0.0
+        )
+        for rank, q, pv_idx in lines:
+            uci_pv = _uci_pv(board, pv_idx)
+            wdl = _q_to_wdl_permille(q, draw_rate) if self._show_wdl else None
+            info_cb(
+                nodes=total_nodes,
+                elapsed_ms=elapsed_ms,
+                score_cp=q_to_cp(0.5 * (q + 1.0)),
+                pv=uci_pv,
+                tbhits=tbhits,
+                score_mate=_pv_mate_moves(board, pv_idx),
+                multipv=rank if emit_multipv else None,
+                wdl=wdl,
+            )
 
     def set_max_tree_mb(self, mb: int) -> None:
         """Soft cap on tree memory; 0 disables. Checked between chunks."""
@@ -284,18 +358,18 @@ class SearchWorker:
         if tb_probe is not None:
             tb_probe.reset_counts()
 
-        # TB root shortcut: if the root position is TB-eligible, the tables
-        # know the move exactly (DTZ-optimal for decisive; any for drawn).
-        # MCTS adds nothing and, worse, picks by visits — which in a TB-win
-        # with Q=1.0 everywhere reduces to "most-popular NN prior", yielding
-        # a valid but DTZ-sub-optimal sequence. Skip straight to the answer.
+  # TB root shortcut: if the root position is TB-eligible, the tables
+  # know the move exactly (DTZ-optimal for decisive; any for drawn).
+  # MCTS adds nothing and, worse, picks by visits — which in a TB-win
+  # with Q=1.0 everywhere reduces to "most-popular NN prior", yielding
+  # a valid but DTZ-sub-optimal sequence. Skip straight to the answer.
         if tb_probe is not None:
             short = _try_tb_root_bestmove(board, tb_probe)
             if short is not None:
                 if info_cb is not None:
-                    # TB root shortcut emits one line; no per-line q to
-                    # derive a wdl from, so we skip the wdl field here.
-                    # (TB-decisive positions get saturated cp anyway.)
+  # TB root shortcut emits one line; no per-line q to
+  # derive a wdl from, so we skip the wdl field here.
+  # (TB-decisive positions get saturated cp anyway.)
                     info_cb(
                         nodes=short.nodes,
                         elapsed_ms=deadline.elapsed_ms(),
@@ -308,10 +382,10 @@ class SearchWorker:
                     )
                 return short
 
-        # Root eval is the same every chunk (same position, same net). Do it
-        # once here and pass pre_pol_logits/pre_wdl_logits into each chunk so
-        # the C path skips its own root GPU call. Saves ~1ms × (chunks-1) per
-        # search and lets us hand-share the encoding across chunks for free.
+  # Root eval is the same every chunk (same position, same net). Do it
+  # once here and pass pre_pol_logits/pre_wdl_logits into each chunk so
+  # the C path skips its own root GPU call. Saves ~1ms × (chunks-1) per
+  # search and lets us hand-share the encoding across chunks for free.
         if self._root_pol_logits is None or self._root_wdl_logits is None:
             xs = np.empty((1, 146, 8, 8), dtype=np.float32)
             root_cb = CBoard.from_board(board)
@@ -319,16 +393,16 @@ class SearchWorker:
             pol, wdl = self._evaluator.evaluate_encoded(xs)
             pol_np = np.asarray(pol, dtype=np.float32)
             wdl_np = np.asarray(wdl, dtype=np.float32).copy()
-            # Probe at root so score_cp reflects TB truth on the very first
-            # chunk's info emission, before MCTS has back-propagated it.
+  # Probe at root so score_cp reflects TB truth on the very first
+  # chunk's info emission, before MCTS has back-propagated it.
             if tb_probe is not None:
                 tb_probe.apply([root_cb], wdl_np)
             self._root_pol_logits = pol_np
             self._root_wdl_logits = wdl_np
 
-        # Walker-pool path pre-expands the root from the cached logits so
-        # the concurrent walkers don't race on it. The classic path does
-        # this internally in run_gumbel_root_many_c.
+  # Walker-pool path pre-expands the root from the cached logits so
+  # the concurrent walkers don't race on it. The classic path does
+  # this internally in run_gumbel_root_many_c.
         if self._walker_pool is not None:
             self._ensure_walker_root_expanded(board)
 
@@ -346,9 +420,9 @@ class SearchWorker:
                 last_value = self._run_gumbel_chunk(chunk, board, tb_probe)
             total_nodes += int(chunk)
 
-            # PV extraction is only needed for info emission (rate-limited)
-            # and for max_depth termination. Skip otherwise — saves a handful
-            # of tree walks per second on chunk=512 at ~5 nps/chunk.
+  # PV extraction is only needed for info emission (rate-limited)
+  # and for max_depth termination. Skip otherwise — saves a handful
+  # of tree walks per second on chunk=512 at ~5 nps/chunk.
             elapsed = deadline.elapsed_ms() if info_cb is not None else 0
             need_pv = (
                 (info_cb is not None and elapsed - last_info_ms >= _INFO_EMIT_INTERVAL_MS)
@@ -356,24 +430,14 @@ class SearchWorker:
             )
             if need_pv:
                 assert self._tree is not None and self._root_id is not None
-                # Extract the PV we use for max_depth termination first —
-                # that's just the single most-visited line regardless of
-                # multi_pv setting.
+  # Extract the PV we use for max_depth termination first —
+  # that's just the single most-visited line regardless of
+  # multi_pv setting.
                 _, pv_indices = _best_move_and_pv(self._tree, self._root_id)
                 if info_cb is not None and elapsed - last_info_ms >= _INFO_EMIT_INTERVAL_MS:
-                    _tbhits = tb_probe.hits if tb_probe is not None else 0
-                    _emit_multipv_info(
-                        info_cb=info_cb,
-                        tree=self._tree,
-                        root_id=self._root_id,
-                        board=board,
-                        n=self._multi_pv,
-                        root_q=float(last_value),
-                        total_nodes=total_nodes,
-                        elapsed_ms=elapsed,
-                        tbhits=_tbhits,
-                        show_wdl=self._show_wdl,
-                        root_wdl_logits=self._root_wdl_logits,
+                    self._emit_pv_info(
+                        info_cb, board, float(last_value),
+                        total_nodes, elapsed, tb_probe,
                     )
                     last_info_ms = elapsed
 
@@ -386,26 +450,17 @@ class SearchWorker:
             if (self._max_tree_bytes > 0
                     and self._tree is not None
                     and self._tree.memory_bytes() >= self._max_tree_bytes):
-                # Don't try to grow into swap; halt with the best move we have.
-                # Info-string so GUIs/logs surface the reason.
+  # Don't try to grow into swap; halt with the best move we have.
+  # Info-string so GUIs/logs surface the reason.
                 if info_cb is not None:
                     assert self._root_id is not None
-                    _emit_multipv_info(
-                        info_cb=info_cb,
-                        tree=self._tree,
-                        root_id=self._root_id,
-                        board=board,
-                        n=self._multi_pv,
-                        root_q=float(last_value),
-                        total_nodes=total_nodes,
-                        elapsed_ms=elapsed,
-                        tbhits=tb_probe.hits if tb_probe is not None else 0,
-                        show_wdl=self._show_wdl,
-                        root_wdl_logits=self._root_wdl_logits,
+                    self._emit_pv_info(
+                        info_cb, board, float(last_value),
+                        total_nodes, elapsed, tb_probe,
                     )
                 break
 
-        # Final snapshot using whatever the tree knows now.
+  # Final snapshot using whatever the tree knows now.
         assert self._tree is not None and self._root_id is not None
         bestmove_idx, pv_indices = _best_move_and_pv(self._tree, self._root_id)
         ponder_idx = _predicted_opponent_reply(self._tree, self._root_id)
@@ -477,7 +532,7 @@ class SearchWorker:
         assert self._root_pol_logits is not None
         if self._tree is None:
             self._tree = MCTSTree()
-            # Pre-size so concurrent descents can't trigger a realloc.
+  # Pre-size so concurrent descents can't trigger a realloc.
             self._tree.reserve(50_000, 500_000)
             self._root_id = None
         if self._root_id is None:
@@ -490,8 +545,8 @@ class SearchWorker:
         if not self._tree.is_expanded(self._root_id):
             legal_idx = self._walker_cboard.legal_move_indices()
             if legal_idx.size > 0:
-                # _root_pol_logits is shape (1, 4672) — we cache the
-                # batched eval output. expand_from_logits wants 1D.
+  # _root_pol_logits is shape (1, 4672) — we cache the
+  # batched eval output. expand_from_logits wants 1D.
                 self._tree.expand_from_logits(
                     self._root_id,
                     legal_idx.astype(np.int32),
@@ -541,7 +596,7 @@ def _multipv_lines(
     actions, visits, qs = tree.get_children_q(root_id, root_q_default)
     if actions.size == 0:
         return []
-    # Sort descending by visits; ties tolerated — argsort is stable in numpy.
+  # Sort descending by visits; ties tolerated — argsort is stable in numpy.
     order = np.argsort(-visits)[:max(1, int(n))]
     out: list[tuple[int, float, list[int]]] = []
     for rank, i in enumerate(order.tolist(), start=1):
@@ -560,48 +615,6 @@ def _multipv_lines(
     return out
 
 
-def _emit_multipv_info(
-    *,
-    info_cb: InfoCallback,
-    tree: MCTSTree,
-    root_id: int,
-    board: chess.Board,
-    n: int,
-    root_q: float,
-    total_nodes: int,
-    elapsed_ms: int,
-    tbhits: int,
-    show_wdl: bool = False,
-    root_wdl_logits: np.ndarray | None = None,
-) -> None:
-    """Emit one or more ``info`` lines, one per top-ranked PV.
-
-    When n == 1 the ``multipv`` field is omitted (classic single-PV UCI).
-    When n > 1 each line gets ``multipv 1..N``. When ``show_wdl`` is True
-    and root logits are available, each line also gets a ``wdl W D L``
-    field derived from its Q plus the root's NN draw-rate estimate.
-    """
-    lines = _multipv_lines(tree, root_id, n, root_q)
-    if not lines:
-        return
-    emit_multipv = n > 1
-    draw_rate = (
-        _root_draw_rate(root_wdl_logits[0]) if show_wdl and root_wdl_logits is not None
-        else 0.0
-    )
-    for rank, q, pv_idx in lines:
-        uci_pv = _uci_pv(board, pv_idx)
-        wdl = _q_to_wdl_permille(q, draw_rate) if show_wdl else None
-        info_cb(
-            nodes=total_nodes,
-            elapsed_ms=elapsed_ms,
-            score_cp=q_to_cp(0.5 * (q + 1.0)),
-            pv=uci_pv,
-            tbhits=tbhits,
-            score_mate=_pv_mate_moves(board, pv_idx),
-            multipv=rank if emit_multipv else None,
-            wdl=wdl,
-        )
 
 
 def _try_tb_root_bestmove(
@@ -609,13 +622,13 @@ def _try_tb_root_bestmove(
 ) -> SearchResult | None:
     """Return a SearchResult built from the TB's DTZ-optimal move at root,
     or None if the position isn't TB-eligible (or the probe fails)."""
-    root = try_tb_root_move(board, tb_probe._path)  # pyright: ignore[reportPrivateUsage]
+    root = try_tb_root_move(board, tb_probe._path)
     if root is None:
         return None
     best, wdl_val = root
 
-    # Count the root probe toward tbhits so downstream info emission shows
-    # a non-zero hit count (MCTS path isn't run in the shortcut).
+  # Count the root probe toward tbhits so downstream info emission shows
+  # a non-zero hit count (MCTS path isn't run in the shortcut).
     tb_probe.probes += 1
     tb_probe.hits += 1
 
@@ -626,11 +639,11 @@ def _try_tb_root_bestmove(
     else:
         score_cp = 0  # draw (includes cursed/blessed in our convention)
 
-    # Ponder move: after our best, what's the opponent's DTZ-optimal reply?
-    # Re-runs try_tb_root_move; still cheap (a few legal-move probes).
+  # Ponder move: after our best, what's the opponent's DTZ-optimal reply?
+  # Re-runs try_tb_root_move; still cheap (a few legal-move probes).
     board_after = board.copy(stack=False)
     board_after.push(best)
-    ponder = try_tb_root_move(board_after, tb_probe._path)  # pyright: ignore[reportPrivateUsage]
+    ponder = try_tb_root_move(board_after, tb_probe._path)
     ponder_uci = ponder[0].uci() if ponder is not None else None
 
     return SearchResult(
@@ -665,9 +678,9 @@ def _pv_mate_moves(root_board: chess.Board, pv_indices: list[int]) -> int | None
         b.push(mv)
     if not b.is_checkmate():
         return None
-    # After pushing all PV moves, b.turn is the side that has no legal moves
-    # (the mated side). Mating side = opposite. Convert plies → UCI moves
-    # with ceil(plies/2) so odd plies (STM delivers mate) round up correctly.
+  # After pushing all PV moves, b.turn is the side that has no legal moves
+  # (the mated side). Mating side = opposite. Convert plies → UCI moves
+  # with ceil(plies/2) so odd plies (STM delivers mate) round up correctly.
     plies = len(pv_indices)
     mating_side = not b.turn
     moves = (plies + 1) // 2
@@ -681,8 +694,8 @@ def _best_move_and_pv(tree: MCTSTree, root_id: int) -> tuple[int, list[int]]:
     best = int(actions[int(np.argmax(visits))])
     pv = [best]
     current_id = tree.find_child(root_id, best)
-    # Tree walks from root are acyclic by construction of MCTSTree, and the
-    # first unexpanded node naturally terminates the descent. No depth cap.
+  # Tree walks from root are acyclic by construction of MCTSTree, and the
+  # first unexpanded node naturally terminates the descent. No depth cap.
     while current_id != -1:
         a, vs = tree.get_children_visits(current_id)
         if a.size == 0:
@@ -733,7 +746,7 @@ def _uci_pv(root_board: chess.Board, pv_indices: list[int]) -> tuple[str, ...]:
 
 def _index_to_uci(board: chess.Board, idx: int) -> str:
     if idx < 0:
-        # Fallback: any legal move. Should not happen except on game-ended positions.
+  # Fallback: any legal move. Should not happen except on game-ended positions.
         legal = list(board.legal_moves)
         return legal[0].uci() if legal else "0000"
     return index_to_move(int(idx), board).uci()

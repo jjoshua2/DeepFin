@@ -16,6 +16,9 @@ from typing import Callable
 
 import chess
 
+from chess_anti_engine.inference import BatchEvaluator
+from chess_anti_engine.tablebase import SyzygyProbe, get_tablebase
+
 from .protocol import (
     CmdGo,
     CmdIsReady,
@@ -34,11 +37,8 @@ from .protocol import (
     format_readyok,
     format_uciok,
 )
-from chess_anti_engine.tablebase import SyzygyProbe, get_tablebase
-
 from .search import SearchResult, SearchWorker
 from .time_manager import Deadline, SearchLimits, limits_from_go
-
 
 _ENGINE_NAME = "DeepFin"
 _ENGINE_AUTHOR = "jjosh"
@@ -51,14 +51,14 @@ def _attach_log_file(path: str) -> None:
     replaces any prior DeepFin file handler."""
     import logging
     root = logging.getLogger()
-    # Tag our handlers so repeat setoption doesn't stack duplicates.
+  # Tag our handlers so repeat setoption doesn't stack duplicates.
     for h in list(root.handlers):
         if getattr(h, "_deepfin_logfile", False):
             root.removeHandler(h)
             try:
                 h.close()
-            except Exception:
-                pass
+            except OSError:
+                pass  # log file already closed / gone
     if not path:
         return
     try:
@@ -83,6 +83,7 @@ def emit_handshake(options: "EngineOptions") -> None:
         _println(line)
     _println(f"option name Hash type spin default {options.hash_mb} min 1024 max 524288")
     _println(f"option name Threads type spin default {options.threads} min 1 max 64")
+    _println(f"option name LeafGather type spin default {options.leaf_gather} min 1 max 64")
     _println(f"option name MaxBatch type spin default {options.max_batch} min 64 max 8192")
     _println(f"option name MinibatchSize type spin default {options.minibatch_size} min 0 max 8192")
     _println(f"option name MultiPV type spin default {options.multi_pv} min 1 max 256")
@@ -103,48 +104,53 @@ _JOIN_TIMEOUT_S = 30.0
 
 @dataclass
 class EngineOptions:
-    # Soft cap on MCTS tree memory in MB. Search halts between chunks when
-    # the tree's own allocations exceed this — prevents runaway growth from
-    # pushing the process into swap on long analysis. It is NOT a bounded
-    # transposition table; we stop adding nodes rather than evicting.
+  # Soft cap on MCTS tree memory in MB. Search halts between chunks when
+  # the tree's own allocations exceed this — prevents runaway growth from
+  # pushing the process into swap on long analysis. It is NOT a bounded
+  # transposition table; we stop adding nodes rather than evicting.
     hash_mb: int = 4096
-    # Number of MCTS walker threads. 1 = classic Gumbel path; >1 = PUCT
-    # walker pool with virtual loss. Set via UCI `Threads`.
+  # Number of MCTS walker threads. 1 = classic Gumbel path; >1 = PUCT
+  # walker pool with virtual loss. Set via UCI `Threads`.
     threads: int = 2
-    # Hardware-side max batch: the largest leaf-batch shape the evaluator
-    # allocates buffers + CUDA-graph captures for. Changing it rebuilds
-    # the evaluator + re-warmup (5-10s stall). Set via UCI `MaxBatch`.
+  # Per-walker leaf gather: each walker does G descents → one NN batch
+  # instead of one descent per submit. Amplifies effective batch to
+  # N_walkers×G without spawning more threads. 1 = classic. Lc0's
+  # canonical value is 8. Set via UCI `LeafGather`.
+    leaf_gather: int = 1
+  # Hardware-side max batch: the largest leaf-batch shape the evaluator
+  # allocates buffers + CUDA-graph captures for. Changing it rebuilds
+  # the evaluator + re-warmup (5-10s stall). Set via UCI `MaxBatch`.
     max_batch: int = 1024
-    # Minibatch target the C gumbel state machine aims for before flushing
-    # leaves to GPU eval. 0 = C-side default (GSS_GPU_BATCH = 1024). Live
-    # update; takes effect on the next chunk.
+  # Minibatch target the C gumbel state machine aims for before flushing
+  # leaves to GPU eval. 0 = C-side default (GSS_GPU_BATCH = 1024). Live
+  # update; takes effect on the next chunk.
     minibatch_size: int = 0
-    # Number of top-ranked lines to emit per info tick. 1 = classic single
-    # PV (no `multipv` field). >1 emits N lines each tagged `multipv k`.
+  # Number of top-ranked lines to emit per info tick. 1 = classic single
+  # PV (no `multipv` field). >1 emits N lines each tagged `multipv k`.
     multi_pv: int = 1
-    # Emit a `wdl W D L` field (per-mille) on each info line. Derived
-    # per-line from that line's Q plus a shared draw-rate estimate from
-    # the root NN evaluation. Off by default to keep info strings compact.
+  # Emit a `wdl W D L` field (per-mille) on each info line. Derived
+  # per-line from that line's Q plus a shared draw-rate estimate from
+  # the root NN evaluation. Off by default to keep info strings compact.
     show_wdl: bool = False
-    # Milliseconds reserved per move for UCI/GUI overhead. Subtracted from
-    # the computed deadline before search starts; keeps us off the clock
-    # in fast games.
+  # Milliseconds reserved per move for UCI/GUI overhead. Subtracted from
+  # the computed deadline before search starts; keeps us off the clock
+  # in fast games.
     move_overhead_ms: int = 30
-    # Syzygy semantics: when true, cursed-win/blessed-loss count as draws
-    # (matches 50-move-rule play). When false, treat them as decisive
-    # (theoretical result — useful for correspondence / analysis).
+  # Syzygy semantics: when true, cursed-win/blessed-loss count as draws
+  # (matches 50-move-rule play). When false, treat them as decisive
+  # (theoretical result — useful for correspondence / analysis).
     syzygy_50_move_rule: bool = True
-    # Optional log-file path. When set, stderr logs are mirrored to this
-    # file so Windows GUIs (which swallow stderr) can surface diagnostics.
+  # Optional log-file path. When set, stderr logs are mirrored to this
+  # file so Windows GUIs (which swallow stderr) can surface diagnostics.
     log_file: str = ""
-    # Syzygy tablebase directory path(s). Multiple paths separated by
-    # OS-conventional separators (';' on Windows, ':' elsewhere) per the
-    # de-facto UCI convention. Empty means disabled.
+  # Syzygy tablebase directory path(s). Multiple paths separated by
+  # OS-conventional separators (';' on Windows, ':' elsewhere) per the
+  # de-facto UCI convention. Empty means disabled.
     syzygy_path: str = ""
-    # Ponder is a signal to the GUI about whether to issue `go ponder`
-    # commands; the engine itself honors `go ponder` regardless, since
-    # ignoring it would break cutechess/Arena if the user forgets to flip
-    # the option. Default off — safer for fixed-time match play.
+  # Ponder is a signal to the GUI about whether to issue `go ponder`
+  # commands; the engine itself honors `go ponder` regardless, since
+  # ignoring it would break cutechess/Arena if the user forgets to flip
+  # the option. Default off — safer for fixed-time match play.
     ponder: bool = False
 
 
@@ -153,13 +159,13 @@ class Engine:
         self,
         worker: SearchWorker,
         *,
-        rebuild_evaluator: "Callable[[int], object] | None" = None,
+        rebuild_evaluator: "Callable[[int], BatchEvaluator] | None" = None,
     ) -> None:
         self._worker = worker
-        # Factory handed in by __main__. Captures the model, devices, and
-        # coalesce flag; takes a max_batch and returns a warmed-up
-        # evaluator. When None, the MaxBatch setoption silently no-ops
-        # (e.g., in unit-test harnesses that don't build a real evaluator).
+  # Factory handed in by __main__. Captures the model, devices, and
+  # coalesce flag; takes a max_batch and returns a warmed-up
+  # evaluator. When None, the MaxBatch setoption silently no-ops
+  # (e.g., in unit-test harnesses that don't build a real evaluator).
         self._rebuild_evaluator = rebuild_evaluator
         self._options = EngineOptions()
         self._worker.set_max_tree_mb(self._options.hash_mb)
@@ -167,33 +173,33 @@ class Engine:
         self._search_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._ponderhit_event = threading.Event()
-        # While the current search is a `go ponder`, hold the "real" limits
-        # here so ponderhit can swap them in.
+  # While the current search is a `go ponder`, hold the "real" limits
+  # here so ponderhit can swap them in.
         self._pending_real_limits: SearchLimits | None = None
         self._quit_requested = False
-        # Monotonic counter bumped on every new `go`. Stored on the search
-        # thread's frame; a stale thread that outlives its join still sees
-        # its own captured value, so emit-bestmove and tree-writeback both
-        # gate on `gen == self._search_gen`. Prevents races after a slow stop.
+  # Monotonic counter bumped on every new `go`. Stored on the search
+  # thread's frame; a stale thread that outlives its join still sees
+  # its own captured value, so emit-bestmove and tree-writeback both
+  # gate on `gen == self._search_gen`. Prevents races after a slow stop.
         self._search_gen = 0
         self._state_lock = threading.Lock()
-        # `position` commands go here; the tree isn't advanced until `go` so
-        # ponder mode can choose to back off one ply (see _handle_go).
+  # `position` commands go here; the tree isn't advanced until `go` so
+  # ponder mode can choose to back off one ply (see _handle_go).
         self._pending_fen: str | None = None
         self._pending_moves: list[chess.Move] = []
-        # What we actually descended the tree through. On the next `position`+
-        # `go` pair, if pending-moves extend applied-moves we descend the
-        # extras instead of rebuilding. On ponder, applied-moves is one ply
-        # short of pending-moves.
+  # What we actually descended the tree through. On the next `position`+
+  # `go` pair, if pending-moves extend applied-moves we descend the
+  # extras instead of rebuilding. On ponder, applied-moves is one ply
+  # short of pending-moves.
         self._applied_fen: str | None = None
         self._applied_moves: tuple[chess.Move, ...] = ()
-        # Set on `go ponder`: the last move of the position command, which
-        # the opponent will play if we predicted correctly. On ponderhit, the
-        # search thread advances the tree root by this move before switching
-        # to time-bounded search.
+  # Set on `go ponder`: the last move of the position command, which
+  # the opponent will play if we predicted correctly. On ponderhit, the
+  # search thread advances the tree root by this move before switching
+  # to time-bounded search.
         self._popped_ponder_move: chess.Move | None = None
 
-    # -- main-thread command dispatch -----------------------------------------
+  # -- main-thread command dispatch -----------------------------------------
 
     def dispatch(self, cmd: Command) -> None:
         if isinstance(cmd, CmdUci):
@@ -220,14 +226,14 @@ class Engine:
     def quit_requested(self) -> bool:
         return self._quit_requested
 
-    # -- handlers -------------------------------------------------------------
+  # -- handlers -------------------------------------------------------------
 
     def _handle_uci(self) -> None:
         emit_handshake(self._options)
 
     def _handle_isready(self) -> None:
-        # Block until any running search has responded to a stop. Simpler
-        # than juggling readyok semantics during an in-flight search.
+  # Block until any running search has responded to a stop. Simpler
+  # than juggling readyok semantics during an in-flight search.
         self._wait_for_search()
         _println(format_readyok())
 
@@ -263,11 +269,11 @@ class Engine:
             new_board.push(mv)
             parsed.append(mv)
         self._board = new_board
-        # Record intent; the tree is advanced in _handle_go so ponder mode
-        # can choose to stop one ply short.
+  # Record intent; the tree is advanced in _handle_go so ponder mode
+  # can choose to stop one ply short.
         self._pending_fen = cmd.fen
         self._pending_moves = parsed
-        # Any popped-ponder state from a prior `go ponder` is invalid now.
+  # Any popped-ponder state from a prior `go ponder` is invalid now.
         self._popped_ponder_move = None
 
     def _sync_tree_root(self, target_moves: list[chess.Move]) -> None:
@@ -295,15 +301,15 @@ class Engine:
 
     def _handle_go(self, cmd: CmdGo) -> None:
         if self._search_thread is not None and self._search_thread.is_alive():
-            # UCI says you should `stop` before issuing another `go`. Be
-            # forgiving: stop the current one first.
+  # UCI says you should `stop` before issuing another `go`. Be
+  # forgiving: stop the current one first.
             self._handle_stop()
-        # Ponder mode: search at the position BEFORE opponent's predicted
-        # reply. That node's root expansion creates a child for every legal
-        # opponent move, so whichever one they play — predicted or not — we
-        # already have sims proportional to the Gumbel prior. Ponder-hit
-        # advances the root by one ply; ponder-miss advances by the actually-
-        # played move, which is still a root child, so it descends cleanly.
+  # Ponder mode: search at the position BEFORE opponent's predicted
+  # reply. That node's root expansion creates a child for every legal
+  # opponent move, so whichever one they play — predicted or not — we
+  # already have sims proportional to the Gumbel prior. Ponder-hit
+  # advances the root by one ply; ponder-miss advances by the actually-
+  # played move, which is still a root child, so it descends cleanly.
         if cmd.args.ponder and len(self._pending_moves) >= 1:
             target_moves = self._pending_moves[:-1]
             self._popped_ponder_move = self._pending_moves[-1]
@@ -323,10 +329,10 @@ class Engine:
         )
         self._stop_event = threading.Event()
         self._ponderhit_event = threading.Event()
-        # For `go ponder`, the ponder phase runs open-ended; ponderhit
-        # converts to a real-deadline phase using the SAME underlying clock
-        # args. We re-derive the "real" limits here by synthesizing a
-        # non-ponder copy of the args.
+  # For `go ponder`, the ponder phase runs open-ended; ponderhit
+  # converts to a real-deadline phase using the SAME underlying clock
+  # args. We re-derive the "real" limits here by synthesizing a
+  # non-ponder copy of the args.
         self._pending_real_limits = (
             limits_from_go(
                 replace(cmd.args, ponder=False),
@@ -350,10 +356,10 @@ class Engine:
             self._stop_event.set()
             self._search_thread.join(timeout=_JOIN_TIMEOUT_S)
             if self._search_thread.is_alive():
-                # Don't clear the handle: the thread may still be running a
-                # C chunk that can't be interrupted. Bumping _search_gen
-                # (in _handle_go) will invalidate any late bestmove. We
-                # retry the cleanup on the next isready / go.
+  # Don't clear the handle: the thread may still be running a
+  # C chunk that can't be interrupted. Bumping _search_gen
+  # (in _handle_go) will invalidate any late bestmove. We
+  # retry the cleanup on the next isready / go.
                 _println("info string search stop timed out; thread still running")
             else:
                 self._search_thread = None
@@ -364,16 +370,16 @@ class Engine:
         """
         if self._search_thread is None or not self._search_thread.is_alive():
             return
-        # Signal the search loop: next iteration, swap ponder-deadline
-        # for real-deadline.
+  # Signal the search loop: next iteration, swap ponder-deadline
+  # for real-deadline.
         self._ponderhit_event.set()
         self._stop_event.set()
 
     def _handle_setoption(self, cmd: CmdSetOption) -> None:
-        # Same barrier as _handle_position / _handle_newgame / _handle_isready:
-        # options must not mutate while a search thread is still reading them.
-        # In particular SyzygyPath swaps the shared tablebase cache, which the
-        # search thread probes through on every leaf batch.
+  # Same barrier as _handle_position / _handle_newgame / _handle_isready:
+  # options must not mutate while a search thread is still reading them.
+  # In particular SyzygyPath swaps the shared tablebase cache, which the
+  # search thread probes through on every leaf batch.
         self._wait_for_search()
         name = cmd.name.lower()
         if name == "hash" and cmd.value is not None:
@@ -395,6 +401,14 @@ class Engine:
                 f"info string Threads set to {n} "
                 f"({'walker pool' if n > 1 else 'classic Gumbel path'})"
             )
+        elif name == "leafgather" and cmd.value is not None:
+            try:
+                n = max(1, int(cmd.value))
+            except ValueError:
+                return
+            self._options.leaf_gather = n
+            self._worker.set_walker_gather(n)
+            _println(f"info string LeafGather set to {n}")
         elif name == "multipv" and cmd.value is not None:
             try:
                 n = max(1, int(cmd.value))
@@ -412,9 +426,9 @@ class Engine:
                 pass
         elif name == "syzygy50moverule" and cmd.value is not None:
             self._options.syzygy_50_move_rule = cmd.value.strip().lower() == "true"
-            # Re-install probe so the new semantics take effect for the
-            # next search. Cheap — just wraps the same path with different
-            # cursed/blessed handling.
+  # Re-install probe so the new semantics take effect for the
+  # next search. Cheap — just wraps the same path with different
+  # cursed/blessed handling.
             if self._options.syzygy_path:
                 self._install_tablebase(self._options.syzygy_path)
         elif name == "logfile" and cmd.value is not None:
@@ -442,8 +456,8 @@ class Engine:
                 return
             if mb == self._options.max_batch:
                 return
-            # Rebuild is 5-10s (CUDA graph recapture on first forward).
-            # User sees the stall only if they poll isready soon after.
+  # Rebuild is 5-10s (CUDA graph recapture on first forward).
+  # User sees the stall only if they poll isready soon after.
             _println(f"info string MaxBatch rebuilding evaluator at {mb}…")
             new_eval = self._rebuild_evaluator(mb)
             self._options.max_batch = mb
@@ -451,12 +465,12 @@ class Engine:
             _println(f"info string MaxBatch set to {mb}; evaluator rebuilt + warmed")
         elif name == "syzygypath":
             value = (cmd.value or "").strip()
-            # Conventional UCI sentinel for "unset".
+  # Conventional UCI sentinel for "unset".
             if value.lower() in ("", "<empty>"):
                 value = ""
             self._options.syzygy_path = value
             self._install_tablebase(value)
-        # All other options silently accepted — we don't expose any yet.
+  # All other options silently accepted — we don't expose any yet.
 
     def _install_tablebase(self, path: str) -> None:
         """Validate ``path`` by opening the tablebase once, then install a
@@ -487,16 +501,16 @@ class Engine:
             f"up to {probe.max_pieces}-piece positions"
         )
 
-    # -- search thread body ---------------------------------------------------
+  # -- search thread body ---------------------------------------------------
 
     def _run_search(self, limits: SearchLimits, gen: int, board: chess.Board) -> None:
-        # Ponder search: no deadline yet; runs until ponderhit or stop.
+  # Ponder search: no deadline yet; runs until ponderhit or stop.
         result = self._run_one_phase(limits, is_ponder=limits.ponder, board=board)
         if self._ponderhit_event.is_set() and self._pending_real_limits is not None:
-            # Ponderhit: opponent played our predicted move. Advance root by
-            # one ply (the popped move) so the real phase searches at the
-            # actual current position, reusing sims the ponder accumulated
-            # below that child.
+  # Ponderhit: opponent played our predicted move. Advance root by
+  # one ply (the popped move) so the real phase searches at the
+  # actual current position, reusing sims the ponder accumulated
+  # below that child.
             self._stop_event = threading.Event()
             real_limits = self._pending_real_limits
             self._pending_real_limits = None
@@ -506,14 +520,14 @@ class Engine:
             self._popped_ponder_move = None
             if popped is not None:
                 if not self._worker.advance_root(board, [popped]):
-                    # Defensive: ponder-at-M root-expanded the popped child, so
-                    # this shouldn't fail. Reset rather than search stale tree.
+  # Defensive: ponder-at-M root-expanded the popped child, so
+  # this shouldn't fail. Reset rather than search stale tree.
                     self._worker.reset_tree()
                 self._applied_moves = self._applied_moves + (popped,)
                 real_board.push(popped)
             result = self._run_one_phase(real_limits, is_ponder=False, board=real_board)
-        # Gate the emit: if a newer `go` has started, our result is stale
-        # and the new search owns bestmove. Silently drop.
+  # Gate the emit: if a newer `go` has started, our result is stale
+  # and the new search owns bestmove. Silently drop.
         with self._state_lock:
             if gen != self._search_gen:
                 return
@@ -564,7 +578,15 @@ class Engine:
     def _emit_bestmove(self, result: SearchResult) -> None:
         _println(format_bestmove(result.bestmove_uci, ponder=result.ponder_uci))
 
-    # -- helpers --------------------------------------------------------------
+    def close(self) -> None:
+        """Stop any running search and release the worker's evaluator. Call
+        from the UCI main loop's finally block so ``BatchCoalescingDispatcher``
+        (if active) drains its non-daemon submitter before the interpreter
+        tears down torch's CUDA context."""
+        self._wait_for_search()
+        self._worker.close()
+
+  # -- helpers --------------------------------------------------------------
 
     def _wait_for_search(self) -> None:
         if self._search_thread is not None and self._search_thread.is_alive():

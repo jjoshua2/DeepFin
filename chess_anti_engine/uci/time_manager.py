@@ -11,7 +11,6 @@ from dataclasses import dataclass
 
 from .protocol import GoArgs
 
-
 # Hard floor / ceiling guards on clock-derived deadlines.
 _MIN_DEADLINE_MS = 20
 # We never spend more than this fraction of remaining time on a single move,
@@ -28,11 +27,11 @@ class SearchLimits:
     ``None`` on every field means "infinite" — the search runs until an
     external ``stop`` / ``ponderhit`` arrives.
     """
-    deadline_ms: int | None = None   # wall-clock budget in ms
-    max_nodes: int | None = None     # total MCTS sims
-    max_depth: int | None = None     # treat UCI depth as sims (coarse v1)
+    deadline_ms: int | None = None  # wall-clock budget in ms
+    max_nodes: int | None = None  # total MCTS sims
+    max_depth: int | None = None  # treat UCI depth as sims (coarse v1)
     infinite: bool = False
-    ponder: bool = False             # no deadline until ponderhit
+    ponder: bool = False  # no deadline until ponderhit
 
     def is_open_ended(self) -> bool:
         return self.infinite or self.ponder or (
@@ -48,8 +47,8 @@ def limits_from_go(
     if args.infinite:
         return SearchLimits(infinite=True)
     if args.ponder:
-        # Ponder still wants a fallback budget (for `ponderhit` latency bounds)
-        # but until ponderhit flips it live, the search runs open-ended.
+  # Ponder still wants a fallback budget (for `ponderhit` latency bounds)
+  # but until ponderhit flips it live, the search runs open-ended.
         return SearchLimits(ponder=True, max_nodes=args.nodes, max_depth=args.depth)
 
     deadline_ms: int | None = None
@@ -63,8 +62,8 @@ def limits_from_go(
             ceiling = remaining * _MAX_FRACTION_OF_REMAINING
             deadline_ms = max(_MIN_DEADLINE_MS, int(min(budget, ceiling)))
 
-    # Reserve time for UCI command + GUI overhead (bestmove emission, pipe
-    # latency). Without this, engines lose on time in fast games.
+  # Reserve time for UCI command + GUI overhead (bestmove emission, pipe
+  # latency). Without this, engines lose on time in fast games.
     if deadline_ms is not None and move_overhead_ms > 0:
         deadline_ms = max(_MIN_DEADLINE_MS, deadline_ms - int(move_overhead_ms))
 

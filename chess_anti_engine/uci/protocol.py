@@ -6,8 +6,8 @@ ignoring unknown commands per spec.
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Iterable
 
 
 @dataclass(frozen=True)
@@ -27,7 +27,7 @@ class CmdUciNewGame:
 
 @dataclass(frozen=True)
 class CmdPosition:
-    # fen is None for startpos
+  # fen is None for startpos
     fen: str | None
     moves: tuple[str, ...] = ()
 
@@ -123,7 +123,7 @@ def _parse_go(tokens: list[str]) -> GoArgs:
             i += 1
     if searchmoves:
         kwargs["searchmoves"] = tuple(searchmoves)
-    return GoArgs(**kwargs)  # type: ignore[arg-type]
+    return GoArgs(**kwargs)  # type: ignore[arg-type] # dict[str, object] splat — values constructed from validated UCI tokens
 
 
 _GO_KEYWORDS = frozenset({
@@ -143,7 +143,7 @@ def _parse_position(tokens: list[str]) -> CmdPosition:
         fen = None
         i = 1
     elif tokens[0] == "fen":
-        # FEN is 6 space-separated tokens: pieces stm castling ep halfmove fullmove
+  # FEN is 6 space-separated tokens: pieces stm castling ep halfmove fullmove
         if len(tokens) >= 7:
             fen = " ".join(tokens[1:7])
             i = 7
@@ -155,7 +155,7 @@ def _parse_position(tokens: list[str]) -> CmdPosition:
 
 
 def _parse_setoption(tokens: list[str]) -> CmdSetOption:
-    # setoption name <...> [value <...>]
+  # setoption name <...> [value <...>]
     if not tokens or tokens[0] != "name":
         return CmdSetOption(name="", value=None)
     try:
@@ -215,8 +215,8 @@ class InfoFields:
     pv: tuple[str, ...] = field(default_factory=tuple)
     hashfull_per_mille: int | None = None
     tbhits: int | None = None
-    # Per-mille (W, D, L) from the stm's perspective. When set, emitted as
-    # `wdl W D L` after the score field per UCI_ShowWDL convention.
+  # Per-mille (W, D, L) from the stm's perspective. When set, emitted as
+  # `wdl W D L` after the score field per UCI_ShowWDL convention.
     wdl: tuple[int, int, int] | None = None
     string: str | None = None
 

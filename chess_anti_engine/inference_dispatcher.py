@@ -16,7 +16,7 @@ explicit ``max_batch`` property is the only attribute surface we promise.
 from __future__ import annotations
 
 import threading
-from typing import Sequence
+from collections.abc import Sequence
 
 import numpy as np
 
@@ -68,12 +68,12 @@ class BatchCoalescingDispatcher:
         self._pending: list[tuple[np.ndarray, threading.Event, list]] = []
         self._wake = threading.Event()
         self._shutdown = threading.Event()
-        # Daemon so tests / scripts that forget ``close()`` don't hang at
-        # interpreter shutdown. The UCI main loop calls ``close()`` in a
-        # ``finally`` before returning, so the CUDA-owning path still drains
-        # deterministically before Python tears down torch's C++ context
-        # (which was the original ``terminate called without an active
-        # exception`` failure mode).
+  # Daemon so tests / scripts that forget ``close()`` don't hang at
+  # interpreter shutdown. The UCI main loop calls ``close()`` in a
+  # ``finally`` before returning, so the CUDA-owning path still drains
+  # deterministically before Python tears down torch's C++ context
+  # (which was the original ``terminate called without an active
+  # exception`` failure mode).
         self._submitter = threading.Thread(
             target=self._submitter_loop,
             name="coalesce-submitter",
@@ -108,18 +108,27 @@ class BatchCoalescingDispatcher:
             self._submitter.join(timeout=30.0)
 
     def __del__(self) -> None:
-        # Best-effort close on GC, in case caller forgets.
+  # Best-effort close on GC, in case caller forgets.
         try:
             self.close()
         except Exception:
             pass
 
     def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+  # Fail fast on single requests that can never be dispatched. Without
+  # this, an oversize lone request would sit in pending and eventually
+  # be forwarded to the inner evaluator (which raises), which is
+  # harder to debug — the caller blocked on done.wait() gets a
+  # generic error from another thread's context.
+        n = int(x.shape[0])
+        if n > self._max_batch:
+            raise ValueError(
+                f"request batch {n} > coalescer max {self._max_batch}")
         done = threading.Event()
         result: list[tuple[np.ndarray, np.ndarray] | BaseException | None] = [None]
         with self._lock:
-            # Reject new work after close() rather than silently waiting on
-            # a submitter thread that's about to exit.
+  # Reject new work after close() rather than silently waiting on
+  # a submitter thread that's about to exit.
             if self._shutdown.is_set():
                 raise RuntimeError("BatchCoalescingDispatcher is closed")
             self._pending.append((x, done, result))
@@ -135,24 +144,38 @@ class BatchCoalescingDispatcher:
         while True:
             self._wake.wait()
             self._wake.clear()
-            # Drain any work that landed before shutdown AND while the
-            # submitter was busy on the prior batch — so a caller that
-            # appended in the window between our wake.clear and our lock
-            # acquire isn't left stranded (close() also drains, but only
-            # sees items at shutdown time).
+  # Drain any work that landed before shutdown AND while the
+  # submitter was busy on the prior batch — so a caller that
+  # appended in the window between our wake.clear and our lock
+  # acquire isn't left stranded (close() also drains, but only
+  # sees items at shutdown time).
             while True:
                 with self._lock:
                     if not self._pending:
                         break
-                    batch = self._pending[:self._max_batch]
-                    self._pending = self._pending[self._max_batch:]
+  # Pack by cumulative rows, not request count. Each
+  # request is x.shape[0] rows (leaf-gather > 1 with the
+  # walker pool), and the inner evaluator caps at
+  # _max_batch rows. Always include the head so a lone
+  # oversize request (already rejected in evaluate_encoded,
+  # but defensive) surfaces an error instead of stalling.
+                    rows = 0
+                    cut = 0
+                    for entry in self._pending:
+                        n = entry[0].shape[0]
+                        if cut > 0 and rows + n > self._max_batch:
+                            break
+                        rows += n
+                        cut += 1
+                    batch = self._pending[:cut]
+                    self._pending = self._pending[cut:]
                 xs = np.concatenate([entry[0] for entry in batch], axis=0)
                 try:
                     pol, wdl = self._inner.evaluate_encoded(xs)
                 except BaseException as exc:
-                    # Wake every waiter with the exception so no walker
-                    # hangs, then drain anything that arrived during the
-                    # failed submit too.
+  # Wake every waiter with the exception so no walker
+  # hangs, then drain anything that arrived during the
+  # failed submit too.
                     for _, ev, res in batch:
                         res[0] = exc
                         ev.set()
@@ -169,9 +192,9 @@ class BatchCoalescingDispatcher:
                     res[0] = (pol[offset:offset + n], wdl[offset:offset + n])
                     ev.set()
                     offset += n
-            # Exit only after pending is fully drained — ``close()`` already
-            # emptied pending into stranded-err waiters, so at this point
-            # there's nothing the submitter can do except leave.
+  # Exit only after pending is fully drained — ``close()`` already
+  # emptied pending into stranded-err waiters, so at this point
+  # there's nothing the submitter can do except leave.
             if self._shutdown.is_set():
                 return
 

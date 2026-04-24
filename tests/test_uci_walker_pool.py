@@ -26,7 +26,8 @@ from chess_anti_engine.inference import DirectGPUEvaluator
 from chess_anti_engine.inference_dispatcher import ThreadSafeGPUDispatcher
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
 from chess_anti_engine.model import ModelConfig, build_model
-from chess_anti_engine.uci.subprocess_client import LineReader as _LineReader, send_line as _send
+from chess_anti_engine.uci.subprocess_client import LineReader as _LineReader
+from chess_anti_engine.uci.subprocess_client import send_line as _send
 from chess_anti_engine.uci.walker_pool import WalkerPool, WalkerPoolConfig
 
 
@@ -118,6 +119,106 @@ def test_walker_pool_accumulates_visits() -> None:
     # All virtual loss unwound.
     for nid in range(tree.node_count()):
         assert tree.get_virtual_loss(nid) == 0, f"vl leaked on node {nid}"
+
+
+def test_walker_pool_gather_amplifies_batch() -> None:
+    """With gather=G per walker, a single walker thread should submit
+    NN batches of size up to G instead of always 1. Validates the
+    per-walker leaf-gather amplification."""
+
+    class _RecordingEvaluator:
+        """Wraps a real evaluator, records every submit's batch size."""
+        def __init__(self, inner):
+            self._inner = inner
+            self.submit_sizes: list[int] = []
+            self._lock = threading.Lock()
+
+        def evaluate_encoded(self, x):
+            with self._lock:
+                self.submit_sizes.append(int(x.shape[0]))
+            return self._inner.evaluate_encoded(x)
+
+    cfg = ModelConfig(embed_dim=16, num_layers=1, num_heads=2, ffn_mult=2.0)
+    model = build_model(cfg)
+    model.eval()
+    inner = DirectGPUEvaluator(model, device="cpu", max_batch=16, use_amp=False)
+    rec = _RecordingEvaluator(inner)
+
+    tree = MCTSTree()
+    tree.reserve(1024, 8192)
+    board = chess.Board()
+    root_cb = CBoard.from_board(board)
+    rid = tree.add_root(0, 0.0)
+    legal = root_cb.legal_move_indices().astype(np.int32)
+    priors = np.full(legal.size, 1.0 / legal.size, dtype=np.float64)
+    tree.expand(rid, legal, priors)
+
+    pool = WalkerPool(
+        WalkerPoolConfig(n_walkers=1, c_puct=1.5, fpu_at_root=0.0,
+                         fpu_reduction=0.33, vloss_weight=3, gather=4),
+        rec,
+    )
+    stop = threading.Event()
+    # 16 sims / gather=4 → expect ~4 submits, each of size ≤4.
+    pool.run(tree=tree, root_id=rid, root_cboard=root_cb,
+             target_sims=16, stop_event=stop)
+
+    assert rec.submit_sizes, "no NN calls recorded"
+    assert max(rec.submit_sizes) > 1, (
+        f"gather=4 should yield batch>1; got {rec.submit_sizes}"
+    )
+    # Sum of submitted leaves equals non-terminal descents (≤ target).
+    total = sum(rec.submit_sizes)
+    assert 1 <= total <= 16, f"submitted {total} leaves for target=16"
+    # No virtual loss leaked.
+    for nid in range(tree.node_count()):
+        assert tree.get_virtual_loss(nid) == 0, f"vl leaked on node {nid}"
+
+
+def test_walker_pool_gather_default_is_one() -> None:
+    """gather=1 (the default) must preserve classic one-leaf-per-submit
+    behavior — regression guard against the gather parameter changing
+    default semantics."""
+
+    class _RecordingEvaluator:
+        def __init__(self, inner):
+            self._inner = inner
+            self.submit_sizes: list[int] = []
+            self._lock = threading.Lock()
+
+        def evaluate_encoded(self, x):
+            with self._lock:
+                self.submit_sizes.append(int(x.shape[0]))
+            return self._inner.evaluate_encoded(x)
+
+    cfg = ModelConfig(embed_dim=16, num_layers=1, num_heads=2, ffn_mult=2.0)
+    model = build_model(cfg)
+    model.eval()
+    inner = DirectGPUEvaluator(model, device="cpu", max_batch=4, use_amp=False)
+    rec = _RecordingEvaluator(inner)
+
+    tree = MCTSTree()
+    tree.reserve(512, 4096)
+    board = chess.Board()
+    root_cb = CBoard.from_board(board)
+    rid = tree.add_root(0, 0.0)
+    legal = root_cb.legal_move_indices().astype(np.int32)
+    priors = np.full(legal.size, 1.0 / legal.size, dtype=np.float64)
+    tree.expand(rid, legal, priors)
+
+    pool = WalkerPool(
+        WalkerPoolConfig(n_walkers=1, c_puct=1.5, fpu_at_root=0.0,
+                         fpu_reduction=0.33, vloss_weight=3),  # gather default=1
+        rec,
+    )
+    stop = threading.Event()
+    pool.run(tree=tree, root_id=rid, root_cboard=root_cb,
+             target_sims=8, stop_event=stop)
+    # Every submit is single-leaf when gather=1 and walker=1.
+    assert rec.submit_sizes
+    assert all(n == 1 for n in rec.submit_sizes), (
+        f"gather=1 should give only batch=1 submits; got {rec.submit_sizes}"
+    )
 
 
 def test_walker_pool_stop_event_shortens_run() -> None:

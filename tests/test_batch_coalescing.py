@@ -239,3 +239,82 @@ def test_close_is_idempotent() -> None:
     coalesce = BatchCoalescingDispatcher(_RecordingInner(), max_batch=128)
     coalesce.close()
     coalesce.close()  # must not hang or raise
+
+
+def test_row_aware_packing_never_exceeds_max_batch() -> None:
+    """Walker-pool scenario (Codex adversarial finding): each caller submits
+    leaf_gather > 1 rows. Coalescer must pack by cumulative rows, not by
+    request count, or it concatenates two legal requests into an oversize
+    tensor the inner evaluator rejects."""
+    inner = _RecordingInner(submit_sleep=0.02)
+    max_batch = 64
+    coalesce = BatchCoalescingDispatcher(inner, max_batch=max_batch)
+
+    # Two concurrent callers each sending leaf_gather=64 rows. Under the
+    # old slice-by-request behavior, both got merged into a 128-row submit
+    # and raised ValueError from the inner evaluator.
+    n_callers = 2
+    gather = 64
+    barrier = threading.Barrier(n_callers)
+    results: list[tuple[np.ndarray, np.ndarray] | None] = [None] * n_callers
+
+    def worker(i: int) -> None:
+        barrier.wait()
+        x = np.zeros((gather, 146, 8, 8), dtype=np.float32)
+        results[i] = coalesce.evaluate_encoded(x)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(n_callers)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10.0)
+
+    assert all(r is not None for r in results)
+    assert all(size <= max_batch for size in inner.submit_sizes), (
+        f"submit exceeded max_batch: {inner.submit_sizes}")
+    assert sum(inner.submit_sizes) == n_callers * gather
+
+
+def test_rejects_single_request_larger_than_max_batch() -> None:
+    """A single caller with x.shape[0] > max_batch can never be dispatched.
+    Reject at entry so the error carries the right traceback instead of
+    surfacing from the submitter thread."""
+    coalesce = BatchCoalescingDispatcher(_RecordingInner(submit_sleep=0.0), max_batch=64)
+    import pytest
+    with pytest.raises(ValueError, match="coalescer max 64"):
+        coalesce.evaluate_encoded(np.zeros((128, 146, 8, 8), dtype=np.float32))
+
+
+def test_cumulative_packing_splits_across_rounds() -> None:
+    """Requests of heterogeneous sizes must be packed cumulatively up to
+    max_batch. FIFO order preserved (no reordering that could starve
+    large requests)."""
+    inner = _RecordingInner(submit_sleep=0.05)
+    coalesce = BatchCoalescingDispatcher(inner, max_batch=64)
+
+    # Sizes 40, 30, 20: first round fits 40 only (40+30=70 > 64);
+    # second round fits 30+20=50; total two submits.
+    sizes = [40, 30, 20]
+    barrier = threading.Barrier(len(sizes))
+    results: list[tuple[np.ndarray, np.ndarray] | None] = [None] * len(sizes)
+
+    def worker(i: int, n: int) -> None:
+        barrier.wait()
+        # Stagger submission slightly so FIFO order in pending reflects
+        # sizes[] order (threads arriving out of order would give a
+        # different packing; we assert the correctness invariant, not a
+        # specific pack pattern, for robustness against scheduler jitter).
+        time.sleep(0.001 * i)
+        x = np.zeros((n, 146, 8, 8), dtype=np.float32)
+        results[i] = coalesce.evaluate_encoded(x)
+
+    threads = [threading.Thread(target=worker, args=(i, n)) for i, n in enumerate(sizes)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10.0)
+
+    assert all(r is not None for r in results)
+    assert all(size <= 64 for size in inner.submit_sizes), (
+        f"submit exceeded max_batch: {inner.submit_sizes}")
+    assert sum(inner.submit_sizes) == sum(sizes)

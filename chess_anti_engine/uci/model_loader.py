@@ -67,7 +67,7 @@ def _model_config_from_params(params: dict) -> ModelConfig:
     valid = {f.name for f in fields(ModelConfig)}
     filtered = {k: v for k, v in params.items() if k in valid}
     filtered.setdefault("kind", kind)
-    # 'use_smolgen' is stored as the negation 'no_smolgen' in some trials.
+  # 'use_smolgen' is stored as the negation 'no_smolgen' in some trials.
     if "no_smolgen" in params and "use_smolgen" not in filtered:
         filtered["use_smolgen"] = not bool(params["no_smolgen"])
     return ModelConfig(**filtered)  # type: ignore[arg-type]
@@ -126,9 +126,9 @@ def load_model_from_checkpoint(
     here rather than start a partly-random model.
     """
     trainer_pt = _resolve_trainer_pt(Path(path))
-    # weights_only=True blocks arbitrary pickle execution — our trainer only
-    # writes tensors + primitives (including the `arch` dict), so this stays
-    # safe with no loss.
+  # weights_only=True blocks arbitrary pickle execution — our trainer only
+  # writes tensors + primitives (including the `arch` dict), so this stays
+  # safe with no loss.
     ckpt = torch.load(trainer_pt, map_location=device, weights_only=True)
 
     if model_config is None:
