@@ -1,25 +1,27 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import math
+from dataclasses import dataclass
 from typing import cast
 
-import numpy as np
 import chess
+import numpy as np
 import torch
 
 from chess_anti_engine.encoding import encode_positions_batch
 from chess_anti_engine.inference import BatchEvaluator, LocalModelEvaluator
-from chess_anti_engine.moves import POLICY_SIZE
-from chess_anti_engine.moves.encode import legal_move_indices
 from chess_anti_engine.mcts.puct import (
     Node,
     _backprop,
     _expand_sparse,
     _select_child,
     _terminal_value,
+)
+from chess_anti_engine.mcts.puct import (
     _value_scalar_from_wdl_logits as _wdl_to_q,
 )
+from chess_anti_engine.moves import POLICY_SIZE
+from chess_anti_engine.moves.encode import legal_move_indices
 
 
 def _gumbel(rng: np.random.Generator, size: int) -> np.ndarray:
@@ -55,13 +57,13 @@ def _masked_priors(pol_logits: np.ndarray, board: chess.Board) -> tuple[np.ndarr
         return (np.zeros(POLICY_SIZE, dtype=np.float64),
                 np.zeros(POLICY_SIZE, dtype=np.bool_),
                 legal_idx)
-    # Compute softmax only over legal moves
+  # Compute softmax only over legal moves
     legal_logits = pol_logits[legal_idx].astype(np.float64)
     legal_logits -= legal_logits.max()
     e = np.exp(legal_logits)
     s = float(e.sum())
     legal_priors = (e / s) if s > 0 else np.full_like(e, 1.0 / e.size)
-    # Scatter into full-size arrays
+  # Scatter into full-size arrays
     pri = np.zeros(POLICY_SIZE, dtype=np.float64)
     pri[legal_idx] = legal_priors
     mask = np.zeros(POLICY_SIZE, dtype=np.bool_)
@@ -174,13 +176,13 @@ def _collect_forced_leaf(
     node = child
     path = [root, child]
     while node.expanded and node.children:
-        if bool(cfg.full_tree):
+        if cfg.full_tree:
             _, node = _select_full_gumbel_child(node, cfg=cfg)
         else:
             _, node = _select_child(node, c_puct=float(cfg.c_puct), fpu_reduction=float(cfg.fpu_reduction))
         path.append(node)
-        # Expanded nodes with children are never terminal — skip is_game_over()
-        # here. Terminal detection happens after the loop exits.
+  # Expanded nodes with children are never terminal — skip is_game_over()
+  # here. Terminal detection happens after the loop exits.
 
     if node.board.is_game_over():
         return None, path, _terminal_value(node.board)
@@ -222,11 +224,11 @@ def run_gumbel_root_many(
 
     sim_budget = max(1, int(cfg.simulations))
 
-    # ── 1. Batch root evaluation ─────────────────────────────────────────────
+  # ── 1. Batch root evaluation ─────────────────────────────────────────────
     if pre_pol_logits is not None and pre_wdl_logits is not None:
-        # Reuse logits computed by the caller (saves one forward pass per ply).
-        pol_logits_batch = np.asarray(pre_pol_logits, dtype=np.float32)   # (B, POLICY_SIZE)
-        wdl_logits_batch = np.asarray(pre_wdl_logits, dtype=np.float32)   # (B, 3)
+  # Reuse logits computed by the caller (saves one forward pass per ply).
+        pol_logits_batch = np.asarray(pre_pol_logits, dtype=np.float32)  # (B, POLICY_SIZE)
+        wdl_logits_batch = np.asarray(pre_wdl_logits, dtype=np.float32)  # (B, 3)
     else:
         xs = encode_positions_batch(boards, add_features=True)
         eval_impl = evaluator
@@ -238,7 +240,7 @@ def run_gumbel_root_many(
 
     root_qs = [_wdl_to_q(wdl_logits_batch[i]) for i in range(n_boards)]
 
-    # ── 2. Per-board root init + Gumbel candidate selection ──────────────────
+  # ── 2. Per-board root init + Gumbel candidate selection ──────────────────
     probs_out: list[np.ndarray | None] = [None] * n_boards
     actions_out: list[int | None] = [None] * n_boards
     values_out: list[float] = list(root_qs)
@@ -280,8 +282,8 @@ def run_gumbel_root_many(
             actions_out[i] = a0
             continue
 
-        # Gumbel noise → select top-m. Keep m small enough that sequential
-        # halving can still allocate at least one visit per action each phase.
+  # Gumbel noise → select top-m. Keep m small enough that sequential
+  # halving can still allocate at least one visit per action each phase.
         log_pri = np.log(np.maximum(pri[legal], 1e-12))
         g = _gumbel(rng, legal.size) if cfg.add_noise else np.zeros(legal.size, dtype=np.float64)
         score: np.ndarray = g + log_pri
@@ -301,8 +303,8 @@ def run_gumbel_root_many(
         remaining_per_board[i] = list(cands)
         gumbels_per_board[i] = {int(a): float(gg) for a, gg in zip(legal.tolist(), g.tolist(), strict=True)}
 
-    # ── 3. Sequential halving with real subtree simulations ──────────────────
-    # Resolve evaluator once for all leaf evaluations below.
+  # ── 3. Sequential halving with real subtree simulations ──────────────────
+  # Resolve evaluator once for all leaf evaluations below.
     leaf_eval: BatchEvaluator | None = evaluator
     if leaf_eval is None and model is not None:
         leaf_eval = LocalModelEvaluator(model, device=device)
@@ -379,7 +381,7 @@ def run_gumbel_root_many(
             gmap = gumbels_per_board[bi]
             if rem is None or root is None or pri is None or gmap is None:
                 continue
-            # Re-bind as non-Optional locals so pyright narrows inside the lambda below.
+  # Re-bind as non-Optional locals so pyright narrows inside the lambda below.
             pri_nn = pri
             gmap_nn = gmap
             root_nn = root
@@ -401,7 +403,7 @@ def run_gumbel_root_many(
             )
             remaining_per_board[bi] = rem[: max(1, (len(rem) + 1) // 2)]
 
-    # ── 4. Build improved policies ────────────────────────────────────────────
+  # ── 4. Build improved policies ────────────────────────────────────────────
     for i in range(n_boards):
         if probs_out[i] is not None:
             continue  # handled (empty / single-legal cases)
@@ -448,7 +450,7 @@ def run_gumbel_root_many(
 
         values_out[i] = _completed_q(root_q=float(root_qs[i]), root=root, action=best_a)
 
-    # Build legal masks from root children
+  # Build legal masks from root children
     legal_masks_out: list[np.ndarray] = []
     for i in range(n_boards):
         root = roots[i]
@@ -458,7 +460,7 @@ def run_gumbel_root_many(
                 mask[a] = True
         legal_masks_out.append(mask)
 
-    # Every slot of probs_out/actions_out is set above (terminal/fallback/main paths).
+  # Every slot of probs_out/actions_out is set above (terminal/fallback/main paths).
     return (
         cast(list[np.ndarray], probs_out),
         cast(list[int], actions_out),

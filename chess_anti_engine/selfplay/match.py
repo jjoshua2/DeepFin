@@ -3,13 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import numpy as np
 import chess
+import numpy as np
 import torch
 
-from chess_anti_engine.mcts import MCTSConfig, GumbelConfig
-from chess_anti_engine.mcts.puct import run_mcts_many
+from chess_anti_engine.mcts import GumbelConfig, MCTSConfig
 from chess_anti_engine.mcts.gumbel import run_gumbel_root_many
+from chess_anti_engine.mcts.puct import run_mcts_many
 from chess_anti_engine.moves import index_to_move
 from chess_anti_engine.selfplay.opening import OpeningConfig, make_starting_board
 
@@ -20,14 +20,20 @@ except ImportError:
     _HAS_C_TREE = False
 
 try:
-    from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c as _run_gumbel_root_many_c
+    from chess_anti_engine.mcts.gumbel_c import (
+        run_gumbel_root_many_c as _run_gumbel_root_many_c,
+    )
     _HAS_GUMBEL_C = True
 except ImportError:
     _HAS_GUMBEL_C = False
 
 if TYPE_CHECKING:
-    from chess_anti_engine.mcts.puct_c import run_mcts_many_c as _run_mcts_many_c  # noqa: F401,F811
-    from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c as _run_gumbel_root_many_c  # noqa: F401,F811
+    from chess_anti_engine.mcts.gumbel_c import (
+        run_gumbel_root_many_c as _run_gumbel_root_many_c,  # noqa: F401,F811
+    )
+    from chess_anti_engine.mcts.puct_c import (
+        run_mcts_many_c as _run_mcts_many_c,  # noqa: F401,F811
+    )
 
 
 @dataclass(frozen=True)
@@ -35,7 +41,7 @@ class MatchStats:
     games: int
     max_plies: int
 
-    # From model_a perspective
+  # From model_a perspective
     a_win: int
     a_draw: int
     a_loss: int
@@ -129,7 +135,7 @@ def play_match_batch(
                 mv = next(iter(boards[i].legal_moves))
             boards[i].push(mv)
 
-    # Main play loop
+  # Main play loop
     for _ply in range(int(max_plies)):
         active = [i for i in range(g) if not done[i] and not boards[i].is_game_over(claim_draw=True)]
         for i in range(g):
@@ -138,7 +144,7 @@ def play_match_batch(
         if not active:
             break
 
-        # Split by which model is to move (depends on side assignment + board.turn).
+  # Split by which model is to move (depends on side assignment + board.turn).
         a_to_move: list[int] = []
         b_to_move: list[int] = []
         for i in active:
@@ -149,7 +155,7 @@ def play_match_batch(
         _apply_moves(a_to_move, _pick_moves(model_a, a_to_move))
         _apply_moves(b_to_move, _pick_moves(model_b, b_to_move))
 
-    # Score from model_a perspective.
+  # Score from model_a perspective.
     a_win = a_draw = a_loss = 0
     for i, b in enumerate(boards):
         res = b.result(claim_draw=True)

@@ -1,6 +1,10 @@
 import numpy as np
 
-from chess_anti_engine.replay.buffer import ArrayReplayBuffer, ReplayBuffer, ReplaySample
+from chess_anti_engine.replay.buffer import (
+    ArrayReplayBuffer,
+    ReplayBuffer,
+    ReplaySample,
+)
 
 
 def test_surprise_sampling_batch_size():

@@ -9,14 +9,19 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import numpy as np
 import chess
+import numpy as np
 import torch
 
 from chess_anti_engine.encoding import encode_positions_batch
 from chess_anti_engine.inference import BatchEvaluator, LocalModelEvaluator
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
-from chess_anti_engine.mcts.puct import MCTSConfig, _softmax_legal, _terminal_value, _value_scalar_from_wdl_logits
+from chess_anti_engine.mcts.puct import (
+    MCTSConfig,
+    _softmax_legal,
+    _terminal_value,
+    _value_scalar_from_wdl_logits,
+)
 from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.moves.encode import index_to_move_fast, legal_move_indices
 
@@ -29,7 +34,9 @@ except ImportError:
 
 if TYPE_CHECKING:
     from chess_anti_engine.encoding._lc0_ext import CBoard  # noqa: F401,F811
-    from chess_anti_engine.encoding.cboard_encode import cboard_from_board_fast  # noqa: F401,F811
+    from chess_anti_engine.encoding.cboard_encode import (
+        cboard_from_board_fast,  # noqa: F401,F811
+    )
 
 
 def _replay_board_cached(
@@ -38,7 +45,7 @@ def _replay_board_cached(
     action_path: np.ndarray,
 ) -> chess.Board:
     """Build leaf board from closest cached ancestor in the path."""
-    # Walk backwards through node_path to find cached ancestor
+  # Walk backwards through node_path to find cached ancestor
     for depth in range(len(node_path) - 2, -1, -1):
         ancestor_id = int(node_path[depth])
         ancestor_board = board_cache.get(ancestor_id)
@@ -48,7 +55,7 @@ def _replay_board_cached(
                 move = index_to_move_fast(int(a), board)
                 board.push(move)
             return board
-    # Should not reach here — root is always cached
+  # Should not reach here — root is always cached
     raise RuntimeError("No cached ancestor found")
 
 
@@ -84,7 +91,7 @@ def run_mcts_many_c(
             amp_dtype=str(cfg.amp_dtype),
         )
 
-    # ── 1. Root evaluation ───────────────────────────────────────────────
+  # ── 1. Root evaluation ───────────────────────────────────────────────
     use_cboard = _HAS_CBOARD
     root_cboards: list[CBoard] | None = (cboards if cboards is not None else [CBoard.from_board(b) for b in boards]) if use_cboard else None
     if pre_pol_logits is not None and pre_wdl_logits is not None:
@@ -99,7 +106,7 @@ def run_mcts_many_c(
             xs = encode_positions_batch(boards, add_features=True)
         pol_logits_all, wdl_logits_all = eval_impl.evaluate_encoded(xs)
 
-    # ── 2. Build C tree + init roots ─────────────────────────────────────
+  # ── 2. Build C tree + init roots ─────────────────────────────────────
     tree = MCTSTree()
     root_ids = np.empty(n_boards, dtype=np.int32)
     board_cache: dict[int, chess.Board] = {}
@@ -123,24 +130,24 @@ def run_mcts_many_c(
         if not root_board.is_game_over() and legal_idx.size > 0:
             priors = _softmax_legal(pol_logits_all[i], legal_idx)
 
-            # Add Dirichlet noise at root
+  # Add Dirichlet noise at root
             if cfg.dirichlet_eps > 0:
                 noise = rng.dirichlet(np.full(int(legal_idx.size), cfg.dirichlet_alpha)).astype(np.float64)
                 priors = (1 - cfg.dirichlet_eps) * priors + cfg.dirichlet_eps * noise
 
             tree.expand(root_id, legal_idx.astype(np.int32), priors)
 
-    # ── 3. Simulations ───────────────────────────────────────────────────
+  # ── 3. Simulations ───────────────────────────────────────────────────
     c_puct = float(cfg.c_puct)
     fpu_root = float(cfg.fpu_at_root)
     fpu_tree = float(cfg.fpu_reduction)
 
-    # Limit cache size: keep root entries + up to 4x simulations of non-root entries.
+  # Limit cache size: keep root entries + up to 4x simulations of non-root entries.
     _cache_max = n_boards + 4 * int(cfg.simulations)
     _root_id_set = set(int(root_ids[i]) for i in range(n_boards))
 
     for _ in range(int(cfg.simulations)):
-        # Select one leaf per root (all in C)
+  # Select one leaf per root (all in C)
         leaves = tree.select_leaves(root_ids, c_puct, fpu_root, fpu_tree)
 
         leaf_data: list[tuple[int, np.ndarray, chess.Board, CBoard | None]] = []
@@ -166,7 +173,7 @@ def run_mcts_many_c(
                 continue
 
             if use_cboard:
-                # CBoard path: copy + push_index (34x faster)
+  # CBoard path: copy + push_index (34x faster)
                 if len(node_path) >= 2:
                     parent_id = int(node_path[-2])
                     parent_cb = cb_cache.get(parent_id)
@@ -174,7 +181,7 @@ def run_mcts_many_c(
                         cb = parent_cb.copy()
                         cb.push_index(int(action_path[-1]))
                     else:
-                        # Fallback: replay from root
+  # Fallback: replay from root
                         root_cb = cb_cache[int(node_path[0])]
                         cb = root_cb.copy()
                         for a in action_path:
@@ -189,7 +196,7 @@ def run_mcts_many_c(
                 cb = None
             leaf_data.append((leaf_id, node_path, board, cb))
 
-        # Backprop terminals
+  # Backprop terminals
         if terminal_backprops:
             t_paths = [tb[0] for tb in terminal_backprops]
             t_values = [tb[1] for tb in terminal_backprops]
@@ -236,7 +243,7 @@ def run_mcts_many_c(
             for k in evict[:len(evict) // 2]:
                 del board_cache[k]
 
-    # ── 4. Extract results ───────────────────────────────────────────────
+  # ── 4. Extract results ───────────────────────────────────────────────
     probs_list: list[np.ndarray] = []
     actions: list[int] = []
     values: list[float] = []
@@ -256,7 +263,7 @@ def run_mcts_many_c(
                 probs[child_actions] = visits_f / s
             mask[child_actions] = True
 
-        # Action selection (sample over children only, not full POLICY_SIZE)
+  # Action selection (sample over children only, not full POLICY_SIZE)
         if child_actions.size == 0:
             action = 0
         elif cfg.temperature <= 0:

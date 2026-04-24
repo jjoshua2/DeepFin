@@ -93,7 +93,12 @@ def _assert_wdl_probs(arr: np.ndarray, name: str) -> None:
 def selfplay_samples():
     """Run a tiny selfplay batch and return (samples, stats)."""
     from chess_anti_engine.selfplay import play_batch
-    from chess_anti_engine.selfplay.config import TemperatureConfig, SearchConfig, DiffFocusConfig, GameConfig
+    from chess_anti_engine.selfplay.config import (
+        DiffFocusConfig,
+        GameConfig,
+        SearchConfig,
+        TemperatureConfig,
+    )
     from chess_anti_engine.stockfish import StockfishUCI
 
     model = _tiny_model().eval()
@@ -213,7 +218,12 @@ def test_sample_moves_left(selfplay_samples):
 def test_gumbel_selfplay_smoke():
     """Gumbel MCTS path also produces valid samples."""
     from chess_anti_engine.selfplay import play_batch
-    from chess_anti_engine.selfplay.config import TemperatureConfig, SearchConfig, DiffFocusConfig, GameConfig
+    from chess_anti_engine.selfplay.config import (
+        DiffFocusConfig,
+        GameConfig,
+        SearchConfig,
+        TemperatureConfig,
+    )
     from chess_anti_engine.stockfish import StockfishUCI
 
     model = _tiny_model().eval()

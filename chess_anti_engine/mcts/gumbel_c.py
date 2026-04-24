@@ -17,22 +17,25 @@ from __future__ import annotations
 import logging as _logging
 from typing import cast
 
-import numpy as np
 import chess
+import numpy as np
 import torch
 
-from chess_anti_engine.inference import AsyncBatchEvaluator, BatchEvaluator, LocalModelEvaluator  # skylos: ignore (AsyncBatchEvaluator used via stringified cast)
+from chess_anti_engine.encoding._lc0_ext import CBoard
+from chess_anti_engine.inference import (  # noqa: F401  # skylos: ignore (AsyncBatchEvaluator used via stringified cast)
+    AsyncBatchEvaluator,
+    BatchEvaluator,
+    LocalModelEvaluator,
+)
+from chess_anti_engine.mcts._mcts_tree import MCTSTree, NNCache
 from chess_anti_engine.mcts.gumbel import (
     GumbelConfig,
     _gumbel,
+    _sigma_scale,
     _softmax,
     _wdl_to_q,
-    _sigma_scale,
 )
 from chess_anti_engine.moves import POLICY_SIZE
-
-from chess_anti_engine.encoding._lc0_ext import CBoard
-from chess_anti_engine.mcts._mcts_tree import MCTSTree, NNCache
 
 _log = _logging.getLogger(__name__)
 
@@ -93,11 +96,11 @@ def run_gumbel_root_many_c(
             raise ValueError("run_gumbel_root_many_c requires model or evaluator")
         eval_impl = LocalModelEvaluator(model, device=device)
 
-    # -- 1. Batch root evaluation ------------------------------------------
+  # -- 1. Batch root evaluation ------------------------------------------
     root_cboards = cboards if cboards is not None else [CBoard.from_board(b) for b in boards]
 
     _has_async = hasattr(eval_impl, 'evaluate_encoded_async')
-    # All async-capable evaluators conform to the protocol; _has_async is the runtime check.
+  # All async-capable evaluators conform to the protocol; _has_async is the runtime check.
     _async_eval = cast("AsyncBatchEvaluator", eval_impl)
     _use_pipeline = _has_async and n_boards >= 64
 
@@ -117,16 +120,16 @@ def run_gumbel_root_many_c(
         else:
             pol_logits_batch, wdl_logits_batch = eval_impl.evaluate_encoded(xs)
 
-    # Override root wdl_logits before root_qs is derived (root_qs seeds FPU
-    # and the values_out initial pass). Skip when pre_* logits were provided
-    # — the caller already probed the root once and is reusing the cached
-    # eval across chunks, so re-probing here would double-count tbhits.
+  # Override root wdl_logits before root_qs is derived (root_qs seeds FPU
+  # and the values_out initial pass). Skip when pre_* logits were provided
+  # — the caller already probed the root once and is reusing the cached
+  # eval across chunks, so re-probing here would double-count tbhits.
     if tb_probe is not None and pre_pol_logits is None:
         tb_probe.apply(root_cboards, wdl_logits_batch)
 
     root_qs = [_wdl_to_q(wdl_logits_batch[i]) for i in range(n_boards)]
 
-    # -- 2. Init C tree + roots --------------------------------------------
+  # -- 2. Init C tree + roots --------------------------------------------
     _own_tree = tree is None
     if _own_tree:
         tree = MCTSTree()
@@ -139,10 +142,11 @@ def run_gumbel_root_many_c(
     root_legal: list[np.ndarray | None] = [None] * n_boards
     root_pri: list[np.ndarray | None] = [None] * n_boards
     remaining_per_board: list[list[int] | None] = [None] * n_boards
+    budget_remaining: list[int]
     if per_game_simulations is not None:
-        budget_remaining: list[int] = [max(1, int(s)) for s in per_game_simulations]
+        budget_remaining = [max(1, int(s)) for s in per_game_simulations]
     else:
-        budget_remaining: list[int] = [sim_budget] * n_boards
+        budget_remaining = [sim_budget] * n_boards
     gumbels_per_board: list[np.ndarray | None] = [None] * n_boards
 
     _full_tree = bool(cfg.full_tree)
@@ -164,7 +168,7 @@ def run_gumbel_root_many_c(
 
         root_legal[i] = legal_idx
 
-        # Softmax priors
+  # Softmax priors
         ll = pol_logits_batch[i][legal_idx].astype(np.float64)
         ll -= ll.max()
         e = np.exp(ll)
@@ -175,8 +179,8 @@ def run_gumbel_root_many_c(
         pri[legal_idx] = priors
         root_pri[i] = pri
 
-        # Reuse existing root from persistent tree, or create new one.
-        # Skip when pipelining — pipeline creates its own sub-trees.
+  # Reuse existing root from persistent tree, or create new one.
+  # Skip when pipelining — pipeline creates its own sub-trees.
         if not _use_pipeline:
             _reused = False
             if root_node_ids is not None and root_node_ids[i] >= 0:
@@ -198,7 +202,7 @@ def run_gumbel_root_many_c(
             actions_out[i] = a0
             continue
 
-        # Gumbel noise -> select top-m
+  # Gumbel noise -> select top-m
         log_pri = np.log(np.maximum(pri[legal_idx], 1e-12))
         _noise_this = per_game_add_noise[i] if per_game_add_noise is not None else cfg.add_noise
         g = _gumbel(rng, legal_idx.size) if _noise_this else np.zeros(legal_idx.size, dtype=np.float64)
@@ -217,24 +221,24 @@ def run_gumbel_root_many_c(
         cands = legal_idx[top_idx].astype(int).tolist()
 
         remaining_per_board[i] = list(cands)
-        # Store gumbel values indexed by legal_idx for scoring
+  # Store gumbel values indexed by legal_idx for scoring
         g_full = np.zeros(POLICY_SIZE, dtype=np.float64)
         g_full[legal_idx] = g
         gumbels_per_board[i] = g_full
 
     _t_init = _time.perf_counter() - _t0
-    # -- 3. Sequential halving with C tree ---------------------------------
+  # -- 3. Sequential halving with C tree ---------------------------------
 
-    # Floor at 256 so single-game UCI (n_boards=1) gets a usefully-sized GPU
-    # batch. _enc_buf is _max_leaves_per_rep*2, so this gives a 512-slot buffer
-    # minimum (~19 MB). Without the floor, 1 board × topk=32 caps at 64 slots
-    # and gss_step flushes the halving round across 4-5 tiny GPU calls.
+  # Floor at 256 so single-game UCI (n_boards=1) gets a usefully-sized GPU
+  # batch. _enc_buf is _max_leaves_per_rep*2, so this gives a 512-slot buffer
+  # minimum (~19 MB). Without the floor, 1 board × topk=32 caps at 64 slots
+  # and gss_step flushes the halving round across 4-5 tiny GPU calls.
     _max_leaves_per_rep = max(256, n_boards * max(2, int(cfg.topk)))
     _BUCKETS = (128, 256, 384, 512, 768, 1024, 1536, 2048, 4096)
 
-    # ---- Pipelined simulation: split games into 2 groups ----------------
-    # While GPU evaluates group A's leaves, C does tree walks for group B,
-    # and vice versa.  CPU (C tree walks) and GPU overlap on separate hardware.
+  # ---- Pipelined simulation: split games into 2 groups ----------------
+  # While GPU evaluates group A's leaves, C does tree walks for group B,
+  # and vice versa.  CPU (C tree walks) and GPU overlap on separate hardware.
 
     def _pad_for_bucket(nl, buf_len):
         for _b in _BUCKETS:
@@ -253,7 +257,7 @@ def run_gumbel_root_many_c(
             for _ in range(2)
         ]
 
-        # Create fresh root nodes in each sub-tree and build local root_ids
+  # Create fresh root nodes in each sub-tree and build local root_ids
         _sub_root_ids: list[list[int]] = [[], []]
         for g in range(2):
             for i in _grp[g]:
@@ -267,7 +271,7 @@ def run_gumbel_root_many_c(
                 _trees[g].expand(rid, _legal_i.astype(np.int32), priors)
                 _sub_root_ids[g].append(rid)
 
-        # Start both groups
+  # Start both groups
         _n_leaves: list[int | None] = [None, None]
         _tp0 = _time.perf_counter()
         for g in range(2):
@@ -277,7 +281,7 @@ def run_gumbel_root_many_c(
                 continue
             _cb_g = [root_cboards[i] for i in idx]
             _rid_g = np.array(_sub_root_ids[g], dtype=np.int32)
-            # idx slots were populated in the init loop above, so items are non-None.
+  # idx slots were populated in the init loop above, so items are non-None.
             _rem_g = cast("list[list[int]]", [remaining_per_board[i] for i in idx])
             _gum_g = cast("list[np.ndarray]", [gumbels_per_board[i] for i in idx])
             _pri_g = cast("list[np.ndarray]", [root_pri[i] for i in idx])
@@ -291,10 +295,10 @@ def run_gumbel_root_many_c(
             )
         _t_prepare += _time.perf_counter() - _tp0
 
-        # Pipeline loop --------------------------------------------------
-        # Each group independently cycles: GPU eval → C tree walks → GPU eval → ...
-        # We overlap GPU(A) with C(B) by launching async GPU for one group,
-        # then doing continue_gumbel_sims for the other.
+  # Pipeline loop --------------------------------------------------
+  # Each group independently cycles: GPU eval → C tree walks → GPU eval → ...
+  # We overlap GPU(A) with C(B) by launching async GPU for one group,
+  # then doing continue_gumbel_sims for the other.
 
         def _drain_sequential(g):
             """Drain remaining simulation for group g without pipelining."""
@@ -316,19 +320,19 @@ def run_gumbel_root_many_c(
                     pol_t[:nl].numpy(), _wdl_slice)
                 _t_prepare += _time.perf_counter() - _tp0
 
-        # Main pipelined loop: GPU(g) overlaps with C tree walks(other).
-        # The first iteration runs asymmetrically (no pending group 1 results
-        # yet), then settles into a steady-state pattern:
-        #   1. Submit GPU(0) async
-        #   2. C tree walks for group 1 using previous GPU(1) results
-        #   3. Sync GPU(0), copy results out of pinned buffers
-        #   4. Submit GPU(1) async
-        #   5. C tree walks for group 0 using copied GPU(0) results
-        #   6. Sync GPU(1), copy results → _pending_g1 for next iteration
-        #
-        # We copy results from pinned buffers immediately after sync because
-        # the next evaluate_encoded_async reuses the same _pinned_pol /
-        # _pinned_wdl buffers, invalidating any views.
+  # Main pipelined loop: GPU(g) overlaps with C tree walks(other).
+  # The first iteration runs asymmetrically (no pending group 1 results
+  # yet), then settles into a steady-state pattern:
+  #   1. Submit GPU(0) async
+  #   2. C tree walks for group 1 using previous GPU(1) results
+  #   3. Sync GPU(0), copy results out of pinned buffers
+  #   4. Submit GPU(1) async
+  #   5. C tree walks for group 0 using copied GPU(0) results
+  #   6. Sync GPU(1), copy results → _pending_g1 for next iteration
+  #
+  # We copy results from pinned buffers immediately after sync because
+  # the next evaluate_encoded_async reuses the same _pinned_pol /
+  # _pinned_wdl buffers, invalidating any views.
         _pending_g1 = None  # (pol_np, wdl_np) — synced + copied numpy
 
         _max_iters = n_boards * max(max(budget_remaining), 1) + 100
@@ -336,7 +340,7 @@ def run_gumbel_root_many_c(
             if _n_leaves[0] is None and _n_leaves[1] is None:
                 break
 
-            # Only one group active → flush pending, then drain
+  # Only one group active → flush pending, then drain
             if _n_leaves[0] is None:
                 if _pending_g1 is not None:
                     _tp0 = _time.perf_counter()
@@ -350,16 +354,16 @@ def run_gumbel_root_many_c(
                 _drain_sequential(0)
                 break
 
-            # Both active — one pipelined iteration:
+  # Both active — one pipelined iteration:
 
-            # 1) Submit GPU for group 0 (async — GPU starts working)
+  # 1) Submit GPU for group 0 (async — GPU starts working)
             nl0 = int(_n_leaves[0])
             padded0 = _pad_for_bucket(nl0, len(_enc_bufs[0]))
             _tg0 = _time.perf_counter()
             pol_t0, wdl_t0, ev0 = _async_eval.evaluate_encoded_async(_enc_bufs[0][:padded0])
 
-            # 2) While GPU processes group 0, do C tree walks for group 1
-            #    (continue_gumbel_sims releases GIL; CPU and GPU run in parallel)
+  # 2) While GPU processes group 0, do C tree walks for group 1
+  #    (continue_gumbel_sims releases GIL; CPU and GPU run in parallel)
             if _pending_g1 is not None:
                 _tp0 = _time.perf_counter()
                 _tb_override(_trees[1], tb_probe, _pending_g1[1])
@@ -368,7 +372,7 @@ def run_gumbel_root_many_c(
                 _pending_g1 = None
 
                 if _n_leaves[1] is None:
-                    # Group 1 finished — wait for GPU(0) and drain group 0
+  # Group 1 finished — wait for GPU(0) and drain group 0
                     if ev0 is not None:
                         ev0.synchronize()
                     _t_gpu += _time.perf_counter() - _tg0
@@ -383,7 +387,7 @@ def run_gumbel_root_many_c(
                     _drain_sequential(0)
                     break
 
-            # 3) Wait for GPU(0) and copy results before next async submit
+  # 3) Wait for GPU(0) and copy results before next async submit
             if ev0 is not None:
                 ev0.synchronize()
             _t_gpu += _time.perf_counter() - _tg0
@@ -392,37 +396,37 @@ def run_gumbel_root_many_c(
             pol_np0 = pol_t0[:nl0].numpy().copy()
             wdl_np0 = wdl_t0[:nl0].numpy().copy()
 
-            # 4) Submit GPU for group 1 (async — safe: group 0 results copied)
+  # 4) Submit GPU for group 1 (async — safe: group 0 results copied)
             if _n_leaves[1] is not None:
                 nl1 = int(_n_leaves[1])
                 padded1 = _pad_for_bucket(nl1, len(_enc_bufs[1]))
                 _tg1 = _time.perf_counter()
                 pol_t1, wdl_t1, ev1 = _async_eval.evaluate_encoded_async(_enc_bufs[1][:padded1])
 
-            # 5) While GPU processes group 1, do C tree walks for group 0
-            #    (uses copied numpy arrays — safe from pinned buffer reuse)
+  # 5) While GPU processes group 1, do C tree walks for group 0
+  #    (uses copied numpy arrays — safe from pinned buffer reuse)
             _tp0 = _time.perf_counter()
             _tb_override(_trees[0], tb_probe, wdl_np0)
             _n_leaves[0] = _trees[0].continue_gumbel_sims(pol_np0, wdl_np0)
             _t_prepare += _time.perf_counter() - _tp0
 
-            # 6) Sync GPU(1), copy results for next iteration's step 2.
-            # Same-condition re-check — ev1/_tg1/nl1/pol_t1/wdl_t1 are all bound
-            # from step (4). Pyright can't narrow across the blocks.
+  # 6) Sync GPU(1), copy results for next iteration's step 2.
+  # Same-condition re-check — ev1/_tg1/nl1/pol_t1/wdl_t1 are all bound
+  # from step (4). Pyright can't narrow across the blocks.
             if _n_leaves[1] is not None:
-                if ev1 is not None:  # pyright: ignore[reportPossiblyUnboundVariable]
-                    ev1.synchronize()  # pyright: ignore[reportPossiblyUnboundVariable]
-                _t_gpu += _time.perf_counter() - _tg1  # pyright: ignore[reportPossiblyUnboundVariable]
+                if ev1 is not None:
+                    ev1.synchronize()
+                _t_gpu += _time.perf_counter() - _tg1
                 _n_gpu_calls += 1
-                _n_gpu_positions += nl1  # pyright: ignore[reportPossiblyUnboundVariable]
+                _n_gpu_positions += nl1
                 _pending_g1 = (
-                    pol_t1[:nl1].numpy().copy(),  # pyright: ignore[reportPossiblyUnboundVariable]
-                    wdl_t1[:nl1].numpy().copy(),  # pyright: ignore[reportPossiblyUnboundVariable]
+                    pol_t1[:nl1].numpy().copy(),
+                    wdl_t1[:nl1].numpy().copy(),
                 )
         else:
             raise RuntimeError(f"pipeline loop did not converge in {_max_iters} iterations")
 
-        # Retrieve remaining candidates from both trees, merge back
+  # Retrieve remaining candidates from both trees, merge back
         _rem_a = _trees[0].get_gumbel_remaining()
         _rem_b = _trees[1].get_gumbel_remaining()
         remaining_per_board = [None] * n_boards
@@ -431,9 +435,9 @@ def run_gumbel_root_many_c(
         for gi, i in enumerate(_grp[1]):
             remaining_per_board[i] = _rem_b[gi] if gi < len(_rem_b) else None
 
-        # Store tree refs + root IDs for policy extraction. `None` on the outer
-        # type is reserved for the non-pipelined else-branch below (signals
-        # "use single tree"); pipelined path always populates every slot.
+  # Store tree refs + root IDs for policy extraction. `None` on the outer
+  # type is reserved for the non-pipelined else-branch below (signals
+  # "use single tree"); pipelined path always populates every slot.
         _tree_for_board: list[MCTSTree | None] | None = list[MCTSTree | None]([None] * n_boards)
         _rid_for_board: list[int] | None = [0] * n_boards
         for g in range(2):
@@ -442,7 +446,7 @@ def run_gumbel_root_many_c(
                 _rid_for_board[i] = _sub_root_ids[g][gi]
 
     else:
-        # Non-pipelined fallback (small batches or no async)
+  # Non-pipelined fallback (small batches or no async)
         _enc_buf = np.empty((_max_leaves_per_rep * 2, 146, 8, 8), dtype=np.float32)
         _root_ids_arr = np.array(root_ids, dtype=np.int32)
         _budget_arr = np.array(budget_remaining, dtype=np.int32)
@@ -488,7 +492,7 @@ def run_gumbel_root_many_c(
         _tree_for_board = None  # signal to use single tree
         _rid_for_board = None
 
-    # -- 4. Build improved policies from C tree ----------------------------
+  # -- 4. Build improved policies from C tree ----------------------------
     _tp0 = _time.perf_counter()
     for i in range(n_boards):
         if probs_out[i] is not None:
@@ -511,7 +515,7 @@ def run_gumbel_root_many_c(
         legal = np.nonzero(pri > 0)[0].astype(int)
         root_q_i = float(root_qs[i])
 
-        # Get children stats from C tree (completed_q already negated)
+  # Get children stats from C tree (completed_q already negated)
         assert _qtree is not None
         child_actions, child_visits, child_q = _qtree.get_children_q(rid, root_q_i)
         action_to_slot = {}
@@ -552,10 +556,10 @@ def run_gumbel_root_many_c(
         probs_out[i] = probs
         actions_out[i] = action
 
-        # Value from child
+  # Value from child
         slot = action_to_slot.get(best_a)
         if slot is not None and int(child_visits[slot]) > 0:
-            # completed_q for best_a
+  # completed_q for best_a
             j_best = np.searchsorted(legal, best_a)
             if j_best < legal.size and int(legal[j_best]) == best_a:
                 values_out[i] = float(completed_q[j_best])
@@ -564,7 +568,7 @@ def run_gumbel_root_many_c(
         else:
             values_out[i] = root_q_i
 
-    # Build legal masks
+  # Build legal masks
     legal_masks_out: list[np.ndarray] = []
     for i in range(n_boards):
         mask = np.zeros((POLICY_SIZE,), dtype=np.bool_)
@@ -587,8 +591,8 @@ def run_gumbel_root_many_c(
             _t_finish, _t_score, _t_policy, _t_python_glue,
             " PIPELINE" if _use_pipeline else "",
         )
-    # When pipelining, sub-trees are ephemeral — invalidate root IDs so
-    # the caller doesn't try to reuse nodes that don't exist in the main tree.
+  # When pipelining, sub-trees are ephemeral — invalidate root IDs so
+  # the caller doesn't try to reuse nodes that don't exist in the main tree.
     _ret_root_ids = root_ids if not _use_pipeline else [-1] * n_boards
     assert tree is not None
     return (

@@ -91,8 +91,12 @@ def test_games_per_iter_start_fallback() -> None:
 
 def test_from_real_config() -> None:
     """Load from a real YAML config to verify no crashes."""
-    from chess_anti_engine.utils.config_yaml import load_yaml_file, flatten_run_config_defaults
     from pathlib import Path
+
+    from chess_anti_engine.utils.config_yaml import (
+        flatten_run_config_defaults,
+        load_yaml_file,
+    )
 
     config_path = Path(__file__).resolve().parents[1] / "configs" / "default.yaml"
     if not config_path.exists():

@@ -1,14 +1,18 @@
-import numpy as np
 import chess
+import numpy as np
 import pytest
 import torch
 
 from chess_anti_engine.encoding import encode_positions_batch
 from chess_anti_engine.inference import _policy_output
-from chess_anti_engine.mcts.gumbel import GumbelConfig, _completed_q, run_gumbel_root_many
+from chess_anti_engine.mcts.gumbel import (
+    GumbelConfig,
+    _completed_q,
+    run_gumbel_root_many,
+)
 from chess_anti_engine.mcts.puct import Node, _select_child
-from chess_anti_engine.moves import legal_move_mask
 from chess_anti_engine.model import ModelConfig, build_model
+from chess_anti_engine.moves import legal_move_mask
 
 try:
     from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c

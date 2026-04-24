@@ -8,7 +8,12 @@ import numpy as np
 import pytest
 
 from chess_anti_engine.encoding.cboard_encode import cboard_from_board_fast
-from chess_anti_engine.moves import legal_move_mask, move_to_index, index_to_move, POLICY_SIZE
+from chess_anti_engine.moves import (
+    POLICY_SIZE,
+    index_to_move,
+    legal_move_mask,
+    move_to_index,
+)
 
 try:
     from chess_anti_engine.mcts._mcts_tree import batch_process_ply

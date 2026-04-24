@@ -1,8 +1,8 @@
 """Tests for C-accelerated MCTS tree."""
 from __future__ import annotations
 
-import numpy as np
 import chess
+import numpy as np
 import pytest
 import torch
 
@@ -11,8 +11,8 @@ from chess_anti_engine.inference import _policy_output
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
 from chess_anti_engine.mcts.puct import MCTSConfig, run_mcts_many
 from chess_anti_engine.mcts.puct_c import run_mcts_many_c
-from chess_anti_engine.moves import legal_move_mask
 from chess_anti_engine.model import ModelConfig, build_model
+from chess_anti_engine.moves import legal_move_mask
 
 try:
     from chess_anti_engine.encoding._lc0_ext import CBoard
@@ -20,7 +20,9 @@ except ImportError:  # pragma: no cover - extension absent
     CBoard = None
 
 try:
-    from chess_anti_engine.encoding._features_ext import compute_extra_features as _c_compute
+    from chess_anti_engine.encoding._features_ext import (
+        compute_extra_features as _c_compute,
+    )
 except ImportError:  # pragma: no cover - extension absent
     _c_compute = None
 

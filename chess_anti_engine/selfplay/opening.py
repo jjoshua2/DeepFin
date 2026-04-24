@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import io
 import zipfile
+from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from collections.abc import Iterable
 
 import chess
 import chess.pgn
@@ -13,31 +13,31 @@ import chess.pgn
 
 @dataclass(frozen=True)
 class OpeningConfig:
-    # If set, sample openings from this file.
-    # Supported:
-    # - .bin (Polyglot)
-    # - .pgn
-    # - .pgn.zip (a zip containing one or more .pgn files)
+  # If set, sample openings from this file.
+  # Supported:
+  # - .bin (Polyglot)
+  # - .pgn
+  # - .pgn.zip (a zip containing one or more .pgn files)
     opening_book_path: str | None = None
 
-    # How many plies to apply from the book (max). For the stockfish 2-move book,
-    # this would typically be 4 (2 full moves).
+  # How many plies to apply from the book (max). For the stockfish 2-move book,
+  # this would typically be 4 (2 full moves).
     opening_book_max_plies: int = 4
 
-    # For PGN-based books: maximum number of games to parse (0 means all; can be slow).
+  # For PGN-based books: maximum number of games to parse (0 means all; can be slow).
     opening_book_max_games: int = 200_000
 
-    # Probability of using the opening book (vs random-start plies).
+  # Probability of using the opening book (vs random-start plies).
     opening_book_prob: float = 1.0
 
-    # Optional second opening book (e.g. a deeper 8-move book).
+  # Optional second opening book (e.g. a deeper 8-move book).
     opening_book_path_2: str | None = None
     opening_book_max_plies_2: int = 16
     opening_book_max_games_2: int = 200_000
-    # Fraction of book games that use book 2 (the remainder use book 1).
+  # Fraction of book games that use book 2 (the remainder use book 1).
     opening_book_mix_prob_2: float = 0.0
 
-    # If >0, play this many random legal plies from the start position.
+  # If >0, play this many random legal plies from the start position.
     random_start_plies: int = 0
 
 
@@ -63,7 +63,7 @@ def _iter_pgn_bytes_from_path(path: Path) -> Iterable[bytes]:
 
     if suffixes.endswith(".pgn.zip") or suffixes.endswith(".zip"):
         with zipfile.ZipFile(path) as z:
-            # Heuristic: read all members ending in .pgn
+  # Heuristic: read all members ending in .pgn
             pgn_members = [n for n in z.namelist() if n.lower().endswith(".pgn")]
             if not pgn_members:
                 raise ValueError(f"No .pgn files found in zip: {path}")
@@ -160,7 +160,7 @@ def _sample_from_polyglot(*, rng, path: str, max_plies: int) -> chess.Board:
             if not entries:
                 break
 
-            # Polyglot entries have a weight; sample proportional to that weight.
+  # Polyglot entries have a weight; sample proportional to that weight.
             import numpy as np
 
             ws = np.array([max(0, int(e.weight)) for e in entries], dtype=np.float64)

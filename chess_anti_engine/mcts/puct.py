@@ -1,14 +1,18 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import math
+from dataclasses import dataclass
 
-import numpy as np
 import chess
+import numpy as np
 import torch
 
 from chess_anti_engine.encoding import encode_position, encode_positions_batch
-from chess_anti_engine.inference import BatchEvaluator, LocalModelEvaluator, _policy_output
+from chess_anti_engine.inference import (
+    BatchEvaluator,
+    LocalModelEvaluator,
+    _policy_output,
+)
 from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.moves.encode import index_to_move_fast, legal_move_indices
 from chess_anti_engine.utils.amp import inference_autocast
@@ -24,8 +28,8 @@ def _softmax_legal(logits: np.ndarray, legal_idx: np.ndarray) -> np.ndarray:
 
 
 def _value_scalar_from_wdl_logits(wdl_logits: np.ndarray) -> float:
-    # Convert (3,) logits into a scalar v in [-1,1] from side-to-move perspective.
-    # Pure Python math is faster than numpy for 3-element arrays.
+  # Convert (3,) logits into a scalar v in [-1,1] from side-to-move perspective.
+  # Pure Python math is faster than numpy for 3-element arrays.
     w, d, l = float(wdl_logits[0]), float(wdl_logits[1]), float(wdl_logits[2])
     mx = max(w, d, l)
     ew = math.exp(w - mx)
@@ -43,15 +47,15 @@ class MCTSConfig:
     dirichlet_eps: float = 0.25
     temperature: float = 1.0
 
-    # FPU (First Play Urgency): LC0/KataGo-style reduction for unvisited children.
-    # Unvisited child Q = parent.Q - fpu * sqrt(sum of visited children's priors).
-    # This biases search toward deeply exploring promising lines rather than
-    # spreading visits across all children.
-    fpu_reduction: float = 1.2   # Non-root nodes (LC0 default)
-    fpu_at_root: float = 1.0     # Root node (typically lower — root has Dirichlet noise)
+  # FPU (First Play Urgency): LC0/KataGo-style reduction for unvisited children.
+  # Unvisited child Q = parent.Q - fpu * sqrt(sum of visited children's priors).
+  # This biases search toward deeply exploring promising lines rather than
+  # spreading visits across all children.
+    fpu_reduction: float = 1.2  # Non-root nodes (LC0 default)
+    fpu_at_root: float = 1.0  # Root node (typically lower — root has Dirichlet noise)
 
-    # Inference AMP: used in selfplay / evaluation for throughput.
-    # dtype='auto' => bf16 if supported else fp16.
+  # Inference AMP: used in selfplay / evaluation for throughput.
+  # dtype='auto' => bf16 if supported else fp16.
     use_amp: bool = True
     amp_dtype: str = "auto"
 
@@ -86,7 +90,7 @@ class Node:
         self.prior = float(prior)
         self.N = 0
         self.W = 0.0
-        self.children: dict[int, Node] = {}
+        self.children = {}
         self.expanded = False
         if board is not None:
             self.to_play = board.turn
@@ -102,8 +106,8 @@ class Node:
             if self._move is None:
                 assert self._action_idx is not None
                 self._move = index_to_move_fast(self._action_idx, self.parent.board)
-            # Preserve full history so search-time encodings keep LC0 history
-            # and repetition planes consistent with python-chess semantics.
+  # Preserve full history so search-time encodings keep LC0 history
+  # and repetition planes consistent with python-chess semantics.
             self._board = self.parent.board.copy(stack=True)
             self._board.push(self._move)
         return self._board
@@ -114,11 +118,11 @@ class Node:
 
 
 def _select_child(node: Node, *, c_puct: float, fpu_reduction: float) -> tuple[int, Node]:
-    # PUCT: Q_eff + c_puct * P * sqrt(N_parent) / (1 + N_child)
-    # FPU: unvisited children use parent.Q - fpu_reduction * sqrt(visited_policy)
+  # PUCT: Q_eff + c_puct * P * sqrt(N_parent) / (1 + N_child)
+  # FPU: unvisited children use parent.Q - fpu_reduction * sqrt(visited_policy)
     c_sqrt_n = c_puct * math.sqrt(max(1, node.N))
 
-    # LC0-style FPU: penalty scales with how much prior mass is already explored
+  # LC0-style FPU: penalty scales with how much prior mass is already explored
     visited_policy = 0.0
     for ch in node.children.values():
         if ch.N > 0:
@@ -129,8 +133,8 @@ def _select_child(node: Node, *, c_puct: float, fpu_reduction: float) -> tuple[i
     best_score = -1e30
     for a, ch in node.children.items():
         n = ch.N
-        # Child W/Q is stored from the child's side-to-move perspective.
-        # Negate visited children so every score is compared in the parent's frame.
+  # Child W/Q is stored from the child's side-to-move perspective.
+  # Negate visited children so every score is compared in the parent's frame.
         q = (-ch.W / n) if n > 0 else fpu_value
         score = q + c_sqrt_n * ch.prior / (1.0 + n)
         if score > best_score:
@@ -149,7 +153,7 @@ def _expand_sparse(node: Node, legal_indices: np.ndarray, priors: np.ndarray) ->
 
 
 def _backprop(path: list[Node], value: float) -> None:
-    # value is from perspective of the leaf's side-to-move.
+  # value is from perspective of the leaf's side-to-move.
     v = float(value)
     for n in reversed(path):
         n.N += 1
@@ -248,7 +252,7 @@ def run_mcts_many(
             for i, b in enumerate(boards)
         ]
     else:
-        # _init_root runs the model itself — caller must provide it when pre-logits aren't given.
+  # _init_root runs the model itself — caller must provide it when pre-logits aren't given.
         assert model is not None
         roots = [_init_root(model, b, device=device, rng=rng, cfg=cfg) for b in boards]
 
@@ -256,7 +260,7 @@ def run_mcts_many(
         leaf_nodes: list[Node] = []
         leaf_paths: list[list[Node]] = []
 
-        # Select one leaf per root
+  # Select one leaf per root
         for root in roots:
             node = root
             path = [node]
@@ -265,8 +269,8 @@ def run_mcts_many(
                 _, node = _select_child(node, c_puct=cfg.c_puct, fpu_reduction=fpu)
                 path.append(node)
                 fpu = cfg.fpu_reduction  # Subsequent selections use tree FPU
-                # Expanded nodes with children are never terminal — skip game-over check
-                # for them. Only check unexpanded nodes (leaves) below.
+  # Expanded nodes with children are never terminal — skip game-over check
+  # for them. Only check unexpanded nodes (leaves) below.
 
             if node.board.is_game_over():
                 _backprop(path, _terminal_value(node.board))
@@ -280,7 +284,7 @@ def run_mcts_many(
 
         leaf_x = encode_positions_batch([n.board for n in leaf_nodes], add_features=True)
 
-        # Batched eval
+  # Batched eval
         pol_logits_batch, wdl_logits_batch = eval_impl.evaluate_encoded(leaf_x)
 
         for node, path, pol_logits, wdl_logits in zip(leaf_nodes, leaf_paths, pol_logits_batch, wdl_logits_batch, strict=True):
@@ -296,7 +300,7 @@ def run_mcts_many(
     legal_masks: list[np.ndarray] = []
 
     for root in roots:
-        # Build full visit distribution for the caller and legal mask.
+  # Build full visit distribution for the caller and legal mask.
         visits_full = np.zeros((POLICY_SIZE,), dtype=np.float32)
         child_actions = np.array(sorted(root.children.keys()), dtype=np.int32)
         child_visits = np.array([float(root.children[int(a)].N) for a in child_actions], dtype=np.float64)
@@ -308,7 +312,7 @@ def run_mcts_many(
         if cfg.temperature <= 0 or child_actions.size == 0:
             action = int(np.argmax(visits_full))
         else:
-            # Sample over children only (not all 4672 entries).
+  # Sample over children only (not all 4672 entries).
             p = np.maximum(child_visits, 0.0)
             if cfg.temperature != 1.0:
                 np.power(p, 1.0 / float(cfg.temperature), out=p)
