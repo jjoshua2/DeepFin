@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import cast
-import math
 
 import torch
 import torch.nn as nn
@@ -10,7 +10,6 @@ import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint as grad_checkpoint
 
 from chess_anti_engine.moves import POLICY_SIZE, build_policy_gather_tables
-
 
 _VOLATILITY_HEAD_NEUTRAL_OUTPUT = 0.01
 
@@ -27,7 +26,7 @@ def _rmsnorm(normalized_shape: int, *, eps: float = 1e-6) -> nn.Module:
     """
 
     if hasattr(nn, "RMSNorm"):
-        # PyTorch 2.0+
+  # PyTorch 2.0+
         return nn.RMSNorm(int(normalized_shape), eps=float(eps))
 
     class _FallbackRMSNorm(nn.Module):
@@ -37,7 +36,7 @@ def _rmsnorm(normalized_shape: int, *, eps: float = 1e-6) -> nn.Module:
             self.weight = nn.Parameter(torch.ones((int(d),)))
 
         def forward(self, x: torch.Tensor) -> torch.Tensor:  # skylos: ignore (nn.Module dispatch via __call__)
-            # x: (..., d)
+  # x: (..., d)
             rms = torch.sqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
             return (x / rms) * self.weight
 
@@ -56,6 +55,8 @@ class AttentionPolicyHead(nn.Module):
     Output is a flat `(B, 4672)` tensor, indexed as `from_sq * 73 + plane`.
     """
 
+  # Registered as buffers in __init__ via register_buffer; these declarations are
+  # for type checkers (pyright does not recognize register_buffer as initialization).
     to_sq: torch.Tensor
     to_valid: torch.Tensor
     promo_from: torch.Tensor
@@ -67,10 +68,10 @@ class AttentionPolicyHead(nn.Module):
         self.q = nn.Linear(embed_dim, policy_dim)
         self.k = nn.Linear(embed_dim, policy_dim)
         self.scale = policy_dim**-0.5
-        # Learnable sharpness multiplier: 1/√d squashes terminal-head logits below sharp MCTS targets.
+  # Learnable sharpness multiplier: 1/√d squashes terminal-head logits below sharp MCTS targets.
         self.log_temp = nn.Parameter(torch.zeros(1))
 
-        # Underpromotion planes: 9 logits per from-square (N,B,R) x (left,forward,right).
+  # Underpromotion planes: 9 logits per from-square (N,B,R) x (left,forward,right).
         self.underpromo = nn.Linear(embed_dim, 9)
 
         tables = build_policy_gather_tables()
@@ -122,16 +123,16 @@ class ValueHead(nn.Module):
             nn.Mish(),
             nn.Linear(128, out_dim),
         )
-        # Small-scale init on the output projection so initial logits are ~0
-        # (softmax → ~uniform distribution, win_p ≈ 1/3 instead of random ±1.4σ).
+  # Small-scale init on the output projection so initial logits are ~0
+  # (softmax → ~uniform distribution, win_p ≈ 1/3 instead of random ±1.4σ).
         out = cast("nn.Linear", self.net[2])
         nn.init.normal_(out.weight, std=0.01)
         nn.init.zeros_(out.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: (B, 64, embed_dim)
+  # x: (B, 64, embed_dim)
         projected = F.mish(self.token_proj(x))  # (B, 64, token_dim)
-        flat = projected.flatten(1)              # (B, 64 * token_dim)
+        flat = projected.flatten(1)  # (B, 64 * token_dim)
         return self.net(flat)
 
 
@@ -142,7 +143,7 @@ class VolatilityHead(nn.Module):
             nn.Linear(embed_dim, 64),
             nn.Mish(),
             nn.Linear(64, 3),
-            # Keep outputs non-negative without the hard-zero dead zone of ReLU.
+  # Keep outputs non-negative without the hard-zero dead zone of ReLU.
             nn.Softplus(),
         )
         self.reset_neutral_output_bias_()
@@ -190,26 +191,26 @@ class Smolgen(nn.Module):
         super().__init__()
         self.num_heads = int(num_heads)
         self.gen_sz = int(gen_sz)
-        # Per-square compression (no bias, matching LC0).
+  # Per-square compression (no bias, matching LC0).
         self.compress = nn.Linear(embed_dim, hidden_channels, bias=False)
         flat_dim = 64 * hidden_channels
-        # Bottleneck MLP: flatten → hidden_sz → H*gen_sz (LC0 BT4 topology).
+  # Bottleneck MLP: flatten → hidden_sz → H*gen_sz (LC0 BT4 topology).
         self.dense1 = nn.Linear(flat_dim, hidden_sz)
         self.ln1 = nn.LayerNorm(hidden_sz)
         self.dense2 = nn.Linear(hidden_sz, num_heads * gen_sz)
         self.ln2 = nn.LayerNorm(num_heads * gen_sz)
-        # Per-head weight generation: gen_sz → 64*64 (no bias, matching LC0).
+  # Per-head weight generation: gen_sz → 64*64 (no bias, matching LC0).
         self.gen_weight = nn.Linear(gen_sz, 64 * 64, bias=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: (B,64,D) -> bias: (B,H,64,64)
+  # x: (B,64,D) -> bias: (B,H,64,64)
         b = x.shape[0]
-        h = self.compress(x)               # (B, 64, hidden_channels)
-        h = h.flatten(1)                    # (B, 64 * hidden_channels)
+        h = self.compress(x)  # (B, 64, hidden_channels)
+        h = h.flatten(1)  # (B, 64 * hidden_channels)
         h = self.ln1(F.silu(self.dense1(h)))  # (B, hidden_sz)
         h = self.ln2(F.silu(self.dense2(h)))  # (B, H * gen_sz)
         h = h.view(b, self.num_heads, self.gen_sz)  # (B, H, gen_sz)
-        bias = self.gen_weight(h)           # (B, H, 64*64)
+        bias = self.gen_weight(h)  # (B, H, 64*64)
         return bias.view(b, self.num_heads, 64, 64)
 
 
@@ -254,7 +255,7 @@ class TransformerBlock(nn.Module):
         self.head_dim = self.embed_dim // self.num_heads
         self.dropout = float(dropout)
 
-        # QKV projections (fused into single linear for non-NLA path)
+  # QKV projections (fused into single linear for non-NLA path)
         self.use_nla = bool(use_nla)
         if use_nla:
             self.q_proj = _NLAProjection(self.embed_dim, self.embed_dim)
@@ -280,7 +281,7 @@ class TransformerBlock(nn.Module):
         self.ln2 = nn.LayerNorm(self.embed_dim)
 
     def forward(self, x: torch.Tensor, smolgen_bias: torch.Tensor | None = None) -> torch.Tensor:
-        # x: (B,64,D), smolgen_bias: (B,H,64,64) or None
+  # x: (B,64,D), smolgen_bias: (B,H,64,64) or None
         b, t, d = x.shape
         if self.use_nla:
             q = self.q_proj(x)
@@ -290,7 +291,7 @@ class TransformerBlock(nn.Module):
             qkv = self.qkv_proj(x).view(b, t, 3, self.num_heads, self.head_dim)
             q, k, v = qkv.unbind(dim=2)
 
-        # (B,H,T,hd)
+  # (B,H,T,hd)
         if self.use_nla:
             q = q.view(b, t, self.num_heads, self.head_dim).transpose(1, 2)
             k = k.view(b, t, self.num_heads, self.head_dim).transpose(1, 2)
@@ -353,13 +354,13 @@ class ChessNet(nn.Module):
         self._use_grad_ckpt = bool(cfg.use_gradient_checkpointing)
         self._inference_only = False
 
-        # LC0 BT4 input block: Dense(activation) → mult_gate → add_gate
+  # LC0 BT4 input block: Dense(activation) → mult_gate → add_gate
         self.embed = nn.Linear(cfg.in_planes, cfg.embed_dim)
-        # ma_gating: multiplicative gate (init 1, non-negative) then additive gate (init 0)
-        # Store raw param; apply softplus in forward to enforce non-negativity (LC0 uses NonNeg constraint).
+  # ma_gating: multiplicative gate (init 1, non-negative) then additive gate (init 0)
+  # Store raw param; apply softplus in forward to enforce non-negativity (LC0 uses NonNeg constraint).
         self._embed_gate_mul_raw = nn.Parameter(torch.full((cfg.embed_dim,), _softplus_inverse(1.0)))
         self.embed_gate_add = nn.Parameter(torch.zeros(cfg.embed_dim))
-        # Shared smolgen: one instance, bias reused by every encoder layer (LC0 BT4).
+  # Shared smolgen: one instance, bias reused by every encoder layer (LC0 BT4).
         self.smolgen = Smolgen(cfg.embed_dim, cfg.num_heads) if cfg.use_smolgen else None
         self.blocks = nn.ModuleList(
             [
@@ -389,15 +390,15 @@ class ChessNet(nn.Module):
         self.moves_left = ScalarHead(cfg.embed_dim)
 
     def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
-        # x: (B,C,8,8) -> (B,64,C)
+  # x: (B,C,8,8) -> (B,64,C)
         b, c, h, w = x.shape
         assert (h, w) == (8, 8)
         tokens = x.reshape(b, c, 64).permute(0, 2, 1).contiguous()  # (B,64,C)
 
-        # BT4 input: Dense(mish) → mult_gate(non-neg) → add_gate
+  # BT4 input: Dense(mish) → mult_gate(non-neg) → add_gate
         t = F.mish(self.embed(tokens))
         t = t * F.softplus(self._embed_gate_mul_raw) + self.embed_gate_add
-        # Compute smolgen bias once, shared across all layers (LC0 BT4).
+  # Compute smolgen bias once, shared across all layers (LC0 BT4).
         smolgen_bias = self.smolgen(t) if self.smolgen is not None else None
         for blk in self.blocks:
             if self._use_grad_ckpt and self.training:

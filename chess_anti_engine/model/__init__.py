@@ -5,9 +5,9 @@ from dataclasses import dataclass
 import torch
 
 from chess_anti_engine.encoding import encode_position
+
 from .tiny import TinyNet
 from .transformer import ChessNet, TransformerConfig
-
 
 # Bump this when ModelConfig gains a field that a defaulted value would
 # misrepresent. Trainer embeds this version when saving; the UCI loader
@@ -30,7 +30,7 @@ class ModelConfig:
 
 
 def infer_input_planes() -> int:
-    # Use startpos to infer plane count.
+  # Use startpos to infer plane count.
     import chess
 
     b = chess.Board()
@@ -109,7 +109,7 @@ def load_state_dict_tolerant(
     Missing and unexpected keys are logged but not fatal, allowing
     architecture changes (new layers, renamed modules) to load gracefully.
     """
-    # Migrate separate q_proj/k_proj/v_proj -> fused qkv_proj
+  # Migrate separate q_proj/k_proj/v_proj -> fused qkv_proj
     migrated_keys: list[str] = []
     extra = {}
     prefixes_seen: set[str] = set()

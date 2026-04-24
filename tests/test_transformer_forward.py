@@ -1,7 +1,11 @@
 import torch
 
 from chess_anti_engine.model import reinit_volatility_head_parameters_
-from chess_anti_engine.model.transformer import ChessNet, TransformerConfig, VolatilityHead
+from chess_anti_engine.model.transformer import (
+    ChessNet,
+    TransformerConfig,
+    VolatilityHead,
+)
 
 
 def test_transformer_forward_shapes():
