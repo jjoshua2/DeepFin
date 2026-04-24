@@ -26,11 +26,11 @@ import torch
 
 from chess_anti_engine.encoding import encode_position, encode_positions_batch
 from chess_anti_engine.inference import LocalModelEvaluator
-from chess_anti_engine.mcts import MCTSConfig, GumbelConfig
-from chess_anti_engine.mcts.puct import run_mcts_many
+from chess_anti_engine.mcts import GumbelConfig, MCTSConfig
 from chess_anti_engine.mcts.gumbel import run_gumbel_root_many
+from chess_anti_engine.mcts.puct import run_mcts_many
 from chess_anti_engine.model import ModelConfig, build_model
-from chess_anti_engine.moves.encode import legal_move_mask, legal_move_indices
+from chess_anti_engine.moves.encode import legal_move_indices, legal_move_mask
 from chess_anti_engine.utils.amp import inference_autocast
 
 try:

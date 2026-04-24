@@ -86,10 +86,10 @@ def _quantize_dynamic_ort(
 
     extra_options: dict[str, Any] = {"MatMulConstBOnly": True}
 
-    # ORT quantization runs ONNX shape inference internally. Some PyTorch-exported models
-    # include intermediate ValueInfo shapes that can conflict with ONNX's inferred shapes
-    # (even though the model itself runs fine in ORT). If that happens, fall back to
-    # stripping ValueInfo shapes before quantization.
+  # ORT quantization runs ONNX shape inference internally. Some PyTorch-exported models
+  # include intermediate ValueInfo shapes that can conflict with ONNX's inferred shapes
+  # (even though the model itself runs fine in ORT). If that happens, fall back to
+  # stripping ValueInfo shapes before quantization.
     try:
         quantize_dynamic(
             model_input=str(fp32_path),
@@ -108,14 +108,14 @@ def _quantize_dynamic_ort(
 
         model = onnx.load(str(fp32_path))
 
-        # Strip only *shapes* (keep dtype/type info). This avoids ONNX shape inference
-        # complaining about mismatches while still leaving enough type data for ORT's
-        # quantizer.
+  # Strip only *shapes* (keep dtype/type info). This avoids ONNX shape inference
+  # complaining about mismatches while still leaving enough type data for ORT's
+  # quantizer.
         def _clear_shape(v) -> None:
             if v.type.HasField("tensor_type") and v.type.tensor_type.HasField("shape"):
-                # Clearing only dims can accidentally turn an "unknown" shape into a scalar
-                # (rank=0) and trigger shape-inference mismatches. Clear the whole shape
-                # field instead.
+  # Clearing only dims can accidentally turn an "unknown" shape into a scalar
+  # (rank=0) and trigger shape-inference mismatches. Clear the whole shape
+  # field instead.
                 v.type.tensor_type.ClearField("shape")
 
         for v in list(model.graph.input) + list(model.graph.output) + list(model.graph.value_info):
@@ -165,7 +165,7 @@ def export_onnx_int8(
         raise ValueError(f"Unsupported quantization mode {quant_cfg.mode!r} (only 'dynamic' supported)")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    # Replace only the final suffix (".onnx" -> ".fp32.onnx").
+  # Replace only the final suffix (".onnx" -> ".fp32.onnx").
     fp32_path = out_path.with_suffix(".fp32.onnx")
 
     export_onnx(model, out_path=fp32_path, device=device, cfg=export_cfg)

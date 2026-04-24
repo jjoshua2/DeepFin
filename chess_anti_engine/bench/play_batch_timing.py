@@ -3,23 +3,27 @@ from __future__ import annotations
 import argparse
 import time
 
+import chess
 import numpy as np
 import torch
 
-from chess_anti_engine.inference import _policy_output
-from chess_anti_engine.model import ModelConfig, build_model
-from chess_anti_engine.selfplay.manager import _apply_temperature, BatchStats
-from chess_anti_engine.replay.buffer import ReplaySample
-from chess_anti_engine.stockfish import StockfishPool, StockfishUCI
-from chess_anti_engine.mcts import MCTSConfig, GumbelConfig
-from chess_anti_engine.mcts.puct import run_mcts_many
-from chess_anti_engine.mcts.gumbel import run_gumbel_root_many
 from chess_anti_engine.encoding import encode_position, encode_positions_batch
-from chess_anti_engine.moves import POLICY_SIZE, move_to_index, index_to_move, legal_move_mask
-from chess_anti_engine.train.targets import hlgauss_target
+from chess_anti_engine.inference import _policy_output
+from chess_anti_engine.mcts import GumbelConfig, MCTSConfig
+from chess_anti_engine.mcts.gumbel import run_gumbel_root_many
+from chess_anti_engine.mcts.puct import run_mcts_many
+from chess_anti_engine.model import ModelConfig, build_model
+from chess_anti_engine.moves import (
+    POLICY_SIZE,
+    index_to_move,
+    legal_move_mask,
+    move_to_index,
+)
+from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.selfplay.game import _result_to_wdl
-
-import chess
+from chess_anti_engine.selfplay.manager import BatchStats, _apply_temperature
+from chess_anti_engine.stockfish import StockfishPool, StockfishUCI
+from chess_anti_engine.train.targets import hlgauss_target
 
 
 def play_batch_timed(
@@ -51,7 +55,7 @@ def play_batch_timed(
     boards = [chess.Board() for _ in range(int(games))]
     done = [False] * int(games)
 
-    # Each entry: (x, policy_probs, pov_white, sf_wdl, sf_move_index, has_policy, priority)
+  # Each entry: (x, policy_probs, pov_white, sf_wdl, sf_move_index, has_policy, priority)
     samples_per_game: list[list[tuple[np.ndarray, np.ndarray, bool, np.ndarray | None, int | None, bool, float]]] = [
         [] for _ in range(int(games))
     ]
@@ -69,12 +73,12 @@ def play_batch_timed(
         if not active_idxs:
             break
 
-        # Network turns (white to move)
+  # Network turns (white to move)
         net_idxs = [i for i in active_idxs if boards[i].turn == chess.WHITE]
         if net_idxs:
             xs_batch = encode_positions_batch([boards[i] for i in net_idxs], add_features=True)
 
-            # policy logits for surprise priority only
+  # policy logits for surprise priority only
             with torch.no_grad():
                 xt = torch.from_numpy(xs_batch).to(device)
                 out = model(xt)
@@ -153,7 +157,7 @@ def play_batch_timed(
 
                 samples_per_game[idx].append((xs_batch[j], probs, True, None, None, bool(is_full[j]), kl))
 
-        # Stockfish turns (black to move)
+  # Stockfish turns (black to move)
         sf_idxs = [i for i in active_idxs if boards[i].turn == chess.BLACK]
         if sf_idxs:
             if isinstance(stockfish, StockfishPool):
@@ -178,7 +182,7 @@ def play_batch_timed(
 
     t_play_done = time.perf_counter()
 
-    # Post-hoc batched WDL estimation for all recorded positions.
+  # Post-hoc batched WDL estimation for all recorded positions.
     infer_bs = 512
     all_x: list[np.ndarray] = []
     offsets: list[int] = [0]

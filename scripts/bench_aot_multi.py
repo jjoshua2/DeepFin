@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Benchmark multi-process × multi-thread AOT selfplay."""
 from __future__ import annotations
+
 import argparse
 import multiprocessing as mp
 import time
@@ -11,10 +12,20 @@ def _worker_fn(worker_id, n_threads, batch_per_thread, sf_workers,
                result_dict, barrier):
     import numpy as np
     import torch
-    from chess_anti_engine.model import ModelConfig, build_model, load_state_dict_tolerant
+
     from chess_anti_engine.inference import ThreadedAOTEvaluator
+    from chess_anti_engine.model import (
+        ModelConfig,
+        build_model,
+        load_state_dict_tolerant,
+    )
     from chess_anti_engine.selfplay import play_batch
-    from chess_anti_engine.selfplay.config import OpponentConfig, TemperatureConfig, SearchConfig, GameConfig
+    from chess_anti_engine.selfplay.config import (
+        GameConfig,
+        OpponentConfig,
+        SearchConfig,
+        TemperatureConfig,
+    )
     from chess_anti_engine.selfplay.opening import OpeningConfig
     from chess_anti_engine.stockfish import StockfishPool
 

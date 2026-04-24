@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Benchmark DirectGPUEvaluator in eager mode (no compile) with multiple workers."""
 from __future__ import annotations
+
 import multiprocessing as mp
-import numpy as np
 import time
+
+import numpy as np
 
 
 def worker_fn(worker_id, results_dict, batch_size=256, n_iters=30):
-    from chess_anti_engine.model import ModelConfig, build_model
     from chess_anti_engine.inference import DirectGPUEvaluator
+    from chess_anti_engine.model import ModelConfig, build_model
 
     model = build_model(ModelConfig(
         kind="transformer", embed_dim=384, num_layers=9, num_heads=12,

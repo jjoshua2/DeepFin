@@ -23,7 +23,7 @@ def _trial_run_id_from_name(name: str) -> str | None:
 
 
 def _latest_tune_run_id(tune_dir: Path) -> str | None:
-    # Prefer latest PB2 policy log naming (pbt_policy_<runid>_<trial>.txt).
+  # Prefer latest PB2 policy log naming (pbt_policy_<runid>_<trial>.txt).
     policy_files = sorted(
         tune_dir.glob("pbt_policy_*.txt"),
         key=lambda p: p.stat().st_mtime,
@@ -34,7 +34,7 @@ def _latest_tune_run_id(tune_dir: Path) -> str | None:
         if m:
             return str(m.group("rid"))
 
-    # Fallback: latest trial directory by mtime.
+  # Fallback: latest trial directory by mtime.
     best: tuple[float, str] | None = None
     for d in tune_dir.glob("train_trial_*"):
         if not d.is_dir():
@@ -124,7 +124,7 @@ def _run_salvage(args: argparse.Namespace) -> None:
         seed_dir = seeds_dir / f"slot_{slot:03d}"
         seed_dir.mkdir(parents=True, exist_ok=True)
 
-        row_ckpt_name = row.get("checkpoint_dir_name") if isinstance(row, dict) else None
+        row_ckpt_name = row.get("checkpoint_dir_name")
         row_ckpt_dir = td / str(row_ckpt_name) if isinstance(row_ckpt_name, str) and row_ckpt_name.strip() else None
         ckpt_dir = row_ckpt_dir if (row_ckpt_dir is not None and (row_ckpt_dir / "trainer.pt").exists()) else (td / "ckpt")
         ckpt_source = "result_row_checkpoint" if ckpt_dir is row_ckpt_dir else "mutable_ckpt_fallback"
@@ -138,18 +138,18 @@ def _run_salvage(args: argparse.Namespace) -> None:
             if src.exists():
                 shutil.copy2(str(src), str(seed_dir / fn))
 
-        # Align salvaged PID state with the same metrics row used for ranking.
-        # This avoids stale difficulty carryover when ckpt writes and result rows
-        # are out of phase (e.g. salvaging while trials are still running).
+  # Align salvaged PID state with the same metrics row used for ranking.
+  # This avoids stale difficulty carryover when ckpt writes and result rows
+  # are out of phase (e.g. salvaging while trials are still running).
         pid_state_overrides: list[str] = []
         pid_seed_path = seed_dir / "pid_state.json"
-        if pid_seed_path.exists() and isinstance(row, dict):
+        if pid_seed_path.exists():
             try:
                 pid_obj = json.loads(pid_seed_path.read_text(encoding="utf-8"))
             except Exception:
                 pid_obj = None
             if isinstance(pid_obj, dict):
-                # pylint: disable=dangerous-default-value  # closure-via-default captures outer-scope refs by design
+  # pylint: disable=dangerous-default-value  # closure-via-default captures outer-scope refs by design
                 def _set_pid(
                     dst_key: str,
                     src_keys: tuple[str, ...],
@@ -240,19 +240,19 @@ def _run_salvage(args: argparse.Namespace) -> None:
 
 
 _TUNE_CONFIG_DENYLIST = frozenset({
-    "config",           # YAML path, not a tunable
-    "resume",           # harness control
-    "mode",             # harness control
-    "num_samples",      # tune.run parameter, not per-trial config
-    "tune_metric",      # harness-level metric selection
-    "tune_mode",        # harness-level mode (min/max)
-    # Salvage-mode CLI args (only used by _run_salvage, not per-trial config).
+    "config",  # YAML path, not a tunable
+    "resume",  # harness control
+    "mode",  # harness control
+    "num_samples",  # tune.run parameter, not per-trial config
+    "tune_metric",  # harness-level metric selection
+    "tune_mode",  # harness-level mode (min/max)
+  # Salvage-mode CLI args (only used by _run_salvage, not per-trial config).
     "salvage_source_run_id",
     "salvage_top_n",
     "salvage_out_dir",
     "salvage_metric",
     "salvage_copy_replay",
-    # search_optimizer_choices needs list conversion, handled explicitly below.
+  # search_optimizer_choices needs list conversion, handled explicitly below.
     "search_optimizer_choices",
 })
 
@@ -266,23 +266,23 @@ def _build_tune_config_dict(args: argparse.Namespace) -> dict:
     """
     base = {k: v for k, v in vars(args).items() if k not in _TUNE_CONFIG_DENYLIST}
 
-    # Derived values that differ from the raw argparse value.
+  # Derived values that differ from the raw argparse value.
     base["device"] = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     base["use_amp"] = not bool(args.no_amp)
     base["use_smolgen"] = not bool(args.no_smolgen)
     base["work_dir"] = str(Path(args.work_dir) / "tune")
 
-    # eval_mcts_simulations: default to start sims if progressive, else base sims.
+  # eval_mcts_simulations: default to start sims if progressive, else base sims.
     if args.eval_mcts_simulations is None:
         base["eval_mcts_simulations"] = (
             int(args.mcts_start_simulations) if bool(args.progressive_mcts) else int(args.mcts_simulations)
         )
 
-    # eval_sf_nodes: default to sf_nodes if not explicitly set.
+  # eval_sf_nodes: default to sf_nodes if not explicitly set.
     if args.eval_sf_nodes is None:
         base["eval_sf_nodes"] = int(args.sf_nodes)
 
-    # search_optimizer_choices: convert to list.
+  # search_optimizer_choices: convert to list.
     choices = args.search_optimizer_choices
     base["search_optimizer_choices"] = list(choices) if choices else None
 
@@ -290,12 +290,12 @@ def _build_tune_config_dict(args: argparse.Namespace) -> dict:
 
 
 def main() -> None:
-    # Enable TF32 for any float32 ops outside autocast BF16 scope.
+  # Enable TF32 for any float32 ops outside autocast BF16 scope.
     import torch
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
 
-    # Two-pass parse so a YAML config can provide defaults.
+  # Two-pass parse so a YAML config can provide defaults.
     pre = argparse.ArgumentParser(add_help=False)
     pre.add_argument("--config", type=str, default=None, help="Path to YAML config file")
     pre_args, _ = pre.parse_known_args()
@@ -307,8 +307,8 @@ def main() -> None:
 
     ap = argparse.ArgumentParser(parents=[pre])
 
-    # Harness: train (one trial, distributed, no PBT) is the default.
-    # tune = PBT/PB2 hyperparameter search. salvage = export seed pool.
+  # Harness: train (one trial, distributed, no PBT) is the default.
+  # tune = PBT/PB2 hyperparameter search. salvage = export seed pool.
     ap.add_argument("--mode", type=str, default="train", choices=["train", "tune", "salvage"])
     ap.add_argument(
         "--resume",
@@ -330,7 +330,7 @@ def main() -> None:
                             help="Salvage mode: export checkpoints only (no replay shards).")
     ap.set_defaults(salvage_copy_replay=True)
 
-    # Disk usage controls
+  # Disk usage controls
     ap.add_argument(
         "--tune-num-to-keep",
         type=int,
@@ -543,7 +543,7 @@ def main() -> None:
         "--gpbt-winner-weight", type=float, default=1.0,
         help="GPBT-PL: winner weight for attraction toward donor (multiplied by r2~U[0,1]).",
     )
-    # Legacy aliases kept for backwards compatibility with old configs
+  # Legacy aliases kept for backwards compatibility with old configs
     ap.add_argument("--gpbt-pairwise-lr", type=float, default=0.35, help=argparse.SUPPRESS)
     ap.add_argument("--gpbt-pairwise-momentum", type=float, default=0.5, help=argparse.SUPPRESS)
     ap.add_argument(
@@ -600,7 +600,7 @@ def main() -> None:
     ap.add_argument("--drift-threshold", type=float, default=0.0)
     ap.add_argument("--drift-sample-size", type=int, default=256)
 
-    # Bootstrap and gating
+  # Bootstrap and gating
     ap.add_argument("--bootstrap-dir", type=str, default=None, help="Directory with bootstrap NPZ shards")
     ap.add_argument("--bootstrap-checkpoint", type=str, default=None, help="Path to pre-trained bootstrap checkpoint (from scripts/train_bootstrap.py)")
     ap.add_argument("--bootstrap-zero-policy-heads", action="store_true",
@@ -774,7 +774,7 @@ def main() -> None:
     )
     ap.add_argument("--max-plies", type=int, default=240)
 
-    # Progressive simulation budget: start low (fast) and ramp up as training improves.
+  # Progressive simulation budget: start low (fast) and ramp up as training improves.
     mcts_prog = ap.add_mutually_exclusive_group()
     mcts_prog.add_argument("--progressive-mcts", dest="progressive_mcts", action="store_true")
     mcts_prog.add_argument("--no-progressive-mcts", dest="progressive_mcts", action="store_false")
@@ -821,7 +821,7 @@ def main() -> None:
         help="Stockfish WDL confidence required to label max_plies timeouts as decisive",
     )
 
-    # Puzzle evaluation (overspecialization canary)
+  # Puzzle evaluation (overspecialization canary)
     ap.add_argument("--puzzle-epd", type=str, default=None,
                     help="Path to EPD puzzle file for periodic evaluation (e.g. data/wac.epd)")
     ap.add_argument("--puzzle-interval", type=int, default=1,
@@ -839,14 +839,14 @@ def main() -> None:
     if args.stockfish_path is None:
         raise SystemExit("--stockfish-path is required (or set stockfish.path in --config)")
 
-    # Both train and tune modes go through run_tune — train just forces
-    # scheduler=none and num_samples=1 so there's no hyperparameter search.
+  # Both train and tune modes go through run_tune — train just forces
+  # scheduler=none and num_samples=1 so there's no hyperparameter search.
     base = _build_tune_config_dict(args)
     base["_yaml_config_path"] = str(Path(args.config).resolve()) if args.config else None
 
-    # Distributed is the only selfplay path; ensure at least 1 local worker so
-    # harness.run_tune() boots the server/broker. Applies to both --mode train
-    # and --mode tune — configs that omit the key must still work.
+  # Distributed is the only selfplay path; ensure at least 1 local worker so
+  # harness.run_tune() boots the server/broker. Applies to both --mode train
+  # and --mode tune — configs that omit the key must still work.
     if int(base.get("distributed_workers_per_trial", 0) or 0) <= 0:
         base["distributed_workers_per_trial"] = 1
 

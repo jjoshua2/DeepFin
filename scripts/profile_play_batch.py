@@ -1,15 +1,18 @@
 """Profile time breakdown within a single play_batch call."""
 from __future__ import annotations
-import time
-import sys
+
 import os
+import sys
+import time
+
 sys.path.insert(0, os.getcwd())
 
 import torch
 
+from chess_anti_engine.model.tiny import TinyNet
+
 # Minimal setup
 from chess_anti_engine.selfplay.manager import play_batch
-from chess_anti_engine.model.tiny import TinyNet
 from chess_anti_engine.stockfish.pool import StockfishPool
 from chess_anti_engine.utils.config_yaml import load_yaml_config
 

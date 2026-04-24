@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import math
-import numpy as np
 
+import numpy as np
 
 DEFAULT_CATEGORICAL_BINS = 32
 
@@ -25,8 +25,11 @@ def hlgauss_target(
 
     edges = np.linspace(vmin, vmax, num_bins + 1, dtype=np.float64)
     z = (edges - value) / (sigma * math.sqrt(2.0))
-    # Vectorized erf via numpy (np.frompyfunc is ~3x faster than list comprehension)
-    cdfs = 0.5 * (1.0 + np.frompyfunc(math.erf, 1, 1)(z).astype(np.float64))
+  # Vectorized erf via numpy (np.frompyfunc is ~3x faster than list comprehension).
+  # frompyfunc returns an object-dtype ndarray; pyright's stubs narrow it to
+  # `float` so the downstream .astype call needs the suppression.
+    erf_vec: np.ndarray = np.asarray(np.frompyfunc(math.erf, 1, 1)(z))
+    cdfs = 0.5 * (1.0 + erf_vec.astype(np.float64))
     probs = cdfs[1:] - cdfs[:-1]
     s = float(probs.sum())
     if s <= 0:

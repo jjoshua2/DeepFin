@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """Benchmark different torch.compile modes for multi-worker DirectGPU."""
 from __future__ import annotations
+
 import multiprocessing as mp
-import numpy as np
 import time
+
+import numpy as np
 
 
 def worker_fn(worker_id, results_dict, compile_mode, batch_size=170, n_iters=30):
     import torch
-    from chess_anti_engine.model import ModelConfig, build_model
+
     from chess_anti_engine.inference import DirectGPUEvaluator
+    from chess_anti_engine.model import ModelConfig, build_model
 
     model = build_model(ModelConfig(
         kind="transformer", embed_dim=384, num_layers=9, num_heads=12,

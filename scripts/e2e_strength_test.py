@@ -5,17 +5,21 @@ Measures: policy accuracy vs SF, game length, value-SF correlation, W/D/L.
 Usage: python scripts/e2e_strength_test.py [--hours 1.0]
 """
 from __future__ import annotations
+
 import argparse
 import json
 import time
 from pathlib import Path
+
 import chess
 import numpy as np
 import torch
+
 from chess_anti_engine.encoding import encode_position
 from chess_anti_engine.model.transformer import ChessNet, TransformerConfig
-from chess_anti_engine.moves import move_to_index, legal_move_mask
+from chess_anti_engine.moves import legal_move_mask, move_to_index
 from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
+from chess_anti_engine.replay.shard import samples_to_arrays
 from chess_anti_engine.selfplay import play_batch
 from chess_anti_engine.selfplay.config import (
     DiffFocusConfig,
@@ -25,7 +29,6 @@ from chess_anti_engine.selfplay.config import (
     TemperatureConfig,
 )
 from chess_anti_engine.selfplay.opening import OpeningConfig
-from chess_anti_engine.replay.shard import samples_to_arrays
 from chess_anti_engine.stockfish.uci import StockfishUCI
 from chess_anti_engine.train import Trainer
 

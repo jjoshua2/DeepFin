@@ -8,14 +8,18 @@ Usage:
 from __future__ import annotations
 
 import argparse
+
 import numpy as np
 import torch
 
 from chess_anti_engine.model import ModelConfig, build_model
-from chess_anti_engine.selfplay.manager import play_batch
 from chess_anti_engine.selfplay.config import (
-    OpponentConfig, SearchConfig, TemperatureConfig, GameConfig,
+    GameConfig,
+    OpponentConfig,
+    SearchConfig,
+    TemperatureConfig,
 )
+from chess_anti_engine.selfplay.manager import play_batch
 from chess_anti_engine.stockfish import StockfishPool
 
 

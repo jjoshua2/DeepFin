@@ -25,7 +25,6 @@ import torch
 from chess_anti_engine.mcts import MCTSConfig, run_mcts_many
 from chess_anti_engine.moves import index_to_move
 
-
 # ---------------------------------------------------------------------------
 # Puzzle data structures
 # ---------------------------------------------------------------------------
@@ -61,16 +60,16 @@ class PuzzleSuite:
 
 def _parse_san_or_uci(board: chess.Board, token: str) -> chess.Move | None:
     """Try to parse a move token as SAN first, then UCI."""
-    # Strip trailing semicolons / whitespace.
+  # Strip trailing semicolons / whitespace.
     token = token.strip().rstrip(";").strip()
     if not token:
         return None
-    # Try SAN.
+  # Try SAN.
     try:
         return board.parse_san(token)
     except (chess.InvalidMoveError, chess.IllegalMoveError, ValueError):
         pass
-    # Try UCI.
+  # Try UCI.
     try:
         m = chess.Move.from_uci(token)
         if m in board.legal_moves:
@@ -96,7 +95,7 @@ def load_epd(path: str | Path) -> PuzzleSuite:
         if not line or line.startswith("#"):
             continue
 
-        # EPD: everything before "bm" is the FEN (possibly 4-field or 6-field).
+  # EPD: everything before "bm" is the FEN (possibly 4-field or 6-field).
         bm_idx = line.find(" bm ")
         if bm_idx < 0:
             continue  # skip lines without bm opcode
@@ -104,11 +103,11 @@ def load_epd(path: str | Path) -> PuzzleSuite:
         fen_part = line[:bm_idx].strip()
         rest = line[bm_idx + 4:]  # after " bm "
 
-        # FEN may have 4 or 6 fields.  python-chess needs at least 4.
+  # FEN may have 4 or 6 fields.  python-chess needs at least 4.
         fen_fields = fen_part.split()
         if len(fen_fields) < 4:
             continue
-        # Pad to 6 fields if needed (halfmove=0, fullmove=1).
+  # Pad to 6 fields if needed (halfmove=0, fullmove=1).
         while len(fen_fields) < 6:
             fen_fields.append("0" if len(fen_fields) == 4 else "1")
         fen = " ".join(fen_fields)
@@ -118,9 +117,9 @@ def load_epd(path: str | Path) -> PuzzleSuite:
         except ValueError:
             continue
 
-        # Parse best moves: everything up to the first ";" that's followed by
-        # another opcode (e.g. "id") or end of line.
-        # Moves may be separated by spaces.
+  # Parse best moves: everything up to the first ";" that's followed by
+  # another opcode (e.g. "id") or end of line.
+  # Moves may be separated by spaces.
         bm_section = re.split(r";", rest)[0].strip()
         tokens = bm_section.split()
         best_moves: list[chess.Move] = []
@@ -132,7 +131,7 @@ def load_epd(path: str | Path) -> PuzzleSuite:
         if not best_moves:
             continue
 
-        # Try to extract puzzle id.
+  # Try to extract puzzle id.
         pid = ""
         id_match = re.search(r'id\s+"([^"]+)"', rest)
         if id_match:
@@ -184,7 +183,7 @@ def run_puzzle_eval(
     correct = 0
     total = len(suite)
 
-    # Process in batches for GPU efficiency.
+  # Process in batches for GPU efficiency.
     for start in range(0, total, batch_size):
         end = min(start + batch_size, total)
         batch_puzzles = suite.puzzles[start:end]
@@ -194,7 +193,7 @@ def run_puzzle_eval(
             model, boards, device=device, rng=rng, cfg=cfg,
         )
 
-        for j, (puzzle, action_idx) in enumerate(zip(batch_puzzles, actions)):
+        for puzzle, action_idx in zip(batch_puzzles, actions):
             chosen = index_to_move(int(action_idx), puzzle.board)
             if chosen in puzzle.best_moves:
                 correct += 1

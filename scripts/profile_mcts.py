@@ -1,15 +1,18 @@
 """Profile MCTS loop to find where time goes."""
 from __future__ import annotations
-import numpy as np
-import chess
+
 import time
+
+import chess
+import numpy as np
+import torch
+
 from chess_anti_engine.encoding.cboard_encode import cboard_from_board_fast
 from chess_anti_engine.mcts._mcts_tree import MCTSTree, NNCache
-from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
 from chess_anti_engine.mcts.gumbel import GumbelConfig
+from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
 from chess_anti_engine.model.tiny import TinyNet
 from chess_anti_engine.moves.encode import index_to_move
-import torch
 
 model = TinyNet(in_planes=146).eval()
 
@@ -50,7 +53,6 @@ for ply in range(N_PLIES):
         None, boards, device='cpu', rng=rng, cfg=cfg,
         evaluator=type('E', (), {
             'evaluate_encoded': lambda self, x: (
-                model(torch.from_numpy(x)).values() if False else
                 (lambda o: (o["policy"].numpy(), o["wdl"].numpy()))(model(torch.from_numpy(x)))
             )
         })(),

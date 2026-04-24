@@ -63,12 +63,12 @@ _STOCKFISH_KEYS = (
     "sf_pid_wdl_regret_start", "sf_pid_wdl_regret_min", "sf_pid_wdl_regret_max",
     "sf_pid_wdl_regret_stage_end",
     "sf_pid_inverse_regret_window",
-    "sf_pid_inverse_regret_sigma_tolerance", "sf_pid_inverse_regret_max_step",
+    "sf_pid_inverse_regret_max_step",
     "sf_pid_inverse_regret_max_step_frac",
-    "sf_pid_inverse_regret_safety_floor", "sf_pid_inverse_regret_safety_band",
+    "sf_pid_inverse_regret_safety_floor",
     "sf_pid_inverse_regret_emergency_ease_step",
     "sf_pid_inverse_regret_recency_half_life",
-    "sf_pid_inverse_regret_target_deadband",
+    "sf_pid_inverse_regret_target_deadband_sigma",
 )
 # Backwards compat: old short YAML names still work inside stockfish: section.
 _STOCKFISH_LEGACY: dict[str, str] = {
@@ -194,9 +194,9 @@ def _build_flat_allowlist() -> frozenset[str]:
     """Derive the set of keys accepted at the YAML root level."""
     keys: set[str] = set(_CORE_KEYS)
     keys.update(_STOCKFISH_KEYS)
-    # selfplay, train, tune: flat name == nested name
+  # selfplay, train, tune: flat name == nested name
     keys.update(_SELFPLAY_KEYS)
-    # model has special handling but these flat names are accepted
+  # model has special handling but these flat names are accepted
     keys.update(_MODEL_PASSTHROUGH)
     keys.add("model")  # kind → model
     keys.add("no_smolgen")  # use_smolgen → no_smolgen (inverted)
@@ -235,12 +235,10 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
 
     out: dict[str, Any] = {}
 
-    # --- Pass 1: flat keys at the YAML root level ---
+  # --- Pass 1: flat keys at the YAML root level ---
     _SECTION_NAMES = frozenset({"stockfish", "selfplay", "train", "model", "tune"})
     root_unknown: list[str] = []
     for k, v in cfg.items():
-        if not isinstance(k, str):
-            continue
         if k in _SECTION_NAMES:
             continue
         if k in _FLAT_ALLOWLIST:
@@ -254,7 +252,7 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             "a current flat key, or delete if retired."
         )
 
-    # --- Pass 2: nested sections (can override flat keys) ---
+  # --- Pass 2: nested sections (can override flat keys) ---
 
     stockfish = cfg.get("stockfish")
     if isinstance(stockfish, dict):
@@ -263,8 +261,8 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
         for k in _STOCKFISH_KEYS:
             if k in stockfish:
                 out[k] = stockfish[k]
-        # Backwards compat: accept old short names (e.g. "path" -> "stockfish_path").
-        # New-style key wins if both are present.
+  # Backwards compat: accept old short names (e.g. "path" -> "stockfish_path").
+  # New-style key wins if both are present.
         for old_k, new_k in _STOCKFISH_LEGACY.items():
             if old_k in stockfish and new_k not in stockfish:
                 out[new_k] = stockfish[old_k]
@@ -282,7 +280,7 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
         for k in _TRAIN_KEYS:
             if k in train:
                 out[k] = train[k]
-        # allow train.device to set global device if the top-level key isn't present
+  # allow train.device to set global device if the top-level key isn't present
         if "device" in train and "device" not in out:
             out["device"] = train["device"]
 
@@ -299,7 +297,7 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
 
     tune = cfg.get("tune")
     if isinstance(tune, dict):
-        # pb2_bounds_* are dynamic; allow any number of them.
+  # pb2_bounds_* are dynamic; allow any number of them.
         unknown_tune = sorted(
             k for k in tune
             if k not in _TUNE_KEYS and not k.startswith("pb2_bounds_")
@@ -313,10 +311,10 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
         for k in _TUNE_KEYS:
             if k in tune:
                 out[k] = tune[k]
-        # Pass through pb2_bounds_* keys (dynamic, any number of them).
+  # Pass through pb2_bounds_* keys (dynamic, any number of them).
         for k, v in tune.items():
             if k.startswith("pb2_bounds_"):
                 out[k] = v
 
-    # Keep defaults dict clean.
+  # Keep defaults dict clean.
     return {k: v for k, v in out.items() if v is not None}

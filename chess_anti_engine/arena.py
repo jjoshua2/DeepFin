@@ -13,7 +13,7 @@ from chess_anti_engine.selfplay.match import play_match_batch
 
 def _load_state_dict(path: Path) -> dict:
     ckpt = torch.load(str(path), map_location="cpu")
-    # We sometimes save {"model": state_dict}.
+  # We sometimes save {"model": state_dict}.
     sd = ckpt.get("model", ckpt)
     if not isinstance(sd, dict):
         raise ValueError(f"Unexpected checkpoint format in {path}")
@@ -48,7 +48,7 @@ def main() -> None:
 
     ap.add_argument("--device", type=str, default=None)
 
-    # Model config (used if --manifest is not provided)
+  # Model config (used if --manifest is not provided)
     ap.add_argument("--model", type=str, default="transformer", choices=["tiny", "transformer"])
     ap.add_argument("--embed-dim", type=int, default=256)
     ap.add_argument("--num-layers", type=int, default=6)
@@ -125,8 +125,8 @@ def main() -> None:
     best.eval()
 
     g = int(args.games)
-    if bool(args.swap_sides):
-        # Alternate colors to remove first-move bias.
+    if args.swap_sides:
+  # Alternate colors to remove first-move bias.
         a_plays_white = [bool(i % 2 == 0) for i in range(g)]
     else:
         a_plays_white = [True] * g

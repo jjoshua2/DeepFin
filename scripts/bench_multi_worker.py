@@ -26,11 +26,18 @@ def _worker_fn(
     import numpy as np
     import torch
 
-    from chess_anti_engine.model import ModelConfig, build_model, load_state_dict_tolerant
     from chess_anti_engine.inference import DirectGPUEvaluator
+    from chess_anti_engine.model import (
+        ModelConfig,
+        build_model,
+        load_state_dict_tolerant,
+    )
     from chess_anti_engine.selfplay import play_batch
     from chess_anti_engine.selfplay.config import (
-        OpponentConfig, TemperatureConfig, SearchConfig, GameConfig,
+        GameConfig,
+        OpponentConfig,
+        SearchConfig,
+        TemperatureConfig,
     )
     from chess_anti_engine.selfplay.opening import OpeningConfig
     from chess_anti_engine.stockfish import StockfishPool

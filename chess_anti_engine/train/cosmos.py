@@ -136,7 +136,7 @@ def cosmos(
             exp_avgs_GG[i].copy_(exp_avg_gg)
 
         else:
-            # AdamW fallback for 1D params, biases, embeddings, large matrices.
+  # AdamW fallback for 1D params, biases, embeddings, large matrices.
             bias_correction1_adam = 1 - beta1 ** step
             exp_avg.mul_(beta1).add_(grad, alpha=1.0 - beta1)
             exp_avg_sq.mul_(beta2).addcmul_(grad, grad.conj(), value=1 - beta2)

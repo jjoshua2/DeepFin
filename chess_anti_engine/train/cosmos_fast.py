@@ -52,8 +52,8 @@ def _cosmos_momentum_direction(
 ) -> Tensor:
     step = max(1, int(step))
     if use_nesterov:
-        # Match COSMOS paper/reference implementation:
-        # grad <- (grad + beta1 * exp_avg) / (1 + beta1 * ((1 - beta1^t) / (1 - beta1)))
+  # Match COSMOS paper/reference implementation:
+  # grad <- (grad + beta1 * exp_avg) / (1 + beta1 * ((1 - beta1^t) / (1 - beta1)))
         bias_correction1 = (1.0 - beta1**step) / max(1.0 - beta1, 1e-12)
         denom = 1.0 + beta1 * bias_correction1
         return (grad + beta1 * exp_avg) / max(denom, 1e-12)
@@ -204,7 +204,7 @@ class COSMOSFast(Optimizer):
                     if weight_decay != 0.0:
                         param.mul_(1.0 - lr * weight_decay)
 
-                    # Keep low-rank branch consistent with COSMOS reference update.
+  # Keep low-rank branch consistent with COSMOS reference update.
                     exp_avg.mul_(beta1).add_(grad)
                     momentum = _cosmos_momentum_direction(
                         grad,
@@ -276,21 +276,19 @@ class COSMOSFast(Optimizer):
                 step = int(state.get("step", 0)) + 1
                 state["step"] = step
 
-                exp_avg = state.get("exp_avg")
-                exp_avg_sq = state.get("exp_avg_sq")
-                if exp_avg is None:
-                    exp_avg = torch.zeros_like(param, memory_format=torch.preserve_format)
-                    exp_avg_sq = torch.zeros_like(param, memory_format=torch.preserve_format)
-                    state["exp_avg"] = exp_avg
-                    state["exp_avg_sq"] = exp_avg_sq
+                if "exp_avg" not in state:
+                    state["exp_avg"] = torch.zeros_like(param, memory_format=torch.preserve_format)
+                    state["exp_avg_sq"] = torch.zeros_like(param, memory_format=torch.preserve_format)
+                fast_exp_avg: Tensor = state["exp_avg"]
+                fast_exp_avg_sq: Tensor = state["exp_avg_sq"]
 
-                exp_avg.mul_(beta1).add_(grad, alpha=1.0 - beta1)
-                exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1.0 - beta2)
+                fast_exp_avg.mul_(beta1).add_(grad, alpha=1.0 - beta1)
+                fast_exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1.0 - beta2)
 
                 bias_correction1 = 1.0 - beta1 ** step
                 bias_correction2 = 1.0 - beta2 ** step
-                denom = exp_avg_sq.sqrt().div_(math.sqrt(max(bias_correction2, 1e-12))).add_(eps)
+                denom = fast_exp_avg_sq.sqrt().div_(math.sqrt(max(bias_correction2, 1e-12))).add_(eps)
                 step_size = lr / max(bias_correction1, 1e-12)
-                param.addcdiv_(exp_avg, denom, value=-step_size)
+                param.addcdiv_(fast_exp_avg, denom, value=-step_size)
 
         return loss

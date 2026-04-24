@@ -16,12 +16,20 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import torch
 
-from chess_anti_engine.model.tiny import TinyNet
-from chess_anti_engine.inference import ThreadedBatchEvaluator, LocalModelEvaluator, BatchEvaluator
-from chess_anti_engine.selfplay.manager import play_batch
-from chess_anti_engine.selfplay.config import (
-    GameConfig, OpponentConfig, SearchConfig, TemperatureConfig, DiffFocusConfig,
+from chess_anti_engine.inference import (
+    BatchEvaluator,
+    LocalModelEvaluator,
+    ThreadedBatchEvaluator,
 )
+from chess_anti_engine.model.tiny import TinyNet
+from chess_anti_engine.selfplay.config import (
+    DiffFocusConfig,
+    GameConfig,
+    OpponentConfig,
+    SearchConfig,
+    TemperatureConfig,
+)
+from chess_anti_engine.selfplay.manager import play_batch
 from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.stockfish.uci import StockfishUCI
 

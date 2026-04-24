@@ -9,12 +9,12 @@ Usage:
 """
 from __future__ import annotations
 
-import subprocess
-import time
 import json
 import re
-import sys
 import shutil
+import subprocess
+import sys
+import time
 from pathlib import Path
 
 BASE_CONFIG = Path("configs/pbt2_fresh_run9.yaml")
@@ -161,7 +161,7 @@ def run_config(workers: int, sf_workers: int, batch: int) -> dict:
     cfg_path = make_config(workers, sf_workers, batch)
 
     # Launch
-    proc = subprocess.Popen(
+    proc = subprocess.Popen(  # pylint: disable=consider-using-with  # long-lived benchmark subprocess, terminated later
         [sys.executable, "-m", "chess_anti_engine.run",
          "--config", str(cfg_path), "--mode", "tune"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
