@@ -31,7 +31,6 @@ import numpy as np
 
 from chess_anti_engine.encoding._lc0_ext import CBoard
 
-
 _log = logging.getLogger(__name__)
 
 
@@ -71,8 +70,8 @@ def get_tablebase(path: str) -> chess.syzygy.Tablebase | None:
     if _tablebase is not None:
         try:
             _tablebase.close()
-        except Exception:
-            pass
+        except OSError:
+            pass  # syzygy already closed / file handle gone
         _tablebase = None
         _tablebase_path = None
     if not path:
@@ -153,16 +152,16 @@ def probe_best_move(board: chess.Board, syzygy_path: str) -> chess.Move | None:
             continue
         board.pop()
 
-        # After our move, it's opponent's turn. ``child_dtz`` is DTZ from
-        # their perspective: negative if they're losing (we're winning),
-        # positive if they're winning (we're losing), 0 on draw.
-        #
-        # We always MAXIMIZE child_dtz, regardless of WDL class:
-        #   * winning: child_dtz ∈ (-∞, 0). Largest = least negative =
-        #     smallest |dtz| = opponent converts fastest = we win fastest.
-        #   * drawing: child_dtz == 0 (filter), trivially max.
-        #   * losing: child_dtz ∈ (0, +∞). Largest = most plies before
-        #     opponent can zero = we survive longest.
+  # After our move, it's opponent's turn. ``child_dtz`` is DTZ from
+  # their perspective: negative if they're losing (we're winning),
+  # positive if they're winning (we're losing), 0 on draw.
+  #
+  # We always MAXIMIZE child_dtz, regardless of WDL class:
+  #   * winning: child_dtz ∈ (-∞, 0). Largest = least negative =
+  #     smallest |dtz| = opponent converts fastest = we win fastest.
+  #   * drawing: child_dtz == 0 (filter), trivially max.
+  #   * losing: child_dtz ∈ (0, +∞). Largest = most plies before
+  #     opponent can zero = we survive longest.
         if root_wdl > 0 and child_dtz >= 0:
             continue  # winning move must leave opponent in a lost position
         if root_wdl == 0 and child_dtz != 0:
@@ -293,8 +292,8 @@ class SyzygyProbe:
         if tb is not None:
             self.n_wdl = len(tb.wdl)
             self.n_dtz = len(tb.dtz)
-            # Material keys like "KQvK" / "KRPvKP" — piece letters are
-            # uppercase, 'v' is lowercase; count uppercase only.
+  # Material keys like "KQvK" / "KRPvKP" — piece letters are
+  # uppercase, 'v' is lowercase; count uppercase only.
             available = max(
                 (sum(c.isupper() for c in k) for k in tb.wdl.keys()),
                 default=0,
@@ -351,9 +350,9 @@ class SyzygyProbe:
             except Exception as exc:
                 _log.debug("syzygy probe failed on %s: %r", cb.fen(), exc)
                 continue
-            # Decisive threshold depends on 50-move-rule semantics:
-            # cursed_as_draw=True (default) => only ±2 counts as decisive;
-            # cursed_as_draw=False          => ±1 counts too.
+  # Decisive threshold depends on 50-move-rule semantics:
+  # cursed_as_draw=True (default) => only ±2 counts as decisive;
+  # cursed_as_draw=False          => ±1 counts too.
             win_thresh = 2 if self._cursed_as_draw else 1
             loss_thresh = -win_thresh
             if wdl_val >= win_thresh:

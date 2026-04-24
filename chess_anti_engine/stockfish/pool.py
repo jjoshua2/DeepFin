@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
 
-from .uci import StockfishUCI, StockfishResult
+from .uci import StockfishResult, StockfishUCI
 
 
 class StockfishPool:
@@ -20,12 +20,14 @@ class StockfishPool:
         num_workers: int,
         multipv: int = 1,
         hash_mb: int | None = None,
+        syzygy_path: str | None = None,
     ):
         self.path = path
         self.nodes = int(nodes)
         self.num_workers = int(num_workers)
         self.multipv = int(multipv)
         self.hash_mb = None if hash_mb is None else max(1, int(hash_mb))
+        self.syzygy_path = syzygy_path or None
 
         self._exec = ThreadPoolExecutor(max_workers=self.num_workers)
         self._engines = [
@@ -34,6 +36,7 @@ class StockfishPool:
                 nodes=self.nodes,
                 multipv=self.multipv,
                 hash_mb=self.hash_mb,
+                syzygy_path=self.syzygy_path,
             )
             for _ in range(self.num_workers)
         ]
@@ -50,7 +53,7 @@ class StockfishPool:
             e.set_nodes(int(nodes))
 
     def submit(self, fen: str, *, nodes: int | None = None) -> Future[StockfishResult]:
-        # Round-robin assignment
+  # Round-robin assignment
         idx = self._next
         self._next = (self._next + 1) % self.num_workers
         engine = self._engines[idx]
