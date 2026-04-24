@@ -15,11 +15,11 @@ import pytest
 import torch
 
 from chess_anti_engine.inference import (
+    _STATE_SHUTDOWN,
     LocalModelEvaluator,
     SlotBroker,
     SlotInferenceClient,
     _InferenceSlot,
-    _STATE_SHUTDOWN,
     _SlotLayout,
 )
 from chess_anti_engine.model import ModelConfig, build_model
@@ -67,7 +67,7 @@ def test_slot_inference_broker_roundtrip(tmp_path: Path) -> None:
     slot_prefix = "cae-test-slot"
     max_batch = 64
 
-    proc = subprocess.Popen(
+    proc = subprocess.Popen(  # pylint: disable=consider-using-with  # long-lived broker subprocess, explicit terminate in finally
         [
             sys.executable,
             "-m",
@@ -126,7 +126,11 @@ def test_slot_inference_client_times_out_if_broker_never_responds() -> None:
     slot_name = f"cae-timeout-{uuid.uuid4().hex}"
     shm = SharedMemory(name=slot_name, create=True, size=64 * 146 * 8 * 8 * 4 + 64 * 4672 * 4 + 64 * 3 * 4 + 8)
     try:
-        from chess_anti_engine.inference import _InferenceSlot, _SlotLayout, _STATE_REQUEST
+        from chess_anti_engine.inference import (
+            _STATE_REQUEST,
+            _InferenceSlot,
+            _SlotLayout,
+        )
 
         slot = _InferenceSlot(shm, _SlotLayout.compute(64), owns=False)
         slot.state = _STATE_REQUEST
@@ -318,7 +322,7 @@ def test_local_model_evaluator_respects_amp_settings(monkeypatch: pytest.MonkeyP
         def __enter__(self):
             return None
 
-        def __exit__(self, exc_type, exc, tb):
+        def __exit__(self, _exc_type, _exc, _tb):
             return False
 
     monkeypatch.setattr("chess_anti_engine.inference.inference_autocast", _AutocastRecorder)

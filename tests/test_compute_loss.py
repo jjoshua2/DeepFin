@@ -67,13 +67,15 @@ def _full_batch(b: int) -> dict[str, torch.Tensor]:
 def test_compute_loss_returns_expected_keys():
     b = 4
     losses = compute_loss(_fake_outputs(b), _full_batch(b))
+    # Core keys must be present. Observation-only per-source / per-phase
+    # diagnostics are additive and tested separately.
     expected = {
         "total", "policy_ce", "wdl_ce", "sf_wdl_ce",
         "soft_policy_ce", "future_policy_ce",
         "sf_move_ce", "sf_eval_ce", "categorical_ce",
         "volatility", "sf_volatility", "moves_left",
     }
-    assert set(losses.keys()) == expected
+    assert expected <= set(losses.keys())
 
 
 def test_compute_loss_all_scalars():

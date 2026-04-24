@@ -8,7 +8,11 @@ import pytest
 
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
-from chess_anti_engine.replay.shard import delete_shard_path, iter_shard_paths, load_shard_arrays
+from chess_anti_engine.replay.shard import (
+    delete_shard_path,
+    iter_shard_paths,
+    load_shard_arrays,
+)
 
 
 def _sample() -> ReplaySample:
@@ -347,7 +351,7 @@ def test_close_discards_late_prefetch_results(tmp_path) -> None:
     started = threading.Event()
     release = threading.Event()
 
-    def _slow_load_refresh_chunks(*, shard_paths, refresh_shards, rng):
+    def _slow_load_refresh_chunks(*, shard_paths, refresh_shards, rng):  # pylint: disable=unused-argument  # mock matches real signature
         started.set()
         release.wait(timeout=2.0)
         return [arrs]

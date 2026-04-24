@@ -4,7 +4,7 @@ import numpy as np
 import torch
 
 from chess_anti_engine.selfplay import play_batch
-from chess_anti_engine.selfplay.config import TemperatureConfig, GameConfig
+from chess_anti_engine.selfplay.config import GameConfig, TemperatureConfig
 from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.stockfish.uci import StockfishResult
 
@@ -14,7 +14,7 @@ class _FakeStockfish:
         self.nodes = 1
         self._wdl = np.asarray(wdl, dtype=np.float32)
 
-    def search(self, fen: str, *, nodes: int | None = None) -> StockfishResult:  # noqa: ARG002
+    def search(self, fen: str, *, nodes: int | None = None) -> StockfishResult:  # noqa: ARG002  # pylint: disable=unused-argument  # mock matches StockfishUCI.search signature
         return StockfishResult(bestmove_uci="0000", wdl=self._wdl, pvs=[])
 
 

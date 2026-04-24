@@ -31,7 +31,7 @@ def _write_test_pgn(path):
     path.write_text(pgn, encoding="utf-8")
 
 
-def test_make_starting_board_random_plies(tmp_path):
+def test_make_starting_board_random_plies():
     rng = np.random.default_rng(0)
     cfg = OpeningConfig(opening_book_path=None, random_start_plies=3)
     b = make_starting_board(rng=rng, cfg=cfg)

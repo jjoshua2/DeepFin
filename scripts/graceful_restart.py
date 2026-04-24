@@ -44,7 +44,7 @@ def _idle_seconds(csv: Path) -> float:
     return time.time() - csv.stat().st_mtime
 
 
-def _find_tuner_pid(tune_dir: Path) -> int | None:
+def _find_tuner_pid() -> int | None:
     """Best-effort lookup of the top-level Tune driver process.
 
     Intentionally ignore Ray trial actors and worker processes so --auto-kill
@@ -146,7 +146,7 @@ def main() -> None:
             print(f"[graceful_restart] {len(idle_trials)} trials are at a clean stopping point.")
 
             if auto_kill:
-                pid = _find_tuner_pid(tune_dir)
+                pid = _find_tuner_pid()
                 if pid:
                     print(f"[graceful_restart] Sending SIGTERM to tuner PID {pid}...")
                     os.kill(pid, signal.SIGTERM)

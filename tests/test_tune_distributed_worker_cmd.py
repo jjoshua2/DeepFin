@@ -3,17 +3,19 @@ from pathlib import Path
 
 import numpy as np
 
-from chess_anti_engine.tune.process_cleanup import _list_matching_pids
 from chess_anti_engine.replay.shard import LOCAL_SHARD_SUFFIX, save_local_shard_arrays
-from chess_anti_engine.tune.harness import (
-    _extract_saved_trial_config_keys,
-    _patch_experiment_state_for_resume,
-    _resolve_local_override_root as _resolve_harness_override_root,
-)
 from chess_anti_engine.tune.distributed_runtime import (
     _build_distributed_worker_cmd,
     _launch_inference_broker,
 )
+from chess_anti_engine.tune.harness import (
+    _extract_saved_trial_config_keys,
+    _patch_experiment_state_for_resume,
+)
+from chess_anti_engine.tune.harness import (
+    _resolve_local_override_root as _resolve_harness_override_root,
+)
+from chess_anti_engine.tune.process_cleanup import _list_matching_pids
 from chess_anti_engine.tune.replay_exchange import (
     _refresh_replay_shards_on_exploit,
     _trial_replay_shard_dir,
@@ -131,7 +133,7 @@ def test_replay_override_under_wsl_remaps_to_linux_run_sidecar(tmp_path: Path) -
     assert replay_dir == Path("/home/josh/projects/chess/runs/pbt2_fresh_run9_replay") / trial_dir.name / "replay_shards"
 
 
-def test_server_override_under_wsl_remaps_to_linux_run_sidecar(tmp_path: Path) -> None:
+def test_server_override_under_wsl_remaps_to_linux_run_sidecar() -> None:
     server_root = _resolve_harness_override_root(
         raw_root="/mnt/c/chess_active/pbt2_fresh_run9_server",
         work_dir=Path("/home/josh/projects/chess/runs/pbt2_fresh_run9"),
@@ -276,7 +278,7 @@ def test_launch_inference_broker_does_not_inherit_worker_compile(monkeypatch, tm
         def poll(self) -> int | None:
             return None
 
-    def _fake_popen(cmd, **kwargs):  # type: ignore[no-untyped-def]
+    def _fake_popen(cmd, **kwargs):  # type: ignore[no-untyped-def]  # pylint: disable=unused-argument  # mocks subprocess.Popen signature
         calls.append(list(cmd))
         return DummyProc()
 
@@ -311,7 +313,7 @@ def test_launch_inference_broker_respects_dedicated_compile_flag(monkeypatch, tm
         def poll(self) -> int | None:
             return None
 
-    def _fake_popen(cmd, **kwargs):  # type: ignore[no-untyped-def]
+    def _fake_popen(cmd, **kwargs):  # type: ignore[no-untyped-def]  # pylint: disable=unused-argument  # mocks subprocess.Popen signature
         calls.append(list(cmd))
         return DummyProc()
 

@@ -4,7 +4,10 @@ import hashlib
 import logging
 from pathlib import Path
 
-from chess_anti_engine.worker_assets import _cached_sha_asset_needs_refresh, _download_opening_book
+from chess_anti_engine.worker_assets import (
+    _cached_sha_asset_needs_refresh,
+    _download_opening_book,
+)
 
 
 def _sha256_bytes(data: bytes) -> str:
@@ -42,7 +45,7 @@ def test_download_opening_book_redownloads_when_same_sha_uses_new_filename(
 
     downloads: list[Path] = []
 
-    def _fake_download_and_verify_shared(url: str, *, out_path: Path, expected_sha256: str, headers: dict) -> None:
+    def _fake_download_and_verify_shared(url: str, *, out_path: Path, expected_sha256: str, headers: dict) -> None:  # pylint: disable=unused-argument  # mock matches real signature
         assert url == "http://server/v1/opening_book"
         assert expected_sha256 == sha
         downloads.append(out_path)

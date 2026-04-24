@@ -34,7 +34,7 @@ class _FakeStockfish:
         self.nodes = 1
         self._wdl = np.asarray(wdl, dtype=np.float32)
 
-    def search(self, fen: str, *, nodes: int | None = None) -> StockfishResult:  # noqa: ARG002
+    def search(self, fen: str, *, nodes: int | None = None) -> StockfishResult:  # noqa: ARG002  # pylint: disable=unused-argument  # mock matches StockfishUCI.search signature
         board = chess.Board(fen)
         move = next(iter(board.legal_moves), chess.Move.null())
         return StockfishResult(bestmove_uci=move.uci(), wdl=self._wdl, pvs=[])

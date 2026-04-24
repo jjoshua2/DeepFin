@@ -22,10 +22,8 @@ def _mk_pid(**overrides) -> DifficultyPID:
         wdl_regret_min=0.02,
         wdl_regret_max=1.0,
         inverse_regret_window=10,
-        inverse_regret_sigma_tolerance=0.02,
         inverse_regret_max_step=0.01,
         inverse_regret_safety_floor=0.50,
-        inverse_regret_safety_band=0.05,
         inverse_regret_emergency_ease_step=0.01,
     )
     defaults.update(overrides)
@@ -117,7 +115,6 @@ def test_emergency_ease_never_exceeds_max_step():
         inverse_regret_max_step=0.01,
         inverse_regret_emergency_ease_step=0.01,
         inverse_regret_safety_floor=0.50,
-        inverse_regret_safety_band=0.05,
     )
     # Even an extreme batch (zero wins, zero draws) must not exceed max_step.
     pid.observe(wins=0, draws=0, losses=800, force=True)
