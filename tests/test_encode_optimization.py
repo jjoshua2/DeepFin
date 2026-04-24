@@ -1,12 +1,11 @@
 """Regression tests: verify optimized encoding paths produce identical output."""
 from __future__ import annotations
 
-import numpy as np
 import chess
+import numpy as np
 import pytest
 
 from chess_anti_engine.encoding.encode import encode_position
-
 
 # ---------------------------------------------------------------------------
 # Reference boards with varied state

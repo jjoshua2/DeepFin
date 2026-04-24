@@ -13,7 +13,7 @@ def parse_version(v: str) -> tuple[int, int, int]:
     if s.startswith("v"):
         s = s[1:]
 
-    # Split on any non-digit.
+  # Split on any non-digit.
     parts = [p for p in re.split(r"[^0-9]+", s) if p]
     nums = [int(p) for p in parts[:3]]
     while len(nums) < 3:

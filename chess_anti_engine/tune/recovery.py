@@ -11,8 +11,8 @@ from chess_anti_engine.tune._utils import stable_seed_u32
 def _trial_index_from_name(trial_dir: Path) -> int:
     """Best-effort numeric trial index from Tune trial directory name."""
     name = str(Path(trial_dir).name)
-    # Expected: train_trial_<runid>_<trial_idx>_<params>_<timestamp>
-    # Use the explicit <trial_idx> field, not trailing timestamp digits.
+  # Expected: train_trial_<runid>_<trial_idx>_<params>_<timestamp>
+  # Use the explicit <trial_idx> field, not trailing timestamp digits.
     m = re.match(r"^train_trial_[^_]+_(\d+)_", name)
     if not m:
         return -1

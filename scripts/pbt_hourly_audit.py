@@ -9,7 +9,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-
 TRIAL_RE = re.compile(r"^train_trial_([a-z0-9]+)_(\d{5})_")
 
 

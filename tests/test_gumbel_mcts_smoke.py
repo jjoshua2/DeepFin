@@ -1,8 +1,8 @@
-import numpy as np
 import chess
+import numpy as np
 
+from chess_anti_engine.mcts.gumbel import GumbelConfig, run_gumbel_root
 from chess_anti_engine.model.transformer import ChessNet, TransformerConfig
-from chess_anti_engine.mcts.gumbel import run_gumbel_root, GumbelConfig
 
 
 def test_gumbel_returns_distribution():

@@ -17,7 +17,7 @@ _CP_K = 1.5637541897
 def q_to_cp(q: float) -> int:
     """Map Q in [0, 1] → centipawns, clamped to a sane range."""
     q = max(0.0, min(1.0, float(q)))
-    # tan goes to infinity near q=0 or q=1; clamp arg just shy of ±π/2.
+  # tan goes to infinity near q=0 or q=1; clamp arg just shy of ±π/2.
     arg = _CP_K * (2.0 * q - 1.0)
     cp = _CP_A * math.tan(arg)
     return int(round(cp))

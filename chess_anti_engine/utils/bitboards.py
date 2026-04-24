@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import numpy as np
 import chess
+import numpy as np
 
 
 def orient_square(sq: chess.Square, turn: chess.Color) -> chess.Square:

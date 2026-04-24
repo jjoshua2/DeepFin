@@ -22,8 +22,11 @@ def main() -> None:
     except Exception as e:  # pragma: no cover
         raise RuntimeError("server requires uvicorn; install with pip install -e '.[server]' ") from e
 
-    from chess_anti_engine.server.lease import active_run_prefix, prune_non_active_run_leases
     from chess_anti_engine.server.app import create_app
+    from chess_anti_engine.server.lease import (
+        active_run_prefix,
+        prune_non_active_run_leases,
+    )
 
     server_root = str(args.server_root)
     leases_root = str(args.server_root) + "/leases"

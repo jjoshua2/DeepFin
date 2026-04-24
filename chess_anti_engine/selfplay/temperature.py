@@ -34,7 +34,7 @@ def temperature_for_ply(
             return float(temperature)
         if t >= start + dm:
             return float(endgame)
-        # linear interpolation from temperature -> endgame
+  # linear interpolation from temperature -> endgame
         frac = float(t - start) / float(dm)
         return float(temperature + (float(endgame) - float(temperature)) * frac)
 

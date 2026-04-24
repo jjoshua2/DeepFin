@@ -1,5 +1,5 @@
-import numpy as np
 import chess
+import numpy as np
 
 from chess_anti_engine.encoding import encode_position
 

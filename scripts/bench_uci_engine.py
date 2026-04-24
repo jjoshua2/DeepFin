@@ -23,8 +23,8 @@ import subprocess
 import sys
 import time
 
-from chess_anti_engine.uci.subprocess_client import LineReader as _LineReader, send_line as _send
-
+from chess_anti_engine.uci.subprocess_client import LineReader as _LineReader
+from chess_anti_engine.uci.subprocess_client import send_line as _send
 
 # Matches the DEBUG profile line from gumbel_c.py. Parses out fields we care
 # about for the bench summary: GPU call count, total positions fed to GPU,

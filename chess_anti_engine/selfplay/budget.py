@@ -32,7 +32,7 @@ def progressive_mcts_simulations(
     st = max(0, int(step))
     t = min(1.0, float(st) / float(int(ramp_steps)))
 
-    # Robustness: negative/NaN exponents -> linear.
+  # Robustness: negative/NaN exponents -> linear.
     try:
         exp = float(exponent)
         if not (exp > 0.0):

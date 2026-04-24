@@ -16,8 +16,8 @@ from chess_anti_engine.tune.distributed_runtime import (
     _quarantine_inbox_shards,
 )
 from chess_anti_engine.tune.trainable_metrics import (
-    _curriculum_winrate_raw_or_none,
     _compute_train_step_budget,
+    _curriculum_winrate_raw_or_none,
     _iteration_pause_metrics,
     _should_retry_iteration_without_games,
 )

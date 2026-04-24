@@ -21,7 +21,7 @@ import torch
 from chess_anti_engine.model import ModelConfig, build_model
 from chess_anti_engine.replay import DiskReplayBuffer
 from chess_anti_engine.train import Trainer, trainer_kwargs_from_config
-from chess_anti_engine.utils import load_yaml_file, flatten_run_config_defaults
+from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 
 TRIAL_DIR = sorted(
     Path("runs/pbt2_small/tune").glob("train_trial_*"),

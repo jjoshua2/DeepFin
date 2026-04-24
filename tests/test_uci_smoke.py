@@ -21,7 +21,8 @@ import pytest
 import torch
 
 from chess_anti_engine.model import ModelConfig, build_model
-from chess_anti_engine.uci.subprocess_client import LineReader as _LineReader, send_line as _send
+from chess_anti_engine.uci.subprocess_client import LineReader as _LineReader
+from chess_anti_engine.uci.subprocess_client import send_line as _send
 
 
 def _make_tiny_checkpoint(tmp_path: Path) -> Path:

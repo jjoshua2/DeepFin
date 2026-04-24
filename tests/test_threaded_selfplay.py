@@ -9,8 +9,8 @@ import pytest
 import torch
 
 from chess_anti_engine.inference import ThreadedBatchEvaluator
-from chess_anti_engine.model import ModelConfig, build_model
 from chess_anti_engine.mcts.gumbel import GumbelConfig
+from chess_anti_engine.model import ModelConfig, build_model
 
 try:
     from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c as _gumbel_fn

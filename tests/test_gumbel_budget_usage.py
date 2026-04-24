@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import numpy as np
 import chess
+import numpy as np
 import torch
 
 from chess_anti_engine.mcts.gumbel import GumbelConfig, run_gumbel_root

@@ -10,8 +10,8 @@ import time
 import numpy as np
 import torch
 
-from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.model.transformer import ChessNet, TransformerConfig
+from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.replay import ReplayBuffer
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.train import Trainer

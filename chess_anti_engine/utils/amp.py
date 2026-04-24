@@ -6,8 +6,8 @@ import torch
 
 
 def _auto_cuda_amp_dtype() -> torch.dtype:
-    # Prefer BF16 when supported (Ampere+ with BF16 support, Hopper, Ada, Blackwell, etc.).
-    # Fall back to FP16 otherwise.
+  # Prefer BF16 when supported (Ampere+ with BF16 support, Hopper, Ada, Blackwell, etc.).
+  # Fall back to FP16 otherwise.
     try:
         is_bf16 = bool(torch.cuda.is_bf16_supported())
     except Exception:

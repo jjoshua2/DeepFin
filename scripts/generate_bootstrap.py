@@ -26,7 +26,6 @@ from chess_anti_engine.moves.encode import legal_move_mask
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.shard import ShardMeta, save_npz
 
-
 MAX_PLIES = 300  # Hard cap per game
 GAMES_PER_BATCH = 100  # Small batches to limit per-worker memory
 

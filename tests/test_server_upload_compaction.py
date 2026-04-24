@@ -7,8 +7,8 @@ import numpy as np
 from chess_anti_engine.replay import ReplaySample
 from chess_anti_engine.replay.shard import arrays_to_samples, load_shard_arrays
 from chess_anti_engine.server.app import (
-    _BufferedUploadAccumulator,
     _buffered_upload_ready,
+    _BufferedUploadAccumulator,
     _flush_buffered_upload_to_inbox,
 )
 
