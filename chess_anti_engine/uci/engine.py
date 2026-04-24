@@ -332,15 +332,22 @@ class Engine:
   # For `go ponder`, the ponder phase runs open-ended; ponderhit
   # converts to a real-deadline phase using the SAME underlying clock
   # args. We re-derive the "real" limits here by synthesizing a
-  # non-ponder copy of the args.
-        self._pending_real_limits = (
-            limits_from_go(
+  # non-ponder copy of the args — but the side-to-move must be
+  # derived from the REAL-phase board (after the opponent's predicted
+  # move was pushed), not search_board (which is their side). Using
+  # search_board.turn here picks the opponent's wtime/btime and
+  # causes the real phase to flag or undersearch at asymmetric
+  # clocks. (Codex adversarial review.)
+        if cmd.args.ponder and self._popped_ponder_move is not None:
+            real_board = search_board.copy(stack=False)
+            real_board.push(self._popped_ponder_move)
+            self._pending_real_limits = limits_from_go(
                 replace(cmd.args, ponder=False),
-                side_to_move_is_white=(search_board.turn == chess.WHITE),
+                side_to_move_is_white=(real_board.turn == chess.WHITE),
                 move_overhead_ms=overhead,
             )
-            if cmd.args.ponder else None
-        )
+        else:
+            self._pending_real_limits = None
         with self._state_lock:
             self._search_gen += 1
             gen = self._search_gen

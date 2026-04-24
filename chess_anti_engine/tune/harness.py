@@ -51,7 +51,7 @@ def _wait_for_server_ready(
 def _prepare_distributed_worker_auth(
     *, server_root: Path, config: dict | None = None
 ) -> tuple[str, Path]:
-    from chess_anti_engine.server.auth import upsert_user
+    from chess_anti_engine.server.auth import load_users, upsert_user
 
     cfg = config or {}
     username = str(cfg.get("distributed_worker_username", "") or "").strip()
@@ -63,9 +63,15 @@ def _prepare_distributed_worker_auth(
             "Add a user first: python -m chess_anti_engine.server.manage_users add <username>"
         )
 
-  # Self-register on every startup so contributors don't need a separate
-  # provisioning step — their credentials are just written to the local DB.
-    upsert_user(server_root / "users.json", username=username, password=password)
+  # First-time provisioning only — if the user already exists, leave
+  # their record alone. This preserves the disabled flag (so an operator
+  # can disable a compromised account without startup silently re-
+  # enabling it) and any rotated password from manage_users.py (so yaml
+  # drift can't overwrite the authoritative admin change).
+  # (Codex adversarial review.)
+    users_path = server_root / "users.json"
+    if username not in load_users(users_path):
+        upsert_user(users_path, username=username, password=password)
 
     password_file = server_root / f"{username}.password"
     password_file.write_text(password + "\n", encoding="utf-8")
