@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
-from dataclasses import dataclass
-from pathlib import Path
-
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
@@ -17,7 +16,9 @@ from zclip import ZClip
 from chess_anti_engine.utils.atomic import atomic_write
 
 try:
-    from torch.utils.tensorboard import SummaryWriter  # type: ignore[assignment]  # skylos: ignore (used via runtime fallback)
+    from torch.utils.tensorboard import (
+        SummaryWriter,  # skylos: ignore (used via runtime fallback)
+    )
 except Exception:  # pragma: no cover
     class SummaryWriter:  # type: ignore[no-redef]
         def __init__(self, *args: Any, **kwargs: Any) -> None:  # skylos: ignore (stub signature parity)
@@ -31,13 +32,22 @@ except Exception:  # pragma: no cover
 
 from chess_anti_engine.encoding.lc0 import LC0_FULL
 from chess_anti_engine.model import ARCH_SCHEMA_VERSION, ModelConfig
+from chess_anti_engine.replay.augment import (
+    maybe_mirror_batch_arrays,
+    maybe_mirror_samples,
+)
 from chess_anti_engine.replay.buffer import ReplayBuffer
 from chess_anti_engine.replay.dataset import collate, collate_arrays
-from chess_anti_engine.replay.augment import maybe_mirror_batch_arrays, maybe_mirror_samples
-from .muon import MuonWithAuxAdam
+
 from .cosmos import COSMOS
 from .cosmos_fast import COSMOSFast
-from .losses import compute_loss
+from .losses import (
+    apply_mask_to_logits,
+    compute_loss,
+    wdl_brier_ece_from_stats,
+    wdl_calibration_stats,
+)
+from .muon import MuonWithAuxAdam
 
 
 @dataclass
@@ -55,10 +65,64 @@ class TrainMetrics:
     sf_volatility_loss: float
     moves_left_loss: float
     sf_wdl_loss: float = 0.0
+    sf_move_acc_top5: float = 0.0
+    policy_own_acc_top1: float = 0.0
+    policy_own_acc_top5: float = 0.0
+    policy_future_acc_top1: float = 0.0
+    policy_future_acc_top5: float = 0.0
     train_time_s: float = 0.0
     opt_step_time_s: float = 0.0
     train_steps_done: int = 0
     train_samples_seen: int = 0
+  # Per-source loss split (observation-only; only meaningful once shards carry is_selfplay).
+    policy_loss_selfplay: float = 0.0
+    policy_loss_curriculum: float = 0.0
+    wdl_loss_selfplay: float = 0.0
+    wdl_loss_curriculum: float = 0.0
+    frac_is_selfplay: float = 0.0
+    frac_tagged: float = 0.0
+  # Per-game-phase loss split (bucketed by moves_left).
+    policy_loss_open: float = 0.0
+    policy_loss_mid: float = 0.0
+    policy_loss_end: float = 0.0
+    wdl_loss_open: float = 0.0
+    wdl_loss_mid: float = 0.0
+    wdl_loss_end: float = 0.0
+  # Value-head calibration (populated on holdout eval).
+    wdl_brier: float = 0.0
+    wdl_ece: float = 0.0
+
+
+# Map compute_loss dict keys → TrainMetrics field names where they differ.
+# Keys not listed pass through unchanged (e.g. the split losses are same-named).
+_LOSS_KEY_TO_METRIC_FIELD = {
+    "policy_ce": "policy_loss",
+    "soft_policy_ce": "soft_policy_loss",
+    "future_policy_ce": "future_policy_loss",
+    "wdl_ce": "wdl_loss",
+    "sf_move_ce": "sf_move_loss",
+    "sf_eval_ce": "sf_eval_loss",
+    "categorical_ce": "categorical_loss",
+    "volatility": "volatility_loss",
+    "sf_volatility": "sf_volatility_loss",
+    "moves_left": "moves_left_loss",
+    "sf_wdl_ce": "sf_wdl_loss",
+}
+_TRAIN_METRICS_FIELDS = frozenset(f.name for f in dataclasses.fields(TrainMetrics))
+
+
+def _loss_sums_to_metric_kwargs(sums: dict[str, float], n: float) -> dict[str, float]:
+    """Convert accumulated per-batch loss sums into TrainMetrics kwargs.
+
+    Keys that don't map to a TrainMetrics field are dropped silently so
+    compute_loss can add experimental scalars before TrainMetrics catches up.
+    """
+    out: dict[str, float] = {}
+    for k, v in sums.items():
+        field = _LOSS_KEY_TO_METRIC_FIELD.get(k, k)
+        if field in _TRAIN_METRICS_FIELDS:
+            out[field] = v / n
+    return out
 
 
 def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> dict:
@@ -74,12 +138,12 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
     def _f(key: str, default: float, typ: type = float) -> Any:
         return typ(config.get(key, default))
 
-    # Handle grad_clip → zclip_max_norm alias
+  # Handle grad_clip → zclip_max_norm alias
     zclip_max_norm = float(config.get(
         "zclip_max_norm", config.get("grad_clip", 1.0)
     ))
 
-    # w_sf_volatility falls back to w_volatility if not explicitly set
+  # w_sf_volatility falls back to w_volatility if not explicitly set
     w_volatility = _f("w_volatility", 0.05)
     w_sf_volatility_raw = config.get("w_sf_volatility")
     w_sf_volatility = float(w_sf_volatility_raw) if w_sf_volatility_raw is not None else w_volatility
@@ -160,7 +224,7 @@ class Trainer:
         swa_start: int = 0,
         swa_freq: int = 50,
         mirror_prob: float = 0.5,
-        # Loss weights (all tunable for Ray Tune ablations)
+  # Loss weights (all tunable for Ray Tune ablations)
         w_policy: float = 1.0,
         w_soft: float = 0.5,
         w_future: float = 0.15,
@@ -178,15 +242,15 @@ class Trainer:
         model_config: ModelConfig | None = None,
     ):
         self.device = device
-        # Declared as nn.Module; torch.compile (below) wraps it in a Module
-        # subclass at runtime, but its stub types return Callable — cast on
-        # assignment there to keep attribute access (.train/.eval/.state_dict)
-        # type-checked here.
+  # Declared as nn.Module; torch.compile (below) wraps it in a Module
+  # subclass at runtime, but its stub types return Callable — cast on
+  # assignment there to keep attribute access (.train/.eval/.state_dict)
+  # type-checked here.
         self.model: torch.nn.Module = model.to(device)
-        # Optional — when provided, `save()` and the SWA export embed it
-        # into the checkpoint so standalone loaders (UCI engine) don't need
-        # a sibling params.json. Kept optional for backward compatibility
-        # with direct Trainer() construction in tests.
+  # Optional — when provided, `save()` and the SWA export embed it
+  # into the checkpoint so standalone loaders (UCI engine) don't need
+  # a sibling params.json. Kept optional for backward compatibility
+  # with direct Trainer() construction in tests.
         self._model_config = model_config
 
         optimizer = str(optimizer).lower()
@@ -209,9 +273,9 @@ class Trainer:
                 else:
                     aux_decay_params.append(param)
 
-            # Muon is typically run with a larger LR on hidden weights than the
-            # AdamW fallback uses on heads / norms / biases. Keep one Tune LR and
-            # derive the trunk LR from it so search stays simple.
+  # Muon is typically run with a larger LR on hidden weights than the
+  # AdamW fallback uses on heads / norms / biases. Keep one Tune LR and
+  # derive the trunk LR from it so search stays simple.
             muon_lr = float(lr) * 20.0
             param_groups = [
                 {"params": muon_decay_params, "weight_decay": 1e-4, "use_muon": True, "lr": muon_lr},
@@ -252,7 +316,7 @@ class Trainer:
                 gamma=float(cosmos_gamma),
             )
         else:
-            # Selective weight decay: apply only to non-bias, non-LayerNorm parameters.
+  # Selective weight decay: apply only to non-bias, non-LayerNorm parameters.
             decay_params = []
             no_decay_params = []
             for name, param in self.model.named_parameters():
@@ -268,9 +332,9 @@ class Trainer:
             ]
 
         if optimizer == "nadamw":
-            # NAdam with decoupled weight decay (spec: β1=0.9, β2=0.98, ε=1e-7).
-            # PyTorch NAdam supports decoupled_weight_decay since 2.x; param-group
-            # weight_decay values are applied per-group.
+  # NAdam with decoupled weight decay (spec: β1=0.9, β2=0.98, ε=1e-7).
+  # PyTorch NAdam supports decoupled_weight_decay since 2.x; param-group
+  # weight_decay values are applied per-group.
             self.opt = torch.optim.NAdam(
                 param_groups, lr=lr, betas=(0.9, 0.98), eps=1e-7,
                 decoupled_weight_decay=True,
@@ -284,13 +348,15 @@ class Trainer:
         elif optimizer == "cosmos_fast":
             pass
         elif optimizer == "soap":
-            # SOAP: Shampoo-like second-order optimizer. Prefer a local
-            # `soap.py`; otherwise fall back to pytorch-optimizer's SOAP.
+  # SOAP: Shampoo-like second-order optimizer. Prefer a local
+  # `soap.py`; otherwise fall back to pytorch-optimizer's SOAP.
             try:
-                from soap import SOAP  # type: ignore[import]
+                from soap import SOAP  # type: ignore[import] # optional local module
             except ImportError as exc:
                 try:
-                    from pytorch_optimizer import SOAP  # type: ignore[import]
+                    from pytorch_optimizer import (
+                        SOAP,  # type: ignore[import] # optional dep
+                    )
                 except ImportError:
                     raise ImportError(
                         "SOAP optimizer requires either a local `soap.py` module "
@@ -313,13 +379,13 @@ class Trainer:
 
         self.use_amp = bool(use_amp)
         self._amp_dtype = torch.bfloat16 if device.startswith("cuda") else None
-        # BF16 typically does not need GradScaler; keep scaler only for fp16 if added later.
+  # BF16 typically does not need GradScaler; keep scaler only for fp16 if added later.
         self._scaler = None
 
         self.feature_dropout_p = float(feature_dropout_p)
         self._base_input_planes = int(LC0_FULL.num_planes)
-        # Per-group dropout: (start_offset_from_base, num_planes, dropout_prob)
-        # Groups: king_safety(10), pins(6), pawns(8), mobility(6), outposts(4)
+  # Per-group dropout: (start_offset_from_base, num_planes, dropout_prob)
+  # Groups: king_safety(10), pins(6), pawns(8), mobility(6), outposts(4)
         _fdp = float(feature_dropout_p)
         self._feature_group_dropout = [
             (0, 10, float(fdp_king_safety) if fdp_king_safety is not None else _fdp),
@@ -342,20 +408,20 @@ class Trainer:
         self.sf_wdl_conf_power = float(sf_wdl_conf_power)
         self.sf_wdl_draw_scale = float(sf_wdl_draw_scale)
 
-        # Data augmentation: mirror positions left-right (files) with given probability.
+  # Data augmentation: mirror positions left-right (files) with given probability.
         self.mirror_prob = float(mirror_prob)
 
-        # Optional torch.compile for training throughput.
+  # Optional torch.compile for training throughput.
         if use_compile and device.startswith("cuda"):
             try:
                 self.model = cast("torch.nn.Module", torch.compile(self.model, mode="reduce-overhead"))
             except Exception:
                 pass  # torch.compile may not be available on all platforms
 
-        # Gradient accumulation
+  # Gradient accumulation
         self.accum_steps = max(1, int(accum_steps))
 
-        # LR schedule: linear warmup then cosine annealing with warm restarts
+  # LR schedule: linear warmup then cosine annealing with warm restarts
         self._peak_lr = float(lr)
         self._warmup_steps = int(warmup_steps)
         if warmup_lr_start is None:
@@ -367,8 +433,8 @@ class Trainer:
         )
         self._set_initial_lrs()
 
-        # Stochastic Weight Averaging (SWA): maintain a running average of model
-        # weights for smoother, more generalizable exported networks.
+  # Stochastic Weight Averaging (SWA): maintain a running average of model
+  # weights for smoother, more generalizable exported networks.
         self._swa_start = int(swa_start)
         self._swa_freq = max(1, int(swa_freq))
         self._swa_model: torch.optim.swa_utils.AveragedModel | None = None
@@ -406,17 +472,16 @@ class Trainer:
 
     @staticmethod
     def _extract_loss_scalars(losses: dict[str, torch.Tensor]) -> dict[str, float]:
-        """Extract all loss component scalars from compute_loss output."""
-        result = {}
-        for key in ("policy_ce", "wdl_ce", "sf_move_ce", "sf_eval_ce", "moves_left",
-                     "soft_policy_ce", "future_policy_ce", "categorical_ce",
-                     "volatility", "sf_volatility", "sf_wdl_ce"):
-            v = losses.get(key)
-            if isinstance(v, torch.Tensor):
-                result[key] = float(v.detach().item())
-            else:
-                result[key] = float(v or 0.0)
-        return result
+        """Extract all non-total loss component scalars from compute_loss output.
+
+        Takes every scalar tensor except ``total`` so new metrics added to the
+        loss dict flow through automatically without a third place to edit.
+        """
+        return {
+            key: float(v.detach().item())
+            for key, v in losses.items()
+            if key != "total"
+        }
 
     def _log_metrics(self, metrics: TrainMetrics, tag: str) -> None:
         """Log all TrainMetrics fields to TensorBoard under the given tag."""
@@ -502,7 +567,7 @@ class Trainer:
     def _update_lr(self) -> None:
         """Apply linear warmup, then hand off to cosine schedule."""
         if self.step < self._warmup_steps:
-            # Called after optimizer.step(); set the LR for the *next* training step.
+  # Called after optimizer.step(); set the LR for the *next* training step.
             next_frac = min(1.0, float(self.step + 1) / max(1, self._warmup_steps))
             for pg, base_lr in zip(self.opt.param_groups, self._base_lrs(), strict=True):
                 start_lr = self._warmup_start_lr_for(float(base_lr))
@@ -534,26 +599,24 @@ class Trainer:
         ref_old = max(float(self._peak_lr), self._reference_lr_from_bases(old_bases))
         scale = new_peak / ref_old
 
-        new_bases: list[float] = []
-        for ob in old_bases:
-            if ob > 0.0:
-                new_bases.append(ob * scale)
-            else:
-                new_bases.append(new_peak)
+        new_bases: list[float] = [
+            ob * scale if ob > 0.0 else new_peak
+            for ob in old_bases
+        ]
 
         self._peak_lr = new_peak
 
-        # Keep scheduler phase but rebase amplitude.
+  # Keep scheduler phase but rebase amplitude.
         if hasattr(self._scheduler, "base_lrs"):
             self._scheduler.base_lrs = list(new_bases)
 
-        # Keep the scheduler's cached current LR consistent with the rebase.
+  # Keep the scheduler's cached current LR consistent with the rebase.
         if hasattr(self._scheduler, "_last_lr"):
             last_lrs = self._scheduler._last_lr
-            if isinstance(last_lrs, list) and last_lrs:
+            if last_lrs:
                 self._scheduler._last_lr = [float(v) * scale for v in last_lrs]
 
-        # Keep optimizer param-group metadata aligned.
+  # Keep optimizer param-group metadata aligned.
         for i, pg in enumerate(self.opt.param_groups):
             ob = old_bases[i] if i < len(old_bases) else ref_old
             nb = new_bases[i] if i < len(new_bases) else new_peak
@@ -566,7 +629,7 @@ class Trainer:
         if not rescale_current:
             return
 
-        # Rebase currently active optimizer LR so training continues at same phase.
+  # Rebase currently active optimizer LR so training continues at same phase.
         for i, pg in enumerate(self.opt.param_groups):
             ob = old_bases[i] if i < len(old_bases) else ref_old
             nb = new_bases[i] if i < len(new_bases) else new_peak
@@ -585,22 +648,69 @@ class Trainer:
                         pg["lr"] = nb
 
     @staticmethod
-    def _sf_move_accuracy(out: dict, batch: dict) -> tuple[float, float]:
-        """Compute SF move prediction accuracy (numerator, denominator)."""
-        sf_mask = batch.get("has_sf_move")
+    def _policy_accuracy_stats(out: dict, batch: dict) -> dict[str, tuple[float, float]]:
+        """Top-1/top-5 accuracy for policy_own, policy_sf, policy_future with
+        per-head legal masks (legal_mask at t, sf_legal_mask at t+1 opp-POV,
+        future_legal_mask at t+2 net-POV). Masks gated on has_* flags so old
+        shards without them fall through unmasked.
+        """
+        stats: dict[str, tuple[float, float]] = {}
+
+        def _topk(logits: torch.Tensor, target: torch.Tensor, mask_f: torch.Tensor,
+                  k_values: tuple[int, ...]) -> dict[int, tuple[float, float]]:
+            out_: dict[int, tuple[float, float]] = {}
+            total = float(mask_f.sum().item())
+            if total <= 0:
+                return {k: (0.0, 0.0) for k in k_values}
+            max_k = max(k_values)
+            _, top_idx = torch.topk(logits, k=max_k, dim=-1)
+            match = (top_idx == target.unsqueeze(-1))
+            for k in k_values:
+                hit = match[:, :k].any(dim=-1).to(torch.float32)
+                out_[k] = (float((hit * mask_f).sum().item()), total)
+            return out_
+
+        pol_logits = out.get("policy") if "policy" in out else out.get("policy_own")
+        pol_target = batch.get("policy_t")
+        has_policy = batch.get("has_policy")
+        if pol_logits is not None and pol_target is not None and has_policy is not None:
+            logits = apply_mask_to_logits(pol_logits.detach(), batch, "legal_mask", "has_legal_mask")
+            tgt = torch.argmax(pol_target, dim=-1)
+            mf = has_policy.to(torch.float32)
+            tk = _topk(logits, tgt, mf, (1, 5))
+            stats["policy_own_acc_top1"] = tk[1]
+            stats["policy_own_acc_top5"] = tk[5]
+
         sf_logits = out.get("policy_sf")
-        if sf_mask is None or sf_logits is None:
-            return 0.0, 0.0
-        sf_mask_f = sf_mask.to(torch.float32)
-        pred = torch.argmax(sf_logits.detach(), dim=-1)
-        correct = (pred == batch["sf_move_index"]).to(torch.float32)
-        return float((correct * sf_mask_f).sum().item()), float(sf_mask_f.sum().item())
+        has_sf_move = batch.get("has_sf_move")
+        if sf_logits is not None and has_sf_move is not None and "sf_move_index" in batch:
+            logits = apply_mask_to_logits(sf_logits.detach(), batch, "sf_legal_mask", "has_sf_legal_mask")
+            tgt = batch["sf_move_index"]
+            mf = has_sf_move.to(torch.float32)
+            tk = _topk(logits, tgt, mf, (1, 5))
+            stats["sf_move_acc"] = tk[1]
+            stats["sf_move_acc_top5"] = tk[5]
+
+        fut_logits = out.get("policy_future")
+        fut_target = batch.get("future_policy_t")
+        has_future = batch.get("has_future")
+        if fut_logits is not None and fut_target is not None and has_future is not None:
+            logits = apply_mask_to_logits(fut_logits.detach(), batch, "future_legal_mask", "has_future_legal_mask")
+            tgt = torch.argmax(fut_target, dim=-1)
+            mf = has_future.to(torch.float32)
+            tk = _topk(logits, tgt, mf, (1, 5))
+            stats["policy_future_acc_top1"] = tk[1]
+            stats["policy_future_acc_top5"] = tk[5]
+
+        return stats
 
     @torch.no_grad()
     def _compute_metrics(self, *, buf: ReplayBuffer, batch_size: int, steps: int, tag: str) -> TrainMetrics:
         sums: dict[str, float] = {}
-        sf_acc_num = 0.0
-        sf_acc_den = 0.0
+        acc_sums: dict[str, tuple[float, float]] = {}
+  # Accumulate on-device so each eval batch adds ~0 host syncs; one .item()
+  # at the end produces the global Brier + ECE.
+        calib_accum: dict[str, torch.Tensor] = {}
 
         mirror_p = self.mirror_prob if str(tag).startswith("train") else 0.0
 
@@ -616,25 +726,34 @@ class Trainer:
             for k, v in scalars.items():
                 sums[k] = sums.get(k, 0.0) + v
 
-            acc_n, acc_d = self._sf_move_accuracy(out, batch)
-            sf_acc_num += acc_n
-            sf_acc_den += acc_d
+            for name, (n_, d_) in self._policy_accuracy_stats(out, batch).items():
+                prev_n, prev_d = acc_sums.get(name, (0.0, 0.0))
+                acc_sums[name] = (prev_n + n_, prev_d + d_)
+
+            wdl_logits = out.get("wdl")
+            wdl_target = batch.get("wdl_t")
+            if wdl_logits is not None and wdl_target is not None and wdl_target.numel() > 0:
+                stats = wdl_calibration_stats(wdl_logits.detach(), wdl_target)
+                for k, v in stats.items():
+                    calib_accum[k] = calib_accum.get(k, torch.zeros_like(v)) + v
 
         n = float(max(1, steps))
+        def _acc(name: str) -> float:
+            n_, d_ = acc_sums.get(name, (0.0, 0.0))
+            return float(n_ / d_) if d_ > 0 else 0.0
+
+        wdl_brier, wdl_ece = wdl_brier_ece_from_stats(calib_accum) if calib_accum else (0.0, 0.0)
+
         metrics = TrainMetrics(
-            loss=sums.get("loss", 0.0) / n,
-            policy_loss=sums.get("policy_ce", 0.0) / n,
-            soft_policy_loss=sums.get("soft_policy_ce", 0.0) / n,
-            future_policy_loss=sums.get("future_policy_ce", 0.0) / n,
-            wdl_loss=sums.get("wdl_ce", 0.0) / n,
-            sf_move_loss=sums.get("sf_move_ce", 0.0) / n,
-            sf_move_acc=float(sf_acc_num / max(1.0, sf_acc_den)),
-            sf_eval_loss=sums.get("sf_eval_ce", 0.0) / n,
-            categorical_loss=sums.get("categorical_ce", 0.0) / n,
-            volatility_loss=sums.get("volatility", 0.0) / n,
-            sf_volatility_loss=sums.get("sf_volatility", 0.0) / n,
-            moves_left_loss=sums.get("moves_left", 0.0) / n,
-            sf_wdl_loss=sums.get("sf_wdl_ce", 0.0) / n,
+            **_loss_sums_to_metric_kwargs(sums, n), # dict[str,float] splat covers int fields (step counters) at runtime
+            sf_move_acc=_acc("sf_move_acc"),
+            sf_move_acc_top5=_acc("sf_move_acc_top5"),
+            policy_own_acc_top1=_acc("policy_own_acc_top1"),
+            policy_own_acc_top5=_acc("policy_own_acc_top5"),
+            policy_future_acc_top1=_acc("policy_future_acc_top1"),
+            policy_future_acc_top5=_acc("policy_future_acc_top5"),
+            wdl_brier=wdl_brier,
+            wdl_ece=wdl_ece,
         )
         self._log_metrics(metrics, tag)
         return metrics
@@ -644,8 +763,7 @@ class Trainer:
         train_wall_start = time.perf_counter()
 
         sums: dict[str, float] = {}
-        sf_acc_num = 0.0
-        sf_acc_den = 0.0
+        acc_sums: dict[str, tuple[float, float]] = {}
         n_micro = 0
         opt_step_time_s = 0.0
         train_steps_done = 0
@@ -657,15 +775,14 @@ class Trainer:
             try:
                 self.opt.zero_grad(set_to_none=True)
                 step_sums: dict[str, float] = {}
-                step_sf_acc_num = 0.0
-                step_sf_acc_den = 0.0
+                step_acc_sums: dict[str, tuple[float, float]] = {}
                 step_n_micro = 0
 
                 for batch in self._iter_prefetched_batches(
                     buf, batch_size=batch_size,
                     mirror_prob=self.mirror_prob, count=self.accum_steps,
                 ):
-                    # Per-group feature dropout: independently zero each classical feature group.
+  # Per-group feature dropout: independently zero each classical feature group.
                     base = int(self._base_input_planes)
                     x = batch["x"]
                     if x.shape[1] > base:
@@ -680,22 +797,22 @@ class Trainer:
                         loss = losses["total"] / self.accum_steps
                     loss.backward()
 
-                    # Accumulate metric scalars (no graph kept).
+  # Accumulate metric scalars (no graph kept).
                     scalars = self._extract_loss_scalars(losses)
                     scalars["loss"] = float(loss.item() * self.accum_steps)
                     for k, v in scalars.items():
                         step_sums[k] = step_sums.get(k, 0.0) + v
 
                     with torch.no_grad():
-                        acc_n, acc_d = self._sf_move_accuracy(out, batch)
-                        step_sf_acc_num += acc_n
-                        step_sf_acc_den += acc_d
+                        for name, (n_, d_) in self._policy_accuracy_stats(out, batch).items():
+                            prev_n, prev_d = step_acc_sums.get(name, (0.0, 0.0))
+                            step_acc_sums[name] = (prev_n + n_, prev_d + d_)
 
                     step_n_micro += 1
 
                 grad_norm = self.zclip.step(self.model)
                 if self._should_log_step_scalars():
-                    self.writer.add_scalar("train/grad_norm", float(grad_norm) if grad_norm is not None else 0.0, self.step)
+                    self.writer.add_scalar("train/grad_norm", float(grad_norm), self.step)
                 opt_step_start = time.perf_counter()
                 self.opt.step()
                 opt_step_time_s += time.perf_counter() - opt_step_start
@@ -711,11 +828,12 @@ class Trainer:
                 self.opt.zero_grad(set_to_none=True)
                 continue
 
-            # Success — commit metrics from this step.
+  # Success — commit metrics from this step.
             for k, v in step_sums.items():
                 sums[k] = sums.get(k, 0.0) + v
-            sf_acc_num += step_sf_acc_num
-            sf_acc_den += step_sf_acc_den
+            for name, (n_, d_) in step_acc_sums.items():
+                prev_n, prev_d = acc_sums.get(name, (0.0, 0.0))
+                acc_sums[name] = (prev_n + n_, prev_d + d_)
             n_micro += step_n_micro
 
             if (
@@ -735,27 +853,25 @@ class Trainer:
         train_time_s = time.perf_counter() - train_wall_start
         train_samples_seen = int(n_micro * batch_size)
         n = float(max(1, n_micro))
+        def _acc(name: str) -> float:
+            n_, d_ = acc_sums.get(name, (0.0, 0.0))
+            return float(n_ / d_) if d_ > 0 else 0.0
+
         metrics = TrainMetrics(
-            loss=sums.get("loss", 0.0) / n,
-            policy_loss=sums.get("policy_ce", 0.0) / n,
-            soft_policy_loss=sums.get("soft_policy_ce", 0.0) / n,
-            future_policy_loss=sums.get("future_policy_ce", 0.0) / n,
-            wdl_loss=sums.get("wdl_ce", 0.0) / n,
-            sf_move_loss=sums.get("sf_move_ce", 0.0) / n,
-            sf_move_acc=float(sf_acc_num / max(1.0, sf_acc_den)),
-            sf_eval_loss=sums.get("sf_eval_ce", 0.0) / n,
-            categorical_loss=sums.get("categorical_ce", 0.0) / n,
-            volatility_loss=sums.get("volatility", 0.0) / n,
-            sf_volatility_loss=sums.get("sf_volatility", 0.0) / n,
-            moves_left_loss=sums.get("moves_left", 0.0) / n,
-            sf_wdl_loss=sums.get("sf_wdl_ce", 0.0) / n,
+            **_loss_sums_to_metric_kwargs(sums, n),
+            sf_move_acc=_acc("sf_move_acc"),
+            sf_move_acc_top5=_acc("sf_move_acc_top5"),
+            policy_own_acc_top1=_acc("policy_own_acc_top1"),
+            policy_own_acc_top5=_acc("policy_own_acc_top5"),
+            policy_future_acc_top1=_acc("policy_future_acc_top1"),
+            policy_future_acc_top5=_acc("policy_future_acc_top5"),
             train_time_s=float(train_time_s),
             opt_step_time_s=float(opt_step_time_s),
             train_steps_done=int(train_steps_done),
             train_samples_seen=int(train_samples_seen),
         )
         self._log_metrics(metrics, "train_avg")
-        # Log throughput stats that aren't in TrainMetrics
+  # Log throughput stats that aren't in TrainMetrics
         self.writer.add_scalar("train_avg/steps_per_s", float(train_steps_done / max(train_time_s, 1e-9)), self.step)
         self.writer.add_scalar("train_avg/samples_per_s", float(train_samples_seen / max(train_time_s, 1e-9)), self.step)
         self.writer.add_scalar("train_avg/opt_steps_per_s", float(train_steps_done / max(opt_step_time_s, 1e-9)) if opt_step_time_s > 0.0 else 0.0, self.step)

@@ -13,7 +13,6 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-from chess_anti_engine.utils.atomic import atomic_write_text
 from chess_anti_engine.tune.trial_config import (
     DriftMetrics,
     PidResult,
@@ -22,6 +21,7 @@ from chess_anti_engine.tune.trial_config import (
     TrainingResult,
     TrialConfig,
 )
+from chess_anti_engine.utils.atomic import atomic_write_text
 
 
 def _prune_trial_checkpoints(*, trial_dir: Path, keep_last: int) -> None:
@@ -201,7 +201,7 @@ def _update_best_regret_checkpoints(
 
     best_regret_dir.mkdir(parents=True, exist_ok=True)
 
-    # Read existing entries
+  # Read existing entries
     index_path = best_regret_dir / "index.json"
     entries: list[dict] = []
     if index_path.exists():
@@ -210,13 +210,13 @@ def _update_best_regret_checkpoints(
         except Exception:
             entries = []
 
-    # Check if this regret qualifies
+  # Check if this regret qualifies
     if len(entries) >= _BEST_REGRET_KEEP:
         worst = max(entries, key=lambda e: e["regret"])
         if regret >= worst["regret"]:
             return  # Not in top-N
 
-    # Save checkpoint
+  # Save checkpoint
     tag = f"regret_{regret:.4f}_step{step}_iter{iteration_idx}"
     slot_dir = best_regret_dir / tag
     slot_dir.mkdir(parents=True, exist_ok=True)
@@ -253,7 +253,7 @@ def _update_best_regret_checkpoints(
         "ema_winrate": ema_wr, "opp_strength_ema": opp_strength_ema,
     })
 
-    # Prune to top-N (lowest regret)
+  # Prune to top-N (lowest regret)
     entries.sort(key=lambda e: e["regret"])
     evicted = entries[_BEST_REGRET_KEEP:]
     entries = entries[:_BEST_REGRET_KEEP]
@@ -268,8 +268,8 @@ def _update_best_regret_checkpoints(
 
     atomic_write_text(index_path, json.dumps(entries, indent=2))
 
-    # Also emit a salvage-pool-compatible manifest.json so this directory can be
-    # consumed directly by `train.sh salvage-restart` without further packaging.
+  # Also emit a salvage-pool-compatible manifest.json so this directory can be
+  # consumed directly by `train.sh salvage-restart` without further packaging.
     try:
         import time
         manifest = {
@@ -358,7 +358,7 @@ def _build_report_dict(
     drift: DriftMetrics,
     eval_dict: dict,
     puzzle_dict: dict,
-    # Iteration context
+  # Iteration context
     wdl_regret_used: float,
     sf_nodes_used: int,
     pause_metrics: dict,
@@ -374,7 +374,7 @@ def _build_report_dict(
     """Assemble the per-iteration report dict for Ray Tune."""
     metrics = tr.metrics
 
-    # --- Test / holdout metrics ---
+  # --- Test / holdout metrics ---
     test_dict: dict = {
         "holdout_frozen": int(1 if holdout_frozen else 0),
         "holdout_generation": int(holdout_generation),
@@ -399,6 +399,13 @@ def _build_report_dict(
         "test_volatility_loss": float("nan"),
         "test_sf_volatility_loss": float("nan"),
         "test_moves_left_loss": float("nan"),
+        "test_wdl_brier": float("nan"),
+        "test_wdl_ece": float("nan"),
+        "test_policy_loss_selfplay": float("nan"),
+        "test_policy_loss_curriculum": float("nan"),
+        "test_policy_loss_open": float("nan"),
+        "test_policy_loss_mid": float("nan"),
+        "test_policy_loss_end": float("nan"),
     }
     if tr.test_metrics is not None:
         tm = tr.test_metrics
@@ -416,6 +423,13 @@ def _build_report_dict(
             "test_volatility_loss": tm.volatility_loss,
             "test_sf_volatility_loss": tm.sf_volatility_loss,
             "test_moves_left_loss": tm.moves_left_loss,
+            "test_wdl_brier": float(tm.wdl_brier),
+            "test_wdl_ece": float(tm.wdl_ece),
+            "test_policy_loss_selfplay": float(tm.policy_loss_selfplay),
+            "test_policy_loss_curriculum": float(tm.policy_loss_curriculum),
+            "test_policy_loss_open": float(tm.policy_loss_open),
+            "test_policy_loss_mid": float(tm.policy_loss_mid),
+            "test_policy_loss_end": float(tm.policy_loss_end),
         })
 
     return {
@@ -429,6 +443,13 @@ def _build_report_dict(
         "test_replay": int(holdout_buf_size),
         "positions_added": sp.total_positions,
         "replay_positions_ingested": int(sp.replay_positions_ingested),
+        "ingest_is_selfplay_tagged": int(sp.ingest_is_selfplay_tagged),
+        "ingest_is_selfplay_true": int(sp.ingest_is_selfplay_true),
+        "ingest_frac_selfplay": (
+            float(sp.ingest_is_selfplay_true) / float(sp.ingest_is_selfplay_tagged)
+            if sp.ingest_is_selfplay_tagged > 0
+            else 0.0
+        ),
         "games_generated": int(sp.total_games_generated),
         "avg_game_plies": float(pr.avg_game_plies),
         "adjudication_rate": float(pr.adjudication_rate),
@@ -525,6 +546,18 @@ def _build_report_dict(
         "volatility_loss": float(metrics.volatility_loss) if metrics is not None else 0.0,
         "sf_volatility_loss": float(metrics.sf_volatility_loss) if metrics is not None else 0.0,
         "moves_left_loss": float(metrics.moves_left_loss) if metrics is not None else 0.0,
+        "policy_loss_selfplay": float(metrics.policy_loss_selfplay) if metrics is not None else 0.0,
+        "policy_loss_curriculum": float(metrics.policy_loss_curriculum) if metrics is not None else 0.0,
+        "wdl_loss_selfplay": float(metrics.wdl_loss_selfplay) if metrics is not None else 0.0,
+        "wdl_loss_curriculum": float(metrics.wdl_loss_curriculum) if metrics is not None else 0.0,
+        "frac_is_selfplay_batch": float(metrics.frac_is_selfplay) if metrics is not None else 0.0,
+        "frac_tagged_batch": float(metrics.frac_tagged) if metrics is not None else 0.0,
+        "policy_loss_open": float(metrics.policy_loss_open) if metrics is not None else 0.0,
+        "policy_loss_mid": float(metrics.policy_loss_mid) if metrics is not None else 0.0,
+        "policy_loss_end": float(metrics.policy_loss_end) if metrics is not None else 0.0,
+        "wdl_loss_open": float(metrics.wdl_loss_open) if metrics is not None else 0.0,
+        "wdl_loss_mid": float(metrics.wdl_loss_mid) if metrics is not None else 0.0,
+        "wdl_loss_end": float(metrics.wdl_loss_end) if metrics is not None else 0.0,
         "gate_passed": int(1 if tr.gate_passed else 0),
         "ingest_ms": float(sp.ingest_ms),
         "train_ms": float(tr.train_ms),

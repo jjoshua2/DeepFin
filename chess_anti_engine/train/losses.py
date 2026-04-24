@@ -3,6 +3,12 @@ from __future__ import annotations
 import torch
 import torch.nn.functional as F
 
+# Phase buckets for per-phase loss reporting. `moves_left` is plies-remaining /
+# max_plies so 1.0 = opening, 0.0 = endgame; these thresholds split it roughly
+# into thirds. Tunable without breaking shards since it's a view-time metric.
+_PHASE_OPEN_THRESHOLD = 0.66
+_PHASE_END_THRESHOLD = 0.33
+
 
 def masked_mean(x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     """Mean of x over mask==1 entries. mask is broadcastable to x."""
@@ -23,6 +29,23 @@ def policy_cross_entropy(logits: torch.Tensor, target_probs: torch.Tensor) -> to
 
 def wdl_cross_entropy(logits: torch.Tensor, target_wdl: torch.Tensor) -> torch.Tensor:
     return F.cross_entropy(logits, target_wdl, reduction="none")
+
+
+def apply_mask_to_logits(
+    logits: torch.Tensor,
+    batch: dict[str, torch.Tensor],
+    mask_key: str,
+    has_key: str,
+) -> torch.Tensor:
+    """LC0-style illegal-move masking: `(1 - mask) * -1e9` added to logits,
+    gated by `has_key` so rows without a mask pass through unchanged.
+    """
+    mask = batch.get(mask_key)
+    if mask is None:
+        return logits
+    has = batch.get(has_key)
+    active = has.unsqueeze(-1) if has is not None else 1.0
+    return logits + (1.0 - mask) * -1e9 * active
 
 
 def soft_cross_entropy(logits: torch.Tensor, target_probs: torch.Tensor, *, eps: float = 1e-8) -> torch.Tensor:
@@ -66,17 +89,10 @@ def compute_loss(
     """Compute multi-head training loss."""
     net_mask = _get_mask(batch, "is_network_turn", default=1.0).to(torch.float32)
 
-    # LC0-style illegal move masking: set illegal move logits to -1e9 before softmax.
-    _legal_mask = batch.get("legal_mask")
-    _has_legal = batch.get("has_legal_mask")
     def _apply_legal_mask(logits: torch.Tensor) -> torch.Tensor:
-        if _legal_mask is None:
-            return logits
-        mask_active = _has_legal.unsqueeze(-1) if _has_legal is not None else 1.0
-        penalty = (1.0 - _legal_mask) * -1e9
-        return logits + penalty * mask_active
+        return apply_mask_to_logits(logits, batch, "legal_mask", "has_legal_mask")
 
-    # policy
+  # policy
     base_policy_logits = outputs["policy"] if "policy" in outputs else outputs.get("policy_own")
     if base_policy_logits is None:
         raise KeyError("Model outputs must include either 'policy' or 'policy_own'.")
@@ -85,24 +101,28 @@ def compute_loss(
     zero_loss = torch.zeros_like(pol_ce)
     has_policy = _get_mask(batch, "has_policy", default=1.0)
 
-    # soft policy (temp2)
+  # soft policy (temp2)
     has_soft = _get_mask(batch, "has_policy_soft")
     soft_logits = outputs.get("policy_soft", base_policy_logits)
     soft_target = batch.get("policy_soft_t")
     soft_ce = policy_cross_entropy(_apply_legal_mask(soft_logits), soft_target) if soft_target is not None else zero_loss
 
-    # future policy (t+2) — do NOT apply legal_mask: future_policy_t uses move indices
-    # from position t+2, so t's legal mask would incorrectly mask most moves.
+  # future policy (t+2): target and mask are in the t+2 move space.
     has_future = _get_mask(batch, "has_future")
     future_logits = outputs.get("policy_future", base_policy_logits)
     future_target = batch.get("future_policy_t")
-    future_ce = policy_cross_entropy(future_logits, future_target) if future_target is not None else zero_loss
+    if future_target is not None:
+        future_ce = policy_cross_entropy(
+            apply_mask_to_logits(future_logits, batch, "future_legal_mask", "has_future_legal_mask"),
+            future_target,
+        )
+    else:
+        future_ce = zero_loss
 
-    # value
+  # value
     wdl_ce = wdl_cross_entropy(outputs["wdl"], batch["wdl_t"])
 
-    # SF move prediction — do NOT apply legal_mask: sf_policy_t uses move indices from the
-    # next board position (after the network moves).
+  # SF move prediction: target and mask are in the t+1 move space (opp POV).
     has_sf_move = _get_mask(batch, "has_sf_move")
     has_sf_policy = batch.get("has_sf_policy")
     if has_sf_policy is None:
@@ -113,9 +133,12 @@ def compute_loss(
     if sf_pol_logits is None or sf_policy_target is None:
         sf_move_ce = zero_loss
     else:
-        sf_move_ce = soft_cross_entropy(sf_pol_logits, sf_policy_target)
+        sf_move_ce = soft_cross_entropy(
+            apply_mask_to_logits(sf_pol_logits, batch, "sf_legal_mask", "has_sf_legal_mask"),
+            sf_policy_target,
+        )
 
-    # sf_eval
+  # sf_eval
     has_sf_wdl = _get_mask(batch, "has_sf_wdl")
     sf_wdl_raw = batch.get("sf_wdl")
     sf_wdl_probs = None
@@ -128,7 +151,7 @@ def compute_loss(
     else:
         sf_eval_ce = soft_cross_entropy(sf_eval_logits, sf_wdl_probs)
 
-    # moves_left
+  # moves_left
     has_moves_left = _get_mask(batch, "has_moves_left")
     ml_pred = outputs.get("moves_left")
     moves_left_t = batch.get("moves_left")
@@ -137,7 +160,7 @@ def compute_loss(
     else:
         ml_loss = F.smooth_l1_loss(ml_pred.squeeze(-1), moves_left_t, reduction="none")
 
-    # categorical value
+  # categorical value
     has_cat = _get_mask(batch, "has_categorical")
     cat_logits = outputs.get("categorical")
     categorical_t = batch.get("categorical_t")
@@ -146,7 +169,7 @@ def compute_loss(
     else:
         cat_ce = policy_cross_entropy(cat_logits, categorical_t)
 
-    # volatility (network)
+  # volatility (network)
     has_vol = _get_mask(batch, "has_volatility")
     vol_pred = outputs.get("volatility")
     volatility_t = batch.get("volatility_t")
@@ -155,7 +178,7 @@ def compute_loss(
     else:
         vol_loss = F.huber_loss(vol_pred, volatility_t, delta=0.1, reduction="none").mean(dim=-1)
 
-    # volatility (Stockfish)
+  # volatility (Stockfish)
     has_sf_vol = _get_mask(batch, "has_sf_volatility")
     sf_vol_pred = outputs.get("sf_volatility")
     sf_volatility_t = batch.get("sf_volatility_t")
@@ -164,12 +187,12 @@ def compute_loss(
     else:
         sf_vol_loss = F.huber_loss(sf_vol_pred, sf_volatility_t, delta=0.1, reduction="none").mean(dim=-1)
 
-    # Loss weights — float() casts defend against numpy scalars from Ray Tune config mutation
+  # Loss weights — float() casts defend against numpy scalars from Ray Tune config mutation
     w_sf_volatility = float(w_sf_volatility) if w_sf_volatility is not None else float(w_volatility)
     sf_wdl_conf_power = max(0.0, float(sf_wdl_conf_power))
     sf_wdl_draw_scale = max(0.0, float(sf_wdl_draw_scale))
 
-    # SF-WDL confidence damping: (1 - draw_prob)^power, with optional draw_scale
+  # SF-WDL confidence damping: (1 - draw_prob)^power, with optional draw_scale
     sf_wdl_mask = net_mask * has_sf_wdl
     if sf_wdl_probs is not None:
         if sf_wdl_conf_power > 0.0:
@@ -184,8 +207,10 @@ def compute_loss(
     else:
         sf_wdl_soft_ce = soft_cross_entropy(outputs["wdl"], sf_wdl_probs)
 
-    # Compute each masked_mean once, reuse for both total and return dict.
-    m_policy = masked_mean(pol_ce, net_mask * has_policy)
+  # Precompute the per-sample base mask for each head so the downstream
+  # split reductions don't recompute `net_mask * has_X` once per bucket.
+    pol_base = net_mask * has_policy
+    m_policy = masked_mean(pol_ce, pol_base)
     m_soft = masked_mean(soft_ce, net_mask * has_soft)
     m_future = masked_mean(future_ce, net_mask * has_future)
     m_wdl = masked_mean(wdl_ce, net_mask)
@@ -196,6 +221,30 @@ def compute_loss(
     m_vol = masked_mean(vol_loss, net_mask * has_vol)
     m_sf_vol = masked_mean(sf_vol_loss, net_mask * has_sf_vol)
     m_ml = masked_mean(ml_loss, net_mask * has_moves_left)
+
+  # Gated on `has_is_selfplay` so legacy shards without the tag are excluded
+  # from the split (they won't contribute to either selfplay_ or curriculum_ keys).
+    has_is_sp = _get_mask(batch, "has_is_selfplay").to(torch.float32)
+    is_sp_bool = _get_mask(batch, "is_selfplay", default=0.0).to(torch.float32)
+    sp_mask = has_is_sp * is_sp_bool
+    cur_mask = has_is_sp - sp_mask
+
+    ml_val = _get_mask(batch, "moves_left", default=1.0).to(torch.float32)
+    open_mask = has_moves_left * (ml_val > _PHASE_OPEN_THRESHOLD).to(torch.float32)
+    end_mask = has_moves_left * (ml_val < _PHASE_END_THRESHOLD).to(torch.float32)
+    mid_mask = has_moves_left - open_mask - end_mask
+
+    split_masks = (
+        ("selfplay", sp_mask),
+        ("curriculum", cur_mask),
+        ("open", open_mask),
+        ("mid", mid_mask),
+        ("end", end_mask),
+    )
+    split_losses: dict[str, torch.Tensor] = {}
+    for suffix, m in split_masks:
+        split_losses[f"policy_loss_{suffix}"] = masked_mean(pol_ce, pol_base * m)
+        split_losses[f"wdl_loss_{suffix}"] = masked_mean(wdl_ce, net_mask * m)
 
     total = (
         float(w_policy) * m_policy
@@ -224,4 +273,72 @@ def compute_loss(
         "volatility": m_vol,
         "sf_volatility": m_sf_vol,
         "moves_left": m_ml,
+        **split_losses,
+        "frac_is_selfplay": masked_mean(is_sp_bool, has_is_sp),
+        "frac_tagged": masked_mean(has_is_sp, net_mask),
     }
+
+
+def wdl_calibration_stats(
+    logits: torch.Tensor,
+    target: torch.Tensor,
+    *,
+    n_bins: int = 10,
+) -> dict[str, torch.Tensor]:
+    """Per-sample Brier + per-bin calibration aggregates (all on-device, no syncs).
+
+    Returns accumulator-friendly sums: callers sum these across eval batches and
+    derive global Brier/ECE at the end. Doing per-batch ECE and then averaging
+    weights small batches the same as large ones, which is wrong.
+
+    Keys in the returned dict:
+      - ``brier_sum``: scalar, sum of per-sample Brier over the batch
+      - ``n``: scalar, number of samples in the batch
+      - ``bin_conf_sum``: (n_bins,) sum of max-prob confidence per bin
+      - ``bin_correct_sum``: (n_bins,) sum of correctness (0/1) per bin
+      - ``bin_n``: (n_bins,) count per bin
+    """
+    probs = F.softmax(logits, dim=-1)
+    one_hot = F.one_hot(target.to(torch.int64), num_classes=3).to(probs.dtype)
+    brier_per_sample = ((probs - one_hot) ** 2).sum(dim=-1)
+
+    conf, pred = probs.max(dim=-1)
+    correct = (pred == target).to(probs.dtype)
+  # bucketize boundaries: n_bins-1 inner edges so bins span [0,1/n), ... ,[(n-1)/n, 1].
+  # Clamp to [0, n_bins-1] so the topmost conf==1.0 doesn't land in an n_bins slot.
+    inner_edges = torch.linspace(
+        1.0 / n_bins, 1.0 - 1.0 / n_bins, n_bins - 1, device=logits.device, dtype=probs.dtype
+    )
+    bin_idx = torch.bucketize(conf.detach(), inner_edges).clamp_max(n_bins - 1)
+    bin_n = torch.zeros(n_bins, device=logits.device, dtype=probs.dtype).scatter_add_(
+        0, bin_idx, torch.ones_like(conf)
+    )
+    bin_conf_sum = torch.zeros(n_bins, device=logits.device, dtype=probs.dtype).scatter_add_(
+        0, bin_idx, conf
+    )
+    bin_correct_sum = torch.zeros(n_bins, device=logits.device, dtype=probs.dtype).scatter_add_(
+        0, bin_idx, correct
+    )
+    return {
+        "brier_sum": brier_per_sample.sum(),
+        "n": torch.tensor(float(target.numel()), device=logits.device, dtype=probs.dtype),
+        "bin_conf_sum": bin_conf_sum,
+        "bin_correct_sum": bin_correct_sum,
+        "bin_n": bin_n,
+    }
+
+
+def wdl_brier_ece_from_stats(stats: dict[str, torch.Tensor]) -> tuple[float, float]:
+    """Combine accumulated calibration stats into (mean_brier, global_ece).
+
+    ECE = sum_b |correct_sum[b] - conf_sum[b]| / n_total — algebraically identical
+    to the standard definition, since bin_acc[b]*bin_n[b] = correct_sum[b] and
+    bin_conf[b]*bin_n[b] = conf_sum[b], and the per-bin weight is bin_n[b]/n_total.
+    """
+    n = float(stats["n"].item())
+    if n <= 0:
+        return 0.0, 0.0
+    brier = float(stats["brier_sum"].item()) / n
+    diff = (stats["bin_correct_sum"] - stats["bin_conf_sum"]).abs().sum()
+    ece = float(diff.item()) / n
+    return brier, ece

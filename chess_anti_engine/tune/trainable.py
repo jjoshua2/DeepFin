@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-# Optional dependency module (Ray Tune). Kept import-light so the core package
-# works without installing `.[tune]`.
-
-from pathlib import Path
 import csv
 import json
 import subprocess
 import time
+
+# Optional dependency module (Ray Tune). Kept import-light so the core package
+# works without installing `.[tune]`.
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -15,30 +15,10 @@ import torch
 from chess_anti_engine.model import ModelConfig, build_model
 from chess_anti_engine.stockfish import StockfishPool, StockfishUCI, pid_from_config
 from chess_anti_engine.train import Trainer, trainer_kwargs_from_config
-from chess_anti_engine.tune.trial_config import DifficultyState, TrialConfig
-from chess_anti_engine.tune.trainable_metrics import _compute_drift_metrics
-from chess_anti_engine.tune.trainable_report import _save_trial_checkpoint, _update_best_model
-from chess_anti_engine.tune.trainable_config_ops import (
-    _reload_yaml_into_config,
-    _resolve_pause_marker_path,
-    _resolve_sims,
-    _sync_trainer_weights,
-    _wait_if_paused,
-)
-from chess_anti_engine.tune.trainable_phases import (
-    _finalize_iteration,
-    _run_eval_games,
-    _run_pid_and_eval,
-    _run_selfplay_phase,
-    _run_training_and_gating,
-)
-from chess_anti_engine.tune.trainable_init import (
-    _init_replay_buffers,
-    _maybe_load_bootstrap,
-    _restore_checkpoint_or_salvage,
-)
 from chess_anti_engine.tune._utils import (
     resolve_local_override_root as _resolve_local_override_root,
+)
+from chess_anti_engine.tune._utils import (
     stable_seed_u32 as _stable_seed_u32,
 )
 from chess_anti_engine.tune.distributed_runtime import (
@@ -51,7 +31,31 @@ from chess_anti_engine.tune.distributed_runtime import (
     _stop_worker_processes,
     _trial_server_dirs,
 )
-
+from chess_anti_engine.tune.trainable_config_ops import (
+    _reload_yaml_into_config,
+    _resolve_pause_marker_path,
+    _resolve_sims,
+    _sync_trainer_weights,
+    _wait_if_paused,
+)
+from chess_anti_engine.tune.trainable_init import (
+    _init_replay_buffers,
+    _maybe_load_bootstrap,
+    _restore_checkpoint_or_salvage,
+)
+from chess_anti_engine.tune.trainable_metrics import _compute_drift_metrics
+from chess_anti_engine.tune.trainable_phases import (
+    _finalize_iteration,
+    _run_eval_games,
+    _run_pid_and_eval,
+    _run_selfplay_phase,
+    _run_training_and_gating,
+)
+from chess_anti_engine.tune.trainable_report import (
+    _save_trial_checkpoint,
+    _update_best_model,
+)
+from chess_anti_engine.tune.trial_config import DifficultyState, TrialConfig
 
 
 def train_trial(config: dict):
@@ -60,11 +64,13 @@ def train_trial(config: dict):
     Reports metrics per outer-loop iteration. Supports checkpoint restore.
     """
 
-    from ray.tune import report as _tune_report, get_checkpoint as _tune_get_checkpoint
-    from ray.tune import Checkpoint, get_context as _tune_get_context
+    from ray.tune import Checkpoint
+    from ray.tune import get_checkpoint as _tune_get_checkpoint
+    from ray.tune import get_context as _tune_get_context
+    from ray.tune import report as _tune_report
 
-    # Re-read YAML and overlay all keys EXCEPT those PB2 is actively searching.
-    # This lets --resume pick up config changes without clobbering tuned hyperparams.
+  # Re-read YAML and overlay all keys EXCEPT those PB2 is actively searching.
+  # This lets --resume pick up config changes without clobbering tuned hyperparams.
     _reload_yaml_into_config(config, config.get("_yaml_config_path"))
     if "device" not in config:
         config["device"] = "cuda" if torch.cuda.is_available() else "cpu"
@@ -95,17 +101,17 @@ def train_trial(config: dict):
     )
     model = build_model(model_cfg)
 
-    # Use Ray-provided trial directory for ALL per-trial state (checkpoints,
-    # replay shards, gate state, best model, TensorBoard logs).
-    # IMPORTANT: Do NOT use config["work_dir"] here — it points to the shared
-    # runs/pbt2_small/ directory. Using it caused all 10 trials to write
-    # checkpoints to the same directory, making PB2 unable to clone checkpoints
-    # ("no checkpoint for trial X. Skip exploit.").
+  # Use Ray-provided trial directory for ALL per-trial state (checkpoints,
+  # replay shards, gate state, best model, TensorBoard logs).
+  # IMPORTANT: Do NOT use config["work_dir"] here — it points to the shared
+  # runs/pbt2_small/ directory. Using it caused all 10 trials to write
+  # checkpoints to the same directory, making PB2 unable to clone checkpoints
+  # ("no checkpoint for trial X. Skip exploit.").
     trial_dir = Path(_ctx.get_trial_dir())
     work_dir = trial_dir
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    # Compact status CSV — reset on each process start so checkpoint-restore rows don't accumulate.
+  # Compact status CSV — reset on each process start so checkpoint-restore rows don't accumulate.
     _STATUS_CSV_PATH = trial_dir / "status.csv"
     _STATUS_COLS = [
         "iter", "global_iter", "opp", "opp_ema", "sf_nodes", "regret",
@@ -115,7 +121,7 @@ def train_trial(config: dict):
     with _STATUS_CSV_PATH.open("w", newline="") as _f:
         csv.writer(_f).writerow(_STATUS_COLS)
 
-    # Gate match counter (so we can log gate scalars against match #, not iteration).
+  # Gate match counter (so we can log gate scalars against match #, not iteration).
     gate_state_path = work_dir / "gate_state.json"
     gate_match_idx = 0
     if gate_state_path.exists():
@@ -125,7 +131,7 @@ def train_trial(config: dict):
         except Exception:
             gate_match_idx = 0
 
-    # Best-model tracking (per trial)
+  # Best-model tracking (per trial)
     best_state_path = work_dir / "best.json"
     best_dir = work_dir / "best"
     best_dir.mkdir(parents=True, exist_ok=True)
@@ -157,7 +163,7 @@ def train_trial(config: dict):
     global_iter = restore.global_iter
     opp_strength_ema = restore.opp_strength_ema
 
-    # Rebuild tc — _restore_checkpoint_or_salvage may overlay donor config.
+  # Rebuild tc — _restore_checkpoint_or_salvage may overlay donor config.
     tc = TrialConfig.from_dict(config)
 
     buf, holdout_buf, current_window, replay_shard_dir, selfplay_shards_dir = _init_replay_buffers(
@@ -183,8 +189,8 @@ def train_trial(config: dict):
             "or populate the distributed_* keys."
         )
 
-    # Local SF is only needed for gate-check games; distributed workers run
-    # their own SF subprocesses.
+  # Local SF is only needed for gate-check games; distributed workers run
+  # their own SF subprocesses.
     sf = None
     if tc.gate_games > 0:
         if tc.sf_workers > 1:
@@ -194,6 +200,7 @@ def train_trial(config: dict):
                 num_workers=tc.sf_workers,
                 multipv=tc.sf_multipv,
                 hash_mb=tc.sf_hash_mb,
+                syzygy_path=tc.syzygy_path,
             )
         else:
             sf = StockfishUCI(
@@ -201,6 +208,7 @@ def train_trial(config: dict):
                 nodes=tc.sf_nodes,
                 multipv=tc.sf_multipv,
                 hash_mb=tc.sf_hash_mb,
+                syzygy_path=tc.syzygy_path,
             )
 
     distributed_server_root = _resolve_local_override_root(
@@ -228,12 +236,13 @@ def train_trial(config: dict):
 
     eval_sf = None
     if tc.eval_games > 0:
-        # For fixed-strength evaluation, use a dedicated engine instance with its own node limit.
+  # For fixed-strength evaluation, use a dedicated engine instance with its own node limit.
         eval_sf = StockfishUCI(
             tc.stockfish_path,
             nodes=tc.eval_sf_nodes,
             multipv=1,
             hash_mb=tc.sf_hash_mb,
+            syzygy_path=tc.syzygy_path,
         )
 
     pid = None
@@ -244,15 +253,15 @@ def train_trial(config: dict):
                 pid.load_state_dict(restored_pid_state)
             except Exception:
                 pass
-        # Keep local sf in lock-step with restored PID nodes so gate games
-        # on resume play at the same difficulty as distributed workers.
+  # Keep local sf in lock-step with restored PID nodes so gate games
+  # on resume play at the same difficulty as distributed workers.
         if sf is not None:
             try:
                 sf.set_nodes(int(pid.nodes))
             except Exception:
                 pass
 
-    # Optional puzzle evaluation suite.
+  # Optional puzzle evaluation suite.
     puzzle_suite = None
     if tc.puzzle_epd and tc.puzzle_interval > 0:
         from chess_anti_engine.eval import load_epd
@@ -306,7 +315,7 @@ def train_trial(config: dict):
             iteration_idx = iteration_zero_based + 1
             iter_t0 = time.monotonic()
 
-            # Live-reload YAML config each iteration so changes apply without restart.
+  # Live-reload YAML config each iteration so changes apply without restart.
             _reload_yaml_into_config(config, _yaml_path)
             tc = TrialConfig.from_dict(config)
 
@@ -322,9 +331,9 @@ def train_trial(config: dict):
                 iteration=iteration_idx,
             )
 
-            # Difficulty knobs used for this iteration's selfplay (kept fixed across
-            # selfplay chunks). PID is updated once per iteration AFTER training so
-            # changes align to net updates rather than chunk noise.
+  # Difficulty knobs used for this iteration's selfplay (kept fixed across
+  # selfplay chunks). PID is updated once per iteration AFTER training so
+  # changes align to net updates rather than chunk noise.
             ds = DifficultyState.from_pid(pid, sf, tc)
 
             base_sims = tc.mcts_simulations
@@ -334,7 +343,7 @@ def train_trial(config: dict):
                 tc=tc, config=config, trainer=trainer, model_cfg=model_cfg,
                 buf=buf, holdout_buf=holdout_buf,
                 holdout_frozen=holdout_frozen,
-                device=device, rng=rng, sf=sf,
+                rng=rng,
                 distributed_dirs=distributed_dirs,
                 distributed_server_root=distributed_server_root,
                 distributed_worker_procs=distributed_worker_procs,
@@ -364,7 +373,7 @@ def train_trial(config: dict):
                 drift_sample_size=tc.drift_sample_size,
             )
 
-            # Optional holdout reset based on input drift threshold.
+  # Optional holdout reset based on input drift threshold.
             if (
                 tc.reset_holdout_on_drift
                 and (tc.drift_threshold > 0.0)
@@ -387,7 +396,6 @@ def train_trial(config: dict):
                 gate_match_idx=gate_match_idx,
                 gate_state_path=gate_state_path,
                 distributed_server_root=distributed_server_root,
-                distributed_dirs=distributed_dirs,
                 iteration_idx=iteration_idx,
                 iteration_zero_based=iteration_zero_based,
                 trial_id=trial_id,
@@ -400,7 +408,7 @@ def train_trial(config: dict):
                 eval_sf=eval_sf,
             )
 
-            # Flush replay + save checkpoint (model+optimizer+step + PID state).
+  # Flush replay + save checkpoint (model+optimizer+step + PID state).
             checkpoint = _save_trial_checkpoint(
                 trainer=trainer,
                 buf=buf,
@@ -415,7 +423,7 @@ def train_trial(config: dict):
                 Checkpoint=Checkpoint,
             )
 
-            # Best-model tracking: prefer holdout loss when available, skip if no training yet.
+  # Best-model tracking: prefer holdout loss when available, skip if no training yet.
             best_loss = _update_best_model(
                 trainer=trainer, test_metrics=tr.test_metrics, train_metrics=tr.metrics,
                 best_loss=best_loss, best_dir=best_dir, best_state_path=best_state_path,
@@ -425,7 +433,6 @@ def train_trial(config: dict):
             pid_result = _run_pid_and_eval(
                 tc=tc, config=config, pid=pid, sf=sf,
                 sp_result=sp,
-                iteration_zero_based=iteration_zero_based,
                 opp_strength_ema=opp_strength_ema,
                 opp_ema_alpha=_OPP_EMA_ALPHA,
                 ds=ds,
