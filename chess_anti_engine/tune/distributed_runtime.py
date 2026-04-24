@@ -26,11 +26,13 @@ from chess_anti_engine.tune._utils import (
     resolve_local_override_root,
     slice_array_batch,
     stable_seed_u32,
+)
+from chess_anti_engine.tune._utils import (
     terminate_process as _stop_process,
 )
+from chess_anti_engine.tune.process_cleanup import terminate_matching_processes
 from chess_anti_engine.utils import sha256_file
 from chess_anti_engine.utils.atomic import atomic_write_text
-from chess_anti_engine.tune.process_cleanup import terminate_matching_processes
 from chess_anti_engine.version import PACKAGE_VERSION, PROTOCOL_VERSION
 
 # Cache for SHA256 of static files (opening books, worker wheel) that don't
@@ -182,7 +184,7 @@ def _prune_processed_shards(
                 deleted += 1
         except Exception:
             continue
-    # Remove empty subdirectories.
+  # Remove empty subdirectories.
     for d in processed_dir.iterdir():
         if d.is_dir() and not any(d.iterdir()):
             try:
@@ -225,7 +227,7 @@ def _publish_distributed_trial_state(
         worker_wheel_src = Path(worker_wheel_raw)
         if worker_wheel_src.exists() and worker_wheel_src.is_file():
             dst = publish_dir / "worker.whl"
-            # Skip copy if dst already matches src (wheel is static during a run).
+  # Skip copy if dst already matches src (wheel is static during a run).
             src_size = worker_wheel_src.stat().st_size
             needs_copy = (not dst.exists()) or dst.stat().st_size != src_size
             try:
@@ -261,10 +263,10 @@ def _publish_distributed_trial_state(
         "temperature_decay_moves": int(config.get("temperature_decay_moves", 60)),
         "temperature_endgame": float(config.get("temperature_endgame", 0.6)),
         "timeout_adjudication_threshold": float(config.get("timeout_adjudication_threshold", 0.90)),
-        # Syzygy. `path` must be a filesystem location visible to workers
-        # (same layout on all nodes in a multi-node deployment). Server
-        # operators can edit these directly in publish/manifest.json to
-        # change endgame adjudication behavior without restarting anyone.
+  # Syzygy. `path` must be a filesystem location visible to workers
+  # (same layout on all nodes in a multi-node deployment). Server
+  # operators can edit these directly in publish/manifest.json to
+  # change endgame adjudication behavior without restarting anyone.
         "syzygy_path": config.get("syzygy_path") or None,
         "syzygy_policy": bool(config.get("syzygy_policy", False)),
         "syzygy_adjudicate": bool(config.get("syzygy_adjudicate", False)),
@@ -371,7 +373,7 @@ def _launch_distributed_worker(
         server_dirs = _trial_server_dirs(server_root=server_root, trial_id=trial_id)
         worker_root = server_dirs["workers_root"] / f"worker_{worker_index:02d}"
     else:
-        # Fallback for non-standard local setups: keep previous behavior.
+  # Fallback for non-standard local setups: keep previous behavior.
         worker_root = worker_artifact_root
     worker_root.mkdir(parents=True, exist_ok=True)
 
@@ -481,7 +483,7 @@ def _build_distributed_worker_cmd(
         "info",
     ]
 
-    if bool(config.get("distributed_inference_broker_enabled", False)):
+    if config.get("distributed_inference_broker_enabled", False):
         slot_prefix = _trial_slot_prefix(trial_id=trial_id)
         slot_name = f"{slot_prefix}-{worker_index}"
         max_batch = int(
@@ -499,7 +501,7 @@ def _build_distributed_worker_cmd(
             ]
         )
 
-    if bool(config.get("distributed_worker_auto_tune", False)):
+    if config.get("distributed_worker_auto_tune", False):
         cmd.extend(
             [
                 "--auto-tune",
@@ -544,7 +546,7 @@ def _launch_inference_broker(
     else:
         shared_cache_root = Path(str(config["distributed_server_root"])) / "worker_cache"
     shared_cache_root.mkdir(parents=True, exist_ok=True)
-    # Env var override so --resume picks up changes without re-baking tuner config.
+  # Env var override so --resume picks up changes without re-baking tuner config.
     _env = os.environ.get("CAE_INFERENCE_COMPILE")
     compile_inference = bool(
         _env == "1" if _env is not None
@@ -596,11 +598,11 @@ def _ensure_inference_broker(
     publish_dir: Path,
     proc: subprocess.Popen[bytes] | None,
 ) -> subprocess.Popen[bytes] | None:
-    if not bool(config.get("distributed_inference_broker_enabled", False)):
+    if not config.get("distributed_inference_broker_enabled", False):
         _stop_process(proc)
         return None
-    # Skip per-trial broker when shared broker is enabled
-    if bool(config.get("distributed_inference_shared_broker", False)):
+  # Skip per-trial broker when shared broker is enabled
+    if config.get("distributed_inference_shared_broker", False):
         _stop_process(proc)
         return None
     if proc is not None and proc.poll() is None:
@@ -681,7 +683,7 @@ def launch_shared_inference_broker(
         )
         print(f"[tune] launched shared inference broker: pid={proc.pid}")
 
-        # Store the launch command so the harness can restart if needed
+  # Store the launch command so the harness can restart if needed
         proc._shared_broker_cmd = cmd  # type: ignore[attr-defined]
         proc._shared_broker_server_root = str(server_root)  # type: ignore[attr-defined]
         return proc
@@ -726,7 +728,7 @@ def _ensure_distributed_workers(
                     worker_index=idx,
                 )
             )
-    # Kill excess workers if count decreased
+  # Kill excess workers if count decreased
     for p in out[want:]:
         if p.poll() is None:
             print(f"[trial] stopping excess worker pid={p.pid} trial={trial_id}")
@@ -761,6 +763,11 @@ def _empty_ingest_summary() -> dict[str, int]:
         "stale_positions": 0,
         "matching_shards": 0,
         "stale_shards": 0,
+  # Per-sample source counters (is_selfplay tag): sum of tagged samples
+  # and the selfplay-true subset, across ingested shards.  Used to
+  # compute ingest_frac_selfplay = selfplay / tagged.
+        "ingest_is_selfplay_tagged": 0,
+        "ingest_is_selfplay_true": 0,
     }
 
 
@@ -831,6 +838,16 @@ def _process_shard(
         if np.any(train_mask):
             train_arrs = slice_array_batch(shard_arrs, np.flatnonzero(train_mask))
             buf.add_many_arrays(train_arrs)
+
+  # Count per-sample is_selfplay tags over training rows only. Shards
+  # written before this field existed won't carry it — fall through.
+        if np.any(train_mask) and "has_is_selfplay" in shard_arrs:
+            has_sp = np.asarray(shard_arrs["has_is_selfplay"], dtype=np.uint8)[train_mask]
+            tagged = int(has_sp.sum())
+            if tagged > 0:
+                is_sp = np.asarray(shard_arrs.get("is_selfplay", np.zeros_like(has_sp)), dtype=np.uint8)[train_mask]
+                summary["ingest_is_selfplay_tagged"] += tagged
+                summary["ingest_is_selfplay_true"] += int((is_sp & has_sp).sum())
     summary["positions_replay_added"] += positions
 
     if model_sha in accepted_model_shas:
@@ -902,9 +919,9 @@ def _ingest_distributed_selfplay(
     deadline = time.time() + float(wait_timeout_s)
     summary = _empty_ingest_summary()
 
-    # Cap prev-model games at a fraction of target.  Once reached, demote
-    # the prev SHA so further prev-model shards count as stale.
-    # Skip if prev == current (discarding would remove the only accepted SHA).
+  # Cap prev-model games at a fraction of target.  Once reached, demote
+  # the prev SHA so further prev-model shards count as stale.
+  # Skip if prev == current (discarding would remove the only accepted SHA).
     _cap_prev = bool(prev_model_sha) and len(accepted_model_shas) > 1
     prev_max_games = int(math.ceil(float(prev_model_max_fraction) * target_games)) if _cap_prev else 0
     prev_matching_games = 0
@@ -936,7 +953,7 @@ def _ingest_distributed_selfplay(
             )
             games_added = summary["matching_games"] - games_before
 
-            # Track prev-model matching games and demote once capped.
+  # Track prev-model matching games and demote once capped.
             if (
                 _cap_prev
                 and prev_model_sha in effective_accepted

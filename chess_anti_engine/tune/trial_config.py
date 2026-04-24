@@ -27,7 +27,7 @@ class TrialConfig:
     to the underlying dict, then TrialConfig is rebuilt.
     """
 
-    # --- Global / control ---
+  # --- Global / control ---
     seed: int = 0
     device: str = ""  # resolved at runtime
     iterations: int = 10
@@ -36,7 +36,7 @@ class TrialConfig:
     pause_poll_seconds: int = 60
     _yaml_config_path: str | None = None
 
-    # --- Model architecture (startup-only) ---
+  # --- Model architecture (startup-only) ---
     model: str = "transformer"
     embed_dim: int = 256
     num_layers: int = 6
@@ -46,7 +46,7 @@ class TrialConfig:
     use_nla: bool = False
     gradient_checkpointing: bool = False
 
-    # --- Training ---
+  # --- Training ---
     lr: float = 0.0003
     optimizer: str = "nadamw"
     cosmos_gamma: float = 0.0
@@ -63,7 +63,7 @@ class TrialConfig:
     fdp_mobility: float = -1.0
     fdp_outposts: float = -1.0
 
-    # --- Selfplay ---
+  # --- Selfplay ---
     games_per_iter: int = 1
     games_per_iter_start: int = 0  # 0 means use games_per_iter
     games_per_iter_ramp_iters: int = 0
@@ -81,7 +81,7 @@ class TrialConfig:
     fpu_reduction: float = 1.2
     fpu_at_root: float = 1.0
 
-    # --- Temperature ---
+  # --- Temperature ---
     temperature: float = 1.0
     temperature_drop_plies: int = 0
     temperature_after: float = 0.0
@@ -89,7 +89,7 @@ class TrialConfig:
     temperature_decay_moves: int = 60
     temperature_endgame: float = 0.6
 
-    # --- Opening books ---
+  # --- Opening books ---
     opening_book_path: str | None = None
     opening_book_max_plies: int = 4
     opening_book_max_games: int = 200_000
@@ -100,7 +100,7 @@ class TrialConfig:
     opening_book_mix_prob_2: float = 0.0
     random_start_plies: int = 0
 
-    # --- SF policy / game ---
+  # --- SF policy / game ---
     sf_policy_temp: float = 0.25
     sf_policy_label_smooth: float = 0.05
     soft_policy_temp: float = 2.0
@@ -111,14 +111,14 @@ class TrialConfig:
     categorical_bins: int = DEFAULT_CATEGORICAL_BINS
     hlgauss_sigma: float = 0.04
 
-    # --- Diff focus ---
+  # --- Diff focus ---
     diff_focus_enabled: bool = True
     diff_focus_q_weight: float = 6.0
     diff_focus_pol_scale: float = 3.5
     diff_focus_slope: float = 3.0
     diff_focus_min: float = 0.025
 
-    # --- Stockfish ---
+  # --- Stockfish ---
     stockfish_path: str = ""
     sf_nodes: int = 500
     sf_workers: int = 1
@@ -126,17 +126,17 @@ class TrialConfig:
     sf_hash_mb: int = 16
     sf_pid_enabled: bool = True
 
-    # --- PID controller ---
+  # --- PID controller ---
     sf_pid_target_winrate: float = 0.60
     sf_pid_ema_alpha: float = 0.03
     sf_pid_wdl_regret_max: float = 1.0
 
-    # --- Loss weights ---
+  # --- Loss weights ---
     w_sf_wdl: float = 1.0
     sf_wdl_floor: float = 0.1
     sf_wdl_floor_at_regret: float = 0.0
 
-    # --- Replay buffer ---
+  # --- Replay buffer ---
     replay_window_start: int = 100_000
     replay_window_max: int = 1_000_000
     replay_window_growth: int = 10_000
@@ -148,7 +148,7 @@ class TrialConfig:
     shuffle_wl_max_ratio: float = 1.5
     shared_shards_dir: str | None = None
 
-    # --- Holdout / evaluation ---
+  # --- Holdout / evaluation ---
     holdout_fraction: float = 0.02
     holdout_capacity: int = 50_000
     freeze_holdout_at: int = 0
@@ -161,18 +161,18 @@ class TrialConfig:
     eval_temperature: float = 0.25
     eval_max_plies: int = 0  # 0 means fallback to max_plies
 
-    # --- Gate ---
+  # --- Gate ---
     gate_games: int = 0
     gate_interval: int = 1
     gate_threshold: float = 0.50
     gate_mcts_sims: int = 1
 
-    # --- Puzzle ---
+  # --- Puzzle ---
     puzzle_epd: str | None = None
     puzzle_interval: int = 1
     puzzle_simulations: int = 200
 
-    # --- Distributed ---
+  # --- Distributed ---
     distributed_workers_per_trial: int = 1
     distributed_server_root: str | None = None
     distributed_server_url: str | None = None
@@ -183,7 +183,7 @@ class TrialConfig:
     distributed_pause_selfplay_during_training: bool = False
     processed_max_age_seconds: float = 43200.0
 
-    # --- Exploit replay sharing ---
+  # --- Exploit replay sharing ---
     exploit_replay_refresh_enabled: bool = True
     exploit_replay_local_keep_recent_fraction: float = 0.20
     exploit_replay_local_keep_older_fraction: float = 0.65
@@ -197,12 +197,12 @@ class TrialConfig:
     exploit_replay_max_unseen_iters_per_source: int = 2
     exploit_replay_share_fraction: float = 1.0
 
-    # --- Persistent best-regret snapshots (cross-trial, cross-experiment) ---
-    # None means write in-trial at work_dir / "best_regret" (legacy). A path makes the
-    # top-N snapshots persist even after Ray rotates the trial dir.
+  # --- Persistent best-regret snapshots (cross-trial, cross-experiment) ---
+  # None means write in-trial at work_dir / "best_regret" (legacy). A path makes the
+  # top-N snapshots persist even after Ray rotates the trial dir.
     best_regret_checkpoints_dir: str | None = "data/best_regret_checkpoints"
 
-    # --- Salvage / bootstrap ---
+  # --- Salvage / bootstrap ---
     salvage_seed_pool_dir: str | None = None
     salvage_reinit_volatility_heads: bool = False
     salvage_restore_donor_config: bool = False
@@ -216,7 +216,7 @@ class TrialConfig:
     bootstrap_zero_policy_heads: bool = False
     bootstrap_reinit_volatility_heads: bool = False
 
-    # --- Tune bookkeeping ---
+  # --- Tune bookkeeping ---
     tune_num_to_keep: int = 2
 
     @classmethod
@@ -231,7 +231,7 @@ class TrialConfig:
             return default if v is None else v
 
         return cls(
-            # --- Global ---
+  # --- Global ---
             seed=int(config.get("seed", 0)),
             device=str(config.get("device", "cuda")),
             iterations=int(config.get("iterations", 10)),
@@ -240,7 +240,7 @@ class TrialConfig:
             pause_poll_seconds=int(config.get("pause_poll_seconds", 60)),
             _yaml_config_path=_get("_yaml_config_path", None),
 
-            # --- Model ---
+  # --- Model ---
             model=str(config.get("model", "transformer")),
             embed_dim=int(config.get("embed_dim", 256)),
             num_layers=int(config.get("num_layers", 6)),
@@ -250,7 +250,7 @@ class TrialConfig:
             use_nla=bool(config.get("use_nla", False)),
             gradient_checkpointing=bool(config.get("gradient_checkpointing", False)),
 
-            # --- Training ---
+  # --- Training ---
             lr=float(config["lr"]) if "lr" in config else 0.0003,
             optimizer=str(config.get("optimizer", "nadamw")),
             cosmos_gamma=float(config["cosmos_gamma"]) if "cosmos_gamma" in config else 0.0,
@@ -267,7 +267,7 @@ class TrialConfig:
             fdp_mobility=float(config.get("fdp_mobility", -1)),
             fdp_outposts=float(config.get("fdp_outposts", -1)),
 
-            # --- Selfplay ---
+  # --- Selfplay ---
             games_per_iter=int(config.get("games_per_iter", 1)),
             games_per_iter_start=int(config.get("games_per_iter_start", config.get("games_per_iter", 1))),
             games_per_iter_ramp_iters=int(config.get("games_per_iter_ramp_iters", 0)),
@@ -285,7 +285,7 @@ class TrialConfig:
             fpu_reduction=float(config.get("fpu_reduction", 1.2)),
             fpu_at_root=float(config.get("fpu_at_root", 1.0)),
 
-            # --- Temperature ---
+  # --- Temperature ---
             temperature=float(config.get("temperature", 1.0)),
             temperature_drop_plies=int(config.get("temperature_drop_plies", 0)),
             temperature_after=float(config.get("temperature_after", 0.0)),
@@ -293,7 +293,7 @@ class TrialConfig:
             temperature_decay_moves=int(config.get("temperature_decay_moves", 60)),
             temperature_endgame=float(config.get("temperature_endgame", 0.6)),
 
-            # --- Opening books ---
+  # --- Opening books ---
             opening_book_path=_get("opening_book_path", None),
             opening_book_max_plies=int(config.get("opening_book_max_plies", 4)),
             opening_book_max_games=int(config.get("opening_book_max_games", 200_000)),
@@ -304,7 +304,7 @@ class TrialConfig:
             opening_book_mix_prob_2=float(config.get("opening_book_mix_prob_2", 0.0)),
             random_start_plies=int(config.get("random_start_plies", 0)),
 
-            # --- SF policy / game ---
+  # --- SF policy / game ---
             sf_policy_temp=float(config.get("sf_policy_temp", 0.25)),
             sf_policy_label_smooth=float(config.get("sf_policy_label_smooth", 0.05)),
             soft_policy_temp=float(config.get("soft_policy_temp", 2.0)),
@@ -315,14 +315,14 @@ class TrialConfig:
             categorical_bins=int(config.get("categorical_bins", DEFAULT_CATEGORICAL_BINS)),
             hlgauss_sigma=float(config.get("hlgauss_sigma", 0.04)),
 
-            # --- Diff focus ---
+  # --- Diff focus ---
             diff_focus_enabled=bool(config.get("diff_focus_enabled", True)),
             diff_focus_q_weight=float(config.get("diff_focus_q_weight", 6.0)),
             diff_focus_pol_scale=float(config.get("diff_focus_pol_scale", 3.5)),
             diff_focus_slope=float(config.get("diff_focus_slope", 3.0)),
             diff_focus_min=float(config.get("diff_focus_min", 0.025)),
 
-            # --- Stockfish ---
+  # --- Stockfish ---
             stockfish_path=str(config.get("stockfish_path", "")),
             sf_nodes=int(config.get("sf_nodes", 500)),
             sf_workers=int(config.get("sf_workers", 1)),
@@ -330,17 +330,17 @@ class TrialConfig:
             sf_hash_mb=int(config.get("sf_hash_mb", 16)),
             sf_pid_enabled=bool(config.get("sf_pid_enabled", True)),
 
-            # --- PID ---
+  # --- PID ---
             sf_pid_target_winrate=float(config.get("sf_pid_target_winrate", 0.60)),
             sf_pid_ema_alpha=float(config.get("sf_pid_ema_alpha", 0.03)),
             sf_pid_wdl_regret_max=float(config.get("sf_pid_wdl_regret_max", 1.0)),
 
-            # --- Loss weights ---
+  # --- Loss weights ---
             w_sf_wdl=float(config.get("w_sf_wdl", 1.0)),
             sf_wdl_floor=float(config.get("sf_wdl_floor", 0.1)),
             sf_wdl_floor_at_regret=float(config.get("sf_wdl_floor_at_regret", 0.0)),
 
-            # --- Replay buffer ---
+  # --- Replay buffer ---
             replay_window_start=int(config.get("replay_window_start", 100_000)),
             replay_window_max=int(config.get("replay_window_max", config.get("replay_capacity", 1_000_000))),
             replay_window_growth=int(config.get("replay_window_growth", 10_000)),
@@ -352,7 +352,7 @@ class TrialConfig:
             shuffle_wl_max_ratio=float(config.get("shuffle_wl_max_ratio", 1.5)),
             shared_shards_dir=_get("shared_shards_dir", None),
 
-            # --- Holdout / evaluation ---
+  # --- Holdout / evaluation ---
             holdout_fraction=float(config.get("holdout_fraction", 0.02)),
             holdout_capacity=int(config.get("holdout_capacity", 50_000)),
             freeze_holdout_at=int(config.get("freeze_holdout_at", 0)),
@@ -365,18 +365,18 @@ class TrialConfig:
             eval_temperature=float(config.get("eval_temperature", 0.25)),
             eval_max_plies=int(_get("eval_max_plies", None) or config.get("max_plies", 240)),
 
-            # --- Gate ---
+  # --- Gate ---
             gate_games=int(config.get("gate_games", 0)),
             gate_interval=int(config.get("gate_interval", 1)),
             gate_threshold=float(config.get("gate_threshold", 0.50)),
             gate_mcts_sims=int(config.get("gate_mcts_sims", 1)),
 
-            # --- Puzzle ---
+  # --- Puzzle ---
             puzzle_epd=_get("puzzle_epd", None),
             puzzle_interval=int(config.get("puzzle_interval", 1)),
             puzzle_simulations=int(config.get("puzzle_simulations", 200)),
 
-            # --- Distributed ---
+  # --- Distributed ---
             distributed_workers_per_trial=max(1, int(config.get("distributed_workers_per_trial", 1))),
             distributed_server_root=_get("distributed_server_root", None),
             distributed_server_url=_get("distributed_server_url", None),
@@ -387,7 +387,7 @@ class TrialConfig:
             distributed_pause_selfplay_during_training=bool(config.get("distributed_pause_selfplay_during_training", False)),
             processed_max_age_seconds=float(config.get("processed_max_age_seconds", 43200.0)),
 
-            # --- Exploit replay sharing ---
+  # --- Exploit replay sharing ---
             exploit_replay_refresh_enabled=bool(config.get("exploit_replay_refresh_enabled", True)),
             exploit_replay_local_keep_recent_fraction=float(config.get("exploit_replay_local_keep_recent_fraction", 0.20)),
             exploit_replay_local_keep_older_fraction=float(config.get("exploit_replay_local_keep_older_fraction", 0.65)),
@@ -401,10 +401,10 @@ class TrialConfig:
             exploit_replay_max_unseen_iters_per_source=int(config.get("exploit_replay_max_unseen_iters_per_source", 2)),
             exploit_replay_share_fraction=float(config.get("exploit_replay_share_fraction", 1.0)),
 
-            # --- Persistent best-regret snapshots ---
+  # --- Persistent best-regret snapshots ---
             best_regret_checkpoints_dir=_get("best_regret_checkpoints_dir", "data/best_regret_checkpoints"),
 
-            # --- Salvage / bootstrap ---
+  # --- Salvage / bootstrap ---
             salvage_seed_pool_dir=_get("salvage_seed_pool_dir", None),
             salvage_reinit_volatility_heads=bool(config.get("salvage_reinit_volatility_heads", False)),
             salvage_restore_donor_config=bool(config.get("salvage_restore_donor_config", False)),
@@ -418,7 +418,7 @@ class TrialConfig:
             bootstrap_zero_policy_heads=bool(config.get("bootstrap_zero_policy_heads", False)),
             bootstrap_reinit_volatility_heads=bool(config.get("bootstrap_reinit_volatility_heads", False)),
 
-            # --- Tune ---
+  # --- Tune ---
             tune_num_to_keep=int(config.get("tune_num_to_keep", 2)),
         )
 
@@ -431,55 +431,58 @@ class TrialConfig:
 class SelfplayResult:
     """Accumulated stats from one iteration of selfplay + ingest."""
 
-    # Win / draw / loss
+  # Win / draw / loss
     total_w: int = 0
     total_d: int = 0
     total_l: int = 0
 
-    # Game counts
+  # Game counts
     total_games_generated: int = 0
     total_game_plies: int = 0
     total_adjudicated_games: int = 0
     total_tb_adjudicated_games: int = 0
     total_draw_games: int = 0
 
-    # Selfplay-only subset
+  # Selfplay-only subset
     total_selfplay_games: int = 0
     total_selfplay_adjudicated_games: int = 0
     total_selfplay_draw_games: int = 0
 
-    # Curriculum subset
+  # Curriculum subset
     total_curriculum_games: int = 0
     total_curriculum_adjudicated_games: int = 0
     total_curriculum_draw_games: int = 0
 
-    # Endgame stats
+  # Endgame stats
     total_checkmate_games: int = 0
     total_stalemate_games: int = 0
     total_plies_win: int = 0
     total_plies_draw: int = 0
     total_plies_loss: int = 0
 
-    # Positions / ingest
+  # Positions / ingest
     total_positions: int = 0
     replay_positions_ingested: int = 0
+  # Per-sample is_selfplay tag accounting (this iter's ingested training rows).
+    ingest_is_selfplay_tagged: int = 0
+    ingest_is_selfplay_true: int = 0
 
-    # SF evaluation deltas
+  # SF evaluation deltas
     total_sf_d6: float = 0.0
     total_sf_d6_n: int = 0
 
-    # Distributed stale data
+  # Distributed stale data
     distributed_stale_positions: int = 0
     distributed_stale_games: int = 0
 
-    # Cross-trial sharing
+  # Cross-trial sharing
     shared_summary: dict = field(default_factory=dict)
     imported_samples_this_iter: int = 0
 
-    # Timing
+  # Timing
     ingest_ms: float = 0.0
 
-    # Control flow
+  # Control flow
     should_retry: bool = False
 
 
@@ -493,7 +496,7 @@ class DriftMetrics:
     drift_policy_entropy_train: float = 0.0
     drift_policy_entropy_holdout: float = 0.0
 
-    # Always-on data diversity (from training buffer only)
+  # Always-on data diversity (from training buffer only)
     data_policy_entropy: float = 0.0
     data_unique_positions: float = 0.0
     data_wdl_balance: float = 0.0
@@ -548,13 +551,13 @@ class DifficultyState:
 class PidResult:
     """Output of the PID update + eval games + opponent strength phase."""
 
-    # PID outputs (next-iteration values)
+  # PID outputs (next-iteration values)
     sf_nodes_next: int = 0
     wdl_regret_next: float = -1.0
     pid_ema_wr: float = 0.0
     pid_update: object | None = None
 
-    # Derived game stats
+  # Derived game stats
     curriculum_winrate_raw: float | None = None
     avg_game_plies: float = 0.0
     adjudication_rate: float = 0.0
@@ -570,7 +573,7 @@ class PidResult:
     avg_plies_draw: float = 0.0
     avg_plies_loss: float = 0.0
 
-    # Opponent strength
+  # Opponent strength
     opp_strength: float = 0.0
     opp_strength_ema: float = 0.0
 

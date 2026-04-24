@@ -12,20 +12,21 @@ class ReplaySample:
     policy_target: np.ndarray  # (POLICY_SIZE,) float32 distribution
     wdl_target: int  # 0/1/2
 
-    # Sampling priority (KataGo-style surprise weighting)
+  # Sampling priority (KataGo-style surprise weighting)
     priority: float = 1.0
     has_policy: bool = True
 
-    # Optional auxiliary targets (for spec completeness; not all are trained yet)
-    #
-    # NOTE: With the "train on network turns only" scheme, SF targets (policy + eval)
-    # are attached to the *network-turn* sample, representing Stockfish's reply to the
-    # network's move and the evaluation after that reply.
+  # Optional auxiliary targets (for spec completeness; not all are trained yet)
+  #
+  # NOTE: With the "train on network turns only" scheme, SF targets (policy + eval)
+  # are attached to the *network-turn* sample, representing Stockfish's reply to the
+  # network's move and the evaluation after that reply.
     sf_wdl: np.ndarray | None = None  # (3,) float32
     sf_move_index: int | None = None  # action index for SF chosen move
     sf_policy_target: np.ndarray | None = None  # (POLICY_SIZE,) float32 SF reply distribution
     moves_left: float | None = None
     is_network_turn: bool | None = None
+    is_selfplay: bool | None = None
 
     categorical_target: np.ndarray | None = None  # (num_bins,) float32
 
@@ -39,10 +40,14 @@ class ReplaySample:
     sf_volatility_target: np.ndarray | None = None  # (3,) float32
     has_sf_volatility: bool | None = None
 
-    # LC0-style illegal move masking: 1=legal, 0=illegal, shape (POLICY_SIZE,).
-    # Applied to policy logits before softmax during training to avoid wasting
-    # probability mass on illegal moves. None for old shards (masking skipped).
-    legal_mask: np.ndarray | None = None  # (POLICY_SIZE,) bool/uint8
+  # LC0-style illegal move masking: 1=legal, 0=illegal, shape (POLICY_SIZE,).
+  # Applied to policy logits before softmax during training to avoid wasting
+  # probability mass on illegal moves. None for old shards (masking skipped).
+    legal_mask: np.ndarray | None = None  # (POLICY_SIZE,) bool/uint8 — legal at t, net POV
+  # Legal mask at t+1 (opponent POV) for policy_sf head.
+    sf_legal_mask: np.ndarray | None = None
+  # Legal mask at t+2 (net POV, next own move) for policy_future head.
+    future_legal_mask: np.ndarray | None = None
 
 
 def balance_wdl(
@@ -87,7 +92,7 @@ def balance_wdl(
             idxs = rng.choice(len(bucket), size=cap, replace=False)
             out.extend([bucket[int(i)] for i in idxs])
 
-    rng.shuffle(out)  # type: ignore[arg-type]
+    rng.shuffle(out)  # type: ignore[arg-type] # numpy expects ArrayLike; list[dataclass] works at runtime
     return out
 
 
@@ -260,8 +265,9 @@ class ArrayReplayBuffer:
         return np.concatenate(picks, axis=0)
 
     def _gather_rows(self, indices: np.ndarray) -> dict[str, np.ndarray]:
-        from .shard import densify_chunk
         from chess_anti_engine.moves import POLICY_SIZE
+
+        from .shard import densify_chunk
         idx = np.asarray(indices, dtype=np.int64).reshape(-1)
         if not self._chunks:
             raise ValueError("ArrayReplayBuffer is empty")
@@ -274,8 +280,8 @@ class ArrayReplayBuffer:
                 "priority": np.empty((0,), dtype=np.float32),
                 "has_policy": np.empty((0,), dtype=np.uint8),
             }
-        # Densify each chunk's selected rows, then merge into output.
-        # This avoids shape mismatches when chunks have different sparse K values.
+  # Densify each chunk's selected rows, then merge into output.
+  # This avoids shape mismatches when chunks have different sparse K values.
         selected: list[tuple[dict[str, np.ndarray], np.ndarray]] = []
         all_keys: set[str] = set()
         start = 0
@@ -289,8 +295,8 @@ class ArrayReplayBuffer:
                 selected.append((dense_rows, mask))
                 all_keys.update(dense_rows.keys())
             start = end
-        # Build prototype from ALL selected chunks so optional fields present
-        # in any chunk are allocated (not just those in the first chunk).
+  # Build prototype from ALL selected chunks so optional fields present
+  # in any chunk are allocated (not just those in the first chunk).
         proto: dict[str, np.ndarray] = {}
         for dense_rows, _ in selected:
             for k, v in dense_rows.items():

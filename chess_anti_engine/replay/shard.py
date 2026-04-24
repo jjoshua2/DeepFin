@@ -10,14 +10,12 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import zarr
+from numcodecs import Blosc
 
 from chess_anti_engine.moves import POLICY_SIZE
 
 from .buffer import ReplaySample
-
-import zarr
-from numcodecs import Blosc
-
 
 SHARD_VERSION = 1
 LOCAL_SHARD_SUFFIX = ".zarr"
@@ -38,6 +36,8 @@ _SHARD_FIELDS = (
     "has_moves_left",
     "is_network_turn",
     "has_is_network_turn",
+    "is_selfplay",
+    "has_is_selfplay",
     "categorical_target",
     "has_categorical",
     "policy_soft_target",
@@ -50,6 +50,10 @@ _SHARD_FIELDS = (
     "has_sf_volatility",
     "legal_mask",
     "has_legal_mask",
+    "sf_legal_mask",
+    "has_sf_legal_mask",
+    "future_legal_mask",
+    "has_future_legal_mask",
 )
 
 _REQUIRED_STORAGE_FIELDS = (
@@ -66,13 +70,22 @@ _OPTIONAL_STORAGE_PAIRS = (
     ("sf_policy_target", "has_sf_policy"),
     ("moves_left", "has_moves_left"),
     ("is_network_turn", "has_is_network_turn"),
+    ("is_selfplay", "has_is_selfplay"),
     ("categorical_target", "has_categorical"),
     ("policy_soft_target", "has_policy_soft"),
     ("future_policy_target", "has_future"),
     ("volatility_target", "has_volatility"),
     ("sf_volatility_target", "has_sf_volatility"),
     ("legal_mask", "has_legal_mask"),
+    ("sf_legal_mask", "has_sf_legal_mask"),
+    ("future_legal_mask", "has_future_legal_mask"),
 )
+
+# Legal-mask fields: per-head masks in different positions/POVs. Stored as
+# packed indices in shards since values are always 0/1.
+LEGAL_MASK_FIELDS = ("legal_mask", "sf_legal_mask", "future_legal_mask")
+LEGAL_MASK_HAS_FIELDS = ("has_legal_mask", "has_sf_legal_mask", "has_future_legal_mask")
+_SPARSE_MASK_FIELDS = LEGAL_MASK_FIELDS
 
 
 # ---------------------------------------------------------------------------
@@ -139,23 +152,26 @@ def sparsify_chunk(arrs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
         out[key] = vals
         out[f"{key}_cols"] = cols
         out[f"{key}_nnz"] = nnz
-    # legal_mask: store as indices only (values are always 1)
-    if "legal_mask" in out:
-        mask = out["legal_mask"]
-        if mask.ndim == 2 and mask.shape[1] > 0:
-            N = mask.shape[0]
-            nz_mask = mask != 0
-            nnz = nz_mask.sum(axis=1).astype(np.uint16)
-            K = int(nnz.max()) if N > 0 else 0
-            if K > 0:
-                rows, col_idxs = np.nonzero(nz_mask)
-                positions = _padded_positions(nnz, rows, N)
-                idx_arr = np.zeros((N, K), dtype=np.uint16)
-                idx_arr[rows, positions] = col_idxs.astype(np.uint16)
-            else:
-                idx_arr = np.zeros((N, 0), dtype=np.uint16)
-            out["legal_mask"] = idx_arr
-            out["legal_mask_nnz"] = nnz
+  # legal masks: store as indices only (values are always 1)
+    for key in _SPARSE_MASK_FIELDS:
+        if key not in out:
+            continue
+        mask = out[key]
+        if mask.ndim != 2 or mask.shape[1] <= 0:
+            continue
+        N = mask.shape[0]
+        nz_mask = mask != 0
+        nnz = nz_mask.sum(axis=1).astype(np.uint16)
+        K = int(nnz.max()) if N > 0 else 0
+        if K > 0:
+            rows, col_idxs = np.nonzero(nz_mask)
+            positions = _padded_positions(nnz, rows, N)
+            idx_arr = np.zeros((N, K), dtype=np.uint16)
+            idx_arr[rows, positions] = col_idxs.astype(np.uint16)
+        else:
+            idx_arr = np.zeros((N, 0), dtype=np.uint16)
+        out[key] = idx_arr
+        out[f"{key}_nnz"] = nnz
     return out
 
 
@@ -171,10 +187,13 @@ def densify_chunk(arrs: dict[str, np.ndarray], policy_size: int = POLICY_SIZE) -
         out[key] = dense
         del out[cols_key]
         del out[nnz_key]
-    # legal_mask
-    if "legal_mask_nnz" in out:
-        idx_arr = out["legal_mask"]
-        nnz = out["legal_mask_nnz"]
+  # legal masks
+    for key in _SPARSE_MASK_FIELDS:
+        nnz_key = f"{key}_nnz"
+        if nnz_key not in out:
+            continue
+        idx_arr = out[key]
+        nnz = out[nnz_key]
         N = idx_arr.shape[0]
         K = idx_arr.shape[1] if idx_arr.ndim == 2 else 0
         mask = np.zeros((N, policy_size), dtype=np.uint8)
@@ -182,8 +201,8 @@ def densify_chunk(arrs: dict[str, np.ndarray], policy_size: int = POLICY_SIZE) -
             valid = np.arange(K, dtype=np.uint16)[None, :] < nnz[:, None]
             rows, ks = np.nonzero(valid)
             mask[rows, idx_arr[rows, ks]] = 1
-        out["legal_mask"] = mask
-        del out["legal_mask_nnz"]
+        out[key] = mask
+        del out[nnz_key]
     return out
 
 
@@ -293,7 +312,7 @@ def shard_positions(path: str | Path) -> int:
     p = Path(path)
     try:
         g = zarr.open_group(str(p), mode="r")
-        return int(g["x"].shape[0])  # type: ignore[arg-type,union-attr]
+        return int(g["x"].shape[0])  # type: ignore[arg-type,union-attr] # zarr Group item may be Group or Array at type level
     except Exception:
         return 0
 
@@ -421,6 +440,8 @@ def samples_to_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
     has_moves_left = np.zeros((len(samples),), dtype=np.uint8)
     is_network_turn = np.zeros((len(samples),), dtype=np.uint8)
     has_is_network_turn = np.zeros((len(samples),), dtype=np.uint8)
+    is_selfplay = np.zeros((len(samples),), dtype=np.uint8)
+    has_is_selfplay = np.zeros((len(samples),), dtype=np.uint8)
     categorical_target = np.zeros((len(samples), 32), dtype=np.float16)
     has_categorical = np.zeros((len(samples),), dtype=np.uint8)
     policy_soft_target = np.zeros_like(policy_target, dtype=np.float16)
@@ -431,8 +452,8 @@ def samples_to_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
     has_volatility = np.zeros((len(samples),), dtype=np.uint8)
     sf_volatility_target = np.zeros((len(samples), 3), dtype=np.float16)
     has_sf_volatility = np.zeros((len(samples),), dtype=np.uint8)
-    legal_mask = np.zeros((len(samples), POLICY_SIZE), dtype=np.uint8)
-    has_legal_mask = np.zeros((len(samples),), dtype=np.uint8)
+    masks = {k: np.zeros((len(samples), POLICY_SIZE), dtype=np.uint8) for k in LEGAL_MASK_FIELDS}
+    has_masks = {k: np.zeros((len(samples),), dtype=np.uint8) for k in LEGAL_MASK_HAS_FIELDS}
 
     for i, s in enumerate(samples):
         if s.sf_wdl is not None:
@@ -450,6 +471,9 @@ def samples_to_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
         if s.is_network_turn is not None:
             is_network_turn[i] = 1 if bool(s.is_network_turn) else 0
             has_is_network_turn[i] = 1
+        if s.is_selfplay is not None:
+            is_selfplay[i] = 1 if bool(s.is_selfplay) else 0
+            has_is_selfplay[i] = 1
         if s.categorical_target is not None:
             categorical_target[i] = np.asarray(s.categorical_target, dtype=np.float16)
             has_categorical[i] = 1
@@ -465,9 +489,11 @@ def samples_to_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
         if getattr(s, "sf_volatility_target", None) is not None:
             sf_volatility_target[i] = np.asarray(s.sf_volatility_target, dtype=np.float16)
             has_sf_volatility[i] = 1
-        if getattr(s, "legal_mask", None) is not None:
-            legal_mask[i] = np.asarray(s.legal_mask, dtype=np.uint8)
-            has_legal_mask[i] = 1
+        for mk, hk in zip(LEGAL_MASK_FIELDS, LEGAL_MASK_HAS_FIELDS, strict=True):
+            v = getattr(s, mk, None)
+            if v is not None:
+                masks[mk][i] = np.asarray(v, dtype=np.uint8)
+                has_masks[hk][i] = 1
 
     return {
         "x": x,
@@ -485,6 +511,8 @@ def samples_to_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
         "has_moves_left": has_moves_left,
         "is_network_turn": is_network_turn,
         "has_is_network_turn": has_is_network_turn,
+        "is_selfplay": is_selfplay,
+        "has_is_selfplay": has_is_selfplay,
         "categorical_target": categorical_target,
         "has_categorical": has_categorical,
         "policy_soft_target": policy_soft_target,
@@ -495,8 +523,8 @@ def samples_to_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
         "has_volatility": has_volatility,
         "sf_volatility_target": sf_volatility_target,
         "has_sf_volatility": has_sf_volatility,
-        "legal_mask": legal_mask,
-        "has_legal_mask": has_legal_mask,
+        **masks,
+        **has_masks,
     }
 
 
@@ -554,6 +582,8 @@ def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
     has_moves_left = np.asarray(arrs.get("has_moves_left", np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
     is_network_turn = np.asarray(arrs.get("is_network_turn", np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
     has_is_network_turn = np.asarray(arrs.get("has_is_network_turn", np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
+    is_selfplay = np.asarray(arrs.get("is_selfplay", np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
+    has_is_selfplay = np.asarray(arrs.get("has_is_selfplay", np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
     categorical = np.asarray(arrs.get("categorical_target", np.zeros((n, 32), dtype=np.float16)))
     has_categorical = np.asarray(arrs.get("has_categorical", np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
     policy_soft = np.asarray(arrs.get("policy_soft_target", np.zeros_like(policy, dtype=np.float16)))
@@ -564,8 +594,14 @@ def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
     has_vol = np.asarray(arrs.get("has_volatility", np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
     sf_vol = np.asarray(arrs.get("sf_volatility_target", np.zeros((n, 3), dtype=np.float16)))
     has_sf_vol = np.asarray(arrs.get("has_sf_volatility", np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
-    legal_mask_arr = np.asarray(arrs.get("legal_mask", np.zeros((n, POLICY_SIZE), dtype=np.uint8)), dtype=np.uint8)
-    has_legal_mask = np.asarray(arrs.get("has_legal_mask", np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
+    masks = {
+        k: np.asarray(arrs.get(k, np.zeros((n, POLICY_SIZE), dtype=np.uint8)), dtype=np.uint8)
+        for k in LEGAL_MASK_FIELDS
+    }
+    has_masks = {
+        k: np.asarray(arrs.get(k, np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
+        for k in LEGAL_MASK_HAS_FIELDS
+    }
 
     out: list[ReplaySample] = []
     for i in range(n):
@@ -576,31 +612,34 @@ def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
             priority=float(priority[i]),
             has_policy=bool(int(has_policy[i]) != 0),
         )
-        if bool(int(has_sf_wdl[i]) != 0):
+        if int(has_sf_wdl[i]) != 0:
             s.sf_wdl = _copy_row(sf_wdl, i)
-        if bool(int(has_sf_move[i]) != 0):
+        if int(has_sf_move[i]) != 0:
             s.sf_move_index = int(sf_move_index[i])
-        if bool(int(has_sf_policy[i]) != 0):
+        if int(has_sf_policy[i]) != 0:
             s.sf_policy_target = _copy_row(sf_policy_target, i)
-        if bool(int(has_moves_left[i]) != 0):
+        if int(has_moves_left[i]) != 0:
             s.moves_left = float(moves_left[i])
-        if bool(int(has_is_network_turn[i]) != 0):
+        if int(has_is_network_turn[i]) != 0:
             s.is_network_turn = bool(int(is_network_turn[i]) != 0)
-        if bool(int(has_categorical[i]) != 0):
+        if int(has_is_selfplay[i]) != 0:
+            s.is_selfplay = bool(int(is_selfplay[i]) != 0)
+        if int(has_categorical[i]) != 0:
             s.categorical_target = _copy_row(categorical, i)
-        if bool(int(has_policy_soft[i]) != 0):
+        if int(has_policy_soft[i]) != 0:
             s.policy_soft_target = _copy_row(policy_soft, i)
-        if bool(int(has_future[i]) != 0):
+        if int(has_future[i]) != 0:
             s.future_policy_target = _copy_row(future_policy, i)
             s.has_future = True
-        if bool(int(has_vol[i]) != 0):
+        if int(has_vol[i]) != 0:
             s.volatility_target = _copy_row(vol, i)
             s.has_volatility = True
-        if bool(int(has_sf_vol[i]) != 0):
+        if int(has_sf_vol[i]) != 0:
             s.sf_volatility_target = _copy_row(sf_vol, i)
             s.has_sf_volatility = True
-        if bool(int(has_legal_mask[i]) != 0):
-            s.legal_mask = _copy_row(legal_mask_arr, i, dtype=np.uint8)
+        for mk, hk in zip(LEGAL_MASK_FIELDS, LEGAL_MASK_HAS_FIELDS, strict=True):
+            if int(has_masks[hk][i]) != 0:
+                setattr(s, mk, _copy_row(masks[mk], i, dtype=np.uint8))
         out.append(s)
     return out
 
@@ -623,7 +662,7 @@ def save_npz(
     stored = prune_storage_arrays(samples_to_arrays(samples))
     meta_json = json.dumps(_meta_dict(meta, positions=int(np.asarray(stored["x"]).shape[0])), sort_keys=True)
     saver = np.savez_compressed if compress else np.savez
-    saver(str(p), **stored, meta_json=np.array(meta_json))
+    saver(str(p), **stored, meta_json=np.array(meta_json)) # numpy's savez stubs reject dict[str, ndarray] splat
     return p
 
 
@@ -644,10 +683,10 @@ def save_local_shard_arrays(
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     stored = prune_storage_arrays(arrs)
-    # Write to a temp path then atomic-rename to avoid races with concurrent
-    # readers/writers that can cause "Directory not empty" on rmtree.
-    # Prefix matches the ingest-side tmp filter (_is_tmp_shard_name) so a
-    # crashed-mid-write tmp dir isn't mistaken for a real shard on resume.
+  # Write to a temp path then atomic-rename to avoid races with concurrent
+  # readers/writers that can cause "Directory not empty" on rmtree.
+  # Prefix matches the ingest-side tmp filter (_is_tmp_shard_name) so a
+  # crashed-mid-write tmp dir isn't mistaken for a real shard on resume.
     tmp = p.with_name(f"._tmp_{os.getpid()}_{p.name}")
     try:
         g = zarr.open_group(str(tmp), mode="w")
@@ -656,7 +695,7 @@ def save_local_shard_arrays(
         for name, value in stored.items():
             arr = np.asarray(value)
             g.create_dataset(name, data=arr, chunks=_local_chunks(arr), compressor=compressor, overwrite=True)
-        # Atomic replace: remove old, rename new.
+  # Atomic replace: remove old, rename new.
         if p.exists():
             shutil.rmtree(p, ignore_errors=True) if p.is_dir() else p.unlink(missing_ok=True)
         tmp.rename(p)

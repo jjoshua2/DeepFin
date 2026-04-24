@@ -2,9 +2,25 @@ from __future__ import annotations
 
 import numpy as np
 
-from chess_anti_engine.moves.encode import MIRROR_POLICY_MAP, mirror_policy, mirror_policy_batch, mirror_policy_index
+from chess_anti_engine.moves.encode import (
+    MIRROR_POLICY_MAP,
+    mirror_policy,
+    mirror_policy_batch,
+    mirror_policy_index,
+)
 
 from .buffer import ReplaySample
+from .shard import LEGAL_MASK_FIELDS
+
+# Fields whose rows live in POLICY_SIZE move space and must be remapped under
+# the mirror permutation. Includes all policy-like targets and legal masks.
+_MIRROR_POLICY_FIELDS = (
+    "policy_target",
+    "sf_policy_target",
+    "policy_soft_target",
+    "future_policy_target",
+    *LEGAL_MASK_FIELDS,
+)
 
 
 def mirror_x(x: np.ndarray) -> np.ndarray:
@@ -12,7 +28,7 @@ def mirror_x(x: np.ndarray) -> np.ndarray:
     arr = np.asarray(x)
     if arr.ndim != 3 or tuple(arr.shape[-2:]) != (8, 8):
         raise ValueError(f"x must be (C,8,8); got {arr.shape}")
-    # Flip file axis (last axis). Force a positive-stride array.
+  # Flip file axis (last axis). Force a positive-stride array.
     return arr[:, :, ::-1].copy()
 
 
@@ -30,12 +46,13 @@ def mirror_sample(s: ReplaySample) -> ReplaySample:
         has_policy=bool(getattr(s, "has_policy", True)),
     )
 
-    # Aux targets
+  # Aux targets
     out.sf_wdl = None if s.sf_wdl is None else np.asarray(s.sf_wdl, dtype=np.float32)
     out.sf_move_index = None if s.sf_move_index is None else int(mirror_policy_index(int(s.sf_move_index)))
     out.sf_policy_target = None if s.sf_policy_target is None else mirror_policy(s.sf_policy_target)
     out.moves_left = None if s.moves_left is None else float(s.moves_left)
     out.is_network_turn = None if s.is_network_turn is None else bool(s.is_network_turn)
+    out.is_selfplay = None if s.is_selfplay is None else bool(s.is_selfplay)
 
     out.categorical_target = None if s.categorical_target is None else np.asarray(s.categorical_target, dtype=np.float32)
 
@@ -48,6 +65,14 @@ def mirror_sample(s: ReplaySample) -> ReplaySample:
 
     out.sf_volatility_target = None if getattr(s, "sf_volatility_target", None) is None else np.asarray(s.sf_volatility_target, dtype=np.float32)
     out.has_sf_volatility = getattr(s, "has_sf_volatility", None)
+
+    for name in LEGAL_MASK_FIELDS:
+        v = getattr(s, name, None)
+        if v is None:
+            setattr(out, name, None)
+        else:
+            mirrored = mirror_policy(np.asarray(v, dtype=np.float32))
+            setattr(out, name, mirrored.astype(np.asarray(v).dtype, copy=False))
 
     return out
 
@@ -63,13 +88,10 @@ def maybe_mirror_samples(
     if p <= 0.0:
         return samples
 
-    out: list[ReplaySample] = []
-    for s in samples:
-        if float(rng.random()) < p:
-            out.append(mirror_sample(s))
-        else:
-            out.append(s)
-    return out
+    return [
+        mirror_sample(s) if float(rng.random()) < p else s
+        for s in samples
+    ]
 
 
 def maybe_mirror_batch_arrays(
@@ -96,10 +118,12 @@ def maybe_mirror_batch_arrays(
     out["x"] = np.array(arrs["x"], copy=True, order="C")
     out["x"][mask] = out["x"][mask, :, :, ::-1].copy()
 
-    for key in ("policy_target", "sf_policy_target", "policy_soft_target", "future_policy_target", "legal_mask"):
+    for key in _MIRROR_POLICY_FIELDS:
         if key in arrs:
+            src_dtype = np.asarray(arrs[key]).dtype
             out[key] = np.array(arrs[key], copy=True, order="C")
-            out[key][mask] = mirror_policy_batch(out[key][mask])
+            mirrored = mirror_policy_batch(out[key][mask])
+            out[key][mask] = mirrored.astype(src_dtype, copy=False)
 
     if "sf_move_index" in arrs:
         out["sf_move_index"] = np.array(arrs["sf_move_index"], copy=True, order="C")

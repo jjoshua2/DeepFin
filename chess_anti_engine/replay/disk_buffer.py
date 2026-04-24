@@ -7,8 +7,8 @@ thousands of ``ReplaySample`` Python objects.
 """
 from __future__ import annotations
 
-from collections import deque
 import threading
+from collections import deque
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +20,8 @@ from .buffer import ReplaySample
 from .shard import (
     _OPTIONAL_STORAGE_PAIRS,
     _SHARD_FIELDS,
+    LEGAL_MASK_FIELDS,
+    LEGAL_MASK_HAS_FIELDS,
     arrays_to_samples,
     delete_shard_path,
     densify_chunk,
@@ -78,6 +80,10 @@ def _zeros_for_missing_field(
         return np.zeros((n,), dtype=np.uint8)
     if name == "has_is_network_turn":
         return np.zeros((n,), dtype=np.uint8)
+    if name == "is_selfplay":
+        return np.zeros((n,), dtype=np.uint8)
+    if name == "has_is_selfplay":
+        return np.zeros((n,), dtype=np.uint8)
     if name == "categorical_target":
         return np.zeros((n, categorical_bins), dtype=np.float16)
     if name == "has_categorical":
@@ -98,9 +104,9 @@ def _zeros_for_missing_field(
         return np.zeros((n, 3), dtype=np.float16)
     if name == "has_sf_volatility":
         return np.zeros((n,), dtype=np.uint8)
-    if name == "legal_mask":
+    if name in LEGAL_MASK_FIELDS:
         return np.zeros((n, policy_size), dtype=np.uint8)
-    if name == "has_legal_mask":
+    if name in LEGAL_MASK_HAS_FIELDS:
         return np.zeros((n,), dtype=np.uint8)
     raise KeyError(f"unknown replay field {name!r}")
 
@@ -145,11 +151,11 @@ def _concat_sparse_batches(chunks: list[dict[str, np.ndarray]]) -> dict[str, np.
                     )
                 )
         merged = np.concatenate(parts, axis=0)
-        # Keep required fields explicit; drop optional fields that are uniformly absent.
+  # Keep required fields explicit; drop optional fields that are uniformly absent.
         if any(name in chunk for chunk in chunks) or name in ("x", "policy_target", "wdl_target", "priority", "has_policy"):
             out[name] = merged
             continue
-        # Value arrays are only needed when the corresponding has_* flag is present.
+  # Value arrays are only needed when the corresponding has_* flag is present.
         flag_name = _VALUE_TO_FLAG.get(name)
         if flag_name is not None and flag_name in out:
             out[name] = merged
@@ -190,8 +196,8 @@ class DiskReplayBuffer:
         self._prefetch_thread: threading.Thread | None = None
         self._prefetch_generation = 0
 
-        # In-memory hot replay as chunked sparse arrays with logical front offsets.
-        # Sampling stays random over the hot pool while trims avoid front-copy churn.
+  # In-memory hot replay as chunked sparse arrays with logical front offsets.
+  # Sampling stays random over the hot pool while trims avoid front-copy churn.
         self._shuffle_buf: deque[dict[str, np.ndarray]] = deque()
         self._shuffle_sizes: deque[int] = deque()
         self._shuffle_offsets: deque[int] = deque()
@@ -200,26 +206,26 @@ class DiskReplayBuffer:
         self._shuffle_wdl_store = np.zeros((0,), dtype=np.int8)
         self._shuffle_head = 0
 
-        # Write buffer: chunked arrays that accumulate until shard_size, then flush.
+  # Write buffer: chunked arrays that accumulate until shard_size, then flush.
         self._write_buf: list[dict[str, np.ndarray]] = []
         self._write_buf_sizes: list[int] = []
         self._write_buf_rows = 0
 
-        # Disk shard tracking (ordered oldest-first).
+  # Disk shard tracking (ordered oldest-first).
         self._shard_paths: deque[Path] = deque()
         self._shard_sizes: deque[int] = deque()
         self._total_positions = 0
         self._shard_index = 0
 
-        # Counter for scheduling shuffle buffer refreshes.
+  # Counter for scheduling shuffle buffer refreshes.
         self._sample_count = 0
 
-        # KataGo-style surprise weighting: 50% uniform, 50% priority.
+  # KataGo-style surprise weighting: 50% uniform, 50% priority.
         self.surprise_mix = 0.5
         self.draw_cap_frac = float(draw_cap_frac)
         self.wl_max_ratio = float(wl_max_ratio)
 
-        # Scan existing shards on disk (for resume).
+  # Scan existing shards on disk (for resume).
         self._scan_existing_shards()
         self._ensure_prefetch_thread()
         self._schedule_refresh_prefetch()
@@ -529,7 +535,7 @@ class DiskReplayBuffer:
             return
         arrs = prune_storage_arrays(samples_to_arrays(samples))
 
-        # Keep newest data available for training immediately in the hot buffer.
+  # Keep newest data available for training immediately in the hot buffer.
         self._append_shuffle_arrays(arrs)
         self._trim_shuffle_buf()
 
@@ -671,8 +677,8 @@ class DiskReplayBuffer:
         if np.any(idx < 0) or np.any(idx >= self._shuffle_len()):
             raise IndexError("sample index out of shuffle-buffer range")
 
-        # Densify each chunk's selected rows, then merge into output.
-        # This avoids shape mismatches when chunks have different sparse K values.
+  # Densify each chunk's selected rows, then merge into output.
+  # This avoids shape mismatches when chunks have different sparse K values.
         selected: list[tuple[dict[str, np.ndarray], np.ndarray]] = []
         all_keys: set[str] = set()
         start = 0
@@ -687,8 +693,8 @@ class DiskReplayBuffer:
                 all_keys.update(dense_rows.keys())
             start = end
 
-        # Build prototype from ALL selected chunks so optional fields present
-        # in any chunk are allocated (not just those in the first chunk).
+  # Build prototype from ALL selected chunks so optional fields present
+  # in any chunk are allocated (not just those in the first chunk).
         proto: dict[str, np.ndarray] = {}
         for dense_rows, _ in selected:
             for k, v in dense_rows.items():

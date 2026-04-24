@@ -6,6 +6,7 @@ import torch
 from chess_anti_engine.moves import POLICY_SIZE as _PS
 
 from .buffer import ReplaySample
+from .shard import LEGAL_MASK_FIELDS, LEGAL_MASK_HAS_FIELDS
 
 
 def _to_tensor(arr: np.ndarray, *, device: str) -> torch.Tensor:
@@ -58,6 +59,8 @@ def collate(samples: list[ReplaySample], *, device: str) -> dict[str, torch.Tens
     moves_left = np.zeros((len(samples),), dtype=np.float32)
     has_moves_left = np.zeros((len(samples),), dtype=np.float32)
     is_network_turn = np.zeros((len(samples),), dtype=np.bool_)
+    is_selfplay = np.zeros((len(samples),), dtype=np.bool_)
+    has_is_selfplay = np.zeros((len(samples),), dtype=np.float32)
 
     categorical_t = np.zeros((len(samples), 32), dtype=np.float32)
     has_categorical = np.zeros((len(samples),), dtype=np.float32)
@@ -73,8 +76,8 @@ def collate(samples: list[ReplaySample], *, device: str) -> dict[str, torch.Tens
     sf_volatility_t = np.zeros((len(samples), 3), dtype=np.float32)
     has_sf_volatility = np.zeros((len(samples),), dtype=np.float32)
 
-    legal_mask_t = np.zeros((len(samples), _PS), dtype=np.float32)
-    has_legal_mask = np.zeros((len(samples),), dtype=np.float32)
+    mask_arrs = {k: np.zeros((len(samples), _PS), dtype=np.float32) for k in LEGAL_MASK_FIELDS}
+    has_mask_arrs = {k: np.zeros((len(samples),), dtype=np.float32) for k in LEGAL_MASK_HAS_FIELDS}
 
     for i, s in enumerate(samples):
         if s.sf_wdl is not None:
@@ -92,6 +95,9 @@ def collate(samples: list[ReplaySample], *, device: str) -> dict[str, torch.Tens
             has_moves_left[i] = 1.0
         if s.is_network_turn is not None:
             is_network_turn[i] = bool(s.is_network_turn)
+        if s.is_selfplay is not None:
+            is_selfplay[i] = bool(s.is_selfplay)
+            has_is_selfplay[i] = 1.0
         if s.categorical_target is not None:
             categorical_t[i] = s.categorical_target.astype(np.float32, copy=False)
             has_categorical[i] = 1.0
@@ -108,10 +114,11 @@ def collate(samples: list[ReplaySample], *, device: str) -> dict[str, torch.Tens
         if _sf_vol_tgt is not None:
             sf_volatility_t[i] = _sf_vol_tgt.astype(np.float32, copy=False)
             has_sf_volatility[i] = 1.0
-        _legal_mask = getattr(s, "legal_mask", None)
-        if _legal_mask is not None:
-            legal_mask_t[i] = _legal_mask.astype(np.float32, copy=False)
-            has_legal_mask[i] = 1.0
+        for mk, hk in zip(LEGAL_MASK_FIELDS, LEGAL_MASK_HAS_FIELDS, strict=True):
+            v = getattr(s, mk, None)
+            if v is not None:
+                mask_arrs[mk][i] = v.astype(np.float32, copy=False)
+                has_mask_arrs[hk][i] = 1.0
 
     return {
         "x": _to_tensor(x, device=device),
@@ -127,6 +134,8 @@ def collate(samples: list[ReplaySample], *, device: str) -> dict[str, torch.Tens
         "moves_left": _to_tensor(moves_left, device=device),
         "has_moves_left": _to_tensor(has_moves_left, device=device),
         "is_network_turn": _to_tensor(is_network_turn, device=device),
+        "is_selfplay": _to_tensor(is_selfplay, device=device),
+        "has_is_selfplay": _to_tensor(has_is_selfplay, device=device),
         "categorical_t": _to_tensor(categorical_t, device=device),
         "has_categorical": _to_tensor(has_categorical, device=device),
         "policy_soft_t": _to_tensor(policy_soft_t, device=device),
@@ -137,8 +146,8 @@ def collate(samples: list[ReplaySample], *, device: str) -> dict[str, torch.Tens
         "has_volatility": _to_tensor(has_volatility, device=device),
         "sf_volatility_t": _to_tensor(sf_volatility_t, device=device),
         "has_sf_volatility": _to_tensor(has_sf_volatility, device=device),
-        "legal_mask": _to_tensor(legal_mask_t, device=device),
-        "has_legal_mask": _to_tensor(has_legal_mask, device=device),
+        **{k: _to_tensor(mask_arrs[k], device=device) for k in LEGAL_MASK_FIELDS},
+        **{k: _to_tensor(has_mask_arrs[k], device=device) for k in LEGAL_MASK_HAS_FIELDS},
     }
 
 
@@ -167,6 +176,8 @@ def collate_arrays(arrs: dict[str, np.ndarray], *, device: str) -> dict[str, tor
         ("moves_left", (n,), np.float32, torch.float32),
         ("has_moves_left", (n,), np.float32, torch.float32),
         ("is_network_turn", (n,), np.bool_, torch.bool),
+        ("is_selfplay", (n,), np.bool_, torch.bool),
+        ("has_is_selfplay", (n,), np.float32, torch.float32),
         ("categorical_t", (n, 32), np.float32, torch.float32, "categorical_target"),
         ("has_categorical", (n,), np.float32, torch.float32),
         ("policy_soft_t", (n, policy_t.shape[1]), np.float32, torch.float32, "policy_soft_target"),
@@ -177,8 +188,8 @@ def collate_arrays(arrs: dict[str, np.ndarray], *, device: str) -> dict[str, tor
         ("has_volatility", (n,), np.float32, torch.float32),
         ("sf_volatility_t", (n, 3), np.float32, torch.float32, "sf_volatility_target"),
         ("has_sf_volatility", (n,), np.float32, torch.float32),
-        ("legal_mask", (n, _PS), np.float32, torch.float32),
-        ("has_legal_mask", (n,), np.float32, torch.float32),
+        *[(k, (n, _PS), np.float32, torch.float32) for k in LEGAL_MASK_FIELDS],
+        *[(k, (n,), np.float32, torch.float32) for k in LEGAL_MASK_HAS_FIELDS],
     )
     for spec in optional_specs:
         if len(spec) == 4:

@@ -43,11 +43,10 @@ from chess_anti_engine.tune.distributed_runtime import (
     _publish_distributed_trial_state,
 )
 from chess_anti_engine.tune.replay_exchange import _share_top_replay_each_iteration
-from chess_anti_engine.utils.atomic import atomic_write_text
 from chess_anti_engine.tune.trainable_config_ops import _play_batch_kwargs
 from chess_anti_engine.tune.trainable_metrics import (
-    _curriculum_winrate_raw_or_none,
     _compute_train_step_budget,
+    _curriculum_winrate_raw_or_none,
     _games_per_iter_for_iteration,
     _iteration_pause_metrics,
     _opponent_strength,
@@ -69,6 +68,7 @@ from chess_anti_engine.tune.trial_config import (
     TrainingResult,
     TrialConfig,
 )
+from chess_anti_engine.utils.atomic import atomic_write_text
 
 
 def _gate_check(
@@ -88,7 +88,7 @@ def _gate_check(
     gate can admit regressions by testing against an unrestricted opponent.
     """
     kw = _play_batch_kwargs(tc, ds=ds)
-    # Gate: exploit mode — low temperature, no playout cap, minimal search.
+  # Gate: exploit mode — low temperature, no playout cap, minimal search.
     kw["temp"] = TemperatureConfig(temperature=0.3, drop_plies=0, after=0.0, decay_start_move=10, decay_moves=30, endgame=0.1)
     kw["search"] = dataclasses.replace(kw["search"], simulations=tc.gate_mcts_sims, playout_cap_fraction=1.0, fast_simulations=0)
     kw["diff_focus"] = dataclasses.replace(kw["diff_focus"], enabled=False)
@@ -185,7 +185,6 @@ def _run_training_and_gating(
     gate_match_idx: int,
     gate_state_path: Path,
     distributed_server_root: Path,
-    distributed_dirs: dict,
     iteration_idx: int,
     iteration_zero_based: int,
     trial_id: str,
@@ -226,7 +225,7 @@ def _run_training_and_gating(
             ):
                 steps = min(steps, tc.salvage_startup_post_share_max_train_steps)
 
-        # Save model state for potential rollback (net gating).
+  # Save model state for potential rollback (net gating).
         pre_train_state = None
         if tc.gate_games > 0 and (iteration_zero_based % tc.gate_interval == 0):
             pre_train_state = {
@@ -253,7 +252,7 @@ def _run_training_and_gating(
             steps=steps,
         )
 
-        # Net gating: play gate_games and reject if winrate < threshold.
+  # Net gating: play gate_games and reject if winrate < threshold.
         if pre_train_state is not None and tc.gate_games > 0:
             gate_wr, gate_w, gate_d, gate_l = _gate_check(
                 trainer.model,
@@ -320,7 +319,6 @@ def _run_pid_and_eval(
     pid: DifficultyPID | None,
     sf: StockfishUCI | StockfishPool | None,
     sp_result: SelfplayResult,
-    iteration_zero_based: int,
     opp_strength_ema: float,
     opp_ema_alpha: float,
     ds: DifficultyState,
@@ -337,7 +335,7 @@ def _run_pid_and_eval(
     total_d = sp_result.total_d
     total_l = sp_result.total_l
 
-    # --- Derived game stats ---
+  # --- Derived game stats ---
     gen = float(max(1, int(sp_result.total_games_generated)))
     sp = float(max(1, int(sp_result.total_selfplay_games)))
     cur = float(max(1, int(sp_result.total_curriculum_games)))
@@ -346,7 +344,7 @@ def _run_pid_and_eval(
         wins=total_w, draws=total_d, losses=total_l,
     )
 
-    # --- PID update ---
+  # --- PID update ---
     pid_update = None
     pid_ema_wr = float(pid.ema_winrate) if pid is not None else 0.0
     sf_nodes_next = int(sf_nodes_used)
@@ -361,7 +359,7 @@ def _run_pid_and_eval(
 
     wdl_regret_next = float(pid.wdl_regret) if pid is not None else -1.0
 
-    # --- Opponent strength ---
+  # --- Opponent strength ---
     opp_strength = _opponent_strength(
         sf_nodes=int(sf_nodes_used),
         ema_winrate=float(pid_ema_wr),
@@ -412,9 +410,7 @@ def _run_selfplay_phase(
     buf,
     holdout_buf,
     holdout_frozen: bool,
-    device: str,
     rng,
-    sf,
     distributed_dirs: dict,
     distributed_server_root: Path,
     distributed_worker_procs: list,
@@ -439,7 +435,7 @@ def _run_selfplay_phase(
     """
     total_games = _games_per_iter_for_iteration(tc, iteration_idx)
 
-    # --- Play games (distributed workers upload shards; we ingest) ---
+  # --- Play games (distributed workers upload shards; we ingest) ---
     ingest_t0 = time.monotonic()
     total_sf_d6 = 0.0
     total_sf_d6_n = 0
@@ -515,6 +511,8 @@ def _run_selfplay_phase(
     distributed_stale_positions = int(ingest_summary["stale_positions"])
     distributed_stale_games = int(ingest_summary["stale_games"])
     replay_positions_ingested = int(ingest_summary["positions_replay_added"])
+    ingest_is_selfplay_tagged = int(ingest_summary.get("ingest_is_selfplay_tagged", 0))
+    ingest_is_selfplay_true = int(ingest_summary.get("ingest_is_selfplay_true", 0))
     prev_published_model_sha = str(published_model_sha)
 
     if iteration_zero_based % 10 == 0:
@@ -525,7 +523,7 @@ def _run_selfplay_phase(
 
     ingest_ms = (time.monotonic() - ingest_t0) * 1000.0
 
-    # --- Retry if distributed returned no games ---
+  # --- Retry if distributed returned no games ---
     if _should_retry_iteration_without_games(total_games_generated=total_games_generated):
         print(
             "[trial] distributed iteration waiting for fresh selfplay: "
@@ -540,7 +538,7 @@ def _run_selfplay_phase(
             distributed_inference_broker_proc,
         )
 
-    # --- Export selfplay shards for sibling trials ---
+  # --- Export selfplay shards for sibling trials ---
     _selfplay_export_path = local_shard_path(selfplay_shards_dir, iteration_idx)
     if _new_selfplay_shards:
         _export_batches: list[dict[str, np.ndarray]] = []
@@ -561,13 +559,13 @@ def _run_selfplay_phase(
         except Exception:
             pass
 
-    # --- Growing window ---
+  # --- Growing window ---
     if current_window < tc.replay_window_max:
         current_window = min(current_window + tc.replay_window_growth, tc.replay_window_max)
         if buf.capacity < current_window:
             buf.capacity = current_window
 
-    # --- Cross-trial replay sharing ---
+  # --- Cross-trial replay sharing ---
     shared_summary: dict = {
         "source_trials_selected": 0,
         "source_trials_ingested": 0,
@@ -628,6 +626,8 @@ def _run_selfplay_phase(
         total_plies_loss=total_plies_loss,
         total_positions=total_positions,
         replay_positions_ingested=replay_positions_ingested,
+        ingest_is_selfplay_tagged=ingest_is_selfplay_tagged,
+        ingest_is_selfplay_true=ingest_is_selfplay_true,
         total_sf_d6=total_sf_d6,
         total_sf_d6_n=total_sf_d6_n,
         distributed_stale_positions=distributed_stale_positions,
@@ -675,8 +675,8 @@ def _finalize_iteration(
     """End-of-iteration bookkeeping: PID persist, reporting, CSV, prune."""
     wdl_regret_used = ds.wdl_regret
     sf_nodes_used = ds.sf_nodes
-    # Persist PID state AFTER observe() so checkpoints carry the
-    # post-iteration difficulty.
+  # Persist PID state AFTER observe() so checkpoints carry the
+  # post-iteration difficulty.
     if pid is not None:
         try:
             atomic_write_text(
@@ -686,19 +686,19 @@ def _finalize_iteration(
         except Exception:
             pass
 
-    # Save top-3 checkpoints by lowest regret (best-effort). Write to a
-    # persistent cross-trial location so Ray's --tune-keep-last-experiments
-    # rotation doesn't take them out with the trial dir.
+  # Save top-3 checkpoints by lowest regret (best-effort). Write to a
+  # persistent cross-trial location so Ray's --tune-keep-last-experiments
+  # rotation doesn't take them out with the trial dir.
     try:
         cross_trial_dir = getattr(tc, "best_regret_checkpoints_dir", None)
         if cross_trial_dir and str(cross_trial_dir).strip():
             _best_regret_dir = Path(str(cross_trial_dir)).expanduser()
             if not _best_regret_dir.is_absolute():
-                # Ray workers run with cwd set to a per-trial tmp dir, so
-                # Path.cwd() would silently write to /tmp/ray/... which gets
-                # wiped on process restart. Anchor relative paths to the
-                # project root (yaml file's grandparent, since yaml lives in
-                # <project>/configs/).
+  # Ray workers run with cwd set to a per-trial tmp dir, so
+  # Path.cwd() would silently write to /tmp/ray/... which gets
+  # wiped on process restart. Anchor relative paths to the
+  # project root (yaml file's grandparent, since yaml lives in
+  # <project>/configs/).
                 _yaml = getattr(tc, "_yaml_config_path", None)
                 if _yaml:
                     _best_regret_dir = Path(_yaml).resolve().parent.parent / _best_regret_dir
@@ -721,7 +721,7 @@ def _finalize_iteration(
         )
         traceback.print_exc()
 
-    # Puzzle evaluation (overspecialization canary).
+  # Puzzle evaluation (overspecialization canary).
     puzzle_dict = _run_puzzle_eval_if_due(
         trainer.model, puzzle_suite,
         tc=tc, device=device, rng=rng,
@@ -762,7 +762,7 @@ def _finalize_iteration(
 
     tune_report_fn(report_dict, checkpoint=checkpoint)
 
-    # Write compact status row (best-effort — never crash the trial).
+  # Write compact status row (best-effort — never crash the trial).
     _write_status_csv_row(
         status_csv_path,
         iteration_idx=iteration_idx,
@@ -786,7 +786,7 @@ def _finalize_iteration(
         startup_source=restore.startup_source,
     )
 
-    # Best-effort: keep disk usage bounded.
+  # Best-effort: keep disk usage bounded.
     if (completed_iterations + 1) % 5 == 0:
         _prune_trial_checkpoints(
             trial_dir=trial_dir,
