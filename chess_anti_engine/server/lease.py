@@ -259,8 +259,8 @@ def pick_trial_for_lease(
         lag = max(0, int(max_iter) - int(iter_idx))
         active = int(counts.get(tid, 0))
         throughput = float(throughputs.get(tid, 0.0))
-        # Primary goal: keep active trials close in iteration progress.
-        # Only use throughput as a secondary tiebreaker once lag is equal.
+  # Primary goal: keep active trials close in iteration progress.
+  # Only use throughput as a secondary tiebreaker once lag is equal.
         return (-lag, active, throughput, tid)
 
     return min(eligible, key=_score)
@@ -286,9 +286,12 @@ def assign_trial_lease(
     active_leases = prune_expired_leases(leases_root=leases_root, now_unix=now_unix)
     requested_trial_id = normalize_trial_id(requested_trial_id)
     requested_lease_id = str(requested_lease_id or "").strip()
-    worker_id = ""
-    if isinstance(worker_info, dict):
-        worker_id = str(worker_info.get("worker_id") or "").strip()
+    # Defense-in-depth: app.py already normalizes worker_info, but a non-HTTP
+    # caller (test, future internal path) passing None or a non-dict payload
+    # would otherwise 500 with AttributeError on the .get() below.
+    if not isinstance(worker_info, dict):
+        worker_info = {}
+    worker_id = str(worker_info.get("worker_id") or "").strip()
 
     if requested_lease_id:
         existing = load_lease(leases_root=leases_root, lease_id=requested_lease_id)

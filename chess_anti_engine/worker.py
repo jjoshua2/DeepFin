@@ -1421,6 +1421,11 @@ class WorkerSession:
         "sf_nodes",
         "opponent_wdl_regret_limit", "mcts_simulations", "fast_simulations",
         "selfplay_fraction",
+        # Syzygy knobs affect adjudication + in-search overrides — without a
+        # restart, workers keep producing shards under stale TB settings until
+        # an unrelated key changes. Flagged by Codex adversarial review.
+        "syzygy_path", "syzygy_policy", "syzygy_adjudicate",
+        "syzygy_adjudicate_fraction", "syzygy_in_search",
     )
 
     def _run_selfplay(self, manifest: dict) -> None:
