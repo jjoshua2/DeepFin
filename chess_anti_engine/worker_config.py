@@ -34,9 +34,9 @@ def save_worker_config(path: str | Path, cfg: dict[str, Any]) -> None:
     p = Path(path)
     atomic_write_text(p, yaml.safe_dump(cfg, sort_keys=True))
 
-    # Best-effort: if config contains a password, lock down permissions.
+  # Best-effort: if config contains a password, lock down permissions.
     try:
         if "password" in cfg and cfg.get("password"):
             os.chmod(p, 0o600)
-    except Exception:
-        pass
+    except OSError:
+        pass  # Windows / non-POSIX filesystem — chmod is best-effort

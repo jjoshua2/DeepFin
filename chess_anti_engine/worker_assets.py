@@ -13,8 +13,8 @@ def _ensure_executable(path: Path) -> None:
         if os.name != "nt":
             st = os.stat(path)
             os.chmod(path, st.st_mode | 0o111)
-    except Exception:
-        pass
+    except OSError:
+        pass  # stat/chmod refused by filesystem — downstream will fail loud if exec matters
 
 
 def _download(

@@ -16,9 +16,9 @@ from typing import Callable
 
 def _tmp_path_for(path: Path, *, preserve_suffix: bool = False) -> Path:
     if preserve_suffix:
-        # e.g. foo.npz -> foo.tmp.<pid>.<uuid>.npz
+  # e.g. foo.npz -> foo.tmp.<pid>.<uuid>.npz
         return path.with_name(f"{path.stem}.tmp.{os.getpid()}.{uuid.uuid4().hex}{path.suffix}")
-    # e.g. foo.json -> foo.json.tmp.<pid>.<uuid>  (does not match "*.json" glob)
+  # e.g. foo.json -> foo.json.tmp.<pid>.<uuid>  (does not match "*.json" glob)
     return path.with_name(f"{path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}")
 
 
@@ -48,10 +48,9 @@ def atomic_write(
         os.replace(str(tmp), str(path))
     finally:
         try:
-            if tmp.exists():
-                tmp.unlink()
-        except Exception:
-            pass
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass  # best-effort temp cleanup; os.replace succeeded or original error surfaced
 
 
 def atomic_write_bytes(path: Path, data: bytes) -> None:

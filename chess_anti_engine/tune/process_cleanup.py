@@ -24,7 +24,8 @@ def _list_matching_pids(
                 ["ps", "-eo", "pid=,args="],
                 text=True,
             )
-        except Exception:
+        except (subprocess.CalledProcessError, OSError):
+  # ps unavailable or failed — nothing we can match against
             return []
 
     matches: list[int] = []
@@ -35,7 +36,8 @@ def _list_matching_pids(
         pid_raw, _, cmd = line.partition(" ")
         try:
             pid = int(pid_raw)
-        except Exception:
+        except ValueError:
+  # header row or malformed ps output — skip
             continue
         if pid in excluded:
             continue
@@ -62,7 +64,8 @@ def _terminate_pid(pid: int, *, timeout_s: float = 5.0) -> bool:
         os.kill(int(pid), signal.SIGTERM)
     except ProcessLookupError:
         return True
-    except Exception:
+    except (PermissionError, OSError):
+  # not our process or kernel refused — treat as failure
         return False
 
     deadline = time.monotonic() + float(timeout_s)
@@ -75,7 +78,8 @@ def _terminate_pid(pid: int, *, timeout_s: float = 5.0) -> bool:
         os.kill(int(pid), signal.SIGKILL)
     except ProcessLookupError:
         return True
-    except Exception:
+    except (PermissionError, OSError):
+  # not our process or kernel refused — treat as failure
         return False
     return not _pid_exists(int(pid))
 
@@ -87,13 +91,13 @@ def terminate_matching_processes(
     exclude_pids: Iterable[int] = (),
     timeout_s: float = 5.0,
 ) -> list[int]:
-    killed: list[int] = []
-    for pid in _list_matching_pids(
-        module=module,
-        required_terms=required_terms,
-        exclude_pids=exclude_pids,
-    ):
-        if _terminate_pid(pid, timeout_s=float(timeout_s)):
-            killed.append(int(pid))
-    return killed
+    return [
+        int(pid)
+        for pid in _list_matching_pids(
+            module=module,
+            required_terms=required_terms,
+            exclude_pids=exclude_pids,
+        )
+        if _terminate_pid(pid, timeout_s=float(timeout_s))
+    ]
 

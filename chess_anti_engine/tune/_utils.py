@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
+
 def stable_seed_u32(*parts: object) -> int:
     """Deterministic 32-bit seed from arbitrary parts."""
     h = hashlib.blake2b(digest_size=8)
@@ -23,8 +24,8 @@ def slice_array_batch(arrs: dict[str, np.ndarray], idxs: np.ndarray) -> dict[str
 def concat_array_batches(batches: list[dict[str, np.ndarray]]) -> dict[str, np.ndarray]:
     if not batches:
         raise ValueError("cannot concatenate empty replay shard list")
-    # Use intersection so shards missing optional keys (e.g. future_policy_target
-    # absent from bootstrap data) don't crash the concat.
+  # Use intersection so shards missing optional keys (e.g. future_policy_target
+  # absent from bootstrap data) don't crash the concat.
     keys = set(batches[0].keys())
     for batch in batches[1:]:
         keys &= set(batch.keys())
@@ -36,7 +37,7 @@ def concat_array_batches(batches: list[dict[str, np.ndarray]]) -> dict[str, np.n
 
 def to_nonnegative_int(v: object, default: int = 0) -> int:
     try:
-        iv = int(v)  # type: ignore[arg-type]
+        iv = int(v)  # type: ignore[arg-type] # object input validated by try/except
         return iv if iv >= 0 else default
     except Exception:
         return default
@@ -51,12 +52,12 @@ def terminate_process(proc: subprocess.Popen[bytes] | None, *, timeout_s: float 
     try:
         proc.terminate()
         proc.wait(timeout=float(timeout_s))
-    except Exception:
+    except (subprocess.TimeoutExpired, ProcessLookupError):
         try:
             proc.kill()
             proc.wait(timeout=2.0)
-        except Exception:
-            pass
+        except (subprocess.TimeoutExpired, ProcessLookupError):
+            pass  # stuck or gone — caller is on a cleanup path either way
 
 
 def resolve_local_override_root(

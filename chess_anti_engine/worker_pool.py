@@ -30,8 +30,8 @@ def _terminate_children(children: list[subprocess.Popen[bytes]], *, timeout_s: f
         if proc.poll() is None:
             try:
                 proc.terminate()
-            except Exception:
-                pass
+            except ProcessLookupError:
+                pass  # already exited between poll() and terminate()
     deadline = time.time() + float(timeout_s)
     for proc in children:
         if proc.poll() is not None:
@@ -39,17 +39,17 @@ def _terminate_children(children: list[subprocess.Popen[bytes]], *, timeout_s: f
         remaining = max(0.0, deadline - time.time())
         try:
             proc.wait(timeout=remaining)
-        except Exception:
+        except subprocess.TimeoutExpired:
             try:
                 proc.kill()
-            except Exception:
+            except ProcessLookupError:
                 pass
     for proc in children:
         if proc.poll() is None:
             try:
                 proc.wait(timeout=1.0)
-            except Exception:
-                pass
+            except subprocess.TimeoutExpired:
+                pass  # stuck — caller is exiting anyway, let OS reap
 
 
 def main() -> None:
@@ -93,7 +93,7 @@ def main() -> None:
 
     stop = False
 
-    def _handle_stop(signum: int, frame: object) -> None:  # skylos: ignore  # pylint: disable=unused-argument  # signal handler signature
+    def _handle_stop(_signum: int, _frame: object) -> None:  # skylos: ignore  # pylint: disable=unused-argument  # signal handler signature
         nonlocal stop
         stop = True
 

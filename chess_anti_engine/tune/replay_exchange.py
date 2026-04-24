@@ -16,12 +16,12 @@ from chess_anti_engine.replay.shard import (
     iter_shard_paths,
     load_shard_arrays,
 )
-from chess_anti_engine.utils.atomic import atomic_write_text
 from chess_anti_engine.tune._utils import (
     resolve_local_override_root,
     slice_array_batch,
     to_nonnegative_int,
 )
+from chess_anti_engine.utils.atomic import atomic_write_text
 
 log = logging.getLogger(__name__)
 
@@ -52,11 +52,13 @@ def _read_last_jsonl_row(path: Path) -> dict | None:
                     continue
                 try:
                     row = json.loads(ln)
-                except Exception:
+                except (json.JSONDecodeError, UnicodeDecodeError):
+  # partially flushed line — skip and keep reading
                     continue
                 if isinstance(row, dict):
                     last = row
-    except Exception:
+    except OSError:
+  # file vanished or unreadable mid-iteration — caller retries
         return None
     return last
 
@@ -74,11 +76,13 @@ def _read_jsonl_rows(path: Path) -> list[dict]:
                     continue
                 try:
                     row = json.loads(ln)
-                except Exception:
+                except (json.JSONDecodeError, UnicodeDecodeError):
+  # partially flushed line — skip and keep reading
                     continue
                 if isinstance(row, dict):
                     rows.append(row)
-    except Exception:
+    except OSError:
+  # file vanished or unreadable mid-iteration — caller retries
         return []
     return rows
 
@@ -94,8 +98,8 @@ def _all_trial_result_rows(trial_dir: Path) -> list[dict]:
 
 
 def _metric_from_result_row(row: dict) -> float | None:
-    # Prefer EMA-smoothed metric — less noisy for GPBT exploit/explore
-    # decisions.  Falls back to raw opponent_strength for older rows.
+  # Prefer EMA-smoothed metric — less noisy for GPBT exploit/explore
+  # decisions.  Falls back to raw opponent_strength for older rows.
     v = row.get("opponent_strength_ema", row.get("opponent_strength"))
     if isinstance(v, (int, float)):
         fv = float(v)
@@ -158,7 +162,7 @@ def _estimate_recent_shard_count(
     if pa <= 0:
         return 0
     ss = max(1, int(shard_size))
-    # Positions entering train replay are roughly (1-holdout_fraction) of total.
+  # Positions entering train replay are roughly (1-holdout_fraction) of total.
     hf = max(0.0, min(0.99, float(holdout_fraction)))
     train_positions = max(1, int(math.ceil(float(pa) * (1.0 - hf))))
     return max(1, int(math.ceil(float(train_positions) / float(ss))))
@@ -297,7 +301,7 @@ def _refresh_replay_shards_on_exploit(
         keep_older = set(local_older[-keep_older_n:]) if keep_older_n > 0 else set()
         keep_set = keep_recent | keep_older
 
-        # Keep at least one local shard to avoid an empty replay on corner cases.
+  # Keep at least one local shard to avoid an empty replay on corner cases.
         if not keep_set and local_shards:
             keep_set.add(local_shards[-1])
 
@@ -433,8 +437,8 @@ def _share_top_replay_each_iteration(
         if len(unseen_snaps) > max_unseen_iters_per_source:
             unseen_snaps = unseen_snaps[-max_unseen_iters_per_source:]
 
-        # Prefer the clean selfplay-only export dir; fall back to replay_shards
-        # (old behaviour) if selfplay_shards doesn't exist yet.
+  # Prefer the clean selfplay-only export dir; fall back to replay_shards
+  # (old behaviour) if selfplay_shards doesn't exist yet.
         src_dir = td / "selfplay_shards"
         use_selfplay_export = src_dir.is_dir() and bool(iter_shard_paths(src_dir))
         if not use_selfplay_export:
@@ -457,7 +461,7 @@ def _share_top_replay_each_iteration(
                 maybe = find_shard_path(src_dir, snap_iter)
                 iter_shards = [maybe] if maybe is not None else []
             else:
-                # Legacy fallback: estimate which shards belong to this iter.
+  # Legacy fallback: estimate which shards belong to this iter.
                 shards = iter_shard_paths(src_dir)
                 if source_skip_newest > 0:
                     shards = shards[:-source_skip_newest] if len(shards) > source_skip_newest else []
