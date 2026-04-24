@@ -14,7 +14,6 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-
 from typing import Any, Callable, TypeVar, cast, overload
 
 import numpy as np
@@ -26,7 +25,6 @@ from chess_anti_engine.inference import (
     SlotInferenceClient,
     ThreadedBatchEvaluator,
 )
-from chess_anti_engine.utils import sha256_file as _sha256_file
 from chess_anti_engine.model import ModelConfig, build_model, load_state_dict_tolerant
 from chess_anti_engine.moves.encode import POLICY_SIZE
 from chess_anti_engine.replay.shard import (
@@ -44,6 +42,7 @@ from chess_anti_engine.selfplay.config import (
 from chess_anti_engine.selfplay.match import play_match_batch
 from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.stockfish import StockfishPool, StockfishUCI
+from chess_anti_engine.utils import sha256_file as _sha256_file
 from chess_anti_engine.utils.versioning import version_lt
 from chess_anti_engine.version import PACKAGE_NAME, PACKAGE_VERSION, PROTOCOL_VERSION
 from chess_anti_engine.worker_assets import (
@@ -54,8 +53,8 @@ from chess_anti_engine.worker_assets import (
     _prune_cached_models,
 )
 from chess_anti_engine.worker_buffer import (
-    _BufferedUpload,
     _buffer_add_completed_game,
+    _BufferedUpload,
     _flush_upload_buffer_to_pending,
     _maybe_flush_upload_buffer,
     _pending_elapsed_path,
@@ -119,7 +118,7 @@ def _collect_worker_info(*, device: str) -> dict[str, object]:
 
 
 def _pip_install_wheel(wheel_path: Path) -> None:
-    # Use a PEP508 direct reference so we can request extras (installs worker deps like requests).
+  # Use a PEP508 direct reference so we can request extras (installs worker deps like requests).
     uri = wheel_path.resolve().as_uri()
     req = f"{PACKAGE_NAME}[worker] @ {uri}"
     cmd = [sys.executable, "-m", "pip", "install", "--upgrade", req]
@@ -127,7 +126,7 @@ def _pip_install_wheel(wheel_path: Path) -> None:
 
 
 def _restart_process() -> None:
-    # Avoid infinite update loops.
+  # Avoid infinite update loops.
     os.environ["CAE_SELF_UPDATED"] = "1"
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
@@ -140,7 +139,7 @@ def _maybe_apply_fp8_inference(model: torch.nn.Module) -> torch.nn.Module:
     Requires torch.compile afterwards for actual speedup.
     """
     try:
-        from torchao.quantization import (
+        from torchao.quantization import (  # optional dep
             Float8DynamicActivationFloat8WeightConfig,
             PerRow,
             quantize_,
@@ -195,23 +194,23 @@ def _configure_shared_compile_cache(*, cache_dir: Path) -> None:
     triton_dir.mkdir(parents=True, exist_ok=True)
     os.environ["TORCHINDUCTOR_CACHE_DIR"] = str(inductor_dir)
     os.environ["TRITON_CACHE_DIR"] = str(triton_dir)
-    # Enable FX graph cache so compiled graphs persist across restarts.
+  # Enable FX graph cache so compiled graphs persist across restarts.
     os.environ["TORCHINDUCTOR_FX_GRAPH_CACHE"] = "1"
 
 
 def main() -> None:
-    # Let PyTorch return unused CUDA memory to the driver instead of hoarding
-    # it in the caching allocator.  Reduces peak VRAM when multiple compiled
-    # workers share one GPU.
+  # Let PyTorch return unused CUDA memory to the driver instead of hoarding
+  # it in the caching allocator.  Reduces peak VRAM when multiple compiled
+  # workers share one GPU.
     import os
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
-    # Enable TF32 for any float32 ops that remain outside autocast BF16 scope.
+  # Enable TF32 for any float32 ops that remain outside autocast BF16 scope.
     import torch
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
-    # Limit inductor compile workers to reduce memory — each worker subprocess
-    # accumulates compiled kernels and can grow to >1GB.
+  # Limit inductor compile workers to reduce memory — each worker subprocess
+  # accumulates compiled kernels and can grow to >1GB.
     os.environ.setdefault("TORCH_COMPILE_THREADS", "1")
 
     ap = argparse.ArgumentParser(description="Distributed selfplay worker")
@@ -233,8 +232,8 @@ def main() -> None:
         default=None,
         help="Worker YAML config path. Default: <work_dir>/worker.yaml",
     )
-    # Default behavior: save config + password to make volunteer setup one command.
-    # Users can opt out with --no-save-config / --no-save-password.
+  # Default behavior: save config + password to make volunteer setup one command.
+  # Users can opt out with --no-save-config / --no-save-password.
     ap.set_defaults(save_config=True)
     ap.set_defaults(save_password=True)
     ap.add_argument(
@@ -330,16 +329,16 @@ def main() -> None:
 
     ap.add_argument("--stockfish-path", type=str, default=None)
 
-    # Server-managed strength knobs (defaults come from manifest recommended_worker).
+  # Server-managed strength knobs (defaults come from manifest recommended_worker).
     ap.add_argument("--sf-nodes", type=int, default=None)
     ap.add_argument("--sf-multipv", type=int, default=None)
     ap.add_argument("--sf-policy-temp", type=float, default=None)
     ap.add_argument("--sf-policy-label-smooth", type=float, default=None)
 
-    # Local performance knob
+  # Local performance knob
     ap.add_argument("--sf-workers", type=int, default=None)
 
-    # selfplay: if omitted, defaults come from server manifest `recommended_worker`.
+  # selfplay: if omitted, defaults come from server manifest `recommended_worker`.
     ap.add_argument("--games-per-batch", type=int, default=None)
     ap.add_argument("--max-plies", type=int, default=None)
     ap.add_argument("--mcts", type=str, default=None, choices=["puct", "gumbel"])
@@ -374,13 +373,13 @@ def main() -> None:
         help="Hard cap on in-memory buffered positions. New game batches are dropped with a warning once this is exceeded — a backstop for when disk flush keeps failing.",
     )
 
-    # Server-managed exploration knobs
+  # Server-managed exploration knobs
     ap.add_argument("--temperature", type=float, default=None)
     ap.add_argument("--temperature-decay-start-move", type=int, default=None)
     ap.add_argument("--temperature-decay-moves", type=int, default=None)
     ap.add_argument("--temperature-endgame", type=float, default=None)
 
-    # Opening diversification: if omitted, defaults come from server manifest `recommended_worker`.
+  # Opening diversification: if omitted, defaults come from server manifest `recommended_worker`.
     ap.add_argument("--opening-book-prob", type=float, default=None)
     ap.add_argument("--opening-book-max-plies", type=int, default=None)
     ap.add_argument("--opening-book-max-games", type=int, default=None)
@@ -404,7 +403,7 @@ def main() -> None:
 
     args = ap.parse_args()
 
-    # Optional debug logging (off by default).
+  # Optional debug logging (off by default).
     log = logging.getLogger("chess_anti_engine.worker")
     if args.log_file:
         level = str(args.log_level).lower()
@@ -423,24 +422,24 @@ def main() -> None:
 
     log.info("worker starting version=%s protocol=%s", str(PACKAGE_VERSION), int(PROTOCOL_VERSION))
 
-    # Load config (if present) and merge defaults.
+  # Load config (if present) and merge defaults.
     work_dir = Path(args.work_dir)
     cfg_path = Path(args.config) if args.config is not None else (work_dir / "worker.yaml")
     cfg = load_worker_config(cfg_path)
 
-    # Remember which knobs were explicitly pinned on the CLI.
+  # Remember which knobs were explicitly pinned on the CLI.
     pinned_games_per_batch_cli = args.games_per_batch is not None
 
-    # Merge: CLI wins; config provides defaults.
+  # Merge: CLI wins; config provides defaults.
     args.server_url = args.server_url or cfg.get("server_url") or "http://127.0.0.1:45453"
     args.trial_id = args.trial_id or cfg.get("trial_id")
     args.username = args.username or cfg.get("username")
 
-    # password-file: CLI wins; config can provide a default.
+  # password-file: CLI wins; config can provide a default.
     if args.password_file is None and cfg.get("password_file"):
         args.password_file = str(cfg.get("password_file"))
 
-    # Optional persisted flags in worker.yaml
+  # Optional persisted flags in worker.yaml
     if (not bool(args.self_update)) and bool(cfg.get("self_update", False)):
         args.self_update = True
     if (not bool(args.stockfish_from_server)) and bool(cfg.get("stockfish_from_server", False)):
@@ -457,8 +456,8 @@ def main() -> None:
     if "upload_flush_seconds" in cfg:
         args.upload_flush_seconds = float(cfg["upload_flush_seconds"])
 
-    # --password-file (CLI) always wins over the saved password in worker.yaml
-    # so that a fresh session with a rotated password loads correctly.
+  # --password-file (CLI) always wins over the saved password in worker.yaml
+  # so that a fresh session with a rotated password loads correctly.
     if args.password_file:
         try:
             p = Path(str(args.password_file))
@@ -475,13 +474,13 @@ def main() -> None:
             "--stockfish-path is required (or set stockfish_path in worker config), unless --stockfish-from-server is enabled"
         )
 
-    # If calibrate is requested, force auto-tune on.
-    if bool(args.calibrate):
+  # If calibrate is requested, force auto-tune on.
+    if args.calibrate:
         args.auto_tune = True
         args.save_config = True
 
-    # Hardening: prevent accidental/drive-by messing with server-managed knobs.
-    # To use --allow-overrides, require an explicit env var on top of the CLI flag.
+  # Hardening: prevent accidental/drive-by messing with server-managed knobs.
+  # To use --allow-overrides, require an explicit env var on top of the CLI flag.
     if bool(getattr(args, "allow_overrides", False)) and os.environ.get("CHESS_ANTI_ENGINE_DEBUG_OVERRIDES") != "1":
         raise SystemExit(
             "--allow-overrides is disabled by default. Set CHESS_ANTI_ENGINE_DEBUG_OVERRIDES=1 to enable."
@@ -495,7 +494,7 @@ def main() -> None:
     if args.password is None:
         args.password = getpass.getpass("Password: ")
 
-    # If user allows it, persist password in config.
+  # If user allows it, persist password in config.
     if bool(args.save_config) and bool(args.save_password):
         cfg["password"] = str(args.password)
 
@@ -554,7 +553,7 @@ class WorkerSession:
         self.arena_pending_dir.mkdir(parents=True, exist_ok=True)
         self.arena_uploaded_dir.mkdir(parents=True, exist_ok=True)
 
-        # Local throughput override that can be tuned and persisted.
+  # Local throughput override that can be tuned and persisted.
         self.games_per_batch_local = int(args.games_per_batch) if args.games_per_batch is not None else None
         self.worker_id = str(cfg.get("worker_id") or "").strip()
         if not self.worker_id:
@@ -563,7 +562,7 @@ class WorkerSession:
 
         self.machine_id = str(cfg.get("machine_name") or "").strip() or socket.gethostname()
 
-        # Save initial config (best effort).
+  # Save initial config (best effort).
         self._persist_cfg()
 
         self.device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -574,7 +573,7 @@ class WorkerSession:
 
         self.rng = np.random.default_rng(int(args.seed))
 
-        # Validate server-managed overrides once at startup (args never change).
+  # Validate server-managed overrides once at startup (args never change).
         if not bool(args.allow_overrides):
             _server_managed_keys = [
                 "max_plies", "mcts", "mcts_simulations", "playout_cap_fraction",
@@ -594,10 +593,11 @@ class WorkerSession:
                     f"Remove selfplay/strength flags ({', '.join(overridden)}), or pass --allow-overrides for debugging."
                 )
 
-        # Engine: initialize with placeholder settings; we will align nodes from manifest each loop.
-        # MultiPV is set at init time; reinitialize when it changes.
+  # Engine: initialize with placeholder settings; we will align nodes from manifest each loop.
+  # MultiPV and SyzygyPath are set at init time; reinitialize when they change.
         self.sf: StockfishPool | StockfishUCI | None = None
         self.sf_multipv_active: int | None = None
+        self.sf_syzygy_path_active: str | None = None
 
         self.last_model_sha = None
         self.last_ob_sha: str | None = None
@@ -616,17 +616,24 @@ class WorkerSession:
         self.last_best_sha = None
         self.best_model = None
 
-        # Opening book paths (set by _sync_opening_books each iteration).
+  # Opening book paths (set by _sync_opening_books each iteration).
         self.opening_book_path: str | None = None
         self.opening_book_path_2: str | None = None
 
-        # Per-iteration state (set during each loop iteration).
+  # Per-iteration state (set during each loop iteration).
         self.model_sha = ""
         self.model_step = 0
         self._saw_completed_game = False
         self._stop_selfplay = False
         self._upload_buf_lock: threading.Lock | None = None  # set when threaded
         self._last_manifest_poll_s: float = 0.0
+  # Manifest-watch state (lazy-init in _check_model_update via getattr fallback).
+        self._manifest_path: Path | None = None
+        self._manifest_mtime: float | None = None
+  # Compiled-model cache ids (set the first time we compile a module).
+        self._active_reco: dict | None = None
+        self._threaded_model_id: int | None = None
+        self._aot_model_id: int | None = None
 
     def _stop_fn(self) -> bool:
         """Called every ply by play_batch.  Return True to exit continuous selfplay."""
@@ -641,7 +648,7 @@ class WorkerSession:
                     continue
                 self._sync_assets(manifest)
                 if not self.model_sha:
-                    # Model download failed (mid-publish race); retry next poll.
+  # Model download failed (mid-publish race); retry next poll.
                     time.sleep(float(self.args.poll_seconds))
                     continue
                 task = manifest.get("task") or {"type": "selfplay"}
@@ -653,7 +660,7 @@ class WorkerSession:
         finally:
             self._cleanup()
 
-    # -- Helper methods -------------------------------------------------------
+  # -- Helper methods -------------------------------------------------------
 
     def _server_url_for(self, endpoint: str) -> str:
         if endpoint.startswith("http://") or endpoint.startswith("https://"):
@@ -759,10 +766,10 @@ class WorkerSession:
         load_state_dict_tolerant(model, sd, label=label)
         model.to(self.device)
         model.eval()
-        # Selfplay only needs policy_own + wdl; skip 8 unused heads.
+  # Selfplay only needs policy_own + wdl; skip 8 unused heads.
         if hasattr(model, "_inference_only"):
             setattr(model, "_inference_only", True)
-        if bool(self.args.compile_inference):
+        if self.args.compile_inference:
             compile_t0 = time.time()
             self.log.info("compile starting %s sha=%s", label, sha_short)
             _compile_mode = str(self.args.compile_mode)
@@ -787,7 +794,7 @@ class WorkerSession:
         2. Every call: stat() the local manifest file mtime (~1µs)
         3. Only if mtime changed: read manifest, download model, swap
         """
-        # Tier 0: periodic manifest poll for task changes / pause
+  # Tier 0: periodic manifest poll for task changes / pause
         _now = time.time()
         if _now - self._last_manifest_poll_s > 30.0:
             self._last_manifest_poll_s = _now
@@ -795,9 +802,9 @@ class WorkerSession:
                 _old_tid = self.leased_trial_id
                 manifest = self._poll_manifest()
                 if manifest is None:
-                    # _poll_manifest returns None on pause or transient failure.
-                    # If paused, stop continuous selfplay so the outer loop can
-                    # re-poll properly.  Transient failures are retried next cycle.
+  # _poll_manifest returns None on pause or transient failure.
+  # If paused, stop continuous selfplay so the outer loop can
+  # re-poll properly.  Transient failures are retried next cycle.
                     if self.pause_selfplay_active:
                         self._stop_selfplay = True
                     return
@@ -806,14 +813,14 @@ class WorkerSession:
                 if task_type != "selfplay":
                     self._stop_selfplay = True
                     return
-                # Trial reassignment: stop selfplay so the outer loop can
-                # re-lease and start a clean session with the new trial context.
+  # Trial reassignment: stop selfplay so the outer loop can
+  # re-lease and start a clean session with the new trial context.
                 if self.leased_trial_id != _old_tid:
                     self._stop_selfplay = True
                     return
-                # Difficulty knob changes: if the trainer updated sf_nodes,
-                # random_move_prob, etc. we need to restart the session so
-                # _run_selfplay rebuilds the frozen config dataclasses.
+  # Difficulty knob changes: if the trainer updated sf_nodes,
+  # random_move_prob, etc. we need to restart the session so
+  # _run_selfplay rebuilds the frozen config dataclasses.
                 _new_reco = manifest.get("recommended_worker") or {}
                 _active = getattr(self, "_active_reco", None)
                 if _active is not None:
@@ -828,11 +835,11 @@ class WorkerSession:
             except Exception:
                 pass
 
-        # Tier 1: cheap mtime check on local manifest file
+  # Tier 1: cheap mtime check on local manifest file
         manifest_path = getattr(self, "_manifest_path", None)
         if manifest_path is None:
             try:
-                # work_dir is .../trials/{trial_id}/workers/worker_XX
+  # work_dir is .../trials/{trial_id}/workers/worker_XX
                 trials_dir = Path(self.args.work_dir).parent.parent.parent
                 tid = self.leased_trial_id or self.fixed_trial_id or ""
                 if not tid:
@@ -841,7 +848,7 @@ class WorkerSession:
                 if not manifest_path.parent.exists():
                     return  # Not a local worker — fall back to between-batch polling
                 self._manifest_path = manifest_path
-                self._manifest_mtime: float | None = None
+                self._manifest_mtime = None
             except Exception:
                 return
 
@@ -853,10 +860,10 @@ class WorkerSession:
             return
         self._manifest_mtime = mtime
 
-        # Tier 2: mtime changed — read and potentially swap model / reco
+  # Tier 2: mtime changed — read and potentially swap model / reco
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            # Check for reco changes (difficulty knobs updated by trainer).
+  # Check for reco changes (difficulty knobs updated by trainer).
             _new_reco = manifest.get("recommended_worker") or {}
             _active = getattr(self, "_active_reco", None)
             if _active is not None:
@@ -887,15 +894,15 @@ class WorkerSession:
                 model_path, _cfg,
                 label="worker-model", sha_short=str(new_sha)[:8],
             )
-            # Update evaluator with new model
+  # Update evaluator with new model
             if isinstance(self._direct_evaluator, ThreadedBatchEvaluator):
                 self._direct_evaluator.update_model(self.model)
             elif isinstance(self._direct_evaluator, DirectGPUEvaluator):
                 self._direct_evaluator.model = self.model
             elif isinstance(self._direct_evaluator, AOTEvaluator):
                 self._direct_evaluator.load_weights(self.model.state_dict())
-            # Flush upload buffer tagged with old SHA (lock protects against
-            # concurrent _on_completed_game calls in threaded selfplay)
+  # Flush upload buffer tagged with old SHA (lock protects against
+  # concurrent _on_completed_game calls in threaded selfplay)
             _buf_lock = self._upload_buf_lock
             now = time.time()
             if _buf_lock is not None:
@@ -943,7 +950,7 @@ class WorkerSession:
             if uploaded_at is not None:
                 self.last_successful_send_s = float(uploaded_at)
 
-    # -- Lifecycle methods ----------------------------------------------------
+  # -- Lifecycle methods ----------------------------------------------------
 
     def _poll_manifest(self) -> dict | None:
         """Lease negotiation + manifest fetch + version checks + self-update.
@@ -981,15 +988,15 @@ class WorkerSession:
             self.trial_api_prefix = new_api_prefix
             self.lease_id = new_lease_id
 
-        # Upload any pending shards first (skip in-progress temp files).
+  # Upload any pending shards first (skip in-progress temp files).
         self._upload_pending_shards(default_elapsed_s=float(self.cfg.get("_last_batch_elapsed_s", 0.0) or 0.0))
 
-        # Upload any pending arena results.
+  # Upload any pending arena results.
         for jp in sorted(self.arena_pending_dir.glob("*.json")):
             try:
                 payload = json.loads(jp.read_text(encoding="utf-8"))
             except Exception:
-                # bad local file; quarantine to uploaded to avoid retry storms
+  # bad local file; quarantine to uploaded to avoid retry storms
                 jp.replace(self.arena_uploaded_dir / jp.name)
                 continue
 
@@ -1005,7 +1012,7 @@ class WorkerSession:
             else:
                 break
 
-        # Poll manifest
+  # Poll manifest
         r = requests.get(
             self._server_url_for(self.trial_api_prefix + "/manifest"),
             timeout=30.0,
@@ -1019,9 +1026,9 @@ class WorkerSession:
         self.manifest_state = "active"
         self.manifest_state_elapsed_s = None
         if r.status_code == 426:
-            # Server says "upgrade required".
+  # Server says "upgrade required".
             if bool(self.args.self_update) and os.environ.get("CAE_SELF_UPDATED") != "1":
-                # Ask the server for minimal update info (does not require compatibility).
+  # Ask the server for minimal update info (does not require compatibility).
                 r2 = requests.get(self._server_url_for(self.trial_api_prefix + "/update_info"), timeout=30.0)
                 if r2.status_code != 200:
                     raise SystemExit(f"Upgrade required but could not fetch update info for self-update: {r2.text}")
@@ -1067,7 +1074,7 @@ class WorkerSession:
 
         manifest = r.json()
 
-        # Compatibility guardrails (manifest-driven).
+  # Compatibility guardrails (manifest-driven).
         req_proto = manifest.get("protocol_version")
         protocol_mismatch = False
         if req_proto is not None:
@@ -1085,7 +1092,7 @@ class WorkerSession:
         if "input_planes" in enc and int(enc.get("input_planes") or 0) != 146:
             raise SystemExit(f"input_planes mismatch: worker expects 146, server={enc.get('input_planes')}")
 
-        # Optional self-update (manifest-driven).
+  # Optional self-update (manifest-driven).
         if bool(self.args.self_update) and os.environ.get("CAE_SELF_UPDATED") != "1":
             ww = manifest.get("worker_wheel")
             if isinstance(ww, dict) and ww.get("endpoint") and ww.get("sha256"):
@@ -1112,7 +1119,7 @@ class WorkerSession:
                     _pip_install_wheel(wheel_path)
                     _restart_process()
 
-        # Enforce after any self-update opportunity.
+  # Enforce after any self-update opportunity.
         if protocol_mismatch:
             raise SystemExit(f"Protocol mismatch: worker={PROTOCOL_VERSION} server_required={req_proto}")
         if version_too_old:
@@ -1165,7 +1172,7 @@ class WorkerSession:
             return
         model_step = int(manifest.get("trainer_step") or 0)
 
-        # Store for use by other methods this iteration.
+  # Store for use by other methods this iteration.
         self.model_sha = model_sha
         self.model_step = model_step
 
@@ -1190,12 +1197,12 @@ class WorkerSession:
         if need_local_model and model_sha != self.last_model_sha:
             self.log.info("switching to latest model sha=%s", model_sha)
             model_path = self.cache_dir / f"model_{model_sha}.pt"
-            # Download (or re-download) and verify sha256.
-            # Note: the server serves a stable endpoint (/v1/model) whose contents can change
-            # whenever the learner publishes a new model. If we fetched a slightly stale
-            # manifest, the expected sha may not match what /v1/model returns.
-            #
-            # In that case, do NOT crash-loop; just re-poll the manifest next iteration.
+  # Download (or re-download) and verify sha256.
+  # Note: the server serves a stable endpoint (/v1/model) whose contents can change
+  # whenever the learner publishes a new model. If we fetched a slightly stale
+  # manifest, the expected sha may not match what /v1/model returns.
+  #
+  # In that case, do NOT crash-loop; just re-poll the manifest next iteration.
             if (not model_path.exists()) or (_sha256_file(model_path) != model_sha):
                 try:
                     _download_and_verify_shared(
@@ -1210,7 +1217,7 @@ class WorkerSession:
                         e,
                     )
                     model_path.unlink(missing_ok=True)
-                    # Signal caller to sleep and retry by clearing model_sha.
+  # Signal caller to sleep and retry by clearing model_sha.
                     self.model_sha = ""
                     return
 
@@ -1233,7 +1240,7 @@ class WorkerSession:
             )
 
             if self.last_model_sha is not None and not self.fixed_trial_id:
-                # Reconsider assignment at natural model-boundary checkpoints.
+  # Reconsider assignment at natural model-boundary checkpoints.
                 self.lease_id = ""
                 self.leased_trial_id = ""
                 self.trial_api_prefix = "/v1"
@@ -1255,13 +1262,19 @@ class WorkerSession:
             last_sha=self.last_ob2_sha,
         )
 
-    def _sync_stockfish(self, manifest: dict, sf_nodes: int, sf_multipv: int) -> str:
-        """Download SF binary + (re)init engine if multipv changed.
+    def _sync_stockfish(
+        self,
+        manifest: dict,
+        sf_nodes: int,
+        sf_multipv: int,
+        syzygy_path: str | None = None,
+    ) -> str:
+        """Download SF binary + (re)init engine if multipv or syzygy path changed.
 
         Returns the resolved stockfish_path.
         """
         stockfish_path = str(self.args.stockfish_path) if self.args.stockfish_path is not None else ""
-        if bool(self.args.stockfish_from_server):
+        if self.args.stockfish_from_server:
             sf_rec = manifest.get("stockfish")
             if not isinstance(sf_rec, dict) or not sf_rec.get("endpoint") or not sf_rec.get("sha256"):
                 raise SystemExit("--stockfish-from-server enabled but server did not publish stockfish")
@@ -1281,9 +1294,11 @@ class WorkerSession:
             self.last_sf_sha = sf_sha
             stockfish_path = str(sf_cached)
 
-        # (Re)initialize engine if multipv changed (must be set at init time)
+  # (Re)initialize engine if multipv or syzygy path changed (both must be set at init time)
+        sz_path = syzygy_path or None
         multipv_changed = self.sf_multipv_active is None or int(self.sf_multipv_active) != int(sf_multipv)
-        if self.sf is None or multipv_changed:
+        syzygy_changed = self.sf_syzygy_path_active != sz_path
+        if self.sf is None or multipv_changed or syzygy_changed:
             if self.sf is not None:
                 try:
                     self.sf.close()
@@ -1296,12 +1311,19 @@ class WorkerSession:
                     nodes=int(sf_nodes),
                     num_workers=int(self.args.sf_workers),
                     multipv=int(sf_multipv),
+                    syzygy_path=sz_path,
                 )
             else:
-                self.sf = StockfishUCI(str(stockfish_path), nodes=int(sf_nodes), multipv=int(sf_multipv))
+                self.sf = StockfishUCI(
+                    str(stockfish_path),
+                    nodes=int(sf_nodes),
+                    multipv=int(sf_multipv),
+                    syzygy_path=sz_path,
+                )
             self.sf_multipv_active = int(sf_multipv)
+            self.sf_syzygy_path_active = sz_path
         else:
-            # update nodes dynamically
+  # update nodes dynamically
             if hasattr(self.sf, "set_nodes"):
                 self.sf.set_nodes(int(sf_nodes))
 
@@ -1350,7 +1372,7 @@ class WorkerSession:
             time.sleep(float(self.args.poll_seconds))
             return
 
-        arena_cfg = (task.get("arena") or {}) if isinstance(task, dict) else {}
+        arena_cfg = task.get("arena") or {}
         batch_games = int(arena_cfg.get("batch_games", 8))
         max_plies_arena = int(arena_cfg.get("max_plies", 240))
         mcts_type_arena = str(arena_cfg.get("mcts", "puct"))
@@ -1415,8 +1437,8 @@ class WorkerSession:
 
         time.sleep(0.1)
 
-    # Fields in recommended_worker that affect gameplay and should trigger
-    # a session restart when the trainer updates them between iterations.
+  # Fields in recommended_worker that affect gameplay and should trigger
+  # a session restart when the trainer updates them between iterations.
     _RECO_RESTART_KEYS = (
         "sf_nodes",
         "opponent_wdl_regret_limit", "mcts_simulations", "fast_simulations",
@@ -1446,7 +1468,7 @@ class WorkerSession:
             time.sleep(float(self.args.poll_seconds))
             return
 
-        # Use ThreadedBatchEvaluator, AOTEvaluator, or DirectGPUEvaluator.
+  # Use ThreadedBatchEvaluator, AOTEvaluator, or DirectGPUEvaluator.
         if need_local_model:
             assert self.model is not None  # guarded above by need_local_model check
             if self._direct_evaluator is None:
@@ -1467,7 +1489,7 @@ class WorkerSession:
                     self._direct_evaluator = DirectGPUEvaluator(
                         self.model, device=str(self.device), max_batch=4096,
                     )
-            # Model update handling
+  # Model update handling
             if self.args.threaded_selfplay:
                 assert isinstance(self._direct_evaluator, ThreadedBatchEvaluator)
                 if getattr(self, "_threaded_model_id", None) != id(self.model):
@@ -1517,28 +1539,28 @@ class WorkerSession:
         t_moves = self._resolve_reco(reco, "temperature_decay_moves", 60, int)
         t_end = self._resolve_reco(reco, "temperature_endgame", 0.6)
 
-        # Syzygy is fully manifest-driven so the server operator can tune
-        # adjudication behavior live by editing publish/manifest.json. None
-        # for path = disabled; fraction 1.0 = always adjudicate when on.
+  # Syzygy is fully manifest-driven so the server operator can tune
+  # adjudication behavior live by editing publish/manifest.json. None
+  # for path = disabled; fraction 1.0 = always adjudicate when on.
         syzygy_path = reco.get("syzygy_path") or None
         syzygy_policy = bool(reco.get("syzygy_policy", False))
         syzygy_adjudicate = bool(reco.get("syzygy_adjudicate", False))
         syzygy_adjudicate_fraction = float(reco.get("syzygy_adjudicate_fraction", 1.0))
         syzygy_in_search = bool(reco.get("syzygy_in_search", False))
 
-        # Resolve stockfish binary and (re)init engine.
-        self._sync_stockfish(manifest, sf_nodes, sf_multipv)
+  # Resolve stockfish binary and (re)init engine.
+        self._sync_stockfish(manifest, sf_nodes, sf_multipv, syzygy_path=syzygy_path)
         assert self.sf is not None  # _sync_stockfish always assigns
         _sf = self.sf
 
-        # Generate a shard
+  # Generate a shard
         t0 = time.time()
         self._saw_completed_game = False
 
         try:
             _eval = self.inference_client or self._direct_evaluator
 
-            # Build shared config objects (frozen dataclasses, thread-safe)
+  # Build shared config objects (frozen dataclasses, thread-safe)
             _opponent_cfg = OpponentConfig(
                 wdl_regret_limit=opponent_wdl_regret_limit,
             )
@@ -1579,10 +1601,10 @@ class WorkerSession:
             )
 
             if self.args.threaded_selfplay:
-                # Multi-threaded selfplay: N threads share one GPU evaluator
+  # Multi-threaded selfplay: N threads share one GPU evaluator
                 n_threads = min(int(self.args.selfplay_threads), int(games_per_batch))
                 base_games, remainder = divmod(int(games_per_batch), n_threads)
-                # Thread i gets base_games + 1 if i < remainder
+  # Thread i gets base_games + 1 if i < remainder
                 _thread_games = [base_games + (1 if i < remainder else 0) for i in range(n_threads)]
                 _lock = threading.Lock()
                 self._upload_buf_lock = _lock  # shared with _check_model_update
@@ -1615,7 +1637,7 @@ class WorkerSession:
                         s, st = f.result()
                         all_samples.extend(s)
                         all_stats.append(st)
-                    # Aggregate stats: sum integer fields from all threads
+  # Aggregate stats: sum integer fields from all threads
                     from chess_anti_engine.selfplay.manager import BatchStats
                     first = all_stats[0]
                     agg = {}
@@ -1629,9 +1651,9 @@ class WorkerSession:
                             agg[fld.name] = vals[0]  # first thread's value
                     stats = BatchStats(**agg)
             else:
-                # Continuous selfplay: 256 slots always full, games recycled
-                # on completion.  Runs until _stop_selfplay is set (task change,
-                # pause, or shutdown).  Samples flow via _on_completed_game.
+  # Continuous selfplay: 256 slots always full, games recycled
+  # on completion.  Runs until _stop_selfplay is set (task change,
+  # pause, or shutdown).  Samples flow via _on_completed_game.
                 _samples, stats = play_batch(
                     self.model if (need_local_model and _eval is None) else None,
                     device=str(self.device), rng=self.rng,
@@ -1669,7 +1691,7 @@ class WorkerSession:
             return
         t1 = time.time()
 
-        # Log session outcome.
+  # Log session outcome.
         self.log.info(
             "selfplay stopped: games=%d positions=%d W/D/L=%d/%d/%d elapsed_s=%.1f",
             int(stats.games),
@@ -1680,7 +1702,7 @@ class WorkerSession:
             float(t1 - t0),
         )
 
-        # Flush any remaining buffered samples.
+  # Flush any remaining buffered samples.
         if self.upload_buf.positions > 0:
             _flush_upload_buffer_to_pending(
                 pending_dir=self.pending_dir, username=str(self.args.username),
@@ -1688,7 +1710,7 @@ class WorkerSession:
             )
             self._upload_pending_shards(default_elapsed_s=0.0)
 
-        # Prune old cached models opportunistically.
+  # Prune old cached models opportunistically.
         best_info = manifest.get("best_model") or {}
         best_sha = str(best_info.get("sha256") or "")
         if not self.shared_cache_enabled:

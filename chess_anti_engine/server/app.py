@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import re
-import hashlib
 import secrets
 import threading
 import time
@@ -178,13 +178,21 @@ def create_app(
     """
 
     try:
-        from fastapi import Body, Depends, FastAPI, File, Header, HTTPException, UploadFile
+        from fastapi import (
+            Body,
+            Depends,
+            FastAPI,
+            File,
+            Header,
+            HTTPException,
+            UploadFile,
+        )
         from fastapi.responses import FileResponse, JSONResponse
         from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
-        # Important: this module uses `from __future__ import annotations`, so FastAPI/Pydantic
-        # will resolve annotations (e.g. UploadFile) via the *module* globals, not function locals.
-        # Export these types into globals() so file upload endpoints work under Pydantic v2.
+  # Important: this module uses `from __future__ import annotations`, so FastAPI/Pydantic
+  # will resolve annotations (e.g. UploadFile) via the *module* globals, not function locals.
+  # Export these types into globals() so file upload endpoints work under Pydantic v2.
         globals()["UploadFile"] = UploadFile
         globals()["HTTPBasicCredentials"] = HTTPBasicCredentials
     except Exception as e:  # pragma: no cover
@@ -225,7 +233,16 @@ def create_app(
     recent_upload_shas: dict[tuple[str | None, str], float] = {}
     upload_lock = threading.Lock()
 
-    app = FastAPI(title="chess-anti-engine server", version="0.1")
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _lifespan(_app):  # skylos: ignore (FastAPI lifespan signature requires app arg)
+        try:
+            yield
+        finally:
+            _flush_ready_upload_accumulators(force_age=False, force_all=True)
+
+    app = FastAPI(title="chess-anti-engine server", version="0.1", lifespan=_lifespan)
 
     _trial_id_re = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 
@@ -329,8 +346,8 @@ def create_app(
             return None
         try:
             return dict(json.loads(mf.read_text(encoding="utf-8")))
-        except Exception:
-            return None
+        except (OSError, json.JSONDecodeError):
+            return None  # manifest mid-write or missing
 
     class _LeaseAssignLock:
         def __init__(self, path: Path, *, timeout_s: float = 10.0) -> None:
@@ -355,7 +372,7 @@ def create_app(
                             pass
                     time.sleep(0.05)
 
-        def __exit__(self, exc_type, exc, tb) -> None:
+        def __exit__(self, _exc_type, _exc, _tb) -> None:
             if self._held:
                 try:
                     self.path.unlink(missing_ok=True)
@@ -367,7 +384,8 @@ def create_app(
             return {}
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+  # file mid-write or corrupted — caller retries next poll
             return {}
         return data if isinstance(data, dict) else {}
 
@@ -479,7 +497,7 @@ def create_app(
         min_v = mf.get("min_worker_version")
         req_proto = mf.get("protocol_version")
 
-        # Backward-compat: if fields are missing, don't enforce.
+  # Backward-compat: if fields are missing, don't enforce.
         if min_v is None and req_proto is None:
             return True, ""
 
@@ -511,7 +529,7 @@ def create_app(
         rec = users.get(str(creds.username))
         if rec is None:
             raise HTTPException(status_code=401, detail="unknown user")
-        if bool(rec.disabled):
+        if rec.disabled:
             raise HTTPException(status_code=403, detail="user disabled")
         if not verify_password(str(creds.password), rec):
             raise HTTPException(status_code=401, detail="bad password")
@@ -534,7 +552,7 @@ def create_app(
             worker_protocol=x_cae_protocol_version,
         )
         if not ok:
-            # 426 (Upgrade Required) communicates "update your client".
+  # 426 (Upgrade Required) communicates "update your client".
             raise HTTPException(status_code=426, detail=reason)
 
         return JSONResponse(content=json.loads(mf.read_text(encoding="utf-8")))
@@ -735,7 +753,7 @@ def create_app(
         if not ok:
             log.warning("rejecting shard upload from user=%s: %s", username, reason)
             return {"stored": False, "rejected": True, "reason": reason}
-        # Size guard: FastAPI doesn't enforce this automatically.
+  # Size guard: FastAPI doesn't enforce this automatically.
         max_bytes = int(max_upload_mb) * 1024 * 1024
         inbox_root = _inbox_root(trial_id)
         quarantine_root = _quarantine_root(trial_id)
@@ -744,16 +762,16 @@ def create_app(
 
         upload_name = str(file.filename or "")
         if not upload_name.endswith(UPLOAD_TAR_SUFFIX):
-            # Workers only produce zarr-tar uploads; reject anything else so
-            # stale clients fail fast rather than writing a partial file.
+  # Workers only produce zarr-tar uploads; reject anything else so
+  # stale clients fail fast rather than writing a partial file.
             return {
                 "stored": False,
                 "rejected": True,
                 "reason": f"unsupported upload suffix: expected {UPLOAD_TAR_SUFFIX}",
             }
         tmp = inbox_root / f"tmp_{os.getpid()}_{secrets.token_hex(8)}{UPLOAD_TAR_SUFFIX}"
-        # Stream upload to disk and hash it in the same pass; rehashing the
-        # file after validation would re-read the full shard from disk.
+  # Stream upload to disk and hash it in the same pass; rehashing the
+  # file after validation would re-read the full shard from disk.
         h = hashlib.sha256()
         n = 0
         with tmp.open("wb") as f:
@@ -775,7 +793,7 @@ def create_app(
             zarr_root = extract_uploaded_shard_tar(tmp, tmp_zarr)
             shard_arrs, meta = load_shard_arrays(zarr_root)
         except Exception as e:
-            # Quarantine so we can inspect bad uploads without causing worker retry storms.
+  # Quarantine so we can inspect bad uploads without causing worker retry storms.
             qdir = quarantine_root / "invalid"
             qdir.mkdir(parents=True, exist_ok=True)
             qpath = qdir / tmp.name
@@ -797,8 +815,7 @@ def create_app(
 
         positions = int(shard_arrs["x"].shape[0])
         tmp.unlink(missing_ok=True)
-        if tmp_zarr is not None:
-            delete_shard_path(tmp_zarr)
+        delete_shard_path(tmp_zarr)
         trial_key = _normalize_trial_id(trial_id)
         upload_seen_key = (trial_key, sha)
         now_unix = time.time()
@@ -855,14 +872,14 @@ def create_app(
             elapsed_s=batch_elapsed_s,
         )
 
-        # Update user stats.
+  # Update user stats.
         try:
             users = load_users(users_path)
             machine_id = str(x_cae_machine_id).strip() if x_cae_machine_id else None
             record_upload(users, username=username, bytes_uploaded=int(n), positions=positions, machine_id=machine_id)
             save_users(users_path, users)
         except Exception:
-            # Stats failure should not fail the upload.
+  # Stats failure should not fail the upload.
             pass
 
         return {
@@ -933,7 +950,7 @@ def create_app(
         if not ok:
             log.warning("rejecting arena upload from user=%s: %s", username, reason)
             return {"stored": False, "rejected": True, "reason": reason}
-        # Basic schema validation
+  # Basic schema validation
         def _req_int(k: str) -> int:
             if k not in payload:
                 raise HTTPException(status_code=400, detail=f"missing field {k}")
@@ -961,7 +978,7 @@ def create_app(
         b_sha = _req_str("b_sha256")
         ts = int(payload.get("generated_at_unix") or 0)
 
-        # Store under arena_inbox/<username>/
+  # Store under arena_inbox/<username>/
         arena_root = _arena_inbox_root(trial_id)
         user_dir = arena_root / username
         user_dir.mkdir(parents=True, exist_ok=True)
@@ -1014,9 +1031,5 @@ def create_app(
             x_cae_worker_version=x_cae_worker_version,
             x_cae_protocol_version=x_cae_protocol_version,
         )
-
-    @app.on_event("shutdown")
-    def _flush_upload_accumulators_on_shutdown() -> None:
-        _flush_ready_upload_accumulators(force_age=False, force_all=True)
 
     return app

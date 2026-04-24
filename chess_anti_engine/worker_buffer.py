@@ -85,9 +85,9 @@ def _buffer_add_completed_game(
         return
     new_positions = int(getattr(game_batch, "positions", 0))
     if max_positions > 0 and int(buf.positions) + new_positions > int(max_positions):
-        # Backstop: if flush-to-disk has been failing, drop rather than OOM.
-        # Normal flow flushes at upload_target_positions; this cap only bites
-        # when something is wrong (disk full, permissions, etc.).
+  # Backstop: if flush-to-disk has been failing, drop rather than OOM.
+  # Normal flow flushes at upload_target_positions; this cap only bites
+  # when something is wrong (disk full, permissions, etc.).
         log.warning(
             "upload buffer at %d positions; dropping %d-position game batch (cap=%d)",
             int(buf.positions), new_positions, int(max_positions),

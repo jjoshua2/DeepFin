@@ -16,20 +16,20 @@ from chess_anti_engine.utils.atomic import atomic_write_text
 @dataclass
 class UserRecord:
     username: str
-    # PBKDF2-SHA256
+  # PBKDF2-SHA256
     salt_b64: str
     iterations: int
     hash_b64: str
 
     disabled: bool = False
 
-    # Aggregate stats
+  # Aggregate stats
     uploads: int = 0
     total_bytes: int = 0
     total_positions: int = 0
     last_upload_at_unix: int | None = None
 
-    # Per-machine stats: machine_id -> {uploads, positions, last_upload_at_unix}
+  # Per-machine stats: machine_id -> {uploads, positions, last_upload_at_unix}
     machines: dict = field(default_factory=dict)
 
 
@@ -66,18 +66,17 @@ def load_users(path: str | Path) -> dict[str, UserRecord]:
     if not isinstance(data, dict):
         raise ValueError("users db must be a dict")
 
-    out: dict[str, UserRecord] = {}
-    for username, v in data.items():
-        if not isinstance(v, dict):
-            continue
-        out[str(username)] = UserRecord(username=str(username), **v)
-    return out
+    return {
+        str(username): UserRecord(username=str(username), **v)
+        for username, v in data.items()
+        if isinstance(v, dict)
+    }
 
 
 def save_users(path: str | Path, users: dict[str, UserRecord]) -> None:
     data: dict[str, Any] = {}
     for u, rec in users.items():
-        # exclude username field (key is username)
+  # exclude username field (key is username)
         d = rec.__dict__.copy()
         d.pop("username", None)
         data[u] = d

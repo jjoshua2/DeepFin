@@ -3,7 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from chess_anti_engine.server.lease import assign_trial_lease, available_trial_ids, pick_trial_for_lease
+from chess_anti_engine.server.lease import (
+    assign_trial_lease,
+    available_trial_ids,
+    pick_trial_for_lease,
+)
 
 
 def _write_manifest(root: Path, trial_id: str) -> None:

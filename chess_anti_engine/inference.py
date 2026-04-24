@@ -78,8 +78,8 @@ def _detach_attached_shm_from_resource_tracker(shm: SharedMemory) -> None:
         return
     try:
         resource_tracker.unregister(name, "shared_memory")
-    except Exception:
-        pass
+    except KeyError:
+        pass  # already unregistered (race between parent/child detach)
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +101,8 @@ class LocalModelEvaluator:
         self._use_cuda = self.device.startswith("cuda")
         self._use_amp = bool(use_amp)
         self._amp_dtype = str(amp_dtype)
+  # Lazy-initialized on first evaluate_encoded_async call on CUDA.
+        self._stream: torch.cuda.Stream | None = None
 
     def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         xb = _coerce_input_batch(x)
@@ -144,12 +146,12 @@ class LocalModelEvaluator:
             stream = torch.cuda.Stream(device=self.device)
             self._stream = stream
 
-        # Default stream must finish any prior work before we branch
+  # Default stream must finish any prior work before we branch
         event_default = torch.cuda.Event()
         event_default.record(torch.cuda.current_stream(self.device))
 
         with torch.cuda.stream(stream):
-            stream.wait_event(event_default)
+            stream.wait_event(event_default) # torch stubs have duplicate Event types
             xt = torch.from_numpy(xb).to(self.device, non_blocking=True)
             with torch.no_grad():
                 with inference_autocast(device=self.device, enabled=self._use_amp, dtype=self._amp_dtype):
@@ -292,7 +294,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         event_default.record(torch.cuda.current_stream(self.device))
 
         with torch.cuda.stream(stream):
-            stream.wait_event(event_default)
+            stream.wait_event(event_default) # torch stubs have duplicate Event types
             xt = self._pinned_input[:bsz].to(self.device, non_blocking=True)
             with torch.no_grad():
                 with inference_autocast(device=self.device, enabled=self._use_amp, dtype=self._amp_dtype):
@@ -334,7 +336,7 @@ class ThreadedBatchEvaluator:
         self._queue: queue.Queue = queue.Queue()
         self._stop = False
 
-        # GPU evaluator created on the GPU thread to ensure CUDA context ownership.
+  # GPU evaluator created on the GPU thread to ensure CUDA context ownership.
         self._model = model
         self._use_amp = bool(use_amp)
         self._amp_dtype = str(amp_dtype)
@@ -352,7 +354,7 @@ class ThreadedBatchEvaluator:
         event = threading.Event()
         result: dict = {}
         self._queue.put((x, event, result))
-        # Wait with timeout and check GPU thread health
+  # Wait with timeout and check GPU thread health
         while not event.wait(timeout=5.0):
             if not self._gpu_thread.is_alive():
                 raise RuntimeError("GPU thread died while waiting for results")
@@ -387,7 +389,7 @@ class ThreadedBatchEvaluator:
             self._gpu_ready.set()  # Unblock constructor even on failure
 
         while not self._stop:
-            # Wait for first request
+  # Wait for first request
             try:
                 first = self._queue.get(timeout=0.1)
             except queue.Empty:
@@ -395,7 +397,7 @@ class ThreadedBatchEvaluator:
             if first is None:
                 break
 
-            # Handle model update (sentinel: string tag, not numpy array)
+  # Handle model update (sentinel: string tag, not numpy array)
             if isinstance(first, tuple) and len(first) == 3 and isinstance(first[0], str):
                 _, new_model, event = first
                 self._gpu_eval.model = new_model
@@ -405,7 +407,7 @@ class ThreadedBatchEvaluator:
             pending = [first]
             total = first[0].shape[0]
 
-            # Accumulate more requests up to min_batch or timeout (cap at max_batch)
+  # Accumulate more requests up to min_batch or timeout (cap at max_batch)
             deadline = time.monotonic() + self._timeout
             while total < self._min_batch and total < self._max_batch and time.monotonic() < deadline:
                 try:
@@ -415,13 +417,13 @@ class ThreadedBatchEvaluator:
                 if item is None:
                     break
                 if isinstance(item, tuple) and len(item) == 3 and isinstance(item[0], str):
-                    # Model update — put it back and break so pending requests
-                    # get processed with the current model first.
+  # Model update — put it back and break so pending requests
+  # get processed with the current model first.
                     self._queue.put(item)
                     break
                 item_size = item[0].shape[0]
                 if total + item_size > self._max_batch:
-                    # Would exceed max — put back for next round
+  # Would exceed max — put back for next round
                     self._queue.put(item)
                     break
                 pending.append(item)
@@ -430,13 +432,13 @@ class ThreadedBatchEvaluator:
             if not pending:
                 continue
 
-            # Concatenate all inputs
+  # Concatenate all inputs
             if len(pending) == 1:
                 combined = pending[0][0]
             else:
                 combined = np.concatenate([p[0] for p in pending], axis=0)
 
-            # Bucket-pad to reduce CUDA graph count
+  # Bucket-pad to reduce CUDA graph count
             _BUCKETS = (128, 256, 384, 512, 768, 1024, 1536, 2048, 4096)
             padded_size = total
             for b in _BUCKETS:
@@ -447,7 +449,7 @@ class ThreadedBatchEvaluator:
                 pad = np.zeros((padded_size - total, *combined.shape[1:]), dtype=combined.dtype)
                 combined = np.concatenate([combined, pad], axis=0)
 
-            # Single GPU call — catch any error and propagate to all waiting threads
+  # Single GPU call — catch any error and propagate to all waiting threads
             try:
                 pol_all, wdl_all = self._gpu_eval.evaluate_encoded(combined, copy_out=False)
                 pol_all = pol_all[:total]
@@ -458,13 +460,13 @@ class ThreadedBatchEvaluator:
                     event.set()
                 continue
             except BaseException as exc:
-                # Fatal (KeyboardInterrupt, SystemExit) — unblock all threads
+  # Fatal (KeyboardInterrupt, SystemExit) — unblock all threads
                 for _x, event, result in pending:  # skylos: ignore (_x unpacked but unused by convention)
                     result["error"] = str(exc)
                     event.set()
                 raise
 
-            # Scatter results back to each thread
+  # Scatter results back to each thread
             offset = 0
             for x, event, result in pending:
                 n = x.shape[0]
@@ -504,7 +506,7 @@ class AOTEvaluator:
         self._max_batch = int(max_batch)
         aot_dir = Path(aot_dir)
 
-        # Load compiled models in parallel (CUDA driver is thread-safe for loading).
+  # Load compiled models in parallel (CUDA driver is thread-safe for loading).
         from concurrent.futures import ThreadPoolExecutor
         pkgs: dict[int, Path] = {}
         for b in _BATCH_BUCKETS:
@@ -524,7 +526,7 @@ class AOTEvaluator:
         self._sorted_buckets = sorted(self._models.keys())
         self._constant_fqns = list(next(iter(self._models.values())).get_constant_fqns())
 
-        # Pre-allocate pinned buffers
+  # Pre-allocate pinned buffers
         _pin = self.device.startswith("cuda")
         self._pinned_input = torch.empty(
             (self._max_batch, _CHANNELS, _BOARD_H, _BOARD_W),
@@ -560,7 +562,7 @@ class AOTEvaluator:
         bucket = self._pick_bucket(bsz)
         model = self._models[bucket]
 
-        # Copy into pinned buffer and convert to BF16 on GPU
+  # Copy into pinned buffer and convert to BF16 on GPU
         self._pinned_input_np[:bsz] = x
         xt = torch.from_numpy(self._pinned_input_np[:bucket]).to(
             device=self.device, dtype=torch.bfloat16, non_blocking=True,
@@ -772,7 +774,7 @@ class SlotBroker:
         self._slots: list[_InferenceSlot] = []
         self._slot_names: list[str] = []
 
-        # Pre-allocated pinned buffers for zero-copy GPU transfer.
+  # Pre-allocated pinned buffers for zero-copy GPU transfer.
         _total_cap = num_slots * max_batch_per_slot
         _pin = "cuda" in self.device and torch.cuda.is_available()
         self._pinned_input = torch.empty(
@@ -785,14 +787,14 @@ class SlotBroker:
         self._pinned_wdl = torch.empty(
             (_total_cap, _WDL_SIZE), dtype=torch.float32, pin_memory=_pin,
         )
-        # Pinned tensors need force=True for numpy conversion.
+  # Pinned tensors need force=True for numpy conversion.
         self._pinned_input_np = self._pinned_input.numpy(force=True)
         self._pinned_pol_np = self._pinned_pol.numpy(force=True)
         self._pinned_wdl_np = self._pinned_wdl.numpy(force=True)
 
         for i in range(num_slots):
             name = f"{slot_prefix}-{i}"
-            # Clean up stale shm with the same name
+  # Clean up stale shm with the same name
             try:
                 old = SharedMemory(name=name, create=False)
                 old.close()
@@ -810,7 +812,7 @@ class SlotBroker:
     def slot_names(self) -> list[str]:
         return list(self._slot_names)
 
-    # -- model loading (same logic as before) --
+  # -- model loading (same logic as before) --
 
     def _load_manifest_if_changed(self) -> dict:
         mf = self.publish_dir / "manifest.json"
@@ -867,7 +869,7 @@ class SlotBroker:
         self._model_sha = model_sha
         self._first_inference_pending = bool(self.compile_inference)
 
-    # -- batch processing --
+  # -- batch processing --
 
     def _process_batch(self, ready: list[_InferenceSlot]) -> None:
         self._ensure_model()
@@ -879,8 +881,8 @@ class SlotBroker:
                 slot.state = _STATE_RESPONSE
             return
 
-        # Gather inputs directly into pre-allocated pinned buffer (one memcpy
-        # from shm → pinned, then async DMA to GPU — no intermediate allocs).
+  # Gather inputs directly into pre-allocated pinned buffer (one memcpy
+  # from shm → pinned, then async DMA to GPU — no intermediate allocs).
         batch_sizes: list[int] = []
         total = 0
         for slot in ready:
@@ -904,10 +906,10 @@ class SlotBroker:
 
         if first_inf:
             log.info("first inference (includes kernel compile) elapsed_s=%.2f batch=%d",
-                     time.time() - inf_t0, xt.shape[0])  # pyright: ignore[reportPossiblyUnboundVariable]
+                     time.time() - inf_t0, xt.shape[0])
             self._first_inference_pending = False
 
-        # Copy results to pinned buffer (async GPU→pinned), then to shm.
+  # Copy results to pinned buffer (async GPU→pinned), then to shm.
         pol_gpu = _policy_output(out).detach().float()
         wdl_gpu = out["wdl"].detach().float()
         self._pinned_pol[:total].copy_(pol_gpu, non_blocking=True)
@@ -915,7 +917,7 @@ class SlotBroker:
         if self.device.startswith("cuda"):
             torch.cuda.current_stream(torch.device(self.device)).synchronize()
 
-        # Scatter from pinned buffer to worker slots
+  # Scatter from pinned buffer to worker slots
         start = 0
         for slot, bsz in zip(ready, batch_sizes):
             end = start + bsz
@@ -924,10 +926,10 @@ class SlotBroker:
             slot.state = _STATE_RESPONSE
             start = end
 
-    # -- main loop --
+  # -- main loop --
 
     def serve_forever(self) -> None:
-        # Batch size metrics (printed periodically)
+  # Batch size metrics (printed periodically)
         _batch_count = 0
         _total_positions = 0
         _total_slots_used = 0
@@ -939,12 +941,12 @@ class SlotBroker:
                 self._stop = True
                 break
 
-            # Scan for ready slots
+  # Scan for ready slots
             ready = [s for s in self._slots if s.state == _STATE_REQUEST]
 
             if not ready:
-                # Tight spin with occasional yield to avoid burning 100% of
-                # one core while keeping latency minimal.
+  # Tight spin with occasional yield to avoid burning 100% of
+  # one core while keeping latency minimal.
                 for _ in range(200):
                     if any(s.state == _STATE_REQUEST for s in self._slots):
                         break
@@ -952,7 +954,7 @@ class SlotBroker:
                     time.sleep(0.00002)  # 20µs yield
                 continue
 
-            # Batching window: wait briefly for more slots to become ready
+  # Batching window: wait briefly for more slots to become ready
             if self.batch_wait_ms > 0:
                 deadline = time.monotonic() + (self.batch_wait_ms / 1000.0)
                 while time.monotonic() < deadline:
@@ -972,7 +974,7 @@ class SlotBroker:
                         break
                     time.sleep(0.0001)
 
-            # Re-collect in case some changed during the wait
+  # Re-collect in case some changed during the wait
             ready = [s for s in self._slots if s.state == _STATE_REQUEST]
             if ready:
                 total_pos = sum(s.batch_size for s in ready)
@@ -981,7 +983,7 @@ class SlotBroker:
                 _total_slots_used += len(ready)
                 self._process_batch(ready)
 
-            # Periodic metrics
+  # Periodic metrics
             now = time.monotonic()
             if now - _last_report >= _report_interval and _batch_count > 0:
                 avg_pos = _total_positions / _batch_count
@@ -1071,17 +1073,20 @@ class SlotInferenceClient:
         while True:
             slot = self._connect(deadline=deadline)
 
-            # Write input directly into shared memory (one memcpy)
+  # Write input directly into shared memory (one memcpy)
             slot.input[:bsz] = xb
             slot.batch_size = bsz
             slot.state = _STATE_REQUEST
 
-            # Wait for response. Keep the fast spin path for short broker latency,
-            # but recover if the broker went away and the slot had to be recreated.
+  # Wait for response. Keep the fast spin path for short broker latency,
+  # but recover if the broker went away and the slot had to be recreated.
             spins = 0
             retry = False
             while True:
-                state = slot.state
+  # slot.state is shared-memory; at runtime the broker writes
+  # other state values concurrently, so we wrap in int() to keep
+  # pyright from narrowing to the last literal we stored.
+                state = int(slot.state)
                 if state == _STATE_RESPONSE:
                     pol = np.array(slot.policy[:bsz], copy=True, order="C")
                     wdl = np.array(slot.wdl[:bsz], copy=True, order="C")
@@ -1153,13 +1158,13 @@ class SharedSlotBroker:
 
         self._layout = _SlotLayout.compute(max_batch_per_slot)
 
-        # Per-trial model instances on separate CUDA streams for parallel execution.
-        # All share one CUDA context + compiled kernel cache (~13GB total)
-        # instead of N separate processes (~15GB each).
+  # Per-trial model instances on separate CUDA streams for parallel execution.
+  # All share one CUDA context + compiled kernel cache (~13GB total)
+  # instead of N separate processes (~15GB each).
         self._model_config_key: tuple | None = None
         self._first_inference_done = False
 
-        # Per-trial state
+  # Per-trial state
         self._trial_slots: dict[str, list[_InferenceSlot]] = {}
         self._trial_shas: dict[str, str] = {}
         self._trial_models: dict[str, torch.nn.Module] = {}  # per-trial model on GPU
@@ -1191,8 +1196,10 @@ class SharedSlotBroker:
             if not manifest.exists():
                 continue
 
-            # Create slots for this trial
-            from chess_anti_engine.tune._utils import stable_seed_u32  # deferred: avoids circular import
+  # Create slots for this trial
+            from chess_anti_engine.tune._utils import (
+                stable_seed_u32,  # deferred: avoids circular import
+            )
             h = stable_seed_u32("slot-prefix", trial_id)
             slot_prefix = f"cae-{h:08x}"
 
@@ -1212,12 +1219,11 @@ class SharedSlotBroker:
                 slots.append(slot)
 
             self._trial_slots[trial_id] = slots
-            for slot in slots:
-                self._all_slots.append((trial_id, slot))
+            self._all_slots.extend((trial_id, slot) for slot in slots)
             log.info("shared broker: registered trial %s with %d slots (prefix=%s)",
                      trial_id, len(slots), slot_prefix)
 
-        # Clean up trials that no longer have a publish dir
+  # Clean up trials that no longer have a publish dir
         stale = [tid for tid in self._trial_slots
                  if not (trials_root / tid / "publish" / "manifest.json").exists()
                  or (active_prefix and not tid.startswith(active_prefix))]
@@ -1247,8 +1253,8 @@ class SharedSlotBroker:
 
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except Exception:
-            return False
+        except (OSError, json.JSONDecodeError):
+            return False  # manifest missing or mid-write; try again next poll
 
         model_info = manifest.get("model") or {}
         model_sha = str(model_info.get("sha256") or "")
@@ -1256,7 +1262,7 @@ class SharedSlotBroker:
             self._trial_manifest_sigs[trial_id] = sig
             return trial_id in self._trial_models
 
-        # Validate config matches
+  # Validate config matches
         mc = manifest.get("model_config") or {}
         config_key = (
             str(mc.get("kind", "transformer")),
@@ -1274,15 +1280,15 @@ class SharedSlotBroker:
         if self._model_config_key is None:
             self._model_config_key = config_key
 
-        # Load checkpoint
+  # Load checkpoint
         model_path = publish_dir / "latest_model.pt"
         try:
             ckpt = torch.load(str(model_path), map_location="cpu")
             sd = ckpt.get("model", ckpt)
-        except Exception:
-            return False
+        except (OSError, RuntimeError, EOFError):
+            return False  # checkpoint missing, mid-write, or torch load failed
 
-        # Build or update model instance for this trial
+  # Build or update model instance for this trial
         model_cfg = ModelConfig(
             kind=config_key[0], embed_dim=config_key[1],
             num_layers=config_key[2], num_heads=config_key[3],
@@ -1292,7 +1298,7 @@ class SharedSlotBroker:
         )
 
         if trial_id not in self._trial_models:
-            # New trial: build fresh model instance
+  # New trial: build fresh model instance
             model = build_model(model_cfg)
             model.to(self.device)
             model.eval()
@@ -1306,7 +1312,7 @@ class SharedSlotBroker:
                 self._trial_streams[trial_id] = torch.cuda.Stream(device=self.device)
             print(f"[shared-broker] created model for trial {trial_id} (sha={model_sha[:8]})", flush=True)
         else:
-            # Existing trial: update weights
+  # Existing trial: update weights
             model = self._trial_models[trial_id]
             target = getattr(model, "_orig_mod", model)
             load_state_dict_tolerant(target, sd, label=f"shared-broker-{trial_id}")
@@ -1320,7 +1326,7 @@ class SharedSlotBroker:
         """Process all trials' batches in parallel using per-trial CUDA streams."""
         use_cuda = self.device.startswith("cuda")
 
-        # Prepare inputs for each trial
+  # Prepare inputs for each trial
         trial_data: list[tuple[str, list[_InferenceSlot], list[int], torch.Tensor]] = []
         for trial_id, ready in ready_by_trial.items():
             model = self._trial_models.get(trial_id)
@@ -1340,7 +1346,7 @@ class SharedSlotBroker:
         if not trial_data:
             return
 
-        # Launch forward passes in parallel on separate streams
+  # Launch forward passes in parallel on separate streams
         results: list[tuple[str, list[_InferenceSlot], list[int], torch.Tensor, torch.Tensor]] = []
         for trial_id, ready, batch_sizes, xt in trial_data:
             model = self._trial_models[trial_id]
@@ -1362,7 +1368,7 @@ class SharedSlotBroker:
 
             results.append((trial_id, ready, batch_sizes, pol, wdl))
 
-        # Synchronize all streams
+  # Synchronize all streams
         if use_cuda:
             for trial_id in ready_by_trial:
                 stream = self._trial_streams.get(trial_id)
@@ -1373,7 +1379,7 @@ class SharedSlotBroker:
             self._first_inference_done = True
             log.info("shared broker: first parallel inference complete (%d trials)", len(results))
 
-        # Scatter results back to slots
+  # Scatter results back to slots
         for trial_id, ready, batch_sizes, pol, wdl in results:
             pol_np = pol.numpy()
             wdl_np = wdl.numpy()
@@ -1396,10 +1402,10 @@ class SharedSlotBroker:
         while not self._stop:
             now = time.monotonic()
 
-            # Periodically scan for new trials
+  # Periodically scan for new trials
             if now - _last_scan >= _scan_interval:
                 self._scan_trials()
-                # Refresh weights for all known trials
+  # Refresh weights for all known trials
                 for tid in list(self._trial_slots.keys()):
                     self._load_trial_weights(tid)
                 _last_scan = now
@@ -1412,9 +1418,9 @@ class SharedSlotBroker:
                 self._stop = True
                 break
 
-            # Collect ready slots grouped by trial.
-            # No batching window: cross-trial batching isn't possible (different weights),
-            # so delaying fast trials to wait for slow ones only adds latency.
+  # Collect ready slots grouped by trial.
+  # No batching window: cross-trial batching isn't possible (different weights),
+  # so delaying fast trials to wait for slow ones only adds latency.
             ready_by_trial: dict[str, list[_InferenceSlot]] = {}
             for trial_id, slot in self._all_slots:
                 if slot.state == _STATE_REQUEST:
@@ -1428,13 +1434,13 @@ class SharedSlotBroker:
                     time.sleep(0.00002)
                 continue
 
-            # Process all trials' batches in parallel on separate CUDA streams
+  # Process all trials' batches in parallel on separate CUDA streams
             for ready in ready_by_trial.values():
                 _batch_count += 1
                 _total_positions += sum(s.batch_size for s in ready)
             self._process_parallel(ready_by_trial)
 
-            # Periodic metrics
+  # Periodic metrics
             now = time.monotonic()
             if now - _last_report >= _report_interval and _batch_count > 0:
                 avg_pos = _total_positions / _batch_count
@@ -1462,7 +1468,7 @@ class SharedSlotBroker:
 
 
 def main() -> int:
-    # Detect mode from argv: "shared" subcommand or legacy per-trial flags
+  # Detect mode from argv: "shared" subcommand or legacy per-trial flags
     import sys as _sys
     if len(_sys.argv) > 1 and _sys.argv[1] == "shared":
         ap = argparse.ArgumentParser(description="Shared inference broker for all trials")
@@ -1509,7 +1515,7 @@ def main() -> int:
             broker.shutdown()
         return 0
 
-    # Per-trial mode
+  # Per-trial mode
     broker = SlotBroker(
         publish_dir=Path(args.publish_dir).expanduser(),
         num_slots=int(args.num_slots),
