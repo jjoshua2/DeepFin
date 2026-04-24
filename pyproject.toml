@@ -77,6 +77,20 @@ filterwarnings = [
 #       loss-function variables.
 ignore = ["E741"]
 
+[tool.vulture]
+# Names that vulture can't see being used. Keep this list small and
+# annotated — the goal is that every entry is a FP we've verified, not
+# a convenience suppression.
+#   AsyncBatchEvaluator     — used via stringified cast in gumbel_c.py
+#   pairwise_lr/_momentum   — accepted as legacy kwargs in gpbt.py
+#   pipeline                — benchmark kwarg kept for API parity
+ignore_names = [
+  "AsyncBatchEvaluator",
+  "pairwise_lr",
+  "pairwise_momentum",
+  "pipeline",
+]
+
 [tool.pylint.main]
 # Narrow pylint scope: disable everything, enable only the semantic checks
 # that ruff and skylos don't cover well. Style/convention noise is left to

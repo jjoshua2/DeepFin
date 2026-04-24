@@ -2,5 +2,30 @@
     "include": ["chess_anti_engine"],
     "exclude": ["chess_anti_engine/bench"],
     "reportUnsupportedDunderAll": false,
-    "reportPrivateImportUsage": false
+    "reportPrivateImportUsage": false,
+
+    "reportAny": false,
+    "reportExplicitAny": false,
+    "reportUnknownVariableType": false,
+    "reportUnknownMemberType": false,
+    "reportUnknownArgumentType": false,
+    "reportUnknownParameterType": false,
+    "reportMissingTypeStubs": false,
+    "reportUnusedCallResult": false,
+    "reportImplicitStringConcatenation": false,
+    "reportImplicitOverride": false,
+
+    "reportMissingTypeArgument": false,
+    "reportUnannotatedClassAttribute": false,
+    "reportMissingParameterType": false,
+    "reportCallInDefaultInitializer": false,
+    "reportUnknownLambdaType": false,
+    "reportConstantRedefinition": false,
+
+    "reportPrivateUsage": false,
+    "reportUnusedFunction": false,
+    "reportPrivateLocalImportUsage": false,
+
+    "reportUnnecessaryTypeIgnoreComment": "warning"
 }
+

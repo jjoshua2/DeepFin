@@ -1,0 +1,19 @@
+{
+  "verbosity": 0.30173086635140717,
+  "erosion": 0.8186445617726692,
+  "cog_erosion": 0.9277942734249675,
+  "files_scanned": 95,
+  "total_loc": 21781,
+  "verbosity_flagged_loc": 6572,
+  "clone_loc": 1104,
+  "ast_grep_flagged_loc": 5956,
+  "total_functions": 773,
+  "high_cc_functions": 118,
+  "high_cog_functions": 161,
+  "total_mass": 49775.09570750152,
+  "high_cc_mass": 40748.11141266025,
+  "total_cog_mass": 85749.7444094498,
+  "high_cog_mass": 79558.12181074214,
+  "_baseline_date": "2026-04-24",
+  "_baseline_target": "chess_anti_engine"
+}

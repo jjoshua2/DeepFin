@@ -128,9 +128,35 @@ Ray Tune with GPBT (Gaussian Process Bandit PBT) scheduler. Pairwise velocity-ba
 - Python 3.10+, uses `from __future__ import annotations` throughout
 - C extensions in `encoding/_lc0_ext.c` and `mcts/_mcts_tree.c`
 - Type hints on functions and dataclasses
-- No configured linter; no formatter config
 - Tests in `tests/`
 - PYTHONPATH=. required for scripts
+
+### Static analysis
+
+Run `./scripts/lint.sh <paths>` after editing. Default is all five tools — **ruff + basedpyright + pylint + vulture + skylos** — and the repo is kept at zero findings for ruff/pylint/vulture/skylos. basedpyright uses a baseline file (`.basedpyright/baseline.json`) to suppress the ~1200 pre-existing warnings from its stricter-than-pyright defaults; new code must be clean.
+
+```bash
+./scripts/lint.sh chess_anti_engine/train/trainer.py   # specific files
+./scripts/lint.sh --changed                            # git-changed .py files since HEAD
+./scripts/lint.sh --fast [paths...]                    # skip vulture + skylos (the slower ones)
+basedpyright --writebaseline                           # refresh baseline after fixing a batch
+```
+
+Configs:
+- `pyproject.toml`: `[tool.ruff.lint]`, `[tool.pylint.main]`, `[tool.vulture]`
+- `pyrightconfig.json`: basedpyright settings — rules we'll never fix are **disabled** (ML-typing noise: `reportAny`, `reportMissingTypeArgument`, annotation-drift rules), so they don't pollute the baseline
+- `.basedpyright/baseline.json`: machine-generated frozen "fix later" queue. Each item is a real signal we just haven't addressed yet
+
+**Convention for splitting "won't fix" from "fix later":**
+- Disable the rule in `pyrightconfig.json` if we've decided the whole category isn't worth the ceremony (e.g. `dict` without `[K,V]` — 400+ sites, no real signal).
+- Keep the rule enabled + let baseline suppress current instances if it's a real signal and we plan to fix it eventually (e.g. `reportOptionalMemberAccess` — crash risk). New instances in edited code fail, baseline items are the todo list. Run `basedpyright --writebaseline` after a cleanup pass to shrink it.
+
+Suppression syntax (prefer config/baseline over inline; inline only when refactoring would hurt the code):
+- basedpyright: `# pyright: ignore[reportRuleName]`
+- Ruff: `# noqa: E741`
+- Skylos: `# skylos: ignore`
+
+Baseline cleanup sequence used to get here: ruff (commits `b1a7cca`), pyright (`55d0dd5`), pylint (`b490310`), skylos (`9220460`), plus the basedpyright migration. Don't let drift accumulate — fix findings in the same commit that introduces them.
 
 ## Code Review Protocol
 
