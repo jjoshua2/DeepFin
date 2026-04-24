@@ -5,8 +5,10 @@ Xavier-uniform(gain=0.1) for 2-D params, zero for 1-D params, in:
   - value_sf_eval
   - value_categorical
 
-Also zeros the AdamW exp_avg / exp_avg_sq entries for the reinited params
-so stale optimizer momentum doesn't kick them on step 1.
+Drops the optimizer state entirely so AdamW rebuilds fresh momentum on
+resume — the alternative (remapping per-param positional indices across
+an architecture change) is more complexity than a recovery script
+warrants. A few iterations of cold momentum is a fine cost.
 
 Usage: python scripts/reinit_value_heads.py POOL_DIR [--dry-run]
 Writes POOL_DIR/seeds/slot_000/trainer.pt in place (keeps trainer.pt.bak).
@@ -23,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import torch
 from torch import nn
 
-from chess_anti_engine.model import ModelConfig, build_model
+from chess_anti_engine.model import ModelConfig, build_model, load_state_dict_tolerant
 
 VALUE_HEADS = ("value_wdl", "value_sf_eval", "value_categorical")
 
@@ -40,7 +42,6 @@ def main() -> None:
 
     ck = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     state = ck["model"]
-    opt_state = ck["opt"]
 
     mcfg = ModelConfig(
         kind="transformer",
@@ -52,51 +53,28 @@ def main() -> None:
         use_nla=False,
     )
     model = build_model(mcfg)
-    model.load_state_dict(state, strict=True)
+    load_state_dict_tolerant(model, state, label="reinit-value-heads")
 
-    # Collect parameter objects we'll reinit, and their positions in the full
-    # parameter list (to match optimizer state_dict indexing).
-    all_params = list(model.parameters())
-    all_param_ids = {id(p): i for i, p in enumerate(all_params)}
-
-    reinit_param_indices: list[int] = []
     reinit_param_names: list[str] = []
     for head_name in VALUE_HEADS:
         head = getattr(model, head_name, None)
         if not isinstance(head, nn.Module):
             sys.exit(f"model missing head: {head_name}")
         for pname, p in head.named_parameters():
-            full_name = f"{head_name}.{pname}"
-            reinit_param_names.append(full_name)
-            reinit_param_indices.append(all_param_ids[id(p)])
+            reinit_param_names.append(f"{head_name}.{pname}")
             with torch.no_grad():
                 if p.dim() >= 2:
                     nn.init.xavier_uniform_(p, gain=0.1)
                 else:
                     nn.init.zeros_(p)
 
-    # Write updated model weights back into state dict
-    new_state = model.state_dict()
-    for k in new_state:
-        state[k] = new_state[k]
-
-    # Zero optimizer state entries for reinited param indices.
-    # opt_state is a dict: {'state': {idx: {'step','exp_avg','exp_avg_sq',...}}, 'param_groups': [...]}
-    opt_inner = opt_state.get("state", {})
-    zeroed = 0
-    for idx in reinit_param_indices:
-        entry = opt_inner.get(idx)
-        if entry is None:
-            continue
-        for key in ("exp_avg", "exp_avg_sq", "max_exp_avg_sq"):
-            if key in entry and torch.is_tensor(entry[key]):
-                entry[key].zero_()
-                zeroed += 1
+    ck["model"] = model.state_dict()
+    ck.pop("opt", None)  # force Adam to rebuild momentum; positional indices unsafe across arch changes
 
     print(f"reinit: {len(reinit_param_names)} params across {len(VALUE_HEADS)} heads")
     for n in reinit_param_names:
         print(f"  {n}")
-    print(f"zeroed {zeroed} optimizer state tensors for reinited params")
+    print("dropped optimizer state (trainer will rebuild on resume)")
 
     if args.dry_run:
         print("dry-run; not writing")
