@@ -4,16 +4,17 @@ from __future__ import annotations
 # C extensions are imported under `if TYPE_CHECKING or _HAS_*_C_EXT:` guards.
 # Every call site re-checks the matching `_HAS_*_C_EXT` flag — pylint cannot
 # model this coupled invariant.
-
 from typing import TYPE_CHECKING
 
-import numpy as np
 import chess
+import numpy as np
 
-from .lc0 import encode_lc0_full, encode_lc0_reduced, _HAS_LC0_C_EXT
+from .lc0 import _HAS_LC0_C_EXT, encode_lc0_full, encode_lc0_reduced
+
 if TYPE_CHECKING or _HAS_LC0_C_EXT:
     from .lc0 import encode_lc0_full_c
-from .features import extra_feature_planes_fast, _HAS_C_EXT
+from .features import _HAS_C_EXT, extra_feature_planes_fast
+
 if TYPE_CHECKING or _HAS_C_EXT:
     from .features import extra_feature_planes_c
 
@@ -81,11 +82,11 @@ def encode_position_into(
     out[...] = 0.0
 
     if use_full_lc0 and _HAS_LC0_C_EXT and _HAS_C_EXT and add_features:
-        # Fast fused path: extract bitboards once, pass to both C extensions.
+  # Fast fused path: extract bitboards once, pass to both C extensions.
         _encode_fused_c(board, out, feature_dropout_p=feature_dropout_p, rng=rng)
         return
 
-    # Fallback: delegate to existing functions, copy into out.
+  # Fallback: delegate to existing functions, copy into out.
     if use_full_lc0:
         base = encode_lc0_full_c(board) if _HAS_LC0_C_EXT else encode_lc0_full(board)
         base_planes = 112
@@ -153,7 +154,7 @@ def _encode_fused_c(
     turn = board.turn
     us = turn
 
-    # ── Extract bitboards once for current position ──
+  # ── Extract bitboards once for current position ──
     occ_w = int(board.occupied_co[chess.WHITE])
     occ_b = int(board.occupied_co[chess.BLACK])
     pawns = board.pawns
@@ -167,7 +168,7 @@ def _encode_fused_c(
     stack = board._stack
     stack_len = len(stack)
 
-    # ── LC0 piece planes (history) ──
+  # ── LC0 piece planes (history) ──
     bbs_list: list[int] = []
     turns_list: list[int] = []
     n_steps = 0
@@ -192,9 +193,11 @@ def _encode_fused_c(
         turns_list.append(1 if turn_h == chess.WHITE else 0)
         us_occ = h_occ_w if turn_h == chess.WHITE else h_occ_b
         them_occ = h_occ_b if turn_h == chess.WHITE else h_occ_w
-        for occ in (us_occ, them_occ):
-            for bb in (h_pawns, h_knights, h_bishops, h_rooks, h_queens, h_kings):
-                bbs_list.append(bb & occ)
+        bbs_list.extend(
+            bb & occ
+            for occ in (us_occ, them_occ)
+            for bb in (h_pawns, h_knights, h_bishops, h_rooks, h_queens, h_kings)
+        )
         n_steps += 1
 
     bbs_arr = np.array(bbs_list, dtype=np.uint64)
@@ -202,13 +205,13 @@ def _encode_fused_c(
     planes = _c_encode_piece_planes(bbs_arr, turns_arr, n_steps)
     out[:n_steps * 12] = planes
 
-    # ── Repetition planes ──
+  # ── Repetition planes ──
     _check_repetitions(board, stack, stack_len, n_steps, out, 103)
 
-    # ── Metadata planes ──
+  # ── Metadata planes ──
     _write_metadata_planes(out, board)
 
-    # ── Feature planes (reuse already-extracted bitboards) ──
+  # ── Feature planes (reuse already-extracted bitboards) ──
     us_occ_cur = occ_w if us == chess.WHITE else occ_b
     them_occ_cur = occ_b if us == chess.WHITE else occ_w
 

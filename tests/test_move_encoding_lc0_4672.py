@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import inspect
 
-import numpy as np
 import chess
+import numpy as np
 
-from chess_anti_engine.moves import POLICY_SIZE, index_to_move, legal_move_mask, move_to_index
+from chess_anti_engine.moves import (
+    POLICY_SIZE,
+    index_to_move,
+    legal_move_mask,
+    move_to_index,
+)
 
 
 def test_policy_size_is_4672():

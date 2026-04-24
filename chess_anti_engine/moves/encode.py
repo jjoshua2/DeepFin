@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import numpy as np
 import chess
+import numpy as np
 
 from chess_anti_engine.utils.bitboards import orient_square
 
@@ -101,12 +101,12 @@ def mirror_policy_index(index: int) -> int:
     from_o = idx // PLANE_COUNT
     plane = idx % PLANE_COUNT
 
-    # Mirror the origin square.
+  # Mirror the origin square.
     f_o = chess.Square(from_o)
     f_m = mirror_oriented_square(f_o)
 
     if plane >= 64:
-        # Underpromotions: mirror df direction (left<->right), keep piece type.
+  # Underpromotions: mirror df direction (left<->right), keep piece type.
         rel = plane - 64
         piece_idx = rel // 3
         dir_idx = rel % 3
@@ -116,7 +116,7 @@ def mirror_policy_index(index: int) -> int:
 
     delta = _PLANE_TO_DELTA.get(int(plane))
     if delta is None:
-        # Should be unreachable for valid indices.
+  # Should be unreachable for valid indices.
         return idx
     df, dr = delta
     plane_m = _DELTA_TO_PLANE.get((-int(df), int(dr)))
@@ -170,11 +170,11 @@ for _turn in (chess.WHITE, chess.BLACK):
                     _to_o = chess.square(_tf, _tr)
                     _f_real = orient_square(_from_o, _turn)
                     _t_real = orient_square(_to_o, _turn)
-                    # Check for queen promotion (pawn reaching last rank)
+  # Check for queen promotion (pawn reaching last rank)
                     _promo_val = 0
                     _real_rank = chess.square_rank(_t_real)
                     if _real_rank == 7 or _real_rank == 0:
-                        # Could be pawn promotion — mark as queen
+  # Could be pawn promotion — mark as queen
                         _promo_val = chess.QUEEN
                     _INDEX_TO_MOVE_LUT[_ti, _idx] = [_f_real, _t_real, _promo_val]
 
@@ -186,7 +186,7 @@ def index_to_move_fast(index: int, board: chess.Board) -> chess.Move:
     if f < 0:
         return next(iter(board.legal_moves))
 
-    # Only apply promotion if a pawn is actually on the from square
+  # Only apply promotion if a pawn is actually on the from square
     promotion = None
     if promo > 0:
         piece = board.piece_at(f)
@@ -196,7 +196,7 @@ def index_to_move_fast(index: int, board: chess.Board) -> chess.Move:
     m = chess.Move(f, t, promotion=promotion)
     if m in board.legal_moves:
         return m
-    # Fallback (rare edge cases)
+  # Fallback (rare edge cases)
     for lm in board.legal_moves:
         if move_to_index(lm, board) == index:
             return lm
@@ -211,7 +211,7 @@ def mirror_policy(policy: np.ndarray) -> np.ndarray:
     p = np.asarray(policy)
     if p.shape != (POLICY_SIZE,):
         raise ValueError(f"policy must be ({POLICY_SIZE},), got {p.shape}")
-    # new[j] = old[inv[j]]
+  # new[j] = old[inv[j]]
     return p[MIRROR_POLICY_INV].astype(np.float32, copy=False)
 
 
@@ -258,10 +258,10 @@ def uci_to_policy_index(uci: str, turn: bool) -> int:
     from_sq = (ord(uci[0]) - ord("a")) + (ord(uci[1]) - ord("1")) * 8
     to_sq = (ord(uci[2]) - ord("a")) + (ord(uci[3]) - ord("1")) * 8
 
-    # Underpromotion: 5-char UCI like "a7a8n"
+  # Underpromotion: 5-char UCI like "a7a8n"
     promo_char = uci[4].lower() if len(uci) == 5 else ""
     if promo_char in _UNDERPROMO_CHAR_TO_IDX:
-        # Orient squares
+  # Orient squares
         f = from_sq if turn else (from_sq ^ 56)
         t = to_sq if turn else (to_sq ^ 56)
         ff, tf = f % 8, t % 8
@@ -271,7 +271,7 @@ def uci_to_policy_index(uci: str, turn: bool) -> int:
         plane = 64 + piece_idx * 3 + dir_idx
         return int(f) * PLANE_COUNT + int(plane)
 
-    # Queen promotion or normal move — use precomputed LUT
+  # Queen promotion or normal move — use precomputed LUT
     idx = int(_MOVE_INDEX_LUT[int(turn)][from_sq][to_sq])
     return idx
 

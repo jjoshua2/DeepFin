@@ -19,11 +19,11 @@ def cboard_from_board_fast(board: chess.Board) -> CBoard:
     """
     cr = int(board.castling_rights)
     castling = 0
-    # Column-aligned bitfield decoding; keep single-line form intentionally.
-    if cr & (1 << 7):  castling |= 1   # noqa: E701  WK_CASTLE — H1
-    if cr & (1 << 0):  castling |= 2   # noqa: E701  WQ_CASTLE — A1
-    if cr & (1 << 63): castling |= 4   # noqa: E701  BK_CASTLE — H8
-    if cr & (1 << 56): castling |= 8   # noqa: E701  BQ_CASTLE — A8
+  # Column-aligned bitfield decoding; keep single-line form intentionally.
+    if cr & (1 << 7):  castling |= 1  # noqa: E701  WK_CASTLE — H1
+    if cr & (1 << 0):  castling |= 2  # noqa: E701  WQ_CASTLE — A1
+    if cr & (1 << 63): castling |= 4  # noqa: E701  BK_CASTLE — H8
+    if cr & (1 << 56): castling |= 8  # noqa: E701  BQ_CASTLE — A8
     return CBoard.from_raw(
         int(board.pawns), int(board.knights), int(board.bishops),
         int(board.rooks), int(board.queens), int(board.kings),
@@ -36,13 +36,17 @@ def cboard_from_board_fast(board: chess.Board) -> CBoard:
     )
 
 try:
-    from chess_anti_engine.encoding._features_ext import compute_extra_features as _c_compute
+    from chess_anti_engine.encoding._features_ext import (
+        compute_extra_features as _c_compute,
+    )
     _HAS_FEATURES_C = True
 except ImportError:
     _HAS_FEATURES_C = False
 
 if TYPE_CHECKING:
-    from chess_anti_engine.encoding._features_ext import compute_extra_features as _c_compute  # noqa: F401,F811
+    from chess_anti_engine.encoding._features_ext import (
+        compute_extra_features as _c_compute,  # noqa: F401,F811
+    )
 
 
 def encode_cboard(cb: CBoard) -> np.ndarray:
@@ -55,16 +59,16 @@ def encode_cboard(cb: CBoard) -> np.ndarray:
     if encode_146 is not None:
         return encode_146()
 
-    # LC0 112 planes — all in C
+  # LC0 112 planes — all in C
     lc0 = cb.encode_planes()  # (112, 8, 8) float32
 
     if not _HAS_FEATURES_C:
-        # No features C ext — return LC0 only with zero features
+  # No features C ext — return LC0 only with zero features
         out = np.zeros((146, 8, 8), dtype=np.float32)
         out[:112] = lc0
         return out
 
-    # Extract bitboard values for features extension
+  # Extract bitboard values for features extension
     is_white = cb.turn  # True = WHITE
     occ_w = cb.occ_white
     occ_b = cb.occ_black
@@ -84,7 +88,7 @@ def encode_cboard(cb: CBoard) -> np.ndarray:
     ], dtype=np.uint64)
 
     occupied = int(occ_w | occ_b)
-    # King squares
+  # King squares
     us_kings = cb.kings & us_occ
     them_kings = cb.kings & them_occ
     king_sq_us = int(us_kings).bit_length() - 1 if us_kings else -1

@@ -4,19 +4,23 @@ import struct
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import numpy as np
 import chess
+import numpy as np
 
 from chess_anti_engine.utils.bitboards import file_to_plane
 
 try:
-    from chess_anti_engine.encoding._lc0_ext import encode_piece_planes as _c_encode_piece_planes
+    from chess_anti_engine.encoding._lc0_ext import (
+        encode_piece_planes as _c_encode_piece_planes,
+    )
     _HAS_LC0_C_EXT = True
 except ImportError:
     _HAS_LC0_C_EXT = False
 
 if TYPE_CHECKING:
-    from chess_anti_engine.encoding._lc0_ext import encode_piece_planes as _c_encode_piece_planes  # noqa: F401,F811
+    from chess_anti_engine.encoding._lc0_ext import (
+        encode_piece_planes as _c_encode_piece_planes,  # noqa: F401,F811
+    )
 
 
 PIECE_TYPES = [
@@ -119,7 +123,7 @@ def encode_lc0_reduced(board: chess.Board) -> np.ndarray:
     out = np.zeros((LC0_REDUCED.num_planes, 8, 8), dtype=np.float32)
     idx = _write_piece_planes(board, out, 0)
 
-    # Castling rights: us-K, us-Q, them-K, them-Q
+  # Castling rights: us-K, us-Q, them-K, them-Q
     castling_flags = [
         board.has_kingside_castling_rights(us),
         board.has_queenside_castling_rights(us),
@@ -131,24 +135,24 @@ def encode_lc0_reduced(board: chess.Board) -> np.ndarray:
             out[idx, :, :] = 1.0
         idx += 1
 
-    # En passant file
+  # En passant file
     if board.ep_square is not None:
         ep_file = chess.square_file(board.ep_square)
         out[idx, :, :] = file_to_plane(ep_file)
     idx += 1
 
-    # Rule50 (halfmove clock) normalized
+  # Rule50 (halfmove clock) normalized
     rule50 = min(float(board.halfmove_clock), 100.0) / 100.0
     out[idx, :, :] = rule50
     idx += 1
 
-    # Repetition marker (current position repeated at least once)
+  # Repetition marker (current position repeated at least once)
     rep = 1.0 if (board.is_repetition(2) or board.is_repetition(3)) else 0.0
     if rep > 0.0:
         out[idx, :, :] = rep
     idx += 1
 
-    # All-ones bias
+  # All-ones bias
     out[idx, :, :] = 1.0
 
     assert out.shape == (LC0_REDUCED.num_planes, 8, 8)
@@ -182,7 +186,7 @@ def encode_lc0_full(board: chess.Board, *, history_len: int = 8) -> np.ndarray:
     stack = board._stack
     stack_len = len(stack)
 
-    # Collect bitboards from current board + _stack history.
+  # Collect bitboards from current board + _stack history.
     bbs: list[int] = []
     turns: list[bool] = []
     n_steps = 0
@@ -206,12 +210,14 @@ def encode_lc0_full(board: chess.Board, *, history_len: int = 8) -> np.ndarray:
         turns.append(turn_h)
         us_occ = occ_w if turn_h == chess.WHITE else occ_b
         them_occ = occ_b if turn_h == chess.WHITE else occ_w
-        for occ in (us_occ, them_occ):
-            for bb in piece_bbs:
-                bbs.append(bb & occ)
+        bbs.extend(
+            bb & occ
+            for occ in (us_occ, them_occ)
+            for bb in piece_bbs
+        )
         n_steps += 1
 
-    # Batch-convert all bitboards via struct.pack (3x faster than to_bytes)
+  # Batch-convert all bitboards via struct.pack (3x faster than to_bytes)
     n_bbs = n_steps * 12
     pack_struct = _STRUCT_BY_N.get(n_steps)
     if pack_struct is not None:
@@ -220,7 +226,7 @@ def encode_lc0_full(board: chess.Board, *, history_len: int = 8) -> np.ndarray:
         raw_bytes = struct.pack('>' + 'Q' * n_bbs, *bbs)
     raw = np.unpackbits(np.frombuffer(raw_bytes, dtype=np.uint8)).reshape(n_bbs, 8, 8)
 
-    # Write piece planes with correct orientation per history step
+  # Write piece planes with correct orientation per history step
     for hist_idx in range(n_steps):
         s_bb = hist_idx * 12
         s_plane = hist_idx * 12
@@ -229,8 +235,8 @@ def encode_lc0_full(board: chess.Board, *, history_len: int = 8) -> np.ndarray:
         else:
             out[s_plane:s_plane + 12] = raw[s_bb:s_bb + 12, :, ::-1]
 
-    # Repetition planes — check only the 8 history positions, not entire stack.
-    # Build keys only for positions within the history window + scan backward.
+  # Repetition planes — check only the 8 history positions, not entire stack.
+  # Build keys only for positions within the history window + scan backward.
     rep_base = 103  # 96 piece + 4 castling + 1 EP + 1 turn + 1 rule50
     _check_repetitions(board, stack, stack_len, n_steps, out, rep_base)
 
@@ -280,7 +286,7 @@ def encode_lc0_full_c(board: chess.Board, *, history_len: int = 8) -> np.ndarray
     stack = board._stack
     stack_len = len(stack)
 
-    # Collect bitboards from current board + _stack history
+  # Collect bitboards from current board + _stack history
     bbs_list: list[int] = []
     turns_list: list[int] = []
     n_steps = 0
@@ -306,18 +312,20 @@ def encode_lc0_full_c(board: chess.Board, *, history_len: int = 8) -> np.ndarray
         turns_list.append(1 if turn_h == chess.WHITE else 0)
         us_occ = occ_w if turn_h == chess.WHITE else occ_b
         them_occ = occ_b if turn_h == chess.WHITE else occ_w
-        for occ in (us_occ, them_occ):
-            for bb in (pawns, knights, bishops, rooks, queens, kings):
-                bbs_list.append(bb & occ)
+        bbs_list.extend(
+            bb & occ
+            for occ in (us_occ, them_occ)
+            for bb in (pawns, knights, bishops, rooks, queens, kings)
+        )
         n_steps += 1
 
-    # C-accelerated bitboard → plane conversion
+  # C-accelerated bitboard → plane conversion
     bbs_arr = np.array(bbs_list, dtype=np.uint64)
     turns_arr = np.array(turns_list, dtype=np.int32)
     planes = _c_encode_piece_planes(bbs_arr, turns_arr, n_steps)
     out[:n_steps * 12] = planes
 
-    # Repetition planes
+  # Repetition planes
     rep_base = 103
     _check_repetitions(board, stack, stack_len, n_steps, out, rep_base)
 
@@ -332,9 +340,9 @@ def _check_repetitions(board, stack, stack_len, n_steps, out, rep_base):
     then checks each history position against it (O(1) per lookup).
     """
     def _skey(s):
-        # Omit ep_square: python-chess is_repetition ignores EP when no EP
-        # capture is legal. Excluding it avoids false negatives and matches
-        # the old behavior. False positives are extremely rare and harmless.
+  # Omit ep_square: python-chess is_repetition ignores EP when no EP
+  # capture is legal. Excluding it avoids false negatives and matches
+  # the old behavior. False positives are extremely rare and harmless.
         return (s.pawns, s.knights, s.bishops, s.rooks, s.queens, s.kings,
                 s.occupied_w, s.occupied_b, s.turn, s.castling_rights)
 
@@ -344,18 +352,18 @@ def _check_repetitions(board, stack, stack_len, n_steps, out, rep_base):
                 int(board.occupied_co[chess.BLACK]), board.turn,
                 board.castling_rights)
 
-    # The history window covers stack indices [earliest_si .. stack_len-1] + current board.
-    # earliest_si is the index corresponding to hist_idx = n_steps - 1.
-    # For hist_idx k (k>=1), si = stack_len - k.
-    # So earliest_si = stack_len - (n_steps - 1) for the last history step (if n_steps > 1).
+  # The history window covers stack indices [earliest_si .. stack_len-1] + current board.
+  # earliest_si is the index corresponding to hist_idx = n_steps - 1.
+  # For hist_idx k (k>=1), si = stack_len - k.
+  # So earliest_si = stack_len - (n_steps - 1) for the last history step (if n_steps > 1).
     earliest_si = max(0, stack_len - (n_steps - 1)) if n_steps > 1 else stack_len
 
-    # Pre-build set of all keys BEFORE the history window
+  # Pre-build set of all keys BEFORE the history window
     seen: set = set()
     for i in range(earliest_si):
         seen.add(_skey(stack[i]))
 
-    # Check each history position (from oldest to newest), adding to seen as we go
+  # Check each history position (from oldest to newest), adding to seen as we go
     for hist_idx in range(n_steps - 1, -1, -1):
         if hist_idx == 0:
             key = _bkey()

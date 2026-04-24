@@ -2,19 +2,23 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import numpy as np
 import chess
+import numpy as np
 
 from chess_anti_engine.utils.bitboards import bitboards_to_planes
 
 try:
-    from chess_anti_engine.encoding._features_ext import compute_extra_features as _c_compute
+    from chess_anti_engine.encoding._features_ext import (
+        compute_extra_features as _c_compute,
+    )
     _HAS_C_EXT = True
 except ImportError:
     _HAS_C_EXT = False
 
 if TYPE_CHECKING:
-    from chess_anti_engine.encoding._features_ext import compute_extra_features as _c_compute  # noqa: F401,F811
+    from chess_anti_engine.encoding._features_ext import (
+        compute_extra_features as _c_compute,  # noqa: F401,F811
+    )
 
 
 
@@ -69,19 +73,19 @@ def _discovered_attack_mask(board: chess.Board, color: chess.Color) -> int:
         return 0
 
     if board.is_attacked_by(color, opp_king):
-        # Optimized in-check path: avoid board copies per piece.
-        # Any non-attacker piece's removal doesn't change the check.
-        # Multiple attackers → removing any single one leaves the others.
+  # Optimized in-check path: avoid board copies per piece.
+  # Any non-attacker piece's removal doesn't change the check.
+  # Multiple attackers → removing any single one leaves the others.
         attackers = board.attackers_mask(color, opp_king)
         n_attackers = chess.popcount(attackers)
         all_own = int(board.occupied_co[color])
 
         if n_attackers >= 2:
-            # Double+ check: removing any piece leaves ≥1 attacker.
+  # Double+ check: removing any piece leaves ≥1 attacker.
             return all_own
 
-        # Single attacker: all non-attackers stay in mask. For the single
-        # attacker itself, check if removing it reveals a hidden slider.
+  # Single attacker: all non-attackers stay in mask. For the single
+  # attacker itself, check if removing it reveals a hidden slider.
         attacker_sq = chess.lsb(attackers)
         b2 = board.copy(stack=False)
         b2.remove_piece_at(attacker_sq)
@@ -89,7 +93,7 @@ def _discovered_attack_mask(board: chess.Board, color: chess.Color) -> int:
             return all_own  # hidden slider revealed
         return all_own & ~int(attackers)
 
-    # No sliders → no discovered attacks possible.
+  # No sliders → no discovered attacks possible.
     has_sliders = (
         board.pieces_mask(chess.BISHOP, color)
         | board.pieces_mask(chess.ROOK, color)
@@ -156,8 +160,8 @@ _PAWN_DOUBLE_PUSH_MASK = {
     chess.BLACK: [0] * 64,
 }
 _ORIENT_COORDS: dict[bool, list[tuple[int, int]]] = {
-    # Out-of-range sentinel: uninitialized accesses surface-fault rather than
-    # silently returning a plausible square. _build_square_tables() fills every slot.
+  # Out-of-range sentinel: uninitialized accesses surface-fault rather than
+  # silently returning a plausible square. _build_square_tables() fills every slot.
     chess.WHITE: [(-1, -1)] * 64,
     chess.BLACK: [(-1, -1)] * 64,
 }
@@ -229,7 +233,7 @@ def _king_zone(board: chess.Board, color: chess.Color) -> int:
 
     zone = chess.BB_KING_ATTACKS[king_sq] | chess.BB_SQUARES[king_sq]
 
-    # Add squares 1-2 ranks in front of king (toward opponent)
+  # Add squares 1-2 ranks in front of king (toward opponent)
     kf = chess.square_file(king_sq)
     kr = chess.square_rank(king_sq)
     drs = (1, 2) if color == chess.WHITE else (-1, -2)
@@ -300,21 +304,21 @@ def _backward_pawns(board: chess.Board, color: chess.Color) -> int:
         f = chess.square_file(sq)
         r = chess.square_rank(sq)
 
-        # not isolated
+  # not isolated
         if not (_ADJACENT_FILE_MASKS[f] & own_pawns):
             continue
 
-        # in-front square
+  # in-front square
         r1 = r + direction
         if not (0 <= r1 <= 7):
             continue
         front_sq = chess.square(f, r1)
 
-        # attacked by enemy pawn?
+  # attacked by enemy pawn?
         if not (chess.BB_PAWN_ATTACKS[color][front_sq] & enemy_pawns):
             continue
 
-        # no adjacent pawn at least as advanced
+  # no adjacent pawn at least as advanced
         if _BACKWARD_SUPPORT_MASKS[color][sq] & own_pawns:
             continue
 
@@ -344,7 +348,7 @@ def extra_feature_planes_c(board: chess.Board) -> np.ndarray:
     turn = board.turn
     us, them = turn, not turn
 
-    # Build uint64[6] arrays for each side: PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING
+  # Build uint64[6] arrays for each side: PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING
     piece_types = (chess.PAWN, chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN, chess.KING)
     pieces_us = np.array(
         [int(board.pieces_mask(pt, us)) for pt in piece_types], dtype=np.uint64
@@ -376,11 +380,11 @@ def extra_feature_planes_fast(board: chess.Board) -> np.ndarray:
     us, them = turn, not turn
     out = np.zeros((34, 8, 8), dtype=np.float32)
 
-    # --- Collect bitboard-based planes ---
-    # Phase 1: king safety (10) + pins (6) + pawn structure (8) = 24 bitboards
+  # --- Collect bitboard-based planes ---
+  # Phase 1: king safety (10) + pins (6) + pawn structure (8) = 24 bitboards
     bbs: list[int] = []
 
-    # King safety: 10 planes
+  # King safety: 10 planes
     for color in (us, them):
         kz = _king_zone(board, color)
         bbs.append(kz)
@@ -391,7 +395,7 @@ def extra_feature_planes_fast(board: chess.Board) -> np.ndarray:
                 overlap |= board.attacks_mask(sq) & kz
             bbs.append(overlap)
 
-    # Pins/x-rays/discovered: 6 planes
+  # Pins/x-rays/discovered: 6 planes
     for color in (us, them):
         pinned_mask = 0
         pin_ray_mask = 0
@@ -405,18 +409,18 @@ def extra_feature_planes_fast(board: chess.Board) -> np.ndarray:
         bbs.append(pin_ray_mask)
         bbs.append(discovered_mask)
 
-    # Pawn structure: 8 planes
+  # Pawn structure: 8 planes
     for color in (us, them):
         bbs.append(_passed_pawns(board, color))
         bbs.append(_isolated_pawns(board, color))
         bbs.append(_backward_pawns(board, color))
         bbs.append(_connected_pawns(board, color))
 
-    # Convert first 24 bitboard planes in one batch → out[0:24]
+  # Convert first 24 bitboard planes in one batch → out[0:24]
     assert len(bbs) == 24
     out[:24] = bitboards_to_planes(bbs, turn=turn)
 
-    # --- Mobility: 6 planes [24:30] (float values, not bitboard) ---
+  # --- Mobility: 6 planes [24:30] (float values, not bitboard) ---
     orient_coords = _ORIENT_COORDS[turn]
     occ = int(board.occupied)
     ep_mask = int(chess.BB_SQUARES[board.ep_square]) if board.ep_square is not None else 0
@@ -446,7 +450,7 @@ def extra_feature_planes_fast(board: chess.Board) -> np.ndarray:
                 row, col = orient_coords[sq]
                 plane[row, col] = np.float32(float(mobility) / max_m)
 
-    # --- Outpost/space: 4 planes [30:34] ---
+  # --- Outpost/space: 4 planes [30:34] ---
     outpost_bbs: list[int] = []
     for color in (us, them):
         own_att = 0
