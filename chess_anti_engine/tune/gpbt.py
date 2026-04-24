@@ -7,6 +7,7 @@ import os
 import random
 from collections import defaultdict
 from typing import TYPE_CHECKING
+
 from ray.tune.experiment import Trial
 from ray.tune.schedulers import PopulationBasedTraining
 from ray.tune.schedulers.pbt import SafeFallbackEncoder, _FutureTrainingResult
@@ -43,7 +44,7 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
         hyperparam_bounds: dict[str, list[float]] | None = None,
         trial_inertia_weight: float = 1.0,
         trial_winner_weight: float = 1.0,
-        # Legacy aliases (ignored if the new names are also set)
+  # Legacy aliases (ignored if the new names are also set)
         pairwise_lr: float | None = None,  # pylint: disable=unused-argument
         pairwise_momentum: float | None = None,  # pylint: disable=unused-argument
         **kwargs,
@@ -72,16 +73,16 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
         if self._time_attr not in result or self._metric not in result:
             return super().on_trial_result(tune_controller, trial, result)
 
-        # Always keep score fresh so _quantiles() sees all live trials,
-        # even those that haven't reached the perturbation boundary yet.
-        # Only touch last_score — leave last_train_time and last_result
-        # to the parent's _save_trial_state at the actual boundary, since
-        # last_train_time is used as a sync-mode readiness watermark.
+  # Always keep score fresh so _quantiles() sees all live trials,
+  # even those that haven't reached the perturbation boundary yet.
+  # Only touch last_score — leave last_train_time and last_result
+  # to the parent's _save_trial_state at the actual boundary, since
+  # last_train_time is used as a sync-mode readiness watermark.
         state = self._trial_state[trial]
         score = self._metric_op * result[self._metric]
         state.last_score = score
 
-        # Delegate to parent for the actual perturbation-interval gate
+  # Delegate to parent for the actual perturbation-interval gate
         return super().on_trial_result(tune_controller, trial, result)
 
     @staticmethod
@@ -171,10 +172,10 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
             ):
                 lo, hi = self._hyperparam_bounds[param_name]
                 if random.random() < self._resample_probability:
-                    # Resample uniformly from the full range.  This is the
-                    # only escape hatch when all trials converge to the same
-                    # value (e.g. all pinned at the old ceiling): pairwise
-                    # velocity is zero so the param would never move otherwise.
+  # Resample uniformly from the full range.  This is the
+  # only escape hatch when all trials converge to the same
+  # value (e.g. all pinned at the old ceiling): pairwise
+  # velocity is zero so the param would never move otherwise.
                     proposed = random.uniform(float(lo), float(hi))
                     operations[param_name] = "resample"
                 else:
@@ -238,9 +239,9 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
         )
 
         if trial in upper_quantile:
-            # Always use the most recent committed checkpoint from train.report().
-            # Avoids creating a new async _FutureTrainingResult that may not resolve
-            # before a lower-quantile trial tries to exploit this donor.
+  # Always use the most recent committed checkpoint from train.report().
+  # Avoids creating a new async _FutureTrainingResult that may not resolve
+  # before a lower-quantile trial tries to exploit this donor.
             state.last_checkpoint = trial.checkpoint
             self._num_checkpoints += 1
         else:
@@ -280,11 +281,11 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
                 last_checkpoint = None
 
         if not last_checkpoint:
-            # Async race: the donor hasn't hit its own perturbation window yet so
-            # _schedule_trial_save was never called for it.  Fall back to the
-            # donor's most recent checkpoint committed via train.report() — this
-            # is always available after the first reported iteration and is
-            # current enough for copying model weights.
+  # Async race: the donor hasn't hit its own perturbation window yet so
+  # _schedule_trial_save was never called for it.  Fall back to the
+  # donor's most recent checkpoint committed via train.report() — this
+  # is always available after the first reported iteration and is
+  # current enough for copying model weights.
             last_checkpoint = donor.checkpoint
             if last_checkpoint:
                 donor_state.last_checkpoint = last_checkpoint

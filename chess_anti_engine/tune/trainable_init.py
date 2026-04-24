@@ -174,7 +174,7 @@ def _restore_checkpoint_or_salvage(
                 label="salvage",
             )
             del salvage_ckpt
-        if bool(config.get("salvage_reinit_volatility_heads", False)):
+        if config.get("salvage_reinit_volatility_heads", False):
             reinit = reinit_volatility_head_parameters_(trainer.model)
             if reinit:
                 print(f"[trial] Reinitialized salvage volatility heads: {', '.join(reinit)}")
@@ -199,7 +199,7 @@ def _restore_checkpoint_or_salvage(
                     + ", ".join(pid_manifest_overrides)
                 )
 
-    # Post-restore metadata fixups.
+  # Post-restore metadata fixups.
     restored_owner_trial_id = ""
     if isinstance(restored_trial_meta, dict):
         restored_owner_trial_id = str(restored_trial_meta.get("owner_trial_id", ""))
@@ -227,7 +227,7 @@ def _restore_checkpoint_or_salvage(
             pass
 
     if ckpt is not None and rr.cross_trial_restore:
-        # PB2 exploit clone: fork RNG stream so recipients do not replay donor opening sequences.
+  # PB2 exploit clone: fork RNG stream so recipients do not replay donor opening sequences.
         restore_rows = _count_jsonl_rows(trial_dir / "result.json")
         fork_seed = _stable_seed_u32(
             base_seed,
@@ -248,8 +248,8 @@ def _restore_checkpoint_or_salvage(
             f"recipient_optimizer={str(config.get('optimizer', 'nadamw')).lower()} "
             f"restore_mode={rr.startup_source}"
         )
-        # Inherit donor's EMA so the recipient isn't ranked on stale
-        # pre-exploit history.
+  # Inherit donor's EMA so the recipient isn't ranked on stale
+  # pre-exploit history.
         if rr.restored_owner_trial_dir:
             _donor_row = _latest_trial_result_row(Path(rr.restored_owner_trial_dir))
             if _donor_row is not None:
@@ -300,7 +300,7 @@ def _maybe_load_bootstrap(
         reinit = reinit_volatility_head_parameters_(trainer.model)
         if reinit:
             print(f"[trial] Reinitialized bootstrap volatility heads: {', '.join(reinit)}")
-    # Re-sync SWA with the newly loaded weights (AveragedModel deep-copies at init).
+  # Re-sync SWA with the newly loaded weights (AveragedModel deep-copies at init).
     trainer._init_swa()
     del ckpt_data
 
@@ -325,7 +325,7 @@ def _init_replay_buffers(
     selfplay_shards_dir = work_dir / "selfplay_shards"
     selfplay_shards_dir.mkdir(parents=True, exist_ok=True)
 
-    # Optional warmstart replay from salvage seed slot (fresh trials only).
+  # Optional warmstart replay from salvage seed slot (fresh trials only).
     if (
         restore.seed_warmstart_used
         and (not restore.cross_trial_restore)
@@ -346,8 +346,8 @@ def _init_replay_buffers(
 
     shared_shards_loaded = 0
 
-    # Seed replay buffer with shared iter-0 data (played once from bootstrap net).
-    # Only copy if this is a fresh trial (no existing shards in replay_shard_dir).
+  # Seed replay buffer with shared iter-0 data (played once from bootstrap net).
+  # Only copy if this is a fresh trial (no existing shards in replay_shard_dir).
     if tc.shared_shards_dir and not iter_shard_paths(replay_shard_dir) and (not restore.cross_trial_restore):
         src = Path(tc.shared_shards_dir)
         if src.is_dir():
@@ -386,9 +386,9 @@ def _init_replay_buffers(
             f"donor_copied={refresh_summary['donor_copied']} "
             f"final={refresh_summary['local_final']}"
         )
-        # Set current_window based on shards actually kept on disk after refresh,
-        # so the DiskReplayBuffer capacity is correct from construction and
-        # _enforce_window doesn't aggressively evict on first add_many.
+  # Set current_window based on shards actually kept on disk after refresh,
+  # so the DiskReplayBuffer capacity is correct from construction and
+  # _enforce_window doesn't aggressively evict on first add_many.
         kept_after_refresh = iter_shard_paths(replay_shard_dir)
         if kept_after_refresh:
             current_window = max(int(current_window), len(kept_after_refresh) * tc.shard_size)
@@ -409,9 +409,9 @@ def _init_replay_buffers(
         wl_max_ratio=tc.shuffle_wl_max_ratio,
     )
 
-    # Preserve intentionally seeded replay (resume, salvage warmstart, shared-shard
-    # bootstrap), but keep plain fresh starts at replay_window_start so easy early
-    # games evict promptly instead of inheriting stale local shards.
+  # Preserve intentionally seeded replay (resume, salvage warmstart, shared-shard
+  # bootstrap), but keep plain fresh starts at replay_window_start so easy early
+  # games evict promptly instead of inheriting stale local shards.
     seeded_replay_start = bool(ckpt is not None or restore.seed_warmstart_used or shared_shards_loaded > 0)
     if seeded_replay_start:
         current_window = max(int(current_window), int(len(buf)))

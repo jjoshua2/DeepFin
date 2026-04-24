@@ -167,9 +167,9 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
 # a restart because the broker's shared-memory layout and worker processes
 # are configured at launch time.
 _TOPOLOGY_KEYS = frozenset({
-    # Worker-level keys (workers_per_trial, use_compile, sf_workers, threaded,
-    # selfplay_threads) removed — _ensure_distributed_workers spawns new workers
-    # with updated config each iteration.
+  # Worker-level keys (workers_per_trial, use_compile, sf_workers, threaded,
+  # selfplay_threads) removed — _ensure_distributed_workers spawns new workers
+  # with updated config each iteration.
     "distributed_inference_max_batch_per_slot",
     "distributed_inference_batch_wait_ms",
     "distributed_inference_use_compile",
@@ -194,9 +194,9 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None) -> None:
     if not yaml_path:
         return
     try:
-        from chess_anti_engine.utils import load_yaml_file, flatten_run_config_defaults
+        from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
         fresh = flatten_run_config_defaults(load_yaml_file(yaml_path))
-        # Derive searched keys from the config's own bounds (stable), not YAML.
+  # Derive searched keys from the config's own bounds (stable), not YAML.
         searched = {
             k.removeprefix("pb2_bounds_")
             for k in config if k.startswith("pb2_bounds_")

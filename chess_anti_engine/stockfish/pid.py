@@ -76,7 +76,7 @@ def _fit_inverse_regret(
         return None
     a = (swrr * sww - swr * swrw) / det
     b = (sw * swrw - swr * sww) / det
-    # Physics sanity: winrate should increase with regret (easier SF → more wins).
+  # Physics sanity: winrate should increase with regret (easier SF → more wins).
     if b <= 1e-4:
         return None
     n = len(history)
@@ -118,7 +118,7 @@ class DifficultyPID:
          from a rolling history of observations and moves regret toward r*
          predicted to hit the target winrate. Capped per-iter by
          inverse_regret_max_step scaled by prediction confidence. Safety
-         floor forces emergency ease when raw winrate drops below floor-band.
+         floor forces emergency ease when raw winrate drops below floor.
       2. Nodes stage: only active once regret has dropped to
          wdl_regret_stage_end (the gate). Proportional multiplicative step
          against the EMA-winrate error, capped at ±_NODES_STEP_CAP per iter.
@@ -133,22 +133,20 @@ class DifficultyPID:
         min_games_between_adjust: int = 30,
         min_nodes: int = 1_000,
         max_nodes: int = 1_000_000,
-        # --- WDL regret ---
+  # --- WDL regret ---
         initial_wdl_regret: float = -1.0,
         wdl_regret_min: float = 0.01,
         wdl_regret_max: float = 1.0,
         wdl_regret_stage_end: float = -1.0,
         wdl_regret_stage_reenter: float | None = None,
-        # --- Inverse-model regret controller ---
+  # --- Inverse-model regret controller ---
         inverse_regret_window: int = 20,
-        inverse_regret_sigma_tolerance: float = 0.02,
         inverse_regret_max_step: float = 0.01,
         inverse_regret_max_step_frac: float = 0.0,
         inverse_regret_safety_floor: float = 0.50,
-        inverse_regret_safety_band: float = 0.05,
         inverse_regret_emergency_ease_step: float = 0.01,
         inverse_regret_recency_half_life: float = 0.0,
-        inverse_regret_target_deadband: float = 0.02,
+        inverse_regret_target_deadband_sigma: float = 1.0,
     ):
         init = int(initial_nodes)
         self.nodes = int(_clamp(init, int(min_nodes), int(max_nodes)))
@@ -188,14 +186,12 @@ class DifficultyPID:
         self._games_since_adjust = 0
 
         self.inverse_regret_window = int(inverse_regret_window)
-        self.inverse_regret_sigma_tolerance = float(inverse_regret_sigma_tolerance)
         self.inverse_regret_max_step = float(inverse_regret_max_step)
         self.inverse_regret_max_step_frac = float(inverse_regret_max_step_frac)
         self.inverse_regret_safety_floor = float(inverse_regret_safety_floor)
-        self.inverse_regret_safety_band = float(inverse_regret_safety_band)
         self.inverse_regret_emergency_ease_step = float(inverse_regret_emergency_ease_step)
         self.inverse_regret_recency_half_life = float(inverse_regret_recency_half_life)
-        self.inverse_regret_target_deadband = float(inverse_regret_target_deadband)
+        self.inverse_regret_target_deadband_sigma = float(inverse_regret_target_deadband_sigma)
         self._inverse_history: deque[tuple[float, float, float]] = deque(
             maxlen=max(3, self.inverse_regret_window)
         )
@@ -229,10 +225,6 @@ class DifficultyPID:
             self.wdl_regret_stage_reenter = _clamp(
                 self.wdl_regret_stage_reenter, stage_end, self.wdl_regret_max,
             )
-        if "sf_pid_inverse_regret_sigma_tolerance" in config:
-            self.inverse_regret_sigma_tolerance = float(
-                config["sf_pid_inverse_regret_sigma_tolerance"]
-            )
         if "sf_pid_inverse_regret_max_step" in config:
             self.inverse_regret_max_step = float(config["sf_pid_inverse_regret_max_step"])
         if "sf_pid_inverse_regret_max_step_frac" in config:
@@ -243,10 +235,6 @@ class DifficultyPID:
             self.inverse_regret_safety_floor = float(
                 config["sf_pid_inverse_regret_safety_floor"]
             )
-        if "sf_pid_inverse_regret_safety_band" in config:
-            self.inverse_regret_safety_band = float(
-                config["sf_pid_inverse_regret_safety_band"]
-            )
         if "sf_pid_inverse_regret_emergency_ease_step" in config:
             self.inverse_regret_emergency_ease_step = float(
                 config["sf_pid_inverse_regret_emergency_ease_step"]
@@ -255,9 +243,9 @@ class DifficultyPID:
             self.inverse_regret_recency_half_life = float(
                 config["sf_pid_inverse_regret_recency_half_life"]
             )
-        if "sf_pid_inverse_regret_target_deadband" in config:
-            self.inverse_regret_target_deadband = float(
-                config["sf_pid_inverse_regret_target_deadband"]
+        if "sf_pid_inverse_regret_target_deadband_sigma" in config:
+            self.inverse_regret_target_deadband_sigma = float(
+                config["sf_pid_inverse_regret_target_deadband_sigma"]
             )
 
     def state_dict(self) -> dict:
@@ -331,7 +319,7 @@ class DifficultyPID:
         if not force and self._games_since_adjust < int(self.min_games_between_adjust):
             return self._no_change_update(err)
 
-        # --- Stage 1: inverse-model regret controller ---
+  # --- Stage 1: inverse-model regret controller ---
         regret_before = float(self.wdl_regret)
         regret_changed = False
 
@@ -342,33 +330,45 @@ class DifficultyPID:
 
             regret_after = float(regret_before)
             floor = self.inverse_regret_safety_floor
-            band = max(1e-6, self.inverse_regret_safety_band)
-            deadband = max(0.0, self.inverse_regret_target_deadband)
+  # Dual z-gate: act if EITHER the single iter's raw err is
+  # beyond sigma × SE, OR the EMA of err (which accumulates
+  # same-direction evidence) is beyond sigma × SE(ema_err).
+  #   - Raw gate catches one clear spike (|z|>1.5 is ~6.5:1 real).
+  #   - EMA gate catches a slow drift of small same-direction
+  #     deviations that the raw gate would miss each iter.
+  # For iid per-iter err with variance σ², the EMA's steady-state
+  # variance is α/(2-α) · σ², so SE(ema_err) = σ · √(α/(2-α)).
             err = self.target - raw_wr_this_batch
-            # Effective absolute step cap for this iter. When max_step_frac > 0
-            # it scales with current regret (2% of 0.07 ≈ 0.0014; 2% of 0.02 ≈
-            # 0.0004). Constant-regret steps become non-constant-wr steps as
-            # SF approaches optimal, so scaling by current regret keeps the
-            # wr perturbation per step roughly constant.
+            ema_err = self.target - float(self.ema_winrate)
+            ema_se_factor = math.sqrt(self.alpha / max(2.0 - self.alpha, 1e-9))
+            sigma = max(0.0, self.inverse_regret_target_deadband_sigma)
+            raw_deadband = sigma * se_this_batch
+            ema_deadband = sigma * se_this_batch * ema_se_factor
+            in_deadband = abs(err) <= raw_deadband and abs(ema_err) <= ema_deadband
+  # Effective absolute step cap for this iter. When max_step_frac > 0
+  # it scales with current regret (2% of 0.07 ≈ 0.0014; 2% of 0.02 ≈
+  # 0.0004). Constant-regret steps become non-constant-wr steps as
+  # SF approaches optimal, so scaling by current regret keeps the
+  # wr perturbation per step roughly constant.
             if self.inverse_regret_max_step_frac > 0.0:
                 abs_max_step = self.inverse_regret_max_step_frac * regret_before
             else:
                 abs_max_step = self.inverse_regret_max_step
 
-            if raw_wr_this_batch < floor + band:
-                # Safety airbag — emergency ease proportional to distance below
-                # floor, capped at abs_max_step so one bad batch can't jump
-                # regret by an order of magnitude.
-                margin = raw_wr_this_batch - floor
-                urgency = max(0.2, 1.0 + (band - margin) / band * 4.0)
-                desired_ease = self.inverse_regret_emergency_ease_step * urgency
-                ease = min(desired_ease, abs_max_step)
+            if raw_wr_this_batch < floor:
+  # Safety airbag — raw_wr dropped below floor. Ease regret by
+  # emergency_ease_step, bypassing the max_step_frac cap so the
+  # airbag can loosen faster than normal PID tightens. Still
+  # clamped by the absolute max_step as a runaway guard. Fires
+  # strictly below floor so the deadband around target stays
+  # reachable.
+                ease = min(self.inverse_regret_emergency_ease_step, self.inverse_regret_max_step)
                 regret_after = _clamp(
                     regret_before + ease, self.wdl_regret_min, self.wdl_regret_max
                 )
-            elif abs(err) <= deadband:
-                # Within deadband of target — hold regret steady so the model
-                # gets stable training data at the current difficulty.
+            elif in_deadband:
+  # Neither raw nor ema err crossed its sigma-gated threshold
+  # — hold regret steady.
                 pass
             else:
                 fit = _fit_inverse_regret(
@@ -377,19 +377,16 @@ class DifficultyPID:
                     recency_half_life=self.inverse_regret_recency_half_life,
                 )
                 if fit is not None:
-                    predicted_regret, sigma_pred, _ = fit
-                    # Scale the step by prediction confidence instead of
-                    # clamping to the observed [min, max]. Noisy fit (large
-                    # sigma_pred) → tiny step; clean fit → full step toward
-                    # predicted_regret. The old clamp pinned predictions to
-                    # the range edge when slope ≈ 0, causing edge-to-edge
-                    # zigzag each window.
-                    confidence = min(
-                        1.0,
-                        self.inverse_regret_sigma_tolerance / max(sigma_pred, 1e-6),
-                    )
+                    predicted_regret, _, _ = fit
+  # Step toward fit's predicted r*, bounded by abs_max_step.
+  # Prior versions scaled by sigma_pred/sigma_tolerance, but
+  # backtest on 168 iters showed sigma_pred has ~0 correlation
+  # with actual prediction error (Pearson 0.009) — the iid-
+  # Gaussian residual assumption doesn't hold for drifting
+  # training data. max_step_frac (cap) is the only bound that
+  # actually works.
                     delta = _clamp(
-                        confidence * (predicted_regret - regret_before),
+                        predicted_regret - regret_before,
                         -abs_max_step,
                         abs_max_step,
                     )
@@ -399,10 +396,10 @@ class DifficultyPID:
                         self.wdl_regret_max,
                     )
                 else:
-                    # Fit degenerate (history span < min_span, or other).
-                    # We're outside the deadband (checked above) so we know the
-                    # direction to move. Step sign(err) * abs_max_step to
-                    # explore and widen history for the next iteration's fit.
+  # Fit degenerate (history span < min_span, or other).
+  # We're outside the deadband (checked above) so we know the
+  # direction to move. Step sign(err) * abs_max_step to
+  # explore and widen history for the next iteration's fit.
                     step_sign = 1.0 if err > 0 else -1.0
                     delta = step_sign * abs_max_step
                     regret_after = _clamp(
@@ -423,11 +420,11 @@ class DifficultyPID:
                     if self.wdl_regret <= regret_end:
                         self._regret_stage_complete = True
 
-        # --- Stage 2: nodes (only once regret stage is complete) ---
-        # Use ema − target here (NOT the regret-stage-local err, which is
-        # target − raw and has the opposite sign). Positive ema_err = model
-        # winning too much → raise nodes. Shadowing caused a positive-feedback
-        # loop where nodes climbed while wr dropped.
+  # --- Stage 2: nodes (only once regret stage is complete) ---
+  # Use ema − target here (NOT the regret-stage-local err, which is
+  # target − raw and has the opposite sign). Positive ema_err = model
+  # winning too much → raise nodes. Shadowing caused a positive-feedback
+  # loop where nodes climbed while wr dropped.
         nodes_after = int(self.nodes)
         if self._regret_stage_complete:
             ema_err = float(self.ema_winrate) - float(self.target)
@@ -466,9 +463,6 @@ def pid_from_config(config: dict) -> DifficultyPID:
         wdl_regret_max=float(config.get("sf_pid_wdl_regret_max", 1.0)),
         wdl_regret_stage_end=float(config.get("sf_pid_wdl_regret_stage_end", -1.0)),
         inverse_regret_window=int(config.get("sf_pid_inverse_regret_window", 20)),
-        inverse_regret_sigma_tolerance=float(
-            config.get("sf_pid_inverse_regret_sigma_tolerance", 0.02)
-        ),
         inverse_regret_max_step=float(config.get("sf_pid_inverse_regret_max_step", 0.01)),
         inverse_regret_max_step_frac=float(
             config.get("sf_pid_inverse_regret_max_step_frac", 0.0)
@@ -476,16 +470,13 @@ def pid_from_config(config: dict) -> DifficultyPID:
         inverse_regret_safety_floor=float(
             config.get("sf_pid_inverse_regret_safety_floor", 0.50)
         ),
-        inverse_regret_safety_band=float(
-            config.get("sf_pid_inverse_regret_safety_band", 0.05)
-        ),
         inverse_regret_emergency_ease_step=float(
             config.get("sf_pid_inverse_regret_emergency_ease_step", 0.01)
         ),
         inverse_regret_recency_half_life=float(
             config.get("sf_pid_inverse_regret_recency_half_life", 0.0)
         ),
-        inverse_regret_target_deadband=float(
-            config.get("sf_pid_inverse_regret_target_deadband", 0.02)
+        inverse_regret_target_deadband_sigma=float(
+            config.get("sf_pid_inverse_regret_target_deadband_sigma", 1.0)
         ),
     )

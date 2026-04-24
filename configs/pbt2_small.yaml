@@ -20,9 +20,9 @@ work_dir: runs/pbt2_small
 device: cuda
 iterations: 750
 replay_capacity: 5000000   # Hard cap
-replay_window_start: 20000   # Small start so early easy games evict by iter 10-15
+replay_window_start: 400000   # 2026-04-22 v4: was 20000 (truncated pool to 10/187 shards). Raised so salvage keeps all pool shards (~374k pos).
 replay_window_max: 2000000
-replay_window_growth: 2500   # ~17 iters in buffer; LC0/AlphaZero use large windows for stability
+replay_window_growth: 5000   # 2026-04-23: 2500→5000. Net growth ~2.5 shards/iter (was 1.25). Accumulate low-regret games faster during post-syzygy recovery.
 
 # Bootstrap: train initial net on all random games, then discard from window
 bootstrap_dir: data/bootstrap
@@ -59,34 +59,32 @@ stockfish:
 
   sf_pid_enabled: true
   sf_pid_target_winrate: 0.57
-  sf_pid_ema_alpha: 0.50      # EMA half-life ~1 iter — faster reaction with shorter iters
+  sf_pid_ema_alpha: 0.10      # 2026-04-23: 0.50→0.10 per backtest on 168-iter trial history. With deadband_sigma=1.5, α=0.10 hits 0 FP / 0 FN (vs 11 FP at α=0.50 σ=1.0). Smaller α shrinks EMA's own SE so slow 0.35σ drifts register without chasing per-iter noise.
   sf_pid_min_games_between_adjust: 200  # Higher than games_per_iter so only the forced iteration-boundary adjust fires.
-  sf_pid_min_nodes: 5000         # 5k nodes: wider WDL spread so regret filter actually works
-  sf_pid_max_nodes: 25000        # Raised 10k→25k 2026-04-18: headroom for node stage when regret hits 0.05 gate (not live-reloadable, needs restart)
-  sf_pid_wdl_regret_start: 0.50       # Start near equilibrium for 5k nodes; model stable here
-  sf_pid_wdl_regret_min: 0.01         # hard floor (tightened 0.02→0.01 2026-04-21: current trial reached 0.025, floor needs headroom)
-  sf_pid_wdl_regret_max: 2.0          # max if PID needs to ease off
-  sf_pid_wdl_regret_stage_end: 0.01   # nodes stage doesn't engage until regret floors at 1% — clean one-stage-at-a-time separation
+  sf_pid_min_nodes: 5000         # 2026-04-22 v4: locked to 5000 (min==max). Nodes no longer a lever; regret is.
+  sf_pid_max_nodes: 1000000      # 2026-04-23: raise ceiling to 1M. Nodes stay at min_nodes=5000 until regret hits stage_end (0.01); then stage-2 scales nodes by ema_winrate−target to keep winrate balanced. Construction-only knob — restart required.
+  sf_pid_wdl_regret_start: 0.20       # 2026-04-22 v7: (construction-only; only matters on fresh PID restart).
+  sf_pid_wdl_regret_min: 0.01         # 2026-04-23: 0.02→0.01 so regret can reach stage_end (0.01) and activate stage-2 node growth. Live-reloaded.
+  sf_pid_wdl_regret_max: 0.40         # 2026-04-22 v9: 0.15→0.40. PID hit 0.15 ceiling with EMA 0.46; needs room to climb much higher to avoid TB-adj range.
+  sf_pid_wdl_regret_stage_end: 0.01   # Stage gating irrelevant now (inverse PID ignores stages); kept ≤ max for sanity.
 
   # Inverse-model regret controller: fits observed (regret, winrate) history via
   # weighted least squares and moves toward the regret that predicts target
   # winrate. Weights are 1/SE² where SE is computed from the actual W/D/L
   # distribution per iter.
   sf_pid_inverse_regret_window: 20            # rolling history length
-  sf_pid_inverse_regret_sigma_tolerance: 0.02 # prediction SE at which step-cap applies at full magnitude
-  sf_pid_inverse_regret_max_step: 0.003            # absolute step cap. Used only when max_step_frac == 0.
-  sf_pid_inverse_regret_max_step_frac: 0.02        # relative step cap = frac × current_regret. If >0, overrides max_step. 0.02 @ regret=0.07 → ±0.0014/iter; scales naturally as regret falls.
+  sf_pid_inverse_regret_max_step: 0.02             # 2026-04-24: 0.10→0.02 to cap emergency-ease step after 6 limit-cycle overshoots (raw_wr airbag firing 3×). max_step_frac still governs normal tightening; this only tightens the ease branch.
+  sf_pid_inverse_regret_max_step_frac: 0.12        # 2026-04-23: 0.10→0.12 conservative bump. Backtest: 44% of regret moves hit the 10% cap, p75=15% wanted larger. Small bump to loosen chronic under-reaction without repeating v14 (0.05 was too slow).
   sf_pid_inverse_regret_safety_floor: 0.50         # below this raw winrate → emergency ease
-  sf_pid_inverse_regret_safety_band: 0.05          # urgency zone between floor and floor+band
-  sf_pid_inverse_regret_emergency_ease_step: 0.01  # base emergency ease; scales up to ~5x near floor
-  sf_pid_inverse_regret_recency_half_life: 15.0    # exp-decay on history. 15-iter half-life → ~85% effective weight on 20-point window, keeps fit stable while still tracking slow drift.
-  sf_pid_inverse_regret_target_deadband: 0.02      # abs(raw_wr - target) below this → hold regret (let model settle); above → adjust. Replaces min_span as the "act vs hold" gate.
+  sf_pid_inverse_regret_emergency_ease_step: 0.03  # raise regret by this amount when raw_wr < floor (2026-04-23: 0.08→0.03 post-recovery).
+  sf_pid_inverse_regret_recency_half_life: 3.0     # 2026-04-23: 15→3 per walk-forward backtest (hl=3 lowest MAE 0.069, wins 55% overall incl. quiet periods, 94% in drift). Fit still uses full last-20 window; old points just get low weight.
+  sf_pid_inverse_regret_target_deadband_sigma: 1.5  # 2026-04-23: dual z-gate. Act if |raw_err| > σ·SE OR |ema_err| > σ·SE·√(α/(2-α)). Backtest on 168 iters: σ=1.5 + α=0.10 → 0 FP, 0 FN, 154 acts (same coverage as σ=1.0 α=0.50, no noise-chase).
 
 selfplay:
   games_per_iter: 800
   games_per_iter_start: 32  # One round of 8 workers × 4 games; fast sanity check.
   games_per_iter_ramp_iters: 5
-  selfplay_fraction: 0.50  # 50/50 selfplay vs curriculum for stronger WDL signal
+  selfplay_fraction: 0.25  # 2026-04-24: 0.50→0.25 (25% selfplay / 75% SF curriculum). test_policy_loss drifted 2.25→2.55 at iter 272-285; past runs at 75% SF worked better. Revert if regret/winrate stop moving or policy_loss doesn't recover.
   selfplay_batch: 256   # Concurrent game slots per worker (always full via continuous recycling).
   max_plies: 450
 

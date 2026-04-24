@@ -2,17 +2,17 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import socket
 import subprocess
 import sys
 import time
+from pathlib import Path
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 from chess_anti_engine.tune._utils import terminate_process as _terminate_process
-from chess_anti_engine.utils.atomic import atomic_write_text
 from chess_anti_engine.tune.process_cleanup import terminate_matching_processes
+from chess_anti_engine.utils.atomic import atomic_write_text
 
 
 def _pick_free_port() -> int:
@@ -63,16 +63,16 @@ def _prepare_distributed_worker_auth(
             "Add a user first: python -m chess_anti_engine.server.manage_users add <username>"
         )
 
-    # Self-register on every startup so contributors don't need a separate
-    # provisioning step — their credentials are just written to the local DB.
+  # Self-register on every startup so contributors don't need a separate
+  # provisioning step — their credentials are just written to the local DB.
     upsert_user(server_root / "users.json", username=username, password=password)
 
     password_file = server_root / f"{username}.password"
     password_file.write_text(password + "\n", encoding="utf-8")
     try:
         password_file.chmod(0o600)
-    except Exception:
-        pass
+    except OSError:
+        pass  # Windows / non-POSIX filesystem — chmod is best-effort
     return username, password_file
 
 
@@ -94,7 +94,7 @@ def _cleanup_old_tune_experiments(*, tune_dir: Path, keep_last: int) -> None:
     if not tune_dir.exists():
         return
 
-    # Ray writes these per experiment run.
+  # Ray writes these per experiment run.
     state_files = sorted(tune_dir.glob("experiment_state-*.json"))
     if len(state_files) <= keep_last:
         return
@@ -102,7 +102,7 @@ def _cleanup_old_tune_experiments(*, tune_dir: Path, keep_last: int) -> None:
     keep = set(state_files[-keep_last:])
     delete_states = [p for p in state_files if p not in keep]
 
-    # Extract timestamps like 2026-02-26_18-51-01 from filenames.
+  # Extract timestamps like 2026-02-26_18-51-01 from filenames.
     ts_re = re.compile(r"^experiment_state-(?P<ts>.+)\.json$")
     delete_ts: set[str] = set()
     for p in delete_states:
@@ -110,15 +110,15 @@ def _cleanup_old_tune_experiments(*, tune_dir: Path, keep_last: int) -> None:
         if m:
             delete_ts.add(m.group("ts"))
 
-    # Delete associated trial directories and any small aux files.
+  # Delete associated trial directories and any small aux files.
     for ts in sorted(delete_ts):
-        # Remove trial dirs with this timestamp suffix.
+  # Remove trial dirs with this timestamp suffix.
         for d in tune_dir.glob(f"train_trial_*{ts}"):
             if d.is_dir():
                 print(f"[run_tune] Pruning old Ray Tune trial dir: {d}")
                 shutil.rmtree(d, ignore_errors=True)
 
-        # Remove state files for this timestamp.
+  # Remove state files for this timestamp.
         for p in [
             tune_dir / f"experiment_state-{ts}.json",
             tune_dir / f"basic-variant-state-{ts}.json",
@@ -130,19 +130,19 @@ def _cleanup_old_tune_experiments(*, tune_dir: Path, keep_last: int) -> None:
                 except Exception:
                     pass
 
-    # Also prune PB2 policy logs that correspond to now-missing trial prefixes.
-    # These are small, but they can accumulate.
+  # Also prune PB2 policy logs that correspond to now-missing trial prefixes.
+  # These are small, but they can accumulate.
     prefixes: set[str] = set()
     for d in tune_dir.glob("train_trial_*"):
         if not d.is_dir():
             continue
-        # train_trial_<prefix>_...
+  # train_trial_<prefix>_...
         parts = d.name.split("_", 2)
         if len(parts) >= 3:
             prefixes.add(parts[1])
 
     for p in tune_dir.glob("pbt_policy_*.txt"):
-        # pbt_policy_<prefix>_<trialid>.txt
+  # pbt_policy_<prefix>_<trialid>.txt
         m = re.match(r"^pbt_policy_(?P<prefix>[^_]+)_\d+\.txt$", p.name)
         if m and m.group("prefix") not in prefixes:
             print(f"[run_tune] Pruning old PB2 policy log: {p}")
@@ -287,7 +287,7 @@ def run_tune(
     try:
         import ray
         from ray import tune
-        from ray.tune import RunConfig, CheckpointConfig
+        from ray.tune import CheckpointConfig, RunConfig
     except Exception as e:  # pragma: no cover
         raise RuntimeError(
             "Ray Tune is required. Install with `pip install -e '.[tune]'`."
@@ -353,7 +353,7 @@ def run_tune(
 
         log_fh = server_log.open("ab")
         try:
-            # pylint: disable=consider-using-with  # server_proc outlives this function
+  # pylint: disable=consider-using-with  # server_proc outlives this function
             server_proc = subprocess.Popen(
                 cmd,
                 cwd=str(Path(__file__).resolve().parents[2]),
@@ -379,12 +379,14 @@ def run_tune(
             }
         )
 
-    # Launch shared inference broker if configured
+  # Launch shared inference broker if configured
     shared_broker_proc: subprocess.Popen[bytes] | None = None
     if (int(base_config.get("distributed_workers_per_trial", 0)) > 0
             and bool(base_config.get("distributed_inference_broker_enabled", False))
             and bool(base_config.get("distributed_inference_shared_broker", False))):
-        from chess_anti_engine.tune.distributed_runtime import launch_shared_inference_broker
+        from chess_anti_engine.tune.distributed_runtime import (
+            launch_shared_inference_broker,
+        )
         shared_broker_proc = launch_shared_inference_broker(
             config=base_config,
             server_root=Path(base_config.get("distributed_server_root", str(work_dir / "server"))),
@@ -395,18 +397,18 @@ def run_tune(
     if mode not in ("min", "max"):
         raise ValueError(f"mode must be 'min' or 'max', got {mode!r}")
 
-    # ------------------------------------------------------------------
-    # GPU / CPU resource allocation
-    # ------------------------------------------------------------------
+  # ------------------------------------------------------------------
+  # GPU / CPU resource allocation
+  # ------------------------------------------------------------------
     want_cuda = str(base_config.get("device", "")) == "cuda"
     cpus_per_trial = int(base_config.get("cpus_per_trial", 4))
     gpus_per_trial = float(base_config.get("gpus_per_trial", 1.0 if want_cuda else 0.0))
     resources = {"cpu": cpus_per_trial, "gpu": gpus_per_trial}
     trainable = tune.with_resources(train_trial, resources)
 
-    # ------------------------------------------------------------------
-    # Build param_space
-    # ------------------------------------------------------------------
+  # ------------------------------------------------------------------
+  # Build param_space
+  # ------------------------------------------------------------------
     if scheduler_name == "pb2":
         param_space, scheduler = _build_pb2(base_config, metric=metric, mode=mode)
         search_alg = None  # Scheduler handles search internally.
@@ -428,16 +430,16 @@ def run_tune(
             "Expected one of: 'pb2', 'pbt', 'gpbt_pl', 'asha', 'none'."
         )
 
-    # ------------------------------------------------------------------
-    # Assemble and run Tuner
-    # ------------------------------------------------------------------
+  # ------------------------------------------------------------------
+  # Assemble and run Tuner
+  # ------------------------------------------------------------------
     tune_config_kwargs: dict = dict(
         num_samples=int(num_samples),
         scheduler=scheduler,
         max_concurrent_trials=int(base_config.get("max_concurrent_trials", num_samples)),
-        # The tune path uses the function-style trainable API, which does not
-        # implement reset_config(). Reusing actors under GPBT/PBT causes Ray to
-        # error during perturb/exploit when it attempts an in-place config reset.
+  # The tune path uses the function-style trainable API, which does not
+  # implement reset_config(). Reusing actors under GPBT/PBT causes Ray to
+  # error during perturb/exploit when it attempts an in-place config reset.
         reuse_actors=False,
     )
     if search_alg is not None:
@@ -451,21 +453,22 @@ def run_tune(
 
     experiment_path = work_dir.resolve() / "tune"
 
-    # If we're starting a fresh run (not restoring), prune old experiments to keep
-    # disk usage bounded.
+  # If we're starting a fresh run (not restoring), prune old experiments to keep
+  # disk usage bounded.
     if not resume:
         keep_last_exps = int(base_config.get("tune_keep_last_experiments", 2))
-        # We prune to (N-1) before starting a fresh run so that after the new
-        # experiment is created we have at most N total.
+  # We prune to (N-1) before starting a fresh run so that after the new
+  # experiment is created we have at most N total.
         _cleanup_old_tune_experiments(
             tune_dir=experiment_path,
             keep_last=max(0, keep_last_exps - 1),
         )
 
     restored = False
+    tuner: "tune.Tuner | None" = None
     if resume and experiment_path.exists():
-        # Validate experiment state files before attempting restore.
-        # Ray silently falls back to a broken 1-trial restart if state is corrupt.
+  # Validate experiment state files before attempting restore.
+  # Ray silently falls back to a broken 1-trial restart if state is corrupt.
         import glob as _glob
         state_files = sorted(_glob.glob(str(experiment_path / "experiment_state-*.json")))
         state_ok = False
@@ -483,25 +486,25 @@ def run_tune(
                 print(f"[run_tune] Renamed corrupt state file: {sf} -> {corrupt_name}")
 
         if state_ok and valid_state_file is not None:
-            # Ray validates that param_space keys match the saved state
-            # exactly.  When new config keys are added between runs, the
-            # mismatch causes a ValueError. Patch the saved trial configs
-            # with current literal values so resumed trials honor the YAML.
+  # Ray validates that param_space keys match the saved state
+  # exactly.  When new config keys are added between runs, the
+  # mismatch causes a ValueError. Patch the saved trial configs
+  # with current literal values so resumed trials honor the YAML.
             _restore_param_space = param_space
             added_keys, skipped_keys = _patch_experiment_state_for_resume(
                 state_file=valid_state_file,
-                param_space=param_space,
+                param_space=param_space, # scheduler builders return dict[str, ...] subtype of dict[str, object]
             )
             if added_keys:
                 print(f"[run_tune] Added {len(added_keys)} new config keys to restored trial state: {sorted(added_keys)}")
-            # Ray's _validate_param_space_on_restore reads
-            # `__flattened_param_space_keys` from tuner.pkl (not the
-            # experiment_state-*.json we patched above). Any key we pass that
-            # isn't in that pickle triggers ValueError. Strip them; trainable
-            # reads the YAML each iter and re-applies values, so this only
-            # affects Ray's hyperparameter-tracking view, not runtime behavior.
+  # Ray's _validate_param_space_on_restore reads
+  # `__flattened_param_space_keys` from tuner.pkl (not the
+  # experiment_state-*.json we patched above). Any key we pass that
+  # isn't in that pickle triggers ValueError. Strip them; trainable
+  # reads the YAML each iter and re-applies values, so this only
+  # affects Ray's hyperparameter-tracking view, not runtime behavior.
+            import pickle as _pickle
             try:
-                import pickle as _pickle
                 with (experiment_path / "tuner.pkl").open("rb") as _fh:
                     _tuner_state = _pickle.load(_fh)
                 _ray_keys = set(_tuner_state.get("__flattened_param_space_keys") or [])
@@ -509,6 +512,14 @@ def run_tune(
                 if _drop and _ray_keys:  # only strip if pkl was readable
                     _restore_param_space = {k: v for k, v in _restore_param_space.items() if k not in _drop}
                     print(f"[run_tune] Stripping keys absent from tuner.pkl for Ray validation: {sorted(_drop)}")
+                _missing = _ray_keys - set(_restore_param_space.keys())
+                if _missing:
+  # Keys in pkl but removed from current config. Trainable reads
+  # the live YAML, so the value we pass here is inert — only the
+  # key set matters for Ray's validation.
+                    for _k in _missing:
+                        _restore_param_space[_k] = None
+                    print(f"[run_tune] Padding removed keys with None for Ray validation: {sorted(_missing)}")
             except (FileNotFoundError, _pickle.UnpicklingError, EOFError) as exc:
                 print(f"[run_tune] Could not read tuner.pkl for key filtering (non-fatal): {exc}")
             if skipped_keys:
@@ -548,17 +559,24 @@ def run_tune(
             ),
         )
     else:
-        # Hotpatch scheduler bounds from current YAML config into the restored
-        # scheduler.  Ray unpickles the old scheduler (with old bounds baked in)
-        # on restore, so any pb2_bounds_* changes in the YAML are silently
-        # ignored.  We reach into the live scheduler and overwrite its bounds
-        # dict so that the very next exploit/explore step uses the updated ranges.
+  # Hotpatch scheduler bounds from current YAML config into the restored
+  # scheduler.  Ray unpickles the old scheduler (with old bounds baked in)
+  # on restore, so any pb2_bounds_* changes in the YAML are silently
+  # ignored.  We reach into the live scheduler and overwrite its bounds
+  # dict so that the very next exploit/explore step uses the updated ranges.
+        assert tuner is not None, "restored=True implies tuner was created via Tuner.restore()"
         try:
-            live_sched = tuner._local_tuner._tune_config.scheduler  # type: ignore[possibly-unbound]
-            if hasattr(live_sched, "_hyperparam_bounds") and hasattr(scheduler, "_hyperparam_bounds"):
-                old = dict(live_sched._hyperparam_bounds)  # type: ignore[union-attr]
-                live_sched._hyperparam_bounds = dict(scheduler._hyperparam_bounds)  # type: ignore[union-attr]
-                changed = {k: (old.get(k), v) for k, v in scheduler._hyperparam_bounds.items() if old.get(k) != v}  # type: ignore[union-attr]
+  # Ray's `Tuner._local_tuner._tune_config.scheduler` is a private surface
+  # — pyright has no typings for these attrs.
+            live_sched = tuner._local_tuner._tune_config.scheduler
+            if (
+                scheduler is not None
+                and hasattr(live_sched, "_hyperparam_bounds")
+                and hasattr(scheduler, "_hyperparam_bounds")
+            ):
+                old = dict(live_sched._hyperparam_bounds)
+                live_sched._hyperparam_bounds = dict(scheduler._hyperparam_bounds)
+                changed = {k: (old.get(k), v) for k, v in scheduler._hyperparam_bounds.items() if old.get(k) != v}
                 if changed:
                     print(f"[run_tune] Hotpatched scheduler bounds (old→new): {changed}")
                 else:
@@ -566,8 +584,9 @@ def run_tune(
         except AttributeError as exc:
             print(f"[run_tune] Could not hotpatch scheduler bounds (non-fatal): {exc}")
 
+    assert tuner is not None
     try:
-        return tuner.fit()  # type: ignore[possibly-unbound]
+        return tuner.fit()
     finally:
         _terminate_process(shared_broker_proc)
         _terminate_process(server_proc)
@@ -615,11 +634,11 @@ def _build_mutation_param_space(base_config: dict, *, bounds: dict[str, list[flo
     for param_name, param_bounds in bounds.items():
         param_space[param_name] = tune.uniform(*param_bounds)
 
-    if bool(base_config.get("search_smolgen", False)):
+    if base_config.get("search_smolgen", False):
         param_space["use_smolgen"] = tune.choice([True, False])
-    if bool(base_config.get("search_nla", False)):
+    if base_config.get("search_nla", False):
         param_space["use_nla"] = tune.choice([True, False])
-    if bool(base_config.get("search_optimizer", False)):
+    if base_config.get("search_optimizer", False):
         param_space["optimizer"] = tune.choice(optimizer_candidates)
 
     return param_space
@@ -633,11 +652,11 @@ def _build_pbt_mutations(base_config: dict, *, bounds: dict[str, list[float]]):
     for param_name, param_bounds in bounds.items():
         mutations[param_name] = tune.uniform(*param_bounds)
 
-    if bool(base_config.get("search_smolgen", False)):
+    if base_config.get("search_smolgen", False):
         mutations["use_smolgen"] = [True, False]
-    if bool(base_config.get("search_nla", False)):
+    if base_config.get("search_nla", False):
         mutations["use_nla"] = [True, False]
-    if bool(base_config.get("search_optimizer", False)):
+    if base_config.get("search_optimizer", False):
         mutations["optimizer"] = list(optimizer_candidates)
 
     return mutations
@@ -661,7 +680,7 @@ def _build_pb2(base_config: dict, *, metric: str, mode: str):
         metric=metric,
         mode=mode,
         perturbation_interval=perturbation_interval,
-        hyperparam_bounds=hyperparam_bounds,  # type: ignore[arg-type]
+        hyperparam_bounds=hyperparam_bounds,  # type: ignore[arg-type] # Ray's PB2 accepts list bounds at runtime
     )
 
     return param_space, scheduler
@@ -686,7 +705,7 @@ def _build_pbt(base_config: dict, *, metric: str, mode: str):
         metric=metric,
         mode=mode,
         perturbation_interval=perturbation_interval,
-        hyperparam_mutations=hyperparam_mutations,  # type: ignore[arg-type]
+        hyperparam_mutations=hyperparam_mutations,  # type: ignore[arg-type] # Ray's PBT accepts flat dict[str, object] at runtime
         synch=bool(base_config.get("pbt_synch", False)),
     )
 
@@ -735,9 +754,9 @@ def _build_asha(base_config: dict, *, metric: str, mode: str):
     loss weights) because ASHA assumes a stationary objective.
     """
     try:
+        from ray import tune
         from ray.tune.schedulers import ASHAScheduler
         from ray.tune.search.optuna import OptunaSearch
-        from ray import tune
     except ImportError as e:
         raise ImportError(
             "ASHA requires `ray[tune]` with optuna. "
@@ -745,9 +764,9 @@ def _build_asha(base_config: dict, *, metric: str, mode: str):
         ) from e
 
     optimizer_candidates = _optimizer_candidates_from_config(base_config, include_nadamw=False)
-    if bool(base_config.get("asha_optimizer_only", False)):
+    if base_config.get("asha_optimizer_only", False):
         param_space = {**dict(base_config)}
-        if bool(base_config.get("search_optimizer", False)):
+        if base_config.get("search_optimizer", False):
             param_space["optimizer"] = tune.grid_search(list(optimizer_candidates))
         repeats = max(1, int(base_config.get("asha_optimizer_repeats", 1)))
         base_seed = int(base_config.get("seed", 0))
@@ -770,13 +789,13 @@ def _build_asha(base_config: dict, *, metric: str, mode: str):
             "sf_policy_label_smooth": tune.uniform(0.0, 0.15),
         }
 
-        if bool(base_config.get("search_feature_dropout_p", False)):
+        if base_config.get("search_feature_dropout_p", False):
             param_space["feature_dropout_p"] = tune.choice([0.0, 0.3])
-        if bool(base_config.get("search_w_volatility", False)):
+        if base_config.get("search_w_volatility", False):
             param_space["w_volatility"] = tune.choice([0.0, 0.05, 0.10])
-        if bool(base_config.get("search_volatility_source", False)):
+        if base_config.get("search_volatility_source", False):
             param_space["volatility_source"] = tune.choice(["raw", "search"])
-        if bool(base_config.get("search_optimizer", False)):
+        if base_config.get("search_optimizer", False):
             param_space["optimizer"] = tune.choice(optimizer_candidates)
         search_alg = OptunaSearch(metric=metric, mode=mode)
 

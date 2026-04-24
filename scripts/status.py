@@ -14,7 +14,6 @@ import subprocess
 import time
 from pathlib import Path
 
-
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 def _find_active_ray_session(active_pid: str | None = None) -> Path | None:
@@ -197,6 +196,52 @@ def main() -> None:
         loss_str = f"{float(loss):.3f}" if isinstance(loss, (int, float)) else "?"
         ema_str = f"{opp_ema:.1f}" if opp_ema > 0 else "   -"
         print(f"  {tid:<14} {it:>4}  {opp:>6.1f}  {ema_str:>6}  {skill:>5}  {ingest:>6.0f}s  {train:>5.0f}s  {steps:>5}  {replay:>8,}  {loss_str:>7}  {stale:>5}")
+
+    # Per-source loss split — how selfplay vs curriculum data is training the model.
+    # Only meaningful once shards tagged with is_selfplay have cycled into the replay
+    # window (frac_tagged_batch should climb toward 1.0 over ~2 days).
+    has_split = any(
+        any(k in r for k in ("policy_loss_selfplay", "policy_loss_curriculum", "frac_tagged_batch"))
+        for r in trials
+    )
+    if has_split:
+        print()
+        print("  Per-source / per-phase loss split (train batch averages):")
+        print(f"  {'trial':<14}  {'tagged%':>7}  {'sp%':>6}  {'pol_sp':>7}  {'pol_cur':>7}  {'pol_open':>8}  {'pol_mid':>7}  {'pol_end':>7}")
+        print(f"  {'-'*14}  {'-'*7}  {'-'*6}  {'-'*7}  {'-'*7}  {'-'*8}  {'-'*7}  {'-'*7}")
+        for r in trials:
+            tid      = str(r.get("trial_id", "?"))[:14]
+            tagged   = float(r.get("frac_tagged_batch", 0.0))
+            frac_sp  = float(r.get("frac_is_selfplay_batch", 0.0))
+            pol_sp   = float(r.get("policy_loss_selfplay", 0.0))
+            pol_cur  = float(r.get("policy_loss_curriculum", 0.0))
+            pol_o    = float(r.get("policy_loss_open", 0.0))
+            pol_m    = float(r.get("policy_loss_mid", 0.0))
+            pol_e    = float(r.get("policy_loss_end", 0.0))
+            # Zero means "no tagged samples in this batch yet" — show as dash.
+            def _f(v: float, width: int = 7) -> str:
+                return f"{v:>{width}.3f}" if v > 0 else ("-" * (width - 3)).rjust(width)
+            print(f"  {tid:<14}  {tagged:>7.1%}  {frac_sp:>6.1%}  {_f(pol_sp)}  {_f(pol_cur)}  {_f(pol_o, 8)}  {_f(pol_m)}  {_f(pol_e)}")
+
+    # WDL calibration (holdout only) + realized-selfplay-rate in ingested shards.
+    has_cal = any(
+        any(k in r for k in ("test_wdl_brier", "test_wdl_ece", "ingest_frac_selfplay"))
+        for r in trials
+    )
+    if has_cal:
+        print()
+        print("  WDL calibration (holdout) + shard ingest:")
+        print(f"  {'trial':<14}  {'brier':>6}  {'ece':>6}  {'ingest_sp%':>10}  {'tagged_pos':>10}")
+        print(f"  {'-'*14}  {'-'*6}  {'-'*6}  {'-'*10}  {'-'*10}")
+        for r in trials:
+            tid      = str(r.get("trial_id", "?"))[:14]
+            brier    = r.get("test_wdl_brier")
+            ece      = r.get("test_wdl_ece")
+            ing_sp   = float(r.get("ingest_frac_selfplay", 0.0))
+            tagged_n = int(r.get("ingest_is_selfplay_tagged", 0))
+            brier_s  = f"{float(brier):.3f}" if isinstance(brier, (int, float)) and brier == brier else "   -"
+            ece_s    = f"{float(ece):.3f}" if isinstance(ece, (int, float)) and ece == ece else "   -"
+            print(f"  {tid:<14}  {brier_s:>6}  {ece_s:>6}  {ing_sp:>10.1%}  {tagged_n:>10,}")
 
     print()
 

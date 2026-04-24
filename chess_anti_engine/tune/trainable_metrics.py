@@ -109,7 +109,7 @@ def _opponent_strength(
     min_nodes = int(min_nodes)
     max_nodes = int(max_nodes)
 
-    # regret: max→0 maps to 0→1 (negative = disabled = no contribution)
+  # regret: max→0 maps to 0→1 (negative = disabled = no contribution)
     regret_enabled = float(wdl_regret) >= 0.0
     if not regret_enabled:
         regret_score = 0.0
@@ -117,7 +117,7 @@ def _opponent_strength(
         r_max = max(0.001, float(wdl_regret_max))
         regret_score = 1.0 - max(0.0, min(1.0, float(wdl_regret) / r_max))
 
-    # nodes: log-scaled, min→max maps to 0→1
+  # nodes: log-scaled, min→max maps to 0→1
     if min_nodes < max_nodes and nodes > 0:
         log_frac = (math.log(max(nodes, min_nodes)) - math.log(max(1, min_nodes))) / (
             math.log(max(1, max_nodes)) - math.log(max(1, min_nodes))
@@ -129,9 +129,9 @@ def _opponent_strength(
     w_regret = _W_REGRET if regret_enabled else 0.0
     difficulty = w_regret * regret_score + _W_NODES * nodes_score
 
-    # Winrate scaling with floor: cap penalty at 50% so a single bad batch
-    # can't crater the metric (old death spiral), but still penalise trials
-    # that are consistently losing at their difficulty level.
+  # Winrate scaling with floor: cap penalty at 50% so a single bad batch
+  # can't crater the metric (old death spiral), but still penalise trials
+  # that are consistently losing at their difficulty level.
     target = max(0.01, float(pid_target_winrate))
     winrate_factor = max(0.5, min(1.0, max(0.0, float(ema_winrate)) / target))
 
@@ -260,18 +260,18 @@ def _compute_drift_metrics(
 
     dm.data_policy_entropy = _mean_entropy(train_batch)
 
-    # Unique positions (approximate via row-hash).
+  # Unique positions (approximate via row-hash).
     train_x = train_batch["x"]
     x_flat = train_x.reshape(train_x.shape[0], -1)
     row_sums = x_flat.view(np.uint32).reshape(x_flat.shape[0], -1).sum(axis=1)
     dm.data_unique_positions = float(np.unique(row_sums).shape[0]) / float(max(1, train_x.shape[0]))
 
-    # WDL balance: entropy of WDL distribution.
+  # WDL balance: entropy of WDL distribution.
     p = _wdl_hist(train_batch)
     if p.sum() > 0:
         dm.data_wdl_balance = -float(np.sum(p * np.log(p + eps)))
 
-    # Drift metrics (train vs holdout).
+  # Drift metrics (train vs holdout).
     if len(holdout_buf) >= drift_sample_size:
         hold_batch = _sample_drift_arrays(holdout_buf, drift_sample_size)
         hold_x = hold_batch["x"]
