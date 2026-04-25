@@ -29,6 +29,25 @@ class ModelConfig:
     use_gradient_checkpointing: bool = False
 
 
+def model_config_from_manifest_dict(mc: dict) -> ModelConfig:
+    """Build a ModelConfig from the ``model_config`` block of a publish manifest.
+
+    Manifest field name is ``gradient_checkpointing`` (not ``use_*``) for
+    historical reasons; everything else maps 1:1.
+    """
+    return ModelConfig(
+        kind=str(mc.get("kind", "transformer")),
+        embed_dim=int(mc.get("embed_dim", 256)),
+        num_layers=int(mc.get("num_layers", 6)),
+        num_heads=int(mc.get("num_heads", 8)),
+        ffn_mult=float(mc.get("ffn_mult", 2)),
+        use_smolgen=bool(mc.get("use_smolgen", True)),
+        use_nla=bool(mc.get("use_nla", False)),
+        use_qk_rmsnorm=bool(mc.get("use_qk_rmsnorm", False)),
+        use_gradient_checkpointing=bool(mc.get("gradient_checkpointing", False)),
+    )
+
+
 def infer_input_planes() -> int:
   # Use startpos to infer plane count.
     import chess

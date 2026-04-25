@@ -7,7 +7,11 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from chess_anti_engine.model import ModelConfig, build_model, load_state_dict_tolerant
+from chess_anti_engine.model import (
+    build_model,
+    load_state_dict_tolerant,
+    model_config_from_manifest_dict,
+)
 from chess_anti_engine.selfplay.match import play_match_batch
 
 
@@ -103,16 +107,7 @@ def main() -> None:
             "gradient_checkpointing": bool(args.gradient_checkpointing),
         }
 
-    model_cfg = ModelConfig(
-        kind=str(mc.get("kind", "transformer")),
-        embed_dim=int(mc.get("embed_dim", 256)),
-        num_layers=int(mc.get("num_layers", 6)),
-        num_heads=int(mc.get("num_heads", 8)),
-        ffn_mult=float(mc.get("ffn_mult", 2)),
-        use_smolgen=bool(mc.get("use_smolgen", True)),
-        use_nla=bool(mc.get("use_nla", False)),
-        use_gradient_checkpointing=bool(mc.get("gradient_checkpointing", False)),
-    )
+    model_cfg = model_config_from_manifest_dict(mc)
 
     latest = build_model(model_cfg)
     load_state_dict_tolerant(latest, _load_state_dict(latest_path), label="arena-latest")

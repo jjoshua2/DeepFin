@@ -17,7 +17,12 @@ from typing import Any, Protocol, cast
 import numpy as np
 import torch
 
-from chess_anti_engine.model import ModelConfig, build_model, load_state_dict_tolerant
+from chess_anti_engine.model import (
+    ModelConfig,
+    build_model,
+    load_state_dict_tolerant,
+    model_config_from_manifest_dict,
+)
 from chess_anti_engine.utils.amp import inference_autocast
 
 log = logging.getLogger(__name__)
@@ -58,10 +63,11 @@ def _configure_compile_cache(cache_root: Path) -> None:
 
 
 def _coerce_input_batch(x: np.ndarray) -> np.ndarray:
-    arr = np.ascontiguousarray(x, dtype=np.float32)
-    if arr.ndim != 4:
-        raise ValueError(f"expected encoded batch shape (B,C,H,W), got {arr.shape!r}")
-    return arr
+    if x.ndim != 4:
+        raise ValueError(f"expected encoded batch shape (B,C,H,W), got {x.shape!r}")
+    if x.dtype is np.dtype(np.float32) and x.flags["C_CONTIGUOUS"]:
+        return x
+    return np.ascontiguousarray(x, dtype=np.float32)
 
 
 def _detach_attached_shm_from_resource_tracker(shm: SharedMemory) -> None:
@@ -141,10 +147,9 @@ class LocalModelEvaluator:
             wdl = out["wdl"].detach().float()
             return pol, wdl, None
 
-        stream = getattr(self, "_stream", None)
-        if stream is None:
-            stream = torch.cuda.Stream(device=self.device)
-            self._stream = stream
+        if self._stream is None:
+            self._stream = torch.cuda.Stream(device=self.device)
+        stream = self._stream
 
   # Default stream must finish any prior work before we branch
         event_default = torch.cuda.Event()
@@ -285,10 +290,9 @@ class DirectGPUEvaluator(LocalModelEvaluator):
 
         self._pinned_input_np[:bsz] = x
 
-        stream = getattr(self, "_stream", None)
-        if stream is None:
-            stream = torch.cuda.Stream(device=self.device)
-            self._stream = stream
+        if self._stream is None:
+            self._stream = torch.cuda.Stream(device=self.device)
+        stream = self._stream
 
         event_default = torch.cuda.Event()
         event_default.record(torch.cuda.current_stream(self.device))
@@ -305,6 +309,12 @@ class DirectGPUEvaluator(LocalModelEvaluator):
             done.record(stream)
 
         return self._pinned_pol[:bsz], self._pinned_wdl[:bsz], done
+
+
+# Bucket ladder for ThreadedBatchEvaluator's coalesced GPU forwards. Coarser
+# than the per-batch AOT bucket list (_BATCH_BUCKETS) because torch.compile
+# graphs are cheaper to recapture across mid-range sizes.
+_COMPILED_BATCH_BUCKETS = (128, 256, 384, 512, 768, 1024, 1536, 2048, 4096)
 
 
 class ThreadedBatchEvaluator:
@@ -439,9 +449,8 @@ class ThreadedBatchEvaluator:
                 combined = np.concatenate([p[0] for p in pending], axis=0)
 
   # Bucket-pad to reduce CUDA graph count
-            _BUCKETS = (128, 256, 384, 512, 768, 1024, 1536, 2048, 4096)
             padded_size = total
-            for b in _BUCKETS:
+            for b in _COMPILED_BATCH_BUCKETS:
                 if b >= total:
                     padded_size = min(b, self._max_batch)
                     break
@@ -842,18 +851,7 @@ class SlotBroker:
         if self._model is not None and self._model_sha == model_sha:
             return
 
-        mc = manifest.get("model_config") or {}
-        model_cfg = ModelConfig(
-            kind=str(mc.get("kind", "transformer")),
-            embed_dim=int(mc.get("embed_dim", 256)),
-            num_layers=int(mc.get("num_layers", 6)),
-            num_heads=int(mc.get("num_heads", 8)),
-            ffn_mult=float(mc.get("ffn_mult", 2)),
-            use_smolgen=bool(mc.get("use_smolgen", True)),
-            use_nla=bool(mc.get("use_nla", False)),
-            use_qk_rmsnorm=bool(mc.get("use_qk_rmsnorm", False)),
-            use_gradient_checkpointing=False,
-        )
+        model_cfg = model_config_from_manifest_dict(manifest.get("model_config") or {})
         model_path = self.publish_dir / "latest_model.pt"
         ckpt = torch.load(str(model_path), map_location="cpu")
         sd = ckpt.get("model", ckpt)
@@ -1088,8 +1086,12 @@ class SlotInferenceClient:
   # pyright from narrowing to the last literal we stored.
                 state = int(slot.state)
                 if state == _STATE_RESPONSE:
-                    pol = np.array(slot.policy[:bsz], copy=True, order="C")
-                    wdl = np.array(slot.wdl[:bsz], copy=True, order="C")
+  # slot.policy / slot.wdl are C-contiguous numpy views over the
+  # shared-memory buffer (constructed that way in _InferenceSlot);
+  # .copy() is enough — np.array(..., copy=True, order="C") was an
+  # extra contiguity check we don't need.
+                    pol = slot.policy[:bsz].copy()
+                    wdl = slot.wdl[:bsz].copy()
                     slot.state = _STATE_IDLE
                     return pol, wdl
                 if state == _STATE_SHUTDOWN or state == _STATE_IDLE:
