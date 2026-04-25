@@ -96,44 +96,6 @@ def balance_wdl(
     return out
 
 
-class ReplayBuffer:
-    def __init__(self, capacity: int, *, rng: np.random.Generator):
-        self.capacity = int(capacity)
-        self.rng = rng
-        self._array = ArrayReplayBuffer(self.capacity, rng=rng)
-
-    @property
-    def surprise_mix(self) -> float:
-        return float(self._array.surprise_mix)
-
-    @surprise_mix.setter
-    def surprise_mix(self, value: float) -> None:
-        self._array.surprise_mix = float(value)
-
-    def __len__(self) -> int:
-        return len(self._array)
-
-    def clear(self) -> None:
-        self._array.clear()
-
-    def add_many(self, samples: list[ReplaySample]) -> None:
-        self._array.add_many(samples)
-
-    def add_many_arrays(self, arrs: dict[str, np.ndarray]) -> None:
-        self._array.add_many_arrays(arrs)
-
-    def add(self, sample: ReplaySample) -> None:
-        self._array.add(sample)
-
-    def sample_batch_arrays(self, batch_size: int, *, wdl_balance: bool = True) -> dict[str, np.ndarray]:
-        return self._array.sample_batch_arrays(batch_size, wdl_balance=wdl_balance)
-
-    def sample_batch(self, batch_size: int, *, wdl_balance: bool = True) -> list[ReplaySample]:
-        from .shard import arrays_to_samples
-
-        return arrays_to_samples(self.sample_batch_arrays(batch_size, wdl_balance=wdl_balance))
-
-
 class ArrayReplayBuffer:
     def __init__(self, capacity: int, *, rng: np.random.Generator):
         self.capacity = int(capacity)
@@ -350,3 +312,9 @@ class ArrayReplayBuffer:
         from .shard import arrays_to_samples
 
         return arrays_to_samples(self.sample_batch_arrays(batch_size, wdl_balance=wdl_balance))
+
+
+# Public name. ``ReplayBuffer`` was previously a pure-delegation wrapper; the
+# wrapper-as-API existed for historical reasons and added no behavior. Aliased
+# here so external imports keep working.
+ReplayBuffer = ArrayReplayBuffer
