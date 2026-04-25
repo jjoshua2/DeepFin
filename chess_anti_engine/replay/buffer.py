@@ -239,30 +239,9 @@ class ArrayReplayBuffer:
 
     def _sample_all_indices(self, batch_size: int) -> np.ndarray:
         n = int(self._size)
-        bs = int(batch_size)
-        if bs <= 0 or n <= 0:
+        if int(batch_size) <= 0 or n <= 0:
             return np.zeros((0,), dtype=np.int64)
-        k_uni = int(round(bs * (1.0 - self.surprise_mix)))
-        k_pri = bs - k_uni
-        picks: list[np.ndarray] = []
-        if k_uni > 0:
-            picks.append(np.asarray(self.rng.integers(0, n, size=k_uni), dtype=np.int64))
-        if k_pri > 0:
-            pri = self._priority.astype(np.float64, copy=True)
-            np.nan_to_num(pri, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
-            np.maximum(pri, 0.0, out=pri)
-            ps = float(pri.sum())
-            if ps <= 0.0 or not np.isfinite(ps):
-                picks.append(np.asarray(self.rng.integers(0, n, size=k_pri), dtype=np.int64))
-            else:
-                picks.append(
-                    np.asarray(self.rng.choice(n, size=k_pri, replace=True, p=(pri / ps)), dtype=np.int64)
-                )
-        if not picks:
-            return np.zeros((0,), dtype=np.int64)
-        if len(picks) == 1:
-            return picks[0]
-        return np.concatenate(picks, axis=0)
+        return self._sample_indices(np.arange(n, dtype=np.int64), int(batch_size))
 
     def _gather_rows(self, indices: np.ndarray) -> dict[str, np.ndarray]:
         from chess_anti_engine.moves import POLICY_SIZE

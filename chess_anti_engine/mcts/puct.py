@@ -16,15 +16,12 @@ from chess_anti_engine.inference import (
 from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.moves.encode import index_to_move_fast, legal_move_indices
 from chess_anti_engine.utils.amp import inference_autocast
+from chess_anti_engine.utils.numpy_helpers import softmax_1d
 
 
 def _softmax_legal(logits: np.ndarray, legal_idx: np.ndarray) -> np.ndarray:
     """Softmax over legal moves only. Returns priors for each legal index."""
-    ll = logits[legal_idx].astype(np.float64)
-    ll -= np.max(ll)
-    e = np.exp(ll)
-    s = float(e.sum())
-    return (e / s) if s > 0 else np.full_like(e, 1.0 / e.size)
+    return softmax_1d(logits[legal_idx])
 
 
 def _value_scalar_from_wdl_logits(wdl_logits: np.ndarray) -> float:

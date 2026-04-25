@@ -39,46 +39,18 @@ def _trial_replay_shard_dir(*, config: dict, trial_dir: Path) -> Path:
     return Path(trial_dir) / "replay_shards"
 
 
-def _read_last_jsonl_row(path: Path) -> dict | None:
-    """Read the last valid JSON object from a JSONL file."""
-    if not path.exists():
-        return None
-    last: dict | None = None
-    try:
-  # errors="replace": invalid UTF-8 bytes at a truncated EOF would
-  # otherwise raise UnicodeDecodeError during `for ln in f` iteration
-  # (before the inner try catches), losing every row after the bad
-  # one. Replacement chars then fail json.loads cleanly, which the
-  # inner except skips per-line. (Codex adversarial review.)
-        with path.open("r", encoding="utf-8", errors="replace") as f:
-            for ln in f:
-                ln = ln.strip()
-                if not ln:
-                    continue
-                try:
-                    row = json.loads(ln)
-                except (json.JSONDecodeError, UnicodeDecodeError):
-  # partially flushed line — skip and keep reading
-                    continue
-                if isinstance(row, dict):
-                    last = row
-    except OSError:
-  # file vanished or unreadable mid-iteration — caller retries
-        return None
-    return last
-
-
 def _read_jsonl_rows(path: Path) -> list[dict]:
-    """Read all valid JSON objects from a JSONL file."""
+    """Read all valid JSON dict rows from a JSONL file.
+
+    ``errors="replace"`` defends against invalid UTF-8 at a truncated EOF
+    that would otherwise raise UnicodeDecodeError during iteration (before
+    the inner try catches), losing every row after the bad one. Replacement
+    chars then fail json.loads cleanly per-line. (Codex adversarial review.)
+    """
     rows: list[dict] = []
     if not path.exists():
         return rows
     try:
-  # errors="replace": invalid UTF-8 bytes at a truncated EOF would
-  # otherwise raise UnicodeDecodeError during `for ln in f` iteration
-  # (before the inner try catches), losing every row after the bad
-  # one. Replacement chars then fail json.loads cleanly, which the
-  # inner except skips per-line. (Codex adversarial review.)
         with path.open("r", encoding="utf-8", errors="replace") as f:
             for ln in f:
                 ln = ln.strip()
@@ -87,14 +59,18 @@ def _read_jsonl_rows(path: Path) -> list[dict]:
                 try:
                     row = json.loads(ln)
                 except (json.JSONDecodeError, UnicodeDecodeError):
-  # partially flushed line — skip and keep reading
-                    continue
+                    continue  # partially flushed line — skip and keep reading
                 if isinstance(row, dict):
                     rows.append(row)
     except OSError:
-  # file vanished or unreadable mid-iteration — caller retries
-        return []
+        return []  # file vanished or unreadable mid-iteration — caller retries
     return rows
+
+
+def _read_last_jsonl_row(path: Path) -> dict | None:
+    """Read the last valid JSON dict row from a JSONL file (or None if empty)."""
+    rows = _read_jsonl_rows(path)
+    return rows[-1] if rows else None
 
 
 def _latest_trial_result_row(trial_dir: Path) -> dict | None:
