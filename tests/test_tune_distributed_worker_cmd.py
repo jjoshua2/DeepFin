@@ -12,8 +12,8 @@ from chess_anti_engine.tune.harness import (
     _extract_saved_trial_config_keys,
     _patch_experiment_state_for_resume,
 )
-from chess_anti_engine.tune.harness import (
-    _resolve_local_override_root as _resolve_harness_override_root,
+from chess_anti_engine.tune._utils import (
+    resolve_local_override_root as _resolve_harness_override_root,
 )
 from chess_anti_engine.tune.process_cleanup import _list_matching_pids
 from chess_anti_engine.tune.replay_exchange import (
@@ -134,9 +134,11 @@ def test_replay_override_under_wsl_remaps_to_linux_run_sidecar(tmp_path: Path) -
 
 
 def test_server_override_under_wsl_remaps_to_linux_run_sidecar() -> None:
+  # Harness now passes ``work_dir / "tune"`` to the canonical helper
+  # (the helper expects the *tune* subdir and derives run_root = .parent).
     server_root = _resolve_harness_override_root(
         raw_root="/mnt/c/chess_active/pbt2_fresh_run9_server",
-        work_dir=Path("/home/josh/projects/chess/runs/pbt2_fresh_run9"),
+        tune_work_dir=Path("/home/josh/projects/chess/runs/pbt2_fresh_run9/tune"),
         suffix="server",
     )
 

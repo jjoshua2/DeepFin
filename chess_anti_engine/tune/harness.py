@@ -10,7 +10,10 @@ from pathlib import Path
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
-from chess_anti_engine.tune._utils import terminate_process as _terminate_process
+from chess_anti_engine.tune._utils import (
+    resolve_local_override_root,
+    terminate_process as _terminate_process,
+)
 from chess_anti_engine.utils.atomic import atomic_write_text
 
 
@@ -163,12 +166,10 @@ def _cleanup_old_tune_experiments(*, tune_dir: Path, keep_last: int) -> None:
                 pass
 
 
-def _resolve_local_override_root(*, raw_root: object, work_dir: Path, suffix: str) -> Path:
-    root = Path(str(raw_root or "")).expanduser()
-    run_root = Path(work_dir).expanduser().resolve()
-    if root.as_posix().startswith("/mnt/c/chess_active/"):
-        return run_root.with_name(f"{run_root.name}_{suffix}")
-    return root
+# NB: harness's ``work_dir`` is the run root, while the canonical
+# ``resolve_local_override_root`` in ``tune/_utils.py`` expects the *tune*
+# subdir and derives ``run_root = tune_dir.parent``. Pass ``work_dir/"tune"``
+# to bridge the conventions.
 
 
 def _load_trial_config_from_state_entry(entry: object) -> tuple[dict[str, object] | None, bool]:
@@ -313,9 +314,9 @@ def run_tune(
     if int(base_config.get("distributed_workers_per_trial", 0)) > 0:
         server_root_override = str(base_config.get("distributed_server_root_override", "")).strip()
         if server_root_override:
-            server_root = _resolve_local_override_root(
+            server_root = resolve_local_override_root(
                 raw_root=server_root_override,
-                work_dir=work_dir,
+                tune_work_dir=work_dir / "tune",
                 suffix="server",
             ).resolve()
         else:
