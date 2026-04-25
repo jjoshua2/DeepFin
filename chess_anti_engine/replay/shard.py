@@ -21,6 +21,19 @@ SHARD_VERSION = 1
 LOCAL_SHARD_SUFFIX = ".zarr"
 LEGACY_SHARD_SUFFIX = ".npz"
 
+# Server-managed staging dir for crash-recoverable uploads. Lives at
+# ``inbox_root/_pending`` and is replayed by ``server.app.create_app`` on
+# startup; learner-side ingest skips it (see ``_iter_shard_paths_nested``)
+# so the same samples don't reach replay through both channels.
+PENDING_DIR_NAME = "_pending"
+
+
+def is_tmp_shard_name(name: str) -> bool:
+    """In-progress upload staging name: tmp directories the server is mid-write
+    on (or the ``._tmp_*`` ``Path.replace`` stems numpy/zarr leave behind).
+    """
+    return name.startswith("tmp_") or name.startswith("._tmp_")
+
 
 @dataclass(frozen=True)
 class _OptFieldSpec:

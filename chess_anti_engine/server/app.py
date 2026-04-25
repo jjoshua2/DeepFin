@@ -15,22 +15,23 @@ from typing import Any
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.shard import (
     LOCAL_SHARD_SUFFIX,
+    PENDING_DIR_NAME,
     UPLOAD_TAR_SUFFIX,
     ShardMeta,
     arrays_to_samples,
     delete_shard_path,
     extract_uploaded_shard_tar,
+    is_tmp_shard_name,
     samples_to_arrays,
     save_local_shard_arrays,
 )
 from chess_anti_engine.utils.atomic import atomic_write_text
 from chess_anti_engine.utils.versioning import version_lt
 
-# Pending-upload staging directory under each inbox root. Each shard durably
-# extracted from an upload tar is atomically renamed here before the server
-# returns ``stored: true`` so a crash before compaction-flush cannot lose
-# replay samples the worker has already discarded.
-_PENDING_DIR_NAME = "_pending"
+# Pending-upload staging dir name (server side of the wire protocol — see
+# ``replay.shard.PENDING_DIR_NAME`` for the canonical constant). Aliased
+# here purely to keep the local docstring at the call sites.
+_PENDING_DIR_NAME = PENDING_DIR_NAME
 
 
 @dataclass
@@ -1100,7 +1101,7 @@ def create_app(
         recovered = 0
         for entry in sorted(pending_dir.iterdir()):
             name = entry.name
-            if name.startswith("._tmp_") or name.startswith("tmp_"):
+            if is_tmp_shard_name(name):
                 continue
             if not name.endswith(LOCAL_SHARD_SUFFIX):
                 continue

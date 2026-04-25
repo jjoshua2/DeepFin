@@ -26,6 +26,7 @@ from chess_anti_engine.inference import (  # noqa: F401  # skylos: ignore (Async
     AsyncBatchEvaluator,
     BatchEvaluator,
     LocalModelEvaluator,
+    _COMPILED_BATCH_BUCKETS,
 )
 from chess_anti_engine.mcts._mcts_tree import MCTSTree, NNCache
 from chess_anti_engine.mcts.gumbel import (
@@ -234,7 +235,7 @@ def run_gumbel_root_many_c(
   # minimum (~19 MB). Without the floor, 1 board × topk=32 caps at 64 slots
   # and gss_step flushes the halving round across 4-5 tiny GPU calls.
     _max_leaves_per_rep = max(256, n_boards * max(2, int(cfg.topk)))
-    _BUCKETS = (128, 256, 384, 512, 768, 1024, 1536, 2048, 4096)
+    _BUCKETS = _COMPILED_BATCH_BUCKETS
 
   # ---- Pipelined simulation: split games into 2 groups ----------------
   # While GPU evaluates group A's leaves, C does tree walks for group B,

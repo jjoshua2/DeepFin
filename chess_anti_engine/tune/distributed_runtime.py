@@ -18,7 +18,9 @@ from chess_anti_engine.replay import ArrayReplayBuffer, DiskReplayBuffer
 from chess_anti_engine.replay.shard import (
     LEGACY_SHARD_SUFFIX,
     LOCAL_SHARD_SUFFIX,
+    PENDING_DIR_NAME,
     delete_shard_path,
+    is_tmp_shard_name,
     load_shard_arrays,
 )
 from chess_anti_engine.train import Trainer
@@ -98,16 +100,10 @@ def _trial_server_dirs(*, server_root: Path, trial_id: str) -> dict[str, Path]:
     }
 
 
-def _is_tmp_shard_name(name: str) -> bool:
-    """In-progress upload staging name — see ``_iter_shard_paths_nested``."""
-    return name.startswith("tmp_") or name.startswith("._tmp_")
-
-
-# Server-managed staging dir for crash-recoverable uploads. Lives at
-# ``inbox_root/_pending`` and is replayed by ``create_app`` on startup; it
-# must never be ingested as a real shard, otherwise the same samples would
-# also reach replay through compaction.
-_PENDING_DIR_NAME = "_pending"
+# Re-export under the historical _-prefixed names used in this module's
+# private callers (private to the module, not the wire protocol).
+_is_tmp_shard_name = is_tmp_shard_name
+_PENDING_DIR_NAME = PENDING_DIR_NAME
 
 
 def _iter_shard_paths_nested(root: Path) -> list[Path]:
