@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import math
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -37,10 +36,6 @@ if TYPE_CHECKING:
     )
 import chess
 
-from chess_anti_engine.moves import (
-    POLICY_SIZE,
-)
-from chess_anti_engine.moves.encode import uci_to_policy_index
 from chess_anti_engine.selfplay.config import (
     DiffFocusConfig,
     GameConfig,
@@ -56,6 +51,10 @@ from chess_anti_engine.selfplay.state import (
     CompletedGameBatch,
     SelfplayState,
 )
+from chess_anti_engine.selfplay.stockfish_turn import (
+    finish_sf_annotation_and_moves,
+    submit_sf_queries,
+)
 from chess_anti_engine.selfplay.temperature import (
     apply_policy_temperature,
 )
@@ -65,37 +64,6 @@ from chess_anti_engine.tablebase import tb_adjudicate_result
 # Backward-compatible alias: tests and bench scripts import this name directly.
 # The implementation lives in ``selfplay.temperature`` as ``apply_policy_temperature``.
 _apply_temperature = apply_policy_temperature
-
-
-def _choose_curriculum_opponent_move(
-    *,
-    rng: np.random.Generator,
-    legal_indices: np.ndarray,
-    cand_indices: list[int],
-    cand_scores: list[float],
-    regret_limit: float,
-) -> int:
-    """Choose the curriculum opponent move index from Stockfish candidates.
-
-    Returns a policy index (int).  No python-chess objects needed.
-    """
-    if not cand_indices:
-        return int(legal_indices[int(rng.integers(len(legal_indices)))])
-
-    if not math.isfinite(float(regret_limit)):
-        # No regret filter = full-strength SF. MultiPV lists PVs in rank order
-        # so cand_indices[0] is SF's best move. Used by eval / gate matches.
-        return cand_indices[0]
-
-    best_score = max(float(s) for s in cand_scores)
-    acceptable = [
-        idx
-        for idx, score in zip(cand_indices, cand_scores, strict=False)
-        if (best_score - float(score)) <= float(regret_limit) + 1e-12
-    ]
-    if not acceptable:
-        acceptable = [cand_indices[0]]
-    return acceptable[int(rng.integers(len(acceptable)))]
 
 
 def play_batch(
@@ -159,146 +127,6 @@ def play_batch(
     )
 
     all_samples: list[ReplaySample] = []
-
-    # ── Stockfish annotation + opponent moves ─────────────────────────────────
-
-    def _eff_nodes(idx: int) -> int | None:
-        if state.base_nodes <= 0:
-            return None
-        fast_scale = 1.0 if bool(state.last_net_full[idx]) else 0.25
-        return max(1, int(round(float(state.base_nodes) * float(fast_scale))))
-
-    def _submit_sf_queries(idxs: list[int]) -> dict[int, Any]:
-        """Submit SF queries to pool without blocking. Returns futures dict.
-
-        Only valid when ``stockfish`` is a ``StockfishPool`` — callers guard with isinstance.
-        """
-        assert isinstance(state.stockfish, StockfishPool)
-        return {idx: state.stockfish.submit(state.cboards[idx].fen(), nodes=_eff_nodes(idx)) for idx in idxs}
-
-    def _finish_sf_annotation_and_moves(
-        idxs: list[int], *, play_curriculum_moves: bool,
-        futures: dict[int, Any] | None = None,
-    ) -> None:
-        """Collect SF results (from futures or synchronous) and process."""
-        if not idxs:
-            return
-        if futures is not None:
-            results = {idx: futures[idx].result() for idx in idxs if idx in futures}
-        elif isinstance(state.stockfish, StockfishPool):
-            futs = {idx: state.stockfish.submit(state.cboards[idx].fen(), nodes=_eff_nodes(idx)) for idx in idxs}
-            results = {idx: fut.result() for idx, fut in futs.items()}
-        else:
-            results = {idx: state.stockfish.search(state.cboards[idx].fen(), nodes=_eff_nodes(idx)) for idx in idxs}
-        _process_sf_results(idxs, results=results, play_curriculum_moves=play_curriculum_moves)
-
-    def _process_sf_results(
-        idxs: list[int], *, results: dict, play_curriculum_moves: bool,
-    ) -> None:
-        if not idxs:
-            return
-
-        sf_policy_temp_local = float(game.sf_policy_temp)
-        sf_policy_label_smooth_local = float(game.sf_policy_label_smooth)
-
-        def _softmax_np(x: np.ndarray) -> np.ndarray:
-            z = x.astype(np.float64, copy=False)
-            z = z - float(np.max(z))
-            e = np.exp(z)
-            s = float(e.sum())
-            if s <= 0:
-                return np.full_like(z, 1.0 / float(z.size))
-            return e / s
-
-        def _flip_wdl_pov(wdl: np.ndarray) -> np.ndarray:
-            wdl = np.asarray(wdl, dtype=np.float32)
-            if wdl.shape != (3,):
-                return wdl.astype(np.float32, copy=False)
-            return np.array([float(wdl[2]), float(wdl[1]), float(wdl[0])], dtype=np.float32)
-
-        regret_limit = (
-            float(opponent.wdl_regret_limit)
-            if opponent.wdl_regret_limit is not None
-            else float("inf")
-        )
-
-        for idx in idxs:
-            res = results[idx]
-            legal_indices = state.cboards[idx].legal_move_indices()
-            if legal_indices.size == 0:
-                state.done_arr[idx] = 1
-                continue
-
-            _turn = bool(state.cboards[idx].turn)
-            legal_set = {int(x) for x in legal_indices}
-
-            a_idx = uci_to_policy_index(res.bestmove_uci, _turn)
-            if a_idx < 0 or a_idx not in legal_set:
-                a_idx = int(legal_indices[0])
-
-            cand_idxs: list[int] = []
-            cand_scores: list[float] = []
-            if getattr(res, "pvs", None):
-                for pv in res.pvs:
-                    if pv.wdl is None:
-                        continue
-                    a = uci_to_policy_index(pv.move_uci, _turn)
-                    if a < 0 or a not in legal_set:
-                        continue
-                    w_sf, d_sf = float(pv.wdl[0]), float(pv.wdl[1])
-                    cand_idxs.append(a)
-                    cand_scores.append(w_sf + 0.5 * d_sf)
-
-            if not cand_idxs:
-                cand_idxs = [a_idx]
-                cand_scores = [0.0]
-
-            scores = np.array(cand_scores, dtype=np.float64) / max(1e-6, sf_policy_temp_local)
-            p_top = _softmax_np(scores).astype(np.float32, copy=False)
-
-            p_sf = np.zeros((POLICY_SIZE,), dtype=np.float32)
-            for a, p in zip(cand_idxs, p_top, strict=False):
-                p_sf[int(a)] += float(p)
-
-            if sf_policy_label_smooth_local > 0.0:
-                n_legal = legal_indices.size
-                if n_legal > 0:
-                    p_sf *= (1.0 - sf_policy_label_smooth_local)
-                    p_sf[legal_indices] += sf_policy_label_smooth_local / float(n_legal)
-
-            ps = float(p_sf.sum())
-            if ps > 0:
-                p_sf /= ps
-
-            if state.samples_per_game[idx]:
-                rec = state.samples_per_game[idx][-1]
-                if rec.sf_policy_target is None and rec.sf_move_index is None:
-                    rec.sf_policy_target = p_sf
-                    rec.sf_move_index = a_idx
-                    if res.wdl is not None:
-                        rec.sf_wdl = _flip_wdl_pov(res.wdl)
-                    _sf_mask = np.zeros((POLICY_SIZE,), dtype=np.uint8)
-                    _sf_mask[legal_indices] = 1
-                    rec.sf_legal_mask = _sf_mask
-
-            if not play_curriculum_moves or state.selfplay_arr[idx]:
-                continue
-
-            _opp_move_idx = _choose_curriculum_opponent_move(
-                rng=rng,
-                legal_indices=legal_indices,
-                cand_indices=cand_idxs,
-                cand_scores=cand_scores,
-                regret_limit=regret_limit,
-            )
-
-            state.cboards[idx].push_index(_opp_move_idx)
-            state.move_idx_history[idx].append(_opp_move_idx)
-            # Advance tree root through opponent's move
-            if state.mcts_tree is not None and state.root_ids[idx] >= 0:
-                state.root_ids[idx] = state.mcts_tree.find_child(state.root_ids[idx], _opp_move_idx)
-            if state.cboards[idx].is_game_over():
-                state.done_arr[idx] = 1
 
     # ── Main game loop (rolling batch) ────────────────────────────────────────
     if continuous:
@@ -364,7 +192,7 @@ def play_batch(
         _sf_futures: dict[int, Any] | None = None
         if curriculum_opp_idxs and isinstance(state.stockfish, StockfishPool):
             _t0 = time.time()
-            _sf_futures = _submit_sf_queries(curriculum_opp_idxs)
+            _sf_futures = submit_sf_queries(state, curriculum_opp_idxs)
             _t_sf += time.time() - _t0
 
         # Combined network turn: merge net_idxs + selfplay_opp_idxs into a
@@ -384,19 +212,19 @@ def play_batch(
         _sf_sp_futures: dict[int, Any] | None = None
         if selfplay_opp_idxs and isinstance(state.stockfish, StockfishPool):
             _t0 = time.time()
-            _sf_sp_futures = _submit_sf_queries(selfplay_opp_idxs)
+            _sf_sp_futures = submit_sf_queries(state, selfplay_opp_idxs)
             _t_sf += time.time() - _t0
 
         # Collect curriculum SF results (overlapped with combined net turn)
         if curriculum_opp_idxs:
             _t0 = time.time()
-            _finish_sf_annotation_and_moves(curriculum_opp_idxs, play_curriculum_moves=True, futures=_sf_futures)
+            finish_sf_annotation_and_moves(state, curriculum_opp_idxs, play_curriculum_moves=True, futures=_sf_futures)
             _t_sf += time.time() - _t0
 
         # Collect selfplay SF move results (submitted above, overlapped with curriculum)
         if selfplay_opp_idxs:
             _t0 = time.time()
-            _finish_sf_annotation_and_moves(selfplay_opp_idxs, play_curriculum_moves=True, futures=_sf_sp_futures)
+            finish_sf_annotation_and_moves(state, selfplay_opp_idxs, play_curriculum_moves=True, futures=_sf_sp_futures)
             _t_sf += time.time() - _t0
             # Submit label queries immediately; collect after (overlaps with
             # finalization below for negligible extra latency).
@@ -404,11 +232,11 @@ def play_batch(
             _sf_label_futures: dict[int, Any] | None = None
             if selfplay_label_idxs and isinstance(state.stockfish, StockfishPool):
                 _t0 = time.time()
-                _sf_label_futures = _submit_sf_queries(selfplay_label_idxs)
+                _sf_label_futures = submit_sf_queries(state, selfplay_label_idxs)
                 _t_sf += time.time() - _t0
             if selfplay_label_idxs:
                 _t0 = time.time()
-                _finish_sf_annotation_and_moves(selfplay_label_idxs, play_curriculum_moves=False, futures=_sf_label_futures)
+                finish_sf_annotation_and_moves(state, selfplay_label_idxs, play_curriculum_moves=False, futures=_sf_label_futures)
                 _t_sf += time.time() - _t0
 
         # Finalize completed games and optionally recycle slots
