@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import contextlib
 import dataclasses
 import logging
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +13,7 @@ import numpy as np
 import torch
 from zclip import ZClip
 
+from chess_anti_engine.utils.amp import inference_autocast
 from chess_anti_engine.utils.atomic import atomic_write
 
 try:
@@ -48,6 +49,38 @@ from .losses import (
     wdl_calibration_stats,
 )
 from .muon import MuonWithAuxAdam
+
+
+def _split_decay_groups(
+    model: torch.nn.Module,
+    *,
+    hidden_filter: Callable[[str, torch.nn.Parameter], bool] | None = None,
+) -> tuple[list, list, list, list]:
+    """Bucket parameters into (hidden_decay, hidden_no_decay, aux_decay, aux_no_decay).
+
+    ``no_decay`` are 1-D tensors and biases (norms, biases — selective weight
+    decay convention). ``hidden_filter`` separates a "trunk" subset (hidden_*)
+    from the rest (aux_*); without it, hidden_* are empty and all params go
+    into aux_*.
+    """
+    hidden_decay: list = []
+    hidden_no_decay: list = []
+    aux_decay: list = []
+    aux_no_decay: list = []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        is_no_decay = param.ndim <= 1 or name.endswith(".bias")
+        is_hidden = bool(hidden_filter(name, param)) if hidden_filter else False
+        if is_hidden and not is_no_decay:
+            hidden_decay.append(param)
+        elif is_hidden:
+            hidden_no_decay.append(param)
+        elif is_no_decay:
+            aux_no_decay.append(param)
+        else:
+            aux_decay.append(param)
+    return hidden_decay, hidden_no_decay, aux_decay, aux_no_decay
 
 
 @dataclass
@@ -255,58 +288,30 @@ class Trainer:
 
         optimizer = str(optimizer).lower()
         if optimizer == "muon":
-            muon_decay_params = []
-            muon_no_decay_params = []
-            aux_decay_params = []
-            aux_no_decay_params = []
-            for name, param in self.model.named_parameters():
-                if not param.requires_grad:
-                    continue
-                is_no_decay = param.ndim <= 1 or name.endswith(".bias")
-                is_muon_trunk = param.ndim >= 2 and (name == "embed.weight" or name.startswith("blocks."))
-                if is_muon_trunk and not is_no_decay:
-                    muon_decay_params.append(param)
-                elif is_muon_trunk:
-                    muon_no_decay_params.append(param)
-                elif is_no_decay:
-                    aux_no_decay_params.append(param)
-                else:
-                    aux_decay_params.append(param)
-
-  # Muon is typically run with a larger LR on hidden weights than the
-  # AdamW fallback uses on heads / norms / biases. Keep one Tune LR and
-  # derive the trunk LR from it so search stays simple.
+            hd, hnd, ad, and_ = _split_decay_groups(
+                self.model,
+                hidden_filter=lambda name, p: p.ndim >= 2 and (name == "embed.weight" or name.startswith("blocks.")),
+            )
+  # Muon trunk gets a larger LR than the AdamW fallback for heads/norms.
+  # Keep one Tune-search LR and derive trunk LR so search stays simple.
             muon_lr = float(lr) * 20.0
             param_groups = [
-                {"params": muon_decay_params, "weight_decay": 1e-4, "use_muon": True, "lr": muon_lr},
-                {"params": muon_no_decay_params, "weight_decay": 0.0, "use_muon": True, "lr": muon_lr},
-                {"params": aux_decay_params, "weight_decay": 1e-4, "use_muon": False, "lr": float(lr)},
-                {"params": aux_no_decay_params, "weight_decay": 0.0, "use_muon": False, "lr": float(lr)},
+                {"params": hd, "weight_decay": 1e-4, "use_muon": True, "lr": muon_lr},
+                {"params": hnd, "weight_decay": 0.0, "use_muon": True, "lr": muon_lr},
+                {"params": ad, "weight_decay": 1e-4, "use_muon": False, "lr": float(lr)},
+                {"params": and_, "weight_decay": 0.0, "use_muon": False, "lr": float(lr)},
             ]
             self.opt = MuonWithAuxAdam(param_groups)
         elif optimizer == "cosmos_fast":
-            cosmos_decay_params = []
-            cosmos_no_decay_params = []
-            aux_decay_params = []
-            aux_no_decay_params = []
-            for name, param in self.model.named_parameters():
-                if not param.requires_grad:
-                    continue
-                is_no_decay = param.ndim <= 1 or name.endswith(".bias")
-                is_cosmos_hidden = param.ndim == 2 and name.startswith("blocks.")
-                if is_cosmos_hidden and not is_no_decay:
-                    cosmos_decay_params.append(param)
-                elif is_cosmos_hidden:
-                    cosmos_no_decay_params.append(param)
-                elif is_no_decay:
-                    aux_no_decay_params.append(param)
-                else:
-                    aux_decay_params.append(param)
+            hd, hnd, ad, and_ = _split_decay_groups(
+                self.model,
+                hidden_filter=lambda name, p: p.ndim == 2 and name.startswith("blocks."),
+            )
             param_groups = [
-                {"params": cosmos_decay_params, "weight_decay": 1e-4, "use_cosmos_fast": True},
-                {"params": cosmos_no_decay_params, "weight_decay": 0.0, "use_cosmos_fast": True},
-                {"params": aux_decay_params, "weight_decay": 1e-4, "use_cosmos_fast": False},
-                {"params": aux_no_decay_params, "weight_decay": 0.0, "use_cosmos_fast": False},
+                {"params": hd, "weight_decay": 1e-4, "use_cosmos_fast": True},
+                {"params": hnd, "weight_decay": 0.0, "use_cosmos_fast": True},
+                {"params": ad, "weight_decay": 1e-4, "use_cosmos_fast": False},
+                {"params": and_, "weight_decay": 0.0, "use_cosmos_fast": False},
             ]
             self.opt = COSMOSFast(
                 param_groups,
@@ -317,15 +322,7 @@ class Trainer:
             )
         else:
   # Selective weight decay: apply only to non-bias, non-LayerNorm parameters.
-            decay_params = []
-            no_decay_params = []
-            for name, param in self.model.named_parameters():
-                if not param.requires_grad:
-                    continue
-                if param.ndim <= 1 or name.endswith(".bias"):
-                    no_decay_params.append(param)
-                else:
-                    decay_params.append(param)
+            _, _, decay_params, no_decay_params = _split_decay_groups(self.model)
             param_groups = [
                 {"params": decay_params, "weight_decay": 1e-4},
                 {"params": no_decay_params, "weight_decay": 0.0},
@@ -379,8 +376,6 @@ class Trainer:
 
         self.use_amp = bool(use_amp)
         self._amp_dtype = torch.bfloat16 if device.startswith("cuda") else None
-  # BF16 typically does not need GradScaler; keep scaler only for fp16 if added later.
-        self._scaler = None
 
         self.feature_dropout_p = float(feature_dropout_p)
         self._base_input_planes = int(LC0_FULL.num_planes)
@@ -466,27 +461,53 @@ class Trainer:
         )
 
     def _amp_context(self):
-        if self.use_amp and self.device.startswith("cuda"):
-            return torch.amp.autocast("cuda", dtype=self._amp_dtype)
-        return contextlib.nullcontext()
+        return inference_autocast(device=self.device, enabled=self.use_amp)
 
     @staticmethod
     def _extract_loss_scalars(losses: dict[str, torch.Tensor]) -> dict[str, float]:
         """Extract all non-total loss component scalars from compute_loss output.
 
-        Takes every scalar tensor except ``total`` so new metrics added to the
-        loss dict flow through automatically without a third place to edit.
+        Single GPU sync via stack-then-tolist instead of one ``.item()`` per
+        component (~13 syncs per microbatch otherwise — meaningful at high
+        accum_steps).
         """
-        return {
-            key: float(v.detach().item())
-            for key, v in losses.items()
-            if key != "total"
-        }
+        keys = [k for k in losses if k != "total"]
+        if not keys:
+            return {}
+        stacked = torch.stack([losses[k].detach() for k in keys])
+        values = stacked.tolist()
+        return dict(zip(keys, values, strict=True))
 
     def _log_metrics(self, metrics: TrainMetrics, tag: str) -> None:
         """Log all TrainMetrics fields to TensorBoard under the given tag."""
         for field_name, value in dataclasses.asdict(metrics).items():
             self.writer.add_scalar(f"{tag}/{field_name}", float(value), self.step)
+
+    @staticmethod
+    def _build_metrics(
+        sums: dict[str, float],
+        acc_sums: dict[str, tuple[float, float]],
+        n: float,
+        **extras: Any,
+    ) -> TrainMetrics:
+        """Common tail of ``_compute_metrics`` and ``train_steps`` — averages
+        loss sums by ``n`` and computes per-head accuracy ratios from
+        (numerator, denominator) tuples in ``acc_sums``.
+        """
+        def _acc(name: str) -> float:
+            num, den = acc_sums.get(name, (0.0, 0.0))
+            return float(num / den) if den > 0 else 0.0
+
+        return TrainMetrics(
+            **_loss_sums_to_metric_kwargs(sums, n),  # dict[str,float] splat covers int fields (step counters) at runtime
+            sf_move_acc=_acc("sf_move_acc"),
+            sf_move_acc_top5=_acc("sf_move_acc_top5"),
+            policy_own_acc_top1=_acc("policy_own_acc_top1"),
+            policy_own_acc_top5=_acc("policy_own_acc_top5"),
+            policy_future_acc_top1=_acc("policy_future_acc_top1"),
+            policy_future_acc_top5=_acc("policy_future_acc_top5"),
+            **extras,
+        )
 
     def _sample_batch_host(
         self,
@@ -737,23 +758,10 @@ class Trainer:
                 for k, v in stats.items():
                     calib_accum[k] = calib_accum.get(k, torch.zeros_like(v)) + v
 
-        n = float(max(1, steps))
-        def _acc(name: str) -> float:
-            n_, d_ = acc_sums.get(name, (0.0, 0.0))
-            return float(n_ / d_) if d_ > 0 else 0.0
-
         wdl_brier, wdl_ece = wdl_brier_ece_from_stats(calib_accum) if calib_accum else (0.0, 0.0)
-
-        metrics = TrainMetrics(
-            **_loss_sums_to_metric_kwargs(sums, n), # dict[str,float] splat covers int fields (step counters) at runtime
-            sf_move_acc=_acc("sf_move_acc"),
-            sf_move_acc_top5=_acc("sf_move_acc_top5"),
-            policy_own_acc_top1=_acc("policy_own_acc_top1"),
-            policy_own_acc_top5=_acc("policy_own_acc_top5"),
-            policy_future_acc_top1=_acc("policy_future_acc_top1"),
-            policy_future_acc_top5=_acc("policy_future_acc_top5"),
-            wdl_brier=wdl_brier,
-            wdl_ece=wdl_ece,
+        metrics = self._build_metrics(
+            sums, acc_sums, float(max(1, steps)),
+            wdl_brier=wdl_brier, wdl_ece=wdl_ece,
         )
         self._log_metrics(metrics, tag)
         return metrics
@@ -852,19 +860,8 @@ class Trainer:
 
         train_time_s = time.perf_counter() - train_wall_start
         train_samples_seen = int(n_micro * batch_size)
-        n = float(max(1, n_micro))
-        def _acc(name: str) -> float:
-            n_, d_ = acc_sums.get(name, (0.0, 0.0))
-            return float(n_ / d_) if d_ > 0 else 0.0
-
-        metrics = TrainMetrics(
-            **_loss_sums_to_metric_kwargs(sums, n),
-            sf_move_acc=_acc("sf_move_acc"),
-            sf_move_acc_top5=_acc("sf_move_acc_top5"),
-            policy_own_acc_top1=_acc("policy_own_acc_top1"),
-            policy_own_acc_top5=_acc("policy_own_acc_top5"),
-            policy_future_acc_top1=_acc("policy_future_acc_top1"),
-            policy_future_acc_top5=_acc("policy_future_acc_top5"),
+        metrics = self._build_metrics(
+            sums, acc_sums, float(max(1, n_micro)),
             train_time_s=float(train_time_s),
             opt_step_time_s=float(opt_step_time_s),
             train_steps_done=int(train_steps_done),
@@ -898,7 +895,9 @@ class Trainer:
             }
         if self._swa_model is not None:
             state["swa_model"] = self._swa_model.state_dict()
-        torch.save(state, str(path))
+  # Atomic write so workers polling for new checkpoints never see a partial
+  # file (matches the export_swa path; previously diverged).
+        atomic_write(path, lambda tmp: torch.save(state, str(tmp)))
 
     def load(self, path: Path) -> None:
         from chess_anti_engine.model import load_state_dict_tolerant
