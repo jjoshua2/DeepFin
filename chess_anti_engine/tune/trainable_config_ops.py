@@ -57,12 +57,12 @@ def _resolve_sims(tc: TrialConfig, trainer, *, max_sims: int) -> int:
 
 
 def _resolve_pause_marker_path(*, tc: TrialConfig, trial_dir: Path) -> Path:
+  # Always resolve from ``trial_dir.parent`` (the tune dir). The previous
+  # work_dir override resolved against ``Path.cwd()``, which inside a
+  # Ray actor is /tmp/ray/.../working_dirs/... — never where
+  # graceful_restart.py drops the marker (project_root/<work_dir>/tune/).
+  # That made the pause hook silently no-op under PBT.
     tune_root = trial_dir.parent
-    raw_work_dir = tc.work_dir
-    if raw_work_dir and raw_work_dir.strip():
-        tune_root = Path(raw_work_dir.strip()).expanduser()
-        if not tune_root.is_absolute():
-            tune_root = Path.cwd() / tune_root
     raw = tc.pause_file
     if raw and raw.strip():
         p = Path(raw.strip())

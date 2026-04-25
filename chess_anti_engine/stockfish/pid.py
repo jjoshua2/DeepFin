@@ -382,14 +382,15 @@ class DifficultyPID:
 
   # Raw-vs-fit sign disagreement: raw is the fresh single-iter
   # signal; the fit is averaged over ``inverse_regret_window`` iters
-  # and lags reality. When they disagree, the fit is provably stale,
-  # so step in raw's direction at half ``abs_max_step`` — full step
-  # would defeat the fit's role of magnitude calibration when signs
-  # agree, but zero (the prior behavior) leaves us holding steady
-  # while raw underperforms because the fit hasn't caught up.
-                if raw_wr_this_batch < self.target and delta < 0:
+  # and lags reality. When they disagree (and raw is outside its own
+  # deadband — within the deadband, raw is statistical noise around
+  # target and shouldn't override the fit), step in raw's direction
+  # at half ``abs_max_step``. Full step would defeat the fit's
+  # magnitude calibration when signs agree; zero (the prior behavior)
+  # leaves us holding while raw genuinely underperforms.
+                if err > raw_deadband and delta < 0:
                     delta = 0.5 * abs_max_step
-                elif raw_wr_this_batch > self.target and delta > 0:
+                elif err < -raw_deadband and delta > 0:
                     delta = -0.5 * abs_max_step
 
                 regret_after = _clamp(
