@@ -8,7 +8,7 @@ import numpy as np
 import torch
 
 from chess_anti_engine.encoding.cboard_encode import cboard_from_board_fast
-from chess_anti_engine.mcts._mcts_tree import MCTSTree, NNCache
+from chess_anti_engine.mcts._mcts_tree import MCTSTree
 from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
 from chess_anti_engine.model.tiny import TinyNet
@@ -37,7 +37,6 @@ with torch.no_grad():
     wdl_logits = out["wdl"].numpy()
 
 tree = MCTSTree()
-cache = NNCache(1 << 17)
 
 # Warm up
 _ = run_gumbel_root_many_c(
@@ -59,7 +58,6 @@ for ply in range(N_PLIES):
         pre_pol_logits=pol_logits,
         pre_wdl_logits=wdl_logits,
         cboards=cboards,
-        nn_cache=cache,
         tree=tree,
         root_node_ids=[-1] * N_GAMES,
     )

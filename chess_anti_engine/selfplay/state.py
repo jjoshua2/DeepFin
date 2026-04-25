@@ -311,7 +311,6 @@ class SelfplayState:
     root_ids: list[int]
 
     # ── Shared caches (None when C tree unavailable) ─────────────────────────
-    nn_cache: Any = None
     mcts_tree: Any = None
 
     # ── C capability flags + handles ─────────────────────────────────────────
@@ -406,18 +405,15 @@ class SelfplayState:
         last_net_full = [True] * batch_size
         root_ids = [-1] * batch_size
 
-        # NN eval cache + persistent MCTS tree (C-only).
-        nn_cache = None
+        # Persistent MCTS tree (C-only). Transposition table inside the tree
+        # already deduplicates repeated NN evals; the separate NNCache that
+        # used to live here was removed (low marginal hit rate, ~387 MB).
         mcts_tree = None
         try:
             from chess_anti_engine.mcts._mcts_tree import (
                 MCTSTree as _MCTSTree,
             )
-            from chess_anti_engine.mcts._mcts_tree import (
-                NNCache as _NNCache,
-            )
 
-            nn_cache = _NNCache(1 << 17)  # 131072 slots
             mcts_tree = _MCTSTree()
         except ImportError:
             pass
@@ -507,7 +503,6 @@ class SelfplayState:
             consecutive_low_winrate=consecutive_low_winrate,
             last_net_full=last_net_full,
             root_ids=root_ids,
-            nn_cache=nn_cache,
             mcts_tree=mcts_tree,
             has_c_ply=has_c_ply,
             has_classify_c=has_classify_c,

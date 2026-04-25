@@ -235,14 +235,6 @@
                 "code": "reportCallIssue",
                 "range": {
                     "startColumn": 16,
-                    "endColumn": 24,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportCallIssue",
-                "range": {
-                    "startColumn": 16,
                     "endColumn": 20,
                     "lineCount": 1
                 }

@@ -74,6 +74,44 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
     if not net_idxs:
         return
 
+    # Forced-move short-circuit: games whose current position has exactly one
+    # legal move skip both the NN eval and the MCTS step entirely. The policy
+    # target would collapse to one-hot regardless, the value head can't
+    # influence the choice (no alternative to compare against), and the move
+    # is mechanically determined. Saves a slot in the NN batch + skips one
+    # _NetRecord that would carry no policy signal anyway. Note: state.boards
+    # in the C-ply fast path stays at the starting position (history is replayed
+    # from move_idx_history), so we only push to cboards here.
+    forced_idxs: list[int] = []
+    forced_actions: list[int] = []
+    play_idxs: list[int] = []
+    for _idx in net_idxs:
+        _li = state.cboards[_idx].legal_move_indices()
+        if _li.size == 1:
+            forced_idxs.append(_idx)
+            forced_actions.append(int(_li[0]))
+        else:
+            play_idxs.append(_idx)
+    if forced_idxs:
+        for _idx, _act in zip(forced_idxs, forced_actions, strict=True):
+            state.cboards[_idx].push_index(_act)
+            if not state.has_c_ply:
+                # Python fallback path keeps state.boards in sync with cboards.
+                state.boards[_idx].push(index_to_move(_act, state.boards[_idx]))
+            state.move_idx_history[_idx].append(_act)
+            state.last_net_full[_idx] = True
+            if state.cboards[_idx].is_game_over():
+                state.done_arr[_idx] = 1
+            # No tree carryover — without an MCTS root expansion, there's
+            # nothing to reuse next ply.
+            if state.mcts_tree is not None:
+                state.root_ids[_idx] = -1
+        if not play_idxs:
+            return
+        # Continue with only the remaining games. Re-bind net_idxs locally so
+        # the rest of the function operates on the multi-legal-move subset.
+        net_idxs = play_idxs
+
     eval_impl = state.evaluator
     rng = state.rng
     search = state.search
@@ -195,7 +233,6 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
                 per_game_simulations=sub_sims,
                 per_game_add_noise=sub_noise,
                 cboards=sub_cboards,
-                nn_cache=state.nn_cache,
                 tree=state.mcts_tree,
                 root_node_ids=sub_root_ids,
                 tb_probe=state.tb_probe if state.game.syzygy_in_search else None,

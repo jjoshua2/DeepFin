@@ -142,6 +142,49 @@ def test_walker_descend_marks_checkmate_leaf_solved():
     assert t.get_solved_status(root) == SOLVED_WIN
 
 
+def test_walker_descend_marks_twofold_repetition_draw():
+    """LC0-style 2-fold-as-draw: a position seen once already in the game
+    history, when revisited inside the search tree, is marked SOLVED_DRAW
+    even though python-chess would still consider the game in progress
+    (3-fold is the FIDE rule). Justification: side-to-move can force the
+    third repetition by repeating, so 2-fold inside search is at-best-draw."""
+    t = MCTSTree()
+    # Build a game where the current position has appeared once before in
+    # history. Knight shuffle: Nf3 Nf6 Ng1 Ng8 reaches the start position
+    # again with the same side to move + castling rights.
+    b = chess.Board()
+    for san in ["Nf3", "Nf6", "Ng1", "Ng8"]:
+        b.push_san(san)
+    # Now play any move + a "back" move to set up 2-fold detectable inside search.
+    # Easier: the root position itself is already a 2-fold (start position
+    # appeared at ply 0 and now again at ply 4). But cboard_is_repetition only
+    # fires on the leaf cboard inside search, not the root — push a couple
+    # more moves so the leaf cboard re-reaches a hash already in hash_stack.
+    from chess_anti_engine.moves.encode import move_to_index
+
+    # Make the leaf reach the start position again (2-fold of starting):
+    # play Nf3 from current → child position equals position-after-1.Nf3 from
+    # earlier in the line, so it's a 2-fold.
+    b_for_leaf = b.copy()
+    nf3 = chess.Move.from_uci("g1f3")
+    assert nf3 in b_for_leaf.legal_moves
+    cb_root = CBoard.from_board(b)
+    root = t.add_root(0, 0.0)
+    idx = move_to_index(nf3, b)
+    t.expand(root, np.array([idx], dtype=np.int32), np.array([1.0], dtype=np.float64))
+    enc = np.zeros((1, 146, 8, 8), dtype=np.float32)
+    leaf_id, _node_path, _legal, term_q = t.walker_descend_puct(
+        root, cb_root, 2.5, 1.0, 1.0, 0, enc,
+    )
+    # Leaf is a 2-fold (start-pos-after-Nf3 appeared at ply 1) but the game
+    # is NOT over by FIDE rules (only 2 occurrences). Search should still
+    # treat it as a draw.
+    assert term_q is not None
+    assert term_q == pytest.approx(0.0)
+    assert t.get_solved_status(leaf_id) == SOLVED_DRAW
+    assert t.get_solved_status(root) == SOLVED_DRAW
+
+
 def test_walker_descend_marks_stalemate_leaf_draw():
     """Stalemate leaf → SOLVED_DRAW; root's only move forces stalemate → root DRAW."""
     t = MCTSTree()

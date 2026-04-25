@@ -92,121 +92,7 @@ static int extract_cboards(PyObject *list, int32_t n,
     return 0;
 }
 
-/* ================================================================
- * NN evaluation cache (position hash → expanded node data)
- * ================================================================ */
-
-#define NNCACHE_MAX_LEGAL  256  /* max legal moves in chess is 218 */
 #define MCTS_MAX_PATH      512  /* max tree-traversal depth per query */
-
-typedef struct {
-    uint64_t key;           /* zobrist hash */
-    int32_t  legal[NNCACHE_MAX_LEGAL];
-    double   priors[NNCACHE_MAX_LEGAL]; /* softmaxed */
-    int32_t  n_legal;
-    double   q_value;       /* from WDL logits */
-    uint32_t generation;    /* matches NNCacheData.generation when valid */
-} NNCacheEntry;
-
-typedef struct {
-    NNCacheEntry *entries;
-    int32_t cap;            /* power of 2 */
-    int32_t mask;           /* cap - 1 */
-    int32_t count;
-    uint32_t generation;    /* bumped on clear — avoids memset */
-    /* Lifetime counters — not reset on clear(), so stats span restarts of
-     * the gumbel sim but are reset-on-process-start. Used to decide whether
-     * NNCache earns its 131k×entry memory footprint. */
-    uint64_t stat_hits;
-    uint64_t stat_misses;
-    uint64_t stat_inserts;
-    uint64_t stat_insert_collisions;
-    /* Thread-safety (phase 4): sharded locks keyed by hash & (NCACHE_SHARDS-1).
-     * Walker pool probe/insert holds the shard lock. Uncontended x86 cost
-     * is ~10ns; sharding keeps contention sub-linear in walker count. */
-    pthread_mutex_t shard_locks[16];
-} NNCacheData;
-#define NCACHE_SHARDS 16
-
-static int nncache_init(NNCacheData *c, int32_t cap) {
-    c->cap = cap;
-    c->mask = cap - 1;
-    c->count = 0;
-    c->generation = 1;
-    c->stat_hits = 0;
-    c->stat_misses = 0;
-    c->stat_inserts = 0;
-    c->stat_insert_collisions = 0;
-    c->entries = (NNCacheEntry *)calloc(cap, sizeof(NNCacheEntry));
-    if (!c->entries) return -1;
-    for (int i = 0; i < NCACHE_SHARDS; i++) {
-        if (pthread_mutex_init(&c->shard_locks[i], NULL) != 0) {
-            for (int j = 0; j < i; j++) pthread_mutex_destroy(&c->shard_locks[j]);
-            free(c->entries);
-            c->entries = NULL;
-            return -1;
-        }
-    }
-    return 0;
-}
-
-static void nncache_free(NNCacheData *c) {
-    if (c->entries) {
-        for (int i = 0; i < NCACHE_SHARDS; i++) pthread_mutex_destroy(&c->shard_locks[i]);
-    }
-    free(c->entries);
-    c->entries = NULL;
-    c->count = 0;
-}
-
-static inline pthread_mutex_t *nncache_shard(NNCacheData *c, uint64_t hash) {
-    return &c->shard_locks[hash & (NCACHE_SHARDS - 1)];
-}
-
-/* Probe cache (thread-safe). Returns locked pointer to entry on hit, NULL on
- * miss. On hit the caller OWNS the shard lock and MUST call nncache_release
- * after reading entry fields. Keeps priors/legal arrays stable against a
- * concurrent insert racing in on the same shard.
- *
- * Serial callers still get correct behavior — lock/unlock is ~10ns. */
-static NNCacheEntry *nncache_probe(NNCacheData *c, uint64_t hash) {
-    int32_t slot = (int32_t)(hash & (uint64_t)c->mask);
-    pthread_mutex_t *lk = nncache_shard(c, hash);
-    pthread_mutex_lock(lk);
-    NNCacheEntry *e = &c->entries[slot];
-    if (e->generation == c->generation && e->key == hash) {
-        c->stat_hits++;
-        return e;  /* caller owns the shard lock */
-    }
-    c->stat_misses++;
-    pthread_mutex_unlock(lk);
-    return NULL;
-}
-
-/* Release the shard lock returned by a successful nncache_probe hit. */
-static inline void nncache_release(NNCacheData *c, uint64_t hash) {
-    pthread_mutex_unlock(nncache_shard(c, hash));
-}
-
-/* Insert into cache (thread-safe). Caller must call nncache_release on
- * the same hash after writing entry fields. Returns NULL (with lock
- * already released) if slot collides with another live entry. */
-static NNCacheEntry *nncache_insert(NNCacheData *c, uint64_t hash) {
-    int32_t slot = (int32_t)(hash & (uint64_t)c->mask);
-    pthread_mutex_t *lk = nncache_shard(c, hash);
-    pthread_mutex_lock(lk);
-    NNCacheEntry *e = &c->entries[slot];
-    if (e->generation == c->generation && e->key != hash) {
-        c->stat_insert_collisions++;
-        pthread_mutex_unlock(lk);
-        return NULL;  /* keep existing entry (older = more useful) */
-    }
-    if (e->generation != c->generation) c->count++;
-    c->stat_inserts++;
-    e->key = hash;
-    e->generation = c->generation;
-    return e;  /* caller owns the shard lock */
-}
 
 /* ================================================================
  * Tree data structure
@@ -320,7 +206,9 @@ static int tree_init(TreeData *t) {
 
     /* Per-node hash + hash table for DAG transposition detection */
     t->node_hash = (uint64_t *)calloc(t->node_cap, sizeof(uint64_t));
-    t->ht_cap = 1 << 17;  /* 131072 */
+    t->ht_cap = 1 << 18;  /* 262144 — sized to comfortably exceed typical
+                           * tree node counts (10k-100k) so hash collisions
+                           * stay rare. ~1 MB; freed cheaply on tree reset. */
     t->ht_mask = t->ht_cap - 1;
     t->hash_table = (int32_t *)malloc(t->ht_cap * sizeof(int32_t));
 
@@ -707,6 +595,32 @@ static inline int8_t cboard_terminal_solved_status(const CBoard *b) {
 }
 
 
+/* Search-time terminal detection. Returns 1 and writes terminal Q + solved
+ * status if the position should be treated as terminal during MCTS search:
+ *   - true game-over (checkmate / stalemate / 3-fold / 50-move / insufficient)
+ *   - LC0-style 2-fold-as-draw: any prior occurrence inside the search tree
+ *     means the side-to-move can force the third repetition, so the position
+ *     is draw-or-better for whichever side prefers it. Treating 2-fold as a
+ *     hard draw lets the search prune perpetual-check / shuffling lines
+ *     immediately instead of waiting for the third visit.
+ * Q for 2-fold is 0.0 (draw); cboard_terminal_value already returns 0.0 for
+ * any non-game-over position, but we set it explicitly here for clarity. */
+static inline int cboard_search_terminal(const CBoard *b,
+                                          double *out_q, int8_t *out_solved) {
+    if (cboard_is_game_over(b)) {
+        *out_q = (double)cboard_terminal_value(b);
+        *out_solved = cboard_terminal_solved_status(b);
+        return 1;
+    }
+    if (cboard_is_repetition(b)) {
+        *out_q = 0.0;
+        *out_solved = SOLVED_DRAW;
+        return 1;
+    }
+    return 0;
+}
+
+
 /* Resolve `node`'s solved status from its expanded children, returning the
  * new status (SOLVED_UNKNOWN if not yet provable). Caller must hold tree_lock
  * — children_offset/num_children/solved[] are read across multiple slots and
@@ -797,9 +711,10 @@ static int try_forced_collapse(TreeData *t,
         path_buf[(*path_len)++] = child_id;
         *leaf_id = child_id;
 
-        if (cboard_is_game_over(cb)) {
-            tree_mark_solved_and_propagate(t, path_buf, *path_len,
-                                            cboard_terminal_solved_status(cb));
+        double tq;
+        int8_t ts;
+        if (cboard_search_terminal(cb, &tq, &ts)) {
+            tree_mark_solved_and_propagate(t, path_buf, *path_len, ts);
             return 1;
         }
     }
@@ -1076,10 +991,6 @@ typedef struct {
     int32_t *q_forced;
     int32_t  q_cap;
 
-    /* NNCache pointer (borrowed, valid for lifetime of sim) */
-    NNCacheData *nncache;
-    PyObject *nncache_ref;       /* Strong ref to keep NNCache alive */
-
     /* Minibatch-size target: gss_step accumulates up to this many leaves
      * before returning for GPU eval. Large = better GPU util, slightly
      * staler tree state on later leaves + higher stop-latency. Small =
@@ -1100,7 +1011,6 @@ static void gss_free(GumbelSimState *g) {
     free(g->active);
     free(g->q_board_idx); free(g->q_root_ids); free(g->q_forced);
     Py_XDECREF(g->enc_arr_ref);
-    Py_XDECREF(g->nncache_ref);
     memset(g, 0, sizeof(*g));
 }
 
@@ -1323,10 +1233,11 @@ static int32_t gss_prepare_batch(
         for (int32_t ri = n_replay - 1; ri >= 0; ri--)
             cboard_push_index(&cb, replay_actions[ri]);
 
-        if (cboard_is_game_over(&cb)) {
+        double term_q;
+        int8_t term_solved;
+        if (cboard_search_terminal(&cb, &term_q, &term_solved)) {
             if (stored_append_terminal(s, path_buf, path_len,
-                                       (double)cboard_terminal_value(&cb),
-                                       cboard_terminal_solved_status(&cb)) < 0) return -1;
+                                       term_q, term_solved) < 0) return -1;
             continue;
         }
 
@@ -1344,7 +1255,7 @@ static int32_t gss_prepare_batch(
             continue;
         }
 
-        /* Transposition / NNCache check */
+        /* Transposition check */
         if (!__atomic_load_n(&t->expanded[leaf_id], __ATOMIC_ACQUIRE)) {
             int32_t existing = tree_ht_probe(t, cb.hash);
             if (existing >= 0 && existing != leaf_id &&
@@ -1368,25 +1279,6 @@ static int32_t gss_prepare_batch(
                 tree_ht_insert(t, cb.hash, leaf_id);
                 if (cache_ok) tree_cb_cache_put(t, leaf_id, &cb);
                 continue;
-            }
-            if (g->nncache) {
-                NNCacheEntry *ce = nncache_probe(g->nncache, cb.hash);
-                if (ce) {
-                    /* Copy fields under the shard lock, then release before
-                     * calling tree_expand (which takes its own lock). */
-                    int32_t legal_copy[NNCACHE_MAX_LEGAL];
-                    double  prior_copy[NNCACHE_MAX_LEGAL];
-                    int32_t n_legal_copy = ce->n_legal;
-                    double  q_copy = ce->q_value;
-                    memcpy(legal_copy, ce->legal, n_legal_copy * sizeof(int32_t));
-                    memcpy(prior_copy, ce->priors, n_legal_copy * sizeof(double));
-                    nncache_release(g->nncache, cb.hash);
-                    tree_expand(t, leaf_id, legal_copy, prior_copy, n_legal_copy);
-                    tree_backprop(t, path_buf, path_len, q_copy);
-                    tree_ht_insert(t, cb.hash, leaf_id);
-                    if (cache_ok) tree_cb_cache_put(t, leaf_id, &cb);
-                    continue;
-                }
             }
         }
 
@@ -1433,7 +1325,7 @@ static int32_t gss_prepare_batch(
 /* Run expand + backprop for all stored leaves using GPU eval results.
  * Pure C, no GIL needed. */
 static void gss_finish_batch(
-    TreeData *t, StoredPrepState *s, NNCacheData *nncache,
+    TreeData *t, StoredPrepState *s,
     const float *pol_data, const float *wdl_data)
 {
     for (int32_t li = 0; li < s->n_leaves; li++) {
@@ -1455,16 +1347,6 @@ static void gss_finish_batch(
                     priors[j] = (double)logits[legal[j]];
                 softmax_inplace(priors, n_legal);
                 tree_expand(t, nid, legal, priors, n_legal);
-                if (nncache && n_legal <= NNCACHE_MAX_LEGAL) {
-                    NNCacheEntry *ce = nncache_insert(nncache, s->hashes[li]);
-                    if (ce) {
-                        ce->n_legal = n_legal;
-                        memcpy(ce->legal, legal, n_legal * sizeof(int32_t));
-                        memcpy(ce->priors, priors, n_legal * sizeof(double));
-                        ce->q_value = q;
-                        nncache_release(nncache, s->hashes[li]);
-                    }
-                }
                 if (priors != priors_stack) free(priors);
             }
         }
@@ -1667,136 +1549,6 @@ static int MCTSTree_init(MCTSTreeObject *self, PyObject *args, PyObject *kwds) {
     }
     return 0;
 }
-
-
-/* ================================================================
- * Python wrapper: NNCache
- * ================================================================ */
-
-typedef struct {
-    PyObject_HEAD
-    NNCacheData cache;
-} PyNNCacheObject;
-
-static void PyNNCache_dealloc(PyNNCacheObject *self) {
-    nncache_free(&self->cache);
-    Py_TYPE(self)->tp_free((PyObject *)self);
-}
-
-static int PyNNCache_init(PyNNCacheObject *self, PyObject *args, PyObject *kwds) {
-    static char *kwlist[] = {"capacity", NULL};
-    int cap = 1 << 17;  /* 131072 default */
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "|i", kwlist, &cap))
-        return -1;
-    /* Round up to power of 2 */
-    int p = 1;
-    while (p < cap) p <<= 1;
-    if (nncache_init(&self->cache, p) < 0) {
-        PyErr_SetString(PyExc_MemoryError, "Failed to allocate NNCache");
-        return -1;
-    }
-    return 0;
-}
-
-static PyObject *PyNNCache_count(PyNNCacheObject *self, PyObject *Py_UNUSED(ignored)) {
-    return PyLong_FromLong(self->cache.count);
-}
-
-static PyObject *PyNNCache_clear(PyNNCacheObject *self, PyObject *Py_UNUSED(ignored)) {
-    self->cache.generation++;
-    self->cache.count = 0;
-    Py_RETURN_NONE;
-}
-
-static PyObject *PyNNCache_probe(PyNNCacheObject *self, PyObject *args) {
-    unsigned long long hash;
-    if (!PyArg_ParseTuple(args, "K", &hash))
-        return NULL;
-    NNCacheEntry *e = nncache_probe(&self->cache, (uint64_t)hash);
-    if (!e)
-        Py_RETURN_NONE;
-    /* Copy fields into stack buffers while the shard lock is held, then
-     * release before doing Python allocation (which can arbitrarily long-tail
-     * on GC and would block other walkers on this shard). */
-    int32_t n_legal = e->n_legal;
-    int32_t legal_buf[NNCACHE_MAX_LEGAL];
-    double  prior_buf[NNCACHE_MAX_LEGAL];
-    double  q_copy = e->q_value;
-    memcpy(legal_buf, e->legal, n_legal * sizeof(int32_t));
-    memcpy(prior_buf, e->priors, n_legal * sizeof(double));
-    nncache_release(&self->cache, (uint64_t)hash);
-
-    npy_intp dims[1] = {n_legal};
-    PyObject *legal_arr = PyArray_SimpleNew(1, dims, NPY_INT32);
-    PyObject *prior_arr = PyArray_SimpleNew(1, dims, NPY_FLOAT64);
-    if (!legal_arr || !prior_arr) {
-        Py_XDECREF(legal_arr); Py_XDECREF(prior_arr);
-        return NULL;
-    }
-    memcpy(PyArray_DATA((PyArrayObject *)legal_arr), legal_buf, n_legal * sizeof(int32_t));
-    memcpy(PyArray_DATA((PyArrayObject *)prior_arr), prior_buf, n_legal * sizeof(double));
-    return Py_BuildValue("(NNd)", legal_arr, prior_arr, q_copy);
-}
-
-static PyObject *PyNNCache_stats(PyNNCacheObject *self, PyObject *Py_UNUSED(ignored)) {
-    NNCacheData *c = &self->cache;
-    return Py_BuildValue(
-        "{s:K,s:K,s:K,s:K,s:i,s:i}",
-        "hits", (unsigned long long)c->stat_hits,
-        "misses", (unsigned long long)c->stat_misses,
-        "inserts", (unsigned long long)c->stat_inserts,
-        "insert_collisions", (unsigned long long)c->stat_insert_collisions,
-        "count", c->count,
-        "cap", c->cap
-    );
-}
-
-static PyObject *PyNNCache_reset_stats(PyNNCacheObject *self, PyObject *Py_UNUSED(ignored)) {
-    NNCacheData *c = &self->cache;
-    c->stat_hits = 0;
-    c->stat_misses = 0;
-    c->stat_inserts = 0;
-    c->stat_insert_collisions = 0;
-    Py_RETURN_NONE;
-}
-
-static PyObject *PyNNCache_keys(PyNNCacheObject *self, PyObject *Py_UNUSED(ignored)) {
-    NNCacheData *c = &self->cache;
-    PyObject *list = PyList_New(0);
-    if (!list) return NULL;
-    for (int32_t i = 0; i < c->cap; i++) {
-        NNCacheEntry *e = &c->entries[i];
-        if (e->generation == c->generation) {
-            PyObject *val = PyLong_FromUnsignedLongLong(e->key);
-            PyList_Append(list, val);
-            Py_DECREF(val);
-        }
-    }
-    return list;
-}
-
-static PyMethodDef PyNNCache_methods[] = {
-    {"count", (PyCFunction)PyNNCache_count, METH_NOARGS, "count() -> int"},
-    {"clear", (PyCFunction)PyNNCache_clear, METH_NOARGS, "clear() -> None"},
-    {"probe", (PyCFunction)PyNNCache_probe, METH_VARARGS, "probe(hash) -> (q, n_legal) or None"},
-    {"keys", (PyCFunction)PyNNCache_keys, METH_NOARGS, "keys() -> list of cached hashes"},
-    {"stats", (PyCFunction)PyNNCache_stats, METH_NOARGS, "stats() -> {hits, misses, inserts, insert_collisions, count, cap}"},
-    {"reset_stats", (PyCFunction)PyNNCache_reset_stats, METH_NOARGS, "reset_stats() -> None"},
-    {NULL}
-};
-
-static PyTypeObject PyNNCacheType = {
-    PyVarObject_HEAD_INIT(NULL, 0)
-    .tp_name = "_mcts_tree.NNCache",
-    .tp_doc = "C-level NN evaluation cache keyed by Zobrist hash.",
-    .tp_basicsize = sizeof(PyNNCacheObject),
-    .tp_itemsize = 0,
-    .tp_flags = Py_TPFLAGS_DEFAULT,
-    .tp_new = PyType_GenericNew,
-    .tp_init = (initproc)PyNNCache_init,
-    .tp_dealloc = (destructor)PyNNCache_dealloc,
-    .tp_methods = PyNNCache_methods,
-};
 
 
 /* add_root(N, W) -> int (root node id) */
@@ -2059,17 +1811,20 @@ static PyObject *MCTSTree_walker_descend_puct(MCTSTreeObject *self, PyObject *ar
     memcpy(PyArray_DATA((PyArrayObject *)node_path), path_buf,
            path_len * sizeof(int32_t));
 
-    if (cboard_is_game_over(&cb)) {
-        /* Terminal: no vloss (caller backprops immediately), no encoding,
-         * empty legal array. Also mark the leaf solved and propagate up. */
-        Py_DECREF(enc_arr);
-        npy_intp ldims[1] = {0};
-        PyObject *legal_arr = PyArray_SimpleNew(1, ldims, NPY_INT32);
-        if (!legal_arr) { Py_DECREF(node_path); return NULL; }
-        double term_q = (double)cboard_terminal_value(&cb);
-        tree_mark_solved_and_propagate(t, path_buf, path_len,
-                                       cboard_terminal_solved_status(&cb));
-        return Py_BuildValue("(iNNd)", leaf_id, node_path, legal_arr, term_q);
+    {
+        double term_q;
+        int8_t term_solved;
+        if (cboard_search_terminal(&cb, &term_q, &term_solved)) {
+            /* Terminal: no vloss (caller backprops immediately), no encoding,
+             * empty legal array. Also mark the leaf solved and propagate up.
+             * Includes LC0-style 2-fold-as-draw inside the search tree. */
+            Py_DECREF(enc_arr);
+            npy_intp ldims[1] = {0};
+            PyObject *legal_arr = PyArray_SimpleNew(1, ldims, NPY_INT32);
+            if (!legal_arr) { Py_DECREF(node_path); return NULL; }
+            tree_mark_solved_and_propagate(t, path_buf, path_len, term_solved);
+            return Py_BuildValue("(iNNd)", leaf_id, node_path, legal_arr, term_q);
+        }
     }
 
     /* Forced-move chain collapse — same idea as in gss_prepare_batch. Try to
@@ -2887,7 +2642,7 @@ static void cboard_encode_146_into(const CBoard *b, float * restrict out) {
  * start_gumbel_sims(root_cboards, root_ids, remaining_per_board,
  *                   gumbels_per_board, root_priors, budget_remaining,
  *                   root_qs, c_scale, c_visit, c_puct, fpu_reduction,
- *                   full_tree, enc_buf[, nn_cache, vloss_weight])
+ *                   full_tree, enc_buf[, vloss_weight])
  *
  * Initializes the gumbel simulation state machine and runs until
  * the first batch of positions needs GPU eval.
@@ -2902,15 +2657,14 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
     PyObject *priors_list, *budget_obj, *root_qs_obj, *enc_buf_obj;
     double c_scale, c_visit, c_puct, fpu_reduction;
     int full_tree;
-    PyObject *nn_cache_obj = NULL;
     int vloss_weight = 0;
     int target_batch = 0;  /* 0 => use GSS_GPU_BATCH default in gss_step */
 
-    if (!PyArg_ParseTuple(args, "OOOOOOOddddpO|Oii",
+    if (!PyArg_ParseTuple(args, "OOOOOOOddddpO|ii",
                           &root_cbs_list, &root_ids_obj, &remaining_list,
                           &gumbels_list, &priors_list, &budget_obj, &root_qs_obj,
                           &c_scale, &c_visit, &c_puct, &fpu_reduction, &full_tree,
-                          &enc_buf_obj, &nn_cache_obj, &vloss_weight, &target_batch))
+                          &enc_buf_obj, &vloss_weight, &target_batch))
         return NULL;
 
     /* Validate list args before any indexing — PyList_GET_ITEM has no
@@ -3126,16 +2880,6 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
     /* Minibatch target (0 => fall back to GSS_GPU_BATCH in gss_step) */
     g->target_batch = (int32_t)target_batch;
 
-    /* NNCache (strong ref to keep alive) */
-    g->nncache = NULL;
-    g->nncache_ref = NULL;
-    if (nn_cache_obj != NULL && nn_cache_obj != Py_None &&
-        Py_TYPE(nn_cache_obj) == &PyNNCacheType) {
-        g->nncache = &((PyNNCacheObject *)nn_cache_obj)->cache;
-        Py_INCREF(nn_cache_obj);
-        g->nncache_ref = nn_cache_obj;
-    }
-
     /* Seed CBoard cache */
     tree_ensure_cb_cache(&self->tree, self->tree.node_count);
     for (int32_t i = 0; i < n_boards; i++) {
@@ -3217,7 +2961,7 @@ static PyObject *MCTSTree_continue_gumbel_sims(MCTSTreeObject *self, PyObject *a
     /* Finish batch (expand + backprop) and continue simulation */
     Py_BEGIN_ALLOW_THREADS
 
-    gss_finish_batch(&self->tree, s, g->nncache, pol_data, wdl_data);
+    gss_finish_batch(&self->tree, s, pol_data, wdl_data);
 
     /* Reset stored state for next batch */
     s->n_leaves = 0;
@@ -4085,8 +3829,6 @@ PyMODINIT_FUNC PyInit__mcts_tree(void) {
 
     if (PyType_Ready(&MCTSTreeType) < 0)
         return NULL;
-    if (PyType_Ready(&PyNNCacheType) < 0)
-        return NULL;
 
     PyObject *m = PyModule_Create(&mcts_tree_module);
     if (!m) return NULL;
@@ -4094,13 +3836,6 @@ PyMODINIT_FUNC PyInit__mcts_tree(void) {
     Py_INCREF(&MCTSTreeType);
     if (PyModule_AddObject(m, "MCTSTree", (PyObject *)&MCTSTreeType) < 0) {
         Py_DECREF(&MCTSTreeType);
-        Py_DECREF(m);
-        return NULL;
-    }
-
-    Py_INCREF(&PyNNCacheType);
-    if (PyModule_AddObject(m, "NNCache", (PyObject *)&PyNNCacheType) < 0) {
-        Py_DECREF(&PyNNCacheType);
         Py_DECREF(m);
         return NULL;
     }
