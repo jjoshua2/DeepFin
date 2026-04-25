@@ -108,7 +108,7 @@ class TrialConfig:
     timeout_adjudication_threshold: float = 0.90
     volatility_source: str = "raw"
     syzygy_path: str | None = None
-    syzygy_policy: bool = False
+    syzygy_rescore_policy: bool = False
     categorical_bins: int = DEFAULT_CATEGORICAL_BINS
     hlgauss_sigma: float = 0.04
 
@@ -313,7 +313,7 @@ class TrialConfig:
             timeout_adjudication_threshold=float(config.get("timeout_adjudication_threshold", 0.90)),
             volatility_source=str(config.get("volatility_source", "raw")),
             syzygy_path=_get("syzygy_path", None),
-            syzygy_policy=bool(config.get("syzygy_policy", False)),
+            syzygy_rescore_policy=bool(config.get("syzygy_rescore_policy", False)),
             categorical_bins=int(config.get("categorical_bins", DEFAULT_CATEGORICAL_BINS)),
             hlgauss_sigma=float(config.get("hlgauss_sigma", 0.04)),
 

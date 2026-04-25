@@ -156,7 +156,7 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
             timeout_adjudication_threshold=tc.timeout_adjudication_threshold,
             volatility_source=tc.volatility_source,
             syzygy_path=tc.syzygy_path,
-            syzygy_policy=tc.syzygy_policy,
+            syzygy_rescore_policy=tc.syzygy_rescore_policy,
             categorical_bins=tc.categorical_bins,
             hlgauss_sigma=tc.hlgauss_sigma,
         ),

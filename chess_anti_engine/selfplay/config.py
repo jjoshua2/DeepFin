@@ -49,7 +49,7 @@ class GameConfig:
     timeout_adjudication_threshold: float = 0.90
     volatility_source: str = "raw"
     syzygy_path: str | None = None
-    syzygy_policy: bool = False
+    syzygy_rescore_policy: bool = False
   # If true, end the game as soon as the position becomes TB-eligible and
   # use the TB-proven WDL as the outcome. Saves the rest of the MCTS work
   # that would have been spent playing out a known-result endgame.

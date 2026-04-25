@@ -130,9 +130,16 @@ selfplay:
   # in-tree probing). Pins Q to TB truth for endgame leaves.
   syzygy_in_search: true
   # Override policy targets with DTZ-optimal moves at TB-eligible positions.
-  # Pairs with syzygy_adjudicate — eligible positions get both labels right
-  # (outcome from WDL, policy from DTZ).
-  syzygy_policy: true
+  # Disabled 2026-04-25: redundant with syzygy_in_search (MCTS already gets
+  # TB-correct moves at eligible leaves) + syzygy_adjudicate (games end at
+  # the TB position, so the rare past-TB tail isn't worth the post-game
+  # rescore path. The path also corrupted ~0.09% of policy_targets when
+  # combined with the 1-legal-move shortcut in run_network_turn (forced
+  # plies were pushed but produced no record, so the syzygy replay's
+  # sample_idx counter overshot the records list, stamping K+P-endgame
+  # overrides on unrelated records). finalize.py was fixed to align by
+  # ply_index, but the simpler answer is to leave the path off.
+  syzygy_rescore_policy: false
 
   # Stockfish WDL confidence required to adjudicate max_plies timeouts as decisive.
   timeout_adjudication_threshold: 0.99

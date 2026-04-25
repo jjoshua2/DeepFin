@@ -307,7 +307,7 @@ def _publish_distributed_trial_state(
   # operators can edit these directly in publish/manifest.json to
   # change endgame adjudication behavior without restarting anyone.
         "syzygy_path": config.get("syzygy_path") or None,
-        "syzygy_policy": bool(config.get("syzygy_policy", False)),
+        "syzygy_rescore_policy": bool(config.get("syzygy_rescore_policy", False)),
         "syzygy_adjudicate": bool(config.get("syzygy_adjudicate", False)),
         "syzygy_adjudicate_fraction": float(config.get("syzygy_adjudicate_fraction", 1.0)),
         "syzygy_in_search": bool(config.get("syzygy_in_search", False)),

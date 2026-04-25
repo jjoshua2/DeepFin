@@ -112,7 +112,7 @@ def _rescore_with_syzygy(
 
     Returns ``(result, tb_policy_overrides)``.  ``result`` may be
     overridden when the TB proves the outcome; ``tb_policy_overrides``
-    is populated only when ``game.syzygy_policy`` is enabled.
+    is populated only when ``game.syzygy_rescore_policy`` is enabled.
     """
     tb_policy_overrides: dict[int, np.ndarray] = {}
     if not state.game.syzygy_path or state.starting_boards is None:
@@ -136,34 +136,32 @@ def _rescore_with_syzygy(
     if tb_result is not None:
         result = tb_result
 
-    if not state.game.syzygy_policy:
+    if not state.game.syzygy_rescore_policy:
         return result, tb_policy_overrides
 
+    # Map each record's ply_index to its position in the records list. The
+    # replay walks every ply in ``move_stack`` (including forced-move plies
+    # that the 1-legal shortcut in ``run_network_turn`` push but skip
+    # recording), so a naive ``sample_idx`` counter would overshoot ``t``
+    # by the number of skipped forced plies — stamping TB overrides from
+    # K+P endgame positions onto the wrong records.
+    record_at_ply = {int(rec.ply_index): t for t, rec in enumerate(records)}
+
     replay_board = starting.copy()
-    sample_idx = 0
-    is_sp = bool(state.selfplay_arr[i])
-    net_color = state.net_color(i)
     for mv in move_stack[opening_len:]:
-        board_before = replay_board.copy()
-        is_net = replay_board.turn == net_color
-        # In selfplay games the network plays both sides, so every ply produces
-        # a sample.  In curriculum games only the network-color turns do.
-        is_sample_turn = is_net or is_sp
-        if is_sample_turn:
-            if sample_idx >= len(records):
-                break
-            if is_tb_eligible(board_before):
-                best = probe_best_move(board_before, state.game.syzygy_path)
-                if best is not None:
-                    try:
-                        a = int(move_to_index(best, board_before))
-                    except (ValueError, KeyError):
-                        a = -1
-                    if a >= 0:
-                        p = np.zeros((POLICY_SIZE,), dtype=np.float32)
-                        p[a] = 1.0
-                        tb_policy_overrides[sample_idx] = p
-            sample_idx += 1
+        cur_ply = len(replay_board.move_stack)
+        t = record_at_ply.get(cur_ply)
+        if t is not None and is_tb_eligible(replay_board):
+            best = probe_best_move(replay_board, state.game.syzygy_path)
+            if best is not None:
+                try:
+                    a = int(move_to_index(best, replay_board))
+                except (ValueError, KeyError):
+                    a = -1
+                if a >= 0:
+                    p = np.zeros((POLICY_SIZE,), dtype=np.float32)
+                    p[a] = 1.0
+                    tb_policy_overrides[t] = p
         replay_board.push(mv)
 
     return result, tb_policy_overrides
