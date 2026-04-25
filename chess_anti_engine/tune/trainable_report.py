@@ -271,13 +271,11 @@ def _update_best_regret_checkpoints(
   # Also emit a salvage-pool-compatible manifest.json so this directory can be
   # consumed directly by `train.sh salvage-restart` without further packaging.
     try:
-        import time
-        manifest = {
-            "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "label": "auto_best_regret",
-            "metric": "wdl_regret",
-            "top_n": len(entries),
-            "entries": [
+        from chess_anti_engine.tune.salvage import build_pool_manifest_dict
+        manifest = build_pool_manifest_dict(
+            metric="wdl_regret",
+            label="auto_best_regret",
+            entries=[
                 {
                     "slot": i,
                     "metric": float(e["regret"]),
@@ -292,7 +290,7 @@ def _update_best_regret_checkpoints(
                 }
                 for i, e in enumerate(entries)
             ],
-        }
+        )
         atomic_write_text(
             best_regret_dir / "manifest.json",
             json.dumps(manifest, indent=2, sort_keys=True),

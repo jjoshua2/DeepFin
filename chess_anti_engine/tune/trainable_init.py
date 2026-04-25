@@ -8,7 +8,6 @@ Three phases that run once at trial startup (before the main loop):
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import numpy as np
@@ -21,7 +20,10 @@ from chess_anti_engine.model import (
 )
 from chess_anti_engine.replay import ArrayReplayBuffer, DiskReplayBuffer
 from chess_anti_engine.replay.shard import copy_or_link_shard, iter_shard_paths
-from chess_anti_engine.tune._utils import stable_seed_u32 as _stable_seed_u32
+from chess_anti_engine.tune._utils import (
+    load_optional_json,
+    stable_seed_u32 as _stable_seed_u32,
+)
 from chess_anti_engine.tune.recovery import (
     _load_salvage_manifest_entry,
     _merge_pid_state_from_result_row,
@@ -69,23 +71,9 @@ def _restore_checkpoint_or_salvage(
         ckpt_dir = Path(ckpt.to_directory())
         maybe = ckpt_dir / "trainer.pt"
         pid_path = ckpt_dir / "pid_state.json"
-        if pid_path.exists():
-            try:
-                rr.restored_pid_state = json.loads(pid_path.read_text(encoding="utf-8"))
-            except Exception:
-                rr.restored_pid_state = None
-        rng_path = ckpt_dir / "rng_state.json"
-        if rng_path.exists():
-            try:
-                restored_rng_state = json.loads(rng_path.read_text(encoding="utf-8"))
-            except Exception:
-                restored_rng_state = None
-        trial_meta_path = ckpt_dir / "trial_meta.json"
-        if trial_meta_path.exists():
-            try:
-                restored_trial_meta = json.loads(trial_meta_path.read_text(encoding="utf-8"))
-            except Exception:
-                restored_trial_meta = None
+        rr.restored_pid_state = load_optional_json(pid_path)
+        restored_rng_state = load_optional_json(ckpt_dir / "rng_state.json")
+        restored_trial_meta = load_optional_json(ckpt_dir / "trial_meta.json")
         if isinstance(restored_trial_meta, dict):
             restored_owner_optimizer = str(restored_trial_meta.get("optimizer", "") or "")
         current_optimizer = str(config.get("optimizer", "nadamw")).lower()
@@ -183,12 +171,9 @@ def _restore_checkpoint_or_salvage(
             f"of {rr.seed_warmstart_slots_total} from {rr.seed_warmstart_dir}"
         )
         if salvage_restore_pid_state:
-            pid_path = rr.seed_warmstart_dir / "pid_state.json"
-            if pid_path.exists():
-                try:
-                    rr.restored_pid_state = json.loads(pid_path.read_text(encoding="utf-8"))
-                except Exception:
-                    rr.restored_pid_state = None
+            rr.restored_pid_state = load_optional_json(
+                rr.seed_warmstart_dir / "pid_state.json",
+            )
             rr.restored_pid_state, pid_manifest_overrides = _merge_pid_state_from_result_row(
                 pid_state=rr.restored_pid_state,
                 result_row=seed_warmstart_manifest_row,

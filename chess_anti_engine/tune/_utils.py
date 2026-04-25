@@ -1,10 +1,26 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import subprocess
 from pathlib import Path
 
 import numpy as np
+
+
+def load_optional_json(path: Path) -> dict | None:
+    """Read ``path`` as JSON. Returns the parsed dict, or ``None`` for any
+    miss (file absent, unreadable, malformed, or non-dict root). Used for
+    optional checkpoint sidecar files (pid_state.json, rng_state.json,
+    trial_meta.json, etc.) where the absence of the file is not an error.
+    """
+    if not path.exists():
+        return None
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return obj if isinstance(obj, dict) else None
 
 
 def stable_seed_u32(*parts: object) -> int:

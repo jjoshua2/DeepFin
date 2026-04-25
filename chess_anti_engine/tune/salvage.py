@@ -20,6 +20,34 @@ from chess_anti_engine.replay.shard import iter_shard_paths
 from chess_anti_engine.tune.replay_exchange import _read_jsonl_rows
 
 
+def build_pool_manifest_dict(
+    *,
+    metric: str,
+    entries: list[dict],
+    label: str | None = None,
+    source_tune_dir: Path | None = None,
+    source_run_id: str | None = None,
+) -> dict:
+    """Salvage-pool ``manifest.json`` schema. Both ``export_seed_pool`` (run
+    salvage from a tune dir) and ``trainable_report._update_best_regret_checkpoints``
+    (auto-save best-regret slots during training) write through this so the
+    on-disk format stays consistent — ``salvage-restart`` consumes either.
+    """
+    out: dict[str, object] = {
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "metric": str(metric),
+        "top_n": int(len(entries)),
+        "entries": list(entries),
+    }
+    if label is not None:
+        out["label"] = str(label)
+    if source_tune_dir is not None:
+        out["source_tune_dir"] = str(source_tune_dir.resolve())
+    if source_run_id is not None:
+        out["source_run_id"] = str(source_run_id)
+    return out
+
+
 def _trial_run_id_from_name(name: str) -> str | None:
     m = re.match(r"^train_trial_(?P<rid>[^_]+)_", name)
     if not m:
@@ -247,14 +275,12 @@ def export_seed_pool(args: argparse.Namespace) -> None:
             }
         )
 
-    manifest = {
-        "created_at": datetime.now().isoformat(timespec="seconds"),
-        "source_tune_dir": str(tune_dir.resolve()),
-        "source_run_id": str(run_id),
-        "metric": metric_key,
-        "top_n": int(len(entries)),
-        "entries": entries,
-    }
+    manifest = build_pool_manifest_dict(
+        metric=metric_key,
+        entries=entries,
+        source_tune_dir=tune_dir,
+        source_run_id=run_id,
+    )
     (out_dir / "manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True),
         encoding="utf-8",

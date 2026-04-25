@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 
 import chess
 import chess.syzygy
@@ -49,9 +50,12 @@ def is_tb_eligible(board: chess.Board) -> bool:
 
 # Lazy, path-keyed cache. ``path`` is the raw string the caller passed in
 # (OS-separated multi-dir supported), so two callers with the same path
-# string share the opened Tablebase.
+# string share the opened Tablebase. UCI search and selfplay can call from
+# different threads with potentially different paths during a settings
+# swap, so the swap-and-open path holds ``_tablebase_lock``.
 _tablebase: chess.syzygy.Tablebase | None = None
 _tablebase_path: str | None = None
+_tablebase_lock = threading.Lock()
 
 
 def get_tablebase(path: str) -> chess.syzygy.Tablebase | None:
@@ -65,37 +69,44 @@ def get_tablebase(path: str) -> chess.syzygy.Tablebase | None:
     path returns the cached handle without reopening.
     """
     global _tablebase, _tablebase_path
+  # Hot-path fast read: same path the cache holds, no lock needed (the
+  # global rebind in the swap branch is atomic on CPython, so a stale
+  # read returns the previous handle which is still valid until close).
     if _tablebase is not None and _tablebase_path == path:
         return _tablebase
-    if _tablebase is not None:
-        try:
-            _tablebase.close()
-        except OSError:
-            pass  # syzygy already closed / file handle gone
-        _tablebase = None
-        _tablebase_path = None
-    if not path:
-        return None
-    dirs = [p.strip() for p in path.split(os.pathsep) if p.strip()]
-    if not dirs:
-        return None
-    tb = chess.syzygy.Tablebase()
-    added = 0
-    for d in dirs:
-        try:
-            tb.add_directory(d)
-            added += 1
-        except (OSError, FileNotFoundError):
-            continue
-    if added == 0:
-        try:
-            tb.close()
-        except Exception:
-            pass
-        return None
-    _tablebase = tb
-    _tablebase_path = path
-    return tb
+    with _tablebase_lock:
+  # Re-check under lock — another thread may have swapped while we waited.
+        if _tablebase is not None and _tablebase_path == path:
+            return _tablebase
+        if _tablebase is not None:
+            try:
+                _tablebase.close()
+            except OSError:
+                pass  # syzygy already closed / file handle gone
+            _tablebase = None
+            _tablebase_path = None
+        if not path:
+            return None
+        dirs = [p.strip() for p in path.split(os.pathsep) if p.strip()]
+        if not dirs:
+            return None
+        tb = chess.syzygy.Tablebase()
+        added = 0
+        for d in dirs:
+            try:
+                tb.add_directory(d)
+                added += 1
+            except (OSError, FileNotFoundError):
+                continue
+        if added == 0:
+            try:
+                tb.close()
+            except OSError:
+                pass
+            return None
+        _tablebase = tb
+        _tablebase_path = path
+        return tb
 
 
 def probe_wdl(board: chess.Board, syzygy_path: str) -> int | None:
