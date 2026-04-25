@@ -388,24 +388,6 @@
                 }
             }
         ],
-        "./chess_anti_engine/tune/distributed_runtime.py": [
-            {
-                "code": "reportAttributeAccessIssue",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 31,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportAttributeAccessIssue",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 39,
-                    "lineCount": 1
-                }
-            }
-        ],
         "./chess_anti_engine/tune/harness.py": [
             {
                 "code": "reportArgumentType",
@@ -484,22 +466,6 @@
                 "range": {
                     "startColumn": 68,
                     "endColumn": 86,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportArgumentType",
-                "range": {
-                    "startColumn": 26,
-                    "endColumn": 43,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportArgumentType",
-                "range": {
-                    "startColumn": 29,
-                    "endColumn": 49,
                     "lineCount": 1
                 }
             }

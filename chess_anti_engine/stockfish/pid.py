@@ -380,18 +380,17 @@ class DifficultyPID:
                     step_sign = 1.0 if err > 0 else -1.0
                     delta = step_sign * abs_max_step
 
-  # Raw-sign veto: never tighten when this batch's raw is below
-  # target, never ease when it's above. The fit learns from
-  # smoothed history, but the live raw signal is a direct "we're
-  # already under-performing / over-winning" statement. Observed
-  # at iter 345→346: fit said tighten from 0.022→0.020 despite
-  # raw=0.55 already below target 0.58, and 346 crashed to 0.49
-  # triggering airbag. Symmetric. Self-correcting: next iter with
-  # raw on the supporting side will re-enable the step.
+  # Raw-vs-fit sign disagreement: raw is the fresh single-iter
+  # signal; the fit is averaged over ``inverse_regret_window`` iters
+  # and lags reality. When they disagree, the fit is provably stale,
+  # so step in raw's direction at half ``abs_max_step`` — full step
+  # would defeat the fit's role of magnitude calibration when signs
+  # agree, but zero (the prior behavior) leaves us holding steady
+  # while raw underperforms because the fit hasn't caught up.
                 if raw_wr_this_batch < self.target and delta < 0:
-                    delta = 0.0
+                    delta = 0.5 * abs_max_step
                 elif raw_wr_this_batch > self.target and delta > 0:
-                    delta = 0.0
+                    delta = -0.5 * abs_max_step
 
                 regret_after = _clamp(
                     regret_before + delta,

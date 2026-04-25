@@ -250,6 +250,79 @@ def test_step_size_respects_max_step_cap():
     assert abs(pid.wdl_regret - 0.25) <= 0.003 + 1e-9
 
 
+def test_raw_sign_disagreement_steps_half_max_in_raw_direction():
+    # When the fit's predicted delta disagrees with the live raw signal's
+    # direction, the fit is provably stale (averaged over the recent window
+    # while raw is the fresh single-iter measurement). Step in raw's
+    # direction at 0.5 × abs_max_step — neither full step (would defeat the
+    # fit's role of magnitude calibration on agreement) nor zero (the prior
+    # behavior, which held steady through several iters of underperformance
+    # because the fit hadn't caught up).
+    pid = _mk_pid(
+        initial_wdl_regret=0.15,
+        target_winrate=0.60,
+        inverse_regret_max_step=0.01,
+        inverse_regret_safety_floor=0.50,  # stay above so the airbag doesn't fire
+        ema_alpha=0.5,
+    )
+    # Pre-populate history with a steep positive-slope relationship at LOW
+    # regret values, so even after the new low-raw observation is appended,
+    # the fit still predicts r* far below current regret 0.20 (i.e. wants
+    # to tighten). Using direct insertion bypasses the auto-step that
+    # ``_feed_observations`` triggers.
+    pid._inverse_history.extend([
+        (0.04, 0.30, 0.018),
+        (0.06, 0.40, 0.018),
+        (0.08, 0.50, 0.018),
+        (0.10, 0.60, 0.018),
+        (0.12, 0.70, 0.018),
+    ])
+    pid.wdl_regret = 0.20  # well above the fit's r* ≈ 0.10
+    regret_before = pid.wdl_regret
+    pid.ema_winrate = 0.60  # neutral, won't dominate the deadband
+    n = 800
+    wins = int(0.55 * n)  # raw 0.55 < target 0.60 → wants ease
+    pid.observe(wins=wins, draws=0, losses=n - wins, force=True)
+    # Fit: tighten. Raw: ease. Disagreement → +0.5 × max_step = +0.005.
+    delta = pid.wdl_regret - regret_before
+    assert delta > 0, f"expected ease when raw < target, got delta={delta}"
+    assert abs(delta - 0.005) < 1e-9, f"expected +0.005, got {delta}"
+
+
+def test_raw_sign_agreement_lets_fit_drive_magnitude():
+    # Sanity for the symmetric path: when fit and raw signs AGREE, the fit's
+    # delta governs magnitude (subject to abs_max_step cap). The half-step
+    # override only applies on disagreement.
+    pid = _mk_pid(
+        initial_wdl_regret=0.15,
+        target_winrate=0.60,
+        inverse_regret_max_step=0.01,
+        inverse_regret_safety_floor=0.50,
+        ema_alpha=0.5,
+    )
+    # Seed: lower regret → lower winrate, so fit predicts r* above current
+    # for target 0.60 (wants to ease).
+    _feed_observations(pid, [
+        (0.10, 0.50),
+        (0.12, 0.54),
+        (0.14, 0.58),
+        (0.16, 0.62),
+        (0.18, 0.66),
+    ], n_games=800)
+    # Set regret low so fit definitely predicts ease, then feed below-target
+    # raw. Fit (ease) and raw (below target → wants ease) AGREE.
+    pid.wdl_regret = 0.10
+    regret_before = pid.wdl_regret
+    n = 800
+    wins = int(0.55 * n)  # raw 0.55 < target 0.60
+    pid.observe(wins=wins, draws=0, losses=n - wins, force=True)
+    delta = pid.wdl_regret - regret_before
+    assert delta > 0, f"expected ease when both signal ease, got {delta}"
+    # Magnitude is fit-driven, capped at max_step=0.01. Should NOT be the
+    # half-step 0.005 from the disagreement branch.
+    assert delta <= 0.01 + 1e-9
+
+
 def test_inverse_model_handles_noisy_data():
     # Add measurement noise; fit should still give reasonable predictions
     random.seed(42)
