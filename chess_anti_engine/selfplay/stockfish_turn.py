@@ -1,28 +1,18 @@
 """Stockfish annotation + curriculum-opponent move selection.
 
-Step 4 of the selfplay/manager refactor: extracts the four nested
-closures (``_eff_nodes``, ``_submit_sf_queries``,
-``_finish_sf_annotation_and_moves``, ``_process_sf_results``) into
-module-level functions that take ``SelfplayState`` explicitly.
+* ``_eff_sf_nodes`` — adaptive per-slot SF node budget (scales down when
+  the previous net decision used fast sims).
+* ``submit_sf_queries`` — dispatch async queries to ``StockfishPool``
+  (no-op for synchronous stockfish).
+* ``finish_sf_annotation_and_moves`` — resolve futures (or run sync),
+  then ``_process_sf_results`` per slot: build the softmax SF policy
+  target, attach (with per-head legal mask) to the last ``_NetRecord``
+  for that slot, and play the curriculum opponent's move for non-
+  selfplay games.
 
-Responsibilities
-----------------
-* **Adaptive SF nodes** (``_eff_sf_nodes``) — budget per slot; scales
-  down when the previous network decision used fast sims.
-* **Submission** (``submit_sf_queries``) — dispatch async queries to
-  ``StockfishPool`` (no-op when the stockfish object is synchronous).
-* **Collection + processing** (``finish_sf_annotation_and_moves``) —
-  resolve futures (or run synchronously), then call
-  ``_process_sf_results`` for each slot.
-* **Per-slot processing** (``_process_sf_results``) — build the
-  softmax SF policy target, attach it (with a per-head legal mask) to
-  the last ``_NetRecord`` for that slot, and play the curriculum
-  opponent's move for non-selfplay games.
-
-Behavior is byte-for-byte preserved.  All entry points expect slot-index
-iterables disjoint from the network-turn indices — the driver in
-``manager.play_batch`` enforces this partitioning via
-``classify_active_slots``.
+All entry points expect slot-index iterables disjoint from the network-
+turn indices — the driver in ``manager.play_batch`` enforces this
+partitioning via ``classify_active_slots``.
 """
 
 from __future__ import annotations

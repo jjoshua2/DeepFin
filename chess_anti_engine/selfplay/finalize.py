@@ -1,25 +1,10 @@
 """Finalize a completed game into ``ReplaySample`` objects + stats updates.
 
-Step 2 of the selfplay/manager refactor: extracts the ~280-line
-``_finalize_game`` nested closure from ``play_batch`` into a module-level
-function that takes ``SelfplayState`` explicitly.
-
-Structure
----------
-* ``_sf_terminal_result`` — map SF's WDL at a timed-out position to a
-  result string using the configured adjudication threshold.
-* ``_rescore_with_syzygy`` — probe the syzygy TB along the game's move
-  stack; return a corrected result string and a per-sample policy override
-  map.
-* ``_update_aggregate_stats`` / ``_PerGameCounters`` — update
-  ``state.stats`` in place and compute the one-game counter bundle used
-  by the ``CompletedGameBatch`` callback.
-* ``_compute_volatility_and_sf_delta`` — single-pass over the per-ply
-  records to fill volatility targets and the log-only SF eval delta6
-  metric.
-* ``finalize_game`` — top-level orchestrator; replaces ``_finalize_game``.
-
-Behavior is byte-for-byte preserved.
+``finalize_game`` is the orchestrator; the underscore-prefixed helpers
+break it into stages: terminal-result resolution, optional syzygy rescore,
+volatility / SF-delta-6 computation, aggregate-stats update, and per-game
+``ReplaySample`` build (which writes per-head legal masks + is_selfplay
+tagging on each row).
 """
 
 from __future__ import annotations
@@ -278,6 +263,7 @@ def _update_aggregate_stats(
 def _compute_volatility_and_sf_delta(
     state: SelfplayState,
     records: list[_NetRecord],
+    ply_to_index: dict[int, int],
 ) -> tuple[list[np.ndarray | None], list[np.ndarray | None]]:
     """Compute per-sample volatility targets + log SF eval delta6.
 
@@ -285,7 +271,6 @@ def _compute_volatility_and_sf_delta(
     ``state.stats.sf_d6_n`` as a side-effect.
     """
     n = len(records)
-    ply_to_index = {int(rec.ply_index): idx for idx, rec in enumerate(records)}
     vol_targets: list[np.ndarray | None] = [None] * n
     sf_vol_targets: list[np.ndarray | None] = [None] * n
     use_search = state.volatility_source == "search"
@@ -324,6 +309,7 @@ def _build_replay_samples(
     vol_targets: list[np.ndarray | None],
     sf_vol_targets: list[np.ndarray | None],
     total_plies_played: int,
+    ply_to_index: dict[int, int],
 ) -> list[ReplaySample]:
     """Materialize one game's per-ply records into ``ReplaySample`` objects.
 
@@ -333,7 +319,6 @@ def _build_replay_samples(
     only to read ``state.selfplay_arr[i]`` for the per-sample
     ``is_selfplay`` tag.
     """
-    ply_to_index = {int(rec.ply_index): idx for idx, rec in enumerate(records)}
     out: list[ReplaySample] = []
     is_selfplay_slot = bool(state.selfplay_arr[i])
 
@@ -492,7 +477,10 @@ def finalize_game(
         game_plies=game_plies,
     )
 
-    vol_targets, sf_vol_targets = _compute_volatility_and_sf_delta(state, records)
+    ply_to_index = {int(rec.ply_index): idx for idx, rec in enumerate(records)}
+    vol_targets, sf_vol_targets = _compute_volatility_and_sf_delta(
+        state, records, ply_to_index,
+    )
 
     sample_start = len(all_samples)
     new_samples = _build_replay_samples(
@@ -504,6 +492,7 @@ def finalize_game(
         vol_targets=vol_targets,
         sf_vol_targets=sf_vol_targets,
         total_plies_played=int(cb.ply),
+        ply_to_index=ply_to_index,
     )
     all_samples.extend(new_samples)
 

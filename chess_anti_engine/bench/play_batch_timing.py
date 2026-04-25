@@ -21,7 +21,8 @@ from chess_anti_engine.moves import (
 )
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.selfplay.game import _result_to_wdl
-from chess_anti_engine.selfplay.manager import BatchStats, _apply_temperature
+from chess_anti_engine.selfplay.manager import BatchStats
+from chess_anti_engine.selfplay.temperature import apply_policy_temperature
 from chess_anti_engine.stockfish import StockfishPool, StockfishUCI
 from chess_anti_engine.train.targets import hlgauss_target
 
@@ -229,7 +230,7 @@ def play_batch_timed(
             scalar_v = 1.0 if wdl == 0 else (0.0 if wdl == 1 else -1.0)
             cat = hlgauss_target(scalar_v, num_bins=32, sigma=0.04)
 
-            soft = _apply_temperature(probs, 2.0)
+            soft = apply_policy_temperature(probs, 2.0)
 
             future = None
             if ply_idx + 2 < total_plies:

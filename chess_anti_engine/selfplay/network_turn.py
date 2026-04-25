@@ -1,23 +1,15 @@
 """Run one network turn for a batch of network-assigned slots.
 
-Step 3 of the selfplay/manager refactor: extracts the ~350-line
-``_run_network_turn`` nested closure (plus its inner ``_run_mcts_group``
-sub-closure) out of ``play_batch`` into a module-level function that
-takes ``SelfplayState`` explicitly.
+The C fast paths (``batch_encode_146``, ``batch_process_ply``,
+``temperature_resample``) consume plain Python lists of ``CBoard``
+objects + numpy arrays by reference; the zero-copy inplace path writes
+into the evaluator's pinned buffer. Torch-compile shape-stability
+buckets are kept as a module constant so the evaluator sees a stable
+set of batch shapes.
 
-Scope & invariants
-------------------
-* Behavior byte-for-byte preserved.
-* The C fast paths (``batch_encode_146``, ``batch_process_ply``,
-  ``temperature_resample``) still consume plain Python lists of
-  ``CBoard`` objects + numpy arrays by reference; the zero-copy
-  inplace path continues to write into the evaluator's pinned buffer.
-* Torch-compile shape-stability buckets (32/64/128/256/512) are kept
-  as a module constant so the evaluator sees a stable set of batch
-  shapes.
-* ``_run_mcts_group`` stays nested inside ``run_network_turn`` so it
-  can capture the large local pol/wdl logit matrices without a
-  signature explosion.
+``_run_mcts_group`` is nested inside ``run_network_turn`` so it can
+capture the large local pol/wdl logit matrices without a parameter
+explosion.
 """
 
 from __future__ import annotations
@@ -76,8 +68,8 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
       Python fallback) with the chosen move.
     * Appends an ``_NetRecord`` to ``state.samples_per_game[idx]``.
     * Appends the chosen policy index to ``state.move_idx_history[idx]``.
-    * Updates ``state.consecutive_low_winrate``, ``state.sf_resign_scale``,
-      ``state.last_net_full``, ``state.root_ids``, and ``state.done_arr``.
+    * Updates ``state.consecutive_low_winrate``, ``state.last_net_full``,
+      ``state.root_ids``, and ``state.done_arr``.
     """
     if not net_idxs:
         return
@@ -145,8 +137,6 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
         if state.consecutive_low_winrate[idx] >= SOFT_RESIGN_CONSECUTIVE:
             ratio = win_p / SOFT_RESIGN_THRESHOLD
             sample_weights[j] = 0.1 + 0.9 * ratio
-
-        state.sf_resign_scale[idx] = 1.0
 
     probs_list: list[np.ndarray | None] = [None] * len(net_idxs)
     actions: list[int | None] = [None] * len(net_idxs)

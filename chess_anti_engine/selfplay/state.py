@@ -1,22 +1,17 @@
 """Mutable state bundle for ``play_batch``.
 
-Step 1 of the selfplay/manager refactor: groups the 12+ parallel per-slot
-arrays/lists, shared caches, capability flags, and stats accumulators
-previously scattered as locals (and threaded through closures via ``nonlocal``)
-into a single structured type.
+Groups the parallel per-slot arrays/lists, shared caches, capability flags,
+and stats accumulators that ``play_batch`` threads through every helper.
 
-Design notes
-------------
-* The C fast paths (``batch_process_ply``, ``batch_encode_146``,
-  ``classify_games``, ``temperature_resample``) consume plain Python lists
-  of ``CBoard`` objects and ``np.int8`` arrays.  Those layouts are preserved
-  here verbatim so extraction is zero-cost.
-* The capability handles (``c_process_ply``, ``batch_enc_146``, ``c_classify``,
-  ``c_temp_resample``) are stored as ``Callable | None``.  Callers guard on
-  the boolean ``has_c_ply`` / ``has_classify_c`` flags.
-* ``_StatsAcc`` is a mutable dataclass whose field names match ``BatchStats``
-  exactly for the accumulated counters.  It exposes ``.to_batch_stats(...)``
-  to produce the immutable return value at the end of ``play_batch``.
+The C fast paths (``batch_process_ply``, ``batch_encode_146``,
+``classify_games``, ``temperature_resample``) consume plain Python lists of
+``CBoard`` objects and ``np.int8`` arrays — those layouts are preserved
+verbatim so extraction stays zero-cost. Capability handles are
+``Callable | None``; callers guard on the boolean ``has_c_ply`` /
+``has_classify_c`` flags.
+
+``_StatsAcc`` mirrors ``BatchStats``'s counter field names and exposes
+``.to_batch_stats(...)`` to produce the immutable return value.
 """
 
 from __future__ import annotations
@@ -312,7 +307,6 @@ class SelfplayState:
     move_idx_history: list[list[int]]
     samples_per_game: list[list[Any]]  # list[_NetRecord]; avoid import cycle
     consecutive_low_winrate: list[int]
-    sf_resign_scale: list[float]
     last_net_full: list[bool]
     root_ids: list[int]
 
@@ -409,7 +403,6 @@ class SelfplayState:
         move_idx_history: list[list[int]] = [[] for _ in range(batch_size)]
         samples_per_game: list[list[Any]] = [[] for _ in range(batch_size)]
         consecutive_low_winrate = [0] * batch_size
-        sf_resign_scale = [1.0] * batch_size
         last_net_full = [True] * batch_size
         root_ids = [-1] * batch_size
 
@@ -512,7 +505,6 @@ class SelfplayState:
             move_idx_history=move_idx_history,
             samples_per_game=samples_per_game,
             consecutive_low_winrate=consecutive_low_winrate,
-            sf_resign_scale=sf_resign_scale,
             last_net_full=last_net_full,
             root_ids=root_ids,
             nn_cache=nn_cache,
@@ -634,7 +626,6 @@ class SelfplayState:
             ) else 0
         self.samples_per_game[i] = []
         self.consecutive_low_winrate[i] = 0
-        self.sf_resign_scale[i] = 1.0
         self.last_net_full[i] = True
         self.root_ids[i] = -1  # Reset tree reuse for new game.
         self.games_started += 1

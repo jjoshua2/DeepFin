@@ -30,15 +30,9 @@ from chess_anti_engine.selfplay.stockfish_turn import (
     finish_sf_annotation_and_moves,
     submit_sf_queries,
 )
-from chess_anti_engine.selfplay.temperature import apply_policy_temperature
 from chess_anti_engine.stockfish.pool import StockfishPool
 from chess_anti_engine.stockfish.uci import StockfishUCI
 from chess_anti_engine.tablebase import tb_adjudicate_result
-
-
-# Backward-compatible alias: tests and bench scripts import this name directly.
-# The implementation lives in ``selfplay.temperature`` as ``apply_policy_temperature``.
-_apply_temperature = apply_policy_temperature
 
 
 def _tb_adjudicate_active_games(state: SelfplayState) -> int:

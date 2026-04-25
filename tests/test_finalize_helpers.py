@@ -128,7 +128,7 @@ class TestComputeVolatilityAndSfDelta:
         state = self._mk_state()
         # Only one record → no pair at ply+6 → all targets are None.
         records = [_record(0, [0.5, 0.4, 0.1])]
-        vol, sf_vol = _compute_volatility_and_sf_delta(state, records)
+        vol, sf_vol = _compute_volatility_and_sf_delta(state, records, {int(rec.ply_index): idx for idx, rec in enumerate(records)})
         assert vol == [None]
         assert sf_vol == [None]
         assert state.stats.sf_d6_n == 0
@@ -139,7 +139,7 @@ class TestComputeVolatilityAndSfDelta:
             _record(0, [0.6, 0.3, 0.1]),
             _record(6, [0.2, 0.3, 0.5]),
         ]
-        vol, sf_vol = _compute_volatility_and_sf_delta(state, records)
+        vol, sf_vol = _compute_volatility_and_sf_delta(state, records, {int(rec.ply_index): idx for idx, rec in enumerate(records)})
         # |[0.6,0.3,0.1] - [0.2,0.3,0.5]| = [0.4, 0.0, 0.4]
         assert vol[0] == pytest.approx([0.4, 0.0, 0.4])
         assert vol[1] is None
@@ -151,7 +151,7 @@ class TestComputeVolatilityAndSfDelta:
             _record(0, [0.5, 0.4, 0.1], search_wdl=[0.8, 0.1, 0.1]),
             _record(6, [0.5, 0.4, 0.1], search_wdl=[0.2, 0.2, 0.6]),
         ]
-        vol, _sf_vol = _compute_volatility_and_sf_delta(state, records)
+        vol, _sf_vol = _compute_volatility_and_sf_delta(state, records, {int(rec.ply_index): idx for idx, rec in enumerate(records)})
         # The helper reads search_wdl_est when volatility_source == "search",
         # so the diff should come from those values (not net_wdl).
         assert vol[0] == pytest.approx([0.6, 0.1, 0.5])
@@ -166,7 +166,7 @@ class TestComputeVolatilityAndSfDelta:
             _record(0, [0.5, 0.4, 0.1], sf_wdl=[0.7, 0.2, 0.1]),
             _record(6, [0.5, 0.4, 0.1], sf_wdl=[0.1, 0.3, 0.6]),
         ]
-        _compute_volatility_and_sf_delta(state, records)
+        _compute_volatility_and_sf_delta(state, records, {int(rec.ply_index): idx for idx, rec in enumerate(records)})
         assert state.stats.sf_d6_n == 1
         assert state.stats.sf_d6_sum == pytest.approx(0.55)
 
@@ -176,5 +176,5 @@ class TestComputeVolatilityAndSfDelta:
             _record(0, [0.5, 0.4, 0.1], sf_wdl=[0.7, 0.2, 0.1]),
             _record(6, [0.5, 0.4, 0.1], sf_wdl=None),
         ]
-        _compute_volatility_and_sf_delta(state, records)
+        _compute_volatility_and_sf_delta(state, records, {int(rec.ply_index): idx for idx, rec in enumerate(records)})
         assert state.stats.sf_d6_n == 0
