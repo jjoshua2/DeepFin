@@ -486,17 +486,25 @@ class Trainer:
     @staticmethod
     def _build_metrics(
         sums: dict[str, float],
-        acc_sums: dict[str, tuple[float, float]],
+        acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]],
         n: float,
         **extras: Any,
     ) -> TrainMetrics:
         """Common tail of ``_compute_metrics`` and ``train_steps`` — averages
         loss sums by ``n`` and computes per-head accuracy ratios from
-        (numerator, denominator) tuples in ``acc_sums``.
+        (numerator, denominator) GPU-tensor pairs in ``acc_sums``. The
+        tensors get materialized to CPU floats here in a single sync per
+        head rather than per-microbatch.
         """
         def _acc(name: str) -> float:
-            num, den = acc_sums.get(name, (0.0, 0.0))
-            return float(num / den) if den > 0 else 0.0
+            val = acc_sums.get(name)
+            if val is None:
+                return 0.0
+            num, den = val
+            den_f = float(den.item())
+            if den_f <= 0:
+                return 0.0
+            return float(num.item()) / den_f
 
         return TrainMetrics(
             **_loss_sums_to_metric_kwargs(sums, n),  # dict[str,float] splat covers int fields (step counters) at runtime
@@ -669,27 +677,32 @@ class Trainer:
                         pg["lr"] = nb
 
     @staticmethod
-    def _policy_accuracy_stats(out: dict, batch: dict) -> dict[str, tuple[float, float]]:
-        """Top-1/top-5 accuracy for policy_own, policy_sf, policy_future with
-        per-head legal masks (legal_mask at t, sf_legal_mask at t+1 opp-POV,
-        future_legal_mask at t+2 net-POV). Masks gated on has_* flags so old
-        shards without them fall through unmasked.
-        """
-        stats: dict[str, tuple[float, float]] = {}
+    def _policy_accuracy_stats(
+        out: dict, batch: dict,
+    ) -> dict[str, tuple[torch.Tensor, torch.Tensor]]:
+        """Top-1/top-5 accuracy for policy_own, policy_sf, policy_future.
 
-        def _topk(logits: torch.Tensor, target: torch.Tensor, mask_f: torch.Tensor,
-                  k_values: tuple[int, ...]) -> dict[int, tuple[float, float]]:
-            out_: dict[int, tuple[float, float]] = {}
-            total = float(mask_f.sum().item())
-            if total <= 0:
-                return {k: (0.0, 0.0) for k in k_values}
+        Returns (numerator, denominator) GPU 0-d tensors per head — accumulated
+        on-device by callers so per-microbatch ``.item()`` syncs stay out of
+        the inner loop. Per-head legal masks (``legal_mask`` at t,
+        ``sf_legal_mask`` at t+1 opp-POV, ``future_legal_mask`` at t+2
+        net-POV) are gated on ``has_*`` flags so old shards without them
+        fall through unmasked.
+        """
+        stats: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
+
+        def _topk(
+            logits: torch.Tensor, target: torch.Tensor, mask_f: torch.Tensor,
+            k_values: tuple[int, ...],
+        ) -> dict[int, tuple[torch.Tensor, torch.Tensor]]:
+            total = mask_f.sum()
             max_k = max(k_values)
             _, top_idx = torch.topk(logits, k=max_k, dim=-1)
             match = (top_idx == target.unsqueeze(-1))
-            for k in k_values:
-                hit = match[:, :k].any(dim=-1).to(torch.float32)
-                out_[k] = (float((hit * mask_f).sum().item()), total)
-            return out_
+            return {
+                k: ((match[:, :k].any(dim=-1).to(torch.float32) * mask_f).sum(), total)
+                for k in k_values
+            }
 
         pol_logits = out.get("policy") if "policy" in out else out.get("policy_own")
         pol_target = batch.get("policy_t")
@@ -697,8 +710,7 @@ class Trainer:
         if pol_logits is not None and pol_target is not None and has_policy is not None:
             logits = apply_mask_to_logits(pol_logits.detach(), batch, "legal_mask", "has_legal_mask")
             tgt = torch.argmax(pol_target, dim=-1)
-            mf = has_policy.to(torch.float32)
-            tk = _topk(logits, tgt, mf, (1, 5))
+            tk = _topk(logits, tgt, has_policy.to(torch.float32), (1, 5))
             stats["policy_own_acc_top1"] = tk[1]
             stats["policy_own_acc_top5"] = tk[5]
 
@@ -706,9 +718,7 @@ class Trainer:
         has_sf_move = batch.get("has_sf_move")
         if sf_logits is not None and has_sf_move is not None and "sf_move_index" in batch:
             logits = apply_mask_to_logits(sf_logits.detach(), batch, "sf_legal_mask", "has_sf_legal_mask")
-            tgt = batch["sf_move_index"]
-            mf = has_sf_move.to(torch.float32)
-            tk = _topk(logits, tgt, mf, (1, 5))
+            tk = _topk(logits, batch["sf_move_index"], has_sf_move.to(torch.float32), (1, 5))
             stats["sf_move_acc"] = tk[1]
             stats["sf_move_acc_top5"] = tk[5]
 
@@ -718,8 +728,7 @@ class Trainer:
         if fut_logits is not None and fut_target is not None and has_future is not None:
             logits = apply_mask_to_logits(fut_logits.detach(), batch, "future_legal_mask", "has_future_legal_mask")
             tgt = torch.argmax(fut_target, dim=-1)
-            mf = has_future.to(torch.float32)
-            tk = _topk(logits, tgt, mf, (1, 5))
+            tk = _topk(logits, tgt, has_future.to(torch.float32), (1, 5))
             stats["policy_future_acc_top1"] = tk[1]
             stats["policy_future_acc_top5"] = tk[5]
 
@@ -728,7 +737,7 @@ class Trainer:
     @torch.no_grad()
     def _compute_metrics(self, *, buf: ReplayBuffer, batch_size: int, steps: int, tag: str) -> TrainMetrics:
         sums: dict[str, float] = {}
-        acc_sums: dict[str, tuple[float, float]] = {}
+        acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
   # Accumulate on-device so each eval batch adds ~0 host syncs; one .item()
   # at the end produces the global Brier + ECE.
         calib_accum: dict[str, torch.Tensor] = {}
@@ -748,8 +757,8 @@ class Trainer:
                 sums[k] = sums.get(k, 0.0) + v
 
             for name, (n_, d_) in self._policy_accuracy_stats(out, batch).items():
-                prev_n, prev_d = acc_sums.get(name, (0.0, 0.0))
-                acc_sums[name] = (prev_n + n_, prev_d + d_)
+                prev = acc_sums.get(name)
+                acc_sums[name] = (n_, d_) if prev is None else (prev[0] + n_, prev[1] + d_)
 
             wdl_logits = out.get("wdl")
             wdl_target = batch.get("wdl_t")
@@ -771,7 +780,7 @@ class Trainer:
         train_wall_start = time.perf_counter()
 
         sums: dict[str, float] = {}
-        acc_sums: dict[str, tuple[float, float]] = {}
+        acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
         n_micro = 0
         opt_step_time_s = 0.0
         train_steps_done = 0
@@ -783,7 +792,7 @@ class Trainer:
             try:
                 self.opt.zero_grad(set_to_none=True)
                 step_sums: dict[str, float] = {}
-                step_acc_sums: dict[str, tuple[float, float]] = {}
+                step_acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
                 step_n_micro = 0
 
                 for batch in self._iter_prefetched_batches(
@@ -813,8 +822,8 @@ class Trainer:
 
                     with torch.no_grad():
                         for name, (n_, d_) in self._policy_accuracy_stats(out, batch).items():
-                            prev_n, prev_d = step_acc_sums.get(name, (0.0, 0.0))
-                            step_acc_sums[name] = (prev_n + n_, prev_d + d_)
+                            prev = step_acc_sums.get(name)
+                            step_acc_sums[name] = (n_, d_) if prev is None else (prev[0] + n_, prev[1] + d_)
 
                     step_n_micro += 1
 
@@ -840,8 +849,8 @@ class Trainer:
             for k, v in step_sums.items():
                 sums[k] = sums.get(k, 0.0) + v
             for name, (n_, d_) in step_acc_sums.items():
-                prev_n, prev_d = acc_sums.get(name, (0.0, 0.0))
-                acc_sums[name] = (prev_n + n_, prev_d + d_)
+                prev = acc_sums.get(name)
+                acc_sums[name] = (n_, d_) if prev is None else (prev[0] + n_, prev[1] + d_)
             n_micro += step_n_micro
 
             if (

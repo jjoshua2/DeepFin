@@ -665,6 +665,21 @@ def _build_pbt_mutations(base_config: dict, *, bounds: dict[str, list[float]]):
     return mutations
 
 
+def _pbt_family_setup(base_config: dict) -> tuple[int, dict, dict, dict]:
+    """Shared setup for PBT-family schedulers.
+
+    Returns ``(perturbation_interval, hyperparam_bounds, param_space, mutations)``.
+    PB2 ignores ``mutations`` (it perturbs along ``hyperparam_bounds``
+    directly) but it's cheap to compute, and lets the three builders
+    share a single setup block.
+    """
+    perturbation_interval = int(base_config.get("pb2_perturbation_interval", 10))
+    hyperparam_bounds = _collect_mutation_bounds(base_config)
+    param_space = _build_mutation_param_space(base_config, bounds=hyperparam_bounds)
+    mutations = _build_pbt_mutations(base_config, bounds=hyperparam_bounds)
+    return perturbation_interval, hyperparam_bounds, param_space, mutations
+
+
 def _build_pb2(base_config: dict, *, metric: str, mode: str):
     """PB2: Population-Based Bandits 2 for RL hyperparameter search."""
     try:
@@ -674,10 +689,7 @@ def _build_pb2(base_config: dict, *, metric: str, mode: str):
             "PB2 requires `ray[tune]`. Install with: pip install -e '.[tune]'"
         ) from e
 
-    perturbation_interval = int(base_config.get("pb2_perturbation_interval", 10))
-    hyperparam_bounds = _collect_mutation_bounds(base_config)
-    param_space = _build_mutation_param_space(base_config, bounds=hyperparam_bounds)
-
+    perturbation_interval, hyperparam_bounds, param_space, _ = _pbt_family_setup(base_config)
     scheduler = PB2(
         time_attr="training_iteration",
         metric=metric,
@@ -685,7 +697,6 @@ def _build_pb2(base_config: dict, *, metric: str, mode: str):
         perturbation_interval=perturbation_interval,
         hyperparam_bounds=hyperparam_bounds,  # type: ignore[arg-type] # Ray's PB2 accepts list bounds at runtime
     )
-
     return param_space, scheduler
 
 
@@ -698,20 +709,15 @@ def _build_pbt(base_config: dict, *, metric: str, mode: str):
             "PBT requires `ray[tune]`. Install with: pip install -e '.[tune]'"
         ) from e
 
-    perturbation_interval = int(base_config.get("pb2_perturbation_interval", 10))
-    hyperparam_bounds = _collect_mutation_bounds(base_config)
-    param_space = _build_mutation_param_space(base_config, bounds=hyperparam_bounds)
-    hyperparam_mutations = _build_pbt_mutations(base_config, bounds=hyperparam_bounds)
-
+    perturbation_interval, _, param_space, mutations = _pbt_family_setup(base_config)
     scheduler = PopulationBasedTraining(
         time_attr="training_iteration",
         metric=metric,
         mode=mode,
         perturbation_interval=perturbation_interval,
-        hyperparam_mutations=hyperparam_mutations,  # type: ignore[arg-type] # Ray's PBT accepts flat dict[str, object] at runtime
+        hyperparam_mutations=mutations,  # type: ignore[arg-type] # Ray's PBT accepts flat dict[str, object] at runtime
         synch=bool(base_config.get("pbt_synch", False)),
     )
-
     return param_space, scheduler
 
 
@@ -724,17 +730,13 @@ def _build_gpbt_pl(base_config: dict, *, metric: str, mode: str):
             "GPBT-PL scheduler could not be imported from chess_anti_engine.tune.gpbt."
         ) from e
 
-    perturbation_interval = int(base_config.get("pb2_perturbation_interval", 10))
-    hyperparam_bounds = _collect_mutation_bounds(base_config)
-    param_space = _build_mutation_param_space(base_config, bounds=hyperparam_bounds)
-    hyperparam_mutations = _build_pbt_mutations(base_config, bounds=hyperparam_bounds)
-
+    perturbation_interval, hyperparam_bounds, param_space, mutations = _pbt_family_setup(base_config)
     scheduler = GPBTPairwiseScheduler(
         time_attr="training_iteration",
         metric=metric,
         mode=mode,
         perturbation_interval=perturbation_interval,
-        hyperparam_mutations=hyperparam_mutations,
+        hyperparam_mutations=mutations,
         hyperparam_bounds=hyperparam_bounds,
         trial_inertia_weight=float(base_config.get("gpbt_inertia_weight", 1.0)),
         trial_winner_weight=float(base_config.get("gpbt_winner_weight", 1.0)),
@@ -742,7 +744,6 @@ def _build_gpbt_pl(base_config: dict, *, metric: str, mode: str):
         resample_probability=float(base_config.get("gpbt_resample_probability", 0.05)),
         synch=bool(base_config.get("pbt_synch", False)),
     )
-
     return param_space, scheduler
 
 
