@@ -12,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
-from chess_anti_engine.model import ModelConfig
+from chess_anti_engine.model import ModelConfig, model_config_to_manifest_dict
 from chess_anti_engine.moves.encode import POLICY_SIZE
 from chess_anti_engine.replay import ArrayReplayBuffer, DiskReplayBuffer
 from chess_anti_engine.replay.shard import (
@@ -34,6 +34,11 @@ from chess_anti_engine.tune.process_cleanup import terminate_matching_processes
 from chess_anti_engine.utils import sha256_file
 from chess_anti_engine.utils.atomic import atomic_write_text
 from chess_anti_engine.version import PACKAGE_VERSION, PROTOCOL_VERSION
+
+# Repo root used as cwd for spawned workers/brokers (so relative imports of
+# the chess_anti_engine package work). Resolved once at import time — fs walk
+# would otherwise repeat for every spawn.
+_REPO_ROOT: Path = Path(__file__).resolve().parents[2]
 
 # Cache for SHA256 of static files (opening books, worker wheel) that don't
 # change during a run.  Keyed by (path_str, file_size).
@@ -316,38 +321,24 @@ def _publish_distributed_trial_state(
             "filename": "latest_model.pt",
             "format": "torch_state_dict",
         },
-        "model_config": {
-            "kind": str(model_cfg.kind),
-            "embed_dim": int(model_cfg.embed_dim),
-            "num_layers": int(model_cfg.num_layers),
-            "num_heads": int(model_cfg.num_heads),
-            "ffn_mult": float(model_cfg.ffn_mult),
-            "use_smolgen": bool(model_cfg.use_smolgen),
-            "use_nla": bool(model_cfg.use_nla),
-            "use_qk_rmsnorm": bool(getattr(model_cfg, "use_qk_rmsnorm", False)),
-            "gradient_checkpointing": bool(model_cfg.use_gradient_checkpointing),
-        },
+        "model_config": model_config_to_manifest_dict(model_cfg),
     }
 
-    opening_book_path = config.get("opening_book_path")
-    if isinstance(opening_book_path, str) and opening_book_path.strip():
-        p = Path(opening_book_path.strip())
-        if p.exists():
-            manifest["opening_book"] = {
-                "endpoint": "/v1/opening_book",
-                "filename": p.name,
-                "sha256": _sha256_cached(p),
-            }
-
-    opening_book_path_2 = config.get("opening_book_path_2")
-    if isinstance(opening_book_path_2, str) and opening_book_path_2.strip():
-        p2 = Path(opening_book_path_2.strip())
-        if p2.exists():
-            manifest["opening_book_2"] = {
-                "endpoint": "/v1/opening_book_2",
-                "filename": p2.name,
-                "sha256": _sha256_cached(p2),
-            }
+    for cfg_key, manifest_key, endpoint in (
+        ("opening_book_path", "opening_book", "/v1/opening_book"),
+        ("opening_book_path_2", "opening_book_2", "/v1/opening_book_2"),
+    ):
+        raw = config.get(cfg_key)
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        p = Path(raw.strip())
+        if not p.exists():
+            continue
+        manifest[manifest_key] = {
+            "endpoint": endpoint,
+            "filename": p.name,
+            "sha256": _sha256_cached(p),
+        }
 
     if published_worker_wheel_path is not None and published_worker_wheel_path.exists():
         manifest["worker_wheel"] = {
@@ -398,26 +389,13 @@ def _launch_distributed_worker(
         worker_index=worker_index,
         worker_log=worker_log,
     )
-
-    out_fh = worker_out.open("ab")
-    try:
-        stale_worker_pids = terminate_matching_processes(
-            module="chess_anti_engine.worker",
-            required_terms=["--trial-id", str(trial_id), "--work-dir", str(worker_root)],
-        )
-        if stale_worker_pids:
-            print(
-                f"[trial] reaped stale distributed workers: "
-                f"trial={trial_id} worker_index={worker_index} pids={stale_worker_pids}"
-            )
-        return subprocess.Popen(
-            cmd,
-            cwd=str(Path(__file__).resolve().parents[2]),
-            stdout=out_fh,
-            stderr=subprocess.STDOUT,
-        )
-    finally:
-        out_fh.close()
+    return _spawn_with_reap(
+        cmd=cmd,
+        log_path=worker_out,
+        reap_module="chess_anti_engine.worker",
+        reap_terms=["--trial-id", str(trial_id), "--work-dir", str(worker_root)],
+        reap_label=f"distributed workers (trial={trial_id} idx={worker_index:02d})",
+    )
 
 
 def _build_distributed_worker_cmd(
@@ -536,6 +514,66 @@ def _trial_slot_prefix(*, trial_id: str) -> str:
     return f"cae-{h:08x}"
 
 
+def _resolve_shared_cache_root(config: dict, server_root: Path) -> Path:
+    """Resolve and create the broker's torch.compile/triton cache dir.
+
+    Caller-supplied (``distributed_worker_shared_cache_dir``) wins; otherwise
+    falls back to ``<server_root>/worker_cache``. Cache is per-machine, so a
+    single location shared across trials is correct.
+    """
+    raw = str(config.get("distributed_worker_shared_cache_dir") or "").strip()
+    root = Path(raw).expanduser() if raw else (server_root / "worker_cache")
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _resolve_compile_inference(config: dict) -> bool:
+    """Compile-inference toggle. ``CAE_INFERENCE_COMPILE`` env var overrides
+    config so ``--resume`` picks up changes without re-baking the tuner config.
+    """
+    env = os.environ.get("CAE_INFERENCE_COMPILE")
+    if env is not None:
+        return env == "1"
+    return bool(config.get("distributed_inference_use_compile", False))
+
+
+def _resolve_max_batch_per_slot(config: dict) -> int:
+    return int(
+        config.get(
+            "distributed_inference_max_batch_per_slot",
+            config.get("distributed_inference_max_batch_positions", 256),
+        )
+    )
+
+
+def _spawn_with_reap(
+    *,
+    cmd: list[str],
+    log_path: Path,
+    reap_module: str,
+    reap_terms: list[str],
+    reap_label: str,
+) -> subprocess.Popen[bytes]:
+    """Reap stale instances matching ``reap_module``+``reap_terms``, then
+    spawn ``cmd`` with stdout/stderr appended to ``log_path``.
+    """
+    out_fh = log_path.open("ab")
+    try:
+        stale_pids = terminate_matching_processes(
+            module=reap_module, required_terms=reap_terms,
+        )
+        if stale_pids:
+            print(f"[trial] reaped stale {reap_label}: pids={stale_pids}")
+        return subprocess.Popen(
+            cmd,
+            cwd=str(_REPO_ROOT),
+            stdout=out_fh,
+            stderr=subprocess.STDOUT,
+        )
+    finally:
+        out_fh.close()
+
+
 def _launch_inference_broker(
     *,
     config: dict,
@@ -545,63 +583,26 @@ def _launch_inference_broker(
 ) -> subprocess.Popen[bytes]:
     broker_artifact_root = trial_dir / "distributed_inference"
     broker_artifact_root.mkdir(parents=True, exist_ok=True)
-    broker_out = broker_artifact_root / "broker.out"
     slot_prefix = _trial_slot_prefix(trial_id=trial_id)
-    num_workers = int(config.get("distributed_workers_per_trial", 2))
-    max_batch = int(
-        config.get(
-            "distributed_inference_max_batch_per_slot",
-            config.get("distributed_inference_max_batch_positions", 256),
-        )
-    )
-    shared_cache_raw = str(config.get("distributed_worker_shared_cache_dir") or "").strip()
-    if shared_cache_raw:
-        shared_cache_root = Path(shared_cache_raw).expanduser()
-    else:
-        shared_cache_root = Path(str(config["distributed_server_root"])) / "worker_cache"
-    shared_cache_root.mkdir(parents=True, exist_ok=True)
-  # Env var override so --resume picks up changes without re-baking tuner config.
-    _env = os.environ.get("CAE_INFERENCE_COMPILE")
-    compile_inference = bool(
-        _env == "1" if _env is not None
-        else config.get("distributed_inference_use_compile", False)
-    )
+    server_root = Path(str(config["distributed_server_root"]))
     cmd = [
-        sys.executable,
-        "-m",
-        "chess_anti_engine.inference",
-        "--publish-dir",
-        str(publish_dir),
-        "--slot-prefix",
-        str(slot_prefix),
-        "--num-slots",
-        str(num_workers),
-        "--max-batch-per-slot",
-        str(max_batch),
-        "--device",
-        str(config.get("distributed_worker_device") or config.get("device", "cpu")),
-        "--batch-wait-ms",
-        str(float(config.get("distributed_inference_batch_wait_ms", 5.0))),
-        "--shared-cache-dir",
-        str(shared_cache_root),
-        *(["--compile-inference"] if compile_inference else []),
+        sys.executable, "-m", "chess_anti_engine.inference",
+        "--publish-dir", str(publish_dir),
+        "--slot-prefix", str(slot_prefix),
+        "--num-slots", str(int(config.get("distributed_workers_per_trial", 2))),
+        "--max-batch-per-slot", str(_resolve_max_batch_per_slot(config)),
+        "--device", str(config.get("distributed_worker_device") or config.get("device", "cpu")),
+        "--batch-wait-ms", str(float(config.get("distributed_inference_batch_wait_ms", 5.0))),
+        "--shared-cache-dir", str(_resolve_shared_cache_root(config, server_root)),
+        *(["--compile-inference"] if _resolve_compile_inference(config) else []),
     ]
-    out_fh = broker_out.open("ab")
-    try:
-        stale_broker_pids = terminate_matching_processes(
-            module="chess_anti_engine.inference",
-            required_terms=["--publish-dir", str(publish_dir), "--slot-prefix", str(slot_prefix)],
-        )
-        if stale_broker_pids:
-            print(f"[trial] reaped stale inference brokers: trial={trial_id} pids={stale_broker_pids}")
-        return subprocess.Popen(
-            cmd,
-            cwd=str(Path(__file__).resolve().parents[2]),
-            stdout=out_fh,
-            stderr=subprocess.STDOUT,
-        )
-    finally:
-        out_fh.close()
+    return _spawn_with_reap(
+        cmd=cmd,
+        log_path=broker_artifact_root / "broker.out",
+        reap_module="chess_anti_engine.inference",
+        reap_terms=["--publish-dir", str(publish_dir), "--slot-prefix", str(slot_prefix)],
+        reap_label=f"inference brokers (trial={trial_id})",
+    )
 
 
 def _ensure_inference_broker(
@@ -615,7 +616,7 @@ def _ensure_inference_broker(
     if not config.get("distributed_inference_broker_enabled", False):
         _stop_process(proc)
         return None
-  # Skip per-trial broker when shared broker is enabled
+  # Per-trial broker is mutually exclusive with the shared broker.
     if config.get("distributed_inference_shared_broker", False):
         _stop_process(proc)
         return None
@@ -639,70 +640,26 @@ def launch_shared_inference_broker(
         return None
     if not bool(config.get("distributed_inference_shared_broker", False)):
         return None
-
-    broker_out = server_root / "shared_broker.out"
-    num_workers = int(config.get("distributed_workers_per_trial", 2))
-    max_batch = int(
-        config.get(
-            "distributed_inference_max_batch_per_slot",
-            config.get("distributed_inference_max_batch_positions", 256),
-        )
-    )
-    shared_cache_raw = str(config.get("distributed_worker_shared_cache_dir") or "").strip()
-    if shared_cache_raw:
-        shared_cache_root = Path(shared_cache_raw).expanduser()
-    else:
-        shared_cache_root = server_root / "worker_cache"
-    shared_cache_root.mkdir(parents=True, exist_ok=True)
-
-    _env = os.environ.get("CAE_INFERENCE_COMPILE")
-    compile_inference = bool(
-        _env == "1" if _env is not None
-        else config.get("distributed_inference_use_compile", False)
-    )
-
     cmd = [
-        sys.executable,
-        "-m",
-        "chess_anti_engine.inference",
+        sys.executable, "-m", "chess_anti_engine.inference",
         "shared",
-        "--server-root",
-        str(server_root),
-        "--slots-per-trial",
-        str(num_workers),
-        "--max-batch-per-slot",
-        str(max_batch),
-        "--device",
-        str(config.get("distributed_worker_device") or config.get("device", "cpu")),
-        "--batch-wait-ms",
-        str(float(config.get("distributed_inference_batch_wait_ms", 0.0))),
-        "--shared-cache-dir",
-        str(shared_cache_root),
-        *(["--compile-inference"] if compile_inference else []),
+        "--server-root", str(server_root),
+        "--slots-per-trial", str(int(config.get("distributed_workers_per_trial", 2))),
+        "--max-batch-per-slot", str(_resolve_max_batch_per_slot(config)),
+        "--device", str(config.get("distributed_worker_device") or config.get("device", "cpu")),
+        "--batch-wait-ms", str(float(config.get("distributed_inference_batch_wait_ms", 0.0))),
+        "--shared-cache-dir", str(_resolve_shared_cache_root(config, server_root)),
+        *(["--compile-inference"] if _resolve_compile_inference(config) else []),
     ]
-
-    out_fh = broker_out.open("ab")
-    try:
-        stale_pids = terminate_matching_processes(
-            module="chess_anti_engine.inference",
-            required_terms=["shared", "--server-root", str(server_root)],
-        )
-        if stale_pids:
-            print(f"[tune] reaped stale shared inference broker: pids={stale_pids}")
-        proc = subprocess.Popen(  # pylint: disable=consider-using-with  # broker runs for the trial lifetime
-            cmd,
-            cwd=str(Path(__file__).resolve().parents[2]),
-            stdout=out_fh,
-            stderr=subprocess.STDOUT,
-        )
-        print(f"[tune] launched shared inference broker: pid={proc.pid}")
-
-  # Store the launch command so the harness can restart if needed
-        proc._shared_broker_cmd = cmd  # type: ignore[attr-defined]
-        proc._shared_broker_server_root = str(server_root)  # type: ignore[attr-defined]
-        return proc
-    finally:
-        out_fh.close()
+    proc = _spawn_with_reap(
+        cmd=cmd,
+        log_path=server_root / "shared_broker.out",
+        reap_module="chess_anti_engine.inference",
+        reap_terms=["shared", "--server-root", str(server_root)],
+        reap_label="shared inference broker",
+    )
+    print(f"[tune] launched shared inference broker: pid={proc.pid}")
+    return proc
 
 
 def _stop_worker_processes(procs: list[subprocess.Popen[bytes]]) -> None:

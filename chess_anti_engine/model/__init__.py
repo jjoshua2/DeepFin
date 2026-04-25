@@ -48,6 +48,25 @@ def model_config_from_manifest_dict(mc: dict) -> ModelConfig:
     )
 
 
+def model_config_to_manifest_dict(cfg: ModelConfig) -> dict:
+    """Inverse of ``model_config_from_manifest_dict``.
+
+    Use when writing the manifest's ``model_config`` block, so encode and
+    decode stay in sync as ModelConfig fields evolve.
+    """
+    return {
+        "kind": str(cfg.kind),
+        "embed_dim": int(cfg.embed_dim),
+        "num_layers": int(cfg.num_layers),
+        "num_heads": int(cfg.num_heads),
+        "ffn_mult": float(cfg.ffn_mult),
+        "use_smolgen": bool(cfg.use_smolgen),
+        "use_nla": bool(cfg.use_nla),
+        "use_qk_rmsnorm": bool(cfg.use_qk_rmsnorm),
+        "gradient_checkpointing": bool(cfg.use_gradient_checkpointing),
+    }
+
+
 def infer_input_planes() -> int:
   # Use startpos to infer plane count.
     import chess
