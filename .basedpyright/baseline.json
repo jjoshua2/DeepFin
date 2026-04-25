@@ -190,40 +190,6 @@
                 }
             }
         ],
-        "./chess_anti_engine/selfplay/manager.py": [
-            {
-                "code": "reportUnusedImport",
-                "range": {
-                    "startColumn": 65,
-                    "endColumn": 81,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUnusedImport",
-                "range": {
-                    "startColumn": 34,
-                    "endColumn": 57,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUnusedImport",
-                "range": {
-                    "startColumn": 34,
-                    "endColumn": 57,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUnusedImport",
-                "range": {
-                    "startColumn": 27,
-                    "endColumn": 43,
-                    "lineCount": 1
-                }
-            }
-        ],
         "./chess_anti_engine/selfplay/network_turn.py": [
             {
                 "code": "reportAttributeAccessIssue",
