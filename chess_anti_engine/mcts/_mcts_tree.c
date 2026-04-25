@@ -731,6 +731,82 @@ static int8_t tree_resolve_from_children(const TreeData *t, int32_t node) {
 }
 
 
+/* Forward decl: defined below, after tree_resolve_from_children. */
+static void tree_mark_solved_and_propagate(TreeData *t,
+                                           const int32_t *path,
+                                           int32_t path_len,
+                                           int8_t leaf_status);
+
+
+/* Lock-free lookup of a child by action. Returns child node id, or -1 if
+ * not present. Caller must have observed expanded[node_id]==1 with acquire
+ * semantics so children_offset/num_children/child_action[] are coherent. */
+static int32_t tree_find_child_action(const TreeData *t, int32_t node_id, int32_t action) {
+    int32_t n_ch = t->num_children[node_id];
+    int32_t off = t->children_offset[node_id];
+    for (int32_t i = 0; i < n_ch; i++) {
+        if (t->child_action[off + i] == action)
+            return t->child_node[off + i];
+    }
+    return -1;
+}
+
+
+/* Forced-move chain collapse. When the current leaf has exactly one legal
+ * move, expand it as a single-child node (prior=1.0), descend, and repeat
+ * until branching, terminal, or depth_cap. Saves NN evals on perpetual-check
+ * sequences, forced recaptures, etc. — positions where the policy would
+ * collapse to one-hot anyway.
+ *
+ * In/out parameters (all updated when chain collapses):
+ *   *leaf_id  — current leaf node id, advanced to chain end
+ *   *cb       — board state, advanced to chain end (cboard_push_index'd)
+ *   path_buf  — descent path, with new node ids appended
+ *   *path_len — length of path_buf
+ *
+ * Returns:
+ *    1 — chain ended at a terminal; leaf was marked solved + propagated.
+ *        Caller must NOT queue this leaf for NN eval; should treat it like
+ *        any other terminal-leaf detection (backprop the terminal value).
+ *    0 — chain did not terminate. leaf_id/cb may have advanced 0+ plies;
+ *        caller should proceed with NN eval / transposition check at the
+ *        possibly-new leaf.
+ *
+ * Thread-safety: tree_expand internally takes tree_lock for each forced ply.
+ * That's the only shared-state mutation. cb is caller-local. */
+static int try_forced_collapse(TreeData *t,
+                                int32_t *leaf_id, CBoard *cb,
+                                int32_t *path_buf, int32_t *path_len,
+                                int depth_cap) {
+    int legal_buf[256];
+    for (int d = 0; d < depth_cap; d++) {
+        int n = cboard_legal_move_indices(cb, legal_buf, /*sorted=*/0);
+        if (n != 1) return 0;
+        int32_t action = (int32_t)legal_buf[0];
+
+        int32_t cur = *leaf_id;
+        if (!__atomic_load_n(&t->expanded[cur], __ATOMIC_ACQUIRE)) {
+            double prior_one = 1.0;
+            if (tree_expand(t, cur, &action, &prior_one, 1) < 0) return 0;
+        }
+        int32_t child_id = tree_find_child_action(t, cur, action);
+        if (child_id < 0) return 0;  /* expand-then-not-found = race; bail */
+
+        cboard_push_index(cb, action);
+        if (*path_len >= MCTS_MAX_PATH) return 0;  /* path overflow — bail */
+        path_buf[(*path_len)++] = child_id;
+        *leaf_id = child_id;
+
+        if (cboard_is_game_over(cb)) {
+            tree_mark_solved_and_propagate(t, path_buf, *path_len,
+                                            cboard_terminal_solved_status(cb));
+            return 1;
+        }
+    }
+    return 0;
+}
+
+
 /* Mark a leaf (or freshly evaluated node) with a solved status, then walk
  * upward and resolve as many ancestors as possible. Stops at the first
  * ancestor that doesn't yet resolve.
@@ -1030,10 +1106,17 @@ static void gss_free(GumbelSimState *g) {
 
 /* Compute active boards and visits_per_action for current halving round.
  * Returns max_reps (0 if nothing to do). */
-static int32_t gss_begin_round(GumbelSimState *g) {
+static int32_t gss_begin_round(GumbelSimState *g, const TreeData *t) {
     g->n_active = 0;
     g->max_reps = 0;
     for (int32_t i = 0; i < g->n_boards; i++) {
+        /* Early-exit when the root is already solved: the result of search is
+         * known, every additional sim is wasted GPU work. Zero the budget so
+         * it stays out of subsequent rounds too. */
+        int32_t rid = g->root_ids[i];
+        if (rid >= 0 && rid < t->node_count && t->solved[rid] != SOLVED_UNKNOWN) {
+            g->budget_remaining[i] = 0;
+        }
         if (g->budget_remaining[i] <= 0 || g->cands_count[i] == 0)
             continue;
         g->active[g->n_active++] = i;
@@ -1247,6 +1330,20 @@ static int32_t gss_prepare_batch(
             continue;
         }
 
+        /* Forced-move chain collapse: when this leaf has only one legal move
+         * (forced recapture, perpetual-check, etc.), expand the chain into the
+         * tree at prior=1.0 per ply and advance to the first branching position
+         * before NN eval. Saves an NN eval per collapsed ply on every future
+         * sim through this subtree. */
+        if (try_forced_collapse(t, &leaf_id, &cb, path_buf, &path_len, 16)) {
+            /* Chain ended at a terminal; collapse already marked solved.
+             * Backprop the terminal value the same way regular terminals do. */
+            if (stored_append_terminal(s, path_buf, path_len,
+                                       (double)cboard_terminal_value(&cb),
+                                       SOLVED_UNKNOWN) < 0) return -1;
+            continue;
+        }
+
         /* Transposition / NNCache check */
         if (!__atomic_load_n(&t->expanded[leaf_id], __ATOMIC_ACQUIRE)) {
             int32_t existing = tree_ht_probe(t, cb.hash);
@@ -1437,7 +1534,7 @@ static int32_t gss_step(TreeData *t, StoredPrepState *s, GumbelSimState *g, floa
         gss_score_and_halve(g, t);
 
         /* Start next halving round */
-        if (gss_begin_round(g) == 0) {
+        if (gss_begin_round(g, t) == 0) {
             g->phase = 2;
             return 0;
         }
@@ -1973,6 +2070,36 @@ static PyObject *MCTSTree_walker_descend_puct(MCTSTreeObject *self, PyObject *ar
         tree_mark_solved_and_propagate(t, path_buf, path_len,
                                        cboard_terminal_solved_status(&cb));
         return Py_BuildValue("(iNNd)", leaf_id, node_path, legal_arr, term_q);
+    }
+
+    /* Forced-move chain collapse — same idea as in gss_prepare_batch. Try to
+     * walk forced replies before paying for an NN eval. May rebuild path_buf
+     * + advance leaf_id/cb in place. The path output array was already built
+     * above; if we collapse, rebuild it. */
+    if (try_forced_collapse(t, &leaf_id, &cb, path_buf, &path_len, 16)) {
+        /* Chain hit terminal: same shape as the cboard_is_game_over branch. */
+        Py_DECREF(enc_arr);
+        Py_DECREF(node_path);
+        npy_intp pdims2[1] = {path_len};
+        node_path = PyArray_SimpleNew(1, pdims2, NPY_INT32);
+        if (!node_path) return NULL;
+        memcpy(PyArray_DATA((PyArrayObject *)node_path), path_buf,
+               path_len * sizeof(int32_t));
+        npy_intp ldims[1] = {0};
+        PyObject *legal_arr = PyArray_SimpleNew(1, ldims, NPY_INT32);
+        if (!legal_arr) { Py_DECREF(node_path); return NULL; }
+        double term_q = (double)cboard_terminal_value(&cb);
+        return Py_BuildValue("(iNNd)", leaf_id, node_path, legal_arr, term_q);
+    }
+    /* Non-terminal collapse may still have advanced the leaf — rebuild the
+     * node_path array if so. */
+    if (path_len != (int32_t)PyArray_DIM((PyArrayObject *)node_path, 0)) {
+        Py_DECREF(node_path);
+        npy_intp pdims2[1] = {path_len};
+        node_path = PyArray_SimpleNew(1, pdims2, NPY_INT32);
+        if (!node_path) { Py_DECREF(enc_arr); return NULL; }
+        memcpy(PyArray_DATA((PyArrayObject *)node_path), path_buf,
+               path_len * sizeof(int32_t));
     }
 
     /* Non-terminal: apply vloss along path[1:] before exposing the leaf to
@@ -3034,7 +3161,7 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
 
     /* Begin first halving round */
     g->phase = 1;
-    if (gss_begin_round(g) == 0) {
+    if (gss_begin_round(g, &self->tree) == 0) {
         g->phase = 2;
         Py_RETURN_NONE;
     }

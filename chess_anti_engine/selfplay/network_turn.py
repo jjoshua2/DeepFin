@@ -323,11 +323,15 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
             state.move_idx_history[idx].append(_act_list[j])
             state.last_net_full[idx] = _is_full_list[j]
 
+            # Skip training on positions with a single legal move: the policy
+            # target collapses to one-hot regardless of search, so there's no
+            # learning signal. Same shape as low-sim filtering (has_policy=False).
+            _has_policy = bool(_is_full_list[j]) and int(c_mask[j].sum()) > 1
             state.samples_per_game[idx].append(
                 _NetRecord(
                     c_x[j], c_probs[j], c_wdl_net[j], c_wdl_search[j],
                     chess.WHITE if _c_pov_list[j] else chess.BLACK,
-                    _c_ply_list[j], _is_full_list[j],
+                    _c_ply_list[j], _has_policy,
                     _c_priority_list[j], _sw_list[j], _c_keep_list[j],
                     c_mask[j],
                 ),
@@ -406,7 +410,7 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
                     search_wdl_est=search_wdl_est,
                     pov_color=pov_color,
                     ply_index=ply_index,
-                    has_policy=bool(is_full[j]),
+                    has_policy=bool(is_full[j]) and int(mask.sum()) > 1,
                     priority=float(difficulty),
                     sample_weight=float(sample_weights[j]),
                     keep_prob=float(keep_prob),
