@@ -30,6 +30,7 @@ def _gumbel(rng: np.random.Generator, size: int) -> np.ndarray:
     return -np.log(-np.log(u))
 
 
+from chess_anti_engine.mcts.sampling import sample_action_with_temperature  # noqa: E402
 from chess_anti_engine.utils.numpy_helpers import softmax_1d as _softmax  # noqa: E402
 
 
@@ -428,18 +429,13 @@ def run_gumbel_root_many(
         probs[legal] = imp_all.astype(np.float32)
 
         best_a = int(remaining[0])
-        if cfg.temperature <= 0:
-            action = best_a
-        else:
-            p = imp_all.astype(np.float64, copy=True)
-            if cfg.temperature != 1.0:
-                p = np.power(np.maximum(p, 0.0), 1.0 / float(cfg.temperature))
-            ps = float(p.sum())
-            if ps > 0:
-                p /= ps
-                action = int(rng.choice(legal, p=p))
-            else:
-                action = best_a
+  # Gumbel sequential halving leaves the survivor at remaining[0]; map
+  # that back to its position in the full ``legal`` array (= imp_all).
+        argmax_idx = int(np.searchsorted(legal, best_a)) if legal.size > 0 else 0
+        action = sample_action_with_temperature(
+            rng, legal, imp_all, float(cfg.temperature),
+            argmax_idx=argmax_idx,
+        )
 
         probs_out[i] = probs
         actions_out[i] = action

@@ -51,6 +51,25 @@ def _policy_output(out: dict[str, torch.Tensor]) -> torch.Tensor:
     return out["policy"] if "policy" in out else out["policy_own"]
 
 
+def _forward_no_grad(
+    model: torch.nn.Module,
+    xt: torch.Tensor,
+    *,
+    device: str,
+    use_amp: bool = True,
+    amp_dtype: str = "auto",
+) -> dict[str, torch.Tensor]:
+    """Run a single forward pass under no_grad + inference_autocast.
+
+    Centralizes the ``with torch.no_grad(): with inference_autocast(...): ...``
+    pattern so every evaluator path uses the same autocast policy. Eleven
+    sites used to reimplement this inline.
+    """
+    with torch.no_grad():
+        with inference_autocast(device=device, enabled=use_amp, dtype=amp_dtype):
+            return model(xt)
+
+
 def _configure_compile_cache(cache_root: Path) -> None:
     cache_root.mkdir(parents=True, exist_ok=True)
     compile_root = cache_root / "compile_cache"
@@ -113,9 +132,10 @@ class LocalModelEvaluator:
     def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         xb = _coerce_input_batch(x)
         xt = torch.from_numpy(xb).to(self.device)
-        with torch.no_grad():
-            with inference_autocast(device=self.device, enabled=self._use_amp, dtype=self._amp_dtype):
-                out = self.model(xt)
+        out = _forward_no_grad(
+            self.model, xt, device=self.device,
+            use_amp=self._use_amp, amp_dtype=self._amp_dtype,
+        )
         policy_out = _policy_output(out)
         _cpu_f32 = torch.float32
         pol = policy_out.detach().to(dtype=_cpu_f32, device="cpu").numpy()
@@ -139,9 +159,10 @@ class LocalModelEvaluator:
         xb = _coerce_input_batch(x)
         if not self._use_cuda:
             xt = torch.from_numpy(xb)
-            with torch.no_grad():
-                with inference_autocast(device=self.device, enabled=self._use_amp, dtype=self._amp_dtype):
-                    out = self.model(xt)
+            out = _forward_no_grad(
+                self.model, xt, device=self.device,
+                use_amp=self._use_amp, amp_dtype=self._amp_dtype,
+            )
             policy_out = _policy_output(out)
             pol = policy_out.detach().float()
             wdl = out["wdl"].detach().float()
@@ -158,9 +179,10 @@ class LocalModelEvaluator:
         with torch.cuda.stream(stream):
             stream.wait_event(event_default) # torch stubs have duplicate Event types
             xt = torch.from_numpy(xb).to(self.device, non_blocking=True)
-            with torch.no_grad():
-                with inference_autocast(device=self.device, enabled=self._use_amp, dtype=self._amp_dtype):
-                    out = self.model(xt)
+            out = _forward_no_grad(
+                self.model, xt, device=self.device,
+                use_amp=self._use_amp, amp_dtype=self._amp_dtype,
+            )
             policy_out = _policy_output(out)
             pol = policy_out.detach().to(dtype=torch.float32, device="cpu", non_blocking=True)
             wdl = out["wdl"].detach().to(dtype=torch.float32, device="cpu", non_blocking=True)
@@ -253,15 +275,17 @@ class DirectGPUEvaluator(LocalModelEvaluator):
     ) -> tuple[np.ndarray, np.ndarray]:
         if not self._use_cuda:
             xt = self._pinned_input[:bsz]
-            with torch.no_grad():
-                with inference_autocast(device=self.device, enabled=self._use_amp, dtype=self._amp_dtype):
-                    out = self.model(xt)
+            out = _forward_no_grad(
+                self.model, xt, device=self.device,
+                use_amp=self._use_amp, amp_dtype=self._amp_dtype,
+            )
             return _policy_output(out).detach().float().numpy(), out["wdl"].detach().float().numpy()
 
         xt = self._pinned_input[:bsz].to(self.device, non_blocking=True)
-        with torch.no_grad():
-            with inference_autocast(device=self.device, enabled=self._use_amp, dtype=self._amp_dtype):
-                out = self.model(xt)
+        out = _forward_no_grad(
+            self.model, xt, device=self.device,
+            use_amp=self._use_amp, amp_dtype=self._amp_dtype,
+        )
         self._pinned_pol[:bsz].copy_(_policy_output(out).detach().float(), non_blocking=True)
         self._pinned_wdl[:bsz].copy_(out["wdl"].detach().float(), non_blocking=True)
         done = torch.cuda.Event()
@@ -300,9 +324,10 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         with torch.cuda.stream(stream):
             stream.wait_event(event_default) # torch stubs have duplicate Event types
             xt = self._pinned_input[:bsz].to(self.device, non_blocking=True)
-            with torch.no_grad():
-                with inference_autocast(device=self.device, enabled=self._use_amp, dtype=self._amp_dtype):
-                    out = self.model(xt)
+            out = _forward_no_grad(
+                self.model, xt, device=self.device,
+                use_amp=self._use_amp, amp_dtype=self._amp_dtype,
+            )
             self._pinned_pol[:bsz].copy_(_policy_output(out).detach().float(), non_blocking=True)
             self._pinned_wdl[:bsz].copy_(out["wdl"].detach().float(), non_blocking=True)
             done = torch.cuda.Event()
@@ -898,9 +923,7 @@ class SlotBroker:
         if first_inf:
             inf_t0 = time.time()
 
-        with torch.no_grad():
-            with inference_autocast(device=self.device, enabled=True, dtype="auto"):
-                out = self._model(xt)
+        out = _forward_no_grad(self._model, xt, device=self.device)
 
         if first_inf:
             log.info("first inference (includes kernel compile) elapsed_s=%.2f batch=%d",
@@ -1356,15 +1379,11 @@ class SharedSlotBroker:
 
             if use_cuda and stream is not None:
                 with torch.cuda.stream(stream):
-                    with torch.no_grad():
-                        with inference_autocast(device=self.device, enabled=True, dtype="auto"):
-                            out = model(xt)
+                    out = _forward_no_grad(model, xt, device=self.device)
                     pol = _policy_output(out).detach().float().to("cpu", non_blocking=True)
                     wdl = out["wdl"].detach().float().to("cpu", non_blocking=True)
             else:
-                with torch.no_grad():
-                    with inference_autocast(device=self.device, enabled=True, dtype="auto"):
-                        out = model(xt)
+                out = _forward_no_grad(model, xt, device=self.device)
                 pol = _policy_output(out).detach().float().cpu()
                 wdl = out["wdl"].detach().float().cpu()
 

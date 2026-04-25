@@ -16,6 +16,7 @@ import torch
 from chess_anti_engine.encoding import encode_positions_batch
 from chess_anti_engine.inference import BatchEvaluator, LocalModelEvaluator
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
+from chess_anti_engine.mcts.sampling import sample_action_with_temperature
 from chess_anti_engine.mcts.puct import (
     MCTSConfig,
     _softmax_legal,
@@ -264,20 +265,10 @@ def run_mcts_many_c(
             mask[child_actions] = True
 
   # Action selection (sample over children only, not full POLICY_SIZE)
-        if child_actions.size == 0:
-            action = 0
-        elif cfg.temperature <= 0:
-            action = int(child_actions[np.argmax(child_visits)])
-        else:
-            cp = visits_f.astype(np.float64)
-            if cfg.temperature != 1.0:
-                cp = np.power(np.maximum(cp, 0.0), 1.0 / float(cfg.temperature))
-            cps = float(cp.sum())
-            if not np.isfinite(cps) or cps <= 0:
-                action = int(child_actions[np.argmax(child_visits)])
-            else:
-                cp /= cps
-                action = int(child_actions[rng.choice(child_actions.size, p=cp)])
+        action = sample_action_with_temperature(
+            rng, child_actions, visits_f, float(cfg.temperature),
+            argmax_idx=int(np.argmax(child_visits)) if child_visits.size > 0 else 0,
+        )
 
         probs_list.append(probs)
         actions.append(action)

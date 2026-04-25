@@ -13,6 +13,7 @@ from chess_anti_engine.inference import (
     LocalModelEvaluator,
     _policy_output,
 )
+from chess_anti_engine.mcts.sampling import sample_action_with_temperature
 from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.moves.encode import index_to_move_fast, legal_move_indices
 from chess_anti_engine.utils.amp import inference_autocast
@@ -306,19 +307,13 @@ def run_mcts_many(
         s = float(child_visits.sum())
         probs = (visits_full / s) if s > 0 else visits_full
 
-        if cfg.temperature <= 0 or child_actions.size == 0:
+        if child_actions.size == 0:
             action = int(np.argmax(visits_full))
         else:
-  # Sample over children only (not all 4672 entries).
-            p = np.maximum(child_visits, 0.0)
-            if cfg.temperature != 1.0:
-                np.power(p, 1.0 / float(cfg.temperature), out=p)
-            ps = float(p.sum())
-            if not np.isfinite(ps) or ps <= 0:
-                action = int(child_actions[np.argmax(child_visits)])
-            else:
-                p /= ps
-                action = int(child_actions[rng.choice(child_actions.size, p=p)])
+            action = sample_action_with_temperature(
+                rng, child_actions, child_visits, float(cfg.temperature),
+                argmax_idx=int(np.argmax(child_visits)),
+            )
 
         probs_list.append(probs.astype(np.float32, copy=False))
         actions.append(action)

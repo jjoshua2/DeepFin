@@ -186,26 +186,50 @@ def _prune_processed_shards(
 ) -> int:
     """Delete processed shards older than *max_age_seconds*.
 
-    Returns the number of files deleted.
+    Returns the number of files deleted. Per-user-dir mtime gate skips
+    walking subtrees whose newest entry is younger than the cutoff —
+    O(n_users) stat calls instead of O(n_total_shards) on long runs.
     """
     if max_age_seconds <= 0 or not processed_dir.is_dir():
         return 0
     cutoff = time.time() - float(max_age_seconds)
     deleted = 0
-    for sp in _iter_shard_paths_nested(processed_dir):
-        try:
-            if sp.stat().st_mtime < cutoff:
-                delete_shard_path(sp)
-                deleted += 1
-        except Exception:
+    try:
+        user_dirs = list(processed_dir.iterdir())
+    except FileNotFoundError:
+        return 0
+    for user_dir in user_dirs:
+        if not user_dir.is_dir() or _is_tmp_shard_name(user_dir.name):
             continue
+        if user_dir.name == _PENDING_DIR_NAME:
+            continue
+        try:
+  # If the user-dir's own mtime is fresh, every shard inside is
+  # also fresh (mtime is updated on add). Skip the per-shard scan.
+            if user_dir.stat().st_mtime >= cutoff:
+                continue
+            entries = list(user_dir.iterdir())
+        except FileNotFoundError:
+            continue
+        for entry in entries:
+            name = entry.name
+            if _is_tmp_shard_name(name):
+                continue
+            if not (name.endswith(LOCAL_SHARD_SUFFIX) or name.endswith(LEGACY_SHARD_SUFFIX)):
+                continue
+            try:
+                if entry.stat().st_mtime < cutoff:
+                    delete_shard_path(entry)
+                    deleted += 1
+            except FileNotFoundError:
+                continue
   # Remove empty subdirectories.
     for d in processed_dir.iterdir():
         if d.is_dir() and not any(d.iterdir()):
             try:
                 d.rmdir()
-            except Exception:
-                pass
+            except OSError:
+                pass  # raced with another writer or permission issue — skip
     return deleted
 
 
