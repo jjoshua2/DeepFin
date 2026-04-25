@@ -83,10 +83,16 @@ pylint "${PATHS[@]}"
 if [[ $RUN_DEAD -eq 1 ]]; then
     echo
     echo "::: vulture (dead code, min confidence 80)"
-    vulture --min-confidence 80 "${PATHS[@]}" || true
+    # Vulture exits non-zero on findings; under set -e that fails the
+    # run, which is what we want — unignored dead code should gate.
+    vulture --min-confidence 80 "${PATHS[@]}"
 
     echo
-    echo "::: skylos (dead code + circular imports)"
+    echo "::: skylos (advisory — dead code + circular imports)"
+    # Skylos exits 0 even with findings (its grep-verify rescues most
+    # false positives). Its output tables remain the signal; treat as
+    # advisory. Review the tables by eye, add `# skylos: ignore` for
+    # FPs. Explicitly advisory — do not quietly gate on it.
     skylos "${PATHS[@]}" || true
 fi
 

@@ -390,11 +390,6 @@ class DifficultyPID:
                         -abs_max_step,
                         abs_max_step,
                     )
-                    regret_after = _clamp(
-                        regret_before + delta,
-                        self.wdl_regret_min,
-                        self.wdl_regret_max,
-                    )
                 else:
   # Fit degenerate (history span < min_span, or other).
   # We're outside the deadband (checked above) so we know the
@@ -402,11 +397,25 @@ class DifficultyPID:
   # explore and widen history for the next iteration's fit.
                     step_sign = 1.0 if err > 0 else -1.0
                     delta = step_sign * abs_max_step
-                    regret_after = _clamp(
-                        regret_before + delta,
-                        self.wdl_regret_min,
-                        self.wdl_regret_max,
-                    )
+
+  # Raw-sign veto: never tighten when this batch's raw is below
+  # target, never ease when it's above. The fit learns from
+  # smoothed history, but the live raw signal is a direct "we're
+  # already under-performing / over-winning" statement. Observed
+  # at iter 345→346: fit said tighten from 0.022→0.020 despite
+  # raw=0.55 already below target 0.58, and 346 crashed to 0.49
+  # triggering airbag. Symmetric. Self-correcting: next iter with
+  # raw on the supporting side will re-enable the step.
+                if raw_wr_this_batch < self.target and delta < 0:
+                    delta = 0.0
+                elif raw_wr_this_batch > self.target and delta > 0:
+                    delta = 0.0
+
+                regret_after = _clamp(
+                    regret_before + delta,
+                    self.wdl_regret_min,
+                    self.wdl_regret_max,
+                )
             self.wdl_regret = float(regret_after)
             regret_changed = abs(regret_after - regret_before) > 1e-12
 

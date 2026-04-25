@@ -45,7 +45,12 @@ def _read_last_jsonl_row(path: Path) -> dict | None:
         return None
     last: dict | None = None
     try:
-        with path.open("r", encoding="utf-8") as f:
+  # errors="replace": invalid UTF-8 bytes at a truncated EOF would
+  # otherwise raise UnicodeDecodeError during `for ln in f` iteration
+  # (before the inner try catches), losing every row after the bad
+  # one. Replacement chars then fail json.loads cleanly, which the
+  # inner except skips per-line. (Codex adversarial review.)
+        with path.open("r", encoding="utf-8", errors="replace") as f:
             for ln in f:
                 ln = ln.strip()
                 if not ln:
@@ -69,7 +74,12 @@ def _read_jsonl_rows(path: Path) -> list[dict]:
     if not path.exists():
         return rows
     try:
-        with path.open("r", encoding="utf-8") as f:
+  # errors="replace": invalid UTF-8 bytes at a truncated EOF would
+  # otherwise raise UnicodeDecodeError during `for ln in f` iteration
+  # (before the inner try catches), losing every row after the bad
+  # one. Replacement chars then fail json.loads cleanly, which the
+  # inner except skips per-line. (Codex adversarial review.)
+        with path.open("r", encoding="utf-8", errors="replace") as f:
             for ln in f:
                 ln = ln.strip()
                 if not ln:

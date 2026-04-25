@@ -29,10 +29,12 @@ train = [
 
 dev = [
   "pytest>=7.0",
-  # Static analysis
+  # Static analysis — must match the tools scripts/lint.sh invokes so that a
+  # clean `pip install -e ".[dev]"` can reproduce the documented gate.
   "ruff>=0.5",
-  "pyright>=1.1.400",
+  "basedpyright>=1.39",
   "skylos>=4.0",
+  "vulture>=2.0",
   "pylint>=3.0",
   # C extension static analysis (pip-installable, no sudo required)
   "cppcheck>=1.5",     # general C static analyzer (bundles cppcheck binary)

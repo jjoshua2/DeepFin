@@ -304,6 +304,24 @@
                 }
             }
         ],
+        "./chess_anti_engine/server/lease.py": [
+            {
+                "code": "reportUnnecessaryIsInstance",
+                "range": {
+                    "startColumn": 11,
+                    "endColumn": 40,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnreachable",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 24,
+                    "lineCount": 1
+                }
+            }
+        ],
         "./chess_anti_engine/train/cosmos.py": [
             {
                 "code": "reportIncompatibleMethodOverride",
