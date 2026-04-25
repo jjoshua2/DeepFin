@@ -1,15 +1,5 @@
 {
     "files": {
-        "./chess_anti_engine/eval/puzzles.py": [
-            {
-                "code": "reportUnusedParameter",
-                "range": {
-                    "startColumn": 4,
-                    "endColumn": 13,
-                    "lineCount": 1
-                }
-            }
-        ],
         "./chess_anti_engine/inference.py": [
             {
                 "code": "reportArgumentType",

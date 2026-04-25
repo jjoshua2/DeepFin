@@ -14,6 +14,7 @@ Lines starting with '#' or blank lines are skipped.
 """
 from __future__ import annotations
 
+import csv
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -25,6 +26,17 @@ import torch
 from chess_anti_engine.mcts import MCTSConfig, run_mcts_many
 from chess_anti_engine.moves import index_to_move
 
+# Default rating buckets for Lichess-style evaluation, matching the LC0 blog
+# (https://lczero.org/blog/2024/02/...) coarse buckets.
+DEFAULT_RATING_BUCKETS: tuple[tuple[int, int], ...] = (
+    (0, 1000),
+    (1000, 1500),
+    (1500, 2000),
+    (2000, 2500),
+    (2500, 3000),
+    (3000, 9999),
+)
+
 # ---------------------------------------------------------------------------
 # Puzzle data structures
 # ---------------------------------------------------------------------------
@@ -34,6 +46,8 @@ class Puzzle:
     board: chess.Board
     best_moves: list[chess.Move]  # any of these is accepted as correct
     puzzle_id: str = ""
+    rating: int | None = None  # Lichess Elo, optional (None for non-Lichess sources)
+    themes: tuple[str, ...] = ()
 
 
 @dataclass
@@ -41,6 +55,9 @@ class PuzzleResult:
     total: int
     correct: int
     accuracy: float  # correct / total
+    # Per-rating-bucket accuracy: ordered list of (low, high, total, correct, accuracy).
+    # Empty when the suite has no rating annotations.
+    by_rating: list[tuple[int, int, int, int, float]] = field(default_factory=list)
 
 
 @dataclass
@@ -142,6 +159,90 @@ def load_epd(path: str | Path) -> PuzzleSuite:
     return PuzzleSuite(puzzles=puzzles, name=p.stem)
 
 
+def load_lichess_csv(
+    path: str | Path,
+    *,
+    max_puzzles: int | None = None,
+    min_rating: int | None = None,
+    max_rating: int | None = None,
+    themes_filter: tuple[str, ...] = (),
+) -> PuzzleSuite:
+    """Load puzzles from a Lichess puzzle CSV dump.
+
+    Format (https://database.lichess.org/#puzzles):
+        PuzzleId,FEN,Moves,Rating,RatingDeviation,Popularity,NbPlays,Themes,GameUrl,OpeningTags
+
+    The FEN is the position *before* the opponent's setup move; ``Moves`` is a
+    space-separated UCI sequence whose first move is that setup. We apply the
+    setup, then take the second move as the puzzle's expected best move (the
+    user's first reply). Multi-move puzzle continuations are ignored — top-1
+    accuracy on the post-setup position matches LC0's blog methodology.
+    """
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"Puzzle CSV not found: {p}")
+
+    puzzles: list[Puzzle] = []
+    with p.open(encoding="utf-8", newline="") as fh:
+        reader = csv.DictReader(fh)
+        for row in reader:
+            try:
+                rating = int(row.get("Rating", "") or 0)
+            except ValueError:
+                rating = 0
+            if min_rating is not None and rating < min_rating:
+                continue
+            if max_rating is not None and rating > max_rating:
+                continue
+
+            themes = tuple((row.get("Themes") or "").split())
+            if themes_filter and not any(t in themes for t in themes_filter):
+                continue
+
+            fen = (row.get("FEN") or "").strip()
+            moves_str = (row.get("Moves") or "").strip()
+            if not fen or not moves_str:
+                continue
+
+            try:
+                board = chess.Board(fen)
+            except ValueError:
+                continue
+
+            move_tokens = moves_str.split()
+            if len(move_tokens) < 2:
+                continue
+
+            # Apply opponent's setup move; the next move is the user's expected reply.
+            try:
+                setup = chess.Move.from_uci(move_tokens[0])
+            except (ValueError, chess.InvalidMoveError):
+                continue
+            if setup not in board.legal_moves:
+                continue
+            board.push(setup)
+
+            try:
+                best = chess.Move.from_uci(move_tokens[1])
+            except (ValueError, chess.InvalidMoveError):
+                continue
+            if best not in board.legal_moves:
+                continue
+
+            puzzles.append(Puzzle(
+                board=board,
+                best_moves=[best],
+                puzzle_id=(row.get("PuzzleId") or "").strip(),
+                rating=rating if rating > 0 else None,
+                themes=themes,
+            ))
+
+            if max_puzzles is not None and len(puzzles) >= max_puzzles:
+                break
+
+    return PuzzleSuite(puzzles=puzzles, name=p.stem)
+
+
 # ---------------------------------------------------------------------------
 # Evaluation
 # ---------------------------------------------------------------------------
@@ -153,26 +254,30 @@ def run_puzzle_eval(
     *,
     device: str,
     mcts_simulations: int = 200,
-    mcts_type: str = "puct",  # pylint: disable=unused-argument  # reserved for gumbel variant
     batch_size: int = 32,
     rng: np.random.Generator | None = None,
+    rating_buckets: tuple[tuple[int, int], ...] = DEFAULT_RATING_BUCKETS,
 ) -> PuzzleResult:
     """Evaluate the model on a puzzle suite.
 
     For each puzzle, run MCTS with the given simulation budget and check
-    whether the top move matches any of the accepted best moves.
+    whether the top move matches any of the accepted best moves. When the
+    suite has rating annotations (Lichess CSV), also report per-bucket
+    accuracy in ``PuzzleResult.by_rating``.
 
     Args:
         model: The network to evaluate (already on device or will be moved).
         suite: Loaded puzzle suite.
         device: Torch device string.
         mcts_simulations: Simulation budget per puzzle position.
-        mcts_type: MCTS variant ("puct" only for now; gumbel could be added).
         batch_size: Number of positions to evaluate in one MCTS batch.
         rng: Numpy RNG; a default is created if None.
+        rating_buckets: Half-open ``[low, high)`` bands. Ignored when no
+            puzzle has a rating set.
 
     Returns:
-        PuzzleResult with total, correct, accuracy.
+        PuzzleResult with total, correct, accuracy, and (when applicable)
+        bucketed accuracy.
     """
     if rng is None:
         rng = np.random.default_rng(42)
@@ -180,23 +285,41 @@ def run_puzzle_eval(
     model.eval()
     cfg = MCTSConfig(simulations=mcts_simulations, temperature=0.0)
 
-    correct = 0
     total = len(suite)
+    correct_flags = [False] * total
 
-  # Process in batches for GPU efficiency.
     for start in range(0, total, batch_size):
         end = min(start + batch_size, total)
         batch_puzzles = suite.puzzles[start:end]
         boards = [p.board.copy() for p in batch_puzzles]
 
-        _probs, actions, _vals, _masks = run_mcts_many(
+        _, actions, *_ = run_mcts_many(
             model, boards, device=device, rng=rng, cfg=cfg,
         )
 
-        for puzzle, action_idx in zip(batch_puzzles, actions):
+        for offset, (puzzle, action_idx) in enumerate(zip(batch_puzzles, actions)):
             chosen = index_to_move(int(action_idx), puzzle.board)
             if chosen in puzzle.best_moves:
-                correct += 1
+                correct_flags[start + offset] = True
 
+    correct = sum(correct_flags)
     accuracy = float(correct) / max(1, total)
-    return PuzzleResult(total=total, correct=correct, accuracy=accuracy)
+
+    by_rating: list[tuple[int, int, int, int, float]] = []
+    if any(p.rating is not None for p in suite.puzzles):
+        for low, high in rating_buckets:
+            b_total = 0
+            b_correct = 0
+            for puzzle, ok in zip(suite.puzzles, correct_flags):
+                r = puzzle.rating
+                if r is None or r < low or r >= high:
+                    continue
+                b_total += 1
+                if ok:
+                    b_correct += 1
+            if b_total > 0:
+                by_rating.append((low, high, b_total, b_correct, b_correct / b_total))
+
+    return PuzzleResult(
+        total=total, correct=correct, accuracy=accuracy, by_rating=by_rating,
+    )
