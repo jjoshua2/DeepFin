@@ -194,7 +194,7 @@ tune:
   # Disk usage controls
   # NOTE: PB2/PBT needs older checkpoints to be available for cloning/exploit.
   # Keeping too few checkpoints can cause missing-checkpoint restore errors.
-  tune_num_to_keep: 3               # keep last 3 checkpoints per trial (disk space)
+  tune_num_to_keep: 6               # keep last 6 checkpoints per trial (disk space)
   tune_keep_last_experiments: 2     # keep last 2 experiments under work_dir/tune
 
   tune_scheduler: gpbt_pl

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import os
+import pty
 import select
 import subprocess
+import termios
 import threading
 import time
 from dataclasses import dataclass
@@ -54,14 +57,25 @@ class StockfishUCI:
         self.read_timeout_s = float(read_timeout_s)
         self._lock = threading.Lock()
 
+  # Stockfish's stdout switches to block-buffered when stdin is a pipe,
+  # which causes the `uci` response (~1.5 KB) to never reach us — the
+  # buffer never fills, so we hang at "id name" and time out at 60s. A
+  # pty makes Stockfish's stdout line-buffered like a terminal and avoids
+  # the deadlock. Disable ECHO on the slave so input commands don't get
+  # echoed back into our read stream.
+        master_fd, slave_fd = pty.openpty()
+        attrs = termios.tcgetattr(slave_fd)
+        attrs[3] &= ~termios.ECHO
+        termios.tcsetattr(slave_fd, termios.TCSANOW, attrs)
+        self._tty_fd = master_fd
+        self._read_buf = b""
         self.proc = subprocess.Popen(  # pylint: disable=consider-using-with  # process outlives __init__ (closed in .close())
             [self.path],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
+            stdin=slave_fd,
+            stdout=slave_fd,
             stderr=subprocess.DEVNULL,
-            text=True,
-            bufsize=1,
         )
+        os.close(slave_fd)
 
         self._send("uci")
         self._wait_for("uciok")
@@ -82,13 +96,10 @@ class StockfishUCI:
                 self._send("quit")
             except (BrokenPipeError, OSError):
                 pass  # stockfish already exited
-            for stream in (self.proc.stdin, self.proc.stdout):
-                if stream is None:
-                    continue
-                try:
-                    stream.close()
-                except OSError:
-                    pass  # already closed
+            try:
+                os.close(self._tty_fd)
+            except OSError:
+                pass  # already closed
             try:
                 self.proc.kill()
             except ProcessLookupError:
@@ -104,31 +115,36 @@ class StockfishUCI:
             self.nodes = int(nodes)
 
     def _send(self, cmd: str) -> None:
-        assert self.proc.stdin is not None
-        self.proc.stdin.write(cmd + "\n")
-        self.proc.stdin.flush()
+        os.write(self._tty_fd, (cmd + "\n").encode("utf-8"))
 
     def _readline_with_deadline(self, deadline: float) -> str:
         """Blocking readline that respects ``deadline`` (monotonic seconds).
 
         Raises ``StockfishTimeoutError`` if no line arrives in time and
-        ``RuntimeError`` if the process closed stdout. Uses select() on
-        the underlying fd so a stalled subprocess can't hang us
-        forever (F004).
+        ``RuntimeError`` if the process closed stdout. Reads from the pty
+        master fd, accumulating bytes until a newline appears or the
+        deadline expires (F004).
         """
-        assert self.proc.stdout is not None
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise StockfishTimeoutError("Stockfish read deadline expired before select")
-        ready, _, _ = select.select([self.proc.stdout], [], [], remaining)
-        if not ready:
-            raise StockfishTimeoutError(
-                f"Stockfish stdout silent for {self.read_timeout_s:.1f}s"
-            )
-        line = self.proc.stdout.readline()
-        if not line:
-            raise RuntimeError("Stockfish process exited")
-        return line
+        while b"\n" not in self._read_buf:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise StockfishTimeoutError("Stockfish read deadline expired before select")
+            ready, _, _ = select.select([self._tty_fd], [], [], remaining)
+            if not ready:
+                raise StockfishTimeoutError(
+                    f"Stockfish stdout silent for {self.read_timeout_s:.1f}s"
+                )
+            try:
+                chunk = os.read(self._tty_fd, 4096)
+            except OSError as exc:
+                raise RuntimeError("Stockfish process exited") from exc
+            if not chunk:
+                raise RuntimeError("Stockfish process exited")
+            self._read_buf += chunk
+        nl = self._read_buf.index(b"\n")
+        line = self._read_buf[: nl + 1].decode("utf-8", errors="replace")
+        self._read_buf = self._read_buf[nl + 1 :]
+        return line.replace("\r\n", "\n")
 
     def _wait_for(self, token: str) -> None:
         deadline = time.monotonic() + self.read_timeout_s
@@ -144,7 +160,6 @@ class StockfishUCI:
         top lines so the caller can build a soft "SF policy" target distribution.
         """
         with self._lock:
-            assert self.proc.stdout is not None
             self._send(f"position fen {fen}")
             n = int(self.nodes) if nodes is None else int(nodes)
             self._send(f"go nodes {n}")
