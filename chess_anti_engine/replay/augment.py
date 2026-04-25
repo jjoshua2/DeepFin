@@ -10,17 +10,11 @@ from chess_anti_engine.moves.encode import (
 )
 
 from .buffer import ReplaySample
-from .shard import LEGAL_MASK_FIELDS
+from .shard import LEGAL_MASK_FIELDS, POLICY_SPACE_FIELDS
 
 # Fields whose rows live in POLICY_SIZE move space and must be remapped under
 # the mirror permutation. Includes all policy-like targets and legal masks.
-_MIRROR_POLICY_FIELDS = (
-    "policy_target",
-    "sf_policy_target",
-    "policy_soft_target",
-    "future_policy_target",
-    *LEGAL_MASK_FIELDS,
-)
+_MIRROR_POLICY_FIELDS = (*POLICY_SPACE_FIELDS, *LEGAL_MASK_FIELDS)
 
 
 def mirror_x(x: np.ndarray) -> np.ndarray:

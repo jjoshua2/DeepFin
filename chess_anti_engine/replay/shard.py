@@ -104,7 +104,7 @@ LEGAL_MASK_HAS_FIELDS: tuple[str, ...] = ("has_legal_mask", "has_sf_legal_mask",
 # Storing as padded-sparse (values + column indices + lengths) saves ~10x
 # memory per policy field in the shuffle buffer.
 
-_POLICY_SPARSE_FIELDS = ("policy_target", "sf_policy_target", "policy_soft_target", "future_policy_target")
+POLICY_SPACE_FIELDS = ("policy_target", "sf_policy_target", "policy_soft_target", "future_policy_target")
 
 
 def _padded_positions(nnz: np.ndarray, rows: np.ndarray, N: int) -> np.ndarray:
@@ -151,7 +151,7 @@ def _densify_policy(vals: np.ndarray, cols: np.ndarray, nnz: np.ndarray,
 def sparsify_chunk(arrs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
     """Convert dense policy arrays in a chunk dict to padded-sparse format."""
     out = dict(arrs)
-    for key in _POLICY_SPARSE_FIELDS:
+    for key in POLICY_SPACE_FIELDS:
         if key not in out:
             continue
         dense = out[key]
@@ -187,7 +187,7 @@ def sparsify_chunk(arrs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
 def densify_chunk(arrs: dict[str, np.ndarray], policy_size: int = POLICY_SIZE) -> dict[str, np.ndarray]:
     """Convert padded-sparse policy arrays back to dense format."""
     out = dict(arrs)
-    for key in _POLICY_SPARSE_FIELDS:
+    for key in POLICY_SPACE_FIELDS:
         cols_key = f"{key}_cols"
         nnz_key = f"{key}_nnz"
         if cols_key not in out:

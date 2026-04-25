@@ -11,7 +11,6 @@ from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 from chess_anti_engine.tune._utils import terminate_process as _terminate_process
-from chess_anti_engine.tune.process_cleanup import terminate_matching_processes
 from chess_anti_engine.utils.atomic import atomic_write_text
 
 

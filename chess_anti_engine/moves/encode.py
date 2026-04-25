@@ -136,47 +136,50 @@ MIRROR_POLICY_INV = np.empty((POLICY_SIZE,), dtype=np.int32)
 MIRROR_POLICY_INV[MIRROR_POLICY_MAP] = np.arange(POLICY_SIZE, dtype=np.int32)
 
 
-# Precomputed reverse LUT: policy index → (from_sq, to_sq, promotion) in real coordinates.
-# Shape: (2, POLICY_SIZE, 3) — axis 0: int(turn) (0=BLACK, 1=WHITE).
-# [:,idx,0] = from_sq, [:,idx,1] = to_sq, [:,idx,2] = promotion piece type (0=none, 2=knight, 3=bishop, 4=rook, 5=queen)
-_INDEX_TO_MOVE_LUT = np.full((2, POLICY_SIZE, 3), -1, dtype=np.int16)
+def _build_index_to_move_lut() -> np.ndarray:
+    """Precomputed reverse LUT: policy index → (from_sq, to_sq, promotion).
 
-for _turn in (chess.WHITE, chess.BLACK):
-    _ti = int(_turn)
-    for _idx in range(POLICY_SIZE):
-        _from_o = _idx // PLANE_COUNT
-        _plane = _idx % PLANE_COUNT
-        if _plane >= 64:
-            _rel = _plane - 64
-            _piece_idx = _rel // 3
-            _dir_idx = _rel % 3
-            _df = UNDERPROMO_DFS[_dir_idx]
-            _dr = 1
-            _ff, _fr = chess.square_file(_from_o), chess.square_rank(_from_o)
-            _tf, _tr = _ff + _df, _fr + _dr
-            if 0 <= _tf <= 7 and 0 <= _tr <= 7:
-                _to_o = chess.square(_tf, _tr)
-                _f_real = orient_square(_from_o, _turn)
-                _t_real = orient_square(_to_o, _turn)
-                _promo = [chess.KNIGHT, chess.BISHOP, chess.ROOK][_piece_idx]
-                _INDEX_TO_MOVE_LUT[_ti, _idx] = [_f_real, _t_real, _promo]
-        else:
-            _delta = _PLANE_TO_DELTA.get(_plane)
-            if _delta is not None:
-                _df, _dr = _delta
-                _ff, _fr = chess.square_file(_from_o), chess.square_rank(_from_o)
-                _tf, _tr = _ff + _df, _fr + _dr
-                if 0 <= _tf <= 7 and 0 <= _tr <= 7:
-                    _to_o = chess.square(_tf, _tr)
-                    _f_real = orient_square(_from_o, _turn)
-                    _t_real = orient_square(_to_o, _turn)
-  # Check for queen promotion (pawn reaching last rank)
-                    _promo_val = 0
-                    _real_rank = chess.square_rank(_t_real)
-                    if _real_rank == 7 or _real_rank == 0:
-  # Could be pawn promotion — mark as queen
-                        _promo_val = chess.QUEEN
-                    _INDEX_TO_MOVE_LUT[_ti, _idx] = [_f_real, _t_real, _promo_val]
+    Shape ``(2, POLICY_SIZE, 3)``; axis 0 is ``int(turn)`` (0=BLACK, 1=WHITE).
+    ``lut[:, idx, 0]`` = from_sq, ``lut[:, idx, 1]`` = to_sq,
+    ``lut[:, idx, 2]`` = promotion piece type (0=none, 2=knight, 3=bishop,
+    4=rook, 5=queen).
+    """
+    lut = np.full((2, POLICY_SIZE, 3), -1, dtype=np.int16)
+    for turn in (chess.WHITE, chess.BLACK):
+        ti = int(turn)
+        for idx in range(POLICY_SIZE):
+            from_o = idx // PLANE_COUNT
+            plane = idx % PLANE_COUNT
+            ff, fr = chess.square_file(from_o), chess.square_rank(from_o)
+            if plane >= 64:
+                rel = plane - 64
+                df = UNDERPROMO_DFS[rel % 3]
+                tf, tr = ff + df, fr + 1
+                if not (0 <= tf <= 7 and 0 <= tr <= 7):
+                    continue
+                to_o = chess.square(tf, tr)
+                promo = [chess.KNIGHT, chess.BISHOP, chess.ROOK][rel // 3]
+                lut[ti, idx] = [orient_square(from_o, turn), orient_square(to_o, turn), promo]
+                continue
+            delta = _PLANE_TO_DELTA.get(plane)
+            if delta is None:
+                continue
+            df, dr = delta
+            tf, tr = ff + df, fr + dr
+            if not (0 <= tf <= 7 and 0 <= tr <= 7):
+                continue
+            to_o = chess.square(tf, tr)
+            f_real = orient_square(from_o, turn)
+            t_real = orient_square(to_o, turn)
+  # Pawn reaching last rank: encode queen-promotion candidate; the
+  # real-board piece-type check happens at decode time in
+  # ``index_to_move_fast``.
+            promo_val = chess.QUEEN if chess.square_rank(t_real) in (0, 7) else 0
+            lut[ti, idx] = [f_real, t_real, promo_val]
+    return lut
+
+
+_INDEX_TO_MOVE_LUT = _build_index_to_move_lut()
 
 
 def index_to_move_fast(index: int, board: chess.Board) -> chess.Move:
@@ -281,27 +284,31 @@ def index_to_move(index: int, board: chess.Board) -> chess.Move:
     return index_to_move_fast(index, board)
 
 
-# Precomputed (from_sq, to_sq) → policy index for non-underpromotion moves.
-# Shape: (2, 64, 64) — axis 0: int(turn) (0=BLACK, 1=WHITE).
-_MOVE_INDEX_LUT = np.full((2, 64, 64), -1, dtype=np.int32)
+def _build_move_index_lut() -> np.ndarray:
+    """Precomputed (from_sq, to_sq) → policy index for non-underpromotion moves.
 
-for _turn in (chess.WHITE, chess.BLACK):
-    _ti = int(_turn)
-    for _from_sq in range(64):
-        _f = orient_square(_from_sq, _turn)
-        _ff = chess.square_file(_f)
-        _fr = chess.square_rank(_f)
-        for _to_sq in range(64):
-            if _from_sq == _to_sq:
-                continue
-            _t = orient_square(_to_sq, _turn)
-            _tf = chess.square_file(_t)
-            _tr = chess.square_rank(_t)
-            _df = _tf - _ff
-            _dr = _tr - _fr
-            _p = _DELTA_TO_PLANE.get((_df, _dr))
-            if _p is not None:
-                _MOVE_INDEX_LUT[_ti][_from_sq][_to_sq] = int(_f) * PLANE_COUNT + int(_p)
+    Shape ``(2, 64, 64)``; axis 0 is ``int(turn)`` (0=BLACK, 1=WHITE).
+    Returns -1 for unreachable (df, dr) deltas.
+    """
+    lut = np.full((2, 64, 64), -1, dtype=np.int32)
+    for turn in (chess.WHITE, chess.BLACK):
+        ti = int(turn)
+        for from_sq in range(64):
+            f = orient_square(from_sq, turn)
+            ff, fr = chess.square_file(f), chess.square_rank(f)
+            for to_sq in range(64):
+                if from_sq == to_sq:
+                    continue
+                t = orient_square(to_sq, turn)
+                df = chess.square_file(t) - ff
+                dr = chess.square_rank(t) - fr
+                p = _DELTA_TO_PLANE.get((df, dr))
+                if p is not None:
+                    lut[ti][from_sq][to_sq] = int(f) * PLANE_COUNT + int(p)
+    return lut
+
+
+_MOVE_INDEX_LUT = _build_move_index_lut()
 
 
 def _extract_c_legal_args(board: chess.Board) -> tuple:
