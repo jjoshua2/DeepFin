@@ -10,6 +10,7 @@ and makes the v2 multi-GPU swap a local change.
 """
 from __future__ import annotations
 
+import dataclasses
 import threading
 from dataclasses import dataclass
 from typing import Protocol
@@ -502,17 +503,7 @@ class SearchWorker:
             boards=[board],
             device=self._device,
             rng=self._rng,
-            cfg=GumbelConfig(
-                simulations=chunk,
-                topk=self._cfg.topk,
-                temperature=self._cfg.temperature,
-                c_visit=self._cfg.c_visit,
-                c_scale=self._cfg.c_scale,
-                c_puct=self._cfg.c_puct,
-                fpu_reduction=self._cfg.fpu_reduction,
-                full_tree=self._cfg.full_tree,
-                add_noise=False,
-            ),
+            cfg=dataclasses.replace(self._cfg, simulations=chunk, add_noise=False),
             evaluator=self._evaluator,
             pre_pol_logits=self._root_pol_logits,
             pre_wdl_logits=self._root_wdl_logits,
@@ -688,22 +679,14 @@ def _pv_mate_moves(root_board: chess.Board, pv_indices: list[int]) -> int | None
 
 
 def _best_move_and_pv(tree: MCTSTree, root_id: int) -> tuple[int, list[int]]:
-    actions, visits = tree.get_children_visits(root_id)
-    if actions.size == 0:
+    """Most-visited root move and its PV. ``q`` is unused at the call sites
+    that take this shape (so the third tuple element from ``_multipv_lines``
+    is dropped here)."""
+    lines = _multipv_lines(tree, root_id, root_q_default=0.0, n=1)
+    if not lines:
         return -1, []
-    best = int(actions[int(np.argmax(visits))])
-    pv = [best]
-    current_id = tree.find_child(root_id, best)
-  # Tree walks from root are acyclic by construction of MCTSTree, and the
-  # first unexpanded node naturally terminates the descent. No depth cap.
-    while current_id != -1:
-        a, vs = tree.get_children_visits(current_id)
-        if a.size == 0:
-            break
-        nxt = int(a[int(np.argmax(vs))])
-        pv.append(nxt)
-        current_id = tree.find_child(current_id, nxt)
-    return best, pv
+    _, _, pv = lines[0]
+    return pv[0], pv
 
 
 def _predicted_opponent_reply(tree: MCTSTree, root_id: int) -> int | None:
@@ -716,17 +699,10 @@ def _predicted_opponent_reply(tree: MCTSTree, root_id: int) -> int | None:
     Distinct from the "root's second-most-visited child" which would be
     our 2nd-best move from the current position — a different concept.
     """
-    actions, visits = tree.get_children_visits(root_id)
-    if actions.size == 0:
+    lines = _multipv_lines(tree, root_id, root_q_default=0.0, n=1)
+    if not lines or len(lines[0][2]) < 2:
         return None
-    best = int(actions[int(np.argmax(visits))])
-    child_id = tree.find_child(root_id, best)
-    if child_id == -1:
-        return None
-    a, vs = tree.get_children_visits(child_id)
-    if a.size == 0:
-        return None
-    return int(a[int(np.argmax(vs))])
+    return lines[0][2][1]
 
 
 def _uci_pv(root_board: chess.Board, pv_indices: list[int]) -> tuple[str, ...]:
