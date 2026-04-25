@@ -17,18 +17,16 @@ def masked_mean(x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     return (x * mask).sum() / denom
 
 
-def policy_cross_entropy(logits: torch.Tensor, target_probs: torch.Tensor) -> torch.Tensor:
+def soft_cross_entropy(logits: torch.Tensor, target_probs: torch.Tensor) -> torch.Tensor:
     """Cross-entropy with a soft target distribution.
 
-    logits: (B,A)
-    target_probs: (B,A) with rows summing to 1 over legal moves
+    ``target_probs`` must already be normalized along the last axis (rows
+    summing to 1 — true for ``policy_t``, ``policy_soft_t``,
+    ``future_policy_t``, ``categorical_t``, and the post-clamp
+    ``sf_wdl_probs``). Callers working from raw counts must normalize
+    first.
     """
-    logp = F.log_softmax(logits, dim=-1)
-    return -(target_probs * logp).sum(dim=-1)
-
-
-def wdl_cross_entropy(logits: torch.Tensor, target_wdl: torch.Tensor) -> torch.Tensor:
-    return F.cross_entropy(logits, target_wdl, reduction="none")
+    return -(target_probs * F.log_softmax(logits, dim=-1)).sum(dim=-1)
 
 
 def apply_mask_to_logits(
@@ -48,16 +46,8 @@ def apply_mask_to_logits(
     return logits + (1.0 - mask) * -1e9 * active
 
 
-def soft_cross_entropy(logits: torch.Tensor, target_probs: torch.Tensor, *, eps: float = 1e-8) -> torch.Tensor:
-    """Cross-entropy with a soft target distribution.
-
-    logits: (B,K)
-    target_probs: (B,K) non-negative (does not need to be perfectly normalized)
-    """
-    p = target_probs.to(torch.float32).clamp_min(0.0)
-    p = p / p.sum(dim=-1, keepdim=True).clamp_min(eps)
-    logp = F.log_softmax(logits, dim=-1)
-    return -(p * logp).sum(dim=-1)
+def _huber_per_sample(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    return F.huber_loss(pred, target, delta=0.1, reduction="none").mean(dim=-1)
 
 
 def _get_mask(batch: dict[str, torch.Tensor], key: str, *, default: float = 0.0) -> torch.Tensor:
@@ -92,41 +82,36 @@ def compute_loss(
     def _apply_legal_mask(logits: torch.Tensor) -> torch.Tensor:
         return apply_mask_to_logits(logits, batch, "legal_mask", "has_legal_mask")
 
-  # policy
     base_policy_logits = outputs["policy"] if "policy" in outputs else outputs.get("policy_own")
     if base_policy_logits is None:
         raise KeyError("Model outputs must include either 'policy' or 'policy_own'.")
 
-    pol_ce = policy_cross_entropy(_apply_legal_mask(base_policy_logits), batch["policy_t"])
+    pol_ce = soft_cross_entropy(_apply_legal_mask(base_policy_logits), batch["policy_t"])
     zero_loss = torch.zeros_like(pol_ce)
     has_policy = _get_mask(batch, "has_policy", default=1.0)
 
-  # soft policy (temp2)
     has_soft = _get_mask(batch, "has_policy_soft")
     soft_logits = outputs.get("policy_soft", base_policy_logits)
     soft_target = batch.get("policy_soft_t")
-    soft_ce = policy_cross_entropy(_apply_legal_mask(soft_logits), soft_target) if soft_target is not None else zero_loss
+    soft_ce = soft_cross_entropy(_apply_legal_mask(soft_logits), soft_target) if soft_target is not None else zero_loss
 
-  # future policy (t+2): target and mask are in the t+2 move space.
+  # Future policy (t+2): target and legal mask are in the t+2 move space.
     has_future = _get_mask(batch, "has_future")
     future_logits = outputs.get("policy_future", base_policy_logits)
     future_target = batch.get("future_policy_t")
     if future_target is not None:
-        future_ce = policy_cross_entropy(
+        future_ce = soft_cross_entropy(
             apply_mask_to_logits(future_logits, batch, "future_legal_mask", "has_future_legal_mask"),
             future_target,
         )
     else:
         future_ce = zero_loss
 
-  # value
-    wdl_ce = wdl_cross_entropy(outputs["wdl"], batch["wdl_t"])
+    wdl_ce = F.cross_entropy(outputs["wdl"], batch["wdl_t"], reduction="none")
 
-  # SF move prediction: target and mask are in the t+1 move space (opp POV).
+  # SF move prediction: target and legal mask are in the t+1 move space (opp POV).
     has_sf_move = _get_mask(batch, "has_sf_move")
-    has_sf_policy = batch.get("has_sf_policy")
-    if has_sf_policy is None:
-        has_sf_policy = has_sf_move
+    has_sf_policy = _get_mask(batch, "has_sf_policy") if "has_sf_policy" in batch else has_sf_move
 
     sf_pol_logits = outputs.get("policy_sf")
     sf_policy_target = batch.get("sf_policy_t")
@@ -138,7 +123,6 @@ def compute_loss(
             sf_policy_target,
         )
 
-  # sf_eval
     has_sf_wdl = _get_mask(batch, "has_sf_wdl")
     sf_wdl_raw = batch.get("sf_wdl")
     sf_wdl_probs = None
@@ -146,12 +130,8 @@ def compute_loss(
         sf_wdl_probs = sf_wdl_raw.clamp_min(0.0)
         sf_wdl_probs = sf_wdl_probs / sf_wdl_probs.sum(dim=-1, keepdim=True).clamp_min(1e-8)
     sf_eval_logits = outputs.get("sf_eval")
-    if sf_eval_logits is None or sf_wdl_probs is None:
-        sf_eval_ce = zero_loss
-    else:
-        sf_eval_ce = soft_cross_entropy(sf_eval_logits, sf_wdl_probs)
+    sf_eval_ce = soft_cross_entropy(sf_eval_logits, sf_wdl_probs) if sf_eval_logits is not None and sf_wdl_probs is not None else zero_loss
 
-  # moves_left
     has_moves_left = _get_mask(batch, "has_moves_left")
     ml_pred = outputs.get("moves_left")
     moves_left_t = batch.get("moves_left")
@@ -160,32 +140,20 @@ def compute_loss(
     else:
         ml_loss = F.smooth_l1_loss(ml_pred.squeeze(-1), moves_left_t, reduction="none")
 
-  # categorical value
     has_cat = _get_mask(batch, "has_categorical")
     cat_logits = outputs.get("categorical")
     categorical_t = batch.get("categorical_t")
-    if cat_logits is None or categorical_t is None:
-        cat_ce = zero_loss
-    else:
-        cat_ce = policy_cross_entropy(cat_logits, categorical_t)
+    cat_ce = soft_cross_entropy(cat_logits, categorical_t) if cat_logits is not None and categorical_t is not None else zero_loss
 
-  # volatility (network)
     has_vol = _get_mask(batch, "has_volatility")
     vol_pred = outputs.get("volatility")
     volatility_t = batch.get("volatility_t")
-    if vol_pred is None or volatility_t is None:
-        vol_loss = zero_loss
-    else:
-        vol_loss = F.huber_loss(vol_pred, volatility_t, delta=0.1, reduction="none").mean(dim=-1)
+    vol_loss = _huber_per_sample(vol_pred, volatility_t) if vol_pred is not None and volatility_t is not None else zero_loss
 
-  # volatility (Stockfish)
     has_sf_vol = _get_mask(batch, "has_sf_volatility")
     sf_vol_pred = outputs.get("sf_volatility")
     sf_volatility_t = batch.get("sf_volatility_t")
-    if sf_vol_pred is None or sf_volatility_t is None:
-        sf_vol_loss = zero_loss
-    else:
-        sf_vol_loss = F.huber_loss(sf_vol_pred, sf_volatility_t, delta=0.1, reduction="none").mean(dim=-1)
+    sf_vol_loss = _huber_per_sample(sf_vol_pred, sf_volatility_t) if sf_vol_pred is not None and sf_volatility_t is not None else zero_loss
 
   # Loss weights — float() casts defend against numpy scalars from Ray Tune config mutation
     w_sf_volatility = float(w_sf_volatility) if w_sf_volatility is not None else float(w_volatility)
