@@ -1226,7 +1226,13 @@ class WorkerSession:
                     self.model_sha = ""
                     return
 
-            model_cfg = model_config_from_manifest_dict(manifest.get("model_config") or {})
+            # Force-off gradient checkpointing: workers run inference only,
+            # and grad-ckpt hooks would diverge the compiled graph from the
+            # broker paths that hardcode False.
+            model_cfg = dataclasses.replace(
+                model_config_from_manifest_dict(manifest.get("model_config") or {}),
+                use_gradient_checkpointing=False,
+            )
             self.model_cfg_active = model_cfg
 
             self.model = self._load_and_compile_model(

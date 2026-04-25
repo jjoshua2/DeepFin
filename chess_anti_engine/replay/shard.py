@@ -14,6 +14,7 @@ import zarr
 from numcodecs import Blosc
 
 from chess_anti_engine.moves import POLICY_SIZE
+from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 
 from .buffer import ReplaySample
 
@@ -73,7 +74,7 @@ _OPTIONAL_FIELD_SPECS: tuple[_OptFieldSpec, ...] = (
     _OptFieldSpec("moves_left",           "has_moves_left",        (),            _F16),
     _OptFieldSpec("is_network_turn",      "has_is_network_turn",   (),            _U8_DT),
     _OptFieldSpec("is_selfplay",          "has_is_selfplay",       (),            _U8_DT),
-    _OptFieldSpec("categorical_target",   "has_categorical",       (32,),         _F16),
+    _OptFieldSpec("categorical_target",   "has_categorical",       (DEFAULT_CATEGORICAL_BINS,), _F16),
     _OptFieldSpec("policy_soft_target",   "has_policy_soft",       _POLICY_SHAPE, _F16),
     _OptFieldSpec("future_policy_target", "has_future",            _POLICY_SHAPE, _F16),
     _OptFieldSpec("volatility_target",    "has_volatility",        (3,),          _F16),

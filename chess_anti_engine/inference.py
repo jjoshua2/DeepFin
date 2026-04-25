@@ -8,7 +8,7 @@ import queue
 import struct
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dataclass_replace
 from multiprocessing import resource_tracker
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
@@ -876,7 +876,14 @@ class SlotBroker:
         if self._model is not None and self._model_sha == model_sha:
             return
 
-        model_cfg = model_config_from_manifest_dict(manifest.get("model_config") or {})
+        # Force-off gradient checkpointing for inference: the manifest value
+        # reflects the trainer's setting, but the broker is eval-only and
+        # any grad-ckpt hooks would diverge from SharedSlotBroker (which
+        # also hardcodes False) in compiled-graph shape.
+        model_cfg = dataclass_replace(
+            model_config_from_manifest_dict(manifest.get("model_config") or {}),
+            use_gradient_checkpointing=False,
+        )
         model_path = self.publish_dir / "latest_model.pt"
         ckpt = torch.load(str(model_path), map_location="cpu")
         sd = ckpt.get("model", ckpt)
