@@ -339,7 +339,11 @@ def _build_replay_samples(
         future = None
         future_lmask = None
         future_idx = ply_to_index.get(int(rec.ply_index) + 2)
-        if future_idx is not None and bool(records[future_idx].has_policy):
+        # Don't gate on records[future_idx].has_policy — the future record's
+        # MCTS distribution is valid supervision regardless of sim count
+        # (fast-sim is noisier than full but still ground truth for "what the
+        # network played"). Gating dropped 75% of targets.
+        if future_idx is not None:
             future = records[future_idx].policy_probs
             future_lmask = records[future_idx].legal_mask
 
