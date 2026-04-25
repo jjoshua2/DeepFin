@@ -1,6 +1,11 @@
-from .puzzles import PuzzleResult, PuzzleSuite, load_epd, load_lichess_csv, run_puzzle_eval
+from .puzzles import (
+    PuzzleResult, PuzzleSuite,
+    load_epd, load_lichess_csv,
+    run_puzzle_eval, run_value_head_puzzle_eval,
+)
 
 __all__ = [
-    "PuzzleSuite", "PuzzleResult", "run_puzzle_eval",
+    "PuzzleSuite", "PuzzleResult",
     "load_epd", "load_lichess_csv",
+    "run_puzzle_eval", "run_value_head_puzzle_eval",
 ]

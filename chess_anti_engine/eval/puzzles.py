@@ -323,3 +323,92 @@ def run_puzzle_eval(
     return PuzzleResult(
         total=total, correct=correct, accuracy=accuracy, by_rating=by_rating,
     )
+
+
+@torch.no_grad()
+def run_value_head_puzzle_eval(
+    model: torch.nn.Module,
+    suite: PuzzleSuite,
+    *,
+    device: str,
+    batch_size: int = 256,
+    rating_buckets: tuple[tuple[int, int], ...] = DEFAULT_RATING_BUCKETS,
+) -> PuzzleResult:
+    """Score the value head by argmax over legal-move push-evals (LC0-blog).
+
+    For each puzzle, push every legal move and query the value head on the
+    resulting position. After a push the side-to-move flips, so the
+    *opponent's* P(W) on the resulting board corresponds to the mover's
+    P(L). The candidate that minimises that — equivalently, that maximises
+    ``P(L_opp) - P(W_opp)`` — is the value head's pick. Score 1 if it
+    matches any of the puzzle's accepted best moves.
+
+    This is independent of the policy head; results test value-head
+    correctness only.
+    """
+    from chess_anti_engine.encoding import encode_position  # local import; slow
+
+    model.eval()
+    total = len(suite)
+    correct_flags = [False] * total
+
+    # Flatten (puzzle_idx, candidate_move) pairs across the suite, then batch.
+    flat_idx: list[int] = []
+    flat_moves: list[chess.Move] = []
+    flat_x: list[np.ndarray] = []
+    flat_groups: list[tuple[int, int]] = []  # (puzzle_idx, # legal moves) — used to slice scores
+
+    legal_per_puzzle: list[list[chess.Move]] = []
+    for puzzle in suite.puzzles:
+        legal = list(puzzle.board.legal_moves)
+        legal_per_puzzle.append(legal)
+        for mv in legal:
+            puzzle.board.push(mv)
+            flat_x.append(encode_position(puzzle.board))
+            puzzle.board.pop()
+            flat_moves.append(mv)
+        flat_groups.append((len(flat_idx), len(legal)))
+        flat_idx.extend([len(legal_per_puzzle) - 1] * len(legal))
+
+    # Batched value-head forward.
+    pos_count = len(flat_x)
+    scores = np.empty(pos_count, dtype=np.float32)
+    for start in range(0, pos_count, batch_size):
+        end = min(start + batch_size, pos_count)
+        x = torch.from_numpy(np.stack(flat_x[start:end])).to(device, non_blocking=True)
+        out = model(x)
+        wdl_logits = out["wdl"] if isinstance(out, dict) else out[1]
+        wdl_p = torch.softmax(wdl_logits, dim=-1).float().cpu().numpy()
+        # After-push board is opponent's POV: P_opp(L) - P_opp(W) = mover's signed value.
+        scores[start:end] = wdl_p[:, 2] - wdl_p[:, 0]
+
+    for puzzle_idx, (slot_start, n_legal) in enumerate(flat_groups):
+        if n_legal == 0:
+            continue
+        slot = scores[slot_start:slot_start + n_legal]
+        best = int(np.argmax(slot))
+        chosen = flat_moves[slot_start + best]
+        if chosen in suite.puzzles[puzzle_idx].best_moves:
+            correct_flags[puzzle_idx] = True
+
+    correct = sum(correct_flags)
+    accuracy = float(correct) / max(1, total)
+
+    by_rating: list[tuple[int, int, int, int, float]] = []
+    if any(p.rating is not None for p in suite.puzzles):
+        for low, high in rating_buckets:
+            b_total = 0
+            b_correct = 0
+            for puzzle, ok in zip(suite.puzzles, correct_flags):
+                r = puzzle.rating
+                if r is None or r < low or r >= high:
+                    continue
+                b_total += 1
+                if ok:
+                    b_correct += 1
+            if b_total > 0:
+                by_rating.append((low, high, b_total, b_correct, b_correct / b_total))
+
+    return PuzzleResult(
+        total=total, correct=correct, accuracy=accuracy, by_rating=by_rating,
+    )
