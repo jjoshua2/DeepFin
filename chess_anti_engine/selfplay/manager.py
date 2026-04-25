@@ -15,7 +15,7 @@ from chess_anti_engine.mcts.gumbel import run_gumbel_root_many
 from chess_anti_engine.mcts.puct import run_mcts_many
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.stockfish.pool import StockfishPool
-from chess_anti_engine.stockfish.uci import StockfishResult, StockfishUCI
+from chess_anti_engine.stockfish.uci import StockfishUCI
 
 try:
     from chess_anti_engine.mcts.puct_c import run_mcts_many_c as _run_mcts_many_c
@@ -44,7 +44,6 @@ from chess_anti_engine.moves import (
     POLICY_SIZE,
     index_to_move,
     legal_move_mask,
-    move_to_index,
 )
 from chess_anti_engine.moves.encode import uci_to_policy_index
 from chess_anti_engine.selfplay.config import (
@@ -54,6 +53,7 @@ from chess_anti_engine.selfplay.config import (
     SearchConfig,
     TemperatureConfig,
 )
+from chess_anti_engine.selfplay.finalize import finalize_game
 from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.selfplay.state import (
     SOFT_RESIGN_CONSECUTIVE,
@@ -67,13 +67,7 @@ from chess_anti_engine.selfplay.temperature import (
     apply_policy_temperature,
     temperature_for_ply,
 )
-from chess_anti_engine.tablebase import (
-    is_tb_eligible,
-    probe_best_move,
-    rescore_game_samples,
-    tb_adjudicate_result,
-)
-from chess_anti_engine.train.targets import hlgauss_target
+from chess_anti_engine.tablebase import tb_adjudicate_result
 
 
 # Backward-compatible alias: tests and bench scripts import this name directly.
@@ -173,328 +167,8 @@ def play_batch(
     )
     eval_impl = state.evaluator
 
-    def _sf_terminal_result(turn_is_white: bool, sf_res: StockfishResult | None) -> str:
-        if sf_res is None or sf_res.wdl is None:
-            return "1/2-1/2"
-        wdl_stm = sf_res.wdl
-        if not turn_is_white:
-            wdl_white = np.array(
-                [float(wdl_stm[2]), float(wdl_stm[1]), float(wdl_stm[0])],
-                dtype=np.float32,
-            )
-        else:
-            wdl_white = np.asarray(wdl_stm, dtype=np.float32)
-        if float(wdl_white[0]) > float(game.timeout_adjudication_threshold):
-            return "1-0"
-        if float(wdl_white[2]) > float(game.timeout_adjudication_threshold):
-            return "0-1"
-        return "1/2-1/2"
-
     all_samples: list[ReplaySample] = []
 
-    def _finalize_game(i: int) -> None:
-        """Finalize a completed game: compute labels, build samples, update stats."""
-        cb = state.cboards[i]
-        # When C per-ply is active, ``state.boards[i]`` is the starting position —
-        # reconstruct by replaying ``state.move_idx_history[i]``.  When the Python
-        # fallback is active, ``state.boards[i]`` is already the final position
-        # (pushed each ply).
-        if state.has_c_ply:
-            b = state.boards[i].copy(stack=False)
-            for _mi in state.move_idx_history[i]:
-                _mv = index_to_move(_mi, b)
-                b.push(_mv)
-        else:
-            b = state.boards[i]
-        # TB adjudication (if enabled) short-circuits cb.result() — this game
-        # was ended early at a known-result endgame position. Skip the SF
-        # terminal eval branch below and use the stashed TB result directly.
-        _tb_stash = state.tb_result_arr[i]
-        result = _tb_stash if _tb_stash is not None else cb.result()
-        _game_plies = int(cb.ply)
-        state.stats.total_game_plies += _game_plies
-        _is_cm = cb.is_checkmate()
-        _is_sm = cb.is_stalemate()
-        if _is_cm:
-            state.stats.checkmate_games += 1
-        elif _is_sm:
-            state.stats.stalemate_games += 1
-
-        was_tb_adjudicated = _tb_stash is not None
-        if was_tb_adjudicated:
-            state.stats.tb_adjudicated_games += 1
-
-        was_adjudicated = False
-        sf_res: StockfishResult | None = None
-        if result == "*":
-            state.stats.adjudicated_games += 1
-            was_adjudicated = True
-            try:
-                if isinstance(state.stockfish, StockfishPool):
-                    sf_res = state.stockfish.submit(
-                        cb.fen(), nodes=int(state.terminal_eval_nodes),
-                    ).result()
-                else:
-                    sf_res = state.stockfish.search(
-                        cb.fen(), nodes=int(state.terminal_eval_nodes),
-                    )
-            except (OSError, ValueError, RuntimeError):
-                sf_res = None
-            result = _sf_terminal_result(bool(cb.turn), sf_res)
-
-        # Debug: log unexpected short wins
-        if (
-            not state.selfplay_arr[i]
-            and result in ("1-0", "0-1")
-            and _game_plies < int(game.max_plies) - 10
-        ):
-            outcome = b.outcome(claim_draw=True)
-            _term = outcome.termination.name if outcome else "adjudicated"
-            _log = logging.getLogger("chess_anti_engine.selfplay")
-            _log.warning(
-                "Short win: %s at %d plies (max=%d), term=%s, adj=%s, is_over=%s",
-                result, _game_plies, int(game.max_plies), _term,
-                was_adjudicated, cb.is_game_over(),
-            )
-
-        # Log final FEN + SF WDL for games that reached max_plies.
-        # These are rare (~0.03% of games); SF eval was already paid for during adjudication.
-        if was_adjudicated and _game_plies >= int(game.max_plies):
-            _wdl_str = (
-                f"{float(sf_res.wdl[0]):.3f}/{float(sf_res.wdl[1]):.3f}/{float(sf_res.wdl[2]):.3f}"
-                if (sf_res is not None and sf_res.wdl is not None) else "none"
-            )
-            logging.getLogger("chess_anti_engine.selfplay").warning(
-                "MAX_PLY_GAME plies=%d result=%s sf_wdl(stm)=%s fen=%s",
-                _game_plies, result, _wdl_str, cb.fen(),
-            )
-
-        records = state.samples_per_game[i]
-
-        # Syzygy tablebase rescoring
-        tb_policy_overrides: dict[int, np.ndarray] = {}
-        if game.syzygy_path and state.starting_boards is not None:
-            replay_board = state.starting_boards[i].copy()
-            replay_boards: list[chess.Board] = []
-            move_stack = list(b.move_stack)
-            # With ``state.has_c_ply``, ``b`` was rebuilt via ``copy(stack=False)``
-            # + replayed network moves, so ``b.move_stack`` contains only network
-            # moves. In the Python path ``b`` was pushed in-place, so its stack
-            # contains opening + network moves.
-            opening_len = 0 if state.has_c_ply else len(state.starting_boards[i].move_stack)
-
-            for mv in move_stack[opening_len:]:
-                replay_board.push(mv)
-                replay_boards.append(replay_board.copy())
-
-            tb_result = rescore_game_samples(replay_boards, game.syzygy_path)
-            if tb_result is not None:
-                result = tb_result
-
-            if game.syzygy_policy:
-                replay_board = state.starting_boards[i].copy()
-                sample_idx = 0
-                _is_sp = bool(state.selfplay_arr[i])
-                for mv in move_stack[opening_len:]:
-                    board_before = replay_board.copy()
-                    is_net = replay_board.turn == state.net_color(i)
-                    # In selfplay games the network plays both sides, so every
-                    # ply produces a sample.  In curriculum games only the
-                    # network-color turns produce samples.
-                    is_sample_turn = is_net or _is_sp
-                    if is_sample_turn:
-                        if sample_idx >= len(records):
-                            break
-                        if is_tb_eligible(board_before):
-                            best = probe_best_move(board_before, game.syzygy_path)
-                            if best is not None:
-                                try:
-                                    a = int(move_to_index(best, board_before))
-                                except (ValueError, KeyError):
-                                    a = -1
-                                if a >= 0:
-                                    p = np.zeros((POLICY_SIZE,), dtype=np.float32)
-                                    p[a] = 1.0
-                                    tb_policy_overrides[sample_idx] = p
-                        sample_idx += 1
-                    replay_board.push(mv)
-
-        game_w = 0
-        game_d = 0
-        game_l = 0
-        game_total_draws = 0
-        game_selfplay_games = 0
-        game_selfplay_adj = 0
-        game_selfplay_draws = 0
-        game_curriculum_games = 0
-        game_curriculum_adj = 0
-        game_curriculum_draws = 0
-
-        # Stats
-        if state.selfplay_arr[i]:
-            state.stats.selfplay_games += 1
-            game_selfplay_games = 1
-            if was_adjudicated:
-                state.stats.selfplay_adjudicated_games += 1
-                game_selfplay_adj = 1
-        else:
-            state.stats.curriculum_games += 1
-            game_curriculum_games = 1
-            if was_adjudicated:
-                state.stats.curriculum_adjudicated_games += 1
-                game_curriculum_adj = 1
-
-        if result == "1/2-1/2":
-            state.stats.total_draw_games += 1
-            game_total_draws = 1
-            if state.selfplay_arr[i]:
-                state.stats.selfplay_draw_games += 1
-                game_selfplay_draws = 1
-            else:
-                state.stats.curriculum_draw_games += 1
-                game_curriculum_draws = 1
-
-        if not state.selfplay_arr[i]:
-            net_col = state.net_color(i)
-            if result == "1/2-1/2":
-                state.stats.d += 1
-                game_d = 1
-            elif (result == "1-0" and net_col == chess.WHITE) or (result == "0-1" and net_col == chess.BLACK):
-                state.stats.w += 1
-                game_w = 1
-            else:
-                state.stats.l += 1
-                game_l = 1
-
-        if not state.selfplay_arr[i]:
-            if game_w:
-                state.stats.plies_win += _game_plies
-            elif game_d:
-                state.stats.plies_draw += _game_plies
-            elif game_l:
-                state.stats.plies_loss += _game_plies
-
-        n = len(records)
-        ply_to_index = {int(rec.ply_index): idx for idx, rec in enumerate(records)}
-
-        # Volatility targets + SF eval delta6 metric (single pass over records).
-        vol_targets: list[np.ndarray | None] = [None] * n
-        sf_vol_targets: list[np.ndarray | None] = [None] * n
-        for t in range(n):
-            th = ply_to_index.get(int(records[t].ply_index) + 6)
-            if th is not None:
-                if state.volatility_source == "search":
-                    w0 = records[t].search_wdl_est
-                    w6 = records[th].search_wdl_est
-                else:
-                    w0 = records[t].net_wdl_est
-                    w6 = records[th].net_wdl_est
-                vol_targets[t] = np.abs(w6 - w0).astype(np.float32, copy=False)
-
-                sf0 = records[t].sf_wdl
-                sf6 = records[th].sf_wdl
-                if (sf0 is not None) and (sf6 is not None):
-                    sf_vol_targets[t] = np.abs(sf6 - sf0).astype(np.float32, copy=False)
-                    wr0 = float(sf0[0]) + 0.5 * float(sf0[1])
-                    wr6 = float(sf6[0]) + 0.5 * float(sf6[1])
-                    state.stats.sf_d6_sum += abs(wr6 - wr0)
-                    state.stats.sf_d6_n += 1
-
-        # Build ReplaySample objects
-        sample_start = len(all_samples)
-        for t, rec in enumerate(records):
-            if float(rec.sample_weight) < 1.0 and rng.random() > float(rec.sample_weight):
-                continue
-            if float(rec.keep_prob) < 1.0 and rng.random() > float(rec.keep_prob):
-                continue
-            if not bool(rec.has_policy):
-                continue
-
-            if result == "1/2-1/2":
-                wdl = 1
-            elif (result == "1-0" and rec.pov_color == chess.WHITE) or \
-                 (result == "0-1" and rec.pov_color == chess.BLACK):
-                wdl = 0
-            else:
-                wdl = 2
-
-            total_plies_played = max(1, int(cb.ply))
-            moves_left = float(max(0, total_plies_played - int(rec.ply_index))) / max(1.0, float(game.max_plies))
-
-            scalar_v = 1.0 if wdl == 0 else (0.0 if wdl == 1 else -1.0)
-            cat = hlgauss_target(scalar_v, num_bins=game.categorical_bins, sigma=game.hlgauss_sigma)
-
-            eff_probs = tb_policy_overrides.get(t, rec.policy_probs)
-            soft = _apply_temperature(eff_probs, game.soft_policy_temp)
-
-            future = None
-            future_lmask = None
-            future_idx = ply_to_index.get(int(rec.ply_index) + 2)
-            if future_idx is not None and bool(records[future_idx].has_policy):
-                future = records[future_idx].policy_probs
-                future_lmask = records[future_idx].legal_mask
-
-            vol = vol_targets[t]
-            sf_vol = sf_vol_targets[t]
-
-            all_samples.append(
-                ReplaySample(
-                    x=rec.x,
-                    policy_target=eff_probs,
-                    wdl_target=int(wdl),
-                    priority=float(rec.priority),
-                    has_policy=bool(rec.has_policy),
-                    sf_wdl=rec.sf_wdl,
-                    sf_move_index=rec.sf_move_index,
-                    sf_policy_target=rec.sf_policy_target,
-                    moves_left=moves_left,
-                    is_network_turn=True,
-                    categorical_target=cat,
-                    policy_soft_target=soft,
-                    future_policy_target=future,
-                    has_future=(future is not None),
-                    volatility_target=vol,
-                    has_volatility=(vol is not None),
-                    sf_volatility_target=sf_vol,
-                    has_sf_volatility=(sf_vol is not None),
-                    legal_mask=rec.legal_mask,
-                    sf_legal_mask=rec.sf_legal_mask,
-                    future_legal_mask=future_lmask,
-                    is_selfplay=bool(state.selfplay_arr[i]),
-                ),
-            )
-
-        if on_game_complete is not None:
-            game_samples = list(all_samples[sample_start:])
-            if game_samples:
-                on_game_complete(
-                    CompletedGameBatch(
-                        samples=game_samples,
-                        positions=len(game_samples),
-                        w=game_w,
-                        d=game_d,
-                        l=game_l,
-                        total_game_plies=_game_plies,
-                        adjudicated_games=1 if was_adjudicated else 0,
-                        tb_adjudicated_games=1 if was_tb_adjudicated else 0,
-                        total_draw_games=game_total_draws,
-                        selfplay_games=game_selfplay_games,
-                        selfplay_adjudicated_games=game_selfplay_adj,
-                        selfplay_draw_games=game_selfplay_draws,
-                        curriculum_games=game_curriculum_games,
-                        curriculum_adjudicated_games=game_curriculum_adj,
-                        curriculum_draw_games=game_curriculum_draws,
-                        checkmate_games=1 if _is_cm else 0,
-                        stalemate_games=1 if _is_sm else 0,
-                        plies_win=_game_plies if game_w else 0,
-                        plies_draw=_game_plies if game_d else 0,
-                        plies_loss=_game_plies if game_l else 0,
-                    ),
-                )
-        # In continuous mode, samples are delivered via on_game_complete;
-        # clear the list to prevent unbounded memory growth.
-        if continuous:
-            all_samples.clear()
 
     # ── Network turn ──────────────────────────────────────────────────────────
 
@@ -1110,7 +784,7 @@ def play_batch(
         # Finalize completed games and optionally recycle slots
         for i in range(batch_size):
             if state.done_arr[i] and not state.finalized_arr[i]:
-                _finalize_game(i)
+                finalize_game(state, i, all_samples, on_game_complete)
                 state.finalized_arr[i] = 1
                 state.games_completed += 1
                 if continuous or state.games_started < target:
