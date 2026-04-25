@@ -123,8 +123,13 @@ def _align_pid_state(pid_seed_path: Path, row: dict) -> list[str]:
     if not pid_seed_path.exists():
         return []
     try:
+  # ValueError covers both UnicodeDecodeError (read_text decode failure)
+  # and JSONDecodeError (its subclass). Without the broader catch a
+  # corrupted/non-UTF-8 pid_state.json would propagate and abort the
+  # salvage mid-loop, leaving an unusable pool with partial replay-shard
+  # copies on disk.
         pid_obj = json.loads(pid_seed_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError):
         return []
     if not isinstance(pid_obj, dict):
         return []
@@ -222,58 +227,72 @@ def export_seed_pool(args: argparse.Namespace) -> None:
 
     copy_replay = bool(getattr(args, "salvage_copy_replay", True))
     entries: list[dict] = []
+    failed_slots: list[tuple[int, str]] = []
     for slot, (metric, it, td, row) in enumerate(selected):
-        seed_dir = seeds_dir / f"slot_{slot:03d}"
-        seed_dir.mkdir(parents=True, exist_ok=True)
+  # Each slot is best-effort independently. A single slot's OSError
+  # (disk full, permission, source vanishes) or unanticipated failure
+  # must not abort the run after we've already done expensive
+  # replay-shard copies for prior slots — we still want manifest.json
+  # to land covering the slots that succeeded.
+        try:
+            seed_dir = seeds_dir / f"slot_{slot:03d}"
+            seed_dir.mkdir(parents=True, exist_ok=True)
 
-        row_ckpt_name = row.get("checkpoint_dir_name")
-        row_ckpt_dir = (
-            td / str(row_ckpt_name)
-            if isinstance(row_ckpt_name, str) and row_ckpt_name.strip()
-            else None
-        )
-        ckpt_dir = (
-            row_ckpt_dir
-            if (row_ckpt_dir is not None and (row_ckpt_dir / "trainer.pt").exists())
-            else (td / "ckpt")
-        )
-        ckpt_source = (
-            "result_row_checkpoint" if ckpt_dir is row_ckpt_dir else "mutable_ckpt_fallback"
-        )
-        if ckpt_source != "result_row_checkpoint":
-            print(
-                f"[salvage] WARNING: using fallback ckpt for {td.name} "
-                f"(row checkpoint missing: {row_ckpt_name})"
+            row_ckpt_name = row.get("checkpoint_dir_name")
+            row_ckpt_dir = (
+                td / str(row_ckpt_name)
+                if isinstance(row_ckpt_name, str) and row_ckpt_name.strip()
+                else None
             )
-        for fn in ("trainer.pt", "pid_state.json", "trial_meta.json", "rng_state.json"):
-            src = ckpt_dir / fn
-            if src.exists():
-                shutil.copy2(str(src), str(seed_dir / fn))
+            ckpt_dir = (
+                row_ckpt_dir
+                if (row_ckpt_dir is not None and (row_ckpt_dir / "trainer.pt").exists())
+                else (td / "ckpt")
+            )
+            ckpt_source = (
+                "result_row_checkpoint" if ckpt_dir is row_ckpt_dir else "mutable_ckpt_fallback"
+            )
+            if ckpt_source != "result_row_checkpoint":
+                print(
+                    f"[salvage] WARNING: using fallback ckpt for {td.name} "
+                    f"(row checkpoint missing: {row_ckpt_name})"
+                )
+            for fn in ("trainer.pt", "pid_state.json", "trial_meta.json", "rng_state.json"):
+                src = ckpt_dir / fn
+                if src.exists():
+                    shutil.copy2(str(src), str(seed_dir / fn))
 
-        pid_state_overrides = _align_pid_state(seed_dir / "pid_state.json", row)
+            pid_state_overrides = _align_pid_state(seed_dir / "pid_state.json", row)
 
-        copied_shards = 0
-        if copy_replay:
-            src_replay = td / "replay_shards"
-            if (not src_replay.is_dir()) and replay_root_override:
-                src_replay = Path(replay_root_override).expanduser() / td.name / "replay_shards"
-            if src_replay.is_dir():
-                copied_shards = _copy_replay_shards(src_replay, seed_dir / "replay_shards")
+            copied_shards = 0
+            if copy_replay:
+                src_replay = td / "replay_shards"
+                if (not src_replay.is_dir()) and replay_root_override:
+                    src_replay = Path(replay_root_override).expanduser() / td.name / "replay_shards"
+                if src_replay.is_dir():
+                    copied_shards = _copy_replay_shards(src_replay, seed_dir / "replay_shards")
 
-        entries.append(
-            {
-                "slot": int(slot),
-                "metric": float(metric),
-                "training_iteration": int(it),
-                "source_trial_dir": str(td.resolve()),
-                "checkpoint_source": str(ckpt_source),
-                "checkpoint_dir_name": str(row_ckpt_name) if isinstance(row_ckpt_name, str) else "",
-                "seed_dir": str(seed_dir.relative_to(out_dir)),
-                "copied_replay_shards": int(copied_shards),
-                "pid_state_overrides": list(pid_state_overrides),
-                "result_row": row,
-            }
-        )
+            entries.append(
+                {
+                    "slot": int(slot),
+                    "metric": float(metric),
+                    "training_iteration": int(it),
+                    "source_trial_dir": str(td.resolve()),
+                    "checkpoint_source": str(ckpt_source),
+                    "checkpoint_dir_name": str(row_ckpt_name) if isinstance(row_ckpt_name, str) else "",
+                    "seed_dir": str(seed_dir.relative_to(out_dir)),
+                    "copied_replay_shards": int(copied_shards),
+                    "pid_state_overrides": list(pid_state_overrides),
+                    "result_row": row,
+                }
+            )
+        except Exception as exc:  # pylint: disable=broad-except  # per-slot isolation, see comment above
+            failed_slots.append((int(slot), f"{type(exc).__name__}: {exc}"))
+            print(
+                f"[salvage] ERROR: slot {slot:03d} from {td.name} failed "
+                f"({type(exc).__name__}: {exc}); manifest will skip this slot",
+                flush=True,
+            )
 
     manifest = build_pool_manifest_dict(
         metric=metric_key,
@@ -281,6 +300,10 @@ def export_seed_pool(args: argparse.Namespace) -> None:
         source_tune_dir=tune_dir,
         source_run_id=run_id,
     )
+    if failed_slots:
+        manifest["failed_slots"] = [
+            {"slot": s, "error": e} for s, e in failed_slots
+        ]
     (out_dir / "manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True),
         encoding="utf-8",
