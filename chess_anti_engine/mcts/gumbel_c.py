@@ -45,8 +45,14 @@ def _tb_override(tree: MCTSTree | None, probe, wdl: np.ndarray) -> None:
     if probe is None or tree is None:
         return
     indices, leaves = tree.get_pending_tb_leaves(probe.max_pieces)
-    if leaves:
-        probe.apply(leaves, wdl, indices=indices)
+    if not leaves:
+        return
+    # solved_out feeds mark_tb_solved so subtrees with proven WDL short-circuit
+    # MCTS selection (and propagate up). 0 = no TB hit / skip.
+    solved_out = np.zeros(len(leaves), dtype=np.int8)
+    probe.apply(leaves, wdl, indices=indices, solved_out=solved_out)
+    if (solved_out != 0).any():
+        tree.mark_tb_solved(indices.astype(np.int32, copy=False), solved_out)
 
 
 @torch.no_grad()

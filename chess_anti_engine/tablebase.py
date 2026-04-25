@@ -328,6 +328,7 @@ class SyzygyProbe:
         leaf_cboards: list[CBoard],
         wdl: np.ndarray,
         indices: np.ndarray | None = None,
+        solved_out: np.ndarray | None = None,
     ) -> int:
         """Probe each leaf and overwrite its wdl row on a TB hit.
 
@@ -336,6 +337,11 @@ class SyzygyProbe:
         path) and ``indices[j]`` is the row of ``wdl`` to write. When
         ``indices`` is None, each leaf is checked here — used at the root
         where leaves are a short explicit list, not pre-filtered.
+
+        ``solved_out``: optional int8 array, same length as ``leaf_cboards``,
+        receives the solved status for each hit (1=WIN, -1=LOSS, 2=DRAW from
+        STM perspective; 0=no hit / skipped). Caller passes it to
+        ``MCTSTree.mark_tb_solved`` to propagate proven values up the tree.
         """
         if not leaf_cboards:
             return 0
@@ -368,10 +374,16 @@ class SyzygyProbe:
             loss_thresh = -win_thresh
             if wdl_val >= win_thresh:
                 wdl[i] = _WIN_LOGITS
+                if solved_out is not None:
+                    solved_out[j] = 1  # SOLVED_WIN
             elif wdl_val <= loss_thresh:
                 wdl[i] = _LOSS_LOGITS
+                if solved_out is not None:
+                    solved_out[j] = -1  # SOLVED_LOSS
             else:
                 wdl[i] = _DRAW_LOGITS
+                if solved_out is not None:
+                    solved_out[j] = 2  # SOLVED_DRAW
             hits += 1
         self.hits += hits
         return hits

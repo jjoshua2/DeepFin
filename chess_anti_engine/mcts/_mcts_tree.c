@@ -215,6 +215,21 @@ static NNCacheEntry *nncache_insert(NNCacheData *c, uint64_t hash) {
 #define INITIAL_NODE_CAP   4096
 #define INITIAL_CHILD_CAP  65536
 
+/* Solved-node status, from the node's side-to-move perspective.
+ * Stored in TreeData.solved[node_id] as int8_t.
+ *   UNKNOWN: not proven (default for any new node).
+ *   WIN:     STM is provably winning (some legal move leads to opponent LOSS).
+ *   LOSS:    STM is provably losing (every legal move leaves opponent WINning,
+ *            or the leaf itself is checkmate against STM).
+ *   DRAW:    STM provably draws (no winning child; at least one drawing child;
+ *            no losing child — or terminal stalemate / 50-move / repetition /
+ *            insufficient material).
+ * Backup is min/max-style and respects the side-flip across plies. */
+#define SOLVED_UNKNOWN  0
+#define SOLVED_WIN      1
+#define SOLVED_LOSS    -1
+#define SOLVED_DRAW     2
+
 typedef struct {
     /* Per-node arrays */
     int32_t *N;                /* visit count */
@@ -226,6 +241,14 @@ typedef struct {
     int32_t *num_children;     /* number of children */
     int32_t *children_offset;  /* offset into children pool */
     int32_t *virtual_loss;     /* vloss count per node (walker-pool scaffolding, phase 2+3). */
+    int8_t  *solved;           /* SOLVED_UNKNOWN/WIN/LOSS/DRAW from this node's STM perspective.
+                                * 0 = unknown (default). Once set non-zero, value is proven and
+                                * MCTS selection short-circuits. See SOLVED_* constants below. */
+    int8_t  *has_solved_child; /* 1 iff at least one direct child has solved != UNKNOWN.
+                                * Lets the selection hot path skip the solved-aware pre-pass
+                                * entirely on the common case where no propagation has reached
+                                * this node yet. Set inside tree_mark_solved_and_propagate
+                                * whenever a child's solved status changes. */
 
     int32_t node_count;
     int32_t node_cap;
@@ -285,6 +308,8 @@ static int tree_init(TreeData *t) {
     t->num_children = (int32_t *)calloc(t->node_cap, sizeof(int32_t));
     t->children_offset = (int32_t *)calloc(t->node_cap, sizeof(int32_t));
     t->virtual_loss = (int32_t *)calloc(t->node_cap, sizeof(int32_t));
+    t->solved = (int8_t *)calloc(t->node_cap, sizeof(int8_t));
+    t->has_solved_child = (int8_t *)calloc(t->node_cap, sizeof(int8_t));
 
     t->child_action = (int32_t *)malloc(t->child_cap * sizeof(int32_t));
     t->child_node = (int32_t *)malloc(t->child_cap * sizeof(int32_t));
@@ -301,7 +326,7 @@ static int tree_init(TreeData *t) {
 
     if (!t->N || !t->W || !t->prior || !t->expanded || !t->parent ||
         !t->action_from_parent || !t->num_children || !t->children_offset ||
-        !t->virtual_loss ||
+        !t->virtual_loss || !t->solved || !t->has_solved_child ||
         !t->child_action || !t->child_node || !t->node_hash || !t->hash_table) {
         return -1;
     }
@@ -327,6 +352,8 @@ static void tree_free(TreeData *t) {
     free(t->num_children);
     free(t->children_offset);
     free(t->virtual_loss);
+    free(t->solved);
+    free(t->has_solved_child);
     free(t->child_action);
     free(t->child_node);
     free(t->cb_cache);
@@ -358,6 +385,8 @@ static int tree_grow_nodes(TreeData *t) {
     GROW(num_children, int32_t);
     GROW(children_offset, int32_t);
     GROW(virtual_loss, int32_t);
+    GROW(solved, int8_t);
+    GROW(has_solved_child, int8_t);
     GROW(node_hash, uint64_t);
 
     #undef GROW
@@ -373,6 +402,8 @@ static int tree_grow_nodes(TreeData *t) {
     memset(t->num_children + old_cap, 0, (new_cap - old_cap) * sizeof(int32_t));
     memset(t->children_offset + old_cap, 0, (new_cap - old_cap) * sizeof(int32_t));
     memset(t->virtual_loss + old_cap, 0, (new_cap - old_cap) * sizeof(int32_t));
+    memset(t->solved + old_cap, 0, (new_cap - old_cap) * sizeof(int8_t));
+    memset(t->has_solved_child + old_cap, 0, (new_cap - old_cap) * sizeof(int8_t));
     memset(t->node_hash + old_cap, 0, (new_cap - old_cap) * sizeof(uint64_t));
 
     t->node_cap = new_cap;
@@ -465,6 +496,8 @@ static int32_t tree_add_node(TreeData *t, int32_t parent_id, int32_t action, dou
     t->action_from_parent[id] = action;
     t->num_children[id] = 0;
     t->children_offset[id] = 0;
+    t->solved[id] = SOLVED_UNKNOWN;
+    t->has_solved_child[id] = 0;
     return id;
 }
 
@@ -538,6 +571,36 @@ static int32_t tree_select_child(const TreeData *t, int32_t node_id,
     int32_t n_ch = t->num_children[node_id];
     int32_t off = t->children_offset[node_id];
 
+    /* Solved-aware fast paths (only entered when at least one child has been
+     * proven). The common case — no propagated proofs in this subtree —
+     * skips the pre-pass + the per-child solved checks in the main loop.
+     *
+     *   - any child with solved==SOLVED_LOSS (from child's STM) means parent
+     *     has a move to a losing-for-opponent position → take it. Pick the
+     *     highest-prior such child so the soft policy target stays sensible.
+     *   - children with solved==SOLVED_WIN are losing for parent; exclude
+     *     them from candidate set. If *every* child is SOLVED_WIN, parent is
+     *     also already LOSS — fall through and pick any (we still need a
+     *     visit to keep N stats coherent on the path).
+     * SOLVED_DRAW children stay in the candidate pool with their normal
+     * scores; the W/N average converges to 0 anyway. */
+    int32_t any_unsolved_or_draw = 1;  /* default for the no-solved-child fast path */
+    if (t->has_solved_child[node_id]) {
+        int32_t winning_slot = -1;
+        double  winning_prior = -1.0;
+        any_unsolved_or_draw = 0;
+        for (int32_t i = 0; i < n_ch; i++) {
+            int8_t cs = t->solved[t->child_node[off + i]];
+            if (cs == SOLVED_LOSS) {
+                double pr = t->prior[t->child_node[off + i]];
+                if (pr > winning_prior) { winning_prior = pr; winning_slot = i; }
+            } else if (cs != SOLVED_WIN) {
+                any_unsolved_or_draw = 1;
+            }
+        }
+        if (winning_slot >= 0) return winning_slot;
+    }
+
     int32_t parent_vl = (vloss_weight > 0) ? t->virtual_loss[node_id] : 0;
     double parent_N = (double)(t->N[node_id] + vloss_weight * parent_vl);
     double parent_W = t->W[node_id] + (double)(vloss_weight * parent_vl);
@@ -555,15 +618,28 @@ static int32_t tree_select_child(const TreeData *t, int32_t node_id,
     int32_t best_unvisited_slot = -1;
     double best_unvisited_prior = -1.0;
 
+    /* Hoist the solved-aware-loop branch so the common case (no solved
+     * children) skips both per-child solved[] loads. */
+    int32_t check_solved = t->has_solved_child[node_id];
     for (int32_t i = 0; i < n_ch; i++) {
         int32_t cid = t->child_node[off + i];
+        int8_t cs = check_solved ? t->solved[cid] : SOLVED_UNKNOWN;
+        /* Skip SOLVED_WIN children unless every child is solved-losing for
+         * parent (in which case any_unsolved_or_draw is 0 and we let them
+         * back in — we still need to visit something). */
+        if (any_unsolved_or_draw && cs == SOLVED_WIN) continue;
         int32_t vl = (vloss_weight > 0) ? t->virtual_loss[cid] : 0;
         int32_t n = t->N[cid] + vloss_weight * vl;
         double w = t->W[cid] + (double)(vloss_weight * vl);
         double prior = t->prior[cid];
         if (n > 0) {
             visited_policy += prior;
-            double score = -w / (double)n + c_sqrt_n * prior / (1.0 + (double)n);
+            /* For SOLVED_DRAW children, override Q to exact 0 — accumulated
+             * W might disagree slightly from one or two NN-eval visits before
+             * the leaf was proven, but the proven value is what selection
+             * should use. */
+            double q_parent = (cs == SOLVED_DRAW) ? 0.0 : (-w / (double)n);
+            double score = q_parent + c_sqrt_n * prior / (1.0 + (double)n);
             if (score > best_visited_score) {
                 best_visited_score = score;
                 best_visited_slot = i;
@@ -608,6 +684,98 @@ static int32_t tree_select_leaf(const TreeData *t, int32_t root_id,
         fpu = fpu_reduction;
     }
     return depth;
+}
+
+
+/* Flip a solved status across one ply (parent <-> child STM swap).
+ *   parent sees a child WIN  → parent considers it LOSS-for-self
+ *   parent sees a child LOSS → parent considers it WIN-for-self
+ *   DRAW and UNKNOWN are unchanged. */
+static inline int8_t solved_flip(int8_t s) {
+    if (s == SOLVED_WIN) return SOLVED_LOSS;
+    if (s == SOLVED_LOSS) return SOLVED_WIN;
+    return s;  /* DRAW or UNKNOWN */
+}
+
+
+/* Solved status for a known-terminal CBoard. Caller must have already
+ * confirmed cboard_is_game_over(b). Companion to cboard_terminal_value:
+ * checkmate ⇒ STM lost; everything else terminal (stalemate / 50-move /
+ * repetition / insufficient material) ⇒ DRAW. */
+static inline int8_t cboard_terminal_solved_status(const CBoard *b) {
+    return cboard_is_checkmate(b) ? SOLVED_LOSS : SOLVED_DRAW;
+}
+
+
+/* Resolve `node`'s solved status from its expanded children, returning the
+ * new status (SOLVED_UNKNOWN if not yet provable). Caller must hold tree_lock
+ * — children_offset/num_children/solved[] are read across multiple slots and
+ * we don't want concurrent expand/mark to race with this scan. */
+static int8_t tree_resolve_from_children(const TreeData *t, int32_t node) {
+    if (!__atomic_load_n(&t->expanded[node], __ATOMIC_ACQUIRE)) return SOLVED_UNKNOWN;
+    int32_t nc = t->num_children[node];
+    if (nc <= 0) return SOLVED_UNKNOWN;
+    int32_t off = t->children_offset[node];
+    int has_draw = 0;
+    int all_solved = 1;
+    for (int32_t j = 0; j < nc; j++) {
+        int32_t cid = t->child_node[off + j];
+        int8_t cs = t->solved[cid];
+        int8_t cs_parent = solved_flip(cs);  /* what this child means for parent */
+        if (cs_parent == SOLVED_WIN) return SOLVED_WIN;  /* one good move suffices */
+        if (cs_parent == SOLVED_DRAW) has_draw = 1;
+        else if (cs_parent != SOLVED_LOSS) all_solved = 0;  /* an unknown child blocks resolution */
+    }
+    if (!all_solved) return SOLVED_UNKNOWN;
+    return has_draw ? SOLVED_DRAW : SOLVED_LOSS;
+}
+
+
+/* Mark a leaf (or freshly evaluated node) with a solved status, then walk
+ * upward and resolve as many ancestors as possible. Stops at the first
+ * ancestor that doesn't yet resolve.
+ *
+ * Holds tree_lock for the scan + writes — keeps the child-array view
+ * coherent against concurrent expansion (phase 4 walker pool, phase 2
+ * brute-force worker). The hot backprop path is short (a few writes per
+ * ancestor); contention with NN-eval-driven walkers is bounded by tree
+ * branching factor.
+ *
+ * `path` is the descent path from root → leaf (same array passed to
+ * tree_backprop). leaf_status is the status to write at path[path_len-1]. */
+static void tree_mark_solved_and_propagate(TreeData *t,
+                                           const int32_t *path,
+                                           int32_t path_len,
+                                           int8_t leaf_status) {
+    if (path_len <= 0 || leaf_status == SOLVED_UNKNOWN) return;
+    pthread_mutex_lock(&t->tree_lock);
+
+    int32_t leaf = path[path_len - 1];
+    /* If already solved, nothing to do — solved status is monotonic
+     * (UNKNOWN → terminal once and stays). */
+    if (t->solved[leaf] != SOLVED_UNKNOWN) {
+        pthread_mutex_unlock(&t->tree_lock);
+        return;
+    }
+    t->solved[leaf] = leaf_status;
+    /* Notify the leaf's parent that it now has a solved child — lets the
+     * selection hot path skip the solved-aware pre-pass when this flag is 0. */
+    if (path_len >= 2) t->has_solved_child[path[path_len - 2]] = 1;
+
+    /* Walk up. At each ancestor, try to resolve from its children. Stop on
+     * the first one that's still UNKNOWN — anything above it can't resolve
+     * either. */
+    for (int32_t i = path_len - 2; i >= 0; i--) {
+        int32_t nid = path[i];
+        if (t->solved[nid] != SOLVED_UNKNOWN) break;  /* already resolved earlier */
+        int8_t resolved = tree_resolve_from_children(t, nid);
+        if (resolved == SOLVED_UNKNOWN) break;
+        t->solved[nid] = resolved;
+        /* Newly-resolved ancestor → its own parent now has a solved child. */
+        if (i >= 1) t->has_solved_child[path[i - 1]] = 1;
+    }
+
+    pthread_mutex_unlock(&t->tree_lock);
 }
 
 
@@ -716,6 +884,9 @@ typedef struct {
     int32_t *term_path_offset;
     int32_t *term_path_count;
     double  *term_values;
+    int8_t  *term_solved;        /* SOLVED_* status for each terminal; SOLVED_UNKNOWN
+                                  * means "no proven status, just a fallback value (e.g.
+                                  * root-Q for buffer-full / depth-1 root cases)". */
     int32_t  term_path_flat_used;
     int32_t  term_path_flat_cap;
     int32_t  term_cap;
@@ -767,7 +938,7 @@ static inline void tree_cb_cache_put(TreeData *t, int32_t leaf_id, const CBoard 
  * no measurable hot-path cost. */
 static inline int stored_append_terminal(StoredPrepState *s,
                                          const int32_t *path_buf, int32_t path_len,
-                                         double value) {
+                                         double value, int8_t solved_status) {
     if (stored_ensure_term_path_flat(s, s->term_path_flat_used + path_len) < 0) return -1;
     int32_t ti = s->n_terminals;
     s->term_path_offset[ti] = s->term_path_flat_used;
@@ -775,6 +946,7 @@ static inline int stored_append_terminal(StoredPrepState *s,
     memcpy(s->term_path_flat + s->term_path_flat_used, path_buf, path_len * sizeof(int32_t));
     s->term_path_flat_used += path_len;
     s->term_values[ti] = value;
+    s->term_solved[ti] = solved_status;
     s->n_terminals++;
     return 0;
 }
@@ -1032,7 +1204,9 @@ static int32_t gss_prepare_batch(
         int32_t leaf_id = path_buf[path_len - 1];
 
         if (path_len <= 1) {
-            if (stored_append_terminal(s, path_buf, path_len, g->root_qs[bi]) < 0) return -1;
+            /* Root-only "descent" — no real leaf was reached, just bias backprop
+             * with the root's known Q. Not a proven status. */
+            if (stored_append_terminal(s, path_buf, path_len, g->root_qs[bi], SOLVED_UNKNOWN) < 0) return -1;
             continue;
         }
 
@@ -1067,7 +1241,9 @@ static int32_t gss_prepare_batch(
             cboard_push_index(&cb, replay_actions[ri]);
 
         if (cboard_is_game_over(&cb)) {
-            if (stored_append_terminal(s, path_buf, path_len, (double)cboard_terminal_value(&cb)) < 0) return -1;
+            if (stored_append_terminal(s, path_buf, path_len,
+                                       (double)cboard_terminal_value(&cb),
+                                       cboard_terminal_solved_status(&cb)) < 0) return -1;
             continue;
         }
 
@@ -1118,8 +1294,9 @@ static int32_t gss_prepare_batch(
         }
 
         if (s->n_leaves >= g->enc_capacity) {
-            /* Buffer full — fall back to root Q (not 0.0 which biases toward draws). */
-            if (stored_append_terminal(s, path_buf, path_len, g->root_qs[bi]) < 0) return -1;
+            /* Buffer full — fall back to root Q (not 0.0 which biases toward draws).
+             * Not a proven terminal, so SOLVED_UNKNOWN. */
+            if (stored_append_terminal(s, path_buf, path_len, g->root_qs[bi], SOLVED_UNKNOWN) < 0) return -1;
             continue;
         }
 
@@ -1127,10 +1304,14 @@ static int32_t gss_prepare_batch(
         if (stored_append_leaf(s, t, &cb, leaf_id, path_buf, path_len, cache_ok) < 0) return -1;
     }
 
-    /* Backprop terminals */
+    /* Backprop terminals + propagate proven statuses upward. */
     for (int32_t ti = 0; ti < s->n_terminals; ti++) {
-        tree_backprop(t, s->term_path_flat + s->term_path_offset[ti],
-                      s->term_path_count[ti], s->term_values[ti]);
+        const int32_t *tpath = s->term_path_flat + s->term_path_offset[ti];
+        int32_t tlen = s->term_path_count[ti];
+        tree_backprop(t, tpath, tlen, s->term_values[ti]);
+        if (s->term_solved[ti] != SOLVED_UNKNOWN) {
+            tree_mark_solved_and_propagate(t, tpath, tlen, s->term_solved[ti]);
+        }
     }
     /* Reset terminal count since we've backpropped them */
     s->n_terminals = 0;
@@ -1276,7 +1457,7 @@ static void stored_free(StoredPrepState *s) {
     free(s->legal_flat); free(s->legal_offset); free(s->legal_count);
     free(s->path_flat); free(s->path_offset); free(s->path_count);
     free(s->term_path_flat); free(s->term_path_offset); free(s->term_path_count);
-    free(s->term_values);
+    free(s->term_values); free(s->term_solved);
     memset(s, 0, sizeof(*s));
 }
 
@@ -1303,6 +1484,7 @@ static int stored_ensure_cap(StoredPrepState *s, int32_t leaf_cap, int32_t term_
         SGROW(term_path_offset, int32_t, term_cap);
         SGROW(term_path_count,  int32_t, term_cap);
         SGROW(term_values,      double,  term_cap);
+        SGROW(term_solved,      int8_t,  term_cap);
         s->term_cap = term_cap;
     }
     #undef SGROW
@@ -1782,12 +1964,14 @@ static PyObject *MCTSTree_walker_descend_puct(MCTSTreeObject *self, PyObject *ar
 
     if (cboard_is_game_over(&cb)) {
         /* Terminal: no vloss (caller backprops immediately), no encoding,
-         * empty legal array. */
+         * empty legal array. Also mark the leaf solved and propagate up. */
         Py_DECREF(enc_arr);
         npy_intp ldims[1] = {0};
         PyObject *legal_arr = PyArray_SimpleNew(1, ldims, NPY_INT32);
         if (!legal_arr) { Py_DECREF(node_path); return NULL; }
         double term_q = (double)cboard_terminal_value(&cb);
+        tree_mark_solved_and_propagate(t, path_buf, path_len,
+                                       cboard_terminal_solved_status(&cb));
         return Py_BuildValue("(iNNd)", leaf_id, node_path, legal_arr, term_q);
     }
 
@@ -1966,6 +2150,31 @@ static int32_t tree_gumbel_select_child(const TreeData *t, int32_t node_id,
     int32_t off = t->children_offset[node_id];
     if (n_ch <= 0) return 0;
 
+    /* Solved-aware fast paths (mirrors tree_select_child). Gated on
+     * has_solved_child[node_id] so the no-proofs-yet common case skips the
+     * pre-pass. When 0, all children are unknown ⇒ any_unsolved_or_draw=1,
+     * winning_slot stays -1, no exclusions in the main scoring pass.
+     *   - any SOLVED_LOSS child (winning move for parent) → pick highest-prior one.
+     *   - exclude SOLVED_WIN children (losing for parent) unless every child is
+     *     SOLVED_WIN, in which case we fall through (parent already lost). */
+    int32_t any_unsolved_or_draw = 1;
+    int32_t check_solved = t->has_solved_child[node_id];
+    if (check_solved) {
+        int32_t winning_slot = -1;
+        double  winning_prior = -1.0;
+        any_unsolved_or_draw = 0;
+        for (int32_t i = 0; i < n_ch; i++) {
+            int8_t cs = t->solved[t->child_node[off + i]];
+            if (cs == SOLVED_LOSS) {
+                double pr = t->prior[t->child_node[off + i]];
+                if (pr > winning_prior) { winning_prior = pr; winning_slot = i; }
+            } else if (cs != SOLVED_WIN) {
+                any_unsolved_or_draw = 1;
+            }
+        }
+        if (winning_slot >= 0) return winning_slot;
+    }
+
     /* Parent's effective N also includes its own in-flight visits so
      * completed_Q for unvisited children reflects the penalized parent. */
     int32_t parent_vl = (vloss_weight > 0) ? t->virtual_loss[node_id] : 0;
@@ -1978,30 +2187,44 @@ static int32_t tree_gumbel_select_child(const TreeData *t, int32_t node_id,
     double *log_priors = (double *)alloca(n_ch * sizeof(double));
     double *cqs        = (double *)alloca(n_ch * sizeof(double));
     int32_t *eff_ns    = (int32_t *)alloca(n_ch * sizeof(int32_t));
+    int8_t  *exclude   = (int8_t *)alloca(n_ch * sizeof(int8_t));
     int32_t max_visit = 0;
     int32_t total_visits = 0;
     for (int32_t i = 0; i < n_ch; i++) {
         int32_t cid = t->child_node[off + i];
+        int8_t  cs  = check_solved ? t->solved[cid] : SOLVED_UNKNOWN;
+        /* Exclude SOLVED_WIN children when alternatives exist. Mark in
+         * `exclude` and skip them in scoring + argmax below. */
+        exclude[i] = (any_unsolved_or_draw && cs == SOLVED_WIN) ? 1 : 0;
         int32_t vl = (vloss_weight > 0) ? t->virtual_loss[cid] : 0;
         int32_t eff_n = t->N[cid] + vloss_weight * vl;
         eff_ns[i] = eff_n;
-        if (eff_n > max_visit) max_visit = eff_n;
-        total_visits += eff_n;
+        if (!exclude[i] && eff_n > max_visit) max_visit = eff_n;
+        if (!exclude[i]) total_visits += eff_n;
         log_priors[i] = log(t->prior[cid] > 1e-12 ? t->prior[cid] : 1e-12);
         /* Virtual loss adds vloss_weight per in-flight walker to both N and
          * W from the child's parent perspective; child-perspective Q inverts
-         * the sign on W (parent and child alternate sides). */
-        cqs[i] = (eff_n > 0)
-            ? (-(t->W[cid] + (double)(vloss_weight * vl)) / (double)eff_n)
-            : parent_Q;
+         * the sign on W (parent and child alternate sides).
+         *
+         * For SOLVED_DRAW children the proven Q from parent's frame is 0
+         * (drawing line); use that instead of the noisy averaged W/N. */
+        if (cs == SOLVED_DRAW) {
+            cqs[i] = 0.0;
+        } else {
+            cqs[i] = (eff_n > 0)
+                ? (-(t->W[cid] + (double)(vloss_weight * vl)) / (double)eff_n)
+                : parent_Q;
+        }
     }
     double sigma = c_scale * (c_visit + (double)max_visit);
     double inv_total = 1.0 / (1.0 + (double)total_visits);
 
-    /* Fuse score-compute with softmax-max tracking. */
+    /* Fuse score-compute with softmax-max tracking. Excluded slots get
+     * -infinity so they're invisible to the softmax. */
     double *scores = (double *)alloca(n_ch * sizeof(double));
     double max_score = -INFINITY;
     for (int32_t i = 0; i < n_ch; i++) {
+        if (exclude[i]) { scores[i] = -INFINITY; continue; }
         double s = log_priors[i] + sigma * cqs[i];
         scores[i] = s;
         if (s > max_score) max_score = s;
@@ -2011,17 +2234,24 @@ static int32_t tree_gumbel_select_child(const TreeData *t, int32_t node_id,
     double sum = 0.0;
     if (isfinite(max_score)) {
         for (int32_t i = 0; i < n_ch; i++) {
+            if (exclude[i]) { scores[i] = 0.0; continue; }
             scores[i] = exp(scores[i] - max_score);
             sum += scores[i];
         }
     }
     int uniform_fallback = !(sum > 0.0 && isfinite(sum));
-    double inv_sum = uniform_fallback ? (1.0 / (double)n_ch) : (1.0 / sum);
+    /* Uniform fallback only over the non-excluded slot count. */
+    int32_t n_active = 0;
+    for (int32_t i = 0; i < n_ch; i++) if (!exclude[i]) n_active++;
+    double inv_sum = uniform_fallback
+        ? (n_active > 0 ? (1.0 / (double)n_active) : (1.0 / (double)n_ch))
+        : (1.0 / sum);
 
     /* Fused normalize + argmax(prob - N/(1+total_N)). */
-    int32_t best_slot = 0;
+    int32_t best_slot = -1;
     double best_val = -1e30;
     for (int32_t i = 0; i < n_ch; i++) {
+        if (exclude[i]) continue;
         double p = uniform_fallback ? inv_sum : (scores[i] * inv_sum);
         double target = p - (double)eff_ns[i] * inv_total;
         if (target > best_val) {
@@ -2029,7 +2259,9 @@ static int32_t tree_gumbel_select_child(const TreeData *t, int32_t node_id,
             best_slot = i;
         }
     }
-    return best_slot;
+    /* If everything was excluded (all children solved-WIN against parent),
+     * fall back to slot 0 — keeps N/W bookkeeping consistent. */
+    return best_slot >= 0 ? best_slot : 0;
 }
 
 
@@ -2190,6 +2422,37 @@ static PyObject *MCTSTree_node_q(MCTSTreeObject *self, PyObject *args) {
     TreeData *t = &self->tree;
     double q = (t->N[node_id] > 0) ? (t->W[node_id] / (double)t->N[node_id]) : 0.0;
     return PyFloat_FromDouble(q);
+}
+
+
+/* mark_solved_path(node_path, status) -> None
+ *
+ * Direct entry point for marking a node solved + propagating ancestors.
+ * Used by tests and (forthcoming) by the phase-2 brute-force terminal
+ * extender that runs a few plies past frontier leaves to discover proven
+ * lines. status is SOLVED_WIN (+1), SOLVED_LOSS (-1), or SOLVED_DRAW (+2)
+ * from the leaf's STM perspective; SOLVED_UNKNOWN is silently ignored. */
+static PyObject *MCTSTree_mark_solved_path(MCTSTreeObject *self, PyObject *args) {
+    PyObject *path_obj;
+    int status;
+    if (!PyArg_ParseTuple(args, "Oi", &path_obj, &status)) return NULL;
+    PyArrayObject *p = FROMANY_1D(path_obj, NPY_INT32);
+    if (!p) return NULL;
+    npy_intp n = PyArray_DIM(p, 0);
+    tree_mark_solved_and_propagate(&self->tree,
+        (const int32_t *)PyArray_DATA(p), (int32_t)n, (int8_t)status);
+    Py_DECREF(p);
+    Py_RETURN_NONE;
+}
+
+
+/* get_solved_status(node_id) -> int (SOLVED_UNKNOWN/WIN/LOSS/DRAW). */
+static PyObject *MCTSTree_get_solved_status(MCTSTreeObject *self, PyObject *args) {
+    int node_id;
+    if (!PyArg_ParseTuple(args, "i", &node_id)) return NULL;
+    if (node_id < 0 || node_id >= self->tree.node_count)
+        return PyLong_FromLong(SOLVED_UNKNOWN);
+    return PyLong_FromLong((long)self->tree.solved[node_id]);
 }
 
 
@@ -2924,6 +3187,60 @@ static PyObject *MCTSTree_get_pending_tb_leaves(MCTSTreeObject *self, PyObject *
 
 
 /*
+ * mark_tb_solved(indices: np.int32, statuses: np.int8) -> int (count marked)
+ *
+ * For each i in indices, look up the corresponding leaf in the current
+ * pending batch (must be in phase 1, paired with get_pending_tb_leaves) and
+ * mark its tree node solved with statuses[i] (one of SOLVED_WIN, SOLVED_LOSS,
+ * SOLVED_DRAW from STM perspective). Then propagate the solved status up
+ * each leaf's path. UNKNOWN entries are skipped silently.
+ *
+ * The two arrays must have the same length and indices[k] must reference a
+ * leaf row in [0, n_leaves). The leaf's path is taken from
+ * StoredPrepState.path_flat — same source the eventual backprop uses.
+ */
+static PyObject *MCTSTree_mark_tb_solved(MCTSTreeObject *self, PyObject *args) {
+    PyObject *indices_obj, *statuses_obj;
+    if (!PyArg_ParseTuple(args, "OO", &indices_obj, &statuses_obj)) return NULL;
+    StoredPrepState *s = &self->stored;
+    GumbelSimState *g = &self->gsim;
+    if (g->phase != 1) {
+        PyErr_SetString(PyExc_RuntimeError,
+            "mark_tb_solved: no batch pending (phase != 1)");
+        return NULL;
+    }
+    PyArrayObject *idx_arr = FROMANY_1D(indices_obj, NPY_INT32);
+    if (!idx_arr) return NULL;
+    PyArrayObject *st_arr = FROMANY_1D(statuses_obj, NPY_INT8);
+    if (!st_arr) { Py_DECREF(idx_arr); return NULL; }
+    npy_intp n_idx = PyArray_DIM(idx_arr, 0);
+    if (n_idx != PyArray_DIM(st_arr, 0)) {
+        Py_DECREF(idx_arr); Py_DECREF(st_arr);
+        PyErr_SetString(PyExc_ValueError,
+            "mark_tb_solved: indices and statuses length mismatch");
+        return NULL;
+    }
+    const int32_t *indices = (const int32_t *)PyArray_DATA(idx_arr);
+    const int8_t  *statuses = (const int8_t *)PyArray_DATA(st_arr);
+    int32_t marked = 0;
+    for (npy_intp k = 0; k < n_idx; k++) {
+        int32_t i = indices[k];
+        int8_t status = statuses[k];
+        if (status == SOLVED_UNKNOWN) continue;
+        if (i < 0 || i >= s->n_leaves) continue;
+        const int32_t *path = s->path_flat + s->path_offset[i];
+        int32_t plen = s->path_count[i];
+        if (plen <= 0) continue;
+        tree_mark_solved_and_propagate(&self->tree, path, plen, status);
+        marked++;
+    }
+    Py_DECREF(idx_arr);
+    Py_DECREF(st_arr);
+    return PyLong_FromLong(marked);
+}
+
+
+/*
  * get_gumbel_remaining() -> list[list[int]]
  *
  * After simulation completes, get the remaining candidates per board.
@@ -2988,6 +3305,8 @@ static PyMethodDef MCTSTree_methods[] = {
      "continue_gumbel_sims(pol, wdl) -> n_leaves or None. Feed GPU results, continue sim."},
     {"get_pending_tb_leaves", (PyCFunction)MCTSTree_get_pending_tb_leaves, METH_VARARGS,
      "get_pending_tb_leaves(max_pieces) -> (np.int32 indices, list[CBoard]). Syzygy-eligible subset of the current pending batch."},
+    {"mark_tb_solved", (PyCFunction)MCTSTree_mark_tb_solved, METH_VARARGS,
+     "mark_tb_solved(indices: np.int32, statuses: np.int8) -> int. Mark each indexed leaf with its TB-derived solved status (1=WIN, -1=LOSS, 2=DRAW; 0=skip) and propagate upward."},
     {"get_gumbel_remaining", (PyCFunction)MCTSTree_get_gumbel_remaining, METH_NOARGS,
      "get_gumbel_remaining() -> list[list[int]]. Get remaining candidates after sim."},
     {"get_children_visits", (PyCFunction)MCTSTree_get_children_visits, METH_VARARGS,
@@ -2996,6 +3315,10 @@ static PyMethodDef MCTSTree_methods[] = {
      "get_children_q(node_id, default_q) -> (actions_int32, visits_int32, q_float64)"},
     {"node_q", (PyCFunction)MCTSTree_node_q, METH_VARARGS,
      "node_q(node_id) -> float"},
+    {"get_solved_status", (PyCFunction)MCTSTree_get_solved_status, METH_VARARGS,
+     "get_solved_status(node_id) -> int (0=unknown, 1=win, -1=loss, 2=draw, STM perspective)"},
+    {"mark_solved_path", (PyCFunction)MCTSTree_mark_solved_path, METH_VARARGS,
+     "mark_solved_path(node_path: NDArray[np.int32], status: int) -> None. Mark leaf solved with status (1/-1/2 = WIN/LOSS/DRAW from STM, 0=skip) and propagate upward."},
     {"is_expanded", (PyCFunction)MCTSTree_is_expanded, METH_VARARGS,
      "is_expanded(node_id) -> bool"},
     {"memory_bytes", (PyCFunction)MCTSTree_memory_bytes, METH_NOARGS,
