@@ -27,6 +27,15 @@ LEGACY_SHARD_SUFFIX = ".npz"
 # so the same samples don't reach replay through both channels.
 PENDING_DIR_NAME = "_pending"
 
+# Server-managed flush staging. While a compacted shard is being written,
+# the contributing pending zarrs are moved into
+# ``inbox_root/_in_flight/<flush_token>/``. The same ``flush_token`` is
+# embedded in the compacted shard's filename, so recovery can decide per
+# in-flight group whether the flush committed (matching compacted shard
+# exists → safe to delete the group) or crashed before commit (no match →
+# move the contents back to ``_pending`` for re-seeding).
+IN_FLIGHT_DIR_NAME = "_in_flight"
+
 
 def is_tmp_shard_name(name: str) -> bool:
     """In-progress upload staging name: tmp directories the server is mid-write

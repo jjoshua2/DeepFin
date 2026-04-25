@@ -14,6 +14,7 @@ from typing import Any
 
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.shard import (
+    IN_FLIGHT_DIR_NAME,
     LOCAL_SHARD_SUFFIX,
     PENDING_DIR_NAME,
     UPLOAD_TAR_SUFFIX,
@@ -32,6 +33,7 @@ from chess_anti_engine.utils.versioning import version_lt
 # ``replay.shard.PENDING_DIR_NAME`` for the canonical constant). Aliased
 # here purely to keep the local docstring at the call sites.
 _PENDING_DIR_NAME = PENDING_DIR_NAME
+_IN_FLIGHT_DIR_NAME = IN_FLIGHT_DIR_NAME
 
 
 @dataclass
@@ -123,6 +125,7 @@ def _flush_buffered_upload_to_inbox(
     inbox_root: Path,
     acc: _BufferedUploadAccumulator,
     now_unix: float,
+    flush_token: str,
 ) -> Path | None:
     if acc.positions <= 0 or not acc.samples:
         return None
@@ -155,9 +158,13 @@ def _flush_buffered_upload_to_inbox(
         checkmate_games=int(acc.checkmate_games),
         stalemate_games=int(acc.stalemate_games),
     )
+    # ``flush_token`` doubles as the compacted shard's uniqueness suffix and
+    # the link back to ``_in_flight/<flush_token>/``. Recovery globs for this
+    # token in ``_compacted/*`` to decide whether the in-flight group has
+    # already committed.
     final = compacted_dir / (
         f"{int(now_unix)}_{str(acc.model_sha256)[:8]}_{int(acc.games)}g_{int(acc.positions)}p_"
-        f"{secrets.token_hex(8)}{LOCAL_SHARD_SUFFIX}"
+        f"{flush_token}{LOCAL_SHARD_SUFFIX}"
     )
     compacted_dir.mkdir(parents=True, exist_ok=True)
     arrs = samples_to_arrays(samples)
@@ -289,33 +296,86 @@ def create_app(
     def _try_flush_and_pop(acc_key, *, inbox_root: Path, acc, now_unix: float) -> bool:
         """Flush an accumulator to disk; on success pop it, on failure leave it.
 
-        Transactional: dedup state has already recorded the uploaded shas, so
-        dropping the accumulator on a transient write error would silently lose
-        replay samples the worker can't resend. Returning False keeps the acc
-        in memory for the next upload or periodic tick to retry.
+        Crash-safety contract:
+        - Move pending zarrs into ``_in_flight/<flush_token>/`` BEFORE writing
+          the compacted shard. The compacted shard's filename also embeds
+          ``<flush_token>``, so its presence on disk is a durable witness
+          that this group of pending zarrs is now committed.
+        - Recovery (``_recover_in_flight_dirs``) handles every crash window:
+          before-rename → pending intact, re-seeded; mid-rename → some in
+          flight, no compacted → moved back; post-rename, no compacted →
+          moved back; post-compacted → in-flight deleted as committed.
 
-        Order matters: only delete the pending zarrs after the compacted shard
-        has been written. A crash mid-flush leaves the pending zarrs in place
-        for the next ``create_app`` startup to re-seed and replay.
+        Returning False on a flush error leaves the acc in memory and
+        moves the in-flight zarrs back to ``_pending`` so the next attempt
+        starts from the same on-disk state.
         """
+        flush_token = secrets.token_hex(8)
+        in_flight_dir = inbox_root / _IN_FLIGHT_DIR_NAME / flush_token
+        try:
+            in_flight_dir.mkdir(parents=True, exist_ok=False)
+        except Exception:
+            log.exception(
+                "failed to create in-flight dir %s; keeping accumulator for retry",
+                in_flight_dir,
+            )
+            return False
+        moved: list[tuple[Path, Path]] = []  # (original_pending, in_flight_path)
+        try:
+            for pending in list(acc.pending_paths):
+                target = in_flight_dir / pending.name
+                pending.replace(target)
+                moved.append((pending, target))
+            acc.pending_paths = [target for _, target in moved]
+        except Exception:
+            log.exception(
+                "failed to stage pending shards into %s; rolling back",
+                in_flight_dir,
+            )
+            for original, target in moved:
+                try:
+                    target.replace(original)
+                except Exception:
+                    log.exception("rollback rename failed for %s -> %s", target, original)
+            acc.pending_paths = [original for original, _ in moved] + [
+                p for p in acc.pending_paths if p not in {orig for orig, _ in moved}
+            ]
+            delete_shard_path(in_flight_dir)
+            return False
+
         try:
             compacted_path = _flush_buffered_upload_to_inbox(
                 inbox_root=inbox_root,
                 acc=acc,
                 now_unix=now_unix,
+                flush_token=flush_token,
             )
         except Exception:
             log.exception(
                 "compaction flush failed for key=%r; keeping accumulator (%d samples) for retry",
                 acc_key, int(getattr(acc, "positions", 0)),
             )
-            return False
-        if compacted_path is not None:
-            for pending in list(acc.pending_paths):
+            # Compacted shard never landed; restore pending so the retry
+            # path (and any later recovery) operates on the same state as
+            # before the flush attempt.
+            restored: list[Path] = []
+            for original, target in moved:
                 try:
-                    delete_shard_path(pending)
+                    target.replace(original)
+                    restored.append(original)
                 except Exception:
-                    log.exception("failed to delete pending shard %s after flush", pending)
+                    log.exception("restore rename failed for %s -> %s", target, original)
+                    restored.append(target)
+            acc.pending_paths = restored
+            delete_shard_path(in_flight_dir)
+            return False
+
+        if compacted_path is not None:
+            # Compacted shard exists with ``flush_token`` in its name — this is
+            # the commit point. From here, the in-flight group is safe to
+            # delete; if we crash before this delete completes, recovery
+            # token-matches and deletes the leftover.
+            delete_shard_path(in_flight_dir)
             acc.pending_paths.clear()
         upload_accumulators.pop(acc_key, None)
         return True
@@ -854,8 +914,12 @@ def create_app(
         # path is a directly loadable shard.
         pending_dir = inbox_root / _PENDING_DIR_NAME
         pending_dir.mkdir(parents=True, exist_ok=True)
+        # Full sha (not sha[:8]) so recovery can repopulate
+        # ``recent_upload_shas`` from the filename alone — without that, a
+        # worker retry after a crash would not be deduped against the
+        # already-recovered samples.
         pending_path = pending_dir / (
-            f"{int(now_unix)}_{sha[:8]}_{secrets.token_hex(8)}{LOCAL_SHARD_SUFFIX}"
+            f"{int(now_unix)}_{sha}_{secrets.token_hex(8)}{LOCAL_SHARD_SUFFIX}"
         )
         try:
             zarr_root.replace(pending_path)
@@ -1089,12 +1153,76 @@ def create_app(
             x_cae_protocol_version=x_cae_protocol_version,
         )
 
-    # Crash-recovery: re-seed accumulators from any pending shards left on
-    # disk by a prior server process that accepted uploads but crashed before
-    # compaction-flush. Scans both the default inbox and every per-trial
-    # inbox under ``trials/<tid>/inbox``. Pending shards are NOT picked up by
-    # the trainable's inbox scan (filtered in ``_iter_shard_paths_nested``),
-    # so this is the only path that turns them back into compacted shards.
+    # Crash-recovery, two phases:
+    #
+    # Phase 1 — ``_recover_in_flight_dirs``: settle ``_in_flight/<token>/``
+    # groups left over from a flush that crashed mid-cleanup. The compacted
+    # shard's filename embeds ``<token>``, so:
+    #   - if ``_compacted/*<token>*`` exists, the flush committed; the
+    #     in-flight group is just leftover state to delete.
+    #   - if no compacted match, the flush never committed; move each
+    #     in-flight zarr back to ``_pending`` so phase 2 re-seeds it.
+    #
+    # Phase 2 — ``_scan_pending_dir``: re-seed accumulators from any pending
+    # shards left on disk (uploads accepted but never flushed). Filename
+    # encodes the full upload sha, so we also backfill ``recent_upload_shas``
+    # — without that, a worker retry after the crash would not be deduped
+    # against the recovered samples and would double-count. If the same sha
+    # appears twice (e.g. a duplicate upload whose ``delete_shard_path``
+    # silently failed), only the first pending file is re-seeded; the rest
+    # are orphaned duplicates that get deleted.
+    #
+    # Pending shards are NOT picked up by the trainable's inbox scan
+    # (filtered in ``_iter_shard_paths_nested``), so this is the only path
+    # that turns them back into compacted shards.
+
+    def _parse_pending_sha(name: str) -> str | None:
+        """Extract the full upload sha from a pending shard filename.
+
+        Format: ``<int_now>_<sha64>_<token>.zarr``. Returns ``None`` if the
+        middle field doesn't look like a sha256 hex digest.
+        """
+        stem = name[: -len(LOCAL_SHARD_SUFFIX)] if name.endswith(LOCAL_SHARD_SUFFIX) else name
+        parts = stem.split("_")
+        if len(parts) < 3:
+            return None
+        candidate = parts[1]
+        if len(candidate) != 64 or any(c not in "0123456789abcdef" for c in candidate):
+            return None
+        return candidate
+
+    def _recover_in_flight_dirs(*, in_flight_root: Path, compacted_dir: Path) -> None:
+        if not in_flight_root.is_dir():
+            return
+        for token_dir in sorted(in_flight_root.iterdir()):
+            if not token_dir.is_dir():
+                continue
+            token = token_dir.name
+            committed = compacted_dir.is_dir() and any(
+                p.name.endswith(LOCAL_SHARD_SUFFIX) and token in p.name
+                for p in compacted_dir.iterdir()
+            )
+            if committed:
+                # Compacted shard exists for this token → samples already
+                # durable; just clean up the staging dir.
+                delete_shard_path(token_dir)
+                continue
+            # No matching compacted shard → flush never committed. Move
+            # every shard back to ``_pending`` for phase 2 to re-seed.
+            pending_dir = in_flight_root.parent / _PENDING_DIR_NAME
+            pending_dir.mkdir(parents=True, exist_ok=True)
+            for entry in sorted(token_dir.iterdir()):
+                if not entry.name.endswith(LOCAL_SHARD_SUFFIX):
+                    continue
+                try:
+                    entry.replace(pending_dir / entry.name)
+                except Exception:
+                    log.exception(
+                        "failed to restore in-flight shard %s to pending; leaving in place",
+                        entry,
+                    )
+            delete_shard_path(token_dir)
+
     def _scan_pending_dir(*, pending_dir: Path, trial_key: str | None) -> int:
         if not pending_dir.is_dir():
             return 0
@@ -1104,6 +1232,18 @@ def create_app(
             if is_tmp_shard_name(name):
                 continue
             if not name.endswith(LOCAL_SHARD_SUFFIX):
+                continue
+            upload_sha = _parse_pending_sha(name)
+            # Orphaned duplicate: an earlier pending with the same upload
+            # sha was already re-seeded this scan, so this one's samples
+            # are already in the accumulator. Treat as a leftover from a
+            # silent ``delete_shard_path`` failure on the duplicate-upload
+            # path and drop it.
+            if upload_sha is not None and (trial_key, upload_sha) in recent_upload_shas:
+                try:
+                    delete_shard_path(entry)
+                except Exception:
+                    log.exception("failed to drop orphaned duplicate pending %s", entry)
                 continue
             try:
                 arrs, meta_dict = load_shard_arrays(entry)
@@ -1137,11 +1277,20 @@ def create_app(
                 upload_accumulators[acc_key] = acc
             acc.add_upload(samples=samples, meta=meta_dict, now_unix=mtime)
             acc.pending_paths.append(entry)
+            if upload_sha is not None:
+                recent_upload_shas[(trial_key, upload_sha)] = mtime
             recovered += 1
         return recovered
 
     def _recover_pending_uploads() -> None:
         # Default (no-trial) inbox.
+        try:
+            _recover_in_flight_dirs(
+                in_flight_root=inbox / _IN_FLIGHT_DIR_NAME,
+                compacted_dir=inbox / "_compacted",
+            )
+        except Exception:
+            log.exception("in-flight recovery (default inbox) failed")
         try:
             _scan_pending_dir(pending_dir=inbox / _PENDING_DIR_NAME, trial_key=None)
         except Exception:
@@ -1158,9 +1307,17 @@ def create_app(
                     continue
                 if trial_key is None:
                     continue
+                trial_inbox = trial_dir / inbox_dir
+                try:
+                    _recover_in_flight_dirs(
+                        in_flight_root=trial_inbox / _IN_FLIGHT_DIR_NAME,
+                        compacted_dir=trial_inbox / "_compacted",
+                    )
+                except Exception:
+                    log.exception("in-flight recovery for trial %s failed", trial_key)
                 try:
                     _scan_pending_dir(
-                        pending_dir=trial_dir / inbox_dir / _PENDING_DIR_NAME,
+                        pending_dir=trial_inbox / _PENDING_DIR_NAME,
                         trial_key=trial_key,
                     )
                 except Exception:

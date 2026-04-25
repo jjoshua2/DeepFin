@@ -461,7 +461,10 @@ class Trainer:
         )
 
     def _amp_context(self):
-        return inference_autocast(device=self.device, enabled=self.use_amp)
+        # Pinned to bf16: training has no GradScaler, so an FP16 fallback
+        # would silently underflow gradients on non-BF16 CUDA cards. The
+        # ``inference_autocast`` helper would auto-fallback to FP16 there.
+        return inference_autocast(device=self.device, enabled=self.use_amp, dtype="bf16")
 
     @staticmethod
     def _extract_loss_scalars(losses: dict[str, torch.Tensor]) -> dict[str, float]:

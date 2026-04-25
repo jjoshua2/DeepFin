@@ -62,6 +62,7 @@ def test_server_compacts_multiple_small_uploads_into_one_inbox_shard(tmp_path) -
         inbox_root=inbox_root,
         acc=acc,
         now_unix=101.0,
+        flush_token="abcd0123abcd0123",
     )
     assert out is not None
     assert out.parent == inbox_root / "_compacted"
@@ -112,6 +113,7 @@ def test_server_compactor_atomically_replaces_temp_path(tmp_path) -> None:
         inbox_root=inbox_root,
         acc=acc,
         now_unix=52.0,
+        flush_token="cafebabecafebabe",
     )
 
     assert out is not None

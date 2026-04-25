@@ -368,22 +368,6 @@
                     "endColumn": 42,
                     "lineCount": 1
                 }
-            },
-            {
-                "code": "reportArgumentType",
-                "range": {
-                    "startColumn": 14,
-                    "endColumn": 50,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportArgumentType",
-                "range": {
-                    "startColumn": 14,
-                    "endColumn": 50,
-                    "lineCount": 1
-                }
             }
         ],
         "./chess_anti_engine/tune/_utils.py": [
