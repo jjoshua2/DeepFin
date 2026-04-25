@@ -97,6 +97,7 @@ def train_trial(config: dict):
         ffn_mult=tc.ffn_mult,
         use_smolgen=tc.use_smolgen,
         use_nla=tc.use_nla,
+        use_qk_rmsnorm=tc.use_qk_rmsnorm,
         use_gradient_checkpointing=tc.gradient_checkpointing,
     )
     model = build_model(model_cfg)

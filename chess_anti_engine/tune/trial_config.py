@@ -44,6 +44,7 @@ class TrialConfig:
     ffn_mult: float = 2.0
     use_smolgen: bool = True
     use_nla: bool = False
+    use_qk_rmsnorm: bool = False
     gradient_checkpointing: bool = False
 
   # --- Training ---
@@ -248,6 +249,7 @@ class TrialConfig:
             ffn_mult=float(config.get("ffn_mult", 2)),
             use_smolgen=bool(config.get("use_smolgen", True)),
             use_nla=bool(config.get("use_nla", False)),
+            use_qk_rmsnorm=bool(config.get("use_qk_rmsnorm", False)),
             gradient_checkpointing=bool(config.get("gradient_checkpointing", False)),
 
   # --- Training ---

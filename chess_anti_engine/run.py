@@ -291,7 +291,6 @@ def _build_tune_config_dict(args: argparse.Namespace) -> dict:
 
 def main() -> None:
   # Enable TF32 for any float32 ops outside autocast BF16 scope.
-    import torch
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
 
