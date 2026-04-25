@@ -3364,8 +3364,10 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
         int32_t action = actions[i];
         double value = values[i];
 
-        /* Ply index and POV */
-        ply_out[i] = (int32_t)cb->hist_len;
+        /* Ply index and POV. Use cb->ply (total halfmoves from game start),
+         * not cb->hist_len which is the LC0 history-buffer count capped at 8.
+         * The +2/+6 lookups in finalize.py rely on monotone per-game ply indices. */
+        ply_out[i] = (int32_t)cb->ply;
         pov_out[i] = (int32_t)cb->turn;
 
         /* Legal mask */
