@@ -630,6 +630,23 @@ class SelfplayState:
         self.root_ids[i] = -1  # Reset tree reuse for new game.
         self.games_started += 1
 
+    def replay_board(self, i: int) -> chess.Board:
+        """Return a ``chess.Board`` at the current position of slot ``i``.
+
+        When the C per-ply fast path is active ``self.boards[i]`` is kept at
+        the opening position and we replay ``self.move_idx_history[i]``.
+        In the Python fallback the board has already been mutated in place,
+        so it's returned as-is.
+        """
+        from chess_anti_engine.moves import index_to_move
+
+        if not self.has_c_ply:
+            return self.boards[i]
+        b = self.boards[i].copy(stack=False)
+        for mi in self.move_idx_history[i]:
+            b.push(index_to_move(mi, b))
+        return b
+
 
 __all__ = [
     "SOFT_RESIGN_CONSECUTIVE",

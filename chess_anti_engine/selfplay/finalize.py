@@ -17,13 +17,14 @@ from typing import TYPE_CHECKING
 import chess
 import numpy as np
 
-from chess_anti_engine.moves import POLICY_SIZE, index_to_move, move_to_index
+from chess_anti_engine.moves import POLICY_SIZE, move_to_index
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.selfplay.state import (
     CompletedGameBatch,
     SelfplayState,
     _NetRecord,
 )
+from chess_anti_engine.selfplay.stockfish_turn import flip_wdl_pov
 from chess_anti_engine.selfplay.temperature import apply_policy_temperature
 from chess_anti_engine.stockfish.pool import StockfishPool
 from chess_anti_engine.stockfish.uci import StockfishResult
@@ -51,13 +52,10 @@ def _sf_terminal_result(
     if sf_res is None or sf_res.wdl is None:
         return "1/2-1/2"
     wdl_stm = sf_res.wdl
-    if not turn_is_white:
-        wdl_white = np.array(
-            [float(wdl_stm[2]), float(wdl_stm[1]), float(wdl_stm[0])],
-            dtype=np.float32,
-        )
-    else:
-        wdl_white = np.asarray(wdl_stm, dtype=np.float32)
+    wdl_white = (
+        np.asarray(wdl_stm, dtype=np.float32) if turn_is_white
+        else flip_wdl_pov(wdl_stm)
+    )
     if float(wdl_white[0]) > float(adjudication_threshold):
         return "1-0"
     if float(wdl_white[2]) > float(adjudication_threshold):
@@ -65,20 +63,6 @@ def _sf_terminal_result(
     return "1/2-1/2"
 
 
-def _reconstruct_final_board(state: SelfplayState, i: int) -> chess.Board:
-    """Return a ``chess.Board`` at the final position of slot ``i``.
-
-    When the C per-ply fast path is active ``state.boards[i]`` is kept at
-    the opening position and we replay ``state.move_idx_history[i]``.
-    In the Python fallback the board has already been mutated in place.
-    """
-    if state.has_c_ply:
-        b = state.boards[i].copy(stack=False)
-        for _mi in state.move_idx_history[i]:
-            _mv = index_to_move(_mi, b)
-            b.push(_mv)
-        return b
-    return state.boards[i]
 
 
 def _compute_terminal_result(
@@ -412,7 +396,7 @@ def finalize_game(
       growth for long-running workers).
     """
     cb = state.cboards[i]
-    b = _reconstruct_final_board(state, i)
+    b = state.replay_board(i)
 
     # TB adjudication (if enabled) short-circuits cb.result() — this game
     # was ended early at a known-result endgame position. Skip the SF

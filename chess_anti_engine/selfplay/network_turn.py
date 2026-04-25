@@ -210,17 +210,8 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
         else:
             # PUCT needs python-chess boards.  When the C fast path is
             # active, boards[idx] stays at the starting position — rebuild
-            # current state from move_idx_history (same as finalize_game).
-            if state.has_c_ply:
-                sub_boards = []
-                for j in group:
-                    idx = net_idxs[j]
-                    b = state.boards[idx].copy(stack=False)
-                    for _mi in state.move_idx_history[idx]:
-                        b.push(index_to_move(_mi, b))
-                    sub_boards.append(b)
-            else:
-                sub_boards = [state.boards[net_idxs[j]] for j in group]
+            # current state from move_idx_history (handled inside replay_board).
+            sub_boards = [state.replay_board(net_idxs[j]) for j in group]
             _puct_fn = _run_mcts_many_c if _HAS_C_TREE else run_mcts_many
             p_sub, a_sub, v_sub, m_sub = _puct_fn(
                 state.model,

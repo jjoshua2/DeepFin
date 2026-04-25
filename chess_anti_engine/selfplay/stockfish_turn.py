@@ -28,18 +28,10 @@ from chess_anti_engine.selfplay.state import SelfplayState
 from chess_anti_engine.stockfish.pool import StockfishPool
 
 
-def _softmax_np(x: np.ndarray) -> np.ndarray:
-    """Numerically-stable softmax over a 1D numpy array."""
-    z = x.astype(np.float64, copy=False)
-    z = z - float(np.max(z))
-    e = np.exp(z)
-    s = float(e.sum())
-    if s <= 0:
-        return np.full_like(z, 1.0 / float(z.size))
-    return e / s
+from chess_anti_engine.utils.numpy_helpers import softmax_1d as _softmax_np  # noqa: E402
 
 
-def _flip_wdl_pov(wdl: np.ndarray) -> np.ndarray:
+def flip_wdl_pov(wdl: np.ndarray) -> np.ndarray:
     """Flip a ``[W, D, L]`` vector to the opposite POV (swaps W and L)."""
     wdl = np.asarray(wdl, dtype=np.float32)
     if wdl.shape != (3,):
@@ -218,7 +210,7 @@ def _process_sf_results(
                 rec.sf_policy_target = p_sf
                 rec.sf_move_index = a_idx
                 if res.wdl is not None:
-                    rec.sf_wdl = _flip_wdl_pov(res.wdl)
+                    rec.sf_wdl = flip_wdl_pov(res.wdl)
                 _sf_mask = np.zeros((POLICY_SIZE,), dtype=np.uint8)
                 _sf_mask[legal_indices] = 1
                 rec.sf_legal_mask = _sf_mask

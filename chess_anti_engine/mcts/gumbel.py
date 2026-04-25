@@ -30,11 +30,7 @@ def _gumbel(rng: np.random.Generator, size: int) -> np.ndarray:
     return -np.log(-np.log(u))
 
 
-def _softmax(x: np.ndarray) -> np.ndarray:
-    x = x - np.max(x)
-    e = np.exp(x)
-    s = float(e.sum())
-    return e / s if s > 0 else np.full_like(x, 1.0 / x.size)
+from chess_anti_engine.utils.numpy_helpers import softmax_1d as _softmax  # noqa: E402
 
 
 @dataclass
