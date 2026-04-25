@@ -98,6 +98,13 @@ def _is_tmp_shard_name(name: str) -> bool:
     return name.startswith("tmp_") or name.startswith("._tmp_")
 
 
+# Server-managed staging dir for crash-recoverable uploads. Lives at
+# ``inbox_root/_pending`` and is replayed by ``create_app`` on startup; it
+# must never be ingested as a real shard, otherwise the same samples would
+# also reach replay through compaction.
+_PENDING_DIR_NAME = "_pending"
+
+
 def _iter_shard_paths_nested(root: Path) -> list[Path]:
     """List shard paths under a two-level inbox/processed layout
     (``root/<user>/<shard>``).
@@ -112,6 +119,11 @@ def _iter_shard_paths_nested(root: Path) -> list[Path]:
     would scandir its internals and race with that rename, raising
     FileNotFoundError. Any dir that vanishes mid-iteration is also skipped;
     its contents will be picked up on a later call once the rename lands.
+
+    Also skips the server's ``_pending`` staging dir. Pending shards already
+    contributed their samples to an in-memory accumulator and will land in
+    replay via ``_compacted`` once the server flushes; ingesting them here
+    would double-count them.
     """
     paths: list[Path] = []
     try:
@@ -120,6 +132,8 @@ def _iter_shard_paths_nested(root: Path) -> list[Path]:
         return paths
     for user_dir in user_dirs:
         if not user_dir.is_dir() or _is_tmp_shard_name(user_dir.name):
+            continue
+        if user_dir.name == _PENDING_DIR_NAME:
             continue
         try:
             for entry in user_dir.iterdir():

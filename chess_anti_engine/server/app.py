@@ -26,6 +26,12 @@ from chess_anti_engine.replay.shard import (
 from chess_anti_engine.utils.atomic import atomic_write_text
 from chess_anti_engine.utils.versioning import version_lt
 
+# Pending-upload staging directory under each inbox root. Each shard durably
+# extracted from an upload tar is atomically renamed here before the server
+# returns ``stored: true`` so a crash before compaction-flush cannot lose
+# replay samples the worker has already discarded.
+_PENDING_DIR_NAME = "_pending"
+
 
 @dataclass
 class _BufferedUploadAccumulator:
@@ -55,6 +61,11 @@ class _BufferedUploadAccumulator:
     checkmate_games: int = 0
     stalemate_games: int = 0
     model_step: int | None = None
+    # Disk-resident extracted shards that contributed to this accumulator and
+    # have NOT yet been folded into a compacted shard. Deleted only after the
+    # compacted shard has been written to disk so a crash mid-flush leaves the
+    # pending shards in place to be replayed at restart.
+    pending_paths: list[Path] = field(default_factory=list)
 
     def add_upload(
         self,
@@ -281,9 +292,13 @@ def create_app(
         dropping the accumulator on a transient write error would silently lose
         replay samples the worker can't resend. Returning False keeps the acc
         in memory for the next upload or periodic tick to retry.
+
+        Order matters: only delete the pending zarrs after the compacted shard
+        has been written. A crash mid-flush leaves the pending zarrs in place
+        for the next ``create_app`` startup to re-seed and replay.
         """
         try:
-            _flush_buffered_upload_to_inbox(
+            compacted_path = _flush_buffered_upload_to_inbox(
                 inbox_root=inbox_root,
                 acc=acc,
                 now_unix=now_unix,
@@ -294,6 +309,13 @@ def create_app(
                 acc_key, int(getattr(acc, "positions", 0)),
             )
             return False
+        if compacted_path is not None:
+            for pending in list(acc.pending_paths):
+                try:
+                    delete_shard_path(pending)
+                except Exception:
+                    log.exception("failed to delete pending shard %s after flush", pending)
+            acc.pending_paths.clear()
         upload_accumulators.pop(acc_key, None)
         return True
 
@@ -815,11 +837,39 @@ def create_app(
 
         positions = int(shard_arrs["x"].shape[0])
         tmp.unlink(missing_ok=True)
-        delete_shard_path(tmp_zarr)
         trial_key = _normalize_trial_id(trial_id)
         upload_seen_key = (trial_key, sha)
         now_unix = time.time()
         stored = False
+        # Atomically promote the extracted zarr group to the pending dir
+        # before acknowledging the upload. ``Path.replace`` is atomic on the
+        # same filesystem (the staging path and pending_dir share
+        # inbox_root). If we fail to promote, drop the temp shard and
+        # reject the upload — workers retry on non-stored responses.
+        #
+        # ``extract_uploaded_shard_tar`` returns the actual zarr group root,
+        # which may be ``tmp_zarr`` itself or a single nested child dir
+        # holding ``.zgroup``. Promote that exact directory so the pending
+        # path is a directly loadable shard.
+        pending_dir = inbox_root / _PENDING_DIR_NAME
+        pending_dir.mkdir(parents=True, exist_ok=True)
+        pending_path = pending_dir / (
+            f"{int(now_unix)}_{sha[:8]}_{secrets.token_hex(8)}{LOCAL_SHARD_SUFFIX}"
+        )
+        try:
+            zarr_root.replace(pending_path)
+        except Exception as exc:
+            delete_shard_path(tmp_zarr)
+            log.exception("failed to promote extracted shard to pending dir")
+            return {
+                "stored": False,
+                "rejected": True,
+                "reason": f"pending stage failed: {type(exc).__name__}: {exc}",
+            }
+        # Clean up the (now empty) wrapper dir if extraction nested a child.
+        if zarr_root != tmp_zarr:
+            delete_shard_path(tmp_zarr)
+        tmp_zarr = None
         with upload_lock:
             if upload_seen_key not in recent_upload_shas:
                 model_sha = str(meta.get("model_sha256") or sha)
@@ -838,6 +888,7 @@ def create_app(
                     meta=meta,
                     now_unix=now_unix,
                 )
+                acc.pending_paths.append(pending_path)
                 recent_upload_shas[upload_seen_key] = now_unix
                 stored = True
                 if _buffered_upload_ready(
@@ -847,6 +898,11 @@ def create_app(
                     max_age_s=compact_max_age_seconds,
                 ):
                     _try_flush_and_pop(acc_key, inbox_root=inbox_root, acc=acc, now_unix=now_unix)
+            else:
+                # Duplicate upload (already accumulated). The pending shard we
+                # just promoted is redundant — drop it so it isn't re-seeded
+                # on restart.
+                delete_shard_path(pending_path)
 
         lease = None
         if x_cae_worker_lease_id is not None:
@@ -1031,5 +1087,84 @@ def create_app(
             x_cae_worker_version=x_cae_worker_version,
             x_cae_protocol_version=x_cae_protocol_version,
         )
+
+    # Crash-recovery: re-seed accumulators from any pending shards left on
+    # disk by a prior server process that accepted uploads but crashed before
+    # compaction-flush. Scans both the default inbox and every per-trial
+    # inbox under ``trials/<tid>/inbox``. Pending shards are NOT picked up by
+    # the trainable's inbox scan (filtered in ``_iter_shard_paths_nested``),
+    # so this is the only path that turns them back into compacted shards.
+    def _scan_pending_dir(*, pending_dir: Path, trial_key: str | None) -> int:
+        if not pending_dir.is_dir():
+            return 0
+        recovered = 0
+        for entry in sorted(pending_dir.iterdir()):
+            name = entry.name
+            if name.startswith("._tmp_") or name.startswith("tmp_"):
+                continue
+            if not name.endswith(LOCAL_SHARD_SUFFIX):
+                continue
+            try:
+                arrs, meta_dict = load_shard_arrays(entry)
+            except Exception:
+                log.exception("failed to load pending shard %s; skipping", entry)
+                continue
+            try:
+                samples = arrays_to_samples(arrs)
+            except Exception:
+                log.exception("failed to materialize pending shard %s; skipping", entry)
+                continue
+            model_sha = str(meta_dict.get("model_sha256") or "")
+            if not model_sha:
+                # Without a model_sha we cannot key the accumulator the same
+                # way as the live upload path. Fall back to the shard's
+                # filename prefix so re-seeding is still deterministic.
+                model_sha = entry.stem
+            try:
+                mtime = float(entry.stat().st_mtime)
+            except OSError:
+                mtime = float(time.time())
+            acc_key = (trial_key, model_sha)
+            acc = upload_accumulators.get(acc_key)
+            if acc is None:
+                acc = _BufferedUploadAccumulator(
+                    trial_id=trial_key,
+                    model_sha256=model_sha,
+                    created_at_unix=mtime,
+                    last_update_unix=mtime,
+                )
+                upload_accumulators[acc_key] = acc
+            acc.add_upload(samples=samples, meta=meta_dict, now_unix=mtime)
+            acc.pending_paths.append(entry)
+            recovered += 1
+        return recovered
+
+    def _recover_pending_uploads() -> None:
+        # Default (no-trial) inbox.
+        try:
+            _scan_pending_dir(pending_dir=inbox / _PENDING_DIR_NAME, trial_key=None)
+        except Exception:
+            log.exception("pending-upload recovery (default inbox) failed")
+        # Per-trial inboxes.
+        trials_dir = root / "trials"
+        if trials_dir.is_dir():
+            for trial_dir in sorted(trials_dir.iterdir()):
+                if not trial_dir.is_dir():
+                    continue
+                try:
+                    trial_key = _normalize_trial_id(trial_dir.name)
+                except HTTPException:
+                    continue
+                if trial_key is None:
+                    continue
+                try:
+                    _scan_pending_dir(
+                        pending_dir=trial_dir / inbox_dir / _PENDING_DIR_NAME,
+                        trial_key=trial_key,
+                    )
+                except Exception:
+                    log.exception("pending-upload recovery for trial %s failed", trial_key)
+
+    _recover_pending_uploads()
 
     return app
