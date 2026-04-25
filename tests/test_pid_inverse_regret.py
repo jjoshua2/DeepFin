@@ -66,13 +66,10 @@ def test_fit_recovers_linear_relationship():
         (0.16, 0.72, 0.018),
         (0.18, 0.76, 0.018),
     ]
-    fit = _fit_inverse_regret(history, target_wr=0.70)
-    assert fit is not None
-    predicted_r, sigma_pred, slope = fit
+    predicted_r = _fit_inverse_regret(history, target_wr=0.70)
+    assert predicted_r is not None
     # Target 0.70 should map to regret 0.15 (slope 2, intercept 0.4)
     assert abs(predicted_r - 0.15) < 0.005
-    assert abs(slope - 2.0) < 0.1
-    assert sigma_pred < 0.05  # tight fit
 
 
 def test_fit_rejects_insufficient_span():
@@ -141,30 +138,11 @@ def test_saturated_batches_do_not_dominate_fit():
     assert (1.0 / se_saturated ** 2) / (1.0 / se_normal ** 2) < 10.0
 
 
-def test_sigma_pred_reflects_residual_variance():
-    # Codex HIGH finding #2 (continued): residual variance must flow into
-    # sigma_pred. Two fits with identical regret spread but different residuals
-    # should give different predicted-winrate uncertainty.
-    tight_history = [
-        (0.10, 0.60, 0.018),
-        (0.12, 0.64, 0.018),
-        (0.14, 0.68, 0.018),
-        (0.16, 0.72, 0.018),
-    ]
-    noisy_history = [
-        (0.10, 0.70, 0.018),   # residual far from linear trend
-        (0.12, 0.50, 0.018),
-        (0.14, 0.80, 0.018),
-        (0.16, 0.55, 0.018),
-    ]
-    tight = _fit_inverse_regret(tight_history, target_wr=0.66)
-    noisy = _fit_inverse_regret(noisy_history, target_wr=0.66)
-    assert tight is not None
-    # Noisy fit may return None (sign-check reject) or very high sigma_pred.
-    # If it returned a fit, sigma_pred should exceed the tight fit's.
-    if noisy is not None:
-        assert noisy[1] > tight[1]
-    assert tight[1] < 0.05  # tight residuals → low prediction uncertainty
+# Removed test_sigma_pred_reflects_residual_variance — sigma_pred has been
+# dropped from _fit_inverse_regret. Backtest on 168 iters showed it had
+# ~0 correlation with actual prediction error (Pearson 0.009), so the
+# step-size policy ignores it; the cov00/cov01/cov11 + sqrt block was
+# dead compute. See pid.py:_fit_inverse_regret for the rationale.
 
 
 def test_inverse_history_round_trips_via_state_dict():
@@ -282,9 +260,7 @@ def test_inverse_model_handles_noisy_data():
         true_wr = true_intercept + true_slope * regret
         noisy_wr = true_wr + random.gauss(0, 0.018)
         history.append((regret, noisy_wr, 0.018))
-    fit = _fit_inverse_regret(history, target_wr=0.70)
-    assert fit is not None
-    predicted_r, sigma_pred, slope = fit
+    predicted_r = _fit_inverse_regret(history, target_wr=0.70)
+    assert predicted_r is not None
     # Target 0.70: true r* = 0.15. Noise should allow fit within ±0.02
     assert abs(predicted_r - 0.15) < 0.03
-    assert abs(slope - true_slope) < 0.5

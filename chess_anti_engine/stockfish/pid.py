@@ -42,18 +42,17 @@ def _fit_inverse_regret(
     *,
     target_wr: float,
     recency_half_life: float = 0.0,
-) -> tuple[float, float, float] | None:
-    """Weighted least-squares fit winrate = a + b*regret, solve for r* at target.
+) -> float | None:
+    """Weighted least-squares fit ``winrate = a + b*regret``, solve for r* at target.
 
     History is ordered oldest-first. When ``recency_half_life > 0`` each point
     is additionally weighted by ``0.5 ** (age / half_life)`` so recent points
     dominate — intended to handle training drift that lifts the regret→winrate
     curve upward over iterations.
 
-    Returns (predicted_regret, sigma_predicted_wr, slope), or None if
-    the fit is degenerate (fewer than 3 points, zero x variance, or
-    physically implausible negative slope). Callers handle None by falling
-    back to an exploration step.
+    Returns the predicted regret, or None if the fit is degenerate (fewer than
+    3 points, zero x variance, or physically implausible negative slope).
+    Callers handle None by falling back to an exploration step.
     """
     if len(history) < 3:
         return None
@@ -79,22 +78,7 @@ def _fit_inverse_regret(
   # Physics sanity: winrate should increase with regret (easier SF → more wins).
     if b <= 1e-4:
         return None
-    n = len(history)
-    if n > 2:
-        wres_sq = sum(
-            w * (v - (a + b * r)) ** 2
-            for w, r, v in zip(weights, r_vals, w_vals)
-        )
-        resid_variance = max(wres_sq / float(n - 2), 1e-6)
-    else:
-        resid_variance = 1.0
-    cov00 = resid_variance * swrr / det
-    cov01 = resid_variance * (-swr) / det
-    cov11 = resid_variance * sw / det
-    r_star = (float(target_wr) - a) / b
-    var_pred = cov00 + 2.0 * r_star * cov01 + (r_star ** 2) * cov11
-    sigma_pred = math.sqrt(max(var_pred, 1e-12))
-    return r_star, sigma_pred, b
+    return (float(target_wr) - a) / b
 
 
 @dataclass
@@ -371,20 +355,18 @@ class DifficultyPID:
   # — hold regret steady.
                 pass
             else:
-                fit = _fit_inverse_regret(
+                predicted_regret = _fit_inverse_regret(
                     list(self._inverse_history),
                     target_wr=self.target,
                     recency_half_life=self.inverse_regret_recency_half_life,
                 )
-                if fit is not None:
-                    predicted_regret, _, _ = fit
-  # Step toward fit's predicted r*, bounded by abs_max_step.
-  # Prior versions scaled by sigma_pred/sigma_tolerance, but
-  # backtest on 168 iters showed sigma_pred has ~0 correlation
-  # with actual prediction error (Pearson 0.009) — the iid-
-  # Gaussian residual assumption doesn't hold for drifting
-  # training data. max_step_frac (cap) is the only bound that
-  # actually works.
+                if predicted_regret is not None:
+  # Step toward fit's predicted r*, bounded by abs_max_step. Prior
+  # versions scaled by sigma_pred/sigma_tolerance, but backtest on
+  # 168 iters showed sigma_pred has ~0 correlation with actual
+  # prediction error (Pearson 0.009) — the iid-Gaussian residual
+  # assumption doesn't hold for drifting training data. max_step_frac
+  # (cap) is the only bound that actually works.
                     delta = _clamp(
                         predicted_regret - regret_before,
                         -abs_max_step,

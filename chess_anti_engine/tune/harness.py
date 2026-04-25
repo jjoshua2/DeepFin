@@ -70,15 +70,21 @@ def _prepare_distributed_worker_auth(
   # drift can't overwrite the authoritative admin change).
   # (Codex adversarial review.)
     users_path = server_root / "users.json"
-    if username not in load_users(users_path):
+    user_existed = username in load_users(users_path)
+    if not user_existed:
         upsert_user(users_path, username=username, password=password)
 
     password_file = server_root / f"{username}.password"
-    password_file.write_text(password + "\n", encoding="utf-8")
-    try:
-        password_file.chmod(0o600)
-    except OSError:
-        pass  # Windows / non-POSIX filesystem — chmod is best-effort
+  # Symmetric to the upsert: only write the .password file on first
+  # provisioning. If admin rotated the password via manage_users, the
+  # yaml password is stale; rewriting it would cause workers to read the
+  # stale value and fail auth against the live users.json.
+    if not user_existed and not password_file.exists():
+        password_file.write_text(password + "\n", encoding="utf-8")
+        try:
+            password_file.chmod(0o600)
+        except OSError:
+            pass  # Windows / non-POSIX filesystem — chmod is best-effort
     return username, password_file
 
 
@@ -324,12 +330,6 @@ def run_tune(
         ready_url = f"http://{ready_host}:{port}"
         base_url = public_url or ready_url
         username, password_file = _prepare_distributed_worker_auth(server_root=server_root, config=base_config)
-        stale_server_pids = terminate_matching_processes(
-            module="chess_anti_engine.server.run_server",
-            required_terms=["--server-root", str(server_root)],
-        )
-        if stale_server_pids:
-            print(f"[run_tune] Reaped stale distributed server processes: {stale_server_pids}")
 
         cmd = [
             sys.executable,
@@ -350,24 +350,22 @@ def run_tune(
             "--upload-compact-max-age-seconds",
             str(float(base_config.get("distributed_upload_compact_max_age_seconds", 90.0))),
         ]
-        opening_book = base_config.get("opening_book_path")
-        if isinstance(opening_book, str) and opening_book.strip():
-            cmd.extend(["--opening-book-path", opening_book.strip()])
-        opening_book_2 = base_config.get("opening_book_path_2")
-        if isinstance(opening_book_2, str) and opening_book_2.strip():
-            cmd.extend(["--opening-book-path-2", opening_book_2.strip()])
+        for cfg_key, flag in (
+            ("opening_book_path", "--opening-book-path"),
+            ("opening_book_path_2", "--opening-book-path-2"),
+        ):
+            book = base_config.get(cfg_key)
+            if isinstance(book, str) and book.strip():
+                cmd.extend([flag, book.strip()])
 
-        log_fh = server_log.open("ab")
-        try:
-  # pylint: disable=consider-using-with  # server_proc outlives this function
-            server_proc = subprocess.Popen(
-                cmd,
-                cwd=str(Path(__file__).resolve().parents[2]),
-                stdout=log_fh,
-                stderr=subprocess.STDOUT,
-            )
-        finally:
-            log_fh.close()
+        from chess_anti_engine.tune.distributed_runtime import _spawn_with_reap
+        server_proc = _spawn_with_reap(
+            cmd=cmd,
+            log_path=server_log,
+            reap_module="chess_anti_engine.server.run_server",
+            reap_terms=["--server-root", str(server_root)],
+            reap_label="distributed Tune servers",
+        )
 
         try:
             _wait_for_server_ready(base_url=ready_url, proc=server_proc)
