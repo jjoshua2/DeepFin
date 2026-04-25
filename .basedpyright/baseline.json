@@ -192,15 +192,7 @@
         ],
         "./chess_anti_engine/selfplay/manager.py": [
             {
-                "code": "reportAttributeAccessIssue",
-                "range": {
-                    "startColumn": 29,
-                    "endColumn": 45,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportAttributeAccessIssue",
+                "code": "reportUnusedImport",
                 "range": {
                     "startColumn": 65,
                     "endColumn": 81,
@@ -208,33 +200,75 @@
                 }
             },
             {
+                "code": "reportUnusedImport",
+                "range": {
+                    "startColumn": 34,
+                    "endColumn": 57,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnusedImport",
+                "range": {
+                    "startColumn": 34,
+                    "endColumn": 57,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnusedImport",
+                "range": {
+                    "startColumn": 27,
+                    "endColumn": 43,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./chess_anti_engine/selfplay/network_turn.py": [
+            {
+                "code": "reportAttributeAccessIssue",
+                "range": {
+                    "startColumn": 25,
+                    "endColumn": 41,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportAttributeAccessIssue",
+                "range": {
+                    "startColumn": 61,
+                    "endColumn": 77,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPossiblyUnboundVariable",
+                "range": {
+                    "startColumn": 25,
+                    "endColumn": 48,
+                    "lineCount": 1
+                }
+            },
+            {
                 "code": "reportArgumentType",
                 "range": {
-                    "startColumn": 20,
-                    "endColumn": 30,
+                    "startColumn": 16,
+                    "endColumn": 26,
                     "lineCount": 1
                 }
             },
             {
                 "code": "reportCallIssue",
                 "range": {
-                    "startColumn": 20,
-                    "endColumn": 27,
+                    "startColumn": 16,
+                    "endColumn": 23,
                     "lineCount": 1
                 }
             },
             {
                 "code": "reportCallIssue",
                 "range": {
-                    "startColumn": 20,
-                    "endColumn": 28,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportCallIssue",
-                "range": {
-                    "startColumn": 20,
+                    "startColumn": 16,
                     "endColumn": 24,
                     "lineCount": 1
                 }
@@ -242,32 +276,40 @@
             {
                 "code": "reportCallIssue",
                 "range": {
-                    "startColumn": 20,
-                    "endColumn": 33,
+                    "startColumn": 16,
+                    "endColumn": 20,
                     "lineCount": 1
                 }
             },
             {
                 "code": "reportCallIssue",
                 "range": {
-                    "startColumn": 20,
-                    "endColumn": 28,
+                    "startColumn": 16,
+                    "endColumn": 29,
                     "lineCount": 1
                 }
             },
             {
                 "code": "reportCallIssue",
                 "range": {
-                    "startColumn": 20,
-                    "endColumn": 27,
+                    "startColumn": 16,
+                    "endColumn": 24,
                     "lineCount": 1
                 }
             },
             {
                 "code": "reportPossiblyUnboundVariable",
                 "range": {
-                    "startColumn": 26,
-                    "endColumn": 34,
+                    "startColumn": 23,
+                    "endColumn": 39,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportCallIssue",
+                "range": {
+                    "startColumn": 16,
+                    "endColumn": 23,
                     "lineCount": 1
                 }
             }
