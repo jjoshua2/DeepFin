@@ -43,12 +43,10 @@ class WalkerPoolConfig:
     fpu_at_root: float
     fpu_reduction: float
     vloss_weight: int = 3
-  # Per-walker leaf gather: each walker does up to `gather` descents
-  # before submitting one NN batch. gather=1 is the classic "one leaf
-  # per NN call" shape; gather=G amplifies the effective submit batch
-  # to N_walkers×G. Virtual loss diversifies descents within the gather
-  # the same way it diversifies across walkers. Default 1 preserves
-  # existing behavior; Lc0's canonical leaf-gather is 8.
+  # Each walker does up to `gather` descents before submitting one NN
+  # batch — virtual loss diversifies within a gather the same way it
+  # diversifies across walkers. Lc0's canonical default is 8; we keep
+  # 1 to preserve the classic one-leaf-per-call shape.
     gather: int = 1
 
 
@@ -78,14 +76,13 @@ class WalkerPool:
             return 0
 
         cfg = self._cfg
-  # Semaphore models N remaining claims; workers exit when acquire
-  # returns False. Also serves as the "done" counter via target - value.
+  # Semaphore models N remaining sim claims; workers exit when
+  # ``acquire(blocking=False)`` returns False.
         budget = threading.Semaphore(target_sims)
 
-  # Per-pool exception capture. First worker to fail pushes here and
-  # sets ``stop_event`` so siblings exit early instead of running a
-  # full sim budget against a broken evaluator / tree. CPython
-  # list.append is GIL-atomic so no explicit lock needed.
+  # Per-pool exception capture. CPython ``list.append`` is GIL-atomic
+  # so no explicit lock; workers also set ``stop_event`` so siblings
+  # exit instead of burning the rest of the budget on the same fault.
         errors: list[BaseException] = []
 
         threads = [
@@ -103,14 +100,10 @@ class WalkerPool:
         for th in threads:
             th.join()
         if errors:
-  # Re-raise the first one; a dead walker means the search
-  # tree is underfilled and any bestmove would be based on
-  # partial data. Caller (Engine._run_one_phase) catches and
-  # surfaces via ``info string search error``.
+  # A dead walker means the tree is underfilled; any bestmove would
+  # be based on partial data, so re-raise instead of returning early.
             raise errors[0]
-  # Semaphore's internal counter is target - claimed; we cannot read
-  # it portably, so return target_sims as the best-effort count. The
-  # caller only uses this for progress logging.
+  # Semaphore counter isn't portably readable; best-effort.
         return target_sims
 
 
@@ -131,18 +124,13 @@ def _worker_loop(
     fpu_red = cfg.fpu_reduction
     vloss = cfg.vloss_weight
     gather = max(1, int(cfg.gather))
-  # Preallocate once; each iteration writes into enc[0:k] for the k
-  # leaves gathered this round. Slicing `enc[i:i+1]` gives descend a
-  # writable 1-row view without another allocation.
     enc = np.empty((gather, 146, 8, 8), dtype=np.float32)
 
     try:
         while not stop_event.is_set():
-  # Gather up to `gather` leaves. Track (slot, path, legal) for
-  # non-terminal leaves so we can submit one batch to the NN
-  # and re-integrate in order. Terminal leaves backprop inline —
-  # no NN eval needed. Budget acquired per-leaf so a partially-
-  # drained budget doesn't leave sims on the table.
+  # Budget is acquired per-leaf (not per-gather) so a partially-drained
+  # budget doesn't leave sims on the table. Terminal leaves backprop
+  # inline; non-terminals are queued for one batched NN call.
             pending_slots: list[int] = []
             pending_paths = []
             pending_legals = []
@@ -162,18 +150,16 @@ def _worker_loop(
                     pending_paths.append(path)
                     pending_legals.append(legal)
             if acquired == 0:
-  # Budget drained or stop signalled; exit.
                 return
             if not pending_paths:
-  # All gathered sims were terminal — no NN batch to submit.
                 continue
-  # Compact non-terminal rows into a contiguous array only when
-  # needed. Full-gather with no terminals is the hot path.
+  # Hot path is full-gather with no terminals → contiguous slice. Fancy
+  # indexing copies, so reserve it for the partial-gather case.
             n_pending = len(pending_slots)
-            if n_pending == gather and pending_slots[-1] == gather - 1:
+            if n_pending == gather:
                 xs = enc[:n_pending]
             else:
-                xs = enc[pending_slots]  # fancy-index → contiguous copy
+                xs = enc[pending_slots]
             pol, wdl_arr = evaluator.evaluate_encoded(xs)
             for k in range(n_pending):
                 tree.walker_integrate_leaf(
@@ -181,12 +167,8 @@ def _worker_loop(
                     pol[k], wdl_arr[k], vloss,
                 )
     except Exception as exc:
-  # Record the failure so ``WalkerPool.run`` can re-raise after join,
-  # and signal siblings to stop — running a full sim budget against
-  # a broken evaluator would just produce N identical failures and
-  # delay the error surfacing. ``KeyboardInterrupt`` / ``SystemExit``
-  # deliberately propagate out of the thread (daemon, so Python
-  # lets them die without join).
+  # KeyboardInterrupt / SystemExit deliberately propagate (daemon
+  # threads, Python lets them die without join).
         _log.exception("walker thread raised; requesting pool stop")
         errors.append(exc)
         stop_event.set()

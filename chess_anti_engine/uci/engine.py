@@ -95,10 +95,9 @@ def emit_handshake(options: "EngineOptions") -> None:
     _println(f"option name Ponder type check default {'true' if options.ponder else 'false'}")
     _println(format_uciok())
 
-# How long to wait for a search thread to honor `stop`. 5s was too tight:
-# a cold CUDA-graph compile on the first search can take ~3-4s, which
-# previously let a slow stop orphan a running thread that would later
-# emit a stale bestmove against a new board.
+# Tight (e.g. 5s) timeouts let a slow stop orphan a thread that emits a
+# stale bestmove against the next board — a cold CUDA-graph compile on
+# the first search is ~3-4s on its own.
 _JOIN_TIMEOUT_S = 30.0
 
 
@@ -162,10 +161,9 @@ class Engine:
         rebuild_evaluator: "Callable[[int], BatchEvaluator] | None" = None,
     ) -> None:
         self._worker = worker
-  # Factory handed in by __main__. Captures the model, devices, and
-  # coalesce flag; takes a max_batch and returns a warmed-up
-  # evaluator. When None, the MaxBatch setoption silently no-ops
-  # (e.g., in unit-test harnesses that don't build a real evaluator).
+  # Factory that takes a max_batch and returns a warmed-up evaluator
+  # (model + devices + coalesce flag are captured at construction).
+  # When None, the MaxBatch setoption silently no-ops.
         self._rebuild_evaluator = rebuild_evaluator
         self._options = EngineOptions()
         self._worker.set_max_tree_mb(self._options.hash_mb)
