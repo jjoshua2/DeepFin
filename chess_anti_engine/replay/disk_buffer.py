@@ -18,10 +18,9 @@ from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 
 from .buffer import ReplaySample
 from .shard import (
+    _OPTIONAL_FIELD_SPECS,
     _OPTIONAL_STORAGE_PAIRS,
     _SHARD_FIELDS,
-    LEGAL_MASK_FIELDS,
-    LEGAL_MASK_HAS_FIELDS,
     arrays_to_samples,
     delete_shard_path,
     densify_chunk,
@@ -50,6 +49,16 @@ def _zeros_for_missing_field(
     x_planes: int,
     categorical_bins: int = DEFAULT_CATEGORICAL_BINS,
 ) -> np.ndarray:
+    """Default array for a missing field at concat time.
+
+    Required fields (``x``, ``policy_target``, ``wdl_target``, ``priority``,
+    ``has_policy``) have explicit shapes since they take runtime params
+    (``policy_size``, ``x_planes``) or non-zero defaults (``priority``,
+    ``has_policy`` are ones, not zeros). Everything else is driven by
+    ``shard._OPTIONAL_FIELD_SPECS`` — the single source of truth for
+    optional shard fields. ``categorical_target``'s trailing dim comes
+    from the runtime arg since the bin count can vary across runs.
+    """
     if name == "x":
         return np.zeros((n, x_planes, 8, 8), dtype=np.float16)
     if name == "policy_target":
@@ -60,54 +69,12 @@ def _zeros_for_missing_field(
         return np.ones((n,), dtype=np.float32)
     if name == "has_policy":
         return np.ones((n,), dtype=np.uint8)
-    if name == "sf_wdl":
-        return np.zeros((n, 3), dtype=np.float16)
-    if name == "has_sf_wdl":
-        return np.zeros((n,), dtype=np.uint8)
-    if name == "sf_move_index":
-        return np.zeros((n,), dtype=np.int32)
-    if name == "has_sf_move":
-        return np.zeros((n,), dtype=np.uint8)
-    if name == "sf_policy_target":
-        return np.zeros((n, policy_size), dtype=np.float16)
-    if name == "has_sf_policy":
-        return np.zeros((n,), dtype=np.uint8)
-    if name == "moves_left":
-        return np.zeros((n,), dtype=np.float16)
-    if name == "has_moves_left":
-        return np.zeros((n,), dtype=np.uint8)
-    if name == "is_network_turn":
-        return np.zeros((n,), dtype=np.uint8)
-    if name == "has_is_network_turn":
-        return np.zeros((n,), dtype=np.uint8)
-    if name == "is_selfplay":
-        return np.zeros((n,), dtype=np.uint8)
-    if name == "has_is_selfplay":
-        return np.zeros((n,), dtype=np.uint8)
-    if name == "categorical_target":
-        return np.zeros((n, categorical_bins), dtype=np.float16)
-    if name == "has_categorical":
-        return np.zeros((n,), dtype=np.uint8)
-    if name == "policy_soft_target":
-        return np.zeros((n, policy_size), dtype=np.float16)
-    if name == "has_policy_soft":
-        return np.zeros((n,), dtype=np.uint8)
-    if name == "future_policy_target":
-        return np.zeros((n, policy_size), dtype=np.float16)
-    if name == "has_future":
-        return np.zeros((n,), dtype=np.uint8)
-    if name == "volatility_target":
-        return np.zeros((n, 3), dtype=np.float16)
-    if name == "has_volatility":
-        return np.zeros((n,), dtype=np.uint8)
-    if name == "sf_volatility_target":
-        return np.zeros((n, 3), dtype=np.float16)
-    if name == "has_sf_volatility":
-        return np.zeros((n,), dtype=np.uint8)
-    if name in LEGAL_MASK_FIELDS:
-        return np.zeros((n, policy_size), dtype=np.uint8)
-    if name in LEGAL_MASK_HAS_FIELDS:
-        return np.zeros((n,), dtype=np.uint8)
+    for spec in _OPTIONAL_FIELD_SPECS:
+        if name == spec.flag:
+            return np.zeros((n,), dtype=np.uint8)
+        if name == spec.arr:
+            shape = (categorical_bins,) if name == "categorical_target" else spec.shape
+            return np.zeros((n, *shape), dtype=spec.dtype)
     raise KeyError(f"unknown replay field {name!r}")
 
 
