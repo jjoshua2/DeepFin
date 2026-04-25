@@ -72,6 +72,9 @@ filterwarnings = [
     "ignore::DeprecationWarning:torch.jit",
     "ignore::FutureWarning:copyreg",
 ]
+markers = [
+    "slow: stress / long-running tests (e.g. mcts thread-safety hammer); not in the default run",
+]
 
 [tool.ruff.lint]
 # E741: allow single-letter `l` — we use `w/d/l` for win/draw/loss counters

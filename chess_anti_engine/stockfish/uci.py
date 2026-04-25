@@ -1,10 +1,25 @@
 from __future__ import annotations
 
+import select
 import subprocess
 import threading
+import time
 from dataclasses import dataclass
 
 import numpy as np
+
+
+# Default deadline for any single readline waiting on Stockfish stdout.
+# 60s is generous enough for the slowest realistic search (~5k nodes per
+# our PID config completes in <100ms; even 1M-node deep searches finish
+# well under this). The ceiling exists to break a stalled subprocess /
+# protocol deadlock that would otherwise hang selfplay/arena while
+# holding the lock (F004).
+_DEFAULT_READ_TIMEOUT_S = 60.0
+
+
+class StockfishTimeoutError(RuntimeError):
+    """Raised when Stockfish stdout doesn't deliver a line within the deadline."""
 
 
 @dataclass
@@ -29,12 +44,14 @@ class StockfishUCI:
         multipv: int = 1,
         hash_mb: int | None = None,
         syzygy_path: str | None = None,
+        read_timeout_s: float = _DEFAULT_READ_TIMEOUT_S,
     ):
         self.path = path
         self.nodes = int(nodes)
         self.multipv = int(multipv)
         self.hash_mb = None if hash_mb is None else max(1, int(hash_mb))
         self.syzygy_path = syzygy_path or None
+        self.read_timeout_s = float(read_timeout_s)
         self._lock = threading.Lock()
 
         self.proc = subprocess.Popen(  # pylint: disable=consider-using-with  # process outlives __init__ (closed in .close())
@@ -91,12 +108,32 @@ class StockfishUCI:
         self.proc.stdin.write(cmd + "\n")
         self.proc.stdin.flush()
 
-    def _wait_for(self, token: str) -> None:
+    def _readline_with_deadline(self, deadline: float) -> str:
+        """Blocking readline that respects ``deadline`` (monotonic seconds).
+
+        Raises ``StockfishTimeoutError`` if no line arrives in time and
+        ``RuntimeError`` if the process closed stdout. Uses select() on
+        the underlying fd so a stalled subprocess can't hang us
+        forever (F004).
+        """
         assert self.proc.stdout is not None
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise StockfishTimeoutError("Stockfish read deadline expired before select")
+        ready, _, _ = select.select([self.proc.stdout], [], [], remaining)
+        if not ready:
+            raise StockfishTimeoutError(
+                f"Stockfish stdout silent for {self.read_timeout_s:.1f}s"
+            )
+        line = self.proc.stdout.readline()
+        if not line:
+            raise RuntimeError("Stockfish process exited")
+        return line
+
+    def _wait_for(self, token: str) -> None:
+        deadline = time.monotonic() + self.read_timeout_s
         while True:
-            line = self.proc.stdout.readline()
-            if not line:
-                raise RuntimeError("Stockfish process exited")
+            line = self._readline_with_deadline(deadline)
             if token in line:
                 return
 
@@ -115,12 +152,10 @@ class StockfishUCI:
             bestmove = None
             wdl_pv1 = None
             pvs: dict[int, StockfishPV] = {}
+            deadline = time.monotonic() + self.read_timeout_s
 
             while True:
-                line = self.proc.stdout.readline()
-                if not line:
-                    raise RuntimeError("Stockfish process exited")
-                line = line.strip()
+                line = self._readline_with_deadline(deadline).strip()
 
                 if line.startswith("info"):
                     parts = line.split()
