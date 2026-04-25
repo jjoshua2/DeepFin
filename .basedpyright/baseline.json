@@ -192,10 +192,18 @@
         ],
         "./chess_anti_engine/selfplay/manager.py": [
             {
-                "code": "reportAttributeAccessIssue",
+                "code": "reportArgumentType",
                 "range": {
-                    "startColumn": 29,
-                    "endColumn": 45,
+                    "startColumn": 38,
+                    "endColumn": 47,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportArgumentType",
+                "range": {
+                    "startColumn": 34,
+                    "endColumn": 43,
                     "lineCount": 1
                 }
             },
@@ -204,14 +212,6 @@
                 "range": {
                     "startColumn": 29,
                     "endColumn": 45,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportAttributeAccessIssue",
-                "range": {
-                    "startColumn": 65,
-                    "endColumn": 81,
                     "lineCount": 1
                 }
             },
@@ -282,24 +282,8 @@
             {
                 "code": "reportPossiblyUnboundVariable",
                 "range": {
-                    "startColumn": 20,
-                    "endColumn": 36,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportPossiblyUnboundVariable",
-                "range": {
                     "startColumn": 26,
                     "endColumn": 34,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportPossiblyUnboundVariable",
-                "range": {
-                    "startColumn": 48,
-                    "endColumn": 59,
                     "lineCount": 1
                 }
             }

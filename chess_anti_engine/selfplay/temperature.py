@@ -1,5 +1,30 @@
 from __future__ import annotations
 
+import numpy as np
+
+
+def apply_policy_temperature(probs: np.ndarray, temperature: float) -> np.ndarray:
+    """Apply a temperature ``T`` to a probability distribution.
+
+    Equivalent to ``softmax(log(p)/T)`` for ``p > 0``.  Returns ``probs``
+    unchanged when ``T == 1.0`` or the distribution is degenerate.
+    Used for the soft policy target in ``finalize_game`` and for the
+    post-search resampling in ``run_network_turn``.
+    """
+    t = float(temperature)
+    if t == 1.0:
+        return probs.astype(np.float32, copy=False)
+    p = probs.astype(np.float64, copy=True)
+    p = np.maximum(p, 0.0)
+    if float(p.sum()) <= 0:
+        return probs.astype(np.float32, copy=False)
+    p = p / float(p.sum())
+    p = np.power(p, 1.0 / t)
+    s = float(p.sum())
+    if s > 0:
+        p /= s
+    return p.astype(np.float32, copy=False)
+
 
 def temperature_for_ply(
     *,
