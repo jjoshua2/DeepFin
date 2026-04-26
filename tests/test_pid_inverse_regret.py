@@ -512,6 +512,57 @@ def test_regret_lever_freezes_after_stage_2_entered():
     assert pid._regret_stage_complete
 
 
+def test_load_state_dict_reseeds_history_at_restored_value():
+    # Regression: prior bug had construction-time seed at config initial_nodes
+    # (e.g., 5000) but load_state_dict restored nodes=6354 from checkpoint
+    # without updating the seed. The fit then anchored at a value the
+    # controller wasn't actually at. Now load_state_dict re-seeds at the
+    # restored value when saved history is empty.
+    pid1 = _mk_pid_nodes_only(initial_nodes=5_000)
+    # Seed entry should be at construction value 5000.
+    assert list(pid1.nodes_lever.history) == [(5000.0, pid1.target, 0.01)]
+
+    # Simulate a legacy / pre-seed checkpoint: state_dict with nodes=6354
+    # but no nodes_history (matches the empty-history path in old saves).
+    legacy_state = {
+        "nodes": 6354,
+        "wdl_regret": -1.0,
+        "ema_winrate": 0.59,
+        "regret_history": [],
+        "nodes_history": [],
+        "regret_stage_complete": True,
+        "games_since_adjust": 0,
+    }
+    pid2 = _mk_pid_nodes_only(initial_nodes=5_000)
+    pid2.load_state_dict(legacy_state)
+    # Nodes should be restored to 6354 AND the seed entry should now anchor
+    # at 6354 (current value), not the stale construction value 5000.
+    assert pid2.nodes_lever.value == 6354
+    assert len(pid2.nodes_lever.history) == 1
+    seed_value, seed_wr, seed_se = pid2.nodes_lever.history[0]
+    assert seed_value == 6354.0, (
+        f"expected re-seeded anchor at restored value 6354, got {seed_value}"
+    )
+    assert seed_wr == pid2.target
+    assert seed_se == 0.01
+
+    # When saved history IS non-empty, _restore_history takes precedence and
+    # the seed is replaced by the saved data (no re-seed).
+    full_state = {
+        "nodes": 6354,
+        "wdl_regret": -1.0,
+        "ema_winrate": 0.59,
+        "nodes_history": [[5500.0, 0.55, 0.018], [6000.0, 0.58, 0.018]],
+        "regret_history": [],
+        "regret_stage_complete": True,
+        "games_since_adjust": 0,
+    }
+    pid3 = _mk_pid_nodes_only(initial_nodes=5_000)
+    pid3.load_state_dict(full_state)
+    assert len(pid3.nodes_lever.history) == 2
+    assert pid3.nodes_lever.history[0] == (5500.0, 0.55, 0.018)
+
+
 def test_nodes_airbag_recovers_at_min_nodes():
     # Stage 2 entered, nodes already at the floor, winrate crashes.
     # Codex finding: at min_nodes=5000 the airbag had no escape (clamp

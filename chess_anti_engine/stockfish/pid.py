@@ -339,22 +339,8 @@ class DifficultyPID:
             deadband_sigma=float(nodes_deadband_sigma),
             window=int(nodes_window),
         )
-        # Seed each lever's history with one anchor entry: (current_value,
-        # target_winrate, floored SE). Without this, the first 3 observations
-        # produce no fit (history < 3 → exploration step), wasting iters
-        # during which the controller has no calibration. The seed is a
-        # *prior* not data — recency_half_life ages it out within a window
-        # once real observations arrive, and load_state_dict overwrites it
-        # entirely on salvage. The choice of target_winrate as the seed wr
-        # encodes "until proven otherwise, assume the starting value
-        # produces target winrate"; biases the fit toward holding still
-        # rather than blindly ramping.
-        self.regret_lever.history.append(
-            (float(self.regret_lever.value), float(self.target), _OBSERVATION_SE_FLOOR)
-        )
-        self.nodes_lever.history.append(
-            (float(self.nodes_lever.value), float(self.target), _OBSERVATION_SE_FLOOR)
-        )
+        _seed_lever_history(self.regret_lever, target_wr=self.target)
+        _seed_lever_history(self.nodes_lever, target_wr=self.target)
 
     # Compatibility shims — call sites in worker.py / tune/* still read
     # pid.wdl_regret and pid.nodes directly; renaming them is a separate
@@ -447,6 +433,16 @@ class DifficultyPID:
         _restore_history(self.regret_lever, regret_hist)
         nodes_hist = state.get("nodes_history") or []
         _restore_history(self.nodes_lever, nodes_hist)
+
+        # If saved history was empty (legacy / pre-seed checkpoints), the
+        # construction-time seed entry is now stale because we just restored
+        # `nodes` / `wdl_regret` to potentially different values. Re-seed at
+        # the restored values so the inverse fit's first anchor point matches
+        # current state instead of the configured initial_nodes / initial_regret.
+        if not regret_hist:
+            _seed_lever_history(self.regret_lever, target_wr=self.target)
+        if not nodes_hist:
+            _seed_lever_history(self.nodes_lever, target_wr=self.target)
 
         self._games_since_adjust = int(state.get("games_since_adjust", self._games_since_adjust))
 
@@ -547,6 +543,20 @@ def _restore_history(lever: _Lever, saved: list) -> None:
         except (TypeError, ValueError, IndexError):
             continue
         lever.history.append((x, w, s))
+
+
+def _seed_lever_history(lever: _Lever, *, target_wr: float) -> None:
+    """Replace history with a single anchor entry at the lever's current value.
+
+    The inverse fit needs ≥3 points to activate, so seeding gives it a head
+    start; without it the first 2 real observations produce no fit and the
+    controller blindly explores. The seed encodes "until proven otherwise,
+    assume the current value yields target_wr" — biases the fit toward
+    holding still rather than ramping. recency_half_life ages it out within
+    a window once real data arrives.
+    """
+    lever.history.clear()
+    lever.history.append((float(lever.value), float(target_wr), _OBSERVATION_SE_FLOOR))
 
 
 def pid_from_config(config: dict) -> DifficultyPID:
