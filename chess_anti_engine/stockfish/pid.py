@@ -234,13 +234,6 @@ _LEVER_NONNEG_FIELDS: frozenset[str] = frozenset({
     "emergency_ease_step", "recency_half_life", "deadband_sigma",
 })
 
-# Pre-rename yaml keys for the regret lever (sf_pid_regret_* is the current
-# name). Drop after no live training run still emits the old keys via its
-# checkpoint config — rename landed 2026-04-26.
-_REGRET_LEGACY_KEYS = {
-    f: f"sf_pid_inverse_regret_{f}" for f in _LEVER_LIVE_FIELDS
-} | {"deadband_sigma": "sf_pid_inverse_regret_target_deadband_sigma"}
-
 
 class DifficultyPID:
     """Adaptive difficulty controller — regret + nodes via shared lever logic.
@@ -346,6 +339,22 @@ class DifficultyPID:
             deadband_sigma=float(nodes_deadband_sigma),
             window=int(nodes_window),
         )
+        # Seed each lever's history with one anchor entry: (current_value,
+        # target_winrate, floored SE). Without this, the first 3 observations
+        # produce no fit (history < 3 → exploration step), wasting iters
+        # during which the controller has no calibration. The seed is a
+        # *prior* not data — recency_half_life ages it out within a window
+        # once real observations arrive, and load_state_dict overwrites it
+        # entirely on salvage. The choice of target_winrate as the seed wr
+        # encodes "until proven otherwise, assume the starting value
+        # produces target winrate"; biases the fit toward holding still
+        # rather than blindly ramping.
+        self.regret_lever.history.append(
+            (float(self.regret_lever.value), float(self.target), _OBSERVATION_SE_FLOOR)
+        )
+        self.nodes_lever.history.append(
+            (float(self.nodes_lever.value), float(self.target), _OBSERVATION_SE_FLOOR)
+        )
 
     # Compatibility shims — call sites in worker.py / tune/* still read
     # pid.wdl_regret and pid.nodes directly; renaming them is a separate
@@ -362,7 +371,11 @@ class DifficultyPID:
 
     @property
     def nodes(self) -> int:
-        return int(round(float(self.nodes_lever.value)))
+        # Ceil so a sub-1.0 step in the float lever still produces a visible
+        # node change. With round-down, frac=10% at value≈1 (post-airbag floor)
+        # ate every step until cumulative drift cleared 1.0 — recovery from
+        # the floor took ~10 winning iters before SF visibly strengthened.
+        return int(math.ceil(float(self.nodes_lever.value)))
 
     @nodes.setter
     def nodes(self, value: int) -> None:
@@ -375,10 +388,6 @@ class DifficultyPID:
         ``window``, regret enable/gate flags) stay pinned. Everything else is
         a scalar attr that can be safely overwritten each iteration so
         live-reloaded yaml takes effect.
-
-        Accepts both new ``sf_pid_regret_*`` / ``sf_pid_nodes_*`` keys and
-        the legacy ``sf_pid_inverse_regret_*`` / ``sf_pid_node_step_cap``
-        names, with new keys taking precedence.
         """
         if "sf_pid_target_winrate" in config:
             self.target = float(config["sf_pid_target_winrate"])
@@ -398,16 +407,8 @@ class DifficultyPID:
                 self.wdl_regret_min, self.wdl_regret_max,
             )
 
-        _refresh_lever_from_config(
-            self.regret_lever, config,
-            primary_prefix="sf_pid_regret_",
-            legacy_keys=_REGRET_LEGACY_KEYS,
-        )
-        _refresh_lever_from_config(
-            self.nodes_lever, config,
-            primary_prefix="sf_pid_nodes_",
-            legacy_keys={"max_step_frac": "sf_pid_node_step_cap"},
-        )
+        _refresh_lever_from_config(self.regret_lever, config, "sf_pid_regret_")
+        _refresh_lever_from_config(self.nodes_lever, config, "sf_pid_nodes_")
 
     def state_dict(self) -> dict:
         return {
@@ -524,25 +525,13 @@ class DifficultyPID:
         )
 
 
-def _refresh_lever_from_config(
-    lever: _Lever, config: dict, *, primary_prefix: str,
-    legacy_keys: dict[str, str] | None = None,
-) -> None:
-    """Update ``lever`` knobs from a flat config dict.
-
-    Reads ``f"{primary_prefix}{field}"`` first, then falls back to the
-    per-field key in ``legacy_keys`` (used for the rename transition).
-    """
-    legacy_keys = legacy_keys or {}
+def _refresh_lever_from_config(lever: _Lever, config: dict, prefix: str) -> None:
+    """Update ``lever``'s live-reloadable knobs from ``config[f"{prefix}{field}"]``."""
     for field_name in _LEVER_LIVE_FIELDS:
-        primary_key = f"{primary_prefix}{field_name}"
-        legacy_key = legacy_keys.get(field_name)
-        if primary_key in config:
-            value = float(config[primary_key])
-        elif legacy_key is not None and legacy_key in config:
-            value = float(config[legacy_key])
-        else:
+        key = f"{prefix}{field_name}"
+        if key not in config:
             continue
+        value = float(config[key])
         if field_name in _LEVER_NONNEG_FIELDS:
             value = max(0.0, value)
         setattr(lever, field_name, value)
@@ -561,18 +550,7 @@ def _restore_history(lever: _Lever, saved: list) -> None:
 
 
 def pid_from_config(config: dict) -> DifficultyPID:
-    """Construct a DifficultyPID from a flat config dict.
-
-    Accepts new ``sf_pid_regret_*`` / ``sf_pid_nodes_*`` keys and falls back
-    to legacy ``sf_pid_inverse_regret_*`` / ``sf_pid_node_step_cap`` so a
-    yaml mid-rename still constructs the same controller.
-    """
-    def cfg(*keys, default):
-        for k in keys:
-            if k in config:
-                return config[k]
-        return default
-
+    """Construct a DifficultyPID from a flat config dict (yaml-flattened)."""
     return DifficultyPID(
         initial_nodes=int(config.get("sf_nodes", 500)),
         target_winrate=float(config.get("sf_pid_target_winrate", 0.60)),
@@ -584,28 +562,17 @@ def pid_from_config(config: dict) -> DifficultyPID:
         wdl_regret_min=float(config.get("sf_pid_wdl_regret_min", 0.01)),
         wdl_regret_max=float(config.get("sf_pid_wdl_regret_max", 1.0)),
         wdl_regret_stage_end=float(config.get("sf_pid_wdl_regret_stage_end", -1.0)),
-        regret_window=int(cfg(
-            "sf_pid_regret_window", "sf_pid_inverse_regret_window", default=20)),
-        regret_max_step=float(cfg(
-            "sf_pid_regret_max_step", "sf_pid_inverse_regret_max_step", default=0.01)),
-        regret_max_step_frac=float(cfg(
-            "sf_pid_regret_max_step_frac", "sf_pid_inverse_regret_max_step_frac", default=0.0)),
-        regret_safety_floor=float(cfg(
-            "sf_pid_regret_safety_floor", "sf_pid_inverse_regret_safety_floor", default=0.50)),
-        regret_emergency_ease_step=float(cfg(
-            "sf_pid_regret_emergency_ease_step",
-            "sf_pid_inverse_regret_emergency_ease_step", default=0.01)),
-        regret_recency_half_life=float(cfg(
-            "sf_pid_regret_recency_half_life",
-            "sf_pid_inverse_regret_recency_half_life", default=0.0)),
-        regret_deadband_sigma=float(cfg(
-            "sf_pid_regret_deadband_sigma",
-            "sf_pid_inverse_regret_target_deadband_sigma", default=1.0)),
+        regret_window=int(config.get("sf_pid_regret_window", 20)),
+        regret_max_step=float(config.get("sf_pid_regret_max_step", 0.01)),
+        regret_max_step_frac=float(config.get("sf_pid_regret_max_step_frac", 0.0)),
+        regret_safety_floor=float(config.get("sf_pid_regret_safety_floor", 0.50)),
+        regret_emergency_ease_step=float(config.get("sf_pid_regret_emergency_ease_step", 0.01)),
+        regret_recency_half_life=float(config.get("sf_pid_regret_recency_half_life", 0.0)),
+        regret_deadband_sigma=float(config.get("sf_pid_regret_deadband_sigma", 1.0)),
         nodes_window=int(config.get("sf_pid_nodes_window", 20)),
         nodes_max_step=float(config["sf_pid_nodes_max_step"])
             if "sf_pid_nodes_max_step" in config else None,
-        nodes_max_step_frac=float(cfg(
-            "sf_pid_nodes_max_step_frac", "sf_pid_node_step_cap", default=0.10)),
+        nodes_max_step_frac=float(config.get("sf_pid_nodes_max_step_frac", 0.10)),
         nodes_safety_floor=float(config.get("sf_pid_nodes_safety_floor", 0.0)),
         nodes_emergency_ease_step=float(config.get("sf_pid_nodes_emergency_ease_step", 0.0)),
         nodes_recency_half_life=float(config.get("sf_pid_nodes_recency_half_life", 0.0)),

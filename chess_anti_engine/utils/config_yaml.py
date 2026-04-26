@@ -15,7 +15,7 @@ def load_yaml_file(path: str | Path) -> dict[str, Any]:
         raise FileNotFoundError(str(p))
 
     try:
-        import yaml  # type: ignore
+        import yaml
     except Exception as e:  # pragma: no cover
         raise RuntimeError("PyYAML is required to load config files. Install pyyaml.") from e
 
@@ -76,15 +76,6 @@ _STOCKFISH_KEYS = (
     "sf_pid_nodes_emergency_ease_step",
     "sf_pid_nodes_recency_half_life",
     "sf_pid_nodes_deadband_sigma",
-  # Legacy aliases — pid_from_config + refresh_live_params still read these.
-    "sf_pid_inverse_regret_window",
-    "sf_pid_inverse_regret_max_step",
-    "sf_pid_inverse_regret_max_step_frac",
-    "sf_pid_inverse_regret_safety_floor",
-    "sf_pid_inverse_regret_emergency_ease_step",
-    "sf_pid_inverse_regret_recency_half_life",
-    "sf_pid_inverse_regret_target_deadband_sigma",
-    "sf_pid_node_step_cap",
 )
 # Backwards compat: old short YAML names still work inside stockfish: section.
 _STOCKFISH_LEGACY: dict[str, str] = {

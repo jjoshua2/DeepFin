@@ -161,6 +161,7 @@ def test_regret_history_round_trips_via_state_dict():
     # observations far from target (raw_wr 0.40, target 0.57) so they
     # bypass the dual z-gate deadband and definitely append.
     pid1 = _mk_pid(initial_wdl_regret=0.15)
+    # Construction seeds 1 anchor entry; 5 observations append → 6 total.
     _feed_observations(pid1, [
         (0.10, 0.40),
         (0.12, 0.42),
@@ -171,11 +172,11 @@ def test_regret_history_round_trips_via_state_dict():
     state = pid1.state_dict()
     assert "regret_history" in state
     saved_len = len(state["regret_history"])
-    assert saved_len == 5
+    assert saved_len == 6
 
     # New PID, restore state — history should come back identically.
     pid2 = _mk_pid(initial_wdl_regret=0.15)
-    assert len(pid2.regret_lever.history) == 0
+    assert len(pid2.regret_lever.history) == 1  # construction seed
     pid2.load_state_dict(state)
     assert len(pid2.regret_lever.history) == saved_len
     for (r1, w1, s1), (r2, w2, s2) in zip(pid1.regret_lever.history, pid2.regret_lever.history):
@@ -219,7 +220,9 @@ def test_legacy_checkpoint_without_regret_history_loads_gracefully():
         "random_stage_complete": True, "regret_stage_complete": False,
     }
     pid.load_state_dict(legacy_state)
-    assert len(pid.regret_lever.history) == 0  # remains empty, no crash
+    # Legacy state has no regret_history → _restore_history is a no-op and
+    # the construction-time seed entry stays. Crash-free is the contract.
+    assert len(pid.regret_lever.history) == 1
 
 
 def test_holds_with_insufficient_history():
@@ -463,15 +466,16 @@ def test_nodes_step_capped_by_max_step_frac():
 
 def test_nodes_history_round_trips_via_state_dict():
     pid1 = _mk_pid_nodes_only(initial_nodes=10_000)
+    # Construction seeds 1 anchor entry; 4 observations append → 5 total.
     for _ in range(4):
         pid1.observe(wins=400, draws=0, losses=400, force=True)
     state = pid1.state_dict()
     assert "nodes_history" in state
-    assert len(state["nodes_history"]) == 4
+    assert len(state["nodes_history"]) == 5
 
     pid2 = _mk_pid_nodes_only(initial_nodes=10_000)
     pid2.load_state_dict(state)
-    assert len(pid2.nodes_lever.history) == 4
+    assert len(pid2.nodes_lever.history) == 5
 
 
 def test_regret_lever_freezes_after_stage_2_entered():
@@ -506,6 +510,70 @@ def test_regret_lever_freezes_after_stage_2_entered():
     )
     # Stage 2 stays entered even if regret somehow drifted up.
     assert pid._regret_stage_complete
+
+
+def test_nodes_airbag_recovers_at_min_nodes():
+    # Stage 2 entered, nodes already at the floor, winrate crashes.
+    # Codex finding: at min_nodes=5000 the airbag had no escape (clamp
+    # blocked further easing, regret was frozen). The shipped fix lowers
+    # min_nodes to 1, so the airbag can keep dropping nodes; once winrate
+    # recovers, the inverse fit ramps nodes back up.
+    pid = DifficultyPID(
+        initial_nodes=5_000,
+        target_winrate=0.57,
+        ema_alpha=0.5,
+        min_nodes=1,
+        max_nodes=1_000_000,
+        initial_wdl_regret=0.005,        # below stage_end → stage 2 entered
+        wdl_regret_min=0.001,
+        wdl_regret_max=1.0,
+        wdl_regret_stage_end=0.01,
+        regret_window=10,
+        regret_safety_floor=0.50,
+        nodes_window=10,
+        nodes_max_step_frac=0.10,
+        nodes_safety_floor=0.50,
+        nodes_emergency_ease_step=1000,
+    )
+    assert pid._regret_stage_complete, "stage 2 should be entered at construction"
+    # 0/800 → raw_wr=0 fires the nodes airbag.
+    pid.observe(wins=0, draws=0, losses=800, force=True)
+    assert pid.nodes < 5_000, f"airbag should drop nodes from 5000, got {pid.nodes}"
+    # Drive nodes to the floor.
+    for _ in range(10):
+        pid.observe(wins=0, draws=0, losses=800, force=True)
+    assert pid.nodes == 1, f"expected nodes pinned at floor=1, got {pid.nodes}"
+    # Floor reached → no further easing, but the lever isn't dead. Once
+    # winrate recovers above target, the controller ramps nodes back up.
+    # Ramp is slow at floor=1 because the frac cap (10% of 1 = 0.1) gates
+    # per-iter movement, but the lever's float value accumulates and
+    # eventually clears integer rounding.
+    floor_value = pid.nodes_lever.value
+    for _ in range(20):
+        pid.observe(wins=720, draws=0, losses=80, force=True)  # 90% wr
+    assert pid.nodes_lever.value > floor_value, (
+        f"nodes lever should ramp from floor when winning, got "
+        f"{floor_value}→{pid.nodes_lever.value}"
+    )
+
+
+def test_nodes_lever_max_step_unset_uses_frac_only():
+    # Codex finding: shipping both an absolute and frac cap was a footgun
+    # (frac silently dominated above ~50k nodes). Default behavior with
+    # nodes_max_step left unset = no absolute cap; frac is the only bound.
+    pid = _mk_pid_nodes_only(
+        initial_nodes=200_000,
+        max_nodes=2_000_000,
+        nodes_max_step_frac=0.10,
+        # nodes_max_step intentionally unset → defaults to ~unbounded
+    )
+    # 75% wr drives nodes up; cap should be 10% of value (= 20_000), not a
+    # spurious 5000-style absolute.
+    pid.observe(wins=600, draws=0, losses=200, force=True)
+    delta = pid.nodes - 200_000
+    assert 15_000 <= delta <= 22_000, (
+        f"expected ~10%/iter step (~20k), got Δ={delta}"
+    )
 
 
 def test_nodes_lever_paused_when_regret_stage_incomplete():
