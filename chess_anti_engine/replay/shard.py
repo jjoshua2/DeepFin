@@ -253,6 +253,8 @@ class ShardMeta:
     plies_loss: int | None = None
     checkmate_games: int | None = None
     stalemate_games: int | None = None
+    sf_d6_sum: float | None = None
+    sf_d6_n: int | None = None
 
 
 def _u8(x: np.ndarray) -> np.ndarray:

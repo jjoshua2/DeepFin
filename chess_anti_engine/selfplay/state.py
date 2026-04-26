@@ -123,6 +123,11 @@ class CompletedGameBatch:
     plies_win: int = 0
     plies_draw: int = 0
     plies_loss: int = 0
+    # SF eval delta over 6-ply lookahead, summed over the (t, t+6) pairs in
+    # this game's records. Aggregated across the shard for a single
+    # sf_eval_delta6 mean reported in TensorBoard.
+    sf_d6_sum: float = 0.0
+    sf_d6_n: int = 0
 
 
 class _NetRecord:

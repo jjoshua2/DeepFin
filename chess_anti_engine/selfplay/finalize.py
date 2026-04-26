@@ -464,9 +464,13 @@ def finalize_game(
     )
 
     ply_to_index = {int(rec.ply_index): idx for idx, rec in enumerate(records)}
+    _sf_d6_sum_before = state.stats.sf_d6_sum
+    _sf_d6_n_before = state.stats.sf_d6_n
     vol_targets, sf_vol_targets = _compute_volatility_and_sf_delta(
         state, records, ply_to_index,
     )
+    _game_sf_d6_sum = state.stats.sf_d6_sum - _sf_d6_sum_before
+    _game_sf_d6_n = state.stats.sf_d6_n - _sf_d6_n_before
 
     sample_start = len(all_samples)
     new_samples = _build_replay_samples(
@@ -507,6 +511,8 @@ def finalize_game(
                     plies_win=game_plies if counters.w else 0,
                     plies_draw=game_plies if counters.d else 0,
                     plies_loss=game_plies if counters.l else 0,
+                    sf_d6_sum=float(_game_sf_d6_sum),
+                    sf_d6_n=int(_game_sf_d6_n),
                 ),
             )
     # In continuous mode, samples flow through ``on_game_complete`` and

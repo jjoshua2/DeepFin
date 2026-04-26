@@ -727,7 +727,7 @@ def _ensure_distributed_workers(
     return out[:want]
 
 
-def _empty_ingest_summary() -> dict[str, int]:
+def _empty_ingest_summary() -> dict[str, int | float]:
     return {
         "matching_games": 0,
         "matching_positions": 0,
@@ -749,6 +749,8 @@ def _empty_ingest_summary() -> dict[str, int]:
         "matching_plies_loss": 0,
         "matching_checkmate_games": 0,
         "matching_stalemate_games": 0,
+        "matching_sf_d6_sum": 0.0,
+        "matching_sf_d6_n": 0,
         "positions_replay_added": 0,
         "stale_games": 0,
         "stale_positions": 0,
@@ -773,7 +775,7 @@ def _process_shard(
     holdout_frozen: bool,
     accepted_model_shas: set[str],
     rng: np.random.Generator,
-    summary: dict[str, int],
+    summary: dict[str, int | float],
 ) -> str:
     """Load one shard from inbox, ingest into replay buffer, update summary.
 
@@ -815,6 +817,8 @@ def _process_shard(
     plies_loss = int(meta.get("plies_loss", 0) or 0)
     checkmate_games = int(meta.get("checkmate_games", 0) or 0)
     stalemate_games = int(meta.get("stalemate_games", 0) or 0)
+    sf_d6_sum = float(meta.get("sf_d6_sum", 0.0) or 0.0)
+    sf_d6_n = int(meta.get("sf_d6_n", 0) or 0)
 
     if shard_n > 0:
         holdout_mask = np.zeros((shard_n,), dtype=bool)
@@ -862,6 +866,8 @@ def _process_shard(
         summary["matching_plies_loss"] += plies_loss
         summary["matching_checkmate_games"] += checkmate_games
         summary["matching_stalemate_games"] += stalemate_games
+        summary["matching_sf_d6_sum"] += sf_d6_sum
+        summary["matching_sf_d6_n"] += sf_d6_n
         summary["matching_shards"] += 1
     else:
         summary["stale_games"] += games
@@ -891,7 +897,7 @@ def _ingest_distributed_selfplay(
     min_games_fraction: float = 0.5,
     prev_model_sha: str | None = None,
     prev_model_max_fraction: float = 1.0,
-) -> dict[str, int]:
+) -> dict[str, int | float]:
     """Poll inbox until enough games arrive, then return.
 
     Shards whose ``model_sha256`` is in *accepted_model_shas* count as

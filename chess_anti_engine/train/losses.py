@@ -4,10 +4,13 @@ import torch
 import torch.nn.functional as F
 
 # Phase buckets for per-phase loss reporting. `moves_left` is plies-remaining /
-# max_plies so 1.0 = opening, 0.0 = endgame; these thresholds split it roughly
-# into thirds. Tunable without breaking shards since it's a view-time metric.
-_PHASE_OPEN_THRESHOLD = 0.66
-_PHASE_END_THRESHOLD = 0.33
+# max_plies so 1.0 = opening, 0.0 = endgame. Thresholds calibrated from
+# empirical P33/P67 of recent selfplay shards (data is skewed toward shorter
+# games due to adjudication, so a naive 0.33/0.66 split puts ~11% in open
+# and ~51% in mid). Re-derive periodically — `scripts/eval_phase_thresholds`
+# (or the inline grep in trainable_phases) when the distribution drifts.
+_PHASE_OPEN_THRESHOLD = 0.45
+_PHASE_END_THRESHOLD = 0.31
 
 
 def masked_mean(x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:

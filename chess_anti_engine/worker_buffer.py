@@ -40,6 +40,8 @@ class _BufferedUpload:
     plies_loss: int = 0
     checkmate_games: int = 0
     stalemate_games: int = 0
+    sf_d6_sum: float = 0.0
+    sf_d6_n: int = 0
     first_buffered_at_s: float | None = None
 
     def reset(self) -> None:
@@ -122,6 +124,8 @@ def _buffer_add_completed_game(
     buf.plies_loss += int(getattr(game_batch, "plies_loss", 0))
     buf.checkmate_games += int(getattr(game_batch, "checkmate_games", 0))
     buf.stalemate_games += int(getattr(game_batch, "stalemate_games", 0))
+    buf.sf_d6_sum += float(getattr(game_batch, "sf_d6_sum", 0.0))
+    buf.sf_d6_n += int(getattr(game_batch, "sf_d6_n", 0))
 
 
 def _pending_elapsed_path(shard_path: Path) -> Path:
@@ -170,6 +174,8 @@ def _flush_upload_buffer_to_pending(
         plies_loss=int(buf.plies_loss),
         checkmate_games=int(buf.checkmate_games),
         stalemate_games=int(buf.stalemate_games),
+        sf_d6_sum=float(buf.sf_d6_sum),
+        sf_d6_n=int(buf.sf_d6_n),
     )
     arrs = samples_to_arrays(list(buf.samples))
     save_local_shard_arrays(shard_path, arrs=arrs, meta=meta)
