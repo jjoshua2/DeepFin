@@ -157,29 +157,55 @@ def test_saturated_batches_do_not_dominate_fit():
 
 
 def test_regret_history_round_trips_via_state_dict():
-    # Codex MED finding #3: history must persist across save/load.
+    # Codex MED finding #3: history must persist across save/load. Use
+    # observations far from target (raw_wr 0.40, target 0.57) so they
+    # bypass the dual z-gate deadband and definitely append.
     pid1 = _mk_pid(initial_wdl_regret=0.15)
     _feed_observations(pid1, [
-        (0.10, 0.55),
-        (0.12, 0.58),
-        (0.14, 0.62),
-        (0.16, 0.66),
-        (0.18, 0.70),
+        (0.10, 0.40),
+        (0.12, 0.42),
+        (0.14, 0.44),
+        (0.16, 0.46),
+        (0.18, 0.48),
     ], n_games=800)
     state = pid1.state_dict()
     assert "regret_history" in state
-    assert len(state["regret_history"]) == 5
+    saved_len = len(state["regret_history"])
+    assert saved_len == 5
 
-    # New PID, restore state — history should come back.
+    # New PID, restore state — history should come back identically.
     pid2 = _mk_pid(initial_wdl_regret=0.15)
     assert len(pid2.regret_lever.history) == 0
     pid2.load_state_dict(state)
-    assert len(pid2.regret_lever.history) == 5
-    # Entries should match (within float precision)
+    assert len(pid2.regret_lever.history) == saved_len
     for (r1, w1, s1), (r2, w2, s2) in zip(pid1.regret_lever.history, pid2.regret_lever.history):
         assert abs(r1 - r2) < 1e-12
         assert abs(w1 - w2) < 1e-12
         assert abs(s1 - s2) < 1e-12
+
+
+def test_deadband_holds_skip_history_append():
+    # Constant-x history collapses the WLS slope (det → 0 → degenerate fit),
+    # forcing a blind exploration step the next time something disturbs the
+    # system. Skip the append in deadband so the deque retains older
+    # varied-x points.
+    pid = _mk_pid(
+        initial_wdl_regret=0.15,
+        target_winrate=0.57,
+        ema_alpha=0.5,
+        regret_safety_floor=0.30,  # below test wr so airbag never fires
+        regret_deadband_sigma=2.0,  # wide gate so test wr lands in it
+    )
+    # Pre-seed history with one entry so we can verify it's not overwritten.
+    pid.regret_lever.history.append((0.10, 0.55, 0.018))
+    pid.ema_winrate = 0.57  # neutralise EMA so ema_err = 0
+    initial_len = len(pid.regret_lever.history)
+    # raw_wr = 0.57 → err = 0; clearly in deadband.
+    pid.observe(wins=456, draws=0, losses=344, force=True)  # 0.57 wr exact
+    assert len(pid.regret_lever.history) == initial_len, (
+        "in-deadband observe must not append; otherwise constant-x entries "
+        "fill the deque and break future fits"
+    )
 
 
 def test_legacy_checkpoint_without_regret_history_loads_gracefully():
