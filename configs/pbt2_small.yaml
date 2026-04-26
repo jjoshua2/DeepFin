@@ -79,6 +79,7 @@ stockfish:
   sf_pid_inverse_regret_emergency_ease_step: 0.015 # raise regret by this amount when raw_wr < floor (2026-04-25: 0.03→0.015; full 3% bump was overshooting the recovery band).
   sf_pid_inverse_regret_recency_half_life: 3.0     # 2026-04-23: 15→3 per walk-forward backtest (hl=3 lowest MAE 0.069, wins 55% overall incl. quiet periods, 94% in drift). Fit still uses full last-20 window; old points just get low weight.
   sf_pid_inverse_regret_target_deadband_sigma: 0.5  # 2026-04-25: 1.5→0.5 per replay backtest on 450 iters of trial ba920 with new pid.py (half-step on raw-vs-fit sign disagreement). σ=1.5 had 8 "floor-drop precedents" (controller held in iter t-1 while iter t crashed below safety_floor — the iter 448 failure mode). σ=0.5 eliminates these (0 events at α=0.10) without meaningful swing increase. Half-step fix bounds the FP cost of tighter σ. Live-reloadable.
+  sf_pid_node_step_cap: 0.10                        # Stage-2 node-growth: max ±fractional change to sf_nodes per iter (proportional to ema_winrate − target). 0.10 = ±10%/iter. Raise to ramp difficulty faster (more variance), lower to smooth ramp. Live-reloadable.
 
 selfplay:
   games_per_iter: 800

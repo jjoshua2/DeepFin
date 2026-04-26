@@ -13,9 +13,9 @@ def _clamp(val: float, lo: float, hi: float) -> float:
 # batches from dominating the weighted fit with 1/SE^2 weights.
 _OBSERVATION_SE_FLOOR = 0.01
 
-# Max ±fractional change to nodes per observe() step once the nodes stage is
-# active. Hardcoded — this is a safety rail, not a tuning knob.
-_NODES_STEP_CAP = 0.10
+# Default max ±fractional change to nodes per observe() step once the nodes
+# stage is active. Overridable via ``sf_pid_node_step_cap`` (live-reloaded).
+_DEFAULT_NODES_STEP_CAP = 0.10
 
 
 def _observation_se(wins: int, draws: int, losses: int) -> float:
@@ -105,7 +105,8 @@ class DifficultyPID:
          floor forces emergency ease when raw winrate drops below floor.
       2. Nodes stage: only active once regret has dropped to
          wdl_regret_stage_end (the gate). Proportional multiplicative step
-         against the EMA-winrate error, capped at ±_NODES_STEP_CAP per iter.
+         against the EMA-winrate error, capped at ±node_step_cap per iter
+         (default 0.10; live-reloadable via sf_pid_node_step_cap).
     """
 
     def __init__(
@@ -131,6 +132,7 @@ class DifficultyPID:
         inverse_regret_emergency_ease_step: float = 0.01,
         inverse_regret_recency_half_life: float = 0.0,
         inverse_regret_target_deadband_sigma: float = 1.0,
+        node_step_cap: float = _DEFAULT_NODES_STEP_CAP,
     ):
         init = int(initial_nodes)
         self.nodes = int(_clamp(init, int(min_nodes), int(max_nodes)))
@@ -176,6 +178,7 @@ class DifficultyPID:
         self.inverse_regret_emergency_ease_step = float(inverse_regret_emergency_ease_step)
         self.inverse_regret_recency_half_life = float(inverse_regret_recency_half_life)
         self.inverse_regret_target_deadband_sigma = float(inverse_regret_target_deadband_sigma)
+        self.node_step_cap = max(0.0, float(node_step_cap))
         self._inverse_history: deque[tuple[float, float, float]] = deque(
             maxlen=max(3, self.inverse_regret_window)
         )
@@ -231,6 +234,8 @@ class DifficultyPID:
             self.inverse_regret_target_deadband_sigma = float(
                 config["sf_pid_inverse_regret_target_deadband_sigma"]
             )
+        if "sf_pid_node_step_cap" in config:
+            self.node_step_cap = max(0.0, float(config["sf_pid_node_step_cap"]))
 
     def state_dict(self) -> dict:
         return {
@@ -419,7 +424,8 @@ class DifficultyPID:
         nodes_after = int(self.nodes)
         if self._regret_stage_complete:
             ema_err = float(self.ema_winrate) - float(self.target)
-            delta_frac = _clamp(ema_err, -_NODES_STEP_CAP, _NODES_STEP_CAP)
+            cap = float(self.node_step_cap)
+            delta_frac = _clamp(ema_err, -cap, cap)
             new_nodes = int(round(float(self.nodes) * (1.0 + delta_frac)))
             self.nodes = int(_clamp(new_nodes, self.min_nodes, self.max_nodes))
             nodes_after = int(self.nodes)
@@ -469,5 +475,8 @@ def pid_from_config(config: dict) -> DifficultyPID:
         ),
         inverse_regret_target_deadband_sigma=float(
             config.get("sf_pid_inverse_regret_target_deadband_sigma", 1.0)
+        ),
+        node_step_cap=float(
+            config.get("sf_pid_node_step_cap", _DEFAULT_NODES_STEP_CAP)
         ),
     )
