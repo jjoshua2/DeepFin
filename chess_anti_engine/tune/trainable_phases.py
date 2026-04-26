@@ -22,6 +22,7 @@ from typing import Any
 
 import numpy as np
 import torch
+import zarr
 
 from chess_anti_engine.replay.shard import (
     iter_shard_paths,
@@ -437,8 +438,6 @@ def _run_selfplay_phase(
 
   # --- Play games (distributed workers upload shards; we ingest) ---
     ingest_t0 = time.monotonic()
-    total_sf_d6 = 0.0
-    total_sf_d6_n = 0
 
     distributed_worker_procs[:] = _ensure_distributed_workers(
         config=config,
@@ -488,6 +487,27 @@ def _run_selfplay_phase(
 
     buf.flush()
     _new_selfplay_shards = [p for p in buf._shard_paths if p not in _shards_before_ingest]
+
+  # sf_eval_delta6: mean |winrate(t+6) - winrate(t)| from SF evals — a measure
+  # of how dynamic the SF-evaluated positions are over a 6-ply lookahead.
+  # The selfplay finalizer accumulates this in worker-local SelfplayState,
+  # which never reaches this layer. Re-derive from the ingested shards'
+  # sf_volatility_target = |sf6 - sf0| (per-W/D/L) using
+  # |Δwinrate| ≤ |ΔW| + 0.5·|ΔD| (winrate = W + 0.5·D).
+    total_sf_d6 = 0.0
+    total_sf_d6_n = 0
+    for _shard_path in _new_selfplay_shards:
+        try:
+            _z = zarr.open(_shard_path, mode="r")
+            if "sf_volatility_target" in _z and "has_sf_volatility" in _z:
+                _sv = np.asarray(_z["sf_volatility_target"])
+                _mask = np.asarray(_z["has_sf_volatility"]).astype(bool)
+                if _mask.any():
+                    _wr_delta = _sv[_mask, 0] + 0.5 * _sv[_mask, 1]
+                    total_sf_d6 += float(_wr_delta.sum())
+                    total_sf_d6_n += int(_wr_delta.shape[0])
+        except (OSError, KeyError, ValueError):
+            continue
     total_w = int(ingest_summary["matching_w"])
     total_d = int(ingest_summary["matching_d"])
     total_l = int(ingest_summary["matching_l"])
