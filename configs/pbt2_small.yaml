@@ -42,7 +42,7 @@ salvage_reinit_volatility_heads: false  # Keep volatility heads from trial 3
 model:
   kind: transformer
   embed_dim: 384     # ~15M params, ~0.7 GB optimizer state for 4 trials in 32 GB VRAM
-  num_layers: 9
+  num_layers: 10  # 2026-04-25: 9→10. Diagnostics show trunk effective rank ~29 of 384; adding depth gives the search-bootstrap loop more headroom to push representational rank upward iter-over-iter. Build-time knob — requires restart, then iter93+ runs at 10 layers (block 9 fresh-init via tolerant load; blocks 0-8 inherit weights).
   num_heads: 12
   ffn_mult: 1.5
   use_smolgen: true  # Pin to true (we know smolgen helps from spec)
