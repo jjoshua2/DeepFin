@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 def _clamp(val: float, lo: float, hi: float) -> float:
@@ -12,10 +12,6 @@ def _clamp(val: float, lo: float, hi: float) -> float:
 # Floor on per-observation SE to prevent saturated (all-win/all-loss/all-draw)
 # batches from dominating the weighted fit with 1/SE^2 weights.
 _OBSERVATION_SE_FLOOR = 0.01
-
-# Default max ±fractional change to nodes per observe() step once the nodes
-# stage is active. Overridable via ``sf_pid_node_step_cap`` (live-reloaded).
-_DEFAULT_NODES_STEP_CAP = 0.10
 
 
 def _observation_se(wins: int, draws: int, losses: int) -> float:
@@ -37,26 +33,29 @@ def _observation_se(wins: int, draws: int, losses: int) -> float:
     return max(raw_se, _OBSERVATION_SE_FLOOR)
 
 
-def _fit_inverse_regret(
+def _fit_inverse_lever(
     history: list[tuple[float, float, float]],
     *,
     target_wr: float,
+    expected_slope_sign: int,
     recency_half_life: float = 0.0,
 ) -> float | None:
-    """Weighted least-squares fit ``winrate = a + b*regret``, solve for r* at target.
+    """Weighted least-squares fit ``winrate = a + b*x``, solve for x* at target.
 
-    History is ordered oldest-first. When ``recency_half_life > 0`` each point
-    is additionally weighted by ``0.5 ** (age / half_life)`` so recent points
-    dominate — intended to handle training drift that lifts the regret→winrate
-    curve upward over iterations.
+    History is ``(lever_value, raw_winrate, observation_se)`` entries ordered
+    oldest-first. When ``recency_half_life > 0`` each point is additionally
+    weighted by ``0.5 ** (age / half_life)`` so recent points dominate.
 
-    Returns the predicted regret, or None if the fit is degenerate (fewer than
-    3 points, zero x variance, or physically implausible negative slope).
-    Callers handle None by falling back to an exploration step.
+    ``expected_slope_sign`` ±1 is a physics check on b: regret-style levers
+    expect b > 0 (more regret → more wins), nodes-style levers expect b < 0
+    (more nodes → fewer wins). A wrong-sign fit is treated as degenerate.
+
+    Returns the predicted x* at ``target_wr``, or None if degenerate (fewer
+    than 3 points, zero x variance, or wrong-sign slope).
     """
     if len(history) < 3:
         return None
-    r_vals = [float(h[0]) for h in history]
+    x_vals = [float(h[0]) for h in history]
     w_vals = [float(h[1]) for h in history]
     se_vals = [max(float(h[2]), _OBSERVATION_SE_FLOOR) for h in history]
     weights = [1.0 / (s * s) for s in se_vals]
@@ -66,19 +65,148 @@ def _fit_inverse_regret(
             age = (n - 1) - i
             weights[i] *= 0.5 ** (age / recency_half_life)
     sw = sum(weights)
-    swr = sum(w * r for w, r in zip(weights, r_vals))
-    sww = sum(w * v for w, v in zip(weights, w_vals))
-    swrr = sum(w * r * r for w, r in zip(weights, r_vals))
-    swrw = sum(w * r * v for w, r, v in zip(weights, r_vals, w_vals))
-    det = sw * swrr - swr * swr
+    swx = sum(w * x for w, x in zip(weights, x_vals))
+    swr = sum(w * v for w, v in zip(weights, w_vals))
+    swxx = sum(w * x * x for w, x in zip(weights, x_vals))
+    swxr = sum(w * x * v for w, x, v in zip(weights, x_vals, w_vals))
+    det = sw * swxx - swx * swx
     if abs(det) < 1e-12:
         return None
-    a = (swrr * sww - swr * swrw) / det
-    b = (sw * swrw - swr * sww) / det
-  # Physics sanity: winrate should increase with regret (easier SF → more wins).
-    if b <= 1e-4:
+    a = (swxx * swr - swx * swxr) / det
+    b = (sw * swxr - swx * swr) / det
+  # Threshold filters out floating-point zero slopes without rejecting
+  # small-but-real ones (nodes-side slopes are O(1e-6/node) — a 1e-4 cutoff
+  # would reject every real fit). Wrong-sign slopes still get rejected.
+    if b * float(expected_slope_sign) <= 1e-12:
         return None
     return (float(target_wr) - a) / b
+
+
+@dataclass
+class _Lever:
+    """A difficulty knob with inverse-fit + dual z-gate update logic.
+
+    ``direction``:
+      +1 → raising ``value`` makes things HARDER (lowers winrate). Used for
+           sf_nodes: more nodes = stronger Stockfish.
+      -1 → lowering ``value`` makes things HARDER. Used for wdl_regret:
+           less regret = stronger Stockfish (closer to optimal play).
+
+    The fit ``wr = a + b·value`` has expected slope ``b`` of sign
+    ``-direction``: regret slope is positive, nodes slope is negative.
+    Stored under ``history`` with ``deque(maxlen=window)`` for replay.
+
+    All knobs except ``window`` (deque maxlen) and ``min_value/max_value``
+    are intended to be live-reloadable.
+    """
+
+    name: str
+    value: float
+    min_value: float
+    max_value: float
+    direction: int
+    max_step: float
+    max_step_frac: float = 0.0
+    safety_floor: float = 0.50
+    emergency_ease_step: float = 0.01
+    recency_half_life: float = 0.0
+    deadband_sigma: float = 1.0
+    window: int = 20
+    history: deque[tuple[float, float, float]] = field(default_factory=deque)
+
+    def __post_init__(self) -> None:
+        self.direction = 1 if int(self.direction) >= 0 else -1
+        self.value = _clamp(float(self.value), float(self.min_value), float(self.max_value))
+        target_max = max(3, int(self.window))
+        if self.history.maxlen != target_max:
+            self.history = deque(self.history, maxlen=target_max)
+
+
+def _step_lever(
+    lever: _Lever,
+    *,
+    target_wr: float,
+    raw_wr: float,
+    ema_wr: float,
+    ema_alpha: float,
+    se: float,
+) -> bool:
+    """Apply one observation to ``lever``; return True if value changed.
+
+    Mirrors the structure used previously for the regret-only inverse-fit
+    controller, generalized via ``lever.direction``:
+      - airbag: ``raw_wr < safety_floor`` → step in the easier direction
+        by ``emergency_ease_step`` (capped by ``max_step``).
+      - dual z-gate deadband (raw and EMA both within ``sigma·SE``) → hold.
+      - else fit ``wr = a + b·value`` and step toward predicted x*, capped
+        by ``abs_max_step`` (``max_step_frac·value`` if frac > 0 else
+        ``max_step``). Fit-degenerate → exploration step in raw's direction.
+      - raw vs fit sign disagreement → half-step in raw's direction.
+    """
+    value_before = float(lever.value)
+    lever.history.append((value_before, float(raw_wr), float(se)))
+
+    # ease_sign is the lever delta sign that decreases difficulty.
+    # direction=+1 (nodes): easier = decrease → ease_sign = -1.
+    # direction=-1 (regret): easier = increase → ease_sign = +1.
+    ease_sign = -lever.direction
+
+    err = float(target_wr) - float(raw_wr)
+    ema_err = float(target_wr) - float(ema_wr)
+  # Dual z-gate: act if EITHER the single iter's raw err is beyond
+  # sigma × SE, OR the EMA of err is beyond sigma × SE(ema_err).
+  # For iid per-iter err with variance σ², EMA's steady-state variance
+  # is α/(2-α) · σ², so SE(ema_err) = σ · √(α/(2-α)).
+    ema_se_factor = math.sqrt(float(ema_alpha) / max(2.0 - float(ema_alpha), 1e-9))
+    sigma = max(0.0, float(lever.deadband_sigma))
+    raw_deadband = sigma * float(se)
+    ema_deadband = sigma * float(se) * ema_se_factor
+    in_deadband = abs(err) <= raw_deadband and abs(ema_err) <= ema_deadband
+
+  # max_step_frac > 0 scales the cap with current value, so wr-perturbation
+  # per step stays roughly constant as the lever approaches its target.
+    if lever.max_step_frac > 0.0:
+        abs_max_step = float(lever.max_step_frac) * value_before
+    else:
+        abs_max_step = float(lever.max_step)
+
+    if float(raw_wr) < float(lever.safety_floor):
+  # Airbag: emergency ease, capped by max_step (absolute) so a runaway
+  # ease branch can't break the user's per-iter movement promise.
+        ease_mag = min(float(lever.emergency_ease_step), float(lever.max_step))
+        delta = float(ease_sign) * ease_mag
+        new_value = _clamp(value_before + delta, float(lever.min_value), float(lever.max_value))
+    elif in_deadband:
+        new_value = value_before
+    else:
+        predicted = _fit_inverse_lever(
+            list(lever.history),
+            target_wr=float(target_wr),
+            expected_slope_sign=int(ease_sign),
+            recency_half_life=float(lever.recency_half_life),
+        )
+        if predicted is not None:
+            delta = _clamp(predicted - value_before, -abs_max_step, abs_max_step)
+        else:
+  # Fit degenerate. We're outside the deadband so the direction is
+  # known; step by abs_max_step in the err's "ease/tighten" direction
+  # to widen history for the next iter's fit.
+            step_sign = 1.0 if err > 0 else -1.0
+            delta = step_sign * float(ease_sign) * abs_max_step
+
+  # Raw-vs-fit sign disagreement: raw is the fresh single-iter
+  # signal; the fit is averaged over the window and lags reality.
+  # When raw is outside its deadband AND its sign disagrees with
+  # delta's, step in raw's direction at half abs_max_step.
+        if err > raw_deadband and delta * float(ease_sign) < -1e-12:
+            delta = float(ease_sign) * 0.5 * abs_max_step
+        elif err < -raw_deadband and delta * float(ease_sign) > 1e-12:
+            delta = -float(ease_sign) * 0.5 * abs_max_step
+
+        new_value = _clamp(value_before + delta, float(lever.min_value), float(lever.max_value))
+
+    lever.value = new_value
+    return abs(new_value - value_before) > 1e-12
 
 
 @dataclass
@@ -94,19 +222,31 @@ class PIDUpdate:
     wdl_regret_changed: bool = False
 
 
-class DifficultyPID:
-    """Adaptive difficulty controller — regret + nodes, inverse-model only.
+# Default knobs for the nodes lever — chosen so older configs that don't
+# specify them still get the proportional-style stage-2 behavior the
+# previous controller used (±10%/iter, no airbag, no deadband).
+_NODES_DEFAULTS = dict(
+    max_step_frac=0.10,
+    max_step=1_000_000_000.0,  # effectively unbounded; frac is the real cap
+    safety_floor=0.0,           # off (regret-lever airbag handles wr crashes)
+    emergency_ease_step=0.0,
+    recency_half_life=0.0,
+    deadband_sigma=0.0,         # off — react to every iter; matches old proportional
+    window=20,
+)
 
-    Two knobs in series:
-      1. Regret stage: inverse-model controller fits winrate = a + b*regret
-         from a rolling history of observations and moves regret toward r*
-         predicted to hit the target winrate. Capped per-iter by
-         inverse_regret_max_step scaled by prediction confidence. Safety
-         floor forces emergency ease when raw winrate drops below floor.
-      2. Nodes stage: only active once regret has dropped to
-         wdl_regret_stage_end (the gate). Proportional multiplicative step
-         against the EMA-winrate error, capped at ±node_step_cap per iter
-         (default 0.10; live-reloadable via sf_pid_node_step_cap).
+
+class DifficultyPID:
+    """Adaptive difficulty controller — regret + nodes via shared lever logic.
+
+    Two ``_Lever`` instances share the same inverse-fit + dual z-gate code
+    via ``_step_lever``; the only difference is ``direction``:
+      - regret_lever (direction=-1): lowering regret makes SF stronger.
+      - nodes_lever (direction=+1):  raising nodes makes SF stronger.
+
+    Series gate: regret moves first. Once ``self.wdl_regret`` ≤ stage_end
+    (and stays ≤ stage_reenter), nodes move; if regret drifts back above
+    reenter (e.g. airbag fired), nodes pause until stage clears again.
     """
 
     def __init__(
@@ -118,24 +258,31 @@ class DifficultyPID:
         min_games_between_adjust: int = 30,
         min_nodes: int = 1_000,
         max_nodes: int = 1_000_000,
-  # --- WDL regret ---
+  # --- WDL regret bounds + stage gate ---
         initial_wdl_regret: float = -1.0,
         wdl_regret_min: float = 0.01,
         wdl_regret_max: float = 1.0,
         wdl_regret_stage_end: float = -1.0,
         wdl_regret_stage_reenter: float | None = None,
-  # --- Inverse-model regret controller ---
-        inverse_regret_window: int = 20,
-        inverse_regret_max_step: float = 0.01,
-        inverse_regret_max_step_frac: float = 0.0,
-        inverse_regret_safety_floor: float = 0.50,
-        inverse_regret_emergency_ease_step: float = 0.01,
-        inverse_regret_recency_half_life: float = 0.0,
-        inverse_regret_target_deadband_sigma: float = 1.0,
-        node_step_cap: float = _DEFAULT_NODES_STEP_CAP,
+  # --- Regret lever ---
+        regret_window: int = 20,
+        regret_max_step: float = 0.01,
+        regret_max_step_frac: float = 0.0,
+        regret_safety_floor: float = 0.50,
+        regret_emergency_ease_step: float = 0.01,
+        regret_recency_half_life: float = 0.0,
+        regret_deadband_sigma: float = 1.0,
+  # --- Nodes lever (defaults chosen to match prior proportional behavior) ---
+        nodes_window: int = 20,
+        nodes_max_step: float | None = None,
+        nodes_max_step_frac: float = 0.10,
+        nodes_safety_floor: float = 0.0,
+        nodes_emergency_ease_step: float = 0.0,
+        nodes_recency_half_life: float = 0.0,
+        nodes_deadband_sigma: float = 0.0,
     ):
         init = int(initial_nodes)
-        self.nodes = int(_clamp(init, int(min_nodes), int(max_nodes)))
+        nodes_clamped = int(_clamp(init, int(min_nodes), int(max_nodes)))
         self.target = float(target_winrate)
         self.alpha = float(ema_alpha)
         self.min_games_between_adjust = int(min_games_between_adjust)
@@ -146,10 +293,10 @@ class DifficultyPID:
         self._regret_gate_enabled = self._regret_enabled and float(wdl_regret_stage_end) >= 0.0
         self.wdl_regret_min = float(wdl_regret_min)
         self.wdl_regret_max = float(wdl_regret_max)
-        if self._regret_enabled:
-            self.wdl_regret = _clamp(float(initial_wdl_regret), self.wdl_regret_min, self.wdl_regret_max)
-        else:
-            self.wdl_regret = float(initial_wdl_regret)
+        regret_init = (
+            _clamp(float(initial_wdl_regret), self.wdl_regret_min, self.wdl_regret_max)
+            if self._regret_enabled else float(initial_wdl_regret)
+        )
 
         if self._regret_gate_enabled:
             self.wdl_regret_stage_end = _clamp(
@@ -157,12 +304,13 @@ class DifficultyPID:
             )
             regret_reenter_default = min(self.wdl_regret_max, self.wdl_regret_stage_end + 0.05)
             regret_reenter_val = (
-                regret_reenter_default if wdl_regret_stage_reenter is None else float(wdl_regret_stage_reenter)
+                regret_reenter_default if wdl_regret_stage_reenter is None
+                else float(wdl_regret_stage_reenter)
             )
             self.wdl_regret_stage_reenter = _clamp(
                 regret_reenter_val, self.wdl_regret_stage_end, self.wdl_regret_max
             )
-            self._regret_stage_complete = float(self.wdl_regret) <= float(self.wdl_regret_stage_end)
+            self._regret_stage_complete = float(regret_init) <= float(self.wdl_regret_stage_end)
         else:
             self.wdl_regret_stage_end = float(wdl_regret_stage_end)
             self.wdl_regret_stage_reenter = float(wdl_regret_stage_end)
@@ -171,27 +319,69 @@ class DifficultyPID:
         self.ema_winrate: float = float(target_winrate)
         self._games_since_adjust = 0
 
-        self.inverse_regret_window = int(inverse_regret_window)
-        self.inverse_regret_max_step = float(inverse_regret_max_step)
-        self.inverse_regret_max_step_frac = float(inverse_regret_max_step_frac)
-        self.inverse_regret_safety_floor = float(inverse_regret_safety_floor)
-        self.inverse_regret_emergency_ease_step = float(inverse_regret_emergency_ease_step)
-        self.inverse_regret_recency_half_life = float(inverse_regret_recency_half_life)
-        self.inverse_regret_target_deadband_sigma = float(inverse_regret_target_deadband_sigma)
-        self.node_step_cap = max(0.0, float(node_step_cap))
-        self._inverse_history: deque[tuple[float, float, float]] = deque(
-            maxlen=max(3, self.inverse_regret_window)
+        self.regret_lever = _Lever(
+            name="regret",
+            value=regret_init,
+            min_value=self.wdl_regret_min,
+            max_value=self.wdl_regret_max,
+            direction=-1,  # lowering regret makes harder
+            max_step=float(regret_max_step),
+            max_step_frac=float(regret_max_step_frac),
+            safety_floor=float(regret_safety_floor),
+            emergency_ease_step=float(regret_emergency_ease_step),
+            recency_half_life=float(regret_recency_half_life),
+            deadband_sigma=float(regret_deadband_sigma),
+            window=int(regret_window),
         )
+        self.nodes_lever = _Lever(
+            name="nodes",
+            value=float(nodes_clamped),
+            min_value=float(self.min_nodes),
+            max_value=float(self.max_nodes),
+            direction=+1,  # raising nodes makes harder
+            max_step=float(nodes_max_step) if nodes_max_step is not None
+                else float(_NODES_DEFAULTS["max_step"]),
+            max_step_frac=float(nodes_max_step_frac),
+            safety_floor=float(nodes_safety_floor),
+            emergency_ease_step=float(nodes_emergency_ease_step),
+            recency_half_life=float(nodes_recency_half_life),
+            deadband_sigma=float(nodes_deadband_sigma),
+            window=int(nodes_window),
+        )
+
+  # --- Compatibility shims so callers keep using pid.wdl_regret / pid.nodes ---
+
+    @property
+    def wdl_regret(self) -> float:
+        return float(self.regret_lever.value)
+
+    @wdl_regret.setter
+    def wdl_regret(self, value: float) -> None:
+        self.regret_lever.value = _clamp(
+            float(value), float(self.regret_lever.min_value), float(self.regret_lever.max_value)
+        )
+
+    @property
+    def nodes(self) -> int:
+        return int(round(float(self.nodes_lever.value)))
+
+    @nodes.setter
+    def nodes(self, value: int) -> None:
+        self.nodes_lever.value = float(_clamp(int(value), self.min_nodes, self.max_nodes))
+
+  # --- Live reload ---
 
     def refresh_live_params(self, config: dict) -> None:
         """Re-read live-reloadable knobs from a flat config dict.
 
-        Construction-time fields (``min_nodes``, ``max_nodes``,
-        ``inverse_regret_window``, regret enable/gate flags) stay pinned — the
-        deque ``maxlen`` and the ``_regret_enabled``/``_regret_gate_enabled``
-        flags are decided once in ``__init__``. Everything else is a scalar
-        attr that can be safely overwritten each iteration so live-reloaded
-        yaml actually takes effect.
+        Construction-time fields (``min_nodes``, ``max_nodes``, lever
+        ``window``, regret enable/gate flags) stay pinned. Everything else is
+        a scalar attr that can be safely overwritten each iteration so
+        live-reloaded yaml takes effect.
+
+        Accepts both new ``sf_pid_regret_*`` / ``sf_pid_nodes_*`` keys and
+        the legacy ``sf_pid_inverse_regret_*`` / ``sf_pid_node_step_cap``
+        names, with new keys taking precedence.
         """
         if "sf_pid_target_winrate" in config:
             self.target = float(config["sf_pid_target_winrate"])
@@ -201,8 +391,10 @@ class DifficultyPID:
             self.min_games_between_adjust = int(config["sf_pid_min_games_between_adjust"])
         if "sf_pid_wdl_regret_min" in config:
             self.wdl_regret_min = float(config["sf_pid_wdl_regret_min"])
+            self.regret_lever.min_value = self.wdl_regret_min
         if "sf_pid_wdl_regret_max" in config:
             self.wdl_regret_max = float(config["sf_pid_wdl_regret_max"])
+            self.regret_lever.max_value = self.wdl_regret_max
         if self._regret_gate_enabled and "sf_pid_wdl_regret_stage_end" in config:
             stage_end = _clamp(
                 float(config["sf_pid_wdl_regret_stage_end"]),
@@ -212,30 +404,20 @@ class DifficultyPID:
             self.wdl_regret_stage_reenter = _clamp(
                 self.wdl_regret_stage_reenter, stage_end, self.wdl_regret_max,
             )
-        if "sf_pid_inverse_regret_max_step" in config:
-            self.inverse_regret_max_step = float(config["sf_pid_inverse_regret_max_step"])
-        if "sf_pid_inverse_regret_max_step_frac" in config:
-            self.inverse_regret_max_step_frac = float(
-                config["sf_pid_inverse_regret_max_step_frac"]
-            )
-        if "sf_pid_inverse_regret_safety_floor" in config:
-            self.inverse_regret_safety_floor = float(
-                config["sf_pid_inverse_regret_safety_floor"]
-            )
-        if "sf_pid_inverse_regret_emergency_ease_step" in config:
-            self.inverse_regret_emergency_ease_step = float(
-                config["sf_pid_inverse_regret_emergency_ease_step"]
-            )
-        if "sf_pid_inverse_regret_recency_half_life" in config:
-            self.inverse_regret_recency_half_life = float(
-                config["sf_pid_inverse_regret_recency_half_life"]
-            )
-        if "sf_pid_inverse_regret_target_deadband_sigma" in config:
-            self.inverse_regret_target_deadband_sigma = float(
-                config["sf_pid_inverse_regret_target_deadband_sigma"]
-            )
-        if "sf_pid_node_step_cap" in config:
-            self.node_step_cap = max(0.0, float(config["sf_pid_node_step_cap"]))
+
+        _refresh_lever_from_config(
+            self.regret_lever, config,
+            primary_prefix="sf_pid_regret_",
+            legacy_prefix="sf_pid_inverse_regret_",
+        )
+        _refresh_lever_from_config(
+            self.nodes_lever, config,
+            primary_prefix="sf_pid_nodes_",
+            legacy_prefix=None,
+            legacy_keys={"max_step_frac": "sf_pid_node_step_cap"},
+        )
+
+  # --- Persistence ---
 
     def state_dict(self) -> dict:
         return {
@@ -244,14 +426,18 @@ class DifficultyPID:
             "ema_winrate": float(self.ema_winrate),
             "games_since_adjust": int(self._games_since_adjust),
             "regret_stage_complete": bool(self._regret_stage_complete),
-            "inverse_history": [
-                [float(r), float(w), float(s)]
-                for (r, w, s) in self._inverse_history
+            "regret_history": [
+                [float(x), float(w), float(s)]
+                for (x, w, s) in self.regret_lever.history
+            ],
+            "nodes_history": [
+                [float(x), float(w), float(s)]
+                for (x, w, s) in self.nodes_lever.history
             ],
         }
 
     def load_state_dict(self, state: dict) -> None:
-        """Restore controller state. Silently ignores retired fields from legacy checkpoints."""
+        """Restore controller state. Tolerates legacy ``inverse_history``."""
         self.nodes = int(_clamp(int(state.get("nodes", self.nodes)), self.min_nodes, self.max_nodes))
 
         if self._regret_enabled:
@@ -262,21 +448,18 @@ class DifficultyPID:
 
         self.ema_winrate = float(state.get("ema_winrate", self.ema_winrate))
 
-        saved_hist = state.get("inverse_history") or []
-        if saved_hist:
-            self._inverse_history.clear()
-            for entry in saved_hist:
-                try:
-                    r, w, s = float(entry[0]), float(entry[1]), float(entry[2])
-                except (TypeError, ValueError, IndexError):
-                    continue
-                self._inverse_history.append((r, w, s))
+        regret_hist = state.get("regret_history") or state.get("inverse_history") or []
+        _restore_history(self.regret_lever, regret_hist)
+        nodes_hist = state.get("nodes_history") or []
+        _restore_history(self.nodes_lever, nodes_hist)
 
         self._games_since_adjust = int(state.get("games_since_adjust", self._games_since_adjust))
 
         rgc = state.get("regret_stage_complete")
         if rgc is not None and self._regret_gate_enabled:
             self._regret_stage_complete = bool(rgc)
+
+  # --- Observe ---
 
     def _no_change_update(self, err: float) -> PIDUpdate:
         return PIDUpdate(
@@ -302,113 +485,31 @@ class DifficultyPID:
 
         err = float(self.ema_winrate) - float(self.target)
         nodes_before = int(self.nodes)
-        raw_wr_this_batch = float(wr)
-        se_this_batch = _observation_se(int(wins), int(draws), int(losses))
+        regret_before = float(self.wdl_regret)
+        raw_wr = float(wr)
+        se = _observation_se(int(wins), int(draws), int(losses))
 
         if not force and self._games_since_adjust < int(self.min_games_between_adjust):
             return self._no_change_update(err)
 
-  # --- Stage 1: inverse-model regret controller ---
-        regret_before = float(self.wdl_regret)
+  # Stage 1: regret lever.
         regret_changed = False
-
         if self._regret_enabled:
-            self._inverse_history.append(
-                (float(regret_before), raw_wr_this_batch, se_this_batch)
+            regret_changed = _step_lever(
+                self.regret_lever,
+                target_wr=float(self.target),
+                raw_wr=raw_wr,
+                ema_wr=float(self.ema_winrate),
+                ema_alpha=float(self.alpha),
+                se=se,
             )
-
-            regret_after = float(regret_before)
-            floor = self.inverse_regret_safety_floor
-  # Dual z-gate: act if EITHER the single iter's raw err is
-  # beyond sigma × SE, OR the EMA of err (which accumulates
-  # same-direction evidence) is beyond sigma × SE(ema_err).
-  #   - Raw gate catches one clear spike (|z|>1.5 is ~6.5:1 real).
-  #   - EMA gate catches a slow drift of small same-direction
-  #     deviations that the raw gate would miss each iter.
-  # For iid per-iter err with variance σ², the EMA's steady-state
-  # variance is α/(2-α) · σ², so SE(ema_err) = σ · √(α/(2-α)).
-            err = self.target - raw_wr_this_batch
-            ema_err = self.target - float(self.ema_winrate)
-            ema_se_factor = math.sqrt(self.alpha / max(2.0 - self.alpha, 1e-9))
-            sigma = max(0.0, self.inverse_regret_target_deadband_sigma)
-            raw_deadband = sigma * se_this_batch
-            ema_deadband = sigma * se_this_batch * ema_se_factor
-            in_deadband = abs(err) <= raw_deadband and abs(ema_err) <= ema_deadband
-  # Effective absolute step cap for this iter. When max_step_frac > 0
-  # it scales with current regret (2% of 0.07 ≈ 0.0014; 2% of 0.02 ≈
-  # 0.0004). Constant-regret steps become non-constant-wr steps as
-  # SF approaches optimal, so scaling by current regret keeps the
-  # wr perturbation per step roughly constant.
-            if self.inverse_regret_max_step_frac > 0.0:
-                abs_max_step = self.inverse_regret_max_step_frac * regret_before
-            else:
-                abs_max_step = self.inverse_regret_max_step
-
-            if raw_wr_this_batch < floor:
-  # Safety airbag — raw_wr dropped below floor. Ease regret by
-  # emergency_ease_step, bypassing the max_step_frac cap so the
-  # airbag can loosen faster than normal PID tightens. Still
-  # clamped by the absolute max_step as a runaway guard. Fires
-  # strictly below floor so the deadband around target stays
-  # reachable.
-                ease = min(self.inverse_regret_emergency_ease_step, self.inverse_regret_max_step)
-                regret_after = _clamp(
-                    regret_before + ease, self.wdl_regret_min, self.wdl_regret_max
-                )
-            elif in_deadband:
-  # Neither raw nor ema err crossed its sigma-gated threshold
-  # — hold regret steady.
-                pass
-            else:
-                predicted_regret = _fit_inverse_regret(
-                    list(self._inverse_history),
-                    target_wr=self.target,
-                    recency_half_life=self.inverse_regret_recency_half_life,
-                )
-                if predicted_regret is not None:
-  # Step toward fit's predicted r*, bounded by abs_max_step. Prior
-  # versions scaled by sigma_pred/sigma_tolerance, but backtest on
-  # 168 iters showed sigma_pred has ~0 correlation with actual
-  # prediction error (Pearson 0.009) — the iid-Gaussian residual
-  # assumption doesn't hold for drifting training data. max_step_frac
-  # (cap) is the only bound that actually works.
-                    delta = _clamp(
-                        predicted_regret - regret_before,
-                        -abs_max_step,
-                        abs_max_step,
-                    )
-                else:
-  # Fit degenerate (history span < min_span, or other).
-  # We're outside the deadband (checked above) so we know the
-  # direction to move. Step sign(err) * abs_max_step to
-  # explore and widen history for the next iteration's fit.
-                    step_sign = 1.0 if err > 0 else -1.0
-                    delta = step_sign * abs_max_step
-
-  # Raw-vs-fit sign disagreement: raw is the fresh single-iter
-  # signal; the fit is averaged over ``inverse_regret_window`` iters
-  # and lags reality. When they disagree (and raw is outside its own
-  # deadband — within the deadband, raw is statistical noise around
-  # target and shouldn't override the fit), step in raw's direction
-  # at half ``abs_max_step``. Full step would defeat the fit's
-  # magnitude calibration when signs agree; zero (the prior behavior)
-  # leaves us holding while raw genuinely underperforms.
-                if err > raw_deadband and delta < 0:
-                    delta = 0.5 * abs_max_step
-                elif err < -raw_deadband and delta > 0:
-                    delta = -0.5 * abs_max_step
-
-                regret_after = _clamp(
-                    regret_before + delta,
-                    self.wdl_regret_min,
-                    self.wdl_regret_max,
-                )
-            self.wdl_regret = float(regret_after)
-            regret_changed = abs(regret_after - regret_before) > 1e-12
-
             if self._regret_gate_enabled:
-                regret_end = _clamp(self.wdl_regret_stage_end, self.wdl_regret_min, self.wdl_regret_max)
-                regret_reenter = _clamp(self.wdl_regret_stage_reenter, regret_end, self.wdl_regret_max)
+                regret_end = _clamp(
+                    self.wdl_regret_stage_end, self.wdl_regret_min, self.wdl_regret_max
+                )
+                regret_reenter = _clamp(
+                    self.wdl_regret_stage_reenter, regret_end, self.wdl_regret_max
+                )
                 if self._regret_stage_complete:
                     if self.wdl_regret >= regret_reenter:
                         self._regret_stage_complete = False
@@ -416,38 +517,104 @@ class DifficultyPID:
                     if self.wdl_regret <= regret_end:
                         self._regret_stage_complete = True
 
-  # --- Stage 2: nodes (only once regret stage is complete) ---
-  # Use ema − target here (NOT the regret-stage-local err, which is
-  # target − raw and has the opposite sign). Positive ema_err = model
-  # winning too much → raise nodes. Shadowing caused a positive-feedback
-  # loop where nodes climbed while wr dropped.
-        nodes_after = int(self.nodes)
+  # Stage 2: nodes lever (only after regret has settled at floor).
+        nodes_changed = False
         if self._regret_stage_complete:
-            ema_err = float(self.ema_winrate) - float(self.target)
-            cap = float(self.node_step_cap)
-            delta_frac = _clamp(ema_err, -cap, cap)
-            new_nodes = int(round(float(self.nodes) * (1.0 + delta_frac)))
-            self.nodes = int(_clamp(new_nodes, self.min_nodes, self.max_nodes))
-            nodes_after = int(self.nodes)
+            nodes_changed = _step_lever(
+                self.nodes_lever,
+                target_wr=float(self.target),
+                raw_wr=raw_wr,
+                ema_wr=float(self.ema_winrate),
+                ema_alpha=float(self.alpha),
+                se=se,
+            )
 
         self._games_since_adjust = 0
-
-        adjusted = (nodes_after != nodes_before) or bool(regret_changed)
+        nodes_after = int(self.nodes)
+        adjusted = bool(regret_changed) or bool(nodes_changed) or (nodes_after != nodes_before)
 
         return PIDUpdate(
             nodes_before=nodes_before,
-            nodes_after=int(nodes_after),
+            nodes_after=nodes_after,
             ema_winrate=float(self.ema_winrate),
             err=err,
             adjusted=bool(adjusted),
-            wdl_regret_before=float(regret_before),
+            wdl_regret_before=regret_before,
             wdl_regret_after=float(self.wdl_regret),
             wdl_regret_changed=bool(regret_changed),
         )
 
 
+_LEVER_LIVE_FIELDS = (
+    "max_step",
+    "max_step_frac",
+    "safety_floor",
+    "emergency_ease_step",
+    "recency_half_life",
+    "deadband_sigma",
+)
+
+
+def _refresh_lever_from_config(
+    lever: _Lever,
+    config: dict,
+    *,
+    primary_prefix: str,
+    legacy_prefix: str | None = None,
+    legacy_keys: dict[str, str] | None = None,
+) -> None:
+    """Update ``lever`` knobs from a flat config dict.
+
+    Looks up ``f"{primary_prefix}{field}"`` first, falls back to
+    ``f"{legacy_prefix}{field}"`` (if given) or the per-field override in
+    ``legacy_keys`` (if given). Allows both ``sf_pid_regret_*`` (new) and
+    ``sf_pid_inverse_regret_*`` (old) to coexist during transition.
+    """
+    legacy_keys = legacy_keys or {}
+    for field_name in _LEVER_LIVE_FIELDS:
+        primary_key = f"{primary_prefix}{field_name}"
+        legacy_key = (
+            f"{legacy_prefix}{field_name}" if legacy_prefix is not None else None
+        )
+        if primary_key in config:
+            value = config[primary_key]
+        elif legacy_key is not None and legacy_key in config:
+            value = config[legacy_key]
+        elif field_name in legacy_keys and legacy_keys[field_name] in config:
+            value = config[legacy_keys[field_name]]
+        else:
+            continue
+        setattr(lever, field_name, max(0.0, float(value)) if field_name in {
+            "max_step", "max_step_frac", "emergency_ease_step",
+            "recency_half_life", "deadband_sigma",
+        } else float(value))
+
+
+def _restore_history(lever: _Lever, saved: list) -> None:
+    if not saved:
+        return
+    lever.history.clear()
+    for entry in saved:
+        try:
+            x, w, s = float(entry[0]), float(entry[1]), float(entry[2])
+        except (TypeError, ValueError, IndexError):
+            continue
+        lever.history.append((x, w, s))
+
+
 def pid_from_config(config: dict) -> DifficultyPID:
-    """Construct a DifficultyPID from a flat config dict."""
+    """Construct a DifficultyPID from a flat config dict.
+
+    Accepts new ``sf_pid_regret_*`` / ``sf_pid_nodes_*`` keys and falls back
+    to legacy ``sf_pid_inverse_regret_*`` / ``sf_pid_node_step_cap`` so a
+    yaml mid-rename still constructs the same controller.
+    """
+    def cfg(*keys, default):
+        for k in keys:
+            if k in config:
+                return config[k]
+        return default
+
     return DifficultyPID(
         initial_nodes=int(config.get("sf_nodes", 500)),
         target_winrate=float(config.get("sf_pid_target_winrate", 0.60)),
@@ -459,24 +626,30 @@ def pid_from_config(config: dict) -> DifficultyPID:
         wdl_regret_min=float(config.get("sf_pid_wdl_regret_min", 0.01)),
         wdl_regret_max=float(config.get("sf_pid_wdl_regret_max", 1.0)),
         wdl_regret_stage_end=float(config.get("sf_pid_wdl_regret_stage_end", -1.0)),
-        inverse_regret_window=int(config.get("sf_pid_inverse_regret_window", 20)),
-        inverse_regret_max_step=float(config.get("sf_pid_inverse_regret_max_step", 0.01)),
-        inverse_regret_max_step_frac=float(
-            config.get("sf_pid_inverse_regret_max_step_frac", 0.0)
-        ),
-        inverse_regret_safety_floor=float(
-            config.get("sf_pid_inverse_regret_safety_floor", 0.50)
-        ),
-        inverse_regret_emergency_ease_step=float(
-            config.get("sf_pid_inverse_regret_emergency_ease_step", 0.01)
-        ),
-        inverse_regret_recency_half_life=float(
-            config.get("sf_pid_inverse_regret_recency_half_life", 0.0)
-        ),
-        inverse_regret_target_deadband_sigma=float(
-            config.get("sf_pid_inverse_regret_target_deadband_sigma", 1.0)
-        ),
-        node_step_cap=float(
-            config.get("sf_pid_node_step_cap", _DEFAULT_NODES_STEP_CAP)
-        ),
+        regret_window=int(cfg(
+            "sf_pid_regret_window", "sf_pid_inverse_regret_window", default=20)),
+        regret_max_step=float(cfg(
+            "sf_pid_regret_max_step", "sf_pid_inverse_regret_max_step", default=0.01)),
+        regret_max_step_frac=float(cfg(
+            "sf_pid_regret_max_step_frac", "sf_pid_inverse_regret_max_step_frac", default=0.0)),
+        regret_safety_floor=float(cfg(
+            "sf_pid_regret_safety_floor", "sf_pid_inverse_regret_safety_floor", default=0.50)),
+        regret_emergency_ease_step=float(cfg(
+            "sf_pid_regret_emergency_ease_step",
+            "sf_pid_inverse_regret_emergency_ease_step", default=0.01)),
+        regret_recency_half_life=float(cfg(
+            "sf_pid_regret_recency_half_life",
+            "sf_pid_inverse_regret_recency_half_life", default=0.0)),
+        regret_deadband_sigma=float(cfg(
+            "sf_pid_regret_deadband_sigma",
+            "sf_pid_inverse_regret_target_deadband_sigma", default=1.0)),
+        nodes_window=int(config.get("sf_pid_nodes_window", 20)),
+        nodes_max_step=float(config["sf_pid_nodes_max_step"])
+            if "sf_pid_nodes_max_step" in config else None,
+        nodes_max_step_frac=float(cfg(
+            "sf_pid_nodes_max_step_frac", "sf_pid_node_step_cap", default=0.10)),
+        nodes_safety_floor=float(config.get("sf_pid_nodes_safety_floor", 0.0)),
+        nodes_emergency_ease_step=float(config.get("sf_pid_nodes_emergency_ease_step", 0.0)),
+        nodes_recency_half_life=float(config.get("sf_pid_nodes_recency_half_life", 0.0)),
+        nodes_deadband_sigma=float(config.get("sf_pid_nodes_deadband_sigma", 0.0)),
     )

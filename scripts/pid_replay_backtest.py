@@ -86,13 +86,13 @@ def replay(rows: list[dict], *, alpha: float, sigma: float) -> dict:
         wdl_regret_min=WDL_REGRET_MIN,
         wdl_regret_max=WDL_REGRET_MAX,
         wdl_regret_stage_end=-1.0,  # disabled — keep stage 1 active
-        inverse_regret_window=INVERSE_WINDOW,
-        inverse_regret_max_step=INVERSE_MAX_STEP,
-        inverse_regret_max_step_frac=INVERSE_MAX_STEP_FRAC,
-        inverse_regret_safety_floor=INVERSE_SAFETY_FLOOR,
-        inverse_regret_emergency_ease_step=INVERSE_EMERGENCY_EASE,
-        inverse_regret_recency_half_life=INVERSE_RECENCY_HL,
-        inverse_regret_target_deadband_sigma=sigma,
+        regret_window=INVERSE_WINDOW,
+        regret_max_step=INVERSE_MAX_STEP,
+        regret_max_step_frac=INVERSE_MAX_STEP_FRAC,
+        regret_safety_floor=INVERSE_SAFETY_FLOOR,
+        regret_emergency_ease_step=INVERSE_EMERGENCY_EASE,
+        regret_recency_half_life=INVERSE_RECENCY_HL,
+        regret_deadband_sigma=sigma,
         min_games_between_adjust=0,  # always permit per-iter step
     )
     regret_trail: list[float] = []

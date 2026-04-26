@@ -68,18 +68,32 @@ stockfish:
   sf_pid_wdl_regret_max: 0.40         # 2026-04-22 v9: 0.15→0.40. PID hit 0.15 ceiling with EMA 0.46; needs room to climb much higher to avoid TB-adj range.
   sf_pid_wdl_regret_stage_end: 0.01   # Stage gating irrelevant now (inverse PID ignores stages); kept ≤ max for sanity.
 
-  # Inverse-model regret controller: fits observed (regret, winrate) history via
-  # weighted least squares and moves toward the regret that predicts target
-  # winrate. Weights are 1/SE² where SE is computed from the actual W/D/L
-  # distribution per iter.
-  sf_pid_inverse_regret_window: 20            # rolling history length
-  sf_pid_inverse_regret_max_step: 0.02             # 2026-04-24: 0.10→0.02 to cap emergency-ease step after 6 limit-cycle overshoots (raw_wr airbag firing 3×). max_step_frac still governs normal tightening; this only tightens the ease branch.
-  sf_pid_inverse_regret_max_step_frac: 0.12        # 2026-04-23: 0.10→0.12 conservative bump. Backtest: 44% of regret moves hit the 10% cap, p75=15% wanted larger. Small bump to loosen chronic under-reaction without repeating v14 (0.05 was too slow).
-  sf_pid_inverse_regret_safety_floor: 0.50         # below this raw winrate → emergency ease
-  sf_pid_inverse_regret_emergency_ease_step: 0.010 # raise regret by this amount when raw_wr < floor (2026-04-25: 0.03→0.015; 2026-04-26: 0.015→0.010 entering stage-2 node-ramp regime — gentler airbag = less risk of unnecessarily crossing stage_reenter (0.06) and freezing nodes during a transient dip).
-  sf_pid_inverse_regret_recency_half_life: 3.0     # 2026-04-23: 15→3 per walk-forward backtest (hl=3 lowest MAE 0.069, wins 55% overall incl. quiet periods, 94% in drift). Fit still uses full last-20 window; old points just get low weight.
-  sf_pid_inverse_regret_target_deadband_sigma: 0.5  # 2026-04-25: 1.5→0.5 per replay backtest on 450 iters of trial ba920 with new pid.py (half-step on raw-vs-fit sign disagreement). σ=1.5 had 8 "floor-drop precedents" (controller held in iter t-1 while iter t crashed below safety_floor — the iter 448 failure mode). σ=0.5 eliminates these (0 events at α=0.10) without meaningful swing increase. Half-step fix bounds the FP cost of tighter σ. Live-reloadable.
-  sf_pid_node_step_cap: 0.10                        # Stage-2 node-growth: max ±fractional change to sf_nodes per iter (proportional to ema_winrate − target). 0.10 = ±10%/iter. Raise to ramp difficulty faster (more variance), lower to smooth ramp. Live-reloadable.
+  # Regret + nodes inverse-fit levers: each fits observed (lever, winrate)
+  # history via weighted least squares and steps toward the value that
+  # predicts target winrate. Weights are 1/SE² where SE comes from the W/D/L
+  # distribution per iter. Regret moves first; nodes only move once regret
+  # has settled at stage_end. Both stages share the same step / dual z-gate /
+  # raw-vs-fit-disagreement code (chess_anti_engine/stockfish/pid.py:_step_lever).
+  sf_pid_regret_window: 20            # rolling history length (construction-only)
+  sf_pid_regret_max_step: 0.02             # 2026-04-24: 0.10→0.02 to cap emergency-ease step after 6 limit-cycle overshoots (raw_wr airbag firing 3×). max_step_frac still governs normal tightening; this only tightens the ease branch.
+  sf_pid_regret_max_step_frac: 0.12        # 2026-04-23: 0.10→0.12 conservative bump. Backtest: 44% of regret moves hit the 10% cap, p75=15% wanted larger. Small bump to loosen chronic under-reaction without repeating v14 (0.05 was too slow).
+  sf_pid_regret_safety_floor: 0.50         # below this raw winrate → emergency ease
+  sf_pid_regret_emergency_ease_step: 0.010 # raise regret by this amount when raw_wr < floor (2026-04-25: 0.03→0.015; 2026-04-26: 0.015→0.010 entering stage-2 node-ramp regime — gentler airbag = less risk of unnecessarily crossing stage_reenter (0.06) and freezing nodes during a transient dip).
+  sf_pid_regret_recency_half_life: 3.0     # 2026-04-23: 15→3 per walk-forward backtest (hl=3 lowest MAE 0.069, wins 55% overall incl. quiet periods, 94% in drift). Fit still uses full last-20 window; old points just get low weight.
+  sf_pid_regret_deadband_sigma: 0.5  # 2026-04-25: 1.5→0.5 per replay backtest on 450 iters of trial ba920 with new pid.py (half-step on raw-vs-fit sign disagreement). σ=1.5 had 8 "floor-drop precedents" (controller held in iter t-1 while iter t crashed below safety_floor — the iter 448 failure mode). σ=0.5 eliminates these (0 events at α=0.10) without meaningful swing increase. Half-step fix bounds the FP cost of tighter σ. Live-reloadable.
+
+  # Nodes lever (stage 2). Same inverse-fit mechanism as regret but with
+  # direction=+1 (raising nodes makes Stockfish stronger). Defaults below
+  # match the prior proportional behavior: max_step_frac=0.10 (±10%/iter),
+  # deadband=0 (react every iter), no airbag (regret-lever airbag handles
+  # wr crashes; once it fires, regret rises above stage_reenter and the
+  # nodes lever pauses until regret settles back at floor).
+  sf_pid_nodes_window: 20                 # construction-only
+  sf_pid_nodes_max_step_frac: 0.10        # ±10%/iter cap on the nodes step (live-reloadable). Raise for faster ramp / more variance; lower for smoother. Replaces sf_pid_node_step_cap.
+  sf_pid_nodes_deadband_sigma: 0.0        # 0 = no deadband (act every iter while in stage 2). Raise to add a hold-zone like the regret lever.
+  sf_pid_nodes_recency_half_life: 0.0     # 0 disables; raise to discount older obs in the nodes-side fit.
+  sf_pid_nodes_safety_floor: 0.0          # 0 = airbag off (regret lever's airbag covers wr crashes).
+  sf_pid_nodes_emergency_ease_step: 0.0   # paired with safety_floor; absolute nodes drop on airbag fire.
 
 selfplay:
   games_per_iter: 800

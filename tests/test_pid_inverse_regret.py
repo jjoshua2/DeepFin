@@ -1,4 +1,4 @@
-"""Tests for the inverse-model regret controller in DifficultyPID."""
+"""Tests for the inverse-fit lever logic in DifficultyPID (regret stage)."""
 from __future__ import annotations
 
 import math
@@ -6,13 +6,24 @@ import random
 
 from chess_anti_engine.stockfish.pid import (
     DifficultyPID,
-    _fit_inverse_regret,
+    _fit_inverse_lever,
     _observation_se,
 )
 
 
+# Test-local alias matching the regret-side slope convention so legacy tests
+# keep their signature (``_fit_inverse_regret(history, target_wr=...)``).
+def _fit_inverse_regret(history, *, target_wr, recency_half_life=0.0):
+    return _fit_inverse_lever(
+        history,
+        target_wr=target_wr,
+        expected_slope_sign=+1,
+        recency_half_life=recency_half_life,
+    )
+
+
 def _mk_pid(**overrides) -> DifficultyPID:
-    defaults = dict(
+    defaults: dict = dict(
         initial_nodes=5000,
         target_winrate=0.57,
         ema_alpha=0.5,
@@ -21,10 +32,10 @@ def _mk_pid(**overrides) -> DifficultyPID:
         initial_wdl_regret=0.15,
         wdl_regret_min=0.02,
         wdl_regret_max=1.0,
-        inverse_regret_window=10,
-        inverse_regret_max_step=0.01,
-        inverse_regret_safety_floor=0.50,
-        inverse_regret_emergency_ease_step=0.01,
+        regret_window=10,
+        regret_max_step=0.01,
+        regret_safety_floor=0.50,
+        regret_emergency_ease_step=0.01,
     )
     defaults.update(overrides)
     return DifficultyPID(**defaults)
@@ -109,9 +120,9 @@ def test_emergency_ease_never_exceeds_max_step():
     # Codex HIGH finding #1: one 0.40 batch must not jump regret by +0.13.
     pid = _mk_pid(
         initial_wdl_regret=0.15,
-        inverse_regret_max_step=0.01,
-        inverse_regret_emergency_ease_step=0.01,
-        inverse_regret_safety_floor=0.50,
+        regret_max_step=0.01,
+        regret_emergency_ease_step=0.01,
+        regret_safety_floor=0.50,
     )
     # Even an extreme batch (zero wins, zero draws) must not exceed max_step.
     pid.observe(wins=0, draws=0, losses=800, force=True)
@@ -145,7 +156,7 @@ def test_saturated_batches_do_not_dominate_fit():
 # dead compute. See pid.py:_fit_inverse_regret for the rationale.
 
 
-def test_inverse_history_round_trips_via_state_dict():
+def test_regret_history_round_trips_via_state_dict():
     # Codex MED finding #3: history must persist across save/load.
     pid1 = _mk_pid(initial_wdl_regret=0.15)
     _feed_observations(pid1, [
@@ -156,22 +167,22 @@ def test_inverse_history_round_trips_via_state_dict():
         (0.18, 0.70),
     ], n_games=800)
     state = pid1.state_dict()
-    assert "inverse_history" in state
-    assert len(state["inverse_history"]) == 5
+    assert "regret_history" in state
+    assert len(state["regret_history"]) == 5
 
     # New PID, restore state — history should come back.
     pid2 = _mk_pid(initial_wdl_regret=0.15)
-    assert len(pid2._inverse_history) == 0
+    assert len(pid2.regret_lever.history) == 0
     pid2.load_state_dict(state)
-    assert len(pid2._inverse_history) == 5
+    assert len(pid2.regret_lever.history) == 5
     # Entries should match (within float precision)
-    for (r1, w1, s1), (r2, w2, s2) in zip(pid1._inverse_history, pid2._inverse_history):
+    for (r1, w1, s1), (r2, w2, s2) in zip(pid1.regret_lever.history, pid2.regret_lever.history):
         assert abs(r1 - r2) < 1e-12
         assert abs(w1 - w2) < 1e-12
         assert abs(s1 - s2) < 1e-12
 
 
-def test_legacy_checkpoint_without_inverse_history_loads_gracefully():
+def test_legacy_checkpoint_without_regret_history_loads_gracefully():
     # Older state dicts (pre-inverse-model or from disabled runs) have no
     # "inverse_history" key. Loading should not crash.
     pid = _mk_pid(initial_wdl_regret=0.15)
@@ -182,7 +193,7 @@ def test_legacy_checkpoint_without_inverse_history_loads_gracefully():
         "random_stage_complete": True, "regret_stage_complete": False,
     }
     pid.load_state_dict(legacy_state)
-    assert len(pid._inverse_history) == 0  # remains empty, no crash
+    assert len(pid.regret_lever.history) == 0  # remains empty, no crash
 
 
 def test_holds_with_insufficient_history():
@@ -230,7 +241,7 @@ def test_never_extrapolates_beyond_observed_range():
 
 
 def test_step_size_respects_max_step_cap():
-    pid = _mk_pid(initial_wdl_regret=0.15, inverse_regret_max_step=0.003)
+    pid = _mk_pid(initial_wdl_regret=0.15, regret_max_step=0.003)
     _feed_observations(pid, [
         (0.05, 0.45),
         (0.10, 0.55),
@@ -261,8 +272,8 @@ def test_raw_sign_disagreement_steps_half_max_in_raw_direction():
     pid = _mk_pid(
         initial_wdl_regret=0.15,
         target_winrate=0.60,
-        inverse_regret_max_step=0.01,
-        inverse_regret_safety_floor=0.50,  # stay above so the airbag doesn't fire
+        regret_max_step=0.01,
+        regret_safety_floor=0.50,  # stay above so the airbag doesn't fire
         ema_alpha=0.5,
     )
     # Pre-populate history with a steep positive-slope relationship at LOW
@@ -270,7 +281,7 @@ def test_raw_sign_disagreement_steps_half_max_in_raw_direction():
     # the fit still predicts r* far below current regret 0.20 (i.e. wants
     # to tighten). Using direct insertion bypasses the auto-step that
     # ``_feed_observations`` triggers.
-    pid._inverse_history.extend([
+    pid.regret_lever.history.extend([
         (0.04, 0.30, 0.018),
         (0.06, 0.40, 0.018),
         (0.08, 0.50, 0.018),
@@ -296,8 +307,8 @@ def test_raw_sign_agreement_lets_fit_drive_magnitude():
     pid = _mk_pid(
         initial_wdl_regret=0.15,
         target_winrate=0.60,
-        inverse_regret_max_step=0.01,
-        inverse_regret_safety_floor=0.50,
+        regret_max_step=0.01,
+        regret_safety_floor=0.50,
         ema_alpha=0.5,
     )
     # Seed: lower regret → lower winrate, so fit predicts r* above current
@@ -337,3 +348,125 @@ def test_inverse_model_handles_noisy_data():
     assert predicted_r is not None
     # Target 0.70: true r* = 0.15. Noise should allow fit within ±0.02
     assert abs(predicted_r - 0.15) < 0.03
+
+
+# --- Nodes lever (direction=+1) tests ---
+
+
+def _mk_pid_nodes_only(**overrides) -> DifficultyPID:
+    """PID with regret disabled so the nodes lever runs every iter."""
+    defaults: dict = dict(
+        initial_nodes=10000,
+        target_winrate=0.57,
+        ema_alpha=0.5,
+        min_nodes=2000,
+        max_nodes=200_000,
+        initial_wdl_regret=-1.0,  # disable regret stage; gate stays complete
+        nodes_window=10,
+        nodes_max_step_frac=0.10,
+        nodes_safety_floor=0.0,
+        nodes_emergency_ease_step=0.0,
+        nodes_deadband_sigma=0.0,
+    )
+    defaults.update(overrides)
+    return DifficultyPID(**defaults)
+
+
+def test_fit_inverse_lever_recovers_negative_slope_for_nodes():
+    # Synthetic linear data with NEGATIVE slope: more nodes → fewer wins.
+    # winrate = 0.80 - 0.000004 * nodes
+    history: list[tuple[float, float, float]] = [
+        (5_000.0, 0.78, 0.018),
+        (10_000.0, 0.76, 0.018),
+        (20_000.0, 0.72, 0.018),
+        (40_000.0, 0.64, 0.018),
+        (80_000.0, 0.48, 0.018),
+    ]
+    predicted = _fit_inverse_lever(
+        history, target_wr=0.57, expected_slope_sign=-1
+    )
+    assert predicted is not None
+    # target 0.57 → nodes ≈ (0.80-0.57)/0.000004 ≈ 57500. Allow ±10%.
+    assert 50_000 < predicted < 65_000
+
+
+def test_fit_inverse_lever_rejects_positive_slope_for_nodes():
+    # Nodes-side fit must reject positive slope (would mean more nodes →
+    # more wins, which is non-physical for a stronger opponent).
+    history: list[tuple[float, float, float]] = [
+        (5_000.0, 0.50, 0.018),
+        (10_000.0, 0.55, 0.018),
+        (20_000.0, 0.60, 0.018),
+    ]
+    fit = _fit_inverse_lever(history, target_wr=0.57, expected_slope_sign=-1)
+    assert fit is None
+
+
+def test_nodes_lever_decreases_when_winning_too_much():
+    # Underperforming target → easier SF → fewer nodes (direction=+1, ease=down).
+    pid = _mk_pid_nodes_only(initial_nodes=10_000)
+    n = 800
+    # Win 40% (well below target 0.57) — controller should ease, dropping nodes.
+    wins = int(0.40 * n)
+    initial = pid.nodes
+    pid.observe(wins=wins, draws=0, losses=n - wins, force=True)
+    assert pid.nodes < initial, f"expected nodes to drop, got {initial}→{pid.nodes}"
+
+
+def test_nodes_lever_increases_when_winning_too_little_for_opponent():
+    # Outperforming target → harder SF → more nodes.
+    pid = _mk_pid_nodes_only(initial_nodes=10_000)
+    n = 800
+    # Win 75% (well above target 0.57) — controller tightens, raising nodes.
+    wins = int(0.75 * n)
+    initial = pid.nodes
+    pid.observe(wins=wins, draws=0, losses=n - wins, force=True)
+    assert pid.nodes > initial, f"expected nodes to rise, got {initial}→{pid.nodes}"
+
+
+def test_nodes_step_capped_by_max_step_frac():
+    # ±10%/iter cap from a single observation, even when raw is extreme.
+    pid = _mk_pid_nodes_only(initial_nodes=10_000, nodes_max_step_frac=0.10)
+    pid.observe(wins=800, draws=0, losses=0, force=True)  # 100% wr → tighten hard
+    # 10% cap → max nodes = 11_000
+    assert pid.nodes <= 11_000 + 1
+    pid.nodes = 10_000
+    pid.observe(wins=0, draws=0, losses=800, force=True)  # 0% wr → ease hard
+    assert pid.nodes >= 9_000 - 1
+
+
+def test_nodes_history_round_trips_via_state_dict():
+    pid1 = _mk_pid_nodes_only(initial_nodes=10_000)
+    for _ in range(4):
+        pid1.observe(wins=400, draws=0, losses=400, force=True)
+    state = pid1.state_dict()
+    assert "nodes_history" in state
+    assert len(state["nodes_history"]) == 4
+
+    pid2 = _mk_pid_nodes_only(initial_nodes=10_000)
+    pid2.load_state_dict(state)
+    assert len(pid2.nodes_lever.history) == 4
+
+
+def test_nodes_lever_paused_when_regret_stage_incomplete():
+    # Regret enabled with stage_end below current regret → stage incomplete →
+    # nodes must not move regardless of winrate.
+    pid = DifficultyPID(
+        initial_nodes=10_000,
+        target_winrate=0.57,
+        ema_alpha=0.5,
+        min_nodes=2_000,
+        max_nodes=200_000,
+        initial_wdl_regret=0.10,
+        wdl_regret_min=0.01,
+        wdl_regret_max=1.0,
+        wdl_regret_stage_end=0.01,  # stage gate active; current regret 0.10 > 0.01
+        regret_window=10,
+        regret_max_step=0.005,
+        regret_safety_floor=0.50,
+        nodes_window=10,
+        nodes_max_step_frac=0.10,
+    )
+    initial = pid.nodes
+    pid.observe(wins=600, draws=0, losses=200, force=True)  # 75% wr
+    assert pid.nodes == initial, "nodes must stay pinned while regret stage incomplete"
