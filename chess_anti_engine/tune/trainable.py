@@ -26,6 +26,7 @@ from chess_anti_engine.tune.distributed_runtime import (
     _ensure_inference_broker,
     _publish_distributed_trial_state,
     _quarantine_inbox_shards,
+    _resolve_shared_cache_root,
     _set_active_run_prefix,
     _stop_process,
     _stop_worker_processes,
@@ -219,6 +220,21 @@ def train_trial(config: dict):
     )
     _set_active_run_prefix(server_root=distributed_server_root, trial_id=trial_id)
     distributed_dirs = _trial_server_dirs(server_root=distributed_server_root, trial_id=trial_id)
+  # Point the trainer's torch.compile at the same shared cache the workers
+  # use, so a 10-layer/15M model's compile artifacts (FX graph, autotuned
+  # Triton kernels) survive across restarts. Without this, the trainer
+  # writes to /tmp/torchinductor_josh and recompiles every restart (~7min
+  # on first iter). Force-set (not setdefault) so we override the default.
+    _shared_cache_root = _resolve_shared_cache_root(config, distributed_server_root)
+    _trainer_compile_root = _shared_cache_root / "compile_cache"
+    _trainer_inductor_dir = _trainer_compile_root / "torchinductor"
+    _trainer_triton_dir = _trainer_compile_root / "triton"
+    _trainer_inductor_dir.mkdir(parents=True, exist_ok=True)
+    _trainer_triton_dir.mkdir(parents=True, exist_ok=True)
+    import os as _os
+    _os.environ["TORCHINDUCTOR_CACHE_DIR"] = str(_trainer_inductor_dir)
+    _os.environ["TRITON_CACHE_DIR"] = str(_trainer_triton_dir)
+    _os.environ["TORCHINDUCTOR_FX_GRAPH_CACHE"] = "1"
     distributed_worker_procs: list[subprocess.Popen[bytes]] = []
     distributed_inference_broker_proc: subprocess.Popen[bytes] | None = None
 
