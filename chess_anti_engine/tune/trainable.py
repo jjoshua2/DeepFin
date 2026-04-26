@@ -34,7 +34,7 @@ from chess_anti_engine.tune.distributed_runtime import (
 )
 from chess_anti_engine.tune.trainable_config_ops import (
     _reload_yaml_into_config,
-    _resolve_pause_marker_path,
+    _resolve_pause_marker_paths,
     _resolve_sims,
     _sync_trainer_weights,
     _wait_if_paused,
@@ -279,7 +279,17 @@ def train_trial(config: dict):
         except FileNotFoundError:
             puzzle_suite = None
 
-    pause_marker_path = _resolve_pause_marker_path(tc=tc, trial_dir=trial_dir)
+    pause_marker_paths = _resolve_pause_marker_paths(tc=tc, trial_dir=trial_dir)
+    # One-shot startup log so we can compare against the path graceful_restart
+    # writes if the pause hook ever fails to fire again. flush=True because
+    # this prints once and the actor's stdout buffer is large.
+    _present = [p for p in pause_marker_paths if p.exists()]
+    print(
+        f"[trial] graceful pause marker paths: "
+        f"{[str(p) for p in pause_marker_paths]} "
+        f"(present at startup: {[str(p) for p in _present]})",
+        flush=True,
+    )
 
     current_nodes_init = int(pid.nodes) if pid is not None else tc.sf_nodes
     sims_init = _resolve_sims(tc, trainer, max_sims=tc.mcts_simulations)
@@ -334,7 +344,7 @@ def train_trial(config: dict):
                 and int(iteration_zero_based) < tc.salvage_startup_no_share_iters
             )
             _wait_if_paused(
-                pause_marker_path=pause_marker_path,
+                pause_marker_paths=pause_marker_paths,
                 poll_seconds=tc.pause_poll_seconds,
                 trial_id=trial_id,
                 iteration=iteration_idx,

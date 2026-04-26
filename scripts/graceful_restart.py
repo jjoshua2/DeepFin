@@ -109,13 +109,22 @@ def main() -> None:
     pause_file = tune_dir / "pause.txt"
     auto_kill = args.auto_kill or bool(args.resume_cmd)
 
-    # Step 1: create the pause marker
-    if pause_file.exists():
-        print(f"[graceful_restart] pause.txt already exists at {pause_file}")
-    else:
-        pause_file.write_text("graceful restart in progress\n")
-        print(f"[graceful_restart] Created {pause_file}")
-        print("[graceful_restart] Trials will pause after their current iteration.")
+    # Step 1: create the pause marker(s). Drop one in tune_dir AND one in
+    # every active trial dir — the trial checks both. Without the per-trial
+    # markers a previous run pause-no-op'd silently when the actor's view of
+    # tune_dir/pause.txt didn't fire its exists() check (root cause never
+    # diagnosed; the per-trial marker is the belt-and-suspenders fix).
+    pause_targets: list[Path] = [pause_file]
+    for csv in _active_trials(tune_dir):
+        pause_targets.append(csv.parent / "pause.txt")
+
+    for target in pause_targets:
+        if target.exists():
+            print(f"[graceful_restart] pause.txt already exists at {target}")
+        else:
+            target.write_text("graceful restart in progress\n")
+            print(f"[graceful_restart] Created {target}")
+    print("[graceful_restart] Trials will pause after their current iteration.")
 
     print(f"[graceful_restart] Waiting for {args.wait} of the active trials to go idle "
           f"(>{args.idle_secs}s without a progress.csv update)...")
@@ -154,8 +163,10 @@ def main() -> None:
                 else:
                     print("[graceful_restart] Could not find tuner PID — kill it manually.")
 
-                print(f"[graceful_restart] Removing {pause_file}")
-                pause_file.unlink(missing_ok=True)
+                for target in pause_targets:
+                    if target.exists():
+                        print(f"[graceful_restart] Removing {target}")
+                        target.unlink(missing_ok=True)
 
                 if args.resume_cmd:
                     print(f"[graceful_restart] Running: {args.resume_cmd}")

@@ -56,43 +56,68 @@ def _resolve_sims(tc: TrialConfig, trainer, *, max_sims: int) -> int:
     )
 
 
-def _resolve_pause_marker_path(*, tc: TrialConfig, trial_dir: Path) -> Path:
-  # Always resolve from ``trial_dir.parent`` (the tune dir). The previous
-  # work_dir override resolved against ``Path.cwd()``, which inside a
-  # Ray actor is /tmp/ray/.../working_dirs/... — never where
-  # graceful_restart.py drops the marker (project_root/<work_dir>/tune/).
-  # That made the pause hook silently no-op under PBT.
+def _resolve_pause_marker_paths(*, tc: TrialConfig, trial_dir: Path) -> list[Path]:
+    """All paths the trial considers a "pause" marker; ANY existing one pauses.
+
+    Returning multiple candidates is defensive: an earlier graceful_restart
+    failed silently when only the tune-dir marker was checked and the actor's
+    view of that path drifted from where the script wrote it. Now the trial
+    checks both the trial dir itself (which definitely matches what
+    ``_ctx.get_trial_dir()`` reports — verified via status.csv landing in the
+    same dir) and the tune dir (where graceful_restart historically writes).
+    Custom ``tc.pause_file`` overrides come first.
+    """
     tune_root = trial_dir.parent
+    candidates: list[Path] = []
     raw = tc.pause_file
     if raw and raw.strip():
         p = Path(raw.strip())
         if not p.is_absolute():
             p = tune_root / p
-        return p
-    return tune_root / "pause.txt"
+        candidates.append(p)
+    candidates.append(trial_dir / "pause.txt")
+    candidates.append(tune_root / "pause.txt")
+    # Dedupe while preserving order (a custom pause_file may equal one of the defaults).
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for c in candidates:
+        if c not in seen:
+            seen.add(c)
+            unique.append(c)
+    return unique
 
 
 def _wait_if_paused(
     *,
-    pause_marker_path: Path,
+    pause_marker_paths: list[Path],
     poll_seconds: int,
     trial_id: str,
     iteration: int,
 ) -> None:
     poll_s = max(1, int(poll_seconds))
     announced = False
-    while pause_marker_path.exists():
+
+    def _existing_markers() -> list[Path]:
+        return [p for p in pause_marker_paths if p.exists()]
+
+    while True:
+        present = _existing_markers()
+        if not present:
+            break
         if not announced:
+            # flush=True so the message reaches the log even though the
+            # subsequent sleep would otherwise hold it in stdio buffers.
             print(
-                f"[trial] pause marker detected: {pause_marker_path} "
-                f"(trial={trial_id}, next_iter={iteration})"
+                f"[trial] pause marker(s) detected: {[str(p) for p in present]} "
+                f"(trial={trial_id}, next_iter={iteration})",
+                flush=True,
             )
             announced = True
         time.sleep(float(poll_s))
     if announced:
         print(
-            f"[trial] pause marker cleared: {pause_marker_path} "
-            f"(trial={trial_id}, resuming_iter={iteration})"
+            f"[trial] pause marker cleared (trial={trial_id}, resuming_iter={iteration})",
+            flush=True,
         )
 
 
