@@ -448,6 +448,40 @@ def test_nodes_history_round_trips_via_state_dict():
     assert len(pid2.nodes_lever.history) == 4
 
 
+def test_regret_lever_freezes_after_stage_2_entered():
+    # Once stage 2 is entered (regret reached stage_end), regret lever must
+    # NEVER move again — including its airbag. This is the "single knob per
+    # regime" invariant: stage 2 changes are nodes-only so an effect can be
+    # attributed to one cause.
+    pid = DifficultyPID(
+        initial_nodes=10_000,
+        target_winrate=0.57,
+        ema_alpha=0.5,
+        min_nodes=2_000,
+        max_nodes=200_000,
+        initial_wdl_regret=0.01,           # already at floor
+        wdl_regret_min=0.01,
+        wdl_regret_max=1.0,
+        wdl_regret_stage_end=0.01,         # stage 2 active from start
+        regret_window=10,
+        regret_max_step=0.10,
+        regret_safety_floor=0.99,           # absurdly high → would airbag every iter if active
+        regret_emergency_ease_step=0.10,
+        nodes_window=10,
+        nodes_max_step_frac=0.10,
+    )
+    assert pid._regret_stage_complete  # precondition
+    initial_regret = pid.wdl_regret
+    # Catastrophic crash sequence — would normally trip regret airbag every iter.
+    for _ in range(5):
+        pid.observe(wins=0, draws=0, losses=800, force=True)
+    assert pid.wdl_regret == initial_regret, (
+        f"regret moved during stage 2 (was {initial_regret}, now {pid.wdl_regret})"
+    )
+    # Stage 2 stays entered even if regret somehow drifted up.
+    assert pid._regret_stage_complete
+
+
 def test_nodes_lever_paused_when_regret_stage_incomplete():
     # Regret enabled with stage_end below current regret → stage incomplete →
     # nodes must not move regardless of winrate.

@@ -244,9 +244,11 @@ class DifficultyPID:
       - regret_lever (direction=-1): lowering regret makes SF stronger.
       - nodes_lever (direction=+1):  raising nodes makes SF stronger.
 
-    Series gate: regret moves first. Once ``self.wdl_regret`` ≤ stage_end
-    (and stays ≤ stage_reenter), nodes move; if regret drifts back above
-    reenter (e.g. airbag fired), nodes pause until stage clears again.
+    Series gate (one-way): regret moves first. Once ``self.wdl_regret`` ≤
+    stage_end, the regret lever freezes and the nodes lever takes over for
+    the life of this PID. The nodes lever has its own airbag for stage-2
+    wr-crash response — keeping the controller a single-knob system in
+    each regime so a change has one observable effect.
     """
 
     def __init__(
@@ -263,7 +265,6 @@ class DifficultyPID:
         wdl_regret_min: float = 0.01,
         wdl_regret_max: float = 1.0,
         wdl_regret_stage_end: float = -1.0,
-        wdl_regret_stage_reenter: float | None = None,
   # --- Regret lever ---
         regret_window: int = 20,
         regret_max_step: float = 0.01,
@@ -302,18 +303,9 @@ class DifficultyPID:
             self.wdl_regret_stage_end = _clamp(
                 float(wdl_regret_stage_end), self.wdl_regret_min, self.wdl_regret_max
             )
-            regret_reenter_default = min(self.wdl_regret_max, self.wdl_regret_stage_end + 0.05)
-            regret_reenter_val = (
-                regret_reenter_default if wdl_regret_stage_reenter is None
-                else float(wdl_regret_stage_reenter)
-            )
-            self.wdl_regret_stage_reenter = _clamp(
-                regret_reenter_val, self.wdl_regret_stage_end, self.wdl_regret_max
-            )
             self._regret_stage_complete = float(regret_init) <= float(self.wdl_regret_stage_end)
         else:
             self.wdl_regret_stage_end = float(wdl_regret_stage_end)
-            self.wdl_regret_stage_reenter = float(wdl_regret_stage_end)
             self._regret_stage_complete = True
 
         self.ema_winrate: float = float(target_winrate)
@@ -396,13 +388,9 @@ class DifficultyPID:
             self.wdl_regret_max = float(config["sf_pid_wdl_regret_max"])
             self.regret_lever.max_value = self.wdl_regret_max
         if self._regret_gate_enabled and "sf_pid_wdl_regret_stage_end" in config:
-            stage_end = _clamp(
+            self.wdl_regret_stage_end = _clamp(
                 float(config["sf_pid_wdl_regret_stage_end"]),
                 self.wdl_regret_min, self.wdl_regret_max,
-            )
-            self.wdl_regret_stage_end = stage_end
-            self.wdl_regret_stage_reenter = _clamp(
-                self.wdl_regret_stage_reenter, stage_end, self.wdl_regret_max,
             )
 
         _refresh_lever_from_config(
@@ -492,9 +480,12 @@ class DifficultyPID:
         if not force and self._games_since_adjust < int(self.min_games_between_adjust):
             return self._no_change_update(err)
 
-  # Stage 1: regret lever.
+  # Stage 1: regret lever. Frozen after the gate has fired (one-way) so a
+  # stage-2 wr dip can't trip its airbag and double-mutate the controller.
+  # Without a gate, regret keeps running every iter as before.
         regret_changed = False
-        if self._regret_enabled:
+        regret_frozen = self._regret_gate_enabled and self._regret_stage_complete
+        if self._regret_enabled and not regret_frozen:
             regret_changed = _step_lever(
                 self.regret_lever,
                 target_wr=float(self.target),
@@ -507,17 +498,11 @@ class DifficultyPID:
                 regret_end = _clamp(
                     self.wdl_regret_stage_end, self.wdl_regret_min, self.wdl_regret_max
                 )
-                regret_reenter = _clamp(
-                    self.wdl_regret_stage_reenter, regret_end, self.wdl_regret_max
-                )
-                if self._regret_stage_complete:
-                    if self.wdl_regret >= regret_reenter:
-                        self._regret_stage_complete = False
-                else:
-                    if self.wdl_regret <= regret_end:
-                        self._regret_stage_complete = True
+                if self.wdl_regret <= regret_end:
+                    self._regret_stage_complete = True
 
   # Stage 2: nodes lever (only after regret has settled at floor).
+  # One-way gate — once entered, stays entered for the life of this PID.
         nodes_changed = False
         if self._regret_stage_complete:
             nodes_changed = _step_lever(
