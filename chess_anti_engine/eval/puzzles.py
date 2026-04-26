@@ -23,8 +23,9 @@ import chess
 import numpy as np
 import torch
 
+from chess_anti_engine.encoding import encode_position
 from chess_anti_engine.mcts import MCTSConfig, run_mcts_many
-from chess_anti_engine.moves import index_to_move
+from chess_anti_engine.moves import index_to_move, move_to_index
 
 # Default rating buckets for Lichess-style evaluation, matching the LC0 blog
 # (https://lczero.org/blog/2024/02/...) coarse buckets.
@@ -44,10 +45,14 @@ DEFAULT_RATING_BUCKETS: tuple[tuple[int, int], ...] = (
 @dataclass
 class Puzzle:
     board: chess.Board
-    best_moves: list[chess.Move]  # any of these is accepted as correct
+    best_moves: list[chess.Move]  # accepted moves at the FIRST user step
     puzzle_id: str = ""
     rating: int | None = None  # Lichess Elo, optional (None for non-Lichess sources)
     themes: tuple[str, ...] = ()
+    # Full alternating user/opponent move list starting from `board` (i.e. the
+    # post-setup position). Indices 0,2,4,... are user moves; 1,3,5,... are
+    # forced opponent replies. Empty for non-sequence sources (e.g. EPD bm).
+    solution_sequence: tuple[chess.Move, ...] = ()
 
 
 @dataclass
@@ -229,12 +234,21 @@ def load_lichess_csv(
             if best not in board.legal_moves:
                 continue
 
+            # Parse the rest of the solution sequence (user/opponent alternating).
+            seq: list[chess.Move] = []
+            try:
+                for tok in move_tokens[1:]:
+                    seq.append(chess.Move.from_uci(tok))
+            except (ValueError, chess.InvalidMoveError):
+                seq = [best]  # fall back to just the first user move
+
             puzzles.append(Puzzle(
                 board=board,
                 best_moves=[best],
                 puzzle_id=(row.get("PuzzleId") or "").strip(),
                 rating=rating if rating > 0 else None,
                 themes=themes,
+                solution_sequence=tuple(seq),
             ))
 
             if max_puzzles is not None and len(puzzles) >= max_puzzles:
@@ -322,6 +336,106 @@ def run_puzzle_eval(
 
     return PuzzleResult(
         total=total, correct=correct, accuracy=accuracy, by_rating=by_rating,
+    )
+
+
+def _by_rating_table(
+    correct_flags: list[bool],
+    suite: PuzzleSuite,
+    rating_buckets: tuple[tuple[int, int], ...],
+) -> list[tuple[int, int, int, int, float]]:
+    out: list[tuple[int, int, int, int, float]] = []
+    if not any(p.rating is not None for p in suite.puzzles):
+        return out
+    for low, high in rating_buckets:
+        b_total = 0
+        b_correct = 0
+        for puzzle, ok in zip(suite.puzzles, correct_flags):
+            r = puzzle.rating
+            if r is None or r < low or r >= high:
+                continue
+            b_total += 1
+            if ok:
+                b_correct += 1
+        if b_total > 0:
+            out.append((low, high, b_total, b_correct, b_correct / b_total))
+    return out
+
+
+@torch.no_grad()
+def run_policy_sequence_eval(
+    model: torch.nn.Module,
+    suite: PuzzleSuite,
+    *,
+    device: str,
+    batch_size: int = 256,
+    rating_buckets: tuple[tuple[int, int], ...] = DEFAULT_RATING_BUCKETS,
+) -> PuzzleResult:
+    """LC0/DeepMind-style policy puzzle accuracy: full-sequence top-1.
+
+    A puzzle is solved iff the network plays the prescribed move at every
+    user step (any move that delivers checkmate is accepted at the final
+    step, per Lichess scoring). Forced opponent replies are pushed
+    automatically. Argmax over legal-masked policy logits, no search.
+    """
+    model.eval()
+    total = len(suite)
+    correct_flags = [False] * total
+
+    # Active set: puzzles still in progress. Each entry: (puzzle_idx, board, step_idx).
+    # step_idx is the next solution_sequence index where the *user* is to move.
+    active: list[tuple[int, chess.Board, int]] = [
+        (i, p.board.copy(), 0)
+        for i, p in enumerate(suite.puzzles)
+        if p.solution_sequence
+    ]
+
+    while active:
+        # Forward all active boards in batches; pick legal-argmax move per board.
+        boards = [b for _, b, _ in active]
+        picks: list[chess.Move] = []
+        for start in range(0, len(boards), batch_size):
+            chunk = boards[start:start + batch_size]
+            xs = np.stack([encode_position(b) for b in chunk])
+            x = torch.from_numpy(xs).to(device, non_blocking=True)
+            out = model(x)
+            pol_logits = (out["policy_own"] if isinstance(out, dict) and "policy_own" in out
+                          else out["policy"]).float().cpu().numpy()
+            for j, b in enumerate(chunk):
+                legal = list(b.legal_moves)
+                legal_idxs = [move_to_index(m, b) for m in legal]
+                picks.append(legal[int(np.argmax(pol_logits[j, legal_idxs]))])
+
+        next_active: list[tuple[int, chess.Board, int]] = []
+        for (puzzle_i, board, cur_step), picked in zip(active, picks):
+            seq = suite.puzzles[puzzle_i].solution_sequence
+            expected = seq[cur_step]
+
+            # End-of-sequence: accept any checkmate (Lichess rule), else strict match.
+            if cur_step == len(seq) - 1:
+                board.push(picked)
+                if board.is_checkmate() or picked == expected:
+                    correct_flags[puzzle_i] = True
+                continue
+
+            if picked != expected:
+                continue  # wrong → puzzle failed
+
+            board.push(expected)
+            board.push(seq[cur_step + 1])  # forced opponent reply
+            new_step = cur_step + 2
+            if new_step >= len(seq):
+                correct_flags[puzzle_i] = True  # ran out of user moves to play
+            else:
+                next_active.append((puzzle_i, board, new_step))
+
+        active = next_active
+
+    correct = sum(correct_flags)
+    accuracy = float(correct) / max(1, total)
+    return PuzzleResult(
+        total=total, correct=correct, accuracy=accuracy,
+        by_rating=_by_rating_table(correct_flags, suite, rating_buckets),
     )
 
 
