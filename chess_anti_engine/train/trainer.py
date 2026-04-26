@@ -380,14 +380,20 @@ class Trainer:
         self.feature_dropout_p = float(feature_dropout_p)
         self._base_input_planes = int(LC0_FULL.num_planes)
   # Per-group dropout: (start_offset_from_base, num_planes, dropout_prob)
-  # Groups: king_safety(10), pins(6), pawns(8), mobility(6), outposts(4)
+  # Groups: king_safety(10), pins(6), pawns(8), mobility(6), outposts(4).
+  # Per-group overrides default to a -1 sentinel in TrialConfig (not None),
+  # so treat any negative value as "fall back to global feature_dropout_p".
         _fdp = float(feature_dropout_p)
+
+        def _resolve_fdp(v: float | None) -> float:
+            return _fdp if v is None or v < 0 else float(v)
+
         self._feature_group_dropout = [
-            (0, 10, float(fdp_king_safety) if fdp_king_safety is not None else _fdp),
-            (10, 6, float(fdp_pins) if fdp_pins is not None else _fdp),
-            (16, 8, float(fdp_pawns) if fdp_pawns is not None else _fdp),
-            (24, 6, float(fdp_mobility) if fdp_mobility is not None else _fdp),
-            (30, 4, float(fdp_outposts) if fdp_outposts is not None else _fdp),
+            (0, 10, _resolve_fdp(fdp_king_safety)),
+            (10, 6, _resolve_fdp(fdp_pins)),
+            (16, 8, _resolve_fdp(fdp_pawns)),
+            (24, 6, _resolve_fdp(fdp_mobility)),
+            (30, 4, _resolve_fdp(fdp_outposts)),
         ]
         self.w_policy = float(w_policy)
         self.w_soft = float(w_soft)
