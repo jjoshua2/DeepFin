@@ -84,6 +84,8 @@ def emit_handshake(options: "EngineOptions") -> None:
     _println(f"option name Hash type spin default {options.hash_mb} min 1024 max 524288")
     _println(f"option name Threads type spin default {options.threads} min 1 max 64")
     _println(f"option name LeafGather type spin default {options.leaf_gather} min 1 max 64")
+    _println(f"option name UseVL type check default {'true' if options.use_vl else 'false'}")
+    _println(f"option name VLGather type spin default {options.vl_gather} min 32 max 4096")
     _println(f"option name MaxBatch type spin default {options.max_batch} min 64 max 8192")
     _println(f"option name MinibatchSize type spin default {options.minibatch_size} min 0 max 8192")
     _println(f"option name MultiPV type spin default {options.multi_pv} min 1 max 256")
@@ -116,6 +118,14 @@ class EngineOptions:
   # N_walkers×G without spawning more threads. 1 = classic. Lc0's
   # canonical value is 8. Set via UCI `LeafGather`.
     leaf_gather: int = 1
+  # Single-thread async-pipeline batched-VL PUCT. Active only at
+  # `Threads=1` with a 2-slot inplace-async evaluator. Bench: +112%
+  # over sync gumbel walkers=1 (54k vs 26k nps on a 10-layer model).
+  # Set via UCI `UseVL`.
+    use_vl: bool = False
+  # Sims per pipeline submit when `UseVL=true`. Sweet spot 384-768 for
+  # the 384-dim 10-layer model on RTX 5090. Set via UCI `VLGather`.
+    vl_gather: int = 512
   # Hardware-side max batch: the largest leaf-batch shape the evaluator
   # allocates buffers + CUDA-graph captures for. Changing it rebuilds
   # the evaluator + re-warmup (5-10s stall). Set via UCI `MaxBatch`.
@@ -414,6 +424,24 @@ class Engine:
             self._options.leaf_gather = n
             self._worker.set_walker_gather(n)
             _println(f"info string LeafGather set to {n}")
+        elif name == "usevl" and cmd.value is not None:
+            enabled = cmd.value.strip().lower() == "true"
+            self._options.use_vl = enabled
+            self._worker.set_use_pucv(enabled, gather=self._options.vl_gather)
+            _println(
+                f"info string UseVL {'on' if enabled else 'off'} "
+                f"(gather={self._options.vl_gather}; "
+                f"requires Threads=1 + 2-slot async evaluator)"
+            )
+        elif name == "vlgather" and cmd.value is not None:
+            try:
+                n = max(32, int(cmd.value))
+            except ValueError:
+                return
+            self._options.vl_gather = n
+            if self._options.use_vl:
+                self._worker.set_use_pucv(True, gather=n)
+            _println(f"info string VLGather set to {n}")
         elif name == "multipv" and cmd.value is not None:
             try:
                 n = max(1, int(cmd.value))

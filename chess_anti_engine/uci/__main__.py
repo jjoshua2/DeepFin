@@ -81,21 +81,46 @@ def _load_models(checkpoint: str, devices: list[str]):
     return [load_model_from_checkpoint(checkpoint, device=devices[0])]
 
 
-def _make_evaluator_factory(models, devices, coalesce, n_walkers, walker_gather):
+def _make_evaluator_factory(
+    models, devices, coalesce, n_walkers, walker_gather,
+    *, compile_mode: str | None = None,
+):
     """Return a ``build(max_batch) -> evaluator`` closure. The models are
     captured once at startup; each call constructs fresh evaluator
     wrappers at the new max_batch and warms them at the shapes the
-    walker count + gumbel bucket will actually hit."""
+    walker count + gumbel bucket will actually hit.
+
+    ``compile_mode`` (e.g. ``"reduce-overhead"``) wraps the model with
+    ``torch.compile`` before warmup. Compile + cudagraph capture happens
+    on whichever thread calls ``_warmup_evaluator`` *through the wrapped
+    evaluator*: walkers=1 → main thread; walkers>1 → BatchCoalescingDispatcher
+    submitter thread (because it intercepts every evaluate_encoded). That
+    keeps cudagraph_trees TLS pinned to the same thread that replays
+    during search, which is load-bearing — the selfplay 2026-04-28 incident
+    (worker compiled on main, dispatched on submitter, fell back to eager
+    at 47ms/forward instead of ~25ms) is the failure mode this avoids.
+    """
     def build(max_batch: int):
+        if compile_mode:
+            import torch
+            from typing import cast
+            compiled_models = [
+                cast("torch.nn.Module", torch.compile(m, mode=compile_mode))
+                for m in models
+            ]
+        else:
+            compiled_models = list(models)
+
         if len(devices) > 1:
             evaluators = [
-                DirectGPUEvaluator(m, device=d, max_batch=max_batch)
-                for m, d in zip(models, devices)
+                DirectGPUEvaluator(m, device=d, max_batch=max_batch, n_slots=2)
+                for m, d in zip(compiled_models, devices)
             ]
             evaluator = MultiGPUDispatcher(evaluators)
         else:
             evaluator = DirectGPUEvaluator(
-                models[0], device=devices[0], max_batch=max_batch,
+                compiled_models[0], device=devices[0],
+                max_batch=max_batch, n_slots=2,
             )
   # Always wrap in ThreadSafeGPUDispatcher so the UCI `Threads`
   # option can bump walker count at runtime without a race. Lock
@@ -189,6 +214,30 @@ def main() -> int:
     p.add_argument("--no-coalesce", dest="coalesce", action="store_false",
                    help="disable walker-call coalescing (debug / A-B bench only)")
     p.set_defaults(coalesce=True)
+  # torch.compile + cudagraph wins are large for 384-dim/9-layer at small
+  # batches (selfplay sees ~3-5x). Selfplay path uses ``reduce-overhead``;
+  # we mirror that here. Cache lives at --compile-cache-dir so repeated
+  # UCI launches reuse Inductor's FX graph cache + Triton kernels (cold
+  # compile is ~30-90s; warm is ~1s).
+    p.add_argument("--compile", dest="compile", action="store_true",
+                   help="apply torch.compile to the model (default: on)")
+    p.add_argument("--no-compile", dest="compile", action="store_false",
+                   help="disable torch.compile (eager mode; useful for debugging)")
+    p.set_defaults(compile=True)
+  # 2026-04-28 sweep on 10-layer ckpt @ chunk=8192 mb=4096 walkers=1:
+  # max-autotune = ~52k nps, reduce-overhead = ~44k nps. Cold compile is
+  # ~2-3min slower under max-autotune but the FX graph + autotune cache
+  # at --compile-cache-dir means second-run cost is ~seconds, not minutes.
+    p.add_argument("--compile-mode", default="max-autotune",
+                   help="torch.compile mode: max-autotune (default; ~52k nps benchmark) | "
+                   "reduce-overhead (~44k nps; faster cold compile) | default (eager-ish)")
+    p.add_argument("--compile-cache-dir",
+                   default=os.environ.get(
+                       "DEEPFIN_COMPILE_CACHE",
+                       os.path.expanduser("~/.cache/deepfin/worker_cache"),
+                   ),
+                   help="shared TorchInductor/Triton cache root (env: DEEPFIN_COMPILE_CACHE; "
+                   "default: ~/.cache/deepfin/worker_cache)")
     args = p.parse_args()
 
     if not args.checkpoint:
@@ -203,6 +252,16 @@ def main() -> int:
         stream=sys.stderr,
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
+
+  # Configure shared inductor + triton cache before any torch.compile
+  # call. Mirrors selfplay (worker._configure_shared_compile_cache) so a
+  # `deepfin` UCI invocation reuses the same compiled kernels as training.
+    if args.compile:
+        from chess_anti_engine.worker import _configure_shared_compile_cache
+        from pathlib import Path
+        _configure_shared_compile_cache(
+            cache_dir=Path(args.compile_cache_dir).expanduser(),
+        )
 
   # UCI assumes line-buffered I/O. When a GUI pipes stdout, Python defaults
   # to block-buffered, which swallows our responses until the buffer fills.
@@ -230,9 +289,11 @@ def main() -> int:
             n_walkers = max(1, int(args.walkers))
             walker_gather = max(1, int(args.walker_gather))
             models = _load_models(args.checkpoint, devices)
+            compile_mode = str(args.compile_mode) if args.compile else None
             build_eval = _make_evaluator_factory(
                 models, devices, coalesce=bool(args.coalesce),
                 n_walkers=n_walkers, walker_gather=walker_gather,
+                compile_mode=compile_mode,
             )
   # Initial build: warms the evaluator too (see factory body).
             evaluator = build_eval(args.max_batch)

@@ -13,7 +13,7 @@ from __future__ import annotations
 import dataclasses
 import threading
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 import chess
 import numpy as np
@@ -24,6 +24,8 @@ from chess_anti_engine.mcts._mcts_tree import MCTSTree
 from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
 from chess_anti_engine.mcts.puct import _value_scalar_from_wdl_logits
+from chess_anti_engine.mcts.puct_vl import PucvChunker
+from .multi_gpu_pucv_pool import MultiGpuPucvConfig, MultiGpuPucvPool
 from chess_anti_engine.moves import index_to_move, move_to_index
 from chess_anti_engine.tablebase import SyzygyProbe, try_tb_root_move
 
@@ -108,6 +110,24 @@ class SearchWorker:
         self._walker_gather = max(1, int(walker_gather))
         self._walker_pool: WalkerPool | None = self._build_walker_pool(self._n_walkers)
         self._walker_cboard: CBoard | None = None
+  # Async-pipeline batched-VL PUCT (single-thread, 2-slot CPU/GPU
+  # overlap via batch_descend_puct + batch_integrate_leaves). Active
+  # only when n_walkers == 1, evaluator exposes evaluate_inplace_async
+  # with n_slots >= 2, and ``set_use_pucv(True)`` was called. Bench
+  # showed +112% over sync evaluate_encoded — same throughput as
+  # gumbel walkers=1 with classic PUCT visit counts.
+        self._use_pucv: bool = False
+        self._pucv_gather: int = 512
+        self._pucv: PucvChunker | None = None
+        self._pucv_cboard: CBoard | None = None
+  # Multi-GPU pucv pool: one worker thread per GPU, each running its
+  # own 2-slot pipeline against the shared tree. Active when set via
+  # ``install_multi_gpu_pucv`` — overrides both walker_pool and pucv.
+  # Caller is responsible for building the per-GPU evaluators (typically
+  # via ``_make_evaluator_factory`` repeated per device).
+        self._pucv_pool: MultiGpuPucvPool | None = None
+        self._pucv_pool_evals: list[Any] = []
+        self._pucv_pool_cboard: CBoard | None = None
 
   # Persistent tree across calls within a game. Reset on new position.
         self._tree: MCTSTree | None = None
@@ -167,17 +187,115 @@ class SearchWorker:
         self._multi_pv = max(1, int(n))
 
     def set_walker_gather(self, n: int) -> None:
-        """Set per-walker leaf gather. Rebuilds the walker pool (cheap —
-        pool is stateless between runs) and resets the tree only when
-        walker pool exists; at n_walkers=1 the option is accepted but
-        has no runtime effect until threads are raised. Caller holds the
-        search barrier."""
+        """Set per-walker leaf gather. Rebuilds the walker pool (now
+        spawns N persistent threads, so tear the old pool down first) and
+        resets the tree only when walker pool exists; at n_walkers=1 the
+        option is accepted but has no runtime effect until threads are
+        raised. Caller holds the search barrier."""
         n = max(1, int(n))
         if n == self._walker_gather:
             return
         self._walker_gather = n
         if self._walker_pool is not None:
+            self._walker_pool.close()
             self._walker_pool = self._build_walker_pool(self._n_walkers)
+
+    def install_multi_gpu_pucv(
+        self,
+        evaluators_or_factories: list[Any],
+        *,
+        gather: int = 384,
+        as_factories: bool = False,
+    ) -> None:
+        """Install N per-GPU evaluators driven by ``MultiGpuPucvPool``.
+
+        Two modes:
+          - ``as_factories=False`` (default): pre-built evaluators. Only
+            safe when evaluators don't use cudagraphs (CPU/eager/test
+            paths). Each evaluator must expose ``evaluate_inplace_async``
+            and ``n_slots >= 2``.
+          - ``as_factories=True``: callables returning evaluators. Each
+            factory is invoked on its own pool worker thread so any
+            cudagraph state lives where it'll be replayed. **Required
+            for production runs with torch.compile + cudagraphs** —
+            building the compiled model on the main thread and replaying
+            it from a worker thread crashes with a TLS-key assertion
+            inside torch._inductor.cudagraph_trees.
+
+        Replaces both ``_walker_pool`` and ``_pucv`` so this becomes the
+        sole search path until ``clear_multi_gpu_pucv`` is called. Caller
+        holds the search barrier (same as ``set_evaluator``).
+        """
+        if not evaluators_or_factories:
+            raise ValueError("at least one evaluator/factory required")
+        self.clear_multi_gpu_pucv()
+        if self._walker_pool is not None:
+            self._walker_pool.close()
+            self._walker_pool = None
+        self._pucv = None
+        cfg = MultiGpuPucvConfig(
+            n_gpus=len(evaluators_or_factories),
+            gather=int(gather),
+            c_puct=float(self._cfg.c_puct),
+            fpu_at_root=0.0,
+            fpu_reduction=float(self._cfg.fpu_reduction),
+            vloss_weight=self._vloss_weight,
+        )
+        if as_factories:
+            self._pucv_pool = MultiGpuPucvPool(
+                cfg, evaluator_factories=evaluators_or_factories,
+            )
+  # Keep refs to evaluators built inside workers, for close() teardown.
+            self._pucv_pool_evals = list(self._pucv_pool._evals)  # noqa: SLF001
+        else:
+            self._pucv_pool_evals = list(evaluators_or_factories)
+            self._pucv_pool = MultiGpuPucvPool(
+                cfg, evaluators=evaluators_or_factories,
+            )
+        self.reset_tree()
+
+    def clear_multi_gpu_pucv(self) -> None:
+        """Tear down the multi-GPU pool and revert to single-evaluator
+        gumbel/walker/pucv routing. Idempotent."""
+        if self._pucv_pool is not None:
+            self._pucv_pool.close()
+            self._pucv_pool = None
+        self._pucv_pool_evals = []
+        self._pucv_pool_cboard = None
+
+    def set_use_pucv(self, enabled: bool, *, gather: int | None = None) -> None:
+        """Enable async-pipeline batched-VL PUCT (single-thread, 2-slot
+        overlap). Requires ``n_walkers == 1`` and an evaluator with
+        ``evaluate_inplace_async`` + ``n_slots >= 2``. When the requirement
+        isn't met or ``enabled`` is False, the classic gumbel path is used.
+        Resets the tree because pucv accumulates vloss-adjusted Q/N stats
+        that don't blend with gumbel's halving stats. Caller holds the
+        search barrier."""
+        enabled = bool(enabled)
+        if gather is not None:
+            self._pucv_gather = max(1, int(gather))
+        if enabled == self._use_pucv and self._pucv is not None:
+            return
+        self._use_pucv = enabled
+        self._pucv = self._build_pucv() if enabled else None
+        self.reset_tree()
+
+    def _build_pucv(self) -> PucvChunker | None:
+        if self._n_walkers != 1:
+            return None
+        ev = self._evaluator
+        if not hasattr(ev, "evaluate_inplace_async"):
+            return None
+        if getattr(ev, "n_slots", 1) < 2:
+            return None
+        return PucvChunker(
+            ev,
+            gather=self._pucv_gather,
+            c_puct=float(self._cfg.c_puct),
+            fpu_at_root=0.0,
+            fpu_reduction=float(self._cfg.fpu_reduction),
+            vloss_weight=self._vloss_weight,
+        )
 
     def set_minibatch_size(self, n: int) -> None:
         """Set the minibatch accumulation target for the C gumbel state
@@ -190,7 +308,21 @@ class SearchWorker:
         """Close the current evaluator. Safe to call multiple times; no-op
         if the evaluator has no ``close`` method. Used at process shutdown
         to drain ``BatchCoalescingDispatcher``'s submitter thread before
-        Python tears down PyTorch's CUDA context."""
+        Python tears down PyTorch's CUDA context. Also tears down the
+        multi-GPU pucv pool's worker threads if active."""
+        if self._pucv_pool is not None:
+            self._pucv_pool.close()
+            self._pucv_pool = None
+  # Each per-GPU evaluator may also need close() (BatchCoalescingDispatcher
+  # submitter etc.).
+        for ev in self._pucv_pool_evals:
+            close = getattr(ev, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+        self._pucv_pool_evals = []
         ev = self._evaluator
         close = getattr(ev, "close", None)
         if callable(close):
@@ -213,7 +345,11 @@ class SearchWorker:
         """
         old = self._evaluator
         self._evaluator = evaluator
+        if self._walker_pool is not None:
+            self._walker_pool.close()
         self._walker_pool = self._build_walker_pool(self._n_walkers)
+        if self._use_pucv:
+            self._pucv = self._build_pucv()
         self.reset_tree()
         close = getattr(old, "close", None)
         if callable(close):
@@ -233,7 +369,13 @@ class SearchWorker:
         if n == self._n_walkers:
             return
         self._n_walkers = n
+        if self._walker_pool is not None:
+            self._walker_pool.close()
         self._walker_pool = self._build_walker_pool(n)
+  # pucv requires single-thread; rebuild against the new walker count
+  # (returns None when n != 1, which silently disables the path).
+        if self._use_pucv:
+            self._pucv = self._build_pucv()
         self.reset_tree()
 
     def reset_tree(self) -> None:
@@ -246,6 +388,8 @@ class SearchWorker:
         self._root_pol_logits = None
         self._root_wdl_logits = None
         self._walker_cboard = None
+        self._pucv_cboard = None
+        self._pucv_pool_cboard = None
 
     def _emit_pv_info(
         self,
@@ -403,9 +547,14 @@ class SearchWorker:
 
   # Walker-pool path pre-expands the root from the cached logits so
   # the concurrent walkers don't race on it. The classic path does
-  # this internally in run_gumbel_root_many_c.
-        if self._walker_pool is not None:
+  # this internally in run_gumbel_root_many_c. The pucv path also
+  # needs the root pre-expanded (batch_descend expects it).
+        if self._pucv_pool is not None:
+            self._ensure_pucv_pool_root_expanded(board)
+        elif self._walker_pool is not None:
             self._ensure_walker_root_expanded(board)
+        elif self._pucv is not None:
+            self._ensure_pucv_root_expanded(board)
 
         while True:
             chunk = self._chunk_sims
@@ -415,8 +564,12 @@ class SearchWorker:
                     break
                 chunk = min(chunk, remaining)
 
-            if self._walker_pool is not None:
+            if self._pucv_pool is not None:
+                last_value = self._run_pucv_pool_chunk(chunk, stop_event)
+            elif self._walker_pool is not None:
                 last_value = self._run_walker_chunk(chunk, stop_event)
+            elif self._pucv is not None:
+                last_value = self._run_pucv_chunk(chunk)
             else:
                 last_value = self._run_gumbel_chunk(chunk, board, tb_probe)
             total_nodes += int(chunk)
@@ -515,6 +668,79 @@ class SearchWorker:
         self._tree = tree
         self._root_id = int(root_ids[0])
         return float(values[0])
+
+    def _run_pucv_pool_chunk(
+        self, chunk: int, stop_event: threading.Event,
+    ) -> float:
+        assert self._tree is not None and self._root_id is not None
+        assert self._pucv_pool is not None and self._pucv_pool_cboard is not None
+        self._pucv_pool.run(
+            tree=self._tree,
+            root_id=self._root_id,
+            root_cboard=self._pucv_pool_cboard,
+            target_sims=chunk,
+            stop_event=stop_event,
+        )
+        return self._tree.node_q(self._root_id)
+
+    def _ensure_pucv_pool_root_expanded(self, board: chess.Board) -> None:
+        """Same root-prep contract as walker_pool / pucv: pool workers
+        race on the root's first descent, so it must be expanded before
+        run() returns control. Mirrors ``_ensure_walker_root_expanded``."""
+        assert self._root_pol_logits is not None
+        if self._tree is None:
+            self._tree = MCTSTree()
+            self._tree.reserve(50_000, 500_000)
+            self._root_id = None
+        if self._root_id is None:
+            assert self._root_wdl_logits is not None
+            root_q = float(_value_scalar_from_wdl_logits(self._root_wdl_logits[0]))
+            self._root_id = int(self._tree.add_root(0, root_q))
+        if self._pucv_pool_cboard is None:
+            self._pucv_pool_cboard = CBoard.from_board(board)
+        if not self._tree.is_expanded(self._root_id):
+            legal_idx = self._pucv_pool_cboard.legal_move_indices()
+            if legal_idx.size > 0:
+                self._tree.expand_from_logits(
+                    self._root_id,
+                    legal_idx.astype(np.int32),
+                    self._root_pol_logits[0],
+                )
+
+    def _run_pucv_chunk(self, chunk: int) -> float:
+        assert self._tree is not None and self._root_id is not None
+        assert self._pucv is not None and self._pucv_cboard is not None
+        self._pucv.run(
+            tree=self._tree,
+            root_id=self._root_id,
+            root_cboard=self._pucv_cboard,
+            target_sims=chunk,
+        )
+        return self._tree.node_q(self._root_id)
+
+    def _ensure_pucv_root_expanded(self, board: chess.Board) -> None:
+        """pucv path needs the root pre-expanded (batch_descend_puct expects
+        an expanded root) and a CBoard handle reused across calls. Mirrors
+        ``_ensure_walker_root_expanded``."""
+        assert self._root_pol_logits is not None
+        if self._tree is None:
+            self._tree = MCTSTree()
+            self._tree.reserve(50_000, 500_000)
+            self._root_id = None
+        if self._root_id is None:
+            assert self._root_wdl_logits is not None
+            root_q = float(_value_scalar_from_wdl_logits(self._root_wdl_logits[0]))
+            self._root_id = int(self._tree.add_root(0, root_q))
+        if self._pucv_cboard is None:
+            self._pucv_cboard = CBoard.from_board(board)
+        if not self._tree.is_expanded(self._root_id):
+            legal_idx = self._pucv_cboard.legal_move_indices()
+            if legal_idx.size > 0:
+                self._tree.expand_from_logits(
+                    self._root_id,
+                    legal_idx.astype(np.int32),
+                    self._root_pol_logits[0],
+                )
 
     def _ensure_walker_root_expanded(self, board: chess.Board) -> None:
         """Walker path needs the root pre-expanded before workers start;
