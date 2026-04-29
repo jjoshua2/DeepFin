@@ -298,19 +298,6 @@ def _run_training_and_gating(
             timeout=tc.distributed_async_test_eval_timeout_s,
         )
         if len(holdout_buf) >= tc.batch_size:
-  # Strip cudagraphs from the eval-thread snap. PyTorch's cudagraph_trees
-  # stashes ``tree_manager_containers`` in TLS at module-import time on the
-  # main thread only; AsyncTestEval's worker thread can't see it and hits
-  # ``assert torch._C._is_key_in_tls(...)`` on first compiled forward.
-  # Inductor compile is fine cross-thread; only the cudagraph layer breaks.
-            cm_raw = (
-                str(config.get("compile_mode", "reduce-overhead"))
-                if bool(config.get("use_compile", False)) else "off"
-            )
-            cm_eval = {
-                "reduce-overhead": "default",
-                "max-autotune": "max-autotune-no-cudagraphs",
-            }.get(cm_raw, cm_raw)
             async_test_eval.start(
                 trainer=trainer,
                 model_cfg=model_cfg,
@@ -319,7 +306,10 @@ def _run_training_and_gating(
                 steps=tc.test_steps,
                 device=device,
                 source_iter=int(iteration_idx),
-                compile_mode=cm_eval,
+                compile_mode=(
+                    str(config.get("compile_mode", "reduce-overhead"))
+                    if bool(config.get("use_compile", False)) else "off"
+                ),
             )
     elif len(holdout_buf) >= tc.batch_size:
         test_metrics = trainer.eval_steps(
