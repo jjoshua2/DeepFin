@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import csv
-import json
 import logging
 import os
 import subprocess
@@ -18,6 +16,7 @@ from chess_anti_engine.model import ModelConfig, build_model
 from chess_anti_engine.stockfish import StockfishPool, StockfishUCI, pid_from_config
 from chess_anti_engine.train import Trainer, trainer_kwargs_from_config
 from chess_anti_engine.tune._utils import (
+    load_optional_json,
     resolve_local_override_root as _resolve_local_override_root,
 )
 from chess_anti_engine.tune._utils import (
@@ -55,6 +54,7 @@ from chess_anti_engine.tune.trainable_phases import (
     _run_training_and_gating,
 )
 from chess_anti_engine.tune.trainable_report import (
+    _init_status_csv,
     _save_trial_checkpoint,
     _update_best_model,
 )
@@ -64,11 +64,8 @@ import re as _re
 
 _AVG_BATCH_RE = _re.compile(rb"avg=([0-9.]+)")
 
-_STATUS_COLS = (
-    "iter", "global_iter", "opp", "opp_ema", "sf_nodes", "regret",
-    "ingest_s", "train_s", "iter_s", "steps", "replay", "pos_added",
-    "stale", "train_loss", "best_loss", "win", "draw", "loss", "lr", "startup",
-)
+  # Smoothing factor for opp_strength EMA — higher = more responsive.
+_OPP_EMA_ALPHA = 0.3
 
 
 def _set_log_level(config: dict) -> None:
@@ -80,32 +77,13 @@ def _set_log_level(config: dict) -> None:
         logging.getLogger().info("chess_anti_engine logging at DEBUG (gumbel batch-size profiling enabled)")
 
 
-def _init_status_csv(trial_dir: Path) -> Path:
-    """Write fresh CSV header (truncates any prior file from a crashed restart)."""
-    path = trial_dir / "status.csv"
-    with path.open("w", newline="") as f:
-        csv.writer(f).writerow(_STATUS_COLS)
-    return path
-
-
-def _load_gate_match_idx(gate_state_path: Path) -> int:
-    if not gate_state_path.exists():
-        return 0
-    try:
-        return int(json.loads(gate_state_path.read_text(encoding="utf-8")).get("matches", 0))
-    except Exception:
-        return 0
-
-
 def _load_best_state(best_state_path: Path) -> tuple[float, float]:
     """Return (best_loss, opp_strength_ema) from best.json or defaults."""
-    if not best_state_path.exists():
-        return float("inf"), 0.0
-    try:
-        d = json.loads(best_state_path.read_text(encoding="utf-8"))
-        return float(d.get("best_loss", d.get("loss", float("inf")))), float(d.get("opp_strength_ema", 0.0))
-    except Exception:
-        return float("inf"), 0.0
+    d = load_optional_json(best_state_path) or {}
+    return (
+        float(d.get("best_loss", d.get("loss", float("inf")))),
+        float(d.get("opp_strength_ema", 0.0)),
+    )
 
 
 def _assert_distributed_configured(tc: TrialConfig) -> None:
@@ -123,6 +101,14 @@ def _assert_distributed_configured(tc: TrialConfig) -> None:
         )
 
 
+def _make_stockfish_uci(tc: TrialConfig, *, nodes: int, multipv: int) -> StockfishUCI:
+    """Single-engine factory used by both gate and eval SF init."""
+    return StockfishUCI(
+        tc.stockfish_path, nodes=nodes, multipv=multipv,
+        hash_mb=tc.sf_hash_mb, syzygy_path=tc.syzygy_path,
+    )
+
+
 def _init_local_stockfish(tc: TrialConfig) -> StockfishUCI | StockfishPool | None:
     """Local SF for gate-check games only; distributed workers run their own SF."""
     if tc.gate_games <= 0:
@@ -133,20 +119,14 @@ def _init_local_stockfish(tc: TrialConfig) -> StockfishUCI | StockfishPool | Non
             num_workers=tc.sf_workers, multipv=tc.sf_multipv,
             hash_mb=tc.sf_hash_mb, syzygy_path=tc.syzygy_path,
         )
-    return StockfishUCI(
-        tc.stockfish_path, nodes=tc.sf_nodes, multipv=tc.sf_multipv,
-        hash_mb=tc.sf_hash_mb, syzygy_path=tc.syzygy_path,
-    )
+    return _make_stockfish_uci(tc, nodes=tc.sf_nodes, multipv=tc.sf_multipv)
 
 
 def _init_eval_stockfish(tc: TrialConfig) -> StockfishUCI | None:
     """Dedicated fixed-strength engine for eval games (separate node limit)."""
     if tc.eval_games <= 0:
         return None
-    return StockfishUCI(
-        tc.stockfish_path, nodes=tc.eval_sf_nodes, multipv=1,
-        hash_mb=tc.sf_hash_mb, syzygy_path=tc.syzygy_path,
-    )
+    return _make_stockfish_uci(tc, nodes=tc.eval_sf_nodes, multipv=1)
 
 
 def _init_pid(tc: TrialConfig, config: dict, restored_pid_state, sf):
@@ -157,14 +137,15 @@ def _init_pid(tc: TrialConfig, config: dict, restored_pid_state, sf):
     if restored_pid_state is not None:
         try:
             pid.load_state_dict(restored_pid_state)
-        except Exception:
-            pass
+        except (KeyError, ValueError, TypeError) as exc:
+  # Silent fallback would lose regret/winrate history; surface it.
+            logging.getLogger(__name__).warning("PID state restore failed (using defaults): %s", exc)
   # Keep gate-game SF in lock-step with restored PID nodes so gate plays
-  # at the same difficulty distributed workers do.
+  # at the same difficulty distributed workers do. Cosmetic — fail quietly.
     if sf is not None:
         try:
             sf.set_nodes(int(pid.nodes))
-        except Exception:
+        except (OSError, ValueError, AttributeError):
             pass
     return pid
 
@@ -257,7 +238,10 @@ def _avg_batch_from_worker_logs(distributed_dirs, offsets: dict[str, int]) -> fl
     in any new `gumbel profile (...)` line. Returns 0 if no new samples.
     Mutates ``offsets`` in place to record post-read positions per file.
     """
-    workers_root = getattr(distributed_dirs, "distributed_workers_dir", None)
+  # distributed_dirs is a dict from _trial_server_dirs (key "workers_root").
+  # Pre-2026-04-29 this used getattr() and silently returned 0 every iter,
+  # killing the selfplay/avg_batch_size TB scalar.
+    workers_root = distributed_dirs.get("workers_root")
     if workers_root is None:
         return 0.0
     samples: list[float] = []
@@ -350,13 +334,12 @@ def train_trial(config: dict):
     _STATUS_CSV_PATH = _init_status_csv(trial_dir)
 
     gate_state_path = work_dir / "gate_state.json"
-    gate_match_idx = _load_gate_match_idx(gate_state_path)
+    gate_match_idx = int((load_optional_json(gate_state_path) or {}).get("matches", 0))
 
     best_state_path = work_dir / "best.json"
     best_dir = work_dir / "best"
     best_dir.mkdir(parents=True, exist_ok=True)
     best_loss, opp_strength_ema = _load_best_state(best_state_path)
-    _OPP_EMA_ALPHA = 0.3  # smoothing factor — higher = more responsive
 
     trainer_ctor = trainer_kwargs_from_config(
         config | {"device": device}, log_dir=work_dir / "tb",

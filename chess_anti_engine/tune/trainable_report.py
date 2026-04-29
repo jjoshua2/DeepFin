@@ -50,6 +50,25 @@ def _prune_trial_checkpoints(*, trial_dir: Path, keep_last: int) -> None:
         shutil.rmtree(p, ignore_errors=True)
 
 
+_STATUS_COLS = (
+    "iter", "global_iter", "opp", "opp_ema", "sf_nodes", "regret",
+    "ingest_s", "train_s", "iter_s", "steps", "replay", "pos_added",
+    "stale", "train_loss", "best_loss", "win", "draw", "loss", "lr", "startup",
+)
+
+
+def _init_status_csv(trial_dir: Path) -> Path:
+    """Write fresh status.csv header and return its path.
+
+    Truncates any prior file — TensorBoard is the durable cross-restart
+    record; status.csv is a per-segment compact view.
+    """
+    path = trial_dir / "status.csv"
+    with path.open("w", newline="") as f:
+        csv.writer(f).writerow(_STATUS_COLS)
+    return path
+
+
 def _write_status_csv_row(
     path: Path,
     *,
