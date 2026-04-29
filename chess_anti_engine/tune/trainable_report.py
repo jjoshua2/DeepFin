@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import shutil
 import time
 import traceback
@@ -22,6 +23,8 @@ from chess_anti_engine.tune.trial_config import (
     TrialConfig,
 )
 from chess_anti_engine.utils.atomic import atomic_write_text
+
+log = logging.getLogger(__name__)
 
 
 def _prune_trial_checkpoints(*, trial_dir: Path, keep_last: int) -> None:
@@ -51,6 +54,7 @@ def _write_status_csv_row(
     path: Path,
     *,
     iteration_idx: int,
+    global_iter: int,
     opp_strength: float,
     opp_strength_ema: float,
     sf_nodes: int,
@@ -75,7 +79,7 @@ def _write_status_csv_row(
         with path.open("a", newline="") as f:
             csv.writer(f).writerow([
                 int(iteration_idx),
-                int(iteration_idx),
+                int(global_iter),
                 f"{float(opp_strength):.1f}",
                 f"{float(opp_strength_ema):.1f}",
                 int(sf_nodes),
@@ -121,8 +125,9 @@ def _save_trial_checkpoint(
             ckpt_dir / "rng_state.json",
             json.dumps(rng.bit_generator.state, sort_keys=True),
         )
-    except Exception:
-        pass
+    except (OSError, TypeError, ValueError) as exc:
+  # Silent loss here breaks deterministic resume — log once, don't crash.
+        log.warning("[trial] failed to write rng_state.json: %s", exc)
     try:
         atomic_write_text(
             ckpt_dir / "trial_meta.json",
@@ -140,8 +145,9 @@ def _save_trial_checkpoint(
                 "global_iter": int(iteration_idx),
             }, sort_keys=True, indent=2),
         )
-    except Exception:
-        pass
+    except (OSError, TypeError, ValueError) as exc:
+  # trial_meta drives exploit-clone owner tracking; loud failure is the right call.
+        log.warning("[trial] failed to write trial_meta.json: %s", exc)
     return Checkpoint.from_directory(str(ckpt_dir))
 
 

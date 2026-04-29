@@ -604,6 +604,7 @@ def train_trial(config: dict):
                 iter_t0=iter_t0,
                 iteration_idx=iteration_idx,
                 iteration_zero_based=iteration_zero_based,
+                global_iter=global_iter,
                 completed_iterations=completed_iterations,
                 device=device,
                 rng=rng,

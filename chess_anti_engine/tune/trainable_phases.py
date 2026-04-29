@@ -697,6 +697,7 @@ def _finalize_iteration(
     iter_t0: float,
     iteration_idx: int,
     iteration_zero_based: int,
+    global_iter: int,
     completed_iterations: int,
     device: str,
     rng,
@@ -795,6 +796,7 @@ def _finalize_iteration(
     _write_status_csv_row(
         status_csv_path,
         iteration_idx=iteration_idx,
+        global_iter=global_iter,
         opp_strength=pid_result.opp_strength,
         opp_strength_ema=pid_result.opp_strength_ema,
         sf_nodes=sf_nodes_used,
