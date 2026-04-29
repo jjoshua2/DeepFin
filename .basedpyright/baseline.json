@@ -254,22 +254,6 @@
                 }
             },
             {
-                "code": "reportUnusedParameter",
-                "range": {
-                    "startColumn": 30,
-                    "endColumn": 34,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUnusedParameter",
-                "range": {
-                    "startColumn": 43,
-                    "endColumn": 49,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportMissingImports",
                 "range": {
                     "startColumn": 21,

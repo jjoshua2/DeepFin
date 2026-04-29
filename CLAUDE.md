@@ -70,9 +70,9 @@ Transformer encoder-only backbone (`ChessNet` in `transformer.py`). BT4-aligned 
 
 | Head output | Shape | Training target | Target source | Loss | Weight knob |
 |---|---|---|---|---|---|
-| `policy` / `policy_own` | 4672 logits | `policy_t` (**1-hot**) | Move actually played by net (MCTS argmax/sample) | CE, legal-masked | `w_policy` |
-| `policy_soft` | 4672 logits | `policy_soft_t` (soft) | MCTS visit-count distribution at softmax temp | CE, legal-masked | `w_soft` |
-| `policy_future` | 4672 logits | `future_policy_t` (1-hot) | Move played at position t+2 (predict-own-reply) | CE, **no** mask | `w_future` |
+| `policy` / `policy_own` | 4672 logits | `policy_t` (soft) | MCTS visit-count distribution at the move-selection temperature (`rec.policy_probs` from gumbel) | CE, legal-masked | `w_policy` |
+| `policy_soft` | 4672 logits | `policy_soft_t` (soft) | Same visit distribution as `policy_t`, retempered via `apply_policy_temperature(soft_policy_temp)` (typically softer) | CE, legal-masked | `w_soft` |
+| `policy_future` | 4672 logits | `future_policy_t` (soft) | The t+2 record's `policy_probs` — visit distribution at position t+2 (predict-own-reply) | CE, **no** mask | `w_future` |
 | `policy_sf` | 4672 logits | `sf_policy_t` (soft) | Softmax over SF's MultiPV candidate WDL scores + label smoothing. `sf_move_index` is stored as the bestmove index but **not** used as a target — `policy_sf` trains on the soft distribution. **WDL saturation in decided positions can flatten this target**. | CE (soft), no mask | `w_sf_move` |
 | `wdl` | 3 logits | `wdl_t` (hard 0=W/1=D/2=L) + `sf_wdl` (soft SF eval) | Game outcome (hard) blended with SF's WDL eval. Both target the **same** head — load-bearing, see w_sf_wdl note below | CE + soft CE | `w_wdl`, `w_sf_wdl` |
 | `sf_eval` | 3 logits | `sf_wdl` (soft) | SF's WDL eval only (auxiliary, **not** used in MCTS) | Soft CE | `w_sf_eval` |
