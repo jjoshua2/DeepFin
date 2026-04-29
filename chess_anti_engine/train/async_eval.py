@@ -14,15 +14,19 @@ the eval would read a mix of pre- and mid-train weights. The snapshot
 is a freshly-built ``ChessNet`` instance loaded from a CPU copy of the
 post-train state_dict.
 
-**Why one long-lived eval thread.** cudagraph_trees keeps thread-local
-state and asserts when a compiled forward replays on a thread that
-didn't capture its tree (observed crashes 2026-04-29 with per-iter
-spawned threads). The fix is to use a single persistent eval thread
-that captures its cudagraph tree on the first eval and replays it on
-every subsequent iter — same pattern the trainer and ThreadedDispatcher
-use. Each iter we just ``load_state_dict`` into the long-lived snapshot
-in-place; the cudagraph keys on graph topology, not weight values, so
-it stays valid across weight updates.
+**Why one long-lived eval thread.** Inductor compile keeps per-thread
+state; without a persistent thread, every iter pays a fresh compile.
+The persistent thread also lets us reuse one snapshot model and just
+``load_state_dict`` new weights in place each iter.
+
+**Why no cudagraphs on the eval snap.** PyTorch's cudagraph_trees
+stashes ``tree_manager_containers`` in TLS at module-import time on the
+main thread only. A secondary thread can't see it and the first
+compiled forward asserts in ``get_obj`` (observed every iter on
+2026-04-29). The fix is at the call site: map cudagraph compile modes
+(``reduce-overhead``, ``max-autotune``) to their no-cudagraph variants
+when invoking ``start()``. Inductor compile itself works fine across
+threads — only the cudagraph layer breaks.
 """
 from __future__ import annotations
 
