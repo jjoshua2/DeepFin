@@ -160,5 +160,111 @@ def test_collect_handles_exception_in_thread(cfg_and_builder):
     assert metrics is None and src == -1
 
 
+def test_load_state_dict_works_through_compile_wrapper(cfg_and_builder, monkeypatch):
+    """When apply_compile wraps the snap, the state_dict load must reach the
+    underlying params. Previously strict=False against an OptimizedModule's
+    prefixed keys silently no-op'd, leaving the snap at its build-time random
+    init."""
+    model = _StubChessNet(dim=4)
+    model.linear.weight.data.fill_(7.0)
+    model.linear.bias.data.fill_(11.0)
+
+    captured: dict = {}
+
+    class _FakeOptimizedModule(torch.nn.Module):
+        """Mimic torch.compile's OptimizedModule wrapping convention: the
+        wrapped model is stored as an attribute named ``_orig_mod`` and the
+        state_dict picks up an ``_orig_mod.`` prefix."""
+        def __init__(self, inner: torch.nn.Module) -> None:
+            super().__init__()
+            self._orig_mod = inner
+
+        def forward(self, *args, **kwargs):
+            return self._orig_mod(*args, **kwargs)
+
+    def _fake_apply_compile(m, *, mode, device):
+        del mode, device
+        return _FakeOptimizedModule(m)
+
+    monkeypatch.setattr("chess_anti_engine.train.async_eval.apply_compile", _fake_apply_compile)
+
+    def _capture(*, buf, batch_size, steps, tag, model_override=None):
+        del buf, batch_size, steps, tag
+  # Reach into the compiled snap and read the loaded params.
+        assert model_override is not None
+        captured["w"] = model_override._orig_mod.linear.weight.detach().clone()
+        captured["b"] = model_override._orig_mod.linear.bias.detach().clone()
+        return "OK"
+
+    trainer = MagicMock()
+    trainer.model = model
+    trainer._compute_metrics = _capture
+
+    aer = AsyncTestEval()
+    aer.start(
+        trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
+        batch_size=4, steps=2, device="cpu", source_iter=5, compile_mode="reduce-overhead",
+    )
+    metrics, src = aer.collect(timeout=5.0)
+    assert metrics == "OK"
+    assert src == 5
+    assert torch.allclose(captured["w"], torch.full_like(captured["w"], 7.0)), (
+        "snap params should equal the trainer's pushed weights, not the build-time init"
+    )
+    assert torch.allclose(captured["b"], torch.full_like(captured["b"], 11.0))
+
+
+def test_second_iter_reuses_snap_with_new_weights(cfg_and_builder):
+    """Persistent eval thread + in-place state_dict load: iter 2 must see iter
+    2's weights, not iter 1's, even though the snap model instance is reused."""
+    model = _StubChessNet(dim=4)
+    seen_weights: list[torch.Tensor] = []
+
+    def _capture(*, buf, batch_size, steps, tag, model_override=None):
+        del buf, batch_size, steps, tag
+        assert model_override is not None
+        seen_weights.append(model_override.linear.weight.detach().clone())
+        return f"iter_{len(seen_weights)}"
+
+    trainer = MagicMock()
+    trainer.model = model
+    trainer._compute_metrics = _capture
+
+    aer = AsyncTestEval()
+    model.linear.weight.data.fill_(1.0)
+    aer.start(
+        trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
+        batch_size=4, steps=2, device="cpu", source_iter=10,
+    )
+    m1, s1 = aer.collect(timeout=5.0)
+
+    model.linear.weight.data.fill_(2.0)
+    aer.start(
+        trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
+        batch_size=4, steps=2, device="cpu", source_iter=11,
+    )
+    m2, s2 = aer.collect(timeout=5.0)
+
+    assert (m1, s1) == ("iter_1", 10)
+    assert (m2, s2) == ("iter_2", 11)
+    assert len(seen_weights) == 2
+    assert torch.allclose(seen_weights[0], torch.ones_like(seen_weights[0]))
+    assert torch.allclose(seen_weights[1], torch.full_like(seen_weights[1], 2.0))
+    aer.shutdown(timeout=5.0)
+
+
+def test_shutdown_joins_thread(cfg_and_builder):
+    model = _StubChessNet(dim=4)
+    trainer, _ = _make_trainer_stub(model, eval_payload="OK")
+    aer = AsyncTestEval()
+    aer.start(
+        trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
+        batch_size=4, steps=2, device="cpu", source_iter=1,
+    )
+    aer.collect(timeout=5.0)
+    aer.shutdown(timeout=5.0)
+    assert aer._thread is None
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

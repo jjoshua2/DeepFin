@@ -126,7 +126,11 @@ class AsyncTestEval:
                     "AsyncTestEval.start called while previous eval (iter %d) still "
                     "running; abandoning prior result", self._inflight_iter,
                 )
-  # Drain any stale work item the worker hasn't picked up yet.
+  # Drain any stale work item the worker hasn't picked up yet. If the
+  # worker has already pulled it and is mid-eval, its result will be
+  # written under its work.source_iter (set in _loop), not the new
+  # source_iter — so collect() always returns a correctly-labeled
+  # result, just possibly an older one.
                 try:
                     self._work_q.get_nowait()
                 except queue.Empty:
@@ -134,14 +138,16 @@ class AsyncTestEval:
             self._inflight_iter = int(source_iter)
             self._result = None
             self._exc = None
-            self._source_iter = int(source_iter)
+            self._source_iter = -1
             self._result_event.clear()
 
         self._work_q.put(work)
 
     def _loop(self) -> None:
         """Worker thread main loop. Builds the snapshot once; reuses it forever."""
-        assert self._init_args is not None
+        if self._init_args is None:
+            log.error("AsyncTestEval._loop entered before init args were set")
+            return
         try:
             snap = build_model(self._init_args["model_cfg"]).to(self._init_args["device"])
             snap.eval()
@@ -156,6 +162,12 @@ class AsyncTestEval:
             self._result_event.set()
             return
 
+  # apply_compile wraps the model in OptimizedModule whose state_dict
+  # carries an ``_orig_mod.`` prefix; the caller strips that prefix
+  # so we must load into the underlying module to get matching keys.
+  # Falls through to ``snap`` when compile is off.
+        load_target = getattr(snap, "_orig_mod", snap)
+
         while True:
             work = self._work_q.get()
             if work is None:
@@ -164,7 +176,7 @@ class AsyncTestEval:
   # In-place state_dict load preserves the compiled callable + its
   # cudagraph tree (which key on graph topology, not parameter
   # values) so the next forward just replays the captured graph.
-                snap.load_state_dict(work.snap_state, strict=False)
+                load_target.load_state_dict(work.snap_state, strict=True)
                 metrics = work.trainer._compute_metrics(  # noqa: SLF001
                     buf=work.buf,
                     batch_size=work.batch_size,
@@ -174,6 +186,7 @@ class AsyncTestEval:
                 )
                 with self._lock:
                     self._result = metrics
+                    self._source_iter = work.source_iter
             except BaseException as exc:  # noqa: BLE001
                 log.exception("async test eval failed")
                 with self._lock:
