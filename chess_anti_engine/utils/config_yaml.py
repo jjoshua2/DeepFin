@@ -161,6 +161,8 @@ _TUNE_KEYS = (
     "distributed_inference_use_compile",
     "distributed_inference_max_batch_per_slot",
     "distributed_pause_selfplay_during_training", "distributed_wait_timeout_seconds",
+    "distributed_prefetch_shards",
+    "distributed_async_test_eval", "distributed_async_test_eval_timeout_s",
     "distributed_min_games_fraction",
     "distributed_prev_model_max_fraction",
     "tune_metric", "tune_mode", "tune_num_to_keep", "tune_keep_last_experiments",
