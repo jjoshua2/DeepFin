@@ -411,22 +411,27 @@ class Engine:
 
   # ─── setoption handlers ────────────────────────────────────────────────────
   # Each takes the raw value string and is responsible for parsing + clamping.
-  # Failures (ValueError from int()) silently keep the prior value, mirroring
-  # the original behavior.
-    def _set_hash(self, value: str) -> None:
+  # Non-int values silently keep the prior value (mirrors original behavior).
+    @staticmethod
+    def _parse_clamped_int(value: str, lo: int) -> int | None:
         try:
-            self._options.hash_mb = int(value)
+            return max(lo, int(value))
         except ValueError:
+            return None
+
+    def _set_hash(self, value: str) -> None:
+        n = self._parse_clamped_int(value, lo=1)
+        if n is None:
             return
-        self._worker.set_max_tree_mb(self._options.hash_mb)
+        self._options.hash_mb = n
+        self._worker.set_max_tree_mb(n)
 
     def _set_ponder(self, value: str) -> None:
         self._options.ponder = value.strip().lower() == "true"
 
     def _set_threads(self, value: str) -> None:
-        try:
-            n = max(1, int(value))
-        except ValueError:
+        n = self._parse_clamped_int(value, lo=1)
+        if n is None:
             return
         self._options.threads = n
         self._worker.set_num_threads(n)
@@ -436,9 +441,8 @@ class Engine:
         )
 
     def _set_leaf_gather(self, value: str) -> None:
-        try:
-            n = max(1, int(value))
-        except ValueError:
+        n = self._parse_clamped_int(value, lo=1)
+        if n is None:
             return
         self._options.leaf_gather = n
         self._worker.set_walker_gather(n)
@@ -455,9 +459,8 @@ class Engine:
         )
 
     def _set_vl_gather(self, value: str) -> None:
-        try:
-            n = max(32, int(value))
-        except ValueError:
+        n = self._parse_clamped_int(value, lo=32)
+        if n is None:
             return
         self._options.vl_gather = n
         if self._options.use_vl:
@@ -465,9 +468,8 @@ class Engine:
         _println(f"info string VLGather set to {n}")
 
     def _set_multi_pv(self, value: str) -> None:
-        try:
-            n = max(1, int(value))
-        except ValueError:
+        n = self._parse_clamped_int(value, lo=1)
+        if n is None:
             return
         self._options.multi_pv = n
         self._worker.set_multi_pv(n)
@@ -477,10 +479,10 @@ class Engine:
         self._worker.set_show_wdl(self._options.show_wdl)
 
     def _set_move_overhead_ms(self, value: str) -> None:
-        try:
-            self._options.move_overhead_ms = max(0, int(value))
-        except ValueError:
+        n = self._parse_clamped_int(value, lo=0)
+        if n is None:
             return
+        self._options.move_overhead_ms = n
 
     def _set_syzygy_50_move_rule(self, value: str) -> None:
         self._options.syzygy_50_move_rule = value.strip().lower() == "true"
@@ -496,9 +498,8 @@ class Engine:
         _attach_log_file(path)
 
     def _set_minibatch_size(self, value: str) -> None:
-        try:
-            n = max(0, int(value))
-        except ValueError:
+        n = self._parse_clamped_int(value, lo=0)
+        if n is None:
             return
         self._options.minibatch_size = n
         self._worker.set_minibatch_size(n)
@@ -508,9 +509,8 @@ class Engine:
         )
 
     def _set_max_batch(self, value: str) -> None:
-        try:
-            mb = max(64, int(value))
-        except ValueError:
+        mb = self._parse_clamped_int(value, lo=64)
+        if mb is None:
             return
         if self._rebuild_evaluator is None:
             _println("info string MaxBatch ignored — no evaluator factory wired")
@@ -533,7 +533,7 @@ class Engine:
         self._options.syzygy_path = v
         self._install_tablebase(v)
 
-    _SETOPTION_HANDLERS: dict = {
+    _SETOPTION_HANDLERS: dict[str, Callable[[Engine, str], None]] = {
         "hash": _set_hash,
         "ponder": _set_ponder,
         "threads": _set_threads,
