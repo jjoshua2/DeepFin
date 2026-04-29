@@ -248,6 +248,23 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None) -> None:
         log.warning("YAML reload failed (%s): %s", yaml_path, exc)
 
 
+def _apply_lr_gamma_weights(trainer: Trainer, config: dict, *, rescale_current_lr: bool) -> None:
+    """Push lr / cosmos_gamma / loss-weight keys from config into trainer.
+
+    ``rescale_current_lr=True`` is the iter-loop call (PB2 perturbations
+    take effect immediately). ``False`` is the one-shot init call from
+    salvage donor-config overlay (we don't want to scale a freshly-built
+    schedule).
+    """
+    if "lr" in config:
+        trainer.set_peak_lr(float(config["lr"]), rescale_current=rescale_current_lr)
+    if "cosmos_gamma" in config and hasattr(trainer.opt, "gamma"):
+        trainer.opt.gamma = float(config["cosmos_gamma"])
+    for wk in _TRAINER_WEIGHT_KEYS:
+        if wk in config:
+            setattr(trainer, wk, float(config[wk]))
+
+
 def _sync_trainer_weights(
     trainer: Trainer,
     config: dict,
@@ -259,13 +276,7 @@ def _sync_trainer_weights(
     Called each iteration so PB2 perturbations and live YAML changes
     take effect immediately.
     """
-    if "lr" in config:
-        trainer.set_peak_lr(float(config["lr"]), rescale_current=True)
-    if "cosmos_gamma" in config and hasattr(trainer.opt, "gamma"):
-        trainer.opt.gamma = float(config["cosmos_gamma"])
-    for wk in _TRAINER_WEIGHT_KEYS:
-        if wk in config:
-            setattr(trainer, wk, float(config[wk]))
+    _apply_lr_gamma_weights(trainer, config, rescale_current_lr=True)
 
     cur_sf_wdl = _dynamic_sf_wdl_weight(
         sf_wdl_start=tc.w_sf_wdl,

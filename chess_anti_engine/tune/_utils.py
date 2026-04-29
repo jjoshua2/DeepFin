@@ -8,6 +8,14 @@ from pathlib import Path
 import numpy as np
 
 
+  # Checkpoint sidecar filenames — read by trainable_init, written by
+  # trainable_report + salvage. Keeping these in one place avoids
+  # reader/writer drift on rename.
+SIDECAR_PID_STATE = "pid_state.json"
+SIDECAR_RNG_STATE = "rng_state.json"
+SIDECAR_TRIAL_META = "trial_meta.json"
+
+
 def load_optional_json(path: Path) -> dict | None:
     """Read ``path`` as JSON. Returns the parsed dict, or ``None`` for any
     miss (file absent, unreadable, malformed, or non-dict root). Used for

@@ -14,6 +14,11 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+from chess_anti_engine.tune._utils import (
+    SIDECAR_PID_STATE,
+    SIDECAR_RNG_STATE,
+    SIDECAR_TRIAL_META,
+)
 from chess_anti_engine.tune.trial_config import (
     DriftMetrics,
     PidResult,
@@ -141,7 +146,7 @@ def _save_trial_checkpoint(
     trainer.save(ckpt_dir / "trainer.pt")
     try:
         atomic_write_text(
-            ckpt_dir / "rng_state.json",
+            ckpt_dir / SIDECAR_RNG_STATE,
             json.dumps(rng.bit_generator.state, sort_keys=True),
         )
     except (OSError, TypeError, ValueError) as exc:
@@ -149,7 +154,7 @@ def _save_trial_checkpoint(
         log.warning("[trial] failed to write rng_state.json: %s", exc)
     try:
         atomic_write_text(
-            ckpt_dir / "trial_meta.json",
+            ckpt_dir / SIDECAR_TRIAL_META,
             json.dumps({
                 "owner_trial_id": str(trial_id),
                 "owner_trial_dir": str(trial_dir.resolve()),
@@ -249,7 +254,7 @@ def _update_best_regret_checkpoints(
         trainer.save(slot_dir / "trainer.pt")
         pid_state = pid.state_dict()
         atomic_write_text(
-            slot_dir / "pid_state.json",
+            slot_dir / SIDECAR_PID_STATE,
             json.dumps(pid_state, sort_keys=True, indent=2),
         )
         atomic_write_text(
