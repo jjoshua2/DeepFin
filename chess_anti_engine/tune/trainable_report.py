@@ -409,6 +409,7 @@ def _build_report_dict(
         tm = tr.test_metrics
         test_dict.update({
             "test_size": int(holdout_buf_size),
+            "test_iter": int(tr.test_metrics_source_iter),
             "test_loss": tm.loss,
             "test_policy_loss": tm.policy_loss,
             "test_soft_policy_loss": tm.soft_policy_loss,

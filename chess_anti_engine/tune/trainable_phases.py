@@ -189,6 +189,7 @@ def _run_training_and_gating(
     iteration_zero_based: int,
     trial_id: str,
     restore: RestoreResult,
+    async_test_eval=None,
 ) -> TrainingResult:
     """Compute step budget, run training, net gating, and holdout eval."""
     train_t0 = time.monotonic()
@@ -291,12 +292,32 @@ def _run_training_and_gating(
                 gate_passed = False
 
     test_metrics = None
-    if len(holdout_buf) >= tc.batch_size:
+    test_metrics_source_iter = -1
+    if async_test_eval is not None:
+        test_metrics, test_metrics_source_iter = async_test_eval.collect(
+            timeout=tc.distributed_async_test_eval_timeout_s,
+        )
+        if len(holdout_buf) >= tc.batch_size:
+            async_test_eval.start(
+                trainer=trainer,
+                model_cfg=model_cfg,
+                holdout_buf=holdout_buf,
+                batch_size=tc.batch_size,
+                steps=tc.test_steps,
+                device=device,
+                source_iter=int(iteration_idx),
+                compile_mode=(
+                    str(config.get("compile_mode", "reduce-overhead"))
+                    if bool(config.get("use_compile", False)) else "off"
+                ),
+            )
+    elif len(holdout_buf) >= tc.batch_size:
         test_metrics = trainer.eval_steps(
             holdout_buf,
             batch_size=tc.batch_size,
             steps=tc.test_steps,
         )
+        test_metrics_source_iter = int(iteration_idx)
 
     train_ms = (time.monotonic() - train_t0) * 1000.0
 
@@ -309,6 +330,7 @@ def _run_training_and_gating(
         window_target_samples=window_target_samples,
         train_ms=train_ms,
         gate_match_idx=gate_match_idx,
+        test_metrics_source_iter=test_metrics_source_iter,
     )
 
 
@@ -426,6 +448,7 @@ def _run_selfplay_phase(
     replay_shard_dir: Path,
     current_window: int,
     in_salvage_startup_grace: bool,
+    prefetcher=None,
 ) -> tuple[SelfplayResult, str, int, subprocess.Popen[bytes] | None]:
     """Run distributed selfplay, ingest, export shards, grow window, cross-trial share.
 
@@ -482,6 +505,7 @@ def _run_selfplay_phase(
         poll_seconds=tc.distributed_worker_poll_seconds,
         rng=rng,
         min_games_fraction=tc.distributed_min_games_fraction,
+        prefetcher=prefetcher,
     )
 
     buf.flush()

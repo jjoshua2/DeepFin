@@ -22,10 +22,10 @@ try:
     )
 except Exception:  # pragma: no cover
     class SummaryWriter:  # type: ignore[no-redef]
-        def __init__(self, *args: Any, **kwargs: Any) -> None:  # skylos: ignore (stub signature parity)
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:  # skylos: ignore (stub signature parity)
             pass
 
-        def add_scalar(self, *args: Any, **kwargs: Any) -> None:  # skylos: ignore (stub signature parity)
+        def add_scalar(self, *_args: Any, **_kwargs: Any) -> None:  # skylos: ignore (stub signature parity)
             pass
 
         def close(self) -> None:
@@ -752,7 +752,10 @@ class Trainer:
         return stats
 
     @torch.no_grad()
-    def _compute_metrics(self, *, buf: ReplayBuffer, batch_size: int, steps: int, tag: str) -> TrainMetrics:
+    def _compute_metrics(
+        self, *, buf: ReplayBuffer, batch_size: int, steps: int, tag: str,
+        model_override: torch.nn.Module | None = None,
+    ) -> TrainMetrics:
         sums: dict[str, float] = {}
         acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
   # Accumulate on-device so each eval batch adds ~0 host syncs; one .item()
@@ -761,11 +764,17 @@ class Trainer:
 
         mirror_p = self.mirror_prob if str(tag).startswith("train") else 0.0
 
+  # ``model_override`` lets the async test-eval path drive the loop on a
+  # snapshot model while ``self.model`` is being mutated by the next iter's
+  # train phase. ``self.model`` is read elsewhere (notably by
+  # _policy_accuracy_stats — but that takes ``out`` already, not ``self.model``).
+        eval_model = model_override if model_override is not None else self.model
+
         for batch in self._iter_prefetched_batches(
             buf, batch_size=batch_size, mirror_prob=mirror_p, count=int(steps),
         ):
             with self._amp_context():
-                out = self.model(batch["x"])
+                out = eval_model(batch["x"])
                 losses = compute_loss(out, batch, **self._loss_kwargs)
 
             scalars = self._extract_loss_scalars(losses)

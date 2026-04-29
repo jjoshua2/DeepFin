@@ -183,6 +183,15 @@ class TrialConfig:
     distributed_prev_model_max_fraction: float = 0.33
     distributed_pause_selfplay_during_training: bool = False
     processed_max_age_seconds: float = 43200.0
+    # Background shard prefetcher: zarr decompress moves to a daemon thread
+    # during train phase. Default off until measured in production.
+    distributed_prefetch_shards: bool = False
+    # Run holdout test eval in a daemon thread on a snapshot of the
+    # post-train model — overlaps eval (~30-50s) with the next iter's
+    # selfplay phase. Trade-off: test_metrics in row N reports loss for
+    # iter N-1's model; row gains a `test_iter` field to disambiguate.
+    distributed_async_test_eval: bool = False
+    distributed_async_test_eval_timeout_s: float = 120.0
 
   # --- Exploit replay sharing ---
     exploit_replay_refresh_enabled: bool = True
@@ -388,6 +397,9 @@ class TrialConfig:
             distributed_prev_model_max_fraction=float(config.get("distributed_prev_model_max_fraction", 0.33)),
             distributed_pause_selfplay_during_training=bool(config.get("distributed_pause_selfplay_during_training", False)),
             processed_max_age_seconds=float(config.get("processed_max_age_seconds", 43200.0)),
+            distributed_prefetch_shards=bool(config.get("distributed_prefetch_shards", False)),
+            distributed_async_test_eval=bool(config.get("distributed_async_test_eval", False)),
+            distributed_async_test_eval_timeout_s=float(config.get("distributed_async_test_eval_timeout_s", 120.0)),
 
   # --- Exploit replay sharing ---
             exploit_replay_refresh_enabled=bool(config.get("exploit_replay_refresh_enabled", True)),
@@ -516,6 +528,9 @@ class TrainingResult:
     window_target_samples: int = 0
     train_ms: float = 0.0
     gate_match_idx: int = 0
+    # Iter whose model produced ``test_metrics``. Equals ``training_iteration``
+    # for sync eval; lags by 1 for ``distributed_async_test_eval``.
+    test_metrics_source_iter: int = -1
 
 
 @dataclass(frozen=True)

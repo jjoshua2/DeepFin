@@ -380,6 +380,28 @@ def train_trial(config: dict):
     ckpt_dir = work_dir / "ckpt"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
+  # Background shard prefetcher: polls inbox during train phase and decodes
+  # zarr in a daemon thread, so iter-boundary ingest only does the cheap
+  # in-memory append. None when distributed_prefetch_shards=false (the
+  # _ingest_distributed_selfplay default keeps existing behaviour).
+    shard_prefetcher = None
+    if tc.distributed_prefetch_shards:
+        from chess_anti_engine.tune.distributed_runtime import _iter_shard_paths_nested
+        from chess_anti_engine.tune.prefetch import BackgroundShardPrefetcher
+        shard_prefetcher = BackgroundShardPrefetcher(
+            inbox_dir=distributed_dirs["inbox_dir"],
+            path_iter=_iter_shard_paths_nested,
+        )
+        shard_prefetcher.start()
+
+  # 1-iter-lagged async test eval: snapshot model + eval in daemon thread
+  # so the ~30-50s holdout pass overlaps the next iter's selfplay phase.
+  # Row N's test_metrics measures iter N-1's model (see test_metrics_source_iter).
+    async_test_eval = None
+    if tc.distributed_async_test_eval:
+        from chess_anti_engine.train.async_eval import AsyncTestEval
+        async_test_eval = AsyncTestEval()
+
     try:
         iterations = tc.iterations
         completed_iterations = 0
@@ -434,6 +456,7 @@ def train_trial(config: dict):
                 replay_shard_dir=replay_shard_dir,
                 current_window=current_window,
                 in_salvage_startup_grace=in_salvage_startup_grace,
+                prefetcher=shard_prefetcher,
             )
             t_selfplay_secs = time.monotonic() - t_selfplay_start
             distributed_pause_active = False
@@ -477,6 +500,7 @@ def train_trial(config: dict):
                 iteration_zero_based=iteration_zero_based,
                 trial_id=trial_id,
                 restore=restore,
+                async_test_eval=async_test_eval,
             )
             t_train_secs = time.monotonic() - t_train_start
             gate_match_idx = tr.gate_match_idx
@@ -535,6 +559,19 @@ def train_trial(config: dict):
                 ds=ds,
             )
             opp_strength_ema = pid_result.opp_strength_ema
+            # PID-relevant winrate (curriculum_winrate_raw) is what the
+            # controller observes — selfplay-vs-SF only, not the games-generated
+            # blend that mixes in selfplay-vs-self draws/losses. Log it
+            # alongside ema/regret/nodes so a quick eyeball matches the lever.
+            _cur_wr = pid_result.curriculum_winrate_raw
+            logging.getLogger("chess_anti_engine.iter").info(
+                "iter %d wr: cur_raw=%s ema=%.3f → regret=%.3f nodes=%d (sp_games=%d cur_games=%d)",
+                iteration_idx,
+                f"{_cur_wr:.3f}" if _cur_wr is not None else "n/a",
+                pid_result.pid_ema_wr,
+                pid_result.wdl_regret_next, pid_result.sf_nodes_next,
+                int(sp.total_selfplay_games), int(sp.total_curriculum_games),
+            )
 
             _finalize_iteration(
                 tc=tc, trainer=trainer, pid=pid,
@@ -568,6 +605,13 @@ def train_trial(config: dict):
             global_iter = int(iteration_idx)
             completed_iterations += 1
     finally:
+        if shard_prefetcher is not None:
+            shard_prefetcher.stop()
+        if async_test_eval is not None:
+  # Drain any in-flight eval so the snapshot model + thread shut
+  # down cleanly (avoids the daemon thread getting torn down
+  # mid-CUDA-call on interpreter exit).
+            async_test_eval.collect(timeout=10.0)
         _stop_worker_processes(distributed_worker_procs)
         _stop_process(distributed_inference_broker_proc)
         if sf is not None:

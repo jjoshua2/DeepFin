@@ -780,24 +780,33 @@ def _process_shard(
     accepted_model_shas: set[str],
     rng: np.random.Generator,
     summary: dict[str, int | float],
+    preloaded: tuple[dict, dict] | None = None,
 ) -> str:
     """Load one shard from inbox, ingest into replay buffer, update summary.
 
     Returns the shard's model_sha256 (empty string if unknown).
+
+    If ``preloaded`` is provided, skip the disk read — the background
+    prefetcher already has ``(shard_arrs, meta)`` in memory. The atomic
+    move of the original ``sp`` file from inbox→processed still happens
+    here, so the prefetcher must NOT touch sp other than reading it.
     """
     rel = sp.relative_to(inbox_dir)
     out = processed_dir / rel
     out.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        shard_arrs, meta = load_shard_arrays(sp)
-    except Exception:
-        bad = processed_dir / "bad" / rel.name
-        bad.parent.mkdir(parents=True, exist_ok=True)
+    if preloaded is not None:
+        shard_arrs, meta = preloaded
+    else:
         try:
-            sp.replace(bad)
+            shard_arrs, meta = load_shard_arrays(sp)
         except Exception:
-            delete_shard_path(sp)
-        return ""
+            bad = processed_dir / "bad" / rel.name
+            bad.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                sp.replace(bad)
+            except Exception:
+                delete_shard_path(sp)
+            return ""
 
     model_sha = str(meta.get("model_sha256") or "")
     wins = int(meta.get("wins", 0) or 0)
@@ -901,6 +910,7 @@ def _ingest_distributed_selfplay(
     min_games_fraction: float = 0.5,
     prev_model_sha: str | None = None,
     prev_model_max_fraction: float = 1.0,
+    prefetcher=None,
 ) -> dict[str, int | float]:
     """Poll inbox until enough games arrive, then return.
 
@@ -927,6 +937,37 @@ def _ingest_distributed_selfplay(
     prev_max_games = int(math.ceil(float(prev_model_max_fraction) * target_games)) if _cap_prev else 0
     prev_matching_games = 0
     effective_accepted = set(accepted_model_shas)
+
+  # Drain prefetcher first so the inbox-poll fallback below only sees
+  # shards that arrived after the last background scan (the trainer's
+  # atomic inbox→processed move inside _process_shard prevents the
+  # next scan from re-picking the same path).
+    if prefetcher is not None:
+        for sp, arrs, meta in prefetcher.drain():
+            games_before = summary["matching_games"]
+            shard_sha = _process_shard(
+                sp,
+                inbox_dir=inbox_dir,
+                processed_dir=processed_dir,
+                buf=buf,
+                holdout_buf=holdout_buf,
+                holdout_frac=holdout_frac,
+                holdout_frozen=holdout_frozen,
+                accepted_model_shas=effective_accepted,
+                rng=rng,
+                summary=summary,
+                preloaded=(arrs, meta),
+            )
+            games_added = summary["matching_games"] - games_before
+            if (
+                _cap_prev
+                and prev_model_sha in effective_accepted
+                and shard_sha == prev_model_sha
+                and games_added > 0
+            ):
+                prev_matching_games += games_added
+                if prev_matching_games >= prev_max_games:
+                    effective_accepted.discard(prev_model_sha)
 
     while summary["matching_games"] < target_games:
         shard_paths = _iter_shard_paths_nested(inbox_dir)
