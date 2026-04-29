@@ -155,7 +155,12 @@ def _step_lever(
     ema_deadband = raw_deadband * ema_se_factor
     in_deadband = abs(err) <= raw_deadband and abs(ema_err) <= ema_deadband
 
-    if raw_wr < lever.safety_floor:
+    # Airbag fires only when raw_wr is statistically distinguishable from the
+    # floor (1.5σ). Without this, a 77-game iter at 0.435 (SE≈0.057, well within
+    # noise of 0.50) fires the same response as a 665-game iter at 0.413
+    # (SE≈0.019, 4σ below floor). The first is noise; the second is a real
+    # crash. Same trigger → spurious overshoots near equilibrium.
+    if raw_wr + 1.5 * se < lever.safety_floor:
         lever.history.append((value_before, raw_wr, se))
         # Airbag capped by max_step so a runaway ease branch can't break the
         # user's per-iter movement promise.
@@ -481,9 +486,16 @@ class DifficultyPID:
 
         # Regret lever freezes one-way once the stage gate fires; otherwise
         # a stage-2 wr dip would trip its airbag and double-mutate alongside
-        # the nodes lever, hiding cause from effect.
+        # the nodes lever, hiding cause from effect. Exception: if the nodes
+        # lever has no ease-direction headroom (already at min_nodes), there's
+        # no stage-2 channel to handle a winrate drop — unfreeze regret so the
+        # controller still has an ease lever instead of wedging.
         regret_changed = False
-        regret_frozen = self._regret_gate_enabled and self._regret_stage_complete
+        regret_frozen = (
+            self._regret_gate_enabled
+            and self._regret_stage_complete
+            and self.nodes > self.min_nodes
+        )
         if self._regret_enabled and not regret_frozen:
             regret_changed = _step_lever(
                 self.regret_lever,
@@ -498,7 +510,20 @@ class DifficultyPID:
                     self._regret_stage_complete = True
 
         nodes_changed = False
-        if self._regret_stage_complete:
+        # Nodes lever runs when nodes is the active controller — either regret
+        # is disabled entirely (initial_wdl_regret<0 → nodes is the only knob)
+        # or the stage gate is wired up AND has fired (regret descended to the
+        # floor and is intentionally handing off). With regret enabled but
+        # gate disabled (stage_end=-1, "no second stage"), stage_complete is
+        # set True unconditionally at construction; without this guard that
+        # silently gave a dual-knob system — regret AND nodes both moving each
+        # iter, with nodes ratcheting up as the model won, making SF steadily
+        # harder behind our backs.
+        nodes_active = (
+            not self._regret_enabled
+            or (self._regret_gate_enabled and self._regret_stage_complete)
+        )
+        if nodes_active:
             nodes_changed = _step_lever(
                 self.nodes_lever,
                 target_wr=self.target, raw_wr=raw_wr,
