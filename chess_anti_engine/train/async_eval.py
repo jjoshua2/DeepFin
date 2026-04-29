@@ -12,12 +12,14 @@ not ``training_iteration``, when async eval is enabled.
 next iter's ``train_steps`` mutates them in place. Without isolation
 the eval would read a mix of pre- and mid-train weights. The snapshot
 is a freshly-built ``ChessNet`` instance loaded from a CPU copy of the
-post-train state_dict, moved to GPU at thread start. The snapshot is
-re-wrapped with the same ``apply_compile`` mode as the trainer so the
-shared TORCHINDUCTOR/Triton caches hit on graph + kernel keys, skipping
-the autotune phase. cudagraph capture still happens once on the eval
-thread (cudagraph state is thread-local per the ThreadedDispatcher
-comments) but replays cheaply on subsequent iters.
+post-train state_dict, moved to GPU at thread start.
+
+**Why eager (not compiled).** Compiling the snapshot was tempting (it
+would hit the shared inductor cache) but cudagraph_trees keeps
+thread-local state and asserts when a compiled forward replays on a
+non-main thread (observed crashes 2026-04-29). Eval is once per iter
+on ~200 batches, so the 2-3x compile speedup isn't worth the
+thread-affinity hazard.
 """
 from __future__ import annotations
 
@@ -28,7 +30,6 @@ from typing import Any
 import torch
 
 from chess_anti_engine.model import ModelConfig, build_model
-from chess_anti_engine.train.compile_probe import apply_compile
 
 log = logging.getLogger(__name__)
 
@@ -85,11 +86,14 @@ class AsyncTestEval:
                 snap = build_model(model_cfg).to(device)
                 snap.load_state_dict(snap_state, strict=False)
                 snap.eval()
-  # Wrap in the trainer's compile mode so the shared inductor +
-  # Triton caches hit (shared via TORCHINDUCTOR_CACHE_DIR /
-  # TRITON_CACHE_DIR). Compile happens on this thread so cudagraph
-  # TLS lines up with the forward call below.
-                snap = apply_compile(snap, mode=compile_mode, device=device)
+  # Skip torch.compile: cudagraph_trees keeps thread-local state and
+  # asserts in get_obj when a compiled forward runs on a non-main
+  # thread (observed iter 26-27 — every async eval crashed with
+  # AssertionError in cudagraph_trees.py). Eval is one shot per iter
+  # on ~200 batches, so the inductor speedup isn't worth the
+  # thread-affinity hazard. Eager forward runs ~2-3x slower than
+  # compiled but completes in ~30-50s, well inside the 120s timeout.
+                _ = compile_mode  # accepted for API parity; intentionally unused
                 metrics = trainer._compute_metrics(  # noqa: SLF001
                     buf=holdout_buf,
                     batch_size=batch_size,
