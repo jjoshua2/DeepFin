@@ -24,6 +24,65 @@ def _pick_free_port() -> int:
         return int(s.getsockname()[1])
 
 
+# Atomic-write tmp prefixes used by save_local_shard_arrays + server compaction
+# (mirrors `is_tmp_shard_name` in chess_anti_engine.replay.shard). Anchored
+# globs only — Ray's _ExcludingLocalFilesystem matches via fnmatch on the path
+# relative to the sync root, so an unanchored "._tmp_*" wouldn't fire on
+# nested `selfplay_shards/._tmp_*.zarr/...` paths.
+#
+# We also exclude the entire `selfplay_shards/` tree. Ray's experiment-state
+# sync iterates these in pyarrow's `_copy_files_selector`, which races against
+# `enforce_window` deletes — even completed `shard_000123.zarr/.zattrs` paths
+# get raced if window enforcement deletes them between enumerate and open.
+# Selfplay shards are local-only (worker writes → trainable consumes); Ray's
+# experiment state has no business with them.
+_TMP_SHARD_EXCLUDE_PATTERNS: tuple[str, ...] = (
+    "**/._tmp_*",
+    "**/tmp_*",
+    "._tmp_*",
+    "tmp_*",
+    "**/selfplay_shards/**",
+    "selfplay_shards/**",
+    # `chess_anti_engine.utils.atomic.atomic_write` uses
+    # `<final>.tmp.<pid>.<uuid>` then atomic rename. Ray's enumerator races
+    # the rename → FileNotFoundError on .tmp.* paths.
+    "**/*.tmp.*",
+    "*.tmp.*",
+)
+
+
+def _patch_ray_artifact_sync_excludes() -> None:
+    """Make Ray's experiment-state syncer skip in-flight atomic-rename shards.
+
+    Ray's experiment-state checkpoint syncs the trial dir to persistent storage
+    via `pyarrow.fs.copy_files`, which enumerates files then opens each one.
+    When the enumeration captures a `._tmp_<pid>_*.zarr` path that is then
+    atomic-renamed away by `save_local_shard_arrays`, the open fails with
+    `FileNotFoundError`. The data is fine (the rename is atomic; the next sync
+    sees the final shard) but the syncer raises and pollutes logs.
+
+    Ray's `SyncConfig` does not expose excludes, but `_upload_to_fs_path`
+    accepts an `exclude` kwarg that switches to a fsspec-based walker which
+    filters before enumerating — eliminating the race entirely. Wrap that
+    function so every call carries our temp prefixes in `exclude`.
+    """
+    try:
+        from ray.train._internal import storage as _ray_storage
+    except Exception:
+        return
+    orig = _ray_storage._upload_to_fs_path
+    if getattr(orig, "_chess_tmp_exclude_patched", False):
+        return
+
+    def _upload_to_fs_path_with_excludes(local_path, fs, fs_path, exclude=None):
+        merged = list(exclude or [])
+        merged.extend(_TMP_SHARD_EXCLUDE_PATTERNS)
+        return orig(local_path, fs, fs_path, exclude=merged)
+
+    _upload_to_fs_path_with_excludes._chess_tmp_exclude_patched = True  # pyright: ignore[reportFunctionMemberAccess]
+    _ray_storage._upload_to_fs_path = _upload_to_fs_path_with_excludes
+
+
 def _wait_for_server_ready(
     *,
     base_url: str,
@@ -304,6 +363,8 @@ def run_tune(
         raise RuntimeError(
             "Ray Tune is required. Install with `pip install -e '.[tune]'`."
         ) from e
+
+    _patch_ray_artifact_sync_excludes()
 
     from chess_anti_engine.tune.trainable import train_trial
 
