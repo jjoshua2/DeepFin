@@ -164,7 +164,10 @@ class ThreadedDispatcher:
 
     def _dispatch_loop(self) -> None:
         if self._compile_mode is not None:
-            torch.cuda.set_device(self._device)
+            # set_device wants an index or "cuda:N", not bare "cuda".
+            dev = torch.device(self._device)
+            if dev.type == "cuda":
+                torch.cuda.set_device(dev.index if dev.index is not None else 0)
             self._evaluator.model = torch.compile(  # pyright: ignore[reportAttributeAccessIssue]
                 self._evaluator.model, mode=self._compile_mode,
             )
