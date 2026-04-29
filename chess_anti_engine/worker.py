@@ -1012,46 +1012,37 @@ class WorkerSession:
 
   # -- Lifecycle methods ----------------------------------------------------
 
-    def _poll_manifest(self) -> dict | None:
-        """Lease negotiation + manifest fetch + version checks + self-update.
+    def _negotiate_lease(self) -> bool:
+        """POST /v1/lease_trial; update self.lease_id/api_prefix/leased_trial_id.
 
-        Returns the manifest dict, or None to signal 'sleep and retry'.
+        Returns True on success, False to signal 'sleep and retry'.
         """
-        requests = self._requests
+        body: dict[str, object] = {"worker_info": self.worker_info}
+        if self.lease_id:
+            body["lease_id"] = str(self.lease_id)
+        if self.leased_trial_id:
+            body["trial_id"] = str(self.leased_trial_id)
+        r_lease = self._requests.post(
+            self._server_url_for("/v1/lease_trial"),
+            json=body,
+            auth=(str(self.args.username), str(self.args.password)),
+            headers=_worker_headers(),
+            timeout=30.0,
+        )
+        if r_lease.status_code != 200:
+            time.sleep(float(self.args.poll_seconds))
+            return False
+        lease = r_lease.json()
+        new_trial_id = str(lease.get("trial_id") or "").strip()
+        if new_trial_id != self.leased_trial_id:
+            self.log.info("leased trial assignment changed: %s -> %s", self.leased_trial_id or "<root>", new_trial_id or "<root>")
+        self.leased_trial_id = new_trial_id
+        self.trial_api_prefix = str(lease.get("api_prefix") or "/v1").strip() or "/v1"
+        self.lease_id = str(lease.get("lease_id") or "").strip()
+        return True
 
-        if self.inference_client is None:
-            self.inference_client = self._make_inference_client()
-
-        if not self.fixed_trial_id:
-            body: dict[str, object] = {"worker_info": self.worker_info}
-            if self.lease_id:
-                body["lease_id"] = str(self.lease_id)
-            if self.leased_trial_id:
-                body["trial_id"] = str(self.leased_trial_id)
-            r_lease = requests.post(
-                self._server_url_for("/v1/lease_trial"),
-                json=body,
-                auth=(str(self.args.username), str(self.args.password)),
-                headers=_worker_headers(),
-                timeout=30.0,
-            )
-            if r_lease.status_code != 200:
-                time.sleep(float(self.args.poll_seconds))
-                return None
-            lease = r_lease.json()
-            new_trial_id = str(lease.get("trial_id") or "").strip()
-            new_api_prefix = str(lease.get("api_prefix") or "/v1").strip() or "/v1"
-            new_lease_id = str(lease.get("lease_id") or "").strip()
-            if new_trial_id != self.leased_trial_id:
-                self.log.info("leased trial assignment changed: %s -> %s", self.leased_trial_id or "<root>", new_trial_id or "<root>")
-            self.leased_trial_id = new_trial_id
-            self.trial_api_prefix = new_api_prefix
-            self.lease_id = new_lease_id
-
-  # Upload any pending shards first (skip in-progress temp files).
-        self._upload_pending_shards(default_elapsed_s=float(self.cfg.get("_last_batch_elapsed_s", 0.0) or 0.0))
-
-  # Upload any pending arena results.
+    def _upload_pending_arena_results(self) -> None:
+        """Drain arena_pending_dir to the server; quarantine bad files."""
         for jp in sorted(self.arena_pending_dir.glob("*.json")):
             try:
                 payload = json.loads(jp.read_text(encoding="utf-8"))
@@ -1059,8 +1050,7 @@ class WorkerSession:
   # bad local file; quarantine to uploaded to avoid retry storms
                 jp.replace(self.arena_uploaded_dir / jp.name)
                 continue
-
-            r = requests.post(
+            r = self._requests.post(
                 self._server_url_for(self.trial_api_prefix + "/upload_arena_result"),
                 json=payload,
                 auth=(str(self.args.username), str(self.args.password)),
@@ -1072,69 +1062,47 @@ class WorkerSession:
             else:
                 break
 
-  # Poll manifest
-        r = requests.get(
-            self._server_url_for(self.trial_api_prefix + "/manifest"),
-            timeout=30.0,
-            headers=_manifest_poll_headers(
-                worker_id=self.worker_id,
-                lease_id=self.lease_id,
-                state=self.manifest_state,
-                elapsed_s=self.manifest_state_elapsed_s,
-            ),
+    def _install_worker_wheel(self, ww: dict, fallback_version: str) -> None:
+        """Download + verify + pip install + exec-restart. Does not return."""
+        wheel_version = str(ww.get("version") or fallback_version or "0.0.0")
+        sha = str(ww.get("sha256"))
+        endpoint = str(ww.get("endpoint"))
+        wheel_path = self.cache_dir / f"worker_{sha}.whl"
+        self.log.warning("self-update: installing worker wheel version=%s sha=%s", wheel_version, sha)
+        _download_and_verify_shared(
+            self._server_url_for(endpoint),
+            out_path=wheel_path,
+            expected_sha256=sha,
+            headers=_worker_headers(),
         )
-        self.manifest_state = "active"
-        self.manifest_state_elapsed_s = None
-        if r.status_code == 426:
-  # Server says "upgrade required".
-            if bool(self.args.self_update) and os.environ.get("CAE_SELF_UPDATED") != "1":
-  # Ask the server for minimal update info (does not require compatibility).
-                r2 = requests.get(self._server_url_for(self.trial_api_prefix + "/update_info"), timeout=30.0)
-                if r2.status_code != 200:
-                    raise SystemExit(f"Upgrade required but could not fetch update info for self-update: {r2.text}")
-                update_info = r2.json()
+        _pip_install_wheel(wheel_path)
+        _restart_process()
 
-                ww = update_info.get("worker_wheel")
-                if not (isinstance(ww, dict) and ww.get("endpoint") and ww.get("sha256")):
-                    try:
-                        detail = r.json().get("detail")
-                    except Exception:
-                        detail = None
-                    raise SystemExit(
-                        f"Worker is not compatible with server and no worker_wheel was published for self-update: {detail or r.text}"
-                    )
+    def _self_update_enabled(self) -> bool:
+        return bool(self.args.self_update) and os.environ.get("CAE_SELF_UPDATED") != "1"
 
-                wheel_version = str(ww.get("version") or update_info.get("server_version") or "0.0.0")
-                sha = str(ww.get("sha256"))
-                endpoint = str(ww.get("endpoint"))
-                wheel_path = self.cache_dir / f"worker_{sha}.whl"
-                self.log.warning(
-                    "self-update: installing worker wheel version=%s sha=%s",
-                    wheel_version,
-                    sha,
-                )
-                _download_and_verify_shared(
-                    self._server_url_for(endpoint),
-                    out_path=wheel_path,
-                    expected_sha256=sha,
-                    headers=_worker_headers(),
-                )
-                _pip_install_wheel(wheel_path)
-                _restart_process()
+    def _handle_upgrade_required(self, r: Any) -> None:
+        """Server returned 426. Try self-update (no return) or raise SystemExit."""
+        if self._self_update_enabled():
+            r2 = self._requests.get(self._server_url_for(self.trial_api_prefix + "/update_info"), timeout=30.0)
+            if r2.status_code != 200:
+                raise SystemExit(f"Upgrade required but could not fetch update info for self-update: {r2.text}")
+            update_info = r2.json()
+            ww = update_info.get("worker_wheel")
+            if isinstance(ww, dict) and ww.get("endpoint") and ww.get("sha256"):
+                self._install_worker_wheel(ww, str(update_info.get("server_version") or ""))
+        try:
+            detail = r.json().get("detail")
+        except Exception:
+            detail = None
+        raise SystemExit(f"Worker is not compatible with server: {detail or r.text}")
 
-            try:
-                detail = r.json().get("detail")
-            except Exception:
-                detail = None
-            raise SystemExit(f"Worker is not compatible with server: {detail or r.text}")
+    def _check_manifest_compat(self, manifest: dict) -> tuple[bool, bool]:
+        """Read protocol/min_version/encoding from manifest; raise on encoding mismatch.
 
-        if r.status_code != 200:
-            time.sleep(float(self.args.poll_seconds))
-            return None
-
-        manifest = r.json()
-
-  # Compatibility guardrails (manifest-driven).
+        Returns (protocol_mismatch, version_too_old) so callers can attempt
+        self-update before deciding whether to SystemExit.
+        """
         req_proto = manifest.get("protocol_version")
         protocol_mismatch = False
         if req_proto is not None:
@@ -1142,49 +1110,30 @@ class WorkerSession:
                 protocol_mismatch = int(req_proto) != int(PROTOCOL_VERSION)
             except Exception:
                 raise SystemExit(f"Bad protocol_version in manifest: {req_proto!r}")
-
         min_v = manifest.get("min_worker_version")
         version_too_old = bool(min_v is not None and version_lt(str(PACKAGE_VERSION), str(min_v)))
-
         enc = manifest.get("encoding") or {}
         if "policy_size" in enc and int(enc.get("policy_size") or 0) != int(POLICY_SIZE):
             raise SystemExit(f"policy_size mismatch: worker={POLICY_SIZE} server={enc.get('policy_size')}")
         if "input_planes" in enc and int(enc.get("input_planes") or 0) != 146:
             raise SystemExit(f"input_planes mismatch: worker expects 146, server={enc.get('input_planes')}")
+        return protocol_mismatch, version_too_old
 
-  # Optional self-update (manifest-driven).
-        if bool(self.args.self_update) and os.environ.get("CAE_SELF_UPDATED") != "1":
-            ww = manifest.get("worker_wheel")
-            if isinstance(ww, dict) and ww.get("endpoint") and ww.get("sha256"):
-                wheel_version = str(ww.get("version") or manifest.get("server_version") or "0.0.0")
-                need = False
-                if protocol_mismatch or version_too_old or version_lt(str(PACKAGE_VERSION), wheel_version):
-                    need = True
+    def _maybe_self_update_from_manifest(
+        self, manifest: dict, *, protocol_mismatch: bool, version_too_old: bool,
+    ) -> None:
+        """If manifest carries a worker_wheel and we're behind, install it (no return)."""
+        if not self._self_update_enabled():
+            return
+        ww = manifest.get("worker_wheel")
+        if not (isinstance(ww, dict) and ww.get("endpoint") and ww.get("sha256")):
+            return
+        wheel_version = str(ww.get("version") or manifest.get("server_version") or "0.0.0")
+        if protocol_mismatch or version_too_old or version_lt(str(PACKAGE_VERSION), wheel_version):
+            self._install_worker_wheel(ww, str(manifest.get("server_version") or ""))
 
-                if need:
-                    sha = str(ww.get("sha256"))
-                    endpoint = str(ww.get("endpoint"))
-                    wheel_path = self.cache_dir / f"worker_{sha}.whl"
-                    self.log.warning(
-                        "self-update: installing worker wheel version=%s sha=%s",
-                        wheel_version,
-                        sha,
-                    )
-                    _download_and_verify_shared(
-                        self._server_url_for(endpoint),
-                        out_path=wheel_path,
-                        expected_sha256=sha,
-                        headers=_worker_headers(),
-                    )
-                    _pip_install_wheel(wheel_path)
-                    _restart_process()
-
-  # Enforce after any self-update opportunity.
-        if protocol_mismatch:
-            raise SystemExit(f"Protocol mismatch: worker={PROTOCOL_VERSION} server_required={req_proto}")
-        if version_too_old:
-            raise SystemExit(f"Worker too old: worker={PACKAGE_VERSION} min_required={min_v}")
-
+    def _check_pause_selfplay(self, manifest: dict) -> bool:
+        """Return True (and sleep) when server has paused selfplay."""
         reco = manifest.get("recommended_worker") or {}
         backpressure = manifest.get("backpressure") or {}
         task = manifest.get("task") or {"type": "selfplay"}
@@ -1199,20 +1148,64 @@ class WorkerSession:
                 pause_reason = str(backpressure.get("pause_reason") or pause_reason)
         if pause_selfplay:
             if not self.pause_selfplay_active:
-                self.log.info(
-                    "selfplay paused by server%s",
-                    f": {pause_reason}" if pause_reason else "",
-                )
+                self.log.info("selfplay paused by server%s", f": {pause_reason}" if pause_reason else "")
                 self.pause_selfplay_active = True
             sleep_s = max(0.1, float(self.args.poll_seconds))
             time.sleep(sleep_s)
             self.manifest_state = "paused_selfplay"
             self.manifest_state_elapsed_s = sleep_s
-            return None
+            return True
         if self.pause_selfplay_active:
             self.log.info("selfplay pause cleared by server")
             self.pause_selfplay_active = False
+        return False
 
+    def _poll_manifest(self) -> dict | None:
+        """Lease negotiation + manifest fetch + version checks + self-update.
+
+        Returns the manifest dict, or None to signal 'sleep and retry'.
+        """
+        if self.inference_client is None:
+            self.inference_client = self._make_inference_client()
+
+        if not self.fixed_trial_id and not self._negotiate_lease():
+            return None
+
+  # Upload any pending shards first (skip in-progress temp files).
+        self._upload_pending_shards(default_elapsed_s=float(self.cfg.get("_last_batch_elapsed_s", 0.0) or 0.0))
+        self._upload_pending_arena_results()
+
+        r = self._requests.get(
+            self._server_url_for(self.trial_api_prefix + "/manifest"),
+            timeout=30.0,
+            headers=_manifest_poll_headers(
+                worker_id=self.worker_id,
+                lease_id=self.lease_id,
+                state=self.manifest_state,
+                elapsed_s=self.manifest_state_elapsed_s,
+            ),
+        )
+        self.manifest_state = "active"
+        self.manifest_state_elapsed_s = None
+        if r.status_code == 426:
+            self._handle_upgrade_required(r)
+        if r.status_code != 200:
+            time.sleep(float(self.args.poll_seconds))
+            return None
+
+        manifest = r.json()
+        protocol_mismatch, version_too_old = self._check_manifest_compat(manifest)
+        self._maybe_self_update_from_manifest(
+            manifest, protocol_mismatch=protocol_mismatch, version_too_old=version_too_old,
+        )
+  # Enforce after any self-update opportunity.
+        if protocol_mismatch:
+            raise SystemExit(f"Protocol mismatch: worker={PROTOCOL_VERSION} server_required={manifest.get('protocol_version')}")
+        if version_too_old:
+            raise SystemExit(f"Worker too old: worker={PACKAGE_VERSION} min_required={manifest.get('min_worker_version')}")
+
+        if self._check_pause_selfplay(manifest):
+            return None
         return manifest
 
     def _sync_assets(self, manifest: dict) -> None:
