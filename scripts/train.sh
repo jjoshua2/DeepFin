@@ -59,7 +59,19 @@ start() {
         fi
     fi
     echo "Starting training with $CONFIG ${extra_args[*]:+(extra: ${extra_args[*]})}..."
-    PYTHONPATH=. nohup python3 -m chess_anti_engine.run \
+    # Inductor compile parallelism — without these, autotune is single-threaded
+    # and uses ~6% of available CPU. COMPILE_THREADS parallelizes codegen
+    # across candidate kernels; AUTOTUNE_IN_SUBPROC isolates each candidate's
+    # benchmark in a subprocess so a config that overflows shared memory
+    # (RTX 5090 hits this with max-autotune block sizes) crashes its own
+    # process instead of polluting the parent's CUDA context, and lets
+    # candidates benchmark concurrently. FX_GRAPH_CACHE persists traced
+    # graphs across runs alongside the kernel cache.
+    PYTHONPATH=. \
+    TORCHINDUCTOR_COMPILE_THREADS="${TORCHINDUCTOR_COMPILE_THREADS:-16}" \
+    TORCHINDUCTOR_AUTOTUNE_IN_SUBPROC="${TORCHINDUCTOR_AUTOTUNE_IN_SUBPROC:-1}" \
+    TORCHINDUCTOR_FX_GRAPH_CACHE="${TORCHINDUCTOR_FX_GRAPH_CACHE:-1}" \
+    nohup python3 -m chess_anti_engine.run \
         --config "$CONFIG" --mode tune "${extra_args[@]}" \
         > "$LOG" 2>&1 &
     echo $! > "$PIDFILE"
