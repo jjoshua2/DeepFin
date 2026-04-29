@@ -213,7 +213,7 @@ def train_trial(config: dict):
         config=config, trainer=trainer, device=device,
         trial_id=trial_id, trial_dir=trial_dir,
         base_seed=base_seed, active_seed=active_seed,
-        rng=rng, ckpt=ckpt, Checkpoint=Checkpoint,
+        rng=rng, ckpt=ckpt,
     )
     restored_pid_state = restore.restored_pid_state
     global_iter = restore.global_iter

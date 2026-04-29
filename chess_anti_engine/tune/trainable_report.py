@@ -385,6 +385,7 @@ def _build_report_dict(
         "data_unique_positions": float(drift.data_unique_positions),
         "data_wdl_balance": float(drift.data_wdl_balance),
         "test_size": 0,
+        "test_iter": -1,
         "test_loss": float("nan"),
         "test_policy_loss": float("nan"),
         "test_soft_policy_loss": float("nan"),

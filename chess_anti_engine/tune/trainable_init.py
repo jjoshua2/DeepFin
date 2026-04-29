@@ -8,6 +8,7 @@ Three phases that run once at trial startup (before the main loop):
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -38,6 +39,8 @@ from chess_anti_engine.tune.trainable_config_ops import _TRAINER_WEIGHT_KEYS
 from chess_anti_engine.tune.trainable_metrics import _count_jsonl_rows
 from chess_anti_engine.tune.trial_config import RestoreResult, TrialConfig
 
+log = logging.getLogger(__name__)
+
 
 def _restore_checkpoint_or_salvage(
     *,
@@ -50,7 +53,6 @@ def _restore_checkpoint_or_salvage(
     active_seed: int,
     rng: np.random.Generator,
     ckpt,
-    Checkpoint,  # skylos: ignore  # pylint: disable=unused-argument  # ray.train.Checkpoint class, injected via caller
 ) -> tuple[RestoreResult, np.random.Generator]:
     """Restore from Ray checkpoint, salvage seed pool, or start fresh.
 
@@ -208,8 +210,11 @@ def _restore_checkpoint_or_salvage(
     if restored_rng_state is not None and not rr.cross_trial_restore:
         try:
             rng.bit_generator.state = restored_rng_state
-        except Exception:
-            pass
+        except (ValueError, TypeError, KeyError) as exc:
+            log.warning(
+                "[trial] failed to restore RNG state from checkpoint (%s); continuing with current rng",
+                exc,
+            )
 
     if ckpt is not None and rr.cross_trial_restore:
   # PB2 exploit clone: fork RNG stream so recipients do not replay donor opening sequences.

@@ -370,16 +370,6 @@
                 }
             }
         ],
-        "./chess_anti_engine/tune/trainable_init.py": [
-            {
-                "code": "reportUnusedParameter",
-                "range": {
-                    "startColumn": 4,
-                    "endColumn": 14,
-                    "lineCount": 1
-                }
-            }
-        ],
         "./chess_anti_engine/uci/__main__.py": [
             {
                 "code": "reportAttributeAccessIssue",
