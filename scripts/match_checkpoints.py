@@ -3,35 +3,19 @@
 from __future__ import annotations
 
 import argparse
-import json
 import time
-from dataclasses import fields
 
 import numpy as np
 
-from chess_anti_engine.model import ModelConfig
 from chess_anti_engine.selfplay.match import play_match_batch
 from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
-
-
-def _cfg_from_params_json(params_path: str) -> ModelConfig:
-    with open(params_path) as fh:
-        params = json.load(fh)
-    valid = {f.name for f in fields(ModelConfig)}
-    filtered = {k: v for k, v in params.items() if k in valid}
-    filtered.setdefault("kind", str(params.get("model", "transformer")))
-    if "no_smolgen" in params and "use_smolgen" not in filtered:
-        filtered["use_smolgen"] = not bool(params["no_smolgen"])
-    return ModelConfig(**filtered)  # type: ignore[arg-type]
 
 
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--a", required=True, help="model A checkpoint path")
     p.add_argument("--b", required=True, help="model B checkpoint path")
-    p.add_argument("--params-a", default=None, help="override params.json for A")
-    p.add_argument("--params-b", default=None, help="override params.json for B")
     p.add_argument("--games", type=int, default=64)
     p.add_argument("--sims", type=int, default=200)
     p.add_argument("--temperature", type=float, default=0.1)
@@ -43,14 +27,11 @@ def main() -> None:
     p.add_argument("--label-b", default="B")
     args = p.parse_args()
 
-    cfg_a = _cfg_from_params_json(args.params_a) if args.params_a else None
-    cfg_b = _cfg_from_params_json(args.params_b) if args.params_b else None
-
     t0 = time.time()
     print(f"[match] loading A: {args.a}")
-    model_a = load_model_from_checkpoint(args.a, device=args.device, model_config=cfg_a)
+    model_a = load_model_from_checkpoint(args.a, device=args.device)
     print(f"[match] loading B: {args.b}")
-    model_b = load_model_from_checkpoint(args.b, device=args.device, model_config=cfg_b)
+    model_b = load_model_from_checkpoint(args.b, device=args.device)
     print(f"[match] loaded both in {time.time()-t0:.1f}s")
 
     rng = np.random.default_rng(args.seed)
