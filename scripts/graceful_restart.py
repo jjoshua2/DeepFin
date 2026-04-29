@@ -44,6 +44,19 @@ def _idle_seconds(csv: Path) -> float:
     return time.time() - csv.stat().st_mtime
 
 
+def _csv_recent_at_pause(csv: Path, pause_ts: float, tolerance: float) -> bool:
+    """True if the CSV was written within *tolerance* seconds before/after
+    pause.txt was created.
+
+    Filters out CSVs from a defunct prior trial (last written long before the
+    pause). Allows the legitimate "trial finished iter, then immediately
+    entered _wait_if_paused" case where CSV mtime is a few seconds older
+    than pause.txt — without that allowance the gate rejects every paused
+    trial forever, since a paused trial does not write progress.csv.
+    """
+    return csv.stat().st_mtime >= pause_ts - tolerance
+
+
 def _find_tuner_pid() -> int | None:
     """Best-effort lookup of the top-level Tune driver process.
 
@@ -130,6 +143,7 @@ def main() -> None:
           f"(>{args.idle_secs}s without a progress.csv update)...")
     print()
 
+    pause_created_ts = pause_file.stat().st_mtime if pause_file.exists() else time.time()
     start = time.time()
     while True:
         csvs = _active_trials(tune_dir)
@@ -138,13 +152,25 @@ def main() -> None:
             time.sleep(args.poll)
             continue
 
-        idle = [(csv, _idle_seconds(csv)) for csv in csvs]
+        # Only count CSVs whose last write is reasonably close to pause-creation
+        # time. A CSV written long before pause is from a defunct prior trial
+        # (the original misfire case); a CSV written shortly before pause is
+        # the legitimate "iter ended right before pause hook engaged" case.
+        # Tolerance == idle_secs keeps it tied to the same scale the script
+        # already uses to call something paused.
+        fresh_csvs = [
+            c for c in csvs
+            if _csv_recent_at_pause(c, pause_created_ts, float(args.idle_secs))
+        ]
+        idle = [(csv, _idle_seconds(csv)) for csv in fresh_csvs]
         idle_trials = [(csv, age) for csv, age in idle if age >= args.idle_secs]
 
         # Print status
         elapsed = int(time.time() - start)
-        print(f"[{elapsed:4d}s] {len(idle_trials)}/{len(csvs)} trials paused "
-              f"(need {args.wait}):")
+        stale = len(csvs) - len(fresh_csvs)
+        stale_note = f" ({stale} stale CSV ignored)" if stale else ""
+        print(f"[{elapsed:4d}s] {len(idle_trials)}/{len(fresh_csvs)} trials paused "
+              f"(need {args.wait}){stale_note}:")
         for csv, age in sorted(idle, key=lambda x: -x[1]):
             trial = csv.parent.name.split("_")[2] + "_" + csv.parent.name.split("_")[3]
             status = "PAUSED" if age >= args.idle_secs else "running"
