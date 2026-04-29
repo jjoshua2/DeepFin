@@ -15,10 +15,13 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Any, Callable, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Any, Callable, NamedTuple, TypeVar, cast, overload
 
 import numpy as np
 import torch
+
+if TYPE_CHECKING:
+    import requests
 
 from chess_anti_engine.inference import (
     AOTEvaluator,
@@ -70,6 +73,26 @@ from chess_anti_engine.worker_buffer import (
 from chess_anti_engine.worker_config import load_worker_config, save_worker_config
 
 _ResolveT = TypeVar("_ResolveT")
+
+  # Wire-protocol values sent in X-CAE-Worker-State; tests assert on them
+  # (tests/test_distributed_selfplay_backpressure.py).
+_MANIFEST_STATE_ACTIVE = "active"
+_MANIFEST_STATE_PAUSED = "paused_selfplay"
+
+
+def _extract_worker_wheel(payload: dict) -> dict | None:
+    """Return the worker_wheel dict iff it has both endpoint and sha256, else None."""
+    ww = payload.get("worker_wheel")
+    if isinstance(ww, dict) and ww.get("endpoint") and ww.get("sha256"):
+        return ww
+    return None
+
+
+class _ManifestCompat(NamedTuple):
+    protocol_mismatch: bool
+    version_too_old: bool
+    req_proto: object
+    min_worker_version: object
 
 
 def _worker_headers(*, machine_id: str | None = None) -> dict[str, str]:
@@ -525,7 +548,7 @@ def main() -> None:
         )
 
     try:
-        import requests  # type: ignore
+        import requests
     except Exception as e:  # pragma: no cover
         raise RuntimeError("worker requires requests; install with pip install -e '.[worker]' ") from e
 
@@ -566,6 +589,7 @@ class WorkerSession:
         self.log = log
         self.pinned_games_per_batch_cli = pinned_games_per_batch_cli
         self._requests = requests_mod
+        self._auth: tuple[str, str] = (str(args.username), str(args.password))
 
         self.server = str(args.server_url).rstrip("/")
         trial_id = str(args.trial_id).strip() if args.trial_id is not None else ""
@@ -648,7 +672,7 @@ class WorkerSession:
         ) = None
         self.inference_client = self._make_inference_client()
         self.pause_selfplay_active = False
-        self.manifest_state = "active"
+        self.manifest_state = _MANIFEST_STATE_ACTIVE
         self.manifest_state_elapsed_s: float | None = None
         self.upload_buf = _BufferedUpload()
         self.last_successful_send_s = time.time()
@@ -1025,7 +1049,7 @@ class WorkerSession:
         r_lease = self._requests.post(
             self._server_url_for("/v1/lease_trial"),
             json=body,
-            auth=(str(self.args.username), str(self.args.password)),
+            auth=self._auth,
             headers=_worker_headers(),
             timeout=30.0,
         )
@@ -1043,6 +1067,7 @@ class WorkerSession:
 
     def _upload_pending_arena_results(self) -> None:
         """Drain arena_pending_dir to the server; quarantine bad files."""
+        upload_url = self._server_url_for(self.trial_api_prefix + "/upload_arena_result")
         for jp in sorted(self.arena_pending_dir.glob("*.json")):
             try:
                 payload = json.loads(jp.read_text(encoding="utf-8"))
@@ -1051,20 +1076,17 @@ class WorkerSession:
                 jp.replace(self.arena_uploaded_dir / jp.name)
                 continue
             r = self._requests.post(
-                self._server_url_for(self.trial_api_prefix + "/upload_arena_result"),
-                json=payload,
-                auth=(str(self.args.username), str(self.args.password)),
-                headers=_worker_headers(),
-                timeout=60.0,
+                upload_url, json=payload, auth=self._auth,
+                headers=_worker_headers(), timeout=60.0,
             )
             if r.status_code == 200:
                 jp.unlink(missing_ok=True)
             else:
                 break
 
-    def _install_worker_wheel(self, ww: dict, fallback_version: str) -> None:
+    def _install_worker_wheel(self, ww: dict, version_source: dict) -> None:
         """Download + verify + pip install + exec-restart. Does not return."""
-        wheel_version = str(ww.get("version") or fallback_version or "0.0.0")
+        wheel_version = str(ww.get("version") or version_source.get("server_version") or "0.0.0")
         sha = str(ww.get("sha256"))
         endpoint = str(ww.get("endpoint"))
         wheel_path = self.cache_dir / f"worker_{sha}.whl"
@@ -1081,27 +1103,29 @@ class WorkerSession:
     def _self_update_enabled(self) -> bool:
         return bool(self.args.self_update) and os.environ.get("CAE_SELF_UPDATED") != "1"
 
-    def _handle_upgrade_required(self, r: Any) -> None:
+    def _handle_upgrade_required(self, r: requests.Response) -> None:
         """Server returned 426. Try self-update (no return) or raise SystemExit."""
         if self._self_update_enabled():
             r2 = self._requests.get(self._server_url_for(self.trial_api_prefix + "/update_info"), timeout=30.0)
             if r2.status_code != 200:
                 raise SystemExit(f"Upgrade required but could not fetch update info for self-update: {r2.text}")
             update_info = r2.json()
-            ww = update_info.get("worker_wheel")
-            if isinstance(ww, dict) and ww.get("endpoint") and ww.get("sha256"):
-                self._install_worker_wheel(ww, str(update_info.get("server_version") or ""))
+            ww = _extract_worker_wheel(update_info)
+            if ww is not None:
+                self._install_worker_wheel(ww, update_info)
         try:
             detail = r.json().get("detail")
         except Exception:
             detail = None
         raise SystemExit(f"Worker is not compatible with server: {detail or r.text}")
 
-    def _check_manifest_compat(self, manifest: dict) -> tuple[bool, bool]:
-        """Read protocol/min_version/encoding from manifest; raise on encoding mismatch.
+    def _check_manifest_compat(self, manifest: dict) -> _ManifestCompat:
+        """Validate manifest; raise SystemExit on encoding mismatch.
 
-        Returns (protocol_mismatch, version_too_old) so callers can attempt
-        self-update before deciding whether to SystemExit.
+        Returns the compat struct (mismatches + raw values) so the caller
+        can attempt self-update before deciding whether to SystemExit on
+        protocol/version. Encoding mismatches are unrecoverable so they
+        raise here.
         """
         req_proto = manifest.get("protocol_version")
         protocol_mismatch = False
@@ -1111,54 +1135,54 @@ class WorkerSession:
             except Exception:
                 raise SystemExit(f"Bad protocol_version in manifest: {req_proto!r}")
         min_v = manifest.get("min_worker_version")
-        version_too_old = bool(min_v is not None and version_lt(str(PACKAGE_VERSION), str(min_v)))
+        version_too_old = bool(min_v is not None and version_lt(PACKAGE_VERSION, str(min_v)))
         enc = manifest.get("encoding") or {}
         if "policy_size" in enc and int(enc.get("policy_size") or 0) != int(POLICY_SIZE):
             raise SystemExit(f"policy_size mismatch: worker={POLICY_SIZE} server={enc.get('policy_size')}")
         if "input_planes" in enc and int(enc.get("input_planes") or 0) != 146:
             raise SystemExit(f"input_planes mismatch: worker expects 146, server={enc.get('input_planes')}")
-        return protocol_mismatch, version_too_old
+        return _ManifestCompat(
+            protocol_mismatch=protocol_mismatch, version_too_old=version_too_old,
+            req_proto=req_proto, min_worker_version=min_v,
+        )
 
-    def _maybe_self_update_from_manifest(
-        self, manifest: dict, *, protocol_mismatch: bool, version_too_old: bool,
-    ) -> None:
+    def _maybe_self_update_from_manifest(self, manifest: dict, compat: _ManifestCompat) -> None:
         """If manifest carries a worker_wheel and we're behind, install it (no return)."""
         if not self._self_update_enabled():
             return
-        ww = manifest.get("worker_wheel")
-        if not (isinstance(ww, dict) and ww.get("endpoint") and ww.get("sha256")):
+        ww = _extract_worker_wheel(manifest)
+        if ww is None:
             return
         wheel_version = str(ww.get("version") or manifest.get("server_version") or "0.0.0")
-        if protocol_mismatch or version_too_old or version_lt(str(PACKAGE_VERSION), wheel_version):
-            self._install_worker_wheel(ww, str(manifest.get("server_version") or ""))
+        if compat.protocol_mismatch or compat.version_too_old or version_lt(PACKAGE_VERSION, wheel_version):
+            self._install_worker_wheel(ww, manifest)
 
     def _check_pause_selfplay(self, manifest: dict) -> bool:
         """Return True (and sleep) when server has paused selfplay."""
         reco = manifest.get("recommended_worker") or {}
         backpressure = manifest.get("backpressure") or {}
         task = manifest.get("task") or {"type": "selfplay"}
-        task_type = str(task.get("type", "selfplay")).lower()
         pause_selfplay = False
         pause_reason = ""
-        if task_type == "selfplay":
+        if str(task.get("type", "selfplay")).lower() == "selfplay":
             pause_selfplay = bool(reco.get("pause_selfplay", False))
             pause_reason = str(reco.get("pause_reason") or "")
             if (not pause_selfplay) and isinstance(backpressure, dict):
                 pause_selfplay = bool(backpressure.get("pause_selfplay", False))
                 pause_reason = str(backpressure.get("pause_reason") or pause_reason)
-        if pause_selfplay:
-            if not self.pause_selfplay_active:
-                self.log.info("selfplay paused by server%s", f": {pause_reason}" if pause_reason else "")
-                self.pause_selfplay_active = True
-            sleep_s = max(0.1, float(self.args.poll_seconds))
-            time.sleep(sleep_s)
-            self.manifest_state = "paused_selfplay"
-            self.manifest_state_elapsed_s = sleep_s
-            return True
-        if self.pause_selfplay_active:
-            self.log.info("selfplay pause cleared by server")
-            self.pause_selfplay_active = False
-        return False
+        if not pause_selfplay:
+            if self.pause_selfplay_active:
+                self.log.info("selfplay pause cleared by server")
+                self.pause_selfplay_active = False
+            return False
+        if not self.pause_selfplay_active:
+            self.log.info("selfplay paused by server%s", f": {pause_reason}" if pause_reason else "")
+            self.pause_selfplay_active = True
+        sleep_s = max(0.1, float(self.args.poll_seconds))
+        time.sleep(sleep_s)
+        self.manifest_state = _MANIFEST_STATE_PAUSED
+        self.manifest_state_elapsed_s = sleep_s
+        return True
 
     def _poll_manifest(self) -> dict | None:
         """Lease negotiation + manifest fetch + version checks + self-update.
@@ -1171,7 +1195,6 @@ class WorkerSession:
         if not self.fixed_trial_id and not self._negotiate_lease():
             return None
 
-  # Upload any pending shards first (skip in-progress temp files).
         self._upload_pending_shards(default_elapsed_s=float(self.cfg.get("_last_batch_elapsed_s", 0.0) or 0.0))
         self._upload_pending_arena_results()
 
@@ -1185,7 +1208,7 @@ class WorkerSession:
                 elapsed_s=self.manifest_state_elapsed_s,
             ),
         )
-        self.manifest_state = "active"
+        self.manifest_state = _MANIFEST_STATE_ACTIVE
         self.manifest_state_elapsed_s = None
         if r.status_code == 426:
             self._handle_upgrade_required(r)
@@ -1194,15 +1217,13 @@ class WorkerSession:
             return None
 
         manifest = r.json()
-        protocol_mismatch, version_too_old = self._check_manifest_compat(manifest)
-        self._maybe_self_update_from_manifest(
-            manifest, protocol_mismatch=protocol_mismatch, version_too_old=version_too_old,
-        )
-  # Enforce after any self-update opportunity.
-        if protocol_mismatch:
-            raise SystemExit(f"Protocol mismatch: worker={PROTOCOL_VERSION} server_required={manifest.get('protocol_version')}")
-        if version_too_old:
-            raise SystemExit(f"Worker too old: worker={PACKAGE_VERSION} min_required={manifest.get('min_worker_version')}")
+        compat = self._check_manifest_compat(manifest)
+        self._maybe_self_update_from_manifest(manifest, compat)
+  # Self-update may not have returned; if we're still here and behind, exit.
+        if compat.protocol_mismatch:
+            raise SystemExit(f"Protocol mismatch: worker={PROTOCOL_VERSION} server_required={compat.req_proto}")
+        if compat.version_too_old:
+            raise SystemExit(f"Worker too old: worker={PACKAGE_VERSION} min_required={compat.min_worker_version}")
 
         if self._check_pause_selfplay(manifest):
             return None
