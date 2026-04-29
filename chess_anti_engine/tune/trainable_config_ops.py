@@ -59,24 +59,32 @@ def _resolve_sims(tc: TrialConfig, trainer, *, max_sims: int) -> int:
 def _resolve_pause_marker_paths(*, tc: TrialConfig, trial_dir: Path) -> list[Path]:
     """All paths the trial considers a "pause" marker; ANY existing one pauses.
 
-    Returning multiple candidates is defensive: an earlier graceful_restart
-    failed silently when only the tune-dir marker was checked and the actor's
-    view of that path drifted from where the script wrote it. Now the trial
-    checks both the trial dir itself (which definitely matches what
-    ``_ctx.get_trial_dir()`` reports — verified via status.csv landing in the
-    same dir) and the tune dir (where graceful_restart historically writes).
-    Custom ``tc.pause_file`` overrides come first.
+    The trial sees TWO different "tune dirs": the ephemeral Ray session
+    artifacts dir under ``/tmp/ray/session_*/artifacts/.../tune/driver_artifacts/``
+    (what ``_ctx.get_trial_dir().parent`` returns), and the persistent
+    ``<work_dir>/tune/`` (where graceful_restart writes). Earlier "fixes"
+    only checked the ephemeral path, so pause.txt at the persistent path was
+    silently invisible. Now we check both, plus a custom ``tc.pause_file``.
     """
-    tune_root = trial_dir.parent
+    tune_root_ephemeral = trial_dir.parent
     candidates: list[Path] = []
     raw = tc.pause_file
     if raw and raw.strip():
         p = Path(raw.strip())
         if not p.is_absolute():
-            p = tune_root / p
+            p = tune_root_ephemeral / p
         candidates.append(p)
     candidates.append(trial_dir / "pause.txt")
-    candidates.append(tune_root / "pause.txt")
+    candidates.append(tune_root_ephemeral / "pause.txt")
+    if tc.work_dir:
+        # work_dir is relative in YAML (e.g. "runs/pbt2_small"); inside the Ray
+        # actor cwd is /tmp/ray/.../working_dirs/..., NOT the repo root, so a
+        # bare Path(work_dir) resolves to nowhere. Anchor against the yaml
+        # config's grandparent dir (yaml lives in <repo>/configs/X.yaml).
+        wd = Path(tc.work_dir)
+        if not wd.is_absolute() and tc._yaml_config_path:
+            wd = Path(tc._yaml_config_path).resolve().parent.parent / wd
+        candidates.append(wd / "tune" / "pause.txt")
     # Dedupe while preserving order (a custom pause_file may equal one of the defaults).
     seen: set[Path] = set()
     unique: list[Path] = []
