@@ -58,15 +58,15 @@ stockfish:
   # Keep SF at full strength for labels and sample from MultiPV for easier played moves.
 
   sf_pid_enabled: true
-  sf_pid_target_winrate: 0.57
-  sf_pid_ema_alpha: 0.10      # 2026-04-23: 0.50→0.10 per backtest on 168-iter trial history. With deadband_sigma=1.5, α=0.10 hits 0 FP / 0 FN (vs 11 FP at α=0.50 σ=1.0). Smaller α shrinks EMA's own SE so slow 0.35σ drifts register without chasing per-iter noise.
+  sf_pid_target_winrate: 0.58
+  sf_pid_ema_alpha: 0.20      # 2026-04-28: 0.10→0.20 (transient). Plant is non-stationary while model is recalibrating from corrupted training; α=0.10 (tuned for stable plant) lags model-strength shifts. Doubling α halves the EMA's effective half-life from ~6.6 iters to ~3.1 iters so the controller tracks current model strength faster. Live-reloadable — revert toward 0.10 once wdl_loss stabilizes and the plant is stationary again.
   sf_pid_min_games_between_adjust: 200  # Higher than games_per_iter so only the forced iteration-boundary adjust fires.
-  sf_pid_min_nodes: 1            # 2026-04-26: 5000→1. Stage-2 airbag at min_nodes had no escape (regret frozen, nodes clamped). Permitting nodes→1 means SF becomes near-random during recovery; controller naturally ramps back as winrate rebounds. Construction-only knob — restart required.
+  sf_pid_min_nodes: 50000        # 2026-04-28: 1→50000. Going back to high-nodes regret-controlled training (stage 1). 50k nodes gives clean WDL labels + sharp sf_policy targets even when SF play is regret-handicapped. Difficulty knob is regret, not nodes. Construction-only knob — restart required.
   sf_pid_max_nodes: 1000000      # 2026-04-23: raise ceiling to 1M. Compute cap, not control. Construction-only knob — restart required.
   sf_pid_wdl_regret_start: 0.20       # Construction-only; only matters on fresh PID restart.
-  sf_pid_wdl_regret_min: 0.01         # Live-reloaded. Stage 2 entry threshold is wdl_regret_stage_end below.
-  sf_pid_wdl_regret_max: 0.40         # 2026-04-22 v9: 0.15→0.40. PID hit 0.15 ceiling with EMA 0.46; needs room to climb much higher to avoid TB-adj range.
-  sf_pid_wdl_regret_stage_end: 0.01   # Stage gate. When regret hits this, regret-lever freezes one-way and nodes-lever takes over.
+  sf_pid_wdl_regret_min: 0.01         # Live-reloaded. Stage 1 regret-lever can drop all the way to 0.01 (full SF strength); stage 2 only takes over after regret hits stage_end below.
+  sf_pid_wdl_regret_max: 0.50         # 2026-04-28: 0.40→0.50. Donor (iter175_autosave_test) trained against SF@5k nodes; now SF@50k is ~10× stronger. After airbag, regret was racing toward 0.40 ceiling with raw_wr still ~0.40 — give the lever extra headroom in case 0.40 isn't enough handicap. Live-reloadable.
+  sf_pid_wdl_regret_stage_end: 0.01   # 2026-04-28: -1 → 0.01 (re-enabled). Disabled-gate path turned out to silently activate the nodes lever (stage_complete=True set unconditionally → nodes lever ran every iter), ratcheting nodes from 50k → 79k while regret was also tightening — dual-knob "make harder" without telling us. pid.py:501 now requires gate_enabled too, so re-enabling the gate gives the original "regret descends in stage 1, nodes takes over after floor" semantic. Wedge bug fix at pid.py:486 (regret unfreezes when nodes <= min_nodes) prevents the original day-1 wedge.
 
   # Regret + nodes inverse-fit levers: each fits observed (lever, winrate)
   # history via weighted least squares and steps toward the value that
@@ -75,11 +75,11 @@ stockfish:
   # has settled at stage_end. Both stages share the same step / dual z-gate /
   # raw-vs-fit-disagreement code (chess_anti_engine/stockfish/pid.py:_step_lever).
   sf_pid_regret_window: 20            # rolling history length (construction-only)
-  sf_pid_regret_max_step: 0.02             # 2026-04-24: 0.10→0.02 to cap emergency-ease step after 6 limit-cycle overshoots (raw_wr airbag firing 3×). max_step_frac still governs normal tightening; this only tightens the ease branch.
-  sf_pid_regret_max_step_frac: 0.12        # 2026-04-23: 0.10→0.12 conservative bump. Backtest: 44% of regret moves hit the 10% cap, p75=15% wanted larger. Small bump to loosen chronic under-reaction without repeating v14 (0.05 was too slow).
+  sf_pid_regret_max_step: 0.10             # 2026-04-28: 0.02→0.10. Was clamping emergency-ease to 0.02 even when emergency_ease_step was higher (airbag uses min(ease_step, max_step)). Raised to 0.10 so a real airbag actually rescues the model in 1-2 fires instead of 10+. Live-reloadable.
+  sf_pid_regret_max_step_frac: 0.05        # 2026-04-28: 0.10→0.05. Halved to slow how fast SF strengthens. Iters 8→27 saw regret descend 0.43→0.26 over 19 iters (model strengthening), then a value-head regression pulse iter 28-30 (test_wdl 0.80→0.86). Slowing tightening gives the value head more iters at each regret level to fit the local distribution before the next step. Asymmetric vs airbag (0.05 absolute) — at regret=0.30, fit ease/tighten caps at 0.015 while airbag rescues at 0.050, so ease is 3× faster than tighten (matches what we want: slow strengthening, fast rescue). Live-reloadable.
   sf_pid_regret_safety_floor: 0.50         # below this raw winrate → emergency ease
-  sf_pid_regret_emergency_ease_step: 0.010 # raise regret by this amount when raw_wr < floor (only fires during stage 1 — once stage 2 is entered, regret freezes and the nodes airbag handles wr crashes). 2026-04-25: 0.03→0.015. 2026-04-26: 0.015→0.010 to keep stage-1 ease conservative.
-  sf_pid_regret_recency_half_life: 3.0     # 2026-04-23: 15→3 per walk-forward backtest (hl=3 lowest MAE 0.069, wins 55% overall incl. quiet periods, 94% in drift). Fit still uses full last-20 window; old points just get low weight.
+  sf_pid_regret_emergency_ease_step: 0.05  # 2026-04-28: 0.10→0.05. 0.10 was overshooting equilibrium — single-iter dip 0.27→raw=0.46 (2.3σ below 0.50 floor) airbagged to 0.37, double the actual handicap shortfall. 0.05 still rescues real crashes in 2-3 fires while halving overshoot near equilibrium. max_step kept at 0.10 (caps airbag); airbag effective step is now min(0.05, 0.10)=0.05. Live-reloadable.
+  sf_pid_regret_recency_half_life: 2.0     # 2026-04-28: 3→2. Plant is non-stationary while training is reshaping the model; stale (regret, wr) points from pre-regression iters were anchoring fit at a wrong wr(regret) curve. Reduced so fit forgets old plant-state faster without becoming overly twitchy. Live-reloadable.
   sf_pid_regret_deadband_sigma: 0.5  # 2026-04-25: 1.5→0.5 per replay backtest on 450 iters of trial ba920 with new pid.py (half-step on raw-vs-fit sign disagreement). σ=1.5 had 8 "floor-drop precedents" (controller held in iter t-1 while iter t crashed below safety_floor — the iter 448 failure mode). σ=0.5 eliminates these (0 events at α=0.10) without meaningful swing increase. Half-step fix bounds the FP cost of tighter σ. Live-reloadable.
 
   # Nodes lever (stage 2). Same inverse-fit mechanism as regret but with
@@ -94,8 +94,8 @@ stockfish:
   # point and have not been calibrated against real data. Expect to
   # revisit once the controller has spent meaningful time in stage 2.
   sf_pid_nodes_window: 20                 # construction-only
-  sf_pid_nodes_max_step_frac: 0.10        # ±10%/iter cap on the nodes step (live-reloadable).
-  sf_pid_nodes_deadband_sigma: 0.5        # mirror regret-side σ.
+  sf_pid_nodes_max_step_frac: 0.10        # 2026-04-27: 0.05→0.10 — at 0.05 the normal-step cap (~330 @ 6700 nodes) couldn't drop nodes fast enough when raw_wr sagged, so we kept hitting the 0.50 airbag (8 fires by iter 334). Restoring the original cap; airbag is a worse outcome than oscillation. Live-reloadable.
+  sf_pid_nodes_deadband_sigma: 2.0        # 2026-04-27: 1.5→2.0. Gives raw=±12.4%, ema=±2.8% (at se≈0.062, α=0.10). Just under the ±3% target; matched the user's "maybe 2 is good" call. Holds the lever through normal slow EMA drift, only acts on persistent >2.8% bias from target. Live-reloadable.
   sf_pid_nodes_recency_half_life: 3.0     # mirror regret-side half-life.
   sf_pid_nodes_safety_floor: 0.50         # raw_wr < floor → airbag drops nodes by emergency_ease_step.
   sf_pid_nodes_emergency_ease_step: 1000  # absolute nodes drop on airbag fire.
@@ -105,9 +105,9 @@ stockfish:
   # surprise. Airbag step is bounded by emergency_ease_step alone.
 
 selfplay:
-  games_per_iter: 800
-  games_per_iter_start: 32  # One round of 8 workers × 4 games; fast sanity check.
-  games_per_iter_ramp_iters: 5
+  games_per_iter: 500   # 2026-04-28: 1000→500 (transient — speed up controller feedback while plant is non-stationary). Halves selfplay time per iter (~340s→~170s), widens per-iter SE to ~0.022 (still tight enough for Wilson airbag check). Revert toward 1000+ once plant stabilizes. Live-reloadable.
+  games_per_iter_start: 500   # match games_per_iter; ramp disabled. Live-reloadable.
+  games_per_iter_ramp_iters: 0
   selfplay_fraction: 0.25  # 2026-04-24: 0.50→0.25 (25% selfplay / 75% SF curriculum). test_policy_loss drifted 2.25→2.55 at iter 272-285; past runs at 75% SF worked better. Revert if regret/winrate stop moving or policy_loss doesn't recover.
   selfplay_batch: 256   # Concurrent game slots per worker (always full via continuous recycling).
   max_plies: 450
@@ -212,7 +212,9 @@ train:
   lr_eta_min: 0.00001
   lr_T0: 999999        # Disable cosine cycling — PBT exploit/explore handles LR variation
   lr_T_mult: 1
-  use_compile: false
+  use_compile: true    # 2026-04-27: re-enabled with max-autotune. The earlier "compile destroys trainer" diagnosis turned out to be a prefix bug, not a compile-backward bug — saving under compile created `_orig_mod.`-prefixed checkpoints, then a later unwrapped load silently dropped all 192 keys (no warning) leaving the trainer fresh-init. Workers running max-autotune have been stable through trial f2f58 (raw_wr 0.81/0.59/0.57 across iters 1-3). Both bugs in the chain are now fixed: Trainer.save() strips the prefix, and load_state_dict_tolerant raises on <50% load.
+  compile_mode: max-autotune
+  log_level: DEBUG   # Enables per-search "gumbel profile (...avg=B)" line in mcts/gumbel_c.py so we can read selfplay batch sizes. Override via env CHESS_LOG_LEVEL.
   swa_start: -1  # Disabled: SWA averaging hurts early training. Enable after model stabilizes.
   swa_freq: 50
 
@@ -239,15 +241,17 @@ tune:
   gpus_per_trial: 1.0
   distributed_workers_per_trial: 2  # 2 compiled workers × 1 thread; proven ~170s/iter
   distributed_worker_sf_workers: 8  # 8 SF per worker = 16 total
-  distributed_worker_min_games_per_batch: 128  # GPU needs large batches for utilization
+  distributed_worker_min_games_per_batch: 200  # Bigger forwards: better GPU util + lower per-gumbel overhead
   distributed_worker_max_games_per_batch: 512
   distributed_worker_username: josh
   distributed_worker_password: chess_worker_2026
-  distributed_worker_use_compile: true
+  distributed_worker_use_compile: true   # Worker compile (max-autotune) has been stable for many iters of training. Was briefly disabled 2026-04-27 to test whether compile was producing wrong outputs after a bad salvage; it wasn't — actual root cause was a corrupted pid_state.json in the iter 403 pool I'd manually built (had iter 408-era values rather than iter 403's).
   distributed_worker_compile_mode: max-autotune
   distributed_worker_inference_fp8: false  # FP8 quantized inference (RTX 5090 native)
-  distributed_worker_threaded: false  # Compiled 2w×1t: proven ~170s/iter, AOT threading slower in prod
-  distributed_worker_selfplay_threads: 1
+  distributed_worker_threaded: true   # 2026-04-29: enable threaded selfplay so the new dispatcher actually engages. Bench at N=16 producers showed 36k leaves/s vs ~7k for the prior path (5x). Old comment "AOT threading slower in prod" referred to the AOT-compiled threading path; this is the compiled+dispatcher path which is structurally different.
+  distributed_worker_selfplay_threads: 16
+  distributed_worker_threaded_dispatcher: true   # 2-slot async pipeline (2026-04-29 refactor): +5.9x over ThreadedBatchEvaluator at N=16 producers, parity tests at 1e-5 vs DirectGPUEvaluator. Was false based on 2026-04-28 A/B which used a pre-refactor sync dispatcher AND a bench with main-thread compile that broke cudagraph TLS — both fixed.
+  distributed_worker_dispatcher_batch_wait_ms: 1.0
   # distributed_worker_aot_dir: data/aot_models  # Auto-detected by _worker_inference_args when threaded=true
   distributed_inference_broker_enabled: false
   distributed_inference_shared_broker: true
