@@ -14,12 +14,14 @@ the eval would read a mix of pre- and mid-train weights. The snapshot
 is a freshly-built ``ChessNet`` instance loaded from a CPU copy of the
 post-train state_dict, moved to GPU at thread start.
 
-**Why eager (not compiled).** Compiling the snapshot was tempting (it
-would hit the shared inductor cache) but cudagraph_trees keeps
-thread-local state and asserts when a compiled forward replays on a
-non-main thread (observed crashes 2026-04-29). Eval is once per iter
-on ~200 batches, so the 2-3x compile speedup isn't worth the
-thread-affinity hazard.
+**Why no cudagraph.** Compile is on (inductor codegen is thread-safe
+and the shared cache hits) but cudagraph capture/replay is thread-
+affine — cudagraph_trees keeps thread-local state and asserts in
+get_obj when a compiled forward replays on a non-main thread
+(observed crashes 2026-04-29). The compile mode is translated to its
+no-cudagraph equivalent (e.g. ``max-autotune`` → ``max-autotune-no-
+cudagraphs``) so the eval thread keeps the kernel speedup without
+the TLS hazard.
 """
 from __future__ import annotations
 
@@ -30,6 +32,18 @@ from typing import Any
 import torch
 
 from chess_anti_engine.model import ModelConfig, build_model
+from chess_anti_engine.train.compile_probe import apply_compile
+
+_CUDAGRAPH_MODES = frozenset({"reduce-overhead", "max-autotune"})
+
+
+def _no_cudagraph_mode(mode: str) -> str:
+    """Translate a compile mode to its cudagraph-free equivalent.
+
+    cudagraph capture/replay is thread-affine — the eval thread can't share
+    the trainer thread's cudagraph state. Inductor codegen itself is fine.
+    """
+    return "max-autotune-no-cudagraphs" if mode in _CUDAGRAPH_MODES else mode
 
 log = logging.getLogger(__name__)
 
@@ -81,19 +95,14 @@ class AsyncTestEval:
             for k, v in trainer.model.state_dict().items()
         }
 
+        eval_mode = _no_cudagraph_mode(compile_mode)
+
         def _run() -> None:
             try:
                 snap = build_model(model_cfg).to(device)
                 snap.load_state_dict(snap_state, strict=False)
                 snap.eval()
-  # Skip torch.compile: cudagraph_trees keeps thread-local state and
-  # asserts in get_obj when a compiled forward runs on a non-main
-  # thread (observed iter 26-27 — every async eval crashed with
-  # AssertionError in cudagraph_trees.py). Eval is one shot per iter
-  # on ~200 batches, so the inductor speedup isn't worth the
-  # thread-affinity hazard. Eager forward runs ~2-3x slower than
-  # compiled but completes in ~30-50s, well inside the 120s timeout.
-                _ = compile_mode  # accepted for API parity; intentionally unused
+                snap = apply_compile(snap, mode=eval_mode, device=device)
                 metrics = trainer._compute_metrics(  # noqa: SLF001
                     buf=holdout_buf,
                     batch_size=batch_size,
