@@ -397,113 +397,157 @@ class Engine:
   # search thread probes through on every leaf batch.
         self._wait_for_search()
         name = cmd.name.lower()
-        if name == "hash" and cmd.value is not None:
-            try:
-                self._options.hash_mb = int(cmd.value)
-                self._worker.set_max_tree_mb(self._options.hash_mb)
-            except ValueError:
-                pass
-        elif name == "ponder" and cmd.value is not None:
-            self._options.ponder = cmd.value.strip().lower() == "true"
-        elif name == "threads" and cmd.value is not None:
-            try:
-                n = max(1, int(cmd.value))
-            except ValueError:
-                return
-            self._options.threads = n
-            self._worker.set_num_threads(n)
-            _println(
-                f"info string Threads set to {n} "
-                f"({'walker pool' if n > 1 else 'classic Gumbel path'})"
-            )
-        elif name == "leafgather" and cmd.value is not None:
-            try:
-                n = max(1, int(cmd.value))
-            except ValueError:
-                return
-            self._options.leaf_gather = n
-            self._worker.set_walker_gather(n)
-            _println(f"info string LeafGather set to {n}")
-        elif name == "usevl" and cmd.value is not None:
-            enabled = cmd.value.strip().lower() == "true"
-            self._options.use_vl = enabled
-            self._worker.set_use_pucv(enabled, gather=self._options.vl_gather)
-            _println(
-                f"info string UseVL {'on' if enabled else 'off'} "
-                f"(gather={self._options.vl_gather}; "
-                f"requires Threads=1 + 2-slot async evaluator)"
-            )
-        elif name == "vlgather" and cmd.value is not None:
-            try:
-                n = max(32, int(cmd.value))
-            except ValueError:
-                return
-            self._options.vl_gather = n
-            if self._options.use_vl:
-                self._worker.set_use_pucv(True, gather=n)
-            _println(f"info string VLGather set to {n}")
-        elif name == "multipv" and cmd.value is not None:
-            try:
-                n = max(1, int(cmd.value))
-            except ValueError:
-                return
-            self._options.multi_pv = n
-            self._worker.set_multi_pv(n)
-        elif name == "uci_showwdl" and cmd.value is not None:
-            self._options.show_wdl = cmd.value.strip().lower() == "true"
-            self._worker.set_show_wdl(self._options.show_wdl)
-        elif name == "moveoverheadms" and cmd.value is not None:
-            try:
-                self._options.move_overhead_ms = max(0, int(cmd.value))
-            except ValueError:
-                pass
-        elif name == "syzygy50moverule" and cmd.value is not None:
-            self._options.syzygy_50_move_rule = cmd.value.strip().lower() == "true"
+  # SyzygyPath is special: empty value is meaningful (sentinel for unset),
+  # all others bail when value is None.
+        if name == "syzygypath":
+            self._set_syzygy_path(cmd.value)
+            return
+        if cmd.value is None:
+            return
+        handler = self._SETOPTION_HANDLERS.get(name)
+        if handler is not None:
+            handler(self, cmd.value)
+  # All other options silently accepted — we don't expose any yet.
+
+  # ─── setoption handlers ────────────────────────────────────────────────────
+  # Each takes the raw value string and is responsible for parsing + clamping.
+  # Failures (ValueError from int()) silently keep the prior value, mirroring
+  # the original behavior.
+    def _set_hash(self, value: str) -> None:
+        try:
+            self._options.hash_mb = int(value)
+        except ValueError:
+            return
+        self._worker.set_max_tree_mb(self._options.hash_mb)
+
+    def _set_ponder(self, value: str) -> None:
+        self._options.ponder = value.strip().lower() == "true"
+
+    def _set_threads(self, value: str) -> None:
+        try:
+            n = max(1, int(value))
+        except ValueError:
+            return
+        self._options.threads = n
+        self._worker.set_num_threads(n)
+        _println(
+            f"info string Threads set to {n} "
+            f"({'walker pool' if n > 1 else 'classic Gumbel path'})"
+        )
+
+    def _set_leaf_gather(self, value: str) -> None:
+        try:
+            n = max(1, int(value))
+        except ValueError:
+            return
+        self._options.leaf_gather = n
+        self._worker.set_walker_gather(n)
+        _println(f"info string LeafGather set to {n}")
+
+    def _set_use_vl(self, value: str) -> None:
+        enabled = value.strip().lower() == "true"
+        self._options.use_vl = enabled
+        self._worker.set_use_pucv(enabled, gather=self._options.vl_gather)
+        _println(
+            f"info string UseVL {'on' if enabled else 'off'} "
+            f"(gather={self._options.vl_gather}; "
+            f"requires Threads=1 + 2-slot async evaluator)"
+        )
+
+    def _set_vl_gather(self, value: str) -> None:
+        try:
+            n = max(32, int(value))
+        except ValueError:
+            return
+        self._options.vl_gather = n
+        if self._options.use_vl:
+            self._worker.set_use_pucv(True, gather=n)
+        _println(f"info string VLGather set to {n}")
+
+    def _set_multi_pv(self, value: str) -> None:
+        try:
+            n = max(1, int(value))
+        except ValueError:
+            return
+        self._options.multi_pv = n
+        self._worker.set_multi_pv(n)
+
+    def _set_show_wdl(self, value: str) -> None:
+        self._options.show_wdl = value.strip().lower() == "true"
+        self._worker.set_show_wdl(self._options.show_wdl)
+
+    def _set_move_overhead_ms(self, value: str) -> None:
+        try:
+            self._options.move_overhead_ms = max(0, int(value))
+        except ValueError:
+            return
+
+    def _set_syzygy_50_move_rule(self, value: str) -> None:
+        self._options.syzygy_50_move_rule = value.strip().lower() == "true"
   # Re-install probe so the new semantics take effect for the
   # next search. Cheap — just wraps the same path with different
   # cursed/blessed handling.
-            if self._options.syzygy_path:
-                self._install_tablebase(self._options.syzygy_path)
-        elif name == "logfile" and cmd.value is not None:
-            path = cmd.value.strip()
-            self._options.log_file = path
-            _attach_log_file(path)
-        elif name == "minibatchsize" and cmd.value is not None:
-            try:
-                n = max(0, int(cmd.value))
-            except ValueError:
-                return
-            self._options.minibatch_size = n
-            self._worker.set_minibatch_size(n)
-            _println(
-                f"info string MinibatchSize set to {n} "
-                f"({'default' if n == 0 else f'{n} leaves per GPU flush'})"
-            )
-        elif name == "maxbatch" and cmd.value is not None:
-            try:
-                mb = max(64, int(cmd.value))
-            except ValueError:
-                return
-            if self._rebuild_evaluator is None:
-                _println("info string MaxBatch ignored — no evaluator factory wired")
-                return
-            if mb == self._options.max_batch:
-                return
+        if self._options.syzygy_path:
+            self._install_tablebase(self._options.syzygy_path)
+
+    def _set_log_file(self, value: str) -> None:
+        path = value.strip()
+        self._options.log_file = path
+        _attach_log_file(path)
+
+    def _set_minibatch_size(self, value: str) -> None:
+        try:
+            n = max(0, int(value))
+        except ValueError:
+            return
+        self._options.minibatch_size = n
+        self._worker.set_minibatch_size(n)
+        _println(
+            f"info string MinibatchSize set to {n} "
+            f"({'default' if n == 0 else f'{n} leaves per GPU flush'})"
+        )
+
+    def _set_max_batch(self, value: str) -> None:
+        try:
+            mb = max(64, int(value))
+        except ValueError:
+            return
+        if self._rebuild_evaluator is None:
+            _println("info string MaxBatch ignored — no evaluator factory wired")
+            return
+        if mb == self._options.max_batch:
+            return
   # Rebuild is 5-10s (CUDA graph recapture on first forward).
   # User sees the stall only if they poll isready soon after.
-            _println(f"info string MaxBatch rebuilding evaluator at {mb}…")
-            new_eval = self._rebuild_evaluator(mb)
-            self._options.max_batch = mb
-            self._worker.set_evaluator(new_eval)
-            _println(f"info string MaxBatch set to {mb}; evaluator rebuilt + warmed")
-        elif name == "syzygypath":
-            value = (cmd.value or "").strip()
+        _println(f"info string MaxBatch rebuilding evaluator at {mb}…")
+        new_eval = self._rebuild_evaluator(mb)
+        self._options.max_batch = mb
+        self._worker.set_evaluator(new_eval)
+        _println(f"info string MaxBatch set to {mb}; evaluator rebuilt + warmed")
+
+    def _set_syzygy_path(self, value: str | None) -> None:
+        v = (value or "").strip()
   # Conventional UCI sentinel for "unset".
-            if value.lower() in ("", "<empty>"):
-                value = ""
-            self._options.syzygy_path = value
-            self._install_tablebase(value)
-  # All other options silently accepted — we don't expose any yet.
+        if v.lower() in ("", "<empty>"):
+            v = ""
+        self._options.syzygy_path = v
+        self._install_tablebase(v)
+
+    _SETOPTION_HANDLERS: dict = {
+        "hash": _set_hash,
+        "ponder": _set_ponder,
+        "threads": _set_threads,
+        "leafgather": _set_leaf_gather,
+        "usevl": _set_use_vl,
+        "vlgather": _set_vl_gather,
+        "multipv": _set_multi_pv,
+        "uci_showwdl": _set_show_wdl,
+        "moveoverheadms": _set_move_overhead_ms,
+        "syzygy50moverule": _set_syzygy_50_move_rule,
+        "logfile": _set_log_file,
+        "minibatchsize": _set_minibatch_size,
+        "maxbatch": _set_max_batch,
+    }
 
     def _install_tablebase(self, path: str) -> None:
         """Validate ``path`` by opening the tablebase once, then install a
