@@ -492,7 +492,7 @@ def _build_distributed_worker_cmd(
         "--log-file",
         str(worker_log),
         "--log-level",
-        "info",
+        str(config.get("log_level", "info")).lower(),
     ]
 
     if config.get("distributed_inference_broker_enabled", False):

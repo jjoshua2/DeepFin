@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
+import os
 import subprocess
 import time
 
@@ -58,6 +60,49 @@ from chess_anti_engine.tune.trainable_report import (
 )
 from chess_anti_engine.tune.trial_config import DifficultyState, TrialConfig
 
+import re as _re
+
+_AVG_BATCH_RE = _re.compile(rb"avg=([0-9.]+)")
+
+
+def _avg_batch_from_worker_logs(distributed_dirs, offsets: dict[str, int]) -> float:
+    """Tail each worker log since last call and return mean of `avg=N` values
+    in any new `gumbel profile (...)` line. Returns 0 if no new samples.
+    Mutates ``offsets`` in place to record post-read positions per file.
+    """
+    workers_root = getattr(distributed_dirs, "distributed_workers_dir", None)
+    if workers_root is None:
+        return 0.0
+    samples: list[float] = []
+    for log_path in Path(workers_root).glob("worker_*/worker.log"):
+        key = str(log_path)
+        try:
+            sz = log_path.stat().st_size
+        except OSError:
+            continue
+        last = int(offsets.get(key, 0))
+        # Truncated/rotated → reset and skip the now-stale tail.
+        if sz < last:
+            offsets[key] = sz
+            continue
+        if sz == last:
+            continue
+        try:
+            with log_path.open("rb") as fh:
+                fh.seek(last)
+                chunk = fh.read(sz - last)
+        except OSError:
+            continue
+        offsets[key] = sz
+        for m in _AVG_BATCH_RE.finditer(chunk):
+            try:
+                samples.append(float(m.group(1)))
+            except ValueError:
+                continue
+    if not samples:
+        return 0.0
+    return sum(samples) / len(samples)
+
 
 def train_trial(config: dict):
     """Ray Tune trainable.
@@ -76,6 +121,15 @@ def train_trial(config: dict):
     if "device" not in config:
         config["device"] = "cuda" if torch.cuda.is_available() else "cpu"
     tc = TrialConfig.from_dict(config)
+
+    # Logging level: yaml `log_level` or env CHESS_LOG_LEVEL (env wins).
+    # DEBUG enables the per-search "gumbel profile (n_boards=N): ... avg=B"
+    # line in mcts/gumbel_c.py and similar batch-size diagnostics elsewhere.
+    _lvl_name = (os.environ.get("CHESS_LOG_LEVEL") or config.get("log_level") or "INFO").upper()
+    _lvl = getattr(logging, _lvl_name, logging.INFO)
+    logging.getLogger("chess_anti_engine").setLevel(_lvl)
+    if _lvl <= logging.DEBUG:
+        logging.getLogger().info("chess_anti_engine logging at DEBUG (gumbel batch-size profiling enabled)")
     _yaml_path = tc._yaml_config_path
 
     _ctx = _tune_get_context()
@@ -329,6 +383,7 @@ def train_trial(config: dict):
     try:
         iterations = tc.iterations
         completed_iterations = 0
+        _worker_log_offsets: dict[str, int] = {}
         while completed_iterations < iterations:
             iteration_zero_based = int(global_iter)
             iteration_idx = iteration_zero_based + 1
@@ -358,6 +413,7 @@ def train_trial(config: dict):
             base_sims = tc.mcts_simulations
             sims = _resolve_sims(tc, trainer, max_sims=base_sims)
 
+            t_selfplay_start = time.monotonic()
             sp, prev_published_model_sha, current_window, distributed_inference_broker_proc = _run_selfplay_phase(
                 tc=tc, config=config, trainer=trainer, model_cfg=model_cfg,
                 buf=buf, holdout_buf=holdout_buf,
@@ -379,6 +435,7 @@ def train_trial(config: dict):
                 current_window=current_window,
                 in_salvage_startup_grace=in_salvage_startup_grace,
             )
+            t_selfplay_secs = time.monotonic() - t_selfplay_start
             distributed_pause_active = False
             distributed_pause_started_at = None
             if sp.should_retry:
@@ -404,6 +461,7 @@ def train_trial(config: dict):
 
             _sync_trainer_weights(trainer, config, tc, ds)
 
+            t_train_start = time.monotonic()
             tr = _run_training_and_gating(
                 tc=tc, trainer=trainer, buf=buf, holdout_buf=holdout_buf,
                 config=config, model_cfg=model_cfg,
@@ -420,7 +478,27 @@ def train_trial(config: dict):
                 trial_id=trial_id,
                 restore=restore,
             )
+            t_train_secs = time.monotonic() - t_train_start
             gate_match_idx = tr.gate_match_idx
+            t_iter_so_far = time.monotonic() - iter_t0
+            t_other_secs = max(0.0, t_iter_so_far - t_selfplay_secs - t_train_secs)
+            logging.getLogger("chess_anti_engine.iter").info(
+                "iter %d phase split: selfplay=%.1fs (%.0f%%) train=%.1fs (%.0f%%) other=%.1fs (%.0f%%) total_so_far=%.1fs",
+                iteration_idx,
+                t_selfplay_secs, 100.0 * t_selfplay_secs / max(t_iter_so_far, 1e-9),
+                t_train_secs, 100.0 * t_train_secs / max(t_iter_so_far, 1e-9),
+                t_other_secs, 100.0 * t_other_secs / max(t_iter_so_far, 1e-9),
+                t_iter_so_far,
+            )
+            try:
+                trainer.writer.add_scalar("iter/selfplay_secs", float(t_selfplay_secs), iteration_idx)
+                trainer.writer.add_scalar("iter/train_secs", float(t_train_secs), iteration_idx)
+                trainer.writer.add_scalar("iter/other_secs", float(t_other_secs), iteration_idx)
+                avg_batch = _avg_batch_from_worker_logs(distributed_dirs, _worker_log_offsets)
+                if avg_batch > 0:
+                    trainer.writer.add_scalar("selfplay/avg_batch_size", float(avg_batch), iteration_idx)
+            except Exception:
+                pass  # TB scalar emission must never break training
 
             eval_dict = _run_eval_games(
                 tc=tc, trainer=trainer, device=device, rng=rng,

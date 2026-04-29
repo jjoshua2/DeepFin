@@ -130,7 +130,7 @@ _TRAIN_KEYS = (
     "w_volatility",
     "accum_steps", "warmup_steps", "warmup_lr_start", "lr_eta_min", "lr_T0", "lr_T_mult",
     "grad_clip", "zclip_z_thresh", "zclip_alpha", "zclip_max_norm",
-    "use_compile", "swa_start", "swa_freq",
+    "use_compile", "compile_mode", "log_level", "swa_start", "swa_freq",
     "w_policy", "w_soft", "w_future", "w_wdl", "w_sf_move", "w_sf_eval",
     "w_categorical", "w_sf_volatility", "w_moves_left",
     "w_sf_wdl", "sf_wdl_conf_power", "sf_wdl_draw_scale", "sf_wdl_floor", "sf_wdl_floor_at_regret",

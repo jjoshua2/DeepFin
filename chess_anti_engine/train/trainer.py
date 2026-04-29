@@ -7,7 +7,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import numpy as np
 import torch
@@ -40,6 +40,7 @@ from chess_anti_engine.replay.augment import (
 from chess_anti_engine.replay.buffer import ReplayBuffer
 from chess_anti_engine.replay.dataset import collate, collate_arrays
 
+from .compile_probe import CompileProbe, apply_compile
 from .cosmos import COSMOS
 from .cosmos_fast import COSMOSFast
 from .losses import (
@@ -202,6 +203,7 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         lr_T0=_f("lr_T0", 5000, int),
         lr_T_mult=_f("lr_T_mult", 2, int),
         use_compile=bool(config.get("use_compile", False)),
+        compile_mode=str(config.get("compile_mode", "reduce-overhead")),
         optimizer=str(config.get("optimizer", "nadamw")),
         cosmos_rank=_f("cosmos_rank", 64, int),
         cosmos_gamma=_f("cosmos_gamma", 0.2),
@@ -251,6 +253,7 @@ class Trainer:
         lr_T0: int = 5000,
         lr_T_mult: int = 2,
         use_compile: bool = False,
+        compile_mode: str = "reduce-overhead",
         optimizer: str = "nadamw",
         cosmos_rank: int = 64,
         cosmos_gamma: float = 0.2,
@@ -412,12 +415,17 @@ class Trainer:
   # Data augmentation: mirror positions left-right (files) with given probability.
         self.mirror_prob = float(mirror_prob)
 
-  # Optional torch.compile for training throughput.
-        if use_compile and device.startswith("cuda"):
-            try:
-                self.model = cast("torch.nn.Module", torch.compile(self.model, mode="reduce-overhead"))
-            except Exception:
-                pass  # torch.compile may not be available on all platforms
+  # Optional torch.compile for training throughput. Failures and recompile
+  # thrash are surfaced via apply_compile + CompileProbe instead of being
+  # swallowed silently.
+        self.model = apply_compile(
+            self.model,
+            mode=(compile_mode if use_compile else "off"),
+            device=device,
+        )
+        self._compile_probe = CompileProbe()
+        self._compile_probe.snapshot_baseline()
+        self._compile_probe_steps_remaining = 10  # report after first 10 steps
 
   # Gradient accumulation
         self.accum_steps = max(1, int(accum_steps))
@@ -886,6 +894,15 @@ class Trainer:
             train_samples_seen=int(train_samples_seen),
         )
         self._log_metrics(metrics, "train_avg")
+
+  # Compile probe: report once after the first batch of train steps that
+  # reach the configured threshold. This catches: (a) compile not engaged,
+  # (b) graphs failing to capture, (c) per-step recompile thrash.
+        if self._compile_probe_steps_remaining > 0 and train_steps_done > 0:
+            self._compile_probe_steps_remaining -= train_steps_done
+            if self._compile_probe_steps_remaining <= 0:
+                self._compile_probe.report(step_count=10)
+
   # Log throughput stats that aren't in TrainMetrics
         self.writer.add_scalar("train_avg/steps_per_s", float(train_steps_done / max(train_time_s, 1e-9)), self.step)
         self.writer.add_scalar("train_avg/samples_per_s", float(train_samples_seen / max(train_time_s, 1e-9)), self.step)
@@ -899,8 +916,17 @@ class Trainer:
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
+        # Strip torch.compile's `_orig_mod.` prefix before saving so the
+        # checkpoint is wrap-agnostic. Without this, a save under
+        # `use_compile=true` produces keys like `_orig_mod.embed.weight`,
+        # which a later load into an unwrapped trainer will silently drop
+        # (every key looks "unexpected"), leaving the trainer fresh-init.
+        # That's the failure mode that destroyed the model on 2026-04-27.
+        def _strip_compile_prefix(sd: dict) -> dict:
+            return {k.removeprefix("_orig_mod."): v for k, v in sd.items()}
+
         state: dict[str, Any] = {
-            "model": self.model.state_dict(),
+            "model": _strip_compile_prefix(self.model.state_dict()),
             "opt": self.opt.state_dict(),
             "scheduler": self._scheduler.state_dict(),
             "step": self.step,
@@ -912,7 +938,7 @@ class Trainer:
                 **dataclasses.asdict(self._model_config),
             }
         if self._swa_model is not None:
-            state["swa_model"] = self._swa_model.state_dict()
+            state["swa_model"] = _strip_compile_prefix(self._swa_model.state_dict())
   # Atomic write so workers polling for new checkpoints never see a partial
   # file (matches the export_swa path; previously diverged).
         atomic_write(path, lambda tmp: torch.save(state, str(tmp)))
