@@ -173,6 +173,17 @@ def load_state_dict_tolerant(
         print(f"[{label}] Migrated {len(migrated_keys)} separate q/k/v keys -> fused qkv_proj")
     ckpt_state = {**ckpt_state, **extra}
 
+    # Normalize torch.compile's `_orig_mod.` prefix in BOTH directions so a
+    # save under one wrap-state can load into either. Without this, the same
+    # checkpoint is unloadable as soon as the trainer's `use_compile` flag
+    # flips, which is exactly how the model destruction happened today.
+    ckpt_has_prefix = any(k.startswith("_orig_mod.") for k in ckpt_state)
+    model_has_prefix = any(k.startswith("_orig_mod.") for k in model.state_dict())
+    if ckpt_has_prefix and not model_has_prefix:
+        ckpt_state = {k.removeprefix("_orig_mod."): v for k, v in ckpt_state.items()}
+    elif model_has_prefix and not ckpt_has_prefix:
+        ckpt_state = {f"_orig_mod.{k}": v for k, v in ckpt_state.items()}
+
     model_state = model.state_dict()
     filtered = {}
     skipped: list[str] = []
@@ -183,6 +194,22 @@ def load_state_dict_tolerant(
         filtered[k] = v
 
     missing, unexpected = model.load_state_dict(filtered, strict=False)
+
+    # Catastrophic-load detector: if essentially nothing loaded, bail loudly.
+    # Trainer would otherwise silently fall back to fresh-init weights and
+    # then publish them to selfplay workers, destroying the model. Threshold
+    # is generous (50%): partial loads with arch drift are still allowed,
+    # but "0/192 keys loaded" gets caught.
+    n_expected = len(model_state)
+    n_loaded = n_expected - len(missing)
+    if n_expected > 0 and n_loaded < max(1, n_expected // 2):
+        raise RuntimeError(
+            f"[{label}] Catastrophic state-dict load: only {n_loaded}/{n_expected} "
+            f"parameters loaded from checkpoint. This usually indicates a key-prefix "
+            f"mismatch (e.g. saving under torch.compile then loading without it). "
+            f"Refusing to continue with a fresh-initialized model. "
+            f"Sample missing keys: {missing[:5]}, sample unexpected: {unexpected[:5]}"
+        )
     if skipped or missing or unexpected:
         print(f"[{label}] Tolerant load — shape_skipped={skipped}, "
               f"missing={missing}, unexpected={unexpected}")
