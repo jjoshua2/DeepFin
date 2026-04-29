@@ -846,6 +846,111 @@ class WorkerSession:
         v = getattr(self.args, key, None)
         return cast(v) if v is not None else cast(reco.get(key, default))
 
+    def _reco_changed(self, manifest: dict, *, source_tag: str) -> bool:
+        """Return True (and request session restart) if reco knobs differ from active."""
+        new_reco = manifest.get("recommended_worker") or {}
+        active = getattr(self, "_active_reco", None)
+        if active is None:
+            return False
+        new_snap = {k: new_reco.get(k) for k in self._RECO_RESTART_KEYS}
+        if new_snap == active:
+            return False
+        self.log.info("recommended_worker changed (%s), restarting selfplay session", source_tag)
+        self._stop_selfplay = True
+        return True
+
+    def _periodic_manifest_poll(self) -> None:
+        """Tier 0: every 30s, re-poll for task/pause/trial-reassign/reco changes."""
+        try:
+            old_tid = self.leased_trial_id
+            manifest = self._poll_manifest()
+            if manifest is None:
+  # _poll_manifest returns None on pause or transient failure.
+  # If paused, stop continuous selfplay so the outer loop can
+  # re-poll properly.  Transient failures are retried next cycle.
+                if self.pause_selfplay_active:
+                    self._stop_selfplay = True
+                return
+            task_type = str((manifest.get("task") or {}).get("type", "selfplay")).lower()
+            if task_type != "selfplay":
+                self._stop_selfplay = True
+                return
+  # Trial reassignment: stop selfplay so the outer loop can re-lease.
+            if self.leased_trial_id != old_tid:
+                self._stop_selfplay = True
+                return
+            if self._reco_changed(manifest, source_tag="poll"):
+                return
+            self._sync_assets(manifest)
+        except Exception:
+            pass
+
+    def _resolve_local_manifest_path(self) -> Path | None:
+        """Lazily compute the on-disk manifest path; cached on self."""
+        manifest_path = getattr(self, "_manifest_path", None)
+        if manifest_path is not None:
+            return manifest_path
+        try:
+  # work_dir is .../trials/{trial_id}/workers/worker_XX
+            trials_dir = Path(self.args.work_dir).parent.parent.parent
+            tid = self.leased_trial_id or self.fixed_trial_id or ""
+            if not tid:
+                return None
+            manifest_path = trials_dir / tid / "publish" / "manifest.json"
+            if not manifest_path.parent.exists():
+                return None  # Not a local worker — between-batch poll handles it
+            self._manifest_path = manifest_path
+            self._manifest_mtime = None
+            return manifest_path
+        except Exception:
+            return None
+
+    def _swap_model_from_manifest(self, manifest: dict) -> None:
+        """Tier 2 inner: download new SHA if changed, hot-swap model, flush old shards."""
+        new_sha = str(manifest.get("model", {}).get("sha256", ""))
+        if not new_sha or new_sha == self.model_sha:
+            return
+        model_info = manifest.get("model") or {}
+        model_path = self.cache_dir / f"model_{new_sha}.pt"
+        if (not model_path.exists()) or (_sha256_file(model_path) != new_sha):
+            _download_and_verify_shared(
+                self._server_url_for(str(model_info.get("endpoint") or (self.trial_api_prefix + "/model"))),
+                out_path=model_path,
+                expected_sha256=new_sha,
+                headers=_worker_headers(),
+            )
+        mc = manifest.get("model_config") or self.model_cfg_active
+        _cfg = mc if isinstance(mc, ModelConfig) else self.model_cfg_active
+        if _cfg is None:
+            raise RuntimeError("no model_config available for worker-model load")
+        self.model = self._load_and_compile_model(
+            model_path, _cfg,
+            label="worker-model", sha_short=str(new_sha)[:8],
+        )
+        if self._direct_evaluator is not None:
+            _sync_evaluator_to_model(self._direct_evaluator, self.model)
+            self._evaluator_model_id = id(self.model)
+  # Flush upload buffer tagged with old SHA (lock protects against
+  # concurrent _on_completed_game calls in threaded selfplay)
+        _buf_lock = self._upload_buf_lock
+        now = time.time()
+        if _buf_lock is not None:
+            _buf_lock.acquire()  # pylint: disable=consider-using-with  # try/finally below releases across the whole flush block
+        try:
+            if self.upload_buf.positions > 0:
+                _flush_upload_buffer_to_pending(
+                    pending_dir=self.pending_dir, username=str(self.args.username),
+                    buf=self.upload_buf, now_s=now,
+                )
+                self._upload_pending_shards(default_elapsed_s=0.0)
+            self.model_sha = new_sha
+            self.model_step = int(manifest.get("trainer_step") or 0)
+            self.last_model_sha = new_sha
+        finally:
+            if _buf_lock is not None:
+                _buf_lock.release()
+        self.log.info("mid-batch model switch sha=%s", str(new_sha)[:8])
+
     def _check_model_update(self) -> None:
         """Check for new model between moves (called every ply by play_batch).
 
@@ -854,64 +959,16 @@ class WorkerSession:
         2. Every call: stat() the local manifest file mtime (~1µs)
         3. Only if mtime changed: read manifest, download model, swap
         """
-  # Tier 0: periodic manifest poll for task changes / pause
         _now = time.time()
         if _now - self._last_manifest_poll_s > 30.0:
             self._last_manifest_poll_s = _now
-            try:
-                _old_tid = self.leased_trial_id
-                manifest = self._poll_manifest()
-                if manifest is None:
-  # _poll_manifest returns None on pause or transient failure.
-  # If paused, stop continuous selfplay so the outer loop can
-  # re-poll properly.  Transient failures are retried next cycle.
-                    if self.pause_selfplay_active:
-                        self._stop_selfplay = True
-                    return
-                task = manifest.get("task") or {"type": "selfplay"}
-                task_type = str(task.get("type", "selfplay")).lower()
-                if task_type != "selfplay":
-                    self._stop_selfplay = True
-                    return
-  # Trial reassignment: stop selfplay so the outer loop can
-  # re-lease and start a clean session with the new trial context.
-                if self.leased_trial_id != _old_tid:
-                    self._stop_selfplay = True
-                    return
-  # Difficulty knob changes: if the trainer updated sf_nodes,
-  # random_move_prob, etc. we need to restart the session so
-  # _run_selfplay rebuilds the frozen config dataclasses.
-                _new_reco = manifest.get("recommended_worker") or {}
-                _active = getattr(self, "_active_reco", None)
-                if _active is not None:
-                    _new_snap = {k: _new_reco.get(k) for k in self._RECO_RESTART_KEYS}
-                    if _new_snap != _active:
-                        self.log.info(
-                            "recommended_worker changed, restarting selfplay session"
-                        )
-                        self._stop_selfplay = True
-                        return
-                self._sync_assets(manifest)
-            except Exception:
-                pass
-
-  # Tier 1: cheap mtime check on local manifest file
-        manifest_path = getattr(self, "_manifest_path", None)
-        if manifest_path is None:
-            try:
-  # work_dir is .../trials/{trial_id}/workers/worker_XX
-                trials_dir = Path(self.args.work_dir).parent.parent.parent
-                tid = self.leased_trial_id or self.fixed_trial_id or ""
-                if not tid:
-                    return
-                manifest_path = trials_dir / tid / "publish" / "manifest.json"
-                if not manifest_path.parent.exists():
-                    return  # Not a local worker — fall back to between-batch polling
-                self._manifest_path = manifest_path
-                self._manifest_mtime = None
-            except Exception:
+            self._periodic_manifest_poll()
+            if self._stop_selfplay:
                 return
 
+        manifest_path = self._resolve_local_manifest_path()
+        if manifest_path is None:
+            return
         try:
             mtime = manifest_path.stat().st_mtime
         except OSError:
@@ -923,60 +980,9 @@ class WorkerSession:
   # Tier 2: mtime changed — read and potentially swap model / reco
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-  # Check for reco changes (difficulty knobs updated by trainer).
-            _new_reco = manifest.get("recommended_worker") or {}
-            _active = getattr(self, "_active_reco", None)
-            if _active is not None:
-                _new_snap = {k: _new_reco.get(k) for k in self._RECO_RESTART_KEYS}
-                if _new_snap != _active:
-                    self.log.info(
-                        "recommended_worker changed (mtime), restarting selfplay"
-                    )
-                    self._stop_selfplay = True
-                    return
-            new_sha = str(manifest.get("model", {}).get("sha256", ""))
-            if not new_sha or new_sha == self.model_sha:
+            if self._reco_changed(manifest, source_tag="mtime"):
                 return
-            model_info = manifest.get("model") or {}
-            model_path = self.cache_dir / f"model_{new_sha}.pt"
-            if (not model_path.exists()) or (_sha256_file(model_path) != new_sha):
-                _download_and_verify_shared(
-                    self._server_url_for(str(model_info.get("endpoint") or (self.trial_api_prefix + "/model"))),
-                    out_path=model_path,
-                    expected_sha256=new_sha,
-                    headers=_worker_headers(),
-                )
-            mc = manifest.get("model_config") or self.model_cfg_active
-            _cfg = mc if isinstance(mc, ModelConfig) else self.model_cfg_active
-            if _cfg is None:
-                raise RuntimeError("no model_config available for worker-model load")
-            self.model = self._load_and_compile_model(
-                model_path, _cfg,
-                label="worker-model", sha_short=str(new_sha)[:8],
-            )
-            if self._direct_evaluator is not None:
-                _sync_evaluator_to_model(self._direct_evaluator, self.model)
-                self._evaluator_model_id = id(self.model)
-  # Flush upload buffer tagged with old SHA (lock protects against
-  # concurrent _on_completed_game calls in threaded selfplay)
-            _buf_lock = self._upload_buf_lock
-            now = time.time()
-            if _buf_lock is not None:
-                _buf_lock.acquire()  # pylint: disable=consider-using-with  # try/finally below releases across the whole flush block
-            try:
-                if self.upload_buf.positions > 0:
-                    _flush_upload_buffer_to_pending(
-                        pending_dir=self.pending_dir, username=str(self.args.username),
-                        buf=self.upload_buf, now_s=now,
-                    )
-                    self._upload_pending_shards(default_elapsed_s=0.0)
-                self.model_sha = new_sha
-                self.model_step = int(manifest.get("trainer_step") or 0)
-                self.last_model_sha = new_sha
-            finally:
-                if _buf_lock is not None:
-                    _buf_lock.release()
-            self.log.info("mid-batch model switch sha=%s", str(new_sha)[:8])
+            self._swap_model_from_manifest(manifest)
         except Exception as _exc:
             self.log.debug("mid-batch model check failed: %s", _exc)
 
@@ -1501,6 +1507,129 @@ class WorkerSession:
         "syzygy_adjudicate_fraction", "syzygy_in_search",
     )
 
+    def _build_selfplay_configs(self, reco: dict) -> tuple[tuple, tuple]:
+        """Unpack manifest.recommended_worker into the 5 frozen config dataclasses.
+
+        Returns ``(cfgs, sf_args)`` where ``cfgs`` is the tuple
+        ``(opponent, temp, search, opening, game)`` and ``sf_args`` is
+        ``(sf_nodes, sf_multipv, syzygy_path)`` for the Stockfish bring-up.
+        """
+        opponent_wdl_regret_limit_raw = reco.get("opponent_wdl_regret_limit", None)
+        opponent_wdl_regret_limit = (
+            float(opponent_wdl_regret_limit_raw)
+            if opponent_wdl_regret_limit_raw is not None
+            else None
+        )
+        opponent_cfg = OpponentConfig(wdl_regret_limit=opponent_wdl_regret_limit)
+        temp_cfg = TemperatureConfig(
+            temperature=float(self._resolve_reco(reco, "temperature", 1.0)),
+            decay_start_move=int(self._resolve_reco(reco, "temperature_decay_start_move", 20, int)),
+            decay_moves=int(self._resolve_reco(reco, "temperature_decay_moves", 60, int)),
+            endgame=float(self._resolve_reco(reco, "temperature_endgame", 0.6)),
+        )
+        search_cfg = SearchConfig(
+            simulations=int(self._resolve_reco(reco, "mcts_simulations", 50, int)),
+            mcts_type=str(self._resolve_reco(reco, "mcts", "puct", str)),
+            playout_cap_fraction=float(self._resolve_reco(reco, "playout_cap_fraction", 0.25)),
+            fast_simulations=int(self._resolve_reco(reco, "fast_simulations", 8, int)),
+        )
+        opening_cfg = OpeningConfig(
+            opening_book_path=self.opening_book_path,
+            opening_book_max_plies=int(self._resolve_reco(reco, "opening_book_max_plies", 4, int)),
+            opening_book_max_games=int(self._resolve_reco(reco, "opening_book_max_games", 200000, int)),
+            opening_book_prob=float(self._resolve_reco(reco, "opening_book_prob", 1.0)),
+            opening_book_path_2=self.opening_book_path_2,
+            opening_book_max_plies_2=int(reco.get("opening_book_max_plies_2", 16)),
+            opening_book_max_games_2=int(reco.get("opening_book_max_games_2", 200000)),
+            opening_book_mix_prob_2=float(reco.get("opening_book_mix_prob_2", 0.0)),
+            random_start_plies=int(self._resolve_reco(reco, "random_start_plies", 0, int)),
+        )
+  # Syzygy is fully manifest-driven so the server operator can tune
+  # adjudication behavior live by editing publish/manifest.json. None
+  # for path = disabled; fraction 1.0 = always adjudicate when on.
+        syzygy_path = reco.get("syzygy_path") or None
+        game_cfg = GameConfig(
+            max_plies=int(self._resolve_reco(reco, "max_plies", 240, int)),
+            selfplay_fraction=float(reco.get("selfplay_fraction", 0.0)),
+            sf_policy_temp=float(self._resolve_reco(reco, "sf_policy_temp", 0.25)),
+            sf_policy_label_smooth=float(self._resolve_reco(reco, "sf_policy_label_smooth", 0.05)),
+            timeout_adjudication_threshold=float(reco.get("timeout_adjudication_threshold", 0.90)),
+            syzygy_path=syzygy_path,
+            syzygy_rescore_policy=bool(reco.get("syzygy_rescore_policy", False)),
+            syzygy_adjudicate=bool(reco.get("syzygy_adjudicate", False)),
+            syzygy_adjudicate_fraction=float(reco.get("syzygy_adjudicate_fraction", 1.0)),
+            syzygy_in_search=bool(reco.get("syzygy_in_search", False)),
+        )
+        sf_args = (
+            int(self._resolve_reco(reco, "sf_nodes", 2000, int)),
+            int(self._resolve_reco(reco, "sf_multipv", 5, int)),
+            syzygy_path,
+        )
+        return (opponent_cfg, temp_cfg, search_cfg, opening_cfg, game_cfg), sf_args
+
+    def _reset_inference_client(self, reason: str, exc: BaseException) -> None:
+        """Close + null the broker client and back off; caller `return`s after."""
+        self.log.warning("%s; resetting client: %s", reason, exc)
+        try:
+            assert self.inference_client is not None  # caller verified
+            self.inference_client.close()
+        except Exception:
+            pass
+        self.inference_client = None
+        time.sleep(float(self.args.poll_seconds))
+
+    @staticmethod
+    def _aggregate_thread_stats(all_stats: list) -> Any:
+        """Per-field reduce: sum ints, average floats, take thread-0 for the rest."""
+        from chess_anti_engine.selfplay.manager import BatchStats
+        agg: dict = {}
+        for fld in dataclasses.fields(all_stats[0]):
+            vals = [getattr(st, fld.name) for st in all_stats]
+            if all(isinstance(v, int) for v in vals):
+                agg[fld.name] = sum(vals)
+            elif all(isinstance(v, float) for v in vals):
+                agg[fld.name] = sum(vals) / len(vals)
+            else:
+                agg[fld.name] = vals[0]
+        return BatchStats(**agg)
+
+    def _run_selfplay_threaded(self, *, games_per_batch: int, sf, eval_, cfgs) -> Any:
+        """Multi-threaded selfplay: N threads share one GPU evaluator."""
+        _opponent_cfg, _temp_cfg, _search_cfg, _opening_cfg, _game_cfg = cfgs
+        n_threads = min(int(self.args.selfplay_threads), games_per_batch)
+        base_games, remainder = divmod(games_per_batch, n_threads)
+        _thread_games = [base_games + (1 if i < remainder else 0) for i in range(n_threads)]
+        _lock = threading.Lock()
+        self._upload_buf_lock = _lock  # shared with _check_model_update
+
+        def _on_game_thread_safe(game_batch):
+            with _lock:
+                self._on_completed_game(game_batch)
+
+        _seeds = [int(self.rng.integers(2**63)) for _ in range(n_threads)]
+
+        def _run_one_thread(tid):
+            thread_rng = np.random.default_rng(_seeds[tid])
+            return play_batch(
+                None, device=str(self.device), rng=thread_rng,
+                stockfish=sf, evaluator=eval_,
+                games=_thread_games[tid],
+                on_game_complete=_on_game_thread_safe,
+                on_step=self._check_model_update if tid == 0 else None,
+                stop_fn=self._stop_fn,
+                opponent=_opponent_cfg, temp=_temp_cfg,
+                search=_search_cfg, opening=_opening_cfg,
+                game=_game_cfg,
+            )
+
+        with ThreadPoolExecutor(max_workers=n_threads) as pool:
+            futures = [pool.submit(_run_one_thread, i) for i in range(n_threads)]
+            all_stats = []
+            for f in futures:
+                _s, st = f.result()
+                all_stats.append(st)
+        return self._aggregate_thread_stats(all_stats)
+
     def _run_selfplay(self, manifest: dict) -> None:
         """Continuous selfplay — runs until stop signal (task change/pause/shutdown)."""
         self._stop_selfplay = False
@@ -1533,44 +1662,10 @@ class WorkerSession:
             else int(reco.get("games_per_batch", 8))
         )
 
-        max_plies = self._resolve_reco(reco, "max_plies", 240, int)
-        mcts_type = self._resolve_reco(reco, "mcts", "puct", str)
-        mcts_sims = self._resolve_reco(reco, "mcts_simulations", 50, int)
-        playout_cap_fraction = self._resolve_reco(reco, "playout_cap_fraction", 0.25)
-        fast_sims = self._resolve_reco(reco, "fast_simulations", 8, int)
-        opponent_wdl_regret_limit_raw = reco.get("opponent_wdl_regret_limit", None)
-        opponent_wdl_regret_limit = float(opponent_wdl_regret_limit_raw) if opponent_wdl_regret_limit_raw is not None else None
-        selfplay_fraction = float(reco.get("selfplay_fraction", 0.0))
-        timeout_adjudication_threshold = float(reco.get("timeout_adjudication_threshold", 0.90))
-
-        opening_book_prob = self._resolve_reco(reco, "opening_book_prob", 1.0)
-        opening_book_max_plies = self._resolve_reco(reco, "opening_book_max_plies", 4, int)
-        opening_book_max_games = self._resolve_reco(reco, "opening_book_max_games", 200000, int)
-        opening_book_max_plies_2 = int(reco.get("opening_book_max_plies_2", 16))
-        opening_book_max_games_2 = int(reco.get("opening_book_max_games_2", 200000))
-        opening_book_mix_prob_2 = float(reco.get("opening_book_mix_prob_2", 0.0))
-        random_start_plies = self._resolve_reco(reco, "random_start_plies", 0, int)
-
-        sf_nodes = self._resolve_reco(reco, "sf_nodes", 2000, int)
-        sf_multipv = self._resolve_reco(reco, "sf_multipv", 5, int)
-        sf_policy_temp = self._resolve_reco(reco, "sf_policy_temp", 0.25)
-        sf_policy_label_smooth = self._resolve_reco(reco, "sf_policy_label_smooth", 0.05)
-
-        temperature = self._resolve_reco(reco, "temperature", 1.0)
-        t_start = self._resolve_reco(reco, "temperature_decay_start_move", 20, int)
-        t_moves = self._resolve_reco(reco, "temperature_decay_moves", 60, int)
-        t_end = self._resolve_reco(reco, "temperature_endgame", 0.6)
-
-  # Syzygy is fully manifest-driven so the server operator can tune
-  # adjudication behavior live by editing publish/manifest.json. None
-  # for path = disabled; fraction 1.0 = always adjudicate when on.
-        syzygy_path = reco.get("syzygy_path") or None
-        syzygy_rescore_policy = bool(reco.get("syzygy_rescore_policy", False))
-        syzygy_adjudicate = bool(reco.get("syzygy_adjudicate", False))
-        syzygy_adjudicate_fraction = float(reco.get("syzygy_adjudicate_fraction", 1.0))
-        syzygy_in_search = bool(reco.get("syzygy_in_search", False))
+        cfgs, sf_args = self._build_selfplay_configs(reco)
 
   # Resolve stockfish binary and (re)init engine.
+        sf_nodes, sf_multipv, syzygy_path = sf_args
         self._sync_stockfish(manifest, sf_nodes, sf_multipv, syzygy_path=syzygy_path)
         assert self.sf is not None  # _sync_stockfish always assigns
         _sf = self.sf
@@ -1581,97 +1676,12 @@ class WorkerSession:
 
         try:
             _eval = self.inference_client or self._direct_evaluator
-
-  # Build shared config objects (frozen dataclasses, thread-safe)
-            _opponent_cfg = OpponentConfig(
-                wdl_regret_limit=opponent_wdl_regret_limit,
-            )
-            _temp_cfg = TemperatureConfig(
-                temperature=float(temperature),
-                decay_start_move=int(t_start),
-                decay_moves=int(t_moves),
-                endgame=float(t_end),
-            )
-            _search_cfg = SearchConfig(
-                simulations=int(mcts_sims),
-                mcts_type=str(mcts_type),
-                playout_cap_fraction=float(playout_cap_fraction),
-                fast_simulations=int(fast_sims),
-            )
-            _opening_cfg = OpeningConfig(
-                opening_book_path=self.opening_book_path,
-                opening_book_max_plies=int(opening_book_max_plies),
-                opening_book_max_games=int(opening_book_max_games),
-                opening_book_prob=float(opening_book_prob),
-                opening_book_path_2=self.opening_book_path_2,
-                opening_book_max_plies_2=int(opening_book_max_plies_2),
-                opening_book_max_games_2=int(opening_book_max_games_2),
-                opening_book_mix_prob_2=float(opening_book_mix_prob_2),
-                random_start_plies=int(random_start_plies),
-            )
-            _game_cfg = GameConfig(
-                max_plies=int(max_plies),
-                selfplay_fraction=float(selfplay_fraction),
-                sf_policy_temp=float(sf_policy_temp),
-                sf_policy_label_smooth=float(sf_policy_label_smooth),
-                timeout_adjudication_threshold=float(timeout_adjudication_threshold),
-                syzygy_path=syzygy_path,
-                syzygy_rescore_policy=syzygy_rescore_policy,
-                syzygy_adjudicate=syzygy_adjudicate,
-                syzygy_adjudicate_fraction=syzygy_adjudicate_fraction,
-                syzygy_in_search=syzygy_in_search,
-            )
-
+            _opponent_cfg, _temp_cfg, _search_cfg, _opening_cfg, _game_cfg = cfgs
             if self.args.threaded_selfplay:
-  # Multi-threaded selfplay: N threads share one GPU evaluator
-                n_threads = min(int(self.args.selfplay_threads), int(games_per_batch))
-                base_games, remainder = divmod(int(games_per_batch), n_threads)
-  # Thread i gets base_games + 1 if i < remainder
-                _thread_games = [base_games + (1 if i < remainder else 0) for i in range(n_threads)]
-                _lock = threading.Lock()
-                self._upload_buf_lock = _lock  # shared with _check_model_update
-
-                def _on_game_thread_safe(game_batch):
-                    with _lock:
-                        self._on_completed_game(game_batch)
-
-                _seeds = [int(self.rng.integers(2**63)) for _ in range(n_threads)]
-
-                def _run_one_thread(tid):
-                    thread_rng = np.random.default_rng(_seeds[tid])
-                    return play_batch(
-                        None, device=str(self.device), rng=thread_rng,
-                        stockfish=_sf, evaluator=_eval,
-                        games=_thread_games[tid],
-                        on_game_complete=_on_game_thread_safe,
-                        on_step=self._check_model_update if tid == 0 else None,
-                        stop_fn=self._stop_fn,
-                        opponent=_opponent_cfg, temp=_temp_cfg,
-                        search=_search_cfg, opening=_opening_cfg,
-                        game=_game_cfg,
-                    )
-
-                with ThreadPoolExecutor(max_workers=n_threads) as pool:
-                    futures = [pool.submit(_run_one_thread, i) for i in range(n_threads)]
-                    all_samples = []
-                    all_stats = []
-                    for f in futures:
-                        s, st = f.result()
-                        all_samples.extend(s)
-                        all_stats.append(st)
-  # Aggregate stats: sum integer fields from all threads
-                    from chess_anti_engine.selfplay.manager import BatchStats
-                    first = all_stats[0]
-                    agg = {}
-                    for fld in dataclasses.fields(first):
-                        vals = [getattr(st, fld.name) for st in all_stats]
-                        if all(isinstance(v, int) for v in vals):
-                            agg[fld.name] = sum(vals)
-                        elif all(isinstance(v, float) for v in vals):
-                            agg[fld.name] = sum(vals) / len(vals)  # average
-                        else:
-                            agg[fld.name] = vals[0]  # first thread's value
-                    stats = BatchStats(**agg)
+                stats = self._run_selfplay_threaded(
+                    games_per_batch=int(games_per_batch),
+                    sf=_sf, eval_=_eval, cfgs=cfgs,
+                )
             else:
   # Continuous selfplay: 256 slots always full, games recycled
   # on completion.  Runs until _stop_selfplay is set (task change,
@@ -1691,25 +1701,13 @@ class WorkerSession:
         except TimeoutError as exc:
             if self.inference_client is None:
                 raise
-            self.log.warning("inference broker timed out; resetting client: %s", exc)
-            try:
-                self.inference_client.close()
-            except Exception:
-                pass
-            self.inference_client = None
-            time.sleep(float(self.args.poll_seconds))
+            self._reset_inference_client("inference broker timed out", exc)
             return
         except RuntimeError as exc:
             err = str(exc).lower()
             if self.inference_client is None or not any(tok in err for tok in ("inference", "broker", "slot")):
                 raise
-            self.log.warning("inference broker error; resetting client: %s", exc)
-            try:
-                self.inference_client.close()
-            except Exception:
-                pass
-            self.inference_client = None
-            time.sleep(float(self.args.poll_seconds))
+            self._reset_inference_client("inference broker error", exc)
             return
         t1 = time.time()
 
