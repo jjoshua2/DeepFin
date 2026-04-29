@@ -13,6 +13,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Callable, TypeVar, cast, overload
 
@@ -45,6 +46,7 @@ from chess_anti_engine.selfplay.config import (
     SearchConfig,
     TemperatureConfig,
 )
+from chess_anti_engine.selfplay.manager import BatchStats
 from chess_anti_engine.selfplay.match import play_match_batch
 from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.stockfish import StockfishPool, StockfishUCI
@@ -930,13 +932,12 @@ class WorkerSession:
         if self._direct_evaluator is not None:
             _sync_evaluator_to_model(self._direct_evaluator, self.model)
             self._evaluator_model_id = id(self.model)
-  # Flush upload buffer tagged with old SHA (lock protects against
-  # concurrent _on_completed_game calls in threaded selfplay)
-        _buf_lock = self._upload_buf_lock
+  # Flush upload buffer tagged with old SHA. Lock (when set by
+  # threaded selfplay) protects against concurrent _on_completed_game
+  # calls; in single-threaded mode it's None and nullcontext is a no-op.
+        buf_lock = self._upload_buf_lock
         now = time.time()
-        if _buf_lock is not None:
-            _buf_lock.acquire()  # pylint: disable=consider-using-with  # try/finally below releases across the whole flush block
-        try:
+        with buf_lock if buf_lock is not None else nullcontext():
             if self.upload_buf.positions > 0:
                 _flush_upload_buffer_to_pending(
                     pending_dir=self.pending_dir, username=str(self.args.username),
@@ -946,9 +947,6 @@ class WorkerSession:
             self.model_sha = new_sha
             self.model_step = int(manifest.get("trainer_step") or 0)
             self.last_model_sha = new_sha
-        finally:
-            if _buf_lock is not None:
-                _buf_lock.release()
         self.log.info("mid-batch model switch sha=%s", str(new_sha)[:8])
 
     def _check_model_update(self) -> None:
@@ -1507,65 +1505,65 @@ class WorkerSession:
         "syzygy_adjudicate_fraction", "syzygy_in_search",
     )
 
-    def _build_selfplay_configs(self, reco: dict) -> tuple[tuple, tuple]:
+    def _build_selfplay_configs(self, reco: dict) -> tuple[dict, tuple]:
         """Unpack manifest.recommended_worker into the 5 frozen config dataclasses.
 
-        Returns ``(cfgs, sf_args)`` where ``cfgs`` is the tuple
-        ``(opponent, temp, search, opening, game)`` and ``sf_args`` is
+        Returns ``(cfgs, sf_args)`` where ``cfgs`` is a dict keyed by
+        ``play_batch`` kwarg names (``opponent``/``temp``/``search``/``opening``/
+        ``game``), ready for ``play_batch(..., **cfgs)``; ``sf_args`` is
         ``(sf_nodes, sf_multipv, syzygy_path)`` for the Stockfish bring-up.
         """
-        opponent_wdl_regret_limit_raw = reco.get("opponent_wdl_regret_limit", None)
-        opponent_wdl_regret_limit = (
-            float(opponent_wdl_regret_limit_raw)
-            if opponent_wdl_regret_limit_raw is not None
-            else None
-        )
-        opponent_cfg = OpponentConfig(wdl_regret_limit=opponent_wdl_regret_limit)
-        temp_cfg = TemperatureConfig(
-            temperature=float(self._resolve_reco(reco, "temperature", 1.0)),
-            decay_start_move=int(self._resolve_reco(reco, "temperature_decay_start_move", 20, int)),
-            decay_moves=int(self._resolve_reco(reco, "temperature_decay_moves", 60, int)),
-            endgame=float(self._resolve_reco(reco, "temperature_endgame", 0.6)),
-        )
-        search_cfg = SearchConfig(
-            simulations=int(self._resolve_reco(reco, "mcts_simulations", 50, int)),
-            mcts_type=str(self._resolve_reco(reco, "mcts", "puct", str)),
-            playout_cap_fraction=float(self._resolve_reco(reco, "playout_cap_fraction", 0.25)),
-            fast_simulations=int(self._resolve_reco(reco, "fast_simulations", 8, int)),
-        )
-        opening_cfg = OpeningConfig(
-            opening_book_path=self.opening_book_path,
-            opening_book_max_plies=int(self._resolve_reco(reco, "opening_book_max_plies", 4, int)),
-            opening_book_max_games=int(self._resolve_reco(reco, "opening_book_max_games", 200000, int)),
-            opening_book_prob=float(self._resolve_reco(reco, "opening_book_prob", 1.0)),
-            opening_book_path_2=self.opening_book_path_2,
-            opening_book_max_plies_2=int(reco.get("opening_book_max_plies_2", 16)),
-            opening_book_max_games_2=int(reco.get("opening_book_max_games_2", 200000)),
-            opening_book_mix_prob_2=float(reco.get("opening_book_mix_prob_2", 0.0)),
-            random_start_plies=int(self._resolve_reco(reco, "random_start_plies", 0, int)),
-        )
+        regret_raw = reco.get("opponent_wdl_regret_limit", None)
+  # None must propagate (means "no regret limit"); only cast real values.
+        regret_limit = float(regret_raw) if regret_raw is not None else None
   # Syzygy is fully manifest-driven so the server operator can tune
   # adjudication behavior live by editing publish/manifest.json. None
   # for path = disabled; fraction 1.0 = always adjudicate when on.
         syzygy_path = reco.get("syzygy_path") or None
-        game_cfg = GameConfig(
-            max_plies=int(self._resolve_reco(reco, "max_plies", 240, int)),
-            selfplay_fraction=float(reco.get("selfplay_fraction", 0.0)),
-            sf_policy_temp=float(self._resolve_reco(reco, "sf_policy_temp", 0.25)),
-            sf_policy_label_smooth=float(self._resolve_reco(reco, "sf_policy_label_smooth", 0.05)),
-            timeout_adjudication_threshold=float(reco.get("timeout_adjudication_threshold", 0.90)),
-            syzygy_path=syzygy_path,
-            syzygy_rescore_policy=bool(reco.get("syzygy_rescore_policy", False)),
-            syzygy_adjudicate=bool(reco.get("syzygy_adjudicate", False)),
-            syzygy_adjudicate_fraction=float(reco.get("syzygy_adjudicate_fraction", 1.0)),
-            syzygy_in_search=bool(reco.get("syzygy_in_search", False)),
-        )
+        cfgs = {
+            "opponent": OpponentConfig(wdl_regret_limit=regret_limit),
+            "temp": TemperatureConfig(
+                temperature=self._resolve_reco(reco, "temperature", 1.0),
+                decay_start_move=self._resolve_reco(reco, "temperature_decay_start_move", 20, int),
+                decay_moves=self._resolve_reco(reco, "temperature_decay_moves", 60, int),
+                endgame=self._resolve_reco(reco, "temperature_endgame", 0.6),
+            ),
+            "search": SearchConfig(
+                simulations=self._resolve_reco(reco, "mcts_simulations", 50, int),
+                mcts_type=self._resolve_reco(reco, "mcts", "puct", str),
+                playout_cap_fraction=self._resolve_reco(reco, "playout_cap_fraction", 0.25),
+                fast_simulations=self._resolve_reco(reco, "fast_simulations", 8, int),
+            ),
+            "opening": OpeningConfig(
+                opening_book_path=self.opening_book_path,
+                opening_book_max_plies=self._resolve_reco(reco, "opening_book_max_plies", 4, int),
+                opening_book_max_games=self._resolve_reco(reco, "opening_book_max_games", 200000, int),
+                opening_book_prob=self._resolve_reco(reco, "opening_book_prob", 1.0),
+                opening_book_path_2=self.opening_book_path_2,
+                opening_book_max_plies_2=int(reco.get("opening_book_max_plies_2", 16)),
+                opening_book_max_games_2=int(reco.get("opening_book_max_games_2", 200000)),
+                opening_book_mix_prob_2=float(reco.get("opening_book_mix_prob_2", 0.0)),
+                random_start_plies=self._resolve_reco(reco, "random_start_plies", 0, int),
+            ),
+            "game": GameConfig(
+                max_plies=self._resolve_reco(reco, "max_plies", 240, int),
+                selfplay_fraction=float(reco.get("selfplay_fraction", 0.0)),
+                sf_policy_temp=self._resolve_reco(reco, "sf_policy_temp", 0.25),
+                sf_policy_label_smooth=self._resolve_reco(reco, "sf_policy_label_smooth", 0.05),
+                timeout_adjudication_threshold=float(reco.get("timeout_adjudication_threshold", 0.90)),
+                syzygy_path=syzygy_path,
+                syzygy_rescore_policy=bool(reco.get("syzygy_rescore_policy", False)),
+                syzygy_adjudicate=bool(reco.get("syzygy_adjudicate", False)),
+                syzygy_adjudicate_fraction=float(reco.get("syzygy_adjudicate_fraction", 1.0)),
+                syzygy_in_search=bool(reco.get("syzygy_in_search", False)),
+            ),
+        }
         sf_args = (
-            int(self._resolve_reco(reco, "sf_nodes", 2000, int)),
-            int(self._resolve_reco(reco, "sf_multipv", 5, int)),
+            self._resolve_reco(reco, "sf_nodes", 2000, int),
+            self._resolve_reco(reco, "sf_multipv", 5, int),
             syzygy_path,
         )
-        return (opponent_cfg, temp_cfg, search_cfg, opening_cfg, game_cfg), sf_args
+        return cfgs, sf_args
 
     def _reset_inference_client(self, reason: str, exc: BaseException) -> None:
         """Close + null the broker client and back off; caller `return`s after."""
@@ -1579,9 +1577,8 @@ class WorkerSession:
         time.sleep(float(self.args.poll_seconds))
 
     @staticmethod
-    def _aggregate_thread_stats(all_stats: list) -> Any:
+    def _aggregate_thread_stats(all_stats: list[BatchStats]) -> BatchStats:
         """Per-field reduce: sum ints, average floats, take thread-0 for the rest."""
-        from chess_anti_engine.selfplay.manager import BatchStats
         agg: dict = {}
         for fld in dataclasses.fields(all_stats[0]):
             vals = [getattr(st, fld.name) for st in all_stats]
@@ -1593,41 +1590,34 @@ class WorkerSession:
                 agg[fld.name] = vals[0]
         return BatchStats(**agg)
 
-    def _run_selfplay_threaded(self, *, games_per_batch: int, sf, eval_, cfgs) -> Any:
+    def _run_selfplay_threaded(self, *, games_per_batch: int, sf, eval_, cfgs: dict) -> BatchStats:
         """Multi-threaded selfplay: N threads share one GPU evaluator."""
-        _opponent_cfg, _temp_cfg, _search_cfg, _opening_cfg, _game_cfg = cfgs
         n_threads = min(int(self.args.selfplay_threads), games_per_batch)
         base_games, remainder = divmod(games_per_batch, n_threads)
-        _thread_games = [base_games + (1 if i < remainder else 0) for i in range(n_threads)]
-        _lock = threading.Lock()
-        self._upload_buf_lock = _lock  # shared with _check_model_update
+        thread_games = [base_games + (1 if i < remainder else 0) for i in range(n_threads)]
+        lock = threading.Lock()
+        self._upload_buf_lock = lock  # shared with _check_model_update
 
         def _on_game_thread_safe(game_batch):
-            with _lock:
+            with lock:
                 self._on_completed_game(game_batch)
 
-        _seeds = [int(self.rng.integers(2**63)) for _ in range(n_threads)]
+        seeds = [int(self.rng.integers(2**63)) for _ in range(n_threads)]
 
         def _run_one_thread(tid):
-            thread_rng = np.random.default_rng(_seeds[tid])
             return play_batch(
-                None, device=str(self.device), rng=thread_rng,
+                None, device=str(self.device), rng=np.random.default_rng(seeds[tid]),
                 stockfish=sf, evaluator=eval_,
-                games=_thread_games[tid],
+                games=thread_games[tid],
                 on_game_complete=_on_game_thread_safe,
                 on_step=self._check_model_update if tid == 0 else None,
                 stop_fn=self._stop_fn,
-                opponent=_opponent_cfg, temp=_temp_cfg,
-                search=_search_cfg, opening=_opening_cfg,
-                game=_game_cfg,
+                **cfgs,
             )
 
         with ThreadPoolExecutor(max_workers=n_threads) as pool:
             futures = [pool.submit(_run_one_thread, i) for i in range(n_threads)]
-            all_stats = []
-            for f in futures:
-                _s, st = f.result()
-                all_stats.append(st)
+            all_stats = [f.result()[1] for f in futures]
         return self._aggregate_thread_stats(all_stats)
 
     def _run_selfplay(self, manifest: dict) -> None:
@@ -1676,7 +1666,6 @@ class WorkerSession:
 
         try:
             _eval = self.inference_client or self._direct_evaluator
-            _opponent_cfg, _temp_cfg, _search_cfg, _opening_cfg, _game_cfg = cfgs
             if self.args.threaded_selfplay:
                 stats = self._run_selfplay_threaded(
                     games_per_batch=int(games_per_batch),
@@ -1694,9 +1683,7 @@ class WorkerSession:
                     on_game_complete=self._on_completed_game,
                     on_step=self._check_model_update,
                     stop_fn=self._stop_fn,
-                    opponent=_opponent_cfg, temp=_temp_cfg,
-                    search=_search_cfg, opening=_opening_cfg,
-                    game=_game_cfg,
+                    **cfgs,
                 )
         except TimeoutError as exc:
             if self.inference_client is None:
