@@ -28,7 +28,7 @@ from chess_anti_engine.inference import (  # noqa: F401  # skylos: ignore (Async
     LocalModelEvaluator,
     _COMPILED_BATCH_BUCKETS,
 )
-from chess_anti_engine.mcts._mcts_tree import MCTSTree
+from chess_anti_engine.mcts._mcts_tree import MCTSTree, batch_encode_146
 from chess_anti_engine.mcts.gumbel import (
     GumbelConfig,
     _gumbel,
@@ -110,13 +110,34 @@ def run_gumbel_root_many_c(
     _async_eval = cast("AsyncBatchEvaluator", eval_impl)
     _use_pipeline = _has_async and n_boards >= 64
 
+  # Zero-copy path: when the evaluator exposes get_input_buffer + evaluate_inplace_async
+  # (DirectGPUEvaluator with n_slots>=needed), we route the C tree walks to write
+  # encodes directly into pinned host memory. This eliminates one numpy memcpy per
+  # rep AND lets H2D DMA start immediately when the C walk returns. Pipelined mode
+  # also requires 2 slots so submit(g=0)+submit(g=1) don't share output buffers
+  # (otherwise the next async submit overwrites pol/wdl before C reads them, forcing
+  # a defensive .numpy().copy()).
+    _slots_needed = 2 if _use_pipeline else 1
+    _inplace = (
+        hasattr(eval_impl, "get_input_buffer")
+        and hasattr(eval_impl, "evaluate_inplace_async")
+        and getattr(eval_impl, "n_slots", 1) >= _slots_needed
+    )
+
     if pre_pol_logits is not None and pre_wdl_logits is not None:
         pol_logits_batch = np.asarray(pre_pol_logits, dtype=np.float32)
         wdl_logits_batch = np.asarray(pre_wdl_logits, dtype=np.float32)
+    elif _inplace:
+        root_buf = eval_impl.get_input_buffer(n_boards, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
+        batch_encode_146(root_cboards, root_buf)
+        pol_t, wdl_t, event = eval_impl.evaluate_inplace_async(n_boards, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
+        if event is not None:
+            event.synchronize()
+        pol_logits_batch = pol_t.numpy()
+        wdl_logits_batch = wdl_t.numpy()
     else:
         xs = np.empty((n_boards, 146, 8, 8), dtype=np.float32)
-        for _i, _cb in enumerate(root_cboards):
-            xs[_i] = _cb.encode_146()
+        batch_encode_146(root_cboards, xs)
         if _has_async:
             pol_t, wdl_t, event = _async_eval.evaluate_encoded_async(xs)
             if event is not None:
@@ -258,10 +279,21 @@ def run_gumbel_root_many_c(
         _trees = [MCTSTree(), MCTSTree()]
         _max_grp = max(mid, n_boards - mid)  # ceil half for odd splits
         _leaf_cap = max(512, _max_grp * max(2, int(cfg.topk)) * 2)
-        _enc_bufs = [
-            np.empty((_leaf_cap, 146, 8, 8), dtype=np.float32)
-            for _ in range(2)
-        ]
+        if _inplace:
+  # Pinned-host views: C writes encodes directly here, eval reads from the
+  # same memory (no memcpy on submit). Two slots so g=0 / g=1 outputs don't
+  # collide.
+            _max_batch = getattr(eval_impl, "_max_batch", _leaf_cap)
+            _leaf_cap = min(_leaf_cap, _max_batch)
+            _enc_bufs = [
+                eval_impl.get_input_buffer(_leaf_cap, slot=g)  # pyright: ignore[reportAttributeAccessIssue]
+                for g in range(2)
+            ]
+        else:
+            _enc_bufs = [
+                np.empty((_leaf_cap, 146, 8, 8), dtype=np.float32)
+                for _ in range(2)
+            ]
 
   # Create fresh root nodes in each sub-tree and build local root_ids
         _sub_root_ids: list[list[int]] = [[], []]
@@ -313,7 +345,10 @@ def run_gumbel_root_many_c(
                 nl = int(_n_leaves[g])
                 padded = _pad_for_bucket(nl, len(_enc_bufs[g]))
                 _tg0 = _time.perf_counter()
-                pol_t, wdl_t, ev = _async_eval.evaluate_encoded_async(_enc_bufs[g][:padded])
+                if _inplace:
+                    pol_t, wdl_t, ev = eval_impl.evaluate_inplace_async(padded, slot=g)  # pyright: ignore[reportAttributeAccessIssue]
+                else:
+                    pol_t, wdl_t, ev = _async_eval.evaluate_encoded_async(_enc_bufs[g][:padded])
                 if ev is not None:
                     ev.synchronize()
                 _t_gpu += _time.perf_counter() - _tg0
@@ -366,7 +401,10 @@ def run_gumbel_root_many_c(
             nl0 = int(_n_leaves[0])
             padded0 = _pad_for_bucket(nl0, len(_enc_bufs[0]))
             _tg0 = _time.perf_counter()
-            pol_t0, wdl_t0, ev0 = _async_eval.evaluate_encoded_async(_enc_bufs[0][:padded0])
+            if _inplace:
+                pol_t0, wdl_t0, ev0 = eval_impl.evaluate_inplace_async(padded0, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
+            else:
+                pol_t0, wdl_t0, ev0 = _async_eval.evaluate_encoded_async(_enc_bufs[0][:padded0])
 
   # 2) While GPU processes group 0, do C tree walks for group 1
   #    (continue_gumbel_sims releases GIL; CPU and GPU run in parallel)
@@ -393,21 +431,31 @@ def run_gumbel_root_many_c(
                     _drain_sequential(0)
                     break
 
-  # 3) Wait for GPU(0) and copy results before next async submit
+  # 3) Wait for GPU(0). Slot-aware path: pinned slot 0 outputs stay live
+  # until the next submit(slot=0), which happens at the *top* of next loop
+  # iteration — well after step (5) reads them. Legacy path must copy
+  # because both submits share one output buffer.
             if ev0 is not None:
                 ev0.synchronize()
             _t_gpu += _time.perf_counter() - _tg0
             _n_gpu_calls += 1
             _n_gpu_positions += nl0
-            pol_np0 = pol_t0[:nl0].numpy().copy()
-            wdl_np0 = wdl_t0[:nl0].numpy().copy()
+            if _inplace:
+                pol_np0 = pol_t0[:nl0].numpy()
+                wdl_np0 = wdl_t0[:nl0].numpy()
+            else:
+                pol_np0 = pol_t0[:nl0].numpy().copy()
+                wdl_np0 = wdl_t0[:nl0].numpy().copy()
 
-  # 4) Submit GPU for group 1 (async — safe: group 0 results copied)
+  # 4) Submit GPU for group 1 (async — safe: group 0 results consumed below)
             if _n_leaves[1] is not None:
                 nl1 = int(_n_leaves[1])
                 padded1 = _pad_for_bucket(nl1, len(_enc_bufs[1]))
                 _tg1 = _time.perf_counter()
-                pol_t1, wdl_t1, ev1 = _async_eval.evaluate_encoded_async(_enc_bufs[1][:padded1])
+                if _inplace:
+                    pol_t1, wdl_t1, ev1 = eval_impl.evaluate_inplace_async(padded1, slot=1)  # pyright: ignore[reportAttributeAccessIssue]
+                else:
+                    pol_t1, wdl_t1, ev1 = _async_eval.evaluate_encoded_async(_enc_bufs[1][:padded1])
 
   # 5) While GPU processes group 1, do C tree walks for group 0
   #    (uses copied numpy arrays — safe from pinned buffer reuse)
@@ -420,15 +468,26 @@ def run_gumbel_root_many_c(
   # Same-condition re-check — ev1/_tg1/nl1/pol_t1/wdl_t1 are all bound
   # from step (4). Pyright can't narrow across the blocks.
             if _n_leaves[1] is not None:
-                if ev1 is not None:
-                    ev1.synchronize()
-                _t_gpu += _time.perf_counter() - _tg1
+                _ev1 = ev1  # pyright: ignore[reportPossiblyUnboundVariable]
+                _tg1_l = _tg1  # pyright: ignore[reportPossiblyUnboundVariable]
+                _nl1 = nl1  # pyright: ignore[reportPossiblyUnboundVariable]
+                _pol1 = pol_t1  # pyright: ignore[reportPossiblyUnboundVariable]
+                _wdl1 = wdl_t1  # pyright: ignore[reportPossiblyUnboundVariable]
+                if _ev1 is not None:
+                    _ev1.synchronize()
+                _t_gpu += _time.perf_counter() - _tg1_l
                 _n_gpu_calls += 1
-                _n_gpu_positions += nl1
-                _pending_g1 = (
-                    pol_t1[:nl1].numpy().copy(),
-                    wdl_t1[:nl1].numpy().copy(),
-                )
+                _n_gpu_positions += _nl1
+  # Inplace path: slot 1's pinned outputs persist until next submit(slot=1)
+  # in step (4) of next iter — safe to alias. Legacy path shares one output
+  # buffer across both submits, so we must clone before submit(slot=0).
+                if _inplace:
+                    _pending_g1 = (_pol1[:_nl1].numpy(), _wdl1[:_nl1].numpy())
+                else:
+                    _pending_g1 = (
+                        _pol1[:_nl1].numpy().copy(),
+                        _wdl1[:_nl1].numpy().copy(),
+                    )
         else:
             raise RuntimeError(f"pipeline loop did not converge in {_max_iters} iterations")
 
@@ -453,7 +512,12 @@ def run_gumbel_root_many_c(
 
     else:
   # Non-pipelined fallback (small batches or no async)
-        _enc_buf = np.empty((_max_leaves_per_rep * 2, 146, 8, 8), dtype=np.float32)
+        if _inplace:
+            _max_batch = getattr(eval_impl, "_max_batch", _max_leaves_per_rep * 2)
+            _cap = min(_max_leaves_per_rep * 2, _max_batch)
+            _enc_buf = eval_impl.get_input_buffer(_cap, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
+        else:
+            _enc_buf = np.empty((_max_leaves_per_rep * 2, 146, 8, 8), dtype=np.float32)
         _root_ids_arr = np.array(root_ids, dtype=np.int32)
         _budget_arr = np.array(budget_remaining, dtype=np.int32)
         _root_qs_arr = np.array(root_qs, dtype=np.float64)
@@ -473,16 +537,21 @@ def run_gumbel_root_many_c(
         while n_leaves is not None:
             n_leaves = int(n_leaves)
             padded = _pad_for_bucket(n_leaves, len(_enc_buf))
-            enc_slice = _enc_buf[:padded]
             _tg0 = _time.perf_counter()
-            if _has_async:
-                pol_t, wdl_t, event = _async_eval.evaluate_encoded_async(enc_slice)
+            if _inplace:
+                pol_t, wdl_t, event = eval_impl.evaluate_inplace_async(padded, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
+                if event is not None:
+                    event.synchronize()
+                pol_all = pol_t[:n_leaves].numpy()
+                wdl_all = wdl_t[:n_leaves].numpy()
+            elif _has_async:
+                pol_t, wdl_t, event = _async_eval.evaluate_encoded_async(_enc_buf[:padded])
                 if event is not None:
                     event.synchronize()
                 pol_all = pol_t[:n_leaves].numpy()
                 wdl_all = wdl_t[:n_leaves].numpy()
             else:
-                pol_all, wdl_all = eval_impl.evaluate_encoded(enc_slice)
+                pol_all, wdl_all = eval_impl.evaluate_encoded(_enc_buf[:padded])
                 pol_all = pol_all[:n_leaves]
                 wdl_all = wdl_all[:n_leaves]
             _t_gpu += _time.perf_counter() - _tg0

@@ -1,0 +1,57 @@
+{
+  "args": {
+    "compile_mode": "",
+    "total_games": 400,
+    "threads": 16,
+    "simulations": 50,
+    "topk": 16,
+    "iters": 3,
+    "warmup_iters": 1,
+    "out": "docs/threaded_dispatcher_gumbel_eager.json"
+  },
+  "results": [
+    {
+      "name": "DirectGPU",
+      "n_threads": 1,
+      "games_per_thread": 400,
+      "simulations": 50,
+      "iters": 3,
+      "elapsed_s": 3.511015807001968,
+      "iters_per_sec": 0.8544535726718016,
+      "games_per_sec": 341.7814290687206,
+      "approx_nps": 17089.07145343603,
+      "frames_ok_delta": 0,
+      "cudagraph_skips_delta": 0
+    },
+    {
+      "name": "ThreadedBatchEvaluator",
+      "n_threads": 16,
+      "games_per_thread": 25,
+      "simulations": 50,
+      "iters": 3,
+      "elapsed_s": 4.413660257996526,
+      "iters_per_sec": 0.6797079577125806,
+      "games_per_sec": 271.8831830850322,
+      "approx_nps": 13594.159154251613,
+      "frames_ok_delta": 0,
+      "cudagraph_skips_delta": 0
+    },
+    {
+      "name": "ThreadedDispatcher",
+      "n_threads": 16,
+      "games_per_thread": 25,
+      "simulations": 50,
+      "iters": 3,
+      "elapsed_s": 9.313953991004382,
+      "iters_per_sec": 0.32209736089500385,
+      "games_per_sec": 128.83894435800156,
+      "approx_nps": 6441.947217900077,
+      "frames_ok_delta": 0,
+      "cudagraph_skips_delta": 0,
+      "dispatcher_avg_batch": 2218.181818181818,
+      "dispatcher_avg_forward_ms": 145.89066108965199,
+      "dispatcher_full_drains": 4,
+      "dispatcher_lifetime_batches": 44
+    }
+  ]
+}

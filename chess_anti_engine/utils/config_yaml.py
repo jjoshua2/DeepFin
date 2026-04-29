@@ -145,6 +145,8 @@ _TUNE_KEYS = (
     "distributed_worker_inference_fp8",
     "distributed_worker_aot_dir", "distributed_worker_threaded",
     "distributed_worker_selfplay_threads", "distributed_worker_auto_tune",
+    "distributed_worker_threaded_dispatcher",
+    "distributed_worker_dispatcher_batch_wait_ms",
     "distributed_worker_target_batch_seconds",
     "distributed_worker_min_games_per_batch", "distributed_worker_max_games_per_batch",
     "distributed_worker_upload_target_positions", "distributed_worker_upload_flush_seconds",

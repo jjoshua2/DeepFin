@@ -15,7 +15,7 @@ import torch
 
 from chess_anti_engine.encoding import encode_positions_batch
 from chess_anti_engine.inference import BatchEvaluator, LocalModelEvaluator
-from chess_anti_engine.mcts._mcts_tree import MCTSTree
+from chess_anti_engine.mcts._mcts_tree import MCTSTree, batch_encode_146
 from chess_anti_engine.mcts.sampling import sample_action_with_temperature
 from chess_anti_engine.mcts.puct import (
     MCTSConfig,
@@ -95,14 +95,30 @@ def run_mcts_many_c(
   # ── 1. Root evaluation ───────────────────────────────────────────────
     use_cboard = _HAS_CBOARD
     root_cboards: list[CBoard] | None = (cboards if cboards is not None else [CBoard.from_board(b) for b in boards]) if use_cboard else None
+
+  # Inplace path: write encodes directly into pinned host memory (slot 0)
+  # and skip a numpy memcpy on submit. Falls back to evaluate_encoded for
+  # evaluators without the slot-pool API.
+    _max_batch_eval = getattr(eval_impl, "_max_batch", 0)
+    _inplace = (
+        use_cboard
+        and hasattr(eval_impl, "get_input_buffer")
+        and hasattr(eval_impl, "evaluate_inplace")
+        and getattr(eval_impl, "n_slots", 1) >= 1
+        and n_boards <= _max_batch_eval
+    )
+
     if pre_pol_logits is not None and pre_wdl_logits is not None:
         pol_logits_all = np.asarray(pre_pol_logits, dtype=np.float32)
         wdl_logits_all = np.asarray(pre_wdl_logits, dtype=np.float32)
+    elif _inplace and root_cboards is not None:
+        root_buf = eval_impl.get_input_buffer(n_boards, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
+        batch_encode_146(root_cboards, root_buf)
+        pol_logits_all, wdl_logits_all = eval_impl.evaluate_inplace(n_boards, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
     else:
         if use_cboard and root_cboards is not None:
             xs = np.empty((n_boards, 146, 8, 8), dtype=np.float32)
-            for _ri, _rcb in enumerate(root_cboards):
-                xs[_ri] = _rcb.encode_146()
+            batch_encode_146(root_cboards, xs)
         else:
             xs = encode_positions_batch(boards, add_features=True)
         pol_logits_all, wdl_logits_all = eval_impl.evaluate_encoded(xs)
@@ -206,17 +222,28 @@ def run_mcts_many_c(
         if not leaf_data:
             continue
 
-        if use_cboard:
-            n_leaves = len(leaf_data)
-            leaf_xs = np.empty((n_leaves, 146, 8, 8), dtype=np.float32)
-            for _li, _ld in enumerate(leaf_data):
-                _cb = _ld[3]
-                assert _cb is not None  # use_cboard branch always populates cb
-                leaf_xs[_li] = _cb.encode_146()
+        n_leaves = len(leaf_data)
+        if _inplace and use_cboard and n_leaves <= _max_batch_eval:
+            leaf_xs = eval_impl.get_input_buffer(n_leaves, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
+            _leaf_cbs: list[CBoard] = []
+            for ld in leaf_data:
+                cb = ld[3]
+                assert cb is not None  # use_cboard branch always populates cb
+                _leaf_cbs.append(cb)
+            batch_encode_146(_leaf_cbs, leaf_xs)
+            pol_batch, wdl_batch = eval_impl.evaluate_inplace(n_leaves, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
         else:
-            leaf_xs = encode_positions_batch([ld[2] for ld in leaf_data], add_features=True)
-
-        pol_batch, wdl_batch = eval_impl.evaluate_encoded(leaf_xs)
+            if use_cboard:
+                leaf_xs = np.empty((n_leaves, 146, 8, 8), dtype=np.float32)
+                _leaf_cbs2: list[CBoard] = []
+                for ld in leaf_data:
+                    cb = ld[3]
+                    assert cb is not None
+                    _leaf_cbs2.append(cb)
+                batch_encode_146(_leaf_cbs2, leaf_xs)
+            else:
+                leaf_xs = encode_positions_batch([ld[2] for ld in leaf_data], add_features=True)
+            pol_batch, wdl_batch = eval_impl.evaluate_encoded(leaf_xs)
         q_values = tree.batch_wdl_to_q(wdl_batch.reshape(-1, 3))
 
         node_paths = []

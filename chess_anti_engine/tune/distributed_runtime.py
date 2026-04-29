@@ -476,6 +476,10 @@ def _build_distributed_worker_cmd(
         *(
             ["--threaded-selfplay", "--selfplay-threads",
              str(int(config.get("distributed_worker_selfplay_threads", 16)))]
+            + (["--threaded-dispatcher",
+                "--dispatcher-batch-wait-ms",
+                str(float(config.get("distributed_worker_dispatcher_batch_wait_ms", 1.0)))]
+               if bool(config.get("distributed_worker_threaded_dispatcher", False)) else [])
             if bool(config.get("distributed_worker_threaded", False))
             else []
         ),

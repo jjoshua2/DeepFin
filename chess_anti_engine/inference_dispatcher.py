@@ -7,11 +7,20 @@
 - ``BatchCoalescingDispatcher``: merge concurrent batch=1 calls into one
   ``np.concatenate``-d submit so the GPU sees batch=N.
 
-None of these expose ``evaluate_encoded_async``. ``gumbel_c.py`` gates its
-pipelined path on ``hasattr(eval, 'evaluate_encoded_async')``, and the
-pipelined path requires ``n_boards >= 64`` — irrelevant for single-game
-UCI and would bypass the dispatch/coalesce logic if silently proxied. The
-explicit ``max_batch`` property is the only attribute surface we promise.
+``ThreadSafeGPUDispatcher`` forwards the slot-pool inplace API
+(``get_input_buffer`` / ``evaluate_inplace`` / ``evaluate_inplace_async``)
+when the wrapped evaluator implements it. UCI single-game searches
+(``n_walkers=1``) thus skip the input + output memcpys.
+
+Slot-pool API contract under the dispatcher: callers must hold a slot for
+its full write→submit→read cycle. The lock serializes submits but does
+not prevent two threads picking the same slot — that's the caller's job.
+gumbel_c uses one Python thread (with two slots for its own pipeline), so
+the constraint is satisfied; walker-pool paths don't go through gumbel_c.
+
+``BatchCoalescingDispatcher`` and ``MultiGPUDispatcher`` deliberately do
+NOT forward the inplace API: their value is in the dispatch / coalesce
+logic, which slot-aliasing would route around.
 """
 from __future__ import annotations
 
@@ -19,6 +28,7 @@ import threading
 from collections.abc import Sequence
 
 import numpy as np
+import torch
 
 from chess_anti_engine.inference import BatchEvaluator
 
@@ -35,6 +45,40 @@ class ThreadSafeGPUDispatcher:
     @property
     def max_batch(self) -> int:
         return int(getattr(self._eval, "_max_batch", getattr(self._eval, "max_batch", 0)))
+
+  # Inplace API forwarders. Defined unconditionally so hasattr() probes
+  # see them; calls fall through to AttributeError on the inner if it
+  # doesn't implement them — the caller's hasattr() will fail then.
+    @property
+    def n_slots(self) -> int:
+        return int(getattr(self._eval, "n_slots", 1))
+
+    @property
+    def _max_batch(self) -> int:
+        return self.max_batch
+
+    def get_input_buffer(self, bsz: int, slot: int = 0) -> np.ndarray:
+        return self._eval.get_input_buffer(bsz, slot=slot)  # pyright: ignore[reportAttributeAccessIssue]
+
+    def evaluate_inplace(
+        self, bsz: int, *, copy_out: bool = True, slot: int = 0,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        with self._lock:
+            return self._eval.evaluate_inplace(  # pyright: ignore[reportAttributeAccessIssue]
+                bsz, copy_out=copy_out, slot=slot,
+            )
+
+    def evaluate_inplace_async(
+        self, bsz: int, *, slot: int = 0,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
+        with self._lock:
+            return self._eval.evaluate_inplace_async(bsz, slot=slot)  # pyright: ignore[reportAttributeAccessIssue]
+
+    def evaluate_encoded_async(
+        self, x: np.ndarray,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
+        with self._lock:
+            return self._eval.evaluate_encoded_async(x)  # pyright: ignore[reportAttributeAccessIssue]
 
 
 class BatchCoalescingDispatcher:

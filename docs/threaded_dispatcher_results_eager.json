@@ -1,0 +1,49 @@
+{
+  "args": {
+    "ckpt": null,
+    "compile_mode": "",
+    "threads": 16,
+    "batch_size": 44,
+    "duration_s": 30.0,
+    "warmup_s": 5.0,
+    "out": "docs/threaded_dispatcher_results_eager.json"
+  },
+  "results": [
+    {
+      "name": "DirectGPU-1t",
+      "n_threads": 1,
+      "batch_size": 704,
+      "elapsed_s": 30.035561292999773,
+      "total_calls": 878,
+      "positions_per_sec": 20579.339069786587,
+      "calls_per_sec": 29.232015724128676,
+      "frames_ok_delta": 0,
+      "cudagraph_skips_delta": 0
+    },
+    {
+      "name": "ThreadedBatchEvaluator",
+      "n_threads": 16,
+      "batch_size": 44,
+      "elapsed_s": 30.06421800800308,
+      "total_calls": 5962,
+      "positions_per_sec": 8725.588669233586,
+      "calls_per_sec": 198.3088333916724,
+      "frames_ok_delta": 0,
+      "cudagraph_skips_delta": 0
+    },
+    {
+      "name": "ThreadedDispatcher",
+      "n_threads": 16,
+      "batch_size": 44,
+      "elapsed_s": 30.02215125899238,
+      "total_calls": 13482,
+      "positions_per_sec": 19759.010434747557,
+      "calls_per_sec": 449.06841897153544,
+      "frames_ok_delta": 0,
+      "cudagraph_skips_delta": 0,
+      "dispatcher_avg_batch": 680.5771144278607,
+      "dispatcher_avg_forward_ms": 23.416732849966763,
+      "dispatcher_full_drains": 0
+    }
+  ]
+}

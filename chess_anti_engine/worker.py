@@ -25,6 +25,7 @@ from chess_anti_engine.inference import (
     SlotInferenceClient,
     ThreadedBatchEvaluator,
 )
+from chess_anti_engine.inference_threaded import ThreadedDispatcher
 from chess_anti_engine.model import (
     ModelConfig,
     build_model,
@@ -185,6 +186,18 @@ def _maybe_compile_inference_model(
         return model
 
 
+def _sync_evaluator_to_model(
+    evaluator: DirectGPUEvaluator | ThreadedBatchEvaluator | ThreadedDispatcher | AOTEvaluator,
+    model: torch.nn.Module,
+) -> None:
+    if isinstance(evaluator, (ThreadedBatchEvaluator, ThreadedDispatcher)):
+        evaluator.update_model(model)
+    elif isinstance(evaluator, AOTEvaluator):
+        evaluator.load_weights(model.state_dict())
+    else:
+        evaluator.model = model
+
+
 def _configure_shared_compile_cache(*, cache_dir: Path) -> None:
     """Point TorchInductor/Triton caches at a shared worker cache root.
 
@@ -322,14 +335,25 @@ def main() -> None:
     ap.add_argument(
         "--threaded-selfplay",
         action="store_true",
-        help="Use multi-threaded selfplay with shared GPU. "
-             "N threads run play_batch() concurrently, one GPU thread batches inference.",
+        help="Use multi-threaded selfplay with shared GPU.",
     )
     ap.add_argument(
         "--selfplay-threads",
         type=int,
         default=16,
         help="Number of selfplay threads (with --threaded-selfplay).",
+    )
+    ap.add_argument(
+        "--threaded-dispatcher",
+        action="store_true",
+        help="With --threaded-selfplay: use single-consumer ThreadedDispatcher "
+             "(cudagraph-safe) instead of ThreadedBatchEvaluator.",
+    )
+    ap.add_argument(
+        "--dispatcher-batch-wait-ms",
+        type=float,
+        default=1.0,
+        help="ThreadedDispatcher batching window in ms (latency vs batch fill).",
     )
 
     ap.add_argument("--stockfish-path", type=str, default=None)
@@ -408,7 +432,12 @@ def main() -> None:
 
     args = ap.parse_args()
 
-  # Optional debug logging (off by default).
+  # Optional debug logging (off by default). Attach the file handler to the
+  # `chess_anti_engine` PARENT logger so DEBUG lines from sibling submodules
+  # (mcts.gumbel_c, inference, etc.) propagate to the worker log file. If we
+  # only configured `chess_anti_engine.worker`, sibling loggers wouldn't reach
+  # this handler and DEBUG-gated lines like `gumbel profile (...avg=B)` would
+  # go nowhere visible.
     log = logging.getLogger("chess_anti_engine.worker")
     if args.log_file:
         level = str(args.log_level).lower()
@@ -419,11 +448,13 @@ def main() -> None:
             "error": logging.ERROR,
         }.get(level, logging.INFO)
 
-        log.setLevel(lvl)
+        parent = logging.getLogger("chess_anti_engine")
+        parent.setLevel(lvl)
         fh = logging.FileHandler(str(args.log_file))
         fh.setLevel(lvl)
-        fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-        log.addHandler(fh)
+        fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+        parent.addHandler(fh)
+        log.setLevel(lvl)
 
     log.info("worker starting version=%s protocol=%s", str(PACKAGE_VERSION), int(PROTOCOL_VERSION))
 
@@ -610,7 +641,9 @@ class WorkerSession:
         self.last_sf_sha: str | None = None
         self.model_cfg_active: ModelConfig | None = None
         self.model = None
-        self._direct_evaluator: DirectGPUEvaluator | ThreadedBatchEvaluator | AOTEvaluator | None = None
+        self._direct_evaluator: (
+            DirectGPUEvaluator | ThreadedBatchEvaluator | ThreadedDispatcher | AOTEvaluator | None
+        ) = None
         self.inference_client = self._make_inference_client()
         self.pause_selfplay_active = False
         self.manifest_state = "active"
@@ -635,10 +668,29 @@ class WorkerSession:
   # Manifest-watch state (lazy-init in _check_model_update via getattr fallback).
         self._manifest_path: Path | None = None
         self._manifest_mtime: float | None = None
-  # Compiled-model cache ids (set the first time we compile a module).
         self._active_reco: dict | None = None
-        self._threaded_model_id: int | None = None
-        self._aot_model_id: int | None = None
+        self._evaluator_model_id: int | None = None
+
+    def _build_evaluator(
+        self, model: torch.nn.Module,
+    ) -> DirectGPUEvaluator | ThreadedBatchEvaluator | ThreadedDispatcher | AOTEvaluator:
+        device = str(self.device)
+        if self.args.threaded_selfplay and self.args.threaded_dispatcher:
+            disp_compile = (
+                str(self.args.compile_mode) if self.args.compile_inference else None
+            )
+            return ThreadedDispatcher(
+                model, device=device, max_batch=4096,
+                batch_wait_ms=float(self.args.dispatcher_batch_wait_ms),
+                compile_mode=disp_compile,
+            )
+        if self.args.threaded_selfplay:
+            return ThreadedBatchEvaluator(model, device=device, max_batch=4096, min_batch=256)
+        if self.args.aot_dir:
+            aot = AOTEvaluator(self.args.aot_dir, device=device, max_batch=4096)
+            aot.load_weights(model.state_dict())
+            return aot
+        return DirectGPUEvaluator(model, device=device, max_batch=4096, n_slots=2)
 
     def _stop_fn(self) -> bool:
         """Called every ply by play_batch.  Return True to exit continuous selfplay."""
@@ -774,7 +826,10 @@ class WorkerSession:
   # Selfplay only needs policy_own + wdl; skip 8 unused heads.
         if hasattr(model, "_inference_only"):
             setattr(model, "_inference_only", True)
-        if self.args.compile_inference:
+        # ThreadedDispatcher compiles on its own thread so cudagraph TLS lives
+        # where the forwards happen. Pre-compiling here would cause the
+        # dispatcher's first forward to fall back to eager.
+        if self.args.compile_inference and not getattr(self.args, "threaded_dispatcher", False):
             compile_t0 = time.time()
             self.log.info("compile starting %s sha=%s", label, sha_short)
             _compile_mode = str(self.args.compile_mode)
@@ -899,13 +954,9 @@ class WorkerSession:
                 model_path, _cfg,
                 label="worker-model", sha_short=str(new_sha)[:8],
             )
-  # Update evaluator with new model
-            if isinstance(self._direct_evaluator, ThreadedBatchEvaluator):
-                self._direct_evaluator.update_model(self.model)
-            elif isinstance(self._direct_evaluator, DirectGPUEvaluator):
-                self._direct_evaluator.model = self.model
-            elif isinstance(self._direct_evaluator, AOTEvaluator):
-                self._direct_evaluator.load_weights(self.model.state_dict())
+            if self._direct_evaluator is not None:
+                _sync_evaluator_to_model(self._direct_evaluator, self.model)
+                self._evaluator_model_id = id(self.model)
   # Flush upload buffer tagged with old SHA (lock protects against
   # concurrent _on_completed_game calls in threaded selfplay)
             _buf_lock = self._upload_buf_lock
@@ -1468,42 +1519,13 @@ class WorkerSession:
             time.sleep(float(self.args.poll_seconds))
             return
 
-  # Use ThreadedBatchEvaluator, AOTEvaluator, or DirectGPUEvaluator.
         if need_local_model:
-            assert self.model is not None  # guarded above by need_local_model check
+            assert self.model is not None
             if self._direct_evaluator is None:
-                if self.args.threaded_selfplay:
-                    self._direct_evaluator = ThreadedBatchEvaluator(
-                        self.model, device=str(self.device), max_batch=4096,
-                        min_batch=256,
-                    )
-                    self._threaded_model_id = id(self.model)
-                elif self.args.aot_dir:
-                    _aot = AOTEvaluator(
-                        self.args.aot_dir, device=str(self.device), max_batch=4096,
-                    )
-                    _aot.load_weights(self.model.state_dict())
-                    self._direct_evaluator = _aot
-                    self._aot_model_id = id(self.model)
-                else:
-                    self._direct_evaluator = DirectGPUEvaluator(
-                        self.model, device=str(self.device), max_batch=4096,
-                    )
-  # Model update handling
-            if self.args.threaded_selfplay:
-                assert isinstance(self._direct_evaluator, ThreadedBatchEvaluator)
-                if getattr(self, "_threaded_model_id", None) != id(self.model):
-                    self._direct_evaluator.update_model(self.model)
-                    self._threaded_model_id = id(self.model)
-            elif self.args.aot_dir:
-                assert isinstance(self._direct_evaluator, AOTEvaluator)
-                if getattr(self, "_aot_model_id", None) != id(self.model):
-                    self._direct_evaluator.load_weights(self.model.state_dict())
-                    self._aot_model_id = id(self.model)
-            else:
-                assert isinstance(self._direct_evaluator, DirectGPUEvaluator)
-                if self._direct_evaluator.model is not self.model:
-                    self._direct_evaluator.model = self.model
+                self._direct_evaluator = self._build_evaluator(self.model)
+            if self._evaluator_model_id != id(self.model):
+                _sync_evaluator_to_model(self._direct_evaluator, self.model)
+                self._evaluator_model_id = id(self.model)
 
         games_per_batch = (
             int(self.games_per_batch_local)
@@ -1701,6 +1723,15 @@ class WorkerSession:
             int(stats.l),
             float(t1 - t0),
         )
+        if isinstance(self._direct_evaluator, ThreadedDispatcher):
+            ds = self._direct_evaluator.stats
+            self.log.info(
+                "dispatcher stats: batches=%d avg_batch=%.1f avg_forward_ms=%.2f full_drains=%d",
+                ds["lifetime_batches"],
+                ds["avg_batch_size"],
+                ds["avg_forward_ms"],
+                ds["lifetime_full_drains"],
+            )
 
   # Flush any remaining buffered samples.
         if self.upload_buf.positions > 0:

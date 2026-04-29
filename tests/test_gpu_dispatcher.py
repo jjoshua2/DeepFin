@@ -54,12 +54,14 @@ def test_dispatcher_concurrent_callers_get_correct_results():
 
     def worker(i: int) -> None:
         barrier.wait()
+        pol = wdl = None
         for _ in range(5):
             pol, wdl = dispatcher.evaluate_encoded(inputs[i])
             # Each iteration must match the baseline — lock ensures no cross-
             # thread buffer contamination.
             np.testing.assert_allclose(pol, baseline[i][0], rtol=1e-5, atol=1e-5)
             np.testing.assert_allclose(wdl, baseline[i][1], rtol=1e-5, atol=1e-5)
+        assert pol is not None and wdl is not None
         results[i] = (pol, wdl)
 
     threads = [threading.Thread(target=worker, args=(i,)) for i in range(len(inputs))]
@@ -72,15 +74,22 @@ def test_dispatcher_concurrent_callers_get_correct_results():
         assert r is not None
 
 
-def test_dispatcher_hides_async_attribute():
-    # gumbel_c.py gates its pipelined path on hasattr(eval, 'evaluate_encoded_async').
-    # Dispatchers deliberately don't expose it (no __getattr__ proxy) so the
-    # pipelined path never activates through a wrapped evaluator — that path
-    # would bypass our serialization/coalescing logic.
+def test_dispatcher_forwards_inplace_and_async_apis():
+    # gumbel_c.py probes hasattr(eval, 'evaluate_encoded_async') and
+    # hasattr(eval, 'get_input_buffer') to pick the inplace zero-copy path.
+    # ThreadSafeGPUDispatcher forwards those (lock-wrapped) so UCI search
+    # — which always wraps DirectGPUEvaluator in this dispatcher — gets the
+    # same skip-the-input-memcpy benefit as direct callers. Pipelining
+    # itself still requires n_boards >= 64, which UCI never hits, so the
+    # forward of evaluate_encoded_async doesn't accidentally activate the
+    # pipelined path through the dispatcher.
     evaluator = _make_evaluator()
     dispatcher = ThreadSafeGPUDispatcher(evaluator)
-    assert not hasattr(dispatcher, "evaluate_encoded_async")
     assert hasattr(dispatcher, "evaluate_encoded")
+    assert hasattr(dispatcher, "evaluate_encoded_async")
+    assert hasattr(dispatcher, "get_input_buffer")
+    assert hasattr(dispatcher, "evaluate_inplace_async")
+    assert dispatcher.n_slots == evaluator.n_slots
 
 
 def test_dispatcher_exposes_max_batch():

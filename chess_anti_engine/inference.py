@@ -212,51 +212,66 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         max_batch: int = 512,
         use_amp: bool = True,
         amp_dtype: str = "auto",
+        n_slots: int = 1,
     ) -> None:
         super().__init__(model, device=device, use_amp=use_amp, amp_dtype=amp_dtype)
         self._max_batch = int(max_batch)
+        if n_slots < 1:
+            raise ValueError(f"n_slots must be >= 1, got {n_slots}")
+        self._n_slots = int(n_slots)
 
         _pin = self._use_cuda
-        self._pinned_input = torch.empty(
-            (self._max_batch, _CHANNELS, _BOARD_H, _BOARD_W),
-            dtype=torch.float32, pin_memory=_pin,
-        )
-        self._pinned_pol = torch.empty(
-            (self._max_batch, _POLICY_SIZE),
-            dtype=torch.float32, pin_memory=_pin,
-        )
-        self._pinned_wdl = torch.empty(
-            (self._max_batch, _WDL_SIZE),
-            dtype=torch.float32, pin_memory=_pin,
-        )
-        self._pinned_input_np = self._pinned_input.numpy(force=True)
-        self._pinned_pol_np = self._pinned_pol.numpy(force=True)
-        self._pinned_wdl_np = self._pinned_wdl.numpy(force=True)
+        self._pinned_inputs: list[torch.Tensor] = [
+            torch.empty(
+                (self._max_batch, _CHANNELS, _BOARD_H, _BOARD_W),
+                dtype=torch.float32, pin_memory=_pin,
+            ) for _ in range(self._n_slots)
+        ]
+        self._pinned_pols: list[torch.Tensor] = [
+            torch.empty(
+                (self._max_batch, _POLICY_SIZE),
+                dtype=torch.float32, pin_memory=_pin,
+            ) for _ in range(self._n_slots)
+        ]
+        self._pinned_wdls: list[torch.Tensor] = [
+            torch.empty(
+                (self._max_batch, _WDL_SIZE),
+                dtype=torch.float32, pin_memory=_pin,
+            ) for _ in range(self._n_slots)
+        ]
+        self._pinned_inputs_np: list[np.ndarray] = [t.numpy(force=True) for t in self._pinned_inputs]
+        self._pinned_pols_np: list[np.ndarray] = [t.numpy(force=True) for t in self._pinned_pols]
+        self._pinned_wdls_np: list[np.ndarray] = [t.numpy(force=True) for t in self._pinned_wdls]
 
-    def get_input_buffer(self, bsz: int) -> np.ndarray:
-        """Return a writable (bsz, C, H, W) view into the pinned input buffer.
+    @property
+    def n_slots(self) -> int:
+        return self._n_slots
+
+    def get_input_buffer(self, bsz: int, slot: int = 0) -> np.ndarray:
+        """Return a writable (bsz, C, H, W) view into pinned input slot ``slot``.
 
         Caller can write encoded positions directly into this buffer,
         avoiding a separate allocation + copy.  The view is valid until
-        the next ``evaluate_encoded`` or ``get_input_buffer`` call.
+        the next ``evaluate_inplace`` / ``evaluate_inplace_async`` /
+        ``evaluate_encoded`` call **on the same slot**.
         """
         if bsz > self._max_batch:
             raise ValueError(f"batch {bsz} > max {self._max_batch}")
-        return self._pinned_input_np[:bsz]
+        if not 0 <= slot < self._n_slots:
+            raise ValueError(f"slot {slot} out of range [0, {self._n_slots})")
+        return self._pinned_inputs_np[slot][:bsz]
 
     def evaluate_inplace(
-        self, bsz: int, *, copy_out: bool = True,
+        self, bsz: int, *, copy_out: bool = True, slot: int = 0,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Run inference on data already written to ``get_input_buffer()``.
-
-        Same as ``evaluate_encoded`` but skips the input copy — caller must
-        have already written ``bsz`` positions into the pinned input buffer.
-        """
+        """Run inference on data already written to ``get_input_buffer(slot)``."""
         if bsz <= 0:
             return np.empty((0, _POLICY_SIZE), dtype=np.float32), np.empty((0, _WDL_SIZE), dtype=np.float32)
         if bsz > self._max_batch:
             raise ValueError(f"batch {bsz} > max {self._max_batch}")
-        return self._run_forward(bsz, copy_out=copy_out)
+        if not 0 <= slot < self._n_slots:
+            raise ValueError(f"slot {slot} out of range [0, {self._n_slots})")
+        return self._run_forward(bsz, copy_out=copy_out, slot=slot)
 
     def evaluate_encoded(
         self, x: np.ndarray, *, copy_out: bool = True,
@@ -267,33 +282,36 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         if bsz > self._max_batch:
             raise ValueError(f"batch {bsz} > max {self._max_batch}")
 
-        self._pinned_input_np[:bsz] = x
-        return self._run_forward(bsz, copy_out=copy_out)
+        self._pinned_inputs_np[0][:bsz] = x
+        return self._run_forward(bsz, copy_out=copy_out, slot=0)
 
     def _run_forward(
-        self, bsz: int, *, copy_out: bool = True,
+        self, bsz: int, *, copy_out: bool = True, slot: int = 0,
     ) -> tuple[np.ndarray, np.ndarray]:
+        pin_in = self._pinned_inputs[slot]
+        pin_pol = self._pinned_pols[slot]
+        pin_wdl = self._pinned_wdls[slot]
         if not self._use_cuda:
-            xt = self._pinned_input[:bsz]
+            xt = pin_in[:bsz]
             out = _forward_no_grad(
                 self.model, xt, device=self.device,
                 use_amp=self._use_amp, amp_dtype=self._amp_dtype,
             )
             return _policy_output(out).detach().float().numpy(), out["wdl"].detach().float().numpy()
 
-        xt = self._pinned_input[:bsz].to(self.device, non_blocking=True)
+        xt = pin_in[:bsz].to(self.device, non_blocking=True)
         out = _forward_no_grad(
             self.model, xt, device=self.device,
             use_amp=self._use_amp, amp_dtype=self._amp_dtype,
         )
-        self._pinned_pol[:bsz].copy_(_policy_output(out).detach().float(), non_blocking=True)
-        self._pinned_wdl[:bsz].copy_(out["wdl"].detach().float(), non_blocking=True)
+        pin_pol[:bsz].copy_(_policy_output(out).detach().float(), non_blocking=True)
+        pin_wdl[:bsz].copy_(out["wdl"].detach().float(), non_blocking=True)
         done = torch.cuda.Event()
         done.record(torch.cuda.current_stream(torch.device(self.device)))
         done.synchronize()
 
-        pol_np = self._pinned_pol_np[:bsz]
-        wdl_np = self._pinned_wdl_np[:bsz]
+        pol_np = self._pinned_pols_np[slot][:bsz]
+        wdl_np = self._pinned_wdls_np[slot][:bsz]
         if copy_out:
             return pol_np.copy(), wdl_np.copy()
         return pol_np, wdl_np
@@ -312,7 +330,35 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         if not self._use_cuda:
             return super().evaluate_encoded_async(x)
 
-        self._pinned_input_np[:bsz] = x
+        self._pinned_inputs_np[0][:bsz] = x
+        return self._async_forward(bsz, slot=0)
+
+    def evaluate_inplace_async(
+        self, bsz: int, *, slot: int = 0,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
+        """Async forward on data already written to ``get_input_buffer(slot)``.
+
+        Skips the input memcpy: caller wrote the encoded batch directly into
+        the pinned input view, so H2D DMA can launch immediately. Output
+        slots are independent across slot indices, so two concurrent
+        in-flight inplace_async calls on different slots don't clobber each
+        other's pinned outputs.
+        """
+        if bsz > self._max_batch:
+            raise ValueError(f"batch {bsz} > max {self._max_batch}")
+        if not 0 <= slot < self._n_slots:
+            raise ValueError(f"slot {slot} out of range [0, {self._n_slots})")
+        if not self._use_cuda:
+            xb = self._pinned_inputs_np[slot][:bsz]
+            return super().evaluate_encoded_async(xb)
+        return self._async_forward(bsz, slot=slot)
+
+    def _async_forward(
+        self, bsz: int, *, slot: int,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
+        pin_in = self._pinned_inputs[slot]
+        pin_pol = self._pinned_pols[slot]
+        pin_wdl = self._pinned_wdls[slot]
 
         if self._stream is None:
             self._stream = torch.cuda.Stream(device=self.device)
@@ -322,18 +368,18 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         event_default.record(torch.cuda.current_stream(self.device))
 
         with torch.cuda.stream(stream):
-            stream.wait_event(event_default) # torch stubs have duplicate Event types
-            xt = self._pinned_input[:bsz].to(self.device, non_blocking=True)
+            stream.wait_event(event_default)  # torch stubs have duplicate Event types
+            xt = pin_in[:bsz].to(self.device, non_blocking=True)
             out = _forward_no_grad(
                 self.model, xt, device=self.device,
                 use_amp=self._use_amp, amp_dtype=self._amp_dtype,
             )
-            self._pinned_pol[:bsz].copy_(_policy_output(out).detach().float(), non_blocking=True)
-            self._pinned_wdl[:bsz].copy_(out["wdl"].detach().float(), non_blocking=True)
+            pin_pol[:bsz].copy_(_policy_output(out).detach().float(), non_blocking=True)
+            pin_wdl[:bsz].copy_(out["wdl"].detach().float(), non_blocking=True)
             done = torch.cuda.Event()
             done.record(stream)
 
-        return self._pinned_pol[:bsz], self._pinned_wdl[:bsz], done
+        return pin_pol[:bsz], pin_wdl[:bsz], done
 
 
 # Bucket ladder for ThreadedBatchEvaluator's coalesced GPU forwards. Coarser
@@ -1016,9 +1062,14 @@ class SlotBroker:
             if now - _last_report >= _report_interval and _batch_count > 0:
                 avg_pos = _total_positions / _batch_count
                 avg_slots = _total_slots_used / _batch_count
+                # Capacity = num_slots × max_batch_per_slot. Fullness < ~50%
+                # = brokering small batches (dispatch-bound), > 80% = saturated.
+                _capacity_per_batch = len(self._slots) * self._layout.max_batch
+                fullness = (100.0 * avg_pos / _capacity_per_batch) if _capacity_per_batch else 0.0
                 print(
                     f"[broker] {_batch_count} batches in {now - _last_report:.1f}s | "
-                    f"avg {avg_pos:.1f} pos/batch, {avg_slots:.1f} slots/batch | "
+                    f"avg {avg_pos:.1f} pos/batch ({fullness:.0f}% of {_capacity_per_batch}-cap), "
+                    f"{avg_slots:.1f}/{len(self._slots)} slots/batch | "
                     f"{_total_positions / (now - _last_report):.0f} pos/s",
                     flush=True,
                 )
