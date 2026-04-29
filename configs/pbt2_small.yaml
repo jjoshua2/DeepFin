@@ -212,8 +212,8 @@ train:
   lr_eta_min: 0.00001
   lr_T0: 999999        # Disable cosine cycling — PBT exploit/explore handles LR variation
   lr_T_mult: 1
-  use_compile: false   # 2026-04-29: re-disabled. With max-autotune, trainer iter_time=560s, train_secs=339s vs yesterday's ~100s uncompiled — 3.4× train regression. Workers keep their own compile (separate path, proven stable). Construction-only knob — restart required.
-  compile_mode: reduce-overhead
+  use_compile: true    # 2026-04-27: re-enabled with max-autotune. The earlier "compile destroys trainer" diagnosis turned out to be a prefix bug, not a compile-backward bug — saving under compile created `_orig_mod.`-prefixed checkpoints, then a later unwrapped load silently dropped all 192 keys (no warning) leaving the trainer fresh-init. Workers running max-autotune have been stable through trial f2f58 (raw_wr 0.81/0.59/0.57 across iters 1-3). Both bugs in the chain are now fixed: Trainer.save() strips the prefix, and load_state_dict_tolerant raises on <50% load.
+  compile_mode: max-autotune
   log_level: DEBUG   # Enables per-search "gumbel profile (...avg=B)" line in mcts/gumbel_c.py so we can read selfplay batch sizes. Override via env CHESS_LOG_LEVEL.
   swa_start: -1  # Disabled: SWA averaging hurts early training. Enable after model stabilizes.
   swa_freq: 50
