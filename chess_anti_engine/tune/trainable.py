@@ -64,6 +64,193 @@ import re as _re
 
 _AVG_BATCH_RE = _re.compile(rb"avg=([0-9.]+)")
 
+_STATUS_COLS = (
+    "iter", "global_iter", "opp", "opp_ema", "sf_nodes", "regret",
+    "ingest_s", "train_s", "iter_s", "steps", "replay", "pos_added",
+    "stale", "train_loss", "best_loss", "win", "draw", "loss", "lr", "startup",
+)
+
+
+def _set_log_level(config: dict) -> None:
+    """Set chess_anti_engine logger level from env or yaml; log if DEBUG."""
+    lvl_name = (os.environ.get("CHESS_LOG_LEVEL") or config.get("log_level") or "INFO").upper()
+    lvl = getattr(logging, lvl_name, logging.INFO)
+    logging.getLogger("chess_anti_engine").setLevel(lvl)
+    if lvl <= logging.DEBUG:
+        logging.getLogger().info("chess_anti_engine logging at DEBUG (gumbel batch-size profiling enabled)")
+
+
+def _init_status_csv(trial_dir: Path) -> Path:
+    """Write fresh CSV header (truncates any prior file from a crashed restart)."""
+    path = trial_dir / "status.csv"
+    with path.open("w", newline="") as f:
+        csv.writer(f).writerow(_STATUS_COLS)
+    return path
+
+
+def _load_gate_match_idx(gate_state_path: Path) -> int:
+    if not gate_state_path.exists():
+        return 0
+    try:
+        return int(json.loads(gate_state_path.read_text(encoding="utf-8")).get("matches", 0))
+    except Exception:
+        return 0
+
+
+def _load_best_state(best_state_path: Path) -> tuple[float, float]:
+    """Return (best_loss, opp_strength_ema) from best.json or defaults."""
+    if not best_state_path.exists():
+        return float("inf"), 0.0
+    try:
+        d = json.loads(best_state_path.read_text(encoding="utf-8"))
+        return float(d.get("best_loss", d.get("loss", float("inf")))), float(d.get("opp_strength_ema", 0.0))
+    except Exception:
+        return float("inf"), 0.0
+
+
+def _assert_distributed_configured(tc: TrialConfig) -> None:
+    if not (
+        tc.distributed_workers_per_trial > 0
+        and bool((tc.distributed_server_root or "").strip())
+        and bool((tc.distributed_server_url or "").strip())
+    ):
+        raise RuntimeError(
+            "Trainable requires distributed selfplay to be configured: "
+            "distributed_workers_per_trial>0 plus server_root/server_url. "
+            "run.py auto-enables this for --mode train; if you see this from "
+            "a direct trainable invocation, call run.py --mode train (or tune) "
+            "or populate the distributed_* keys."
+        )
+
+
+def _init_local_stockfish(tc: TrialConfig) -> StockfishUCI | StockfishPool | None:
+    """Local SF for gate-check games only; distributed workers run their own SF."""
+    if tc.gate_games <= 0:
+        return None
+    if tc.sf_workers > 1:
+        return StockfishPool(
+            path=tc.stockfish_path, nodes=tc.sf_nodes,
+            num_workers=tc.sf_workers, multipv=tc.sf_multipv,
+            hash_mb=tc.sf_hash_mb, syzygy_path=tc.syzygy_path,
+        )
+    return StockfishUCI(
+        tc.stockfish_path, nodes=tc.sf_nodes, multipv=tc.sf_multipv,
+        hash_mb=tc.sf_hash_mb, syzygy_path=tc.syzygy_path,
+    )
+
+
+def _init_eval_stockfish(tc: TrialConfig) -> StockfishUCI | None:
+    """Dedicated fixed-strength engine for eval games (separate node limit)."""
+    if tc.eval_games <= 0:
+        return None
+    return StockfishUCI(
+        tc.stockfish_path, nodes=tc.eval_sf_nodes, multipv=1,
+        hash_mb=tc.sf_hash_mb, syzygy_path=tc.syzygy_path,
+    )
+
+
+def _init_pid(tc: TrialConfig, config: dict, restored_pid_state, sf):
+    """Build PID from config + optional restored state. Sync local SF nodes if any."""
+    if not tc.sf_pid_enabled:
+        return None
+    pid = pid_from_config(config)
+    if restored_pid_state is not None:
+        try:
+            pid.load_state_dict(restored_pid_state)
+        except Exception:
+            pass
+  # Keep gate-game SF in lock-step with restored PID nodes so gate plays
+  # at the same difficulty distributed workers do.
+    if sf is not None:
+        try:
+            sf.set_nodes(int(pid.nodes))
+        except Exception:
+            pass
+    return pid
+
+
+def _load_puzzle_suite(tc: TrialConfig):
+    if not (tc.puzzle_epd and tc.puzzle_interval > 0):
+        return None
+    from chess_anti_engine.eval import load_epd
+    try:
+        return load_epd(tc.puzzle_epd)
+    except FileNotFoundError:
+        return None
+
+
+def _lazy_construct_iter_helpers(
+    *, shard_prefetcher, async_test_eval, tc: TrialConfig,
+    distributed_dirs: dict, iteration_idx: int,
+):
+    """First-iter activation gates for prefetcher + async_test_eval.
+
+    Lazily constructed inside the iter loop so live YAML reload can flip
+    them on; constructing at trial-setup time misses --resume strips of
+    these keys from tuner.pkl param_space.
+    """
+    if shard_prefetcher is None and tc.distributed_prefetch_shards:
+        from chess_anti_engine.tune.distributed_runtime import _iter_shard_paths_nested
+        from chess_anti_engine.tune.prefetch import BackgroundShardPrefetcher
+        shard_prefetcher = BackgroundShardPrefetcher(
+            inbox_dir=distributed_dirs["inbox_dir"],
+            path_iter=_iter_shard_paths_nested,
+        )
+        shard_prefetcher.start()
+        logging.getLogger("chess_anti_engine.iter").info("[trial]BackgroundShardPrefetcher started (iter %d)", iteration_idx)
+    if async_test_eval is None and tc.distributed_async_test_eval:
+        from chess_anti_engine.train.async_eval import AsyncTestEval
+        async_test_eval = AsyncTestEval()
+        logging.getLogger("chess_anti_engine.iter").info("[trial]AsyncTestEval enabled (iter %d)", iteration_idx)
+    return shard_prefetcher, async_test_eval
+
+
+def _log_iter_phase_split(
+    *, trainer, iteration_idx: int, distributed_dirs: dict,
+    worker_log_offsets: dict[str, int],
+    selfplay_secs: float, train_secs: float, iter_so_far: float,
+) -> None:
+    other_secs = max(0.0, iter_so_far - selfplay_secs - train_secs)
+    denom = max(iter_so_far, 1e-9)
+    logging.getLogger("chess_anti_engine.iter").info(
+        "iter %d phase split: selfplay=%.1fs (%.0f%%) train=%.1fs (%.0f%%) other=%.1fs (%.0f%%) total_so_far=%.1fs",
+        iteration_idx,
+        selfplay_secs, 100.0 * selfplay_secs / denom,
+        train_secs, 100.0 * train_secs / denom,
+        other_secs, 100.0 * other_secs / denom,
+        iter_so_far,
+    )
+    try:
+        trainer.writer.add_scalar("iter/selfplay_secs", float(selfplay_secs), iteration_idx)
+        trainer.writer.add_scalar("iter/train_secs", float(train_secs), iteration_idx)
+        trainer.writer.add_scalar("iter/other_secs", float(other_secs), iteration_idx)
+        avg_batch = _avg_batch_from_worker_logs(distributed_dirs, worker_log_offsets)
+        if avg_batch > 0:
+            trainer.writer.add_scalar("selfplay/avg_batch_size", float(avg_batch), iteration_idx)
+    except Exception:
+        pass  # TB scalar emission must never break training
+
+
+def _cleanup_trial_resources(
+    *, shard_prefetcher, async_test_eval,
+    distributed_worker_procs, distributed_inference_broker_proc,
+    sf, eval_sf,
+) -> None:
+    if shard_prefetcher is not None:
+        shard_prefetcher.stop()
+    if async_test_eval is not None:
+  # Drain in-flight eval, then signal the long-lived worker thread to
+  # exit cleanly (avoids the daemon thread getting torn down mid-CUDA-
+  # call on interpreter exit).
+        async_test_eval.collect(timeout=10.0)
+        async_test_eval.shutdown(timeout=5.0)
+    _stop_worker_processes(distributed_worker_procs)
+    _stop_process(distributed_inference_broker_proc)
+    if sf is not None:
+        sf.close()
+    if eval_sf is not None:
+        eval_sf.close()
+
 
 def _avg_batch_from_worker_logs(distributed_dirs, offsets: dict[str, int]) -> float:
     """Tail each worker log since last call and return mean of `avg=N` values
@@ -121,15 +308,7 @@ def train_trial(config: dict):
     if "device" not in config:
         config["device"] = "cuda" if torch.cuda.is_available() else "cpu"
     tc = TrialConfig.from_dict(config)
-
-    # Logging level: yaml `log_level` or env CHESS_LOG_LEVEL (env wins).
-    # DEBUG enables the per-search "gumbel profile (n_boards=N): ... avg=B"
-    # line in mcts/gumbel_c.py and similar batch-size diagnostics elsewhere.
-    _lvl_name = (os.environ.get("CHESS_LOG_LEVEL") or config.get("log_level") or "INFO").upper()
-    _lvl = getattr(logging, _lvl_name, logging.INFO)
-    logging.getLogger("chess_anti_engine").setLevel(_lvl)
-    if _lvl <= logging.DEBUG:
-        logging.getLogger().info("chess_anti_engine logging at DEBUG (gumbel batch-size profiling enabled)")
+    _set_log_level(config)
     _yaml_path = tc._yaml_config_path
 
     _ctx = _tune_get_context()
@@ -168,40 +347,16 @@ def train_trial(config: dict):
     work_dir.mkdir(parents=True, exist_ok=True)
 
   # Compact status CSV — reset on each process start so checkpoint-restore rows don't accumulate.
-    _STATUS_CSV_PATH = trial_dir / "status.csv"
-    _STATUS_COLS = [
-        "iter", "global_iter", "opp", "opp_ema", "sf_nodes", "regret",
-        "ingest_s", "train_s", "iter_s", "steps", "replay", "pos_added",
-        "stale", "train_loss", "best_loss", "win", "draw", "loss", "lr", "startup",
-    ]
-    with _STATUS_CSV_PATH.open("w", newline="") as _f:
-        csv.writer(_f).writerow(_STATUS_COLS)
+    _STATUS_CSV_PATH = _init_status_csv(trial_dir)
 
-  # Gate match counter (so we can log gate scalars against match #, not iteration).
     gate_state_path = work_dir / "gate_state.json"
-    gate_match_idx = 0
-    if gate_state_path.exists():
-        try:
-            d = json.loads(gate_state_path.read_text(encoding="utf-8"))
-            gate_match_idx = int(d.get("matches", 0))
-        except Exception:
-            gate_match_idx = 0
+    gate_match_idx = _load_gate_match_idx(gate_state_path)
 
-  # Best-model tracking (per trial)
     best_state_path = work_dir / "best.json"
     best_dir = work_dir / "best"
     best_dir.mkdir(parents=True, exist_ok=True)
-
-    best_loss = float("inf")
-    opp_strength_ema = 0.0
+    best_loss, opp_strength_ema = _load_best_state(best_state_path)
     _OPP_EMA_ALPHA = 0.3  # smoothing factor — higher = more responsive
-    if best_state_path.exists():
-        try:
-            d = json.loads(best_state_path.read_text(encoding="utf-8"))
-            best_loss = float(d.get("best_loss", d.get("loss", best_loss)))
-            opp_strength_ema = float(d.get("opp_strength_ema", 0.0))
-        except Exception:
-            pass
 
     trainer_ctor = trainer_kwargs_from_config(
         config | {"device": device}, log_dir=work_dir / "tb",
@@ -232,40 +387,8 @@ def train_trial(config: dict):
     holdout_frozen = False
     holdout_generation = 0
 
-    if not (
-        tc.distributed_workers_per_trial > 0
-        and bool((tc.distributed_server_root or "").strip())
-        and bool((tc.distributed_server_url or "").strip())
-    ):
-        raise RuntimeError(
-            "Trainable requires distributed selfplay to be configured: "
-            "distributed_workers_per_trial>0 plus server_root/server_url. "
-            "run.py auto-enables this for --mode train; if you see this from "
-            "a direct trainable invocation, call run.py --mode train (or tune) "
-            "or populate the distributed_* keys."
-        )
-
-  # Local SF is only needed for gate-check games; distributed workers run
-  # their own SF subprocesses.
-    sf = None
-    if tc.gate_games > 0:
-        if tc.sf_workers > 1:
-            sf = StockfishPool(
-                path=tc.stockfish_path,
-                nodes=tc.sf_nodes,
-                num_workers=tc.sf_workers,
-                multipv=tc.sf_multipv,
-                hash_mb=tc.sf_hash_mb,
-                syzygy_path=tc.syzygy_path,
-            )
-        else:
-            sf = StockfishUCI(
-                tc.stockfish_path,
-                nodes=tc.sf_nodes,
-                multipv=tc.sf_multipv,
-                hash_mb=tc.sf_hash_mb,
-                syzygy_path=tc.syzygy_path,
-            )
+    _assert_distributed_configured(tc)
+    sf = _init_local_stockfish(tc)
 
     distributed_server_root = _resolve_local_override_root(
         raw_root=str(tc.distributed_server_root),
@@ -297,41 +420,9 @@ def train_trial(config: dict):
                 f"dst={quarantined['quarantine_root']}"
             )
 
-    eval_sf = None
-    if tc.eval_games > 0:
-  # For fixed-strength evaluation, use a dedicated engine instance with its own node limit.
-        eval_sf = StockfishUCI(
-            tc.stockfish_path,
-            nodes=tc.eval_sf_nodes,
-            multipv=1,
-            hash_mb=tc.sf_hash_mb,
-            syzygy_path=tc.syzygy_path,
-        )
-
-    pid = None
-    if tc.sf_pid_enabled:
-        pid = pid_from_config(config)
-        if restored_pid_state is not None:
-            try:
-                pid.load_state_dict(restored_pid_state)
-            except Exception:
-                pass
-  # Keep local sf in lock-step with restored PID nodes so gate games
-  # on resume play at the same difficulty as distributed workers.
-        if sf is not None:
-            try:
-                sf.set_nodes(int(pid.nodes))
-            except Exception:
-                pass
-
-  # Optional puzzle evaluation suite.
-    puzzle_suite = None
-    if tc.puzzle_epd and tc.puzzle_interval > 0:
-        from chess_anti_engine.eval import load_epd
-        try:
-            puzzle_suite = load_epd(tc.puzzle_epd)
-        except FileNotFoundError:
-            puzzle_suite = None
+    eval_sf = _init_eval_stockfish(tc)
+    pid = _init_pid(tc, config, restored_pid_state, sf)
+    puzzle_suite = _load_puzzle_suite(tc)
 
     pause_marker_paths = _resolve_pause_marker_paths(tc=tc, trial_dir=trial_dir)
     # One-shot startup log so we can compare against the path graceful_restart
@@ -407,20 +498,13 @@ def train_trial(config: dict):
             _reload_yaml_into_config(config, _yaml_path)
             tc = TrialConfig.from_dict(config)
 
-  # Lazy construction (post-YAML-reload so --resume strip can't hide flags).
-            if shard_prefetcher is None and tc.distributed_prefetch_shards:
-                from chess_anti_engine.tune.distributed_runtime import _iter_shard_paths_nested
-                from chess_anti_engine.tune.prefetch import BackgroundShardPrefetcher
-                shard_prefetcher = BackgroundShardPrefetcher(
-                    inbox_dir=distributed_dirs["inbox_dir"],
-                    path_iter=_iter_shard_paths_nested,
-                )
-                shard_prefetcher.start()
-                logging.getLogger("chess_anti_engine.iter").info("[trial]BackgroundShardPrefetcher started (iter %d)", iteration_idx)
-            if async_test_eval is None and tc.distributed_async_test_eval:
-                from chess_anti_engine.train.async_eval import AsyncTestEval
-                async_test_eval = AsyncTestEval()
-                logging.getLogger("chess_anti_engine.iter").info("[trial]AsyncTestEval enabled (iter %d)", iteration_idx)
+            shard_prefetcher, async_test_eval = _lazy_construct_iter_helpers(
+                shard_prefetcher=shard_prefetcher,
+                async_test_eval=async_test_eval,
+                tc=tc,
+                distributed_dirs=distributed_dirs,
+                iteration_idx=iteration_idx,
+            )
 
             in_salvage_startup_grace = (
                 restore.startup_source == "salvage"
@@ -511,25 +595,13 @@ def train_trial(config: dict):
             )
             t_train_secs = time.monotonic() - t_train_start
             gate_match_idx = tr.gate_match_idx
-            t_iter_so_far = time.monotonic() - iter_t0
-            t_other_secs = max(0.0, t_iter_so_far - t_selfplay_secs - t_train_secs)
-            logging.getLogger("chess_anti_engine.iter").info(
-                "iter %d phase split: selfplay=%.1fs (%.0f%%) train=%.1fs (%.0f%%) other=%.1fs (%.0f%%) total_so_far=%.1fs",
-                iteration_idx,
-                t_selfplay_secs, 100.0 * t_selfplay_secs / max(t_iter_so_far, 1e-9),
-                t_train_secs, 100.0 * t_train_secs / max(t_iter_so_far, 1e-9),
-                t_other_secs, 100.0 * t_other_secs / max(t_iter_so_far, 1e-9),
-                t_iter_so_far,
+            _log_iter_phase_split(
+                trainer=trainer, iteration_idx=iteration_idx,
+                distributed_dirs=distributed_dirs,
+                worker_log_offsets=_worker_log_offsets,
+                selfplay_secs=t_selfplay_secs, train_secs=t_train_secs,
+                iter_so_far=time.monotonic() - iter_t0,
             )
-            try:
-                trainer.writer.add_scalar("iter/selfplay_secs", float(t_selfplay_secs), iteration_idx)
-                trainer.writer.add_scalar("iter/train_secs", float(t_train_secs), iteration_idx)
-                trainer.writer.add_scalar("iter/other_secs", float(t_other_secs), iteration_idx)
-                avg_batch = _avg_batch_from_worker_logs(distributed_dirs, _worker_log_offsets)
-                if avg_batch > 0:
-                    trainer.writer.add_scalar("selfplay/avg_batch_size", float(avg_batch), iteration_idx)
-            except Exception:
-                pass  # TB scalar emission must never break training
 
             eval_dict = _run_eval_games(
                 tc=tc, trainer=trainer, device=device, rng=rng,
@@ -613,17 +685,10 @@ def train_trial(config: dict):
             global_iter = int(iteration_idx)
             completed_iterations += 1
     finally:
-        if shard_prefetcher is not None:
-            shard_prefetcher.stop()
-        if async_test_eval is not None:
-  # Drain any in-flight eval, then signal the long-lived worker
-  # thread to exit cleanly (avoids the daemon thread getting torn
-  # down mid-CUDA-call on interpreter exit).
-            async_test_eval.collect(timeout=10.0)
-            async_test_eval.shutdown(timeout=5.0)
-        _stop_worker_processes(distributed_worker_procs)
-        _stop_process(distributed_inference_broker_proc)
-        if sf is not None:
-            sf.close()
-        if eval_sf is not None:
-            eval_sf.close()
+        _cleanup_trial_resources(
+            shard_prefetcher=shard_prefetcher,
+            async_test_eval=async_test_eval,
+            distributed_worker_procs=distributed_worker_procs,
+            distributed_inference_broker_proc=distributed_inference_broker_proc,
+            sf=sf, eval_sf=eval_sf,
+        )
