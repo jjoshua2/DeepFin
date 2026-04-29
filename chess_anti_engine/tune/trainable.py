@@ -608,10 +608,11 @@ def train_trial(config: dict):
         if shard_prefetcher is not None:
             shard_prefetcher.stop()
         if async_test_eval is not None:
-  # Drain any in-flight eval so the snapshot model + thread shut
-  # down cleanly (avoids the daemon thread getting torn down
-  # mid-CUDA-call on interpreter exit).
+  # Drain any in-flight eval, then signal the long-lived worker
+  # thread to exit cleanly (avoids the daemon thread getting torn
+  # down mid-CUDA-call on interpreter exit).
             async_test_eval.collect(timeout=10.0)
+            async_test_eval.shutdown(timeout=5.0)
         _stop_worker_processes(distributed_worker_procs)
         _stop_process(distributed_inference_broker_proc)
         if sf is not None:

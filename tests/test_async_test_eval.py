@@ -99,7 +99,7 @@ def test_start_during_inflight_orphans_prior(cfg_and_builder, caplog):
             trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
             batch_size=4, steps=2, device="cpu", source_iter=2,
         )
-    assert any("previous eval still running" in r.getMessage() for r in caplog.records)
+    assert any("previous eval" in r.getMessage() and "still running" in r.getMessage() for r in caplog.records)
     block.set()
     aer.collect(timeout=5.0)
 

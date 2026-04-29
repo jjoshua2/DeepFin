@@ -12,20 +12,22 @@ not ``training_iteration``, when async eval is enabled.
 next iter's ``train_steps`` mutates them in place. Without isolation
 the eval would read a mix of pre- and mid-train weights. The snapshot
 is a freshly-built ``ChessNet`` instance loaded from a CPU copy of the
-post-train state_dict, moved to GPU at thread start.
+post-train state_dict.
 
-**Why no cudagraph.** Compile is on (inductor codegen is thread-safe
-and the shared cache hits) but cudagraph capture/replay is thread-
-affine — cudagraph_trees keeps thread-local state and asserts in
-get_obj when a compiled forward replays on a non-main thread
-(observed crashes 2026-04-29). The compile mode is translated to its
-no-cudagraph equivalent (e.g. ``max-autotune`` → ``max-autotune-no-
-cudagraphs``) so the eval thread keeps the kernel speedup without
-the TLS hazard.
+**Why one long-lived eval thread.** cudagraph_trees keeps thread-local
+state and asserts when a compiled forward replays on a thread that
+didn't capture its tree (observed crashes 2026-04-29 with per-iter
+spawned threads). The fix is to use a single persistent eval thread
+that captures its cudagraph tree on the first eval and replays it on
+every subsequent iter — same pattern the trainer and ThreadedDispatcher
+use. Each iter we just ``load_state_dict`` into the long-lived snapshot
+in-place; the cudagraph keys on graph topology, not weight values, so
+it stays valid across weight updates.
 """
 from __future__ import annotations
 
 import logging
+import queue
 import threading
 from typing import Any
 
@@ -34,26 +36,48 @@ import torch
 from chess_anti_engine.model import ModelConfig, build_model
 from chess_anti_engine.train.compile_probe import apply_compile
 
-_CUDAGRAPH_MODES = frozenset({"reduce-overhead", "max-autotune"})
-
-
-def _no_cudagraph_mode(mode: str) -> str:
-    """Translate a compile mode to its cudagraph-free equivalent.
-
-    cudagraph capture/replay is thread-affine — the eval thread can't share
-    the trainer thread's cudagraph state. Inductor codegen itself is fine.
-    """
-    return "max-autotune-no-cudagraphs" if mode in _CUDAGRAPH_MODES else mode
-
 log = logging.getLogger(__name__)
 
 
+class _Work:
+    """Per-iter work item handed to the eval thread."""
+
+    __slots__ = ("snap_state", "trainer", "buf", "batch_size", "steps", "source_iter")
+
+    def __init__(
+        self,
+        *,
+        snap_state: dict[str, torch.Tensor],
+        trainer: Any,
+        buf: Any,
+        batch_size: int,
+        steps: int,
+        source_iter: int,
+    ) -> None:
+        self.snap_state = snap_state
+        self.trainer = trainer
+        self.buf = buf
+        self.batch_size = batch_size
+        self.steps = steps
+        self.source_iter = source_iter
+
+
 class AsyncTestEval:
-    """Owns the snapshot model + thread + result holder for one trial."""
+    """Long-lived eval thread + reusable snapshot model.
+
+    The snapshot is built and compiled once on first start(); each
+    subsequent start() pushes a new state_dict copy that the worker
+    thread loads in-place. cudagraph capture happens once on the worker
+    thread's first forward and replays on every iter after.
+    """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        self._result_event = threading.Event()
+        self._work_q: queue.Queue[_Work | None] = queue.Queue(maxsize=1)
         self._thread: threading.Thread | None = None
+        self._init_args: dict[str, Any] | None = None
+        self._inflight_iter: int = -1
         self._result: Any = None
         self._exc: BaseException | None = None
         self._source_iter: int = -1
@@ -61,52 +85,90 @@ class AsyncTestEval:
     def start(
         self,
         *,
-        trainer,
+        trainer: Any,
         model_cfg: ModelConfig,
-        holdout_buf,
+        holdout_buf: Any,
         batch_size: int,
         steps: int,
         device: str,
         source_iter: int,
         compile_mode: str = "off",
     ) -> None:
-        """Snapshot weights to CPU + spawn eval thread.
-
-        State_dict cloning happens synchronously here, so this returns
-        once the snapshot is independent of ``trainer.model``. The
-        caller has just finished ``train_steps``, so no concurrent
-        optimizer is running — the CPU detour is purely to release the
-        GPU references before the next iter's train phase grows them.
-        """
-        with self._lock:
-            if self._thread is not None and self._thread.is_alive():
-                log.warning(
-                    "AsyncTestEval.start called while previous eval still running; "
-                    "abandoning prior thread (it will finish in the background)",
-                )
-            self._result = None
-            self._exc = None
-            self._source_iter = int(source_iter)
-
+        """Snapshot weights to CPU and hand them to the eval thread."""
   # torch.compile prefixes parameter keys with `_orig_mod.`; strip so
-  # the snapshot (uncompiled) can load them via load_state_dict.
+  # the snapshot (uncompiled before apply_compile wraps it) loads them.
         snap_state: dict[str, torch.Tensor] = {
             k.removeprefix("_orig_mod."): v.detach().to("cpu").clone()
             for k, v in trainer.model.state_dict().items()
         }
+        work = _Work(
+            snap_state=snap_state, trainer=trainer, buf=holdout_buf,
+            batch_size=batch_size, steps=steps, source_iter=int(source_iter),
+        )
 
-        eval_mode = _no_cudagraph_mode(compile_mode)
+        with self._lock:
+            if self._thread is None:
+  # Lazy init on first call so we can capture device/compile_mode/
+  # model_cfg from the trainer's runtime config without forcing the
+  # caller to pass them at construction time.
+                self._init_args = {
+                    "model_cfg": model_cfg,
+                    "device": device,
+                    "compile_mode": compile_mode,
+                }
+                self._thread = threading.Thread(
+                    target=self._loop, name="AsyncTestEval", daemon=True,
+                )
+                self._thread.start()
 
-        def _run() -> None:
+            if self._inflight_iter >= 0 and not self._result_event.is_set():
+                log.warning(
+                    "AsyncTestEval.start called while previous eval (iter %d) still "
+                    "running; abandoning prior result", self._inflight_iter,
+                )
+  # Drain any stale work item the worker hasn't picked up yet.
+                try:
+                    self._work_q.get_nowait()
+                except queue.Empty:
+                    pass
+            self._inflight_iter = int(source_iter)
+            self._result = None
+            self._exc = None
+            self._source_iter = int(source_iter)
+            self._result_event.clear()
+
+        self._work_q.put(work)
+
+    def _loop(self) -> None:
+        """Worker thread main loop. Builds the snapshot once; reuses it forever."""
+        assert self._init_args is not None
+        try:
+            snap = build_model(self._init_args["model_cfg"]).to(self._init_args["device"])
+            snap.eval()
+            snap = apply_compile(
+                snap, mode=self._init_args["compile_mode"],
+                device=self._init_args["device"],
+            )
+        except BaseException as exc:  # noqa: BLE001
+            log.exception("AsyncTestEval init failed")
+            with self._lock:
+                self._exc = exc
+            self._result_event.set()
+            return
+
+        while True:
+            work = self._work_q.get()
+            if work is None:
+                return
             try:
-                snap = build_model(model_cfg).to(device)
-                snap.load_state_dict(snap_state, strict=False)
-                snap.eval()
-                snap = apply_compile(snap, mode=eval_mode, device=device)
-                metrics = trainer._compute_metrics(  # noqa: SLF001
-                    buf=holdout_buf,
-                    batch_size=batch_size,
-                    steps=steps,
+  # In-place state_dict load preserves the compiled callable + its
+  # cudagraph tree (which key on graph topology, not parameter
+  # values) so the next forward just replays the captured graph.
+                snap.load_state_dict(work.snap_state, strict=False)
+                metrics = work.trainer._compute_metrics(  # noqa: SLF001
+                    buf=work.buf,
+                    batch_size=work.batch_size,
+                    steps=work.steps,
                     tag="eval",
                     model_override=snap,
                 )
@@ -116,31 +178,22 @@ class AsyncTestEval:
                 log.exception("async test eval failed")
                 with self._lock:
                     self._exc = exc
-
-        self._thread = threading.Thread(
-            target=_run, name="AsyncTestEval", daemon=True,
-        )
-        self._thread.start()
+            self._result_event.set()
 
     def collect(self, timeout: float = 120.0) -> tuple[Any, int]:
-        """Join the running eval and return ``(metrics, source_iter)``.
+        """Wait for the in-flight eval and return ``(metrics, source_iter)``.
 
-        ``(None, -1)`` when no eval ran, or the join timed out (the
-        thread keeps running and ``start()`` will warn-and-orphan it on
-        the next iter rather than crash).
+        ``(None, -1)`` when no eval was started, the eval raised, or the
+        wait timed out (the thread keeps the snapshot alive for the next
+        iter's start()).
         """
         if self._thread is None:
             return None, -1
-        self._thread.join(timeout=timeout)
-        if self._thread.is_alive():
+        if not self._result_event.wait(timeout=timeout):
             log.warning(
                 "async test eval did not finish within %.1fs; dropping iter %d's metrics",
-                timeout, self._source_iter,
+                timeout, self._inflight_iter,
             )
-  # Clear the handle so the next start() doesn't see this as "still
-  # running" — the thread is daemon, it'll exit when the trial does.
-            self._thread = None
-            self._source_iter = -1
             return None, -1
         with self._lock:
             r = self._result
@@ -149,7 +202,16 @@ class AsyncTestEval:
             self._result = None
             self._exc = None
             self._source_iter = -1
-        self._thread = None
+            self._inflight_iter = -1
+            self._result_event.clear()
         if exc is not None:
             return None, -1
         return r, it
+
+    def shutdown(self, timeout: float = 10.0) -> None:
+        """Tell the worker thread to exit and join it."""
+        if self._thread is None:
+            return
+        self._work_q.put(None)
+        self._thread.join(timeout=timeout)
+        self._thread = None
