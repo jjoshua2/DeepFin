@@ -126,7 +126,7 @@ def _save_trial_checkpoint(
             json.dumps(rng.bit_generator.state, sort_keys=True),
         )
     except (OSError, TypeError, ValueError) as exc:
-  # Silent loss here breaks deterministic resume — log once, don't crash.
+        # Silent loss here breaks deterministic resume — log once, don't crash.
         log.warning("[trial] failed to write rng_state.json: %s", exc)
     try:
         atomic_write_text(
@@ -146,7 +146,7 @@ def _save_trial_checkpoint(
             }, sort_keys=True, indent=2),
         )
     except (OSError, TypeError, ValueError) as exc:
-  # trial_meta drives exploit-clone owner tracking; loud failure is the right call.
+        # trial_meta drives exploit-clone owner tracking; loud failure is the right call.
         log.warning("[trial] failed to write trial_meta.json: %s", exc)
     return Checkpoint.from_directory(str(ckpt_dir))
 
@@ -426,7 +426,7 @@ def _test_and_drift_dict(
     """Holdout-eval metrics + data-drift telemetry. Pre-seed test_iter so Ray
     Tune locks the column on row 1 (else CSV consumers find it missing)."""
     test_dict: dict = {
-        "holdout_frozen": int(1 if holdout_frozen else 0),
+        "holdout_frozen": int(holdout_frozen),
         "holdout_generation": int(holdout_generation),
         "data_drift_input_l2": float(drift.drift_input_l2),
         "data_drift_wdl_js": float(drift.drift_wdl_js),
@@ -478,7 +478,7 @@ def _build_report_dict(
     drift: DriftMetrics,
     eval_dict: dict,
     puzzle_dict: dict,
-  # Iteration context
+    # Iteration context
     wdl_regret_used: float,
     sf_nodes_used: int,
     pause_metrics: dict,
