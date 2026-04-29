@@ -11,8 +11,14 @@ Usage:
 What it does:
   1. Creates pause.txt in the tune dir  → trials finish their current iteration
      then hold at the start of the next one (the existing _wait_if_paused hook).
-  2. Polls progress.csv mtime for each trial.  A trial is considered "paused"
-     when its progress.csv hasn't been written for --idle-secs seconds (default 90).
+  2. Snapshots progress.csv row count at pause.  A trial is considered "paused"
+     when (a) it appended >= 1 new row after pause and the row count then
+     stayed flat for one poll cycle, OR (b) row count is still at the snapshot
+     and a --grace-secs grace window has elapsed (handles the edge case where
+     pause.txt was created exactly at an iter boundary, so the next iter
+     blocks before writing any post-pause row). Row count is the right
+     signal — Ray Tune touches progress.csv via metadata sync independent of
+     iter completion, so mtime polling falsely reports "active" forever.
   3. Once --wait trials are paused, prints a ready message.  If --auto-kill is
      set it also sends SIGTERM to the tuner process and removes pause.txt.
 """
@@ -39,22 +45,13 @@ def _active_trials(tune_dir: Path) -> list[Path]:
     return csvs
 
 
-def _idle_seconds(csv: Path) -> float:
-    """Seconds since the progress.csv was last modified."""
-    return time.time() - csv.stat().st_mtime
-
-
-def _csv_recent_at_pause(csv: Path, pause_ts: float, tolerance: float) -> bool:
-    """True if the CSV was written within *tolerance* seconds before/after
-    pause.txt was created.
-
-    Filters out CSVs from a defunct prior trial (last written long before the
-    pause). Allows the legitimate "trial finished iter, then immediately
-    entered _wait_if_paused" case where CSV mtime is a few seconds older
-    than pause.txt — without that allowance the gate rejects every paused
-    trial forever, since a paused trial does not write progress.csv.
-    """
-    return csv.stat().st_mtime >= pause_ts - tolerance
+def _row_count(csv: Path) -> int:
+    """Count data rows in progress.csv (excludes header)."""
+    try:
+        with csv.open() as f:
+            return max(0, sum(1 for _ in f) - 1)
+    except OSError:
+        return 0
 
 
 def _find_tuner_pid() -> int | None:
@@ -100,8 +97,9 @@ def main() -> None:
                     help="Path to the Ray Tune experiment directory")
     ap.add_argument("--wait", type=int, default=2,
                     help="Number of trials that must be idle before declaring safe")
-    ap.add_argument("--idle-secs", type=int, default=90,
-                    help="Seconds without a progress.csv write to call a trial idle/paused")
+    ap.add_argument("--grace-secs", type=int, default=90,
+                    help="Grace window for the boundary-edge case (no post-pause row yet — "
+                         "treat as paused if row count has been at snapshot for this long)")
     ap.add_argument("--poll", type=int, default=15,
                     help="Polling interval in seconds")
     ap.add_argument("--auto-kill", action="store_true",
@@ -139,12 +137,18 @@ def main() -> None:
             print(f"[graceful_restart] Created {target}")
     print("[graceful_restart] Trials will pause after their current iteration.")
 
-    print(f"[graceful_restart] Waiting for {args.wait} of the active trials to go idle "
-          f"(>{args.idle_secs}s without a progress.csv update)...")
+    print(f"[graceful_restart] Waiting for {args.wait} of the active trials to "
+          f"stop appending rows to progress.csv...")
     print()
 
     pause_created_ts = pause_file.stat().st_mtime if pause_file.exists() else time.time()
     start = time.time()
+    # Snapshot row count at pause time per trial. A trial counts as paused
+    # once we observe (rows_now > rows_at_pause) AND rows_now stayed flat for
+    # one full poll cycle — i.e. exactly one post-pause iter completed and
+    # the next one is now blocked at _wait_if_paused.
+    snapshot_rows: dict[Path, int] = {c: _row_count(c) for c in _active_trials(tune_dir)}
+    prev_rows: dict[Path, int] = dict(snapshot_rows)
     while True:
         csvs = _active_trials(tune_dir)
         if not csvs:
@@ -152,29 +156,30 @@ def main() -> None:
             time.sleep(args.poll)
             continue
 
-        # Only count CSVs whose last write is reasonably close to pause-creation
-        # time. A CSV written long before pause is from a defunct prior trial
-        # (the original misfire case); a CSV written shortly before pause is
-        # the legitimate "iter ended right before pause hook engaged" case.
-        # Tolerance == idle_secs keeps it tied to the same scale the script
-        # already uses to call something paused.
-        fresh_csvs = [
-            c for c in csvs
-            if _csv_recent_at_pause(c, pause_created_ts, float(args.idle_secs))
-        ]
-        idle = [(csv, _idle_seconds(csv)) for csv in fresh_csvs]
-        idle_trials = [(csv, age) for csv, age in idle if age >= args.idle_secs]
+        idle_trials: list[tuple[Path, str]] = []
+        observations: list[tuple[Path, int, int, str]] = []
+        for csv in csvs:
+            rc = _row_count(csv)
+            snap = snapshot_rows.setdefault(csv, rc)  # late-arriving trial: anchor at first sight
+            prev = prev_rows.get(csv, snap)
+            if rc > snap and rc == prev:
+                state = "PAUSED"
+                idle_trials.append((csv, state))
+            elif rc == snap and time.time() - pause_created_ts >= args.grace_secs:
+                state = "PAUSED-AT-BOUNDARY"
+                idle_trials.append((csv, state))
+            else:
+                state = f"running rows {snap}->{rc}"
+            observations.append((csv, snap, rc, state))
+            prev_rows[csv] = rc
 
         # Print status
         elapsed = int(time.time() - start)
-        stale = len(csvs) - len(fresh_csvs)
-        stale_note = f" ({stale} stale CSV ignored)" if stale else ""
-        print(f"[{elapsed:4d}s] {len(idle_trials)}/{len(fresh_csvs)} trials paused "
-              f"(need {args.wait}){stale_note}:")
-        for csv, age in sorted(idle, key=lambda x: -x[1]):
+        print(f"[{elapsed:4d}s] {len(idle_trials)}/{len(csvs)} trials paused "
+              f"(need {args.wait}):")
+        for csv, snap, rc, state in observations:
             trial = csv.parent.name.split("_")[2] + "_" + csv.parent.name.split("_")[3]
-            status = "PAUSED" if age >= args.idle_secs else "running"
-            print(f"         {trial}  {status}  ({age:.0f}s idle)")
+            print(f"         {trial}  rows@pause={snap} rows_now={rc}  {state}")
 
         if len(idle_trials) >= args.wait:
             print()
@@ -212,9 +217,14 @@ def main() -> None:
                     while True:
                         time.sleep(args.poll)
                         csvs2 = _active_trials(tune_dir)
-                        still_idle = sum(
-                            1 for c in csvs2 if _idle_seconds(c) >= args.idle_secs
-                        )
+                        still_idle = 0
+                        for c in csvs2:
+                            rc = _row_count(c)
+                            snap = snapshot_rows.get(c, rc)
+                            prev = prev_rows.get(c, snap)
+                            if rc == prev and (rc > snap or time.time() - pause_created_ts >= args.grace_secs):
+                                still_idle += 1
+                            prev_rows[c] = rc
                         elapsed2 = int(time.time() - start)
                         print(f"[{elapsed2:4d}s] still {still_idle}/{len(csvs2)} paused — "
                               f"safe to kill and restart with --resume")
