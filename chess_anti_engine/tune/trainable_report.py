@@ -352,33 +352,79 @@ def _log_iteration_scalars(
         pass
 
 
-def _build_report_dict(
-    *,
-    tc: TrialConfig,
-    trainer,
-    pr: PidResult,
-    sp: SelfplayResult,
-    tr: TrainingResult,
-    drift: DriftMetrics,
-    eval_dict: dict,
-    puzzle_dict: dict,
-  # Iteration context
-    wdl_regret_used: float,
-    sf_nodes_used: int,
-    pause_metrics: dict,
-    restore: RestoreResult,
-    best_loss: float,
-    iter_t0: float,
-    iteration_idx: int,
-    buf_size: int,
-    holdout_buf_size: int,
-    holdout_frozen: bool,
-    holdout_generation: int,
-) -> dict:
-    """Assemble the per-iteration report dict for Ray Tune."""
-    metrics = tr.metrics
+_TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
+    "train_loss": 999.0, "train_time_s": 0.0, "optimizer_step_time_s": 0.0,
+    "trainer_steps_done": 0, "train_samples_seen": 0,
+    "trainer_steps_per_s": 0.0, "trainer_samples_per_s": 0.0, "optimizer_steps_per_s": 0.0,
+    "policy_loss": 0.0, "soft_policy_loss": 0.0, "future_policy_loss": 0.0,
+    "wdl_loss": 0.0, "sf_move_loss": 0.0, "sf_move_acc": 0.0, "sf_eval_loss": 0.0,
+    "categorical_loss": 0.0, "volatility_loss": 0.0, "sf_volatility_loss": 0.0,
+    "moves_left_loss": 0.0,
+    "policy_loss_selfplay": 0.0, "policy_loss_curriculum": 0.0,
+    "wdl_loss_selfplay": 0.0, "wdl_loss_curriculum": 0.0,
+    "frac_is_selfplay_batch": 0.0, "frac_tagged_batch": 0.0,
+    "policy_loss_open": 0.0, "policy_loss_mid": 0.0, "policy_loss_end": 0.0,
+    "wdl_loss_open": 0.0, "wdl_loss_mid": 0.0, "wdl_loss_end": 0.0,
+}
 
-  # --- Test / holdout metrics ---
+
+def _train_metrics_dict(metrics) -> dict:
+    """Trainer per-iter metrics (uniform 0/999 fallback when the train phase ran no steps)."""
+    if metrics is None:
+        return dict(_TRAIN_METRIC_DEFAULTS)
+    train_t = max(metrics.train_time_s, 1e-9)
+    opt_t = max(metrics.opt_step_time_s, 1e-9)
+    return {
+        "train_loss": float(metrics.loss),
+        "train_time_s": float(metrics.train_time_s),
+        "optimizer_step_time_s": float(metrics.opt_step_time_s),
+        "trainer_steps_done": int(metrics.train_steps_done),
+        "train_samples_seen": int(metrics.train_samples_seen),
+        "trainer_steps_per_s": float(metrics.train_steps_done / train_t) if metrics.train_time_s > 0.0 else 0.0,
+        "trainer_samples_per_s": float(metrics.train_samples_seen / train_t) if metrics.train_time_s > 0.0 else 0.0,
+        "optimizer_steps_per_s": float(metrics.train_steps_done / opt_t) if metrics.opt_step_time_s > 0.0 else 0.0,
+        "policy_loss": float(metrics.policy_loss),
+        "soft_policy_loss": float(metrics.soft_policy_loss),
+        "future_policy_loss": float(metrics.future_policy_loss),
+        "wdl_loss": float(metrics.wdl_loss),
+        "sf_move_loss": float(metrics.sf_move_loss),
+        "sf_move_acc": float(metrics.sf_move_acc),
+        "sf_eval_loss": float(metrics.sf_eval_loss),
+        "categorical_loss": float(metrics.categorical_loss),
+        "volatility_loss": float(metrics.volatility_loss),
+        "sf_volatility_loss": float(metrics.sf_volatility_loss),
+        "moves_left_loss": float(metrics.moves_left_loss),
+        "policy_loss_selfplay": float(metrics.policy_loss_selfplay),
+        "policy_loss_curriculum": float(metrics.policy_loss_curriculum),
+        "wdl_loss_selfplay": float(metrics.wdl_loss_selfplay),
+        "wdl_loss_curriculum": float(metrics.wdl_loss_curriculum),
+        "frac_is_selfplay_batch": float(metrics.frac_is_selfplay),
+        "frac_tagged_batch": float(metrics.frac_tagged),
+        "policy_loss_open": float(metrics.policy_loss_open),
+        "policy_loss_mid": float(metrics.policy_loss_mid),
+        "policy_loss_end": float(metrics.policy_loss_end),
+        "wdl_loss_open": float(metrics.wdl_loss_open),
+        "wdl_loss_mid": float(metrics.wdl_loss_mid),
+        "wdl_loss_end": float(metrics.wdl_loss_end),
+    }
+
+
+_TEST_METRIC_KEYS: tuple[str, ...] = (
+    "test_loss", "test_policy_loss", "test_soft_policy_loss", "test_future_policy_loss",
+    "test_wdl_loss", "test_sf_move_loss", "test_sf_move_acc", "test_sf_eval_loss",
+    "test_categorical_loss", "test_volatility_loss", "test_sf_volatility_loss",
+    "test_moves_left_loss", "test_wdl_brier", "test_wdl_ece",
+    "test_policy_loss_selfplay", "test_policy_loss_curriculum",
+    "test_policy_loss_open", "test_policy_loss_mid", "test_policy_loss_end",
+)
+
+
+def _test_and_drift_dict(
+    *, tr: TrainingResult, drift: DriftMetrics,
+    holdout_buf_size: int, holdout_frozen: bool, holdout_generation: int,
+) -> dict:
+    """Holdout-eval metrics + data-drift telemetry. Pre-seed test_iter so Ray
+    Tune locks the column on row 1 (else CSV consumers find it missing)."""
     test_dict: dict = {
         "holdout_frozen": int(1 if holdout_frozen else 0),
         "holdout_generation": int(holdout_generation),
@@ -392,25 +438,7 @@ def _build_report_dict(
         "data_wdl_balance": float(drift.data_wdl_balance),
         "test_size": 0,
         "test_iter": -1,
-        "test_loss": float("nan"),
-        "test_policy_loss": float("nan"),
-        "test_soft_policy_loss": float("nan"),
-        "test_future_policy_loss": float("nan"),
-        "test_wdl_loss": float("nan"),
-        "test_sf_move_loss": float("nan"),
-        "test_sf_move_acc": float("nan"),
-        "test_sf_eval_loss": float("nan"),
-        "test_categorical_loss": float("nan"),
-        "test_volatility_loss": float("nan"),
-        "test_sf_volatility_loss": float("nan"),
-        "test_moves_left_loss": float("nan"),
-        "test_wdl_brier": float("nan"),
-        "test_wdl_ece": float("nan"),
-        "test_policy_loss_selfplay": float("nan"),
-        "test_policy_loss_curriculum": float("nan"),
-        "test_policy_loss_open": float("nan"),
-        "test_policy_loss_mid": float("nan"),
-        "test_policy_loss_end": float("nan"),
+        **{k: float("nan") for k in _TEST_METRIC_KEYS},
     }
     if tr.test_metrics is not None:
         tm = tr.test_metrics
@@ -437,6 +465,38 @@ def _build_report_dict(
             "test_policy_loss_mid": float(tm.policy_loss_mid),
             "test_policy_loss_end": float(tm.policy_loss_end),
         })
+    return test_dict
+
+
+def _build_report_dict(
+    *,
+    tc: TrialConfig,
+    trainer,
+    pr: PidResult,
+    sp: SelfplayResult,
+    tr: TrainingResult,
+    drift: DriftMetrics,
+    eval_dict: dict,
+    puzzle_dict: dict,
+  # Iteration context
+    wdl_regret_used: float,
+    sf_nodes_used: int,
+    pause_metrics: dict,
+    restore: RestoreResult,
+    best_loss: float,
+    iter_t0: float,
+    iteration_idx: int,
+    buf_size: int,
+    holdout_buf_size: int,
+    holdout_frozen: bool,
+    holdout_generation: int,
+) -> dict:
+    """Assemble the per-iteration report dict for Ray Tune."""
+    test_dict = _test_and_drift_dict(
+        tr=tr, drift=drift, holdout_buf_size=holdout_buf_size,
+        holdout_frozen=holdout_frozen, holdout_generation=holdout_generation,
+    )
+    train_metrics_dict = _train_metrics_dict(tr.metrics)
 
     return {
         "opponent_sf_nodes": int(sf_nodes_used),
@@ -529,44 +589,8 @@ def _build_report_dict(
         "optimizer_name": tc.optimizer,
         "sf_wdl_conf_power": float(trainer.sf_wdl_conf_power),
         "sf_wdl_draw_scale": float(trainer.sf_wdl_draw_scale),
-        "train_loss": float(metrics.loss) if metrics is not None else 999.0,
-        "train_time_s": float(metrics.train_time_s) if metrics is not None else 0.0,
-        "optimizer_step_time_s": float(metrics.opt_step_time_s) if metrics is not None else 0.0,
-        "trainer_steps_done": int(metrics.train_steps_done) if metrics is not None else 0,
-        "train_samples_seen": int(metrics.train_samples_seen) if metrics is not None else 0,
-        "trainer_steps_per_s": float(
-            metrics.train_steps_done / max(metrics.train_time_s, 1e-9)
-        ) if metrics is not None and metrics.train_time_s > 0.0 else 0.0,
-        "trainer_samples_per_s": float(
-            metrics.train_samples_seen / max(metrics.train_time_s, 1e-9)
-        ) if metrics is not None and metrics.train_time_s > 0.0 else 0.0,
-        "optimizer_steps_per_s": float(
-            metrics.train_steps_done / max(metrics.opt_step_time_s, 1e-9)
-        ) if metrics is not None and metrics.opt_step_time_s > 0.0 else 0.0,
         "best_loss": float(best_loss),
-        "policy_loss": float(metrics.policy_loss) if metrics is not None else 0.0,
-        "soft_policy_loss": float(metrics.soft_policy_loss) if metrics is not None else 0.0,
-        "future_policy_loss": float(metrics.future_policy_loss) if metrics is not None else 0.0,
-        "wdl_loss": float(metrics.wdl_loss) if metrics is not None else 0.0,
-        "sf_move_loss": float(metrics.sf_move_loss) if metrics is not None else 0.0,
-        "sf_move_acc": float(metrics.sf_move_acc) if metrics is not None else 0.0,
-        "sf_eval_loss": float(metrics.sf_eval_loss) if metrics is not None else 0.0,
-        "categorical_loss": float(metrics.categorical_loss) if metrics is not None else 0.0,
-        "volatility_loss": float(metrics.volatility_loss) if metrics is not None else 0.0,
-        "sf_volatility_loss": float(metrics.sf_volatility_loss) if metrics is not None else 0.0,
-        "moves_left_loss": float(metrics.moves_left_loss) if metrics is not None else 0.0,
-        "policy_loss_selfplay": float(metrics.policy_loss_selfplay) if metrics is not None else 0.0,
-        "policy_loss_curriculum": float(metrics.policy_loss_curriculum) if metrics is not None else 0.0,
-        "wdl_loss_selfplay": float(metrics.wdl_loss_selfplay) if metrics is not None else 0.0,
-        "wdl_loss_curriculum": float(metrics.wdl_loss_curriculum) if metrics is not None else 0.0,
-        "frac_is_selfplay_batch": float(metrics.frac_is_selfplay) if metrics is not None else 0.0,
-        "frac_tagged_batch": float(metrics.frac_tagged) if metrics is not None else 0.0,
-        "policy_loss_open": float(metrics.policy_loss_open) if metrics is not None else 0.0,
-        "policy_loss_mid": float(metrics.policy_loss_mid) if metrics is not None else 0.0,
-        "policy_loss_end": float(metrics.policy_loss_end) if metrics is not None else 0.0,
-        "wdl_loss_open": float(metrics.wdl_loss_open) if metrics is not None else 0.0,
-        "wdl_loss_mid": float(metrics.wdl_loss_mid) if metrics is not None else 0.0,
-        "wdl_loss_end": float(metrics.wdl_loss_end) if metrics is not None else 0.0,
+        **train_metrics_dict,
         "gate_passed": int(1 if tr.gate_passed else 0),
         "ingest_ms": float(sp.ingest_ms),
         "train_ms": float(tr.train_ms),
