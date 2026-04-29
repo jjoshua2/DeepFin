@@ -73,10 +73,11 @@ def test_collect_returns_none_when_no_eval_started():
 
 
 def test_start_during_inflight_orphans_prior(cfg_and_builder, caplog):
-    """If a prior eval is still running, start() warns + spawns a new one
-    rather than raising. The orphaned thread is daemon — it'll exit on
-    trial teardown. This avoids a latent crash when an eval times out
-    in collect()."""
+    """If start() is called while a prior eval is still running, it must
+    warn + accept the new work rather than raise. With the long-lived
+    eval thread the prior eval's result gets dropped (collect after the
+    new start sees only the new iter's metrics), but the warning is the
+    user-visible signal that something was abandoned."""
     import threading
     model = _StubChessNet(dim=4)
     block = threading.Event()

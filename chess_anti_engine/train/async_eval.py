@@ -225,6 +225,13 @@ class AsyncTestEval:
         """Tell the worker thread to exit and join it."""
         if self._thread is None:
             return
+  # Drain any queued work so the sentinel put doesn't block on a
+  # full queue (maxsize=1). Worker may still be mid-eval on a
+  # previously dequeued item; that's fine — it'll see None next.
+        try:
+            self._work_q.get_nowait()
+        except queue.Empty:
+            pass
         self._work_q.put(None)
         self._thread.join(timeout=timeout)
         self._thread = None
