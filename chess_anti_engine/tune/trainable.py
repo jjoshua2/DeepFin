@@ -380,27 +380,19 @@ def train_trial(config: dict):
     ckpt_dir = work_dir / "ckpt"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
-  # Background shard prefetcher: polls inbox during train phase and decodes
-  # zarr in a daemon thread, so iter-boundary ingest only does the cheap
-  # in-memory append. None when distributed_prefetch_shards=false (the
-  # _ingest_distributed_selfplay default keeps existing behaviour).
+  # Lazily-constructed: build on first iter where the live YAML reload says
+  # they're enabled. Constructing at trial-setup time (before the per-iter
+  # YAML reload) misses cases where --resume strips these keys from
+  # tuner.pkl's param_space — the YAML still has them, but the initial `tc`
+  # was built from the stripped config.
+  #
+  # shard_prefetcher polls the inbox during train phase and decodes zarr in
+  # a daemon thread; iter-boundary ingest then just does in-memory append.
+  # async_test_eval snapshots the post-train model and evals on a long-lived
+  # daemon thread so the ~30-50s holdout pass overlaps next iter's selfplay
+  # (test_metrics in row N measures iter N-1's model — see test_metrics_source_iter).
     shard_prefetcher = None
-    if tc.distributed_prefetch_shards:
-        from chess_anti_engine.tune.distributed_runtime import _iter_shard_paths_nested
-        from chess_anti_engine.tune.prefetch import BackgroundShardPrefetcher
-        shard_prefetcher = BackgroundShardPrefetcher(
-            inbox_dir=distributed_dirs["inbox_dir"],
-            path_iter=_iter_shard_paths_nested,
-        )
-        shard_prefetcher.start()
-
-  # 1-iter-lagged async test eval: snapshot model + eval in daemon thread
-  # so the ~30-50s holdout pass overlaps the next iter's selfplay phase.
-  # Row N's test_metrics measures iter N-1's model (see test_metrics_source_iter).
     async_test_eval = None
-    if tc.distributed_async_test_eval:
-        from chess_anti_engine.train.async_eval import AsyncTestEval
-        async_test_eval = AsyncTestEval()
 
     try:
         iterations = tc.iterations
@@ -414,6 +406,21 @@ def train_trial(config: dict):
   # Live-reload YAML config each iteration so changes apply without restart.
             _reload_yaml_into_config(config, _yaml_path)
             tc = TrialConfig.from_dict(config)
+
+  # Lazy construction (post-YAML-reload so --resume strip can't hide flags).
+            if shard_prefetcher is None and tc.distributed_prefetch_shards:
+                from chess_anti_engine.tune.distributed_runtime import _iter_shard_paths_nested
+                from chess_anti_engine.tune.prefetch import BackgroundShardPrefetcher
+                shard_prefetcher = BackgroundShardPrefetcher(
+                    inbox_dir=distributed_dirs["inbox_dir"],
+                    path_iter=_iter_shard_paths_nested,
+                )
+                shard_prefetcher.start()
+                logging.getLogger("chess_anti_engine.iter").info("[trial]BackgroundShardPrefetcher started (iter %d)", iteration_idx)
+            if async_test_eval is None and tc.distributed_async_test_eval:
+                from chess_anti_engine.train.async_eval import AsyncTestEval
+                async_test_eval = AsyncTestEval()
+                logging.getLogger("chess_anti_engine.iter").info("[trial]AsyncTestEval enabled (iter %d)", iteration_idx)
 
             in_salvage_startup_grace = (
                 restore.startup_source == "salvage"
