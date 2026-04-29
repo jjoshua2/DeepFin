@@ -71,6 +71,36 @@ class MCTSTree:
         wdl_logits: NDArray[np.float32],
         vloss_weight: int,
     ) -> None: ...
+    def batch_descend_puct(
+        self,
+        root_id: int,
+        root_cboard: CBoard,
+        n_leaves: int,
+        c_puct: float,
+        fpu_root: float,
+        fpu_reduction: float,
+        vloss_weight: int,
+        enc_buf: NDArray[np.float32],
+        leaf_ids: NDArray[np.int32],
+        path_buf: NDArray[np.int32],
+        path_lens: NDArray[np.int32],
+        legal_buf: NDArray[np.int32],
+        legal_lens: NDArray[np.int32],
+        term_qs: NDArray[np.float64],
+        is_term: NDArray[np.int8],
+    ) -> int: ...
+    def batch_integrate_leaves(
+        self,
+        n_leaves: int,
+        path_buf: NDArray[np.int32],
+        path_lens: NDArray[np.int32],
+        legal_buf: NDArray[np.int32],
+        legal_lens: NDArray[np.int32],
+        is_term: NDArray[np.int8],
+        pol_logits: NDArray[np.float32],
+        wdl_logits: NDArray[np.float32],
+        vloss_weight: int,
+    ) -> None: ...
 
 def batch_process_ply(
     cboards: list[CBoard],

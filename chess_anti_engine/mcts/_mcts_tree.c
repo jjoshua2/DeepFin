@@ -1956,6 +1956,278 @@ static PyObject *MCTSTree_walker_integrate_leaf(MCTSTreeObject *self, PyObject *
 }
 
 
+/* batch_descend_puct(root_id, root_cb, n_leaves, c_puct, fpu_root, fpu_red,
+ *                    vloss_weight,
+ *                    enc_buf, leaf_ids, path_buf, path_lens,
+ *                    legal_buf, legal_lens, term_qs, is_term)
+ *   -> int (number of leaves descended; == n_leaves)
+ *
+ * Single-call batched descent with virtual loss. Mirrors walker_descend_puct
+ * but processes N leaves in one C call with the GIL released — eliminates
+ * per-leaf PyArray allocations and Python C-API roundtrips that cap the
+ * walker pool / pure-Python single-thread loop at ~30k nps on this workload.
+ *
+ * Caller pre-allocates fixed-stride buffers:
+ *   enc_buf    : (>=N, 146, 8, 8) float32, written.  Contiguous.
+ *   leaf_ids   : (>=N,) int32,            written.
+ *   path_buf   : (>=N*MCTS_MAX_PATH,) int32,   written. path[i] occupies
+ *                rows [i*MAX, i*MAX + path_lens[i]).
+ *   path_lens  : (>=N,) int32,            written.
+ *   legal_buf  : (>=N*256,) int32,        written. legal[i] occupies
+ *                [i*256, i*256 + legal_lens[i]). Empty for terminals.
+ *   legal_lens : (>=N,) int32,            written.
+ *   term_qs    : (>=N,) float64,          written. STM-relative Q for
+ *                terminals; undefined for non-terminals.
+ *   is_term    : (>=N,) int8,             written. 1=terminal (already
+ *                backpropped + marked solved by this call), 0=non-terminal
+ *                (caller must call batch_integrate_leaves with NN results).
+ *
+ * Vloss is applied to non-terminals so subsequent within-batch descents
+ * pick divergent paths. Terminal leaves are backpropped + mark_solved-ed
+ * inline (vloss is NOT applied since there's no eval round-trip to unwind).
+ *
+ * try_forced_collapse from walker_descend_puct is intentionally omitted —
+ * collapsing the leaf advances it to a different node which would invalidate
+ * the path layout for sibling iterations; layered back in once the bench
+ * confirms the basic primitive is fast.
+ */
+static PyObject *MCTSTree_batch_descend_puct(MCTSTreeObject *self, PyObject *args) {
+    int root_id, n_leaves, vloss_weight;
+    PyObject *root_cb_obj;
+    PyObject *enc_obj, *leaf_ids_obj, *path_obj, *path_lens_obj;
+    PyObject *legal_obj, *legal_lens_obj, *term_qs_obj, *is_term_obj;
+    double c_puct, fpu_root, fpu_reduction;
+    if (!PyArg_ParseTuple(args, "iOidddiOOOOOOOO",
+                          &root_id, &root_cb_obj, &n_leaves,
+                          &c_puct, &fpu_root, &fpu_reduction, &vloss_weight,
+                          &enc_obj, &leaf_ids_obj, &path_obj, &path_lens_obj,
+                          &legal_obj, &legal_lens_obj, &term_qs_obj, &is_term_obj))
+        return NULL;
+
+    TreeData *t = &self->tree;
+    if (root_id < 0 || root_id >= t->node_count) {
+        PyErr_SetString(PyExc_ValueError, "root_id out of range");
+        return NULL;
+    }
+    if (n_leaves <= 0) return PyLong_FromLong(0);
+
+    PyTypeObject *cb_type = _cached_cboard_type;
+    if (!cb_type) {
+        cb_type = Py_TYPE(root_cb_obj);
+        if (strstr(cb_type->tp_name, "CBoard") == NULL) {
+            PyErr_SetString(PyExc_TypeError, "root_cboard must be a CBoard");
+            return NULL;
+        }
+        _cached_cboard_type = cb_type;
+    } else if (Py_TYPE(root_cb_obj) != cb_type) {
+        PyErr_SetString(PyExc_TypeError, "root_cboard must be a CBoard");
+        return NULL;
+    }
+    const CBoard *root_cb = &((PyCBoard *)root_cb_obj)->board;
+
+    PyArrayObject *enc_arr = FROMANY_4D_RW(enc_obj, NPY_FLOAT32);
+    PyArrayObject *leaf_ids_arr = FROMANY_1D_RW(leaf_ids_obj, NPY_INT32);
+    PyArrayObject *path_arr = FROMANY_1D_RW(path_obj, NPY_INT32);
+    PyArrayObject *path_lens_arr = FROMANY_1D_RW(path_lens_obj, NPY_INT32);
+    PyArrayObject *legal_arr = FROMANY_1D_RW(legal_obj, NPY_INT32);
+    PyArrayObject *legal_lens_arr = FROMANY_1D_RW(legal_lens_obj, NPY_INT32);
+    PyArrayObject *term_qs_arr = FROMANY_1D_RW(term_qs_obj, NPY_FLOAT64);
+    PyArrayObject *is_term_arr = FROMANY_1D_RW(is_term_obj, NPY_INT8);
+    if (!enc_arr || !leaf_ids_arr || !path_arr || !path_lens_arr ||
+        !legal_arr || !legal_lens_arr || !term_qs_arr || !is_term_arr) {
+        Py_XDECREF(enc_arr); Py_XDECREF(leaf_ids_arr);
+        Py_XDECREF(path_arr); Py_XDECREF(path_lens_arr);
+        Py_XDECREF(legal_arr); Py_XDECREF(legal_lens_arr);
+        Py_XDECREF(term_qs_arr); Py_XDECREF(is_term_arr);
+        return NULL;
+    }
+    if (PyArray_DIM(enc_arr, 0) < n_leaves ||
+        PyArray_DIM(enc_arr, 1) != 146 ||
+        PyArray_DIM(enc_arr, 2) != 8 ||
+        PyArray_DIM(enc_arr, 3) != 8 ||
+        PyArray_DIM(leaf_ids_arr, 0) < n_leaves ||
+        PyArray_DIM(path_arr, 0) < (npy_intp)n_leaves * MCTS_MAX_PATH ||
+        PyArray_DIM(path_lens_arr, 0) < n_leaves ||
+        PyArray_DIM(legal_arr, 0) < (npy_intp)n_leaves * 256 ||
+        PyArray_DIM(legal_lens_arr, 0) < n_leaves ||
+        PyArray_DIM(term_qs_arr, 0) < n_leaves ||
+        PyArray_DIM(is_term_arr, 0) < n_leaves) {
+        Py_DECREF(enc_arr); Py_DECREF(leaf_ids_arr);
+        Py_DECREF(path_arr); Py_DECREF(path_lens_arr);
+        Py_DECREF(legal_arr); Py_DECREF(legal_lens_arr);
+        Py_DECREF(term_qs_arr); Py_DECREF(is_term_arr);
+        PyErr_SetString(PyExc_ValueError,
+            "buffer too small for n_leaves (or wrong shape)");
+        return NULL;
+    }
+
+    float *enc_data = (float *)PyArray_DATA(enc_arr);
+    int32_t *leaf_ids = (int32_t *)PyArray_DATA(leaf_ids_arr);
+    int32_t *path_data = (int32_t *)PyArray_DATA(path_arr);
+    int32_t *path_lens = (int32_t *)PyArray_DATA(path_lens_arr);
+    int32_t *legal_data = (int32_t *)PyArray_DATA(legal_arr);
+    int32_t *legal_lens = (int32_t *)PyArray_DATA(legal_lens_arr);
+    double *term_qs = (double *)PyArray_DATA(term_qs_arr);
+    int8_t *is_term = (int8_t *)PyArray_DATA(is_term_arr);
+
+    Py_BEGIN_ALLOW_THREADS
+    for (int i = 0; i < n_leaves; i++) {
+        int32_t *path_i = path_data + (size_t)i * MCTS_MAX_PATH;
+        int32_t path_len = tree_select_leaf(
+            t, root_id, c_puct, fpu_root, fpu_reduction, vloss_weight,
+            path_i, MCTS_MAX_PATH);
+        int32_t leaf_id = path_i[path_len - 1];
+        leaf_ids[i] = leaf_id;
+        path_lens[i] = path_len;
+
+        /* Replay moves root → leaf via parent-pointer walk. */
+        int32_t actions[MCTS_MAX_PATH];
+        int32_t n_actions = 0;
+        int32_t nid = leaf_id;
+        while (nid != root_id && t->parent[nid] >= 0 && n_actions < MCTS_MAX_PATH) {
+            int32_t act = t->action_from_parent[nid];
+            if (act >= 0) actions[n_actions++] = act;
+            nid = t->parent[nid];
+        }
+        CBoard cb = *root_cb;
+        for (int32_t k = n_actions - 1; k >= 0; k--) {
+            cboard_push_index(&cb, actions[k]);
+        }
+
+        double term_q;
+        int8_t term_solved;
+        if (cboard_search_terminal(&cb, &term_q, &term_solved)) {
+            is_term[i] = 1;
+            term_qs[i] = term_q;
+            legal_lens[i] = 0;
+            /* Zero out enc slot so a buggy caller that submits this row
+             * to GPU anyway gets a benign forward instead of UB. */
+            memset(enc_data + (size_t)i * 146 * 64, 0, 146 * 64 * sizeof(float));
+            tree_mark_solved_and_propagate(t, path_i, path_len, term_solved);
+            tree_backprop(t, path_i, path_len, term_q);
+            continue;
+        }
+
+        is_term[i] = 0;
+        if (vloss_weight > 0) {
+            tree_apply_vloss_path(t, path_i, path_len);
+        }
+        cboard_encode_146_into(&cb, enc_data + (size_t)i * 146 * 64);
+
+        int legal_tmp[256];
+        int n_legal_i = cboard_legal_move_indices(&cb, legal_tmp, /*sorted=*/0);
+        if (n_legal_i < 0) n_legal_i = 0;
+        if (n_legal_i > 256) n_legal_i = 256;
+        int32_t *legal_dst = legal_data + (size_t)i * 256;
+        for (int k = 0; k < n_legal_i; k++) legal_dst[k] = (int32_t)legal_tmp[k];
+        legal_lens[i] = n_legal_i;
+    }
+    Py_END_ALLOW_THREADS
+
+    Py_DECREF(enc_arr); Py_DECREF(leaf_ids_arr);
+    Py_DECREF(path_arr); Py_DECREF(path_lens_arr);
+    Py_DECREF(legal_arr); Py_DECREF(legal_lens_arr);
+    Py_DECREF(term_qs_arr); Py_DECREF(is_term_arr);
+    return PyLong_FromLong(n_leaves);
+}
+
+
+/* batch_integrate_leaves(n, path_buf, path_lens, legal_buf, legal_lens,
+ *                        is_term, pol_logits_NxP, wdl_logits_Nx3,
+ *                        vloss_weight)
+ *   -> None
+ *
+ * Companion to batch_descend_puct: integrates GPU eval results for the
+ * non-terminal leaves of a batch, removing virtual loss + backpropping in
+ * one GIL-released C call. Skips rows where is_term[i]==1 (already handled
+ * inline by batch_descend_puct).
+ *
+ * pol expected shape (>=n, >=4672). wdl expected shape (>=n, >=3).
+ */
+static PyObject *MCTSTree_batch_integrate_leaves(MCTSTreeObject *self, PyObject *args) {
+    int n, vloss_weight;
+    PyObject *path_obj, *path_lens_obj, *legal_obj, *legal_lens_obj;
+    PyObject *is_term_obj, *pol_obj, *wdl_obj;
+    if (!PyArg_ParseTuple(args, "iOOOOOOOi",
+                          &n, &path_obj, &path_lens_obj,
+                          &legal_obj, &legal_lens_obj, &is_term_obj,
+                          &pol_obj, &wdl_obj, &vloss_weight))
+        return NULL;
+    if (n <= 0) Py_RETURN_NONE;
+
+    PyArrayObject *path_arr = FROMANY_1D(path_obj, NPY_INT32);
+    PyArrayObject *path_lens_arr = FROMANY_1D(path_lens_obj, NPY_INT32);
+    PyArrayObject *legal_arr = FROMANY_1D(legal_obj, NPY_INT32);
+    PyArrayObject *legal_lens_arr = FROMANY_1D(legal_lens_obj, NPY_INT32);
+    PyArrayObject *is_term_arr = FROMANY_1D(is_term_obj, NPY_INT8);
+    /* pol/wdl come back from torch as 2D (N, K); accept both 2D and 1D. */
+    PyArrayObject *pol_arr = (PyArrayObject *)PyArray_FROMANY(
+        pol_obj, NPY_FLOAT32, 1, 2, NPY_ARRAY_C_CONTIGUOUS);
+    PyArrayObject *wdl_arr = (PyArrayObject *)PyArray_FROMANY(
+        wdl_obj, NPY_FLOAT32, 1, 2, NPY_ARRAY_C_CONTIGUOUS);
+    if (!path_arr || !path_lens_arr || !legal_arr || !legal_lens_arr ||
+        !is_term_arr || !pol_arr || !wdl_arr) {
+        Py_XDECREF(path_arr); Py_XDECREF(path_lens_arr);
+        Py_XDECREF(legal_arr); Py_XDECREF(legal_lens_arr);
+        Py_XDECREF(is_term_arr); Py_XDECREF(pol_arr); Py_XDECREF(wdl_arr);
+        return NULL;
+    }
+
+    int32_t *path_data = (int32_t *)PyArray_DATA(path_arr);
+    int32_t *path_lens = (int32_t *)PyArray_DATA(path_lens_arr);
+    int32_t *legal_data = (int32_t *)PyArray_DATA(legal_arr);
+    int32_t *legal_lens = (int32_t *)PyArray_DATA(legal_lens_arr);
+    int8_t *is_term = (int8_t *)PyArray_DATA(is_term_arr);
+    float *pol_data = (float *)PyArray_DATA(pol_arr);
+    float *wdl_data = (float *)PyArray_DATA(wdl_arr);
+
+    /* Stride between leaves in pol/wdl: contiguous 4672/3 if 2D, else 0
+     * (caller passes one row at a time — degenerate for n=1 only). */
+    int pol_ndim = PyArray_NDIM(pol_arr);
+    int wdl_ndim = PyArray_NDIM(wdl_arr);
+    npy_intp pol_stride = (pol_ndim == 2) ? PyArray_DIM(pol_arr, 1) : 4672;
+    npy_intp wdl_stride = (wdl_ndim == 2) ? PyArray_DIM(wdl_arr, 1) : 3;
+
+    TreeData *t = &self->tree;
+
+    Py_BEGIN_ALLOW_THREADS
+    for (int i = 0; i < n; i++) {
+        if (is_term[i]) continue;  /* descend already backpropped + solved */
+        const int32_t *path_i = path_data + (size_t)i * MCTS_MAX_PATH;
+        int32_t plen = path_lens[i];
+        int32_t leaf_id = path_i[plen - 1];
+        const int32_t *legal_i = legal_data + (size_t)i * 256;
+        int32_t n_legal = legal_lens[i];
+        const float *pol_i = pol_data + (size_t)i * pol_stride;
+        const float *wdl_i = wdl_data + (size_t)i * wdl_stride;
+
+        double q = wdl_logits_to_q((double)wdl_i[0], (double)wdl_i[1], (double)wdl_i[2]);
+
+        /* Expand if not yet — idempotent under tree_lock. */
+        if (n_legal > 0 &&
+            !__atomic_load_n(&t->expanded[leaf_id], __ATOMIC_ACQUIRE)) {
+            double priors_stack[256];
+            for (int j = 0; j < n_legal; j++) {
+                priors_stack[j] = (double)pol_i[legal_i[j]];
+            }
+            softmax_inplace(priors_stack, n_legal);
+            tree_expand(t, leaf_id, legal_i, priors_stack, n_legal);
+        }
+
+        if (vloss_weight > 0) {
+            tree_remove_vloss_path(t, path_i, plen);
+        }
+        tree_backprop(t, path_i, plen, q);
+    }
+    Py_END_ALLOW_THREADS
+
+    Py_DECREF(path_arr); Py_DECREF(path_lens_arr);
+    Py_DECREF(legal_arr); Py_DECREF(legal_lens_arr);
+    Py_DECREF(is_term_arr); Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
+    Py_RETURN_NONE;
+}
+
+
 /* backprop_many(list_of_node_paths, list_of_values) -> None
  * Batched backprop: avoids per-call Python overhead. */
 static PyObject *MCTSTree_backprop_many(MCTSTreeObject *self, PyObject *args) {
@@ -3210,6 +3482,10 @@ static PyMethodDef MCTSTree_methods[] = {
      "walker_descend_puct(root_id, root_cboard, c_puct, fpu_root, fpu_reduction, vloss_weight, enc_out) -> (leaf_id, node_path, legal, terminal_q_or_None)"},
     {"walker_integrate_leaf", (PyCFunction)MCTSTree_walker_integrate_leaf, METH_VARARGS,
      "walker_integrate_leaf(node_path, legal, pol_logits, wdl_logits, vloss_weight) -> None"},
+    {"batch_descend_puct", (PyCFunction)MCTSTree_batch_descend_puct, METH_VARARGS,
+     "batch_descend_puct(root_id, root_cboard, n, c_puct, fpu_root, fpu_red, vloss, enc_buf, leaf_ids, path_buf, path_lens, legal_buf, legal_lens, term_qs, is_term) -> int. Single-call N-leaf descent with vloss; GIL released. Terminals are backpropped + marked solved inline."},
+    {"batch_integrate_leaves", (PyCFunction)MCTSTree_batch_integrate_leaves, METH_VARARGS,
+     "batch_integrate_leaves(n, path_buf, path_lens, legal_buf, legal_lens, is_term, pol, wdl, vloss) -> None. Companion to batch_descend_puct: integrates GPU results for non-terminal leaves; GIL released."},
     {NULL}
 };
 
