@@ -1278,6 +1278,46 @@ class SharedSlotBroker:
         self._trial_manifest_sigs: dict[str, tuple[int, int]] = {}
         self._all_slots: list[tuple[str, _InferenceSlot]] = []
 
+    def _register_new_trial(self, trial_id: str) -> None:
+        """Allocate ``slots_per_trial`` shared-memory slots for a freshly seen trial."""
+        from chess_anti_engine.tune._utils import (
+            stable_seed_u32,  # deferred: avoids circular import
+        )
+        h = stable_seed_u32("slot-prefix", trial_id)
+        slot_prefix = f"cae-{h:08x}"
+
+        slots: list[_InferenceSlot] = []
+        for i in range(self.slots_per_trial):
+            name = f"{slot_prefix}-{i}"
+            try:
+                old = SharedMemory(name=name, create=False)
+                old.close()
+                old.unlink()
+            except FileNotFoundError:
+                pass
+            shm = SharedMemory(name=name, create=True, size=self._layout.total_bytes)
+            slot = _InferenceSlot(shm, self._layout, owns=True)
+            slot.state = _STATE_IDLE
+            slot.batch_size = 0
+            slots.append(slot)
+
+        self._trial_slots[trial_id] = slots
+        self._all_slots.extend((trial_id, slot) for slot in slots)
+        log.info("shared broker: registered trial %s with %d slots (prefix=%s)",
+                 trial_id, len(slots), slot_prefix)
+
+    def _deregister_trial(self, trial_id: str) -> None:
+        """Tear down slot/model bookkeeping for a trial that's gone away."""
+        for slot in self._trial_slots[trial_id]:
+            slot.close()
+        self._all_slots = [(t, s) for t, s in self._all_slots if t != trial_id]
+        del self._trial_slots[trial_id]
+        self._trial_models.pop(trial_id, None)
+        self._trial_streams.pop(trial_id, None)
+        self._trial_shas.pop(trial_id, None)
+        self._trial_manifest_sigs.pop(trial_id, None)
+        print(f"[shared-broker] deregistered stale trial {trial_id}", flush=True)
+
     def _scan_trials(self) -> None:
         """Discover new trials and create slots for them."""
         trials_root = self.server_root / "trials"
@@ -1297,52 +1337,17 @@ class SharedSlotBroker:
                 continue
             if trial_id in self._trial_slots:
                 continue
-            publish_dir = trial_dir / "publish"
-            manifest = publish_dir / "manifest.json"
-            if not manifest.exists():
+            if not (trial_dir / "publish" / "manifest.json").exists():
                 continue
+            self._register_new_trial(trial_id)
 
-  # Create slots for this trial
-            from chess_anti_engine.tune._utils import (
-                stable_seed_u32,  # deferred: avoids circular import
-            )
-            h = stable_seed_u32("slot-prefix", trial_id)
-            slot_prefix = f"cae-{h:08x}"
-
-            slots: list[_InferenceSlot] = []
-            for i in range(self.slots_per_trial):
-                name = f"{slot_prefix}-{i}"
-                try:
-                    old = SharedMemory(name=name, create=False)
-                    old.close()
-                    old.unlink()
-                except FileNotFoundError:
-                    pass
-                shm = SharedMemory(name=name, create=True, size=self._layout.total_bytes)
-                slot = _InferenceSlot(shm, self._layout, owns=True)
-                slot.state = _STATE_IDLE
-                slot.batch_size = 0
-                slots.append(slot)
-
-            self._trial_slots[trial_id] = slots
-            self._all_slots.extend((trial_id, slot) for slot in slots)
-            log.info("shared broker: registered trial %s with %d slots (prefix=%s)",
-                     trial_id, len(slots), slot_prefix)
-
-  # Clean up trials that no longer have a publish dir
-        stale = [tid for tid in self._trial_slots
-                 if not (trials_root / tid / "publish" / "manifest.json").exists()
-                 or (active_prefix and not tid.startswith(active_prefix))]
+        stale = [
+            tid for tid in self._trial_slots
+            if not (trials_root / tid / "publish" / "manifest.json").exists()
+            or (active_prefix and not tid.startswith(active_prefix))
+        ]
         for tid in stale:
-            for slot in self._trial_slots[tid]:
-                slot.close()
-            self._all_slots = [(t, s) for t, s in self._all_slots if t != tid]
-            del self._trial_slots[tid]
-            self._trial_models.pop(tid, None)
-            self._trial_streams.pop(tid, None)
-            self._trial_shas.pop(tid, None)
-            self._trial_manifest_sigs.pop(tid, None)
-            print(f"[shared-broker] deregistered stale trial {tid}", flush=True)
+            self._deregister_trial(tid)
 
     def _load_trial_weights(self, trial_id: str) -> bool:
         """Load/refresh model for a trial. Each trial gets its own model instance + CUDA stream."""
