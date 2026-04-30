@@ -444,6 +444,93 @@ def _run_pid_and_eval(
     )
 
 
+def _export_selfplay_shards_for_siblings(
+    *,
+    new_selfplay_shards: list[Path],
+    selfplay_shards_dir: Path,
+    iteration_idx: int,
+    keep_iters: int,
+) -> None:
+    """Bundle this iter's new selfplay shards into one local export shard, then
+    prune older exports beyond ``keep_iters`` to bound the sibling-share cost."""
+    export_path = local_shard_path(selfplay_shards_dir, iteration_idx)
+    if new_selfplay_shards:
+        export_batches: list[dict[str, np.ndarray]] = []
+        for sp_path in new_selfplay_shards:
+            try:
+                arrs, _ = load_shard_arrays(sp_path, lazy=True)
+                if int(np.asarray(arrs["x"]).shape[0]) > 0:
+                    export_batches.append(arrs)
+            except Exception:
+                pass
+        if export_batches:
+            save_local_shard_arrays(export_path, arrs=_concat_array_batches(export_batches))
+
+    for old in iter_shard_paths(selfplay_shards_dir)[:-keep_iters]:
+        try:
+            shutil.rmtree(old) if old.is_dir() else old.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def _maybe_share_cross_trial_replay(
+    *,
+    tc: TrialConfig,
+    config: dict,
+    trial_dir: Path,
+    replay_shard_dir: Path,
+    buf,
+    in_salvage_startup_grace: bool,
+    iteration_zero_based: int,
+) -> dict:
+    """Cross-trial replay sharing (if enabled and not in salvage grace).
+
+    Returns the shared_summary dict; on disabled/grace path returns the
+    zero-counter shape so callers can read the fields uniformly.
+    """
+    empty_summary = {
+        "source_trials_selected": 0,
+        "source_trials_ingested": 0,
+        "source_trials_skipped_repeat": 0,
+        "source_shards_loaded": 0,
+        "source_samples_ingested": 0,
+    }
+    if not tc.exploit_replay_share_top_enabled:
+        return empty_summary
+    if in_salvage_startup_grace:
+        print(
+            "[trial] replay share skipped during salvage startup grace: "
+            f"iter={iteration_zero_based} grace_iters={tc.salvage_startup_no_share_iters}"
+        )
+        return empty_summary
+
+    summary = _share_top_replay_each_iteration(
+        config=config,
+        recipient_trial_dir=trial_dir,
+        replay_shard_dir=replay_shard_dir,
+        buf=buf,
+        top_k_trials=tc.exploit_replay_top_k_trials,
+        within_best_frac=tc.exploit_replay_top_within_best_frac,
+        min_metric=tc.exploit_replay_top_min_metric,
+        source_skip_newest=tc.exploit_replay_skip_newest,
+        shard_size=tc.shard_size,
+        holdout_fraction=tc.holdout_fraction,
+        max_unseen_iters_per_source=tc.exploit_replay_max_unseen_iters_per_source,
+        max_shards_per_source=tc.exploit_replay_top_shards_per_source,
+        share_fraction=tc.exploit_replay_share_fraction,
+    )
+    if summary["source_samples_ingested"] > 0:
+        print(
+            "[trial] replay share this iter: "
+            f"sources_selected={summary['source_trials_selected']} "
+            f"sources_ingested={summary['source_trials_ingested']} "
+            f"sources_skipped_repeat={summary['source_trials_skipped_repeat']} "
+            f"source_shards_loaded={summary['source_shards_loaded']} "
+            f"source_samples_ingested={summary['source_samples_ingested']}"
+        )
+    return summary
+
+
 def _run_selfplay_phase(
     *,
     tc: TrialConfig,
@@ -588,26 +675,12 @@ def _run_selfplay_phase(
             distributed_inference_broker_proc,
         )
 
-  # --- Export selfplay shards for sibling trials ---
-    _selfplay_export_path = local_shard_path(selfplay_shards_dir, iteration_idx)
-    if _new_selfplay_shards:
-        _export_batches: list[dict[str, np.ndarray]] = []
-        for _sp_path in _new_selfplay_shards:
-            try:
-                _arrs, _ = load_shard_arrays(_sp_path, lazy=True)
-                if int(np.asarray(_arrs["x"]).shape[0]) > 0:
-                    _export_batches.append(_arrs)
-            except Exception:
-                pass
-        if _export_batches:
-            save_local_shard_arrays(_selfplay_export_path, arrs=_concat_array_batches(_export_batches))
-    _keep_selfplay_iters = tc.exploit_replay_max_unseen_iters_per_source + 2
-    _all_selfplay_exports = iter_shard_paths(selfplay_shards_dir)
-    for _old in _all_selfplay_exports[:-_keep_selfplay_iters]:
-        try:
-            shutil.rmtree(_old) if _old.is_dir() else _old.unlink(missing_ok=True)
-        except Exception:
-            pass
+    _export_selfplay_shards_for_siblings(
+        new_selfplay_shards=_new_selfplay_shards,
+        selfplay_shards_dir=selfplay_shards_dir,
+        iteration_idx=iteration_idx,
+        keep_iters=tc.exploit_replay_max_unseen_iters_per_source + 2,
+    )
 
   # --- Growing window ---
     if current_window < tc.replay_window_max:
@@ -615,44 +688,12 @@ def _run_selfplay_phase(
         if buf.capacity < current_window:
             buf.capacity = current_window
 
-  # --- Cross-trial replay sharing ---
-    shared_summary: dict = {
-        "source_trials_selected": 0,
-        "source_trials_ingested": 0,
-        "source_trials_skipped_repeat": 0,
-        "source_shards_loaded": 0,
-        "source_samples_ingested": 0,
-    }
-    if tc.exploit_replay_share_top_enabled and (not in_salvage_startup_grace):
-        shared_summary = _share_top_replay_each_iteration(
-            config=config,
-            recipient_trial_dir=trial_dir,
-            replay_shard_dir=replay_shard_dir,
-            buf=buf,
-            top_k_trials=tc.exploit_replay_top_k_trials,
-            within_best_frac=tc.exploit_replay_top_within_best_frac,
-            min_metric=tc.exploit_replay_top_min_metric,
-            source_skip_newest=tc.exploit_replay_skip_newest,
-            shard_size=tc.shard_size,
-            holdout_fraction=tc.holdout_fraction,
-            max_unseen_iters_per_source=tc.exploit_replay_max_unseen_iters_per_source,
-            max_shards_per_source=tc.exploit_replay_top_shards_per_source,
-            share_fraction=tc.exploit_replay_share_fraction,
-        )
-        if shared_summary["source_samples_ingested"] > 0:
-            print(
-                "[trial] replay share this iter: "
-                f"sources_selected={shared_summary['source_trials_selected']} "
-                f"sources_ingested={shared_summary['source_trials_ingested']} "
-                f"sources_skipped_repeat={shared_summary['source_trials_skipped_repeat']} "
-                f"source_shards_loaded={shared_summary['source_shards_loaded']} "
-                f"source_samples_ingested={shared_summary['source_samples_ingested']}"
-            )
-    elif tc.exploit_replay_share_top_enabled and in_salvage_startup_grace:
-        print(
-            "[trial] replay share skipped during salvage startup grace: "
-            f"iter={iteration_zero_based} grace_iters={tc.salvage_startup_no_share_iters}"
-        )
+    shared_summary = _maybe_share_cross_trial_replay(
+        tc=tc, config=config,
+        trial_dir=trial_dir, replay_shard_dir=replay_shard_dir,
+        buf=buf, in_salvage_startup_grace=in_salvage_startup_grace,
+        iteration_zero_based=iteration_zero_based,
+    )
 
     imported_samples_this_iter = int(shared_summary.get("source_samples_ingested", 0))
 
