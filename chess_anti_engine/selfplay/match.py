@@ -68,6 +68,78 @@ def _result_from_a_pov(result: str, *, a_is_white: bool) -> int:
     return 1 if a_won else -1
 
 
+def _pick_moves_for_boards(
+    model: torch.nn.Module, sub_boards: list[chess.Board], *,
+    device: str, rng: np.random.Generator,
+    mcts_type: str, mcts_simulations: int, temperature: float, c_puct: float,
+) -> list[int]:
+    """Run gumbel- or PUCT-MCTS for one model on a list of boards."""
+    if str(mcts_type) == "gumbel":
+        gumbel_fn = _run_gumbel_root_many_c if _HAS_GUMBEL_C else run_gumbel_root_many
+        result = gumbel_fn(
+            model, sub_boards, device=device, rng=rng,
+            cfg=GumbelConfig(
+                simulations=int(mcts_simulations), temperature=float(temperature),
+            ),
+        )
+        _probs, actions, _values, _masks = result[:4]
+    else:
+        puct_fn = _run_mcts_many_c if _HAS_C_TREE else run_mcts_many
+        _probs, actions, _values, _masks = puct_fn(
+            model, sub_boards, device=device, rng=rng,
+            cfg=MCTSConfig(
+                simulations=int(mcts_simulations), temperature=float(temperature),
+                c_puct=float(c_puct), dirichlet_eps=0.0,
+            ),
+        )
+    return [int(a) for a in actions]
+
+
+def _apply_actions_to_boards(
+    boards: list[chess.Board], idxs: list[int], actions: list[int],
+) -> None:
+    """Push each chosen action onto its board (fall back to first legal if illegal)."""
+    for i, a in zip(idxs, actions, strict=True):
+        mv = index_to_move(int(a), boards[i])
+        if mv not in boards[i].legal_moves:
+            mv = next(iter(boards[i].legal_moves))
+        boards[i].push(mv)
+
+
+def _split_active_by_side_to_move(
+    active: list[int], boards: list[chess.Board], a_plays_white: list[bool],
+) -> tuple[list[int], list[int]]:
+    """Partition active slots by which model (a/b) is to move."""
+    a_to_move: list[int] = []
+    b_to_move: list[int] = []
+    for i in active:
+        a_is_white = bool(a_plays_white[i])
+        a_moves_now = (
+            (boards[i].turn == chess.WHITE and a_is_white)
+            or (boards[i].turn == chess.BLACK and not a_is_white)
+        )
+        (a_to_move if a_moves_now else b_to_move).append(i)
+    return a_to_move, b_to_move
+
+
+def _tally_match_results(
+    boards: list[chess.Board], a_plays_white: list[bool],
+) -> tuple[int, int, int]:
+    """Count (a_win, a_draw, a_loss) over the finished boards."""
+    a_win = a_draw = a_loss = 0
+    for i, b in enumerate(boards):
+        outcome = _result_from_a_pov(
+            b.result(claim_draw=True), a_is_white=bool(a_plays_white[i]),
+        )
+        if outcome == 0:
+            a_draw += 1
+        elif outcome > 0:
+            a_win += 1
+        else:
+            a_loss += 1
+    return a_win, a_draw, a_loss
+
+
 def play_match_batch(
     model_a: torch.nn.Module,
     model_b: torch.nn.Module,
@@ -91,11 +163,9 @@ def play_match_batch(
     a book path or random_start_plies so games don't all start from the same position.
     Defaults to 2 random start plies if not provided.
     """
-
     g = int(games)
     if g <= 0:
         raise ValueError("games must be > 0")
-
     if a_plays_white is None:
         a_plays_white = [True] * g
     if len(a_plays_white) != g:
@@ -106,66 +176,31 @@ def play_match_batch(
     boards = [make_starting_board(rng=rng, cfg=opening_cfg) for _ in range(g)]
     done = [False] * g
 
-    def _pick_moves(model: torch.nn.Module, idxs: list[int]) -> list[int]:
+    def _pick(model: torch.nn.Module, idxs: list[int]) -> list[int]:
         if not idxs:
             return []
-        sub_boards = [boards[i] for i in idxs]
-        if str(mcts_type) == "gumbel":
-            _gumbel_fn = _run_gumbel_root_many_c if _HAS_GUMBEL_C else run_gumbel_root_many
-            _gumbel_result = _gumbel_fn(
-                model, sub_boards, device=device, rng=rng,
-                cfg=GumbelConfig(simulations=int(mcts_simulations), temperature=float(temperature)),
-            )
-            _probs, actions, _values, _masks = _gumbel_result[:4]
-        else:
-            _puct_fn = _run_mcts_many_c if _HAS_C_TREE else run_mcts_many
-            _probs, actions, _values, _masks = _puct_fn(
-                model, sub_boards, device=device, rng=rng,
-                cfg=MCTSConfig(
-                    simulations=int(mcts_simulations), temperature=float(temperature),
-                    c_puct=float(c_puct), dirichlet_eps=0.0,
-                ),
-            )
-        return [int(a) for a in actions]
+        return _pick_moves_for_boards(
+            model, [boards[i] for i in idxs],
+            device=device, rng=rng,
+            mcts_type=mcts_type, mcts_simulations=mcts_simulations,
+            temperature=temperature, c_puct=c_puct,
+        )
 
-    def _apply_moves(idxs: list[int], actions: list[int]) -> None:
-        for i, a in zip(idxs, actions, strict=True):
-            mv = index_to_move(int(a), boards[i])
-            if mv not in boards[i].legal_moves:
-                mv = next(iter(boards[i].legal_moves))
-            boards[i].push(mv)
-
-  # Main play loop
     for _ply in range(int(max_plies)):
-        active = [i for i in range(g) if not done[i] and not boards[i].is_game_over(claim_draw=True)]
         for i in range(g):
             if not done[i] and boards[i].is_game_over(claim_draw=True):
                 done[i] = True
+        active = [i for i in range(g) if not done[i]]
         if not active:
             break
 
-  # Split by which model is to move (depends on side assignment + board.turn).
-        a_to_move: list[int] = []
-        b_to_move: list[int] = []
-        for i in active:
-            a_is_white = bool(a_plays_white[i])
-            a_moves_now = (boards[i].turn == chess.WHITE and a_is_white) or (boards[i].turn == chess.BLACK and not a_is_white)
-            (a_to_move if a_moves_now else b_to_move).append(i)
+        a_to_move, b_to_move = _split_active_by_side_to_move(
+            active, boards, a_plays_white,
+        )
+        _apply_actions_to_boards(boards, a_to_move, _pick(model_a, a_to_move))
+        _apply_actions_to_boards(boards, b_to_move, _pick(model_b, b_to_move))
 
-        _apply_moves(a_to_move, _pick_moves(model_a, a_to_move))
-        _apply_moves(b_to_move, _pick_moves(model_b, b_to_move))
-
-  # Score from model_a perspective.
-    a_win = a_draw = a_loss = 0
-    for i, b in enumerate(boards):
-        res = b.result(claim_draw=True)
-        outcome = _result_from_a_pov(res, a_is_white=bool(a_plays_white[i]))
-        if outcome == 0:
-            a_draw += 1
-        elif outcome > 0:
-            a_win += 1
-        else:
-            a_loss += 1
+    a_win, a_draw, a_loss = _tally_match_results(boards, a_plays_white)
 
     return MatchStats(
         games=g,
