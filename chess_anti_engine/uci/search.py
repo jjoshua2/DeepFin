@@ -601,21 +601,27 @@ class SearchWorker:
         stop_event: threading.Event, deadline: Deadline,
         max_nodes: int | None, max_depth: int | None,
         total_nodes: int, pv_len: int,
-    ) -> bool:
-        """True if any external/budget/depth/memory stop condition has fired."""
+    ) -> str | None:
+        """Return the first-firing stop reason, or ``None`` to keep searching.
+
+        Reasons are checked in priority order so the caller can match the
+        original sequential-break semantics — ``"tree_bytes"`` only fires when
+        no earlier budget/external/depth limit was already hit, which matters
+        for the tree-bytes-only final info-cb emission in :meth:`run`.
+        """
         if stop_event.is_set() or deadline.expired():
-            return True
+            return "external"
         if max_nodes is not None and total_nodes >= max_nodes:
-            return True
+            return "max_nodes"
         if max_depth is not None and pv_len >= max_depth:
-            return True
+            return "max_depth"
         if (
             self._max_tree_bytes > 0
             and self._tree is not None
             and self._tree.memory_bytes() >= self._max_tree_bytes
         ):
-            return True
-        return False
+            return "tree_bytes"
+        return None
 
     def run(
         self,
@@ -674,19 +680,15 @@ class SearchWorker:
                 last_info_ms=last_info_ms, tb_probe=tb_probe,
             )
 
-            if self._should_stop_search(
+            stop_reason = self._should_stop_search(
                 stop_event=stop_event, deadline=deadline,
                 max_nodes=max_nodes, max_depth=max_depth,
                 total_nodes=total_nodes, pv_len=len(pv_indices),
-            ):
-  # Tree-bytes stop emits a final info line; other stop reasons either
-  # already emitted via _maybe_emit_pv_info above or want quiet exit.
-                if (
-                    info_cb is not None
-                    and self._max_tree_bytes > 0
-                    and self._tree is not None
-                    and self._tree.memory_bytes() >= self._max_tree_bytes
-                ):
+            )
+            if stop_reason is not None:
+  # Tree-bytes-only stops emit a final info line; other stop reasons
+  # either already emitted via _maybe_emit_pv_info above or want quiet exit.
+                if stop_reason == "tree_bytes" and info_cb is not None:
                     assert self._root_id is not None
                     self._emit_pv_info(
                         info_cb, board, float(last_value),
