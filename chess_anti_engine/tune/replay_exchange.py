@@ -217,6 +217,109 @@ def _select_top_trial_snapshots(
     return eligible
 
 
+def _prune_local_shards_keep_fraction(
+    *,
+    replay_shard_dir: Path,
+    recipient_trial_dir: Path,
+    keep_recent_fraction: float,
+    keep_older_fraction: float,
+    shard_size: int,
+    holdout_fraction: float,
+    summary: dict[str, int],
+) -> None:
+    """Delete recipient shards while retaining keep_*_fraction slices of recent/older.
+
+    Keeps at least one shard in pathological corner cases. Recent vs older is
+    decided by the recipient's last-iteration snapshot of positions_added.
+    """
+    local_shards = iter_shard_paths(replay_shard_dir)
+    summary["local_before"] = len(local_shards)
+    if not local_shards:
+        return
+
+    recipient_snap = _latest_trial_snapshot(recipient_trial_dir)
+    recipient_recent_shards = 0
+    if recipient_snap is not None:
+        recipient_recent_shards = _estimate_recent_shard_count(
+            positions_added=int(recipient_snap.get("positions_added", 0)),
+            shard_size=shard_size,
+            holdout_fraction=holdout_fraction,
+        )
+    recipient_recent_shards = max(0, min(len(local_shards), int(recipient_recent_shards)))
+
+    if recipient_recent_shards > 0:
+        local_recent = local_shards[-recipient_recent_shards:]
+        local_older = local_shards[:-recipient_recent_shards]
+    else:
+        local_recent = []
+        local_older = local_shards
+
+    keep_recent_n = int(math.ceil(len(local_recent) * keep_recent_fraction))
+    keep_older_n = int(math.ceil(len(local_older) * keep_older_fraction))
+    keep_set = set()
+    if keep_recent_n > 0:
+        keep_set |= set(local_recent[-keep_recent_n:])
+    if keep_older_n > 0:
+        keep_set |= set(local_older[-keep_older_n:])
+    if not keep_set:
+        keep_set.add(local_shards[-1])
+
+    for sp in local_shards:
+        if sp in keep_set:
+            continue
+        try:
+            delete_shard_path(sp)
+        except Exception:
+            continue
+        summary["local_deleted"] += 1
+        if sp in local_recent:
+            summary["local_recent_deleted"] += 1
+        else:
+            summary["local_older_deleted"] += 1
+
+
+def _copy_donor_shards_to_recipient(
+    *,
+    donor_replay_dir: Path,
+    replay_shard_dir: Path,
+    donor_shards: int,
+    donor_skip_newest: int,
+    summary: dict[str, int],
+) -> None:
+    """Copy a tail slice of donor shards into the recipient. Mutates ``summary``.
+
+    ``donor_shards``: -1 = all, 0 = disabled (caller checks before calling),
+    N = last N. ``donor_skip_newest`` drops the latest N donor shards (their
+    PID/training state may not yet match the recipient's restore).
+    """
+    from chess_anti_engine.replay.shard import shard_index
+
+    donor_files = iter_shard_paths(donor_replay_dir)
+    summary["donor_available"] = len(donor_files)
+    if donor_skip_newest > 0:
+        donor_files = donor_files[:-donor_skip_newest] if len(donor_files) > donor_skip_newest else []
+    if not donor_files:
+        return
+    if donor_shards > 0:
+        donor_files = donor_files[-donor_shards:]
+    summary["donor_selected"] = len(donor_files)
+
+    next_idx = 0
+    for sp in iter_shard_paths(replay_shard_dir):
+        idx = shard_index(sp)
+        if idx >= 0:
+            next_idx = max(next_idx, idx + 1)
+
+    for src in donor_files:
+        dst = replay_shard_dir / f"shard_{next_idx:06d}{src.suffix}"
+        next_idx += 1
+        try:
+            copy_or_link_shard(src, dst)
+            summary["donor_copied"] += 1
+        except Exception:
+            pass
+
+
 def _refresh_replay_shards_on_exploit(
     *,
     config: dict,
@@ -241,78 +344,29 @@ def _refresh_replay_shards_on_exploit(
     replay_shard_dir = Path(replay_shard_dir)
     replay_shard_dir.mkdir(parents=True, exist_ok=True)
 
-    keep_recent_fraction = max(0.0, min(1.0, float(keep_recent_fraction)))
-    keep_older_fraction = max(0.0, min(1.0, float(keep_older_fraction)))
-    donor_shards = int(donor_shards)  # -1 = copy all, 0 = disabled, N = last N
-    donor_skip_newest = max(0, int(donor_skip_newest))
-    shard_size = max(1, int(shard_size))
-    holdout_fraction = max(0.0, min(0.99, float(holdout_fraction)))
-
     summary = {
-        "local_before": 0,
-        "local_deleted": 0,
-        "local_recent_deleted": 0,
-        "local_older_deleted": 0,
-        "local_after_keep": 0,
-        "local_final": 0,
-        "donor_available": 0,
-        "donor_selected": 0,
-        "donor_copied": 0,
+        "local_before": 0, "local_deleted": 0,
+        "local_recent_deleted": 0, "local_older_deleted": 0,
+        "local_after_keep": 0, "local_final": 0,
+        "donor_available": 0, "donor_selected": 0, "donor_copied": 0,
     }
 
-    local_shards = iter_shard_paths(replay_shard_dir)
-    summary["local_before"] = len(local_shards)
+    _prune_local_shards_keep_fraction(
+        replay_shard_dir=replay_shard_dir,
+        recipient_trial_dir=recipient_trial_dir,
+        keep_recent_fraction=max(0.0, min(1.0, float(keep_recent_fraction))),
+        keep_older_fraction=max(0.0, min(1.0, float(keep_older_fraction))),
+        shard_size=max(1, int(shard_size)),
+        holdout_fraction=max(0.0, min(0.99, float(holdout_fraction))),
+        summary=summary,
+    )
+    summary["local_after_keep"] = len(iter_shard_paths(replay_shard_dir))
 
-    recipient_snap = _latest_trial_snapshot(recipient_trial_dir)
-    recipient_recent_shards = 0
-    if recipient_snap is not None:
-        recipient_recent_shards = _estimate_recent_shard_count(
-            positions_added=int(recipient_snap.get("positions_added", 0)),
-            shard_size=shard_size,
-            holdout_fraction=holdout_fraction,
-        )
-    recipient_recent_shards = max(0, min(len(local_shards), int(recipient_recent_shards)))
-
-    if local_shards:
-        if recipient_recent_shards > 0:
-            local_recent = local_shards[-recipient_recent_shards:]
-            local_older = local_shards[:-recipient_recent_shards]
-        else:
-            local_recent = []
-            local_older = local_shards
-
-        keep_recent_n = int(math.ceil(len(local_recent) * keep_recent_fraction))
-        keep_older_n = int(math.ceil(len(local_older) * keep_older_fraction))
-        keep_recent = set(local_recent[-keep_recent_n:]) if keep_recent_n > 0 else set()
-        keep_older = set(local_older[-keep_older_n:]) if keep_older_n > 0 else set()
-        keep_set = keep_recent | keep_older
-
-  # Keep at least one local shard to avoid an empty replay on corner cases.
-        if not keep_set and local_shards:
-            keep_set.add(local_shards[-1])
-
-        for sp in local_shards:
-            if sp in keep_set:
-                continue
-            is_recent = sp in local_recent
-            try:
-                delete_shard_path(sp)
-                summary["local_deleted"] += 1
-                if is_recent:
-                    summary["local_recent_deleted"] += 1
-                else:
-                    summary["local_older_deleted"] += 1
-            except Exception:
-                pass
-
-    local_after_keep = iter_shard_paths(replay_shard_dir)
-    summary["local_after_keep"] = len(local_after_keep)
-
+    donor_shards = int(donor_shards)  # -1 = all, 0 = disabled, N = last N
     donor_dir = Path(donor_trial_dir) if donor_trial_dir is not None else None
     donor_replay_dir = (
         _trial_replay_shard_dir(config=config, trial_dir=donor_dir)
-        if donor_dir is not None
-        else None
+        if donor_dir is not None else None
     )
     log.info(
         "exploit replay donor lookup: donor_replay_dir=%s is_dir=%s donor_shards=%d",
@@ -321,34 +375,13 @@ def _refresh_replay_shards_on_exploit(
         donor_shards,
     )
     if donor_shards != 0 and donor_replay_dir is not None and donor_replay_dir.is_dir():
-        from chess_anti_engine.replay.shard import shard_index
-
-        donor_files = iter_shard_paths(donor_replay_dir)
-        summary["donor_available"] = len(donor_files)
-        if donor_skip_newest > 0 and len(donor_files) > donor_skip_newest:
-            donor_files = donor_files[:-donor_skip_newest]
-        elif donor_skip_newest > 0:
-            donor_files = []
-        if donor_files:
-            if donor_shards > 0:
-                donor_files = donor_files[-donor_shards:]
-            summary["donor_selected"] = len(donor_files)
-
-            existing = iter_shard_paths(replay_shard_dir)
-            next_idx = 0
-            for sp in existing:
-                idx = shard_index(sp)
-                if idx >= 0:
-                    next_idx = max(next_idx, idx + 1)
-
-            for src in donor_files:
-                dst = replay_shard_dir / f"shard_{next_idx:06d}{src.suffix}"
-                next_idx += 1
-                try:
-                    copy_or_link_shard(src, dst)
-                    summary["donor_copied"] += 1
-                except Exception:
-                    pass
+        _copy_donor_shards_to_recipient(
+            donor_replay_dir=donor_replay_dir,
+            replay_shard_dir=replay_shard_dir,
+            donor_shards=donor_shards,
+            donor_skip_newest=max(0, int(donor_skip_newest)),
+            summary=summary,
+        )
 
     summary["local_final"] = len(iter_shard_paths(replay_shard_dir))
     return summary
