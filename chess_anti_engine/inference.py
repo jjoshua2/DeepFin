@@ -1349,6 +1349,36 @@ class SharedSlotBroker:
         for tid in stale:
             self._deregister_trial(tid)
 
+    def _build_trial_model(
+        self, trial_id: str, *, model_cfg: ModelConfig, sd: dict, model_sha: str,
+    ) -> None:
+        """Construct + register a fresh model instance + CUDA stream for a new trial."""
+        model = build_model(model_cfg)
+        model.to(self.device)
+        model.eval()
+        if hasattr(model, "_inference_only"):
+            setattr(model, "_inference_only", True)
+        load_state_dict_tolerant(model, sd, label=f"shared-broker-{trial_id}")
+        if self.compile_inference and self.device.startswith("cuda"):
+            model = cast("torch.nn.Module", torch.compile(model, mode="reduce-overhead"))
+        self._trial_models[trial_id] = model
+        if self.device.startswith("cuda"):
+            self._trial_streams[trial_id] = torch.cuda.Stream(device=self.device)
+        print(
+            f"[shared-broker] created model for trial {trial_id} (sha={model_sha[:8]})",
+            flush=True,
+        )
+
+    def _update_trial_weights(self, trial_id: str, *, sd: dict, model_sha: str) -> None:
+        """Hot-swap weights into the existing model instance for ``trial_id``."""
+        model = self._trial_models[trial_id]
+        target = getattr(model, "_orig_mod", model)
+        load_state_dict_tolerant(target, sd, label=f"shared-broker-{trial_id}")
+        print(
+            f"[shared-broker] updated weights for trial {trial_id} (sha={model_sha[:8]})",
+            flush=True,
+        )
+
     def _load_trial_weights(self, trial_id: str) -> bool:
         """Load/refresh model for a trial. Each trial gets its own model instance + CUDA stream."""
         publish_dir = self.server_root / "trials" / trial_id / "publish"
@@ -1373,7 +1403,6 @@ class SharedSlotBroker:
             self._trial_manifest_sigs[trial_id] = sig
             return trial_id in self._trial_models
 
-  # Validate config matches
         mc = manifest.get("model_config") or {}
         config_key = (
             str(mc.get("kind", "transformer")),
@@ -1386,20 +1415,20 @@ class SharedSlotBroker:
             bool(mc.get("use_qk_rmsnorm", False)),
         )
         if self._model_config_key is not None and config_key != self._model_config_key:
-            print(f"[shared-broker] WARNING: trial {trial_id} has different model config, skipping", flush=True)
+            print(
+                f"[shared-broker] WARNING: trial {trial_id} has different model config, skipping",
+                flush=True,
+            )
             return False
         if self._model_config_key is None:
             self._model_config_key = config_key
 
-  # Load checkpoint
-        model_path = publish_dir / "latest_model.pt"
         try:
-            ckpt = torch.load(str(model_path), map_location="cpu")
+            ckpt = torch.load(str(publish_dir / "latest_model.pt"), map_location="cpu")
             sd = ckpt.get("model", ckpt)
         except (OSError, RuntimeError, EOFError):
             return False  # checkpoint missing, mid-write, or torch load failed
 
-  # Build or update model instance for this trial
         model_cfg = ModelConfig(
             kind=config_key[0], embed_dim=config_key[1],
             num_layers=config_key[2], num_heads=config_key[3],
@@ -1409,25 +1438,11 @@ class SharedSlotBroker:
         )
 
         if trial_id not in self._trial_models:
-  # New trial: build fresh model instance
-            model = build_model(model_cfg)
-            model.to(self.device)
-            model.eval()
-            if hasattr(model, "_inference_only"):
-                setattr(model, "_inference_only", True)
-            load_state_dict_tolerant(model, sd, label=f"shared-broker-{trial_id}")
-            if self.compile_inference and self.device.startswith("cuda"):
-                model = cast("torch.nn.Module", torch.compile(model, mode="reduce-overhead"))
-            self._trial_models[trial_id] = model
-            if self.device.startswith("cuda"):
-                self._trial_streams[trial_id] = torch.cuda.Stream(device=self.device)
-            print(f"[shared-broker] created model for trial {trial_id} (sha={model_sha[:8]})", flush=True)
+            self._build_trial_model(
+                trial_id, model_cfg=model_cfg, sd=sd, model_sha=model_sha,
+            )
         else:
-  # Existing trial: update weights
-            model = self._trial_models[trial_id]
-            target = getattr(model, "_orig_mod", model)
-            load_state_dict_tolerant(target, sd, label=f"shared-broker-{trial_id}")
-            print(f"[shared-broker] updated weights for trial {trial_id} (sha={model_sha[:8]})", flush=True)
+            self._update_trial_weights(trial_id, sd=sd, model_sha=model_sha)
 
         self._trial_shas[trial_id] = model_sha
         self._trial_manifest_sigs[trial_id] = sig
