@@ -40,115 +40,74 @@ def _to_optional_tensor(
     return _to_tensor(np.asarray(arr, dtype=dtype_np), device=device)
 
 
-def collate(samples: list[ReplaySample], *, device: str) -> dict[str, torch.Tensor]:
-    x = np.stack([s.x for s in samples], axis=0).astype(np.float32, copy=False)
-    policy_t = np.stack([s.policy_target for s in samples], axis=0).astype(np.float32, copy=False)
-    wdl_t = np.array([s.wdl_target for s in samples], dtype=np.int64)
+  # Optional float-vector fields. Each entry: (sample_attr, target_key, has_key, shape_per_sample).
+  # Values are .astype(float32) into target[i] when present. Drives the per-sample loop in collate().
+_OPTIONAL_FLOAT_FIELDS: tuple[tuple[str, str, str, tuple[int, ...]], ...] = (
+    ("sf_wdl",              "sf_wdl",          "has_sf_wdl",       (3,)),
+    ("sf_policy_target",    "sf_policy_t",     "has_sf_policy",    (_PS,)),
+    ("categorical_target",  "categorical_t",   "has_categorical",  (32,)),
+    ("policy_soft_target",  "policy_soft_t",   "has_policy_soft",  (_PS,)),
+    ("future_policy_target","future_policy_t", "has_future",       (_PS,)),
+    ("volatility_target",   "volatility_t",    "has_volatility",   (3,)),
+    ("sf_volatility_target","sf_volatility_t", "has_sf_volatility",(3,)),
+)
 
-    has_policy = np.array([1.0 if getattr(s, "has_policy", True) else 0.0 for s in samples], dtype=np.float32)
 
-    sf_wdl = np.zeros((len(samples), 3), dtype=np.float32)
-    has_sf_wdl = np.zeros((len(samples),), dtype=np.float32)
-
-    sf_move_index = np.zeros((len(samples),), dtype=np.int64)
-    has_sf_move = np.zeros((len(samples),), dtype=np.float32)
-
-    sf_policy_t = np.zeros_like(policy_t, dtype=np.float32)
-    has_sf_policy = np.zeros((len(samples),), dtype=np.float32)
-
-    moves_left = np.zeros((len(samples),), dtype=np.float32)
-    has_moves_left = np.zeros((len(samples),), dtype=np.float32)
-    is_network_turn = np.zeros((len(samples),), dtype=np.bool_)
-    is_selfplay = np.zeros((len(samples),), dtype=np.bool_)
-    has_is_selfplay = np.zeros((len(samples),), dtype=np.float32)
-
-    categorical_t = np.zeros((len(samples), 32), dtype=np.float32)
-    has_categorical = np.zeros((len(samples),), dtype=np.float32)
-
-    policy_soft_t = np.zeros_like(policy_t, dtype=np.float32)
-    has_policy_soft = np.zeros((len(samples),), dtype=np.float32)
-    future_policy_t = np.zeros_like(policy_t, dtype=np.float32)
-    has_future = np.zeros((len(samples),), dtype=np.float32)
-
-    volatility_t = np.zeros((len(samples), 3), dtype=np.float32)
-    has_volatility = np.zeros((len(samples),), dtype=np.float32)
-
-    sf_volatility_t = np.zeros((len(samples), 3), dtype=np.float32)
-    has_sf_volatility = np.zeros((len(samples),), dtype=np.float32)
-
-    mask_arrs = {k: np.zeros((len(samples), _PS), dtype=np.float32) for k in LEGAL_MASK_FIELDS}
-    has_mask_arrs = {k: np.zeros((len(samples),), dtype=np.float32) for k in LEGAL_MASK_HAS_FIELDS}
+def _build_collate_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
+    """Build per-sample numpy arrays for every collate field. Returns the array
+    dict; ``collate`` then converts every entry to a tensor."""
+    n = len(samples)
+    out: dict[str, np.ndarray] = {
+        "x": np.stack([s.x for s in samples], axis=0).astype(np.float32, copy=False),
+        "policy_t": np.stack([s.policy_target for s in samples], axis=0).astype(np.float32, copy=False),
+        "wdl_t": np.array([s.wdl_target for s in samples], dtype=np.int64),
+        "has_policy": np.array(
+            [1.0 if getattr(s, "has_policy", True) else 0.0 for s in samples], dtype=np.float32,
+        ),
+        "sf_move_index": np.zeros((n,), dtype=np.int64),
+        "has_sf_move": np.zeros((n,), dtype=np.float32),
+        "moves_left": np.zeros((n,), dtype=np.float32),
+        "has_moves_left": np.zeros((n,), dtype=np.float32),
+        "is_network_turn": np.zeros((n,), dtype=np.bool_),
+        "is_selfplay": np.zeros((n,), dtype=np.bool_),
+        "has_is_selfplay": np.zeros((n,), dtype=np.float32),
+    }
+    for src, target, has, shape in _OPTIONAL_FLOAT_FIELDS:
+        out[target] = np.zeros((n, *shape), dtype=np.float32)
+        out[has] = np.zeros((n,), dtype=np.float32)
+    for k in LEGAL_MASK_FIELDS:
+        out[k] = np.zeros((n, _PS), dtype=np.float32)
+    for k in LEGAL_MASK_HAS_FIELDS:
+        out[k] = np.zeros((n,), dtype=np.float32)
 
     for i, s in enumerate(samples):
-        if s.sf_wdl is not None:
-            sf_wdl[i] = s.sf_wdl.astype(np.float32, copy=False)
-            has_sf_wdl[i] = 1.0
+        for src, target, has, _ in _OPTIONAL_FLOAT_FIELDS:
+            v = getattr(s, src, None)
+            if v is not None:
+                out[target][i] = v.astype(np.float32, copy=False)
+                out[has][i] = 1.0
         if s.sf_move_index is not None:
-            sf_move_index[i] = int(s.sf_move_index)
-            has_sf_move[i] = 1.0
-        _sf_pol_tgt = getattr(s, "sf_policy_target", None)
-        if _sf_pol_tgt is not None:
-            sf_policy_t[i] = _sf_pol_tgt.astype(np.float32, copy=False)
-            has_sf_policy[i] = 1.0
+            out["sf_move_index"][i] = int(s.sf_move_index)
+            out["has_sf_move"][i] = 1.0
         if s.moves_left is not None:
-            moves_left[i] = float(s.moves_left)
-            has_moves_left[i] = 1.0
+            out["moves_left"][i] = float(s.moves_left)
+            out["has_moves_left"][i] = 1.0
         if s.is_network_turn is not None:
-            is_network_turn[i] = bool(s.is_network_turn)
+            out["is_network_turn"][i] = bool(s.is_network_turn)
         if s.is_selfplay is not None:
-            is_selfplay[i] = bool(s.is_selfplay)
-            has_is_selfplay[i] = 1.0
-        if s.categorical_target is not None:
-            categorical_t[i] = s.categorical_target.astype(np.float32, copy=False)
-            has_categorical[i] = 1.0
-        if s.policy_soft_target is not None:
-            policy_soft_t[i] = s.policy_soft_target.astype(np.float32, copy=False)
-            has_policy_soft[i] = 1.0
-        if s.future_policy_target is not None:
-            future_policy_t[i] = s.future_policy_target.astype(np.float32, copy=False)
-            has_future[i] = 1.0
-        if s.volatility_target is not None:
-            volatility_t[i] = s.volatility_target.astype(np.float32, copy=False)
-            has_volatility[i] = 1.0
-        _sf_vol_tgt = getattr(s, "sf_volatility_target", None)
-        if _sf_vol_tgt is not None:
-            sf_volatility_t[i] = _sf_vol_tgt.astype(np.float32, copy=False)
-            has_sf_volatility[i] = 1.0
+            out["is_selfplay"][i] = bool(s.is_selfplay)
+            out["has_is_selfplay"][i] = 1.0
         for mk, hk in zip(LEGAL_MASK_FIELDS, LEGAL_MASK_HAS_FIELDS, strict=True):
             v = getattr(s, mk, None)
             if v is not None:
-                mask_arrs[mk][i] = v.astype(np.float32, copy=False)
-                has_mask_arrs[hk][i] = 1.0
+                out[mk][i] = v.astype(np.float32, copy=False)
+                out[hk][i] = 1.0
+    return out
 
-    return {
-        "x": _to_tensor(x, device=device),
-        "policy_t": _to_tensor(policy_t, device=device),
-        "wdl_t": _to_tensor(wdl_t, device=device),
-        "has_policy": _to_tensor(has_policy, device=device),
-        "sf_wdl": _to_tensor(sf_wdl, device=device),
-        "has_sf_wdl": _to_tensor(has_sf_wdl, device=device),
-        "sf_move_index": _to_tensor(sf_move_index, device=device),
-        "has_sf_move": _to_tensor(has_sf_move, device=device),
-        "sf_policy_t": _to_tensor(sf_policy_t, device=device),
-        "has_sf_policy": _to_tensor(has_sf_policy, device=device),
-        "moves_left": _to_tensor(moves_left, device=device),
-        "has_moves_left": _to_tensor(has_moves_left, device=device),
-        "is_network_turn": _to_tensor(is_network_turn, device=device),
-        "is_selfplay": _to_tensor(is_selfplay, device=device),
-        "has_is_selfplay": _to_tensor(has_is_selfplay, device=device),
-        "categorical_t": _to_tensor(categorical_t, device=device),
-        "has_categorical": _to_tensor(has_categorical, device=device),
-        "policy_soft_t": _to_tensor(policy_soft_t, device=device),
-        "has_policy_soft": _to_tensor(has_policy_soft, device=device),
-        "future_policy_t": _to_tensor(future_policy_t, device=device),
-        "has_future": _to_tensor(has_future, device=device),
-        "volatility_t": _to_tensor(volatility_t, device=device),
-        "has_volatility": _to_tensor(has_volatility, device=device),
-        "sf_volatility_t": _to_tensor(sf_volatility_t, device=device),
-        "has_sf_volatility": _to_tensor(has_sf_volatility, device=device),
-        **{k: _to_tensor(mask_arrs[k], device=device) for k in LEGAL_MASK_FIELDS},
-        **{k: _to_tensor(has_mask_arrs[k], device=device) for k in LEGAL_MASK_HAS_FIELDS},
-    }
+
+def collate(samples: list[ReplaySample], *, device: str) -> dict[str, torch.Tensor]:
+    arrs = _build_collate_arrays(samples)
+    return {k: _to_tensor(v, device=device) for k, v in arrs.items()}
 
 
 def collate_arrays(arrs: dict[str, np.ndarray], *, device: str) -> dict[str, torch.Tensor]:
