@@ -275,6 +275,69 @@ def _avg_batch_from_worker_logs(distributed_dirs, offsets: dict[str, int]) -> fl
     return sum(samples) / len(samples)
 
 
+def _maybe_reset_holdout_on_drift(
+    *, holdout_buf, drift, tc: TrialConfig, holdout_frozen: bool, holdout_generation: int,
+) -> tuple[bool, int]:
+    """Clear holdout when input-drift L2 crosses threshold; bumps generation
+    counter to mark which holdout the test_loss in this row reflects."""
+    if not (
+        tc.reset_holdout_on_drift
+        and tc.drift_threshold > 0.0
+        and drift.drift_input_l2 > tc.drift_threshold
+    ):
+        return holdout_frozen, holdout_generation
+    holdout_buf.clear()
+    return False, holdout_generation + 1
+
+
+def _log_pid_iter_summary(
+    *, iteration_idx: int, pid_result, sp,
+) -> None:
+    """One-line iter summary: PID-relevant winrate, ema, regret, nodes, game counts."""
+    cur_wr = pid_result.curriculum_winrate_raw
+    logging.getLogger("chess_anti_engine.iter").info(
+        "iter %d wr: cur_raw=%s ema=%.3f → regret=%.3f nodes=%d (sp_games=%d cur_games=%d)",
+        iteration_idx,
+        f"{cur_wr:.3f}" if cur_wr is not None else "n/a",
+        pid_result.pid_ema_wr,
+        pid_result.wdl_regret_next, pid_result.sf_nodes_next,
+        int(sp.total_selfplay_games), int(sp.total_curriculum_games),
+    )
+
+
+def _build_trial_model_config(tc: TrialConfig) -> ModelConfig:
+    """Build the ModelConfig from a TrialConfig — pure mapping."""
+    return ModelConfig(
+        kind=tc.model,
+        embed_dim=tc.embed_dim,
+        num_layers=tc.num_layers,
+        num_heads=tc.num_heads,
+        ffn_mult=tc.ffn_mult,
+        use_smolgen=tc.use_smolgen,
+        use_nla=tc.use_nla,
+        use_qk_rmsnorm=tc.use_qk_rmsnorm,
+        use_gradient_checkpointing=tc.gradient_checkpointing,
+    )
+
+
+def _quarantine_inbox_on_resume(
+    *, distributed_dirs: dict, restore, trial_id: str,
+) -> None:
+    """On resume, move any preexisting inbox shards out of the way so they
+    don't get ingested as if produced by the resuming model generation."""
+    quarantined = _quarantine_inbox_shards(
+        inbox_dir=distributed_dirs["inbox_dir"],
+        processed_dir=distributed_dirs["processed_dir"],
+        reason=f"{restore.startup_source}_resume",
+    )
+    if int(quarantined["moved_shards"]) > 0:
+        print(
+            "[trial] quarantined preexisting inbox shards on resume: "
+            f"trial={trial_id} moved={quarantined['moved_shards']} "
+            f"dst={quarantined['quarantine_root']}"
+        )
+
+
 def train_trial(config: dict):
     """Ray Tune trainable.
 
@@ -298,26 +361,14 @@ def train_trial(config: dict):
     _ctx = _tune_get_context()
     base_seed = tc.seed
     trial_id = str(_ctx.get_trial_id() or "trial")
-    trial_seed = _stable_seed_u32(base_seed, trial_id)
-    active_seed = int(trial_seed)
+    active_seed = int(_stable_seed_u32(base_seed, trial_id))
     rng = np.random.default_rng(active_seed)
     torch.manual_seed(active_seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(active_seed)
 
     device = tc.device
-
-    model_cfg = ModelConfig(
-        kind=tc.model,
-        embed_dim=tc.embed_dim,
-        num_layers=tc.num_layers,
-        num_heads=tc.num_heads,
-        ffn_mult=tc.ffn_mult,
-        use_smolgen=tc.use_smolgen,
-        use_nla=tc.use_nla,
-        use_qk_rmsnorm=tc.use_qk_rmsnorm,
-        use_gradient_checkpointing=tc.gradient_checkpointing,
-    )
+    model_cfg = _build_trial_model_config(tc)
     model = build_model(model_cfg)
 
   # Use Ray-provided trial directory for ALL per-trial state (checkpoints,
@@ -391,17 +442,9 @@ def train_trial(config: dict):
     distributed_inference_broker_proc: subprocess.Popen[bytes] | None = None
 
     if ckpt is not None:
-        quarantined = _quarantine_inbox_shards(
-            inbox_dir=distributed_dirs["inbox_dir"],
-            processed_dir=distributed_dirs["processed_dir"],
-            reason=f"{restore.startup_source}_resume",
+        _quarantine_inbox_on_resume(
+            distributed_dirs=distributed_dirs, restore=restore, trial_id=trial_id,
         )
-        if int(quarantined["moved_shards"]) > 0:
-            print(
-                "[trial] quarantined preexisting inbox shards on resume: "
-                f"trial={trial_id} moved={quarantined['moved_shards']} "
-                f"dst={quarantined['quarantine_root']}"
-            )
 
     eval_sf = _init_eval_stockfish(tc)
     pid = _init_pid(tc, config, restored_pid_state, sf)
@@ -545,16 +588,10 @@ def train_trial(config: dict):
                 buf=buf, holdout_buf=holdout_buf,
                 drift_sample_size=tc.drift_sample_size,
             )
-
-  # Optional holdout reset based on input drift threshold.
-            if (
-                tc.reset_holdout_on_drift
-                and (tc.drift_threshold > 0.0)
-                and (drift.drift_input_l2 > tc.drift_threshold)
-            ):
-                holdout_buf.clear()
-                holdout_frozen = False
-                holdout_generation += 1
+            holdout_frozen, holdout_generation = _maybe_reset_holdout_on_drift(
+                holdout_buf=holdout_buf, drift=drift, tc=tc,
+                holdout_frozen=holdout_frozen, holdout_generation=holdout_generation,
+            )
 
             _sync_trainer_weights(trainer, config, tc, ds)
 
@@ -621,19 +658,10 @@ def train_trial(config: dict):
                 ds=ds,
             )
             opp_strength_ema = pid_result.opp_strength_ema
-            # PID-relevant winrate (curriculum_winrate_raw) is what the
-            # controller observes — selfplay-vs-SF only, not the games-generated
-            # blend that mixes in selfplay-vs-self draws/losses. Log it
-            # alongside ema/regret/nodes so a quick eyeball matches the lever.
-            _cur_wr = pid_result.curriculum_winrate_raw
-            logging.getLogger("chess_anti_engine.iter").info(
-                "iter %d wr: cur_raw=%s ema=%.3f → regret=%.3f nodes=%d (sp_games=%d cur_games=%d)",
-                iteration_idx,
-                f"{_cur_wr:.3f}" if _cur_wr is not None else "n/a",
-                pid_result.pid_ema_wr,
-                pid_result.wdl_regret_next, pid_result.sf_nodes_next,
-                int(sp.total_selfplay_games), int(sp.total_curriculum_games),
-            )
+            # PID-relevant winrate (curriculum_winrate_raw) is what the controller
+            # observes — selfplay-vs-SF only, not the games-generated blend that
+            # mixes in selfplay-vs-self draws/losses.
+            _log_pid_iter_summary(iteration_idx=iteration_idx, pid_result=pid_result, sp=sp)
 
             _finalize_iteration(
                 tc=tc, trainer=trainer, pid=pid,
