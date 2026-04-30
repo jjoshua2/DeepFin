@@ -807,6 +807,57 @@ class Trainer:
         self._log_metrics(metrics, tag)
         return metrics
 
+    def _apply_feature_group_dropout(self, x: torch.Tensor) -> None:
+        """Per-group classical-feature dropout applied in-place on x[:, base:, ...]."""
+        base = int(self._base_input_planes)
+        if x.shape[1] <= base:
+            return
+        for g_off, g_len, g_p in self._feature_group_dropout:
+            if g_p > 0.0:
+                drop = (torch.rand((x.shape[0], 1, 1, 1), device=x.device) < g_p).to(x.dtype)
+                x[:, base + g_off : base + g_off + g_len, :, :] *= (1.0 - drop)
+
+    def _run_optimizer_step(
+        self, *, step_sums: dict[str, float], step_acc_sums: dict, buf: ReplayBuffer, batch_size: int,
+    ) -> tuple[int, float]:
+        """Run accum_steps microbatches, do zclip + opt.step + lr update.
+
+        Mutates step_sums/step_acc_sums in place. Returns (step_n_micro, opt_step_time_s).
+        """
+        self.opt.zero_grad(set_to_none=True)
+        step_n_micro = 0
+        for batch in self._iter_prefetched_batches(
+            buf, batch_size=batch_size,
+            mirror_prob=self.mirror_prob, count=self.accum_steps,
+        ):
+            self._apply_feature_group_dropout(batch["x"])
+            with self._amp_context():
+                out = self.model(batch["x"])
+                losses = compute_loss(out, batch, **self._loss_kwargs)
+                loss = losses["total"] / self.accum_steps
+            loss.backward()
+
+            scalars = self._extract_loss_scalars(losses)
+            scalars["loss"] = float(loss.item() * self.accum_steps)
+            for k, v in scalars.items():
+                step_sums[k] = step_sums.get(k, 0.0) + v
+
+            with torch.no_grad():
+                for name, (n_, d_) in self._policy_accuracy_stats(out, batch).items():
+                    prev = step_acc_sums.get(name)
+                    step_acc_sums[name] = (n_, d_) if prev is None else (prev[0] + n_, prev[1] + d_)
+
+            step_n_micro += 1
+
+        grad_norm = self.zclip.step(self.model)
+        if self._should_log_step_scalars():
+            self.writer.add_scalar("train/grad_norm", float(grad_norm), self.step)
+        opt_step_start = time.perf_counter()
+        self.opt.step()
+        opt_step_time_s = time.perf_counter() - opt_step_start
+        self._update_lr()
+        return step_n_micro, opt_step_time_s
+
     def train_steps(self, buf: ReplayBuffer, *, batch_size: int, steps: int) -> TrainMetrics:
         self.model.train()
         train_wall_start = time.perf_counter()
@@ -821,52 +872,14 @@ class Trainer:
 
         for _ in range(int(steps)):
           for _attempt in range(3):
+            step_sums: dict[str, float] = {}
+            step_acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
             try:
-                self.opt.zero_grad(set_to_none=True)
-                step_sums: dict[str, float] = {}
-                step_acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
-                step_n_micro = 0
-
-                for batch in self._iter_prefetched_batches(
-                    buf, batch_size=batch_size,
-                    mirror_prob=self.mirror_prob, count=self.accum_steps,
-                ):
-  # Per-group feature dropout: independently zero each classical feature group.
-                    base = int(self._base_input_planes)
-                    x = batch["x"]
-                    if x.shape[1] > base:
-                        for g_off, g_len, g_p in self._feature_group_dropout:
-                            if g_p > 0.0:
-                                drop = (torch.rand((x.shape[0], 1, 1, 1), device=x.device) < g_p).to(x.dtype)
-                                x[:, base + g_off : base + g_off + g_len, :, :] *= (1.0 - drop)
-
-                    with self._amp_context():
-                        out = self.model(x)
-                        losses = compute_loss(out, batch, **self._loss_kwargs)
-                        loss = losses["total"] / self.accum_steps
-                    loss.backward()
-
-  # Accumulate metric scalars (no graph kept).
-                    scalars = self._extract_loss_scalars(losses)
-                    scalars["loss"] = float(loss.item() * self.accum_steps)
-                    for k, v in scalars.items():
-                        step_sums[k] = step_sums.get(k, 0.0) + v
-
-                    with torch.no_grad():
-                        for name, (n_, d_) in self._policy_accuracy_stats(out, batch).items():
-                            prev = step_acc_sums.get(name)
-                            step_acc_sums[name] = (n_, d_) if prev is None else (prev[0] + n_, prev[1] + d_)
-
-                    step_n_micro += 1
-
-                grad_norm = self.zclip.step(self.model)
-                if self._should_log_step_scalars():
-                    self.writer.add_scalar("train/grad_norm", float(grad_norm), self.step)
-                opt_step_start = time.perf_counter()
-                self.opt.step()
-                opt_step_time_s += time.perf_counter() - opt_step_start
-                self._update_lr()
-
+                step_n_micro, this_opt_time = self._run_optimizer_step(
+                    step_sums=step_sums, step_acc_sums=step_acc_sums,
+                    buf=buf, batch_size=batch_size,
+                )
+                opt_step_time_s += this_opt_time
             except RuntimeError as exc:
                 if "CUDA" not in str(exc) or _attempt >= 2:
                     raise
