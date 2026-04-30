@@ -61,6 +61,63 @@ def _get_mask(batch: dict[str, torch.Tensor], key: str, *, default: float = 0.0)
     return torch.full((batch["x"].shape[0],), default, device=batch["x"].device)
 
 
+def _compute_sf_wdl_mask(
+    *,
+    net_mask: torch.Tensor,
+    has_sf_wdl: torch.Tensor,
+    sf_wdl_probs: torch.Tensor | None,
+    wdl_target: torch.Tensor,
+    conf_power: float,
+    draw_scale: float,
+) -> torch.Tensor:
+    """SF-WDL per-sample mask with optional confidence damping + draw rescale.
+
+    Damping: ``(1 - draw_prob)^power`` zeros out high-draw rows where SF's
+    label barely disagrees with a fresh-init model. Draw rescale boosts/cuts
+    the contribution of game-decided-as-draw outcomes.
+    """
+    mask = net_mask * has_sf_wdl
+    if sf_wdl_probs is None:
+        return mask
+    if conf_power > 0.0:
+        sf_conf = (1.0 - sf_wdl_probs[:, 1]).clamp(0.0, 1.0).pow(conf_power)
+        mask = mask * sf_conf
+    if draw_scale != 1.0:
+        draw_mask = (wdl_target == 1).to(torch.float32)
+        mask = mask * (1.0 - draw_mask + draw_mask * draw_scale)
+    return mask
+
+
+def _normalize_sf_wdl_probs(sf_wdl_raw: torch.Tensor | None) -> torch.Tensor | None:
+    """Clamp negatives to 0 and renormalize so each row sums to 1."""
+    if sf_wdl_raw is None:
+        return None
+    p = sf_wdl_raw.clamp_min(0.0)
+    return p / p.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+
+
+def _phase_split_masks(
+    *,
+    has_is_selfplay: torch.Tensor,
+    is_selfplay: torch.Tensor,
+    has_moves_left: torch.Tensor,
+    moves_left_val: torch.Tensor,
+) -> tuple[tuple[str, torch.Tensor], ...]:
+    """selfplay/curriculum + opening/midgame/endgame masks for split loss reporting."""
+    sp_mask = has_is_selfplay * is_selfplay
+    cur_mask = has_is_selfplay - sp_mask
+    open_mask = has_moves_left * (moves_left_val > _PHASE_OPEN_THRESHOLD).to(torch.float32)
+    end_mask = has_moves_left * (moves_left_val < _PHASE_END_THRESHOLD).to(torch.float32)
+    mid_mask = has_moves_left - open_mask - end_mask
+    return (
+        ("selfplay", sp_mask),
+        ("curriculum", cur_mask),
+        ("open", open_mask),
+        ("mid", mid_mask),
+        ("end", end_mask),
+    )
+
+
 def compute_loss(
     outputs: dict[str, torch.Tensor],
     batch: dict[str, torch.Tensor],
@@ -127,56 +184,56 @@ def compute_loss(
         )
 
     has_sf_wdl = _get_mask(batch, "has_sf_wdl")
-    sf_wdl_raw = batch.get("sf_wdl")
-    sf_wdl_probs = None
-    if sf_wdl_raw is not None:
-        sf_wdl_probs = sf_wdl_raw.clamp_min(0.0)
-        sf_wdl_probs = sf_wdl_probs / sf_wdl_probs.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+    sf_wdl_probs = _normalize_sf_wdl_probs(batch.get("sf_wdl"))
     sf_eval_logits = outputs.get("sf_eval")
-    sf_eval_ce = soft_cross_entropy(sf_eval_logits, sf_wdl_probs) if sf_eval_logits is not None and sf_wdl_probs is not None else zero_loss
+    sf_eval_ce = (
+        soft_cross_entropy(sf_eval_logits, sf_wdl_probs)
+        if sf_eval_logits is not None and sf_wdl_probs is not None else zero_loss
+    )
 
     has_moves_left = _get_mask(batch, "has_moves_left")
     ml_pred = outputs.get("moves_left")
     moves_left_t = batch.get("moves_left")
-    if ml_pred is None or moves_left_t is None:
-        ml_loss = zero_loss
-    else:
-        ml_loss = F.smooth_l1_loss(ml_pred.squeeze(-1), moves_left_t, reduction="none")
+    ml_loss = (
+        F.smooth_l1_loss(ml_pred.squeeze(-1), moves_left_t, reduction="none")
+        if ml_pred is not None and moves_left_t is not None else zero_loss
+    )
 
     has_cat = _get_mask(batch, "has_categorical")
     cat_logits = outputs.get("categorical")
     categorical_t = batch.get("categorical_t")
-    cat_ce = soft_cross_entropy(cat_logits, categorical_t) if cat_logits is not None and categorical_t is not None else zero_loss
+    cat_ce = (
+        soft_cross_entropy(cat_logits, categorical_t)
+        if cat_logits is not None and categorical_t is not None else zero_loss
+    )
 
     has_vol = _get_mask(batch, "has_volatility")
     vol_pred = outputs.get("volatility")
     volatility_t = batch.get("volatility_t")
-    vol_loss = _huber_per_sample(vol_pred, volatility_t) if vol_pred is not None and volatility_t is not None else zero_loss
+    vol_loss = (
+        _huber_per_sample(vol_pred, volatility_t)
+        if vol_pred is not None and volatility_t is not None else zero_loss
+    )
 
     has_sf_vol = _get_mask(batch, "has_sf_volatility")
     sf_vol_pred = outputs.get("sf_volatility")
     sf_volatility_t = batch.get("sf_volatility_t")
-    sf_vol_loss = _huber_per_sample(sf_vol_pred, sf_volatility_t) if sf_vol_pred is not None and sf_volatility_t is not None else zero_loss
+    sf_vol_loss = (
+        _huber_per_sample(sf_vol_pred, sf_volatility_t)
+        if sf_vol_pred is not None and sf_volatility_t is not None else zero_loss
+    )
 
   # Loss weights — float() casts defend against numpy scalars from Ray Tune config mutation
     w_sf_volatility = float(w_sf_volatility) if w_sf_volatility is not None else float(w_volatility)
-    sf_wdl_conf_power = max(0.0, float(sf_wdl_conf_power))
-    sf_wdl_draw_scale = max(0.0, float(sf_wdl_draw_scale))
-
-  # SF-WDL confidence damping: (1 - draw_prob)^power, with optional draw_scale
-    sf_wdl_mask = net_mask * has_sf_wdl
-    if sf_wdl_probs is not None:
-        if sf_wdl_conf_power > 0.0:
-            sf_conf = (1.0 - sf_wdl_probs[:, 1]).clamp(0.0, 1.0).pow(sf_wdl_conf_power)
-            sf_wdl_mask = sf_wdl_mask * sf_conf
-        if sf_wdl_draw_scale != 1.0:
-            draw_mask = (batch["wdl_t"] == 1).to(torch.float32)
-            sf_wdl_mask = sf_wdl_mask * (1.0 - draw_mask + draw_mask * sf_wdl_draw_scale)
-
-    if sf_wdl_probs is None:
-        sf_wdl_soft_ce = zero_loss
-    else:
-        sf_wdl_soft_ce = soft_cross_entropy(outputs["wdl"], sf_wdl_probs)
+    sf_wdl_mask = _compute_sf_wdl_mask(
+        net_mask=net_mask, has_sf_wdl=has_sf_wdl, sf_wdl_probs=sf_wdl_probs,
+        wdl_target=batch["wdl_t"],
+        conf_power=max(0.0, float(sf_wdl_conf_power)),
+        draw_scale=max(0.0, float(sf_wdl_draw_scale)),
+    )
+    sf_wdl_soft_ce = (
+        soft_cross_entropy(outputs["wdl"], sf_wdl_probs) if sf_wdl_probs is not None else zero_loss
+    )
 
   # Precompute the per-sample base mask for each head so the downstream
   # split reductions don't recompute `net_mask * has_X` once per bucket.
@@ -197,20 +254,10 @@ def compute_loss(
   # from the split (they won't contribute to either selfplay_ or curriculum_ keys).
     has_is_sp = _get_mask(batch, "has_is_selfplay").to(torch.float32)
     is_sp_bool = _get_mask(batch, "is_selfplay", default=0.0).to(torch.float32)
-    sp_mask = has_is_sp * is_sp_bool
-    cur_mask = has_is_sp - sp_mask
-
-    ml_val = _get_mask(batch, "moves_left", default=1.0).to(torch.float32)
-    open_mask = has_moves_left * (ml_val > _PHASE_OPEN_THRESHOLD).to(torch.float32)
-    end_mask = has_moves_left * (ml_val < _PHASE_END_THRESHOLD).to(torch.float32)
-    mid_mask = has_moves_left - open_mask - end_mask
-
-    split_masks = (
-        ("selfplay", sp_mask),
-        ("curriculum", cur_mask),
-        ("open", open_mask),
-        ("mid", mid_mask),
-        ("end", end_mask),
+    split_masks = _phase_split_masks(
+        has_is_selfplay=has_is_sp, is_selfplay=is_sp_bool,
+        has_moves_left=has_moves_left,
+        moves_left_val=_get_mask(batch, "moves_left", default=1.0).to(torch.float32),
     )
     split_losses: dict[str, torch.Tensor] = {}
     for suffix, m in split_masks:
