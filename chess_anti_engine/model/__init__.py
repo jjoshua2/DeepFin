@@ -134,6 +134,57 @@ def reinit_volatility_head_parameters_(model: torch.nn.Module) -> list[str]:
     return _reinit_heads(model, _VOLATILITY_HEADS)
 
 
+def _migrate_qkv_keys(ckpt_state: dict, *, label: str) -> dict:
+    """Fuse separate q_proj/k_proj/v_proj weights+biases into ``qkv_proj`` if absent."""
+    prefixes_seen: set[str] = set()
+    for k in ckpt_state:
+        for proj in ("q_proj", "k_proj", "v_proj"):
+            if k.endswith(f".{proj}.weight") or k.endswith(f".{proj}.bias"):
+                prefix = k.rsplit(f".{proj}.", 1)[0]
+                if f"{prefix}.qkv_proj.{k.rsplit(f'.{proj}.', 1)[1]}" not in ckpt_state:
+                    prefixes_seen.add(prefix)
+                break
+
+    extra: dict = {}
+    migrated_count = 0
+    for prefix in prefixes_seen:
+        for suffix in ("weight", "bias"):
+            q_k = f"{prefix}.q_proj.{suffix}"
+            k_k = f"{prefix}.k_proj.{suffix}"
+            v_k = f"{prefix}.v_proj.{suffix}"
+            fused_k = f"{prefix}.qkv_proj.{suffix}"
+            if q_k in ckpt_state and k_k in ckpt_state and v_k in ckpt_state and fused_k not in ckpt_state:
+                extra[fused_k] = torch.cat([ckpt_state[q_k], ckpt_state[k_k], ckpt_state[v_k]], dim=0)
+                migrated_count += 3
+    if migrated_count:
+        print(f"[{label}] Migrated {migrated_count} separate q/k/v keys -> fused qkv_proj")
+    return {**ckpt_state, **extra}
+
+
+def _normalize_orig_mod_prefix(ckpt_state: dict, *, model_state: dict) -> dict:
+    """Add/remove torch.compile's ``_orig_mod.`` prefix so a checkpoint saved
+    under one wrap-state loads under either."""
+    ckpt_has_prefix = any(k.startswith("_orig_mod.") for k in ckpt_state)
+    model_has_prefix = any(k.startswith("_orig_mod.") for k in model_state)
+    if ckpt_has_prefix and not model_has_prefix:
+        return {k.removeprefix("_orig_mod."): v for k, v in ckpt_state.items()}
+    if model_has_prefix and not ckpt_has_prefix:
+        return {f"_orig_mod.{k}": v for k, v in ckpt_state.items()}
+    return ckpt_state
+
+
+def _filter_shape_mismatches(ckpt_state: dict, model_state: dict) -> tuple[dict, list[str]]:
+    """Drop keys whose checkpoint shape differs from the model. Returns (filtered, skipped)."""
+    filtered: dict = {}
+    skipped: list[str] = []
+    for k, v in ckpt_state.items():
+        if k in model_state and v.shape != model_state[k].shape:
+            skipped.append(k)
+        else:
+            filtered[k] = v
+    return filtered, skipped
+
+
 def load_state_dict_tolerant(
     model: torch.nn.Module,
     ckpt_state: dict,
@@ -147,51 +198,10 @@ def load_state_dict_tolerant(
     Missing and unexpected keys are logged but not fatal, allowing
     architecture changes (new layers, renamed modules) to load gracefully.
     """
-  # Migrate separate q_proj/k_proj/v_proj -> fused qkv_proj
-    migrated_keys: list[str] = []
-    extra = {}
-    prefixes_seen: set[str] = set()
-    for k in list(ckpt_state.keys()):
-        for proj in ("q_proj", "k_proj", "v_proj"):
-            if k.endswith(f".{proj}.weight") or k.endswith(f".{proj}.bias"):
-                prefix = k.rsplit(f".{proj}.", 1)[0]
-                suffix = k.rsplit(f".{proj}.", 1)[1]  # "weight" or "bias"
-                fused_key = f"{prefix}.qkv_proj.{suffix}"
-                if fused_key not in ckpt_state and prefix not in prefixes_seen:
-                    prefixes_seen.add(prefix)
-                break
-    for prefix in prefixes_seen:
-        for suffix in ("weight", "bias"):
-            q_k = f"{prefix}.q_proj.{suffix}"
-            k_k = f"{prefix}.k_proj.{suffix}"
-            v_k = f"{prefix}.v_proj.{suffix}"
-            fused_k = f"{prefix}.qkv_proj.{suffix}"
-            if q_k in ckpt_state and k_k in ckpt_state and v_k in ckpt_state and fused_k not in ckpt_state:
-                extra[fused_k] = torch.cat([ckpt_state[q_k], ckpt_state[k_k], ckpt_state[v_k]], dim=0)
-                migrated_keys.extend([q_k, k_k, v_k])
-    if migrated_keys:
-        print(f"[{label}] Migrated {len(migrated_keys)} separate q/k/v keys -> fused qkv_proj")
-    ckpt_state = {**ckpt_state, **extra}
-
-    # Normalize torch.compile's `_orig_mod.` prefix in BOTH directions so a
-    # save under one wrap-state can load into either. Without this, the same
-    # checkpoint is unloadable as soon as the trainer's `use_compile` flag
-    # flips, which is exactly how the model destruction happened today.
-    ckpt_has_prefix = any(k.startswith("_orig_mod.") for k in ckpt_state)
-    model_has_prefix = any(k.startswith("_orig_mod.") for k in model.state_dict())
-    if ckpt_has_prefix and not model_has_prefix:
-        ckpt_state = {k.removeprefix("_orig_mod."): v for k, v in ckpt_state.items()}
-    elif model_has_prefix and not ckpt_has_prefix:
-        ckpt_state = {f"_orig_mod.{k}": v for k, v in ckpt_state.items()}
-
+    ckpt_state = _migrate_qkv_keys(ckpt_state, label=label)
     model_state = model.state_dict()
-    filtered = {}
-    skipped: list[str] = []
-    for k, v in ckpt_state.items():
-        if k in model_state and v.shape != model_state[k].shape:
-            skipped.append(k)
-            continue
-        filtered[k] = v
+    ckpt_state = _normalize_orig_mod_prefix(ckpt_state, model_state=model_state)
+    filtered, skipped = _filter_shape_mismatches(ckpt_state, model_state)
 
     missing, unexpected = model.load_state_dict(filtered, strict=False)
 
