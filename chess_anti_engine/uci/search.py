@@ -544,6 +544,79 @@ class SearchWorker:
             return self._run_pucv_chunk(chunk)
         return self._run_gumbel_chunk(chunk, board, tb_probe)
 
+    def _maybe_emit_pv_info(
+        self,
+        *,
+        board: chess.Board, deadline: Deadline,
+        last_value: float, total_nodes: int,
+        info_cb: InfoCallback | None, max_depth: int | None,
+        last_info_ms: int, tb_probe,
+    ) -> tuple[list[int], int, int]:
+        """Extract PV (only when needed) and rate-limited emit-info side effect.
+
+        Returns (pv_indices, last_info_ms, elapsed). PV extraction is skipped
+        unless info emission is due or max_depth termination needs it — saves
+        a handful of tree walks per second at chunk=512.
+        """
+        elapsed = deadline.elapsed_ms() if info_cb is not None else 0
+        info_due = info_cb is not None and elapsed - last_info_ms >= _INFO_EMIT_INTERVAL_MS
+        need_pv = info_due or max_depth is not None
+        if not need_pv:
+            return [], last_info_ms, elapsed
+        assert self._tree is not None and self._root_id is not None
+        _, pv_indices = _best_move_and_pv(self._tree, self._root_id)
+        if info_due:
+            assert info_cb is not None
+            self._emit_pv_info(
+                info_cb, board, float(last_value), total_nodes, elapsed, tb_probe,
+            )
+            last_info_ms = elapsed
+        return pv_indices, last_info_ms, elapsed
+
+    def _build_final_search_result(
+        self, *, board: chess.Board, total_nodes: int, last_value: float, tb_probe,
+    ) -> SearchResult:
+        """Final snapshot of the searched tree → SearchResult."""
+        assert self._tree is not None and self._root_id is not None
+        bestmove_idx, pv_indices = _best_move_and_pv(self._tree, self._root_id)
+        ponder_idx = _predicted_opponent_reply(self._tree, self._root_id)
+        bestmove = _index_to_uci(board, bestmove_idx)
+        ponder = (
+            _index_to_uci(_board_after(board, bestmove_idx), ponder_idx)
+            if ponder_idx is not None else None
+        )
+        return SearchResult(
+            bestmove_uci=bestmove,
+            ponder_uci=ponder,
+            nodes=total_nodes,
+            pv=_uci_pv(board, pv_indices),
+            score_cp=q_to_cp(0.5 * (last_value + 1.0)),
+            tbhits=tb_probe.hits if tb_probe is not None else 0,
+            score_mate=_pv_mate_moves(board, pv_indices),
+        )
+
+    def _should_stop_search(
+        self,
+        *,
+        stop_event: threading.Event, deadline: Deadline,
+        max_nodes: int | None, max_depth: int | None,
+        total_nodes: int, pv_len: int,
+    ) -> bool:
+        """True if any external/budget/depth/memory stop condition has fired."""
+        if stop_event.is_set() or deadline.expired():
+            return True
+        if max_nodes is not None and total_nodes >= max_nodes:
+            return True
+        if max_depth is not None and pv_len >= max_depth:
+            return True
+        if (
+            self._max_tree_bytes > 0
+            and self._tree is not None
+            and self._tree.memory_bytes() >= self._max_tree_bytes
+        ):
+            return True
+        return False
+
     def run(
         self,
         board: chess.Board,
@@ -594,35 +667,26 @@ class SearchWorker:
             last_value = self._run_one_chunk(chunk, board, stop_event, tb_probe)
             total_nodes += int(chunk)
 
-  # PV extraction is only needed for info emission (rate-limited) and
-  # for max_depth termination. Skip otherwise — saves a handful of tree
-  # walks per second on chunk=512 at ~5 nps/chunk.
-            elapsed = deadline.elapsed_ms() if info_cb is not None else 0
-            need_pv = (
-                (info_cb is not None and elapsed - last_info_ms >= _INFO_EMIT_INTERVAL_MS)
-                or max_depth is not None
+            pv_indices, last_info_ms, elapsed = self._maybe_emit_pv_info(
+                board=board, deadline=deadline,
+                last_value=last_value, total_nodes=total_nodes,
+                info_cb=info_cb, max_depth=max_depth,
+                last_info_ms=last_info_ms, tb_probe=tb_probe,
             )
-            if need_pv:
-                assert self._tree is not None and self._root_id is not None
-                _, pv_indices = _best_move_and_pv(self._tree, self._root_id)
-                if info_cb is not None and elapsed - last_info_ms >= _INFO_EMIT_INTERVAL_MS:
-                    self._emit_pv_info(
-                        info_cb, board, float(last_value),
-                        total_nodes, elapsed, tb_probe,
-                    )
-                    last_info_ms = elapsed
 
-            if stop_event.is_set() or deadline.expired():
-                break
-            if max_nodes is not None and total_nodes >= max_nodes:
-                break
-            if max_depth is not None and len(pv_indices) >= max_depth:
-                break
-            if (self._max_tree_bytes > 0
+            if self._should_stop_search(
+                stop_event=stop_event, deadline=deadline,
+                max_nodes=max_nodes, max_depth=max_depth,
+                total_nodes=total_nodes, pv_len=len(pv_indices),
+            ):
+  # Tree-bytes stop emits a final info line; other stop reasons either
+  # already emitted via _maybe_emit_pv_info above or want quiet exit.
+                if (
+                    info_cb is not None
+                    and self._max_tree_bytes > 0
                     and self._tree is not None
-                    and self._tree.memory_bytes() >= self._max_tree_bytes):
-  # Don't grow into swap; halt with the best move we have.
-                if info_cb is not None:
+                    and self._tree.memory_bytes() >= self._max_tree_bytes
+                ):
                     assert self._root_id is not None
                     self._emit_pv_info(
                         info_cb, board, float(last_value),
@@ -630,23 +694,9 @@ class SearchWorker:
                     )
                 break
 
-  # Final snapshot using whatever the tree knows now.
-        assert self._tree is not None and self._root_id is not None
-        bestmove_idx, pv_indices = _best_move_and_pv(self._tree, self._root_id)
-        ponder_idx = _predicted_opponent_reply(self._tree, self._root_id)
-        bestmove = _index_to_uci(board, bestmove_idx)
-        ponder = (
-            _index_to_uci(_board_after(board, bestmove_idx), ponder_idx)
-            if ponder_idx is not None else None
-        )
-        return SearchResult(
-            bestmove_uci=bestmove,
-            ponder_uci=ponder,
-            nodes=total_nodes,
-            pv=_uci_pv(board, pv_indices),
-            score_cp=q_to_cp(0.5 * (last_value + 1.0)),
-            tbhits=tb_probe.hits if tb_probe is not None else 0,
-            score_mate=_pv_mate_moves(board, pv_indices),
+        return self._build_final_search_result(
+            board=board, total_nodes=total_nodes,
+            last_value=last_value, tb_probe=tb_probe,
         )
 
     def _run_walker_chunk(
