@@ -1244,10 +1244,56 @@ class WorkerSession:
         self._sync_model(manifest)
         self._sync_opening_books(manifest)
 
+    def _flush_pre_swap_buffer_if_stale(self, *, model_sha: str, model_step: int) -> None:
+        """If buffered samples were generated under a different model_sha/step,
+        flush them to pending before we swap the active model."""
+        if self.upload_buf.positions <= 0:
+            return
+        if (
+            str(self.upload_buf.model_sha or "") == str(model_sha)
+            and int(self.upload_buf.model_step or 0) == int(model_step)
+        ):
+            return
+        shard_path, elapsed_s = _flush_upload_buffer_to_pending(
+            pending_dir=self.pending_dir,
+            username=str(self.args.username),
+            buf=self.upload_buf,
+            now_s=time.time(),
+        )
+        if shard_path is None:
+            return
+        uploaded_at = self._upload_pending_shards(default_elapsed_s=float(elapsed_s))
+        if uploaded_at is not None:
+            self.last_successful_send_s = float(uploaded_at)
+
+    def _ensure_local_model_at_sha(self, *, model_info: dict, model_sha: str) -> Path | None:
+        """Ensure cache_dir has model_{sha}.pt with matching sha256. Returns the
+        path on success, None on download race (caller should re-poll). The
+        server serves a stable /v1/model endpoint whose contents can change
+        whenever the learner publishes a new model — a slightly stale manifest
+        can name a different sha than what's currently published."""
+        model_path = self.cache_dir / f"model_{model_sha}.pt"
+        if model_path.exists() and _sha256_file(model_path) == model_sha:
+            return model_path
+        try:
+            _download_and_verify_shared(
+                self._server_url_for(str(model_info.get("endpoint") or (self.trial_api_prefix + "/model"))),
+                out_path=model_path,
+                expected_sha256=model_sha,
+                headers=_worker_headers(),
+            )
+        except Exception as e:
+            self.log.warning(
+                "model download failed (likely mid-publish race). Will re-poll manifest: %s",
+                e,
+            )
+            model_path.unlink(missing_ok=True)
+            return None
+        return model_path
+
     def _sync_model(self, manifest: dict) -> None:
         """Download + build + load + compile model if SHA changed."""
-        task = manifest.get("task") or {"type": "selfplay"}
-        task_type = str(task.get("type", "selfplay")).lower()
+        task_type = str((manifest.get("task") or {"type": "selfplay"}).get("type", "selfplay")).lower()
         need_local_model = self.inference_client is None or task_type == "arena"
 
         model_info = manifest.get("model") or {}
@@ -1260,70 +1306,36 @@ class WorkerSession:
         self.model_sha = model_sha
         self.model_step = model_step
 
-        if (
-            self.upload_buf.positions > 0
-            and (
-                str(self.upload_buf.model_sha or "") != str(model_sha)
-                or int(self.upload_buf.model_step or 0) != int(model_step)
-            )
-        ):
-            shard_path, elapsed_s = _flush_upload_buffer_to_pending(
-                pending_dir=self.pending_dir,
-                username=str(self.args.username),
-                buf=self.upload_buf,
-                now_s=time.time(),
-            )
-            if shard_path is not None:
-                uploaded_at = self._upload_pending_shards(default_elapsed_s=float(elapsed_s))
-                if uploaded_at is not None:
-                    self.last_successful_send_s = float(uploaded_at)
+        self._flush_pre_swap_buffer_if_stale(model_sha=model_sha, model_step=model_step)
 
-        if need_local_model and model_sha != self.last_model_sha:
-            self.log.info("switching to latest model sha=%s", model_sha)
-            model_path = self.cache_dir / f"model_{model_sha}.pt"
-  # Download (or re-download) and verify sha256.
-  # Note: the server serves a stable endpoint (/v1/model) whose contents can change
-  # whenever the learner publishes a new model. If we fetched a slightly stale
-  # manifest, the expected sha may not match what /v1/model returns.
-  #
-  # In that case, do NOT crash-loop; just re-poll the manifest next iteration.
-            if (not model_path.exists()) or (_sha256_file(model_path) != model_sha):
-                try:
-                    _download_and_verify_shared(
-                        self._server_url_for(str(model_info.get("endpoint") or (self.trial_api_prefix + "/model"))),
-                        out_path=model_path,
-                        expected_sha256=model_sha,
-                        headers=_worker_headers(),
-                    )
-                except Exception as e:
-                    self.log.warning(
-                        "model download failed (likely mid-publish race). Will re-poll manifest: %s",
-                        e,
-                    )
-                    model_path.unlink(missing_ok=True)
+        if not (need_local_model and model_sha != self.last_model_sha):
+            return
+
+        self.log.info("switching to latest model sha=%s", model_sha)
+        model_path = self._ensure_local_model_at_sha(model_info=model_info, model_sha=model_sha)
+        if model_path is None:
   # Signal caller to sleep and retry by clearing model_sha.
-                    self.model_sha = ""
-                    return
+            self.model_sha = ""
+            return
 
-            # Force-off gradient checkpointing: workers run inference only,
-            # and grad-ckpt hooks would diverge the compiled graph from the
-            # broker paths that hardcode False.
-            model_cfg = dataclasses.replace(
-                model_config_from_manifest_dict(manifest.get("model_config") or {}),
-                use_gradient_checkpointing=False,
-            )
-            self.model_cfg_active = model_cfg
+        # Force-off gradient checkpointing: workers run inference only, and
+        # grad-ckpt hooks would diverge the compiled graph from the broker
+        # paths that hardcode False.
+        model_cfg = dataclasses.replace(
+            model_config_from_manifest_dict(manifest.get("model_config") or {}),
+            use_gradient_checkpointing=False,
+        )
+        self.model_cfg_active = model_cfg
+        self.model = self._load_and_compile_model(
+            model_path, model_cfg, label="worker-model", sha_short=str(model_sha)[:8],
+        )
 
-            self.model = self._load_and_compile_model(
-                model_path, model_cfg, label="worker-model", sha_short=str(model_sha)[:8],
-            )
-
-            if self.last_model_sha is not None and not self.fixed_trial_id:
+        if self.last_model_sha is not None and not self.fixed_trial_id:
   # Reconsider assignment at natural model-boundary checkpoints.
-                self.lease_id = ""
-                self.leased_trial_id = ""
-                self.trial_api_prefix = "/v1"
-            self.last_model_sha = model_sha
+            self.lease_id = ""
+            self.leased_trial_id = ""
+            self.trial_api_prefix = "/v1"
+        self.last_model_sha = model_sha
 
     def _sync_opening_books(self, manifest: dict) -> None:
         """Download opening books if SHA changed."""
