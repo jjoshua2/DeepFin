@@ -621,6 +621,39 @@ class Trainer:
         else:
             self._scheduler.step(self.step - self._warmup_steps)
 
+    def _resolve_old_bases(self, n_groups: int) -> list[float]:
+        """Per-group base LRs to scale from. Falls back to ``self._peak_lr`` if
+        the scheduler hasn't recorded any, and pads/truncates to ``n_groups``."""
+        old = (
+            [float(v) for v in self._scheduler.base_lrs]
+            if hasattr(self._scheduler, "base_lrs") else []
+        )
+        if not old:
+            old = [float(self._peak_lr)] * n_groups
+        if len(old) < n_groups:
+            old.extend([old[-1]] * (n_groups - len(old)))
+        return old[:n_groups]
+
+    def _rescale_active_lr_for_group(
+        self,
+        pg: dict,
+        *,
+        old_base: float,
+        new_base: float,
+        scheduler_last_lr_for_group: float | None,
+    ) -> None:
+        """Rebase one optimizer group's active ``lr``. Cold-start cases (old_base==0)
+        recreate the warmup-phase LR from ``self.step`` and ``self._warmup_steps``."""
+        if old_base > 0.0:
+            pg["lr"] = float(pg.get("lr", 0.0)) * (new_base / old_base)
+            return
+        if self.step < self._warmup_steps:
+            frac = self.step / max(1, self._warmup_steps)
+            warm_start = self._warmup_start_lr_for(new_base)
+            pg["lr"] = warm_start + (new_base - warm_start) * frac
+        else:
+            pg["lr"] = float(scheduler_last_lr_for_group) if scheduler_last_lr_for_group is not None else new_base
+
     def set_peak_lr(self, lr: float, *, rescale_current: bool = True) -> None:
         """Rebase LR schedule to a new peak while preserving schedule phase.
 
@@ -633,65 +666,38 @@ class Trainer:
             return
 
         n_groups = len(self.opt.param_groups)
-        old_bases = []
-        if hasattr(self._scheduler, "base_lrs"):
-            old_bases = [float(v) for v in self._scheduler.base_lrs]
-        if not old_bases:
-            old_bases = [float(self._peak_lr)] * n_groups
-        if len(old_bases) < n_groups:
-            old_bases.extend([old_bases[-1]] * (n_groups - len(old_bases)))
-        old_bases = old_bases[:n_groups]
-
+        old_bases = self._resolve_old_bases(n_groups)
         ref_old = max(float(self._peak_lr), self._reference_lr_from_bases(old_bases))
         scale = new_peak / ref_old
 
-        new_bases: list[float] = [
-            ob * scale if ob > 0.0 else new_peak
-            for ob in old_bases
-        ]
-
+        new_bases = [(ob * scale if ob > 0.0 else new_peak) for ob in old_bases]
         self._peak_lr = new_peak
 
   # Keep scheduler phase but rebase amplitude.
         if hasattr(self._scheduler, "base_lrs"):
             self._scheduler.base_lrs = list(new_bases)
-
-  # Keep the scheduler's cached current LR consistent with the rebase.
         if hasattr(self._scheduler, "_last_lr"):
             last_lrs = self._scheduler._last_lr
             if last_lrs:
                 self._scheduler._last_lr = [float(v) * scale for v in last_lrs]
 
   # Keep optimizer param-group metadata aligned.
-        for i, pg in enumerate(self.opt.param_groups):
-            ob = old_bases[i] if i < len(old_bases) else ref_old
-            nb = new_bases[i] if i < len(new_bases) else new_peak
+        for pg, ob, nb in zip(self.opt.param_groups, old_bases, new_bases, strict=True):
             if "initial_lr" in pg:
-                if ob > 0.0:
-                    pg["initial_lr"] = float(pg["initial_lr"]) * (nb / ob)
-                else:
-                    pg["initial_lr"] = nb
+                pg["initial_lr"] = float(pg["initial_lr"]) * (nb / ob) if ob > 0.0 else nb
 
         if not rescale_current:
             return
 
   # Rebase currently active optimizer LR so training continues at same phase.
-        for i, pg in enumerate(self.opt.param_groups):
-            ob = old_bases[i] if i < len(old_bases) else ref_old
-            nb = new_bases[i] if i < len(new_bases) else new_peak
-            if ob > 0.0:
-                pg["lr"] = float(pg.get("lr", 0.0)) * (nb / ob)
-            else:
-                if self.step < self._warmup_steps:
-                    frac = self.step / max(1, self._warmup_steps)
-                    warm_start = self._warmup_start_lr_for(nb)
-                    pg["lr"] = warm_start + (nb - warm_start) * frac
-                else:
-                    last_lrs = getattr(self._scheduler, "_last_lr", None)
-                    if isinstance(last_lrs, list) and i < len(last_lrs):
-                        pg["lr"] = float(last_lrs[i])
-                    else:
-                        pg["lr"] = nb
+        last_lrs = getattr(self._scheduler, "_last_lr", None)
+        for i, (pg, ob, nb) in enumerate(zip(self.opt.param_groups, old_bases, new_bases, strict=True)):
+            sched_lr = (
+                float(last_lrs[i]) if isinstance(last_lrs, list) and i < len(last_lrs) else None
+            )
+            self._rescale_active_lr_for_group(
+                pg, old_base=ob, new_base=nb, scheduler_last_lr_for_group=sched_lr,
+            )
 
     @staticmethod
     def _policy_accuracy_stats(
