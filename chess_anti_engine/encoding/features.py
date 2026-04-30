@@ -368,23 +368,9 @@ def extra_feature_planes_c(board: chess.Board) -> np.ndarray:
     return _c_compute(pieces_us, pieces_them, occupied, king_sq_us, king_sq_them, turn_white, ep_square)
 
 
-def extra_feature_planes_fast(board: chess.Board) -> np.ndarray:
-    """Optimized version: returns (34, 8, 8) float32 directly.
-
-    Collects all bitboard masks first, converts in a single batch operation,
-    then fills in the mobility planes (float values) separately.
-
-    Layout: [0:10] king safety, [10:16] pins, [16:24] pawns, [24:30] mobility, [30:34] outpost
-    """
-    turn = board.turn
-    us, them = turn, not turn
-    out = np.zeros((34, 8, 8), dtype=np.float32)
-
-  # --- Collect bitboard-based planes ---
-  # Phase 1: king safety (10) + pins (6) + pawn structure (8) = 24 bitboards
+def _collect_king_safety_bitboards(board: chess.Board, us: bool, them: bool) -> list[int]:
+    """10 bitboards: per-color (king zone + 4 attacker overlaps for KNIGHT/BISHOP/ROOK/QUEEN)."""
     bbs: list[int] = []
-
-  # King safety: 10 planes
     for color in (us, them):
         kz = _king_zone(board, color)
         bbs.append(kz)
@@ -394,8 +380,12 @@ def extra_feature_planes_fast(board: chess.Board) -> np.ndarray:
             for sq in board.pieces(pt, opp):
                 overlap |= board.attacks_mask(sq) & kz
             bbs.append(overlap)
+    return bbs
 
-  # Pins/x-rays/discovered: 6 planes
+
+def _collect_pin_bitboards(board: chess.Board, us: bool, them: bool) -> list[int]:
+    """6 bitboards: per-color (pinned squares, pin-ray, discovered-attack mask)."""
+    bbs: list[int] = []
     for color in (us, them):
         pinned_mask = 0
         pin_ray_mask = 0
@@ -404,23 +394,33 @@ def extra_feature_planes_fast(board: chess.Board) -> np.ndarray:
             if pin != chess.BB_ALL:
                 pinned_mask |= chess.BB_SQUARES[sq]
                 pin_ray_mask |= pin
-        discovered_mask = _discovered_attack_mask(board, color)
         bbs.append(pinned_mask)
         bbs.append(pin_ray_mask)
-        bbs.append(discovered_mask)
+        bbs.append(_discovered_attack_mask(board, color))
+    return bbs
 
-  # Pawn structure: 8 planes
-    for color in (us, them):
-        bbs.append(_passed_pawns(board, color))
-        bbs.append(_isolated_pawns(board, color))
-        bbs.append(_backward_pawns(board, color))
-        bbs.append(_connected_pawns(board, color))
 
-  # Convert first 24 bitboard planes in one batch → out[0:24]
-    assert len(bbs) == 24
-    out[:24] = bitboards_to_planes(bbs, turn=turn)
+def _pawn_mobility_count(
+    sq: int, *, color: chess.Color, occ: int, opp_occ: int, ep_mask: int,
+) -> int:
+    """Pawn-specific mobility: forward push (single + maybe double) + diagonal captures + en passant."""
+    mobility = 0
+    single_mask = _PAWN_SINGLE_PUSH_MASK[color][sq]
+    if single_mask and not (occ & single_mask):
+        mobility += 1
+        double_mask = _PAWN_DOUBLE_PUSH_MASK[color][sq]
+        if double_mask and not (occ & double_mask):
+            mobility += 1
+    capture_mask = chess.BB_PAWN_ATTACKS[color][sq]
+    mobility += chess.popcount(capture_mask & opp_occ)
+    if ep_mask and (capture_mask & ep_mask):
+        mobility += 1
+    return mobility
 
-  # --- Mobility: 6 planes [24:30] (float values, not bitboard) ---
+
+def _fill_mobility_planes(board: chess.Board, *, turn: chess.Color, out: np.ndarray) -> None:
+    """Fill out[24:30] in place. Each piece type's plane carries that piece's
+    move-count (normalized by _MOBILITY_MAX[pt]) at its source square."""
     orient_coords = _ORIENT_COORDS[turn]
     occ = int(board.occupied)
     ep_mask = int(chess.BB_SQUARES[board.ep_square]) if board.ep_square is not None else 0
@@ -433,25 +433,18 @@ def extra_feature_planes_fast(board: chess.Board) -> np.ndarray:
             opp_occ = int(board.occupied_co[not color])
             for sq in chess.scan_forward(int(board.pieces_mask(pt, color))):
                 if pt == chess.PAWN:
-                    mobility = 0
-                    single_mask = _PAWN_SINGLE_PUSH_MASK[color][sq]
-                    if single_mask and not (occ & single_mask):
-                        mobility += 1
-                        double_mask = _PAWN_DOUBLE_PUSH_MASK[color][sq]
-                        if double_mask and not (occ & double_mask):
-                            mobility += 1
-                    capture_mask = chess.BB_PAWN_ATTACKS[color][sq]
-                    mobility += chess.popcount(capture_mask & opp_occ)
-                    if ep_mask and (capture_mask & ep_mask):
-                        mobility += 1
+                    mobility = _pawn_mobility_count(
+                        sq, color=color, occ=occ, opp_occ=opp_occ, ep_mask=ep_mask,
+                    )
                 else:
-                    attacks = board.attacks_mask(sq)
-                    mobility = chess.popcount(attacks & ~own_occ)
+                    mobility = chess.popcount(board.attacks_mask(sq) & ~own_occ)
                 row, col = orient_coords[sq]
                 plane[row, col] = np.float32(float(mobility) / max_m)
 
-  # --- Outpost/space: 4 planes [30:34] ---
-    outpost_bbs: list[int] = []
+
+def _collect_outpost_bitboards(board: chess.Board, us: bool, them: bool) -> list[int]:
+    """4 bitboards: per-color (outpost = pawn-attack covered & not enemy-attacked, space-control)."""
+    bbs: list[int] = []
     for color in (us, them):
         own_att = 0
         for sq in board.pieces(chess.PAWN, color):
@@ -459,7 +452,7 @@ def extra_feature_planes_fast(board: chess.Board) -> np.ndarray:
         enemy_att = 0
         for sq in board.pieces(chess.PAWN, not color):
             enemy_att |= chess.BB_PAWN_ATTACKS[not color][sq]
-        outpost_bbs.append(own_att & ~enemy_att)
+        bbs.append(own_att & ~enemy_att)
 
         space = 0
         direction = -1 if color == chess.WHITE else 1
@@ -472,8 +465,33 @@ def extra_feature_planes_fast(board: chess.Board) -> np.ndarray:
                 r2 = r + dr
                 if 0 <= r2 <= 7:
                     space |= chess.BB_SQUARES[chess.square(f, r2)]
-        outpost_bbs.append(space)
+        bbs.append(space)
+    return bbs
 
-    out[30:34] = bitboards_to_planes(outpost_bbs, turn=turn)
 
+def extra_feature_planes_fast(board: chess.Board) -> np.ndarray:
+    """Optimized version: returns (34, 8, 8) float32 directly.
+
+    Collects all bitboard masks first, converts in a single batch operation,
+    then fills in the mobility planes (float values) separately.
+
+    Layout: [0:10] king safety, [10:16] pins, [16:24] pawns, [24:30] mobility, [30:34] outpost
+    """
+    turn = board.turn
+    us, them = turn, not turn
+    out = np.zeros((34, 8, 8), dtype=np.float32)
+
+    bbs: list[int] = []
+    bbs.extend(_collect_king_safety_bitboards(board, us, them))
+    bbs.extend(_collect_pin_bitboards(board, us, them))
+    for color in (us, them):
+        bbs.append(_passed_pawns(board, color))
+        bbs.append(_isolated_pawns(board, color))
+        bbs.append(_backward_pawns(board, color))
+        bbs.append(_connected_pawns(board, color))
+    assert len(bbs) == 24
+    out[:24] = bitboards_to_planes(bbs, turn=turn)
+
+    _fill_mobility_planes(board, turn=turn, out=out)
+    out[30:34] = bitboards_to_planes(_collect_outpost_bitboards(board, us, them), turn=turn)
     return out
