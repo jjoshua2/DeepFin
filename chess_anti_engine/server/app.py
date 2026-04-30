@@ -36,6 +36,20 @@ _PENDING_DIR_NAME = PENDING_DIR_NAME
 _IN_FLIGHT_DIR_NAME = IN_FLIGHT_DIR_NAME
 
 
+# Aggregate counter fields shared between the meta dict (input) and accumulator
+# attribute (output). ``games`` is left out of this list because the dict key
+# matches but it has no separate input mapping in upload-meta payloads either.
+_AGGREGATE_COUNTER_FIELDS: tuple[str, ...] = (
+    "games", "wins", "draws", "losses",
+    "total_game_plies",
+    "adjudicated_games", "tb_adjudicated_games", "total_draw_games",
+    "selfplay_games", "selfplay_adjudicated_games", "selfplay_draw_games",
+    "curriculum_games", "curriculum_adjudicated_games", "curriculum_draw_games",
+    "plies_win", "plies_draw", "plies_loss",
+    "checkmate_games", "stalemate_games",
+)
+
+
 @dataclass
 class _BufferedUploadAccumulator:
     trial_id: str | None
@@ -79,28 +93,14 @@ class _BufferedUploadAccumulator:
     ) -> None:
         self.samples.extend(samples)
         self.positions += len(samples)
-        self.games += int(meta.get("games") or 0)
-        self.wins += int(meta.get("wins") or 0)
-        self.draws += int(meta.get("draws") or 0)
-        self.losses += int(meta.get("losses") or 0)
-        self.total_game_plies += int(meta.get("total_game_plies") or 0)
-        self.adjudicated_games += int(meta.get("adjudicated_games") or 0)
-        self.tb_adjudicated_games += int(meta.get("tb_adjudicated_games") or 0)
-        self.total_draw_games += int(meta.get("total_draw_games") or 0)
-        self.selfplay_games += int(meta.get("selfplay_games") or 0)
-        self.selfplay_adjudicated_games += int(meta.get("selfplay_adjudicated_games") or 0)
-        self.selfplay_draw_games += int(meta.get("selfplay_draw_games") or 0)
-        self.curriculum_games += int(meta.get("curriculum_games") or 0)
-        self.curriculum_adjudicated_games += int(meta.get("curriculum_adjudicated_games") or 0)
-        self.curriculum_draw_games += int(meta.get("curriculum_draw_games") or 0)
-        self.plies_win += int(meta.get("plies_win") or 0)
-        self.plies_draw += int(meta.get("plies_draw") or 0)
-        self.plies_loss += int(meta.get("plies_loss") or 0)
-        self.checkmate_games += int(meta.get("checkmate_games") or 0)
-        self.stalemate_games += int(meta.get("stalemate_games") or 0)
-        _step_raw = meta.get("model_step")
-        if _step_raw is not None:
-            self.model_step = int(_step_raw)
+        for field_name in _AGGREGATE_COUNTER_FIELDS:
+            setattr(
+                self, field_name,
+                getattr(self, field_name) + int(meta.get(field_name) or 0),
+            )
+        step_raw = meta.get("model_step")
+        if step_raw is not None:
+            self.model_step = int(step_raw)
         self.last_update_unix = float(now_unix)
 
 
