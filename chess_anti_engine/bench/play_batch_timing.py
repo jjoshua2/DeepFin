@@ -111,6 +111,138 @@ def _assemble_samples_for_game(
     return out
 
 
+_GameSampleRec = tuple[np.ndarray, np.ndarray, bool, "np.ndarray | None", "int | None", bool, float]
+
+
+def _do_network_turn(
+    model: torch.nn.Module,
+    boards: list[chess.Board],
+    samples_per_game: list[list[_GameSampleRec]],
+    net_idxs: list[int],
+    *,
+    device: str,
+    rng: np.random.Generator,
+    mcts_type: str,
+    simulations: int,
+    fast_simulations: int,
+    playout_cap_fraction: float,
+    temperature: float,
+) -> None:
+    """Network plies for ``net_idxs``: encode → MCTS → push move → record sample.
+
+    Splits net_idxs into full/fast sim buckets via ``playout_cap_fraction`` and runs
+    MCTS once per bucket. Mutates ``boards`` and ``samples_per_game`` in place.
+    """
+    xs_batch = encode_positions_batch([boards[i] for i in net_idxs], add_features=True)
+    with torch.no_grad():
+        xt = torch.from_numpy(xs_batch).to(device)
+        out = model(xt)
+        pol_logits = _policy_output(out).detach().float().cpu().numpy()
+
+    is_full = rng.random(size=len(net_idxs)) < float(playout_cap_fraction)
+
+    probs_list: list[np.ndarray | None] = [None] * len(net_idxs)
+    actions: list[int | None] = [None] * len(net_idxs)
+    for sub_idxs, sims in (
+        ([j for j, v in enumerate(is_full) if bool(v)], simulations),
+        ([j for j, v in enumerate(is_full) if not bool(v)], fast_simulations),
+    ):
+        if not sub_idxs:
+            continue
+        sub_boards = [boards[net_idxs[j]] for j in sub_idxs]
+        p_sub, a_sub, _v_sub, _m_sub = _run_mcts_for_subset(
+            model, sub_boards,
+            mcts_type=mcts_type, simulations=sims, temperature=temperature,
+            device=device, rng=rng,
+        )
+        for jj, p, a in zip(sub_idxs, p_sub, a_sub, strict=True):
+            probs_list[jj] = p
+            actions[jj] = a
+
+    for j, (idx, probs, a) in enumerate(zip(net_idxs, probs_list, actions, strict=True)):
+        assert probs is not None and a is not None
+        priority = _surprise_priority(pol_logits[j], probs, boards[idx])
+        boards[idx].push(index_to_move(int(a), boards[idx]))
+        samples_per_game[idx].append(
+            (xs_batch[j], probs, True, None, None, bool(is_full[j]), priority),
+        )
+
+
+def _surprise_priority(pol_logits: np.ndarray, probs: np.ndarray, board: chess.Board) -> float:
+    """KL(masked-renormalized raw policy || MCTS-improved policy). Used as a
+    sampling priority; higher KL means the search disagreed more with the prior."""
+    mask = legal_move_mask(board)
+    lg = pol_logits.astype(np.float64, copy=True)
+    lg[~mask] = -1e9
+    lg = lg - float(np.max(lg))
+    rp = np.exp(lg)
+    rp[~mask] = 0.0
+    s = float(rp.sum())
+    raw = (rp / s).astype(np.float32) if s > 0 else (mask.astype(np.float32) / float(mask.sum()))
+
+    imp = np.maximum(probs.astype(np.float32, copy=False), 1e-12)
+    raw_c = np.maximum(raw, 1e-12)
+    return float(np.sum(raw_c * (np.log(raw_c) - np.log(imp))))
+
+
+def _do_sf_turn(
+    stockfish: StockfishUCI | StockfishPool,
+    boards: list[chess.Board],
+    samples_per_game: list[list[_GameSampleRec]],
+    sf_idxs: list[int],
+) -> None:
+    """SF plies: query engine (in parallel for pool), push bestmove, record sample.
+
+    Mutates ``boards`` and ``samples_per_game`` in place.
+    """
+    if isinstance(stockfish, StockfishPool):
+        futures = {idx: stockfish.submit(boards[idx].fen()) for idx in sf_idxs}
+        results = {idx: fut.result() for idx, fut in futures.items()}
+    else:
+        results = {idx: stockfish.search(boards[idx].fen()) for idx in sf_idxs}
+
+    for idx in sf_idxs:
+        res = results[idx]
+        move = chess.Move.from_uci(res.bestmove_uci)
+        if move not in boards[idx].legal_moves:
+            move = next(iter(boards[idx].legal_moves))
+        x = encode_position(boards[idx], add_features=True)
+        a_idx = int(move_to_index(move, boards[idx]))
+        onehot = np.zeros((POLICY_SIZE,), dtype=np.float32)
+        onehot[a_idx] = 1.0
+        boards[idx].push(move)
+        samples_per_game[idx].append((x, onehot, False, res.wdl, a_idx, False, 0.0))
+
+
+def _estimate_wdl_for_all_samples(
+    model: torch.nn.Module,
+    samples_per_game: list[list[_GameSampleRec]],
+    *,
+    device: str,
+    infer_bs: int = 512,
+) -> tuple[np.ndarray, list[int]]:
+    """Post-hoc batched WDL pass over every recorded position. Returns
+    (wdl_est_all[N,3], per-game offsets into wdl_est_all)."""
+    all_x: list[np.ndarray] = []
+    offsets: list[int] = [0]
+    for game_samples in samples_per_game:
+        all_x.extend(rec[0] for rec in game_samples)
+        offsets.append(len(all_x))
+
+    wdl_est_all = np.zeros((len(all_x), 3), dtype=np.float32)
+    if all_x:
+        with torch.no_grad():
+            for s in range(0, len(all_x), infer_bs):
+                e = min(len(all_x), s + infer_bs)
+                xt = torch.from_numpy(np.stack(all_x[s:e], axis=0)).to(device)
+                out = model(xt)
+                wdl_est_all[s:e] = (
+                    torch.softmax(out["wdl"].detach().float(), dim=-1)
+                    .cpu().numpy().astype(np.float32, copy=False)
+                )
+    return wdl_est_all, offsets
+
+
 def play_batch_timed(
     model: torch.nn.Module,
     *,
@@ -134,130 +266,40 @@ def play_batch_timed(
     Note: This intentionally mirrors the current implementation in
     `chess_anti_engine.selfplay.manager.play_batch`.
     """
-
     t0 = time.perf_counter()
-
     boards = [chess.Board() for _ in range(int(games))]
     done = [False] * int(games)
-
-  # Each entry: (x, policy_probs, pov_white, sf_wdl, sf_move_index, has_policy, priority)
-    samples_per_game: list[list[tuple[np.ndarray, np.ndarray, bool, np.ndarray | None, int | None, bool, float]]] = [
-        [] for _ in range(int(games))
-    ]
+    samples_per_game: list[list[_GameSampleRec]] = [[] for _ in range(int(games))]
 
     for _ply in range(int(max_plies)):
-        active_idxs = [i for i in range(int(games)) if not done[i]]
-        if not active_idxs:
-            break
-
-        for i in active_idxs:
-            if boards[i].is_game_over():
+        for i in range(int(games)):
+            if not done[i] and boards[i].is_game_over():
                 done[i] = True
-
         active_idxs = [i for i in range(int(games)) if not done[i]]
         if not active_idxs:
             break
 
-  # Network turns (white to move)
         net_idxs = [i for i in active_idxs if boards[i].turn == chess.WHITE]
         if net_idxs:
-            xs_batch = encode_positions_batch([boards[i] for i in net_idxs], add_features=True)
+            _do_network_turn(
+                model, boards, samples_per_game, net_idxs,
+                device=device, rng=rng, mcts_type=mcts_type,
+                simulations=mcts_simulations, fast_simulations=fast_simulations,
+                playout_cap_fraction=playout_cap_fraction, temperature=temperature,
+            )
 
-  # policy logits for surprise priority only
-            with torch.no_grad():
-                xt = torch.from_numpy(xs_batch).to(device)
-                out = model(xt)
-                policy_out = _policy_output(out)
-                pol_logits = policy_out.detach().float().cpu().numpy()
-
-            is_full = rng.random(size=len(net_idxs)) < float(playout_cap_fraction)
-
-            probs_list: list[np.ndarray | None] = [None] * len(net_idxs)
-            actions: list[int | None] = [None] * len(net_idxs)
-
-            for sub_idxs, sims in (
-                ([j for j, v in enumerate(is_full) if bool(v)], mcts_simulations),
-                ([j for j, v in enumerate(is_full) if not bool(v)], fast_simulations),
-            ):
-                if not sub_idxs:
-                    continue
-                sub_boards = [boards[net_idxs[j]] for j in sub_idxs]
-                p_sub, a_sub, _v_sub, _m_sub = _run_mcts_for_subset(
-                    model, sub_boards,
-                    mcts_type=mcts_type, simulations=sims, temperature=temperature,
-                    device=device, rng=rng,
-                )
-                for jj, p, a in zip(sub_idxs, p_sub, a_sub, strict=True):
-                    probs_list[jj] = p
-                    actions[jj] = a
-
-            for j, (idx, probs, a) in enumerate(zip(net_idxs, probs_list, actions, strict=True)):
-                assert probs is not None and a is not None
-
-                mask = legal_move_mask(boards[idx])
-                lg = pol_logits[j].astype(np.float64, copy=True)
-                lg[~mask] = -1e9
-                lg = lg - float(np.max(lg))
-                rp = np.exp(lg)
-                rp[~mask] = 0.0
-                s = float(rp.sum())
-                raw = (rp / s).astype(np.float32) if s > 0 else (mask.astype(np.float32) / float(mask.sum()))
-
-                imp = np.maximum(probs.astype(np.float32, copy=False), 1e-12)
-                raw_c = np.maximum(raw, 1e-12)
-                kl = float(np.sum(raw_c * (np.log(raw_c) - np.log(imp))))
-
-                move = index_to_move(int(a), boards[idx])
-                boards[idx].push(move)
-
-                samples_per_game[idx].append((xs_batch[j], probs, True, None, None, bool(is_full[j]), kl))
-
-  # Stockfish turns (black to move)
         sf_idxs = [i for i in active_idxs if boards[i].turn == chess.BLACK]
         if sf_idxs:
-            if isinstance(stockfish, StockfishPool):
-                futures = {idx: stockfish.submit(boards[idx].fen()) for idx in sf_idxs}
-                results = {idx: fut.result() for idx, fut in futures.items()}
-            else:
-                results = {idx: stockfish.search(boards[idx].fen()) for idx in sf_idxs}
-
-            for idx in sf_idxs:
-                res = results[idx]
-                move = chess.Move.from_uci(res.bestmove_uci)
-                if move not in boards[idx].legal_moves:
-                    move = next(iter(boards[idx].legal_moves))
-
-                x = encode_position(boards[idx], add_features=True)
-                a_idx = int(move_to_index(move, boards[idx]))
-                onehot = np.zeros((POLICY_SIZE,), dtype=np.float32)
-                onehot[a_idx] = 1.0
-
-                boards[idx].push(move)
-                samples_per_game[idx].append((x, onehot, False, res.wdl, a_idx, False, 0.0))
+            _do_sf_turn(stockfish, boards, samples_per_game, sf_idxs)
 
     t_play_done = time.perf_counter()
 
-  # Post-hoc batched WDL estimation for all recorded positions.
-    infer_bs = 512
-    all_x: list[np.ndarray] = []
-    offsets: list[int] = [0]
-    for g in range(int(games)):
-        all_x.extend([rec[0] for rec in samples_per_game[g]])
-        offsets.append(len(all_x))
-
-    wdl_est_all = np.zeros((len(all_x), 3), dtype=np.float32)
-    if all_x:
-        with torch.no_grad():
-            for s in range(0, len(all_x), infer_bs):
-                e = min(len(all_x), s + infer_bs)
-                xt = torch.from_numpy(np.stack(all_x[s:e], axis=0)).to(device)
-                out = model(xt)
-                wdl = torch.softmax(out["wdl"].detach().float(), dim=-1).cpu().numpy().astype(np.float32, copy=False)
-                wdl_est_all[s:e] = wdl
+    wdl_est_all, offsets = _estimate_wdl_for_all_samples(
+        model, samples_per_game, device=device,
+    )
 
     all_samples: list[ReplaySample] = []
     w = d = l = 0
-
     for i, b in enumerate(boards):
         result = b.result(claim_draw=True)
         if result == "1-0":
@@ -266,7 +308,6 @@ def play_batch_timed(
             l += 1
         else:
             d += 1
-
         all_samples.extend(_assemble_samples_for_game(
             samples=samples_per_game[i],
             wdl_series=wdl_est_all[offsets[i] : offsets[i + 1]],
@@ -275,13 +316,11 @@ def play_batch_timed(
         ))
 
     t_done = time.perf_counter()
-
     timings = {
         "play_sec": float(t_play_done - t0),
         "posthoc_sec": float(t_done - t_play_done),
         "total_sec": float(t_done - t0),
     }
-
     stats = BatchStats(games=int(games), positions=len(all_samples), w=w, d=d, l=l)
     return all_samples, stats, timings
 
