@@ -34,6 +34,7 @@ from chess_anti_engine.selfplay.config import TemperatureConfig
 from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.stockfish import DifficultyPID, StockfishPool, StockfishUCI
 from chess_anti_engine.train import Trainer
+from chess_anti_engine.train.trainer import TrainMetrics
 from chess_anti_engine.tune._utils import concat_array_batches as _concat_array_batches
 from chess_anti_engine.tune.distributed_runtime import (
     _ensure_distributed_workers,
@@ -167,6 +168,96 @@ def _run_eval_games(
     return eval_dict
 
 
+def _apply_salvage_step_caps(
+    steps: int, *, tc: TrialConfig, restore: RestoreResult, iteration_zero_based: int,
+) -> int:
+    """Cap train_steps during the salvage warmup window: tighter cap before
+    shard-sharing kicks in, looser cap during the post-share ramp."""
+    if not (restore.startup_source == "salvage" and bool(restore.salvage_origin_used)):
+        return steps
+    iter0 = int(iteration_zero_based)
+    if iter0 < tc.salvage_startup_no_share_iters and tc.salvage_startup_max_train_steps > 0:
+        return min(steps, tc.salvage_startup_max_train_steps)
+    ramp_end = tc.salvage_startup_no_share_iters + tc.salvage_startup_post_share_ramp_iters
+    if (
+        tc.salvage_startup_post_share_ramp_iters > 0
+        and iter0 < ramp_end
+        and tc.salvage_startup_post_share_max_train_steps > 0
+    ):
+        return min(steps, tc.salvage_startup_post_share_max_train_steps)
+    return steps
+
+
+def _run_net_gating(
+    trainer, *,
+    pre_train_state: dict | None,
+    tc: TrialConfig, ds: DifficultyState, sf, device: str, rng: np.random.Generator,
+    gate_match_idx: int, gate_state_path: Path,
+) -> tuple[bool, int]:
+    """Play gate_games matches; on winrate < threshold restore pre_train_state.
+    Persists gate_match_idx counter + per-match TB scalars. Returns (gate_passed, new_idx)."""
+    if pre_train_state is None or tc.gate_games <= 0:
+        return True, gate_match_idx
+
+    gate_wr, gate_w, gate_d, gate_l = _gate_check(
+        trainer.model, device=device, rng=rng, sf=sf,
+        gate_games=tc.gate_games, tc=tc, ds=ds,
+    )
+    gate_match_idx += 1
+    try:
+        atomic_write_text(
+            gate_state_path,
+            json.dumps({"matches": int(gate_match_idx)}, indent=2, sort_keys=True),
+        )
+    except Exception:
+        pass
+    try:
+        trainer.writer.add_scalar("gate/winrate", float(gate_wr), int(gate_match_idx))
+        trainer.writer.add_scalar("gate/win", float(gate_w), int(gate_match_idx))
+        trainer.writer.add_scalar("gate/draw", float(gate_d), int(gate_match_idx))
+        trainer.writer.add_scalar("gate/loss", float(gate_l), int(gate_match_idx))
+        trainer.writer.add_scalar(
+            "gate/passed", float(1.0 if gate_wr >= tc.gate_threshold else 0.0), int(gate_match_idx),
+        )
+    except Exception:
+        pass
+
+    if gate_wr < tc.gate_threshold:
+        trainer.model.load_state_dict(pre_train_state)
+        return False, gate_match_idx
+    return True, gate_match_idx
+
+
+def _run_holdout_evaluation(
+    *, trainer, holdout_buf, tc: TrialConfig, model_cfg, device: str, config: dict,
+    iteration_idx: int, async_test_eval=None,
+) -> tuple[TrainMetrics | None, int]:
+    """Run synchronous or async holdout eval. Async path: collect last iter's
+    result, then start the next one. Returns (metrics, source_iter)."""
+    if async_test_eval is not None:
+        test_metrics, source_iter = async_test_eval.collect(
+            timeout=tc.distributed_async_test_eval_timeout_s,
+        )
+        if len(holdout_buf) >= tc.batch_size:
+            async_test_eval.start(
+                trainer=trainer,
+                model_cfg=model_cfg,
+                holdout_buf=holdout_buf,
+                batch_size=tc.batch_size,
+                steps=tc.test_steps,
+                device=device,
+                source_iter=int(iteration_idx),
+                compile_mode=(
+                    str(config.get("compile_mode", "reduce-overhead"))
+                    if bool(config.get("use_compile", False)) else "off"
+                ),
+            )
+        return test_metrics, source_iter
+    if len(holdout_buf) >= tc.batch_size:
+        return trainer.eval_steps(holdout_buf, batch_size=tc.batch_size, steps=tc.test_steps), int(iteration_idx)
+    return None, -1
+
+
 def _run_training_and_gating(
     *,
     tc: TrialConfig,
@@ -215,23 +306,14 @@ def _run_training_and_gating(
         steps = int(train_budget["steps"])
         target_sample_budget = int(train_budget["target_sample_budget"])
         window_target_samples = int(train_budget["window_target_samples"])
-
-        if restore.startup_source == "salvage" and bool(restore.salvage_origin_used):
-            if int(iteration_zero_based) < tc.salvage_startup_no_share_iters and tc.salvage_startup_max_train_steps > 0:
-                steps = min(steps, tc.salvage_startup_max_train_steps)
-            elif (
-                tc.salvage_startup_post_share_ramp_iters > 0
-                and int(iteration_zero_based) < (tc.salvage_startup_no_share_iters + tc.salvage_startup_post_share_ramp_iters)
-                and tc.salvage_startup_post_share_max_train_steps > 0
-            ):
-                steps = min(steps, tc.salvage_startup_post_share_max_train_steps)
+        steps = _apply_salvage_step_caps(
+            steps, tc=tc, restore=restore, iteration_zero_based=iteration_zero_based,
+        )
 
   # Save model state for potential rollback (net gating).
         pre_train_state = None
         if tc.gate_games > 0 and (iteration_zero_based % tc.gate_interval == 0):
-            pre_train_state = {
-                k: v.clone() for k, v in trainer.model.state_dict().items()
-            }
+            pre_train_state = {k: v.clone() for k, v in trainer.model.state_dict().items()}
 
         if tc.distributed_pause_selfplay_during_training:
             _publish_distributed_trial_state(
@@ -247,79 +329,18 @@ def _run_training_and_gating(
                 export_model=False,
             )
 
-        metrics = trainer.train_steps(
-            buf,
-            batch_size=batch_size,
-            steps=steps,
+        metrics = trainer.train_steps(buf, batch_size=batch_size, steps=steps)
+        gate_passed, gate_match_idx = _run_net_gating(
+            trainer, pre_train_state=pre_train_state,
+            tc=tc, ds=ds, sf=sf, device=device, rng=rng,
+            gate_match_idx=gate_match_idx, gate_state_path=gate_state_path,
         )
 
-  # Net gating: play gate_games and reject if winrate < threshold.
-        if pre_train_state is not None and tc.gate_games > 0:
-            gate_wr, gate_w, gate_d, gate_l = _gate_check(
-                trainer.model,
-                device=device,
-                rng=rng,
-                sf=sf,
-                gate_games=tc.gate_games,
-                tc=tc,
-                ds=ds,
-            )
-
-            gate_match_idx += 1
-            try:
-                atomic_write_text(
-                    gate_state_path,
-                    json.dumps(
-                        {"matches": int(gate_match_idx)},
-                        indent=2,
-                        sort_keys=True,
-                    ),
-                )
-            except Exception:
-                pass
-
-            try:
-                trainer.writer.add_scalar("gate/winrate", float(gate_wr), int(gate_match_idx))
-                trainer.writer.add_scalar("gate/win", float(gate_w), int(gate_match_idx))
-                trainer.writer.add_scalar("gate/draw", float(gate_d), int(gate_match_idx))
-                trainer.writer.add_scalar("gate/loss", float(gate_l), int(gate_match_idx))
-                trainer.writer.add_scalar("gate/passed", float(1.0 if gate_wr >= tc.gate_threshold else 0.0), int(gate_match_idx))
-            except Exception:
-                pass
-
-            if gate_wr < tc.gate_threshold:
-                trainer.model.load_state_dict(pre_train_state)
-                gate_passed = False
-
-    test_metrics = None
-    test_metrics_source_iter = -1
-    if async_test_eval is not None:
-        test_metrics, test_metrics_source_iter = async_test_eval.collect(
-            timeout=tc.distributed_async_test_eval_timeout_s,
-        )
-        if len(holdout_buf) >= tc.batch_size:
-            async_test_eval.start(
-                trainer=trainer,
-                model_cfg=model_cfg,
-                holdout_buf=holdout_buf,
-                batch_size=tc.batch_size,
-                steps=tc.test_steps,
-                device=device,
-                source_iter=int(iteration_idx),
-                compile_mode=(
-                    str(config.get("compile_mode", "reduce-overhead"))
-                    if bool(config.get("use_compile", False)) else "off"
-                ),
-            )
-    elif len(holdout_buf) >= tc.batch_size:
-        test_metrics = trainer.eval_steps(
-            holdout_buf,
-            batch_size=tc.batch_size,
-            steps=tc.test_steps,
-        )
-        test_metrics_source_iter = int(iteration_idx)
-
-    train_ms = (time.monotonic() - train_t0) * 1000.0
+    test_metrics, test_metrics_source_iter = _run_holdout_evaluation(
+        trainer=trainer, holdout_buf=holdout_buf,
+        tc=tc, model_cfg=model_cfg, device=device, config=config,
+        iteration_idx=iteration_idx, async_test_eval=async_test_eval,
+    )
 
     return TrainingResult(
         metrics=metrics,
@@ -328,7 +349,7 @@ def _run_training_and_gating(
         steps=steps,
         target_sample_budget=target_sample_budget,
         window_target_samples=window_target_samples,
-        train_ms=train_ms,
+        train_ms=(time.monotonic() - train_t0) * 1000.0,
         gate_match_idx=gate_match_idx,
         test_metrics_source_iter=test_metrics_source_iter,
     )
