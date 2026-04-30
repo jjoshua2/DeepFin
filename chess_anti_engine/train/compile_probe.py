@@ -112,9 +112,16 @@ class CompileProbe:
         captures = _delta("frames", "ok")
         recompiles = _delta("recompiles", "recompile")
         all_breaks = sum(_delta("graph_break", k) for k in counters.get("graph_break", {}))
+  # cudagraphify_called > 0 + cudagraph_skips == 0 → cudagraphs actually
+  # firing. cudagraph_skips > 0 means inductor compiled but the cudagraph
+  # layer rejected (dynamic shapes, cross-thread TLS miss, etc) and we
+  # silently fell back to eager replay.
+        cg_called = _delta("inductor", "cudagraphify_called")
+        cg_skips = _delta("inductor", "cudagraph_skips")
         msg = (
             f"torch.compile probe ({step_count} steps): "
-            f"frames_ok={captures} recompiles={recompiles} graph_breaks={all_breaks}"
+            f"frames_ok={captures} recompiles={recompiles} graph_breaks={all_breaks} "
+            f"cudagraphify_called={cg_called} cudagraph_skips={cg_skips}"
         )
         if recompiles >= max(2, step_count // 2):
             logger.warning("%s — RECOMPILE LOOP (every other step or more)", msg)

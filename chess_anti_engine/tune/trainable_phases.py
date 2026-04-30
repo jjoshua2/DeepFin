@@ -239,6 +239,24 @@ def _run_holdout_evaluation(
             timeout=tc.distributed_async_test_eval_timeout_s,
         )
         if len(holdout_buf) >= tc.batch_size:
+  # Strip cudagraphs from the eval-thread snap. PyTorch's cudagraph_trees
+  # stashes ``tree_manager_containers`` in TLS at module-import time on the
+  # main thread only; user-spawned threads can see neither the Python
+  # ``threading.local`` (per-thread, set on import-thread) nor C++ TLS
+  # (only auto-copied to autograd-spawned threads). The eval thread hits
+  # ``assert torch._C._is_key_in_tls(...)`` on first compiled forward
+  # otherwise. Inductor compile is fine cross-thread; only the cudagraph
+  # layer breaks. ``set_device`` does NOT bootstrap this TLS — the
+  # 2026-04-29 attempt to remove this mapping was reverted after the
+  # assertion kept firing on iter 1+ (worker err log, Apr 30).
+            cm_raw = (
+                str(config.get("compile_mode", "reduce-overhead"))
+                if bool(config.get("use_compile", False)) else "off"
+            )
+            cm_eval = {
+                "reduce-overhead": "default",
+                "max-autotune": "max-autotune-no-cudagraphs",
+            }.get(cm_raw, cm_raw)
             async_test_eval.start(
                 trainer=trainer,
                 model_cfg=model_cfg,
@@ -247,10 +265,7 @@ def _run_holdout_evaluation(
                 steps=tc.test_steps,
                 device=device,
                 source_iter=int(iteration_idx),
-                compile_mode=(
-                    str(config.get("compile_mode", "reduce-overhead"))
-                    if bool(config.get("use_compile", False)) else "off"
-                ),
+                compile_mode=cm_eval,
             )
         return test_metrics, source_iter
     if len(holdout_buf) >= tc.batch_size:

@@ -24,13 +24,17 @@ use. Each iter we just ``load_state_dict`` into the long-lived snapshot
 in-place; the cudagraph keys on graph topology, not weight values, so
 it stays valid across weight updates.
 
-**Crucial:** the ``_loop`` thread must call ``torch.cuda.set_device``
-BEFORE building the model. cudagraph_trees only initializes its
-per-thread tree-manager containers when a CUDA context already exists
-on the thread; without set_device, ``build_model().to(cuda)`` does
-*not* count and the first compiled forward asserts in ``get_obj``
-(observed every iter on 2026-04-29 — fix in commit 62f4e58 added
-no-cudagraph workaround, then proper set_device fix replaced it).
+**Cudagraphs are NOT supported on this thread.** PyTorch's
+``cudagraph_trees`` module stashes ``tree_manager_containers`` in
+TLS at import time on the main thread only — user-spawned threads
+have neither the Python ``threading.local`` attr nor the C++ TLS
+key, so the first compiled forward asserts in ``get_obj``. The
+caller (trainable_phases) maps ``reduce-overhead → default`` and
+``max-autotune → max-autotune-no-cudagraphs`` before invoking
+``start()``. ``torch.cuda.set_device`` here pins the thread's
+default CUDA device for allocations; it does NOT bootstrap the
+cudagraph TLS (a 2026-04-29 attempt to use it as a "real fix" was
+reverted after the assertion kept firing).
 """
 from __future__ import annotations
 
@@ -157,11 +161,11 @@ class AsyncTestEval:
             log.error("AsyncTestEval._loop entered before init args were set")
             return
         try:
-  # cudagraph_trees stashes tree_manager_containers in TLS lazily on
-  # first compiled forward, but only finds it if the thread already has
-  # a CUDA device set. Without an explicit set_device, the new thread's
-  # device-state lookup fails and get_obj asserts. This mirrors
-  # ThreadedDispatcher._dispatch_loop and multi_gpu_pucv_pool._worker_loop.
+  # Pin the thread's default CUDA device for tensor allocations made
+  # via ``.to("cuda")`` without an explicit index. Does NOT bootstrap
+  # cudagraph_trees TLS (that key only ever lands in TLS on the
+  # import thread or on autograd-spawned threads); the caller strips
+  # cudagraphs from compile_mode for this thread to compensate.
             dev = torch.device(self._init_args["device"])
             if dev.type == "cuda":
   # bare "cuda" yields dev.index=None; set_device needs an int.

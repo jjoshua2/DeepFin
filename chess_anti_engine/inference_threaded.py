@@ -31,6 +31,47 @@ def _next_bucket(n: int, buckets: tuple[int, ...] = _COMPILED_BATCH_BUCKETS) -> 
     return buckets[-1]
 
 
+def _snapshot_dynamo_counters() -> dict[str, dict[str, int]] | None:
+    """Snapshot torch._dynamo.utils.counters; returns None if unavailable."""
+    try:
+        from torch._dynamo.utils import counters
+    except Exception:  # noqa: BLE001
+        return None
+    return {cat: dict(d) for cat, d in counters.items()}
+
+
+def _delta_dynamo_counters(
+    baseline: dict[str, dict[str, int]] | None,
+) -> dict[str, int] | None:
+    """Compute (now - baseline) for the cudagraph-relevant counters.
+
+    Keys returned: frames_ok, recompiles, graph_breaks, cudagraph_skips,
+    cudagraphify_called. ``cudagraph_skips`` > 0 means inductor compiled
+    the graph but the cudagraph layer rejected it (dynamic shapes,
+    cross-thread TLS miss, etc) and silently fell back to eager.
+    """
+    if baseline is None:
+        return None
+    try:
+        from torch._dynamo.utils import counters
+    except Exception:  # noqa: BLE001
+        return None
+
+    def _delta(cat: str, key: str) -> int:
+        return max(0, int(counters.get(cat, {}).get(key, 0)) - int(baseline.get(cat, {}).get(key, 0)))
+
+    graph_break_total = sum(
+        _delta("graph_break", k) for k in counters.get("graph_break", {})
+    )
+    return {
+        "frames_ok": _delta("frames", "ok"),
+        "recompiles": _delta("recompiles", "recompile"),
+        "graph_breaks": graph_break_total,
+        "cudagraph_skips": _delta("inductor", "cudagraph_skips"),
+        "cudagraphify_called": _delta("inductor", "cudagraphify_called"),
+    }
+
+
 class ThreadedDispatcher:
     """Queue-batched GPU dispatcher with a single CUDA-owning thread.
 
@@ -79,6 +120,13 @@ class ThreadedDispatcher:
         self._lifetime_positions = 0
         self._lifetime_full_drains = 0
         self._lifetime_forward_s = 0.0
+
+  # Dynamo/cudagraph counters: snapshotted on the dispatcher thread before
+  # first compile, then re-read after warmup so the delta tells us whether
+  # cudagraphs actually fired (frames_ok > 0, cudagraph_skips == 0) or
+  # silently fell back to eager. See compile_probe.py for the same idea.
+        self._compile_baseline: dict[str, dict[str, int]] | None = None
+        self._compile_probe_logged = False
 
         self._thread = threading.Thread(
             target=self._dispatch_loop,
@@ -168,6 +216,7 @@ class ThreadedDispatcher:
             dev = torch.device(self._device)
             if dev.type == "cuda":
                 torch.cuda.set_device(dev.index if dev.index is not None else 0)
+            self._compile_baseline = _snapshot_dynamo_counters()
             self._evaluator.model = torch.compile(  # pyright: ignore[reportAttributeAccessIssue]
                 self._evaluator.model, mode=self._compile_mode,
             )
@@ -199,6 +248,26 @@ class ThreadedDispatcher:
                     for _, fut in items:
                         if not fut.done():
                             fut.set_exception(exc)
+
+  # One-shot cudagraph probe. After the warmup window (50 batches) has
+  # passed compile + capture, the dynamo counters' delta tells us
+  # whether cudagraphs are actually firing on this thread. The
+  # alternative is silent eager fallback, in which case the
+  # ``set_device`` workaround claim is folklore.
+            if (
+                not self._compile_probe_logged
+                and self._compile_baseline is not None
+                and self._lifetime_batches >= 50
+            ):
+                d = _delta_dynamo_counters(self._compile_baseline)
+                if d is not None:
+                    logger.info(
+                        "dispatcher cudagraph probe: frames_ok=%d cudagraphify_called=%d "
+                        "cudagraph_skips=%d recompiles=%d graph_breaks=%d",
+                        d["frames_ok"], d["cudagraphify_called"],
+                        d["cudagraph_skips"], d["recompiles"], d["graph_breaks"],
+                    )
+                self._compile_probe_logged = True
 
             if pending is not None:
                 try:
