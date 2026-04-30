@@ -261,13 +261,19 @@ def play_batch(
             batch_size=batch_size, continuous=continuous, target=target,
         )
 
-        # Reset tree when it grows unbounded and no roots reference old nodes.
+        # Reset tree when it grows unbounded. Live root_ids can't be preserved
+        # across reset, but the next ply's MCTS root-init rebuilds them with no
+        # algorithmic loss — only the few-ply tree-reuse window vanishes.
+        # Without this, continuous selfplay leaks tree nodes for the lifetime
+        # of the worker (the prior `all(rid < 0)` guard never fired with
+        # >1 slot since at least one root_id stays >= 0 at all times).
         if (
             state.mcts_tree is not None
             and state.mcts_tree.node_count() > 500_000
-            and all(rid < 0 for rid in state.root_ids)
         ):
             state.mcts_tree.reset()
+            for _i in range(len(state.root_ids)):
+                state.root_ids[_i] = -1
 
     logging.getLogger("chess_anti_engine.worker").info(
         "play_batch timing: net=%.1fs sf=%.1fs (net %.0f%%, sf %.0f%%)",
