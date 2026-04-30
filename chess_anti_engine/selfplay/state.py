@@ -546,6 +546,61 @@ class SelfplayState:
         """Return ``chess.Color`` for slot ``i``'s network-assigned color."""
         return chess.WHITE if self.net_color_arr[i] else chess.BLACK
 
+    def _classify_active_slots_c(
+        self,
+    ) -> tuple[list[int], list[int], list[int], bool]:
+        """C fast-path classify; ``has_classify_c`` guarantees handle is set."""
+        assert self.c_classify is not None
+        _c_net, _c_sp, _c_cur = self.c_classify(
+            self.cboards,
+            self.net_color_arr,
+            self.done_arr,
+            self.finalized_arr,
+            self.selfplay_arr,
+            int(self.game.max_plies),
+        )
+        net_idxs = _c_net.tolist()
+        sp_idxs = _c_sp.tolist()
+        cur_idxs = _c_cur.tolist()
+        all_done = (
+            not net_idxs
+            and not sp_idxs
+            and not cur_idxs
+            and not np.any(self.finalized_arr == 0)
+        )
+        return net_idxs, sp_idxs, cur_idxs, all_done
+
+    def _mark_timed_out_slots(self, active_idxs: list[int]) -> None:
+        """Mark active slots as done if game-over or past ``max_plies``."""
+        max_plies = int(self.game.max_plies)
+        for i in active_idxs:
+            if not self.done_arr[i] and (
+                self.cboards[i].is_game_over() or self.cboards[i].ply >= max_plies
+            ):
+                self.done_arr[i] = 1
+
+    def _classify_live_slots_python(
+        self,
+    ) -> tuple[list[int], list[int], list[int]]:
+        """Partition live (non-finalized, non-done) slots by whose move is next."""
+        live = [
+            i
+            for i in range(self.batch_size)
+            if not self.finalized_arr[i] and not self.done_arr[i]
+        ]
+        net_idxs = [i for i in live if self.cboards[i].turn == self.net_color(i)]
+        sp_idxs = [
+            i
+            for i in live
+            if self.cboards[i].turn != self.net_color(i) and self.selfplay_arr[i]
+        ]
+        cur_idxs = [
+            i
+            for i in live
+            if self.cboards[i].turn != self.net_color(i) and not self.selfplay_arr[i]
+        ]
+        return net_idxs, sp_idxs, cur_idxs
+
     def classify_active_slots(
         self,
     ) -> tuple[list[int], list[int], list[int], bool]:
@@ -569,54 +624,15 @@ class SelfplayState:
         marks timed-out slots as done, matching the original semantics).
         """
         if self.has_classify_c:
-            assert self.c_classify is not None
-            _c_net, _c_sp, _c_cur = self.c_classify(
-                self.cboards,
-                self.net_color_arr,
-                self.done_arr,
-                self.finalized_arr,
-                self.selfplay_arr,
-                int(self.game.max_plies),
-            )
-            net_idxs = _c_net.tolist()
-            sp_idxs = _c_sp.tolist()
-            cur_idxs = _c_cur.tolist()
-            all_done = (
-                not net_idxs
-                and not sp_idxs
-                and not cur_idxs
-                and not np.any(self.finalized_arr == 0)
-            )
-            return net_idxs, sp_idxs, cur_idxs, all_done
+            return self._classify_active_slots_c()
 
-        # Python fallback: mark timed-out slots + classify by turn.
         active_idxs = [
             i for i in range(self.batch_size) if not self.finalized_arr[i]
         ]
         if not active_idxs:
             return [], [], [], True
-        for i in active_idxs:
-            if not self.done_arr[i] and (
-                self.cboards[i].is_game_over()
-                or self.cboards[i].ply >= int(self.game.max_plies)
-            ):
-                self.done_arr[i] = 1
-        live = [
-            i
-            for i in range(self.batch_size)
-            if not self.finalized_arr[i] and not self.done_arr[i]
-        ]
-        net_idxs = [i for i in live if self.cboards[i].turn == self.net_color(i)]
-        sp_idxs = [
-            i
-            for i in live
-            if self.cboards[i].turn != self.net_color(i) and self.selfplay_arr[i]
-        ]
-        cur_idxs = [
-            i
-            for i in live
-            if self.cboards[i].turn != self.net_color(i) and not self.selfplay_arr[i]
-        ]
+        self._mark_timed_out_slots(active_idxs)
+        net_idxs, sp_idxs, cur_idxs = self._classify_live_slots_python()
         return net_idxs, sp_idxs, cur_idxs, False
 
     def recycle_slot(self, i: int) -> None:
