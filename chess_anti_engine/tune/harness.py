@@ -149,25 +149,62 @@ def _prepare_distributed_worker_auth(
     return username, password_file
 
 
+def _delete_obsolete_tune_files(*, tune_dir: Path, ts: str) -> None:
+    """Remove train_trial dirs + state aux files for one experiment timestamp."""
+    import shutil
+
+    for d in tune_dir.glob(f"train_trial_*{ts}"):
+        if d.is_dir():
+            print(f"[run_tune] Pruning old Ray Tune trial dir: {d}")
+            shutil.rmtree(d, ignore_errors=True)
+    for p in (
+        tune_dir / f"experiment_state-{ts}.json",
+        tune_dir / f"basic-variant-state-{ts}.json",
+    ):
+        if p.exists():
+            print(f"[run_tune] Pruning old Ray Tune state file: {p}")
+            try:
+                p.unlink()
+            except Exception:
+                pass
+
+
+def _prune_orphan_pb2_policy_logs(*, tune_dir: Path) -> None:
+    """Drop pbt_policy_<prefix>_<id>.txt files whose prefix has no surviving
+    train_trial_<prefix>_* directory."""
+    import re
+
+    live_prefixes: set[str] = set()
+    for d in tune_dir.glob("train_trial_*"):
+        if not d.is_dir():
+            continue
+        parts = d.name.split("_", 2)
+        if len(parts) >= 3:
+            live_prefixes.add(parts[1])
+
+    for p in tune_dir.glob("pbt_policy_*.txt"):
+        m = re.match(r"^pbt_policy_(?P<prefix>[^_]+)_\d+\.txt$", p.name)
+        if m and m.group("prefix") not in live_prefixes:
+            print(f"[run_tune] Pruning old PB2 policy log: {p}")
+            try:
+                p.unlink()
+            except Exception:
+                pass
+
+
 def _cleanup_old_tune_experiments(*, tune_dir: Path, keep_last: int) -> None:
     """Best-effort pruning of old Ray Tune experiments.
 
-    We keep the newest `keep_last` experiment_state-*.json files and delete
+    Keeps the newest `keep_last` experiment_state-*.json files and deletes
     train_trial_* directories associated with older experiment timestamps.
-
-    This is only intended to run when starting a *fresh* run (i.e. not --resume).
+    Only intended to run on fresh starts (not --resume).
     """
-
     import re
-    import shutil
 
     keep_last = int(keep_last)
-    if keep_last <= 0:
-        return
-    if not tune_dir.exists():
+    if keep_last <= 0 or not tune_dir.exists():
         return
 
-  # Ray writes these per experiment run.
     state_files = sorted(tune_dir.glob("experiment_state-*.json"))
     if len(state_files) <= keep_last:
         return
@@ -175,7 +212,6 @@ def _cleanup_old_tune_experiments(*, tune_dir: Path, keep_last: int) -> None:
     keep = set(state_files[-keep_last:])
     delete_states = [p for p in state_files if p not in keep]
 
-  # Extract timestamps like 2026-02-26_18-51-01 from filenames.
     ts_re = re.compile(r"^experiment_state-(?P<ts>.+)\.json$")
     delete_ts: set[str] = set()
     for p in delete_states:
@@ -183,46 +219,10 @@ def _cleanup_old_tune_experiments(*, tune_dir: Path, keep_last: int) -> None:
         if m:
             delete_ts.add(m.group("ts"))
 
-  # Delete associated trial directories and any small aux files.
     for ts in sorted(delete_ts):
-  # Remove trial dirs with this timestamp suffix.
-        for d in tune_dir.glob(f"train_trial_*{ts}"):
-            if d.is_dir():
-                print(f"[run_tune] Pruning old Ray Tune trial dir: {d}")
-                shutil.rmtree(d, ignore_errors=True)
+        _delete_obsolete_tune_files(tune_dir=tune_dir, ts=ts)
 
-  # Remove state files for this timestamp.
-        for p in [
-            tune_dir / f"experiment_state-{ts}.json",
-            tune_dir / f"basic-variant-state-{ts}.json",
-        ]:
-            if p.exists():
-                print(f"[run_tune] Pruning old Ray Tune state file: {p}")
-                try:
-                    p.unlink()
-                except Exception:
-                    pass
-
-  # Also prune PB2 policy logs that correspond to now-missing trial prefixes.
-  # These are small, but they can accumulate.
-    prefixes: set[str] = set()
-    for d in tune_dir.glob("train_trial_*"):
-        if not d.is_dir():
-            continue
-  # train_trial_<prefix>_...
-        parts = d.name.split("_", 2)
-        if len(parts) >= 3:
-            prefixes.add(parts[1])
-
-    for p in tune_dir.glob("pbt_policy_*.txt"):
-  # pbt_policy_<prefix>_<trialid>.txt
-        m = re.match(r"^pbt_policy_(?P<prefix>[^_]+)_\d+\.txt$", p.name)
-        if m and m.group("prefix") not in prefixes:
-            print(f"[run_tune] Pruning old PB2 policy log: {p}")
-            try:
-                p.unlink()
-            except Exception:
-                pass
+    _prune_orphan_pb2_policy_logs(tune_dir=tune_dir)
 
 
 # NB: harness's ``work_dir`` is the run root, while the canonical
