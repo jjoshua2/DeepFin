@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import cast
 
 import chess
 import numpy as np
@@ -186,6 +185,248 @@ def _collect_forced_leaf(
     return node, path, None
 
 
+def _resolve_root_logits(
+    boards: list[chess.Board],
+    *,
+    model: torch.nn.Module | None,
+    evaluator: BatchEvaluator | None,
+    device: str,
+    pre_pol_logits: np.ndarray | None,
+    pre_wdl_logits: np.ndarray | None,
+) -> tuple[np.ndarray, np.ndarray, BatchEvaluator | None]:
+    """Phase 1: get root pol/wdl logits + a leaf evaluator for later phases.
+
+    Reuses caller-provided ``pre_*_logits`` (one forward pass saved per ply
+    when called from selfplay). Always resolves a ``leaf_eval`` for use by
+    sequential halving — even when pre-logits short-circuit phase 1.
+    """
+    if pre_pol_logits is not None and pre_wdl_logits is not None:
+        pol = np.asarray(pre_pol_logits, dtype=np.float32)
+        wdl = np.asarray(pre_wdl_logits, dtype=np.float32)
+        leaf_eval = evaluator if evaluator is not None else (
+            LocalModelEvaluator(model, device=device) if model is not None else None
+        )
+        return pol, wdl, leaf_eval
+
+    eval_impl = evaluator
+    if eval_impl is None:
+        if model is None:
+            raise ValueError("run_gumbel_root_many requires model or evaluator")
+        eval_impl = LocalModelEvaluator(model, device=device)
+    xs = encode_positions_batch(boards, add_features=True)
+    pol, wdl = eval_impl.evaluate_encoded(xs)
+    return pol, wdl, eval_impl
+
+
+def _evaluate_and_backprop_leaves(
+    leaf_nodes: list[Node],
+    leaf_paths: list[list[Node]],
+    leaf_eval: BatchEvaluator | None,
+) -> None:
+    """Batched leaf NN eval + expand + backprop. No-op when ``leaf_nodes`` is empty."""
+    if not leaf_nodes:
+        return
+    if leaf_eval is None:
+        raise ValueError("run_gumbel_root_many requires model or evaluator")
+    leaf_xs = encode_positions_batch([node.board for node in leaf_nodes], add_features=True)
+    pol_logits_leaf, wdl_logits_leaf = leaf_eval.evaluate_encoded(leaf_xs)
+    for node, path, pol_logits, wdl_logits in zip(
+        leaf_nodes, leaf_paths, pol_logits_leaf, wdl_logits_leaf, strict=True,
+    ):
+        pri, _, legal_idx = _masked_priors(pol_logits, node.board)
+        if legal_idx.size > 0:
+            _expand_sparse(node, legal_idx, pri[legal_idx])
+        _backprop(path, _wdl_to_q(wdl_logits.reshape(-1)))
+
+
+def _select_top_m_with_gumbel(
+    *,
+    legal: np.ndarray,
+    pri: np.ndarray,
+    sim_budget: int,
+    topk: int,
+    add_noise: bool,
+    rng: np.random.Generator,
+) -> tuple[list[int], dict[int, float]]:
+    """Sample top-m root actions via Gumbel(logit + noise). Caller filters trivial cases.
+
+    Returns (cands, gumbels_for_all_legal). ``m`` is bounded so sequential halving
+    can still allocate ≥1 visit per action per round.
+    """
+    log_pri = np.log(np.maximum(pri[legal], 1e-12))
+    g = _gumbel(rng, legal.size) if add_noise else np.zeros(legal.size, dtype=np.float64)
+    score: np.ndarray = g + log_pri
+
+    if sim_budget <= 1:
+        m = 1
+    else:
+        m_cap = max(2, (sim_budget + 1) // 2)
+        m = max(2, int(min(int(topk), int(legal.size), int(m_cap))))
+
+    kth = min(m - 1, int(score.size) - 1)
+    top_idx = np.argpartition(-score, kth)[:m]
+    cands = legal[top_idx].astype(int).tolist()
+    gumbels = {int(a): float(gg) for a, gg in zip(legal.tolist(), g.tolist(), strict=True)}
+    return cands, gumbels
+
+
+@dataclass
+class _BoardSearchState:
+    """Per-board state for sequential halving. ``finished`` short-circuits halving."""
+    root: Node
+    priors: np.ndarray
+    candidates: list[int] | None
+    remaining: list[int] | None
+    gumbels: dict[int, float] | None
+    finished_probs: np.ndarray | None
+    finished_action: int | None
+    finished_value: float | None
+
+
+def _init_board_search_state(
+    board: chess.Board,
+    *,
+    pol_logits: np.ndarray,
+    root_q: float,
+    sim_budget: int,
+    cfg: GumbelConfig,
+    rng: np.random.Generator,
+) -> _BoardSearchState:
+    """Phase 2 per-board: init root, early-exit trivial cases, else select top-m."""
+    root, pri, mask = _init_root_from_logits(board, pol_logits=pol_logits, root_q=root_q)
+
+    def _finish(probs: np.ndarray, action: int, value: float) -> _BoardSearchState:
+        return _BoardSearchState(
+            root=root, priors=pri, candidates=None, remaining=None, gumbels=None,
+            finished_probs=probs, finished_action=action, finished_value=value,
+        )
+
+    if root.board.is_game_over():
+        return _finish(np.zeros((POLICY_SIZE,), dtype=np.float32), 0, float(root.Q))
+
+    legal = np.nonzero(mask)[0]
+    if legal.size == 0:
+        return _finish(np.zeros((POLICY_SIZE,), dtype=np.float32), 0, root_q)
+
+    if legal.size == 1:
+        a0 = int(legal[0])
+        p = np.zeros((POLICY_SIZE,), dtype=np.float32)
+        p[a0] = 1.0
+        return _finish(p, a0, root_q)
+
+    cands, gumbels = _select_top_m_with_gumbel(
+        legal=legal, pri=pri, sim_budget=sim_budget,
+        topk=int(cfg.topk), add_noise=cfg.add_noise, rng=rng,
+    )
+    return _BoardSearchState(
+        root=root, priors=pri,
+        candidates=cands, remaining=list(cands), gumbels=gumbels,
+        finished_probs=None, finished_action=None, finished_value=None,
+    )
+
+
+def _collect_forced_leaves_round(
+    *,
+    active: list[int],
+    states: list[_BoardSearchState],
+    visits_per_action: dict[int, int],
+    rep: int,
+    cfg: GumbelConfig,
+) -> tuple[list[Node], list[list[Node]]]:
+    """One sequential-halving round: walk forced lines from root, collect non-terminal leaves.
+
+    Backprops terminal-value paths immediately; returns leaves that need NN eval.
+    """
+    leaf_nodes: list[Node] = []
+    leaf_paths: list[list[Node]] = []
+    for bi in active:
+        st = states[bi]
+        rem = st.remaining
+        if rem is None or rep >= visits_per_action[bi]:
+            continue
+        for action in rem:
+            leaf, path, terminal_value = _collect_forced_leaf(
+                root=st.root, forced_action=int(action), cfg=cfg,
+            )
+            if terminal_value is not None:
+                _backprop(path, float(terminal_value))
+            elif leaf is not None:
+                leaf_nodes.append(leaf)
+                leaf_paths.append(path)
+    return leaf_nodes, leaf_paths
+
+
+def _halve_remaining_for_board(
+    st: _BoardSearchState,
+    *,
+    root_q: float,
+    cfg: GumbelConfig,
+) -> None:
+    """Re-rank ``st.remaining`` by completed-Q and halve it. No-op when ≤1 candidate left."""
+    rem = st.remaining
+    if rem is None or st.gumbels is None or len(rem) <= 1:
+        return
+    pri = st.priors
+    gmap = st.gumbels
+    root = st.root
+    max_visit = max(
+        (root.children[int(a)].N for a in rem if int(a) in root.children),
+        default=0,
+    )
+    rem.sort(
+        key=lambda a: _root_score(
+            log_prior=float(np.log(max(float(pri[int(a)]), 1e-12))),
+            gumbel=float(gmap.get(int(a), 0.0)),
+            q_hat=_completed_q(root_q=root_q, root=root, action=int(a)),
+            max_visit=int(max_visit),
+            cfg=cfg,
+        ),
+        reverse=True,
+    )
+    st.remaining = rem[: max(1, (len(rem) + 1) // 2)]
+
+
+def _build_improved_policy_for_board(
+    st: _BoardSearchState,
+    *,
+    root_q: float,
+    cfg: GumbelConfig,
+    rng: np.random.Generator,
+) -> tuple[np.ndarray, int, float]:
+    """Phase 4: completed-Q policy improvement at the searched root + temperature sample."""
+    root = st.root
+    pri = st.priors
+    remaining = st.remaining
+    if remaining is None or st.candidates is None:
+        return np.zeros((POLICY_SIZE,), dtype=np.float32), 0, root_q
+
+    legal = np.nonzero(pri > 0)[0].astype(int)
+    max_visit = max(
+        (root.children[int(a)].N for a in legal if int(a) in root.children),
+        default=0,
+    )
+    completed_q = np.array(
+        [_completed_q(root_q=root_q, root=root, action=int(a)) for a in legal],
+        dtype=np.float64,
+    )
+    logits_imp = np.log(np.maximum(pri[legal], 1e-12)) + _sigma_scale(
+        max_visit=int(max_visit), cfg=cfg,
+    ) * completed_q
+    imp_all = _softmax(logits_imp)
+    probs = np.zeros((POLICY_SIZE,), dtype=np.float32)
+    probs[legal] = imp_all.astype(np.float32)
+
+    best_a = int(remaining[0])
+  # Gumbel sequential halving leaves the survivor at remaining[0]; map
+  # that back to its position in the full ``legal`` array (= imp_all).
+    argmax_idx = int(np.searchsorted(legal, best_a)) if legal.size > 0 else 0
+    action = sample_action_with_temperature(
+        rng, legal, imp_all, float(cfg.temperature), argmax_idx=argmax_idx,
+    )
+    value = _completed_q(root_q=root_q, root=root, action=best_a)
+    return probs, action, value
+
+
 @torch.no_grad()
 def run_gumbel_root_many(
     model: torch.nn.Module | None,
@@ -221,108 +462,43 @@ def run_gumbel_root_many(
 
     sim_budget = max(1, int(cfg.simulations))
 
-  # ── 1. Batch root evaluation ─────────────────────────────────────────────
-    if pre_pol_logits is not None and pre_wdl_logits is not None:
-  # Reuse logits computed by the caller (saves one forward pass per ply).
-        pol_logits_batch = np.asarray(pre_pol_logits, dtype=np.float32)  # (B, POLICY_SIZE)
-        wdl_logits_batch = np.asarray(pre_wdl_logits, dtype=np.float32)  # (B, 3)
-    else:
-        xs = encode_positions_batch(boards, add_features=True)
-        eval_impl = evaluator
-        if eval_impl is None:
-            if model is None:
-                raise ValueError("run_gumbel_root_many requires model or evaluator")
-            eval_impl = LocalModelEvaluator(model, device=device)
-        pol_logits_batch, wdl_logits_batch = eval_impl.evaluate_encoded(xs)
-
+  # ── 1. Batch root evaluation + resolve leaf evaluator for phase 3 ────────
+    pol_logits_batch, wdl_logits_batch, leaf_eval = _resolve_root_logits(
+        boards,
+        model=model, evaluator=evaluator, device=device,
+        pre_pol_logits=pre_pol_logits, pre_wdl_logits=pre_wdl_logits,
+    )
     root_qs = [_wdl_to_q(wdl_logits_batch[i]) for i in range(n_boards)]
 
   # ── 2. Per-board root init + Gumbel candidate selection ──────────────────
-    probs_out: list[np.ndarray | None] = [None] * n_boards
-    actions_out: list[int | None] = [None] * n_boards
-    values_out: list[float] = list(root_qs)
-
-    roots: list[Node | None] = [None] * n_boards
-    priors: list[np.ndarray | None] = [None] * n_boards
-    candidates_per_board: list[list[int] | None] = [None] * n_boards
-    remaining_per_board: list[list[int] | None] = [None] * n_boards
-    budget_remaining: list[int] = [sim_budget] * n_boards
-    gumbels_per_board: list[dict[int, float] | None] = [None] * n_boards
-
-    for i, b in enumerate(boards):
-        root, pri, mask = _init_root_from_logits(
+    states: list[_BoardSearchState] = [
+        _init_board_search_state(
             b,
             pol_logits=pol_logits_batch[i],
             root_q=float(root_qs[i]),
+            sim_budget=sim_budget,
+            cfg=cfg,
+            rng=rng,
         )
-        roots[i] = root
-        priors[i] = pri
-
-        if root.board.is_game_over():
-            probs_out[i] = np.zeros((POLICY_SIZE,), dtype=np.float32)
-            actions_out[i] = 0
-            values_out[i] = float(root.Q)
-            continue
-
-        legal = np.nonzero(mask)[0]
-
-        if legal.size == 0:
-            probs_out[i] = np.zeros((POLICY_SIZE,), dtype=np.float32)
-            actions_out[i] = 0
-            continue
-
-        if legal.size == 1:
-            a0 = int(legal[0])
-            p = np.zeros((POLICY_SIZE,), dtype=np.float32)
-            p[a0] = 1.0
-            probs_out[i] = p
-            actions_out[i] = a0
-            continue
-
-  # Gumbel noise → select top-m. Keep m small enough that sequential
-  # halving can still allocate at least one visit per action each phase.
-        log_pri = np.log(np.maximum(pri[legal], 1e-12))
-        g = _gumbel(rng, legal.size) if cfg.add_noise else np.zeros(legal.size, dtype=np.float64)
-        score: np.ndarray = g + log_pri
-
-        if sim_budget <= 1:
-            m = 1
-        else:
-            m_cap = max(2, (sim_budget + 1) // 2)
-            m = int(min(int(cfg.topk), int(legal.size), int(m_cap)))
-            m = max(2, m)
-
-        kth = min(m - 1, int(score.size) - 1)
-        top_idx = np.argpartition(-score, kth)[:m]
-        cands = legal[top_idx].astype(int).tolist()
-
-        candidates_per_board[i] = cands
-        remaining_per_board[i] = list(cands)
-        gumbels_per_board[i] = {int(a): float(gg) for a, gg in zip(legal.tolist(), g.tolist(), strict=True)}
+        for i, b in enumerate(boards)
+    ]
+    budget_remaining: list[int] = [sim_budget] * n_boards
 
   # ── 3. Sequential halving with real subtree simulations ──────────────────
-  # Resolve evaluator once for all leaf evaluations below.
-    leaf_eval: BatchEvaluator | None = evaluator
-    if leaf_eval is None and model is not None:
-        leaf_eval = LocalModelEvaluator(model, device=device)
-
     while True:
-        active = []
-        for i in range(n_boards):
-            rem_i = remaining_per_board[i]
-            if (
-                probs_out[i] is None
-                and rem_i is not None
-                and len(rem_i) >= 1
-                and budget_remaining[i] > 0
-            ):
-                active.append(i)
+        active = [
+            i for i, st in enumerate(states)
+            if st.finished_probs is None
+            and st.remaining is not None
+            and len(st.remaining) >= 1
+            and budget_remaining[i] > 0
+        ]
         if not active:
             break
 
         visits_per_action: dict[int, int] = {}
         for bi in active:
-            rem = remaining_per_board[bi]
+            rem = states[bi].remaining
             assert rem is not None
             if len(rem) <= 1:
                 visits_per_action[bi] = int(budget_remaining[bi])
@@ -333,132 +509,46 @@ def run_gumbel_root_many(
 
         max_reps = max(visits_per_action.values(), default=0)
         for rep in range(max_reps):
-            leaf_nodes: list[Node] = []
-            leaf_paths: list[list[Node]] = []
-            leaf_entries: list[tuple[int, int]] = []
-
-            for bi in active:
-                rem = remaining_per_board[bi]
-                root = roots[bi]
-                if rem is None or root is None or rep >= visits_per_action[bi]:
-                    continue
-                for action in rem:
-                    leaf, path, terminal_value = _collect_forced_leaf(
-                        root=root,
-                        forced_action=int(action),
-                        cfg=cfg,
-                    )
-                    if terminal_value is not None:
-                        _backprop(path, float(terminal_value))
-                    elif leaf is not None:
-                        leaf_nodes.append(leaf)
-                        leaf_paths.append(path)
-                        leaf_entries.append((bi, int(action)))
-
-            if not leaf_nodes:
-                continue
-
-            leaf_xs = encode_positions_batch([node.board for node in leaf_nodes], add_features=True)
-            if leaf_eval is None:
-                raise ValueError("run_gumbel_root_many requires model or evaluator")
-            pol_logits_leaf, wdl_logits_leaf = leaf_eval.evaluate_encoded(leaf_xs)
-
-            for node, path, pol_logits, wdl_logits in zip(
-                leaf_nodes, leaf_paths, pol_logits_leaf, wdl_logits_leaf, strict=True
-            ):
-                pri, _, legal_idx = _masked_priors(pol_logits, node.board)
-                if legal_idx.size > 0:
-                    _expand_sparse(node, legal_idx, pri[legal_idx])
-                _backprop(path, _wdl_to_q(wdl_logits.reshape(-1)))
+            leaf_nodes, leaf_paths = _collect_forced_leaves_round(
+                active=active, states=states,
+                visits_per_action=visits_per_action, rep=rep, cfg=cfg,
+            )
+            _evaluate_and_backprop_leaves(leaf_nodes, leaf_paths, leaf_eval)
 
         for bi in active:
-            rem = remaining_per_board[bi]
-            root = roots[bi]
-            pri = priors[bi]
-            gmap = gumbels_per_board[bi]
-            if rem is None or root is None or pri is None or gmap is None:
+            st = states[bi]
+            rem = st.remaining
+            if rem is None:
                 continue
-  # Re-bind as non-Optional locals so pyright narrows inside the lambda below.
-            pri_nn = pri
-            gmap_nn = gmap
-            root_nn = root
-
-            budget_remaining[bi] = max(0, int(budget_remaining[bi] - visits_per_action[bi] * len(rem)))
-            if len(rem) <= 1:
-                continue
-
-            max_visit = max((root_nn.children[int(a)].N for a in rem if int(a) in root_nn.children), default=0)
-            rem.sort(
-                key=lambda a: _root_score(
-                    log_prior=float(np.log(max(float(pri_nn[int(a)]), 1e-12))),
-                    gumbel=float(gmap_nn.get(int(a), 0.0)),
-                    q_hat=_completed_q(root_q=float(root_qs[bi]), root=root_nn, action=int(a)),
-                    max_visit=int(max_visit),
-                    cfg=cfg,
-                ),
-                reverse=True,
+            budget_remaining[bi] = max(
+                0, int(budget_remaining[bi] - visits_per_action[bi] * len(rem)),
             )
-            remaining_per_board[bi] = rem[: max(1, (len(rem) + 1) // 2)]
+            _halve_remaining_for_board(st, root_q=float(root_qs[bi]), cfg=cfg)
 
-  # ── 4. Build improved policies ────────────────────────────────────────────
-    for i in range(n_boards):
-        if probs_out[i] is not None:
-            continue  # handled (empty / single-legal cases)
-
-        root = roots[i]
-        cands = candidates_per_board[i]
-        pri = priors[i]
-        remaining = remaining_per_board[i]
-        if root is None or cands is None or pri is None or remaining is None:
-            probs_out[i] = np.zeros((POLICY_SIZE,), dtype=np.float32)
-            actions_out[i] = 0
-            continue
-
-        legal = np.nonzero(pri > 0)[0].astype(int)
-        max_visit = max((root.children[int(a)].N for a in legal if int(a) in root.children), default=0)
-        completed_q = np.array(
-            [_completed_q(root_q=float(root_qs[i]), root=root, action=int(a)) for a in legal],
-            dtype=np.float64,
-        )
-        logits_imp = np.log(np.maximum(pri[legal], 1e-12)) + _sigma_scale(
-            max_visit=int(max_visit),
-            cfg=cfg,
-        ) * completed_q
-        imp_all = _softmax(logits_imp)
-        probs = np.zeros((POLICY_SIZE,), dtype=np.float32)
-        probs[legal] = imp_all.astype(np.float32)
-
-        best_a = int(remaining[0])
-  # Gumbel sequential halving leaves the survivor at remaining[0]; map
-  # that back to its position in the full ``legal`` array (= imp_all).
-        argmax_idx = int(np.searchsorted(legal, best_a)) if legal.size > 0 else 0
-        action = sample_action_with_temperature(
-            rng, legal, imp_all, float(cfg.temperature),
-            argmax_idx=argmax_idx,
-        )
-
-        probs_out[i] = probs
-        actions_out[i] = action
-
-        values_out[i] = _completed_q(root_q=float(root_qs[i]), root=root, action=best_a)
-
-  # Build legal masks from root children
+  # ── 4. Build improved policies + legal masks ─────────────────────────────
+    probs_out: list[np.ndarray] = []
+    actions_out: list[int] = []
+    values_out: list[float] = []
     legal_masks_out: list[np.ndarray] = []
-    for i in range(n_boards):
-        root = roots[i]
+    for i, st in enumerate(states):
+        if st.finished_probs is not None:
+            probs_out.append(st.finished_probs)
+            actions_out.append(int(st.finished_action or 0))
+            values_out.append(float(st.finished_value if st.finished_value is not None else root_qs[i]))
+        else:
+            probs, action, value = _build_improved_policy_for_board(
+                st, root_q=float(root_qs[i]), cfg=cfg, rng=rng,
+            )
+            probs_out.append(probs)
+            actions_out.append(action)
+            values_out.append(value)
+
         mask = np.zeros((POLICY_SIZE,), dtype=np.bool_)
-        if root is not None:
-            for a in root.children:
-                mask[a] = True
+        for a in st.root.children:
+            mask[a] = True
         legal_masks_out.append(mask)
 
-  # Every slot of probs_out/actions_out is set above (terminal/fallback/main paths).
-    return (
-        cast(list[np.ndarray], probs_out),
-        cast(list[int], actions_out),
-        values_out,
-        legal_masks_out,
-    )
+    return probs_out, actions_out, values_out, legal_masks_out
 
 
 @torch.no_grad()

@@ -68,6 +68,100 @@ def _tb_adjudicate_active_games(state: SelfplayState) -> int:
     return adjudicated
 
 
+def _run_step(
+    state: SelfplayState,
+    *,
+    net_idxs: list[int],
+    sp_opp_idxs: list[int],
+    cur_opp_idxs: list[int],
+    stockfish: StockfishUCI | StockfishPool,
+) -> tuple[float, float]:
+    """Network + SF turn for one step. Returns ``(net_seconds, sf_seconds)``.
+
+    Pipelines SF I/O with GPU work: curriculum SF queries dispatch first
+    (disjoint boards), then the combined net+sp_opp MCTS turn runs while
+    those queries fly, then selfplay-opp SF dispatches before collecting
+    curriculum responses, etc.
+    """
+    t_net = 0.0
+    t_sf = 0.0
+    is_pool = isinstance(stockfish, StockfishPool)
+
+    # Curriculum SF first — boards are disjoint, so we overlap SF I/O with
+    # the combined network turn below.
+    cur_futures: dict[int, Any] | None = None
+    if cur_opp_idxs and is_pool:
+        t0 = time.time()
+        cur_futures = submit_sf_queries(state, cur_opp_idxs)
+        t_sf += time.time() - t0
+
+    # Combined network turn: merge net_idxs + sp_opp_idxs into one MCTS call
+    # for GPU batch-size doubling. Disjoint + independent.
+    combined_net_idxs = net_idxs + sp_opp_idxs
+    if combined_net_idxs:
+        t0 = time.time()
+        run_network_turn(state, combined_net_idxs)
+        t_net += time.time() - t0
+
+    # Selfplay-opp SF queries right after the net turn (boards now have the
+    # move pushed) so they overlap with the curriculum SF collect below.
+    sp_futures: dict[int, Any] | None = None
+    if sp_opp_idxs and is_pool:
+        t0 = time.time()
+        sp_futures = submit_sf_queries(state, sp_opp_idxs)
+        t_sf += time.time() - t0
+
+    if cur_opp_idxs:
+        t0 = time.time()
+        finish_sf_annotation_and_moves(
+            state, cur_opp_idxs, play_curriculum_moves=True, futures=cur_futures,
+        )
+        t_sf += time.time() - t0
+
+    if sp_opp_idxs:
+        t0 = time.time()
+        finish_sf_annotation_and_moves(
+            state, sp_opp_idxs, play_curriculum_moves=True, futures=sp_futures,
+        )
+        t_sf += time.time() - t0
+        # Label queries for still-live selfplay slots: submit async now,
+        # collect after (overlaps with finalization for free).
+        sp_label_idxs = [i for i in sp_opp_idxs if not state.done_arr[i]]
+        sp_label_futures: dict[int, Any] | None = None
+        if sp_label_idxs and is_pool:
+            t0 = time.time()
+            sp_label_futures = submit_sf_queries(state, sp_label_idxs)
+            t_sf += time.time() - t0
+        if sp_label_idxs:
+            t0 = time.time()
+            finish_sf_annotation_and_moves(
+                state, sp_label_idxs,
+                play_curriculum_moves=False, futures=sp_label_futures,
+            )
+            t_sf += time.time() - t0
+
+    return t_net, t_sf
+
+
+def _finalize_completed_slots(
+    state: SelfplayState,
+    *,
+    all_samples: list[ReplaySample],
+    on_game_complete: Callable[[CompletedGameBatch], None] | None,
+    batch_size: int,
+    continuous: bool,
+    target: int,
+) -> None:
+    """Finalize done-but-not-yet-finalized games; recycle slots while target allows."""
+    for i in range(batch_size):
+        if state.done_arr[i] and not state.finalized_arr[i]:
+            finalize_game(state, i, all_samples, on_game_complete)
+            state.finalized_arr[i] = 1
+            state.games_completed += 1
+            if continuous or state.games_started < target:
+                state.recycle_slot(i)
+
+
 def play_batch(
     model: torch.nn.Module | None,
     *,
@@ -143,11 +237,10 @@ def play_batch(
         if stop_fn is not None and stop_fn():
             break
 
-        # Tablebase adjudication before the classify pass. Any game that's
-        # now TB-eligible gets marked done; the classify will then skip it
-        # and the finalize path uses the stashed TB result. Runs at most
-        # once per game — the ``state.tb_result_arr`` stash is the
-        # idempotency key.
+        # Tablebase adjudication before classify_active_slots. Any TB-eligible
+        # game gets marked done; classify then skips it and finalize uses the
+        # stashed TB result. Runs at most once per game (state.tb_result_arr
+        # is the idempotency key).
         if state.tb_probe is not None and game.syzygy_adjudicate:
             _tb_adjudicate_active_games(state)
 
@@ -155,73 +248,26 @@ def play_batch(
         if all_done:
             break
 
-        # Submit SF queries for curriculum games FIRST — curriculum boards
-        # are disjoint from net/selfplay boards, so we can overlap SF I/O
-        # with the combined network turn below.
-        cur_futures: dict[int, Any] | None = None
-        if cur_opp_idxs and isinstance(stockfish, StockfishPool):
-            t0 = time.time()
-            cur_futures = submit_sf_queries(state, cur_opp_idxs)
-            t_sf += time.time() - t0
+        net_dt, sf_dt = _run_step(
+            state, net_idxs=net_idxs, sp_opp_idxs=sp_opp_idxs,
+            cur_opp_idxs=cur_opp_idxs, stockfish=stockfish,
+        )
+        t_net += net_dt
+        t_sf += sf_dt
 
-        # Combined network turn: merge net_idxs + sp_opp_idxs into one
-        # MCTS call for GPU batch-size doubling.  Disjoint + independent.
-        combined_net_idxs = net_idxs + sp_opp_idxs
-        if combined_net_idxs:
-            t0 = time.time()
-            run_network_turn(state, combined_net_idxs)
-            t_net += time.time() - t0
-
-        # Submit selfplay SF queries right after network turn (boards now
-        # have the move pushed) so they overlap with the curriculum collect.
-        sp_futures: dict[int, Any] | None = None
-        if sp_opp_idxs and isinstance(stockfish, StockfishPool):
-            t0 = time.time()
-            sp_futures = submit_sf_queries(state, sp_opp_idxs)
-            t_sf += time.time() - t0
-
-        if cur_opp_idxs:
-            t0 = time.time()
-            finish_sf_annotation_and_moves(
-                state, cur_opp_idxs, play_curriculum_moves=True, futures=cur_futures,
-            )
-            t_sf += time.time() - t0
-
-        if sp_opp_idxs:
-            t0 = time.time()
-            finish_sf_annotation_and_moves(
-                state, sp_opp_idxs, play_curriculum_moves=True, futures=sp_futures,
-            )
-            t_sf += time.time() - t0
-            # Label queries for still-live selfplay slots: submit async now,
-            # collect after (overlaps with finalization for free).
-            sp_label_idxs = [i for i in sp_opp_idxs if not state.done_arr[i]]
-            sp_label_futures: dict[int, Any] | None = None
-            if sp_label_idxs and isinstance(stockfish, StockfishPool):
-                t0 = time.time()
-                sp_label_futures = submit_sf_queries(state, sp_label_idxs)
-                t_sf += time.time() - t0
-            if sp_label_idxs:
-                t0 = time.time()
-                finish_sf_annotation_and_moves(
-                    state, sp_label_idxs,
-                    play_curriculum_moves=False, futures=sp_label_futures,
-                )
-                t_sf += time.time() - t0
-
-        # Finalize completed games and recycle slots while target allows.
-        for i in range(batch_size):
-            if state.done_arr[i] and not state.finalized_arr[i]:
-                finalize_game(state, i, all_samples, on_game_complete)
-                state.finalized_arr[i] = 1
-                state.games_completed += 1
-                if continuous or state.games_started < target:
-                    state.recycle_slot(i)
+        _finalize_completed_slots(
+            state, all_samples=all_samples,
+            on_game_complete=on_game_complete,
+            batch_size=batch_size, continuous=continuous, target=target,
+        )
 
         # Reset tree when it grows unbounded and no roots reference old nodes.
-        if state.mcts_tree is not None and state.mcts_tree.node_count() > 500_000:
-            if all(rid < 0 for rid in state.root_ids):
-                state.mcts_tree.reset()
+        if (
+            state.mcts_tree is not None
+            and state.mcts_tree.node_count() > 500_000
+            and all(rid < 0 for rid in state.root_ids)
+        ):
+            state.mcts_tree.reset()
 
     logging.getLogger("chess_anti_engine.worker").info(
         "play_batch timing: net=%.1fs sf=%.1fs (net %.0f%%, sf %.0f%%)",

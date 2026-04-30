@@ -60,6 +60,106 @@ def _padded_batch_size(bsz: int) -> int:
     return bsz
 
 
+def _apply_forced_moves(state: SelfplayState, net_idxs: list[int]) -> list[int]:
+    """Push the only-legal-move for each forced game and return remaining indices.
+
+    Forced-move (only one legal move) games skip both NN eval and MCTS — the
+    policy target would collapse to one-hot regardless and the value head
+    can't compare alternatives. ``state.boards`` is only kept in sync with
+    ``state.cboards`` on the Python fallback path; the C-ply fast path
+    replays history from ``move_idx_history`` instead.
+    """
+    forced_idxs: list[int] = []
+    forced_actions: list[int] = []
+    play_idxs: list[int] = []
+    for idx in net_idxs:
+        legal = state.cboards[idx].legal_move_indices()
+        if legal.size == 1:
+            forced_idxs.append(idx)
+            forced_actions.append(int(legal[0]))
+        else:
+            play_idxs.append(idx)
+    if not forced_idxs:
+        return play_idxs
+    for idx, act in zip(forced_idxs, forced_actions, strict=True):
+        state.cboards[idx].push_index(act)
+        if not state.has_c_ply:
+            state.boards[idx].push(index_to_move(act, state.boards[idx]))
+        state.move_idx_history[idx].append(act)
+        state.last_net_full[idx] = True
+        if state.cboards[idx].is_game_over():
+            state.done_arr[idx] = 1
+  # No tree carryover — without an MCTS root expansion there's nothing to reuse.
+        if state.mcts_tree is not None:
+            state.root_ids[idx] = -1
+    return play_idxs
+
+
+def _evaluate_root_batch(
+    state: SelfplayState, net_idxs: list[int],
+) -> tuple[np.ndarray | None, np.ndarray, np.ndarray, np.ndarray]:
+    """Encode + run one batched root NN eval.
+
+    Returns ``(xs_batch_or_None, pol_logits, wdl_logits_raw, wdl_softmax)``.
+    The fast path encodes into the evaluator's pinned input buffer (zero-copy
+    H2D), in which case ``xs_batch`` is None — callers that need per-game x
+    arrays must use the fallback path.
+    """
+    eval_impl = state.evaluator
+    bsz = len(net_idxs)
+    padded_bsz = _padded_batch_size(bsz)
+    cb_encode_list = [state.cboards[idx] for idx in net_idxs]
+
+    use_inplace = state.batch_enc_146 is not None and hasattr(eval_impl, "get_input_buffer")
+    if use_inplace:
+  # evaluate_inplace + get_input_buffer exist on DirectGPU-style evaluators only.
+        buf = eval_impl.get_input_buffer(padded_bsz)  # pyright: ignore[reportAttributeAccessIssue]
+        assert state.batch_enc_146 is not None
+        state.batch_enc_146(cb_encode_list, buf)
+        pol_padded, wdl_padded = eval_impl.evaluate_inplace(  # pyright: ignore[reportAttributeAccessIssue]
+            padded_bsz, copy_out=True,
+        )
+        xs_batch: np.ndarray | None = None
+    else:
+        xs_batch = np.empty((bsz, 146, 8, 8), dtype=np.float32)
+        if state.batch_enc_146 is not None:
+            state.batch_enc_146(cb_encode_list, xs_batch)
+        else:
+            for j, idx in enumerate(net_idxs):
+                xs_batch[j] = state.cboards[idx].encode_146()
+        if padded_bsz > bsz:
+            pad = np.zeros((padded_bsz - bsz, *xs_batch.shape[1:]), dtype=xs_batch.dtype)
+            xs_padded = np.concatenate([xs_batch, pad], axis=0)
+        else:
+            xs_padded = xs_batch
+        pol_padded, wdl_padded = eval_impl.evaluate_encoded(xs_padded)
+
+    pol_logits = pol_padded[:bsz]
+    wdl_logits_raw = wdl_padded[:bsz]
+  # Pure numpy softmax avoids torch tensor roundtrip for small arrays.
+    wdl_f = wdl_logits_raw.astype(np.float64, copy=True)
+    wdl_f -= wdl_f.max(axis=-1, keepdims=True)
+    np.exp(wdl_f, out=wdl_f)
+    wdl_f /= wdl_f.sum(axis=-1, keepdims=True)
+    return xs_batch, pol_logits, wdl_logits_raw, wdl_f.astype(np.float32, copy=False)
+
+
+def _compute_resign_weights(
+    state: SelfplayState, wdl_est: np.ndarray, net_idxs: list[int],
+) -> list[float]:
+    """Soft-resign sample weights based on consecutive low-winrate plies."""
+    sample_weights = [1.0] * len(net_idxs)
+    for j, idx in enumerate(net_idxs):
+        win_p = float(wdl_est[j][0])
+        if win_p < SOFT_RESIGN_THRESHOLD:
+            state.consecutive_low_winrate[idx] += 1
+        else:
+            state.consecutive_low_winrate[idx] = 0
+        if state.consecutive_low_winrate[idx] >= SOFT_RESIGN_CONSECUTIVE:
+            sample_weights[j] = 0.1 + 0.9 * (win_p / SOFT_RESIGN_THRESHOLD)
+    return sample_weights
+
+
 def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
     """Run one network turn for the games in ``net_idxs``.
 
@@ -74,43 +174,9 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
     if not net_idxs:
         return
 
-    # Forced-move short-circuit: games whose current position has exactly one
-    # legal move skip both the NN eval and the MCTS step entirely. The policy
-    # target would collapse to one-hot regardless, the value head can't
-    # influence the choice (no alternative to compare against), and the move
-    # is mechanically determined. Saves a slot in the NN batch + skips one
-    # _NetRecord that would carry no policy signal anyway. Note: state.boards
-    # in the C-ply fast path stays at the starting position (history is replayed
-    # from move_idx_history), so we only push to cboards here.
-    forced_idxs: list[int] = []
-    forced_actions: list[int] = []
-    play_idxs: list[int] = []
-    for _idx in net_idxs:
-        _li = state.cboards[_idx].legal_move_indices()
-        if _li.size == 1:
-            forced_idxs.append(_idx)
-            forced_actions.append(int(_li[0]))
-        else:
-            play_idxs.append(_idx)
-    if forced_idxs:
-        for _idx, _act in zip(forced_idxs, forced_actions, strict=True):
-            state.cboards[_idx].push_index(_act)
-            if not state.has_c_ply:
-                # Python fallback path keeps state.boards in sync with cboards.
-                state.boards[_idx].push(index_to_move(_act, state.boards[_idx]))
-            state.move_idx_history[_idx].append(_act)
-            state.last_net_full[_idx] = True
-            if state.cboards[_idx].is_game_over():
-                state.done_arr[_idx] = 1
-            # No tree carryover — without an MCTS root expansion, there's
-            # nothing to reuse next ply.
-            if state.mcts_tree is not None:
-                state.root_ids[_idx] = -1
-        if not play_idxs:
-            return
-        # Continue with only the remaining games. Re-bind net_idxs locally so
-        # the rest of the function operates on the multi-legal-move subset.
-        net_idxs = play_idxs
+    net_idxs = _apply_forced_moves(state, net_idxs)
+    if not net_idxs:
+        return
 
     eval_impl = state.evaluator
     rng = state.rng
@@ -118,63 +184,13 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
     temp = state.temp
     diff_focus = state.diff_focus
 
-    _bsz = len(net_idxs)
-    _padded_bsz = _padded_batch_size(_bsz)
-
+    xs_batch, pol_logits, wdl_logits_raw, wdl_est = _evaluate_root_batch(state, net_idxs)
     _cb_encode_list = [state.cboards[_idx] for _idx in net_idxs]
 
-    # Fast path: encode directly into evaluator's pinned buffer (zero-copy H2D)
-    _use_inplace = state.batch_enc_146 is not None and hasattr(eval_impl, "get_input_buffer")
-    if _use_inplace:
-        # get_input_buffer + evaluate_inplace exist only on DirectGPU-style evaluators;
-        # _use_inplace is the runtime guard.
-        _buf = eval_impl.get_input_buffer(_padded_bsz)  # type: ignore[attr-defined]
-        # batch_encode_146 memsets + encodes into first _bsz slots;
-        # remaining slots are zero-padded by get_input_buffer's pinned memory.
-        assert state.batch_enc_146 is not None
-        state.batch_enc_146(_cb_encode_list, _buf)
-        pol_logits_padded, wdl_logits_raw_padded = eval_impl.evaluate_inplace(  # type: ignore[attr-defined]
-            _padded_bsz, copy_out=True,
-        )
-        xs_batch: np.ndarray | None = None
-    else:
-        xs_batch = np.empty((_bsz, 146, 8, 8), dtype=np.float32)
-        if state.batch_enc_146 is not None:
-            state.batch_enc_146(_cb_encode_list, xs_batch)
-        else:
-            for _j, _idx in enumerate(net_idxs):
-                xs_batch[_j] = state.cboards[_idx].encode_146()
-        if _padded_bsz > _bsz:
-            _pad = np.zeros((_padded_bsz - _bsz, *xs_batch.shape[1:]), dtype=xs_batch.dtype)
-            xs_padded = np.concatenate([xs_batch, _pad], axis=0)
-        else:
-            xs_padded = xs_batch
-        pol_logits_padded, wdl_logits_raw_padded = eval_impl.evaluate_encoded(xs_padded)
-
-    pol_logits = pol_logits_padded[:_bsz]
-    wdl_logits_raw = wdl_logits_raw_padded[:_bsz]
-    # Pure numpy softmax (avoids torch tensor creation roundtrip for small arrays)
-    wdl_f = wdl_logits_raw.astype(np.float64, copy=True)
-    wdl_f -= wdl_f.max(axis=-1, keepdims=True)
-    np.exp(wdl_f, out=wdl_f)
-    wdl_f /= wdl_f.sum(axis=-1, keepdims=True)
-    wdl_est = wdl_f.astype(np.float32, copy=False)
-
     is_full = rng.random(size=len(net_idxs)) < float(search.playout_cap_fraction)
-
     full_sims = int(search.simulations)
     fast_sims = int(search.fast_simulations)
-    sample_weights = [1.0] * len(net_idxs)
-    for j, idx in enumerate(net_idxs):
-        win_p = float(wdl_est[j][0])
-        if win_p < SOFT_RESIGN_THRESHOLD:
-            state.consecutive_low_winrate[idx] += 1
-        else:
-            state.consecutive_low_winrate[idx] = 0
-
-        if state.consecutive_low_winrate[idx] >= SOFT_RESIGN_CONSECUTIVE:
-            ratio = win_p / SOFT_RESIGN_THRESHOLD
-            sample_weights[j] = 0.1 + 0.9 * ratio
+    sample_weights = _compute_resign_weights(state, wdl_est, net_idxs)
 
     probs_list: list[np.ndarray | None] = [None] * len(net_idxs)
     actions: list[int | None] = [None] * len(net_idxs)
