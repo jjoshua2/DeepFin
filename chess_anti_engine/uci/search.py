@@ -472,6 +472,78 @@ class SearchWorker:
         self._invalidate_root_caches()
         return True
 
+    def _try_tb_shortcut(
+        self, board: chess.Board, tb_probe, deadline: Deadline, info_cb: InfoCallback | None,
+    ) -> SearchResult | None:
+        """If TB knows the answer at root, return DTZ-optimal move directly.
+
+        MCTS picks by visits — in a TB-win with Q=1.0 everywhere that reduces
+        to "most-popular NN prior" and yields valid but DTZ-suboptimal play.
+        Bypassing MCTS here is a correctness win, not just a speed win.
+        """
+        if tb_probe is None:
+            return None
+        short = _try_tb_root_bestmove(board, tb_probe)
+        if short is None:
+            return None
+        if info_cb is not None:
+  # TB-decisive positions get saturated cp; no per-line q to derive
+  # a wdl, so we omit the wdl field.
+            info_cb(
+                nodes=short.nodes,
+                elapsed_ms=deadline.elapsed_ms(),
+                score_cp=short.score_cp,
+                pv=short.pv,
+                tbhits=short.tbhits,
+                score_mate=short.score_mate,
+                multipv=1 if self._multi_pv > 1 else None,
+                wdl=None,
+            )
+        return short
+
+    def _ensure_root_eval_cached(self, board: chess.Board, tb_probe) -> None:
+        """Cache root NN eval once per search.
+
+        The root position is the same every chunk; doing the eval once and
+        passing pre_pol_logits/pre_wdl_logits into each chunk skips a ~1ms GPU
+        call per chunk and lets us share the encoding across chunks.
+        """
+        if self._root_pol_logits is not None and self._root_wdl_logits is not None:
+            return
+        xs = np.empty((1, 146, 8, 8), dtype=np.float32)
+        root_cb = CBoard.from_board(board)
+        xs[0] = root_cb.encode_146()
+        pol, wdl = self._evaluator.evaluate_encoded(xs)
+        pol_np = np.asarray(pol, dtype=np.float32)
+        wdl_np = np.asarray(wdl, dtype=np.float32).copy()
+  # Probe at root so score_cp reflects TB truth on the very first chunk's
+  # info emission, before MCTS has back-propagated it.
+        if tb_probe is not None:
+            tb_probe.apply([root_cb], wdl_np)
+        self._root_pol_logits = pol_np
+        self._root_wdl_logits = wdl_np
+
+    def _pre_expand_root_for_pool(self, board: chess.Board) -> None:
+        """Pool paths race on the root's first descent so it must be expanded
+        upfront. The classic gumbel path does this internally."""
+        if self._pucv_pool is not None:
+            self._ensure_pucv_pool_root_expanded(board)
+        elif self._walker_pool is not None:
+            self._ensure_walker_root_expanded(board)
+        elif self._pucv is not None:
+            self._ensure_pucv_root_expanded(board)
+
+    def _run_one_chunk(
+        self, chunk: int, board: chess.Board, stop_event: threading.Event, tb_probe,
+    ) -> float:
+        if self._pucv_pool is not None:
+            return self._run_pucv_pool_chunk(chunk, stop_event)
+        if self._walker_pool is not None:
+            return self._run_walker_chunk(chunk, stop_event)
+        if self._pucv is not None:
+            return self._run_pucv_chunk(chunk)
+        return self._run_gumbel_chunk(chunk, board, tb_probe)
+
     def run(
         self,
         board: chess.Board,
@@ -495,67 +567,22 @@ class SearchWorker:
             self._tree_fen = fen
             self._invalidate_root_caches()
 
-        total_nodes = 0
-        last_info_ms = -1
-        last_value = 0.0
-        pv_indices: list[int] = []
         tb_probe = self._tb_probe
         if tb_probe is not None:
             tb_probe.reset_counts()
 
-  # TB root shortcut: if the root position is TB-eligible, the tables
-  # know the move exactly (DTZ-optimal for decisive; any for drawn).
-  # MCTS adds nothing and, worse, picks by visits — which in a TB-win
-  # with Q=1.0 everywhere reduces to "most-popular NN prior", yielding
-  # a valid but DTZ-sub-optimal sequence. Skip straight to the answer.
-        if tb_probe is not None:
-            short = _try_tb_root_bestmove(board, tb_probe)
-            if short is not None:
-                if info_cb is not None:
-  # TB root shortcut emits one line; no per-line q to
-  # derive a wdl from, so we skip the wdl field here.
-  # (TB-decisive positions get saturated cp anyway.)
-                    info_cb(
-                        nodes=short.nodes,
-                        elapsed_ms=deadline.elapsed_ms(),
-                        score_cp=short.score_cp,
-                        pv=short.pv,
-                        tbhits=short.tbhits,
-                        score_mate=short.score_mate,
-                        multipv=1 if self._multi_pv > 1 else None,
-                        wdl=None,
-                    )
-                return short
+        short = self._try_tb_shortcut(board, tb_probe, deadline, info_cb)
+        if short is not None:
+            return short
 
-  # Root eval is the same every chunk (same position, same net). Do it
-  # once here and pass pre_pol_logits/pre_wdl_logits into each chunk so
-  # the C path skips its own root GPU call. Saves ~1ms × (chunks-1) per
-  # search and lets us hand-share the encoding across chunks for free.
-        if self._root_pol_logits is None or self._root_wdl_logits is None:
-            xs = np.empty((1, 146, 8, 8), dtype=np.float32)
-            root_cb = CBoard.from_board(board)
-            xs[0] = root_cb.encode_146()
-            pol, wdl = self._evaluator.evaluate_encoded(xs)
-            pol_np = np.asarray(pol, dtype=np.float32)
-            wdl_np = np.asarray(wdl, dtype=np.float32).copy()
-  # Probe at root so score_cp reflects TB truth on the very first
-  # chunk's info emission, before MCTS has back-propagated it.
-            if tb_probe is not None:
-                tb_probe.apply([root_cb], wdl_np)
-            self._root_pol_logits = pol_np
-            self._root_wdl_logits = wdl_np
+        self._ensure_root_eval_cached(board, tb_probe)
+        self._pre_expand_root_for_pool(board)
 
-  # Walker-pool path pre-expands the root from the cached logits so
-  # the concurrent walkers don't race on it. The classic path does
-  # this internally in run_gumbel_root_many_c. The pucv path also
-  # needs the root pre-expanded (batch_descend expects it).
-        if self._pucv_pool is not None:
-            self._ensure_pucv_pool_root_expanded(board)
-        elif self._walker_pool is not None:
-            self._ensure_walker_root_expanded(board)
-        elif self._pucv is not None:
-            self._ensure_pucv_root_expanded(board)
-
+        total_nodes = 0
+        last_info_ms = -1
+        last_value = 0.0
+        pv_indices: list[int] = []
+        elapsed = 0
         while True:
             chunk = self._chunk_sims
             if max_nodes is not None:
@@ -564,19 +591,12 @@ class SearchWorker:
                     break
                 chunk = min(chunk, remaining)
 
-            if self._pucv_pool is not None:
-                last_value = self._run_pucv_pool_chunk(chunk, stop_event)
-            elif self._walker_pool is not None:
-                last_value = self._run_walker_chunk(chunk, stop_event)
-            elif self._pucv is not None:
-                last_value = self._run_pucv_chunk(chunk)
-            else:
-                last_value = self._run_gumbel_chunk(chunk, board, tb_probe)
+            last_value = self._run_one_chunk(chunk, board, stop_event, tb_probe)
             total_nodes += int(chunk)
 
-  # PV extraction is only needed for info emission (rate-limited)
-  # and for max_depth termination. Skip otherwise — saves a handful
-  # of tree walks per second on chunk=512 at ~5 nps/chunk.
+  # PV extraction is only needed for info emission (rate-limited) and
+  # for max_depth termination. Skip otherwise — saves a handful of tree
+  # walks per second on chunk=512 at ~5 nps/chunk.
             elapsed = deadline.elapsed_ms() if info_cb is not None else 0
             need_pv = (
                 (info_cb is not None and elapsed - last_info_ms >= _INFO_EMIT_INTERVAL_MS)
@@ -584,9 +604,6 @@ class SearchWorker:
             )
             if need_pv:
                 assert self._tree is not None and self._root_id is not None
-  # Extract the PV we use for max_depth termination first —
-  # that's just the single most-visited line regardless of
-  # multi_pv setting.
                 _, pv_indices = _best_move_and_pv(self._tree, self._root_id)
                 if info_cb is not None and elapsed - last_info_ms >= _INFO_EMIT_INTERVAL_MS:
                     self._emit_pv_info(
@@ -604,8 +621,7 @@ class SearchWorker:
             if (self._max_tree_bytes > 0
                     and self._tree is not None
                     and self._tree.memory_bytes() >= self._max_tree_bytes):
-  # Don't try to grow into swap; halt with the best move we have.
-  # Info-string so GUIs/logs surface the reason.
+  # Don't grow into swap; halt with the best move we have.
                 if info_cb is not None:
                     assert self._root_id is not None
                     self._emit_pv_info(
@@ -623,12 +639,11 @@ class SearchWorker:
             _index_to_uci(_board_after(board, bestmove_idx), ponder_idx)
             if ponder_idx is not None else None
         )
-        pv = _uci_pv(board, pv_indices)
         return SearchResult(
             bestmove_uci=bestmove,
             ponder_uci=ponder,
             nodes=total_nodes,
-            pv=pv,
+            pv=_uci_pv(board, pv_indices),
             score_cp=q_to_cp(0.5 * (last_value + 1.0)),
             tbhits=tb_probe.hits if tb_probe is not None else 0,
             score_mate=_pv_mate_moves(board, pv_indices),

@@ -458,9 +458,73 @@ class ThreadedBatchEvaluator:
         self._queue.put(None)
         self._gpu_thread.join(timeout=5.0)
 
+    @staticmethod
+    def _is_model_update(item: object) -> bool:
+        """Sentinel detection: model-update items are ``(str, model, event)`` tuples
+        instead of the normal ``(np.ndarray, event, result_dict)``."""
+        return isinstance(item, tuple) and len(item) == 3 and isinstance(item[0], str)
+
+    def _accumulate_batch(self, first) -> list:
+        """Pull items from the queue until min_batch is hit or timeout expires.
+
+        Returns the list of pending items (always includes ``first``). Items
+        that would overflow ``max_batch`` or model-update sentinels are pushed
+        back onto the queue for the next loop iteration.
+        """
+        pending = [first]
+        total = first[0].shape[0]
+        deadline = time.monotonic() + self._timeout
+        while total < self._min_batch and total < self._max_batch and time.monotonic() < deadline:
+            try:
+                item = self._queue.get(timeout=max(0.0001, deadline - time.monotonic()))
+            except queue.Empty:
+                break
+            if item is None:
+                break
+            if self._is_model_update(item):
+  # Defer model-swap until pending batch processes with current model.
+                self._queue.put(item)
+                break
+            item_size = item[0].shape[0]
+            if total + item_size > self._max_batch:
+                self._queue.put(item)
+                break
+            pending.append(item)
+            total += item_size
+        return pending
+
+    def _build_padded_batch(self, pending: list) -> tuple[np.ndarray, int]:
+        """Concat + bucket-pad pending inputs. Returns ``(combined, real_total)``."""
+        total = sum(p[0].shape[0] for p in pending)
+        combined = pending[0][0] if len(pending) == 1 else np.concatenate([p[0] for p in pending], axis=0)
+        padded_size = total
+        for b in _COMPILED_BATCH_BUCKETS:
+            if b >= total:
+                padded_size = min(b, self._max_batch)
+                break
+        if padded_size > total:
+            pad = np.zeros((padded_size - total, *combined.shape[1:]), dtype=combined.dtype)
+            combined = np.concatenate([combined, pad], axis=0)
+        return combined, total
+
+    @staticmethod
+    def _propagate_error_to_pending(pending: list, exc: BaseException) -> None:
+        for _x, event, result in pending:  # skylos: ignore (_x unpacked but unused by convention)
+            result["error"] = str(exc)
+            event.set()
+
+    @staticmethod
+    def _scatter_results(pending: list, pol_all: np.ndarray, wdl_all: np.ndarray) -> None:
+        offset = 0
+        for x, event, result in pending:
+            n = x.shape[0]
+            result["pol"] = pol_all[offset:offset + n].copy()
+            result["wdl"] = wdl_all[offset:offset + n].copy()
+            offset += n
+            event.set()
+
     def _gpu_loop(self) -> None:
         """Dedicated GPU thread: accumulate requests, run batched inference."""
-
         try:
             self._gpu_eval = DirectGPUEvaluator(
                 self._model, device=self.device, max_batch=self._max_batch,
@@ -470,7 +534,6 @@ class ThreadedBatchEvaluator:
             self._gpu_ready.set()  # Unblock constructor even on failure
 
         while not self._stop:
-  # Wait for first request
             try:
                 first = self._queue.get(timeout=0.1)
             except queue.Empty:
@@ -478,82 +541,30 @@ class ThreadedBatchEvaluator:
             if first is None:
                 break
 
-  # Handle model update (sentinel: string tag, not numpy array)
-            if isinstance(first, tuple) and len(first) == 3 and isinstance(first[0], str):
+            if self._is_model_update(first):
                 _, new_model, event = first
                 self._gpu_eval.model = new_model
                 event.set()
                 continue
 
-            pending = [first]
-            total = first[0].shape[0]
-
-  # Accumulate more requests up to min_batch or timeout (cap at max_batch)
-            deadline = time.monotonic() + self._timeout
-            while total < self._min_batch and total < self._max_batch and time.monotonic() < deadline:
-                try:
-                    item = self._queue.get(timeout=max(0.0001, deadline - time.monotonic()))
-                except queue.Empty:
-                    break
-                if item is None:
-                    break
-                if isinstance(item, tuple) and len(item) == 3 and isinstance(item[0], str):
-  # Model update — put it back and break so pending requests
-  # get processed with the current model first.
-                    self._queue.put(item)
-                    break
-                item_size = item[0].shape[0]
-                if total + item_size > self._max_batch:
-  # Would exceed max — put back for next round
-                    self._queue.put(item)
-                    break
-                pending.append(item)
-                total += item_size
-
+            pending = self._accumulate_batch(first)
             if not pending:
                 continue
+            combined, total = self._build_padded_batch(pending)
 
-  # Concatenate all inputs
-            if len(pending) == 1:
-                combined = pending[0][0]
-            else:
-                combined = np.concatenate([p[0] for p in pending], axis=0)
-
-  # Bucket-pad to reduce CUDA graph count
-            padded_size = total
-            for b in _COMPILED_BATCH_BUCKETS:
-                if b >= total:
-                    padded_size = min(b, self._max_batch)
-                    break
-            if padded_size > total:
-                pad = np.zeros((padded_size - total, *combined.shape[1:]), dtype=combined.dtype)
-                combined = np.concatenate([combined, pad], axis=0)
-
-  # Single GPU call — catch any error and propagate to all waiting threads
             try:
                 pol_all, wdl_all = self._gpu_eval.evaluate_encoded(combined, copy_out=False)
                 pol_all = pol_all[:total]
                 wdl_all = wdl_all[:total]
             except Exception as exc:
-                for _x, event, result in pending:  # skylos: ignore (_x unpacked but unused by convention)
-                    result["error"] = str(exc)
-                    event.set()
+                self._propagate_error_to_pending(pending, exc)
                 continue
             except BaseException as exc:
-  # Fatal (KeyboardInterrupt, SystemExit) — unblock all threads
-                for _x, event, result in pending:  # skylos: ignore (_x unpacked but unused by convention)
-                    result["error"] = str(exc)
-                    event.set()
+  # Fatal (KeyboardInterrupt, SystemExit) — unblock all threads first.
+                self._propagate_error_to_pending(pending, exc)
                 raise
 
-  # Scatter results back to each thread
-            offset = 0
-            for x, event, result in pending:
-                n = x.shape[0]
-                result["pol"] = pol_all[offset:offset + n].copy()
-                result["wdl"] = wdl_all[offset:offset + n].copy()
-                offset += n
-                event.set()
+            self._scatter_results(pending, pol_all, wdl_all)
 
 
 # Batch size buckets for AOT-compiled inference models.
@@ -1002,81 +1013,93 @@ class SlotBroker:
 
   # -- main loop --
 
+    def _wait_for_ready_slots(self) -> bool:
+        """Tight-spin with 20µs yield until at least one slot becomes ready.
+
+        Returns False to skip the rest of the loop iteration (no slot ready
+        within the spin budget).
+        """
+        for _ in range(200):
+            if any(s.state == _STATE_REQUEST for s in self._slots):
+                return True
+        time.sleep(0.00002)
+        return False
+
+    def _gather_more_within_window(self, ready: list) -> None:
+        """Block up to ``batch_wait_ms`` for more slots to enter REQUEST state.
+
+        Mutates ``ready`` in place. Exits early if all slots have responded
+        (request/response/shutdown — no more can arrive) or the window fills.
+        """
+        if self.batch_wait_ms <= 0:
+            return
+        deadline = time.monotonic() + (self.batch_wait_ms / 1000.0)
+        while time.monotonic() < deadline:
+            if all(
+                s.state in (_STATE_REQUEST, _STATE_RESPONSE, _STATE_SHUTDOWN)
+                for s in self._slots
+            ):
+                return
+            more = [s for s in self._slots if s.state == _STATE_REQUEST and s not in ready]
+            if more:
+                ready.extend(more)
+            if len(ready) >= len(self._slots):
+                return
+            time.sleep(0.0001)
+
+    def _maybe_print_broker_metrics(self, m: dict, now: float, report_interval: float) -> None:
+        """Print broker throughput once per ``report_interval`` and reset counters."""
+        if not (now - m["last_report"] >= report_interval and m["batches"] > 0):
+            return
+        avg_pos = m["positions"] / m["batches"]
+        avg_slots = m["slots"] / m["batches"]
+  # Capacity = num_slots × max_batch_per_slot. Fullness < ~50% = small batches
+  # (dispatch-bound); > 80% = saturated.
+        capacity_per_batch = len(self._slots) * self._layout.max_batch
+        fullness = (100.0 * avg_pos / capacity_per_batch) if capacity_per_batch else 0.0
+        print(
+            f"[broker] {m['batches']} batches in {now - m['last_report']:.1f}s | "
+            f"avg {avg_pos:.1f} pos/batch ({fullness:.0f}% of {capacity_per_batch}-cap), "
+            f"{avg_slots:.1f}/{len(self._slots)} slots/batch | "
+            f"{m['positions'] / (now - m['last_report']):.0f} pos/s",
+            flush=True,
+        )
+        m["batches"] = 0
+        m["positions"] = 0
+        m["slots"] = 0
+        m["last_report"] = now
+
     def serve_forever(self) -> None:
-  # Batch size metrics (printed periodically)
-        _batch_count = 0
-        _total_positions = 0
-        _total_slots_used = 0
-        _last_report = time.monotonic()
-        _report_interval = 10.0  # seconds
+        metrics = {
+            "batches": 0,
+            "positions": 0,
+            "slots": 0,
+            "last_report": time.monotonic(),
+        }
+        report_interval = 10.0  # seconds
 
         while not self._stop:
             if any(s.state == _STATE_SHUTDOWN for s in self._slots):
                 self._stop = True
                 break
 
-  # Scan for ready slots
             ready = [s for s in self._slots if s.state == _STATE_REQUEST]
-
             if not ready:
-  # Tight spin with occasional yield to avoid burning 100% of
-  # one core while keeping latency minimal.
-                for _ in range(200):
-                    if any(s.state == _STATE_REQUEST for s in self._slots):
-                        break
-                else:
-                    time.sleep(0.00002)  # 20µs yield
+                if not self._wait_for_ready_slots():
+                    continue
                 continue
 
-  # Batching window: wait briefly for more slots to become ready
-            if self.batch_wait_ms > 0:
-                deadline = time.monotonic() + (self.batch_wait_ms / 1000.0)
-                while time.monotonic() < deadline:
-                    if all(
-                        s.state in (_STATE_REQUEST, _STATE_RESPONSE, _STATE_SHUTDOWN)
-                        for s in self._slots
-                    ):
-                        break  # all slots submitted or already served
-                    more = [
-                        s
-                        for s in self._slots
-                        if s.state == _STATE_REQUEST and s not in ready
-                    ]
-                    if more:
-                        ready.extend(more)
-                    if len(ready) >= len(self._slots):
-                        break
-                    time.sleep(0.0001)
+            self._gather_more_within_window(ready)
 
-  # Re-collect in case some changed during the wait
+  # Re-collect in case some slots changed during the wait window.
             ready = [s for s in self._slots if s.state == _STATE_REQUEST]
             if ready:
-                total_pos = sum(s.batch_size for s in ready)
-                _batch_count += 1
-                _total_positions += total_pos
-                _total_slots_used += len(ready)
+                metrics["batches"] += 1
+                metrics["positions"] += sum(s.batch_size for s in ready)
+                metrics["slots"] += len(ready)
                 self._process_batch(ready)
 
-  # Periodic metrics
-            now = time.monotonic()
-            if now - _last_report >= _report_interval and _batch_count > 0:
-                avg_pos = _total_positions / _batch_count
-                avg_slots = _total_slots_used / _batch_count
-                # Capacity = num_slots × max_batch_per_slot. Fullness < ~50%
-                # = brokering small batches (dispatch-bound), > 80% = saturated.
-                _capacity_per_batch = len(self._slots) * self._layout.max_batch
-                fullness = (100.0 * avg_pos / _capacity_per_batch) if _capacity_per_batch else 0.0
-                print(
-                    f"[broker] {_batch_count} batches in {now - _last_report:.1f}s | "
-                    f"avg {avg_pos:.1f} pos/batch ({fullness:.0f}% of {_capacity_per_batch}-cap), "
-                    f"{avg_slots:.1f}/{len(self._slots)} slots/batch | "
-                    f"{_total_positions / (now - _last_report):.0f} pos/s",
-                    flush=True,
-                )
-                _batch_count = 0
-                _total_positions = 0
-                _total_slots_used = 0
-                _last_report = now
+            self._maybe_print_broker_metrics(metrics, time.monotonic(), report_interval)
 
     def shutdown(self) -> None:
         self._stop = True

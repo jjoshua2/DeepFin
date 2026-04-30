@@ -241,21 +241,94 @@ def _configure_shared_compile_cache(*, cache_dir: Path) -> None:
     os.environ["TORCHINDUCTOR_FX_GRAPH_CACHE"] = "1"
 
 
-def main() -> None:
-  # Let PyTorch return unused CUDA memory to the driver instead of hoarding
-  # it in the caching allocator.  Reduces peak VRAM when multiple compiled
-  # workers share one GPU.
+def _configure_worker_torch_env() -> None:
+    """Set PyTorch / CUDA env tuning that must precede any imports of torch ops.
+
+    - PYTORCH_CUDA_ALLOC_CONF: hand unused VRAM back to the driver so multiple
+      compiled workers can share one GPU.
+    - TORCH_COMPILE_THREADS: cap inductor's compile-worker fan-out (each
+      subprocess can accumulate >1GB of compiled kernels).
+    - TF32: enable for fp32 ops outside autocast BF16 scope.
+    """
     import os
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
-
-  # Enable TF32 for any float32 ops that remain outside autocast BF16 scope.
+    os.environ.setdefault("TORCH_COMPILE_THREADS", "1")
     import torch
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
-  # Limit inductor compile workers to reduce memory — each worker subprocess
-  # accumulates compiled kernels and can grow to >1GB.
-    os.environ.setdefault("TORCH_COMPILE_THREADS", "1")
 
+
+def _setup_worker_logging(args) -> logging.Logger:
+    """Attach a file handler to the parent ``chess_anti_engine`` logger.
+
+    We attach to the parent (not ``chess_anti_engine.worker``) so DEBUG lines
+    from sibling submodules (mcts.gumbel_c, inference, etc.) propagate to the
+    same log file — gumbel profile lines are emitted by mcts and would
+    otherwise be invisible.
+    """
+    log = logging.getLogger("chess_anti_engine.worker")
+    if not args.log_file:
+        return log
+    lvl = {
+        "debug": logging.DEBUG,
+        "info": logging.INFO,
+        "warning": logging.WARNING,
+        "error": logging.ERROR,
+    }.get(str(args.log_level).lower(), logging.INFO)
+    parent = logging.getLogger("chess_anti_engine")
+    parent.setLevel(lvl)
+    fh = logging.FileHandler(str(args.log_file))
+    fh.setLevel(lvl)
+    fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+    parent.addHandler(fh)
+    log.setLevel(lvl)
+    return log
+
+
+def _merge_cli_with_yaml_defaults(args, cfg: dict) -> None:
+    """Fill missing CLI fields from worker.yaml. CLI always wins."""
+    args.server_url = args.server_url or cfg.get("server_url") or "http://127.0.0.1:45453"
+    args.trial_id = args.trial_id or cfg.get("trial_id")
+    args.username = args.username or cfg.get("username")
+    if args.password_file is None and cfg.get("password_file"):
+        args.password_file = str(cfg.get("password_file"))
+    if (not bool(args.self_update)) and bool(cfg.get("self_update", False)):
+        args.self_update = True
+    if (not bool(args.stockfish_from_server)) and bool(cfg.get("stockfish_from_server", False)):
+        args.stockfish_from_server = True
+    args.stockfish_path = args.stockfish_path or cfg.get("stockfish_path")
+    args.shared_cache_dir = args.shared_cache_dir or cfg.get("shared_cache_dir")
+    if args.sf_workers is None:
+        args.sf_workers = int(cfg.get("sf_workers", 1))
+    if args.games_per_batch is None and "games_per_batch" in cfg:
+        args.games_per_batch = int(cfg["games_per_batch"])
+    if "upload_target_positions" in cfg:
+        args.upload_target_positions = int(cfg["upload_target_positions"])
+    if "upload_flush_seconds" in cfg:
+        args.upload_flush_seconds = float(cfg["upload_flush_seconds"])
+
+
+def _resolve_worker_password(args, cfg: dict) -> str:
+    """CLI > --password-file > config password > prompt.
+
+    --password-file (CLI) wins over saved cfg password so that a fresh session
+    with a rotated password loads correctly.
+    """
+    if args.password_file:
+        try:
+            return Path(str(args.password_file)).read_text(encoding="utf-8").splitlines()[0].strip()
+        except Exception as e:
+            raise SystemExit(f"Failed to read --password-file {args.password_file!r}: {e}") from e
+    if args.password is not None:
+        return str(args.password)
+    cfg_pw = cfg.get("password")
+    if cfg_pw is not None:
+        return str(cfg_pw)
+    return getpass.getpass("Password: ")
+
+
+def main() -> None:
+    _configure_worker_torch_env()
     ap = argparse.ArgumentParser(description="Distributed selfplay worker")
 
     ap.add_argument("--server-url", type=str, default=None)
@@ -457,33 +530,9 @@ def main() -> None:
 
     args = ap.parse_args()
 
-  # Optional debug logging (off by default). Attach the file handler to the
-  # `chess_anti_engine` PARENT logger so DEBUG lines from sibling submodules
-  # (mcts.gumbel_c, inference, etc.) propagate to the worker log file. If we
-  # only configured `chess_anti_engine.worker`, sibling loggers wouldn't reach
-  # this handler and DEBUG-gated lines like `gumbel profile (...avg=B)` would
-  # go nowhere visible.
-    log = logging.getLogger("chess_anti_engine.worker")
-    if args.log_file:
-        level = str(args.log_level).lower()
-        lvl = {
-            "debug": logging.DEBUG,
-            "info": logging.INFO,
-            "warning": logging.WARNING,
-            "error": logging.ERROR,
-        }.get(level, logging.INFO)
-
-        parent = logging.getLogger("chess_anti_engine")
-        parent.setLevel(lvl)
-        fh = logging.FileHandler(str(args.log_file))
-        fh.setLevel(lvl)
-        fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
-        parent.addHandler(fh)
-        log.setLevel(lvl)
-
+    log = _setup_worker_logging(args)
     log.info("worker starting version=%s protocol=%s", str(PACKAGE_VERSION), int(PROTOCOL_VERSION))
 
-  # Load config (if present) and merge defaults.
     work_dir = Path(args.work_dir)
     cfg_path = Path(args.config) if args.config is not None else (work_dir / "worker.yaml")
     cfg = load_worker_config(cfg_path)
@@ -491,42 +540,7 @@ def main() -> None:
   # Remember which knobs were explicitly pinned on the CLI.
     pinned_games_per_batch_cli = args.games_per_batch is not None
 
-  # Merge: CLI wins; config provides defaults.
-    args.server_url = args.server_url or cfg.get("server_url") or "http://127.0.0.1:45453"
-    args.trial_id = args.trial_id or cfg.get("trial_id")
-    args.username = args.username or cfg.get("username")
-
-  # password-file: CLI wins; config can provide a default.
-    if args.password_file is None and cfg.get("password_file"):
-        args.password_file = str(cfg.get("password_file"))
-
-  # Optional persisted flags in worker.yaml
-    if (not bool(args.self_update)) and bool(cfg.get("self_update", False)):
-        args.self_update = True
-    if (not bool(args.stockfish_from_server)) and bool(cfg.get("stockfish_from_server", False)):
-        args.stockfish_from_server = True
-
-    args.stockfish_path = args.stockfish_path or cfg.get("stockfish_path")
-    args.shared_cache_dir = args.shared_cache_dir or cfg.get("shared_cache_dir")
-    if args.sf_workers is None:
-        args.sf_workers = int(cfg.get("sf_workers", 1))
-    if args.games_per_batch is None and "games_per_batch" in cfg:
-        args.games_per_batch = int(cfg["games_per_batch"])
-    if "upload_target_positions" in cfg:
-        args.upload_target_positions = int(cfg["upload_target_positions"])
-    if "upload_flush_seconds" in cfg:
-        args.upload_flush_seconds = float(cfg["upload_flush_seconds"])
-
-  # --password-file (CLI) always wins over the saved password in worker.yaml
-  # so that a fresh session with a rotated password loads correctly.
-    if args.password_file:
-        try:
-            p = Path(str(args.password_file))
-            args.password = p.read_text(encoding="utf-8").splitlines()[0].strip()
-        except Exception as e:
-            raise SystemExit(f"Failed to read --password-file {args.password_file!r}: {e}")
-    elif args.password is None:
-        args.password = cfg.get("password")
+    _merge_cli_with_yaml_defaults(args, cfg)
 
     if args.username is None:
         raise SystemExit("--username is required (or set username in worker config)")
@@ -535,13 +549,12 @@ def main() -> None:
             "--stockfish-path is required (or set stockfish_path in worker config), unless --stockfish-from-server is enabled"
         )
 
-  # If calibrate is requested, force auto-tune on.
     if args.calibrate:
         args.auto_tune = True
         args.save_config = True
 
-  # Hardening: prevent accidental/drive-by messing with server-managed knobs.
-  # To use --allow-overrides, require an explicit env var on top of the CLI flag.
+  # --allow-overrides is gated by an env var on top of the CLI flag so
+  # drive-by usage can't override server-managed strength knobs.
     if bool(getattr(args, "allow_overrides", False)) and os.environ.get("CHESS_ANTI_ENGINE_DEBUG_OVERRIDES") != "1":
         raise SystemExit(
             "--allow-overrides is disabled by default. Set CHESS_ANTI_ENGINE_DEBUG_OVERRIDES=1 to enable."
@@ -552,10 +565,7 @@ def main() -> None:
     except Exception as e:  # pragma: no cover
         raise RuntimeError("worker requires requests; install with pip install -e '.[worker]' ") from e
 
-    if args.password is None:
-        args.password = getpass.getpass("Password: ")
-
-  # If user allows it, persist password in config.
+    args.password = _resolve_worker_password(args, cfg)
     if bool(args.save_config) and bool(args.save_password):
         cfg["password"] = str(args.password)
 

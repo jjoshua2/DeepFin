@@ -354,6 +354,87 @@ def _refresh_replay_shards_on_exploit(
     return summary
 
 
+def _load_import_state(path: Path) -> dict[str, int]:
+    """Read the import-state JSON sidecar; return {} on any error."""
+    if not path.exists():
+        return {}
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(obj, dict):
+        return {}
+    return {str(k): int(v) for k, v in obj.items() if isinstance(v, (int, float))}
+
+
+def _resolve_source_shard_dir(
+    td: Path, *, config: dict
+) -> tuple[Path, bool] | None:
+    """Pick the source's shard dir. Returns ``(dir, use_selfplay_export)`` or None.
+
+    Prefer the clean selfplay-only export; fall back to the trial's replay_shards
+    dir for trials predating selfplay_shards/.
+    """
+    src_dir = td / "selfplay_shards"
+    use_selfplay_export = src_dir.is_dir() and bool(iter_shard_paths(src_dir))
+    if not use_selfplay_export:
+        src_dir = _trial_replay_shard_dir(config=config, trial_dir=td)
+    return (src_dir, use_selfplay_export) if src_dir.is_dir() else None
+
+
+def _collect_iter_shards(
+    *,
+    src_dir: Path,
+    snap_iter: int,
+    unseen_snap: dict,
+    use_selfplay_export: bool,
+    source_skip_newest: int,
+    shard_size: int,
+    holdout_fraction: float,
+    max_shards_per_source: int,
+    shards_loaded_this_source: int,
+) -> list[Path]:
+    if use_selfplay_export:
+        maybe = find_shard_path(src_dir, snap_iter)
+        return [maybe] if maybe is not None else []
+  # Legacy: estimate which trailing shards belong to this iter.
+    shards = iter_shard_paths(src_dir)
+    if source_skip_newest > 0:
+        shards = shards[:-source_skip_newest] if len(shards) > source_skip_newest else []
+    n_recent = _estimate_recent_shard_count(
+        positions_added=int(unseen_snap.get("positions_added", 0)),
+        shard_size=shard_size,
+        holdout_fraction=holdout_fraction,
+    )
+    iter_shards = shards[max(0, len(shards) - n_recent):] if n_recent > 0 else []
+    if max_shards_per_source > 0:
+        remaining = max_shards_per_source - shards_loaded_this_source
+        iter_shards = iter_shards[-remaining:]
+    return iter_shards
+
+
+def _ingest_one_shard(
+    sp: Path, *, buf: DiskReplayBuffer, share_fraction: float, summary: dict[str, int],
+) -> bool:
+    """Load one shard and add it to ``buf``. Returns True on success."""
+    loaded = _load_shard_arrays_with_retry(sp, retries=5, sleep_s=0.12)
+    if loaded is None:
+        return False
+    shard_arrs, _meta = loaded
+    n_samples = int(np.asarray(shard_arrs["x"]).shape[0])
+    if n_samples <= 0:
+        return False
+    if 0.0 < share_fraction < 1.0:
+        k = max(1, int(round(n_samples * share_fraction)))
+        chosen = buf.rng.choice(n_samples, size=k, replace=False)
+        shard_arrs = slice_array_batch(shard_arrs, chosen)
+        n_samples = int(np.asarray(shard_arrs["x"]).shape[0])
+    buf.add_many_arrays(shard_arrs)
+    summary["source_shards_loaded"] += 1
+    summary["source_samples_ingested"] += int(n_samples)
+    return True
+
+
 def _share_top_replay_each_iteration(
     *,
     config: dict,
@@ -371,7 +452,6 @@ def _share_top_replay_each_iteration(
     share_fraction: float = 1.0,
 ) -> dict[str, int]:
     """Ingest recent unseen top-trial generations into the live replay buffer."""
-
     source_skip_newest = max(0, int(source_skip_newest))
     shard_size = max(1, int(shard_size))
     holdout_fraction = max(0.0, min(0.99, float(holdout_fraction)))
@@ -392,21 +472,11 @@ def _share_top_replay_each_iteration(
         "source_shards_loaded": 0,
         "source_samples_ingested": 0,
     }
-
     if not source_snaps:
         return summary
 
     import_state_path = Path(replay_shard_dir) / "_import_state.json"
-    import_state: dict[str, int] = {}
-    if import_state_path.exists():
-        try:
-            obj = json.loads(import_state_path.read_text(encoding="utf-8"))
-            if isinstance(obj, dict):
-                import_state = {
-                    str(k): int(v) for k, v in obj.items() if isinstance(v, (int, float))
-                }
-        except Exception:
-            import_state = {}
+    import_state = _load_import_state(import_state_path)
 
     for snap in source_snaps:
         td = Path(snap["trial_dir"])
@@ -423,14 +493,10 @@ def _share_top_replay_each_iteration(
         if len(unseen_snaps) > max_unseen_iters_per_source:
             unseen_snaps = unseen_snaps[-max_unseen_iters_per_source:]
 
-  # Prefer the clean selfplay-only export dir; fall back to replay_shards
-  # (old behaviour) if selfplay_shards doesn't exist yet.
-        src_dir = td / "selfplay_shards"
-        use_selfplay_export = src_dir.is_dir() and bool(iter_shard_paths(src_dir))
-        if not use_selfplay_export:
-            src_dir = _trial_replay_shard_dir(config=config, trial_dir=td)
-        if not src_dir.is_dir():
+        resolved = _resolve_source_shard_dir(td, config=config)
+        if resolved is None:
             continue
+        src_dir, use_selfplay_export = resolved
 
         ingested_any = False
         imported_iters: list[int] = []
@@ -443,46 +509,24 @@ def _share_top_replay_each_iteration(
             if snap_iter < 0:
                 continue
 
-            if use_selfplay_export:
-                maybe = find_shard_path(src_dir, snap_iter)
-                iter_shards = [maybe] if maybe is not None else []
-            else:
-  # Legacy fallback: estimate which shards belong to this iter.
-                shards = iter_shard_paths(src_dir)
-                if source_skip_newest > 0:
-                    shards = shards[:-source_skip_newest] if len(shards) > source_skip_newest else []
-                n_recent = _estimate_recent_shard_count(
-                    positions_added=int(unseen_snap.get("positions_added", 0)),
-                    shard_size=shard_size,
-                    holdout_fraction=holdout_fraction,
-                )
-                iter_shards = shards[max(0, len(shards) - n_recent):] if n_recent > 0 else []
-                if max_shards_per_source > 0:
-                    remaining = max_shards_per_source - shards_loaded_this_source
-                    iter_shards = iter_shards[-remaining:]
-
-            if not iter_shards:
-                continue
-
+            iter_shards = _collect_iter_shards(
+                src_dir=src_dir,
+                snap_iter=snap_iter,
+                unseen_snap=unseen_snap,
+                use_selfplay_export=use_selfplay_export,
+                source_skip_newest=source_skip_newest,
+                shard_size=shard_size,
+                holdout_fraction=holdout_fraction,
+                max_shards_per_source=max_shards_per_source,
+                shards_loaded_this_source=shards_loaded_this_source,
+            )
+            iter_had_ingest = False
             for sp in iter_shards:
-                loaded = _load_shard_arrays_with_retry(sp, retries=5, sleep_s=0.12)
-                if loaded is None:
-                    continue
-                shard_arrs, _meta = loaded
-                n_samples = int(np.asarray(shard_arrs["x"]).shape[0])
-                if n_samples <= 0:
-                    continue
-                if 0.0 < share_fraction < 1.0:
-                    k = max(1, int(round(n_samples * share_fraction)))
-                    chosen = buf.rng.choice(n_samples, size=k, replace=False)
-                    shard_arrs = slice_array_batch(shard_arrs, chosen)
-                    n_samples = int(np.asarray(shard_arrs["x"]).shape[0])
-                buf.add_many_arrays(shard_arrs)
-                summary["source_shards_loaded"] += 1
-                summary["source_samples_ingested"] += int(n_samples)
-                shards_loaded_this_source += 1
-                ingested_any = True
-            if ingested_any:
+                if _ingest_one_shard(sp, buf=buf, share_fraction=share_fraction, summary=summary):
+                    shards_loaded_this_source += 1
+                    iter_had_ingest = True
+                    ingested_any = True
+            if iter_had_ingest:
                 imported_iters.append(snap_iter)
 
         if ingested_any:

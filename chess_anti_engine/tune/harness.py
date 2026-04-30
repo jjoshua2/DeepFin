@@ -244,34 +244,28 @@ def _load_trial_config_from_state_entry(entry: object) -> tuple[dict[str, object
     return payload if isinstance(payload, dict) else None, False
 
 
-def _extract_saved_trial_config_keys(*, experiment_state: dict[str, object]) -> set[str]:
-    trial_data = experiment_state.get("trial_data", [])
-    if not isinstance(trial_data, list):
-        return set()
-    for entry in trial_data:
-        trial, _ = _load_trial_config_from_state_entry(entry)
-        if not isinstance(trial, dict):
-            continue
-        cfg = trial.get("config")
-        if isinstance(cfg, dict) and cfg:
-            return set(cfg.keys())
-    return set()
-
-
 def _patch_experiment_state_for_resume(
     *,
     state_file: Path,
     param_space: dict[str, object],
-) -> tuple[set[str], set[str]]:
+) -> tuple[set[str], set[str], set[str]]:
+    """Patch saved trial configs with current YAML keys so Ray's resume validation passes.
+
+    Returns ``(added_keys, skipped_keys, post_patch_saved_keys)``. The third
+    value is the union of trial-config keys after patching — callers use it to
+    drop param_space keys that aren't in any saved trial config (Ray rejects
+    those on restore).
+    """
     with state_file.open("r", encoding="utf-8") as fh:
         experiment_state = json.load(fh)
 
     trial_data = experiment_state.get("trial_data", [])
     if not isinstance(trial_data, list):
-        return set(), set()
+        return set(), set(), set()
 
     added_keys: set[str] = set()
     skipped_keys: set[str] = set()
+    saved_keys: set[str] = set()
     changed = False
     for idx, entry in enumerate(trial_data):
         trial, payload_is_json = _load_trial_config_from_state_entry(entry)
@@ -294,6 +288,7 @@ def _patch_experiment_state_for_resume(
             added_keys.add(str(key))
             trial_changed = True
 
+        saved_keys.update(str(k) for k in cfg.keys())
         if not trial_changed:
             continue
         changed = True
@@ -302,11 +297,234 @@ def _patch_experiment_state_for_resume(
         elif isinstance(entry, dict):
             trial_data[idx] = trial
 
-    if not changed:
-        return added_keys, skipped_keys
+    if changed:
+        atomic_write_text(state_file, json.dumps(experiment_state) + "\n")
+    return added_keys, skipped_keys, saved_keys
 
-    atomic_write_text(state_file, json.dumps(experiment_state) + "\n")
-    return added_keys, skipped_keys
+
+def _launch_distributed_server(
+    *, base_config: dict, work_dir: Path
+) -> subprocess.Popen[bytes] | None:
+    """Launch the trial server subprocess if distributed mode is enabled.
+
+    Mutates ``base_config`` in place with resolved server URLs and credentials
+    so trainable actors can connect.
+    """
+    if int(base_config.get("distributed_workers_per_trial", 0)) <= 0:
+        return None
+
+    server_root_override = str(base_config.get("distributed_server_root_override", "")).strip()
+    if server_root_override:
+        server_root = resolve_local_override_root(
+            raw_root=server_root_override,
+            tune_work_dir=work_dir / "tune",
+            suffix="server",
+        ).resolve()
+    else:
+        server_root = work_dir.resolve() / "server"
+    server_root.mkdir(parents=True, exist_ok=True)
+    server_log = server_root / "server.log"
+    port = int(base_config.get("distributed_server_port", 0)) or _pick_free_port()
+    host = str(base_config.get("distributed_server_host", "127.0.0.1")).strip() or "127.0.0.1"
+    public_url = str(base_config.get("distributed_server_public_url", "")).strip()
+    ready_host = "127.0.0.1" if host == "0.0.0.0" else host
+    ready_url = f"http://{ready_host}:{port}"
+    base_url = public_url or ready_url
+    username, password_file = _prepare_distributed_worker_auth(server_root=server_root, config=base_config)
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "chess_anti_engine.server.run_server",
+        "--host",
+        host,
+        "--port",
+        str(port),
+        "--server-root",
+        str(server_root),
+        "--min-workers-per-trial",
+        str(int(base_config.get("distributed_min_workers_per_trial", 1))),
+        "--max-worker-delta-per-rebalance",
+        str(int(base_config.get("distributed_max_worker_delta_per_rebalance", 1))),
+        "--upload-compact-shard-size",
+        str(int(base_config.get("distributed_upload_compact_shard_size", base_config.get("shard_size", 2000)))),
+        "--upload-compact-max-age-seconds",
+        str(float(base_config.get("distributed_upload_compact_max_age_seconds", 90.0))),
+    ]
+    for cfg_key, flag in (
+        ("opening_book_path", "--opening-book-path"),
+        ("opening_book_path_2", "--opening-book-path-2"),
+    ):
+        book = base_config.get(cfg_key)
+        if isinstance(book, str) and book.strip():
+            cmd.extend([flag, book.strip()])
+
+    from chess_anti_engine.tune.distributed_runtime import _spawn_with_reap
+    server_proc = _spawn_with_reap(
+        cmd=cmd,
+        log_path=server_log,
+        reap_module="chess_anti_engine.server.run_server",
+        reap_terms=["--server-root", str(server_root)],
+        reap_label="distributed Tune servers",
+    )
+
+    try:
+        _wait_for_server_ready(base_url=ready_url, proc=server_proc)
+    except Exception:
+        _terminate_process(server_proc)
+        raise
+
+    base_config.update({
+        "distributed_server_root": str(server_root),
+        "distributed_server_url": str(ready_url),
+        "distributed_server_public_url": str(base_url),
+        "distributed_worker_username": str(username),
+        "distributed_worker_password_file": str(password_file),
+    })
+    return server_proc
+
+
+def _maybe_launch_shared_broker(
+    *, base_config: dict, work_dir: Path
+) -> subprocess.Popen[bytes] | None:
+    """Launch shared broker. Must be called *after* ``_launch_distributed_server``
+    populates ``base_config['distributed_server_root']``.
+    """
+    if not (
+        int(base_config.get("distributed_workers_per_trial", 0)) > 0
+        and bool(base_config.get("distributed_inference_broker_enabled", False))
+        and bool(base_config.get("distributed_inference_shared_broker", False))
+    ):
+        return None
+    from chess_anti_engine.tune.distributed_runtime import launch_shared_inference_broker
+    return launch_shared_inference_broker(
+        config=base_config,
+        server_root=Path(base_config.get("distributed_server_root", str(work_dir / "server"))),
+    )
+
+
+def _build_scheduler_and_param_space(
+    *, scheduler_name: str, base_config: dict, metric: str, mode: str
+):
+    """Dispatch to the per-scheduler builder. Returns (param_space, scheduler, search_alg)."""
+    if scheduler_name == "pb2":
+        param_space, scheduler = _build_pb2(base_config, metric=metric, mode=mode)
+        return param_space, scheduler, None
+    if scheduler_name == "pbt":
+        param_space, scheduler = _build_pbt(base_config, metric=metric, mode=mode)
+        return param_space, scheduler, None
+    if scheduler_name == "gpbt_pl":
+        param_space, scheduler = _build_gpbt_pl(base_config, metric=metric, mode=mode)
+        return param_space, scheduler, None
+    if scheduler_name == "asha":
+        return _build_asha(base_config, metric=metric, mode=mode)
+    if scheduler_name == "none":
+        return {**base_config}, None, None
+    raise ValueError(
+        f"Unsupported tune_scheduler={scheduler_name!r}. "
+        "Expected one of: 'pb2', 'pbt', 'gpbt_pl', 'asha', 'none'."
+    )
+
+
+def _find_valid_experiment_state(experiment_path: Path) -> Path | None:
+    """Newest non-corrupt experiment_state-*.json. Renames corrupt ones to .corrupt.
+
+    Ray silently falls back to a broken 1-trial restart if state is corrupt,
+    so we validate JSON parseability before handing the file to Tuner.restore.
+    """
+    import glob as _glob
+    state_files = sorted(_glob.glob(str(experiment_path / "experiment_state-*.json")))
+    for sf in reversed(state_files):  # newest first
+        try:
+            with open(sf, encoding="utf-8") as fh:
+                json.loads(fh.read())
+            return Path(sf)
+        except Exception:
+            corrupt_name = sf + ".corrupt"
+            os.rename(sf, corrupt_name)
+            print(f"[run_tune] Renamed corrupt state file: {sf} -> {corrupt_name}")
+    return None
+
+
+def _filter_param_space_against_tuner_pkl(
+    param_space: dict, *, experiment_path: Path
+) -> dict:
+    """Strip/pad keys to match ``__flattened_param_space_keys`` in tuner.pkl.
+
+    Ray's _validate_param_space_on_restore reads from the pickle, not the
+    experiment_state JSON we patched. Any key not in the pkl triggers
+    ValueError; missing keys must be padded with None.
+    """
+    import pickle as _pickle
+    out = dict(param_space)
+    try:
+        with (experiment_path / "tuner.pkl").open("rb") as fh:
+            tuner_state = _pickle.load(fh)
+    except (FileNotFoundError, _pickle.UnpicklingError, EOFError) as exc:
+        print(f"[run_tune] Could not read tuner.pkl for key filtering (non-fatal): {exc}")
+        return out
+    ray_keys = set(tuner_state.get("__flattened_param_space_keys") or [])
+    if not ray_keys:
+        return out
+    drop = set(out.keys()) - ray_keys
+    if drop:
+        out = {k: v for k, v in out.items() if k not in drop}
+        print(f"[run_tune] Stripping keys absent from tuner.pkl for Ray validation: {sorted(drop)}")
+    missing = ray_keys - set(out.keys())
+    if missing:
+        for k in missing:
+            out[k] = None
+        print(f"[run_tune] Padding removed keys with None for Ray validation: {sorted(missing)}")
+    return out
+
+
+def _resolve_resume_param_space(
+    *, param_space: dict, valid_state_file: Path, experiment_path: Path
+) -> dict:
+    """Patch param_space so Ray's restore validation accepts our current keys."""
+    added_keys, skipped_keys, saved_keys = _patch_experiment_state_for_resume(
+        state_file=valid_state_file,
+        param_space=param_space,
+    )
+    if added_keys:
+        print(f"[run_tune] Added {len(added_keys)} new config keys to restored trial state: {sorted(added_keys)}")
+    out = _filter_param_space_against_tuner_pkl(param_space, experiment_path=experiment_path)
+    if skipped_keys:
+        out = {k: v for k, v in out.items() if k not in skipped_keys}
+        print(f"[run_tune] Skipping non-JSON param_space keys for resume: {sorted(skipped_keys)}")
+    extra = set(out.keys()) - saved_keys
+    if extra:
+        out = {k: v for k, v in out.items() if k not in extra}
+        print(f"[run_tune] Stripping unresolved param_space keys for resume: {sorted(extra)}")
+    return out
+
+
+def _hotpatch_scheduler_bounds(*, tuner, scheduler) -> None:
+    """Overwrite restored scheduler's hyperparam_bounds with current YAML.
+
+    Ray unpickles the old scheduler (with old bounds baked in) on restore, so
+    any pb2_bounds_* changes in the YAML are silently ignored. We reach into
+    the live scheduler and overwrite its bounds dict so the very next
+    exploit/explore step uses the updated ranges.
+    """
+    if scheduler is None:
+        return
+    try:
+  # Ray's `Tuner._local_tuner._tune_config.scheduler` is a private surface
+  # — pyright has no typings for these attrs.
+        live_sched = tuner._local_tuner._tune_config.scheduler
+    except AttributeError as exc:
+        print(f"[run_tune] Could not hotpatch scheduler bounds (non-fatal): {exc}")
+        return
+    if not (hasattr(live_sched, "_hyperparam_bounds") and hasattr(scheduler, "_hyperparam_bounds")):
+        return
+    old = dict(live_sched._hyperparam_bounds)
+    live_sched._hyperparam_bounds = dict(scheduler._hyperparam_bounds)
+    changed = {k: (old.get(k), v) for k, v in scheduler._hyperparam_bounds.items() if old.get(k) != v}
+    if changed:
+        print(f"[run_tune] Hotpatched scheduler bounds (old→new): {changed}")
+    else:
+        print("[run_tune] Scheduler bounds unchanged after restore.")
 
 
 def run_tune(
@@ -354,7 +572,6 @@ def run_tune(
         GPU.  On an RTX 5090 with a small model, 10 trials at gpu=0.1 each
         fits comfortably in 32 GB VRAM.
     """
-
     try:
         import ray
         from ray import tune
@@ -370,134 +587,25 @@ def run_tune(
 
     work_dir.mkdir(parents=True, exist_ok=True)
     base_config = dict(base_config)
-
-    server_proc: subprocess.Popen[bytes] | None = None
-    if int(base_config.get("distributed_workers_per_trial", 0)) > 0:
-        server_root_override = str(base_config.get("distributed_server_root_override", "")).strip()
-        if server_root_override:
-            server_root = resolve_local_override_root(
-                raw_root=server_root_override,
-                tune_work_dir=work_dir / "tune",
-                suffix="server",
-            ).resolve()
-        else:
-            server_root = work_dir.resolve() / "server"
-        server_root.mkdir(parents=True, exist_ok=True)
-        server_log = server_root / "server.log"
-        port = int(base_config.get("distributed_server_port", 0)) or _pick_free_port()
-        host = str(base_config.get("distributed_server_host", "127.0.0.1")).strip() or "127.0.0.1"
-        public_url = str(base_config.get("distributed_server_public_url", "")).strip()
-        ready_host = "127.0.0.1" if host == "0.0.0.0" else host
-        ready_url = f"http://{ready_host}:{port}"
-        base_url = public_url or ready_url
-        username, password_file = _prepare_distributed_worker_auth(server_root=server_root, config=base_config)
-
-        cmd = [
-            sys.executable,
-            "-m",
-            "chess_anti_engine.server.run_server",
-            "--host",
-            host,
-            "--port",
-            str(port),
-            "--server-root",
-            str(server_root),
-            "--min-workers-per-trial",
-            str(int(base_config.get("distributed_min_workers_per_trial", 1))),
-            "--max-worker-delta-per-rebalance",
-            str(int(base_config.get("distributed_max_worker_delta_per_rebalance", 1))),
-            "--upload-compact-shard-size",
-            str(int(base_config.get("distributed_upload_compact_shard_size", base_config.get("shard_size", 2000)))),
-            "--upload-compact-max-age-seconds",
-            str(float(base_config.get("distributed_upload_compact_max_age_seconds", 90.0))),
-        ]
-        for cfg_key, flag in (
-            ("opening_book_path", "--opening-book-path"),
-            ("opening_book_path_2", "--opening-book-path-2"),
-        ):
-            book = base_config.get(cfg_key)
-            if isinstance(book, str) and book.strip():
-                cmd.extend([flag, book.strip()])
-
-        from chess_anti_engine.tune.distributed_runtime import _spawn_with_reap
-        server_proc = _spawn_with_reap(
-            cmd=cmd,
-            log_path=server_log,
-            reap_module="chess_anti_engine.server.run_server",
-            reap_terms=["--server-root", str(server_root)],
-            reap_label="distributed Tune servers",
-        )
-
-        try:
-            _wait_for_server_ready(base_url=ready_url, proc=server_proc)
-        except Exception:
-            _terminate_process(server_proc)
-            raise
-
-        base_config.update(
-            {
-                "distributed_server_root": str(server_root),
-                "distributed_server_url": str(ready_url),
-                "distributed_server_public_url": str(base_url),
-                "distributed_worker_username": str(username),
-                "distributed_worker_password_file": str(password_file),
-            }
-        )
-
-  # Launch shared inference broker if configured
-    shared_broker_proc: subprocess.Popen[bytes] | None = None
-    if (int(base_config.get("distributed_workers_per_trial", 0)) > 0
-            and bool(base_config.get("distributed_inference_broker_enabled", False))
-            and bool(base_config.get("distributed_inference_shared_broker", False))):
-        from chess_anti_engine.tune.distributed_runtime import (
-            launch_shared_inference_broker,
-        )
-        shared_broker_proc = launch_shared_inference_broker(
-            config=base_config,
-            server_root=Path(base_config.get("distributed_server_root", str(work_dir / "server"))),
-        )
-
-    scheduler_name = str(base_config.get("tune_scheduler", "pb2")).lower()
     mode = str(mode)
     if mode not in ("min", "max"):
         raise ValueError(f"mode must be 'min' or 'max', got {mode!r}")
 
-  # ------------------------------------------------------------------
-  # GPU / CPU resource allocation
-  # ------------------------------------------------------------------
+    server_proc = _launch_distributed_server(base_config=base_config, work_dir=work_dir)
+    shared_broker_proc = _maybe_launch_shared_broker(base_config=base_config, work_dir=work_dir)
+
     want_cuda = str(base_config.get("device", "")) == "cuda"
-    cpus_per_trial = int(base_config.get("cpus_per_trial", 4))
-    gpus_per_trial = float(base_config.get("gpus_per_trial", 1.0 if want_cuda else 0.0))
-    resources = {"cpu": cpus_per_trial, "gpu": gpus_per_trial}
+    resources = {
+        "cpu": int(base_config.get("cpus_per_trial", 4)),
+        "gpu": float(base_config.get("gpus_per_trial", 1.0 if want_cuda else 0.0)),
+    }
     trainable = tune.with_resources(train_trial, resources)
 
-  # ------------------------------------------------------------------
-  # Build param_space
-  # ------------------------------------------------------------------
-    if scheduler_name == "pb2":
-        param_space, scheduler = _build_pb2(base_config, metric=metric, mode=mode)
-        search_alg = None  # Scheduler handles search internally.
-    elif scheduler_name == "pbt":
-        param_space, scheduler = _build_pbt(base_config, metric=metric, mode=mode)
-        search_alg = None  # Scheduler handles search internally.
-    elif scheduler_name == "gpbt_pl":
-        param_space, scheduler = _build_gpbt_pl(base_config, metric=metric, mode=mode)
-        search_alg = None  # Scheduler handles search internally.
-    elif scheduler_name == "asha":
-        param_space, scheduler, search_alg = _build_asha(base_config, metric=metric, mode=mode)
-    elif scheduler_name == "none":
-        param_space = {**base_config}
-        scheduler = None
-        search_alg = None
-    else:
-        raise ValueError(
-            f"Unsupported tune_scheduler={scheduler_name!r}. "
-            "Expected one of: 'pb2', 'pbt', 'gpbt_pl', 'asha', 'none'."
-        )
+    scheduler_name = str(base_config.get("tune_scheduler", "pb2")).lower()
+    param_space, scheduler, search_alg = _build_scheduler_and_param_space(
+        scheduler_name=scheduler_name, base_config=base_config, metric=metric, mode=mode,
+    )
 
-  # ------------------------------------------------------------------
-  # Assemble and run Tuner
-  # ------------------------------------------------------------------
     tune_config_kwargs: dict = dict(
         num_samples=int(num_samples),
         scheduler=scheduler,
@@ -517,101 +625,37 @@ def run_tune(
     ray.init(ignore_reinit_error=True, include_dashboard=False)
 
     experiment_path = work_dir.resolve() / "tune"
-
-  # If we're starting a fresh run (not restoring), prune old experiments to keep
-  # disk usage bounded.
     if not resume:
         keep_last_exps = int(base_config.get("tune_keep_last_experiments", 2))
-  # We prune to (N-1) before starting a fresh run so that after the new
-  # experiment is created we have at most N total.
+  # Prune to (N-1) before the new experiment is created so we end at <=N total.
         _cleanup_old_tune_experiments(
             tune_dir=experiment_path,
             keep_last=max(0, keep_last_exps - 1),
         )
 
-    restored = False
-    tuner: "tune.Tuner | None" = None
-    if resume and experiment_path.exists():
-  # Validate experiment state files before attempting restore.
-  # Ray silently falls back to a broken 1-trial restart if state is corrupt.
-        import glob as _glob
-        state_files = sorted(_glob.glob(str(experiment_path / "experiment_state-*.json")))
-        state_ok = False
-        valid_state_file: Path | None = None
-        for sf in reversed(state_files):  # try newest first
-            try:
-                with open(sf, encoding="utf-8") as fh:
-                    json.loads(fh.read())
-                state_ok = True
-                valid_state_file = Path(sf)
-                break
-            except Exception:
-                corrupt_name = sf + ".corrupt"
-                os.rename(sf, corrupt_name)
-                print(f"[run_tune] Renamed corrupt state file: {sf} -> {corrupt_name}")
+    valid_state_file = (
+        _find_valid_experiment_state(experiment_path)
+        if resume and experiment_path.exists()
+        else None
+    )
 
-        if state_ok and valid_state_file is not None:
-  # Ray validates that param_space keys match the saved state
-  # exactly.  When new config keys are added between runs, the
-  # mismatch causes a ValueError. Patch the saved trial configs
-  # with current literal values so resumed trials honor the YAML.
-            _restore_param_space = param_space
-            added_keys, skipped_keys = _patch_experiment_state_for_resume(
-                state_file=valid_state_file,
-                param_space=param_space, # scheduler builders return dict[str, ...] subtype of dict[str, object]
-            )
-            if added_keys:
-                print(f"[run_tune] Added {len(added_keys)} new config keys to restored trial state: {sorted(added_keys)}")
-  # Ray's _validate_param_space_on_restore reads
-  # `__flattened_param_space_keys` from tuner.pkl (not the
-  # experiment_state-*.json we patched above). Any key we pass that
-  # isn't in that pickle triggers ValueError. Strip them; trainable
-  # reads the YAML each iter and re-applies values, so this only
-  # affects Ray's hyperparameter-tracking view, not runtime behavior.
-            import pickle as _pickle
-            try:
-                with (experiment_path / "tuner.pkl").open("rb") as _fh:
-                    _tuner_state = _pickle.load(_fh)
-                _ray_keys = set(_tuner_state.get("__flattened_param_space_keys") or [])
-                _drop = set(_restore_param_space.keys()) - _ray_keys
-                if _drop and _ray_keys:  # only strip if pkl was readable
-                    _restore_param_space = {k: v for k, v in _restore_param_space.items() if k not in _drop}
-                    print(f"[run_tune] Stripping keys absent from tuner.pkl for Ray validation: {sorted(_drop)}")
-                _missing = _ray_keys - set(_restore_param_space.keys())
-                if _missing:
-  # Keys in pkl but removed from current config. Trainable reads
-  # the live YAML, so the value we pass here is inert — only the
-  # key set matters for Ray's validation.
-                    for _k in _missing:
-                        _restore_param_space[_k] = None
-                    print(f"[run_tune] Padding removed keys with None for Ray validation: {sorted(_missing)}")
-            except (FileNotFoundError, _pickle.UnpicklingError, EOFError) as exc:
-                print(f"[run_tune] Could not read tuner.pkl for key filtering (non-fatal): {exc}")
-            if skipped_keys:
-                _restore_param_space = {k: v for k, v in _restore_param_space.items() if k not in skipped_keys}
-                print(
-                    "[run_tune] Skipping non-JSON param_space keys for resume: "
-                    f"{sorted(skipped_keys)}"
-                )
-            with valid_state_file.open("r", encoding="utf-8") as fh:
-                saved_keys = _extract_saved_trial_config_keys(experiment_state=json.load(fh))
-            extra = set(_restore_param_space.keys()) - saved_keys
-            if extra:
-                _restore_param_space = {k: v for k, v in _restore_param_space.items() if k not in extra}
-                print(f"[run_tune] Stripping unresolved param_space keys for resume: {sorted(extra)}")
-
-            tuner = tune.Tuner.restore(
-                str(experiment_path),
-                trainable=trainable,
-                param_space=_restore_param_space,
-                resume_errored=True,
-                resume_unfinished=True,
-            )
-            restored = True
-        else:
+    if valid_state_file is not None:
+        restore_param_space = _resolve_resume_param_space(
+            param_space=param_space,
+            valid_state_file=valid_state_file,
+            experiment_path=experiment_path,
+        )
+        tuner = tune.Tuner.restore(
+            str(experiment_path),
+            trainable=trainable,
+            param_space=restore_param_space,
+            resume_errored=True,
+            resume_unfinished=True,
+        )
+        _hotpatch_scheduler_bounds(tuner=tuner, scheduler=scheduler)
+    else:
+        if resume and experiment_path.exists():
             print("[run_tune] All experiment state files corrupt; starting fresh run.")
-
-    if not restored:
         ckpt_keep = int(base_config.get("tune_num_to_keep", 2))
         tuner = tune.Tuner(
             trainable,
@@ -623,33 +667,7 @@ def run_tune(
                 checkpoint_config=CheckpointConfig(num_to_keep=ckpt_keep),
             ),
         )
-    else:
-  # Hotpatch scheduler bounds from current YAML config into the restored
-  # scheduler.  Ray unpickles the old scheduler (with old bounds baked in)
-  # on restore, so any pb2_bounds_* changes in the YAML are silently
-  # ignored.  We reach into the live scheduler and overwrite its bounds
-  # dict so that the very next exploit/explore step uses the updated ranges.
-        assert tuner is not None, "restored=True implies tuner was created via Tuner.restore()"
-        try:
-  # Ray's `Tuner._local_tuner._tune_config.scheduler` is a private surface
-  # — pyright has no typings for these attrs.
-            live_sched = tuner._local_tuner._tune_config.scheduler
-            if (
-                scheduler is not None
-                and hasattr(live_sched, "_hyperparam_bounds")
-                and hasattr(scheduler, "_hyperparam_bounds")
-            ):
-                old = dict(live_sched._hyperparam_bounds)
-                live_sched._hyperparam_bounds = dict(scheduler._hyperparam_bounds)
-                changed = {k: (old.get(k), v) for k, v in scheduler._hyperparam_bounds.items() if old.get(k) != v}
-                if changed:
-                    print(f"[run_tune] Hotpatched scheduler bounds (old→new): {changed}")
-                else:
-                    print("[run_tune] Scheduler bounds unchanged after restore.")
-        except AttributeError as exc:
-            print(f"[run_tune] Could not hotpatch scheduler bounds (non-fatal): {exc}")
 
-    assert tuner is not None
     try:
         return tuner.fit()
     finally:
@@ -757,7 +775,7 @@ def _build_pb2(base_config: dict, *, metric: str, mode: str):
         metric=metric,
         mode=mode,
         perturbation_interval=perturbation_interval,
-        hyperparam_bounds=hyperparam_bounds,  # type: ignore[arg-type] # Ray's PB2 accepts list bounds at runtime
+        hyperparam_bounds=hyperparam_bounds,
     )
     return param_space, scheduler
 
@@ -777,7 +795,7 @@ def _build_pbt(base_config: dict, *, metric: str, mode: str):
         metric=metric,
         mode=mode,
         perturbation_interval=perturbation_interval,
-        hyperparam_mutations=mutations,  # type: ignore[arg-type] # Ray's PBT accepts flat dict[str, object] at runtime
+        hyperparam_mutations=mutations,
         synch=bool(base_config.get("pbt_synch", False)),
     )
     return param_space, scheduler

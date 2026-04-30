@@ -768,6 +768,88 @@ def _empty_ingest_summary() -> dict[str, int | float]:
     }
 
 
+  # (meta_key, summary_suffix). int unless suffix is "sf_d6_sum" (float).
+_SHARD_META_FIELDS: tuple[tuple[str, str], ...] = (
+    ("total_game_plies", "total_game_plies"),
+    ("tb_adjudicated_games", "tb_adjudicated_games"),
+    ("selfplay_games", "selfplay_games"),
+    ("selfplay_adjudicated_games", "selfplay_adjudicated_games"),
+    ("selfplay_draw_games", "selfplay_draw_games"),
+    ("curriculum_games", "curriculum_games"),
+    ("curriculum_adjudicated_games", "curriculum_adjudicated_games"),
+    ("curriculum_draw_games", "curriculum_draw_games"),
+    ("plies_win", "plies_win"),
+    ("plies_draw", "plies_draw"),
+    ("plies_loss", "plies_loss"),
+    ("checkmate_games", "checkmate_games"),
+    ("stalemate_games", "stalemate_games"),
+    ("sf_d6_n", "sf_d6_n"),
+)
+
+
+def _extract_shard_metrics(meta: dict, shard_n: int) -> dict[str, int | float]:
+    """Pull all per-shard counts/sums from the meta dict in one place.
+
+    Output keys map directly onto summary["matching_*"] suffixes (no prefix);
+    callers add the matching/stale prefix at update time.
+    """
+    wins = int(meta.get("wins", 0) or 0)
+    draws = int(meta.get("draws", 0) or 0)
+    losses = int(meta.get("losses", 0) or 0)
+    out: dict[str, int | float] = {
+        "w": wins,
+        "d": draws,
+        "l": losses,
+        "games": int(meta.get("games", wins + draws + losses) or 0),
+        "positions": int(meta.get("positions", shard_n) or shard_n),
+  # adjudicated_games legacy-aliases timeout_games for old shards
+        "adjudicated_games": int(meta.get("adjudicated_games", meta.get("timeout_games", 0)) or 0),
+        "total_draw_games": int(meta.get("total_draw_games", draws) or draws),
+        "sf_d6_sum": float(meta.get("sf_d6_sum", 0.0) or 0.0),
+    }
+    for src_key, out_key in _SHARD_META_FIELDS:
+        out[out_key] = int(meta.get(src_key, 0) or 0)
+    return out
+
+
+def _ingest_train_arrays(
+    shard_arrs: dict,
+    shard_n: int,
+    *,
+    buf: DiskReplayBuffer,
+    holdout_buf: ArrayReplayBuffer,
+    holdout_frac: float,
+    holdout_frozen: bool,
+    rng: np.random.Generator,
+    summary: dict[str, int | float],
+) -> None:
+    """Split shard rows into holdout vs train, push to buffers, count is_selfplay tags."""
+    if shard_n <= 0:
+        return
+    holdout_mask = np.zeros((shard_n,), dtype=bool)
+    if holdout_frac > 0.0 and (not holdout_frozen):
+        holdout_mask = rng.random(shard_n) < holdout_frac
+        if np.any(holdout_mask):
+            holdout_buf.add_many_arrays(
+                slice_array_batch(shard_arrs, np.flatnonzero(holdout_mask))
+            )
+    train_mask = ~holdout_mask
+    if not np.any(train_mask):
+        return
+    buf.add_many_arrays(slice_array_batch(shard_arrs, np.flatnonzero(train_mask)))
+  # Per-sample is_selfplay tag count, training rows only. Shards written
+  # before this field existed won't carry it — silently skip.
+    if "has_is_selfplay" not in shard_arrs:
+        return
+    has_sp = np.asarray(shard_arrs["has_is_selfplay"], dtype=np.uint8)[train_mask]
+    tagged = int(has_sp.sum())
+    if tagged <= 0:
+        return
+    is_sp = np.asarray(shard_arrs.get("is_selfplay", np.zeros_like(has_sp)), dtype=np.uint8)[train_mask]
+    summary["ingest_is_selfplay_tagged"] += tagged
+    summary["ingest_is_selfplay_true"] += int((is_sp & has_sp).sum())
+
+
 def _process_shard(
     sp: Path,
     *,
@@ -809,82 +891,24 @@ def _process_shard(
             return ""
 
     model_sha = str(meta.get("model_sha256") or "")
-    wins = int(meta.get("wins", 0) or 0)
-    draws = int(meta.get("draws", 0) or 0)
-    losses = int(meta.get("losses", 0) or 0)
-    games = int(meta.get("games", wins + draws + losses) or 0)
     shard_n = int(np.asarray(shard_arrs["x"]).shape[0])
-    positions = int(meta.get("positions", shard_n) or shard_n)
-    total_game_plies = int(meta.get("total_game_plies", 0) or 0)
-    adjudicated_games = int(meta.get("adjudicated_games", meta.get("timeout_games", 0)) or 0)
-    tb_adjudicated_games = int(meta.get("tb_adjudicated_games", 0) or 0)
-    total_draw_games = int(meta.get("total_draw_games", draws) or draws)
-    selfplay_games = int(meta.get("selfplay_games", 0) or 0)
-    selfplay_adjudicated_games = int(meta.get("selfplay_adjudicated_games", 0) or 0)
-    selfplay_draw_games = int(meta.get("selfplay_draw_games", 0) or 0)
-    curriculum_games = int(meta.get("curriculum_games", 0) or 0)
-    curriculum_adjudicated_games = int(meta.get("curriculum_adjudicated_games", 0) or 0)
-    curriculum_draw_games = int(meta.get("curriculum_draw_games", 0) or 0)
-    plies_win = int(meta.get("plies_win", 0) or 0)
-    plies_draw = int(meta.get("plies_draw", 0) or 0)
-    plies_loss = int(meta.get("plies_loss", 0) or 0)
-    checkmate_games = int(meta.get("checkmate_games", 0) or 0)
-    stalemate_games = int(meta.get("stalemate_games", 0) or 0)
-    sf_d6_sum = float(meta.get("sf_d6_sum", 0.0) or 0.0)
-    sf_d6_n = int(meta.get("sf_d6_n", 0) or 0)
+    m = _extract_shard_metrics(meta, shard_n)
 
-    if shard_n > 0:
-        holdout_mask = np.zeros((shard_n,), dtype=bool)
-        if holdout_frac > 0.0 and (not holdout_frozen):
-            holdout_mask = rng.random(shard_n) < holdout_frac
-            if np.any(holdout_mask):
-                holdout_buf.add_many_arrays(
-                    slice_array_batch(shard_arrs, np.flatnonzero(holdout_mask))
-                )
-
-        train_mask = ~holdout_mask
-        if np.any(train_mask):
-            train_arrs = slice_array_batch(shard_arrs, np.flatnonzero(train_mask))
-            buf.add_many_arrays(train_arrs)
-
-  # Count per-sample is_selfplay tags over training rows only. Shards
-  # written before this field existed won't carry it — fall through.
-        if np.any(train_mask) and "has_is_selfplay" in shard_arrs:
-            has_sp = np.asarray(shard_arrs["has_is_selfplay"], dtype=np.uint8)[train_mask]
-            tagged = int(has_sp.sum())
-            if tagged > 0:
-                is_sp = np.asarray(shard_arrs.get("is_selfplay", np.zeros_like(has_sp)), dtype=np.uint8)[train_mask]
-                summary["ingest_is_selfplay_tagged"] += tagged
-                summary["ingest_is_selfplay_true"] += int((is_sp & has_sp).sum())
-    summary["positions_replay_added"] += positions
+    _ingest_train_arrays(
+        shard_arrs, shard_n,
+        buf=buf, holdout_buf=holdout_buf,
+        holdout_frac=holdout_frac, holdout_frozen=holdout_frozen,
+        rng=rng, summary=summary,
+    )
+    summary["positions_replay_added"] += m["positions"]
 
     if model_sha in accepted_model_shas:
-        summary["matching_games"] += games
-        summary["matching_positions"] += positions
-        summary["matching_w"] += wins
-        summary["matching_d"] += draws
-        summary["matching_l"] += losses
-        summary["matching_total_game_plies"] += total_game_plies
-        summary["matching_adjudicated_games"] += adjudicated_games
-        summary["matching_tb_adjudicated_games"] += tb_adjudicated_games
-        summary["matching_total_draw_games"] += total_draw_games
-        summary["matching_selfplay_games"] += selfplay_games
-        summary["matching_selfplay_adjudicated_games"] += selfplay_adjudicated_games
-        summary["matching_selfplay_draw_games"] += selfplay_draw_games
-        summary["matching_curriculum_games"] += curriculum_games
-        summary["matching_curriculum_adjudicated_games"] += curriculum_adjudicated_games
-        summary["matching_curriculum_draw_games"] += curriculum_draw_games
-        summary["matching_plies_win"] += plies_win
-        summary["matching_plies_draw"] += plies_draw
-        summary["matching_plies_loss"] += plies_loss
-        summary["matching_checkmate_games"] += checkmate_games
-        summary["matching_stalemate_games"] += stalemate_games
-        summary["matching_sf_d6_sum"] += sf_d6_sum
-        summary["matching_sf_d6_n"] += sf_d6_n
+        for key, val in m.items():
+            summary[f"matching_{key}"] += val
         summary["matching_shards"] += 1
     else:
-        summary["stale_games"] += games
-        summary["stale_positions"] += positions
+        summary["stale_games"] += m["games"]
+        summary["stale_positions"] += m["positions"]
         summary["stale_shards"] += 1
 
     try:

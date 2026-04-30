@@ -27,6 +27,90 @@ from chess_anti_engine.stockfish import StockfishPool, StockfishUCI
 from chess_anti_engine.train.targets import hlgauss_target
 
 
+def _run_mcts_for_subset(
+    model: torch.nn.Module,
+    sub_boards: list[chess.Board],
+    *,
+    mcts_type: str,
+    simulations: int,
+    temperature: float,
+    device: str,
+    rng: np.random.Generator,
+):
+    if mcts_type == "gumbel":
+        cfg = GumbelConfig(simulations=int(simulations), temperature=float(temperature))
+        return run_gumbel_root_many(model, sub_boards, device=device, rng=rng, cfg=cfg)
+    return run_mcts_many(
+        model,
+        sub_boards,
+        device=device,
+        rng=rng,
+        cfg=MCTSConfig(simulations=int(simulations), temperature=float(temperature)),
+    )
+
+
+def _build_replay_sample(
+    *,
+    rec: tuple[np.ndarray, np.ndarray, bool, np.ndarray | None, int | None, bool, float],
+    wdl: int,
+    moves_left: float,
+    cat: np.ndarray,
+    soft: np.ndarray,
+    future: np.ndarray | None,
+    vol: np.ndarray | None,
+) -> ReplaySample:
+    x, probs, pov_white, sf_wdl, sf_move_idx, has_policy, priority = rec
+    return ReplaySample(
+        x=x,
+        policy_target=probs,
+        wdl_target=int(wdl),
+        priority=priority,
+        has_policy=bool(has_policy),
+        sf_wdl=sf_wdl,
+        sf_move_index=sf_move_idx,
+        moves_left=moves_left,
+        is_network_turn=bool(pov_white),
+        categorical_target=cat,
+        policy_soft_target=soft,
+        future_policy_target=future,
+        has_future=(future is not None),
+        volatility_target=vol,
+        has_volatility=(vol is not None),
+    )
+
+
+def _assemble_samples_for_game(
+    *,
+    samples: list[tuple[np.ndarray, np.ndarray, bool, np.ndarray | None, int | None, bool, float]],
+    wdl_series: np.ndarray,
+    result: str,
+    max_plies: int,
+) -> list[ReplaySample]:
+    total_plies = len(samples)
+    vol_targets: list[np.ndarray | None] = [None] * total_plies
+    for t in range(total_plies):
+        t6 = t + 6
+        if t6 < total_plies:
+            vol_targets[t] = np.abs(wdl_series[t6] - wdl_series[t]).astype(np.float32, copy=False)
+
+    out: list[ReplaySample] = []
+    for ply_idx, rec in enumerate(samples):
+        pov_white = rec[2]
+        wdl = _result_to_wdl(result, pov_white=bool(pov_white))
+        scalar_v = 1.0 if wdl == 0 else (0.0 if wdl == 1 else -1.0)
+        future = samples[ply_idx + 2][1] if ply_idx + 2 < total_plies else None
+        out.append(_build_replay_sample(
+            rec=rec,
+            wdl=wdl,
+            moves_left=float(total_plies - ply_idx) / max(1.0, float(max_plies)),
+            cat=hlgauss_target(scalar_v, num_bins=32, sigma=0.04),
+            soft=apply_policy_temperature(rec[1], 2.0),
+            future=future,
+            vol=vol_targets[ply_idx],
+        ))
+    return out
+
+
 def play_batch_timed(
     model: torch.nn.Module,
     *,
@@ -88,52 +172,22 @@ def play_batch_timed(
 
             is_full = rng.random(size=len(net_idxs)) < float(playout_cap_fraction)
 
-            probs_list = [None] * len(net_idxs)
-            actions = [None] * len(net_idxs)
+            probs_list: list[np.ndarray | None] = [None] * len(net_idxs)
+            actions: list[int | None] = [None] * len(net_idxs)
 
-            full_idxs = [j for j, v in enumerate(is_full) if bool(v)]
-            if full_idxs:
-                sub_boards = [boards[net_idxs[j]] for j in full_idxs]
-                if mcts_type == "gumbel":
-                    p_sub, a_sub, _v_sub, _m_sub = run_gumbel_root_many(
-                        model,
-                        sub_boards,
-                        device=device,
-                        rng=rng,
-                        cfg=GumbelConfig(simulations=int(mcts_simulations), temperature=float(temperature)),
-                    )
-                else:
-                    p_sub, a_sub, _v_sub, _m_sub = run_mcts_many(
-                        model,
-                        sub_boards,
-                        device=device,
-                        rng=rng,
-                        cfg=MCTSConfig(simulations=int(mcts_simulations), temperature=float(temperature)),
-                    )
-                for jj, p, a in zip(full_idxs, p_sub, a_sub, strict=True):
-                    probs_list[jj] = p
-                    actions[jj] = a
-
-            fast_idxs = [j for j, v in enumerate(is_full) if not bool(v)]
-            if fast_idxs:
-                sub_boards = [boards[net_idxs[j]] for j in fast_idxs]
-                if mcts_type == "gumbel":
-                    p_sub, a_sub, _v_sub, _m_sub = run_gumbel_root_many(
-                        model,
-                        sub_boards,
-                        device=device,
-                        rng=rng,
-                        cfg=GumbelConfig(simulations=int(fast_simulations), temperature=float(temperature)),
-                    )
-                else:
-                    p_sub, a_sub, _v_sub, _m_sub = run_mcts_many(
-                        model,
-                        sub_boards,
-                        device=device,
-                        rng=rng,
-                        cfg=MCTSConfig(simulations=int(fast_simulations), temperature=float(temperature)),
-                    )
-                for jj, p, a in zip(fast_idxs, p_sub, a_sub, strict=True):
+            for sub_idxs, sims in (
+                ([j for j, v in enumerate(is_full) if bool(v)], mcts_simulations),
+                ([j for j, v in enumerate(is_full) if not bool(v)], fast_simulations),
+            ):
+                if not sub_idxs:
+                    continue
+                sub_boards = [boards[net_idxs[j]] for j in sub_idxs]
+                p_sub, a_sub, _v_sub, _m_sub = _run_mcts_for_subset(
+                    model, sub_boards,
+                    mcts_type=mcts_type, simulations=sims, temperature=temperature,
+                    device=device, rng=rng,
+                )
+                for jj, p, a in zip(sub_idxs, p_sub, a_sub, strict=True):
                     probs_list[jj] = p
                     actions[jj] = a
 
@@ -213,50 +267,12 @@ def play_batch_timed(
         else:
             d += 1
 
-        total_plies = len(samples_per_game[i])
-        wdl_series = wdl_est_all[offsets[i] : offsets[i + 1]]
-
-        vol_targets: list[np.ndarray | None] = [None] * total_plies
-        for t in range(total_plies):
-            t6 = t + 6
-            if t6 < total_plies:
-                vol_targets[t] = np.abs(wdl_series[t6] - wdl_series[t]).astype(np.float32, copy=False)
-
-        for ply_idx, (x, probs, pov_white, sf_wdl, sf_move_idx, has_policy, priority) in enumerate(samples_per_game[i]):
-            wdl = _result_to_wdl(result, pov_white=bool(pov_white))
-
-            moves_left = float(total_plies - ply_idx) / max(1.0, float(max_plies))
-
-            scalar_v = 1.0 if wdl == 0 else (0.0 if wdl == 1 else -1.0)
-            cat = hlgauss_target(scalar_v, num_bins=32, sigma=0.04)
-
-            soft = apply_policy_temperature(probs, 2.0)
-
-            future = None
-            if ply_idx + 2 < total_plies:
-                future = samples_per_game[i][ply_idx + 2][1]
-
-            vol = vol_targets[ply_idx]
-
-            all_samples.append(
-                ReplaySample(
-                    x=x,
-                    policy_target=probs,
-                    wdl_target=int(wdl),
-                    priority=priority,
-                    has_policy=bool(has_policy),
-                    sf_wdl=sf_wdl,
-                    sf_move_index=sf_move_idx,
-                    moves_left=moves_left,
-                    is_network_turn=bool(pov_white),
-                    categorical_target=cat,
-                    policy_soft_target=soft,
-                    future_policy_target=future,
-                    has_future=(future is not None),
-                    volatility_target=vol,
-                    has_volatility=(vol is not None),
-                )
-            )
+        all_samples.extend(_assemble_samples_for_game(
+            samples=samples_per_game[i],
+            wdl_series=wdl_est_all[offsets[i] : offsets[i + 1]],
+            result=result,
+            max_plies=int(max_plies),
+        ))
 
     t_done = time.perf_counter()
 

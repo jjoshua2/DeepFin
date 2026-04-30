@@ -266,6 +266,85 @@ def pick_trial_for_lease(
     return min(eligible, key=_score)
 
 
+def _try_renew_existing_lease(
+    *,
+    leases_root: Path,
+    requested_lease_id: str,
+    username: str,
+    worker_info: dict[str, Any],
+    available_trials: list[str],
+    now_unix: int,
+    lease_seconds: int,
+) -> dict[str, Any] | None:
+    """Heartbeat path: extend the worker's existing lease if still valid.
+
+    Returns the renewed lease, or None if there's nothing to renew (no such
+    lease, owned by another user, or its trial is gone — we delete those).
+    """
+    if not requested_lease_id:
+        return None
+    existing = load_lease(leases_root=leases_root, lease_id=requested_lease_id)
+    if existing is None or str(existing.get("username") or "") != str(username):
+        return None
+    if normalize_trial_id(existing.get("trial_id")) not in available_trials:
+  # Trial was retired; drop the stale lease so the caller can pick a new trial.
+        lease_path(leases_root=leases_root, lease_id=requested_lease_id).unlink(missing_ok=True)
+        return None
+    existing["last_heartbeat_unix"] = now_unix
+    existing["expires_at_unix"] = now_unix + int(lease_seconds)
+    existing["worker_info"] = worker_info
+    save_lease(leases_root=leases_root, lease=existing)
+    return existing
+
+
+def _find_same_worker_leases(
+    active_leases: list[dict[str, Any]], *, username: str, worker_id: str,
+) -> list[dict[str, Any]]:
+    """All active leases owned by the same (username, worker_id) tuple."""
+    if not worker_id:
+        return []
+    out: list[dict[str, Any]] = []
+    for lease in active_leases:
+        if str(lease.get("username") or "") != str(username):
+            continue
+        info = lease.get("worker_info")
+        if isinstance(info, dict) and str(info.get("worker_id") or "").strip() == worker_id:
+            out.append(lease)
+    return out
+
+
+def _choose_trial_for_lease(
+    *,
+    requested_trial_id: str | None,
+    current_trial_id: str | None,
+    available_trials: list[str],
+    active_leases: list[dict[str, Any]],
+    manifest_loader,
+    trial_throughput_loader,
+    min_workers_per_trial: int,
+    max_worker_delta_per_rebalance: int,
+) -> str | None:
+    """Pick which trial to assign. Order: requested → current (if not over-served) → balancer."""
+    if requested_trial_id in available_trials:
+        return requested_trial_id
+    counts = lease_counts_by_trial(active_leases=active_leases)
+    if (
+        current_trial_id in available_trials
+        and int(counts.get(str(current_trial_id), 0)) <= int(max(0, min_workers_per_trial))
+    ):
+        return current_trial_id
+    if available_trials:
+        return pick_trial_for_lease(
+            available_trials=available_trials,
+            active_leases=active_leases,
+            manifest_loader=manifest_loader,
+            trial_throughput_loader=trial_throughput_loader,
+            min_workers_per_trial=min_workers_per_trial,
+            max_worker_delta_per_rebalance=max_worker_delta_per_rebalance,
+        )
+    return None
+
+
 def assign_trial_lease(
     *,
     leases_root: Path,
@@ -293,62 +372,49 @@ def assign_trial_lease(
         worker_info = {}
     worker_id = str(worker_info.get("worker_id") or "").strip()
 
-    if requested_lease_id:
-        existing = load_lease(leases_root=leases_root, lease_id=requested_lease_id)
-        if existing is not None and str(existing.get("username") or "") == str(username):
-            existing_trial_id = normalize_trial_id(existing.get("trial_id"))
-            if existing_trial_id in available_trials:
-                existing["last_heartbeat_unix"] = now_unix
-                existing["expires_at_unix"] = now_unix + int(lease_seconds)
-                existing["worker_info"] = worker_info
-                save_lease(leases_root=leases_root, lease=existing)
-                return existing
-            lease_path(leases_root=leases_root, lease_id=requested_lease_id).unlink(missing_ok=True)
+    renewed = _try_renew_existing_lease(
+        leases_root=leases_root,
+        requested_lease_id=requested_lease_id,
+        username=username,
+        worker_info=worker_info,
+        available_trials=available_trials,
+        now_unix=now_unix,
+        lease_seconds=lease_seconds,
+    )
+    if renewed is not None:
+        return renewed
 
-    same_worker_leases: list[dict[str, Any]] = []
-    if worker_id:
-        for lease in active_leases:
-            if str(lease.get("username") or "") != str(username):
-                continue
-            info = lease.get("worker_info")
-            if not isinstance(info, dict):
-                continue
-            if str(info.get("worker_id") or "").strip() == worker_id:
-                same_worker_leases.append(lease)
+    same_worker_leases = _find_same_worker_leases(
+        active_leases, username=username, worker_id=worker_id,
+    )
+    same_worker_leases.sort(
+        key=lambda lease: int(lease.get("last_heartbeat_unix") or 0), reverse=True,
+    )
+    current_trial_id = (
+        normalize_trial_id(same_worker_leases[0].get("trial_id"))
+        if same_worker_leases else None
+    )
 
-    current_trial_id: str | None = None
-    if same_worker_leases:
-        same_worker_leases.sort(key=lambda lease: int(lease.get("last_heartbeat_unix") or 0), reverse=True)
-        current_trial_id = normalize_trial_id(same_worker_leases[0].get("trial_id"))
+    chosen_trial_id = _choose_trial_for_lease(
+        requested_trial_id=requested_trial_id,
+        current_trial_id=current_trial_id,
+        available_trials=available_trials,
+        active_leases=active_leases,
+        manifest_loader=manifest_loader,
+        trial_throughput_loader=trial_throughput_loader,
+        min_workers_per_trial=min_workers_per_trial,
+        max_worker_delta_per_rebalance=max_worker_delta_per_rebalance,
+    )
 
-    counts = lease_counts_by_trial(active_leases=active_leases)
-
-    chosen_trial_id = requested_trial_id if requested_trial_id in available_trials else None
-    if (
-        chosen_trial_id is None
-        and current_trial_id in available_trials
-        and int(counts.get(str(current_trial_id), 0)) <= int(max(0, min_workers_per_trial))
-    ):
-        chosen_trial_id = current_trial_id
-    if chosen_trial_id is None and available_trials:
-        chosen_trial_id = pick_trial_for_lease(
-            available_trials=available_trials,
-            active_leases=active_leases,
-            manifest_loader=manifest_loader,
-            trial_throughput_loader=trial_throughput_loader,
-            min_workers_per_trial=min_workers_per_trial,
-            max_worker_delta_per_rebalance=max_worker_delta_per_rebalance,
-        )
-
-    api_prefix = "/v1" if chosen_trial_id is None else f"/v1/trials/{chosen_trial_id}"
-    reuse_lease_id = ""
-    if same_worker_leases:
-        reuse_lease_id = str(same_worker_leases[0].get("lease_id") or "").strip()
+    reuse_lease_id = (
+        str(same_worker_leases[0].get("lease_id") or "").strip()
+        if same_worker_leases else ""
+    )
     lease = {
         "lease_id": reuse_lease_id or uuid.uuid4().hex,
         "username": str(username),
         "trial_id": chosen_trial_id,
-        "api_prefix": api_prefix,
+        "api_prefix": "/v1" if chosen_trial_id is None else f"/v1/trials/{chosen_trial_id}",
         "issued_at_unix": now_unix,
         "last_heartbeat_unix": now_unix,
         "expires_at_unix": now_unix + int(lease_seconds),

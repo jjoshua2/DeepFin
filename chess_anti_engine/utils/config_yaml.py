@@ -234,20 +234,15 @@ def _check_unknown(section: str, section_cfg: dict, allowed: set[str]) -> None:
         )
 
 
-def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
-    """Map a nested YAML config into run.py argparse defaults.
+_SECTION_NAMES = frozenset({"stockfish", "selfplay", "train", "model", "tune"})
 
-    Supports both:
-    - flat keys matching argparse destinations (e.g. sf_nodes, sf_policy_temp)
-    - nested sections: stockfish/selfplay/train/model/tune
 
-    Raises ValueError if a recognized section contains unknown keys.
+def _flatten_root_keys(cfg: dict[str, Any], out: dict[str, Any]) -> None:
+    """Copy root-level keys (those not nested under sections) into ``out``.
+
+    Raises if any root-level key is neither a known section nor in the flat
+    allowlist — typically a leftover from a prior config schema.
     """
-
-    out: dict[str, Any] = {}
-
-  # --- Pass 1: flat keys at the YAML root level ---
-    _SECTION_NAMES = frozenset({"stockfish", "selfplay", "train", "model", "tune"})
     root_unknown: list[str] = []
     for k, v in cfg.items():
         if k in _SECTION_NAMES:
@@ -263,69 +258,88 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
             "a current flat key, or delete if retired."
         )
 
-  # --- Pass 2: nested sections (can override flat keys) ---
 
+def _copy_section_keys(out: dict[str, Any], section: dict[str, Any], keys: tuple[str, ...]) -> None:
+    """Copy each key in ``keys`` from ``section`` into ``out`` if present."""
+    for k in keys:
+        if k in section:
+            out[k] = section[k]
+
+
+def _apply_stockfish_section(out: dict[str, Any], section: dict[str, Any]) -> None:
+    _check_unknown("stockfish", section, set(_STOCKFISH_KEYS) | set(_STOCKFISH_LEGACY.keys()))
+    _copy_section_keys(out, section, _STOCKFISH_KEYS)
+  # Legacy alias map (e.g. "path" -> "stockfish_path"); new-style wins if both
+  # are present.
+    for old_k, new_k in _STOCKFISH_LEGACY.items():
+        if old_k in section and new_k not in section:
+            out[new_k] = section[old_k]
+
+
+def _apply_train_section(out: dict[str, Any], section: dict[str, Any]) -> None:
+    _check_unknown("train", section, set(_TRAIN_KEYS) | {"device"})
+    _copy_section_keys(out, section, _TRAIN_KEYS)
+  # train.device sets the global device only if not set at the root level.
+    if "device" in section and "device" not in out:
+        out["device"] = section["device"]
+
+
+def _apply_model_section(out: dict[str, Any], section: dict[str, Any]) -> None:
+    _check_unknown("model", section, set(_MODEL_PASSTHROUGH) | {"kind", "use_smolgen"})
+    if "kind" in section:
+        out["model"] = section["kind"]
+    _copy_section_keys(out, section, _MODEL_PASSTHROUGH)
+    if "use_smolgen" in section:
+        out["no_smolgen"] = not bool(section["use_smolgen"])
+
+
+def _apply_tune_section(out: dict[str, Any], section: dict[str, Any]) -> None:
+  # pb2_bounds_* are dynamic — any number of them allowed.
+    unknown = sorted(k for k in section if k not in _TUNE_KEYS and not k.startswith("pb2_bounds_"))
+    if unknown:
+        raise ValueError(
+            f"Unknown keys in yaml 'tune:' section: {unknown}. "
+            "These are typically leftovers from a prior config schema; "
+            "delete them or update to the current names."
+        )
+    _copy_section_keys(out, section, _TUNE_KEYS)
+    for k, v in section.items():
+        if k.startswith("pb2_bounds_"):
+            out[k] = v
+
+
+def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Map a nested YAML config into run.py argparse defaults.
+
+    Supports both:
+    - flat keys matching argparse destinations (e.g. sf_nodes, sf_policy_temp)
+    - nested sections: stockfish/selfplay/train/model/tune
+
+    Raises ValueError if a recognized section contains unknown keys.
+    """
+    out: dict[str, Any] = {}
+    _flatten_root_keys(cfg, out)
+
+  # Nested sections override matching flat keys.
     stockfish = cfg.get("stockfish")
     if isinstance(stockfish, dict):
-        allowed = set(_STOCKFISH_KEYS) | set(_STOCKFISH_LEGACY.keys())
-        _check_unknown("stockfish", stockfish, allowed)
-        for k in _STOCKFISH_KEYS:
-            if k in stockfish:
-                out[k] = stockfish[k]
-  # Backwards compat: accept old short names (e.g. "path" -> "stockfish_path").
-  # New-style key wins if both are present.
-        for old_k, new_k in _STOCKFISH_LEGACY.items():
-            if old_k in stockfish and new_k not in stockfish:
-                out[new_k] = stockfish[old_k]
+        _apply_stockfish_section(out, stockfish)
 
     selfplay = cfg.get("selfplay")
     if isinstance(selfplay, dict):
         _check_unknown("selfplay", selfplay, set(_SELFPLAY_KEYS))
-        for k in _SELFPLAY_KEYS:
-            if k in selfplay:
-                out[k] = selfplay[k]
+        _copy_section_keys(out, selfplay, _SELFPLAY_KEYS)
 
     train = cfg.get("train")
     if isinstance(train, dict):
-        _check_unknown("train", train, set(_TRAIN_KEYS) | {"device"})
-        for k in _TRAIN_KEYS:
-            if k in train:
-                out[k] = train[k]
-  # allow train.device to set global device if the top-level key isn't present
-        if "device" in train and "device" not in out:
-            out["device"] = train["device"]
+        _apply_train_section(out, train)
 
     model = cfg.get("model")
     if isinstance(model, dict):
-        _check_unknown("model", model, set(_MODEL_PASSTHROUGH) | {"kind", "use_smolgen"})
-        if "kind" in model:
-            out["model"] = model["kind"]
-        for k in _MODEL_PASSTHROUGH:
-            if k in model:
-                out[k] = model[k]
-        if "use_smolgen" in model:
-            out["no_smolgen"] = not bool(model["use_smolgen"])
+        _apply_model_section(out, model)
 
     tune = cfg.get("tune")
     if isinstance(tune, dict):
-  # pb2_bounds_* are dynamic; allow any number of them.
-        unknown_tune = sorted(
-            k for k in tune
-            if k not in _TUNE_KEYS and not k.startswith("pb2_bounds_")
-        )
-        if unknown_tune:
-            raise ValueError(
-                f"Unknown keys in yaml 'tune:' section: {unknown_tune}. "
-                "These are typically leftovers from a prior config schema; "
-                "delete them or update to the current names."
-            )
-        for k in _TUNE_KEYS:
-            if k in tune:
-                out[k] = tune[k]
-  # Pass through pb2_bounds_* keys (dynamic, any number of them).
-        for k, v in tune.items():
-            if k.startswith("pb2_bounds_"):
-                out[k] = v
+        _apply_tune_section(out, tune)
 
-  # Keep defaults dict clean.
     return {k: v for k, v in out.items() if v is not None}

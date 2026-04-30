@@ -9,7 +9,6 @@ from chess_anti_engine.tune.distributed_runtime import (
     _launch_inference_broker,
 )
 from chess_anti_engine.tune.harness import (
-    _extract_saved_trial_config_keys,
     _patch_experiment_state_for_resume,
 )
 from chess_anti_engine.tune._utils import (
@@ -190,7 +189,7 @@ def test_patch_experiment_state_for_resume_adds_new_jsonable_keys(tmp_path: Path
         encoding="utf-8",
     )
 
-    added, skipped = _patch_experiment_state_for_resume(
+    added, skipped, saved_keys = _patch_experiment_state_for_resume(
         state_file=state_file,
         param_space={
             "seed": 7,
@@ -205,17 +204,17 @@ def test_patch_experiment_state_for_resume_adds_new_jsonable_keys(tmp_path: Path
         "distributed_upload_compact_max_age_seconds",
     }
     assert skipped == set()
-
-    saved_state = json.loads(state_file.read_text(encoding="utf-8"))
-    saved_trial = json.loads(saved_state["trial_data"][0][0])
-    assert saved_trial["config"]["distributed_upload_compact_shard_size"] == 2000
-    assert saved_trial["config"]["distributed_upload_compact_max_age_seconds"] == 90.0
-    assert _extract_saved_trial_config_keys(experiment_state=saved_state) == {
+    assert saved_keys == {
         "seed",
         "lr",
         "distributed_upload_compact_shard_size",
         "distributed_upload_compact_max_age_seconds",
     }
+
+    saved_state = json.loads(state_file.read_text(encoding="utf-8"))
+    saved_trial = json.loads(saved_state["trial_data"][0][0])
+    assert saved_trial["config"]["distributed_upload_compact_shard_size"] == 2000
+    assert saved_trial["config"]["distributed_upload_compact_max_age_seconds"] == 90.0
 
 
 def test_patch_experiment_state_for_resume_skips_non_jsonable_keys(tmp_path: Path) -> None:
@@ -231,7 +230,7 @@ def test_patch_experiment_state_for_resume_skips_non_jsonable_keys(tmp_path: Pat
         encoding="utf-8",
     )
 
-    added, skipped = _patch_experiment_state_for_resume(
+    added, skipped, _saved = _patch_experiment_state_for_resume(
         state_file=state_file,
         param_space={
             "seed": 7,
@@ -280,7 +279,7 @@ def test_launch_inference_broker_does_not_inherit_worker_compile(monkeypatch, tm
         def poll(self) -> int | None:
             return None
 
-    def _fake_popen(cmd, **kwargs):  # type: ignore[no-untyped-def]  # pylint: disable=unused-argument  # mocks subprocess.Popen signature
+    def _fake_popen(cmd, **_kwargs):  # pylint: disable=unused-argument
         calls.append(list(cmd))
         return DummyProc()
 
@@ -315,7 +314,7 @@ def test_launch_inference_broker_respects_dedicated_compile_flag(monkeypatch, tm
         def poll(self) -> int | None:
             return None
 
-    def _fake_popen(cmd, **kwargs):  # type: ignore[no-untyped-def]  # pylint: disable=unused-argument  # mocks subprocess.Popen signature
+    def _fake_popen(cmd, **_kwargs):  # pylint: disable=unused-argument
         calls.append(list(cmd))
         return DummyProc()
 
