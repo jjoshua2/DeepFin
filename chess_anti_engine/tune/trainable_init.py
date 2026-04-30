@@ -328,6 +328,103 @@ def _maybe_load_bootstrap(
     del ckpt_data
 
 
+def _seed_replay_from_warmstart(
+    *, restore: RestoreResult, replay_shard_dir: Path,
+) -> None:
+    """Salvage-seed warmstart: only when no shards exist locally and not cross-trial restore."""
+    if not (
+        restore.seed_warmstart_used
+        and not restore.cross_trial_restore
+        and restore.seed_warmstart_replay_dir is not None
+        and restore.seed_warmstart_replay_dir.is_dir()
+        and not iter_shard_paths(replay_shard_dir)
+    ):
+        return
+    replay_shard_dir.mkdir(parents=True, exist_ok=True)
+    copied = 0
+    for sp in iter_shard_paths(restore.seed_warmstart_replay_dir):
+        copy_or_link_shard(sp, replay_shard_dir / sp.name)
+        copied += 1
+    if copied:
+        print(
+            f"[trial] Seeded {copied} replay shards from salvage slot "
+            f"{restore.seed_warmstart_slot} ({restore.seed_warmstart_replay_dir})"
+        )
+
+
+def _seed_replay_from_shared_shards(
+    *, tc: TrialConfig, restore: RestoreResult, replay_shard_dir: Path,
+) -> int:
+    """Iter-0 shared-bootstrap seed: only on fresh start (no shards + not cross-trial)."""
+    if (
+        not tc.shared_shards_dir
+        or iter_shard_paths(replay_shard_dir)
+        or restore.cross_trial_restore
+    ):
+        return 0
+    src = Path(tc.shared_shards_dir)
+    if not src.is_dir():
+        return 0
+    replay_shard_dir.mkdir(parents=True, exist_ok=True)
+    copied = 0
+    for sp in iter_shard_paths(src):
+        copy_or_link_shard(sp, replay_shard_dir / sp.name)
+        copied += 1
+    if copied:
+        print(f"[trial] Seeded {copied} shared iter-0 shards from {src}")
+    return int(copied)
+
+
+def _refresh_replay_after_exploit(
+    *, tc: TrialConfig, config: dict, restore: RestoreResult,
+    replay_shard_dir: Path, trial_dir: Path, current_window: int,
+) -> int:
+    """Run exploit-replay refresh + bump current_window to fit the kept shards.
+
+    The window pre-bump prevents DiskReplayBuffer's _enforce_window from
+    aggressively evicting on the first add_many post-restore.
+    """
+    if not (restore.cross_trial_restore and tc.exploit_replay_refresh_enabled):
+        return current_window
+    donor_trial_dir = (
+        Path(restore.restored_owner_trial_dir).expanduser()
+        if restore.restored_owner_trial_dir else None
+    )
+    refresh_summary = _refresh_replay_shards_on_exploit(
+        config=config,
+        replay_shard_dir=replay_shard_dir,
+        recipient_trial_dir=trial_dir,
+        donor_trial_dir=donor_trial_dir,
+        keep_recent_fraction=tc.exploit_replay_local_keep_recent_fraction,
+        keep_older_fraction=tc.exploit_replay_local_keep_older_fraction,
+        donor_shards=tc.exploit_replay_donor_shards,
+        donor_skip_newest=tc.exploit_replay_skip_newest,
+        shard_size=tc.shard_size,
+        holdout_fraction=tc.holdout_fraction,
+    )
+    print(
+        "[trial] replay refresh after exploit: "
+        f"local_before={refresh_summary['local_before']} "
+        f"deleted={refresh_summary['local_deleted']} "
+        f"local_recent_deleted={refresh_summary['local_recent_deleted']} "
+        f"local_older_deleted={refresh_summary['local_older_deleted']} "
+        f"after_keep={refresh_summary['local_after_keep']} "
+        f"donor_available={refresh_summary['donor_available']} "
+        f"donor_selected={refresh_summary['donor_selected']} "
+        f"donor_copied={refresh_summary['donor_copied']} "
+        f"final={refresh_summary['local_final']}"
+    )
+    kept = iter_shard_paths(replay_shard_dir)
+    if kept:
+        new_window = max(int(current_window), len(kept) * tc.shard_size)
+        print(
+            f"[trial] exploit restore: pre-set window={new_window} "
+            f"for {len(kept)} kept shards"
+        )
+        return new_window
+    return current_window
+
+
 def _init_replay_buffers(
     *,
     tc: TrialConfig,
@@ -348,77 +445,15 @@ def _init_replay_buffers(
     selfplay_shards_dir = work_dir / "selfplay_shards"
     selfplay_shards_dir.mkdir(parents=True, exist_ok=True)
 
-  # Optional warmstart replay from salvage seed slot (fresh trials only).
-    if (
-        restore.seed_warmstart_used
-        and (not restore.cross_trial_restore)
-        and restore.seed_warmstart_replay_dir is not None
-        and restore.seed_warmstart_replay_dir.is_dir()
-        and (not iter_shard_paths(replay_shard_dir))
-    ):
-        replay_shard_dir.mkdir(parents=True, exist_ok=True)
-        copied = 0
-        for sp in iter_shard_paths(restore.seed_warmstart_replay_dir):
-            copy_or_link_shard(sp, replay_shard_dir / sp.name)
-            copied += 1
-        if copied:
-            print(
-                f"[trial] Seeded {copied} replay shards from salvage slot "
-                f"{restore.seed_warmstart_slot} ({restore.seed_warmstart_replay_dir})"
-            )
-
-    shared_shards_loaded = 0
-
-  # Seed replay buffer with shared iter-0 data (played once from bootstrap net).
-  # Only copy if this is a fresh trial (no existing shards in replay_shard_dir).
-    if tc.shared_shards_dir and not iter_shard_paths(replay_shard_dir) and (not restore.cross_trial_restore):
-        src = Path(tc.shared_shards_dir)
-        if src.is_dir():
-            replay_shard_dir.mkdir(parents=True, exist_ok=True)
-            copied = 0
-            for sp in iter_shard_paths(src):
-                copy_or_link_shard(sp, replay_shard_dir / sp.name)
-                copied += 1
-            if copied:
-                shared_shards_loaded = int(copied)
-                print(f"[trial] Seeded {copied} shared iter-0 shards from {src}")
-
-    if restore.cross_trial_restore and tc.exploit_replay_refresh_enabled:
-        donor_trial_dir = Path(restore.restored_owner_trial_dir).expanduser() if restore.restored_owner_trial_dir else None
-        refresh_summary = _refresh_replay_shards_on_exploit(
-            config=config,
-            replay_shard_dir=replay_shard_dir,
-            recipient_trial_dir=trial_dir,
-            donor_trial_dir=donor_trial_dir,
-            keep_recent_fraction=tc.exploit_replay_local_keep_recent_fraction,
-            keep_older_fraction=tc.exploit_replay_local_keep_older_fraction,
-            donor_shards=tc.exploit_replay_donor_shards,
-            donor_skip_newest=tc.exploit_replay_skip_newest,
-            shard_size=tc.shard_size,
-            holdout_fraction=tc.holdout_fraction,
-        )
-        print(
-            "[trial] replay refresh after exploit: "
-            f"local_before={refresh_summary['local_before']} "
-            f"deleted={refresh_summary['local_deleted']} "
-            f"local_recent_deleted={refresh_summary['local_recent_deleted']} "
-            f"local_older_deleted={refresh_summary['local_older_deleted']} "
-            f"after_keep={refresh_summary['local_after_keep']} "
-            f"donor_available={refresh_summary['donor_available']} "
-            f"donor_selected={refresh_summary['donor_selected']} "
-            f"donor_copied={refresh_summary['donor_copied']} "
-            f"final={refresh_summary['local_final']}"
-        )
-  # Set current_window based on shards actually kept on disk after refresh,
-  # so the DiskReplayBuffer capacity is correct from construction and
-  # _enforce_window doesn't aggressively evict on first add_many.
-        kept_after_refresh = iter_shard_paths(replay_shard_dir)
-        if kept_after_refresh:
-            current_window = max(int(current_window), len(kept_after_refresh) * tc.shard_size)
-            print(
-                f"[trial] exploit restore: pre-set window={current_window} "
-                f"for {len(kept_after_refresh)} kept shards"
-            )
+    _seed_replay_from_warmstart(restore=restore, replay_shard_dir=replay_shard_dir)
+    shared_shards_loaded = _seed_replay_from_shared_shards(
+        tc=tc, restore=restore, replay_shard_dir=replay_shard_dir,
+    )
+    current_window = _refresh_replay_after_exploit(
+        tc=tc, config=config, restore=restore,
+        replay_shard_dir=replay_shard_dir, trial_dir=trial_dir,
+        current_window=current_window,
+    )
 
     buf = DiskReplayBuffer(
         current_window,
