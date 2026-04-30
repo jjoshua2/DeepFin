@@ -440,6 +440,26 @@ def extract_uploaded_shard_tar(tar_path: str | Path, dest: str | Path) -> Path:
     return dest
 
 
+  # Each entry: (sample_attr, target_arr, has_arr, scalar_caster_or_None_for_array_asarray).
+  # ``None`` ⇒ generic ``np.asarray(v, dtype=spec.dtype)`` — used for the float16
+  # vector heads. Custom callables handle scalar packing (int/bool/half).
+_SCALAR_FIELDS: tuple[tuple[str, str, str, "object"], ...] = (
+    ("sf_move_index",     "sf_move_index",  "has_sf_move",          int),
+    ("moves_left",        "moves_left",     "has_moves_left",       lambda v: np.float16(float(v))),
+    ("is_network_turn",   "is_network_turn","has_is_network_turn",  lambda v: 1 if bool(v) else 0),
+    ("is_selfplay",       "is_selfplay",    "has_is_selfplay",      lambda v: 1 if bool(v) else 0),
+)
+_VECTOR_FIELDS: tuple[tuple[str, str, str], ...] = (
+    ("sf_wdl",               "sf_wdl",               "has_sf_wdl"),
+    ("sf_policy_target",     "sf_policy_target",     "has_sf_policy"),
+    ("categorical_target",   "categorical_target",   "has_categorical"),
+    ("policy_soft_target",   "policy_soft_target",   "has_policy_soft"),
+    ("future_policy_target", "future_policy_target", "has_future"),
+    ("volatility_target",    "volatility_target",    "has_volatility"),
+    ("sf_volatility_target", "sf_volatility_target", "has_sf_volatility"),
+)
+
+
 def samples_to_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
     if not samples:
         raise ValueError("cannot serialize empty shard")
@@ -459,39 +479,16 @@ def samples_to_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
         arrs[spec.flag] = np.zeros((n,), dtype=np.uint8)
 
     for i, s in enumerate(samples):
-        if s.sf_wdl is not None:
-            arrs["sf_wdl"][i] = np.asarray(s.sf_wdl, dtype=np.float16)
-            arrs["has_sf_wdl"][i] = 1
-        if s.sf_move_index is not None:
-            arrs["sf_move_index"][i] = int(s.sf_move_index)
-            arrs["has_sf_move"][i] = 1
-        if s.sf_policy_target is not None:
-            arrs["sf_policy_target"][i] = np.asarray(s.sf_policy_target, dtype=np.float16)
-            arrs["has_sf_policy"][i] = 1
-        if s.moves_left is not None:
-            arrs["moves_left"][i] = np.float16(float(s.moves_left))
-            arrs["has_moves_left"][i] = 1
-        if s.is_network_turn is not None:
-            arrs["is_network_turn"][i] = 1 if bool(s.is_network_turn) else 0
-            arrs["has_is_network_turn"][i] = 1
-        if s.is_selfplay is not None:
-            arrs["is_selfplay"][i] = 1 if bool(s.is_selfplay) else 0
-            arrs["has_is_selfplay"][i] = 1
-        if s.categorical_target is not None:
-            arrs["categorical_target"][i] = np.asarray(s.categorical_target, dtype=np.float16)
-            arrs["has_categorical"][i] = 1
-        if s.policy_soft_target is not None:
-            arrs["policy_soft_target"][i] = np.asarray(s.policy_soft_target, dtype=np.float16)
-            arrs["has_policy_soft"][i] = 1
-        if s.future_policy_target is not None:
-            arrs["future_policy_target"][i] = np.asarray(s.future_policy_target, dtype=np.float16)
-            arrs["has_future"][i] = 1
-        if s.volatility_target is not None:
-            arrs["volatility_target"][i] = np.asarray(s.volatility_target, dtype=np.float16)
-            arrs["has_volatility"][i] = 1
-        if s.sf_volatility_target is not None:
-            arrs["sf_volatility_target"][i] = np.asarray(s.sf_volatility_target, dtype=np.float16)
-            arrs["has_sf_volatility"][i] = 1
+        for src, target, has, cast in _SCALAR_FIELDS:
+            v = getattr(s, src, None)
+            if v is not None:
+                arrs[target][i] = cast(v)  # pyright: ignore[reportCallIssue]
+                arrs[has][i] = 1
+        for src, target, has in _VECTOR_FIELDS:
+            v = getattr(s, src, None)
+            if v is not None:
+                arrs[target][i] = np.asarray(v, dtype=np.float16)
+                arrs[has][i] = 1
         for mk, hk in zip(LEGAL_MASK_FIELDS, LEGAL_MASK_HAS_FIELDS, strict=True):
             v = getattr(s, mk, None)
             if v is not None:
