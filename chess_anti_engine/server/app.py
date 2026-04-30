@@ -36,9 +36,10 @@ _PENDING_DIR_NAME = PENDING_DIR_NAME
 _IN_FLIGHT_DIR_NAME = IN_FLIGHT_DIR_NAME
 
 
-# Aggregate counter fields shared between the meta dict (input) and accumulator
-# attribute (output). ``games`` is left out of this list because the dict key
-# matches but it has no separate input mapping in upload-meta payloads either.
+# Aggregate counter fields shared between the upload-meta dict (input) and
+# accumulator attribute (output). Each entry is both the meta-dict key and the
+# accumulator field name. ``positions`` is NOT in here — it tracks
+# ``len(samples)`` directly, not a meta-dict counter.
 _AGGREGATE_COUNTER_FIELDS: tuple[str, ...] = (
     "games", "wins", "draws", "losses",
     "total_game_plies",
