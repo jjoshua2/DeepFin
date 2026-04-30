@@ -255,6 +255,117 @@ class _StatsAcc:
 
 
 @dataclass
+class _CExtensionCaps:
+    """C extension probes consumed by ``SelfplayState.create``."""
+    mcts_tree: Any
+    has_c_ply: bool
+    has_classify_c: bool
+    c_process_ply: Callable[..., Any] | None
+    batch_enc_146: Callable[..., Any] | None
+    c_classify: Callable[..., Any] | None
+    c_temp_resample: Callable[..., Any] | None
+
+
+def _init_color_and_selfplay_arrays(
+    batch_size: int, *, rng: np.random.Generator, selfplay_fraction: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Alternate net color per slot; roll selfplay vs curriculum per slot."""
+    net_color_arr = np.array(
+        [1 if (i % 2 == 0) else 0 for i in range(batch_size)],
+        dtype=np.int8,
+    )
+    sp_frac = max(0.0, min(1.0, float(selfplay_fraction)))
+    selfplay_arr = np.array(
+        [1 if rng.random() < sp_frac else 0 for _ in range(batch_size)],
+        dtype=np.int8,
+    )
+    return net_color_arr, selfplay_arr
+
+
+def _init_tb_state(
+    batch_size: int, *, rng: np.random.Generator, game: GameConfig,
+) -> tuple[SyzygyProbe | None, list[str | None], np.ndarray]:
+    """Build TB probe + per-slot result/adjudicate-roll arrays.
+
+    When ``syzygy_adjudicate`` is on, end games early at the first TB-eligible
+    position (saves compute on known-result endgames). When ``syzygy_in_search``
+    is on, the probe is also passed to MCTS to override NN wdl logits at
+    TB-eligible leaves. The per-slot adjudicate roll lets us play through
+    some endgames so the NN doesn't lose endgame skill.
+    """
+    tb_probe: SyzygyProbe | None = None
+    if game.syzygy_path and (game.syzygy_adjudicate or game.syzygy_in_search):
+        tb_probe = SyzygyProbe(game.syzygy_path)
+    tb_result_arr: list[str | None] = [None] * batch_size
+    tb_adj_roll_arr = np.zeros(batch_size, dtype=np.int8)
+    if tb_probe is not None and game.syzygy_adjudicate:
+        tb_adj_frac = max(0.0, min(1.0, float(game.syzygy_adjudicate_fraction)))
+        for _i in range(batch_size):
+            if rng.random() < tb_adj_frac:
+                tb_adj_roll_arr[_i] = 1
+    return tb_probe, tb_result_arr, tb_adj_roll_arr
+
+
+def _probe_c_extensions() -> _CExtensionCaps:
+    """Probe C fast-path imports (tree, per-ply, classify/resample).
+
+    Each block is independent — partial availability is fine. ``batch_process_ply``
+    and ``batch_encode_146`` are imported together so the two ``None``-fallbacks
+    can't drift (drift would break the xs_batch invariant in the network turn).
+    """
+    mcts_tree = None
+    try:
+        from chess_anti_engine.mcts._mcts_tree import MCTSTree as _MCTSTree
+        mcts_tree = _MCTSTree()
+    except ImportError:
+        pass
+
+    c_process_ply: Callable[..., Any] | None = None
+    batch_enc_146: Callable[..., Any] | None = None
+    has_c_ply = False
+    try:
+        from chess_anti_engine.mcts._mcts_tree import (
+            batch_encode_146 as _batch_enc_146,
+        )
+        from chess_anti_engine.mcts._mcts_tree import (
+            batch_process_ply as _c_process_ply,
+        )
+        c_process_ply = _c_process_ply
+        batch_enc_146 = _batch_enc_146
+        has_c_ply = True
+    except ImportError:
+        logging.getLogger("chess_anti_engine.selfplay").warning(
+            "C per-ply fast path unavailable (batch_process_ply/batch_encode_146 "
+            "not importable from _mcts_tree); falling back to Python. Rebuild "
+            "the C extension for production.",
+        )
+
+    c_classify: Callable[..., Any] | None = None
+    c_temp_resample: Callable[..., Any] | None = None
+    has_classify_c = False
+    try:
+        from chess_anti_engine.mcts._mcts_tree import classify_games as _c_classify
+        from chess_anti_engine.mcts._mcts_tree import (
+            temperature_resample as _c_temp_resample,
+        )
+        c_classify = _c_classify
+        c_temp_resample = _c_temp_resample
+        has_classify_c = True
+    except ImportError:
+        pass
+
+    return _CExtensionCaps(
+        mcts_tree=mcts_tree,
+        has_c_ply=has_c_ply,
+        has_classify_c=has_classify_c,
+        c_process_ply=c_process_ply,
+        batch_enc_146=batch_enc_146,
+        c_classify=c_classify,
+        c_temp_resample=c_temp_resample,
+    )
+
+
+@dataclass
 class SelfplayState:
     """Bundle of mutable state driving one ``play_batch`` invocation.
 
@@ -371,101 +482,14 @@ class SelfplayState:
         cboards = [_CBoard.from_board(b) for b in boards]
         starting_boards = [b.copy() for b in boards] if game.syzygy_path else None
 
-        done_arr = np.zeros(batch_size, dtype=np.int8)
-        finalized_arr = np.zeros(batch_size, dtype=np.int8)
-        # Alternate which color the network plays so it sees both perspectives.
-        net_color_arr = np.array(
-            [1 if (i % 2 == 0) else 0 for i in range(batch_size)],
-            dtype=np.int8,
+        net_color_arr, selfplay_arr = _init_color_and_selfplay_arrays(
+            batch_size, rng=rng, selfplay_fraction=game.selfplay_fraction,
         )
-        sp_frac = max(0.0, min(1.0, float(game.selfplay_fraction)))
-        selfplay_arr = np.array(
-            [1 if rng.random() < sp_frac else 0 for _ in range(batch_size)],
-            dtype=np.int8,
+        tb_probe, tb_result_arr, tb_adj_roll_arr = _init_tb_state(
+            batch_size, rng=rng, game=game,
         )
 
-        # TB state. When ``syzygy_adjudicate`` is on, we end games early at the
-        # first TB-eligible position and stash the TB-proven result — saves the
-        # compute that would otherwise be spent on MCTS sims through a
-        # known-result endgame. When ``syzygy_in_search`` is on, the probe is
-        # also passed to MCTS to override NN wdl logits at TB-eligible leaves.
-        tb_probe: SyzygyProbe | None = None
-        if game.syzygy_path and (game.syzygy_adjudicate or game.syzygy_in_search):
-            tb_probe = SyzygyProbe(game.syzygy_path)
-        tb_result_arr: list[str | None] = [None] * batch_size
-        # Per-game adjudication roll. 1 = this game gets TB-adjudicated when
-        # eligible; 0 = play through. Re-rolled on slot recycle below from
-        # ``syzygy_adjudicate_fraction``, which lets the NN keep training on
-        # endgame positions instead of silently losing endgame skill.
-        tb_adj_roll_arr = np.zeros(batch_size, dtype=np.int8)
-        if tb_probe is not None and game.syzygy_adjudicate:
-            tb_adj_frac = max(0.0, min(1.0, float(game.syzygy_adjudicate_fraction)))
-            for _i in range(batch_size):
-                if rng.random() < tb_adj_frac:
-                    tb_adj_roll_arr[_i] = 1
-
-        move_idx_history: list[list[int]] = [[] for _ in range(batch_size)]
-        samples_per_game: list[list[Any]] = [[] for _ in range(batch_size)]
-        consecutive_low_winrate = [0] * batch_size
-        last_net_full = [True] * batch_size
-        root_ids = [-1] * batch_size
-
-        # Persistent MCTS tree (C-only). Transposition table inside the tree
-        # already deduplicates repeated NN evals; the separate NNCache that
-        # used to live here was removed (low marginal hit rate, ~387 MB).
-        mcts_tree = None
-        try:
-            from chess_anti_engine.mcts._mcts_tree import (
-                MCTSTree as _MCTSTree,
-            )
-
-            mcts_tree = _MCTSTree()
-        except ImportError:
-            pass
-
-        # Probe C per-ply fast path.  ``batch_process_ply`` and ``batch_encode_146``
-        # live in the same C module; importing together keeps the two
-        # ``None``-fallback paths coupled (prevents drift where only one is
-        # available, which would break the xs_batch invariant in the network
-        # turn).
-        c_process_ply: Callable[..., Any] | None = None
-        batch_enc_146: Callable[..., Any] | None = None
-        has_c_ply = False
-        try:
-            from chess_anti_engine.mcts._mcts_tree import (
-                batch_encode_146 as _batch_enc_146,
-            )
-            from chess_anti_engine.mcts._mcts_tree import (
-                batch_process_ply as _c_process_ply,
-            )
-
-            c_process_ply = _c_process_ply
-            batch_enc_146 = _batch_enc_146
-            has_c_ply = True
-        except ImportError:
-            logging.getLogger("chess_anti_engine.selfplay").warning(
-                "C per-ply fast path unavailable (batch_process_ply/batch_encode_146 "
-                "not importable from _mcts_tree); falling back to Python. Rebuild "
-                "the C extension for production.",
-            )
-
-        # Probe C classify/resample fast paths.
-        c_classify: Callable[..., Any] | None = None
-        c_temp_resample: Callable[..., Any] | None = None
-        has_classify_c = False
-        try:
-            from chess_anti_engine.mcts._mcts_tree import (
-                classify_games as _c_classify,
-            )
-            from chess_anti_engine.mcts._mcts_tree import (
-                temperature_resample as _c_temp_resample,
-            )
-
-            c_classify = _c_classify
-            c_temp_resample = _c_temp_resample
-            has_classify_c = True
-        except ImportError:
-            pass
+        c_caps = _probe_c_extensions()
 
         # Normalize volatility source.
         vs = str(game.volatility_source).lower().strip()
@@ -493,8 +517,8 @@ class SelfplayState:
             volatility_source=vs,
             base_nodes=base_nodes,
             terminal_eval_nodes=terminal_eval_nodes,
-            done_arr=done_arr,
-            finalized_arr=finalized_arr,
+            done_arr=np.zeros(batch_size, dtype=np.int8),
+            finalized_arr=np.zeros(batch_size, dtype=np.int8),
             net_color_arr=net_color_arr,
             selfplay_arr=selfplay_arr,
             tb_probe=tb_probe,
@@ -503,18 +527,18 @@ class SelfplayState:
             boards=boards,
             cboards=cboards,
             starting_boards=starting_boards,
-            move_idx_history=move_idx_history,
-            samples_per_game=samples_per_game,
-            consecutive_low_winrate=consecutive_low_winrate,
-            last_net_full=last_net_full,
-            root_ids=root_ids,
-            mcts_tree=mcts_tree,
-            has_c_ply=has_c_ply,
-            has_classify_c=has_classify_c,
-            c_process_ply=c_process_ply,
-            batch_enc_146=batch_enc_146,
-            c_classify=c_classify,
-            c_temp_resample=c_temp_resample,
+            move_idx_history=[[] for _ in range(batch_size)],
+            samples_per_game=[[] for _ in range(batch_size)],
+            consecutive_low_winrate=[0] * batch_size,
+            last_net_full=[True] * batch_size,
+            root_ids=[-1] * batch_size,
+            mcts_tree=c_caps.mcts_tree,
+            has_c_ply=c_caps.has_c_ply,
+            has_classify_c=c_caps.has_classify_c,
+            c_process_ply=c_caps.c_process_ply,
+            batch_enc_146=c_caps.batch_enc_146,
+            c_classify=c_caps.c_classify,
+            c_temp_resample=c_caps.c_temp_resample,
             games_started=batch_size,
         )
 
