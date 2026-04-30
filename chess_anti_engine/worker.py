@@ -1644,6 +1644,59 @@ class WorkerSession:
             all_stats = [f.result()[1] for f in futures]
         return self._aggregate_thread_stats(all_stats)
 
+    def _dispatch_selfplay_one_shard(
+        self, *, games_per_batch: int, cfgs: dict, need_local_model: bool,
+    ) -> "BatchStats | None":
+        """Run one continuous-selfplay session. Returns None on broker errors that
+        we recover from via reset (caller exits the iteration); otherwise BatchStats."""
+        assert self.sf is not None  # caller (_run_selfplay) calls _sync_stockfish first
+        _eval = self.inference_client or self._direct_evaluator
+        try:
+            if self.args.threaded_selfplay:
+                return self._run_selfplay_threaded(
+                    games_per_batch=int(games_per_batch),
+                    sf=self.sf, eval_=_eval, cfgs=cfgs,
+                )
+  # Continuous selfplay: 256 slots always full, games recycled on completion.
+  # Runs until _stop_selfplay is set (task change, pause, or shutdown).
+  # Samples flow via _on_completed_game.
+            _samples, stats = play_batch(
+                self.model if (need_local_model and _eval is None) else None,
+                device=str(self.device), rng=self.rng,
+                stockfish=self.sf, evaluator=_eval,
+                games=int(games_per_batch),
+                on_game_complete=self._on_completed_game,
+                on_step=self._check_model_update,
+                stop_fn=self._stop_fn,
+                **cfgs,
+            )
+            return stats
+        except TimeoutError as exc:
+            if self.inference_client is None:
+                raise
+            self._reset_inference_client("inference broker timed out", exc)
+            return None
+        except RuntimeError as exc:
+            err = str(exc).lower()
+            if self.inference_client is None or not any(tok in err for tok in ("inference", "broker", "slot")):
+                raise
+            self._reset_inference_client("inference broker error", exc)
+            return None
+
+    def _flush_and_upload_after_shard(self, manifest: dict, model_sha: str) -> None:
+        """Flush any buffered samples + upload pending shards + prune unused cached models."""
+        if self.upload_buf.positions > 0:
+            _flush_upload_buffer_to_pending(
+                pending_dir=self.pending_dir, username=str(self.args.username),
+                buf=self.upload_buf, now_s=time.time(),
+            )
+            self._upload_pending_shards(default_elapsed_s=0.0)
+
+        best_sha = str((manifest.get("best_model") or {}).get("sha256") or "")
+        if not self.shared_cache_enabled:
+            _prune_cached_models(cache_dir=self.cache_dir, keep_shas={model_sha, best_sha})
+        self._upload_pending_shards(default_elapsed_s=0.0)
+
     def _run_selfplay(self, manifest: dict) -> None:
         """Continuous selfplay — runs until stop signal (task change/pause/shutdown)."""
         self._stop_selfplay = False
@@ -1654,11 +1707,7 @@ class WorkerSession:
 
         need_local_model = self.inference_client is None
 
-        if not model_sha:
-            time.sleep(float(self.args.poll_seconds))
-            return
-
-        if need_local_model and self.model is None:
+        if not model_sha or (need_local_model and self.model is None):
             time.sleep(float(self.args.poll_seconds))
             return
 
@@ -1676,87 +1725,34 @@ class WorkerSession:
             else int(reco.get("games_per_batch", 8))
         )
 
-        cfgs, sf_args = self._build_selfplay_configs(reco)
-
-  # Resolve stockfish binary and (re)init engine.
-        sf_nodes, sf_multipv, syzygy_path = sf_args
+        cfgs, (sf_nodes, sf_multipv, syzygy_path) = self._build_selfplay_configs(reco)
         self._sync_stockfish(manifest, sf_nodes, sf_multipv, syzygy_path=syzygy_path)
         assert self.sf is not None  # _sync_stockfish always assigns
-        _sf = self.sf
 
-  # Generate a shard
         t0 = time.time()
         self._saw_completed_game = False
-
-        try:
-            _eval = self.inference_client or self._direct_evaluator
-            if self.args.threaded_selfplay:
-                stats = self._run_selfplay_threaded(
-                    games_per_batch=int(games_per_batch),
-                    sf=_sf, eval_=_eval, cfgs=cfgs,
-                )
-            else:
-  # Continuous selfplay: 256 slots always full, games recycled
-  # on completion.  Runs until _stop_selfplay is set (task change,
-  # pause, or shutdown).  Samples flow via _on_completed_game.
-                _samples, stats = play_batch(
-                    self.model if (need_local_model and _eval is None) else None,
-                    device=str(self.device), rng=self.rng,
-                    stockfish=self.sf, evaluator=_eval,
-                    games=int(games_per_batch),
-                    on_game_complete=self._on_completed_game,
-                    on_step=self._check_model_update,
-                    stop_fn=self._stop_fn,
-                    **cfgs,
-                )
-        except TimeoutError as exc:
-            if self.inference_client is None:
-                raise
-            self._reset_inference_client("inference broker timed out", exc)
-            return
-        except RuntimeError as exc:
-            err = str(exc).lower()
-            if self.inference_client is None or not any(tok in err for tok in ("inference", "broker", "slot")):
-                raise
-            self._reset_inference_client("inference broker error", exc)
+        stats = self._dispatch_selfplay_one_shard(
+            games_per_batch=games_per_batch, cfgs=cfgs, need_local_model=need_local_model,
+        )
+        if stats is None:
             return
         t1 = time.time()
 
-  # Log session outcome.
         self.log.info(
             "selfplay stopped: games=%d positions=%d W/D/L=%d/%d/%d elapsed_s=%.1f",
-            int(stats.games),
-            int(stats.positions),
-            int(stats.w),
-            int(stats.d),
-            int(stats.l),
+            int(stats.games), int(stats.positions),
+            int(stats.w), int(stats.d), int(stats.l),
             float(t1 - t0),
         )
         if isinstance(self._direct_evaluator, ThreadedDispatcher):
             ds = self._direct_evaluator.stats
             self.log.info(
                 "dispatcher stats: batches=%d avg_batch=%.1f avg_forward_ms=%.2f full_drains=%d",
-                ds["lifetime_batches"],
-                ds["avg_batch_size"],
-                ds["avg_forward_ms"],
-                ds["lifetime_full_drains"],
+                ds["lifetime_batches"], ds["avg_batch_size"],
+                ds["avg_forward_ms"], ds["lifetime_full_drains"],
             )
 
-  # Flush any remaining buffered samples.
-        if self.upload_buf.positions > 0:
-            _flush_upload_buffer_to_pending(
-                pending_dir=self.pending_dir, username=str(self.args.username),
-                buf=self.upload_buf, now_s=time.time(),
-            )
-            self._upload_pending_shards(default_elapsed_s=0.0)
-
-  # Prune old cached models opportunistically.
-        best_info = manifest.get("best_model") or {}
-        best_sha = str(best_info.get("sha256") or "")
-        if not self.shared_cache_enabled:
-            _prune_cached_models(cache_dir=self.cache_dir, keep_shas={model_sha, best_sha})
-
-        self._upload_pending_shards(default_elapsed_s=0.0)
+        self._flush_and_upload_after_shard(manifest, model_sha)
 
     def _cleanup(self) -> None:
         if self.inference_client is not None and hasattr(self.inference_client, "close"):
