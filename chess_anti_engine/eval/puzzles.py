@@ -164,6 +164,103 @@ def load_epd(path: str | Path) -> PuzzleSuite:
     return PuzzleSuite(puzzles=puzzles, name=p.stem)
 
 
+def _row_rating(row: dict[str, str]) -> int:
+    try:
+        return int(row.get("Rating", "") or 0)
+    except ValueError:
+        return 0
+
+
+def _row_passes_filters(
+    row: dict[str, str],
+    *,
+    min_rating: int | None,
+    max_rating: int | None,
+    themes_filter: tuple[str, ...],
+) -> tuple[bool, int, tuple[str, ...]]:
+    """Return (passes, rating, themes) — themes parsed once for reuse."""
+    rating = _row_rating(row)
+    if min_rating is not None and rating < min_rating:
+        return False, rating, ()
+    if max_rating is not None and rating > max_rating:
+        return False, rating, ()
+    themes = tuple((row.get("Themes") or "").split())
+    if themes_filter and not any(t in themes for t in themes_filter):
+        return False, rating, themes
+    return True, rating, themes
+
+
+def _parse_setup_and_best(
+    fen: str, move_tokens: list[str],
+) -> tuple[chess.Board, chess.Move] | None:
+    """Apply opponent's setup move; validate user's first reply is legal."""
+    try:
+        board = chess.Board(fen)
+    except ValueError:
+        return None
+    try:
+        setup = chess.Move.from_uci(move_tokens[0])
+    except (ValueError, chess.InvalidMoveError):
+        return None
+    if setup not in board.legal_moves:
+        return None
+    board.push(setup)
+    try:
+        best = chess.Move.from_uci(move_tokens[1])
+    except (ValueError, chess.InvalidMoveError):
+        return None
+    if best not in board.legal_moves:
+        return None
+    return board, best
+
+
+def _parse_solution_sequence(
+    move_tokens: list[str], best: chess.Move,
+) -> tuple[chess.Move, ...]:
+    """Parse the rest of the solution sequence; fall back to [best] on error."""
+    try:
+        return tuple(chess.Move.from_uci(tok) for tok in move_tokens[1:])
+    except (ValueError, chess.InvalidMoveError):
+        return (best,)
+
+
+def _row_to_puzzle(
+    row: dict[str, str],
+    *,
+    min_rating: int | None,
+    max_rating: int | None,
+    themes_filter: tuple[str, ...],
+) -> Puzzle | None:
+    passed, rating, themes = _row_passes_filters(
+        row, min_rating=min_rating, max_rating=max_rating, themes_filter=themes_filter,
+    )
+    if not passed:
+        return None
+
+    fen = (row.get("FEN") or "").strip()
+    moves_str = (row.get("Moves") or "").strip()
+    if not fen or not moves_str:
+        return None
+
+    move_tokens = moves_str.split()
+    if len(move_tokens) < 2:
+        return None
+
+    parsed = _parse_setup_and_best(fen, move_tokens)
+    if parsed is None:
+        return None
+    board, best = parsed
+
+    return Puzzle(
+        board=board,
+        best_moves=[best],
+        puzzle_id=(row.get("PuzzleId") or "").strip(),
+        rating=rating if rating > 0 else None,
+        themes=themes,
+        solution_sequence=_parse_solution_sequence(move_tokens, best),
+    )
+
+
 def load_lichess_csv(
     path: str | Path,
     *,
@@ -191,66 +288,13 @@ def load_lichess_csv(
     with p.open(encoding="utf-8", newline="") as fh:
         reader = csv.DictReader(fh)
         for row in reader:
-            try:
-                rating = int(row.get("Rating", "") or 0)
-            except ValueError:
-                rating = 0
-            if min_rating is not None and rating < min_rating:
+            puzzle = _row_to_puzzle(
+                row, min_rating=min_rating, max_rating=max_rating,
+                themes_filter=themes_filter,
+            )
+            if puzzle is None:
                 continue
-            if max_rating is not None and rating > max_rating:
-                continue
-
-            themes = tuple((row.get("Themes") or "").split())
-            if themes_filter and not any(t in themes for t in themes_filter):
-                continue
-
-            fen = (row.get("FEN") or "").strip()
-            moves_str = (row.get("Moves") or "").strip()
-            if not fen or not moves_str:
-                continue
-
-            try:
-                board = chess.Board(fen)
-            except ValueError:
-                continue
-
-            move_tokens = moves_str.split()
-            if len(move_tokens) < 2:
-                continue
-
-            # Apply opponent's setup move; the next move is the user's expected reply.
-            try:
-                setup = chess.Move.from_uci(move_tokens[0])
-            except (ValueError, chess.InvalidMoveError):
-                continue
-            if setup not in board.legal_moves:
-                continue
-            board.push(setup)
-
-            try:
-                best = chess.Move.from_uci(move_tokens[1])
-            except (ValueError, chess.InvalidMoveError):
-                continue
-            if best not in board.legal_moves:
-                continue
-
-            # Parse the rest of the solution sequence (user/opponent alternating).
-            seq: list[chess.Move] = []
-            try:
-                for tok in move_tokens[1:]:
-                    seq.append(chess.Move.from_uci(tok))
-            except (ValueError, chess.InvalidMoveError):
-                seq = [best]  # fall back to just the first user move
-
-            puzzles.append(Puzzle(
-                board=board,
-                best_moves=[best],
-                puzzle_id=(row.get("PuzzleId") or "").strip(),
-                rating=rating if rating > 0 else None,
-                themes=themes,
-                solution_sequence=tuple(seq),
-            ))
-
+            puzzles.append(puzzle)
             if max_puzzles is not None and len(puzzles) >= max_puzzles:
                 break
 
