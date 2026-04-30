@@ -285,27 +285,43 @@ def _setup_worker_logging(args) -> logging.Logger:
     return log
 
 
+# Args whose CLI value (when None/falsy) falls back to cfg.get(<key>).
+# Order is the original assignment order so server_url retains its hardcoded fallback.
+_OR_FALLBACK_FIELDS: tuple[str, ...] = (
+    "trial_id", "username", "stockfish_path", "shared_cache_dir",
+)
+
+# Args whose YAML value should override the CLI default whenever the YAML key
+# is present. Each entry is (cli_field, yaml_key, cast).
+_TYPED_OVERRIDE_FIELDS: tuple[tuple[str, str, type], ...] = (
+    ("upload_target_positions", "upload_target_positions", int),
+    ("upload_flush_seconds", "upload_flush_seconds", float),
+)
+
+
 def _merge_cli_with_yaml_defaults(args, cfg: dict) -> None:
     """Fill missing CLI fields from worker.yaml. CLI always wins."""
-    args.server_url = args.server_url or cfg.get("server_url") or "http://127.0.0.1:45453"
-    args.trial_id = args.trial_id or cfg.get("trial_id")
-    args.username = args.username or cfg.get("username")
+    args.server_url = (
+        args.server_url or cfg.get("server_url") or "http://127.0.0.1:45453"
+    )
+    for field_name in _OR_FALLBACK_FIELDS:
+        setattr(args, field_name, getattr(args, field_name) or cfg.get(field_name))
+
     if args.password_file is None and cfg.get("password_file"):
         args.password_file = str(cfg.get("password_file"))
-    if (not bool(args.self_update)) and bool(cfg.get("self_update", False)):
-        args.self_update = True
-    if (not bool(args.stockfish_from_server)) and bool(cfg.get("stockfish_from_server", False)):
-        args.stockfish_from_server = True
-    args.stockfish_path = args.stockfish_path or cfg.get("stockfish_path")
-    args.shared_cache_dir = args.shared_cache_dir or cfg.get("shared_cache_dir")
+
+    for flag in ("self_update", "stockfish_from_server"):
+        if not bool(getattr(args, flag)) and bool(cfg.get(flag, False)):
+            setattr(args, flag, True)
+
     if args.sf_workers is None:
         args.sf_workers = int(cfg.get("sf_workers", 1))
     if args.games_per_batch is None and "games_per_batch" in cfg:
         args.games_per_batch = int(cfg["games_per_batch"])
-    if "upload_target_positions" in cfg:
-        args.upload_target_positions = int(cfg["upload_target_positions"])
-    if "upload_flush_seconds" in cfg:
-        args.upload_flush_seconds = float(cfg["upload_flush_seconds"])
+
+    for cli_field, yaml_key, caster in _TYPED_OVERRIDE_FIELDS:
+        if yaml_key in cfg:
+            setattr(args, cli_field, caster(cfg[yaml_key]))
 
 
 def _resolve_worker_password(args, cfg: dict) -> str:
