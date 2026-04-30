@@ -186,6 +186,58 @@ def _apply_donor_config_overlay(config: dict, donor_cfg: dict, trainer) -> None:
     _apply_lr_gamma_weights(trainer, config, rescale_current_lr=False)
 
 
+def _apply_restored_trial_meta(rr: RestoreResult, restored_trial_meta: dict | None) -> tuple[str, str]:
+    """Pull owner/salvage/global-iter fields from checkpoint metadata into ``rr``.
+    Returns (owner_trial_id, owner_optimizer)."""
+    if not isinstance(restored_trial_meta, dict):
+        return "", ""
+    rr.restored_owner_trial_dir = str(restored_trial_meta.get("owner_trial_dir", ""))
+    rr.salvage_origin_used = bool(restored_trial_meta.get("salvage_origin_used", rr.salvage_origin_used))
+    rr.salvage_origin_slot = int(restored_trial_meta.get("salvage_origin_slot", rr.salvage_origin_slot))
+    rr.salvage_origin_slots_total = int(
+        restored_trial_meta.get("salvage_origin_slots_total", rr.salvage_origin_slots_total)
+    )
+    rr.salvage_origin_dir = str(restored_trial_meta.get("salvage_origin_dir", rr.salvage_origin_dir or ""))
+    rr.global_iter = int(restored_trial_meta.get("global_iter", 0))
+    return (
+        str(restored_trial_meta.get("owner_trial_id", "")),
+        str(restored_trial_meta.get("optimizer", "") or ""),
+    )
+
+
+def _fork_rng_for_exploit_clone(
+    *,
+    config: dict, trainer, base_seed: int, trial_id: str, trial_dir: Path,
+    rr: RestoreResult, owner_trial_id: str, owner_optimizer: str,
+) -> np.random.Generator:
+    """PB2 exploit clone: fork RNG/torch seeds so recipients don't replay donor
+    openings, plus inherit donor's opp_strength_ema. Returns the new RNG."""
+    restore_rows = _count_jsonl_rows(trial_dir / "result.json")
+    fork_seed = _stable_seed_u32(
+        base_seed, trial_id, "exploit", restore_rows, int(getattr(trainer, "step", 0)),
+    )
+    rr.active_seed = int(fork_seed)
+    rng = np.random.default_rng(rr.active_seed)
+    torch.manual_seed(rr.active_seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(rr.active_seed)
+    print(
+        f"[trial] PB2 exploit restore detected: owner={owner_trial_id} "
+        f"recipient={trial_id} fork_seed={rr.active_seed} "
+        f"owner_optimizer={owner_optimizer or 'unknown'} "
+        f"recipient_optimizer={str(config.get('optimizer', 'nadamw')).lower()} "
+        f"restore_mode={rr.startup_source}"
+    )
+    if rr.restored_owner_trial_dir:
+        donor_row = _latest_trial_result_row(Path(rr.restored_owner_trial_dir))
+        if donor_row is not None:
+            rr.opp_strength_ema = float(donor_row.get(
+                "opponent_strength_ema", donor_row.get("opponent_strength", 0.0),
+            ))
+            print(f"[trial] exploit: inherited donor opp_strength_ema={rr.opp_strength_ema:.1f}")
+    return rng
+
+
 def _restore_checkpoint_or_salvage(
     *,
     config: dict,
@@ -218,27 +270,15 @@ def _restore_checkpoint_or_salvage(
             trial_id=trial_id, trial_dir=trial_dir, rr=rr,
         )
 
-  # Post-restore metadata fixups.
-    restored_owner_trial_id = ""
-    restored_owner_optimizer = ""
-    if isinstance(restored_trial_meta, dict):
-        restored_owner_trial_id = str(restored_trial_meta.get("owner_trial_id", ""))
-        rr.restored_owner_trial_dir = str(restored_trial_meta.get("owner_trial_dir", ""))
-        restored_owner_optimizer = str(restored_trial_meta.get("optimizer", "") or "")
-        rr.salvage_origin_used = bool(restored_trial_meta.get("salvage_origin_used", rr.salvage_origin_used))
-        rr.salvage_origin_slot = int(restored_trial_meta.get("salvage_origin_slot", rr.salvage_origin_slot))
-        rr.salvage_origin_slots_total = int(
-            restored_trial_meta.get("salvage_origin_slots_total", rr.salvage_origin_slots_total)
-        )
-        rr.salvage_origin_dir = str(restored_trial_meta.get("salvage_origin_dir", rr.salvage_origin_dir or ""))
-        rr.global_iter = int(restored_trial_meta.get("global_iter", 0))
+    owner_trial_id, owner_optimizer = _apply_restored_trial_meta(rr, restored_trial_meta)
     rr.cross_trial_restore = bool(
-        ckpt is not None and restored_owner_trial_id and restored_owner_trial_id != trial_id
+        ckpt is not None and owner_trial_id and owner_trial_id != trial_id
     )
-    if rr.cross_trial_restore and rr.startup_source == "checkpoint":
-        rr.startup_source = "exploit_restore"
-    elif rr.cross_trial_restore and rr.startup_source == "checkpoint_model_only":
-        rr.startup_source = "exploit_restore_model_only"
+    if rr.cross_trial_restore:
+        if rr.startup_source == "checkpoint":
+            rr.startup_source = "exploit_restore"
+        elif rr.startup_source == "checkpoint_model_only":
+            rr.startup_source = "exploit_restore_model_only"
 
     if restored_rng_state is not None and not rr.cross_trial_restore:
         try:
@@ -250,40 +290,11 @@ def _restore_checkpoint_or_salvage(
             )
 
     if ckpt is not None and rr.cross_trial_restore:
-  # PB2 exploit clone: fork RNG stream so recipients do not replay donor opening sequences.
-        restore_rows = _count_jsonl_rows(trial_dir / "result.json")
-        fork_seed = _stable_seed_u32(
-            base_seed,
-            trial_id,
-            "exploit",
-            restore_rows,
-            int(getattr(trainer, "step", 0)),
+        rng = _fork_rng_for_exploit_clone(
+            config=config, trainer=trainer, base_seed=base_seed,
+            trial_id=trial_id, trial_dir=trial_dir, rr=rr,
+            owner_trial_id=owner_trial_id, owner_optimizer=owner_optimizer,
         )
-        rr.active_seed = int(fork_seed)
-        rng = np.random.default_rng(rr.active_seed)
-        torch.manual_seed(rr.active_seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(rr.active_seed)
-        print(
-            f"[trial] PB2 exploit restore detected: owner={restored_owner_trial_id} "
-            f"recipient={trial_id} fork_seed={rr.active_seed} "
-            f"owner_optimizer={restored_owner_optimizer or 'unknown'} "
-            f"recipient_optimizer={str(config.get('optimizer', 'nadamw')).lower()} "
-            f"restore_mode={rr.startup_source}"
-        )
-  # Inherit donor's EMA so the recipient isn't ranked on stale
-  # pre-exploit history.
-        if rr.restored_owner_trial_dir:
-            _donor_row = _latest_trial_result_row(Path(rr.restored_owner_trial_dir))
-            if _donor_row is not None:
-                _donor_ema = _donor_row.get(
-                    "opponent_strength_ema",
-                    _donor_row.get("opponent_strength", 0.0),
-                )
-                rr.opp_strength_ema = float(_donor_ema)
-                print(
-                    f"[trial] exploit: inherited donor opp_strength_ema={rr.opp_strength_ema:.1f}"
-                )
 
     return rr, rng
 
