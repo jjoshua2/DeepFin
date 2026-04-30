@@ -160,6 +160,165 @@ def _compute_resign_weights(
     return sample_weights
 
 
+def _append_records_via_c(
+    state: SelfplayState, net_idxs: list[int],
+    *, cb_encode_list, pol_logits: np.ndarray, wdl_logits_raw: np.ndarray,
+    actions: list[int | None], values_list: list[float | None],
+    probs_list: list[np.ndarray | None],
+    is_full_py: list[bool], sample_weights: list[float],
+    diff_focus,
+) -> None:
+    """C-fast-path per-ply append (GIL released inside ``c_process_ply``)."""
+    n = len(net_idxs)
+    actions_arr = np.array(actions, dtype=np.int32)
+    values_arr = np.array(values_list, dtype=np.float64)
+    # All slots filled by _run_mcts_group above; cast for np.stack's strict ArrayLike protocol.
+    probs_arr = np.stack(cast("list[np.ndarray]", probs_list)).astype(np.float32, copy=False)
+
+    assert state.c_process_ply is not None
+    (c_x, c_probs, c_wdl_net, c_wdl_search, c_priority,
+     c_keep, c_mask, c_ply, c_pov, c_over) = state.c_process_ply(
+        cb_encode_list, pol_logits[:n], wdl_logits_raw[:n],
+        actions_arr, values_arr, probs_arr,
+        int(diff_focus.enabled), float(diff_focus.q_weight),
+        float(diff_focus.pol_scale), float(diff_focus.min_keep), float(diff_focus.slope),
+    )
+
+    # Pre-extract Python scalars from numpy arrays (batch conversion is cheaper
+    # than per-element conversion in the loop).
+    c_ply_list = c_ply.tolist()
+    c_pov_list = c_pov.tolist()
+    c_priority_list = c_priority.tolist()
+    c_keep_list = c_keep.tolist()
+    c_over_list = c_over.tolist()
+    act_list = actions_arr.tolist()
+
+    for j in range(n):
+        idx = net_idxs[j]
+        state.move_idx_history[idx].append(act_list[j])
+        state.last_net_full[idx] = is_full_py[j]
+
+        # Skip training on positions with a single legal move: the policy
+        # target collapses to one-hot regardless of search, so there's no
+        # learning signal. Same shape as low-sim filtering (has_policy=False).
+        has_policy = bool(is_full_py[j]) and int(c_mask[j].sum()) > 1
+        state.samples_per_game[idx].append(
+            _NetRecord(
+                c_x[j], c_probs[j], c_wdl_net[j], c_wdl_search[j],
+                chess.WHITE if c_pov_list[j] else chess.BLACK,
+                c_ply_list[j], has_policy,
+                c_priority_list[j], sample_weights[j], c_keep_list[j],
+                c_mask[j],
+            ),
+        )
+
+        if c_over_list[j]:
+            state.done_arr[idx] = 1
+
+
+def _append_records_via_python(
+    state: SelfplayState, net_idxs: list[int],
+    *, xs_batch: np.ndarray | None,
+    pol_logits: np.ndarray, wdl_est: np.ndarray,
+    probs_list: list[np.ndarray | None], actions: list[int | None],
+    values_list: list[float | None],
+    masks_list: list[np.ndarray | None],
+    is_full: np.ndarray, sample_weights: list[float],
+    diff_focus,
+) -> None:
+    """Python fallback per-ply loop (only runs when C ply path is unavailable)."""
+    lg_buf = np.empty(POLICY_SIZE, dtype=np.float64)
+    swdl_buf = np.empty(3, dtype=np.float32)
+    df_enabled = bool(diff_focus.enabled)
+    df_q_w = float(diff_focus.q_weight)
+    df_p_s = float(diff_focus.pol_scale)
+    df_slope = float(diff_focus.slope)
+    df_min = float(diff_focus.min_keep)
+
+    # ``not state.has_c_ply`` ⇒ ``state.batch_enc_146 is None``
+    # (coupled import in SelfplayState.create) ⇒ ``_use_inplace is False``
+    # ⇒ ``xs_batch`` was set in the else-branch of _evaluate_root_batch.
+    assert xs_batch is not None
+
+    for j, (idx, probs, a, v) in enumerate(
+        zip(net_idxs, probs_list, actions, values_list, strict=True),
+    ):
+        assert probs is not None and a is not None and v is not None
+
+        board_before = state.boards[idx]
+        ply_index = int(len(board_before.move_stack))
+        pov_color = board_before.turn
+
+        mask = masks_list[j]
+        if mask is None:
+            mask = legal_move_mask(board_before)
+
+        np.copyto(lg_buf, pol_logits[j])
+        lg_buf[~mask] = -1e9
+        lg_buf -= float(np.max(lg_buf))
+        np.exp(lg_buf, out=lg_buf)
+        lg_buf[~mask] = 0.0
+        s = float(lg_buf.sum())
+        if s > 0:
+            raw = (lg_buf / s).astype(np.float32, copy=False)
+        else:
+            raw = mask.astype(np.float32) / float(mask.sum())
+
+        imp = np.maximum(probs.astype(np.float32, copy=False), 1e-12)
+        raw_c = np.maximum(raw, 1e-12)
+        kl = float(np.sum(raw_c * (np.log(raw_c) - np.log(imp))))
+
+        orig_q = float(wdl_est[j][0] - wdl_est[j][2])
+        best_q = float(v)
+        q_surprise = abs(best_q - orig_q)
+
+        difficulty = q_surprise * df_q_w + kl * df_p_s
+        if not math.isfinite(difficulty):
+            difficulty = 1.0
+        keep_prob = (
+            max(df_min, min(1.0, difficulty * df_slope)) if df_enabled else 1.0
+        )
+
+        move = index_to_move(int(a), board_before)
+        board_before.push(move)
+        state.cboards[idx].push_index(int(a))
+        state.move_idx_history[idx].append(int(a))
+
+        d_raw = float(wdl_est[j][1])
+        rem = max(0.0, 1.0 - d_raw)
+        q = float(max(-rem, min(rem, best_q)))
+        w_search = 0.5 * (rem + q)
+        swdl_buf[0] = w_search
+        swdl_buf[1] = d_raw
+        swdl_buf[2] = rem - w_search
+        search_wdl_est = swdl_buf.copy()
+        if not np.all(np.isfinite(search_wdl_est)):
+            search_wdl_est = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+
+        state.last_net_full[idx] = bool(is_full[j])
+        state.samples_per_game[idx].append(
+            _NetRecord(
+                x=xs_batch[j],
+                policy_probs=probs,
+                net_wdl_est=(
+                    wdl_est[j] if np.all(np.isfinite(wdl_est[j]))
+                    else np.array([0.0, 1.0, 0.0], dtype=np.float32)
+                ),
+                search_wdl_est=search_wdl_est,
+                pov_color=pov_color,
+                ply_index=ply_index,
+                has_policy=bool(is_full[j]) and int(mask.sum()) > 1,
+                priority=float(difficulty),
+                sample_weight=float(sample_weights[j]),
+                keep_prob=float(keep_prob),
+                legal_mask=mask.view(np.uint8),
+            ),
+        )
+
+        if state.cboards[idx].is_game_over():
+            state.done_arr[idx] = 1
+
+
 def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
     """Run one network turn for the games in ``net_idxs``.
 
@@ -335,144 +494,25 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
     combined_sims = [full_sims if is_full_py[j] else fast_sims for j in all_idxs]
     _run_mcts_group(all_idxs, combined_sims, per_game_noise=is_full_py)
 
-    # Pre-allocate reusable buffers for per-sample computation
-    _lg_buf = np.empty(POLICY_SIZE, dtype=np.float64)
-    _swdl_buf = np.empty(3, dtype=np.float32)
-    _df_enabled = bool(diff_focus.enabled)
-    _df_q_w = float(diff_focus.q_weight)
-    _df_p_s = float(diff_focus.pol_scale)
-    _df_slope = float(diff_focus.slope)
-    _df_min = float(diff_focus.min_keep)
-
-    # ── C-accelerated per-ply processing (GIL released) ──────────
     if state.has_c_ply and len(net_idxs) > 0:
-        _n = len(net_idxs)
-        _actions_arr = np.array(actions, dtype=np.int32)
-        _values_arr = np.array(values_list, dtype=np.float64)
-        # All slots filled by _run_mcts_group above; cast for np.stack's strict ArrayLike protocol.
-        _probs_arr = np.stack(cast("list[np.ndarray]", probs_list)).astype(np.float32, copy=False)
-
-        assert state.c_process_ply is not None
-        (c_x, c_probs, c_wdl_net, c_wdl_search, c_priority,
-         c_keep, c_mask, c_ply, c_pov, c_over) = state.c_process_ply(
-            _cb_encode_list, pol_logits[:_n], wdl_logits_raw[:_n],
-            _actions_arr, _values_arr, _probs_arr,
-            int(_df_enabled), float(_df_q_w), float(_df_p_s), float(_df_min), float(_df_slope),
+        _append_records_via_c(
+            state, net_idxs,
+            cb_encode_list=_cb_encode_list,
+            pol_logits=pol_logits, wdl_logits_raw=wdl_logits_raw,
+            actions=actions, values_list=values_list, probs_list=probs_list,
+            is_full_py=is_full_py, sample_weights=sample_weights,
+            diff_focus=diff_focus,
         )
-
-        # Pre-extract Python scalars from numpy arrays (batch conversion
-        # is cheaper than per-element conversion in the loop).
-        _c_ply_list = c_ply.tolist()
-        _c_pov_list = c_pov.tolist()
-        _c_priority_list = c_priority.tolist()
-        _c_keep_list = c_keep.tolist()
-        _c_over_list = c_over.tolist()
-        _is_full_list = is_full_py
-        _sw_list = sample_weights
-        _act_list = _actions_arr.tolist()
-
-        for j in range(_n):
-            idx = net_idxs[j]
-            state.move_idx_history[idx].append(_act_list[j])
-            state.last_net_full[idx] = _is_full_list[j]
-
-            # Skip training on positions with a single legal move: the policy
-            # target collapses to one-hot regardless of search, so there's no
-            # learning signal. Same shape as low-sim filtering (has_policy=False).
-            _has_policy = bool(_is_full_list[j]) and int(c_mask[j].sum()) > 1
-            state.samples_per_game[idx].append(
-                _NetRecord(
-                    c_x[j], c_probs[j], c_wdl_net[j], c_wdl_search[j],
-                    chess.WHITE if _c_pov_list[j] else chess.BLACK,
-                    _c_ply_list[j], _has_policy,
-                    _c_priority_list[j], _sw_list[j], _c_keep_list[j],
-                    c_mask[j],
-                ),
-            )
-
-            if _c_over_list[j]:
-                state.done_arr[idx] = 1
-
     else:
-        # Python fallback (original per-ply loop)
-        for j, (idx, probs, a, v) in enumerate(zip(net_idxs, probs_list, actions, values_list, strict=True)):
-            assert probs is not None and a is not None and v is not None
-
-            board_before = state.boards[idx]
-            ply_index = int(len(board_before.move_stack))
-            pov_color = board_before.turn
-
-            mask = masks_list[j]
-            if mask is None:
-                mask = legal_move_mask(board_before)
-
-            np.copyto(_lg_buf, pol_logits[j])
-            _lg_buf[~mask] = -1e9
-            _lg_buf -= float(np.max(_lg_buf))
-            np.exp(_lg_buf, out=_lg_buf)
-            _lg_buf[~mask] = 0.0
-            s = float(_lg_buf.sum())
-            if s > 0:
-                raw = (_lg_buf / s).astype(np.float32, copy=False)
-            else:
-                raw = mask.astype(np.float32) / float(mask.sum())
-
-            imp = np.maximum(probs.astype(np.float32, copy=False), 1e-12)
-            raw_c = np.maximum(raw, 1e-12)
-            kl = float(np.sum(raw_c * (np.log(raw_c) - np.log(imp))))
-
-            orig_q = float(wdl_est[j][0] - wdl_est[j][2])
-            best_q = float(v)
-            q_surprise = abs(best_q - orig_q)
-
-            difficulty = q_surprise * _df_q_w + kl * _df_p_s
-            if not math.isfinite(difficulty):
-                difficulty = 1.0
-            if not _df_enabled:
-                keep_prob = 1.0
-            else:
-                keep_prob = max(_df_min, min(1.0, difficulty * _df_slope))
-
-            move = index_to_move(int(a), board_before)
-            board_before.push(move)
-            state.cboards[idx].push_index(int(a))
-            state.move_idx_history[idx].append(int(a))
-
-            d_raw = float(wdl_est[j][1])
-            rem = max(0.0, 1.0 - d_raw)
-            q = float(max(-rem, min(rem, best_q)))
-            w_search = 0.5 * (rem + q)
-            _swdl_buf[0] = w_search
-            _swdl_buf[1] = d_raw
-            _swdl_buf[2] = rem - w_search
-            search_wdl_est = _swdl_buf.copy()
-            if not np.all(np.isfinite(search_wdl_est)):
-                search_wdl_est = np.array([0.0, 1.0, 0.0], dtype=np.float32)
-
-            state.last_net_full[idx] = bool(is_full[j])
-
-            # ``not state.has_c_ply`` ⇒ ``state.batch_enc_146 is None``
-            # (coupled import in SelfplayState.create) ⇒ ``_use_inplace is False``
-            # ⇒ ``xs_batch`` was set in the else-branch above.
-            assert xs_batch is not None
-            state.samples_per_game[idx].append(
-                _NetRecord(
-                    x=xs_batch[j],
-                    policy_probs=probs,
-                    net_wdl_est=wdl_est[j] if np.all(np.isfinite(wdl_est[j])) else np.array([0.0, 1.0, 0.0], dtype=np.float32),
-                    search_wdl_est=search_wdl_est,
-                    pov_color=pov_color,
-                    ply_index=ply_index,
-                    has_policy=bool(is_full[j]) and int(mask.sum()) > 1,
-                    priority=float(difficulty),
-                    sample_weight=float(sample_weights[j]),
-                    keep_prob=float(keep_prob),
-                    legal_mask=mask.view(np.uint8),
-                ),
-            )
-
-            if state.cboards[idx].is_game_over():
-                state.done_arr[idx] = 1
+        _append_records_via_python(
+            state, net_idxs,
+            xs_batch=xs_batch,
+            pol_logits=pol_logits, wdl_est=wdl_est,
+            probs_list=probs_list, actions=actions, values_list=values_list,
+            masks_list=masks_list,
+            is_full=is_full, sample_weights=sample_weights,
+            diff_focus=diff_focus,
+        )
 
 
 __all__ = ["run_network_turn"]
