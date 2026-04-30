@@ -133,6 +133,91 @@ def finish_sf_annotation_and_moves(
     )
 
 
+def _collect_sf_pv_candidates(
+    res, *, _turn: bool, legal_set: set[int],
+) -> tuple[list[int], list[float]]:
+    """Extract (action_idx, w + 0.5*d) per legal SF MultiPV candidate."""
+    cand_idxs: list[int] = []
+    cand_scores: list[float] = []
+    for pv in getattr(res, "pvs", None) or []:
+        if pv.wdl is None:
+            continue
+        a = uci_to_policy_index(pv.move_uci, _turn)
+        if a < 0 or a not in legal_set:
+            continue
+        w_sf, d_sf = float(pv.wdl[0]), float(pv.wdl[1])
+        cand_idxs.append(a)
+        cand_scores.append(w_sf + 0.5 * d_sf)
+    return cand_idxs, cand_scores
+
+
+def _build_sf_policy_target(
+    cand_idxs: list[int], cand_scores: list[float],
+    *, legal_indices: np.ndarray,
+    sf_policy_temp: float, sf_policy_label_smooth: float,
+) -> np.ndarray:
+    """Softmax over MultiPV candidates → POLICY_SIZE vector with optional
+    legal-set label smoothing. Final vector is renormalized."""
+    scores = np.array(cand_scores, dtype=np.float64) / max(1e-6, sf_policy_temp)
+    p_top = _softmax_np(scores).astype(np.float32, copy=False)
+    p_sf = np.zeros((POLICY_SIZE,), dtype=np.float32)
+    for a, p in zip(cand_idxs, p_top, strict=False):
+        p_sf[int(a)] += float(p)
+
+    if sf_policy_label_smooth > 0.0 and legal_indices.size > 0:
+        p_sf *= 1.0 - sf_policy_label_smooth
+        p_sf[legal_indices] += sf_policy_label_smooth / float(legal_indices.size)
+
+    ps = float(p_sf.sum())
+    if ps > 0:
+        p_sf /= ps
+    return p_sf
+
+
+def _attach_sf_target_to_last_record(
+    state: SelfplayState, idx: int,
+    *, p_sf: np.ndarray, a_idx: int, res, legal_indices: np.ndarray,
+) -> None:
+    """Stamp SF policy target / move idx / wdl / legal_mask onto the latest
+    _NetRecord (idempotent: skipped if already populated)."""
+    if not state.samples_per_game[idx]:
+        return
+    rec = state.samples_per_game[idx][-1]
+    if rec.sf_policy_target is not None or rec.sf_move_index is not None:
+        return
+    rec.sf_policy_target = p_sf
+    rec.sf_move_index = a_idx
+    if res.wdl is not None:
+        rec.sf_wdl = flip_wdl_pov(res.wdl)
+    _sf_mask = np.zeros((POLICY_SIZE,), dtype=np.uint8)
+    _sf_mask[legal_indices] = 1
+    rec.sf_legal_mask = _sf_mask
+
+
+def _push_curriculum_opponent_move(
+    state: SelfplayState, idx: int,
+    *, legal_indices: np.ndarray,
+    cand_idxs: list[int], cand_scores: list[float], regret_limit: float,
+) -> None:
+    """Pick a curriculum-strength opponent move + push it on the board + advance
+    the tree root for next-ply reuse. Marks the slot done if the push terminates."""
+    opp_move_idx = _choose_curriculum_opponent_move(
+        rng=state.rng,
+        legal_indices=legal_indices,
+        cand_indices=cand_idxs,
+        cand_scores=cand_scores,
+        regret_limit=regret_limit,
+    )
+    state.cboards[idx].push_index(opp_move_idx)
+    state.move_idx_history[idx].append(opp_move_idx)
+    if state.mcts_tree is not None and state.root_ids[idx] >= 0:
+        state.root_ids[idx] = state.mcts_tree.find_child(
+            state.root_ids[idx], opp_move_idx,
+        )
+    if state.cboards[idx].is_game_over():
+        state.done_arr[idx] = 1
+
+
 def _process_sf_results(
     state: SelfplayState,
     idxs: list[int],
@@ -145,13 +230,11 @@ def _process_sf_results(
     if not idxs:
         return
 
-    sf_policy_temp_local = float(state.game.sf_policy_temp)
-    sf_policy_label_smooth_local = float(state.game.sf_policy_label_smooth)
-
+    sf_policy_temp = float(state.game.sf_policy_temp)
+    sf_policy_label_smooth = float(state.game.sf_policy_label_smooth)
     regret_limit = (
         float(state.opponent.wdl_regret_limit)
-        if state.opponent.wdl_regret_limit is not None
-        else float("inf")
+        if state.opponent.wdl_regret_limit is not None else float("inf")
     )
 
     for idx in idxs:
@@ -168,73 +251,29 @@ def _process_sf_results(
         if a_idx < 0 or a_idx not in legal_set:
             a_idx = int(legal_indices[0])
 
-        cand_idxs: list[int] = []
-        cand_scores: list[float] = []
-        if getattr(res, "pvs", None):
-            for pv in res.pvs:
-                if pv.wdl is None:
-                    continue
-                a = uci_to_policy_index(pv.move_uci, _turn)
-                if a < 0 or a not in legal_set:
-                    continue
-                w_sf, d_sf = float(pv.wdl[0]), float(pv.wdl[1])
-                cand_idxs.append(a)
-                cand_scores.append(w_sf + 0.5 * d_sf)
-
+        cand_idxs, cand_scores = _collect_sf_pv_candidates(
+            res, _turn=_turn, legal_set=legal_set,
+        )
         if not cand_idxs:
             cand_idxs = [a_idx]
             cand_scores = [0.0]
 
-        scores = np.array(cand_scores, dtype=np.float64) / max(
-            1e-6, sf_policy_temp_local,
-        )
-        p_top = _softmax_np(scores).astype(np.float32, copy=False)
-
-        p_sf = np.zeros((POLICY_SIZE,), dtype=np.float32)
-        for a, p in zip(cand_idxs, p_top, strict=False):
-            p_sf[int(a)] += float(p)
-
-        if sf_policy_label_smooth_local > 0.0:
-            n_legal = legal_indices.size
-            if n_legal > 0:
-                p_sf *= 1.0 - sf_policy_label_smooth_local
-                p_sf[legal_indices] += sf_policy_label_smooth_local / float(n_legal)
-
-        ps = float(p_sf.sum())
-        if ps > 0:
-            p_sf /= ps
-
-        if state.samples_per_game[idx]:
-            rec = state.samples_per_game[idx][-1]
-            if rec.sf_policy_target is None and rec.sf_move_index is None:
-                rec.sf_policy_target = p_sf
-                rec.sf_move_index = a_idx
-                if res.wdl is not None:
-                    rec.sf_wdl = flip_wdl_pov(res.wdl)
-                _sf_mask = np.zeros((POLICY_SIZE,), dtype=np.uint8)
-                _sf_mask[legal_indices] = 1
-                rec.sf_legal_mask = _sf_mask
-
-        if not play_curriculum_moves or state.selfplay_arr[idx]:
-            continue
-
-        _opp_move_idx = _choose_curriculum_opponent_move(
-            rng=state.rng,
+        p_sf = _build_sf_policy_target(
+            cand_idxs, cand_scores,
             legal_indices=legal_indices,
-            cand_indices=cand_idxs,
-            cand_scores=cand_scores,
-            regret_limit=regret_limit,
+            sf_policy_temp=sf_policy_temp,
+            sf_policy_label_smooth=sf_policy_label_smooth,
+        )
+        _attach_sf_target_to_last_record(
+            state, idx, p_sf=p_sf, a_idx=a_idx, res=res, legal_indices=legal_indices,
         )
 
-        state.cboards[idx].push_index(_opp_move_idx)
-        state.move_idx_history[idx].append(_opp_move_idx)
-        # Advance tree root through opponent's move for next-ply reuse.
-        if state.mcts_tree is not None and state.root_ids[idx] >= 0:
-            state.root_ids[idx] = state.mcts_tree.find_child(
-                state.root_ids[idx], _opp_move_idx,
+        if play_curriculum_moves and not state.selfplay_arr[idx]:
+            _push_curriculum_opponent_move(
+                state, idx, legal_indices=legal_indices,
+                cand_idxs=cand_idxs, cand_scores=cand_scores,
+                regret_limit=regret_limit,
             )
-        if state.cboards[idx].is_game_over():
-            state.done_arr[idx] = 1
 
 
 __all__ = [
