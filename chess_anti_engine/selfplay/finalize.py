@@ -380,6 +380,96 @@ def _build_replay_samples(
     return out
 
 
+def _resolve_terminal_result(
+    state: SelfplayState, i: int,
+) -> tuple[str, bool, bool, StockfishResult | None]:
+    """Resolve the game's terminal result. Returns (result, was_adjudicated,
+    was_tb_adjudicated, sf_res). Updates per-bucket counters in state.stats."""
+    cb = state.cboards[i]
+    tb_stash = state.tb_result_arr[i]
+    was_tb_adjudicated = tb_stash is not None
+
+    if was_tb_adjudicated:
+        state.stats.tb_adjudicated_games += 1
+        assert tb_stash is not None
+        return tb_stash, False, True, None
+
+    result, was_adjudicated, sf_res = _compute_terminal_result(state, cb)
+    if was_adjudicated:
+        state.stats.adjudicated_games += 1
+    return result, was_adjudicated, False, sf_res
+
+
+def _log_terminal_anomalies(
+    state: SelfplayState, i: int, *,
+    result: str, game_plies: int, was_adjudicated: bool,
+    sf_res: StockfishResult | None,
+) -> None:
+    """Warn on unexpectedly short curriculum wins + dump max_plies-game FENs."""
+    cb = state.cboards[i]
+    b = state.replay_board(i)
+    max_plies = int(state.game.max_plies)
+
+    if (
+        not state.selfplay_arr[i]
+        and result in ("1-0", "0-1")
+        and game_plies < max_plies - 10
+    ):
+        outcome = b.outcome(claim_draw=True)
+        term = outcome.termination.name if outcome else "adjudicated"
+        _LOG.warning(
+            "Short win: %s at %d plies (max=%d), term=%s, adj=%s, is_over=%s",
+            result, game_plies, max_plies, term,
+            was_adjudicated, cb.is_game_over(),
+        )
+
+    if was_adjudicated and game_plies >= max_plies:
+        wdl_str = (
+            f"{float(sf_res.wdl[0]):.3f}/{float(sf_res.wdl[1]):.3f}/{float(sf_res.wdl[2]):.3f}"
+            if (sf_res is not None and sf_res.wdl is not None) else "none"
+        )
+        _LOG.warning(
+            "MAX_PLY_GAME plies=%d result=%s sf_wdl(stm)=%s fen=%s",
+            game_plies, result, wdl_str, cb.fen(),
+        )
+
+
+def _emit_completed_game_batch(
+    *, samples: list[ReplaySample], counters,
+    game_plies: int, is_cm: bool, is_sm: bool,
+    was_adjudicated: bool, was_tb_adjudicated: bool,
+    sf_d6_sum: float, sf_d6_n: int,
+    on_game_complete: Callable[[CompletedGameBatch], None],
+) -> None:
+    """Build + dispatch CompletedGameBatch for one finalized game."""
+    on_game_complete(
+        CompletedGameBatch(
+            samples=samples,
+            positions=len(samples),
+            w=counters.w,
+            d=counters.d,
+            l=counters.l,
+            total_game_plies=game_plies,
+            adjudicated_games=1 if was_adjudicated else 0,
+            tb_adjudicated_games=1 if was_tb_adjudicated else 0,
+            total_draw_games=counters.total_draw_games,
+            selfplay_games=counters.selfplay_games,
+            selfplay_adjudicated_games=counters.selfplay_adjudicated_games,
+            selfplay_draw_games=counters.selfplay_draw_games,
+            curriculum_games=counters.curriculum_games,
+            curriculum_adjudicated_games=counters.curriculum_adjudicated_games,
+            curriculum_draw_games=counters.curriculum_draw_games,
+            checkmate_games=1 if is_cm else 0,
+            stalemate_games=1 if is_sm else 0,
+            plies_win=game_plies if counters.w else 0,
+            plies_draw=game_plies if counters.d else 0,
+            plies_loss=game_plies if counters.l else 0,
+            sf_d6_sum=float(sf_d6_sum),
+            sf_d6_n=int(sf_d6_n),
+        ),
+    )
+
+
 def finalize_game(
     state: SelfplayState,
     i: int,
@@ -399,13 +489,6 @@ def finalize_game(
     """
     cb = state.cboards[i]
     b = state.replay_board(i)
-
-    # TB adjudication (if enabled) short-circuits cb.result() — this game
-    # was ended early at a known-result endgame position. Skip the SF
-    # terminal eval branch and use the stashed TB result directly.
-    tb_stash = state.tb_result_arr[i]
-    was_tb_adjudicated = tb_stash is not None
-
     game_plies = int(cb.ply)
     state.stats.total_game_plies += game_plies
 
@@ -416,105 +499,54 @@ def finalize_game(
     elif is_sm:
         state.stats.stalemate_games += 1
 
-    if was_tb_adjudicated:
-        state.stats.tb_adjudicated_games += 1
-        result: str = tb_stash  # type: ignore[assignment]
-        was_adjudicated = False
-        sf_res: StockfishResult | None = None
-    else:
-        result, was_adjudicated, sf_res = _compute_terminal_result(state, cb)
-        if was_adjudicated:
-            state.stats.adjudicated_games += 1
-
-    # Debug: log unexpectedly short wins.  Skips selfplay (which is noisier).
-    if (
-        not state.selfplay_arr[i]
-        and result in ("1-0", "0-1")
-        and game_plies < int(state.game.max_plies) - 10
-    ):
-        outcome = b.outcome(claim_draw=True)
-        _term = outcome.termination.name if outcome else "adjudicated"
-        _LOG.warning(
-            "Short win: %s at %d plies (max=%d), term=%s, adj=%s, is_over=%s",
-            result, game_plies, int(state.game.max_plies), _term,
-            was_adjudicated, cb.is_game_over(),
-        )
-
-    # Log final FEN + SF WDL for games that reached max_plies.
-    # These are rare (~0.03% of games); SF eval was already paid for during adjudication.
-    if was_adjudicated and game_plies >= int(state.game.max_plies):
-        _wdl_str = (
-            f"{float(sf_res.wdl[0]):.3f}/{float(sf_res.wdl[1]):.3f}/{float(sf_res.wdl[2]):.3f}"
-            if (sf_res is not None and sf_res.wdl is not None) else "none"
-        )
-        _LOG.warning(
-            "MAX_PLY_GAME plies=%d result=%s sf_wdl(stm)=%s fen=%s",
-            game_plies, result, _wdl_str, cb.fen(),
-        )
+    result, was_adjudicated, was_tb_adjudicated, sf_res = _resolve_terminal_result(
+        state, i,
+    )
+    _log_terminal_anomalies(
+        state, i,
+        result=result, game_plies=game_plies,
+        was_adjudicated=was_adjudicated, sf_res=sf_res,
+    )
 
     records = state.samples_per_game[i]
     result, tb_policy_overrides = _rescore_with_syzygy(state, i, b, records, result)
-
     counters = _update_aggregate_stats(
-        state,
-        i,
-        result=result,
-        was_adjudicated=was_adjudicated,
-        game_plies=game_plies,
+        state, i, result=result,
+        was_adjudicated=was_adjudicated, game_plies=game_plies,
     )
 
     ply_to_index = {int(rec.ply_index): idx for idx, rec in enumerate(records)}
-    _sf_d6_sum_before = state.stats.sf_d6_sum
-    _sf_d6_n_before = state.stats.sf_d6_n
+    sf_d6_sum_before = state.stats.sf_d6_sum
+    sf_d6_n_before = state.stats.sf_d6_n
     vol_targets, sf_vol_targets = _compute_volatility_and_sf_delta(
         state, records, ply_to_index,
     )
-    _game_sf_d6_sum = state.stats.sf_d6_sum - _sf_d6_sum_before
-    _game_sf_d6_n = state.stats.sf_d6_n - _sf_d6_n_before
+    game_sf_d6_sum = state.stats.sf_d6_sum - sf_d6_sum_before
+    game_sf_d6_n = state.stats.sf_d6_n - sf_d6_n_before
 
     sample_start = len(all_samples)
-    new_samples = _build_replay_samples(
-        state,
-        i,
-        records,
+    all_samples.extend(_build_replay_samples(
+        state, i, records,
         result=result,
         tb_policy_overrides=tb_policy_overrides,
         vol_targets=vol_targets,
         sf_vol_targets=sf_vol_targets,
         total_plies_played=int(cb.ply),
         ply_to_index=ply_to_index,
-    )
-    all_samples.extend(new_samples)
+    ))
 
     if on_game_complete is not None:
         game_samples = list(all_samples[sample_start:])
         if game_samples:
-            on_game_complete(
-                CompletedGameBatch(
-                    samples=game_samples,
-                    positions=len(game_samples),
-                    w=counters.w,
-                    d=counters.d,
-                    l=counters.l,
-                    total_game_plies=game_plies,
-                    adjudicated_games=1 if was_adjudicated else 0,
-                    tb_adjudicated_games=1 if was_tb_adjudicated else 0,
-                    total_draw_games=counters.total_draw_games,
-                    selfplay_games=counters.selfplay_games,
-                    selfplay_adjudicated_games=counters.selfplay_adjudicated_games,
-                    selfplay_draw_games=counters.selfplay_draw_games,
-                    curriculum_games=counters.curriculum_games,
-                    curriculum_adjudicated_games=counters.curriculum_adjudicated_games,
-                    curriculum_draw_games=counters.curriculum_draw_games,
-                    checkmate_games=1 if is_cm else 0,
-                    stalemate_games=1 if is_sm else 0,
-                    plies_win=game_plies if counters.w else 0,
-                    plies_draw=game_plies if counters.d else 0,
-                    plies_loss=game_plies if counters.l else 0,
-                    sf_d6_sum=float(_game_sf_d6_sum),
-                    sf_d6_n=int(_game_sf_d6_n),
-                ),
+            _emit_completed_game_batch(
+                samples=game_samples, counters=counters,
+                game_plies=game_plies, is_cm=is_cm, is_sm=is_sm,
+                was_adjudicated=was_adjudicated,
+                was_tb_adjudicated=was_tb_adjudicated,
+                sf_d6_sum=game_sf_d6_sum, sf_d6_n=game_sf_d6_n,
+                on_game_complete=on_game_complete,
             )
+
     # In continuous mode, samples flow through ``on_game_complete`` and
     # ``all_samples`` would otherwise grow without bound.
     if state.continuous:
