@@ -210,6 +210,68 @@ def _terminal_value(board: chess.Board) -> float:
     return 1.0 if board.turn == chess.BLACK else -1.0
 
 
+def _select_one_leaf(root: Node, *, c_puct: float, fpu_at_root: float,
+                     fpu_reduction: float) -> tuple[Node, list[Node]]:
+    """Descend the tree from ``root`` to one unexpanded leaf, returning (leaf, path).
+
+    Root selection uses ``fpu_at_root``; deeper selections switch to
+    ``fpu_reduction``. Expanded nodes with children are never terminal, so
+    the game-over check happens only at the returned leaf in the caller.
+    """
+    node = root
+    path = [node]
+    fpu = fpu_at_root
+    while node.expanded and node.children:
+        _, node = _select_child(node, c_puct=c_puct, fpu_reduction=fpu)
+        path.append(node)
+        fpu = fpu_reduction
+    return node, path
+
+
+def _expand_and_backprop_leaves(
+    leaf_nodes: list[Node], leaf_paths: list[list[Node]],
+    *, eval_impl: BatchEvaluator,
+) -> None:
+    """Run one batched NN eval for the leaves, expand each, and backprop the value."""
+    leaf_x = encode_positions_batch([n.board for n in leaf_nodes], add_features=True)
+    pol_logits_batch, wdl_logits_batch = eval_impl.evaluate_encoded(leaf_x)
+    for node, path, pol_logits, wdl_logits in zip(
+        leaf_nodes, leaf_paths, pol_logits_batch, wdl_logits_batch, strict=True,
+    ):
+        legal_idx = legal_move_indices(node.board)
+        if legal_idx.size > 0:
+            _expand_sparse(node, legal_idx, _softmax_legal(pol_logits, legal_idx))
+        v = _value_scalar_from_wdl_logits(wdl_logits.reshape(-1))
+        _backprop(path, v)
+
+
+def _build_root_outputs(
+    root: Node, *, rng: np.random.Generator, temperature: float,
+) -> tuple[np.ndarray, int, float, np.ndarray]:
+    """Build (probs, action, root_Q, legal_mask) for one finished root."""
+    visits_full = np.zeros((POLICY_SIZE,), dtype=np.float32)
+    child_actions = np.array(sorted(root.children.keys()), dtype=np.int32)
+    child_visits = np.array(
+        [float(root.children[int(a)].N) for a in child_actions], dtype=np.float64,
+    )
+    for a, v in zip(child_actions, child_visits):
+        visits_full[a] = v
+    s = float(child_visits.sum())
+    probs = (visits_full / s) if s > 0 else visits_full
+
+    if child_actions.size == 0:
+        action = int(np.argmax(visits_full))
+    else:
+        action = sample_action_with_temperature(
+            rng, child_actions, child_visits, float(temperature),
+            argmax_idx=int(np.argmax(child_visits)),
+        )
+
+    mask = np.zeros((POLICY_SIZE,), dtype=np.bool_)
+    mask[child_actions] = True
+    return probs.astype(np.float32, copy=False), action, float(root.Q), mask
+
+
 @torch.no_grad()
 def run_mcts_many(
     model: torch.nn.Module | None,
@@ -238,89 +300,51 @@ def run_mcts_many(
         if model is None:
             raise ValueError("run_mcts_many requires model or evaluator")
         eval_impl = LocalModelEvaluator(
-            model,
-            device=device,
-            use_amp=bool(cfg.use_amp),
-            amp_dtype=str(cfg.amp_dtype),
+            model, device=device,
+            use_amp=bool(cfg.use_amp), amp_dtype=str(cfg.amp_dtype),
         )
 
     if pre_pol_logits is not None and pre_wdl_logits is not None:
         roots = [
-            _init_root_from_logits(b, pol_logits=pre_pol_logits[i], wdl_logits=pre_wdl_logits[i], rng=rng, cfg=cfg)
+            _init_root_from_logits(
+                b, pol_logits=pre_pol_logits[i], wdl_logits=pre_wdl_logits[i],
+                rng=rng, cfg=cfg,
+            )
             for i, b in enumerate(boards)
         ]
     else:
-  # _init_root runs the model itself — caller must provide it when pre-logits aren't given.
+        # _init_root runs the model itself — caller must provide it when pre-logits aren't given.
         assert model is not None
         roots = [_init_root(model, b, device=device, rng=rng, cfg=cfg) for b in boards]
 
     for _ in range(int(cfg.simulations)):
         leaf_nodes: list[Node] = []
         leaf_paths: list[list[Node]] = []
-
-  # Select one leaf per root
         for root in roots:
-            node = root
-            path = [node]
-            fpu = cfg.fpu_at_root  # First selection from root uses root FPU
-            while node.expanded and node.children:
-                _, node = _select_child(node, c_puct=cfg.c_puct, fpu_reduction=fpu)
-                path.append(node)
-                fpu = cfg.fpu_reduction  # Subsequent selections use tree FPU
-  # Expanded nodes with children are never terminal — skip game-over check
-  # for them. Only check unexpanded nodes (leaves) below.
-
+            node, path = _select_one_leaf(
+                root, c_puct=cfg.c_puct,
+                fpu_at_root=cfg.fpu_at_root, fpu_reduction=cfg.fpu_reduction,
+            )
             if node.board.is_game_over():
                 _backprop(path, _terminal_value(node.board))
                 continue
-
             leaf_nodes.append(node)
             leaf_paths.append(path)
 
-        if not leaf_nodes:
-            continue
-
-        leaf_x = encode_positions_batch([n.board for n in leaf_nodes], add_features=True)
-
-  # Batched eval
-        pol_logits_batch, wdl_logits_batch = eval_impl.evaluate_encoded(leaf_x)
-
-        for node, path, pol_logits, wdl_logits in zip(leaf_nodes, leaf_paths, pol_logits_batch, wdl_logits_batch, strict=True):
-            legal_idx = legal_move_indices(node.board)
-            if legal_idx.size > 0:
-                _expand_sparse(node, legal_idx, _softmax_legal(pol_logits, legal_idx))
-            v = _value_scalar_from_wdl_logits(wdl_logits.reshape(-1))
-            _backprop(path, v)
+        if leaf_nodes:
+            _expand_and_backprop_leaves(leaf_nodes, leaf_paths, eval_impl=eval_impl)
 
     probs_list: list[np.ndarray] = []
     actions: list[int] = []
     values: list[float] = []
     legal_masks: list[np.ndarray] = []
-
     for root in roots:
-  # Build full visit distribution for the caller and legal mask.
-        visits_full = np.zeros((POLICY_SIZE,), dtype=np.float32)
-        child_actions = np.array(sorted(root.children.keys()), dtype=np.int32)
-        child_visits = np.array([float(root.children[int(a)].N) for a in child_actions], dtype=np.float64)
-        for a, v in zip(child_actions, child_visits):
-            visits_full[a] = v
-        s = float(child_visits.sum())
-        probs = (visits_full / s) if s > 0 else visits_full
-
-        if child_actions.size == 0:
-            action = int(np.argmax(visits_full))
-        else:
-            action = sample_action_with_temperature(
-                rng, child_actions, child_visits, float(cfg.temperature),
-                argmax_idx=int(np.argmax(child_visits)),
-            )
-
-        probs_list.append(probs.astype(np.float32, copy=False))
+        probs, action, root_q, mask = _build_root_outputs(
+            root, rng=rng, temperature=float(cfg.temperature),
+        )
+        probs_list.append(probs)
         actions.append(action)
-        values.append(float(root.Q))
-
-        mask = np.zeros((POLICY_SIZE,), dtype=np.bool_)
-        mask[child_actions] = True
+        values.append(root_q)
         legal_masks.append(mask)
 
     return probs_list, actions, values, legal_masks
