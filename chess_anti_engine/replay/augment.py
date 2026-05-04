@@ -60,6 +60,8 @@ def mirror_sample(s: ReplaySample) -> ReplaySample:
     out.sf_volatility_target = None if getattr(s, "sf_volatility_target", None) is None else np.asarray(s.sf_volatility_target, dtype=np.float32)
     out.has_sf_volatility = getattr(s, "has_sf_volatility", None)
 
+    out.search_wdl = None if getattr(s, "search_wdl", None) is None else np.asarray(s.search_wdl, dtype=np.float32)
+
     for name in LEGAL_MASK_FIELDS:
         v = getattr(s, name, None)
         if v is None:

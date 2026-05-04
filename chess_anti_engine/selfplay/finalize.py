@@ -370,6 +370,7 @@ def _build_replay_samples(
                 has_volatility=(vol is not None),
                 sf_volatility_target=sf_vol,
                 has_sf_volatility=(sf_vol is not None),
+                search_wdl=rec.search_wdl_est,
                 legal_mask=rec.legal_mask,
                 sf_legal_mask=rec.sf_legal_mask,
                 future_legal_mask=future_lmask,

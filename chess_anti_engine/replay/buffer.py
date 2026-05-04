@@ -24,6 +24,7 @@ class ReplaySample:
     sf_wdl: np.ndarray | None = None  # (3,) float32
     sf_move_index: int | None = None  # action index for SF chosen move
     sf_policy_target: np.ndarray | None = None  # (POLICY_SIZE,) float32 SF reply distribution
+    search_wdl: np.ndarray | None = None  # (3,) float32 — MCTS-improved value head prediction
     moves_left: float | None = None
     is_network_turn: bool | None = None
     is_selfplay: bool | None = None

@@ -79,6 +79,7 @@ _OPTIONAL_FIELD_SPECS: tuple[_OptFieldSpec, ...] = (
     _OptFieldSpec("future_policy_target", "has_future",            _POLICY_SHAPE, _F16),
     _OptFieldSpec("volatility_target",    "has_volatility",        (3,),          _F16),
     _OptFieldSpec("sf_volatility_target", "has_sf_volatility",     (3,),          _F16),
+    _OptFieldSpec("search_wdl",           "has_search_wdl",        (3,),          _F16),
     _OptFieldSpec("legal_mask",           "has_legal_mask",        _POLICY_SHAPE, _U8_DT),
     _OptFieldSpec("sf_legal_mask",        "has_sf_legal_mask",     _POLICY_SHAPE, _U8_DT),
     _OptFieldSpec("future_legal_mask",    "has_future_legal_mask", _POLICY_SHAPE, _U8_DT),
@@ -457,6 +458,7 @@ _VECTOR_FIELDS: tuple[tuple[str, str, str], ...] = (
     ("future_policy_target", "future_policy_target", "has_future"),
     ("volatility_target",    "volatility_target",    "has_volatility"),
     ("sf_volatility_target", "sf_volatility_target", "has_sf_volatility"),
+    ("search_wdl",           "search_wdl",           "has_search_wdl"),
 )
 
 
@@ -584,6 +586,8 @@ def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
         if opt["has_sf_volatility"][i]:
             s.sf_volatility_target = _copy_row(opt["sf_volatility_target"], i)
             s.has_sf_volatility = True
+        if opt["has_search_wdl"][i]:
+            s.search_wdl = _copy_row(opt["search_wdl"], i)
         for mk, hk in zip(LEGAL_MASK_FIELDS, LEGAL_MASK_HAS_FIELDS, strict=True):
             if opt[hk][i]:
                 setattr(s, mk, _copy_row(opt[mk], i, dtype=np.uint8))
