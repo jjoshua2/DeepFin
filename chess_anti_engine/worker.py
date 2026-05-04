@@ -53,6 +53,7 @@ from chess_anti_engine.selfplay.manager import BatchStats
 from chess_anti_engine.selfplay.match import play_match_batch
 from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.stockfish import StockfishPool, StockfishUCI
+from chess_anti_engine.stockfish.uci import StockfishTimeoutError
 from chess_anti_engine.utils import sha256_file as _sha256_file
 from chess_anti_engine.utils.versioning import version_lt
 from chess_anti_engine.version import PACKAGE_NAME, PACKAGE_VERSION, PROTOCOL_VERSION
@@ -1718,6 +1719,16 @@ class WorkerSession:
                 **cfgs,
             )
             return stats
+        except StockfishTimeoutError as exc:
+  # Stockfish went silent (DTZ load latency, GPU pressure, etc.).  Kill
+  # the process and let _sync_stockfish restart it on the next shard.
+            self.log.warning("Stockfish timed out, restarting SF process: %s", exc)
+            try:
+                self.sf.close()
+            except Exception:
+                pass
+            self.sf = None
+            return None
         except TimeoutError as exc:
             if self.inference_client is None:
                 raise
