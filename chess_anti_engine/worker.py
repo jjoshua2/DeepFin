@@ -931,7 +931,9 @@ class WorkerSession:
             if self.leased_trial_id != old_tid:
                 self._stop_selfplay = True
                 return
-            if self._reco_changed(manifest, source_tag="poll"):
+            reco_changed = self._reco_changed(manifest, source_tag="poll")
+            if reco_changed:
+                self._swap_model_from_manifest(manifest)
                 return
             self._sync_assets(manifest)
         except Exception:
@@ -963,6 +965,14 @@ class WorkerSession:
         if not new_sha or new_sha == self.model_sha:
             return
         model_info = manifest.get("model") or {}
+        model_step = int(manifest.get("trainer_step") or 0)
+        if self.inference_client is not None:
+            self._flush_pre_swap_buffer_if_stale(model_sha=new_sha, model_step=model_step)
+            self.model_sha = new_sha
+            self.model_step = model_step
+            self.last_model_sha = new_sha
+            self.log.info("mid-batch model tag switch sha=%s", str(new_sha)[:8])
+            return
         model_path = self.cache_dir / f"model_{new_sha}.pt"
         if (not model_path.exists()) or (_sha256_file(model_path) != new_sha):
             _download_and_verify_shared(
@@ -971,10 +981,16 @@ class WorkerSession:
                 expected_sha256=new_sha,
                 headers=_worker_headers(),
             )
-        mc = manifest.get("model_config") or self.model_cfg_active
-        _cfg = mc if isinstance(mc, ModelConfig) else self.model_cfg_active
+        mc = manifest.get("model_config")
+        if isinstance(mc, ModelConfig):
+            _cfg = mc
+        elif isinstance(mc, dict) and mc:
+            _cfg = model_config_from_manifest_dict(mc)
+        else:
+            _cfg = self.model_cfg_active
         if _cfg is None:
             raise RuntimeError("no model_config available for worker-model load")
+        _cfg = dataclasses.replace(_cfg, use_gradient_checkpointing=False)
         self.model = self._load_and_compile_model(
             model_path, _cfg,
             label="worker-model", sha_short=str(new_sha)[:8],
@@ -995,7 +1011,7 @@ class WorkerSession:
                 )
                 self._upload_pending_shards(default_elapsed_s=0.0)
             self.model_sha = new_sha
-            self.model_step = int(manifest.get("trainer_step") or 0)
+            self.model_step = model_step
             self.last_model_sha = new_sha
         self.log.info("mid-batch model switch sha=%s", str(new_sha)[:8])
 
@@ -1028,11 +1044,12 @@ class WorkerSession:
   # Tier 2: mtime changed — read and potentially swap model / reco
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            if self._reco_changed(manifest, source_tag="mtime"):
-                return
+            reco_changed = self._reco_changed(manifest, source_tag="mtime")
             self._swap_model_from_manifest(manifest)
+            if reco_changed:
+                return
         except Exception as _exc:
-            self.log.debug("mid-batch model check failed: %s", _exc)
+            self.log.warning("mid-batch model check failed (worker stuck on old model): %s", _exc, exc_info=True)
 
     def _on_completed_game(self, game_batch) -> None:
         now_s = time.time()
@@ -1263,19 +1280,21 @@ class WorkerSession:
     def _flush_pre_swap_buffer_if_stale(self, *, model_sha: str, model_step: int) -> None:
         """If buffered samples were generated under a different model_sha/step,
         flush them to pending before we swap the active model."""
-        if self.upload_buf.positions <= 0:
-            return
-        if (
-            str(self.upload_buf.model_sha or "") == str(model_sha)
-            and int(self.upload_buf.model_step or 0) == int(model_step)
-        ):
-            return
-        shard_path, elapsed_s = _flush_upload_buffer_to_pending(
-            pending_dir=self.pending_dir,
-            username=str(self.args.username),
-            buf=self.upload_buf,
-            now_s=time.time(),
-        )
+        buf_lock = self._upload_buf_lock
+        with buf_lock if buf_lock is not None else nullcontext():
+            if self.upload_buf.positions <= 0:
+                return
+            if (
+                str(self.upload_buf.model_sha or "") == str(model_sha)
+                and int(self.upload_buf.model_step or 0) == int(model_step)
+            ):
+                return
+            shard_path, elapsed_s = _flush_upload_buffer_to_pending(
+                pending_dir=self.pending_dir,
+                username=str(self.args.username),
+                buf=self.upload_buf,
+                now_s=time.time(),
+            )
         if shard_path is None:
             return
         uploaded_at = self._upload_pending_shards(default_elapsed_s=float(elapsed_s))

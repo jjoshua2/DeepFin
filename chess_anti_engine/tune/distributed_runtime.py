@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import re
@@ -36,6 +37,8 @@ from chess_anti_engine.tune.process_cleanup import terminate_matching_processes
 from chess_anti_engine.utils import sha256_file
 from chess_anti_engine.utils.atomic import atomic_write_text
 from chess_anti_engine.version import PACKAGE_VERSION, PROTOCOL_VERSION
+
+log = logging.getLogger(__name__)
 
 # Repo root used as cwd for spawned workers/brokers (so relative imports of
 # the chess_anti_engine package work). Resolved once at import time — fs walk
@@ -249,12 +252,23 @@ def _publish_distributed_trial_state(
     pause_reason: str = "",
     backpressure: dict[str, object] | None = None,
     export_model: bool = True,
+    reuse_existing_model_for_same_step: bool = False,
 ) -> str:
     dirs = _trial_server_dirs(server_root=server_root, trial_id=trial_id)
     publish_dir = dirs["publish_dir"]
     publish_dir.mkdir(parents=True, exist_ok=True)
 
     model_path = publish_dir / "latest_model.pt"
+    if export_model and reuse_existing_model_for_same_step and model_path.exists():
+        manifest_path = publish_dir / "manifest.json"
+        try:
+            prev_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            prev_step = int(prev_manifest.get("trainer_step") or -1)
+            prev_sha = str((prev_manifest.get("model") or {}).get("sha256") or "")
+            if prev_step == int(trainer_step) and prev_sha and sha256_file(model_path) == prev_sha:
+                export_model = False
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            pass
     if export_model or (not model_path.exists()):
         trainer.export_swa(model_path)
     model_sha = sha256_file(model_path)
@@ -999,7 +1013,12 @@ def _ingest_distributed_selfplay(
     processed_dir.mkdir(parents=True, exist_ok=True)
     target_games = max(1, int(target_games))
     min_games = max(1, int(math.ceil(float(min_games_fraction) * target_games)))
-    deadline = time.time() + float(wait_timeout_s)
+    _now = time.time()
+    deadline = _now + float(wait_timeout_s)
+  # Hard ceiling: if matching_games never reaches min_games (all workers stale
+  # or dead), the soft deadline's matching_games guard never fires.  3× gives
+  # workers time to restart while bounding the worst-case hang.
+    hard_deadline = _now + float(wait_timeout_s) * 3.0
     summary = _empty_ingest_summary()
 
   # Cap prev-model games at a fraction of target.  Once reached, demote
@@ -1031,10 +1050,17 @@ def _ingest_distributed_selfplay(
             _ingest(sp, preloaded=(arrs, meta))
 
     while summary["matching_games"] < target_games:
+        _now = time.time()
+        if _now >= deadline and summary["matching_games"] >= min_games:
+            break
+        if _now >= hard_deadline:
+            log.warning(
+                "ingest hard timeout (%.0fs): %d/%d matching games — all workers likely stale",
+                wait_timeout_s * 3, summary["matching_games"], target_games,
+            )
+            break
         shard_paths = _iter_shard_paths_nested(inbox_dir)
         if not shard_paths:
-            if time.time() >= deadline and summary["matching_games"] >= min_games:
-                break
             time.sleep(float(poll_seconds))
             continue
 
@@ -1042,7 +1068,10 @@ def _ingest_distributed_selfplay(
             _ingest(sp)
             if summary["matching_games"] >= target_games:
                 break
+            _now = time.time()
+            if _now >= deadline and summary["matching_games"] >= min_games:
+                break
+            if _now >= hard_deadline:
+                break
 
     return summary
-
-
