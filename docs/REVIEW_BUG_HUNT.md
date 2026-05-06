@@ -280,6 +280,15 @@ Current notes:
   `tests/test_uci_protocol.py`, `tests/test_uci_time_manager.py`,
   `tests/test_uci_searchmoves.py`, `tests/test_uci_ponderhit_clock.py`,
   `tests/test_uci_smoke.py`, and `tests/test_uci_walker_pool.py` (`58 passed`).
+- Finding F028 opened/fixed in this cycle: invalid `position fen ...` reset the
+  visible board to startpos but left `_pending_fen` / `_pending_moves` and
+  applied-tree state from the previous valid position. The next `go` could sync
+  search from stale pending moves. Invalid FEN now clears pending/applied/ponder
+  state consistently with the reset board.
+- Focused UCI state validation after F028 passed:
+  `tests/test_uci_engine_state.py`, `tests/test_uci_protocol.py`,
+  `tests/test_uci_time_manager.py`, `tests/test_uci_searchmoves.py`, and
+  `tests/test_uci_ponderhit_clock.py` (`46 passed`).
 - Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
   `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
   `tests/test_tune_distributed_worker_cmd.py`,

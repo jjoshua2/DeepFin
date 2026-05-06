@@ -264,6 +264,11 @@ class Engine:
                 start = chess.Board(cmd.fen)
             except ValueError:
                 self._board = chess.Board()
+                self._pending_fen = None
+                self._pending_moves = []
+                self._applied_fen = None
+                self._applied_moves = ()
+                self._popped_ponder_move = None
                 return
         new_board = start.copy(stack=False)
         parsed: list[chess.Move] = []
