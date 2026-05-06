@@ -71,7 +71,7 @@ def test_cleanup_does_not_broad_kill_chess_processes(tmp_path: Path, monkeypatch
     module = _load_profile_module()
     calls = []
 
-    def fake_run(cmd, **kwargs):
+    def fake_run(cmd, **_kwargs):
         calls.append(cmd)
 
     monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)

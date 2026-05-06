@@ -107,6 +107,7 @@ def test_ensure_distributed_workers_restarts_on_launch_config_change(
         proc.stopped = True
 
     def _fake_launch(*, config, trial_dir, trial_id, worker_index):
+        _ = trial_dir
         proc = _FakeProc()
         proc._cae_worker_launch_signature = _worker_launch_signature(
             config=config, trial_id=trial_id, worker_index=worker_index,

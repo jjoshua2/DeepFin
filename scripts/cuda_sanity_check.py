@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import multiprocessing as mp
 import os
-import queue
+import queue as queue_mod
 import sys
 import time
 from dataclasses import dataclass
@@ -34,18 +34,18 @@ def _run_once(worker_idx: int, matrix_size: int) -> Result:
         return Result(worker=worker_idx, ok=False, detail=f"{type(exc).__name__}: {exc}", elapsed_s=time.time() - t0)
 
 
-def _child_main(worker_idx: int, matrix_size: int, queue: mp.Queue) -> None:
+def _child_main(worker_idx: int, matrix_size: int, result_queue: mp.Queue) -> None:
     res = _run_once(worker_idx=worker_idx, matrix_size=matrix_size)
-    queue.put(res)
+    result_queue.put(res)
 
 
 def _run_multi(workers: int, matrix_size: int, stagger_s: float, timeout_s: float) -> int:
     ctx = mp.get_context("spawn")
-    queue: mp.Queue = ctx.Queue()
+    result_queue: mp.Queue = ctx.Queue()
     procs: list[mp.Process] = []
 
     for i in range(workers):
-        p = ctx.Process(target=_child_main, args=(i, matrix_size, queue))
+        p = ctx.Process(target=_child_main, args=(i, matrix_size, result_queue))
         p.start()
         procs.append(p)
         if stagger_s > 0 and i + 1 < workers:
@@ -54,8 +54,8 @@ def _run_multi(workers: int, matrix_size: int, stagger_s: float, timeout_s: floa
     results: list[Result] = []
     for _ in range(workers):
         try:
-            results.append(queue.get(timeout=timeout_s))
-        except queue.Empty:
+            results.append(result_queue.get(timeout=timeout_s))
+        except queue_mod.Empty:
             break
 
     exit_codes: list[int] = []

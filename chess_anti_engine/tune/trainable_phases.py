@@ -783,6 +783,7 @@ def _finalize_iteration(
     rng,
 ) -> None:
     """End-of-iteration bookkeeping: PID persist, reporting, CSV, prune."""
+    _ = global_iter
     wdl_regret_used = ds.wdl_regret
     sf_nodes_used = ds.sf_nodes
   # Persist PID state AFTER observe() so checkpoints carry the

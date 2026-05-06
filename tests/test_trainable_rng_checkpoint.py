@@ -19,7 +19,7 @@ from chess_anti_engine.tune.trial_config import (
 
 
 class _Writer:
-    def add_scalar(self, *args, **kwargs) -> None:
+    def add_scalar(self, *_args, **_kwargs) -> None:
         return None
 
 
@@ -57,7 +57,7 @@ def test_finalize_updates_checkpoint_rng_after_puzzle_eval(
     ckpt_dir.mkdir()
     _write_rng_state_sidecar(ckpt_dir=ckpt_dir, rng=rng)
 
-    def _consume_rng(*args, **kwargs):
+    def _consume_rng(*_args, **_kwargs):
         rng.integers(0, 2**31)
         return {"puzzle_accuracy": 0.0, "puzzle_correct": 0, "puzzle_total": 1}
 
@@ -69,6 +69,7 @@ def test_finalize_updates_checkpoint_rng_after_puzzle_eval(
     reported_state = {}
 
     def _report(_report_dict, checkpoint=None):
+        _ = checkpoint
         reported_state.update(
             json.loads((ckpt_dir / "rng_state.json").read_text(encoding="utf-8"))
         )

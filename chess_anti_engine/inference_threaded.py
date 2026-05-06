@@ -11,7 +11,7 @@ import concurrent.futures
 import logging
 import threading
 import time
-from typing import Any
+from typing import Any, Literal, TypeGuard, cast
 
 import numpy as np
 import torch
@@ -22,6 +22,11 @@ from chess_anti_engine.inference import (
 )
 
 logger = logging.getLogger(__name__)
+
+EvalItem = tuple[np.ndarray, concurrent.futures.Future]
+ModelUpdateItem = tuple[Literal["_update_model"], torch.nn.Module, threading.Event, dict[str, BaseException]]
+QueueItem = EvalItem | ModelUpdateItem
+DispatchHandle = tuple[list[EvalItem], int, Any, Any, Any]
 
 
 def _next_bucket(n: int, buckets: tuple[int, ...] = _COMPILED_BATCH_BUCKETS) -> int:
@@ -111,7 +116,7 @@ class ThreadedDispatcher:
         self._compile_mode = compile_mode
         self._device = device
 
-        self._queue: collections.deque[object] = collections.deque()
+        self._queue: collections.deque[QueueItem] = collections.deque()
         self._lock = threading.Lock()
         self._cond = threading.Condition(self._lock)
         self._stop = False
@@ -189,18 +194,12 @@ class ThreadedDispatcher:
             raise RuntimeError("dispatcher model update failed") from result["error"]
 
     @staticmethod
-    def _is_model_update(item: object) -> bool:
-        return (
-            isinstance(item, tuple)
-            and len(item) == 4
-            and item[0] == "_update_model"
-            and isinstance(item[2], threading.Event)
-            and isinstance(item[3], dict)
-        )
+    def _is_model_update(item: QueueItem) -> TypeGuard[ModelUpdateItem]:
+        return len(item) == 4 and item[0] == "_update_model"
 
     def _drain_batch(
         self, *, blocking: bool = True,
-    ) -> list[object]:
+    ) -> list[QueueItem]:
         """Pop up to max_batch leaves from the queue.
 
         ``blocking=True`` waits indefinitely for the first item to arrive
@@ -225,18 +224,19 @@ class ThreadedDispatcher:
             if self._is_model_update(first):
                 return [self._queue.popleft()]
 
-            items: list[object] = []
+            items: list[EvalItem] = []
             total = 0
             while self._queue:
                 item = self._queue[0]
                 if self._is_model_update(item):
                     break
-                enc = item[0]  # type: ignore[index]
+                eval_item = cast(EvalItem, item)
+                enc = eval_item[0]
                 if total + enc.shape[0] > self._max_batch:
                     break
-                items.append(self._queue.popleft())
+                items.append(cast(EvalItem, self._queue.popleft()))
                 total += enc.shape[0]
-            return items
+            return cast(list[QueueItem], items)
 
     def _compile_model_on_dispatcher(self, model: torch.nn.Module) -> torch.nn.Module:
         model.eval()
@@ -245,16 +245,16 @@ class ThreadedDispatcher:
         # set_device wants an index or "cuda:N", not bare "cuda".
         dev = torch.device(self._device)
         if dev.type == "cuda":
-            torch.cuda.set_device(dev.index if dev.index is not None else 0)
+            torch.cuda.set_device(dev.index or 0)
         self._compile_baseline = _snapshot_dynamo_counters()
         self._compile_probe_logged = False
         self._compile_probe_after_batches = self._lifetime_batches + 50
-        return torch.compile(  # pyright: ignore[reportAttributeAccessIssue]
+        return cast(torch.nn.Module, torch.compile(
             model, mode=self._compile_mode,
-        )
+        ))
 
-    def _apply_model_update(self, item: object) -> None:
-        _, model, done, result = item  # type: ignore[misc]
+    def _apply_model_update(self, item: ModelUpdateItem) -> None:
+        _, model, done, result = item
         try:
             if self._compile_mode is not None:
                 load_target = getattr(self._evaluator.model, "_orig_mod", self._evaluator.model)
@@ -282,7 +282,7 @@ class ThreadedDispatcher:
   # PucvChunker's pattern from chess_anti_engine/mcts/puct_vl.py.
         ev = self._evaluator
         slot = 0
-        pending: tuple | None = None  # (items, real_n, pol_t, wdl_t, evt)
+        pending: DispatchHandle | None = None  # (items, real_n, pol_t, wdl_t, evt)
 
         while not self._stop or self._queue or pending is not None:
   # Block (cond-wait) only when the pipeline is idle. With pending
@@ -292,15 +292,16 @@ class ThreadedDispatcher:
             blocking = pending is None
             items = self._drain_batch(blocking=blocking)
 
-            next_handle: tuple | None = None
+            next_handle: DispatchHandle | None = None
             model_update = items[0] if len(items) == 1 and self._is_model_update(items[0]) else None
             if items and model_update is None:
+                eval_items = cast(list[EvalItem], items)
                 try:
-                    next_handle = self._submit_batch(items, slot, ev)  # type: ignore[arg-type]
+                    next_handle = self._submit_batch(eval_items, slot, ev)
                     slot = 1 - slot
                 except Exception as exc:  # noqa: BLE001
                     logger.exception("dispatcher submit failed: %s", exc)
-                    for _, fut in items:
+                    for _, fut in eval_items:
                         if not fut.done():
                             fut.set_exception(exc)
 
@@ -343,9 +344,9 @@ class ThreadedDispatcher:
                 return
 
     def _submit_batch(
-        self, items: list[tuple[np.ndarray, concurrent.futures.Future]],
+        self, items: list[EvalItem],
         slot: int, ev: DirectGPUEvaluator,
-    ) -> tuple:
+    ) -> DispatchHandle:
         """Pack items into slot's pinned input and fire async forward.
 
         Returns (items, real_n, pol_t, wdl_t, evt). Caller waits on evt
@@ -375,7 +376,7 @@ class ThreadedDispatcher:
             self._lifetime_full_drains += 1
         return (items, real_n, pol_t, wdl_t, evt)
 
-    def _scatter_pending(self, pending: tuple) -> None:
+    def _scatter_pending(self, pending: DispatchHandle) -> None:
         items, pol_t, wdl_t, evt = pending[0], pending[2], pending[3], pending[4]
         if evt is not None:
             evt.synchronize()

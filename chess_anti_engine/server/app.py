@@ -940,8 +940,7 @@ def create_app(
         trial_key = _normalize_trial_id(trial_id)
         if not shard_run_id_matches_upload_trial(trial_key, meta.get("run_id")):
             tmp.unlink(missing_ok=True)
-            if tmp_zarr is not None:
-                delete_shard_path(tmp_zarr)
+            delete_shard_path(tmp_zarr)
             return {
                 "stored": False,
                 "rejected": True,
