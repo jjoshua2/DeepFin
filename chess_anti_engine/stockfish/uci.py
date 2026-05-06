@@ -81,18 +81,22 @@ class StockfishUCI:
         )
         os.close(slave_fd)
 
-        self._send("uci")
-        self._wait_for("uciok")
-        self._send("setoption name UCI_ShowWDL value true")
-        self._send("setoption name Threads value 1")
-        if self.hash_mb is not None:
-            self._send(f"setoption name Hash value {self.hash_mb}")
-        if self.syzygy_path:
-            self._send(f"setoption name SyzygyPath value {self.syzygy_path}")
-        if self.multipv > 1:
-            self._send(f"setoption name MultiPV value {self.multipv}")
-        self._send("isready")
-        self._wait_for("readyok")
+        try:
+            self._send("uci")
+            self._wait_for("uciok")
+            self._send("setoption name UCI_ShowWDL value true")
+            self._send("setoption name Threads value 1")
+            if self.hash_mb is not None:
+                self._send(f"setoption name Hash value {self.hash_mb}")
+            if self.syzygy_path:
+                self._send(f"setoption name SyzygyPath value {self.syzygy_path}")
+            if self.multipv > 1:
+                self._send(f"setoption name MultiPV value {self.multipv}")
+            self._send("isready")
+            self._wait_for("readyok")
+        except BaseException:
+            self.close()
+            raise
 
     def close(self) -> None:
         with self._lock:

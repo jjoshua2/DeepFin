@@ -296,6 +296,12 @@ Current notes:
 - Focused readiness validation after F029 passed:
   `tests/test_uci_engine_state.py` and
   `tests/test_uci_smoke.py::test_stop_interrupts_search` (`3 passed`).
+- Finding F030 opened/fixed in this cycle: `StockfishUCI.__init__` could raise
+  during `uciok`/`readyok` timeout without closing the partially started process
+  and pty. Constructor handshake failures now close/kill/wait before re-raising.
+- Focused Stockfish wrapper validation after F030 passed:
+  `tests/test_stockfish_uci_timeout.py` and `tests/test_cp_to_wdl.py`
+  (`15 passed`).
 - Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
   `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
   `tests/test_tune_distributed_worker_cmd.py`,

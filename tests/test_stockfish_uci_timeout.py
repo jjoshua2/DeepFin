@@ -9,8 +9,10 @@ indefinitely while holding ``self._lock``. Post-fix, both go through
 """
 from __future__ import annotations
 
+import os
 import stat
 import sys
+import time
 
 import pytest
 
@@ -51,6 +53,32 @@ def test_handshake_times_out_on_silent_engine(tmp_path) -> None:
     engine = _make_engine_wrapper(tmp_path, _SILENT_ENGINE, "silent")
     with pytest.raises(StockfishTimeoutError):
         StockfishUCI(engine, nodes=1, read_timeout_s=0.3)
+
+
+def test_constructor_timeout_cleans_up_subprocess(tmp_path) -> None:
+    pidfile = tmp_path / "pid.txt"
+    body = f"""\
+import os
+import sys
+from pathlib import Path
+Path({str(pidfile)!r}).write_text(str(os.getpid()), encoding="utf-8")
+for _line in sys.stdin:
+    pass
+"""
+    engine = _make_engine_wrapper(tmp_path, body, "silent_pid")
+
+    with pytest.raises(StockfishTimeoutError):
+        StockfishUCI(engine, nodes=1, read_timeout_s=0.3)
+
+    pid = int(pidfile.read_text(encoding="utf-8"))
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"Stockfish subprocess {pid} survived constructor timeout")
 
 
 def test_search_times_out_when_engine_hangs_after_go(tmp_path) -> None:
