@@ -58,6 +58,7 @@ from chess_anti_engine.tune.trainable_report import (
     _log_iteration_scalars,
     _prune_trial_checkpoints,
     _update_best_regret_checkpoints,
+    _write_rng_state_sidecar,
     _write_status_csv_row,
 )
 from chess_anti_engine.tune.trial_config import (
@@ -836,6 +837,7 @@ def _finalize_iteration(
         tc=tc, device=device, rng=rng,
         iteration_zero_based=iteration_zero_based,
     )
+    _write_rng_state_sidecar(ckpt_dir=ckpt_dir, rng=rng)
 
     pause_metrics = _iteration_pause_metrics(
         iteration_started_at=iter_t0,

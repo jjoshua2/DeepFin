@@ -127,6 +127,17 @@ def _write_status_csv_row(
         pass
 
 
+def _write_rng_state_sidecar(*, ckpt_dir: Path, rng) -> None:
+    try:
+        atomic_write_text(
+            ckpt_dir / SIDECAR_RNG_STATE,
+            json.dumps(rng.bit_generator.state, sort_keys=True),
+        )
+    except (OSError, TypeError, ValueError) as exc:
+        # Silent loss here breaks deterministic resume — log once, don't crash.
+        log.warning("[trial] failed to write rng_state.json: %s", exc)
+
+
 def _save_trial_checkpoint(
     *,
     trainer,
@@ -145,14 +156,7 @@ def _save_trial_checkpoint(
     """Flush replay buffer and save a lightweight checkpoint."""
     buf.flush()
     trainer.save(ckpt_dir / "trainer.pt")
-    try:
-        atomic_write_text(
-            ckpt_dir / SIDECAR_RNG_STATE,
-            json.dumps(rng.bit_generator.state, sort_keys=True),
-        )
-    except (OSError, TypeError, ValueError) as exc:
-        # Silent loss here breaks deterministic resume — log once, don't crash.
-        log.warning("[trial] failed to write rng_state.json: %s", exc)
+    _write_rng_state_sidecar(ckpt_dir=ckpt_dir, rng=rng)
     try:
         atomic_write_text(
             ckpt_dir / SIDECAR_TRIAL_META,

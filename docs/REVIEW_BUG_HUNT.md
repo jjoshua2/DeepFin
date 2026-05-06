@@ -78,6 +78,8 @@ Tune trainable lifecycle:
   `GameConfig`.
 - [ ] Verify checkpoint restore, cross-trial exploit restore, and salvage donor
   config overlay preserve ownership, RNG, PID, and replay invariants.
+- [x] Verify checkpoint RNG sidecars include all per-iteration RNG consumers
+  before Ray receives the checkpoint directory.
 - [ ] Verify live YAML reload cannot silently ignore runtime-mutable keys that
   should affect workers or trainer weights.
 - [ ] Verify async holdout eval and background prefetch cannot report stale or
@@ -109,6 +111,9 @@ Current notes:
 - Finding F012 opened/fixed in this cycle: `TrialConfig` dropped Syzygy
   adjudication/search knobs, so local Tune gate/eval play paths ignored
   tablebase adjudication settings present in YAML and distributed manifests.
+- Finding F013 opened/fixed in this cycle: checkpoint RNG sidecars were written
+  before puzzle eval could consume the trainable RNG, making resume diverge
+  from uninterrupted runs after puzzle iterations.
 
 ### `/simplify` Review Criteria
 
@@ -229,6 +234,7 @@ Context:
 | F010 | Medium | Reliability | Worker upload | `chess_anti_engine/worker.py`, `tests/test_worker_upload_response.py` | Workers deleted local pending shards after any HTTP 200 upload response, including explicit server rejections such as protocol/version incompatibility. That could drop replay data that the server never accepted. | `_upload_pending_shards()` checked only `r.status_code == 200` before `delete_shard_path(sp)`, while the server uses HTTP 200 bodies with `stored: false, rejected: true` for compatibility and validation rejections. | Added `_upload_response_allows_pending_delete()` so workers delete only accepted uploads or deduped non-rejections; rejected 200 responses keep the pending shard for retry. Verified worker upload slice: `11 passed`. | fixed |
 | F011 | Medium | Security / Reliability | Worker assets | `chess_anti_engine/worker_assets.py`, `chess_anti_engine/worker.py`, `tests/test_worker_cached_assets.py` | Worker asset cache paths trusted manifest-provided `filename` values. A filename containing path components such as `../../outside.bin` could make opening-book or Stockfish downloads write outside the cache directory. | `_download_opening_book()` and `_sync_stockfish()` interpolated manifest `filename` directly into `cache_dir / f\"..._{filename}\"`. | Added `_safe_manifest_filename()` to reduce manifest asset names to basenames before constructing cache paths. Verified worker asset slice: `12 passed`. | fixed |
 | F012 | Medium | Training Quality / Reliability | Tune config | `chess_anti_engine/tune/trial_config.py`, `chess_anti_engine/tune/trainable_config_ops.py`, `tests/test_trainable_config_ops.py`, `tests/test_trial_config.py` | Local Tune gate/eval play paths ignored Syzygy adjudication and in-search probing settings because `TrialConfig` dropped `syzygy_adjudicate`, `syzygy_adjudicate_fraction`, and `syzygy_in_search` before `_play_batch_kwargs()` built `GameConfig`. | `configs/pbt2_small.yaml` enables the knobs and `distributed_runtime.py` publishes them for workers, but `TrialConfig.from_dict()` parsed only `syzygy_path` and `syzygy_rescore_policy`; `_play_batch_kwargs()` likewise only forwarded those two fields. | Added typed fields, forwarded them into `GameConfig`, and covered both parsing and play-kwargs preservation. Verified `tests/test_trial_config.py tests/test_trainable_config_ops.py tests/test_worker_model_update.py` -> `9 passed`. | fixed |
+| F013 | Medium | Reliability | Tune checkpointing | `chess_anti_engine/tune/trainable_report.py`, `chess_anti_engine/tune/trainable_phases.py`, `tests/test_trainable_rng_checkpoint.py` | The checkpoint RNG sidecar could lag the actual trainable RNG because `_save_trial_checkpoint()` wrote `rng_state.json` before `_finalize_iteration()` ran puzzle eval. If puzzle eval consumed RNG before `tune.report()` copied the checkpoint, resume would replay an older RNG stream and diverge from uninterrupted training. | `trainable.py` saved the checkpoint before `_finalize_iteration()`, while `_finalize_iteration()` calls `_run_puzzle_eval_if_due(..., rng=rng)` before reporting that same checkpoint directory to Ray. | Reused a sidecar writer and rewrote `rng_state.json` after puzzle eval and before `tune_report_fn(...)`; regression test verifies `tune.report()` sees the advanced RNG state. Verified Tune slice: `18 passed`. | fixed |
 
 ## Review Passes
 
