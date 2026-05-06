@@ -1159,10 +1159,19 @@ class WorkerSession:
                 upload_url, json=payload, auth=self._auth,
                 headers=_worker_headers(), timeout=60.0,
             )
-            if r.status_code == 200:
+            if _upload_response_allows_pending_delete(r):
                 jp.unlink(missing_ok=True)
-            else:
-                break
+                continue
+            if r.status_code == 200:
+                try:
+                    body = r.json()
+                except Exception:
+                    body = {}
+                self.log.warning(
+                    "server did not accept pending arena result %s; keeping for retry: %s",
+                    jp, body,
+                )
+            break
 
     def _install_worker_wheel(self, ww: dict, version_source: dict) -> None:
         """Download + verify + pip install + exec-restart. Does not return."""

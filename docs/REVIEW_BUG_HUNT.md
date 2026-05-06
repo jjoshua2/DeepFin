@@ -252,6 +252,14 @@ Current notes:
   `tests/test_server_upload_security.py::test_arena_username_cannot_escape_arena_inbox`
   and `tests/test_server_upload_security.py::test_arena_username_uses_single_child_dir`
   (`4 passed` including nearby artifact resolver tests).
+- Finding F025 opened/fixed in this cycle: worker arena result retry handling
+  deleted pending JSON after any HTTP 200 response. The server returns HTTP 200
+  for explicit protocol/version rejections with `rejected=true`, so incompatible
+  workers could silently drop arena results instead of retrying after update.
+  Arena uploads now use the same accepted/deduped response predicate as replay
+  shard uploads and keep rejected responses locally.
+- Focused worker retry validation after F025 passed:
+  `tests/test_worker_upload_response.py` (`6 passed`).
 - Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
   `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
   `tests/test_tune_distributed_worker_cmd.py`,
