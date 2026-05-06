@@ -150,7 +150,7 @@ def main():
     ap.add_argument("--sf-nodes", type=int, default=5000)
     ap.add_argument("--compile", action="store_true", default=True)
     ap.add_argument("--no-compile", dest="compile", action="store_false")
-    ap.add_argument("--stockfish-path", default="/home/josh/local_stockfish/extract/usr/games/stockfish")
+    ap.add_argument("--stockfish-path", default="stockfish")
     ap.add_argument("--bootstrap", default="")
     ap.add_argument(
         "--configs", type=str, default="1:8,4:8,8:8,16:16",

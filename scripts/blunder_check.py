@@ -6,6 +6,7 @@ Reports the distribution so we can tell whether regret=0.09 lets SF play
 """
 from __future__ import annotations
 
+import os
 import random
 import sys
 from pathlib import Path
@@ -18,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from chess_anti_engine.stockfish import StockfishUCI  # noqa: E402
 
 REGRET_LIMIT = 0.0925
-SF_PATH = "/home/josh/projects/chess/e2e_server/publish/stockfish"
+SF_PATH = os.environ.get("STOCKFISH_PATH", "stockfish")
 SF_NODES = 5000
 SF_MULTIPV = 20
 N_POSITIONS = 30

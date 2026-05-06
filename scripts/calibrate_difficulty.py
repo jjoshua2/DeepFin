@@ -69,8 +69,7 @@ def main():
     ap.add_argument("--checkpoint", type=str, required=True)
     ap.add_argument("--games", type=int, default=50)
     ap.add_argument("--device", type=str, default="cpu")
-    ap.add_argument("--sf-path", type=str,
-                    default="/home/josh/projects/chess/e2e_server/publish/stockfish")
+    ap.add_argument("--sf-path", type=str, default="stockfish")
     ap.add_argument("--sf-workers", type=int, default=2)
     args = ap.parse_args()
 

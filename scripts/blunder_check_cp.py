@@ -9,6 +9,7 @@ Reports distribution so we can see how big the cp-equivalent handicap is.
 """
 from __future__ import annotations
 
+import os
 import random
 import subprocess
 import sys
@@ -21,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
 REGRET_LIMIT = 0.0925
-SF_PATH = "/home/josh/projects/chess/e2e_server/publish/stockfish"
+SF_PATH = os.environ.get("STOCKFISH_PATH", "stockfish")
 SF_NODES = 5000
 SF_MULTIPV = 20
 N_POSITIONS = 30

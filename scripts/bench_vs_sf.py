@@ -49,6 +49,7 @@ def _git_hash() -> str | None:
 
 
 def _resolve_stockfish_path(path_arg: str | None) -> str:
+    repo_root = Path(__file__).resolve().parents[1]
     candidates = [path_arg] if path_arg else []
     env = os.environ.get("STOCKFISH_PATH")
     if env:
@@ -57,7 +58,7 @@ def _resolve_stockfish_path(path_arg: str | None) -> str:
         "stockfish",
         "/usr/games/stockfish",
         "/usr/local/bin/stockfish",
-        "/home/josh/projects/chess/e2e_server/publish/stockfish",
+        str(repo_root / "e2e_server" / "publish" / "stockfish"),
     ]
     seen: set[str] = set()
     for raw in candidates:

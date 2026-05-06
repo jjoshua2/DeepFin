@@ -127,7 +127,7 @@ def _eval_model(model, eval_set, device):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--stockfish-path", default="/home/josh/projects/chess/e2e_server/publish/stockfish")
+    ap.add_argument("--stockfish-path", default="stockfish")
     ap.add_argument("--sf-nodes", type=int, default=200)
     ap.add_argument("--sf-eval-nodes", type=int, default=5000)
     ap.add_argument("--embed-dim", type=int, default=128)

@@ -141,7 +141,7 @@ def main():
     ap.add_argument("--batch-size", type=int, default=256)
     ap.add_argument("--mcts-sims", type=int, default=128)
     ap.add_argument("--sf-nodes", type=int, default=5000)
-    ap.add_argument("--stockfish-path", default="/home/josh/local_stockfish/extract/usr/games/stockfish")
+    ap.add_argument("--stockfish-path", default="stockfish")
     ap.add_argument("--bootstrap", default="")
     args = ap.parse_args()
 

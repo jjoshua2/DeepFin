@@ -126,9 +126,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--mcts-sims", type=int, default=128)
     ap.add_argument("--sf-nodes", type=int, default=5000)
-    ap.add_argument("--stockfish-path", default="/home/josh/local_stockfish/extract/usr/games/stockfish")
+    ap.add_argument("--stockfish-path", default="stockfish")
     ap.add_argument("--bootstrap", default="")
-    ap.add_argument("--aot-dir", default="/home/josh/projects/chess/data/aot_models")
+    ap.add_argument("--aot-dir", default="data/aot_models")
     args = ap.parse_args()
 
     mp.set_start_method("spawn", force=True)

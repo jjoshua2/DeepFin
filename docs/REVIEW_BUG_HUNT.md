@@ -369,6 +369,15 @@ Current notes:
   `bash -n` across `scripts/*.sh` and `scripts/deepfin`,
   `python3 -m py_compile scripts/pbt_30m_poll.py scripts/pbt_hourly_audit.py`,
   and `--help` for both Python poll/audit helpers.
+- Finding F037 opened/fixed in this cycle: several benchmark/analysis scripts
+  defaulted to machine-specific Stockfish, AOT, replay, or result paths under
+  `/home/josh/...`. Those defaults made the scripts fail or silently analyze a
+  stale historical run on any different checkout. Defaults now use `stockfish`,
+  repo-relative paths, `STOCKFISH_PATH`, or latest-run discovery with explicit
+  `--trial-result`/`--root` overrides.
+- Focused path-default validation after F037 passed:
+  hardcoded-path `rg` sweep, `py_compile` for the touched scripts, and `--help`
+  for both PID replay backtests.
 - Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
   `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
   `tests/test_tune_distributed_worker_cmd.py`,
@@ -1141,7 +1150,7 @@ Files:
 - [x] `chess_anti_engine/eval/puzzles.py`
 - [ ] `chess_anti_engine/bench/__init__.py`
 - [ ] `chess_anti_engine/bench/play_batch_timing.py`
-- [ ] `scripts/bench_*.py`
+- [x] `scripts/bench_*.py`
 - [ ] `scripts/profile_*.py`
 - [x] `scripts/bench_batch_wait.sh`
 - [ ] `scripts/cuda_sanity_check.py`
@@ -1180,6 +1189,8 @@ Correctness/reliability:
   filtering.
 - [x] PBT polling/watchdog scripts derive repo roots from their script paths and
   keep source configs untouched during batch-wait benchmarking.
+- [x] Benchmark and analysis script defaults avoid machine-specific absolute
+  paths.
 - [x] Diagnostic scripts run from repo root and fail clearly when required
   trial/replay paths are absent.
 - [ ] Remaining Python scripts run from repo root and fail clearly when required files/env vars are absent.

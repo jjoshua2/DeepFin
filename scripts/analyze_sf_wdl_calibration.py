@@ -21,8 +21,7 @@ import zarr
 
 
 _DEFAULT_GLOB = (
-    "/home/josh/projects/chess/runs/pbt2_small/replay/"
-    "train_trial_d3156_00000_0_lr=0.0003_2026-04-29_10-58-04/replay_shards/shard_*.zarr"
+    "runs/pbt2_small/replay/*/replay_shards/shard_*.zarr"
 )
 
 

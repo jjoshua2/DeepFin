@@ -28,13 +28,11 @@ Usage:
 """
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
 from chess_anti_engine.stockfish.pid import DifficultyPID
-
-TRIAL_DIR = Path("runs/pbt2_small/tune/train_trial_ba920_00000_0_lr=0.0003_2026-04-22_17-53-42")
-RESULT_PATH = TRIAL_DIR / "result.json"
 
 # Match yaml constants — only alpha and sigma sweep.
 TARGET = 0.57
@@ -57,9 +55,22 @@ SIGMAS = [0.5, 1.0, 1.5, 2.0]
 DRIFT_THRESHOLD = 0.02
 
 
-def load_iters() -> list[dict]:
+def _latest_result_path(root: Path) -> Path:
+    candidates = sorted(
+        root.glob("runs/pbt2_small/tune/train_trial_*/result.json"),
+        key=lambda p: p.stat().st_mtime,
+    )
+    if not candidates:
+        raise FileNotFoundError(
+            f"no result.json files under {root / 'runs' / 'pbt2_small' / 'tune'}; "
+            "pass --trial-result"
+        )
+    return candidates[-1]
+
+
+def load_iters(path: Path) -> list[dict]:
     rows: list[dict] = []
-    with open(RESULT_PATH) as f:
+    with path.open() as f:
         for line in f:
             line = line.strip()
             if line:
@@ -167,8 +178,19 @@ def replay(rows: list[dict], *, alpha: float, sigma: float) -> dict:
 
 
 def main() -> None:
-    rows = load_iters()
-    print(f"Loaded {len(rows)} iters (1..{rows[-1]['iter']}) from {RESULT_PATH.name}")
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--trial-result", type=Path, default=None)
+    ap.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
+    args = ap.parse_args()
+    result_path = (
+        args.trial_result.expanduser().resolve()
+        if args.trial_result is not None
+        else _latest_result_path(args.root.expanduser().resolve())
+    )
+    rows = load_iters(result_path)
+    if not rows:
+        raise SystemExit(f"no rows in {result_path}")
+    print(f"Loaded {len(rows)} iters (1..{rows[-1]['iter']}) from {result_path}")
     print(f"drift_threshold={DRIFT_THRESHOLD}  safety_floor={INVERSE_SAFETY_FLOOR}\n")
 
     results = []

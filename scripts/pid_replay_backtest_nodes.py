@@ -28,10 +28,6 @@ from pathlib import Path
 
 from chess_anti_engine.stockfish.pid import DifficultyPID
 
-DEFAULT_TRIAL_RESULT = Path(
-    "runs/pbt2_small/tune/train_trial_2b03f_00000_0_lr=0.0003_2026-04-25_13-57-04/result.json"
-)
-
 # Yaml constants — fixed across the sweep. Sweep dims are α and σ.
 TARGET = 0.60
 MIN_NODES = 5_000
@@ -60,6 +56,19 @@ def load_iters(path: Path) -> list[dict]:
             if line:
                 rows.append(json.loads(line))
     return rows
+
+
+def _latest_result_path(root: Path) -> Path:
+    candidates = sorted(
+        root.glob("runs/pbt2_small/tune/train_trial_*/result.json"),
+        key=lambda p: p.stat().st_mtime,
+    )
+    if not candidates:
+        raise FileNotFoundError(
+            f"no result.json files under {root / 'runs' / 'pbt2_small' / 'tune'}; "
+            "pass --trial-result"
+        )
+    return candidates[-1]
 
 
 def stage2_rows(rows: list[dict]) -> list[dict]:
@@ -170,10 +179,15 @@ def replay(rows: list[dict], *, alpha: float, sigma: float, initial_nodes: int) 
 
 def main() -> None:
     p = argparse.ArgumentParser(description=(__doc__ or "").split("\n", 1)[0])
-    p.add_argument("--trial-result", default=str(DEFAULT_TRIAL_RESULT))
+    p.add_argument("--trial-result", type=Path, default=None)
+    p.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
     args = p.parse_args()
 
-    path = Path(args.trial_result).expanduser().resolve()
+    path = (
+        args.trial_result.expanduser().resolve()
+        if args.trial_result is not None
+        else _latest_result_path(args.root.expanduser().resolve())
+    )
     all_rows = load_iters(path)
     rows = stage2_rows(all_rows)
     if not rows:

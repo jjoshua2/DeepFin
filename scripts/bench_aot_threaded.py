@@ -142,9 +142,9 @@ def main():
     ap.add_argument("--mcts-sims", type=int, default=128)
     ap.add_argument("--sf-nodes", type=int, default=5000)
     ap.add_argument("--sf-workers", type=int, default=8)
-    ap.add_argument("--stockfish-path", default="/home/josh/local_stockfish/extract/usr/games/stockfish")
+    ap.add_argument("--stockfish-path", default="stockfish")
     ap.add_argument("--bootstrap", default="")
-    ap.add_argument("--aot-dir", default="/home/josh/projects/chess/data/aot_models")
+    ap.add_argument("--aot-dir", default="data/aot_models")
     ap.add_argument("--configs", type=str, default="1,2,4",
                     help="Comma-separated thread counts")
     args = ap.parse_args()
