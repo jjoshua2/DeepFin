@@ -12,7 +12,7 @@ from chess_anti_engine.mcts.gumbel import (
 )
 from chess_anti_engine.mcts.puct import Node, _select_child
 from chess_anti_engine.model import ModelConfig, build_model
-from chess_anti_engine.moves import legal_move_mask
+from chess_anti_engine.moves import POLICY_SIZE, legal_move_mask
 
 try:
     from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
@@ -147,6 +147,77 @@ def test_gumbel_root_many_precomputed_logits_matches_direct_path():
         assert np.array_equal(m0, m1)
         assert np.array_equal(m0, legal_move_mask(board))
         assert np.count_nonzero(p0[~m0]) == 0
+
+
+class _FakeRootTbProbe:
+    max_pieces = 32
+
+    def __init__(self) -> None:
+        self.root_calls = 0
+        self.leaf_calls = 0
+        self.hits = 0
+
+    def apply(self, leaf_cboards, wdl, indices=None, solved_out=None):
+        if indices is not None:
+            self.leaf_calls += 1
+            return 0
+        self.root_calls += 1
+        wdl[:] = np.array([12.0, -12.0, -12.0], dtype=np.float32)
+        self.hits += len(leaf_cboards)
+        if solved_out is not None:
+            solved_out[:] = 1
+        return len(leaf_cboards)
+
+
+@pytest.mark.skipif(run_gumbel_root_many_c is None, reason="C tree extension not available")
+def test_gumbel_c_applies_tb_root_override_with_precomputed_logits():
+    board = chess.Board("7k/6Q1/4K3/8/8/8/8/8 b - - 0 1")
+    assert len(list(board.legal_moves)) == 1
+
+    probe = _FakeRootTbProbe()
+    pre_pol = np.zeros((1, POLICY_SIZE), dtype=np.float32)
+    pre_wdl = np.zeros((1, 3), dtype=np.float32)
+
+    _, _, values, _, _, _ = run_gumbel_root_many_c(
+        None,
+        [board],
+        device="cpu",
+        rng=np.random.default_rng(0),
+        cfg=GumbelConfig(simulations=4, temperature=1.0, add_noise=False),
+        evaluator=object(),
+        pre_pol_logits=pre_pol,
+        pre_wdl_logits=pre_wdl,
+        tb_probe=probe,
+    )
+
+    assert probe.root_calls == 1
+    assert probe.leaf_calls == 0
+    assert values[0] > 0.999
+
+
+@pytest.mark.skipif(run_gumbel_root_many_c is None, reason="C tree extension not available")
+def test_gumbel_c_can_skip_cached_tb_root_override():
+    board = chess.Board("7k/6Q1/4K3/8/8/8/8/8 b - - 0 1")
+    probe = _FakeRootTbProbe()
+    pre_pol = np.zeros((1, POLICY_SIZE), dtype=np.float32)
+    pre_wdl = np.zeros((1, 3), dtype=np.float32)
+
+    _, _, values, _, _, _ = run_gumbel_root_many_c(
+        None,
+        [board],
+        device="cpu",
+        rng=np.random.default_rng(0),
+        cfg=GumbelConfig(simulations=4, temperature=1.0, add_noise=False),
+        evaluator=object(),
+        pre_pol_logits=pre_pol,
+        pre_wdl_logits=pre_wdl,
+        tb_probe=probe,
+        pre_wdl_logits_tb_probed=True,
+    )
+
+    assert probe.root_calls == 0
+    assert probe.leaf_calls == 0
+    assert values[0] == 0.0
 
 
 def test_completed_q_uses_parent_perspective_for_visited_child():

@@ -184,6 +184,14 @@ Current notes:
   `tests/test_losses.py`, `tests/test_sf_search_agreement_gate.py`,
   `tests/test_collation.py`, and `tests/test_replay_shard_validation.py`
   (`40 passed`).
+- Finding F020 opened/fixed in this cycle: C Gumbel skipped the tablebase root
+  WDL override whenever precomputed logits were supplied. That was only valid
+  for UCI's cached-root path; selfplay passes raw batched logits, so TB-eligible
+  selfplay roots could seed search from NN values instead of Syzygy values.
+- Focused MCTS/tablebase validation after F020 passed:
+  `tests/test_gumbel_root_many_edge_cases.py`, `tests/test_mcts_c_tree.py`,
+  `tests/test_mcts_solved_propagation.py`, and `tests/test_tablebase_cache.py`
+  (`38 passed`).
 - Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
   `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
   `tests/test_tune_distributed_worker_cmd.py`,

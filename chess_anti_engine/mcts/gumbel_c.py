@@ -72,6 +72,7 @@ def run_gumbel_root_many_c(
     tree: MCTSTree | None = None,
     root_node_ids: list[int] | None = None,
     tb_probe=None,
+    pre_wdl_logits_tb_probed: bool = False,
     target_batch: int = 0,
 ) -> tuple[list[np.ndarray], list[int], list[float], list[np.ndarray], MCTSTree, list[int]]:
     """Gumbel root search with MCTSTree C tree + CBoard.
@@ -148,10 +149,9 @@ def run_gumbel_root_many_c(
             pol_logits_batch, wdl_logits_batch = eval_impl.evaluate_encoded(xs)
 
   # Override root wdl_logits before root_qs is derived (root_qs seeds FPU
-  # and the values_out initial pass). Skip when pre_* logits were provided
-  # — the caller already probed the root once and is reusing the cached
-  # eval across chunks, so re-probing here would double-count tbhits.
-    if tb_probe is not None and pre_pol_logits is None:
+  # and the values_out initial pass). UCI may pass cached logits that already
+  # include this override; selfplay passes raw batched model logits.
+    if tb_probe is not None and not pre_wdl_logits_tb_probed:
         tb_probe.apply(root_cboards, wdl_logits_batch)
 
     root_qs = [_wdl_to_q(wdl_logits_batch[i]) for i in range(n_boards)]
@@ -678,5 +678,4 @@ def run_gumbel_root_many_c(
         tree,
         _ret_root_ids,
     )
-
 

@@ -730,6 +730,7 @@ class SearchWorker:
             tree=self._tree,
             root_node_ids=[self._root_id] if self._root_id is not None else None,
             tb_probe=tb_probe,
+            pre_wdl_logits_tb_probed=True,
             target_batch=self._minibatch_size,
         )
         self._tree = tree
@@ -1028,5 +1029,4 @@ def _board_after(board: chess.Board, idx: int) -> chess.Board:
     except Exception:
         pass
     return b
-
 
