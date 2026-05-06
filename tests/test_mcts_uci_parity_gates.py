@@ -11,7 +11,7 @@ import pytest
 from chess_anti_engine.mcts.gumbel import GumbelConfig, run_gumbel_root_many
 from chess_anti_engine.mcts.puct import MCTSConfig, run_mcts_many
 from chess_anti_engine.mcts.puct_c import run_mcts_many_c
-from chess_anti_engine.moves import POLICY_SIZE, legal_move_mask, move_to_index
+from chess_anti_engine.moves import POLICY_SIZE, move_to_index
 from chess_anti_engine.uci import search as uci_search
 from chess_anti_engine.uci.search import SearchWorker
 from chess_anti_engine.uci.time_manager import Deadline
@@ -86,7 +86,24 @@ def _root_logits(n: int) -> tuple[np.ndarray, np.ndarray]:
     )
 
 
-def test_puct_c_and_python_root_masks_match_edge_cases() -> None:
+def _expected_root_mask(board: chess.Board) -> np.ndarray:
+    mask = np.zeros((POLICY_SIZE,), dtype=np.bool_)
+    if board.is_game_over():
+        return mask
+    for move in board.legal_moves:
+        mask[int(move_to_index(move, board))] = True
+    return mask
+
+
+def _expected_root_value(board: chess.Board) -> float:
+    if board.is_checkmate():
+        return -1.0
+    if board.is_game_over(claim_draw=True):
+        return 0.0
+    return 0.0
+
+
+def test_puct_cross_impl_root_outputs_match_edge_case_oracles() -> None:
     boards = _edge_case_boards()
     pre_pol, pre_wdl = _root_logits(len(boards))
     cfg = MCTSConfig(simulations=0, dirichlet_eps=0.0, temperature=0.0)
@@ -114,14 +131,13 @@ def test_puct_c_and_python_root_masks_match_edge_cases() -> None:
 
     assert py_actions == c_actions
     np.testing.assert_allclose(py_values, c_values, atol=0.0)
-    for board, py_prob, c_prob, py_mask, c_mask in zip(
-        boards, py_probs, c_probs, py_masks, c_masks, strict=True,
+    for board, py_prob, c_prob, py_value, c_value, py_mask, c_mask in zip(
+        boards, py_probs, c_probs, py_values, c_values, py_masks, c_masks, strict=True,
     ):
-        expected_mask = (
-            np.zeros((POLICY_SIZE,), dtype=np.bool_)
-            if board.is_game_over()
-            else legal_move_mask(board)
-        )
+        expected_mask = _expected_root_mask(board)
+        expected_value = _expected_root_value(board)
+        assert py_value == expected_value
+        assert c_value == expected_value
         assert np.array_equal(py_mask, expected_mask)
         assert np.array_equal(c_mask, expected_mask)
         assert np.array_equal(py_mask, c_mask)
@@ -131,7 +147,7 @@ def test_puct_c_and_python_root_masks_match_edge_cases() -> None:
 
 
 @pytest.mark.skipif(run_gumbel_root_many_c is None, reason="gumbel_c extension not available")
-def test_gumbel_c_and_python_root_masks_match_edge_cases() -> None:
+def test_gumbel_cross_impl_root_outputs_match_edge_case_oracles() -> None:
     boards = _edge_case_boards()
     pre_pol, pre_wdl = _root_logits(len(boards))
     cfg = GumbelConfig(simulations=1, topk=8, temperature=0.0, add_noise=False)
@@ -161,14 +177,13 @@ def test_gumbel_c_and_python_root_masks_match_edge_cases() -> None:
 
     assert py_actions == c_actions
     np.testing.assert_allclose(py_values, c_values, atol=0.0)
-    for board, py_prob, c_prob, py_mask, c_mask in zip(
-        boards, py_probs, c_probs, py_masks, c_masks, strict=True,
+    for board, py_prob, c_prob, py_value, c_value, py_mask, c_mask in zip(
+        boards, py_probs, c_probs, py_values, c_values, py_masks, c_masks, strict=True,
     ):
-        expected_mask = (
-            np.zeros((POLICY_SIZE,), dtype=np.bool_)
-            if board.is_game_over()
-            else legal_move_mask(board)
-        )
+        expected_mask = _expected_root_mask(board)
+        expected_value = _expected_root_value(board)
+        assert py_value == expected_value
+        assert c_value == expected_value
         assert np.array_equal(py_mask, expected_mask)
         assert np.array_equal(c_mask, expected_mask)
         assert np.array_equal(py_mask, c_mask)
