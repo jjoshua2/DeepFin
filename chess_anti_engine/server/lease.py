@@ -9,6 +9,14 @@ from typing import Any
 from chess_anti_engine.utils.atomic import atomic_write_text
 
 
+def _load_json_dict(path: Path) -> dict[str, Any] | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def normalize_trial_id(trial_id: str | None) -> str | None:
     if trial_id is None:
         return None
@@ -30,11 +38,7 @@ def load_lease(*, leases_root: Path, lease_id: str) -> dict[str, Any] | None:
         return None
     if not p.exists():
         return None
-    try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-    return data if isinstance(data, dict) else None
+    return _load_json_dict(p)
 
 
 def save_lease(*, leases_root: Path, lease: dict[str, Any]) -> None:
@@ -48,11 +52,7 @@ def save_lease(*, leases_root: Path, lease: dict[str, Any]) -> None:
 def prune_expired_leases(*, leases_root: Path, now_unix: int) -> list[dict[str, Any]]:
     active: list[dict[str, Any]] = []
     for p in sorted(leases_root.glob("*.json")):
-        try:
-            data = json.loads(p.read_text(encoding="utf-8"))
-        except Exception:
-            p.unlink(missing_ok=True)
-            continue
+        data = _load_json_dict(p)
         if not isinstance(data, dict):
             p.unlink(missing_ok=True)
             continue
@@ -64,7 +64,14 @@ def prune_expired_leases(*, leases_root: Path, now_unix: int) -> list[dict[str, 
     return active
 
 
-def available_trial_ids(*, server_root: Path, publish_dir: str = "publish") -> list[str]:
+def _manifest_server_time(manifest: dict[str, Any]) -> int:
+    try:
+        return int(manifest.get("server_time_unix") or 0)
+    except Exception:
+        return 0
+
+
+def _published_trial_entries(*, server_root: Path, publish_dir: str) -> list[tuple[str, int]]:
     trials_root = server_root / "trials"
     entries: list[tuple[str, int]] = []
     if not trials_root.exists():
@@ -73,80 +80,59 @@ def available_trial_ids(*, server_root: Path, publish_dir: str = "publish") -> l
         trial_id = normalize_trial_id(mf.parent.parent.name)
         if trial_id is None:
             continue
-        try:
-            payload = json.loads(mf.read_text(encoding="utf-8"))
-        except Exception:
+        payload = _load_json_dict(mf)
+        if payload is None:
             continue
-        if not isinstance(payload, dict):
-            continue
-        try:
-            server_time = int(payload.get("server_time_unix") or 0)
-        except Exception:
-            server_time = 0
-        entries.append((trial_id, server_time))
-    if not entries:
-        return []
-    active_prefix_path = Path(server_root) / "active_run_prefix.txt"
-    current_prefix: str | None = None
-    try:
-        active_prefix = active_prefix_path.read_text(encoding="utf-8").strip()
-        if active_prefix:
-            current_prefix = str(active_prefix)
-    except Exception:
-        current_prefix = None
-    if not current_prefix:
-        newest_trial_id, _ = max(entries, key=lambda item: int(item[1]))
-        current_prefix = str(newest_trial_id).split("_", 1)[0]
-    return [
-        trial_id
-        for trial_id, _ in entries
-        if str(trial_id).split("_", 1)[0] == current_prefix
-    ]
+        entries.append((trial_id, _manifest_server_time(payload)))
+    return entries
 
 
-def active_run_prefix(*, server_root: Path, publish_dir: str = "publish") -> str | None:
+def _stored_active_run_prefix(server_root: Path) -> str | None:
     active_prefix_path = Path(server_root) / "active_run_prefix.txt"
     try:
         active_prefix = active_prefix_path.read_text(encoding="utf-8").strip()
         if active_prefix:
             return str(active_prefix)
     except Exception:
-        pass
-
-    trials_root = Path(server_root) / "trials"
-    entries: list[tuple[str, int]] = []
-    if not trials_root.exists():
         return None
-    for mf in sorted(trials_root.glob(f"*/{publish_dir}/manifest.json")):
-        trial_id = normalize_trial_id(mf.parent.parent.name)
-        if trial_id is None:
-            continue
-        try:
-            payload = json.loads(mf.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        if not isinstance(payload, dict):
-            continue
-        try:
-            server_time = int(payload.get("server_time_unix") or 0)
-        except Exception:
-            server_time = 0
-        entries.append((trial_id, server_time))
+    return None
+
+
+def _run_prefix_for_trial(trial_id: str) -> str:
+    return str(trial_id).split("_", 1)[0]
+
+
+def available_trial_ids(*, server_root: Path, publish_dir: str = "publish") -> list[str]:
+    entries = _published_trial_entries(server_root=server_root, publish_dir=publish_dir)
+    if not entries:
+        return []
+    current_prefix = _stored_active_run_prefix(server_root)
+    if not current_prefix:
+        newest_trial_id, _ = max(entries, key=lambda item: int(item[1]))
+        current_prefix = _run_prefix_for_trial(newest_trial_id)
+    return [
+        trial_id
+        for trial_id, _ in entries
+        if _run_prefix_for_trial(trial_id) == current_prefix
+    ]
+
+
+def active_run_prefix(*, server_root: Path, publish_dir: str = "publish") -> str | None:
+    stored_prefix = _stored_active_run_prefix(server_root)
+    if stored_prefix:
+        return stored_prefix
+    entries = _published_trial_entries(server_root=server_root, publish_dir=publish_dir)
     if not entries:
         return None
     newest_trial_id, _ = max(entries, key=lambda item: int(item[1]))
-    return str(newest_trial_id).split("_", 1)[0]
+    return _run_prefix_for_trial(newest_trial_id)
 
 
 def prune_non_active_run_leases(*, leases_root: Path, active_prefix: str | None) -> None:
     if not active_prefix:
         return
     for p in sorted(leases_root.glob("*.json")):
-        try:
-            data = json.loads(p.read_text(encoding="utf-8"))
-        except Exception:
-            p.unlink(missing_ok=True)
-            continue
+        data = _load_json_dict(p)
         if not isinstance(data, dict):
             p.unlink(missing_ok=True)
             continue
@@ -265,8 +251,8 @@ def pick_trial_for_lease(
         lag = max(0, int(max_iter) - int(iter_idx))
         active = int(counts.get(tid, 0))
         throughput = float(throughputs.get(tid, 0.0))
-  # Primary goal: keep active trials close in iteration progress.
-  # Only use throughput as a secondary tiebreaker once lag is equal.
+        # Primary goal: keep active trials close in iteration progress.
+        # Only use throughput as a secondary tiebreaker once lag is equal.
         return (-lag, active, throughput, tid)
 
     return min(eligible, key=_score)
@@ -293,7 +279,7 @@ def _try_renew_existing_lease(
     if existing is None or str(existing.get("username") or "") != str(username):
         return None
     if normalize_trial_id(existing.get("trial_id")) not in available_trials:
-  # Trial was retired; drop the stale lease so the caller can pick a new trial.
+        # Trial was retired; drop the stale lease so the caller can pick a new trial.
         lease_path(leases_root=leases_root, lease_id=requested_lease_id).unlink(missing_ok=True)
         return None
     existing["last_heartbeat_unix"] = now_unix
