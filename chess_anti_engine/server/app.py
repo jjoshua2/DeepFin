@@ -47,6 +47,20 @@ def resolve_publish_artifact_path(publish_root: Path, filename: str) -> Path | N
     return path
 
 
+def resolve_arena_user_dir(arena_root: Path, username: str) -> Path | None:
+    """Return a single-directory arena user path, or None on unsafe names."""
+    name = str(username or "").strip()
+    if not name or name in {".", ".."} or "/" in name or "\\" in name:
+        return None
+    root = Path(arena_root).resolve()
+    path = (root / name).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return None
+    return path
+
+
 # Aggregate counter fields shared between the upload-meta dict (input) and
 # accumulator attribute (output). Each entry is both the meta-dict key and the
 # accumulator field name. ``positions`` is NOT in here — it tracks
@@ -1119,7 +1133,9 @@ def create_app(
 
   # Store under arena_inbox/<username>/
         arena_root = _arena_inbox_root(trial_id)
-        user_dir = arena_root / username
+        user_dir = resolve_arena_user_dir(arena_root, username)
+        if user_dir is None:
+            raise HTTPException(status_code=400, detail="invalid username")
         user_dir.mkdir(parents=True, exist_ok=True)
 
         body = json.dumps(payload, sort_keys=True).encode("utf-8")

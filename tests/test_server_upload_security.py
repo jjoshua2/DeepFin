@@ -246,3 +246,23 @@ def test_manifest_artifact_filename_serves_publish_child(tmp_path) -> None:
     publish.mkdir(parents=True)
 
     assert resolve_publish_artifact_path(publish, "stockfish") == publish / "stockfish"
+
+
+def test_arena_username_cannot_escape_arena_inbox(tmp_path) -> None:
+    from chess_anti_engine.server.app import resolve_arena_user_dir
+
+    arena = tmp_path / "server" / "arena_inbox"
+    arena.mkdir(parents=True)
+
+    assert resolve_arena_user_dir(arena, "../outside") is None
+    assert resolve_arena_user_dir(arena, str(tmp_path / "outside")) is None
+    assert resolve_arena_user_dir(arena, r"..\outside") is None
+
+
+def test_arena_username_uses_single_child_dir(tmp_path) -> None:
+    from chess_anti_engine.server.app import resolve_arena_user_dir
+
+    arena = tmp_path / "server" / "arena_inbox"
+    arena.mkdir(parents=True)
+
+    assert resolve_arena_user_dir(arena, "worker_1") == arena / "worker_1"

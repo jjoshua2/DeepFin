@@ -243,6 +243,15 @@ Current notes:
   `leases_root`.
 - Focused lease validation after F023 passed: `tests/test_server_trial_lease.py`
   and `tests/test_server_upload_compaction.py` (`10 passed`).
+- Finding F024 opened/fixed in this cycle: arena result uploads stored JSON under
+  `arena_inbox/<username>/` without constraining the authenticated username to a
+  single path component. A legacy/admin-created username containing path
+  separators could write outside the arena inbox. Arena result storage now
+  rejects unsafe usernames before creating the directory.
+- Focused arena path validation after F024 passed:
+  `tests/test_server_upload_security.py::test_arena_username_cannot_escape_arena_inbox`
+  and `tests/test_server_upload_security.py::test_arena_username_uses_single_child_dir`
+  (`4 passed` including nearby artifact resolver tests).
 - Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
   `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
   `tests/test_tune_distributed_worker_cmd.py`,
