@@ -103,12 +103,18 @@ def _run_step(
         run_network_turn(state, combined_net_idxs)
         t_net += time.time() - t0
 
-    # Selfplay-opp SF queries right after the net turn (boards now have the
-    # move pushed) so they overlap with the curriculum SF collect below.
-    sp_futures: dict[int, Any] | None = None
-    if sp_opp_idxs and is_pool:
+    # Selfplay games still need SF labels on every network turn. Curriculum
+    # games get their label from the next SF-opponent query, but selfplay slots
+    # would otherwise advance another network turn before annotation and lose
+    # the previous record as "latest".
+    sp_label_idxs = [
+        i for i in combined_net_idxs
+        if bool(state.selfplay_arr[i]) and not state.done_arr[i]
+    ]
+    sp_label_futures: dict[int, Any] | None = None
+    if sp_label_idxs and is_pool:
         t0 = time.time()
-        sp_futures = submit_sf_queries(state, sp_opp_idxs)
+        sp_label_futures = submit_sf_queries(state, sp_label_idxs)
         t_sf += time.time() - t0
 
     if cur_opp_idxs:
@@ -118,27 +124,13 @@ def _run_step(
         )
         t_sf += time.time() - t0
 
-    if sp_opp_idxs:
+    if sp_label_idxs:
         t0 = time.time()
         finish_sf_annotation_and_moves(
-            state, sp_opp_idxs, play_curriculum_moves=True, futures=sp_futures,
+            state, sp_label_idxs,
+            play_curriculum_moves=False, futures=sp_label_futures,
         )
         t_sf += time.time() - t0
-        # Label queries for still-live selfplay slots: submit async now,
-        # collect after (overlaps with finalization for free).
-        sp_label_idxs = [i for i in sp_opp_idxs if not state.done_arr[i]]
-        sp_label_futures: dict[int, Any] | None = None
-        if sp_label_idxs and is_pool:
-            t0 = time.time()
-            sp_label_futures = submit_sf_queries(state, sp_label_idxs)
-            t_sf += time.time() - t0
-        if sp_label_idxs:
-            t0 = time.time()
-            finish_sf_annotation_and_moves(
-                state, sp_label_idxs,
-                play_curriculum_moves=False, futures=sp_label_futures,
-            )
-            t_sf += time.time() - t0
 
     return t_net, t_sf
 

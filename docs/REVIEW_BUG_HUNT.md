@@ -1,11 +1,147 @@
-# Bug Hunt Review Plan
+# Adversarial Review Tracker
 
-This document is the durable tracker for a thorough project review. The goal is
-to find correctness bugs, training-quality bugs, runtime reliability bugs,
-efficiency/performance bugs, scalability bugs, security bugs, and missing tests.
+This document is the durable tracker for project-wide adversarial review and
+follow-up simplification work. The goal is to find correctness bugs,
+training-quality bugs, runtime reliability bugs, efficiency/performance bugs,
+scalability bugs, security bugs, missing tests, and code structure that should
+be simplified before it becomes harder to reason about.
 
-The active runtime checkout should stay untouched while this plan is developed.
-This copy lives in an isolated worktree on branch `bug-hunt-plan-20260424`.
+Current strategy: review by component and contract boundary, not only by commit.
+Commit-level review is still useful for newly landed changes, but the long-term
+pass should ask whether each subsystem is correct, minimal, observable, and easy
+to change.
+
+## Current Review Cycle
+
+Started: 2026-05-06
+
+Working rules:
+
+- Review read-first, patch-second. Record attack vectors even when no bug is
+  found.
+- Every finding should name the violated invariant, exact file/line evidence,
+  likely runtime effect, and the smallest verification command.
+- Fix commits should stay grouped by component unless a cross-cutting contract
+  bug demands otherwise.
+- The `/simplify` pass is separate from bug fixing unless simplification is the
+  lowest-risk way to remove a bug.
+
+### Active Queue
+
+| Order | Track | Component | Files | Status | Notes |
+|-------|-------|-----------|-------|--------|-------|
+| 1 | adversarial | Selfplay labels and finalization | `chess_anti_engine/selfplay/finalize.py`, `state.py`, `stockfish_turn.py`, `tablebase.py` | active | Highest training-data corruption risk. Review POV, result labels, TB adjudication, draw handling, optional target fields. |
+| 2 | adversarial | Replay and shard ingest | `chess_anti_engine/replay/*`, `worker_buffer.py`, server/worker shard paths | pending | Schema drift, stale shards, missing arrays, holdout leakage, old-run compatibility. |
+| 3 | adversarial | Worker lifecycle | `worker.py`, `worker_assets.py`, `worker_pool.py`, `stockfish/*` | pending | Manifest restart keys, model swaps, Stockfish restarts, partial updates, pause/resume. |
+| 4 | adversarial | Tune trainable lifecycle | `chess_anti_engine/tune/*` | pending | Config reload, donor/salvage overlays, PID state restore, manifests, async eval timing. |
+| 5 | adversarial | Loss and trainer contracts | `chess_anti_engine/train/losses.py`, `trainer.py`, `targets.py` | pending | Blend weights, masks, target normalization, old shard behavior, live weight sync. |
+| 6 | adversarial | MCTS and search engines | `chess_anti_engine/mcts/*`, `uci/search.py`, `tablebase.py` | pending | Memory ownership, root reuse, terminal handling, solved/TB propagation, concurrent mutation. |
+| 7 | adversarial | Distributed server | `chess_anti_engine/server/*`, `tune/distributed_runtime.py` | pending | Upload durability, auth, leases, path safety, backpressure, recovery after crash. |
+| 8 | adversarial | UCI runtime | `chess_anti_engine/uci/*`, `stockfish/uci.py` | pending | Protocol state, time controls, ponderhit, cancellation, subprocess hangs. |
+| 9 | simplify | Hot-path code quality and efficiency | selfplay, replay, MCTS, inference, worker | pending | Remove duplicated orchestration, clarify contracts, reduce allocations/sync/I/O stalls. |
+| 10 | simplify | Config and ops ergonomics | `configs/*`, `scripts/*`, `AGENTS.md`, `CLAUDE.md` | pending | Stale knobs, unclear ownership, scripts that assume one run layout. |
+
+### Current Slice Checklist
+
+Selfplay labels and finalization:
+
+- [x] Map result-label convention: `wdl_target` class order, POV, scalar value,
+  categorical target, and draw handling.
+- [ ] Verify terminal result source precedence: natural game end, timeout
+  adjudication, tablebase adjudication, tablebase rescore.
+- [x] Verify Stockfish WDL and cp-logistic target POV through curriculum games.
+- [x] Verify Stockfish annotations cover both colors in full selfplay games.
+- [x] Verify selfplay vs curriculum counters and `is_selfplay` tags survive slot
+  recycling.
+- [ ] Verify optional targets (`sf_wdl`, `sf_policy_target`, `search_wdl`,
+  legal masks, future policy, volatility) are masked or defaulted safely.
+- [ ] Identify simplification candidates only after correctness review.
+
+Current notes:
+
+- WDL class convention in finalization is `0=sample POV win`, `1=draw`,
+  `2=sample POV loss`; categorical scalar maps win/draw/loss to `+1/0/-1`.
+- Curriculum games are counted in `w/d/l`; full-selfplay games are tracked in
+  selfplay counters but intentionally excluded from curriculum winrate.
+- Finding F006 opened/fixed in this cycle: full-selfplay net-color turns missed
+  SF annotations because the next network turn replaced the "latest" record
+  before any SF label query ran.
+
+### `/simplify` Review Criteria
+
+Use this as a separate pass after a component's correctness review:
+
+- Efficiency: unnecessary allocations, board/FEN roundtrips, repeated zarr
+  opens, GPU sync points, unbounded queues, avoidable serialization.
+- Code quality: functions with mixed responsibilities, hidden state mutation,
+  weak names, implicit contracts, broad exception handling, unclear units/POV.
+- Code reuse: duplicated config plumbing, duplicate result-label logic, multiple
+  retry/backoff implementations, parallel shard schemas.
+- Refactoring: extract only when it reduces real complexity or makes invariants
+  testable. Avoid broad style churn.
+- Tests: add regression tests for behavior, not just shape or smoke coverage.
+
+### Heavy-Thinking Prompt Bank
+
+Use these prompts when a question deserves GPT Pro/deep research rather than a
+quick local code review.
+
+#### Architecture Simplification Prompt
+
+```text
+You are reviewing a Python chess-engine training codebase with distributed
+selfplay, replay shards, MCTS, Stockfish supervision, tablebase adjudication,
+and Ray Tune/PBT orchestration. I want an adversarial simplification plan, not
+a rewrite. Given the files and notes below, identify the highest-leverage
+refactors that reduce correctness risk, duplicated logic, and operational
+fragility while preserving behavior. For each proposal include: invariant
+protected, files touched, migration risk, tests required, and a smallest
+incremental PR sequence. Challenge any refactor that is aesthetic only.
+
+Context:
+[paste component map, file snippets, current findings, and constraints]
+```
+
+#### Training-Target Semantics Prompt
+
+```text
+Act as a skeptical ML systems reviewer. This chess project trains on game WDL,
+Stockfish WDL/cp-logistic targets, search WDL, policy targets, future policy,
+categorical value targets, and tablebase relabeling. Review the target-blending
+semantics for hidden POV/sign/class-order bugs, feedback loops, label leakage,
+and draw/adjudication bias. Produce concrete invariants and test cases that
+would catch silent training corruption. Do not assume comments are correct.
+
+Context:
+[paste relevant finalize/loss/replay/tablebase snippets and metric definitions]
+```
+
+#### Distributed Runtime Prompt
+
+```text
+Act as an adversarial distributed-systems reviewer. This repo has a training
+server publishing model manifests, workers polling/downloading assets, workers
+uploading replay shards, trainables ingesting shards, and restart/resume scripts.
+Find crash-consistency, stale-data, auth/path-safety, backpressure, partial
+publish, and lifecycle bugs. Prioritize concrete failure interleavings and
+minimal fixes with tests.
+
+Context:
+[paste server app, worker polling/upload, manifest publish, ingest, and scripts]
+```
+
+#### MCTS C Extension Prompt
+
+```text
+Review this Python/C MCTS extension as a memory-safety and algorithmic
+correctness auditor. Focus on ownership, reset/reuse behavior, concurrent
+walkers, virtual loss, solved-node propagation, tablebase overrides, NumPy
+buffer lifetimes, and Python fallback parity. Give concrete attack vectors and
+tests or sanitizer/profiling commands.
+
+Context:
+[paste _mcts_tree.c regions, gumbel_c.py, puct_c.py, and tests]
+```
 
 ## Status Legend
 
@@ -43,6 +179,7 @@ This copy lives in an isolated worktree on branch `bug-hunt-plan-20260424`.
 | F003 | Medium | Reliability | Operational scripts | `scripts/diagnose.py` | Diagnostic script hardcodes `runs/pbt2_small/tune`, discovers the latest trial at import time, and has no CLI override despite documenting only `PYTHONPATH=. python3 scripts/diagnose.py`. It can crash before argument parsing on machines without that run, or diagnose the wrong run when the active config differs. | Top-level `TRIAL_DIR = sorted(Path("runs/pbt2_small/tune").glob("train_trial_*"), ...)[-1]` executes before any `main`/CLI. Replay path later uses `TRIAL_DIR / "selfplay_shards"`, while current distributed paths often use replay roots elsewhere. | Add `--run/--trial-dir/--config/--device` args and move discovery into `main`; add a smoke test for missing run producing a clear error. | open |
 | F004 | Medium | Reliability | Stockfish integration | `chess_anti_engine/stockfish/uci.py` | Real Stockfish subprocess reads have no timeout. A stalled engine or protocol deadlock can hang selfplay/arena code while holding the Stockfish lock. | `_wait_for` and `search` call `self.proc.stdout.readline()` in unbounded loops. UCI smoke tests use timeout readers around the engine process, but Stockfish integration tests mostly use mocks and do not exercise a stalled real subprocess. | Add a timeout/error path around Stockfish reads, terminate/restart the process on timeout, and add a fake-process regression test that never emits `uciok`, `readyok`, or `bestmove`. | open |
 | F005 | Low | Test Hygiene | Pytest config | `pyproject.toml`, `tests/test_mcts_thread_safety.py` | Full-suite run emitted `PytestUnknownMarkWarning` for the thread-safety stress test's `slow` marker. | `pytest` passed with one warning before config change. | Registered the `slow` marker in `pyproject.toml`; `pytest tests/test_mcts_thread_safety.py` now passes without the warning. | fixed |
+| F006 | High | Training Quality | Selfplay | `chess_anti_engine/selfplay/manager.py`, `tests/test_selfplay_fraction.py` | Full-selfplay games annotated only one color's network turns with SF targets. The assigned net-color turn advanced to the selfplay-opponent network turn before any SF label query ran, so the earlier `_NetRecord` was no longer the latest record and never received `sf_wdl` / SF policy targets. | In `_run_step`, SF label queries were only submitted for `sp_opp_idxs` after `run_network_turn`; `net_idxs` that were also selfplay skipped annotation. A direct repro before the fix produced two selfplay samples with `[False, True]` for `s.sf_wdl is not None`. | Tightened `test_full_selfplay_generates_both_side_samples_and_no_pid_wdl_stats` to require all full-selfplay samples have `sf_wdl` and `sf_policy_target`. Verified selfplay/finalize slice: `33 passed`. | fixed |
 
 ## Review Passes
 

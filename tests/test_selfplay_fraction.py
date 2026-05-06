@@ -54,7 +54,9 @@ def test_full_selfplay_generates_both_side_samples_and_no_pid_wdl_stats():
     assert stats.w == 0
     assert stats.d == 0
     assert stats.l == 0
-    assert any(s.sf_wdl is not None for s in samples)
+    assert all(s.is_selfplay for s in samples)
+    assert all(s.sf_wdl is not None for s in samples)
+    assert all(s.sf_policy_target is not None for s in samples)
 
 
 def test_target_games_recycles_slots_and_preserves_selfplay_accounting():
