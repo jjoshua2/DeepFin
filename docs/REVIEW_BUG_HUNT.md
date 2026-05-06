@@ -289,6 +289,13 @@ Current notes:
   `tests/test_uci_engine_state.py`, `tests/test_uci_protocol.py`,
   `tests/test_uci_time_manager.py`, `tests/test_uci_searchmoves.py`, and
   `tests/test_uci_ponderhit_clock.py` (`46 passed`).
+- Finding F029 opened/fixed in this cycle: UCI `isready` stopped and joined any
+  active search before printing `readyok`, making a readiness probe behave like
+  `stop`. The entrypoint already blocks pre-load commands until the engine
+  exists, so `isready` now responds without mutating the active search.
+- Focused readiness validation after F029 passed:
+  `tests/test_uci_engine_state.py` and
+  `tests/test_uci_smoke.py::test_stop_interrupts_search` (`3 passed`).
 - Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
   `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
   `tests/test_tune_distributed_worker_cmd.py`,

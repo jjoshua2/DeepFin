@@ -240,9 +240,6 @@ class Engine:
         emit_handshake(self._options)
 
     def _handle_isready(self) -> None:
-  # Block until any running search has responded to a stop. Simpler
-  # than juggling readyok semantics during an in-flight search.
-        self._wait_for_search()
         _println(format_readyok())
 
     def _handle_newgame(self) -> None:

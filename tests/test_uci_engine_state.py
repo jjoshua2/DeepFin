@@ -22,3 +22,16 @@ def test_invalid_position_fen_clears_pending_state() -> None:
     assert engine._applied_fen is None  # noqa: SLF001
     assert engine._applied_moves == ()  # noqa: SLF001
     assert engine._popped_ponder_move is None  # noqa: SLF001
+
+
+def test_isready_does_not_stop_active_search(capsys) -> None:
+    engine = Engine(worker=MagicMock())
+    thread = MagicMock()
+    thread.is_alive.return_value = True
+    engine._search_thread = thread  # noqa: SLF001
+
+    engine._handle_isready()  # noqa: SLF001
+
+    assert capsys.readouterr().out == "readyok\n"
+    assert not engine._stop_event.is_set()  # noqa: SLF001
+    thread.join.assert_not_called()
