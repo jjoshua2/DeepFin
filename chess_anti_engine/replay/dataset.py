@@ -44,6 +44,7 @@ def _to_optional_tensor(
   # Values are .astype(float32) into target[i] when present. Drives the per-sample loop in collate().
 _OPTIONAL_FLOAT_FIELDS: tuple[tuple[str, str, str, tuple[int, ...]], ...] = (
     ("sf_wdl",              "sf_wdl",          "has_sf_wdl",       (3,)),
+    ("search_wdl",          "search_wdl",      "has_search_wdl",   (3,)),
     ("sf_policy_target",    "sf_policy_t",     "has_sf_policy",    (_PS,)),
     ("categorical_target",  "categorical_t",   "has_categorical",  (32,)),
     ("policy_soft_target",  "policy_soft_t",   "has_policy_soft",  (_PS,)),
@@ -128,6 +129,8 @@ def collate_arrays(arrs: dict[str, np.ndarray], *, device: str) -> dict[str, tor
     optional_specs = (
         ("sf_wdl", (n, 3), np.float32, torch.float32),
         ("has_sf_wdl", (n,), np.float32, torch.float32),
+        ("search_wdl", (n, 3), np.float32, torch.float32),
+        ("has_search_wdl", (n,), np.float32, torch.float32),
         ("sf_move_index", (n,), np.int64, torch.int64),
         ("has_sf_move", (n,), np.float32, torch.float32),
         ("sf_policy_t", (n, policy_t.shape[1]), np.float32, torch.float32, "sf_policy_target"),

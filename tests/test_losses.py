@@ -125,7 +125,7 @@ def test_compute_loss_optional_heads_produce_gradients_when_targets_present() ->
     batch["moves_left"] = torch.tensor([0.25], dtype=torch.float32)
     batch["has_moves_left"] = torch.tensor([1.0], dtype=torch.float32)
 
-    losses = compute_loss(outputs, batch, w_sf_wdl=0.25)
+    losses = compute_loss(outputs, batch, sf_wdl_frac=0.25)
     losses["total"].backward()
 
     for key in (

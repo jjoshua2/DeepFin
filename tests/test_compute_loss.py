@@ -70,7 +70,7 @@ def test_compute_loss_returns_expected_keys():
     # Core keys must be present. Observation-only per-source / per-phase
     # diagnostics are additive and tested separately.
     expected = {
-        "total", "policy_ce", "wdl_ce", "sf_wdl_ce",
+        "total", "policy_ce", "wdl_ce", "blended_wdl_ce",
         "soft_policy_ce", "future_policy_ce",
         "sf_move_ce", "sf_eval_ce", "categorical_ce",
         "volatility", "sf_volatility", "moves_left",
@@ -171,11 +171,11 @@ def test_wdl_weight_scales_total():
     losses_1x = compute_loss(out, batch, w_wdl=1.0, w_policy=0.0, w_soft=0.0,
                               w_future=0.0, w_sf_move=0.0, w_sf_eval=0.0,
                               w_categorical=0.0, w_volatility=0.0,
-                              w_moves_left=0.0, w_sf_wdl=0.0)
+                              w_moves_left=0.0, sf_wdl_frac=0.0)
     losses_2x = compute_loss(out, batch, w_wdl=2.0, w_policy=0.0, w_soft=0.0,
                               w_future=0.0, w_sf_move=0.0, w_sf_eval=0.0,
                               w_categorical=0.0, w_volatility=0.0,
-                              w_moves_left=0.0, w_sf_wdl=0.0)
+                              w_moves_left=0.0, sf_wdl_frac=0.0)
 
     ratio = losses_2x["total"].item() / max(losses_1x["total"].item(), 1e-12)
     assert abs(ratio - 2.0) < 1e-4
@@ -259,7 +259,7 @@ def test_reported_categorical_and_moves_left_match_total_loss_masks():
         w_wdl=0.0,
         w_sf_move=0.0,
         w_sf_eval=0.0,
-        w_sf_wdl=0.0,
+        sf_wdl_frac=0.0,
         w_volatility=0.0,
         w_sf_volatility=0.0,
         w_categorical=1.0,

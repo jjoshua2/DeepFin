@@ -98,7 +98,10 @@ class TrainMetrics:
     volatility_loss: float
     sf_volatility_loss: float
     moves_left_loss: float
-    sf_wdl_loss: float = 0.0
+    blended_wdl_loss: float = 0.0
+    sf_search_agree_frac: float = 0.0
+    sf_search_disagree_sf_low_frac: float = 0.0
+    sf_search_disagree_sf_high_frac: float = 0.0
     sf_move_acc_top5: float = 0.0
     policy_own_acc_top1: float = 0.0
     policy_own_acc_top5: float = 0.0
@@ -140,7 +143,7 @@ _LOSS_KEY_TO_METRIC_FIELD = {
     "volatility": "volatility_loss",
     "sf_volatility": "sf_volatility_loss",
     "moves_left": "moves_left_loss",
-    "sf_wdl_ce": "sf_wdl_loss",
+    "blended_wdl_ce": "blended_wdl_loss",
 }
 _TRAIN_METRICS_FIELDS = frozenset(f.name for f in dataclasses.fields(TrainMetrics))
 
@@ -218,9 +221,13 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         w_categorical=_f("w_categorical", 0.10),
         w_sf_volatility=w_sf_volatility,
         w_moves_left=_f("w_moves_left", 0.02),
-        w_sf_wdl=_f("w_sf_wdl", 1.0),
+        sf_wdl_frac=_f("sf_wdl_frac", 0.0),
+        search_wdl_frac=_f("search_wdl_frac", 0.0),
         sf_wdl_conf_power=_f("sf_wdl_conf_power", 0.0),
         sf_wdl_draw_scale=_f("sf_wdl_draw_scale", 1.0),
+        sf_wdl_temperature=_f("sf_wdl_temperature", 1.0),
+        sf_search_dampen_sf_low=_f("sf_search_dampen_sf_low", 0.0),
+        sf_search_dampen_sf_high=_f("sf_search_dampen_sf_high", 0.0),
     )
     if log_dir is not None:
         kw["log_dir"] = log_dir
@@ -270,9 +277,13 @@ class Trainer:
         w_categorical: float = 0.10,
         w_sf_volatility: float | None = None,
         w_moves_left: float = 0.02,
-        w_sf_wdl: float = 1.0,
+        sf_wdl_frac: float = 0.0,
+        search_wdl_frac: float = 0.0,
         sf_wdl_conf_power: float = 0.0,
         sf_wdl_draw_scale: float = 1.0,
+        sf_wdl_temperature: float = 1.0,
+        sf_search_dampen_sf_low: float = 0.0,
+        sf_search_dampen_sf_high: float = 0.0,
         tb_log_interval: int = 10,
         prefetch_batches: bool = True,
         model_config: ModelConfig | None = None,
@@ -408,9 +419,13 @@ class Trainer:
         self.w_volatility = float(w_volatility)
         self.w_sf_volatility = float(w_sf_volatility) if w_sf_volatility is not None else float(w_volatility)
         self.w_moves_left = float(w_moves_left)
-        self.w_sf_wdl = float(w_sf_wdl)
+        self.sf_wdl_frac = float(sf_wdl_frac)
+        self.search_wdl_frac = float(search_wdl_frac)
         self.sf_wdl_conf_power = float(sf_wdl_conf_power)
         self.sf_wdl_draw_scale = float(sf_wdl_draw_scale)
+        self.sf_wdl_temperature = float(sf_wdl_temperature)
+        self.sf_search_dampen_sf_low = float(sf_search_dampen_sf_low)
+        self.sf_search_dampen_sf_high = float(sf_search_dampen_sf_high)
 
   # Data augmentation: mirror positions left-right (files) with given probability.
         self.mirror_prob = float(mirror_prob)
@@ -470,8 +485,12 @@ class Trainer:
             w_wdl=self.w_wdl, w_sf_move=self.w_sf_move, w_sf_eval=self.w_sf_eval,
             w_categorical=self.w_categorical, w_volatility=self.w_volatility,
             w_sf_volatility=self.w_sf_volatility, w_moves_left=self.w_moves_left,
-            w_sf_wdl=self.w_sf_wdl, sf_wdl_conf_power=self.sf_wdl_conf_power,
+            sf_wdl_frac=self.sf_wdl_frac, search_wdl_frac=self.search_wdl_frac,
+            sf_wdl_conf_power=self.sf_wdl_conf_power,
             sf_wdl_draw_scale=self.sf_wdl_draw_scale,
+            sf_wdl_temperature=self.sf_wdl_temperature,
+            sf_search_dampen_sf_low=self.sf_search_dampen_sf_low,
+            sf_search_dampen_sf_high=self.sf_search_dampen_sf_high,
         )
 
     def _amp_context(self):
