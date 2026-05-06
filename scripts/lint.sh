@@ -19,7 +19,7 @@
 # Usage:
 #   scripts/lint.sh                     # all tools on package + tests + scripts
 #   scripts/lint.sh path/a.py path/b.py # all tools on given files
-#   scripts/lint.sh --changed           # all tools on git-changed .py files
+#   scripts/lint.sh --changed           # all tools on changed/untracked .py files
 #   scripts/lint.sh --fast [paths...]   # skip vulture + skylos
 #   scripts/lint.sh --slop [paths...]   # also scb-check (verbosity/erosion)
 #   scripts/lint.sh --all               # alias for default (all tools, full paths)
@@ -52,6 +52,9 @@ if [[ $USE_CHANGED -eq 1 ]]; then
     while IFS= read -r f; do
         [[ -f "$f" && "$f" == *.py ]] && PATHS+=("$f")
     done < <(git diff --name-only HEAD)
+    while IFS= read -r f; do
+        [[ -f "$f" && "$f" == *.py ]] && PATHS+=("$f")
+    done < <(git ls-files --others --exclude-standard)
     USER_SET_PATHS=1
 fi
 

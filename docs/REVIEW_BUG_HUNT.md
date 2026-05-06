@@ -423,6 +423,18 @@ Current notes:
   `python3 -m py_compile` for the touched profile scripts plus invalid-argument
   smoke checks for `profile_selfplay.py`, `profile_mcts_detail.py`,
   `profile_uci_search.py`, and `profile_worker_inference.py`.
+- Finding F042 opened/fixed in this cycle: `scripts/cuda_sanity_check.py`
+  could hang forever in multi-worker mode if a spawned process died before
+  putting a `Result` on the queue, then report a still-running process as exit
+  code `0` after a join timeout. `scripts/lint.sh --changed` also skipped
+  untracked Python files, which is exactly where new tests/scripts often sit
+  during review. CUDA sanity now uses bounded result/join timeouts, terminates
+  stuck children, reports missing results, validates inputs, and lint changed
+  mode includes untracked `.py` files.
+- Focused CUDA/lint validation after F042 passed:
+  `python3 -m py_compile scripts/cuda_sanity_check.py`,
+  invalid-argument smoke for `cuda_sanity_check.py`, `bash -n` for
+  `scripts/lint.sh`/`scripts/deepfin`, and `scripts/lint.sh --help`.
 - Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
   `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
   `tests/test_tune_distributed_worker_cmd.py`,
@@ -1198,8 +1210,8 @@ Files:
 - [x] `scripts/bench_*.py`
 - [x] `scripts/profile_*.py`
 - [x] `scripts/bench_batch_wait.sh`
-- [ ] `scripts/cuda_sanity_check.py`
-- [ ] `scripts/deepfin`
+- [x] `scripts/cuda_sanity_check.py`
+- [x] `scripts/deepfin`
 - [ ] `scripts/deepfin.bat`
 - [x] `scripts/diagnose.py`
 - [x] `scripts/diagnose_arch.py`
@@ -1208,7 +1220,7 @@ Files:
 - [ ] `scripts/generate_bootstrap.py`
 - [ ] `scripts/graceful_restart.py`
 - [x] `scripts/hourly_pbt_audit.sh`
-- [ ] `scripts/lint.sh`
+- [x] `scripts/lint.sh`
 - [ ] `scripts/match_checkpoints.py`
 - [x] `scripts/monitor_pbt.sh`
 - [x] `scripts/pbt_30m_poll.py`

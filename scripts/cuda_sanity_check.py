@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import multiprocessing as mp
 import os
+import queue
 import sys
 import time
 from dataclasses import dataclass
@@ -38,7 +39,7 @@ def _child_main(worker_idx: int, matrix_size: int, queue: mp.Queue) -> None:
     queue.put(res)
 
 
-def _run_multi(workers: int, matrix_size: int, stagger_s: float) -> int:
+def _run_multi(workers: int, matrix_size: int, stagger_s: float, timeout_s: float) -> int:
     ctx = mp.get_context("spawn")
     queue: mp.Queue = ctx.Queue()
     procs: list[mp.Process] = []
@@ -52,20 +53,29 @@ def _run_multi(workers: int, matrix_size: int, stagger_s: float) -> int:
 
     results: list[Result] = []
     for _ in range(workers):
-        results.append(queue.get())
+        try:
+            results.append(queue.get(timeout=timeout_s))
+        except queue.Empty:
+            break
 
     exit_codes: list[int] = []
     for p in procs:
-        p.join(timeout=30.0)
-        exit_codes.append(int(p.exitcode or 0))
+        p.join(timeout=timeout_s)
+        if p.is_alive():
+            p.terminate()
+            p.join(timeout=5.0)
+        exit_codes.append(-1 if p.exitcode is None else int(p.exitcode))
 
     results.sort(key=lambda r: r.worker)
     for res in results:
         status = "OK" if res.ok else "FAIL"
         print(f"[worker {res.worker}] {status} elapsed={res.elapsed_s:.3f}s {res.detail}")
+    missing = workers - len(results)
+    if missing:
+        print(f"missing_results={missing}")
 
     print(f"exit_codes={exit_codes}")
-    return 0 if all(code == 0 for code in exit_codes) and all(r.ok for r in results) else 1
+    return 0 if len(results) == workers and all(code == 0 for code in exit_codes) and all(r.ok for r in results) else 1
 
 
 def main() -> int:
@@ -73,7 +83,17 @@ def main() -> int:
     parser.add_argument("--workers", type=int, default=1, help="Number of spawned processes to test.")
     parser.add_argument("--matrix-size", type=int, default=1024, help="Square matrix size for a tiny GEMM.")
     parser.add_argument("--stagger-seconds", type=float, default=0.0, help="Delay between worker launches.")
+    parser.add_argument("--timeout-seconds", type=float, default=60.0, help="Per-worker result/join timeout.")
     args = parser.parse_args()
+
+    if args.workers <= 0:
+        raise SystemExit("--workers must be > 0")
+    if args.matrix_size <= 0:
+        raise SystemExit("--matrix-size must be > 0")
+    if args.stagger_seconds < 0:
+        raise SystemExit("--stagger-seconds must be >= 0")
+    if args.timeout_seconds <= 0:
+        raise SystemExit("--timeout-seconds must be > 0")
 
     print(f"python={sys.version.split()[0]} pid={os.getpid()}")
     if args.workers <= 1:
@@ -86,6 +106,7 @@ def main() -> int:
         workers=int(args.workers),
         matrix_size=int(args.matrix_size),
         stagger_s=float(args.stagger_seconds),
+        timeout_s=float(args.timeout_seconds),
     )
 
 
