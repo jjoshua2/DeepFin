@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import numpy as np
 import torch
 
 import chess_anti_engine.tune.distributed_runtime as distributed_runtime
+from chess_anti_engine.model import ModelConfig
 from chess_anti_engine.replay import ArrayReplayBuffer
 from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
 from chess_anti_engine.replay.shard import LOCAL_SHARD_SUFFIX, save_local_shard_arrays
@@ -43,12 +43,14 @@ class _CountingTrainer:
 
 
 class _WeightTrainer:
-    pass
+    w_policy = 0.0
+    w_moves_left = 0.0
+    sf_wdl_frac = 0.0
+    search_wdl_frac = 0.0
 
 
-def test_publish_distributed_trial_state_includes_pause_selfplay(tmp_path: Path) -> None:
-    trainer = _FakeTrainer()
-    model_cfg = SimpleNamespace(
+def _model_cfg() -> ModelConfig:
+    return ModelConfig(
         kind="transformer",
         embed_dim=64,
         num_layers=2,
@@ -59,6 +61,11 @@ def test_publish_distributed_trial_state_includes_pause_selfplay(tmp_path: Path)
         use_qk_rmsnorm=False,
         use_gradient_checkpointing=False,
     )
+
+
+def test_publish_distributed_trial_state_includes_pause_selfplay(tmp_path: Path) -> None:
+    trainer = _FakeTrainer()
+    model_cfg = _model_cfg()
 
     _publish_distributed_trial_state(
         trainer=trainer,
@@ -116,17 +123,7 @@ def test_donor_config_overlay_copies_sf_wdl_frac() -> None:
 
 def test_publish_reuses_existing_model_when_resume_step_matches(tmp_path: Path) -> None:
     trainer = _CountingTrainer()
-    model_cfg = SimpleNamespace(
-        kind="transformer",
-        embed_dim=64,
-        num_layers=2,
-        num_heads=4,
-        ffn_mult=2,
-        use_smolgen=False,
-        use_nla=False,
-        use_qk_rmsnorm=False,
-        use_gradient_checkpointing=False,
-    )
+    model_cfg = _model_cfg()
 
     first_sha = _publish_distributed_trial_state(
         trainer=trainer,
@@ -162,17 +159,7 @@ def test_publish_reuses_existing_model_when_resume_step_matches(tmp_path: Path) 
 
 def test_publish_exports_new_model_when_resume_step_changes(tmp_path: Path) -> None:
     trainer = _CountingTrainer()
-    model_cfg = SimpleNamespace(
-        kind="transformer",
-        embed_dim=64,
-        num_layers=2,
-        num_heads=4,
-        ffn_mult=2,
-        use_smolgen=False,
-        use_nla=False,
-        use_qk_rmsnorm=False,
-        use_gradient_checkpointing=False,
-    )
+    model_cfg = _model_cfg()
 
     first_sha = _publish_distributed_trial_state(
         trainer=trainer,

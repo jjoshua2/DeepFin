@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from argparse import Namespace
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -20,7 +20,7 @@ def test_diagnose_replay_dir_prefers_trainer_replay_shards(tmp_path: Path) -> No
     _touch_shard(legacy_dir / "shard_000001.zarr")
 
     resolved = diagnose._resolve_replay_dir(
-        SimpleNamespace(replay_dir=None),
+        Namespace(replay_dir=None),
         cfg={},
         trial_dir=trial_dir,
     )
@@ -34,7 +34,7 @@ def test_diagnose_replay_dir_falls_back_to_selfplay_exports(tmp_path: Path) -> N
     _touch_shard(legacy_dir / "shard_000001.zarr")
 
     resolved = diagnose_arch._resolve_replay_dir(
-        SimpleNamespace(replay_dir=None),
+        Namespace(replay_dir=None),
         cfg={},
         trial_dir=trial_dir,
     )
@@ -47,7 +47,7 @@ def test_diagnose_replay_dir_errors_with_checked_paths(tmp_path: Path) -> None:
 
     with pytest.raises(SystemExit) as exc:
         diagnose._resolve_replay_dir(
-            SimpleNamespace(replay_dir=None),
+            Namespace(replay_dir=None),
             cfg={},
             trial_dir=trial_dir,
         )
@@ -63,7 +63,7 @@ def test_diagnose_replay_dir_accepts_explicit_replay_dir(tmp_path: Path) -> None
     explicit.mkdir()
 
     resolved = diagnose._resolve_replay_dir(
-        SimpleNamespace(replay_dir=str(explicit)),
+        Namespace(replay_dir=str(explicit)),
         cfg={},
         trial_dir=tmp_path / "ignored_trial",
     )

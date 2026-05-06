@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any, cast
+
 import pytest
 
 from chess_anti_engine.stockfish.uci import StockfishUCI
@@ -15,13 +17,13 @@ class _NullLock:
 
 
 def _parse_stockfish_lines(lines: list[str]):
-    sf = object.__new__(StockfishUCI)
+    sf = cast(Any, object.__new__(StockfishUCI))
     sf.nodes = 1
     sf.read_timeout_s = 1.0
     sf._lock = _NullLock()
     pending = list(lines)
-    sf._send = lambda _cmd: None
-    sf._readline_with_deadline = lambda _deadline: pending.pop(0)
+    sf._send = lambda cmd: None
+    sf._readline_with_deadline = lambda deadline: pending.pop(0)
     return StockfishUCI.search(sf, "8/8/8/8/8/8/8/8 w - - 0 1")
 
 

@@ -6,7 +6,9 @@ import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
+import torch
 from chess_anti_engine.model import ModelConfig
 import chess_anti_engine.worker as worker_mod
 from chess_anti_engine.worker import WorkerSession
@@ -39,12 +41,12 @@ def test_mtime_model_update_swaps_before_reco_restart(tmp_path: Path) -> None:
 
     swaps: list[str] = []
 
-    def _swap_model_from_manifest(m: dict) -> None:
-        swaps.append(str(m["model"]["sha256"]))
-        session.model_sha = str(m["model"]["sha256"])
+    def _swap_model_from_manifest(manifest: dict) -> None:
+        swaps.append(str(manifest["model"]["sha256"]))
+        session.model_sha = str(manifest["model"]["sha256"])
 
     session._resolve_local_manifest_path = lambda: manifest_path
-    session._swap_model_from_manifest = _swap_model_from_manifest
+    cast(Any, session)._swap_model_from_manifest = _swap_model_from_manifest
 
     WorkerSession._check_model_update(session)
 
@@ -64,12 +66,12 @@ def test_periodic_manifest_poll_swaps_before_reco_restart() -> None:
 
     swaps: list[str] = []
 
-    def _swap_model_from_manifest(m: dict) -> None:
-        swaps.append(str(m["model"]["sha256"]))
-        session.model_sha = str(m["model"]["sha256"])
+    def _swap_model_from_manifest(manifest: dict) -> None:
+        swaps.append(str(manifest["model"]["sha256"]))
+        session.model_sha = str(manifest["model"]["sha256"])
 
     session._poll_manifest = lambda: manifest
-    session._swap_model_from_manifest = _swap_model_from_manifest
+    cast(Any, session)._swap_model_from_manifest = _swap_model_from_manifest
 
     WorkerSession._periodic_manifest_poll(session)
 
@@ -118,17 +120,17 @@ def test_threaded_local_model_swap_keeps_buffer_metadata_atomic(monkeypatch, tmp
     session.leased_trial_id = "trial_00000"
     session.fixed_trial_id = ""
     session.args = SimpleNamespace(username="worker")
-    session.upload_buf = _BufferedUpload(positions=1, games=1, samples=[object()])
+    session.upload_buf = _BufferedUpload(positions=1, games=1, samples=[])
     lock = threading.Lock()
     session._upload_buf_lock = lock
 
     new_sha = "new-sha"
     (tmp_path / f"model_{new_sha}.pt").write_bytes(b"checkpoint")
-    new_model = object()
+    new_model = torch.nn.Identity()
     evaluator = SimpleNamespace(model="old-model")
-    session._direct_evaluator = evaluator
+    cast(Any, session)._direct_evaluator = evaluator
 
-    session._server_url_for = lambda path: f"http://server{path}"
+    session._server_url_for = lambda endpoint: f"http://server{endpoint}"
     session._load_and_compile_model = lambda *_args, **_kwargs: new_model
     monkeypatch.setattr(worker_mod, "_sha256_file", lambda _path: new_sha)
 
@@ -147,14 +149,14 @@ def test_threaded_local_model_swap_keeps_buffer_metadata_atomic(monkeypatch, tmp
         sync_events.append((lock.locked(), session.model_sha, session.upload_buf.positions))
         evaluator_arg.model = model_arg
 
-    def _fake_upload_pending_shards(*, default_elapsed_s):
+    def _fake_upload_pending_shards(*, default_elapsed_s: float | None = None) -> float:
         upload_events.append(lock.locked())
         assert default_elapsed_s == 7.0
         return 123.0
 
     monkeypatch.setattr(worker_mod, "_flush_upload_buffer_to_pending", _fake_flush)
     monkeypatch.setattr(worker_mod, "_sync_evaluator_to_model", _fake_sync)
-    session._upload_pending_shards = _fake_upload_pending_shards
+    cast(Any, session)._upload_pending_shards = _fake_upload_pending_shards
 
     WorkerSession._swap_model_from_manifest(
         session,

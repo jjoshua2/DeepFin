@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+from typing import Any, cast
 
 import chess
 import numpy as np
@@ -16,10 +17,16 @@ from chess_anti_engine.moves import (
 )
 
 try:
-    from chess_anti_engine.mcts._mcts_tree import batch_process_ply
+    from chess_anti_engine.mcts._mcts_tree import batch_process_ply as _batch_process_ply
     HAS_C = True
 except ImportError:
+    _batch_process_ply = None
     HAS_C = False
+
+
+def _require_batch_process_ply():
+    assert _batch_process_ply is not None
+    return _batch_process_ply
 
 
 def _python_process_ply(board, pol_logits, wdl_logits, action, value, mcts_probs,
@@ -102,13 +109,14 @@ def test_single_game_parity():
     df_q_w, df_pol_s, df_min, df_slope = 4.8, 3.8, 0.09, 1.0
 
     # Python reference
-    py = _python_process_ply(
+    py = cast(dict[str, Any], _python_process_ply(
         board.copy(), pol, wdl, action, value, probs,
         True, df_q_w, df_pol_s, df_min, df_slope,
-    )
+    ))
 
     # C function
-    (c_x, c_probs, c_wdl_net, c_wdl_search, c_priority,
+    batch_process_ply = _require_batch_process_ply()
+    (_c_x, _c_probs, c_wdl_net, c_wdl_search, c_priority,
      c_keep, c_mask, c_ply, c_pov, c_over) = batch_process_ply(
         [cb],
         pol.reshape(1, -1), wdl.reshape(1, -1),
@@ -143,11 +151,12 @@ def test_multi_game():
     probs = np.abs(np.random.randn(n, POLICY_SIZE).astype(np.float32))
     probs /= probs.sum(axis=1, keepdims=True)
 
+    batch_process_ply = _require_batch_process_ply()
     result = batch_process_ply(
         cboards, pol, wdl, actions, values, probs,
         1, 4.8, 3.8, 0.09, 1.0,
     )
-    x, p, wn, ws, pri, keep, mask, ply, pov, over = result
+    x, p, _wn, _ws, _pri, _keep, mask, ply, pov, _over = result
 
     assert x.shape == (n, 146, 8, 8)
     assert p.shape == (n, POLICY_SIZE)
@@ -175,6 +184,7 @@ def test_game_over_detection():
     probs = np.zeros((1, POLICY_SIZE), dtype=np.float32)
     probs[0, action] = 1.0
 
+    batch_process_ply = _require_batch_process_ply()
     result = batch_process_ply(
         [cb], pol, wdl,
         np.array([action], dtype=np.int32),

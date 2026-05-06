@@ -1,3 +1,5 @@
+from typing import Any, cast
+
 import chess
 import numpy as np
 import pytest
@@ -18,6 +20,11 @@ try:
     from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
 except ImportError:  # pragma: no cover - extension absent
     run_gumbel_root_many_c = None
+
+
+def _require_run_gumbel_root_many_c():
+    assert run_gumbel_root_many_c is not None
+    return run_gumbel_root_many_c
 
 
 def _tiny_model() -> torch.nn.Module:
@@ -88,7 +95,7 @@ def test_gumbel_root_many_empty_batch_returns_four_lists():
         device="cpu",
         rng=np.random.default_rng(0),
         cfg=GumbelConfig(simulations=8, topk=8, temperature=1.0),
-        evaluator=lambda x: (x, x),
+        evaluator=cast(Any, lambda x: (x, x)),
     )
 
     assert probs_list == []
@@ -178,13 +185,14 @@ def test_gumbel_c_applies_tb_root_override_with_precomputed_logits():
     pre_pol = np.zeros((1, POLICY_SIZE), dtype=np.float32)
     pre_wdl = np.zeros((1, 3), dtype=np.float32)
 
+    run_gumbel_root_many_c = _require_run_gumbel_root_many_c()
     _, _, values, _, _, _ = run_gumbel_root_many_c(
         None,
         [board],
         device="cpu",
         rng=np.random.default_rng(0),
         cfg=GumbelConfig(simulations=4, temperature=1.0, add_noise=False),
-        evaluator=object(),
+        evaluator=cast(Any, object()),
         pre_pol_logits=pre_pol,
         pre_wdl_logits=pre_wdl,
         tb_probe=probe,
@@ -202,13 +210,14 @@ def test_gumbel_c_can_skip_cached_tb_root_override():
     pre_pol = np.zeros((1, POLICY_SIZE), dtype=np.float32)
     pre_wdl = np.zeros((1, 3), dtype=np.float32)
 
+    run_gumbel_root_many_c = _require_run_gumbel_root_many_c()
     _, _, values, _, _, _ = run_gumbel_root_many_c(
         None,
         [board],
         device="cpu",
         rng=np.random.default_rng(0),
         cfg=GumbelConfig(simulations=4, temperature=1.0, add_noise=False),
-        evaluator=object(),
+        evaluator=cast(Any, object()),
         pre_pol_logits=pre_pol,
         pre_wdl_logits=pre_wdl,
         tb_probe=probe,
@@ -291,6 +300,7 @@ def test_gumbel_c_matches_python_on_history_and_terminal_draws():
     boards = [repeated, opening, bare_kings]
 
     cfg = GumbelConfig(simulations=16, temperature=0.0, add_noise=False)
+    run_gumbel_root_many_c = _require_run_gumbel_root_many_c()
     py = run_gumbel_root_many(
         model,
         boards,
@@ -306,7 +316,7 @@ def test_gumbel_c_matches_python_on_history_and_terminal_draws():
         cfg=cfg,
     )
 
-    probs_py, actions_py, values_py, masks_py = py[:4]
+    _probs_py, actions_py, _values_py, masks_py = py[:4]
     probs_c, actions_c, values_c, masks_c = c[:4]
 
     # CBoard encodes history planes differently from python-chess, so
@@ -359,9 +369,10 @@ def test_gumbel_c_pipeline_path():
         boards[i] = b
 
     cfg = GumbelConfig(simulations=16, temperature=1.0, add_noise=True)
+    run_gumbel_root_many_c = _require_run_gumbel_root_many_c()
 
     # Sequential path (sync evaluator)
-    probs_seq, act_seq, val_seq, masks_seq = run_gumbel_root_many_c(
+    _probs_seq, _act_seq, _val_seq, masks_seq = run_gumbel_root_many_c(
         model, boards, device="cpu", rng=np.random.default_rng(42), cfg=cfg,
     )[:4]
 
@@ -383,7 +394,7 @@ def test_gumbel_c_pipeline_path():
     async_ev = MockAsyncEvaluator(model)
 
     # Pipeline path (async evaluator + >=64 boards triggers pipeline)
-    probs_pipe, act_pipe, val_pipe, masks_pipe = run_gumbel_root_many_c(
+    probs_pipe, act_pipe, _val_pipe, masks_pipe = run_gumbel_root_many_c(
         model, boards, device="cpu", rng=np.random.default_rng(42),
         cfg=cfg, evaluator=async_ev,
     )[:4]

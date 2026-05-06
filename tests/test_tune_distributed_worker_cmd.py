@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 
@@ -78,6 +79,7 @@ def test_build_distributed_worker_cmd_adds_inference_slot() -> None:
 class _FakeProc:
     pid = 1234
     returncode = None
+    _cae_worker_launch_signature: tuple[object, ...] | None = None
 
     def __init__(self) -> None:
         self.stopped = False
@@ -118,12 +120,12 @@ def test_ensure_distributed_workers_restarts_on_launch_config_change(
     monkeypatch.setattr("chess_anti_engine.tune.distributed_runtime._stop_process", _fake_stop)
     monkeypatch.setattr("chess_anti_engine.tune.distributed_runtime._launch_distributed_worker", _fake_launch)
 
-    out = _ensure_distributed_workers(
+    out = cast(Any, _ensure_distributed_workers(
         config=new_config,
         trial_dir=tmp_path,
         trial_id="trial_00000",
-        procs=[old_proc],
-    )
+        procs=cast(Any, [old_proc]),
+    ))
 
     assert old_proc.stopped is True
     assert len(launched) == 1

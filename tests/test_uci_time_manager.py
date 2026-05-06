@@ -91,8 +91,12 @@ def test_clock_ceiling_caps_half_remaining() -> None:
 def test_deadline_tracking() -> None:
     d = Deadline(deadline_ms=500, now=100.0)
     # Floating-point subtraction at ms precision can round down by 1 ms; allow it.
-    assert abs(d.remaining_ms(now=100.0) - 500) <= 1  # type: ignore[operator]
-    assert abs(d.remaining_ms(now=100.4) - 100) <= 1  # type: ignore[operator]
+    remaining_start = d.remaining_ms(now=100.0)
+    remaining_mid = d.remaining_ms(now=100.4)
+    assert remaining_start is not None
+    assert remaining_mid is not None
+    assert abs(remaining_start - 500) <= 1
+    assert abs(remaining_mid - 100) <= 1
     assert d.remaining_ms(now=100.5) == 0
     assert d.expired(now=100.5) is True
     assert d.expired(now=100.2) is False

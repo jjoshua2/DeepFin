@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from typing import Any
 
 import yaml
 
 from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults
 
 
-def _load_profile_module():
+def _load_profile_module() -> Any:
     script_path = Path(__file__).resolve().parents[1] / "scripts" / "profile_distributed.py"
     spec = importlib.util.spec_from_file_location("profile_distributed_test_module", script_path)
     assert spec is not None

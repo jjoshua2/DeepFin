@@ -31,6 +31,7 @@ class _CaptureModel(torch.nn.Module):
 class _NoPostMetricsTrainer(Trainer):
     @torch.no_grad()
     def _compute_metrics(self, *, buf: ReplayBuffer, batch_size: int, steps: int, tag: str) -> TrainMetrics:  # pylint: disable=unused-argument  # matches parent signature
+        del buf, batch_size, steps, tag
         # Avoid a second forward pass that would overwrite _CaptureModel.last_x.
         return TrainMetrics(
             loss=0.0,

@@ -60,15 +60,18 @@ def test_temperature_for_ply_nonzero_after_step_only():
 
 def test_temperature_bucket_rounding_stays_tight_for_default_decay():
     """Manager buckets by round(temp, 2); adjacent bucket splits should stay small."""
-    params = dict(
-        temperature=1.0,
-        drop_plies=0,
-        after=0.0,
-        decay_start_move=20,
-        decay_moves=60,
-        endgame=0.6,
-    )
-    vals = [(ply, temperature_for_ply(ply=ply, **params)) for ply in range(1, 121)]
+    def _default_decay_temp(ply: int) -> float:
+        return temperature_for_ply(
+            ply=ply,
+            temperature=1.0,
+            drop_plies=0,
+            after=0.0,
+            decay_start_move=20,
+            decay_moves=60,
+            endgame=0.6,
+        )
+
+    vals = [(ply, _default_decay_temp(ply)) for ply in range(1, 121)]
 
     # Equal temperatures must always land in the same bucket.
     for i in range(1, len(vals)):

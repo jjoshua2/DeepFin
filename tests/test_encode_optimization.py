@@ -44,6 +44,8 @@ def _make_boards() -> list[chess.Board]:
 class TestEncodePositionSnapshot:
     """Snapshot: capture reference outputs, verify they don't change."""
 
+    boards: list[chess.Board] = []
+
     @pytest.fixture(autouse=True)
     def _boards(self):
         self.boards = _make_boards()

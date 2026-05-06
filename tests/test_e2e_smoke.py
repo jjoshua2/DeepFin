@@ -55,6 +55,11 @@ POLICY_SIZE = 4672
 INPUT_PLANES = 146
 
 
+def _stockfish_path() -> str:
+    assert SF_PATH is not None
+    return SF_PATH
+
+
 def _tiny_model() -> torch.nn.Module:
     """Smallest transformer that exercises all 10 heads."""
     from chess_anti_engine.model import ModelConfig, build_model
@@ -103,7 +108,7 @@ def selfplay_samples():
 
     model = _tiny_model().eval()
     rng = np.random.default_rng(42)
-    sf = StockfishUCI(SF_PATH, nodes=100, multipv=3)
+    sf = StockfishUCI(_stockfish_path(), nodes=100, multipv=3)
     try:
         samples, stats = play_batch(
             model, device="cpu", rng=rng, stockfish=sf, games=3,
@@ -228,7 +233,7 @@ def test_gumbel_selfplay_smoke():
 
     model = _tiny_model().eval()
     rng = np.random.default_rng(7)
-    sf = StockfishUCI(SF_PATH, nodes=100, multipv=1)
+    sf = StockfishUCI(_stockfish_path(), nodes=100, multipv=1)
     try:
         samples, stats = play_batch(
             model, device="cpu", rng=rng, stockfish=sf, games=2,

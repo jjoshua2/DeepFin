@@ -28,8 +28,8 @@ def test_get_tablebase_keeps_path_swaps_from_closing_active_handles(monkeypatch)
     first = tablebase.get_tablebase("tb_a")
     second = tablebase.get_tablebase("tb_b")
 
-    assert first is not None
-    assert second is not None
+    assert isinstance(first, _FakeTablebase)
+    assert isinstance(second, _FakeTablebase)
     assert first is not second
     assert not first.closed
     assert not second.closed

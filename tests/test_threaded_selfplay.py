@@ -37,7 +37,7 @@ def test_single_thread(evaluator):
     """Basic sanity: one thread produces valid actions."""
     boards = [chess.Board() for _ in range(4)]
     rng = np.random.default_rng(42)
-    probs, actions, values, masks, *_ = _gumbel_fn(
+    _probs, actions, _values, _masks, *_ = _gumbel_fn(
         None, boards, device="cuda", evaluator=evaluator,
         cfg=GumbelConfig(simulations=10, topk=8), rng=rng,
     )
@@ -49,18 +49,18 @@ def test_single_thread(evaluator):
 def test_concurrent_threads(evaluator):
     """Multiple threads produce valid, independent results."""
     n_threads = 4
-    results = [None] * n_threads
-    errors = [None] * n_threads
+    results: list[list[object | None] | None] = [None] * n_threads
+    errors: list[str | None] = [None] * n_threads
 
-    def run_thread(tid):
+    def run_thread(tid: int) -> None:
         try:
             boards = [chess.Board() for _ in range(4)]
             rng = np.random.default_rng(100 + tid)
-            probs, actions, values, masks, *_ = _gumbel_fn(
+            _probs, actions, _values, _masks, *_ = _gumbel_fn(
                 None, boards, device="cuda", evaluator=evaluator,
                 cfg=GumbelConfig(simulations=10, topk=8), rng=rng,
             )
-            results[tid] = actions
+            results[tid] = list(actions)
         except Exception as e:
             errors[tid] = str(e)
 
@@ -72,9 +72,10 @@ def test_concurrent_threads(evaluator):
 
     for i in range(n_threads):
         assert errors[i] is None, f"Thread {i} error: {errors[i]}"
-        assert results[i] is not None, f"Thread {i} produced no result"
-        assert len(results[i]) == 4
-        assert all(a is not None for a in results[i])
+        result = results[i]
+        assert result is not None, f"Thread {i} produced no result"
+        assert len(result) == 4
+        assert all(a is not None for a in result)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
@@ -85,7 +86,7 @@ def test_model_update(evaluator):
     # Verify inference still works after swap
     boards = [chess.Board() for _ in range(2)]
     rng = np.random.default_rng(99)
-    probs, actions, values, masks, *_ = _gumbel_fn(
+    _probs, actions, _values, _masks, *_ = _gumbel_fn(
         None, boards, device="cuda", evaluator=evaluator,
         cfg=GumbelConfig(simulations=5, topk=4), rng=rng,
     )

@@ -161,7 +161,7 @@ def test_slot_inference_client_waits_for_slot_creation() -> None:
             slot.state = 0
             deadline = time.monotonic() + 2.0
             while time.monotonic() < deadline:
-                if slot.state == 1:
+                if int(slot.state) == 1:
                     bsz = slot.batch_size
                     slot.policy[:bsz].fill(3.0)
                     slot.wdl[:bsz].fill(4.0)
@@ -200,7 +200,7 @@ def test_slot_inference_client_reconnects_after_slot_recreation() -> None:
     def _restart_and_serve() -> None:
         deadline = time.monotonic() + 2.0
         while time.monotonic() < deadline:
-            if old_slot.state == 1:
+            if int(old_slot.state) == 1:
                 old_slot.state = _STATE_SHUTDOWN
                 old_shm.close()
                 old_shm.unlink()
@@ -212,7 +212,7 @@ def test_slot_inference_client_reconnects_after_slot_recreation() -> None:
                     restarted.set()
                     deadline_new = time.monotonic() + 2.0
                     while time.monotonic() < deadline_new:
-                        if new_slot.state == 1:
+                        if int(new_slot.state) == 1:
                             bsz = new_slot.batch_size
                             new_slot.policy[:bsz].fill(5.0)
                             new_slot.wdl[:bsz].fill(6.0)

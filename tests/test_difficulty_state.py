@@ -118,7 +118,7 @@ def test_difficulty_state_is_frozen() -> None:
 
     ds = DifficultyState.from_pid(None, None, _fresh_tc())
     try:
-        ds.sf_nodes = 9999  # type: ignore[misc]
+        setattr(ds, "sf_nodes", 9999)
     except dataclasses.FrozenInstanceError:
         return
     raise AssertionError("DifficultyState should be frozen")

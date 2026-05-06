@@ -30,6 +30,11 @@ def _make_sample(*, with_optionals: bool = False) -> ReplaySample:
     return s
 
 
+def _present_array(arr: np.ndarray | None) -> np.ndarray:
+    assert arr is not None
+    return arr
+
+
 # ── collate (from ReplaySample list) ─────────────────────────────────
 
 
@@ -170,24 +175,24 @@ def test_collate_vs_collate_arrays_key_parity():
         "policy_target": np.stack([s.policy_target for s in samples]),
         "wdl_target": np.array([s.wdl_target for s in samples], dtype=np.int8),
         "has_policy": np.ones(2, dtype=np.float32),
-        "sf_wdl": np.stack([s.sf_wdl for s in samples]),
+        "sf_wdl": np.stack([_present_array(s.sf_wdl) for s in samples]),
         "has_sf_wdl": np.ones(2, dtype=np.float32),
         "sf_move_index": np.array([s.sf_move_index for s in samples], dtype=np.int64),
         "has_sf_move": np.ones(2, dtype=np.float32),
         "moves_left": np.array([s.moves_left for s in samples], dtype=np.float32),
         "has_moves_left": np.ones(2, dtype=np.float32),
         "is_network_turn": np.array([True, True]),
-        "categorical_target": np.stack([s.categorical_target for s in samples]),
+        "categorical_target": np.stack([_present_array(s.categorical_target) for s in samples]),
         "has_categorical": np.ones(2, dtype=np.float32),
-        "policy_soft_target": np.stack([s.policy_soft_target for s in samples]),
+        "policy_soft_target": np.stack([_present_array(s.policy_soft_target) for s in samples]),
         "has_policy_soft": np.ones(2, dtype=np.float32),
-        "future_policy_target": np.stack([s.future_policy_target for s in samples]),
+        "future_policy_target": np.stack([_present_array(s.future_policy_target) for s in samples]),
         "has_future": np.ones(2, dtype=np.float32),
-        "volatility_target": np.stack([s.volatility_target for s in samples]),
+        "volatility_target": np.stack([_present_array(s.volatility_target) for s in samples]),
         "has_volatility": np.ones(2, dtype=np.float32),
-        "sf_volatility_target": np.stack([s.sf_volatility_target for s in samples]),
+        "sf_volatility_target": np.stack([_present_array(s.sf_volatility_target) for s in samples]),
         "has_sf_volatility": np.ones(2, dtype=np.float32),
-        "legal_mask": np.stack([s.legal_mask for s in samples]),
+        "legal_mask": np.stack([_present_array(s.legal_mask) for s in samples]),
         "has_legal_mask": np.ones(2, dtype=np.float32),
     }
     batch_from_arrs = collate_arrays(arrs, device="cpu")

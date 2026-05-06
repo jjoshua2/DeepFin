@@ -27,6 +27,16 @@ except ImportError:  # pragma: no cover - extension absent
     _c_compute = None
 
 
+def _require_cboard():
+    assert CBoard is not None
+    return CBoard
+
+
+def _require_c_compute():
+    assert _c_compute is not None
+    return _c_compute
+
+
 # ── Low-level tree tests ─────────────────────────────────────────────────
 
 
@@ -77,7 +87,7 @@ def test_tree_backprop():
 
     # Child should have N=1, W=1.0 (value from its perspective)
     # Root should have N=2 (1 initial + 1 backprop), W = 0.0 + (-1.0) = -1.0
-    acts, visits = t.get_children_visits(root)
+    _acts, visits = t.get_children_visits(root)
     assert visits[0] == 1
 
 
@@ -95,7 +105,7 @@ def test_tree_backprop_many():
     values = [1.0, -0.5]
     t.backprop_many(paths, values)
 
-    acts, visits = t.get_children_visits(root)
+    _acts, visits = t.get_children_visits(root)
     assert int(visits[0]) == 1
     assert int(visits[1]) == 1
 
@@ -174,7 +184,7 @@ def test_run_mcts_many_c_basic(tiny_model):
     rng = np.random.default_rng(42)
     cfg = MCTSConfig(simulations=16, temperature=1.0)
 
-    probs, actions, values, masks = run_mcts_many_c(
+    probs, actions, _values, masks = run_mcts_many_c(
         tiny_model, boards, device="cpu", rng=rng, cfg=cfg,
     )
 
@@ -201,7 +211,7 @@ def test_run_mcts_many_c_multi_board(tiny_model):
     boards.append(b2)
 
     cfg = MCTSConfig(simulations=8, temperature=1.0)
-    probs, actions, values, masks = run_mcts_many_c(
+    probs, actions, _values, masks = run_mcts_many_c(
         tiny_model, boards, device="cpu", rng=rng, cfg=cfg,
     )
 
@@ -227,7 +237,7 @@ def test_run_mcts_many_c_terminal():
     rng = np.random.default_rng(0)
     cfg = MCTSConfig(simulations=8)
     # Should not crash on terminal position
-    probs, actions, values, masks = run_mcts_many_c(
+    probs, _actions, _values, _masks = run_mcts_many_c(
         model, [b], device="cpu", rng=rng, cfg=cfg,
     )
     assert len(probs) == 1
@@ -349,6 +359,8 @@ def test_run_mcts_many_precomputed_logits_matches_direct_path(tiny_model):
 
 @pytest.mark.skipif(CBoard is None or _c_compute is None, reason="CBoard/features extension not available")
 def test_cboard_encode_146_matches_encode_position():
+    CBoard = _require_cboard()
+    c_compute = _require_c_compute()
     boards = [
         chess.Board(),
         chess.Board("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"),
@@ -399,7 +411,7 @@ def test_cboard_encode_146_matches_encode_position():
         king_sq_us = int(us_kings).bit_length() - 1 if us_kings else -1
         king_sq_them = int(them_kings).bit_length() - 1 if them_kings else -1
         ep_square = -1 if cb.ep_square is None else cb.ep_square
-        feat = _c_compute(pieces_us, pieces_them, occupied, king_sq_us, king_sq_them, turn, ep_square)
+        feat = c_compute(pieces_us, pieces_them, occupied, king_sq_us, king_sq_them, turn, ep_square)
         ref = np.concatenate([cb.encode_planes(), feat], axis=0)
 
         assert fused.shape == (146, 8, 8)
