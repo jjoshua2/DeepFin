@@ -152,36 +152,37 @@ def main() -> None:
     fens = walk_positions(N_POSITIONS, rng)
     print(f"generated {len(fens)} positions (plies {MIN_PLY}..{MAX_PLY})")
 
-    sf = SFRaw()
     wdl_gaps: list[float] = []
     cp_gaps: list[int] = []
     pool_sizes: list[int] = []
     big_cases: list[str] = []
 
-    for i, fen in enumerate(fens):
-        pvs = sf.search(fen)
-        if len(pvs) < 2:
-            continue
-        # Sort by wdl descending so [0] is top
-        pvs.sort(key=lambda x: -x[2])
-        top_move, top_cp, top_wdl = pvs[0]
-        acceptable = [(m, cp, w) for (m, cp, w) in pvs if top_wdl - w <= REGRET_LIMIT + 1e-12]
-        chosen_move, chosen_cp, chosen_wdl = acceptable[rng.randrange(len(acceptable))]
-        wdl_gap = top_wdl - chosen_wdl
-        cp_gap = top_cp - chosen_cp
-        wdl_gaps.append(wdl_gap)
-        cp_gaps.append(cp_gap)
-        pool_sizes.append(len(acceptable))
+    sf = SFRaw()
+    try:
+        for i, fen in enumerate(fens):
+            pvs = sf.search(fen)
+            if len(pvs) < 2:
+                continue
+            # Sort by wdl descending so [0] is top
+            pvs.sort(key=lambda x: -x[2])
+            top_move, top_cp, top_wdl = pvs[0]
+            acceptable = [(m, cp, w) for (m, cp, w) in pvs if top_wdl - w <= REGRET_LIMIT + 1e-12]
+            chosen_move, chosen_cp, chosen_wdl = acceptable[rng.randrange(len(acceptable))]
+            wdl_gap = top_wdl - chosen_wdl
+            cp_gap = top_cp - chosen_cp
+            wdl_gaps.append(wdl_gap)
+            cp_gaps.append(cp_gap)
+            pool_sizes.append(len(acceptable))
 
-        if wdl_gap > 0.05 or cp_gap > 80:
-            big_cases.append(
-                f"[{i}] wdl_gap={wdl_gap:.4f} cp_gap={cp_gap:+d}  "
-                f"top={top_move}(wdl={top_wdl:.3f} cp={top_cp:+d}) "
-                f"chose={chosen_move}(wdl={chosen_wdl:.3f} cp={chosen_cp:+d}) "
-                f"pool={len(acceptable)}"
-            )
-
-    sf.close()
+            if wdl_gap > 0.05 or cp_gap > 80:
+                big_cases.append(
+                    f"[{i}] wdl_gap={wdl_gap:.4f} cp_gap={cp_gap:+d}  "
+                    f"top={top_move}(wdl={top_wdl:.3f} cp={top_cp:+d}) "
+                    f"chose={chosen_move}(wdl={chosen_wdl:.3f} cp={chosen_cp:+d}) "
+                    f"pool={len(acceptable)}"
+                )
+    finally:
+        sf.close()
 
     if not wdl_gaps:
         print("no data")

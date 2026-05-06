@@ -446,6 +446,19 @@ Current notes:
 - Focused bootstrap/match/e2e validation after F043 passed:
   `python3 -m py_compile` for the touched scripts, invalid-argument smokes for
   all three, and `python3 -m pytest tests/test_match_checkpoints_script.py -q`.
+- Finding F044 opened/fixed in this cycle: `scripts/graceful_restart.py`
+  removed pause markers and ran the resume command even when it could not find
+  the tuner PID to stop, and the manual `--no-auto-kill` instructions only told
+  the operator to remove the top-level pause marker even though the script also
+  writes per-trial pause markers. The blunder-check utilities also left their
+  Stockfish subprocess cleanup outside `finally` paths. Graceful restart now
+  validates timing inputs, leaves pause markers in place and does not resume
+  when it cannot prove the tuner target, waits for SIGTERM completion before
+  restart, checks resume command failure, and prints every marker to remove in
+  manual mode; blunder checks close Stockfish through `finally`.
+- Focused restart/blunder validation after F044 passed:
+  `python3 -m py_compile` for the touched scripts, invalid-argument smoke for
+  `graceful_restart.py`, and `graceful_restart.py --help`.
 - Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
   `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
   `tests/test_tune_distributed_worker_cmd.py`,
@@ -1229,7 +1242,7 @@ Files:
 - [x] `scripts/e2e_strength_test.py`
 - [x] `scripts/eval_puzzles.py`
 - [x] `scripts/generate_bootstrap.py`
-- [ ] `scripts/graceful_restart.py`
+- [x] `scripts/graceful_restart.py`
 - [x] `scripts/hourly_pbt_audit.sh`
 - [x] `scripts/lint.sh`
 - [x] `scripts/match_checkpoints.py`
@@ -1243,8 +1256,8 @@ Files:
 - [x] `scripts/status.py`
 - [x] `scripts/train.sh`
 - [x] `scripts/train_bootstrap.py`
-- [ ] `scripts/blunder_check.py`
-- [ ] `scripts/blunder_check_cp.py`
+- [x] `scripts/blunder_check.py`
+- [x] `scripts/blunder_check_cp.py`
 
 Correctness/reliability:
 

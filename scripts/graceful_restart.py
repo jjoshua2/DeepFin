@@ -20,8 +20,8 @@ What it does:
      blocks before writing any post-pause row). Row count is the right
      signal — Ray Tune touches progress.csv via metadata sync independent of
      iter completion, so mtime polling falsely reports "active" forever.
-  3. Once --wait trials are paused, sends SIGTERM to the tuner, removes
-     pause.txt, and runs the resume command.  Pass --no-auto-kill to skip
+  3. Once --wait trials are paused, sends SIGTERM to the tuner, removes all
+     pause markers, and runs the resume command.  Pass --no-auto-kill to skip
      this and just print status instead.
 """
 from __future__ import annotations
@@ -93,6 +93,16 @@ def _find_tuner_pid() -> int | None:
     return None
 
 
+def _pid_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--tune-dir", default="runs/pbt2_small/tune",
@@ -109,6 +119,13 @@ def main() -> None:
     ap.add_argument("--resume-cmd", default="./scripts/train.sh restart",
                     help="Shell command to run after killing (default: ./scripts/train.sh restart)")
     args = ap.parse_args()
+
+    if args.wait <= 0:
+        raise SystemExit("--wait must be > 0")
+    if args.grace_secs < 0:
+        raise SystemExit("--grace-secs must be >= 0")
+    if args.poll <= 0:
+        raise SystemExit("--poll must be > 0")
 
     tune_dir = Path(args.tune_dir)
     if not tune_dir.is_dir():
@@ -192,9 +209,16 @@ def main() -> None:
                 if pid:
                     print(f"[graceful_restart] Sending SIGTERM to tuner PID {pid}...")
                     os.kill(pid, signal.SIGTERM)
-                    time.sleep(3)
+                    deadline = time.time() + 30.0
+                    while _pid_exists(pid) and time.time() < deadline:
+                        time.sleep(1)
+                    if _pid_exists(pid):
+                        print(f"[graceful_restart] Tuner PID {pid} did not exit after SIGTERM; not resuming.")
+                        return
                 else:
                     print("[graceful_restart] Could not find tuner PID — kill it manually.")
+                    print("[graceful_restart] Leaving pause markers in place and not running resume.")
+                    return
 
                 for target in pause_targets:
                     if target.exists():
@@ -204,12 +228,14 @@ def main() -> None:
                 if args.resume_cmd:
                     print(f"[graceful_restart] Running: {args.resume_cmd}")
                     time.sleep(5)  # let Ray finish shutting down
-                    subprocess.run(args.resume_cmd, shell=True)
+                    subprocess.run(args.resume_cmd, shell=True, check=True)
             else:
                 print()
                 print("  Next steps:")
                 print("  1. Kill the tuner process (Ctrl+C or kill the run command)")
-                print(f"  2. rm {pause_file}")
+                print("  2. Remove all pause markers:")
+                for target in pause_targets:
+                    print(f"     rm {target}")
                 print("  3. Restart with --resume")
                 print()
                 print(f"[graceful_restart] Watching until you kill — remove {pause_file} "

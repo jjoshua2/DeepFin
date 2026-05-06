@@ -52,46 +52,46 @@ def main() -> None:
     fens = walk_positions(N_POSITIONS, rng)
     print(f"generated {len(fens)} positions (plies {MIN_PLY}..{MAX_PLY})")
 
-    sf = StockfishUCI(SF_PATH, nodes=SF_NODES, multipv=SF_MULTIPV)
-
     gaps: list[float] = []
     pool_sizes: list[int] = []
     blunders_over_05: int = 0
     played_top: int = 0
 
-    for i, fen in enumerate(fens):
-        try:
-            res = sf.search(fen)
-        except Exception as exc:
-            print(f"[{i}] SF error: {exc}")
-            continue
-
-        scored = []
-        for pv in res.pvs:
-            if pv.wdl is None:
+    sf = StockfishUCI(SF_PATH, nodes=SF_NODES, multipv=SF_MULTIPV)
+    try:
+        for i, fen in enumerate(fens):
+            try:
+                res = sf.search(fen)
+            except Exception as exc:
+                print(f"[{i}] SF error: {exc}")
                 continue
-            w, d, _ = pv.wdl
-            score = float(w) + 0.5 * float(d)
-            scored.append((pv.move_uci, score))
 
-        if len(scored) < 2:
-            continue
+            scored = []
+            for pv in res.pvs:
+                if pv.wdl is None:
+                    continue
+                w, d, _ = pv.wdl
+                score = float(w) + 0.5 * float(d)
+                scored.append((pv.move_uci, score))
 
-        scored.sort(key=lambda x: -x[1])
-        top_uci, top_score = scored[0]
-        acceptable = [(u, s) for (u, s) in scored if (top_score - s) <= REGRET_LIMIT + 1e-12]
-        chosen_uci, chosen_score = acceptable[rng.randrange(len(acceptable))]
-        gap = top_score - chosen_score
+            if len(scored) < 2:
+                continue
 
-        pool_sizes.append(len(acceptable))
-        gaps.append(gap)
-        if gap == 0.0:
-            played_top += 1
-        if gap > 0.05:
-            blunders_over_05 += 1
-            print(f"[{i}] BIG GAP gap={gap:.4f}  top={top_uci} (s={top_score:.3f})  chose={chosen_uci} (s={chosen_score:.3f})  pool_size={len(acceptable)}")
+            scored.sort(key=lambda x: -x[1])
+            top_uci, top_score = scored[0]
+            acceptable = [(u, s) for (u, s) in scored if (top_score - s) <= REGRET_LIMIT + 1e-12]
+            chosen_uci, chosen_score = acceptable[rng.randrange(len(acceptable))]
+            gap = top_score - chosen_score
 
-    sf.close()
+            pool_sizes.append(len(acceptable))
+            gaps.append(gap)
+            if gap == 0.0:
+                played_top += 1
+            if gap > 0.05:
+                blunders_over_05 += 1
+                print(f"[{i}] BIG GAP gap={gap:.4f}  top={top_uci} (s={top_score:.3f})  chose={chosen_uci} (s={chosen_score:.3f})  pool_size={len(acceptable)}")
+    finally:
+        sf.close()
 
     if not gaps:
         print("No data collected.")
