@@ -363,23 +363,11 @@ def run_puzzle_eval(
     correct = sum(correct_flags)
     accuracy = float(correct) / max(1, total)
 
-    by_rating: list[tuple[int, int, int, int, float]] = []
-    if any(p.rating is not None for p in suite.puzzles):
-        for low, high in rating_buckets:
-            b_total = 0
-            b_correct = 0
-            for puzzle, ok in zip(suite.puzzles, correct_flags):
-                r = puzzle.rating
-                if r is None or r < low or r >= high:
-                    continue
-                b_total += 1
-                if ok:
-                    b_correct += 1
-            if b_total > 0:
-                by_rating.append((low, high, b_total, b_correct, b_correct / b_total))
-
     return PuzzleResult(
-        total=total, correct=correct, accuracy=accuracy, by_rating=by_rating,
+        total=total,
+        correct=correct,
+        accuracy=accuracy,
+        by_rating=_by_rating_table(correct_flags, suite, rating_buckets),
     )
 
 
@@ -557,21 +545,9 @@ def run_value_head_puzzle_eval(
     correct = sum(correct_flags)
     accuracy = float(correct) / max(1, total)
 
-    by_rating: list[tuple[int, int, int, int, float]] = []
-    if any(p.rating is not None for p in suite.puzzles):
-        for low, high in rating_buckets:
-            b_total = 0
-            b_correct = 0
-            for puzzle, ok in zip(suite.puzzles, correct_flags):
-                r = puzzle.rating
-                if r is None or r < low or r >= high:
-                    continue
-                b_total += 1
-                if ok:
-                    b_correct += 1
-            if b_total > 0:
-                by_rating.append((low, high, b_total, b_correct, b_correct / b_total))
-
     return PuzzleResult(
-        total=total, correct=correct, accuracy=accuracy, by_rating=by_rating,
+        total=total,
+        correct=correct,
+        accuracy=accuracy,
+        by_rating=_by_rating_table(correct_flags, suite, rating_buckets),
     )
