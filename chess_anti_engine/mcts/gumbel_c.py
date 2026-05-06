@@ -187,7 +187,15 @@ def run_gumbel_root_many_c(
         root_cb = root_cboards[i]
         legal_idx = root_cb.legal_move_indices()
 
-        if root_cb.is_game_over() or legal_idx.size == 0:
+        if root_cb.is_game_over():
+            root_qs[i] = float(root_cb.terminal_value())
+            values_out[i] = float(root_qs[i])
+            probs_out[i] = np.zeros((POLICY_SIZE,), dtype=np.float32)
+            actions_out[i] = 0
+            root_pri[i] = np.zeros(POLICY_SIZE, dtype=np.float64)
+            continue
+
+        if legal_idx.size == 0:
             probs_out[i] = np.zeros((POLICY_SIZE,), dtype=np.float32)
             actions_out[i] = 0
             root_pri[i] = np.zeros(POLICY_SIZE, dtype=np.float64)
@@ -678,4 +686,3 @@ def run_gumbel_root_many_c(
         tree,
         _ret_root_ids,
     )
-
