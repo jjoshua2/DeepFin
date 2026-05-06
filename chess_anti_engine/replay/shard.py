@@ -535,6 +535,31 @@ def validate_arrays(arrs: dict[str, np.ndarray]) -> None:
     if ((wdl_i < 0) | (wdl_i > 2)).any():
         raise ValueError("wdl_target out of range")
 
+    n = int(x.shape[0])
+    for spec in _OPTIONAL_FIELD_SPECS:
+        flag_present = spec.flag in arrs
+        value_present = spec.arr in arrs
+        active = False
+
+        if flag_present:
+            flag = np.asarray(arrs[spec.flag])
+            if flag.ndim != 1 or flag.shape[0] != n:
+                raise ValueError(f"{spec.flag} must be (N,) matching x")
+            active = bool(np.any(flag != 0))
+
+        if value_present:
+            value = np.asarray(arrs[spec.arr])
+            expected_shape = (n, *spec.shape)
+            if value.shape != expected_shape:
+                raise ValueError(
+                    f"{spec.arr} shape mismatch: expected {expected_shape}, got {value.shape}",
+                )
+            if np.issubdtype(value.dtype, np.floating) and not np.isfinite(value).all():
+                raise ValueError(f"{spec.arr} contains NaN/Inf")
+
+        if active and not value_present:
+            raise ValueError(f"{spec.flag} is set but {spec.arr} is missing")
+
 
 def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
     validate_arrays(arrs)

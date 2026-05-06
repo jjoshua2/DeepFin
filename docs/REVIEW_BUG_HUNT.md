@@ -30,8 +30,8 @@ Working rules:
 
 | Order | Track | Component | Files | Status | Notes |
 |-------|-------|-----------|-------|--------|-------|
-| 1 | adversarial | Selfplay labels and finalization | `chess_anti_engine/selfplay/finalize.py`, `state.py`, `stockfish_turn.py`, `tablebase.py` | active | Highest training-data corruption risk. Review POV, result labels, TB adjudication, draw handling, optional target fields. |
-| 2 | adversarial | Replay and shard ingest | `chess_anti_engine/replay/*`, `worker_buffer.py`, server/worker shard paths | pending | Schema drift, stale shards, missing arrays, holdout leakage, old-run compatibility. |
+| 1 | adversarial | Selfplay labels and finalization | `chess_anti_engine/selfplay/finalize.py`, `state.py`, `stockfish_turn.py`, `tablebase.py` | deep | Highest training-data corruption risk. Review POV, result labels, TB adjudication, draw handling, optional target fields. |
+| 2 | adversarial | Replay and shard ingest | `chess_anti_engine/replay/*`, `worker_buffer.py`, server/worker shard paths | active | Schema drift, stale shards, missing arrays, holdout leakage, old-run compatibility. |
 | 3 | adversarial | Worker lifecycle | `worker.py`, `worker_assets.py`, `worker_pool.py`, `stockfish/*` | pending | Manifest restart keys, model swaps, Stockfish restarts, partial updates, pause/resume. |
 | 4 | adversarial | Tune trainable lifecycle | `chess_anti_engine/tune/*` | pending | Config reload, donor/salvage overlays, PID state restore, manifests, async eval timing. |
 | 5 | adversarial | Loss and trainer contracts | `chess_anti_engine/train/losses.py`, `trainer.py`, `targets.py` | pending | Blend weights, masks, target normalization, old shard behavior, live weight sync. |
@@ -57,6 +57,19 @@ Selfplay labels and finalization:
   legal masks, future policy, volatility) are masked or defaulted safely.
 - [ ] Identify simplification candidates only after correctness review.
 
+Replay and shard ingest:
+
+- [x] Map canonical shard schema: required arrays, optional flag/value pairs,
+  sparse policy/mask storage, legacy NPZ compatibility, and zarr writer/loader.
+- [x] Verify optional target flag/value pairs reject corrupt shards instead of
+  synthesizing present zero labels.
+- [ ] Verify disk buffer resume/window logic and prefetch cannot sample deleted
+  or schema-incompatible shards.
+- [ ] Verify server upload, pending recovery, and compaction preserve accepted
+  samples across crash/restart interleavings.
+- [ ] Verify worker upload/delete flow cannot drop an unaccepted shard.
+- [ ] Identify replay simplification candidates only after correctness review.
+
 Current notes:
 
 - WDL class convention in finalization is `0=sample POV win`, `1=draw`,
@@ -69,6 +82,9 @@ Current notes:
 - Finding F007 opened/fixed in this cycle: tablebase path swaps could close a
   handle still being probed by another thread; tablebase handles are now cached
   per path and failed opens still close their temporary handle.
+- Finding F008 opened/fixed in this cycle: shard validation accepted optional
+  `has_*` flags without the paired value array, causing present-but-zero
+  auxiliary targets after load.
 
 ### `/simplify` Review Criteria
 
@@ -184,6 +200,7 @@ Context:
 | F005 | Low | Test Hygiene | Pytest config | `pyproject.toml`, `tests/test_mcts_thread_safety.py` | Full-suite run emitted `PytestUnknownMarkWarning` for the thread-safety stress test's `slow` marker. | `pytest` passed with one warning before config change. | Registered the `slow` marker in `pyproject.toml`; `pytest tests/test_mcts_thread_safety.py` now passes without the warning. | fixed |
 | F006 | High | Training Quality | Selfplay | `chess_anti_engine/selfplay/manager.py`, `tests/test_selfplay_fraction.py` | Full-selfplay games annotated only one color's network turns with SF targets. The assigned net-color turn advanced to the selfplay-opponent network turn before any SF label query ran, so the earlier `_NetRecord` was no longer the latest record and never received `sf_wdl` / SF policy targets. | In `_run_step`, SF label queries were only submitted for `sp_opp_idxs` after `run_network_turn`; `net_idxs` that were also selfplay skipped annotation. A direct repro before the fix produced two selfplay samples with `[False, True]` for `s.sf_wdl is not None`. | Tightened `test_full_selfplay_generates_both_side_samples_and_no_pid_wdl_stats` to require all full-selfplay samples have `sf_wdl` and `sf_policy_target`. Verified selfplay/finalize slice: `33 passed`. | fixed |
 | F007 | Medium | Reliability | Tablebase | `chess_anti_engine/tablebase.py`, `tests/test_tablebase_cache.py` | The shared Syzygy cache used one global handle and closed the previous handle whenever another path was requested. A UCI option swap or concurrent training/search probe with a different path could invalidate an in-flight caller's returned handle after `get_tablebase()` released its lock. | `get_tablebase()` returned the cached handle without a usage lock, while the different-path branch closed `_tablebase` before installing the new handle. Call sites probe the returned handle outside the cache lock. | Replaced the single global with a path-keyed cache that leaves existing handles open; added fake-tablebase regression proving path swaps do not close active handles and failed opens still close the temporary handle. Verified `tests/test_tablebase_cache.py` -> `2 passed`. | fixed |
+| F008 | High | Training Quality / Reliability | Replay shards | `chess_anti_engine/replay/shard.py`, `tests/test_replay_shard_validation.py` | Optional shard targets could be marked present without storing the paired value array. Loading such a shard synthesized a zero-filled value and `arrays_to_samples()` treated it as a real SF/search/policy/mask target, silently corrupting auxiliary supervision. | `validate_arrays()` only checked `x`, `policy_target`, and `wdl_target`; `arrays_to_samples()` populated missing optional arrays with zeros and then trusted `has_*` flags from the shard. | Added optional field validation for flag shape, value shape, finite float values, and active flag without value. Verified replay shard/collation/disk-buffer slice: `33 passed`. | fixed |
 
 ## Review Passes
 
