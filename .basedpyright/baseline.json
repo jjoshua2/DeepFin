@@ -381,16 +381,6 @@
                     "lineCount": 1
                 }
             }
-        ],
-        "./chess_anti_engine/worker.py": [
-            {
-                "code": "reportMissingImports",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 33,
-                    "lineCount": 1
-                }
-            }
         ]
     }
 }

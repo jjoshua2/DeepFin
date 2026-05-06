@@ -36,7 +36,7 @@ should be done only when it reduces real complexity or operational risk.
 | ID | Area | Files | Complexity Signal | Decision | Verification |
 |----|------|-------|-------------------|----------|--------------|
 | S001 | Inference queue typing and model swap | `chess_anti_engine/inference_threaded.py`, `chess_anti_engine/inference.py` | Queue items, model updates, compile fallback, and cudagraph probing share one dispatcher loop. Recent lint fix needed casts to describe the implicit union. | Implemented small internal typed request/handle objects for `ThreadedDispatcher`; no queue ordering or async pipeline behavior changes intended. | `python3 -m pytest tests/test_threaded_dispatcher.py tests/test_gpu_dispatcher.py -q`; `ruff check chess_anti_engine/inference_threaded.py tests/test_threaded_dispatcher.py`; `basedpyright chess_anti_engine/inference_threaded.py` |
-| S002 | Worker lifecycle size | `chess_anti_engine/worker.py`, `worker_config.py`, `worker_assets.py` | `worker.py` is the largest Python file and owns config, manifest sync, assets, Stockfish, selfplay, uploads, metrics, and cleanup. | Split only along existing ownership boundaries if it reduces reload/swap/upload risk. | `python3 -m pytest tests/test_worker_* tests/test_threaded_selfplay.py -q` |
+| S002 | Worker lifecycle size | `chess_anti_engine/worker.py`, `worker_config.py`, `worker_assets.py`, `worker_inference.py` | `worker.py` is the largest Python file and owns config, manifest sync, assets, Stockfish, selfplay, uploads, metrics, and cleanup. | First boundary implemented: worker-side inference compile/sync helpers live in `worker_inference.py`; defer larger lifecycle splits until a state-owner boundary is clearer. | `python3 -m pytest tests/test_worker_model_update.py tests/test_threaded_dispatcher.py tests/test_gpu_dispatcher.py -q`; `ruff check chess_anti_engine/worker.py chess_anti_engine/worker_inference.py`; `basedpyright chess_anti_engine/worker.py chess_anti_engine/worker_inference.py` |
 | S003 | Server upload state machine | `chess_anti_engine/server/app.py` | Upload handling now preserves durability, but staging, quarantine, dedupe, recovery, and compaction still live in one large module. | Extract helpers only for independently testable upload/recovery units; avoid hiding file-atomicity order. | `python3 -m pytest tests/test_server_upload_* tests/test_server_trial_lease.py -q` |
 | S004 | Replay schema compatibility | `chess_anti_engine/replay/shard.py`, `disk_buffer.py`, `tune/_utils.py`, `tune/replay_exchange.py` | Optional-array validation, union/intersection behavior, old NPZ support, and server zarr paths are spread across several modules. | Centralize canonical schema metadata if it reduces duplicate optional-field handling. | `python3 -m pytest tests/test_replay_* tests/test_collation.py tests/test_tune_utils.py -q` |
 | S005 | Trial config/report plumbing | `chess_anti_engine/tune/trial_config.py`, `trainable_config_ops.py`, `trainable_report.py`, `trainable_phases.py` | Runtime-mutable config keys and report fields are repeated across parser, sync, report, and status output. | Build a key registry only if it can replace multiple allowlists without obscuring PBT ownership rules. | `python3 -m pytest tests/test_trial_config.py tests/test_trainable_config_ops.py tests/test_trainable_rng_checkpoint.py -q` |
@@ -49,10 +49,10 @@ should be done only when it reduces real complexity or operational risk.
 Inventory and rank the first three simplify candidates:
 
 - [x] S001: read `inference_threaded.py` and dispatcher tests for a no-behavior-change typed queue cleanup.
-- [ ] S002: map `worker.py` responsibilities and identify extraction boundaries that would reduce risk.
+- [x] S002: map `worker.py` responsibilities and identify extraction boundaries that would reduce risk.
 - [ ] S003: map `server/app.py` upload helpers and decide whether upload staging should be extracted.
 
-Do not implement S002-S003 until the proposed shape is written under "Decisions".
+Do not implement S003 until the proposed shape is written under "Decisions".
 
 ## Decisions
 
@@ -60,6 +60,7 @@ Record accepted/rejected simplification decisions here.
 
 | Date | ID | Decision | Reason | Follow-up |
 |------|----|----------|--------|-----------|
+| 2026-05-06 | S002 | Extract only worker-side inference compile/sync helpers into `worker_inference.py`; leave manifest, upload, lease, and selfplay state inside `WorkerSession`. | `worker.py` mixes lifecycle state with pure inference utility behavior. Moving FP8/compile/evaluator-sync helpers reduces top-level worker coupling without changing when model swaps, uploads, or evaluator updates occur. Broader splits would currently risk hiding state transitions across model SHA, lease ID, and buffered uploads. | Verify worker model-update tests plus dispatcher tests; continue S002 later only after identifying a state owner, likely for manifest polling or pending upload drainage. |
 | 2026-05-06 | S001 | Accept a dedicated no-behavior-change cleanup that replaces tuple queue items with internal dataclass request/handle objects. | The previous dispatcher queue encoded eval requests, model updates, and pending GPU work as tuple shape plus casts; explicit objects make the model-update boundary and future-scatter path auditable while preserving the same drain/submit/scatter order. | Run dispatcher tests, lint, and type check before commit; defer larger worker/inference boundary changes to S002 or a heavy-thinking pass. |
 | 2026-05-06 | S000 | Keep bug fixes in `REVIEW_BUG_HUNT.md`; track refactors here. | Bug-hunt tracker is complete and should stay auditable. Simplification needs a separate queue to avoid mixing cleanup with correctness findings. | Start with S001-S003 inventory. |
 

@@ -15,7 +15,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, NamedTuple, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Any, Callable, NamedTuple, TypeVar, overload
 
 import numpy as np
 import torch
@@ -74,6 +74,10 @@ from chess_anti_engine.worker_buffer import (
     _pending_elapsed_path,
 )
 from chess_anti_engine.worker_config import load_worker_config, save_worker_config
+from chess_anti_engine.worker_inference import (
+    maybe_compile_inference_model as _maybe_compile_inference_model,
+    sync_evaluator_to_model as _sync_evaluator_to_model,
+)
 
 _ResolveT = TypeVar("_ResolveT")
 
@@ -189,67 +193,6 @@ def _restart_process() -> None:
   # Avoid infinite update loops.
     os.environ["CAE_SELF_UPDATED"] = "1"
     os.execv(sys.executable, [sys.executable] + sys.argv)
-
-
-def _maybe_apply_fp8_inference(model: torch.nn.Module) -> torch.nn.Module:
-    """Quantize eligible Linear layers to FP8 (dynamic activation, FP8 weight).
-
-    Skips layers where FP8 hurts accuracy or speed: Smolgen (small batch dim),
-    non-16-aligned dims (tensor core requirement), tiny output heads.
-    Requires torch.compile afterwards for actual speedup.
-    """
-    try:
-        from torchao.quantization import (  # optional dep
-            Float8DynamicActivationFloat8WeightConfig,
-            PerRow,
-            quantize_,
-        )
-    except ImportError:
-        return model
-
-    def _fp8_filter(mod: torch.nn.Module, fqn: str) -> bool:
-        if not isinstance(mod, torch.nn.Linear):
-            return False
-        if mod.in_features % 16 != 0 or mod.out_features % 16 != 0:
-            return False
-        if "smolgen" in fqn:
-            return False
-        if fqn.endswith(".net.2") and mod.out_features <= 32:
-            return False
-        return True
-
-    try:
-        quantize_(model, Float8DynamicActivationFloat8WeightConfig(granularity=PerRow()), filter_fn=_fp8_filter)
-    except Exception as exc:
-        import logging
-        logging.getLogger(__name__).warning("FP8 quantization failed, continuing with BF16: %s", exc)
-    return model
-
-
-def _maybe_compile_inference_model(
-    model: torch.nn.Module, *, device: str, mode: str = "reduce-overhead",
-    use_fp8: bool = False,
-) -> torch.nn.Module:
-    if not str(device).startswith("cuda"):
-        return model
-    if use_fp8:
-        model = _maybe_apply_fp8_inference(model)
-    try:
-        return cast("torch.nn.Module", torch.compile(model, mode=mode))
-    except Exception:
-        return model
-
-
-def _sync_evaluator_to_model(
-    evaluator: DirectGPUEvaluator | ThreadedBatchEvaluator | ThreadedDispatcher | AOTEvaluator,
-    model: torch.nn.Module,
-) -> None:
-    if isinstance(evaluator, (ThreadedBatchEvaluator, ThreadedDispatcher)):
-        evaluator.update_model(model)
-    elif isinstance(evaluator, AOTEvaluator):
-        evaluator.load_weights(model.state_dict())
-    else:
-        evaluator.model = model
 
 
 def _configure_shared_compile_cache(*, cache_dir: Path) -> None:
@@ -931,7 +874,12 @@ class WorkerSession:
             compile_t0 = time.time()
             self.log.info("compile starting %s sha=%s", label, sha_short)
             _compile_mode = str(self.args.compile_mode)
-            model = _maybe_compile_inference_model(model, device=str(self.device), mode=_compile_mode, use_fp8=bool(getattr(self.args, "inference_fp8", False)))
+            model = _maybe_compile_inference_model(
+                model,
+                device=str(self.device),
+                mode=_compile_mode,
+                use_fp8=bool(getattr(self.args, "inference_fp8", False)),
+            )
             self.log.info("compile finished %s sha=%s elapsed_s=%.2f", label, sha_short, float(time.time() - compile_t0))
         return model
 
