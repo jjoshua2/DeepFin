@@ -230,14 +230,6 @@
         ],
         "./chess_anti_engine/train/trainer.py": [
             {
-                "code": "reportAssignmentType",
-                "range": {
-                    "startColumn": 8,
-                    "endColumn": 21,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportMissingImports",
                 "range": {
                     "startColumn": 21,

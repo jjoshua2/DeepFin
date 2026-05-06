@@ -17,11 +17,11 @@ from chess_anti_engine.utils.amp import inference_autocast
 from chess_anti_engine.utils.atomic import atomic_write
 
 try:
-    from torch.utils.tensorboard import (
-        SummaryWriter,  # skylos: ignore (used via runtime fallback)
-    )
+    from torch.utils.tensorboard import SummaryWriter as _ImportedSummaryWriter
+
+    _SummaryWriter: Any = _ImportedSummaryWriter
 except Exception:  # pragma: no cover
-    class SummaryWriter:  # type: ignore[no-redef]
+    class _FallbackSummaryWriter:
         def __init__(self, *_args: Any, **_kwargs: Any) -> None:  # skylos: ignore (stub signature parity)
             pass
 
@@ -30,6 +30,8 @@ except Exception:  # pragma: no cover
 
         def close(self) -> None:
             pass
+
+    _SummaryWriter = _FallbackSummaryWriter
 
 from chess_anti_engine.encoding.lc0 import LC0_FULL
 from chess_anti_engine.model import ARCH_SCHEMA_VERSION, ModelConfig
@@ -50,6 +52,8 @@ from .losses import (
     wdl_calibration_stats,
 )
 from .muon import MuonWithAuxAdam
+
+SummaryWriter = _SummaryWriter  # skylos: ignore (used via runtime fallback)
 
 
 def _split_decay_groups(

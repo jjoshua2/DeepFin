@@ -78,14 +78,6 @@ def load_iters(path: Path) -> list[dict]:
     return rows
 
 
-def compute_raw_wr(row: dict) -> float:
-    win = int(row.get("win", 0) or 0)
-    draw = int(row.get("draw", 0) or 0)
-    loss = int(row.get("loss", 0) or 0)
-    total = win + draw + loss
-    return (win + 0.5 * draw) / total if total > 0 else 0.0
-
-
 def replay(rows: list[dict], *, alpha: float, sigma: float) -> dict:
     pid = DifficultyPID(
         initial_nodes=MIN_NODES,

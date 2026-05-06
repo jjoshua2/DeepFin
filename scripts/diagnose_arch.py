@@ -124,18 +124,21 @@ def main() -> None:
     captures: dict[str, torch.Tensor] = {}
     head_caps: list[tuple[int, torch.Tensor]] = []
 
-    def hook_embed_out(_mod, _inp, out):
+    def hook_embed_out(_mod, _inp, out):  # skylos: ignore (torch hook signature)
+        del _mod, _inp
         captures["embed_out"] = out.detach().float()
 
     def make_block_hook(idx: int):
-        def hook(_mod, inp, out):
+        def hook(_mod, inp, out):  # skylos: ignore (torch hook signature)
+            del _mod
             captures[f"block_in_{idx}"] = inp[0].detach().float()
             captures[f"block_out_{idx}"] = out.detach().float()
         return hook
 
     def make_attn_outproj_hook(idx: int):
         # Captures the input to out_proj: (B,T,D) where D=H*head_dim — split per head.
-        def hook(_mod, inp, _out):
+        def hook(_mod, inp, _out):  # skylos: ignore (torch hook signature)
+            del _mod, _out
             head_caps.append((idx, inp[0].detach().float()))
         return hook
 
