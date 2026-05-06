@@ -312,6 +312,16 @@ Current notes:
 - Focused worker model-swap validation after F031 passed:
   `tests/test_worker_model_update.py`, `tests/test_worker_small_uploads.py`, and
   `tests/test_worker_upload_response.py` (`20 passed`).
+- Finding F003 was closed during the operational scripts pass: `diagnose.py`
+  already had CLI-based trial discovery, but still sampled `selfplay_shards`
+  instead of the trainer replay directory. `diagnose.py` and `diagnose_arch.py`
+  now accept `--replay-dir`, default through the repo's trial replay resolver,
+  keep legacy `selfplay_shards` as fallback, and defer heavy ML imports until
+  after argument parsing so `--help` stays lightweight.
+- Focused diagnostic script validation after F003 passed:
+  `tests/test_diagnose_scripts.py` (`4 passed`), plus
+  `python3 scripts/diagnose.py --help` and
+  `python3 scripts/diagnose_arch.py --help`.
 - Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
   `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
   `tests/test_tune_distributed_worker_cmd.py`,
@@ -429,7 +439,7 @@ Context:
 |----|----------|----------|-----------|------|---------|----------|-----------------------|--------|
 | F001 | High | Reliability / Test Gap | Selfplay | `tests/test_play_batch_helpers.py`, `chess_anti_engine/selfplay/manager.py` | Tracked test suite failed during collection because helper tests imported `_PlayBatchState`, `_init_play_batch_state`, and module-level `_sf_terminal_result`, but `manager.py` only had the nested timeout helper. | `pytest tests/test_play_batch_helpers.py` failed with `ImportError: cannot import name '_PlayBatchState'`. | Added module-level helper/state API and routed timeout adjudication through shared helper. Verified `tests/test_play_batch_helpers.py` -> `16 passed`; broader selfplay slice -> `38 passed`. | fixed |
 | F002 | High | Reliability | Distributed server | `chess_anti_engine/server/app.py`, `tests/test_server_upload_durability.py` | Accepted shard uploads were buffered only in process memory until compaction flush, so a server crash before flush could lose replay samples after returning `stored: true`. | Current code atomically promotes validated uploads into `inbox/_pending` before acknowledgement, re-seeds accumulators from pending shards at `create_app()` startup, stages pending shards through `_in_flight/<token>` during compaction, and token-matches committed compacted shards during recovery. | Regression tests cover below-threshold pending durability, restart replay into compacted shards, pending cleanup after flush, distinct accumulator keys, in-flight recovery, deduped worker retries, and duplicate pending cleanup. | fixed |
-| F003 | Medium | Reliability | Operational scripts | `scripts/diagnose.py` | Diagnostic script hardcodes `runs/pbt2_small/tune`, discovers the latest trial at import time, and has no CLI override despite documenting only `PYTHONPATH=. python3 scripts/diagnose.py`. It can crash before argument parsing on machines without that run, or diagnose the wrong run when the active config differs. | Top-level `TRIAL_DIR = sorted(Path("runs/pbt2_small/tune").glob("train_trial_*"), ...)[-1]` executes before any `main`/CLI. Replay path later uses `TRIAL_DIR / "selfplay_shards"`, while current distributed paths often use replay roots elsewhere. | Add `--run/--trial-dir/--config/--device` args and move discovery into `main`; add a smoke test for missing run producing a clear error. | open |
+| F003 | Medium | Reliability | Operational scripts | `scripts/diagnose.py`, `scripts/diagnose_arch.py`, `tests/test_diagnose_scripts.py` | Diagnostic scripts could target stale replay data because they assumed `trial_dir/selfplay_shards`, while current Tune training reads `replay_shards` and may relocate it through `tune_replay_root_override`. Earlier versions also discovered `runs/pbt2_small/tune` at import time, so simple help/error flows could fail before argument handling. | Current scripts resolve trials after parsing `--run`/`--trial-dir`, accept explicit `--replay-dir`, default to the same replay path as `_trial_replay_shard_dir()`, fall back to legacy `selfplay_shards`, and defer heavy ML imports until after CLI parsing. | Regression tests cover replay-dir preference, legacy fallback, explicit override, and clear no-shards errors; script `--help` now runs without importing the training stack. | fixed |
 | F004 | Medium | Reliability | Stockfish integration | `chess_anti_engine/stockfish/uci.py`, `tests/test_stockfish_uci_timeout.py` | Real Stockfish subprocess reads had no timeout. A stalled engine or protocol deadlock could hang selfplay/arena code while holding the Stockfish lock. | Current code reads Stockfish through a pty-backed `_readline_with_deadline()` using `select`, raises `StockfishTimeoutError`, and keeps startup/read/search deadlines configurable through `read_timeout_s`. | Regression tests cover handshake timeout on a silent fake engine and search timeout when an engine responds to `uci`/`isready` but never emits `bestmove`. | fixed |
 | F005 | Low | Test Hygiene | Pytest config | `pyproject.toml`, `tests/test_mcts_thread_safety.py` | Full-suite run emitted `PytestUnknownMarkWarning` for the thread-safety stress test's `slow` marker. | `pytest` passed with one warning before config change. | Registered the `slow` marker in `pyproject.toml`; `pytest tests/test_mcts_thread_safety.py` now passes without the warning. | fixed |
 | F006 | High | Training Quality | Selfplay | `chess_anti_engine/selfplay/manager.py`, `tests/test_selfplay_fraction.py` | Full-selfplay games annotated only one color's network turns with SF targets. The assigned net-color turn advanced to the selfplay-opponent network turn before any SF label query ran, so the earlier `_NetRecord` was no longer the latest record and never received `sf_wdl` / SF policy targets. | In `_run_step`, SF label queries were only submitted for `sp_opp_idxs` after `run_network_turn`; `net_idxs` that were also selfplay skipped annotation. A direct repro before the fix produced two selfplay samples with `[False, True]` for `s.sf_wdl is not None`. | Tightened `test_full_selfplay_generates_both_side_samples_and_no_pid_wdl_stats` to require all full-selfplay samples have `sf_wdl` and `sf_policy_target`. Verified selfplay/finalize slice: `33 passed`. | fixed |
@@ -1090,7 +1100,8 @@ Files:
 - [ ] `scripts/cuda_sanity_check.py`
 - [ ] `scripts/deepfin`
 - [ ] `scripts/deepfin.bat`
-- [ ] `scripts/diagnose.py`
+- [x] `scripts/diagnose.py`
+- [x] `scripts/diagnose_arch.py`
 - [ ] `scripts/e2e_strength_test.py`
 - [ ] `scripts/generate_bootstrap.py`
 - [ ] `scripts/graceful_restart.py`
@@ -1110,7 +1121,9 @@ Files:
 
 Correctness/reliability:
 
-- [ ] Scripts run from repo root and fail clearly when required files/env vars are absent.
+- [x] Diagnostic scripts run from repo root and fail clearly when required
+  trial/replay paths are absent.
+- [ ] Other scripts run from repo root and fail clearly when required files/env vars are absent.
 - [ ] Shell scripts quote paths and handle PID/log/stale-process states safely.
 - [ ] Benchmarks measure what their names claim and do not accidentally benchmark setup overhead.
 - [ ] Operational scripts avoid deleting or overwriting unrelated run data.

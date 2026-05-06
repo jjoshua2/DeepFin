@@ -19,12 +19,8 @@ import argparse
 import sys
 from pathlib import Path
 
-import numpy as np
-import torch
-
-from chess_anti_engine.model import ModelConfig, build_model
-from chess_anti_engine.replay import DiskReplayBuffer
-from chess_anti_engine.train import Trainer, trainer_kwargs_from_config
+from chess_anti_engine.replay.shard import iter_shard_paths
+from chess_anti_engine.tune.replay_exchange import _trial_replay_shard_dir
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 
 
@@ -55,6 +51,31 @@ def _resolve_trial_dir(args: argparse.Namespace) -> Path:
     return candidates[-1]
 
 
+def _resolve_replay_dir(args: argparse.Namespace, *, cfg: dict, trial_dir: Path) -> Path:
+    if args.replay_dir:
+        replay_dir = Path(args.replay_dir).expanduser().resolve()
+        if not replay_dir.is_dir():
+            sys.exit(f"--replay-dir does not exist: {replay_dir}")
+        return replay_dir
+
+    candidates: list[Path] = [
+        _trial_replay_shard_dir(config=cfg, trial_dir=trial_dir),
+        trial_dir / "selfplay_shards",
+    ]
+    seen: set[Path] = set()
+    checked: list[Path] = []
+    for candidate in candidates:
+        candidate = candidate.expanduser().resolve()
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        checked.append(candidate)
+        if candidate.is_dir() and iter_shard_paths(candidate):
+            return candidate
+    checked_s = ", ".join(str(p) for p in checked)
+    sys.exit(f"No replay shards found. Checked: {checked_s}. Pass --replay-dir <path>.")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=(__doc__ or "").split("\n", 1)[0])
     p.add_argument("--run", default=None,
@@ -63,11 +84,20 @@ def main() -> None:
                    help="Specific train_trial_* directory; overrides --run.")
     p.add_argument("--config", default="configs/pbt2_small.yaml",
                    help="YAML config (default: configs/pbt2_small.yaml).")
+    p.add_argument("--replay-dir", default=None,
+                   help="Replay shard directory; defaults to the trial replay_shards path.")
     p.add_argument("--device", default="cuda",
                    help="Torch device (default: cuda; use cpu if no GPU).")
     p.add_argument("--n", type=int, default=2048,
                    help="Number of replay positions to sample (default: 2048).")
     args = p.parse_args()
+
+    import numpy as np
+    import torch
+
+    from chess_anti_engine.model import ModelConfig, build_model
+    from chess_anti_engine.replay import DiskReplayBuffer
+    from chess_anti_engine.train import Trainer, trainer_kwargs_from_config
 
     trial_dir = _resolve_trial_dir(args)
     print(f"Trial: {trial_dir.name}")
@@ -100,12 +130,13 @@ def main() -> None:
     device = trainer.device
     print(f"Device: {device}")
 
-    shard_dir = trial_dir / "selfplay_shards"
+    shard_dir = _resolve_replay_dir(args, cfg=cfg, trial_dir=trial_dir)
     buf = DiskReplayBuffer(
         capacity=200_000,
         shard_dir=shard_dir,
         rng=np.random.default_rng(42),
     )
+    print(f"Replay: {shard_dir}")
     print(f"Buffer size: {len(buf):,} positions")
 
     n = min(int(args.n), len(buf))
