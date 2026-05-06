@@ -37,8 +37,8 @@ Working rules:
 | 5 | adversarial | Loss and trainer contracts | `chess_anti_engine/train/losses.py`, `trainer.py`, `targets.py` | deep | Blend weights, masks, target normalization, old shard behavior, live weight sync. |
 | 6 | adversarial | MCTS and search engines | `chess_anti_engine/mcts/*`, `uci/search.py`, `tablebase.py` | deep | Memory ownership, root reuse, terminal handling, solved/TB propagation, concurrent mutation. |
 | 7 | adversarial | Distributed server | `chess_anti_engine/server/*`, `tune/distributed_runtime.py` | deep | Upload durability, auth, leases, path safety, backpressure, recovery after crash. |
-| 8 | adversarial | UCI runtime | `chess_anti_engine/uci/*`, `stockfish/uci.py` | active | Protocol state, time controls, ponderhit, cancellation, subprocess hangs. |
-| 9 | simplify | Hot-path code quality and efficiency | selfplay, replay, MCTS, inference, worker | pending | Remove duplicated orchestration, clarify contracts, reduce allocations/sync/I/O stalls. |
+| 8 | adversarial | UCI runtime | `chess_anti_engine/uci/*`, `stockfish/uci.py` | deep | Protocol state, time controls, ponderhit, cancellation, subprocess hangs. |
+| 9 | simplify | Hot-path code quality and efficiency | selfplay, replay, MCTS, inference, worker | active | Remove duplicated orchestration, clarify contracts, reduce allocations/sync/I/O stalls. |
 | 10 | simplify | Config and ops ergonomics | `configs/*`, `scripts/*`, `AGENTS.md`, `CLAUDE.md` | pending | Stale knobs, unclear ownership, scripts that assume one run layout. |
 
 ### Current Slice Checklist
@@ -1017,33 +1017,35 @@ Tests:
 
 ### UCI Engine
 
-Status: `deep` for protocol parsing/formatting, UCI smoke behavior, time
-manager, ponderhit clock-side regression, and walker pool tests.
+Status: `deep` for protocol parsing/formatting, UCI command state, searchmoves,
+UCI smoke behavior, time manager, ponderhit clock-side regression, Stockfish
+subprocess timeout/cleanup, and walker pool tests.
 
 Evidence:
 
 - `pytest tests/test_uci_protocol.py tests/test_uci_smoke.py tests/test_uci_time_manager.py tests/test_uci_ponderhit_clock.py tests/test_uci_walker_pool.py tests/test_pid_inverse_regret.py tests/test_difficulty_state.py tests/test_worker_pool.py` passed: `78 passed`.
+- `pytest tests/test_uci_protocol.py tests/test_uci_engine_state.py tests/test_uci_time_manager.py tests/test_uci_searchmoves.py tests/test_uci_ponderhit_clock.py tests/test_uci_smoke.py tests/test_uci_walker_pool.py tests/test_stockfish_uci_timeout.py tests/test_cp_to_wdl.py tests/test_worker_pool.py` passed.
 
 Files:
 
-- [ ] `chess_anti_engine/uci/__init__.py`
-- [ ] `chess_anti_engine/uci/__main__.py`
-- [ ] `chess_anti_engine/uci/engine.py`
-- [ ] `chess_anti_engine/uci/model_loader.py`
-- [ ] `chess_anti_engine/uci/protocol.py`
-- [ ] `chess_anti_engine/uci/score.py`
-- [ ] `chess_anti_engine/uci/search.py`
-- [ ] `chess_anti_engine/uci/subprocess_client.py`
-- [ ] `chess_anti_engine/uci/time_manager.py`
-- [ ] `chess_anti_engine/uci/walker_pool.py`
+- [x] `chess_anti_engine/uci/__init__.py`
+- [x] `chess_anti_engine/uci/__main__.py`
+- [x] `chess_anti_engine/uci/engine.py`
+- [x] `chess_anti_engine/uci/model_loader.py`
+- [x] `chess_anti_engine/uci/protocol.py`
+- [x] `chess_anti_engine/uci/score.py`
+- [x] `chess_anti_engine/uci/search.py`
+- [x] `chess_anti_engine/uci/subprocess_client.py`
+- [x] `chess_anti_engine/uci/time_manager.py`
+- [x] `chess_anti_engine/uci/walker_pool.py`
 
 Correctness/reliability:
 
-- [ ] UCI parser accepts common GUI command sequences and rejects malformed input safely.
-- [ ] `go`, `stop`, `ponderhit`, `isready`, `ucinewgame`, and `quit` state transitions are correct.
-- [ ] Time manager uses the correct side clock/increment after move and ponder transitions.
-- [ ] Search returns legal best moves and reasonable scores under empty/terminal/legal-limited states.
-- [ ] Subprocess client handles child engine errors and shutdown.
+- [x] UCI parser accepts common GUI command sequences and rejects malformed input safely.
+- [x] `go`, `stop`, `ponderhit`, `isready`, `ucinewgame`, and `quit` state transitions are correct.
+- [x] Time manager uses the correct side clock/increment after move and ponder transitions.
+- [x] Search returns legal best moves and reasonable scores under empty/terminal/legal-limited states.
+- [x] Subprocess client handles child engine errors and shutdown.
 
 Efficiency:
 
@@ -1053,11 +1055,14 @@ Efficiency:
 
 Tests:
 
-- [ ] `tests/test_uci_protocol.py`
-- [ ] `tests/test_uci_smoke.py`
-- [ ] `tests/test_uci_time_manager.py`
-- [ ] `tests/test_uci_ponderhit_clock.py`
-- [ ] `tests/test_uci_walker_pool.py`
+- [x] `tests/test_uci_protocol.py`
+- [x] `tests/test_uci_engine_state.py`
+- [x] `tests/test_uci_smoke.py`
+- [x] `tests/test_uci_time_manager.py`
+- [x] `tests/test_uci_searchmoves.py`
+- [x] `tests/test_uci_ponderhit_clock.py`
+- [x] `tests/test_uci_walker_pool.py`
+- [x] `tests/test_stockfish_uci_timeout.py`
 
 ### Evaluation, Benchmarks, and Operational Scripts
 
