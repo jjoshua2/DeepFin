@@ -191,16 +191,22 @@ def rescore_game_samples(
     boards_history: list[chess.Board],
     syzygy_path: str,
 ) -> str | None:
-    """Walk ``boards_history`` forward and relabel the whole game to the
-    first TB-proven result we encounter (``"1-0"`` / ``"0-1"`` / ``"1/2-1/2"``).
+    """Walk ``boards_history`` and relabel the whole game to the LAST
+    TB-proven result (``"1-0"`` / ``"0-1"`` / ``"1/2-1/2"``).
+
+    Using the last result (not the first) correctly handles games that
+    transition through a drawn endgame into a winning one — e.g., KRvKR
+    (drawn) → rook captured → KRvK (won). The first-eligible result would
+    be the drawn KRvKR position; the last is the won KRvK, which is correct.
 
     Returns ``None`` if no board in the history was TB-eligible.
     """
+    last: str | None = None
     for board in boards_history:
         result = tb_adjudicate_result(board, syzygy_path)
         if result is not None:
-            return result
-    return None
+            last = result
+    return last
 
 
 def tb_adjudicate_result(
