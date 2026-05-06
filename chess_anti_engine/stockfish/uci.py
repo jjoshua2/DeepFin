@@ -42,6 +42,54 @@ class StockfishResult:
     mate: int | None = None  # PV1 raw mate-in-N
 
 
+def _int_after(parts: list[str], token: str) -> int | None:
+    try:
+        return int(parts[parts.index(token) + 1])
+    except (ValueError, IndexError):
+        return None
+
+
+def _parse_score(parts: list[str]) -> tuple[int | None, int | None]:
+    try:
+        score_idx = parts.index("score")
+        score_kind = parts[score_idx + 1]
+        score_arg = int(parts[score_idx + 2])
+    except (ValueError, IndexError):
+        return None, None
+    if score_kind == "cp":
+        return score_arg, None
+    if score_kind == "mate":
+        return None, score_arg
+    return None, None
+
+
+def _parse_wdl(parts: list[str]) -> np.ndarray | None:
+    try:
+        wdl_idx = parts.index("wdl")
+        vec = np.array(
+            [
+                int(parts[wdl_idx + 1]),
+                int(parts[wdl_idx + 2]),
+                int(parts[wdl_idx + 3]),
+            ],
+            dtype=np.float32,
+        )
+    except (ValueError, IndexError):
+        return None
+    total = float(vec.sum())
+    return vec / total if total > 0.0 else None
+
+
+def _parse_pv_move(parts: list[str]) -> str | None:
+    try:
+        pv_idx = parts.index("pv")
+    except ValueError:
+        return None
+    if pv_idx + 1 >= len(parts):
+        return None
+    return parts[pv_idx + 1]
+
+
 class StockfishUCI:
     def __init__(
         self,
@@ -186,53 +234,16 @@ class StockfishUCI:
                     parts = line.split()
 
   # multipv index (default 1 if absent)
-                    mpv = 1
-                    if "multipv" in parts:
-                        try:
-                            mpv = int(parts[parts.index("multipv") + 1])
-                        except Exception:
-                            mpv = 1
+                    mpv = _int_after(parts, "multipv") or 1
 
   # parse score (cp / mate) if present
-                    cp_val: int | None = None
-                    mate_val: int | None = None
-                    if "score" in parts:
-                        try:
-                            score_idx = parts.index("score")
-                            score_kind = parts[score_idx + 1]
-                            score_arg = parts[score_idx + 2]
-                            if score_kind == "cp":
-                                cp_val = int(score_arg)
-                            elif score_kind == "mate":
-                                mate_val = int(score_arg)
-                        except (ValueError, IndexError):
-                            cp_val = None
-                            mate_val = None
+                    cp_val, mate_val = _parse_score(parts)
 
   # parse WDL if present
-                    wdl_vec = None
-                    if "wdl" in parts:
-                        try:
-                            wdl_idx = parts.index("wdl")
-                            w = int(parts[wdl_idx + 1])
-                            d = int(parts[wdl_idx + 2])
-                            l = int(parts[wdl_idx + 3])
-                            vec = np.array([w, d, l], dtype=np.float32)
-                            s = float(vec.sum())
-                            if s > 0:
-                                wdl_vec = vec / s
-                        except Exception:
-                            wdl_vec = None
+                    wdl_vec = _parse_wdl(parts)
 
   # parse PV first move if present
-                    pv_move = None
-                    if "pv" in parts:
-                        try:
-                            pv_idx = parts.index("pv")
-                            if pv_idx + 1 < len(parts):
-                                pv_move = parts[pv_idx + 1]
-                        except Exception:
-                            pv_move = None
+                    pv_move = _parse_pv_move(parts)
 
                     if mpv == 1:
                         if wdl_vec is not None:
