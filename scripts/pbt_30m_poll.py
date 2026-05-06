@@ -185,7 +185,12 @@ def run_once(*, root: Path, prefix: str | None) -> int:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Poll latest PBT trial metrics once.")
-    ap.add_argument("--root", type=Path, default=Path("/home/josh/projects/chess"))
+    ap.add_argument(
+        "--root",
+        type=Path,
+        default=Path(__file__).resolve().parents[1],
+        help="Repository root containing runs/pbt2_small",
+    )
     ap.add_argument("--prefix", type=str, default=None)
     args = ap.parse_args()
     raise SystemExit(run_once(root=args.root, prefix=args.prefix))

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import csv
 import json
 import math
@@ -75,7 +76,15 @@ def maybe_load_json(path: Path) -> dict[str, Any] | None:
 
 
 def main() -> None:
-    root = Path("/home/josh/projects/chess")
+    ap = argparse.ArgumentParser(description="Audit latest PBT trial metrics once.")
+    ap.add_argument(
+        "--root",
+        type=Path,
+        default=Path(__file__).resolve().parents[1],
+        help="Repository root containing runs/pbt2_small",
+    )
+    args = ap.parse_args()
+    root = args.root.expanduser().resolve()
     tune_dir = root / "runs" / "pbt2_small" / "tune"
 
     now = time.time()
@@ -245,4 +254,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

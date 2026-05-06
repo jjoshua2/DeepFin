@@ -1,31 +1,37 @@
 #!/bin/bash
-# PBT2 overnight watchdog — run in tmux before bed:
+# PBT2 watchdog. Run in tmux before leaving a run unattended:
 #   tmux new -s watchdog 'bash scripts/watchdog_pbt.sh'
-#
-# Auto-restarts training if the process dies.
-# Logs status every 60 minutes.
 
-LOG="/home/josh/projects/chess/runs/pbt2_small/monitor.log"
-CMD="python -m chess_anti_engine.run --config configs/pbt2_small.yaml --mode tune --resume"
-cd /home/josh/projects/chess
+set -euo pipefail
 
-source .venv/bin/activate 2>/dev/null
+ROOT="${CHESS_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+CONFIG="${TRAIN_CONFIG:-configs/pbt2_small.yaml}"
+LOG="${TRAIN_MONITOR_LOG:-$ROOT/runs/pbt2_small/monitor.log}"
+INTERVAL_SECONDS="${WATCHDOG_INTERVAL_SECONDS:-3600}"
+
+cd "$ROOT"
+if [ -f ".venv/bin/activate" ]; then
+  # shellcheck disable=SC1091
+  source .venv/bin/activate
+fi
+mkdir -p "$(dirname "$LOG")"
 
 while true; do
-    echo "========================================"  | tee -a "$LOG"
-    echo "Watchdog check: $(date)"                   | tee -a "$LOG"
-    echo "========================================"  | tee -a "$LOG"
+  {
+    echo "========================================"
+    echo "Watchdog check: $(date)"
+    echo "========================================"
+  } | tee -a "$LOG"
 
-    if ! pgrep -f "chess_anti_engine.run" > /dev/null 2>&1; then
-        echo "WARNING: Training process not found! Restarting..." | tee -a "$LOG"
-        $CMD >> "$LOG" 2>&1 &
-        echo "Restarted with PID $!" | tee -a "$LOG"
-        sleep 120  # give it time to initialize before next check
-        continue
-    fi
+  if ! pgrep -f "chess_anti_engine.run" >/dev/null 2>&1; then
+    echo "WARNING: Training process not found. Restarting..." | tee -a "$LOG"
+    PYTHONPATH=. python3 -m chess_anti_engine.run \
+      --config "$CONFIG" --mode tune --resume >> "$LOG" 2>&1 &
+    echo "Restarted with PID $!" | tee -a "$LOG"
+    sleep 120
+    continue
+  fi
 
-    # Quick status summary
-    bash /home/josh/projects/chess/scripts/monitor_pbt.sh
-
-    sleep 3600
+  CHESS_ROOT="$ROOT" TRAIN_MONITOR_LOG="$LOG" bash "$ROOT/scripts/monitor_pbt.sh"
+  sleep "$INTERVAL_SECONDS"
 done

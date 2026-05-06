@@ -1,10 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-ROOT="/home/josh/projects/chess"
-LOG="$ROOT/runs/pbt2_small/poll_30m.log"
+ROOT="${CHESS_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+LOG="${PBT_30M_LOG:-$ROOT/runs/pbt2_small/poll_30m.log}"
 SCRIPT="$ROOT/scripts/pbt_30m_poll.py"
-INTERVAL_SECONDS=1800
+INTERVAL_SECONDS="${PBT_30M_INTERVAL_SECONDS:-1800}"
 
 cd "$ROOT"
 if [ -f ".venv/bin/activate" ]; then
@@ -22,4 +22,3 @@ while true; do
   } >> "$LOG" 2>&1
   sleep "$INTERVAL_SECONDS"
 done
-

@@ -357,6 +357,18 @@ Current notes:
   matches under `set -euo pipefail`, and creates the log directory.
 - Focused monitor script validation after F035 passed:
   `bash -n scripts/monitor_pbt.sh`.
+- Finding F036 opened/fixed in this cycle: the remaining PBT polling/watchdog
+  shell scripts had a mix of hardcoded `/home/josh/projects/chess` paths,
+  a CRLF-damaged `watchdog_pbt.sh` that failed `bash -n`, and
+  `bench_batch_wait.sh` edited `configs/pbt2_small.yaml` in place while testing
+  batch-wait values. The scripts now derive the repo root from their path,
+  accept env overrides, pass explicit roots into Python helpers, keep
+  `watchdog_pbt.sh` syntactically valid, and run the batch-wait benchmark from
+  a temporary config so interrupted runs do not alter the source YAML.
+- Focused polling/watchdog validation after F036 passed:
+  `bash -n` across `scripts/*.sh` and `scripts/deepfin`,
+  `python3 -m py_compile scripts/pbt_30m_poll.py scripts/pbt_hourly_audit.py`,
+  and `--help` for both Python poll/audit helpers.
 - Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
   `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
   `tests/test_tune_distributed_worker_cmd.py`,
@@ -1131,7 +1143,7 @@ Files:
 - [ ] `chess_anti_engine/bench/play_batch_timing.py`
 - [ ] `scripts/bench_*.py`
 - [ ] `scripts/profile_*.py`
-- [ ] `scripts/bench_batch_wait.sh`
+- [x] `scripts/bench_batch_wait.sh`
 - [ ] `scripts/cuda_sanity_check.py`
 - [ ] `scripts/deepfin`
 - [ ] `scripts/deepfin.bat`
@@ -1141,13 +1153,13 @@ Files:
 - [x] `scripts/eval_puzzles.py`
 - [ ] `scripts/generate_bootstrap.py`
 - [ ] `scripts/graceful_restart.py`
-- [ ] `scripts/hourly_pbt_audit.sh`
+- [x] `scripts/hourly_pbt_audit.sh`
 - [ ] `scripts/lint.sh`
 - [ ] `scripts/match_checkpoints.py`
 - [x] `scripts/monitor_pbt.sh`
-- [ ] `scripts/pbt_30m_poll.py`
-- [ ] `scripts/pbt_hourly_audit.py`
-- [ ] `scripts/poll_pbt_30m.sh`
+- [x] `scripts/pbt_30m_poll.py`
+- [x] `scripts/pbt_hourly_audit.py`
+- [x] `scripts/poll_pbt_30m.sh`
 - [x] `scripts/profile_play_batch.py`
 - [ ] `scripts/reinit_value_heads.py`
 - [ ] `scripts/status.py`
@@ -1166,17 +1178,19 @@ Correctness/reliability:
   Tune helper as training.
 - [x] `monitor_pbt.sh` avoids hardcoded repo paths and fragile trial-prefix
   filtering.
+- [x] PBT polling/watchdog scripts derive repo roots from their script paths and
+  keep source configs untouched during batch-wait benchmarking.
 - [x] Diagnostic scripts run from repo root and fail clearly when required
   trial/replay paths are absent.
-- [ ] Other scripts run from repo root and fail clearly when required files/env vars are absent.
-- [ ] Shell scripts quote paths and handle PID/log/stale-process states safely.
+- [ ] Remaining Python scripts run from repo root and fail clearly when required files/env vars are absent.
+- [x] Shell scripts quote paths and handle PID/log/stale-process states safely.
 - [ ] Benchmarks measure what their names claim and do not accidentally benchmark setup overhead.
 - [ ] Operational scripts avoid deleting or overwriting unrelated run data.
 
 Efficiency:
 
 - [ ] Benchmark/profiling scripts include warmup, stable iteration counts, and useful output.
-- [ ] Polling scripts use reasonable intervals and avoid expensive repeated scans.
+- [x] Polling scripts use reasonable intervals and avoid expensive repeated scans.
 
 Tests:
 
