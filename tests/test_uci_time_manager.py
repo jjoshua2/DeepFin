@@ -38,6 +38,14 @@ def test_nodes_only() -> None:
     assert not lim.is_open_ended()
 
 
+def test_searchmoves_are_preserved_in_limits() -> None:
+    lim = limits_from_go(
+        GoArgs(nodes=250, searchmoves=("e2e4", "d2d4")),
+        side_to_move_is_white=True,
+    )
+    assert lim.searchmoves == ("e2e4", "d2d4")
+
+
 def test_depth_only() -> None:
     lim = limits_from_go(GoArgs(depth=8), side_to_move_is_white=True)
     assert lim.max_depth == 8

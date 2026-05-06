@@ -574,12 +574,23 @@ class SearchWorker:
         return pv_indices, last_info_ms, elapsed
 
     def _build_final_search_result(
-        self, *, board: chess.Board, total_nodes: int, last_value: float, tb_probe,
+        self, *,
+        board: chess.Board,
+        total_nodes: int,
+        last_value: float,
+        tb_probe,
+        allowed_root_indices: set[int] | None = None,
     ) -> SearchResult:
         """Final snapshot of the searched tree → SearchResult."""
         assert self._tree is not None and self._root_id is not None
-        bestmove_idx, pv_indices = _best_move_and_pv(self._tree, self._root_id)
-        ponder_idx = _predicted_opponent_reply(self._tree, self._root_id)
+        bestmove_idx, pv_indices = _best_move_and_pv(
+            self._tree, self._root_id,
+            allowed_root_indices=allowed_root_indices,
+        )
+        ponder_idx = _predicted_opponent_reply(
+            self._tree, self._root_id,
+            allowed_root_indices=allowed_root_indices,
+        )
         bestmove = _index_to_uci(board, bestmove_idx)
         ponder = (
             _index_to_uci(_board_after(board, bestmove_idx), ponder_idx)
@@ -631,6 +642,7 @@ class SearchWorker:
         deadline: Deadline,
         max_nodes: int | None,
         max_depth: int | None = None,
+        root_moves: tuple[str, ...] = (),
         info_cb: InfoCallback | None = None,
     ) -> SearchResult:
         """Search until any of: stop_event set, deadline expired, max_nodes hit,
@@ -650,9 +662,25 @@ class SearchWorker:
         if tb_probe is not None:
             tb_probe.reset_counts()
 
-        short = self._try_tb_shortcut(board, tb_probe, deadline, info_cb)
+        allowed_root_indices = _allowed_root_indices(board, root_moves)
+
+        short = (
+            None
+            if allowed_root_indices is not None
+            else self._try_tb_shortcut(board, tb_probe, deadline, info_cb)
+        )
         if short is not None:
             return short
+
+        if allowed_root_indices is not None and not allowed_root_indices:
+            return SearchResult(
+                bestmove_uci="0000",
+                ponder_uci=None,
+                nodes=0,
+                pv=(),
+                score_cp=0,
+                tbhits=tb_probe.hits if tb_probe is not None else 0,
+            )
 
         self._ensure_root_eval_cached(board, tb_probe)
         self._pre_expand_root_for_pool(board)
@@ -699,6 +727,7 @@ class SearchWorker:
         return self._build_final_search_result(
             board=board, total_nodes=total_nodes,
             last_value=last_value, tb_probe=tb_probe,
+            allowed_root_indices=allowed_root_indices,
         )
 
     def _run_walker_chunk(
@@ -869,7 +898,11 @@ def _q_to_wdl_permille(q: float, draw_rate: float) -> tuple[int, int, int]:
 
 
 def _multipv_lines(
-    tree: MCTSTree, root_id: int, n: int, root_q_default: float,
+    tree: MCTSTree,
+    root_id: int,
+    n: int,
+    root_q_default: float,
+    allowed_root_indices: set[int] | None = None,
 ) -> list[tuple[int, float, list[int]]]:
     """Return up to ``n`` (rank, q, pv_indices) triples for the top-visited
     root children. Rank is 1-based (UCI convention: ``multipv 1`` = best).
@@ -881,6 +914,13 @@ def _multipv_lines(
     actions, visits, qs = tree.get_children_q(root_id, root_q_default)
     if actions.size == 0:
         return []
+    if allowed_root_indices is not None:
+        keep = np.isin(actions, np.fromiter(allowed_root_indices, dtype=np.int32))
+        actions = actions[keep]
+        visits = visits[keep]
+        qs = qs[keep]
+        if actions.size == 0:
+            return []
   # Sort descending by visits; ties tolerated — argsort is stable in numpy.
     order = np.argsort(-visits)[:max(1, int(n))]
     out: list[tuple[int, float, list[int]]] = []
@@ -900,6 +940,22 @@ def _multipv_lines(
     return out
 
 
+
+
+def _allowed_root_indices(board: chess.Board, root_moves: tuple[str, ...]) -> set[int] | None:
+    """Convert UCI ``searchmoves`` to legal root policy indices."""
+    if not root_moves:
+        return None
+    allowed: set[int] = set()
+    for uci in root_moves:
+        try:
+            move = chess.Move.from_uci(str(uci))
+        except ValueError:
+            continue
+        if move not in board.legal_moves:
+            continue
+        allowed.add(int(move_to_index(move, board)))
+    return allowed
 
 
 def _try_tb_root_bestmove(
@@ -972,18 +1028,32 @@ def _pv_mate_moves(root_board: chess.Board, pv_indices: list[int]) -> int | None
     return moves if mating_side == root_board.turn else -moves
 
 
-def _best_move_and_pv(tree: MCTSTree, root_id: int) -> tuple[int, list[int]]:
+def _best_move_and_pv(
+    tree: MCTSTree,
+    root_id: int,
+    allowed_root_indices: set[int] | None = None,
+) -> tuple[int, list[int]]:
     """Most-visited root move and its PV. ``q`` is unused at the call sites
     that take this shape (so the third tuple element from ``_multipv_lines``
     is dropped here)."""
-    lines = _multipv_lines(tree, root_id, root_q_default=0.0, n=1)
+    lines = _multipv_lines(
+        tree,
+        root_id,
+        root_q_default=0.0,
+        n=1,
+        allowed_root_indices=allowed_root_indices,
+    )
     if not lines:
         return -1, []
     _, _, pv = lines[0]
     return pv[0], pv
 
 
-def _predicted_opponent_reply(tree: MCTSTree, root_id: int) -> int | None:
+def _predicted_opponent_reply(
+    tree: MCTSTree,
+    root_id: int,
+    allowed_root_indices: set[int] | None = None,
+) -> int | None:
     """Move index the opponent is predicted to play after OUR bestmove.
 
     This is what we ponder on, not our own alternative — we take the
@@ -993,7 +1063,13 @@ def _predicted_opponent_reply(tree: MCTSTree, root_id: int) -> int | None:
     Distinct from the "root's second-most-visited child" which would be
     our 2nd-best move from the current position — a different concept.
     """
-    lines = _multipv_lines(tree, root_id, root_q_default=0.0, n=1)
+    lines = _multipv_lines(
+        tree,
+        root_id,
+        root_q_default=0.0,
+        n=1,
+        allowed_root_indices=allowed_root_indices,
+    )
     if not lines or len(lines[0][2]) < 2:
         return None
     return lines[0][2][1]
@@ -1029,4 +1105,3 @@ def _board_after(board: chess.Board, idx: int) -> chess.Board:
     except Exception:
         pass
     return b
-

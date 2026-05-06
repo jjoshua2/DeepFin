@@ -271,6 +271,15 @@ Current notes:
   `tests/test_worker_upload_response.py`, `tests/test_worker_small_uploads.py`,
   and `tests/test_server_upload_security.py::test_shard_run_id_must_match_upload_trial`
   (`17 passed`).
+- Finding F027 opened/fixed in this cycle: UCI parsed `go searchmoves ...` but
+  ignored it during search/result selection, so a GUI could request a restricted
+  root move set and receive a bestmove outside that set. Search limits now carry
+  `searchmoves`, and final root move / ponder selection is restricted to legal
+  requested root moves.
+- Focused UCI searchmoves validation after F027 passed:
+  `tests/test_uci_protocol.py`, `tests/test_uci_time_manager.py`,
+  `tests/test_uci_searchmoves.py`, `tests/test_uci_ponderhit_clock.py`,
+  `tests/test_uci_smoke.py`, and `tests/test_uci_walker_pool.py` (`58 passed`).
 - Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
   `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
   `tests/test_tune_distributed_worker_cmd.py`,

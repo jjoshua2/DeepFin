@@ -32,6 +32,7 @@ class SearchLimits:
     max_depth: int | None = None  # treat UCI depth as sims (coarse v1)
     infinite: bool = False
     ponder: bool = False  # no deadline until ponderhit
+    searchmoves: tuple[str, ...] = ()
 
     def is_open_ended(self) -> bool:
         return self.infinite or self.ponder or (
@@ -45,11 +46,16 @@ def limits_from_go(
     move_overhead_ms: int = 0,
 ) -> SearchLimits:
     if args.infinite:
-        return SearchLimits(infinite=True)
+        return SearchLimits(infinite=True, searchmoves=tuple(args.searchmoves))
     if args.ponder:
   # Ponder still wants a fallback budget (for `ponderhit` latency bounds)
   # but until ponderhit flips it live, the search runs open-ended.
-        return SearchLimits(ponder=True, max_nodes=args.nodes, max_depth=args.depth)
+        return SearchLimits(
+            ponder=True,
+            max_nodes=args.nodes,
+            max_depth=args.depth,
+            searchmoves=tuple(args.searchmoves),
+        )
 
     deadline_ms: int | None = None
     if args.movetime_ms is not None:
@@ -71,6 +77,7 @@ def limits_from_go(
         deadline_ms=deadline_ms,
         max_nodes=args.nodes,
         max_depth=args.depth,
+        searchmoves=tuple(args.searchmoves),
     )
 
 

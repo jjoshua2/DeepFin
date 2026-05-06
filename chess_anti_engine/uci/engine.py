@@ -624,6 +624,7 @@ class Engine:
                 deadline=deadline,
                 max_nodes=max_nodes,
                 max_depth=max_depth,
+                root_moves=limits.searchmoves,
                 info_cb=self._emit_info,
             )
         except Exception as exc:  # pragma: no cover — UCI crash-safety
