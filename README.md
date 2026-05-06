@@ -36,7 +36,7 @@ Common minimal installs:
 - worker/client machine: `pip install -e ".[worker]"`
 
 ## Quickstart: single-trial run (selfplay + train loop, no PBT)
-You must point at a Stockfish binary. `--mode train` runs a single trial through the same distributed selfplay pipeline as tune mode, but without population-based hyperparameter search — one worker process, no search, no exploits.
+You must point at a Stockfish binary. `--mode train` runs a single trial through the same distributed selfplay pipeline as tune mode, but without population-based hyperparameter search — one worker process, no population search, no exploits.
 
 ```bash
 python -m chess_anti_engine.run \

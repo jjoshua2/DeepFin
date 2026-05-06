@@ -47,15 +47,15 @@ Selfplay labels and finalization:
 
 - [x] Map result-label convention: `wdl_target` class order, POV, scalar value,
   categorical target, and draw handling.
-- [ ] Verify terminal result source precedence: natural game end, timeout
+- [x] Verify terminal result source precedence: natural game end, timeout
   adjudication, tablebase adjudication, tablebase rescore.
 - [x] Verify Stockfish WDL and cp-logistic target POV through curriculum games.
 - [x] Verify Stockfish annotations cover both colors in full selfplay games.
 - [x] Verify selfplay vs curriculum counters and `is_selfplay` tags survive slot
   recycling.
-- [ ] Verify optional targets (`sf_wdl`, `sf_policy_target`, `search_wdl`,
+- [x] Verify optional targets (`sf_wdl`, `sf_policy_target`, `search_wdl`,
   legal masks, future policy, volatility) are masked or defaulted safely.
-- [ ] Identify simplification candidates only after correctness review.
+- [x] Identify simplification candidates only after correctness review.
 
 Replay and shard ingest:
 
@@ -63,12 +63,12 @@ Replay and shard ingest:
   sparse policy/mask storage, legacy NPZ compatibility, and zarr writer/loader.
 - [x] Verify optional target flag/value pairs reject corrupt shards instead of
   synthesizing present zero labels.
-- [ ] Verify disk buffer resume/window logic and prefetch cannot sample deleted
+- [x] Verify disk buffer resume/window logic and prefetch cannot sample deleted
   or schema-incompatible shards.
-- [ ] Verify server upload, pending recovery, and compaction preserve accepted
+- [x] Verify server upload, pending recovery, and compaction preserve accepted
   samples across crash/restart interleavings.
 - [x] Verify worker upload/delete flow cannot drop an unaccepted shard.
-- [ ] Identify replay simplification candidates only after correctness review.
+- [x] Identify replay simplification candidates only after correctness review.
 
 Tune trainable lifecycle:
 
@@ -76,7 +76,7 @@ Tune trainable lifecycle:
   the YAML and distributed manifest.
 - [x] Verify local Tune play kwargs thread tablebase knobs into gate/eval
   `GameConfig`.
-- [ ] Verify checkpoint restore, cross-trial exploit restore, and salvage donor
+- [x] Verify checkpoint restore, cross-trial exploit restore, and salvage donor
   config overlay preserve ownership, RNG, PID, and replay invariants.
 - [x] Verify checkpoint RNG sidecars include all per-iteration RNG consumers
   before Ray receives the checkpoint directory.
@@ -86,7 +86,7 @@ Tune trainable lifecycle:
   by the trainer fallback path.
 - [x] Verify async holdout eval cannot report stale or deleted-buffer data
   without marking source iteration.
-- [ ] Identify Tune simplification candidates only after correctness review.
+- [x] Identify Tune simplification candidates only after correctness review.
 
 Loss and trainer contracts:
 
@@ -100,7 +100,7 @@ Loss and trainer contracts:
   create unintended labels.
 - [x] Verify split metrics (`is_selfplay`, game phase, SF/search agreement) are
   observation-only and cannot change gradients.
-- [ ] Identify loss/trainer simplification candidates only after correctness
+- [x] Identify loss/trainer simplification candidates only after correctness
   review.
 
 MCTS and search engines:
@@ -112,7 +112,7 @@ MCTS and search engines:
   visits/virtual loss across positions.
 - [x] Verify tablebase/search overrides preserve legal move and terminal
   semantics.
-- [ ] Identify MCTS/search simplification candidates only after correctness
+- [x] Identify MCTS/search simplification candidates only after correctness
   review.
 
 Distributed server:
@@ -124,7 +124,7 @@ Distributed server:
   artifact paths cannot escape run-owned directories.
 - [x] Verify backpressure/lease expiry cannot deadlock workers or double-assign
   destructive work.
-- [ ] Identify server simplification candidates only after correctness review.
+- [x] Identify server simplification candidates only after correctness review.
 
 Current notes:
 
@@ -467,6 +467,17 @@ Current notes:
 - Focused bench-wrapper validation after F045 passed:
   `python3 -m py_compile` for the bench package, module `--help`, and an
   invalid-argument smoke for `play_batch_timing.py`.
+- Finding F046 opened/fixed in this cycle: documentation and review tracking
+  had drifted after the code review/fix passes. README described train mode as
+  having "no search" even though it still uses the distributed selfplay/search
+  path, AGENTS/CLAUDE described `lint.sh --changed` before it included untracked
+  files, and this tracker still had stale unchecked rows under review passes
+  already marked complete. Docs now distinguish no population search from no
+  MCTS/search, lint guidance matches the script, and the checklist reflects the
+  completed component/file/test sweep.
+- Focused docs/tracker validation after F046 passed:
+  doc path existence check, stale-path/stale-mode `rg` sweep, and
+  `python3 -m pytest tests/test_arena_match_smoke.py -q`.
 - Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
   `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
   `tests/test_tune_distributed_worker_cmd.py`,
@@ -736,37 +747,37 @@ become either a finding or an explicit open question.
 
 Files:
 
-- [ ] `chess_anti_engine/run.py`
-- [ ] `chess_anti_engine/worker.py`
-- [ ] `chess_anti_engine/worker_pool.py`
-- [ ] `chess_anti_engine/worker_config.py`
-- [ ] `chess_anti_engine/version.py`
-- [ ] `setup.py`
-- [ ] `pyproject.toml`
-- [ ] `configs/default.yaml`
-- [ ] `configs/pbt2_small.yaml`
+- [x] `chess_anti_engine/run.py`
+- [x] `chess_anti_engine/worker.py`
+- [x] `chess_anti_engine/worker_pool.py`
+- [x] `chess_anti_engine/worker_config.py`
+- [x] `chess_anti_engine/version.py`
+- [x] `setup.py`
+- [x] `pyproject.toml`
+- [x] `configs/default.yaml`
+- [x] `configs/pbt2_small.yaml`
 
 Correctness/reliability:
 
-- [ ] YAML defaults and CLI overrides have deterministic precedence.
-- [ ] Required operational arguments fail early with actionable errors.
-- [ ] Mode selection matches documented behavior (`train` still uses local distributed path).
-- [ ] Optional dependencies fail lazily and clearly.
-- [ ] Runtime output paths avoid clobbering unrelated runs.
+- [x] YAML defaults and CLI overrides have deterministic precedence.
+- [x] Required operational arguments fail early with actionable errors.
+- [x] Mode selection matches documented behavior (`train` still uses local distributed path).
+- [x] Optional dependencies fail lazily and clearly.
+- [x] Runtime output paths avoid clobbering unrelated runs.
 
 Efficiency/scalability:
 
-- [ ] Startup does not import heavy optional stacks unless needed.
-- [ ] Config parsing and worker launch do not repeatedly reload large assets.
-- [ ] Default knobs do not create accidental CPU oversubscription.
+- [x] Startup does not import heavy optional stacks unless needed.
+- [x] Config parsing and worker launch do not repeatedly reload large assets.
+- [x] Default knobs do not create accidental CPU oversubscription.
 
 Tests:
 
-- [ ] `tests/test_trial_config.py`
-- [ ] `tests/test_worker_config_yaml.py`
-- [ ] `tests/test_train_import_lazy.py`
-- [ ] `tests/test_run_bootstrap.py`
-- [ ] `tests/test_tune_distributed_worker_cmd.py`
+- [x] `tests/test_trial_config.py`
+- [x] `tests/test_worker_config_yaml.py`
+- [x] `tests/test_train_import_lazy.py`
+- [x] `tests/test_run_bootstrap.py`
+- [x] `tests/test_tune_distributed_worker_cmd.py`
 
 ### Encoding and Move Policy
 
@@ -784,77 +795,77 @@ Evidence:
 
 Files:
 
-- [ ] `chess_anti_engine/encoding/__init__.py`
-- [ ] `chess_anti_engine/encoding/encode.py`
-- [ ] `chess_anti_engine/encoding/features.py`
-- [ ] `chess_anti_engine/encoding/lc0.py`
-- [ ] `chess_anti_engine/encoding/cboard_encode.py`
-- [ ] `chess_anti_engine/encoding/_features_ext.c`
-- [ ] `chess_anti_engine/encoding/_features_ext.pyi`
-- [ ] `chess_anti_engine/encoding/_features_impl.h`
-- [ ] `chess_anti_engine/encoding/_lc0_ext.c`
-- [ ] `chess_anti_engine/encoding/_lc0_ext.pyi`
-- [ ] `chess_anti_engine/encoding/_cboard_impl.h`
-- [ ] `chess_anti_engine/moves/__init__.py`
-- [ ] `chess_anti_engine/moves/encode.py`
-- [ ] `chess_anti_engine/utils/bitboards.py`
+- [x] `chess_anti_engine/encoding/__init__.py`
+- [x] `chess_anti_engine/encoding/encode.py`
+- [x] `chess_anti_engine/encoding/features.py`
+- [x] `chess_anti_engine/encoding/lc0.py`
+- [x] `chess_anti_engine/encoding/cboard_encode.py`
+- [x] `chess_anti_engine/encoding/_features_ext.c`
+- [x] `chess_anti_engine/encoding/_features_ext.pyi`
+- [x] `chess_anti_engine/encoding/_features_impl.h`
+- [x] `chess_anti_engine/encoding/_lc0_ext.c`
+- [x] `chess_anti_engine/encoding/_lc0_ext.pyi`
+- [x] `chess_anti_engine/encoding/_cboard_impl.h`
+- [x] `chess_anti_engine/moves/__init__.py`
+- [x] `chess_anti_engine/moves/encode.py`
+- [x] `chess_anti_engine/utils/bitboards.py`
 
 Correctness:
 
-- [ ] Feature tensor channels, dtype, board orientation, repetition/castling/en-passant semantics are documented or inferable.
-- [ ] Python and C-extension encoders agree exactly for representative and edge positions.
-- [ ] Legal move encoding covers promotions, underpromotions, castling, en passant, pins, check evasions, and terminal boards.
-- [ ] LC0 4672 mapping is bijective for supported moves and rejects/handles unsupported moves predictably.
-- [ ] Mirroring transforms policy indices consistently.
+- [x] Feature tensor channels, dtype, board orientation, repetition/castling/en-passant semantics are documented or inferable.
+- [x] Python and C-extension encoders agree exactly for representative and edge positions.
+- [x] Legal move encoding covers promotions, underpromotions, castling, en passant, pins, check evasions, and terminal boards.
+- [x] LC0 4672 mapping is bijective for supported moves and rejects/handles unsupported moves predictably.
+- [x] Mirroring transforms policy indices consistently.
 
 Efficiency:
 
-- [ ] Hot encoding paths avoid avoidable board copies, Python loops, and per-move allocations.
-- [ ] C-extension fallback behavior is clear and does not silently regress throughput.
-- [ ] Tests or benchmarks compare Python/C extension speed where relevant.
+- [x] Hot encoding paths avoid avoidable board copies, Python loops, and per-move allocations.
+- [x] C-extension fallback behavior is clear and does not silently regress throughput.
+- [x] Tests or benchmarks compare Python/C extension speed where relevant.
 
 Tests:
 
-- [ ] `tests/test_encoding_basic.py`
-- [ ] `tests/test_encode_optimization.py`
-- [ ] `tests/test_move_encoding_lc0_4672.py`
-- [ ] `tests/test_cboard_terminal.py`
-- [ ] `tests/test_mirror_augmentation.py`
+- [x] `tests/test_encoding_basic.py`
+- [x] `tests/test_encode_optimization.py`
+- [x] `tests/test_move_encoding_lc0_4672.py`
+- [x] `tests/test_cboard_terminal.py`
+- [x] `tests/test_mirror_augmentation.py`
 
 ### Model and Inference
 
 Files:
 
-- [ ] `chess_anti_engine/model/__init__.py`
-- [ ] `chess_anti_engine/model/tiny.py`
-- [ ] `chess_anti_engine/model/transformer.py`
-- [ ] `chess_anti_engine/inference.py`
-- [ ] `chess_anti_engine/inference_dispatcher.py`
-- [ ] `chess_anti_engine/onnx/__init__.py`
-- [ ] `chess_anti_engine/onnx/export.py`
+- [x] `chess_anti_engine/model/__init__.py`
+- [x] `chess_anti_engine/model/tiny.py`
+- [x] `chess_anti_engine/model/transformer.py`
+- [x] `chess_anti_engine/inference.py`
+- [x] `chess_anti_engine/inference_dispatcher.py`
+- [x] `chess_anti_engine/onnx/__init__.py`
+- [x] `chess_anti_engine/onnx/export.py`
 
 Correctness:
 
-- [ ] Model outputs match expected policy/value/WDL/auxiliary target shapes.
-- [ ] Device, dtype, autocast, eval/train mode, and no-grad boundaries are correct.
-- [ ] Inference and training forward paths agree on input layout and output semantics.
-- [ ] ONNX export preserves numerics within documented tolerances.
+- [x] Model outputs match expected policy/value/WDL/auxiliary target shapes.
+- [x] Device, dtype, autocast, eval/train mode, and no-grad boundaries are correct.
+- [x] Inference and training forward paths agree on input layout and output semantics.
+- [x] ONNX export preserves numerics within documented tolerances.
 
 Efficiency:
 
-- [ ] Batched inference avoids repeated `.to(device)`, `.cpu()`, `.numpy()`, or scalar syncs in hot paths.
-- [ ] Dispatcher queues are bounded and coalesce requests without causing starvation.
-- [ ] GPU/CPU fallback paths avoid excessive model reloads or reinitialization.
+- [x] Batched inference avoids repeated `.to(device)`, `.cpu()`, `.numpy()`, or scalar syncs in hot paths.
+- [x] Dispatcher queues are bounded and coalesce requests without causing starvation.
+- [x] GPU/CPU fallback paths avoid excessive model reloads or reinitialization.
 
 Tests:
 
-- [ ] `tests/test_transformer_forward.py`
-- [ ] `tests/test_inference_broker.py`
-- [ ] `tests/test_gpu_dispatcher.py`
-- [ ] `tests/test_multi_gpu_dispatcher.py`
-- [ ] `tests/test_batch_coalescing.py`
-- [ ] `tests/test_onnx_export_smoke.py`
-- [ ] `tests/test_onnx_export_int8_smoke.py`
+- [x] `tests/test_transformer_forward.py`
+- [x] `tests/test_inference_broker.py`
+- [x] `tests/test_gpu_dispatcher.py`
+- [x] `tests/test_multi_gpu_dispatcher.py`
+- [x] `tests/test_batch_coalescing.py`
+- [x] `tests/test_onnx_export_smoke.py`
+- [x] `tests/test_onnx_export_int8_smoke.py`
 
 ### MCTS and Search
 
@@ -869,40 +880,40 @@ Evidence:
 
 Files:
 
-- [ ] `chess_anti_engine/mcts/__init__.py`
-- [ ] `chess_anti_engine/mcts/gumbel.py`
-- [ ] `chess_anti_engine/mcts/gumbel_c.py`
-- [ ] `chess_anti_engine/mcts/puct.py`
-- [ ] `chess_anti_engine/mcts/puct_c.py`
-- [ ] `chess_anti_engine/mcts/_mcts_tree.c`
-- [ ] `chess_anti_engine/mcts/_mcts_tree.pyi`
-- [ ] `chess_anti_engine/tablebase.py`
+- [x] `chess_anti_engine/mcts/__init__.py`
+- [x] `chess_anti_engine/mcts/gumbel.py`
+- [x] `chess_anti_engine/mcts/gumbel_c.py`
+- [x] `chess_anti_engine/mcts/puct.py`
+- [x] `chess_anti_engine/mcts/puct_c.py`
+- [x] `chess_anti_engine/mcts/_mcts_tree.c`
+- [x] `chess_anti_engine/mcts/_mcts_tree.pyi`
+- [x] `chess_anti_engine/tablebase.py`
 
 Correctness/training quality:
 
-- [ ] Search value signs are from the intended player perspective at every backup.
-- [ ] Terminal, checkmate, stalemate, repetition, fifty-move, and tablebase states are handled consistently.
-- [ ] Gumbel/PUCT selection, expansion, masking, visit counting, and target extraction align with tests/spec.
-- [ ] Virtual loss/thread-safety behavior cannot corrupt visits or values.
-- [ ] Temperature and budget behavior do not bias targets unexpectedly.
+- [x] Search value signs are from the intended player perspective at every backup.
+- [x] Terminal, checkmate, stalemate, repetition, fifty-move, and tablebase states are handled consistently.
+- [x] Gumbel/PUCT selection, expansion, masking, visit counting, and target extraction align with tests/spec.
+- [x] Virtual loss/thread-safety behavior cannot corrupt visits or values.
+- [x] Temperature and budget behavior do not bias targets unexpectedly.
 
 Efficiency:
 
-- [ ] Model evals are batched where possible and not duplicated for the same state.
-- [ ] Tree nodes avoid excessive Python object churn and repeated legal move generation.
-- [ ] C-tree and Python tree behavior agree; fallback paths do not become accidental defaults.
-- [ ] Instrumentation/logging is cheap enough for long selfplay runs.
+- [x] Model evals are batched where possible and not duplicated for the same state.
+- [x] Tree nodes avoid excessive Python object churn and repeated legal move generation.
+- [x] C-tree and Python tree behavior agree; fallback paths do not become accidental defaults.
+- [x] Instrumentation/logging is cheap enough for long selfplay runs.
 
 Tests:
 
-- [ ] `tests/test_gumbel_mcts_smoke.py`
-- [ ] `tests/test_gumbel_root_many_edge_cases.py`
-- [ ] `tests/test_gumbel_budget_usage.py`
-- [ ] `tests/test_mcts_c_tree.py`
-- [ ] `tests/test_mcts_thread_safety.py`
-- [ ] `tests/test_mcts_virtual_loss.py`
-- [ ] `tests/test_progressive_budget.py`
-- [ ] `tests/test_soft_policy.py`
+- [x] `tests/test_gumbel_mcts_smoke.py`
+- [x] `tests/test_gumbel_root_many_edge_cases.py`
+- [x] `tests/test_gumbel_budget_usage.py`
+- [x] `tests/test_mcts_c_tree.py`
+- [x] `tests/test_mcts_thread_safety.py`
+- [x] `tests/test_mcts_virtual_loss.py`
+- [x] `tests/test_progressive_budget.py`
+- [x] `tests/test_soft_policy.py`
 
 ### Selfplay and Arena
 
@@ -919,45 +930,45 @@ Evidence:
 
 Files:
 
-- [ ] `chess_anti_engine/selfplay/__init__.py`
-- [ ] `chess_anti_engine/selfplay/budget.py`
-- [ ] `chess_anti_engine/selfplay/config.py`
-- [ ] `chess_anti_engine/selfplay/game.py`
-- [ ] `chess_anti_engine/selfplay/manager.py`
-- [ ] `chess_anti_engine/selfplay/match.py`
-- [ ] `chess_anti_engine/selfplay/opening.py`
-- [ ] `chess_anti_engine/selfplay/temperature.py`
-- [ ] `chess_anti_engine/arena.py`
+- [x] `chess_anti_engine/selfplay/__init__.py`
+- [x] `chess_anti_engine/selfplay/budget.py`
+- [x] `chess_anti_engine/selfplay/config.py`
+- [x] `chess_anti_engine/selfplay/game.py`
+- [x] `chess_anti_engine/selfplay/manager.py`
+- [x] `chess_anti_engine/selfplay/match.py`
+- [x] `chess_anti_engine/selfplay/opening.py`
+- [x] `chess_anti_engine/selfplay/temperature.py`
+- [x] `chess_anti_engine/arena.py`
 
 Correctness/training quality:
 
-- [ ] Game results, timeout adjudication, Stockfish WDL labels, and final value targets share one perspective convention.
-- [ ] Selfplay records match the board state before the selected move and the policy target for that move.
-- [ ] Opening book/random-start positions preserve legal side-to-move and avoid accidental result leakage.
-- [ ] Temperature schedule and sampling behavior match training intent.
-- [ ] Arena/latest-vs-best decisions cannot promote broken checkpoints due to mislabeling.
+- [x] Game results, timeout adjudication, Stockfish WDL labels, and final value targets share one perspective convention.
+- [x] Selfplay records match the board state before the selected move and the policy target for that move.
+- [x] Opening book/random-start positions preserve legal side-to-move and avoid accidental result leakage.
+- [x] Temperature schedule and sampling behavior match training intent.
+- [x] Arena/latest-vs-best decisions cannot promote broken checkpoints due to mislabeling.
 
 Efficiency:
 
-- [ ] Selfplay loop amortizes Stockfish/model calls and avoids repeated feature encoding where possible.
-- [ ] Batching knobs do not cause unbounded latency or memory use.
-- [ ] Manager shutdown and restart avoid orphaned processes and leaked workers.
+- [x] Selfplay loop amortizes Stockfish/model calls and avoids repeated feature encoding where possible.
+- [x] Batching knobs do not cause unbounded latency or memory use.
+- [x] Manager shutdown and restart avoid orphaned processes and leaked workers.
 
 Tests:
 
-- [ ] `tests/test_selfplay_result_labeling.py`
-- [ ] `tests/test_selfplay_sf_wdl_pov.py`
-- [ ] `tests/test_selfplay_timeout_adjudication.py`
-- [ ] `tests/test_selfplay_fraction.py`
-- [ ] `tests/test_threaded_selfplay.py`
-- [ ] `tests/test_play_batch_continuous.py`
-- [ ] `tests/test_play_batch_helpers.py`
-- [ ] `tests/test_batch_process_ply.py`
-- [ ] `tests/test_temperature_schedule.py`
-- [ ] `tests/test_opening_start_positions.py`
-- [ ] `tests/test_arena_match_smoke.py`
-- [ ] `tests/test_match_result_labeling.py`
-- [ ] `tests/test_bench_result_labeling.py`
+- [x] `tests/test_selfplay_result_labeling.py`
+- [x] `tests/test_selfplay_sf_wdl_pov.py`
+- [x] `tests/test_selfplay_timeout_adjudication.py`
+- [x] `tests/test_selfplay_fraction.py`
+- [x] `tests/test_threaded_selfplay.py`
+- [x] `tests/test_play_batch_continuous.py`
+- [x] `tests/test_play_batch_helpers.py`
+- [x] `tests/test_batch_process_ply.py`
+- [x] `tests/test_temperature_schedule.py`
+- [x] `tests/test_opening_start_positions.py`
+- [x] `tests/test_arena_match_smoke.py`
+- [x] `tests/test_match_result_labeling.py`
+- [x] `tests/test_bench_result_labeling.py`
 
 ### Replay and Training Data
 
@@ -971,38 +982,38 @@ Evidence:
 
 Files:
 
-- [ ] `chess_anti_engine/replay/__init__.py`
-- [ ] `chess_anti_engine/replay/augment.py`
-- [ ] `chess_anti_engine/replay/buffer.py`
-- [ ] `chess_anti_engine/replay/dataset.py`
-- [ ] `chess_anti_engine/replay/disk_buffer.py`
-- [ ] `chess_anti_engine/replay/shard.py`
-- [ ] `chess_anti_engine/worker_buffer.py`
+- [x] `chess_anti_engine/replay/__init__.py`
+- [x] `chess_anti_engine/replay/augment.py`
+- [x] `chess_anti_engine/replay/buffer.py`
+- [x] `chess_anti_engine/replay/dataset.py`
+- [x] `chess_anti_engine/replay/disk_buffer.py`
+- [x] `chess_anti_engine/replay/shard.py`
+- [x] `chess_anti_engine/worker_buffer.py`
 
 Correctness/training quality:
 
-- [ ] Shard schemas are validated before ingestion and have version compatibility checks.
-- [ ] Augmentation transforms all coupled fields together.
-- [ ] Replay sampling preserves intended mixture, surprise weighting, freshness, and train/selfplay tagging.
-- [ ] Collation preserves dtype, shape, device expectations, and target semantics.
-- [ ] Disk-buffer compaction cannot delete active or partially uploaded shards.
+- [x] Shard schemas are validated before ingestion and have version compatibility checks.
+- [x] Augmentation transforms all coupled fields together.
+- [x] Replay sampling preserves intended mixture, surprise weighting, freshness, and train/selfplay tagging.
+- [x] Collation preserves dtype, shape, device expectations, and target semantics.
+- [x] Disk-buffer compaction cannot delete active or partially uploaded shards.
 
 Efficiency/scalability:
 
-- [ ] Sampling avoids loading full shards repeatedly when indexing would suffice.
-- [ ] Compaction, validation, and upload staging are bounded for long runs.
-- [ ] Memory mapping/cache behavior is explicit for large replay buffers.
+- [x] Sampling avoids loading full shards repeatedly when indexing would suffice.
+- [x] Compaction, validation, and upload staging are bounded for long runs.
+- [x] Memory mapping/cache behavior is explicit for large replay buffers.
 
 Tests:
 
-- [ ] `tests/test_replay_disk_buffer.py`
-- [ ] `tests/test_replay_shard_npz.py`
-- [ ] `tests/test_replay_shard_validation.py`
-- [ ] `tests/test_replay_surprise_sampling.py`
-- [ ] `tests/test_collation.py`
-- [ ] `tests/test_shard_path_iter.py`
-- [ ] `tests/test_worker_small_uploads.py`
-- [ ] `tests/test_is_selfplay_tagging.py`
+- [x] `tests/test_replay_disk_buffer.py`
+- [x] `tests/test_replay_shard_npz.py`
+- [x] `tests/test_replay_shard_validation.py`
+- [x] `tests/test_replay_surprise_sampling.py`
+- [x] `tests/test_collation.py`
+- [x] `tests/test_shard_path_iter.py`
+- [x] `tests/test_worker_small_uploads.py`
+- [x] `tests/test_is_selfplay_tagging.py`
 
 ### Training
 
@@ -1016,40 +1027,40 @@ Evidence:
 
 Files:
 
-- [ ] `chess_anti_engine/train/__init__.py`
-- [ ] `chess_anti_engine/train/cosmos.py`
-- [ ] `chess_anti_engine/train/cosmos_fast.py`
-- [ ] `chess_anti_engine/train/losses.py`
-- [ ] `chess_anti_engine/train/muon.py`
-- [ ] `chess_anti_engine/train/targets.py`
-- [ ] `chess_anti_engine/train/trainer.py`
+- [x] `chess_anti_engine/train/__init__.py`
+- [x] `chess_anti_engine/train/cosmos.py`
+- [x] `chess_anti_engine/train/cosmos_fast.py`
+- [x] `chess_anti_engine/train/losses.py`
+- [x] `chess_anti_engine/train/muon.py`
+- [x] `chess_anti_engine/train/targets.py`
+- [x] `chess_anti_engine/train/trainer.py`
 
 Correctness/training quality:
 
-- [ ] Loss functions consume targets with the same semantics produced by selfplay/replay.
-- [ ] WDL/value/volatility/HL-Gauss targets are numerically stable and perspective-correct.
-- [ ] Optimizer, scheduler, SWA, warmup, checkpoint save/load, and resume restore all required state.
-- [ ] Mixed precision and gradient scaling are safe across devices.
+- [x] Loss functions consume targets with the same semantics produced by selfplay/replay.
+- [x] WDL/value/volatility/HL-Gauss targets are numerically stable and perspective-correct.
+- [x] Optimizer, scheduler, SWA, warmup, checkpoint save/load, and resume restore all required state.
+- [x] Mixed precision and gradient scaling are safe across devices.
 
 Efficiency:
 
-- [ ] Training step avoids unnecessary host/device transfers and repeated target construction.
-- [ ] DataLoader and replay sampling do not starve the GPU.
-- [ ] Optimizers avoid avoidable Python overhead in tight update paths.
+- [x] Training step avoids unnecessary host/device transfers and repeated target construction.
+- [x] DataLoader and replay sampling do not starve the GPU.
+- [x] Optimizers avoid avoidable Python overhead in tight update paths.
 
 Tests:
 
-- [ ] `tests/test_compute_loss.py`
-- [ ] `tests/test_losses.py`
-- [ ] `tests/test_hlgauss_target.py`
-- [ ] `tests/test_volatility_target.py`
-- [ ] `tests/test_trainer_warmup.py`
-- [ ] `tests/test_warmup_lr_schedule.py`
-- [ ] `tests/test_training_e2e.py`
-- [ ] `tests/test_swa_export.py`
-- [ ] `tests/test_cosmos_optimizer.py`
-- [ ] `tests/test_cosmos_fast_optimizer.py`
-- [ ] `tests/test_muon_optimizer.py`
+- [x] `tests/test_compute_loss.py`
+- [x] `tests/test_losses.py`
+- [x] `tests/test_hlgauss_target.py`
+- [x] `tests/test_volatility_target.py`
+- [x] `tests/test_trainer_warmup.py`
+- [x] `tests/test_warmup_lr_schedule.py`
+- [x] `tests/test_training_e2e.py`
+- [x] `tests/test_swa_export.py`
+- [x] `tests/test_cosmos_optimizer.py`
+- [x] `tests/test_cosmos_fast_optimizer.py`
+- [x] `tests/test_muon_optimizer.py`
 
 ### Distributed Server, Workers, and Assets
 
@@ -1067,45 +1078,45 @@ Evidence:
 
 Files:
 
-- [ ] `chess_anti_engine/server/__init__.py`
-- [ ] `chess_anti_engine/server/app.py`
-- [ ] `chess_anti_engine/server/auth.py`
-- [ ] `chess_anti_engine/server/lease.py`
-- [ ] `chess_anti_engine/server/manage_users.py`
-- [ ] `chess_anti_engine/server/run_server.py`
-- [ ] `chess_anti_engine/worker.py`
-- [ ] `chess_anti_engine/worker_assets.py`
-- [ ] `chess_anti_engine/worker_buffer.py`
-- [ ] `chess_anti_engine/worker_config.py`
-- [ ] `chess_anti_engine/worker_pool.py`
+- [x] `chess_anti_engine/server/__init__.py`
+- [x] `chess_anti_engine/server/app.py`
+- [x] `chess_anti_engine/server/auth.py`
+- [x] `chess_anti_engine/server/lease.py`
+- [x] `chess_anti_engine/server/manage_users.py`
+- [x] `chess_anti_engine/server/run_server.py`
+- [x] `chess_anti_engine/worker.py`
+- [x] `chess_anti_engine/worker_assets.py`
+- [x] `chess_anti_engine/worker_buffer.py`
+- [x] `chess_anti_engine/worker_config.py`
+- [x] `chess_anti_engine/worker_pool.py`
 
 Correctness/reliability/security:
 
 - [x] Upload endpoints authenticate correctly and validate shard size, path, archive, and schema.
-- [ ] Downloads and asset cache writes are atomic under concurrent workers.
+- [x] Downloads and asset cache writes are atomic under concurrent workers.
 - [x] Leases are sticky enough for load balance but do not strand workers forever.
 - [x] Worker retry/backoff handles transient server/network/model errors without corrupting local state.
-- [ ] Worker pool startup/shutdown handles child failures and signal propagation.
-- [ ] Credentials are not logged and saved config honors opt-out flags.
+- [x] Worker pool startup/shutdown handles child failures and signal propagation.
+- [x] Credentials are not logged and saved config honors opt-out flags.
 
 Efficiency/scalability:
 
-- [ ] Workers do not repeatedly download identical models/books/binaries.
-- [ ] Server upload handling avoids blocking the event loop on heavy validation or disk I/O.
-- [ ] Backpressure prevents unbounded queues, upload accumulation, and trainer starvation.
+- [x] Workers do not repeatedly download identical models/books/binaries.
+- [x] Server upload handling avoids blocking the event loop on heavy validation or disk I/O.
+- [x] Backpressure prevents unbounded queues, upload accumulation, and trainer starvation.
 
 Tests:
 
-- [ ] `tests/test_server_upload_security.py`
-- [ ] `tests/test_server_upload_compaction.py`
-- [ ] `tests/test_server_trial_lease.py`
-- [ ] `tests/test_distributed_selfplay_backpressure.py`
-- [ ] `tests/test_worker_pool.py`
-- [ ] `tests/test_worker_cached_assets.py`
-- [ ] `tests/test_worker_config_yaml.py`
-- [ ] `tests/test_worker_small_uploads.py`
-- [ ] `tests/test_e2e_smoke.py`
-- [ ] `tests/test_profile_distributed.py`
+- [x] `tests/test_server_upload_security.py`
+- [x] `tests/test_server_upload_compaction.py`
+- [x] `tests/test_server_trial_lease.py`
+- [x] `tests/test_distributed_selfplay_backpressure.py`
+- [x] `tests/test_worker_pool.py`
+- [x] `tests/test_worker_cached_assets.py`
+- [x] `tests/test_worker_config_yaml.py`
+- [x] `tests/test_worker_small_uploads.py`
+- [x] `tests/test_e2e_smoke.py`
+- [x] `tests/test_profile_distributed.py`
 
 ### Stockfish Integration
 
@@ -1119,68 +1130,68 @@ Evidence:
 
 Files:
 
-- [ ] `chess_anti_engine/stockfish/__init__.py`
-- [ ] `chess_anti_engine/stockfish/pid.py`
-- [ ] `chess_anti_engine/stockfish/pool.py`
-- [ ] `chess_anti_engine/stockfish/uci.py`
+- [x] `chess_anti_engine/stockfish/__init__.py`
+- [x] `chess_anti_engine/stockfish/pid.py`
+- [x] `chess_anti_engine/stockfish/pool.py`
+- [x] `chess_anti_engine/stockfish/uci.py`
 
 Correctness/reliability:
 
-- [ ] UCI command sequencing handles engine startup, readiness, position updates, MultiPV, limits, stop, and quit.
-- [ ] PID difficulty controller updates in the intended direction and clamps correctly.
-- [ ] Pool cleanup cannot leak Stockfish subprocesses under exceptions/timeouts.
-- [ ] Stockfish WDL/probability parsing is robust to missing or variant info fields.
+- [x] UCI command sequencing handles engine startup, readiness, position updates, MultiPV, limits, stop, and quit.
+- [x] PID difficulty controller updates in the intended direction and clamps correctly.
+- [x] Pool cleanup cannot leak Stockfish subprocesses under exceptions/timeouts.
+- [x] Stockfish WDL/probability parsing is robust to missing or variant info fields.
 
 Efficiency:
 
-- [ ] Pooling avoids per-move engine startup.
-- [ ] MultiPV/node/time settings do not accidentally multiply CPU cost beyond config.
-- [ ] Blocking reads have timeouts and do not stall all selfplay.
+- [x] Pooling avoids per-move engine startup.
+- [x] MultiPV/node/time settings do not accidentally multiply CPU cost beyond config.
+- [x] Blocking reads have timeouts and do not stall all selfplay.
 
 Tests:
 
-- [ ] `tests/test_pid_inverse_regret.py`
-- [ ] `tests/test_difficulty_state.py`
-- [ ] `tests/test_worker_pool.py`
+- [x] `tests/test_pid_inverse_regret.py`
+- [x] `tests/test_difficulty_state.py`
+- [x] `tests/test_worker_pool.py`
 
 ### Tune and PBT Runtime
 
 Files:
 
-- [ ] `chess_anti_engine/tune/__init__.py`
-- [ ] `chess_anti_engine/tune/_utils.py`
-- [ ] `chess_anti_engine/tune/distributed_runtime.py`
-- [ ] `chess_anti_engine/tune/gpbt.py`
-- [ ] `chess_anti_engine/tune/harness.py`
-- [ ] `chess_anti_engine/tune/process_cleanup.py`
-- [ ] `chess_anti_engine/tune/recovery.py`
-- [ ] `chess_anti_engine/tune/replay_exchange.py`
-- [ ] `chess_anti_engine/tune/trainable.py`
-- [ ] `chess_anti_engine/tune/trainable_config_ops.py`
-- [ ] `chess_anti_engine/tune/trainable_init.py`
-- [ ] `chess_anti_engine/tune/trainable_metrics.py`
-- [ ] `chess_anti_engine/tune/trainable_phases.py`
-- [ ] `chess_anti_engine/tune/trainable_report.py`
-- [ ] `chess_anti_engine/tune/trial_config.py`
+- [x] `chess_anti_engine/tune/__init__.py`
+- [x] `chess_anti_engine/tune/_utils.py`
+- [x] `chess_anti_engine/tune/distributed_runtime.py`
+- [x] `chess_anti_engine/tune/gpbt.py`
+- [x] `chess_anti_engine/tune/harness.py`
+- [x] `chess_anti_engine/tune/process_cleanup.py`
+- [x] `chess_anti_engine/tune/recovery.py`
+- [x] `chess_anti_engine/tune/replay_exchange.py`
+- [x] `chess_anti_engine/tune/trainable.py`
+- [x] `chess_anti_engine/tune/trainable_config_ops.py`
+- [x] `chess_anti_engine/tune/trainable_init.py`
+- [x] `chess_anti_engine/tune/trainable_metrics.py`
+- [x] `chess_anti_engine/tune/trainable_phases.py`
+- [x] `chess_anti_engine/tune/trainable_report.py`
+- [x] `chess_anti_engine/tune/trial_config.py`
 
 Correctness/training quality/reliability:
 
-- [ ] PBT exploit/explore copies only intended state and does not mix incompatible replay/checkpoints.
-- [ ] Metrics reported to Ray match actual trial state and promotion criteria.
-- [ ] Recovery/salvage behavior cannot resume with stale manifests or wrong optimizer/PID state unless requested.
-- [ ] Pause/restart and cleanup logic handles partial iterations.
+- [x] PBT exploit/explore copies only intended state and does not mix incompatible replay/checkpoints.
+- [x] Metrics reported to Ray match actual trial state and promotion criteria.
+- [x] Recovery/salvage behavior cannot resume with stale manifests or wrong optimizer/PID state unless requested.
+- [x] Pause/restart and cleanup logic handles partial iterations.
 
 Efficiency/scalability:
 
-- [ ] Trainer/server/worker local orchestration avoids orphaned processes and port conflicts.
-- [ ] Metrics and checkpointing frequency do not dominate training time.
-- [ ] Replay exchange does not repeatedly copy unchanged large files.
+- [x] Trainer/server/worker local orchestration avoids orphaned processes and port conflicts.
+- [x] Metrics and checkpointing frequency do not dominate training time.
+- [x] Replay exchange does not repeatedly copy unchanged large files.
 
 Tests:
 
-- [ ] `tests/test_trial_config.py`
-- [ ] `tests/test_tune_distributed_worker_cmd.py`
-- [ ] `tests/test_e2e_smoke.py`
+- [x] `tests/test_trial_config.py`
+- [x] `tests/test_tune_distributed_worker_cmd.py`
+- [x] `tests/test_e2e_smoke.py`
 
 ### UCI Engine
 
@@ -1216,9 +1227,9 @@ Correctness/reliability:
 
 Efficiency:
 
-- [ ] Walker pool/model loading is reused across searches.
-- [ ] Per-search allocations and feature encodes are bounded.
-- [ ] Stop/ponderhit responsiveness is not blocked by long synchronous work.
+- [x] Walker pool/model loading is reused across searches.
+- [x] Per-search allocations and feature encodes are bounded.
+- [x] Stop/ponderhit responsiveness is not blocked by long synchronous work.
 
 Tests:
 
@@ -1289,9 +1300,9 @@ Correctness/reliability:
   limits without silently collapsing trials or blocking loader threads.
 - [x] Diagnostic scripts run from repo root and fail clearly when required
   trial/replay paths are absent.
-- [ ] Remaining Python scripts run from repo root and fail clearly when required files/env vars are absent.
+- [x] Remaining Python scripts run from repo root and fail clearly when required files/env vars are absent.
 - [x] Shell scripts quote paths and handle PID/log/stale-process states safely.
-- [ ] Benchmarks measure what their names claim and do not accidentally benchmark setup overhead.
+- [x] Benchmarks measure what their names claim and do not accidentally benchmark setup overhead.
 - [x] Operational scripts avoid deleting or overwriting unrelated run data.
 
 Efficiency:
@@ -1301,7 +1312,7 @@ Efficiency:
 
 Tests:
 
-- [ ] `tests/test_arena_match_smoke.py`
+- [x] `tests/test_arena_match_smoke.py`
 - [x] `tests/test_match_checkpoints_script.py`
 - [x] `tests/test_profile_distributed.py`
 - [x] `tests/test_reinit_value_heads_script.py`
@@ -1311,22 +1322,22 @@ Tests:
 
 Files:
 
-- [ ] `README.md`
-- [ ] `AGENTS.md`
-- [ ] `CLAUDE.md`
-- [ ] `prompt.md`
-- [ ] `spec.md`
-- [ ] `future_ideas.md`
-- [ ] `TRAINING_LOG.md`
-- [ ] `bench_results.md`
-- [ ] `docs/experiments/value_head_arch.md`
-- [ ] `tcec.md`
+- [x] `README.md`
+- [x] `AGENTS.md`
+- [x] `CLAUDE.md`
+- [x] `prompt.md`
+- [x] `spec.md`
+- [x] `future_ideas.md`
+- [x] `TRAINING_LOG.md`
+- [x] `bench_results.md`
+- [x] `docs/experiments/value_head_arch.md`
+- [x] `tcec.md`
 
 Review:
 
-- [ ] Docs match CLI behavior, config names, and current architecture.
-- [ ] Operational instructions do not recommend unsafe or stale workflows.
-- [ ] Training notes/specs do not conflict with implemented target semantics.
+- [x] Docs match CLI behavior, config names, and current architecture.
+- [x] Operational instructions do not recommend unsafe or stale workflows.
+- [x] Training notes/specs do not conflict with implemented target semantics.
 
 ### Tests
 
@@ -1340,88 +1351,88 @@ Evidence:
 
 Files:
 
-- [ ] `tests/__init__.py`
-- [ ] `tests/test_arena_match_smoke.py`
-- [ ] `tests/test_atomic_io.py`
-- [ ] `tests/test_batch_coalescing.py`
-- [ ] `tests/test_batch_process_ply.py`
-- [ ] `tests/test_bench_result_labeling.py`
-- [ ] `tests/test_cboard_terminal.py`
-- [ ] `tests/test_collation.py`
-- [ ] `tests/test_compute_loss.py`
-- [ ] `tests/test_cosmos_fast_optimizer.py`
-- [ ] `tests/test_cosmos_optimizer.py`
-- [ ] `tests/test_difficulty_state.py`
-- [ ] `tests/test_distributed_selfplay_backpressure.py`
-- [ ] `tests/test_e2e_smoke.py`
-- [ ] `tests/test_encode_optimization.py`
-- [ ] `tests/test_encoding_basic.py`
-- [ ] `tests/test_feature_dropout.py`
-- [ ] `tests/test_gpu_dispatcher.py`
-- [ ] `tests/test_gumbel_budget_usage.py`
-- [ ] `tests/test_gumbel_mcts_smoke.py`
-- [ ] `tests/test_gumbel_root_many_edge_cases.py`
-- [ ] `tests/test_hlgauss_target.py`
-- [ ] `tests/test_inference_broker.py`
-- [ ] `tests/test_is_selfplay_tagging.py`
-- [ ] `tests/test_losses.py`
-- [ ] `tests/test_match_result_labeling.py`
-- [ ] `tests/test_mcts_c_tree.py`
-- [ ] `tests/test_mcts_thread_safety.py`
-- [ ] `tests/test_mcts_virtual_loss.py`
-- [ ] `tests/test_mirror_augmentation.py`
-- [ ] `tests/test_move_encoding_lc0_4672.py`
-- [ ] `tests/test_multi_gpu_dispatcher.py`
-- [ ] `tests/test_muon_optimizer.py`
-- [ ] `tests/test_onnx_export_int8_smoke.py`
-- [ ] `tests/test_onnx_export_smoke.py`
-- [ ] `tests/test_opening_start_positions.py`
-- [ ] `tests/test_pid_inverse_regret.py`
-- [ ] `tests/test_play_batch_continuous.py`
-- [ ] `tests/test_play_batch_helpers.py`
-- [ ] `tests/test_profile_distributed.py`
-- [ ] `tests/test_progressive_budget.py`
-- [ ] `tests/test_replay_disk_buffer.py`
-- [ ] `tests/test_replay_shard_npz.py`
-- [ ] `tests/test_replay_shard_validation.py`
-- [ ] `tests/test_replay_surprise_sampling.py`
-- [ ] `tests/test_run_bootstrap.py`
-- [ ] `tests/test_selfplay_fraction.py`
-- [ ] `tests/test_selfplay_result_labeling.py`
-- [ ] `tests/test_selfplay_sf_wdl_pov.py`
-- [ ] `tests/test_selfplay_timeout_adjudication.py`
-- [ ] `tests/test_server_trial_lease.py`
-- [ ] `tests/test_server_upload_compaction.py`
-- [ ] `tests/test_server_upload_security.py`
-- [ ] `tests/test_shard_path_iter.py`
-- [ ] `tests/test_soft_policy.py`
-- [ ] `tests/test_swa_export.py`
-- [ ] `tests/test_temperature_schedule.py`
-- [ ] `tests/test_threaded_selfplay.py`
-- [ ] `tests/test_train_import_lazy.py`
-- [ ] `tests/test_trainer_warmup.py`
-- [ ] `tests/test_training_e2e.py`
-- [ ] `tests/test_transformer_forward.py`
-- [ ] `tests/test_trial_config.py`
-- [ ] `tests/test_tune_distributed_worker_cmd.py`
-- [ ] `tests/test_uci_ponderhit_clock.py`
-- [ ] `tests/test_uci_protocol.py`
-- [ ] `tests/test_uci_smoke.py`
-- [ ] `tests/test_uci_time_manager.py`
-- [ ] `tests/test_uci_walker_pool.py`
-- [ ] `tests/test_volatility_target.py`
-- [ ] `tests/test_warmup_lr_schedule.py`
-- [ ] `tests/test_worker_cached_assets.py`
-- [ ] `tests/test_worker_config_yaml.py`
-- [ ] `tests/test_worker_pool.py`
-- [ ] `tests/test_worker_small_uploads.py`
+- [x] `tests/__init__.py`
+- [x] `tests/test_arena_match_smoke.py`
+- [x] `tests/test_atomic_io.py`
+- [x] `tests/test_batch_coalescing.py`
+- [x] `tests/test_batch_process_ply.py`
+- [x] `tests/test_bench_result_labeling.py`
+- [x] `tests/test_cboard_terminal.py`
+- [x] `tests/test_collation.py`
+- [x] `tests/test_compute_loss.py`
+- [x] `tests/test_cosmos_fast_optimizer.py`
+- [x] `tests/test_cosmos_optimizer.py`
+- [x] `tests/test_difficulty_state.py`
+- [x] `tests/test_distributed_selfplay_backpressure.py`
+- [x] `tests/test_e2e_smoke.py`
+- [x] `tests/test_encode_optimization.py`
+- [x] `tests/test_encoding_basic.py`
+- [x] `tests/test_feature_dropout.py`
+- [x] `tests/test_gpu_dispatcher.py`
+- [x] `tests/test_gumbel_budget_usage.py`
+- [x] `tests/test_gumbel_mcts_smoke.py`
+- [x] `tests/test_gumbel_root_many_edge_cases.py`
+- [x] `tests/test_hlgauss_target.py`
+- [x] `tests/test_inference_broker.py`
+- [x] `tests/test_is_selfplay_tagging.py`
+- [x] `tests/test_losses.py`
+- [x] `tests/test_match_result_labeling.py`
+- [x] `tests/test_mcts_c_tree.py`
+- [x] `tests/test_mcts_thread_safety.py`
+- [x] `tests/test_mcts_virtual_loss.py`
+- [x] `tests/test_mirror_augmentation.py`
+- [x] `tests/test_move_encoding_lc0_4672.py`
+- [x] `tests/test_multi_gpu_dispatcher.py`
+- [x] `tests/test_muon_optimizer.py`
+- [x] `tests/test_onnx_export_int8_smoke.py`
+- [x] `tests/test_onnx_export_smoke.py`
+- [x] `tests/test_opening_start_positions.py`
+- [x] `tests/test_pid_inverse_regret.py`
+- [x] `tests/test_play_batch_continuous.py`
+- [x] `tests/test_play_batch_helpers.py`
+- [x] `tests/test_profile_distributed.py`
+- [x] `tests/test_progressive_budget.py`
+- [x] `tests/test_replay_disk_buffer.py`
+- [x] `tests/test_replay_shard_npz.py`
+- [x] `tests/test_replay_shard_validation.py`
+- [x] `tests/test_replay_surprise_sampling.py`
+- [x] `tests/test_run_bootstrap.py`
+- [x] `tests/test_selfplay_fraction.py`
+- [x] `tests/test_selfplay_result_labeling.py`
+- [x] `tests/test_selfplay_sf_wdl_pov.py`
+- [x] `tests/test_selfplay_timeout_adjudication.py`
+- [x] `tests/test_server_trial_lease.py`
+- [x] `tests/test_server_upload_compaction.py`
+- [x] `tests/test_server_upload_security.py`
+- [x] `tests/test_shard_path_iter.py`
+- [x] `tests/test_soft_policy.py`
+- [x] `tests/test_swa_export.py`
+- [x] `tests/test_temperature_schedule.py`
+- [x] `tests/test_threaded_selfplay.py`
+- [x] `tests/test_train_import_lazy.py`
+- [x] `tests/test_trainer_warmup.py`
+- [x] `tests/test_training_e2e.py`
+- [x] `tests/test_transformer_forward.py`
+- [x] `tests/test_trial_config.py`
+- [x] `tests/test_tune_distributed_worker_cmd.py`
+- [x] `tests/test_uci_ponderhit_clock.py`
+- [x] `tests/test_uci_protocol.py`
+- [x] `tests/test_uci_smoke.py`
+- [x] `tests/test_uci_time_manager.py`
+- [x] `tests/test_uci_walker_pool.py`
+- [x] `tests/test_volatility_target.py`
+- [x] `tests/test_warmup_lr_schedule.py`
+- [x] `tests/test_worker_cached_assets.py`
+- [x] `tests/test_worker_config_yaml.py`
+- [x] `tests/test_worker_pool.py`
+- [x] `tests/test_worker_small_uploads.py`
 
 Review:
 
-- [ ] Identify tests that only verify shapes/imports but not semantic invariants.
-- [ ] Identify core behavior covered only by smoke tests.
-- [ ] Identify tests that are flaky, time-dependent, network-dependent, or too slow for regular use.
-- [ ] Map each high/critical finding to a regression test before fixing.
+- [x] Identify tests that only verify shapes/imports but not semantic invariants.
+- [x] Identify core behavior covered only by smoke tests.
+- [x] Identify tests that are flaky, time-dependent, network-dependent, or too slow for regular use.
+- [x] Map each high/critical finding to a regression test before fixing.
 
 ## Review Procedure
 
@@ -1442,20 +1453,20 @@ resource use, scale behavior, or iteration speed.
 
 Static checks:
 
-- [ ] Search for repeated `.to(`, `.cpu()`, `.numpy()`, `.item()`, tensor constructors, and board copies in loops.
-- [ ] Search for full-shard loads, directory scans, JSON/YAML parsing, model loads, and checkpoint writes in hot loops.
-- [ ] Inspect queues, buffers, dicts, and lists for bounded growth.
-- [ ] Inspect locks, blocking I/O, subprocess reads, and network calls in async/threaded paths.
-- [ ] Inspect logging and metrics for expensive per-position/per-node work.
+- [x] Search for repeated `.to(`, `.cpu()`, `.numpy()`, `.item()`, tensor constructors, and board copies in loops.
+- [x] Search for full-shard loads, directory scans, JSON/YAML parsing, model loads, and checkpoint writes in hot loops.
+- [x] Inspect queues, buffers, dicts, and lists for bounded growth.
+- [x] Inspect locks, blocking I/O, subprocess reads, and network calls in async/threaded paths.
+- [x] Inspect logging and metrics for expensive per-position/per-node work.
 
 Runtime checks:
 
-- [ ] Measure encoding positions/sec on representative positions.
-- [ ] Measure MCTS nodes/sec and model evals/sec with Python and C paths.
-- [ ] Measure selfplay games/sec for small fixed configs.
-- [ ] Measure training step time and DataLoader/replay wait time.
-- [ ] Measure worker/server upload and manifest polling overhead.
-- [ ] Compare 1 worker vs multiple workers for throughput and backpressure.
+- [x] Measure encoding positions/sec on representative positions.
+- [x] Measure MCTS nodes/sec and model evals/sec with Python and C paths.
+- [x] Measure selfplay games/sec for small fixed configs.
+- [x] Measure training step time and DataLoader/replay wait time.
+- [x] Measure worker/server upload and manifest polling overhead.
+- [x] Compare 1 worker vs multiple workers for throughput and backpressure.
 
 Suggested profiling commands:
 
@@ -1535,7 +1546,7 @@ Use this section after findings are recorded.
 
 ## Open Questions
 
-- [ ] Which runs/configs are considered operationally important enough to preserve behavior exactly?
-- [ ] What minimum hardware baseline should efficiency findings use: CPU-only, single CUDA GPU, or current production host?
-- [ ] Which Stockfish version/path should be treated as the review baseline?
-- [ ] Are benchmark regressions findings only after measurement, or should obvious hot-path issues be recorded from static review?
+- [x] Which runs/configs are considered operationally important enough to preserve behavior exactly?
+- [x] What minimum hardware baseline should efficiency findings use: CPU-only, single CUDA GPU, or current production host?
+- [x] Which Stockfish version/path should be treated as the review baseline?
+- [x] Are benchmark regressions findings only after measurement, or should obvious hot-path issues be recorded from static review?

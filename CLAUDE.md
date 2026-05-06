@@ -141,7 +141,7 @@ Run `./scripts/lint.sh <paths>` after editing. Default is all five tools — **r
 
 ```bash
 ./scripts/lint.sh chess_anti_engine/train/trainer.py   # specific files
-./scripts/lint.sh --changed                            # git-changed .py files since HEAD
+./scripts/lint.sh --changed                            # changed and untracked .py files
 ./scripts/lint.sh --fast [paths...]                    # skip vulture + skylos (the slower ones)
 basedpyright --writebaseline                           # refresh baseline after fixing a batch
 ```

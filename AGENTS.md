@@ -46,7 +46,7 @@ python -m chess_anti_engine.run --config configs/default.yaml --mode train
 - Match existing files by keeping `from __future__ import annotations` at module top.
 - Naming: functions/modules `snake_case`, classes `PascalCase`, tests `test_*`.
 - Keep imports grouped `stdlib` / `third-party` / `local`.
-- Run `./scripts/lint.sh <paths>` after editing Python when practical. `./scripts/lint.sh --changed` checks changed Python files; `--fast` skips the slower vulture and skylos passes.
+- Run `./scripts/lint.sh <paths>` after editing Python when practical. `./scripts/lint.sh --changed` checks changed and untracked Python files; `--fast` skips the slower vulture and skylos passes.
 - New code should be clean for ruff, basedpyright, pylint, vulture, and skylos. Prefer fixing findings over adding inline suppressions; when suppression is necessary, use the repo's existing syntax (`# pyright: ignore[rule]`, `# noqa: ...`, `# skylos: ignore`).
 
 ## Testing Guidelines
