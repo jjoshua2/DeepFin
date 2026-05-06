@@ -4,9 +4,7 @@ These tests lock down behavior prior to the Phase 5 refactor of play_batch.
 """
 from __future__ import annotations
 
-import chess
 import numpy as np
-import torch
 
 from chess_anti_engine.selfplay import play_batch
 from chess_anti_engine.selfplay.config import (
@@ -17,32 +15,12 @@ from chess_anti_engine.selfplay.config import (
 )
 from chess_anti_engine.selfplay.manager import CompletedGameBatch
 from chess_anti_engine.selfplay.opening import OpeningConfig
-from chess_anti_engine.stockfish.uci import StockfishResult
-
-
-class _UniformModel(torch.nn.Module):
-    def forward(self, x: torch.Tensor):
-        b = x.shape[0]
-        return {
-            "policy": torch.zeros((b, 4672), dtype=torch.float32, device=x.device),
-            "wdl": torch.zeros((b, 3), dtype=torch.float32, device=x.device),
-        }
-
-
-class _FakeStockfish:
-    def __init__(self, wdl: list[float]):
-        self.nodes = 1
-        self._wdl = np.asarray(wdl, dtype=np.float32)
-
-    def search(self, fen: str, *, nodes: int | None = None) -> StockfishResult:  # noqa: ARG002  # pylint: disable=unused-argument  # mock matches StockfishUCI.search signature
-        board = chess.Board(fen)
-        move = next(iter(board.legal_moves), chess.Move.null())
-        return StockfishResult(bestmove_uci=move.uci(), wdl=self._wdl, pvs=[])
+from tests.selfplay_helpers import FakeStockfish, UniformPolicyValueModel
 
 
 def test_continuous_mode_stops_on_stop_fn_and_delivers_via_callback():
     """Continuous mode: stop_fn terminates the loop; samples flow via callback."""
-    model = _UniformModel().eval()
+    model = UniformPolicyValueModel().eval()
     rng = np.random.default_rng(0)
 
     completed: list[CompletedGameBatch] = []
@@ -53,7 +31,7 @@ def test_continuous_mode_stops_on_stop_fn_and_delivers_via_callback():
 
     samples, stats = play_batch(
         model, device="cpu", rng=rng,
-        stockfish=_FakeStockfish([0.0, 1.0, 0.0]),
+        stockfish=FakeStockfish([0.0, 1.0, 0.0]),
         games=2,
         target_games=0,  # continuous mode
         stop_fn=_stop,
@@ -80,7 +58,7 @@ def test_continuous_mode_stops_on_stop_fn_and_delivers_via_callback():
 
 def test_continuous_mode_recycles_slots_beyond_initial_batch():
     """Continuous mode with small batch_size must recycle slots indefinitely."""
-    model = _UniformModel().eval()
+    model = UniformPolicyValueModel().eval()
     rng = np.random.default_rng(1)
 
     completed: list[CompletedGameBatch] = []
@@ -90,7 +68,7 @@ def test_continuous_mode_recycles_slots_beyond_initial_batch():
 
     samples, stats = play_batch(
         model, device="cpu", rng=rng,
-        stockfish=_FakeStockfish([0.0, 1.0, 0.0]),
+        stockfish=FakeStockfish([0.0, 1.0, 0.0]),
         games=2,  # only 2 parallel slots
         target_games=0,
         stop_fn=_stop,
@@ -111,7 +89,7 @@ def test_continuous_mode_recycles_slots_beyond_initial_batch():
 def test_continuous_mode_stats_sum_matches_callback_sum():
     """Aggregated BatchStats must match the sum of individual CompletedGameBatch
     deliveries, with no double counting after slot recycling."""
-    model = _UniformModel().eval()
+    model = UniformPolicyValueModel().eval()
     rng = np.random.default_rng(2)
 
     completed: list[CompletedGameBatch] = []
@@ -121,7 +99,7 @@ def test_continuous_mode_stats_sum_matches_callback_sum():
 
     _samples, stats = play_batch(
         model, device="cpu", rng=rng,
-        stockfish=_FakeStockfish([0.0, 1.0, 0.0]),
+        stockfish=FakeStockfish([0.0, 1.0, 0.0]),
         games=2,
         target_games=0,
         stop_fn=_stop,
@@ -149,12 +127,12 @@ def test_continuous_mode_stats_sum_matches_callback_sum():
 
 def test_finite_mode_does_not_deliver_via_callback_when_none_given():
     """Finite mode without callback: samples are returned directly, no crash."""
-    model = _UniformModel().eval()
+    model = UniformPolicyValueModel().eval()
     rng = np.random.default_rng(3)
 
     samples, stats = play_batch(
         model, device="cpu", rng=rng,
-        stockfish=_FakeStockfish([0.0, 1.0, 0.0]),
+        stockfish=FakeStockfish([0.0, 1.0, 0.0]),
         games=2, target_games=2,
         temp=TemperatureConfig(temperature=1.0),
         search=SearchConfig(simulations=1, playout_cap_fraction=1.0, fast_simulations=1),
@@ -169,14 +147,14 @@ def test_finite_mode_does_not_deliver_via_callback_when_none_given():
 
 def test_finite_mode_with_callback_also_delivers_via_callback():
     """When both finite target_games and callback are set, both paths deliver."""
-    model = _UniformModel().eval()
+    model = UniformPolicyValueModel().eval()
     rng = np.random.default_rng(4)
 
     completed: list[CompletedGameBatch] = []
 
     samples, stats = play_batch(
         model, device="cpu", rng=rng,
-        stockfish=_FakeStockfish([0.0, 1.0, 0.0]),
+        stockfish=FakeStockfish([0.0, 1.0, 0.0]),
         games=2, target_games=3,
         on_game_complete=completed.append,
         temp=TemperatureConfig(temperature=1.0),
@@ -195,7 +173,7 @@ def test_finite_mode_with_callback_also_delivers_via_callback():
 
 def test_continuous_mode_respects_on_step_callback():
     """on_step should be invoked during the main loop in continuous mode."""
-    model = _UniformModel().eval()
+    model = UniformPolicyValueModel().eval()
     rng = np.random.default_rng(5)
 
     step_calls: list[int] = []
@@ -209,7 +187,7 @@ def test_continuous_mode_respects_on_step_callback():
 
     play_batch(
         model, device="cpu", rng=rng,
-        stockfish=_FakeStockfish([0.0, 1.0, 0.0]),
+        stockfish=FakeStockfish([0.0, 1.0, 0.0]),
         games=2,
         target_games=0,
         stop_fn=_stop,
