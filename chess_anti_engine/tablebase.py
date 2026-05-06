@@ -50,11 +50,11 @@ def is_tb_eligible(board: chess.Board) -> bool:
 
 # Lazy, path-keyed cache. ``path`` is the raw string the caller passed in
 # (OS-separated multi-dir supported), so two callers with the same path
-# string share the opened Tablebase. UCI search and selfplay can call from
-# different threads with potentially different paths during a settings
-# swap, so the swap-and-open path holds ``_tablebase_lock``.
-_tablebase: chess.syzygy.Tablebase | None = None
-_tablebase_path: str | None = None
+# string share the opened Tablebase. We keep old path handles open instead of
+# closing on swap: callers probe the returned handle after this function
+# releases its lock, so closing the previous global handle can invalidate an
+# in-flight probe from another thread.
+_tablebases: dict[str, chess.syzygy.Tablebase] = {}
 _tablebase_lock = threading.Lock()
 
 
@@ -65,28 +65,16 @@ def get_tablebase(path: str) -> chess.syzygy.Tablebase | None:
     on Windows). Returns ``None`` on empty path or if none of the listed
     directories could be added.
 
-    Swapping to a new path closes the previous instance; passing the same
-    path returns the cached handle without reopening.
+    Passing the same path returns the cached handle without reopening.
+    Different paths keep independent handles so an option change cannot close
+    a tablebase while another thread is still probing it.
     """
-    global _tablebase, _tablebase_path
-  # Hot-path fast read: same path the cache holds, no lock needed (the
-  # global rebind in the swap branch is atomic on CPython, so a stale
-  # read returns the previous handle which is still valid until close).
-    if _tablebase is not None and _tablebase_path == path:
-        return _tablebase
+    if not path:
+        return None
     with _tablebase_lock:
-  # Re-check under lock — another thread may have swapped while we waited.
-        if _tablebase is not None and _tablebase_path == path:
-            return _tablebase
-        if _tablebase is not None:
-            try:
-                _tablebase.close()
-            except OSError:
-                pass  # syzygy already closed / file handle gone
-            _tablebase = None
-            _tablebase_path = None
-        if not path:
-            return None
+        cached = _tablebases.get(path)
+        if cached is not None:
+            return cached
         dirs = [p.strip() for p in path.split(os.pathsep) if p.strip()]
         if not dirs:
             return None
@@ -104,8 +92,7 @@ def get_tablebase(path: str) -> chess.syzygy.Tablebase | None:
             except OSError:
                 pass
             return None
-        _tablebase = tb
-        _tablebase_path = path
+        _tablebases[path] = tb
         return tb
 
 

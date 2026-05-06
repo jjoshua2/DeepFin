@@ -66,6 +66,9 @@ Current notes:
 - Finding F006 opened/fixed in this cycle: full-selfplay net-color turns missed
   SF annotations because the next network turn replaced the "latest" record
   before any SF label query ran.
+- Finding F007 opened/fixed in this cycle: tablebase path swaps could close a
+  handle still being probed by another thread; tablebase handles are now cached
+  per path and failed opens still close their temporary handle.
 
 ### `/simplify` Review Criteria
 
@@ -180,6 +183,7 @@ Context:
 | F004 | Medium | Reliability | Stockfish integration | `chess_anti_engine/stockfish/uci.py` | Real Stockfish subprocess reads have no timeout. A stalled engine or protocol deadlock can hang selfplay/arena code while holding the Stockfish lock. | `_wait_for` and `search` call `self.proc.stdout.readline()` in unbounded loops. UCI smoke tests use timeout readers around the engine process, but Stockfish integration tests mostly use mocks and do not exercise a stalled real subprocess. | Add a timeout/error path around Stockfish reads, terminate/restart the process on timeout, and add a fake-process regression test that never emits `uciok`, `readyok`, or `bestmove`. | open |
 | F005 | Low | Test Hygiene | Pytest config | `pyproject.toml`, `tests/test_mcts_thread_safety.py` | Full-suite run emitted `PytestUnknownMarkWarning` for the thread-safety stress test's `slow` marker. | `pytest` passed with one warning before config change. | Registered the `slow` marker in `pyproject.toml`; `pytest tests/test_mcts_thread_safety.py` now passes without the warning. | fixed |
 | F006 | High | Training Quality | Selfplay | `chess_anti_engine/selfplay/manager.py`, `tests/test_selfplay_fraction.py` | Full-selfplay games annotated only one color's network turns with SF targets. The assigned net-color turn advanced to the selfplay-opponent network turn before any SF label query ran, so the earlier `_NetRecord` was no longer the latest record and never received `sf_wdl` / SF policy targets. | In `_run_step`, SF label queries were only submitted for `sp_opp_idxs` after `run_network_turn`; `net_idxs` that were also selfplay skipped annotation. A direct repro before the fix produced two selfplay samples with `[False, True]` for `s.sf_wdl is not None`. | Tightened `test_full_selfplay_generates_both_side_samples_and_no_pid_wdl_stats` to require all full-selfplay samples have `sf_wdl` and `sf_policy_target`. Verified selfplay/finalize slice: `33 passed`. | fixed |
+| F007 | Medium | Reliability | Tablebase | `chess_anti_engine/tablebase.py`, `tests/test_tablebase_cache.py` | The shared Syzygy cache used one global handle and closed the previous handle whenever another path was requested. A UCI option swap or concurrent training/search probe with a different path could invalidate an in-flight caller's returned handle after `get_tablebase()` released its lock. | `get_tablebase()` returned the cached handle without a usage lock, while the different-path branch closed `_tablebase` before installing the new handle. Call sites probe the returned handle outside the cache lock. | Replaced the single global with a path-keyed cache that leaves existing handles open; added fake-tablebase regression proving path swaps do not close active handles and failed opens still close the temporary handle. Verified `tests/test_tablebase_cache.py` -> `2 passed`. | fixed |
 
 ## Review Passes
 
