@@ -378,6 +378,17 @@ Current notes:
 - Focused path-default validation after F037 passed:
   hardcoded-path `rg` sweep, `py_compile` for the touched scripts, and `--help`
   for both PID replay backtests.
+- Finding F038 opened/fixed in this cycle: `scripts/profile_distributed.py`
+  defaulted to a missing `configs/pbt2_fresh_run9.yaml`, wrote profile artifacts
+  under fixed `/mnt/c/chess_active/...` paths, and its cleanup killed every
+  matching `chess_anti_engine` process on the host. The profiler now uses
+  repo-relative defaults, exposes explicit path/timing CLI overrides, terminates
+  only the benchmark process group it starts, and keeps Ray shutdown explicit
+  through cleanup arguments/`--no-ray-stop`.
+- Focused distributed-profile validation after F038 passed:
+  `python3 -m py_compile scripts/profile_distributed.py`,
+  `python3 scripts/profile_distributed.py --help`, and
+  `python3 -m pytest tests/test_profile_distributed.py -q`.
 - Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
   `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
   `tests/test_tune_distributed_worker_cmd.py`,
@@ -1169,6 +1180,7 @@ Files:
 - [x] `scripts/pbt_30m_poll.py`
 - [x] `scripts/pbt_hourly_audit.py`
 - [x] `scripts/poll_pbt_30m.sh`
+- [x] `scripts/profile_distributed.py`
 - [x] `scripts/profile_play_batch.py`
 - [ ] `scripts/reinit_value_heads.py`
 - [ ] `scripts/status.py`
@@ -1191,12 +1203,14 @@ Correctness/reliability:
   keep source configs untouched during batch-wait benchmarking.
 - [x] Benchmark and analysis script defaults avoid machine-specific absolute
   paths.
+- [x] `profile_distributed.py` uses an existing base config, repo-relative
+  artifact paths, and benchmark-owned process cleanup.
 - [x] Diagnostic scripts run from repo root and fail clearly when required
   trial/replay paths are absent.
 - [ ] Remaining Python scripts run from repo root and fail clearly when required files/env vars are absent.
 - [x] Shell scripts quote paths and handle PID/log/stale-process states safely.
 - [ ] Benchmarks measure what their names claim and do not accidentally benchmark setup overhead.
-- [ ] Operational scripts avoid deleting or overwriting unrelated run data.
+- [x] Operational scripts avoid deleting or overwriting unrelated run data.
 
 Efficiency:
 
@@ -1206,7 +1220,7 @@ Efficiency:
 Tests:
 
 - [ ] `tests/test_arena_match_smoke.py`
-- [ ] `tests/test_profile_distributed.py`
+- [x] `tests/test_profile_distributed.py`
 
 ### Documentation and Specs
 

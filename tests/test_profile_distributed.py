@@ -18,6 +18,12 @@ def _load_profile_module():
     return module
 
 
+def test_default_base_config_exists() -> None:
+    module = _load_profile_module()
+
+    assert module.BASE_CONFIG.exists()
+
+
 def test_make_config_overrides_nested_sections(tmp_path: Path) -> None:
     module = _load_profile_module()
 
@@ -59,6 +65,29 @@ def test_make_config_overrides_nested_sections(tmp_path: Path) -> None:
     assert flat["distributed_worker_sf_workers"] == 1
     assert flat["distributed_server_root_override"] == str(module.SERVER_DIR)
     assert flat["tune_replay_root_override"] == str(module.REPLAY_DIR)
+
+
+def test_cleanup_does_not_broad_kill_chess_processes(tmp_path: Path, monkeypatch) -> None:
+    module = _load_profile_module()
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    module.cleanup(
+        work_dir=tmp_path / "work",
+        server_dir=tmp_path / "server",
+        replay_dir=tmp_path / "replay",
+        stop_ray=True,
+    )
+
+    assert calls == [["ray", "stop", "--force"]]
+    assert not any(isinstance(cmd, str) and "chess_anti_engine" in cmd for cmd in calls)
+    assert (tmp_path / "server").is_dir()
+    assert (tmp_path / "replay").is_dir()
 
 
 def test_flatten_run_config_defaults_passes_shuffle_balance_knobs() -> None:

@@ -9,18 +9,22 @@ Usage:
 """
 from __future__ import annotations
 
+import argparse
 import json
+import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
 
-BASE_CONFIG = Path("configs/pbt2_fresh_run9.yaml")
-WORK_DIR = Path("runs/profile_distributed")
-SERVER_DIR = Path("/mnt/c/chess_active/profile_dist_server")
-REPLAY_DIR = Path("/mnt/c/chess_active/profile_dist_replay")
+REPO_ROOT = Path(__file__).resolve().parents[1]
+BASE_CONFIG = REPO_ROOT / "configs" / "pbt2_small.yaml"
+WORK_DIR = REPO_ROOT / "runs" / "profile_distributed"
+SERVER_DIR = WORK_DIR / "server"
+REPLAY_DIR = WORK_DIR / "replay"
 
 # Combinations to test (workers_per_trial, sf_workers, selfplay_batch)
 CONFIGS = [
@@ -45,30 +49,65 @@ GPU_SAMPLES = 6
 GPU_SAMPLE_INTERVAL = 5
 
 
-def cleanup():
-    """Kill any running chess processes and ray."""
-    subprocess.run(
-        "ps aux | grep 'chess_anti_engine' | grep -v grep | awk '{print $2}' | xargs kill -9 2>/dev/null",
-        shell=True, capture_output=True,
-    )
+def _resolve(path: Path) -> Path:
+    return path.expanduser().resolve()
+
+
+def _reset_dir(path: Path) -> None:
+    """Remove and recreate a benchmark-owned directory."""
+    resolved = _resolve(path)
+    if resolved in {Path("/"), Path.home().resolve()}:
+        raise ValueError(f"refusing to reset unsafe directory: {resolved}")
+    if resolved.exists():
+        shutil.rmtree(resolved, ignore_errors=True)
+    resolved.mkdir(parents=True, exist_ok=True)
+
+
+def cleanup(
+    *,
+    work_dir: Path | None = None,
+    server_dir: Path | None = None,
+    replay_dir: Path | None = None,
+    stop_ray: bool = True,
+) -> None:
+    """Reset benchmark-owned dirs and optionally stop the Ray cluster."""
+    work_dir = WORK_DIR if work_dir is None else work_dir
+    server_dir = SERVER_DIR if server_dir is None else server_dir
+    replay_dir = REPLAY_DIR if replay_dir is None else replay_dir
+
     time.sleep(2)
-    subprocess.run("ray stop --force 2>/dev/null", shell=True, capture_output=True)
+    if stop_ray:
+        try:
+            subprocess.run(["ray", "stop", "--force"], capture_output=True)
+        except FileNotFoundError:
+            pass
     time.sleep(3)
-    # Clean dirs
-    for d in [SERVER_DIR, REPLAY_DIR]:
-        if d.exists():
-            shutil.rmtree(d, ignore_errors=True)
-        d.mkdir(parents=True, exist_ok=True)
-    tune_dir = WORK_DIR / "tune"
+    for d in [server_dir, replay_dir]:
+        _reset_dir(d)
+    tune_dir = work_dir / "tune"
     if tune_dir.exists():
         shutil.rmtree(tune_dir, ignore_errors=True)
 
 
-def make_config(workers: int, sf_workers: int, batch: int) -> Path:
+def make_config(
+    workers: int,
+    sf_workers: int,
+    batch: int,
+    *,
+    base_config: Path | None = None,
+    work_dir: Path | None = None,
+    server_dir: Path | None = None,
+    replay_dir: Path | None = None,
+) -> Path:
     """Patch the base config with the given parameters."""
     import yaml
 
-    with open(BASE_CONFIG) as f:
+    base_config = BASE_CONFIG if base_config is None else base_config
+    work_dir = WORK_DIR if work_dir is None else work_dir
+    server_dir = SERVER_DIR if server_dir is None else server_dir
+    replay_dir = REPLAY_DIR if replay_dir is None else replay_dir
+
+    with open(base_config) as f:
         cfg = yaml.safe_load(f)
 
     cfg.setdefault("selfplay", {})
@@ -84,11 +123,11 @@ def make_config(workers: int, sf_workers: int, batch: int) -> Path:
     cfg["selfplay"]["games_per_iter"] = 150
     cfg["selfplay"]["games_per_iter_start"] = 32
     # Override dirs
-    cfg["work_dir"] = str(WORK_DIR / "tune")
-    cfg["tune"]["distributed_server_root_override"] = str(SERVER_DIR)
-    cfg["tune"]["tune_replay_root_override"] = str(REPLAY_DIR)
+    cfg["work_dir"] = str(work_dir / "tune")
+    cfg["tune"]["distributed_server_root_override"] = str(server_dir)
+    cfg["tune"]["tune_replay_root_override"] = str(replay_dir)
 
-    out = WORK_DIR / "profile_config.yaml"
+    out = work_dir / "profile_config.yaml"
     out.parent.mkdir(parents=True, exist_ok=True)
     with open(out, "w") as f:
         yaml.dump(cfg, f, default_flow_style=False)
@@ -150,27 +189,70 @@ def count_processes() -> dict:
     }
 
 
-def run_config(workers: int, sf_workers: int, batch: int) -> dict:
+def _terminate_process_tree(proc: subprocess.Popen) -> None:
+    if proc.poll() is not None:
+        return
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.wait()
+
+
+def run_config(
+    workers: int,
+    sf_workers: int,
+    batch: int,
+    *,
+    base_config: Path | None = None,
+    work_dir: Path | None = None,
+    server_dir: Path | None = None,
+    replay_dir: Path | None = None,
+    warmup_seconds: int = WARMUP_SECONDS,
+    gpu_samples: int = GPU_SAMPLES,
+    gpu_sample_interval: float = GPU_SAMPLE_INTERVAL,
+    stop_ray: bool = True,
+) -> dict:
     """Run a single config and measure performance."""
     label = f"{workers}w×{sf_workers}sf×{batch}b"
     print(f"\n{'='*60}")
     print(f"  Testing: {label}")
     print(f"{'='*60}")
 
-    cleanup()
-    cfg_path = make_config(workers, sf_workers, batch)
+    work_dir = WORK_DIR if work_dir is None else work_dir
+    server_dir = SERVER_DIR if server_dir is None else server_dir
+    replay_dir = REPLAY_DIR if replay_dir is None else replay_dir
+
+    cleanup(work_dir=work_dir, server_dir=server_dir, replay_dir=replay_dir, stop_ray=stop_ray)
+    cfg_path = make_config(
+        workers,
+        sf_workers,
+        batch,
+        base_config=base_config,
+        work_dir=work_dir,
+        server_dir=server_dir,
+        replay_dir=replay_dir,
+    )
 
     # Launch
     proc = subprocess.Popen(  # pylint: disable=consider-using-with  # long-lived benchmark subprocess, terminated later
         [sys.executable, "-m", "chess_anti_engine.run",
          "--config", str(cfg_path), "--mode", "tune"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        cwd=str(Path.cwd()),
+        cwd=str(REPO_ROOT),
+        start_new_session=True,
     )
 
     # Wait for warmup
-    print(f"  Warming up {WARMUP_SECONDS}s...", flush=True)
-    time.sleep(WARMUP_SECONDS)
+    print(f"  Warming up {warmup_seconds}s...", flush=True)
+    time.sleep(warmup_seconds)
 
     # Check it's still running
     if proc.poll() is not None:
@@ -178,28 +260,23 @@ def run_config(workers: int, sf_workers: int, batch: int) -> dict:
         return {"label": label, "error": True}
 
     # Sample GPU
-    print(f"  Sampling GPU ({GPU_SAMPLES}x @ {GPU_SAMPLE_INTERVAL}s)...", flush=True)
-    gpu_samples = sample_gpu()
+    print(f"  Sampling GPU ({gpu_samples}x @ {gpu_sample_interval}s)...", flush=True)
+    gpu_values = sample_gpu(gpu_samples, gpu_sample_interval)
     cpu_info = sample_cpu()
     procs = count_processes()
 
     # Kill
-    proc.terminate()
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
+    _terminate_process_tree(proc)
 
     result = {
         "label": label,
         "workers": workers,
         "sf_workers": sf_workers,
         "batch": batch,
-        "gpu_samples": gpu_samples,
-        "gpu_avg": sum(gpu_samples) / len(gpu_samples) if gpu_samples else 0,
-        "gpu_min": min(gpu_samples) if gpu_samples else 0,
-        "gpu_max": max(gpu_samples) if gpu_samples else 0,
+        "gpu_samples": gpu_values,
+        "gpu_avg": sum(gpu_values) / len(gpu_values) if gpu_values else 0,
+        "gpu_min": min(gpu_values) if gpu_values else 0,
+        "gpu_max": max(gpu_values) if gpu_values else 0,
         **cpu_info,
         **procs,
         "error": False,
@@ -212,21 +289,55 @@ def run_config(workers: int, sf_workers: int, batch: int) -> dict:
     return result
 
 
-def main():
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base-config", type=Path, default=BASE_CONFIG)
+    parser.add_argument("--work-dir", type=Path, default=WORK_DIR)
+    parser.add_argument("--server-dir", type=Path, default=None)
+    parser.add_argument("--replay-dir", type=Path, default=None)
+    parser.add_argument("--warmup-seconds", type=int, default=WARMUP_SECONDS)
+    parser.add_argument("--gpu-samples", type=int, default=GPU_SAMPLES)
+    parser.add_argument("--gpu-sample-interval", type=float, default=GPU_SAMPLE_INTERVAL)
+    parser.add_argument("--no-ray-stop", action="store_true", help="do not run ray stop --force during cleanup")
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    work_dir = args.work_dir
+    server_dir = args.server_dir or work_dir / "server"
+    replay_dir = args.replay_dir or work_dir / "replay"
+    stop_ray = not args.no_ray_stop
+
     print("Distributed Profile - Testing worker/SF/batch combinations")
-    print(f"Base config: {BASE_CONFIG}")
-    print(f"Warmup: {WARMUP_SECONDS}s, Sample: {GPU_SAMPLES}x @ {GPU_SAMPLE_INTERVAL}s")
+    print(f"Base config: {args.base_config}")
+    print(f"Work dir: {work_dir}")
+    print(f"Server dir: {server_dir}")
+    print(f"Replay dir: {replay_dir}")
+    print(f"Warmup: {args.warmup_seconds}s, Sample: {args.gpu_samples}x @ {args.gpu_sample_interval}s")
     print(f"Configs to test: {len(CONFIGS)}")
-    est_minutes = len(CONFIGS) * (WARMUP_SECONDS + GPU_SAMPLES * GPU_SAMPLE_INTERVAL + 15) / 60
+    est_minutes = len(CONFIGS) * (args.warmup_seconds + args.gpu_samples * args.gpu_sample_interval + 15) / 60
     print(f"Estimated time: {est_minutes:.0f} minutes")
     print()
 
     results = []
     for workers, sf_workers, batch in CONFIGS:
-        r = run_config(workers, sf_workers, batch)
+        r = run_config(
+            workers,
+            sf_workers,
+            batch,
+            base_config=args.base_config,
+            work_dir=work_dir,
+            server_dir=server_dir,
+            replay_dir=replay_dir,
+            warmup_seconds=args.warmup_seconds,
+            gpu_samples=args.gpu_samples,
+            gpu_sample_interval=args.gpu_sample_interval,
+            stop_ray=stop_ray,
+        )
         results.append(r)
 
-    cleanup()
+    cleanup(work_dir=work_dir, server_dir=server_dir, replay_dir=replay_dir, stop_ray=stop_ray)
 
     # Summary table
     print(f"\n{'='*80}")
@@ -248,7 +359,7 @@ def main():
         )
 
     # Save results
-    out_path = WORK_DIR / "profile_results.json"
+    out_path = work_dir / "profile_results.json"
     with open(out_path, "w") as f:
         json.dump(results, f, indent=2)
     print(f"\nResults saved to {out_path}")
