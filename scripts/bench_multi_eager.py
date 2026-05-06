@@ -48,7 +48,7 @@ def main():
 
         total_nps = sum(results.values())
         avg_nps = total_nps / len(results) if results else 0
-        free, total = torch.cuda.mem_get_info()
+        free, _total = torch.cuda.mem_get_info()
         print(
             f"{n_workers:>2} eager workers: {total_nps:>8.0f} total pos/s  "
             f"({avg_nps:.0f}/worker)  VRAM free={free/1e9:.1f}GB"

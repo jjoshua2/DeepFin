@@ -8,6 +8,7 @@ import numpy as np
 import torch
 
 from chess_anti_engine.encoding.cboard_encode import cboard_from_board_fast
+from chess_anti_engine.inference import BatchEvaluator
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
 from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
@@ -38,6 +39,13 @@ with torch.no_grad():
 
 tree = MCTSTree()
 
+
+class _ModelEvaluator(BatchEvaluator):
+    def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        with torch.no_grad():
+            out = model(torch.from_numpy(x))
+        return out["policy"].numpy(), out["wdl"].numpy()
+
 # Warm up
 _ = run_gumbel_root_many_c(
     model, boards[:4], device='cpu', rng=rng, cfg=GumbelConfig(simulations=8),
@@ -50,11 +58,7 @@ for ply in range(N_PLIES):
     t0 = time.perf_counter()
     result = run_gumbel_root_many_c(
         None, boards, device='cpu', rng=rng, cfg=cfg,
-        evaluator=type('E', (), {
-            'evaluate_encoded': lambda self, x: (
-                (lambda o: (o["policy"].numpy(), o["wdl"].numpy()))(model(torch.from_numpy(x)))
-            )
-        })(),
+        evaluator=_ModelEvaluator(),
         pre_pol_logits=pol_logits,
         pre_wdl_logits=wdl_logits,
         cboards=cboards,
@@ -68,13 +72,12 @@ for ply in range(N_PLIES):
     actions = result[1]
     root_ids = result[5]
     for i in range(N_GAMES):
-        if actions[i] is not None:
-            try:
-                m = index_to_move(actions[i], boards[i])
-                boards[i].push(m)
-                cboards[i] = cboard_from_board_fast(boards[i])
-            except Exception:
-                pass
+        try:
+            m = index_to_move(int(actions[i]), boards[i])
+            boards[i].push(m)
+            cboards[i] = cboard_from_board_fast(boards[i])
+        except Exception:
+            pass
 
     # Re-eval for next ply
     with torch.no_grad():

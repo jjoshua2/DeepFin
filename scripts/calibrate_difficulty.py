@@ -1,4 +1,4 @@
-"""Calibrate opponent_strength weights by measuring winrate at various settings.
+"""Calibrate opponent difficulty by measuring winrate at current settings.
 
 Usage:
     PYTHONPATH=. python3 scripts/calibrate_difficulty.py \
@@ -29,20 +29,13 @@ def run_games(
     *,
     device: str,
     games: int,
-    rmp: float,
-    topk: int,
+    regret: float,
     nodes: int,
 ) -> dict:
     rng = np.random.default_rng(seed=42)
     sf_pool.set_nodes(nodes)
 
-    # Force topk by setting topk_min=topk and topk_stage_end=999
-    # so _effective_curriculum_topk always returns topk_min
-    opponent = OpponentConfig(
-        random_move_prob=rmp,
-        topk_stage_end=999.0,
-        topk_min=topk,
-    )
+    opponent = OpponentConfig(wdl_regret_limit=regret)
     search = SearchConfig(simulations=16, mcts_type="gumbel")
     temp = TemperatureConfig(temperature=1.0)
     game_cfg = GameConfig(max_plies=240)
@@ -96,37 +89,29 @@ def main():
 
     results = []
 
-    # Test 1: Vary rmp at low range (topk=3, nodes=1000)
-    print("\n=== Vary rmp (topk=3, nodes=1000) ===")
-    for rmp in [0.00, 0.02, 0.04, 0.05, 0.07, 0.10, 0.15, 0.20]:
+    # Test 1: Vary WDL regret at fixed nodes.
+    print("\n=== Vary regret (nodes=1000) ===")
+    for regret in [0.02, 0.05, 0.10, 0.15, 0.25, 0.40, 0.60, 1.00]:
         r = run_games(model, sf_pool, device=args.device, games=args.games,
-                      rmp=rmp, topk=3, nodes=1000)
-        print(f"  rmp={rmp:.2f}  W={r['w']:3d} D={r['d']:3d} L={r['l']:3d}  wr={r['wr']:.2f}")
-        results.append({"test": "rmp", "rmp": rmp, "topk": 3, "nodes": 1000, **r})
+                      regret=regret, nodes=1000)
+        print(f"  regret={regret:.2f}  W={r['w']:3d} D={r['d']:3d} L={r['l']:3d}  wr={r['wr']:.2f}")
+        results.append({"test": "regret", "regret": regret, "nodes": 1000, **r})
 
-    # Test 2: Vary topk at rmp=0.05 (nodes=1000)
-    print("\n=== Vary topk (rmp=0.05, nodes=1000) ===")
-    for topk in [2, 3, 4, 6, 8, 12]:
-        r = run_games(model, sf_pool, device=args.device, games=args.games,
-                      rmp=0.05, topk=topk, nodes=1000)
-        print(f"  topk={topk:2d}   W={r['w']:3d} D={r['d']:3d} L={r['l']:3d}  wr={r['wr']:.2f}")
-        results.append({"test": "topk", "rmp": 0.05, "topk": topk, "nodes": 1000, **r})
-
-    # Test 3: Vary nodes at rmp=0.05 (topk=3)
-    print("\n=== Vary nodes (rmp=0.05, topk=3) ===")
+    # Test 2: Vary nodes at a moderate regret limit.
+    print("\n=== Vary nodes (regret=0.15) ===")
     for nodes in [500, 1000, 2000, 5000, 10000]:
         r = run_games(model, sf_pool, device=args.device, games=args.games,
-                      rmp=0.05, topk=3, nodes=nodes)
+                      regret=0.15, nodes=nodes)
         print(f"  nodes={nodes:5d}  W={r['w']:3d} D={r['d']:3d} L={r['l']:3d}  wr={r['wr']:.2f}")
-        results.append({"test": "nodes", "rmp": 0.05, "topk": 3, "nodes": nodes, **r})
+        results.append({"test": "nodes", "regret": 0.15, "nodes": nodes, **r})
 
     sf_pool.close()
 
     # Summary
     print("\n=== Summary ===")
-    print(f"{'test':<6} {'rmp':>5} {'topk':>5} {'nodes':>6} {'wr':>6}")
+    print(f"{'test':<8} {'regret':>7} {'nodes':>6} {'wr':>6}")
     for r in results:
-        print(f"{r['test']:<6} {r['rmp']:5.2f} {r['topk']:5d} {r['nodes']:6d} {r['wr']:6.2f}")
+        print(f"{r['test']:<8} {r['regret']:7.2f} {r['nodes']:6d} {r['wr']:6.2f}")
 
 
 if __name__ == "__main__":

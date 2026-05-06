@@ -10,6 +10,7 @@ import argparse
 import json
 import time
 from pathlib import Path
+from typing import Any
 
 import chess
 import numpy as np
@@ -193,7 +194,7 @@ def main():
                       warmup_steps=args.warmup_steps, warmup_lr_start=1e-5,
                       swa_start=0, swa_freq=50)
 
-    buf = DiskReplayBuffer(100_000, shard_dir=str(work_dir / "replay"),
+    buf = DiskReplayBuffer(100_000, shard_dir=work_dir / "replay",
                            rng=rng, shuffle_cap=20_000, shard_size=500)
 
     # Baseline
@@ -209,9 +210,9 @@ def main():
     deadline = t_start + args.hours * 3600
     cum_w = cum_d = cum_l = cum_games = cum_plies = 0
 
-    sp_kw = dict(
+    sp_kw: dict[str, Any] = dict(
         device=device, rng=rng, stockfish=sf,
-        opponent=OpponentConfig(random_move_prob=0.0),
+        opponent=OpponentConfig(),
         temp=TemperatureConfig(
             temperature=1.0, drop_plies=0, after=0.0,
             decay_start_move=20, decay_moves=60, endgame=0.6,

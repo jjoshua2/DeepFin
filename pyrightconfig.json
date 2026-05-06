@@ -1,5 +1,5 @@
 {
-    "include": ["chess_anti_engine", "tests"],
+    "include": ["chess_anti_engine", "tests", "scripts"],
     "exclude": ["chess_anti_engine/bench"],
     "reportUnsupportedDunderAll": false,
     "reportPrivateImportUsage": false,

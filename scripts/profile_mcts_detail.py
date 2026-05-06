@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import time
 from collections import defaultdict
+from typing import Any, cast
 
 import chess
 import numpy as np
@@ -25,11 +26,13 @@ from chess_anti_engine.model import ModelConfig, build_model
 from chess_anti_engine.moves.encode import index_to_move_fast, legal_move_indices
 
 try:
-    from chess_anti_engine.encoding._lc0_ext import CBoard
-    from chess_anti_engine.encoding.cboard_encode import encode_cboard
-    _HAS_CBOARD = True
+    from chess_anti_engine.encoding._lc0_ext import CBoard as _CBoard
+    from chess_anti_engine.encoding.cboard_encode import encode_cboard as _encode_cboard
 except ImportError:
-    _HAS_CBOARD = False
+    _CBoard = None
+    _encode_cboard = None
+
+_HAS_CBOARD = _CBoard is not None and _encode_cboard is not None
 
 
 def make_boards(n: int, rng: np.random.Generator) -> list[chess.Board]:
@@ -68,12 +71,12 @@ def profile_mcts(
     t0 = time.perf_counter()
     tree = MCTSTree()
     root_ids = np.empty(n_boards, dtype=np.int32)
-    use_cboard = _HAS_CBOARD
+    cboard_cls = _CBoard
+    encode_cboard_fn = _encode_cboard
+    use_cboard = cboard_cls is not None and encode_cboard_fn is not None
 
-    if use_cboard:
-        cb_cache: dict[int, CBoard] = {}
-    else:
-        board_cache: dict[int, chess.Board] = {}
+    cb_cache: dict[int, Any] = {}
+    board_cache: dict[int, chess.Board] = {}
 
     for i, b in enumerate(boards):
         root_q = _value_scalar_from_wdl_logits(wdl_all[i].reshape(-1))
@@ -81,7 +84,8 @@ def profile_mcts(
         root_ids[i] = root_id
 
         if use_cboard:
-            root_cb = CBoard.from_board(b)
+            assert cboard_cls is not None
+            root_cb = cboard_cls.from_board(b)
             cb_cache[root_id] = root_cb
             legal_idx = root_cb.legal_move_indices()
         else:
@@ -120,6 +124,7 @@ def profile_mcts(
                 continue
 
             if use_cboard:
+                assert cboard_cls is not None
                 if len(node_path) >= 2:
                     parent_id = int(node_path[-2])
                     parent_cb = cb_cache.get(parent_id)
@@ -136,7 +141,7 @@ def profile_mcts(
                     if cb is not None:
                         cb = cb.copy()
                     else:
-                        cb = CBoard.from_board(chess.Board())
+                        cb = cboard_cls.from_board(chess.Board())
 
                 if cb.is_game_over():
                     terminal_paths.append(node_path)
@@ -180,7 +185,8 @@ def profile_mcts(
         # Encoding
         t0 = time.perf_counter()
         if use_cboard:
-            leaf_xs = [encode_cboard(ld[2]) for ld in leaf_data]
+            assert encode_cboard_fn is not None
+            leaf_xs = [encode_cboard_fn(ld[2]) for ld in leaf_data]
         else:
             leaf_xs = [encode_position(ld[2], add_features=True) for ld in leaf_data]
         xb = np.stack(leaf_xs, axis=0)
@@ -260,7 +266,7 @@ def main() -> None:
     )).to(device)
     model.eval()
     if args.compile and device.startswith("cuda"):
-        model = torch.compile(model, mode="reduce-overhead")
+        model = cast(torch.nn.Module, torch.compile(model, mode="reduce-overhead"))
         for _ in range(5):
             model(torch.randn(4, 146, 8, 8, device=device))
         torch.cuda.synchronize()

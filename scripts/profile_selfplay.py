@@ -19,6 +19,7 @@ import cProfile
 import io
 import pstats
 import time
+from typing import cast
 
 import chess
 import numpy as np
@@ -34,23 +35,21 @@ from chess_anti_engine.moves.encode import legal_move_indices, legal_move_mask
 from chess_anti_engine.utils.amp import inference_autocast
 
 try:
-    from chess_anti_engine.mcts.puct_c import run_mcts_many_c
-    _HAS_C_TREE = True
+    from chess_anti_engine.mcts.puct_c import run_mcts_many_c as _run_mcts_many_c
 except ImportError:
-    _HAS_C_TREE = False
+    _run_mcts_many_c = None
 
 try:
-    from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
-    _HAS_GUMBEL_C = True
+    from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c as _run_gumbel_root_many_c
 except ImportError:
-    _HAS_GUMBEL_C = False
+    _run_gumbel_root_many_c = None
 
 try:
-    from chess_anti_engine.encoding._lc0_ext import CBoard
-    from chess_anti_engine.encoding.cboard_encode import encode_cboard
-    _HAS_CBOARD = True
+    from chess_anti_engine.encoding._lc0_ext import CBoard as _CBoard
+    from chess_anti_engine.encoding.cboard_encode import encode_cboard as _encode_cboard
 except ImportError:
-    _HAS_CBOARD = False
+    _CBoard = None
+    _encode_cboard = None
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -122,12 +121,14 @@ def bench_encoding(boards: list[chess.Board], repeats: int) -> None:
     print(f"  encode_positions_batch:        {t*1000:8.2f} ms  ({t/n*1000:.3f} ms/pos)")
 
     # 1c. CBoard
-    if _HAS_CBOARD:
-        cboards = [CBoard.from_board(b) for b in boards]
+    cboard_cls = _CBoard
+    encode_cboard_fn = _encode_cboard
+    if cboard_cls is not None and encode_cboard_fn is not None:
+        cboards = [cboard_cls.from_board(b) for b in boards]
         def _cb_batch():
             out = np.empty((len(cboards), 146, 8, 8), dtype=np.float32)
             for i, cb in enumerate(cboards):
-                out[i] = encode_cboard(cb)
+                out[i] = encode_cboard_fn(cb)
             return out
         t = _timer(_cb_batch, repeats)
         print(f"  CBoard encode_146 (batch):     {t*1000:8.2f} ms  ({t/n*1000:.3f} ms/pos)")
@@ -161,8 +162,9 @@ def bench_board_ops(boards: list[chess.Board], repeats: int) -> None:
     print(f"  board.is_game_over():           {t*1000:8.2f} ms  ({t/n*1e6:.1f} µs/pos)")
 
     # CBoard ops
-    if _HAS_CBOARD:
-        cboards = [CBoard.from_board(b) for b in boards]
+    cboard_cls = _CBoard
+    if cboard_cls is not None:
+        cboards = [cboard_cls.from_board(b) for b in boards]
         t = _timer(lambda: [cb.copy() for cb in cboards], repeats)
         print(f"  CBoard.copy():                  {t*1000:8.2f} ms  ({t/n*1e6:.1f} µs/pos)")
 
@@ -172,7 +174,7 @@ def bench_board_ops(boards: list[chess.Board], repeats: int) -> None:
         t = _timer(lambda: [cb.legal_move_indices() for cb in cboards], repeats)
         print(f"  CBoard.legal_move_indices():    {t*1000:8.2f} ms  ({t/n*1e6:.1f} µs/pos)")
 
-        t = _timer(lambda: [CBoard.from_board(b) for b in boards], repeats)
+        t = _timer(lambda: [cboard_cls.from_board(b) for b in boards], repeats)
         print(f"  CBoard.from_board():            {t*1000:8.2f} ms  ({t/n*1e6:.1f} µs/pos)")
 
 
@@ -232,9 +234,10 @@ def bench_mcts_e2e(
     print(f"  Gumbel (Python):        {t_gumbel_py*1000:8.1f} ms  ({t_gumbel_py/n*1000:.1f} ms/board, {n/t_gumbel_py:.1f} boards/sec)")
 
     # Gumbel C (CBoard)
-    if _HAS_GUMBEL_C:
+    gumbel_c = _run_gumbel_root_many_c
+    if gumbel_c is not None:
         def _gumbel_c():
-            return run_gumbel_root_many_c(
+            return gumbel_c(
                 model, boards, device=device, rng=np.random.default_rng(42),
                 cfg=GumbelConfig(simulations=sims), evaluator=evaluator,
             )
@@ -244,9 +247,10 @@ def bench_mcts_e2e(
         print(f"  Gumbel speedup:         {speedup:.2f}x")
 
     # PUCT C tree (for reference)
-    if _HAS_C_TREE:
+    puct_c = _run_mcts_many_c
+    if puct_c is not None:
         def _puct_c():
-            return run_mcts_many_c(
+            return puct_c(
                 model, boards, device=device, rng=np.random.default_rng(42),
                 cfg=MCTSConfig(simulations=sims), evaluator=evaluator,
             )
@@ -266,15 +270,15 @@ def profile_mcts(
     rng = np.random.default_rng(42)
 
     # Warmup
-    if mcts_type == "gumbel_c" and _HAS_GUMBEL_C:
-        run_gumbel_root_many_c(model, boards[:2], device=device, rng=rng,
-                               cfg=GumbelConfig(simulations=4), evaluator=evaluator)
+    if mcts_type == "gumbel_c" and _run_gumbel_root_many_c is not None:
+        _run_gumbel_root_many_c(model, boards[:2], device=device, rng=rng,
+                                cfg=GumbelConfig(simulations=4), evaluator=evaluator)
     elif mcts_type == "gumbel":
         run_gumbel_root_many(model, boards[:2], device=device, rng=rng,
                              cfg=GumbelConfig(simulations=4), evaluator=evaluator)
-    elif mcts_type == "puct_c" and _HAS_C_TREE:
-        run_mcts_many_c(model, boards[:2], device=device, rng=rng,
-                        cfg=MCTSConfig(simulations=4), evaluator=evaluator)
+    elif mcts_type == "puct_c" and _run_mcts_many_c is not None:
+        _run_mcts_many_c(model, boards[:2], device=device, rng=rng,
+                         cfg=MCTSConfig(simulations=4), evaluator=evaluator)
     else:
         run_mcts_many(model, boards[:2], device=device, rng=rng,
                       cfg=MCTSConfig(simulations=4), evaluator=evaluator)
@@ -286,15 +290,15 @@ def profile_mcts(
     pr.enable()
 
     rng2 = np.random.default_rng(42)
-    if mcts_type == "gumbel_c" and _HAS_GUMBEL_C:
-        run_gumbel_root_many_c(model, boards, device=device, rng=rng2,
-                               cfg=GumbelConfig(simulations=sims), evaluator=evaluator)
+    if mcts_type == "gumbel_c" and _run_gumbel_root_many_c is not None:
+        _run_gumbel_root_many_c(model, boards, device=device, rng=rng2,
+                                cfg=GumbelConfig(simulations=sims), evaluator=evaluator)
     elif mcts_type == "gumbel":
         run_gumbel_root_many(model, boards, device=device, rng=rng2,
                              cfg=GumbelConfig(simulations=sims), evaluator=evaluator)
-    elif mcts_type == "puct_c" and _HAS_C_TREE:
-        run_mcts_many_c(model, boards, device=device, rng=rng2,
-                        cfg=MCTSConfig(simulations=sims), evaluator=evaluator)
+    elif mcts_type == "puct_c" and _run_mcts_many_c is not None:
+        _run_mcts_many_c(model, boards, device=device, rng=rng2,
+                         cfg=MCTSConfig(simulations=sims), evaluator=evaluator)
     else:
         run_mcts_many(model, boards, device=device, rng=rng2,
                       cfg=MCTSConfig(simulations=sims), evaluator=evaluator)
@@ -360,7 +364,7 @@ def main() -> None:
 
     if args.compile and device.startswith("cuda"):
         print("Compiling model (this may take a minute)...")
-        model = torch.compile(model, mode="reduce-overhead")
+        model = cast(torch.nn.Module, torch.compile(model, mode="reduce-overhead"))
         # Warmup compile with various batch sizes
         for bs in [1, 4, 16, 64]:
             dummy = torch.randn(bs, 146, 8, 8, device=device)

@@ -67,12 +67,11 @@ ruff check "${PATHS[@]}"
 
 echo
 echo "::: basedpyright"
-# basedpyright scope is defined in pyrightconfig.json (package + tests). It
+# basedpyright scope is defined in pyrightconfig.json (package + tests + scripts). It
 # also respects .basedpyright/baseline.json so existing package drift doesn't
 # fail CI; refresh the baseline with `basedpyright --writebaseline` after a fix
-# campaign. Scripts are still checked when explicitly named, via --changed, or
-# through targeted cleanup passes. Only override scope when the user explicitly
-# names paths, so ad-hoc invocations on specific files still work.
+# campaign. Only override scope when the user explicitly names paths, so ad-hoc
+# invocations on specific files still work.
 if [[ $USER_SET_PATHS -eq 1 ]]; then
     basedpyright "${PATHS[@]}"
 else
