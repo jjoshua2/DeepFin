@@ -88,6 +88,22 @@ def test_collate_mixed_optional_presence():
     assert batch["sf_wdl"][1].sum().item() == 0.0
 
 
+def test_collate_respects_explicit_false_optional_flags():
+    s = _make_sample(with_optionals=True)
+    s.has_future = False
+    s.has_volatility = False
+    s.has_sf_volatility = False
+
+    batch = collate([s], device="cpu")
+
+    assert batch["has_future"][0].item() == 0.0
+    assert batch["future_policy_t"][0].sum().item() == 0.0
+    assert batch["has_volatility"][0].item() == 0.0
+    assert batch["volatility_t"][0].sum().item() == 0.0
+    assert batch["has_sf_volatility"][0].item() == 0.0
+    assert batch["sf_volatility_t"][0].sum().item() == 0.0
+
+
 # ── collate_arrays (from numpy dict) ─────────────────────────────────
 
 

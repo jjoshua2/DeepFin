@@ -52,6 +52,20 @@ _OPTIONAL_FLOAT_FIELDS: tuple[tuple[str, str, str, tuple[int, ...]], ...] = (
     ("volatility_target",   "volatility_t",    "has_volatility",   (3,)),
     ("sf_volatility_target","sf_volatility_t", "has_sf_volatility",(3,)),
 )
+_OPTIONAL_EXPLICIT_HAS_ATTRS: dict[str, str] = {
+    "future_policy_target": "has_future",
+    "volatility_target": "has_volatility",
+    "sf_volatility_target": "has_sf_volatility",
+}
+
+
+def _sample_has_optional(s: ReplaySample, src: str) -> bool:
+    explicit = _OPTIONAL_EXPLICIT_HAS_ATTRS.get(src)
+    if explicit is not None:
+        flag = getattr(s, explicit, None)
+        if flag is not None:
+            return bool(flag)
+    return getattr(s, src, None) is not None
 
 
 def _build_collate_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
@@ -84,7 +98,7 @@ def _build_collate_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
     for i, s in enumerate(samples):
         for src, target, has, _ in _OPTIONAL_FLOAT_FIELDS:
             v = getattr(s, src, None)
-            if v is not None:
+            if v is not None and _sample_has_optional(s, src):
                 out[target][i] = v.astype(np.float32, copy=False)
                 out[has][i] = 1.0
         if s.sf_move_index is not None:

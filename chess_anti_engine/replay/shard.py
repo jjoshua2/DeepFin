@@ -460,6 +460,20 @@ _VECTOR_FIELDS: tuple[tuple[str, str, str], ...] = (
     ("sf_volatility_target", "sf_volatility_target", "has_sf_volatility"),
     ("search_wdl",           "search_wdl",           "has_search_wdl"),
 )
+_VECTOR_EXPLICIT_HAS_ATTRS: dict[str, str] = {
+    "future_policy_target": "has_future",
+    "volatility_target": "has_volatility",
+    "sf_volatility_target": "has_sf_volatility",
+}
+
+
+def _sample_has_vector_field(s: ReplaySample, src: str) -> bool:
+    explicit = _VECTOR_EXPLICIT_HAS_ATTRS.get(src)
+    if explicit is not None:
+        flag = getattr(s, explicit, None)
+        if flag is not None:
+            return bool(flag)
+    return getattr(s, src, None) is not None
 
 
 def samples_to_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
@@ -488,7 +502,7 @@ def samples_to_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
                 arrs[has][i] = 1
         for src, target, has in _VECTOR_FIELDS:
             v = getattr(s, src, None)
-            if v is not None:
+            if v is not None and _sample_has_vector_field(s, src):
                 arrs[target][i] = np.asarray(v, dtype=np.float16)
                 arrs[has][i] = 1
         for mk, hk in zip(LEGAL_MASK_FIELDS, LEGAL_MASK_HAS_FIELDS, strict=True):

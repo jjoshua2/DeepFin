@@ -94,8 +94,10 @@ Loss and trainer contracts:
   salvage donor overlay, `Trainer._loss_kwargs`, and `compute_loss`.
 - [x] Verify live YAML/PB2/salvage config sync covers all runtime-mutable loss
   weights, including constructor fallback semantics.
-- [ ] Verify blend-weight normalization, target availability masks, and legacy
+- [x] Verify target availability masks and legacy
   shard defaults cannot create unintended labels.
+- [ ] Verify blend-weight normalization and SF/search WDL target fallback cannot
+  create unintended labels.
 - [ ] Verify split metrics (`is_selfplay`, game phase, SF/search agreement) are
   observation-only and cannot change gradients.
 - [ ] Identify loss/trainer simplification candidates only after correctness
@@ -147,6 +149,14 @@ Current notes:
   `tests/test_trainable_config_ops.py`,
   `tests/test_distributed_selfplay_backpressure.py`, `tests/test_compute_loss.py`,
   `tests/test_losses.py`, and `tests/test_collation.py` (`42 passed`).
+- Finding F018 opened/fixed in this cycle: in-memory list collation and
+  `samples_to_arrays` treated optional target presence as authoritative over
+  explicit `has_future`, `has_volatility`, and `has_sf_volatility=False`,
+  allowing intentionally masked auxiliary targets to train if their arrays were
+  still populated.
+- Focused replay/loss validation after F018 passed: `tests/test_collation.py`,
+  `tests/test_replay_shard_npz.py`, `tests/test_compute_loss.py`,
+  `tests/test_losses.py`, and `tests/test_replay_disk_buffer.py` (`47 passed`).
 - Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
   `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
   `tests/test_tune_distributed_worker_cmd.py`,

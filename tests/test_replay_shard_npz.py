@@ -10,6 +10,7 @@ from chess_anti_engine.replay.shard import (
     local_shard_path,
     save_local_shard_arrays,
     save_npz,
+    samples_to_arrays,
 )
 
 
@@ -138,3 +139,19 @@ def test_save_prunes_unset_optional_arrays(tmp_path):
     assert len(out) == 1
     assert out[0].sf_wdl is None
     assert out[0].future_policy_target is None
+
+
+def test_samples_to_arrays_respects_explicit_false_optional_flags():
+    s = _sample()
+    s.has_future = False
+    s.has_volatility = False
+    s.has_sf_volatility = False
+
+    arrs = samples_to_arrays([s])
+
+    assert arrs["has_future"][0] == 0
+    assert arrs["future_policy_target"][0].sum() == 0.0
+    assert arrs["has_volatility"][0] == 0
+    assert arrs["volatility_target"][0].sum() == 0.0
+    assert arrs["has_sf_volatility"][0] == 0
+    assert arrs["sf_volatility_target"][0].sum() == 0.0
