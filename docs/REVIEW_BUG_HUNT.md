@@ -34,8 +34,8 @@ Working rules:
 | 2 | adversarial | Replay and shard ingest | `chess_anti_engine/replay/*`, `worker_buffer.py`, server/worker shard paths | deep | Schema drift, stale shards, missing arrays, holdout leakage, old-run compatibility. |
 | 3 | adversarial | Worker lifecycle | `worker.py`, `worker_assets.py`, `worker_pool.py`, `stockfish/*` | deep | Manifest restart keys, model swaps, Stockfish restarts, partial updates, pause/resume. |
 | 4 | adversarial | Tune trainable lifecycle | `chess_anti_engine/tune/*` | deep | Config reload, donor/salvage overlays, PID state restore, manifests, async eval timing. |
-| 5 | adversarial | Loss and trainer contracts | `chess_anti_engine/train/losses.py`, `trainer.py`, `targets.py` | active | Blend weights, masks, target normalization, old shard behavior, live weight sync. |
-| 6 | adversarial | MCTS and search engines | `chess_anti_engine/mcts/*`, `uci/search.py`, `tablebase.py` | pending | Memory ownership, root reuse, terminal handling, solved/TB propagation, concurrent mutation. |
+| 5 | adversarial | Loss and trainer contracts | `chess_anti_engine/train/losses.py`, `trainer.py`, `targets.py` | deep | Blend weights, masks, target normalization, old shard behavior, live weight sync. |
+| 6 | adversarial | MCTS and search engines | `chess_anti_engine/mcts/*`, `uci/search.py`, `tablebase.py` | active | Memory ownership, root reuse, terminal handling, solved/TB propagation, concurrent mutation. |
 | 7 | adversarial | Distributed server | `chess_anti_engine/server/*`, `tune/distributed_runtime.py` | pending | Upload durability, auth, leases, path safety, backpressure, recovery after crash. |
 | 8 | adversarial | UCI runtime | `chess_anti_engine/uci/*`, `stockfish/uci.py` | pending | Protocol state, time controls, ponderhit, cancellation, subprocess hangs. |
 | 9 | simplify | Hot-path code quality and efficiency | selfplay, replay, MCTS, inference, worker | pending | Remove duplicated orchestration, clarify contracts, reduce allocations/sync/I/O stalls. |
@@ -98,9 +98,21 @@ Loss and trainer contracts:
   shard defaults cannot create unintended labels.
 - [x] Verify blend-weight normalization and SF/search WDL target fallback cannot
   create unintended labels.
-- [ ] Verify split metrics (`is_selfplay`, game phase, SF/search agreement) are
+- [x] Verify split metrics (`is_selfplay`, game phase, SF/search agreement) are
   observation-only and cannot change gradients.
 - [ ] Identify loss/trainer simplification candidates only after correctness
+  review.
+
+MCTS and search engines:
+
+- [ ] Map Python/C search entrypoints, root initialization, terminal expansion,
+  and policy/legal-mask contracts.
+- [ ] Verify solved/TB value propagation cannot mix POV/sign conventions.
+- [ ] Verify root reuse, tree reset, and concurrent walker state cannot leak
+  visits/virtual loss across positions.
+- [ ] Verify tablebase/search overrides preserve legal move and terminal
+  semantics.
+- [ ] Identify MCTS/search simplification candidates only after correctness
   review.
 
 Current notes:
@@ -165,6 +177,13 @@ Current notes:
   `tests/test_replay_shard_validation.py`, `tests/test_replay_shard_npz.py`,
   `tests/test_collation.py`, `tests/test_sf_search_agreement_gate.py`,
   `tests/test_compute_loss.py`, and `tests/test_losses.py` (`47 passed`).
+- Split diagnostic adversarial check found no gradient path issue: loss `total`
+  only includes weighted head losses, SF/search agreement stats are detached,
+  and trainer scalar extraction detaches every non-total diagnostic before
+  logging. Focused validation passed: `tests/test_compute_loss.py`,
+  `tests/test_losses.py`, `tests/test_sf_search_agreement_gate.py`,
+  `tests/test_collation.py`, and `tests/test_replay_shard_validation.py`
+  (`40 passed`).
 - Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
   `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
   `tests/test_tune_distributed_worker_cmd.py`,
