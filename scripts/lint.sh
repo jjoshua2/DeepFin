@@ -28,6 +28,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+LINT_TMP="$(mktemp -d)"
+trap 'rm -rf "$LINT_TMP"' EXIT
+
 RUN_DEAD=1
 RUN_SLOP=0
 USE_CHANGED=0
@@ -63,45 +66,39 @@ if [[ ${#PATHS[@]} -eq 0 ]]; then
     PATHS=(chess_anti_engine tests scripts)
 fi
 
-echo "::: ruff check"
-ruff check "${PATHS[@]}"
+JOB_NAMES=()
+JOB_PIDS=()
+JOB_LOGS=()
+JOB_ADVISORY=()
 
-echo
-echo "::: basedpyright"
-# basedpyright scope is defined in pyrightconfig.json (package + tests + scripts). It
-# also respects .basedpyright/baseline.json so existing package drift doesn't
-# fail CI; refresh the baseline with `basedpyright --writebaseline` after a fix
-# campaign. Only override scope when the user explicitly names paths, so ad-hoc
-# invocations on specific files still work.
-if [[ $USER_SET_PATHS -eq 1 ]]; then
-    basedpyright "${PATHS[@]}"
-else
-    basedpyright
-fi
+start_job() {
+    local advisory="$1"
+    local name="$2"
+    shift 2
+    local idx="${#JOB_NAMES[@]}"
+    local safe_name="${name//[^A-Za-z0-9_.-]/_}"
+    local log="$LINT_TMP/${idx}-${safe_name}.log"
+    JOB_NAMES+=("$name")
+    JOB_LOGS+=("$log")
+    JOB_ADVISORY+=("$advisory")
+    ("$@" >"$log" 2>&1) &
+    JOB_PIDS+=("$!")
+}
 
-echo
-echo "::: pylint (narrow config: 7 semantic checks, see pyproject.toml)"
-pylint "${PATHS[@]}"
+run_basedpyright() {
+    # basedpyright scope is defined in pyrightconfig.json (package + tests + scripts). It
+    # also respects .basedpyright/baseline.json so existing package drift doesn't
+    # fail CI; refresh the baseline with `basedpyright --writebaseline` after a fix
+    # campaign. Only override scope when the user explicitly names paths, so ad-hoc
+    # invocations on specific files still work.
+    if [[ $USER_SET_PATHS -eq 1 ]]; then
+        basedpyright "${PATHS[@]}"
+    else
+        basedpyright
+    fi
+}
 
-if [[ $RUN_DEAD -eq 1 ]]; then
-    echo
-    echo "::: vulture (dead code, min confidence 80)"
-    # Vulture exits non-zero on findings; under set -e that fails the
-    # run, which is what we want — unignored dead code should gate.
-    vulture --min-confidence 80 "${PATHS[@]}"
-
-    echo
-    echo "::: skylos (advisory — dead code + circular imports)"
-    # Skylos exits 0 even with findings (its grep-verify rescues most
-    # false positives). Its output tables remain the signal; treat as
-    # advisory. Review the tables by eye, add `# skylos: ignore` for
-    # FPs. Explicitly advisory — do not quietly gate on it.
-    skylos "${PATHS[@]}" || true
-fi
-
-if [[ $RUN_SLOP -eq 1 ]]; then
-    echo
-    echo "::: scb-check (verbosity + erosion + slop patterns)"
+run_slop() {
     # Summary scores to stderr for the drift signal. Full findings to stdout —
     # uvx runs on demand; installs into ~/.cache/uv on first call.
     uvx scb-check check "${PATHS[@]}" --report 2>/dev/null | python3 -c "
@@ -113,6 +110,63 @@ try:
 except Exception as e:
     print(f'  scb-check report failed: {e}')
 "
+}
+
+run_group() {
+    local failed=0
+    local status=0
+    for idx in "${!JOB_PIDS[@]}"; do
+        if wait "${JOB_PIDS[$idx]}"; then
+            status=0
+        else
+            status=$?
+        fi
+
+        echo
+        echo "::: ${JOB_NAMES[$idx]}"
+        cat "${JOB_LOGS[$idx]}"
+        if [[ $status -ne 0 ]]; then
+            if [[ "${JOB_ADVISORY[$idx]}" == "1" ]]; then
+                echo "::: ${JOB_NAMES[$idx]} exited $status (advisory; continuing)"
+            else
+                failed=1
+            fi
+        fi
+    done
+    JOB_NAMES=()
+    JOB_PIDS=()
+    JOB_LOGS=()
+    JOB_ADVISORY=()
+    return "$failed"
+}
+
+echo
+echo "::: running core linters in parallel"
+start_job 0 "ruff check" ruff check "${PATHS[@]}"
+start_job 0 "basedpyright" run_basedpyright
+start_job 0 "pylint (narrow config: 7 semantic checks, see pyproject.toml)" pylint "${PATHS[@]}"
+run_group
+
+echo
+if [[ $RUN_DEAD -eq 1 ]]; then
+    echo "::: running dead-code tools in parallel"
+    # Vulture exits non-zero on findings; under set -e that fails the
+    # run, which is what we want — unignored dead code should gate.
+    start_job 0 "vulture (dead code, min confidence 80)" vulture --min-confidence 80 "${PATHS[@]}"
+
+    # Skylos exits 0 even with findings (its grep-verify rescues most
+    # false positives). Its output tables remain the signal; treat as
+    # advisory. Review the tables by eye, add `# skylos: ignore` for
+    # FPs. Explicitly advisory — do not quietly gate on it.
+    start_job 1 "skylos (advisory — dead code + circular imports)" skylos "${PATHS[@]}"
+fi
+
+if [[ $RUN_SLOP -eq 1 ]]; then
+    start_job 0 "scb-check (verbosity + erosion + slop patterns)" run_slop
+fi
+
+if [[ ${#JOB_PIDS[@]} -gt 0 ]]; then
+    run_group
 fi
 
 echo
