@@ -90,9 +90,16 @@ def main() -> None:
     max_pos = args.max_positions
     shard_paths = [str(p) for p in sorted(bootstrap_dir.glob("*.npz"))]
     num_shards = len(shard_paths)
-    print(f"Found {num_shards} shards in {bootstrap_dir}", flush=True)
-    print(f"batch_size={batch_size}, loaders={args.loaders}", flush=True)
-
+    if not shard_paths:
+        raise SystemExit(f"No bootstrap shards found in {bootstrap_dir}")
+    if args.loaders < 0:
+        raise SystemExit("--loaders must be >= 0")
+    if batch_size <= 0:
+        raise SystemExit("--batch-size must be > 0")
+    if args.epochs <= 0:
+        raise SystemExit("--epochs must be > 0")
+    if max_pos < 0:
+        raise SystemExit("--max-positions must be >= 0")
     rng = np.random.default_rng(42)
 
     # ── Phase 1: threaded loading into buffer ──
@@ -103,8 +110,10 @@ def main() -> None:
     shard_count = 0
 
     rng.shuffle(shard_paths)
-    q: queue.Queue = queue.Queue(maxsize=args.loaders * 2)
-    n_loaders = args.loaders
+    n_loaders = max(1, min(args.loaders, num_shards))
+    q: queue.Queue = queue.Queue(maxsize=n_loaders * 2)
+    print(f"Found {num_shards} shards in {bootstrap_dir}", flush=True)
+    print(f"batch_size={batch_size}, loaders={n_loaders}", flush=True)
     chunks = [shard_paths[i::n_loaders] for i in range(n_loaders)]
     threads = []
     for chunk in chunks:
@@ -118,24 +127,28 @@ def main() -> None:
         if item is None:
             done_count += 1
             continue
+        if max_pos > 0 and total_loaded >= max_pos:
+            del item
+            continue
         n = len(item)
         if max_pos > 0 and total_loaded + n > max_pos:
             item = item[:max_pos - total_loaded]
             n = len(item)
-        buf.add_many(item)
+        if n:
+            buf.add_many(item)
         total_loaded += n
         shard_count += 1
         del item
         if shard_count % 50 == 0:
             print(f"  Loading: {shard_count}/{num_shards} shards, {total_loaded:,} pos [{time.time()-t0:.0f}s]", flush=True)
-        if max_pos > 0 and total_loaded >= max_pos:
-            break
 
     for t in threads:
         t.join(timeout=5)
 
     load_time = time.time() - t0
     print(f"Loaded {total_loaded:,} positions from {shard_count} shards in {load_time:.0f}s", flush=True)
+    if total_loaded <= 0:
+        raise SystemExit("No bootstrap positions loaded")
 
     # ── Phase 2: tight GPU training loop ──
     steps_per_epoch = max(1, total_loaded // batch_size)

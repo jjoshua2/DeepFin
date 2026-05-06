@@ -400,6 +400,18 @@ Current notes:
   `python3 -m py_compile scripts/reinit_value_heads.py`,
   `python3 scripts/reinit_value_heads.py --help`, and
   `python3 -m pytest tests/test_reinit_value_heads_script.py -q`.
+- Finding F040 opened/fixed in this cycle: `scripts/status.py` collapsed
+  result rows without a `trial_id` onto the same truncated fallback
+  (`train_trial_`), so status output could hide all but one trial on older or
+  partial Ray result files. `scripts/train_bootstrap.py` also broke out of its
+  loader queue once `--max-positions` was reached, which could leave daemon
+  loader threads blocked on a full queue while the script trained. Status now
+  derives the Ray trial suffix from result paths, and bootstrap training drains
+  loader sentinels while validating empty/invalid inputs up front.
+- Focused status/bootstrap validation after F040 passed:
+  `python3 -m py_compile scripts/status.py scripts/train_bootstrap.py`,
+  `--help` for both scripts, and
+  `python3 -m pytest tests/test_status_script.py -q`.
 - Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
   `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
   `tests/test_tune_distributed_worker_cmd.py`,
@@ -1194,9 +1206,9 @@ Files:
 - [x] `scripts/profile_distributed.py`
 - [x] `scripts/profile_play_batch.py`
 - [x] `scripts/reinit_value_heads.py`
-- [ ] `scripts/status.py`
+- [x] `scripts/status.py`
 - [x] `scripts/train.sh`
-- [ ] `scripts/train_bootstrap.py`
+- [x] `scripts/train_bootstrap.py`
 - [ ] `scripts/blunder_check.py`
 - [ ] `scripts/blunder_check_cp.py`
 
@@ -1218,6 +1230,8 @@ Correctness/reliability:
   artifact paths, and benchmark-owned process cleanup.
 - [x] Recovery scripts preserve checkpoint architecture metadata instead of
   rewriting salvaged checkpoints with guessed model shapes.
+- [x] Status/bootstrap scripts handle missing trial IDs and bounded loading
+  limits without silently collapsing trials or blocking loader threads.
 - [x] Diagnostic scripts run from repo root and fail clearly when required
   trial/replay paths are absent.
 - [ ] Remaining Python scripts run from repo root and fail clearly when required files/env vars are absent.
@@ -1235,6 +1249,7 @@ Tests:
 - [ ] `tests/test_arena_match_smoke.py`
 - [x] `tests/test_profile_distributed.py`
 - [x] `tests/test_reinit_value_heads_script.py`
+- [x] `tests/test_status_script.py`
 
 ### Documentation and Specs
 

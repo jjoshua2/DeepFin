@@ -2,7 +2,7 @@
 
 Usage:
     python3 scripts/status.py
-    python3 scripts/status.py --run runs/pbt2_fresh_run9
+    python3 scripts/status.py --run runs/pbt2_small
 """
 from __future__ import annotations
 
@@ -61,6 +61,18 @@ def _find_trial_result_jsons(run_dir: Path, active_pid: str | None = None) -> li
     if not results:
         results = sorted(run_dir.rglob("result.json"), key=lambda p: p.stat().st_mtime)
     return results
+
+
+def _trial_id_from_result_path(path: Path) -> str:
+    for parent in [path.parent, *path.parents]:
+        name = parent.name
+        if not name.startswith("train_trial_"):
+            continue
+        parts = name.split("_")
+        if len(parts) >= 4:
+            return f"{parts[2]}_{parts[3]}"
+        return name.removeprefix("train_trial_")
+    return path.parent.name
 
 
 def _latest_worker_log_line(run_dir: Path, trial_id: str, active_pid: str | None = None) -> str:
@@ -163,7 +175,7 @@ def main() -> None:
             if not lines:
                 continue
             r = json.loads(lines[-1])
-            tid = str(r.get("trial_id", rf.parent.name[:12]))
+            tid = str(r.get("trial_id") or _trial_id_from_result_path(rf))
             existing = by_trial.get(tid)
             if existing is None or int(r.get("iter", 0)) >= int(existing.get("iter", 0)):
                 by_trial[tid] = r
