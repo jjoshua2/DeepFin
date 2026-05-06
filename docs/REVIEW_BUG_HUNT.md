@@ -213,6 +213,18 @@ Current notes:
   `tests/test_batch_descend_puct.py`, `tests/test_pucv_search.py`,
   `tests/test_uci_walker_pool.py`, `tests/test_multi_gpu_pucv_pool.py`, and
   `tests/test_tablebase_cache.py` (`75 passed`, `2 skipped`).
+- Finding F021 opened/fixed in this cycle: server artifact endpoints trusted
+  manifest-provided `filename` for Stockfish/worker-wheel artifacts. Absolute
+  paths or `..` components could escape the publish directory and serve an
+  arbitrary readable file. Artifact resolution now rejects paths that do not
+  resolve under the publish root.
+- Focused server artifact/path validation after F021 passed:
+  `tests/test_server_upload_security.py::test_manifest_artifact_filename_cannot_escape_publish_root`,
+  `tests/test_server_upload_security.py::test_manifest_artifact_filename_serves_publish_child`,
+  `tests/test_server_trial_lease.py`, and `tests/test_server_upload_compaction.py`
+  (`11 passed`). Attempted broader FastAPI `TestClient` upload-security runs
+  hung in the local TestClient/lifespan path before reaching assertions, so the
+  new coverage uses the pure resolver helper directly.
 - Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
   `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
   `tests/test_tune_distributed_worker_cmd.py`,

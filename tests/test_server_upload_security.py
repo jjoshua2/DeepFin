@@ -227,3 +227,22 @@ def test_compaction_flush_failure_preserves_accumulator(tmp_path, monkeypatch: p
     # The critical assertion: no replay data was lost due to the first failure.
     assert arrs["x"].shape[0] == 3
     assert int(meta["positions"]) == 3
+
+
+def test_manifest_artifact_filename_cannot_escape_publish_root(tmp_path) -> None:
+    from chess_anti_engine.server.app import resolve_publish_artifact_path
+
+    publish = tmp_path / "server" / "publish"
+    publish.mkdir(parents=True)
+
+    assert resolve_publish_artifact_path(publish, "../../outside_stockfish") is None
+    assert resolve_publish_artifact_path(publish, str(tmp_path / "outside_stockfish")) is None
+
+
+def test_manifest_artifact_filename_serves_publish_child(tmp_path) -> None:
+    from chess_anti_engine.server.app import resolve_publish_artifact_path
+
+    publish = tmp_path / "server" / "publish"
+    publish.mkdir(parents=True)
+
+    assert resolve_publish_artifact_path(publish, "stockfish") == publish / "stockfish"

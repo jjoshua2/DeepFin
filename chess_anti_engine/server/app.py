@@ -36,6 +36,17 @@ _PENDING_DIR_NAME = PENDING_DIR_NAME
 _IN_FLIGHT_DIR_NAME = IN_FLIGHT_DIR_NAME
 
 
+def resolve_publish_artifact_path(publish_root: Path, filename: str) -> Path | None:
+    """Return a publish-root-contained artifact path, or None on escape."""
+    root = Path(publish_root).resolve()
+    path = (root / str(filename)).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return None
+    return path
+
+
 # Aggregate counter fields shared between the upload-meta dict (input) and
 # accumulator attribute (output). Each entry is both the meta-dict key and the
 # accumulator field name. ``positions`` is NOT in here — it tracks
@@ -717,7 +728,13 @@ def create_app(
             name = str(rec.get("filename"))
         else:
             name = str(default_name)
-        p = _publish_root(trial_id) / name
+        p = resolve_publish_artifact_path(_publish_root(trial_id), name)
+        if p is None:
+            log.warning(
+                "rejecting manifest artifact path outside publish root: key=%s filename=%r",
+                key, name,
+            )
+            return None
         if p.exists() and p.is_file():
             return p
         return None
