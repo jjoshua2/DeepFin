@@ -19,6 +19,7 @@ import numpy as np
 
 from chess_anti_engine.moves import POLICY_SIZE, move_to_index
 from chess_anti_engine.replay.buffer import ReplaySample
+from chess_anti_engine.selfplay.game import _result_to_wdl
 from chess_anti_engine.selfplay.state import (
     CompletedGameBatch,
     SelfplayState,
@@ -312,14 +313,7 @@ def _build_replay_samples(
         if not bool(rec.has_policy):
             continue
 
-        if result == "1/2-1/2":
-            wdl = 1
-        elif (result == "1-0" and rec.pov_color == chess.WHITE) or (
-            result == "0-1" and rec.pov_color == chess.BLACK
-        ):
-            wdl = 0
-        else:
-            wdl = 2
+        wdl = _result_to_wdl(result, pov_white=rec.pov_color == chess.WHITE)
 
         total = max(1, int(total_plies_played))
         moves_left = float(max(0, total - int(rec.ply_index))) / max(
