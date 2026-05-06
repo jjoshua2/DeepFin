@@ -62,6 +62,7 @@ KNIGHT_DELTAS: list[tuple[int, int]] = [
 ]
 
 UNDERPROMO_TO_IDX = {chess.KNIGHT: 0, chess.BISHOP: 1, chess.ROOK: 2}
+UNDERPROMO_PIECES = [chess.KNIGHT, chess.BISHOP, chess.ROOK]
 UNDERPROMO_DFS: list[int] = [-1, 0, 1]  # left, forward, right
 DF_TO_UNDERPROMO_DIR = {-1: 0, 0: 1, 1: 2}
 
@@ -80,6 +81,26 @@ for i, (df, dr) in enumerate(KNIGHT_DELTAS):
     p = 56 + i
     _DELTA_TO_PLANE[(df, dr)] = p
     _PLANE_TO_DELTA[p] = (df, dr)
+
+
+def _policy_index(from_oriented: int, plane: int) -> int:
+    return int(from_oriented) * PLANE_COUNT + int(plane)
+
+
+def _underpromo_plane(piece_idx: int, dir_idx: int) -> int:
+    return 64 + int(piece_idx) * 3 + int(dir_idx)
+
+
+def _underpromo_dir_idx(df: int) -> int:
+    return DF_TO_UNDERPROMO_DIR.get(int(df), 1)
+
+
+def _oriented_move_delta(move: chess.Move, turn: chess.Color) -> tuple[int, int, int]:
+    from_oriented = orient_square(move.from_square, turn)
+    to_oriented = orient_square(move.to_square, turn)
+    df = chess.square_file(to_oriented) - chess.square_file(from_oriented)
+    dr = chess.square_rank(to_oriented) - chess.square_rank(from_oriented)
+    return int(from_oriented), int(df), int(dr)
 
 
 def mirror_oriented_square(sq: chess.Square) -> chess.Square:
@@ -101,29 +122,28 @@ def mirror_policy_index(index: int) -> int:
     from_o = idx // PLANE_COUNT
     plane = idx % PLANE_COUNT
 
-  # Mirror the origin square.
     f_o = chess.Square(from_o)
     f_m = mirror_oriented_square(f_o)
 
     if plane >= 64:
-  # Underpromotions: mirror df direction (left<->right), keep piece type.
+        # Underpromotions: mirror df direction (left<->right), keep piece type.
         rel = plane - 64
         piece_idx = rel // 3
         dir_idx = rel % 3
         dir_m = 2 - int(dir_idx)  # 0<->2, 1 stays
-        plane_m = 64 + int(piece_idx) * 3 + int(dir_m)
-        return int(f_m) * PLANE_COUNT + int(plane_m)
+        plane_m = _underpromo_plane(piece_idx, dir_m)
+        return _policy_index(f_m, plane_m)
 
     delta = _PLANE_TO_DELTA.get(int(plane))
     if delta is None:
-  # Should be unreachable for valid indices.
+        # Should be unreachable for valid indices.
         return idx
     df, dr = delta
     plane_m = _DELTA_TO_PLANE.get((-int(df), int(dr)))
     if plane_m is None:
         return idx
 
-    return int(f_m) * PLANE_COUNT + int(plane_m)
+    return _policy_index(f_m, plane_m)
 
 
 # Flat index permutations for mirroring in oriented coordinates.
@@ -158,7 +178,7 @@ def _build_index_to_move_lut() -> np.ndarray:
                 if not (0 <= tf <= 7 and 0 <= tr <= 7):
                     continue
                 to_o = chess.square(tf, tr)
-                promo = [chess.KNIGHT, chess.BISHOP, chess.ROOK][rel // 3]
+                promo = UNDERPROMO_PIECES[rel // 3]
                 lut[ti, idx] = [orient_square(from_o, turn), orient_square(to_o, turn), promo]
                 continue
             delta = _PLANE_TO_DELTA.get(plane)
@@ -171,9 +191,9 @@ def _build_index_to_move_lut() -> np.ndarray:
             to_o = chess.square(tf, tr)
             f_real = orient_square(from_o, turn)
             t_real = orient_square(to_o, turn)
-  # Pawn reaching last rank: encode queen-promotion candidate; the
-  # real-board piece-type check happens at decode time in
-  # ``index_to_move_fast``.
+            # Pawn reaching last rank: encode queen-promotion candidate; the
+            # real-board piece-type check happens at decode time in
+            # ``index_to_move_fast``.
             promo_val = chess.QUEEN if chess.square_rank(t_real) in (0, 7) else 0
             lut[ti, idx] = [f_real, t_real, promo_val]
     return lut
@@ -189,7 +209,7 @@ def index_to_move_fast(index: int, board: chess.Board) -> chess.Move:
     if f < 0:
         return next(iter(board.legal_moves))
 
-  # Only apply promotion if a pawn is actually on the from square
+    # Only apply promotion if a pawn is actually on the from square.
     promotion = None
     if promo > 0:
         piece = board.piece_at(f)
@@ -199,7 +219,7 @@ def index_to_move_fast(index: int, board: chess.Board) -> chess.Move:
     m = chess.Move(f, t, promotion=promotion)
     if m in board.legal_moves:
         return m
-  # Fallback (rare edge cases)
+    # Fallback for rare edge cases like ambiguous queen-promotion candidates.
     for lm in board.legal_moves:
         if move_to_index(lm, board) == index:
             return lm
@@ -214,7 +234,7 @@ def mirror_policy(policy: np.ndarray) -> np.ndarray:
     p = np.asarray(policy)
     if p.shape != (POLICY_SIZE,):
         raise ValueError(f"policy must be ({POLICY_SIZE},), got {p.shape}")
-  # new[j] = old[inv[j]]
+    # new[j] = old[inv[j]]
     return p[MIRROR_POLICY_INV].astype(np.float32, copy=False)
 
 
@@ -224,27 +244,20 @@ def mirror_policy_batch(policies: np.ndarray) -> np.ndarray:
         raise ValueError(f"policies must be (N,{POLICY_SIZE}), got {p.shape}")
     return p[:, MIRROR_POLICY_INV].astype(np.float32, copy=False)
 
-def move_to_index(move: chess.Move, board: chess.Board) -> int:
-    turn = board.turn
-    f = orient_square(move.from_square, turn)
-    t = orient_square(move.to_square, turn)
 
-    ff, fr = chess.square_file(f), chess.square_rank(f)
-    tf, tr = chess.square_file(t), chess.square_rank(t)
-    df = tf - ff
-    dr = tr - fr
+def move_to_index(move: chess.Move, board: chess.Board) -> int:
+    from_oriented, df, dr = _oriented_move_delta(move, board.turn)
 
     if move.promotion is not None and move.promotion in UNDERPROMO_TO_IDX:
-        dir_idx = DF_TO_UNDERPROMO_DIR.get(df, 1)
+        dir_idx = _underpromo_dir_idx(df)
         piece_idx = UNDERPROMO_TO_IDX[move.promotion]
-        plane = 64 + piece_idx * 3 + dir_idx
-        return int(f) * PLANE_COUNT + int(plane)
+        return _policy_index(from_oriented, _underpromo_plane(piece_idx, dir_idx))
 
     plane = _DELTA_TO_PLANE.get((df, dr))
     if plane is None:
         raise ValueError(f"Unencodable move delta df={df}, dr={dr} for move={move}")
 
-    return int(f) * PLANE_COUNT + int(plane)
+    return _policy_index(from_oriented, plane)
 
 
 _UNDERPROMO_CHAR_TO_IDX = {"n": 0, "b": 1, "r": 2}
@@ -261,20 +274,17 @@ def uci_to_policy_index(uci: str, turn: bool) -> int:
     from_sq = (ord(uci[0]) - ord("a")) + (ord(uci[1]) - ord("1")) * 8
     to_sq = (ord(uci[2]) - ord("a")) + (ord(uci[3]) - ord("1")) * 8
 
-  # Underpromotion: 5-char UCI like "a7a8n"
     promo_char = uci[4].lower() if len(uci) == 5 else ""
     if promo_char in _UNDERPROMO_CHAR_TO_IDX:
-  # Orient squares
         f = from_sq if turn else (from_sq ^ 56)
         t = to_sq if turn else (to_sq ^ 56)
         ff, tf = f % 8, t % 8
         df = tf - ff
-        dir_idx = DF_TO_UNDERPROMO_DIR.get(df, 1)
+        dir_idx = _underpromo_dir_idx(df)
         piece_idx = _UNDERPROMO_CHAR_TO_IDX[promo_char]
-        plane = 64 + piece_idx * 3 + dir_idx
-        return int(f) * PLANE_COUNT + int(plane)
+        return _policy_index(f, _underpromo_plane(piece_idx, dir_idx))
 
-  # Queen promotion or normal move — use precomputed LUT
+    # Queen promotion or normal move: use the precomputed non-underpromotion LUT.
     idx = int(_MOVE_INDEX_LUT[int(turn)][from_sq][to_sq])
     return idx
 
