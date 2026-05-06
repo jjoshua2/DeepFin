@@ -96,7 +96,7 @@ Loss and trainer contracts:
   weights, including constructor fallback semantics.
 - [x] Verify target availability masks and legacy
   shard defaults cannot create unintended labels.
-- [ ] Verify blend-weight normalization and SF/search WDL target fallback cannot
+- [x] Verify blend-weight normalization and SF/search WDL target fallback cannot
   create unintended labels.
 - [ ] Verify split metrics (`is_selfplay`, game phase, SF/search agreement) are
   observation-only and cannot change gradients.
@@ -157,6 +157,14 @@ Current notes:
 - Focused replay/loss validation after F018 passed: `tests/test_collation.py`,
   `tests/test_replay_shard_npz.py`, `tests/test_compute_loss.py`,
   `tests/test_losses.py`, and `tests/test_replay_disk_buffer.py` (`47 passed`).
+- Finding F019 opened/fixed in this cycle: shard validation allowed active
+  optional distribution targets with negative values or zero row mass, which
+  could create zero-mass/invalid SF-search WDL or policy-like labels before
+  loss-side normalization and masking.
+- Focused optional-distribution validation after F019 passed:
+  `tests/test_replay_shard_validation.py`, `tests/test_replay_shard_npz.py`,
+  `tests/test_collation.py`, `tests/test_sf_search_agreement_gate.py`,
+  `tests/test_compute_loss.py`, and `tests/test_losses.py` (`47 passed`).
 - Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
   `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
   `tests/test_tune_distributed_worker_cmd.py`,

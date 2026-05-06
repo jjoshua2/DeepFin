@@ -96,6 +96,14 @@ _REQUIRED_STORAGE_FIELDS: tuple[str, ...] = (
 _OPTIONAL_STORAGE_PAIRS: tuple[tuple[str, str], ...] = tuple(
     (s.arr, s.flag) for s in _OPTIONAL_FIELD_SPECS
 )
+_OPTIONAL_DISTRIBUTION_FIELDS = frozenset({
+    "sf_wdl",
+    "sf_policy_target",
+    "categorical_target",
+    "policy_soft_target",
+    "future_policy_target",
+    "search_wdl",
+})
 
 _SHARD_FIELDS: tuple[str, ...] = (
     *_REQUIRED_STORAGE_FIELDS,
@@ -570,6 +578,15 @@ def validate_arrays(arrs: dict[str, np.ndarray]) -> None:
                 )
             if np.issubdtype(value.dtype, np.floating) and not np.isfinite(value).all():
                 raise ValueError(f"{spec.arr} contains NaN/Inf")
+            if spec.arr in _OPTIONAL_DISTRIBUTION_FIELDS and flag_present:
+                active_rows = np.asarray(arrs[spec.flag]) != 0
+                if np.any(active_rows):
+                    active_value = value[active_rows]
+                    if (active_value < -1e-6).any():
+                        raise ValueError(f"{spec.arr} active rows contain negative values")
+                    row_sums = active_value.sum(axis=tuple(range(1, active_value.ndim)), dtype=np.float32)
+                    if (row_sums <= 0).any():
+                        raise ValueError(f"{spec.arr} active rows have non-positive sum")
 
         if active and not value_present:
             raise ValueError(f"{spec.flag} is set but {spec.arr} is missing")

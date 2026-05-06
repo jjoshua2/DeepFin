@@ -58,6 +58,26 @@ def test_validate_rejects_optional_value_shape_mismatch():
         validate_arrays(arrs)
 
 
+def test_validate_rejects_active_zero_optional_distribution():
+    arrs = _minimal_valid_arrays()
+    arrs["has_search_wdl"] = np.array([1, 0], dtype=np.uint8)
+    arrs["search_wdl"] = np.zeros((2, 3), dtype=np.float32)
+
+    with pytest.raises(ValueError, match="search_wdl active rows have non-positive sum"):
+        validate_arrays(arrs)
+
+
+def test_validate_rejects_active_negative_optional_distribution():
+    arrs = _minimal_valid_arrays()
+    arrs["has_policy_soft"] = np.array([1, 0], dtype=np.uint8)
+    arrs["policy_soft_target"] = np.zeros((2, 4672), dtype=np.float32)
+    arrs["policy_soft_target"][0, 0] = -0.1
+    arrs["policy_soft_target"][0, 1] = 1.1
+
+    with pytest.raises(ValueError, match="policy_soft_target active rows contain negative values"):
+        validate_arrays(arrs)
+
+
 def test_validate_allows_missing_optional_value_when_flag_is_absent():
     arrs = _minimal_valid_arrays()
     arrs["has_sf_wdl"] = np.array([0, 0], dtype=np.uint8)
