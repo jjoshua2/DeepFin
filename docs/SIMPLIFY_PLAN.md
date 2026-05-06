@@ -30,6 +30,7 @@ should be done only when it reduces real complexity or operational risk.
 | 6 | Selfplay/finalization | `selfplay/*`, `arena.py`, `bench/play_batch_timing.py` | pending | Result labels, target construction, timeout/TB handling, and benchmark mirrors are not duplicated unnecessarily. |
 | 7 | MCTS/UCI | `mcts/*`, `uci/*`, `tablebase.py` | pending | Python/C search paths and UCI runtime ownership are easier to reason about without weakening hot paths. |
 | 8 | Scripts/docs/config | `scripts/*`, `configs/*`, docs | pending | Operational scripts share path/config helpers where useful and docs match the current workflow. |
+| 9 | Remaining coverage | Everything not naturally owned by S001-S008 | active | Every tracked source/config/script/test/doc file is assigned to a simplify track. |
 
 ## Candidate Inventory
 
@@ -43,6 +44,7 @@ should be done only when it reduces real complexity or operational risk.
 | S006 | Selfplay target assembly | `chess_anti_engine/selfplay/finalize.py`, `state.py`, `manager.py`, `bench/play_batch_timing.py` | Benchmark mirrors and production target assembly can drift. | Routed production WDL label mapping through shared `_result_to_wdl`; larger sample-construction sharing deferred because benchmark records are intentionally lighter than production records. | `python3 -m pytest tests/test_selfplay_* tests/test_batch_process_ply.py tests/test_bench_result_labeling.py tests/test_selfplay_result_labeling.py tests/test_is_selfplay_tagging.py -q`; `ruff check chess_anti_engine/selfplay/finalize.py chess_anti_engine/selfplay/game.py chess_anti_engine/bench/play_batch_timing.py`; `basedpyright chess_anti_engine/selfplay/finalize.py chess_anti_engine/selfplay/game.py chess_anti_engine/bench/play_batch_timing.py` |
 | S007 | Search implementation parity | `chess_anti_engine/mcts/gumbel.py`, `gumbel_c.py`, `puct.py`, `puct_c.py`, `uci/search.py`, `uci/*`, `tablebase.py` | Python and C paths have overlapping terminal/root/legal-mask behavior. | Deferred. This needs parity-test-first work before hot-loop refactors; current tests cover terminal roots, C/Python root masks, searchmoves, UCI timing, and walker smoke paths. | `python3 -m pytest tests/test_gumbel_* tests/test_mcts_* tests/test_uci_searchmoves.py tests/test_uci_* -q` |
 | S008 | Script config/path helpers | `scripts/*`, `configs/*`, `AGENTS.md`, `CLAUDE.md` | Many scripts now have safer defaults but still parse roots, run dirs, and Stockfish paths independently. | Deferred. Inventory found many one-off benchmark/profile scripts, but no helper that would delete nontrivial duplicated logic from at least three scripts without forcing a new abstraction. | `python3 -m py_compile $(find scripts -name '*.py' -type f)` |
+| S009 | Remaining file coverage | see "Coverage Matrix" | Some source areas were not changed by S001-S008 but still need explicit ownership. | Active. Use the coverage matrix to drive the rest of the repo pass. | Track-specific tests plus full lint/test sweep at the end. |
 
 ## Current Slice
 
@@ -64,12 +66,33 @@ Next slice:
 - [x] S008: map script/config path helper duplication.
 - [ ] S009: inventory remaining package files not covered by S001-S008.
 
+## Coverage Matrix
+
+This matrix covers the 300 tracked repo files in scope for this pass
+(`git ls-files 'chess_anti_engine/**' 'scripts/**' 'tests/**' 'configs/**'
+'*.md' 'docs/**' 'pyproject.toml'`).
+
+| Track | Globs | Files | Simplify Status |
+|-------|-------|-------|-----------------|
+| S010 | `chess_anti_engine/encoding/**`, `chess_anti_engine/moves/**` | 13 | pending |
+| S011 | `chess_anti_engine/model/**`, `chess_anti_engine/onnx/**`, `chess_anti_engine/train/**`, `chess_anti_engine/eval/**` | 17 | pending |
+| S001/S002 | `chess_anti_engine/inference*.py`, `chess_anti_engine/worker*.py` | 9 | processed; revisit worker lifecycle later |
+| S007 | `chess_anti_engine/mcts/**`, `chess_anti_engine/uci/**`, `chess_anti_engine/tablebase.py` | 21 | processed; parity-test-first |
+| S006 | `chess_anti_engine/selfplay/**`, `chess_anti_engine/arena.py`, `chess_anti_engine/bench/**` | 15 | processed; benchmark sharing mostly deferred |
+| S004 | `chess_anti_engine/replay/**` | 6 | processed |
+| S003/S005 | `chess_anti_engine/server/**`, `chess_anti_engine/tune/**` | 23 | partially processed; more tune/server review later |
+| S012 | `chess_anti_engine/stockfish/**` | 5 | pending |
+| S013 | `chess_anti_engine/utils/**`, `chess_anti_engine/run.py`, `chess_anti_engine/config_keys.py`, `chess_anti_engine/version.py`, `chess_anti_engine/__init__.py` | 11 | pending |
+| S008 | `scripts/**`, `configs/**`, `*.md`, `docs/**`, `pyproject.toml` | 76 | processed; broad helper deferred |
+| S014 | `tests/**` | 104 | pending; simplify only where test helpers are meaningfully duplicated |
+
 ## Decisions
 
 Record accepted/rejected simplification decisions here.
 
 | Date | ID | Decision | Reason | Follow-up |
 |------|----|----------|--------|-----------|
+| 2026-05-06 | S009 | Add explicit coverage matrix for the whole tracked repo scope. | The simplify pass should not depend on memory of which directories were already examined. The matrix assigns all 300 tracked source/config/script/test/doc files to a track and shows what remains. | Continue with S010, S011, S012, S013, S014, then revisit partially deferred S002/S003/S005/S007 if tests justify it. |
 | 2026-05-06 | S008 | Defer shared script helper extraction. | The scripts directory is mostly benchmark, profile, and operational entrypoints with different argument contracts. A common helper would add an import dependency without deleting enough duplicated path/config logic yet. Compile coverage is clean. | Revisit if three or more scripts converge on the same run-dir/config/Stockfish resolution logic after future edits. |
 | 2026-05-06 | S007 | Defer MCTS/UCI hot-loop simplification until parity tests are expanded. | The search surface spans Python and C Gumbel/PUCT, persistent UCI roots, tablebase overrides, legal masks, searchmoves, timing, stop/ponder state, and walker pools. Existing tests pin several edges, but a refactor without more parity coverage could silently change node accounting or root policy behavior. | Add explicit C/Python parity tests for root legal masks, terminal roots, single-legal roots, tablebase-solved roots, and searchmoves before extracting shared search helpers. |
 | 2026-05-06 | S006 | Share result-string to WDL label mapping in production finalization. | `bench/play_batch_timing.py` already used `selfplay.game._result_to_wdl`, while `selfplay/finalize.py` carried a manual copy. Routing production through the shared helper removes drift around `"*"`/draw handling and keeps result-label tests meaningful for both paths. | Keep benchmark sample assembly separate for now; its record tuple omits production-only legal masks, TB overrides, and selfplay tags. |
