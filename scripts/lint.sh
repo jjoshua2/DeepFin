@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Run the project's static-analysis tools over given paths (or `--changed`).
 #
-# Default: ruff + pyright + pylint + vulture + skylos. The baseline was fully
-# cleaned (ruff 0, pyright 0, pylint 10/10, vulture 0, skylos A+ with 0 dead);
-# keep it that way. Known false positives are suppressed inline — see the
-# directives listed in CLAUDE.md's "Static analysis" section. When a FP
-# appears on a new symbol, either fix the symbol or add the suppression in
+# Default: ruff + basedpyright + pylint + vulture + skylos. The active gate is
+# clean (ruff 0, basedpyright 0 after the package baseline, pylint 10/10,
+# vulture 0, skylos A+ with 0 dead); keep it that way. Tests and scripts are
+# clean without baseline entries. Known false positives are suppressed inline
+# — see the directives listed in CLAUDE.md's "Static analysis" section. When a
+# FP appears on a new symbol, either fix the symbol or add the suppression in
 # the same commit.
 #
 # --fast skips vulture + skylos (they're the slower + noisier ones) for quick

@@ -109,12 +109,10 @@ ignore = ["E741"]
 # a convenience suppression.
 #   AsyncBatchEvaluator     — used via stringified cast in gumbel_c.py
 #   pairwise_lr/_momentum   — accepted as legacy kwargs in gpbt.py
-#   pipeline                — benchmark kwarg kept for API parity
 ignore_names = [
   "AsyncBatchEvaluator",
   "pairwise_lr",
   "pairwise_momentum",
-  "pipeline",
 ]
 
 [tool.pylint.main]
