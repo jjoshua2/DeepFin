@@ -431,7 +431,7 @@ def run_policy_sequence_eval(
     active: list[tuple[int, chess.Board, int]] = [
         (i, p.board.copy(), 0)
         for i, p in enumerate(suite.puzzles)
-        if p.solution_sequence
+        if p.solution_sequence or p.best_moves
     ]
 
     while active:
@@ -452,7 +452,12 @@ def run_policy_sequence_eval(
 
         next_active: list[tuple[int, chess.Board, int]] = []
         for (puzzle_i, board, cur_step), picked in zip(active, picks):
-            seq = suite.puzzles[puzzle_i].solution_sequence
+            puzzle = suite.puzzles[puzzle_i]
+            seq = puzzle.solution_sequence
+            if not seq:
+                if picked in puzzle.best_moves:
+                    correct_flags[puzzle_i] = True
+                continue
             expected = seq[cur_step]
 
             # End-of-sequence: accept any checkmate (Lichess rule), else strict match.

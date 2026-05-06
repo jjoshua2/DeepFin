@@ -322,6 +322,15 @@ Current notes:
   `tests/test_diagnose_scripts.py` (`4 passed`), plus
   `python3 scripts/diagnose.py --help` and
   `python3 scripts/diagnose_arch.py --help`.
+- Finding F032 opened/fixed in this cycle: policy puzzle evaluation counted EPD
+  `bm` suites as entirely wrong because `run_policy_sequence_eval()` only queued
+  puzzles with a Lichess-style `solution_sequence`. `load_epd()` populates
+  `best_moves` but leaves `solution_sequence` empty, so
+  `scripts/eval_puzzles.py --puzzle-epd ... --mode policy` could report zero
+  accuracy regardless of the model's first move. Policy sequence eval now scores
+  single-step `best_moves` puzzles directly.
+- Focused puzzle validation after F032 passed:
+  `tests/test_puzzle_eval.py` (`1 passed`).
 - Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
   `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
   `tests/test_tune_distributed_worker_cmd.py`,
@@ -1090,8 +1099,8 @@ Tests:
 
 Files:
 
-- [ ] `chess_anti_engine/eval/__init__.py`
-- [ ] `chess_anti_engine/eval/puzzles.py`
+- [x] `chess_anti_engine/eval/__init__.py`
+- [x] `chess_anti_engine/eval/puzzles.py`
 - [ ] `chess_anti_engine/bench/__init__.py`
 - [ ] `chess_anti_engine/bench/play_batch_timing.py`
 - [ ] `scripts/bench_*.py`
@@ -1103,6 +1112,7 @@ Files:
 - [x] `scripts/diagnose.py`
 - [x] `scripts/diagnose_arch.py`
 - [ ] `scripts/e2e_strength_test.py`
+- [x] `scripts/eval_puzzles.py`
 - [ ] `scripts/generate_bootstrap.py`
 - [ ] `scripts/graceful_restart.py`
 - [ ] `scripts/hourly_pbt_audit.sh`
@@ -1121,6 +1131,8 @@ Files:
 
 Correctness/reliability:
 
+- [x] Puzzle EPD and Lichess CSV modes score the intended first-move policy/value
+  semantics.
 - [x] Diagnostic scripts run from repo root and fail clearly when required
   trial/replay paths are absent.
 - [ ] Other scripts run from repo root and fail clearly when required files/env vars are absent.
