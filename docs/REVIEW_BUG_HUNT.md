@@ -36,8 +36,8 @@ Working rules:
 | 4 | adversarial | Tune trainable lifecycle | `chess_anti_engine/tune/*` | deep | Config reload, donor/salvage overlays, PID state restore, manifests, async eval timing. |
 | 5 | adversarial | Loss and trainer contracts | `chess_anti_engine/train/losses.py`, `trainer.py`, `targets.py` | deep | Blend weights, masks, target normalization, old shard behavior, live weight sync. |
 | 6 | adversarial | MCTS and search engines | `chess_anti_engine/mcts/*`, `uci/search.py`, `tablebase.py` | deep | Memory ownership, root reuse, terminal handling, solved/TB propagation, concurrent mutation. |
-| 7 | adversarial | Distributed server | `chess_anti_engine/server/*`, `tune/distributed_runtime.py` | active | Upload durability, auth, leases, path safety, backpressure, recovery after crash. |
-| 8 | adversarial | UCI runtime | `chess_anti_engine/uci/*`, `stockfish/uci.py` | pending | Protocol state, time controls, ponderhit, cancellation, subprocess hangs. |
+| 7 | adversarial | Distributed server | `chess_anti_engine/server/*`, `tune/distributed_runtime.py` | deep | Upload durability, auth, leases, path safety, backpressure, recovery after crash. |
+| 8 | adversarial | UCI runtime | `chess_anti_engine/uci/*`, `stockfish/uci.py` | active | Protocol state, time controls, ponderhit, cancellation, subprocess hangs. |
 | 9 | simplify | Hot-path code quality and efficiency | selfplay, replay, MCTS, inference, worker | pending | Remove duplicated orchestration, clarify contracts, reduce allocations/sync/I/O stalls. |
 | 10 | simplify | Config and ops ergonomics | `configs/*`, `scripts/*`, `AGENTS.md`, `CLAUDE.md` | pending | Stale knobs, unclear ownership, scripts that assume one run layout. |
 
@@ -117,12 +117,12 @@ MCTS and search engines:
 
 Distributed server:
 
-- [ ] Map upload, validation, publish, lease, and worker heartbeat endpoints.
-- [ ] Verify upload staging/atomic rename/crash recovery cannot lose accepted
+- [x] Map upload, validation, publish, lease, and worker heartbeat endpoints.
+- [x] Verify upload staging/atomic rename/crash recovery cannot lose accepted
   shards or ingest rejected shards.
-- [ ] Verify path handling for worker-provided names and manifest-provided
+- [x] Verify path handling for worker-provided names and manifest-provided
   artifact paths cannot escape run-owned directories.
-- [ ] Verify backpressure/lease expiry cannot deadlock workers or double-assign
+- [x] Verify backpressure/lease expiry cannot deadlock workers or double-assign
   destructive work.
 - [ ] Identify server simplification candidates only after correctness review.
 
@@ -857,10 +857,11 @@ Tests:
 
 ### Distributed Server, Workers, and Assets
 
-Status: `in progress`. Server upload security/compaction, trial leases,
-distributed backpressure, worker pool/cached assets/config, small uploads, E2E
-smoke, and Tune worker command tests have been run. F002 records an open
-durability risk in upload compaction.
+Status: `deep`. Server upload security/compaction, trial leases, distributed
+backpressure, worker retry/delete behavior, cross-trial pending uploads,
+worker pool/cached assets/config, small uploads, E2E smoke, and Tune worker
+command tests have been run. F002, F021-F026 record fixed durability, path,
+retry, and trial-isolation risks from the current pass.
 
 Evidence:
 
@@ -882,10 +883,10 @@ Files:
 
 Correctness/reliability/security:
 
-- [ ] Upload endpoints authenticate correctly and validate shard size, path, archive, and schema.
+- [x] Upload endpoints authenticate correctly and validate shard size, path, archive, and schema.
 - [ ] Downloads and asset cache writes are atomic under concurrent workers.
-- [ ] Leases are sticky enough for load balance but do not strand workers forever.
-- [ ] Worker retry/backoff handles transient server/network/model errors without corrupting local state.
+- [x] Leases are sticky enough for load balance but do not strand workers forever.
+- [x] Worker retry/backoff handles transient server/network/model errors without corrupting local state.
 - [ ] Worker pool startup/shutdown handles child failures and signal propagation.
 - [ ] Credentials are not logged and saved config honors opt-out flags.
 
