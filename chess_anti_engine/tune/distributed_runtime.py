@@ -17,6 +17,7 @@ from chess_anti_engine.model import ModelConfig, model_config_to_manifest_dict
 from chess_anti_engine.moves.encode import POLICY_SIZE
 from chess_anti_engine.replay import ArrayReplayBuffer, DiskReplayBuffer
 from chess_anti_engine.replay.shard import (
+    IN_FLIGHT_DIR_NAME,
     LEGACY_SHARD_SUFFIX,
     LOCAL_SHARD_SUFFIX,
     PENDING_DIR_NAME,
@@ -107,6 +108,7 @@ def _trial_server_dirs(*, server_root: Path, trial_id: str) -> dict[str, Path]:
 # private callers (private to the module, not the wire protocol).
 _is_tmp_shard_name = is_tmp_shard_name
 _PENDING_DIR_NAME = PENDING_DIR_NAME
+_IN_FLIGHT_DIR_NAME = IN_FLIGHT_DIR_NAME
 
 
 def _iter_shard_paths_nested(root: Path) -> list[Path]:
@@ -124,10 +126,11 @@ def _iter_shard_paths_nested(root: Path) -> list[Path]:
     FileNotFoundError. Any dir that vanishes mid-iteration is also skipped;
     its contents will be picked up on a later call once the rename lands.
 
-    Also skips the server's ``_pending`` staging dir. Pending shards already
-    contributed their samples to an in-memory accumulator and will land in
-    replay via ``_compacted`` once the server flushes; ingesting them here
-    would double-count them.
+    Also skips the server's ``_pending`` and ``_in_flight`` staging dirs.
+    Pending shards already contributed their samples to an in-memory
+    accumulator; in-flight shards are being compacted. Both land in replay via
+    ``_compacted`` once the server flushes, so ingesting them here would
+    double-count them.
     """
     paths: list[Path] = []
     try:
@@ -137,7 +140,7 @@ def _iter_shard_paths_nested(root: Path) -> list[Path]:
     for user_dir in user_dirs:
         if not user_dir.is_dir() or _is_tmp_shard_name(user_dir.name):
             continue
-        if user_dir.name == _PENDING_DIR_NAME:
+        if user_dir.name in {_PENDING_DIR_NAME, _IN_FLIGHT_DIR_NAME}:
             continue
         try:
             for entry in user_dir.iterdir():

@@ -225,6 +225,18 @@ Current notes:
   (`11 passed`). Attempted broader FastAPI `TestClient` upload-security runs
   hung in the local TestClient/lifespan path before reaching assertions, so the
   new coverage uses the pure resolver helper directly.
+- Finding F022 opened/fixed in this cycle: the learner-side distributed inbox
+  scanner skipped server `_pending` staging but still descended into
+  `_in_flight/<flush_token>/`. During a compaction flush, that could ingest
+  staging shards directly while the server later published the compacted shard,
+  double-counting accepted samples. `_in_flight` is now skipped alongside
+  `_pending`.
+- Focused distributed-ingest path validation after F022 passed:
+  `tests/test_shard_path_iter.py`,
+  `tests/test_distributed_selfplay_backpressure.py::test_prefetched_shard_missing_from_inbox_is_not_reingested`,
+  and
+  `tests/test_distributed_selfplay_backpressure.py::test_quarantine_inbox_shards_moves_preexisting_resume_backlog`
+  (`10 passed`).
 - Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
   `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
   `tests/test_tune_distributed_worker_cmd.py`,

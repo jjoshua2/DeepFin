@@ -36,6 +36,18 @@ def test_skips_tmp_user_dir(tmp_path: Path) -> None:
     assert [p.name for p in paths] == ["shard_000001.zarr"]
 
 
+def test_skips_server_pending_and_in_flight_staging_dirs(tmp_path: Path) -> None:
+    """Server staging dirs are not worker/user dirs and must not be ingested."""
+    _touch_shard_dir(tmp_path / "worker_00" / "shard_000001.zarr")
+    _touch_shard_dir(tmp_path / "_compacted" / "server_compacted.zarr")
+    _touch_shard_dir(tmp_path / "_pending" / "pending_upload.zarr")
+    _touch_shard_dir(tmp_path / "_in_flight" / "flush_token" / "staged_upload.zarr")
+
+    paths = _iter_shard_paths_nested(tmp_path)
+
+    assert sorted(p.name for p in paths) == ["server_compacted.zarr", "shard_000001.zarr"]
+
+
 def test_skips_tmp_shard_inside_user_dir(tmp_path: Path) -> None:
     """tmp_* at the shard level is a mid-upload file; skip but keep siblings."""
     _touch_shard_dir(tmp_path / "user1" / "shard_000001.zarr")
