@@ -61,6 +61,15 @@ def resolve_arena_user_dir(arena_root: Path, username: str) -> Path | None:
     return path
 
 
+def shard_run_id_matches_upload_trial(upload_trial_id: str | None, shard_run_id: object) -> bool:
+    """Return whether a tagged shard belongs on the upload route's trial."""
+    run_id = str(shard_run_id or "").strip()
+    if not run_id:
+        return True
+    route_trial = str(upload_trial_id or "").strip()
+    return run_id == route_trial
+
+
 # Aggregate counter fields shared between the upload-meta dict (input) and
 # accumulator attribute (output). Each entry is both the meta-dict key and the
 # accumulator field name. ``positions`` is NOT in here — it tracks
@@ -928,9 +937,19 @@ def create_app(
                 "reason": f"invalid shard: {type(e).__name__}: {e}",
             }
 
+        trial_key = _normalize_trial_id(trial_id)
+        if not shard_run_id_matches_upload_trial(trial_key, meta.get("run_id")):
+            tmp.unlink(missing_ok=True)
+            if tmp_zarr is not None:
+                delete_shard_path(tmp_zarr)
+            return {
+                "stored": False,
+                "rejected": True,
+                "reason": "shard run_id does not match upload trial",
+            }
+
         positions = int(shard_arrs["x"].shape[0])
         tmp.unlink(missing_ok=True)
-        trial_key = _normalize_trial_id(trial_id)
         upload_seen_key = (trial_key, sha)
         now_unix = time.time()
         stored = False

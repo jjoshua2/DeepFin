@@ -40,6 +40,7 @@ from chess_anti_engine.moves.encode import POLICY_SIZE
 from chess_anti_engine.replay.shard import (
     LOCAL_SHARD_SUFFIX,
     delete_shard_path,
+    load_shard_arrays,
     pack_shard_for_upload,
 )
 from chess_anti_engine.selfplay import play_batch
@@ -848,6 +849,7 @@ class WorkerSession:
 
     def _upload_pending_shards(self, *, default_elapsed_s: float | None = None) -> float | None:
         last_uploaded_at: float | None = None
+        current_trial_id = self.leased_trial_id or self.fixed_trial_id or ""
         pending: list[Path] = [
             p for p in self.pending_dir.iterdir()
             if not p.name.startswith("_tmp_")
@@ -855,6 +857,13 @@ class WorkerSession:
             and p.suffix == LOCAL_SHARD_SUFFIX
         ]
         for sp in sorted(pending):
+            try:
+                _arrs, meta = load_shard_arrays(sp, lazy=True)
+                shard_trial_id = str(meta.get("run_id") or "").strip()
+            except Exception:
+                shard_trial_id = ""
+            if shard_trial_id and shard_trial_id != current_trial_id:
+                continue
             elapsed_s = default_elapsed_s
             elapsed_path = _pending_elapsed_path(sp)
             if elapsed_path.exists():
@@ -1045,6 +1054,7 @@ class WorkerSession:
                 _flush_upload_buffer_to_pending(
                     pending_dir=self.pending_dir, username=str(self.args.username),
                     buf=self.upload_buf, now_s=now,
+                    trial_id=self.leased_trial_id or self.fixed_trial_id or None,
                 )
                 self._upload_pending_shards(default_elapsed_s=0.0)
             self.model_sha = new_sha
@@ -1108,6 +1118,7 @@ class WorkerSession:
             target_positions=int(self.args.upload_target_positions),
             flush_seconds=float(self.args.upload_flush_seconds),
             force=False,
+            trial_id=self.leased_trial_id or self.fixed_trial_id or None,
         )
         if shard_path is not None:
             uploaded_at = self._upload_pending_shards(default_elapsed_s=float(elapsed_s))
@@ -1147,6 +1158,7 @@ class WorkerSession:
 
     def _upload_pending_arena_results(self) -> None:
         """Drain arena_pending_dir to the server; quarantine bad files."""
+        current_trial_id = self.leased_trial_id or self.fixed_trial_id or ""
         upload_url = self._server_url_for(self.trial_api_prefix + "/upload_arena_result")
         for jp in sorted(self.arena_pending_dir.glob("*.json")):
             try:
@@ -1154,6 +1166,9 @@ class WorkerSession:
             except Exception:
   # bad local file; quarantine to uploaded to avoid retry storms
                 jp.replace(self.arena_uploaded_dir / jp.name)
+                continue
+            payload_trial_id = str(payload.get("trial_id") or "").strip()
+            if payload_trial_id and payload_trial_id != current_trial_id:
                 continue
             r = self._requests.post(
                 upload_url, json=payload, auth=self._auth,
@@ -1340,6 +1355,7 @@ class WorkerSession:
                 username=str(self.args.username),
                 buf=self.upload_buf,
                 now_s=time.time(),
+                trial_id=self.leased_trial_id or self.fixed_trial_id or None,
             )
         if shard_path is None:
             return
@@ -1585,6 +1601,7 @@ class WorkerSession:
         ts = int(time.time())
         payload = {
             "generated_at_unix": ts,
+            "trial_id": self.leased_trial_id or self.fixed_trial_id or "",
             "worker_username": str(self.args.username),
             "a_sha256": str(model_sha),
             "b_sha256": str(best_sha),
@@ -1796,6 +1813,7 @@ class WorkerSession:
             _flush_upload_buffer_to_pending(
                 pending_dir=self.pending_dir, username=str(self.args.username),
                 buf=self.upload_buf, now_s=time.time(),
+                trial_id=self.leased_trial_id or self.fixed_trial_id or None,
             )
             self._upload_pending_shards(default_elapsed_s=0.0)
 

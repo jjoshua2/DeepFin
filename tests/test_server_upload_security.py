@@ -266,3 +266,12 @@ def test_arena_username_uses_single_child_dir(tmp_path) -> None:
     arena.mkdir(parents=True)
 
     assert resolve_arena_user_dir(arena, "worker_1") == arena / "worker_1"
+
+
+def test_shard_run_id_must_match_upload_trial() -> None:
+    from chess_anti_engine.server.app import shard_run_id_matches_upload_trial
+
+    assert shard_run_id_matches_upload_trial("trial_a", "trial_a")
+    assert shard_run_id_matches_upload_trial("trial_a", "")
+    assert not shard_run_id_matches_upload_trial("trial_b", "trial_a")
+    assert not shard_run_id_matches_upload_trial(None, "trial_a")

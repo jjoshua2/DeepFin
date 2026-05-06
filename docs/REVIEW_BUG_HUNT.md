@@ -260,6 +260,17 @@ Current notes:
   shard uploads and keep rejected responses locally.
 - Focused worker retry validation after F025 passed:
   `tests/test_worker_upload_response.py` (`6 passed`).
+- Finding F026 opened/fixed in this cycle: remote workers kept replay shards and
+  arena result JSON in global pending directories, but the upload endpoint is
+  selected from the current lease. If a worker was reassigned while previous
+  uploads were still pending, old-trial data could be uploaded into the newly
+  leased trial. Newly flushed replay shards/results are now tagged with their
+  producing trial, workers skip pending files for other trials, and the server
+  rejects tagged shards that arrive at the wrong trial endpoint.
+- Focused cross-trial upload validation after F026 passed:
+  `tests/test_worker_upload_response.py`, `tests/test_worker_small_uploads.py`,
+  and `tests/test_server_upload_security.py::test_shard_run_id_must_match_upload_trial`
+  (`17 passed`).
 - Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
   `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
   `tests/test_tune_distributed_worker_cmd.py`,

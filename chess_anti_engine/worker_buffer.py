@@ -138,6 +138,7 @@ def _flush_upload_buffer_to_pending(
     username: str,
     buf: _BufferedUpload,
     now_s: float,
+    trial_id: str | None = None,
 ) -> tuple[Path | None, float]:
     if buf.positions <= 0 or not buf.samples:
         return None, 0.0
@@ -151,6 +152,7 @@ def _flush_upload_buffer_to_pending(
     elapsed_s = _buffer_elapsed_s(buf=buf, now_s=now_s)
     meta = ShardMeta(
         username=str(username),
+        run_id=(str(trial_id).strip() if trial_id is not None else "") or None,
         generated_at_unix=ts,
         model_sha256=str(model_sha),
         model_step=int(buf.model_step),
@@ -194,6 +196,7 @@ def _maybe_flush_upload_buffer(
     target_positions: int,
     flush_seconds: float,
     force: bool = False,
+    trial_id: str | None = None,
 ) -> tuple[Path | None, float]:
     if not force and not _buffer_should_flush(
         buf=buf,
@@ -208,4 +211,5 @@ def _maybe_flush_upload_buffer(
         username=username,
         buf=buf,
         now_s=now_s,
+        trial_id=trial_id,
     )

@@ -86,6 +86,7 @@ def test_worker_buffer_flushes_on_position_target(tmp_path) -> None:
     _arrs, meta = load_shard_arrays(shard_path)
     samples = arrays_to_samples(_arrs)
     assert len(samples) == 4
+    assert meta.get("run_id") is None
     assert meta["games"] == 2
     assert meta["positions"] == 4
     assert meta["wins"] == 2
@@ -239,3 +240,26 @@ def test_worker_buffer_preserves_original_model_metadata_across_retries(tmp_path
     _, meta = load_shard_arrays(shard_path)
     assert meta["model_sha256"] == "oldmodel"
     assert meta["model_step"] == 21
+
+
+def test_worker_buffer_tags_pending_shards_with_trial_id(tmp_path) -> None:
+    buf = _BufferedUpload()
+    _buffer_add_completed_game(
+        buf=buf,
+        game_batch=_game_batch(2),
+        now_s=600.0,
+        model_sha="trialmodel",
+        model_step=22,
+    )
+
+    shard_path, _ = _flush_upload_buffer_to_pending(
+        pending_dir=tmp_path,
+        username="worker",
+        buf=buf,
+        now_s=601.0,
+        trial_id="trial_a",
+    )
+
+    assert shard_path is not None
+    _, meta = load_shard_arrays(shard_path)
+    assert meta["run_id"] == "trial_a"
