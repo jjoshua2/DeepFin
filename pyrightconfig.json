@@ -1,6 +1,10 @@
 {
     "include": ["chess_anti_engine", "tests", "scripts"],
     "exclude": ["chess_anti_engine/bench"],
+    "venvPath": ".",
+    "venv": ".venv",
+    "pythonVersion": "3.10",
+    "pythonPlatform": "Linux",
     "reportUnsupportedDunderAll": false,
     "reportPrivateImportUsage": false,
 

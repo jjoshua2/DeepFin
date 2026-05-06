@@ -373,6 +373,16 @@
                     "lineCount": 1
                 }
             }
+        ],
+        "./tests/test_e2e_smoke.py": [
+            {
+                "code": "reportUnreachable",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 19,
+                    "lineCount": 1
+                }
+            }
         ]
     }
 }

@@ -71,6 +71,14 @@ JOB_PIDS=()
 JOB_LOGS=()
 JOB_ADVISORY=()
 
+tool() {
+    if [[ -x ".venv/bin/$1" ]]; then
+        printf '.venv/bin/%s\n' "$1"
+    else
+        printf '%s\n' "$1"
+    fi
+}
+
 start_job() {
     local advisory="$1"
     local name="$2"
@@ -92,24 +100,39 @@ run_basedpyright() {
     # campaign. Only override scope when the user explicitly names paths, so ad-hoc
     # invocations on specific files still work.
     if [[ $USER_SET_PATHS -eq 1 ]]; then
-        basedpyright "${PATHS[@]}"
+        "$(tool basedpyright)" "${PATHS[@]}"
     else
-        basedpyright
+        "$(tool basedpyright)"
     fi
 }
 
 run_slop() {
-    # Summary scores to stderr for the drift signal. Full findings to stdout —
-    # uvx runs on demand; installs into ~/.cache/uv on first call.
-    uvx scb-check check "${PATHS[@]}" --report 2>/dev/null | python3 -c "
+    # Summary scores to stderr for the drift signal. Full findings to stdout.
+    # uvx runs the transient tool environment under LINT_TMP.
+    local target="chess_anti_engine"
+    local report="$LINT_TMP/scb-report.json"
+    local err="$LINT_TMP/scb-report.err"
+    if [[ $USER_SET_PATHS -eq 1 ]]; then
+        if [[ ${#PATHS[@]} -ne 1 ]]; then
+            echo "  scb-check accepts exactly one path; pass one path with --slop"
+            return 2
+        fi
+        target="${PATHS[0]}"
+    fi
+    if ! UV_TOOL_DIR="$LINT_TMP/uv-tools" uvx --from scb-check scb-check check "$target" --report >"$report" 2>"$err"; then
+        sed 's/^/  /' "$err"
+        return 1
+    fi
+    "$(tool python3)" - "$report" <<'PY'
 import json, sys
 try:
-    r = json.loads(sys.stdin.read())
-    print(f'  verbosity={r[\"verbosity\"]:.3f}  erosion={r[\"erosion\"]:.3f}  cog_erosion={r[\"cog_erosion\"]:.3f}')
-    print(f'  {r[\"verbosity_flagged_loc\"]}/{r[\"total_loc\"]} LOC flagged, {r[\"high_cc_functions\"]}/{r[\"total_functions\"]} high-CC fns')
+    r = json.load(open(sys.argv[1]))
+    print(f'  verbosity={r["verbosity"]:.3f}  erosion={r["erosion"]:.3f}  cog_erosion={r["cog_erosion"]:.3f}')
+    print(f'  {r["verbosity_flagged_loc"]}/{r["total_loc"]} LOC flagged, {r["high_cc_functions"]}/{r["total_functions"]} high-CC fns')
 except Exception as e:
     print(f'  scb-check report failed: {e}')
-"
+    raise
+PY
 }
 
 run_group() {
@@ -141,28 +164,25 @@ run_group() {
 }
 
 echo
-echo "::: running core linters in parallel"
-start_job 0 "ruff check" ruff check "${PATHS[@]}"
+echo "::: running lint tools in parallel"
+start_job 0 "ruff check" env RUFF_CACHE_DIR="$LINT_TMP/ruff-cache" "$(tool ruff)" check "${PATHS[@]}"
 start_job 0 "basedpyright" run_basedpyright
-start_job 0 "pylint (narrow config: 7 semantic checks, see pyproject.toml)" pylint "${PATHS[@]}"
-run_group
+start_job 0 "pylint (narrow config: 7 semantic checks, see pyproject.toml)" env PYLINTHOME="$LINT_TMP/pylint" "$(tool pylint)" "${PATHS[@]}"
 
-echo
 if [[ $RUN_DEAD -eq 1 ]]; then
-    echo "::: running dead-code tools in parallel"
     # Vulture exits non-zero on findings; under set -e that fails the
     # run, which is what we want — unignored dead code should gate.
-    start_job 0 "vulture (dead code, min confidence 80)" vulture --min-confidence 80 "${PATHS[@]}"
+    start_job 0 "vulture (dead code, min confidence 80)" "$(tool vulture)" --min-confidence 80 "${PATHS[@]}"
 
     # Skylos exits 0 even with findings (its grep-verify rescues most
     # false positives). Its output tables remain the signal; treat as
     # advisory. Review the tables by eye, add `# skylos: ignore` for
     # FPs. Explicitly advisory — do not quietly gate on it.
-    start_job 1 "skylos (advisory — dead code + circular imports)" skylos "${PATHS[@]}"
+    start_job 1 "skylos (advisory — dead code + circular imports)" "$(tool skylos)" "${PATHS[@]}"
 fi
 
 if [[ $RUN_SLOP -eq 1 ]]; then
-    start_job 0 "scb-check (verbosity + erosion + slop patterns)" run_slop
+    start_job 1 "scb-check (verbosity + erosion + slop patterns)" run_slop
 fi
 
 if [[ ${#JOB_PIDS[@]} -gt 0 ]]; then
