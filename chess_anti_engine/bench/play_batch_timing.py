@@ -351,6 +351,23 @@ def main() -> None:
 
     args = ap.parse_args()
 
+    if args.games <= 0:
+        raise SystemExit("--games must be > 0")
+    if args.max_plies <= 0:
+        raise SystemExit("--max-plies must be > 0")
+    if args.mcts_simulations <= 0:
+        raise SystemExit("--mcts-simulations must be > 0")
+    if args.fast_simulations <= 0:
+        raise SystemExit("--fast-simulations must be > 0")
+    if not 0.0 <= args.playout_cap_fraction <= 1.0:
+        raise SystemExit("--playout-cap-fraction must be between 0 and 1")
+    if args.sf_workers <= 0:
+        raise SystemExit("--sf-workers must be > 0")
+    if args.repeat <= 0:
+        raise SystemExit("--repeat must be > 0")
+    if args.temperature < 0:
+        raise SystemExit("--temperature must be >= 0")
+
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     rng = np.random.default_rng(int(args.seed))
 

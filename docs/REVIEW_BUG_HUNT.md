@@ -459,6 +459,14 @@ Current notes:
 - Focused restart/blunder validation after F044 passed:
   `python3 -m py_compile` for the touched scripts, invalid-argument smoke for
   `graceful_restart.py`, and `graceful_restart.py --help`.
+- Finding F045 opened/fixed in this cycle: `chess_anti_engine/bench/play_batch_timing.py`
+  accepted zero/negative run dimensions and out-of-range playout fractions,
+  causing later benchmark crashes or misleading timing output. The bench module
+  now validates game count, plies, simulation counts, SF worker count, repeats,
+  temperature, and playout-cap fraction before constructing models or engines.
+- Focused bench-wrapper validation after F045 passed:
+  `python3 -m py_compile` for the bench package, module `--help`, and an
+  invalid-argument smoke for `play_batch_timing.py`.
 - Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
   `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
   `tests/test_tune_distributed_worker_cmd.py`,
@@ -1229,14 +1237,14 @@ Files:
 
 - [x] `chess_anti_engine/eval/__init__.py`
 - [x] `chess_anti_engine/eval/puzzles.py`
-- [ ] `chess_anti_engine/bench/__init__.py`
-- [ ] `chess_anti_engine/bench/play_batch_timing.py`
+- [x] `chess_anti_engine/bench/__init__.py`
+- [x] `chess_anti_engine/bench/play_batch_timing.py`
 - [x] `scripts/bench_*.py`
 - [x] `scripts/profile_*.py`
 - [x] `scripts/bench_batch_wait.sh`
 - [x] `scripts/cuda_sanity_check.py`
 - [x] `scripts/deepfin`
-- [ ] `scripts/deepfin.bat`
+- [x] `scripts/deepfin.bat`
 - [x] `scripts/diagnose.py`
 - [x] `scripts/diagnose_arch.py`
 - [x] `scripts/e2e_strength_test.py`
