@@ -112,6 +112,9 @@ class TrialConfig:
     volatility_source: str = "raw"
     syzygy_path: str | None = None
     syzygy_rescore_policy: bool = False
+    syzygy_adjudicate: bool = False
+    syzygy_adjudicate_fraction: float = 1.0
+    syzygy_in_search: bool = False
     categorical_bins: int = DEFAULT_CATEGORICAL_BINS
     hlgauss_sigma: float = 0.04
 
@@ -333,6 +336,9 @@ class TrialConfig:
             volatility_source=str(config.get("volatility_source", "raw")),
             syzygy_path=_get("syzygy_path", None),
             syzygy_rescore_policy=bool(config.get("syzygy_rescore_policy", False)),
+            syzygy_adjudicate=bool(config.get("syzygy_adjudicate", False)),
+            syzygy_adjudicate_fraction=float(config.get("syzygy_adjudicate_fraction", 1.0)),
+            syzygy_in_search=bool(config.get("syzygy_in_search", False)),
             categorical_bins=int(config.get("categorical_bins", DEFAULT_CATEGORICAL_BINS)),
             hlgauss_sigma=float(config.get("hlgauss_sigma", 0.04)),
 

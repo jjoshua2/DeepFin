@@ -20,6 +20,9 @@ def test_from_empty_dict() -> None:
     assert tc.stockfish_path == ""
     assert tc.pause_file is None
     assert tc.opening_book_path is None
+    assert tc.syzygy_adjudicate is False
+    assert tc.syzygy_adjudicate_fraction == 1.0
+    assert tc.syzygy_in_search is False
 
 
 def test_from_dict_overrides() -> None:
@@ -31,6 +34,10 @@ def test_from_dict_overrides() -> None:
         "stockfish_path": "/usr/bin/stockfish",
         "sf_pid_ema_alpha": 0.50,
         "batch_size": 256,
+        "syzygy_path": "/tb",
+        "syzygy_adjudicate": True,
+        "syzygy_adjudicate_fraction": 0.25,
+        "syzygy_in_search": True,
     })
     assert tc.lr == 0.001
     assert tc.sf_nodes == 5000
@@ -38,6 +45,10 @@ def test_from_dict_overrides() -> None:
     assert tc.stockfish_path == "/usr/bin/stockfish"
     assert tc.sf_pid_ema_alpha == 0.50
     assert tc.batch_size == 256
+    assert tc.syzygy_path == "/tb"
+    assert tc.syzygy_adjudicate is True
+    assert tc.syzygy_adjudicate_fraction == 0.25
+    assert tc.syzygy_in_search is True
     # Unset values still get defaults
     assert tc.model == "transformer"
     assert tc.sf_pid_enabled is True
