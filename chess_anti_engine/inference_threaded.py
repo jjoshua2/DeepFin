@@ -1,7 +1,7 @@
 """Single-process queue-fed GPU dispatcher.
 
-Worker threads enqueue (encoded, Future) tuples; one dispatcher thread drains
-the queue, runs a batched forward, and scatters results back. Only the
+Worker threads enqueue evaluation requests; one dispatcher thread drains the
+queue, runs a batched forward, and scatters results back. Only the
 dispatcher thread touches CUDA, so torch.compile cudagraphs stay valid.
 """
 from __future__ import annotations
@@ -11,7 +11,8 @@ import concurrent.futures
 import logging
 import threading
 import time
-from typing import Any, Literal, TypeGuard, cast
+from dataclasses import dataclass
+from typing import Any, cast
 
 import numpy as np
 import torch
@@ -23,10 +24,30 @@ from chess_anti_engine.inference import (
 
 logger = logging.getLogger(__name__)
 
-EvalItem = tuple[np.ndarray, concurrent.futures.Future]
-ModelUpdateItem = tuple[Literal["_update_model"], torch.nn.Module, threading.Event, dict[str, BaseException]]
-QueueItem = EvalItem | ModelUpdateItem
-DispatchHandle = tuple[list[EvalItem], int, Any, Any, Any]
+
+@dataclass(slots=True)
+class _EvalRequest:
+    encoded: np.ndarray
+    future: concurrent.futures.Future
+
+
+@dataclass(slots=True)
+class _ModelUpdateRequest:
+    model: torch.nn.Module
+    done: threading.Event
+    result: dict[str, BaseException]
+
+
+@dataclass(slots=True)
+class _DispatchHandle:
+    items: list[_EvalRequest]
+    real_n: int
+    pol_t: Any
+    wdl_t: Any
+    event: Any
+
+
+QueueItem = _EvalRequest | _ModelUpdateRequest
 
 
 def _next_bucket(n: int, buckets: tuple[int, ...] = _COMPILED_BATCH_BUCKETS) -> int:
@@ -149,7 +170,7 @@ class ThreadedDispatcher:
             )
         future: concurrent.futures.Future = concurrent.futures.Future()
         with self._cond:
-            self._queue.append((x, future))
+            self._queue.append(_EvalRequest(x, future))
             self._cond.notify()
         return future
 
@@ -185,17 +206,13 @@ class ThreadedDispatcher:
         done = threading.Event()
         result: dict[str, BaseException] = {}
         with self._cond:
-            self._queue.append(("_update_model", model, done, result))
+            self._queue.append(_ModelUpdateRequest(model, done, result))
             self._cond.notify()
         while not done.wait(timeout=5.0):
             if not self._thread.is_alive():
                 raise RuntimeError("dispatcher thread died during model update")
         if "error" in result:
             raise RuntimeError("dispatcher model update failed") from result["error"]
-
-    @staticmethod
-    def _is_model_update(item: QueueItem) -> TypeGuard[ModelUpdateItem]:
-        return len(item) == 4 and item[0] == "_update_model"
 
     def _drain_batch(
         self, *, blocking: bool = True,
@@ -221,22 +238,20 @@ class ThreadedDispatcher:
                 return []
 
             first = self._queue[0]
-            if self._is_model_update(first):
+            if isinstance(first, _ModelUpdateRequest):
                 return [self._queue.popleft()]
 
-            items: list[EvalItem] = []
+            items: list[QueueItem] = []
             total = 0
             while self._queue:
                 item = self._queue[0]
-                if self._is_model_update(item):
+                if isinstance(item, _ModelUpdateRequest):
                     break
-                eval_item = cast(EvalItem, item)
-                enc = eval_item[0]
-                if total + enc.shape[0] > self._max_batch:
+                if total + item.encoded.shape[0] > self._max_batch:
                     break
-                items.append(cast(EvalItem, self._queue.popleft()))
-                total += enc.shape[0]
-            return cast(list[QueueItem], items)
+                items.append(self._queue.popleft())
+                total += item.encoded.shape[0]
+            return items
 
     def _compile_model_on_dispatcher(self, model: torch.nn.Module) -> torch.nn.Module:
         model.eval()
@@ -253,24 +268,23 @@ class ThreadedDispatcher:
             model, mode=self._compile_mode,
         ))
 
-    def _apply_model_update(self, item: ModelUpdateItem) -> None:
-        _, model, done, result = item
+    def _apply_model_update(self, item: _ModelUpdateRequest) -> None:
         try:
             if self._compile_mode is not None:
                 load_target = getattr(self._evaluator.model, "_orig_mod", self._evaluator.model)
-                load_target.load_state_dict(model.state_dict(), strict=True)
+                load_target.load_state_dict(item.model.state_dict(), strict=True)
                 load_target.eval()
             else:
-                self._evaluator.model = model
+                self._evaluator.model = item.model
             self._evaluator.model.eval()
         except BaseException:  # noqa: BLE001
             try:
-                self._evaluator.model = self._compile_model_on_dispatcher(model)
+                self._evaluator.model = self._compile_model_on_dispatcher(item.model)
                 self._evaluator.model.eval()
             except BaseException as fallback_exc:  # noqa: BLE001
-                result["error"] = fallback_exc
+                item.result["error"] = fallback_exc
         finally:
-            done.set()
+            item.done.set()
 
     def _dispatch_loop(self) -> None:
         self._evaluator.model = self._compile_model_on_dispatcher(self._evaluator.model)
@@ -282,7 +296,7 @@ class ThreadedDispatcher:
   # PucvChunker's pattern from chess_anti_engine/mcts/puct_vl.py.
         ev = self._evaluator
         slot = 0
-        pending: DispatchHandle | None = None  # (items, real_n, pol_t, wdl_t, evt)
+        pending: _DispatchHandle | None = None
 
         while not self._stop or self._queue or pending is not None:
   # Block (cond-wait) only when the pipeline is idle. With pending
@@ -292,18 +306,18 @@ class ThreadedDispatcher:
             blocking = pending is None
             items = self._drain_batch(blocking=blocking)
 
-            next_handle: DispatchHandle | None = None
-            model_update = items[0] if len(items) == 1 and self._is_model_update(items[0]) else None
+            next_handle: _DispatchHandle | None = None
+            model_update = items[0] if len(items) == 1 and isinstance(items[0], _ModelUpdateRequest) else None
             if items and model_update is None:
-                eval_items = cast(list[EvalItem], items)
+                eval_items = [item for item in items if isinstance(item, _EvalRequest)]
                 try:
                     next_handle = self._submit_batch(eval_items, slot, ev)
                     slot = 1 - slot
                 except Exception as exc:  # noqa: BLE001
                     logger.exception("dispatcher submit failed: %s", exc)
-                    for _, fut in eval_items:
-                        if not fut.done():
-                            fut.set_exception(exc)
+                    for item in eval_items:
+                        if not item.future.done():
+                            item.future.set_exception(exc)
 
   # One-shot cudagraph probe. After the warmup window (50 batches) has
   # passed compile + capture, the dynamo counters' delta tells us
@@ -330,10 +344,9 @@ class ThreadedDispatcher:
                     self._scatter_pending(pending)
                 except Exception as exc:  # noqa: BLE001
                     logger.exception("dispatcher scatter failed: %s", exc)
-                    p_items = pending[0]
-                    for _, fut in p_items:
-                        if not fut.done():
-                            fut.set_exception(exc)
+                    for item in pending.items:
+                        if not item.future.done():
+                            item.future.set_exception(exc)
 
             if model_update is not None:
                 self._apply_model_update(model_update)
@@ -344,24 +357,24 @@ class ThreadedDispatcher:
                 return
 
     def _submit_batch(
-        self, items: list[EvalItem],
+        self, items: list[_EvalRequest],
         slot: int, ev: DirectGPUEvaluator,
-    ) -> DispatchHandle:
+    ) -> _DispatchHandle:
         """Pack items into slot's pinned input and fire async forward.
 
-        Returns (items, real_n, pol_t, wdl_t, evt). Caller waits on evt
-        before reading pol_t/wdl_t and scattering to futures.
+        Caller waits on the returned event before reading pol_t/wdl_t and
+        scattering to futures.
         """
-        real_n = sum(enc.shape[0] for enc, _ in items)
+        real_n = sum(item.encoded.shape[0] for item in items)
         bucket = _next_bucket(real_n)
         inp: Any = ev.get_input_buffer(bucket, slot=slot)
   # get_input_buffer returns the pinned tensor; convert to numpy view
   # to write directly via numpy slice copy (matches gumbel_c.py pattern).
         inp_np = inp.numpy() if hasattr(inp, "numpy") else inp
         offset = 0
-        for enc, _ in items:
-            n = enc.shape[0]
-            inp_np[offset : offset + n] = enc
+        for item in items:
+            n = item.encoded.shape[0]
+            inp_np[offset : offset + n] = item.encoded
             offset += n
   # Bucket padding zone is left untouched — model sees stale data in
   # the padded slots, but caller only reads results[:real_n]. This
@@ -374,14 +387,13 @@ class ThreadedDispatcher:
         self._lifetime_positions += real_n
         if real_n >= self._max_batch:
             self._lifetime_full_drains += 1
-        return (items, real_n, pol_t, wdl_t, evt)
+        return _DispatchHandle(items, real_n, pol_t, wdl_t, evt)
 
-    def _scatter_pending(self, pending: DispatchHandle) -> None:
-        items, pol_t, wdl_t, evt = pending[0], pending[2], pending[3], pending[4]
-        if evt is not None:
-            evt.synchronize()
-        pol_any: Any = pol_t
-        wdl_any: Any = wdl_t
+    def _scatter_pending(self, pending: _DispatchHandle) -> None:
+        if pending.event is not None:
+            pending.event.synchronize()
+        pol_any: Any = pending.pol_t
+        wdl_any: Any = pending.wdl_t
         pol = pol_any.numpy() if hasattr(pol_any, "numpy") else np.asarray(pol_any)
         wdl = wdl_any.numpy() if hasattr(wdl_any, "numpy") else np.asarray(wdl_any)
   # CRITICAL: pol/wdl are views of the slot's pinned output. The next
@@ -391,9 +403,9 @@ class ThreadedDispatcher:
   # into caller-owned numpy memory before set_result. Same constraint
   # as gumbel_c.py's clone-before-resubmit comment.
         offset = 0
-        for enc, fut in items:
-            n = enc.shape[0]
-            fut.set_result((
+        for item in pending.items:
+            n = item.encoded.shape[0]
+            item.future.set_result((
                 pol[offset : offset + n].copy(),
                 wdl[offset : offset + n].copy(),
             ))

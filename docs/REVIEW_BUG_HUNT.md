@@ -24,7 +24,8 @@ Working rules:
 - Fix commits should stay grouped by component unless a cross-cutting contract
   bug demands otherwise.
 - The `/simplify` pass is separate from bug fixing unless simplification is the
-  lowest-risk way to remove a bug.
+  lowest-risk way to remove a bug. Active simplification work now lives in
+  `docs/SIMPLIFY_PLAN.md`; keep this file as the completed bug-hunt record.
 
 ### Active Queue
 
@@ -38,8 +39,8 @@ Working rules:
 | 6 | adversarial | MCTS and search engines | `chess_anti_engine/mcts/*`, `uci/search.py`, `tablebase.py` | deep | Memory ownership, root reuse, terminal handling, solved/TB propagation, concurrent mutation. |
 | 7 | adversarial | Distributed server | `chess_anti_engine/server/*`, `tune/distributed_runtime.py` | deep | Upload durability, auth, leases, path safety, backpressure, recovery after crash. |
 | 8 | adversarial | UCI runtime | `chess_anti_engine/uci/*`, `stockfish/uci.py` | deep | Protocol state, time controls, ponderhit, cancellation, subprocess hangs. |
-| 9 | simplify | Hot-path code quality and efficiency | selfplay, replay, MCTS, inference, worker | active | Remove duplicated orchestration, clarify contracts, reduce allocations/sync/I/O stalls. |
-| 10 | simplify | Config and ops ergonomics | `configs/*`, `scripts/*`, `AGENTS.md`, `CLAUDE.md` | pending | Stale knobs, unclear ownership, scripts that assume one run layout. |
+| 9 | simplify | Hot-path code quality and efficiency | selfplay, replay, MCTS, inference, worker | moved | Tracked in `docs/SIMPLIFY_PLAN.md`. |
+| 10 | simplify | Config and ops ergonomics | `configs/*`, `scripts/*`, `AGENTS.md`, `CLAUDE.md` | moved | Tracked in `docs/SIMPLIFY_PLAN.md`. |
 
 ### Current Slice Checklist
 
