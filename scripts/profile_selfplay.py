@@ -330,6 +330,13 @@ def main() -> None:
     rng = np.random.default_rng(0)
     n_boards = int(args.boards)
     sims = int(args.simulations)
+    repeats = int(args.repeats)
+    if n_boards <= 0:
+        raise SystemExit("--boards must be > 0")
+    if sims <= 0:
+        raise SystemExit("--simulations must be > 0")
+    if repeats <= 0:
+        raise SystemExit("--repeats must be > 0")
 
     print(f"Device: {device}")
     if device.startswith("cuda"):
@@ -345,7 +352,7 @@ def main() -> None:
             embed_dim=int(args.embed_dim),
             num_layers=int(args.num_layers),
             num_heads=int(args.num_heads),
-            ffn_mult=int(args.ffn_mult),
+            ffn_mult=float(args.ffn_mult),
             use_smolgen=True,
         )
     ).to(device)
@@ -367,7 +374,6 @@ def main() -> None:
     print(f"Parameters: {n_params:.1f}M")
 
     boards = _make_boards(n_boards, rng)
-    repeats = int(args.repeats)
 
     if not args.profile_only:
         bench_encoding(boards, repeats)

@@ -412,6 +412,17 @@ Current notes:
   `python3 -m py_compile scripts/status.py scripts/train_bootstrap.py`,
   `--help` for both scripts, and
   `python3 -m pytest tests/test_status_script.py -q`.
+- Finding F041 opened/fixed in this cycle: profiling scripts had a mix of
+  misleading and late-failing CLI behavior. `profile_selfplay.py` converted
+  fractional `--ffn-mult` values to `int`, so a requested `1.5` transformer
+  profile actually built `1.0`; several profile entrypoints also accepted zero
+  counts or CPU settings that later crashed after expensive imports/model setup.
+  The affected scripts now preserve float FFN multipliers and fail before the
+  benchmark body for invalid board/simulation/repeat/node/batch/device values.
+- Focused profiling validation after F041 passed:
+  `python3 -m py_compile` for the touched profile scripts plus invalid-argument
+  smoke checks for `profile_selfplay.py`, `profile_mcts_detail.py`,
+  `profile_uci_search.py`, and `profile_worker_inference.py`.
 - Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
   `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
   `tests/test_tune_distributed_worker_cmd.py`,
@@ -1185,7 +1196,7 @@ Files:
 - [ ] `chess_anti_engine/bench/__init__.py`
 - [ ] `chess_anti_engine/bench/play_batch_timing.py`
 - [x] `scripts/bench_*.py`
-- [ ] `scripts/profile_*.py`
+- [x] `scripts/profile_*.py`
 - [x] `scripts/bench_batch_wait.sh`
 - [ ] `scripts/cuda_sanity_check.py`
 - [ ] `scripts/deepfin`
@@ -1241,7 +1252,7 @@ Correctness/reliability:
 
 Efficiency:
 
-- [ ] Benchmark/profiling scripts include warmup, stable iteration counts, and useful output.
+- [x] Benchmark/profiling scripts include warmup, stable iteration counts, and useful output.
 - [x] Polling scripts use reasonable intervals and avoid expensive repeated scans.
 
 Tests:

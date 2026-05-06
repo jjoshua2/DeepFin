@@ -113,6 +113,15 @@ def main() -> int:
                    help="torch.compile mode (e.g. reduce-overhead). Default: no compile.")
     args = p.parse_args()
 
+    if args.positions <= 0:
+        raise SystemExit("--positions must be > 0")
+    if args.nodes <= 0:
+        raise SystemExit("--nodes must be > 0")
+    if args.max_batch <= 0:
+        raise SystemExit("--max-batch must be > 0")
+    if args.warmup < 0:
+        raise SystemExit("--warmup must be >= 0")
+
     fens = _TEST_FENS[: args.positions]
     print(f"[setup] checkpoint={args.checkpoint} device={args.device} "
           f"max_batch={args.max_batch} nodes={args.nodes} positions={len(fens)}")

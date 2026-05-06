@@ -246,6 +246,12 @@ def main() -> None:
     args = ap.parse_args()
 
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
+    if args.boards <= 0:
+        raise SystemExit("--boards must be > 0")
+    if args.simulations <= 0:
+        raise SystemExit("--simulations must be > 0")
+    if args.repeats <= 0:
+        raise SystemExit("--repeats must be > 0")
     rng = np.random.default_rng(0)
 
     model = build_model(ModelConfig(

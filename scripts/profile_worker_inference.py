@@ -40,6 +40,17 @@ def main() -> None:
     p.add_argument("--device", default="cuda")
     args = p.parse_args()
 
+    if not str(args.device).startswith("cuda"):
+        raise SystemExit("profile_worker_inference.py requires a CUDA device")
+    if not torch.cuda.is_available():
+        raise SystemExit("CUDA is not available")
+    if args.batch <= 0:
+        raise SystemExit("--batch must be > 0")
+    if args.warmup < 0:
+        raise SystemExit("--warmup must be >= 0")
+    if args.iters <= 0:
+        raise SystemExit("--iters must be > 0")
+
     print(f"[profile] loading {args.checkpoint}")
     model = load_model_from_checkpoint(args.checkpoint, device=args.device).eval()
 
