@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from chess_anti_engine.encoding._lc0_ext import CBoard
+from chess_anti_engine.encoding.cboard_encode import cboard_from_board_fast
 from chess_anti_engine.moves.encode import mirror_policy_index
 
 
@@ -111,6 +112,15 @@ def _assert_cboard_matches_board(cb: CBoard, board: chess.Board) -> None:
     assert int(cb.ply) == int(board.ply())
 
 
+def _assert_cboard_current_fields_match_board(cb: CBoard, board: chess.Board) -> None:
+    cboard_fields = cb.fen().split()
+    board_fields = board.fen().split()
+    assert cboard_fields[:5] == board_fields[:5]
+    assert bool(cb.turn) == bool(board.turn)
+    assert cb.ep_square == board.ep_square
+    assert int(cb.halfmove_clock) == int(board.halfmove_clock)
+
+
 @pytest.mark.parametrize(
     "fen",
     [
@@ -196,3 +206,50 @@ def test_mirror_policy_index_matches_independent_file_mirror(fen: str) -> None:
         index = _spec_policy_index(move, board.turn)
         mirrored_index = _spec_policy_index(mirrored_move, board.turn)
         assert mirror_policy_index(index) == mirrored_index
+
+
+@pytest.mark.parametrize(
+    "fen",
+    [
+        chess.STARTING_FEN,
+        "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1",
+        "r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1",
+        "8/8/8/3pP3/8/8/8/4K2k w - d6 0 1",
+        "4k3/P6p/8/8/8/8/p6P/4K3 w - - 0 1",
+        "4k3/P6p/8/8/8/8/p6P/4K3 b - - 0 1",
+        "rnb1kbnr/pppp1ppp/8/4p3/4P1q1/8/PPPP1PPP/RNBQKBNR w KQkq - 1 3",
+        "k7/8/2K5/8/8/8/8/1Q6 b - - 0 1",
+    ],
+)
+def test_fast_cboard_constructor_matches_current_position_contract(fen: str) -> None:
+    board = chess.Board(fen)
+    cb = cboard_from_board_fast(board)
+
+    _assert_cboard_current_fields_match_board(cb, board)
+    assert int(cb.hist_len) == 0
+    assert int(cb.hash_stack_len) == 0
+    assert cb.is_game_over() == board.is_game_over(claim_draw=True)
+    assert set(map(int, cb.legal_move_indices())) == _expected_legal_indices(board)
+
+
+@pytest.mark.parametrize(
+    ("fen", "uci"),
+    [
+        ("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1", "e1c1"),
+        ("r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1", "e8g8"),
+        ("8/8/8/3pP3/8/8/8/4K2k w - d6 0 1", "e5d6"),
+        ("4k3/P6p/8/8/8/8/p6P/4K3 w - - 0 1", "a7a8b"),
+        ("4k3/P6p/8/8/8/8/p6P/4K3 b - - 0 1", "a2a1q"),
+    ],
+)
+def test_fast_cboard_constructor_can_seed_push_index_contract(fen: str, uci: str) -> None:
+    board = chess.Board(fen)
+    move = chess.Move.from_uci(uci)
+    assert move in board.legal_moves
+
+    cb = cboard_from_board_fast(board)
+    cb.push_index(_spec_policy_index(move, board.turn))
+    board.push(move)
+
+    _assert_cboard_current_fields_match_board(cb, board)
+    assert set(map(int, cb.legal_move_indices())) == _expected_legal_indices(board)
