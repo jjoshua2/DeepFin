@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Analyze winrate calibration from shard data by running inference with current model."""
 
+from __future__ import annotations
+
 import argparse
+from typing import Any, cast
+
 import numpy as np
 import torch
 import zarr
@@ -9,7 +13,7 @@ import zarr
 from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--shard", type=str, required=True, help="Path to .zarr shard")
     parser.add_argument("--checkpoint", type=str, required=True, help="Path to model checkpoint")
@@ -17,9 +21,9 @@ def main():
     args = parser.parse_args()
 
     print(f"Loading shard: {args.shard}")
-    z = zarr.open(args.shard)
-    x = z["x"][:]
-    wdl_target = z["wdl_target"][:]
+    z = cast(Any, zarr.open(args.shard))
+    x = np.asarray(z["x"][:])
+    wdl_target = np.asarray(z["wdl_target"][:], dtype=np.int64)
 
     print(f"Shard has {len(x)} positions")
     print(f"WDL target distribution: {np.bincount(wdl_target)}")

@@ -48,7 +48,7 @@ def main() -> None:
 
     sf_path = _resolve_stockfish_path(args.stockfish_path)
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
-    model = TinyNet().to(device).eval()
+    model = TinyNet(in_planes=146).to(device).eval()
     sf = StockfishPool(
         path=sf_path,
         nodes=int(args.sf_nodes),

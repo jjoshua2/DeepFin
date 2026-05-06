@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import time
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -106,7 +107,7 @@ def main() -> None:
     rng = np.random.default_rng(42)
     buf = DiskReplayBuffer(
         args.num_samples,
-        shard_dir=tmpdir + "/replay",
+        shard_dir=Path(tmpdir) / "replay",
         rng=rng,
         shuffle_cap=args.num_samples,
         shard_size=500,
@@ -157,6 +158,7 @@ def main() -> None:
         torch.cuda.reset_peak_memory_stats()
 
     # --- Profiled training run ---
+    peak_mb = 0.0
     print(f"\nProfiled run: {args.steps} steps...")
     if device == "cuda":
         torch.cuda.synchronize()

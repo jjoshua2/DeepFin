@@ -49,6 +49,18 @@ _POSITIONS: list[tuple[str, str]] = [
 ]
 
 
+def _float_from_result(result: dict[str, object], key: str, default: float = 0.0) -> float:
+    value = result.get(key, default)
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return default
+    return default
+
+
 def _spawn(checkpoint: str, device: str, *,
            chunk_sims: int, topk: int, max_batch: int,
            walkers: int = 1, coalesce: bool = True,
@@ -148,7 +160,7 @@ def _run_config(
             _send(proc, "ucinewgame")
             for _ in range(repeats):
                 result = _run_one(proc, reader, fen=fen, nodes=nodes, timeout_s=timeout_s)
-                position_stats.setdefault(pos_label, []).append(float(result["sims_per_s"]))  # type: ignore[arg-type]
+                position_stats.setdefault(pos_label, []).append(_float_from_result(result, "sims_per_s"))
                 prof = result.get("profile") or {}
                 if isinstance(prof, dict) and prof:
                     profile_runs.append(prof)

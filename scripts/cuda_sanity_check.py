@@ -7,6 +7,7 @@ import queue as queue_mod
 import sys
 import time
 from dataclasses import dataclass
+from multiprocessing.process import BaseProcess
 
 
 @dataclass
@@ -42,7 +43,7 @@ def _child_main(worker_idx: int, matrix_size: int, result_queue: mp.Queue) -> No
 def _run_multi(workers: int, matrix_size: int, stagger_s: float, timeout_s: float) -> int:
     ctx = mp.get_context("spawn")
     result_queue: mp.Queue = ctx.Queue()
-    procs: list[mp.Process] = []
+    procs: list[BaseProcess] = []
 
     for i in range(workers):
         p = ctx.Process(target=_child_main, args=(i, matrix_size, result_queue))
