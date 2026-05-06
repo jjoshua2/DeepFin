@@ -153,6 +153,8 @@ def main() -> None:
                 if ti > 1 and it == 0:
                     exploit_like_rows += 1
                 continue
+            if s is None:
+                continue
             scores_nonzero.append(float(s))
             last_row_score = float(s)
 

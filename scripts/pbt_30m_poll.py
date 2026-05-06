@@ -45,16 +45,24 @@ def _read_last_json_row(path: Path) -> dict | None:
 
 
 def _safe_int(v: object, default: int = 0) -> int:
+    if isinstance(v, bool):
+        return int(v)
+    if isinstance(v, int):
+        return v
     try:
-        return int(v)  # type: ignore[arg-type]
-    except Exception:
+        return int(v) if isinstance(v, str | float) else default
+    except (TypeError, ValueError):
         return default
 
 
 def _safe_float(v: object, default: float = 0.0) -> float:
+    if isinstance(v, bool):
+        return float(v)
+    if isinstance(v, int | float):
+        return float(v)
     try:
-        return float(v)  # type: ignore[arg-type]
-    except Exception:
+        return float(v) if isinstance(v, str) else default
+    except (TypeError, ValueError):
         return default
 
 
