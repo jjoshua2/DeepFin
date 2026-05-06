@@ -7,6 +7,12 @@ from pathlib import Path
 
 import numpy as np
 
+from chess_anti_engine.replay.shard import (
+    _OPTIONAL_FIELD_SPECS,
+    _REQUIRED_STORAGE_FIELDS,
+    _SHARD_FIELDS,
+)
+
 
   # Checkpoint sidecar filenames — read by trainable_init, written by
   # trainable_report + salvage. Keeping these in one place avoids
@@ -48,14 +54,42 @@ def slice_array_batch(arrs: dict[str, np.ndarray], idxs: np.ndarray) -> dict[str
 def concat_array_batches(batches: list[dict[str, np.ndarray]]) -> dict[str, np.ndarray]:
     if not batches:
         raise ValueError("cannot concatenate empty replay shard list")
-  # Use intersection so shards missing optional keys (e.g. future_policy_target
-  # absent from bootstrap data) don't crash the concat.
-    keys = set(batches[0].keys())
-    for batch in batches[1:]:
-        keys &= set(batch.keys())
+
+    def _zeros_for_missing(name: str, batch: dict[str, np.ndarray]) -> np.ndarray:
+        n = int(np.asarray(batch["x"]).shape[0])
+        policy_size = int(np.asarray(batch["policy_target"]).shape[1])
+        x_planes = int(np.asarray(batch["x"]).shape[1])
+        if name == "x":
+            return np.zeros((n, x_planes, 8, 8), dtype=np.float16)
+        if name == "policy_target":
+            return np.zeros((n, policy_size), dtype=np.float16)
+        if name == "wdl_target":
+            return np.zeros((n,), dtype=np.int8)
+        if name == "priority":
+            return np.ones((n,), dtype=np.float32)
+        if name == "has_policy":
+            return np.ones((n,), dtype=np.uint8)
+        for spec in _OPTIONAL_FIELD_SPECS:
+            if name == spec.flag:
+                return np.zeros((n,), dtype=np.uint8)
+            if name == spec.arr:
+                return np.zeros((n, *spec.shape), dtype=spec.dtype)
+        raise KeyError(f"unknown replay field {name!r}")
+
+    present_keys = set().union(*(batch.keys() for batch in batches))
+    keys = [
+        name for name in _SHARD_FIELDS
+        if name in _REQUIRED_STORAGE_FIELDS or name in present_keys
+    ]
     return {
-        k: np.concatenate([np.asarray(batch[k]) for batch in batches], axis=0)
-        for k in sorted(keys)
+        k: np.concatenate(
+            [
+                np.asarray(batch[k]) if k in batch else _zeros_for_missing(k, batch)
+                for batch in batches
+            ],
+            axis=0,
+        )
+        for k in keys
     }
 
 
