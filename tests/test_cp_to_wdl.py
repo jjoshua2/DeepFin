@@ -2,7 +2,27 @@ from __future__ import annotations
 
 import pytest
 
+from chess_anti_engine.stockfish.uci import StockfishUCI
 from chess_anti_engine.stockfish.wdl import cp_to_wdl, mate_to_effective_cp
+
+
+class _NullLock:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+
+def _parse_stockfish_lines(lines: list[str]):
+    sf = object.__new__(StockfishUCI)
+    sf.nodes = 1
+    sf.read_timeout_s = 1.0
+    sf._lock = _NullLock()
+    pending = list(lines)
+    sf._send = lambda _cmd: None
+    sf._readline_with_deadline = lambda _deadline: pending.pop(0)
+    return StockfishUCI.search(sf, "8/8/8/8/8/8/8/8 w - - 0 1")
 
 
 def test_cp_zero_is_symmetric_and_normalized():
@@ -73,3 +93,23 @@ def test_mate_to_effective_cp_sign():
     assert mate_to_effective_cp(5) > 0
     assert mate_to_effective_cp(-5) < 0
     assert mate_to_effective_cp(1) > mate_to_effective_cp(40)
+
+
+def test_uci_parser_clears_stale_mate_when_latest_score_is_cp():
+    res = _parse_stockfish_lines([
+        "info depth 1 multipv 1 score mate 3 wdl 1000 0 0 pv e2e4",
+        "info depth 2 multipv 1 score cp 42 wdl 600 300 100 pv e2e4",
+        "bestmove e2e4",
+    ])
+    assert res.cp == 42
+    assert res.mate is None
+
+
+def test_uci_parser_clears_stale_cp_when_latest_score_is_mate():
+    res = _parse_stockfish_lines([
+        "info depth 1 multipv 1 score cp 42 wdl 600 300 100 pv e2e4",
+        "info depth 2 multipv 1 score mate -2 wdl 0 0 1000 pv e2e4",
+        "bestmove e2e4",
+    ])
+    assert res.cp is None
+    assert res.mate == -2

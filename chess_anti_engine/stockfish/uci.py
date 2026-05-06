@@ -235,8 +235,10 @@ class StockfishUCI:
                             wdl_pv1 = wdl_vec
                         if cp_val is not None:
                             cp_pv1 = cp_val
+                            mate_pv1 = None
                         if mate_val is not None:
                             mate_pv1 = mate_val
+                            cp_pv1 = None
 
                     if pv_move is not None:
                         pvs[mpv] = StockfishPV(
