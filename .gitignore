@@ -22,6 +22,10 @@ __pycache__/
 *.jsonl
 *.sqlite
 .pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 .tb/
 /tb/
 .DS_Store
