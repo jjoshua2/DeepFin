@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import multiprocessing as mp
 import time
+from typing import cast
 
 
 def _run_config(
@@ -52,12 +53,12 @@ def _run_config(
 
     if n_threads > 1:
         # Multi-threaded: use AOT with per-thread CUDA streams
-        from chess_anti_engine.inference import ThreadedAOTEvaluator
-        evaluator = ThreadedAOTEvaluator(aot_dir, device="cuda", max_batch=4096)
+        from chess_anti_engine.inference import AOTEvaluator
+        evaluator = AOTEvaluator(aot_dir, device="cuda", max_batch=4096)
         evaluator.load_weights(model.state_dict())
     else:
         # Single thread baseline: use compiled DirectGPU (same as production)
-        model = torch.compile(model, mode="reduce-overhead")
+        model = cast(torch.nn.Module, torch.compile(model, mode="reduce-overhead"))
         evaluator = DirectGPUEvaluator(model, device="cuda", max_batch=512)
 
     sf = StockfishPool(path=stockfish_path, num_workers=sf_workers, nodes=sf_nodes, multipv=1)

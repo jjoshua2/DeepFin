@@ -53,7 +53,7 @@ def run_single_thread(
     search = SearchConfig(simulations=sims, fast_simulations=max(2, sims // 4), mcts_type="gumbel")
     game_cfg = GameConfig(max_plies=60, selfplay_fraction=1.0)  # all selfplay, no SF turns
     t0 = time.perf_counter()
-    samples, stats = play_batch(
+    _samples, stats = play_batch(
         None, device=device, rng=rng, stockfish=sf,
         evaluator=evaluator, games=games,
         search=search, game=game_cfg,
@@ -88,8 +88,9 @@ def bench_threads(n_threads: int, total_games: int, sims: int, sf_path: str, ins
 
     if n_threads <= 1:
         positions, elapsed = run_single_thread(evaluator, sf_path, total_games, sims, seed=42, device=device)
-        if hasattr(evaluator, "shutdown"):
-            evaluator.shutdown()
+        shutdown = getattr(evaluator, "shutdown", None)
+        if callable(shutdown):
+            shutdown()
         return {"threads": 1, "games": total_games, "positions": positions,
                 "elapsed": elapsed, "games_per_sec": total_games / elapsed,
                 "pos_per_sec": positions / elapsed}
@@ -106,8 +107,9 @@ def bench_threads(n_threads: int, total_games: int, sims: int, sf_path: str, ins
         results = [f.result() for f in futs]
     elapsed = time.perf_counter() - t0
 
-    if hasattr(evaluator, "shutdown"):
-        evaluator.shutdown()
+    shutdown = getattr(evaluator, "shutdown", None)
+    if callable(shutdown):
+        shutdown()
 
     total_positions = sum(r[0] for r in results)
     return {"threads": n_threads, "games": total_games, "positions": total_positions,

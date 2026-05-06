@@ -13,7 +13,7 @@ def _worker_fn(worker_id, n_threads, batch_per_thread, sf_workers,
     import numpy as np
     import torch
 
-    from chess_anti_engine.inference import ThreadedAOTEvaluator
+    from chess_anti_engine.inference import AOTEvaluator
     from chess_anti_engine.model import (
         ModelConfig,
         build_model,
@@ -36,7 +36,7 @@ def _worker_fn(worker_id, n_threads, batch_per_thread, sf_workers,
         ckpt = torch.load(bootstrap_path, map_location="cuda", weights_only=True)
         load_state_dict_tolerant(model, ckpt.get("model", ckpt))
 
-    evaluator = ThreadedAOTEvaluator(aot_dir, device="cuda", max_batch=4096)
+    evaluator = AOTEvaluator(aot_dir, device="cuda", max_batch=4096)
     evaluator.load_weights(model.state_dict())
     del model
 
@@ -87,7 +87,6 @@ def _worker_fn(worker_id, n_threads, batch_per_thread, sf_workers,
         total_games = stats.games
 
     elapsed = time.perf_counter() - t0
-    evaluator.shutdown()
     sf.close()
     free, total = torch.cuda.mem_get_info()
     result_dict[worker_id] = {"games": total_games, "positions": total_positions,

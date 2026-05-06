@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import multiprocessing as mp
 import time
+from typing import cast
 
 
 def _worker_fn(
@@ -51,7 +52,7 @@ def _worker_fn(
         ckpt = torch.load(bootstrap_path, map_location="cuda", weights_only=True)
         load_state_dict_tolerant(model, ckpt.get("model", ckpt))
     if compile_model:
-        model = torch.compile(model, mode="reduce-overhead")
+        model = cast(torch.nn.Module, torch.compile(model, mode="reduce-overhead"))
 
     evaluator = DirectGPUEvaluator(model, device="cuda", max_batch=512)
     sf = StockfishPool(path=stockfish_path, num_workers=sf_workers, nodes=sf_nodes, multipv=1)

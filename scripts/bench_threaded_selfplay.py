@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import multiprocessing as mp
 import time
+from typing import cast
 
 
 def _run_config(
@@ -51,7 +52,7 @@ def _run_config(
         ckpt = torch.load(bootstrap_path, map_location="cuda", weights_only=True)
         load_state_dict_tolerant(model, ckpt.get("model", ckpt))
     if compile_model:
-        model = torch.compile(model, mode="reduce-overhead")
+        model = cast(torch.nn.Module, torch.compile(model, mode="reduce-overhead"))
 
     if n_threads > 1:
         evaluator = ThreadedBatchEvaluator(model, device="cuda", max_batch=4096)
@@ -126,8 +127,9 @@ def _run_config(
 
     elapsed = time.perf_counter() - t0
 
-    if hasattr(evaluator, 'shutdown'):
-        evaluator.shutdown()
+    shutdown = getattr(evaluator, "shutdown", None)
+    if callable(shutdown):
+        shutdown()
     sf.close()
 
     free_vram, total_vram = torch.cuda.mem_get_info()

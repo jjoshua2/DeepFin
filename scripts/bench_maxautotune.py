@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import multiprocessing as mp
 import time
+from typing import cast
 
 import numpy as np
 
@@ -19,7 +20,7 @@ def worker_fn(worker_id, results_dict, batch_size=170, n_iters=30):
         ffn_mult=1.5, use_smolgen=True, use_nla=False,
     ))
     model = model.cuda().eval()
-    model = torch.compile(model, mode="max-autotune")
+    model = cast(torch.nn.Module, torch.compile(model, mode="max-autotune"))
     ev = DirectGPUEvaluator(model, device="cuda", max_batch=512)
 
     x = np.random.randn(batch_size, 146, 8, 8).astype(np.float32)
@@ -50,7 +51,7 @@ def main():
 
         total_nps = sum(results.values())
         avg_nps = total_nps / len(results) if results else 0
-        free, total = torch.cuda.mem_get_info()
+        free, _total = torch.cuda.mem_get_info()
         print(
             f"{n_workers:>2} max-autotune workers: {total_nps:>8.0f} total pos/s  "
             f"({avg_nps:.0f}/worker)  VRAM free={free/1e9:.1f}GB"
