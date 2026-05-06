@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from chess_anti_engine.encoding._lc0_ext import CBoard
+from chess_anti_engine.moves.encode import mirror_policy_index
 
 
 PLANE_COUNT = 73
@@ -75,6 +76,19 @@ def _spec_policy_index(move: chess.Move, turn: chess.Color) -> int:
     index = int(from_oriented) * PLANE_COUNT + plane
     assert 0 <= index < POLICY_SIZE
     return index
+
+
+def _mirror_square_files(square: chess.Square) -> chess.Square:
+    return chess.square(7 - chess.square_file(square), chess.square_rank(square))
+
+
+def _mirror_move_files(move: chess.Move) -> chess.Move:
+    return chess.Move(
+        _mirror_square_files(move.from_square),
+        _mirror_square_files(move.to_square),
+        promotion=move.promotion,
+        drop=move.drop,
+    )
 
 
 def _expected_legal_indices(board: chess.Board) -> set[int]:
@@ -157,3 +171,28 @@ def test_cboard_push_index_matches_board_through_deterministic_walk() -> None:
         cb.push_index(_spec_policy_index(move, board.turn))
         board.push(move)
         _assert_cboard_matches_board(cb, board)
+
+
+@pytest.mark.parametrize(
+    "fen",
+    [
+        chess.STARTING_FEN,
+        "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1",
+        "r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1",
+        "8/8/8/3pP3/8/8/8/4K2k w - d6 0 1",
+        "4k3/P6p/8/8/8/8/p6P/4K3 w - - 0 1",
+        "4k3/P6p/8/8/8/8/p6P/4K3 b - - 0 1",
+    ],
+)
+def test_mirror_policy_index_matches_independent_file_mirror(fen: str) -> None:
+    board = chess.Board(fen)
+    mirrored_board = board.transform(chess.flip_horizontal)
+
+    for move in board.legal_moves:
+        mirrored_move = _mirror_move_files(move)
+        if not board.is_castling(move):
+            assert mirrored_move in mirrored_board.legal_moves
+
+        index = _spec_policy_index(move, board.turn)
+        mirrored_index = _spec_policy_index(mirrored_move, board.turn)
+        assert mirror_policy_index(index) == mirrored_index
