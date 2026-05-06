@@ -331,6 +331,15 @@ Current notes:
   single-step `best_moves` puzzles directly.
 - Focused puzzle validation after F032 passed:
   `tests/test_puzzle_eval.py` (`1 passed`).
+- Finding F033 opened/fixed in this cycle: `scripts/profile_play_batch.py` still
+  called the removed `play_batch(model=..., config=..., target=...)` API and
+  printed `result.games_completed`, so the profiling script could not run
+  against current selfplay code. It now parses CLI args, defers heavy imports
+  until after `--help`, resolves Stockfish from CLI/env/PATH, calls the current
+  dataclass-based `play_batch()` API, and prints current `BatchStats` fields.
+- Focused profile script validation after F033 passed:
+  `python3 scripts/profile_play_batch.py --help` and
+  `python3 -m py_compile scripts/profile_play_batch.py`.
 - Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
   `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
   `tests/test_tune_distributed_worker_cmd.py`,
@@ -1122,6 +1131,7 @@ Files:
 - [ ] `scripts/pbt_30m_poll.py`
 - [ ] `scripts/pbt_hourly_audit.py`
 - [ ] `scripts/poll_pbt_30m.sh`
+- [x] `scripts/profile_play_batch.py`
 - [ ] `scripts/reinit_value_heads.py`
 - [ ] `scripts/status.py`
 - [ ] `scripts/train.sh`
@@ -1133,6 +1143,8 @@ Correctness/reliability:
 
 - [x] Puzzle EPD and Lichess CSV modes score the intended first-move policy/value
   semantics.
+- [x] `profile_play_batch.py` uses the current `play_batch()` API and reports
+  current `BatchStats` fields.
 - [x] Diagnostic scripts run from repo root and fail clearly when required
   trial/replay paths are absent.
 - [ ] Other scripts run from repo root and fail clearly when required files/env vars are absent.
