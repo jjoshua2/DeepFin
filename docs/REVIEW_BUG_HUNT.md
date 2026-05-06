@@ -349,6 +349,14 @@ Current notes:
 - Focused train script validation after F034 passed:
   `bash -n scripts/train.sh` and a direct resolver smoke check for
   `configs/pbt2_small.yaml`.
+- Finding F035 opened/fixed in this cycle: `scripts/monitor_pbt.sh` hardcoded
+  `/home/josh/projects/chess`, required GNU `grep -P` prefix extraction, and
+  scanned only trial names matching the inferred prefix from the newest trial.
+  It now derives the repo root from the script path, allows env overrides for
+  tune/log paths, scans all `train_trial_*` dirs, handles missing `pgrep`
+  matches under `set -euo pipefail`, and creates the log directory.
+- Focused monitor script validation after F035 passed:
+  `bash -n scripts/monitor_pbt.sh`.
 - Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
   `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
   `tests/test_tune_distributed_worker_cmd.py`,
@@ -1136,7 +1144,7 @@ Files:
 - [ ] `scripts/hourly_pbt_audit.sh`
 - [ ] `scripts/lint.sh`
 - [ ] `scripts/match_checkpoints.py`
-- [ ] `scripts/monitor_pbt.sh`
+- [x] `scripts/monitor_pbt.sh`
 - [ ] `scripts/pbt_30m_poll.py`
 - [ ] `scripts/pbt_hourly_audit.py`
 - [ ] `scripts/poll_pbt_30m.sh`
@@ -1156,6 +1164,8 @@ Correctness/reliability:
   current `BatchStats` fields.
 - [x] `train.sh best-save` resolves replay shards through the same config-aware
   Tune helper as training.
+- [x] `monitor_pbt.sh` avoids hardcoded repo paths and fragile trial-prefix
+  filtering.
 - [x] Diagnostic scripts run from repo root and fail clearly when required
   trial/replay paths are absent.
 - [ ] Other scripts run from repo root and fail clearly when required files/env vars are absent.

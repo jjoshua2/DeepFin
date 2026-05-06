@@ -2,8 +2,11 @@
 # Monitor PBT2 run: check progress of the latest experiment
 # Writes status to runs/pbt2_small/monitor.log
 
-TUNE_DIR="/home/josh/projects/chess/runs/pbt2_small/tune"
-LOG="/home/josh/projects/chess/runs/pbt2_small/monitor.log"
+set -euo pipefail
+
+ROOT="${CHESS_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+TUNE_DIR="${TRAIN_TUNE_DIR:-$ROOT/runs/pbt2_small/tune}"
+LOG="${TRAIN_MONITOR_LOG:-$ROOT/runs/pbt2_small/monitor.log}"
 
 check_progress() {
     echo "========================================"
@@ -11,7 +14,7 @@ check_progress() {
     echo "========================================"
 
     # Check if any python training process is running
-    PIDS=$(pgrep -f "chess_anti_engine.run" 2>/dev/null)
+    PIDS=$(pgrep -f "chess_anti_engine.run" 2>/dev/null || true)
     if [ -z "$PIDS" ]; then
         echo "WARNING: No chess_anti_engine.run process found!"
         echo "STATUS: DEAD"
@@ -26,17 +29,15 @@ check_progress() {
         nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader 2>/dev/null
     fi
 
-    # Find the latest experiment prefix (most recently modified trial dir)
-    LATEST_DIR=$(ls -dt "$TUNE_DIR"/train_trial_*/ 2>/dev/null | head -1)
-    if [ -z "$LATEST_DIR" ]; then
+    # Scan all train_trial directories under the configured Tune directory.
+    if ! compgen -G "$TUNE_DIR/train_trial_*" >/dev/null; then
         echo "WARNING: No trial directories found!"
         echo "STATUS: DEAD"
         return 1
     fi
-    PREFIX=$(basename "$LATEST_DIR" | grep -oP 'train_trial_\K[a-f0-9]+(?=_)')
 
     echo ""
-    echo "Experiment prefix: $PREFIX"
+    echo "Tune dir: $TUNE_DIR"
     echo "Per-trial status:"
     echo "---"
 
@@ -46,11 +47,11 @@ check_progress() {
     BEST_LOSS=999999
     BEST_TRIAL=""
 
-    for d in "$TUNE_DIR"/train_trial_${PREFIX}_*/; do
+    for d in "$TUNE_DIR"/train_trial_*/; do
         [ -d "$d" ] || continue
         TOTAL_TRIALS=$((TOTAL_TRIALS + 1))
 
-        trial=$(basename "$d" | grep -oP '000\d+')
+        trial=$(basename "$d")
         csv=$(find "$d" -name "progress.csv" -print -quit 2>/dev/null)
 
         if [ -z "$csv" ] || [ ! -s "$csv" ]; then
@@ -84,7 +85,7 @@ check_progress() {
         skill=$([ -n "$col_skill" ] && echo "$last" | awk -F',' -v c="$col_skill" '{print $c}' || echo "n/a")
 
         # Track max iter
-        if [ -n "$iter" ] && [ "$iter" -gt "$MAX_ITER" ] 2>/dev/null; then
+        if [[ "$iter" =~ ^[0-9]+$ ]] && [ "$iter" -gt "$MAX_ITER" ]; then
             MAX_ITER=$iter
         fi
 
@@ -115,4 +116,5 @@ check_progress() {
     return 0
 }
 
+mkdir -p "$(dirname "$LOG")"
 check_progress 2>&1 | tee -a "$LOG"
