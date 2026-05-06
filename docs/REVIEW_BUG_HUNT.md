@@ -31,8 +31,8 @@ Working rules:
 | Order | Track | Component | Files | Status | Notes |
 |-------|-------|-----------|-------|--------|-------|
 | 1 | adversarial | Selfplay labels and finalization | `chess_anti_engine/selfplay/finalize.py`, `state.py`, `stockfish_turn.py`, `tablebase.py` | deep | Highest training-data corruption risk. Review POV, result labels, TB adjudication, draw handling, optional target fields. |
-| 2 | adversarial | Replay and shard ingest | `chess_anti_engine/replay/*`, `worker_buffer.py`, server/worker shard paths | active | Schema drift, stale shards, missing arrays, holdout leakage, old-run compatibility. |
-| 3 | adversarial | Worker lifecycle | `worker.py`, `worker_assets.py`, `worker_pool.py`, `stockfish/*` | pending | Manifest restart keys, model swaps, Stockfish restarts, partial updates, pause/resume. |
+| 2 | adversarial | Replay and shard ingest | `chess_anti_engine/replay/*`, `worker_buffer.py`, server/worker shard paths | deep | Schema drift, stale shards, missing arrays, holdout leakage, old-run compatibility. |
+| 3 | adversarial | Worker lifecycle | `worker.py`, `worker_assets.py`, `worker_pool.py`, `stockfish/*` | active | Manifest restart keys, model swaps, Stockfish restarts, partial updates, pause/resume. |
 | 4 | adversarial | Tune trainable lifecycle | `chess_anti_engine/tune/*` | pending | Config reload, donor/salvage overlays, PID state restore, manifests, async eval timing. |
 | 5 | adversarial | Loss and trainer contracts | `chess_anti_engine/train/losses.py`, `trainer.py`, `targets.py` | pending | Blend weights, masks, target normalization, old shard behavior, live weight sync. |
 | 6 | adversarial | MCTS and search engines | `chess_anti_engine/mcts/*`, `uci/search.py`, `tablebase.py` | pending | Memory ownership, root reuse, terminal handling, solved/TB propagation, concurrent mutation. |
@@ -90,6 +90,8 @@ Current notes:
   whenever they were bundled with a minimal/legacy shard.
 - Finding F010 opened/fixed in this cycle: workers deleted pending shards for
   HTTP 200 responses even when the server body explicitly rejected the upload.
+- Finding F011 opened/fixed in this cycle: worker asset cache paths trusted
+  manifest `filename` path components for opening books and Stockfish binaries.
 
 ### `/simplify` Review Criteria
 
@@ -208,6 +210,7 @@ Context:
 | F008 | High | Training Quality / Reliability | Replay shards | `chess_anti_engine/replay/shard.py`, `tests/test_replay_shard_validation.py` | Optional shard targets could be marked present without storing the paired value array. Loading such a shard synthesized a zero-filled value and `arrays_to_samples()` treated it as a real SF/search/policy/mask target, silently corrupting auxiliary supervision. | `validate_arrays()` only checked `x`, `policy_target`, and `wdl_target`; `arrays_to_samples()` populated missing optional arrays with zeros and then trusted `has_*` flags from the shard. | Added optional field validation for flag shape, value shape, finite float values, and active flag without value. Verified replay shard/collation/disk-buffer slice: `33 passed`. | fixed |
 | F009 | Medium | Training Quality | Tune replay sharing | `chess_anti_engine/tune/_utils.py`, `tests/test_tune_utils.py` | Cross-trial selfplay export concatenation dropped any optional array absent from one selected shard. A single legacy/minimal shard in the bundle could strip SF/search/future/volatility targets from every full-schema shard in the exported replay. | `concat_array_batches()` used set intersection across batch keys before `save_local_shard_arrays()` wrote the export shard. | Changed concat to use the canonical replay schema order, preserve union-present fields, and synthesize zero/absent defaults for batches missing an optional field. Verified tune/replay slice: `26 passed`. | fixed |
 | F010 | Medium | Reliability | Worker upload | `chess_anti_engine/worker.py`, `tests/test_worker_upload_response.py` | Workers deleted local pending shards after any HTTP 200 upload response, including explicit server rejections such as protocol/version incompatibility. That could drop replay data that the server never accepted. | `_upload_pending_shards()` checked only `r.status_code == 200` before `delete_shard_path(sp)`, while the server uses HTTP 200 bodies with `stored: false, rejected: true` for compatibility and validation rejections. | Added `_upload_response_allows_pending_delete()` so workers delete only accepted uploads or deduped non-rejections; rejected 200 responses keep the pending shard for retry. Verified worker upload slice: `11 passed`. | fixed |
+| F011 | Medium | Security / Reliability | Worker assets | `chess_anti_engine/worker_assets.py`, `chess_anti_engine/worker.py`, `tests/test_worker_cached_assets.py` | Worker asset cache paths trusted manifest-provided `filename` values. A filename containing path components such as `../../outside.bin` could make opening-book or Stockfish downloads write outside the cache directory. | `_download_opening_book()` and `_sync_stockfish()` interpolated manifest `filename` directly into `cache_dir / f\"..._{filename}\"`. | Added `_safe_manifest_filename()` to reduce manifest asset names to basenames before constructing cache paths. Verified worker asset slice: `12 passed`. | fixed |
 
 ## Review Passes
 

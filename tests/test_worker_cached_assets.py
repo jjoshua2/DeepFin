@@ -7,6 +7,7 @@ from pathlib import Path
 from chess_anti_engine.worker_assets import (
     _cached_sha_asset_needs_refresh,
     _download_opening_book,
+    _safe_manifest_filename,
 )
 
 
@@ -77,3 +78,47 @@ def test_download_opening_book_redownloads_when_same_sha_uses_new_filename(
     assert returned_sha == sha
     assert expected_path.read_bytes() == book_bytes
 
+
+def test_manifest_asset_filename_is_reduced_to_basename() -> None:
+    assert _safe_manifest_filename("../../evil.bin", default="stockfish") == "evil.bin"
+    assert _safe_manifest_filename("nested/book.bin", default="book") == "book.bin"
+    assert _safe_manifest_filename("", default="book") == "book"
+
+
+def test_download_opening_book_does_not_trust_manifest_path_components(
+    tmp_path: Path, monkeypatch
+) -> None:
+    book_bytes = b"opening-book"
+    sha = _sha256_bytes(book_bytes)
+    downloads: list[Path] = []
+
+    def _fake_download_and_verify_shared(url: str, *, out_path: Path, expected_sha256: str, headers: dict) -> None:  # pylint: disable=unused-argument
+        downloads.append(out_path)
+        out_path.write_bytes(book_bytes)
+
+    monkeypatch.setattr("chess_anti_engine.worker_assets._download_and_verify_shared", _fake_download_and_verify_shared)
+
+    path, returned_sha = _download_opening_book(
+        {
+            "opening_book": {
+                "filename": "../../outside.bin",
+                "sha256": sha,
+                "endpoint": "/v1/opening_book",
+            }
+        },
+        "opening_book",
+        tmp_path,
+        cache_prefix="opening",
+        default_endpoint="/v1/opening_book",
+        server_url_fn=lambda endpoint: f"http://server{endpoint}",
+        headers={},
+        log=logging.getLogger("test"),
+        last_sha=None,
+    )
+
+    expected_path = tmp_path / f"opening_{sha}_outside.bin"
+    assert downloads == [expected_path]
+    assert path == str(expected_path)
+    assert returned_sha == sha
+    assert expected_path.exists()
+    assert not (tmp_path.parent / "outside.bin").exists()

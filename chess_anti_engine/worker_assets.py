@@ -7,6 +7,11 @@ from pathlib import Path
 from chess_anti_engine.utils import sha256_file as _sha256_file
 
 
+def _safe_manifest_filename(value: object, *, default: str) -> str:
+    name = Path(str(value or default)).name
+    return name or str(default)
+
+
 def _ensure_executable(path: Path) -> None:
     """Best-effort chmod +x for POSIX systems."""
     try:
@@ -188,7 +193,7 @@ def _download_opening_book(
     if key not in manifest:
         return None, None
     ob = manifest.get(key) or {}
-    filename = str(ob.get("filename") or key)
+    filename = _safe_manifest_filename(ob.get("filename"), default=key)
     sha = str(ob.get("sha256") or "")
     endpoint = str(ob.get("endpoint") or default_endpoint)
 

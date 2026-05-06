@@ -63,6 +63,7 @@ from chess_anti_engine.worker_assets import (
     _download_opening_book,
     _ensure_executable,
     _prune_cached_models,
+    _safe_manifest_filename,
 )
 from chess_anti_engine.worker_buffer import (
     _buffer_add_completed_game,
@@ -1442,7 +1443,7 @@ class WorkerSession:
                 raise SystemExit("--stockfish-from-server enabled but server did not publish stockfish")
             sf_sha = str(sf_rec.get("sha256"))
             sf_endpoint = str(sf_rec.get("endpoint"))
-            sf_filename = str(sf_rec.get("filename") or "stockfish")
+            sf_filename = _safe_manifest_filename(sf_rec.get("filename"), default="stockfish")
             sf_cached = self.cache_dir / f"stockfish_{sf_sha}_{sf_filename}"
             if _cached_sha_asset_needs_refresh(path=sf_cached, sha256=sf_sha, last_sha256=self.last_sf_sha):
                 self.log.info("downloading stockfish sha=%s filename=%s", sf_sha, sf_filename)
