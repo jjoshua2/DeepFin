@@ -35,8 +35,8 @@ Working rules:
 | 3 | adversarial | Worker lifecycle | `worker.py`, `worker_assets.py`, `worker_pool.py`, `stockfish/*` | deep | Manifest restart keys, model swaps, Stockfish restarts, partial updates, pause/resume. |
 | 4 | adversarial | Tune trainable lifecycle | `chess_anti_engine/tune/*` | deep | Config reload, donor/salvage overlays, PID state restore, manifests, async eval timing. |
 | 5 | adversarial | Loss and trainer contracts | `chess_anti_engine/train/losses.py`, `trainer.py`, `targets.py` | deep | Blend weights, masks, target normalization, old shard behavior, live weight sync. |
-| 6 | adversarial | MCTS and search engines | `chess_anti_engine/mcts/*`, `uci/search.py`, `tablebase.py` | active | Memory ownership, root reuse, terminal handling, solved/TB propagation, concurrent mutation. |
-| 7 | adversarial | Distributed server | `chess_anti_engine/server/*`, `tune/distributed_runtime.py` | pending | Upload durability, auth, leases, path safety, backpressure, recovery after crash. |
+| 6 | adversarial | MCTS and search engines | `chess_anti_engine/mcts/*`, `uci/search.py`, `tablebase.py` | deep | Memory ownership, root reuse, terminal handling, solved/TB propagation, concurrent mutation. |
+| 7 | adversarial | Distributed server | `chess_anti_engine/server/*`, `tune/distributed_runtime.py` | active | Upload durability, auth, leases, path safety, backpressure, recovery after crash. |
 | 8 | adversarial | UCI runtime | `chess_anti_engine/uci/*`, `stockfish/uci.py` | pending | Protocol state, time controls, ponderhit, cancellation, subprocess hangs. |
 | 9 | simplify | Hot-path code quality and efficiency | selfplay, replay, MCTS, inference, worker | pending | Remove duplicated orchestration, clarify contracts, reduce allocations/sync/I/O stalls. |
 | 10 | simplify | Config and ops ergonomics | `configs/*`, `scripts/*`, `AGENTS.md`, `CLAUDE.md` | pending | Stale knobs, unclear ownership, scripts that assume one run layout. |
@@ -105,15 +105,26 @@ Loss and trainer contracts:
 
 MCTS and search engines:
 
-- [ ] Map Python/C search entrypoints, root initialization, terminal expansion,
+- [x] Map Python/C search entrypoints, root initialization, terminal expansion,
   and policy/legal-mask contracts.
-- [ ] Verify solved/TB value propagation cannot mix POV/sign conventions.
-- [ ] Verify root reuse, tree reset, and concurrent walker state cannot leak
+- [x] Verify solved/TB value propagation cannot mix POV/sign conventions.
+- [x] Verify root reuse, tree reset, and concurrent walker state cannot leak
   visits/virtual loss across positions.
-- [ ] Verify tablebase/search overrides preserve legal move and terminal
+- [x] Verify tablebase/search overrides preserve legal move and terminal
   semantics.
 - [ ] Identify MCTS/search simplification candidates only after correctness
   review.
+
+Distributed server:
+
+- [ ] Map upload, validation, publish, lease, and worker heartbeat endpoints.
+- [ ] Verify upload staging/atomic rename/crash recovery cannot lose accepted
+  shards or ingest rejected shards.
+- [ ] Verify path handling for worker-provided names and manifest-provided
+  artifact paths cannot escape run-owned directories.
+- [ ] Verify backpressure/lease expiry cannot deadlock workers or double-assign
+  destructive work.
+- [ ] Identify server simplification candidates only after correctness review.
 
 Current notes:
 
@@ -192,6 +203,16 @@ Current notes:
   `tests/test_gumbel_root_many_edge_cases.py`, `tests/test_mcts_c_tree.py`,
   `tests/test_mcts_solved_propagation.py`, and `tests/test_tablebase_cache.py`
   (`38 passed`).
+- Broader MCTS/search validation after F020 found no additional correctness bug
+  in root initialization, terminal handling, solved propagation, virtual-loss
+  cleanup, or selfplay root reuse. Validation passed:
+  `tests/test_mcts_c_tree.py`, `tests/test_mcts_solved_propagation.py`,
+  `tests/test_mcts_forced_collapse.py`, `tests/test_mcts_virtual_loss.py`,
+  `tests/test_mcts_thread_safety.py`, `tests/test_gumbel_root_many_edge_cases.py`,
+  `tests/test_gumbel_budget_usage.py`, `tests/test_gumbel_mcts_smoke.py`,
+  `tests/test_batch_descend_puct.py`, `tests/test_pucv_search.py`,
+  `tests/test_uci_walker_pool.py`, `tests/test_multi_gpu_pucv_pool.py`, and
+  `tests/test_tablebase_cache.py` (`75 passed`, `2 skipped`).
 - Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
   `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
   `tests/test_tune_distributed_worker_cmd.py`,
