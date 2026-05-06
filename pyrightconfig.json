@@ -1,5 +1,5 @@
 {
-    "include": ["chess_anti_engine"],
+    "include": ["chess_anti_engine", "tests"],
     "exclude": ["chess_anti_engine/bench"],
     "reportUnsupportedDunderAll": false,
     "reportPrivateImportUsage": false,
@@ -28,4 +28,3 @@
 
     "reportUnnecessaryTypeIgnoreComment": "warning"
 }
-
