@@ -148,6 +148,23 @@ def main():
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
 
+    if args.games_per_iter <= 0:
+        raise SystemExit("--games-per-iter must be > 0")
+    if args.selfplay_batch <= 0:
+        raise SystemExit("--selfplay-batch must be > 0")
+    if args.mcts_simulations <= 0:
+        raise SystemExit("--mcts-simulations must be > 0")
+    if args.batch_size <= 0:
+        raise SystemExit("--batch-size must be > 0")
+    if args.iterations <= 0:
+        raise SystemExit("--iterations must be > 0")
+    if args.hours <= 0:
+        raise SystemExit("--hours must be > 0")
+    if args.eval_interval <= 0:
+        raise SystemExit("--eval-interval must be > 0")
+    if args.max_plies <= 0:
+        raise SystemExit("--max-plies must be > 0")
+
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     rng = np.random.default_rng(args.seed)
     work_dir = Path(args.work_dir)

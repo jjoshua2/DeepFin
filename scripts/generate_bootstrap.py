@@ -143,10 +143,27 @@ def main() -> None:
     parser.add_argument("--batch-games", type=int, default=GAMES_PER_BATCH,
                         help="Games per worker batch/shard (controls peak memory)")
     parser.add_argument("--seed", type=int, default=42, help="Base random seed")
+    parser.add_argument("--overwrite", action="store_true", help="Overwrite existing bootstrap_*.npz shards in --out")
     args = parser.parse_args()
+
+    if args.games <= 0:
+        raise SystemExit("--games must be > 0")
+    if args.workers < 0:
+        raise SystemExit("--workers must be >= 0")
+    if args.batch_games <= 0:
+        raise SystemExit("--batch-games must be > 0")
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
+    existing = sorted(out_dir.glob("bootstrap_*.npz"))
+    if existing and not args.overwrite:
+        raise SystemExit(
+            f"{out_dir} already contains {len(existing)} bootstrap shard(s); "
+            "pass --overwrite to replace them"
+        )
+    if args.overwrite:
+        for path in existing:
+            path.unlink()
 
     workers = args.workers or min(cpu_count(), 8)  # Cap at 8 to limit memory
     games = args.games

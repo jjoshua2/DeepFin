@@ -435,6 +435,17 @@ Current notes:
   `python3 -m py_compile scripts/cuda_sanity_check.py`,
   invalid-argument smoke for `cuda_sanity_check.py`, `bash -n` for
   `scripts/lint.sh`/`scripts/deepfin`, and `scripts/lint.sh --help`.
+- Finding F043 opened/fixed in this cycle: bootstrap/match/e2e scripts accepted
+  invalid sizes until deeper code failed, `generate_bootstrap.py` silently
+  overwrote `bootstrap_*.npz` in an existing output directory, and
+  `match_checkpoints.py` used raw labels in JSON log filenames so labels with
+  path separators could write outside the intended log filename. These scripts
+  now validate run sizes up front, require `--overwrite` before replacing
+  bootstrap shards, remove stale bootstrap shards on overwrite, and sanitize
+  match log labels.
+- Focused bootstrap/match/e2e validation after F043 passed:
+  `python3 -m py_compile` for the touched scripts, invalid-argument smokes for
+  all three, and `python3 -m pytest tests/test_match_checkpoints_script.py -q`.
 - Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
   `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
   `tests/test_tune_distributed_worker_cmd.py`,
@@ -1215,13 +1226,13 @@ Files:
 - [ ] `scripts/deepfin.bat`
 - [x] `scripts/diagnose.py`
 - [x] `scripts/diagnose_arch.py`
-- [ ] `scripts/e2e_strength_test.py`
+- [x] `scripts/e2e_strength_test.py`
 - [x] `scripts/eval_puzzles.py`
-- [ ] `scripts/generate_bootstrap.py`
+- [x] `scripts/generate_bootstrap.py`
 - [ ] `scripts/graceful_restart.py`
 - [x] `scripts/hourly_pbt_audit.sh`
 - [x] `scripts/lint.sh`
-- [ ] `scripts/match_checkpoints.py`
+- [x] `scripts/match_checkpoints.py`
 - [x] `scripts/monitor_pbt.sh`
 - [x] `scripts/pbt_30m_poll.py`
 - [x] `scripts/pbt_hourly_audit.py`
@@ -1270,6 +1281,7 @@ Efficiency:
 Tests:
 
 - [ ] `tests/test_arena_match_smoke.py`
+- [x] `tests/test_match_checkpoints_script.py`
 - [x] `tests/test_profile_distributed.py`
 - [x] `tests/test_reinit_value_heads_script.py`
 - [x] `tests/test_status_script.py`

@@ -6,6 +6,7 @@ import argparse
 import datetime
 import json
 import math
+import re
 import sys
 import time
 from pathlib import Path
@@ -17,6 +18,11 @@ from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
 _LOG_DIR = Path("runs/matches")
+
+
+def _safe_log_label(label: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", label.strip())
+    return safe.strip("._") or "model"
 
 
 def main() -> None:
@@ -36,6 +42,15 @@ def main() -> None:
                    help="Directory for match result logs (default: runs/matches)")
     p.add_argument("--no-log", action="store_true", help="Skip writing log file")
     args = p.parse_args()
+
+    if args.games <= 0:
+        raise SystemExit("--games must be > 0")
+    if args.sims <= 0:
+        raise SystemExit("--sims must be > 0")
+    if args.max_plies <= 0:
+        raise SystemExit("--max-plies must be > 0")
+    if args.temperature < 0:
+        raise SystemExit("--temperature must be >= 0")
 
     t0 = time.time()
     print(f"[match] loading A: {args.a}")
@@ -84,7 +99,9 @@ def main() -> None:
         log_dir = Path(args.log_dir)
         log_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_path = log_dir / f"{ts}_{args.label_a}_vs_{args.label_b}.json"
+        label_a = _safe_log_label(str(args.label_a))
+        label_b = _safe_log_label(str(args.label_b))
+        log_path = log_dir / f"{ts}_{label_a}_vs_{label_b}.json"
         record = {
             "timestamp": ts,
             "label_a": args.label_a,
