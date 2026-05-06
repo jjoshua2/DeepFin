@@ -106,16 +106,20 @@ class _Lever:
     direction: int
     max_step: float
     max_step_frac: float = 0.0
+    ease_step_frac: float = 0.0
     safety_floor: float = 0.50
     emergency_ease_step: float = 0.01
     recency_half_life: float = 0.0
     deadband_sigma: float = 1.0
+    degen_step_frac: float = 0.5
     window: int = 20
     history: deque[tuple[float, float, float]] = field(default_factory=deque)
+    cap_hits: dict[str, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.direction = 1 if self.direction >= 0 else -1
         self.value = _clamp(float(self.value), self.min_value, self.max_value)
+        self.degen_step_frac = _clamp(self.degen_step_frac, 0.0, 1.0)
         self.history = deque(self.history, maxlen=max(3, self.window))
 
 
@@ -173,9 +177,13 @@ def _step_lever(
         lever.history.append((value_before, raw_wr, se))
         # frac scales with value so wr-perturbation per step stays roughly
         # constant as the lever approaches its target.
-        abs_max_step = (
+        abs_tighten_step = (
             lever.max_step_frac * value_before if lever.max_step_frac > 0.0
             else lever.max_step
+        )
+        abs_ease_step = (
+            lever.ease_step_frac * value_before if lever.ease_step_frac > 0.0
+            else abs_tighten_step
         )
         predicted = _fit_inverse_lever(
             list(lever.history),
@@ -184,20 +192,29 @@ def _step_lever(
             recency_half_life=lever.recency_half_life,
         )
         if predicted is not None:
-            delta = _clamp(predicted - value_before, -abs_max_step, abs_max_step)
+            raw_delta = predicted - value_before
+            cap = abs_ease_step if raw_delta * ease_sign >= 0 else abs_tighten_step
+            delta = _clamp(raw_delta, -cap, cap)
+            if abs(raw_delta) > cap + 1e-12:
+                key = "ease_capped" if raw_delta * ease_sign >= 0 else "tighten_capped"
+                lever.cap_hits[key] = lever.cap_hits.get(key, 0) + 1
         else:
-            # Fit degenerate, but direction is known (outside deadband) — step
-            # abs_max_step to widen history for the next fit.
-            delta = (1.0 if err > 0 else -1.0) * ease_sign * abs_max_step
+            # Fit degenerate: direction known (outside deadband) but magnitude
+            # unknown. Step degen_step_frac of the appropriate cap — still
+            # diversifies the history x-range for the next fit.
+            if err > 0:
+                delta = ease_sign * lever.degen_step_frac * abs_ease_step
+            else:
+                delta = -ease_sign * lever.degen_step_frac * abs_tighten_step
 
         # Raw is fresh; the fit lags by ~window iters. On sign disagreement
         # with raw outside its deadband, override delta to half-step in raw's
         # direction (full step would defeat the fit's magnitude calibration
         # when signs agree; zero would hold while raw genuinely underperforms).
         if err > raw_deadband and delta * ease_sign < -1e-12:
-            delta = ease_sign * 0.5 * abs_max_step
+            delta = ease_sign * 0.5 * abs_ease_step
         elif err < -raw_deadband and delta * ease_sign > 1e-12:
-            delta = -ease_sign * 0.5 * abs_max_step
+            delta = -ease_sign * 0.5 * abs_tighten_step
 
         new_value = _clamp(value_before + delta, lever.min_value, lever.max_value)
 
@@ -228,15 +245,18 @@ _NODES_MAX_STEP_DEFAULT = 1_000_000_000.0
 _LEVER_LIVE_FIELDS = (
     "max_step",
     "max_step_frac",
+    "ease_step_frac",
     "safety_floor",
     "emergency_ease_step",
     "recency_half_life",
     "deadband_sigma",
+    "degen_step_frac",
 )
 # Fields where negative values are physically meaningless; clamp at 0.
 _LEVER_NONNEG_FIELDS: frozenset[str] = frozenset({
-    "max_step", "max_step_frac",
+    "max_step", "max_step_frac", "ease_step_frac",
     "emergency_ease_step", "recency_half_life", "deadband_sigma",
+    "degen_step_frac",
 })
 
 
@@ -273,18 +293,22 @@ class DifficultyPID:
         regret_window: int = 20,
         regret_max_step: float = 0.01,
         regret_max_step_frac: float = 0.0,
+        regret_ease_step_frac: float = 0.0,
         regret_safety_floor: float = 0.50,
         regret_emergency_ease_step: float = 0.01,
         regret_recency_half_life: float = 0.0,
         regret_deadband_sigma: float = 1.0,
+        regret_degen_step_frac: float = 0.5,
         # Nodes lever — defaults match the prior proportional controller
         nodes_window: int = 20,
         nodes_max_step: float | None = None,
         nodes_max_step_frac: float = 0.10,
+        nodes_ease_step_frac: float = 0.0,
         nodes_safety_floor: float = 0.0,
         nodes_emergency_ease_step: float = 0.0,
         nodes_recency_half_life: float = 0.0,
         nodes_deadband_sigma: float = 0.0,
+        nodes_degen_step_frac: float = 0.5,
     ):
         init = int(initial_nodes)
         nodes_clamped = int(_clamp(init, int(min_nodes), int(max_nodes)))
@@ -323,10 +347,12 @@ class DifficultyPID:
             direction=-1,  # lowering regret makes harder
             max_step=float(regret_max_step),
             max_step_frac=float(regret_max_step_frac),
+            ease_step_frac=float(regret_ease_step_frac),
             safety_floor=float(regret_safety_floor),
             emergency_ease_step=float(regret_emergency_ease_step),
             recency_half_life=float(regret_recency_half_life),
             deadband_sigma=float(regret_deadband_sigma),
+            degen_step_frac=float(regret_degen_step_frac),
             window=int(regret_window),
         )
         self.nodes_lever = _Lever(
@@ -338,10 +364,12 @@ class DifficultyPID:
             max_step=float(nodes_max_step) if nodes_max_step is not None
                 else _NODES_MAX_STEP_DEFAULT,
             max_step_frac=float(nodes_max_step_frac),
+            ease_step_frac=float(nodes_ease_step_frac),
             safety_floor=float(nodes_safety_floor),
             emergency_ease_step=float(nodes_emergency_ease_step),
             recency_half_life=float(nodes_recency_half_life),
             deadband_sigma=float(nodes_deadband_sigma),
+            degen_step_frac=float(nodes_degen_step_frac),
             window=int(nodes_window),
         )
         _seed_lever_history(self.regret_lever, target_wr=self.target)
@@ -553,7 +581,9 @@ def _refresh_lever_from_config(lever: _Lever, config: dict, prefix: str) -> None
         if key not in config:
             continue
         value = float(config[key])
-        if field_name in _LEVER_NONNEG_FIELDS:
+        if field_name == "degen_step_frac":
+            value = _clamp(value, 0.0, 1.0)
+        elif field_name in _LEVER_NONNEG_FIELDS:
             value = max(0.0, value)
         setattr(lever, field_name, value)
 
@@ -600,16 +630,20 @@ def pid_from_config(config: dict) -> DifficultyPID:
         regret_window=int(config.get("sf_pid_regret_window", 20)),
         regret_max_step=float(config.get("sf_pid_regret_max_step", 0.01)),
         regret_max_step_frac=float(config.get("sf_pid_regret_max_step_frac", 0.0)),
+        regret_ease_step_frac=float(config.get("sf_pid_regret_ease_step_frac", 0.0)),
         regret_safety_floor=float(config.get("sf_pid_regret_safety_floor", 0.50)),
         regret_emergency_ease_step=float(config.get("sf_pid_regret_emergency_ease_step", 0.01)),
         regret_recency_half_life=float(config.get("sf_pid_regret_recency_half_life", 0.0)),
         regret_deadband_sigma=float(config.get("sf_pid_regret_deadband_sigma", 1.0)),
+        regret_degen_step_frac=float(config.get("sf_pid_regret_degen_step_frac", 0.5)),
         nodes_window=int(config.get("sf_pid_nodes_window", 20)),
         nodes_max_step=float(config["sf_pid_nodes_max_step"])
             if "sf_pid_nodes_max_step" in config else None,
         nodes_max_step_frac=float(config.get("sf_pid_nodes_max_step_frac", 0.10)),
+        nodes_ease_step_frac=float(config.get("sf_pid_nodes_ease_step_frac", 0.0)),
         nodes_safety_floor=float(config.get("sf_pid_nodes_safety_floor", 0.0)),
         nodes_emergency_ease_step=float(config.get("sf_pid_nodes_emergency_ease_step", 0.0)),
         nodes_recency_half_life=float(config.get("sf_pid_nodes_recency_half_life", 0.0)),
         nodes_deadband_sigma=float(config.get("sf_pid_nodes_deadband_sigma", 0.0)),
+        nodes_degen_step_frac=float(config.get("sf_pid_nodes_degen_step_frac", 0.5)),
     )

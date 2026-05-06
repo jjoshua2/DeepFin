@@ -612,10 +612,13 @@ def test_nodes_lever_max_step_unset_uses_frac_only():
     # Codex finding: shipping both an absolute and frac cap was a footgun
     # (frac silently dominated above ~50k nodes). Default behavior with
     # nodes_max_step left unset = no absolute cap; frac is the only bound.
+    # nodes_degen_step_frac=1.0 so degenerate fallback uses the full frac cap;
+    # this isolates the absolute-vs-frac question from the degen-step-size question.
     pid = _mk_pid_nodes_only(
         initial_nodes=200_000,
         max_nodes=2_000_000,
         nodes_max_step_frac=0.10,
+        nodes_degen_step_frac=1.0,
         # nodes_max_step intentionally unset → defaults to ~unbounded
     )
     # 75% wr drives nodes up; cap should be 10% of value (= 20_000), not a
