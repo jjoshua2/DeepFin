@@ -25,6 +25,30 @@ if TYPE_CHECKING or _HAS_C_EXT:
     from .features import _c_compute
 
 
+def _encode_lc0_planes(board: chess.Board, *, use_full_lc0: bool) -> np.ndarray:
+    if use_full_lc0:
+        return encode_lc0_full_c(board) if _HAS_LC0_C_EXT else encode_lc0_full(board)
+    return encode_lc0_reduced(board)
+
+
+def _extra_feature_planes(board: chess.Board) -> np.ndarray:
+    return extra_feature_planes_c(board) if _HAS_C_EXT else extra_feature_planes_fast(board)
+
+
+def _apply_feature_dropout(
+    planes: np.ndarray,
+    *,
+    feature_dropout_p: float,
+    rng: np.random.Generator | None,
+) -> None:
+    if feature_dropout_p <= 0.0:
+        return
+    if rng is None:
+        rng = np.random.default_rng()
+    if float(rng.random()) < float(feature_dropout_p):
+        planes[...] = 0.0
+
+
 def encode_position(
     board: chess.Board,
     *,
@@ -45,21 +69,16 @@ def encode_position(
     Parameters
     - feature_dropout_p: probability of zeroing ALL extra feature planes.
     """
-    if use_full_lc0:
-        base = encode_lc0_full_c(board) if _HAS_LC0_C_EXT else encode_lc0_full(board)
-    else:
-        base = encode_lc0_reduced(board)
-
+    base = _encode_lc0_planes(board, use_full_lc0=use_full_lc0)
     if not add_features:
         return base
 
-    feat_arr = extra_feature_planes_c(board) if _HAS_C_EXT else extra_feature_planes_fast(board)
-
-    if feature_dropout_p > 0.0:
-        if rng is None:
-            rng = np.random.default_rng()
-        if float(rng.random()) < float(feature_dropout_p):
-            feat_arr[...] = 0.0
+    feat_arr = _extra_feature_planes(board)
+    _apply_feature_dropout(
+        feat_arr,
+        feature_dropout_p=feature_dropout_p,
+        rng=rng,
+    )
 
     return np.concatenate([base, feat_arr], axis=0)
 
@@ -87,24 +106,19 @@ def encode_position_into(
         return
 
   # Fallback: delegate to existing functions, copy into out.
-    if use_full_lc0:
-        base = encode_lc0_full_c(board) if _HAS_LC0_C_EXT else encode_lc0_full(board)
-        base_planes = 112
-    else:
-        base = encode_lc0_reduced(board)
-        base_planes = base.shape[0]
+    base = _encode_lc0_planes(board, use_full_lc0=use_full_lc0)
+    base_planes = base.shape[0]
     out[:base_planes] = base
 
     if not add_features:
         return
 
-    feat = extra_feature_planes_c(board) if _HAS_C_EXT else extra_feature_planes_fast(board)
-
-    if feature_dropout_p > 0.0:
-        if rng is None:
-            rng = np.random.default_rng()
-        if float(rng.random()) < float(feature_dropout_p):
-            feat[...] = 0.0
+    feat = _extra_feature_planes(board)
+    _apply_feature_dropout(
+        feat,
+        feature_dropout_p=feature_dropout_p,
+        rng=rng,
+    )
 
     out[base_planes:base_planes + feat.shape[0]] = feat
 
@@ -234,10 +248,10 @@ def _encode_fused_c(
     feat = _c_compute(pieces_us, pieces_them, occupied,
                       king_sq_us, king_sq_them, turn_white, ep_sq_int)
 
-    if feature_dropout_p > 0.0:
-        if rng is None:
-            rng = np.random.default_rng()
-        if float(rng.random()) < float(feature_dropout_p):
-            feat[...] = 0.0
+    _apply_feature_dropout(
+        feat,
+        feature_dropout_p=feature_dropout_p,
+        rng=rng,
+    )
 
     out[112:] = feat
