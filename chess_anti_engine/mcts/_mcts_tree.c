@@ -176,10 +176,12 @@ typedef struct {
      * MUST call MCTSTree.reserve(max_nodes) upfront so no realloc fires
      * during concurrent descent. */
     pthread_mutex_t tree_lock;
+    int tree_lock_initialized;
 } TreeData;
 
 
 static int tree_init(TreeData *t) {
+    memset(t, 0, sizeof(*t));
     t->node_cap = INITIAL_NODE_CAP;
     t->child_cap = INITIAL_CHILD_CAP;
     t->node_count = 0;
@@ -222,15 +224,13 @@ static int tree_init(TreeData *t) {
     memset(t->action_from_parent, -1, t->node_cap * sizeof(int32_t));
     memset(t->hash_table, -1, t->ht_cap * sizeof(int32_t));
     if (pthread_mutex_init(&t->tree_lock, NULL) != 0) return -1;
+    t->tree_lock_initialized = 1;
     return 0;
 }
 
 
 static void tree_free(TreeData *t) {
-    /* Destroy the mutex only if the struct was actually initialized —
-     * callers that hit OOM mid-tree_init bail before the mutex is set up,
-     * and zeroing pthread_mutex_t + destroying is undefined on glibc. */
-    if (t->N) pthread_mutex_destroy(&t->tree_lock);
+    if (t->tree_lock_initialized) pthread_mutex_destroy(&t->tree_lock);
     free(t->N);
     free(t->W);
     free(t->prior);
@@ -2646,6 +2646,8 @@ static PyObject *MCTSTree_memory_bytes(MCTSTreeObject *self, PyObject *Py_UNUSED
       + sizeof(int32_t)   /* num_children */
       + sizeof(int32_t)   /* children_offset */
       + sizeof(int32_t)   /* virtual_loss */
+      + sizeof(int8_t)    /* solved */
+      + sizeof(int8_t)    /* has_solved_child */
       + sizeof(uint64_t)  /* node_hash */
     );
     /* Children pool. */
@@ -2670,6 +2672,28 @@ static PyObject *MCTSTree_reset(MCTSTreeObject *self, PyObject *Py_UNUSED(args))
     /* Clear transposition hash table to prevent stale lookups */
     if (self->tree.hash_table && self->tree.ht_cap > 0)
         memset(self->tree.hash_table, -1, self->tree.ht_cap * sizeof(int32_t));
+    Py_RETURN_NONE;
+}
+
+
+/* reset_compact() -> None
+ *
+ * Discard high-water buffers and replace the tree with a fresh initial tree.
+ * This is intended for existing reset sites that already invalidate root_ids:
+ * it preserves that behavior while returning large per-node CBoard caches and
+ * overgrown node/child pools to the allocator. */
+static PyObject *MCTSTree_reset_compact(MCTSTreeObject *self, PyObject *Py_UNUSED(args)) {
+    TreeData fresh;
+    if (tree_init(&fresh) < 0) {
+        tree_free(&fresh);
+        PyErr_NoMemory();
+        return NULL;
+    }
+
+    gss_free(&self->gsim);
+    stored_free(&self->stored);
+    tree_free(&self->tree);
+    self->tree = fresh;
     Py_RETURN_NONE;
 }
 
@@ -3470,6 +3494,8 @@ static PyMethodDef MCTSTree_methods[] = {
      "node_count() -> int"},
     {"reset", (PyCFunction)MCTSTree_reset, METH_NOARGS,
      "reset() -> None"},
+    {"reset_compact", (PyCFunction)MCTSTree_reset_compact, METH_NOARGS,
+     "reset_compact() -> None. Reset and release high-water tree buffers."},
     {"reserve", (PyCFunction)MCTSTree_reserve, METH_VARARGS,
      "reserve(node_cap, child_cap=0) -> None (pre-grow for concurrent use)"},
     {"get_virtual_loss", (PyCFunction)MCTSTree_get_virtual_loss, METH_VARARGS,

@@ -271,7 +271,11 @@ def play_batch(
             state.mcts_tree is not None
             and state.mcts_tree.node_count() > 500_000
         ):
-            state.mcts_tree.reset()
+            reset_compact = getattr(state.mcts_tree, "reset_compact", None)
+            if reset_compact is not None:
+                reset_compact()
+            else:  # pragma: no cover - compatibility with old extension builds
+                state.mcts_tree.reset()
             for _i in range(len(state.root_ids)):
                 state.root_ids[_i] = -1
 

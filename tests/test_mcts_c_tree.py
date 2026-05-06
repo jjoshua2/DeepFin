@@ -141,6 +141,23 @@ def test_tree_reset():
     assert t.node_count() == 0
 
 
+def test_tree_reset_compact_releases_high_water_buffers():
+    t = MCTSTree()
+    baseline = t.memory_bytes()
+
+    t.reserve(16_384, 262_144)
+    grown = t.memory_bytes()
+    assert grown > baseline
+
+    t.reset()
+    assert t.memory_bytes() == grown
+
+    t.reset_compact()
+    assert t.node_count() == 0
+    assert t.memory_bytes() < grown
+    assert t.memory_bytes() <= baseline
+
+
 # ── Integration: C tree vs Python tree produce same structure ────────────
 
 
