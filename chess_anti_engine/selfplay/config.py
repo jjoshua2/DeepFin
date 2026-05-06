@@ -45,6 +45,9 @@ class GameConfig:
     selfplay_fraction: float = 0.0
     sf_policy_temp: float = 0.25
     sf_policy_label_smooth: float = 0.05
+    sf_wdl_use_cp_logistic: bool = False
+    sf_wdl_cp_slope: float = 0.010
+    sf_wdl_cp_draw_width: float = 60.0
     soft_policy_temp: float = 2.0
     timeout_adjudication_threshold: float = 0.90
     volatility_source: str = "raw"

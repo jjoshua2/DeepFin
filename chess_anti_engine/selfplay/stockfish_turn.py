@@ -26,6 +26,7 @@ from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.moves.encode import uci_to_policy_index
 from chess_anti_engine.selfplay.state import SelfplayState
 from chess_anti_engine.stockfish.pool import StockfishPool
+from chess_anti_engine.stockfish.wdl import cp_to_wdl as _cp_to_wdl
 
 
 from chess_anti_engine.utils.numpy_helpers import softmax_1d as _softmax_np  # noqa: E402
@@ -177,6 +178,9 @@ def _build_sf_policy_target(
 def _attach_sf_target_to_last_record(
     state: SelfplayState, idx: int,
     *, p_sf: np.ndarray, a_idx: int, res, legal_indices: np.ndarray,
+    sf_wdl_use_cp_logistic: bool = False,
+    sf_wdl_cp_slope: float = 0.010,
+    sf_wdl_cp_draw_width: float = 60.0,
 ) -> None:
     """Stamp SF policy target / move idx / wdl / legal_mask onto the latest
     _NetRecord (idempotent: skipped if already populated)."""
@@ -187,7 +191,10 @@ def _attach_sf_target_to_last_record(
         return
     rec.sf_policy_target = p_sf
     rec.sf_move_index = a_idx
-    if res.wdl is not None:
+    if sf_wdl_use_cp_logistic and (res.cp is not None or res.mate is not None):
+        wdl_stm = _cp_to_wdl(res.cp, res.mate, slope=sf_wdl_cp_slope, draw_width_cp=sf_wdl_cp_draw_width)
+        rec.sf_wdl = flip_wdl_pov(wdl_stm)
+    elif res.wdl is not None:
         rec.sf_wdl = flip_wdl_pov(res.wdl)
     _sf_mask = np.zeros((POLICY_SIZE,), dtype=np.uint8)
     _sf_mask[legal_indices] = 1
@@ -232,6 +239,9 @@ def _process_sf_results(
 
     sf_policy_temp = float(state.game.sf_policy_temp)
     sf_policy_label_smooth = float(state.game.sf_policy_label_smooth)
+    sf_wdl_use_cp_logistic = bool(state.game.sf_wdl_use_cp_logistic)
+    sf_wdl_cp_slope = float(state.game.sf_wdl_cp_slope)
+    sf_wdl_cp_draw_width = float(state.game.sf_wdl_cp_draw_width)
     regret_limit = (
         float(state.opponent.wdl_regret_limit)
         if state.opponent.wdl_regret_limit is not None else float("inf")
@@ -266,6 +276,9 @@ def _process_sf_results(
         )
         _attach_sf_target_to_last_record(
             state, idx, p_sf=p_sf, a_idx=a_idx, res=res, legal_indices=legal_indices,
+            sf_wdl_use_cp_logistic=sf_wdl_use_cp_logistic,
+            sf_wdl_cp_slope=sf_wdl_cp_slope,
+            sf_wdl_cp_draw_width=sf_wdl_cp_draw_width,
         )
 
         if play_curriculum_moves and not state.selfplay_arr[idx]:

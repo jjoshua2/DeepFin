@@ -29,6 +29,8 @@ class StockfishTimeoutError(RuntimeError):
 class StockfishPV:
     move_uci: str
     wdl: np.ndarray | None  # (3,) float32 or None
+    cp: int | None = None    # raw centipawn score (None if mate-only / unknown)
+    mate: int | None = None  # raw mate-in-N (None if cp / unknown)
 
 
 @dataclass
@@ -36,6 +38,8 @@ class StockfishResult:
     bestmove_uci: str
     wdl: np.ndarray | None  # (3,) float32 or None (PV1)
     pvs: list[StockfishPV]
+    cp: int | None = None    # PV1 raw centipawn score
+    mate: int | None = None  # PV1 raw mate-in-N
 
 
 class StockfishUCI:
@@ -166,6 +170,8 @@ class StockfishUCI:
 
             bestmove = None
             wdl_pv1 = None
+            cp_pv1: int | None = None
+            mate_pv1: int | None = None
             pvs: dict[int, StockfishPV] = {}
             deadline = time.monotonic() + self.read_timeout_s
 
@@ -182,6 +188,22 @@ class StockfishUCI:
                             mpv = int(parts[parts.index("multipv") + 1])
                         except Exception:
                             mpv = 1
+
+  # parse score (cp / mate) if present
+                    cp_val: int | None = None
+                    mate_val: int | None = None
+                    if "score" in parts:
+                        try:
+                            score_idx = parts.index("score")
+                            score_kind = parts[score_idx + 1]
+                            score_arg = parts[score_idx + 2]
+                            if score_kind == "cp":
+                                cp_val = int(score_arg)
+                            elif score_kind == "mate":
+                                mate_val = int(score_arg)
+                        except (ValueError, IndexError):
+                            cp_val = None
+                            mate_val = None
 
   # parse WDL if present
                     wdl_vec = None
@@ -208,11 +230,18 @@ class StockfishUCI:
                         except Exception:
                             pv_move = None
 
-                    if mpv == 1 and wdl_vec is not None:
-                        wdl_pv1 = wdl_vec
+                    if mpv == 1:
+                        if wdl_vec is not None:
+                            wdl_pv1 = wdl_vec
+                        if cp_val is not None:
+                            cp_pv1 = cp_val
+                        if mate_val is not None:
+                            mate_pv1 = mate_val
 
                     if pv_move is not None:
-                        pvs[mpv] = StockfishPV(move_uci=pv_move, wdl=wdl_vec)
+                        pvs[mpv] = StockfishPV(
+                            move_uci=pv_move, wdl=wdl_vec, cp=cp_val, mate=mate_val
+                        )
 
                 if line.startswith("bestmove"):
                     toks = line.split()
@@ -220,4 +249,10 @@ class StockfishUCI:
                     break
 
             pv_list = [pvs[k] for k in sorted(pvs.keys())]
-            return StockfishResult(bestmove_uci=bestmove or "0000", wdl=wdl_pv1, pvs=pv_list)
+            return StockfishResult(
+                bestmove_uci=bestmove or "0000",
+                wdl=wdl_pv1,
+                pvs=pv_list,
+                cp=cp_pv1,
+                mate=mate_pv1,
+            )
