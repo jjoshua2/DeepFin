@@ -111,7 +111,7 @@ class ThreadedDispatcher:
         self._compile_mode = compile_mode
         self._device = device
 
-        self._queue: collections.deque[tuple[np.ndarray, concurrent.futures.Future]] = collections.deque()
+        self._queue: collections.deque[object] = collections.deque()
         self._lock = threading.Lock()
         self._cond = threading.Condition(self._lock)
         self._stop = False
@@ -127,6 +127,7 @@ class ThreadedDispatcher:
   # silently fell back to eager. See compile_probe.py for the same idea.
         self._compile_baseline: dict[str, dict[str, int]] | None = None
         self._compile_probe_logged = False
+        self._compile_probe_after_batches = 50
 
         self._thread = threading.Thread(
             target=self._dispatch_loop,
@@ -174,12 +175,32 @@ class ThreadedDispatcher:
         }
 
     def update_model(self, model: torch.nn.Module) -> None:
-        self._evaluator.model = model
-        self._evaluator.model.eval()
+        if not self._thread.is_alive():
+            raise RuntimeError("dispatcher thread died")
+        done = threading.Event()
+        result: dict[str, BaseException] = {}
+        with self._cond:
+            self._queue.append(("_update_model", model, done, result))
+            self._cond.notify()
+        while not done.wait(timeout=5.0):
+            if not self._thread.is_alive():
+                raise RuntimeError("dispatcher thread died during model update")
+        if "error" in result:
+            raise RuntimeError("dispatcher model update failed") from result["error"]
+
+    @staticmethod
+    def _is_model_update(item: object) -> bool:
+        return (
+            isinstance(item, tuple)
+            and len(item) == 4
+            and item[0] == "_update_model"
+            and isinstance(item[2], threading.Event)
+            and isinstance(item[3], dict)
+        )
 
     def _drain_batch(
         self, *, blocking: bool = True,
-    ) -> list[tuple[np.ndarray, concurrent.futures.Future]]:
+    ) -> list[object]:
         """Pop up to max_batch leaves from the queue.
 
         ``blocking=True`` waits indefinitely for the first item to arrive
@@ -200,26 +221,59 @@ class ThreadedDispatcher:
             elif not self._queue:
                 return []
 
-            items: list[tuple[np.ndarray, concurrent.futures.Future]] = []
+            first = self._queue[0]
+            if self._is_model_update(first):
+                return [self._queue.popleft()]
+
+            items: list[object] = []
             total = 0
             while self._queue:
-                enc = self._queue[0][0]
+                item = self._queue[0]
+                if self._is_model_update(item):
+                    break
+                enc = item[0]  # type: ignore[index]
                 if total + enc.shape[0] > self._max_batch:
                     break
                 items.append(self._queue.popleft())
                 total += enc.shape[0]
             return items
 
+    def _compile_model_on_dispatcher(self, model: torch.nn.Module) -> torch.nn.Module:
+        model.eval()
+        if self._compile_mode is None:
+            return model
+        # set_device wants an index or "cuda:N", not bare "cuda".
+        dev = torch.device(self._device)
+        if dev.type == "cuda":
+            torch.cuda.set_device(dev.index if dev.index is not None else 0)
+        self._compile_baseline = _snapshot_dynamo_counters()
+        self._compile_probe_logged = False
+        self._compile_probe_after_batches = self._lifetime_batches + 50
+        return torch.compile(  # pyright: ignore[reportAttributeAccessIssue]
+            model, mode=self._compile_mode,
+        )
+
+    def _apply_model_update(self, item: object) -> None:
+        _, model, done, result = item  # type: ignore[misc]
+        try:
+            if self._compile_mode is not None:
+                load_target = getattr(self._evaluator.model, "_orig_mod", self._evaluator.model)
+                load_target.load_state_dict(model.state_dict(), strict=True)
+                load_target.eval()
+            else:
+                self._evaluator.model = model
+            self._evaluator.model.eval()
+        except BaseException:  # noqa: BLE001
+            try:
+                self._evaluator.model = self._compile_model_on_dispatcher(model)
+                self._evaluator.model.eval()
+            except BaseException as fallback_exc:  # noqa: BLE001
+                result["error"] = fallback_exc
+        finally:
+            done.set()
+
     def _dispatch_loop(self) -> None:
-        if self._compile_mode is not None:
-            # set_device wants an index or "cuda:N", not bare "cuda".
-            dev = torch.device(self._device)
-            if dev.type == "cuda":
-                torch.cuda.set_device(dev.index if dev.index is not None else 0)
-            self._compile_baseline = _snapshot_dynamo_counters()
-            self._evaluator.model = torch.compile(  # pyright: ignore[reportAttributeAccessIssue]
-                self._evaluator.model, mode=self._compile_mode,
-            )
+        self._evaluator.model = self._compile_model_on_dispatcher(self._evaluator.model)
 
   # Two-slot async pipeline. While the GPU runs forward K (slot s),
   # the dispatcher drains the queue and writes batch K+1 into slot
@@ -239,9 +293,10 @@ class ThreadedDispatcher:
             items = self._drain_batch(blocking=blocking)
 
             next_handle: tuple | None = None
-            if items:
+            model_update = items[0] if len(items) == 1 and self._is_model_update(items[0]) else None
+            if items and model_update is None:
                 try:
-                    next_handle = self._submit_batch(items, slot, ev)
+                    next_handle = self._submit_batch(items, slot, ev)  # type: ignore[arg-type]
                     slot = 1 - slot
                 except Exception as exc:  # noqa: BLE001
                     logger.exception("dispatcher submit failed: %s", exc)
@@ -257,7 +312,7 @@ class ThreadedDispatcher:
             if (
                 not self._compile_probe_logged
                 and self._compile_baseline is not None
-                and self._lifetime_batches >= 50
+                and self._lifetime_batches >= self._compile_probe_after_batches
             ):
                 d = _delta_dynamo_counters(self._compile_baseline)
                 if d is not None:
@@ -278,6 +333,9 @@ class ThreadedDispatcher:
                     for _, fut in p_items:
                         if not fut.done():
                             fut.set_exception(exc)
+
+            if model_update is not None:
+                self._apply_model_update(model_update)
 
             pending = next_handle
 

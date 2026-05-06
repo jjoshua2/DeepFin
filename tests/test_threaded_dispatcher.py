@@ -138,6 +138,36 @@ def test_dispatcher_update_model_swaps_weights():
         dispatcher.shutdown()
 
 
+def test_dispatcher_update_model_preserves_compiled_model(monkeypatch):
+    calls: list[tuple[torch.nn.Module, str, str]] = []
+
+    def fake_compile(model: torch.nn.Module, *, mode: str) -> torch.nn.Module:
+        calls.append((model, mode, threading.current_thread().name))
+        return model
+
+    monkeypatch.setattr(torch, "compile", fake_compile)
+
+    model_a = _make_model()
+    model_b = _make_model()
+    dispatcher = ThreadedDispatcher(
+        model_a,
+        device="cpu",
+        max_batch=128,
+        batch_wait_ms=0.0,
+        compile_mode="reduce-overhead",
+    )
+    try:
+        rng = np.random.default_rng(1)
+        dispatcher.evaluate_encoded(_rand_batch(rng, 4))
+        dispatcher.update_model(model_b)
+
+        assert calls == [(model_a, "reduce-overhead", "ThreadedDispatcher")]
+        for actual, expected in zip(model_a.parameters(), model_b.parameters(), strict=True):
+            torch.testing.assert_close(actual, expected)
+    finally:
+        dispatcher.shutdown()
+
+
 def test_dispatcher_evaluate_returns_future():
     model = _make_model()
     dispatcher = ThreadedDispatcher(model, device="cpu", max_batch=128, batch_wait_ms=0.0)
