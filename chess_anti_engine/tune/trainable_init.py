@@ -199,6 +199,7 @@ def _apply_restored_trial_meta(rr: RestoreResult, restored_trial_meta: dict | No
     )
     rr.salvage_origin_dir = str(restored_trial_meta.get("salvage_origin_dir", rr.salvage_origin_dir or ""))
     rr.global_iter = int(restored_trial_meta.get("global_iter", 0))
+    rr.restored_window = int(restored_trial_meta.get("current_window", 0))
     return (
         str(restored_trial_meta.get("owner_trial_id", "")),
         str(restored_trial_meta.get("optimizer", "") or ""),
@@ -465,6 +466,10 @@ def _init_replay_buffers(
         replay_shard_dir=replay_shard_dir, trial_dir=trial_dir,
         current_window=current_window,
     )
+  # Apply saved window BEFORE constructing the buffer so enforce_window
+  # inside __init__ doesn't trim data we intend to keep on resume.
+    if restore.restored_window > 0:
+        current_window = max(current_window, restore.restored_window)
 
     buf = DiskReplayBuffer(
         current_window,
@@ -483,7 +488,7 @@ def _init_replay_buffers(
   # games evict promptly instead of inheriting stale local shards.
     seeded_replay_start = bool(ckpt is not None or restore.seed_warmstart_used or shared_shards_loaded > 0)
     if seeded_replay_start:
-        current_window = max(int(current_window), int(len(buf)))
+        current_window = max(int(current_window), int(len(buf)), int(restore.restored_window))
     buf.capacity = int(current_window)
     print(
         f"[trial] buffer init: startup_source={restore.startup_source} "

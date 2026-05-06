@@ -104,6 +104,9 @@ class TrialConfig:
   # --- SF policy / game ---
     sf_policy_temp: float = 0.25
     sf_policy_label_smooth: float = 0.05
+    sf_wdl_use_cp_logistic: bool = False
+    sf_wdl_cp_slope: float = 0.010
+    sf_wdl_cp_draw_width: float = 60.0
     soft_policy_temp: float = 2.0
     timeout_adjudication_threshold: float = 0.90
     volatility_source: str = "raw"
@@ -133,9 +136,13 @@ class TrialConfig:
     sf_pid_wdl_regret_max: float = 1.0
 
   # --- Loss weights ---
-    w_sf_wdl: float = 1.0
-    sf_wdl_floor: float = 0.1
+    sf_wdl_frac: float = 0.5
+    sf_wdl_frac_floor: float = 0.10
+    search_wdl_frac: float = 0.0
     sf_wdl_floor_at_regret: float = 0.0
+    sf_wdl_temperature: float = 1.0
+    sf_search_dampen_sf_low: float = 0.0
+    sf_search_dampen_sf_high: float = 0.0
 
   # --- Replay buffer ---
     replay_window_start: int = 100_000
@@ -318,6 +325,9 @@ class TrialConfig:
   # --- SF policy / game ---
             sf_policy_temp=float(config.get("sf_policy_temp", 0.25)),
             sf_policy_label_smooth=float(config.get("sf_policy_label_smooth", 0.05)),
+            sf_wdl_use_cp_logistic=bool(config.get("sf_wdl_use_cp_logistic", False)),
+            sf_wdl_cp_slope=float(config.get("sf_wdl_cp_slope", 0.010)),
+            sf_wdl_cp_draw_width=float(config.get("sf_wdl_cp_draw_width", 60.0)),
             soft_policy_temp=float(config.get("soft_policy_temp", 2.0)),
             timeout_adjudication_threshold=float(config.get("timeout_adjudication_threshold", 0.90)),
             volatility_source=str(config.get("volatility_source", "raw")),
@@ -347,8 +357,12 @@ class TrialConfig:
             sf_pid_wdl_regret_max=float(config.get("sf_pid_wdl_regret_max", 1.0)),
 
   # --- Loss weights ---
-            w_sf_wdl=float(config.get("w_sf_wdl", 1.0)),
-            sf_wdl_floor=float(config.get("sf_wdl_floor", 0.1)),
+            sf_wdl_frac=float(config.get("sf_wdl_frac", 0.5)),
+            sf_wdl_frac_floor=float(config.get("sf_wdl_frac_floor", 0.10)),
+            sf_wdl_temperature=float(config.get("sf_wdl_temperature", 1.0)),
+            sf_search_dampen_sf_low=float(config.get("sf_search_dampen_sf_low", 0.0)),
+            sf_search_dampen_sf_high=float(config.get("sf_search_dampen_sf_high", 0.0)),
+            search_wdl_frac=float(config.get("search_wdl_frac", 0.0)),
             sf_wdl_floor_at_regret=float(config.get("sf_wdl_floor_at_regret", 0.0)),
 
   # --- Replay buffer ---
@@ -615,3 +629,4 @@ class RestoreResult:
     salvage_origin_dir: str = ""
     cross_trial_restore: bool = False
     restored_owner_trial_dir: str = ""
+    restored_window: int = 0

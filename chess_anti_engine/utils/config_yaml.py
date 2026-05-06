@@ -65,10 +65,12 @@ _STOCKFISH_KEYS = (
     "sf_pid_regret_window",
     "sf_pid_regret_max_step",
     "sf_pid_regret_max_step_frac",
+    "sf_pid_regret_ease_step_frac",
     "sf_pid_regret_safety_floor",
     "sf_pid_regret_emergency_ease_step",
     "sf_pid_regret_recency_half_life",
     "sf_pid_regret_deadband_sigma",
+    "sf_pid_regret_degen_step_frac",
     "sf_pid_nodes_window",
     "sf_pid_nodes_max_step",
     "sf_pid_nodes_max_step_frac",
@@ -76,6 +78,7 @@ _STOCKFISH_KEYS = (
     "sf_pid_nodes_emergency_ease_step",
     "sf_pid_nodes_recency_half_life",
     "sf_pid_nodes_deadband_sigma",
+    "sf_pid_nodes_degen_step_frac",
 )
 # Backwards compat: old short YAML names still work inside stockfish: section.
 _STOCKFISH_LEGACY: dict[str, str] = {
@@ -108,6 +111,7 @@ _SELFPLAY_KEYS = (
     "opening_book_path_2", "opening_book_max_plies_2", "opening_book_max_games_2", "opening_book_mix_prob_2",
     "random_start_plies",
     "sf_policy_temp", "sf_policy_label_smooth", "soft_policy_temp",
+    "sf_wdl_use_cp_logistic", "sf_wdl_cp_slope", "sf_wdl_cp_draw_width",
     "syzygy_path", "syzygy_rescore_policy", "syzygy_adjudicate",
     "syzygy_adjudicate_fraction", "syzygy_in_search",
     "timeout_adjudication_threshold",
@@ -133,7 +137,9 @@ _TRAIN_KEYS = (
     "use_compile", "compile_mode", "log_level", "swa_start", "swa_freq",
     "w_policy", "w_soft", "w_future", "w_wdl", "w_sf_move", "w_sf_eval",
     "w_categorical", "w_sf_volatility", "w_moves_left",
-    "w_sf_wdl", "sf_wdl_conf_power", "sf_wdl_draw_scale", "sf_wdl_floor", "sf_wdl_floor_at_regret",
+    "sf_wdl_frac", "sf_wdl_frac_floor", "sf_wdl_conf_power", "sf_wdl_draw_scale", "sf_wdl_floor_at_regret",
+    "search_wdl_frac", "sf_wdl_temperature",
+    "sf_search_dampen_sf_low", "sf_search_dampen_sf_high",
 )
 
 # tune section: all 1:1 passthrough.

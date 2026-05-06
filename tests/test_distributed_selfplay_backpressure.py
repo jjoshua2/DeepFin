@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import numpy as np
 import torch
 
+import chess_anti_engine.tune.distributed_runtime as distributed_runtime
 from chess_anti_engine.replay import ArrayReplayBuffer
 from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
 from chess_anti_engine.replay.shard import LOCAL_SHARD_SUFFIX, save_local_shard_arrays
@@ -28,6 +29,16 @@ class _FakeTrainer:
     def export_swa(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         torch.save({"model": {}}, str(path))
+
+
+class _CountingTrainer:
+    def __init__(self) -> None:
+        self.exports = 0
+
+    def export_swa(self, path: Path) -> None:
+        self.exports += 1
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(f"export-{self.exports}".encode("ascii"))
 
 
 def test_publish_distributed_trial_state_includes_pause_selfplay(tmp_path: Path) -> None:
@@ -71,6 +82,94 @@ def test_publish_distributed_trial_state_includes_pause_selfplay(tmp_path: Path)
     assert manifest["backpressure"]["pause_selfplay"] is True
     assert manifest["backpressure"]["pause_reason"] == "training"
     assert manifest["backpressure"]["stale_games"] == 96
+
+
+def test_publish_reuses_existing_model_when_resume_step_matches(tmp_path: Path) -> None:
+    trainer = _CountingTrainer()
+    model_cfg = SimpleNamespace(
+        kind="transformer",
+        embed_dim=64,
+        num_layers=2,
+        num_heads=4,
+        ffn_mult=2,
+        use_smolgen=False,
+        use_nla=False,
+        use_qk_rmsnorm=False,
+        use_gradient_checkpointing=False,
+    )
+
+    first_sha = _publish_distributed_trial_state(
+        trainer=trainer,
+        config={},
+        model_cfg=model_cfg,
+        server_root=tmp_path,
+        trial_id="trial_00000",
+        training_iteration=7,
+        trainer_step=123,
+        sf_nodes=1000,
+        mcts_simulations=64,
+    )
+    second_sha = _publish_distributed_trial_state(
+        trainer=trainer,
+        config={},
+        model_cfg=model_cfg,
+        server_root=tmp_path,
+        trial_id="trial_00000",
+        training_iteration=8,
+        trainer_step=123,
+        sf_nodes=1000,
+        mcts_simulations=64,
+        reuse_existing_model_for_same_step=True,
+    )
+
+    manifest_path = tmp_path / "trials" / "trial_00000" / "publish" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert trainer.exports == 1
+    assert second_sha == first_sha
+    assert manifest["training_iteration"] == 8
+    assert manifest["model"]["sha256"] == first_sha
+
+
+def test_publish_exports_new_model_when_resume_step_changes(tmp_path: Path) -> None:
+    trainer = _CountingTrainer()
+    model_cfg = SimpleNamespace(
+        kind="transformer",
+        embed_dim=64,
+        num_layers=2,
+        num_heads=4,
+        ffn_mult=2,
+        use_smolgen=False,
+        use_nla=False,
+        use_qk_rmsnorm=False,
+        use_gradient_checkpointing=False,
+    )
+
+    first_sha = _publish_distributed_trial_state(
+        trainer=trainer,
+        config={},
+        model_cfg=model_cfg,
+        server_root=tmp_path,
+        trial_id="trial_00000",
+        training_iteration=7,
+        trainer_step=123,
+        sf_nodes=1000,
+        mcts_simulations=64,
+    )
+    second_sha = _publish_distributed_trial_state(
+        trainer=trainer,
+        config={},
+        model_cfg=model_cfg,
+        server_root=tmp_path,
+        trial_id="trial_00000",
+        training_iteration=8,
+        trainer_step=124,
+        sf_nodes=1000,
+        mcts_simulations=64,
+        reuse_existing_model_for_same_step=True,
+    )
+
+    assert trainer.exports == 2
+    assert second_sha != first_sha
 
 
 def test_iteration_pause_metrics_reports_percent_paused() -> None:
@@ -205,6 +304,71 @@ def test_distributed_ingest_budget_uses_matching_positions_not_stale_backlog(tmp
     )
     assert budget["target_sample_budget"] == 5_000
     assert budget["steps"] == 5
+
+
+def test_distributed_ingest_timeout_does_not_wait_for_empty_inbox_after_prev_cap(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    inbox_dir = tmp_path / "inbox"
+    processed_dir = tmp_path / "processed"
+    worker_dir = inbox_dir / "worker_00"
+    worker_dir.mkdir(parents=True)
+
+    arrs = {
+        "x": np.zeros((2, 146, 8, 8), dtype=np.float32),
+        "policy_target": np.pad(
+            np.ones((2, 1), dtype=np.float32),
+            ((0, 0), (0, 4671)),
+        ),
+        "wdl_target": np.zeros((2,), dtype=np.int8),
+        "priority": np.ones((2,), dtype=np.float32),
+        "has_policy": np.ones((2,), dtype=np.uint8),
+    }
+    meta = {
+        "model_sha256": "prev-sha",
+        "games": 2,
+        "positions": 2,
+    }
+    prev_path = worker_dir / f"00_prev{LOCAL_SHARD_SUFFIX}"
+    save_local_shard_arrays(prev_path, arrs=arrs, meta=meta)
+
+    class _Prefetcher:
+        def drain(self):
+            return [(prev_path, arrs, meta)]
+
+    def _fail_iter(_inbox_dir: Path):
+        raise AssertionError("deadline should be checked before polling for more shards")
+
+    monkeypatch.setattr(distributed_runtime, "_iter_shard_paths_nested", _fail_iter)
+
+    rng = np.random.default_rng(0)
+    summary = _ingest_distributed_selfplay(
+        buf=DiskReplayBuffer(
+            256,
+            shard_dir=tmp_path / "replay",
+            rng=rng,
+            shuffle_cap=64,
+            shard_size=8,
+        ),
+        holdout_buf=ArrayReplayBuffer(32, rng=np.random.default_rng(1)),
+        holdout_frac=0.0,
+        holdout_frozen=False,
+        inbox_dir=inbox_dir,
+        processed_dir=processed_dir,
+        target_games=10,
+        accepted_model_shas={"fresh-sha", "prev-sha"},
+        prev_model_sha="prev-sha",
+        prev_model_max_fraction=0.2,
+        wait_timeout_s=-1.0,
+        poll_seconds=0.01,
+        rng=np.random.default_rng(2),
+        min_games_fraction=0.2,
+        prefetcher=_Prefetcher(),
+    )
+
+    assert summary["matching_games"] == 2
+    assert summary["stale_games"] == 0
 
 
 def test_quarantine_inbox_shards_moves_preexisting_resume_backlog(tmp_path: Path) -> None:

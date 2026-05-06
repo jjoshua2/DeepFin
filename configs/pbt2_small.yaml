@@ -6,7 +6,7 @@
 #   New plateau: os≈278-280 (rmp≈0.27) vs old 222-224. Both weights hit upper bounds.
 #
 # What PB2 searches now:
-#   lr, w_wdl, w_soft, w_sf_move, w_sf_wdl, diff_focus_q_weight
+#   lr, w_wdl, w_soft, w_sf_move, sf_wdl_frac, diff_focus_q_weight
 #
 # What is pinned:
 #   diff_focus_* (medians of top-5), temperature, playout_cap_fraction,
@@ -76,11 +76,13 @@ stockfish:
   # raw-vs-fit-disagreement code (chess_anti_engine/stockfish/pid.py:_step_lever).
   sf_pid_regret_window: 20            # rolling history length (construction-only)
   sf_pid_regret_max_step: 0.10             # 2026-04-28: 0.02→0.10. Was clamping emergency-ease to 0.02 even when emergency_ease_step was higher (airbag uses min(ease_step, max_step)). Raised to 0.10 so a real airbag actually rescues the model in 1-2 fires instead of 10+. Live-reloadable.
-  sf_pid_regret_max_step_frac: 0.05        # 2026-04-28: 0.10→0.05. Halved to slow how fast SF strengthens. Iters 8→27 saw regret descend 0.43→0.26 over 19 iters (model strengthening), then a value-head regression pulse iter 28-30 (test_wdl 0.80→0.86). Slowing tightening gives the value head more iters at each regret level to fit the local distribution before the next step. Asymmetric vs airbag (0.05 absolute) — at regret=0.30, fit ease/tighten caps at 0.015 while airbag rescues at 0.050, so ease is 3× faster than tighten (matches what we want: slow strengthening, fast rescue). Live-reloadable.
+  sf_pid_regret_max_step_frac: 0.03        # 2026-04-28: 0.10→0.05. 2026-05-02: 0.05→0.03. Model oscillating at regret 0.30-0.32 for ~12 iters; slowing tighten step to ~0.009/iter at regret=0.30 to force longer dwell before pushing lower. Live-reloadable.
+  sf_pid_regret_ease_step_frac: 0.06       # 2026-05-03: added. 2× tighten frac → ease at ~0.018/iter vs tighten at ~0.009/iter at regret=0.30. Normal-path ease is now 2× faster than tighten (separate from airbag). Live-reloadable.
   sf_pid_regret_safety_floor: 0.50         # below this raw winrate → emergency ease
   sf_pid_regret_emergency_ease_step: 0.05  # 2026-04-28: 0.10→0.05. 0.10 was overshooting equilibrium — single-iter dip 0.27→raw=0.46 (2.3σ below 0.50 floor) airbagged to 0.37, double the actual handicap shortfall. 0.05 still rescues real crashes in 2-3 fires while halving overshoot near equilibrium. max_step kept at 0.10 (caps airbag); airbag effective step is now min(0.05, 0.10)=0.05. Live-reloadable.
-  sf_pid_regret_recency_half_life: 0.5     # 2026-04-29: 2.0→0.5. Salvaged regret_history (20 points from yesterday's plant where wr≈0.58 at regret=0.47) anchored the inverse fit at a target-met optimum even though today's plant only delivers wr≈0.50 at the same regret. With hl=2 the salvaged-most-recent-5 carried 84% of the fit weight, so today's 4 fresh points couldn't sway it. hl=0.5 ages a 5-iter-old point to weight 0.001 — current observations dominate within ~3 iters. Cost: noisier early-trial steps. Live-reloadable.
+  sf_pid_regret_recency_half_life: 1.0     # 2026-04-29: 2.0→0.5. 2026-05-01: 0.5→1.0. Backtest on 65 post-restart iters showed hl=0.5 produced 10/65 degenerate fallbacks (fit collapsed to <3 effective points) vs 7/65 at hl=1.0, with better prediction RMSE (0.0544 vs 0.0558). Salvage-stale-data concern no longer applies — history is 65 iters of fresh current-run observations. Live-reloadable.
   sf_pid_regret_deadband_sigma: 0.5  # 2026-04-25: 1.5→0.5 per replay backtest on 450 iters of trial ba920 with new pid.py (half-step on raw-vs-fit sign disagreement). σ=1.5 had 8 "floor-drop precedents" (controller held in iter t-1 while iter t crashed below safety_floor — the iter 448 failure mode). σ=0.5 eliminates these (0 events at α=0.10) without meaningful swing increase. Half-step fix bounds the FP cost of tighter σ. Live-reloadable.
+  sf_pid_regret_degen_step_frac: 0.5  # Fraction of abs_max_step taken when the inverse fit is degenerate (slope wrong-sign or det≈0). Direction is known but magnitude is not — a full step would be overconfident. Start at 0.5; tune down if oscillation persists, up if convergence is too slow. Live-reloadable.
 
   # Nodes lever (stage 2). Same inverse-fit mechanism as regret but with
   # direction=+1 (raising nodes makes Stockfish stronger). Once stage 2 is
@@ -97,6 +99,7 @@ stockfish:
   sf_pid_nodes_max_step_frac: 0.10        # 2026-04-27: 0.05→0.10 — at 0.05 the normal-step cap (~330 @ 6700 nodes) couldn't drop nodes fast enough when raw_wr sagged, so we kept hitting the 0.50 airbag (8 fires by iter 334). Restoring the original cap; airbag is a worse outcome than oscillation. Live-reloadable.
   sf_pid_nodes_deadband_sigma: 2.0        # 2026-04-27: 1.5→2.0. Gives raw=±12.4%, ema=±2.8% (at se≈0.062, α=0.10). Just under the ±3% target; matched the user's "maybe 2 is good" call. Holds the lever through normal slow EMA drift, only acts on persistent >2.8% bias from target. Live-reloadable.
   sf_pid_nodes_recency_half_life: 3.0     # mirror regret-side half-life.
+  sf_pid_nodes_degen_step_frac: 0.5      # same semantics as regret-side; half-step when fit is degenerate. Live-reloadable.
   sf_pid_nodes_safety_floor: 0.50         # raw_wr < floor → airbag drops nodes by emergency_ease_step.
   sf_pid_nodes_emergency_ease_step: 1000  # absolute nodes drop on airbag fire.
   # sf_pid_nodes_max_step intentionally unset: the frac cap (above) is the
@@ -105,10 +108,10 @@ stockfish:
   # surprise. Airbag step is bounded by emergency_ease_step alone.
 
 selfplay:
-  games_per_iter: 500   # 2026-04-28: 1000→500 (transient — speed up controller feedback while plant is non-stationary). Halves selfplay time per iter (~340s→~170s), widens per-iter SE to ~0.022 (still tight enough for Wilson airbag check). Revert toward 1000+ once plant stabilizes. Live-reloadable.
-  games_per_iter_start: 500   # match games_per_iter; ramp disabled. Live-reloadable.
+  games_per_iter: 1000   # 2026-04-30: 500→1000 to smooth PID/eval noise and reduce iteration-boundary churn after late draw/plies regime flips. Live-reloadable.
+  games_per_iter_start: 1000   # match games_per_iter; ramp disabled. Live-reloadable.
   games_per_iter_ramp_iters: 0
-  selfplay_fraction: 0.25  # 2026-04-24: 0.50→0.25 (25% selfplay / 75% SF curriculum). test_policy_loss drifted 2.25→2.55 at iter 272-285; past runs at 75% SF worked better. Revert if regret/winrate stop moving or policy_loss doesn't recover.
+  selfplay_fraction: 0.30  # 2026-04-24: 0.50→0.25; 2026-05-04: 0.25→0.30 (30% selfplay / 70% SF curriculum). test_policy_loss drifted 2.25→2.55 at iter 272-285; past runs at 75% SF worked better. Revert if regret/winrate stop moving or policy_loss doesn't recover.
   selfplay_batch: 256   # Concurrent game slots per worker (always full via continuous recycling).
   max_plies: 450
 
@@ -139,17 +142,20 @@ selfplay:
 
   sf_policy_temp: 0.35       # Pinned: top-5 median from Run 4
   sf_policy_label_smooth: 0.05  # Halved from 0.10 to complement sf_multipv=20; less need to hallucinate tail coverage.
+  sf_wdl_use_cp_logistic: true   # Replace SF's UCI_ShowWDL (72% one-hot) with own logistic on cp score.
+  sf_wdl_cp_slope: 0.010         # Logistic steepness per cp. Raise as regret → 0 (SF plays stronger, evals sharper).
+  sf_wdl_cp_draw_width: 60.0     # Half-width of draw zone in cp. At |cp|≈draw_width, p_win ≈ 0.5.
   soft_policy_temp: 3.0     # Temperature for soft policy target (LC0 uses 3, was hardcoded 2)
 
-  syzygy_path: /home/josh/projects/chess/data/syzygy_3-4-5
+  syzygy_path: /home/josh/projects/chess/data/syzygy_3-4-5:/mnt/e/chess/syzygy_6_dtz
   # End games at the first TB-eligible position and use the TB-proven result
   # as the outcome. Skips MCTS compute on the endgame tail (~25% of replay
   # positions are in <=7-man range — see the piece-count audit).
   syzygy_adjudicate: true
-  # Fraction of games that actually adjudicate. 0.95 leaves 5% playing
+  # Fraction of games that actually adjudicate. 0.99 leaves 1% playing
   # through the endgame so the NN keeps generating endgame samples with
   # its own labels — guards against losing endgame skill entirely.
-  syzygy_adjudicate_fraction: 0.95
+  syzygy_adjudicate_fraction: 0.99
   # Override NN wdl logits at MCTS leaves when TB-eligible (UCI-style
   # in-tree probing). Pins Q to TB truth for endgame leaves.
   syzygy_in_search: true
@@ -201,11 +207,15 @@ train:
   w_volatility: 0.10        # Pinned: top-5 median from Run 4
   w_sf_volatility: 0.05
   w_moves_left: 0.02
-  w_sf_wdl: 1.7             # Load-bearing SF-eval bootstrap. Halving to 0.85 underperformed the snapshot we restarted from; zeroing crashed 0.64→0.40 in 4 iters (commit 52ab9c0).
+  sf_wdl_frac: 0.50         # Fraction of WDL target blended from SF labels when available.
+  sf_wdl_frac_floor: 0.10   # Residual SF-label fraction at tight regret.
+  search_wdl_frac: 0.50     # Fraction of WDL target blended from MCTS-averaged WDL when available.
   sf_wdl_conf_power: 1.0    # Confidence damping: scale SF-WDL by (1-draw_prob)^power.
   sf_wdl_draw_scale: 0.55   # Pinned low-to-mid based on the healthier late-run settings.
-  sf_wdl_floor: 0.20        # Residual SF-eval pressure at tight regret.
-  sf_wdl_floor_at_regret: 0.10  # Regret value at which SF WDL weight hits the floor.
+  sf_wdl_floor_at_regret: 0.10  # Regret value at which SF WDL fraction hits the floor.
+  sf_wdl_temperature: 1.0   # p^(1/T) softening on SF WDL before blending. Now using cp logistic (slope/draw_width control softness); keep at 1.0.
+  sf_search_dampen_sf_low: 0.0   # Damping (0..1) on SF target when SF says STM losing but search says STM winning. Live-tunable.
+  sf_search_dampen_sf_high: 0.0  # Damping (0..1) on SF target when SF says STM winning but search says STM losing. Live-tunable.
 
   accum_steps: 1    # More gradient steps per iteration; effective batch = 256.
   warmup_steps: 72   # Run 26 default.

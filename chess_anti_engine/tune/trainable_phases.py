@@ -572,6 +572,7 @@ def _run_selfplay_phase(
     current_window: int,
     in_salvage_startup_grace: bool,
     prefetcher=None,
+    reuse_existing_model_for_same_step: bool = False,
 ) -> tuple[SelfplayResult, str, int, subprocess.Popen[bytes] | None]:
     """Run distributed selfplay, ingest, export shards, grow window, cross-trial share.
 
@@ -603,6 +604,7 @@ def _run_selfplay_phase(
         wdl_regret=float(ds.wdl_regret),
         pause_selfplay=False,
         pause_reason="",
+        reuse_existing_model_for_same_step=bool(reuse_existing_model_for_same_step),
     )
     distributed_inference_broker_proc = _ensure_inference_broker(
         config=config,

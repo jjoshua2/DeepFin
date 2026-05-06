@@ -477,6 +477,7 @@ def train_trial(config: dict):
         wdl_regret=float(pid.wdl_regret) if pid is not None else -1.0,
         pause_selfplay=False,
         pause_reason="",
+        reuse_existing_model_for_same_step=(ckpt is not None),
     )
     distributed_inference_broker_proc = _ensure_inference_broker(
         config=config,
@@ -574,6 +575,7 @@ def train_trial(config: dict):
                 current_window=current_window,
                 in_salvage_startup_grace=in_salvage_startup_grace,
                 prefetcher=shard_prefetcher,
+                reuse_existing_model_for_same_step=(ckpt is not None),
             )
             t_selfplay_secs = time.monotonic() - t_selfplay_start
             distributed_pause_active = False
@@ -640,6 +642,7 @@ def train_trial(config: dict):
                 base_seed=base_seed,
                 restore=restore,
                 iteration_idx=iteration_idx,
+                current_window=current_window,
                 Checkpoint=Checkpoint,
             )
 

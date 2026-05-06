@@ -37,9 +37,12 @@ _TRAINER_WEIGHT_KEYS: tuple[str, ...] = (
     "w_sf_eval",
     "w_categorical",
     "w_volatility",
-    "w_sf_wdl",
+    "search_wdl_frac",
     "sf_wdl_conf_power",
     "sf_wdl_draw_scale",
+    "sf_wdl_temperature",
+    "sf_search_dampen_sf_low",
+    "sf_search_dampen_sf_high",
 )
 
 
@@ -185,6 +188,9 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
             selfplay_fraction=tc.selfplay_fraction,
             sf_policy_temp=tc.sf_policy_temp,
             sf_policy_label_smooth=tc.sf_policy_label_smooth,
+            sf_wdl_use_cp_logistic=tc.sf_wdl_use_cp_logistic,
+            sf_wdl_cp_slope=tc.sf_wdl_cp_slope,
+            sf_wdl_cp_draw_width=tc.sf_wdl_cp_draw_width,
             soft_policy_temp=tc.soft_policy_temp,
             timeout_adjudication_threshold=tc.timeout_adjudication_threshold,
             volatility_source=tc.volatility_source,
@@ -278,12 +284,12 @@ def _sync_trainer_weights(
     """
     _apply_lr_gamma_weights(trainer, config, rescale_current_lr=True)
 
-    cur_sf_wdl = _dynamic_sf_wdl_weight(
-        sf_wdl_start=tc.w_sf_wdl,
-        sf_wdl_floor=tc.sf_wdl_floor,
+    cur_sf_frac = _dynamic_sf_wdl_weight(
+        sf_wdl_start=tc.sf_wdl_frac,
+        sf_wdl_floor=tc.sf_wdl_frac_floor,
         sf_wdl_floor_at_regret=tc.sf_wdl_floor_at_regret,
         regret_max=tc.sf_pid_wdl_regret_max,
         wdl_regret_used=ds.wdl_regret,
     )
-    if cur_sf_wdl is not None:
-        trainer.w_sf_wdl = cur_sf_wdl
+    if cur_sf_frac is not None:
+        trainer.sf_wdl_frac = cur_sf_frac

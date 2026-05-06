@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Gracefully pause a running PBT experiment and wait for N trials to reach a
-clean iteration boundary before signalling that it's safe to kill and restart.
+clean iteration boundary, then kill the tuner and restart automatically.
 
 Usage:
-    python3 scripts/graceful_restart.py                  # pause all, wait for 2
-    python3 scripts/graceful_restart.py --wait 3         # wait for 3 trials
+    python3 scripts/graceful_restart.py                  # pause, wait, restart (default)
+    python3 scripts/graceful_restart.py --no-auto-kill   # pause and print status only
+    python3 scripts/graceful_restart.py --wait 3         # wait for 3 trials to be idle
     python3 scripts/graceful_restart.py --tune-dir runs/pbt2_small/tune
-    python3 scripts/graceful_restart.py --resume-cmd "python3 -m chess_anti_engine.run --config configs/pbt2_small.yaml --mode tune --resume"
+    python3 scripts/graceful_restart.py --resume-cmd "custom restart command"
 
 What it does:
   1. Creates pause.txt in the tune dir  → trials finish their current iteration
@@ -19,8 +20,9 @@ What it does:
      blocks before writing any post-pause row). Row count is the right
      signal — Ray Tune touches progress.csv via metadata sync independent of
      iter completion, so mtime polling falsely reports "active" forever.
-  3. Once --wait trials are paused, prints a ready message.  If --auto-kill is
-     set it also sends SIGTERM to the tuner process and removes pause.txt.
+  3. Once --wait trials are paused, sends SIGTERM to the tuner, removes
+     pause.txt, and runs the resume command.  Pass --no-auto-kill to skip
+     this and just print status instead.
 """
 from __future__ import annotations
 
@@ -95,17 +97,17 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--tune-dir", default="runs/pbt2_small/tune",
                     help="Path to the Ray Tune experiment directory")
-    ap.add_argument("--wait", type=int, default=2,
+    ap.add_argument("--wait", type=int, default=1,
                     help="Number of trials that must be idle before declaring safe")
     ap.add_argument("--grace-secs", type=int, default=90,
                     help="Grace window for the boundary-edge case (no post-pause row yet — "
                          "treat as paused if row count has been at snapshot for this long)")
     ap.add_argument("--poll", type=int, default=15,
                     help="Polling interval in seconds")
-    ap.add_argument("--auto-kill", action="store_true",
-                    help="Automatically send SIGTERM to the tuner process when ready")
-    ap.add_argument("--resume-cmd", default="",
-                    help="Shell command to run after killing (implies --auto-kill)")
+    ap.add_argument("--no-auto-kill", dest="auto_kill", action="store_false",
+                    help="Print status and exit without killing or restarting")
+    ap.add_argument("--resume-cmd", default="./scripts/train.sh restart",
+                    help="Shell command to run after killing (default: ./scripts/train.sh restart)")
     args = ap.parse_args()
 
     tune_dir = Path(args.tune_dir)
@@ -118,7 +120,7 @@ def main() -> None:
         sys.exit(1)
 
     pause_file = tune_dir / "pause.txt"
-    auto_kill = args.auto_kill or bool(args.resume_cmd)
+    auto_kill = args.auto_kill
 
     # Step 1: create the pause marker(s). Drop one in tune_dir AND one in
     # every active trial dir — the trial checks both. Without the per-trial
