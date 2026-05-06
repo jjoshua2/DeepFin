@@ -17,11 +17,17 @@ def normalize_trial_id(trial_id: str | None) -> str | None:
 
 
 def lease_path(*, leases_root: Path, lease_id: str) -> Path:
-    return leases_root / f"{lease_id}.json"
+    lid = str(lease_id or "").strip()
+    if not lid or Path(lid).name != lid or lid in {".", ".."}:
+        raise ValueError("invalid lease_id")
+    return leases_root / f"{lid}.json"
 
 
 def load_lease(*, leases_root: Path, lease_id: str) -> dict[str, Any] | None:
-    p = lease_path(leases_root=leases_root, lease_id=lease_id)
+    try:
+        p = lease_path(leases_root=leases_root, lease_id=lease_id)
+    except ValueError:
+        return None
     if not p.exists():
         return None
     try:

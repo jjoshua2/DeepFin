@@ -237,6 +237,12 @@ Current notes:
   and
   `tests/test_distributed_selfplay_backpressure.py::test_quarantine_inbox_shards_moves_preexisting_resume_backlog`
   (`10 passed`).
+- Finding F023 opened/fixed in this cycle: lease IDs were interpolated into
+  `leases_root / f"{lease_id}.json"` without rejecting path separators. Invalid
+  renewal IDs now fail closed before any filesystem lookup outside
+  `leases_root`.
+- Focused lease validation after F023 passed: `tests/test_server_trial_lease.py`
+  and `tests/test_server_upload_compaction.py` (`10 passed`).
 - Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
   `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
   `tests/test_tune_distributed_worker_cmd.py`,

@@ -6,6 +6,7 @@ from pathlib import Path
 from chess_anti_engine.server.lease import (
     assign_trial_lease,
     available_trial_ids,
+    load_lease,
     pick_trial_for_lease,
 )
 
@@ -264,3 +265,12 @@ def test_requested_stale_lease_is_not_reused_when_trial_is_unavailable(tmp_path:
     assert reassigned["trial_id"] == "trial_b"
     assert reassigned["lease_id"] == original["lease_id"]
     assert len(list(leases_root.glob("*.json"))) == 1
+
+
+def test_load_lease_rejects_path_traversal_id(tmp_path: Path) -> None:
+    leases_root = tmp_path / "leases"
+    leases_root.mkdir()
+    outside = tmp_path / "outside.json"
+    outside.write_text('{"username": "worker"}', encoding="utf-8")
+
+    assert load_lease(leases_root=leases_root, lease_id="../outside") is None
