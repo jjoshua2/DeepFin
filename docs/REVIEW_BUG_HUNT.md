@@ -389,6 +389,17 @@ Current notes:
   `python3 -m py_compile scripts/profile_distributed.py`,
   `python3 scripts/profile_distributed.py --help`, and
   `python3 -m pytest tests/test_profile_distributed.py -q`.
+- Finding F039 opened/fixed in this cycle: `scripts/reinit_value_heads.py`
+  rebuilt every salvage checkpoint as a hardcoded 384-dim/9-layer transformer
+  before writing `trainer.pt` back. Running it on a different architecture would
+  silently drop shape-mismatched weights through the tolerant loader and save a
+  partially fresh model. The script now reads embedded `arch` metadata or the
+  checkpoint-local Ray `params.json` fallback and refuses to rewrite when it
+  cannot prove the architecture.
+- Focused value-head reinit validation after F039 passed:
+  `python3 -m py_compile scripts/reinit_value_heads.py`,
+  `python3 scripts/reinit_value_heads.py --help`, and
+  `python3 -m pytest tests/test_reinit_value_heads_script.py -q`.
 - Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
   `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
   `tests/test_tune_distributed_worker_cmd.py`,
@@ -1182,7 +1193,7 @@ Files:
 - [x] `scripts/poll_pbt_30m.sh`
 - [x] `scripts/profile_distributed.py`
 - [x] `scripts/profile_play_batch.py`
-- [ ] `scripts/reinit_value_heads.py`
+- [x] `scripts/reinit_value_heads.py`
 - [ ] `scripts/status.py`
 - [x] `scripts/train.sh`
 - [ ] `scripts/train_bootstrap.py`
@@ -1205,6 +1216,8 @@ Correctness/reliability:
   paths.
 - [x] `profile_distributed.py` uses an existing base config, repo-relative
   artifact paths, and benchmark-owned process cleanup.
+- [x] Recovery scripts preserve checkpoint architecture metadata instead of
+  rewriting salvaged checkpoints with guessed model shapes.
 - [x] Diagnostic scripts run from repo root and fail clearly when required
   trial/replay paths are absent.
 - [ ] Remaining Python scripts run from repo root and fail clearly when required files/env vars are absent.
@@ -1221,6 +1234,7 @@ Tests:
 
 - [ ] `tests/test_arena_match_smoke.py`
 - [x] `tests/test_profile_distributed.py`
+- [x] `tests/test_reinit_value_heads_script.py`
 
 ### Documentation and Specs
 

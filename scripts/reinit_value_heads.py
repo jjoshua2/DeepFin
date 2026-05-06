@@ -16,6 +16,8 @@ Writes POOL_DIR/seeds/slot_000/trainer.pt in place (keeps trainer.pt.bak).
 from __future__ import annotations
 
 import argparse
+import dataclasses
+import json
 import shutil
 import sys
 from pathlib import Path
@@ -25,9 +27,30 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import torch
 from torch import nn
 
-from chess_anti_engine.model import ModelConfig, build_model, load_state_dict_tolerant
+from chess_anti_engine.model import ARCH_SCHEMA_VERSION, ModelConfig, build_model, load_state_dict_tolerant
+from chess_anti_engine.uci.model_loader import (
+    _find_params_json,
+    _model_config_from_arch,
+    _model_config_from_params,
+)
 
 VALUE_HEADS = ("value_wdl", "value_sf_eval", "value_categorical")
+
+
+def _checkpoint_model_config(ckpt: dict, ckpt_path: Path) -> ModelConfig:
+    """Load the checkpoint's actual architecture, failing loud if absent."""
+    if isinstance(ckpt.get("arch"), dict):
+        return _model_config_from_arch(ckpt["arch"])
+
+    params_path = _find_params_json(ckpt_path)
+    if params_path is not None:
+        with params_path.open() as fh:
+            return _model_config_from_params(json.load(fh))
+
+    raise SystemExit(
+        f"{ckpt_path} has no embedded arch and no params.json in its ancestor "
+        "tree; refusing to rewrite value heads with a guessed architecture"
+    )
 
 
 def main() -> None:
@@ -43,15 +66,7 @@ def main() -> None:
     ck = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     state = ck["model"]
 
-    mcfg = ModelConfig(
-        kind="transformer",
-        embed_dim=384,
-        num_layers=9,
-        num_heads=12,
-        ffn_mult=1.5,
-        use_smolgen=True,
-        use_nla=False,
-    )
+    mcfg = _checkpoint_model_config(ck, ckpt_path)
     model = build_model(mcfg)
     load_state_dict_tolerant(model, state, label="reinit-value-heads")
 
@@ -69,6 +84,10 @@ def main() -> None:
                     nn.init.zeros_(p)
 
     ck["model"] = model.state_dict()
+    ck["arch"] = {
+        "_schema_version": ARCH_SCHEMA_VERSION,
+        **dataclasses.asdict(mcfg),
+    }
     ck.pop("opt", None)  # force Adam to rebuild momentum; positional indices unsafe across arch changes
 
     print(f"reinit: {len(reinit_param_names)} params across {len(VALUE_HEADS)} heads")
