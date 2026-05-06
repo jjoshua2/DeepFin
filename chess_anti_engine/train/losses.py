@@ -204,7 +204,15 @@ def compute_loss(
 
     wdl_t = batch["wdl_t"].to(torch.int64)
     game_oh = F.one_hot(wdl_t, 3).float()
-    game_frac = max(0.0, 1.0 - float(sf_wdl_frac) - float(search_wdl_frac))
+    sf_wdl_frac_f = max(0.0, float(sf_wdl_frac))
+    search_wdl_frac_f = max(0.0, float(search_wdl_frac))
+    blend_sum = sf_wdl_frac_f + search_wdl_frac_f
+    if blend_sum > 1.0:
+        sf_wdl_frac_f /= blend_sum
+        search_wdl_frac_f /= blend_sum
+        game_frac = 0.0
+    else:
+        game_frac = 1.0 - blend_sum
     target = game_frac * game_oh
     sf_available = has_sf_wdl.float()
     search_available = has_search_wdl.float()
@@ -246,18 +254,18 @@ def compute_loss(
     sf_effective = sf_available * keep
     sf_effective_b = sf_effective.unsqueeze(1)
     if sf_wdl_probs is not None:
-        target += float(sf_wdl_frac) * (
+        target += sf_wdl_frac_f * (
             sf_effective_b * sf_wdl_probs + (1.0 - sf_effective_b) * game_oh
         )
     else:
-        target += float(sf_wdl_frac) * game_oh
+        target += sf_wdl_frac_f * game_oh
     search_available_b = search_available.unsqueeze(1)
     if search_wdl_probs is not None:
-        target += float(search_wdl_frac) * (
+        target += search_wdl_frac_f * (
             search_available_b * search_wdl_probs + (1.0 - search_available_b) * game_oh
         )
     else:
-        target += float(search_wdl_frac) * game_oh
+        target += search_wdl_frac_f * game_oh
     blended_wdl_ce = soft_cross_entropy(outputs["wdl"], target.detach())
 
     has_moves_left = _get_mask(batch, "has_moves_left")

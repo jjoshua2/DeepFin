@@ -32,10 +32,10 @@ def _batch(*, sf_says: str, search_says: str, outcome: int) -> tuple[dict, dict]
     return outputs, batch
 
 
-def _loss(out, batch, **knobs):
+def _loss(out, batch, *, sf_frac: float = 0.5, search_frac: float = 0.5, **knobs):
     return compute_loss(
         out, batch,
-        sf_wdl_frac=0.5, search_wdl_frac=0.5,
+        sf_wdl_frac=sf_frac, search_wdl_frac=search_frac,
         w_policy=0.0, w_wdl=1.0, w_sf_move=0.0, w_sf_eval=0.0,
         w_categorical=0.0, w_volatility=0.0, w_moves_left=0.0,
         **knobs,
@@ -103,3 +103,10 @@ def test_diagnostics_zero_when_search_missing():
     assert losses["sf_search_agree_frac"].item() == 0.0
     assert losses["sf_search_disagree_sf_low_frac"].item() == 0.0
     assert losses["sf_search_disagree_sf_high_frac"].item() == 0.0
+
+
+def test_overfull_blend_fractions_are_renormalized():
+    out, batch = _batch(sf_says="win", search_says="loss", outcome=1)
+    base = _loss(out, batch, sf_frac=0.5, search_frac=0.5)["blended_wdl_ce"].item()
+    overfull = _loss(out, batch, sf_frac=2.0, search_frac=2.0)["blended_wdl_ce"].item()
+    assert abs(overfull - base) < 1e-6

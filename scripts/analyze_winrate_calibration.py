@@ -6,7 +6,7 @@ import numpy as np
 import torch
 import zarr
 
-from chess_anti_engine.model import ModelConfig, build_model
+from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
 
 def main():
@@ -26,25 +26,7 @@ def main():
 
     print(f"\nLoading model from: {args.checkpoint}")
     device = torch.device(args.device)
-    cfg = ModelConfig(
-        kind="transformer",
-        embed_dim=384,
-        num_layers=10,
-        num_heads=12,
-        ffn_mult=1.5,
-        use_smolgen=True,
-        use_nla=False,
-        gradient_checkpointing=False,
-        categorical_bins=32,
-    )
-    model = build_model(cfg).to(device)
-    model.eval()
-
-    checkpoint = torch.load(args.checkpoint, map_location=device)
-    if "model_state_dict" in checkpoint:
-        model.load_state_dict(checkpoint["model_state_dict"])
-    else:
-        model.load_state_dict(checkpoint)
+    model = load_model_from_checkpoint(args.checkpoint, device=str(device))
 
     print("Running inference...")
     with torch.no_grad():

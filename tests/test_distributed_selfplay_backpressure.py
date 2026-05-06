@@ -16,6 +16,7 @@ from chess_anti_engine.tune.distributed_runtime import (
     _publish_distributed_trial_state,
     _quarantine_inbox_shards,
 )
+from chess_anti_engine.tune.trainable_init import _apply_donor_config_overlay
 from chess_anti_engine.tune.trainable_metrics import (
     _compute_train_step_budget,
     _curriculum_winrate_raw_or_none,
@@ -39,6 +40,10 @@ class _CountingTrainer:
         self.exports += 1
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(f"export-{self.exports}".encode("ascii"))
+
+
+class _WeightTrainer:
+    pass
 
 
 def test_publish_distributed_trial_state_includes_pause_selfplay(tmp_path: Path) -> None:
@@ -82,6 +87,25 @@ def test_publish_distributed_trial_state_includes_pause_selfplay(tmp_path: Path)
     assert manifest["backpressure"]["pause_selfplay"] is True
     assert manifest["backpressure"]["pause_reason"] == "training"
     assert manifest["backpressure"]["stale_games"] == 96
+
+
+def test_donor_config_overlay_copies_sf_wdl_frac() -> None:
+    trainer = _WeightTrainer()
+    config: dict = {}
+
+    _apply_donor_config_overlay(
+        config,
+        {
+            "sf_wdl_frac": 0.37,
+            "search_wdl_frac": 0.42,
+        },
+        trainer,
+    )
+
+    assert config["sf_wdl_frac"] == 0.37
+    assert config["search_wdl_frac"] == 0.42
+    assert trainer.sf_wdl_frac == 0.37
+    assert trainer.search_wdl_frac == 0.42
 
 
 def test_publish_reuses_existing_model_when_resume_step_matches(tmp_path: Path) -> None:

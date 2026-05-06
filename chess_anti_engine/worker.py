@@ -1570,6 +1570,7 @@ class WorkerSession:
         "sf_nodes",
         "opponent_wdl_regret_limit", "mcts_simulations", "fast_simulations",
         "selfplay_fraction",
+        "sf_wdl_use_cp_logistic", "sf_wdl_cp_slope", "sf_wdl_cp_draw_width",
         # Syzygy knobs affect adjudication + in-search overrides — without a
         # restart, workers keep producing shards under stale TB settings until
         # an unrelated key changes. Flagged by Codex adversarial review.

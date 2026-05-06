@@ -71,3 +71,28 @@ def test_periodic_manifest_poll_swaps_before_reco_restart() -> None:
     assert session._stop_selfplay is True
     assert swaps == ["new-sha"]
     assert session.model_sha == "new-sha"
+
+
+def test_cp_wdl_recommendation_changes_restart_selfplay_session() -> None:
+    session = _bare_worker_session()
+    old = {
+        "sf_nodes": 100,
+        "sf_wdl_use_cp_logistic": False,
+        "sf_wdl_cp_slope": 0.010,
+        "sf_wdl_cp_draw_width": 60.0,
+    }
+    session._active_reco = {k: old.get(k) for k in WorkerSession._RECO_RESTART_KEYS}
+
+    changed = WorkerSession._reco_changed(
+        session,
+        {
+            "recommended_worker": {
+                **old,
+                "sf_wdl_use_cp_logistic": True,
+            }
+        },
+        source_tag="test",
+    )
+
+    assert changed is True
+    assert session._stop_selfplay is True

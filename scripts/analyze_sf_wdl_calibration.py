@@ -42,6 +42,8 @@ def main() -> None:
     args = parse_args()
     paths = sorted(glob.glob(args.shard_glob))[-args.n_shards :]
     print(f"sampling {len(paths)} shards (most recent)")
+    if not paths:
+        raise SystemExit("no shards matched --shard-glob")
 
     sf_list, g_list, hsf_list = [], [], []
     for p in paths:
@@ -55,6 +57,8 @@ def main() -> None:
         sf_list.append(sf_wdl)
         g_list.append(wdl_t)
         hsf_list.append(has_sf)
+    if not sf_list:
+        raise SystemExit("matched shards did not contain sf_wdl/wdl_target/has_sf_wdl arrays")
 
     sf = np.concatenate(sf_list)
     g = np.concatenate(g_list)

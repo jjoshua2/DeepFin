@@ -37,6 +37,7 @@ _TRAINER_WEIGHT_KEYS: tuple[str, ...] = (
     "w_sf_eval",
     "w_categorical",
     "w_volatility",
+    "sf_wdl_frac",
     "search_wdl_frac",
     "sf_wdl_conf_power",
     "sf_wdl_draw_scale",
