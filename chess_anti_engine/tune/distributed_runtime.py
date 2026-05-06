@@ -393,6 +393,55 @@ def _publish_distributed_trial_state(
     return model_sha
 
 
+_WORKER_LAUNCH_CONFIG_KEYS: tuple[str, ...] = (
+    "distributed_server_url",
+    "distributed_worker_username",
+    "distributed_worker_password_file",
+    "distributed_server_root",
+    "distributed_worker_shared_cache_dir",
+    "stockfish_path",
+    "distributed_worker_device",
+    "device",
+    "distributed_worker_aot_dir",
+    "distributed_worker_use_compile",
+    "distributed_worker_compile_mode",
+    "distributed_worker_inference_fp8",
+    "distributed_worker_threaded",
+    "distributed_worker_selfplay_threads",
+    "distributed_worker_threaded_dispatcher",
+    "distributed_worker_dispatcher_batch_wait_ms",
+    "distributed_worker_sf_workers",
+    "distributed_worker_poll_seconds",
+    "distributed_worker_upload_target_positions",
+    "distributed_worker_upload_flush_seconds",
+    "seed",
+    "log_level",
+    "distributed_inference_broker_enabled",
+    "distributed_inference_max_batch_per_slot",
+    "distributed_inference_max_batch_positions",
+    "distributed_worker_auto_tune",
+    "distributed_worker_target_batch_seconds",
+    "distributed_worker_min_games_per_batch",
+    "distributed_worker_max_games_per_batch",
+)
+
+
+def _worker_launch_signature(
+    *, config: dict, trial_id: str, worker_index: int,
+) -> tuple[object, ...]:
+    """Stable signature of worker process-level settings.
+
+    Selfplay parameters delivered through the manifest do not belong here; only
+    values baked into the worker's command line or auth/cache resolution should
+    restart an already-running worker.
+    """
+    return (
+        str(trial_id),
+        int(worker_index),
+        tuple((k, config.get(k)) for k in _WORKER_LAUNCH_CONFIG_KEYS),
+    )
+
+
 def _launch_distributed_worker(
     *,
     config: dict,
@@ -426,13 +475,21 @@ def _launch_distributed_worker(
         worker_index=worker_index,
         worker_log=worker_log,
     )
-    return _spawn_with_reap(
+    proc = _spawn_with_reap(
         cmd=cmd,
         log_path=worker_out,
         reap_module="chess_anti_engine.worker",
         reap_terms=["--trial-id", str(trial_id), "--work-dir", str(worker_root)],
         reap_label=f"distributed workers (trial={trial_id} idx={worker_index:02d})",
     )
+    setattr(
+        proc,
+        "_cae_worker_launch_signature",
+        _worker_launch_signature(
+            config=config, trial_id=trial_id, worker_index=worker_index,
+        ),
+    )
+    return proc
 
 
 def _build_distributed_worker_cmd(
@@ -718,7 +775,24 @@ def _ensure_distributed_workers(
     want = max(0, int(config.get("distributed_workers_per_trial", 0)))
     out = list(procs)
     for idx in range(want):
+        desired_signature = _worker_launch_signature(
+            config=config, trial_id=trial_id, worker_index=idx,
+        )
         if idx < len(out) and out[idx].poll() is None:
+            current_signature = getattr(out[idx], "_cae_worker_launch_signature", None)
+            if current_signature == desired_signature:
+                continue
+            print(
+                f"[trial] restarting distributed worker idx={idx} "
+                f"config_changed=true trial={trial_id}"
+            )
+            _stop_process(out[idx])
+            out[idx] = _launch_distributed_worker(
+                config=config,
+                trial_dir=trial_dir,
+                trial_id=trial_id,
+                worker_index=idx,
+            )
             continue
         if idx < len(out) and out[idx].poll() is not None:
             print(

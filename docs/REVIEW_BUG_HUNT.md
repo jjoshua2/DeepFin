@@ -80,7 +80,7 @@ Tune trainable lifecycle:
   config overlay preserve ownership, RNG, PID, and replay invariants.
 - [x] Verify checkpoint RNG sidecars include all per-iteration RNG consumers
   before Ray receives the checkpoint directory.
-- [ ] Verify live YAML reload cannot silently ignore runtime-mutable keys that
+- [x] Verify live YAML reload cannot silently ignore runtime-mutable keys that
   should affect workers or trainer weights.
 - [ ] Verify async holdout eval and background prefetch cannot report stale or
   deleted-buffer data without marking source iteration.
@@ -114,6 +114,10 @@ Current notes:
 - Finding F013 opened/fixed in this cycle: checkpoint RNG sidecars were written
   before puzzle eval could consume the trainable RNG, making resume diverge
   from uninterrupted runs after puzzle iterations.
+- Finding F014 opened/fixed in this cycle: live YAML reload accepted worker
+  process-level key changes without restarting already-running workers, so
+  settings like SF worker count, threading, compile mode, or upload cadence
+  could stay stale until a manual restart.
 
 ### `/simplify` Review Criteria
 
@@ -235,6 +239,7 @@ Context:
 | F011 | Medium | Security / Reliability | Worker assets | `chess_anti_engine/worker_assets.py`, `chess_anti_engine/worker.py`, `tests/test_worker_cached_assets.py` | Worker asset cache paths trusted manifest-provided `filename` values. A filename containing path components such as `../../outside.bin` could make opening-book or Stockfish downloads write outside the cache directory. | `_download_opening_book()` and `_sync_stockfish()` interpolated manifest `filename` directly into `cache_dir / f\"..._{filename}\"`. | Added `_safe_manifest_filename()` to reduce manifest asset names to basenames before constructing cache paths. Verified worker asset slice: `12 passed`. | fixed |
 | F012 | Medium | Training Quality / Reliability | Tune config | `chess_anti_engine/tune/trial_config.py`, `chess_anti_engine/tune/trainable_config_ops.py`, `tests/test_trainable_config_ops.py`, `tests/test_trial_config.py` | Local Tune gate/eval play paths ignored Syzygy adjudication and in-search probing settings because `TrialConfig` dropped `syzygy_adjudicate`, `syzygy_adjudicate_fraction`, and `syzygy_in_search` before `_play_batch_kwargs()` built `GameConfig`. | `configs/pbt2_small.yaml` enables the knobs and `distributed_runtime.py` publishes them for workers, but `TrialConfig.from_dict()` parsed only `syzygy_path` and `syzygy_rescore_policy`; `_play_batch_kwargs()` likewise only forwarded those two fields. | Added typed fields, forwarded them into `GameConfig`, and covered both parsing and play-kwargs preservation. Verified `tests/test_trial_config.py tests/test_trainable_config_ops.py tests/test_worker_model_update.py` -> `9 passed`. | fixed |
 | F013 | Medium | Reliability | Tune checkpointing | `chess_anti_engine/tune/trainable_report.py`, `chess_anti_engine/tune/trainable_phases.py`, `tests/test_trainable_rng_checkpoint.py` | The checkpoint RNG sidecar could lag the actual trainable RNG because `_save_trial_checkpoint()` wrote `rng_state.json` before `_finalize_iteration()` ran puzzle eval. If puzzle eval consumed RNG before `tune.report()` copied the checkpoint, resume would replay an older RNG stream and diverge from uninterrupted training. | `trainable.py` saved the checkpoint before `_finalize_iteration()`, while `_finalize_iteration()` calls `_run_puzzle_eval_if_due(..., rng=rng)` before reporting that same checkpoint directory to Ray. | Reused a sidecar writer and rewrote `rng_state.json` after puzzle eval and before `tune_report_fn(...)`; regression test verifies `tune.report()` sees the advanced RNG state. Verified Tune slice: `18 passed`. | fixed |
+| F014 | Medium | Reliability / Config | Tune worker lifecycle | `chess_anti_engine/tune/distributed_runtime.py`, `tests/test_tune_distributed_worker_cmd.py` | Live YAML reload could silently accept worker process-level settings without applying them to already-running workers. `_ensure_distributed_workers()` only restarted dead workers or count changes, so changes to SF worker count, threading, compile mode, upload cadence, auth/cache paths, or inference slot layout stayed stale until an external restart. | `trainable_config_ops.py` removed worker-level keys from `_TOPOLOGY_KEYS` because `_ensure_distributed_workers` supposedly spawned updated workers each iteration, but `distributed_runtime.py` returned immediately for any live process at the requested index. | Added a launch signature for CLI/auth/cache process settings and restart workers whose signature no longer matches the desired config; regression test covers a live `distributed_worker_sf_workers` change. Verified distributed runtime slice: `18 passed`. | fixed |
 
 ## Review Passes
 

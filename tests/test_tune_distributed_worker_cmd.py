@@ -6,7 +6,9 @@ import numpy as np
 from chess_anti_engine.replay.shard import LOCAL_SHARD_SUFFIX, save_local_shard_arrays
 from chess_anti_engine.tune.distributed_runtime import (
     _build_distributed_worker_cmd,
+    _ensure_distributed_workers,
     _launch_inference_broker,
+    _worker_launch_signature,
 )
 from chess_anti_engine.tune.harness import (
     _patch_experiment_state_for_resume,
@@ -71,6 +73,63 @@ def test_build_distributed_worker_cmd_adds_inference_slot() -> None:
     assert "--inference-slot-max-batch" in cmd
     slot_name = cmd[cmd.index("--inference-slot-name") + 1]
     assert slot_name.endswith("-0")  # worker_index=0
+
+
+class _FakeProc:
+    pid = 1234
+    returncode = None
+
+    def __init__(self) -> None:
+        self.stopped = False
+
+    def poll(self):
+        return None if not self.stopped else -15
+
+
+def test_ensure_distributed_workers_restarts_on_launch_config_change(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    old_config = {
+        "distributed_workers_per_trial": 1,
+        "distributed_server_url": "http://127.0.0.1:45453",
+        "distributed_server_root": str(tmp_path / "server"),
+        "stockfish_path": "/tmp/stockfish",
+        "distributed_worker_sf_workers": 1,
+    }
+    new_config = {**old_config, "distributed_worker_sf_workers": 2}
+    old_proc = _FakeProc()
+    old_proc._cae_worker_launch_signature = _worker_launch_signature(
+        config=old_config, trial_id="trial_00000", worker_index=0,
+    )
+    launched: list[tuple[dict, int]] = []
+
+    def _fake_stop(proc):
+        proc.stopped = True
+
+    def _fake_launch(*, config, trial_dir, trial_id, worker_index):
+        proc = _FakeProc()
+        proc._cae_worker_launch_signature = _worker_launch_signature(
+            config=config, trial_id=trial_id, worker_index=worker_index,
+        )
+        launched.append((dict(config), int(worker_index)))
+        return proc
+
+    monkeypatch.setattr("chess_anti_engine.tune.distributed_runtime._stop_process", _fake_stop)
+    monkeypatch.setattr("chess_anti_engine.tune.distributed_runtime._launch_distributed_worker", _fake_launch)
+
+    out = _ensure_distributed_workers(
+        config=new_config,
+        trial_dir=tmp_path,
+        trial_id="trial_00000",
+        procs=[old_proc],
+    )
+
+    assert old_proc.stopped is True
+    assert len(launched) == 1
+    assert launched[0][0]["distributed_worker_sf_workers"] == 2
+    assert out[0]._cae_worker_launch_signature == _worker_launch_signature(
+        config=new_config, trial_id="trial_00000", worker_index=0,
+    )
 
 
 def test_refresh_replay_shards_uses_override_root_for_donor(tmp_path: Path) -> None:
