@@ -65,6 +65,8 @@ def main() -> None:
     hsf = np.concatenate(hsf_list)
     sf = sf[hsf]
     g = g[hsf]
+    if len(g) == 0:
+        raise SystemExit("matched shards contained no rows with has_sf_wdl=true")
 
   # Renormalise SF (some rows may have rounding drift).
     s = sf.sum(axis=-1, keepdims=True)
