@@ -395,6 +395,52 @@ def test_distributed_ingest_timeout_does_not_wait_for_empty_inbox_after_prev_cap
     assert summary["stale_games"] == 0
 
 
+def test_prefetched_shard_missing_from_inbox_is_not_reingested(tmp_path: Path) -> None:
+    inbox_dir = tmp_path / "inbox"
+    processed_dir = tmp_path / "processed"
+    stale_path = inbox_dir / "worker_00" / f"stale{LOCAL_SHARD_SUFFIX}"
+    arrs = {
+        "x": np.zeros((2, 146, 8, 8), dtype=np.float32),
+        "policy_target": np.pad(
+            np.ones((2, 1), dtype=np.float32),
+            ((0, 0), (0, 4671)),
+        ),
+        "wdl_target": np.zeros((2,), dtype=np.int8),
+        "priority": np.ones((2,), dtype=np.float32),
+        "has_policy": np.ones((2,), dtype=np.uint8),
+    }
+    meta = {"model_sha256": "fresh-sha", "games": 1, "positions": 2}
+
+    class _Prefetcher:
+        def drain(self):
+            return [(stale_path, arrs, meta)]
+
+    summary = _ingest_distributed_selfplay(
+        buf=DiskReplayBuffer(
+            256,
+            shard_dir=tmp_path / "replay",
+            rng=np.random.default_rng(0),
+            shuffle_cap=64,
+            shard_size=8,
+        ),
+        holdout_buf=ArrayReplayBuffer(32, rng=np.random.default_rng(1)),
+        holdout_frac=0.0,
+        holdout_frozen=False,
+        inbox_dir=inbox_dir,
+        processed_dir=processed_dir,
+        target_games=1,
+        accepted_model_shas={"fresh-sha"},
+        wait_timeout_s=-1.0,
+        poll_seconds=0.01,
+        rng=np.random.default_rng(2),
+        min_games_fraction=1.0,
+        prefetcher=_Prefetcher(),
+    )
+
+    assert summary["matching_games"] == 0
+    assert summary["positions_replay_added"] == 0
+
+
 def test_quarantine_inbox_shards_moves_preexisting_resume_backlog(tmp_path: Path) -> None:
     inbox_dir = tmp_path / "inbox" / "worker_00"
     inbox_dir.mkdir(parents=True)

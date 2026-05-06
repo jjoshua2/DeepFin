@@ -968,6 +968,8 @@ def _process_shard(
     out = processed_dir / rel
     out.parent.mkdir(parents=True, exist_ok=True)
     if preloaded is not None:
+        if not sp.exists():
+            return ""
         shard_arrs, meta = preloaded
     else:
         try:
