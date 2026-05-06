@@ -74,7 +74,7 @@ Next slice:
 
 ## Coverage Matrix
 
-This matrix covers the 300 tracked repo files in scope for this pass
+This matrix covers the 302 tracked repo files in scope for this pass
 (`git ls-files 'chess_anti_engine/**' 'scripts/**' 'tests/**' 'configs/**'
 '*.md' 'docs/**' 'pyproject.toml'`).
 
@@ -90,7 +90,7 @@ This matrix covers the 300 tracked repo files in scope for this pass
 | S012 | `chess_anti_engine/stockfish/**` | 5 | processed |
 | S013 | `chess_anti_engine/utils/**`, `chess_anti_engine/run.py`, `chess_anti_engine/config_keys.py`, `chess_anti_engine/version.py`, `chess_anti_engine/__init__.py` | 11 | processed; run/config schema refactor deferred |
 | S008 | `scripts/**`, `configs/**`, `*.md`, `docs/**`, `pyproject.toml` | 76 | processed; broad helper deferred |
-| S014 | `tests/**` | 104 | processed; shared selfplay test fakes only |
+| S014 | `tests/**` | 106 | processed; shared selfplay test fakes only |
 
 ## Decisions
 
