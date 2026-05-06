@@ -30,6 +30,7 @@ log = logging.getLogger(__name__)
 # Used by _sync_trainer_weights (primary) and by the salvage-donor overlay
 # in _restore_checkpoint_or_salvage. Keeping one tuple prevents drift.
 _TRAINER_WEIGHT_KEYS: tuple[str, ...] = (
+    "w_policy",
     "w_soft",
     "w_future",
     "w_wdl",
@@ -37,6 +38,8 @@ _TRAINER_WEIGHT_KEYS: tuple[str, ...] = (
     "w_sf_eval",
     "w_categorical",
     "w_volatility",
+    "w_sf_volatility",
+    "w_moves_left",
     "sf_wdl_frac",
     "search_wdl_frac",
     "sf_wdl_conf_power",
@@ -273,6 +276,8 @@ def _apply_lr_gamma_weights(trainer: Trainer, config: dict, *, rescale_current_l
     for wk in _TRAINER_WEIGHT_KEYS:
         if wk in config:
             setattr(trainer, wk, float(config[wk]))
+    if "w_sf_volatility" not in config and "w_volatility" in config:
+        trainer.w_sf_volatility = float(config["w_volatility"])
 
 
 def _sync_trainer_weights(

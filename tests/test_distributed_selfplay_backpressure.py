@@ -96,14 +96,20 @@ def test_donor_config_overlay_copies_sf_wdl_frac() -> None:
     _apply_donor_config_overlay(
         config,
         {
+            "w_policy": 1.7,
+            "w_moves_left": 0.09,
             "sf_wdl_frac": 0.37,
             "search_wdl_frac": 0.42,
         },
         trainer,
     )
 
+    assert config["w_policy"] == 1.7
+    assert config["w_moves_left"] == 0.09
     assert config["sf_wdl_frac"] == 0.37
     assert config["search_wdl_frac"] == 0.42
+    assert trainer.w_policy == 1.7
+    assert trainer.w_moves_left == 0.09
     assert trainer.sf_wdl_frac == 0.37
     assert trainer.search_wdl_frac == 0.42
 

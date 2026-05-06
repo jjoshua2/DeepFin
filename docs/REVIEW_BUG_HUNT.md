@@ -33,8 +33,8 @@ Working rules:
 | 1 | adversarial | Selfplay labels and finalization | `chess_anti_engine/selfplay/finalize.py`, `state.py`, `stockfish_turn.py`, `tablebase.py` | deep | Highest training-data corruption risk. Review POV, result labels, TB adjudication, draw handling, optional target fields. |
 | 2 | adversarial | Replay and shard ingest | `chess_anti_engine/replay/*`, `worker_buffer.py`, server/worker shard paths | deep | Schema drift, stale shards, missing arrays, holdout leakage, old-run compatibility. |
 | 3 | adversarial | Worker lifecycle | `worker.py`, `worker_assets.py`, `worker_pool.py`, `stockfish/*` | deep | Manifest restart keys, model swaps, Stockfish restarts, partial updates, pause/resume. |
-| 4 | adversarial | Tune trainable lifecycle | `chess_anti_engine/tune/*` | active | Config reload, donor/salvage overlays, PID state restore, manifests, async eval timing. |
-| 5 | adversarial | Loss and trainer contracts | `chess_anti_engine/train/losses.py`, `trainer.py`, `targets.py` | pending | Blend weights, masks, target normalization, old shard behavior, live weight sync. |
+| 4 | adversarial | Tune trainable lifecycle | `chess_anti_engine/tune/*` | deep | Config reload, donor/salvage overlays, PID state restore, manifests, async eval timing. |
+| 5 | adversarial | Loss and trainer contracts | `chess_anti_engine/train/losses.py`, `trainer.py`, `targets.py` | active | Blend weights, masks, target normalization, old shard behavior, live weight sync. |
 | 6 | adversarial | MCTS and search engines | `chess_anti_engine/mcts/*`, `uci/search.py`, `tablebase.py` | pending | Memory ownership, root reuse, terminal handling, solved/TB propagation, concurrent mutation. |
 | 7 | adversarial | Distributed server | `chess_anti_engine/server/*`, `tune/distributed_runtime.py` | pending | Upload durability, auth, leases, path safety, backpressure, recovery after crash. |
 | 8 | adversarial | UCI runtime | `chess_anti_engine/uci/*`, `stockfish/uci.py` | pending | Protocol state, time controls, ponderhit, cancellation, subprocess hangs. |
@@ -88,6 +88,19 @@ Tune trainable lifecycle:
   without marking source iteration.
 - [ ] Identify Tune simplification candidates only after correctness review.
 
+Loss and trainer contracts:
+
+- [x] Map trainer loss-weight config through constructor kwargs, live Tune sync,
+  salvage donor overlay, `Trainer._loss_kwargs`, and `compute_loss`.
+- [x] Verify live YAML/PB2/salvage config sync covers all runtime-mutable loss
+  weights, including constructor fallback semantics.
+- [ ] Verify blend-weight normalization, target availability masks, and legacy
+  shard defaults cannot create unintended labels.
+- [ ] Verify split metrics (`is_selfplay`, game phase, SF/search agreement) are
+  observation-only and cannot change gradients.
+- [ ] Identify loss/trainer simplification candidates only after correctness
+  review.
+
 Current notes:
 
 - WDL class convention in finalization is `0=sample POV win`, `1=draw`,
@@ -126,6 +139,21 @@ Current notes:
 - Finding F016 opened/fixed in this cycle: `status.csv` wrote the pre-finalize
   `global_iter`, so compact status rows lagged the actual completed iteration
   even though Ray reports used the correct iteration.
+- Finding F017 opened/fixed in this cycle: live Tune loss-weight sync and salvage
+  donor overlay omitted `w_policy`, `w_sf_volatility`, and `w_moves_left`, so
+  those Trainer attributes could stay stale even though constructor config and
+  `compute_loss` supported them.
+- Focused loss/trainer validation after F017 passed:
+  `tests/test_trainable_config_ops.py`,
+  `tests/test_distributed_selfplay_backpressure.py`, `tests/test_compute_loss.py`,
+  `tests/test_losses.py`, and `tests/test_collation.py` (`42 passed`).
+- Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
+  `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
+  `tests/test_tune_distributed_worker_cmd.py`,
+  `tests/test_distributed_selfplay_backpressure.py`, `tests/test_shard_prefetcher.py`,
+  `tests/test_async_test_eval.py`, `tests/test_difficulty_state.py`,
+  `tests/test_pid_inverse_regret.py`, and `tests/test_harness_sync_exclude.py`
+  (`83 passed`).
 
 ### `/simplify` Review Criteria
 
