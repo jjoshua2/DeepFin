@@ -10,11 +10,8 @@ def sha256_file(path: Path) -> str:
     """Return hex SHA-256 digest of a file."""
     h = hashlib.sha256()
     with path.open("rb") as f:
-        while True:
-            b = f.read(1024 * 1024)
-            if not b:
-                break
-            h.update(b)
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
     return h.hexdigest()
 
 
