@@ -340,6 +340,15 @@ Current notes:
 - Focused profile script validation after F033 passed:
   `python3 scripts/profile_play_batch.py --help` and
   `python3 -m py_compile scripts/profile_play_batch.py`.
+- Finding F034 opened/fixed in this cycle: `scripts/train.sh best-save`
+  reconstructed the replay shard path as `$WORK_DIR/replay/<trial>/replay_shards`
+  instead of using the same `tune_replay_root_override` resolver as training.
+  That happened to match `pbt2_small`, but would save a pool without replay
+  shards if the config used in-trial replay or a different override root.
+  `best-save` now resolves replay shards through `_trial_replay_shard_dir()`.
+- Focused train script validation after F034 passed:
+  `bash -n scripts/train.sh` and a direct resolver smoke check for
+  `configs/pbt2_small.yaml`.
 - Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
   `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
   `tests/test_tune_distributed_worker_cmd.py`,
@@ -1134,7 +1143,7 @@ Files:
 - [x] `scripts/profile_play_batch.py`
 - [ ] `scripts/reinit_value_heads.py`
 - [ ] `scripts/status.py`
-- [ ] `scripts/train.sh`
+- [x] `scripts/train.sh`
 - [ ] `scripts/train_bootstrap.py`
 - [ ] `scripts/blunder_check.py`
 - [ ] `scripts/blunder_check_cp.py`
@@ -1145,6 +1154,8 @@ Correctness/reliability:
   semantics.
 - [x] `profile_play_batch.py` uses the current `play_batch()` API and reports
   current `BatchStats` fields.
+- [x] `train.sh best-save` resolves replay shards through the same config-aware
+  Tune helper as training.
 - [x] Diagnostic scripts run from repo root and fail clearly when required
   trial/replay paths are absent.
 - [ ] Other scripts run from repo root and fail clearly when required files/env vars are absent.

@@ -179,6 +179,20 @@ _active_trial_dir() {
     ls -td "$WORK_DIR"/tune/train_trial_*/ 2>/dev/null | head -1 | sed 's:/$::'
 }
 
+_trial_replay_dir() {
+    local trial_dir="$1"
+    PYTHONPATH=. python3 - "$CONFIG" "$trial_dir" <<'PY'
+import sys
+from pathlib import Path
+
+from chess_anti_engine.tune.replay_exchange import _trial_replay_shard_dir
+from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
+
+cfg = flatten_run_config_defaults(load_yaml_file(sys.argv[1]))
+print(_trial_replay_shard_dir(config=cfg, trial_dir=Path(sys.argv[2])))
+PY
+}
+
 best_save() {
     if [ $# -lt 1 ]; then
         echo "Usage: $0 best-save LABEL [--iter N]"
@@ -222,7 +236,8 @@ best_save() {
         return 1
     fi
 
-    local replay_src="$WORK_DIR/replay/$(basename "$trial_dir")/replay_shards"
+    local replay_src
+    replay_src="$(_trial_replay_dir "$trial_dir")"
 
     local pool="$BEST_POOLS_DIR/$label"
     if [ -d "$pool" ]; then
