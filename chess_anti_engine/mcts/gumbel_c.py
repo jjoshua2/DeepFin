@@ -41,6 +41,15 @@ from chess_anti_engine.moves import POLICY_SIZE
 _log = _logging.getLogger(__name__)
 
 
+def _zero_root_output(value: float) -> tuple[np.ndarray, int, float, np.ndarray]:
+    return (
+        np.zeros((POLICY_SIZE,), dtype=np.float32),
+        0,
+        float(value),
+        np.zeros(POLICY_SIZE, dtype=np.float64),
+    )
+
+
 def _tb_override(tree: MCTSTree | None, probe, wdl: np.ndarray) -> None:
     if probe is None or tree is None:
         return
@@ -188,17 +197,16 @@ def run_gumbel_root_many_c(
         legal_idx = root_cb.legal_move_indices()
 
         if root_cb.is_game_over():
-            root_qs[i] = float(root_cb.terminal_value())
-            values_out[i] = float(root_qs[i])
-            probs_out[i] = np.zeros((POLICY_SIZE,), dtype=np.float32)
-            actions_out[i] = 0
-            root_pri[i] = np.zeros(POLICY_SIZE, dtype=np.float64)
+            probs_out[i], actions_out[i], values_out[i], root_pri[i] = (
+                _zero_root_output(float(root_cb.terminal_value()))
+            )
+            root_qs[i] = values_out[i]
             continue
 
         if legal_idx.size == 0:
-            probs_out[i] = np.zeros((POLICY_SIZE,), dtype=np.float32)
-            actions_out[i] = 0
-            root_pri[i] = np.zeros(POLICY_SIZE, dtype=np.float64)
+            probs_out[i], actions_out[i], values_out[i], root_pri[i] = (
+                _zero_root_output(float(root_qs[i]))
+            )
             continue
 
         root_legal[i] = legal_idx

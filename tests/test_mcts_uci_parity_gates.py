@@ -103,6 +103,14 @@ def _expected_root_value(board: chess.Board) -> float:
     return 0.0
 
 
+def _assert_uci_line_is_legal(board: chess.Board, line: tuple[str, ...]) -> None:
+    replay = board.copy(stack=False)
+    for uci in line:
+        move = chess.Move.from_uci(uci)
+        assert move in replay.legal_moves
+        replay.push(move)
+
+
 def test_puct_cross_impl_root_outputs_match_edge_case_oracles() -> None:
     boards = _edge_case_boards()
     pre_pol, pre_wdl = _root_logits(len(boards))
@@ -260,3 +268,54 @@ def test_uci_searchmoves_bypass_tb_shortcut_and_filter_bestmove(
     assert result.bestmove_uci == allowed_move.uci()
     assert result.pv[0] == allowed_move.uci()
     assert uci_search._allowed_root_indices(board, (allowed_move.uci(),)) == {allowed_idx}
+
+
+def test_uci_advance_root_reuses_tree_and_preserves_new_root_contract() -> None:
+    board = chess.Board()
+    evaluator = _ZeroEvaluator()
+    worker = SearchWorker(
+        evaluator,
+        device="cpu",
+        chunk_sims=16,
+        gumbel_cfg=GumbelConfig(simulations=16, topk=8, temperature=0.0, add_noise=False),
+    )
+
+    first = worker.run(
+        board,
+        stop_event=threading.Event(),
+        deadline=Deadline(None),
+        max_nodes=16,
+    )
+    first_move = chess.Move.from_uci(first.bestmove_uci)
+    assert first_move in board.legal_moves
+    assert worker._tree is not None  # noqa: SLF001
+    assert worker._root_id is not None  # noqa: SLF001
+    tree = worker._tree  # noqa: SLF001
+    old_root = int(worker._root_id)  # noqa: SLF001
+    first_idx = int(move_to_index(first_move, board))
+    child_root = tree.find_child(old_root, first_idx)
+    assert child_root >= 0
+    assert tree.is_expanded(child_root)
+
+    assert worker.advance_root(board, [first_move])
+    board.push(first_move)
+    assert worker._tree is tree  # noqa: SLF001
+    assert worker._root_id == child_root  # noqa: SLF001
+    assert worker._tree_fen == board.fen()  # noqa: SLF001
+
+    second = worker.run(
+        board,
+        stop_event=threading.Event(),
+        deadline=Deadline(None),
+        max_nodes=16,
+    )
+    second_move = chess.Move.from_uci(second.bestmove_uci)
+    assert second_move in board.legal_moves
+    _assert_uci_line_is_legal(board, second.pv)
+    assert worker._tree is tree  # noqa: SLF001
+    assert worker._root_id == child_root  # noqa: SLF001
+
+    actions, _visits = tree.get_children_visits(child_root)
+    mask = np.zeros((POLICY_SIZE,), dtype=np.bool_)
+    mask[actions] = True
+    assert np.array_equal(mask, _expected_root_mask(board))
