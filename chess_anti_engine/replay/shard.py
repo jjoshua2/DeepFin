@@ -110,6 +110,40 @@ _SHARD_FIELDS: tuple[str, ...] = (
     *(name for s in _OPTIONAL_FIELD_SPECS for name in (s.arr, s.flag)),
 )
 
+
+def zeros_for_storage_field(
+    name: str,
+    *,
+    n: int,
+    x_planes: int,
+    policy_size: int = POLICY_SIZE,
+    categorical_bins: int = DEFAULT_CATEGORICAL_BINS,
+) -> np.ndarray:
+    """Default array for a missing stored replay field.
+
+    Required fields have explicit defaults because their shapes can depend on
+    runtime policy/input dimensions. Optional fields are driven by
+    ``_OPTIONAL_FIELD_SPECS`` so mixed-schema shard concatenation stays in sync
+    with validation and serialization.
+    """
+    if name == "x":
+        return np.zeros((n, x_planes, 8, 8), dtype=np.float16)
+    if name == "policy_target":
+        return np.zeros((n, policy_size), dtype=np.float16)
+    if name == "wdl_target":
+        return np.zeros((n,), dtype=np.int8)
+    if name == "priority":
+        return np.ones((n,), dtype=np.float32)
+    if name == "has_policy":
+        return np.ones((n,), dtype=np.uint8)
+    for spec in _OPTIONAL_FIELD_SPECS:
+        if name == spec.flag:
+            return np.zeros((n,), dtype=np.uint8)
+        if name == spec.arr:
+            shape = (categorical_bins,) if name == "categorical_target" else spec.shape
+            return np.zeros((n, *shape), dtype=spec.dtype)
+    raise KeyError(f"unknown replay field {name!r}")
+
 # Legal-mask fields: per-head masks in different positions/POVs. Stored as
 # packed indices in shards since values are always 0/1.
 LEGAL_MASK_FIELDS: tuple[str, ...] = ("legal_mask", "sf_legal_mask", "future_legal_mask")

@@ -18,7 +18,6 @@ from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 
 from .buffer import ReplaySample
 from .shard import (
-    _OPTIONAL_FIELD_SPECS,
     _OPTIONAL_STORAGE_PAIRS,
     _SHARD_FIELDS,
     arrays_to_samples,
@@ -33,49 +32,13 @@ from .shard import (
     shard_index,
     shard_positions,
     sparsify_chunk,
+    zeros_for_storage_field,
 )
 
 _ARRAY_FIELD_ORDER = _SHARD_FIELDS
 
 # Lookup: value field name → has-flag field name (derived from shard.py's canonical pairs).
 _VALUE_TO_FLAG = {value: flag for value, flag in _OPTIONAL_STORAGE_PAIRS}
-
-
-def _zeros_for_missing_field(
-    name: str,
-    *,
-    n: int,
-    policy_size: int,
-    x_planes: int,
-    categorical_bins: int = DEFAULT_CATEGORICAL_BINS,
-) -> np.ndarray:
-    """Default array for a missing field at concat time.
-
-    Required fields (``x``, ``policy_target``, ``wdl_target``, ``priority``,
-    ``has_policy``) have explicit shapes since they take runtime params
-    (``policy_size``, ``x_planes``) or non-zero defaults (``priority``,
-    ``has_policy`` are ones, not zeros). Everything else is driven by
-    ``shard._OPTIONAL_FIELD_SPECS`` — the single source of truth for
-    optional shard fields. ``categorical_target``'s trailing dim comes
-    from the runtime arg since the bin count can vary across runs.
-    """
-    if name == "x":
-        return np.zeros((n, x_planes, 8, 8), dtype=np.float16)
-    if name == "policy_target":
-        return np.zeros((n, policy_size), dtype=np.float16)
-    if name == "wdl_target":
-        return np.zeros((n,), dtype=np.int8)
-    if name == "priority":
-        return np.ones((n,), dtype=np.float32)
-    if name == "has_policy":
-        return np.ones((n,), dtype=np.uint8)
-    for spec in _OPTIONAL_FIELD_SPECS:
-        if name == spec.flag:
-            return np.zeros((n,), dtype=np.uint8)
-        if name == spec.arr:
-            shape = (categorical_bins,) if name == "categorical_target" else spec.shape
-            return np.zeros((n, *shape), dtype=spec.dtype)
-    raise KeyError(f"unknown replay field {name!r}")
 
 
 def _batch_dims(arrs: dict[str, np.ndarray]) -> tuple[int, int, int]:
@@ -109,7 +72,7 @@ def _concat_sparse_batches(chunks: list[dict[str, np.ndarray]]) -> dict[str, np.
                 parts.append(np.asarray(chunk[name]))
             else:
                 parts.append(
-                    _zeros_for_missing_field(
+                    zeros_for_storage_field(
                         name,
                         n=n,
                         policy_size=chunk_policy_size,
@@ -635,7 +598,7 @@ class DiskReplayBuffer:
         policy_size = POLICY_SIZE
         if idx.size == 0:
             return {
-                name: _zeros_for_missing_field(
+                name: zeros_for_storage_field(
                     name, n=0, policy_size=policy_size, x_planes=x_planes,
                 )
                 for name in ("x", "policy_target", "wdl_target", "priority", "has_policy")

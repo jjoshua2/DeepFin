@@ -8,9 +8,9 @@ from pathlib import Path
 import numpy as np
 
 from chess_anti_engine.replay.shard import (
-    _OPTIONAL_FIELD_SPECS,
     _REQUIRED_STORAGE_FIELDS,
     _SHARD_FIELDS,
+    zeros_for_storage_field,
 )
 
 
@@ -56,25 +56,12 @@ def concat_array_batches(batches: list[dict[str, np.ndarray]]) -> dict[str, np.n
         raise ValueError("cannot concatenate empty replay shard list")
 
     def _zeros_for_missing(name: str, batch: dict[str, np.ndarray]) -> np.ndarray:
-        n = int(np.asarray(batch["x"]).shape[0])
-        policy_size = int(np.asarray(batch["policy_target"]).shape[1])
-        x_planes = int(np.asarray(batch["x"]).shape[1])
-        if name == "x":
-            return np.zeros((n, x_planes, 8, 8), dtype=np.float16)
-        if name == "policy_target":
-            return np.zeros((n, policy_size), dtype=np.float16)
-        if name == "wdl_target":
-            return np.zeros((n,), dtype=np.int8)
-        if name == "priority":
-            return np.ones((n,), dtype=np.float32)
-        if name == "has_policy":
-            return np.ones((n,), dtype=np.uint8)
-        for spec in _OPTIONAL_FIELD_SPECS:
-            if name == spec.flag:
-                return np.zeros((n,), dtype=np.uint8)
-            if name == spec.arr:
-                return np.zeros((n, *spec.shape), dtype=spec.dtype)
-        raise KeyError(f"unknown replay field {name!r}")
+        return zeros_for_storage_field(
+            name,
+            n=int(np.asarray(batch["x"]).shape[0]),
+            policy_size=int(np.asarray(batch["policy_target"]).shape[1]),
+            x_planes=int(np.asarray(batch["x"]).shape[1]),
+        )
 
     present_keys = set().union(*(batch.keys() for batch in batches))
     keys = [
