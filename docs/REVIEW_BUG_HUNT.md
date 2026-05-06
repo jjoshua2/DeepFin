@@ -302,6 +302,16 @@ Current notes:
 - Focused Stockfish wrapper validation after F030 passed:
   `tests/test_stockfish_uci_timeout.py` and `tests/test_cp_to_wdl.py`
   (`15 passed`).
+- Finding F031 opened/fixed in this cycle: threaded worker selfplay could swap
+  the direct evaluator to a new model before flushing the old replay buffer and
+  updating `model_sha`. A completed-game callback in that window could tag
+  samples with the old SHA even though they used new weights, while network
+  upload happened under the completed-game lock. The worker now stages the new
+  model locally, flushes buffer/evaluator/metadata atomically under the lock,
+  then uploads pending shards after releasing it.
+- Focused worker model-swap validation after F031 passed:
+  `tests/test_worker_model_update.py`, `tests/test_worker_small_uploads.py`, and
+  `tests/test_worker_upload_response.py` (`20 passed`).
 - Broader Tune/config validation after F012-F016 passed: `tests/test_trial_config.py`,
   `tests/test_trainable_config_ops.py`, `tests/test_trainable_rng_checkpoint.py`,
   `tests/test_tune_distributed_worker_cmd.py`,
@@ -892,11 +902,13 @@ Status: `deep`. Server upload security/compaction, trial leases, distributed
 backpressure, worker retry/delete behavior, cross-trial pending uploads,
 worker pool/cached assets/config, small uploads, E2E smoke, and Tune worker
 command tests have been run. F002, F021-F026 record fixed durability, path,
-retry, and trial-isolation risks from the current pass.
+retry, and trial-isolation risks from the current pass. F031 records a threaded
+worker model-swap/replay-tagging race found during the simplify pass.
 
 Evidence:
 
 - `pytest tests/test_server_upload_security.py tests/test_server_upload_compaction.py tests/test_server_trial_lease.py tests/test_distributed_selfplay_backpressure.py tests/test_worker_pool.py tests/test_worker_cached_assets.py tests/test_worker_config_yaml.py tests/test_worker_small_uploads.py tests/test_e2e_smoke.py tests/test_tune_distributed_worker_cmd.py tests/test_trial_config.py` passed: `70 passed`.
+- `pytest tests/test_worker_model_update.py tests/test_worker_small_uploads.py tests/test_worker_upload_response.py` passed: `20 passed`.
 
 Files:
 

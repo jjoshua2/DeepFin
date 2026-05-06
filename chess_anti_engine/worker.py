@@ -1037,29 +1037,33 @@ class WorkerSession:
         if _cfg is None:
             raise RuntimeError("no model_config available for worker-model load")
         _cfg = dataclasses.replace(_cfg, use_gradient_checkpointing=False)
-        self.model = self._load_and_compile_model(
+        new_model = self._load_and_compile_model(
             model_path, _cfg,
             label="worker-model", sha_short=str(new_sha)[:8],
         )
-        if self._direct_evaluator is not None:
-            _sync_evaluator_to_model(self._direct_evaluator, self.model)
-            self._evaluator_model_id = id(self.model)
-  # Flush upload buffer tagged with old SHA. Lock (when set by
-  # threaded selfplay) protects against concurrent _on_completed_game
-  # calls; in single-threaded mode it's None and nullcontext is a no-op.
+        # Flush the old-model upload buffer and swap evaluator/metadata as one
+        # critical section. In threaded selfplay, completed-game callbacks use
+        # this same lock before reading self.model_sha for shard metadata.
         buf_lock = self._upload_buf_lock
         now = time.time()
+        flushed_elapsed_s: float | None = None
         with buf_lock if buf_lock is not None else nullcontext():
             if self.upload_buf.positions > 0:
-                _flush_upload_buffer_to_pending(
+                _shard_path, elapsed_s = _flush_upload_buffer_to_pending(
                     pending_dir=self.pending_dir, username=str(self.args.username),
                     buf=self.upload_buf, now_s=now,
                     trial_id=self.leased_trial_id or self.fixed_trial_id or None,
                 )
-                self._upload_pending_shards(default_elapsed_s=0.0)
+                flushed_elapsed_s = float(elapsed_s)
+            self.model = new_model
+            if self._direct_evaluator is not None:
+                _sync_evaluator_to_model(self._direct_evaluator, self.model)
+                self._evaluator_model_id = id(self.model)
             self.model_sha = new_sha
             self.model_step = model_step
             self.last_model_sha = new_sha
+        if flushed_elapsed_s is not None:
+            self._upload_pending_shards(default_elapsed_s=flushed_elapsed_s)
         self.log.info("mid-batch model switch sha=%s", str(new_sha)[:8])
 
     def _check_model_update(self) -> None:

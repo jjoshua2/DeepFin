@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
+from chess_anti_engine.model import ModelConfig
+import chess_anti_engine.worker as worker_mod
 from chess_anti_engine.worker import WorkerSession
+from chess_anti_engine.worker_buffer import _BufferedUpload
 
 
 def _bare_worker_session() -> WorkerSession:
@@ -96,3 +101,70 @@ def test_cp_wdl_recommendation_changes_restart_selfplay_session() -> None:
 
     assert changed is True
     assert session._stop_selfplay is True
+
+
+def test_threaded_local_model_swap_keeps_buffer_metadata_atomic(monkeypatch, tmp_path: Path) -> None:
+    session = object.__new__(WorkerSession)
+    session.log = logging.getLogger("test.worker_model_update")
+    session.inference_client = None
+    session.model_sha = "old-sha"
+    session.model_step = 1
+    session.last_model_sha = "old-sha"
+    session.model_cfg_active = ModelConfig(kind="tiny")
+    session.cache_dir = tmp_path
+    session.pending_dir = tmp_path / "pending"
+    session.pending_dir.mkdir()
+    session.trial_api_prefix = "/v1/trials/trial_00000"
+    session.leased_trial_id = "trial_00000"
+    session.fixed_trial_id = ""
+    session.args = SimpleNamespace(username="worker")
+    session.upload_buf = _BufferedUpload(positions=1, games=1, samples=[object()])
+    lock = threading.Lock()
+    session._upload_buf_lock = lock
+
+    new_sha = "new-sha"
+    (tmp_path / f"model_{new_sha}.pt").write_bytes(b"checkpoint")
+    new_model = object()
+    evaluator = SimpleNamespace(model="old-model")
+    session._direct_evaluator = evaluator
+
+    session._server_url_for = lambda path: f"http://server{path}"
+    session._load_and_compile_model = lambda *_args, **_kwargs: new_model
+    monkeypatch.setattr(worker_mod, "_sha256_file", lambda _path: new_sha)
+
+    sync_events: list[tuple[bool, str, int]] = []
+    upload_events: list[bool] = []
+
+    def _fake_flush(**kwargs):
+        assert lock.locked()
+        buf = kwargs["buf"]
+        assert buf.positions == 1
+        buf.positions = 0
+        buf.samples = []
+        return tmp_path / "pending.zarr", 7.0
+
+    def _fake_sync(evaluator_arg, model_arg) -> None:
+        sync_events.append((lock.locked(), session.model_sha, session.upload_buf.positions))
+        evaluator_arg.model = model_arg
+
+    def _fake_upload_pending_shards(*, default_elapsed_s):
+        upload_events.append(lock.locked())
+        assert default_elapsed_s == 7.0
+        return 123.0
+
+    monkeypatch.setattr(worker_mod, "_flush_upload_buffer_to_pending", _fake_flush)
+    monkeypatch.setattr(worker_mod, "_sync_evaluator_to_model", _fake_sync)
+    session._upload_pending_shards = _fake_upload_pending_shards
+
+    WorkerSession._swap_model_from_manifest(
+        session,
+        {"model": {"sha256": new_sha}, "trainer_step": 2},
+    )
+
+    assert sync_events == [(True, "old-sha", 0)]
+    assert upload_events == [False]
+    assert evaluator.model is new_model
+    assert session.model is new_model
+    assert session.model_sha == new_sha
+    assert session.model_step == 2
+    assert session.last_model_sha == new_sha
