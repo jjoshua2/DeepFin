@@ -10,6 +10,7 @@ import logging
 import time
 from pathlib import Path
 
+from chess_anti_engine.config_keys import TRAINER_WEIGHT_KEYS
 from chess_anti_engine.selfplay.budget import progressive_mcts_simulations
 from chess_anti_engine.selfplay.config import (
     DiffFocusConfig,
@@ -26,28 +27,7 @@ from chess_anti_engine.tune.trial_config import DifficultyState, TrialConfig
 log = logging.getLogger(__name__)
 
 
-# Runtime-mutable trainer attributes sourced from config each iteration.
-# Used by _sync_trainer_weights (primary) and by the salvage-donor overlay
-# in _restore_checkpoint_or_salvage. Keeping one tuple prevents drift.
-_TRAINER_WEIGHT_KEYS: tuple[str, ...] = (
-    "w_policy",
-    "w_soft",
-    "w_future",
-    "w_wdl",
-    "w_sf_move",
-    "w_sf_eval",
-    "w_categorical",
-    "w_volatility",
-    "w_sf_volatility",
-    "w_moves_left",
-    "sf_wdl_frac",
-    "search_wdl_frac",
-    "sf_wdl_conf_power",
-    "sf_wdl_draw_scale",
-    "sf_wdl_temperature",
-    "sf_search_dampen_sf_low",
-    "sf_search_dampen_sf_high",
-)
+_TRAINER_WEIGHT_KEYS = TRAINER_WEIGHT_KEYS
 
 
 def _resolve_sims(tc: TrialConfig, trainer, *, max_sims: int) -> int:

@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from chess_anti_engine.config_keys import TRAINER_WEIGHT_KEYS
+
 
 def load_yaml_file(path: str | Path) -> dict[str, Any]:
     """Load a YAML file into a dict.
@@ -135,11 +137,8 @@ _TRAIN_KEYS = (
     "accum_steps", "warmup_steps", "warmup_lr_start", "lr_eta_min", "lr_T0", "lr_T_mult",
     "grad_clip", "zclip_z_thresh", "zclip_alpha", "zclip_max_norm",
     "use_compile", "compile_mode", "log_level", "swa_start", "swa_freq",
-    "w_policy", "w_soft", "w_future", "w_wdl", "w_sf_move", "w_sf_eval",
-    "w_categorical", "w_sf_volatility", "w_moves_left",
-    "sf_wdl_frac", "sf_wdl_frac_floor", "sf_wdl_conf_power", "sf_wdl_draw_scale", "sf_wdl_floor_at_regret",
-    "search_wdl_frac", "sf_wdl_temperature",
-    "sf_search_dampen_sf_low", "sf_search_dampen_sf_high",
+    *TRAINER_WEIGHT_KEYS,
+    "sf_wdl_frac_floor", "sf_wdl_floor_at_regret",
 )
 
 # tune section: all 1:1 passthrough.
