@@ -81,6 +81,32 @@ _MANIFEST_STATE_ACTIVE = "active"
 _MANIFEST_STATE_PAUSED = "paused_selfplay"
 
 
+def _upload_response_allows_pending_delete(response: Any) -> bool:
+    """True when a worker may delete its local pending shard after upload.
+
+    The server returns HTTP 200 for both accepted uploads and explicit protocol
+    rejections. Only accepted/deduped uploads are safe to drop locally.
+    """
+    if int(getattr(response, "status_code", 0)) != 200:
+        return False
+    try:
+        body = response.json()
+    except Exception:
+        return False
+    if not isinstance(body, dict):
+        return False
+    if bool(body.get("rejected", False)):
+        return False
+    if body.get("stored") is True:
+        return True
+    # Duplicate uploads return stored=false after the server has already
+    # accumulated or recovered the shard; with no rejected flag, local retry
+    # would only resend data the server intentionally deduped.
+    if body.get("stored") is False:
+        return True
+    return False
+
+
 def _extract_worker_wheel(payload: dict) -> dict | None:
     """Return the worker_wheel dict iff it has both endpoint and sha256, else None."""
     ww = payload.get("worker_wheel")
@@ -859,12 +885,21 @@ class WorkerSession:
                 )
             finally:
                 payload.close()
-            if r.status_code == 200:
+            if _upload_response_allows_pending_delete(r):
                 delete_shard_path(sp)
                 elapsed_path.unlink(missing_ok=True)
                 self.last_successful_send_s = time.time()
                 last_uploaded_at = float(self.last_successful_send_s)
             else:
+                if r.status_code == 200:
+                    try:
+                        body = r.json()
+                    except Exception:
+                        body = {}
+                    self.log.warning(
+                        "server did not accept pending shard %s; keeping for retry: %s",
+                        sp, body,
+                    )
                 break
         return last_uploaded_at
 

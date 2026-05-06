@@ -67,7 +67,7 @@ Replay and shard ingest:
   or schema-incompatible shards.
 - [ ] Verify server upload, pending recovery, and compaction preserve accepted
   samples across crash/restart interleavings.
-- [ ] Verify worker upload/delete flow cannot drop an unaccepted shard.
+- [x] Verify worker upload/delete flow cannot drop an unaccepted shard.
 - [ ] Identify replay simplification candidates only after correctness review.
 
 Current notes:
@@ -88,6 +88,8 @@ Current notes:
 - Finding F009 opened/fixed in this cycle: cross-trial selfplay export concat
   intersected shard keys, dropping auxiliary targets from full-schema shards
   whenever they were bundled with a minimal/legacy shard.
+- Finding F010 opened/fixed in this cycle: workers deleted pending shards for
+  HTTP 200 responses even when the server body explicitly rejected the upload.
 
 ### `/simplify` Review Criteria
 
@@ -205,6 +207,7 @@ Context:
 | F007 | Medium | Reliability | Tablebase | `chess_anti_engine/tablebase.py`, `tests/test_tablebase_cache.py` | The shared Syzygy cache used one global handle and closed the previous handle whenever another path was requested. A UCI option swap or concurrent training/search probe with a different path could invalidate an in-flight caller's returned handle after `get_tablebase()` released its lock. | `get_tablebase()` returned the cached handle without a usage lock, while the different-path branch closed `_tablebase` before installing the new handle. Call sites probe the returned handle outside the cache lock. | Replaced the single global with a path-keyed cache that leaves existing handles open; added fake-tablebase regression proving path swaps do not close active handles and failed opens still close the temporary handle. Verified `tests/test_tablebase_cache.py` -> `2 passed`. | fixed |
 | F008 | High | Training Quality / Reliability | Replay shards | `chess_anti_engine/replay/shard.py`, `tests/test_replay_shard_validation.py` | Optional shard targets could be marked present without storing the paired value array. Loading such a shard synthesized a zero-filled value and `arrays_to_samples()` treated it as a real SF/search/policy/mask target, silently corrupting auxiliary supervision. | `validate_arrays()` only checked `x`, `policy_target`, and `wdl_target`; `arrays_to_samples()` populated missing optional arrays with zeros and then trusted `has_*` flags from the shard. | Added optional field validation for flag shape, value shape, finite float values, and active flag without value. Verified replay shard/collation/disk-buffer slice: `33 passed`. | fixed |
 | F009 | Medium | Training Quality | Tune replay sharing | `chess_anti_engine/tune/_utils.py`, `tests/test_tune_utils.py` | Cross-trial selfplay export concatenation dropped any optional array absent from one selected shard. A single legacy/minimal shard in the bundle could strip SF/search/future/volatility targets from every full-schema shard in the exported replay. | `concat_array_batches()` used set intersection across batch keys before `save_local_shard_arrays()` wrote the export shard. | Changed concat to use the canonical replay schema order, preserve union-present fields, and synthesize zero/absent defaults for batches missing an optional field. Verified tune/replay slice: `26 passed`. | fixed |
+| F010 | Medium | Reliability | Worker upload | `chess_anti_engine/worker.py`, `tests/test_worker_upload_response.py` | Workers deleted local pending shards after any HTTP 200 upload response, including explicit server rejections such as protocol/version incompatibility. That could drop replay data that the server never accepted. | `_upload_pending_shards()` checked only `r.status_code == 200` before `delete_shard_path(sp)`, while the server uses HTTP 200 bodies with `stored: false, rejected: true` for compatibility and validation rejections. | Added `_upload_response_allows_pending_delete()` so workers delete only accepted uploads or deduped non-rejections; rejected 200 responses keep the pending shard for retry. Verified worker upload slice: `11 passed`. | fixed |
 
 ## Review Passes
 
