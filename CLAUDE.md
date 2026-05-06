@@ -19,9 +19,11 @@ python -m pytest tests/test_transformer_forward.py  # Run single test file
 PYTHONPATH=. python3 -m chess_anti_engine.run --config configs/pbt2_small.yaml --mode tune
 PYTHONPATH=. python3 -m chess_anti_engine.run --config configs/pbt2_small.yaml --mode tune --resume
 
-# Single trial (no PBT, local selfplay only)
-PYTHONPATH=. python3 -m chess_anti_engine.run --config configs/default.yaml --mode single
+# Single distributed trial (no PBT; still starts local server + worker)
+PYTHONPATH=. python3 -m chess_anti_engine.run --config configs/default.yaml --mode train
 ```
+
+Current CLI modes are `train`, `tune`, and `salvage`; there is no `single` mode.
 
 ## Operations
 
@@ -101,7 +103,9 @@ Gumbel MCTS with sequential halving (primary) and PUCT (legacy). C-accelerated t
 Workers run as separate processes, each playing game batches via shared inference broker. Broker (`inference.py: SlotBroker/SharedSlotBroker`) uses pre-allocated shared memory slots with pinned CPU buffers for zero-copy GPU transfer. Workers upload shard files to server inbox; trainable ingests them into the replay buffer each iteration.
 
 ### PID Difficulty Controller (`stockfish/pid.py`)
-Adaptive opponent strength via WDL regret-based difficulty. PID controller targets ~60% winrate by adjusting regret limit (how suboptimal SF's moves are). Regret is the primary difficulty lever; SF nodes and skill level are secondary.
+Adaptive opponent strength via WDL regret-based difficulty. PID controller targets `sf_pid_target_winrate` (see `configs/pbt2_small.yaml`) by adjusting `wdl_regret` and SF node count.
+
+**How regret works:** SF selects randomly among all moves whose WDL loss vs the best move is within `wdl_regret`. Higher regret = wider pool of acceptable moves including bad ones = SF plays weaker = model wins more easily. Lower regret = SF constrained to near-optimal moves = harder. So the controller LOWERS regret to increase difficulty and RAISES it when winrate is too low (airbag). The training target is always best-move based — `policy_sf` trains on the soft distribution over SF's MultiPV candidates by WDL eval, and `sf_wdl` reflects the objective position eval — neither depends on which handicapped move SF actually chose.
 
 ### Training (`train/`)
 `Trainer` class runs training steps with `torch.amp` (BF16 on CUDA). Multi-component loss computed in `losses.py`. Optimizer is configurable (`nadamw` / `adamw` / `cosmos` / `cosmos_fast`); current production config uses `adamw`. Gradient clipping via z-clip (`zclip_max_norm` hard cap + z-score outlier clip).
