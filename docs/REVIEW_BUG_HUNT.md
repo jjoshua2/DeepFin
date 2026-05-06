@@ -84,7 +84,7 @@ Tune trainable lifecycle:
   should affect workers or trainer weights.
 - [x] Verify background shard prefetch cannot reingest a shard already claimed
   by the trainer fallback path.
-- [ ] Verify async holdout eval cannot report stale or deleted-buffer data
+- [x] Verify async holdout eval cannot report stale or deleted-buffer data
   without marking source iteration.
 - [ ] Identify Tune simplification candidates only after correctness review.
 
@@ -123,6 +123,9 @@ Current notes:
 - Finding F015 opened/fixed in this cycle: prefetcher races could leave a
   stale preloaded inbox path queued after the trainer fallback path had already
   moved the shard, allowing a later drain to ingest the same arrays twice.
+- Finding F016 opened/fixed in this cycle: `status.csv` wrote the pre-finalize
+  `global_iter`, so compact status rows lagged the actual completed iteration
+  even though Ray reports used the correct iteration.
 
 ### `/simplify` Review Criteria
 
@@ -246,6 +249,7 @@ Context:
 | F013 | Medium | Reliability | Tune checkpointing | `chess_anti_engine/tune/trainable_report.py`, `chess_anti_engine/tune/trainable_phases.py`, `tests/test_trainable_rng_checkpoint.py` | The checkpoint RNG sidecar could lag the actual trainable RNG because `_save_trial_checkpoint()` wrote `rng_state.json` before `_finalize_iteration()` ran puzzle eval. If puzzle eval consumed RNG before `tune.report()` copied the checkpoint, resume would replay an older RNG stream and diverge from uninterrupted training. | `trainable.py` saved the checkpoint before `_finalize_iteration()`, while `_finalize_iteration()` calls `_run_puzzle_eval_if_due(..., rng=rng)` before reporting that same checkpoint directory to Ray. | Reused a sidecar writer and rewrote `rng_state.json` after puzzle eval and before `tune_report_fn(...)`; regression test verifies `tune.report()` sees the advanced RNG state. Verified Tune slice: `18 passed`. | fixed |
 | F014 | Medium | Reliability / Config | Tune worker lifecycle | `chess_anti_engine/tune/distributed_runtime.py`, `tests/test_tune_distributed_worker_cmd.py` | Live YAML reload could silently accept worker process-level settings without applying them to already-running workers. `_ensure_distributed_workers()` only restarted dead workers or count changes, so changes to SF worker count, threading, compile mode, upload cadence, auth/cache paths, or inference slot layout stayed stale until an external restart. | `trainable_config_ops.py` removed worker-level keys from `_TOPOLOGY_KEYS` because `_ensure_distributed_workers` supposedly spawned updated workers each iteration, but `distributed_runtime.py` returned immediately for any live process at the requested index. | Added a launch signature for CLI/auth/cache process settings and restart workers whose signature no longer matches the desired config; regression test covers a live `distributed_worker_sf_workers` change. Verified distributed runtime slice: `18 passed`. | fixed |
 | F015 | Medium | Training Quality / Reliability | Tune prefetch ingest | `chess_anti_engine/tune/distributed_runtime.py`, `tests/test_distributed_selfplay_backpressure.py` | A background prefetch load that finished just after `drain()` could queue a preloaded item for an inbox path the trainer fallback already processed and moved. The next drain would ingest the stale arrays again even though the original inbox shard no longer existed. | `_process_shard(..., preloaded=...)` trusted preloaded arrays without checking whether `sp` was still present in the inbox; the prefetch thread loads outside the consumer lock, so a path can become stale between load and queue. | Skip preloaded items whose inbox path no longer exists before adding arrays or metrics; regression test feeds a missing preloaded path and verifies zero matching games and zero replay positions. Verified distributed ingest/prefetch slice: `29 passed`. | fixed |
+| F016 | Low | Reliability / Observability | Tune reporting | `chess_anti_engine/tune/trainable_phases.py`, `tests/test_trainable_rng_checkpoint.py` | Compact `status.csv` rows reported `global_iter` one behind the completed iteration. Fresh iteration 1 wrote `iter=1, global_iter=0`, and resumed runs inherited the same off-by-one in the status file used for quick progress checks. | `trainable.py` increments `global_iter` only after `_finalize_iteration()`, but `_finalize_iteration()` passed the pre-increment `global_iter` into `_write_status_csv_row`; `_build_report_dict()` separately uses `iteration_idx`. | Write `iteration_idx` into the status row's `global_iter` column and cover it in the finalization regression. | fixed |
 
 ## Review Passes
 

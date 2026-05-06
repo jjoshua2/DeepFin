@@ -108,3 +108,6 @@ def test_finalize_updates_checkpoint_rng_after_puzzle_eval(
     )
 
     assert reported_state == rng.bit_generator.state
+    status_cols = (tmp_path / "status.csv").read_text(encoding="utf-8").strip().split(",")
+    assert status_cols[0] == "1"
+    assert status_cols[1] == "1"
