@@ -312,6 +312,8 @@ def main() -> int:
                    help="sweep multi-GPU PUCV gather and pending modes; requires --devices")
     p.add_argument("--single-pucv-sweep", action="store_true",
                    help="sweep single-GPU UseVL gather and pending modes")
+    p.add_argument("--use-vl", action="store_true",
+                   help="enable UCI UseVL for a single non-sweep config")
     p.add_argument("--chunk-sims", type=int, default=32)
     p.add_argument("--topk", type=int, default=16)
     p.add_argument("--max-batch", type=int, default=32)
@@ -456,6 +458,7 @@ def main() -> int:
             walkers=args.walkers, coalesce=args.coalesce,
             multi_gpu_pucv=args.multi_gpu_pucv, vl_gather=args.vl_gather,
             pucv_pending_mode=args.pucv_pending_mode,
+            use_vl=args.use_vl,
             compile_model=args.compile,
             compile_mode=args.compile_mode,
             compile_cache_dir=args.compile_cache_dir,
