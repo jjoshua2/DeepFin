@@ -80,6 +80,9 @@ def _spawn(checkpoint: str, device: str, *,
            walkers: int = 1, coalesce: bool = True,
            multi_gpu_pucv: bool = False, vl_gather: int = 512,
            pucv_pending_mode: str = "legacy",
+           compile_model: bool = True,
+           compile_mode: str = "max-autotune",
+           compile_cache_dir: str | None = None,
            log_level: str = "WARNING") -> subprocess.Popen[str]:
     cmd = [sys.executable, "-u", "-m", "chess_anti_engine.uci",
            "--checkpoint", checkpoint,
@@ -99,6 +102,12 @@ def _spawn(checkpoint: str, device: str, *,
         cmd.append("--no-coalesce")
     if multi_gpu_pucv:
         cmd.append("--multi-gpu-pucv")
+    if compile_model:
+        cmd.extend(["--compile-mode", compile_mode])
+    else:
+        cmd.append("--no-compile")
+    if compile_cache_dir:
+        cmd.extend(["--compile-cache-dir", compile_cache_dir])
     return subprocess.Popen(
         cmd,
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -192,6 +201,9 @@ def _run_config(
     multi_gpu_pucv: bool = False, vl_gather: int = 512,
     pucv_pending_mode: str = "legacy",
     use_vl: bool = False,
+    compile_model: bool = True,
+    compile_mode: str = "max-autotune",
+    compile_cache_dir: str | None = None,
     log_level: str = "WARNING",
 ) -> None:
     proc = _spawn(checkpoint, device, devices=devices,
@@ -200,6 +212,8 @@ def _run_config(
                   walkers=walkers, coalesce=coalesce,
                   multi_gpu_pucv=multi_gpu_pucv, vl_gather=vl_gather,
                   pucv_pending_mode=pucv_pending_mode,
+                  compile_model=compile_model, compile_mode=compile_mode,
+                  compile_cache_dir=compile_cache_dir,
                   log_level=log_level)
     reader = _LineReader(proc)
     _send(proc, "uci")
@@ -318,6 +332,13 @@ def main() -> int:
     p.set_defaults(coalesce=True)
     p.add_argument("--log-level", default="WARNING",
                    help="DEBUG to see per-search gumbel profile (GPU calls, avg batch, time breakdown).")
+    p.add_argument("--no-compile", dest="compile", action="store_false",
+                   help="pass --no-compile to the UCI engine")
+    p.add_argument("--compile-mode", default="max-autotune",
+                   help="UCI torch.compile mode when compile is enabled")
+    p.add_argument("--compile-cache-dir", default=None,
+                   help="UCI TorchInductor/Triton cache root")
+    p.set_defaults(compile=True)
     args = p.parse_args()
 
     def cache_values() -> tuple[int, ...]:
@@ -347,6 +368,9 @@ def main() -> int:
                         ),
                         log_level=args.log_level,
                         use_vl=True,
+                        compile_model=args.compile,
+                        compile_mode=args.compile_mode,
+                        compile_cache_dir=args.compile_cache_dir,
                     )
     elif args.pucv_sweep:
         if not args.devices:
@@ -367,6 +391,9 @@ def main() -> int:
                             f"cache={cache_entries}"
                         ),
                         log_level=args.log_level,
+                        compile_model=args.compile,
+                        compile_mode=args.compile_mode,
+                        compile_cache_dir=args.compile_cache_dir,
                     )
     elif args.sweep:
         # One variable at a time; first row is baseline so we can A/B against it.
@@ -389,6 +416,9 @@ def main() -> int:
                 eval_cache_entries=args.eval_cache_entries,
                 multi_gpu_pucv=args.multi_gpu_pucv, vl_gather=args.vl_gather,
                 pucv_pending_mode=args.pucv_pending_mode,
+                compile_model=args.compile,
+                compile_mode=args.compile_mode,
+                compile_cache_dir=args.compile_cache_dir,
                 log_level=args.log_level,
             )
     elif args.walker_sweep:
@@ -411,6 +441,9 @@ def main() -> int:
                 walkers=w, coalesce=coal, label=label,
                 multi_gpu_pucv=args.multi_gpu_pucv, vl_gather=args.vl_gather,
                 pucv_pending_mode=args.pucv_pending_mode,
+                compile_model=args.compile,
+                compile_mode=args.compile_mode,
+                compile_cache_dir=args.compile_cache_dir,
                 log_level=args.log_level,
             )
     else:
@@ -422,6 +455,9 @@ def main() -> int:
             walkers=args.walkers, coalesce=args.coalesce,
             multi_gpu_pucv=args.multi_gpu_pucv, vl_gather=args.vl_gather,
             pucv_pending_mode=args.pucv_pending_mode,
+            compile_model=args.compile,
+            compile_mode=args.compile_mode,
+            compile_cache_dir=args.compile_cache_dir,
             label="single",
             log_level=args.log_level,
         )
