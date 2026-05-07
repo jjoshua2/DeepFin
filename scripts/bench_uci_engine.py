@@ -217,13 +217,14 @@ def _run_config(
                   log_level=log_level)
     reader = _LineReader(proc)
     _send(proc, "uci")
-    reader.read_until("uciok", timeout_s=60.0)
+    startup_timeout = max(60.0, float(timeout_s))
+    reader.read_until("uciok", timeout_s=startup_timeout)
     if use_vl:
         _send(proc, "setoption name UseVL value true")
         _send(proc, f"setoption name VLGather value {vl_gather}")
         _send(proc, f"setoption name PUCVPendingMode value {pucv_pending_mode}")
     _send(proc, "isready")
-    reader.read_until("readyok", timeout_s=60.0)
+    reader.read_until("readyok", timeout_s=startup_timeout)
 
     coal_str = "" if walkers == 1 else f"  walkers={walkers}  coalesce={coalesce}"
     device_str = f"devices={devices}" if devices else f"device={device}"
