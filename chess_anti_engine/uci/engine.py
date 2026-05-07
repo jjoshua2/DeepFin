@@ -85,8 +85,17 @@ def emit_handshake(options: "EngineOptions") -> None:
     _println(f"option name Threads type spin default {options.threads} min 1 max 64")
     _println(f"option name LeafGather type spin default {options.leaf_gather} min 1 max 64")
     _println(f"option name UseVL type check default {'true' if options.use_vl else 'false'}")
+    _println(
+        "option name UseMultiGpuPUCV type check default "
+        f"{'true' if options.use_multi_gpu_pucv else 'false'}"
+    )
+    _println(
+        "option name PUCVPendingMode type combo default "
+        f"{options.pucv_pending_mode} var legacy var virtual-mean"
+    )
     _println(f"option name VLGather type spin default {options.vl_gather} min 32 max 4096")
     _println(f"option name MaxBatch type spin default {options.max_batch} min 64 max 8192")
+    _println(f"option name EvalCacheEntries type spin default {options.eval_cache_entries} min 0 max 1048576")
     _println(f"option name MinibatchSize type spin default {options.minibatch_size} min 0 max 8192")
     _println(f"option name MultiPV type spin default {options.multi_pv} min 1 max 256")
     _println(f"option name UCI_ShowWDL type check default {'true' if options.show_wdl else 'false'}")
@@ -123,6 +132,14 @@ class EngineOptions:
   # over sync gumbel walkers=1 (54k vs 26k nps on a 10-layer model).
   # Set via UCI `UseVL`.
     use_vl: bool = False
+  # Multi-GPU shared-tree PUCT. Active only when the executable supplied
+  # per-device evaluator factories; otherwise the option is accepted but
+  # cannot install a pool. Set via UCI `UseMultiGpuPUCV`.
+    use_multi_gpu_pucv: bool = False
+  # Pending accounting for batched PUCV paths. `legacy` keeps the existing
+  # absolute virtual-loss scoring; `virtual-mean` treats in-flight leaves as
+  # virtual-mean samples. Set via UCI `PUCVPendingMode`.
+    pucv_pending_mode: str = "legacy"
   # Sims per pipeline submit when `UseVL=true`. Sweet spot 384-768 for
   # the 384-dim 10-layer model on RTX 5090. Set via UCI `VLGather`.
     vl_gather: int = 512
@@ -130,6 +147,9 @@ class EngineOptions:
   # allocates buffers + CUDA-graph captures for. Changing it rebuilds
   # the evaluator + re-warmup (5-10s stall). Set via UCI `MaxBatch`.
     max_batch: int = 1024
+  # Encoded eval-cache size. 0 = disabled. Covers plain evaluate_encoded
+  # and the single-thread PUCV in-place path.
+    eval_cache_entries: int = 0
   # Minibatch target the C gumbel state machine aims for before flushing
   # leaves to GPU eval. 0 = C-side default (GSS_GPU_BATCH = 1024). Live
   # update; takes effect on the next chunk.
@@ -168,14 +188,19 @@ class Engine:
         self,
         worker: SearchWorker,
         *,
-        rebuild_evaluator: "Callable[[int], BatchEvaluator] | None" = None,
+        rebuild_evaluator: "Callable[[int, int], BatchEvaluator] | None" = None,
+        rebuild_multi_gpu_pucv_factories: (
+            "Callable[[int, int], list[Callable[[], BatchEvaluator]]] | None"
+        ) = None,
+        options: EngineOptions | None = None,
     ) -> None:
         self._worker = worker
   # Factory that takes a max_batch and returns a warmed-up evaluator
   # (model + devices + coalesce flag are captured at construction).
   # When None, the MaxBatch setoption silently no-ops.
         self._rebuild_evaluator = rebuild_evaluator
-        self._options = EngineOptions()
+        self._rebuild_multi_gpu_pucv_factories = rebuild_multi_gpu_pucv_factories
+        self._options = options if options is not None else EngineOptions()
         self._worker.set_max_tree_mb(self._options.hash_mb)
         self._board = chess.Board()
         self._search_thread: threading.Thread | None = None
@@ -460,6 +485,43 @@ class Engine:
             f"requires Threads=1 + 2-slot async evaluator)"
         )
 
+    def _set_use_multi_gpu_pucv(self, value: str) -> None:
+        enabled = value.strip().lower() == "true"
+        self._options.use_multi_gpu_pucv = enabled
+        if not enabled:
+            self._worker.clear_multi_gpu_pucv()
+            _println("info string UseMultiGpuPUCV off")
+            return
+        if self._rebuild_multi_gpu_pucv_factories is None:
+            self._options.use_multi_gpu_pucv = False
+            _println("info string UseMultiGpuPUCV unavailable — no per-device factories wired")
+            return
+        gather = min(self._options.vl_gather, self._options.max_batch)
+        factories = self._rebuild_multi_gpu_pucv_factories(
+            self._options.max_batch, gather,
+        )
+        if len(factories) < 2:
+            self._options.use_multi_gpu_pucv = False
+            _println("info string UseMultiGpuPUCV unavailable — need at least two devices")
+            return
+        self._worker.install_multi_gpu_pucv(
+            factories, gather=gather, as_factories=True,
+        )
+        _println(
+            f"info string UseMultiGpuPUCV on "
+            f"(devices={len(factories)} gather={gather})"
+        )
+
+    def _set_pucv_pending_mode(self, value: str) -> None:
+        normalized = value.strip().lower().replace("_", "-")
+        if normalized not in ("legacy", "virtual-mean"):
+            return
+        self._options.pucv_pending_mode = normalized
+        self._worker.set_pucv_vloss_mode(1 if normalized == "virtual-mean" else 0)
+        if self._options.use_multi_gpu_pucv:
+            self._set_use_multi_gpu_pucv("true")
+        _println(f"info string PUCVPendingMode set to {normalized}")
+
     def _set_vl_gather(self, value: str) -> None:
         n = self._parse_clamped_int(value, lo=32)
         if n is None:
@@ -467,6 +529,8 @@ class Engine:
         self._options.vl_gather = n
         if self._options.use_vl:
             self._worker.set_use_pucv(True, gather=n)
+        if self._options.use_multi_gpu_pucv:
+            self._set_use_multi_gpu_pucv("true")
         _println(f"info string VLGather set to {n}")
 
     def _set_multi_pv(self, value: str) -> None:
@@ -522,10 +586,30 @@ class Engine:
   # Rebuild is 5-10s (CUDA graph recapture on first forward).
   # User sees the stall only if they poll isready soon after.
         _println(f"info string MaxBatch rebuilding evaluator at {mb}…")
-        new_eval = self._rebuild_evaluator(mb)
+        new_eval = self._rebuild_evaluator(mb, self._options.eval_cache_entries)
         self._options.max_batch = mb
         self._worker.set_evaluator(new_eval)
+        if self._options.use_multi_gpu_pucv:
+            self._set_use_multi_gpu_pucv("true")
         _println(f"info string MaxBatch set to {mb}; evaluator rebuilt + warmed")
+
+    def _set_eval_cache_entries(self, value: str) -> None:
+        n = self._parse_clamped_int(value, lo=0)
+        if n is None:
+            return
+        if n == self._options.eval_cache_entries:
+            return
+        if self._rebuild_evaluator is None:
+            _println("info string EvalCacheEntries ignored — no evaluator factory wired")
+            return
+        _println(f"info string EvalCacheEntries rebuilding evaluator at {n}")
+        new_eval = self._rebuild_evaluator(self._options.max_batch, n)
+        self._options.eval_cache_entries = n
+        self._worker.set_eval_cache_entries(n)
+        self._worker.set_evaluator(new_eval)
+        if self._options.use_multi_gpu_pucv:
+            self._set_use_multi_gpu_pucv("true")
+        _println(f"info string EvalCacheEntries set to {n}; evaluator rebuilt + warmed")
 
     def _set_syzygy_path(self, value: str | None) -> None:
         v = (value or "").strip()
@@ -541,6 +625,8 @@ class Engine:
         "threads": _set_threads,
         "leafgather": _set_leaf_gather,
         "usevl": _set_use_vl,
+        "usemultigpupucv": _set_use_multi_gpu_pucv,
+        "pucvpendingmode": _set_pucv_pending_mode,
         "vlgather": _set_vl_gather,
         "multipv": _set_multi_pv,
         "uci_showwdl": _set_show_wdl,
@@ -549,6 +635,7 @@ class Engine:
         "logfile": _set_log_file,
         "minibatchsize": _set_minibatch_size,
         "maxbatch": _set_max_batch,
+        "evalcacheentries": _set_eval_cache_entries,
     }
 
     def _install_tablebase(self, path: str) -> None:
@@ -639,7 +726,7 @@ class Engine:
         self, *,
         nodes: int, elapsed_ms: int, score_cp: int, pv: tuple[str, ...],
         tbhits: int, score_mate: int | None, multipv: int | None,
-        wdl: tuple[int, int, int] | None,
+        wdl: tuple[int, int, int] | None, string: str | None = None,
     ) -> None:
         nps = int(nodes * 1000 / max(1, elapsed_ms))
         _println(format_info(InfoFields(
@@ -653,6 +740,7 @@ class Engine:
             pv=pv,
             tbhits=tbhits,
             wdl=wdl,
+            string=string,
         )))
 
     def _emit_bestmove(self, result: SearchResult) -> None:

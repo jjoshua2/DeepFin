@@ -21,6 +21,7 @@
 #include <numpy/arrayobject.h>
 
 #include <math.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
@@ -45,6 +46,26 @@ static inline double wdl_logits_to_q(double w, double d, double l) {
     return (ws > 0.0) ? ((ew - el) / ws) : 0.0;
 }
 
+/* Fast deterministic fingerprint of an already-encoded network row. This is
+ * for cache indexing only: callers that need collision-proof identity should
+ * still verify against stored encoded bytes on hits. */
+static inline void encoded_row_fingerprint128(
+    const float *row, uint64_t *out0, uint64_t *out1
+) {
+    const unsigned char *p = (const unsigned char *)row;
+    const size_t n = (size_t)146 * 64 * sizeof(float);
+    uint64_t h0 = UINT64_C(1469598103934665603);
+    uint64_t h1 = UINT64_C(1099511628211) ^ (uint64_t)n;
+    for (size_t i = 0; i < n; i++) {
+        h0 ^= (uint64_t)p[i];
+        h0 *= UINT64_C(1099511628211);
+        h1 ^= ((uint64_t)p[i] + UINT64_C(0x9e3779b97f4a7c15) + (h1 << 6) + (h1 >> 2));
+        h1 *= UINT64_C(14029467366897019727);
+    }
+    *out0 = h0;
+    *out1 = h1;
+}
+
 /* PyArray_FROMANY wrappers: shorten the repeated C-contiguous-array coercion
  * boilerplate at the Python-binding boundaries. Each returns a new reference
  * (or NULL on failure) that the caller must DECREF. */
@@ -55,6 +76,9 @@ static inline double wdl_logits_to_q(double w, double d, double l) {
         NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE))
 #define FROMANY_2D(obj, dtype) \
     ((PyArrayObject *)PyArray_FROMANY((obj), (dtype), 2, 2, NPY_ARRAY_C_CONTIGUOUS))
+#define FROMANY_2D_RW(obj, dtype) \
+    ((PyArrayObject *)PyArray_FROMANY((obj), (dtype), 2, 2, \
+        NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE))
 #define FROMANY_4D_RW(obj, dtype) \
     ((PyArrayObject *)PyArray_FROMANY((obj), (dtype), 4, 4, \
         NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE))
@@ -115,6 +139,9 @@ static int extract_cboards(PyObject *list, int32_t n,
 #define SOLVED_WIN      1
 #define SOLVED_LOSS    -1
 #define SOLVED_DRAW     2
+
+#define VLOSS_MODE_LEGACY        0
+#define VLOSS_MODE_VIRTUAL_MEAN  1
 
 typedef struct {
     /* Per-node arrays */
@@ -455,7 +482,7 @@ static int tree_expand(TreeData *t, int32_t node_id,
  * what tree_gumbel_select_child does for Gumbel descent. */
 static int32_t tree_select_child(const TreeData *t, int32_t node_id,
                                   double c_puct, double fpu_reduction,
-                                  int vloss_weight) {
+                                  int vloss_weight, int vloss_mode) {
     int32_t n_ch = t->num_children[node_id];
     int32_t off = t->children_offset[node_id];
 
@@ -490,9 +517,22 @@ static int32_t tree_select_child(const TreeData *t, int32_t node_id,
     }
 
     int32_t parent_vl = (vloss_weight > 0) ? t->virtual_loss[node_id] : 0;
-    double parent_N = (double)(t->N[node_id] + vloss_weight * parent_vl);
-    double parent_W = t->W[node_id] + (double)(vloss_weight * parent_vl);
-    double parent_Q = (parent_N > 0) ? (parent_W / parent_N) : 0.0;
+    double parent_N;
+    double parent_W;
+    double parent_Q;
+    if (vloss_weight > 0 && vloss_mode == VLOSS_MODE_VIRTUAL_MEAN) {
+        int32_t child_pending = 0;
+        for (int32_t i = 0; i < n_ch; i++) {
+            child_pending += t->virtual_loss[t->child_node[off + i]];
+        }
+        parent_N = (double)(t->N[node_id] + vloss_weight * (parent_vl + child_pending));
+        parent_W = t->W[node_id];
+        parent_Q = (t->N[node_id] > 0) ? (parent_W / (double)t->N[node_id]) : 0.0;
+    } else {
+        parent_N = (double)(t->N[node_id] + vloss_weight * parent_vl);
+        parent_W = t->W[node_id] + (double)(vloss_weight * parent_vl);
+        parent_Q = (parent_N > 0) ? (parent_W / parent_N) : 0.0;
+    }
     double c_sqrt_n = c_puct * sqrt(parent_N > 1.0 ? parent_N : 1.0);
 
     /* Single pass: track best visited score, best unvisited prior, and
@@ -517,17 +557,32 @@ static int32_t tree_select_child(const TreeData *t, int32_t node_id,
          * back in — we still need to visit something). */
         if (any_unsolved_or_draw && cs == SOLVED_WIN) continue;
         int32_t vl = (vloss_weight > 0) ? t->virtual_loss[cid] : 0;
-        int32_t n = t->N[cid] + vloss_weight * vl;
-        double w = t->W[cid] + (double)(vloss_weight * vl);
+        double n;
+        double w;
+        if (vloss_weight > 0 && vloss_mode == VLOSS_MODE_VIRTUAL_MEAN) {
+            double pending = (double)(vloss_weight * vl);
+            n = (double)t->N[cid] + pending;
+            if (pending > 0.0) {
+                double child_ref = (t->N[cid] > 0)
+                    ? (t->W[cid] / (double)t->N[cid])
+                    : -parent_Q;
+                w = t->W[cid] + pending * child_ref;
+            } else {
+                w = t->W[cid];
+            }
+        } else {
+            n = (double)(t->N[cid] + vloss_weight * vl);
+            w = t->W[cid] + (double)(vloss_weight * vl);
+        }
         double prior = t->prior[cid];
-        if (n > 0) {
+        if (n > 0.0) {
             visited_policy += prior;
             /* For SOLVED_DRAW children, override Q to exact 0 — accumulated
              * W might disagree slightly from one or two NN-eval visits before
              * the leaf was proven, but the proven value is what selection
              * should use. */
-            double q_parent = (cs == SOLVED_DRAW) ? 0.0 : (-w / (double)n);
-            double score = q_parent + c_sqrt_n * prior / (1.0 + (double)n);
+            double q_parent = (cs == SOLVED_DRAW) ? 0.0 : (-w / n);
+            double score = q_parent + c_sqrt_n * prior / (1.0 + n);
             if (score > best_visited_score) {
                 best_visited_score = score;
                 best_visited_slot = i;
@@ -553,7 +608,7 @@ static int32_t tree_select_child(const TreeData *t, int32_t node_id,
  * vloss_weight=0 keeps descent bit-identical to the pre-walker code path. */
 static int32_t tree_select_leaf(const TreeData *t, int32_t root_id,
                                  double c_puct, double fpu_at_root, double fpu_reduction,
-                                 int vloss_weight,
+                                 int vloss_weight, int vloss_mode,
                                  int32_t *path, int32_t max_path) {
     int32_t node = root_id;
     int32_t depth = 0;
@@ -565,7 +620,7 @@ static int32_t tree_select_leaf(const TreeData *t, int32_t root_id,
      * is visible. */
     while (__atomic_load_n(&t->expanded[node], __ATOMIC_ACQUIRE) && t->num_children[node] > 0) {
         if (depth >= max_path) break;
-        int32_t slot = tree_select_child(t, node, c_puct, fpu, vloss_weight);
+        int32_t slot = tree_select_child(t, node, c_puct, fpu, vloss_weight, vloss_mode);
         int32_t off = t->children_offset[node];
         node = t->child_node[off + slot];
         path[depth++] = node;
@@ -1640,7 +1695,7 @@ static PyObject *MCTSTree_select_leaves(MCTSTreeObject *self, PyObject *args) {
         int32_t root_id = root_ids[i];
         int32_t path_len = tree_select_leaf(&self->tree, root_id,
                                              c_puct, fpu_at_root, fpu_reduction,
-                                             0,
+                                             0, VLOSS_MODE_LEGACY,
                                              path_buf, MCTS_MAX_PATH);
 
         int32_t leaf_id = path_buf[path_len - 1];
@@ -1785,7 +1840,8 @@ static PyObject *MCTSTree_walker_descend_puct(MCTSTreeObject *self, PyObject *ar
     /* Descend. */
     int32_t path_buf[MCTS_MAX_PATH];
     int32_t path_len = tree_select_leaf(t, root_id, c_puct, fpu_root, fpu_reduction,
-                                        vloss_weight, path_buf, MCTS_MAX_PATH);
+                                        vloss_weight, VLOSS_MODE_LEGACY,
+                                        path_buf, MCTS_MAX_PATH);
     int32_t leaf_id = path_buf[path_len - 1];
 
     /* Replay moves root → leaf by walking parent pointers and reversing. */
@@ -1959,7 +2015,8 @@ static PyObject *MCTSTree_walker_integrate_leaf(MCTSTreeObject *self, PyObject *
 /* batch_descend_puct(root_id, root_cb, n_leaves, c_puct, fpu_root, fpu_red,
  *                    vloss_weight,
  *                    enc_buf, leaf_ids, path_buf, path_lens,
- *                    legal_buf, legal_lens, term_qs, is_term)
+ *                    legal_buf, legal_lens, term_qs, is_term,
+ *                    vloss_mode=0, cache_keys=None)
  *   -> int (number of leaves descended; == n_leaves)
  *
  * Single-call batched descent with virtual loss. Mirrors walker_descend_puct
@@ -1993,16 +2050,23 @@ static PyObject *MCTSTree_walker_integrate_leaf(MCTSTreeObject *self, PyObject *
  */
 static PyObject *MCTSTree_batch_descend_puct(MCTSTreeObject *self, PyObject *args) {
     int root_id, n_leaves, vloss_weight;
+    int vloss_mode = VLOSS_MODE_LEGACY;
     PyObject *root_cb_obj;
     PyObject *enc_obj, *leaf_ids_obj, *path_obj, *path_lens_obj;
     PyObject *legal_obj, *legal_lens_obj, *term_qs_obj, *is_term_obj;
+    PyObject *cache_keys_obj = Py_None;
     double c_puct, fpu_root, fpu_reduction;
-    if (!PyArg_ParseTuple(args, "iOidddiOOOOOOOO",
+    if (!PyArg_ParseTuple(args, "iOidddiOOOOOOOO|iO",
                           &root_id, &root_cb_obj, &n_leaves,
                           &c_puct, &fpu_root, &fpu_reduction, &vloss_weight,
                           &enc_obj, &leaf_ids_obj, &path_obj, &path_lens_obj,
-                          &legal_obj, &legal_lens_obj, &term_qs_obj, &is_term_obj))
+                          &legal_obj, &legal_lens_obj, &term_qs_obj, &is_term_obj,
+                          &vloss_mode, &cache_keys_obj))
         return NULL;
+    if (vloss_mode != VLOSS_MODE_LEGACY && vloss_mode != VLOSS_MODE_VIRTUAL_MEAN) {
+        PyErr_SetString(PyExc_ValueError, "vloss_mode must be 0 (legacy) or 1 (virtual_mean)");
+        return NULL;
+    }
 
     TreeData *t = &self->tree;
     if (root_id < 0 || root_id >= t->node_count) {
@@ -2033,12 +2097,18 @@ static PyObject *MCTSTree_batch_descend_puct(MCTSTreeObject *self, PyObject *arg
     PyArrayObject *legal_lens_arr = FROMANY_1D_RW(legal_lens_obj, NPY_INT32);
     PyArrayObject *term_qs_arr = FROMANY_1D_RW(term_qs_obj, NPY_FLOAT64);
     PyArrayObject *is_term_arr = FROMANY_1D_RW(is_term_obj, NPY_INT8);
+    PyArrayObject *cache_keys_arr = NULL;
+    if (cache_keys_obj != Py_None) {
+        cache_keys_arr = FROMANY_2D_RW(cache_keys_obj, NPY_UINT64);
+    }
     if (!enc_arr || !leaf_ids_arr || !path_arr || !path_lens_arr ||
-        !legal_arr || !legal_lens_arr || !term_qs_arr || !is_term_arr) {
+        !legal_arr || !legal_lens_arr || !term_qs_arr || !is_term_arr ||
+        (cache_keys_obj != Py_None && !cache_keys_arr)) {
         Py_XDECREF(enc_arr); Py_XDECREF(leaf_ids_arr);
         Py_XDECREF(path_arr); Py_XDECREF(path_lens_arr);
         Py_XDECREF(legal_arr); Py_XDECREF(legal_lens_arr);
         Py_XDECREF(term_qs_arr); Py_XDECREF(is_term_arr);
+        Py_XDECREF(cache_keys_arr);
         return NULL;
     }
     if (PyArray_DIM(enc_arr, 0) < n_leaves ||
@@ -2051,11 +2121,15 @@ static PyObject *MCTSTree_batch_descend_puct(MCTSTreeObject *self, PyObject *arg
         PyArray_DIM(legal_arr, 0) < (npy_intp)n_leaves * 256 ||
         PyArray_DIM(legal_lens_arr, 0) < n_leaves ||
         PyArray_DIM(term_qs_arr, 0) < n_leaves ||
-        PyArray_DIM(is_term_arr, 0) < n_leaves) {
+        PyArray_DIM(is_term_arr, 0) < n_leaves ||
+        (cache_keys_arr && (
+            PyArray_DIM(cache_keys_arr, 0) < n_leaves ||
+            PyArray_DIM(cache_keys_arr, 1) < 2))) {
         Py_DECREF(enc_arr); Py_DECREF(leaf_ids_arr);
         Py_DECREF(path_arr); Py_DECREF(path_lens_arr);
         Py_DECREF(legal_arr); Py_DECREF(legal_lens_arr);
         Py_DECREF(term_qs_arr); Py_DECREF(is_term_arr);
+        Py_XDECREF(cache_keys_arr);
         PyErr_SetString(PyExc_ValueError,
             "buffer too small for n_leaves (or wrong shape)");
         return NULL;
@@ -2069,12 +2143,13 @@ static PyObject *MCTSTree_batch_descend_puct(MCTSTreeObject *self, PyObject *arg
     int32_t *legal_lens = (int32_t *)PyArray_DATA(legal_lens_arr);
     double *term_qs = (double *)PyArray_DATA(term_qs_arr);
     int8_t *is_term = (int8_t *)PyArray_DATA(is_term_arr);
+    uint64_t *cache_keys = cache_keys_arr ? (uint64_t *)PyArray_DATA(cache_keys_arr) : NULL;
 
     Py_BEGIN_ALLOW_THREADS
     for (int i = 0; i < n_leaves; i++) {
         int32_t *path_i = path_data + (size_t)i * MCTS_MAX_PATH;
         int32_t path_len = tree_select_leaf(
-            t, root_id, c_puct, fpu_root, fpu_reduction, vloss_weight,
+            t, root_id, c_puct, fpu_root, fpu_reduction, vloss_weight, vloss_mode,
             path_i, MCTS_MAX_PATH);
         int32_t leaf_id = path_i[path_len - 1];
         leaf_ids[i] = leaf_id;
@@ -2103,6 +2178,10 @@ static PyObject *MCTSTree_batch_descend_puct(MCTSTreeObject *self, PyObject *arg
             /* Zero out enc slot so a buggy caller that submits this row
              * to GPU anyway gets a benign forward instead of UB. */
             memset(enc_data + (size_t)i * 146 * 64, 0, 146 * 64 * sizeof(float));
+            if (cache_keys) {
+                cache_keys[(size_t)i * 2] = 0;
+                cache_keys[(size_t)i * 2 + 1] = 0;
+            }
             tree_mark_solved_and_propagate(t, path_i, path_len, term_solved);
             tree_backprop(t, path_i, path_len, term_q);
             continue;
@@ -2113,6 +2192,12 @@ static PyObject *MCTSTree_batch_descend_puct(MCTSTreeObject *self, PyObject *arg
             tree_apply_vloss_path(t, path_i, path_len);
         }
         cboard_encode_146_into(&cb, enc_data + (size_t)i * 146 * 64);
+        if (cache_keys) {
+            encoded_row_fingerprint128(
+                enc_data + (size_t)i * 146 * 64,
+                &cache_keys[(size_t)i * 2],
+                &cache_keys[(size_t)i * 2 + 1]);
+        }
 
         int legal_tmp[256];
         int n_legal_i = cboard_legal_move_indices(&cb, legal_tmp, /*sorted=*/0);
@@ -2128,6 +2213,7 @@ static PyObject *MCTSTree_batch_descend_puct(MCTSTreeObject *self, PyObject *arg
     Py_DECREF(path_arr); Py_DECREF(path_lens_arr);
     Py_DECREF(legal_arr); Py_DECREF(legal_lens_arr);
     Py_DECREF(term_qs_arr); Py_DECREF(is_term_arr);
+    Py_XDECREF(cache_keys_arr);
     return PyLong_FromLong(n_leaves);
 }
 
@@ -2477,7 +2563,7 @@ static int32_t tree_gumbel_collect_leaf(const TreeData *t, int32_t root_id,
                                             sel->vloss_weight);
         } else {
             slot = tree_select_child(t, node, sel->c_puct, sel->fpu_reduction,
-                                     sel->vloss_weight);
+                                     sel->vloss_weight, VLOSS_MODE_LEGACY);
         }
         node = t->child_node[t->children_offset[node] + slot];
         path[depth++] = node;
@@ -2913,7 +2999,9 @@ static void cboard_encode_146_into(const CBoard *b, float * restrict out) {
      * Planes 0-11: overwritten by bitboard_to_plane (handles zero BBs internally)
      * Planes 12..12+hist*12-1: overwritten by history encoder
      * Planes 12+hist*12..95: unused history — need zeroing
-     * Planes 96-102,111: overwritten by fill_lc0_112
+     * Planes 96-99: castling planes — need zeroing (conditional fill)
+     * Plane 100: en-passant plane — need zeroing (conditional fill)
+     * Planes 101-102,111: overwritten by fill_lc0_112
      * Planes 103-110: repetition planes — need zeroing (only 103 may be set)
      * Planes 112-145: feature planes — need zeroing (feat_bb_to_plane adds 1.0f) */
     int hist = b->hist_len < CBOARD_HISTORY_MAX ? b->hist_len : CBOARD_HISTORY_MAX;
@@ -2922,6 +3010,8 @@ static void cboard_encode_146_into(const CBoard *b, float * restrict out) {
         memset(out + first_unused_hist * 64, 0,
                (96 - first_unused_hist) * 64 * sizeof(float));
     }
+    /* Castling + en-passant planes 96-100 */
+    memset(out + 96 * 64, 0, 5 * 64 * sizeof(float));
     /* Repetition planes 103-110 (8 planes) */
     memset(out + 103 * 64, 0, 8 * 64 * sizeof(float));
     /* Feature planes 112-145 (34 planes) */
@@ -3509,7 +3599,7 @@ static PyMethodDef MCTSTree_methods[] = {
     {"walker_integrate_leaf", (PyCFunction)MCTSTree_walker_integrate_leaf, METH_VARARGS,
      "walker_integrate_leaf(node_path, legal, pol_logits, wdl_logits, vloss_weight) -> None"},
     {"batch_descend_puct", (PyCFunction)MCTSTree_batch_descend_puct, METH_VARARGS,
-     "batch_descend_puct(root_id, root_cboard, n, c_puct, fpu_root, fpu_red, vloss, enc_buf, leaf_ids, path_buf, path_lens, legal_buf, legal_lens, term_qs, is_term) -> int. Single-call N-leaf descent with vloss; GIL released. Terminals are backpropped + marked solved inline."},
+     "batch_descend_puct(root_id, root_cboard, n, c_puct, fpu_root, fpu_red, vloss, enc_buf, leaf_ids, path_buf, path_lens, legal_buf, legal_lens, term_qs, is_term, vloss_mode=0, cache_keys=None) -> int. Single-call N-leaf descent with vloss; GIL released. Optional cache_keys is uint64[N,2] encoded-row fingerprint output."},
     {"batch_integrate_leaves", (PyCFunction)MCTSTree_batch_integrate_leaves, METH_VARARGS,
      "batch_integrate_leaves(n, path_buf, path_lens, legal_buf, legal_lens, is_term, pol, wdl, vloss) -> None. Companion to batch_descend_puct: integrates GPU results for non-terminal leaves; GIL released."},
     {NULL}

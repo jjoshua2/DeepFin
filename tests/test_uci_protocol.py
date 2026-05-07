@@ -178,3 +178,12 @@ def test_format_info_mate_overrides_cp() -> None:
 def test_format_info_string_trailing() -> None:
     out = format_info(InfoFields(string="hello world"))
     assert out.endswith("string hello world")
+
+
+def test_format_info_pv_string_trailing() -> None:
+    out = format_info(InfoFields(
+        score_cp=12,
+        pv=("e2e4",),
+        string="pucv leaves=512 batches=4",
+    ))
+    assert out.endswith("pv e2e4 string pucv leaves=512 batches=4")

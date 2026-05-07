@@ -26,6 +26,7 @@ from typing import Any
 import numpy as np
 
 from chess_anti_engine.encoding._lc0_ext import CBoard as _CBoard
+from chess_anti_engine.inference_cache import PucvEvalCache, PucvEvalCacheStats
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
 
 # Stride constants matching the C extension's per-leaf write layout.
@@ -43,6 +44,8 @@ def _alloc_buffers(gather: int) -> dict[str, np.ndarray]:
         "legal_lens": np.empty(gather, dtype=np.int32),
         "term_qs": np.empty(gather, dtype=np.float64),
         "is_term": np.empty(gather, dtype=np.int8),
+        "cache_keys": np.empty((gather, 2), dtype=np.uint64),
+        "enc_rows": np.empty((gather, _PLANES, 8, 8), dtype=np.float32),
     }
 
 
@@ -63,6 +66,8 @@ class PucvChunker:
         fpu_at_root: float = 0.0,
         fpu_reduction: float = 0.2,
         vloss_weight: int = 3,
+        vloss_mode: int = 0,
+        eval_cache_entries: int = 0,
     ) -> None:
         if not hasattr(evaluator, "evaluate_inplace_async"):
             raise TypeError(
@@ -78,9 +83,18 @@ class PucvChunker:
         self._fpu_root = float(fpu_at_root)
         self._fpu_red = float(fpu_reduction)
         self._vloss = int(vloss_weight)
+        self._vloss_mode = int(vloss_mode)
+        self._cache = (
+            PucvEvalCache(max_entries=int(eval_cache_entries))
+            if eval_cache_entries > 0
+            else None
+        )
   # Ping-pong CPU metadata buffer sets, one per slot. Encoding for slot
   # k goes into ev.get_input_buffer(_, slot=k); we don't dual that.
         self._bufs = [_alloc_buffers(self._gather), _alloc_buffers(self._gather)]
+
+    def cache_stats(self) -> PucvEvalCacheStats | None:
+        return None if self._cache is None else self._cache.stats()
 
     def run(
         self,
@@ -123,21 +137,27 @@ class PucvChunker:
                     enc_view,
                     b["leaf_ids"], b["path_buf"], b["path_lens"],
                     b["legal_buf"], b["legal_lens"],
-                    b["term_qs"], b["is_term"],
+                    b["term_qs"], b["is_term"], self._vloss_mode,
+                    b["cache_keys"] if self._cache is not None else None,
                 )
-                next_handle = ev.evaluate_inplace_async(n, slot=next_slot)
+                if self._cache is None:
+                    next_handle = (
+                        "gpu_full", next_buf_idx, n,
+                        ev.evaluate_inplace_async(n, slot=next_slot),
+                    )
+                else:
+                    next_handle = self._prepare_cached_submit(
+                        ev, next_slot, next_buf_idx, n, enc_view, b,
+                    )
             else:
                 next_slot = -1
                 next_buf_idx = -1
                 next_handle = None
 
             if pending_handle is not None:
-                pol_t, wdl_t, evt = pending_handle
-                if evt is not None:
-                    evt.synchronize()
-                pol = pol_t.numpy() if hasattr(pol_t, "numpy") else np.asarray(pol_t)
-                wdl = wdl_t.numpy() if hasattr(wdl_t, "numpy") else np.asarray(wdl_t)
-                b_cur = self._bufs[pending_buf_idx]
+                b_cur, pending_n, pol, wdl = self._finish_pending(
+                    pending_handle,
+                )
                 tree.batch_integrate_leaves(
                     pending_n,
                     b_cur["path_buf"], b_cur["path_lens"],
@@ -158,3 +178,100 @@ class PucvChunker:
                 pending_handle = None
 
         return sims
+
+    def _prepare_cached_submit(
+        self,
+        ev: Any,
+        slot: int,
+        buf_idx: int,
+        n: int,
+        enc_view: np.ndarray,
+        b: dict[str, np.ndarray],
+    ) -> tuple[Any, ...]:
+        cache = self._cache
+        assert cache is not None
+        hit_values: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+        miss_indices: list[int] = []
+        for i in range(n):
+            if int(b["is_term"][i]) != 0:
+                continue
+            hit = cache.get(b["cache_keys"][i], enc_view[i])
+            if hit is None:
+                miss_indices.append(i)
+            else:
+                hit_values[i] = hit
+
+        if not miss_indices:
+            return ("cache_only", buf_idx, n, hit_values)
+
+        miss_idx = np.asarray(miss_indices, dtype=np.int32)
+        miss_n = int(miss_idx.size)
+        b["enc_rows"][:n] = enc_view[:n]
+        enc_view[:miss_n] = enc_view[miss_idx]
+        handle = ev.evaluate_inplace_async(miss_n, slot=slot)
+        return ("gpu_miss", buf_idx, n, miss_idx, hit_values, handle)
+
+    def _finish_pending(
+        self,
+        pending_handle: tuple[Any, ...],
+    ) -> tuple[dict[str, np.ndarray], int, np.ndarray, np.ndarray]:
+        kind = pending_handle[0]
+        if kind == "gpu_full":
+            _, buf_idx, n, handle = pending_handle
+            pol_t, wdl_t, evt = handle
+            if evt is not None:
+                evt.synchronize()
+            pol = pol_t.numpy() if hasattr(pol_t, "numpy") else np.asarray(pol_t)
+            wdl = wdl_t.numpy() if hasattr(wdl_t, "numpy") else np.asarray(wdl_t)
+            return self._bufs[buf_idx], int(n), pol, wdl
+
+        if kind == "cache_only":
+            _, buf_idx, n, hit_values = pending_handle
+            b = self._bufs[buf_idx]
+            pol, wdl = self._materialize_cached_outputs(int(n), hit_values, None, None)
+            return b, int(n), pol, wdl
+
+        _, buf_idx, n, miss_idx, hit_values, handle = pending_handle
+        pol_t, wdl_t, evt = handle
+        if evt is not None:
+            evt.synchronize()
+        pol_m = pol_t.numpy() if hasattr(pol_t, "numpy") else np.asarray(pol_t)
+        wdl_m = wdl_t.numpy() if hasattr(wdl_t, "numpy") else np.asarray(wdl_t)
+        b = self._bufs[buf_idx]
+        cache = self._cache
+        assert cache is not None
+        for j, original_i in enumerate(miss_idx):
+            i = int(original_i)
+            cache.put(b["cache_keys"][i], b["enc_rows"][i], pol_m[j], wdl_m[j])
+        pol, wdl = self._materialize_cached_outputs(
+            int(n), hit_values, miss_idx, (pol_m, wdl_m),
+        )
+        return b, int(n), pol, wdl
+
+    def _materialize_cached_outputs(
+        self,
+        n: int,
+        hit_values: dict[int, tuple[np.ndarray, np.ndarray]],
+        miss_idx: np.ndarray | None,
+        miss_outputs: tuple[np.ndarray, np.ndarray] | None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        first_value = next(iter(hit_values.values()), None)
+        if first_value is None and miss_outputs is not None:
+            first_value = (miss_outputs[0][0], miss_outputs[1][0])
+        if first_value is None:
+            return (
+                np.zeros((n, 4672), dtype=np.float32),
+                np.zeros((n, 3), dtype=np.float32),
+            )
+        pol = np.zeros((n, *first_value[0].shape), dtype=first_value[0].dtype)
+        wdl = np.zeros((n, *first_value[1].shape), dtype=first_value[1].dtype)
+        for i, (pol_row, wdl_row) in hit_values.items():
+            pol[i] = pol_row
+            wdl[i] = wdl_row
+        if miss_idx is not None and miss_outputs is not None:
+            pol_m, wdl_m = miss_outputs
+            for j, original_i in enumerate(miss_idx):
+                i = int(original_i)
+                pol[i] = pol_m[j]
+                wdl[i] = wdl_m[j]
+        return pol, wdl

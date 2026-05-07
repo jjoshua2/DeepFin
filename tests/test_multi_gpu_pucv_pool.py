@@ -27,7 +27,7 @@ from chess_anti_engine.uci.multi_gpu_pucv_pool import (
     MultiGpuPucvConfig,
     MultiGpuPucvPool,
 )
-from chess_anti_engine.uci.search import SearchWorker
+from chess_anti_engine.uci.search import SearchWorker, _pucv_stats_string
 from chess_anti_engine.uci.time_manager import Deadline
 
 
@@ -50,6 +50,38 @@ def _seed_tree() -> tuple[MCTSTree, int, CBoard]:
     priors = np.full(legal.size, 1.0 / legal.size, dtype=np.float64)
     tree.expand(rid, legal, priors)
     return tree, rid, cb
+
+
+class _CountingInplaceEvaluator:
+    n_slots = 2
+
+    def __init__(self, max_batch: int = 8) -> None:
+        self.calls = 0
+        self.batch_sizes: list[int] = []
+        self._lock = threading.Lock()
+        self._bufs = [
+            np.zeros((max_batch, 146, 8, 8), dtype=np.float32),
+            np.zeros((max_batch, 146, 8, 8), dtype=np.float32),
+        ]
+
+    def get_input_buffer(self, bsz: int, slot: int = 0) -> np.ndarray:
+        return self._bufs[slot][:bsz]
+
+    def evaluate_inplace_async(
+        self,
+        bsz: int,
+        *,
+        slot: int = 0,
+    ) -> tuple[np.ndarray, np.ndarray, None]:
+        del slot
+        with self._lock:
+            self.calls += 1
+            self.batch_sizes.append(int(bsz))
+        return (
+            np.zeros((bsz, 4672), dtype=np.float32),
+            np.zeros((bsz, 3), dtype=np.float32),
+            None,
+        )
 
 
 def test_pool_n1_accumulates_visits() -> None:
@@ -87,6 +119,14 @@ def test_pool_n2_accumulates_visits_no_vloss_leak() -> None:
         _, visits = tree.get_children_visits(rid)
         total = int(visits.sum())
         assert target * 3 // 4 <= total <= target
+        stats = pool.last_stats()
+        assert stats.target_sims == target
+        assert stats.leaves == target
+        assert stats.batches >= 1
+        assert stats.avg_batch > 0.0
+        assert len(stats.workers) == 2
+        assert sum(w.leaves for w in stats.workers) == target
+        assert max(w.max_batch for w in stats.workers) <= 8
 
         for nid in range(tree.node_count()):
             assert tree.get_virtual_loss(nid) == 0, f"vl leaked on {nid}"
@@ -106,6 +146,32 @@ def test_pool_zero_target_is_noop() -> None:
         pool.run(tree=tree, root_id=rid, root_cboard=cb,
                  target_sims=0, stop_event=threading.Event())
         assert tree.node_count() == pre
+    finally:
+        pool.close()
+
+
+def test_pool_eval_cache_reuses_identical_fresh_tree_leaf() -> None:
+    ev = _CountingInplaceEvaluator()
+    pool = MultiGpuPucvPool(
+        MultiGpuPucvConfig(n_gpus=1, gather=1, eval_cache_entries=8),
+        evaluators=[ev],
+    )
+    try:
+        tree_a, rid_a, cb_a = _seed_tree()
+        pool.run(tree=tree_a, root_id=rid_a, root_cboard=cb_a,
+                 target_sims=1, stop_event=threading.Event())
+
+        tree_b, rid_b, cb_b = _seed_tree()
+        pool.run(tree=tree_b, root_id=rid_b, root_cboard=cb_b,
+                 target_sims=1, stop_event=threading.Event())
+
+        assert ev.calls == 1
+        assert ev.batch_sizes == [1]
+        stats = pool.last_stats()
+        assert stats.cache_hits == 1
+        assert stats.cache_misses == 0
+        for nid in range(tree_b.node_count()):
+            assert tree_b.get_virtual_loss(nid) == 0, f"vl leaked on {nid}"
     finally:
         pool.close()
 
@@ -151,6 +217,13 @@ def test_searchworker_install_multi_gpu_pucv_produces_bestmove() -> None:
                         deadline=deadline, max_nodes=64)
     assert len(result.bestmove_uci) >= 4
     assert result.nodes >= 32
+    stats = worker.last_multi_gpu_pucv_stats()
+    assert stats is not None
+    assert stats.batches >= 1
+    assert stats.leaves >= 32
+    stats_line = _pucv_stats_string(stats, pending_mode=1)
+    assert stats_line is not None
+    assert "pending=virtual-mean" in stats_line
     worker.close()
 
 

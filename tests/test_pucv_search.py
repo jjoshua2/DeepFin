@@ -23,6 +23,7 @@ from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.mcts.puct_vl import PucvChunker
 from chess_anti_engine.model import ModelConfig, build_model
 from chess_anti_engine.uci.search import SearchWorker
+from chess_anti_engine.uci.search import _single_pucv_cache_stats_string
 from chess_anti_engine.uci.time_manager import Deadline
 
 
@@ -48,6 +49,45 @@ def _seed_tree(dispatcher, gather: int = 16) -> tuple[MCTSTree, int, CBoard, Puc
     tree.expand(rid, legal, priors)
     chunker = PucvChunker(dispatcher, gather=gather, c_puct=1.4)
     return tree, rid, cb, chunker
+
+
+class _InplaceCountingEvaluator:
+    n_slots = 2
+
+    def __init__(self, max_batch: int = 8) -> None:
+        self.calls = 0
+        self.batch_sizes: list[int] = []
+        self._bufs = [
+            np.zeros((max_batch, 146, 8, 8), dtype=np.float32),
+            np.zeros((max_batch, 146, 8, 8), dtype=np.float32),
+        ]
+
+    def get_input_buffer(self, bsz: int, slot: int = 0) -> np.ndarray:
+        return self._bufs[slot][:bsz]
+
+    def evaluate_inplace_async(
+        self,
+        bsz: int,
+        *,
+        slot: int = 0,
+    ) -> tuple[np.ndarray, np.ndarray, None]:
+        del slot
+        self.calls += 1
+        self.batch_sizes.append(int(bsz))
+        pol = np.zeros((bsz, 4672), dtype=np.float32)
+        wdl = np.zeros((bsz, 3), dtype=np.float32)
+        return pol, wdl, None
+
+
+def _seed_tree_for_chunker() -> tuple[MCTSTree, int, CBoard]:
+    tree = MCTSTree()
+    board = chess.Board()
+    cb = CBoard.from_board(board)
+    rid = tree.add_root(0, 0.0)
+    legal = cb.legal_move_indices().astype(np.int32)
+    priors = np.full(legal.size, 1.0 / legal.size, dtype=np.float64)
+    tree.expand(rid, legal, priors)
+    return tree, rid, cb
 
 
 def test_pucv_accumulates_visits_at_root() -> None:
@@ -101,6 +141,30 @@ def test_pucv_zero_target_is_noop() -> None:
     chunker.run(tree=tree, root_id=rid, root_cboard=cb, target_sims=0)
 
     assert tree.node_count() == pre_count
+
+
+def test_pucv_eval_cache_reuses_identical_fresh_tree_leaf() -> None:
+    evaluator = _InplaceCountingEvaluator()
+    chunker = PucvChunker(evaluator, gather=1, c_puct=1.4, eval_cache_entries=8)
+
+    tree_a, rid_a, cb_a = _seed_tree_for_chunker()
+    chunker.run(tree=tree_a, root_id=rid_a, root_cboard=cb_a, target_sims=1)
+
+    tree_b, rid_b, cb_b = _seed_tree_for_chunker()
+    chunker.run(tree=tree_b, root_id=rid_b, root_cboard=cb_b, target_sims=1)
+
+    assert evaluator.calls == 1
+    assert evaluator.batch_sizes == [1]
+    stats = chunker.cache_stats()
+    assert stats is not None
+    assert stats.hits == 1
+    assert stats.misses == 1
+    stats_line = _single_pucv_cache_stats_string(stats, pending_mode=1)
+    assert stats_line is not None
+    assert "pending=virtual-mean" in stats_line
+    assert "cache=1/2" in stats_line
+    for nid in range(tree_b.node_count()):
+        assert tree_b.get_virtual_loss(nid) == 0, f"vl leaked on node {nid}"
 
 
 def test_searchworker_use_pucv_produces_bestmove() -> None:

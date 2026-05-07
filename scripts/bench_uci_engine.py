@@ -36,6 +36,18 @@ _PROFILE_RE = re.compile(
     r"gpu=(?P<gpu>[\d.]+)\((?P<gpu_calls>\d+)calls,(?P<gpu_pos>\d+)pos,avg=(?P<avg_batch>[\d.]+)\) "
     r"finish=(?P<finish>[\d.]+) score=(?P<score>[\d.]+) policy=(?P<policy>[\d.]+) glue=(?P<glue>[-\d.]+)"
 )
+_PUCV_PROFILE_RE = re.compile(
+    r"multi_gpu_pucv target=(?P<target>\d+) leaves=(?P<leaves>\d+) "
+    r"batches=(?P<batches>\d+) avg_batch=(?P<avg_batch>[\d.]+) "
+    r"wall=(?P<wall>[\d.]+)s worker_leaves=\[(?P<worker_leaves>[^\]]*)\]"
+)
+_PUCV_INFO_RE = re.compile(
+    r"pucv(?: leaves=(?P<leaves>\d+) batches=(?P<batches>\d+) "
+    r"avg_batch=(?P<avg_batch>[\d.]+) max_batch=(?P<max_batch>\d+) "
+    r"workers=(?P<workers>[^ ]+))? pending=(?P<pending>[-\w]+)"
+    r"(?: cache=(?P<cache_hits>\d+)/(?P<cache_requests>\d+)"
+    r"\((?P<cache_rate>[\d.]+)%\))?"
+)
 
 
 # Representative positions covering the main phases + one tactical spike.
@@ -62,18 +74,31 @@ def _float_from_result(result: dict[str, object], key: str, default: float = 0.0
 
 
 def _spawn(checkpoint: str, device: str, *,
+           devices: str | None = None,
            chunk_sims: int, topk: int, max_batch: int,
+           eval_cache_entries: int = 0,
            walkers: int = 1, coalesce: bool = True,
+           multi_gpu_pucv: bool = False, vl_gather: int = 512,
+           pucv_pending_mode: str = "legacy",
            log_level: str = "WARNING") -> subprocess.Popen[str]:
     cmd = [sys.executable, "-u", "-m", "chess_anti_engine.uci",
-           "--checkpoint", checkpoint, "--device", device,
+           "--checkpoint", checkpoint,
            "--chunk-sims", str(chunk_sims),
            "--topk", str(topk),
            "--max-batch", str(max_batch),
+           "--eval-cache-entries", str(max(0, int(eval_cache_entries))),
            "--walkers", str(walkers),
+           "--vl-gather", str(vl_gather),
+           "--pucv-pending-mode", pucv_pending_mode,
            "--log-level", log_level]
+    if devices:
+        cmd.extend(["--devices", devices])
+    else:
+        cmd.extend(["--device", device])
     if not coalesce:
         cmd.append("--no-coalesce")
+    if multi_gpu_pucv:
+        cmd.append("--multi-gpu-pucv")
     return subprocess.Popen(
         cmd,
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -120,6 +145,29 @@ def _run_one(proc: subprocess.Popen[str], reader: _LineReader, *,
         prof_agg["prep_s"] = sum(float(p["prep"]) for p in profiles)
         prof_agg["finish_s"] = sum(float(p["finish"]) for p in profiles)
         prof_agg["avg_batch"] = prof_agg["gpu_pos"] / max(1.0, prof_agg["gpu_calls"])
+    pucv_profiles = [_PUCV_PROFILE_RE.search(l) for l in lines]
+    pucv_profiles = [p for p in pucv_profiles if p is not None]
+    if pucv_profiles:
+        prof_agg["pucv_searches"] = float(len(pucv_profiles))
+        prof_agg["pucv_target"] = sum(float(p["target"]) for p in pucv_profiles)
+        prof_agg["pucv_leaves"] = sum(float(p["leaves"]) for p in pucv_profiles)
+        prof_agg["pucv_batches"] = sum(float(p["batches"]) for p in pucv_profiles)
+        prof_agg["pucv_wall_s"] = sum(float(p["wall"]) for p in pucv_profiles)
+        prof_agg["pucv_avg_batch"] = (
+            prof_agg["pucv_leaves"] / max(1.0, prof_agg["pucv_batches"])
+        )
+    pucv_infos = [_PUCV_INFO_RE.search(l) for l in lines]
+    pucv_infos = [p for p in pucv_infos if p is not None]
+    if pucv_infos:
+        prof_agg["pucv_info_lines"] = float(len(pucv_infos))
+        prof_agg["pucv_cache_hits"] = sum(float(p["cache_hits"] or 0) for p in pucv_infos)
+        prof_agg["pucv_cache_requests"] = sum(float(p["cache_requests"] or 0) for p in pucv_infos)
+        info_leaves = sum(float(p["leaves"] or 0) for p in pucv_infos)
+        info_batches = sum(float(p["batches"] or 0) for p in pucv_infos)
+        if info_leaves > 0:
+            prof_agg["pucv_leaves"] = prof_agg.get("pucv_leaves", 0.0) + info_leaves
+        if info_batches > 0:
+            prof_agg["pucv_batches"] = prof_agg.get("pucv_batches", 0.0) + info_batches
 
     return {
         "wall_s": round(elapsed, 3),
@@ -135,24 +183,47 @@ def _run_one(proc: subprocess.Popen[str], reader: _LineReader, *,
 
 def _run_config(
     checkpoint: str, device: str, *,
+    devices: str | None = None,
     nodes: int, repeats: int, timeout_s: float,
     chunk_sims: int, topk: int, max_batch: int,
+    eval_cache_entries: int = 0,
     label: str,
     walkers: int = 1, coalesce: bool = True,
+    multi_gpu_pucv: bool = False, vl_gather: int = 512,
+    pucv_pending_mode: str = "legacy",
+    use_vl: bool = False,
     log_level: str = "WARNING",
 ) -> None:
-    proc = _spawn(checkpoint, device,
+    proc = _spawn(checkpoint, device, devices=devices,
                   chunk_sims=chunk_sims, topk=topk, max_batch=max_batch,
+                  eval_cache_entries=eval_cache_entries,
                   walkers=walkers, coalesce=coalesce,
+                  multi_gpu_pucv=multi_gpu_pucv, vl_gather=vl_gather,
+                  pucv_pending_mode=pucv_pending_mode,
                   log_level=log_level)
     reader = _LineReader(proc)
     _send(proc, "uci")
     reader.read_until("uciok", timeout_s=60.0)
+    if use_vl:
+        _send(proc, "setoption name UseVL value true")
+        _send(proc, f"setoption name VLGather value {vl_gather}")
+        _send(proc, f"setoption name PUCVPendingMode value {pucv_pending_mode}")
     _send(proc, "isready")
     reader.read_until("readyok", timeout_s=60.0)
 
     coal_str = "" if walkers == 1 else f"  walkers={walkers}  coalesce={coalesce}"
-    print(f"\n## {label}  chunk_sims={chunk_sims}  topk={topk}  max_batch={max_batch}{coal_str}")
+    device_str = f"devices={devices}" if devices else f"device={device}"
+    pucv_str = ""
+    if devices:
+        pucv_str = (
+            f"  multi_gpu_pucv={multi_gpu_pucv}  vl_gather={vl_gather} "
+            f"pending={pucv_pending_mode}"
+        )
+    elif use_vl:
+        pucv_str = f"  use_vl=True  vl_gather={vl_gather} pending={pucv_pending_mode}"
+    print(f"\n## {label}  {device_str}  chunk_sims={chunk_sims}  topk={topk}  max_batch={max_batch}{coal_str}{pucv_str}")
+    if eval_cache_entries > 0:
+        print(f"  eval_cache_entries={eval_cache_entries}")
     try:
         position_stats: dict[str, list[float]] = {}
         profile_runs: list[dict[str, float]] = []
@@ -183,6 +254,23 @@ def _run_config(
                 f"avg_batch={avg_batch:.1f}  gpu={gpu_pct:.1f}%  "
                 f"tree_prep={prep_pct:.1f}%  finish={finish_pct:.1f}%"
             )
+        pucv_runs = [p for p in profile_runs if "pucv_batches" in p]
+        if pucv_runs:
+            leaves = sum(p.get("pucv_leaves", 0.0) for p in pucv_runs)
+            batches = sum(p.get("pucv_batches", 0.0) for p in pucv_runs)
+            wall = sum(p.get("pucv_wall_s", 0.0) for p in pucv_runs)
+            cache_hits = sum(p.get("pucv_cache_hits", 0.0) for p in profile_runs)
+            cache_requests = sum(p.get("pucv_cache_requests", 0.0) for p in profile_runs)
+            cache = ""
+            if cache_requests > 0:
+                cache = (
+                    f"  cache={int(cache_hits)}/{int(cache_requests)}"
+                    f"({100.0 * cache_hits / cache_requests:.1f}%)"
+                )
+            print(
+                f"  pucv profile: leaves={int(leaves)}  batches={int(batches)}  "
+                f"avg_batch={leaves / max(1.0, batches):.1f}  wall={wall:.3f}s{cache}"
+            )
     finally:
         _send(proc, "quit")
         try:
@@ -195,6 +283,8 @@ def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--checkpoint", required=True)
     p.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
+    p.add_argument("--devices", default=None,
+                   help="comma-separated device list for multi-GPU UCI, e.g. cuda:0,cuda:1")
     p.add_argument("--nodes", type=int, default=1024)
     p.add_argument("--repeats", type=int, default=3)
     p.add_argument("--timeout-s", type=float, default=120.0)
@@ -203,11 +293,26 @@ def main() -> int:
     p.add_argument("--walker-sweep", action="store_true",
                    help="sweep --walkers {1,2,4,8} at the production chunk=512/topk=32/mb=1024 config. "
                         "Single-walker uses classic Gumbel; >1 switches to PUCT walker pool.")
+    p.add_argument("--pucv-sweep", action="store_true",
+                   help="sweep multi-GPU PUCV gather and pending modes; requires --devices")
+    p.add_argument("--single-pucv-sweep", action="store_true",
+                   help="sweep single-GPU UseVL gather and pending modes")
     p.add_argument("--chunk-sims", type=int, default=32)
     p.add_argument("--topk", type=int, default=16)
     p.add_argument("--max-batch", type=int, default=32)
+    p.add_argument("--eval-cache-entries", type=int, default=0,
+                   help="EvalCacheEntries passed to UCI (0 disables)")
+    p.add_argument("--cache-sweep", action="store_true",
+                   help="for PUCV sweeps, run cache off and on")
     p.add_argument("--walkers", type=int, default=1,
                    help="PUCT walker threads for a single --walkers config run (default 1 = Gumbel).")
+    p.add_argument("--vl-gather", type=int, default=512,
+                   help="VLGather / multi-GPU PUCV gather size")
+    p.add_argument("--multi-gpu-pucv", action="store_true",
+                   help="launch UCI with --multi-gpu-pucv when --devices is set")
+    p.add_argument("--pucv-pending-mode", choices=["legacy", "virtual-mean"],
+                   default="legacy",
+                   help="pending accounting for batched PUCV paths")
     p.add_argument("--no-coalesce", dest="coalesce", action="store_false",
                    help="disable walker-call coalescing (only meaningful with --walkers > 1)")
     p.set_defaults(coalesce=True)
@@ -215,9 +320,55 @@ def main() -> int:
                    help="DEBUG to see per-search gumbel profile (GPU calls, avg batch, time breakdown).")
     args = p.parse_args()
 
-    print(f"# checkpoint={args.checkpoint}  device={args.device}  nodes={args.nodes}  repeats={args.repeats}")
+    def cache_values() -> tuple[int, ...]:
+        if not args.cache_sweep:
+            return (max(0, int(args.eval_cache_entries)),)
+        enabled = max(1, int(args.eval_cache_entries)) if args.eval_cache_entries > 0 else 131072
+        return (0, enabled)
 
-    if args.sweep:
+    dev_label = f"devices={args.devices}" if args.devices else f"device={args.device}"
+    print(f"# checkpoint={args.checkpoint}  {dev_label}  nodes={args.nodes}  repeats={args.repeats}")
+
+    if args.single_pucv_sweep:
+        for pending_mode in ("legacy", "virtual-mean"):
+            for gather in (128, 256, 384, 512, 768, 1024):
+                for cache_entries in cache_values():
+                    _run_config(
+                        args.checkpoint, args.device, devices=args.devices,
+                        nodes=args.nodes, repeats=args.repeats, timeout_s=args.timeout_s,
+                        chunk_sims=512, topk=32, max_batch=max(args.max_batch, gather),
+                        eval_cache_entries=cache_entries,
+                        walkers=1, coalesce=args.coalesce,
+                        multi_gpu_pucv=False, vl_gather=gather,
+                        pucv_pending_mode=pending_mode,
+                        label=(
+                            f"single-gpu-pucv gather={gather} pending={pending_mode} "
+                            f"cache={cache_entries}"
+                        ),
+                        log_level=args.log_level,
+                        use_vl=True,
+                    )
+    elif args.pucv_sweep:
+        if not args.devices:
+            p.error("--pucv-sweep requires --devices")
+        for pending_mode in ("legacy", "virtual-mean"):
+            for gather in (128, 256, 384, 512, 768, 1024):
+                for cache_entries in cache_values():
+                    _run_config(
+                        args.checkpoint, args.device, devices=args.devices,
+                        nodes=args.nodes, repeats=args.repeats, timeout_s=args.timeout_s,
+                        chunk_sims=512, topk=32, max_batch=max(args.max_batch, gather),
+                        eval_cache_entries=cache_entries,
+                        walkers=args.walkers, coalesce=args.coalesce,
+                        multi_gpu_pucv=True, vl_gather=gather,
+                        pucv_pending_mode=pending_mode,
+                        label=(
+                            f"multi-gpu-pucv gather={gather} pending={pending_mode} "
+                            f"cache={cache_entries}"
+                        ),
+                        log_level=args.log_level,
+                    )
+    elif args.sweep:
         # One variable at a time; first row is baseline so we can A/B against it.
         configs = [
             ("baseline",                      32,   16,  32),
@@ -232,9 +383,12 @@ def main() -> int:
         ]
         for label, cs, tk, mb in configs:
             _run_config(
-                args.checkpoint, args.device,
+                args.checkpoint, args.device, devices=args.devices,
                 nodes=args.nodes, repeats=args.repeats, timeout_s=args.timeout_s,
                 chunk_sims=cs, topk=tk, max_batch=mb, label=label,
+                eval_cache_entries=args.eval_cache_entries,
+                multi_gpu_pucv=args.multi_gpu_pucv, vl_gather=args.vl_gather,
+                pucv_pending_mode=args.pucv_pending_mode,
                 log_level=args.log_level,
             )
     elif args.walker_sweep:
@@ -250,18 +404,24 @@ def main() -> int:
         ]
         for label, w, coal in walker_configs:
             _run_config(
-                args.checkpoint, args.device,
+                args.checkpoint, args.device, devices=args.devices,
                 nodes=args.nodes, repeats=args.repeats, timeout_s=args.timeout_s,
                 chunk_sims=512, topk=32, max_batch=1024,
+                eval_cache_entries=args.eval_cache_entries,
                 walkers=w, coalesce=coal, label=label,
+                multi_gpu_pucv=args.multi_gpu_pucv, vl_gather=args.vl_gather,
+                pucv_pending_mode=args.pucv_pending_mode,
                 log_level=args.log_level,
             )
     else:
         _run_config(
-            args.checkpoint, args.device,
+            args.checkpoint, args.device, devices=args.devices,
             nodes=args.nodes, repeats=args.repeats, timeout_s=args.timeout_s,
             chunk_sims=args.chunk_sims, topk=args.topk, max_batch=args.max_batch,
+            eval_cache_entries=args.eval_cache_entries,
             walkers=args.walkers, coalesce=args.coalesce,
+            multi_gpu_pucv=args.multi_gpu_pucv, vl_gather=args.vl_gather,
+            pucv_pending_mode=args.pucv_pending_mode,
             label="single",
             log_level=args.log_level,
         )

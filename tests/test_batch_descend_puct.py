@@ -38,6 +38,28 @@ def _fake_pol_wdl(rng: np.random.Generator, n: int) -> tuple[np.ndarray, np.ndar
     return pol, wdl
 
 
+def _descend_buffers(n: int) -> tuple[
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+]:
+    return (
+        np.empty((n, 146, 8, 8), dtype=np.float32),
+        np.empty(n, dtype=np.int32),
+        np.empty(n * _MAX_PATH, dtype=np.int32),
+        np.empty(n, dtype=np.int32),
+        np.empty(n * 256, dtype=np.int32),
+        np.empty(n, dtype=np.int32),
+        np.empty(n, dtype=np.float64),
+        np.empty(n, dtype=np.int8),
+    )
+
+
 @pytest.mark.skip(
     reason="walker_descend_puct calls try_forced_collapse (extends path "
     "through forced reply chains); batch_descend_puct deliberately omits "
@@ -172,6 +194,41 @@ def test_batch_descend_zero_n():
     assert got == 0
 
 
+def test_batch_descend_can_emit_encoded_cache_keys():
+    n = 1
+    board = chess.Board()
+
+    tree_a, rid_a, cb_a, _ = _root(board)
+    enc_a, leaf_ids_a, path_buf_a, path_lens_a, legal_buf_a, legal_lens_a, term_qs_a, is_term_a = (
+        _descend_buffers(n)
+    )
+    keys_a = np.zeros((n, 2), dtype=np.uint64)
+    tree_a.batch_descend_puct(
+        rid_a, cb_a, n, _C_PUCT, _FPU_ROOT, _FPU_RED, _VLOSS,
+        enc_a, leaf_ids_a, path_buf_a, path_lens_a,
+        legal_buf_a, legal_lens_a, term_qs_a, is_term_a,
+        0, keys_a,
+    )
+
+    tree_b, rid_b, cb_b, _ = _root(board)
+    enc_b, leaf_ids_b, path_buf_b, path_lens_b, legal_buf_b, legal_lens_b, term_qs_b, is_term_b = (
+        _descend_buffers(n)
+    )
+    keys_b = np.zeros((n, 2), dtype=np.uint64)
+    tree_b.batch_descend_puct(
+        rid_b, cb_b, n, _C_PUCT, _FPU_ROOT, _FPU_RED, _VLOSS,
+        enc_b, leaf_ids_b, path_buf_b, path_lens_b,
+        legal_buf_b, legal_lens_b, term_qs_b, is_term_b,
+        0, keys_b,
+    )
+
+    assert int(is_term_a[0]) == 0
+    assert np.isfinite(enc_a).all()
+    assert keys_a[0, 0] != 0 or keys_a[0, 1] != 0
+    np.testing.assert_array_equal(keys_a, keys_b)
+    np.testing.assert_array_equal(enc_a, enc_b)
+
+
 def test_batch_descend_undersized_buffer_raises():
     """ValueError when any buffer is smaller than n_leaves needs."""
     tree, rid, cb, _ = _root(chess.Board())
@@ -189,3 +246,47 @@ def test_batch_descend_undersized_buffer_raises():
     except ValueError:
         return
     raise AssertionError("expected ValueError on undersized path buffer")
+
+
+def test_batch_descend_virtual_mean_pending_does_not_turn_pending_into_loss():
+    board = chess.Board()
+    cb = CBoard.from_board(board)
+    legal = cb.legal_move_indices().astype(np.int32)
+    actions = legal[:2]
+
+    def make_tree() -> tuple[MCTSTree, int, int, int]:
+        tree = MCTSTree()
+        rid = tree.add_root(1, 0.0)
+        tree.expand(rid, actions, np.array([0.5, 0.5], dtype=np.float64))
+        good = tree.find_child(rid, int(actions[0]))
+        ok = tree.find_child(rid, int(actions[1]))
+        for _ in range(10):
+            tree.backprop(np.array([rid, good], dtype=np.int32), -1.0)
+        for _ in range(4):
+            tree.backprop(np.array([rid, ok], dtype=np.int32), -0.25)
+        tree.apply_vloss_path(np.array([rid, good], dtype=np.int32))
+        return tree, rid, good, ok
+
+    tree_legacy, rid_legacy, _good_legacy, ok_legacy = make_tree()
+    enc, leaf_ids, path_buf, path_lens, legal_buf, legal_lens, term_qs, is_term = (
+        _descend_buffers(1)
+    )
+    tree_legacy.batch_descend_puct(
+        rid_legacy, cb, 1, 0.0, 0.0, 0.2, 16,
+        enc, leaf_ids, path_buf, path_lens,
+        legal_buf, legal_lens, term_qs, is_term,
+        0,
+    )
+    assert int(leaf_ids[0]) == ok_legacy
+
+    tree_vm, rid_vm, good_vm, _ok_vm = make_tree()
+    enc, leaf_ids, path_buf, path_lens, legal_buf, legal_lens, term_qs, is_term = (
+        _descend_buffers(1)
+    )
+    tree_vm.batch_descend_puct(
+        rid_vm, cb, 1, 0.0, 0.0, 0.2, 16,
+        enc, leaf_ids, path_buf, path_lens,
+        legal_buf, legal_lens, term_qs, is_term,
+        1,
+    )
+    assert int(leaf_ids[0]) == good_vm

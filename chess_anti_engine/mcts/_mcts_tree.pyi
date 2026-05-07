@@ -89,6 +89,8 @@ class MCTSTree:
         legal_lens: NDArray[np.int32],
         term_qs: NDArray[np.float64],
         is_term: NDArray[np.int8],
+        vloss_mode: int = ...,
+        cache_keys: NDArray[np.uint64] | None = ...,
     ) -> int: ...
     def batch_integrate_leaves(
         self,

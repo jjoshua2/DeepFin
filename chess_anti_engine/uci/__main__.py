@@ -20,6 +20,7 @@ import numpy as np
 
 from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.inference import DirectGPUEvaluator
+from chess_anti_engine.inference_cache import EncodedEvalCache
 from chess_anti_engine.inference_dispatcher import (
     BatchCoalescingDispatcher,
     MultiGPUDispatcher,
@@ -68,6 +69,23 @@ def _warmup_evaluator(
             break
 
 
+def _warmup_pucv_evaluator(evaluator, *, gather: int) -> None:
+    """Warm the exact inplace-async shapes used by MultiGpuPucvPool."""
+    cb = CBoard.from_board(chess.Board())
+    encoded = cb.encode_146()
+    batches = sorted({1, max(1, int(gather))})
+    for batch in batches:
+        for slot in range(min(2, int(getattr(evaluator, "n_slots", 1)))):
+            try:
+                buf = evaluator.get_input_buffer(batch, slot=slot)
+                buf[:] = np.broadcast_to(encoded, (batch, 146, 8, 8))
+                _pol, _wdl, event = evaluator.evaluate_inplace_async(batch, slot=slot)
+                if event is not None:
+                    event.synchronize()
+            except Exception:
+                return
+
+
 def _load_models(checkpoint: str, devices: list[str]):
     """Load one model per device. Cached at startup and reused across
     evaluator rebuilds (e.g., when the UCI ``MaxBatch`` option changes)."""
@@ -100,7 +118,7 @@ def _make_evaluator_factory(
     (worker compiled on main, dispatched on submitter, fell back to eager
     at 47ms/forward instead of ~25ms) is the failure mode this avoids.
     """
-    def build(max_batch: int):
+    def build(max_batch: int, eval_cache_entries: int = 0):
         if compile_mode:
             import torch
             from typing import cast
@@ -132,10 +150,52 @@ def _make_evaluator_factory(
   # count, not the --no-coalesce flag alone.
         if coalesce and n_walkers > 1:
             evaluator = BatchCoalescingDispatcher(evaluator, max_batch=max_batch)
+        if eval_cache_entries > 0:
+            evaluator = EncodedEvalCache(
+                evaluator, max_entries=int(eval_cache_entries),
+            )
         _warmup_evaluator(
             evaluator, n_walkers=n_walkers, walker_gather=walker_gather,
         )
         return evaluator
+    return build
+
+
+def _make_multi_gpu_pucv_factory_builder(
+    models,
+    devices,
+    *,
+    compile_mode: str | None = None,
+):
+    """Return ``build(max_batch) -> list[factory]`` for MultiGpuPucvPool.
+
+    Each factory compiles, constructs, and warms its evaluator on the pool
+    worker thread that will replay cudagraphs during search.
+    """
+
+    def build(max_batch: int, gather: int):
+        effective_gather = min(max(1, int(gather)), int(max_batch))
+        factories = []
+        for model, device in zip(models, devices):
+            def make_one(m=model, d=device):
+                if compile_mode:
+                    import torch
+                    from typing import cast
+                    compiled = cast(
+                        "torch.nn.Module",
+                        torch.compile(m, mode=compile_mode),
+                    )
+                else:
+                    compiled = m
+                evaluator = DirectGPUEvaluator(
+                    compiled, device=d, max_batch=max_batch, n_slots=2,
+                )
+                _warmup_pucv_evaluator(evaluator, gather=effective_gather)
+                return evaluator
+
+            factories.append(make_one)
+        return factories
+
     return build
 
 
@@ -148,7 +208,14 @@ def _build_engine(
     n_walkers: int,
     vloss_weight: int,
     walker_gather: int,
+    pucv_vloss_mode: int,
+    max_batch: int,
+    vl_gather: int,
+    eval_cache_entries: int,
+    use_multi_gpu_pucv: bool,
     rebuild_evaluator=None,
+    rebuild_multi_gpu_pucv_factories=None,
+    options: EngineOptions | None = None,
 ) -> Engine:
     worker = SearchWorker(
         evaluator,
@@ -158,8 +225,23 @@ def _build_engine(
         n_walkers=n_walkers,
         vloss_weight=vloss_weight,
         walker_gather=walker_gather,
+        pucv_vloss_mode=pucv_vloss_mode,
+        eval_cache_entries=eval_cache_entries,
     )
-    return Engine(worker, rebuild_evaluator=rebuild_evaluator)
+    engine = Engine(
+        worker,
+        rebuild_evaluator=rebuild_evaluator,
+        rebuild_multi_gpu_pucv_factories=rebuild_multi_gpu_pucv_factories,
+        options=options,
+    )
+    if use_multi_gpu_pucv and rebuild_multi_gpu_pucv_factories is not None:
+        effective_gather = min(vl_gather, max_batch)
+        factories = rebuild_multi_gpu_pucv_factories(max_batch, effective_gather)
+        if len(factories) >= 2:
+            worker.install_multi_gpu_pucv(
+                factories, gather=effective_gather, as_factories=True,
+            )
+    return engine
 
 
 def _pick_device(arg: str) -> str:
@@ -191,6 +273,8 @@ def main() -> int:
     p.add_argument("--topk", type=int, default=32, help="Gumbel root candidates (default: 32)")
     p.add_argument("--max-batch", type=int, default=1024,
                    help="DirectGPUEvaluator max batch (default: 1024). Must be >= expected leaf count per wavefront.")
+    p.add_argument("--eval-cache-entries", type=int, default=0,
+                   help="LRU entries for encoded eval caches, including single-thread PUCV (default: 0/off)")
     p.add_argument("--log-level", default="WARNING",
                    help="stderr log level (DEBUG|INFO|WARNING). DEBUG enables per-search gumbel profile with GPU-calls/avg-batch.")
   # --walkers > 1 switches from the Gumbel-chunked path to a PUCT walker
@@ -209,6 +293,13 @@ def main() -> int:
   # the separate Gumbel path's C state machine, not this).
     p.add_argument("--walker-gather", type=int, default=1,
                    help="per-walker leaf gather (default: 1; lc0-style amplification at 4-8)")
+    p.add_argument("--vl-gather", type=int, default=512,
+                   help="leaf gather for UseVL and UseMultiGpuPUCV (default: 512)")
+    p.add_argument("--multi-gpu-pucv", action="store_true",
+                   help="with --devices, use shared-tree per-GPU PUCV workers instead of the routing dispatcher")
+    p.add_argument("--pucv-pending-mode", choices=["legacy", "virtual-mean"],
+                   default="legacy",
+                   help="pending accounting for batched PUCV paths (default: legacy)")
   # Coalesce concurrent walker calls into batched submits. On by default
   # when walkers > 1 since batch=1 per walker wastes GPU.
     p.add_argument("--no-coalesce", dest="coalesce", action="store_false",
@@ -275,6 +366,16 @@ def main() -> int:
         devices = [d.strip() for d in args.devices.split(",") if d.strip()]
     else:
         devices = [_pick_device(args.device)]
+    use_multi_gpu_pucv = bool(args.multi_gpu_pucv and len(devices) > 1)
+    startup_options = EngineOptions(
+        threads=max(1, int(args.walkers)),
+        leaf_gather=max(1, int(args.walker_gather)),
+        use_multi_gpu_pucv=use_multi_gpu_pucv,
+        pucv_pending_mode=str(args.pucv_pending_mode),
+        vl_gather=max(32, int(args.vl_gather)),
+        max_batch=max(64, int(args.max_batch)),
+        eval_cache_entries=max(0, int(args.eval_cache_entries)),
+    )
 
   # Background-build so `uci` can be answered before model load finishes.
   # Any command other than uci/quit blocks on `engine_ready` below, which
@@ -295,14 +396,30 @@ def main() -> int:
                 n_walkers=n_walkers, walker_gather=walker_gather,
                 compile_mode=compile_mode,
             )
+            build_pucv_factories = (
+                _make_multi_gpu_pucv_factory_builder(
+                    models,
+                    devices,
+                    compile_mode=compile_mode,
+                )
+                if len(devices) > 1
+                else None
+            )
   # Initial build: warms the evaluator too (see factory body).
-            evaluator = build_eval(args.max_batch)
+            evaluator = build_eval(args.max_batch, startup_options.eval_cache_entries)
             engine_ref[0] = _build_engine(
                 evaluator=evaluator, primary_device=devices[0],
                 chunk_sims=args.chunk_sims, topk=args.topk,
                 n_walkers=n_walkers, vloss_weight=int(args.vloss_weight),
                 walker_gather=walker_gather,
+                pucv_vloss_mode=1 if args.pucv_pending_mode == "virtual-mean" else 0,
+                max_batch=startup_options.max_batch,
+                vl_gather=startup_options.vl_gather,
+                eval_cache_entries=startup_options.eval_cache_entries,
+                use_multi_gpu_pucv=use_multi_gpu_pucv,
                 rebuild_evaluator=build_eval,
+                rebuild_multi_gpu_pucv_factories=build_pucv_factories,
+                options=startup_options,
             )
         except BaseException as exc:  # pragma: no cover — surfaced via readyok
             engine_error[0] = exc
@@ -315,7 +432,7 @@ def main() -> int:
         for raw in sys.stdin:
             cmd = parse_command(raw)
             if isinstance(cmd, CmdUci):
-                emit_handshake(EngineOptions())
+                emit_handshake(startup_options)
                 continue
             if isinstance(cmd, CmdQuit):
                 break

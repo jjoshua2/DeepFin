@@ -25,7 +25,12 @@ from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
 from chess_anti_engine.mcts.puct import _value_scalar_from_wdl_logits
 from chess_anti_engine.mcts.puct_vl import PucvChunker
-from .multi_gpu_pucv_pool import MultiGpuPucvConfig, MultiGpuPucvPool
+from .multi_gpu_pucv_pool import (
+    MultiGpuPucvConfig,
+    MultiGpuPucvPool,
+    MultiGpuPucvStats,
+    MultiGpuPucvWorkerStats,
+)
 from chess_anti_engine.moves import index_to_move, move_to_index
 from chess_anti_engine.tablebase import SyzygyProbe, try_tb_root_move
 
@@ -71,9 +76,49 @@ class InfoCallback(Protocol):
         self, *,
         nodes: int, elapsed_ms: int, score_cp: int, pv: tuple[str, ...],
         tbhits: int, score_mate: int | None, multipv: int | None,
-        wdl: tuple[int, int, int] | None,
+        wdl: tuple[int, int, int] | None, string: str | None = None,
     ) -> None:
         ...
+
+
+def _pucv_stats_string(
+    stats: MultiGpuPucvStats | None,
+    *,
+    pending_mode: int,
+) -> str | None:
+    if stats is None or stats.leaves <= 0:
+        return None
+    workers: tuple[MultiGpuPucvWorkerStats, ...] = stats.workers
+    if not workers:
+        return None
+    worker_leaves = ",".join(str(w.leaves) for w in workers)
+    max_batch = max((w.max_batch for w in workers), default=0)
+    mode = "virtual-mean" if pending_mode == 1 else "legacy"
+    cache_part = ""
+    if stats.cache_requests > 0:
+        cache_part = (
+            f" cache={stats.cache_hits}/{stats.cache_requests}"
+            f"({stats.cache_hit_rate:.1%})"
+        )
+    return (
+        f"pucv leaves={stats.leaves} batches={stats.batches} "
+        f"avg_batch={stats.avg_batch:.1f} max_batch={max_batch} "
+        f"workers={worker_leaves} pending={mode}{cache_part}"
+    )
+
+
+def _single_pucv_cache_stats_string(
+    stats: Any,
+    *,
+    pending_mode: int,
+) -> str | None:
+    if stats is None or stats.requests <= 0:
+        return None
+    mode = "virtual-mean" if pending_mode == 1 else "legacy"
+    return (
+        f"pucv pending={mode} "
+        f"cache={stats.hits}/{stats.requests}({stats.hit_rate:.1%})"
+    )
 
 
 class SearchWorker:
@@ -89,6 +134,8 @@ class SearchWorker:
         n_walkers: int = 1,
         vloss_weight: int = 3,
         walker_gather: int = 1,
+        pucv_vloss_mode: int = 0,
+        eval_cache_entries: int = 0,
     ) -> None:
         self._evaluator = evaluator
         self._device = device
@@ -102,6 +149,8 @@ class SearchWorker:
   # evaluator MUST be thread-safe (caller wraps with Thread/MultiGPU
   # dispatcher or BatchCoalescingDispatcher).
         self._vloss_weight = int(vloss_weight)
+        self._pucv_vloss_mode = 1 if int(pucv_vloss_mode) == 1 else 0
+        self._eval_cache_entries = max(0, int(eval_cache_entries))
         self._n_walkers = max(1, int(n_walkers))
   # Per-walker leaf gather: each walker collects up to this many
   # descents before submitting one NN batch. 1 = classic batch=1
@@ -240,6 +289,8 @@ class SearchWorker:
             fpu_at_root=0.0,
             fpu_reduction=float(self._cfg.fpu_reduction),
             vloss_weight=self._vloss_weight,
+            vloss_mode=self._pucv_vloss_mode,
+            eval_cache_entries=self._eval_cache_entries,
         )
         if as_factories:
             self._pucv_pool = MultiGpuPucvPool(
@@ -260,8 +311,44 @@ class SearchWorker:
         if self._pucv_pool is not None:
             self._pucv_pool.close()
             self._pucv_pool = None
+        for ev in self._pucv_pool_evals:
+            close = getattr(ev, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
         self._pucv_pool_evals = []
         self._pucv_pool_cboard = None
+
+    def last_multi_gpu_pucv_stats(self) -> MultiGpuPucvStats | None:
+        """Return stats from the most recent multi-GPU PUCV chunk."""
+        if self._pucv_pool is None:
+            return None
+        return self._pucv_pool.last_stats()
+
+    def last_single_pucv_cache_stats(self) -> Any | None:
+        """Return cache stats for the active single-thread PUCV chunker."""
+        if self._pucv is None:
+            return None
+        return self._pucv.cache_stats()
+
+    def set_pucv_vloss_mode(self, mode: int) -> None:
+        """Set batched-PUCV pending accounting.
+
+        ``0`` keeps legacy absolute virtual-loss scoring. ``1`` uses
+        virtual-mean pending samples during batched PUCT selection. The
+        walker-pool path is unchanged because it uses the single-leaf C API.
+        """
+        mode = 1 if int(mode) == 1 else 0
+        if mode == self._pucv_vloss_mode:
+            return
+        self._pucv_vloss_mode = mode
+        if self._pucv is not None:
+            self._pucv = self._build_pucv()
+        if self._pucv_pool is not None:
+            self._pucv_pool._cfg.vloss_mode = mode  # noqa: SLF001
+        self.reset_tree()
 
     def set_use_pucv(self, enabled: bool, *, gather: int | None = None) -> None:
         """Enable async-pipeline batched-VL PUCT (single-thread, 2-slot
@@ -295,7 +382,23 @@ class SearchWorker:
             fpu_at_root=0.0,
             fpu_reduction=float(self._cfg.fpu_reduction),
             vloss_weight=self._vloss_weight,
+            vloss_mode=self._pucv_vloss_mode,
+            eval_cache_entries=self._eval_cache_entries,
         )
+
+    def set_eval_cache_entries(self, n: int) -> None:
+        """Set eval-cache capacity for newly built search helpers.
+
+        This is behavior-preserving, so changing it does not require a tree
+        reset. If single-thread PUCV is active, rebuild the chunker so the
+        capacity takes effect immediately.
+        """
+        n = max(0, int(n))
+        if n == self._eval_cache_entries:
+            return
+        self._eval_cache_entries = n
+        if self._pucv is not None:
+            self._pucv = self._build_pucv()
 
     def set_minibatch_size(self, n: int) -> None:
         """Set the minibatch accumulation target for the C gumbel state
@@ -345,6 +448,7 @@ class SearchWorker:
         """
         old = self._evaluator
         self._evaluator = evaluator
+        self.clear_multi_gpu_pucv()
         if self._walker_pool is not None:
             self._walker_pool.close()
         self._walker_pool = self._build_walker_pool(self._n_walkers)
@@ -419,6 +523,15 @@ class SearchWorker:
             if self._show_wdl and self._root_wdl_logits is not None
             else 0.0
         )
+        pucv_info = _pucv_stats_string(
+            self.last_multi_gpu_pucv_stats(),
+            pending_mode=self._pucv_vloss_mode,
+        )
+        if pucv_info is None:
+            pucv_info = _single_pucv_cache_stats_string(
+                self.last_single_pucv_cache_stats(),
+                pending_mode=self._pucv_vloss_mode,
+            )
         for rank, q, pv_idx in lines:
             uci_pv = _uci_pv(board, pv_idx)
             wdl = _q_to_wdl_permille(q, draw_rate) if self._show_wdl else None
@@ -431,6 +544,7 @@ class SearchWorker:
                 score_mate=_pv_mate_moves(board, pv_idx),
                 multipv=rank if emit_multipv else None,
                 wdl=wdl,
+                string=pucv_info if rank == 1 else None,
             )
 
     def set_max_tree_mb(self, mb: int) -> None:
