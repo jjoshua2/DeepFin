@@ -111,6 +111,7 @@ def test_flatten_stockfish_new_style_flat_keys() -> None:
         "stockfish": {
             "stockfish_path": "/usr/bin/stockfish",
             "sf_nodes": 5000,
+            "sf_move_nodes": 10000,
             "sf_pid_ema_alpha": 0.50,
             "sf_pid_wdl_regret_max": 0.9,
         }
@@ -118,6 +119,7 @@ def test_flatten_stockfish_new_style_flat_keys() -> None:
     flat = flatten_run_config_defaults(cfg)
     assert flat["stockfish_path"] == "/usr/bin/stockfish"
     assert flat["sf_nodes"] == 5000
+    assert flat["sf_move_nodes"] == 10000
     assert flat["sf_pid_ema_alpha"] == 0.50
     assert flat["sf_pid_wdl_regret_max"] == 0.9
 

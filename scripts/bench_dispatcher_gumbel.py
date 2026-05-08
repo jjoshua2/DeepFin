@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import multiprocessing as mp
+import random
 import threading
 import time
 from typing import Any
@@ -36,15 +37,18 @@ def _build_model(compile_mode: str | None):
 
 
 def _starting_boards(n: int):
-    """N random-ish opening positions. Same opening repeated is fine for timing."""
+    """N random-ish opening positions for timing."""
     import chess
 
     boards = []
-    rng_seeds = list(range(n))
-    for _ in rng_seeds:
+    for seed in range(n):
+        rng = random.Random(seed)
         b = chess.Board()
-        # Push 4 plies so positions diverge slightly (different transpositions / cache misses).
-        for mv in list(b.legal_moves)[:1]:
+        for _ in range(4):
+            moves = list(b.legal_moves)
+            if not moves:
+                break
+            mv = moves[rng.randrange(len(moves))]
             b.push(mv)
         boards.append(b)
     return boards
@@ -70,6 +74,8 @@ def _run_in_subprocess(
     simulations: int,
     topk: int,
     compile_mode: str | None,
+    dispatcher_batch_wait_ms: float,
+    dispatcher_target_batch: int,
     iters: int,
     warmup_iters: int,
     result_q: mp.Queue,
@@ -94,7 +100,8 @@ def _run_in_subprocess(
             evaluator, shutdown = ev, ev.shutdown
         elif path == "ThreadedDispatcher":
             ev = ThreadedDispatcher(
-                model, device="cuda", max_batch=4096, batch_wait_ms=1.0,
+                model, device="cuda", max_batch=4096, batch_wait_ms=dispatcher_batch_wait_ms,
+                target_batch=dispatcher_target_batch,
                 compile_mode=compile_mode,
             )
             evaluator, shutdown = ev, ev.shutdown
@@ -127,12 +134,18 @@ def _run_in_subprocess(
         counters = torch._dynamo.utils.counters
         pre_frames_ok = int(counters.get("frames", {}).get("ok", 0))
         pre_skips = int(counters.get("inductor", {}).get("cudagraph_skips", 0))
+        dispatcher_stats0 = (
+            dict(evaluator.stats) if isinstance(evaluator, ThreadedDispatcher) else None
+        )
 
         t0 = time.perf_counter()
         total_actions = 0
         for _ in range(iters):
             total_actions += run_one_iter()
         elapsed = time.perf_counter() - t0
+        dispatcher_stats1 = (
+            dict(evaluator.stats) if isinstance(evaluator, ThreadedDispatcher) else None
+        )
 
         post_frames_ok = int(counters.get("frames", {}).get("ok", 0))
         post_skips = int(counters.get("inductor", {}).get("cudagraph_skips", 0))
@@ -148,6 +161,8 @@ def _run_in_subprocess(
             "n_threads": n_threads,
             "games_per_thread": games_per_thread,
             "simulations": simulations,
+            "dispatcher_batch_wait_ms": dispatcher_batch_wait_ms if path == "ThreadedDispatcher" else None,
+            "dispatcher_target_batch": dispatcher_target_batch if path == "ThreadedDispatcher" else None,
             "iters": iters,
             "elapsed_s": elapsed,
             "iters_per_sec": iters / elapsed,
@@ -157,11 +172,30 @@ def _run_in_subprocess(
             "cudagraph_skips_delta": post_skips - pre_skips,
         }
         if isinstance(evaluator, ThreadedDispatcher):
-            s = evaluator.stats
+            s = dispatcher_stats1 or evaluator.stats
+            s0 = dispatcher_stats0 or {}
+            timed_positions = int(s.get("lifetime_positions", 0)) - int(s0.get("lifetime_positions", 0))
+            timed_forward_rows = int(s.get("lifetime_forward_rows", 0)) - int(s0.get("lifetime_forward_rows", 0))
+            timed_batches = int(s.get("lifetime_batches", 0)) - int(s0.get("lifetime_batches", 0))
             out["dispatcher_avg_batch"] = s["avg_batch_size"]
+            out["dispatcher_avg_requests_per_batch"] = s.get("avg_requests_per_batch", 0.0)
+            out["dispatcher_avg_rows_per_request"] = s.get("avg_rows_per_request", 0.0)
+            out["dispatcher_avg_queue_depth"] = s.get("avg_queue_depth", 0.0)
+            out["dispatcher_queue_depth_max"] = s.get("queue_depth_max", 0)
             out["dispatcher_avg_forward_ms"] = s["avg_forward_ms"]
+            out["dispatcher_avg_drain_ms"] = s.get("avg_drain_ms", 0.0)
+            out["dispatcher_avg_pack_ms"] = s.get("avg_pack_ms", 0.0)
+            out["dispatcher_avg_submit_ms"] = s.get("avg_submit_ms", s["avg_forward_ms"])
+            out["dispatcher_avg_wait_ms"] = s.get("avg_wait_ms", 0.0)
+            out["dispatcher_avg_scatter_ms"] = s.get("avg_scatter_ms", 0.0)
             out["dispatcher_full_drains"] = s["lifetime_full_drains"]
             out["dispatcher_lifetime_batches"] = s["lifetime_batches"]
+            out["timed_dispatcher_batches"] = timed_batches
+            out["timed_dispatcher_positions"] = timed_positions
+            out["timed_dispatcher_forward_rows"] = timed_forward_rows
+            out["timed_dispatcher_leaf_per_s"] = timed_positions / elapsed
+            out["timed_dispatcher_forward_rows_per_s"] = timed_forward_rows / elapsed
+            out["timed_dispatcher_pad_ratio"] = timed_forward_rows / max(1, timed_positions)
         shutdown()
         result_q.put(out)
     except Exception as exc:  # noqa: BLE001
@@ -174,32 +208,99 @@ def main() -> None:
     ap.add_argument("--compile-mode", type=str, default="reduce-overhead")
     ap.add_argument("--total-games", type=int, default=400)
     ap.add_argument("--threads", type=int, default=16)
+    ap.add_argument(
+        "--thread-counts",
+        type=str,
+        default="",
+        help="Comma-separated threaded producer counts to sweep; overrides --threads for threaded paths.",
+    )
     ap.add_argument("--simulations", type=int, default=50)
     ap.add_argument("--topk", type=int, default=16)
     ap.add_argument("--iters", type=int, default=5)
     ap.add_argument("--warmup-iters", type=int, default=2)
+    ap.add_argument(
+        "--dispatcher-batch-wait-ms",
+        type=float,
+        default=1.0,
+        help="ThreadedDispatcher batch wait to benchmark.",
+    )
+    ap.add_argument(
+        "--dispatcher-batch-waits-ms",
+        type=str,
+        default="",
+        help="Comma-separated ThreadedDispatcher batch waits to sweep; overrides --dispatcher-batch-wait-ms.",
+    )
+    ap.add_argument(
+        "--dispatcher-target-batch",
+        type=int,
+        default=0,
+        help="ThreadedDispatcher target batch to benchmark; 0 means max-batch.",
+    )
+    ap.add_argument(
+        "--dispatcher-target-batches",
+        type=str,
+        default="",
+        help="Comma-separated ThreadedDispatcher target batches to sweep; overrides --dispatcher-target-batch.",
+    )
+    ap.add_argument(
+        "--paths",
+        type=str,
+        default="DirectGPU,ThreadedBatchEvaluator,ThreadedDispatcher",
+        help="Comma-separated paths to run.",
+    )
     ap.add_argument("--out", type=str, default="docs/threaded_dispatcher_gumbel_results.json")
     args = ap.parse_args()
 
     mp.set_start_method("spawn", force=True)
     compile_mode = args.compile_mode or None
 
-    # 1 thread × 400 games — DirectGPU's "best case" (no thread overhead, big batch).
-    # 16 threads × 25 games — the dispatcher's pitch (16 concurrent gumbel calls
-    # combine via the dispatcher into one big GPU forward).
-    paths = [
-        ("DirectGPU", 1, args.total_games),
-        ("ThreadedBatchEvaluator", args.threads, args.total_games // args.threads),
-        ("ThreadedDispatcher", args.threads, args.total_games // args.threads),
-    ]
+    requested_paths = [p.strip() for p in str(args.paths).split(",") if p.strip()]
+    valid_paths = {"DirectGPU", "ThreadedBatchEvaluator", "ThreadedDispatcher"}
+    unknown = sorted(set(requested_paths) - valid_paths)
+    if unknown:
+        raise SystemExit(f"unknown --paths entries: {', '.join(unknown)}")
+    thread_counts = (
+        [int(x) for x in str(args.thread_counts).split(",") if x.strip()]
+        if str(args.thread_counts).strip()
+        else [int(args.threads)]
+    )
+    if any(t <= 0 for t in thread_counts):
+        raise SystemExit("--threads/--thread-counts must be positive")
+    wait_values = (
+        [float(x) for x in str(args.dispatcher_batch_waits_ms).split(",") if x.strip()]
+        if str(args.dispatcher_batch_waits_ms).strip()
+        else [float(args.dispatcher_batch_wait_ms)]
+    )
+    target_values = (
+        [int(x) for x in str(args.dispatcher_target_batches).split(",") if x.strip()]
+        if str(args.dispatcher_target_batches).strip()
+        else [int(args.dispatcher_target_batch)]
+    )
+
+    paths: list[tuple[str, int, int, float, int]] = []
+    if "DirectGPU" in requested_paths:
+        # DirectGPU's best case: one producer, one large independent-game batch.
+        paths.append(("DirectGPU", 1, int(args.total_games), 0.0, 0))
+    for threads in thread_counts:
+        games_per_thread = max(1, int(args.total_games) // int(threads))
+        if "ThreadedBatchEvaluator" in requested_paths:
+            paths.append(("ThreadedBatchEvaluator", int(threads), games_per_thread, 0.0, 0))
+        if "ThreadedDispatcher" in requested_paths:
+            for wait_ms in wait_values:
+                for target_batch in target_values:
+                    paths.append((
+                        "ThreadedDispatcher", int(threads), games_per_thread,
+                        float(wait_ms), int(target_batch),
+                    ))
     results: list[dict[str, Any]] = []
-    for name, n_threads, games_per_thread in paths:
+    for name, n_threads, games_per_thread, wait_ms, target_batch in paths:
         print(f"\n=== {name} (threads={n_threads}, games/thread={games_per_thread}, "
-              f"sims={args.simulations}, compile={compile_mode}) ===", flush=True)
+              f"sims={args.simulations}, compile={compile_mode}, "
+              f"wait_ms={wait_ms:g}, target={target_batch}) ===", flush=True)
         q: mp.Queue = mp.Queue()
         p = mp.Process(target=_run_in_subprocess, args=(
             name, n_threads, games_per_thread, args.simulations, args.topk,
-            compile_mode, args.iters, args.warmup_iters, q,
+            compile_mode, float(wait_ms), int(target_batch), args.iters, args.warmup_iters, q,
         ))
         p.start()
         p.join(timeout=900)
@@ -222,20 +323,35 @@ def main() -> None:
                   f"skips={r['cudagraph_skips_delta']}")
             if "dispatcher_avg_batch" in r:
                 print(f"  dispatcher: avg_batch={r['dispatcher_avg_batch']:.1f}  "
+                      f"leaf/s={r['timed_dispatcher_leaf_per_s']:.0f}  "
+                      f"fwd_rows/s={r['timed_dispatcher_forward_rows_per_s']:.0f}  "
+                      f"pad={r['timed_dispatcher_pad_ratio']:.2f}  "
+                      f"req/batch={r['dispatcher_avg_requests_per_batch']:.1f}  "
                       f"avg_forward_ms={r['dispatcher_avg_forward_ms']:.2f}  "
                       f"batches={r['dispatcher_lifetime_batches']}  "
                       f"full_drains={r['dispatcher_full_drains']}")
         results.append(r)
 
     print()
-    print(f"{'path':<24} {'iters/s':>8} {'games/s':>10} {'nps':>10} {'frames_ok':>10} {'skips':>8}")
+    print(
+        f"{'path':<24} {'thr':>4} {'wait':>6} {'target':>6} {'iters/s':>8} "
+        f"{'games/s':>10} {'nps':>10} {'leaf/s':>10} {'fwd/s':>10} "
+        f"{'pad':>5} {'frames_ok':>10} {'skips':>8}"
+    )
     for r in results:
         if "error" in r:
             print(f"{r['name']:<24} ERROR: {r['error']}")
             continue
+        leaf_s = r.get("timed_dispatcher_leaf_per_s", 0.0)
+        fwd_s = r.get("timed_dispatcher_forward_rows_per_s", 0.0)
+        pad_ratio = r.get("timed_dispatcher_pad_ratio", 0.0)
         print(
-            f"{r['name']:<24} {r['iters_per_sec']:>8.2f} {r['games_per_sec']:>10.0f} "
-            f"{r['approx_nps']:>10.0f} {r['frames_ok_delta']:>10} "
+            f"{r['name']:<24} {r['n_threads']:>4} "
+            f"{str(r.get('dispatcher_batch_wait_ms') or ''):>6} "
+            f"{str(r.get('dispatcher_target_batch') or ''):>6} "
+            f"{r['iters_per_sec']:>8.2f} {r['games_per_sec']:>10.0f} "
+            f"{r['approx_nps']:>10.0f} {leaf_s:>10.0f} {fwd_s:>10.0f} "
+            f"{pad_ratio:>5.2f} {r['frames_ok_delta']:>10} "
             f"{r['cudagraph_skips_delta']:>8}"
         )
 

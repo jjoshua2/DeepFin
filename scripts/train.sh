@@ -71,8 +71,9 @@ start() {
     TORCHINDUCTOR_COMPILE_THREADS="${TORCHINDUCTOR_COMPILE_THREADS:-16}" \
     TORCHINDUCTOR_AUTOTUNE_IN_SUBPROC="${TORCHINDUCTOR_AUTOTUNE_IN_SUBPROC:-1}" \
     TORCHINDUCTOR_FX_GRAPH_CACHE="${TORCHINDUCTOR_FX_GRAPH_CACHE:-1}" \
-    nohup python3 -m chess_anti_engine.run \
+    setsid nohup python3 -m chess_anti_engine.run \
         --config "$CONFIG" --mode tune "${extra_args[@]}" \
+        < /dev/null \
         > "$LOG" 2>&1 &
     echo $! > "$PIDFILE"
     echo "Started PID $! — log: $LOG"
