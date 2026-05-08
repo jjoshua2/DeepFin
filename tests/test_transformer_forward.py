@@ -33,6 +33,35 @@ def test_transformer_nla_toggle():
     assert out["policy_own"].shape[-1] == 64 * 73
 
 
+def test_transformer_legal_policy_matches_dense_logits():
+    cfg = TransformerConfig(in_planes=146, embed_dim=64, num_layers=1, num_heads=4, use_smolgen=False, use_nla=False)
+    m = ChessNet(cfg).eval()
+    x = torch.randn(2, 146, 8, 8)
+    legal_counts = torch.tensor([5, 4], dtype=torch.long)
+    legal_flat = torch.tensor(
+        [
+            0,
+            5,
+            63,
+            48 * 73 + 64,
+            48 * 73 + 72,
+            7 * 73 + 12,
+            16 * 73 + 21,
+            63 * 73 + 72,
+            4671,
+        ],
+        dtype=torch.long,
+    )
+
+    with torch.no_grad():
+        dense = m(x)
+        compact = m.forward_legal_policy(x, legal_flat, legal_counts)
+
+    rows = torch.repeat_interleave(torch.arange(2), legal_counts)
+    assert torch.allclose(compact["policy_own"], dense["policy_own"][rows, legal_flat])
+    assert torch.allclose(compact["wdl"], dense["wdl"])
+
+
 def test_volatility_head_keeps_gradient_for_negative_preactivations():
     head = VolatilityHead(embed_dim=4)
     first = head.net[0]

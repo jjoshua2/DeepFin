@@ -262,6 +262,7 @@ class _CExtensionCaps:
     has_classify_c: bool
     c_process_ply: Callable[..., Any] | None
     batch_enc_146: Callable[..., Any] | None
+    batch_enc_146_bf16: Callable[..., Any] | None
     c_classify: Callable[..., Any] | None
     c_temp_resample: Callable[..., Any] | None
 
@@ -310,8 +311,8 @@ def _probe_c_extensions() -> _CExtensionCaps:
     """Probe C fast-path imports (tree, per-ply, classify/resample).
 
     Each block is independent — partial availability is fine. ``batch_process_ply``
-    and ``batch_encode_146`` are imported together so the two ``None``-fallbacks
-    can't drift (drift would break the xs_batch invariant in the network turn).
+    and the encoders are imported together so the ``None``-fallbacks can't drift
+    (drift would break the xs_batch invariant in the network turn).
     """
     mcts_tree = None
     try:
@@ -322,22 +323,27 @@ def _probe_c_extensions() -> _CExtensionCaps:
 
     c_process_ply: Callable[..., Any] | None = None
     batch_enc_146: Callable[..., Any] | None = None
+    batch_enc_146_bf16: Callable[..., Any] | None = None
     has_c_ply = False
     try:
         from chess_anti_engine.mcts._mcts_tree import (
             batch_encode_146 as _batch_enc_146,
         )
         from chess_anti_engine.mcts._mcts_tree import (
+            batch_encode_146_bf16 as _batch_enc_146_bf16,
+        )
+        from chess_anti_engine.mcts._mcts_tree import (
             batch_process_ply as _c_process_ply,
         )
         c_process_ply = _c_process_ply
         batch_enc_146 = _batch_enc_146
+        batch_enc_146_bf16 = _batch_enc_146_bf16
         has_c_ply = True
     except ImportError:
         logging.getLogger("chess_anti_engine.selfplay").warning(
             "C per-ply fast path unavailable (batch_process_ply/batch_encode_146 "
-            "not importable from _mcts_tree); falling back to Python. Rebuild "
-            "the C extension for production.",
+            "or batch_encode_146_bf16 not importable from _mcts_tree); falling "
+            "back to Python. Rebuild the C extension for production.",
         )
 
     c_classify: Callable[..., Any] | None = None
@@ -360,6 +366,7 @@ def _probe_c_extensions() -> _CExtensionCaps:
         has_classify_c=has_classify_c,
         c_process_ply=c_process_ply,
         batch_enc_146=batch_enc_146,
+        batch_enc_146_bf16=batch_enc_146_bf16,
         c_classify=c_classify,
         c_temp_resample=c_temp_resample,
     )
@@ -436,6 +443,7 @@ class SelfplayState:
     has_classify_c: bool = False
     c_process_ply: Callable[..., Any] | None = None
     batch_enc_146: Callable[..., Any] | None = None
+    batch_enc_146_bf16: Callable[..., Any] | None = None
     c_classify: Callable[..., Any] | None = None
     c_temp_resample: Callable[..., Any] | None = None
 
@@ -541,6 +549,7 @@ class SelfplayState:
             has_classify_c=c_caps.has_classify_c,
             c_process_ply=c_caps.c_process_ply,
             batch_enc_146=c_caps.batch_enc_146,
+            batch_enc_146_bf16=c_caps.batch_enc_146_bf16,
             c_classify=c_caps.c_classify,
             c_temp_resample=c_caps.c_temp_resample,
             games_started=batch_size,

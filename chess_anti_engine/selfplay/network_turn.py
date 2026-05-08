@@ -111,18 +111,32 @@ def _evaluate_root_batch(
     cb_encode_list = [state.cboards[idx] for idx in net_idxs]
 
     use_inplace = state.batch_enc_146 is not None and hasattr(eval_impl, "get_input_buffer")
+    use_bf16_input = (
+        state.has_c_ply
+        and state.batch_enc_146_bf16 is not None
+        and bool(getattr(eval_impl, "supports_input_bf16_bits", False))
+    )
     if use_inplace:
   # evaluate_inplace + get_input_buffer exist on DirectGPU-style evaluators only.
-        buf = eval_impl.get_input_buffer(padded_bsz)  # pyright: ignore[reportAttributeAccessIssue]
-        assert state.batch_enc_146 is not None
-        state.batch_enc_146(cb_encode_list, buf)
+        if use_bf16_input and hasattr(eval_impl, "get_input_buffer_bf16_bits"):
+            buf = eval_impl.get_input_buffer_bf16_bits(padded_bsz)  # pyright: ignore[reportAttributeAccessIssue]
+            assert state.batch_enc_146_bf16 is not None
+            state.batch_enc_146_bf16(cb_encode_list, buf)
+        else:
+            buf = eval_impl.get_input_buffer(padded_bsz)  # pyright: ignore[reportAttributeAccessIssue]
+            assert state.batch_enc_146 is not None
+            state.batch_enc_146(cb_encode_list, buf)
         pol_padded, wdl_padded = eval_impl.evaluate_inplace(  # pyright: ignore[reportAttributeAccessIssue]
             padded_bsz, copy_out=True,
         )
         xs_batch: np.ndarray | None = None
     else:
-        xs_batch = np.empty((bsz, 146, 8, 8), dtype=np.float32)
-        if state.batch_enc_146 is not None:
+        dtype = np.uint16 if use_bf16_input else np.float32
+        xs_batch = np.empty((bsz, 146, 8, 8), dtype=dtype)
+        if use_bf16_input:
+            assert state.batch_enc_146_bf16 is not None
+            state.batch_enc_146_bf16(cb_encode_list, xs_batch)
+        elif state.batch_enc_146 is not None:
             state.batch_enc_146(cb_encode_list, xs_batch)
         else:
             for j, idx in enumerate(net_idxs):
@@ -133,6 +147,8 @@ def _evaluate_root_batch(
         else:
             xs_padded = xs_batch
         pol_padded, wdl_padded = eval_impl.evaluate_encoded(xs_padded)
+        if use_bf16_input:
+            xs_batch = None
 
     pol_logits = pol_padded[:bsz]
     wdl_logits_raw = wdl_padded[:bsz]

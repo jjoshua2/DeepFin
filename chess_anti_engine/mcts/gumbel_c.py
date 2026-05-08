@@ -29,6 +29,11 @@ from chess_anti_engine.inference import (  # noqa: F401  # skylos: ignore (Async
     _COMPILED_BATCH_BUCKETS,
 )
 from chess_anti_engine.mcts._mcts_tree import MCTSTree, batch_encode_146
+
+try:
+    from chess_anti_engine.mcts._mcts_tree import batch_encode_146_bf16
+except ImportError:  # pragma: no cover - older local extension fallback
+    batch_encode_146_bf16 = None  # type: ignore[assignment]
 from chess_anti_engine.mcts.gumbel import (
     GumbelConfig,
     _gumbel,
@@ -116,6 +121,11 @@ def run_gumbel_root_many_c(
     root_cboards = cboards if cboards is not None else [CBoard.from_board(b) for b in boards]
 
     _has_async = hasattr(eval_impl, 'evaluate_encoded_async')
+    _has_legal_bf16 = hasattr(eval_impl, "evaluate_legal_bf16")
+    _has_input_bf16 = (
+        batch_encode_146_bf16 is not None
+        and bool(getattr(eval_impl, "supports_input_bf16_bits", False))
+    )
   # All async-capable evaluators conform to the protocol; _has_async is the runtime check.
     _async_eval = cast("AsyncBatchEvaluator", eval_impl)
     _use_pipeline = _has_async and n_boards >= 64
@@ -138,16 +148,24 @@ def run_gumbel_root_many_c(
         pol_logits_batch = np.asarray(pre_pol_logits, dtype=np.float32)
         wdl_logits_batch = np.asarray(pre_wdl_logits, dtype=np.float32)
     elif _inplace:
-        root_buf = eval_impl.get_input_buffer(n_boards, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
-        batch_encode_146(root_cboards, root_buf)
+        if _has_input_bf16 and hasattr(eval_impl, "get_input_buffer_bf16_bits"):
+            root_buf = eval_impl.get_input_buffer_bf16_bits(n_boards, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
+            batch_encode_146_bf16(root_cboards, root_buf)  # type: ignore[misc]
+        else:
+            root_buf = eval_impl.get_input_buffer(n_boards, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
+            batch_encode_146(root_cboards, root_buf)
         pol_t, wdl_t, event = eval_impl.evaluate_inplace_async(n_boards, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
         if event is not None:
             event.synchronize()
         pol_logits_batch = pol_t.numpy()
         wdl_logits_batch = wdl_t.numpy()
     else:
-        xs = np.empty((n_boards, 146, 8, 8), dtype=np.float32)
-        batch_encode_146(root_cboards, xs)
+        if _has_input_bf16 and hasattr(eval_impl, "evaluate_encoded"):
+            xs = np.empty((n_boards, 146, 8, 8), dtype=np.uint16)
+            batch_encode_146_bf16(root_cboards, xs)  # type: ignore[misc]
+        else:
+            xs = np.empty((n_boards, 146, 8, 8), dtype=np.float32)
+            batch_encode_146(root_cboards, xs)
         if _has_async:
             pol_t, wdl_t, event = _async_eval.evaluate_encoded_async(xs)
             if event is not None:
@@ -528,12 +546,22 @@ def run_gumbel_root_many_c(
 
     else:
   # Non-pipelined fallback (small batches or no async)
+        _use_legal_bf16 = (
+            _has_legal_bf16
+            and hasattr(tree, "get_pending_legal_indices")
+            and hasattr(tree, "continue_gumbel_sims_legal_bf16")
+        )
+        _use_input_bf16 = _has_input_bf16 and _use_legal_bf16
         if _inplace:
             _max_batch = getattr(eval_impl, "_max_batch", _max_leaves_per_rep * 2)
             _cap = min(_max_leaves_per_rep * 2, _max_batch)
-            _enc_buf = eval_impl.get_input_buffer(_cap, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
+            if _use_input_bf16 and hasattr(eval_impl, "get_input_buffer_bf16_bits"):
+                _enc_buf = eval_impl.get_input_buffer_bf16_bits(_cap, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
+            else:
+                _enc_buf = eval_impl.get_input_buffer(_cap, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
         else:
-            _enc_buf = np.empty((_max_leaves_per_rep * 2, 146, 8, 8), dtype=np.float32)
+            _enc_dtype = np.uint16 if _use_input_bf16 else np.float32
+            _enc_buf = np.empty((_max_leaves_per_rep * 2, 146, 8, 8), dtype=_enc_dtype)
         _root_ids_arr = np.array(root_ids, dtype=np.int32)
         _budget_arr = np.array(budget_remaining, dtype=np.int32)
         _root_qs_arr = np.array(root_qs, dtype=np.float64)
@@ -554,7 +582,12 @@ def run_gumbel_root_many_c(
             n_leaves = int(n_leaves)
             padded = _pad_for_bucket(n_leaves, len(_enc_buf))
             _tg0 = _time.perf_counter()
-            if _inplace:
+            if _use_legal_bf16:
+                legal_flat, legal_counts = tree.get_pending_legal_indices()
+                pol_all, wdl_all = eval_impl.evaluate_legal_bf16(  # pyright: ignore[reportAttributeAccessIssue]
+                    _enc_buf[:n_leaves], legal_flat, legal_counts,
+                )
+            elif _inplace:
                 pol_t, wdl_t, event = eval_impl.evaluate_inplace_async(padded, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
                 if event is not None:
                     event.synchronize()
@@ -576,7 +609,10 @@ def run_gumbel_root_many_c(
 
             _tp0 = _time.perf_counter()
             _tb_override(tree, tb_probe, wdl_all)
-            n_leaves = tree.continue_gumbel_sims(pol_all, wdl_all)
+            if _use_legal_bf16:
+                n_leaves = tree.continue_gumbel_sims_legal_bf16(pol_all, wdl_all)
+            else:
+                n_leaves = tree.continue_gumbel_sims(pol_all, wdl_all)
             _t_prepare += _time.perf_counter() - _tp0
 
         remaining_per_board = cast("list[list[int] | None]", tree.get_gumbel_remaining())

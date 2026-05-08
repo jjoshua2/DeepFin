@@ -32,8 +32,13 @@ def _rand_batch(rng: np.random.Generator, n: int) -> np.ndarray:
 def test_next_bucket_picks_smallest_fit():
     assert _next_bucket(1) == 128
     assert _next_bucket(128) == 128
-    assert _next_bucket(129) == 256
+    assert _next_bucket(129) == 170
+    assert _next_bucket(170) == 170
+    assert _next_bucket(171) == 256
+    assert _next_bucket(340) == 340
+    assert _next_bucket(681) == 768
     assert _next_bucket(700) == 768
+    assert _next_bucket(1190) == 1190
     # Oversize falls back to the max bucket; caller is expected to split.
     assert _next_bucket(99999) == 4096
 
@@ -103,6 +108,90 @@ def test_dispatcher_concurrent_producers_correct_per_caller():
 
         assert dispatcher.stats["lifetime_batches"] >= 1
         assert dispatcher.stats["avg_batch_size"] > 0
+        assert dispatcher.stats["lifetime_requests"] == n_threads
+        assert dispatcher.stats["avg_requests_per_batch"] > 0
+        assert dispatcher.stats["avg_rows_per_request"] > 0
+        assert dispatcher.stats["avg_queue_depth"] > 0
+        assert dispatcher.stats["queue_depth_max"] > 0
+        assert dispatcher.stats["avg_drain_ms"] >= 0
+        assert dispatcher.stats["avg_pack_ms"] >= 0
+        assert dispatcher.stats["avg_submit_ms"] >= 0
+        assert dispatcher.stats["avg_wait_ms"] >= 0
+        assert dispatcher.stats["avg_scatter_ms"] >= 0
+    finally:
+        dispatcher.shutdown()
+
+
+def test_dispatcher_target_batch_limits_normal_drain():
+    model = _make_model()
+    dispatcher = ThreadedDispatcher(
+        model,
+        device="cpu",
+        max_batch=512,
+        target_batch=170,
+        batch_wait_ms=2.0,
+    )
+    try:
+        rng = np.random.default_rng(123)
+        n_threads = 8
+        inputs = [_rand_batch(rng, 80) for _ in range(n_threads)]
+        barrier = threading.Barrier(n_threads)
+
+        def producer(i: int) -> tuple[np.ndarray, np.ndarray]:
+            barrier.wait()
+            return dispatcher.evaluate_encoded(inputs[i])
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=n_threads) as pool:
+            results = list(pool.map(producer, range(n_threads)))
+
+        assert len(results) == n_threads
+        assert dispatcher.stats["max_batch"] == 512
+        assert dispatcher.stats["target_batch"] == 170
+        assert dispatcher.stats["lifetime_batches"] >= 4
+        assert dispatcher.stats["avg_batch_size"] <= 170
+    finally:
+        dispatcher.shutdown()
+
+
+def test_dispatcher_legal_bf16_matches_dense_legal_logits():
+    model = _make_model()
+    direct = DirectGPUEvaluator(model, device="cpu", max_batch=128, use_amp=False)
+    dispatcher = ThreadedDispatcher(model, device="cpu", max_batch=128, batch_wait_ms=0.0)
+    try:
+        rng = np.random.default_rng(99)
+        x = _rand_batch(rng, 5)
+        legal_counts = np.array([2, 3, 1, 4, 2], dtype=np.int32)
+        legal_flat = np.array([0, 7, 1, 64, 200, 42, 3, 5, 8, 13, 21, 34], dtype=np.int32)
+
+        dense_pol, dense_wdl = direct.evaluate_encoded(x)
+        rows = np.repeat(np.arange(x.shape[0]), legal_counts)
+        expected = torch.from_numpy(dense_pol[rows, legal_flat]).to(torch.bfloat16).view(torch.uint16).numpy()
+
+        compact_pol, compact_wdl = dispatcher.evaluate_legal_bf16(x, legal_flat, legal_counts)
+
+        assert compact_pol.dtype == np.uint16
+        np.testing.assert_array_equal(compact_pol, expected)
+        np.testing.assert_allclose(compact_wdl, dense_wdl, rtol=1e-5, atol=1e-5)
+    finally:
+        dispatcher.shutdown()
+
+
+def test_dispatcher_decodes_bf16_input_when_full_input_bf16_disabled():
+    model = _make_model()
+    direct = DirectGPUEvaluator(model, device="cpu", max_batch=128, use_amp=False)
+    dispatcher = ThreadedDispatcher(model, device="cpu", max_batch=128, batch_wait_ms=0.0)
+    try:
+        rng = np.random.default_rng(100)
+        x = _rand_batch(rng, 6)
+        # Simulate a C encoder that has already rounded planes to bfloat16.
+        x_bf16_bits = torch.from_numpy(x).to(torch.bfloat16).view(torch.uint16).numpy()
+        x_decoded = (x_bf16_bits.astype(np.uint32) << 16).view(np.float32)
+
+        expected_pol, expected_wdl = direct.evaluate_encoded(x_decoded)
+        actual_pol, actual_wdl = dispatcher.evaluate_encoded(x_bf16_bits)
+
+        np.testing.assert_allclose(actual_pol, expected_pol, rtol=1e-5, atol=1e-5)
+        np.testing.assert_allclose(actual_wdl, expected_wdl, rtol=1e-5, atol=1e-5)
     finally:
         dispatcher.shutdown()
 

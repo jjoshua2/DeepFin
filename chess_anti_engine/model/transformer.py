@@ -104,6 +104,74 @@ class AttentionPolicyHead(nn.Module):
         assert out.shape[-1] == POLICY_SIZE
         return out
 
+    def forward_legal(
+        self,
+        x: torch.Tensor,
+        legal_flat: torch.Tensor,
+        legal_counts: torch.Tensor,
+    ) -> torch.Tensor:
+        if legal_flat.ndim != 1:
+            raise ValueError(f"legal_flat must be 1D, got {legal_flat.ndim}D")
+        if legal_counts.ndim != 1:
+            raise ValueError(f"legal_counts must be 1D, got {legal_counts.ndim}D")
+        bsz = x.shape[0]
+        if legal_counts.shape[0] > bsz:
+            raise ValueError(f"legal_counts len {legal_counts.shape[0]} exceeds batch {bsz}")
+        n_legal = int(legal_flat.shape[0])
+        if n_legal == 0:
+            return x.new_empty((0,))
+
+        legal_flat = legal_flat.to(device=x.device, dtype=torch.long)
+        legal_counts = legal_counts.to(device=x.device, dtype=torch.long)
+        rows = torch.repeat_interleave(
+            torch.arange(legal_counts.shape[0], device=x.device, dtype=torch.long),
+            legal_counts,
+        )
+        if rows.shape[0] != legal_flat.shape[0]:
+            raise ValueError("legal_flat len must equal sum(legal_counts)")
+        return self.forward_legal_rows(x, legal_flat, rows)
+
+    def forward_legal_rows(
+        self,
+        x: torch.Tensor,
+        legal_flat: torch.Tensor,
+        legal_rows: torch.Tensor,
+    ) -> torch.Tensor:
+        if legal_flat.ndim != 1:
+            raise ValueError(f"legal_flat must be 1D, got {legal_flat.ndim}D")
+        if legal_rows.ndim != 1:
+            raise ValueError(f"legal_rows must be 1D, got {legal_rows.ndim}D")
+        n_legal = int(legal_flat.shape[0])
+        if legal_rows.shape[0] != n_legal:
+            raise ValueError("legal_rows shape must match legal_flat")
+        if n_legal == 0:
+            return x.new_empty((0,))
+
+        legal_flat = legal_flat.to(device=x.device, dtype=torch.long)
+        rows = legal_rows.to(device=x.device, dtype=torch.long)
+        from_sq = torch.div(legal_flat, 73, rounding_mode="floor")
+        plane = legal_flat.remainder(73)
+        normal_mask = plane < 64
+        promo_mask = ~normal_mask
+        neg_inf = x.new_full((n_legal,), -1e9)
+
+        q = self.q(x)
+        k = self.k(x)
+        normal_plane = plane.clamp(max=63)
+        to_sq = self.to_sq[from_sq, normal_plane]
+        normal_valid = normal_mask & self.to_valid[from_sq, normal_plane]
+        normal_logits = (q[rows, from_sq] * k[rows, to_sq]).sum(dim=-1)
+        normal_logits = normal_logits * self.scale * torch.exp(self.log_temp)
+        normal_logits = torch.where(normal_valid, normal_logits, neg_inf)
+
+        up = self.underpromo(x)
+        promo_plane = (plane - 64).clamp(min=0, max=8)
+        promo_valid = promo_mask & self.promo_from[from_sq]
+        promo_logits = up[rows, from_sq, promo_plane]
+        promo_logits = torch.where(promo_valid, promo_logits, neg_inf)
+
+        return torch.where(normal_mask, normal_logits, promo_logits)
+
 
 class ValueHead(nn.Module):
     """LC0-style value head: per-square projection → flatten → MLP.
@@ -389,8 +457,7 @@ class ChessNet(nn.Module):
         self.sf_volatility = VolatilityHead(cfg.embed_dim)
         self.moves_left = ScalarHead(cfg.embed_dim)
 
-    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
-  # x: (B,C,8,8) -> (B,64,C)
+    def _encode_tokens(self, x: torch.Tensor) -> torch.Tensor:
         b, c, h, w = x.shape
         assert (h, w) == (8, 8)
         tokens = x.reshape(b, c, 64).permute(0, 2, 1).contiguous()  # (B,64,C)
@@ -405,6 +472,49 @@ class ChessNet(nn.Module):
                 t = grad_checkpoint(blk, t, smolgen_bias, use_reentrant=False)
             else:
                 t = blk(t, smolgen_bias)
+        return t
+
+    def forward_legal_policy(
+        self,
+        x: torch.Tensor,
+        legal_flat: torch.Tensor,
+        legal_counts: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        t = self._encode_tokens(x)
+        return {
+            "policy_own": self.policy_own.forward_legal(t, legal_flat, legal_counts),
+            "wdl": self.value_wdl(t),
+        }
+
+    def forward_legal_policy_rows(
+        self,
+        x: torch.Tensor,
+        legal_flat: torch.Tensor,
+        legal_rows: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        t = self._encode_tokens(x)
+        return {
+            "policy_own": self.policy_own.forward_legal_rows(t, legal_flat, legal_rows),
+            "wdl": self.value_wdl(t),
+        }
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        legal_flat: torch.Tensor | None = None,
+        legal_counts: torch.Tensor | None = None,
+        legal_rows: torch.Tensor | None = None,
+    ) -> dict[str, torch.Tensor]:
+        if legal_flat is not None or legal_counts is not None or legal_rows is not None:
+            if legal_flat is None:
+                raise ValueError("legal_flat must be provided for legal policy forward")
+            if legal_rows is not None:
+                return self.forward_legal_policy_rows(x, legal_flat, legal_rows)
+            if legal_counts is None:
+                raise ValueError("legal_counts must be provided with legal_flat")
+            return self.forward_legal_policy(x, legal_flat, legal_counts)
+
+        t = self._encode_tokens(x)
 
         if self._inference_only:
             return {

@@ -46,6 +46,22 @@ static inline double wdl_logits_to_q(double w, double d, double l) {
     return (ws > 0.0) ? ((ew - el) / ws) : 0.0;
 }
 
+static inline float bf16_bits_to_float(uint16_t bits) {
+    uint32_t u = ((uint32_t)bits) << 16;
+    float f;
+    memcpy(&f, &u, sizeof(f));
+    return f;
+}
+
+static inline uint16_t float_to_bf16_bits(float f) {
+    uint32_t u;
+    memcpy(&u, &f, sizeof(u));
+    /* Round to nearest-even before truncating lower 16 mantissa bits. */
+    uint32_t lsb = (u >> 16) & 1u;
+    u += 0x7FFFu + lsb;
+    return (uint16_t)(u >> 16);
+}
+
 /* Fast deterministic fingerprint of an already-encoded network row. This is
  * for cache indexing only: callers that need collision-proof identity should
  * still verify against stored encoded bytes on hits. */
@@ -966,6 +982,7 @@ static int32_t tree_gumbel_collect_leaf(const TreeData *t, int32_t root_id,
     int32_t forced_action, const GumbelSelectParams *sel,
     int32_t *path_buf, int32_t path_cap);
 static void cboard_encode_146_into(const CBoard *b, float * restrict out);
+static void cboard_encode_146_bf16_into(const CBoard *b, uint16_t * restrict out);
 static void softmax_inplace(double *arr, int n);
 
 /* Store a CBoard into the tree's per-node cache slot, growing if needed. */
@@ -1036,7 +1053,8 @@ typedef struct {
     int32_t current_rep;
 
     /* Encoding buffer (borrowed pointer — owned by Python) */
-    float *enc_data;
+    void *enc_data;
+    int enc_is_bf16;
     int32_t enc_capacity;
     PyObject *enc_arr_ref;       /* Strong ref to keep enc buffer alive */
 
@@ -1235,7 +1253,7 @@ static int32_t gss_build_queries(GumbelSimState *g) {
  * (StoredPrepState left in its pre-call state — caller should abort). */
 static int32_t gss_prepare_batch(
     TreeData *t, StoredPrepState *s, GumbelSimState *g,
-    int32_t n_queries, float *enc_data)
+    int32_t n_queries, void *enc_data)
 {
     int cache_ok = (t->cb_cache != NULL);
     int32_t path_buf[MCTS_MAX_PATH];
@@ -1370,7 +1388,13 @@ static int32_t gss_prepare_batch(
 #endif
         for (int32_t i = 0; i < n_to_encode; i++) {
             int32_t li = base + i;
-            cboard_encode_146_into(&s->leaf_cboards[li], enc_data + li * 146 * 64);
+            if (g->enc_is_bf16) {
+                uint16_t *out = (uint16_t *)enc_data;
+                cboard_encode_146_bf16_into(&s->leaf_cboards[li], out + li * 146 * 64);
+            } else {
+                float *out = (float *)enc_data;
+                cboard_encode_146_into(&s->leaf_cboards[li], out + li * 146 * 64);
+            }
         }
     }
 
@@ -1411,10 +1435,46 @@ static void gss_finish_batch(
     }
 }
 
+/* Compact legal-policy variant: pol_bf16 is ordered exactly like
+ * StoredPrepState.legal_flat, so leaf li starts at legal_offset[li] and has
+ * legal_count[li] bfloat16 logits. WDL stays float32 for tablebase overrides.
+ */
+static void gss_finish_batch_legal_bf16(
+    TreeData *t, StoredPrepState *s,
+    const uint16_t *pol_bf16, const float *wdl_data)
+{
+    for (int32_t li = 0; li < s->n_leaves; li++) {
+        int32_t nid = s->leaf_ids[li];
+        const int32_t *legal = s->legal_flat + s->legal_offset[li];
+        int32_t n_legal = s->legal_count[li];
+        const int32_t *path = s->path_flat + s->path_offset[li];
+        int32_t path_len = s->path_count[li];
+        const float *wdl = wdl_data + li * 3;
+        double q = wdl_logits_to_q((double)wdl[0], (double)wdl[1], (double)wdl[2]);
+
+        if (!__atomic_load_n(&t->expanded[nid], __ATOMIC_ACQUIRE) && n_legal > 0) {
+            const uint16_t *logits = pol_bf16 + s->legal_offset[li];
+            double priors_stack[256];
+            double *priors = (n_legal <= 256) ? priors_stack
+                                               : (double *)malloc(n_legal * sizeof(double));
+            if (priors) {
+                for (int32_t j = 0; j < n_legal; j++)
+                    priors[j] = (double)bf16_bits_to_float(logits[j]);
+                softmax_inplace(priors, n_legal);
+                tree_expand(t, nid, legal, priors, n_legal);
+                if (priors != priors_stack) free(priors);
+            }
+        }
+
+        tree_backprop(t, path, path_len, q);
+        tree_ht_insert(t, s->hashes[li], nid);
+    }
+}
+
 /* Core simulation loop: build queries → prepare → return for GPU eval,
  * or do scoring/halving and continue to next round.
  * Returns number of leaves needing eval (>0), or 0 if simulation is done. */
-static int32_t gss_step(TreeData *t, StoredPrepState *s, GumbelSimState *g, float *enc_data)
+static int32_t gss_step(TreeData *t, StoredPrepState *s, GumbelSimState *g, void *enc_data)
 {
     /* Accumulate leaves across multiple reps before returning for GPU eval:
      * reduces Python↔C round trips at the cost of slightly staler tree state
@@ -3021,6 +3081,15 @@ static void cboard_encode_146_into(const CBoard *b, float * restrict out) {
     cboard_compute_features_34(b, out + 112 * 64);
 }
 
+static void cboard_encode_146_bf16_into(const CBoard *b, uint16_t * restrict out) {
+    float tmp[146 * 64];
+    memset(tmp, 0, sizeof(tmp));
+    cboard_encode_146_into(b, tmp);
+    for (int32_t i = 0; i < 146 * 64; i++) {
+        out[i] = float_to_bf16_bits(tmp[i]);
+    }
+}
+
 
 
 
@@ -3079,11 +3148,22 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
     PyArrayObject *root_ids_arr = FROMANY_1D(root_ids_obj, NPY_INT32);
     PyArrayObject *budget_arr = FROMANY_1D(budget_obj, NPY_INT32);
     PyArrayObject *root_qs_arr = FROMANY_1D(root_qs_obj, NPY_FLOAT64);
-    PyArrayObject *enc_arr = FROMANY_4D_RW(enc_buf_obj, NPY_FLOAT32);
+    PyArrayObject *enc_arr = (PyArrayObject *)PyArray_FROMANY(
+        enc_buf_obj, NPY_NOTYPE, 4, 4, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE);
 
     if (!root_ids_arr || !budget_arr || !root_qs_arr || !enc_arr) {
         Py_XDECREF(root_ids_arr); Py_XDECREF(budget_arr);
         Py_XDECREF(root_qs_arr); Py_XDECREF(enc_arr);
+        return NULL;
+    }
+    int enc_typenum = PyArray_TYPE(enc_arr);
+    int enc_is_bf16 = 0;
+    if (enc_typenum == NPY_UINT16) {
+        enc_is_bf16 = 1;
+    } else if (enc_typenum != NPY_FLOAT32) {
+        Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
+        Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
+        PyErr_SetString(PyExc_TypeError, "enc_buf must be float32 or uint16 bf16 bits");
         return NULL;
     }
 
@@ -3094,6 +3174,15 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
         Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
         PyErr_SetString(PyExc_ValueError,
             "root_ids/budget/root_qs must have at least n_boards elements");
+        return NULL;
+    }
+    if (PyArray_DIM(enc_arr, 1) != 146 ||
+        PyArray_DIM(enc_arr, 2) != 8 ||
+        PyArray_DIM(enc_arr, 3) != 8) {
+        Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
+        Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
+        PyErr_SetString(PyExc_ValueError,
+            "enc_buf must have shape (>=N, 146, 8, 8)");
         return NULL;
     }
 
@@ -3258,7 +3347,8 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
     }
 
     /* Encoding buffer (strong ref to keep alive) */
-    g->enc_data = (float *)PyArray_DATA(enc_arr);
+    g->enc_data = PyArray_DATA(enc_arr);
+    g->enc_is_bf16 = enc_is_bf16;
     g->enc_capacity = (int32_t)PyArray_DIM(enc_arr, 0);
     Py_INCREF(enc_arr);
     g->enc_arr_ref = (PyObject *)enc_arr;
@@ -3374,6 +3464,99 @@ static PyObject *MCTSTree_continue_gumbel_sims(MCTSTreeObject *self, PyObject *a
     }
 
     return PyLong_FromLong(n_leaves_cont);
+}
+
+static PyObject *MCTSTree_continue_gumbel_sims_legal_bf16(MCTSTreeObject *self, PyObject *args) {
+    PyObject *pol_obj, *wdl_obj;
+
+    if (!PyArg_ParseTuple(args, "OO", &pol_obj, &wdl_obj))
+        return NULL;
+
+    PyArrayObject *pol_arr = FROMANY_1D(pol_obj, NPY_UINT16);
+    PyArrayObject *wdl_arr = FROMANY_2D(wdl_obj, NPY_FLOAT32);
+
+    if (!pol_arr || !wdl_arr) {
+        Py_XDECREF(pol_arr); Py_XDECREF(wdl_arr);
+        return NULL;
+    }
+
+    GumbelSimState *g = &self->gsim;
+    StoredPrepState *s = &self->stored;
+
+    if (g->phase != 1) {
+        PyErr_SetString(PyExc_RuntimeError, "continue_gumbel_sims_legal_bf16 called but simulation not in needs_eval state");
+        Py_DECREF(pol_arr); Py_DECREF(wdl_arr); return NULL;
+    }
+    if (PyArray_DIM(pol_arr, 0) < s->legal_flat_used) {
+        PyErr_Format(PyExc_ValueError,
+            "compact policy has %ld entries, need at least %d",
+            (long)PyArray_DIM(pol_arr, 0), s->legal_flat_used);
+        Py_DECREF(pol_arr); Py_DECREF(wdl_arr); return NULL;
+    }
+    if (PyArray_DIM(wdl_arr, 0) < s->n_leaves || PyArray_DIM(wdl_arr, 1) < 3) {
+        PyErr_SetString(PyExc_ValueError, "wdl must have shape (n_leaves, >=3)");
+        Py_DECREF(pol_arr); Py_DECREF(wdl_arr); return NULL;
+    }
+
+    const uint16_t *pol_data = (const uint16_t *)PyArray_DATA(pol_arr);
+    const float *wdl_data = (const float *)PyArray_DATA(wdl_arr);
+
+    Py_BEGIN_ALLOW_THREADS
+
+    gss_finish_batch_legal_bf16(&self->tree, s, pol_data, wdl_data);
+
+    s->n_leaves = 0;
+    s->n_terminals = 0;
+    s->legal_flat_used = 0;
+    s->path_flat_used = 0;
+    s->term_path_flat_used = 0;
+
+    Py_END_ALLOW_THREADS
+
+    Py_DECREF(pol_arr);
+    Py_DECREF(wdl_arr);
+
+    int32_t n_leaves_cont;
+    Py_BEGIN_ALLOW_THREADS
+    n_leaves_cont = gss_step(&self->tree, s, g, g->enc_data);
+    Py_END_ALLOW_THREADS
+
+    if (n_leaves_cont < 0) return PyErr_NoMemory();
+    if (n_leaves_cont == 0) {
+        g->phase = 2;
+        Py_RETURN_NONE;
+    }
+
+    return PyLong_FromLong(n_leaves_cont);
+}
+
+static PyObject *MCTSTree_get_pending_legal_indices(MCTSTreeObject *self, PyObject *Py_UNUSED(ignored)) {
+    StoredPrepState *s = &self->stored;
+    GumbelSimState *g = &self->gsim;
+    if (g->phase != 1) {
+        PyErr_SetString(PyExc_RuntimeError,
+            "get_pending_legal_indices: no batch pending (phase != 1)");
+        return NULL;
+    }
+
+    npy_intp flat_dims[1] = { s->legal_flat_used };
+    npy_intp leaf_dims[1] = { s->n_leaves };
+    PyArrayObject *flat_arr = (PyArrayObject *)PyArray_SimpleNew(1, flat_dims, NPY_INT32);
+    PyArrayObject *count_arr = (PyArrayObject *)PyArray_SimpleNew(1, leaf_dims, NPY_INT32);
+    if (!flat_arr || !count_arr) {
+        Py_XDECREF(flat_arr); Py_XDECREF(count_arr);
+        return NULL;
+    }
+    if (s->legal_flat_used > 0) {
+        memcpy(PyArray_DATA(flat_arr), s->legal_flat, s->legal_flat_used * sizeof(int32_t));
+    }
+    if (s->n_leaves > 0) {
+        memcpy(PyArray_DATA(count_arr), s->legal_count, s->n_leaves * sizeof(int32_t));
+    }
+    PyObject *tup = PyTuple_Pack(2, (PyObject *)flat_arr, (PyObject *)count_arr);
+    Py_DECREF(flat_arr);
+    Py_DECREF(count_arr);
+    return tup;
 }
 
 
@@ -3560,6 +3743,10 @@ static PyMethodDef MCTSTree_methods[] = {
      "start_gumbel_sims(...) -> n_leaves or None. Start gumbel simulation state machine."},
     {"continue_gumbel_sims", (PyCFunction)MCTSTree_continue_gumbel_sims, METH_VARARGS,
      "continue_gumbel_sims(pol, wdl) -> n_leaves or None. Feed GPU results, continue sim."},
+    {"continue_gumbel_sims_legal_bf16", (PyCFunction)MCTSTree_continue_gumbel_sims_legal_bf16, METH_VARARGS,
+     "continue_gumbel_sims_legal_bf16(compact_policy_bf16_bits, wdl_float32) -> n_leaves or None."},
+    {"get_pending_legal_indices", (PyCFunction)MCTSTree_get_pending_legal_indices, METH_NOARGS,
+     "get_pending_legal_indices() -> (legal_flat_int32, legal_counts_int32) for the current pending batch."},
     {"get_pending_tb_leaves", (PyCFunction)MCTSTree_get_pending_tb_leaves, METH_VARARGS,
      "get_pending_tb_leaves(max_pieces) -> (np.int32 indices, list[CBoard]). Syzygy-eligible subset of the current pending batch."},
     {"mark_tb_solved", (PyCFunction)MCTSTree_mark_tb_solved, METH_VARARGS,
@@ -3930,6 +4117,57 @@ static PyObject *py_batch_encode_146(PyObject *self, PyObject *args) {
     Py_RETURN_NONE;
 }
 
+/* batch_encode_146_bf16(cboards_list, out_array)
+ * Encode N CBoards into a pre-allocated (N, 146, 8, 8) uint16 array holding
+ * bfloat16 bit patterns. GIL released during encoding. */
+static PyObject *py_batch_encode_146_bf16(PyObject *self, PyObject *args) {
+    PyObject *cboards_list;
+    PyObject *out_obj;
+
+    if (!PyArg_ParseTuple(args, "OO", &cboards_list, &out_obj))
+        return NULL;
+
+    if (!PyList_Check(cboards_list)) {
+        PyErr_SetString(PyExc_TypeError, "cboards_list must be a list");
+        return NULL;
+    }
+
+    PyArrayObject *out_arr = FROMANY_4D_RW(out_obj, NPY_UINT16);
+    if (!out_arr) return NULL;
+
+    int32_t n = (int32_t)PyList_Size(cboards_list);
+    if (n <= 0) { Py_DECREF(out_arr); Py_RETURN_NONE; }
+
+    if (PyArray_DIM(out_arr, 0) < n || PyArray_DIM(out_arr, 1) != 146 ||
+        PyArray_DIM(out_arr, 2) != 8 || PyArray_DIM(out_arr, 3) != 8) {
+        Py_DECREF(out_arr);
+        PyErr_SetString(PyExc_ValueError,
+            "out_array must have shape (>=N, 146, 8, 8)");
+        return NULL;
+    }
+
+    CBoard *boards = (CBoard *)malloc(n * sizeof(CBoard));
+    if (!boards) { Py_DECREF(out_arr); return PyErr_NoMemory(); }
+    if (extract_cboards(cboards_list, n, boards, NULL) < 0) {
+        free(boards); Py_DECREF(out_arr); return NULL;
+    }
+
+    uint16_t *out_data = (uint16_t *)PyArray_DATA(out_arr);
+
+    Py_BEGIN_ALLOW_THREADS
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static) if(n > 64)
+#endif
+    for (int32_t i = 0; i < n; i++) {
+        cboard_encode_146_bf16_into(&boards[i], out_data + i * 146 * 64);
+    }
+    Py_END_ALLOW_THREADS
+
+    free(boards);
+    Py_DECREF(out_arr);
+    Py_RETURN_NONE;
+}
+
 /* ================================================================
  * classify_games — classify active games into net / opp groups.
  *
@@ -4200,6 +4438,9 @@ static PyMethodDef module_methods[] = {
     {"batch_encode_146", py_batch_encode_146, METH_VARARGS,
      "batch_encode_146(cboards_list, out_array) -> None. "
      "Encode CBoards into pre-allocated (N,146,8,8) float32 array. GIL released."},
+    {"batch_encode_146_bf16", py_batch_encode_146_bf16, METH_VARARGS,
+     "batch_encode_146_bf16(cboards_list, out_array) -> None. "
+     "Encode CBoards into pre-allocated (N,146,8,8) uint16 bfloat16-bit array. GIL released."},
     {"classify_games", py_classify_games, METH_VARARGS,
      "classify_games(cboards, net_color, done, finalized, selfplay, max_plies) "
      "-> (net_idxs, selfplay_opp_idxs, curriculum_opp_idxs). GIL released."},

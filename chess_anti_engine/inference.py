@@ -70,6 +70,60 @@ def _forward_no_grad(
             return model(xt)
 
 
+def _supports_legal_policy_forward(model: torch.nn.Module) -> bool:
+    if getattr(model, "_orig_mod", None) is not None and os.environ.get("CAE_COMPILED_LEGAL_POLICY", "0") != "1":
+        return False
+    if callable(getattr(model, "forward_legal_policy", None)):
+        return True
+    orig = getattr(model, "_orig_mod", None)
+    return callable(getattr(orig, "forward_legal_policy", None))
+
+
+def _supports_legal_policy_rows_forward(model: torch.nn.Module) -> bool:
+    if getattr(model, "_orig_mod", None) is not None and os.environ.get("CAE_COMPILED_LEGAL_ROWS_POLICY", "0") != "1":
+        return False
+    if callable(getattr(model, "forward_legal_policy_rows", None)):
+        return True
+    orig = getattr(model, "_orig_mod", None)
+    return callable(getattr(orig, "forward_legal_policy_rows", None))
+
+
+def _forward_legal_no_grad(
+    model: torch.nn.Module,
+    xt: torch.Tensor,
+    legal_flat: torch.Tensor,
+    legal_counts: torch.Tensor,
+    *,
+    device: str,
+    use_amp: bool = True,
+    amp_dtype: str = "auto",
+) -> dict[str, torch.Tensor]:
+    with torch.no_grad():
+        with inference_autocast(device=device, enabled=use_amp, dtype=amp_dtype):
+            if callable(getattr(getattr(model, "_orig_mod", None), "forward_legal_policy", None)):
+                return model(xt, legal_flat=legal_flat, legal_counts=legal_counts)
+            forward_legal = getattr(model, "forward_legal_policy")
+            return forward_legal(xt, legal_flat, legal_counts)
+
+
+def _forward_legal_rows_no_grad(
+    model: torch.nn.Module,
+    xt: torch.Tensor,
+    legal_flat: torch.Tensor,
+    legal_rows: torch.Tensor,
+    *,
+    device: str,
+    use_amp: bool = True,
+    amp_dtype: str = "auto",
+) -> dict[str, torch.Tensor]:
+    with torch.no_grad():
+        with inference_autocast(device=device, enabled=use_amp, dtype=amp_dtype):
+            if callable(getattr(getattr(model, "_orig_mod", None), "forward_legal_policy_rows", None)):
+                return model(xt, legal_flat=legal_flat, legal_rows=legal_rows)
+            forward_legal = getattr(model, "forward_legal_policy_rows")
+            return forward_legal(xt, legal_flat, legal_rows)
+
+
 def _configure_compile_cache(cache_root: Path) -> None:
     cache_root.mkdir(parents=True, exist_ok=True)
     compile_root = cache_root / "compile_cache"
@@ -87,6 +141,23 @@ def _coerce_input_batch(x: np.ndarray) -> np.ndarray:
     if x.dtype is np.dtype(np.float32) and x.flags["C_CONTIGUOUS"]:
         return x
     return np.ascontiguousarray(x, dtype=np.float32)
+
+
+def _coerce_bf16_bits_batch(x: np.ndarray) -> np.ndarray:
+    if x.ndim != 4:
+        raise ValueError(f"expected encoded batch shape (B,C,H,W), got {x.shape!r}")
+    if x.dtype != np.uint16:
+        raise TypeError(f"expected uint16 bf16 bits, got {x.dtype}")
+    if x.flags["C_CONTIGUOUS"]:
+        return x
+    return np.ascontiguousarray(x, dtype=np.uint16)
+
+
+def _bf16_bits_to_float32_np(x: np.ndarray) -> np.ndarray:
+    """Decode a numpy uint16 array holding bfloat16 bits into float32."""
+    if x.dtype != np.uint16:
+        raise TypeError(f"expected uint16 bf16 bits, got {x.dtype}")
+    return (np.ascontiguousarray(x).astype(np.uint32) << 16).view(np.float32)
 
 
 def _detach_attached_shm_from_resource_tracker(shm: SharedMemory) -> None:
@@ -213,6 +284,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         use_amp: bool = True,
         amp_dtype: str = "auto",
         n_slots: int = 1,
+        input_bf16: bool = False,
     ) -> None:
         super().__init__(model, device=device, use_amp=use_amp, amp_dtype=amp_dtype)
         self._max_batch = int(max_batch)
@@ -221,12 +293,23 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         self._n_slots = int(n_slots)
 
         _pin = self._use_cuda
+        self._input_bf16 = bool(input_bf16 and self._use_cuda and use_amp)
         self._pinned_inputs: list[torch.Tensor] = [
             torch.empty(
                 (self._max_batch, _CHANNELS, _BOARD_H, _BOARD_W),
                 dtype=torch.float32, pin_memory=_pin,
             ) for _ in range(self._n_slots)
         ]
+        self._pinned_inputs_bf16: list[torch.Tensor] | None = (
+            [
+                torch.empty(
+                    (self._max_batch, _CHANNELS, _BOARD_H, _BOARD_W),
+                    dtype=torch.bfloat16, pin_memory=True,
+                ) for _ in range(self._n_slots)
+            ]
+            if self._input_bf16 else None
+        )
+        self._slot_input_bf16: list[bool] = [False for _ in range(self._n_slots)]
         self._pinned_pols: list[torch.Tensor] = [
             torch.empty(
                 (self._max_batch, _POLICY_SIZE),
@@ -239,13 +322,27 @@ class DirectGPUEvaluator(LocalModelEvaluator):
                 dtype=torch.float32, pin_memory=_pin,
             ) for _ in range(self._n_slots)
         ]
+        self._pinned_legal_pols_bf16_bits: list[torch.Tensor] = [
+            torch.empty(
+                (self._max_batch * 256,),
+                dtype=torch.uint16, pin_memory=_pin,
+            ) for _ in range(self._n_slots)
+        ]
         self._pinned_inputs_np: list[np.ndarray] = [t.numpy(force=True) for t in self._pinned_inputs]
+        self._pinned_inputs_bf16_bits_np: list[np.ndarray] | None = (
+            [t.view(torch.uint16).numpy(force=True) for t in self._pinned_inputs_bf16]
+            if self._pinned_inputs_bf16 is not None else None
+        )
         self._pinned_pols_np: list[np.ndarray] = [t.numpy(force=True) for t in self._pinned_pols]
         self._pinned_wdls_np: list[np.ndarray] = [t.numpy(force=True) for t in self._pinned_wdls]
 
     @property
     def n_slots(self) -> int:
         return self._n_slots
+
+    @property
+    def supports_input_bf16_bits(self) -> bool:
+        return self._pinned_inputs_bf16_bits_np is not None
 
     def get_input_buffer(self, bsz: int, slot: int = 0) -> np.ndarray:
         """Return a writable (bsz, C, H, W) view into pinned input slot ``slot``.
@@ -259,7 +356,29 @@ class DirectGPUEvaluator(LocalModelEvaluator):
             raise ValueError(f"batch {bsz} > max {self._max_batch}")
         if not 0 <= slot < self._n_slots:
             raise ValueError(f"slot {slot} out of range [0, {self._n_slots})")
+        self._slot_input_bf16[slot] = False
         return self._pinned_inputs_np[slot][:bsz]
+
+    def get_input_buffer_bf16_bits(self, bsz: int, slot: int = 0) -> np.ndarray:
+        """Return a writable uint16 view containing bfloat16 input bits."""
+        if self._pinned_inputs_bf16_bits_np is None:
+            raise RuntimeError("bf16 input buffer is unavailable")
+        if bsz > self._max_batch:
+            raise ValueError(f"batch {bsz} > max {self._max_batch}")
+        if not 0 <= slot < self._n_slots:
+            raise ValueError(f"slot {slot} out of range [0, {self._n_slots})")
+        self._slot_input_bf16[slot] = True
+        return self._pinned_inputs_bf16_bits_np[slot][:bsz]
+
+    def _device_input(self, bsz: int, *, slot: int) -> torch.Tensor:
+        pin_in = self._pinned_inputs[slot]
+        if self._pinned_inputs_bf16 is not None and self._slot_input_bf16[slot]:
+            return self._pinned_inputs_bf16[slot][:bsz].to(self.device, non_blocking=True)
+        if self._pinned_inputs_bf16 is not None:
+            pin_bf16 = self._pinned_inputs_bf16[slot]
+            pin_bf16[:bsz].copy_(pin_in[:bsz])
+            return pin_bf16[:bsz].to(self.device, non_blocking=True)
+        return pin_in[:bsz].to(self.device, non_blocking=True)
 
     def evaluate_inplace(
         self, bsz: int, *, copy_out: bool = True, slot: int = 0,
@@ -282,7 +401,16 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         if bsz > self._max_batch:
             raise ValueError(f"batch {bsz} > max {self._max_batch}")
 
-        self._pinned_inputs_np[0][:bsz] = x
+        if x.dtype == np.uint16:
+            if self._pinned_inputs_bf16_bits_np is not None:
+                self._pinned_inputs_bf16_bits_np[0][:bsz] = x
+                self._slot_input_bf16[0] = True
+            else:
+                self._pinned_inputs_np[0][:bsz] = _bf16_bits_to_float32_np(x)
+                self._slot_input_bf16[0] = False
+        else:
+            self._pinned_inputs_np[0][:bsz] = x
+            self._slot_input_bf16[0] = False
         return self._run_forward(bsz, copy_out=copy_out, slot=0)
 
     def _run_forward(
@@ -299,7 +427,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
             )
             return _policy_output(out).detach().float().numpy(), out["wdl"].detach().float().numpy()
 
-        xt = pin_in[:bsz].to(self.device, non_blocking=True)
+        xt = self._device_input(bsz, slot=slot)
         out = _forward_no_grad(
             self.model, xt, device=self.device,
             use_amp=self._use_amp, amp_dtype=self._amp_dtype,
@@ -330,7 +458,16 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         if not self._use_cuda:
             return super().evaluate_encoded_async(x)
 
-        self._pinned_inputs_np[0][:bsz] = x
+        if x.dtype == np.uint16:
+            if self._pinned_inputs_bf16_bits_np is not None:
+                self._pinned_inputs_bf16_bits_np[0][:bsz] = x
+                self._slot_input_bf16[0] = True
+            else:
+                self._pinned_inputs_np[0][:bsz] = _bf16_bits_to_float32_np(x)
+                self._slot_input_bf16[0] = False
+        else:
+            self._pinned_inputs_np[0][:bsz] = x
+            self._slot_input_bf16[0] = False
         return self._async_forward(bsz, slot=0)
 
     def evaluate_inplace_async(
@@ -353,10 +490,46 @@ class DirectGPUEvaluator(LocalModelEvaluator):
             return super().evaluate_encoded_async(xb)
         return self._async_forward(bsz, slot=slot)
 
+    def evaluate_inplace_legal_bf16_async(
+        self, bsz: int, legal_flat: np.ndarray, legal_counts: np.ndarray, *, slot: int = 0,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
+        """Async eval returning compact legal policy logits as BF16 bit patterns.
+
+        ``legal_flat`` is the concatenated policy-index list for each real row;
+        ``legal_counts`` has length ``bsz``. The policy tensor returned is a
+        pinned CPU ``uint16`` tensor containing bfloat16 bits in that compact
+        order. WDL remains float32 because tablebase override mutates it before
+        C integration, and it is only three logits per row.
+        """
+        if bsz > self._max_batch:
+            raise ValueError(f"batch {bsz} > max {self._max_batch}")
+        if not 0 <= slot < self._n_slots:
+            raise ValueError(f"slot {slot} out of range [0, {self._n_slots})")
+        counts = np.asarray(legal_counts, dtype=np.int32)
+        if counts.ndim != 1 or counts.shape[0] != bsz:
+            raise ValueError(f"legal_counts must be shape ({bsz},), got {counts.shape}")
+        flat = np.asarray(legal_flat, dtype=np.int32)
+        if flat.ndim != 1:
+            raise ValueError(f"legal_flat must be 1D, got {flat.ndim}D")
+        n_legal = int(counts.sum())
+        if n_legal != int(flat.shape[0]):
+            raise ValueError(f"legal_flat len {flat.shape[0]} != sum(legal_counts) {n_legal}")
+        if n_legal > self._pinned_legal_pols_bf16_bits[slot].shape[0]:
+            raise ValueError(
+                f"compact legal policy has {n_legal} entries > "
+                f"{self._pinned_legal_pols_bf16_bits[slot].shape[0]} capacity"
+            )
+        if not self._use_cuda:
+            pol, wdl = self.evaluate_inplace(bsz, copy_out=True, slot=slot)
+            rows = np.repeat(np.arange(bsz, dtype=np.int64), counts.astype(np.int64, copy=False))
+            compact = pol[rows, flat.astype(np.int64, copy=False)].astype(np.float32, copy=False)
+            bits = torch.from_numpy(compact).to(torch.bfloat16).view(torch.uint16)
+            return bits, torch.from_numpy(wdl), None
+        return self._async_forward_legal_bf16(bsz, flat, counts, n_legal, slot=slot)
+
     def _async_forward(
         self, bsz: int, *, slot: int,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
-        pin_in = self._pinned_inputs[slot]
         pin_pol = self._pinned_pols[slot]
         pin_wdl = self._pinned_wdls[slot]
 
@@ -369,7 +542,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
 
         with torch.cuda.stream(stream):
             stream.wait_event(event_default)  # torch stubs have duplicate Event types
-            xt = pin_in[:bsz].to(self.device, non_blocking=True)
+            xt = self._device_input(bsz, slot=slot)
             out = _forward_no_grad(
                 self.model, xt, device=self.device,
                 use_amp=self._use_amp, amp_dtype=self._amp_dtype,
@@ -381,11 +554,81 @@ class DirectGPUEvaluator(LocalModelEvaluator):
 
         return pin_pol[:bsz], pin_wdl[:bsz], done
 
+    def _async_forward_legal_bf16(
+        self, bsz: int, legal_flat: np.ndarray, legal_counts: np.ndarray, n_legal: int, *, slot: int,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
+        pin_pol = self._pinned_legal_pols_bf16_bits[slot]
+        pin_wdl = self._pinned_wdls[slot]
+
+        if self._stream is None:
+            self._stream = torch.cuda.Stream(device=self.device)
+        stream = self._stream
+
+        event_default = torch.cuda.Event()
+        event_default.record(torch.cuda.current_stream(self.device))
+
+        with torch.cuda.stream(stream):
+            stream.wait_event(event_default)  # torch stubs have duplicate Event types
+            xt = self._device_input(bsz, slot=slot)
+            legal_counts_gpu = torch.as_tensor(legal_counts, dtype=torch.long, device=self.device)
+            legal_flat_gpu = torch.as_tensor(legal_flat, dtype=torch.long, device=self.device)
+            if _supports_legal_policy_forward(self.model):
+                out = _forward_legal_no_grad(
+                    self.model, xt, legal_flat_gpu, legal_counts_gpu,
+                    device=self.device, use_amp=self._use_amp, amp_dtype=self._amp_dtype,
+                )
+            else:
+                out = _forward_no_grad(
+                    self.model, xt, device=self.device,
+                    use_amp=self._use_amp, amp_dtype=self._amp_dtype,
+                )
+            if n_legal > 0:
+                if _supports_legal_policy_forward(self.model):
+                    legal_logits = _policy_output(out).to(torch.bfloat16)
+                else:
+                    policy = _policy_output(out)[:bsz]
+                    rows = torch.repeat_interleave(torch.arange(bsz, device=self.device), legal_counts_gpu)
+                    legal_logits = policy[rows, legal_flat_gpu].to(torch.bfloat16)
+                pin_pol[:n_legal].copy_(legal_logits.view(torch.uint16), non_blocking=True)
+            pin_wdl[:bsz].copy_(out["wdl"][:bsz].detach().float(), non_blocking=True)
+            done = torch.cuda.Event()
+            done.record(stream)
+
+        return pin_pol[:n_legal], pin_wdl[:bsz], done
+
 
 # Bucket ladder for ThreadedBatchEvaluator's coalesced GPU forwards. Coarser
 # than the per-batch AOT bucket list (_BATCH_BUCKETS) because torch.compile
 # graphs are cheaper to recapture across mid-range sizes.
-_COMPILED_BATCH_BUCKETS = (128, 256, 384, 512, 768, 1024, 1536, 2048, 4096)
+_COMPILED_BATCH_BUCKETS = (
+    128, 170, 256, 340, 384, 512, 680, 768, 1020, 1024, 1190, 1536, 2048, 4096,
+)
+
+_COMPILED_LEGAL_POLICY_BUCKETS = (
+    32_768, 65_536, 131_072, 262_144, 524_288,
+)
+
+
+def _compiled_padded_batch_size(total: int, *, capacity: int | None = None) -> int:
+    if total <= 0:
+        return 0
+    for bucket in _COMPILED_BATCH_BUCKETS:
+        if bucket >= total:
+            if capacity is not None and bucket > capacity:
+                return total
+            return bucket
+    return total
+
+
+def _compiled_padded_legal_policy_size(total: int, *, capacity: int | None = None) -> int:
+    if total <= 0:
+        return 0
+    for bucket in _COMPILED_LEGAL_POLICY_BUCKETS:
+        if bucket >= total:
+            if capacity is not None and bucket > capacity:
+                return total
+            return bucket
+    return total
 
 
 class ThreadedBatchEvaluator:
@@ -497,11 +740,7 @@ class ThreadedBatchEvaluator:
         """Concat + bucket-pad pending inputs. Returns ``(combined, real_total)``."""
         total = sum(p[0].shape[0] for p in pending)
         combined = pending[0][0] if len(pending) == 1 else np.concatenate([p[0] for p in pending], axis=0)
-        padded_size = total
-        for b in _COMPILED_BATCH_BUCKETS:
-            if b >= total:
-                padded_size = min(b, self._max_batch)
-                break
+        padded_size = _compiled_padded_batch_size(total, capacity=self._max_batch)
         if padded_size > total:
             pad = np.zeros((padded_size - total, *combined.shape[1:]), dtype=combined.dtype)
             combined = np.concatenate([combined, pad], axis=0)
@@ -703,9 +942,10 @@ class AOTEvaluator:
 # Each worker owns one "slot" — a pre-allocated shared memory region with:
 #
 #   [0]        state      uint8   (see _STATE_* constants)
+#   [1]        mode       uint8   (see _MODE_* constants)
 #   [4:8]      batch_size int32   (number of positions in this request)
-#   [8:...]    input      float32[max_batch, 146, 8, 8]
-#   [after input]  policy float32[max_batch, 4672]
+#   [8:...]    input      float32 or bf16-bits[max_batch, 146, 8, 8]
+#   [after input]  policy/output float32[max_batch, 4672] or compact metadata/bf16 bits
 #   [after policy] wdl    float32[max_batch, 3]
 #
 # Flow:
@@ -720,6 +960,9 @@ _STATE_IDLE = 0
 _STATE_REQUEST = 1
 _STATE_RESPONSE = 2
 _STATE_SHUTDOWN = 255
+_MODE_DENSE_F32 = 0
+_MODE_DENSE_BF16 = 1
+_MODE_LEGAL_BF16 = 2
 
 _CHANNELS = 146
 _BOARD_H = 8
@@ -729,7 +972,7 @@ _WDL_SIZE = 3
 _F32 = np.float32
 _F32_BYTES = 4
 
-_HEADER_BYTES = 8  # 1 byte state + 3 pad + 4 byte batch_size
+_HEADER_BYTES = 8  # 1 byte state + 1 byte mode + 2 pad + 4 byte batch_size
 
 
 @dataclass(frozen=True)
@@ -766,7 +1009,10 @@ class _SlotLayout:
 class _InferenceSlot:
     """Numpy-backed view into a pre-allocated shared memory slot."""
 
-    __slots__ = ("_shm", "_layout", "_owns", "_buf", "input", "policy", "wdl")
+    __slots__ = (
+        "_shm", "_layout", "_owns", "_buf",
+        "input", "input_bf16_bits", "policy", "policy_i32", "policy_u16", "wdl",
+    )
     _buf: memoryview
 
     def __init__(self, shm: SharedMemory, layout: _SlotLayout, *, owns: bool = False):
@@ -781,9 +1027,27 @@ class _InferenceSlot:
             buffer=self._buf,
             offset=layout.input_offset,
         )
+        self.input_bf16_bits: np.ndarray = np.ndarray(
+            (layout.max_batch, _CHANNELS, _BOARD_H, _BOARD_W),
+            dtype=np.uint16,
+            buffer=self._buf,
+            offset=layout.input_offset,
+        )
         self.policy: np.ndarray = np.ndarray(
             (layout.max_batch, _POLICY_SIZE),
             dtype=_F32,
+            buffer=self._buf,
+            offset=layout.policy_offset,
+        )
+        self.policy_i32: np.ndarray = np.ndarray(
+            (layout.policy_bytes // 4,),
+            dtype=np.int32,
+            buffer=self._buf,
+            offset=layout.policy_offset,
+        )
+        self.policy_u16: np.ndarray = np.ndarray(
+            (layout.policy_bytes // 2,),
+            dtype=np.uint16,
             buffer=self._buf,
             offset=layout.policy_offset,
         )
@@ -809,6 +1073,14 @@ class _InferenceSlot:
     @batch_size.setter
     def batch_size(self, v: int) -> None:
         struct.pack_into("<i", self._buf, 4, int(v))
+
+    @property
+    def request_mode(self) -> int:
+        return int(self._buf[1])
+
+    @request_mode.setter
+    def request_mode(self, v: int) -> None:
+        self._buf[1] = int(v) & 0xFF
 
     @property
     def name(self) -> str:
@@ -849,10 +1121,12 @@ class SlotBroker:
         compile_inference: bool,
         batch_wait_ms: float,
         slot_prefix: str,
+        compile_mode: str = "reduce-overhead",
     ) -> None:
         self.publish_dir = Path(publish_dir)
         self.device = str(device)
         self.compile_inference = bool(compile_inference)
+        self.compile_mode = str(compile_mode or "reduce-overhead")
         self._first_inference_pending = False
         self.batch_wait_ms = float(batch_wait_ms)
         self._model: torch.nn.Module | None = None
@@ -872,16 +1146,25 @@ class SlotBroker:
             (_total_cap, _CHANNELS, _BOARD_H, _BOARD_W),
             dtype=torch.float32, pin_memory=_pin,
         )
+        self._pinned_input_bf16 = torch.empty(
+            (_total_cap, _CHANNELS, _BOARD_H, _BOARD_W),
+            dtype=torch.bfloat16, pin_memory=_pin,
+        )
         self._pinned_pol = torch.empty(
             (_total_cap, _POLICY_SIZE), dtype=torch.float32, pin_memory=_pin,
         )
         self._pinned_wdl = torch.empty(
             (_total_cap, _WDL_SIZE), dtype=torch.float32, pin_memory=_pin,
         )
+        self._pinned_legal_pol_bf16_bits = torch.empty(
+            (_total_cap * 256,), dtype=torch.uint16, pin_memory=_pin,
+        )
   # Pinned tensors need force=True for numpy conversion.
         self._pinned_input_np = self._pinned_input.numpy(force=True)
+        self._pinned_input_bf16_bits_np = self._pinned_input_bf16.view(torch.uint16).numpy(force=True)
         self._pinned_pol_np = self._pinned_pol.numpy(force=True)
         self._pinned_wdl_np = self._pinned_wdl.numpy(force=True)
+        self._pinned_legal_pol_bf16_bits_np = self._pinned_legal_pol_bf16_bits.numpy(force=True)
 
         for i in range(num_slots):
             name = f"{slot_prefix}-{i}"
@@ -896,6 +1179,7 @@ class SlotBroker:
             slot = _InferenceSlot(shm, self._layout, owns=True)
             slot.state = _STATE_IDLE
             slot.batch_size = 0
+            slot.request_mode = _MODE_DENSE_F32
             self._slots.append(slot)
             self._slot_names.append(name)
 
@@ -951,7 +1235,7 @@ class SlotBroker:
         if hasattr(model, "_inference_only"):
             setattr(model, "_inference_only", True)
         if self.compile_inference and self.device.startswith("cuda"):
-            model = cast("torch.nn.Module", torch.compile(model, mode="reduce-overhead"))
+            model = cast("torch.nn.Module", torch.compile(model, mode=self.compile_mode))
         self._model = model
         self._model_sha = model_sha
         self._first_inference_pending = bool(self.compile_inference)
@@ -959,6 +1243,15 @@ class SlotBroker:
   # -- batch processing --
 
     def _process_batch(self, ready: list[_InferenceSlot]) -> None:
+        by_mode: dict[int, list[_InferenceSlot]] = {}
+        for slot in ready:
+            by_mode.setdefault(int(slot.request_mode), []).append(slot)
+        for mode, slots in by_mode.items():
+            self._process_batch_mode(slots, mode=mode)
+
+    def _process_batch_mode(self, ready: list[_InferenceSlot], *, mode: int) -> None:
+        _timing = getattr(self, "_timing_metrics", None)
+        _t_pack0 = time.perf_counter()
         self._ensure_model()
         if self._model is None:
             for slot in ready:
@@ -968,48 +1261,206 @@ class SlotBroker:
                 slot.state = _STATE_RESPONSE
             return
 
+        use_bf16_input = mode in (_MODE_DENSE_BF16, _MODE_LEGAL_BF16)
+        compact_legal = mode == _MODE_LEGAL_BF16
+
   # Gather inputs directly into pre-allocated pinned buffer (one memcpy
   # from shm → pinned, then async DMA to GPU — no intermediate allocs).
+        active: list[_InferenceSlot] = []
         batch_sizes: list[int] = []
+        legal_counts_by_slot: list[np.ndarray] = []
+        legal_flat_by_slot: list[np.ndarray] = []
         total = 0
         for slot in ready:
             bsz = max(0, min(int(slot.batch_size), self._layout.max_batch))
+            if compact_legal:
+                meta = slot.policy_i32
+                n_legal = max(0, int(meta[0]))
+                counts = np.asarray(meta[1:1 + bsz], dtype=np.int32).copy()
+                flat = np.asarray(meta[1 + bsz:1 + bsz + n_legal], dtype=np.int32).copy()
+                if (
+                    counts.shape[0] != bsz
+                    or int(counts.sum()) != n_legal
+                    or flat.shape[0] != n_legal
+                    or (flat.size > 0 and (int(flat.min()) < 0 or int(flat.max()) >= _POLICY_SIZE))
+                ):
+                    slot.policy_u16[:1] = 0
+                    slot.wdl[:bsz].fill(0.0)
+                    slot.request_mode = _MODE_DENSE_F32
+                    slot.state = _STATE_RESPONSE
+                    continue
+                legal_counts_by_slot.append(counts)
+                legal_flat_by_slot.append(flat)
+            if use_bf16_input:
+                self._pinned_input_bf16_bits_np[total:total + bsz] = slot.input_bf16_bits[:bsz]
+            else:
+                self._pinned_input_np[total:total + bsz] = slot.input[:bsz]
+            active.append(slot)
             batch_sizes.append(bsz)
-            self._pinned_input_np[total:total + bsz] = slot.input[:bsz]
             total += bsz
 
         assert total <= self._pinned_input.shape[0], (
             f"gather overflow: {total} > {self._pinned_input.shape[0]}"
         )
-        xt = self._pinned_input[:total].to(self.device, non_blocking=True)
+        if total <= 0:
+            for slot in active:
+                slot.request_mode = _MODE_DENSE_F32
+                slot.state = _STATE_RESPONSE
+            return
+        forward_total = _compiled_padded_batch_size(total, capacity=self._pinned_input.shape[0])
+        pin_input = self._pinned_input_bf16 if use_bf16_input else self._pinned_input
+        compact_offsets: list[tuple[int, int]] = []
+        legal_counts_all: np.ndarray | None = None
+        legal_flat_all: np.ndarray | None = None
+        legal_rows_all: np.ndarray | None = None
+        if compact_legal:
+            rows_parts: list[np.ndarray] = []
+            row_base = 0
+            pol_base = 0
+            for bsz, counts in zip(batch_sizes, legal_counts_by_slot, strict=True):
+                n_legal = int(counts.sum())
+                compact_offsets.append((pol_base, pol_base + n_legal))
+                if n_legal > 0:
+                    rows_parts.append(
+                        np.repeat(
+                            np.arange(row_base, row_base + bsz, dtype=np.int64),
+                            counts.astype(np.int64, copy=False),
+                        )
+                    )
+                row_base += bsz
+                pol_base += n_legal
+            legal_counts_all = (
+                np.concatenate(legal_counts_by_slot).astype(np.int64, copy=False)
+                if legal_counts_by_slot else np.empty((0,), dtype=np.int64)
+            )
+            legal_flat_all = (
+                np.concatenate(legal_flat_by_slot).astype(np.int64, copy=False)
+                if legal_flat_by_slot else np.empty((0,), dtype=np.int64)
+            )
+            legal_rows_all = (
+                np.concatenate(rows_parts).astype(np.int64, copy=False)
+                if rows_parts else np.empty((0,), dtype=np.int64)
+            )
+        if _timing is not None:
+            _timing["pack_s"] += time.perf_counter() - _t_pack0
+        _t_forward0 = time.perf_counter()
+        xt = pin_input[:forward_total].to(self.device, non_blocking=True)
 
         first_inf = self._first_inference_pending
         if first_inf:
             inf_t0 = time.time()
 
-        out = _forward_no_grad(self._model, xt, device=self.device)
+        use_legal_rows_forward = compact_legal and _supports_legal_policy_rows_forward(self._model)
+        use_legal_forward = (
+            compact_legal
+            and not use_legal_rows_forward
+            and _supports_legal_policy_forward(self._model)
+        )
+        if use_legal_rows_forward:
+            assert legal_flat_all is not None
+            assert legal_rows_all is not None
+            legal_real = int(legal_flat_all.shape[0])
+            legal_capacity = int(self._pinned_legal_pol_bf16_bits.shape[0])
+            legal_forward_total = (
+                _compiled_padded_legal_policy_size(legal_real, capacity=legal_capacity)
+                if self.compile_inference else legal_real
+            )
+            if legal_forward_total > legal_real:
+                legal_flat_padded = np.zeros((legal_forward_total,), dtype=np.int64)
+                legal_rows_padded = np.zeros((legal_forward_total,), dtype=np.int64)
+                legal_flat_padded[:legal_real] = legal_flat_all
+                legal_rows_padded[:legal_real] = legal_rows_all
+            else:
+                legal_flat_padded = legal_flat_all
+                legal_rows_padded = legal_rows_all
+            legal_flat_gpu = torch.as_tensor(legal_flat_padded, dtype=torch.long, device=self.device)
+            legal_rows_gpu = torch.as_tensor(legal_rows_padded, dtype=torch.long, device=self.device)
+            out = _forward_legal_rows_no_grad(
+                self._model, xt, legal_flat_gpu, legal_rows_gpu, device=self.device,
+            )
+        elif use_legal_forward:
+            assert legal_counts_all is not None
+            assert legal_flat_all is not None
+            legal_counts_gpu = torch.as_tensor(legal_counts_all, dtype=torch.long, device=self.device)
+            legal_flat_gpu = torch.as_tensor(legal_flat_all, dtype=torch.long, device=self.device)
+            out = _forward_legal_no_grad(
+                self._model, xt, legal_flat_gpu, legal_counts_gpu, device=self.device,
+            )
+        else:
+            out = _forward_no_grad(self._model, xt, device=self.device)
 
         if first_inf:
             log.info("first inference (includes kernel compile) elapsed_s=%.2f batch=%d",
                      time.time() - inf_t0, xt.shape[0])
             self._first_inference_pending = False
 
-  # Copy results to pinned buffer (async GPU→pinned), then to shm.
-        pol_gpu = _policy_output(out).detach().float()
+        if _timing is not None:
+            _timing["forward_s"] += time.perf_counter() - _t_forward0
+        _t_output0 = time.perf_counter()
+        policy_gpu = _policy_output(out).detach()
         wdl_gpu = out["wdl"].detach().float()
-        self._pinned_pol[:total].copy_(pol_gpu, non_blocking=True)
-        self._pinned_wdl[:total].copy_(wdl_gpu, non_blocking=True)
+        self._pinned_wdl[:total].copy_(wdl_gpu[:total], non_blocking=True)
+        compact_bits_np: np.ndarray | None = None
+        if compact_legal:
+            if use_legal_rows_forward or use_legal_forward:
+                assert legal_flat_all is not None
+                n_real_compact = int(legal_flat_all.shape[0])
+                compact_bits = policy_gpu[:n_real_compact].to(torch.bfloat16).view(torch.uint16)
+                n_compact = int(compact_bits.numel())
+                self._pinned_legal_pol_bf16_bits[:n_compact].copy_(compact_bits, non_blocking=True)
+                compact_bits_np = self._pinned_legal_pol_bf16_bits_np[:n_compact]
+            elif legal_counts_by_slot:
+                rows_parts: list[np.ndarray] = []
+                cols_parts: list[np.ndarray] = []
+                row_base = 0
+                for bsz, counts, flat in zip(batch_sizes, legal_counts_by_slot, legal_flat_by_slot, strict=True):
+                    n_legal = int(counts.sum())
+                    if n_legal > 0:
+                        rows_parts.append(
+                            np.repeat(
+                                np.arange(row_base, row_base + bsz, dtype=np.int64),
+                                counts.astype(np.int64, copy=False),
+                            )
+                        )
+                        cols_parts.append(flat.astype(np.int64, copy=False))
+                    row_base += bsz
+                if rows_parts:
+                    rows = torch.as_tensor(np.concatenate(rows_parts), dtype=torch.long, device=self.device)
+                    cols = torch.as_tensor(np.concatenate(cols_parts), dtype=torch.long, device=self.device)
+                    compact_bits = policy_gpu[:total][rows, cols].to(torch.bfloat16).view(torch.uint16)
+                    n_compact = int(compact_bits.numel())
+                    self._pinned_legal_pol_bf16_bits[:n_compact].copy_(compact_bits, non_blocking=True)
+                    compact_bits_np = self._pinned_legal_pol_bf16_bits_np[:n_compact]
+                else:
+                    compact_bits_np = np.empty((0,), dtype=np.uint16)
+            else:
+                compact_bits_np = np.empty((0,), dtype=np.uint16)
+        else:
+            self._pinned_pol[:total].copy_(policy_gpu[:total].float(), non_blocking=True)
+        if _timing is not None:
+            _timing["output_s"] += time.perf_counter() - _t_output0
+        _t_scatter0 = time.perf_counter()
         if self.device.startswith("cuda"):
             torch.cuda.current_stream(torch.device(self.device)).synchronize()
 
   # Scatter from pinned buffer to worker slots
         start = 0
-        for slot, bsz in zip(ready, batch_sizes):
+        compact_idx = 0
+        for slot, bsz in zip(active, batch_sizes, strict=True):
             end = start + bsz
-            slot.policy[:bsz] = self._pinned_pol_np[start:end]
+            if compact_legal:
+                assert compact_bits_np is not None
+                pol_start, pol_end = compact_offsets[compact_idx]
+                slot.policy_u16[:pol_end - pol_start] = compact_bits_np[pol_start:pol_end]
+                compact_idx += 1
+            else:
+                slot.policy[:bsz] = self._pinned_pol_np[start:end]
             slot.wdl[:bsz] = self._pinned_wdl_np[start:end]
+            slot.request_mode = _MODE_DENSE_F32
             slot.state = _STATE_RESPONSE
             start = end
+        if _timing is not None:
+            _timing["scatter_s"] += time.perf_counter() - _t_scatter0
 
   # -- main loop --
 
@@ -1061,12 +1512,20 @@ class SlotBroker:
             f"[broker] {m['batches']} batches in {now - m['last_report']:.1f}s | "
             f"avg {avg_pos:.1f} pos/batch ({fullness:.0f}% of {capacity_per_batch}-cap), "
             f"{avg_slots:.1f}/{len(self._slots)} slots/batch | "
-            f"{m['positions'] / (now - m['last_report']):.0f} pos/s",
+            f"{m['positions'] / (now - m['last_report']):.0f} pos/s | "
+            f"pack={m['pack_s'] * 1000.0 / m['batches']:.2f}ms "
+            f"fwd={m['forward_s'] * 1000.0 / m['batches']:.2f}ms "
+            f"out={m['output_s'] * 1000.0 / m['batches']:.2f}ms "
+            f"sync+scatter={m['scatter_s'] * 1000.0 / m['batches']:.2f}ms",
             flush=True,
         )
         m["batches"] = 0
         m["positions"] = 0
         m["slots"] = 0
+        m["pack_s"] = 0.0
+        m["forward_s"] = 0.0
+        m["output_s"] = 0.0
+        m["scatter_s"] = 0.0
         m["last_report"] = now
 
     def serve_forever(self) -> None:
@@ -1074,6 +1533,10 @@ class SlotBroker:
             "batches": 0,
             "positions": 0,
             "slots": 0,
+            "pack_s": 0.0,
+            "forward_s": 0.0,
+            "output_s": 0.0,
+            "scatter_s": 0.0,
             "last_report": time.monotonic(),
         }
         report_interval = 10.0  # seconds
@@ -1097,6 +1560,7 @@ class SlotBroker:
                 metrics["batches"] += 1
                 metrics["positions"] += sum(s.batch_size for s in ready)
                 metrics["slots"] += len(ready)
+                self._timing_metrics = metrics
                 self._process_batch(ready)
 
             self._maybe_print_broker_metrics(metrics, time.monotonic(), report_interval)
@@ -1130,6 +1594,7 @@ class SlotInferenceClient:
         self._shm: SharedMemory | None = None
         self._slot: _InferenceSlot | None = None
         self._request_timeout_s = max(0.001, float(request_timeout_s))
+        self._lock = threading.Lock()
 
     def _disconnect(self) -> None:
         shm = self._shm
@@ -1162,23 +1627,104 @@ class SlotInferenceClient:
             self._slot = _InferenceSlot(shm, self._layout, owns=False)
             return self._slot
 
+    @property
+    def supports_input_bf16_bits(self) -> bool:
+        return True
+
     def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        xb = _coerce_input_batch(x)
+        with self._lock:
+            return self._evaluate_encoded_locked(x)
+
+    def _evaluate_encoded_locked(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        if x.dtype == np.uint16:
+            xb = _coerce_bf16_bits_batch(x)
+            request_mode = _MODE_DENSE_BF16
+        else:
+            xb = _coerce_input_batch(x)
+            request_mode = _MODE_DENSE_F32
         bsz = xb.shape[0]
         if bsz > self._layout.max_batch:
             raise ValueError(
                 f"batch size {bsz} exceeds slot max {self._layout.max_batch}"
             )
 
+        def _submit(slot: _InferenceSlot) -> None:
+  # Write input directly into shared memory (one memcpy).
+            if request_mode == _MODE_DENSE_BF16:
+                slot.input_bf16_bits[:bsz] = xb
+            else:
+                slot.input[:bsz] = xb
+            slot.request_mode = request_mode
+            slot.batch_size = bsz
+            slot.state = _STATE_REQUEST
+
+        def _read(slot: _InferenceSlot) -> tuple[np.ndarray, np.ndarray]:
+  # slot.policy / slot.wdl are C-contiguous numpy views over the
+  # shared-memory buffer (constructed that way in _InferenceSlot);
+  # .copy() is enough — np.array(..., copy=True, order="C") was an
+  # extra contiguity check we don't need.
+            return slot.policy[:bsz].copy(), slot.wdl[:bsz].copy()
+
+        return self._submit_and_wait_locked(_submit, _read)
+
+    def evaluate_legal_bf16(
+        self, x: np.ndarray, legal_flat: np.ndarray, legal_counts: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        with self._lock:
+            xb = _coerce_bf16_bits_batch(x)
+            bsz = xb.shape[0]
+            if bsz > self._layout.max_batch:
+                raise ValueError(
+                    f"batch size {bsz} exceeds slot max {self._layout.max_batch}"
+                )
+            counts = np.asarray(legal_counts, dtype=np.int32)
+            if counts.ndim != 1 or counts.shape[0] != bsz:
+                raise ValueError(f"legal_counts must be shape ({bsz},), got {counts.shape}")
+            flat = np.asarray(legal_flat, dtype=np.int32)
+            if flat.ndim != 1:
+                raise ValueError(f"legal_flat must be 1D, got {flat.ndim}D")
+            n_legal = int(counts.sum())
+            if n_legal != int(flat.shape[0]):
+                raise ValueError(f"legal_flat len {flat.shape[0]} != sum(legal_counts) {n_legal}")
+            if flat.size > 0 and (int(flat.min()) < 0 or int(flat.max()) >= _POLICY_SIZE):
+                raise ValueError("legal_flat contains out-of-range policy indices")
+            meta_len = 1 + bsz + n_legal
+            if meta_len > self._layout.policy_bytes // 4:
+                raise ValueError(
+                    f"compact legal metadata has {meta_len} int32 entries > "
+                    f"{self._layout.policy_bytes // 4} capacity"
+                )
+            if n_legal > self._layout.policy_bytes // 2:
+                raise ValueError(
+                    f"compact legal policy has {n_legal} entries > "
+                    f"{self._layout.policy_bytes // 2} capacity"
+                )
+
+            def _submit(slot: _InferenceSlot) -> None:
+                slot.input_bf16_bits[:bsz] = xb
+                slot.policy_i32[0] = n_legal
+                slot.policy_i32[1:1 + bsz] = counts
+                slot.policy_i32[1 + bsz:1 + bsz + n_legal] = flat
+                slot.request_mode = _MODE_LEGAL_BF16
+                slot.batch_size = bsz
+                slot.state = _STATE_REQUEST
+
+            def _read(slot: _InferenceSlot) -> tuple[np.ndarray, np.ndarray]:
+                return slot.policy_u16[:n_legal].copy(), slot.wdl[:bsz].copy()
+
+            return self._submit_and_wait_locked(_submit, _read)
+
+    def _submit_and_wait_locked(
+        self,
+        submit: Any,
+        read: Any,
+    ) -> tuple[np.ndarray, np.ndarray]:
         deadline = time.monotonic() + self._request_timeout_s
         last_timeout = False
         while True:
             slot = self._connect(deadline=deadline)
 
-  # Write input directly into shared memory (one memcpy)
-            slot.input[:bsz] = xb
-            slot.batch_size = bsz
-            slot.state = _STATE_REQUEST
+            submit(slot)
 
   # Wait for response. Keep the fast spin path for short broker latency,
   # but recover if the broker went away and the slot had to be recreated.
@@ -1190,12 +1736,7 @@ class SlotInferenceClient:
   # pyright from narrowing to the last literal we stored.
                 state = int(slot.state)
                 if state == _STATE_RESPONSE:
-  # slot.policy / slot.wdl are C-contiguous numpy views over the
-  # shared-memory buffer (constructed that way in _InferenceSlot);
-  # .copy() is enough — np.array(..., copy=True, order="C") was an
-  # extra contiguity check we don't need.
-                    pol = slot.policy[:bsz].copy()
-                    wdl = slot.wdl[:bsz].copy()
+                    pol, wdl = read(slot)
                     slot.state = _STATE_IDLE
                     return pol, wdl
                 if state == _STATE_SHUTDOWN or state == _STATE_IDLE:
@@ -1227,6 +1768,57 @@ class SlotInferenceClient:
         self._disconnect()
 
 
+class MultiSlotInferenceClient:
+    """Thread-safe fan-out across multiple broker slots.
+
+    Each underlying slot still serializes its own request/response protocol,
+    but different selfplay threads can make progress through different slots.
+    """
+
+    def __init__(
+        self,
+        *,
+        slot_names: list[str],
+        max_batch: int,
+        request_timeout_s: float = 30.0,
+    ) -> None:
+        names = [str(n).strip() for n in slot_names if str(n).strip()]
+        if not names:
+            raise ValueError("MultiSlotInferenceClient requires at least one slot")
+        self._clients = [
+            SlotInferenceClient(
+                slot_name=name,
+                max_batch=max_batch,
+                request_timeout_s=request_timeout_s,
+            )
+            for name in names
+        ]
+        self._lock = threading.Lock()
+        self._next = 0
+
+    def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        with self._lock:
+            client = self._clients[self._next % len(self._clients)]
+            self._next += 1
+        return client.evaluate_encoded(x)
+
+    @property
+    def supports_input_bf16_bits(self) -> bool:
+        return True
+
+    def evaluate_legal_bf16(
+        self, x: np.ndarray, legal_flat: np.ndarray, legal_counts: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        with self._lock:
+            client = self._clients[self._next % len(self._clients)]
+            self._next += 1
+        return client.evaluate_legal_bf16(x, legal_flat, legal_counts)
+
+    def close(self) -> None:
+        for client in self._clients:
+            client.close()
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -1254,11 +1846,13 @@ class SharedSlotBroker:
         device: str,
         compile_inference: bool,
         batch_wait_ms: float,
+        compile_mode: str = "reduce-overhead",
     ) -> None:
         self.server_root = Path(server_root)
         self.slots_per_trial = int(slots_per_trial)
         self.device = str(device)
         self.compile_inference = bool(compile_inference)
+        self.compile_mode = str(compile_mode or "reduce-overhead")
         self.batch_wait_ms = float(batch_wait_ms)
         self._stop = False
 
@@ -1360,7 +1954,7 @@ class SharedSlotBroker:
             setattr(model, "_inference_only", True)
         load_state_dict_tolerant(model, sd, label=f"shared-broker-{trial_id}")
         if self.compile_inference and self.device.startswith("cuda"):
-            model = cast("torch.nn.Module", torch.compile(model, mode="reduce-overhead"))
+            model = cast("torch.nn.Module", torch.compile(model, mode=self.compile_mode))
         self._trial_models[trial_id] = model
         if self.device.startswith("cuda"):
             self._trial_streams[trial_id] = torch.cuda.Stream(device=self.device)
@@ -1598,6 +2192,7 @@ def main() -> int:
         ap.add_argument("--server-root", type=str, required=True)
         ap.add_argument("--device", type=str, default="cuda")
         ap.add_argument("--compile-inference", action="store_true")
+        ap.add_argument("--compile-mode", type=str, default="reduce-overhead")
         ap.add_argument("--batch-wait-ms", type=float, default=0.0)
         ap.add_argument("--slots-per-trial", type=int, default=2)
         ap.add_argument("--max-batch-per-slot", type=int, default=256)
@@ -1608,6 +2203,7 @@ def main() -> int:
         ap.add_argument("--publish-dir", type=str, required=True)
         ap.add_argument("--device", type=str, default="cuda")
         ap.add_argument("--compile-inference", action="store_true")
+        ap.add_argument("--compile-mode", type=str, default="reduce-overhead")
         ap.add_argument("--batch-wait-ms", type=float, default=5.0)
         ap.add_argument("--num-slots", type=int, default=2)
         ap.add_argument("--max-batch-per-slot", type=int, default=256)
@@ -1628,6 +2224,7 @@ def main() -> int:
             device=str(args.device),
             compile_inference=bool(args.compile_inference),
             batch_wait_ms=float(args.batch_wait_ms),
+            compile_mode=str(args.compile_mode),
         )
         try:
             broker.serve_forever()
@@ -1646,6 +2243,7 @@ def main() -> int:
         compile_inference=bool(args.compile_inference),
         batch_wait_ms=float(args.batch_wait_ms),
         slot_prefix=str(args.slot_prefix),
+        compile_mode=str(args.compile_mode),
     )
 
     manifest_path = Path(args.publish_dir).expanduser() / "broker_slots.json"
