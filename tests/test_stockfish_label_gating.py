@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import Future
 from types import SimpleNamespace
+from typing import Any
 
 import chess
 import numpy as np
@@ -72,7 +73,7 @@ def _record(*, has_policy: bool) -> _NetRecord:
     )
 
 
-def _state(*, has_policy: bool, sf_move_nodes: int = 0):
+def _state(*, has_policy: bool, sf_move_nodes: int = 0) -> Any:
     cboard = _FakeCBoard()
     return SimpleNamespace(
         batch_size=1,

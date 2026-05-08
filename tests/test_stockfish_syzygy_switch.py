@@ -4,6 +4,7 @@ import stat
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 from chess_anti_engine.selfplay.config import GameConfig
 from chess_anti_engine.selfplay.stockfish_turn import _sf_syzygy_path_for_slot
@@ -14,7 +15,7 @@ def _state_for_path(
     *, pieces: int, adjudicate: bool = True, adj_roll: int = 0,
     normal_path: str | None = "/ssd/tb",
     full_path: str | None = "/ssd/tb:/mnt/e/dtz",
-):
+) -> Any:
     return SimpleNamespace(
         game=GameConfig(
             syzygy_path=full_path,

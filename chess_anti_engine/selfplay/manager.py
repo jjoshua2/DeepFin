@@ -33,7 +33,6 @@ from chess_anti_engine.selfplay.stockfish_turn import (
     submit_async_curriculum_move_queries,
     submit_async_sf_labels_from_curriculum_moves,
     submit_async_sf_label_queries,
-    submit_sf_queries,
 )
 from chess_anti_engine.stockfish.pool import StockfishPool
 from chess_anti_engine.stockfish.uci import StockfishUCI

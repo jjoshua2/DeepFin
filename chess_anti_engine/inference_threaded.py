@@ -350,11 +350,10 @@ class ThreadedDispatcher:
             items: list[QueueItem] = []
             total = 0
             first_compact = (
-                isinstance(first, _EvalRequest)
-                and first.legal_flat is not None
+                first.legal_flat is not None
                 and first.legal_counts is not None
             )
-            first_dtype = first.encoded.dtype if isinstance(first, _EvalRequest) else None
+            first_dtype = first.encoded.dtype
             while self._queue:
                 item = self._queue[0]
                 if isinstance(item, _ModelUpdateRequest):
@@ -511,7 +510,7 @@ class ThreadedDispatcher:
             inp = ev.get_input_buffer(bucket, slot=slot)
   # get_input_buffer returns the pinned tensor; convert to numpy view
   # to write directly via numpy slice copy (matches gumbel_c.py pattern).
-        inp_np = inp.numpy() if hasattr(inp, "numpy") else inp
+        inp_np = inp
         offset = 0
         for item in items:
             n = item.encoded.shape[0]

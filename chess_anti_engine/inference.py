@@ -541,7 +541,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         event_default.record(torch.cuda.current_stream(self.device))
 
         with torch.cuda.stream(stream):
-            stream.wait_event(event_default)  # torch stubs have duplicate Event types
+            stream.wait_event(event_default)  # pyright: ignore[reportArgumentType]  # torch stubs have duplicate Event types
             xt = self._device_input(bsz, slot=slot)
             out = _forward_no_grad(
                 self.model, xt, device=self.device,
@@ -1134,6 +1134,7 @@ class SlotBroker:
         self._stop = False
         self._manifest_cache: dict | None = None
         self._manifest_cache_sig: tuple[int, int] | None = None
+        self._timing_metrics: dict[str, float] | None = None
 
         self._layout = _SlotLayout.compute(max_batch_per_slot)
         self._slots: list[_InferenceSlot] = []
@@ -1314,14 +1315,14 @@ class SlotBroker:
         legal_flat_all: np.ndarray | None = None
         legal_rows_all: np.ndarray | None = None
         if compact_legal:
-            rows_parts: list[np.ndarray] = []
+            compact_row_parts: list[np.ndarray] = []
             row_base = 0
             pol_base = 0
             for bsz, counts in zip(batch_sizes, legal_counts_by_slot, strict=True):
                 n_legal = int(counts.sum())
                 compact_offsets.append((pol_base, pol_base + n_legal))
                 if n_legal > 0:
-                    rows_parts.append(
+                    compact_row_parts.append(
                         np.repeat(
                             np.arange(row_base, row_base + bsz, dtype=np.int64),
                             counts.astype(np.int64, copy=False),
@@ -1338,8 +1339,8 @@ class SlotBroker:
                 if legal_flat_by_slot else np.empty((0,), dtype=np.int64)
             )
             legal_rows_all = (
-                np.concatenate(rows_parts).astype(np.int64, copy=False)
-                if rows_parts else np.empty((0,), dtype=np.int64)
+                np.concatenate(compact_row_parts).astype(np.int64, copy=False)
+                if compact_row_parts else np.empty((0,), dtype=np.int64)
             )
         if _timing is not None:
             _timing["pack_s"] += time.perf_counter() - _t_pack0

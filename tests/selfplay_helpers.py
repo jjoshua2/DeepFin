@@ -21,7 +21,14 @@ class FakeStockfish(StockfishUCI):
         self.nodes = 1
         self._wdl = np.asarray(wdl, dtype=np.float32)
 
-    def search(self, fen: str, *, nodes: int | None = None) -> StockfishResult:  # noqa: ARG002
+    def search(
+        self,
+        fen: str,
+        *,
+        nodes: int | None = None,
+        syzygy_path: str | None = None,
+    ) -> StockfishResult:  # noqa: ARG002
+        del syzygy_path
         del nodes
         board = chess.Board(fen)
         move = next(iter(board.legal_moves), chess.Move.null())

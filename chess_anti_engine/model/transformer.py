@@ -472,7 +472,7 @@ class ChessNet(nn.Module):
                 t = grad_checkpoint(blk, t, smolgen_bias, use_reentrant=False)
             else:
                 t = blk(t, smolgen_bias)
-        return t
+        return cast(torch.Tensor, t)
 
     def forward_legal_policy(
         self,

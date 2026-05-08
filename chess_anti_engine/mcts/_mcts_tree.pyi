@@ -32,7 +32,7 @@ class MCTSTree:
         c_puct: float,
         fpu_reduction: float,
         full_tree: bool | int,
-        enc_buf: NDArray[np.float32],
+        enc_buf: NDArray[np.float32] | NDArray[np.uint16],
         vloss_weight: int = ...,
         target_batch: int = ...,
     ) -> int | None: ...

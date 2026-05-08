@@ -149,8 +149,9 @@ def run_gumbel_root_many_c(
         wdl_logits_batch = np.asarray(pre_wdl_logits, dtype=np.float32)
     elif _inplace:
         if _has_input_bf16 and hasattr(eval_impl, "get_input_buffer_bf16_bits"):
+            assert batch_encode_146_bf16 is not None
             root_buf = eval_impl.get_input_buffer_bf16_bits(n_boards, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
-            batch_encode_146_bf16(root_cboards, root_buf)  # type: ignore[misc]
+            batch_encode_146_bf16(root_cboards, root_buf)
         else:
             root_buf = eval_impl.get_input_buffer(n_boards, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
             batch_encode_146(root_cboards, root_buf)
@@ -161,8 +162,9 @@ def run_gumbel_root_many_c(
         wdl_logits_batch = wdl_t.numpy()
     else:
         if _has_input_bf16 and hasattr(eval_impl, "evaluate_encoded"):
+            assert batch_encode_146_bf16 is not None
             xs = np.empty((n_boards, 146, 8, 8), dtype=np.uint16)
-            batch_encode_146_bf16(root_cboards, xs)  # type: ignore[misc]
+            batch_encode_146_bf16(root_cboards, xs)
         else:
             xs = np.empty((n_boards, 146, 8, 8), dtype=np.float32)
             batch_encode_146(root_cboards, xs)
@@ -574,7 +576,7 @@ def run_gumbel_root_many_c(
             cast("list[np.ndarray]", root_pri),
             _budget_arr, _root_qs_arr,
             _c_scale, _c_visit, _c_puct, _fpu_reduction, _full_tree,
-            _enc_buf, 0, int(target_batch),
+            cast(np.ndarray, _enc_buf), 0, int(target_batch),
         )
         _t_prepare += _time.perf_counter() - _tp0
 

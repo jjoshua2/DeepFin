@@ -24,7 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import torch
@@ -173,7 +173,7 @@ def main() -> None:
         print(f"[profile] compiling with mode={args.mode}")
         from torch._dynamo.utils import counters
         counters.clear()
-        compiled = torch.compile(model, mode=args.mode)
+        compiled = cast(torch.nn.Module, torch.compile(model, mode=args.mode))
     else:
         compiled = model
 

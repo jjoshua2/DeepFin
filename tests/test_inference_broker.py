@@ -180,6 +180,7 @@ def test_slot_broker_uses_model_legal_policy_forward(tmp_path: Path) -> None:
             legal_flat: torch.Tensor,
             legal_counts: torch.Tensor,
         ):
+            del legal_counts
             self.called_legal = True
             bsz = x.shape[0]
             return {
