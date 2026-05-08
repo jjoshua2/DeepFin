@@ -721,38 +721,38 @@ become either a finding or an explicit open question.
 
 | Contract | Status | Notes |
 |----------|--------|-------|
-| Board state -> feature tensor has stable shape, dtype, orientation, and side-to-move semantics. | pending | |
-| python-chess move -> LC0 4672 policy index is total for all legal moves and invalid for illegal moves. | pending | |
-| Policy logits -> legal move probabilities masks illegal moves without changing index semantics. | pending | |
-| MCTS visit counts -> training policy target preserves the current-player perspective. | pending | |
-| Game result / Stockfish WDL -> value target uses the same perspective expected by loss/model. | pending | |
-| Mirroring/augmentation transforms board features, moves, policy vectors, and value targets consistently. | pending | |
-| Replay shard schema is versioned/validated and compatible with dataset collation. | pending | |
-| Trainer checkpoint contains all state needed to resume without silent optimizer/scheduler/PID drift. | pending | |
-| Server manifest/model/book/binary publishing is atomic enough for concurrent workers. | pending | |
-| Worker uploads are authenticated, bounded, path-safe, and recoverable after transient failure. | pending | |
-| UCI engine respects protocol, time controls, ponderhit clock side, and graceful shutdown. | pending | |
+| Board state -> feature tensor has stable shape, dtype, orientation, and side-to-move semantics. | known | Encoding and CBoard parity tests cover shape/orientation-sensitive paths. |
+| python-chess move -> LC0 4672 policy index is total for all legal moves and invalid for illegal moves. | known | Move encoding and CBoard parity gates cover legal move edge cases. |
+| Policy logits -> legal move probabilities masks illegal moves without changing index semantics. | known | MCTS/search parity tests cover legal masks and root behavior. |
+| MCTS visit counts -> training policy target preserves the current-player perspective. | known | Selfplay/finalization and MCTS target tests cover POV-sensitive target production. |
+| Game result / Stockfish WDL -> value target uses the same perspective expected by loss/model. | known | Result-labeling, SF WDL POV, and loss-mask reviews are complete. |
+| Mirroring/augmentation transforms board features, moves, policy vectors, and value targets consistently. | known | Mirroring tests cover feature and policy transformations. |
+| Replay shard schema is versioned/validated and compatible with dataset collation. | known | Replay schema, optional arrays, corrupt-tail, and collation tests cover compatibility. |
+| Trainer checkpoint contains all state needed to resume without silent optimizer/scheduler/PID drift. | known | Checkpoint, RNG sidecar, PID, and salvage/restore reviews are complete. |
+| Server manifest/model/book/binary publishing is atomic enough for concurrent workers. | known | Worker manifest/model-swap and published-state review covered current invariants. |
+| Worker uploads are authenticated, bounded, path-safe, and recoverable after transient failure. | known | Upload durability, retry/delete, pending recovery, and security tests cover the contract. |
+| UCI engine respects protocol, time controls, ponderhit clock side, and graceful shutdown. | known | UCI runtime review and protocol regression tests cover the current contract. |
 
 ## Component Map
 
 | Component | Risk | Review Depth | Files |
 |-----------|------|--------------|-------|
-| Entrypoints, config, packaging | High | pending | `chess_anti_engine/run.py`, `chess_anti_engine/worker.py`, `chess_anti_engine/worker_pool.py`, `chess_anti_engine/worker_config.py`, `chess_anti_engine/version.py`, `setup.py`, `pyproject.toml`, `configs/default.yaml`, `configs/pbt2_small.yaml` |
+| Entrypoints, config, packaging | High | deep | `chess_anti_engine/run.py`, `chess_anti_engine/worker.py`, `chess_anti_engine/worker_pool.py`, `chess_anti_engine/worker_config.py`, `chess_anti_engine/version.py`, `setup.py`, `pyproject.toml`, `configs/default.yaml`, `configs/pbt2_small.yaml` |
 | Encoding and move policy | Critical | deep | `chess_anti_engine/encoding/*`, `chess_anti_engine/moves/*`, `chess_anti_engine/utils/bitboards.py` |
-| Model and inference | High | in progress | `chess_anti_engine/model/*`, `chess_anti_engine/inference.py`, `chess_anti_engine/inference_dispatcher.py`, `chess_anti_engine/onnx/*` |
+| Model and inference | High | deep | `chess_anti_engine/model/*`, `chess_anti_engine/inference.py`, `chess_anti_engine/inference_dispatcher.py`, `chess_anti_engine/onnx/*` |
 | MCTS/search | Critical | deep | `chess_anti_engine/mcts/*`, `chess_anti_engine/tablebase.py` |
-| Selfplay and arena | Critical | in progress | `chess_anti_engine/selfplay/*`, `chess_anti_engine/arena.py` |
+| Selfplay and arena | Critical | deep | `chess_anti_engine/selfplay/*`, `chess_anti_engine/arena.py` |
 | Replay and training data | Critical | deep | `chess_anti_engine/replay/*`, `chess_anti_engine/worker_buffer.py` |
 | Training | Critical | deep | `chess_anti_engine/train/*` |
-| Distributed server | High | in progress | `chess_anti_engine/server/*` |
-| Worker assets/cache/pool | High | in progress | `chess_anti_engine/worker_assets.py`, `chess_anti_engine/worker.py`, `chess_anti_engine/worker_pool.py`, `chess_anti_engine/worker_buffer.py`, `chess_anti_engine/worker_config.py` |
-| Stockfish integration | High | in progress | `chess_anti_engine/stockfish/*` |
-| Tune/PBT runtime | High | pending | `chess_anti_engine/tune/*` |
+| Distributed server | High | deep | `chess_anti_engine/server/*` |
+| Worker assets/cache/pool | High | deep | `chess_anti_engine/worker_assets.py`, `chess_anti_engine/worker.py`, `chess_anti_engine/worker_pool.py`, `chess_anti_engine/worker_buffer.py`, `chess_anti_engine/worker_config.py` |
+| Stockfish integration | High | deep | `chess_anti_engine/stockfish/*` |
+| Tune/PBT runtime | High | deep | `chess_anti_engine/tune/*` |
 | UCI engine | High | deep | `chess_anti_engine/uci/*` |
-| Evaluation and benchmarks | Medium | pending | `chess_anti_engine/eval/*`, `chess_anti_engine/bench/*`, `scripts/bench_*.py`, `scripts/profile_*.py`, `scripts/e2e_strength_test.py` |
-| Operational scripts | Medium | pending | `scripts/*.sh`, `scripts/graceful_restart.py`, `scripts/generate_bootstrap.py`, `scripts/train_bootstrap.py`, `scripts/status.py`, `scripts/diagnose.py`, `scripts/pbt_*`, `scripts/*audit*`, `scripts/match_checkpoints.py`, `scripts/reinit_value_heads.py`, `scripts/blunder_check*.py` |
-| Documentation/specs | Low | pending | `README.md`, `AGENTS.md`, `CLAUDE.md`, `prompt.md`, `spec.md`, `future_ideas.md`, `TRAINING_LOG.md`, `bench_results.md`, `docs/*`, `tcec.md` |
-| Tests | High | pending | `tests/*` |
+| Evaluation and benchmarks | Medium | deep | `chess_anti_engine/eval/*`, `chess_anti_engine/bench/*`, `scripts/bench_*.py`, `scripts/profile_*.py`, `scripts/e2e_strength_test.py` |
+| Operational scripts | Medium | deep | `scripts/*.sh`, `scripts/graceful_restart.py`, `scripts/generate_bootstrap.py`, `scripts/train_bootstrap.py`, `scripts/status.py`, `scripts/diagnose.py`, `scripts/pbt_*`, `scripts/*audit*`, `scripts/match_checkpoints.py`, `scripts/reinit_value_heads.py`, `scripts/blunder_check*.py` |
+| Documentation/specs | Low | deep | `README.md`, `AGENTS.md`, `CLAUDE.md`, `prompt.md`, `spec.md`, `future_ideas.md`, `TRAINING_LOG.md`, `bench_results.md`, `docs/*`, `tcec.md` |
+| Tests | High | deep | `tests/*` |
 
 ## Component Checklists
 
@@ -930,10 +930,11 @@ Tests:
 
 ### Selfplay and Arena
 
-Status: `in progress`. Result labeling, timeout adjudication helper behavior,
+Status: `deep`. Result labeling, timeout adjudication helper behavior,
 Stockfish WDL POV flip, temperature/opening tests, continuous play, arena/match
-labeling, and selfplay fraction tests have been run. One test/API drift finding
-was fixed as F001.
+labeling, and selfplay fraction tests have been run. Later async Stockfish label
+gating and Syzygy path switching changes were covered by focused regression
+tests plus full-suite verification.
 
 Evidence:
 
@@ -1133,9 +1134,8 @@ Tests:
 
 ### Stockfish Integration
 
-Status: `in progress`. PID direction/state tests and worker-pool overlap have
-been run. Static review notes that `StockfishUCI` uses blocking reads without
-an explicit timeout; F004 records the open reliability finding.
+Status: `deep`. PID direction/state tests, worker-pool overlap, UCI timeout
+coverage, async label gating, and Syzygy path switching have been run.
 
 Evidence:
 
@@ -1354,13 +1354,17 @@ Review:
 
 ### Tests
 
-Status: `in progress`. Full suite passes on the review branch after F001 fix.
+Status: `deep`. Full suite passes after the adversarial-review fixes and the
+later throughput/lint cleanup.
 
 Evidence:
 
 - Before F005, `pytest` passed with one warning: `417 passed, 1 warning in 68.66s`.
 - After registering the marker, `pytest tests/test_mcts_thread_safety.py` passed: `5 passed`.
 - Final full-suite verification passed without warnings: `417 passed in 77.97s`.
+- Follow-up full-suite verification passed on 2026-05-08 after async Stockfish
+  labels, compact BF16 inference transport, distributed throughput tuning, and
+  lint cleanup.
 
 Files:
 
@@ -1542,7 +1546,7 @@ Component: first full review pass complete
 
 Goal: fix the high-signal tracked-test regression, record open reliability findings, and keep the runtime checkout untouched.
 
-Last updated: 2026-04-24
+Last updated: 2026-05-08
 
 ## Triage Queue
 
@@ -1550,12 +1554,12 @@ Use this section after findings are recorded.
 
 | Batch | Status | Findings | Fix Strategy | Verification |
 |-------|--------|----------|--------------|--------------|
-| A. Critical correctness | pending | | | |
-| B. Training target quality | pending | | | |
-| C. Runtime/distributed reliability | pending | | | |
-| D. Efficiency hot paths | pending | | | |
-| E. Security hardening | pending | | | |
-| F. Test gaps | pending | | | |
+| A. Critical correctness | complete | F001, F006, F008, F009, F011, F013, F015-F018, F020-F026, F031-F034, F036-F044 | Fixed in component-scoped commits. | Targeted tests plus full-suite verification. |
+| B. Training target quality | complete | F014, F019, F021-F024, F027-F030, F045 | Fixed or explicitly covered by loss/replay/selfplay tests. | Targeted loss/replay/selfplay tests plus full-suite verification. |
+| C. Runtime/distributed reliability | complete | F002-F005, F007, F010, F012, F035, F046 | Fixed with durability/retry/restart/timeout coverage. | Server, worker, Tune, and UCI regression tests. |
+| D. Efficiency hot paths | moved | Search, inference, worker, and selfplay simplification candidates. | Tracked in `docs/SIMPLIFY_PLAN.md`. | Simplify-track tests, lint, and benchmark/profile scripts. |
+| E. Security hardening | complete | Upload path safety, auth, quarantine, and archive handling findings. | Fixed in server/upload hardening commits. | Server upload security and durability tests. |
+| F. Test gaps | complete | Missing or stale regression coverage found during review. | Added targeted tests and full-suite/lint gates. | Full pytest and `./scripts/lint.sh`. |
 
 ## Open Questions
 
