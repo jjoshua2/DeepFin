@@ -57,7 +57,7 @@ _CORE_KEYS = (
 # stockfish section: 1:1 passthrough (YAML key == flat config key).
 # The section is just visual grouping — keys use the same names as code.
 _STOCKFISH_KEYS = (
-    "stockfish_path", "sf_nodes", "sf_workers", "sf_multipv", "sf_hash_mb",
+    "stockfish_path", "sf_nodes", "sf_move_nodes", "sf_workers", "sf_multipv", "sf_hash_mb",
     "sf_pid_enabled",
     "sf_pid_target_winrate", "sf_pid_ema_alpha",
     "sf_pid_min_games_between_adjust",
@@ -114,7 +114,7 @@ _SELFPLAY_KEYS = (
     "random_start_plies",
     "sf_policy_temp", "sf_policy_label_smooth", "soft_policy_temp",
     "sf_wdl_use_cp_logistic", "sf_wdl_cp_slope", "sf_wdl_cp_draw_width",
-    "syzygy_path", "syzygy_rescore_policy", "syzygy_adjudicate",
+    "syzygy_path", "stockfish_syzygy_path", "syzygy_rescore_policy", "syzygy_adjudicate",
     "syzygy_adjudicate_fraction", "syzygy_in_search",
     "timeout_adjudication_threshold",
     "diff_focus_enabled", "diff_focus_q_weight", "diff_focus_pol_scale",
@@ -152,6 +152,8 @@ _TUNE_KEYS = (
     "distributed_worker_selfplay_threads", "distributed_worker_auto_tune",
     "distributed_worker_threaded_dispatcher",
     "distributed_worker_dispatcher_batch_wait_ms",
+    "distributed_worker_dispatcher_max_batch",
+    "distributed_worker_dispatcher_target_batch",
     "distributed_worker_target_batch_seconds",
     "distributed_worker_min_games_per_batch", "distributed_worker_max_games_per_batch",
     "distributed_worker_upload_target_positions", "distributed_worker_upload_flush_seconds",
@@ -163,8 +165,9 @@ _TUNE_KEYS = (
     "distributed_upload_compact_shard_size", "distributed_upload_compact_max_age_seconds",
     "distributed_inference_broker_enabled", "distributed_inference_shared_broker",
     "distributed_inference_batch_wait_ms",
-    "distributed_inference_use_compile",
+    "distributed_inference_use_compile", "distributed_inference_compile_mode",
     "distributed_inference_max_batch_per_slot",
+    "distributed_inference_slots_per_worker",
     "distributed_pause_selfplay_during_training", "distributed_wait_timeout_seconds",
     "distributed_prefetch_shards",
     "distributed_async_test_eval", "distributed_async_test_eval_timeout_s",

@@ -24,6 +24,7 @@ model:
 stockfish:
   stockfish_path: /path/to/stockfish
   sf_nodes: 2000
+  sf_move_nodes: 0
   sf_workers: 1
   sf_multipv: 5
 
@@ -72,6 +73,7 @@ selfplay:
 
   # Syzygy tablebase rescoring (null to disable)
   syzygy_path: null
+  stockfish_syzygy_path: null
   syzygy_rescore_policy: false  # also rescore policy with DTZ-optimal best move (post-game)
 
   # Stockfish WDL confidence required to adjudicate max_plies timeouts as decisive.

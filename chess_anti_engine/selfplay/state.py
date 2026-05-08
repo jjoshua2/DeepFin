@@ -425,6 +425,8 @@ class SelfplayState:
     consecutive_low_winrate: list[int]
     last_net_full: list[bool]
     root_ids: list[int]
+    pending_sf_labels: list[Any]
+    pending_sf_moves: dict[int, Any]
 
     # ── Shared caches (None when C tree unavailable) ─────────────────────────
     mcts_tree: Any = None
@@ -532,6 +534,8 @@ class SelfplayState:
             consecutive_low_winrate=[0] * batch_size,
             last_net_full=[True] * batch_size,
             root_ids=[-1] * batch_size,
+            pending_sf_labels=[],
+            pending_sf_moves={},
             mcts_tree=c_caps.mcts_tree,
             has_c_ply=c_caps.has_c_ply,
             has_classify_c=c_caps.has_classify_c,
@@ -668,6 +672,7 @@ class SelfplayState:
         self.consecutive_low_winrate[i] = 0
         self.last_net_full[i] = True
         self.root_ids[i] = -1  # Reset tree reuse for new game.
+        self.pending_sf_moves.pop(i, None)
         self.games_started += 1
 
     def replay_board(self, i: int) -> chess.Board:

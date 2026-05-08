@@ -43,6 +43,9 @@ class DiffFocusConfig:
 class GameConfig:
     max_plies: int = 240
     selfplay_fraction: float = 0.0
+    # Optional node budget for blocking curriculum opponent moves. 0 means
+    # use the main SF label/eval node budget.
+    sf_move_nodes: int = 0
     sf_policy_temp: float = 0.25
     sf_policy_label_smooth: float = 0.05
     sf_wdl_use_cp_logistic: bool = False
@@ -52,6 +55,10 @@ class GameConfig:
     timeout_adjudication_threshold: float = 0.90
     volatility_source: str = "raw"
     syzygy_path: str | None = None
+    # Optional lower-IO Syzygy path for ordinary high-volume Stockfish
+    # searches. When set, selfplay can still route non-adjudicated <=6-piece
+    # roots to syzygy_path for DTZ-correct play-throughs.
+    stockfish_syzygy_path: str | None = None
     syzygy_rescore_policy: bool = False
   # If true, end the game as soon as the position becomes TB-eligible and
   # use the TB-proven WDL as the outcome. Saves the rest of the MCTS work

@@ -170,6 +170,14 @@ class StockfishUCI:
         with self._lock:
             self.nodes = int(nodes)
 
+    def _set_syzygy_path_locked(self, syzygy_path: str) -> None:
+        if str(syzygy_path) == str(self.syzygy_path or ""):
+            return
+        self._send(f"setoption name SyzygyPath value {syzygy_path}")
+        self._send("isready")
+        self._wait_for("readyok")
+        self.syzygy_path = str(syzygy_path)
+
     def _send(self, cmd: str) -> None:
         os.write(self._tty_fd, (cmd + "\n").encode("utf-8"))
 
@@ -209,13 +217,18 @@ class StockfishUCI:
             if token in line:
                 return
 
-    def search(self, fen: str, *, nodes: int | None = None) -> StockfishResult:
+    def search(
+        self, fen: str, *, nodes: int | None = None,
+        syzygy_path: str | None = None,
+    ) -> StockfishResult:
         """Node-limited search from FEN.
 
         If MultiPV>1 is enabled, we attempt to collect (move, wdl) pairs for the
         top lines so the caller can build a soft "SF policy" target distribution.
         """
         with self._lock:
+            if syzygy_path is not None:
+                self._set_syzygy_path_locked(str(syzygy_path))
             self._send(f"position fen {fen}")
             n = int(self.nodes) if nodes is None else int(nodes)
             self._send(f"go nodes {n}")

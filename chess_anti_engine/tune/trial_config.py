@@ -111,6 +111,7 @@ class TrialConfig:
     timeout_adjudication_threshold: float = 0.90
     volatility_source: str = "raw"
     syzygy_path: str | None = None
+    stockfish_syzygy_path: str | None = None
     syzygy_rescore_policy: bool = False
     syzygy_adjudicate: bool = False
     syzygy_adjudicate_fraction: float = 1.0
@@ -128,6 +129,7 @@ class TrialConfig:
   # --- Stockfish ---
     stockfish_path: str = ""
     sf_nodes: int = 500
+    sf_move_nodes: int = 0
     sf_workers: int = 1
     sf_multipv: int = 1
     sf_hash_mb: int = 16
@@ -335,6 +337,7 @@ class TrialConfig:
             timeout_adjudication_threshold=float(config.get("timeout_adjudication_threshold", 0.90)),
             volatility_source=str(config.get("volatility_source", "raw")),
             syzygy_path=_get("syzygy_path", None),
+            stockfish_syzygy_path=_get("stockfish_syzygy_path", None),
             syzygy_rescore_policy=bool(config.get("syzygy_rescore_policy", False)),
             syzygy_adjudicate=bool(config.get("syzygy_adjudicate", False)),
             syzygy_adjudicate_fraction=float(config.get("syzygy_adjudicate_fraction", 1.0)),
@@ -352,6 +355,7 @@ class TrialConfig:
   # --- Stockfish ---
             stockfish_path=str(config.get("stockfish_path", "")),
             sf_nodes=int(config.get("sf_nodes", 500)),
+            sf_move_nodes=int(config.get("sf_move_nodes", 0)),
             sf_workers=int(config.get("sf_workers", 1)),
             sf_multipv=int(config.get("sf_multipv", 1)),
             sf_hash_mb=int(config.get("sf_hash_mb", 16)),

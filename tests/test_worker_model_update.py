@@ -84,6 +84,7 @@ def test_cp_wdl_recommendation_changes_restart_selfplay_session() -> None:
     session = _bare_worker_session()
     old = {
         "sf_nodes": 100,
+        "sf_move_nodes": 0,
         "sf_wdl_use_cp_logistic": False,
         "sf_wdl_cp_slope": 0.010,
         "sf_wdl_cp_draw_width": 60.0,

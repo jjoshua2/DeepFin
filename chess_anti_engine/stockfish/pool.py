@@ -52,9 +52,12 @@ class StockfishPool:
         for e in self._engines:
             e.set_nodes(int(nodes))
 
-    def submit(self, fen: str, *, nodes: int | None = None) -> Future[StockfishResult]:
+    def submit(
+        self, fen: str, *, nodes: int | None = None,
+        syzygy_path: str | None = None,
+    ) -> Future[StockfishResult]:
   # Round-robin assignment
         idx = self._next
         self._next = (self._next + 1) % self.num_workers
         engine = self._engines[idx]
-        return self._exec.submit(engine.search, fen, nodes=nodes)
+        return self._exec.submit(engine.search, fen, nodes=nodes, syzygy_path=syzygy_path)

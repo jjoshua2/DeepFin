@@ -17,19 +17,33 @@ partitioning via ``classify_active_slots``.
 
 from __future__ import annotations
 
+import logging
 import math
+from concurrent.futures import FIRST_COMPLETED, wait
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 
 from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.moves.encode import uci_to_policy_index
-from chess_anti_engine.selfplay.state import SelfplayState
+from chess_anti_engine.selfplay.state import SelfplayState, _NetRecord
 from chess_anti_engine.stockfish.pool import StockfishPool
 from chess_anti_engine.stockfish.wdl import cp_to_wdl as _cp_to_wdl
 
 
 from chess_anti_engine.utils.numpy_helpers import softmax_1d as _softmax_np  # noqa: E402
+
+
+_LOG = logging.getLogger("chess_anti_engine.selfplay")
+
+
+@dataclass
+class _PendingSfLabel:
+    future: Any
+    record: _NetRecord
+    turn: bool
+    legal_indices: np.ndarray
 
 
 def flip_wdl_pov(wdl: np.ndarray) -> np.ndarray:
@@ -76,16 +90,67 @@ def _choose_curriculum_opponent_move(
     return acceptable[int(rng.integers(len(acceptable)))]
 
 
-def _eff_sf_nodes(state: SelfplayState, idx: int) -> int | None:
+def _eff_sf_nodes(state: SelfplayState, idx: int, *, for_move: bool = False) -> int | None:
     """Return the per-slot SF node budget, scaled down after fast-sim plies."""
-    if state.base_nodes <= 0:
+    base_nodes = int(state.base_nodes)
+    if for_move:
+        move_nodes = int(getattr(state.game, "sf_move_nodes", 0) or 0)
+        if move_nodes > 0:
+            base_nodes = move_nodes
+    if base_nodes <= 0:
         return None
     fast_scale = 1.0 if bool(state.last_net_full[idx]) else 0.25
-    return max(1, int(round(float(state.base_nodes) * float(fast_scale))))
+    return max(1, int(round(float(base_nodes) * float(fast_scale))))
+
+
+def _sf_syzygy_path_for_slot(state: SelfplayState, idx: int) -> str | None:
+    """Pick the low-IO or DTZ-capable Stockfish tablebase path for one root.
+
+    Most SF calls are high-volume curriculum labeling where SSD-only WDL/DTZ is
+    enough. For the explicit non-adjudicated play-through tail, switch that SF
+    process to the full tablebase path once the root itself is <=6 pieces so
+    Stockfish can choose conversion-correct DTZ moves.
+    """
+    normal_path = state.game.stockfish_syzygy_path or state.game.syzygy_path
+    full_path = state.game.syzygy_path
+    if not full_path or str(normal_path or "") == str(full_path):
+        return normal_path
+    cb = state.cboards[idx]
+    occ = int(cb.occ_white) | int(cb.occ_black)
+    if occ.bit_count() > 6 or int(cb.castling) != 0:
+        return normal_path
+    playthrough = (not state.game.syzygy_adjudicate) or (not bool(state.tb_adj_roll_arr[idx]))
+    return full_path if playthrough else normal_path
+
+
+def _search_stockfish_sync(
+    stockfish: Any,
+    fen: str,
+    *,
+    nodes: int | None,
+    syzygy_path: str | None,
+) -> Any:
+    if syzygy_path is None:
+        return stockfish.search(fen, nodes=nodes)
+    try:
+        return stockfish.search(fen, nodes=nodes, syzygy_path=syzygy_path)
+    except TypeError as exc:
+        if "syzygy_path" not in str(exc):
+            raise
+        return stockfish.search(fen, nodes=nodes)
+
+
+def _slot_latest_record_needs_sf_label(state: SelfplayState, idx: int) -> bool:
+    if not state.samples_per_game[idx]:
+        return False
+    rec = state.samples_per_game[idx][-1]
+    if not bool(rec.has_policy):
+        return False
+    return rec.sf_policy_target is None and rec.sf_move_index is None
 
 
 def submit_sf_queries(
-    state: SelfplayState, idxs: list[int],
+    state: SelfplayState, idxs: list[int], *, for_move: bool = False,
 ) -> dict[int, Any]:
     """Submit SF queries to the pool without blocking; return futures dict.
 
@@ -96,10 +161,91 @@ def submit_sf_queries(
     assert isinstance(state.stockfish, StockfishPool)
     return {
         idx: state.stockfish.submit(
-            state.cboards[idx].fen(), nodes=_eff_sf_nodes(state, idx),
+            state.cboards[idx].fen(),
+            nodes=_eff_sf_nodes(state, idx, for_move=for_move),
+            syzygy_path=_sf_syzygy_path_for_slot(state, idx),
         )
         for idx in idxs
     }
+
+
+def submit_async_curriculum_move_queries(state: SelfplayState, idxs: list[int]) -> int:
+    """Submit curriculum SF move queries and leave them pending per slot."""
+    if not idxs:
+        return 0
+    assert isinstance(state.stockfish, StockfishPool)
+    submitted = 0
+    for idx in idxs:
+        if idx in state.pending_sf_moves:
+            continue
+        state.pending_sf_moves[idx] = state.stockfish.submit(
+            state.cboards[idx].fen(),
+            nodes=_eff_sf_nodes(state, idx, for_move=True),
+            syzygy_path=_sf_syzygy_path_for_slot(state, idx),
+        )
+        submitted += 1
+    return submitted
+
+
+def submit_async_sf_labels_from_curriculum_moves(state: SelfplayState, idxs: list[int]) -> int:
+    """Reuse full-strength curriculum move futures as labels when possible."""
+    if int(getattr(state.game, "sf_move_nodes", 0) or 0) > 0:
+        return submit_async_sf_label_queries(state, idxs)
+    submitted = 0
+    max_pending = max(1, int(state.batch_size) * 8)
+    for idx in idxs:
+        if len(state.pending_sf_labels) >= max_pending:
+            break
+        fut = state.pending_sf_moves.get(idx)
+        if fut is None or not _slot_latest_record_needs_sf_label(state, idx):
+            continue
+        legal_indices = state.cboards[idx].legal_move_indices()
+        if legal_indices.size == 0:
+            continue
+        state.pending_sf_labels.append(
+            _PendingSfLabel(
+                future=fut,
+                record=state.samples_per_game[idx][-1],
+                turn=bool(state.cboards[idx].turn),
+                legal_indices=np.asarray(legal_indices, dtype=np.int64).copy(),
+            ),
+        )
+        submitted += 1
+    return submitted
+
+
+def finish_pending_curriculum_moves(
+    state: SelfplayState, *, block: bool = False,
+) -> int:
+    """Apply completed pending curriculum moves.
+
+    If ``block`` is true and no move is ready, wait only until the first
+    Stockfish move completes. This avoids per-step head-of-line blocking while
+    still making progress when all runnable slots are waiting on Stockfish.
+    """
+    if not state.pending_sf_moves:
+        return 0
+    if block and not any(fut.done() for fut in state.pending_sf_moves.values()):
+        wait(tuple(state.pending_sf_moves.values()), return_when=FIRST_COMPLETED)
+
+    completed: list[tuple[int, Any]] = []
+    for idx, fut in list(state.pending_sf_moves.items()):
+        if not fut.done():
+            continue
+        completed.append((idx, fut.result()))
+        del state.pending_sf_moves[idx]
+
+    for idx, res in completed:
+        if state.finalized_arr[idx] or state.done_arr[idx]:
+            continue
+        _process_sf_results(
+            state,
+            [idx],
+            results={idx: res},
+            play_curriculum_moves=True,
+            attach_labels=False,
+        )
+    return len(completed)
 
 
 def finish_sf_annotation_and_moves(
@@ -107,30 +253,42 @@ def finish_sf_annotation_and_moves(
     idxs: list[int],
     *,
     play_curriculum_moves: bool,
+    attach_labels: bool = True,
+    for_move: bool = False,
     futures: dict[int, Any] | None = None,
 ) -> None:
     """Collect SF results (from futures or synchronously), then process."""
     if not idxs:
         return
+    if attach_labels and not play_curriculum_moves:
+        idxs = [idx for idx in idxs if _slot_latest_record_needs_sf_label(state, idx)]
+        if not idxs:
+            return
     if futures is not None:
         results = {idx: futures[idx].result() for idx in idxs if idx in futures}
     elif isinstance(state.stockfish, StockfishPool):
         futs = {
             idx: state.stockfish.submit(
-                state.cboards[idx].fen(), nodes=_eff_sf_nodes(state, idx),
+                state.cboards[idx].fen(),
+                nodes=_eff_sf_nodes(state, idx, for_move=for_move),
+                syzygy_path=_sf_syzygy_path_for_slot(state, idx),
             )
             for idx in idxs
         }
         results = {idx: fut.result() for idx, fut in futs.items()}
     else:
         results = {
-            idx: state.stockfish.search(
-                state.cboards[idx].fen(), nodes=_eff_sf_nodes(state, idx),
+            idx: _search_stockfish_sync(
+                state.stockfish,
+                state.cboards[idx].fen(),
+                nodes=_eff_sf_nodes(state, idx, for_move=for_move),
+                syzygy_path=_sf_syzygy_path_for_slot(state, idx),
             )
             for idx in idxs
         }
     _process_sf_results(
         state, idxs, results=results, play_curriculum_moves=play_curriculum_moves,
+        attach_labels=attach_labels,
     )
 
 
@@ -201,6 +359,166 @@ def _attach_sf_target_to_last_record(
     rec.sf_legal_mask = _sf_mask
 
 
+def _attach_sf_target_to_record(
+    rec: _NetRecord,
+    *,
+    p_sf: np.ndarray,
+    a_idx: int,
+    res,
+    legal_indices: np.ndarray,
+    sf_wdl_use_cp_logistic: bool = False,
+    sf_wdl_cp_slope: float = 0.010,
+    sf_wdl_cp_draw_width: float = 60.0,
+) -> None:
+    if rec.sf_policy_target is not None or rec.sf_move_index is not None:
+        return
+    rec.sf_policy_target = p_sf
+    rec.sf_move_index = a_idx
+    if sf_wdl_use_cp_logistic and (res.cp is not None or res.mate is not None):
+        wdl_stm = _cp_to_wdl(res.cp, res.mate, slope=sf_wdl_cp_slope, draw_width_cp=sf_wdl_cp_draw_width)
+        rec.sf_wdl = flip_wdl_pov(wdl_stm)
+    elif res.wdl is not None:
+        rec.sf_wdl = flip_wdl_pov(res.wdl)
+    _sf_mask = np.zeros((POLICY_SIZE,), dtype=np.uint8)
+    _sf_mask[legal_indices] = 1
+    rec.sf_legal_mask = _sf_mask
+
+
+def _process_sf_label_result_for_record(
+    state: SelfplayState,
+    *,
+    rec: _NetRecord,
+    res,
+    turn: bool,
+    legal_indices: np.ndarray,
+) -> None:
+    if legal_indices.size == 0:
+        return
+    sf_policy_temp = float(state.game.sf_policy_temp)
+    sf_policy_label_smooth = float(state.game.sf_policy_label_smooth)
+    legal_set = {int(x) for x in legal_indices}
+
+    a_idx = uci_to_policy_index(res.bestmove_uci, bool(turn))
+    if a_idx < 0 or a_idx not in legal_set:
+        a_idx = int(legal_indices[0])
+
+    cand_idxs, cand_scores = _collect_sf_pv_candidates(
+        res, _turn=bool(turn), legal_set=legal_set,
+    )
+    if not cand_idxs:
+        cand_idxs = [a_idx]
+        cand_scores = [0.0]
+
+    p_sf = _build_sf_policy_target(
+        cand_idxs, cand_scores,
+        legal_indices=legal_indices,
+        sf_policy_temp=sf_policy_temp,
+        sf_policy_label_smooth=sf_policy_label_smooth,
+    )
+    _attach_sf_target_to_record(
+        rec, p_sf=p_sf, a_idx=a_idx, res=res, legal_indices=legal_indices,
+        sf_wdl_use_cp_logistic=bool(state.game.sf_wdl_use_cp_logistic),
+        sf_wdl_cp_slope=float(state.game.sf_wdl_cp_slope),
+        sf_wdl_cp_draw_width=float(state.game.sf_wdl_cp_draw_width),
+    )
+
+
+def submit_async_sf_label_queries(state: SelfplayState, idxs: list[int]) -> int:
+    """Submit selfplay SF label queries without blocking.
+
+    The pending task captures the exact record and legal move set from query
+    time, so later game advancement or slot recycling cannot stamp the result
+    onto the wrong sample.
+    """
+    if not idxs:
+        return 0
+    assert isinstance(state.stockfish, StockfishPool)
+    max_pending = max(1, int(state.batch_size) * 8)
+    submitted = 0
+    for idx in idxs:
+        if len(state.pending_sf_labels) >= max_pending:
+            break
+        if not _slot_latest_record_needs_sf_label(state, idx):
+            continue
+        legal_indices = state.cboards[idx].legal_move_indices()
+        if legal_indices.size == 0:
+            continue
+        fut = state.stockfish.submit(
+            state.cboards[idx].fen(),
+            nodes=_eff_sf_nodes(state, idx, for_move=False),
+            syzygy_path=_sf_syzygy_path_for_slot(state, idx),
+        )
+        state.pending_sf_labels.append(
+            _PendingSfLabel(
+                future=fut,
+                record=state.samples_per_game[idx][-1],
+                turn=bool(state.cboards[idx].turn),
+                legal_indices=np.asarray(legal_indices, dtype=np.int64).copy(),
+            ),
+        )
+        submitted += 1
+    return submitted
+
+
+def poll_async_sf_labels(state: SelfplayState) -> tuple[int, int]:
+    """Attach completed async SF labels. Returns ``(attached, failed)``."""
+    if not state.pending_sf_labels:
+        return 0, 0
+    still_pending: list[_PendingSfLabel] = []
+    attached = 0
+    failed = 0
+    for pending in state.pending_sf_labels:
+        if not pending.future.done():
+            still_pending.append(pending)
+            continue
+        try:
+            res = pending.future.result()
+            _process_sf_label_result_for_record(
+                state,
+                rec=pending.record,
+                res=res,
+                turn=pending.turn,
+                legal_indices=pending.legal_indices,
+            )
+            attached += 1
+        except Exception as exc:  # pragma: no cover - defensive drop on SF failure.
+            failed += 1
+            _LOG.debug("async SF label failed: %s", exc, exc_info=True)
+    state.pending_sf_labels = still_pending
+    return attached, failed
+
+
+def flush_async_sf_labels_for_records(
+    state: SelfplayState, records: list[_NetRecord],
+) -> tuple[int, int]:
+    """Wait for pending labels attached to these records before replay emit."""
+    if not state.pending_sf_labels or not records:
+        return 0, 0
+    target_records = set(records)
+    still_pending: list[_PendingSfLabel] = []
+    attached = 0
+    failed = 0
+    for pending in state.pending_sf_labels:
+        if pending.record not in target_records:
+            still_pending.append(pending)
+            continue
+        try:
+            res = pending.future.result()
+            _process_sf_label_result_for_record(
+                state,
+                rec=pending.record,
+                res=res,
+                turn=pending.turn,
+                legal_indices=pending.legal_indices,
+            )
+            attached += 1
+        except Exception as exc:  # pragma: no cover - defensive drop on SF failure.
+            failed += 1
+            _LOG.debug("async SF label failed during finalize: %s", exc, exc_info=True)
+    state.pending_sf_labels = still_pending
+    return attached, failed
+
+
 def _push_curriculum_opponent_move(
     state: SelfplayState, idx: int,
     *, legal_indices: np.ndarray,
@@ -231,6 +549,7 @@ def _process_sf_results(
     *,
     results: dict,
     play_curriculum_moves: bool,
+    attach_labels: bool = True,
 ) -> None:
     """Attach SF policy target (+legal mask) to the last _NetRecord per slot
     and, for curriculum games, push the SF-chosen move onto the board."""
@@ -268,18 +587,19 @@ def _process_sf_results(
             cand_idxs = [a_idx]
             cand_scores = [0.0]
 
-        p_sf = _build_sf_policy_target(
-            cand_idxs, cand_scores,
-            legal_indices=legal_indices,
-            sf_policy_temp=sf_policy_temp,
-            sf_policy_label_smooth=sf_policy_label_smooth,
-        )
-        _attach_sf_target_to_last_record(
-            state, idx, p_sf=p_sf, a_idx=a_idx, res=res, legal_indices=legal_indices,
-            sf_wdl_use_cp_logistic=sf_wdl_use_cp_logistic,
-            sf_wdl_cp_slope=sf_wdl_cp_slope,
-            sf_wdl_cp_draw_width=sf_wdl_cp_draw_width,
-        )
+        if attach_labels and _slot_latest_record_needs_sf_label(state, idx):
+            p_sf = _build_sf_policy_target(
+                cand_idxs, cand_scores,
+                legal_indices=legal_indices,
+                sf_policy_temp=sf_policy_temp,
+                sf_policy_label_smooth=sf_policy_label_smooth,
+            )
+            _attach_sf_target_to_last_record(
+                state, idx, p_sf=p_sf, a_idx=a_idx, res=res, legal_indices=legal_indices,
+                sf_wdl_use_cp_logistic=sf_wdl_use_cp_logistic,
+                sf_wdl_cp_slope=sf_wdl_cp_slope,
+                sf_wdl_cp_draw_width=sf_wdl_cp_draw_width,
+            )
 
         if play_curriculum_moves and not state.selfplay_arr[idx]:
             _push_curriculum_opponent_move(
@@ -291,5 +611,11 @@ def _process_sf_results(
 
 __all__ = [
     "finish_sf_annotation_and_moves",
+    "finish_pending_curriculum_moves",
+    "flush_async_sf_labels_for_records",
+    "poll_async_sf_labels",
+    "submit_async_curriculum_move_queries",
+    "submit_async_sf_labels_from_curriculum_moves",
+    "submit_async_sf_label_queries",
     "submit_sf_queries",
 ]

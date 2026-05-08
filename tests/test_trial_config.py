@@ -11,6 +11,7 @@ def test_from_empty_dict() -> None:
     assert tc.lr == 0.0003
     assert tc.optimizer == "nadamw"
     assert tc.sf_nodes == 500
+    assert tc.sf_move_nodes == 0
     assert tc.mcts_simulations == 50
     assert tc.sf_pid_enabled is True
     assert tc.sf_pid_wdl_regret_max == 1.0
@@ -23,6 +24,7 @@ def test_from_empty_dict() -> None:
     assert tc.syzygy_adjudicate is False
     assert tc.syzygy_adjudicate_fraction == 1.0
     assert tc.syzygy_in_search is False
+    assert tc.stockfish_syzygy_path is None
 
 
 def test_from_dict_overrides() -> None:
@@ -30,8 +32,10 @@ def test_from_dict_overrides() -> None:
     tc = TrialConfig.from_dict({
         "lr": 0.001,
         "sf_nodes": 5000,
+        "sf_move_nodes": 10000,
         "mcts_simulations": 100,
         "stockfish_path": "/usr/bin/stockfish",
+        "stockfish_syzygy_path": "/ssd/tb",
         "sf_pid_ema_alpha": 0.50,
         "batch_size": 256,
         "syzygy_path": "/tb",
@@ -41,8 +45,10 @@ def test_from_dict_overrides() -> None:
     })
     assert tc.lr == 0.001
     assert tc.sf_nodes == 5000
+    assert tc.sf_move_nodes == 10000
     assert tc.mcts_simulations == 100
     assert tc.stockfish_path == "/usr/bin/stockfish"
+    assert tc.stockfish_syzygy_path == "/ssd/tb"
     assert tc.sf_pid_ema_alpha == 0.50
     assert tc.batch_size == 256
     assert tc.syzygy_path == "/tb"

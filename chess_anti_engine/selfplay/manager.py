@@ -28,6 +28,11 @@ from chess_anti_engine.selfplay.state import (
 )
 from chess_anti_engine.selfplay.stockfish_turn import (
     finish_sf_annotation_and_moves,
+    finish_pending_curriculum_moves,
+    poll_async_sf_labels,
+    submit_async_curriculum_move_queries,
+    submit_async_sf_labels_from_curriculum_moves,
+    submit_async_sf_label_queries,
     submit_sf_queries,
 )
 from chess_anti_engine.stockfish.pool import StockfishPool
@@ -55,6 +60,8 @@ def _tb_adjudicate_active_games(state: SelfplayState) -> int:
             continue
         if not state.tb_adj_roll_arr[i]:
             continue
+        if i in state.pending_sf_moves:
+            continue
         cb = state.cboards[i]
         occ = int(cb.occ_white) | int(cb.occ_black)
         if occ.bit_count() > max_p or int(cb.castling) != 0:
@@ -75,6 +82,7 @@ def _run_step(
     sp_opp_idxs: list[int],
     cur_opp_idxs: list[int],
     stockfish: StockfishUCI | StockfishPool,
+    on_timing: Callable[[str, float], None] | None = None,
 ) -> tuple[float, float]:
     """Network + SF turn for one step. Returns ``(net_seconds, sf_seconds)``.
 
@@ -91,17 +99,29 @@ def _run_step(
     # the combined network turn below.
     cur_futures: dict[int, Any] | None = None
     if cur_opp_idxs and is_pool:
-        t0 = time.time()
-        cur_futures = submit_sf_queries(state, cur_opp_idxs)
-        t_sf += time.time() - t0
+        t0 = time.perf_counter()
+        submit_async_curriculum_move_queries(state, cur_opp_idxs)
+        dt = time.perf_counter() - t0
+        t_sf += dt
+        if on_timing is not None:
+            on_timing("sf_submit_curriculum", dt)
+        t0 = time.perf_counter()
+        submit_async_sf_labels_from_curriculum_moves(state, cur_opp_idxs)
+        dt = time.perf_counter() - t0
+        t_sf += dt
+        if on_timing is not None:
+            on_timing("sf_submit_label", dt)
 
     # Combined network turn: merge net_idxs + sp_opp_idxs into one MCTS call
     # for GPU batch-size doubling. Disjoint + independent.
     combined_net_idxs = net_idxs + sp_opp_idxs
     if combined_net_idxs:
-        t0 = time.time()
+        t0 = time.perf_counter()
         run_network_turn(state, combined_net_idxs)
-        t_net += time.time() - t0
+        dt = time.perf_counter() - t0
+        t_net += dt
+        if on_timing is not None:
+            on_timing("network", dt)
 
     # Selfplay games still need SF labels on every network turn. Curriculum
     # games get their label from the next SF-opponent query, but selfplay slots
@@ -111,26 +131,40 @@ def _run_step(
         i for i in combined_net_idxs
         if bool(state.selfplay_arr[i]) and not state.done_arr[i]
     ]
-    sp_label_futures: dict[int, Any] | None = None
     if sp_label_idxs and is_pool:
-        t0 = time.time()
-        sp_label_futures = submit_sf_queries(state, sp_label_idxs)
-        t_sf += time.time() - t0
+        t0 = time.perf_counter()
+        submit_async_sf_label_queries(state, sp_label_idxs)
+        dt = time.perf_counter() - t0
+        t_sf += dt
+        if on_timing is not None:
+            on_timing("sf_submit_label", dt)
 
     if cur_opp_idxs:
-        t0 = time.time()
-        finish_sf_annotation_and_moves(
-            state, cur_opp_idxs, play_curriculum_moves=True, futures=cur_futures,
-        )
-        t_sf += time.time() - t0
+        t0 = time.perf_counter()
+        if is_pool:
+            finish_pending_curriculum_moves(state, block=False)
+        else:
+            finish_sf_annotation_and_moves(
+                state, cur_opp_idxs, play_curriculum_moves=True,
+                attach_labels=True,
+                for_move=False,
+                futures=cur_futures,
+            )
+        dt = time.perf_counter() - t0
+        t_sf += dt
+        if on_timing is not None:
+            on_timing("sf_finish_curriculum", dt)
 
-    if sp_label_idxs:
-        t0 = time.time()
+    if sp_label_idxs and not is_pool:
+        t0 = time.perf_counter()
         finish_sf_annotation_and_moves(
             state, sp_label_idxs,
-            play_curriculum_moves=False, futures=sp_label_futures,
+            play_curriculum_moves=False, futures=None,
         )
-        t_sf += time.time() - t0
+        dt = time.perf_counter() - t0
+        t_sf += dt
+        if on_timing is not None:
+            on_timing("sf_finish_label", dt)
 
     return t_net, t_sf
 
@@ -164,6 +198,7 @@ def play_batch(
     games: int,
     target_games: int = 0,
     on_game_complete: Callable[[CompletedGameBatch], None] | None = None,
+    on_timing: Callable[[str, float], None] | None = None,
     on_step: Callable[[], None] | None = None,
     stop_fn: Callable[[], bool] | None = None,
     # Config groups (frozen dataclasses with sensible defaults).
@@ -225,33 +260,79 @@ def play_batch(
 
     for _step in range(max_steps):  # skylos: ignore (loop var unused by convention)
         if on_step is not None:
+            t0 = time.perf_counter()
             on_step()
+            if on_timing is not None:
+                on_timing("check_model", time.perf_counter() - t0)
         if stop_fn is not None and stop_fn():
             break
+
+        if state.pending_sf_labels:
+            t0 = time.perf_counter()
+            poll_async_sf_labels(state)
+            if on_timing is not None:
+                on_timing("sf_label_poll", time.perf_counter() - t0)
+
+        if state.pending_sf_moves:
+            t0 = time.perf_counter()
+            finish_pending_curriculum_moves(state, block=False)
+            if on_timing is not None:
+                on_timing("sf_finish_curriculum", time.perf_counter() - t0)
 
         # Tablebase adjudication before classify_active_slots. Any TB-eligible
         # game gets marked done; classify then skips it and finalize uses the
         # stashed TB result. Runs at most once per game (state.tb_result_arr
         # is the idempotency key).
         if state.tb_probe is not None and game.syzygy_adjudicate:
+            t0 = time.perf_counter()
             _tb_adjudicate_active_games(state)
+            if on_timing is not None:
+                on_timing("tb_adjudicate", time.perf_counter() - t0)
 
+        t0 = time.perf_counter()
         net_idxs, sp_opp_idxs, cur_opp_idxs, all_done = state.classify_active_slots()
+        if state.pending_sf_moves:
+            pending = set(state.pending_sf_moves)
+            net_idxs = [idx for idx in net_idxs if idx not in pending]
+            sp_opp_idxs = [idx for idx in sp_opp_idxs if idx not in pending]
+            cur_opp_idxs = [idx for idx in cur_opp_idxs if idx not in pending]
+        if on_timing is not None:
+            on_timing("classify", time.perf_counter() - t0)
         if all_done:
             break
+        if not net_idxs and not sp_opp_idxs and not cur_opp_idxs and state.pending_sf_moves:
+            t0 = time.perf_counter()
+            finish_pending_curriculum_moves(state, block=True)
+            if on_timing is not None:
+                on_timing("sf_finish_curriculum", time.perf_counter() - t0)
+            t0 = time.perf_counter()
+            _finalize_completed_slots(
+                state, all_samples=all_samples,
+                on_game_complete=on_game_complete,
+                batch_size=batch_size, continuous=continuous, target=target,
+            )
+            if on_timing is not None:
+                on_timing("finalize", time.perf_counter() - t0)
+            continue
 
         net_dt, sf_dt = _run_step(
             state, net_idxs=net_idxs, sp_opp_idxs=sp_opp_idxs,
             cur_opp_idxs=cur_opp_idxs, stockfish=stockfish,
+            on_timing=on_timing,
         )
         t_net += net_dt
         t_sf += sf_dt
 
+        t0 = time.perf_counter()
+        if state.pending_sf_labels:
+            poll_async_sf_labels(state)
         _finalize_completed_slots(
             state, all_samples=all_samples,
             on_game_complete=on_game_complete,
             batch_size=batch_size, continuous=continuous, target=target,
         )
+        if on_timing is not None:
+            on_timing("finalize", time.perf_counter() - t0)
 
         # Reset tree when it grows unbounded. Live root_ids can't be preserved
         # across reset, but the next ply's MCTS root-init rebuilds them with no
@@ -263,6 +344,7 @@ def play_batch(
             state.mcts_tree is not None
             and state.mcts_tree.node_count() > 500_000
         ):
+            t0 = time.perf_counter()
             reset_compact = getattr(state.mcts_tree, "reset_compact", None)
             if reset_compact is not None:
                 reset_compact()
@@ -270,6 +352,8 @@ def play_batch(
                 state.mcts_tree.reset()
             for _i in range(len(state.root_ids)):
                 state.root_ids[_i] = -1
+            if on_timing is not None:
+                on_timing("tree_reset", time.perf_counter() - t0)
 
     logging.getLogger("chess_anti_engine.worker").info(
         "play_batch timing: net=%.1fs sf=%.1fs (net %.0f%%, sf %.0f%%)",

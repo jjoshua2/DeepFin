@@ -42,6 +42,7 @@ def test_play_batch_kwargs_preserves_syzygy_adjudication_knobs() -> None:
     tc = TrialConfig.from_dict(
         {
             "syzygy_path": "/tmp/tb",
+            "stockfish_syzygy_path": "/tmp/ssd-tb",
             "syzygy_rescore_policy": True,
             "syzygy_adjudicate": True,
             "syzygy_adjudicate_fraction": 0.5,
@@ -52,6 +53,7 @@ def test_play_batch_kwargs_preserves_syzygy_adjudication_knobs() -> None:
     game = _play_batch_kwargs(tc)["game"]
 
     assert game.syzygy_path == "/tmp/tb"
+    assert game.stockfish_syzygy_path == "/tmp/ssd-tb"
     assert game.syzygy_rescore_policy is True
     assert game.syzygy_adjudicate is True
     assert game.syzygy_adjudicate_fraction == 0.5

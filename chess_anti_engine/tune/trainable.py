@@ -105,7 +105,8 @@ def _make_stockfish_uci(tc: TrialConfig, *, nodes: int, multipv: int) -> Stockfi
     """Single-engine factory used by both gate and eval SF init."""
     return StockfishUCI(
         tc.stockfish_path, nodes=nodes, multipv=multipv,
-        hash_mb=tc.sf_hash_mb, syzygy_path=tc.syzygy_path,
+        hash_mb=tc.sf_hash_mb,
+        syzygy_path=tc.stockfish_syzygy_path or tc.syzygy_path,
     )
 
 
@@ -117,7 +118,8 @@ def _init_local_stockfish(tc: TrialConfig) -> StockfishUCI | StockfishPool | Non
         return StockfishPool(
             path=tc.stockfish_path, nodes=tc.sf_nodes,
             num_workers=tc.sf_workers, multipv=tc.sf_multipv,
-            hash_mb=tc.sf_hash_mb, syzygy_path=tc.syzygy_path,
+            hash_mb=tc.sf_hash_mb,
+            syzygy_path=tc.stockfish_syzygy_path or tc.syzygy_path,
         )
     return _make_stockfish_uci(tc, nodes=tc.sf_nodes, multipv=tc.sf_multipv)
 

@@ -25,7 +25,10 @@ from chess_anti_engine.selfplay.state import (
     SelfplayState,
     _NetRecord,
 )
-from chess_anti_engine.selfplay.stockfish_turn import flip_wdl_pov
+from chess_anti_engine.selfplay.stockfish_turn import (
+    flip_wdl_pov,
+    flush_async_sf_labels_for_records,
+)
 from chess_anti_engine.selfplay.temperature import apply_policy_temperature
 from chess_anti_engine.stockfish.pool import StockfishPool
 from chess_anti_engine.stockfish.uci import StockfishResult
@@ -400,7 +403,7 @@ def _log_terminal_anomalies(
     result: str, game_plies: int, was_adjudicated: bool,
     sf_res: StockfishResult | None,
 ) -> None:
-    """Warn on unexpectedly short curriculum wins + dump max_plies-game FENs."""
+    """Log unexpectedly short curriculum wins + dump max_plies-game FENs."""
     cb = state.cboards[i]
     b = state.replay_board(i)
     max_plies = int(state.game.max_plies)
@@ -412,7 +415,7 @@ def _log_terminal_anomalies(
     ):
         outcome = b.outcome(claim_draw=True)
         term = outcome.termination.name if outcome else "adjudicated"
-        _LOG.warning(
+        _LOG.debug(
             "Short win: %s at %d plies (max=%d), term=%s, adj=%s, is_over=%s",
             result, game_plies, max_plies, term,
             was_adjudicated, cb.is_game_over(),
@@ -504,6 +507,7 @@ def finalize_game(
     )
 
     records = state.samples_per_game[i]
+    flush_async_sf_labels_for_records(state, records)
     result, tb_policy_overrides = _rescore_with_syzygy(state, i, b, records, result)
     counters = _update_aggregate_stats(
         state, i, result=result,
