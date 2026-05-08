@@ -706,6 +706,8 @@ class WorkerSession:
         self._last_dispatcher_stats_snapshot: tuple[int, int, int, float, float, float, float, float] = (
             0, 0, 0, 0.0, 0.0, 0.0, 0.0, 0.0,
         )
+        self._last_broker_client_stats_log_s: float = time.time()
+        self._last_broker_client_stats_snapshot: dict[str, Any] = {}
         self._completion_telemetry_lock = threading.Lock()
         self._completion_games = 0
         self._completion_positions = 0
@@ -1066,6 +1068,7 @@ class WorkerSession:
         if _now - self._last_manifest_poll_s > 30.0:
             self._last_manifest_poll_s = _now
             self._maybe_log_dispatcher_stats(_now)
+            self._maybe_log_broker_client_stats(_now)
             self._periodic_manifest_poll()
             if self._stop_selfplay:
                 return
@@ -1160,6 +1163,80 @@ class WorkerSession:
             int(ds["lifetime_full_drains"]),
         )
         self._maybe_log_selfplay_phase_stats(elapsed_s)
+
+    def _maybe_log_broker_client_stats(self, now_s: float) -> None:
+        if not isinstance(self.inference_client, MultiSlotInferenceClient):
+            return
+        elapsed_s = float(now_s - self._last_broker_client_stats_log_s)
+        if elapsed_s < 60.0:
+            return
+        ds = self.inference_client.stats
+        prev = self._last_broker_client_stats_snapshot
+        requests = int(ds["lifetime_requests"])
+        positions = int(ds["lifetime_positions"])
+        legal_requests = int(ds.get("lifetime_legal_requests", 0))
+        legal_positions = int(ds.get("lifetime_legal_positions", 0))
+        wait_s = float(ds.get("lifetime_wait_s", 0.0))
+        roundtrip_s = float(ds.get("lifetime_roundtrip_s", 0.0))
+        slot_requests = [int(x) for x in ds.get("slot_requests", [])]
+
+        prev_requests = int(prev.get("requests", 0))
+        prev_positions = int(prev.get("positions", 0))
+        prev_legal_requests = int(prev.get("legal_requests", 0))
+        prev_legal_positions = int(prev.get("legal_positions", 0))
+        prev_wait_s = float(prev.get("wait_s", 0.0))
+        prev_roundtrip_s = float(prev.get("roundtrip_s", 0.0))
+        prev_slot_requests = [int(x) for x in prev.get("slot_requests", [0] * len(slot_requests))]
+
+        delta_requests = max(0, requests - prev_requests)
+        delta_positions = max(0, positions - prev_positions)
+        delta_legal_requests = max(0, legal_requests - prev_legal_requests)
+        delta_legal_positions = max(0, legal_positions - prev_legal_positions)
+        delta_wait_s = max(0.0, wait_s - prev_wait_s)
+        delta_roundtrip_s = max(0.0, roundtrip_s - prev_roundtrip_s)
+        slot_deltas = [
+            max(0, count - (prev_slot_requests[idx] if idx < len(prev_slot_requests) else 0))
+            for idx, count in enumerate(slot_requests)
+        ]
+        active_slot_deltas = [count for count in slot_deltas if count > 0]
+        active_slots = len(active_slot_deltas)
+        slot_skew = max(active_slot_deltas) - min(active_slot_deltas) if active_slot_deltas else 0
+
+        self._last_broker_client_stats_log_s = float(now_s)
+        self._last_broker_client_stats_snapshot = {
+            "requests": requests,
+            "positions": positions,
+            "legal_requests": legal_requests,
+            "legal_positions": legal_positions,
+            "wait_s": wait_s,
+            "roundtrip_s": roundtrip_s,
+            "slot_requests": slot_requests,
+        }
+        if delta_requests <= 0:
+            return
+
+        self.log.info(
+            "broker client stats: requests=%d(+%d) rows_per_req=%.1f "
+            "req_s=%.1f pos_s=%.0f wait_ms=%.2f roundtrip_ms=%.2f "
+            "wait_thread_busy=%.1f%% roundtrip_thread_busy=%.1f%% "
+            "legal_req=%.1f%% legal_pos=%.1f%% slots_active=%d/%d "
+            "slot_req_skew=%d max_inflight=%d available=%d",
+            requests, delta_requests,
+            float(delta_positions / max(1, delta_requests)),
+            float(delta_requests / max(1e-6, elapsed_s)),
+            float(delta_positions / max(1e-6, elapsed_s)),
+            float(1000.0 * delta_wait_s / max(1, delta_requests)),
+            float(1000.0 * delta_roundtrip_s / max(1, delta_requests)),
+            float(100.0 * delta_wait_s / max(1e-6, elapsed_s)),
+            float(100.0 * delta_roundtrip_s / max(1e-6, elapsed_s)),
+            float(100.0 * delta_legal_requests / max(1, delta_requests)),
+            float(100.0 * delta_legal_positions / max(1, delta_positions)),
+            active_slots,
+            int(ds.get("slots", 0)),
+            int(slot_skew),
+            int(ds.get("max_inflight", 0)),
+            int(ds.get("available_slots", 0)),
+        )
 
     def _completion_telemetry_delta(self, elapsed_s: float) -> tuple[float, float, float, float, int, int]:
         with self._completion_telemetry_lock:

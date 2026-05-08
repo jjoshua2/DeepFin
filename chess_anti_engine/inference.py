@@ -1794,16 +1794,36 @@ class MultiSlotInferenceClient:
             )
             for name in names
         ]
-        self._available_clients: queue.Queue[SlotInferenceClient] = queue.Queue()
-        for client in self._clients:
-            self._available_clients.put(client)
+        self._available_clients: queue.Queue[tuple[int, SlotInferenceClient]] = queue.Queue()
+        for idx, client in enumerate(self._clients):
+            self._available_clients.put((idx, client))
+        self._stats_lock = threading.Lock()
+        self._lifetime_requests = 0
+        self._lifetime_positions = 0
+        self._lifetime_legal_requests = 0
+        self._lifetime_legal_positions = 0
+        self._lifetime_wait_s = 0.0
+        self._lifetime_roundtrip_s = 0.0
+        self._inflight = 0
+        self._max_inflight = 0
+        self._slot_requests = [0 for _ in self._clients]
+        self._slot_positions = [0 for _ in self._clients]
+        self._slot_wait_s = [0.0 for _ in self._clients]
+        self._slot_roundtrip_s = [0.0 for _ in self._clients]
 
     def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        client = self._available_clients.get()
+        idx, client, wait_s = self._acquire_client()
+        t0 = time.perf_counter()
         try:
             return client.evaluate_encoded(x)
         finally:
-            self._available_clients.put(client)
+            self._release_client(
+                idx, client,
+                positions=int(x.shape[0]),
+                legal=False,
+                wait_s=wait_s,
+                roundtrip_s=time.perf_counter() - t0,
+            )
 
     @property
     def supports_input_bf16_bits(self) -> bool:
@@ -1812,11 +1832,77 @@ class MultiSlotInferenceClient:
     def evaluate_legal_bf16(
         self, x: np.ndarray, legal_flat: np.ndarray, legal_counts: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
-        client = self._available_clients.get()
+        idx, client, wait_s = self._acquire_client()
+        t0 = time.perf_counter()
         try:
             return client.evaluate_legal_bf16(x, legal_flat, legal_counts)
         finally:
-            self._available_clients.put(client)
+            self._release_client(
+                idx, client,
+                positions=int(x.shape[0]),
+                legal=True,
+                wait_s=wait_s,
+                roundtrip_s=time.perf_counter() - t0,
+            )
+
+    def _acquire_client(self) -> tuple[int, SlotInferenceClient, float]:
+        t0 = time.perf_counter()
+        idx, client = self._available_clients.get()
+        wait_s = time.perf_counter() - t0
+        with self._stats_lock:
+            self._inflight += 1
+            self._max_inflight = max(self._max_inflight, self._inflight)
+        return idx, client, wait_s
+
+    def _release_client(
+        self,
+        idx: int,
+        client: SlotInferenceClient,
+        *,
+        positions: int,
+        legal: bool,
+        wait_s: float,
+        roundtrip_s: float,
+    ) -> None:
+        with self._stats_lock:
+            self._lifetime_requests += 1
+            self._lifetime_positions += int(positions)
+            if legal:
+                self._lifetime_legal_requests += 1
+                self._lifetime_legal_positions += int(positions)
+            self._lifetime_wait_s += float(wait_s)
+            self._lifetime_roundtrip_s += float(roundtrip_s)
+            self._slot_requests[idx] += 1
+            self._slot_positions[idx] += int(positions)
+            self._slot_wait_s[idx] += float(wait_s)
+            self._slot_roundtrip_s[idx] += float(roundtrip_s)
+            self._inflight = max(0, self._inflight - 1)
+        self._available_clients.put((idx, client))
+
+    @property
+    def stats(self) -> dict[str, Any]:
+        with self._stats_lock:
+            requests = int(self._lifetime_requests)
+            positions = int(self._lifetime_positions)
+            return {
+                "slots": len(self._clients),
+                "available_slots": int(self._available_clients.qsize()),
+                "inflight": int(self._inflight),
+                "max_inflight": int(self._max_inflight),
+                "lifetime_requests": requests,
+                "lifetime_positions": positions,
+                "lifetime_legal_requests": int(self._lifetime_legal_requests),
+                "lifetime_legal_positions": int(self._lifetime_legal_positions),
+                "lifetime_wait_s": float(self._lifetime_wait_s),
+                "lifetime_roundtrip_s": float(self._lifetime_roundtrip_s),
+                "avg_rows_per_request": positions / requests if requests else 0.0,
+                "avg_wait_ms": 1000.0 * self._lifetime_wait_s / requests if requests else 0.0,
+                "avg_roundtrip_ms": 1000.0 * self._lifetime_roundtrip_s / requests if requests else 0.0,
+                "slot_requests": list(self._slot_requests),
+                "slot_positions": list(self._slot_positions),
+                "slot_wait_s": list(self._slot_wait_s),
+                "slot_roundtrip_s": list(self._slot_roundtrip_s),
+            }
 
     def close(self) -> None:
         for client in self._clients:

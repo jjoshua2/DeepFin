@@ -471,6 +471,9 @@ def test_multi_slot_inference_client_fans_out_requests() -> None:
         client.evaluate_encoded(x)
 
     assert calls == [0, 1, 2, 0, 1]
+    assert client.stats["lifetime_requests"] == 5
+    assert client.stats["lifetime_positions"] == 5
+    assert client.stats["slot_requests"] == [2, 2, 1]
 
 
 def test_multi_slot_inference_client_uses_first_free_slot() -> None:
@@ -520,6 +523,10 @@ def test_multi_slot_inference_client_uses_first_free_slot() -> None:
     slow_thread.join(timeout=1.0)
 
     assert calls == [0, 1, 1]
+    assert client.stats["lifetime_requests"] == 3
+    assert client.stats["lifetime_positions"] == 3
+    assert client.stats["slot_requests"] == [1, 2]
+    assert client.stats["max_inflight"] == 2
 
 
 def test_slot_inference_client_waits_for_slot_creation() -> None:
