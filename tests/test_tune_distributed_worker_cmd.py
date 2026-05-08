@@ -76,6 +76,66 @@ def test_build_distributed_worker_cmd_adds_inference_slot() -> None:
     assert slot_name.endswith("-0")  # worker_index=0
 
 
+def test_build_distributed_worker_cmd_adds_threaded_dispatcher_max_batch() -> None:
+    cmd = _build_distributed_worker_cmd(
+        config={
+            "distributed_server_url": "http://127.0.0.1:45453",
+            "distributed_worker_username": "worker",
+            "distributed_worker_password_file": "/tmp/pw",
+            "stockfish_path": "/tmp/stockfish",
+            "distributed_server_root": "/tmp/server",
+            "distributed_worker_device": "cuda",
+            "distributed_worker_use_compile": True,
+            "distributed_worker_threaded": True,
+            "distributed_worker_selfplay_threads": 32,
+            "distributed_worker_threaded_dispatcher": True,
+            "distributed_worker_dispatcher_batch_wait_ms": 2.0,
+            "distributed_worker_dispatcher_max_batch": 1024,
+            "distributed_worker_dispatcher_target_batch": 170,
+            "distributed_worker_sf_workers": 1,
+            "distributed_worker_poll_seconds": 1.0,
+            "seed": 123,
+        },
+        trial_root=Path("/tmp/trial/worker_00"),
+        trial_id="trial_00000",
+        worker_index=0,
+        worker_log=Path("/tmp/trial/worker_00/worker.log"),
+    )
+
+    assert "--threaded-dispatcher" in cmd
+    assert cmd[cmd.index("--selfplay-threads") + 1] == "32"
+    assert cmd[cmd.index("--dispatcher-batch-wait-ms") + 1] == "2.0"
+    assert cmd[cmd.index("--dispatcher-max-batch") + 1] == "1024"
+    assert cmd[cmd.index("--dispatcher-target-batch") + 1] == "170"
+
+
+def test_build_distributed_worker_cmd_adds_multiple_inference_slots() -> None:
+    cmd = _build_distributed_worker_cmd(
+        config={
+            "distributed_server_url": "http://127.0.0.1:45453",
+            "distributed_worker_username": "worker",
+            "distributed_worker_password_file": "/tmp/pw",
+            "stockfish_path": "/tmp/stockfish",
+            "distributed_server_root": "/tmp/server",
+            "distributed_worker_device": "cuda",
+            "distributed_worker_use_compile": False,
+            "distributed_worker_sf_workers": 1,
+            "distributed_worker_poll_seconds": 1.0,
+            "distributed_inference_broker_enabled": True,
+            "distributed_inference_max_batch_per_slot": 256,
+            "distributed_inference_slots_per_worker": 4,
+            "seed": 123,
+        },
+        trial_root=Path("/tmp/trial/worker_01"),
+        trial_id="trial_00000",
+        worker_index=1,
+        worker_log=Path("/tmp/trial/worker_01/worker.log"),
+    )
+
+    slot_names = cmd[cmd.index("--inference-slot-name") + 1].split(",")
+    assert [name.rsplit("-", 1)[-1] for name in slot_names] == ["4", "5", "6", "7"]
+
+
 class _FakeProc:
     pid = 1234
     returncode = None
@@ -277,6 +337,48 @@ def test_patch_experiment_state_for_resume_adds_new_jsonable_keys(tmp_path: Path
     saved_trial = json.loads(saved_state["trial_data"][0][0])
     assert saved_trial["config"]["distributed_upload_compact_shard_size"] == 2000
     assert saved_trial["config"]["distributed_upload_compact_max_age_seconds"] == 90.0
+
+
+def test_patch_experiment_state_for_resume_overlays_selected_keys(tmp_path: Path) -> None:
+    state_file = tmp_path / "experiment_state-2026-03-29.json"
+    state_file.write_text(
+        json.dumps(
+            {
+                "trial_data": [
+                    [
+                        json.dumps(
+                            {
+                                "config": {
+                                    "seed": 7,
+                                    "distributed_inference_broker_enabled": False,
+                                }
+                            }
+                        ),
+                        {"meta": "ignored"},
+                    ],
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    added, skipped, saved_keys = _patch_experiment_state_for_resume(
+        state_file=state_file,
+        param_space={
+            "seed": 99,
+            "distributed_inference_broker_enabled": True,
+        },
+        overlay_keys={"distributed_inference_broker_enabled"},
+    )
+
+    assert added == {"distributed_inference_broker_enabled"}
+    assert skipped == set()
+    assert saved_keys == {"seed", "distributed_inference_broker_enabled"}
+
+    saved_state = json.loads(state_file.read_text(encoding="utf-8"))
+    saved_trial = json.loads(saved_state["trial_data"][0][0])
+    assert saved_trial["config"]["seed"] == 7
+    assert saved_trial["config"]["distributed_inference_broker_enabled"] is True
 
 
 def test_patch_experiment_state_for_resume_skips_non_jsonable_keys(tmp_path: Path) -> None:

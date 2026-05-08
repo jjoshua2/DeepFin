@@ -248,6 +248,7 @@ def _patch_experiment_state_for_resume(
     *,
     state_file: Path,
     param_space: dict[str, object],
+    overlay_keys: set[str] | None = None,
 ) -> tuple[set[str], set[str], set[str]]:
     """Patch saved trial configs with current YAML keys so Ray's resume validation passes.
 
@@ -263,6 +264,7 @@ def _patch_experiment_state_for_resume(
     if not isinstance(trial_data, list):
         return set(), set(), set()
 
+    overlay_keys = overlay_keys or set()
     added_keys: set[str] = set()
     skipped_keys: set[str] = set()
     saved_keys: set[str] = set()
@@ -277,12 +279,14 @@ def _patch_experiment_state_for_resume(
 
         trial_changed = False
         for key, value in param_space.items():
-            if key in cfg:
+            if key in cfg and key not in overlay_keys:
                 continue
             try:
                 json.dumps(value)
             except TypeError:
                 skipped_keys.add(str(key))
+                continue
+            if key in cfg and cfg[key] == value:
                 continue
             cfg[key] = value
             added_keys.add(str(key))
@@ -482,12 +486,15 @@ def _resolve_resume_param_space(
     *, param_space: dict, valid_state_file: Path, experiment_path: Path
 ) -> dict:
     """Patch param_space so Ray's restore validation accepts our current keys."""
+    from chess_anti_engine.tune.trainable_config_ops import _TOPOLOGY_KEYS
+
     added_keys, skipped_keys, saved_keys = _patch_experiment_state_for_resume(
         state_file=valid_state_file,
         param_space=param_space,
+        overlay_keys=set(_TOPOLOGY_KEYS),
     )
     if added_keys:
-        print(f"[run_tune] Added {len(added_keys)} new config keys to restored trial state: {sorted(added_keys)}")
+        print(f"[run_tune] Patched {len(added_keys)} config keys in restored trial state: {sorted(added_keys)}")
     out = _filter_param_space_against_tuner_pkl(param_space, experiment_path=experiment_path)
     if skipped_keys:
         out = {k: v for k, v in out.items() if k not in skipped_keys}

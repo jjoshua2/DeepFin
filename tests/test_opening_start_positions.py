@@ -3,7 +3,12 @@ import zipfile
 import numpy as np
 import pytest
 
-from chess_anti_engine.selfplay.opening import OpeningConfig, make_starting_board
+from chess_anti_engine.selfplay.opening import (
+    OpeningConfig,
+    _load_pgn_opening_sequences,
+    make_starting_board,
+    warm_opening_book_cache,
+)
 
 
 def _write_test_pgn(path):
@@ -75,6 +80,25 @@ def test_make_starting_board_pgn_zip(tmp_path):
     b = make_starting_board(rng=rng, cfg=cfg)
     assert 1 <= len(b.move_stack) <= 2
     assert b.move_stack[0].uci() in {"e2e4", "d2d4"}
+
+
+def test_warm_opening_book_cache_preloads_pgn_books(tmp_path):
+    pgn_path = tmp_path / "book.pgn"
+    _write_test_pgn(pgn_path)
+
+    _load_pgn_opening_sequences.cache_clear()
+    cfg = OpeningConfig(
+        opening_book_path=str(pgn_path),
+        opening_book_prob=1.0,
+        opening_book_max_plies=4,
+        opening_book_max_games=10,
+    )
+
+    warm_opening_book_cache(cfg)
+
+    info = _load_pgn_opening_sequences.cache_info()
+    assert info.currsize == 1
+    assert info.misses == 1
 
 
 def test_opening_book_prob_zero_falls_back_to_random(tmp_path):

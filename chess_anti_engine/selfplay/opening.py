@@ -193,6 +193,23 @@ def _sample_book(*, rng, path: str, max_plies: int, max_games: int) -> chess.Boa
     return board
 
 
+def warm_opening_book_cache(cfg: OpeningConfig) -> None:
+    """Preload PGN opening books before launching many selfplay threads."""
+    for path, max_plies, max_games in (
+        (cfg.opening_book_path, cfg.opening_book_max_plies, cfg.opening_book_max_games),
+        (cfg.opening_book_path_2, cfg.opening_book_max_plies_2, cfg.opening_book_max_games_2),
+    ):
+        if not path:
+            continue
+        suffixes = "".join(Path(str(path)).suffixes).lower()
+        if suffixes.endswith(".pgn") or suffixes.endswith(".pgn.zip") or suffixes.endswith(".zip"):
+            _load_pgn_opening_sequences(
+                str(path),
+                max_plies=int(max_plies),
+                max_games=int(max_games),
+            )
+
+
 def make_starting_board(*, rng, cfg: OpeningConfig) -> chess.Board:
     """Create a starting position according to config.
 

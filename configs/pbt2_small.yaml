@@ -52,6 +52,7 @@ model:
 stockfish:
   stockfish_path: /home/josh/projects/chess/e2e_server/publish/stockfish
   sf_nodes: 5000           # 5k nodes: wider WDL spread so regret actually filters moves (was 1k where all 12 passed)
+  sf_move_nodes: 0          # 0 = curriculum moves use the PID-controlled sf_nodes; don't weaken played SF moves by default.
   sf_workers: 2
   sf_multipv: 40            # Bumped from 20 (2026-04-29) to enrich sf_policy_t targets — measurement showed regret≤0.47 saturated top-20; multipv=40 widens tail for richer training distribution. Difficulty implication: opponent gets slightly weaker since more sub-optimal moves enter the regret-filter pool; PID will compensate via regret/nodes.
   sf_hash_mb: 16           # Larger TT helps at higher node counts
@@ -148,6 +149,10 @@ selfplay:
   soft_policy_temp: 3.0     # Temperature for soft policy target (LC0 uses 3, was hardcoded 2)
 
   syzygy_path: /home/josh/projects/chess/data/syzygy_3-4-5:/mnt/e/chess/syzygy_6_dtz
+  # Ordinary high-volume Stockfish curriculum searches stay on local SSD TBs.
+  # Non-adjudicated <=6-piece play-through roots temporarily switch to
+  # syzygy_path above so Stockfish can use E-drive DTZ for conversion play.
+  stockfish_syzygy_path: /home/josh/projects/chess/data/syzygy_3-4-5
   # End games at the first TB-eligible position and use the TB-proven result
   # as the outcome. Skips MCTS compute on the endgame tail (~25% of replay
   # positions are in <=7-man range — see the piece-count audit).
@@ -224,7 +229,7 @@ train:
   lr_T_mult: 1
   use_compile: true    # 2026-04-27: re-enabled with max-autotune. The earlier "compile destroys trainer" diagnosis turned out to be a prefix bug, not a compile-backward bug — saving under compile created `_orig_mod.`-prefixed checkpoints, then a later unwrapped load silently dropped all 192 keys (no warning) leaving the trainer fresh-init. Workers running max-autotune have been stable through trial f2f58 (raw_wr 0.81/0.59/0.57 across iters 1-3). Both bugs in the chain are now fixed: Trainer.save() strips the prefix, and load_state_dict_tolerant raises on <50% load.
   compile_mode: max-autotune
-  log_level: DEBUG   # Enables per-search "gumbel profile (...avg=B)" line in mcts/gumbel_c.py so we can read selfplay batch sizes. Override via env CHESS_LOG_LEVEL.
+  log_level: INFO    # Keep dispatcher/train stats without per-search DEBUG gumbel-profile log overhead.
   swa_start: -1  # Disabled: SWA averaging hurts early training. Enable after model stabilizes.
   swa_freq: 50
 
@@ -249,8 +254,8 @@ tune:
   max_concurrent_trials: 1
   cpus_per_trial: 1
   gpus_per_trial: 1.0
-  distributed_workers_per_trial: 2  # 2 compiled workers × 1 thread; proven ~170s/iter
-  distributed_worker_sf_workers: 8  # 8 SF per worker = 16 total
+  distributed_workers_per_trial: 4  # Shared broker needs more producers to keep the single GPU queue fed.
+  distributed_worker_sf_workers: 4
   distributed_worker_min_games_per_batch: 200  # Bigger forwards: better GPU util + lower per-gumbel overhead
   distributed_worker_max_games_per_batch: 512
   distributed_worker_username: josh
@@ -259,15 +264,19 @@ tune:
   distributed_worker_compile_mode: max-autotune
   distributed_worker_inference_fp8: false  # FP8 quantized inference (RTX 5090 native)
   distributed_worker_threaded: true   # 2026-04-29: enable threaded selfplay so the new dispatcher actually engages. Bench at N=16 producers showed 36k leaves/s vs ~7k for the prior path (5x). Old comment "AOT threading slower in prod" referred to the AOT-compiled threading path; this is the compiled+dispatcher path which is structurally different.
-  distributed_worker_selfplay_threads: 16
+  distributed_worker_selfplay_threads: 32
   distributed_worker_threaded_dispatcher: true   # 2-slot async pipeline (2026-04-29 refactor): +5.9x over ThreadedBatchEvaluator at N=16 producers, parity tests at 1e-5 vs DirectGPUEvaluator. Was false based on 2026-04-28 A/B which used a pre-refactor sync dispatcher AND a bench with main-thread compile that broke cudagraph TLS — both fixed.
-  distributed_worker_dispatcher_batch_wait_ms: 1.0
+  distributed_worker_dispatcher_batch_wait_ms: 2.0
+  distributed_worker_dispatcher_max_batch: 1190
+  distributed_worker_dispatcher_target_batch: 680  # Live producers underfill 340; 680 has been the best current steady compromise.
   # distributed_worker_aot_dir: data/aot_models  # Auto-detected by _worker_inference_args when threaded=true
-  distributed_inference_broker_enabled: false
-  distributed_inference_shared_broker: true
-  distributed_inference_batch_wait_ms: 5.0
-  distributed_inference_max_batch_per_slot: 2048
+  distributed_inference_broker_enabled: true
+  distributed_inference_shared_broker: false
+  distributed_inference_batch_wait_ms: 2.0
+  distributed_inference_max_batch_per_slot: 1190
+  distributed_inference_slots_per_worker: 4
   distributed_inference_use_compile: true
+  distributed_inference_compile_mode: max-autotune
   distributed_pause_selfplay_during_training: false  # Compile done; overlap for speed
   # 2026-04-29: enable shard prefetch + 1-iter-lagged async test eval. Both
   # overlap iter-boundary work onto the prior iter's selfplay phase. Saves

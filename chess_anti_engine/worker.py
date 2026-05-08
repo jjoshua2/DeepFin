@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 from chess_anti_engine.inference import (
     AOTEvaluator,
     DirectGPUEvaluator,
+    MultiSlotInferenceClient,
     SlotInferenceClient,
     ThreadedBatchEvaluator,
 )
@@ -52,7 +53,7 @@ from chess_anti_engine.selfplay.config import (
 )
 from chess_anti_engine.selfplay.manager import BatchStats
 from chess_anti_engine.selfplay.match import play_match_batch
-from chess_anti_engine.selfplay.opening import OpeningConfig
+from chess_anti_engine.selfplay.opening import OpeningConfig, warm_opening_book_cache
 from chess_anti_engine.stockfish import StockfishPool, StockfishUCI
 from chess_anti_engine.stockfish.uci import StockfishTimeoutError
 from chess_anti_engine.utils import sha256_file as _sha256_file
@@ -441,6 +442,18 @@ def main() -> None:
         default=1.0,
         help="ThreadedDispatcher batching window in ms (latency vs batch fill).",
     )
+    ap.add_argument(
+        "--dispatcher-max-batch",
+        type=int,
+        default=4096,
+        help="Maximum rows per ThreadedDispatcher forward.",
+    )
+    ap.add_argument(
+        "--dispatcher-target-batch",
+        type=int,
+        default=0,
+        help="Preferred ThreadedDispatcher drain size; 0 uses --dispatcher-max-batch.",
+    )
 
     ap.add_argument("--stockfish-path", type=str, default=None)
 
@@ -643,8 +656,8 @@ class WorkerSession:
                 "timeout_adjudication_threshold", "temperature",
                 "temperature_decay_start_move", "temperature_decay_moves",
                 "temperature_endgame",
-                "syzygy_path", "syzygy_rescore_policy", "syzygy_adjudicate",
-                "syzygy_adjudicate_fraction", "syzygy_in_search",
+                "syzygy_path", "stockfish_syzygy_path", "syzygy_rescore_policy",
+                "syzygy_adjudicate", "syzygy_adjudicate_fraction", "syzygy_in_search",
             ]
             overridden = [k for k in _server_managed_keys if getattr(args, k, None) is not None]
             if overridden:
@@ -689,6 +702,22 @@ class WorkerSession:
         self._stop_selfplay = False
         self._upload_buf_lock: threading.Lock | None = None  # set when threaded
         self._last_manifest_poll_s: float = 0.0
+        self._last_dispatcher_stats_log_s: float = time.time()
+        self._last_dispatcher_stats_snapshot: tuple[int, int, int, float, float, float, float, float] = (
+            0, 0, 0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        )
+        self._completion_telemetry_lock = threading.Lock()
+        self._completion_games = 0
+        self._completion_positions = 0
+        self._completion_callback_s = 0.0
+        self._completion_upload_s = 0.0
+        self._completion_by_thread: dict[int, int] = {}
+        self._last_completion_stats_snapshot: tuple[int, int, float, float, dict[int, int]] = (
+            0, 0, 0.0, 0.0, {},
+        )
+        self._phase_timing_lock = threading.Lock()
+        self._phase_timing_s: dict[str, float] = {}
+        self._last_phase_timing_snapshot: dict[str, float] = {}
   # Manifest-watch state (lazy-init in _check_model_update via getattr fallback).
         self._manifest_path: Path | None = None
         self._manifest_mtime: float | None = None
@@ -704,7 +733,8 @@ class WorkerSession:
                 str(self.args.compile_mode) if self.args.compile_inference else None
             )
             return ThreadedDispatcher(
-                model, device=device, max_batch=4096,
+                model, device=device, max_batch=int(self.args.dispatcher_max_batch),
+                target_batch=int(self.args.dispatcher_target_batch),
                 batch_wait_ms=float(self.args.dispatcher_batch_wait_ms),
                 compile_mode=disp_compile,
             )
@@ -784,8 +814,18 @@ class WorkerSession:
 
     def _make_inference_client(self):
         if str(self.args.inference_slot_name or "").strip():
-            return SlotInferenceClient(
-                slot_name=str(self.args.inference_slot_name),
+            slot_names = [
+                s.strip()
+                for s in str(self.args.inference_slot_name).split(",")
+                if s.strip()
+            ]
+            if len(slot_names) == 1:
+                return SlotInferenceClient(
+                    slot_name=slot_names[0],
+                    max_batch=int(self.args.inference_slot_max_batch),
+                )
+            return MultiSlotInferenceClient(
+                slot_names=slot_names,
                 max_batch=int(self.args.inference_slot_max_batch),
             )
         return None
@@ -1025,6 +1065,7 @@ class WorkerSession:
         _now = time.time()
         if _now - self._last_manifest_poll_s > 30.0:
             self._last_manifest_poll_s = _now
+            self._maybe_log_dispatcher_stats(_now)
             self._periodic_manifest_poll()
             if self._stop_selfplay:
                 return
@@ -1050,7 +1091,159 @@ class WorkerSession:
         except Exception as _exc:
             self.log.warning("mid-batch model check failed (worker stuck on old model): %s", _exc, exc_info=True)
 
+    def _maybe_log_dispatcher_stats(self, now_s: float) -> None:
+        if not isinstance(self._direct_evaluator, ThreadedDispatcher):
+            return
+        elapsed_s = float(now_s - self._last_dispatcher_stats_log_s)
+        if elapsed_s < 60.0:
+            return
+        ds = self._direct_evaluator.stats
+        batches = int(ds["lifetime_batches"])
+        positions = int(ds["lifetime_positions"])
+        forward_rows = int(ds.get("lifetime_forward_rows", positions))
+        legal_bf16_positions = int(ds.get("lifetime_legal_bf16_positions", 0))
+        forward_s = float(ds["lifetime_forward_s"])
+        pack_s = float(ds.get("lifetime_pack_s", 0.0))
+        wait_s = float(ds.get("lifetime_wait_s", 0.0))
+        scatter_s = float(ds.get("lifetime_scatter_s", 0.0))
+        drain_s = float(ds.get("lifetime_drain_s", 0.0))
+        (
+            prev_batches, prev_positions, prev_forward_rows, prev_forward_s, prev_wait_s,
+            prev_pack_s, prev_scatter_s, prev_drain_s,
+        ) = self._last_dispatcher_stats_snapshot
+        delta_batches = max(0, batches - int(prev_batches))
+        delta_positions = max(0, positions - int(prev_positions))
+        delta_forward_rows = max(0, forward_rows - int(prev_forward_rows))
+        delta_forward_s = max(0.0, forward_s - float(prev_forward_s))
+        delta_wait_s = max(0.0, wait_s - prev_wait_s)
+        delta_pack_s = max(0.0, pack_s - prev_pack_s)
+        delta_scatter_s = max(0.0, scatter_s - prev_scatter_s)
+        delta_drain_s = max(0.0, drain_s - prev_drain_s)
+        self._last_dispatcher_stats_log_s = float(now_s)
+        self._last_dispatcher_stats_snapshot = (
+            batches, positions, forward_rows, forward_s, wait_s, pack_s, scatter_s, drain_s,
+        )
+        if delta_batches <= 0:
+            return
+        self.log.info(
+            "dispatcher live stats: batches=%d(+%d) avg_batch=%.1f "
+            "req_per_batch=%.1f rows_per_req=%.1f q_avg=%.1f q_max=%d "
+            "avg_drain_ms=%.2f avg_pack_ms=%.2f avg_submit_ms=%.2f "
+            "avg_wait_ms=%.2f avg_scatter_ms=%.2f leaf_per_s=%.0f "
+            "fwd_rows_per_s=%.0f pad_ratio=%.2f "
+            "forward_busy=%.1f%% pack_busy=%.1f%% wait_busy=%.1f%% "
+            "scatter_busy=%.1f%% drain_busy=%.1f%% legal_bf16=%.1f%% "
+            "complete_gps=%.2f complete_pos_s=%.0f callback_busy=%.1f%% "
+            "upload_busy=%.1f%% active_threads=%d thread_game_skew=%d "
+            "full_drains=%d",
+            batches, delta_batches,
+            float(ds["avg_batch_size"]),
+            float(ds.get("avg_requests_per_batch", 0.0)),
+            float(ds.get("avg_rows_per_request", 0.0)),
+            float(ds.get("avg_queue_depth", 0.0)),
+            int(ds.get("queue_depth_max", 0)),
+            float(ds.get("avg_drain_ms", 0.0)),
+            float(ds.get("avg_pack_ms", 0.0)),
+            float(ds.get("avg_submit_ms", ds["avg_forward_ms"])),
+            float(ds.get("avg_wait_ms", 0.0)),
+            float(ds.get("avg_scatter_ms", 0.0)),
+            float(delta_positions / max(1e-6, elapsed_s)),
+            float(delta_forward_rows / max(1e-6, elapsed_s)),
+            float(delta_forward_rows / max(1, delta_positions)),
+            float(100.0 * delta_forward_s / max(1e-6, elapsed_s)),
+            float(100.0 * delta_pack_s / max(1e-6, elapsed_s)),
+            float(100.0 * delta_wait_s / max(1e-6, elapsed_s)),
+            float(100.0 * delta_scatter_s / max(1e-6, elapsed_s)),
+            float(100.0 * delta_drain_s / max(1e-6, elapsed_s)),
+            float(100.0 * legal_bf16_positions / max(1, positions)),
+            *self._completion_telemetry_delta(elapsed_s),
+            int(ds["lifetime_full_drains"]),
+        )
+        self._maybe_log_selfplay_phase_stats(elapsed_s)
+
+    def _completion_telemetry_delta(self, elapsed_s: float) -> tuple[float, float, float, float, int, int]:
+        with self._completion_telemetry_lock:
+            games = int(self._completion_games)
+            positions = int(self._completion_positions)
+            callback_s = float(self._completion_callback_s)
+            upload_s = float(self._completion_upload_s)
+            by_thread = dict(self._completion_by_thread)
+            (
+                prev_games, prev_positions, prev_callback_s, prev_upload_s, prev_by_thread,
+            ) = self._last_completion_stats_snapshot
+            self._last_completion_stats_snapshot = (
+                games, positions, callback_s, upload_s, by_thread,
+            )
+
+        delta_games = max(0, games - int(prev_games))
+        delta_positions = max(0, positions - int(prev_positions))
+        delta_callback_s = max(0.0, callback_s - float(prev_callback_s))
+        delta_upload_s = max(0.0, upload_s - float(prev_upload_s))
+        thread_deltas = [
+            max(0, int(count) - int(prev_by_thread.get(tid, 0)))
+            for tid, count in by_thread.items()
+        ]
+        active = [count for count in thread_deltas if count > 0]
+        skew = (max(active) - min(active)) if active else 0
+        return (
+            float(delta_games / max(1e-6, elapsed_s)),
+            float(delta_positions / max(1e-6, elapsed_s)),
+            float(100.0 * delta_callback_s / max(1e-6, elapsed_s)),
+            float(100.0 * delta_upload_s / max(1e-6, elapsed_s)),
+            int(len(active)),
+            int(skew),
+        )
+
+    def _record_selfplay_phase_timing(self, phase: str, seconds: float) -> None:
+        if seconds <= 0.0:
+            return
+        with self._phase_timing_lock:
+            self._phase_timing_s[phase] = float(self._phase_timing_s.get(phase, 0.0)) + float(seconds)
+
+    def _maybe_log_selfplay_phase_stats(self, elapsed_s: float) -> None:
+        phases = (
+            "check_model", "tb_adjudicate", "classify", "network",
+            "sf_submit_curriculum", "sf_submit_label",
+            "sf_finish_curriculum", "sf_finish_label", "sf_label_poll",
+            "finalize", "tree_reset",
+        )
+        with self._phase_timing_lock:
+            current = dict(self._phase_timing_s)
+            previous = dict(self._last_phase_timing_snapshot)
+            self._last_phase_timing_snapshot = current
+        deltas = {
+            phase: max(0.0, float(current.get(phase, 0.0)) - float(previous.get(phase, 0.0)))
+            for phase in phases
+        }
+        total = sum(deltas.values())
+        if total <= 0.0:
+            return
+
+        def pct(phase: str) -> float:
+            return 100.0 * float(deltas[phase]) / max(1e-6, float(elapsed_s))
+
+        self.log.info(
+            "selfplay phase stats: check=%.1f%% tb=%.1f%% classify=%.1f%% "
+            "network=%.1f%% sf_submit_cur=%.1f%% sf_submit_label=%.1f%% "
+            "sf_finish_cur=%.1f%% sf_finish_label=%.1f%% sf_label_poll=%.1f%% "
+            "finalize=%.1f%% tree_reset=%.1f%% total_thread=%.1f%%",
+            pct("check_model"),
+            pct("tb_adjudicate"),
+            pct("classify"),
+            pct("network"),
+            pct("sf_submit_curriculum"),
+            pct("sf_submit_label"),
+            pct("sf_finish_curriculum"),
+            pct("sf_finish_label"),
+            pct("sf_label_poll"),
+            pct("finalize"),
+            pct("tree_reset"),
+            100.0 * total / max(1e-6, float(elapsed_s)),
+        )
+
     def _on_completed_game(self, game_batch) -> None:
+        callback_t0 = time.perf_counter()
+        upload_s = 0.0
         now_s = time.time()
         self._saw_completed_game = True
         _buffer_add_completed_game(
@@ -1073,9 +1266,21 @@ class WorkerSession:
             trial_id=self.leased_trial_id or self.fixed_trial_id or None,
         )
         if shard_path is not None:
+            upload_t0 = time.perf_counter()
             uploaded_at = self._upload_pending_shards(default_elapsed_s=float(elapsed_s))
+            upload_s += time.perf_counter() - upload_t0
             if uploaded_at is not None:
                 self.last_successful_send_s = float(uploaded_at)
+        callback_s = time.perf_counter() - callback_t0
+        tid = threading.get_ident()
+        with self._completion_telemetry_lock:
+            self._completion_games += int(getattr(game_batch, "games", 1) or 1)
+            self._completion_positions += int(
+                getattr(game_batch, "positions", 0) or len(getattr(game_batch, "samples", ()))
+            )
+            self._completion_callback_s += float(callback_s)
+            self._completion_upload_s += float(upload_s)
+            self._completion_by_thread[tid] = int(self._completion_by_thread.get(tid, 0)) + 1
 
   # -- Lifecycle methods ----------------------------------------------------
 
@@ -1581,15 +1786,15 @@ class WorkerSession:
   # Fields in recommended_worker that affect gameplay and should trigger
   # a session restart when the trainer updates them between iterations.
     _RECO_RESTART_KEYS = (
-        "sf_nodes",
+        "sf_nodes", "sf_move_nodes",
         "opponent_wdl_regret_limit", "mcts_simulations", "fast_simulations",
         "selfplay_fraction",
         "sf_wdl_use_cp_logistic", "sf_wdl_cp_slope", "sf_wdl_cp_draw_width",
         # Syzygy knobs affect adjudication + in-search overrides — without a
         # restart, workers keep producing shards under stale TB settings until
         # an unrelated key changes. Flagged by Codex adversarial review.
-        "syzygy_path", "syzygy_rescore_policy", "syzygy_adjudicate",
-        "syzygy_adjudicate_fraction", "syzygy_in_search",
+        "syzygy_path", "stockfish_syzygy_path", "syzygy_rescore_policy",
+        "syzygy_adjudicate", "syzygy_adjudicate_fraction", "syzygy_in_search",
     )
 
     def _build_selfplay_configs(self, reco: dict) -> tuple[dict, tuple]:
@@ -1607,6 +1812,7 @@ class WorkerSession:
   # adjudication behavior live by editing publish/manifest.json. None
   # for path = disabled; fraction 1.0 = always adjudicate when on.
         syzygy_path = reco.get("syzygy_path") or None
+        stockfish_syzygy_path = reco.get("stockfish_syzygy_path") or None
         cfgs = {
             "opponent": OpponentConfig(wdl_regret_limit=regret_limit),
             "temp": TemperatureConfig(
@@ -1635,6 +1841,7 @@ class WorkerSession:
             "game": GameConfig(
                 max_plies=self._resolve_reco(reco, "max_plies", 240, int),
                 selfplay_fraction=float(reco.get("selfplay_fraction", 0.0)),
+                sf_move_nodes=self._resolve_reco(reco, "sf_move_nodes", 0, int),
                 sf_policy_temp=self._resolve_reco(reco, "sf_policy_temp", 0.25),
                 sf_policy_label_smooth=self._resolve_reco(reco, "sf_policy_label_smooth", 0.05),
                 sf_wdl_use_cp_logistic=bool(reco.get("sf_wdl_use_cp_logistic", False)),
@@ -1642,6 +1849,7 @@ class WorkerSession:
                 sf_wdl_cp_draw_width=float(reco.get("sf_wdl_cp_draw_width", 60.0)),
                 timeout_adjudication_threshold=float(reco.get("timeout_adjudication_threshold", 0.90)),
                 syzygy_path=syzygy_path,
+                stockfish_syzygy_path=stockfish_syzygy_path,
                 syzygy_rescore_policy=bool(reco.get("syzygy_rescore_policy", False)),
                 syzygy_adjudicate=bool(reco.get("syzygy_adjudicate", False)),
                 syzygy_adjudicate_fraction=float(reco.get("syzygy_adjudicate_fraction", 1.0)),
@@ -1651,7 +1859,7 @@ class WorkerSession:
         sf_args = (
             self._resolve_reco(reco, "sf_nodes", 2000, int),
             self._resolve_reco(reco, "sf_multipv", 5, int),
-            syzygy_path,
+            stockfish_syzygy_path or syzygy_path,
         )
         return cfgs, sf_args
 
@@ -1700,6 +1908,7 @@ class WorkerSession:
                 stockfish=sf, evaluator=eval_,
                 games=thread_games[tid],
                 on_game_complete=_on_game_thread_safe,
+                on_timing=self._record_selfplay_phase_timing,
                 on_step=self._check_model_update if tid == 0 else None,
                 stop_fn=self._stop_fn,
                 **cfgs,
@@ -1732,6 +1941,7 @@ class WorkerSession:
                 stockfish=self.sf, evaluator=_eval,
                 games=int(games_per_batch),
                 on_game_complete=self._on_completed_game,
+                on_timing=self._record_selfplay_phase_timing,
                 on_step=self._check_model_update,
                 stop_fn=self._stop_fn,
                 **cfgs,
@@ -1803,6 +2013,7 @@ class WorkerSession:
         )
 
         cfgs, (sf_nodes, sf_multipv, syzygy_path) = self._build_selfplay_configs(reco)
+        warm_opening_book_cache(cfgs["opening"])
         self._sync_stockfish(manifest, sf_nodes, sf_multipv, syzygy_path=syzygy_path)
         assert self.sf is not None  # _sync_stockfish always assigns
 
@@ -1824,9 +2035,21 @@ class WorkerSession:
         if isinstance(self._direct_evaluator, ThreadedDispatcher):
             ds = self._direct_evaluator.stats
             self.log.info(
-                "dispatcher stats: batches=%d avg_batch=%.1f avg_forward_ms=%.2f full_drains=%d",
+                "dispatcher stats: batches=%d avg_batch=%.1f req_per_batch=%.1f "
+                "rows_per_req=%.1f q_avg=%.1f q_max=%d avg_drain_ms=%.2f "
+                "avg_pack_ms=%.2f avg_submit_ms=%.2f avg_wait_ms=%.2f "
+                "avg_scatter_ms=%.2f full_drains=%d",
                 ds["lifetime_batches"], ds["avg_batch_size"],
-                ds["avg_forward_ms"], ds["lifetime_full_drains"],
+                ds.get("avg_requests_per_batch", 0.0),
+                ds.get("avg_rows_per_request", 0.0),
+                ds.get("avg_queue_depth", 0.0),
+                ds.get("queue_depth_max", 0),
+                ds.get("avg_drain_ms", 0.0),
+                ds.get("avg_pack_ms", 0.0),
+                ds.get("avg_submit_ms", ds["avg_forward_ms"]),
+                ds.get("avg_wait_ms", 0.0),
+                ds.get("avg_scatter_ms", 0.0),
+                ds["lifetime_full_drains"],
             )
 
         self._flush_and_upload_after_shard(manifest, model_sha)

@@ -310,6 +310,7 @@ def _publish_distributed_trial_state(
         "random_start_plies": int(config.get("random_start_plies", 0)),
         "selfplay_fraction": float(config.get("selfplay_fraction", 0.0)),
         "sf_nodes": int(sf_nodes),
+        "sf_move_nodes": int(config.get("sf_move_nodes", 0)),
         "sf_multipv": int(config.get("sf_multipv", 1)),
         "sf_policy_temp": float(config.get("sf_policy_temp", 0.25)),
         "sf_policy_label_smooth": float(config.get("sf_policy_label_smooth", 0.05)),
@@ -327,6 +328,7 @@ def _publish_distributed_trial_state(
   # operators can edit these directly in publish/manifest.json to
   # change endgame adjudication behavior without restarting anyone.
         "syzygy_path": config.get("syzygy_path") or None,
+        "stockfish_syzygy_path": config.get("stockfish_syzygy_path") or None,
         "syzygy_rescore_policy": bool(config.get("syzygy_rescore_policy", False)),
         "syzygy_adjudicate": bool(config.get("syzygy_adjudicate", False)),
         "syzygy_adjudicate_fraction": float(config.get("syzygy_adjudicate_fraction", 1.0)),
@@ -413,6 +415,8 @@ _WORKER_LAUNCH_CONFIG_KEYS: tuple[str, ...] = (
     "distributed_worker_selfplay_threads",
     "distributed_worker_threaded_dispatcher",
     "distributed_worker_dispatcher_batch_wait_ms",
+    "distributed_worker_dispatcher_max_batch",
+    "distributed_worker_dispatcher_target_batch",
     "distributed_worker_sf_workers",
     "distributed_worker_poll_seconds",
     "distributed_worker_upload_target_positions",
@@ -422,6 +426,7 @@ _WORKER_LAUNCH_CONFIG_KEYS: tuple[str, ...] = (
     "distributed_inference_broker_enabled",
     "distributed_inference_max_batch_per_slot",
     "distributed_inference_max_batch_positions",
+    "distributed_inference_slots_per_worker",
     "distributed_worker_auto_tune",
     "distributed_worker_target_batch_seconds",
     "distributed_worker_min_games_per_batch",
@@ -555,7 +560,11 @@ def _build_distributed_worker_cmd(
              str(int(config.get("distributed_worker_selfplay_threads", 16)))]
             + (["--threaded-dispatcher",
                 "--dispatcher-batch-wait-ms",
-                str(float(config.get("distributed_worker_dispatcher_batch_wait_ms", 1.0)))]
+                str(float(config.get("distributed_worker_dispatcher_batch_wait_ms", 1.0))),
+                "--dispatcher-max-batch",
+                str(int(config.get("distributed_worker_dispatcher_max_batch", 4096))),
+                "--dispatcher-target-batch",
+                str(int(config.get("distributed_worker_dispatcher_target_batch", 0)))]
                if bool(config.get("distributed_worker_threaded_dispatcher", False)) else [])
             if bool(config.get("distributed_worker_threaded", False))
             else []
@@ -578,7 +587,12 @@ def _build_distributed_worker_cmd(
 
     if config.get("distributed_inference_broker_enabled", False):
         slot_prefix = _trial_slot_prefix(trial_id=trial_id)
-        slot_name = f"{slot_prefix}-{worker_index}"
+        slots_per_worker = _resolve_slots_per_worker(config)
+        first_slot = int(worker_index) * slots_per_worker
+        slot_name = ",".join(
+            f"{slot_prefix}-{slot_idx}"
+            for slot_idx in range(first_slot, first_slot + slots_per_worker)
+        )
         max_batch = int(
             config.get(
                 "distributed_inference_max_batch_per_slot",
@@ -638,6 +652,15 @@ def _resolve_compile_inference(config: dict) -> bool:
     return bool(config.get("distributed_inference_use_compile", False))
 
 
+def _resolve_inference_compile_mode(config: dict) -> str:
+    return str(
+        config.get(
+            "distributed_inference_compile_mode",
+            config.get("distributed_worker_compile_mode", "reduce-overhead"),
+        )
+    )
+
+
 def _resolve_max_batch_per_slot(config: dict) -> int:
     return int(
         config.get(
@@ -645,6 +668,10 @@ def _resolve_max_batch_per_slot(config: dict) -> int:
             config.get("distributed_inference_max_batch_positions", 256),
         )
     )
+
+
+def _resolve_slots_per_worker(config: dict) -> int:
+    return max(1, int(config.get("distributed_inference_slots_per_worker", 1)))
 
 
 def _spawn_with_reap(
@@ -690,10 +717,14 @@ def _launch_inference_broker(
         sys.executable, "-m", "chess_anti_engine.inference",
         "--publish-dir", str(publish_dir),
         "--slot-prefix", str(slot_prefix),
-        "--num-slots", str(int(config.get("distributed_workers_per_trial", 2))),
+        "--num-slots", str(
+            int(config.get("distributed_workers_per_trial", 2))
+            * _resolve_slots_per_worker(config)
+        ),
         "--max-batch-per-slot", str(_resolve_max_batch_per_slot(config)),
         "--device", str(config.get("distributed_worker_device") or config.get("device", "cpu")),
         "--batch-wait-ms", str(float(config.get("distributed_inference_batch_wait_ms", 5.0))),
+        "--compile-mode", _resolve_inference_compile_mode(config),
         "--shared-cache-dir", str(_resolve_shared_cache_root(config, server_root)),
         *(["--compile-inference"] if _resolve_compile_inference(config) else []),
     ]
@@ -745,10 +776,14 @@ def launch_shared_inference_broker(
         sys.executable, "-m", "chess_anti_engine.inference",
         "shared",
         "--server-root", str(server_root),
-        "--slots-per-trial", str(int(config.get("distributed_workers_per_trial", 2))),
+        "--slots-per-trial", str(
+            int(config.get("distributed_workers_per_trial", 2))
+            * _resolve_slots_per_worker(config)
+        ),
         "--max-batch-per-slot", str(_resolve_max_batch_per_slot(config)),
         "--device", str(config.get("distributed_worker_device") or config.get("device", "cpu")),
         "--batch-wait-ms", str(float(config.get("distributed_inference_batch_wait_ms", 0.0))),
+        "--compile-mode", _resolve_inference_compile_mode(config),
         "--shared-cache-dir", str(_resolve_shared_cache_root(config, server_root)),
         *(["--compile-inference"] if _resolve_compile_inference(config) else []),
     ]
