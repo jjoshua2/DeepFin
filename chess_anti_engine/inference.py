@@ -1794,14 +1794,16 @@ class MultiSlotInferenceClient:
             )
             for name in names
         ]
-        self._lock = threading.Lock()
-        self._next = 0
+        self._available_clients: queue.Queue[SlotInferenceClient] = queue.Queue()
+        for client in self._clients:
+            self._available_clients.put(client)
 
     def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        with self._lock:
-            client = self._clients[self._next % len(self._clients)]
-            self._next += 1
-        return client.evaluate_encoded(x)
+        client = self._available_clients.get()
+        try:
+            return client.evaluate_encoded(x)
+        finally:
+            self._available_clients.put(client)
 
     @property
     def supports_input_bf16_bits(self) -> bool:
@@ -1810,10 +1812,11 @@ class MultiSlotInferenceClient:
     def evaluate_legal_bf16(
         self, x: np.ndarray, legal_flat: np.ndarray, legal_counts: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
-        with self._lock:
-            client = self._clients[self._next % len(self._clients)]
-            self._next += 1
-        return client.evaluate_legal_bf16(x, legal_flat, legal_counts)
+        client = self._available_clients.get()
+        try:
+            return client.evaluate_legal_bf16(x, legal_flat, legal_counts)
+        finally:
+            self._available_clients.put(client)
 
     def close(self) -> None:
         for client in self._clients:

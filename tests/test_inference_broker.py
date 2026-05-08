@@ -473,6 +473,55 @@ def test_multi_slot_inference_client_fans_out_requests() -> None:
     assert calls == [0, 1, 2, 0, 1]
 
 
+def test_multi_slot_inference_client_uses_first_free_slot() -> None:
+    from chess_anti_engine.inference import MultiSlotInferenceClient
+
+    client = MultiSlotInferenceClient(
+        slot_names=[f"cae-free-{uuid.uuid4().hex}-{i}" for i in range(2)],
+        max_batch=8,
+        request_timeout_s=1.0,
+    )
+    calls: list[int] = []
+    calls_lock = threading.Lock()
+    slow_started = threading.Event()
+    release_slow = threading.Event()
+
+    def _record(idx: int) -> None:
+        with calls_lock:
+            calls.append(idx)
+
+    def _slow_eval(x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        _record(0)
+        slow_started.set()
+        assert release_slow.wait(timeout=1.0)
+        return (
+            np.zeros((x.shape[0], 4672), dtype=np.float32),
+            np.zeros((x.shape[0], 3), dtype=np.float32),
+        )
+
+    def _fast_eval(x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        _record(1)
+        return (
+            np.zeros((x.shape[0], 4672), dtype=np.float32),
+            np.zeros((x.shape[0], 3), dtype=np.float32),
+        )
+
+    client._clients[0].evaluate_encoded = _slow_eval  # type: ignore[method-assign,attr-defined]
+    client._clients[1].evaluate_encoded = _fast_eval  # type: ignore[method-assign,attr-defined]
+
+    x = np.zeros((1, 146, 8, 8), dtype=np.float32)
+    slow_thread = threading.Thread(target=client.evaluate_encoded, args=(x,))
+    slow_thread.start()
+    assert slow_started.wait(timeout=1.0)
+
+    client.evaluate_encoded(x)
+    client.evaluate_encoded(x)
+    release_slow.set()
+    slow_thread.join(timeout=1.0)
+
+    assert calls == [0, 1, 1]
+
+
 def test_slot_inference_client_waits_for_slot_creation() -> None:
     slot_name = f"cae-late-{uuid.uuid4().hex}"
     layout = None
