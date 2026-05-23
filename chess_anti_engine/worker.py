@@ -743,6 +743,7 @@ class WorkerSession:
         self._saw_completed_game = False
         self._stop_selfplay = False
         self._upload_buf_lock: threading.Lock | None = None  # set when threaded
+        self._pending_upload_lock = threading.Lock()
         self._last_manifest_poll_s: float = 0.0
         self._last_dispatcher_stats_log_s: float = time.time()
         self._last_dispatcher_stats_snapshot: tuple[int, int, int, float, float, float, float, float] = (
@@ -875,6 +876,10 @@ class WorkerSession:
         return None
 
     def _upload_pending_shards(self, *, default_elapsed_s: float | None = None) -> float | None:
+        with self._pending_upload_lock:
+            return self._upload_pending_shards_locked(default_elapsed_s=default_elapsed_s)
+
+    def _upload_pending_shards_locked(self, *, default_elapsed_s: float | None = None) -> float | None:
         last_uploaded_at: float | None = None
         current_trial_id = self.leased_trial_id or self.fixed_trial_id or ""
         pending: list[Path] = [
@@ -887,8 +892,13 @@ class WorkerSession:
             try:
                 _arrs, meta = load_shard_arrays(sp, lazy=True)
                 shard_trial_id = str(meta.get("run_id") or "").strip()
-            except Exception:
-                shard_trial_id = ""
+            except Exception as exc:
+                qpath = _quarantine_rejected_pending_shard(sp, f"local invalid shard: {type(exc).__name__}: {exc}")
+                self.log.warning(
+                    "local pending shard %s is invalid; quarantined at %s: %s",
+                    sp, qpath, exc,
+                )
+                continue
             if shard_trial_id and shard_trial_id != current_trial_id:
                 continue
             elapsed_s = default_elapsed_s

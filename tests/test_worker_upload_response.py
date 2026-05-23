@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
@@ -86,6 +87,7 @@ def _minimal_session_for_shard_upload(tmp_path, response: _Resp) -> WorkerSessio
     session.pending_dir = tmp_path / "shards" / "pending"
     session.pending_dir.mkdir(parents=True)
     session.last_successful_send_s = 0.0
+    session._pending_upload_lock = threading.Lock()
     return session
 
 
@@ -179,3 +181,24 @@ def test_shard_upload_quarantines_rejected_200_response(tmp_path):
     assert len(reason_files) == 1
     assert "invalid shard" in reason_files[0].read_text(encoding="utf-8")
     assert session._requests.calls == 1
+
+
+def test_shard_upload_quarantines_locally_invalid_shard_before_post(tmp_path):
+    session = _minimal_session_for_shard_upload(
+        tmp_path,
+        _Resp(200, {"stored": True, "sha256": "abc"}),
+    )
+    pending = session.pending_dir / "zero.zarr"
+    pending.mkdir()
+    (pending / ".zgroup").write_bytes(b"")
+
+    uploaded_at = session._upload_pending_shards(default_elapsed_s=0.0)
+
+    assert uploaded_at is None
+    assert not pending.exists()
+    quarantined = list((tmp_path / "shards" / "corrupt").glob("zero.zarr*"))
+    assert len([p for p in quarantined if p.is_dir()]) == 1
+    reason_files = [p for p in quarantined if p.name.endswith(".reason.txt")]
+    assert len(reason_files) == 1
+    assert "local invalid shard" in reason_files[0].read_text(encoding="utf-8")
+    assert session._requests.calls == 0

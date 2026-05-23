@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import secrets
 import shutil
 import tarfile
 from dataclasses import asdict, dataclass
@@ -765,7 +766,7 @@ def save_local_shard_arrays(
   # readers/writers that can cause "Directory not empty" on rmtree.
   # Prefix matches the ingest-side tmp filter (_is_tmp_shard_name) so a
   # crashed-mid-write tmp dir isn't mistaken for a real shard on resume.
-    tmp = p.with_name(f"._tmp_{os.getpid()}_{p.name}")
+    tmp = p.with_name(f"._tmp_{os.getpid()}_{secrets.token_hex(8)}_{p.name}")
     try:
         g = zarr.open_group(str(tmp), mode="w")
         attrs = _meta_dict(meta, positions=int(np.asarray(stored["x"]).shape[0]))
@@ -775,6 +776,9 @@ def save_local_shard_arrays(
         for name, value in stored.items():
             arr = np.asarray(value)
             g.create_dataset(name, data=arr, chunks=_local_chunks(arr), compressor=compressor, overwrite=True)
+        # Reopen before publishing so malformed local writes never enter the
+        # pending upload queue as completed shards.
+        load_shard_arrays(tmp, lazy=True)
   # Atomic replace: remove old, rename new.
         if p.exists():
             shutil.rmtree(p, ignore_errors=True) if p.is_dir() else p.unlink(missing_ok=True)
