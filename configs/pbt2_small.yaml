@@ -87,7 +87,7 @@ stockfish:
   sf_pid_regret_max_step_frac: 0.03        # 2026-04-28: 0.10→0.05. 2026-05-02: 0.05→0.03. Model oscillating at regret 0.30-0.32 for ~12 iters; slowing tighten step to ~0.009/iter at regret=0.30 to force longer dwell before pushing lower. Live-reloadable.
   sf_pid_regret_ease_step_frac: 0.03       # 2026-05-14: 0.06->0.03; normal ease matched to tighten cap after overshooting loose at 1500 games/iter. Emergency airbag unchanged.
   sf_pid_regret_tighten_streak_after: 2    # 2026-05-09: damp only repeated hardening. Audit on iters 620-685: streak3/0.5 helped 3, hurt 1, neutral 5; avoids blanket under-hardening.
-  sf_pid_regret_tighten_streak_gain: 1.0   # 2026-05-23: disable repeated-tighten damping while raw/EMA winrate are far above target; let regret harden at full cap.
+  sf_pid_regret_tighten_streak_gain: 0.5   # 2026-05-23: re-enable repeated-tighten damping now that raw winrate is near target; avoid overshooting while EMA catches down.
   sf_pid_regret_crash_ease_z: 2.0          # 2026-05-09: if raw score is >2σ below target, require a minimum normal ease response even when the inverse fit is stale.
   sf_pid_regret_crash_ease_min_frac: 0.5   # 2026-05-09: minimum 50% of normal ease cap on >2σ underperformance; softer than point-estimate raw<0.50 airbag.
   sf_pid_regret_safety_floor: 0.50         # below this raw winrate → emergency ease
