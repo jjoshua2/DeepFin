@@ -251,7 +251,7 @@ train:
   sf_wdl_conf_power: 1.0    # Confidence damping: scale SF-WDL by (1-draw_prob)^power.
   sf_wdl_draw_scale: 0.55   # Pinned low-to-mid based on the healthier late-run settings.
   sf_wdl_floor_at_regret: 0.10  # Regret value at which SF WDL fraction hits the floor.
-  sf_wdl_temperature: 1.25  # p^(1/T) softening on SF WDL before blending; conservative step, not full replay-fit T≈4.
+  sf_wdl_temperature: 1.0   # Keep training-time labels unchanged; tune softness in stored cp->WDL formula instead.
   sf_search_dampen_sf_low: 0.0   # Damping (0..1) on SF target when SF says STM losing but search says STM winning. Live-tunable.
   sf_search_dampen_sf_high: 0.0  # Damping (0..1) on SF target when SF says STM winning but search says STM losing. Live-tunable.
 
