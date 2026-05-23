@@ -940,18 +940,11 @@ class WorkerSession:
                 _arrs, meta = load_shard_arrays(sp, lazy=True)
                 shard_trial_id = str(meta.get("run_id") or "").strip()
             except Exception as exc:
-                reason = f"local invalid shard: {type(exc).__name__}: {exc}"
-                qpath = _quarantine_rejected_pending_shard(sp, reason)
                 self.log.warning(
-                    "local pending shard %s is invalid; quarantined at %s: %s",
-                    sp, qpath, exc,
+                    "local pending shard %s is invalid before upload; sending to server for quarantine: %s",
+                    sp, exc,
                 )
-                self._report_bad_pending_shard(
-                    _bad_shard_report_payload(
-                        shard_path=sp, quarantine_path=qpath, reason=reason, kind="local_invalid",
-                    ),
-                )
-                continue
+                shard_trial_id = ""
             if shard_trial_id and shard_trial_id != current_trial_id:
                 continue
             elapsed_s = default_elapsed_s
@@ -961,7 +954,22 @@ class WorkerSession:
                     elapsed_s = float(elapsed_path.read_text(encoding="utf-8").strip())
                 except Exception:
                     elapsed_s = default_elapsed_s
-            upload_name, payload = pack_shard_for_upload(sp)
+            try:
+                upload_name, payload = pack_shard_for_upload(sp)
+            except Exception as exc:
+                reason = f"local pack failed: {type(exc).__name__}: {exc}"
+                qpath = _quarantine_rejected_pending_shard(sp, reason) if sp.exists() else sp
+                self.log.warning(
+                    "local pending shard %s could not be packed; quarantined at %s: %s",
+                    sp, qpath, exc,
+                )
+                self._report_bad_pending_shard(
+                    _bad_shard_report_payload(
+                        shard_path=sp, quarantine_path=qpath, reason=reason, kind="local_pack_failed",
+                    ),
+                )
+                elapsed_path.unlink(missing_ok=True)
+                continue
             files = {"file": (upload_name, payload, "application/x-tar")}
             try:
                 r = self._requests.post(

@@ -183,10 +183,10 @@ def test_shard_upload_quarantines_rejected_200_response(tmp_path):
     assert session._requests.calls == 1
 
 
-def test_shard_upload_quarantines_locally_invalid_shard_before_post(tmp_path):
+def test_shard_upload_sends_locally_invalid_shard_for_server_quarantine(tmp_path):
     session = _minimal_session_for_shard_upload(
         tmp_path,
-        _Resp(200, {"stored": True, "sha256": "abc"}),
+        _Resp(200, {"stored": False, "rejected": True, "reason": "invalid shard"}),
     )
     pending = session.pending_dir / "zero.zarr"
     pending.mkdir()
@@ -200,5 +200,5 @@ def test_shard_upload_quarantines_locally_invalid_shard_before_post(tmp_path):
     assert len([p for p in quarantined if p.is_dir()]) == 1
     reason_files = [p for p in quarantined if p.name.endswith(".reason.txt")]
     assert len(reason_files) == 1
-    assert "local invalid shard" in reason_files[0].read_text(encoding="utf-8")
+    assert "invalid shard" in reason_files[0].read_text(encoding="utf-8")
     assert session._requests.calls == 1
