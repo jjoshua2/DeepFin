@@ -8,6 +8,7 @@ import numpy as np
 import torch
 
 from chess_anti_engine.encoding import encode_position, encode_positions_batch
+from chess_anti_engine.encoding.lc0 import LC0_HISTORY_LEGACY
 from chess_anti_engine.inference import (
     BatchEvaluator,
     LocalModelEvaluator,
@@ -56,6 +57,7 @@ class MCTSConfig:
   # dtype='auto' => bf16 if supported else fp16.
     use_amp: bool = True
     amp_dtype: str = "auto"
+    input_history_encoding: str = LC0_HISTORY_LEGACY
 
 
 class Node:
@@ -192,7 +194,11 @@ def _init_root_from_logits(
 
 def _init_root(model: torch.nn.Module, board: chess.Board, *, device: str, rng: np.random.Generator, cfg: MCTSConfig) -> Node:
     """Create root node by running a forward pass then delegating to _init_root_from_logits."""
-    x0 = encode_position(board, add_features=True)
+    x0 = encode_position(
+        board,
+        add_features=True,
+        input_history_encoding=cfg.input_history_encoding,
+    )
     xt = torch.from_numpy(x0[None, ...]).to(device)
     with inference_autocast(device=device, enabled=bool(cfg.use_amp), dtype=str(cfg.amp_dtype)):
         out = model(xt)
@@ -230,10 +236,14 @@ def _select_one_leaf(root: Node, *, c_puct: float, fpu_at_root: float,
 
 def _expand_and_backprop_leaves(
     leaf_nodes: list[Node], leaf_paths: list[list[Node]],
-    *, eval_impl: BatchEvaluator,
+    *, eval_impl: BatchEvaluator, input_history_encoding: str,
 ) -> None:
     """Run one batched NN eval for the leaves, expand each, and backprop the value."""
-    leaf_x = encode_positions_batch([n.board for n in leaf_nodes], add_features=True)
+    leaf_x = encode_positions_batch(
+        [n.board for n in leaf_nodes],
+        add_features=True,
+        input_history_encoding=input_history_encoding,
+    )
     pol_logits_batch, wdl_logits_batch = eval_impl.evaluate_encoded(leaf_x)
     for node, path, pol_logits, wdl_logits in zip(
         leaf_nodes, leaf_paths, pol_logits_batch, wdl_logits_batch, strict=True,
@@ -332,7 +342,12 @@ def run_mcts_many(
             leaf_paths.append(path)
 
         if leaf_nodes:
-            _expand_and_backprop_leaves(leaf_nodes, leaf_paths, eval_impl=eval_impl)
+            _expand_and_backprop_leaves(
+                leaf_nodes,
+                leaf_paths,
+                eval_impl=eval_impl,
+                input_history_encoding=cfg.input_history_encoding,
+            )
 
     probs_list: list[np.ndarray] = []
     actions: list[int] = []

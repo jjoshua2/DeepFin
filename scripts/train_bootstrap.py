@@ -60,6 +60,8 @@ def main() -> None:
             use_smolgen=not bool(flat.get("no_smolgen", False)),
             use_nla=bool(flat.get("use_nla", False)),
             use_gradient_checkpointing=bool(flat.get("gradient_checkpointing", False)),
+            input_pos_encoding=str(flat.get("input_pos_encoding", "none")),
+            use_deepnorm=bool(flat.get("use_deepnorm", False)),
         )
     )
 

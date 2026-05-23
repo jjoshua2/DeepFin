@@ -82,6 +82,24 @@ _AGGREGATE_COUNTER_FIELDS: tuple[str, ...] = (
     "curriculum_games", "curriculum_adjudicated_games", "curriculum_draw_games",
     "plies_win", "plies_draw", "plies_loss",
     "checkmate_games", "stalemate_games",
+    "diff_focus_records", "diff_focus_kept",
+    "diff_focus_keep_limited", "diff_focus_sample_weight_limited",
+    "gumbel_policy_diag_n",
+    "gumbel_policy_argmax_is_candidate_sum", "gumbel_policy_argmax_is_action_sum",
+    "gumbel_policy_legal_count_sum", "gumbel_policy_candidate_count_sum",
+)
+
+_AGGREGATE_FLOAT_FIELDS: tuple[str, ...] = (
+    "diff_focus_keep_prob_sum",
+    "diff_focus_sample_weight_sum",
+    "diff_focus_priority_sum",
+    "diff_focus_priority_sq_sum",
+    "gumbel_policy_top_prob_sum",
+    "gumbel_policy_action_prob_sum",
+    "gumbel_policy_entropy_sum",
+    "gumbel_policy_eff_moves_sum",
+    "gumbel_policy_candidate_mass_sum",
+    "gumbel_policy_non_candidate_top_prob_sum",
 )
 
 
@@ -112,6 +130,27 @@ class _BufferedUploadAccumulator:
     plies_loss: int = 0
     checkmate_games: int = 0
     stalemate_games: int = 0
+    diff_focus_records: int = 0
+    diff_focus_kept: int = 0
+    diff_focus_keep_prob_sum: float = 0.0
+    diff_focus_keep_limited: int = 0
+    diff_focus_sample_weight_sum: float = 0.0
+    diff_focus_sample_weight_limited: int = 0
+    diff_focus_priority_sum: float = 0.0
+    diff_focus_priority_sq_sum: float = 0.0
+    diff_focus_priority_min: float = float("inf")
+    diff_focus_priority_max: float = -float("inf")
+    gumbel_policy_diag_n: int = 0
+    gumbel_policy_top_prob_sum: float = 0.0
+    gumbel_policy_action_prob_sum: float = 0.0
+    gumbel_policy_entropy_sum: float = 0.0
+    gumbel_policy_eff_moves_sum: float = 0.0
+    gumbel_policy_candidate_mass_sum: float = 0.0
+    gumbel_policy_non_candidate_top_prob_sum: float = 0.0
+    gumbel_policy_argmax_is_candidate_sum: int = 0
+    gumbel_policy_argmax_is_action_sum: int = 0
+    gumbel_policy_legal_count_sum: int = 0
+    gumbel_policy_candidate_count_sum: int = 0
     model_step: int | None = None
     # Disk-resident extracted shards that contributed to this accumulator and
     # have NOT yet been folded into a compacted shard. Deleted only after the
@@ -133,6 +172,21 @@ class _BufferedUploadAccumulator:
                 self, field_name,
                 getattr(self, field_name) + int(meta.get(field_name) or 0),
             )
+        for field_name in _AGGREGATE_FLOAT_FIELDS:
+            setattr(
+                self, field_name,
+                getattr(self, field_name) + float(meta.get(field_name) or 0.0),
+            )
+        incoming_diff_records = int(meta.get("diff_focus_records") or 0)
+        if incoming_diff_records > 0:
+            incoming_min = float(meta.get("diff_focus_priority_min") or 0.0)
+            incoming_max = float(meta.get("diff_focus_priority_max") or 0.0)
+            if int(self.diff_focus_records) == incoming_diff_records:
+                self.diff_focus_priority_min = incoming_min
+                self.diff_focus_priority_max = incoming_max
+            else:
+                self.diff_focus_priority_min = min(float(self.diff_focus_priority_min), incoming_min)
+                self.diff_focus_priority_max = max(float(self.diff_focus_priority_max), incoming_max)
         step_raw = meta.get("model_step")
         if step_raw is not None:
             self.model_step = int(step_raw)
@@ -192,6 +246,33 @@ def _flush_buffered_upload_to_inbox(
         plies_loss=int(acc.plies_loss),
         checkmate_games=int(acc.checkmate_games),
         stalemate_games=int(acc.stalemate_games),
+        diff_focus_records=int(acc.diff_focus_records),
+        diff_focus_kept=int(acc.diff_focus_kept),
+        diff_focus_keep_prob_sum=float(acc.diff_focus_keep_prob_sum),
+        diff_focus_keep_limited=int(acc.diff_focus_keep_limited),
+        diff_focus_sample_weight_sum=float(acc.diff_focus_sample_weight_sum),
+        diff_focus_sample_weight_limited=int(acc.diff_focus_sample_weight_limited),
+        diff_focus_priority_sum=float(acc.diff_focus_priority_sum),
+        diff_focus_priority_sq_sum=float(acc.diff_focus_priority_sq_sum),
+        diff_focus_priority_min=(
+            float(acc.diff_focus_priority_min) if int(acc.diff_focus_records) > 0 else 0.0
+        ),
+        diff_focus_priority_max=(
+            float(acc.diff_focus_priority_max) if int(acc.diff_focus_records) > 0 else 0.0
+        ),
+        gumbel_policy_diag_n=int(acc.gumbel_policy_diag_n),
+        gumbel_policy_top_prob_sum=float(acc.gumbel_policy_top_prob_sum),
+        gumbel_policy_action_prob_sum=float(acc.gumbel_policy_action_prob_sum),
+        gumbel_policy_entropy_sum=float(acc.gumbel_policy_entropy_sum),
+        gumbel_policy_eff_moves_sum=float(acc.gumbel_policy_eff_moves_sum),
+        gumbel_policy_candidate_mass_sum=float(acc.gumbel_policy_candidate_mass_sum),
+        gumbel_policy_non_candidate_top_prob_sum=float(
+            acc.gumbel_policy_non_candidate_top_prob_sum,
+        ),
+        gumbel_policy_argmax_is_candidate_sum=int(acc.gumbel_policy_argmax_is_candidate_sum),
+        gumbel_policy_argmax_is_action_sum=int(acc.gumbel_policy_argmax_is_action_sum),
+        gumbel_policy_legal_count_sum=int(acc.gumbel_policy_legal_count_sum),
+        gumbel_policy_candidate_count_sum=int(acc.gumbel_policy_candidate_count_sum),
     )
     # ``flush_token`` doubles as the compacted shard's uniqueness suffix and
     # the link back to ``_in_flight/<flush_token>/``. Recovery globs for this
@@ -467,6 +548,109 @@ def create_app(
         except (OSError, json.JSONDecodeError):
             return None  # manifest mid-write or missing
 
+    def _iter_visible_inbox_shards(inbox_root: Path) -> list[Path]:
+        """List upload shards visible to learner ingest, excluding staging dirs."""
+        paths: list[Path] = []
+        try:
+            user_dirs = list(inbox_root.iterdir())
+        except FileNotFoundError:
+            return paths
+        for user_dir in user_dirs:
+            if not user_dir.is_dir() or is_tmp_shard_name(user_dir.name):
+                continue
+            if user_dir.name in {_PENDING_DIR_NAME, _IN_FLIGHT_DIR_NAME}:
+                continue
+            try:
+                for entry in user_dir.iterdir():
+                    if is_tmp_shard_name(entry.name):
+                        continue
+                    if entry.name.endswith(LOCAL_SHARD_SUFFIX):
+                        paths.append(entry)
+            except FileNotFoundError:
+                continue
+        return sorted(paths)
+
+    def _queued_games_by_model(*, trial_id: str | None) -> dict[str, int]:
+        """Count un-ingested uploaded games by model SHA for one trial."""
+        tid = _normalize_trial_id(trial_id)
+        totals: dict[str, int] = {}
+        with upload_lock:
+            for (acc_tid, acc_sha), acc in upload_accumulators.items():
+                if acc_tid != tid:
+                    continue
+                sha = str(acc_sha or "")
+                if not sha:
+                    continue
+                totals[sha] = int(totals.get(sha, 0)) + int(acc.games)
+        for shard_path in _iter_visible_inbox_shards(_inbox_root(tid)):
+            try:
+                _arrs, meta = load_shard_arrays(shard_path, lazy=True)
+            except Exception:
+                continue
+            sha = str(meta.get("model_sha256") or "")
+            if not sha:
+                continue
+            totals[sha] = int(totals.get(sha, 0)) + int(meta.get("games") or 0)
+        return totals
+
+    def _queued_games_for_model(*, trial_id: str | None, model_sha: str) -> int:
+        """Count un-ingested uploaded games for the given published model SHA."""
+        if not model_sha:
+            return 0
+        return int(_queued_games_by_model(trial_id=trial_id).get(str(model_sha), 0))
+
+    def _apply_dynamic_stale_pause(trial_id: str | None, manifest: dict[str, Any]) -> dict[str, Any]:
+        """Pause workers once enough old-model backlog exists for next ingest."""
+        backpressure = manifest.get("backpressure")
+        if not isinstance(backpressure, dict):
+            return manifest
+        target_games = int(backpressure.get("stale_pause_target_games") or 0)
+        if target_games <= 0:
+            return manifest
+        reco = manifest.get("recommended_worker")
+        if not isinstance(reco, dict):
+            return manifest
+        if bool(reco.get("pause_selfplay")) or bool(backpressure.get("pause_selfplay")):
+            return manifest
+        model_sha = str(backpressure.get("stale_pause_model_sha") or "")
+        if not model_sha:
+            model_sha = str((manifest.get("model") or {}).get("sha256") or "")
+        queued_by_model = _queued_games_by_model(trial_id=trial_id)
+        queued_games = int(queued_by_model.get(model_sha, 0))
+        stale_queued_games = int(
+            sum(games for sha, games in queued_by_model.items() if str(sha) != model_sha)
+        )
+        total_queued_games = int(sum(queued_by_model.values()))
+        if queued_games < target_games and stale_queued_games < target_games:
+            return manifest
+
+        out = dict(manifest)
+        out_reco = dict(reco)
+        out_backpressure = dict(backpressure)
+        if stale_queued_games >= target_games:
+            pause_games = stale_queued_games
+            reason = (
+                f"stale backlog target reached: {stale_queued_games}/{target_games} "
+                f"queued old-model games"
+            )
+        else:
+            pause_games = queued_games
+            reason = (
+                f"stale backlog target reached: {queued_games}/{target_games} "
+                f"games for model {model_sha[:8]}"
+            )
+        out_reco["pause_selfplay"] = True
+        out_reco["pause_reason"] = reason
+        out_backpressure["pause_selfplay"] = True
+        out_backpressure["pause_reason"] = reason
+        out_backpressure["stale_pause_queued_games"] = int(pause_games)
+        out_backpressure["stale_pause_current_queued_games"] = int(queued_games)
+        out_backpressure["stale_pause_stale_queued_games"] = int(stale_queued_games)
+        out_backpressure["stale_pause_total_queued_games"] = int(total_queued_games)
+        out["recommended_worker"] = out_reco
+        out["backpressure"] = out_backpressure
+        return out
+
     class _LeaseAssignLock:
         def __init__(self, path: Path, *, timeout_s: float = 10.0) -> None:
             self.path = path
@@ -673,7 +857,8 @@ def create_app(
   # 426 (Upgrade Required) communicates "update your client".
             raise HTTPException(status_code=426, detail=reason)
 
-        return JSONResponse(content=json.loads(mf.read_text(encoding="utf-8")))
+        manifest = json.loads(mf.read_text(encoding="utf-8"))
+        return JSONResponse(content=_apply_dynamic_stale_pause(trial_id, manifest))
 
     @app.get("/v1/manifest")
     def get_manifest(

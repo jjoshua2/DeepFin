@@ -41,6 +41,40 @@ def test_en_passant_file_plane():
     assert float(ep_plane.sum()) == 8.0
 
 
+def test_lc0_root_history_uses_classical_112_layout():
+    b = chess.Board()
+    b.push_san("e4")
+    x = encode_position(b, add_features=False, input_history_encoding="lc0_root")
+
+    assert x.shape == (112, 8, 8)
+    # 8 LC0 history slots: each 12 piece planes + one repetition plane.
+    assert int(x[0].sum()) == 8
+    assert int(x[6].sum()) == 8
+    assert int(x[13].sum()) == 8
+    assert int(x[19].sum()) == 8
+
+    # Classical LC0 aux starts at 104. Startpos after 1.e4 has all castling.
+    for i in range(104, 108):
+        assert np.all(x[i] == 1.0)
+    # Plane 108 is the black/flipped flag, not an en-passant file plane.
+    assert np.all(x[108] == 1.0)
+    assert np.all(x[109] == 0.0)  # raw rule50 after a pawn move
+    assert np.all(x[110] == 0.0)
+    assert np.all(x[111] == 1.0)
+
+
+def test_lc0_root_history_keeps_previous_slots_in_root_pov():
+    b = chess.Board()
+    b.push_san("e4")  # black to move; previous startpos should still be black POV.
+    root = encode_position(b, add_features=False, input_history_encoding="lc0_root")
+
+    prev = chess.Board()
+    prev.turn = chess.BLACK
+    ref = encode_position(prev, add_features=False)
+
+    np.testing.assert_array_equal(root[13:25], ref[:12])
+
+
 def test_orientation_side_to_move_flips_ranks_for_black():
     # Put a single white pawn on a2, black to move -> from black POV it should appear on a7
     b = chess.Board(fen="8/8/8/8/8/8/P7/4k2K b - - 0 1")

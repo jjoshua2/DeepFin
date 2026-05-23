@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import math
 import shutil
 import subprocess
 import time
@@ -71,6 +72,32 @@ from chess_anti_engine.tune.trial_config import (
     TrialConfig,
 )
 from chess_anti_engine.utils.atomic import atomic_write_text
+
+
+def _next_replay_window(
+    *,
+    current_window: int,
+    replay_window_max: int,
+    replay_window_growth: int,
+    replay_window_growth_frac: float | None,
+    replay_positions_ingested: int,
+) -> tuple[int, int, float]:
+    """Return next replay window, growth positions, and fraction used."""
+    current = int(current_window)
+    max_window = int(replay_window_max)
+    if current >= max_window:
+        return max_window, max(0, max_window - current), 0.0
+
+    frac = replay_window_growth_frac
+    if frac is not None and math.isfinite(float(frac)) and float(frac) >= 0.0:
+        frac_used = max(0.0, float(frac))
+        growth = int(math.ceil(max(0, int(replay_positions_ingested)) * frac_used))
+    else:
+        frac_used = 0.0
+        growth = int(replay_window_growth)
+    growth = max(0, growth)
+    next_window = min(current + growth, max_window)
+    return next_window, max(0, next_window - current), frac_used
 
 
 def _gate_check(
@@ -668,6 +695,36 @@ def _run_selfplay_phase(
     replay_positions_ingested = int(ingest_summary["positions_replay_added"])
     ingest_is_selfplay_tagged = int(ingest_summary.get("ingest_is_selfplay_tagged", 0))
     ingest_is_selfplay_true = int(ingest_summary.get("ingest_is_selfplay_true", 0))
+
+    stale_pause_target_games = int(tc.distributed_stale_pause_target_games)
+    if stale_pause_target_games < 0:
+        stale_pause_target_games = int(math.ceil(
+            float(total_games) * max(0.0, float(tc.distributed_prev_model_max_fraction))
+        ))
+    if stale_pause_target_games > 0 and distributed_stale_games >= stale_pause_target_games:
+        _publish_distributed_trial_state(
+            trainer=trainer,
+            config=config,
+            model_cfg=model_cfg,
+            server_root=distributed_server_root,
+            trial_id=trial_id,
+            training_iteration=int(iteration_idx),
+            trainer_step=int(getattr(trainer, "step", 0)),
+            sf_nodes=int(ds.sf_nodes),
+            mcts_simulations=int(sims),
+            wdl_regret=float(ds.wdl_regret),
+            pause_selfplay=True,
+            pause_reason=(
+                f"stale ingest target reached: "
+                f"{distributed_stale_games}/{stale_pause_target_games} stale games"
+            ),
+            backpressure={
+                "stale_games": int(distributed_stale_games),
+                "stale_positions": int(distributed_stale_positions),
+                "stale_pause_observed_games": int(distributed_stale_games),
+            },
+            export_model=False,
+        )
     prev_published_model_sha = str(published_model_sha)
 
     if iteration_zero_based % 10 == 0:
@@ -700,11 +757,25 @@ def _run_selfplay_phase(
         keep_iters=tc.exploit_replay_max_unseen_iters_per_source + 2,
     )
 
-  # --- Growing window ---
-    if current_window < tc.replay_window_max:
-        current_window = min(current_window + tc.replay_window_growth, tc.replay_window_max)
-        if buf.capacity < current_window:
-            buf.capacity = current_window
+  # --- Replay window sizing ---
+    replay_window_before = int(current_window)
+    replay_window_growth_positions = 0
+    replay_window_growth_frac_used = 0.0
+    if current_window > tc.replay_window_max:
+        current_window = int(tc.replay_window_max)
+    elif current_window < tc.replay_window_max:
+        current_window, replay_window_growth_positions, replay_window_growth_frac_used = _next_replay_window(
+            current_window=current_window,
+            replay_window_max=tc.replay_window_max,
+            replay_window_growth=tc.replay_window_growth,
+            replay_window_growth_frac=tc.replay_window_growth_frac,
+            replay_positions_ingested=replay_positions_ingested,
+        )
+    if buf.capacity > current_window:
+        buf.capacity = current_window
+        buf.enforce_window()
+    elif buf.capacity < current_window:
+        buf.capacity = current_window
 
     shared_summary = _maybe_share_cross_trial_replay(
         tc=tc, config=config,
@@ -735,8 +806,73 @@ def _run_selfplay_phase(
         total_plies_loss=total_plies_loss,
         total_positions=total_positions,
         replay_positions_ingested=replay_positions_ingested,
+        replay_window_before=replay_window_before,
+        replay_window_after=int(current_window),
+        replay_window_growth_positions=replay_window_growth_positions,
+        replay_window_growth_frac_used=replay_window_growth_frac_used,
         ingest_is_selfplay_tagged=ingest_is_selfplay_tagged,
         ingest_is_selfplay_true=ingest_is_selfplay_true,
+        diff_focus_records=int(ingest_summary.get("matching_diff_focus_records", 0)),
+        diff_focus_kept=int(ingest_summary.get("matching_diff_focus_kept", 0)),
+        diff_focus_keep_prob_sum=float(ingest_summary.get("matching_diff_focus_keep_prob_sum", 0.0)),
+        diff_focus_keep_limited=int(ingest_summary.get("matching_diff_focus_keep_limited", 0)),
+        diff_focus_sample_weight_sum=float(
+            ingest_summary.get("matching_diff_focus_sample_weight_sum", 0.0),
+        ),
+        diff_focus_sample_weight_limited=int(
+            ingest_summary.get("matching_diff_focus_sample_weight_limited", 0),
+        ),
+        diff_focus_priority_sum=float(ingest_summary.get("matching_diff_focus_priority_sum", 0.0)),
+        diff_focus_priority_sq_sum=float(
+            ingest_summary.get("matching_diff_focus_priority_sq_sum", 0.0),
+        ),
+        diff_focus_priority_min=float(ingest_summary.get("matching_diff_focus_priority_min", 0.0)),
+        diff_focus_priority_max=float(ingest_summary.get("matching_diff_focus_priority_max", 0.0)),
+        gumbel_policy_diag_n=int(ingest_summary.get("matching_gumbel_policy_diag_n", 0)),
+        gumbel_policy_top_prob_sum=float(
+            ingest_summary.get("matching_gumbel_policy_top_prob_sum", 0.0),
+        ),
+        gumbel_policy_action_prob_sum=float(
+            ingest_summary.get("matching_gumbel_policy_action_prob_sum", 0.0),
+        ),
+        gumbel_policy_entropy_sum=float(
+            ingest_summary.get("matching_gumbel_policy_entropy_sum", 0.0),
+        ),
+        gumbel_policy_eff_moves_sum=float(
+            ingest_summary.get("matching_gumbel_policy_eff_moves_sum", 0.0),
+        ),
+        gumbel_policy_candidate_mass_sum=float(
+            ingest_summary.get("matching_gumbel_policy_candidate_mass_sum", 0.0),
+        ),
+        gumbel_policy_non_candidate_top_prob_sum=float(
+            ingest_summary.get("matching_gumbel_policy_non_candidate_top_prob_sum", 0.0),
+        ),
+        gumbel_policy_argmax_is_candidate_sum=int(
+            ingest_summary.get("matching_gumbel_policy_argmax_is_candidate_sum", 0),
+        ),
+        gumbel_policy_argmax_is_action_sum=int(
+            ingest_summary.get("matching_gumbel_policy_argmax_is_action_sum", 0),
+        ),
+        gumbel_policy_legal_count_sum=int(
+            ingest_summary.get("matching_gumbel_policy_legal_count_sum", 0),
+        ),
+        gumbel_policy_candidate_count_sum=int(
+            ingest_summary.get("matching_gumbel_policy_candidate_count_sum", 0),
+        ),
+        replay_priority_n=int(ingest_summary.get("replay_priority_n", 0)),
+        replay_priority_sum=float(ingest_summary.get("replay_priority_sum", 0.0)),
+        replay_priority_sq_sum=float(ingest_summary.get("replay_priority_sq_sum", 0.0)),
+        replay_priority_min=float(ingest_summary.get("replay_priority_min", 0.0)),
+        replay_priority_max=float(ingest_summary.get("replay_priority_max", 0.0)),
+        replay_has_policy_n=int(ingest_summary.get("replay_has_policy_n", 0)),
+        replay_has_policy_sum=int(ingest_summary.get("replay_has_policy_sum", 0)),
+        replay_has_sf_wdl_n=int(ingest_summary.get("replay_has_sf_wdl_n", 0)),
+        replay_has_sf_wdl_sum=int(ingest_summary.get("replay_has_sf_wdl_sum", 0)),
+        replay_has_search_wdl_n=int(ingest_summary.get("replay_has_search_wdl_n", 0)),
+        replay_has_search_wdl_sum=int(ingest_summary.get("replay_has_search_wdl_sum", 0)),
+        replay_wdl_0=int(ingest_summary.get("replay_wdl_0", 0)),
+        replay_wdl_1=int(ingest_summary.get("replay_wdl_1", 0)),
+        replay_wdl_2=int(ingest_summary.get("replay_wdl_2", 0)),
         total_sf_d6=total_sf_d6,
         total_sf_d6_n=total_sf_d6_n,
         distributed_stale_positions=distributed_stale_positions,

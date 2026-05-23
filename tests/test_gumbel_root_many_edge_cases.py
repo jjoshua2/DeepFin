@@ -10,6 +10,7 @@ from chess_anti_engine.inference import _policy_output
 from chess_anti_engine.mcts.gumbel import (
     GumbelConfig,
     _completed_q,
+    _select_top_m_with_gumbel,
     run_gumbel_root_many,
 )
 from chess_anti_engine.mcts.puct import Node, _select_child
@@ -25,6 +26,35 @@ except ImportError:  # pragma: no cover - extension absent
 def _require_run_gumbel_root_many_c():
     assert run_gumbel_root_many_c is not None
     return run_gumbel_root_many_c
+
+
+def test_gumbel_scale_zero_matches_noise_disabled() -> None:
+    legal = np.array([1, 2, 3, 4], dtype=np.int64)
+    pri = np.zeros(POLICY_SIZE, dtype=np.float64)
+    pri[legal] = np.array([0.1, 0.2, 0.3, 0.4], dtype=np.float64)
+
+    with_noise_zero, g_zero = _select_top_m_with_gumbel(
+        legal=legal,
+        pri=pri,
+        sim_budget=8,
+        topk=2,
+        add_noise=True,
+        gumbel_scale=0.0,
+        rng=np.random.default_rng(1),
+    )
+    no_noise, g_off = _select_top_m_with_gumbel(
+        legal=legal,
+        pri=pri,
+        sim_budget=8,
+        topk=2,
+        add_noise=False,
+        gumbel_scale=1.0,
+        rng=np.random.default_rng(2),
+    )
+
+    assert with_noise_zero == no_noise
+    assert all(v == 0.0 for v in g_zero.values())
+    assert all(v == 0.0 for v in g_off.values())
 
 
 def _tiny_model() -> torch.nn.Module:

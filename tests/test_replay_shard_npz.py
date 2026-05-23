@@ -88,7 +88,20 @@ def test_load_shard_arrays_reads_legacy_npz(tmp_path):
 
     arrs, meta = load_shard_arrays(src)
     assert arrs["x"].shape[0] == len(samples)
-    assert meta["username"] == "alice"
+
+
+def test_zarr_shard_roundtrip_compact_policy_size(tmp_path):
+    samples = [_sample(policy_size=1858), _sample(policy_size=1858)]
+    arrs = samples_to_arrays(samples)
+
+    p = local_shard_path(tmp_path, 0)
+    save_local_shard_arrays(p, arrs=arrs, meta=ShardMeta(username="alice", positions=len(samples)))
+
+    out, meta_out = load_shard_arrays(p)
+    assert meta_out["policy_size"] == 1858
+    assert out["policy_target"].shape == (2, 1858)
+    assert out["policy_soft_target"].shape == (2, 1858)
+    assert meta_out["username"] == "alice"
 
 
 def test_local_zarr_shard_roundtrip(tmp_path):

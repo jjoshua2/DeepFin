@@ -17,7 +17,12 @@ from typing import TYPE_CHECKING
 import chess
 import numpy as np
 
-from chess_anti_engine.moves import POLICY_SIZE, move_to_index
+from chess_anti_engine.moves import (
+    move_to_index_for_encoding,
+    policy_index_for_encoding,
+    policy_size_for_encoding,
+    policy_vector_to_encoding,
+)
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.selfplay.game import _result_to_wdl
 from chess_anti_engine.selfplay.state import (
@@ -159,11 +164,18 @@ def _rescore_with_syzygy(
             best = probe_best_move(replay_board, state.game.syzygy_path)
             if best is not None:
                 try:
-                    a = int(move_to_index(best, replay_board))
+                    a = int(move_to_index_for_encoding(
+                        best,
+                        replay_board,
+                        policy_encoding=state.game.policy_encoding,
+                    ))
                 except (ValueError, KeyError):
                     a = -1
                 if a >= 0:
-                    p = np.zeros((POLICY_SIZE,), dtype=np.float32)
+                    p = np.zeros(
+                        (policy_size_for_encoding(state.game.policy_encoding),),
+                        dtype=np.float32,
+                    )
                     p[a] = 1.0
                     tb_policy_overrides[t] = p
         replay_board.push(mv)
@@ -185,6 +197,168 @@ class _PerGameCounters:
     curriculum_games: int = 0
     curriculum_adjudicated_games: int = 0
     curriculum_draw_games: int = 0
+
+
+@dataclass(frozen=True)
+class _DiffFocusGameStats:
+    records: int = 0
+    kept: int = 0
+    keep_prob_sum: float = 0.0
+    keep_limited: int = 0
+    sample_weight_sum: float = 0.0
+    sample_weight_limited: int = 0
+    priority_sum: float = 0.0
+    priority_sq_sum: float = 0.0
+    priority_min: float = 0.0
+    priority_max: float = 0.0
+
+
+@dataclass(frozen=True)
+class _GumbelPolicyGameStats:
+    records: int = 0
+    top_prob_sum: float = 0.0
+    action_prob_sum: float = 0.0
+    entropy_sum: float = 0.0
+    eff_moves_sum: float = 0.0
+    candidate_mass_sum: float = 0.0
+    non_candidate_top_prob_sum: float = 0.0
+    argmax_is_candidate_sum: int = 0
+    argmax_is_action_sum: int = 0
+    legal_count_sum: int = 0
+    candidate_count_sum: int = 0
+
+
+def _compute_diff_focus_game_stats(
+    records: list[_NetRecord],
+    samples: list[ReplaySample],
+) -> _DiffFocusGameStats:
+    eligible = [rec for rec in records if bool(rec.has_policy)]
+    n = len(eligible)
+    if n <= 0:
+        return _DiffFocusGameStats()
+
+    keep_sum = 0.0
+    keep_limited = 0
+    weight_sum = 0.0
+    weight_limited = 0
+    priority_sum = 0.0
+    priority_sq_sum = 0.0
+    priority_min = float("inf")
+    priority_max = float("-inf")
+
+    for rec in eligible:
+        keep_prob = float(rec.keep_prob)
+        sample_weight = float(rec.sample_weight)
+        priority = float(rec.priority)
+        keep_sum += keep_prob
+        weight_sum += sample_weight
+        keep_limited += 1 if keep_prob < 1.0 else 0
+        weight_limited += 1 if sample_weight < 1.0 else 0
+        priority_sum += priority
+        priority_sq_sum += priority * priority
+        priority_min = min(priority_min, priority)
+        priority_max = max(priority_max, priority)
+
+    return _DiffFocusGameStats(
+        records=n,
+        kept=len(samples),
+        keep_prob_sum=keep_sum,
+        keep_limited=keep_limited,
+        sample_weight_sum=weight_sum,
+        sample_weight_limited=weight_limited,
+        priority_sum=priority_sum,
+        priority_sq_sum=priority_sq_sum,
+        priority_min=priority_min,
+        priority_max=priority_max,
+    )
+
+
+def _compute_gumbel_policy_game_stats(records: list[_NetRecord]) -> _GumbelPolicyGameStats:
+    n = 0
+    top_prob_sum = 0.0
+    action_prob_sum = 0.0
+    entropy_sum = 0.0
+    eff_moves_sum = 0.0
+    candidate_mass_sum = 0.0
+    non_candidate_top_prob_sum = 0.0
+    argmax_is_candidate_sum = 0
+    argmax_is_action_sum = 0
+    legal_count_sum = 0
+    candidate_count_sum = 0
+
+    for rec in records:
+        if not bool(rec.has_policy):
+            continue
+        diag = rec.gumbel_policy_diag
+        if not diag:
+            continue
+        n += 1
+        top_prob_sum += float(diag.get("top_prob", 0.0))
+        action_prob_sum += float(diag.get("action_prob", 0.0))
+        entropy_sum += float(diag.get("entropy", 0.0))
+        eff_moves_sum += float(diag.get("eff_moves", 0.0))
+        candidate_mass_sum += float(diag.get("candidate_mass", 0.0))
+        non_candidate_top_prob_sum += float(diag.get("non_candidate_top_prob", 0.0))
+        argmax_is_candidate_sum += int(float(diag.get("argmax_is_candidate", 0.0)) > 0.5)
+        argmax_is_action_sum += int(float(diag.get("argmax_is_action", 0.0)) > 0.5)
+        legal_count_sum += int(round(float(diag.get("legal_count", 0.0))))
+        candidate_count_sum += int(round(float(diag.get("candidate_count", 0.0))))
+
+    return _GumbelPolicyGameStats(
+        records=n,
+        top_prob_sum=top_prob_sum,
+        action_prob_sum=action_prob_sum,
+        entropy_sum=entropy_sum,
+        eff_moves_sum=eff_moves_sum,
+        candidate_mass_sum=candidate_mass_sum,
+        non_candidate_top_prob_sum=non_candidate_top_prob_sum,
+        argmax_is_candidate_sum=argmax_is_candidate_sum,
+        argmax_is_action_sum=argmax_is_action_sum,
+        legal_count_sum=legal_count_sum,
+        candidate_count_sum=candidate_count_sum,
+    )
+
+
+def _update_gumbel_policy_stats(state: SelfplayState, stats: _GumbelPolicyGameStats) -> None:
+    if stats.records <= 0:
+        return
+    state.stats.gumbel_policy_diag_n += int(stats.records)
+    state.stats.gumbel_policy_top_prob_sum += float(stats.top_prob_sum)
+    state.stats.gumbel_policy_action_prob_sum += float(stats.action_prob_sum)
+    state.stats.gumbel_policy_entropy_sum += float(stats.entropy_sum)
+    state.stats.gumbel_policy_eff_moves_sum += float(stats.eff_moves_sum)
+    state.stats.gumbel_policy_candidate_mass_sum += float(stats.candidate_mass_sum)
+    state.stats.gumbel_policy_non_candidate_top_prob_sum += float(
+        stats.non_candidate_top_prob_sum,
+    )
+    state.stats.gumbel_policy_argmax_is_candidate_sum += int(stats.argmax_is_candidate_sum)
+    state.stats.gumbel_policy_argmax_is_action_sum += int(stats.argmax_is_action_sum)
+    state.stats.gumbel_policy_legal_count_sum += int(stats.legal_count_sum)
+    state.stats.gumbel_policy_candidate_count_sum += int(stats.candidate_count_sum)
+
+
+def _update_diff_focus_stats(state: SelfplayState, stats: _DiffFocusGameStats) -> None:
+    if stats.records <= 0:
+        return
+    old_n = int(state.stats.diff_focus_records)
+    state.stats.diff_focus_records += int(stats.records)
+    state.stats.diff_focus_kept += int(stats.kept)
+    state.stats.diff_focus_keep_prob_sum += float(stats.keep_prob_sum)
+    state.stats.diff_focus_keep_limited += int(stats.keep_limited)
+    state.stats.diff_focus_sample_weight_sum += float(stats.sample_weight_sum)
+    state.stats.diff_focus_sample_weight_limited += int(stats.sample_weight_limited)
+    state.stats.diff_focus_priority_sum += float(stats.priority_sum)
+    state.stats.diff_focus_priority_sq_sum += float(stats.priority_sq_sum)
+    if old_n <= 0:
+        state.stats.diff_focus_priority_min = float(stats.priority_min)
+        state.stats.diff_focus_priority_max = float(stats.priority_max)
+    else:
+        state.stats.diff_focus_priority_min = min(
+            float(state.stats.diff_focus_priority_min), float(stats.priority_min),
+        )
+        state.stats.diff_focus_priority_max = max(
+            float(state.stats.diff_focus_priority_max), float(stats.priority_max),
+        )
 
 
 def _update_aggregate_stats(
@@ -330,7 +504,10 @@ def _build_replay_samples(
             sigma=state.game.hlgauss_sigma,
         )
 
-        eff_probs = tb_policy_overrides.get(t, rec.policy_probs)
+        eff_probs = tb_policy_overrides.get(
+            t,
+            policy_vector_to_encoding(rec.policy_probs, policy_encoding=state.game.policy_encoding),
+        )
         soft = apply_policy_temperature(eff_probs, state.game.soft_policy_temp)
 
         future = None
@@ -341,8 +518,15 @@ def _build_replay_samples(
         # (fast-sim is noisier than full but still ground truth for "what the
         # network played"). Gating dropped 75% of targets.
         if future_idx is not None:
-            future = records[future_idx].policy_probs
-            future_lmask = records[future_idx].legal_mask
+            future = policy_vector_to_encoding(
+                records[future_idx].policy_probs,
+                policy_encoding=state.game.policy_encoding,
+            )
+            if records[future_idx].legal_mask is not None:
+                future_lmask = policy_vector_to_encoding(
+                    records[future_idx].legal_mask,
+                    policy_encoding=state.game.policy_encoding,
+                ).astype(np.uint8, copy=False)
 
         vol = vol_targets[t]
         sf_vol = sf_vol_targets[t]
@@ -352,11 +536,24 @@ def _build_replay_samples(
                 x=rec.x,
                 policy_target=eff_probs,
                 wdl_target=int(wdl),
+                x_lc0_root=rec.x_lc0_root,
                 priority=float(rec.priority),
                 has_policy=bool(rec.has_policy),
                 sf_wdl=rec.sf_wdl,
-                sf_move_index=rec.sf_move_index,
-                sf_policy_target=rec.sf_policy_target,
+                sf_move_index=(
+                    None if rec.sf_move_index is None else
+                    policy_index_for_encoding(
+                        int(rec.sf_move_index),
+                        policy_encoding=state.game.policy_encoding,
+                    )
+                ),
+                sf_policy_target=(
+                    None if rec.sf_policy_target is None else
+                    policy_vector_to_encoding(
+                        rec.sf_policy_target,
+                        policy_encoding=state.game.policy_encoding,
+                    )
+                ),
                 moves_left=moves_left,
                 is_network_turn=True,
                 categorical_target=cat,
@@ -368,8 +565,20 @@ def _build_replay_samples(
                 sf_volatility_target=sf_vol,
                 has_sf_volatility=(sf_vol is not None),
                 search_wdl=rec.search_wdl_est,
-                legal_mask=rec.legal_mask,
-                sf_legal_mask=rec.sf_legal_mask,
+                legal_mask=(
+                    None if rec.legal_mask is None else
+                    policy_vector_to_encoding(
+                        rec.legal_mask,
+                        policy_encoding=state.game.policy_encoding,
+                    ).astype(np.uint8, copy=False)
+                ),
+                sf_legal_mask=(
+                    None if rec.sf_legal_mask is None else
+                    policy_vector_to_encoding(
+                        rec.sf_legal_mask,
+                        policy_encoding=state.game.policy_encoding,
+                    ).astype(np.uint8, copy=False)
+                ),
                 future_legal_mask=future_lmask,
                 is_selfplay=is_selfplay_slot,
             ),
@@ -437,6 +646,8 @@ def _emit_completed_game_batch(
     game_plies: int, is_cm: bool, is_sm: bool,
     was_adjudicated: bool, was_tb_adjudicated: bool,
     sf_d6_sum: float, sf_d6_n: int,
+    diff_focus: _DiffFocusGameStats,
+    gumbel_policy: _GumbelPolicyGameStats,
     on_game_complete: Callable[[CompletedGameBatch], None],
 ) -> None:
     """Build + dispatch CompletedGameBatch for one finalized game."""
@@ -464,6 +675,29 @@ def _emit_completed_game_batch(
             plies_loss=game_plies if counters.l else 0,
             sf_d6_sum=float(sf_d6_sum),
             sf_d6_n=int(sf_d6_n),
+            diff_focus_records=int(diff_focus.records),
+            diff_focus_kept=int(diff_focus.kept),
+            diff_focus_keep_prob_sum=float(diff_focus.keep_prob_sum),
+            diff_focus_keep_limited=int(diff_focus.keep_limited),
+            diff_focus_sample_weight_sum=float(diff_focus.sample_weight_sum),
+            diff_focus_sample_weight_limited=int(diff_focus.sample_weight_limited),
+            diff_focus_priority_sum=float(diff_focus.priority_sum),
+            diff_focus_priority_sq_sum=float(diff_focus.priority_sq_sum),
+            diff_focus_priority_min=float(diff_focus.priority_min),
+            diff_focus_priority_max=float(diff_focus.priority_max),
+            gumbel_policy_diag_n=int(gumbel_policy.records),
+            gumbel_policy_top_prob_sum=float(gumbel_policy.top_prob_sum),
+            gumbel_policy_action_prob_sum=float(gumbel_policy.action_prob_sum),
+            gumbel_policy_entropy_sum=float(gumbel_policy.entropy_sum),
+            gumbel_policy_eff_moves_sum=float(gumbel_policy.eff_moves_sum),
+            gumbel_policy_candidate_mass_sum=float(gumbel_policy.candidate_mass_sum),
+            gumbel_policy_non_candidate_top_prob_sum=float(
+                gumbel_policy.non_candidate_top_prob_sum,
+            ),
+            gumbel_policy_argmax_is_candidate_sum=int(gumbel_policy.argmax_is_candidate_sum),
+            gumbel_policy_argmax_is_action_sum=int(gumbel_policy.argmax_is_action_sum),
+            gumbel_policy_legal_count_sum=int(gumbel_policy.legal_count_sum),
+            gumbel_policy_candidate_count_sum=int(gumbel_policy.candidate_count_sum),
         ),
     )
 
@@ -536,6 +770,10 @@ def finalize_game(
 
     if on_game_complete is not None:
         game_samples = list(all_samples[sample_start:])
+        diff_focus_stats = _compute_diff_focus_game_stats(records, game_samples)
+        gumbel_policy_stats = _compute_gumbel_policy_game_stats(records)
+        _update_diff_focus_stats(state, diff_focus_stats)
+        _update_gumbel_policy_stats(state, gumbel_policy_stats)
         if game_samples:
             _emit_completed_game_batch(
                 samples=game_samples, counters=counters,
@@ -543,8 +781,18 @@ def finalize_game(
                 was_adjudicated=was_adjudicated,
                 was_tb_adjudicated=was_tb_adjudicated,
                 sf_d6_sum=game_sf_d6_sum, sf_d6_n=game_sf_d6_n,
+                diff_focus=diff_focus_stats,
+                gumbel_policy=gumbel_policy_stats,
                 on_game_complete=on_game_complete,
             )
+    else:
+        game_samples = list(all_samples[sample_start:])
+        _update_diff_focus_stats(
+            state, _compute_diff_focus_game_stats(records, game_samples),
+        )
+        _update_gumbel_policy_stats(
+            state, _compute_gumbel_policy_game_stats(records),
+        )
 
     # In continuous mode, samples flow through ``on_game_complete`` and
     # ``all_samples`` would otherwise grow without bound.

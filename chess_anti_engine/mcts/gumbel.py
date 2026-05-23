@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import chess
 import numpy as np
 import torch
 
+from chess_anti_engine.encoding.lc0 import LC0_HISTORY_LEGACY
 from chess_anti_engine.encoding import encode_positions_batch
 from chess_anti_engine.inference import BatchEvaluator, LocalModelEvaluator
 from chess_anti_engine.mcts.puct import (
@@ -39,11 +40,65 @@ class GumbelConfig:
     topk: int = 16
     temperature: float = 1.0
     c_visit: float = 50.0
-    c_scale: float = 1.0
+    c_scale: float = 0.1
     c_puct: float = 2.5
     fpu_reduction: float = 1.2
     full_tree: bool = True
-    add_noise: bool = True  # Gumbel noise at root; disable for max-strength (non-training) search
+    add_noise: bool = True  # Backward-compatible gate; use gumbel_scale for partial noise.
+    gumbel_scale: float = 1.0
+    input_history_encoding: str = LC0_HISTORY_LEGACY
+
+
+def gumbel_policy_diagnostics(
+    *,
+    probs: np.ndarray,
+    action: int,
+    legal: np.ndarray,
+    candidates: list[int] | np.ndarray | None,
+) -> dict[str, float]:
+    """Cheap diagnostics for the final Gumbel training policy."""
+    legal = np.asarray(legal, dtype=np.int64)
+    if legal.size == 0:
+        return {}
+
+    p = np.asarray(probs, dtype=np.float64)
+    legal_p = np.maximum(p[legal], 0.0)
+    total = float(legal_p.sum(dtype=np.float64))
+    if total <= 0.0 or not np.isfinite(total):
+        return {}
+    legal_p = legal_p / total
+
+    top_local = int(np.argmax(legal_p))
+    top_action = int(legal[top_local])
+    top_prob = float(legal_p[top_local])
+    action_prob = float(p[int(action)]) if 0 <= int(action) < p.shape[0] else 0.0
+    positive = legal_p[legal_p > 0.0]
+    entropy = float(-(positive * np.log(positive)).sum(dtype=np.float64))
+
+    cand_mask = np.zeros_like(legal, dtype=np.bool_)
+    cand_count = 0
+    if candidates is not None:
+        cand_set = {int(a) for a in candidates}
+        cand_count = len(cand_set)
+        if cand_count > 0:
+            cand_mask = np.array([int(a) in cand_set for a in legal], dtype=np.bool_)
+    cand_mass = float(legal_p[cand_mask].sum(dtype=np.float64)) if cand_count > 0 else 0.0
+    non_cand_top = (
+        float(legal_p[~cand_mask].max(initial=0.0)) if cand_count > 0 else 0.0
+    )
+
+    return {
+        "top_prob": top_prob,
+        "action_prob": max(0.0, float(action_prob)),
+        "entropy": entropy,
+        "eff_moves": float(np.exp(entropy)),
+        "candidate_mass": cand_mass,
+        "non_candidate_top_prob": non_cand_top,
+        "argmax_is_candidate": 1.0 if (cand_count > 0 and bool(cand_mask[top_local])) else 0.0,
+        "argmax_is_action": 1.0 if top_action == int(action) else 0.0,
+        "legal_count": float(legal.size),
+        "candidate_count": float(cand_count),
+    }
 
 
 def _masked_priors(pol_logits: np.ndarray, board: chess.Board) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -69,6 +124,42 @@ def _masked_priors(pol_logits: np.ndarray, board: chess.Board) -> tuple[np.ndarr
 
 def _sigma_scale(*, max_visit: int, cfg: GumbelConfig) -> float:
     return float(cfg.c_scale) * (float(cfg.c_visit) + float(max_visit))
+
+
+def _completed_q_transform(
+    *,
+    actions: list[int] | np.ndarray,
+    priors: np.ndarray,
+    visits: np.ndarray,
+    qvalues: np.ndarray,
+    raw_value: float,
+    cfg: GumbelConfig,
+    epsilon: float = 1e-8,
+) -> np.ndarray:
+    """DeepMind mctx completed-by-mix-value Q transform for Gumbel scores."""
+    actions_arr = np.asarray(actions, dtype=np.int64)
+    visits_f = np.asarray(visits, dtype=np.float64)
+    q = np.asarray(qvalues, dtype=np.float64)
+    prior = np.maximum(np.asarray(priors, dtype=np.float64), np.finfo(np.float64).tiny)
+
+    if actions_arr.size == 0:
+        return np.zeros((0,), dtype=np.float64)
+
+    visited = visits_f > 0.0
+    sum_visits = float(visits_f.sum(dtype=np.float64))
+    sum_probs = float(prior[visited].sum(dtype=np.float64)) if visited.any() else 0.0
+    if sum_probs > 0.0 and np.isfinite(sum_probs):
+        weighted_q = float((prior[visited] * q[visited] / sum_probs).sum(dtype=np.float64))
+    else:
+        weighted_q = float(raw_value)
+    mixed_value = (float(raw_value) + sum_visits * weighted_q) / (sum_visits + 1.0)
+
+    completed = np.where(visited, q, mixed_value)
+    min_q = float(completed.min())
+    max_q = float(completed.max())
+    completed = (completed - min_q) / max(max_q - min_q, float(epsilon))
+    max_visit = int(visits_f.max(initial=0.0))
+    return _sigma_scale(max_visit=max_visit, cfg=cfg) * completed
 
 
 def _completed_q(*, root_q: float, root: Node, action: int) -> float:
@@ -101,19 +192,28 @@ def _improved_policy_probs(
 
     n_act = len(actions)
     logits = np.empty(n_act, dtype=np.float64)
-    completed_q = np.empty(n_act, dtype=np.float64)
-    max_visit = 0
+    visits = np.empty(n_act, dtype=np.float64)
+    qvalues = np.empty(n_act, dtype=np.float64)
+    priors = np.empty(n_act, dtype=np.float64)
     v_pi = node.Q
 
     for i, a in enumerate(actions):
         ch = children[a]
         n = ch.N
-        if n > max_visit:
-            max_visit = n
-        logits[i] = math.log(max(ch.prior, 1e-12))
-        completed_q[i] = (-ch.W / n) if n > 0 else v_pi
+        priors[i] = max(ch.prior, 1e-12)
+        logits[i] = math.log(priors[i])
+        visits[i] = float(n)
+        qvalues[i] = (-ch.W / n) if n > 0 else v_pi
 
-    probs = _softmax(logits + _sigma_scale(max_visit=max_visit, cfg=cfg) * completed_q)
+    q_logits = _completed_q_transform(
+        actions=actions,
+        priors=priors,
+        visits=visits,
+        qvalues=qvalues,
+        raw_value=float(v_pi),
+        cfg=cfg,
+    )
+    probs = _softmax(logits + q_logits)
     return actions, probs
 
 
@@ -193,6 +293,7 @@ def _resolve_root_logits(
     device: str,
     pre_pol_logits: np.ndarray | None,
     pre_wdl_logits: np.ndarray | None,
+    input_history_encoding: str,
 ) -> tuple[np.ndarray, np.ndarray, BatchEvaluator | None]:
     """Phase 1: get root pol/wdl logits + a leaf evaluator for later phases.
 
@@ -213,7 +314,11 @@ def _resolve_root_logits(
         if model is None:
             raise ValueError("run_gumbel_root_many requires model or evaluator")
         eval_impl = LocalModelEvaluator(model, device=device)
-    xs = encode_positions_batch(boards, add_features=True)
+    xs = encode_positions_batch(
+        boards,
+        add_features=True,
+        input_history_encoding=input_history_encoding,
+    )
     pol, wdl = eval_impl.evaluate_encoded(xs)
     return pol, wdl, eval_impl
 
@@ -222,13 +327,18 @@ def _evaluate_and_backprop_leaves(
     leaf_nodes: list[Node],
     leaf_paths: list[list[Node]],
     leaf_eval: BatchEvaluator | None,
+    input_history_encoding: str,
 ) -> None:
     """Batched leaf NN eval + expand + backprop. No-op when ``leaf_nodes`` is empty."""
     if not leaf_nodes:
         return
     if leaf_eval is None:
         raise ValueError("run_gumbel_root_many requires model or evaluator")
-    leaf_xs = encode_positions_batch([node.board for node in leaf_nodes], add_features=True)
+    leaf_xs = encode_positions_batch(
+        [node.board for node in leaf_nodes],
+        add_features=True,
+        input_history_encoding=input_history_encoding,
+    )
     pol_logits_leaf, wdl_logits_leaf = leaf_eval.evaluate_encoded(leaf_xs)
     for node, path, pol_logits, wdl_logits in zip(
         leaf_nodes, leaf_paths, pol_logits_leaf, wdl_logits_leaf, strict=True,
@@ -246,6 +356,7 @@ def _select_top_m_with_gumbel(
     sim_budget: int,
     topk: int,
     add_noise: bool,
+    gumbel_scale: float,
     rng: np.random.Generator,
 ) -> tuple[list[int], dict[int, float]]:
     """Sample top-m root actions via Gumbel(logit + noise). Caller filters trivial cases.
@@ -254,7 +365,8 @@ def _select_top_m_with_gumbel(
     can still allocate ≥1 visit per action per round.
     """
     log_pri = np.log(np.maximum(pri[legal], 1e-12))
-    g = _gumbel(rng, legal.size) if add_noise else np.zeros(legal.size, dtype=np.float64)
+    scale = float(gumbel_scale) if add_noise else 0.0
+    g = scale * _gumbel(rng, legal.size) if scale > 0.0 else np.zeros(legal.size, dtype=np.float64)
     score: np.ndarray = g + log_pri
 
     if sim_budget <= 1:
@@ -316,7 +428,8 @@ def _init_board_search_state(
 
     cands, gumbels = _select_top_m_with_gumbel(
         legal=legal, pri=pri, sim_budget=sim_budget,
-        topk=int(cfg.topk), add_noise=cfg.add_noise, rng=rng,
+        topk=int(cfg.topk), add_noise=cfg.add_noise,
+        gumbel_scale=float(cfg.gumbel_scale), rng=rng,
     )
     return _BoardSearchState(
         root=root, priors=pri,
@@ -369,17 +482,28 @@ def _halve_remaining_for_board(
     pri = st.priors
     gmap = st.gumbels
     root = st.root
-    max_visit = max(
-        (root.children[int(a)].N for a in rem if int(a) in root.children),
-        default=0,
+    legal = np.nonzero(pri > 0)[0].astype(int)
+    visits = np.empty(legal.size, dtype=np.float64)
+    qvalues = np.empty(legal.size, dtype=np.float64)
+    for i, a in enumerate(legal):
+        ch = root.children.get(int(a))
+        n = 0 if ch is None else int(ch.N)
+        visits[i] = float(n)
+        qvalues[i] = (-ch.W / n) if (ch is not None and n > 0) else float(root_q)
+    q_logits = _completed_q_transform(
+        actions=legal,
+        priors=pri[legal],
+        visits=visits,
+        qvalues=qvalues,
+        raw_value=float(root_q),
+        cfg=cfg,
     )
+    q_by_action = {int(a): float(q_logits[i]) for i, a in enumerate(legal.tolist())}
     rem.sort(
-        key=lambda a: _root_score(
-            log_prior=float(np.log(max(float(pri[int(a)]), 1e-12))),
-            gumbel=float(gmap.get(int(a), 0.0)),
-            q_hat=_completed_q(root_q=root_q, root=root, action=int(a)),
-            max_visit=int(max_visit),
-            cfg=cfg,
+        key=lambda a: (
+            float(gmap.get(int(a), 0.0))
+            + float(np.log(max(float(pri[int(a)]), 1e-12)))
+            + q_by_action.get(int(a), 0.0)
         ),
         reverse=True,
     )
@@ -401,17 +525,21 @@ def _build_improved_policy_for_board(
         return np.zeros((POLICY_SIZE,), dtype=np.float32), 0, root_q
 
     legal = np.nonzero(pri > 0)[0].astype(int)
-    max_visit = max(
-        (root.children[int(a)].N for a in legal if int(a) in root.children),
-        default=0,
+    visits = np.empty(legal.size, dtype=np.float64)
+    qvalues = np.empty(legal.size, dtype=np.float64)
+    for i, a in enumerate(legal):
+        ch = root.children.get(int(a))
+        n = 0 if ch is None else int(ch.N)
+        visits[i] = float(n)
+        qvalues[i] = (-ch.W / n) if (ch is not None and n > 0) else float(root_q)
+    logits_imp = np.log(np.maximum(pri[legal], 1e-12)) + _completed_q_transform(
+        actions=legal,
+        priors=pri[legal],
+        visits=visits,
+        qvalues=qvalues,
+        raw_value=float(root_q),
+        cfg=cfg,
     )
-    completed_q = np.array(
-        [_completed_q(root_q=root_q, root=root, action=int(a)) for a in legal],
-        dtype=np.float64,
-    )
-    logits_imp = np.log(np.maximum(pri[legal], 1e-12)) + _sigma_scale(
-        max_visit=int(max_visit), cfg=cfg,
-    ) * completed_q
     imp_all = _softmax(logits_imp)
     probs = np.zeros((POLICY_SIZE,), dtype=np.float32)
     probs[legal] = imp_all.astype(np.float32)
@@ -439,8 +567,12 @@ def run_gumbel_root_many(
     pre_pol_logits: np.ndarray | None = None,
     pre_wdl_logits: np.ndarray | None = None,
     per_game_simulations: list[int] | None = None,  # skylos: ignore  # pylint: disable=unused-argument  # API parity with run_gumbel_root_many_async
-    per_game_add_noise: list[bool] | None = None,  # skylos: ignore  # pylint: disable=unused-argument  # API parity with run_gumbel_root_many_async
-) -> tuple[list[np.ndarray], list[int], list[float], list[np.ndarray]]:
+    per_game_add_noise: list[bool] | None = None,
+    per_game_gumbel_scale: list[float] | None = None,
+    return_diagnostics: bool = False,
+) -> tuple[list[np.ndarray], list[int], list[float], list[np.ndarray]] | tuple[
+    list[np.ndarray], list[int], list[float], list[np.ndarray], list[dict[str, float] | None]
+]:
     """Root Gumbel search with sequential halving.
 
     This follows the paper's root-search structure much more closely than the
@@ -467,21 +599,32 @@ def run_gumbel_root_many(
         boards,
         model=model, evaluator=evaluator, device=device,
         pre_pol_logits=pre_pol_logits, pre_wdl_logits=pre_wdl_logits,
+        input_history_encoding=cfg.input_history_encoding,
     )
     root_qs = [_wdl_to_q(wdl_logits_batch[i]) for i in range(n_boards)]
 
   # ── 2. Per-board root init + Gumbel candidate selection ──────────────────
-    states: list[_BoardSearchState] = [
-        _init_board_search_state(
-            b,
-            pol_logits=pol_logits_batch[i],
-            root_q=float(root_qs[i]),
-            sim_budget=sim_budget,
-            cfg=cfg,
-            rng=rng,
+    states: list[_BoardSearchState] = []
+    for i, b in enumerate(boards):
+        board_cfg = replace(
+            cfg,
+            add_noise=bool(per_game_add_noise[i]) if per_game_add_noise is not None else bool(cfg.add_noise),
+            gumbel_scale=(
+                float(per_game_gumbel_scale[i])
+                if per_game_gumbel_scale is not None
+                else float(cfg.gumbel_scale)
+            ),
         )
-        for i, b in enumerate(boards)
-    ]
+        states.append(
+            _init_board_search_state(
+                b,
+                pol_logits=pol_logits_batch[i],
+                root_q=float(root_qs[i]),
+                sim_budget=sim_budget,
+                cfg=board_cfg,
+                rng=rng,
+            )
+        )
     budget_remaining: list[int] = [sim_budget] * n_boards
 
   # ── 3. Sequential halving with real subtree simulations ──────────────────
@@ -513,7 +656,12 @@ def run_gumbel_root_many(
                 active=active, states=states,
                 visits_per_action=visits_per_action, rep=rep, cfg=cfg,
             )
-            _evaluate_and_backprop_leaves(leaf_nodes, leaf_paths, leaf_eval)
+            _evaluate_and_backprop_leaves(
+                leaf_nodes,
+                leaf_paths,
+                leaf_eval,
+                cfg.input_history_encoding,
+            )
 
         for bi in active:
             st = states[bi]
@@ -530,11 +678,13 @@ def run_gumbel_root_many(
     actions_out: list[int] = []
     values_out: list[float] = []
     legal_masks_out: list[np.ndarray] = []
+    diagnostics_out: list[dict[str, float] | None] = []
     for i, st in enumerate(states):
         if st.finished_probs is not None:
             probs_out.append(st.finished_probs)
             actions_out.append(int(st.finished_action or 0))
             values_out.append(float(st.finished_value if st.finished_value is not None else root_qs[i]))
+            diagnostics_out.append(None)
         else:
             probs, action, value = _build_improved_policy_for_board(
                 st, root_q=float(root_qs[i]), cfg=cfg, rng=rng,
@@ -542,12 +692,18 @@ def run_gumbel_root_many(
             probs_out.append(probs)
             actions_out.append(action)
             values_out.append(value)
+            legal = np.nonzero(st.priors > 0)[0].astype(int)
+            diagnostics_out.append(gumbel_policy_diagnostics(
+                probs=probs, action=int(action), legal=legal, candidates=st.candidates,
+            ))
 
         mask = np.zeros((POLICY_SIZE,), dtype=np.bool_)
         for a in st.root.children:
             mask[a] = True
         legal_masks_out.append(mask)
 
+    if return_diagnostics:
+        return probs_out, actions_out, values_out, legal_masks_out, diagnostics_out
     return probs_out, actions_out, values_out, legal_masks_out
 
 

@@ -6,12 +6,16 @@ from typing import Any
 
 import chess
 import numpy as np
+import pytest
 
 from chess_anti_engine.moves import POLICY_SIZE
+from chess_anti_engine.moves.encode import uci_to_policy_index
 from chess_anti_engine.selfplay.config import GameConfig
 from chess_anti_engine.selfplay.config import OpponentConfig
 from chess_anti_engine.selfplay.state import _NetRecord
 from chess_anti_engine.selfplay.stockfish_turn import (
+    _collect_sf_pv_candidates,
+    _process_sf_results,
     flush_async_sf_labels_for_records,
     finish_pending_curriculum_moves,
     submit_async_curriculum_move_queries,
@@ -20,7 +24,9 @@ from chess_anti_engine.selfplay.stockfish_turn import (
     submit_sf_queries,
 )
 from chess_anti_engine.stockfish.pool import StockfishPool
+from chess_anti_engine.stockfish.uci import StockfishPV
 from chess_anti_engine.stockfish.uci import StockfishResult
+from chess_anti_engine.stockfish.wdl import cp_to_wdl
 
 
 class _FakeCBoard:
@@ -29,14 +35,18 @@ class _FakeCBoard:
     occ_black = 0
     castling = 0
 
-    def __init__(self) -> None:
+    def __init__(self, legal_indices: np.ndarray | None = None) -> None:
         self.pushed: list[int] = []
+        self._legal_indices = (
+            legal_indices if legal_indices is not None
+            else np.array([0], dtype=np.int64)
+        )
 
     def fen(self) -> str:
         return chess.STARTING_FEN
 
     def legal_move_indices(self) -> np.ndarray:
-        return np.array([0], dtype=np.int64)
+        return self._legal_indices
 
     def push_index(self, idx: int) -> None:
         self.pushed.append(int(idx))
@@ -73,8 +83,15 @@ def _record(*, has_policy: bool) -> _NetRecord:
     )
 
 
-def _state(*, has_policy: bool, sf_move_nodes: int = 0) -> Any:
-    cboard = _FakeCBoard()
+def _state(
+    *,
+    has_policy: bool,
+    sf_move_nodes: int = 0,
+    legal_indices: np.ndarray | None = None,
+    game: GameConfig | None = None,
+    opponent: OpponentConfig | None = None,
+) -> Any:
+    cboard = _FakeCBoard(legal_indices=legal_indices)
     return SimpleNamespace(
         batch_size=1,
         pending_sf_labels=[],
@@ -85,9 +102,9 @@ def _state(*, has_policy: bool, sf_move_nodes: int = 0) -> Any:
         base_nodes=100,
         last_net_full=[True],
         tb_adj_roll_arr=[True],
-        game=GameConfig(sf_move_nodes=sf_move_nodes),
+        game=game if game is not None else GameConfig(sf_move_nodes=sf_move_nodes),
         rng=np.random.default_rng(0),
-        opponent=OpponentConfig(),
+        opponent=opponent if opponent is not None else OpponentConfig(),
         move_idx_history=[[]],
         mcts_tree=None,
         root_ids=[-1],
@@ -183,3 +200,103 @@ def test_curriculum_label_uses_separate_query_when_move_nodes_are_low() -> None:
     assert submitted_labels == 1
     assert (attached, failed) == (1, 0)
     assert [call["nodes"] for call in state.stockfish.calls] == [10, 100]
+
+
+def test_sf_pv_candidates_use_native_wdl_by_default() -> None:
+    move = "a2a3"
+    move_idx = uci_to_policy_index(move, True)
+    res = SimpleNamespace(
+        pvs=[
+            StockfishPV(
+                move_uci=move,
+                wdl=np.array([0.80, 0.10, 0.10], dtype=np.float32),
+                cp=0,
+            )
+        ]
+    )
+
+    cand_idxs, cand_scores = _collect_sf_pv_candidates(
+        res,
+        _turn=True,
+        legal_set={move_idx},
+    )
+
+    assert cand_idxs == [move_idx]
+    assert cand_scores == pytest.approx([0.85])
+
+
+def test_sf_pv_candidates_use_cp_logistic_when_enabled() -> None:
+    move = "a2a3"
+    move_idx = uci_to_policy_index(move, True)
+    res = SimpleNamespace(
+        pvs=[
+            StockfishPV(
+                move_uci=move,
+                wdl=np.array([0.80, 0.10, 0.10], dtype=np.float32),
+                cp=0,
+            )
+        ]
+    )
+
+    cand_idxs, cand_scores = _collect_sf_pv_candidates(
+        res,
+        _turn=True,
+        legal_set={move_idx},
+        sf_wdl_use_cp_logistic=True,
+        sf_wdl_cp_slope=0.00875,
+        sf_wdl_cp_draw_width=75.0,
+    )
+
+    wdl = cp_to_wdl(0, None, slope=0.00875, draw_width_cp=75.0)
+    expected = float(wdl[0]) + 0.5 * float(wdl[1])
+    assert cand_idxs == [move_idx]
+    assert cand_scores == pytest.approx([expected])
+    assert cand_scores != pytest.approx([0.85])
+
+
+def test_cp_logistic_policy_scores_do_not_change_curriculum_regret_choice() -> None:
+    native_best = "a2a3"
+    logistic_best = "a2a4"
+    native_best_idx = uci_to_policy_index(native_best, True)
+    logistic_best_idx = uci_to_policy_index(logistic_best, True)
+    state = _state(
+        has_policy=True,
+        legal_indices=np.array([native_best_idx, logistic_best_idx], dtype=np.int64),
+        game=GameConfig(
+            sf_wdl_use_cp_logistic=True,
+            sf_wdl_cp_slope=0.00875,
+            sf_wdl_cp_draw_width=75.0,
+            sf_policy_temp=0.1,
+            sf_policy_label_smooth=0.0,
+        ),
+        opponent=OpponentConfig(wdl_regret_limit=0.0),
+    )
+    rec = state.samples_per_game[0][0]
+    res = StockfishResult(
+        bestmove_uci=native_best,
+        wdl=np.array([0.80, 0.10, 0.10], dtype=np.float32),
+        pvs=[
+            StockfishPV(
+                move_uci=native_best,
+                wdl=np.array([0.80, 0.10, 0.10], dtype=np.float32),
+                cp=-200,
+            ),
+            StockfishPV(
+                move_uci=logistic_best,
+                wdl=np.array([0.10, 0.10, 0.80], dtype=np.float32),
+                cp=200,
+            ),
+        ],
+    )
+
+    _process_sf_results(
+        state,
+        [0],
+        results={0: res},
+        play_curriculum_moves=True,
+        attach_labels=True,
+    )
+
+    assert state.cboards[0].pushed == [native_best_idx]
+    assert rec.sf_policy_target is not None
+    assert rec.sf_policy_target[logistic_best_idx] > rec.sf_policy_target[native_best_idx]

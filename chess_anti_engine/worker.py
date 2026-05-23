@@ -37,7 +37,7 @@ from chess_anti_engine.model import (
     load_state_dict_tolerant,
     model_config_from_manifest_dict,
 )
-from chess_anti_engine.moves.encode import POLICY_SIZE
+from chess_anti_engine.moves import COMPACT_POLICY_SIZE, POLICY_SIZE, normalize_policy_encoding
 from chess_anti_engine.replay.shard import (
     LOCAL_SHARD_SUFFIX,
     delete_shard_path,
@@ -112,6 +112,39 @@ def _upload_response_allows_pending_delete(response: Any) -> bool:
     if body.get("stored") is False:
         return True
     return False
+
+
+def _upload_response_rejection_reason(response: Any) -> str | None:
+    """Return the terminal server rejection reason for a shard upload, if any."""
+    if int(getattr(response, "status_code", 0)) != 200:
+        return None
+    try:
+        body = response.json()
+    except Exception:
+        return None
+    if not isinstance(body, dict) or not bool(body.get("rejected", False)):
+        return None
+    reason = body.get("reason")
+    return str(reason) if reason is not None else "server rejected shard"
+
+
+def _quarantine_rejected_pending_shard(shard_path: Path, reason: str) -> Path:
+    """Move a terminally rejected local shard out of the retry queue."""
+    corrupt_dir = shard_path.parent.parent / "corrupt"
+    corrupt_dir.mkdir(parents=True, exist_ok=True)
+    dest = corrupt_dir / shard_path.name
+    if dest.exists():
+        dest = corrupt_dir / f"{shard_path.name}.rejected.{int(time.time())}"
+    shard_path.replace(dest)
+    (dest.with_suffix(dest.suffix + ".reason.txt")).write_text(reason, encoding="utf-8")
+
+    elapsed_path = _pending_elapsed_path(shard_path)
+    if elapsed_path.exists():
+        elapsed_dest = dest.with_suffix(dest.suffix + ".elapsed_s")
+        if elapsed_dest.exists():
+            elapsed_dest = dest.with_suffix(dest.suffix + f".elapsed_s.{int(time.time())}")
+        elapsed_path.replace(elapsed_dest)
+    return dest
 
 
 def _extract_worker_wheel(payload: dict) -> dict | None:
@@ -506,6 +539,11 @@ def main() -> None:
     ap.add_argument("--temperature-decay-start-move", type=int, default=None)
     ap.add_argument("--temperature-decay-moves", type=int, default=None)
     ap.add_argument("--temperature-endgame", type=float, default=None)
+    ap.add_argument("--selfplay-temperature", type=float, default=None)
+    ap.add_argument("--selfplay-temperature-decay-start-move", type=int, default=None)
+    ap.add_argument("--selfplay-temperature-decay-moves", type=int, default=None)
+    ap.add_argument("--selfplay-temperature-endgame", type=float, default=None)
+    ap.add_argument("--gumbel-scale", type=float, default=None)
 
   # Opening diversification: if omitted, defaults come from server manifest `recommended_worker`.
     ap.add_argument("--opening-book-prob", type=float, default=None)
@@ -650,12 +688,16 @@ class WorkerSession:
         if not bool(args.allow_overrides):
             _server_managed_keys = [
                 "max_plies", "mcts", "mcts_simulations", "playout_cap_fraction",
-                "fast_simulations", "opening_book_prob", "opening_book_max_plies",
+                "fast_simulations", "gumbel_topk", "gumbel_scale", "gumbel_scale_after",
+                "gumbel_scale_decay_start_move", "gumbel_scale_decay_moves",
+                "opening_book_prob", "opening_book_max_plies",
                 "opening_book_max_games", "random_start_plies", "sf_nodes",
                 "sf_multipv", "sf_policy_temp", "sf_policy_label_smooth",
                 "timeout_adjudication_threshold", "temperature",
                 "temperature_decay_start_move", "temperature_decay_moves",
                 "temperature_endgame",
+                "selfplay_temperature", "selfplay_temperature_decay_start_move",
+                "selfplay_temperature_decay_moves", "selfplay_temperature_endgame",
                 "syzygy_path", "stockfish_syzygy_path", "syzygy_rescore_policy",
                 "syzygy_adjudicate", "syzygy_adjudicate_fraction", "syzygy_in_search",
             ]
@@ -886,6 +928,15 @@ class WorkerSession:
                 self.last_successful_send_s = time.time()
                 last_uploaded_at = float(self.last_successful_send_s)
             else:
+                rejection_reason = _upload_response_rejection_reason(r)
+                if rejection_reason is not None:
+                    qpath = _quarantine_rejected_pending_shard(sp, rejection_reason)
+                    elapsed_path.unlink(missing_ok=True)
+                    self.log.warning(
+                        "server rejected pending shard %s; quarantined at %s: %s",
+                        sp, qpath, rejection_reason,
+                    )
+                    continue
                 if r.status_code == 200:
                     try:
                         body = r.json()
@@ -1323,14 +1374,49 @@ class WorkerSession:
         upload_s = 0.0
         now_s = time.time()
         self._saw_completed_game = True
-        _buffer_add_completed_game(
-            buf=self.upload_buf,
-            game_batch=game_batch,
-            now_s=now_s,
-            model_sha=self.model_sha,
-            model_step=self.model_step,
-            max_positions=int(self.args.upload_max_buffered_positions),
-        )
+        try:
+            _buffer_add_completed_game(
+                buf=self.upload_buf,
+                game_batch=game_batch,
+                now_s=now_s,
+                model_sha=self.model_sha,
+                model_step=self.model_step,
+                max_positions=int(self.args.upload_max_buffered_positions),
+            )
+        except ValueError as exc:
+            if str(exc) != "buffered upload model metadata mismatch":
+                raise
+            old_sha = str(self.upload_buf.model_sha or "")
+            old_step = int(self.upload_buf.model_step or 0)
+            self.log.warning(
+                "upload buffer model metadata changed old_sha=%s old_step=%d "
+                "new_sha=%s new_step=%d; flushing buffered shard before retry",
+                old_sha[:8],
+                old_step,
+                str(self.model_sha)[:8],
+                int(self.model_step),
+            )
+            shard_path, elapsed_s = _flush_upload_buffer_to_pending(
+                pending_dir=self.pending_dir,
+                username=str(self.args.username),
+                buf=self.upload_buf,
+                now_s=now_s,
+                trial_id=self.leased_trial_id or self.fixed_trial_id or None,
+            )
+            if shard_path is not None:
+                upload_t0 = time.perf_counter()
+                uploaded_at = self._upload_pending_shards(default_elapsed_s=float(elapsed_s))
+                upload_s += time.perf_counter() - upload_t0
+                if uploaded_at is not None:
+                    self.last_successful_send_s = float(uploaded_at)
+            _buffer_add_completed_game(
+                buf=self.upload_buf,
+                game_batch=game_batch,
+                now_s=now_s,
+                model_sha=self.model_sha,
+                model_step=self.model_step,
+                max_positions=int(self.args.upload_max_buffered_positions),
+            )
         shard_path, elapsed_s = _maybe_flush_upload_buffer(
             pending_dir=self.pending_dir,
             username=str(self.args.username),
@@ -1475,8 +1561,11 @@ class WorkerSession:
         min_v = manifest.get("min_worker_version")
         version_too_old = bool(min_v is not None and version_lt(PACKAGE_VERSION, str(min_v)))
         enc = manifest.get("encoding") or {}
-        if "policy_size" in enc and int(enc.get("policy_size") or 0) != int(POLICY_SIZE):
-            raise SystemExit(f"policy_size mismatch: worker={POLICY_SIZE} server={enc.get('policy_size')}")
+        if "policy_size" in enc and int(enc.get("policy_size") or 0) not in (int(POLICY_SIZE), int(COMPACT_POLICY_SIZE)):
+            raise SystemExit(
+                f"policy_size mismatch: worker supports {POLICY_SIZE}/{COMPACT_POLICY_SIZE}, "
+                f"server={enc.get('policy_size')}",
+            )
         if "input_planes" in enc and int(enc.get("input_planes") or 0) != 146:
             raise SystemExit(f"input_planes mismatch: worker expects 146, server={enc.get('input_planes')}")
         return _ManifestCompat(
@@ -1865,8 +1954,15 @@ class WorkerSession:
     _RECO_RESTART_KEYS = (
         "sf_nodes", "sf_move_nodes",
         "opponent_wdl_regret_limit", "mcts_simulations", "fast_simulations",
+        "gumbel_topk", "gumbel_scale", "gumbel_scale_after",
+        "gumbel_scale_decay_start_move", "gumbel_scale_decay_moves",
         "selfplay_fraction",
+        "temperature", "temperature_decay_start_move", "temperature_decay_moves",
+        "temperature_endgame", "selfplay_temperature",
+        "selfplay_temperature_decay_start_move", "selfplay_temperature_decay_moves",
+        "selfplay_temperature_endgame",
         "sf_wdl_use_cp_logistic", "sf_wdl_cp_slope", "sf_wdl_cp_draw_width",
+        "input_history_encoding", "record_lc0_root_input",
         # Syzygy knobs affect adjudication + in-search overrides — without a
         # restart, workers keep producing shards under stale TB settings until
         # an unrelated key changes. Flagged by Codex adversarial review.
@@ -1890,6 +1986,11 @@ class WorkerSession:
   # for path = disabled; fraction 1.0 = always adjudicate when on.
         syzygy_path = reco.get("syzygy_path") or None
         stockfish_syzygy_path = reco.get("stockfish_syzygy_path") or None
+        def _optional_reco(key: str, default: Any, cast: Callable[[Any], Any] = float) -> Any | None:
+            if reco.get(key) is None and getattr(self.args, key, None) is None:
+                return None
+            return self._resolve_reco(reco, key, default, cast)
+
         cfgs = {
             "opponent": OpponentConfig(wdl_regret_limit=regret_limit),
             "temp": TemperatureConfig(
@@ -1897,12 +1998,29 @@ class WorkerSession:
                 decay_start_move=self._resolve_reco(reco, "temperature_decay_start_move", 20, int),
                 decay_moves=self._resolve_reco(reco, "temperature_decay_moves", 60, int),
                 endgame=self._resolve_reco(reco, "temperature_endgame", 0.6),
+                selfplay_temperature=_optional_reco("selfplay_temperature", 1.0),
+                selfplay_decay_start_move=_optional_reco(
+                    "selfplay_temperature_decay_start_move", 20, int,
+                ),
+                selfplay_decay_moves=_optional_reco(
+                    "selfplay_temperature_decay_moves", 60, int,
+                ),
+                selfplay_endgame=_optional_reco("selfplay_temperature_endgame", 0.6),
             ),
             "search": SearchConfig(
                 simulations=self._resolve_reco(reco, "mcts_simulations", 50, int),
                 mcts_type=self._resolve_reco(reco, "mcts", "puct", str),
                 playout_cap_fraction=self._resolve_reco(reco, "playout_cap_fraction", 0.25),
                 fast_simulations=self._resolve_reco(reco, "fast_simulations", 8, int),
+                gumbel_topk=self._resolve_reco(reco, "gumbel_topk", 16, int),
+                gumbel_scale=self._resolve_reco(reco, "gumbel_scale", 1.0),
+                gumbel_scale_after=self._resolve_reco(reco, "gumbel_scale_after", 0.0),
+                gumbel_scale_decay_start_move=self._resolve_reco(
+                    reco, "gumbel_scale_decay_start_move", 0, int,
+                ),
+                gumbel_scale_decay_moves=self._resolve_reco(
+                    reco, "gumbel_scale_decay_moves", 0, int,
+                ),
             ),
             "opening": OpeningConfig(
                 opening_book_path=self.opening_book_path,
@@ -1931,6 +2049,9 @@ class WorkerSession:
                 syzygy_adjudicate=bool(reco.get("syzygy_adjudicate", False)),
                 syzygy_adjudicate_fraction=float(reco.get("syzygy_adjudicate_fraction", 1.0)),
                 syzygy_in_search=bool(reco.get("syzygy_in_search", False)),
+                policy_encoding=normalize_policy_encoding(reco.get("policy_encoding", "az_4672")),
+                input_history_encoding=str(reco.get("input_history_encoding", "legacy")),
+                record_lc0_root_input=bool(reco.get("record_lc0_root_input", False)),
             ),
         }
         sf_args = (

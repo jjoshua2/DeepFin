@@ -13,7 +13,7 @@ import numpy as np
 import zarr
 from numcodecs import Blosc
 
-from chess_anti_engine.moves import POLICY_SIZE
+from chess_anti_engine.moves import COMPACT_POLICY_SIZE, POLICY_SIZE
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 
 from .buffer import ReplaySample
@@ -68,6 +68,7 @@ _U8_DT: np.dtype = np.dtype(np.uint8)
 _I32_DT: np.dtype = np.dtype(np.int32)
 
 _OPTIONAL_FIELD_SPECS: tuple[_OptFieldSpec, ...] = (
+    _OptFieldSpec("x_lc0_root",           "has_x_lc0_root",        (146, 8, 8),   _F16),
     _OptFieldSpec("sf_wdl",               "has_sf_wdl",            (3,),          _F16),
     _OptFieldSpec("sf_move_index",        "has_sf_move",           (),            _I32_DT),
     _OptFieldSpec("sf_policy_target",     "has_sf_policy",         _POLICY_SHAPE, _F16),
@@ -141,6 +142,8 @@ def zeros_for_storage_field(
             return np.zeros((n,), dtype=np.uint8)
         if name == spec.arr:
             shape = (categorical_bins,) if name == "categorical_target" else spec.shape
+            if name in (*POLICY_SPACE_FIELDS, *LEGAL_MASK_FIELDS):
+                shape = (policy_size,)
             return np.zeros((n, *shape), dtype=spec.dtype)
     raise KeyError(f"unknown replay field {name!r}")
 
@@ -204,6 +207,8 @@ def _densify_policy(vals: np.ndarray, cols: np.ndarray, nnz: np.ndarray,
 def sparsify_chunk(arrs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
     """Convert dense policy arrays in a chunk dict to padded-sparse format."""
     out = dict(arrs)
+    if "_policy_size" not in out and "policy_target" in out and np.asarray(out["policy_target"]).ndim == 2:
+        out["_policy_size"] = np.array(int(np.asarray(out["policy_target"]).shape[1]), dtype=np.int32)
     for key in POLICY_SPACE_FIELDS:
         if key not in out:
             continue
@@ -298,6 +303,27 @@ class ShardMeta:
     stalemate_games: int | None = None
     sf_d6_sum: float | None = None
     sf_d6_n: int | None = None
+    diff_focus_records: int | None = None
+    diff_focus_kept: int | None = None
+    diff_focus_keep_prob_sum: float | None = None
+    diff_focus_keep_limited: int | None = None
+    diff_focus_sample_weight_sum: float | None = None
+    diff_focus_sample_weight_limited: int | None = None
+    diff_focus_priority_sum: float | None = None
+    diff_focus_priority_sq_sum: float | None = None
+    diff_focus_priority_min: float | None = None
+    diff_focus_priority_max: float | None = None
+    gumbel_policy_diag_n: int | None = None
+    gumbel_policy_top_prob_sum: float | None = None
+    gumbel_policy_action_prob_sum: float | None = None
+    gumbel_policy_entropy_sum: float | None = None
+    gumbel_policy_eff_moves_sum: float | None = None
+    gumbel_policy_candidate_mass_sum: float | None = None
+    gumbel_policy_non_candidate_top_prob_sum: float | None = None
+    gumbel_policy_argmax_is_candidate_sum: int | None = None
+    gumbel_policy_argmax_is_action_sum: int | None = None
+    gumbel_policy_legal_count_sum: int | None = None
+    gumbel_policy_candidate_count_sum: int | None = None
 
 
 def _u8(x: np.ndarray) -> np.ndarray:
@@ -493,6 +519,7 @@ _SCALAR_FIELDS: tuple[tuple[str, str, str, "object"], ...] = (
     ("is_selfplay",       "is_selfplay",    "has_is_selfplay",      lambda v: 1 if bool(v) else 0),
 )
 _VECTOR_FIELDS: tuple[tuple[str, str, str], ...] = (
+    ("x_lc0_root",           "x_lc0_root",           "has_x_lc0_root"),
     ("sf_wdl",               "sf_wdl",               "has_sf_wdl"),
     ("sf_policy_target",     "sf_policy_target",     "has_sf_policy"),
     ("categorical_target",   "categorical_target",   "has_categorical"),
@@ -522,6 +549,7 @@ def samples_to_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
     if not samples:
         raise ValueError("cannot serialize empty shard")
     n = len(samples)
+    policy_size = int(np.asarray(samples[0].policy_target).shape[0])
 
     arrs: dict[str, np.ndarray] = {
         "x": _f16(np.stack([s.x for s in samples], axis=0)),
@@ -533,7 +561,8 @@ def samples_to_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
         )),
     }
     for spec in _OPTIONAL_FIELD_SPECS:
-        arrs[spec.arr] = np.zeros((n, *spec.shape), dtype=spec.dtype)
+        shape = (policy_size,) if spec.arr in (*POLICY_SPACE_FIELDS, *LEGAL_MASK_FIELDS) else spec.shape
+        arrs[spec.arr] = np.zeros((n, *shape), dtype=spec.dtype)
         arrs[spec.flag] = np.zeros((n,), dtype=np.uint8)
 
     for i, s in enumerate(samples):
@@ -572,8 +601,12 @@ def validate_arrays(arrs: dict[str, np.ndarray]) -> None:
         raise ValueError(f"policy_target must be (N,A); got {policy.shape}")
     if policy.shape[0] != x.shape[0]:
         raise ValueError("policy_target N mismatch")
-    if int(policy.shape[1]) != int(POLICY_SIZE):
-        raise ValueError(f"policy_target A mismatch: expected {POLICY_SIZE}, got {policy.shape[1]}")
+    policy_size = int(policy.shape[1])
+    if policy_size not in (int(POLICY_SIZE), int(COMPACT_POLICY_SIZE)):
+        raise ValueError(
+            f"policy_target A mismatch: expected {POLICY_SIZE} or {COMPACT_POLICY_SIZE}, "
+            f"got {policy.shape[1]}",
+        )
     if wdl.ndim != 1 or wdl.shape[0] != x.shape[0]:
         raise ValueError("wdl_target must be (N,) matching x")
     if not np.isfinite(x).all():
@@ -605,7 +638,8 @@ def validate_arrays(arrs: dict[str, np.ndarray]) -> None:
 
         if value_present:
             value = np.asarray(arrs[spec.arr])
-            expected_shape = (n, *spec.shape)
+            expected_tail = (policy_size,) if spec.arr in (*POLICY_SPACE_FIELDS, *LEGAL_MASK_FIELDS) else spec.shape
+            expected_shape = (n, *expected_tail)
             if value.shape != expected_shape:
                 raise ValueError(
                     f"{spec.arr} shape mismatch: expected {expected_shape}, got {value.shape}",
@@ -639,7 +673,8 @@ def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
 
     opt: dict[str, np.ndarray] = {}
     for spec in _OPTIONAL_FIELD_SPECS:
-        opt[spec.arr] = np.asarray(arrs.get(spec.arr, np.zeros((n, *spec.shape), dtype=spec.dtype)))
+        shape = (int(policy.shape[1]),) if spec.arr in (*POLICY_SPACE_FIELDS, *LEGAL_MASK_FIELDS) else spec.shape
+        opt[spec.arr] = np.asarray(arrs.get(spec.arr, np.zeros((n, *shape), dtype=spec.dtype)))
         opt[spec.flag] = np.asarray(arrs.get(spec.flag, np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
 
     out: list[ReplaySample] = []
@@ -651,6 +686,8 @@ def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
             priority=float(priority[i]),
             has_policy=bool(has_policy[i]),
         )
+        if opt["has_x_lc0_root"][i]:
+            s.x_lc0_root = _copy_row(opt["x_lc0_root"], i)
         if opt["has_sf_wdl"][i]:
             s.sf_wdl = _copy_row(opt["sf_wdl"], i)
         if opt["has_sf_move"][i]:
@@ -731,7 +768,9 @@ def save_local_shard_arrays(
     tmp = p.with_name(f"._tmp_{os.getpid()}_{p.name}")
     try:
         g = zarr.open_group(str(tmp), mode="w")
-        g.attrs.update(_meta_dict(meta, positions=int(np.asarray(stored["x"]).shape[0])))
+        attrs = _meta_dict(meta, positions=int(np.asarray(stored["x"]).shape[0]))
+        attrs["policy_size"] = int(np.asarray(arrs["policy_target"]).shape[1])
+        g.attrs.update(attrs)
         compressor = Blosc(cname="zstd", clevel=3, shuffle=Blosc.SHUFFLE)
         for name, value in stored.items():
             arr = np.asarray(value)
@@ -770,8 +809,12 @@ def load_shard_arrays(
     meta = dict(g.attrs.asdict())
     if lazy:
         arrs = {name: g[name] for name in _SHARD_FIELDS if name in g}
+        if "policy_size" in meta:
+            arrs["_policy_size"] = np.array(int(meta["policy_size"]), dtype=np.int32)
         return arrs, meta
     arrs = {name: np.asarray(g[name]) for name in _SHARD_FIELDS if name in g}
+    if "policy_size" in meta:
+        arrs["_policy_size"] = np.array(int(meta["policy_size"]), dtype=np.int32)
     validate_arrays(arrs)
     return arrs, meta
 

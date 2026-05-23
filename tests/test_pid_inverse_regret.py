@@ -363,6 +363,107 @@ def test_raw_sign_agreement_lets_fit_drive_magnitude():
     assert delta <= 0.01 + 1e-9
 
 
+def test_tighten_gain_damps_regret_hardening():
+    pid = _mk_pid(
+        initial_wdl_regret=0.20,
+        target_winrate=0.60,
+        regret_max_step=0.10,
+        regret_max_step_frac=0.03,
+        regret_ease_step_frac=0.06,
+        regret_tighten_gain=0.5,
+        regret_safety_floor=0.30,
+        ema_alpha=0.5,
+    )
+    pid.regret_lever.history.clear()
+    pid.regret_lever.history.extend([
+        (0.10, 0.55, 0.018),
+        (0.12, 0.58, 0.018),
+        (0.14, 0.61, 0.018),
+        (0.16, 0.64, 0.018),
+    ])
+    pid.ema_winrate = 0.60
+    regret_before = pid.wdl_regret
+
+    pid.observe(wins=600, draws=0, losses=200, force=True)
+
+    delta = pid.wdl_regret - regret_before
+    assert delta < 0
+    assert abs(delta + 0.003) < 1e-9
+
+
+def test_tighten_streak_gain_damps_only_after_repeated_hardening():
+    pid = _mk_pid(
+        initial_wdl_regret=0.20,
+        target_winrate=0.60,
+        regret_max_step=0.10,
+        regret_max_step_frac=0.03,
+        regret_ease_step_frac=0.06,
+        regret_tighten_streak_after=2,
+        regret_tighten_streak_gain=0.5,
+        regret_safety_floor=0.30,
+        ema_alpha=0.5,
+    )
+    pid.regret_lever.history.clear()
+    pid.regret_lever.history.extend([
+        (0.18, 0.64, 0.018),
+        (0.17, 0.64, 0.018),
+        (0.16, 0.64, 0.018),
+        (0.15, 0.64, 0.018),
+    ])
+    pid.ema_winrate = 0.60
+    regret_before = pid.wdl_regret
+
+    pid.observe(wins=600, draws=0, losses=200, force=True)
+
+    delta = pid.wdl_regret - regret_before
+    assert delta < 0
+    assert abs(delta + 0.003) < 1e-9
+
+    pid.regret_lever.history.clear()
+    pid.regret_lever.history.extend([
+        (0.18, 0.64, 0.018),
+        (0.19, 0.64, 0.018),
+        (0.20, 0.64, 0.018),
+        (0.19, 0.64, 0.018),
+    ])
+    pid.wdl_regret = 0.20
+    regret_before = pid.wdl_regret
+
+    pid.observe(wins=600, draws=0, losses=200, force=True)
+
+    delta = pid.wdl_regret - regret_before
+    assert delta < 0
+    assert abs(delta + 0.006) < 1e-9
+
+
+def test_crash_ease_minimum_overrides_timid_fit():
+    pid = _mk_pid(
+        initial_wdl_regret=0.24,
+        target_winrate=0.58,
+        regret_max_step=0.10,
+        regret_max_step_frac=0.03,
+        regret_ease_step_frac=0.06,
+        regret_safety_floor=0.30,
+        regret_crash_ease_z=2.0,
+        regret_crash_ease_min_frac=0.5,
+        ema_alpha=0.5,
+    )
+    pid.regret_lever.history.clear()
+    pid.regret_lever.history.extend([
+        (0.20, 0.52, 0.018),
+        (0.22, 0.56, 0.018),
+        (0.24, 0.60, 0.018),
+        (0.26, 0.64, 0.018),
+    ])
+    pid.ema_winrate = 0.58
+    regret_before = pid.wdl_regret
+
+    pid.observe(wins=400, draws=0, losses=400, force=True)
+
+    delta = pid.wdl_regret - regret_before
+    assert abs(delta - 0.0072) < 1e-9
+
+
 def test_inverse_model_handles_noisy_data():
     # Add measurement noise; fit should still give reasonable predictions
     random.seed(42)

@@ -171,3 +171,71 @@ def test_threaded_local_model_swap_keeps_buffer_metadata_atomic(monkeypatch, tmp
     assert session.model_sha == new_sha
     assert session.model_step == 2
     assert session.last_model_sha == new_sha
+
+
+def test_completed_game_metadata_mismatch_flushes_before_retry(monkeypatch, tmp_path: Path) -> None:
+    session = object.__new__(WorkerSession)
+    session.log = logging.getLogger("test.worker_model_update")
+    session.model_sha = "new-sha"
+    session.model_step = 2
+    session.pending_dir = tmp_path
+    session.leased_trial_id = "trial_00000"
+    session.fixed_trial_id = ""
+    session.args = SimpleNamespace(
+        username="worker",
+        upload_max_buffered_positions=0,
+        upload_target_positions=999,
+        upload_flush_seconds=999.0,
+    )
+    session.last_successful_send_s = 100.0
+    session.upload_buf = _BufferedUpload(
+        samples=[object()],
+        model_sha="old-sha",
+        model_step=1,
+        games=1,
+        positions=1,
+        first_buffered_at_s=50.0,
+    )
+    session._completion_telemetry_lock = threading.Lock()
+    session._completion_games = 0
+    session._completion_positions = 0
+    session._completion_callback_s = 0.0
+    session._completion_upload_s = 0.0
+    session._completion_by_thread = {}
+
+    flushed: list[tuple[str | None, int | None, int]] = []
+    uploaded_elapsed: list[float | None] = []
+    maybe_flush_seen: list[tuple[str | None, int | None, int]] = []
+
+    def _fake_flush(**kwargs):
+        buf = kwargs["buf"]
+        flushed.append((buf.model_sha, buf.model_step, buf.positions))
+        buf.reset()
+        return tmp_path / "old-shard.zarr", 12.5
+
+    def _fake_upload_pending_shards(*, default_elapsed_s: float | None = None) -> float:
+        uploaded_elapsed.append(default_elapsed_s)
+        return 200.0
+
+    def _fake_maybe_flush(**kwargs):
+        buf = kwargs["buf"]
+        maybe_flush_seen.append((buf.model_sha, buf.model_step, buf.positions))
+        return None, 0.0
+
+    monkeypatch.setattr(worker_mod, "_flush_upload_buffer_to_pending", _fake_flush)
+    monkeypatch.setattr(worker_mod, "_maybe_flush_upload_buffer", _fake_maybe_flush)
+    cast(Any, session)._upload_pending_shards = _fake_upload_pending_shards
+
+    game_batch = SimpleNamespace(samples=[object(), object()], positions=2, games=1, w=1)
+
+    WorkerSession._on_completed_game(session, game_batch)
+
+    assert flushed == [("old-sha", 1, 1)]
+    assert uploaded_elapsed == [12.5]
+    assert session.last_successful_send_s == 200.0
+    assert maybe_flush_seen == [("new-sha", 2, 2)]
+    assert session.upload_buf.model_sha == "new-sha"
+    assert session.upload_buf.model_step == 2
+    assert session.upload_buf.positions == 2
+    assert session._completion_games == 1
+    assert session._completion_positions == 2

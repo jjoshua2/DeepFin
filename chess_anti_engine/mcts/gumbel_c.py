@@ -22,24 +22,28 @@ import numpy as np
 import torch
 
 from chess_anti_engine.encoding._lc0_ext import CBoard
+from chess_anti_engine.encoding.lc0 import LC0_HISTORY_ROOT, normalize_lc0_history_encoding
 from chess_anti_engine.inference import (  # noqa: F401  # skylos: ignore (AsyncBatchEvaluator used via stringified cast)
     AsyncBatchEvaluator,
     BatchEvaluator,
     LocalModelEvaluator,
     _COMPILED_BATCH_BUCKETS,
 )
-from chess_anti_engine.mcts._mcts_tree import MCTSTree, batch_encode_146
+from chess_anti_engine.mcts._mcts_tree import MCTSTree, batch_encode_146, batch_encode_146_lc0_root
 
 try:
-    from chess_anti_engine.mcts._mcts_tree import batch_encode_146_bf16
+    from chess_anti_engine.mcts._mcts_tree import batch_encode_146_bf16, batch_encode_146_lc0_root_bf16
 except ImportError:  # pragma: no cover - older local extension fallback
     batch_encode_146_bf16 = None  # type: ignore[assignment]
+    batch_encode_146_lc0_root_bf16 = None  # type: ignore[assignment]
 from chess_anti_engine.mcts.gumbel import (
     GumbelConfig,
+    _completed_q_transform,
     _gumbel,
     _sigma_scale,
     _softmax,
     _wdl_to_q,
+    gumbel_policy_diagnostics,
 )
 from chess_anti_engine.moves import POLICY_SIZE
 
@@ -82,13 +86,18 @@ def run_gumbel_root_many_c(
     pre_wdl_logits: np.ndarray | None = None,
     per_game_simulations: list[int] | None = None,
     per_game_add_noise: list[bool] | None = None,
+    per_game_gumbel_scale: list[float] | None = None,
     cboards: list | None = None,
     tree: MCTSTree | None = None,
     root_node_ids: list[int] | None = None,
     tb_probe=None,
     pre_wdl_logits_tb_probed: bool = False,
     target_batch: int = 0,
-) -> tuple[list[np.ndarray], list[int], list[float], list[np.ndarray], MCTSTree, list[int]]:
+    return_diagnostics: bool = False,
+) -> tuple[list[np.ndarray], list[int], list[float], list[np.ndarray], MCTSTree, list[int]] | tuple[
+    list[np.ndarray], list[int], list[float], list[np.ndarray], MCTSTree, list[int],
+    list[dict[str, float] | None],
+]:
     """Gumbel root search with MCTSTree C tree + CBoard.
 
     Same API as ``run_gumbel_root_many`` -- drop-in replacement.
@@ -107,9 +116,17 @@ def run_gumbel_root_many_c(
 
     n_boards = len(boards)
     if n_boards == 0:
-        return [], [], [], [], (tree if tree is not None else MCTSTree()), []
+        out_empty = ([], [], [], [], (tree if tree is not None else MCTSTree()), [])
+        if return_diagnostics:
+            return (*out_empty, [])
+        return out_empty
 
     sim_budget = max(1, int(cfg.simulations))
+    use_lc0_root = normalize_lc0_history_encoding(cfg.input_history_encoding) == LC0_HISTORY_ROOT
+    batch_encode = batch_encode_146_lc0_root if use_lc0_root else batch_encode_146
+    batch_encode_bf16 = (
+        batch_encode_146_lc0_root_bf16 if use_lc0_root else batch_encode_146_bf16
+    )
 
     eval_impl = evaluator
     if eval_impl is None:
@@ -123,7 +140,7 @@ def run_gumbel_root_many_c(
     _has_async = hasattr(eval_impl, 'evaluate_encoded_async')
     _has_legal_bf16 = hasattr(eval_impl, "evaluate_legal_bf16")
     _has_input_bf16 = (
-        batch_encode_146_bf16 is not None
+        batch_encode_bf16 is not None
         and bool(getattr(eval_impl, "supports_input_bf16_bits", False))
     )
   # All async-capable evaluators conform to the protocol; _has_async is the runtime check.
@@ -149,12 +166,12 @@ def run_gumbel_root_many_c(
         wdl_logits_batch = np.asarray(pre_wdl_logits, dtype=np.float32)
     elif _inplace:
         if _has_input_bf16 and hasattr(eval_impl, "get_input_buffer_bf16_bits"):
-            assert batch_encode_146_bf16 is not None
+            assert batch_encode_bf16 is not None
             root_buf = eval_impl.get_input_buffer_bf16_bits(n_boards, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
-            batch_encode_146_bf16(root_cboards, root_buf)
+            batch_encode_bf16(root_cboards, root_buf)
         else:
             root_buf = eval_impl.get_input_buffer(n_boards, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
-            batch_encode_146(root_cboards, root_buf)
+            batch_encode(root_cboards, root_buf)
         pol_t, wdl_t, event = eval_impl.evaluate_inplace_async(n_boards, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
         if event is not None:
             event.synchronize()
@@ -162,12 +179,12 @@ def run_gumbel_root_many_c(
         wdl_logits_batch = wdl_t.numpy()
     else:
         if _has_input_bf16 and hasattr(eval_impl, "evaluate_encoded"):
-            assert batch_encode_146_bf16 is not None
+            assert batch_encode_bf16 is not None
             xs = np.empty((n_boards, 146, 8, 8), dtype=np.uint16)
-            batch_encode_146_bf16(root_cboards, xs)
+            batch_encode_bf16(root_cboards, xs)
         else:
             xs = np.empty((n_boards, 146, 8, 8), dtype=np.float32)
-            batch_encode_146(root_cboards, xs)
+            batch_encode(root_cboards, xs)
         if _has_async:
             pol_t, wdl_t, event = _async_eval.evaluate_encoded_async(xs)
             if event is not None:
@@ -197,6 +214,7 @@ def run_gumbel_root_many_c(
     root_ids: list[int] = [-1] * n_boards  # node IDs in C tree
     root_legal: list[np.ndarray | None] = [None] * n_boards
     root_pri: list[np.ndarray | None] = [None] * n_boards
+    candidates_per_board: list[list[int] | None] = [None] * n_boards
     remaining_per_board: list[list[int] | None] = [None] * n_boards
     budget_remaining: list[int]
     if per_game_simulations is not None:
@@ -268,7 +286,16 @@ def run_gumbel_root_many_c(
   # Gumbel noise -> select top-m
         log_pri = np.log(np.maximum(pri[legal_idx], 1e-12))
         _noise_this = per_game_add_noise[i] if per_game_add_noise is not None else cfg.add_noise
-        g = _gumbel(rng, legal_idx.size) if _noise_this else np.zeros(legal_idx.size, dtype=np.float64)
+        _gumbel_scale = (
+            float(per_game_gumbel_scale[i])
+            if per_game_gumbel_scale is not None
+            else float(cfg.gumbel_scale)
+        ) if _noise_this else 0.0
+        g = (
+            _gumbel_scale * _gumbel(rng, legal_idx.size)
+            if _gumbel_scale > 0.0
+            else np.zeros(legal_idx.size, dtype=np.float64)
+        )
         score: np.ndarray = g + log_pri
 
         _game_budget = budget_remaining[i]
@@ -283,6 +310,7 @@ def run_gumbel_root_many_c(
         top_idx = np.argpartition(-score, kth)[:m]
         cands = legal_idx[top_idx].astype(int).tolist()
 
+        candidates_per_board[i] = list(cands)
         remaining_per_board[i] = list(cands)
   # Store gumbel values indexed by legal_idx for scoring
         g_full = np.zeros(POLICY_SIZE, dtype=np.float64)
@@ -365,7 +393,7 @@ def run_gumbel_root_many_c(
             _n_leaves[g] = _trees[g].start_gumbel_sims(
                 _cb_g, _rid_g, _rem_g, _gum_g, _pri_g, _bud_g, _rqs_g,
                 _c_scale, _c_visit, _c_puct, _fpu_reduction, _full_tree,
-                _enc_bufs[g], 0, int(target_batch),
+                _enc_bufs[g], 0, int(target_batch), int(use_lc0_root),
             )
         _t_prepare += _time.perf_counter() - _tp0
 
@@ -576,7 +604,7 @@ def run_gumbel_root_many_c(
             cast("list[np.ndarray]", root_pri),
             _budget_arr, _root_qs_arr,
             _c_scale, _c_visit, _c_puct, _fpu_reduction, _full_tree,
-            cast(np.ndarray, _enc_buf), 0, int(target_batch),
+            cast(np.ndarray, _enc_buf), 0, int(target_batch), int(use_lc0_root),
         )
         _t_prepare += _time.perf_counter() - _tp0
 
@@ -654,16 +682,24 @@ def run_gumbel_root_many_c(
         max_visit = int(child_visits.max()) if child_visits.size > 0 else 0
 
         completed_q = np.empty(legal.size, dtype=np.float64)
+        visits = np.empty(legal.size, dtype=np.float64)
         for j, a in enumerate(legal):
             slot = action_to_slot.get(int(a))
             if slot is not None:
                 completed_q[j] = float(child_q[slot])
+                visits[j] = float(child_visits[slot])
             else:
                 completed_q[j] = root_q_i
+                visits[j] = 0.0
 
-        logits_imp = np.log(np.maximum(pri[legal], 1e-12)) + _sigma_scale(
-            max_visit=int(max_visit), cfg=cfg,
-        ) * completed_q
+        logits_imp = np.log(np.maximum(pri[legal], 1e-12)) + _completed_q_transform(
+            actions=legal,
+            priors=pri[legal],
+            visits=visits,
+            qvalues=completed_q,
+            raw_value=root_q_i,
+            cfg=cfg,
+        )
         imp_all = _softmax(logits_imp)
         probs = np.zeros((POLICY_SIZE,), dtype=np.float32)
         probs[legal] = imp_all.astype(np.float32)
@@ -724,6 +760,29 @@ def run_gumbel_root_many_c(
   # the caller doesn't try to reuse nodes that don't exist in the main tree.
     _ret_root_ids = root_ids if not _use_pipeline else [-1] * n_boards
     assert tree is not None
+    if return_diagnostics:
+        diagnostics_out: list[dict[str, float] | None] = [None] * n_boards
+        for i in range(n_boards):
+            probs = probs_out[i]
+            action = actions_out[i]
+            legal = root_legal[i]
+            if probs is None or action is None or legal is None:
+                continue
+            diagnostics_out[i] = gumbel_policy_diagnostics(
+                probs=probs,
+                action=int(action),
+                legal=legal.astype(int, copy=False),
+                candidates=candidates_per_board[i],
+            )
+        return (
+            cast("list[np.ndarray]", probs_out),
+            cast("list[int]", actions_out),
+            values_out,
+            legal_masks_out,
+            tree,
+            _ret_root_ids,
+            diagnostics_out,
+        )
     return (
         cast("list[np.ndarray]", probs_out),
         cast("list[int]", actions_out),

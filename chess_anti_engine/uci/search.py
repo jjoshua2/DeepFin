@@ -19,6 +19,7 @@ import chess
 import numpy as np
 
 from chess_anti_engine.encoding.cboard_encode import CBoard
+from chess_anti_engine.encoding.lc0 import LC0_HISTORY_ROOT, normalize_lc0_history_encoding
 from chess_anti_engine.inference import BatchEvaluator
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
 from chess_anti_engine.mcts.gumbel import GumbelConfig
@@ -187,6 +188,7 @@ class SearchWorker:
   # the ~1ms root GPU call.
         self._root_pol_logits: np.ndarray | None = None
         self._root_wdl_logits: np.ndarray | None = None
+        self._last_gumbel_action_idx: int | None = None
   # Optional Syzygy probe. When set, MCTS leaves in the TB range get
   # their NN wdl overridden with the TB-truth distribution.
         self._tb_probe = None
@@ -491,6 +493,7 @@ class SearchWorker:
     def _invalidate_root_caches(self) -> None:
         self._root_pol_logits = None
         self._root_wdl_logits = None
+        self._last_gumbel_action_idx = None
         self._walker_cboard = None
         self._pucv_cboard = None
         self._pucv_pool_cboard = None
@@ -626,7 +629,10 @@ class SearchWorker:
             return
         xs = np.empty((1, 146, 8, 8), dtype=np.float32)
         root_cb = CBoard.from_board(board)
-        xs[0] = root_cb.encode_146()
+        use_lc0_root = (
+            normalize_lc0_history_encoding(self._cfg.input_history_encoding) == LC0_HISTORY_ROOT
+        )
+        xs[0] = root_cb.encode_146_lc0_root() if use_lc0_root else root_cb.encode_146()
         pol, wdl = self._evaluator.evaluate_encoded(xs)
         pol_np = np.asarray(pol, dtype=np.float32)
         wdl_np = np.asarray(wdl, dtype=np.float32).copy()
@@ -701,10 +707,35 @@ class SearchWorker:
             self._tree, self._root_id,
             allowed_root_indices=allowed_root_indices,
         )
+        if (
+            self._walker_pool is None
+            and self._pucv is None
+            and self._pucv_pool is None
+            and self._last_gumbel_action_idx is not None
+            and (
+                allowed_root_indices is None
+                or int(self._last_gumbel_action_idx) in allowed_root_indices
+            )
+        ):
+            gumbel_pv = _pv_from_root_action(
+                self._tree,
+                self._root_id,
+                int(self._last_gumbel_action_idx),
+            )
+            if gumbel_pv:
+                bestmove_idx = int(self._last_gumbel_action_idx)
+                pv_indices = gumbel_pv
         ponder_idx = _predicted_opponent_reply(
             self._tree, self._root_id,
             allowed_root_indices=allowed_root_indices,
         )
+        if (
+            self._walker_pool is None
+            and self._pucv is None
+            and self._pucv_pool is None
+            and len(pv_indices) >= 2
+        ):
+            ponder_idx = int(pv_indices[1])
         bestmove = _index_to_uci(board, bestmove_idx)
         ponder = (
             _index_to_uci(_board_after(board, bestmove_idx), ponder_idx)
@@ -861,7 +892,7 @@ class SearchWorker:
     def _run_gumbel_chunk(
         self, chunk: int, board: chess.Board, tb_probe,
     ) -> float:
-        _, _, values, _, tree, root_ids = run_gumbel_root_many_c(
+        _, actions, values, _, tree, root_ids = run_gumbel_root_many_c(
             model=None,
             boards=[board],
             device=self._device,
@@ -878,6 +909,7 @@ class SearchWorker:
         )
         self._tree = tree
         self._root_id = int(root_ids[0])
+        self._last_gumbel_action_idx = int(actions[0])
         return float(values[0])
 
     def _run_pucv_pool_chunk(
@@ -1161,6 +1193,32 @@ def _best_move_and_pv(
         return -1, []
     _, _, pv = lines[0]
     return pv[0], pv
+
+
+def _pv_from_root_action(
+    tree: MCTSTree,
+    root_id: int,
+    action_idx: int,
+) -> list[int]:
+    """Build a PV starting from a known root action.
+
+    Classic UCI Gumbel returns a sequential-halving survivor from the C search
+    call. That action is not guaranteed to be the most-visited root child, so
+    final bestmove must preserve it instead of rebuilding from visit counts.
+    After the root action, the continuation can still follow most visits.
+    """
+    cid = tree.find_child(root_id, int(action_idx))
+    if cid == -1:
+        return []
+    pv = [int(action_idx)]
+    while cid != -1:
+        a, vs = tree.get_children_visits(cid)
+        if a.size == 0:
+            break
+        nxt = int(a[int(np.argmax(vs))])
+        pv.append(nxt)
+        cid = tree.find_child(cid, nxt)
+    return pv
 
 
 def _predicted_opponent_reply(

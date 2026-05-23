@@ -210,3 +210,23 @@ class TestEncodePositionSnapshot:
                 cb_enc[112:], ref[112:], atol=1e-6,
                 err_msg=f"CBoard feature planes mismatch for {b.fen()}",
             )
+
+    def test_cboard_encode_146_lc0_root_matches_python(self):
+        """LC0-root CBoard path must match Python for history + metadata."""
+        try:
+            from chess_anti_engine.encoding._lc0_ext import CBoard
+            from chess_anti_engine.mcts._mcts_tree import batch_encode_146_lc0_root
+        except ImportError:
+            pytest.skip("CBoard C extension not available")
+
+        b = chess.Board()
+        for san in ("e4", "e5", "Nf3"):
+            b.push_san(san)
+        cb = CBoard.from_board(b)
+        ref = encode_position(b, add_features=True, input_history_encoding="lc0_root")
+        got = cb.encode_146_lc0_root()
+        np.testing.assert_allclose(got[:112], ref[:112], atol=1e-6)
+
+        batch = np.empty((1, 146, 8, 8), dtype=np.float32)
+        batch_encode_146_lc0_root([cb], batch)
+        np.testing.assert_allclose(batch[0], got, atol=1e-6)

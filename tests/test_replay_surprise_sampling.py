@@ -1,5 +1,6 @@
 import numpy as np
 
+from chess_anti_engine.moves import COMPACT_POLICY_SIZE
 from chess_anti_engine.replay.buffer import (
     ArrayReplayBuffer,
     ReplayBuffer,
@@ -99,3 +100,27 @@ def test_array_replay_buffer_arrays_and_capacity():
     assert arrs["x"].shape == (20, 146, 8, 8)
     assert arrs["policy_target"].shape == (20, 64 * 73)
     assert arrs["wdl_target"].shape == (20,)
+
+
+def test_array_replay_buffer_capacity_preserves_scalar_metadata():
+    rng = np.random.default_rng(0)
+    buf = ArrayReplayBuffer(3, rng=rng)
+
+    x = np.zeros((5, 146, 8, 8), dtype=np.float16)
+    policy = np.zeros((5, COMPACT_POLICY_SIZE), dtype=np.float16)
+    policy[:, 0] = 1.0
+    buf.add_many_arrays({
+        "x": x,
+        "policy_target": policy,
+        "wdl_target": np.arange(5, dtype=np.int8) % 3,
+        "priority": np.arange(5, dtype=np.float32) + 1.0,
+        "has_policy": np.ones((5,), dtype=np.uint8),
+    })
+
+    assert len(buf) == 3
+    chunk = buf._chunks[0]  # noqa: SLF001 - regression test for internal eviction metadata.
+    assert np.asarray(chunk["_policy_size"]).shape == ()
+    assert int(np.asarray(chunk["_policy_size"]).item()) == COMPACT_POLICY_SIZE
+
+    arrs = buf.sample_batch_arrays(2, wdl_balance=False)
+    assert arrs["policy_target"].shape == (2, COMPACT_POLICY_SIZE)

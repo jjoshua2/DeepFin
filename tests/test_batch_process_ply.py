@@ -8,6 +8,7 @@ import chess
 import numpy as np
 import pytest
 
+from chess_anti_engine.encoding import encode_position
 from chess_anti_engine.encoding.cboard_encode import cboard_from_board_fast
 from chess_anti_engine.moves import (
     POLICY_SIZE,
@@ -165,6 +166,38 @@ def test_multi_game():
     assert all(mask[i].sum() == 20 for i in range(n))  # Starting position has 20 legal moves
     assert all(ply[i] == 0 for i in range(n))
     assert all(pov[i] == 1 for i in range(n))  # White to move
+
+
+@pytest.mark.skipif(not HAS_C, reason="C extension not available")
+def test_lc0_root_record_encoding_flag():
+    """C fused record writer can store LC0-root input planes."""
+    board = chess.Board()
+    cb = cboard_from_board_fast(board)
+    for uci in ["e2e4", "e7e5", "g1f3", "b8c6", "f1b5"]:
+        move = chess.Move.from_uci(uci)
+        cb.push_index(move_to_index(move, board))
+        board.push(move)
+    action = int(move_to_index(next(iter(board.legal_moves)), board))
+
+    pol = np.zeros((1, POLICY_SIZE), dtype=np.float32)
+    wdl = np.array([[0.2, 0.6, 0.2]], dtype=np.float32)
+    probs = np.zeros((1, POLICY_SIZE), dtype=np.float32)
+    probs[0, action] = 1.0
+
+    batch_process_ply = _require_batch_process_ply()
+    x, *_rest = batch_process_ply(
+        [cb], pol, wdl,
+        np.array([action], dtype=np.int32),
+        np.array([0.0], dtype=np.float64),
+        probs,
+        0, 4.8, 3.8, 0.09, 1.0,
+        1,
+    )
+
+    expected = encode_position(board, add_features=True, input_history_encoding="lc0_root")
+    legacy = encode_position(board, add_features=True, input_history_encoding="legacy")
+    np.testing.assert_allclose(x[0], expected, atol=0.0)
+    assert not np.array_equal(x[0, :112], legacy[:112])
 
 
 @pytest.mark.skipif(not HAS_C, reason="C extension not available")

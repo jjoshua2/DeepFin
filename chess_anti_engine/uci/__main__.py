@@ -19,6 +19,7 @@ import chess
 import numpy as np
 
 from chess_anti_engine.encoding._lc0_ext import CBoard
+from chess_anti_engine.encoding.lc0 import LC0_HISTORY_ROOT, normalize_lc0_history_encoding
 from chess_anti_engine.inference import DirectGPUEvaluator
 from chess_anti_engine.inference_cache import EncodedEvalCache
 from chess_anti_engine.inference_dispatcher import (
@@ -35,7 +36,11 @@ from .search import SearchWorker
 
 
 def _warmup_evaluator(
-    evaluator, *, n_walkers: int = 1, walker_gather: int = 1,
+    evaluator,
+    *,
+    n_walkers: int = 1,
+    walker_gather: int = 1,
+    input_history_encoding: str = "legacy",
 ) -> None:
     """Trigger torch.compile + CUDA graph capture for the shapes the UCI
     search will actually hit, so the first `go` doesn't pay compile
@@ -52,7 +57,8 @@ def _warmup_evaluator(
     same error and surface it there.
     """
     cb = CBoard.from_board(chess.Board())
-    encoded = cb.encode_146()
+    use_lc0_root = normalize_lc0_history_encoding(input_history_encoding) == LC0_HISTORY_ROOT
+    encoded = cb.encode_146_lc0_root() if use_lc0_root else cb.encode_146()
     if n_walkers > 1:
   # batch=1 covers the pre-gather single-descent phase (e.g. when
   # budget runs out mid-gather). walker_gather is the per-walker
@@ -69,10 +75,16 @@ def _warmup_evaluator(
             break
 
 
-def _warmup_pucv_evaluator(evaluator, *, gather: int) -> None:
+def _warmup_pucv_evaluator(
+    evaluator,
+    *,
+    gather: int,
+    input_history_encoding: str = "legacy",
+) -> None:
     """Warm the exact inplace-async shapes used by MultiGpuPucvPool."""
     cb = CBoard.from_board(chess.Board())
-    encoded = cb.encode_146()
+    use_lc0_root = normalize_lc0_history_encoding(input_history_encoding) == LC0_HISTORY_ROOT
+    encoded = cb.encode_146_lc0_root() if use_lc0_root else cb.encode_146()
     batches = sorted({1, max(1, int(gather))})
     for batch in batches:
         for slot in range(min(2, int(getattr(evaluator, "n_slots", 1)))):
@@ -118,6 +130,8 @@ def _make_evaluator_factory(
     (worker compiled on main, dispatched on submitter, fell back to eager
     at 47ms/forward instead of ~25ms) is the failure mode this avoids.
     """
+    input_history_encoding = str(getattr(models[0], "input_history_encoding", "legacy"))
+
     def build(max_batch: int, eval_cache_entries: int = 0):
         if compile_mode:
             import torch
@@ -156,6 +170,7 @@ def _make_evaluator_factory(
             )
         _warmup_evaluator(
             evaluator, n_walkers=n_walkers, walker_gather=walker_gather,
+            input_history_encoding=input_history_encoding,
         )
         return evaluator
     return build
@@ -172,6 +187,7 @@ def _make_multi_gpu_pucv_factory_builder(
     Each factory compiles, constructs, and warms its evaluator on the pool
     worker thread that will replay cudagraphs during search.
     """
+    input_history_encoding = str(getattr(models[0], "input_history_encoding", "legacy"))
 
     def build(max_batch: int, gather: int):
         effective_gather = min(max(1, int(gather)), int(max_batch))
@@ -190,7 +206,11 @@ def _make_multi_gpu_pucv_factory_builder(
                 evaluator = DirectGPUEvaluator(
                     compiled, device=d, max_batch=max_batch, n_slots=2,
                 )
-                _warmup_pucv_evaluator(evaluator, gather=effective_gather)
+                _warmup_pucv_evaluator(
+                    evaluator,
+                    gather=effective_gather,
+                    input_history_encoding=input_history_encoding,
+                )
                 return evaluator
 
             factories.append(make_one)
@@ -213,6 +233,7 @@ def _build_engine(
     vl_gather: int,
     eval_cache_entries: int,
     use_multi_gpu_pucv: bool,
+    input_history_encoding: str = "legacy",
     rebuild_evaluator=None,
     rebuild_multi_gpu_pucv_factories=None,
     options: EngineOptions | None = None,
@@ -220,7 +241,12 @@ def _build_engine(
     worker = SearchWorker(
         evaluator,
         device=primary_device,
-        gumbel_cfg=GumbelConfig(simulations=chunk_sims, topk=topk, add_noise=False),
+        gumbel_cfg=GumbelConfig(
+            simulations=chunk_sims,
+            topk=topk,
+            add_noise=False,
+            input_history_encoding=input_history_encoding,
+        ),
         chunk_sims=chunk_sims,
         n_walkers=n_walkers,
         vloss_weight=vloss_weight,
@@ -390,6 +416,7 @@ def main() -> int:
             n_walkers = max(1, int(args.walkers))
             walker_gather = max(1, int(args.walker_gather))
             models = _load_models(args.checkpoint, devices)
+            input_history_encoding = str(getattr(models[0], "input_history_encoding", "legacy"))
             compile_mode = str(args.compile_mode) if args.compile else None
             build_eval = _make_evaluator_factory(
                 models, devices, coalesce=bool(args.coalesce),
@@ -417,6 +444,7 @@ def main() -> int:
                 vl_gather=startup_options.vl_gather,
                 eval_cache_entries=startup_options.eval_cache_entries,
                 use_multi_gpu_pucv=use_multi_gpu_pucv,
+                input_history_encoding=input_history_encoding,
                 rebuild_evaluator=build_eval,
                 rebuild_multi_gpu_pucv_factories=build_pucv_factories,
                 options=startup_options,

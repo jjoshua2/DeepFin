@@ -72,6 +72,7 @@ def _pick_moves_for_boards(
     model: torch.nn.Module, sub_boards: list[chess.Board], *,
     device: str, rng: np.random.Generator,
     mcts_type: str, mcts_simulations: int, temperature: float, c_puct: float,
+    gumbel_add_noise: bool,
 ) -> list[int]:
     """Run gumbel- or PUCT-MCTS for one model on a list of boards."""
     if str(mcts_type) == "gumbel":
@@ -80,6 +81,7 @@ def _pick_moves_for_boards(
             model, sub_boards, device=device, rng=rng,
             cfg=GumbelConfig(
                 simulations=int(mcts_simulations), temperature=float(temperature),
+                add_noise=bool(gumbel_add_noise),
             ),
         )
         _probs, actions, _values, _masks = result[:4]
@@ -151,8 +153,11 @@ def play_match_batch(
     a_plays_white: list[bool] | None = None,
     mcts_type: str = "puct",
     mcts_simulations: int = 200,
+    mcts_simulations_a: int | None = None,
+    mcts_simulations_b: int | None = None,
     temperature: float = 0.1,
     c_puct: float = 2.5,
+    gumbel_add_noise: bool = True,
     opening_cfg: OpeningConfig | None = None,
 ) -> MatchStats:
     """Play model-vs-model matches.
@@ -175,15 +180,20 @@ def play_match_batch(
         opening_cfg = OpeningConfig(random_start_plies=2)
     boards = [make_starting_board(rng=rng, cfg=opening_cfg) for _ in range(g)]
     done = [False] * g
+    sims_a = int(mcts_simulations if mcts_simulations_a is None else mcts_simulations_a)
+    sims_b = int(mcts_simulations if mcts_simulations_b is None else mcts_simulations_b)
+    if sims_a <= 0 or sims_b <= 0:
+        raise ValueError("mcts simulations must be > 0")
 
-    def _pick(model: torch.nn.Module, idxs: list[int]) -> list[int]:
+    def _pick(model: torch.nn.Module, idxs: list[int], *, sims: int) -> list[int]:
         if not idxs:
             return []
         return _pick_moves_for_boards(
             model, [boards[i] for i in idxs],
             device=device, rng=rng,
-            mcts_type=mcts_type, mcts_simulations=mcts_simulations,
+            mcts_type=mcts_type, mcts_simulations=sims,
             temperature=temperature, c_puct=c_puct,
+            gumbel_add_noise=bool(gumbel_add_noise),
         )
 
     for _ply in range(int(max_plies)):
@@ -197,8 +207,8 @@ def play_match_batch(
         a_to_move, b_to_move = _split_active_by_side_to_move(
             active, boards, a_plays_white,
         )
-        _apply_actions_to_boards(boards, a_to_move, _pick(model_a, a_to_move))
-        _apply_actions_to_boards(boards, b_to_move, _pick(model_b, b_to_move))
+        _apply_actions_to_boards(boards, a_to_move, _pick(model_a, a_to_move, sims=sims_a))
+        _apply_actions_to_boards(boards, b_to_move, _pick(model_b, b_to_move, sims=sims_b))
 
     a_win, a_draw, a_loss = _tally_match_results(boards, a_plays_white)
 

@@ -42,6 +42,27 @@ class _BufferedUpload:
     stalemate_games: int = 0
     sf_d6_sum: float = 0.0
     sf_d6_n: int = 0
+    diff_focus_records: int = 0
+    diff_focus_kept: int = 0
+    diff_focus_keep_prob_sum: float = 0.0
+    diff_focus_keep_limited: int = 0
+    diff_focus_sample_weight_sum: float = 0.0
+    diff_focus_sample_weight_limited: int = 0
+    diff_focus_priority_sum: float = 0.0
+    diff_focus_priority_sq_sum: float = 0.0
+    diff_focus_priority_min: float = float("inf")
+    diff_focus_priority_max: float = -float("inf")
+    gumbel_policy_diag_n: int = 0
+    gumbel_policy_top_prob_sum: float = 0.0
+    gumbel_policy_action_prob_sum: float = 0.0
+    gumbel_policy_entropy_sum: float = 0.0
+    gumbel_policy_eff_moves_sum: float = 0.0
+    gumbel_policy_candidate_mass_sum: float = 0.0
+    gumbel_policy_non_candidate_top_prob_sum: float = 0.0
+    gumbel_policy_argmax_is_candidate_sum: int = 0
+    gumbel_policy_argmax_is_action_sum: int = 0
+    gumbel_policy_legal_count_sum: int = 0
+    gumbel_policy_candidate_count_sum: int = 0
     first_buffered_at_s: float | None = None
 
     def reset(self) -> None:
@@ -126,6 +147,54 @@ def _buffer_add_completed_game(
     buf.stalemate_games += int(getattr(game_batch, "stalemate_games", 0))
     buf.sf_d6_sum += float(getattr(game_batch, "sf_d6_sum", 0.0))
     buf.sf_d6_n += int(getattr(game_batch, "sf_d6_n", 0))
+    old_diff_records = int(buf.diff_focus_records)
+    incoming_diff_records = int(getattr(game_batch, "diff_focus_records", 0))
+    buf.diff_focus_records += incoming_diff_records
+    buf.diff_focus_kept += int(getattr(game_batch, "diff_focus_kept", 0))
+    buf.diff_focus_keep_prob_sum += float(getattr(game_batch, "diff_focus_keep_prob_sum", 0.0))
+    buf.diff_focus_keep_limited += int(getattr(game_batch, "diff_focus_keep_limited", 0))
+    buf.diff_focus_sample_weight_sum += float(getattr(game_batch, "diff_focus_sample_weight_sum", 0.0))
+    buf.diff_focus_sample_weight_limited += int(
+        getattr(game_batch, "diff_focus_sample_weight_limited", 0),
+    )
+    buf.diff_focus_priority_sum += float(getattr(game_batch, "diff_focus_priority_sum", 0.0))
+    buf.diff_focus_priority_sq_sum += float(getattr(game_batch, "diff_focus_priority_sq_sum", 0.0))
+    if incoming_diff_records > 0:
+        incoming_min = float(getattr(game_batch, "diff_focus_priority_min", 0.0))
+        incoming_max = float(getattr(game_batch, "diff_focus_priority_max", 0.0))
+        if old_diff_records <= 0:
+            buf.diff_focus_priority_min = incoming_min
+            buf.diff_focus_priority_max = incoming_max
+        else:
+            buf.diff_focus_priority_min = min(float(buf.diff_focus_priority_min), incoming_min)
+            buf.diff_focus_priority_max = max(float(buf.diff_focus_priority_max), incoming_max)
+    buf.gumbel_policy_diag_n += int(getattr(game_batch, "gumbel_policy_diag_n", 0))
+    buf.gumbel_policy_top_prob_sum += float(getattr(game_batch, "gumbel_policy_top_prob_sum", 0.0))
+    buf.gumbel_policy_action_prob_sum += float(
+        getattr(game_batch, "gumbel_policy_action_prob_sum", 0.0),
+    )
+    buf.gumbel_policy_entropy_sum += float(getattr(game_batch, "gumbel_policy_entropy_sum", 0.0))
+    buf.gumbel_policy_eff_moves_sum += float(
+        getattr(game_batch, "gumbel_policy_eff_moves_sum", 0.0),
+    )
+    buf.gumbel_policy_candidate_mass_sum += float(
+        getattr(game_batch, "gumbel_policy_candidate_mass_sum", 0.0),
+    )
+    buf.gumbel_policy_non_candidate_top_prob_sum += float(
+        getattr(game_batch, "gumbel_policy_non_candidate_top_prob_sum", 0.0),
+    )
+    buf.gumbel_policy_argmax_is_candidate_sum += int(
+        getattr(game_batch, "gumbel_policy_argmax_is_candidate_sum", 0),
+    )
+    buf.gumbel_policy_argmax_is_action_sum += int(
+        getattr(game_batch, "gumbel_policy_argmax_is_action_sum", 0),
+    )
+    buf.gumbel_policy_legal_count_sum += int(
+        getattr(game_batch, "gumbel_policy_legal_count_sum", 0),
+    )
+    buf.gumbel_policy_candidate_count_sum += int(
+        getattr(game_batch, "gumbel_policy_candidate_count_sum", 0),
+    )
 
 
 def _pending_elapsed_path(shard_path: Path) -> Path:
@@ -178,6 +247,33 @@ def _flush_upload_buffer_to_pending(
         stalemate_games=int(buf.stalemate_games),
         sf_d6_sum=float(buf.sf_d6_sum),
         sf_d6_n=int(buf.sf_d6_n),
+        diff_focus_records=int(buf.diff_focus_records),
+        diff_focus_kept=int(buf.diff_focus_kept),
+        diff_focus_keep_prob_sum=float(buf.diff_focus_keep_prob_sum),
+        diff_focus_keep_limited=int(buf.diff_focus_keep_limited),
+        diff_focus_sample_weight_sum=float(buf.diff_focus_sample_weight_sum),
+        diff_focus_sample_weight_limited=int(buf.diff_focus_sample_weight_limited),
+        diff_focus_priority_sum=float(buf.diff_focus_priority_sum),
+        diff_focus_priority_sq_sum=float(buf.diff_focus_priority_sq_sum),
+        diff_focus_priority_min=(
+            float(buf.diff_focus_priority_min) if int(buf.diff_focus_records) > 0 else 0.0
+        ),
+        diff_focus_priority_max=(
+            float(buf.diff_focus_priority_max) if int(buf.diff_focus_records) > 0 else 0.0
+        ),
+        gumbel_policy_diag_n=int(buf.gumbel_policy_diag_n),
+        gumbel_policy_top_prob_sum=float(buf.gumbel_policy_top_prob_sum),
+        gumbel_policy_action_prob_sum=float(buf.gumbel_policy_action_prob_sum),
+        gumbel_policy_entropy_sum=float(buf.gumbel_policy_entropy_sum),
+        gumbel_policy_eff_moves_sum=float(buf.gumbel_policy_eff_moves_sum),
+        gumbel_policy_candidate_mass_sum=float(buf.gumbel_policy_candidate_mass_sum),
+        gumbel_policy_non_candidate_top_prob_sum=float(
+            buf.gumbel_policy_non_candidate_top_prob_sum,
+        ),
+        gumbel_policy_argmax_is_candidate_sum=int(buf.gumbel_policy_argmax_is_candidate_sum),
+        gumbel_policy_argmax_is_action_sum=int(buf.gumbel_policy_argmax_is_action_sum),
+        gumbel_policy_legal_count_sum=int(buf.gumbel_policy_legal_count_sum),
+        gumbel_policy_candidate_count_sum=int(buf.gumbel_policy_candidate_count_sum),
     )
     arrs = samples_to_arrays(list(buf.samples))
     save_local_shard_arrays(shard_path, arrs=arrs, meta=meta)

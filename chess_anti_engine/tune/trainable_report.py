@@ -446,6 +446,14 @@ def _train_metrics_dict(metrics) -> dict:
     }
 
 
+def _mean_std(n: int, total: float, sq_total: float) -> tuple[float, float]:
+    if n <= 0:
+        return 0.0, 0.0
+    mean = float(total) / float(n)
+    var = max(0.0, float(sq_total) / float(n) - mean * mean)
+    return mean, var ** 0.5
+
+
 _TEST_METRIC_KEYS: tuple[str, ...] = (
     "test_loss", "test_policy_loss", "test_soft_policy_loss", "test_future_policy_loss",
     "test_wdl_loss", "test_sf_move_loss", "test_sf_move_acc", "test_sf_eval_loss",
@@ -534,6 +542,18 @@ def _build_report_dict(
         holdout_frozen=holdout_frozen, holdout_generation=holdout_generation,
     )
     train_metrics_dict = _train_metrics_dict(tr.metrics)
+    diff_priority_mean, diff_priority_std = _mean_std(
+        int(sp.diff_focus_records),
+        float(sp.diff_focus_priority_sum),
+        float(sp.diff_focus_priority_sq_sum),
+    )
+    replay_priority_mean, replay_priority_std = _mean_std(
+        int(sp.replay_priority_n),
+        float(sp.replay_priority_sum),
+        float(sp.replay_priority_sq_sum),
+    )
+    gumbel_diag_n = int(sp.gumbel_policy_diag_n)
+    replay_wdl_n = int(sp.replay_wdl_0) + int(sp.replay_wdl_1) + int(sp.replay_wdl_2)
 
     return {
         "opponent_sf_nodes": int(sf_nodes_used),
@@ -546,12 +566,117 @@ def _build_report_dict(
         "test_replay": int(holdout_buf_size),
         "positions_added": sp.total_positions,
         "replay_positions_ingested": int(sp.replay_positions_ingested),
+        "replay_window_before": int(sp.replay_window_before),
+        "replay_window_after": int(sp.replay_window_after),
+        "replay_window_growth_positions": int(sp.replay_window_growth_positions),
+        "replay_window_growth_frac_used": float(sp.replay_window_growth_frac_used),
         "ingest_is_selfplay_tagged": int(sp.ingest_is_selfplay_tagged),
         "ingest_is_selfplay_true": int(sp.ingest_is_selfplay_true),
         "ingest_frac_selfplay": (
             float(sp.ingest_is_selfplay_true) / float(sp.ingest_is_selfplay_tagged)
             if sp.ingest_is_selfplay_tagged > 0
             else 0.0
+        ),
+        "diff_focus_records": int(sp.diff_focus_records),
+        "diff_focus_kept": int(sp.diff_focus_kept),
+        "diff_focus_keep_rate": (
+            float(sp.diff_focus_kept) / float(sp.diff_focus_records)
+            if sp.diff_focus_records > 0
+            else 0.0
+        ),
+        "diff_focus_keep_prob_mean": (
+            float(sp.diff_focus_keep_prob_sum) / float(sp.diff_focus_records)
+            if sp.diff_focus_records > 0
+            else 0.0
+        ),
+        "diff_focus_keep_limited_frac": (
+            float(sp.diff_focus_keep_limited) / float(sp.diff_focus_records)
+            if sp.diff_focus_records > 0
+            else 0.0
+        ),
+        "diff_focus_sample_weight_mean": (
+            float(sp.diff_focus_sample_weight_sum) / float(sp.diff_focus_records)
+            if sp.diff_focus_records > 0
+            else 0.0
+        ),
+        "diff_focus_sample_weight_limited_frac": (
+            float(sp.diff_focus_sample_weight_limited) / float(sp.diff_focus_records)
+            if sp.diff_focus_records > 0
+            else 0.0
+        ),
+        "diff_focus_priority_mean": float(diff_priority_mean),
+        "diff_focus_priority_std": float(diff_priority_std),
+        "diff_focus_priority_min": float(sp.diff_focus_priority_min),
+        "diff_focus_priority_max": float(sp.diff_focus_priority_max),
+        "gumbel_policy_diag_n": gumbel_diag_n,
+        "gumbel_policy_top_prob_mean": (
+            float(sp.gumbel_policy_top_prob_sum) / float(gumbel_diag_n)
+            if gumbel_diag_n > 0 else 0.0
+        ),
+        "gumbel_policy_action_prob_mean": (
+            float(sp.gumbel_policy_action_prob_sum) / float(gumbel_diag_n)
+            if gumbel_diag_n > 0 else 0.0
+        ),
+        "gumbel_policy_entropy_mean": (
+            float(sp.gumbel_policy_entropy_sum) / float(gumbel_diag_n)
+            if gumbel_diag_n > 0 else 0.0
+        ),
+        "gumbel_policy_eff_moves_mean": (
+            float(sp.gumbel_policy_eff_moves_sum) / float(gumbel_diag_n)
+            if gumbel_diag_n > 0 else 0.0
+        ),
+        "gumbel_policy_candidate_mass_mean": (
+            float(sp.gumbel_policy_candidate_mass_sum) / float(gumbel_diag_n)
+            if gumbel_diag_n > 0 else 0.0
+        ),
+        "gumbel_policy_non_candidate_top_prob_mean": (
+            float(sp.gumbel_policy_non_candidate_top_prob_sum) / float(gumbel_diag_n)
+            if gumbel_diag_n > 0 else 0.0
+        ),
+        "gumbel_policy_argmax_is_candidate_frac": (
+            float(sp.gumbel_policy_argmax_is_candidate_sum) / float(gumbel_diag_n)
+            if gumbel_diag_n > 0 else 0.0
+        ),
+        "gumbel_policy_argmax_is_action_frac": (
+            float(sp.gumbel_policy_argmax_is_action_sum) / float(gumbel_diag_n)
+            if gumbel_diag_n > 0 else 0.0
+        ),
+        "gumbel_policy_legal_count_mean": (
+            float(sp.gumbel_policy_legal_count_sum) / float(gumbel_diag_n)
+            if gumbel_diag_n > 0 else 0.0
+        ),
+        "gumbel_policy_candidate_count_mean": (
+            float(sp.gumbel_policy_candidate_count_sum) / float(gumbel_diag_n)
+            if gumbel_diag_n > 0 else 0.0
+        ),
+        "replay_priority_n": int(sp.replay_priority_n),
+        "replay_priority_mean": float(replay_priority_mean),
+        "replay_priority_std": float(replay_priority_std),
+        "replay_priority_min": float(sp.replay_priority_min),
+        "replay_priority_max": float(sp.replay_priority_max),
+        "replay_has_policy_frac": (
+            float(sp.replay_has_policy_sum) / float(sp.replay_has_policy_n)
+            if sp.replay_has_policy_n > 0
+            else 0.0
+        ),
+        "replay_has_sf_wdl_frac": (
+            float(sp.replay_has_sf_wdl_sum) / float(sp.replay_has_sf_wdl_n)
+            if sp.replay_has_sf_wdl_n > 0
+            else 0.0
+        ),
+        "replay_has_search_wdl_frac": (
+            float(sp.replay_has_search_wdl_sum) / float(sp.replay_has_search_wdl_n)
+            if sp.replay_has_search_wdl_n > 0
+            else 0.0
+        ),
+        "replay_wdl_win_frac": (
+            float(sp.replay_wdl_0) / float(replay_wdl_n) if replay_wdl_n > 0 else 0.0
+        ),
+        "replay_wdl_draw_frac": (
+            float(sp.replay_wdl_1) / float(replay_wdl_n) if replay_wdl_n > 0 else 0.0
+        ),
+        "replay_wdl_loss_frac": (
+            float(sp.replay_wdl_2) / float(replay_wdl_n) if replay_wdl_n > 0 else 0.0
         ),
         "games_generated": int(sp.total_games_generated),
         "avg_game_plies": float(pr.avg_game_plies),
@@ -613,6 +738,9 @@ def _build_report_dict(
         "w_sf_move": float(trainer.w_sf_move),
         "sf_wdl_frac": float(trainer.sf_wdl_frac),
         "diff_focus_q_weight": tc.diff_focus_q_weight,
+        "diff_focus_pol_scale": tc.diff_focus_pol_scale,
+        "diff_focus_slope": tc.diff_focus_slope,
+        "diff_focus_min": tc.diff_focus_min,
         "feature_dropout_p": tc.feature_dropout_p,
         # Report the effective per-group probability (after sentinel resolution),
         # not the raw -1 sentinel from TrialConfig — the dashboard otherwise

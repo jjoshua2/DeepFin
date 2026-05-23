@@ -48,7 +48,14 @@ def stable_seed_u32(*parts: object) -> int:
 
 def slice_array_batch(arrs: dict[str, np.ndarray], idxs: np.ndarray) -> dict[str, np.ndarray]:
     ii = np.asarray(idxs, dtype=np.int64).reshape(-1)
-    return {k: np.array(np.asarray(v)[ii], copy=True, order="C") for k, v in arrs.items()}
+    return {
+        k: (
+            np.array(v, copy=True)
+            if np.asarray(v).ndim == 0
+            else np.array(np.asarray(v)[ii], copy=True, order="C")
+        )
+        for k, v in arrs.items()
+    }
 
 
 def concat_array_batches(batches: list[dict[str, np.ndarray]]) -> dict[str, np.ndarray]:

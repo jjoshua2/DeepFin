@@ -141,6 +141,10 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
             decay_start_move=tc.temperature_decay_start_move,
             decay_moves=tc.temperature_decay_moves,
             endgame=tc.temperature_endgame,
+            selfplay_temperature=tc.selfplay_temperature,
+            selfplay_decay_start_move=tc.selfplay_temperature_decay_start_move,
+            selfplay_decay_moves=tc.selfplay_temperature_decay_moves,
+            selfplay_endgame=tc.selfplay_temperature_endgame,
         ),
         search=SearchConfig(
             mcts_type=tc.mcts,
@@ -148,6 +152,11 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
             fast_simulations=tc.fast_simulations,
             fpu_reduction=tc.fpu_reduction,
             fpu_at_root=tc.fpu_at_root,
+            gumbel_topk=tc.gumbel_topk,
+            gumbel_scale=tc.gumbel_scale,
+            gumbel_scale_after=tc.gumbel_scale_after,
+            gumbel_scale_decay_start_move=tc.gumbel_scale_decay_start_move,
+            gumbel_scale_decay_moves=tc.gumbel_scale_decay_moves,
         ),
         opening=OpeningConfig(
             opening_book_path=tc.opening_book_path,
@@ -187,6 +196,9 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
             syzygy_in_search=tc.syzygy_in_search,
             categorical_bins=tc.categorical_bins,
             hlgauss_sigma=tc.hlgauss_sigma,
+            policy_encoding=tc.policy_encoding,
+            input_history_encoding=tc.input_history_encoding,
+            record_lc0_root_input=tc.record_lc0_root_input,
         ),
     )
 
@@ -208,6 +220,27 @@ _TOPOLOGY_KEYS = frozenset({
     "num_samples",
     "max_concurrent_trials",
     "gpus_per_trial",
+    "optimizer",
+    "matrix_optimizer_scope",
+    "weight_decay_mode",
+    "soda_scope",
+    "soda_start_step",
+    "input_pos_encoding",
+    "qkv_projection",
+    "use_deepnorm",
+    "policy_encoding",
+    "input_history_encoding",
+    "input_global_embedding",
+    "input_global_embedding_channels",
+    "input_square_embedding",
+    "smolgen_mode",
+    "smolgen_bias_scale",
+    "smolgen_bias_norm",
+    "arc_attention_bias",
+    "smolgen_relation_basis",
+    "smolgen_relation_norm",
+    "smolgen_relation_coeff_norm",
+    "smolgen_relation_scale",
 })
 
 
@@ -257,6 +290,23 @@ def _apply_lr_gamma_weights(trainer: Trainer, config: dict, *, rescale_current_l
         trainer.set_peak_lr(float(config["lr"]), rescale_current=rescale_current_lr)
     if "cosmos_gamma" in config and hasattr(trainer.opt, "gamma"):
         trainer.opt.gamma = float(config["cosmos_gamma"])
+    aurora_group_updates: dict[str, object] = {}
+    if "aurora_pp_iterations" in config:
+        aurora_group_updates["aurora_pp_iterations"] = int(config["aurora_pp_iterations"])
+    if "aurora_pp_beta" in config:
+        aurora_group_updates["aurora_pp_beta"] = float(config["aurora_pp_beta"])
+    if "aurora_polar_steps" in config:
+        aurora_group_updates["aurora_polar_steps"] = int(config["aurora_polar_steps"])
+    if "aurora_polar_method" in config:
+        aurora_group_updates["aurora_polar_method"] = str(config["aurora_polar_method"])
+    if "aurora_polar_dtype" in config:
+        aurora_group_updates["aurora_polar_dtype"] = str(config["aurora_polar_dtype"])
+    if "aurora_polar_safety" in config:
+        aurora_group_updates["aurora_polar_safety"] = float(config["aurora_polar_safety"])
+    if aurora_group_updates:
+        for group in trainer.opt.param_groups:
+            if bool(group.get("use_aurora", False)):
+                group.update(aurora_group_updates)
     for wk in _TRAINER_WEIGHT_KEYS:
         if wk in config:
             setattr(trainer, wk, float(config[wk]))

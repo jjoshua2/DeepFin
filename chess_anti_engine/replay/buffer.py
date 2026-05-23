@@ -15,6 +15,7 @@ class ReplaySample:
   # Sampling priority (KataGo-style surprise weighting)
     priority: float = 1.0
     has_policy: bool = True
+    x_lc0_root: np.ndarray | None = None  # Optional alternate LC0-root input planes.
 
   # Optional auxiliary targets (for spec completeness; not all are trained yet)
   #
@@ -144,7 +145,8 @@ class ArrayReplayBuffer:
                 continue
             chunk = self._chunks[0]
             for k in tuple(chunk.keys()):
-                chunk[k] = chunk[k][remaining:]
+                arr = np.asarray(chunk[k])
+                chunk[k] = arr if arr.ndim == 0 else arr[remaining:]
             self._chunk_sizes[0] = first_n - remaining
             self._size -= remaining
             remaining = 0
@@ -207,17 +209,16 @@ class ArrayReplayBuffer:
         return self._sample_indices(np.arange(n, dtype=np.int64), int(batch_size))
 
     def _gather_rows(self, indices: np.ndarray) -> dict[str, np.ndarray]:
-        from chess_anti_engine.moves import POLICY_SIZE
-
         from .shard import densify_chunk
         idx = np.asarray(indices, dtype=np.int64).reshape(-1)
         if not self._chunks:
             raise ValueError("ArrayReplayBuffer is empty")
+        policy_size = int(np.asarray(self._chunks[0].get("_policy_size", 4672)).item())
         if idx.size == 0:
             x_planes = int(np.asarray(self._chunks[0]["x"]).shape[1])
             return {
                 "x": np.empty((0, x_planes, 8, 8), dtype=np.float16),
-                "policy_target": np.empty((0, POLICY_SIZE), dtype=np.float16),
+                "policy_target": np.empty((0, policy_size), dtype=np.float16),
                 "wdl_target": np.empty((0,), dtype=np.int8),
                 "priority": np.empty((0,), dtype=np.float32),
                 "has_policy": np.empty((0,), dtype=np.uint8),
@@ -232,8 +233,8 @@ class ArrayReplayBuffer:
             mask = (idx >= start) & (idx < end)
             if np.any(mask):
                 local = idx[mask] - start
-                rows = {k: v[local] for k, v in chunk.items()}
-                dense_rows = densify_chunk(rows, policy_size=POLICY_SIZE)
+                rows = {k: (v if np.asarray(v).ndim == 0 else v[local]) for k, v in chunk.items()}
+                dense_rows = densify_chunk(rows, policy_size=policy_size)
                 selected.append((dense_rows, mask))
                 all_keys.update(dense_rows.keys())
             start = end

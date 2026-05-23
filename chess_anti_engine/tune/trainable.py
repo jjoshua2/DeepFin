@@ -319,6 +319,22 @@ def _build_trial_model_config(tc: TrialConfig) -> ModelConfig:
         use_nla=tc.use_nla,
         use_qk_rmsnorm=tc.use_qk_rmsnorm,
         use_gradient_checkpointing=tc.gradient_checkpointing,
+        input_pos_encoding=tc.input_pos_encoding,
+        qkv_projection=tc.qkv_projection,
+        use_deepnorm=tc.use_deepnorm,
+        policy_encoding=tc.policy_encoding,
+        input_history_encoding=tc.input_history_encoding,
+        input_global_embedding=tc.input_global_embedding,
+        input_global_embedding_channels=tc.input_global_embedding_channels,
+        input_square_embedding=tc.input_square_embedding,
+        smolgen_mode=tc.smolgen_mode,
+        smolgen_bias_scale=tc.smolgen_bias_scale,
+        smolgen_bias_norm=tc.smolgen_bias_norm,
+        arc_attention_bias=tc.arc_attention_bias,
+        smolgen_relation_basis=tc.smolgen_relation_basis,
+        smolgen_relation_norm=tc.smolgen_relation_norm,
+        smolgen_relation_coeff_norm=tc.smolgen_relation_coeff_norm,
+        smolgen_relation_scale=tc.smolgen_relation_scale,
     )
 
 

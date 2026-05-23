@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import time
+from collections import defaultdict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -42,6 +43,7 @@ from chess_anti_engine.replay.augment import (
 from chess_anti_engine.replay.buffer import ReplayBuffer
 from chess_anti_engine.replay.dataset import collate, collate_arrays
 
+from .aurora import AuroraWithAuxAdam
 from .compile_probe import CompileProbe, apply_compile
 from .cosmos import COSMOS
 from .cosmos_fast import COSMOSFast
@@ -52,8 +54,53 @@ from .losses import (
     wdl_calibration_stats,
 )
 from .muon import MuonWithAuxAdam
+from .soda import SODAWeightDecayWrapper, mark_soda_weight_decay_groups
 
 SummaryWriter = _SummaryWriter  # skylos: ignore (used via runtime fallback)
+
+
+class _ChainedOptimizer(torch.optim.Optimizer):
+    """Expose multiple optimizers as one optimizer for trainer scheduling."""
+
+    def __init__(self, optimizers: list[torch.optim.Optimizer]) -> None:
+        params = [
+            param
+            for opt in optimizers
+            for group in opt.param_groups
+            for param in group["params"]
+        ]
+        super().__init__(params, defaults={})
+        self.optimizers = optimizers
+        self.param_groups = [
+            group
+            for opt in optimizers
+            for group in opt.param_groups
+        ]
+        self.state = defaultdict(dict)
+
+    def zero_grad(self, set_to_none: bool = True) -> None:  # type: ignore[override]
+        for opt in self.optimizers:
+            opt.zero_grad(set_to_none=set_to_none)
+
+    def step(self, closure: Callable[[], float] | None = None) -> float | None:  # type: ignore[override]
+        loss = None
+        for i, opt in enumerate(self.optimizers):
+            loss_i = opt.step(closure if i == 0 else None)
+            if loss_i is not None:
+                loss = loss_i
+        return loss
+
+    def state_dict(self) -> dict[str, Any]:  # type: ignore[override]
+        return {"optimizers": [opt.state_dict() for opt in self.optimizers]}
+
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:  # type: ignore[override]
+        for opt, opt_state in zip(self.optimizers, state_dict["optimizers"], strict=True):
+            opt.load_state_dict(opt_state)
+        self.param_groups = [
+            group
+            for opt in self.optimizers
+            for group in opt.param_groups
+        ]
 
 
 def _split_decay_groups(
@@ -88,6 +135,53 @@ def _split_decay_groups(
     return hidden_decay, hidden_no_decay, aux_decay, aux_no_decay
 
 
+def _matrix_optimizer_filter(
+    scope: str,
+    *,
+    include_embed_default: bool,
+) -> Callable[[str, torch.nn.Parameter], bool]:
+    """Return the 2D matrix subset owned by Muon/Aurora-style optimizers."""
+    scope = str(scope or "default").lower()
+
+    def _is_block_matrix(name: str, param: torch.nn.Parameter) -> bool:
+        return param.ndim >= 2 and name.startswith("blocks.")
+
+    def _is_ffn(name: str) -> bool:
+        return ".ffn." in name
+
+    def _is_attn_out(name: str) -> bool:
+        return ".out_proj." in name
+
+    def _is_attn_input(name: str) -> bool:
+        return any(part in name for part in (".qkv_proj.", ".q_proj.", ".k_proj.", ".v_proj."))
+
+    def _is_attn_v(name: str) -> bool:
+        return ".v_proj." in name
+
+    if scope in ("default", "", "legacy"):
+        return lambda name, p: p.ndim >= 2 and (
+            (include_embed_default and name == "embed.weight") or name.startswith("blocks.")
+        )
+    if scope in ("blocks", "block_all", "all_blocks", "all_block"):
+        return _is_block_matrix
+    if scope in ("mlp", "mlp_only", "ffn", "ffn_only"):
+        return lambda name, p: _is_block_matrix(name, p) and _is_ffn(name)
+    if scope in ("mlp_out", "mlp_o", "mlp_attn_o", "mlp_attention_o"):
+        return lambda name, p: _is_block_matrix(name, p) and (_is_ffn(name) or _is_attn_out(name))
+    if scope in ("mlp_out_v", "mlp_v_out", "mlp_attn_ov", "mlp_attention_ov"):
+        return lambda name, p: _is_block_matrix(name, p) and (
+            _is_ffn(name) or _is_attn_out(name) or _is_attn_v(name)
+        )
+    if scope in ("mlp_attn_all", "mlp_attention_all", "attn_mlp", "all_attention_mlp"):
+        return lambda name, p: _is_block_matrix(name, p) and (
+            _is_ffn(name) or _is_attn_out(name) or _is_attn_input(name)
+        )
+    raise ValueError(
+        f"Unknown matrix_optimizer_scope {scope!r}. Supported: default, block_all, "
+        "mlp_only, mlp_out, mlp_out_v, mlp_attn_all"
+    )
+
+
 @dataclass
 class TrainMetrics:
     loss: float
@@ -115,6 +209,16 @@ class TrainMetrics:
     opt_step_time_s: float = 0.0
     train_steps_done: int = 0
     train_samples_seen: int = 0
+    aurora_uw_floor: float = 0.0
+    aurora_uw_count: float = 0.0
+    aurora_uw_ratio_min: float = 0.0
+    aurora_uw_ratio_p10: float = 0.0
+    aurora_uw_ratio_median: float = 0.0
+    aurora_uw_ratio_p90: float = 0.0
+    aurora_uw_scale_max: float = 0.0
+    aurora_uw_floored_frac: float = 0.0
+    aurora_uw_effective_ratio_min: float = 0.0
+    aurora_uw_effective_ratio_median: float = 0.0
   # Per-source loss split (observation-only; only meaningful once shards carry is_selfplay).
     policy_loss_selfplay: float = 0.0
     policy_loss_curriculum: float = 0.0
@@ -179,10 +283,10 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
     def _f(key: str, default: float, typ: type = float) -> Any:
         return typ(config.get(key, default))
 
-  # Handle grad_clip → zclip_max_norm alias
-    zclip_max_norm = float(config.get(
-        "zclip_max_norm", config.get("grad_clip", 1.0)
-    ))
+  # Handle grad_clip -> zclip_max_norm alias. None disables the fixed hard cap
+  # while leaving adaptive z-score clipping active.
+    zclip_max_norm_raw = config.get("zclip_max_norm", config.get("grad_clip", 1.0))
+    zclip_max_norm = None if zclip_max_norm_raw is None else float(zclip_max_norm_raw)
 
   # w_sf_volatility falls back to w_volatility if not explicitly set
     w_volatility = _f("w_volatility", 0.05)
@@ -194,6 +298,7 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         lr=_f("lr", 3e-4),
         zclip_z_thresh=_f("zclip_z_thresh", 2.5),
         zclip_alpha=_f("zclip_alpha", 0.97),
+        zclip_clip_factor=_f("zclip_clip_factor", 1.0),
         zclip_max_norm=zclip_max_norm,
         use_amp=bool(config.get("use_amp", True)),
         feature_dropout_p=_f("feature_dropout_p", 0.3),
@@ -212,6 +317,20 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         use_compile=bool(config.get("use_compile", False)),
         compile_mode=str(config.get("compile_mode", "reduce-overhead")),
         optimizer=str(config.get("optimizer", "nadamw")),
+        matrix_optimizer_scope=str(config.get("matrix_optimizer_scope", "default")),
+        matrix_lr_multiplier=_f("matrix_lr_multiplier", 20.0),
+        matrix_weight_decay=_f("matrix_weight_decay", 1e-4),
+        aux_weight_decay=_f("aux_weight_decay", 1e-4),
+        weight_decay_mode=str(config.get("weight_decay_mode", "weight_decay")),
+        soda_scope=str(config.get("soda_scope", "decay")),
+        soda_start_step=_f("soda_start_step", 0, int),
+        aurora_uw_floor=_f("aurora_uw_floor", 0.0),
+        aurora_pp_iterations=_f("aurora_pp_iterations", 2, int),
+        aurora_pp_beta=_f("aurora_pp_beta", 0.5),
+        aurora_polar_steps=_f("aurora_polar_steps", 12, int),
+        aurora_polar_method=str(config.get("aurora_polar_method", "simple")),
+        aurora_polar_dtype=str(config.get("aurora_polar_dtype", "auto")),
+        aurora_polar_safety=_f("aurora_polar_safety", 1.01),
         cosmos_rank=_f("cosmos_rank", 64, int),
         cosmos_gamma=_f("cosmos_gamma", 0.2),
         swa_start=_f("swa_start", 0, int),
@@ -247,7 +366,8 @@ class Trainer:
         lr: float,
         zclip_z_thresh: float = 2.5,
         zclip_alpha: float = 0.97,
-        zclip_max_norm: float = 1.0,
+        zclip_clip_factor: float = 1.0,
+        zclip_max_norm: float | None = 1.0,
         log_dir: Path | None = None,
         use_amp: bool = True,
         feature_dropout_p: float = 0.3,
@@ -266,6 +386,20 @@ class Trainer:
         use_compile: bool = False,
         compile_mode: str = "reduce-overhead",
         optimizer: str = "nadamw",
+        matrix_optimizer_scope: str = "default",
+        matrix_lr_multiplier: float = 20.0,
+        matrix_weight_decay: float = 1e-4,
+        aux_weight_decay: float = 1e-4,
+        weight_decay_mode: str = "weight_decay",
+        soda_scope: str = "decay",
+        soda_start_step: int = 0,
+        aurora_uw_floor: float = 0.0,
+        aurora_pp_iterations: int = 2,
+        aurora_pp_beta: float = 0.5,
+        aurora_polar_steps: int = 12,
+        aurora_polar_method: str = "simple",
+        aurora_polar_dtype: str = "auto",
+        aurora_polar_safety: float = 1.01,
         cosmos_rank: int = 64,
         cosmos_gamma: float = 0.2,
         swa_start: int = 0,
@@ -305,46 +439,151 @@ class Trainer:
         self._model_config = model_config
 
         optimizer = str(optimizer).lower()
-        if optimizer == "muon":
+        matrix_optimizer_scope = str(matrix_optimizer_scope).lower()
+        weight_decay_mode = str(weight_decay_mode).lower()
+        if weight_decay_mode not in ("weight_decay", "soda"):
+            raise ValueError(
+                f"Unknown weight_decay_mode {weight_decay_mode!r}. "
+                "Supported: weight_decay, soda"
+            )
+        soda_scope = str(soda_scope or "decay").lower()
+        if soda_scope not in ("decay", "weight_decay", "nonzero_decay", "hidden_matrix_only"):
+            raise ValueError(
+                f"Unknown soda_scope {soda_scope!r}. Supported: decay, hidden_matrix_only"
+            )
+        soda_start_step = max(0, int(soda_start_step))
+        use_soda_weight_decay = False
+
+        def _mark_soda(param_groups: list[dict], *, hidden_group_indices: tuple[int, ...] = (0,)) -> bool:
+            if weight_decay_mode != "soda":
+                return False
+            if soda_scope in ("decay", "weight_decay", "nonzero_decay"):
+                return mark_soda_weight_decay_groups(param_groups, start_step=soda_start_step)
+            for group in param_groups:
+                group["weight_decay"] = 0.0
+            marked = False
+            for idx in hidden_group_indices:
+                if 0 <= idx < len(param_groups):
+                    marked = (
+                        mark_soda_weight_decay_groups(
+                            [param_groups[idx]],
+                            start_step=soda_start_step,
+                            force=True,
+                        )
+                        or marked
+                    )
+            return marked
+
+        if optimizer in ("muon", "aurora"):
+            if optimizer == "muon":
+                hidden_filter = _matrix_optimizer_filter(matrix_optimizer_scope, include_embed_default=True)
+            else:
+                hidden_filter = _matrix_optimizer_filter(matrix_optimizer_scope, include_embed_default=False)
             hd, hnd, ad, and_ = _split_decay_groups(
                 self.model,
-                hidden_filter=lambda name, p: p.ndim >= 2 and (name == "embed.weight" or name.startswith("blocks.")),
+                hidden_filter=hidden_filter,
             )
-  # Muon trunk gets a larger LR than the AdamW fallback for heads/norms.
+  # Muon/Aurora trunk gets a larger LR than the AdamW fallback for heads/norms.
   # Keep one Tune-search LR and derive trunk LR so search stays simple.
-            muon_lr = float(lr) * 20.0
-            param_groups = [
-                {"params": hd, "weight_decay": 1e-4, "use_muon": True, "lr": muon_lr},
-                {"params": hnd, "weight_decay": 0.0, "use_muon": True, "lr": muon_lr},
-                {"params": ad, "weight_decay": 1e-4, "use_muon": False, "lr": float(lr)},
-                {"params": and_, "weight_decay": 0.0, "use_muon": False, "lr": float(lr)},
-            ]
-            self.opt = MuonWithAuxAdam(param_groups)
+            matrix_lr = float(lr) * float(matrix_lr_multiplier)
+            matrix_wd = float(matrix_weight_decay)
+            aux_wd = float(aux_weight_decay)
+            if optimizer == "muon":
+                param_groups = [
+                    {"params": hd, "weight_decay": matrix_wd, "use_muon": True, "lr": matrix_lr},
+                    {"params": hnd, "weight_decay": 0.0, "use_muon": True, "lr": matrix_lr},
+                    {"params": ad, "weight_decay": aux_wd, "use_muon": False, "lr": float(lr)},
+                    {"params": and_, "weight_decay": 0.0, "use_muon": False, "lr": float(lr)},
+                ]
+                use_soda_weight_decay = _mark_soda(param_groups)
+                self.opt = MuonWithAuxAdam(param_groups)
+            else:
+                param_groups = [
+                    {
+                        "params": hd,
+                        "weight_decay": matrix_wd,
+                        "use_aurora": True,
+                        "lr": matrix_lr,
+                        "aurora_uw_floor": float(aurora_uw_floor),
+                    },
+                    {"params": hnd, "weight_decay": 0.0, "use_aurora": False, "lr": float(lr)},
+                    {"params": ad, "weight_decay": aux_wd, "use_aurora": False, "lr": float(lr)},
+                    {"params": and_, "weight_decay": 0.0, "use_aurora": False, "lr": float(lr)},
+                ]
+                use_soda_weight_decay = _mark_soda(param_groups)
+                self.opt = AuroraWithAuxAdam(
+                    param_groups,
+                    aurora_pp_iterations=int(aurora_pp_iterations),
+                    aurora_pp_beta=float(aurora_pp_beta),
+                    aurora_polar_steps=int(aurora_polar_steps),
+                    aurora_polar_method=str(aurora_polar_method),
+                    aurora_polar_dtype=str(aurora_polar_dtype),
+                    aurora_polar_safety=float(aurora_polar_safety),
+                )
         elif optimizer == "cosmos_fast":
             hd, hnd, ad, and_ = _split_decay_groups(
                 self.model,
-                hidden_filter=lambda name, p: p.ndim == 2 and name.startswith("blocks."),
+                hidden_filter=_matrix_optimizer_filter(matrix_optimizer_scope, include_embed_default=False),
             )
+            matrix_wd = float(matrix_weight_decay)
+            aux_wd = float(aux_weight_decay)
             param_groups = [
-                {"params": hd, "weight_decay": 1e-4, "use_cosmos_fast": True},
+                {"params": hd, "weight_decay": matrix_wd, "use_cosmos_fast": True},
                 {"params": hnd, "weight_decay": 0.0, "use_cosmos_fast": True},
-                {"params": ad, "weight_decay": 1e-4, "use_cosmos_fast": False},
+                {"params": ad, "weight_decay": aux_wd, "use_cosmos_fast": False},
                 {"params": and_, "weight_decay": 0.0, "use_cosmos_fast": False},
             ]
+            use_soda_weight_decay = _mark_soda(param_groups)
             self.opt = COSMOSFast(
                 param_groups,
                 lr=lr,
-                weight_decay=1e-4,
+                rank=int(cosmos_rank),
+                gamma=float(cosmos_gamma),
+            )
+        elif optimizer == "cosmos" and matrix_optimizer_scope not in ("default", "", "legacy"):
+            hd, hnd, ad, and_ = _split_decay_groups(
+                self.model,
+                hidden_filter=_matrix_optimizer_filter(matrix_optimizer_scope, include_embed_default=False),
+            )
+            matrix_wd = float(matrix_weight_decay)
+            aux_wd = float(aux_weight_decay)
+            param_groups = [
+                {"params": hd, "weight_decay": matrix_wd, "use_cosmos": True},
+                {"params": hnd, "weight_decay": 0.0, "use_cosmos": False},
+                {"params": ad, "weight_decay": aux_wd, "use_cosmos": False},
+                {"params": and_, "weight_decay": 0.0, "use_cosmos": False},
+            ]
+            use_soda_weight_decay = _mark_soda(param_groups)
+            self.opt = COSMOS(
+                param_groups,
+                lr=lr,
                 rank=int(cosmos_rank),
                 gamma=float(cosmos_gamma),
             )
         else:
   # Selective weight decay: apply only to non-bias, non-LayerNorm parameters.
-            _, _, decay_params, no_decay_params = _split_decay_groups(self.model)
-            param_groups = [
-                {"params": decay_params, "weight_decay": 1e-4},
-                {"params": no_decay_params, "weight_decay": 0.0},
-            ]
+            if weight_decay_mode == "soda" and soda_scope == "hidden_matrix_only":
+                hd, hnd, ad, and_ = _split_decay_groups(
+                    self.model,
+                    hidden_filter=_matrix_optimizer_filter(
+                        matrix_optimizer_scope,
+                        include_embed_default=False,
+                    ),
+                )
+                param_groups = [
+                    {"params": hd, "weight_decay": 0.0},
+                    {"params": hnd, "weight_decay": 0.0},
+                    {"params": ad, "weight_decay": 0.0},
+                    {"params": and_, "weight_decay": 0.0},
+                ]
+                use_soda_weight_decay = _mark_soda(param_groups)
+            else:
+                _, _, decay_params, no_decay_params = _split_decay_groups(self.model)
+                param_groups = [
+                    {"params": decay_params, "weight_decay": 1e-4},
+                    {"params": no_decay_params, "weight_decay": 0.0},
+                ]
+                use_soda_weight_decay = _mark_soda(param_groups)
 
         if optimizer == "nadamw":
   # NAdam with decoupled weight decay (spec: β1=0.9, β2=0.98, ε=1e-7).
@@ -358,8 +597,15 @@ class Trainer:
             self.opt = torch.optim.AdamW(param_groups, lr=lr)
         elif optimizer == "muon":
             pass
+        elif optimizer == "aurora":
+            pass
         elif optimizer == "cosmos":
-            self.opt = COSMOS(param_groups, lr=lr, weight_decay=1e-4)
+            if matrix_optimizer_scope in ("default", "", "legacy"):
+                self.opt = COSMOS(
+                    param_groups,
+                    lr=lr,
+                    weight_decay=0.0 if weight_decay_mode == "soda" else 1e-4,
+                )
         elif optimizer == "cosmos_fast":
             pass
         elif optimizer == "soap":
@@ -378,15 +624,59 @@ class Trainer:
                         "or the `pytorch-optimizer` package. "
                         "Install with: pip install pytorch-optimizer"
                     ) from exc
-            try:
-                self.opt = SOAP(param_groups, lr=lr)
-            except TypeError:
-                self.opt = SOAP(self.model.parameters(), lr=lr)
+            if matrix_optimizer_scope in ("default", "", "legacy"):
+                try:
+                    self.opt = SOAP(param_groups, lr=lr)
+                except TypeError:
+                    self.opt = SOAP(self.model.parameters(), lr=lr)
+            else:
+                hd, hnd, ad, and_ = _split_decay_groups(
+                    self.model,
+                    hidden_filter=_matrix_optimizer_filter(matrix_optimizer_scope, include_embed_default=False),
+                )
+                matrix_wd = float(matrix_weight_decay)
+                aux_wd = float(aux_weight_decay)
+                soap_groups = [{"params": hd, "weight_decay": matrix_wd}]
+                adam_groups = [
+                    {"params": hnd, "weight_decay": 0.0, "lr": float(lr)},
+                    {"params": ad, "weight_decay": aux_wd, "lr": float(lr)},
+                    {"params": and_, "weight_decay": 0.0, "lr": float(lr)},
+                ]
+                if weight_decay_mode == "soda" and soda_scope == "hidden_matrix_only":
+                    for group in adam_groups:
+                        group["weight_decay"] = 0.0
+                    use_soda_weight_decay = mark_soda_weight_decay_groups(
+                        soap_groups,
+                        start_step=soda_start_step,
+                        force=True,
+                    )
+                else:
+                    use_soda_weight_decay = (
+                        _mark_soda(soap_groups)
+                        or _mark_soda(adam_groups, hidden_group_indices=())
+                    )
+                self.opt = _ChainedOptimizer(
+                    [
+                        SOAP(soap_groups, lr=lr, weight_decay=0.0),
+                        torch.optim.AdamW(adam_groups, lr=lr),
+                    ]
+                )
         else:
             raise ValueError(
-                f"Unknown optimizer {optimizer!r}. Supported: nadamw, adamw, muon, cosmos, cosmos_fast, soap"
+                f"Unknown optimizer {optimizer!r}. Supported: nadamw, adamw, muon, aurora, cosmos, cosmos_fast, soap"
             )
-        self.zclip = ZClip(mode="zscore", alpha=float(zclip_alpha), z_thresh=float(zclip_z_thresh), max_grad_norm=float(zclip_max_norm), warmup_steps=25)
+
+        if use_soda_weight_decay:
+            self.opt = SODAWeightDecayWrapper(self.opt)
+        max_grad_norm = None if zclip_max_norm is None else float(zclip_max_norm)
+        self.zclip = ZClip(
+            mode="zscore",
+            alpha=float(zclip_alpha),
+            z_thresh=float(zclip_z_thresh),
+            max_grad_norm=max_grad_norm,
+            clip_factor=float(zclip_clip_factor),
+            warmup_steps=25,
+        )
         self.writer = SummaryWriter(log_dir=str(log_dir or "tb"))
         self.step = 0
         self._tb_log_interval = max(1, int(tb_log_interval))
@@ -481,6 +771,32 @@ class Trainer:
 
     def _should_log_step_scalars(self) -> bool:
         return (self.step % self._tb_log_interval) == 0
+
+    def _zclip_step(self, *, collect_stats: bool) -> tuple[float, dict[str, float] | None]:
+        if not collect_stats:
+            return float(self.zclip.step(self.model)), None
+
+        total_norm = float(self.zclip._compute_grad_norm(self.model))
+        clip_val = (
+            self.zclip._compute_clip_val(total_norm)
+            if bool(getattr(self.zclip, "initialized", False))
+            else None
+        )
+        adaptive_clip = float(clip_val) if clip_val is not None else total_norm
+        max_grad_norm = self.zclip.max_grad_norm
+        effective_clip = adaptive_clip
+        if max_grad_norm is not None:
+            effective_clip = min(effective_clip, float(max_grad_norm))
+
+        clipped = effective_clip < total_norm
+        stats = {
+            "total_norm": total_norm,
+            "effective_clip": float(effective_clip),
+            "adaptive_clip": 1.0 if clip_val is not None and adaptive_clip < total_norm else 0.0,
+            "hard_clip": 1.0 if max_grad_norm is not None and clipped and effective_clip == float(max_grad_norm) else 0.0,
+            "clipped": 1.0 if clipped else 0.0,
+        }
+        return float(self.zclip.step(self.model)), stats
 
     @property
     def _loss_kwargs(self) -> dict[str, float]:
@@ -872,9 +1188,16 @@ class Trainer:
 
             step_n_micro += 1
 
-        grad_norm = self.zclip.step(self.model)
-        if self._should_log_step_scalars():
+        should_log = self._should_log_step_scalars()
+        grad_norm, zclip_stats = self._zclip_step(collect_stats=should_log)
+        if should_log:
             self.writer.add_scalar("train/grad_norm", float(grad_norm), self.step)
+            if zclip_stats is not None:
+                self.writer.add_scalar("zclip/total_norm", zclip_stats["total_norm"], self.step)
+                self.writer.add_scalar("zclip/effective_clip", zclip_stats["effective_clip"], self.step)
+                self.writer.add_scalar("zclip/adaptive_clipped", zclip_stats["adaptive_clip"], self.step)
+                self.writer.add_scalar("zclip/hard_clipped", zclip_stats["hard_clip"], self.step)
+                self.writer.add_scalar("zclip/clipped", zclip_stats["clipped"], self.step)
         opt_step_start = time.perf_counter()
         self.opt.step()
         opt_step_time_s = time.perf_counter() - opt_step_start
@@ -943,6 +1266,7 @@ class Trainer:
             opt_step_time_s=float(opt_step_time_s),
             train_steps_done=int(train_steps_done),
             train_samples_seen=int(train_samples_seen),
+            **getattr(self.opt, "last_uw_stats", {}),
         )
         self._log_metrics(metrics, "train_avg")
 

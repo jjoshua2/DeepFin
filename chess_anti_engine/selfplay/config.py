@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from chess_anti_engine.encoding.lc0 import LC0_HISTORY_LEGACY
+from chess_anti_engine.moves import POLICY_ENCODING_AZ_4672
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 
 
@@ -18,6 +20,10 @@ class TemperatureConfig:
     decay_start_move: int = 20
     decay_moves: int = 60
     endgame: float = 0.6
+    selfplay_temperature: float | None = None
+    selfplay_decay_start_move: int | None = None
+    selfplay_decay_moves: int | None = None
+    selfplay_endgame: float | None = None
 
 
 @dataclass(frozen=True)
@@ -28,6 +34,11 @@ class SearchConfig:
     fast_simulations: int = 8
     fpu_reduction: float = 1.2
     fpu_at_root: float = 1.0
+    gumbel_topk: int = 16
+    gumbel_scale: float = 1.0
+    gumbel_scale_after: float = 0.0
+    gumbel_scale_decay_start_move: int = 0
+    gumbel_scale_decay_moves: int = 0
 
 
 @dataclass(frozen=True)
@@ -75,6 +86,9 @@ class GameConfig:
     syzygy_in_search: bool = False
     categorical_bins: int = DEFAULT_CATEGORICAL_BINS
     hlgauss_sigma: float = 0.04
+    policy_encoding: str = POLICY_ENCODING_AZ_4672
+    input_history_encoding: str = LC0_HISTORY_LEGACY
+    record_lc0_root_input: bool = False
 
 
 __all__ = [

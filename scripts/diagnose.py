@@ -19,6 +19,11 @@ import argparse
 import sys
 from pathlib import Path
 
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from scripts.diagnose_replay import sample_replay_arrays
+
 from chess_anti_engine.replay.shard import iter_shard_paths
 from chess_anti_engine.tune.replay_exchange import _trial_replay_shard_dir
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
@@ -96,7 +101,6 @@ def main() -> None:
     import torch
 
     from chess_anti_engine.model import ModelConfig, build_model
-    from chess_anti_engine.replay import DiskReplayBuffer
     from chess_anti_engine.train import Trainer, trainer_kwargs_from_config
 
     trial_dir = _resolve_trial_dir(args)
@@ -117,6 +121,8 @@ def main() -> None:
         num_heads=int(cfg.get("num_heads", 8)),
         ffn_mult=float(cfg.get("ffn_mult", 2.0)),
         use_smolgen=not bool(cfg.get("no_smolgen", False)),
+        input_pos_encoding=str(cfg.get("input_pos_encoding", "none")),
+        use_deepnorm=bool(cfg.get("use_deepnorm", False)),
     )
     model = build_model(model_cfg)
 
@@ -131,17 +137,17 @@ def main() -> None:
     print(f"Device: {device}")
 
     shard_dir = _resolve_replay_dir(args, cfg=cfg, trial_dir=trial_dir)
-    buf = DiskReplayBuffer(
-        capacity=200_000,
-        shard_dir=shard_dir,
+    arrs, total_positions, shard_count = sample_replay_arrays(
+        shard_dir,
+        int(args.n),
         rng=np.random.default_rng(42),
+        fields=("x", "policy_target", "wdl_target", "has_policy"),
     )
     print(f"Replay: {shard_dir}")
-    print(f"Buffer size: {len(buf):,} positions")
+    print(f"Replay size: {total_positions:,} positions across {shard_count:,} shards")
 
-    n = min(int(args.n), len(buf))
+    n = int(arrs["x"].shape[0])
     print(f"Sampling {n} positions...")
-    arrs = buf.sample_batch_arrays(n, wdl_balance=False)
 
     x = torch.from_numpy(np.asarray(arrs["x"], dtype=np.float32)).to(device)
     policy_target = np.asarray(arrs["policy_target"], dtype=np.float32)
@@ -173,8 +179,12 @@ def main() -> None:
             print(f"  Avg P({name}) when true {name}: {mean_prob:.3f}  (n={count})")
 
     unique, counts = np.unique(wdl_target[valid], return_counts=True)
+    target_counts = {int(k): int(v) for k, v in zip(unique, counts)}
     total = valid.sum()
-    print(f"  Target distribution: W={counts[0] if 0 in unique else 0} D={counts[1] if 1 in unique else 0} L={counts[2] if 2 in unique else 0} ({total} total)")
+    print(
+        f"  Target distribution: W={target_counts.get(0, 0)} "
+        f"D={target_counts.get(1, 0)} L={target_counts.get(2, 0)} ({total} total)"
+    )
 
     # ---- POLICY SHARPNESS ----
     eps = 1e-9

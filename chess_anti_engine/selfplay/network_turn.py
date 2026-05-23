@@ -15,14 +15,17 @@ explosion.
 from __future__ import annotations
 
 import math
-from typing import cast
+from typing import Any, cast
 
 import chess
 import numpy as np
 
+from chess_anti_engine.encoding import encode_position
+from chess_anti_engine.encoding.lc0 import LC0_HISTORY_ROOT, normalize_lc0_history_encoding
 from chess_anti_engine.mcts import GumbelConfig, MCTSConfig
 from chess_anti_engine.mcts.gumbel import run_gumbel_root_many
 from chess_anti_engine.mcts.puct import run_mcts_many
+from chess_anti_engine.mcts.sampling import sample_action_with_temperature
 
 try:
     from chess_anti_engine.mcts.puct_c import run_mcts_many_c as _run_mcts_many_c
@@ -58,6 +61,78 @@ def _padded_batch_size(bsz: int) -> int:
         if b >= bsz:
             return b
     return bsz
+
+
+def _resample_actions_with_temperature(
+    probs_list: list[np.ndarray],
+    actions: list[int],
+    temps: list[float],
+    rng: np.random.Generator,
+    *,
+    c_temp_resample: Any | None,
+    use_c_resample: bool,
+    preserve_zero_temperature_actions: bool,
+) -> None:
+    """Apply final move temperature to search policies in-place.
+
+    Gumbel's temperature-0 action is the sequential-halving survivor, not the
+    argmax of the returned improved policy. ``preserve_zero_temperature_actions``
+    keeps that survivor and only resamples when the requested temperature is
+    positive.
+    """
+    temps_arr = np.array(temps, dtype=np.float64)
+    if preserve_zero_temperature_actions:
+        need_resample = temps_arr > 0.0
+    else:
+        need_resample = temps_arr != 1.0
+    if not need_resample.any():
+        return
+
+    p_stack = np.stack(probs_list)  # (G, 4672)
+    if use_c_resample and not preserve_zero_temperature_actions:
+        # The C helper treats t == 1 as a no-op, which is correct for PUCT
+        # because its search call already sampled at temperature 1. Gumbel
+        # uses the Python path so t == 1 can sample from the improved policy
+        # after starting from the halving survivor.
+        actions_arr = np.array(actions, dtype=np.int32)
+        rand_arr = rng.random(len(temps))
+        assert c_temp_resample is not None
+        c_temp_resample(p_stack, temps_arr, actions_arr, rand_arr)
+        for gi in range(len(actions)):
+            actions[gi] = int(actions_arr[gi])
+        return
+
+    for gi in need_resample.nonzero()[0]:
+        p = p_stack[gi]
+        t = float(temps_arr[gi])
+        legal = np.flatnonzero(p > 0)
+        if len(legal) == 0:
+            continue
+        if preserve_zero_temperature_actions:
+            matches = np.flatnonzero(legal == int(actions[gi]))
+            fallback_idx = int(matches[0]) if matches.size else 0
+        else:
+            fallback_idx = int(np.argmax(p[legal]))
+        actions[gi] = sample_action_with_temperature(
+            rng,
+            legal,
+            p[legal],
+            t,
+            argmax_idx=fallback_idx,
+        )
+
+
+def _scheduled_gumbel_scale(search, *, move_number: int) -> float:
+    start = float(search.gumbel_scale)
+    after = float(search.gumbel_scale_after)
+    decay_start = int(search.gumbel_scale_decay_start_move)
+    decay_moves = int(search.gumbel_scale_decay_moves)
+    if decay_start <= 0 or decay_moves <= 0 or move_number < decay_start:
+        return start
+    if move_number >= decay_start + decay_moves:
+        return after
+    frac = float(move_number - decay_start) / float(decay_moves)
+    return start + (after - start) * frac
 
 
 def _apply_forced_moves(state: SelfplayState, net_idxs: list[int]) -> list[int]:
@@ -109,23 +184,30 @@ def _evaluate_root_batch(
     bsz = len(net_idxs)
     padded_bsz = _padded_batch_size(bsz)
     cb_encode_list = [state.cboards[idx] for idx in net_idxs]
+    use_lc0_root = (
+        normalize_lc0_history_encoding(state.game.input_history_encoding) == LC0_HISTORY_ROOT
+    )
+    batch_enc = state.batch_enc_146_lc0_root if use_lc0_root else state.batch_enc_146
+    batch_enc_bf16 = (
+        state.batch_enc_146_lc0_root_bf16 if use_lc0_root else state.batch_enc_146_bf16
+    )
 
-    use_inplace = state.batch_enc_146 is not None and hasattr(eval_impl, "get_input_buffer")
+    use_inplace = batch_enc is not None and hasattr(eval_impl, "get_input_buffer")
     use_bf16_input = (
         state.has_c_ply
-        and state.batch_enc_146_bf16 is not None
+        and batch_enc_bf16 is not None
         and bool(getattr(eval_impl, "supports_input_bf16_bits", False))
     )
     if use_inplace:
   # evaluate_inplace + get_input_buffer exist on DirectGPU-style evaluators only.
         if use_bf16_input and hasattr(eval_impl, "get_input_buffer_bf16_bits"):
             buf = eval_impl.get_input_buffer_bf16_bits(padded_bsz)  # pyright: ignore[reportAttributeAccessIssue]
-            assert state.batch_enc_146_bf16 is not None
-            state.batch_enc_146_bf16(cb_encode_list, buf)
+            assert batch_enc_bf16 is not None
+            batch_enc_bf16(cb_encode_list, buf)
         else:
             buf = eval_impl.get_input_buffer(padded_bsz)  # pyright: ignore[reportAttributeAccessIssue]
-            assert state.batch_enc_146 is not None
-            state.batch_enc_146(cb_encode_list, buf)
+            assert batch_enc is not None
+            batch_enc(cb_encode_list, buf)
         pol_padded, wdl_padded = eval_impl.evaluate_inplace(  # pyright: ignore[reportAttributeAccessIssue]
             padded_bsz, copy_out=True,
         )
@@ -134,13 +216,18 @@ def _evaluate_root_batch(
         dtype = np.uint16 if use_bf16_input else np.float32
         xs_batch = np.empty((bsz, 146, 8, 8), dtype=dtype)
         if use_bf16_input:
-            assert state.batch_enc_146_bf16 is not None
-            state.batch_enc_146_bf16(cb_encode_list, xs_batch)
-        elif state.batch_enc_146 is not None:
-            state.batch_enc_146(cb_encode_list, xs_batch)
+            assert batch_enc_bf16 is not None
+            batch_enc_bf16(cb_encode_list, xs_batch)
+        elif batch_enc is not None:
+            batch_enc(cb_encode_list, xs_batch)
         else:
             for j, idx in enumerate(net_idxs):
-                xs_batch[j] = state.cboards[idx].encode_146()
+                enc_fn = (
+                    state.cboards[idx].encode_146_lc0_root
+                    if use_lc0_root
+                    else state.cboards[idx].encode_146
+                )
+                xs_batch[j] = enc_fn()
         if padded_bsz > bsz:
             pad = np.zeros((padded_bsz - bsz, *xs_batch.shape[1:]), dtype=xs_batch.dtype)
             xs_padded = np.concatenate([xs_batch, pad], axis=0)
@@ -181,6 +268,7 @@ def _append_records_via_c(
     *, cb_encode_list, pol_logits: np.ndarray, wdl_logits_raw: np.ndarray,
     actions: list[int | None], values_list: list[float | None],
     probs_list: list[np.ndarray | None],
+    gumbel_diags: list[dict[str, float] | None],
     is_full_py: list[bool], sample_weights: list[float],
     diff_focus,
 ) -> None:
@@ -192,12 +280,19 @@ def _append_records_via_c(
     probs_arr = np.stack(cast("list[np.ndarray]", probs_list)).astype(np.float32, copy=False)
 
     assert state.c_process_ply is not None
+    input_history_lc0_root = int(
+        normalize_lc0_history_encoding(state.game.input_history_encoding) == LC0_HISTORY_ROOT
+    )
+    alt_lc0_root_xs = None
+    if bool(state.game.record_lc0_root_input) and not input_history_lc0_root:
+        alt_lc0_root_xs = [cb.encode_146_lc0_root() for cb in cb_encode_list]
     (c_x, c_probs, c_wdl_net, c_wdl_search, c_priority,
      c_keep, c_mask, c_ply, c_pov, c_over) = state.c_process_ply(
         cb_encode_list, pol_logits[:n], wdl_logits_raw[:n],
         actions_arr, values_arr, probs_arr,
         int(diff_focus.enabled), float(diff_focus.q_weight),
         float(diff_focus.pol_scale), float(diff_focus.min_keep), float(diff_focus.slope),
+        input_history_lc0_root,
     )
 
     # Pre-extract Python scalars from numpy arrays (batch conversion is cheaper
@@ -225,6 +320,8 @@ def _append_records_via_c(
                 c_ply_list[j], has_policy,
                 c_priority_list[j], sample_weights[j], c_keep_list[j],
                 c_mask[j],
+                x_lc0_root=(None if alt_lc0_root_xs is None else alt_lc0_root_xs[j]),
+                gumbel_policy_diag=gumbel_diags[j],
             ),
         )
 
@@ -238,6 +335,7 @@ def _append_records_via_python(
     pol_logits: np.ndarray, wdl_est: np.ndarray,
     probs_list: list[np.ndarray | None], actions: list[int | None],
     values_list: list[float | None],
+    gumbel_diags: list[dict[str, float] | None],
     masks_list: list[np.ndarray | None],
     is_full: np.ndarray, sample_weights: list[float],
     diff_focus,
@@ -264,6 +362,14 @@ def _append_records_via_python(
         board_before = state.boards[idx]
         ply_index = int(len(board_before.move_stack))
         pov_color = board_before.turn
+        x_lc0_root = (
+            encode_position(board_before, add_features=True, input_history_encoding=LC0_HISTORY_ROOT)
+            if (
+                bool(state.game.record_lc0_root_input)
+                and normalize_lc0_history_encoding(state.game.input_history_encoding) != LC0_HISTORY_ROOT
+            )
+            else None
+        )
 
         mask = masks_list[j]
         if mask is None:
@@ -328,6 +434,8 @@ def _append_records_via_python(
                 sample_weight=float(sample_weights[j]),
                 keep_prob=float(keep_prob),
                 legal_mask=mask.view(np.uint8),
+                x_lc0_root=x_lc0_root,
+                gumbel_policy_diag=gumbel_diags[j],
             ),
         )
 
@@ -371,23 +479,49 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
     actions: list[int | None] = [None] * len(net_idxs)
     values_list: list[float | None] = [None] * len(net_idxs)
     masks_list: list[np.ndarray | None] = [None] * len(net_idxs)
+    gumbel_diags: list[dict[str, float] | None] = [None] * len(net_idxs)
 
-    # Per-game temperature based on each game's own ply count.
+    # Per-game action temperature based on each game's own ply count.  Pure
+    # selfplay can keep exploration while SF-curriculum games stay sharp.
     temps = [
         temperature_for_ply(
             ply=state.cboards[i].ply // 2 + 1,
-            temperature=float(temp.temperature),
+            temperature=(
+                float(temp.selfplay_temperature)
+                if bool(state.selfplay_arr[i]) and temp.selfplay_temperature is not None
+                else float(temp.temperature)
+            ),
             drop_plies=int(temp.drop_plies),
             after=float(temp.after),
-            decay_start_move=int(temp.decay_start_move),
-            decay_moves=int(temp.decay_moves),
-            endgame=float(temp.endgame),
+            decay_start_move=(
+                int(temp.selfplay_decay_start_move)
+                if bool(state.selfplay_arr[i]) and temp.selfplay_decay_start_move is not None
+                else int(temp.decay_start_move)
+            ),
+            decay_moves=(
+                int(temp.selfplay_decay_moves)
+                if bool(state.selfplay_arr[i]) and temp.selfplay_decay_moves is not None
+                else int(temp.decay_moves)
+            ),
+            endgame=(
+                float(temp.selfplay_endgame)
+                if bool(state.selfplay_arr[i]) and temp.selfplay_endgame is not None
+                else float(temp.endgame)
+            ),
         )
+        for i in net_idxs
+    ]
+    gumbel_scales = [
+        _scheduled_gumbel_scale(search, move_number=state.cboards[i].ply // 2 + 1)
         for i in net_idxs
     ]
 
     def _run_mcts_group(
-        idxs: list[int], sims_per: list[int], *, per_game_noise: list[bool] | None = None,
+        idxs: list[int],
+        sims_per: list[int],
+        *,
+        per_game_noise: list[bool] | None = None,
+        per_game_gumbel_scale: list[float] | None = None,
     ) -> None:
         if not idxs:
             return
@@ -410,6 +544,10 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
             # C gumbel only uses cboards; Python fallback needs python-chess boards
             sub_boards = sub_cboards if _HAS_GUMBEL_C else [state.boards[net_idxs[j]] for j in group]
             sub_noise = [per_game_noise[j] for j in group] if per_game_noise is not None else None
+            sub_scale = [
+                float(per_game_gumbel_scale[j])
+                for j in group
+            ] if per_game_gumbel_scale is not None else [float(search.gumbel_scale) for _ in group]
             # Map group indices to game-level root IDs for tree reuse
             sub_root_ids = [state.root_ids[net_idxs[j]] for j in group] if state.mcts_tree is not None else None
             _gumbel_result = _gumbel_fn(
@@ -417,19 +555,34 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
                 sub_boards,  # type: ignore[arg-type] # CBoard or Board; dispatched by _HAS_GUMBEL_C branch
                 device=state.device,
                 rng=rng,
-                cfg=GumbelConfig(simulations=int(sim_count), temperature=1.0, add_noise=True),
+                cfg=GumbelConfig(
+                    simulations=int(sim_count),
+                    topk=int(search.gumbel_topk),
+                    temperature=0.0,
+                    add_noise=True,
+                    gumbel_scale=1.0,
+                    input_history_encoding=state.game.input_history_encoding,
+                ),
                 evaluator=eval_impl,
                 pre_pol_logits=sub_pol,
                 pre_wdl_logits=sub_wdl,
                 per_game_simulations=sub_sims,
                 per_game_add_noise=sub_noise,
+                per_game_gumbel_scale=sub_scale,
                 cboards=sub_cboards,
                 tree=state.mcts_tree,
                 root_node_ids=sub_root_ids,
                 tb_probe=state.tb_probe if state.game.syzygy_in_search else None,
+                return_diagnostics=True,
             )
             # C version returns 6-tuple (with tree, root_ids), Python returns 4-tuple
             p_sub, a_sub, v_sub, m_sub = _gumbel_result[:4]
+            if _HAS_GUMBEL_C and len(_gumbel_result) >= 7:
+                diag_sub = _gumbel_result[6]
+            elif (not _HAS_GUMBEL_C) and len(_gumbel_result) >= 5:
+                diag_sub = _gumbel_result[4]
+            else:
+                diag_sub = [None] * len(group)
             # Store returned root IDs for tree reuse
             if state.mcts_tree is not None and len(_gumbel_result) >= 6:
                 _ret_root_ids = _gumbel_result[5]
@@ -451,49 +604,34 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
                     temperature=1.0,
                     fpu_reduction=float(search.fpu_reduction),
                     fpu_at_root=float(search.fpu_at_root),
+                    input_history_encoding=state.game.input_history_encoding,
                 ),
                 evaluator=eval_impl,
                 pre_pol_logits=sub_pol,
                 pre_wdl_logits=sub_wdl,
                 cboards=sub_cboards,
             )
+            diag_sub = [None] * len(group)
 
-        # Re-select actions with per-game temperature from the
-        # improved policy (probs are temperature-independent).
-        _temps_arr = np.array(sub_temps, dtype=np.float64)
-        _need_resample = _temps_arr != 1.0
-        if _need_resample.any():
-            _p_stack = np.stack(p_sub)  # (G, 4672)
-            if state.has_classify_c:
-                # C path: GIL released during pow/sample
-                _a_arr = np.array(a_sub, dtype=np.int32)
-                _rand_arr = rng.random(len(sub_temps))
-                assert state.c_temp_resample is not None
-                state.c_temp_resample(_p_stack, _temps_arr, _a_arr, _rand_arr)
-                for gi in range(len(a_sub)):
-                    a_sub[gi] = int(_a_arr[gi])
-            else:
-                _nonzero = _need_resample.nonzero()[0]
-                for gi in _nonzero:
-                    p = _p_stack[gi]
-                    t = _temps_arr[gi]
-                    legal = np.flatnonzero(p > 0)
-                    if len(legal) == 0:
-                        continue
-                    if t <= 0:
-                        a_sub[gi] = int(legal[np.argmax(p[legal])])
-                    else:
-                        pw = np.power(p[legal], 1.0 / t)
-                        ps = float(pw.sum())
-                        if ps > 0:
-                            pw /= ps
-                            a_sub[gi] = int(rng.choice(legal, p=pw))
+        # Re-select actions with per-game temperature from the returned policy.
+        # For Gumbel, temperature <= 0 must preserve the sequential-halving
+        # survivor returned by the search instead of taking policy argmax.
+        _resample_actions_with_temperature(
+            p_sub,
+            a_sub,
+            sub_temps,
+            rng,
+            c_temp_resample=state.c_temp_resample,
+            use_c_resample=bool(state.has_classify_c),
+            preserve_zero_temperature_actions=bool(use_gumbel),
+        )
 
-        for jj, p, a, v, m in zip(group, p_sub, a_sub, v_sub, m_sub, strict=True):
+        for local_j, (jj, p, a, v, m) in enumerate(zip(group, p_sub, a_sub, v_sub, m_sub, strict=True)):
             probs_list[jj] = p
             actions[jj] = a
             values_list[jj] = float(v)
             masks_list[jj] = m
+            gumbel_diags[jj] = diag_sub[local_j]
             # Advance tree root to chosen move's child for next-ply reuse
             if state.mcts_tree is not None:
                 game_idx = net_idxs[jj]
@@ -503,12 +641,27 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
                     state.root_ids[game_idx] = child  # -1 if not found
 
     # Run all games in one MCTS call with per-game sim budgets and noise.
-    # Full-sim games get Gumbel noise for exploration; fast games don't
+    # Full-sim selfplay games get Gumbel noise for exploration; SF-curriculum
+    # games stay deterministic so their move quality reflects the search
+    # budget instead of root sampling noise. Fast games remain deterministic
     # (KataGo playout cap convention).
     all_idxs = list(range(len(net_idxs)))
     is_full_py = is_full.tolist()
+    noise_py = [
+        bool(is_full_py[j]) and bool(state.selfplay_arr[net_idxs[j]])
+        for j in all_idxs
+    ]
     combined_sims = [full_sims if is_full_py[j] else fast_sims for j in all_idxs]
-    _run_mcts_group(all_idxs, combined_sims, per_game_noise=is_full_py)
+    scale_py = [
+        float(gumbel_scales[j]) if bool(noise_py[j]) else 0.0
+        for j in all_idxs
+    ]
+    _run_mcts_group(
+        all_idxs,
+        combined_sims,
+        per_game_noise=noise_py,
+        per_game_gumbel_scale=scale_py,
+    )
 
     if state.has_c_ply and len(net_idxs) > 0:
         _append_records_via_c(
@@ -516,6 +669,7 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
             cb_encode_list=_cb_encode_list,
             pol_logits=pol_logits, wdl_logits_raw=wdl_logits_raw,
             actions=actions, values_list=values_list, probs_list=probs_list,
+            gumbel_diags=gumbel_diags,
             is_full_py=is_full_py, sample_weights=sample_weights,
             diff_focus=diff_focus,
         )
@@ -525,6 +679,7 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
             xs_batch=xs_batch,
             pol_logits=pol_logits, wdl_est=wdl_est,
             probs_list=probs_list, actions=actions, values_list=values_list,
+            gumbel_diags=gumbel_diags,
             masks_list=masks_list,
             is_full=is_full, sample_weights=sample_weights,
             diff_focus=diff_focus,

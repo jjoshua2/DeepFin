@@ -1108,6 +1108,33 @@ static void cboard_encode_hist_planes(const uint64_t hist_bb[6],
     }
 }
 
+/* Encode history entry from the root side-to-move POV.
+ * This matches LC0-style history: each slot keeps a stable us/them and board
+ * orientation instead of reinterpreting the old position by its own turn. */
+static void cboard_encode_hist_planes_root(const uint64_t hist_bb[6],
+                                           const uint64_t hist_occ[2],
+                                           int root_turn, float *out) {
+    int us = root_turn, them = 1 - us;
+    int is_white = (us == WHITE_C);
+    uint64_t bbs[12];
+    bbs[0]  = hist_bb[PAWN]   & hist_occ[us];
+    bbs[1]  = hist_bb[KNIGHT] & hist_occ[us];
+    bbs[2]  = hist_bb[BISHOP] & hist_occ[us];
+    bbs[3]  = hist_bb[ROOK]   & hist_occ[us];
+    bbs[4]  = hist_bb[QUEEN]  & hist_occ[us];
+    bbs[5]  = hist_bb[KING]   & hist_occ[us];
+    bbs[6]  = hist_bb[PAWN]   & hist_occ[them];
+    bbs[7]  = hist_bb[KNIGHT] & hist_occ[them];
+    bbs[8]  = hist_bb[BISHOP] & hist_occ[them];
+    bbs[9]  = hist_bb[ROOK]   & hist_occ[them];
+    bbs[10] = hist_bb[QUEEN]  & hist_occ[them];
+    bbs[11] = hist_bb[KING]   & hist_occ[them];
+    for (int p = 0; p < 12; p++) {
+        if (is_white) bitboard_to_plane_white(bbs[p], out + p * 64);
+        else          bitboard_to_plane_black(bbs[p], out + p * 64);
+    }
+}
+
 /* Compute a position key for repetition detection (from bitboards + meta).
  * Matches _check_repetitions which omits EP square from the key, so EP is
  * not mixed in here either. */
@@ -1183,6 +1210,49 @@ static void cboard_fill_lc0_112(const CBoard *b, float * restrict out) {
     }
 
     /* All-ones bias */
+    for (int i = 0; i < 64; i++) out[111*64 + i] = 1.0f;
+}
+
+static void cboard_fill_lc0_112_root(const CBoard *b, float * restrict out) {
+    /* Planes 0-103: 8 history slots of 12 piece planes + 1 repetition plane. */
+    cboard_encode_piece_planes(b, out);
+
+    for (int hi = 0; hi < b->hist_len && hi < CBOARD_HISTORY_MAX; hi++) {
+        int idx = (b->hist_head - 1 - hi + CBOARD_HISTORY_MAX) % CBOARD_HISTORY_MAX;
+        float *dest = out + ((hi + 1) * 13) * 64;
+        cboard_encode_hist_planes_root(b->hist_bb[idx], b->hist_occ[idx],
+                                       b->turn, dest);
+    }
+
+    /* Current-position repetition plane in slot 0. History-slot repetition
+     * planes are left zero, matching the legacy C encoder's approximation. */
+    if (cboard_is_repetition(b)) {
+        for (int i = 0; i < 64; i++) out[12*64 + i] = 1.0f;
+    }
+
+    /* LC0 classical castling (us-Q, us-K, them-Q, them-K) at 104..107 */
+    int us = b->turn;
+    int us_k, us_q, them_k, them_q;
+    if (us == WHITE_C) {
+        us_k = b->castling & WK_CASTLE; us_q = b->castling & WQ_CASTLE;
+        them_k = b->castling & BK_CASTLE; them_q = b->castling & BQ_CASTLE;
+    } else {
+        us_k = b->castling & BK_CASTLE; us_q = b->castling & BQ_CASTLE;
+        them_k = b->castling & WK_CASTLE; them_q = b->castling & WQ_CASTLE;
+    }
+    if (us_q)   for (int i = 0; i < 64; i++) out[104*64 + i] = 1.0f;
+    if (us_k)   for (int i = 0; i < 64; i++) out[105*64 + i] = 1.0f;
+    if (them_q) for (int i = 0; i < 64; i++) out[106*64 + i] = 1.0f;
+    if (them_k) for (int i = 0; i < 64; i++) out[107*64 + i] = 1.0f;
+
+    /* Color/flipped flag: set when the root side-to-move is black. */
+    if (b->turn == BLACK_C) {
+        for (int i = 0; i < 64; i++) out[108*64 + i] = 1.0f;
+    }
+
+    float r50 = (float)b->halfmove_clock;
+    for (int i = 0; i < 64; i++) out[109*64 + i] = r50;
+
     for (int i = 0; i < 64; i++) out[111*64 + i] = 1.0f;
 }
 

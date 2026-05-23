@@ -21,6 +21,7 @@
 #include <numpy/arrayobject.h>
 
 #include <math.h>
+#include <float.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -982,7 +983,9 @@ static int32_t tree_gumbel_collect_leaf(const TreeData *t, int32_t root_id,
     int32_t forced_action, const GumbelSelectParams *sel,
     int32_t *path_buf, int32_t path_cap);
 static void cboard_encode_146_into(const CBoard *b, float * restrict out);
+static void cboard_encode_146_lc0_root_into(const CBoard *b, float * restrict out);
 static void cboard_encode_146_bf16_into(const CBoard *b, uint16_t * restrict out);
+static void cboard_encode_146_lc0_root_bf16_into(const CBoard *b, uint16_t * restrict out);
 static void softmax_inplace(double *arr, int n);
 
 /* Store a CBoard into the tree's per-node cache slot, growing if needed. */
@@ -1055,6 +1058,7 @@ typedef struct {
     /* Encoding buffer (borrowed pointer — owned by Python) */
     void *enc_data;
     int enc_is_bf16;
+    int input_history_lc0_root;
     int32_t enc_capacity;
     PyObject *enc_arr_ref;       /* Strong ref to keep enc buffer alive */
 
@@ -1146,16 +1150,43 @@ static void gss_score_and_halve(GumbelSimState *g, TreeData *t) {
         int32_t rid = g->root_ids[bi];
         double root_Q = (t->N[rid] > 0) ? (t->W[rid] / (double)t->N[rid]) : 0.0;
 
-        /* Single pass over children: max_visit + populate action_to_slot map */
+        /* Single pass over children: max_visit + mctx mixed-value stats +
+         * populate action_to_slot map. */
         int32_t n_ch = t->num_children[rid];
         int32_t off = t->children_offset[rid];
         int32_t max_visit = 0;
+        int32_t total_visits = 0;
+        double sum_probs = 0.0;
+        double weighted_q_num = 0.0;
         for (int32_t j = 0; j < n_ch; j++) {
-            int32_t n = t->N[t->child_node[off + j]];
+            int32_t cid = t->child_node[off + j];
+            int32_t n = t->N[cid];
             if (n > max_visit) max_visit = n;
+            total_visits += n;
+            if (n > 0) {
+                double pr = t->prior[cid] > DBL_MIN ? t->prior[cid] : DBL_MIN;
+                double q = -t->W[cid] / (double)n;
+                sum_probs += pr;
+                weighted_q_num += pr * q;
+            }
             action_to_slot[t->child_action[off + j]] = (int16_t)j;
         }
-        double sigma = g->sel.c_scale * (g->sel.c_visit + (double)max_visit);
+        double weighted_q = (sum_probs > 0.0 && isfinite(sum_probs))
+            ? (weighted_q_num / sum_probs)
+            : root_Q;
+        double mixed_value = (root_Q + (double)total_visits * weighted_q)
+            / ((double)total_visits + 1.0);
+        double min_q = INFINITY;
+        double max_q = -INFINITY;
+        for (int32_t j = 0; j < n_ch; j++) {
+            int32_t cid = t->child_node[off + j];
+            int32_t n = t->N[cid];
+            double q = (n > 0) ? (-t->W[cid] / (double)n) : mixed_value;
+            if (q < min_q) min_q = q;
+            if (q > max_q) max_q = q;
+        }
+        double q_denom = fmax(max_q - min_q, 1e-8);
+        double q_scale = g->sel.c_scale * (g->sel.c_visit + (double)max_visit);
 
         int32_t coff = g->cands_offset[bi];
         double scores_buf[GSS_MAX_CANDS];
@@ -1169,8 +1200,10 @@ static void gss_score_and_halve(GumbelSimState *g, TreeData *t) {
             if (slot >= 0) {
                 int32_t cid = t->child_node[off + slot];
                 if (t->N[cid] > 0) q_hat = -t->W[cid] / (double)t->N[cid];
+                else q_hat = mixed_value;
             }
-            scores[ci] = g->gumbels[bi * GSS_POLICY_SIZE + action] + log_prior + sigma * q_hat;
+            double q_transformed = q_scale * ((q_hat - min_q) / q_denom);
+            scores[ci] = g->gumbels[bi * GSS_POLICY_SIZE + action] + log_prior + q_transformed;
         }
 
         /* Simple selection sort to find top half (n_cands is small, <=12) */
@@ -1390,10 +1423,16 @@ static int32_t gss_prepare_batch(
             int32_t li = base + i;
             if (g->enc_is_bf16) {
                 uint16_t *out = (uint16_t *)enc_data;
-                cboard_encode_146_bf16_into(&s->leaf_cboards[li], out + li * 146 * 64);
+                if (g->input_history_lc0_root)
+                    cboard_encode_146_lc0_root_bf16_into(&s->leaf_cboards[li], out + li * 146 * 64);
+                else
+                    cboard_encode_146_bf16_into(&s->leaf_cboards[li], out + li * 146 * 64);
             } else {
                 float *out = (float *)enc_data;
-                cboard_encode_146_into(&s->leaf_cboards[li], out + li * 146 * 64);
+                if (g->input_history_lc0_root)
+                    cboard_encode_146_lc0_root_into(&s->leaf_cboards[li], out + li * 146 * 64);
+                else
+                    cboard_encode_146_into(&s->leaf_cboards[li], out + li * 146 * 64);
             }
         }
     }
@@ -2490,6 +2529,8 @@ static int32_t tree_gumbel_select_child(const TreeData *t, int32_t node_id,
     int8_t  *exclude   = (int8_t *)alloca(n_ch * sizeof(int8_t));
     int32_t max_visit = 0;
     int32_t total_visits = 0;
+    double sum_probs = 0.0;
+    double weighted_q_num = 0.0;
     for (int32_t i = 0; i < n_ch; i++) {
         int32_t cid = t->child_node[off + i];
         int8_t  cs  = check_solved ? t->solved[cid] : SOLVED_UNKNOWN;
@@ -2515,8 +2556,27 @@ static int32_t tree_gumbel_select_child(const TreeData *t, int32_t node_id,
                 ? (-(t->W[cid] + (double)(vloss_weight * vl)) / (double)eff_n)
                 : parent_Q;
         }
+        if (!exclude[i] && eff_n > 0) {
+            double pr = t->prior[cid] > DBL_MIN ? t->prior[cid] : DBL_MIN;
+            sum_probs += pr;
+            weighted_q_num += pr * cqs[i];
+        }
     }
-    double sigma = c_scale * (c_visit + (double)max_visit);
+    double weighted_q = (sum_probs > 0.0 && isfinite(sum_probs))
+        ? (weighted_q_num / sum_probs)
+        : parent_Q;
+    double mixed_value = (parent_Q + (double)total_visits * weighted_q)
+        / ((double)total_visits + 1.0);
+    double min_q = INFINITY;
+    double max_q = -INFINITY;
+    for (int32_t i = 0; i < n_ch; i++) {
+        if (exclude[i]) continue;
+        double cq = (eff_ns[i] > 0) ? cqs[i] : mixed_value;
+        if (cq < min_q) min_q = cq;
+        if (cq > max_q) max_q = cq;
+    }
+    double q_denom = fmax(max_q - min_q, 1e-8);
+    double q_scale = c_scale * (c_visit + (double)max_visit);
     double inv_total = 1.0 / (1.0 + (double)total_visits);
 
     /* Fuse score-compute with softmax-max tracking. Excluded slots get
@@ -2525,7 +2585,8 @@ static int32_t tree_gumbel_select_child(const TreeData *t, int32_t node_id,
     double max_score = -INFINITY;
     for (int32_t i = 0; i < n_ch; i++) {
         if (exclude[i]) { scores[i] = -INFINITY; continue; }
-        double s = log_priors[i] + sigma * cqs[i];
+        double cq = (eff_ns[i] > 0) ? cqs[i] : mixed_value;
+        double s = log_priors[i] + q_scale * ((cq - min_q) / q_denom);
         scores[i] = s;
         if (s > max_score) max_score = s;
     }
@@ -3081,10 +3142,24 @@ static void cboard_encode_146_into(const CBoard *b, float * restrict out) {
     cboard_compute_features_34(b, out + 112 * 64);
 }
 
+static void cboard_encode_146_lc0_root_into(const CBoard *b, float * restrict out) {
+    memset(out, 0, 146 * 64 * sizeof(float));
+    cboard_fill_lc0_112_root(b, out);
+    cboard_compute_features_34(b, out + 112 * 64);
+}
+
 static void cboard_encode_146_bf16_into(const CBoard *b, uint16_t * restrict out) {
     float tmp[146 * 64];
     memset(tmp, 0, sizeof(tmp));
     cboard_encode_146_into(b, tmp);
+    for (int32_t i = 0; i < 146 * 64; i++) {
+        out[i] = float_to_bf16_bits(tmp[i]);
+    }
+}
+
+static void cboard_encode_146_lc0_root_bf16_into(const CBoard *b, uint16_t * restrict out) {
+    float tmp[146 * 64];
+    cboard_encode_146_lc0_root_into(b, tmp);
     for (int32_t i = 0; i < 146 * 64; i++) {
         out[i] = float_to_bf16_bits(tmp[i]);
     }
@@ -3097,7 +3172,7 @@ static void cboard_encode_146_bf16_into(const CBoard *b, uint16_t * restrict out
  * start_gumbel_sims(root_cboards, root_ids, remaining_per_board,
  *                   gumbels_per_board, root_priors, budget_remaining,
  *                   root_qs, c_scale, c_visit, c_puct, fpu_reduction,
- *                   full_tree, enc_buf[, vloss_weight])
+ *                   full_tree, enc_buf[, vloss_weight, target_batch, input_history_lc0_root])
  *
  * Initializes the gumbel simulation state machine and runs until
  * the first batch of positions needs GPU eval.
@@ -3114,12 +3189,13 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
     int full_tree;
     int vloss_weight = 0;
     int target_batch = 0;  /* 0 => use GSS_GPU_BATCH default in gss_step */
+    int input_history_lc0_root = 0;
 
-    if (!PyArg_ParseTuple(args, "OOOOOOOddddpO|ii",
+    if (!PyArg_ParseTuple(args, "OOOOOOOddddpO|iii",
                           &root_cbs_list, &root_ids_obj, &remaining_list,
                           &gumbels_list, &priors_list, &budget_obj, &root_qs_obj,
                           &c_scale, &c_visit, &c_puct, &fpu_reduction, &full_tree,
-                          &enc_buf_obj, &vloss_weight, &target_batch))
+                          &enc_buf_obj, &vloss_weight, &target_batch, &input_history_lc0_root))
         return NULL;
 
     /* Validate list args before any indexing — PyList_GET_ITEM has no
@@ -3349,6 +3425,7 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
     /* Encoding buffer (strong ref to keep alive) */
     g->enc_data = PyArray_DATA(enc_arr);
     g->enc_is_bf16 = enc_is_bf16;
+    g->input_history_lc0_root = input_history_lc0_root ? 1 : 0;
     g->enc_capacity = (int32_t)PyArray_DIM(enc_arr, 0);
     Py_INCREF(enc_arr);
     g->enc_arr_ref = (PyObject *)enc_arr;
@@ -3814,7 +3891,8 @@ static PyTypeObject MCTSTreeType = {
 /*
  * batch_process_ply(cboards_list, pol_logits, wdl_logits, actions, values,
  *                   mcts_probs,
- *                   df_enabled, df_q_weight, df_pol_scale, df_min, df_slope)
+ *                   df_enabled, df_q_weight, df_pol_scale, df_min, df_slope,
+ *                   input_history_lc0_root)
  *   -> (sample_x, sample_probs, sample_wdl_net, sample_wdl_search,
  *       sample_priority, sample_keep_prob, sample_legal_mask,
  *       sample_ply, sample_pov, game_over)
@@ -3828,12 +3906,14 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
     PyObject *pol_obj, *wdl_obj, *actions_obj, *values_obj;
     PyObject *mcts_probs_obj;
     int df_enabled;
+    int input_history_lc0_root = 0;
     double df_q_weight, df_pol_scale, df_min, df_slope;
 
-    if (!PyArg_ParseTuple(args, "OOOOOOidddd",
+    if (!PyArg_ParseTuple(args, "OOOOOOidddd|p",
                           &cboards_list, &pol_obj, &wdl_obj, &actions_obj,
                           &values_obj, &mcts_probs_obj,
-                          &df_enabled, &df_q_weight, &df_pol_scale, &df_min, &df_slope))
+                          &df_enabled, &df_q_weight, &df_pol_scale, &df_min, &df_slope,
+                          &input_history_lc0_root))
         return NULL;
 
     PyArrayObject *pol_arr = FROMANY_2D(pol_obj, NPY_FLOAT32);
@@ -4032,7 +4112,10 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
         memcpy(probs_out + i * 4672, mprobs, 4672 * sizeof(float));
 
         /* Encode position BEFORE pushing move */
-        cboard_encode_146_into(cb, x_data + i * 146 * 64);
+        if (input_history_lc0_root)
+            cboard_encode_146_lc0_root_into(cb, x_data + i * 146 * 64);
+        else
+            cboard_encode_146_into(cb, x_data + i * 146 * 64);
 
         /* Push move */
         cboard_push_index(cb, action);
@@ -4117,6 +4200,56 @@ static PyObject *py_batch_encode_146(PyObject *self, PyObject *args) {
     Py_RETURN_NONE;
 }
 
+/* batch_encode_146_lc0_root(cboards_list, out_array)
+ * Encode N CBoards into LC0 root-history layout + feature planes. */
+static PyObject *py_batch_encode_146_lc0_root(PyObject *self, PyObject *args) {
+    PyObject *cboards_list;
+    PyObject *out_obj;
+
+    if (!PyArg_ParseTuple(args, "OO", &cboards_list, &out_obj))
+        return NULL;
+
+    if (!PyList_Check(cboards_list)) {
+        PyErr_SetString(PyExc_TypeError, "cboards_list must be a list");
+        return NULL;
+    }
+
+    PyArrayObject *out_arr = FROMANY_4D_RW(out_obj, NPY_FLOAT32);
+    if (!out_arr) return NULL;
+
+    int32_t n = (int32_t)PyList_Size(cboards_list);
+    if (n <= 0) { Py_DECREF(out_arr); Py_RETURN_NONE; }
+
+    if (PyArray_DIM(out_arr, 0) < n || PyArray_DIM(out_arr, 1) != 146 ||
+        PyArray_DIM(out_arr, 2) != 8 || PyArray_DIM(out_arr, 3) != 8) {
+        Py_DECREF(out_arr);
+        PyErr_SetString(PyExc_ValueError,
+            "out_array must have shape (>=N, 146, 8, 8)");
+        return NULL;
+    }
+
+    CBoard *boards = (CBoard *)malloc(n * sizeof(CBoard));
+    if (!boards) { Py_DECREF(out_arr); return PyErr_NoMemory(); }
+    if (extract_cboards(cboards_list, n, boards, NULL) < 0) {
+        free(boards); Py_DECREF(out_arr); return NULL;
+    }
+
+    float *out_data = (float *)PyArray_DATA(out_arr);
+
+    Py_BEGIN_ALLOW_THREADS
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static) if(n > 64)
+#endif
+    for (int32_t i = 0; i < n; i++) {
+        cboard_encode_146_lc0_root_into(&boards[i], out_data + i * 146 * 64);
+    }
+    Py_END_ALLOW_THREADS
+
+    free(boards);
+    Py_DECREF(out_arr);
+    Py_RETURN_NONE;
+}
+
 /* batch_encode_146_bf16(cboards_list, out_array)
  * Encode N CBoards into a pre-allocated (N, 146, 8, 8) uint16 array holding
  * bfloat16 bit patterns. GIL released during encoding. */
@@ -4160,6 +4293,54 @@ static PyObject *py_batch_encode_146_bf16(PyObject *self, PyObject *args) {
 #endif
     for (int32_t i = 0; i < n; i++) {
         cboard_encode_146_bf16_into(&boards[i], out_data + i * 146 * 64);
+    }
+    Py_END_ALLOW_THREADS
+
+    free(boards);
+    Py_DECREF(out_arr);
+    Py_RETURN_NONE;
+}
+
+static PyObject *py_batch_encode_146_lc0_root_bf16(PyObject *self, PyObject *args) {
+    PyObject *cboards_list;
+    PyObject *out_obj;
+
+    if (!PyArg_ParseTuple(args, "OO", &cboards_list, &out_obj))
+        return NULL;
+
+    if (!PyList_Check(cboards_list)) {
+        PyErr_SetString(PyExc_TypeError, "cboards_list must be a list");
+        return NULL;
+    }
+
+    PyArrayObject *out_arr = FROMANY_4D_RW(out_obj, NPY_UINT16);
+    if (!out_arr) return NULL;
+
+    int32_t n = (int32_t)PyList_Size(cboards_list);
+    if (n <= 0) { Py_DECREF(out_arr); Py_RETURN_NONE; }
+
+    if (PyArray_DIM(out_arr, 0) < n || PyArray_DIM(out_arr, 1) != 146 ||
+        PyArray_DIM(out_arr, 2) != 8 || PyArray_DIM(out_arr, 3) != 8) {
+        Py_DECREF(out_arr);
+        PyErr_SetString(PyExc_ValueError,
+            "out_array must have shape (>=N, 146, 8, 8)");
+        return NULL;
+    }
+
+    CBoard *boards = (CBoard *)malloc(n * sizeof(CBoard));
+    if (!boards) { Py_DECREF(out_arr); return PyErr_NoMemory(); }
+    if (extract_cboards(cboards_list, n, boards, NULL) < 0) {
+        free(boards); Py_DECREF(out_arr); return NULL;
+    }
+
+    uint16_t *out_data = (uint16_t *)PyArray_DATA(out_arr);
+
+    Py_BEGIN_ALLOW_THREADS
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static) if(n > 64)
+#endif
+    for (int32_t i = 0; i < n; i++) {
+        cboard_encode_146_lc0_root_bf16_into(&boards[i], out_data + i * 146 * 64);
     }
     Py_END_ALLOW_THREADS
 
@@ -4434,13 +4615,20 @@ static PyObject *py_temperature_resample(PyObject *self, PyObject *args) {
 static PyMethodDef module_methods[] = {
     {"batch_process_ply", py_batch_process_ply, METH_VARARGS,
      "batch_process_ply(cboards, pol, wdl, actions, values, probs, "
-     "df_enabled, df_q_w, df_pol_s, df_min, df_slope) -> tuple of arrays"},
+     "df_enabled, df_q_w, df_pol_s, df_min, df_slope, "
+     "[input_history_lc0_root]) -> tuple of arrays"},
     {"batch_encode_146", py_batch_encode_146, METH_VARARGS,
      "batch_encode_146(cboards_list, out_array) -> None. "
      "Encode CBoards into pre-allocated (N,146,8,8) float32 array. GIL released."},
+    {"batch_encode_146_lc0_root", py_batch_encode_146_lc0_root, METH_VARARGS,
+     "batch_encode_146_lc0_root(cboards_list, out_array) -> None. "
+     "Encode CBoards with LC0 root-history layout into pre-allocated float32 array."},
     {"batch_encode_146_bf16", py_batch_encode_146_bf16, METH_VARARGS,
      "batch_encode_146_bf16(cboards_list, out_array) -> None. "
      "Encode CBoards into pre-allocated (N,146,8,8) uint16 bfloat16-bit array. GIL released."},
+    {"batch_encode_146_lc0_root_bf16", py_batch_encode_146_lc0_root_bf16, METH_VARARGS,
+     "batch_encode_146_lc0_root_bf16(cboards_list, out_array) -> None. "
+     "Encode CBoards with LC0 root-history layout into pre-allocated bf16-bit array."},
     {"classify_games", py_classify_games, METH_VARARGS,
      "classify_games(cboards, net_color, done, finalized, selfplay, max_plies) "
      "-> (net_idxs, selfplay_opp_idxs, curriculum_opp_idxs). GIL released."},

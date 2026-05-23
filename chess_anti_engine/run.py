@@ -510,6 +510,11 @@ def main() -> None:
     ap.add_argument("--fast-simulations", type=int, default=8)
     ap.add_argument("--fpu-reduction", type=float, default=1.2, help="FPU reduction for non-root MCTS nodes (LC0 default: 1.2)")
     ap.add_argument("--fpu-at-root", type=float, default=1.0, help="FPU reduction for root node (LC0 default: 1.0)")
+    ap.add_argument("--gumbel-topk", type=int, default=16, help="Number of root candidates used by Gumbel sequential halving")
+    ap.add_argument("--gumbel-scale", type=float, default=1.0, help="Scale for root Gumbel noise in Gumbel MCTS selfplay (0 disables; mctx default 1.0)")
+    ap.add_argument("--gumbel-scale-after", type=float, default=0.0, help="Final root Gumbel noise scale after the decay schedule")
+    ap.add_argument("--gumbel-scale-decay-start-move", type=int, default=0, help="Full-move number where root Gumbel scale starts decaying (0 disables)")
+    ap.add_argument("--gumbel-scale-decay-moves", type=int, default=0, help="Number of full moves over which root Gumbel scale decays to gumbel-scale-after")
     ap.add_argument("--batch-size", type=int, default=128)
     ap.add_argument("--temperature", type=float, default=1.0)
     ap.add_argument(
@@ -542,6 +547,10 @@ def main() -> None:
         default=0.6,
         help="Linear schedule: endgame/floor temperature",
     )
+    ap.add_argument("--selfplay-temperature", type=float, default=None)
+    ap.add_argument("--selfplay-temperature-decay-start-move", type=int, default=None)
+    ap.add_argument("--selfplay-temperature-decay-moves", type=int, default=None)
+    ap.add_argument("--selfplay-temperature-endgame", type=float, default=None)
     ap.add_argument("--max-plies", type=int, default=240)
 
   # Progressive simulation budget: start low (fast) and ramp up as training improves.
@@ -564,8 +573,8 @@ def main() -> None:
                     help="Volatility target source: raw (network raw WDL) or search (search-adjusted WDL).")
     ap.add_argument("--feature-dropout-p", type=float, default=0.3)
     ap.add_argument("--work-dir", type=str, default="runs")
-    ap.add_argument("--optimizer", type=str, default="nadamw", choices=["nadamw", "adamw", "muon", "cosmos", "cosmos_fast", "soap"],
-                    help="Optimizer: nadamw, adamw, muon, cosmos, cosmos_fast, or soap")
+    ap.add_argument("--optimizer", type=str, default="nadamw", choices=["nadamw", "adamw", "muon", "aurora", "cosmos", "cosmos_fast", "soap"],
+                    help="Optimizer: nadamw, adamw, muon, aurora, cosmos, cosmos_fast, or soap")
     ap.add_argument("--cosmos-rank", type=int, default=64, help="COSMOS/COSMOSFast low-rank subspace rank")
     ap.add_argument("--cosmos-gamma", type=float, default=0.2, help="COSMOS/COSMOSFast residual branch weight")
     ap.add_argument("--no-amp", action="store_true", help="Disable AMP (BF16 autocast on CUDA)")

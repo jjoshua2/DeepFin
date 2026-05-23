@@ -44,12 +44,16 @@ _VALUE_TO_FLAG = {value: flag for value, flag in _OPTIONAL_STORAGE_PAIRS}
 def _batch_dims(arrs: dict[str, np.ndarray]) -> tuple[int, int, int]:
     x = arrs["x"]
     policy_target = arrs["policy_target"]
-    return int(x.shape[0]), int(policy_target.shape[1]), int(x.shape[1])
+    policy_size = int(np.asarray(arrs.get("_policy_size", policy_target.shape[1])).item())
+    return int(x.shape[0]), policy_size, int(x.shape[1])
 
 
 def _slice_array_batch(arrs: dict[str, np.ndarray], idxs: np.ndarray) -> dict[str, np.ndarray]:
     ii = np.asarray(idxs, dtype=np.int64).reshape(-1)
-    return {k: np.array(v[ii], copy=True, order="C") for k, v in arrs.items()}
+    return {
+        k: (np.array(v, copy=True) if np.asarray(v).ndim == 0 else np.array(v[ii], copy=True, order="C"))
+        for k, v in arrs.items()
+    }
 
 
 def _concat_sparse_batches(chunks: list[dict[str, np.ndarray]]) -> dict[str, np.ndarray]:
@@ -497,6 +501,10 @@ class DiskReplayBuffer:
             self._flush_shard_arrays(self._take_write_prefix(self._write_buf_rows))
             self._enforce_window()
 
+    def enforce_window(self) -> None:
+        """Apply the current capacity limit immediately."""
+        self._enforce_window()
+
     def _flush_shard_arrays(self, arrs: dict[str, np.ndarray]) -> None:
         """Write a shard to disk."""
         path = local_shard_path(self._shard_dir, self._shard_index)
@@ -595,7 +603,7 @@ class DiskReplayBuffer:
         if idx.ndim != 1:
             idx = idx.reshape(-1)
         x_planes = int(next(iter(self._shuffle_buf))["x"].shape[1])
-        policy_size = POLICY_SIZE
+        policy_size = int(np.asarray(next(iter(self._shuffle_buf)).get("_policy_size", POLICY_SIZE)).item())
         if idx.size == 0:
             return {
                 name: zeros_for_storage_field(
@@ -617,7 +625,7 @@ class DiskReplayBuffer:
             mask = (idx >= start) & (idx < end)
             if np.any(mask):
                 local = idx[mask] - start + chunk_off
-                rows = {k: v[local] for k, v in chunk.items()}
+                rows = {k: (v if np.asarray(v).ndim == 0 else v[local]) for k, v in chunk.items()}
                 dense_rows = densify_chunk(rows, policy_size=policy_size)
                 selected.append((dense_rows, mask))
                 all_keys.update(dense_rows.keys())

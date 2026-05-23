@@ -7,6 +7,7 @@ import chess
 import numpy as np
 
 from chess_anti_engine.encoding._lc0_ext import CBoard
+from chess_anti_engine.encoding.lc0 import LC0_HISTORY_ROOT, normalize_lc0_history_encoding
 
 
 def cboard_from_board_fast(board: chess.Board) -> CBoard:
@@ -49,18 +50,19 @@ if TYPE_CHECKING:
     )
 
 
-def encode_cboard(cb: CBoard) -> np.ndarray:
+def encode_cboard(cb: CBoard, *, input_history_encoding: str | None = None) -> np.ndarray:
     """Encode a CBoard into (146, 8, 8) float32.
 
     Prefer the fused CBoard.encode_146() path when available. Fall back to
     CBoard.encode_planes() + the existing features extension otherwise.
     """
-    encode_146 = getattr(cb, "encode_146", None)
+    use_lc0_root = normalize_lc0_history_encoding(input_history_encoding) == LC0_HISTORY_ROOT
+    encode_146 = getattr(cb, "encode_146_lc0_root" if use_lc0_root else "encode_146", None)
     if encode_146 is not None:
         return encode_146()
 
   # LC0 112 planes — all in C
-    lc0 = cb.encode_planes()  # (112, 8, 8) float32
+    lc0 = (cb.encode_planes_lc0_root() if use_lc0_root else cb.encode_planes())
 
     if not _HAS_FEATURES_C:
   # No features C ext — return LC0 only with zero features

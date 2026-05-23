@@ -214,6 +214,18 @@ static PyObject* cboard_encode_146(const CBoard *b) {
     return (PyObject*)arr;
 }
 
+static PyObject* cboard_encode_146_lc0_root(const CBoard *b) {
+    npy_intp dims[3] = {146, 8, 8};
+    PyArrayObject *arr = (PyArrayObject*)PyArray_ZEROS(3, dims, NPY_FLOAT32, 0);
+    if (!arr) return NULL;
+    float *out = (float*)PyArray_DATA(arr);
+
+    cboard_fill_lc0_112_root(b, out);
+    cboard_compute_features_34(b, out + 112 * 64);
+
+    return (PyObject*)arr;
+}
+
 /* Full LC0 112-plane encoding for MCTS boards (no history).
  * Planes 0-11: piece planes, 12-95: zeros (no history),
  * 96-99: castling, 100: EP, 101: turn, 102: rule50,
@@ -225,6 +237,17 @@ static PyObject* cboard_encode_112(const CBoard *b) {
     float *out = (float*)PyArray_DATA(arr);
 
     cboard_fill_lc0_112(b, out);
+
+    return (PyObject*)arr;
+}
+
+static PyObject* cboard_encode_112_lc0_root(const CBoard *b) {
+    npy_intp dims[3] = {112, 8, 8};
+    PyArrayObject *arr = (PyArrayObject*)PyArray_ZEROS(3, dims, NPY_FLOAT32, 0);
+    if (!arr) return NULL;
+    float *out = (float*)PyArray_DATA(arr);
+
+    cboard_fill_lc0_112_root(b, out);
 
     return (PyObject*)arr;
 }
@@ -492,9 +515,17 @@ static PyObject* PyCBoard_encode_planes(PyCBoard *self, PyObject *Py_UNUSED(args
     return cboard_encode_112(&self->board);
 }
 
+static PyObject* PyCBoard_encode_planes_lc0_root(PyCBoard *self, PyObject *Py_UNUSED(args)) {
+    return cboard_encode_112_lc0_root(&self->board);
+}
+
 /* encode_146() -> numpy (146, 8, 8) float32 */
 static PyObject* PyCBoard_encode_146(PyCBoard *self, PyObject *Py_UNUSED(args)) {
     return cboard_encode_146(&self->board);
+}
+
+static PyObject* PyCBoard_encode_146_lc0_root(PyCBoard *self, PyObject *Py_UNUSED(args)) {
+    return cboard_encode_146_lc0_root(&self->board);
 }
 
 /* encode_146_and_legal() -> (numpy(146,8,8), numpy(N,) int32)
@@ -587,8 +618,12 @@ static PyMethodDef PyCBoard_methods[] = {
     {"is_stalemate", (PyCFunction)PyCBoard_is_stalemate, METH_NOARGS, "Check if stalemate"},
     {"encode_planes", (PyCFunction)PyCBoard_encode_planes, METH_NOARGS,
      "Encode as (112, 8, 8) float32 LC0 planes"},
+    {"encode_planes_lc0_root", (PyCFunction)PyCBoard_encode_planes_lc0_root, METH_NOARGS,
+     "Encode as (112, 8, 8) float32 LC0 root-history planes"},
     {"encode_146", (PyCFunction)PyCBoard_encode_146, METH_NOARGS,
      "Encode as (146, 8, 8) float32 LC0+feature planes"},
+    {"encode_146_lc0_root", (PyCFunction)PyCBoard_encode_146_lc0_root, METH_NOARGS,
+     "Encode as (146, 8, 8) float32 LC0 root-history + feature planes"},
     {"encode_146_and_legal", (PyCFunction)PyCBoard_encode_146_and_legal, METH_NOARGS,
      "Encode (146,8,8) and return legal move indices in one call"},
     {NULL}

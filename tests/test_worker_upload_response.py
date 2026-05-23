@@ -159,3 +159,23 @@ def test_shard_upload_skips_other_trial_pending_shard(tmp_path):
     assert uploaded_at is None
     assert pending.exists()
     assert session._requests.calls == 0
+
+
+def test_shard_upload_quarantines_rejected_200_response(tmp_path):
+    session = _minimal_session_for_shard_upload(
+        tmp_path,
+        _Resp(200, {"stored": False, "rejected": True, "reason": "invalid shard"}),
+    )
+    pending = session.pending_dir / "bad.zarr"
+    _write_tagged_shard(pending, run_id="trial_b")
+
+    uploaded_at = session._upload_pending_shards(default_elapsed_s=0.0)
+
+    assert uploaded_at is None
+    assert not pending.exists()
+    quarantined = list((tmp_path / "shards" / "corrupt").glob("bad.zarr*"))
+    assert len([p for p in quarantined if p.is_dir()]) == 1
+    reason_files = [p for p in quarantined if p.name.endswith(".reason.txt")]
+    assert len(reason_files) == 1
+    assert "invalid shard" in reason_files[0].read_text(encoding="utf-8")
+    assert session._requests.calls == 1

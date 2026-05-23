@@ -40,6 +40,7 @@ def load_yaml_file(path: str | Path) -> dict[str, Any]:
 _CORE_KEYS = (
     "mode", "seed", "device", "iterations", "work_dir",
     "replay_capacity", "replay_window_start", "replay_window_max", "replay_window_growth",
+    "replay_window_growth_frac",
     "bootstrap_dir", "bootstrap_checkpoint", "bootstrap_zero_policy_heads",
     "bootstrap_reinit_volatility_heads", "worker_wheel_path",
     "bootstrap_max_positions", "bootstrap_train_steps", "shared_shards_dir",
@@ -73,6 +74,11 @@ _STOCKFISH_KEYS = (
     "sf_pid_regret_recency_half_life",
     "sf_pid_regret_deadband_sigma",
     "sf_pid_regret_degen_step_frac",
+    "sf_pid_regret_tighten_gain",
+    "sf_pid_regret_tighten_streak_after",
+    "sf_pid_regret_tighten_streak_gain",
+    "sf_pid_regret_crash_ease_z",
+    "sf_pid_regret_crash_ease_min_frac",
     "sf_pid_nodes_window",
     "sf_pid_nodes_max_step",
     "sf_pid_nodes_max_step_frac",
@@ -81,6 +87,11 @@ _STOCKFISH_KEYS = (
     "sf_pid_nodes_recency_half_life",
     "sf_pid_nodes_deadband_sigma",
     "sf_pid_nodes_degen_step_frac",
+    "sf_pid_nodes_tighten_gain",
+    "sf_pid_nodes_tighten_streak_after",
+    "sf_pid_nodes_tighten_streak_gain",
+    "sf_pid_nodes_crash_ease_z",
+    "sf_pid_nodes_crash_ease_min_frac",
 )
 # Backwards compat: old short YAML names still work inside stockfish: section.
 _STOCKFISH_LEGACY: dict[str, str] = {
@@ -105,10 +116,13 @@ _SELFPLAY_KEYS = (
     "selfplay_batch", "selfplay_fraction",
     "temperature", "temperature_drop_plies", "temperature_after",
     "temperature_decay_start_move", "temperature_decay_moves", "temperature_endgame",
+    "selfplay_temperature", "selfplay_temperature_decay_start_move",
+    "selfplay_temperature_decay_moves", "selfplay_temperature_endgame",
     "max_plies",
     "mcts", "mcts_simulations", "mcts_start_simulations", "mcts_ramp_steps", "mcts_ramp_exponent",
     "playout_cap_fraction", "fast_simulations",
-    "fpu_reduction", "fpu_at_root",
+    "fpu_reduction", "fpu_at_root", "gumbel_topk", "gumbel_scale", "gumbel_scale_after",
+    "gumbel_scale_decay_start_move", "gumbel_scale_decay_moves",
     "opening_book_path", "opening_book_max_plies", "opening_book_max_games", "opening_book_prob",
     "opening_book_path_2", "opening_book_max_plies_2", "opening_book_max_games_2", "opening_book_mix_prob_2",
     "random_start_plies",
@@ -120,22 +134,33 @@ _SELFPLAY_KEYS = (
     "diff_focus_enabled", "diff_focus_q_weight", "diff_focus_pol_scale",
     "diff_focus_slope", "diff_focus_min",
     "categorical_bins", "hlgauss_sigma",
+    "record_lc0_root_input",
 )
 
 # model section: mostly 1:1 except kind→model and use_smolgen→no_smolgen (inverted).
 _MODEL_PASSTHROUGH = (
     "embed_dim", "num_layers", "num_heads", "ffn_mult", "use_nla", "gradient_checkpointing",
+    "input_pos_encoding", "qkv_projection", "use_deepnorm", "policy_encoding", "input_history_encoding",
+    "input_global_embedding", "input_global_embedding_channels", "input_square_embedding",
+    "smolgen_mode", "smolgen_bias_scale", "smolgen_bias_norm",
+    "arc_attention_bias", "smolgen_relation_basis", "smolgen_relation_norm",
+    "smolgen_relation_coeff_norm", "smolgen_relation_scale",
 )
 
 # train section: all 1:1 passthrough.
 _TRAIN_KEYS = (
-    "optimizer", "cosmos_rank", "cosmos_gamma",
+    "optimizer", "matrix_optimizer_scope", "matrix_lr_multiplier", "matrix_weight_decay", "aux_weight_decay",
+    "weight_decay_mode", "soda_scope", "soda_start_step",
+    "aurora_uw_floor",
+    "aurora_pp_iterations", "aurora_pp_beta", "aurora_polar_steps",
+    "aurora_polar_method", "aurora_polar_dtype", "aurora_polar_safety",
+    "cosmos_rank", "cosmos_gamma",
     "lr", "batch_size", "train_steps", "train_window_fraction",
     "no_amp", "feature_dropout_p",
     "fdp_king_safety", "fdp_pins", "fdp_pawns", "fdp_mobility", "fdp_outposts",
     "w_volatility",
     "accum_steps", "warmup_steps", "warmup_lr_start", "lr_eta_min", "lr_T0", "lr_T_mult",
-    "grad_clip", "zclip_z_thresh", "zclip_alpha", "zclip_max_norm",
+    "grad_clip", "zclip_z_thresh", "zclip_alpha", "zclip_clip_factor", "zclip_max_norm",
     "use_compile", "compile_mode", "log_level", "swa_start", "swa_freq",
     *TRAINER_WEIGHT_KEYS,
     "sf_wdl_frac_floor", "sf_wdl_floor_at_regret",
@@ -173,6 +198,7 @@ _TUNE_KEYS = (
     "distributed_async_test_eval", "distributed_async_test_eval_timeout_s",
     "distributed_min_games_fraction",
     "distributed_prev_model_max_fraction",
+    "distributed_stale_pause_target_games",
     "tune_metric", "tune_mode", "tune_num_to_keep", "tune_keep_last_experiments",
     "tune_scheduler",
     "eval_games", "eval_sf_nodes", "eval_mcts_simulations",

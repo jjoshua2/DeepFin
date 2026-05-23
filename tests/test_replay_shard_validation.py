@@ -41,6 +41,16 @@ def _minimal_valid_arrays() -> dict[str, np.ndarray]:
     }
 
 
+def test_validate_allows_compact_policy_size():
+    policy = np.zeros((2, 1858), dtype=np.float32)
+    policy[:, 0] = 1.0
+    validate_arrays({
+        "x": np.zeros((2, 146, 8, 8), dtype=np.float32),
+        "policy_target": policy,
+        "wdl_target": np.array([0, 1], dtype=np.int8),
+    })
+
+
 def test_validate_rejects_present_optional_flag_without_value():
     arrs = _minimal_valid_arrays()
     arrs["has_sf_wdl"] = np.array([1, 0], dtype=np.uint8)

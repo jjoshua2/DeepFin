@@ -92,6 +92,28 @@ class BatchStats:
     sf_eval_delta6: float = 0.0
     sf_eval_delta6_n: int = 0
 
+    diff_focus_records: int = 0
+    diff_focus_kept: int = 0
+    diff_focus_keep_prob_sum: float = 0.0
+    diff_focus_keep_limited: int = 0
+    diff_focus_sample_weight_sum: float = 0.0
+    diff_focus_sample_weight_limited: int = 0
+    diff_focus_priority_sum: float = 0.0
+    diff_focus_priority_sq_sum: float = 0.0
+    diff_focus_priority_min: float = 0.0
+    diff_focus_priority_max: float = 0.0
+    gumbel_policy_diag_n: int = 0
+    gumbel_policy_top_prob_sum: float = 0.0
+    gumbel_policy_action_prob_sum: float = 0.0
+    gumbel_policy_entropy_sum: float = 0.0
+    gumbel_policy_eff_moves_sum: float = 0.0
+    gumbel_policy_candidate_mass_sum: float = 0.0
+    gumbel_policy_non_candidate_top_prob_sum: float = 0.0
+    gumbel_policy_argmax_is_candidate_sum: int = 0
+    gumbel_policy_argmax_is_action_sum: int = 0
+    gumbel_policy_legal_count_sum: int = 0
+    gumbel_policy_candidate_count_sum: int = 0
+
 
 @dataclass
 class CompletedGameBatch:
@@ -128,22 +150,45 @@ class CompletedGameBatch:
     # sf_eval_delta6 mean reported in TensorBoard.
     sf_d6_sum: float = 0.0
     sf_d6_n: int = 0
+    diff_focus_records: int = 0
+    diff_focus_kept: int = 0
+    diff_focus_keep_prob_sum: float = 0.0
+    diff_focus_keep_limited: int = 0
+    diff_focus_sample_weight_sum: float = 0.0
+    diff_focus_sample_weight_limited: int = 0
+    diff_focus_priority_sum: float = 0.0
+    diff_focus_priority_sq_sum: float = 0.0
+    diff_focus_priority_min: float = 0.0
+    diff_focus_priority_max: float = 0.0
+    gumbel_policy_diag_n: int = 0
+    gumbel_policy_top_prob_sum: float = 0.0
+    gumbel_policy_action_prob_sum: float = 0.0
+    gumbel_policy_entropy_sum: float = 0.0
+    gumbel_policy_eff_moves_sum: float = 0.0
+    gumbel_policy_candidate_mass_sum: float = 0.0
+    gumbel_policy_non_candidate_top_prob_sum: float = 0.0
+    gumbel_policy_argmax_is_candidate_sum: int = 0
+    gumbel_policy_argmax_is_action_sum: int = 0
+    gumbel_policy_legal_count_sum: int = 0
+    gumbel_policy_candidate_count_sum: int = 0
 
 
 class _NetRecord:
     """Per-ply sample record.  Uses ``__slots__`` to avoid dict overhead."""
     __slots__ = (
         "x", "policy_probs", "net_wdl_est", "search_wdl_est",
+        "x_lc0_root",
         "pov_color", "ply_index", "has_policy", "priority",
         "sample_weight", "keep_prob", "legal_mask",
         "sf_policy_target", "sf_move_index", "sf_wdl",
-        "sf_legal_mask",
+        "sf_legal_mask", "gumbel_policy_diag",
     )
 
     x: np.ndarray
     policy_probs: np.ndarray
     net_wdl_est: np.ndarray
     search_wdl_est: np.ndarray
+    x_lc0_root: np.ndarray | None
     pov_color: bool
     ply_index: int
     has_policy: bool
@@ -155,17 +200,21 @@ class _NetRecord:
     sf_move_index: int | None
     sf_wdl: np.ndarray | None
     sf_legal_mask: np.ndarray | None
+    gumbel_policy_diag: dict[str, float] | None
 
     def __init__(
         self, x, policy_probs, net_wdl_est, search_wdl_est,
         pov_color, ply_index, has_policy, priority,
         sample_weight, keep_prob, legal_mask=None,
         sf_policy_target=None, sf_move_index=None, sf_wdl=None,
+        x_lc0_root=None,
+        gumbel_policy_diag=None,
     ):
         self.x = x
         self.policy_probs = policy_probs
         self.net_wdl_est = net_wdl_est
         self.search_wdl_est = search_wdl_est
+        self.x_lc0_root = x_lc0_root
         self.pov_color = pov_color
         self.ply_index = ply_index
         self.has_policy = has_policy
@@ -177,6 +226,7 @@ class _NetRecord:
         self.sf_move_index = sf_move_index
         self.sf_wdl = sf_wdl
         self.sf_legal_mask = None
+        self.gumbel_policy_diag = gumbel_policy_diag
 
 
 @dataclass
@@ -210,6 +260,27 @@ class _StatsAcc:
     # Log-only volatility metric: SF winrate delta across 6 plies.
     sf_d6_sum: float = 0.0
     sf_d6_n: int = 0
+    diff_focus_records: int = 0
+    diff_focus_kept: int = 0
+    diff_focus_keep_prob_sum: float = 0.0
+    diff_focus_keep_limited: int = 0
+    diff_focus_sample_weight_sum: float = 0.0
+    diff_focus_sample_weight_limited: int = 0
+    diff_focus_priority_sum: float = 0.0
+    diff_focus_priority_sq_sum: float = 0.0
+    diff_focus_priority_min: float = 0.0
+    diff_focus_priority_max: float = 0.0
+    gumbel_policy_diag_n: int = 0
+    gumbel_policy_top_prob_sum: float = 0.0
+    gumbel_policy_action_prob_sum: float = 0.0
+    gumbel_policy_entropy_sum: float = 0.0
+    gumbel_policy_eff_moves_sum: float = 0.0
+    gumbel_policy_candidate_mass_sum: float = 0.0
+    gumbel_policy_non_candidate_top_prob_sum: float = 0.0
+    gumbel_policy_argmax_is_candidate_sum: int = 0
+    gumbel_policy_argmax_is_action_sum: int = 0
+    gumbel_policy_legal_count_sum: int = 0
+    gumbel_policy_candidate_count_sum: int = 0
 
     def to_batch_stats(
         self, *, games: int, positions: int, sf_nodes: int | None,
@@ -251,6 +322,29 @@ class _StatsAcc:
             pid_ema_winrate=None,
             sf_eval_delta6=mean_sf_d6,
             sf_eval_delta6_n=int(self.sf_d6_n),
+            diff_focus_records=int(self.diff_focus_records),
+            diff_focus_kept=int(self.diff_focus_kept),
+            diff_focus_keep_prob_sum=float(self.diff_focus_keep_prob_sum),
+            diff_focus_keep_limited=int(self.diff_focus_keep_limited),
+            diff_focus_sample_weight_sum=float(self.diff_focus_sample_weight_sum),
+            diff_focus_sample_weight_limited=int(self.diff_focus_sample_weight_limited),
+            diff_focus_priority_sum=float(self.diff_focus_priority_sum),
+            diff_focus_priority_sq_sum=float(self.diff_focus_priority_sq_sum),
+            diff_focus_priority_min=float(self.diff_focus_priority_min),
+            diff_focus_priority_max=float(self.diff_focus_priority_max),
+            gumbel_policy_diag_n=int(self.gumbel_policy_diag_n),
+            gumbel_policy_top_prob_sum=float(self.gumbel_policy_top_prob_sum),
+            gumbel_policy_action_prob_sum=float(self.gumbel_policy_action_prob_sum),
+            gumbel_policy_entropy_sum=float(self.gumbel_policy_entropy_sum),
+            gumbel_policy_eff_moves_sum=float(self.gumbel_policy_eff_moves_sum),
+            gumbel_policy_candidate_mass_sum=float(self.gumbel_policy_candidate_mass_sum),
+            gumbel_policy_non_candidate_top_prob_sum=float(
+                self.gumbel_policy_non_candidate_top_prob_sum,
+            ),
+            gumbel_policy_argmax_is_candidate_sum=int(self.gumbel_policy_argmax_is_candidate_sum),
+            gumbel_policy_argmax_is_action_sum=int(self.gumbel_policy_argmax_is_action_sum),
+            gumbel_policy_legal_count_sum=int(self.gumbel_policy_legal_count_sum),
+            gumbel_policy_candidate_count_sum=int(self.gumbel_policy_candidate_count_sum),
         )
 
 
@@ -262,7 +356,9 @@ class _CExtensionCaps:
     has_classify_c: bool
     c_process_ply: Callable[..., Any] | None
     batch_enc_146: Callable[..., Any] | None
+    batch_enc_146_lc0_root: Callable[..., Any] | None
     batch_enc_146_bf16: Callable[..., Any] | None
+    batch_enc_146_lc0_root_bf16: Callable[..., Any] | None
     c_classify: Callable[..., Any] | None
     c_temp_resample: Callable[..., Any] | None
 
@@ -323,21 +419,31 @@ def _probe_c_extensions() -> _CExtensionCaps:
 
     c_process_ply: Callable[..., Any] | None = None
     batch_enc_146: Callable[..., Any] | None = None
+    batch_enc_146_lc0_root: Callable[..., Any] | None = None
     batch_enc_146_bf16: Callable[..., Any] | None = None
+    batch_enc_146_lc0_root_bf16: Callable[..., Any] | None = None
     has_c_ply = False
     try:
         from chess_anti_engine.mcts._mcts_tree import (
             batch_encode_146 as _batch_enc_146,
         )
         from chess_anti_engine.mcts._mcts_tree import (
+            batch_encode_146_lc0_root as _batch_enc_146_lc0_root,
+        )
+        from chess_anti_engine.mcts._mcts_tree import (
             batch_encode_146_bf16 as _batch_enc_146_bf16,
+        )
+        from chess_anti_engine.mcts._mcts_tree import (
+            batch_encode_146_lc0_root_bf16 as _batch_enc_146_lc0_root_bf16,
         )
         from chess_anti_engine.mcts._mcts_tree import (
             batch_process_ply as _c_process_ply,
         )
         c_process_ply = _c_process_ply
         batch_enc_146 = _batch_enc_146
+        batch_enc_146_lc0_root = _batch_enc_146_lc0_root
         batch_enc_146_bf16 = _batch_enc_146_bf16
+        batch_enc_146_lc0_root_bf16 = _batch_enc_146_lc0_root_bf16
         has_c_ply = True
     except ImportError:
         logging.getLogger("chess_anti_engine.selfplay").warning(
@@ -366,7 +472,9 @@ def _probe_c_extensions() -> _CExtensionCaps:
         has_classify_c=has_classify_c,
         c_process_ply=c_process_ply,
         batch_enc_146=batch_enc_146,
+        batch_enc_146_lc0_root=batch_enc_146_lc0_root,
         batch_enc_146_bf16=batch_enc_146_bf16,
+        batch_enc_146_lc0_root_bf16=batch_enc_146_lc0_root_bf16,
         c_classify=c_classify,
         c_temp_resample=c_temp_resample,
     )
@@ -443,7 +551,9 @@ class SelfplayState:
     has_classify_c: bool = False
     c_process_ply: Callable[..., Any] | None = None
     batch_enc_146: Callable[..., Any] | None = None
+    batch_enc_146_lc0_root: Callable[..., Any] | None = None
     batch_enc_146_bf16: Callable[..., Any] | None = None
+    batch_enc_146_lc0_root_bf16: Callable[..., Any] | None = None
     c_classify: Callable[..., Any] | None = None
     c_temp_resample: Callable[..., Any] | None = None
 
@@ -549,7 +659,9 @@ class SelfplayState:
             has_classify_c=c_caps.has_classify_c,
             c_process_ply=c_caps.c_process_ply,
             batch_enc_146=c_caps.batch_enc_146,
+            batch_enc_146_lc0_root=c_caps.batch_enc_146_lc0_root,
             batch_enc_146_bf16=c_caps.batch_enc_146_bf16,
+            batch_enc_146_lc0_root_bf16=c_caps.batch_enc_146_lc0_root_bf16,
             c_classify=c_caps.c_classify,
             c_temp_resample=c_caps.c_temp_resample,
             games_started=batch_size,

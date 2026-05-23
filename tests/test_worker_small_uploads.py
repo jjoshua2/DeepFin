@@ -91,8 +91,68 @@ def test_worker_buffer_flushes_on_position_target(tmp_path) -> None:
     assert meta["positions"] == 4
     assert meta["wins"] == 2
     assert meta["curriculum_games"] == 2
+    assert meta["diff_focus_records"] == 0
+    assert meta["diff_focus_priority_min"] == 0.0
+    assert meta["diff_focus_priority_max"] == 0.0
     assert not buf.samples
     assert buf.positions == 0
+
+
+def test_worker_buffer_preserves_diff_focus_metadata(tmp_path) -> None:
+    buf = _BufferedUpload()
+    first = _game_batch(2)
+    first.diff_focus_records = 3
+    first.diff_focus_kept = 2
+    first.diff_focus_keep_prob_sum = 1.5
+    first.diff_focus_keep_limited = 2
+    first.diff_focus_sample_weight_sum = 2.5
+    first.diff_focus_sample_weight_limited = 1
+    first.diff_focus_priority_sum = 9.0
+    first.diff_focus_priority_sq_sum = 35.0
+    first.diff_focus_priority_min = 1.0
+    first.diff_focus_priority_max = 5.0
+    second = _game_batch(1)
+    second.diff_focus_records = 2
+    second.diff_focus_kept = 1
+    second.diff_focus_keep_prob_sum = 1.0
+    second.diff_focus_priority_sum = 8.0
+    second.diff_focus_priority_sq_sum = 40.0
+    second.diff_focus_priority_min = 3.0
+    second.diff_focus_priority_max = 6.0
+
+    _buffer_add_completed_game(
+        buf=buf,
+        game_batch=first,
+        now_s=100.0,
+        model_sha="abc123",
+        model_step=7,
+    )
+    _buffer_add_completed_game(
+        buf=buf,
+        game_batch=second,
+        now_s=101.0,
+        model_sha="abc123",
+        model_step=7,
+    )
+    shard_path, _elapsed_s = _flush_upload_buffer_to_pending(
+        pending_dir=tmp_path,
+        username="worker",
+        buf=buf,
+        now_s=102.0,
+    )
+
+    assert shard_path is not None
+    _arrs, meta = load_shard_arrays(shard_path)
+    assert meta["diff_focus_records"] == 5
+    assert meta["diff_focus_kept"] == 3
+    assert meta["diff_focus_keep_prob_sum"] == 2.5
+    assert meta["diff_focus_keep_limited"] == 2
+    assert meta["diff_focus_sample_weight_sum"] == 2.5
+    assert meta["diff_focus_sample_weight_limited"] == 1
+    assert meta["diff_focus_priority_sum"] == 17.0
+    assert meta["diff_focus_priority_sq_sum"] == 75.0
+    assert meta["diff_focus_priority_min"] == 1.0
+    assert meta["diff_focus_priority_max"] == 6.0
 
 
 def test_worker_buffer_flushes_on_send_age_even_if_small(tmp_path) -> None:

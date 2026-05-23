@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from chess_anti_engine.tune.trial_config import TrialConfig
 
 
@@ -13,6 +15,11 @@ def test_from_empty_dict() -> None:
     assert tc.sf_nodes == 500
     assert tc.sf_move_nodes == 0
     assert tc.mcts_simulations == 50
+    assert tc.gumbel_topk == 16
+    assert tc.gumbel_scale == 1.0
+    assert tc.gumbel_scale_after == 0.0
+    assert tc.gumbel_scale_decay_start_move == 0
+    assert tc.gumbel_scale_decay_moves == 0
     assert tc.sf_pid_enabled is True
     assert tc.sf_pid_wdl_regret_max == 1.0
     assert tc.diff_focus_q_weight == 6.0
@@ -34,6 +41,11 @@ def test_from_dict_overrides() -> None:
         "sf_nodes": 5000,
         "sf_move_nodes": 10000,
         "mcts_simulations": 100,
+        "gumbel_topk": 24,
+        "gumbel_scale": 0.5,
+        "gumbel_scale_after": 0.1,
+        "gumbel_scale_decay_start_move": 15,
+        "gumbel_scale_decay_moves": 15,
         "stockfish_path": "/usr/bin/stockfish",
         "stockfish_syzygy_path": "/ssd/tb",
         "sf_pid_ema_alpha": 0.50,
@@ -47,6 +59,11 @@ def test_from_dict_overrides() -> None:
     assert tc.sf_nodes == 5000
     assert tc.sf_move_nodes == 10000
     assert tc.mcts_simulations == 100
+    assert tc.gumbel_topk == 24
+    assert tc.gumbel_scale == 0.5
+    assert tc.gumbel_scale_after == 0.1
+    assert tc.gumbel_scale_decay_start_move == 15
+    assert tc.gumbel_scale_decay_moves == 15
     assert tc.stockfish_path == "/usr/bin/stockfish"
     assert tc.stockfish_syzygy_path == "/ssd/tb"
     assert tc.sf_pid_ema_alpha == 0.50
@@ -95,6 +112,27 @@ def test_fallback_keys() -> None:
     # Same for replay_window_max -> replay_capacity
     tc = TrialConfig.from_dict({"replay_capacity": 500_000})
     assert tc.replay_window_max == 500_000
+
+    tc = TrialConfig.from_dict({"replay_window_growth_frac": 0.75})
+    assert tc.replay_window_growth_frac == 0.75
+
+
+@pytest.mark.parametrize("value", [-0.01, 1.01, float("inf"), float("nan")])
+def test_replay_window_growth_frac_rejects_out_of_range_values(value: float) -> None:
+    with pytest.raises(ValueError, match="replay_window_growth_frac"):
+        TrialConfig.from_dict({"replay_window_growth_frac": value})
+
+
+@pytest.mark.parametrize("value", [-0.01, float("inf"), float("nan")])
+def test_gumbel_scale_rejects_invalid_values(value: float) -> None:
+    with pytest.raises(ValueError, match="gumbel_scale"):
+        TrialConfig.from_dict({"gumbel_scale": value})
+
+
+@pytest.mark.parametrize("value", [-0.01, float("inf"), float("nan")])
+def test_gumbel_scale_after_rejects_invalid_values(value: float) -> None:
+    with pytest.raises(ValueError, match="gumbel_scale_after"):
+        TrialConfig.from_dict({"gumbel_scale_after": value})
 
 
 def test_games_per_iter_start_fallback() -> None:
