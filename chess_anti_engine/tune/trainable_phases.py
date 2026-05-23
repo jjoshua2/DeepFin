@@ -57,7 +57,6 @@ from chess_anti_engine.tune.trainable_metrics import (
 from chess_anti_engine.tune.trainable_report import (
     _build_report_dict,
     _log_iteration_scalars,
-    _prune_trial_checkpoints,
     _update_best_regret_checkpoints,
     _write_rng_state_sidecar,
     _write_status_csv_row,
@@ -1034,10 +1033,3 @@ def _finalize_iteration(
         opt_lr=float(trainer.opt.param_groups[0]["lr"]),
         startup_source=restore.startup_source,
     )
-
-  # Best-effort: keep disk usage bounded.
-    if (completed_iterations + 1) % 5 == 0:
-        _prune_trial_checkpoints(
-            trial_dir=trial_dir,
-            keep_last=tc.tune_num_to_keep,
-        )
