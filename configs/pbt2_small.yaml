@@ -161,7 +161,7 @@ selfplay:
   fpu_reduction: 1.2    # LC0/KataGo FPU for non-root nodes
   fpu_at_root: 1.0      # FPU for root (lower — root has Dirichlet noise)
 
-  sf_policy_temp: 0.012      # 2026-05-11 live probe: soften SF-policy toward LC0 vanilla/optimistic legal-prior sharpness.
+  sf_policy_temp: 0.014      # 2026-05-23: small softening step paired with SF-WDL calibration drift adjustment.
   sf_policy_label_smooth: 0.05  # Halved from 0.10 to complement sf_multipv=20; less need to hallucinate tail coverage.
   sf_wdl_use_cp_logistic: true   # Replace SF's UCI_ShowWDL (72% one-hot) with own logistic on cp score.
   sf_wdl_cp_slope: 0.0075        # 2026-05-23 live probe: another conservative softening step after replay calibration drift.
@@ -251,7 +251,7 @@ train:
   sf_wdl_conf_power: 1.0    # Confidence damping: scale SF-WDL by (1-draw_prob)^power.
   sf_wdl_draw_scale: 0.55   # Pinned low-to-mid based on the healthier late-run settings.
   sf_wdl_floor_at_regret: 0.10  # Regret value at which SF WDL fraction hits the floor.
-  sf_wdl_temperature: 1.0   # p^(1/T) softening on SF WDL before blending. Now using cp logistic (slope/draw_width control softness); keep at 1.0.
+  sf_wdl_temperature: 1.25  # p^(1/T) softening on SF WDL before blending; conservative step, not full replay-fit T≈4.
   sf_search_dampen_sf_low: 0.0   # Damping (0..1) on SF target when SF says STM losing but search says STM winning. Live-tunable.
   sf_search_dampen_sf_high: 0.0  # Damping (0..1) on SF target when SF says STM winning but search says STM losing. Live-tunable.
 
