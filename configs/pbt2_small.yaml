@@ -164,7 +164,7 @@ selfplay:
   sf_policy_temp: 0.014      # 2026-05-23: small softening step paired with SF-WDL calibration drift adjustment.
   sf_policy_label_smooth: 0.05  # Halved from 0.10 to complement sf_multipv=20; less need to hallucinate tail coverage.
   sf_wdl_use_cp_logistic: true   # Replace SF's UCI_ShowWDL (72% one-hot) with own logistic on cp score.
-  sf_wdl_cp_slope: 0.0075        # 2026-05-23 live probe: another conservative softening step after replay calibration drift.
+  sf_wdl_cp_slope: 0.0060        # 2026-05-23: move toward replay-fit slope (~0.0045-0.0055) while staying conservative.
   sf_wdl_cp_draw_width: 120.0    # Half-width of draw zone in cp; moved toward current-regret replay fit (~130-145).
   soft_policy_temp: 3.0     # Temperature for soft policy target (LC0 uses 3, was hardcoded 2)
 
