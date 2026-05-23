@@ -164,8 +164,8 @@ selfplay:
   sf_policy_temp: 0.012      # 2026-05-11 live probe: soften SF-policy toward LC0 vanilla/optimistic legal-prior sharpness.
   sf_policy_label_smooth: 0.05  # Halved from 0.10 to complement sf_multipv=20; less need to hallucinate tail coverage.
   sf_wdl_use_cp_logistic: true   # Replace SF's UCI_ShowWDL (72% one-hot) with own logistic on cp score.
-  sf_wdl_cp_slope: 0.00875       # 2026-05-10 live probe: 25% softening from 0.010/60 toward calibrated 0.005/120.
-  sf_wdl_cp_draw_width: 75.0     # Half-width of draw zone in cp. At |cp|≈draw_width, p_win ≈ 0.5.
+  sf_wdl_cp_slope: 0.0075        # 2026-05-23 live probe: another conservative softening step after replay calibration drift.
+  sf_wdl_cp_draw_width: 90.0     # Half-width of draw zone in cp. At |cp|≈draw_width, p_win ≈ 0.5.
   soft_policy_temp: 3.0     # Temperature for soft policy target (LC0 uses 3, was hardcoded 2)
 
   syzygy_path: /home/josh/projects/chess/data/syzygy_3-4-5:/mnt/e/chess/syzygy_6_dtz
