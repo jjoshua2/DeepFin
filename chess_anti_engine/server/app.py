@@ -837,6 +837,49 @@ def create_app(
             raise HTTPException(status_code=401, detail="bad password")
         return str(creds.username)
 
+    def _record_bad_shard_report(
+        trial_id: str | None,
+        *,
+        username: str,
+        payload: dict[str, Any],
+        x_cae_worker_version: str | None,
+        x_cae_protocol_version: str | None,
+        x_cae_worker_lease_id: str | None,
+        x_cae_machine_id: str | None,
+    ) -> dict[str, Any]:
+        ok, reason = _check_worker_compat(
+            trial_id=trial_id,
+            worker_version=x_cae_worker_version,
+            worker_protocol=x_cae_protocol_version,
+        )
+        if not ok:
+            log.warning("rejecting bad-shard report from user=%s: %s", username, reason)
+            return {"stored": False, "rejected": True, "reason": reason}
+        qdir = _quarantine_root(trial_id) / "client_reports"
+        qdir.mkdir(parents=True, exist_ok=True)
+        now_unix = time.time()
+        report = {
+            "reported_at_unix": now_unix,
+            "username": str(username),
+            "trial_id": _normalize_trial_id(trial_id),
+            "worker_version": x_cae_worker_version,
+            "protocol_version": x_cae_protocol_version,
+            "lease_id": x_cae_worker_lease_id,
+            "machine_id": x_cae_machine_id,
+            "payload": payload,
+        }
+        out = qdir / f"{int(now_unix)}_{secrets.token_hex(8)}.json"
+        atomic_write_text(out, json.dumps(report, indent=2, sort_keys=True))
+        log.warning(
+            "worker reported bad shard trial=%s user=%s machine=%s shard=%s reason=%s",
+            _normalize_trial_id(trial_id),
+            username,
+            x_cae_machine_id,
+            payload.get("shard_name"),
+            payload.get("reason"),
+        )
+        return {"stored": True, "path": str(out)}
+
     def _get_manifest_impl(
         trial_id: str | None,
         *,
@@ -1287,6 +1330,45 @@ def create_app(
             x_cae_protocol_version=x_cae_protocol_version,
             x_cae_worker_lease_id=x_cae_worker_lease_id,
             x_cae_batch_elapsed_s=x_cae_batch_elapsed_s,
+            x_cae_machine_id=x_cae_machine_id,
+        )
+
+    @app.post("/v1/report_bad_shard")
+    def report_bad_shard(
+        payload: dict[str, Any] = Body(...),
+        username: str = Depends(_auth_user),
+        x_cae_worker_version: str | None = Header(None, alias="X-CAE-Worker-Version"),
+        x_cae_protocol_version: str | None = Header(None, alias="X-CAE-Protocol-Version"),
+        x_cae_worker_lease_id: str | None = Header(None, alias="X-CAE-Worker-Lease-ID"),
+        x_cae_machine_id: str | None = Header(None, alias="X-CAE-Machine-ID"),
+    ) -> Any:
+        return _record_bad_shard_report(
+            None,
+            username=username,
+            payload=payload,
+            x_cae_worker_version=x_cae_worker_version,
+            x_cae_protocol_version=x_cae_protocol_version,
+            x_cae_worker_lease_id=x_cae_worker_lease_id,
+            x_cae_machine_id=x_cae_machine_id,
+        )
+
+    @app.post("/v1/trials/{trial_id}/report_bad_shard")
+    def report_trial_bad_shard(
+        trial_id: str,
+        payload: dict[str, Any] = Body(...),
+        username: str = Depends(_auth_user),
+        x_cae_worker_version: str | None = Header(None, alias="X-CAE-Worker-Version"),
+        x_cae_protocol_version: str | None = Header(None, alias="X-CAE-Protocol-Version"),
+        x_cae_worker_lease_id: str | None = Header(None, alias="X-CAE-Worker-Lease-ID"),
+        x_cae_machine_id: str | None = Header(None, alias="X-CAE-Machine-ID"),
+    ) -> Any:
+        return _record_bad_shard_report(
+            trial_id,
+            username=username,
+            payload=payload,
+            x_cae_worker_version=x_cae_worker_version,
+            x_cae_protocol_version=x_cae_protocol_version,
+            x_cae_worker_lease_id=x_cae_worker_lease_id,
             x_cae_machine_id=x_cae_machine_id,
         )
 

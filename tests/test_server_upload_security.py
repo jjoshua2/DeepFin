@@ -153,6 +153,28 @@ def test_zarr_tar_upload_happy_path(tmp_path) -> None:
     assert body.get("positions") == 3
 
 
+def test_bad_shard_report_is_persisted(tmp_path) -> None:
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+    client = _build_client(server_root)
+
+    r = client.post(
+        "/v1/trials/trial_a/report_bad_shard",
+        auth=("u", "p"),
+        json={"shard_name": "bad.zarr", "reason": "local invalid shard"},
+        headers={**_default_headers(), "X-CAE-Machine-ID": "machine-a"},
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json().get("stored") is True
+    reports = list((server_root / "trials" / "trial_a" / "quarantine" / "client_reports").glob("*.json"))
+    assert len(reports) == 1
+    text = reports[0].read_text(encoding="utf-8")
+    assert "bad.zarr" in text
+    assert "machine-a" in text
+
+
 def test_compaction_flush_failure_preserves_accumulator(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     """If compaction write fails, the in-memory buffer must be retained so the
     next upload can retry the flush — otherwise replay samples that dedup has

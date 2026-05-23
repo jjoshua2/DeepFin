@@ -201,4 +201,4 @@ def test_shard_upload_quarantines_locally_invalid_shard_before_post(tmp_path):
     reason_files = [p for p in quarantined if p.name.endswith(".reason.txt")]
     assert len(reason_files) == 1
     assert "local invalid shard" in reason_files[0].read_text(encoding="utf-8")
-    assert session._requests.calls == 0
+    assert session._requests.calls == 1

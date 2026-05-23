@@ -147,6 +147,34 @@ def _quarantine_rejected_pending_shard(shard_path: Path, reason: str) -> Path:
     return dest
 
 
+def _bad_shard_report_payload(*, shard_path: Path, quarantine_path: Path, reason: str, kind: str) -> dict[str, object]:
+    files = 0
+    bytes_total = 0
+    nonzero_files = 0
+    if quarantine_path.is_dir():
+        try:
+            for fp in quarantine_path.rglob("*"):
+                if not fp.is_file():
+                    continue
+                files += 1
+                size = int(fp.stat().st_size)
+                bytes_total += size
+                if size > 0:
+                    nonzero_files += 1
+        except OSError:
+            pass
+    return {
+        "kind": str(kind),
+        "shard_name": shard_path.name,
+        "reason": str(reason),
+        "quarantine_name": quarantine_path.name,
+        "files": int(files),
+        "bytes": int(bytes_total),
+        "nonzero_files": int(nonzero_files),
+        "created_mtime": float(quarantine_path.stat().st_mtime) if quarantine_path.exists() else 0.0,
+    }
+
+
 def _extract_worker_wheel(payload: dict) -> dict | None:
     """Return the worker_wheel dict iff it has both endpoint and sha256, else None."""
     ww = payload.get("worker_wheel")
@@ -879,6 +907,25 @@ class WorkerSession:
         with self._pending_upload_lock:
             return self._upload_pending_shards_locked(default_elapsed_s=default_elapsed_s)
 
+    def _report_bad_pending_shard(self, payload: dict[str, object]) -> None:
+        try:
+            self._requests.post(
+                self._server_url_for(self.trial_api_prefix + "/report_bad_shard"),
+                json=payload,
+                auth=(str(self.args.username), str(self.args.password)),
+                headers={
+                    **_worker_headers(machine_id=self.machine_id),
+                    **(
+                        {"X-CAE-Worker-Lease-ID": str(self.lease_id)}
+                        if str(self.lease_id).strip()
+                        else {}
+                    ),
+                },
+                timeout=15.0,
+            )
+        except Exception as exc:
+            self.log.warning("failed to report bad local shard to server: %s", exc)
+
     def _upload_pending_shards_locked(self, *, default_elapsed_s: float | None = None) -> float | None:
         last_uploaded_at: float | None = None
         current_trial_id = self.leased_trial_id or self.fixed_trial_id or ""
@@ -893,10 +940,16 @@ class WorkerSession:
                 _arrs, meta = load_shard_arrays(sp, lazy=True)
                 shard_trial_id = str(meta.get("run_id") or "").strip()
             except Exception as exc:
-                qpath = _quarantine_rejected_pending_shard(sp, f"local invalid shard: {type(exc).__name__}: {exc}")
+                reason = f"local invalid shard: {type(exc).__name__}: {exc}"
+                qpath = _quarantine_rejected_pending_shard(sp, reason)
                 self.log.warning(
                     "local pending shard %s is invalid; quarantined at %s: %s",
                     sp, qpath, exc,
+                )
+                self._report_bad_pending_shard(
+                    _bad_shard_report_payload(
+                        shard_path=sp, quarantine_path=qpath, reason=reason, kind="local_invalid",
+                    ),
                 )
                 continue
             if shard_trial_id and shard_trial_id != current_trial_id:
