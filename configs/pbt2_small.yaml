@@ -161,7 +161,7 @@ selfplay:
   fpu_reduction: 1.2    # LC0/KataGo FPU for non-root nodes
   fpu_at_root: 1.0      # FPU for root (lower — root has Dirichlet noise)
 
-  sf_policy_temp: 0.014      # 2026-05-23: small softening step paired with SF-WDL calibration drift adjustment.
+  sf_policy_temp: 0.012      # 2026-05-23: keep SF-policy sharpness after softening the underlying cp->WDL scores.
   sf_policy_label_smooth: 0.05  # Halved from 0.10 to complement sf_multipv=20; less need to hallucinate tail coverage.
   sf_wdl_use_cp_logistic: true   # Replace SF's UCI_ShowWDL (72% one-hot) with own logistic on cp score.
   sf_wdl_cp_slope: 0.0060        # 2026-05-23: move toward replay-fit slope (~0.0045-0.0055) while staying conservative.
