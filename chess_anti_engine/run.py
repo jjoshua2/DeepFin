@@ -469,7 +469,7 @@ def main() -> None:
     ap.add_argument("--sf-multipv", type=int, default=5)
     ap.add_argument("--sf-hash-mb", type=int, default=16)
     ap.add_argument("--sf-workers", type=int, default=1)
-    ap.add_argument("--sf-nice", type=int, default=0, help="Lower Stockfish subprocess priority by setting POSIX nice value 0..19.")
+    ap.add_argument("--sf-nice", type=int, default=0, help="Extra POSIX niceness to add to Stockfish subprocesses, clamped at 19.")
     ap.add_argument("--sf-policy-temp", type=float, default=0.25)
     ap.add_argument("--sf-policy-label-smooth", type=float, default=0.05)
 

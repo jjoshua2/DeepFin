@@ -130,7 +130,8 @@ class StockfishUCI:
             stderr=subprocess.DEVNULL,
         )
         if self.nice > 0:
-            os.setpriority(os.PRIO_PROCESS, self.proc.pid, self.nice)
+            current_nice = os.getpriority(os.PRIO_PROCESS, self.proc.pid)
+            os.setpriority(os.PRIO_PROCESS, self.proc.pid, min(19, current_nice + self.nice))
         os.close(slave_fd)
 
         try:
