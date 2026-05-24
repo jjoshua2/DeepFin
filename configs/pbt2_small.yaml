@@ -60,7 +60,7 @@ stockfish:
   stockfish_path: /home/josh/projects/chess/e2e_server/publish/stockfish
   sf_nodes: 5000           # 5k nodes: wider WDL spread so regret actually filters moves (was 1k where all 12 passed)
   sf_move_nodes: 0          # 0 = curriculum moves use the PID-controlled sf_nodes; don't weaken played SF moves by default.
-  sf_workers: 2
+  sf_workers: 3
   sf_multipv: 40            # Bumped from 20 (2026-04-29) to enrich sf_policy_t targets — measurement showed regret≤0.47 saturated top-20; multipv=40 widens tail for richer training distribution. Difficulty implication: opponent gets slightly weaker since more sub-optimal moves enter the regret-filter pool; PID will compensate via regret/nodes.
   sf_hash_mb: 16           # Larger TT helps at higher node counts
   # Keep SF at full strength for labels and sample from MultiPV for easier played moves.
@@ -288,7 +288,7 @@ tune:
   cpus_per_trial: 1
   gpus_per_trial: 1.0
   distributed_workers_per_trial: 4  # Shared broker needs more producers to keep the single GPU queue fed.
-  distributed_worker_sf_workers: 2  # 2026-05-23: SF is async and not wall-blocking; free CPU for MCTS/dispatch.
+  distributed_worker_sf_workers: 3  # 2026-05-23: modestly reduce CPU contention while keeping SF label parallelism close to the old 4-worker setting.
   distributed_worker_min_games_per_batch: 200  # Bigger forwards: better GPU util + lower per-gumbel overhead
   distributed_worker_max_games_per_batch: 512
   distributed_worker_username: josh
