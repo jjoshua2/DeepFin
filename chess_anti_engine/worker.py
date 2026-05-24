@@ -532,7 +532,7 @@ def main() -> None:
         "--sf-nice",
         type=int,
         default=None,
-        help="Extra POSIX niceness to add to Stockfish subprocesses, clamped at 19.",
+        help="Absolute POSIX nice target for Stockfish subprocesses, clamped to 0..19; never raises priority above the parent.",
     )
 
   # selfplay: if omitted, defaults come from server manifest `recommended_worker`.

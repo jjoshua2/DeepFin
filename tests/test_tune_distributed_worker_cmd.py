@@ -60,7 +60,7 @@ def test_build_distributed_worker_cmd_passes_stockfish_nice() -> None:
             "distributed_worker_use_compile": False,
             "distributed_worker_sf_workers": 3,
             "distributed_worker_poll_seconds": 1.0,
-            "sf_nice": 5,
+            "sf_nice": 19,
             "seed": 123,
         },
         trial_root=Path("/tmp/trial/worker_00"),
@@ -70,7 +70,7 @@ def test_build_distributed_worker_cmd_passes_stockfish_nice() -> None:
     )
 
     assert cmd[cmd.index("--sf-workers") + 1] == "3"
-    assert cmd[cmd.index("--sf-nice") + 1] == "5"
+    assert cmd[cmd.index("--sf-nice") + 1] == "19"
 
 
 def test_build_distributed_worker_cmd_adds_inference_slot() -> None:
