@@ -67,7 +67,7 @@ stockfish:
   # Keep SF at full strength for labels and sample from MultiPV for easier played moves.
 
   sf_pid_enabled: true
-  sf_pid_target_winrate: 0.58
+  sf_pid_target_winrate: 0.62  # 2026-05-24: bias curriculum toward net wins rather than harder games.
   sf_pid_ema_alpha: 0.05      # 2026-04-29: 0.20→0.10→0.05. Offline bake-off (200 episodes × ~30 candidates against a logit-fit plant β=2.18, drift=-0.0064/iter, walk_std=0.31) shows raw_wr behavior is invariant across α (raw_rmse=0.264 universally) — controller is already raw-driven via the inverse fit's history; ema only gates a deadband that almost never fires. Lower α earns a cleaner ema dashboard (settle 50.8 vs 54.4 iters) and a measurably bigger raw-vs-ema lead (~14 iter half-life vs 6.6) which matches the "trust raw, treat ema as stale" intuition. Live-reloadable.
   sf_pid_min_games_between_adjust: 200  # Higher than games_per_iter so only the forced iteration-boundary adjust fires.
   sf_pid_min_nodes: 50000        # 2026-04-28: 1→50000. Going back to high-nodes regret-controlled training (stage 1). 50k nodes gives clean WDL labels + sharp sf_policy targets even when SF play is regret-handicapped. Difficulty knob is regret, not nodes. Construction-only knob — restart required.
