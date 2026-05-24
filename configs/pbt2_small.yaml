@@ -288,7 +288,7 @@ tune:
   cpus_per_trial: 1
   gpus_per_trial: 1.0
   distributed_workers_per_trial: 4  # Shared broker needs more producers to keep the single GPU queue fed.
-  distributed_worker_sf_workers: 4
+  distributed_worker_sf_workers: 2  # 2026-05-23: SF is async and not wall-blocking; free CPU for MCTS/dispatch.
   distributed_worker_min_games_per_batch: 200  # Bigger forwards: better GPU util + lower per-gumbel overhead
   distributed_worker_max_games_per_batch: 512
   distributed_worker_username: josh
