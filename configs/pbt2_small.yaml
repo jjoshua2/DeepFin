@@ -22,7 +22,7 @@ iterations: 750
 replay_capacity: 5000000   # Hard cap
 replay_window_start: 400000   # 2026-04-22 v4: was 20000 (truncated pool to 10/187 shards). Raised so salvage keeps all pool shards (~374k pos).
 replay_window_max: 2000000   # Restored after 2026-05-23 optimistic-data trim; refill slowly via replay_window_growth_frac.
-replay_window_growth_frac: 0.10   # 2026-05-14: 0.90->0.10 so most newly ingested positions replace older data instead of growing the window quickly.
+replay_window_growth_frac: 0.50   # 2026-05-24: refill faster now that the worst old/easy replay data has flushed.
 replay_window_growth: 20000   # Fallback when replay_window_growth_frac is unset.
 
 # Bootstrap: train initial net on all random games, then discard from window
