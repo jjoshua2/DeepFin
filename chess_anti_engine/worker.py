@@ -350,6 +350,8 @@ def _merge_cli_with_yaml_defaults(args, cfg: dict) -> None:
 
     if args.sf_workers is None:
         args.sf_workers = int(cfg.get("sf_workers", 1))
+    if args.sf_nice is None:
+        args.sf_nice = int(cfg.get("sf_nice", 0))
     if args.games_per_batch is None and "games_per_batch" in cfg:
         args.games_per_batch = int(cfg["games_per_batch"])
 
@@ -526,6 +528,12 @@ def main() -> None:
 
   # Local performance knob
     ap.add_argument("--sf-workers", type=int, default=None)
+    ap.add_argument(
+        "--sf-nice",
+        type=int,
+        default=None,
+        help="Lower Stockfish subprocess priority with POSIX nice value 0..19.",
+    )
 
   # selfplay: if omitted, defaults come from server manifest `recommended_worker`.
     ap.add_argument("--games-per-batch", type=int, default=None)
@@ -877,6 +885,7 @@ class WorkerSession:
         else:
             self.cfg.pop("shared_cache_dir", None)
         self.cfg["sf_workers"] = int(self.args.sf_workers)
+        self.cfg["sf_nice"] = int(self.args.sf_nice)
         if self.games_per_batch_local is not None:
             self.cfg["games_per_batch"] = int(self.games_per_batch_local)
         self.cfg["upload_target_positions"] = int(self.args.upload_target_positions)
@@ -1894,6 +1903,7 @@ class WorkerSession:
                     num_workers=int(self.args.sf_workers),
                     multipv=int(sf_multipv),
                     syzygy_path=sz_path,
+                    nice=int(self.args.sf_nice),
                 )
             else:
                 self.sf = StockfishUCI(
@@ -1901,6 +1911,7 @@ class WorkerSession:
                     nodes=int(sf_nodes),
                     multipv=int(sf_multipv),
                     syzygy_path=sz_path,
+                    nice=int(self.args.sf_nice),
                 )
             self.sf_multipv_active = int(sf_multipv)
             self.sf_syzygy_path_active = sz_path

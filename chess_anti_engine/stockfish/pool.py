@@ -21,6 +21,7 @@ class StockfishPool:
         multipv: int = 1,
         hash_mb: int | None = None,
         syzygy_path: str | None = None,
+        nice: int = 0,
     ):
         self.path = path
         self.nodes = int(nodes)
@@ -28,6 +29,7 @@ class StockfishPool:
         self.multipv = int(multipv)
         self.hash_mb = None if hash_mb is None else max(1, int(hash_mb))
         self.syzygy_path = syzygy_path or None
+        self.nice = min(19, max(0, int(nice)))
 
         self._exec = ThreadPoolExecutor(max_workers=self.num_workers)
         self._engines = [
@@ -37,6 +39,7 @@ class StockfishPool:
                 multipv=self.multipv,
                 hash_mb=self.hash_mb,
                 syzygy_path=self.syzygy_path,
+                nice=self.nice,
             )
             for _ in range(self.num_workers)
         ]

@@ -176,6 +176,7 @@ class TrialConfig:
     sf_workers: int = 1
     sf_multipv: int = 1
     sf_hash_mb: int = 16
+    sf_nice: int = 0
     sf_pid_enabled: bool = True
 
   # --- PID controller ---
@@ -449,6 +450,7 @@ class TrialConfig:
             sf_workers=int(config.get("sf_workers", 1)),
             sf_multipv=int(config.get("sf_multipv", 1)),
             sf_hash_mb=int(config.get("sf_hash_mb", 16)),
+            sf_nice=int(config.get("sf_nice", 0)),
             sf_pid_enabled=bool(config.get("sf_pid_enabled", True)),
 
   # --- PID ---

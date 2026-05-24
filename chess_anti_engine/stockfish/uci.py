@@ -99,6 +99,7 @@ class StockfishUCI:
         multipv: int = 1,
         hash_mb: int | None = None,
         syzygy_path: str | None = None,
+        nice: int = 0,
         read_timeout_s: float = _DEFAULT_READ_TIMEOUT_S,
     ):
         self.path = path
@@ -106,6 +107,7 @@ class StockfishUCI:
         self.multipv = int(multipv)
         self.hash_mb = None if hash_mb is None else max(1, int(hash_mb))
         self.syzygy_path = syzygy_path or None
+        self.nice = min(19, max(0, int(nice)))
         self.read_timeout_s = float(read_timeout_s)
         self._lock = threading.Lock()
 
@@ -127,6 +129,8 @@ class StockfishUCI:
             stdout=slave_fd,
             stderr=subprocess.DEVNULL,
         )
+        if self.nice > 0:
+            os.setpriority(os.PRIO_PROCESS, self.proc.pid, self.nice)
         os.close(slave_fd)
 
         try:

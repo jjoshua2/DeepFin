@@ -61,6 +61,7 @@ stockfish:
   sf_nodes: 5000           # 5k nodes: wider WDL spread so regret actually filters moves (was 1k where all 12 passed)
   sf_move_nodes: 0          # 0 = curriculum moves use the PID-controlled sf_nodes; don't weaken played SF moves by default.
   sf_workers: 3
+  sf_nice: 5              # Lower SF subprocess priority so MCTS/dispatch/inference get CPU first under contention.
   sf_multipv: 40            # Bumped from 20 (2026-04-29) to enrich sf_policy_t targets — measurement showed regret≤0.47 saturated top-20; multipv=40 widens tail for richer training distribution. Difficulty implication: opponent gets slightly weaker since more sub-optimal moves enter the regret-filter pool; PID will compensate via regret/nodes.
   sf_hash_mb: 16           # Larger TT helps at higher node counts
   # Keep SF at full strength for labels and sample from MultiPV for easier played moves.
