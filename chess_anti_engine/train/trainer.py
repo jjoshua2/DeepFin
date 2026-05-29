@@ -35,6 +35,7 @@ except Exception:  # pragma: no cover
 
 from chess_anti_engine.encoding.lc0 import LC0_FULL
 from chess_anti_engine.model import ARCH_SCHEMA_VERSION, ModelConfig
+from chess_anti_engine.moves import COMPACT_POLICY_SIZE, FULL_TO_COMPACT_POLICY, POLICY_SIZE
 from chess_anti_engine.replay.augment import (
     maybe_mirror_batch_arrays,
     maybe_mirror_samples,
@@ -46,7 +47,8 @@ from .compile_probe import CompileProbe, apply_compile
 from .cosmos import COSMOS
 from .cosmos_fast import COSMOSFast
 from .losses import (
-    apply_mask_to_logits,
+    align_policy_target,
+    apply_policy_mask_to_logits,
     compute_loss,
     wdl_brier_ece_from_stats,
     wdl_calibration_stats,
@@ -750,12 +752,23 @@ class Trainer:
                 for k in k_values
             }
 
+        def _align_target_index(target: torch.Tensor, width: int) -> torch.Tensor:
+            if int(width) != int(COMPACT_POLICY_SIZE):
+                return target
+            full_to_compact = torch.as_tensor(
+                FULL_TO_COMPACT_POLICY,
+                dtype=torch.long,
+                device=target.device,
+            )
+            target = target.clamp(0, POLICY_SIZE - 1).to(torch.long)
+            return full_to_compact.index_select(0, target)
+
         pol_logits = out.get("policy") if "policy" in out else out.get("policy_own")
         pol_target = batch.get("policy_t")
         has_policy = batch.get("has_policy")
         if pol_logits is not None and pol_target is not None and has_policy is not None:
-            logits = apply_mask_to_logits(pol_logits.detach(), batch, "legal_mask", "has_legal_mask")
-            tgt = torch.argmax(pol_target, dim=-1)
+            logits = apply_policy_mask_to_logits(pol_logits.detach(), batch, "legal_mask", "has_legal_mask")
+            tgt = torch.argmax(align_policy_target(pol_target, int(logits.shape[-1])), dim=-1)
             tk = _topk(logits, tgt, has_policy.to(torch.float32), (1, 5))
             stats["policy_own_acc_top1"] = tk[1]
             stats["policy_own_acc_top5"] = tk[5]
@@ -763,8 +776,10 @@ class Trainer:
         sf_logits = out.get("policy_sf")
         has_sf_move = batch.get("has_sf_move")
         if sf_logits is not None and has_sf_move is not None and "sf_move_index" in batch:
-            logits = apply_mask_to_logits(sf_logits.detach(), batch, "sf_legal_mask", "has_sf_legal_mask")
-            tk = _topk(logits, batch["sf_move_index"], has_sf_move.to(torch.float32), (1, 5))
+            logits = apply_policy_mask_to_logits(sf_logits.detach(), batch, "sf_legal_mask", "has_sf_legal_mask")
+            sf_idx = _align_target_index(batch["sf_move_index"], int(logits.shape[-1]))
+            valid = (sf_idx >= 0).to(torch.float32) * has_sf_move.to(torch.float32)
+            tk = _topk(logits, sf_idx.clamp_min(0), valid, (1, 5))
             stats["sf_move_acc"] = tk[1]
             stats["sf_move_acc_top5"] = tk[5]
 
@@ -772,8 +787,8 @@ class Trainer:
         fut_target = batch.get("future_policy_t")
         has_future = batch.get("has_future")
         if fut_logits is not None and fut_target is not None and has_future is not None:
-            logits = apply_mask_to_logits(fut_logits.detach(), batch, "future_legal_mask", "has_future_legal_mask")
-            tgt = torch.argmax(fut_target, dim=-1)
+            logits = apply_policy_mask_to_logits(fut_logits.detach(), batch, "future_legal_mask", "has_future_legal_mask")
+            tgt = torch.argmax(align_policy_target(fut_target, int(logits.shape[-1])), dim=-1)
             tk = _topk(logits, tgt, has_future.to(torch.float32), (1, 5))
             stats["policy_future_acc_top1"] = tk[1]
             stats["policy_future_acc_top5"] = tk[5]

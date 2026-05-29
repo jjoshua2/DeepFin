@@ -669,6 +669,7 @@ typedef struct {
     uint64_t hist_bb[CBOARD_HISTORY_MAX][6];   /* piece bitboards */
     uint64_t hist_occ[CBOARD_HISTORY_MAX][2];  /* color occupancy */
     int8_t hist_turn[CBOARD_HISTORY_MAX];      /* side to move */
+    uint8_t hist_castling[CBOARD_HISTORY_MAX]; /* castling rights */
     int8_t hist_len;                           /* 0..7 valid history entries */
     int8_t hist_head;                          /* circular buffer write index */
     uint16_t ply;                              /* total half-moves from game start */
@@ -787,6 +788,7 @@ static void cboard_push(CBoard *b, int from_sq, int to_sq, int promotion) {
         memcpy(b->hist_bb[slot], b->bb, 6 * sizeof(uint64_t));
         memcpy(b->hist_occ[slot], b->occ, 2 * sizeof(uint64_t));
         b->hist_turn[slot] = b->turn;
+        b->hist_castling[slot] = b->castling;
         b->hist_head = (slot + 1) % CBOARD_HISTORY_MAX;
         if (b->hist_len < CBOARD_HISTORY_MAX)
             b->hist_len++;
@@ -1224,9 +1226,33 @@ static void cboard_fill_lc0_112_root(const CBoard *b, float * restrict out) {
                                        b->turn, dest);
     }
 
-    /* Current-position repetition plane in slot 0. History-slot repetition
-     * planes are left zero, matching the legacy C encoder's approximation. */
-    if (cboard_is_repetition(b)) {
+    /* Repetition planes: process the kept history window from oldest to newest.
+     * The current plane also checks hash_stack so repetitions before the kept
+     * encoding window are still marked. */
+    uint64_t seen[CBOARD_HISTORY_MAX + 1];
+    int seen_n = 0;
+    int hist_n = b->hist_len < CBOARD_HISTORY_MAX ? b->hist_len : CBOARD_HISTORY_MAX;
+    for (int hi = hist_n - 1; hi >= 0; hi--) {
+        int idx = (b->hist_head - 1 - hi + CBOARD_HISTORY_MAX) % CBOARD_HISTORY_MAX;
+        uint64_t h = cboard_hist_hash(
+            b->hist_bb[idx], b->hist_occ[idx], b->hist_turn[idx], b->hist_castling[idx]
+        );
+        int repeated = 0;
+        for (int j = 0; j < seen_n; j++) {
+            if (seen[j] == h) { repeated = 1; break; }
+        }
+        if (repeated) {
+            int plane = (hi + 1) * 13 + 12;
+            for (int i = 0; i < 64; i++) out[plane*64 + i] = 1.0f;
+        }
+        seen[seen_n++] = h;
+    }
+    uint64_t cur_hash = cboard_compute_hash(b);
+    int cur_repeated = cboard_is_repetition(b);
+    for (int j = 0; !cur_repeated && j < seen_n; j++) {
+        if (seen[j] == cur_hash) cur_repeated = 1;
+    }
+    if (cur_repeated) {
         for (int i = 0; i < 64; i++) out[12*64 + i] = 1.0f;
     }
 

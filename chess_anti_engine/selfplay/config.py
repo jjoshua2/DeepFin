@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from chess_anti_engine.encoding.lc0 import LC0_HISTORY_LEGACY
+from chess_anti_engine.moves import POLICY_ENCODING_AZ_4672
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 
 
@@ -75,6 +77,8 @@ class GameConfig:
     syzygy_in_search: bool = False
     categorical_bins: int = DEFAULT_CATEGORICAL_BINS
     hlgauss_sigma: float = 0.04
+    policy_encoding: str = POLICY_ENCODING_AZ_4672
+    input_history_encoding: str = LC0_HISTORY_LEGACY
 
 
 __all__ = [

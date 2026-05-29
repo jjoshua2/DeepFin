@@ -21,6 +21,12 @@ import chess
 import numpy as np
 import torch
 
+from chess_anti_engine.encoding.lc0 import (
+    LC0_HISTORY_ROOT,
+    LC0_HISTORY_ROOT_LEGACY_META,
+    normalize_lc0_history_encoding,
+    uses_lc0_root_history,
+)
 from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.inference import (  # noqa: F401  # skylos: ignore (AsyncBatchEvaluator used via stringified cast)
     AsyncBatchEvaluator,
@@ -28,12 +34,23 @@ from chess_anti_engine.inference import (  # noqa: F401  # skylos: ignore (Async
     LocalModelEvaluator,
     _COMPILED_BATCH_BUCKETS,
 )
-from chess_anti_engine.mcts._mcts_tree import MCTSTree, batch_encode_146
+from chess_anti_engine.mcts._mcts_tree import (
+    MCTSTree,
+    batch_encode_146,
+    batch_encode_146_lc0_root,
+    batch_encode_146_lc0_root_legacy_meta,
+)
 
 try:
-    from chess_anti_engine.mcts._mcts_tree import batch_encode_146_bf16
+    from chess_anti_engine.mcts._mcts_tree import (
+        batch_encode_146_bf16,
+        batch_encode_146_lc0_root_bf16,
+        batch_encode_146_lc0_root_legacy_meta_bf16,
+    )
 except ImportError:  # pragma: no cover - older local extension fallback
     batch_encode_146_bf16 = None  # type: ignore[assignment]
+    batch_encode_146_lc0_root_bf16 = None  # type: ignore[assignment]
+    batch_encode_146_lc0_root_legacy_meta_bf16 = None  # type: ignore[assignment]
 from chess_anti_engine.mcts.gumbel import (
     GumbelConfig,
     _gumbel,
@@ -42,6 +59,24 @@ from chess_anti_engine.mcts.gumbel import (
     _wdl_to_q,
 )
 from chess_anti_engine.moves import POLICY_SIZE
+
+
+def _input_history_mode(input_history_encoding: str | None) -> int:
+    hist_enc = normalize_lc0_history_encoding(input_history_encoding)
+    if hist_enc == LC0_HISTORY_ROOT_LEGACY_META:
+        return 2
+    if hist_enc == LC0_HISTORY_ROOT:
+        return 1
+    return 0
+
+
+def _batch_encoders(input_history_encoding: str | None):
+    hist_enc = normalize_lc0_history_encoding(input_history_encoding)
+    if hist_enc == LC0_HISTORY_ROOT_LEGACY_META:
+        return batch_encode_146_lc0_root_legacy_meta, batch_encode_146_lc0_root_legacy_meta_bf16
+    if uses_lc0_root_history(hist_enc):
+        return batch_encode_146_lc0_root, batch_encode_146_lc0_root_bf16
+    return batch_encode_146, batch_encode_146_bf16
 
 _log = _logging.getLogger(__name__)
 
@@ -148,26 +183,28 @@ def run_gumbel_root_many_c(
         pol_logits_batch = np.asarray(pre_pol_logits, dtype=np.float32)
         wdl_logits_batch = np.asarray(pre_wdl_logits, dtype=np.float32)
     elif _inplace:
+        batch_enc, batch_enc_bf16 = _batch_encoders(cfg.input_history_encoding)
         if _has_input_bf16 and hasattr(eval_impl, "get_input_buffer_bf16_bits"):
-            assert batch_encode_146_bf16 is not None
+            assert batch_enc_bf16 is not None
             root_buf = eval_impl.get_input_buffer_bf16_bits(n_boards, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
-            batch_encode_146_bf16(root_cboards, root_buf)
+            batch_enc_bf16(root_cboards, root_buf)
         else:
             root_buf = eval_impl.get_input_buffer(n_boards, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
-            batch_encode_146(root_cboards, root_buf)
+            batch_enc(root_cboards, root_buf)
         pol_t, wdl_t, event = eval_impl.evaluate_inplace_async(n_boards, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
         if event is not None:
             event.synchronize()
         pol_logits_batch = pol_t.numpy()
         wdl_logits_batch = wdl_t.numpy()
     else:
+        batch_enc, batch_enc_bf16 = _batch_encoders(cfg.input_history_encoding)
         if _has_input_bf16 and hasattr(eval_impl, "evaluate_encoded"):
-            assert batch_encode_146_bf16 is not None
+            assert batch_enc_bf16 is not None
             xs = np.empty((n_boards, 146, 8, 8), dtype=np.uint16)
-            batch_encode_146_bf16(root_cboards, xs)
+            batch_enc_bf16(root_cboards, xs)
         else:
             xs = np.empty((n_boards, 146, 8, 8), dtype=np.float32)
-            batch_encode_146(root_cboards, xs)
+            batch_enc(root_cboards, xs)
         if _has_async:
             pol_t, wdl_t, event = _async_eval.evaluate_encoded_async(xs)
             if event is not None:
@@ -365,7 +402,7 @@ def run_gumbel_root_many_c(
             _n_leaves[g] = _trees[g].start_gumbel_sims(
                 _cb_g, _rid_g, _rem_g, _gum_g, _pri_g, _bud_g, _rqs_g,
                 _c_scale, _c_visit, _c_puct, _fpu_reduction, _full_tree,
-                _enc_bufs[g], 0, int(target_batch),
+                _enc_bufs[g], 0, int(target_batch), _input_history_mode(cfg.input_history_encoding),
             )
         _t_prepare += _time.perf_counter() - _tp0
 
@@ -576,7 +613,7 @@ def run_gumbel_root_many_c(
             cast("list[np.ndarray]", root_pri),
             _budget_arr, _root_qs_arr,
             _c_scale, _c_visit, _c_puct, _fpu_reduction, _full_tree,
-            cast(np.ndarray, _enc_buf), 0, int(target_batch),
+            cast(np.ndarray, _enc_buf), 0, int(target_batch), _input_history_mode(cfg.input_history_encoding),
         )
         _t_prepare += _time.perf_counter() - _tp0
 

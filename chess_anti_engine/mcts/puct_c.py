@@ -120,7 +120,11 @@ def run_mcts_many_c(
             xs = np.empty((n_boards, 146, 8, 8), dtype=np.float32)
             batch_encode_146(root_cboards, xs)
         else:
-            xs = encode_positions_batch(boards, add_features=True)
+            xs = encode_positions_batch(
+                boards,
+                add_features=True,
+                input_history_encoding=cfg.input_history_encoding,
+            )
         pol_logits_all, wdl_logits_all = eval_impl.evaluate_encoded(xs)
 
   # ── 2. Build C tree + init roots ─────────────────────────────────────
@@ -242,7 +246,11 @@ def run_mcts_many_c(
                     _leaf_cbs2.append(cb)
                 batch_encode_146(_leaf_cbs2, leaf_xs)
             else:
-                leaf_xs = encode_positions_batch([ld[2] for ld in leaf_data], add_features=True)
+                leaf_xs = encode_positions_batch(
+                    [ld[2] for ld in leaf_data],
+                    add_features=True,
+                    input_history_encoding=cfg.input_history_encoding,
+                )
             pol_batch, wdl_batch = eval_impl.evaluate_encoded(leaf_xs)
         q_values = tree.batch_wdl_to_q(wdl_batch.reshape(-1, 3))
 
@@ -303,5 +311,4 @@ def run_mcts_many_c(
         legal_masks.append(mask)
 
     return probs_list, actions, values, legal_masks
-
 

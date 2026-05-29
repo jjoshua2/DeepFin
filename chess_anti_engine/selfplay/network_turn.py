@@ -20,6 +20,13 @@ from typing import cast
 import chess
 import numpy as np
 
+from chess_anti_engine.encoding.cboard_encode import encode_cboard
+from chess_anti_engine.encoding.lc0 import (
+    LC0_HISTORY_ROOT,
+    LC0_HISTORY_ROOT_LEGACY_META,
+    normalize_lc0_history_encoding,
+    uses_lc0_root_history,
+)
 from chess_anti_engine.mcts import GumbelConfig, MCTSConfig
 from chess_anti_engine.mcts.gumbel import run_gumbel_root_many
 from chess_anti_engine.mcts.puct import run_mcts_many
@@ -50,6 +57,24 @@ from chess_anti_engine.selfplay.temperature import temperature_for_ply
 
 # torch.compile shape-stability buckets.
 _ROOT_BUCKETS: tuple[int, ...] = (32, 64, 128, 256, 512)
+
+
+def _c_input_history_mode(input_history_encoding: str | None) -> int:
+    hist_enc = normalize_lc0_history_encoding(input_history_encoding)
+    if hist_enc == LC0_HISTORY_ROOT_LEGACY_META:
+        return 2
+    if hist_enc == LC0_HISTORY_ROOT:
+        return 1
+    return 0
+
+
+def _batch_encoder_pair(state: SelfplayState):
+    hist_enc = normalize_lc0_history_encoding(state.game.input_history_encoding)
+    if hist_enc == LC0_HISTORY_ROOT_LEGACY_META:
+        return state.batch_enc_146_lc0_root_legacy_meta, state.batch_enc_146_lc0_root_legacy_meta_bf16
+    if uses_lc0_root_history(hist_enc):
+        return state.batch_enc_146_lc0_root, state.batch_enc_146_lc0_root_bf16
+    return state.batch_enc_146, state.batch_enc_146_bf16
 
 
 def _padded_batch_size(bsz: int) -> int:
@@ -109,23 +134,25 @@ def _evaluate_root_batch(
     bsz = len(net_idxs)
     padded_bsz = _padded_batch_size(bsz)
     cb_encode_list = [state.cboards[idx] for idx in net_idxs]
+    hist_enc = normalize_lc0_history_encoding(state.game.input_history_encoding)
+    batch_enc, batch_enc_bf16 = _batch_encoder_pair(state)
 
-    use_inplace = state.batch_enc_146 is not None and hasattr(eval_impl, "get_input_buffer")
+    use_inplace = batch_enc is not None and hasattr(eval_impl, "get_input_buffer")
     use_bf16_input = (
         state.has_c_ply
-        and state.batch_enc_146_bf16 is not None
+        and batch_enc_bf16 is not None
         and bool(getattr(eval_impl, "supports_input_bf16_bits", False))
     )
     if use_inplace:
   # evaluate_inplace + get_input_buffer exist on DirectGPU-style evaluators only.
         if use_bf16_input and hasattr(eval_impl, "get_input_buffer_bf16_bits"):
             buf = eval_impl.get_input_buffer_bf16_bits(padded_bsz)  # pyright: ignore[reportAttributeAccessIssue]
-            assert state.batch_enc_146_bf16 is not None
-            state.batch_enc_146_bf16(cb_encode_list, buf)
+            assert batch_enc_bf16 is not None
+            batch_enc_bf16(cb_encode_list, buf)
         else:
             buf = eval_impl.get_input_buffer(padded_bsz)  # pyright: ignore[reportAttributeAccessIssue]
-            assert state.batch_enc_146 is not None
-            state.batch_enc_146(cb_encode_list, buf)
+            assert batch_enc is not None
+            batch_enc(cb_encode_list, buf)
         pol_padded, wdl_padded = eval_impl.evaluate_inplace(  # pyright: ignore[reportAttributeAccessIssue]
             padded_bsz, copy_out=True,
         )
@@ -134,13 +161,16 @@ def _evaluate_root_batch(
         dtype = np.uint16 if use_bf16_input else np.float32
         xs_batch = np.empty((bsz, 146, 8, 8), dtype=dtype)
         if use_bf16_input:
-            assert state.batch_enc_146_bf16 is not None
-            state.batch_enc_146_bf16(cb_encode_list, xs_batch)
-        elif state.batch_enc_146 is not None:
-            state.batch_enc_146(cb_encode_list, xs_batch)
+            assert batch_enc_bf16 is not None
+            batch_enc_bf16(cb_encode_list, xs_batch)
+        elif batch_enc is not None:
+            batch_enc(cb_encode_list, xs_batch)
         else:
             for j, idx in enumerate(net_idxs):
-                xs_batch[j] = state.cboards[idx].encode_146()
+                xs_batch[j] = encode_cboard(
+                    state.cboards[idx],
+                    input_history_encoding=hist_enc,
+                )
         if padded_bsz > bsz:
             pad = np.zeros((padded_bsz - bsz, *xs_batch.shape[1:]), dtype=xs_batch.dtype)
             xs_padded = np.concatenate([xs_batch, pad], axis=0)
@@ -192,19 +222,38 @@ def _append_records_via_c(
     probs_arr = np.stack(cast("list[np.ndarray]", probs_list)).astype(np.float32, copy=False)
 
     assert state.c_process_ply is not None
-    (c_x, c_probs, c_wdl_net, c_wdl_search, c_priority,
-     c_keep, c_mask, c_ply, c_pov, c_over) = state.c_process_ply(
+    c_result = state.c_process_ply(
         cb_encode_list, pol_logits[:n], wdl_logits_raw[:n],
         actions_arr, values_arr, probs_arr,
         int(diff_focus.enabled), float(diff_focus.q_weight),
         float(diff_focus.pol_scale), float(diff_focus.min_keep), float(diff_focus.slope),
+        _c_input_history_mode(state.game.input_history_encoding),
     )
+    if len(c_result) >= 12:
+        (c_x, c_probs, c_wdl_net, c_wdl_search, c_priority,
+         c_priority_policy_kl, c_priority_q_delta,
+         c_keep, c_mask, c_ply, c_pov, c_over) = c_result
+    else:
+        (c_x, c_probs, c_wdl_net, c_wdl_search, c_priority,
+         c_keep, c_mask, c_ply, c_pov, c_over) = c_result
+        c_priority_policy_kl = [None] * n
+        c_priority_q_delta = [None] * n
 
     # Pre-extract Python scalars from numpy arrays (batch conversion is cheaper
     # than per-element conversion in the loop).
     c_ply_list = c_ply.tolist()
     c_pov_list = c_pov.tolist()
     c_priority_list = c_priority.tolist()
+    c_priority_policy_kl_list = (
+        c_priority_policy_kl.tolist()
+        if isinstance(c_priority_policy_kl, np.ndarray)
+        else list(c_priority_policy_kl)
+    )
+    c_priority_q_delta_list = (
+        c_priority_q_delta.tolist()
+        if isinstance(c_priority_q_delta, np.ndarray)
+        else list(c_priority_q_delta)
+    )
     c_keep_list = c_keep.tolist()
     c_over_list = c_over.tolist()
     act_list = actions_arr.tolist()
@@ -225,6 +274,8 @@ def _append_records_via_c(
                 c_ply_list[j], has_policy,
                 c_priority_list[j], sample_weights[j], c_keep_list[j],
                 c_mask[j],
+                priority_policy_kl=c_priority_policy_kl_list[j],
+                priority_q_delta=c_priority_q_delta_list[j],
             ),
         )
 
@@ -287,6 +338,7 @@ def _append_records_via_python(
         orig_q = float(wdl_est[j][0] - wdl_est[j][2])
         best_q = float(v)
         q_surprise = abs(best_q - orig_q)
+        q_delta = best_q - orig_q
 
         difficulty = q_surprise * df_q_w + kl * df_p_s
         if not math.isfinite(difficulty):
@@ -328,6 +380,8 @@ def _append_records_via_python(
                 sample_weight=float(sample_weights[j]),
                 keep_prob=float(keep_prob),
                 legal_mask=mask.view(np.uint8),
+                priority_policy_kl=float(kl),
+                priority_q_delta=float(q_delta),
             ),
         )
 
@@ -417,7 +471,12 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
                 sub_boards,  # type: ignore[arg-type] # CBoard or Board; dispatched by _HAS_GUMBEL_C branch
                 device=state.device,
                 rng=rng,
-                cfg=GumbelConfig(simulations=int(sim_count), temperature=1.0, add_noise=True),
+                cfg=GumbelConfig(
+                    simulations=int(sim_count),
+                    temperature=1.0,
+                    add_noise=True,
+                    input_history_encoding=state.game.input_history_encoding,
+                ),
                 evaluator=eval_impl,
                 pre_pol_logits=sub_pol,
                 pre_wdl_logits=sub_wdl,
@@ -451,6 +510,7 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
                     temperature=1.0,
                     fpu_reduction=float(search.fpu_reduction),
                     fpu_at_root=float(search.fpu_at_root),
+                    input_history_encoding=state.game.input_history_encoding,
                 ),
                 evaluator=eval_impl,
                 pre_pol_logits=sub_pol,

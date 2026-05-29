@@ -44,6 +44,7 @@ class GumbelConfig:
     fpu_reduction: float = 1.2
     full_tree: bool = True
     add_noise: bool = True  # Gumbel noise at root; disable for max-strength (non-training) search
+    input_history_encoding: str = "legacy"
 
 
 def _masked_priors(pol_logits: np.ndarray, board: chess.Board) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -191,6 +192,7 @@ def _resolve_root_logits(
     model: torch.nn.Module | None,
     evaluator: BatchEvaluator | None,
     device: str,
+    cfg: GumbelConfig,
     pre_pol_logits: np.ndarray | None,
     pre_wdl_logits: np.ndarray | None,
 ) -> tuple[np.ndarray, np.ndarray, BatchEvaluator | None]:
@@ -213,7 +215,11 @@ def _resolve_root_logits(
         if model is None:
             raise ValueError("run_gumbel_root_many requires model or evaluator")
         eval_impl = LocalModelEvaluator(model, device=device)
-    xs = encode_positions_batch(boards, add_features=True)
+    xs = encode_positions_batch(
+        boards,
+        add_features=True,
+        input_history_encoding=cfg.input_history_encoding,
+    )
     pol, wdl = eval_impl.evaluate_encoded(xs)
     return pol, wdl, eval_impl
 
@@ -222,13 +228,18 @@ def _evaluate_and_backprop_leaves(
     leaf_nodes: list[Node],
     leaf_paths: list[list[Node]],
     leaf_eval: BatchEvaluator | None,
+    cfg: GumbelConfig,
 ) -> None:
     """Batched leaf NN eval + expand + backprop. No-op when ``leaf_nodes`` is empty."""
     if not leaf_nodes:
         return
     if leaf_eval is None:
         raise ValueError("run_gumbel_root_many requires model or evaluator")
-    leaf_xs = encode_positions_batch([node.board for node in leaf_nodes], add_features=True)
+    leaf_xs = encode_positions_batch(
+        [node.board for node in leaf_nodes],
+        add_features=True,
+        input_history_encoding=cfg.input_history_encoding,
+    )
     pol_logits_leaf, wdl_logits_leaf = leaf_eval.evaluate_encoded(leaf_xs)
     for node, path, pol_logits, wdl_logits in zip(
         leaf_nodes, leaf_paths, pol_logits_leaf, wdl_logits_leaf, strict=True,
@@ -466,6 +477,7 @@ def run_gumbel_root_many(
     pol_logits_batch, wdl_logits_batch, leaf_eval = _resolve_root_logits(
         boards,
         model=model, evaluator=evaluator, device=device,
+        cfg=cfg,
         pre_pol_logits=pre_pol_logits, pre_wdl_logits=pre_wdl_logits,
     )
     root_qs = [_wdl_to_q(wdl_logits_batch[i]) for i in range(n_boards)]
@@ -513,7 +525,7 @@ def run_gumbel_root_many(
                 active=active, states=states,
                 visits_per_action=visits_per_action, rep=rep, cfg=cfg,
             )
-            _evaluate_and_backprop_leaves(leaf_nodes, leaf_paths, leaf_eval)
+            _evaluate_and_backprop_leaves(leaf_nodes, leaf_paths, leaf_eval, cfg)
 
         for bi in active:
             st = states[bi]

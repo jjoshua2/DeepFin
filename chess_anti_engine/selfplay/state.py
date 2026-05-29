@@ -135,6 +135,7 @@ class _NetRecord:
     __slots__ = (
         "x", "policy_probs", "net_wdl_est", "search_wdl_est",
         "pov_color", "ply_index", "has_policy", "priority",
+        "priority_policy_kl", "priority_q_delta",
         "sample_weight", "keep_prob", "legal_mask",
         "sf_policy_target", "sf_move_index", "sf_wdl",
         "sf_legal_mask",
@@ -148,6 +149,8 @@ class _NetRecord:
     ply_index: int
     has_policy: bool
     priority: float
+    priority_policy_kl: float | None
+    priority_q_delta: float | None
     sample_weight: float
     keep_prob: float
     legal_mask: np.ndarray | None
@@ -161,6 +164,7 @@ class _NetRecord:
         pov_color, ply_index, has_policy, priority,
         sample_weight, keep_prob, legal_mask=None,
         sf_policy_target=None, sf_move_index=None, sf_wdl=None,
+        priority_policy_kl=None, priority_q_delta=None,
     ):
         self.x = x
         self.policy_probs = policy_probs
@@ -170,6 +174,8 @@ class _NetRecord:
         self.ply_index = ply_index
         self.has_policy = has_policy
         self.priority = priority
+        self.priority_policy_kl = priority_policy_kl
+        self.priority_q_delta = priority_q_delta
         self.sample_weight = sample_weight
         self.keep_prob = keep_prob
         self.legal_mask = legal_mask
@@ -262,7 +268,11 @@ class _CExtensionCaps:
     has_classify_c: bool
     c_process_ply: Callable[..., Any] | None
     batch_enc_146: Callable[..., Any] | None
+    batch_enc_146_lc0_root: Callable[..., Any] | None
+    batch_enc_146_lc0_root_legacy_meta: Callable[..., Any] | None
     batch_enc_146_bf16: Callable[..., Any] | None
+    batch_enc_146_lc0_root_bf16: Callable[..., Any] | None
+    batch_enc_146_lc0_root_legacy_meta_bf16: Callable[..., Any] | None
     c_classify: Callable[..., Any] | None
     c_temp_resample: Callable[..., Any] | None
 
@@ -323,21 +333,41 @@ def _probe_c_extensions() -> _CExtensionCaps:
 
     c_process_ply: Callable[..., Any] | None = None
     batch_enc_146: Callable[..., Any] | None = None
+    batch_enc_146_lc0_root: Callable[..., Any] | None = None
+    batch_enc_146_lc0_root_legacy_meta: Callable[..., Any] | None = None
     batch_enc_146_bf16: Callable[..., Any] | None = None
+    batch_enc_146_lc0_root_bf16: Callable[..., Any] | None = None
+    batch_enc_146_lc0_root_legacy_meta_bf16: Callable[..., Any] | None = None
     has_c_ply = False
     try:
         from chess_anti_engine.mcts._mcts_tree import (
             batch_encode_146 as _batch_enc_146,
         )
         from chess_anti_engine.mcts._mcts_tree import (
+            batch_encode_146_lc0_root as _batch_enc_146_lc0_root,
+        )
+        from chess_anti_engine.mcts._mcts_tree import (
+            batch_encode_146_lc0_root_legacy_meta as _batch_enc_146_lc0_root_legacy_meta,
+        )
+        from chess_anti_engine.mcts._mcts_tree import (
             batch_encode_146_bf16 as _batch_enc_146_bf16,
+        )
+        from chess_anti_engine.mcts._mcts_tree import (
+            batch_encode_146_lc0_root_bf16 as _batch_enc_146_lc0_root_bf16,
+        )
+        from chess_anti_engine.mcts._mcts_tree import (
+            batch_encode_146_lc0_root_legacy_meta_bf16 as _batch_enc_146_lc0_root_legacy_meta_bf16,
         )
         from chess_anti_engine.mcts._mcts_tree import (
             batch_process_ply as _c_process_ply,
         )
         c_process_ply = _c_process_ply
         batch_enc_146 = _batch_enc_146
+        batch_enc_146_lc0_root = _batch_enc_146_lc0_root
+        batch_enc_146_lc0_root_legacy_meta = _batch_enc_146_lc0_root_legacy_meta
         batch_enc_146_bf16 = _batch_enc_146_bf16
+        batch_enc_146_lc0_root_bf16 = _batch_enc_146_lc0_root_bf16
+        batch_enc_146_lc0_root_legacy_meta_bf16 = _batch_enc_146_lc0_root_legacy_meta_bf16
         has_c_ply = True
     except ImportError:
         logging.getLogger("chess_anti_engine.selfplay").warning(
@@ -366,7 +396,11 @@ def _probe_c_extensions() -> _CExtensionCaps:
         has_classify_c=has_classify_c,
         c_process_ply=c_process_ply,
         batch_enc_146=batch_enc_146,
+        batch_enc_146_lc0_root=batch_enc_146_lc0_root,
+        batch_enc_146_lc0_root_legacy_meta=batch_enc_146_lc0_root_legacy_meta,
         batch_enc_146_bf16=batch_enc_146_bf16,
+        batch_enc_146_lc0_root_bf16=batch_enc_146_lc0_root_bf16,
+        batch_enc_146_lc0_root_legacy_meta_bf16=batch_enc_146_lc0_root_legacy_meta_bf16,
         c_classify=c_classify,
         c_temp_resample=c_temp_resample,
     )
@@ -443,7 +477,11 @@ class SelfplayState:
     has_classify_c: bool = False
     c_process_ply: Callable[..., Any] | None = None
     batch_enc_146: Callable[..., Any] | None = None
+    batch_enc_146_lc0_root: Callable[..., Any] | None = None
+    batch_enc_146_lc0_root_legacy_meta: Callable[..., Any] | None = None
     batch_enc_146_bf16: Callable[..., Any] | None = None
+    batch_enc_146_lc0_root_bf16: Callable[..., Any] | None = None
+    batch_enc_146_lc0_root_legacy_meta_bf16: Callable[..., Any] | None = None
     c_classify: Callable[..., Any] | None = None
     c_temp_resample: Callable[..., Any] | None = None
 
@@ -549,7 +587,11 @@ class SelfplayState:
             has_classify_c=c_caps.has_classify_c,
             c_process_ply=c_caps.c_process_ply,
             batch_enc_146=c_caps.batch_enc_146,
+            batch_enc_146_lc0_root=c_caps.batch_enc_146_lc0_root,
+            batch_enc_146_lc0_root_legacy_meta=c_caps.batch_enc_146_lc0_root_legacy_meta,
             batch_enc_146_bf16=c_caps.batch_enc_146_bf16,
+            batch_enc_146_lc0_root_bf16=c_caps.batch_enc_146_lc0_root_bf16,
+            batch_enc_146_lc0_root_legacy_meta_bf16=c_caps.batch_enc_146_lc0_root_legacy_meta_bf16,
             c_classify=c_caps.c_classify,
             c_temp_resample=c_caps.c_temp_resample,
             games_started=batch_size,

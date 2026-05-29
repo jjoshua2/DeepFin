@@ -47,7 +47,10 @@ class _DtypeMatchedRMSNorm(nn.Module):
         weight = self.weight
         if weight.dtype != x.dtype or weight.device != x.device:
             weight = weight.to(device=x.device, dtype=x.dtype)
-        return F.rms_norm(x, self.normalized_shape, weight, self.eps)
+        if hasattr(F, "rms_norm"):
+            return F.rms_norm(x, self.normalized_shape, weight, self.eps)
+        y = x * x.pow(2).mean(dim=-1, keepdim=True).add(self.eps).rsqrt()
+        return y * weight
 
 
 def _rmsnorm(normalized_shape: int, *, eps: float = 1e-6) -> nn.Module:

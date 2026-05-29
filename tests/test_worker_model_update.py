@@ -29,6 +29,22 @@ def _bare_worker_session() -> WorkerSession:
     return session
 
 
+def test_manifest_compat_accepts_compact_lc0_policy() -> None:
+    session = _bare_worker_session()
+    compat = WorkerSession._check_manifest_compat(
+        session,
+        {
+            "protocol_version": worker_mod.PROTOCOL_VERSION,
+            "encoding": {
+                "input_planes": 146,
+                "policy_size": 1858,
+                "policy_encoding": "lc0_1858",
+            },
+        },
+    )
+    assert compat.protocol_mismatch is False
+
+
 def test_mtime_model_update_swaps_before_reco_restart(tmp_path: Path) -> None:
     session = _bare_worker_session()
     manifest = {

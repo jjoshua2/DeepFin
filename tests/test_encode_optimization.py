@@ -231,6 +231,14 @@ class TestEncodePositionSnapshot:
         batch_encode_146_lc0_root([cb], batch)
         np.testing.assert_allclose(batch[0], got, atol=1e-6)
 
+        rep = chess.Board()
+        for san in ("Nf3", "Nf6", "Ng1", "Ng8", "Nf3", "Nf6"):
+            rep.push_san(san)
+        cb_rep = CBoard.from_board(rep)
+        ref_rep = encode_position(rep, add_features=True, input_history_encoding="lc0_root")
+        got_rep = cb_rep.encode_146_lc0_root()
+        np.testing.assert_allclose(got_rep[:112], ref_rep[:112], atol=1e-6)
+
     def test_cboard_encode_146_lc0_root_legacy_meta_matches_python(self):
         """LC0-root legacy-meta CBoard path must match Python metadata patch."""
         try:

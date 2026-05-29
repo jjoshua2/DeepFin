@@ -3,6 +3,8 @@ from __future__ import annotations
 import torch
 import torch.nn.functional as F
 
+from chess_anti_engine.moves import COMPACT_POLICY_SIZE, COMPACT_TO_FULL_POLICY, POLICY_SIZE
+
 # Phase buckets for per-phase loss reporting. `moves_left` is plies-remaining /
 # max_plies so 1.0 = opening, 0.0 = endgame. Thresholds calibrated from
 # empirical P33/P67 of recent selfplay shards (data is skewed toward shorter
@@ -44,6 +46,63 @@ def apply_mask_to_logits(
     mask = batch.get(mask_key)
     if mask is None:
         return logits
+    has = batch.get(has_key)
+    active = has.unsqueeze(-1) if has is not None else 1.0
+    return logits + (1.0 - mask) * -1e9 * active
+
+
+def align_policy_target(target: torch.Tensor, width: int) -> torch.Tensor:
+    """Return a policy target in the same action encoding width as logits.
+
+    Replay shards are allowed to remain in the full 4672 action space while a
+    model emits compact LC0-1858 logits. Compact projection gathers the valid
+    full actions and renormalizes because invalid 4672 padding can carry tiny
+    mass from smoothing or legacy producers.
+    """
+    src_width = int(target.shape[-1])
+    dst_width = int(width)
+    if src_width == dst_width:
+        return target
+    if src_width == POLICY_SIZE and dst_width == COMPACT_POLICY_SIZE:
+        idx = torch.as_tensor(COMPACT_TO_FULL_POLICY, dtype=torch.long, device=target.device)
+        out = target.index_select(-1, idx)
+        return out / out.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+    if src_width == COMPACT_POLICY_SIZE and dst_width == POLICY_SIZE:
+        idx = torch.as_tensor(COMPACT_TO_FULL_POLICY, dtype=torch.long, device=target.device)
+        out = target.new_zeros((*target.shape[:-1], POLICY_SIZE))
+        out.index_copy_(-1, idx, target)
+        return out
+    raise ValueError(f"policy target width {src_width} is incompatible with logits width {dst_width}")
+
+
+def align_policy_mask(mask: torch.Tensor, width: int) -> torch.Tensor:
+    """Return a legal-move mask in the same action encoding width as logits."""
+    src_width = int(mask.shape[-1])
+    dst_width = int(width)
+    if src_width == dst_width:
+        return mask
+    if src_width == POLICY_SIZE and dst_width == COMPACT_POLICY_SIZE:
+        idx = torch.as_tensor(COMPACT_TO_FULL_POLICY, dtype=torch.long, device=mask.device)
+        return mask.index_select(-1, idx)
+    if src_width == COMPACT_POLICY_SIZE and dst_width == POLICY_SIZE:
+        idx = torch.as_tensor(COMPACT_TO_FULL_POLICY, dtype=torch.long, device=mask.device)
+        out = mask.new_zeros((*mask.shape[:-1], POLICY_SIZE))
+        out.index_copy_(-1, idx, mask)
+        return out
+    raise ValueError(f"policy mask width {src_width} is incompatible with logits width {dst_width}")
+
+
+def apply_policy_mask_to_logits(
+    logits: torch.Tensor,
+    batch: dict[str, torch.Tensor],
+    mask_key: str,
+    has_key: str,
+) -> torch.Tensor:
+    """Policy-specific mask application that supports full/compact encodings."""
+    mask = batch.get(mask_key)
+    if mask is None:
+        return logits
+    mask = align_policy_mask(mask, int(logits.shape[-1]))
     has = batch.get(has_key)
     active = has.unsqueeze(-1) if has is not None else 1.0
     return logits + (1.0 - mask) * -1e9 * active
@@ -148,20 +207,27 @@ def compute_loss(
     net_mask = _get_mask(batch, "is_network_turn", default=1.0).to(torch.float32)
 
     def _apply_legal_mask(logits: torch.Tensor) -> torch.Tensor:
-        return apply_mask_to_logits(logits, batch, "legal_mask", "has_legal_mask")
+        return apply_policy_mask_to_logits(logits, batch, "legal_mask", "has_legal_mask")
 
     base_policy_logits = outputs["policy"] if "policy" in outputs else outputs.get("policy_own")
     if base_policy_logits is None:
         raise KeyError("Model outputs must include either 'policy' or 'policy_own'.")
 
-    pol_ce = soft_cross_entropy(_apply_legal_mask(base_policy_logits), batch["policy_t"])
+    pol_target = align_policy_target(batch["policy_t"], int(base_policy_logits.shape[-1]))
+    pol_ce = soft_cross_entropy(_apply_legal_mask(base_policy_logits), pol_target)
     zero_loss = torch.zeros_like(pol_ce)
     has_policy = _get_mask(batch, "has_policy", default=1.0)
 
     has_soft = _get_mask(batch, "has_policy_soft")
     soft_logits = outputs.get("policy_soft", base_policy_logits)
     soft_target = batch.get("policy_soft_t")
-    soft_ce = soft_cross_entropy(_apply_legal_mask(soft_logits), soft_target) if soft_target is not None else zero_loss
+    soft_ce = (
+        soft_cross_entropy(
+            _apply_legal_mask(soft_logits),
+            align_policy_target(soft_target, int(soft_logits.shape[-1])),
+        )
+        if soft_target is not None else zero_loss
+    )
 
   # Future policy (t+2): target and legal mask are in the t+2 move space.
     has_future = _get_mask(batch, "has_future")
@@ -169,8 +235,8 @@ def compute_loss(
     future_target = batch.get("future_policy_t")
     if future_target is not None:
         future_ce = soft_cross_entropy(
-            apply_mask_to_logits(future_logits, batch, "future_legal_mask", "has_future_legal_mask"),
-            future_target,
+            apply_policy_mask_to_logits(future_logits, batch, "future_legal_mask", "has_future_legal_mask"),
+            align_policy_target(future_target, int(future_logits.shape[-1])),
         )
     else:
         future_ce = zero_loss
@@ -187,8 +253,8 @@ def compute_loss(
         sf_move_ce = zero_loss
     else:
         sf_move_ce = soft_cross_entropy(
-            apply_mask_to_logits(sf_pol_logits, batch, "sf_legal_mask", "has_sf_legal_mask"),
-            sf_policy_target,
+            apply_policy_mask_to_logits(sf_pol_logits, batch, "sf_legal_mask", "has_sf_legal_mask"),
+            align_policy_target(sf_policy_target, int(sf_pol_logits.shape[-1])),
         )
 
     has_sf_wdl = _get_mask(batch, "has_sf_wdl")

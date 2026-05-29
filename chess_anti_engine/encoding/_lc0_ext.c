@@ -382,6 +382,9 @@ static PyObject* PyCBoard_from_board(PyTypeObject *type, PyObject *args) {
             int s_turn;
             py_read_hist_bitboards(s, b->hist_bb[slot], b->hist_occ[slot], &s_turn);
             b->hist_turn[slot] = (int8_t)s_turn;
+            uint8_t s_castling = 0;
+            if (py_read_castling_mask(s, &s_castling) < 0) PyErr_Clear();
+            b->hist_castling[slot] = s_castling;
             b->hist_len++;
         }
         b->hist_head = n_hist % CBOARD_HISTORY_MAX;

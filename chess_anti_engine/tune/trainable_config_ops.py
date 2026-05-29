@@ -187,6 +187,8 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
             syzygy_in_search=tc.syzygy_in_search,
             categorical_bins=tc.categorical_bins,
             hlgauss_sigma=tc.hlgauss_sigma,
+            policy_encoding=tc.policy_encoding,
+            input_history_encoding=tc.input_history_encoding,
         ),
     )
 
@@ -208,6 +210,22 @@ _TOPOLOGY_KEYS = frozenset({
     "num_samples",
     "max_concurrent_trials",
     "gpus_per_trial",
+    "input_pos_encoding",
+    "qkv_projection",
+    "use_deepnorm",
+    "policy_encoding",
+    "input_history_encoding",
+    "input_global_embedding",
+    "input_global_embedding_channels",
+    "input_square_embedding",
+    "smolgen_mode",
+    "smolgen_bias_scale",
+    "smolgen_bias_norm",
+    "arc_attention_bias",
+    "smolgen_relation_basis",
+    "smolgen_relation_norm",
+    "smolgen_relation_coeff_norm",
+    "smolgen_relation_scale",
 })
 
 

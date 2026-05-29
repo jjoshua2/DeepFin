@@ -46,6 +46,22 @@ class TrialConfig:
     use_nla: bool = False
     use_qk_rmsnorm: bool = False
     gradient_checkpointing: bool = False
+    input_pos_encoding: str = "none"
+    qkv_projection: str = "fused"
+    use_deepnorm: bool = False
+    policy_encoding: str = "az_4672"
+    input_history_encoding: str = "legacy"
+    input_global_embedding: str = "none"
+    input_global_embedding_channels: int = 0
+    input_square_embedding: str = "none"
+    smolgen_mode: str = "shared"
+    smolgen_bias_scale: str = "none"
+    smolgen_bias_norm: str = "none"
+    arc_attention_bias: str = "none"
+    smolgen_relation_basis: bool = False
+    smolgen_relation_norm: str = "none"
+    smolgen_relation_coeff_norm: str = "none"
+    smolgen_relation_scale: str = "none"
 
   # --- Training ---
     lr: float = 0.0003
@@ -272,6 +288,22 @@ class TrialConfig:
             use_nla=bool(config.get("use_nla", False)),
             use_qk_rmsnorm=bool(config.get("use_qk_rmsnorm", False)),
             gradient_checkpointing=bool(config.get("gradient_checkpointing", False)),
+            input_pos_encoding=str(config.get("input_pos_encoding", "none")),
+            qkv_projection=str(config.get("qkv_projection", "fused")),
+            use_deepnorm=bool(config.get("use_deepnorm", False)),
+            policy_encoding=str(config.get("policy_encoding", "az_4672")),
+            input_history_encoding=str(config.get("input_history_encoding", "legacy")),
+            input_global_embedding=str(config.get("input_global_embedding", "none")),
+            input_global_embedding_channels=int(config.get("input_global_embedding_channels", 0)),
+            input_square_embedding=str(config.get("input_square_embedding", "none")),
+            smolgen_mode=str(config.get("smolgen_mode", "shared")),
+            smolgen_bias_scale=str(config.get("smolgen_bias_scale", "none")),
+            smolgen_bias_norm=str(config.get("smolgen_bias_norm", "none")),
+            arc_attention_bias=str(config.get("arc_attention_bias", "none")),
+            smolgen_relation_basis=bool(config.get("smolgen_relation_basis", False)),
+            smolgen_relation_norm=str(config.get("smolgen_relation_norm", "none")),
+            smolgen_relation_coeff_norm=str(config.get("smolgen_relation_coeff_norm", "none")),
+            smolgen_relation_scale=str(config.get("smolgen_relation_scale", "none")),
 
   # --- Training ---
             lr=float(config["lr"]) if "lr" in config else 0.0003,

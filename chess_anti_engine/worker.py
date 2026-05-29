@@ -37,7 +37,12 @@ from chess_anti_engine.model import (
     load_state_dict_tolerant,
     model_config_from_manifest_dict,
 )
-from chess_anti_engine.moves.encode import POLICY_SIZE
+from chess_anti_engine.moves import (
+    COMPACT_POLICY_SIZE,
+    POLICY_ENCODING_LC0_1858,
+    POLICY_SIZE,
+    normalize_policy_encoding,
+)
 from chess_anti_engine.replay.shard import (
     LOCAL_SHARD_SUFFIX,
     delete_shard_path,
@@ -1475,8 +1480,20 @@ class WorkerSession:
         min_v = manifest.get("min_worker_version")
         version_too_old = bool(min_v is not None and version_lt(PACKAGE_VERSION, str(min_v)))
         enc = manifest.get("encoding") or {}
-        if "policy_size" in enc and int(enc.get("policy_size") or 0) != int(POLICY_SIZE):
-            raise SystemExit(f"policy_size mismatch: worker={POLICY_SIZE} server={enc.get('policy_size')}")
+        if "policy_size" in enc:
+            server_policy_size = int(enc.get("policy_size") or 0)
+            if server_policy_size not in (int(POLICY_SIZE), int(COMPACT_POLICY_SIZE)):
+                raise SystemExit(
+                    f"policy_size mismatch: worker supports {POLICY_SIZE}/{COMPACT_POLICY_SIZE} "
+                    f"server={enc.get('policy_size')}",
+                )
+            if server_policy_size == int(COMPACT_POLICY_SIZE):
+                policy_encoding = normalize_policy_encoding(enc.get("policy_encoding", "lc0_1858"))
+                if policy_encoding != POLICY_ENCODING_LC0_1858:
+                    raise SystemExit(
+                        f"policy_encoding mismatch: compact size requires lc0_1858, "
+                        f"server={enc.get('policy_encoding')}",
+                    )
         if "input_planes" in enc and int(enc.get("input_planes") or 0) != 146:
             raise SystemExit(f"input_planes mismatch: worker expects 146, server={enc.get('input_planes')}")
         return _ManifestCompat(
