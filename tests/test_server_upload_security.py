@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import json
 import tarfile
 from pathlib import Path
 
@@ -35,12 +36,12 @@ def _seed_user(server_root: Path, username: str = "u", password: str = "p") -> N
     save_users(server_root / "users.json", users)
 
 
-def _build_client(server_root: Path):
+def _build_client(server_root: Path, **kwargs):
     from fastapi.testclient import TestClient
 
     from chess_anti_engine.server.app import create_app
 
-    app = create_app(server_root=str(server_root), users_db="users.json")
+    app = create_app(server_root=str(server_root), users_db="users.json", **kwargs)
     return TestClient(app)
 
 
@@ -151,6 +152,85 @@ def test_zarr_tar_upload_happy_path(tmp_path) -> None:
     body = r.json()
     assert body.get("stored") is True
     assert body.get("positions") == 3
+
+
+def test_zarr_tar_upload_rejects_position_cap_before_ingest(tmp_path) -> None:
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+    client = _build_client(server_root, max_upload_positions=2)
+    tar_bytes = _build_valid_zarr_tar(tmp_path, samples=[_sample(i) for i in range(3)])
+
+    r = client.post(
+        "/v1/upload_shard",
+        auth=("u", "p"),
+        files={"file": ("shard.zarr.tar", tar_bytes, "application/x-tar")},
+        headers=_default_headers(),
+    )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body.get("stored") is False
+    assert body.get("rejected") is True
+    assert "too many positions" in body.get("reason", "")
+
+
+def test_bad_shard_report_is_persisted(tmp_path) -> None:
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+    client = _build_client(server_root)
+
+    r = client.post(
+        "/v1/trials/trial_a/report_bad_shard",
+        auth=("u", "p"),
+        json={"shard_name": "bad.zarr", "reason": "local invalid shard"},
+        headers={**_default_headers(), "X-CAE-Machine-ID": "machine-a"},
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json().get("stored") is True
+    reports = list((server_root / "trials" / "trial_a" / "quarantine" / "client_reports").glob("*.json"))
+    assert len(reports) == 1
+    text = reports[0].read_text(encoding="utf-8")
+    assert "bad.zarr" in text
+    assert "machine-a" in text
+
+
+def test_bad_shard_report_persists_only_bounded_payload_fields(tmp_path) -> None:
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+    client = _build_client(server_root)
+
+    r = client.post(
+        "/v1/trials/trial_a/report_bad_shard",
+        auth=("u", "p"),
+        json={
+            "shard_name": "bad.zarr",
+            "reason": "x" * 10_000,
+            "unused_blob": "y" * 10_000,
+        },
+        headers={**_default_headers(), "X-CAE-Machine-ID": "machine-a"},
+    )
+
+    assert r.status_code == 200, r.text
+    reports = list((server_root / "trials" / "trial_a" / "quarantine" / "client_reports").glob("*.json"))
+    assert len(reports) == 1
+    report = json.loads(reports[0].read_text(encoding="utf-8"))
+    assert set(report["payload"]) == {"shard_name", "reason"}
+    assert report["payload"]["shard_name"] == "bad.zarr"
+    assert len(report["payload"]["reason"]) < 600
+    assert "unused_blob" not in reports[0].read_text(encoding="utf-8")
+
+
+def test_outcome_stats_merge_caps_distinct_keys() -> None:
+    from chess_anti_engine.server.app import _MAX_OUTCOME_STAT_KEYS, _merge_outcome_stats
+
+    dst: dict[str, int] = {}
+    _merge_outcome_stats(dst, {f"outcome_{i}": 1 for i in range(_MAX_OUTCOME_STAT_KEYS + 50)})
+
+    assert len(dst) == _MAX_OUTCOME_STAT_KEYS
 
 
 def test_compaction_flush_failure_preserves_accumulator(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:

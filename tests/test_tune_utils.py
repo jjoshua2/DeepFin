@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from chess_anti_engine.tune._utils import concat_array_batches
+from chess_anti_engine.tune._utils import concat_array_batches, slice_array_batch
 
 
 def _minimal_batch(n: int) -> dict[str, np.ndarray]:
@@ -39,3 +39,14 @@ def test_concat_array_batches_synthesizes_legacy_required_defaults():
 
     assert out["priority"].tolist() == [1.0, 1.0]
     assert out["has_policy"].tolist() == [1, 1]
+
+
+def test_slice_array_batch_preserves_scalar_metadata():
+    batch = _minimal_batch(3)
+    batch["_policy_size"] = np.array(4672, dtype=np.int32)
+
+    out = slice_array_batch(batch, np.array([2, 0], dtype=np.int64))
+
+    assert out["x"].shape[0] == 2
+    assert out["_policy_size"].shape == ()
+    assert int(out["_policy_size"]) == 4672

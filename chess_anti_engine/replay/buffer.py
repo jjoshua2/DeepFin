@@ -5,6 +5,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from chess_anti_engine.moves import POLICY_SIZE
+
 
 @dataclass(slots=True)
 class ReplaySample:
@@ -14,7 +16,11 @@ class ReplaySample:
 
   # Sampling priority (KataGo-style surprise weighting)
     priority: float = 1.0
+    priority_policy_kl: float | None = None
+    priority_q_delta: float | None = None
+    priority_sf_search_gap: float | None = None
     has_policy: bool = True
+    x_lc0_root: np.ndarray | None = None  # Optional alternate LC0-root input planes.
 
   # Optional auxiliary targets (for spec completeness; not all are trained yet)
   #
@@ -144,7 +150,8 @@ class ArrayReplayBuffer:
                 continue
             chunk = self._chunks[0]
             for k in tuple(chunk.keys()):
-                chunk[k] = chunk[k][remaining:]
+                arr = np.asarray(chunk[k])
+                chunk[k] = arr if arr.ndim == 0 else arr[remaining:]
             self._chunk_sizes[0] = first_n - remaining
             self._size -= remaining
             remaining = 0
@@ -207,24 +214,24 @@ class ArrayReplayBuffer:
         return self._sample_indices(np.arange(n, dtype=np.int64), int(batch_size))
 
     def _gather_rows(self, indices: np.ndarray) -> dict[str, np.ndarray]:
-        from chess_anti_engine.moves import POLICY_SIZE
-
         from .shard import densify_chunk
         idx = np.asarray(indices, dtype=np.int64).reshape(-1)
         if not self._chunks:
             raise ValueError("ArrayReplayBuffer is empty")
+        policy_size = int(np.asarray(self._chunks[0].get("_policy_size", POLICY_SIZE)).item())
         if idx.size == 0:
             x_planes = int(np.asarray(self._chunks[0]["x"]).shape[1])
             return {
                 "x": np.empty((0, x_planes, 8, 8), dtype=np.float16),
-                "policy_target": np.empty((0, POLICY_SIZE), dtype=np.float16),
+                "policy_target": np.empty((0, policy_size), dtype=np.float16),
                 "wdl_target": np.empty((0,), dtype=np.int8),
                 "priority": np.empty((0,), dtype=np.float32),
                 "has_policy": np.empty((0,), dtype=np.uint8),
             }
   # Densify each chunk's selected rows, then merge into output.
   # This avoids shape mismatches when chunks have different sparse K values.
-        selected: list[tuple[dict[str, np.ndarray], np.ndarray]] = []
+        selected_sparse: list[tuple[dict[str, np.ndarray], np.ndarray]] = []
+        selected_policy_sizes: set[int] = set()
         all_keys: set[str] = set()
         start = 0
         for chunk, chunk_n in zip(self._chunks, self._chunk_sizes):
@@ -232,11 +239,23 @@ class ArrayReplayBuffer:
             mask = (idx >= start) & (idx < end)
             if np.any(mask):
                 local = idx[mask] - start
-                rows = {k: v[local] for k, v in chunk.items()}
-                dense_rows = densify_chunk(rows, policy_size=POLICY_SIZE)
-                selected.append((dense_rows, mask))
-                all_keys.update(dense_rows.keys())
+                rows = {k: (v if np.asarray(v).ndim == 0 else v[local]) for k, v in chunk.items()}
+                selected_policy_sizes.add(int(np.asarray(rows.get("_policy_size", POLICY_SIZE)).item()))
+                selected_sparse.append((rows, mask))
             start = end
+        if len(selected_policy_sizes) > 1:
+            raise ValueError(f"mixed replay policy sizes in array buffer: {sorted(selected_policy_sizes)}")
+        if not selected_policy_sizes:
+            raise ValueError(
+                "sample indices did not match any replay chunk; "
+                f"indices range [{int(idx.min())}, {int(idx.max())}], size={self._size}",
+            )
+        policy_size = next(iter(selected_policy_sizes))
+        selected: list[tuple[dict[str, np.ndarray], np.ndarray]] = []
+        for rows, mask in selected_sparse:
+            dense_rows = densify_chunk(rows, policy_size=policy_size)
+            selected.append((dense_rows, mask))
+            all_keys.update(dense_rows.keys())
   # Build prototype from ALL selected chunks so optional fields present
   # in any chunk are allocated (not just those in the first chunk).
         proto: dict[str, np.ndarray] = {}
