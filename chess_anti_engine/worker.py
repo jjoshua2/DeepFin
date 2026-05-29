@@ -1889,6 +1889,7 @@ class WorkerSession:
         # an unrelated key changes. Flagged by Codex adversarial review.
         "syzygy_path", "stockfish_syzygy_path", "syzygy_rescore_policy",
         "syzygy_adjudicate", "syzygy_adjudicate_fraction", "syzygy_in_search",
+        "policy_encoding", "input_history_encoding",
     )
 
     def _build_selfplay_configs(self, reco: dict) -> tuple[dict, tuple]:
@@ -1948,6 +1949,8 @@ class WorkerSession:
                 syzygy_adjudicate=bool(reco.get("syzygy_adjudicate", False)),
                 syzygy_adjudicate_fraction=float(reco.get("syzygy_adjudicate_fraction", 1.0)),
                 syzygy_in_search=bool(reco.get("syzygy_in_search", False)),
+                policy_encoding=str(reco.get("policy_encoding", "az_4672")),
+                input_history_encoding=str(reco.get("input_history_encoding", "legacy")),
             ),
         }
         sf_args = (

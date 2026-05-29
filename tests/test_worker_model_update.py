@@ -26,6 +26,9 @@ def _bare_worker_session() -> WorkerSession:
     session._last_manifest_poll_s = time.time()
     session._manifest_mtime = None
     session.model_sha = "old-sha"
+    session.args = SimpleNamespace()
+    session.opening_book_path = None
+    session.opening_book_path_2 = None
     return session
 
 
@@ -113,6 +116,45 @@ def test_cp_wdl_recommendation_changes_restart_selfplay_session() -> None:
             "recommended_worker": {
                 **old,
                 "sf_wdl_use_cp_logistic": True,
+            }
+        },
+        source_tag="test",
+    )
+
+    assert changed is True
+    assert session._stop_selfplay is True
+
+
+def test_build_selfplay_configs_uses_manifest_policy_and_history_encoding() -> None:
+    session = _bare_worker_session()
+
+    cfgs, _sf_args = WorkerSession._build_selfplay_configs(
+        session,
+        {
+            "policy_encoding": "lc0_1858",
+            "input_history_encoding": "lc0_root_legacy_meta",
+        },
+    )
+
+    game_cfg = cfgs["game"]
+    assert game_cfg.policy_encoding == "lc0_1858"
+    assert game_cfg.input_history_encoding == "lc0_root_legacy_meta"
+
+
+def test_encoding_recommendation_changes_restart_selfplay_session() -> None:
+    session = _bare_worker_session()
+    old = {
+        "policy_encoding": "az_4672",
+        "input_history_encoding": "legacy",
+    }
+    session._active_reco = {k: old.get(k) for k in WorkerSession._RECO_RESTART_KEYS}
+
+    changed = WorkerSession._reco_changed(
+        session,
+        {
+            "recommended_worker": {
+                **old,
+                "input_history_encoding": "lc0_root",
             }
         },
         source_tag="test",
