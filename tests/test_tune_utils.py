@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from chess_anti_engine.replay.shard import INPUT_HISTORY_ENCODING_ARRAY_KEY
 from chess_anti_engine.tune._utils import concat_array_batches, slice_array_batch
 
 
@@ -50,3 +51,23 @@ def test_slice_array_batch_preserves_scalar_metadata():
     assert out["x"].shape[0] == 2
     assert out["_policy_size"].shape == ()
     assert int(out["_policy_size"]) == 4672
+
+
+def test_concat_array_batches_preserves_matching_history_metadata():
+    a = _minimal_batch(2)
+    b = _minimal_batch(3)
+    a[INPUT_HISTORY_ENCODING_ARRAY_KEY] = np.asarray("lc0_root")
+    b[INPUT_HISTORY_ENCODING_ARRAY_KEY] = np.asarray("lc0_root")
+
+    out = concat_array_batches([a, b])
+
+    assert out[INPUT_HISTORY_ENCODING_ARRAY_KEY].shape == ()
+    assert str(out[INPUT_HISTORY_ENCODING_ARRAY_KEY]) == "lc0_root"
+
+
+def test_concat_array_batches_rejects_missing_and_concrete_history_metadata():
+    tagged = _minimal_batch(2)
+    tagged[INPUT_HISTORY_ENCODING_ARRAY_KEY] = np.asarray("lc0_root")
+
+    with np.testing.assert_raises_regex(ValueError, "mixed replay metadata"):
+        concat_array_batches([tagged, _minimal_batch(3)])

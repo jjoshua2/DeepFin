@@ -188,6 +188,7 @@ _TUNE_KEYS = (
     "distributed_worker_upload_target_positions", "distributed_worker_upload_flush_seconds",
     "distributed_worker_shared_cache_dir",
     "distributed_worker_username", "distributed_worker_password",
+    "distributed_worker_password_env",
     "distributed_min_workers_per_trial", "distributed_max_worker_delta_per_rebalance",
     "distributed_server_port", "distributed_server_host", "distributed_server_public_url",
     "distributed_server_root_override", "tune_replay_root_override",

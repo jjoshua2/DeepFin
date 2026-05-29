@@ -3,6 +3,7 @@ from __future__ import annotations
 from chess_anti_engine.tune.trainable_config_ops import (
     _apply_lr_gamma_weights,
     _play_batch_kwargs,
+    _reload_yaml_into_config,
 )
 from chess_anti_engine.tune.trial_config import TrialConfig
 
@@ -121,3 +122,24 @@ def test_apply_lr_gamma_weights_preserves_sf_volatility_fallback() -> None:
 
     assert trainer.w_volatility == 0.33
     assert trainer.w_sf_volatility == 0.33
+
+
+def test_yaml_reload_does_not_add_missing_topology_keys(tmp_path) -> None:
+    yaml_path = tmp_path / "cfg.yaml"
+    yaml_path.write_text(
+        """
+model:
+  input_history_encoding: lc0_root
+  qkv_projection: split
+train:
+  lr: 0.0007
+""",
+        encoding="utf-8",
+    )
+    config = {"lr": 0.0003}
+
+    _reload_yaml_into_config(config, str(yaml_path))
+
+    assert config["lr"] == 0.0007
+    assert "input_history_encoding" not in config
+    assert "qkv_projection" not in config

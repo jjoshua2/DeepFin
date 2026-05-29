@@ -18,6 +18,7 @@ from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 
 from .buffer import ReplaySample
 from .shard import (
+    INPUT_HISTORY_ENCODING_ARRAY_KEY,
     _OPTIONAL_STORAGE_PAIRS,
     _SHARD_FIELDS,
     arrays_to_samples,
@@ -36,6 +37,7 @@ from .shard import (
 )
 
 _ARRAY_FIELD_ORDER = _SHARD_FIELDS
+_SCALAR_METADATA_FIELDS = (INPUT_HISTORY_ENCODING_ARRAY_KEY,)
 
 # Lookup: value field name → has-flag field name (derived from shard.py's canonical pairs).
 _VALUE_TO_FLAG = {value: flag for value, flag in _OPTIONAL_STORAGE_PAIRS}
@@ -96,6 +98,24 @@ def _concat_sparse_batches(chunks: list[dict[str, np.ndarray]]) -> dict[str, np.
         flag_name = _VALUE_TO_FLAG.get(name)
         if flag_name is not None and flag_name in out:
             out[name] = merged
+    for name in _SCALAR_METADATA_FIELDS:
+        values: list[str | None] = []
+        for chunk in chunks:
+            if name not in chunk:
+                values.append(None)
+                continue
+            arr = np.asarray(chunk[name])
+            values.append(str(arr.reshape(-1)[0]) if arr.size else None)
+        concrete = [value for value in values if value is not None]
+        if not concrete:
+            continue
+        if len(concrete) != len(values):
+            labels = sorted({"<missing>" if value is None else str(value) for value in values})
+            raise ValueError(f"mixed replay metadata {name}: {labels}")
+        first = concrete[0]
+        if any(value != first for value in concrete):
+            raise ValueError(f"mixed replay metadata {name}: {sorted({str(v) for v in concrete})}")
+        out[name] = np.asarray(first)
     return out
 
 

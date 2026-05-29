@@ -126,6 +126,7 @@ class CompletedGameBatch:
     """
 
     samples: list[ReplaySample]
+    input_history_encoding: str | None = None
     games: int = 1
     positions: int = 0
     w: int = 0

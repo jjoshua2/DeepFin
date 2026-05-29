@@ -59,7 +59,7 @@ def test_uci_loader_reads_history_encoding_from_params_json(tmp_path: Path) -> N
     ckpt = _write_tiny_checkpoint(
         tmp_path,
         params={"model": "tiny", "input_history_encoding": "lc0_root_legacy_meta"},
-        include_arch=True,
+        include_arch=False,
     )
 
     model = load_model_from_checkpoint(ckpt, device="cpu")
@@ -71,6 +71,18 @@ def test_uci_loader_reads_history_encoding_from_embedded_arch(tmp_path: Path) ->
     ckpt = _write_tiny_checkpoint_with_cfg(
         tmp_path,
         ModelConfig(kind="tiny", input_history_encoding="lc0_root"),
+    )
+
+    model = load_model_from_checkpoint(ckpt, device="cpu")
+
+    assert getattr(model, "input_history_encoding") == "lc0_root"
+
+
+def test_uci_loader_embedded_arch_wins_over_stale_params_json(tmp_path: Path) -> None:
+    ckpt = _write_tiny_checkpoint_with_cfg(
+        tmp_path,
+        ModelConfig(kind="tiny", input_history_encoding="lc0_root"),
+        params={"model": "tiny", "input_history_encoding": "legacy"},
     )
 
     model = load_model_from_checkpoint(ckpt, device="cpu")

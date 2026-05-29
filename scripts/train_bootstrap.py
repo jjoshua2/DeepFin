@@ -50,18 +50,34 @@ def main() -> None:
     device = str(flat.get("device", "cuda" if torch.cuda.is_available() else "cpu"))
     batch_size = args.batch_size
 
-    model = build_model(
-        ModelConfig(
-            kind=str(flat.get("model", "transformer")),
-            embed_dim=int(flat.get("embed_dim", 128)),
-            num_layers=int(flat.get("num_layers", 4)),
-            num_heads=int(flat.get("num_heads", 4)),
-            ffn_mult=float(flat.get("ffn_mult", 2)),
-            use_smolgen=not bool(flat.get("no_smolgen", False)),
-            use_nla=bool(flat.get("use_nla", False)),
-            use_gradient_checkpointing=bool(flat.get("gradient_checkpointing", False)),
-        )
+    model_cfg = ModelConfig(
+        kind=str(flat.get("model", "transformer")),
+        embed_dim=int(flat.get("embed_dim", 128)),
+        num_layers=int(flat.get("num_layers", 4)),
+        num_heads=int(flat.get("num_heads", 4)),
+        ffn_mult=float(flat.get("ffn_mult", 2)),
+        use_smolgen=bool(flat.get("use_smolgen", not bool(flat.get("no_smolgen", False)))),
+        use_nla=bool(flat.get("use_nla", False)),
+        use_qk_rmsnorm=bool(flat.get("use_qk_rmsnorm", False)),
+        use_gradient_checkpointing=bool(flat.get("gradient_checkpointing", False)),
+        input_pos_encoding=str(flat.get("input_pos_encoding", "none")),
+        qkv_projection=str(flat.get("qkv_projection", "fused")),
+        use_deepnorm=bool(flat.get("use_deepnorm", False)),
+        policy_encoding=str(flat.get("policy_encoding", "az_4672")),
+        input_history_encoding=str(flat.get("input_history_encoding", "legacy")),
+        input_global_embedding=str(flat.get("input_global_embedding", "none")),
+        input_global_embedding_channels=int(flat.get("input_global_embedding_channels", 0)),
+        input_square_embedding=str(flat.get("input_square_embedding", "none")),
+        smolgen_mode=str(flat.get("smolgen_mode", "shared")),
+        smolgen_bias_scale=str(flat.get("smolgen_bias_scale", "none")),
+        smolgen_bias_norm=str(flat.get("smolgen_bias_norm", "none")),
+        arc_attention_bias=str(flat.get("arc_attention_bias", "none")),
+        smolgen_relation_basis=bool(flat.get("smolgen_relation_basis", False)),
+        smolgen_relation_norm=str(flat.get("smolgen_relation_norm", "none")),
+        smolgen_relation_coeff_norm=str(flat.get("smolgen_relation_coeff_norm", "none")),
+        smolgen_relation_scale=str(flat.get("smolgen_relation_scale", "none")),
     )
+    model = build_model(model_cfg)
 
     trainer = Trainer(
         model,
@@ -84,6 +100,7 @@ def main() -> None:
         w_sf_volatility=float(flat.get("w_sf_volatility", 0.05)),
         w_moves_left=float(flat.get("w_moves_left", 0.02)),
         w_sf_wdl=float(flat.get("w_sf_wdl", 1.0)),
+        model_config=model_cfg,
     )
 
     bootstrap_dir = Path(args.bootstrap_dir or flat.get("bootstrap_dir", "data/bootstrap"))

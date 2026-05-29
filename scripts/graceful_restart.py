@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Gracefully pause a running PBT experiment and wait for N trials to reach a
-clean iteration boundary, then kill the tuner and restart automatically.
+"""Gracefully pause a running PBT experiment and wait for active trials to reach
+a clean iteration boundary, then kill the tuner and restart automatically.
 
 Usage:
     python3 scripts/graceful_restart.py                  # pause, wait, restart (default)
     python3 scripts/graceful_restart.py --no-auto-kill   # pause and print status only
-    python3 scripts/graceful_restart.py --wait 3         # wait for 3 trials to be idle
+    python3 scripts/graceful_restart.py --timeout-secs 1800
+    python3 scripts/graceful_restart.py --wait 3         # deprecated: wait for 3 active trials
     python3 scripts/graceful_restart.py --tune-dir runs/pbt2_small/tune
     python3 scripts/graceful_restart.py --resume-cmd "custom restart command"
 
@@ -13,20 +14,22 @@ What it does:
   1. Creates pause.txt in the tune dir  → trials finish their current iteration
      then hold at the start of the next one (the existing _wait_if_paused hook).
   2. Snapshots progress.csv row count at pause.  A trial is considered "paused"
-     when (a) it appended >= 1 new row after pause and the row count then
-     stayed flat for one poll cycle, OR (b) row count is still at the snapshot
-     and a --grace-secs grace window has elapsed (handles the edge case where
-     pause.txt was created exactly at an iter boundary, so the next iter
-     blocks before writing any post-pause row). Row count is the right
-     signal — Ray Tune touches progress.csv via metadata sync independent of
-     iter completion, so mtime polling falsely reports "active" forever.
-  3. Once --wait trials are paused, sends SIGTERM to the tuner, removes all
-     pause markers, and runs the resume command.  Pass --no-auto-kill to skip
-     this and just print status instead.
+    when it appended >= 1 new row after pause and the row count then stayed
+    flat for one poll cycle. Row count is the right signal — Ray Tune touches
+    progress.csv via metadata sync independent of iter completion, so mtime
+    polling falsely reports "active" forever. Pass --grace-secs only after
+    manually verifying the pause was created exactly at an iteration boundary;
+    otherwise a long in-flight iteration can look indistinguishable from a
+    boundary pause.
+  3. Once all active trials are paused, sends SIGTERM to the tuner, removes
+     all pause markers, and runs the resume command. Deprecated --wait N keeps
+     old automation working by requiring only N active trials. Pass
+     --no-auto-kill to skip this and just print status instead.
 """
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import signal
 import subprocess
@@ -35,14 +38,72 @@ import time
 from pathlib import Path
 
 
+_LIVE_TRIAL_STATES = {"PENDING", "RUNNING"}
+
+
+def _progress_csv_for_trial_dir(trial_dir: Path) -> Path | None:
+    csv = trial_dir / "progress.csv"
+    if csv.exists() and csv.stat().st_size > 200:
+        return csv
+    return None
+
+
+def _trial_record_from_state_item(item) -> dict | None:  # skylos: ignore[ANN001]
+    try:
+        if isinstance(item, list) and item:
+            raw = item[0]
+        else:
+            raw = item
+        if isinstance(raw, str):
+            raw = json.loads(raw)
+        return raw if isinstance(raw, dict) else None
+    except Exception:
+        return None
+
+
+def _active_trials_from_experiment_state(tune_dir: Path) -> list[Path]:
+    states = sorted(tune_dir.glob("experiment_state-*.json"), key=lambda p: p.stat().st_mtime)
+    if not states:
+        return []
+    try:
+        payload = json.loads(states[-1].read_text())
+    except Exception:
+        return []
+
+    csvs: list[Path] = []
+    for item in payload.get("trial_data", []):
+        trial = _trial_record_from_state_item(item)
+        if trial is None:
+            continue
+        if str(trial.get("status", "")).upper() not in _LIVE_TRIAL_STATES:
+            continue
+        rel = str(trial.get("relative_logdir", "") or "").strip()
+        trial_id = str(trial.get("trial_id", "") or "").strip()
+        candidates: list[Path] = []
+        if rel:
+            candidates.append(tune_dir / rel)
+        if trial_id:
+            candidates.extend(sorted(tune_dir.glob(f"train_trial_{trial_id}*")))
+        for trial_dir in candidates:
+            csv = _progress_csv_for_trial_dir(trial_dir)
+            if csv is not None and csv not in csvs:
+                csvs.append(csv)
+                break
+    return sorted(csvs)
+
+
 def _active_trials(tune_dir: Path) -> list[Path]:
-    """Return progress.csv paths for all trials that have at least one row."""
-    csvs = []
+    """Return progress.csv paths for trials Ray still considers live."""
+    from_state = _active_trials_from_experiment_state(tune_dir)
+    if from_state:
+        return from_state
+
+    csvs: list[Path] = []
     for d in sorted(tune_dir.iterdir()):
         if not d.is_dir() or not d.name.startswith("train_trial_"):
             continue
-        csv = d / "progress.csv"
-        if csv.exists() and csv.stat().st_size > 200:
+        csv = _progress_csv_for_trial_dir(d)
+        if csv is not None:
             csvs.append(csv)
     return csvs
 
@@ -103,15 +164,26 @@ def _pid_exists(pid: int) -> bool:
     return True
 
 
+def _required_paused_count(active_count: int, wait_arg: int) -> int:
+    active = max(0, int(active_count))
+    wait = int(wait_arg)
+    if wait > 0:
+        return min(wait, active)
+    return active
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--tune-dir", default="runs/pbt2_small/tune",
                     help="Path to the Ray Tune experiment directory")
-    ap.add_argument("--wait", type=int, default=1,
-                    help="Number of trials that must be idle before declaring safe")
-    ap.add_argument("--grace-secs", type=int, default=90,
-                    help="Grace window for the boundary-edge case (no post-pause row yet — "
-                         "treat as paused if row count has been at snapshot for this long)")
+    ap.add_argument("--wait", type=int, default=0,
+                    help="Deprecated compatibility alias: require N active trials paused; default waits for all.")
+    ap.add_argument("--timeout-secs", type=int, default=0,
+                    help="Maximum seconds to wait before failing. Default 0 waits indefinitely.")
+    ap.add_argument("--grace-secs", type=int, default=-1,
+                    help="Optional grace window for the boundary-edge case. Disabled by "
+                         "default because an in-flight iteration also has no post-pause row. "
+                         "Use only after manually verifying the trial is already paused.")
     ap.add_argument("--poll", type=int, default=15,
                     help="Polling interval in seconds")
     ap.add_argument("--no-auto-kill", dest="auto_kill", action="store_false",
@@ -120,10 +192,12 @@ def main() -> None:
                     help="Shell command to run after killing (default: ./scripts/train.sh restart)")
     args = ap.parse_args()
 
-    if args.wait <= 0:
-        raise SystemExit("--wait must be > 0")
-    if args.grace_secs < 0:
-        raise SystemExit("--grace-secs must be >= 0")
+    if args.wait < 0:
+        raise SystemExit("--wait must be >= 0")
+    if args.timeout_secs < 0:
+        raise SystemExit("--timeout-secs must be >= 0")
+    if args.grace_secs < -1:
+        raise SystemExit("--grace-secs must be >= -1")
     if args.poll <= 0:
         raise SystemExit("--poll must be > 0")
 
@@ -135,6 +209,12 @@ def main() -> None:
     if not tune_dir.is_dir():
         print(f"ERROR: tune dir not found: {args.tune_dir}", file=sys.stderr)
         sys.exit(1)
+    if args.wait > 0:
+        print(
+            "[graceful_restart] WARNING: --wait is deprecated; omit it to wait "
+            "for all active trials.",
+            file=sys.stderr,
+        )
 
     pause_file = tune_dir / "pause.txt"
     auto_kill = args.auto_kill
@@ -156,8 +236,7 @@ def main() -> None:
             print(f"[graceful_restart] Created {target}")
     print("[graceful_restart] Trials will pause after their current iteration.")
 
-    print(f"[graceful_restart] Waiting for {args.wait} of the active trials to "
-          f"stop appending rows to progress.csv...")
+    print("[graceful_restart] Waiting for all active trials to stop appending rows to progress.csv...")
     print()
 
     pause_created_ts = pause_file.stat().st_mtime if pause_file.exists() else time.time()
@@ -172,6 +251,8 @@ def main() -> None:
         csvs = _active_trials(tune_dir)
         if not csvs:
             print("[graceful_restart] No active trials found yet — waiting...")
+            if args.timeout_secs and time.time() - start >= args.timeout_secs:
+                raise SystemExit("[graceful_restart] Timed out waiting for active trials.")
             time.sleep(args.poll)
             continue
 
@@ -184,7 +265,11 @@ def main() -> None:
             if rc > snap and rc == prev:
                 state = "PAUSED"
                 idle_trials.append((csv, state))
-            elif rc == snap and time.time() - pause_created_ts >= args.grace_secs:
+            elif (
+                args.grace_secs >= 0
+                and rc == snap
+                and time.time() - pause_created_ts >= args.grace_secs
+            ):
                 state = "PAUSED-AT-BOUNDARY"
                 idle_trials.append((csv, state))
             else:
@@ -194,13 +279,15 @@ def main() -> None:
 
         # Print status
         elapsed = int(time.time() - start)
+        required_paused = _required_paused_count(len(csvs), int(args.wait))
+        need_label = str(required_paused) if args.wait > 0 else "all"
         print(f"[{elapsed:4d}s] {len(idle_trials)}/{len(csvs)} trials paused "
-              f"(need {args.wait}):")
+              f"(need {need_label}):")
         for csv, snap, rc, state in observations:
             trial = csv.parent.name.split("_")[2] + "_" + csv.parent.name.split("_")[3]
             print(f"         {trial}  rows@pause={snap} rows_now={rc}  {state}")
 
-        if len(idle_trials) >= args.wait:
+        if len(idle_trials) >= required_paused:
             print()
             print(f"[graceful_restart] {len(idle_trials)} trials are at a clean stopping point.")
 
@@ -250,7 +337,13 @@ def main() -> None:
                             rc = _row_count(c)
                             snap = snapshot_rows.get(c, rc)
                             prev = prev_rows.get(c, snap)
-                            if rc == prev and (rc > snap or time.time() - pause_created_ts >= args.grace_secs):
+                            if rc == prev and (
+                                rc > snap
+                                or (
+                                    args.grace_secs >= 0
+                                    and time.time() - pause_created_ts >= args.grace_secs
+                                )
+                            ):
                                 still_idle += 1
                             prev_rows[c] = rc
                         elapsed2 = int(time.time() - start)
@@ -260,6 +353,9 @@ def main() -> None:
                     print("\n[graceful_restart] Interrupted. "
                           f"Remember to rm {pause_file} if you are not restarting.")
             return
+
+        if args.timeout_secs and time.time() - start >= args.timeout_secs:
+            raise SystemExit("[graceful_restart] Timed out before all trials paused.")
 
         time.sleep(args.poll)
 

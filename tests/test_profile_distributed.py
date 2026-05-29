@@ -105,6 +105,14 @@ def test_flatten_run_config_defaults_passes_shuffle_balance_knobs() -> None:
     assert flat["shuffle_wl_max_ratio"] == 1.2
 
 
+def test_flatten_run_config_defaults_passes_qk_rmsnorm() -> None:
+    cfg = {"model": {"use_qk_rmsnorm": True}}
+
+    flat = flatten_run_config_defaults(cfg)
+
+    assert flat["use_qk_rmsnorm"] is True
+
+
 def test_flatten_stockfish_new_style_flat_keys() -> None:
     """New-style YAML: keys inside stockfish: match flat config names directly."""
     cfg = {

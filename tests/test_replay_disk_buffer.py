@@ -8,8 +8,9 @@ import pytest
 
 from chess_anti_engine.moves import COMPACT_POLICY_SIZE
 from chess_anti_engine.replay.buffer import ReplaySample
-from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
+from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer, _concat_sparse_batches
 from chess_anti_engine.replay.shard import (
+    INPUT_HISTORY_ENCODING_ARRAY_KEY,
     delete_shard_path,
     iter_shard_paths,
     load_shard_arrays,
@@ -60,6 +61,27 @@ def test_take_write_prefix_preserves_scalar_chunk_fields(tmp_path) -> None:
     assert int(np.asarray(taken["_policy_size"]).item()) == 4672
     assert int(np.asarray(buf._write_buf[0]["_policy_size"]).item()) == 4672
     assert buf._write_buf[0]["x"].shape[0] == 3
+
+
+def test_concat_sparse_batches_rejects_missing_and_concrete_history_metadata() -> None:
+    legacy = _arrays(4672, n=1)
+    root = _arrays(4672, n=1)
+    root[INPUT_HISTORY_ENCODING_ARRAY_KEY] = np.asarray("lc0_root")
+
+    with pytest.raises(ValueError, match="mixed replay metadata"):
+        _concat_sparse_batches([legacy, root])
+
+
+def test_concat_sparse_batches_keeps_matching_history_metadata() -> None:
+    first = _arrays(4672, n=1)
+    second = _arrays(4672, n=1)
+    first[INPUT_HISTORY_ENCODING_ARRAY_KEY] = np.asarray("lc0_root")
+    second[INPUT_HISTORY_ENCODING_ARRAY_KEY] = np.asarray("lc0_root")
+
+    out = _concat_sparse_batches([first, second])
+
+    assert out["x"].shape[0] == 2
+    assert str(out[INPUT_HISTORY_ENCODING_ARRAY_KEY].item()) == "lc0_root"
 
 
 def test_shuffle_buffer_capped_by_capacity(tmp_path) -> None:

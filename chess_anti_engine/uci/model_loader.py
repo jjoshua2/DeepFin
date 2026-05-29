@@ -170,19 +170,10 @@ def load_model_from_checkpoint(
             assert params is not None
             model_config = _model_config_from_params(params)
 
-    params = _load_params()
-    input_history_encoding = (
-        _history_encoding_from_mapping(params)
-        or input_history_encoding
+    input_history_encoding = normalize_lc0_history_encoding(
+        getattr(model_config, "input_history_encoding", input_history_encoding),
     )
-    model_config = replace(
-        model_config,
-        input_history_encoding=normalize_lc0_history_encoding(
-            getattr(model_config, "input_history_encoding", input_history_encoding),
-        ),
-    )
-    if params is not None and "input_history_encoding" in params:
-        model_config = replace(model_config, input_history_encoding=input_history_encoding)
+    model_config = replace(model_config, input_history_encoding=input_history_encoding)
 
     model = build_model(model_config)
     state = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt

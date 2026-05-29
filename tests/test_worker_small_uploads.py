@@ -22,9 +22,10 @@ def _sample(policy_size: int = 4672) -> ReplaySample:
     return ReplaySample(x=x, policy_target=pol, wdl_target=1)
 
 
-def _game_batch(positions: int) -> SimpleNamespace:
+def _game_batch(positions: int, *, input_history_encoding: str = "legacy") -> SimpleNamespace:
     return SimpleNamespace(
         samples=[_sample() for _ in range(positions)],
+        input_history_encoding=input_history_encoding,
         games=1,
         positions=positions,
         w=1,
@@ -111,6 +112,29 @@ def test_worker_buffer_flushes_on_position_target(tmp_path) -> None:
     assert meta["diff_focus_priority_max"] == 0.0
     assert not buf.samples
     assert buf.positions == 0
+
+
+def test_worker_buffer_tags_pending_shard_with_input_history_encoding(tmp_path) -> None:
+    buf = _BufferedUpload()
+    _buffer_add_completed_game(
+        buf=buf,
+        game_batch=_game_batch(2, input_history_encoding="lc0_root_legacy_meta"),
+        now_s=100.0,
+        model_sha="abc123",
+        model_step=7,
+    )
+
+    shard_path, _elapsed_s = _flush_upload_buffer_to_pending(
+        pending_dir=tmp_path,
+        username="worker",
+        buf=buf,
+        now_s=101.0,
+    )
+
+    assert shard_path is not None
+    _arrs, meta = load_shard_arrays(shard_path)
+    assert meta["input_history_encoding"] == "lc0_root_legacy_meta"
+    assert meta["positions"] == 2
 
 
 def test_worker_buffer_preserves_diff_focus_metadata(tmp_path) -> None:

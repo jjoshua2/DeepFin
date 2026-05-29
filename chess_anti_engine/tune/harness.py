@@ -117,11 +117,15 @@ def _prepare_distributed_worker_auth(
     cfg = config or {}
     username = str(cfg.get("distributed_worker_username", "") or "").strip()
     password = str(cfg.get("distributed_worker_password", "") or "").strip()
+    password_env = str(cfg.get("distributed_worker_password_env", "") or "").strip()
+    if not password and password_env:
+        password = str(os.environ.get(password_env, "") or "").strip()
 
     if not username or not password:
         raise RuntimeError(
-            "distributed_worker_username and distributed_worker_password must be set in config. "
-            "Add a user first: python -m chess_anti_engine.server.manage_users add <username>"
+            "distributed_worker_username and either distributed_worker_password or "
+            "distributed_worker_password_env must be set. Add a user first: "
+            "python -m chess_anti_engine.server.manage_users add <username>"
         )
 
   # First-time provisioning only — if the user already exists, leave
@@ -704,9 +708,9 @@ def _collect_mutation_bounds(base_config: dict) -> dict[str, list[float]]:
 
 
 def _optimizer_candidates_from_config(base_config: dict, *, include_nadamw: bool = True) -> list[str]:
-    default = ["nadamw", "adamw", "muon", "cosmos", "cosmos_fast", "soap"]
+    default = ["nadamw", "adamw", "muon", "aurora", "cosmos", "cosmos_fast", "soap"]
     if not include_nadamw:
-        default = ["adamw", "muon", "cosmos", "cosmos_fast", "soap"]
+        default = ["adamw", "muon", "aurora", "cosmos", "cosmos_fast", "soap"]
     raw = base_config.get("search_optimizer_choices")
     if isinstance(raw, (list, tuple)):
         vals = [str(v).strip().lower() for v in raw if str(v).strip()]

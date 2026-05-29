@@ -18,6 +18,7 @@ These tests pin the new on-disk durability contract:
 """
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import numpy as np
@@ -337,6 +338,7 @@ def test_recovery_drops_in_flight_when_compacted_token_match_exists(tmp_path) ->
         samples=[_sample(0), _sample(1)],
         model_sha256="dddd4444",
     )
+    upload_sha = hashlib.sha256(tar_bytes).hexdigest()
     r = client.post(
         "/v1/upload_shard",
         auth=("u", "p"),
@@ -357,7 +359,7 @@ def test_recovery_drops_in_flight_when_compacted_token_match_exists(tmp_path) ->
     # crash that wrote the compacted shard but didn't delete the staging dir.
     staging = _in_flight_dir(server_root) / token
     staging.mkdir(parents=True, exist_ok=True)
-    leftover_zarr = staging / "leftover_pending.zarr"
+    leftover_zarr = staging / f"123_{upload_sha}_leftoverpending{LOCAL_SHARD_SUFFIX}"
     save_local_shard_arrays(
         leftover_zarr,
         arrs=samples_to_arrays([_sample(0), _sample(1)]),
@@ -375,6 +377,16 @@ def test_recovery_drops_in_flight_when_compacted_token_match_exists(tmp_path) ->
     assert not staging.exists(), "in-flight staging dir should have been deleted"
     assert len(list(_compacted_dir(server_root).glob(f"*{LOCAL_SHARD_SUFFIX}"))) == 1
     assert list(_pending_dir(server_root).glob(f"*{LOCAL_SHARD_SUFFIX}")) == []
+
+    # Sanity: a fresh upload still goes through cleanly post-recovery.
+    retry = client2.post(
+        "/v1/upload_shard",
+        auth=("u", "p"),
+        files={"file": ("retry.zarr.tar", tar_bytes, "application/x-tar")},
+        headers=_default_headers(),
+    )
+    assert retry.status_code == 200, retry.text
+    assert retry.json().get("stored") is False, retry.json()
 
     # Sanity: a fresh upload still goes through cleanly post-recovery.
     tar_extra = _build_zarr_tar(

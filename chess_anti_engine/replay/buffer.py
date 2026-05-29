@@ -21,6 +21,7 @@ class ReplaySample:
     priority_sf_search_gap: float | None = None
     has_policy: bool = True
     x_lc0_root: np.ndarray | None = None  # Optional alternate LC0-root input planes.
+    input_history_encoding: str | None = None
 
   # Optional auxiliary targets (for spec completeness; not all are trained yet)
   #

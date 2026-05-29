@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from chess_anti_engine.encoding.lc0 import normalize_lc0_history_encoding
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.shard import (
     LOCAL_SHARD_SUFFIX,
@@ -21,6 +22,7 @@ class _BufferedUpload:
     samples: list[ReplaySample] = field(default_factory=list)
     model_sha: str | None = None
     model_step: int | None = None
+    input_history_encoding: str | None = None
     games: int = 0
     positions: int = 0
     w: int = 0
@@ -133,11 +135,30 @@ def _buffer_add_completed_game(
         )
         return
     if buf.positions > 0:
-        if str(buf.model_sha or "") != str(model_sha) or int(buf.model_step or 0) != int(model_step):
+        game_input_history = getattr(game_batch, "input_history_encoding", None)
+        incoming_history = (
+            normalize_lc0_history_encoding(str(game_input_history))
+            if game_input_history is not None
+            else None
+        )
+        if (
+            str(buf.model_sha or "") != str(model_sha)
+            or int(buf.model_step or 0) != int(model_step)
+            or (
+                incoming_history is not None
+                and buf.input_history_encoding is not None
+                and str(buf.input_history_encoding) != incoming_history
+            )
+        ):
             raise ValueError("buffered upload model metadata mismatch")
+        if incoming_history is not None and buf.input_history_encoding is None:
+            buf.input_history_encoding = incoming_history
     else:
         buf.model_sha = str(model_sha)
         buf.model_step = int(model_step)
+        game_input_history = getattr(game_batch, "input_history_encoding", None)
+        if game_input_history is not None:
+            buf.input_history_encoding = normalize_lc0_history_encoding(str(game_input_history))
     if buf.first_buffered_at_s is None:
         buf.first_buffered_at_s = float(now_s)
     buf.samples.extend(game_batch.samples)
@@ -242,6 +263,7 @@ def _flush_upload_buffer_to_pending(
         generated_at_unix=ts,
         model_sha256=str(model_sha),
         model_step=int(buf.model_step),
+        input_history_encoding=buf.input_history_encoding,
         games=int(buf.games),
         positions=int(buf.positions),
         wins=int(buf.w),
