@@ -16,6 +16,7 @@ from pathlib import Path
 
 import torch
 
+from chess_anti_engine.encoding.lc0 import LC0_HISTORY_LEGACY, normalize_lc0_history_encoding
 from chess_anti_engine.model import (
     ARCH_SCHEMA_VERSION,
     ModelConfig,
@@ -104,6 +105,12 @@ def _model_config_from_arch(arch: dict) -> ModelConfig:
     return ModelConfig(**payload)  # type: ignore[arg-type]
 
 
+def _history_encoding_from_mapping(mapping: dict | None) -> str | None:
+    if not isinstance(mapping, dict) or "input_history_encoding" not in mapping:
+        return None
+    return normalize_lc0_history_encoding(mapping.get("input_history_encoding"))
+
+
 def load_model_from_checkpoint(
     path: str | Path,
     *,
@@ -130,12 +137,28 @@ def load_model_from_checkpoint(
   # writes tensors + primitives (including the `arch` dict), so this stays
   # safe with no loss.
     ckpt = torch.load(trainer_pt, map_location=device, weights_only=True)
+    params_path = _find_params_json(trainer_pt)
+    params: dict | None = None
+
+    def _load_params() -> dict | None:
+        nonlocal params
+        if params is None and params_path is not None:
+            with params_path.open() as fh:
+                params = json.load(fh)
+        return params
+
+    input_history_encoding = LC0_HISTORY_LEGACY
+    if isinstance(ckpt, dict):
+        input_history_encoding = (
+            _history_encoding_from_mapping(ckpt)
+            or _history_encoding_from_mapping(ckpt.get("arch"))
+            or input_history_encoding
+        )
 
     if model_config is None:
         if isinstance(ckpt, dict) and isinstance(ckpt.get("arch"), dict):
             model_config = _model_config_from_arch(ckpt["arch"])
         else:
-            params_path = _find_params_json(trainer_pt)
             if params_path is None:
                 raise FileNotFoundError(
                     f"{trainer_pt} has no embedded arch and no params.json "
@@ -143,13 +166,19 @@ def load_model_from_checkpoint(
                     "Trainer to embed the arch key, or pass model_config "
                     "explicitly."
                 )
-            with params_path.open() as fh:
-                params = json.load(fh)
+            params = _load_params()
+            assert params is not None
             model_config = _model_config_from_params(params)
+
+    params = _load_params()
+    input_history_encoding = (
+        _history_encoding_from_mapping(params)
+        or input_history_encoding
+    )
 
     model = build_model(model_config)
     state = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
     load_state_dict_tolerant(model, state, label="uci-load")
-    setattr(model, "input_history_encoding", model_config.input_history_encoding)
+    setattr(model, "input_history_encoding", input_history_encoding)
     model.to(device).eval()
     return model
