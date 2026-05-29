@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import torch
 
 from chess_anti_engine.encoding import encode_position
+from chess_anti_engine.moves import POLICY_ENCODING_AZ_4672, normalize_policy_encoding
 
 from .tiny import TinyNet
 from .transformer import ChessNet, TransformerConfig
@@ -13,7 +14,7 @@ from .transformer import ChessNet, TransformerConfig
 # misrepresent. Trainer embeds this version when saving; the UCI loader
 # rejects checkpoints with a higher version AND rejects unknown keys at
 # the same version — both prevent silent architecture mismatch on skew.
-ARCH_SCHEMA_VERSION = 1
+ARCH_SCHEMA_VERSION = 8
 
 
 @dataclass
@@ -27,6 +28,21 @@ class ModelConfig:
     use_nla: bool = False
     use_qk_rmsnorm: bool = False
     use_gradient_checkpointing: bool = False
+    input_pos_encoding: str = "none"
+    qkv_projection: str = "fused"
+    use_deepnorm: bool = False
+    policy_encoding: str = POLICY_ENCODING_AZ_4672
+    input_global_embedding: str = "none"
+    input_global_embedding_channels: int = 0
+    input_square_embedding: str = "none"
+    smolgen_mode: str = "shared"
+    smolgen_bias_scale: str = "none"
+    smolgen_bias_norm: str = "none"
+    arc_attention_bias: str = "none"
+    smolgen_relation_basis: bool = False
+    smolgen_relation_norm: str = "none"
+    smolgen_relation_coeff_norm: str = "none"
+    smolgen_relation_scale: str = "none"
 
 
 def model_config_from_manifest_dict(mc: dict) -> ModelConfig:
@@ -45,6 +61,21 @@ def model_config_from_manifest_dict(mc: dict) -> ModelConfig:
         use_nla=bool(mc.get("use_nla", False)),
         use_qk_rmsnorm=bool(mc.get("use_qk_rmsnorm", False)),
         use_gradient_checkpointing=bool(mc.get("gradient_checkpointing", False)),
+        input_pos_encoding=str(mc.get("input_pos_encoding", "none")),
+        qkv_projection=str(mc.get("qkv_projection", "fused")),
+        use_deepnorm=bool(mc.get("use_deepnorm", False)),
+        policy_encoding=normalize_policy_encoding(mc.get("policy_encoding", POLICY_ENCODING_AZ_4672)),
+        input_global_embedding=str(mc.get("input_global_embedding", "none")),
+        input_global_embedding_channels=int(mc.get("input_global_embedding_channels", 0)),
+        input_square_embedding=str(mc.get("input_square_embedding", "none")),
+        smolgen_mode=str(mc.get("smolgen_mode", "shared")),
+        smolgen_bias_scale=str(mc.get("smolgen_bias_scale", "none")),
+        smolgen_bias_norm=str(mc.get("smolgen_bias_norm", "none")),
+        arc_attention_bias=str(mc.get("arc_attention_bias", "none")),
+        smolgen_relation_basis=bool(mc.get("smolgen_relation_basis", False)),
+        smolgen_relation_norm=str(mc.get("smolgen_relation_norm", "none")),
+        smolgen_relation_coeff_norm=str(mc.get("smolgen_relation_coeff_norm", "none")),
+        smolgen_relation_scale=str(mc.get("smolgen_relation_scale", "none")),
     )
 
 
@@ -64,6 +95,21 @@ def model_config_to_manifest_dict(cfg: ModelConfig) -> dict:
         "use_nla": bool(cfg.use_nla),
         "use_qk_rmsnorm": bool(cfg.use_qk_rmsnorm),
         "gradient_checkpointing": bool(cfg.use_gradient_checkpointing),
+        "input_pos_encoding": str(cfg.input_pos_encoding),
+        "qkv_projection": str(cfg.qkv_projection),
+        "use_deepnorm": bool(cfg.use_deepnorm),
+        "policy_encoding": normalize_policy_encoding(cfg.policy_encoding),
+        "input_global_embedding": str(cfg.input_global_embedding),
+        "input_global_embedding_channels": int(cfg.input_global_embedding_channels),
+        "input_square_embedding": str(cfg.input_square_embedding),
+        "smolgen_mode": str(cfg.smolgen_mode),
+        "smolgen_bias_scale": str(cfg.smolgen_bias_scale),
+        "smolgen_bias_norm": str(cfg.smolgen_bias_norm),
+        "arc_attention_bias": str(cfg.arc_attention_bias),
+        "smolgen_relation_basis": bool(cfg.smolgen_relation_basis),
+        "smolgen_relation_norm": str(cfg.smolgen_relation_norm),
+        "smolgen_relation_coeff_norm": str(cfg.smolgen_relation_coeff_norm),
+        "smolgen_relation_scale": str(cfg.smolgen_relation_scale),
     }
 
 
@@ -79,6 +125,8 @@ def infer_input_planes() -> int:
 def build_model(cfg: ModelConfig) -> torch.nn.Module:
     in_planes = infer_input_planes()
     if cfg.kind == "tiny":
+        if normalize_policy_encoding(cfg.policy_encoding) != POLICY_ENCODING_AZ_4672:
+            raise ValueError("tiny model only supports policy_encoding='az_4672'")
         return TinyNet(in_planes=in_planes)
     if cfg.kind == "transformer":
         tcfg = TransformerConfig(
@@ -91,6 +139,21 @@ def build_model(cfg: ModelConfig) -> torch.nn.Module:
             use_nla=bool(cfg.use_nla),
             use_qk_rmsnorm=bool(cfg.use_qk_rmsnorm),
             use_gradient_checkpointing=bool(cfg.use_gradient_checkpointing),
+            input_pos_encoding=str(cfg.input_pos_encoding),
+            qkv_projection=str(cfg.qkv_projection),
+            use_deepnorm=bool(cfg.use_deepnorm),
+            policy_encoding=normalize_policy_encoding(cfg.policy_encoding),
+            input_global_embedding=str(cfg.input_global_embedding),
+            input_global_embedding_channels=int(cfg.input_global_embedding_channels),
+            input_square_embedding=str(cfg.input_square_embedding),
+            smolgen_mode=str(cfg.smolgen_mode),
+            smolgen_bias_scale=str(cfg.smolgen_bias_scale),
+            smolgen_bias_norm=str(cfg.smolgen_bias_norm),
+            arc_attention_bias=str(cfg.arc_attention_bias),
+            smolgen_relation_basis=bool(cfg.smolgen_relation_basis),
+            smolgen_relation_norm=str(cfg.smolgen_relation_norm),
+            smolgen_relation_coeff_norm=str(cfg.smolgen_relation_coeff_norm),
+            smolgen_relation_scale=str(cfg.smolgen_relation_scale),
         )
         return ChessNet(tcfg)
     raise ValueError(f"Unknown model kind: {cfg.kind}")
@@ -134,31 +197,75 @@ def reinit_volatility_head_parameters_(model: torch.nn.Module) -> list[str]:
     return _reinit_heads(model, _VOLATILITY_HEADS)
 
 
-def _migrate_qkv_keys(ckpt_state: dict, *, label: str) -> dict:
-    """Fuse separate q_proj/k_proj/v_proj weights+biases into ``qkv_proj`` if absent."""
-    prefixes_seen: set[str] = set()
-    for k in ckpt_state:
+def _migrate_qkv_keys(ckpt_state: dict, *, model_state: dict, label: str) -> dict:
+    """Translate between fused and split QKV keys when topology changes."""
+    original_state = dict(ckpt_state)
+
+    split_prefixes: set[str] = set()
+    for k in original_state:
         for proj in ("q_proj", "k_proj", "v_proj"):
             if k.endswith(f".{proj}.weight") or k.endswith(f".{proj}.bias"):
                 prefix = k.rsplit(f".{proj}.", 1)[0]
-                if f"{prefix}.qkv_proj.{k.rsplit(f'.{proj}.', 1)[1]}" not in ckpt_state:
-                    prefixes_seen.add(prefix)
+                suffix = k.rsplit(f".{proj}.", 1)[1]
+                if (
+                    f"{prefix}.qkv_proj.{suffix}" in model_state
+                    and f"{prefix}.qkv_proj.{suffix}" not in original_state
+                ):
+                    split_prefixes.add(prefix)
                 break
 
     extra: dict = {}
     migrated_count = 0
-    for prefix in prefixes_seen:
+    for prefix in split_prefixes:
         for suffix in ("weight", "bias"):
             q_k = f"{prefix}.q_proj.{suffix}"
             k_k = f"{prefix}.k_proj.{suffix}"
             v_k = f"{prefix}.v_proj.{suffix}"
             fused_k = f"{prefix}.qkv_proj.{suffix}"
-            if q_k in ckpt_state and k_k in ckpt_state and v_k in ckpt_state and fused_k not in ckpt_state:
-                extra[fused_k] = torch.cat([ckpt_state[q_k], ckpt_state[k_k], ckpt_state[v_k]], dim=0)
+            if (
+                q_k in original_state
+                and k_k in original_state
+                and v_k in original_state
+                and fused_k not in original_state
+            ):
+                extra[fused_k] = torch.cat(
+                    [original_state[q_k], original_state[k_k], original_state[v_k]],
+                    dim=0,
+                )
                 migrated_count += 3
     if migrated_count:
         print(f"[{label}] Migrated {migrated_count} separate q/k/v keys -> fused qkv_proj")
-    return {**ckpt_state, **extra}
+
+    fused_extra: dict = {}
+    migrated_count = 0
+    fused_prefixes: set[str] = set()
+    for k in original_state:
+        if k.endswith(".qkv_proj.weight") or k.endswith(".qkv_proj.bias"):
+            prefix = k.rsplit(".qkv_proj.", 1)[0]
+            suffix = k.rsplit(".qkv_proj.", 1)[1]
+            if (
+                f"{prefix}.q_proj.{suffix}" in model_state
+                and f"{prefix}.q_proj.{suffix}" not in original_state
+            ):
+                fused_prefixes.add(prefix)
+
+    for prefix in fused_prefixes:
+        for suffix in ("weight", "bias"):
+            fused_k = f"{prefix}.qkv_proj.{suffix}"
+            if fused_k not in original_state:
+                continue
+            tensor = original_state[fused_k]
+            if tensor.shape[0] % 3 != 0:
+                continue
+            q, k, v = tensor.chunk(3, dim=0)
+            for proj, part in (("q_proj", q), ("k_proj", k), ("v_proj", v)):
+                split_k = f"{prefix}.{proj}.{suffix}"
+                if split_k in model_state and split_k not in original_state:
+                    fused_extra[split_k] = part
+                    migrated_count += 1
+    if migrated_count:
+        print(f"[{label}] Migrated {migrated_count} fused qkv_proj keys -> separate q/k/v")
+    return {**original_state, **extra, **fused_extra}
 
 
 def _normalize_orig_mod_prefix(ckpt_state: dict, *, model_state: dict) -> dict:
@@ -198,9 +305,9 @@ def load_state_dict_tolerant(
     Missing and unexpected keys are logged but not fatal, allowing
     architecture changes (new layers, renamed modules) to load gracefully.
     """
-    ckpt_state = _migrate_qkv_keys(ckpt_state, label=label)
     model_state = model.state_dict()
     ckpt_state = _normalize_orig_mod_prefix(ckpt_state, model_state=model_state)
+    ckpt_state = _migrate_qkv_keys(ckpt_state, model_state=model_state, label=label)
     filtered, skipped = _filter_shape_mismatches(ckpt_state, model_state)
 
     missing, unexpected = model.load_state_dict(filtered, strict=False)

@@ -7,6 +7,19 @@ import chess
 import numpy as np
 
 from chess_anti_engine.encoding._lc0_ext import CBoard
+from chess_anti_engine.encoding.lc0 import (
+    LC0_HISTORY_ROOT_LEGACY_META,
+    normalize_lc0_history_encoding,
+    uses_lc0_root_history,
+)
+
+
+def apply_lc0_root_legacy_meta_planes_cboard(out: np.ndarray, cb: CBoard) -> None:
+    """Patch LC0-root planes 109/110 to legacy normalized rule50 + EP file."""
+    out[109, :, :] = min(float(cb.halfmove_clock), 100.0) / 100.0
+    out[110, :, :] = 0.0
+    if cb.ep_square is not None:
+        out[110, :, chess.square_file(int(cb.ep_square))] = 1.0
 
 
 def cboard_from_board_fast(board: chess.Board) -> CBoard:
@@ -49,18 +62,27 @@ if TYPE_CHECKING:
     )
 
 
-def encode_cboard(cb: CBoard) -> np.ndarray:
+def encode_cboard(cb: CBoard, *, input_history_encoding: str | None = None) -> np.ndarray:
     """Encode a CBoard into (146, 8, 8) float32.
 
     Prefer the fused CBoard.encode_146() path when available. Fall back to
     CBoard.encode_planes() + the existing features extension otherwise.
     """
-    encode_146 = getattr(cb, "encode_146", None)
+    hist_enc = normalize_lc0_history_encoding(input_history_encoding)
+    use_lc0_root = uses_lc0_root_history(hist_enc)
+    method_name = (
+        "encode_146_lc0_root_legacy_meta"
+        if hist_enc == LC0_HISTORY_ROOT_LEGACY_META
+        else ("encode_146_lc0_root" if use_lc0_root else "encode_146")
+    )
+    encode_146 = getattr(cb, method_name, None)
     if encode_146 is not None:
         return encode_146()
 
   # LC0 112 planes — all in C
-    lc0 = cb.encode_planes()  # (112, 8, 8) float32
+    lc0 = (cb.encode_planes_lc0_root() if use_lc0_root else cb.encode_planes())
+    if hist_enc == LC0_HISTORY_ROOT_LEGACY_META:
+        apply_lc0_root_legacy_meta_planes_cboard(lc0, cb)
 
     if not _HAS_FEATURES_C:
   # No features C ext — return LC0 only with zero features

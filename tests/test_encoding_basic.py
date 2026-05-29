@@ -2,6 +2,10 @@ import chess
 import numpy as np
 
 from chess_anti_engine.encoding import encode_position
+from chess_anti_engine.encoding.lc0 import (
+    LC0_HISTORY_ROOT_LEGACY_META,
+    normalize_lc0_history_encoding,
+)
 
 
 def test_start_position_piece_counts_and_castling():
@@ -39,6 +43,53 @@ def test_en_passant_file_plane():
     ep_plane = x[100]
     assert np.all(ep_plane[:, 4] == 1.0)
     assert float(ep_plane.sum()) == 8.0
+
+
+def test_lc0_root_history_uses_classical_112_layout():
+    b = chess.Board()
+    b.push_san("e4")
+    x = encode_position(b, add_features=False, input_history_encoding="lc0_root")
+
+    assert x.shape == (112, 8, 8)
+    # 8 LC0 history slots: each 12 piece planes + one repetition plane.
+    assert int(x[0].sum()) == 8
+    assert int(x[6].sum()) == 8
+    assert int(x[13].sum()) == 8
+    assert int(x[19].sum()) == 8
+
+    # Classical LC0 aux starts at 104. Startpos after 1.e4 has all castling.
+    for i in range(104, 108):
+        assert np.all(x[i] == 1.0)
+    # Plane 108 is the black/flipped flag, not an en-passant file plane.
+    assert np.all(x[108] == 1.0)
+    assert np.all(x[109] == 0.0)  # raw rule50 after a pawn move
+    assert np.all(x[110] == 0.0)
+    assert np.all(x[111] == 1.0)
+
+
+def test_lc0_root_history_keeps_previous_slots_in_root_pov():
+    b = chess.Board()
+    b.push_san("e4")  # black to move; previous startpos should still be black POV.
+    root = encode_position(b, add_features=False, input_history_encoding="lc0_root")
+
+    prev = chess.Board()
+    prev.turn = chess.BLACK
+    ref = encode_position(prev, add_features=False)
+
+    np.testing.assert_array_equal(root[13:25], ref[:12])
+
+
+def test_lc0_root_legacy_meta_patches_rule50_and_ep():
+    b = chess.Board("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 37 1")
+    root = encode_position(b, add_features=False, input_history_encoding="lc0_root")
+    meta = encode_position(b, add_features=False, input_history_encoding="lc0_root_legacy_meta")
+
+    assert normalize_lc0_history_encoding("root_meta") == LC0_HISTORY_ROOT_LEGACY_META
+    np.testing.assert_array_equal(meta[:109], root[:109])
+    assert np.all(meta[109] == 0.37)
+    assert np.all(meta[110, :, 4] == 1.0)
+    assert float(meta[110].sum()) == 8.0
+    assert np.all(meta[111] == 1.0)
 
 
 def test_orientation_side_to_move_flips_ranks_for_black():

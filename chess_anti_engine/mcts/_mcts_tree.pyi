@@ -35,6 +35,7 @@ class MCTSTree:
         enc_buf: NDArray[np.float32] | NDArray[np.uint16],
         vloss_weight: int = ...,
         target_batch: int = ...,
+        input_history_lc0_root: int = ...,
     ) -> int | None: ...
     def continue_gumbel_sims(self, pol: NDArray[np.float32], wdl: NDArray[np.float32]) -> int | None: ...
     def continue_gumbel_sims_legal_bf16(self, pol_bf16_bits: NDArray[np.uint16], wdl: NDArray[np.float32]) -> int | None: ...
@@ -119,12 +120,15 @@ def batch_process_ply(
     df_pol_scale: float,
     df_min: float,
     df_slope: float,
+    input_history_lc0_root: int = ...,
 ) -> tuple[
     NDArray[np.float32],  # x
     NDArray[np.float32],  # probs
     NDArray[np.float32],  # wdl_net
     NDArray[np.float32],  # wdl_search
     NDArray[np.float64],  # priority
+    NDArray[np.float64],  # priority_policy_kl
+    NDArray[np.float64],  # priority_q_delta
     NDArray[np.float64],  # keep_prob
     NDArray[np.int32],    # legal_mask
     NDArray[np.int32],    # ply
@@ -137,7 +141,27 @@ def batch_encode_146(
     out: NDArray[np.float32],
 ) -> None: ...
 
+def batch_encode_146_lc0_root(
+    cboards: list[CBoard],
+    out: NDArray[np.float32],
+) -> None: ...
+
+def batch_encode_146_lc0_root_legacy_meta(
+    cboards: list[CBoard],
+    out: NDArray[np.float32],
+) -> None: ...
+
 def batch_encode_146_bf16(
+    cboards: list[CBoard],
+    out: NDArray[np.uint16],
+) -> None: ...
+
+def batch_encode_146_lc0_root_bf16(
+    cboards: list[CBoard],
+    out: NDArray[np.uint16],
+) -> None: ...
+
+def batch_encode_146_lc0_root_legacy_meta_bf16(
     cboards: list[CBoard],
     out: NDArray[np.uint16],
 ) -> None: ...
