@@ -3,6 +3,8 @@ from __future__ import annotations
 import numpy as np
 
 from chess_anti_engine.moves.encode import (
+    COMPACT_MIRROR_POLICY_MAP,
+    COMPACT_POLICY_SIZE,
     MIRROR_POLICY_MAP,
     mirror_policy,
     mirror_policy_batch,
@@ -29,6 +31,7 @@ def mirror_x(x: np.ndarray) -> np.ndarray:
 def mirror_sample(s: ReplaySample) -> ReplaySample:
     """Create the left-right mirrored version of a ReplaySample."""
     x_m = mirror_x(s.x)
+    x_lc0_root = getattr(s, "x_lc0_root", None)
 
     pol_m = mirror_policy(s.policy_target)
 
@@ -38,11 +41,17 @@ def mirror_sample(s: ReplaySample) -> ReplaySample:
         wdl_target=int(s.wdl_target),
         priority=float(getattr(s, "priority", 1.0)),
         has_policy=bool(getattr(s, "has_policy", True)),
+        x_lc0_root=None if x_lc0_root is None else mirror_x(x_lc0_root),
     )
 
   # Aux targets
     out.sf_wdl = None if s.sf_wdl is None else np.asarray(s.sf_wdl, dtype=np.float32)
-    out.sf_move_index = None if s.sf_move_index is None else int(mirror_policy_index(int(s.sf_move_index)))
+    if s.sf_move_index is None:
+        out.sf_move_index = None
+    elif s.sf_policy_target is not None and np.asarray(s.sf_policy_target).shape == (COMPACT_POLICY_SIZE,):
+        out.sf_move_index = int(COMPACT_MIRROR_POLICY_MAP[int(s.sf_move_index)])
+    else:
+        out.sf_move_index = int(mirror_policy_index(int(s.sf_move_index)))
     out.sf_policy_target = None if s.sf_policy_target is None else mirror_policy(s.sf_policy_target)
     out.moves_left = None if s.moves_left is None else float(s.moves_left)
     out.is_network_turn = None if s.is_network_turn is None else bool(s.is_network_turn)
@@ -113,6 +122,9 @@ def maybe_mirror_batch_arrays(
     out = dict(arrs)
     out["x"] = np.array(arrs["x"], copy=True, order="C")
     out["x"][mask] = out["x"][mask, :, :, ::-1].copy()
+    if "x_lc0_root" in arrs:
+        out["x_lc0_root"] = np.array(arrs["x_lc0_root"], copy=True, order="C")
+        out["x_lc0_root"][mask] = out["x_lc0_root"][mask, :, :, ::-1].copy()
 
     for key in _MIRROR_POLICY_FIELDS:
         if key in arrs:
@@ -124,6 +136,9 @@ def maybe_mirror_batch_arrays(
     if "sf_move_index" in arrs:
         out["sf_move_index"] = np.array(arrs["sf_move_index"], copy=True, order="C")
         idx = out["sf_move_index"][mask].astype(np.int64, copy=False)
-        out["sf_move_index"][mask] = MIRROR_POLICY_MAP[idx].astype(out["sf_move_index"].dtype, copy=False)
+        if "sf_policy_target" in arrs and int(np.asarray(arrs["sf_policy_target"]).shape[1]) == int(COMPACT_POLICY_SIZE):
+            out["sf_move_index"][mask] = COMPACT_MIRROR_POLICY_MAP[idx].astype(out["sf_move_index"].dtype, copy=False)
+        else:
+            out["sf_move_index"][mask] = MIRROR_POLICY_MAP[idx].astype(out["sf_move_index"].dtype, copy=False)
 
     return out

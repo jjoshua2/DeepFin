@@ -36,7 +36,20 @@ def test_server_compacts_multiple_small_uploads_into_one_inbox_shard(tmp_path) -
 
     acc.add_upload(
         samples=[_sample(), _sample()],
-        meta={"games": 1, "positions": 2, "wins": 1, "curriculum_games": 1, "model_step": 11},
+        meta={
+            "games": 1,
+            "positions": 2,
+            "wins": 1,
+            "curriculum_games": 1,
+            "model_step": 11,
+            "diff_focus_records": 2,
+            "diff_focus_kept": 2,
+            "diff_focus_keep_prob_sum": 1.5,
+            "diff_focus_priority_sum": 6.0,
+            "diff_focus_priority_sq_sum": 20.0,
+            "diff_focus_priority_min": 1.0,
+            "diff_focus_priority_max": 5.0,
+        },
         now_unix=100.0,
     )
     assert not _buffered_upload_ready(
@@ -48,7 +61,20 @@ def test_server_compacts_multiple_small_uploads_into_one_inbox_shard(tmp_path) -
 
     acc.add_upload(
         samples=[_sample(), _sample()],
-        meta={"games": 1, "positions": 2, "wins": 1, "curriculum_games": 1, "model_step": 11},
+        meta={
+            "games": 1,
+            "positions": 2,
+            "wins": 1,
+            "curriculum_games": 1,
+            "model_step": 11,
+            "diff_focus_records": 2,
+            "diff_focus_kept": 1,
+            "diff_focus_keep_prob_sum": 1.0,
+            "diff_focus_priority_sum": 10.0,
+            "diff_focus_priority_sq_sum": 52.0,
+            "diff_focus_priority_min": 3.0,
+            "diff_focus_priority_max": 7.0,
+        },
         now_unix=101.0,
     )
     assert _buffered_upload_ready(
@@ -73,6 +99,13 @@ def test_server_compacts_multiple_small_uploads_into_one_inbox_shard(tmp_path) -
     assert meta["wins"] == 2
     assert meta["curriculum_games"] == 2
     assert meta["model_sha256"] == "deadbeef"
+    assert meta["diff_focus_records"] == 4
+    assert meta["diff_focus_kept"] == 3
+    assert meta["diff_focus_keep_prob_sum"] == 2.5
+    assert meta["diff_focus_priority_sum"] == 16.0
+    assert meta["diff_focus_priority_sq_sum"] == 72.0
+    assert meta["diff_focus_priority_min"] == 1.0
+    assert meta["diff_focus_priority_max"] == 7.0
 
 
 def test_server_compactor_age_flushes_partial_buffer() -> None:
@@ -123,6 +156,9 @@ def test_server_compactor_atomically_replaces_temp_path(tmp_path) -> None:
     samples, meta = _load_compacted(out)
     assert len(samples) == 2
     assert meta["positions"] == 2
+    assert meta["diff_focus_records"] == 0
+    assert meta["diff_focus_priority_min"] == 0.0
+    assert meta["diff_focus_priority_max"] == 0.0
 
 
 # Removed test_server_compactor_falls_back_when_temp_rename_path_is_missing:

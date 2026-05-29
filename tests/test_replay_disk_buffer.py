@@ -6,6 +6,7 @@ import time
 import numpy as np
 import pytest
 
+from chess_anti_engine.moves import COMPACT_POLICY_SIZE
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
 from chess_anti_engine.replay.shard import (
@@ -25,6 +26,18 @@ def _sample() -> ReplaySample:
         priority=1.0,
         has_policy=True,
     )
+
+
+def _arrays(policy_size: int, n: int = 1) -> dict[str, np.ndarray]:
+    policy = np.zeros((n, policy_size), dtype=np.float32)
+    policy[:, 0] = 1.0
+    return {
+        "x": np.zeros((n, 146, 8, 8), dtype=np.float32),
+        "policy_target": policy,
+        "wdl_target": np.zeros((n,), dtype=np.int8),
+        "priority": np.ones((n,), dtype=np.float32),
+        "has_policy": np.ones((n,), dtype=np.uint8),
+    }
 
 
 def test_shuffle_buffer_capped_by_capacity(tmp_path) -> None:
@@ -79,6 +92,20 @@ def test_sample_batch_arrays_shapes(tmp_path) -> None:
     assert arrs["policy_target"].shape == (6, 4672)
     assert arrs["wdl_target"].shape == (6,)
     assert arrs["priority"].shape == (6,)
+
+
+def test_sample_batch_arrays_rejects_compact_policy_until_training_supports_it(tmp_path) -> None:
+    rng = np.random.default_rng(0)
+    buf = DiskReplayBuffer(
+        50,
+        shard_dir=tmp_path / "replay",
+        rng=rng,
+        shuffle_cap=20,
+        shard_size=10,
+    )
+
+    with pytest.raises(ValueError, match="policy_target A mismatch"):
+        buf.add_many_arrays(_arrays(COMPACT_POLICY_SIZE))
 
 
 def test_resumed_buffer_samples_from_pruned_optional_shards(tmp_path) -> None:

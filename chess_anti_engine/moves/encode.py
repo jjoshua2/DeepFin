@@ -38,6 +38,11 @@ if TYPE_CHECKING:
 
 PLANE_COUNT = 73
 POLICY_SIZE = 64 * PLANE_COUNT  # 4672
+COMPACT_POLICY_SIZE = 1858
+
+POLICY_ENCODING_AZ_4672 = "az_4672"
+POLICY_ENCODING_LC0_1858 = "lc0_1858"
+POLICY_ENCODINGS = (POLICY_ENCODING_AZ_4672, POLICY_ENCODING_LC0_1858)
 
 QUEEN_DIRS: list[tuple[int, int]] = [
     (0, 1),
@@ -156,6 +161,227 @@ MIRROR_POLICY_INV = np.empty((POLICY_SIZE,), dtype=np.int32)
 MIRROR_POLICY_INV[MIRROR_POLICY_MAP] = np.arange(POLICY_SIZE, dtype=np.int32)
 
 
+def _is_geometrically_valid_policy_index(index: int) -> bool:
+    idx = int(index)
+    if idx < 0 or idx >= POLICY_SIZE:
+        return False
+    from_o = idx // PLANE_COUNT
+    plane = idx % PLANE_COUNT
+    ff, fr = chess.square_file(from_o), chess.square_rank(from_o)
+    if plane >= 64:
+        rel = plane - 64
+        if rel < 0 or rel >= 9:
+            return False
+        df = UNDERPROMO_DFS[rel % 3]
+        tf, tr = ff + df, fr + 1
+        return 0 <= tf <= 7 and tr == 7
+    delta = _PLANE_TO_DELTA.get(int(plane))
+    if delta is None:
+        return False
+    df, dr = delta
+    tf, tr = ff + df, fr + dr
+    return 0 <= tf <= 7 and 0 <= tr <= 7
+
+
+COMPACT_TO_FULL_POLICY = np.array(
+    [idx for idx in range(POLICY_SIZE) if _is_geometrically_valid_policy_index(idx)],
+    dtype=np.int32,
+)
+if int(COMPACT_TO_FULL_POLICY.shape[0]) != COMPACT_POLICY_SIZE:
+    raise RuntimeError(
+        f"compact policy map has {COMPACT_TO_FULL_POLICY.shape[0]} entries, "
+        f"expected {COMPACT_POLICY_SIZE}",
+    )
+
+FULL_TO_COMPACT_POLICY = np.full((POLICY_SIZE,), -1, dtype=np.int32)
+FULL_TO_COMPACT_POLICY[COMPACT_TO_FULL_POLICY] = np.arange(COMPACT_POLICY_SIZE, dtype=np.int32)
+
+COMPACT_MIRROR_POLICY_MAP = FULL_TO_COMPACT_POLICY[MIRROR_POLICY_MAP[COMPACT_TO_FULL_POLICY]]
+COMPACT_MIRROR_POLICY_INV = np.empty((COMPACT_POLICY_SIZE,), dtype=np.int32)
+COMPACT_MIRROR_POLICY_INV[COMPACT_MIRROR_POLICY_MAP] = np.arange(COMPACT_POLICY_SIZE, dtype=np.int32)
+
+
+def normalize_policy_encoding(policy_encoding: str | None) -> str:
+    enc = str(policy_encoding or POLICY_ENCODING_AZ_4672).lower()
+    aliases = {
+        "az": POLICY_ENCODING_AZ_4672,
+        "az_4672": POLICY_ENCODING_AZ_4672,
+        "4672": POLICY_ENCODING_AZ_4672,
+        "8x8x73": POLICY_ENCODING_AZ_4672,
+        "lc0": POLICY_ENCODING_LC0_1858,
+        "lc0_1858": POLICY_ENCODING_LC0_1858,
+        "compact": POLICY_ENCODING_LC0_1858,
+        "compact_1858": POLICY_ENCODING_LC0_1858,
+        "1858": POLICY_ENCODING_LC0_1858,
+    }
+    try:
+        return aliases[enc]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported policy_encoding {policy_encoding!r}") from exc
+
+
+def policy_size_for_encoding(policy_encoding: str | None) -> int:
+    enc = normalize_policy_encoding(policy_encoding)
+    return COMPACT_POLICY_SIZE if enc == POLICY_ENCODING_LC0_1858 else POLICY_SIZE
+
+
+def compact_policy_index(full_index: int) -> int:
+    idx = int(full_index)
+    if idx < 0 or idx >= POLICY_SIZE:
+        return -1
+    return int(FULL_TO_COMPACT_POLICY[idx])
+
+
+def full_policy_index(index: int, *, policy_encoding: str | None = None) -> int:
+    enc = normalize_policy_encoding(policy_encoding)
+    idx = int(index)
+    if enc == POLICY_ENCODING_AZ_4672:
+        return idx
+    if idx < 0 or idx >= COMPACT_POLICY_SIZE:
+        return -1
+    return int(COMPACT_TO_FULL_POLICY[idx])
+
+
+def policy_index_for_encoding(full_index: int, *, policy_encoding: str | None = None) -> int:
+    enc = normalize_policy_encoding(policy_encoding)
+    if enc == POLICY_ENCODING_AZ_4672:
+        return int(full_index)
+    return compact_policy_index(int(full_index))
+
+
+def policy_indices_for_encoding(
+    full_indices: np.ndarray,
+    *,
+    policy_encoding: str | None = None,
+) -> np.ndarray:
+    enc = normalize_policy_encoding(policy_encoding)
+    idx = np.asarray(full_indices, dtype=np.int32)
+    if enc == POLICY_ENCODING_AZ_4672:
+        return idx
+    mapped = FULL_TO_COMPACT_POLICY[idx]
+    return mapped[mapped >= 0].astype(np.int32, copy=False)
+
+
+def move_to_index_for_encoding(
+    move: chess.Move,
+    board: chess.Board,
+    *,
+    policy_encoding: str | None = None,
+) -> int:
+    return policy_index_for_encoding(move_to_index(move, board), policy_encoding=policy_encoding)
+
+
+def index_to_move_for_encoding(
+    index: int,
+    board: chess.Board,
+    *,
+    policy_encoding: str | None = None,
+) -> chess.Move:
+    full_index = full_policy_index(index, policy_encoding=policy_encoding)
+    if full_index < 0:
+        raise ValueError(f"invalid policy index {index} for encoding {policy_encoding!r}")
+    return index_to_move(full_index, board)
+
+
+def legal_move_indices_for_encoding(
+    board: chess.Board,
+    *,
+    policy_encoding: str | None = None,
+) -> np.ndarray:
+    return policy_indices_for_encoding(legal_move_indices(board), policy_encoding=policy_encoding)
+
+
+def legal_move_mask_for_encoding(
+    board: chess.Board,
+    *,
+    policy_encoding: str | None = None,
+) -> np.ndarray:
+    enc = normalize_policy_encoding(policy_encoding)
+    if enc == POLICY_ENCODING_AZ_4672:
+        return legal_move_mask(board)
+    mask = np.zeros((COMPACT_POLICY_SIZE,), dtype=np.bool_)
+    idx = legal_move_indices_for_encoding(board, policy_encoding=enc)
+    if idx.size > 0:
+        mask[idx] = True
+    return mask
+
+
+def policy_vector_to_encoding(
+    policy: np.ndarray,
+    *,
+    policy_encoding: str | None = None,
+) -> np.ndarray:
+    enc = normalize_policy_encoding(policy_encoding)
+    p = np.asarray(policy)
+    if enc == POLICY_ENCODING_AZ_4672:
+        if p.shape != (POLICY_SIZE,):
+            raise ValueError(f"policy must be ({POLICY_SIZE},), got {p.shape}")
+        return p
+    if p.shape == (COMPACT_POLICY_SIZE,):
+        return p
+    if p.shape != (POLICY_SIZE,):
+        raise ValueError(
+            f"policy must be ({POLICY_SIZE},) or ({COMPACT_POLICY_SIZE},), got {p.shape}",
+        )
+    return _renormalize_policy_vector(p[COMPACT_TO_FULL_POLICY])
+
+
+def policy_batch_to_encoding(
+    policies: np.ndarray,
+    *,
+    policy_encoding: str | None = None,
+) -> np.ndarray:
+    enc = normalize_policy_encoding(policy_encoding)
+    p = np.asarray(policies)
+    if p.ndim != 2:
+        raise ValueError(f"policies must be 2D, got {p.shape}")
+    if enc == POLICY_ENCODING_AZ_4672:
+        if int(p.shape[1]) != int(POLICY_SIZE):
+            raise ValueError(f"policies must be (N,{POLICY_SIZE}), got {p.shape}")
+        return p
+    if int(p.shape[1]) == int(COMPACT_POLICY_SIZE):
+        return p
+    if int(p.shape[1]) != int(POLICY_SIZE):
+        raise ValueError(
+            f"policies must be (N,{POLICY_SIZE}) or (N,{COMPACT_POLICY_SIZE}), got {p.shape}",
+        )
+    return _renormalize_policy_batch(p[:, COMPACT_TO_FULL_POLICY])
+
+
+def _renormalize_policy_vector(policy: np.ndarray) -> np.ndarray:
+    out = np.asarray(policy, dtype=np.float32)
+    total = float(out.sum(dtype=np.float32))
+    if total > 0.0:
+        out = out / total
+    return out.astype(np.asarray(policy).dtype, copy=False)
+
+
+def _renormalize_policy_batch(policies: np.ndarray) -> np.ndarray:
+    out = np.asarray(policies, dtype=np.float32)
+    totals = out.sum(axis=1, keepdims=True, dtype=np.float32)
+    np.divide(out, totals, out=out, where=totals > 0.0)
+    return out.astype(np.asarray(policies).dtype, copy=False)
+
+
+def policy_vector_to_full(
+    policy: np.ndarray,
+    *,
+    policy_encoding: str | None = None,
+    fill_value: float = 0.0,
+) -> np.ndarray:
+    enc = normalize_policy_encoding(policy_encoding)
+    p = np.asarray(policy)
+    if enc == POLICY_ENCODING_AZ_4672:
+        if p.shape != (POLICY_SIZE,):
+            raise ValueError(f"policy must be ({POLICY_SIZE},), got {p.shape}")
+        return p
+    if p.shape != (COMPACT_POLICY_SIZE,):
+        raise ValueError(f"compact policy must be ({COMPACT_POLICY_SIZE},), got {p.shape}")
+    out = np.full((POLICY_SIZE,), fill_value, dtype=p.dtype)
+    out[COMPACT_TO_FULL_POLICY] = p
+    return out
+
+
 def _build_index_to_move_lut() -> np.ndarray:
     """Precomputed reverse LUT: policy index → (from_sq, to_sq, promotion).
 
@@ -227,21 +453,32 @@ def index_to_move_fast(index: int, board: chess.Board) -> chess.Move:
 
 
 def mirror_policy(policy: np.ndarray) -> np.ndarray:
-    """Mirror a (POLICY_SIZE,) policy vector left-right.
+    """Mirror a policy vector left-right.
 
-    Accepts any float dtype; returns float32.
+    Accepts either the legacy 4672 or compact 1858 move encoding and any float
+    dtype; returns float32.
     """
     p = np.asarray(policy)
+    if p.shape == (COMPACT_POLICY_SIZE,):
+        return p[COMPACT_MIRROR_POLICY_INV].astype(np.float32, copy=False)
     if p.shape != (POLICY_SIZE,):
-        raise ValueError(f"policy must be ({POLICY_SIZE},), got {p.shape}")
+        raise ValueError(
+            f"policy must be ({POLICY_SIZE},) or ({COMPACT_POLICY_SIZE},), got {p.shape}",
+        )
     # new[j] = old[inv[j]]
     return p[MIRROR_POLICY_INV].astype(np.float32, copy=False)
 
 
 def mirror_policy_batch(policies: np.ndarray) -> np.ndarray:
     p = np.asarray(policies)
-    if p.ndim != 2 or int(p.shape[1]) != int(POLICY_SIZE):
-        raise ValueError(f"policies must be (N,{POLICY_SIZE}), got {p.shape}")
+    if p.ndim != 2:
+        raise ValueError(f"policies must be 2D, got {p.shape}")
+    if int(p.shape[1]) == int(COMPACT_POLICY_SIZE):
+        return p[:, COMPACT_MIRROR_POLICY_INV].astype(np.float32, copy=False)
+    if int(p.shape[1]) != int(POLICY_SIZE):
+        raise ValueError(
+            f"policies must be (N,{POLICY_SIZE}) or (N,{COMPACT_POLICY_SIZE}), got {p.shape}",
+        )
     return p[:, MIRROR_POLICY_INV].astype(np.float32, copy=False)
 
 

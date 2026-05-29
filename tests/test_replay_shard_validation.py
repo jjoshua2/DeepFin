@@ -1,7 +1,16 @@
 import numpy as np
 import pytest
 
-from chess_anti_engine.replay.shard import validate_arrays
+from chess_anti_engine.replay.shard import validate_array_declarations, validate_arrays
+
+
+class _DeclaredArray:
+    def __init__(self, shape: tuple[int, ...], dtype: np.dtype) -> None:
+        self.shape = shape
+        self.dtype = dtype
+
+    def __array__(self):  # noqa: ANN204
+        raise AssertionError("declaration validation should not materialize arrays")
 
 
 def test_validate_rejects_wrong_policy_size():
@@ -39,6 +48,47 @@ def _minimal_valid_arrays() -> dict[str, np.ndarray]:
         "policy_target": policy,
         "wdl_target": np.array([0, 1], dtype=np.int8),
     }
+
+
+def test_validate_rejects_compact_policy_size_until_training_supports_it():
+    policy = np.zeros((2, 1858), dtype=np.float32)
+    policy[:, 0] = 1.0
+    with pytest.raises(ValueError, match="policy_target A mismatch"):
+        validate_arrays({
+            "x": np.zeros((2, 146, 8, 8), dtype=np.float32),
+            "policy_target": policy,
+            "wdl_target": np.array([0, 1], dtype=np.int8),
+        })
+
+
+def test_validate_rejects_policy_size_attr_mismatch():
+    arrs = _minimal_valid_arrays()
+    arrs["_policy_size"] = np.array(999_999, dtype=np.int32)
+
+    with pytest.raises(ValueError, match="_policy_size mismatch"):
+        validate_arrays(arrs)
+
+
+def test_validate_declarations_rejects_huge_lazy_shard_without_materializing():
+    arrs = {
+        "x": _DeclaredArray((100_001, 146, 8, 8), np.dtype(np.float16)),
+        "policy_target": _DeclaredArray((100_001, 4672), np.dtype(np.float16)),
+        "wdl_target": _DeclaredArray((100_001,), np.dtype(np.int8)),
+    }
+
+    with pytest.raises(ValueError, match="too many positions"):
+        validate_array_declarations(arrs, max_positions=50_000)
+
+
+def test_validate_declarations_rejects_uncompressed_size_without_materializing():
+    arrs = {
+        "x": _DeclaredArray((10, 146, 8, 8), np.dtype(np.float16)),
+        "policy_target": _DeclaredArray((10, 4672), np.dtype(np.float16)),
+        "wdl_target": _DeclaredArray((10,), np.dtype(np.int8)),
+    }
+
+    with pytest.raises(ValueError, match="uncompressed arrays too large"):
+        validate_array_declarations(arrs, max_uncompressed_bytes=1)
 
 
 def test_validate_rejects_present_optional_flag_without_value():

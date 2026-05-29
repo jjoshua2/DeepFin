@@ -14,6 +14,8 @@ from typing import Any
 
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.shard import (
+    DEFAULT_MAX_SHARD_POSITIONS,
+    DEFAULT_MAX_SHARD_UNCOMPRESSED_BYTES,
     IN_FLIGHT_DIR_NAME,
     LOCAL_SHARD_SUFFIX,
     PENDING_DIR_NAME,
@@ -25,6 +27,7 @@ from chess_anti_engine.replay.shard import (
     is_tmp_shard_name,
     samples_to_arrays,
     save_local_shard_arrays,
+    validate_array_declarations,
 )
 from chess_anti_engine.utils.atomic import atomic_write_text
 from chess_anti_engine.utils.versioning import version_lt
@@ -82,7 +85,52 @@ _AGGREGATE_COUNTER_FIELDS: tuple[str, ...] = (
     "curriculum_games", "curriculum_adjudicated_games", "curriculum_draw_games",
     "plies_win", "plies_draw", "plies_loss",
     "checkmate_games", "stalemate_games",
+    "diff_focus_records", "diff_focus_kept",
+    "diff_focus_keep_limited", "diff_focus_sample_weight_limited",
+    "gumbel_policy_diag_n",
+    "gumbel_policy_argmax_is_candidate_sum", "gumbel_policy_argmax_is_action_sum",
+    "gumbel_policy_legal_count_sum", "gumbel_policy_candidate_count_sum",
 )
+
+_AGGREGATE_FLOAT_FIELDS: tuple[str, ...] = (
+    "diff_focus_keep_prob_sum",
+    "diff_focus_sample_weight_sum",
+    "diff_focus_priority_sum",
+    "diff_focus_priority_sq_sum",
+    "gumbel_policy_top_prob_sum",
+    "gumbel_policy_action_prob_sum",
+    "gumbel_policy_entropy_sum",
+    "gumbel_policy_eff_moves_sum",
+    "gumbel_policy_candidate_mass_sum",
+    "gumbel_policy_non_candidate_top_prob_sum",
+)
+
+_MAX_OUTCOME_STAT_KEYS = 128
+_QUEUED_GAMES_CACHE_TTL_S = 2.0
+_MAX_BAD_SHARD_REPORT_FIELD_CHARS = 512
+
+
+def _merge_outcome_stats(dst: dict[str, int], src: Any) -> None:
+    if not isinstance(src, dict):
+        return
+    for key, val in src.items():
+        key_s = str(key)
+        if not re.fullmatch(r"[a-z0-9_]{1,96}", key_s):
+            continue
+        if key_s not in dst and len(dst) >= _MAX_OUTCOME_STAT_KEYS:
+            continue
+        try:
+            val_i = int(val or 0)
+        except (TypeError, ValueError):
+            continue
+        dst[key_s] = int(dst.get(key_s, 0)) + val_i
+
+
+def _bounded_report_field(value: Any) -> str:
+    text = str(value or "")
+    if len(text) > _MAX_BAD_SHARD_REPORT_FIELD_CHARS:
+        return text[:_MAX_BAD_SHARD_REPORT_FIELD_CHARS] + "...<truncated>"
+    return text
 
 
 @dataclass
@@ -112,6 +160,28 @@ class _BufferedUploadAccumulator:
     plies_loss: int = 0
     checkmate_games: int = 0
     stalemate_games: int = 0
+    diff_focus_records: int = 0
+    diff_focus_kept: int = 0
+    diff_focus_keep_prob_sum: float = 0.0
+    diff_focus_keep_limited: int = 0
+    diff_focus_sample_weight_sum: float = 0.0
+    diff_focus_sample_weight_limited: int = 0
+    diff_focus_priority_sum: float = 0.0
+    diff_focus_priority_sq_sum: float = 0.0
+    diff_focus_priority_min: float = float("inf")
+    diff_focus_priority_max: float = -float("inf")
+    gumbel_policy_diag_n: int = 0
+    gumbel_policy_top_prob_sum: float = 0.0
+    gumbel_policy_action_prob_sum: float = 0.0
+    gumbel_policy_entropy_sum: float = 0.0
+    gumbel_policy_eff_moves_sum: float = 0.0
+    gumbel_policy_candidate_mass_sum: float = 0.0
+    gumbel_policy_non_candidate_top_prob_sum: float = 0.0
+    gumbel_policy_argmax_is_candidate_sum: int = 0
+    gumbel_policy_argmax_is_action_sum: int = 0
+    gumbel_policy_legal_count_sum: int = 0
+    gumbel_policy_candidate_count_sum: int = 0
+    outcome_stats: dict[str, int] = field(default_factory=dict)
     model_step: int | None = None
     # Disk-resident extracted shards that contributed to this accumulator and
     # have NOT yet been folded into a compacted shard. Deleted only after the
@@ -133,9 +203,25 @@ class _BufferedUploadAccumulator:
                 self, field_name,
                 getattr(self, field_name) + int(meta.get(field_name) or 0),
             )
+        for field_name in _AGGREGATE_FLOAT_FIELDS:
+            setattr(
+                self, field_name,
+                getattr(self, field_name) + float(meta.get(field_name) or 0.0),
+            )
+        incoming_diff_records = int(meta.get("diff_focus_records") or 0)
+        if incoming_diff_records > 0:
+            incoming_min = float(meta.get("diff_focus_priority_min") or 0.0)
+            incoming_max = float(meta.get("diff_focus_priority_max") or 0.0)
+            if int(self.diff_focus_records) == incoming_diff_records:
+                self.diff_focus_priority_min = incoming_min
+                self.diff_focus_priority_max = incoming_max
+            else:
+                self.diff_focus_priority_min = min(float(self.diff_focus_priority_min), incoming_min)
+                self.diff_focus_priority_max = max(float(self.diff_focus_priority_max), incoming_max)
         step_raw = meta.get("model_step")
         if step_raw is not None:
             self.model_step = int(step_raw)
+        _merge_outcome_stats(self.outcome_stats, meta.get("outcome_stats"))
         self.last_update_unix = float(now_unix)
 
 
@@ -192,6 +278,34 @@ def _flush_buffered_upload_to_inbox(
         plies_loss=int(acc.plies_loss),
         checkmate_games=int(acc.checkmate_games),
         stalemate_games=int(acc.stalemate_games),
+        diff_focus_records=int(acc.diff_focus_records),
+        diff_focus_kept=int(acc.diff_focus_kept),
+        diff_focus_keep_prob_sum=float(acc.diff_focus_keep_prob_sum),
+        diff_focus_keep_limited=int(acc.diff_focus_keep_limited),
+        diff_focus_sample_weight_sum=float(acc.diff_focus_sample_weight_sum),
+        diff_focus_sample_weight_limited=int(acc.diff_focus_sample_weight_limited),
+        diff_focus_priority_sum=float(acc.diff_focus_priority_sum),
+        diff_focus_priority_sq_sum=float(acc.diff_focus_priority_sq_sum),
+        diff_focus_priority_min=(
+            float(acc.diff_focus_priority_min) if int(acc.diff_focus_records) > 0 else 0.0
+        ),
+        diff_focus_priority_max=(
+            float(acc.diff_focus_priority_max) if int(acc.diff_focus_records) > 0 else 0.0
+        ),
+        gumbel_policy_diag_n=int(acc.gumbel_policy_diag_n),
+        gumbel_policy_top_prob_sum=float(acc.gumbel_policy_top_prob_sum),
+        gumbel_policy_action_prob_sum=float(acc.gumbel_policy_action_prob_sum),
+        gumbel_policy_entropy_sum=float(acc.gumbel_policy_entropy_sum),
+        gumbel_policy_eff_moves_sum=float(acc.gumbel_policy_eff_moves_sum),
+        gumbel_policy_candidate_mass_sum=float(acc.gumbel_policy_candidate_mass_sum),
+        gumbel_policy_non_candidate_top_prob_sum=float(
+            acc.gumbel_policy_non_candidate_top_prob_sum,
+        ),
+        gumbel_policy_argmax_is_candidate_sum=int(acc.gumbel_policy_argmax_is_candidate_sum),
+        gumbel_policy_argmax_is_action_sum=int(acc.gumbel_policy_argmax_is_action_sum),
+        gumbel_policy_legal_count_sum=int(acc.gumbel_policy_legal_count_sum),
+        gumbel_policy_candidate_count_sum=int(acc.gumbel_policy_candidate_count_sum),
+        outcome_stats=dict(acc.outcome_stats),
     )
     # ``flush_token`` doubles as the compacted shard's uniqueness suffix and
     # the link back to ``_in_flight/<flush_token>/``. Recovery globs for this
@@ -221,6 +335,8 @@ def create_app(
     max_worker_delta_per_rebalance: int = 1,
     upload_compact_shard_size: int = 2000,
     upload_compact_max_age_seconds: float = 90.0,
+    max_upload_positions: int = DEFAULT_MAX_SHARD_POSITIONS,
+    max_upload_uncompressed_bytes: int = DEFAULT_MAX_SHARD_UNCOMPRESSED_BYTES,
 ):
     """Create the HTTP server.
 
@@ -286,6 +402,8 @@ def create_app(
     upload_accumulators: dict[tuple[str | None, str], _BufferedUploadAccumulator] = {}
     recent_upload_shas: dict[tuple[str | None, str], float] = {}
     upload_lock = threading.Lock()
+    queued_games_cache: dict[str | None, tuple[float, dict[str, int]]] = {}
+    queued_games_cache_lock = threading.Lock()
 
     from contextlib import asynccontextmanager
 
@@ -327,6 +445,10 @@ def create_app(
     def _arena_inbox_root(trial_id: str | None) -> Path:
         tid = _normalize_trial_id(trial_id)
         return arena_inbox if tid is None else (_trial_root(tid) / "arena_inbox")
+
+    def _invalidate_queued_games_cache(trial_id: str | None) -> None:
+        with queued_games_cache_lock:
+            queued_games_cache.pop(_normalize_trial_id(trial_id), None)
 
     def _try_flush_and_pop(acc_key, *, inbox_root: Path, acc, now_unix: float) -> bool:
         """Flush an accumulator to disk; on success pop it, on failure leave it.
@@ -413,6 +535,7 @@ def create_app(
             delete_shard_path(in_flight_dir)
             acc.pending_paths.clear()
         upload_accumulators.pop(acc_key, None)
+        _invalidate_queued_games_cache(acc.trial_id)
         return True
 
     def _flush_ready_upload_accumulators(
@@ -466,6 +589,112 @@ def create_app(
             return dict(json.loads(mf.read_text(encoding="utf-8")))
         except (OSError, json.JSONDecodeError):
             return None  # manifest mid-write or missing
+
+    def _iter_visible_inbox_shards(inbox_root: Path) -> list[Path]:
+        """List upload shards visible to learner ingest, excluding staging dirs."""
+        paths: list[Path] = []
+        try:
+            user_dirs = list(inbox_root.iterdir())
+        except FileNotFoundError:
+            return paths
+        for user_dir in user_dirs:
+            if not user_dir.is_dir() or is_tmp_shard_name(user_dir.name):
+                continue
+            if user_dir.name in {_PENDING_DIR_NAME, _IN_FLIGHT_DIR_NAME}:
+                continue
+            try:
+                for entry in user_dir.iterdir():
+                    if is_tmp_shard_name(entry.name):
+                        continue
+                    if entry.name.endswith(LOCAL_SHARD_SUFFIX):
+                        paths.append(entry)
+            except FileNotFoundError:
+                continue
+        return sorted(paths)
+
+    def _queued_games_by_model(*, trial_id: str | None) -> dict[str, int]:
+        """Count un-ingested uploaded games by model SHA for one trial."""
+        tid = _normalize_trial_id(trial_id)
+        now_unix = time.time()
+        with queued_games_cache_lock:
+            cached = queued_games_cache.get(tid)
+            if cached is not None:
+                cached_at, cached_totals = cached
+                if (now_unix - float(cached_at)) <= _QUEUED_GAMES_CACHE_TTL_S:
+                    return dict(cached_totals)
+        totals: dict[str, int] = {}
+        with upload_lock:
+            for (acc_tid, acc_sha), acc in upload_accumulators.items():
+                if acc_tid != tid:
+                    continue
+                sha = str(acc_sha or "")
+                if not sha:
+                    continue
+                totals[sha] = int(totals.get(sha, 0)) + int(acc.games)
+        for shard_path in _iter_visible_inbox_shards(_inbox_root(tid)):
+            try:
+                _arrs, meta = load_shard_arrays(shard_path, lazy=True)
+            except Exception:
+                continue
+            sha = str(meta.get("model_sha256") or "")
+            if not sha:
+                continue
+            totals[sha] = int(totals.get(sha, 0)) + int(meta.get("games") or 0)
+        with queued_games_cache_lock:
+            queued_games_cache[tid] = (now_unix, dict(totals))
+        return totals
+
+    def _apply_dynamic_stale_pause(trial_id: str | None, manifest: dict[str, Any]) -> dict[str, Any]:
+        """Pause workers once enough old-model backlog exists for next ingest."""
+        backpressure = manifest.get("backpressure")
+        if not isinstance(backpressure, dict):
+            return manifest
+        target_games = int(backpressure.get("stale_pause_target_games") or 0)
+        if target_games <= 0:
+            return manifest
+        reco = manifest.get("recommended_worker")
+        if not isinstance(reco, dict):
+            return manifest
+        if bool(reco.get("pause_selfplay")) or bool(backpressure.get("pause_selfplay")):
+            return manifest
+        model_sha = str(backpressure.get("stale_pause_model_sha") or "")
+        if not model_sha:
+            model_sha = str((manifest.get("model") or {}).get("sha256") or "")
+        queued_by_model = _queued_games_by_model(trial_id=trial_id)
+        queued_games = int(queued_by_model.get(model_sha, 0))
+        stale_queued_games = int(
+            sum(games for sha, games in queued_by_model.items() if str(sha) != model_sha)
+        )
+        total_queued_games = int(sum(queued_by_model.values()))
+        if queued_games < target_games and stale_queued_games < target_games:
+            return manifest
+
+        out = dict(manifest)
+        out_reco = dict(reco)
+        out_backpressure = dict(backpressure)
+        if stale_queued_games >= target_games:
+            pause_games = stale_queued_games
+            reason = (
+                f"stale backlog target reached: {stale_queued_games}/{target_games} "
+                f"queued old-model games"
+            )
+        else:
+            pause_games = queued_games
+            reason = (
+                f"stale backlog target reached: {queued_games}/{target_games} "
+                f"games for model {model_sha[:8]}"
+            )
+        out_reco["pause_selfplay"] = True
+        out_reco["pause_reason"] = reason
+        out_backpressure["pause_selfplay"] = True
+        out_backpressure["pause_reason"] = reason
+        out_backpressure["stale_pause_queued_games"] = int(pause_games)
+        out_backpressure["stale_pause_current_queued_games"] = int(queued_games)
+        out_backpressure["stale_pause_stale_queued_games"] = int(stale_queued_games)
+        out_backpressure["stale_pause_total_queued_games"] = int(total_queued_games)
+        out["recommended_worker"] = out_reco
+        out["backpressure"] = out_backpressure
+        return out
 
     class _LeaseAssignLock:
         def __init__(self, path: Path, *, timeout_s: float = 10.0) -> None:
@@ -653,6 +882,53 @@ def create_app(
             raise HTTPException(status_code=401, detail="bad password")
         return str(creds.username)
 
+    def _record_bad_shard_report(
+        trial_id: str | None,
+        *,
+        username: str,
+        payload: dict[str, Any],
+        x_cae_worker_version: str | None,
+        x_cae_protocol_version: str | None,
+        x_cae_worker_lease_id: str | None,
+        x_cae_machine_id: str | None,
+    ) -> dict[str, Any]:
+        ok, reason = _check_worker_compat(
+            trial_id=trial_id,
+            worker_version=x_cae_worker_version,
+            worker_protocol=x_cae_protocol_version,
+        )
+        if not ok:
+            log.warning("rejecting bad-shard report from user=%s: %s", username, reason)
+            return {"stored": False, "rejected": True, "reason": reason}
+        qdir = _quarantine_root(trial_id) / "client_reports"
+        qdir.mkdir(parents=True, exist_ok=True)
+        now_unix = time.time()
+        payload_summary = {
+            "shard_name": _bounded_report_field(payload.get("shard_name")),
+            "reason": _bounded_report_field(payload.get("reason")),
+        }
+        report = {
+            "reported_at_unix": now_unix,
+            "username": str(username),
+            "trial_id": _normalize_trial_id(trial_id),
+            "worker_version": x_cae_worker_version,
+            "protocol_version": x_cae_protocol_version,
+            "lease_id": x_cae_worker_lease_id,
+            "machine_id": x_cae_machine_id,
+            "payload": payload_summary,
+        }
+        out = qdir / f"{int(now_unix)}_{secrets.token_hex(8)}.json"
+        atomic_write_text(out, json.dumps(report, indent=2, sort_keys=True))
+        log.warning(
+            "worker reported bad shard trial=%s user=%s machine=%s shard=%s reason=%s",
+            _normalize_trial_id(trial_id),
+            username,
+            x_cae_machine_id,
+            payload_summary["shard_name"],
+            payload_summary["reason"],
+        )
+        return {"stored": True, "path": str(out)}
+
     def _get_manifest_impl(
         trial_id: str | None,
         *,
@@ -673,7 +949,8 @@ def create_app(
   # 426 (Upgrade Required) communicates "update your client".
             raise HTTPException(status_code=426, detail=reason)
 
-        return JSONResponse(content=json.loads(mf.read_text(encoding="utf-8")))
+        manifest = json.loads(mf.read_text(encoding="utf-8"))
+        return JSONResponse(content=_apply_dynamic_stale_pause(trial_id, manifest))
 
     @app.get("/v1/manifest")
     def get_manifest(
@@ -915,6 +1192,12 @@ def create_app(
         try:
             tmp_zarr = inbox_root / f"tmp_{os.getpid()}_{secrets.token_hex(8)}{LOCAL_SHARD_SUFFIX}"
             zarr_root = extract_uploaded_shard_tar(tmp, tmp_zarr)
+            shard_arrs_lazy, meta = load_shard_arrays(zarr_root, lazy=True)
+            validate_array_declarations(
+                shard_arrs_lazy,
+                max_positions=int(max_upload_positions),
+                max_uncompressed_bytes=int(max_upload_uncompressed_bytes),
+            )
             shard_arrs, meta = load_shard_arrays(zarr_root)
         except Exception as e:
   # Quarantine so we can inspect bad uploads without causing worker retry storms.
@@ -1006,6 +1289,7 @@ def create_app(
                 acc.pending_paths.append(pending_path)
                 recent_upload_shas[upload_seen_key] = now_unix
                 stored = True
+                _invalidate_queued_games_cache(trial_key)
                 if _buffered_upload_ready(
                     acc=acc,
                     now_unix=now_unix,
@@ -1018,6 +1302,7 @@ def create_app(
                 # just promoted is redundant — drop it so it isn't re-seeded
                 # on restart.
                 delete_shard_path(pending_path)
+                _invalidate_queued_games_cache(trial_key)
 
         lease = None
         if x_cae_worker_lease_id is not None:
@@ -1102,6 +1387,45 @@ def create_app(
             x_cae_protocol_version=x_cae_protocol_version,
             x_cae_worker_lease_id=x_cae_worker_lease_id,
             x_cae_batch_elapsed_s=x_cae_batch_elapsed_s,
+            x_cae_machine_id=x_cae_machine_id,
+        )
+
+    @app.post("/v1/report_bad_shard")
+    def report_bad_shard(
+        payload: dict[str, Any] = Body(...),
+        username: str = Depends(_auth_user),
+        x_cae_worker_version: str | None = Header(None, alias="X-CAE-Worker-Version"),
+        x_cae_protocol_version: str | None = Header(None, alias="X-CAE-Protocol-Version"),
+        x_cae_worker_lease_id: str | None = Header(None, alias="X-CAE-Worker-Lease-ID"),
+        x_cae_machine_id: str | None = Header(None, alias="X-CAE-Machine-ID"),
+    ) -> Any:
+        return _record_bad_shard_report(
+            None,
+            username=username,
+            payload=payload,
+            x_cae_worker_version=x_cae_worker_version,
+            x_cae_protocol_version=x_cae_protocol_version,
+            x_cae_worker_lease_id=x_cae_worker_lease_id,
+            x_cae_machine_id=x_cae_machine_id,
+        )
+
+    @app.post("/v1/trials/{trial_id}/report_bad_shard")
+    def report_trial_bad_shard(
+        trial_id: str,
+        payload: dict[str, Any] = Body(...),
+        username: str = Depends(_auth_user),
+        x_cae_worker_version: str | None = Header(None, alias="X-CAE-Worker-Version"),
+        x_cae_protocol_version: str | None = Header(None, alias="X-CAE-Protocol-Version"),
+        x_cae_worker_lease_id: str | None = Header(None, alias="X-CAE-Worker-Lease-ID"),
+        x_cae_machine_id: str | None = Header(None, alias="X-CAE-Machine-ID"),
+    ) -> Any:
+        return _record_bad_shard_report(
+            trial_id,
+            username=username,
+            payload=payload,
+            x_cae_worker_version=x_cae_worker_version,
+            x_cae_protocol_version=x_cae_protocol_version,
+            x_cae_worker_lease_id=x_cae_worker_lease_id,
             x_cae_machine_id=x_cae_machine_id,
         )
 

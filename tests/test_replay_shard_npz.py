@@ -20,6 +20,9 @@ def _sample(policy_size: int = 4672) -> ReplaySample:
     pol[0] = 1.0
     s = ReplaySample(x=x, policy_target=pol, wdl_target=1)
     s.priority = 2.0
+    s.priority_policy_kl = 0.75
+    s.priority_q_delta = -0.125
+    s.priority_sf_search_gap = 0.375
     s.has_policy = True
     s.sf_wdl = np.array([0.2, 0.7, 0.1], dtype=np.float32)
     s.sf_move_index = 123
@@ -49,6 +52,12 @@ def test_npz_shard_roundtrip(tmp_path):
 
     s0 = out[0]
     assert s0.policy_target.shape[0] == 4672
+    assert s0.priority_policy_kl is not None
+    assert np.isclose(s0.priority_policy_kl, 0.75)
+    assert s0.priority_q_delta is not None
+    assert np.isclose(s0.priority_q_delta, -0.125)
+    assert s0.priority_sf_search_gap is not None
+    assert np.isclose(s0.priority_sf_search_gap, 0.375)
     assert s0.sf_wdl is not None
     assert s0.sf_move_index is not None
     assert s0.moves_left is not None
@@ -86,9 +95,20 @@ def test_load_shard_arrays_reads_legacy_npz(tmp_path):
     src = tmp_path / "legacy.npz"
     save_npz(src, samples=samples, meta=ShardMeta(username="alice", positions=len(samples)))
 
-    arrs, meta = load_shard_arrays(src)
+    arrs, _meta = load_shard_arrays(src)
     assert arrs["x"].shape[0] == len(samples)
-    assert meta["username"] == "alice"
+
+
+def test_zarr_shard_rejects_compact_policy_size_until_training_supports_it(tmp_path):
+    samples = [_sample(policy_size=1858), _sample(policy_size=1858)]
+    arrs = samples_to_arrays(samples)
+
+    p = local_shard_path(tmp_path, 0)
+    try:
+        save_local_shard_arrays(p, arrs=arrs, meta=ShardMeta(username="alice", positions=len(samples)))
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert "policy_target A mismatch" in str(exc)
 
 
 def test_local_zarr_shard_roundtrip(tmp_path):

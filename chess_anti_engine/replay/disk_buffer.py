@@ -44,12 +44,16 @@ _VALUE_TO_FLAG = {value: flag for value, flag in _OPTIONAL_STORAGE_PAIRS}
 def _batch_dims(arrs: dict[str, np.ndarray]) -> tuple[int, int, int]:
     x = arrs["x"]
     policy_target = arrs["policy_target"]
-    return int(x.shape[0]), int(policy_target.shape[1]), int(x.shape[1])
+    policy_size = int(np.asarray(arrs.get("_policy_size", policy_target.shape[1])).item())
+    return int(x.shape[0]), policy_size, int(x.shape[1])
 
 
 def _slice_array_batch(arrs: dict[str, np.ndarray], idxs: np.ndarray) -> dict[str, np.ndarray]:
     ii = np.asarray(idxs, dtype=np.int64).reshape(-1)
-    return {k: np.array(v[ii], copy=True, order="C") for k, v in arrs.items()}
+    return {
+        k: (np.array(v, copy=True) if np.asarray(v).ndim == 0 else np.array(v[ii], copy=True, order="C"))
+        for k, v in arrs.items()
+    }
 
 
 def _concat_sparse_batches(chunks: list[dict[str, np.ndarray]]) -> dict[str, np.ndarray]:
@@ -57,6 +61,9 @@ def _concat_sparse_batches(chunks: list[dict[str, np.ndarray]]) -> dict[str, np.
         raise ValueError("no chunks to concatenate")
     if len(chunks) == 1:
         return chunks[0]
+    policy_sizes = {int(_batch_dims(chunk)[1]) for chunk in chunks}
+    if len(policy_sizes) > 1:
+        raise ValueError(f"mixed replay policy sizes cannot be concatenated: {sorted(policy_sizes)}")
 
     categorical_bins = next(
         (int(c["categorical_target"].shape[1]) for c in chunks if "categorical_target" in c),
@@ -497,6 +504,10 @@ class DiskReplayBuffer:
             self._flush_shard_arrays(self._take_write_prefix(self._write_buf_rows))
             self._enforce_window()
 
+    def enforce_window(self) -> None:
+        """Apply the current capacity limit immediately."""
+        self._enforce_window()
+
     def _flush_shard_arrays(self, arrs: dict[str, np.ndarray]) -> None:
         """Write a shard to disk."""
         path = local_shard_path(self._shard_dir, self._shard_index)
@@ -595,7 +606,7 @@ class DiskReplayBuffer:
         if idx.ndim != 1:
             idx = idx.reshape(-1)
         x_planes = int(next(iter(self._shuffle_buf))["x"].shape[1])
-        policy_size = POLICY_SIZE
+        policy_size = int(np.asarray(next(iter(self._shuffle_buf)).get("_policy_size", POLICY_SIZE)).item())
         if idx.size == 0:
             return {
                 name: zeros_for_storage_field(
@@ -609,7 +620,9 @@ class DiskReplayBuffer:
 
   # Densify each chunk's selected rows, then merge into output.
   # This avoids shape mismatches when chunks have different sparse K values.
-        selected: list[tuple[dict[str, np.ndarray], np.ndarray]] = []
+        selected_sparse: list[tuple[dict[str, np.ndarray], np.ndarray]] = []
+        selected_policy_sizes: set[int] = set()
+        selected_x_planes: set[int] = set()
         all_keys: set[str] = set()
         start = 0
         for chunk, chunk_n, chunk_off in zip(self._shuffle_buf, self._shuffle_sizes, self._shuffle_offsets):
@@ -617,11 +630,23 @@ class DiskReplayBuffer:
             mask = (idx >= start) & (idx < end)
             if np.any(mask):
                 local = idx[mask] - start + chunk_off
-                rows = {k: v[local] for k, v in chunk.items()}
-                dense_rows = densify_chunk(rows, policy_size=policy_size)
-                selected.append((dense_rows, mask))
-                all_keys.update(dense_rows.keys())
+                rows = {k: (v if np.asarray(v).ndim == 0 else v[local]) for k, v in chunk.items()}
+                _, row_policy_size, row_x_planes = _batch_dims(rows)
+                selected_policy_sizes.add(row_policy_size)
+                selected_x_planes.add(row_x_planes)
+                selected_sparse.append((rows, mask))
             start = end
+        if len(selected_policy_sizes) > 1:
+            raise ValueError(f"mixed replay policy sizes in shuffle buffer: {sorted(selected_policy_sizes)}")
+        if len(selected_x_planes) > 1:
+            raise ValueError(f"mixed replay input plane counts in shuffle buffer: {sorted(selected_x_planes)}")
+        policy_size = next(iter(selected_policy_sizes))
+
+        selected: list[tuple[dict[str, np.ndarray], np.ndarray]] = []
+        for rows, mask in selected_sparse:
+            dense_rows = densify_chunk(rows, policy_size=policy_size)
+            selected.append((dense_rows, mask))
+            all_keys.update(dense_rows.keys())
 
   # Build prototype from ALL selected chunks so optional fields present
   # in any chunk are allocated (not just those in the first chunk).

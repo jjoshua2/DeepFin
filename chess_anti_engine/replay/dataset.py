@@ -3,8 +3,6 @@ from __future__ import annotations
 import numpy as np
 import torch
 
-from chess_anti_engine.moves import POLICY_SIZE as _PS
-
 from .buffer import ReplaySample
 from .shard import LEGAL_MASK_FIELDS, LEGAL_MASK_HAS_FIELDS
 
@@ -42,13 +40,15 @@ def _to_optional_tensor(
 
   # Optional float-vector fields. Each entry: (sample_attr, target_key, has_key, shape_per_sample).
   # Values are .astype(float32) into target[i] when present. Drives the per-sample loop in collate().
+_POLICY_SHAPE = (-1,)
+
 _OPTIONAL_FLOAT_FIELDS: tuple[tuple[str, str, str, tuple[int, ...]], ...] = (
     ("sf_wdl",              "sf_wdl",          "has_sf_wdl",       (3,)),
     ("search_wdl",          "search_wdl",      "has_search_wdl",   (3,)),
-    ("sf_policy_target",    "sf_policy_t",     "has_sf_policy",    (_PS,)),
+    ("sf_policy_target",    "sf_policy_t",     "has_sf_policy",    _POLICY_SHAPE),
     ("categorical_target",  "categorical_t",   "has_categorical",  (32,)),
-    ("policy_soft_target",  "policy_soft_t",   "has_policy_soft",  (_PS,)),
-    ("future_policy_target","future_policy_t", "has_future",       (_PS,)),
+    ("policy_soft_target",  "policy_soft_t",   "has_policy_soft",  _POLICY_SHAPE),
+    ("future_policy_target","future_policy_t", "has_future",       _POLICY_SHAPE),
     ("volatility_target",   "volatility_t",    "has_volatility",   (3,)),
     ("sf_volatility_target","sf_volatility_t", "has_sf_volatility",(3,)),
 )
@@ -72,6 +72,7 @@ def _build_collate_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
     """Build per-sample numpy arrays for every collate field. Returns the array
     dict; ``collate`` then converts every entry to a tensor."""
     n = len(samples)
+    policy_size = int(np.asarray(samples[0].policy_target).shape[0])
     out: dict[str, np.ndarray] = {
         "x": np.stack([s.x for s in samples], axis=0).astype(np.float32, copy=False),
         "policy_t": np.stack([s.policy_target for s in samples], axis=0).astype(np.float32, copy=False),
@@ -88,10 +89,11 @@ def _build_collate_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
         "has_is_selfplay": np.zeros((n,), dtype=np.float32),
     }
     for src, target, has, shape in _OPTIONAL_FLOAT_FIELDS:
+        shape = (policy_size,) if shape == _POLICY_SHAPE else shape
         out[target] = np.zeros((n, *shape), dtype=np.float32)
         out[has] = np.zeros((n,), dtype=np.float32)
     for k in LEGAL_MASK_FIELDS:
-        out[k] = np.zeros((n, _PS), dtype=np.float32)
+        out[k] = np.zeros((n, policy_size), dtype=np.float32)
     for k in LEGAL_MASK_HAS_FIELDS:
         out[k] = np.zeros((n,), dtype=np.float32)
 
@@ -164,7 +166,7 @@ def collate_arrays(arrs: dict[str, np.ndarray], *, device: str) -> dict[str, tor
         ("has_volatility", (n,), np.float32, torch.float32),
         ("sf_volatility_t", (n, 3), np.float32, torch.float32, "sf_volatility_target"),
         ("has_sf_volatility", (n,), np.float32, torch.float32),
-        *[(k, (n, _PS), np.float32, torch.float32) for k in LEGAL_MASK_FIELDS],
+        *[(k, (n, policy_t.shape[1]), np.float32, torch.float32) for k in LEGAL_MASK_FIELDS],
         *[(k, (n,), np.float32, torch.float32) for k in LEGAL_MASK_HAS_FIELDS],
     )
     for spec in optional_specs:
