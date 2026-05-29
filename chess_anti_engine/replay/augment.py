@@ -28,6 +28,10 @@ def mirror_x(x: np.ndarray) -> np.ndarray:
     return arr[:, :, ::-1].copy()
 
 
+def _uses_compact_policy_width(policy: np.ndarray) -> bool:
+    return np.asarray(policy).shape[-1:] == (COMPACT_POLICY_SIZE,)
+
+
 def mirror_sample(s: ReplaySample) -> ReplaySample:
     """Create the left-right mirrored version of a ReplaySample."""
     x_m = mirror_x(s.x)
@@ -48,7 +52,7 @@ def mirror_sample(s: ReplaySample) -> ReplaySample:
     out.sf_wdl = None if s.sf_wdl is None else np.asarray(s.sf_wdl, dtype=np.float32)
     if s.sf_move_index is None:
         out.sf_move_index = None
-    elif s.sf_policy_target is not None and np.asarray(s.sf_policy_target).shape == (COMPACT_POLICY_SIZE,):
+    elif _uses_compact_policy_width(s.policy_target):
         out.sf_move_index = int(COMPACT_MIRROR_POLICY_MAP[int(s.sf_move_index)])
     else:
         out.sf_move_index = int(mirror_policy_index(int(s.sf_move_index)))
@@ -136,7 +140,7 @@ def maybe_mirror_batch_arrays(
     if "sf_move_index" in arrs:
         out["sf_move_index"] = np.array(arrs["sf_move_index"], copy=True, order="C")
         idx = out["sf_move_index"][mask].astype(np.int64, copy=False)
-        if "sf_policy_target" in arrs and int(np.asarray(arrs["sf_policy_target"]).shape[1]) == int(COMPACT_POLICY_SIZE):
+        if _uses_compact_policy_width(arrs["policy_target"]):
             out["sf_move_index"][mask] = COMPACT_MIRROR_POLICY_MAP[idx].astype(out["sf_move_index"].dtype, copy=False)
         else:
             out["sf_move_index"][mask] = MIRROR_POLICY_MAP[idx].astype(out["sf_move_index"].dtype, copy=False)

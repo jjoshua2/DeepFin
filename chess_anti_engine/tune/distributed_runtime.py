@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 
 from chess_anti_engine.model import ModelConfig, model_config_to_manifest_dict
-from chess_anti_engine.moves.encode import POLICY_SIZE
+from chess_anti_engine.moves.encode import POLICY_ENCODING_AZ_4672, POLICY_SIZE
 from chess_anti_engine.replay import ArrayReplayBuffer, DiskReplayBuffer
 from chess_anti_engine.replay.shard import (
     IN_FLIGHT_DIR_NAME,
@@ -355,7 +355,7 @@ def _publish_distributed_trial_state(
         "encoding": {
             "input_planes": 146,
             "policy_size": int(POLICY_SIZE),
-            "policy_encoding": "lc0_4672",
+            "policy_encoding": POLICY_ENCODING_AZ_4672,
         },
         "model": {
             "sha256": str(model_sha),

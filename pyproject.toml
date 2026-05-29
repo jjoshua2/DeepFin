@@ -2,7 +2,7 @@
 name = "chess-anti-engine"
 version = "0.0.1"
 description = "Chess anti-engine training framework (Phase 1: Python pipeline)"
-requires-python = ">=3.10"
+requires-python = ">=3.10.12"
 dependencies = [
   "python-chess>=1.10",
   "numpy>=1.24",

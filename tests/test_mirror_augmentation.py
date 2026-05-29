@@ -1,6 +1,8 @@
 import numpy as np
 
 from chess_anti_engine.moves.encode import (
+    COMPACT_MIRROR_POLICY_MAP,
+    COMPACT_POLICY_SIZE,
     MIRROR_POLICY_MAP,
     POLICY_SIZE,
     mirror_policy_index,
@@ -127,6 +129,37 @@ def test_mirror_batch_arrays_is_involution():
 
     for key, value in batch.items():
         assert np.array_equal(unmirrored[key], value)
+
+
+def test_mirror_sample_uses_compact_map_from_policy_width_without_sf_policy():
+    compact_idx = 10
+    compact_policy = np.zeros((COMPACT_POLICY_SIZE,), dtype=np.float32)
+    compact_policy[compact_idx] = 1.0
+    sample = ReplaySample(
+        x=np.zeros((18, 8, 8), dtype=np.float32),
+        policy_target=compact_policy,
+        wdl_target=1,
+        sf_move_index=compact_idx,
+        sf_policy_target=None,
+    )
+
+    mirrored = mirror_sample(sample)
+
+    assert mirrored.sf_move_index == int(COMPACT_MIRROR_POLICY_MAP[compact_idx])
+
+
+def test_mirror_batch_uses_compact_map_from_policy_width_without_sf_policy():
+    compact_idx = 10
+    batch = {
+        "x": np.zeros((1, 18, 8, 8), dtype=np.float32),
+        "policy_target": np.zeros((1, COMPACT_POLICY_SIZE), dtype=np.float32),
+        "sf_move_index": np.array([compact_idx], dtype=np.int32),
+    }
+    batch["policy_target"][0, compact_idx] = 1.0
+
+    mirrored = maybe_mirror_batch_arrays(batch, rng=np.random.default_rng(1), prob=1.0)
+
+    assert int(mirrored["sf_move_index"][0]) == int(COMPACT_MIRROR_POLICY_MAP[compact_idx])
 
 
 def _build_per_head_masked_batch(n: int = 8, seed: int = 0):
