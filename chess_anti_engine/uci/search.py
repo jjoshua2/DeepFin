@@ -18,7 +18,7 @@ from typing import Any, Protocol
 import chess
 import numpy as np
 
-from chess_anti_engine.encoding.cboard_encode import CBoard
+from chess_anti_engine.encoding.cboard_encode import CBoard, encode_cboard
 from chess_anti_engine.inference import BatchEvaluator
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
 from chess_anti_engine.mcts.gumbel import GumbelConfig
@@ -626,7 +626,10 @@ class SearchWorker:
             return
         xs = np.empty((1, 146, 8, 8), dtype=np.float32)
         root_cb = CBoard.from_board(board)
-        xs[0] = root_cb.encode_146()
+        xs[0] = encode_cboard(
+            root_cb,
+            input_history_encoding=self._cfg.input_history_encoding,
+        )
         pol, wdl = self._evaluator.evaluate_encoded(xs)
         pol_np = np.asarray(pol, dtype=np.float32)
         wdl_np = np.asarray(wdl, dtype=np.float32).copy()

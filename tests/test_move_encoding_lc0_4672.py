@@ -17,7 +17,9 @@ from chess_anti_engine.moves import (
     legal_move_mask,
     move_to_index,
     policy_batch_to_encoding,
+    policy_batch_to_full,
     policy_vector_to_encoding,
+    policy_vector_to_full,
 )
 
 
@@ -106,3 +108,28 @@ def test_full_to_compact_policy_batch_conversion_renormalizes_rows():
 
     assert compact.shape == (2, COMPACT_POLICY_SIZE)
     np.testing.assert_allclose(compact.sum(axis=1), np.ones((2,), dtype=np.float32))
+
+
+def test_compact_to_full_policy_conversion_fills_invalid_slots():
+    compact = np.zeros((COMPACT_POLICY_SIZE,), dtype=np.float32)
+    compact[0] = 3.0
+
+    full = policy_vector_to_full(compact, policy_encoding="lc0_1858", fill_value=-1e9)
+
+    assert full.shape == (POLICY_SIZE,)
+    assert float(full[int(COMPACT_TO_FULL_POLICY[0])]) == 3.0
+    assert float(full[int(np.flatnonzero(FULL_TO_COMPACT_POLICY < 0)[0])]) == -1e9
+
+
+def test_compact_to_full_policy_batch_conversion_fills_invalid_slots():
+    compact = np.zeros((2, COMPACT_POLICY_SIZE), dtype=np.float32)
+    compact[0, 0] = 3.0
+    compact[1, 1] = 4.0
+
+    full = policy_batch_to_full(compact, policy_encoding="lc0_1858", fill_value=-1e9)
+
+    assert full.shape == (2, POLICY_SIZE)
+    assert float(full[0, int(COMPACT_TO_FULL_POLICY[0])]) == 3.0
+    assert float(full[1, int(COMPACT_TO_FULL_POLICY[1])]) == 4.0
+    invalid = int(np.flatnonzero(FULL_TO_COMPACT_POLICY < 0)[0])
+    assert float(full[0, invalid]) == -1e9

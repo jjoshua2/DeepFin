@@ -150,5 +150,6 @@ def load_model_from_checkpoint(
     model = build_model(model_config)
     state = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
     load_state_dict_tolerant(model, state, label="uci-load")
+    setattr(model, "input_history_encoding", model_config.input_history_encoding)
     model.to(device).eval()
     return model

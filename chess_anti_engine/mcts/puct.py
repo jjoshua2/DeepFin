@@ -11,10 +11,10 @@ from chess_anti_engine.encoding import encode_position, encode_positions_batch
 from chess_anti_engine.inference import (
     BatchEvaluator,
     LocalModelEvaluator,
-    _policy_output,
+    _policy_output_full,
 )
 from chess_anti_engine.mcts.sampling import sample_action_with_temperature
-from chess_anti_engine.moves import POLICY_SIZE
+from chess_anti_engine.moves import POLICY_ENCODING_LC0_1858, POLICY_SIZE, policy_batch_to_full
 from chess_anti_engine.moves.encode import index_to_move_fast, legal_move_indices
 from chess_anti_engine.utils.amp import inference_autocast
 from chess_anti_engine.utils.numpy_helpers import softmax_1d
@@ -197,7 +197,7 @@ def _init_root(model: torch.nn.Module, board: chess.Board, *, device: str, rng: 
     xt = torch.from_numpy(x0[None, ...]).to(device)
     with inference_autocast(device=device, enabled=bool(cfg.use_amp), dtype=str(cfg.amp_dtype)):
         out = model(xt)
-    pol_logits = _policy_output(out).detach().float().cpu().numpy().reshape(-1)
+    pol_logits = _policy_output_full(out).detach().float().cpu().numpy().reshape(-1)
     wdl_logits = out["wdl"].detach().float().cpu().numpy().reshape(-1)
     return _init_root_from_logits(board, pol_logits=pol_logits, wdl_logits=wdl_logits, rng=rng, cfg=cfg)
 
@@ -310,9 +310,16 @@ def run_mcts_many(
         )
 
     if pre_pol_logits is not None and pre_wdl_logits is not None:
+        pol_logits_all = np.asarray(pre_pol_logits, dtype=np.float32)
+        if pol_logits_all.ndim == 2 and int(pol_logits_all.shape[1]) != int(POLICY_SIZE):
+            pol_logits_all = policy_batch_to_full(
+                pol_logits_all,
+                policy_encoding=POLICY_ENCODING_LC0_1858,
+                fill_value=-1e9,
+            )
         roots = [
             _init_root_from_logits(
-                b, pol_logits=pre_pol_logits[i], wdl_logits=pre_wdl_logits[i],
+                b, pol_logits=pol_logits_all[i], wdl_logits=pre_wdl_logits[i],
                 rng=rng, cfg=cfg,
             )
             for i, b in enumerate(boards)

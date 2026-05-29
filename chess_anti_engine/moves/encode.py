@@ -382,6 +382,27 @@ def policy_vector_to_full(
     return out
 
 
+def policy_batch_to_full(
+    policies: np.ndarray,
+    *,
+    policy_encoding: str | None = None,
+    fill_value: float = 0.0,
+) -> np.ndarray:
+    enc = normalize_policy_encoding(policy_encoding)
+    p = np.asarray(policies)
+    if p.ndim != 2:
+        raise ValueError(f"policies must be 2D, got {p.shape}")
+    if enc == POLICY_ENCODING_AZ_4672:
+        if int(p.shape[1]) != int(POLICY_SIZE):
+            raise ValueError(f"policies must be (N,{POLICY_SIZE}), got {p.shape}")
+        return p
+    if int(p.shape[1]) != int(COMPACT_POLICY_SIZE):
+        raise ValueError(f"compact policies must be (N,{COMPACT_POLICY_SIZE}), got {p.shape}")
+    out = np.full((int(p.shape[0]), POLICY_SIZE), fill_value, dtype=p.dtype)
+    out[:, COMPACT_TO_FULL_POLICY] = p
+    return out
+
+
 def _build_index_to_move_lut() -> np.ndarray:
     """Precomputed reverse LUT: policy index → (from_sq, to_sq, promotion).
 

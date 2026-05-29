@@ -19,7 +19,7 @@ from chess_anti_engine.mcts.puct import (
 from chess_anti_engine.mcts.puct import (
     _value_scalar_from_wdl_logits as _wdl_to_q,
 )
-from chess_anti_engine.moves import POLICY_SIZE
+from chess_anti_engine.moves import POLICY_ENCODING_LC0_1858, POLICY_SIZE, policy_batch_to_full
 from chess_anti_engine.moves.encode import legal_move_indices
 
 
@@ -204,6 +204,8 @@ def _resolve_root_logits(
     """
     if pre_pol_logits is not None and pre_wdl_logits is not None:
         pol = np.asarray(pre_pol_logits, dtype=np.float32)
+        if pol.ndim == 2 and int(pol.shape[1]) != int(POLICY_SIZE):
+            pol = policy_batch_to_full(pol, policy_encoding=POLICY_ENCODING_LC0_1858, fill_value=-1e9)
         wdl = np.asarray(pre_wdl_logits, dtype=np.float32)
         leaf_eval = evaluator if evaluator is not None else (
             LocalModelEvaluator(model, device=device) if model is not None else None
