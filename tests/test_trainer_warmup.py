@@ -10,6 +10,7 @@ from chess_anti_engine.replay.shard import INPUT_HISTORY_ENCODING_ARRAY_KEY, sam
 from chess_anti_engine.train.soda import SODAWeightDecayWrapper
 from chess_anti_engine.train.trainer import (
     Trainer,
+    _ChainedOptimizer,
     select_input_history_arrays,
     select_input_history_samples,
     trainer_kwargs_from_config,
@@ -136,6 +137,22 @@ def test_select_input_history_arrays_rejects_root_storage_for_legacy_model() -> 
         assert False, "expected ValueError"
     except ValueError as exc:
         assert "cannot train" in str(exc)
+
+
+def test_select_input_history_arrays_fast_path_handles_uniform_metadata() -> None:
+    root = np.zeros((2, 146, 8, 8), dtype=np.float32)
+    root[:, 13, :, :] = 4.0
+
+    out = select_input_history_arrays(
+        {
+            "x": root,
+            "_input_history_encoding": np.asarray(["lc0_root", "lc0_root"], dtype=object),
+        },
+        input_history_encoding="lc0_root",
+    )
+
+    np.testing.assert_array_equal(out["x"], root)
+    assert str(np.asarray(out["_input_history_encoding_selected"]).item()) == "lc0_root"
 
 
 def test_select_input_history_samples_uses_recorded_lc0_root() -> None:
@@ -456,6 +473,21 @@ def test_soda_wrapper_applies_anchor_average_after_base_step() -> None:
     param.grad = torch.tensor([1.0])
     opt.step()
     assert torch.allclose(param, torch.tensor([0.8333333]), atol=1e-6)
+
+
+def test_chained_optimizer_rejects_unroutable_param_group() -> None:
+    p0 = torch.nn.Parameter(torch.tensor([1.0]))
+    p1 = torch.nn.Parameter(torch.tensor([2.0]))
+    opt = _ChainedOptimizer([
+        torch.optim.SGD([p0], lr=0.1),
+        torch.optim.SGD([p1], lr=0.1),
+    ])
+
+    try:
+        opt.add_param_group({"params": [torch.nn.Parameter(torch.tensor([3.0]))]})
+        assert False, "expected NotImplementedError"
+    except NotImplementedError as exc:
+        assert "cannot route" in str(exc)
 
 
 def test_muon_matrix_scope_can_target_mlp_without_embed(tmp_path: Path) -> None:

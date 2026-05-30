@@ -3,10 +3,10 @@ from __future__ import annotations
 import dataclasses
 import logging
 import time
-from collections import defaultdict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -74,6 +74,31 @@ SummaryWriter = _SummaryWriter  # skylos: ignore (used via runtime fallback)
 _LC0_HISTORY_STEPS = 8
 _LC0_PIECE_PLANES = 12
 _INPUT_HISTORY_SELECTED_KEY = "_input_history_encoding_selected"
+
+
+@lru_cache(maxsize=16)
+def _policy_index_lut(
+    lut_name: str,
+    *,
+    device_type: str,
+    device_index: int | None,
+) -> torch.Tensor:
+    if lut_name == "full_to_compact":
+        values = FULL_TO_COMPACT_POLICY
+    elif lut_name == "compact_to_full":
+        values = COMPACT_TO_FULL_POLICY
+    else:
+        raise ValueError(f"unknown policy index LUT {lut_name!r}")
+    device = torch.device(device_type) if device_index is None else torch.device(device_type, device_index)
+    return torch.as_tensor(values, dtype=torch.long, device=device)
+
+
+def _policy_index_lut_for(target: torch.Tensor, lut_name: str) -> torch.Tensor:
+    return _policy_index_lut(
+        lut_name,
+        device_type=target.device.type,
+        device_index=target.device.index,
+    )
 
 
 def _metadata_strings(
@@ -151,6 +176,40 @@ def select_input_history_arrays(
     """Select the replay input tensor matching the model's configured history layout."""
     hist_enc = normalize_lc0_history_encoding(input_history_encoding)
     n = int(np.asarray(arrs["x"]).shape[0])
+    stored_value = arrs.get(INPUT_HISTORY_ENCODING_ARRAY_KEY)
+    if stored_value is not None:
+        stored_array = np.asarray(stored_value)
+        flat_stored = stored_array.reshape(-1)
+        if flat_stored.size == 1 or (
+            flat_stored.size == n
+            and bool(np.all(flat_stored == flat_stored[0]))
+        ):
+            text = str(flat_stored[0]).strip()
+            scalar_enc = normalize_lc0_history_encoding(text) if text else ""
+            if not uses_lc0_root_history(hist_enc):
+                if scalar_enc and uses_lc0_root_history(scalar_enc):
+                    raise ValueError(
+                        "replay x contains rows stored as LC0-root, "
+                        f"cannot train {hist_enc!r} input"
+                    )
+                return arrs
+            selected_enc = _single_metadata_string(arrs, _INPUT_HISTORY_SELECTED_KEY)
+            if selected_enc is not None:
+                if selected_enc != hist_enc:
+                    raise ValueError(
+                        f"replay input history already selected as {selected_enc!r}, "
+                        f"cannot reselect as {hist_enc!r}"
+                    )
+                return arrs
+            if scalar_enc == hist_enc:
+                out = dict(arrs)
+                out[_INPUT_HISTORY_SELECTED_KEY] = np.asarray(hist_enc)
+                return out
+            if scalar_enc and uses_lc0_root_history(scalar_enc):
+                raise ValueError(f"replay x contains incompatible stored history encodings: {[scalar_enc]}")
+    elif not uses_lc0_root_history(hist_enc):
+        return arrs
+
     stored_raw = _metadata_strings(arrs, INPUT_HISTORY_ENCODING_ARRAY_KEY, n=n)
     stored_enc = np.full((n,), "", dtype=object)
     if stored_raw is not None:
@@ -276,14 +335,26 @@ class _ChainedOptimizer(torch.optim.Optimizer):
             for group in opt.param_groups
             for param in group["params"]
         ]
+        self._initializing = True
         super().__init__(params, defaults={})
+        self._initializing = False
         self.optimizers = optimizers
         self.param_groups = [
             group
             for opt in optimizers
             for group in opt.param_groups
         ]
-        self.state = defaultdict(dict)
+        self.state.clear()
+
+    def add_param_group(self, param_group: dict[str, Any]) -> None:  # type: ignore[override]
+        if getattr(self, "_initializing", False):
+            torch.optim.Optimizer.add_param_group(self, param_group)
+            return
+        del param_group
+        raise NotImplementedError(
+            "_ChainedOptimizer cannot route add_param_group() to a child optimizer; "
+            "add new parameters to the intended child optimizer directly."
+        )
 
     def zero_grad(self, set_to_none: bool = True) -> None:  # type: ignore[override]
         for opt in self.optimizers:
@@ -695,17 +766,26 @@ class Trainer:
                 "Supported: weight_decay, soda"
             )
         soda_scope = str(soda_scope or "decay").lower()
-        if soda_scope not in ("decay", "weight_decay", "nonzero_decay", "hidden_matrix_only"):
+        soda_scope_aliases = {
+            "decay": "decay",
+            "weight_decay": "decay",
+            "nonzero_decay": "decay",
+            "hidden_matrix_only": "hidden_matrix_only",
+        }
+        if soda_scope not in soda_scope_aliases:
             raise ValueError(
-                f"Unknown soda_scope {soda_scope!r}. Supported: decay, hidden_matrix_only"
+                f"Unknown soda_scope {soda_scope!r}. "
+                "Supported: decay, hidden_matrix_only "
+                "(aliases: weight_decay, nonzero_decay)"
             )
+        soda_scope = soda_scope_aliases[soda_scope]
         soda_start_step = max(0, int(soda_start_step))
         use_soda_weight_decay = False
 
         def _mark_soda(param_groups: list[dict], *, hidden_group_indices: tuple[int, ...] = (0,)) -> bool:
             if weight_decay_mode != "soda":
                 return False
-            if soda_scope in ("decay", "weight_decay", "nonzero_decay"):
+            if soda_scope == "decay":
                 return mark_soda_weight_decay_groups(param_groups, start_step=soda_start_step)
             for group in param_groups:
                 group["weight_decay"] = 0.0
@@ -1062,12 +1142,30 @@ class Trainer:
         if not collect_stats:
             return float(self.zclip.step(self.model)), None
 
-        total_norm = float(self.zclip._compute_grad_norm(self.model))
-        clip_val = (
-            self.zclip._compute_clip_val(total_norm)
-            if bool(getattr(self.zclip, "initialized", False))
-            else None
-        )
+        was_initialized = bool(getattr(self.zclip, "initialized", False))
+        mean_raw = getattr(self.zclip, "mean", 0.0)
+        var_raw = getattr(self.zclip, "var", 0.0)
+        mean = float(mean_raw if mean_raw is not None else 0.0)
+        var = float(var_raw if var_raw is not None else 0.0)
+        total_norm = float(self.zclip.step(self.model))
+        clip_val = None
+        if was_initialized:
+            std = var ** 0.5
+            mode = str(getattr(self.zclip, "mode", "zscore"))
+            z_thresh = float(getattr(self.zclip, "z_thresh", 0.0))
+            if mode == "percentile":
+                threshold = mean + z_thresh * std
+                if total_norm > threshold:
+                    clip_val = threshold
+            elif mode == "zscore":
+                z_score = (total_norm - mean) / (std + float(getattr(self.zclip, "eps", 1e-8)))
+                if z_score > z_thresh:
+                    clip_option = str(getattr(self.zclip, "clip_option", "adaptive_scaling"))
+                    if clip_option == "adaptive_scaling":
+                        eta = z_score / z_thresh
+                        clip_val = (mean + (z_thresh * std) / eta) * float(getattr(self.zclip, "clip_factor", 1.0))
+                    elif clip_option == "mean":
+                        clip_val = mean
         adaptive_clip = float(clip_val) if clip_val is not None else total_norm
         max_grad_norm = getattr(self.zclip, "max_grad_norm", None)
         effective_clip = adaptive_clip
@@ -1082,7 +1180,7 @@ class Trainer:
             "hard_clip": 1.0 if max_grad_norm is not None and clipped and effective_clip == float(max_grad_norm) else 0.0,
             "clipped": 1.0 if clipped else 0.0,
         }
-        return float(self.zclip.step(self.model)), stats
+        return total_norm, stats
 
     @property
     def _loss_kwargs(self) -> dict[str, float]:
@@ -1382,13 +1480,13 @@ class Trainer:
             if source_width == dst_width:
                 return target, torch.ones_like(target, dtype=torch.bool)
             if source_width == POLICY_SIZE and dst_width == COMPACT_POLICY_SIZE:
-                lut = torch.as_tensor(FULL_TO_COMPACT_POLICY, dtype=torch.long, device=target.device)
+                lut = _policy_index_lut_for(target, "full_to_compact")
                 valid = (target >= 0) & (target < POLICY_SIZE)
                 safe_target = target.clamp(0, POLICY_SIZE - 1).to(torch.long)
                 mapped = lut.index_select(0, safe_target)
                 return mapped, valid & (mapped >= 0)
             if source_width == COMPACT_POLICY_SIZE and dst_width == POLICY_SIZE:
-                lut = torch.as_tensor(COMPACT_TO_FULL_POLICY, dtype=torch.long, device=target.device)
+                lut = _policy_index_lut_for(target, "compact_to_full")
                 valid = (target >= 0) & (target < COMPACT_POLICY_SIZE)
                 safe_target = target.clamp(0, COMPACT_POLICY_SIZE - 1).to(torch.long)
                 mapped = lut.index_select(0, safe_target)

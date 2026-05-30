@@ -148,13 +148,30 @@ class SODAWeightDecayWrapper(torch.optim.Optimizer):
             for group in self.base.param_groups
             for param in group["params"]
         ]
+        marked_param_ids = {
+            id(param)
+            for group in self.base.param_groups
+            if bool(group.get(SODA_REGULARIZE_KEY, False))
+            for param in group["params"]
+        }
+        marked_param_indices = {
+            idx
+            for idx, param in enumerate(params)
+            if id(param) in marked_param_ids
+        }
+        anchor_indices = {int(idx) for idx in soda_anchors}
+        extra_indices = sorted(idx for idx in anchor_indices if idx >= len(params))
+        if extra_indices:
+            raise ValueError(f"SODA checkpoint has anchors for missing parameter indices: {extra_indices[:8]}")
+        missing_indices = sorted(marked_param_indices - anchor_indices)
+        if missing_indices:
+            raise ValueError(f"SODA checkpoint missing anchors for parameter indices: {missing_indices[:8]}")
         self._soda_anchors = {
             params[int(idx)]: anchor.to(device=params[int(idx)].device, dtype=params[int(idx)].dtype)
             for idx, anchor in soda_anchors.items()
-            if int(idx) < len(params)
+            if int(idx) in marked_param_indices
         }
         self._ensure_group_defaults()
-        self._capture_initial_anchors()
 
     @torch.no_grad()
     def step(self, closure=None) -> float | None:  # type: ignore[override]  # pyright: ignore[reportIncompatibleMethodOverride]

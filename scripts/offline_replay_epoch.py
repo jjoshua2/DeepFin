@@ -49,6 +49,8 @@ from chess_anti_engine.replay.shard import (
 from chess_anti_engine.train.trainer import (
     Trainer,
     TrainMetrics,
+    _apply_lc0_root_legacy_meta,
+    _legacy_x_to_synthetic_lc0_root,
     select_input_history_arrays,
     trainer_kwargs_from_config,
 )
@@ -68,10 +70,6 @@ POLICY_FIELDS = (
     "policy_soft_target",
     "future_policy_target",
 )
-
-_LC0_HISTORY_STEPS = 8
-_LC0_PIECE_PLANES = 12
-
 
 class _FixedBatch:
     def __init__(self, arrs: dict[str, np.ndarray], rng: np.random.Generator):
@@ -301,71 +299,6 @@ def _convert_policy_targets(arrs: dict[str, Any], *, policy_encoding: str) -> di
                 np.asarray(out["has_sf_move"], dtype=np.float32) * valid.astype(np.float32)
             )
     out["_policy_size"] = np.array(POLICY_SIZE, dtype=np.int32)
-    return out
-
-
-def _legacy_x_to_synthetic_lc0_root(x: np.ndarray) -> np.ndarray:
-    """Approximate LC0 root-history layout from stored legacy replay tensors.
-
-    Replay shards store already-encoded ``x`` planes, not boards or move
-    histories.  This can still remap the legacy piece-history planes because
-    adjacent plies alternate side-to-move: odd history slots need us/them swap
-    plus a vertical flip to become root-POV.  Metadata is best-effort: castling,
-    rule50, repetition, and bias can be moved; LC0's color flag cannot be
-    recovered from side-to-move-normalized legacy planes and is left zero.
-    """
-    src = np.asarray(x)
-    if src.ndim != 4 or src.shape[1] < 112:
-        raise ValueError(f"expected x with shape (N, >=112, 8, 8), got {src.shape}")
-    out = np.array(src, copy=True, order="C")
-    out[:, :112, :, :] = 0
-
-    for hist_idx in range(_LC0_HISTORY_STEPS):
-        legacy_start = hist_idx * _LC0_PIECE_PLANES
-        root_start = hist_idx * (_LC0_PIECE_PLANES + 1)
-        planes = src[:, legacy_start:legacy_start + _LC0_PIECE_PLANES, :, :]
-        if hist_idx % 2 == 0:
-            out[:, root_start:root_start + _LC0_PIECE_PLANES, :, :] = planes
-        else:
-            out[:, root_start:root_start + 6, :, :] = planes[:, 6:12, ::-1, :]
-            out[:, root_start + 6:root_start + 12, :, :] = planes[:, 0:6, ::-1, :]
-
-        rep_plane = 103 + hist_idx
-        if rep_plane < 111:
-            out[:, root_start + 12, :, :] = src[:, rep_plane, :, :]
-
-    # Legacy metadata: us-K, us-Q, them-K, them-Q, EP, side-to-move, rule50.
-    # Root metadata:   us-Q, us-K, them-Q, them-K, color, rule50, zero, bias.
-    out[:, 104, :, :] = src[:, 97, :, :]
-    out[:, 105, :, :] = src[:, 96, :, :]
-    out[:, 106, :, :] = src[:, 99, :, :]
-    out[:, 107, :, :] = src[:, 98, :, :]
-    out[:, 108, :, :] = 0  # True root color is not recoverable from replay x.
-    out[:, 109, :, :] = src[:, 102, :, :]
-    out[:, 110, :, :] = 0
-    out[:, 111, :, :] = src[:, 111, :, :]
-    return out
-
-
-def _apply_lc0_root_legacy_meta(root_x: np.ndarray, legacy_x: np.ndarray) -> np.ndarray:
-    """Use LC0-root history planes with legacy normalized rule50 and EP metadata.
-
-    Recorded LC0-root replay stores raw halfmove count in plane 109 and leaves
-    plane 110 unused.  For this ablation, keep the recorded root-POV history
-    and castling/color planes, but copy legacy plane 102 (rule50 / 100) into
-    109 and legacy plane 100 (EP file) into 110.
-    """
-    root = np.asarray(root_x)
-    legacy = np.asarray(legacy_x)
-    if root.ndim != 4 or root.shape[1] < 112:
-        raise ValueError(f"expected root x with shape (N, >=112, 8, 8), got {root.shape}")
-    if legacy.ndim != 4 or legacy.shape[1] < 112:
-        raise ValueError(f"expected legacy x with shape (N, >=112, 8, 8), got {legacy.shape}")
-    if root.shape[0] != legacy.shape[0]:
-        raise ValueError(f"root/legacy batch size mismatch: {root.shape[0]} vs {legacy.shape[0]}")
-    out = np.array(root, copy=True, order="C")
-    out[:, 109, :, :] = legacy[:, 102, :, :].astype(out.dtype, copy=False)
-    out[:, 110, :, :] = legacy[:, 100, :, :].astype(out.dtype, copy=False)
     return out
 
 

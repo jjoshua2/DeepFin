@@ -64,3 +64,18 @@ def test_soda_reset_anchors_uses_loaded_weights() -> None:
     # 4.0 + (5.0 - 5.0) / 2 = 4.0. A stale construction anchor at 1.0 would
     # incorrectly pull this to 2.0.
     assert torch.allclose(param.detach(), torch.tensor([4.0]))
+
+
+def test_soda_load_state_requires_anchors_for_marked_params() -> None:
+    param = torch.nn.Parameter(torch.tensor([1.0]))
+    groups = [{"params": [param], "weight_decay": 0.0}]
+    assert mark_soda_weight_decay_groups(groups, force=True)
+    opt = SODAWeightDecayWrapper(torch.optim.SGD(groups, lr=1.0))
+    state = opt.state_dict()
+    state["soda_anchors"] = {}
+
+    try:
+        opt.load_state_dict(state)
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert "missing anchors" in str(exc)

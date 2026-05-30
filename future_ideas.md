@@ -46,3 +46,10 @@ Ideas:
 - Smolgen/relation normalization variants: only revisit normalization around the generated relation branch if diagnostics show scale drift. Do not rerun Q/K RMS normalization as a priority; the prior QK-norm sidecar was negative.
 - Channel-utilization interventions: if dormant channels persist, compare small residual channel dropout, channel-balance regularization, and architecture-side routing changes from fresh init. Track channel spread at epochs 1/3/6 plus policy/WDL loss.
 - Extra-depth Pareto checks: rerun best 11-layer candidate against a 12-layer control and a 12-layer version of the same relation setup to see whether relation gains persist with more capacity.
+
+## PR #13 tooling cleanup follow-ups
+Non-blocking cleanup from the optimizer/offline-sweep review. These are worth doing, but they are not correctness blockers for the optimizer/config PR.
+
+- **Offline sweep shell driver consolidation**: the `scripts/arch_sweep_*.sh` files repeat the same launch/poll/log/result scaffolding. Replace them with one shared driver plus small per-sweep config files that define only `experiments=()` and common args.
+- **`offline_replay_epoch.py` pyright blanket cleanup**: replace the module-wide pyright disables with either targeted suppressions or a refreshed basedpyright baseline, so future edits still get optional-member/type feedback.
+- **SODA per-step clone optimization**: the current SODA implementation preserves the paper formula exactly by saving pre-base-step weights. Investigate a clone-free formulation only if it can be proven equivalent for Aurora/Muon-style optimizers that may inspect current parameter norms during `base.step()`.
