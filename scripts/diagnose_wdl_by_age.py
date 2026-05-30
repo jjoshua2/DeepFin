@@ -146,10 +146,23 @@ def _take_rows(arrs: dict[str, Any], rows: np.ndarray) -> dict[str, np.ndarray]:
 
 def _concat_batches(parts: list[dict[str, np.ndarray]]) -> dict[str, np.ndarray]:
     keys = set.intersection(*(set(p) for p in parts))
+    if any(INPUT_HISTORY_ENCODING_ARRAY_KEY in p for p in parts):
+        keys.add(INPUT_HISTORY_ENCODING_ARRAY_KEY)
     out: dict[str, np.ndarray] = {}
     for key in sorted(keys):
         if key == INPUT_HISTORY_ENCODING_ARRAY_KEY:
-            out[key] = np.concatenate([np.asarray(p[key]) for p in parts], axis=0)
+            values = []
+            for part in parts:
+                n = int(np.asarray(part["x"]).shape[0])
+                if key not in part:
+                    values.append(np.full((n,), "", dtype=object))
+                    continue
+                arr = np.asarray(part[key])
+                if arr.ndim == 0:
+                    values.append(np.full((n,), arr.item(), dtype=object))
+                else:
+                    values.append(arr)
+            out[key] = np.concatenate(values, axis=0)
         elif key.startswith("_"):
             out[key] = parts[0][key]
         else:

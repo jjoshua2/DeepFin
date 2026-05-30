@@ -154,3 +154,22 @@ def test_wdl_age_sampler_broadcasts_history_metadata_per_shard() -> None:
 
     assert out[INPUT_HISTORY_ENCODING_ARRAY_KEY].shape == (2,)
     assert out[INPUT_HISTORY_ENCODING_ARRAY_KEY].astype(str).tolist() == ["lc0_root", ""]
+
+
+def test_wdl_age_concat_preserves_missing_history_metadata_rows() -> None:
+    tagged = _take_wdl_age_rows(
+        {
+            "x": np.zeros((1, 146, 8, 8), dtype=np.float32),
+            INPUT_HISTORY_ENCODING_ARRAY_KEY: np.asarray("lc0_root"),
+        },
+        np.asarray([0], dtype=np.int64),
+    )
+    untagged = _take_wdl_age_rows(
+        {"x": np.ones((1, 146, 8, 8), dtype=np.float32)},
+        np.asarray([0], dtype=np.int64),
+    )
+
+    out = _concat_wdl_age_batches([tagged, untagged])
+
+    assert out[INPUT_HISTORY_ENCODING_ARRAY_KEY].shape == (2,)
+    assert out[INPUT_HISTORY_ENCODING_ARRAY_KEY].astype(str).tolist() == ["lc0_root", ""]

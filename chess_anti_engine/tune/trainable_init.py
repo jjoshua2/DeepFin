@@ -19,8 +19,9 @@ from chess_anti_engine.model import (
     reinit_volatility_head_parameters_,
     zero_policy_head_parameters_,
 )
+from chess_anti_engine.moves import policy_size_for_encoding
 from chess_anti_engine.replay import ArrayReplayBuffer, DiskReplayBuffer
-from chess_anti_engine.replay.shard import copy_or_link_shard, iter_shard_paths
+from chess_anti_engine.replay.shard import copy_or_link_shard, iter_shard_paths, load_shard_arrays
 from chess_anti_engine.tune._utils import (
     SIDECAR_PID_STATE,
     SIDECAR_RNG_STATE,
@@ -381,12 +382,28 @@ def _seed_replay_from_shared_shards(
     if not src.is_dir():
         return 0
     replay_shard_dir.mkdir(parents=True, exist_ok=True)
+    expected_policy_size = policy_size_for_encoding(tc.policy_encoding)
     copied = 0
+    skipped_policy = 0
     for sp in iter_shard_paths(src):
+        try:
+            arrs, meta = load_shard_arrays(sp, lazy=True)
+            shard_policy_size = int(meta.get("policy_size") or np.asarray(arrs["policy_target"]).shape[1])
+        except Exception as exc:
+            log.warning("Skipping unreadable shared seed shard %s: %s", sp, exc)
+            continue
+        if shard_policy_size != expected_policy_size:
+            skipped_policy += 1
+            continue
         copy_or_link_shard(sp, replay_shard_dir / sp.name)
         copied += 1
     if copied:
         print(f"[trial] Seeded {copied} shared iter-0 shards from {src}")
+    if skipped_policy:
+        print(
+            f"[trial] Skipped {skipped_policy} shared iter-0 shards from {src} "
+            f"with policy size != {expected_policy_size}"
+        )
     return int(copied)
 
 
