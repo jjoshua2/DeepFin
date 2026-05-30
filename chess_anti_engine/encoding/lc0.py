@@ -89,6 +89,56 @@ class LC0FullPlaneSpec:
 
 LC0_REDUCED = LC0ReducedPlaneSpec()
 LC0_FULL = LC0FullPlaneSpec()
+LC0_HISTORY_LEGACY = "legacy"
+LC0_HISTORY_ROOT = "lc0_root"
+LC0_HISTORY_ROOT_LEGACY_META = "lc0_root_legacy_meta"
+
+
+def normalize_lc0_history_encoding(input_history_encoding: str | None) -> str:
+    enc = str(input_history_encoding or LC0_HISTORY_LEGACY).lower().strip()
+    aliases = {
+        "legacy": LC0_HISTORY_LEGACY,
+        "current": LC0_HISTORY_LEGACY,
+        "old": LC0_HISTORY_LEGACY,
+        "lc0_root": LC0_HISTORY_ROOT,
+        "lc0": LC0_HISTORY_ROOT,
+        "root": LC0_HISTORY_ROOT,
+        "root_pov": LC0_HISTORY_ROOT,
+        "lc0_13": LC0_HISTORY_ROOT,
+        "lc0_root_legacy_meta": LC0_HISTORY_ROOT_LEGACY_META,
+        "root_legacy_meta": LC0_HISTORY_ROOT_LEGACY_META,
+        "lc0_root_meta": LC0_HISTORY_ROOT_LEGACY_META,
+        "root_meta": LC0_HISTORY_ROOT_LEGACY_META,
+    }
+    try:
+        return aliases[enc]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unsupported input_history_encoding {input_history_encoding!r}; "
+            f"expected '{LC0_HISTORY_LEGACY}', '{LC0_HISTORY_ROOT}', "
+            f"or '{LC0_HISTORY_ROOT_LEGACY_META}'"
+        ) from exc
+
+
+def uses_lc0_root_history(input_history_encoding: str | None) -> bool:
+    """Return True for encodings that use LC0 root-side history slots."""
+    return normalize_lc0_history_encoding(input_history_encoding) in {
+        LC0_HISTORY_ROOT,
+        LC0_HISTORY_ROOT_LEGACY_META,
+    }
+
+
+def uses_lc0_root_legacy_meta(input_history_encoding: str | None) -> bool:
+    """Return True for LC0 root history with legacy EP/rule50 metadata."""
+    return normalize_lc0_history_encoding(input_history_encoding) == LC0_HISTORY_ROOT_LEGACY_META
+
+
+def apply_lc0_root_legacy_meta_planes(out: np.ndarray, board: chess.Board) -> None:
+    """Patch LC0-root planes 109/110 to match the legacy metadata scale."""
+    out[109, :, :] = min(float(board.halfmove_clock), 100.0) / 100.0
+    out[110, :, :] = 0.0
+    if board.ep_square is not None:
+        out[110, :, chess.square_file(board.ep_square)] = 1.0
 
 
 def _write_piece_planes(board: chess.Board, out: np.ndarray, start: int) -> int:
@@ -174,13 +224,25 @@ _STRUCT_BY_N = {
 }
 
 
-def encode_lc0_full(board: chess.Board, *, history_len: int = 8) -> np.ndarray:
+def encode_lc0_full(
+    board: chess.Board,
+    *,
+    history_len: int = 8,
+    input_history_encoding: str | None = None,
+) -> np.ndarray:
     """Encode LC0 112-plane input (8 history positions × 12 + metadata planes).
 
     Each history position is encoded relative to THAT position's side-to-move.
     Reads bitboards directly from board._stack to avoid expensive copy/pop.
     Batches all history bitboards via struct.pack + single unpackbits call.
     """
+    hist_enc = normalize_lc0_history_encoding(input_history_encoding)
+    if uses_lc0_root_history(hist_enc):
+        out = encode_lc0_full_root(board, history_len=history_len)
+        if hist_enc == LC0_HISTORY_ROOT_LEGACY_META:
+            apply_lc0_root_legacy_meta_planes(out, board)
+        return out
+
     out = np.zeros((112, 8, 8), dtype=np.float32)
 
     stack = board._stack
@@ -244,6 +306,68 @@ def encode_lc0_full(board: chess.Board, *, history_len: int = 8) -> np.ndarray:
     return out
 
 
+def encode_lc0_full_root(board: chess.Board, *, history_len: int = 8) -> np.ndarray:
+    """Encode LC0-style 112 planes with 13 planes per root-POV history slot.
+
+    Layout:
+    - 0..103: 8 slots of 12 piece planes + 1 repetition plane.
+    - 104..107: castling rights (us-Q, us-K, them-Q, them-K).
+    - 108: side/color flag (1.0 when the root side to move is black).
+    - 109: raw rule-50 counter.
+    - 110: zero legacy movecount plane.
+    - 111: all-ones bias.
+
+    Unlike the legacy encoder, every history slot is encoded from the root
+    side-to-move POV. That keeps "us"/"them" and board orientation stable
+    across the temporal stack.
+    """
+    out = np.zeros((112, 8, 8), dtype=np.float32)
+    root_turn = board.turn
+    stack = board._stack
+    stack_len = len(stack)
+
+    bbs: list[int] = []
+    n_steps = 0
+    for hist_idx in range(history_len):
+        if hist_idx == 0:
+            occ_w = int(board.occupied_co[chess.WHITE])
+            occ_b = int(board.occupied_co[chess.BLACK])
+            piece_bbs = tuple(getattr(board, f) for f in _BB_FIELDS)
+        else:
+            si = stack_len - hist_idx
+            if si < 0:
+                break
+            s = stack[si]
+            occ_w = s.occupied_w
+            occ_b = s.occupied_b
+            piece_bbs = tuple(getattr(s, f) for f in _BB_FIELDS)
+
+        us_occ = occ_w if root_turn == chess.WHITE else occ_b
+        them_occ = occ_b if root_turn == chess.WHITE else occ_w
+        bbs.extend(bb & occ for occ in (us_occ, them_occ) for bb in piece_bbs)
+        n_steps += 1
+
+    n_bbs = n_steps * 12
+    pack_struct = _STRUCT_BY_N.get(n_steps)
+    if pack_struct is not None:
+        raw_bytes = pack_struct.pack(*bbs)
+    else:
+        raw_bytes = struct.pack('>' + 'Q' * n_bbs, *bbs)
+    raw = np.unpackbits(np.frombuffer(raw_bytes, dtype=np.uint8)).reshape(n_bbs, 8, 8)
+
+    for hist_idx in range(n_steps):
+        s_bb = hist_idx * 12
+        s_plane = hist_idx * 13
+        if root_turn == chess.WHITE:
+            out[s_plane:s_plane + 12] = raw[s_bb:s_bb + 12, ::-1, ::-1]
+        else:
+            out[s_plane:s_plane + 12] = raw[s_bb:s_bb + 12, :, ::-1]
+
+    _check_repetitions(board, stack, stack_len, n_steps, out, 12, rep_stride=13)
+    _write_metadata_planes_root(out, board)
+    return out
+
+
 def _write_metadata_planes(out: np.ndarray, board: chess.Board) -> None:
     """Write castling, EP, turn, rule50, and ones-bias planes starting at index 96."""
     turn = board.turn
@@ -274,13 +398,50 @@ def _write_metadata_planes(out: np.ndarray, board: chess.Board) -> None:
     out[111, :, :] = 1.0  # all-ones bias
 
 
-def encode_lc0_full_c(board: chess.Board, *, history_len: int = 8) -> np.ndarray:
+def _write_metadata_planes_root(out: np.ndarray, board: chess.Board) -> None:
+    """Write LC0 classical root-history metadata at planes 104..111."""
+    turn = board.turn
+    us = turn
+    them = not turn
+    meta_idx = 104
+
+    for has in (
+        board.has_queenside_castling_rights(us),
+        board.has_kingside_castling_rights(us),
+        board.has_queenside_castling_rights(them),
+        board.has_kingside_castling_rights(them),
+    ):
+        if has:
+            out[meta_idx, :, :] = 1.0
+        meta_idx += 1
+
+    if turn == chess.BLACK:
+        out[meta_idx, :, :] = 1.0
+    meta_idx += 1
+
+    out[meta_idx, :, :] = float(board.halfmove_clock)
+    out[111, :, :] = 1.0
+
+
+def encode_lc0_full_c(
+    board: chess.Board,
+    *,
+    history_len: int = 8,
+    input_history_encoding: str | None = None,
+) -> np.ndarray:
     """C-accelerated version of encode_lc0_full.
 
     Extracts bitboard values in Python (fast attribute access), then uses C
     for the bitboard→plane conversion (pack + orient). Metadata + repetitions
     stay in Python.
     """
+    hist_enc = normalize_lc0_history_encoding(input_history_encoding)
+    if uses_lc0_root_history(hist_enc):
+        out = _encode_lc0_full_root_c(board, history_len=history_len)
+        if hist_enc == LC0_HISTORY_ROOT_LEGACY_META:
+            apply_lc0_root_legacy_meta_planes(out, board)
+        return out
+
     out = np.zeros((112, 8, 8), dtype=np.float32)
 
     stack = board._stack
@@ -333,7 +494,54 @@ def encode_lc0_full_c(board: chess.Board, *, history_len: int = 8) -> np.ndarray
     return out
 
 
-def _check_repetitions(board, stack, stack_len, n_steps, out, rep_base):
+def _encode_lc0_full_root_c(board: chess.Board, *, history_len: int = 8) -> np.ndarray:
+    """C-assisted bitboard conversion for the root-POV 13-plane history layout."""
+    out = np.zeros((112, 8, 8), dtype=np.float32)
+    root_turn = board.turn
+    stack = board._stack
+    stack_len = len(stack)
+
+    bbs_list: list[int] = []
+    turns_list: list[int] = []
+    n_steps = 0
+    for hist_idx in range(history_len):
+        if hist_idx == 0:
+            occ_w = int(board.occupied_co[chess.WHITE])
+            occ_b = int(board.occupied_co[chess.BLACK])
+            pawns, knights, bishops = board.pawns, board.knights, board.bishops
+            rooks, queens, kings = board.rooks, board.queens, board.kings
+        else:
+            si = stack_len - hist_idx
+            if si < 0:
+                break
+            s = stack[si]
+            occ_w = s.occupied_w
+            occ_b = s.occupied_b
+            pawns, knights, bishops = s.pawns, s.knights, s.bishops
+            rooks, queens, kings = s.rooks, s.queens, s.kings
+
+        turns_list.append(1 if root_turn == chess.WHITE else 0)
+        us_occ = occ_w if root_turn == chess.WHITE else occ_b
+        them_occ = occ_b if root_turn == chess.WHITE else occ_w
+        bbs_list.extend(
+            bb & occ
+            for occ in (us_occ, them_occ)
+            for bb in (pawns, knights, bishops, rooks, queens, kings)
+        )
+        n_steps += 1
+
+    bbs_arr = np.array(bbs_list, dtype=np.uint64)
+    turns_arr = np.array(turns_list, dtype=np.int32)
+    planes = _c_encode_piece_planes(bbs_arr, turns_arr, n_steps)
+    for hist_idx in range(n_steps):
+        out[hist_idx * 13:hist_idx * 13 + 12] = planes[hist_idx * 12:hist_idx * 12 + 12]
+
+    _check_repetitions(board, stack, stack_len, n_steps, out, 12, rep_stride=13)
+    _write_metadata_planes_root(out, board)
+    return out
+
+
+def _check_repetitions(board, stack, stack_len, n_steps, out, rep_base, *, rep_stride: int = 1):
     """Set repetition plane flags for each history step.
 
     Builds a set of all position keys seen before the history window,
@@ -371,6 +579,6 @@ def _check_repetitions(board, stack, stack_len, n_steps, out, rep_base):
             key = _skey(stack[stack_len - hist_idx])
 
         if key in seen:
-            out[rep_base + hist_idx, :, :] = 1.0
+            out[rep_base + hist_idx * rep_stride, :, :] = 1.0
 
         seen.add(key)

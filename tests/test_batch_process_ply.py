@@ -8,6 +8,7 @@ import chess
 import numpy as np
 import pytest
 
+from chess_anti_engine.encoding import encode_position
 from chess_anti_engine.encoding.cboard_encode import cboard_from_board_fast
 from chess_anti_engine.moves import (
     POLICY_SIZE,
@@ -117,7 +118,7 @@ def test_single_game_parity():
     # C function
     batch_process_ply = _require_batch_process_ply()
     (_c_x, _c_probs, c_wdl_net, c_wdl_search, c_priority,
-     c_keep, c_mask, c_ply, c_pov, c_over) = batch_process_ply(
+     _c_priority_policy_kl, _c_priority_q_delta, c_keep, c_mask, c_ply, c_pov, c_over) = batch_process_ply(
         [cb],
         pol.reshape(1, -1), wdl.reshape(1, -1),
         np.array([action], dtype=np.int32),
@@ -156,7 +157,7 @@ def test_multi_game():
         cboards, pol, wdl, actions, values, probs,
         1, 4.8, 3.8, 0.09, 1.0,
     )
-    x, p, _wn, _ws, _pri, _keep, mask, ply, pov, _over = result
+    x, p, _wn, _ws, _pri, _pri_kl, _pri_q, _keep, mask, ply, pov, _over = result
 
     assert x.shape == (n, 146, 8, 8)
     assert p.shape == (n, POLICY_SIZE)
@@ -165,6 +166,30 @@ def test_multi_game():
     assert all(mask[i].sum() == 20 for i in range(n))  # Starting position has 20 legal moves
     assert all(ply[i] == 0 for i in range(n))
     assert all(pov[i] == 1 for i in range(n))  # White to move
+
+
+@pytest.mark.skipif(not HAS_C, reason="C extension not available")
+def test_lc0_root_legacy_meta_mode_is_not_coerced_to_boolean():
+    board = chess.Board("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 37 1")
+    cb = cboard_from_board_fast(board)
+    action = int(move_to_index(next(iter(board.legal_moves)), board))
+    pol = np.zeros((1, POLICY_SIZE), dtype=np.float32)
+    wdl = np.zeros((1, 3), dtype=np.float32)
+    probs = np.zeros((1, POLICY_SIZE), dtype=np.float32)
+    probs[0, action] = 1.0
+
+    batch_process_ply = _require_batch_process_ply()
+    x, *_ = batch_process_ply(
+        [cb], pol, wdl,
+        np.array([action], dtype=np.int32),
+        np.array([0.0], dtype=np.float64),
+        probs,
+        0, 4.8, 3.8, 0.09, 1.0,
+        2,
+    )
+
+    ref = encode_position(board, add_features=True, input_history_encoding="lc0_root_legacy_meta")
+    np.testing.assert_array_equal(x[0], ref)
 
 
 @pytest.mark.skipif(not HAS_C, reason="C extension not available")
@@ -192,4 +217,4 @@ def test_game_over_detection():
         probs,
         0, 4.8, 3.8, 0.09, 1.0,
     )
-    assert result[9][0] == 1  # game_over = True
+    assert result[11][0] == 1  # game_over = True

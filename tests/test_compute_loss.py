@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from chess_anti_engine.moves import POLICY_SIZE
+from chess_anti_engine.moves import COMPACT_POLICY_SIZE, COMPACT_TO_FULL_POLICY, POLICY_SIZE
 from chess_anti_engine.train.losses import compute_loss
 
 
@@ -83,6 +83,31 @@ def test_compute_loss_all_scalars():
     losses = compute_loss(_fake_outputs(b), _full_batch(b))
     for k, v in losses.items():
         assert v.ndim == 0, f"{k} should be scalar, got shape {v.shape}"
+
+
+def test_compute_loss_accepts_compact_logits_with_full_policy_targets():
+    b = 2
+    outputs = _fake_outputs(b)
+    outputs["policy_own"] = torch.randn((b, COMPACT_POLICY_SIZE), requires_grad=True)
+    outputs["policy_soft"] = torch.randn((b, COMPACT_POLICY_SIZE), requires_grad=True)
+    outputs["policy_sf"] = torch.randn((b, COMPACT_POLICY_SIZE), requires_grad=True)
+    outputs["policy_future"] = torch.randn((b, COMPACT_POLICY_SIZE), requires_grad=True)
+
+    batch = _full_batch(b)
+    full_idx = int(COMPACT_TO_FULL_POLICY[0])
+    for key in ("policy_t", "policy_soft_t", "sf_policy_t", "future_policy_t"):
+        target = torch.zeros((b, POLICY_SIZE), dtype=torch.float32)
+        target[:, full_idx] = 1.0
+        batch[key] = target
+    for key in ("legal_mask", "sf_legal_mask", "future_legal_mask"):
+        batch[key] = torch.ones((b, POLICY_SIZE), dtype=torch.float32)
+    batch["has_sf_legal_mask"] = torch.ones((b,))
+    batch["has_future_legal_mask"] = torch.ones((b,))
+
+    losses = compute_loss(outputs, batch)
+    assert torch.isfinite(losses["total"])
+    losses["total"].backward()
+    assert outputs["policy_own"].grad is not None
 
 
 def test_total_is_finite():

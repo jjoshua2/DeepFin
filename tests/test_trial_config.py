@@ -60,6 +60,43 @@ def test_from_dict_overrides() -> None:
     assert tc.sf_pid_enabled is True
 
 
+def test_model_architecture_keys_are_parsed() -> None:
+    tc = TrialConfig.from_dict({
+        "policy_encoding": "lc0_1858",
+        "input_history_encoding": "lc0_root_legacy_meta",
+        "input_pos_encoding": "arc_adapter",
+        "qkv_projection": "split",
+        "use_deepnorm": True,
+        "input_global_embedding": "bt4_board_adapter",
+        "input_global_embedding_channels": 24,
+        "input_square_embedding": "add",
+        "smolgen_mode": "per_layer",
+        "smolgen_bias_scale": "layer_head",
+        "smolgen_bias_norm": "center_rms",
+        "arc_attention_bias": "basic",
+        "smolgen_relation_basis": True,
+        "smolgen_relation_norm": "branch_center_rms",
+        "smolgen_relation_coeff_norm": "rms",
+        "smolgen_relation_scale": "layer",
+    })
+    assert tc.policy_encoding == "lc0_1858"
+    assert tc.input_history_encoding == "lc0_root_legacy_meta"
+    assert tc.input_pos_encoding == "arc_adapter"
+    assert tc.qkv_projection == "split"
+    assert tc.use_deepnorm is True
+    assert tc.input_global_embedding == "bt4_board_adapter"
+    assert tc.input_global_embedding_channels == 24
+    assert tc.input_square_embedding == "add"
+    assert tc.smolgen_mode == "per_layer"
+    assert tc.smolgen_bias_scale == "layer_head"
+    assert tc.smolgen_bias_norm == "center_rms"
+    assert tc.arc_attention_bias == "basic"
+    assert tc.smolgen_relation_basis is True
+    assert tc.smolgen_relation_norm == "branch_center_rms"
+    assert tc.smolgen_relation_coeff_norm == "rms"
+    assert tc.smolgen_relation_scale == "layer"
+
+
 def test_fallback_keys() -> None:
     """Keys with fallbacks (eval_sf_nodes -> sf_nodes) should chain correctly."""
     # When neither is set, get default sf_nodes

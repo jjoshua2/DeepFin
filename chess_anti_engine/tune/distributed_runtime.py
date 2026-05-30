@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 
 from chess_anti_engine.model import ModelConfig, model_config_to_manifest_dict
-from chess_anti_engine.moves.encode import POLICY_ENCODING_AZ_4672, POLICY_SIZE
+from chess_anti_engine.moves import policy_size_for_encoding
 from chess_anti_engine.replay import ArrayReplayBuffer, DiskReplayBuffer
 from chess_anti_engine.replay.shard import (
     IN_FLIGHT_DIR_NAME,
@@ -314,6 +314,8 @@ def _publish_distributed_trial_state(
         "sf_multipv": int(config.get("sf_multipv", 1)),
         "sf_policy_temp": float(config.get("sf_policy_temp", 0.25)),
         "sf_policy_label_smooth": float(config.get("sf_policy_label_smooth", 0.05)),
+        "policy_encoding": str(model_cfg.policy_encoding),
+        "input_history_encoding": str(config.get("input_history_encoding", "legacy")),
         "sf_wdl_use_cp_logistic": bool(config.get("sf_wdl_use_cp_logistic", False)),
         "sf_wdl_cp_slope": float(config.get("sf_wdl_cp_slope", 0.010)),
         "sf_wdl_cp_draw_width": float(config.get("sf_wdl_cp_draw_width", 60.0)),
@@ -354,8 +356,9 @@ def _publish_distributed_trial_state(
         "recommended_worker": recommended_worker,
         "encoding": {
             "input_planes": 146,
-            "policy_size": int(POLICY_SIZE),
-            "policy_encoding": POLICY_ENCODING_AZ_4672,
+            "policy_size": int(policy_size_for_encoding(model_cfg.policy_encoding)),
+            "policy_encoding": str(model_cfg.policy_encoding),
+            "input_history_encoding": str(config.get("input_history_encoding", "legacy")),
         },
         "model": {
             "sha256": str(model_sha),

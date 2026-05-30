@@ -40,6 +40,28 @@ def _arrays(policy_size: int, n: int = 1) -> dict[str, np.ndarray]:
     }
 
 
+def test_take_write_prefix_preserves_scalar_chunk_fields(tmp_path) -> None:
+    rng = np.random.default_rng(0)
+    buf = DiskReplayBuffer(
+        10,
+        shard_dir=tmp_path / "replay",
+        rng=rng,
+        shuffle_cap=10,
+        shard_size=10,
+    )
+    chunk = _arrays(4672, n=5)
+    chunk["_policy_size"] = np.array(4672, dtype=np.int32)
+    buf._write_buf = [chunk]
+    buf._write_buf_sizes = [5]
+    buf._write_buf_rows = 5
+
+    taken = buf._take_write_prefix(2)
+
+    assert int(np.asarray(taken["_policy_size"]).item()) == 4672
+    assert int(np.asarray(buf._write_buf[0]["_policy_size"]).item()) == 4672
+    assert buf._write_buf[0]["x"].shape[0] == 3
+
+
 def test_shuffle_buffer_capped_by_capacity(tmp_path) -> None:
     rng = np.random.default_rng(0)
     buf = DiskReplayBuffer(

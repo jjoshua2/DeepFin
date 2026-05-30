@@ -14,8 +14,18 @@ import numpy as np
 import torch
 
 from chess_anti_engine.encoding import encode_positions_batch
+from chess_anti_engine.encoding.lc0 import (
+    LC0_HISTORY_ROOT_LEGACY_META,
+    normalize_lc0_history_encoding,
+    uses_lc0_root_history,
+)
 from chess_anti_engine.inference import BatchEvaluator, LocalModelEvaluator
-from chess_anti_engine.mcts._mcts_tree import MCTSTree, batch_encode_146
+from chess_anti_engine.mcts._mcts_tree import (
+    MCTSTree,
+    batch_encode_146,
+    batch_encode_146_lc0_root,
+    batch_encode_146_lc0_root_legacy_meta,
+)
 from chess_anti_engine.mcts.sampling import sample_action_with_temperature
 from chess_anti_engine.mcts.puct import (
     MCTSConfig,
@@ -23,7 +33,7 @@ from chess_anti_engine.mcts.puct import (
     _terminal_value,
     _value_scalar_from_wdl_logits,
 )
-from chess_anti_engine.moves import POLICY_SIZE
+from chess_anti_engine.moves import POLICY_SIZE, policy_batch_to_full_if_needed
 from chess_anti_engine.moves.encode import index_to_move_fast, legal_move_indices
 
 try:
@@ -95,6 +105,13 @@ def run_mcts_many_c(
   # ── 1. Root evaluation ───────────────────────────────────────────────
     use_cboard = _HAS_CBOARD
     root_cboards: list[CBoard] | None = (cboards if cboards is not None else [CBoard.from_board(b) for b in boards]) if use_cboard else None
+    hist_enc = normalize_lc0_history_encoding(cfg.input_history_encoding)
+    if hist_enc == LC0_HISTORY_ROOT_LEGACY_META:
+        batch_encode = batch_encode_146_lc0_root_legacy_meta
+    elif uses_lc0_root_history(hist_enc):
+        batch_encode = batch_encode_146_lc0_root
+    else:
+        batch_encode = batch_encode_146
 
   # Inplace path: write encodes directly into pinned host memory (slot 0)
   # and skip a numpy memcpy on submit. Falls back to evaluate_encoded for
@@ -110,17 +127,26 @@ def run_mcts_many_c(
 
     if pre_pol_logits is not None and pre_wdl_logits is not None:
         pol_logits_all = np.asarray(pre_pol_logits, dtype=np.float32)
+        pol_logits_all = policy_batch_to_full_if_needed(
+            pol_logits_all,
+            policy_encoding=cfg.policy_encoding,
+            fill_value=-1e9,
+        )
         wdl_logits_all = np.asarray(pre_wdl_logits, dtype=np.float32)
     elif _inplace and root_cboards is not None:
         root_buf = eval_impl.get_input_buffer(n_boards, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
-        batch_encode_146(root_cboards, root_buf)
+        batch_encode(root_cboards, root_buf)
         pol_logits_all, wdl_logits_all = eval_impl.evaluate_inplace(n_boards, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
     else:
         if use_cboard and root_cboards is not None:
             xs = np.empty((n_boards, 146, 8, 8), dtype=np.float32)
-            batch_encode_146(root_cboards, xs)
+            batch_encode(root_cboards, xs)
         else:
-            xs = encode_positions_batch(boards, add_features=True)
+            xs = encode_positions_batch(
+                boards,
+                add_features=True,
+                input_history_encoding=cfg.input_history_encoding,
+            )
         pol_logits_all, wdl_logits_all = eval_impl.evaluate_encoded(xs)
 
   # ── 2. Build C tree + init roots ─────────────────────────────────────
@@ -230,7 +256,7 @@ def run_mcts_many_c(
                 cb = ld[3]
                 assert cb is not None  # use_cboard branch always populates cb
                 _leaf_cbs.append(cb)
-            batch_encode_146(_leaf_cbs, leaf_xs)
+            batch_encode(_leaf_cbs, leaf_xs)
             pol_batch, wdl_batch = eval_impl.evaluate_inplace(n_leaves, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
         else:
             if use_cboard:
@@ -240,9 +266,13 @@ def run_mcts_many_c(
                     cb = ld[3]
                     assert cb is not None
                     _leaf_cbs2.append(cb)
-                batch_encode_146(_leaf_cbs2, leaf_xs)
+                batch_encode(_leaf_cbs2, leaf_xs)
             else:
-                leaf_xs = encode_positions_batch([ld[2] for ld in leaf_data], add_features=True)
+                leaf_xs = encode_positions_batch(
+                    [ld[2] for ld in leaf_data],
+                    add_features=True,
+                    input_history_encoding=cfg.input_history_encoding,
+                )
             pol_batch, wdl_batch = eval_impl.evaluate_encoded(leaf_xs)
         q_values = tree.batch_wdl_to_q(wdl_batch.reshape(-1, 3))
 
@@ -303,5 +333,3 @@ def run_mcts_many_c(
         legal_masks.append(mask)
 
     return probs_list, actions, values, legal_masks
-
-

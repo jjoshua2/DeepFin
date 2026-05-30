@@ -9,6 +9,7 @@ import struct
 import threading
 import time
 from dataclasses import dataclass, replace as dataclass_replace
+from functools import lru_cache
 from multiprocessing import resource_tracker
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
@@ -23,6 +24,7 @@ from chess_anti_engine.model import (
     load_state_dict_tolerant,
     model_config_from_manifest_dict,
 )
+from chess_anti_engine.moves import COMPACT_POLICY_SIZE, COMPACT_TO_FULL_POLICY
 from chess_anti_engine.utils.amp import inference_autocast
 
 log = logging.getLogger(__name__)
@@ -49,6 +51,34 @@ class AsyncBatchEvaluator(BatchEvaluator, Protocol):
 def _policy_output(out: dict[str, torch.Tensor]) -> torch.Tensor:
     """Extract policy tensor from model output (handles both key conventions)."""
     return out["policy"] if "policy" in out else out["policy_own"]
+
+
+@lru_cache(maxsize=16)
+def _compact_to_full_index(device_type: str, device_index: int | None) -> torch.Tensor:
+    device = torch.device(device_type, device_index) if device_index is not None else torch.device(device_type)
+    return torch.as_tensor(COMPACT_TO_FULL_POLICY, dtype=torch.long, device=device)
+
+
+def _compact_to_full_index_for(tensor: torch.Tensor) -> torch.Tensor:
+    device = tensor.device
+    return _compact_to_full_index(device.type, device.index)
+
+
+def _policy_output_full(out: dict[str, torch.Tensor]) -> torch.Tensor:
+    """Return dense 4672 policy logits for search-time consumers.
+
+    Compact 1858 checkpoints are the storage/training encoding, but the CBoard
+    and MCTS action id space remains the legacy 4672 ids. Invalid padded slots
+    are filled with -1e9 so downstream legal masking behaves as before.
+    """
+    pol = _policy_output(out)
+    if int(pol.shape[-1]) == int(_POLICY_SIZE):
+        return pol
+    if int(pol.shape[-1]) != int(COMPACT_POLICY_SIZE):
+        raise ValueError(f"unexpected policy output width {int(pol.shape[-1])}")
+    full = pol.new_full((*pol.shape[:-1], _POLICY_SIZE), -1e9)
+    full.index_copy_(-1, _compact_to_full_index_for(pol), pol)
+    return full
 
 
 def _forward_no_grad(
@@ -207,7 +237,7 @@ class LocalModelEvaluator:
             self.model, xt, device=self.device,
             use_amp=self._use_amp, amp_dtype=self._amp_dtype,
         )
-        policy_out = _policy_output(out)
+        policy_out = _policy_output_full(out)
         _cpu_f32 = torch.float32
         pol = policy_out.detach().to(dtype=_cpu_f32, device="cpu").numpy()
         wdl = out["wdl"].detach().to(dtype=_cpu_f32, device="cpu").numpy()
@@ -234,7 +264,7 @@ class LocalModelEvaluator:
                 self.model, xt, device=self.device,
                 use_amp=self._use_amp, amp_dtype=self._amp_dtype,
             )
-            policy_out = _policy_output(out)
+            policy_out = _policy_output_full(out)
             pol = policy_out.detach().float()
             wdl = out["wdl"].detach().float()
             return pol, wdl, None
@@ -254,7 +284,7 @@ class LocalModelEvaluator:
                 self.model, xt, device=self.device,
                 use_amp=self._use_amp, amp_dtype=self._amp_dtype,
             )
-            policy_out = _policy_output(out)
+            policy_out = _policy_output_full(out)
             pol = policy_out.detach().to(dtype=torch.float32, device="cpu", non_blocking=True)
             wdl = out["wdl"].detach().to(dtype=torch.float32, device="cpu", non_blocking=True)
             done = torch.cuda.Event()
@@ -425,14 +455,14 @@ class DirectGPUEvaluator(LocalModelEvaluator):
                 self.model, xt, device=self.device,
                 use_amp=self._use_amp, amp_dtype=self._amp_dtype,
             )
-            return _policy_output(out).detach().float().numpy(), out["wdl"].detach().float().numpy()
+            return _policy_output_full(out).detach().float().numpy(), out["wdl"].detach().float().numpy()
 
         xt = self._device_input(bsz, slot=slot)
         out = _forward_no_grad(
             self.model, xt, device=self.device,
             use_amp=self._use_amp, amp_dtype=self._amp_dtype,
         )
-        pin_pol[:bsz].copy_(_policy_output(out).detach().float(), non_blocking=True)
+        pin_pol[:bsz].copy_(_policy_output_full(out).detach().float(), non_blocking=True)
         pin_wdl[:bsz].copy_(out["wdl"].detach().float(), non_blocking=True)
         done = torch.cuda.Event()
         done.record(torch.cuda.current_stream(torch.device(self.device)))
@@ -547,7 +577,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
                 self.model, xt, device=self.device,
                 use_amp=self._use_amp, amp_dtype=self._amp_dtype,
             )
-            pin_pol[:bsz].copy_(_policy_output(out).detach().float(), non_blocking=True)
+            pin_pol[:bsz].copy_(_policy_output_full(out).detach().float(), non_blocking=True)
             pin_wdl[:bsz].copy_(out["wdl"].detach().float(), non_blocking=True)
             done = torch.cuda.Event()
             done.record(stream)
@@ -586,7 +616,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
                 if _supports_legal_policy_forward(self.model):
                     legal_logits = _policy_output(out).to(torch.bfloat16)
                 else:
-                    policy = _policy_output(out)[:bsz]
+                    policy = _policy_output_full(out)[:bsz]
                     rows = torch.repeat_interleave(torch.arange(bsz, device=self.device), legal_counts_gpu)
                     legal_logits = policy[rows, legal_flat_gpu].to(torch.bfloat16)
                 pin_pol[:n_legal].copy_(legal_logits.view(torch.uint16), non_blocking=True)
@@ -901,7 +931,7 @@ class AOTEvaluator:
         with torch.no_grad():
             out = model(xt)
 
-        pol = _policy_output(out)[:bsz].detach().float().cpu().numpy()
+        pol = _policy_output_full(out)[:bsz].detach().float().cpu().numpy()
         wdl = out["wdl"][:bsz].detach().float().cpu().numpy()
         return pol, wdl
 
@@ -924,7 +954,7 @@ class AOTEvaluator:
         with torch.no_grad():
             out = model(xt)
 
-        pol = _policy_output(out)[:bsz].detach().to(
+        pol = _policy_output_full(out)[:bsz].detach().to(
             dtype=torch.float32, device="cpu", non_blocking=True,
         )
         wdl = out["wdl"][:bsz].detach().to(
@@ -1398,7 +1428,11 @@ class SlotBroker:
         if _timing is not None:
             _timing["forward_s"] += time.perf_counter() - _t_forward0
         _t_output0 = time.perf_counter()
-        policy_gpu = _policy_output(out).detach()
+        policy_gpu = (
+            _policy_output(out).detach()
+            if compact_legal and (use_legal_rows_forward or use_legal_forward)
+            else _policy_output_full(out).detach()
+        )
         wdl_gpu = out["wdl"].detach().float()
         self._pinned_wdl[:total].copy_(wdl_gpu[:total], non_blocking=True)
         compact_bits_np: np.ndarray | None = None
@@ -2097,6 +2131,21 @@ class SharedSlotBroker:
             bool(mc.get("use_smolgen", True)),
             bool(mc.get("use_nla", False)),
             bool(mc.get("use_qk_rmsnorm", False)),
+            str(mc.get("input_pos_encoding", "none")),
+            bool(mc.get("use_deepnorm", False)),
+            str(mc.get("policy_encoding", "az_4672")),
+            str(mc.get("input_global_embedding", "none")),
+            int(mc.get("input_global_embedding_channels", 0)),
+            str(mc.get("input_square_embedding", "none")),
+            str(mc.get("qkv_projection", "fused")),
+            str(mc.get("smolgen_mode", "shared")),
+            str(mc.get("smolgen_bias_scale", "none")),
+            str(mc.get("smolgen_bias_norm", "none")),
+            str(mc.get("arc_attention_bias", "none")),
+            bool(mc.get("smolgen_relation_basis", False)),
+            str(mc.get("smolgen_relation_norm", "none")),
+            str(mc.get("smolgen_relation_coeff_norm", "none")),
+            str(mc.get("smolgen_relation_scale", "none")),
         )
         if self._model_config_key is not None and config_key != self._model_config_key:
             print(
@@ -2118,6 +2167,20 @@ class SharedSlotBroker:
             num_layers=config_key[2], num_heads=config_key[3],
             ffn_mult=config_key[4], use_smolgen=config_key[5],
             use_nla=config_key[6], use_qk_rmsnorm=config_key[7],
+            input_pos_encoding=config_key[8], use_deepnorm=config_key[9],
+            policy_encoding=config_key[10],
+            input_global_embedding=config_key[11],
+            input_global_embedding_channels=config_key[12],
+            input_square_embedding=config_key[13],
+            qkv_projection=config_key[14],
+            smolgen_mode=config_key[15],
+            smolgen_bias_scale=config_key[16],
+            smolgen_bias_norm=config_key[17],
+            arc_attention_bias=config_key[18],
+            smolgen_relation_basis=config_key[19],
+            smolgen_relation_norm=config_key[20],
+            smolgen_relation_coeff_norm=config_key[21],
+            smolgen_relation_scale=config_key[22],
             use_gradient_checkpointing=False,
         )
 
@@ -2165,11 +2228,11 @@ class SharedSlotBroker:
             if use_cuda and stream is not None:
                 with torch.cuda.stream(stream):
                     out = _forward_no_grad(model, xt, device=self.device)
-                    pol = _policy_output(out).detach().float().to("cpu", non_blocking=True)
+                    pol = _policy_output_full(out).detach().float().to("cpu", non_blocking=True)
                     wdl = out["wdl"].detach().float().to("cpu", non_blocking=True)
             else:
                 out = _forward_no_grad(model, xt, device=self.device)
-                pol = _policy_output(out).detach().float().cpu()
+                pol = _policy_output_full(out).detach().float().cpu()
                 wdl = out["wdl"].detach().float().cpu()
 
             results.append((trial_id, ready, batch_sizes, pol, wdl))

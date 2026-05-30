@@ -353,6 +353,12 @@ def _build_replay_samples(
                 policy_target=eff_probs,
                 wdl_target=int(wdl),
                 priority=float(rec.priority),
+                priority_policy_kl=(
+                    None if rec.priority_policy_kl is None else float(rec.priority_policy_kl)
+                ),
+                priority_q_delta=(
+                    None if rec.priority_q_delta is None else float(rec.priority_q_delta)
+                ),
                 has_policy=bool(rec.has_policy),
                 sf_wdl=rec.sf_wdl,
                 sf_move_index=rec.sf_move_index,

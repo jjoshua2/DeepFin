@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import torch
 
-from chess_anti_engine.moves import POLICY_SIZE
+from chess_anti_engine.moves import COMPACT_POLICY_SIZE, POLICY_SIZE
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.dataset import collate, collate_arrays
 
@@ -47,6 +47,23 @@ def test_collate_minimal_shapes():
     assert batch["wdl_t"].shape == (3,)
     assert batch["wdl_t"].dtype == torch.int64
     assert batch["has_policy"].shape == (3,)
+
+
+def test_collate_compact_policy_shapes():
+    samples = []
+    for _ in range(2):
+        x = np.random.randn(146, 8, 8).astype(np.float32)
+        pol = np.random.rand(COMPACT_POLICY_SIZE).astype(np.float32)
+        pol /= pol.sum()
+        s = ReplaySample(x=x, policy_target=pol, wdl_target=1, priority=1.0, has_policy=True)
+        s.policy_soft_target = pol.copy()
+        s.legal_mask = np.ones(COMPACT_POLICY_SIZE, dtype=np.float32)
+        samples.append(s)
+
+    batch = collate(samples, device="cpu")
+    assert batch["policy_t"].shape == (2, COMPACT_POLICY_SIZE)
+    assert batch["policy_soft_t"].shape == (2, COMPACT_POLICY_SIZE)
+    assert batch["legal_mask"].shape == (2, COMPACT_POLICY_SIZE)
 
 
 def test_collate_optional_flags_when_absent():

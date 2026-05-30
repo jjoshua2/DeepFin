@@ -206,6 +206,7 @@ def normalize_policy_encoding(policy_encoding: str | None) -> str:
     aliases = {
         "az": POLICY_ENCODING_AZ_4672,
         "az_4672": POLICY_ENCODING_AZ_4672,
+        "lc0_4672": POLICY_ENCODING_AZ_4672,
         "4672": POLICY_ENCODING_AZ_4672,
         "8x8x73": POLICY_ENCODING_AZ_4672,
         "lc0": POLICY_ENCODING_LC0_1858,
@@ -380,6 +381,48 @@ def policy_vector_to_full(
     out = np.full((POLICY_SIZE,), fill_value, dtype=p.dtype)
     out[COMPACT_TO_FULL_POLICY] = p
     return out
+
+
+def policy_batch_to_full(
+    policies: np.ndarray,
+    *,
+    policy_encoding: str | None = None,
+    fill_value: float = 0.0,
+) -> np.ndarray:
+    enc = normalize_policy_encoding(policy_encoding)
+    p = np.asarray(policies)
+    if p.ndim != 2:
+        raise ValueError(f"policies must be 2D, got {p.shape}")
+    if enc == POLICY_ENCODING_AZ_4672:
+        if int(p.shape[1]) != int(POLICY_SIZE):
+            raise ValueError(f"policies must be (N,{POLICY_SIZE}), got {p.shape}")
+        return p
+    if int(p.shape[1]) != int(COMPACT_POLICY_SIZE):
+        raise ValueError(f"compact policies must be (N,{COMPACT_POLICY_SIZE}), got {p.shape}")
+    out = np.full((int(p.shape[0]), POLICY_SIZE), fill_value, dtype=p.dtype)
+    out[:, COMPACT_TO_FULL_POLICY] = p
+    return out
+
+
+def policy_batch_to_full_if_needed(
+    policies: np.ndarray,
+    *,
+    policy_encoding: str | None = None,
+    fill_value: float = 0.0,
+) -> np.ndarray:
+    """Return full 4672 policy rows, using the declared source encoding.
+
+    Search always consumes full action ids. Model outputs may already be full,
+    or may be compact LC0-1858 rows. Avoid shape-sniffing "any non-full means
+    compact" at call sites: the explicit policy encoding decides which
+    projection is legal and wrong-width arrays fail loudly.
+    """
+    p = np.asarray(policies)
+    if p.ndim != 2:
+        raise ValueError(f"policies must be 2D, got {p.shape}")
+    if int(p.shape[1]) == int(POLICY_SIZE):
+        return p
+    return policy_batch_to_full(p, policy_encoding=policy_encoding, fill_value=fill_value)
 
 
 def _build_index_to_move_lut() -> np.ndarray:

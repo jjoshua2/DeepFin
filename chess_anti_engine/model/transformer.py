@@ -9,9 +9,20 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint as grad_checkpoint
 
-from chess_anti_engine.moves import POLICY_SIZE, build_policy_gather_tables
+from chess_anti_engine.moves import (
+    COMPACT_POLICY_SIZE,
+    COMPACT_TO_FULL_POLICY,
+    POLICY_ENCODING_AZ_4672,
+    POLICY_ENCODING_LC0_1858,
+    POLICY_SIZE,
+    build_policy_gather_tables,
+    normalize_policy_encoding,
+    policy_size_for_encoding,
+)
 
 _VOLATILITY_HEAD_NEUTRAL_OUTPUT = 0.01
+_ARC_POS_CHANNELS = 64
+_ARC_RELATION_CHANNELS = 5
 
 
 def _softplus_inverse(y: float) -> float:
@@ -19,32 +30,112 @@ def _softplus_inverse(y: float) -> float:
     return float(math.log(math.expm1(y)))
 
 
-def _rmsnorm(normalized_shape: int, *, eps: float = 1e-6) -> nn.Module:
-    """Return an RMSNorm module.
+class _DtypeMatchedRMSNorm(nn.Module):
+    """RMSNorm with an affine scale cast to the activation dtype.
 
-    Uses torch.nn.RMSNorm when available; otherwise falls back to a minimal custom impl.
+    Q/K norm runs inside bf16 autocast, while parameters are kept in fp32. PyTorch's
+    RMSNorm warns and misses its fused kernel for that dtype mismatch.
     """
 
-    if hasattr(nn, "RMSNorm"):
-  # PyTorch 2.0+
-        return nn.RMSNorm(int(normalized_shape), eps=float(eps))
+    def __init__(self, normalized_shape: int, *, eps: float = 1e-6):
+        super().__init__()
+        self.normalized_shape = (int(normalized_shape),)
+        self.eps = float(eps)
+        self.weight = nn.Parameter(torch.ones(self.normalized_shape))
 
-    class _FallbackRMSNorm(nn.Module):
-        def __init__(self, d: int, *, eps: float):
-            super().__init__()
-            self.eps = float(eps)
-            self.weight = nn.Parameter(torch.ones((int(d),)))
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # skylos: ignore (nn.Module dispatch via __call__)
+        weight = self.weight
+        if weight.dtype != x.dtype or weight.device != x.device:
+            weight = weight.to(device=x.device, dtype=x.dtype)
+        if hasattr(F, "rms_norm"):
+            return F.rms_norm(x, self.normalized_shape, weight, self.eps)
+        y = x * x.pow(2).mean(dim=-1, keepdim=True).add(self.eps).rsqrt()
+        return y * weight
 
-        def forward(self, x: torch.Tensor) -> torch.Tensor:  # skylos: ignore (nn.Module dispatch via __call__)
-  # x: (..., d)
-            rms = torch.sqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
-            return (x / rms) * self.weight
 
-    return _FallbackRMSNorm(int(normalized_shape), eps=float(eps))
+def _rmsnorm(normalized_shape: int, *, eps: float = 1e-6) -> nn.Module:
+    return _DtypeMatchedRMSNorm(int(normalized_shape), eps=float(eps))
+
+
+def _make_arc_pos_encoding() -> torch.Tensor:
+    """LC0-style fixed square-relation channels, shape ``(1, 64, 64)``."""
+    pos = torch.zeros((1, 64, _ARC_POS_CHANNELS), dtype=torch.float32)
+    queen_dirs = (
+        (0, 1), (0, -1), (1, 0), (-1, 0),
+        (1, 1), (1, -1), (-1, 1), (-1, -1),
+    )
+    knight_dirs = (
+        (1, 2), (2, 1), (2, -1), (1, -2),
+        (-1, -2), (-2, -1), (-2, 1), (-1, 2),
+    )
+    for rank in range(8):
+        for file in range(8):
+            sq = rank * 8 + file
+            pos[0, sq, sq] = -1.0
+            for dr, df in queen_dirs:
+                rr = rank + dr
+                ff = file + df
+                while 0 <= rr < 8 and 0 <= ff < 8:
+                    pos[0, sq, rr * 8 + ff] = 1.0
+                    rr += dr
+                    ff += df
+            for dr, df in knight_dirs:
+                rr = rank + dr
+                ff = file + df
+                if 0 <= rr < 8 and 0 <= ff < 8:
+                    pos[0, sq, rr * 8 + ff] = 1.0
+    return pos
+
+
+def _make_arc_relation_basis() -> torch.Tensor:
+    """Fixed chess square-pair relation masks, shape ``(R, 64, 64)``."""
+    basis = torch.zeros((_ARC_RELATION_CHANNELS, 64, 64), dtype=torch.float32)
+    for src_rank in range(8):
+        for src_file in range(8):
+            src = src_rank * 8 + src_file
+            for dst_rank in range(8):
+                for dst_file in range(8):
+                    dst = dst_rank * 8 + dst_file
+                    dr = dst_rank - src_rank
+                    df = dst_file - src_file
+                    adr = abs(dr)
+                    adf = abs(df)
+                    if dst == src:
+                        basis[0, src, dst] = 1.0
+                    elif dr == 0 or df == 0:
+                        basis[1, src, dst] = 1.0
+                    elif adr == adf:
+                        basis[2, src, dst] = 1.0
+                    elif (adr, adf) in ((1, 2), (2, 1)):
+                        basis[3, src, dst] = 1.0
+                    elif max(adr, adf) == 1:
+                        basis[4, src, dst] = 1.0
+    return basis
+
+
+def _normalize_relation_basis(basis: torch.Tensor, mode: str) -> torch.Tensor:
+    mode = str(mode).lower().strip()
+    if mode == "basis_center":
+        return _normalize_attention_bias(basis, "center")
+    if mode == "basis_center_rms":
+        return _normalize_attention_bias(basis, "center_rms")
+    return basis
+
+
+def _normalize_attention_bias(bias: torch.Tensor, mode: str, *, eps: float = 1e-6) -> torch.Tensor:
+    mode = str(mode).lower().strip()
+    if mode == "none":
+        return bias
+    if mode == "center":
+        return bias - bias.mean(dim=-1, keepdim=True)
+    if mode == "center_rms":
+        var, mean = torch.var_mean(bias, dim=-1, correction=0, keepdim=True)
+        return (bias - mean) * torch.rsqrt(var + float(eps))
+    raise ValueError(f"Unsupported smolgen_bias_norm: {mode!r}")
 
 
 class AttentionPolicyHead(nn.Module):
-    """Attention-based policy head that emits LC0-style 8x8x73 = 4672 logits.
+    """Attention-based policy head that emits LC0-style policy logits.
 
     We compute from->to logits via scaled dot-product between from-square queries
     and to-square keys, then gather those logits into the LC0 73-plane encoding:
@@ -52,7 +143,10 @@ class AttentionPolicyHead(nn.Module):
     - planes 56..63: knight moves
     - planes 64..72: underpromotions (separate linear head)
 
-    Output is a flat `(B, 4672)` tensor, indexed as `from_sq * 73 + plane`.
+    By default output is the legacy padded `(B, 4672)` tensor, indexed as
+    `from_sq * 73 + plane`. With `policy_encoding="lc0_1858"` dense forward
+    gathers only geometrically valid LC0 move classes, while `forward_legal*`
+    still accepts full 4672 action ids for the MCTS/CBoard action space.
     """
 
   # Registered as buffers in __init__ via register_buffer; these declarations are
@@ -60,9 +154,18 @@ class AttentionPolicyHead(nn.Module):
     to_sq: torch.Tensor
     to_valid: torch.Tensor
     promo_from: torch.Tensor
+    compact_to_full: torch.Tensor
 
-    def __init__(self, embed_dim: int, policy_dim: int | None = None):
+    def __init__(
+        self,
+        embed_dim: int,
+        policy_dim: int | None = None,
+        *,
+        policy_encoding: str | None = None,
+    ):
         super().__init__()
+        self.policy_encoding = normalize_policy_encoding(policy_encoding)
+        self.policy_size = policy_size_for_encoding(self.policy_encoding)
         if policy_dim is None:
             policy_dim = embed_dim
         self.q = nn.Linear(embed_dim, policy_dim)
@@ -76,13 +179,22 @@ class AttentionPolicyHead(nn.Module):
 
         tables = build_policy_gather_tables()
         self.register_buffer("to_sq", torch.from_numpy(tables.to_sq).long(), persistent=False)  # (64,64)
+        self.to_sq = cast(torch.Tensor, self._buffers["to_sq"])
         self.register_buffer("to_valid", torch.from_numpy(tables.valid).bool(), persistent=False)  # (64,64)
+        self.to_valid = cast(torch.Tensor, self._buffers["to_valid"])
+        self.register_buffer(
+            "compact_to_full",
+            torch.from_numpy(COMPACT_TO_FULL_POLICY).long(),
+            persistent=False,
+        )
+        self.compact_to_full = cast(torch.Tensor, self._buffers["compact_to_full"])
 
         promo_from = torch.zeros((64,), dtype=torch.bool)
         for sq in range(64):
             if (sq // 8) == 6:  # oriented rank 7
                 promo_from[sq] = True
         self.register_buffer("promo_from", promo_from, persistent=False)
+        self.promo_from = cast(torch.Tensor, self._buffers["promo_from"])
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         b = x.shape[0]
@@ -101,7 +213,13 @@ class AttentionPolicyHead(nn.Module):
 
         logits = torch.cat([logits_64, up], dim=-1)  # (B,64,73)
         out = logits.reshape(b, 64 * 73)
-        assert out.shape[-1] == POLICY_SIZE
+        if self.policy_encoding == POLICY_ENCODING_LC0_1858:
+            out = out.index_select(dim=-1, index=self.compact_to_full)
+            assert self.policy_size == COMPACT_POLICY_SIZE
+            assert out.shape[-1] == COMPACT_POLICY_SIZE
+        else:
+            assert self.policy_size == POLICY_SIZE
+            assert out.shape[-1] == POLICY_SIZE
         return out
 
     def forward_legal(
@@ -255,10 +373,30 @@ class Smolgen(nn.Module):
         hidden_channels: int = 32,
         hidden_sz: int = 256,
         gen_sz: int = 256,
+        gen_weight: nn.Linear | None = None,
+        use_relation_basis: bool = False,
+        relation_norm: str = "none",
+        relation_coeff_norm: str = "none",
+        relation_scale: str = "none",
     ):
         super().__init__()
         self.num_heads = int(num_heads)
         self.gen_sz = int(gen_sz)
+        self.relation_norm = str(relation_norm).lower().strip()
+        if self.relation_norm not in (
+            "none",
+            "branch_center",
+            "branch_center_rms",
+            "basis_center",
+            "basis_center_rms",
+        ):
+            raise ValueError(f"Unsupported smolgen_relation_norm: {relation_norm!r}")
+        self.relation_coeff_norm = str(relation_coeff_norm).lower().strip()
+        if self.relation_coeff_norm not in ("none", "rms"):
+            raise ValueError(f"Unsupported smolgen_relation_coeff_norm: {relation_coeff_norm!r}")
+        self.relation_scale = str(relation_scale).lower().strip()
+        if self.relation_scale not in ("none", "layer", "layer_head"):
+            raise ValueError(f"Unsupported smolgen_relation_scale: {relation_scale!r}")
   # Per-square compression (no bias, matching LC0).
         self.compress = nn.Linear(embed_dim, hidden_channels, bias=False)
         flat_dim = 64 * hidden_channels
@@ -268,7 +406,25 @@ class Smolgen(nn.Module):
         self.dense2 = nn.Linear(hidden_sz, num_heads * gen_sz)
         self.ln2 = nn.LayerNorm(num_heads * gen_sz)
   # Per-head weight generation: gen_sz → 64*64 (no bias, matching LC0).
-        self.gen_weight = nn.Linear(gen_sz, 64 * 64, bias=False)
+        self.gen_weight = (
+            gen_weight if gen_weight is not None else nn.Linear(gen_sz, 64 * 64, bias=False)
+        )
+        self.relation_weight: nn.Linear | None = None
+        if use_relation_basis:
+            self.relation_weight = nn.Linear(gen_sz, _ARC_RELATION_CHANNELS, bias=False)
+            nn.init.zeros_(self.relation_weight.weight)
+        self.relation_scale_param: nn.Parameter | None = None
+        if use_relation_basis and self.relation_scale == "layer":
+            self.relation_scale_param = nn.Parameter(torch.ones(()))
+        elif use_relation_basis and self.relation_scale == "layer_head":
+            self.relation_scale_param = nn.Parameter(torch.ones(num_heads))
+        self.register_buffer(
+            "relation_basis_flat",
+            _normalize_relation_basis(_make_arc_relation_basis(), self.relation_norm).flatten(1)
+            if use_relation_basis
+            else torch.empty(0, dtype=torch.float32),
+            persistent=False,
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
   # x: (B,64,D) -> bias: (B,H,64,64)
@@ -279,7 +435,29 @@ class Smolgen(nn.Module):
         h = self.ln2(F.silu(self.dense2(h)))  # (B, H * gen_sz)
         h = h.view(b, self.num_heads, self.gen_sz)  # (B, H, gen_sz)
         bias = self.gen_weight(h)  # (B, H, 64*64)
-        return bias.view(b, self.num_heads, 64, 64)
+        bias = bias.view(b, self.num_heads, 64, 64)
+        relation_weight = self.relation_weight
+        if relation_weight is not None:
+            coeff = relation_weight(h)
+            if self.relation_coeff_norm == "rms":
+                coeff = coeff * torch.rsqrt(coeff.square().mean(dim=-1, keepdim=True) + 1e-6)
+            basis = cast(torch.Tensor, self._buffers["relation_basis_flat"]).to(dtype=bias.dtype, device=bias.device)
+            relation_bias = torch.matmul(coeff, basis).view(b, self.num_heads, 64, 64)
+            if self.relation_norm == "branch_center":
+                relation_bias = _normalize_attention_bias(relation_bias, "center")
+            elif self.relation_norm == "branch_center_rms":
+                relation_bias = _normalize_attention_bias(relation_bias, "center_rms")
+            scale = self.relation_scale_param
+            if scale is not None:
+                if scale.ndim == 0:
+                    relation_bias = relation_bias * scale.to(dtype=bias.dtype, device=bias.device)
+                else:
+                    relation_bias = relation_bias * scale.to(
+                        dtype=bias.dtype,
+                        device=bias.device,
+                    ).view(1, -1, 1, 1)
+            bias = bias + relation_bias
+        return bias
 
 
 class _NLAProjection(nn.Module):
@@ -306,6 +484,13 @@ class TransformerBlock(nn.Module):
     the attention dot product to keep attention logits in a stable range.
     """
 
+    q_proj: _NLAProjection | nn.Linear
+    k_proj: _NLAProjection | nn.Linear
+    v_proj: _NLAProjection | nn.Linear
+    qkv_proj: nn.Linear
+    out_proj: nn.Linear
+    ffn: nn.Sequential
+
     def __init__(
         self,
         embed_dim: int,
@@ -314,7 +499,9 @@ class TransformerBlock(nn.Module):
         ffn_mult: float = 2,
         dropout: float = 0.0,
         use_nla: bool = False,
+        qkv_projection: str = "fused",
         use_qk_rmsnorm: bool = False,
+        residual_branch_scale: float = 1.0,
     ):
         super().__init__()
         assert embed_dim % num_heads == 0
@@ -322,13 +509,22 @@ class TransformerBlock(nn.Module):
         self.num_heads = int(num_heads)
         self.head_dim = self.embed_dim // self.num_heads
         self.dropout = float(dropout)
+        self.residual_branch_scale = float(residual_branch_scale)
 
-  # QKV projections (fused into single linear for non-NLA path)
+        self.qkv_projection = str(qkv_projection).lower().strip()
+        if self.qkv_projection not in ("fused", "split"):
+            raise ValueError(f"Unsupported qkv_projection: {qkv_projection!r}")
+
+  # QKV projections (fused by default; split is useful for optimizer ablations).
         self.use_nla = bool(use_nla)
         if use_nla:
             self.q_proj = _NLAProjection(self.embed_dim, self.embed_dim)
             self.k_proj = _NLAProjection(self.embed_dim, self.embed_dim)
             self.v_proj = _NLAProjection(self.embed_dim, self.embed_dim)
+        elif self.qkv_projection == "split":
+            self.q_proj = nn.Linear(self.embed_dim, self.embed_dim)
+            self.k_proj = nn.Linear(self.embed_dim, self.embed_dim)
+            self.v_proj = nn.Linear(self.embed_dim, self.embed_dim)
         else:
             self.qkv_proj = nn.Linear(self.embed_dim, 3 * self.embed_dim)
 
@@ -351,7 +547,7 @@ class TransformerBlock(nn.Module):
     def forward(self, x: torch.Tensor, smolgen_bias: torch.Tensor | None = None) -> torch.Tensor:
   # x: (B,64,D), smolgen_bias: (B,H,64,64) or None
         b, t, d = x.shape
-        if self.use_nla:
+        if self.use_nla or self.qkv_projection == "split":
             q = self.q_proj(x)
             k = self.k_proj(x)
             v = self.v_proj(x)
@@ -360,7 +556,7 @@ class TransformerBlock(nn.Module):
             q, k, v = qkv.unbind(dim=2)
 
   # (B,H,T,hd)
-        if self.use_nla:
+        if self.use_nla or self.qkv_projection == "split":
             q = q.view(b, t, self.num_heads, self.head_dim).transpose(1, 2)
             k = k.view(b, t, self.num_heads, self.head_dim).transpose(1, 2)
             v = v.view(b, t, self.num_heads, self.head_dim).transpose(1, 2)
@@ -381,8 +577,9 @@ class TransformerBlock(nn.Module):
         out = out.transpose(1, 2).contiguous().view(b, t, d)  # (B,T,D)
         out = self.out_proj(out)
 
-        x = self.ln1(x + out)
-        x = self.ln2(x + self.ffn(x))
+        branch_scale = self.residual_branch_scale
+        x = self.ln1(x + out * branch_scale)
+        x = self.ln2(x + self.ffn(x) * branch_scale)
         return x
 
 
@@ -398,6 +595,22 @@ class TransformerConfig:
     use_nla: bool = False
     use_qk_rmsnorm: bool = False
     use_gradient_checkpointing: bool = False
+    input_pos_encoding: str = "none"
+    qkv_projection: str = "fused"
+    use_deepnorm: bool = False
+    policy_encoding: str = POLICY_ENCODING_AZ_4672
+    input_global_embedding: str = "none"
+    input_global_embedding_channels: int = 0
+    input_square_embedding: str = "none"
+    smolgen_mode: str = "shared"  # shared | per_layer
+    smolgen_bias_scale: str = "none"  # none | layer | layer_head
+    smolgen_bias_norm: str = "none"  # none | center | center_rms
+    arc_attention_bias: str = "none"  # none | basic
+    smolgen_relation_basis: bool = False
+    # none | branch_center | branch_center_rms | basis_center | basis_center_rms
+    smolgen_relation_norm: str = "none"
+    smolgen_relation_coeff_norm: str = "none"  # none | rms
+    smolgen_relation_scale: str = "none"  # none | layer | layer_head
 
 
 class ChessNet(nn.Module):
@@ -416,20 +629,155 @@ class ChessNet(nn.Module):
     are integrated; but the forward pass and shapes are fixed now.
     """
 
+    embed: nn.Linear
+
     def __init__(self, cfg: TransformerConfig):
         super().__init__()
         self.cfg = cfg
         self._use_grad_ckpt = bool(cfg.use_gradient_checkpointing)
         self._inference_only = False
+        self.resid_channel_dropout = 0.0
+        self.resid_channel_balance_weight = 0.0
+        self._last_channel_balance_loss: torch.Tensor | None = None
+        self.policy_encoding = normalize_policy_encoding(cfg.policy_encoding)
+        self.policy_size = policy_size_for_encoding(self.policy_encoding)
+        self.input_global_embedding = str(cfg.input_global_embedding).lower().strip()
+        if self.input_global_embedding not in ("none", "bt4_board", "bt4_board_adapter"):
+            raise ValueError(f"Unsupported input_global_embedding: {cfg.input_global_embedding!r}")
+        self.input_global_embedding_channels = (
+            int(cfg.input_global_embedding_channels)
+            if int(cfg.input_global_embedding_channels) > 0
+            else int(cfg.embed_dim) // 2
+        )
+        self.input_square_embedding = str(cfg.input_square_embedding).lower().strip()
+        if self.input_square_embedding not in ("none", "add", "ma_gate"):
+            raise ValueError(f"Unsupported input_square_embedding: {cfg.input_square_embedding!r}")
+        self.input_pos_encoding = str(cfg.input_pos_encoding)
+        if self.input_pos_encoding not in ("none", "arc", "arc_adapter"):
+            raise ValueError(f"Unsupported input_pos_encoding: {self.input_pos_encoding!r}")
+        self.qkv_projection = str(cfg.qkv_projection).lower().strip()
+        if self.qkv_projection not in ("fused", "split"):
+            raise ValueError(f"Unsupported qkv_projection: {cfg.qkv_projection!r}")
+        self.smolgen_mode = str(cfg.smolgen_mode).lower().strip()
+        if self.smolgen_mode not in ("shared", "per_layer"):
+            raise ValueError(f"Unsupported smolgen_mode: {cfg.smolgen_mode!r}")
+        self.smolgen_bias_scale = str(cfg.smolgen_bias_scale).lower().strip()
+        if self.smolgen_bias_scale not in ("none", "layer", "layer_head"):
+            raise ValueError(f"Unsupported smolgen_bias_scale: {cfg.smolgen_bias_scale!r}")
+        self.smolgen_bias_norm = str(cfg.smolgen_bias_norm).lower().strip()
+        if self.smolgen_bias_norm not in ("none", "center", "center_rms"):
+            raise ValueError(f"Unsupported smolgen_bias_norm: {cfg.smolgen_bias_norm!r}")
+        self.arc_attention_bias = str(cfg.arc_attention_bias).lower().strip()
+        if self.arc_attention_bias not in ("none", "basic"):
+            raise ValueError(f"Unsupported arc_attention_bias: {cfg.arc_attention_bias!r}")
+        self.smolgen_relation_norm = str(cfg.smolgen_relation_norm).lower().strip()
+        if self.smolgen_relation_norm not in (
+            "none",
+            "branch_center",
+            "branch_center_rms",
+            "basis_center",
+            "basis_center_rms",
+        ):
+            raise ValueError(f"Unsupported smolgen_relation_norm: {cfg.smolgen_relation_norm!r}")
+        self.smolgen_relation_coeff_norm = str(cfg.smolgen_relation_coeff_norm).lower().strip()
+        if self.smolgen_relation_coeff_norm not in ("none", "rms"):
+            raise ValueError(
+                f"Unsupported smolgen_relation_coeff_norm: {cfg.smolgen_relation_coeff_norm!r}"
+            )
+        self.smolgen_relation_scale = str(cfg.smolgen_relation_scale).lower().strip()
+        if self.smolgen_relation_scale not in ("none", "layer", "layer_head"):
+            raise ValueError(f"Unsupported smolgen_relation_scale: {cfg.smolgen_relation_scale!r}")
 
   # LC0 BT4 input block: Dense(activation) → mult_gate → add_gate
-        self.embed = nn.Linear(cfg.in_planes, cfg.embed_dim)
+        embed_in_planes = int(cfg.in_planes) + (
+            _ARC_POS_CHANNELS if self.input_pos_encoding == "arc" else 0
+        )
+        if self.input_global_embedding == "bt4_board":
+            embed_in_planes += self.input_global_embedding_channels
+        self.global_board_preprocess: nn.Linear | None = None
+        self.global_board_adapter: nn.Linear | None = None
+        if self.input_global_embedding == "bt4_board":
+            self.global_board_preprocess = nn.Linear(12 * 64, 64 * self.input_global_embedding_channels)
+        elif self.input_global_embedding == "bt4_board_adapter":
+            with torch.random.fork_rng(devices=[]):
+                self.global_board_preprocess = nn.Linear(12 * 64, 64 * self.input_global_embedding_channels)
+                self.global_board_adapter = nn.Linear(
+                    self.input_global_embedding_channels,
+                    cfg.embed_dim,
+                    bias=False,
+                )
+            nn.init.zeros_(self.global_board_adapter.weight)
+        self.embed = nn.Linear(embed_in_planes, cfg.embed_dim)
+        self.register_buffer(
+            "arc_pos_encoding",
+            _make_arc_pos_encoding()
+            if self.input_pos_encoding in ("arc", "arc_adapter")
+            else torch.empty(0, dtype=torch.float32),
+            persistent=False,
+        )
+        self.register_buffer(
+            "arc_relation_basis_flat",
+            _make_arc_relation_basis().flatten(1)
+            if self.arc_attention_bias == "basic"
+            else torch.empty(0, dtype=torch.float32),
+            persistent=False,
+        )
+        self.arc_attention_weight: nn.Parameter | None = None
+        if self.arc_attention_bias == "basic":
+            self.arc_attention_weight = nn.Parameter(
+                torch.zeros(cfg.num_layers, cfg.num_heads, _ARC_RELATION_CHANNELS)
+            )
+        self.pos_adapter: nn.Linear | None = None
+        if self.input_pos_encoding == "arc_adapter":
+            self.pos_adapter = nn.Linear(_ARC_POS_CHANNELS, cfg.embed_dim, bias=False)
+            nn.init.zeros_(self.pos_adapter.weight)
   # ma_gating: multiplicative gate (init 1, non-negative) then additive gate (init 0)
   # Store raw param; apply softplus in forward to enforce non-negativity (LC0 uses NonNeg constraint).
         self._embed_gate_mul_raw = nn.Parameter(torch.full((cfg.embed_dim,), _softplus_inverse(1.0)))
         self.embed_gate_add = nn.Parameter(torch.zeros(cfg.embed_dim))
-  # Shared smolgen: one instance, bias reused by every encoder layer (LC0 BT4).
-        self.smolgen = Smolgen(cfg.embed_dim, cfg.num_heads) if cfg.use_smolgen else None
+        self.square_embed_gate_mul_raw: nn.Parameter | None = None
+        self.square_embed_gate_add: nn.Parameter | None = None
+        if self.input_square_embedding in ("add", "ma_gate"):
+            self.square_embed_gate_add = nn.Parameter(torch.zeros(64, cfg.embed_dim))
+        if self.input_square_embedding == "ma_gate":
+            self.square_embed_gate_mul_raw = nn.Parameter(
+                torch.full((64, cfg.embed_dim), _softplus_inverse(1.0))
+            )
+        self.smolgen: Smolgen | None = None
+        self.layer_smolgens: nn.ModuleList | None = None
+        self.smolgen_layer_scale: nn.Parameter | None = None
+        self.smolgen_layer_head_scale: nn.Parameter | None = None
+        if self.smolgen_bias_scale == "layer":
+            self.smolgen_layer_scale = nn.Parameter(torch.ones(cfg.num_layers))
+        elif self.smolgen_bias_scale == "layer_head":
+            self.smolgen_layer_head_scale = nn.Parameter(torch.ones(cfg.num_layers, cfg.num_heads))
+        if cfg.use_smolgen and self.smolgen_mode == "per_layer":
+            shared_gen = nn.Linear(256, 64 * 64, bias=False)
+            self.layer_smolgens = nn.ModuleList(
+                [
+                    Smolgen(
+                        cfg.embed_dim,
+                        cfg.num_heads,
+                        gen_weight=shared_gen,
+                        use_relation_basis=bool(cfg.smolgen_relation_basis),
+                        relation_norm=self.smolgen_relation_norm,
+                        relation_coeff_norm=self.smolgen_relation_coeff_norm,
+                        relation_scale=self.smolgen_relation_scale,
+                    )
+                    for _ in range(cfg.num_layers)
+                ]
+            )
+        elif cfg.use_smolgen:
+  # Legacy repo mode: one smolgen bias computed once and reused by all layers.
+            self.smolgen = Smolgen(
+                cfg.embed_dim,
+                cfg.num_heads,
+                use_relation_basis=bool(cfg.smolgen_relation_basis),
+                relation_norm=self.smolgen_relation_norm,
+                relation_coeff_norm=self.smolgen_relation_coeff_norm,
+                relation_scale=self.smolgen_relation_scale,
+            )
+        residual_branch_scale = (2.0 * float(cfg.num_layers)) ** -0.25 if cfg.use_deepnorm else 1.0
         self.blocks = nn.ModuleList(
             [
                 TransformerBlock(
@@ -438,16 +786,20 @@ class ChessNet(nn.Module):
                     ffn_mult=cfg.ffn_mult,
                     dropout=cfg.dropout,
                     use_nla=cfg.use_nla,
+                    qkv_projection=self.qkv_projection,
                     use_qk_rmsnorm=cfg.use_qk_rmsnorm,
+                    residual_branch_scale=residual_branch_scale,
                 )
                 for _ in range(cfg.num_layers)
             ]
         )
+        if cfg.use_deepnorm:
+            self._apply_deepnorm_init()
 
-        self.policy_own = AttentionPolicyHead(cfg.embed_dim)
-        self.policy_soft = AttentionPolicyHead(cfg.embed_dim)
-        self.policy_sf = AttentionPolicyHead(cfg.embed_dim)
-        self.policy_future = AttentionPolicyHead(cfg.embed_dim)
+        self.policy_own = AttentionPolicyHead(cfg.embed_dim, policy_encoding=self.policy_encoding)
+        self.policy_soft = AttentionPolicyHead(cfg.embed_dim, policy_encoding=self.policy_encoding)
+        self.policy_sf = AttentionPolicyHead(cfg.embed_dim, policy_encoding=self.policy_encoding)
+        self.policy_future = AttentionPolicyHead(cfg.embed_dim, policy_encoding=self.policy_encoding)
 
         self.value_wdl = ValueHead(cfg.embed_dim, 3)
         self.value_sf_eval = ValueHead(cfg.embed_dim, 3)
@@ -457,21 +809,141 @@ class ChessNet(nn.Module):
         self.sf_volatility = VolatilityHead(cfg.embed_dim)
         self.moves_left = ScalarHead(cfg.embed_dim)
 
+    def _apply_deepnorm_init(self) -> None:
+        """Scale newly initialized branch weights for DeepNorm-style post-norm runs."""
+        beta = (8.0 * float(self.cfg.num_layers)) ** -0.25
+        with torch.no_grad():
+            for module in self.blocks:
+                if not isinstance(module, TransformerBlock):
+                    continue
+                block = module
+                modules: list[nn.Linear] = [block.out_proj]
+                if block.use_nla:
+                    for proj in (block.q_proj, block.k_proj, block.v_proj):
+                        if isinstance(proj, _NLAProjection):
+                            modules.extend(m for m in proj.net if isinstance(m, nn.Linear))
+                elif block.qkv_projection == "split":
+                    for proj in (block.q_proj, block.k_proj, block.v_proj):
+                        if isinstance(proj, nn.Linear):
+                            modules.append(proj)
+                else:
+                    modules.append(block.qkv_proj)
+                modules.extend(m for m in block.ffn if isinstance(m, nn.Linear))
+                for module in modules:
+                    module.weight.mul_(beta)
+
+    def _smolgen_scale_for_layer(self, idx: int, dtype: torch.dtype, device: torch.device) -> torch.Tensor | None:
+        if self.smolgen_layer_scale is not None:
+            return self.smolgen_layer_scale[idx].to(dtype=dtype, device=device).view(1, 1, 1, 1)
+        if self.smolgen_layer_head_scale is not None:
+            return self.smolgen_layer_head_scale[idx].to(dtype=dtype, device=device).view(1, -1, 1, 1)
+        return None
+
+    def _arc_attention_bias_for_layer(
+        self,
+        idx: int,
+        dtype: torch.dtype,
+        device: torch.device,
+    ) -> torch.Tensor | None:
+        weight = self.arc_attention_weight
+        if weight is None:
+            return None
+        basis = cast(torch.Tensor, self._buffers["arc_relation_basis_flat"]).to(dtype=dtype, device=device)
+        flat = torch.matmul(weight[idx].to(dtype=dtype, device=device), basis)
+        return flat.view(1, self.cfg.num_heads, 64, 64)
+
+    def _attention_bias_for_layer(
+        self,
+        idx: int,
+        smolgen_bias: torch.Tensor | None,
+        *,
+        dtype: torch.dtype,
+        device: torch.device,
+    ) -> torch.Tensor | None:
+        bias = smolgen_bias
+        if bias is not None:
+            bias = _normalize_attention_bias(bias, self.smolgen_bias_norm)
+            scale = self._smolgen_scale_for_layer(idx, dtype=bias.dtype, device=bias.device)
+            if scale is not None:
+                bias = bias * scale
+        arc_bias = self._arc_attention_bias_for_layer(idx, dtype=dtype, device=device)
+        if arc_bias is not None:
+            bias = arc_bias if bias is None else bias + arc_bias
+        return bias
+
     def _encode_tokens(self, x: torch.Tensor) -> torch.Tensor:
         b, c, h, w = x.shape
         assert (h, w) == (8, 8)
         tokens = x.reshape(b, c, 64).permute(0, 2, 1).contiguous()  # (B,64,C)
+        pos: torch.Tensor | None = None
+        if self.input_pos_encoding in ("arc", "arc_adapter"):
+            pos_encoding = self._buffers["arc_pos_encoding"]
+            assert pos_encoding is not None
+            pos = pos_encoding.to(dtype=tokens.dtype, device=tokens.device)
+        if self.input_pos_encoding == "arc":
+            assert pos is not None
+            tokens = torch.cat((tokens, pos.expand(b, -1, -1)), dim=-1)
+        global_board_preprocess = self.global_board_preprocess
+        global_tokens: torch.Tensor | None = None
+        if global_board_preprocess is not None:
+            board_summary = x[:, :12].reshape(b, 12 * 64)
+            global_tokens = global_board_preprocess(board_summary).view(
+                b,
+                64,
+                self.input_global_embedding_channels,
+            )
+            if self.input_global_embedding == "bt4_board":
+                assert global_tokens is not None
+                tokens = torch.cat((tokens, global_tokens), dim=-1)
 
   # BT4 input: Dense(mish) → mult_gate(non-neg) → add_gate
         t = F.mish(self.embed(tokens))
         t = t * F.softplus(self._embed_gate_mul_raw) + self.embed_gate_add
-  # Compute smolgen bias once, shared across all layers (LC0 BT4).
-        smolgen_bias = self.smolgen(t) if self.smolgen is not None else None
-        for blk in self.blocks:
+        if self.square_embed_gate_mul_raw is not None:
+            t = t * F.softplus(self.square_embed_gate_mul_raw).unsqueeze(0)
+        if self.square_embed_gate_add is not None:
+            t = t + self.square_embed_gate_add.unsqueeze(0)
+        if self.global_board_adapter is not None:
+            assert global_tokens is not None
+            t = t + self.global_board_adapter(global_tokens)
+        if self.input_pos_encoding == "arc_adapter":
+            assert pos is not None
+            pos_adapter = self.pos_adapter
+            assert pos_adapter is not None
+            t = t + pos_adapter(pos.expand(b, -1, -1))
+        shared_smolgen_bias = self.smolgen(t) if self.smolgen is not None else None
+        balance_terms: list[torch.Tensor] = []
+        balance_weight = float(getattr(self, "resid_channel_balance_weight", 0.0) or 0.0)
+        for idx, blk in enumerate(self.blocks):
+            smolgen_bias = shared_smolgen_bias
+            if self.layer_smolgens is not None:
+                smolgen_bias = self.layer_smolgens[idx](t)
+            smolgen_bias = self._attention_bias_for_layer(
+                idx,
+                smolgen_bias,
+                dtype=t.dtype,
+                device=t.device,
+            )
+            t_in = t
             if self._use_grad_ckpt and self.training:
-                t = grad_checkpoint(blk, t, smolgen_bias, use_reentrant=False)
+                t = cast(torch.Tensor, grad_checkpoint(blk, t_in, smolgen_bias, use_reentrant=False))
             else:
-                t = blk(t, smolgen_bias)
+                t = cast(torch.Tensor, blk(t_in, smolgen_bias))
+            if self.training and balance_weight > 0.0:
+                delta = (t - t_in).float()
+                energy = delta.square().mean(dim=(0, 1)).clamp_min(1e-12)
+                log_energy = energy.log()
+                balance_terms.append((log_energy - log_energy.mean()).square().mean())
+            drop_p = float(getattr(self, "resid_channel_dropout", 0.0) or 0.0)
+            if self.training and drop_p > 0.0:
+                keep_p = max(1e-6, 1.0 - drop_p)
+                mask = (torch.rand((1, 1, t.shape[-1]), device=t.device) < keep_p).to(t.dtype)
+                t = t * (mask / keep_p)
+        self._last_channel_balance_loss = (
+            torch.stack(balance_terms).mean().to(dtype=t.dtype)
+            if balance_terms
+            else None
+        )
         return cast(torch.Tensor, t)
 
     def forward_legal_policy(
