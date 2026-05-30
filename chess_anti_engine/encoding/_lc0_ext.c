@@ -413,6 +413,11 @@ static PyObject* PyCBoard_from_board(PyTypeObject *type, PyObject *args) {
              * (b->halfmove_clock tells us how many reversible plies back) */
             if ((int)(stack_len - 1 - si) >= (int)b->halfmove_clock) break;
         }
+        for (int i = 0, j = b->hash_stack_len - 1; i < j; i++, j--) {
+            uint64_t tmp = b->hash_stack[i];
+            b->hash_stack[i] = b->hash_stack[j];
+            b->hash_stack[j] = tmp;
+        }
     }
     Py_XDECREF(stack);
 

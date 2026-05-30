@@ -1227,11 +1227,17 @@ static void cboard_fill_lc0_112_root(const CBoard *b, float * restrict out) {
     }
 
     /* Repetition planes: process the kept history window from oldest to newest.
-     * The current plane also checks hash_stack so repetitions before the kept
-     * encoding window are still marked. */
-    uint64_t seen[CBOARD_HISTORY_MAX + 1];
+     * Seed from hash_stack entries before the kept encoding window so a kept
+     * slot that repeats an older reversible position matches Python
+     * _check_repetitions(). */
+    uint64_t seen[CBOARD_HASH_STACK_MAX + CBOARD_HISTORY_MAX + 1];
     int seen_n = 0;
     int hist_n = b->hist_len < CBOARD_HISTORY_MAX ? b->hist_len : CBOARD_HISTORY_MAX;
+    int seed_n = b->hash_stack_len - hist_n;
+    if (seed_n < 0) seed_n = 0;
+    for (int i = 0; i < seed_n && seen_n < (int)(sizeof(seen) / sizeof(seen[0])); i++) {
+        seen[seen_n++] = b->hash_stack[i];
+    }
     for (int hi = hist_n - 1; hi >= 0; hi--) {
         int idx = (b->hist_head - 1 - hi + CBOARD_HISTORY_MAX) % CBOARD_HISTORY_MAX;
         uint64_t h = cboard_hist_hash(
@@ -1245,7 +1251,9 @@ static void cboard_fill_lc0_112_root(const CBoard *b, float * restrict out) {
             int plane = (hi + 1) * 13 + 12;
             for (int i = 0; i < 64; i++) out[plane*64 + i] = 1.0f;
         }
-        seen[seen_n++] = h;
+        if (seen_n < (int)(sizeof(seen) / sizeof(seen[0]))) {
+            seen[seen_n++] = h;
+        }
     }
     uint64_t cur_hash = cboard_compute_hash(b);
     int cur_repeated = cboard_is_repetition(b);

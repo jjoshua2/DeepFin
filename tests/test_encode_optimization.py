@@ -239,6 +239,17 @@ class TestEncodePositionSnapshot:
         got_rep = cb_rep.encode_146_lc0_root()
         np.testing.assert_allclose(got_rep[:112], ref_rep[:112], atol=1e-6)
 
+        long_rep = chess.Board()
+        for uci in (
+            "g1f3", "g8f6", "f3g1", "f6g8", "g1f3",
+            "g8f6", "f3g1", "f6g8", "g1f3", "g8f6",
+        ):
+            long_rep.push(chess.Move.from_uci(uci))
+        cb_long_rep = CBoard.from_board(long_rep)
+        ref_long_rep = encode_position(long_rep, add_features=True, input_history_encoding="lc0_root")
+        got_long_rep = cb_long_rep.encode_146_lc0_root()
+        np.testing.assert_allclose(got_long_rep[:112], ref_long_rep[:112], atol=1e-6)
+
     def test_cboard_encode_146_lc0_root_legacy_meta_matches_python(self):
         """LC0-root legacy-meta CBoard path must match Python metadata patch."""
         try:
