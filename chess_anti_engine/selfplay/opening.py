@@ -41,6 +41,12 @@ class OpeningConfig:
     random_start_plies: int = 0
 
 
+@dataclass(frozen=True)
+class OpeningStart:
+    board: chess.Board
+    source: str
+
+
 def _random_playout_from_start(*, rng, plies: int) -> chess.Board:
     b = chess.Board()
     for _ in range(int(plies)):
@@ -210,8 +216,8 @@ def warm_opening_book_cache(cfg: OpeningConfig) -> None:
             )
 
 
-def make_starting_board(*, rng, cfg: OpeningConfig) -> chess.Board:
-    """Create a starting position according to config.
+def sample_starting_board(*, rng, cfg: OpeningConfig) -> OpeningStart:
+    """Create a starting position and label its low-cardinality source.
 
     Priority:
     - with probability opening_book_prob, use opening book if provided
@@ -226,20 +232,33 @@ def make_starting_board(*, rng, cfg: OpeningConfig) -> chess.Board:
             and float(rng.random()) < float(cfg.opening_book_mix_prob_2)
         )
         if use_book2:
-            return _sample_book(
-                rng=rng,
-                path=str(cfg.opening_book_path_2),
-                max_plies=int(cfg.opening_book_max_plies_2),
-                max_games=int(cfg.opening_book_max_games_2),
+            return OpeningStart(
+                board=_sample_book(
+                    rng=rng,
+                    path=str(cfg.opening_book_path_2),
+                    max_plies=int(cfg.opening_book_max_plies_2),
+                    max_games=int(cfg.opening_book_max_games_2),
+                ),
+                source="book2",
             )
-        return _sample_book(
-            rng=rng,
-            path=str(cfg.opening_book_path),
-            max_plies=int(cfg.opening_book_max_plies),
-            max_games=int(cfg.opening_book_max_games),
+        return OpeningStart(
+            board=_sample_book(
+                rng=rng,
+                path=str(cfg.opening_book_path),
+                max_plies=int(cfg.opening_book_max_plies),
+                max_games=int(cfg.opening_book_max_games),
+            ),
+            source="book1",
         )
 
     if int(cfg.random_start_plies) > 0:
-        return _random_playout_from_start(rng=rng, plies=int(cfg.random_start_plies))
+        return OpeningStart(
+            board=_random_playout_from_start(rng=rng, plies=int(cfg.random_start_plies)),
+            source="random",
+        )
 
-    return chess.Board()
+    return OpeningStart(board=chess.Board(), source="start")
+
+
+def make_starting_board(*, rng, cfg: OpeningConfig) -> chess.Board:
+    return sample_starting_board(rng=rng, cfg=cfg).board

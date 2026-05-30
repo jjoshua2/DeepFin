@@ -5,7 +5,7 @@ import torch
 from torch import nn
 
 from chess_anti_engine.moves import COMPACT_POLICY_SIZE
-from chess_anti_engine.model import load_state_dict_tolerant, reinit_volatility_head_parameters_
+from chess_anti_engine.model import ModelConfig, build_model, load_state_dict_tolerant, reinit_volatility_head_parameters_
 from chess_anti_engine.model.transformer import (
     ChessNet,
     TransformerConfig,
@@ -26,6 +26,22 @@ def test_transformer_forward_shapes():
     assert out["volatility"].shape == (3, 3)
     assert out["sf_volatility"].shape == (3, 3)
     assert out["moves_left"].shape == (3, 1)
+
+
+def test_build_model_attaches_runtime_encoding_metadata():
+    model = build_model(
+        ModelConfig(
+            kind="transformer",
+            embed_dim=64,
+            num_layers=1,
+            num_heads=4,
+            policy_encoding="lc0_1858",
+            input_history_encoding="lc0_root_legacy_meta",
+        )
+    )
+
+    assert getattr(model, "policy_encoding") == "lc0_1858"
+    assert getattr(model, "input_history_encoding") == "lc0_root_legacy_meta"
 
 
 def test_transformer_per_layer_smolgen_shapes_and_shares_gen_projection():

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -16,6 +17,22 @@ StartupSource = Literal[
     "exploit_restore",
     "exploit_restore_model_only",
 ]
+
+
+def _optional_unit_fraction(value: Any, *, name: str) -> float | None:
+    if value is None:
+        return None
+    frac = float(value)
+    if not math.isfinite(frac) or frac < 0.0 or frac > 1.0:
+        raise ValueError(f"{name} must be in [0, 1], got {value!r}")
+    return frac
+
+
+def _nonnegative_float(value: Any, *, name: str) -> float:
+    val = float(value)
+    if not math.isfinite(val) or val < 0.0:
+        raise ValueError(f"{name} must be finite and >= 0, got {value!r}")
+    return val
 
 
 @dataclass
@@ -97,6 +114,16 @@ class TrialConfig:
     fast_simulations: int = 8
     fpu_reduction: float = 1.2
     fpu_at_root: float = 1.0
+    gumbel_topk: int = 16
+    gumbel_c_scale: float = 0.1
+    gumbel_scale: float = 1.0
+    gumbel_scale_after: float = 0.0
+    gumbel_scale_decay_start_move: int = 0
+    gumbel_scale_decay_moves: int = 0
+    curriculum_gumbel_scale: float = 0.0
+    curriculum_gumbel_scale_after: float = 0.0
+    curriculum_gumbel_scale_decay_start_move: int = 0
+    curriculum_gumbel_scale_decay_moves: int = 0
 
   # --- Temperature ---
     temperature: float = 1.0
@@ -105,6 +132,10 @@ class TrialConfig:
     temperature_decay_start_move: int = 20
     temperature_decay_moves: int = 60
     temperature_endgame: float = 0.6
+    selfplay_temperature: float | None = None
+    selfplay_temperature_decay_start_move: int | None = None
+    selfplay_temperature_decay_moves: int | None = None
+    selfplay_temperature_endgame: float | None = None
 
   # --- Opening books ---
     opening_book_path: str | None = None
@@ -134,6 +165,7 @@ class TrialConfig:
     syzygy_in_search: bool = False
     categorical_bins: int = DEFAULT_CATEGORICAL_BINS
     hlgauss_sigma: float = 0.04
+    record_lc0_root_input: bool = False
 
   # --- Diff focus ---
     diff_focus_enabled: bool = True
@@ -149,6 +181,7 @@ class TrialConfig:
     sf_workers: int = 1
     sf_multipv: int = 1
     sf_hash_mb: int = 16
+    sf_nice: int = 0
     sf_pid_enabled: bool = True
 
   # --- PID controller ---
@@ -169,6 +202,7 @@ class TrialConfig:
     replay_window_start: int = 100_000
     replay_window_max: int = 1_000_000
     replay_window_growth: int = 10_000
+    replay_window_growth_frac: float | None = None
     shuffle_buffer_size: int = 20_000
     shard_size: int = 1000
     shuffle_refresh_interval: int = 5
@@ -209,6 +243,7 @@ class TrialConfig:
     distributed_worker_poll_seconds: float = 1.0
     distributed_min_games_fraction: float = 0.5
     distributed_prev_model_max_fraction: float = 0.33
+    distributed_stale_pause_target_games: int = -1
     distributed_pause_selfplay_during_training: bool = False
     processed_max_age_seconds: float = 43200.0
     # Background shard prefetcher: zarr decompress moves to a daemon thread
@@ -339,6 +374,31 @@ class TrialConfig:
             fast_simulations=int(config.get("fast_simulations", 8)),
             fpu_reduction=float(config.get("fpu_reduction", 1.2)),
             fpu_at_root=float(config.get("fpu_at_root", 1.0)),
+            gumbel_topk=max(1, int(config.get("gumbel_topk", 16))),
+            gumbel_c_scale=_nonnegative_float(config.get("gumbel_c_scale", 0.1), name="gumbel_c_scale"),
+            gumbel_scale=_nonnegative_float(config.get("gumbel_scale", 1.0), name="gumbel_scale"),
+            gumbel_scale_after=_nonnegative_float(
+                config.get("gumbel_scale_after", 0.0),
+                name="gumbel_scale_after",
+            ),
+            gumbel_scale_decay_start_move=max(0, int(config.get("gumbel_scale_decay_start_move", 0))),
+            gumbel_scale_decay_moves=max(0, int(config.get("gumbel_scale_decay_moves", 0))),
+            curriculum_gumbel_scale=_nonnegative_float(
+                config.get("curriculum_gumbel_scale", 0.0),
+                name="curriculum_gumbel_scale",
+            ),
+            curriculum_gumbel_scale_after=_nonnegative_float(
+                config.get("curriculum_gumbel_scale_after", 0.0),
+                name="curriculum_gumbel_scale_after",
+            ),
+            curriculum_gumbel_scale_decay_start_move=max(
+                0,
+                int(config.get("curriculum_gumbel_scale_decay_start_move", 0)),
+            ),
+            curriculum_gumbel_scale_decay_moves=max(
+                0,
+                int(config.get("curriculum_gumbel_scale_decay_moves", 0)),
+            ),
 
   # --- Temperature ---
             temperature=float(config.get("temperature", 1.0)),
@@ -347,6 +407,26 @@ class TrialConfig:
             temperature_decay_start_move=int(config.get("temperature_decay_start_move", 20)),
             temperature_decay_moves=int(config.get("temperature_decay_moves", 60)),
             temperature_endgame=float(config.get("temperature_endgame", 0.6)),
+            selfplay_temperature=(
+                None
+                if config.get("selfplay_temperature", None) is None
+                else float(_get("selfplay_temperature", 0.0))
+            ),
+            selfplay_temperature_decay_start_move=(
+                None
+                if config.get("selfplay_temperature_decay_start_move", None) is None
+                else int(_get("selfplay_temperature_decay_start_move", 0))
+            ),
+            selfplay_temperature_decay_moves=(
+                None
+                if config.get("selfplay_temperature_decay_moves", None) is None
+                else int(_get("selfplay_temperature_decay_moves", 0))
+            ),
+            selfplay_temperature_endgame=(
+                None
+                if config.get("selfplay_temperature_endgame", None) is None
+                else float(_get("selfplay_temperature_endgame", 0.0))
+            ),
 
   # --- Opening books ---
             opening_book_path=_get("opening_book_path", None),
@@ -376,6 +456,7 @@ class TrialConfig:
             syzygy_in_search=bool(config.get("syzygy_in_search", False)),
             categorical_bins=int(config.get("categorical_bins", DEFAULT_CATEGORICAL_BINS)),
             hlgauss_sigma=float(config.get("hlgauss_sigma", 0.04)),
+            record_lc0_root_input=bool(config.get("record_lc0_root_input", False)),
 
   # --- Diff focus ---
             diff_focus_enabled=bool(config.get("diff_focus_enabled", True)),
@@ -391,6 +472,7 @@ class TrialConfig:
             sf_workers=int(config.get("sf_workers", 1)),
             sf_multipv=int(config.get("sf_multipv", 1)),
             sf_hash_mb=int(config.get("sf_hash_mb", 16)),
+            sf_nice=int(config.get("sf_nice", 0)),
             sf_pid_enabled=bool(config.get("sf_pid_enabled", True)),
 
   # --- PID ---
@@ -411,6 +493,10 @@ class TrialConfig:
             replay_window_start=int(config.get("replay_window_start", 100_000)),
             replay_window_max=int(config.get("replay_window_max", config.get("replay_capacity", 1_000_000))),
             replay_window_growth=int(config.get("replay_window_growth", 10_000)),
+            replay_window_growth_frac=_optional_unit_fraction(
+                config.get("replay_window_growth_frac", None),
+                name="replay_window_growth_frac",
+            ),
             shuffle_buffer_size=int(config.get("shuffle_buffer_size", 20_000)),
             shard_size=int(config.get("shard_size", 1000)),
             shuffle_refresh_interval=int(config.get("shuffle_refresh_interval", 5)),
@@ -451,6 +537,7 @@ class TrialConfig:
             distributed_worker_poll_seconds=float(config.get("distributed_worker_poll_seconds", 1.0)),
             distributed_min_games_fraction=float(config.get("distributed_min_games_fraction", 0.5)),
             distributed_prev_model_max_fraction=float(config.get("distributed_prev_model_max_fraction", 0.33)),
+            distributed_stale_pause_target_games=int(config.get("distributed_stale_pause_target_games", -1)),
             distributed_pause_selfplay_during_training=bool(config.get("distributed_pause_selfplay_during_training", False)),
             processed_max_age_seconds=float(config.get("processed_max_age_seconds", 43200.0)),
             distributed_prefetch_shards=bool(config.get("distributed_prefetch_shards", False)),
@@ -533,9 +620,49 @@ class SelfplayResult:
   # Positions / ingest
     total_positions: int = 0
     replay_positions_ingested: int = 0
+    replay_window_before: int = 0
+    replay_window_after: int = 0
+    replay_window_growth_positions: int = 0
+    replay_window_growth_frac_used: float = 0.0
   # Per-sample is_selfplay tag accounting (this iter's ingested training rows).
     ingest_is_selfplay_tagged: int = 0
     ingest_is_selfplay_true: int = 0
+    diff_focus_records: int = 0
+    diff_focus_kept: int = 0
+    diff_focus_keep_prob_sum: float = 0.0
+    diff_focus_keep_limited: int = 0
+    diff_focus_sample_weight_sum: float = 0.0
+    diff_focus_sample_weight_limited: int = 0
+    diff_focus_priority_sum: float = 0.0
+    diff_focus_priority_sq_sum: float = 0.0
+    diff_focus_priority_min: float = 0.0
+    diff_focus_priority_max: float = 0.0
+    gumbel_policy_diag_n: int = 0
+    gumbel_policy_top_prob_sum: float = 0.0
+    gumbel_policy_action_prob_sum: float = 0.0
+    gumbel_policy_entropy_sum: float = 0.0
+    gumbel_policy_eff_moves_sum: float = 0.0
+    gumbel_policy_candidate_mass_sum: float = 0.0
+    gumbel_policy_non_candidate_top_prob_sum: float = 0.0
+    gumbel_policy_argmax_is_candidate_sum: int = 0
+    gumbel_policy_argmax_is_action_sum: int = 0
+    gumbel_policy_legal_count_sum: int = 0
+    gumbel_policy_candidate_count_sum: int = 0
+    replay_priority_n: int = 0
+    replay_priority_sum: float = 0.0
+    replay_priority_sq_sum: float = 0.0
+    replay_priority_min: float = 0.0
+    replay_priority_max: float = 0.0
+    replay_has_policy_n: int = 0
+    replay_has_policy_sum: int = 0
+    replay_has_sf_wdl_n: int = 0
+    replay_has_sf_wdl_sum: int = 0
+    replay_has_search_wdl_n: int = 0
+    replay_has_search_wdl_sum: int = 0
+    replay_wdl_0: int = 0
+    replay_wdl_1: int = 0
+    replay_wdl_2: int = 0
+    outcome_stats: dict[str, int] = field(default_factory=dict)
 
   # SF evaluation deltas
     total_sf_d6: float = 0.0

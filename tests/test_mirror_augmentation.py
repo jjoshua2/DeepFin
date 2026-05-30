@@ -1,13 +1,14 @@
 import numpy as np
 
 from chess_anti_engine.moves.encode import (
+    COMPACT_MIRROR_POLICY_MAP,
     COMPACT_POLICY_SIZE,
     COMPACT_TO_FULL_POLICY,
     MIRROR_POLICY_MAP,
     POLICY_SIZE,
     mirror_policy_index,
 )
-from chess_anti_engine.replay.augment import maybe_mirror_batch_arrays, mirror_sample
+from chess_anti_engine.replay.augment import maybe_mirror_batch_arrays, mirror_sample, mirror_x
 from chess_anti_engine.replay.buffer import ReplaySample
 
 
@@ -25,6 +26,82 @@ def test_mirror_policy_map_is_permutation_and_involution():
     # Spot-check all indices in a vectorized way
     mm = m[m]
     assert np.array_equal(mm, np.arange(POLICY_SIZE, dtype=mm.dtype))
+
+
+def test_mirror_x_swaps_legacy_castling_planes():
+    x = np.zeros((146, 8, 8), dtype=np.float32)
+    x[96, :, :] = 1.0
+    x[97, :, :] = 2.0
+    x[98, :, :] = 3.0
+    x[99, :, :] = 4.0
+
+    mirrored = mirror_x(x)
+
+    assert np.all(mirrored[96] == 2.0)
+    assert np.all(mirrored[97] == 1.0)
+    assert np.all(mirrored[98] == 4.0)
+    assert np.all(mirrored[99] == 3.0)
+
+
+def test_mirror_x_swaps_lc0_root_castling_planes():
+    x = np.zeros((146, 8, 8), dtype=np.float32)
+    x[104, :, :] = 1.0
+    x[105, :, :] = 2.0
+    x[106, :, :] = 3.0
+    x[107, :, :] = 4.0
+
+    mirrored = mirror_x(x, input_history_encoding="lc0_root")
+
+    assert np.all(mirrored[104] == 2.0)
+    assert np.all(mirrored[105] == 1.0)
+    assert np.all(mirrored[106] == 4.0)
+    assert np.all(mirrored[107] == 3.0)
+
+
+def test_mirror_batch_swaps_castling_planes_for_x_and_lc0_root():
+    batch = {
+        "x": np.zeros((2, 146, 8, 8), dtype=np.float32),
+        "x_lc0_root": np.zeros((2, 146, 8, 8), dtype=np.float32),
+        "policy_target": np.zeros((2, POLICY_SIZE), dtype=np.float32),
+    }
+    batch["x"][:, 96, :, :] = 1.0
+    batch["x"][:, 97, :, :] = 2.0
+    batch["x_lc0_root"][:, 104, :, :] = 3.0
+    batch["x_lc0_root"][:, 105, :, :] = 4.0
+
+    mirrored = maybe_mirror_batch_arrays(batch, rng=np.random.default_rng(1), prob=1.0)
+
+    assert np.all(mirrored["x"][:, 96] == 2.0)
+    assert np.all(mirrored["x"][:, 97] == 1.0)
+    assert np.all(mirrored["x_lc0_root"][:, 104] == 4.0)
+    assert np.all(mirrored["x_lc0_root"][:, 105] == 3.0)
+
+
+def test_mirror_batch_uses_configured_history_for_primary_x():
+    batch = {
+        "x": np.zeros((1, 146, 8, 8), dtype=np.float32),
+        "policy_target": np.zeros((1, POLICY_SIZE), dtype=np.float32),
+    }
+    batch["x"][:, 96, :, :] = 9.0
+    batch["x"][:, 97, :, :] = 10.0
+    batch["x"][:, 104, :, :] = 1.0
+    batch["x"][:, 105, :, :] = 2.0
+    batch["x"][:, 106, :, :] = 3.0
+    batch["x"][:, 107, :, :] = 4.0
+
+    mirrored = maybe_mirror_batch_arrays(
+        batch,
+        rng=np.random.default_rng(1),
+        prob=1.0,
+        input_history_encoding="lc0_root",
+    )
+
+    assert np.all(mirrored["x"][:, 96] == 9.0)
+    assert np.all(mirrored["x"][:, 97] == 10.0)
+    assert np.all(mirrored["x"][:, 104] == 2.0)
+    assert np.all(mirrored["x"][:, 105] == 1.0)
+    assert np.all(mirrored["x"][:, 106] == 4.0)
+    assert np.all(mirrored["x"][:, 107] == 3.0)
 
 
 def test_mirror_sample_is_involution():
@@ -131,37 +208,79 @@ def test_mirror_batch_arrays_is_involution():
         assert np.array_equal(unmirrored[key], value)
 
 
-def test_mirror_sample_keeps_sf_move_index_in_full_policy_space():
+def test_mirror_sample_keeps_sf_move_index_in_compact_policy_space():
     compact_idx = 10
-    full_idx = int(COMPACT_TO_FULL_POLICY[compact_idx])
     compact_policy = np.zeros((COMPACT_POLICY_SIZE,), dtype=np.float32)
     compact_policy[compact_idx] = 1.0
+    sf_legal_mask = np.zeros((COMPACT_POLICY_SIZE,), dtype=np.uint8)
+    sf_legal_mask[compact_idx] = 1
     sample = ReplaySample(
         x=np.zeros((18, 8, 8), dtype=np.float32),
         policy_target=compact_policy,
         wdl_target=1,
-        sf_move_index=full_idx,
+        sf_move_index=compact_idx,
         sf_policy_target=None,
+        sf_legal_mask=sf_legal_mask,
     )
 
     mirrored = mirror_sample(sample)
 
-    assert mirrored.sf_move_index == int(MIRROR_POLICY_MAP[full_idx])
+    assert mirrored.sf_move_index == int(COMPACT_MIRROR_POLICY_MAP[compact_idx])
+    assert mirrored.sf_legal_mask is not None
+    assert mirrored.sf_move_index is not None
+    assert int(mirrored.sf_legal_mask[int(mirrored.sf_move_index)]) == 1
 
 
-def test_mirror_batch_keeps_sf_move_index_in_full_policy_space():
+def test_mirror_sample_uses_full_map_from_policy_width_with_compact_sf_policy():
+    full_idx = int(COMPACT_TO_FULL_POLICY[10])
+    compact_sf = np.zeros((COMPACT_POLICY_SIZE,), dtype=np.float32)
+    compact_sf[10] = 1.0
+    policy = np.zeros((POLICY_SIZE,), dtype=np.float32)
+    policy[full_idx] = 1.0
+    sample = ReplaySample(
+        x=np.zeros((18, 8, 8), dtype=np.float32),
+        policy_target=policy,
+        wdl_target=1,
+        sf_policy_target=compact_sf,
+        sf_move_index=full_idx,
+    )
+
+    mirrored = mirror_sample(sample)
+
+    assert mirrored.sf_move_index == mirror_policy_index(full_idx)
+
+
+def test_mirror_batch_uses_compact_map_from_policy_width_without_sf_policy():
     compact_idx = 10
-    full_idx = int(COMPACT_TO_FULL_POLICY[compact_idx])
     batch = {
         "x": np.zeros((1, 18, 8, 8), dtype=np.float32),
         "policy_target": np.zeros((1, COMPACT_POLICY_SIZE), dtype=np.float32),
-        "sf_move_index": np.array([full_idx], dtype=np.int32),
+        "sf_legal_mask": np.zeros((1, COMPACT_POLICY_SIZE), dtype=np.uint8),
+        "sf_move_index": np.array([compact_idx], dtype=np.int32),
     }
     batch["policy_target"][0, compact_idx] = 1.0
+    batch["sf_legal_mask"][0, compact_idx] = 1
 
     mirrored = maybe_mirror_batch_arrays(batch, rng=np.random.default_rng(1), prob=1.0)
 
-    assert int(mirrored["sf_move_index"][0]) == int(MIRROR_POLICY_MAP[full_idx])
+    assert int(mirrored["sf_move_index"][0]) == int(COMPACT_MIRROR_POLICY_MAP[compact_idx])
+    assert int(mirrored["sf_legal_mask"][0, int(mirrored["sf_move_index"][0])]) == 1
+
+
+def test_mirror_batch_uses_full_map_from_policy_width_with_compact_sf_policy():
+    full_idx = int(COMPACT_TO_FULL_POLICY[10])
+    batch = {
+        "x": np.zeros((1, 18, 8, 8), dtype=np.float32),
+        "policy_target": np.zeros((1, POLICY_SIZE), dtype=np.float32),
+        "sf_policy_target": np.zeros((1, COMPACT_POLICY_SIZE), dtype=np.float32),
+        "sf_move_index": np.array([full_idx], dtype=np.int32),
+    }
+    batch["policy_target"][0, full_idx] = 1.0
+    batch["sf_policy_target"][0, 10] = 1.0
+
+    mirrored = maybe_mirror_batch_arrays(batch, rng=np.random.default_rng(1), prob=1.0)
+
+    assert int(mirrored["sf_move_index"][0]) == mirror_policy_index(full_idx)
 
 
 def _build_per_head_masked_batch(n: int = 8, seed: int = 0):

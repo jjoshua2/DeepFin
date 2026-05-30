@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import math
 import shutil
 import subprocess
 import time
@@ -547,6 +548,103 @@ def _maybe_share_cross_trial_replay(
     return summary
 
 
+def _compute_replay_window_update(
+    *,
+    current_window: int,
+    replay_window_max: int,
+    fixed_growth: int,
+    growth_frac: float | None,
+    positions_ingested: int,
+) -> tuple[int, int, float]:
+    """Return ``(next_window, actual_growth, growth_frac_used)``.
+
+    ``replay_window_growth_frac`` is defined relative to the positions that
+    actually entered replay this iteration, so live changes track the amount
+    of fresh data produced instead of a fixed position count.
+    """
+    before = max(0, int(current_window))
+    max_window = max(0, int(replay_window_max))
+    frac_used = 0.0 if growth_frac is None else float(growth_frac)
+
+    if before >= max_window:
+        return max_window, 0, frac_used
+
+    if growth_frac is None:
+        requested_growth = max(0, int(fixed_growth))
+    else:
+        requested_growth = int(math.ceil(max(0, int(positions_ingested)) * frac_used))
+
+    after = min(max_window, before + requested_growth)
+    return after, max(0, after - before), frac_used
+
+
+def _selfplay_diagnostic_fields_from_ingest(summary: dict[str, Any]) -> dict[str, Any]:
+    """Map ingest-summary diagnostics onto ``SelfplayResult`` fields."""
+    int_fields = (
+        "diff_focus_records",
+        "diff_focus_kept",
+        "diff_focus_keep_limited",
+        "diff_focus_sample_weight_limited",
+        "gumbel_policy_diag_n",
+        "gumbel_policy_argmax_is_candidate_sum",
+        "gumbel_policy_argmax_is_action_sum",
+        "gumbel_policy_legal_count_sum",
+        "gumbel_policy_candidate_count_sum",
+    )
+    float_fields = (
+        "diff_focus_keep_prob_sum",
+        "diff_focus_sample_weight_sum",
+        "diff_focus_priority_sum",
+        "diff_focus_priority_sq_sum",
+        "diff_focus_priority_min",
+        "diff_focus_priority_max",
+        "gumbel_policy_top_prob_sum",
+        "gumbel_policy_action_prob_sum",
+        "gumbel_policy_entropy_sum",
+        "gumbel_policy_eff_moves_sum",
+        "gumbel_policy_candidate_mass_sum",
+        "gumbel_policy_non_candidate_top_prob_sum",
+    )
+    replay_int_fields = (
+        "replay_priority_n",
+        "replay_has_policy_n",
+        "replay_has_policy_sum",
+        "replay_has_sf_wdl_n",
+        "replay_has_sf_wdl_sum",
+        "replay_has_search_wdl_n",
+        "replay_has_search_wdl_sum",
+        "replay_wdl_0",
+        "replay_wdl_1",
+        "replay_wdl_2",
+    )
+    replay_float_fields = (
+        "replay_priority_sum",
+        "replay_priority_sq_sum",
+        "replay_priority_min",
+        "replay_priority_max",
+    )
+
+    out: dict[str, Any] = {
+        name: int(summary.get(f"matching_{name}", 0) or 0)
+        for name in int_fields
+    }
+    out.update({
+        name: float(summary.get(f"matching_{name}", 0.0) or 0.0)
+        for name in float_fields
+    })
+    out.update({
+        name: int(summary.get(name, 0) or 0)
+        for name in replay_int_fields
+    })
+    out.update({
+        name: float(summary.get(name, 0.0) or 0.0)
+        for name in replay_float_fields
+    })
+    raw_outcomes = summary.get("matching_outcome_stats", {})
+    out["outcome_stats"] = dict(raw_outcomes) if isinstance(raw_outcomes, dict) else {}
+    return out
+
+
 def _run_selfplay_phase(
     *,
     tc: TrialConfig,
@@ -700,11 +798,20 @@ def _run_selfplay_phase(
         keep_iters=tc.exploit_replay_max_unseen_iters_per_source + 2,
     )
 
-  # --- Growing window ---
-    if current_window < tc.replay_window_max:
-        current_window = min(current_window + tc.replay_window_growth, tc.replay_window_max)
-        if buf.capacity < current_window:
-            buf.capacity = current_window
+  # --- Growing/shrinking window ---
+    replay_window_before = int(current_window)
+    current_window, replay_window_growth_positions, replay_window_growth_frac_used = (
+        _compute_replay_window_update(
+            current_window=current_window,
+            replay_window_max=tc.replay_window_max,
+            fixed_growth=tc.replay_window_growth,
+            growth_frac=tc.replay_window_growth_frac,
+            positions_ingested=replay_positions_ingested,
+        )
+    )
+    if int(buf.capacity) != int(current_window):
+        buf.capacity = int(current_window)
+        buf.enforce_window()
 
     shared_summary = _maybe_share_cross_trial_replay(
         tc=tc, config=config,
@@ -735,8 +842,13 @@ def _run_selfplay_phase(
         total_plies_loss=total_plies_loss,
         total_positions=total_positions,
         replay_positions_ingested=replay_positions_ingested,
+        replay_window_before=replay_window_before,
+        replay_window_after=int(current_window),
+        replay_window_growth_positions=int(replay_window_growth_positions),
+        replay_window_growth_frac_used=float(replay_window_growth_frac_used),
         ingest_is_selfplay_tagged=ingest_is_selfplay_tagged,
         ingest_is_selfplay_true=ingest_is_selfplay_true,
+        **_selfplay_diagnostic_fields_from_ingest(ingest_summary),
         total_sf_d6=total_sf_d6,
         total_sf_d6_n=total_sf_d6_n,
         distributed_stale_positions=distributed_stale_positions,

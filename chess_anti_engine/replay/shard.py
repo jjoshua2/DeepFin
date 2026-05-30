@@ -14,7 +14,7 @@ import numpy as np
 import zarr
 from numcodecs import Blosc
 
-from chess_anti_engine.moves import POLICY_SIZE
+from chess_anti_engine.moves import COMPACT_POLICY_SIZE, POLICY_SIZE
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 
 from .buffer import ReplaySample
@@ -477,7 +477,12 @@ def pack_shard_for_upload(shard_path: str | Path) -> tuple[str, io.BytesIO]:
     return p.stem + UPLOAD_TAR_SUFFIX, buf
 
 
-def extract_uploaded_shard_tar(tar_path: str | Path, dest: str | Path) -> Path:
+def extract_uploaded_shard_tar(
+    tar_path: str | Path,
+    dest: str | Path,
+    *,
+    max_extract_bytes: int | None = None,
+) -> Path:
     """Safely extract a worker-uploaded zarr tarball at *tar_path* into *dest*.
 
     *dest* must not already exist; it is created by this function. Raises
@@ -487,13 +492,15 @@ def extract_uploaded_shard_tar(tar_path: str | Path, dest: str | Path) -> Path:
     (either *dest* itself or a single nested child dir containing ``.zgroup``).
 
     Defense in depth: the manual member walk rejects link-based escape attacks
-    before any bytes touch the filesystem; ``tarfile.extractall(filter="data")``
-    strips mode/uid/gid bits and catches anything the walk missed.
+    and oversized declared payloads before any bytes touch the filesystem;
+    ``tarfile.extractall(filter="data")`` strips mode/uid/gid bits and catches
+    anything the walk missed.
     """
     dest = Path(dest)
     dest.mkdir(parents=True, exist_ok=False)
     dest_resolved = dest.resolve()
     with tarfile.open(str(tar_path), mode="r:") as tf:
+        declared_bytes = 0
         for member in tf.getmembers():
             if member.issym() or member.islnk():
                 raise ValueError(f"rejected link member: {member.name!r}")
@@ -510,6 +517,12 @@ def extract_uploaded_shard_tar(tar_path: str | Path, dest: str | Path) -> Path:
                 str(dest_resolved) + os.sep
             ):
                 raise ValueError(f"tar member escapes extract dir: {name!r}")
+            if member.isreg():
+                declared_bytes += max(0, int(member.size))
+                if max_extract_bytes is not None and declared_bytes > int(max_extract_bytes):
+                    raise ValueError(
+                        f"tar declared payload too large: {declared_bytes} > {int(max_extract_bytes)} bytes"
+                    )
         tf.extractall(str(dest), filter="data")
     entries = list(dest.iterdir())
     if len(entries) == 1 and entries[0].is_dir() and (entries[0] / ".zgroup").exists():
@@ -648,9 +661,10 @@ def validate_array_declarations(
     if policy_shape[0] != x_shape[0]:
         raise ValueError("policy_target N mismatch")
     policy_size = int(policy_shape[1])
-    if policy_size != int(POLICY_SIZE):
+    if policy_size not in (int(POLICY_SIZE), int(COMPACT_POLICY_SIZE)):
         raise ValueError(
-            f"policy_target A mismatch: expected {POLICY_SIZE}, got {policy_shape[1]}",
+            f"policy_target A mismatch: expected {POLICY_SIZE} or {COMPACT_POLICY_SIZE}, "
+            f"got {policy_shape[1]}",
         )
     if len(wdl_shape) != 1 or wdl_shape[0] != x_shape[0]:
         raise ValueError("wdl_target must be (N,) matching x")

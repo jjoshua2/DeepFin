@@ -953,7 +953,7 @@ def create_app(
         return JSONResponse(content=_apply_dynamic_stale_pause(trial_id, manifest))
 
     @app.get("/v1/manifest")
-    def get_manifest(
+    async def get_manifest(
         x_cae_worker_version: str | None = Header(None, alias="X-CAE-Worker-Version"),
         x_cae_protocol_version: str | None = Header(None, alias="X-CAE-Protocol-Version"),
     ) -> Any:
@@ -964,7 +964,7 @@ def create_app(
         )
 
     @app.get("/v1/trials/{trial_id}/manifest")
-    def get_trial_manifest(
+    async def get_trial_manifest(
         trial_id: str,
         x_cae_worker_version: str | None = Header(None, alias="X-CAE-Worker-Version"),
         x_cae_protocol_version: str | None = Header(None, alias="X-CAE-Protocol-Version"),
@@ -1191,7 +1191,11 @@ def create_app(
         tmp_zarr: Path | None = None
         try:
             tmp_zarr = inbox_root / f"tmp_{os.getpid()}_{secrets.token_hex(8)}{LOCAL_SHARD_SUFFIX}"
-            zarr_root = extract_uploaded_shard_tar(tmp, tmp_zarr)
+            zarr_root = extract_uploaded_shard_tar(
+                tmp,
+                tmp_zarr,
+                max_extract_bytes=int(max_upload_uncompressed_bytes),
+            )
             shard_arrs_lazy, meta = load_shard_arrays(zarr_root, lazy=True)
             validate_array_declarations(
                 shard_arrs_lazy,

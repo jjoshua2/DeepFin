@@ -11,7 +11,7 @@ import pytest
 from chess_anti_engine.mcts.gumbel import GumbelConfig, run_gumbel_root_many
 from chess_anti_engine.mcts.puct import MCTSConfig, run_mcts_many
 from chess_anti_engine.mcts.puct_c import run_mcts_many_c
-from chess_anti_engine.moves import POLICY_SIZE, move_to_index
+from chess_anti_engine.moves import POLICY_ENCODING_LC0_1858, POLICY_SIZE, move_to_index
 from chess_anti_engine.uci import search as uci_search
 from chess_anti_engine.uci.search import SearchWorker
 from chess_anti_engine.uci.time_manager import Deadline
@@ -229,6 +229,50 @@ def test_uci_tb_solved_root_shortcuts_without_evaluating(monkeypatch: pytest.Mon
     assert result.tbhits == 1
     assert result.score_cp == uci_search._TB_WIN_CP
     assert result.pv == (best.uci(),)
+
+
+def test_uci_gumbel_chunk_forces_deterministic_temperature(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen_temperatures: list[float] = []
+
+    def fake_run_gumbel_root_many_c(**kwargs: Any):
+        seen_temperatures.append(float(kwargs["cfg"].temperature))
+        return ([], [0], [0.0], [], object(), [0])
+
+    monkeypatch.setattr(uci_search, "run_gumbel_root_many_c", fake_run_gumbel_root_many_c)
+    worker = SearchWorker(
+        _ZeroEvaluator(),
+        device="cpu",
+        chunk_sims=4,
+        gumbel_cfg=GumbelConfig(simulations=4, topk=4, temperature=1.0, add_noise=True),
+    )
+
+    value = worker._run_gumbel_chunk(4, chess.Board(), tb_probe=None)  # noqa: SLF001
+
+    assert value == 0.0
+    assert seen_temperatures == [0.0]
+    assert worker._last_gumbel_action_idx == 0  # noqa: SLF001
+
+
+def test_uci_build_engine_threads_policy_encoding_into_gumbel_config() -> None:
+    from chess_anti_engine.uci.__main__ import _build_engine
+
+    engine = _build_engine(
+        evaluator=_ZeroEvaluator(),
+        primary_device="cpu",
+        chunk_sims=4,
+        topk=4,
+        n_walkers=1,
+        vloss_weight=1,
+        walker_gather=1,
+        pucv_vloss_mode=0,
+        max_batch=64,
+        vl_gather=64,
+        eval_cache_entries=0,
+        use_multi_gpu_pucv=False,
+        policy_encoding=POLICY_ENCODING_LC0_1858,
+    )
+
+    assert engine._worker._cfg.policy_encoding == POLICY_ENCODING_LC0_1858  # noqa: SLF001
 
 
 def test_uci_searchmoves_bypass_tb_shortcut_and_filter_bestmove(

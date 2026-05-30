@@ -56,6 +56,33 @@ def flip_wdl_pov(wdl: np.ndarray) -> np.ndarray:
     )
 
 
+def _sf_result_wdl_for_record(
+    res,
+    *,
+    sf_wdl_use_cp_logistic: bool,
+    sf_wdl_cp_slope: float,
+    sf_wdl_cp_draw_width: float,
+) -> np.ndarray | None:
+    """Return SF WDL in the sampled net-record POV.
+
+    SF label searches are run after the network move has been pushed, both for
+    curriculum opponent replies and for async selfplay annotation. Therefore
+    Stockfish's WDL is from the opponent side-to-move and must be flipped back
+    before attaching it to the previous network-turn record.
+    """
+    if sf_wdl_use_cp_logistic and (res.cp is not None or res.mate is not None):
+        wdl_stm = _cp_to_wdl(
+            res.cp,
+            res.mate,
+            slope=sf_wdl_cp_slope,
+            draw_width_cp=sf_wdl_cp_draw_width,
+        )
+        return flip_wdl_pov(wdl_stm)
+    if res.wdl is not None:
+        return flip_wdl_pov(res.wdl)
+    return None
+
+
 def _choose_curriculum_opponent_move(
     *,
     rng: np.random.Generator,
@@ -292,21 +319,54 @@ def finish_sf_annotation_and_moves(
     )
 
 
+def _pv_wdl_score(
+    pv,
+    *,
+    sf_wdl_use_cp_logistic: bool,
+    sf_wdl_cp_slope: float,
+    sf_wdl_cp_draw_width: float,
+) -> float | None:
+    if sf_wdl_use_cp_logistic and (pv.cp is not None or pv.mate is not None):
+        wdl = _cp_to_wdl(
+            pv.cp,
+            pv.mate,
+            slope=sf_wdl_cp_slope,
+            draw_width_cp=sf_wdl_cp_draw_width,
+        )
+    else:
+        wdl = pv.wdl
+    if wdl is None:
+        return None
+    w_sf, d_sf = float(wdl[0]), float(wdl[1])
+    return w_sf + 0.5 * d_sf
+
+
 def _collect_sf_pv_candidates(
-    res, *, _turn: bool, legal_set: set[int],
+    res,
+    *,
+    _turn: bool,
+    legal_set: set[int],
+    sf_wdl_use_cp_logistic: bool = False,
+    sf_wdl_cp_slope: float = 0.010,
+    sf_wdl_cp_draw_width: float = 60.0,
 ) -> tuple[list[int], list[float]]:
     """Extract (action_idx, w + 0.5*d) per legal SF MultiPV candidate."""
     cand_idxs: list[int] = []
     cand_scores: list[float] = []
     for pv in getattr(res, "pvs", None) or []:
-        if pv.wdl is None:
-            continue
         a = uci_to_policy_index(pv.move_uci, _turn)
         if a < 0 or a not in legal_set:
             continue
-        w_sf, d_sf = float(pv.wdl[0]), float(pv.wdl[1])
+        score = _pv_wdl_score(
+            pv,
+            sf_wdl_use_cp_logistic=sf_wdl_use_cp_logistic,
+            sf_wdl_cp_slope=sf_wdl_cp_slope,
+            sf_wdl_cp_draw_width=sf_wdl_cp_draw_width,
+        )
+        if score is None:
+            continue
         cand_idxs.append(a)
-        cand_scores.append(w_sf + 0.5 * d_sf)
+        cand_scores.append(score)
     return cand_idxs, cand_scores
 
 
@@ -349,11 +409,12 @@ def _attach_sf_target_to_last_record(
         return
     rec.sf_policy_target = p_sf
     rec.sf_move_index = a_idx
-    if sf_wdl_use_cp_logistic and (res.cp is not None or res.mate is not None):
-        wdl_stm = _cp_to_wdl(res.cp, res.mate, slope=sf_wdl_cp_slope, draw_width_cp=sf_wdl_cp_draw_width)
-        rec.sf_wdl = flip_wdl_pov(wdl_stm)
-    elif res.wdl is not None:
-        rec.sf_wdl = flip_wdl_pov(res.wdl)
+    rec.sf_wdl = _sf_result_wdl_for_record(
+        res,
+        sf_wdl_use_cp_logistic=sf_wdl_use_cp_logistic,
+        sf_wdl_cp_slope=sf_wdl_cp_slope,
+        sf_wdl_cp_draw_width=sf_wdl_cp_draw_width,
+    )
     _sf_mask = np.zeros((POLICY_SIZE,), dtype=np.uint8)
     _sf_mask[legal_indices] = 1
     rec.sf_legal_mask = _sf_mask
@@ -374,11 +435,12 @@ def _attach_sf_target_to_record(
         return
     rec.sf_policy_target = p_sf
     rec.sf_move_index = a_idx
-    if sf_wdl_use_cp_logistic and (res.cp is not None or res.mate is not None):
-        wdl_stm = _cp_to_wdl(res.cp, res.mate, slope=sf_wdl_cp_slope, draw_width_cp=sf_wdl_cp_draw_width)
-        rec.sf_wdl = flip_wdl_pov(wdl_stm)
-    elif res.wdl is not None:
-        rec.sf_wdl = flip_wdl_pov(res.wdl)
+    rec.sf_wdl = _sf_result_wdl_for_record(
+        res,
+        sf_wdl_use_cp_logistic=sf_wdl_use_cp_logistic,
+        sf_wdl_cp_slope=sf_wdl_cp_slope,
+        sf_wdl_cp_draw_width=sf_wdl_cp_draw_width,
+    )
     _sf_mask = np.zeros((POLICY_SIZE,), dtype=np.uint8)
     _sf_mask[legal_indices] = 1
     rec.sf_legal_mask = _sf_mask
@@ -404,6 +466,9 @@ def _process_sf_label_result_for_record(
 
     cand_idxs, cand_scores = _collect_sf_pv_candidates(
         res, _turn=bool(turn), legal_set=legal_set,
+        sf_wdl_use_cp_logistic=bool(state.game.sf_wdl_use_cp_logistic),
+        sf_wdl_cp_slope=float(state.game.sf_wdl_cp_slope),
+        sf_wdl_cp_draw_width=float(state.game.sf_wdl_cp_draw_width),
     )
     if not cand_idxs:
         cand_idxs = [a_idx]
@@ -588,8 +653,17 @@ def _process_sf_results(
             cand_scores = [0.0]
 
         if attach_labels and _slot_latest_record_needs_sf_label(state, idx):
+            label_cand_idxs, label_cand_scores = _collect_sf_pv_candidates(
+                res, _turn=_turn, legal_set=legal_set,
+                sf_wdl_use_cp_logistic=sf_wdl_use_cp_logistic,
+                sf_wdl_cp_slope=sf_wdl_cp_slope,
+                sf_wdl_cp_draw_width=sf_wdl_cp_draw_width,
+            )
+            if not label_cand_idxs:
+                label_cand_idxs = [a_idx]
+                label_cand_scores = [0.0]
             p_sf = _build_sf_policy_target(
-                cand_idxs, cand_scores,
+                label_cand_idxs, label_cand_scores,
                 legal_indices=legal_indices,
                 sf_policy_temp=sf_policy_temp,
                 sf_policy_label_smooth=sf_policy_label_smooth,

@@ -91,6 +91,19 @@ def _malicious_tar_with_traversal() -> bytes:
     return buf.getvalue()
 
 
+def _tar_with_large_declared_payload() -> bytes:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tf:
+        root = tarfile.TarInfo(name="shard.zarr")
+        root.type = tarfile.DIRTYPE
+        tf.addfile(root)
+        payload = tarfile.TarInfo(name="shard.zarr/too_large")
+        payload_bytes = b"x" * 11
+        payload.size = len(payload_bytes)
+        tf.addfile(payload, io.BytesIO(payload_bytes))
+    return buf.getvalue()
+
+
 def test_zarr_tar_upload_rejects_symlink_member(tmp_path) -> None:
     """A tar containing a symlink must be quarantined, not extracted."""
     server_root = tmp_path / "server"
@@ -133,6 +146,27 @@ def test_zarr_tar_upload_rejects_path_traversal(tmp_path) -> None:
     body = r.json()
     assert body.get("rejected") is True
     assert "traversal" in body.get("reason", "").lower() or "escape" in body.get("reason", "").lower()
+
+
+def test_zarr_tar_upload_rejects_declared_payload_cap_before_extract(tmp_path) -> None:
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+    client = _build_client(server_root, max_upload_uncompressed_bytes=10)
+
+    r = client.post(
+        "/v1/upload_shard",
+        auth=("u", "p"),
+        files={"file": ("shard.zarr.tar", _tar_with_large_declared_payload(), "application/x-tar")},
+        headers=_default_headers(),
+    )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body.get("stored") is False
+    assert body.get("rejected") is True
+    assert "payload too large" in body.get("reason", "")
+    assert not any((server_root / "trials" / "default" / "inbox" / "u").glob("tmp_*.zarr"))
 
 
 def test_zarr_tar_upload_happy_path(tmp_path) -> None:

@@ -99,16 +99,15 @@ def test_load_shard_arrays_reads_legacy_npz(tmp_path):
     assert arrs["x"].shape[0] == len(samples)
 
 
-def test_zarr_shard_rejects_compact_policy_size_until_training_supports_it(tmp_path):
+def test_zarr_shard_accepts_compact_policy_size(tmp_path):
     samples = [_sample(policy_size=1858), _sample(policy_size=1858)]
     arrs = samples_to_arrays(samples)
 
     p = local_shard_path(tmp_path, 0)
-    try:
-        save_local_shard_arrays(p, arrs=arrs, meta=ShardMeta(username="alice", positions=len(samples)))
-        assert False, "expected ValueError"
-    except ValueError as exc:
-        assert "policy_target A mismatch" in str(exc)
+    out_path = save_local_shard_arrays(p, arrs=arrs, meta=ShardMeta(username="alice", positions=len(samples)))
+    loaded, _ = load_shard_arrays(out_path)
+
+    assert loaded["policy_target"].shape == (2, 1858)
 
 
 def test_local_zarr_shard_roundtrip(tmp_path):

@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
+import httpx
 import numpy as np
 import torch
 
 import chess_anti_engine.tune.distributed_runtime as distributed_runtime
 from chess_anti_engine.model import ModelConfig
+from chess_anti_engine.moves.encode import POLICY_SIZE
 from chess_anti_engine.replay import ArrayReplayBuffer
 from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
 from chess_anti_engine.replay.shard import LOCAL_SHARD_SUFFIX, save_local_shard_arrays
+from chess_anti_engine.server.app import create_app
 from chess_anti_engine.tune.distributed_runtime import (
     _ingest_distributed_selfplay,
     _publish_distributed_trial_state,
@@ -47,6 +51,17 @@ class _WeightTrainer:
     w_moves_left = 0.0
     sf_wdl_frac = 0.0
     search_wdl_frac = 0.0
+
+
+def _get_asgi_json(app, path: str, *, headers: dict[str, str]) -> dict:
+    async def _run() -> dict:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get(path, headers=headers)
+            response.raise_for_status()
+            return dict(response.json())
+
+    return asyncio.run(_run())
 
 
 def _model_cfg() -> ModelConfig:
@@ -97,6 +112,130 @@ def test_publish_distributed_trial_state_includes_pause_selfplay(tmp_path: Path)
     assert manifest["backpressure"]["pause_selfplay"] is True
     assert manifest["backpressure"]["pause_reason"] == "training"
     assert manifest["backpressure"]["stale_games"] == 96
+
+
+def test_publish_distributed_trial_state_sets_stale_pause_target(tmp_path: Path) -> None:
+    trainer = _FakeTrainer()
+    model_cfg = _model_cfg()
+
+    _publish_distributed_trial_state(
+        trainer=trainer,
+        config={
+            "games_per_iter": 1000,
+            "distributed_prev_model_max_fraction": 0.5,
+        },
+        model_cfg=model_cfg,
+        server_root=tmp_path,
+        trial_id="trial_00000",
+        training_iteration=7,
+        trainer_step=123,
+        sf_nodes=1000,
+        mcts_simulations=64,
+    )
+
+    manifest_path = tmp_path / "trials" / "trial_00000" / "publish" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["recommended_worker"]["pause_selfplay"] is False
+    assert manifest["backpressure"]["stale_pause_target_games"] == 500
+    assert manifest["backpressure"]["stale_pause_model_sha"] == manifest["model"]["sha256"]
+
+
+def test_manifest_pauses_when_stale_backlog_target_reached(tmp_path: Path) -> None:
+    trainer = _FakeTrainer()
+    model_cfg = _model_cfg()
+    _publish_distributed_trial_state(
+        trainer=trainer,
+        config={
+            "games_per_iter": 1000,
+            "distributed_prev_model_max_fraction": 0.5,
+        },
+        model_cfg=model_cfg,
+        server_root=tmp_path,
+        trial_id="trial_00000",
+        training_iteration=7,
+        trainer_step=123,
+        sf_nodes=1000,
+        mcts_simulations=64,
+    )
+    manifest_path = tmp_path / "trials" / "trial_00000" / "publish" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    model_sha = manifest["model"]["sha256"]
+
+    policy = np.zeros((1, POLICY_SIZE), dtype=np.float16)
+    policy[0, 0] = 1.0
+    inbox_shard = tmp_path / "trials" / "trial_00000" / "inbox" / "_compacted" / f"queued{LOCAL_SHARD_SUFFIX}"
+    save_local_shard_arrays(
+        inbox_shard,
+        arrs={
+            "x": np.zeros((1, 146, 8, 8), dtype=np.float16),
+            "policy_target": policy,
+            "wdl_target": np.zeros((1,), dtype=np.int8),
+            "priority": np.ones((1,), dtype=np.float32),
+            "has_policy": np.ones((1,), dtype=np.uint8),
+        },
+        meta={"model_sha256": model_sha, "games": 500, "positions": 1},
+    )
+
+    served = _get_asgi_json(
+        create_app(server_root=tmp_path),
+        "/v1/trials/trial_00000/manifest",
+        headers=_manifest_poll_headers(worker_id="test-worker"),
+    )
+
+    assert served["recommended_worker"]["pause_selfplay"] is True
+    assert "stale backlog target reached" in served["recommended_worker"]["pause_reason"]
+    assert served["backpressure"]["stale_pause_queued_games"] == 500
+    # Dynamic pause is response-only; the persisted learner manifest remains
+    # unpaused so the pause naturally clears after ingest drains the backlog.
+    persisted = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert persisted["recommended_worker"]["pause_selfplay"] is False
+
+
+def test_manifest_pauses_when_old_model_backlog_target_reached(tmp_path: Path) -> None:
+    trainer = _FakeTrainer()
+    model_cfg = _model_cfg()
+    _publish_distributed_trial_state(
+        trainer=trainer,
+        config={
+            "games_per_iter": 1000,
+            "distributed_prev_model_max_fraction": 0.5,
+        },
+        model_cfg=model_cfg,
+        server_root=tmp_path,
+        trial_id="trial_00000",
+        training_iteration=7,
+        trainer_step=123,
+        sf_nodes=1000,
+        mcts_simulations=64,
+    )
+
+    policy = np.zeros((1, POLICY_SIZE), dtype=np.float16)
+    policy[0, 0] = 1.0
+    old_sha = "a" * 64
+    inbox_shard = tmp_path / "trials" / "trial_00000" / "inbox" / "_compacted" / f"old{LOCAL_SHARD_SUFFIX}"
+    save_local_shard_arrays(
+        inbox_shard,
+        arrs={
+            "x": np.zeros((1, 146, 8, 8), dtype=np.float16),
+            "policy_target": policy,
+            "wdl_target": np.zeros((1,), dtype=np.int8),
+            "priority": np.ones((1,), dtype=np.float32),
+            "has_policy": np.ones((1,), dtype=np.uint8),
+        },
+        meta={"model_sha256": old_sha, "games": 500, "positions": 1},
+    )
+
+    served = _get_asgi_json(
+        create_app(server_root=tmp_path),
+        "/v1/trials/trial_00000/manifest",
+        headers=_manifest_poll_headers(worker_id="test-worker"),
+    )
+
+    assert served["recommended_worker"]["pause_selfplay"] is True
+    assert "queued old-model games" in served["recommended_worker"]["pause_reason"]
+    assert served["backpressure"]["stale_pause_queued_games"] == 500
+    assert served["backpressure"]["stale_pause_stale_queued_games"] == 500
+    assert served["backpressure"]["stale_pause_current_queued_games"] == 0
 
 
 def test_donor_config_overlay_copies_sf_wdl_frac() -> None:

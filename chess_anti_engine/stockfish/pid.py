@@ -112,6 +112,11 @@ class _Lever:
     recency_half_life: float = 0.0
     deadband_sigma: float = 1.0
     degen_step_frac: float = 0.5
+    tighten_gain: float = 1.0
+    tighten_streak_after: int = 0
+    tighten_streak_gain: float = 1.0
+    crash_ease_z: float = 0.0
+    crash_ease_min_frac: float = 0.0
     window: int = 20
     history: deque[tuple[float, float, float]] = field(default_factory=deque)
     cap_hits: dict[str, int] = field(default_factory=dict)
@@ -120,7 +125,22 @@ class _Lever:
         self.direction = 1 if self.direction >= 0 else -1
         self.value = _clamp(float(self.value), self.min_value, self.max_value)
         self.degen_step_frac = _clamp(self.degen_step_frac, 0.0, 1.0)
+        self.tighten_gain = _clamp(self.tighten_gain, 0.0, 1.0)
+        self.tighten_streak_after = max(0, int(self.tighten_streak_after))
+        self.tighten_streak_gain = _clamp(self.tighten_streak_gain, 0.0, 1.0)
+        self.crash_ease_min_frac = _clamp(self.crash_ease_min_frac, 0.0, 1.0)
         self.history = deque(self.history, maxlen=max(3, self.window))
+
+
+def _tighten_streak(history: list[tuple[float, float, float]], *, ease_sign: int) -> int:
+    streak = 0
+    for older, newer in zip(reversed(history[:-1]), reversed(history[1:])):
+        delta = float(newer[0]) - float(older[0])
+        if delta * ease_sign < -1e-12:
+            streak += 1
+        else:
+            break
+    return streak
 
 
 def _step_lever(
@@ -152,6 +172,7 @@ def _step_lever(
 
     err = target_wr - raw_wr
     ema_err = target_wr - ema_wr
+    prior_history = list(lever.history)
     # EMA's steady-state variance is α/(2-α)·σ²; SE(ema_err) = σ·√(α/(2-α)).
     ema_se_factor = math.sqrt(ema_alpha / max(2.0 - ema_alpha, 1e-9))
     sigma = max(0.0, lever.deadband_sigma)
@@ -216,6 +237,26 @@ def _step_lever(
         elif err < -raw_deadband and delta * ease_sign > 1e-12:
             delta = -ease_sign * 0.5 * abs_tighten_step
 
+        if delta * ease_sign < -1e-12:
+            tighten_gain = lever.tighten_gain
+            if (
+                lever.tighten_streak_after > 0
+                and _tighten_streak(prior_history, ease_sign=ease_sign)
+                >= lever.tighten_streak_after
+            ):
+                tighten_gain *= lever.tighten_streak_gain
+            delta *= tighten_gain
+
+        # Crash ease runs after tightening so the safety floor can override a
+        # throttled tighten step when raw regret is outside the crash band.
+        if (
+            lever.crash_ease_z > 0.0
+            and lever.crash_ease_min_frac > 0.0
+            and err > max(raw_deadband, lever.crash_ease_z * se)
+        ):
+            min_ease = lever.crash_ease_min_frac * abs_ease_step
+            delta = ease_sign * max(delta * ease_sign, min_ease)
+
         new_value = _clamp(value_before + delta, lever.min_value, lever.max_value)
 
     lever.value = new_value
@@ -251,12 +292,18 @@ _LEVER_LIVE_FIELDS = (
     "recency_half_life",
     "deadband_sigma",
     "degen_step_frac",
+    "tighten_gain",
+    "tighten_streak_after",
+    "tighten_streak_gain",
+    "crash_ease_z",
+    "crash_ease_min_frac",
 )
 # Fields where negative values are physically meaningless; clamp at 0.
 _LEVER_NONNEG_FIELDS: frozenset[str] = frozenset({
     "max_step", "max_step_frac", "ease_step_frac",
     "emergency_ease_step", "recency_half_life", "deadband_sigma",
-    "degen_step_frac",
+    "degen_step_frac", "tighten_gain", "tighten_streak_after",
+    "tighten_streak_gain", "crash_ease_z", "crash_ease_min_frac",
 })
 
 
@@ -299,6 +346,11 @@ class DifficultyPID:
         regret_recency_half_life: float = 0.0,
         regret_deadband_sigma: float = 1.0,
         regret_degen_step_frac: float = 0.5,
+        regret_tighten_gain: float = 1.0,
+        regret_tighten_streak_after: int = 0,
+        regret_tighten_streak_gain: float = 1.0,
+        regret_crash_ease_z: float = 0.0,
+        regret_crash_ease_min_frac: float = 0.0,
         # Nodes lever — defaults match the prior proportional controller
         nodes_window: int = 20,
         nodes_max_step: float | None = None,
@@ -309,6 +361,11 @@ class DifficultyPID:
         nodes_recency_half_life: float = 0.0,
         nodes_deadband_sigma: float = 0.0,
         nodes_degen_step_frac: float = 0.5,
+        nodes_tighten_gain: float = 1.0,
+        nodes_tighten_streak_after: int = 0,
+        nodes_tighten_streak_gain: float = 1.0,
+        nodes_crash_ease_z: float = 0.0,
+        nodes_crash_ease_min_frac: float = 0.0,
     ):
         init = int(initial_nodes)
         nodes_clamped = int(_clamp(init, int(min_nodes), int(max_nodes)))
@@ -353,6 +410,11 @@ class DifficultyPID:
             recency_half_life=float(regret_recency_half_life),
             deadband_sigma=float(regret_deadband_sigma),
             degen_step_frac=float(regret_degen_step_frac),
+            tighten_gain=float(regret_tighten_gain),
+            tighten_streak_after=int(regret_tighten_streak_after),
+            tighten_streak_gain=float(regret_tighten_streak_gain),
+            crash_ease_z=float(regret_crash_ease_z),
+            crash_ease_min_frac=float(regret_crash_ease_min_frac),
             window=int(regret_window),
         )
         self.nodes_lever = _Lever(
@@ -370,6 +432,11 @@ class DifficultyPID:
             recency_half_life=float(nodes_recency_half_life),
             deadband_sigma=float(nodes_deadband_sigma),
             degen_step_frac=float(nodes_degen_step_frac),
+            tighten_gain=float(nodes_tighten_gain),
+            tighten_streak_after=int(nodes_tighten_streak_after),
+            tighten_streak_gain=float(nodes_tighten_streak_gain),
+            crash_ease_z=float(nodes_crash_ease_z),
+            crash_ease_min_frac=float(nodes_crash_ease_min_frac),
             window=int(nodes_window),
         )
         _seed_lever_history(self.regret_lever, target_wr=self.target)
@@ -636,6 +703,11 @@ def pid_from_config(config: dict) -> DifficultyPID:
         regret_recency_half_life=float(config.get("sf_pid_regret_recency_half_life", 0.0)),
         regret_deadband_sigma=float(config.get("sf_pid_regret_deadband_sigma", 1.0)),
         regret_degen_step_frac=float(config.get("sf_pid_regret_degen_step_frac", 0.5)),
+        regret_tighten_gain=float(config.get("sf_pid_regret_tighten_gain", 1.0)),
+        regret_tighten_streak_after=int(config.get("sf_pid_regret_tighten_streak_after", 0)),
+        regret_tighten_streak_gain=float(config.get("sf_pid_regret_tighten_streak_gain", 1.0)),
+        regret_crash_ease_z=float(config.get("sf_pid_regret_crash_ease_z", 0.0)),
+        regret_crash_ease_min_frac=float(config.get("sf_pid_regret_crash_ease_min_frac", 0.0)),
         nodes_window=int(config.get("sf_pid_nodes_window", 20)),
         nodes_max_step=float(config["sf_pid_nodes_max_step"])
             if "sf_pid_nodes_max_step" in config else None,
@@ -646,4 +718,9 @@ def pid_from_config(config: dict) -> DifficultyPID:
         nodes_recency_half_life=float(config.get("sf_pid_nodes_recency_half_life", 0.0)),
         nodes_deadband_sigma=float(config.get("sf_pid_nodes_deadband_sigma", 0.0)),
         nodes_degen_step_frac=float(config.get("sf_pid_nodes_degen_step_frac", 0.5)),
+        nodes_tighten_gain=float(config.get("sf_pid_nodes_tighten_gain", 1.0)),
+        nodes_tighten_streak_after=int(config.get("sf_pid_nodes_tighten_streak_after", 0)),
+        nodes_tighten_streak_gain=float(config.get("sf_pid_nodes_tighten_streak_gain", 1.0)),
+        nodes_crash_ease_z=float(config.get("sf_pid_nodes_crash_ease_z", 0.0)),
+        nodes_crash_ease_min_frac=float(config.get("sf_pid_nodes_crash_ease_min_frac", 0.0)),
     )

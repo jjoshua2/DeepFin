@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import pytest
+
+from chess_anti_engine.tune.trainable_phases import (
+    _compute_replay_window_update,
+    _selfplay_diagnostic_fields_from_ingest,
+)
 from chess_anti_engine.tune.trial_config import TrialConfig
 
 
@@ -13,6 +19,16 @@ def test_from_empty_dict() -> None:
     assert tc.sf_nodes == 500
     assert tc.sf_move_nodes == 0
     assert tc.mcts_simulations == 50
+    assert tc.gumbel_topk == 16
+    assert tc.gumbel_c_scale == 0.1
+    assert tc.gumbel_scale == 1.0
+    assert tc.gumbel_scale_after == 0.0
+    assert tc.gumbel_scale_decay_start_move == 0
+    assert tc.gumbel_scale_decay_moves == 0
+    assert tc.curriculum_gumbel_scale == 0.0
+    assert tc.curriculum_gumbel_scale_after == 0.0
+    assert tc.curriculum_gumbel_scale_decay_start_move == 0
+    assert tc.curriculum_gumbel_scale_decay_moves == 0
     assert tc.sf_pid_enabled is True
     assert tc.sf_pid_wdl_regret_max == 1.0
     assert tc.diff_focus_q_weight == 6.0
@@ -34,6 +50,16 @@ def test_from_dict_overrides() -> None:
         "sf_nodes": 5000,
         "sf_move_nodes": 10000,
         "mcts_simulations": 100,
+        "gumbel_topk": 24,
+        "gumbel_c_scale": 0.2,
+        "gumbel_scale": 0.5,
+        "gumbel_scale_after": 0.1,
+        "gumbel_scale_decay_start_move": 15,
+        "gumbel_scale_decay_moves": 15,
+        "curriculum_gumbel_scale": 0.25,
+        "curriculum_gumbel_scale_after": 0.05,
+        "curriculum_gumbel_scale_decay_start_move": 10,
+        "curriculum_gumbel_scale_decay_moves": 20,
         "stockfish_path": "/usr/bin/stockfish",
         "stockfish_syzygy_path": "/ssd/tb",
         "sf_pid_ema_alpha": 0.50,
@@ -47,6 +73,16 @@ def test_from_dict_overrides() -> None:
     assert tc.sf_nodes == 5000
     assert tc.sf_move_nodes == 10000
     assert tc.mcts_simulations == 100
+    assert tc.gumbel_topk == 24
+    assert tc.gumbel_c_scale == 0.2
+    assert tc.gumbel_scale == 0.5
+    assert tc.gumbel_scale_after == 0.1
+    assert tc.gumbel_scale_decay_start_move == 15
+    assert tc.gumbel_scale_decay_moves == 15
+    assert tc.curriculum_gumbel_scale == 0.25
+    assert tc.curriculum_gumbel_scale_after == 0.05
+    assert tc.curriculum_gumbel_scale_decay_start_move == 10
+    assert tc.curriculum_gumbel_scale_decay_moves == 20
     assert tc.stockfish_path == "/usr/bin/stockfish"
     assert tc.stockfish_syzygy_path == "/ssd/tb"
     assert tc.sf_pid_ema_alpha == 0.50
@@ -132,6 +168,137 @@ def test_fallback_keys() -> None:
     # Same for replay_window_max -> replay_capacity
     tc = TrialConfig.from_dict({"replay_capacity": 500_000})
     assert tc.replay_window_max == 500_000
+
+    tc = TrialConfig.from_dict({"replay_window_growth_frac": 0.75})
+    assert tc.replay_window_growth_frac == 0.75
+
+
+@pytest.mark.parametrize("value", [-0.01, 1.01, float("inf"), float("nan")])
+def test_replay_window_growth_frac_rejects_out_of_range_values(value: float) -> None:
+    with pytest.raises(ValueError, match="replay_window_growth_frac"):
+        TrialConfig.from_dict({"replay_window_growth_frac": value})
+
+
+@pytest.mark.parametrize("value", [-0.01, float("inf"), float("nan")])
+def test_gumbel_c_scale_rejects_invalid_values(value: float) -> None:
+    with pytest.raises(ValueError, match="gumbel_c_scale"):
+        TrialConfig.from_dict({"gumbel_c_scale": value})
+
+
+def test_replay_window_growth_frac_controls_runtime_growth() -> None:
+    after, growth, frac = _compute_replay_window_update(
+        current_window=1_000,
+        replay_window_max=2_000,
+        fixed_growth=500,
+        growth_frac=0.10,
+        positions_ingested=333,
+    )
+
+    assert after == 1_034
+    assert growth == 34
+    assert frac == 0.10
+
+
+def test_replay_window_fixed_growth_remains_fallback() -> None:
+    after, growth, frac = _compute_replay_window_update(
+        current_window=1_000,
+        replay_window_max=1_100,
+        fixed_growth=500,
+        growth_frac=None,
+        positions_ingested=333,
+    )
+
+    assert after == 1_100
+    assert growth == 100
+    assert frac == 0.0
+
+
+def test_replay_window_live_max_shrink_caps_window() -> None:
+    after, growth, frac = _compute_replay_window_update(
+        current_window=2_000,
+        replay_window_max=1_500,
+        fixed_growth=500,
+        growth_frac=0.25,
+        positions_ingested=333,
+    )
+
+    assert after == 1_500
+    assert growth == 0
+    assert frac == 0.25
+
+
+def test_selfplay_diagnostic_fields_are_copied_from_ingest_summary() -> None:
+    fields = _selfplay_diagnostic_fields_from_ingest({
+        "matching_diff_focus_records": 5,
+        "matching_diff_focus_kept": 3,
+        "matching_diff_focus_keep_prob_sum": 2.5,
+        "matching_diff_focus_keep_limited": 1,
+        "matching_diff_focus_sample_weight_sum": 4.5,
+        "matching_diff_focus_sample_weight_limited": 2,
+        "matching_diff_focus_priority_sum": 10.0,
+        "matching_diff_focus_priority_sq_sum": 25.0,
+        "matching_diff_focus_priority_min": 0.5,
+        "matching_diff_focus_priority_max": 3.5,
+        "matching_gumbel_policy_diag_n": 7,
+        "matching_gumbel_policy_top_prob_sum": 1.25,
+        "matching_gumbel_policy_action_prob_sum": 1.0,
+        "matching_gumbel_policy_entropy_sum": 8.0,
+        "matching_gumbel_policy_eff_moves_sum": 12.0,
+        "matching_gumbel_policy_candidate_mass_sum": 6.5,
+        "matching_gumbel_policy_non_candidate_top_prob_sum": 0.75,
+        "matching_gumbel_policy_argmax_is_candidate_sum": 6,
+        "matching_gumbel_policy_argmax_is_action_sum": 4,
+        "matching_gumbel_policy_legal_count_sum": 210,
+        "matching_gumbel_policy_candidate_count_sum": 70,
+        "matching_outcome_stats": {"book_uho": 4},
+        "replay_priority_n": 11,
+        "replay_priority_sum": 13.0,
+        "replay_priority_sq_sum": 17.0,
+        "replay_priority_min": 0.25,
+        "replay_priority_max": 2.0,
+        "replay_has_policy_n": 11,
+        "replay_has_policy_sum": 10,
+        "replay_has_sf_wdl_n": 9,
+        "replay_has_sf_wdl_sum": 8,
+        "replay_has_search_wdl_n": 7,
+        "replay_has_search_wdl_sum": 6,
+        "replay_wdl_0": 3,
+        "replay_wdl_1": 5,
+        "replay_wdl_2": 2,
+    })
+
+    assert fields["diff_focus_records"] == 5
+    assert fields["diff_focus_priority_max"] == 3.5
+    assert fields["gumbel_policy_diag_n"] == 7
+    assert fields["gumbel_policy_legal_count_sum"] == 210
+    assert fields["outcome_stats"] == {"book_uho": 4}
+    assert fields["replay_priority_n"] == 11
+    assert fields["replay_has_sf_wdl_sum"] == 8
+    assert fields["replay_wdl_1"] == 5
+
+
+@pytest.mark.parametrize("value", [-0.01, float("inf"), float("nan")])
+def test_gumbel_scale_rejects_invalid_values(value: float) -> None:
+    with pytest.raises(ValueError, match="gumbel_scale"):
+        TrialConfig.from_dict({"gumbel_scale": value})
+
+
+@pytest.mark.parametrize("value", [-0.01, float("inf"), float("nan")])
+def test_gumbel_scale_after_rejects_invalid_values(value: float) -> None:
+    with pytest.raises(ValueError, match="gumbel_scale_after"):
+        TrialConfig.from_dict({"gumbel_scale_after": value})
+
+
+@pytest.mark.parametrize("value", [-0.01, float("inf"), float("nan")])
+def test_curriculum_gumbel_scale_rejects_invalid_values(value: float) -> None:
+    with pytest.raises(ValueError, match="curriculum_gumbel_scale"):
+        TrialConfig.from_dict({"curriculum_gumbel_scale": value})
+
+
+@pytest.mark.parametrize("value", [-0.01, float("inf"), float("nan")])
+def test_curriculum_gumbel_scale_after_rejects_invalid_values(value: float) -> None:
+    with pytest.raises(ValueError, match="curriculum_gumbel_scale_after"):
+        TrialConfig.from_dict({"curriculum_gumbel_scale_after": value})
 
 
 def test_games_per_iter_start_fallback() -> None:
