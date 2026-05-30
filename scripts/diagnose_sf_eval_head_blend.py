@@ -23,6 +23,8 @@ from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
 
 DEFAULT_RUN_DIR = Path("runs/pbt2_small")
+MAX_HORIZONS = 32
+MAX_SKIPPED_SHARDS = 20
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,18 +81,29 @@ def _latest_replay_dir(run_dir: Path, trial_dir: Path | None = None) -> Path:
 
 
 def _latest_checkpoint(trial_dir: Path) -> Path:
-    checkpoints = sorted(trial_dir.glob("checkpoint_*"), key=lambda p: p.stat().st_mtime)
-    if checkpoints:
-        return checkpoints[-1] / "trainer.pt"
     direct = trial_dir / "ckpt" / "trainer.pt"
     if direct.is_file():
         return direct
+    checkpoints = [
+        candidate
+        for checkpoint_dir in trial_dir.glob("checkpoint_*")
+        if (candidate := checkpoint_dir / "trainer.pt").is_file()
+    ]
+    if checkpoints:
+        return max(checkpoints, key=lambda p: p.stat().st_mtime)
     raise FileNotFoundError(f"No checkpoint trainer.pt under {trial_dir}")
 
 
 def _select_shards(replay_dir: Path, max_shards: int) -> list[Path]:
     shards = sorted(replay_dir.glob("shard_*.zarr"), key=shard_index)
     return shards if max_shards <= 0 else shards[-max_shards:]
+
+
+def _record_skipped_shard(scan: dict[str, Any], shard: Path, exc: Exception) -> None:
+    if len(scan["skipped_shards"]) < MAX_SKIPPED_SHARDS:
+        scan["skipped_shards"].append({"shard": str(shard), "reason": repr(exc)})
+    else:
+        scan["skipped_shards_omitted"] += 1
 
 
 def _normalize_wdl(arr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -127,6 +140,7 @@ def _load_samples(
         "valid_samples": 0,
         "samples_with_regret": 0,
         "skipped_shards": [],
+        "skipped_shards_omitted": 0,
     }
     for shard in _select_shards(replay_dir, max_shards):
         n = int(shard_positions(shard))
@@ -137,7 +151,7 @@ def _load_samples(
         try:
             arrs, _meta = load_shard_arrays(shard, lazy=True)
         except Exception as exc:  # noqa: BLE001
-            scan["skipped_shards"].append({"shard": str(shard), "reason": repr(exc)})
+            _record_skipped_shard(scan, shard, exc)
             continue
 
         required = ("game_id", "ply_index", "sf_wdl", "search_wdl", "wdl_target")
@@ -437,6 +451,24 @@ def _format_cell(value: Any) -> str:
     return str(value)
 
 
+def _try_latest_trial_dir(run_dir: Path) -> Path | None:
+    try:
+        return _latest_trial_dir(run_dir)
+    except FileNotFoundError:
+        return None
+
+
+def _normalize_horizons(values: list[int]) -> list[int]:
+    out = [int(value) for value in values]
+    if not out:
+        raise argparse.ArgumentTypeError("at least one horizon is required")
+    if any(value <= 0 for value in out):
+        raise argparse.ArgumentTypeError("horizons must be positive")
+    if len(out) > MAX_HORIZONS:
+        raise argparse.ArgumentTypeError(f"horizons supports at most {MAX_HORIZONS} values")
+    return out
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Fit future-eval blend weights with the model's predicted sf_eval head.",
@@ -451,17 +483,30 @@ def main() -> None:
     parser.add_argument("--fold", type=int, default=0)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
+    try:
+        horizons = _normalize_horizons(args.horizons)
+    except argparse.ArgumentTypeError as exc:
+        parser.error(str(exc))
 
     device = "cuda" if args.device == "auto" and torch.cuda.is_available() else args.device
     if device == "auto":
         device = "cpu"
 
-    trial_dir = _latest_trial_dir(args.run_dir)
+    trial_dir = _try_latest_trial_dir(args.run_dir)
+    if args.checkpoint is None and trial_dir is None:
+        raise FileNotFoundError(
+            f"No trial directories under {args.run_dir / 'tune'}; pass --checkpoint explicitly",
+        )
     replay_dir = args.replay_dir if args.replay_dir is not None else _latest_replay_dir(args.run_dir, trial_dir)
-    checkpoint = args.checkpoint if args.checkpoint is not None else _latest_checkpoint(trial_dir)
+    if args.checkpoint is not None:
+        checkpoint = args.checkpoint
+    else:
+        if trial_dir is None:
+            raise AssertionError("trial_dir unexpectedly missing")
+        checkpoint = _latest_checkpoint(trial_dir)
 
     games, scan = _load_samples(replay_dir, max_shards=int(args.max_shards))
-    pairs = _build_pairs(games, horizons=[int(h) for h in args.horizons])
+    pairs = _build_pairs(games, horizons=horizons)
     unique_refs = sorted(
         {pair.ref for pair in pairs},
         key=lambda ref: (str(ref.shard), int(ref.row)),
@@ -483,7 +528,7 @@ def main() -> None:
         ("all", ["sf_label", "search_label", "final", "model_wdl", "model_sf_eval"]),
     ]
     for target_name in ("raw", "adjusted"):
-        for horizon in [int(h) for h in args.horizons]:
+        for horizon in horizons:
             data, target, game_ids, meta = _rows_for_horizon(
                 pairs,
                 preds,
@@ -508,7 +553,7 @@ def main() -> None:
                 rows.append(row)
 
     payload = {
-        "trial": trial_dir.name,
+        "trial": None if trial_dir is None else trial_dir.name,
         "checkpoint": str(checkpoint),
         "replay_dir": str(replay_dir),
         "device": str(device),
@@ -521,7 +566,7 @@ def main() -> None:
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
-        print(f"trial={trial_dir.name}")
+        print(f"trial={None if trial_dir is None else trial_dir.name}")
         print(f"checkpoint={checkpoint}")
         print(f"replay_dir={replay_dir}")
         print(f"device={device} max_shards={args.max_shards}")

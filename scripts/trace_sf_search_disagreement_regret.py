@@ -15,6 +15,9 @@ from chess_anti_engine.replay.shard import load_shard_arrays, shard_index, shard
 
 
 DEFAULT_RUN_DIR = Path("runs/pbt2_small")
+MAX_JSON_TRACES = 1_000
+MAX_SKIPPED_SHARDS = 20
+MAX_TOP = 200
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +84,13 @@ def _select_shards(replay_dir: Path, max_shards: int) -> list[Path]:
     if max_shards > 0:
         return shards[-max_shards:]
     return shards
+
+
+def _record_skipped_shard(stats: dict[str, Any], shard: Path, exc: Exception) -> None:
+    if len(stats["skipped_shards"]) < MAX_SKIPPED_SHARDS:
+        stats["skipped_shards"].append({"shard": str(shard), "reason": repr(exc)})
+    else:
+        stats["skipped_shards_omitted"] += 1
 
 
 def _bool_field(arrs: dict[str, Any], name: str, n: int) -> np.ndarray:
@@ -184,6 +194,7 @@ def _load_samples(replay_dir: Path, max_shards: int) -> tuple[dict[int, list[Sam
         "valid_samples": 0,
         "samples_with_regret": 0,
         "skipped_shards": [],
+        "skipped_shards_omitted": 0,
     }
     for shard in shards:
         n = int(shard_positions(shard))
@@ -193,7 +204,7 @@ def _load_samples(replay_dir: Path, max_shards: int) -> tuple[dict[int, list[Sam
         try:
             arrs, _meta = load_shard_arrays(shard, lazy=True)
         except Exception as exc:  # noqa: BLE001
-            stats["skipped_shards"].append({"shard": str(shard), "reason": repr(exc)})
+            _record_skipped_shard(stats, shard, exc)
             continue
 
         required = ("game_id", "ply_index", "sf_wdl", "search_wdl")
@@ -358,6 +369,18 @@ def _fmt_float(value: float | None, digits: int = 4) -> str:
     return f"{float(value):.{digits}f}"
 
 
+def _rank_traces(traces: list[Trace]) -> list[Trace]:
+    return sorted(
+        traces,
+        key=lambda t: (
+            t.after_ply is not None,
+            -1.0 if t.gap_reduction is None else t.gap_reduction,
+            abs(t.initial_gap),
+        ),
+        reverse=True,
+    )
+
+
 def _print_report(report: dict[str, Any], traces: list[Trace], top: int) -> None:
     scan = report["scan"]
     trigger = report["trigger_summary"]
@@ -392,18 +415,11 @@ def _print_report(report: dict[str, Any], traces: list[Trace], top: int) -> None
         f"gap_reduction_after={_fmt_float(trace_summary['mean_gap_reduction_after'])}"
     )
     if scan["skipped_shards"]:
-        print(f"- skipped shards: {len(scan['skipped_shards'])}")
+        skipped = len(scan["skipped_shards"]) + int(scan.get("skipped_shards_omitted", 0))
+        print(f"- skipped shards: {skipped} ({len(scan['skipped_shards'])} shown)")
     if top <= 0 or not traces:
         return
-    sorted_traces = sorted(
-        traces,
-        key=lambda t: (
-            t.after_ply is not None,
-            -1.0 if t.gap_reduction is None else t.gap_reduction,
-            abs(t.initial_gap),
-        ),
-        reverse=True,
-    )[:top]
+    sorted_traces = _rank_traces(traces)[:top]
     print()
     print("Top traces:")
     print(
@@ -437,12 +453,17 @@ def main() -> None:
     parser.add_argument("--max-trace-plies", type=int, default=80)
     parser.add_argument("--top", type=int, default=20)
     parser.add_argument("--json-out", type=Path, default=None)
+    parser.add_argument("--json-trace-limit", type=int, default=MAX_JSON_TRACES)
     parser.add_argument(
         "--exclude-trigger-regret",
         action="store_true",
         help="start looking after the trigger sample instead of allowing its attached SF reply to count",
     )
     args = parser.parse_args()
+    if int(args.top) < 0 or int(args.top) > MAX_TOP:
+        parser.error(f"--top must be between 0 and {MAX_TOP}")
+    if int(args.json_trace_limit) < 0 or int(args.json_trace_limit) > MAX_JSON_TRACES:
+        parser.error(f"--json-trace-limit must be between 0 and {MAX_JSON_TRACES}")
 
     replay_dir = args.replay_dir or _latest_replay_dir(args.run_dir)
     games, scan = _load_samples(replay_dir, int(args.max_shards))
@@ -465,8 +486,12 @@ def main() -> None:
     }
     if args.json_out is not None:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
+        json_traces = _rank_traces(traces)[: int(args.json_trace_limit)]
         payload = dict(report)
-        payload["traces"] = [asdict(t) for t in traces]
+        payload["traces_total"] = len(traces)
+        payload["traces_included"] = len(json_traces)
+        payload["traces_omitted"] = max(0, len(traces) - len(json_traces))
+        payload["traces"] = [asdict(t) for t in json_traces]
         args.json_out.write_text(json.dumps(payload, indent=2) + "\n")
     _print_report(report, traces, top=int(args.top))
 

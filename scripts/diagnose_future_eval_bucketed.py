@@ -15,6 +15,8 @@ from chess_anti_engine.replay.shard import load_shard_arrays, shard_index, shard
 
 
 DEFAULT_RUN_DIR = Path("runs/pbt2_small")
+MAX_HORIZONS = 32
+MAX_SKIPPED_SHARDS = 20
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +61,13 @@ def _select_shards(replay_dir: Path, max_shards: int) -> list[Path]:
     return shards if max_shards <= 0 else shards[-max_shards:]
 
 
+def _record_skipped_shard(scan: dict[str, Any], shard: Path, exc: Exception) -> None:
+    if len(scan["skipped_shards"]) < MAX_SKIPPED_SHARDS:
+        scan["skipped_shards"].append({"shard": str(shard), "reason": repr(exc)})
+    else:
+        scan["skipped_shards_omitted"] += 1
+
+
 def _normalize_wdl(arr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     wdl = np.asarray(arr, dtype=np.float64)
     finite = np.isfinite(wdl).all(axis=1)
@@ -97,6 +106,7 @@ def _load_samples(
         "selfplay_missing_regret": 0,
         "nonselfplay_missing_regret": 0,
         "skipped_shards": [],
+        "skipped_shards_omitted": 0,
     }
     for shard in _select_shards(replay_dir, max_shards):
         n = int(shard_positions(shard))
@@ -107,7 +117,7 @@ def _load_samples(
         try:
             arrs, _meta = load_shard_arrays(shard, lazy=True)
         except Exception as exc:  # noqa: BLE001
-            scan["skipped_shards"].append({"shard": str(shard), "reason": repr(exc)})
+            _record_skipped_shard(scan, shard, exc)
             continue
         required = ("game_id", "ply_index", "sf_wdl", "search_wdl", "wdl_target")
         flags = ("has_game_id", "has_ply_index", "has_sf_wdl", "has_search_wdl")
@@ -426,6 +436,8 @@ def _parse_horizons(raw: str) -> list[int]:
     values = [int(part.strip()) for part in raw.split(",") if part.strip()]
     if not values or any(value <= 0 for value in values):
         raise argparse.ArgumentTypeError("horizons must be positive comma-separated integers")
+    if len(values) > MAX_HORIZONS:
+        raise argparse.ArgumentTypeError(f"horizons supports at most {MAX_HORIZONS} values")
     return values
 
 

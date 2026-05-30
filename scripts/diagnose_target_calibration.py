@@ -16,6 +16,7 @@ from chess_anti_engine.replay.shard import load_shard_arrays, shard_positions
 
 DEFAULT_RUN = Path("runs/pbt2_small")
 _OUTCOME = ("W", "D", "L")
+MAX_BUCKETS = 20
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,13 @@ def _latest_trial_dir(run_dir: Path) -> Path:
     if not trials:
         raise FileNotFoundError(f"No Ray trial directories under {run_dir / 'tune'}")
     return trials[-1]
+
+
+def _try_latest_trial_dir(run_dir: Path) -> Path | None:
+    try:
+        return _latest_trial_dir(run_dir)
+    except FileNotFoundError:
+        return None
 
 
 def _replay_dir_for_trial(run_dir: Path, trial_dir: Path) -> Path:
@@ -317,17 +325,28 @@ def main() -> None:
     parser.add_argument("--sf-search-dampen-sf-low", type=float, default=None)
     parser.add_argument("--sf-search-dampen-sf-high", type=float, default=None)
     args = parser.parse_args()
+    if int(args.buckets) < 1 or int(args.buckets) > MAX_BUCKETS:
+        parser.error(f"--buckets must be between 1 and {MAX_BUCKETS}")
 
-    trial_dir = args.trial_dir or _latest_trial_dir(args.run_dir)
-    replay_dir = args.replay_dir or _replay_dir_for_trial(args.run_dir, trial_dir)
-    latest = _latest_result(trial_dir)
+    trial_dir = args.trial_dir or _try_latest_trial_dir(args.run_dir)
+    if args.replay_dir is None and trial_dir is None:
+        raise FileNotFoundError(
+            f"No trial directories under {args.run_dir / 'tune'}; pass --replay-dir explicitly",
+        )
+    if args.replay_dir is not None:
+        replay_dir = args.replay_dir
+    else:
+        if trial_dir is None:
+            raise AssertionError("trial_dir unexpectedly missing")
+        replay_dir = _replay_dir_for_trial(args.run_dir, trial_dir)
+    latest = _latest_result(trial_dir) if trial_dir is not None else {}
     cfg = _load_loss_config(latest, args)
     slices = _newest_window_slices(replay_dir, int(args.window_positions))
     total_positions = sum(s.take for s in slices)
     if total_positions <= 0:
         raise SystemExit("no replay positions found")
 
-    bucket_count = max(1, int(args.buckets))
+    bucket_count = int(args.buckets)
     rng = np.random.default_rng(int(args.seed))
     wdl_by_bucket = [_empty_wdl_stats() for _ in range(bucket_count)]
     policy_batches: list[dict[str, list[dict[str, float]]]] = [
@@ -350,35 +369,40 @@ def main() -> None:
             n = min(spec.take - local_pos, max(1, bucket_end_global - global_start))
             sl = slice(row0 + local_pos, row0 + local_pos + n)
 
-            has_sf = np.asarray(arrs["has_sf_wdl"][sl], dtype=bool)
-            has_search = np.asarray(arrs["has_search_wdl"][sl], dtype=bool)
-            outcome = np.asarray(arrs["wdl_target"][sl], dtype=np.int64)
-            both = has_sf & has_search
-            if both.any():
-                sf = _normalize(np.asarray(arrs["sf_wdl"][sl], dtype=np.float64)[both], temperature=cfg["sf_wdl_temperature"])
-                search = _normalize(np.asarray(arrs["search_wdl"][sl], dtype=np.float64)[both])
-                y = outcome[both]
-                blend = _blend_wdl(
-                    y,
-                    sf,
-                    search,
-                    sf_frac=cfg["sf_wdl_frac"],
-                    search_frac=cfg["search_wdl_frac"],
-                    dampen_sf_low=cfg["sf_search_dampen_sf_low"],
-                    dampen_sf_high=cfg["sf_search_dampen_sf_high"],
-                )
-                _add_wdl_stats(wdl_by_bucket[bucket], outcome=y, sf=sf, search=search, blend=blend)
-                for (sf_frac, damp), dst in sf_grid.items():
-                    grid_blend = _blend_wdl(
+            wdl_fields = ("has_sf_wdl", "has_search_wdl", "wdl_target", "sf_wdl", "search_wdl")
+            if all(name in arrs for name in wdl_fields):
+                has_sf = np.asarray(arrs["has_sf_wdl"][sl], dtype=bool)
+                has_search = np.asarray(arrs["has_search_wdl"][sl], dtype=bool)
+                outcome = np.asarray(arrs["wdl_target"][sl], dtype=np.int64)
+                both = has_sf & has_search
+                if both.any():
+                    sf = _normalize(
+                        np.asarray(arrs["sf_wdl"][sl], dtype=np.float64)[both],
+                        temperature=cfg["sf_wdl_temperature"],
+                    )
+                    search = _normalize(np.asarray(arrs["search_wdl"][sl], dtype=np.float64)[both])
+                    y = outcome[both]
+                    blend = _blend_wdl(
                         y,
                         sf,
                         search,
-                        sf_frac=sf_frac,
+                        sf_frac=cfg["sf_wdl_frac"],
                         search_frac=cfg["search_wdl_frac"],
-                        dampen_sf_low=damp,
+                        dampen_sf_low=cfg["sf_search_dampen_sf_low"],
                         dampen_sf_high=cfg["sf_search_dampen_sf_high"],
                     )
-                    _add_wdl_stats(dst, outcome=y, sf=sf, search=search, blend=grid_blend)
+                    _add_wdl_stats(wdl_by_bucket[bucket], outcome=y, sf=sf, search=search, blend=blend)
+                    for (sf_frac, damp), dst in sf_grid.items():
+                        grid_blend = _blend_wdl(
+                            y,
+                            sf,
+                            search,
+                            sf_frac=sf_frac,
+                            search_frac=cfg["search_wdl_frac"],
+                            dampen_sf_low=damp,
+                            dampen_sf_high=cfg["sf_search_dampen_sf_high"],
+                        )
+                        _add_wdl_stats(dst, outcome=y, sf=sf, search=search, blend=grid_blend)
 
             for out_name, target_name, has_name, legal_name in (
                 ("policy", "policy_target", "has_policy", "legal_mask"),
@@ -422,7 +446,7 @@ def main() -> None:
 
     print("# Target Calibration Diagnostics")
     print()
-    print(f"- trial: `{trial_dir.name}`")
+    print(f"- trial: `{None if trial_dir is None else trial_dir.name}`")
     print(f"- replay: `{replay_dir}`")
     print(f"- scanned newest positions: `{total_positions}`")
     print(
