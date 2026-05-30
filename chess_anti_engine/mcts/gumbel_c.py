@@ -15,19 +15,19 @@ Architecture:
 from __future__ import annotations
 
 import logging as _logging
-from typing import cast
+from typing import Literal, cast, overload
 
 import chess
 import numpy as np
 import torch
 
+from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.encoding.lc0 import (
     LC0_HISTORY_ROOT,
     LC0_HISTORY_ROOT_LEGACY_META,
     normalize_lc0_history_encoding,
     uses_lc0_root_history,
 )
-from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.inference import (  # noqa: F401  # skylos: ignore (AsyncBatchEvaluator used via stringified cast)
     AsyncBatchEvaluator,
     BatchEvaluator,
@@ -53,12 +53,24 @@ except ImportError:  # pragma: no cover - older local extension fallback
     batch_encode_146_lc0_root_legacy_meta_bf16 = None  # type: ignore[assignment]
 from chess_anti_engine.mcts.gumbel import (
     GumbelConfig,
+    _completed_q_transform,
     _gumbel,
-    _sigma_scale,
     _softmax,
     _wdl_to_q,
+    gumbel_policy_diagnostics,
 )
 from chess_anti_engine.moves import POLICY_SIZE, policy_batch_to_full_if_needed
+
+GumbelManyCResult = tuple[list[np.ndarray], list[int], list[float], list[np.ndarray], MCTSTree, list[int]]
+GumbelManyCDiagnosticsResult = tuple[
+    list[np.ndarray],
+    list[int],
+    list[float],
+    list[np.ndarray],
+    MCTSTree,
+    list[int],
+    list[dict[str, float] | None],
+]
 
 
 def _input_history_mode(input_history_encoding: str | None) -> int:
@@ -77,6 +89,14 @@ def _batch_encoders(input_history_encoding: str | None):
     if uses_lc0_root_history(hist_enc):
         return batch_encode_146_lc0_root, batch_encode_146_lc0_root_bf16
     return batch_encode_146, batch_encode_146_bf16
+
+
+def _policy_logits_to_full(pol_logits: np.ndarray, *, cfg: GumbelConfig) -> np.ndarray:
+    return policy_batch_to_full_if_needed(
+        np.asarray(pol_logits, dtype=np.float32),
+        policy_encoding=cfg.policy_encoding,
+        fill_value=-1e9,
+    )
 
 _log = _logging.getLogger(__name__)
 
@@ -105,6 +125,7 @@ def _tb_override(tree: MCTSTree | None, probe, wdl: np.ndarray) -> None:
 
 
 @torch.no_grad()
+@overload
 def run_gumbel_root_many_c(
     model: torch.nn.Module | None,
     boards: list[chess.Board],
@@ -117,13 +138,62 @@ def run_gumbel_root_many_c(
     pre_wdl_logits: np.ndarray | None = None,
     per_game_simulations: list[int] | None = None,
     per_game_add_noise: list[bool] | None = None,
+    per_game_gumbel_scale: list[float] | None = None,
     cboards: list | None = None,
     tree: MCTSTree | None = None,
     root_node_ids: list[int] | None = None,
     tb_probe=None,
     pre_wdl_logits_tb_probed: bool = False,
     target_batch: int = 0,
-) -> tuple[list[np.ndarray], list[int], list[float], list[np.ndarray], MCTSTree, list[int]]:
+    return_diagnostics: Literal[False] = False,
+) -> GumbelManyCResult: ...
+
+
+@overload
+def run_gumbel_root_many_c(
+    model: torch.nn.Module | None,
+    boards: list[chess.Board],
+    *,
+    device: str,
+    rng: np.random.Generator,
+    cfg: GumbelConfig,
+    evaluator: BatchEvaluator | None = None,
+    pre_pol_logits: np.ndarray | None = None,
+    pre_wdl_logits: np.ndarray | None = None,
+    per_game_simulations: list[int] | None = None,
+    per_game_add_noise: list[bool] | None = None,
+    per_game_gumbel_scale: list[float] | None = None,
+    cboards: list | None = None,
+    tree: MCTSTree | None = None,
+    root_node_ids: list[int] | None = None,
+    tb_probe=None,
+    pre_wdl_logits_tb_probed: bool = False,
+    target_batch: int = 0,
+    return_diagnostics: Literal[True],
+) -> GumbelManyCDiagnosticsResult: ...
+
+
+def run_gumbel_root_many_c(
+    model: torch.nn.Module | None,
+    boards: list[chess.Board],
+    *,
+    device: str,
+    rng: np.random.Generator,
+    cfg: GumbelConfig,
+    evaluator: BatchEvaluator | None = None,
+    pre_pol_logits: np.ndarray | None = None,
+    pre_wdl_logits: np.ndarray | None = None,
+    per_game_simulations: list[int] | None = None,
+    per_game_add_noise: list[bool] | None = None,
+    per_game_gumbel_scale: list[float] | None = None,
+    cboards: list | None = None,
+    tree: MCTSTree | None = None,
+    root_node_ids: list[int] | None = None,
+    tb_probe=None,
+    pre_wdl_logits_tb_probed: bool = False,
+    target_batch: int = 0,
+    return_diagnostics: bool = False,
+) -> GumbelManyCResult | GumbelManyCDiagnosticsResult:
     """Gumbel root search with MCTSTree C tree + CBoard.
 
     Same API as ``run_gumbel_root_many`` -- drop-in replacement.
@@ -142,9 +212,13 @@ def run_gumbel_root_many_c(
 
     n_boards = len(boards)
     if n_boards == 0:
-        return [], [], [], [], (tree if tree is not None else MCTSTree()), []
+        out_empty = ([], [], [], [], (tree if tree is not None else MCTSTree()), [])
+        if return_diagnostics:
+            return (*out_empty, [])
+        return out_empty
 
     sim_budget = max(1, int(cfg.simulations))
+    _, batch_encode_bf16 = _batch_encoders(cfg.input_history_encoding)
 
     eval_impl = evaluator
     if eval_impl is None:
@@ -158,7 +232,7 @@ def run_gumbel_root_many_c(
     _has_async = hasattr(eval_impl, 'evaluate_encoded_async')
     _has_legal_bf16 = hasattr(eval_impl, "evaluate_legal_bf16")
     _has_input_bf16 = (
-        batch_encode_146_bf16 is not None
+        batch_encode_bf16 is not None
         and bool(getattr(eval_impl, "supports_input_bf16_bits", False))
     )
   # All async-capable evaluators conform to the protocol; _has_async is the runtime check.
@@ -180,12 +254,7 @@ def run_gumbel_root_many_c(
     )
 
     if pre_pol_logits is not None and pre_wdl_logits is not None:
-        pol_logits_batch = np.asarray(pre_pol_logits, dtype=np.float32)
-        pol_logits_batch = policy_batch_to_full_if_needed(
-            pol_logits_batch,
-            policy_encoding=cfg.policy_encoding,
-            fill_value=-1e9,
-        )
+        pol_logits_batch = _policy_logits_to_full(pre_pol_logits, cfg=cfg)
         wdl_logits_batch = np.asarray(pre_wdl_logits, dtype=np.float32)
     elif _inplace:
         batch_enc, batch_enc_bf16 = _batch_encoders(cfg.input_history_encoding)
@@ -218,6 +287,7 @@ def run_gumbel_root_many_c(
             wdl_logits_batch = wdl_t.numpy()
         else:
             pol_logits_batch, wdl_logits_batch = eval_impl.evaluate_encoded(xs)
+    pol_logits_batch = _policy_logits_to_full(pol_logits_batch, cfg=cfg)
 
   # Override root wdl_logits before root_qs is derived (root_qs seeds FPU
   # and the values_out initial pass). UCI may pass cached logits that already
@@ -239,6 +309,7 @@ def run_gumbel_root_many_c(
     root_ids: list[int] = [-1] * n_boards  # node IDs in C tree
     root_legal: list[np.ndarray | None] = [None] * n_boards
     root_pri: list[np.ndarray | None] = [None] * n_boards
+    candidates_per_board: list[list[int] | None] = [None] * n_boards
     remaining_per_board: list[list[int] | None] = [None] * n_boards
     budget_remaining: list[int]
     if per_game_simulations is not None:
@@ -310,7 +381,16 @@ def run_gumbel_root_many_c(
   # Gumbel noise -> select top-m
         log_pri = np.log(np.maximum(pri[legal_idx], 1e-12))
         _noise_this = per_game_add_noise[i] if per_game_add_noise is not None else cfg.add_noise
-        g = _gumbel(rng, legal_idx.size) if _noise_this else np.zeros(legal_idx.size, dtype=np.float64)
+        _gumbel_scale = (
+            float(per_game_gumbel_scale[i])
+            if per_game_gumbel_scale is not None
+            else float(cfg.gumbel_scale)
+        ) if _noise_this else 0.0
+        g = (
+            _gumbel_scale * _gumbel(rng, legal_idx.size)
+            if _gumbel_scale > 0.0
+            else np.zeros(legal_idx.size, dtype=np.float64)
+        )
         score: np.ndarray = g + log_pri
 
         _game_budget = budget_remaining[i]
@@ -325,6 +405,7 @@ def run_gumbel_root_many_c(
         top_idx = np.argpartition(-score, kth)[:m]
         cands = legal_idx[top_idx].astype(int).tolist()
 
+        candidates_per_board[i] = list(cands)
         remaining_per_board[i] = list(cands)
   # Store gumbel values indexed by legal_idx for scoring
         g_full = np.zeros(POLICY_SIZE, dtype=np.float64)
@@ -436,7 +517,9 @@ def run_gumbel_root_many_c(
                 _wdl_slice = wdl_t[:nl].numpy()
                 _tb_override(_trees[g], tb_probe, _wdl_slice)
                 _n_leaves[g] = _trees[g].continue_gumbel_sims(
-                    pol_t[:nl].numpy(), _wdl_slice)
+                    _policy_logits_to_full(pol_t[:nl].numpy(), cfg=cfg),
+                    _wdl_slice,
+                )
                 _t_prepare += _time.perf_counter() - _tp0
 
   # Main pipelined loop: GPU(g) overlaps with C tree walks(other).
@@ -504,7 +587,9 @@ def run_gumbel_root_many_c(
                     _wdl0 = wdl_t0[:nl0].numpy()
                     _tb_override(_trees[0], tb_probe, _wdl0)
                     _n_leaves[0] = _trees[0].continue_gumbel_sims(
-                        pol_t0[:nl0].numpy(), _wdl0)
+                        _policy_logits_to_full(pol_t0[:nl0].numpy(), cfg=cfg),
+                        _wdl0,
+                    )
                     _t_prepare += _time.perf_counter() - _tp0
                     _drain_sequential(0)
                     break
@@ -524,6 +609,7 @@ def run_gumbel_root_many_c(
             else:
                 pol_np0 = pol_t0[:nl0].numpy().copy()
                 wdl_np0 = wdl_t0[:nl0].numpy().copy()
+            pol_np0 = _policy_logits_to_full(pol_np0, cfg=cfg)
 
   # 4) Submit GPU for group 1 (async — safe: group 0 results consumed below)
             if _n_leaves[1] is not None:
@@ -560,10 +646,13 @@ def run_gumbel_root_many_c(
   # in step (4) of next iter — safe to alias. Legacy path shares one output
   # buffer across both submits, so we must clone before submit(slot=0).
                 if _inplace:
-                    _pending_g1 = (_pol1[:_nl1].numpy(), _wdl1[:_nl1].numpy())
+                    _pending_g1 = (
+                        _policy_logits_to_full(_pol1[:_nl1].numpy(), cfg=cfg),
+                        _wdl1[:_nl1].numpy(),
+                    )
                 else:
                     _pending_g1 = (
-                        _pol1[:_nl1].numpy().copy(),
+                        _policy_logits_to_full(_pol1[:_nl1].numpy().copy(), cfg=cfg),
                         _wdl1[:_nl1].numpy().copy(),
                     )
         else:
@@ -656,6 +745,7 @@ def run_gumbel_root_many_c(
             if _use_legal_bf16:
                 n_leaves = tree.continue_gumbel_sims_legal_bf16(pol_all, wdl_all)
             else:
+                pol_all = _policy_logits_to_full(pol_all, cfg=cfg)
                 n_leaves = tree.continue_gumbel_sims(pol_all, wdl_all)
             _t_prepare += _time.perf_counter() - _tp0
 
@@ -693,19 +783,25 @@ def run_gumbel_root_many_c(
         for j in range(child_actions.size):
             action_to_slot[int(child_actions[j])] = j
 
-        max_visit = int(child_visits.max()) if child_visits.size > 0 else 0
-
         completed_q = np.empty(legal.size, dtype=np.float64)
+        visits = np.empty(legal.size, dtype=np.float64)
         for j, a in enumerate(legal):
             slot = action_to_slot.get(int(a))
             if slot is not None:
                 completed_q[j] = float(child_q[slot])
+                visits[j] = float(child_visits[slot])
             else:
                 completed_q[j] = root_q_i
+                visits[j] = 0.0
 
-        logits_imp = np.log(np.maximum(pri[legal], 1e-12)) + _sigma_scale(
-            max_visit=int(max_visit), cfg=cfg,
-        ) * completed_q
+        logits_imp = np.log(np.maximum(pri[legal], 1e-12)) + _completed_q_transform(
+            actions=legal,
+            priors=pri[legal],
+            visits=visits,
+            qvalues=completed_q,
+            raw_value=root_q_i,
+            cfg=cfg,
+        )
         imp_all = _softmax(logits_imp)
         probs = np.zeros((POLICY_SIZE,), dtype=np.float32)
         probs[legal] = imp_all.astype(np.float32)
@@ -766,6 +862,29 @@ def run_gumbel_root_many_c(
   # the caller doesn't try to reuse nodes that don't exist in the main tree.
     _ret_root_ids = root_ids if not _use_pipeline else [-1] * n_boards
     assert tree is not None
+    if return_diagnostics:
+        diagnostics_out: list[dict[str, float] | None] = [None] * n_boards
+        for i in range(n_boards):
+            probs = probs_out[i]
+            action = actions_out[i]
+            legal = root_legal[i]
+            if probs is None or action is None or legal is None:
+                continue
+            diagnostics_out[i] = gumbel_policy_diagnostics(
+                probs=probs,
+                action=int(action),
+                legal=legal.astype(int, copy=False),
+                candidates=candidates_per_board[i],
+            )
+        return (
+            cast("list[np.ndarray]", probs_out),
+            cast("list[int]", actions_out),
+            values_out,
+            legal_masks_out,
+            tree,
+            _ret_root_ids,
+            diagnostics_out,
+        )
     return (
         cast("list[np.ndarray]", probs_out),
         cast("list[int]", actions_out),

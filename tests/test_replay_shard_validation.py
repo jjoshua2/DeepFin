@@ -50,15 +50,14 @@ def _minimal_valid_arrays() -> dict[str, np.ndarray]:
     }
 
 
-def test_validate_rejects_compact_policy_size_until_training_supports_it():
+def test_validate_accepts_compact_policy_size():
     policy = np.zeros((2, 1858), dtype=np.float32)
     policy[:, 0] = 1.0
-    with pytest.raises(ValueError, match="policy_target A mismatch"):
-        validate_arrays({
-            "x": np.zeros((2, 146, 8, 8), dtype=np.float32),
-            "policy_target": policy,
-            "wdl_target": np.array([0, 1], dtype=np.int8),
-        })
+    validate_arrays({
+        "x": np.zeros((2, 146, 8, 8), dtype=np.float32),
+        "policy_target": policy,
+        "wdl_target": np.array([0, 1], dtype=np.int8),
+    })
 
 
 def test_validate_rejects_policy_size_attr_mismatch():

@@ -327,6 +327,26 @@ def policy_vector_to_encoding(
     return _renormalize_policy_vector(p[COMPACT_TO_FULL_POLICY])
 
 
+def policy_mask_to_encoding(
+    mask: np.ndarray,
+    *,
+    policy_encoding: str | None = None,
+) -> np.ndarray:
+    enc = normalize_policy_encoding(policy_encoding)
+    m = np.asarray(mask)
+    if enc == POLICY_ENCODING_AZ_4672:
+        if m.shape != (POLICY_SIZE,):
+            raise ValueError(f"policy mask must be ({POLICY_SIZE},), got {m.shape}")
+        return m
+    if m.shape == (COMPACT_POLICY_SIZE,):
+        return m
+    if m.shape != (POLICY_SIZE,):
+        raise ValueError(
+            f"policy mask must be ({POLICY_SIZE},) or ({COMPACT_POLICY_SIZE},), got {m.shape}",
+        )
+    return m[COMPACT_TO_FULL_POLICY]
+
+
 def policy_batch_to_encoding(
     policies: np.ndarray,
     *,

@@ -21,6 +21,7 @@ from chess_anti_engine.moves import (
     policy_batch_to_encoding,
     policy_batch_to_full,
     policy_batch_to_full_if_needed,
+    policy_mask_to_encoding,
     policy_vector_to_encoding,
     policy_vector_to_full,
 )
@@ -103,6 +104,21 @@ def test_full_to_compact_policy_conversion_renormalizes():
     assert compact.shape == (COMPACT_POLICY_SIZE,)
     assert np.isclose(float(compact.sum(dtype=np.float32)), 1.0)
     assert np.isclose(float(compact[0]), 1.0)
+
+
+def test_full_to_compact_policy_mask_conversion_preserves_bits():
+    mask = np.zeros((POLICY_SIZE,), dtype=np.uint8)
+    mask[int(COMPACT_TO_FULL_POLICY[0])] = 1
+    mask[int(COMPACT_TO_FULL_POLICY[1])] = 1
+    mask[int(np.flatnonzero(FULL_TO_COMPACT_POLICY < 0)[0])] = 1
+
+    compact = policy_mask_to_encoding(mask, policy_encoding="lc0_1858")
+
+    assert compact.shape == (COMPACT_POLICY_SIZE,)
+    assert compact.dtype == np.uint8
+    assert int(compact.sum()) == 2
+    assert int(compact[0]) == 1
+    assert int(compact[1]) == 1
 
 
 def test_full_to_compact_policy_batch_conversion_renormalizes_rows():

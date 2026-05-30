@@ -8,6 +8,7 @@ import numpy as np
 import torch
 
 from chess_anti_engine.encoding import encode_position, encode_positions_batch
+from chess_anti_engine.encoding.lc0 import LC0_HISTORY_LEGACY
 from chess_anti_engine.inference import (
     BatchEvaluator,
     LocalModelEvaluator,
@@ -51,13 +52,12 @@ class MCTSConfig:
   # spreading visits across all children.
     fpu_reduction: float = 1.2  # Non-root nodes (LC0 default)
     fpu_at_root: float = 1.0  # Root node (typically lower — root has Dirichlet noise)
-    input_history_encoding: str = "legacy"
-    policy_encoding: str = POLICY_ENCODING_AZ_4672
-
   # Inference AMP: used in selfplay / evaluation for throughput.
   # dtype='auto' => bf16 if supported else fp16.
     use_amp: bool = True
     amp_dtype: str = "auto"
+    input_history_encoding: str = LC0_HISTORY_LEGACY
+    policy_encoding: str = POLICY_ENCODING_AZ_4672
 
 
 class Node:

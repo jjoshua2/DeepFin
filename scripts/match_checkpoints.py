@@ -31,13 +31,23 @@ def main() -> None:
     p.add_argument("--b", required=True, help="model B checkpoint path")
     p.add_argument("--games", type=int, default=64)
     p.add_argument("--sims", type=int, default=200)
+    p.add_argument("--sims-a", type=int, default=None,
+                   help="MCTS sims/move for model A; defaults to --sims")
+    p.add_argument("--sims-b", type=int, default=None,
+                   help="MCTS sims/move for model B; defaults to --sims")
     p.add_argument("--temperature", type=float, default=0.1)
     p.add_argument("--max-plies", type=int, default=300)
     p.add_argument("--mcts", default="gumbel", choices=["gumbel", "puct"])
+    p.add_argument("--no-gumbel-noise", action="store_true",
+                   help="Disable root Gumbel noise for deterministic strength matches")
     p.add_argument("--device", default="cuda")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--label-a", default="A")
     p.add_argument("--label-b", default="B")
+    p.add_argument("--input-history-a", default=None,
+                   help="Override model A input_history_encoding for compatibility tests")
+    p.add_argument("--input-history-b", default=None,
+                   help="Override model B input_history_encoding for compatibility tests")
     p.add_argument("--log-dir", default=str(_LOG_DIR),
                    help="Directory for match result logs (default: runs/matches)")
     p.add_argument("--no-log", action="store_true", help="Skip writing log file")
@@ -45,8 +55,14 @@ def main() -> None:
 
     if args.games <= 0:
         raise SystemExit("--games must be > 0")
+    sims_a = int(args.sims if args.sims_a is None else args.sims_a)
+    sims_b = int(args.sims if args.sims_b is None else args.sims_b)
     if args.sims <= 0:
         raise SystemExit("--sims must be > 0")
+    if sims_a <= 0:
+        raise SystemExit("--sims-a must be > 0")
+    if sims_b <= 0:
+        raise SystemExit("--sims-b must be > 0")
     if args.max_plies <= 0:
         raise SystemExit("--max-plies must be > 0")
     if args.temperature < 0:
@@ -55,15 +71,27 @@ def main() -> None:
     t0 = time.time()
     print(f"[match] loading A: {args.a}")
     model_a = load_model_from_checkpoint(args.a, device=args.device)
+    if args.input_history_a is not None:
+        setattr(model_a, "input_history_encoding", str(args.input_history_a))
     print(f"[match] loading B: {args.b}")
     model_b = load_model_from_checkpoint(args.b, device=args.device)
+    if args.input_history_b is not None:
+        setattr(model_b, "input_history_encoding", str(args.input_history_b))
     print(f"[match] loaded both in {time.time()-t0:.1f}s")
+    print(
+        "[match] input encodings: "
+        f"A={getattr(model_a, 'input_history_encoding', 'legacy')} "
+        f"B={getattr(model_b, 'input_history_encoding', 'legacy')}"
+    )
 
     rng = np.random.default_rng(args.seed)
     a_plays_white = [i % 2 == 0 for i in range(args.games)]
     opening_cfg = OpeningConfig(random_start_plies=4)
 
-    print(f"[match] playing {args.games} games, {args.sims} sims/move, temp={args.temperature}, {args.mcts} MCTS")
+    print(
+        f"[match] playing {args.games} games, A={sims_a} sims/move, "
+        f"B={sims_b} sims/move, temp={args.temperature}, {args.mcts} MCTS"
+    )
     t0 = time.time()
     stats = play_match_batch(
         model_a, model_b,
@@ -72,7 +100,10 @@ def main() -> None:
         a_plays_white=a_plays_white,
         mcts_type=args.mcts,
         mcts_simulations=args.sims,
+        mcts_simulations_a=sims_a,
+        mcts_simulations_b=sims_b,
         temperature=args.temperature,
+        gumbel_add_noise=not bool(args.no_gumbel_noise),
         opening_cfg=opening_cfg,
     )
     dt = time.time() - t0
@@ -108,10 +139,15 @@ def main() -> None:
             "label_b": args.label_b,
             "checkpoint_a": args.a,
             "checkpoint_b": args.b,
+            "input_history_a": getattr(model_a, "input_history_encoding", "legacy"),
+            "input_history_b": getattr(model_b, "input_history_encoding", "legacy"),
             "games": total,
             "sims": args.sims,
+            "sims_a": sims_a,
+            "sims_b": sims_b,
             "temperature": args.temperature,
             "mcts": args.mcts,
+            "gumbel_add_noise": not bool(args.no_gumbel_noise),
             "seed": args.seed,
             "a_wins": stats.a_win,
             "draws": stats.a_draw,

@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import numpy as np
 
+from chess_anti_engine.encoding.lc0 import uses_lc0_root_history
 from chess_anti_engine.moves.encode import (
+    COMPACT_MIRROR_POLICY_MAP,
+    COMPACT_POLICY_SIZE,
     MIRROR_POLICY_MAP,
+    POLICY_SIZE,
     mirror_policy,
     mirror_policy_batch,
     mirror_policy_index,
@@ -15,20 +19,67 @@ from .shard import LEGAL_MASK_FIELDS, POLICY_SPACE_FIELDS
 # Fields whose rows live in POLICY_SIZE move space and must be remapped under
 # the mirror permutation. Includes all policy-like targets and legal masks.
 _MIRROR_POLICY_FIELDS = (*POLICY_SPACE_FIELDS, *LEGAL_MASK_FIELDS)
+_LEGACY_CASTLING_SWAP_PAIRS = ((96, 97), (98, 99))
+_LC0_ROOT_CASTLING_SWAP_PAIRS = ((104, 105), (106, 107))
 
 
-def mirror_x(x: np.ndarray) -> np.ndarray:
+def _castling_swap_pairs(input_history_encoding: str | None) -> tuple[tuple[int, int], ...]:
+    return _LC0_ROOT_CASTLING_SWAP_PAIRS if uses_lc0_root_history(input_history_encoding) else _LEGACY_CASTLING_SWAP_PAIRS
+
+
+def _swap_constant_planes(x: np.ndarray, pairs: tuple[tuple[int, int], ...]) -> None:
+    for a, b in pairs:
+        if x.shape[-3] <= max(a, b):
+            continue
+        tmp = x[..., a, :, :].copy()
+        x[..., a, :, :] = x[..., b, :, :]
+        x[..., b, :, :] = tmp
+
+
+def _mirror_map_for_policy_width(width: int) -> np.ndarray:
+    if int(width) == int(COMPACT_POLICY_SIZE):
+        return COMPACT_MIRROR_POLICY_MAP
+    if int(width) == int(POLICY_SIZE):
+        return MIRROR_POLICY_MAP
+    raise ValueError(f"policy width must be {POLICY_SIZE} or {COMPACT_POLICY_SIZE}, got {width}")
+
+
+def _mirror_policy_index_for_width(index: int, width: int) -> int:
+    if int(width) == int(POLICY_SIZE):
+        return mirror_policy_index(index)
+    mapping = _mirror_map_for_policy_width(width)
+    if index < 0 or index >= int(mapping.shape[0]):
+        raise ValueError(f"policy index {index} out of range for policy width {width}")
+    return int(mapping[index])
+
+
+def mirror_x(x: np.ndarray, *, input_history_encoding: str | None = None) -> np.ndarray:
     """Mirror an encoded (C,8,8) position tensor left-right (file flip)."""
     arr = np.asarray(x)
     if arr.ndim != 3 or tuple(arr.shape[-2:]) != (8, 8):
         raise ValueError(f"x must be (C,8,8); got {arr.shape}")
   # Flip file axis (last axis). Force a positive-stride array.
-    return arr[:, :, ::-1].copy()
+    out = arr[:, :, ::-1].copy()
+    _swap_constant_planes(out, _castling_swap_pairs(input_history_encoding))
+    return out
 
 
-def mirror_sample(s: ReplaySample) -> ReplaySample:
+def _mirror_x_batch(x: np.ndarray, mask: np.ndarray, *, input_history_encoding: str | None = None) -> np.ndarray:
+    out = np.array(x, copy=True, order="C")
+    out[mask] = out[mask, :, :, ::-1].copy()
+    rows = np.flatnonzero(mask)
+    for a, b in _castling_swap_pairs(input_history_encoding):
+        if out.shape[1] <= max(a, b):
+            continue
+        tmp = out[rows, a, :, :].copy()
+        out[rows, a, :, :] = out[rows, b, :, :]
+        out[rows, b, :, :] = tmp
+    return out
+
+
+def mirror_sample(s: ReplaySample, *, input_history_encoding: str | None = None) -> ReplaySample:
     """Create the left-right mirrored version of a ReplaySample."""
-    x_m = mirror_x(s.x)
+    x_m = mirror_x(s.x, input_history_encoding=input_history_encoding)
     x_lc0_root = getattr(s, "x_lc0_root", None)
 
     pol_m = mirror_policy(s.policy_target)
@@ -39,7 +90,7 @@ def mirror_sample(s: ReplaySample) -> ReplaySample:
         wdl_target=int(s.wdl_target),
         priority=float(getattr(s, "priority", 1.0)),
         has_policy=bool(getattr(s, "has_policy", True)),
-        x_lc0_root=None if x_lc0_root is None else mirror_x(x_lc0_root),
+        x_lc0_root=None if x_lc0_root is None else mirror_x(x_lc0_root, input_history_encoding="lc0_root"),
     )
 
   # Aux targets
@@ -47,7 +98,10 @@ def mirror_sample(s: ReplaySample) -> ReplaySample:
     if s.sf_move_index is None:
         out.sf_move_index = None
     else:
-        out.sf_move_index = int(mirror_policy_index(int(s.sf_move_index)))
+        out.sf_move_index = _mirror_policy_index_for_width(
+            int(s.sf_move_index),
+            int(np.asarray(s.policy_target).shape[-1]),
+        )
     out.sf_policy_target = None if s.sf_policy_target is None else mirror_policy(s.sf_policy_target)
     out.moves_left = None if s.moves_left is None else float(s.moves_left)
     out.is_network_turn = None if s.is_network_turn is None else bool(s.is_network_turn)
@@ -83,6 +137,7 @@ def maybe_mirror_samples(
     *,
     rng: np.random.Generator,
     prob: float,
+    input_history_encoding: str | None = None,
 ) -> list[ReplaySample]:
     """Apply mirroring augmentation to a batch of samples with given probability."""
     p = float(prob)
@@ -90,7 +145,7 @@ def maybe_mirror_samples(
         return samples
 
     return [
-        mirror_sample(s) if float(rng.random()) < p else s
+        mirror_sample(s, input_history_encoding=input_history_encoding) if float(rng.random()) < p else s
         for s in samples
     ]
 
@@ -100,6 +155,7 @@ def maybe_mirror_batch_arrays(
     *,
     rng: np.random.Generator,
     prob: float,
+    input_history_encoding: str | None = None,
 ) -> dict[str, np.ndarray]:
     """Apply mirroring augmentation to array-backed replay batches."""
     p = float(prob)
@@ -116,11 +172,13 @@ def maybe_mirror_batch_arrays(
         return arrs
 
     out = dict(arrs)
-    out["x"] = np.array(arrs["x"], copy=True, order="C")
-    out["x"][mask] = out["x"][mask, :, :, ::-1].copy()
+    out["x"] = _mirror_x_batch(np.asarray(arrs["x"]), mask, input_history_encoding=input_history_encoding)
     if "x_lc0_root" in arrs:
-        out["x_lc0_root"] = np.array(arrs["x_lc0_root"], copy=True, order="C")
-        out["x_lc0_root"][mask] = out["x_lc0_root"][mask, :, :, ::-1].copy()
+        out["x_lc0_root"] = _mirror_x_batch(
+            np.asarray(arrs["x_lc0_root"]),
+            mask,
+            input_history_encoding="lc0_root",
+        )
 
     for key in _MIRROR_POLICY_FIELDS:
         if key in arrs:
@@ -132,6 +190,12 @@ def maybe_mirror_batch_arrays(
     if "sf_move_index" in arrs:
         out["sf_move_index"] = np.array(arrs["sf_move_index"], copy=True, order="C")
         idx = out["sf_move_index"][mask].astype(np.int64, copy=False)
-        out["sf_move_index"][mask] = MIRROR_POLICY_MAP[idx].astype(out["sf_move_index"].dtype, copy=False)
+        mirrored_idx = np.array(idx, copy=True)
+        valid = mirrored_idx >= 0
+        if np.any(valid):
+            policy_width = int(np.asarray(arrs["policy_target"]).shape[1])
+            mirror_map = _mirror_map_for_policy_width(policy_width)
+            mirrored_idx[valid] = mirror_map[mirrored_idx[valid]]
+        out["sf_move_index"][mask] = mirrored_idx.astype(out["sf_move_index"].dtype, copy=False)
 
     return out

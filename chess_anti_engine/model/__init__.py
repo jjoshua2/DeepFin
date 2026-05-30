@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import torch
 
 from chess_anti_engine.encoding import encode_position
+from chess_anti_engine.encoding.lc0 import LC0_HISTORY_LEGACY, normalize_lc0_history_encoding
 from chess_anti_engine.moves import POLICY_ENCODING_AZ_4672, normalize_policy_encoding
 
 from .tiny import TinyNet
@@ -14,7 +15,7 @@ from .transformer import ChessNet, TransformerConfig
 # misrepresent. Trainer embeds this version when saving; the UCI loader
 # rejects checkpoints with a higher version AND rejects unknown keys at
 # the same version — both prevent silent architecture mismatch on skew.
-ARCH_SCHEMA_VERSION = 8
+ARCH_SCHEMA_VERSION = 9
 
 
 @dataclass
@@ -32,6 +33,7 @@ class ModelConfig:
     qkv_projection: str = "fused"
     use_deepnorm: bool = False
     policy_encoding: str = POLICY_ENCODING_AZ_4672
+    input_history_encoding: str = LC0_HISTORY_LEGACY
     input_global_embedding: str = "none"
     input_global_embedding_channels: int = 0
     input_square_embedding: str = "none"
@@ -65,6 +67,7 @@ def model_config_from_manifest_dict(mc: dict) -> ModelConfig:
         qkv_projection=str(mc.get("qkv_projection", "fused")),
         use_deepnorm=bool(mc.get("use_deepnorm", False)),
         policy_encoding=normalize_policy_encoding(mc.get("policy_encoding", POLICY_ENCODING_AZ_4672)),
+        input_history_encoding=normalize_lc0_history_encoding(mc.get("input_history_encoding", LC0_HISTORY_LEGACY)),
         input_global_embedding=str(mc.get("input_global_embedding", "none")),
         input_global_embedding_channels=int(mc.get("input_global_embedding_channels", 0)),
         input_square_embedding=str(mc.get("input_square_embedding", "none")),
@@ -99,6 +102,7 @@ def model_config_to_manifest_dict(cfg: ModelConfig) -> dict:
         "qkv_projection": str(cfg.qkv_projection),
         "use_deepnorm": bool(cfg.use_deepnorm),
         "policy_encoding": normalize_policy_encoding(cfg.policy_encoding),
+        "input_history_encoding": normalize_lc0_history_encoding(cfg.input_history_encoding),
         "input_global_embedding": str(cfg.input_global_embedding),
         "input_global_embedding_channels": int(cfg.input_global_embedding_channels),
         "input_square_embedding": str(cfg.input_square_embedding),
@@ -123,11 +127,16 @@ def infer_input_planes() -> int:
 
 
 def build_model(cfg: ModelConfig) -> torch.nn.Module:
+    policy_encoding = normalize_policy_encoding(cfg.policy_encoding)
+    input_history_encoding = normalize_lc0_history_encoding(cfg.input_history_encoding)
     in_planes = infer_input_planes()
     if cfg.kind == "tiny":
-        if normalize_policy_encoding(cfg.policy_encoding) != POLICY_ENCODING_AZ_4672:
+        if policy_encoding != POLICY_ENCODING_AZ_4672:
             raise ValueError("tiny model only supports policy_encoding='az_4672'")
-        return TinyNet(in_planes=in_planes)
+        model = TinyNet(in_planes=in_planes)
+        setattr(model, "policy_encoding", policy_encoding)
+        setattr(model, "input_history_encoding", input_history_encoding)
+        return model
     if cfg.kind == "transformer":
         tcfg = TransformerConfig(
             in_planes=in_planes,
@@ -142,7 +151,7 @@ def build_model(cfg: ModelConfig) -> torch.nn.Module:
             input_pos_encoding=str(cfg.input_pos_encoding),
             qkv_projection=str(cfg.qkv_projection),
             use_deepnorm=bool(cfg.use_deepnorm),
-            policy_encoding=normalize_policy_encoding(cfg.policy_encoding),
+            policy_encoding=policy_encoding,
             input_global_embedding=str(cfg.input_global_embedding),
             input_global_embedding_channels=int(cfg.input_global_embedding_channels),
             input_square_embedding=str(cfg.input_square_embedding),
@@ -155,7 +164,10 @@ def build_model(cfg: ModelConfig) -> torch.nn.Module:
             smolgen_relation_coeff_norm=str(cfg.smolgen_relation_coeff_norm),
             smolgen_relation_scale=str(cfg.smolgen_relation_scale),
         )
-        return ChessNet(tcfg)
+        model = ChessNet(tcfg)
+        setattr(model, "policy_encoding", policy_encoding)
+        setattr(model, "input_history_encoding", input_history_encoding)
+        return model
     raise ValueError(f"Unknown model kind: {cfg.kind}")
 
 

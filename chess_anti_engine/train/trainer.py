@@ -43,6 +43,7 @@ from chess_anti_engine.replay.augment import (
 from chess_anti_engine.replay.buffer import ReplayBuffer
 from chess_anti_engine.replay.dataset import collate, collate_arrays
 
+from .aurora import AuroraWithAuxAdam
 from .compile_probe import CompileProbe, apply_compile
 from .cosmos import COSMOS
 from .cosmos_fast import COSMOSFast
@@ -88,6 +89,53 @@ def _split_decay_groups(
         else:
             aux_decay.append(param)
     return hidden_decay, hidden_no_decay, aux_decay, aux_no_decay
+
+
+def _matrix_optimizer_filter(
+    scope: str,
+    *,
+    include_embed_default: bool,
+) -> Callable[[str, torch.nn.Parameter], bool]:
+    """Return the 2D matrix subset owned by Muon/Aurora-style optimizers."""
+    scope = str(scope or "default").lower()
+
+    def _is_block_matrix(name: str, param: torch.nn.Parameter) -> bool:
+        return param.ndim >= 2 and name.startswith("blocks.")
+
+    def _is_ffn(name: str) -> bool:
+        return ".ffn." in name
+
+    def _is_attn_out(name: str) -> bool:
+        return ".out_proj." in name
+
+    def _is_attn_input(name: str) -> bool:
+        return any(part in name for part in (".qkv_proj.", ".q_proj.", ".k_proj.", ".v_proj."))
+
+    def _is_attn_v(name: str) -> bool:
+        return ".v_proj." in name
+
+    if scope in ("default", "", "legacy"):
+        return lambda name, p: p.ndim >= 2 and (
+            (include_embed_default and name == "embed.weight") or name.startswith("blocks.")
+        )
+    if scope in ("blocks", "block_all", "all_blocks", "all_block"):
+        return _is_block_matrix
+    if scope in ("mlp", "mlp_only", "ffn", "ffn_only"):
+        return lambda name, p: _is_block_matrix(name, p) and _is_ffn(name)
+    if scope in ("mlp_out", "mlp_o", "mlp_attn_o", "mlp_attention_o"):
+        return lambda name, p: _is_block_matrix(name, p) and (_is_ffn(name) or _is_attn_out(name))
+    if scope in ("mlp_out_v", "mlp_attn_o_v", "mlp_attention_o_v"):
+        return lambda name, p: _is_block_matrix(name, p) and (
+            _is_ffn(name) or _is_attn_out(name) or _is_attn_v(name)
+        )
+    if scope in ("mlp_attention_all", "attn_mlp", "all_attention_mlp"):
+        return lambda name, p: _is_block_matrix(name, p) and (
+            _is_ffn(name) or _is_attn_out(name) or _is_attn_input(name)
+        )
+    raise ValueError(
+        f"Unknown matrix_optimizer_scope {scope!r}. Supported: default, block_all, "
+        "mlp_only, mlp_out, mlp_out_v, mlp_attn_all"
+    )
 
 
 @dataclass
@@ -214,6 +262,17 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         use_compile=bool(config.get("use_compile", False)),
         compile_mode=str(config.get("compile_mode", "reduce-overhead")),
         optimizer=str(config.get("optimizer", "nadamw")),
+        matrix_optimizer_scope=str(config.get("matrix_optimizer_scope", "default")),
+        matrix_lr_multiplier=_f("matrix_lr_multiplier", 20.0),
+        matrix_weight_decay=_f("matrix_weight_decay", 1e-4),
+        aux_weight_decay=_f("aux_weight_decay", 1e-4),
+        aurora_uw_floor=_f("aurora_uw_floor", 0.0),
+        aurora_pp_iterations=_f("aurora_pp_iterations", 2, int),
+        aurora_pp_beta=_f("aurora_pp_beta", 0.5),
+        aurora_polar_steps=_f("aurora_polar_steps", 12, int),
+        aurora_polar_method=str(config.get("aurora_polar_method", "simple")),
+        aurora_polar_dtype=str(config.get("aurora_polar_dtype", "auto")),
+        aurora_polar_safety=_f("aurora_polar_safety", 1.01),
         cosmos_rank=_f("cosmos_rank", 64, int),
         cosmos_gamma=_f("cosmos_gamma", 0.2),
         swa_start=_f("swa_start", 0, int),
@@ -268,6 +327,17 @@ class Trainer:
         use_compile: bool = False,
         compile_mode: str = "reduce-overhead",
         optimizer: str = "nadamw",
+        matrix_optimizer_scope: str = "default",
+        matrix_lr_multiplier: float = 20.0,
+        matrix_weight_decay: float = 1e-4,
+        aux_weight_decay: float = 1e-4,
+        aurora_uw_floor: float = 0.0,
+        aurora_pp_iterations: int = 2,
+        aurora_pp_beta: float = 0.5,
+        aurora_polar_steps: int = 12,
+        aurora_polar_method: str = "simple",
+        aurora_polar_dtype: str = "auto",
+        aurora_polar_safety: float = 1.01,
         cosmos_rank: int = 64,
         cosmos_gamma: float = 0.2,
         swa_start: int = 0,
@@ -307,21 +377,51 @@ class Trainer:
         self._model_config = model_config
 
         optimizer = str(optimizer).lower()
-        if optimizer == "muon":
+        matrix_optimizer_scope = str(matrix_optimizer_scope).lower()
+        if optimizer in ("muon", "aurora"):
+            hidden_filter = _matrix_optimizer_filter(
+                matrix_optimizer_scope,
+                include_embed_default=(optimizer == "muon"),
+            )
             hd, hnd, ad, and_ = _split_decay_groups(
                 self.model,
-                hidden_filter=lambda name, p: p.ndim >= 2 and (name == "embed.weight" or name.startswith("blocks.")),
+                hidden_filter=hidden_filter,
             )
-  # Muon trunk gets a larger LR than the AdamW fallback for heads/norms.
+  # Muon/Aurora trunk gets a larger LR than the AdamW fallback for heads/norms.
   # Keep one Tune-search LR and derive trunk LR so search stays simple.
-            muon_lr = float(lr) * 20.0
-            param_groups = [
-                {"params": hd, "weight_decay": 1e-4, "use_muon": True, "lr": muon_lr},
-                {"params": hnd, "weight_decay": 0.0, "use_muon": True, "lr": muon_lr},
-                {"params": ad, "weight_decay": 1e-4, "use_muon": False, "lr": float(lr)},
-                {"params": and_, "weight_decay": 0.0, "use_muon": False, "lr": float(lr)},
-            ]
-            self.opt = MuonWithAuxAdam(param_groups)
+            matrix_lr = float(lr) * float(matrix_lr_multiplier)
+            matrix_wd = float(matrix_weight_decay)
+            aux_wd = float(aux_weight_decay)
+            if optimizer == "muon":
+                param_groups = [
+                    {"params": hd, "weight_decay": matrix_wd, "use_muon": True, "lr": matrix_lr},
+                    {"params": hnd, "weight_decay": 0.0, "use_muon": True, "lr": matrix_lr},
+                    {"params": ad, "weight_decay": aux_wd, "use_muon": False, "lr": float(lr)},
+                    {"params": and_, "weight_decay": 0.0, "use_muon": False, "lr": float(lr)},
+                ]
+                self.opt = MuonWithAuxAdam(param_groups)
+            else:
+                param_groups = [
+                    {
+                        "params": hd,
+                        "weight_decay": matrix_wd,
+                        "use_aurora": True,
+                        "lr": matrix_lr,
+                        "aurora_uw_floor": float(aurora_uw_floor),
+                    },
+                    {"params": hnd, "weight_decay": 0.0, "use_aurora": False, "lr": float(lr)},
+                    {"params": ad, "weight_decay": aux_wd, "use_aurora": False, "lr": float(lr)},
+                    {"params": and_, "weight_decay": 0.0, "use_aurora": False, "lr": float(lr)},
+                ]
+                self.opt = AuroraWithAuxAdam(
+                    param_groups,
+                    aurora_pp_iterations=int(aurora_pp_iterations),
+                    aurora_pp_beta=float(aurora_pp_beta),
+                    aurora_polar_steps=int(aurora_polar_steps),
+                    aurora_polar_method=str(aurora_polar_method),
+                    aurora_polar_dtype=str(aurora_polar_dtype),
+                    aurora_polar_safety=float(aurora_polar_safety),
+                )
         elif optimizer == "cosmos_fast":
             hd, hnd, ad, and_ = _split_decay_groups(
                 self.model,
@@ -360,6 +460,8 @@ class Trainer:
             self.opt = torch.optim.AdamW(param_groups, lr=lr)
         elif optimizer == "muon":
             pass
+        elif optimizer == "aurora":
+            pass
         elif optimizer == "cosmos":
             self.opt = COSMOS(param_groups, lr=lr, weight_decay=1e-4)
         elif optimizer == "cosmos_fast":
@@ -386,7 +488,7 @@ class Trainer:
                 self.opt = SOAP(self.model.parameters(), lr=lr)
         else:
             raise ValueError(
-                f"Unknown optimizer {optimizer!r}. Supported: nadamw, adamw, muon, cosmos, cosmos_fast, soap"
+                f"Unknown optimizer {optimizer!r}. Supported: nadamw, adamw, muon, aurora, cosmos, cosmos_fast, soap"
             )
         self.zclip = ZClip(mode="zscore", alpha=float(zclip_alpha), z_thresh=float(zclip_z_thresh), max_grad_norm=float(zclip_max_norm), warmup_steps=25)
         self.writer = SummaryWriter(log_dir=str(log_dir or "tb"))
@@ -566,12 +668,25 @@ class Trainer:
         batch_size: int,
         mirror_prob: float,
     ) -> dict[str, np.ndarray] | list:
+        input_history_encoding = (
+            None if self._model_config is None else self._model_config.input_history_encoding
+        )
         if hasattr(buf, "sample_batch_arrays"):
             arrs = buf.sample_batch_arrays(batch_size)
-            return maybe_mirror_batch_arrays(arrs, rng=buf.rng, prob=mirror_prob)
+            return maybe_mirror_batch_arrays(
+                arrs,
+                rng=buf.rng,
+                prob=mirror_prob,
+                input_history_encoding=input_history_encoding,
+            )
 
         samples = buf.sample_batch(batch_size)
-        return maybe_mirror_samples(samples, rng=buf.rng, prob=mirror_prob)
+        return maybe_mirror_samples(
+            samples,
+            rng=buf.rng,
+            prob=mirror_prob,
+            input_history_encoding=input_history_encoding,
+        )
 
     def _host_batch_to_tensors(self, batch: dict[str, np.ndarray] | list) -> dict[str, torch.Tensor]:
         if isinstance(batch, dict):

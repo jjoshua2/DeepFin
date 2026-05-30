@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -277,6 +278,12 @@ def _publish_distributed_trial_state(
     model_sha = sha256_file(model_path)
     api_prefix = f"/v1/trials/{trial_id}"
     published_worker_wheel_path: Path | None = None
+    stale_pause_target_games = int(config.get("distributed_stale_pause_target_games", -1))
+    if stale_pause_target_games < 0:
+        stale_pause_target_games = int(math.ceil(
+            float(config.get("games_per_iter", 0))
+            * max(0.0, float(config.get("distributed_prev_model_max_fraction", 0.0)))
+        ))
 
     worker_wheel_raw = str(config.get("worker_wheel_path", "")).strip()
     if worker_wheel_raw:
@@ -300,6 +307,16 @@ def _publish_distributed_trial_state(
         "mcts_simulations": int(mcts_simulations),
         "playout_cap_fraction": float(config.get("playout_cap_fraction", 0.25)),
         "fast_simulations": int(config.get("fast_simulations", 8)),
+        "gumbel_topk": int(config.get("gumbel_topk", 16)),
+        "gumbel_c_scale": float(config.get("gumbel_c_scale", 0.1)),
+        "gumbel_scale": float(config.get("gumbel_scale", 1.0)),
+        "gumbel_scale_after": float(config.get("gumbel_scale_after", 0.0)),
+        "gumbel_scale_decay_start_move": int(config.get("gumbel_scale_decay_start_move", 0)),
+        "gumbel_scale_decay_moves": int(config.get("gumbel_scale_decay_moves", 0)),
+        "curriculum_gumbel_scale": float(config.get("curriculum_gumbel_scale", 0.0)),
+        "curriculum_gumbel_scale_after": float(config.get("curriculum_gumbel_scale_after", 0.0)),
+        "curriculum_gumbel_scale_decay_start_move": int(config.get("curriculum_gumbel_scale_decay_start_move", 0)),
+        "curriculum_gumbel_scale_decay_moves": int(config.get("curriculum_gumbel_scale_decay_moves", 0)),
         "opening_book_max_plies": int(config.get("opening_book_max_plies", 4)),
         "opening_book_max_games": int(config.get("opening_book_max_games", 200_000)),
         "opening_book_prob": float(config.get("opening_book_prob", 1.0)),
@@ -316,6 +333,7 @@ def _publish_distributed_trial_state(
         "sf_policy_label_smooth": float(config.get("sf_policy_label_smooth", 0.05)),
         "policy_encoding": str(model_cfg.policy_encoding),
         "input_history_encoding": str(config.get("input_history_encoding", "legacy")),
+        "record_lc0_root_input": bool(config.get("record_lc0_root_input", False)),
         "sf_wdl_use_cp_logistic": bool(config.get("sf_wdl_use_cp_logistic", False)),
         "sf_wdl_cp_slope": float(config.get("sf_wdl_cp_slope", 0.010)),
         "sf_wdl_cp_draw_width": float(config.get("sf_wdl_cp_draw_width", 60.0)),
@@ -324,6 +342,10 @@ def _publish_distributed_trial_state(
         "temperature_decay_start_move": int(config.get("temperature_decay_start_move", 20)),
         "temperature_decay_moves": int(config.get("temperature_decay_moves", 60)),
         "temperature_endgame": float(config.get("temperature_endgame", 0.6)),
+        "selfplay_temperature": config.get("selfplay_temperature"),
+        "selfplay_temperature_decay_start_move": config.get("selfplay_temperature_decay_start_move"),
+        "selfplay_temperature_decay_moves": config.get("selfplay_temperature_decay_moves"),
+        "selfplay_temperature_endgame": config.get("selfplay_temperature_endgame"),
         "timeout_adjudication_threshold": float(config.get("timeout_adjudication_threshold", 0.90)),
   # Syzygy. `path` must be a filesystem location visible to workers
   # (same layout on all nodes in a multi-node deployment). Server
@@ -352,6 +374,8 @@ def _publish_distributed_trial_state(
             **(dict(backpressure) if isinstance(backpressure, dict) else {}),
             "pause_selfplay": bool(pause_selfplay),
             "pause_reason": str(pause_reason),
+            "stale_pause_model_sha": str(model_sha),
+            "stale_pause_target_games": max(0, int(stale_pause_target_games)),
         },
         "recommended_worker": recommended_worker,
         "encoding": {
@@ -408,6 +432,7 @@ _WORKER_LAUNCH_CONFIG_KEYS: tuple[str, ...] = (
     "distributed_server_root",
     "distributed_worker_shared_cache_dir",
     "stockfish_path",
+    "sf_nice",
     "distributed_worker_device",
     "device",
     "distributed_worker_aot_dir",
@@ -574,6 +599,8 @@ def _build_distributed_worker_cmd(
         ),
         "--sf-workers",
         str(int(config.get("distributed_worker_sf_workers", 1))),
+        "--sf-nice",
+        str(int(config.get("sf_nice", 0))),
         "--poll-seconds",
         str(float(config.get("distributed_worker_poll_seconds", 1.0))),
         "--upload-target-positions",
@@ -863,7 +890,7 @@ def _ensure_distributed_workers(
     return out[:want]
 
 
-def _empty_ingest_summary() -> dict[str, int | float]:
+def _empty_ingest_summary() -> dict[str, Any]:
     return {
         "matching_games": 0,
         "matching_positions": 0,
@@ -897,6 +924,42 @@ def _empty_ingest_summary() -> dict[str, int | float]:
   # compute ingest_frac_selfplay = selfplay / tagged.
         "ingest_is_selfplay_tagged": 0,
         "ingest_is_selfplay_true": 0,
+        "matching_diff_focus_records": 0,
+        "matching_diff_focus_kept": 0,
+        "matching_diff_focus_keep_prob_sum": 0.0,
+        "matching_diff_focus_keep_limited": 0,
+        "matching_diff_focus_sample_weight_sum": 0.0,
+        "matching_diff_focus_sample_weight_limited": 0,
+        "matching_diff_focus_priority_sum": 0.0,
+        "matching_diff_focus_priority_sq_sum": 0.0,
+        "matching_diff_focus_priority_min": 0.0,
+        "matching_diff_focus_priority_max": 0.0,
+        "matching_gumbel_policy_diag_n": 0,
+        "matching_gumbel_policy_top_prob_sum": 0.0,
+        "matching_gumbel_policy_action_prob_sum": 0.0,
+        "matching_gumbel_policy_entropy_sum": 0.0,
+        "matching_gumbel_policy_eff_moves_sum": 0.0,
+        "matching_gumbel_policy_candidate_mass_sum": 0.0,
+        "matching_gumbel_policy_non_candidate_top_prob_sum": 0.0,
+        "matching_gumbel_policy_argmax_is_candidate_sum": 0,
+        "matching_gumbel_policy_argmax_is_action_sum": 0,
+        "matching_gumbel_policy_legal_count_sum": 0,
+        "matching_gumbel_policy_candidate_count_sum": 0,
+        "matching_outcome_stats": {},
+        "replay_priority_n": 0,
+        "replay_priority_sum": 0.0,
+        "replay_priority_sq_sum": 0.0,
+        "replay_priority_min": 0.0,
+        "replay_priority_max": 0.0,
+        "replay_has_policy_n": 0,
+        "replay_has_policy_sum": 0,
+        "replay_has_sf_wdl_n": 0,
+        "replay_has_sf_wdl_sum": 0,
+        "replay_has_search_wdl_n": 0,
+        "replay_has_search_wdl_sum": 0,
+        "replay_wdl_0": 0,
+        "replay_wdl_1": 0,
+        "replay_wdl_2": 0,
     }
 
 
@@ -916,10 +979,51 @@ _SHARD_META_FIELDS: tuple[tuple[str, str], ...] = (
     ("checkmate_games", "checkmate_games"),
     ("stalemate_games", "stalemate_games"),
     ("sf_d6_n", "sf_d6_n"),
+    ("diff_focus_records", "diff_focus_records"),
+    ("diff_focus_kept", "diff_focus_kept"),
+    ("diff_focus_keep_limited", "diff_focus_keep_limited"),
+    ("diff_focus_sample_weight_limited", "diff_focus_sample_weight_limited"),
+    ("gumbel_policy_diag_n", "gumbel_policy_diag_n"),
+    ("gumbel_policy_argmax_is_candidate_sum", "gumbel_policy_argmax_is_candidate_sum"),
+    ("gumbel_policy_argmax_is_action_sum", "gumbel_policy_argmax_is_action_sum"),
+    ("gumbel_policy_legal_count_sum", "gumbel_policy_legal_count_sum"),
+    ("gumbel_policy_candidate_count_sum", "gumbel_policy_candidate_count_sum"),
+)
+
+_SHARD_META_FLOAT_FIELDS: tuple[tuple[str, str], ...] = (
+    ("diff_focus_keep_prob_sum", "diff_focus_keep_prob_sum"),
+    ("diff_focus_sample_weight_sum", "diff_focus_sample_weight_sum"),
+    ("diff_focus_priority_sum", "diff_focus_priority_sum"),
+    ("diff_focus_priority_sq_sum", "diff_focus_priority_sq_sum"),
+    ("diff_focus_priority_min", "diff_focus_priority_min"),
+    ("diff_focus_priority_max", "diff_focus_priority_max"),
+    ("gumbel_policy_top_prob_sum", "gumbel_policy_top_prob_sum"),
+    ("gumbel_policy_action_prob_sum", "gumbel_policy_action_prob_sum"),
+    ("gumbel_policy_entropy_sum", "gumbel_policy_entropy_sum"),
+    ("gumbel_policy_eff_moves_sum", "gumbel_policy_eff_moves_sum"),
+    ("gumbel_policy_candidate_mass_sum", "gumbel_policy_candidate_mass_sum"),
+    ("gumbel_policy_non_candidate_top_prob_sum", "gumbel_policy_non_candidate_top_prob_sum"),
 )
 
 
-def _extract_shard_metrics(meta: dict, shard_n: int) -> dict[str, int | float]:
+def _sanitize_outcome_stats(raw: Any) -> dict[str, int]:
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, int] = {}
+    for key, val in raw.items():
+        key_s = str(key)
+        if not re.fullmatch(r"[a-z0-9_]{1,96}", key_s):
+            continue
+        out[key_s] = int(out.get(key_s, 0)) + int(val or 0)
+    return out
+
+
+def _merge_outcome_stats(dst: dict[str, int], src: dict[str, int]) -> None:
+    for key, val in src.items():
+        dst[key] = int(dst.get(key, 0)) + int(val)
+
+
+def _extract_shard_metrics(meta: dict, shard_n: int) -> dict[str, Any]:
     """Pull all per-shard counts/sums from the meta dict in one place.
 
     Output keys map directly onto summary["matching_*"] suffixes (no prefix);
@@ -928,7 +1032,7 @@ def _extract_shard_metrics(meta: dict, shard_n: int) -> dict[str, int | float]:
     wins = int(meta.get("wins", 0) or 0)
     draws = int(meta.get("draws", 0) or 0)
     losses = int(meta.get("losses", 0) or 0)
-    out: dict[str, int | float] = {
+    out: dict[str, Any] = {
         "w": wins,
         "d": draws,
         "l": losses,
@@ -941,7 +1045,79 @@ def _extract_shard_metrics(meta: dict, shard_n: int) -> dict[str, int | float]:
     }
     for src_key, out_key in _SHARD_META_FIELDS:
         out[out_key] = int(meta.get(src_key, 0) or 0)
+    for src_key, out_key in _SHARD_META_FLOAT_FIELDS:
+        out[out_key] = float(meta.get(src_key, 0.0) or 0.0)
+    out["outcome_stats"] = _sanitize_outcome_stats(meta.get("outcome_stats"))
     return out
+
+
+def _merge_minmax_summary(
+    summary: dict[str, Any],
+    *,
+    n_key: str,
+    min_key: str,
+    max_key: str,
+    incoming_n: int,
+    incoming_min: float,
+    incoming_max: float,
+) -> None:
+    if incoming_n <= 0:
+        return
+    old_n = max(0, int(summary.get(n_key, 0) or 0) - int(incoming_n))
+    if old_n <= 0:
+        summary[min_key] = float(incoming_min)
+        summary[max_key] = float(incoming_max)
+    else:
+        summary[min_key] = min(float(summary.get(min_key, incoming_min)), float(incoming_min))
+        summary[max_key] = max(float(summary.get(max_key, incoming_max)), float(incoming_max))
+
+
+def _record_replay_array_metrics(
+    shard_arrs: dict,
+    train_mask: np.ndarray,
+    summary: dict[str, Any],
+) -> None:
+    train_n = int(np.count_nonzero(train_mask))
+    if train_n <= 0:
+        return
+
+    priorities = np.asarray(
+        shard_arrs.get("priority", np.ones((train_mask.shape[0],), dtype=np.float32)),
+        dtype=np.float32,
+    )[train_mask]
+    if priorities.size > 0:
+        incoming_n = int(priorities.size)
+        priorities64 = priorities.astype(np.float64, copy=False)
+        summary["replay_priority_n"] += incoming_n
+        summary["replay_priority_sum"] += float(priorities64.sum(dtype=np.float64))
+        summary["replay_priority_sq_sum"] += float((priorities64 * priorities64).sum(dtype=np.float64))
+        _merge_minmax_summary(
+            summary,
+            n_key="replay_priority_n",
+            min_key="replay_priority_min",
+            max_key="replay_priority_max",
+            incoming_n=incoming_n,
+            incoming_min=float(priorities.min()),
+            incoming_max=float(priorities.max()),
+        )
+
+    for flag_name, n_key, sum_key in (
+        ("has_policy", "replay_has_policy_n", "replay_has_policy_sum"),
+        ("has_sf_wdl", "replay_has_sf_wdl_n", "replay_has_sf_wdl_sum"),
+        ("has_search_wdl", "replay_has_search_wdl_n", "replay_has_search_wdl_sum"),
+    ):
+        if flag_name not in shard_arrs:
+            continue
+        flags = np.asarray(shard_arrs[flag_name], dtype=np.uint8)[train_mask]
+        summary[n_key] += int(flags.size)
+        summary[sum_key] += int(flags.sum(dtype=np.int64))
+
+    if "wdl_target" in shard_arrs:
+        wdl = np.asarray(shard_arrs["wdl_target"], dtype=np.int64)[train_mask]
+        counts = np.bincount(np.clip(wdl, 0, 2), minlength=3)
+        summary["replay_wdl_0"] += int(counts[0])
+        summary["replay_wdl_1"] += int(counts[1])
+        summary["replay_wdl_2"] += int(counts[2])
 
 
 def _ingest_train_arrays(
@@ -953,7 +1129,7 @@ def _ingest_train_arrays(
     holdout_frac: float,
     holdout_frozen: bool,
     rng: np.random.Generator,
-    summary: dict[str, int | float],
+    summary: dict[str, Any],
 ) -> None:
     """Split shard rows into holdout vs train, push to buffers, count is_selfplay tags."""
     if shard_n <= 0:
@@ -968,6 +1144,7 @@ def _ingest_train_arrays(
     train_mask = ~holdout_mask
     if not np.any(train_mask):
         return
+    _record_replay_array_metrics(shard_arrs, train_mask, summary)
     buf.add_many_arrays(slice_array_batch(shard_arrs, np.flatnonzero(train_mask)))
   # Per-sample is_selfplay tag count, training rows only. Shards written
   # before this field existed won't carry it — silently skip.
@@ -993,7 +1170,7 @@ def _process_shard(
     holdout_frozen: bool,
     accepted_model_shas: set[str],
     rng: np.random.Generator,
-    summary: dict[str, int | float],
+    summary: dict[str, Any],
     preloaded: tuple[dict, dict] | None = None,
 ) -> str:
     """Load one shard from inbox, ingest into replay buffer, update summary.
@@ -1038,7 +1215,22 @@ def _process_shard(
 
     if model_sha in accepted_model_shas:
         for key, val in m.items():
+            if key in {"diff_focus_priority_min", "diff_focus_priority_max", "outcome_stats"}:
+                continue
             summary[f"matching_{key}"] += val
+        _merge_outcome_stats(
+            summary["matching_outcome_stats"],
+            m.get("outcome_stats", {}),
+        )
+        _merge_minmax_summary(
+            summary,
+            n_key="matching_diff_focus_records",
+            min_key="matching_diff_focus_priority_min",
+            max_key="matching_diff_focus_priority_max",
+            incoming_n=int(m.get("diff_focus_records", 0) or 0),
+            incoming_min=float(m.get("diff_focus_priority_min", 0.0) or 0.0),
+            incoming_max=float(m.get("diff_focus_priority_max", 0.0) or 0.0),
+        )
         summary["matching_shards"] += 1
     else:
         summary["stale_games"] += m["games"]
@@ -1063,7 +1255,7 @@ def _process_shard_with_prev_cap(
     holdout_frozen: bool,
     effective_accepted: set[str],
     rng: np.random.Generator,
-    summary: dict[str, int | float],
+    summary: dict[str, Any],
     cap_prev: bool,
     prev_model_sha: str | None,
     prev_max_games: int,
@@ -1117,7 +1309,7 @@ def _ingest_distributed_selfplay(
     prev_model_sha: str | None = None,
     prev_model_max_fraction: float = 1.0,
     prefetcher=None,
-) -> dict[str, int | float]:
+) -> dict[str, Any]:
     """Poll inbox until enough games arrive, then return.
 
     Shards whose ``model_sha256`` is in *accepted_model_shas* count as

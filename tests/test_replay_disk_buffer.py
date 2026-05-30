@@ -116,7 +116,7 @@ def test_sample_batch_arrays_shapes(tmp_path) -> None:
     assert arrs["priority"].shape == (6,)
 
 
-def test_sample_batch_arrays_rejects_compact_policy_until_training_supports_it(tmp_path) -> None:
+def test_sample_batch_arrays_accepts_compact_policy(tmp_path) -> None:
     rng = np.random.default_rng(0)
     buf = DiskReplayBuffer(
         50,
@@ -126,8 +126,10 @@ def test_sample_batch_arrays_rejects_compact_policy_until_training_supports_it(t
         shard_size=10,
     )
 
-    with pytest.raises(ValueError, match="policy_target A mismatch"):
-        buf.add_many_arrays(_arrays(COMPACT_POLICY_SIZE))
+    buf.add_many_arrays(_arrays(COMPACT_POLICY_SIZE, n=4))
+    arrs = buf.sample_batch_arrays(2, wdl_balance=False)
+
+    assert arrs["policy_target"].shape == (2, COMPACT_POLICY_SIZE)
 
 
 def test_resumed_buffer_samples_from_pruned_optional_shards(tmp_path) -> None:

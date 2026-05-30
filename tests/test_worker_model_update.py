@@ -8,9 +8,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
+import pytest
 import torch
 from chess_anti_engine.model import ModelConfig
 import chess_anti_engine.worker as worker_mod
+from chess_anti_engine.selfplay.manager import BatchStats
 from chess_anti_engine.worker import WorkerSession
 from chess_anti_engine.worker_buffer import _BufferedUpload
 
@@ -164,6 +166,66 @@ def test_encoding_recommendation_changes_restart_selfplay_session() -> None:
     assert session._stop_selfplay is True
 
 
+def test_aggregate_thread_stats_preserves_counted_float_sums() -> None:
+    stats = WorkerSession._aggregate_thread_stats([
+        BatchStats(
+            games=1,
+            positions=10,
+            w=1,
+            d=0,
+            l=0,
+            sf_eval_delta6=0.25,
+            sf_eval_delta6_n=4,
+            diff_focus_records=2,
+            diff_focus_keep_prob_sum=1.5,
+            diff_focus_sample_weight_sum=2.5,
+            diff_focus_priority_sum=3.0,
+            diff_focus_priority_sq_sum=5.0,
+            diff_focus_priority_min=0.4,
+            diff_focus_priority_max=2.0,
+            gumbel_policy_diag_n=2,
+            gumbel_policy_top_prob_sum=0.8,
+            gumbel_policy_entropy_sum=1.2,
+            outcome_stats={"book:a": 1},
+        ),
+        BatchStats(
+            games=2,
+            positions=20,
+            w=0,
+            d=1,
+            l=1,
+            sf_eval_delta6=0.75,
+            sf_eval_delta6_n=2,
+            diff_focus_records=3,
+            diff_focus_keep_prob_sum=2.0,
+            diff_focus_sample_weight_sum=3.5,
+            diff_focus_priority_sum=7.0,
+            diff_focus_priority_sq_sum=11.0,
+            diff_focus_priority_min=0.2,
+            diff_focus_priority_max=3.0,
+            gumbel_policy_diag_n=3,
+            gumbel_policy_top_prob_sum=1.1,
+            gumbel_policy_entropy_sum=2.4,
+            outcome_stats={"book:a": 2, "book:b": 1},
+        ),
+    ])
+
+    assert stats.games == 3
+    assert stats.positions == 30
+    assert stats.sf_eval_delta6_n == 6
+    assert stats.sf_eval_delta6 == pytest.approx((0.25 * 4 + 0.75 * 2) / 6)
+    assert stats.diff_focus_keep_prob_sum == pytest.approx(3.5)
+    assert stats.diff_focus_sample_weight_sum == pytest.approx(6.0)
+    assert stats.diff_focus_priority_sum == pytest.approx(10.0)
+    assert stats.diff_focus_priority_sq_sum == pytest.approx(16.0)
+    assert stats.diff_focus_priority_min == pytest.approx(0.2)
+    assert stats.diff_focus_priority_max == pytest.approx(3.0)
+    assert stats.gumbel_policy_diag_n == 5
+    assert stats.gumbel_policy_top_prob_sum == pytest.approx(1.9)
+    assert stats.gumbel_policy_entropy_sum == pytest.approx(3.6)
+    assert stats.outcome_stats == {"book:a": 3, "book:b": 1}
+
+
 def test_threaded_local_model_swap_keeps_buffer_metadata_atomic(monkeypatch, tmp_path: Path) -> None:
     session = object.__new__(WorkerSession)
     session.log = logging.getLogger("test.worker_model_update")
@@ -229,3 +291,71 @@ def test_threaded_local_model_swap_keeps_buffer_metadata_atomic(monkeypatch, tmp
     assert session.model_sha == new_sha
     assert session.model_step == 2
     assert session.last_model_sha == new_sha
+
+
+def test_completed_game_metadata_mismatch_flushes_before_retry(monkeypatch, tmp_path: Path) -> None:
+    session = object.__new__(WorkerSession)
+    session.log = logging.getLogger("test.worker_model_update")
+    session.model_sha = "new-sha"
+    session.model_step = 2
+    session.pending_dir = tmp_path
+    session.leased_trial_id = "trial_00000"
+    session.fixed_trial_id = ""
+    session.args = SimpleNamespace(
+        username="worker",
+        upload_max_buffered_positions=0,
+        upload_target_positions=999,
+        upload_flush_seconds=999.0,
+    )
+    session.last_successful_send_s = 100.0
+    session.upload_buf = _BufferedUpload(
+        samples=cast(Any, [object()]),
+        model_sha="old-sha",
+        model_step=1,
+        games=1,
+        positions=1,
+        first_buffered_at_s=50.0,
+    )
+    session._completion_telemetry_lock = threading.Lock()
+    session._completion_games = 0
+    session._completion_positions = 0
+    session._completion_callback_s = 0.0
+    session._completion_upload_s = 0.0
+    session._completion_by_thread = {}
+
+    flushed: list[tuple[str | None, int | None, int]] = []
+    uploaded_elapsed: list[float | None] = []
+    maybe_flush_seen: list[tuple[str | None, int | None, int]] = []
+
+    def _fake_flush(**kwargs):
+        buf = kwargs["buf"]
+        flushed.append((buf.model_sha, buf.model_step, buf.positions))
+        buf.reset()
+        return tmp_path / "old-shard.zarr", 12.5
+
+    def _fake_upload_pending_shards(*, default_elapsed_s: float | None = None) -> float:
+        uploaded_elapsed.append(default_elapsed_s)
+        return 200.0
+
+    def _fake_maybe_flush(**kwargs):
+        buf = kwargs["buf"]
+        maybe_flush_seen.append((buf.model_sha, buf.model_step, buf.positions))
+        return None, 0.0
+
+    monkeypatch.setattr(worker_mod, "_flush_upload_buffer_to_pending", _fake_flush)
+    monkeypatch.setattr(worker_mod, "_maybe_flush_upload_buffer", _fake_maybe_flush)
+    cast(Any, session)._upload_pending_shards = _fake_upload_pending_shards
+
+    game_batch = SimpleNamespace(samples=[object(), object()], positions=2, games=1, w=1)
+
+    WorkerSession._on_completed_game(session, game_batch)
+
+    assert flushed == [("old-sha", 1, 1)]
+    assert uploaded_elapsed == [12.5]
+    assert session.last_successful_send_s == 200.0
+    assert maybe_flush_seen == [("new-sha", 2, 2)]
+    assert session.upload_buf.model_sha == "new-sha"
+    assert session.upload_buf.model_step == 2
+    assert session.upload_buf.positions == 2
+    assert session._completion_games == 1
+    assert session._completion_positions == 2

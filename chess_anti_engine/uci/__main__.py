@@ -232,6 +232,7 @@ def _build_engine(
     eval_cache_entries: int,
     use_multi_gpu_pucv: bool,
     input_history_encoding: str = "legacy",
+    policy_encoding: str = "az_4672",
     rebuild_evaluator=None,
     rebuild_multi_gpu_pucv_factories=None,
     options: EngineOptions | None = None,
@@ -244,6 +245,7 @@ def _build_engine(
             topk=topk,
             add_noise=False,
             input_history_encoding=input_history_encoding,
+            policy_encoding=policy_encoding,
         ),
         chunk_sims=chunk_sims,
         n_walkers=n_walkers,
@@ -415,6 +417,7 @@ def main() -> int:
             walker_gather = max(1, int(args.walker_gather))
             models = _load_models(args.checkpoint, devices)
             input_history_encoding = str(getattr(models[0], "input_history_encoding", "legacy"))
+            policy_encoding = str(getattr(models[0], "policy_encoding", "az_4672"))
             compile_mode = str(args.compile_mode) if args.compile else None
             build_eval = _make_evaluator_factory(
                 models, devices, coalesce=bool(args.coalesce),
@@ -443,6 +446,7 @@ def main() -> int:
                 eval_cache_entries=startup_options.eval_cache_entries,
                 use_multi_gpu_pucv=use_multi_gpu_pucv,
                 input_history_encoding=input_history_encoding,
+                policy_encoding=policy_encoding,
                 rebuild_evaluator=build_eval,
                 rebuild_multi_gpu_pucv_factories=build_pucv_factories,
                 options=startup_options,

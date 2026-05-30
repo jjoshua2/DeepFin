@@ -146,7 +146,7 @@ def test_array_replay_buffer_rejects_out_of_range_gather_indices():
         buf._gather_rows(np.array([10], dtype=np.int64))  # noqa: SLF001
 
 
-def test_array_replay_buffer_rejects_compact_policy_until_training_supports_it():
+def test_array_replay_buffer_accepts_compact_policy_after_training_supports_it():
     rng = np.random.default_rng(0)
     buf = ArrayReplayBuffer(10, rng=rng)
     x = np.zeros((1, 146, 8, 8), dtype=np.float16)
@@ -159,5 +159,7 @@ def test_array_replay_buffer_rejects_compact_policy_until_training_supports_it()
         "priority": np.ones((1,), dtype=np.float32),
         "has_policy": np.ones((1,), dtype=np.uint8),
     }
-    with pytest.raises(ValueError, match="policy_target A mismatch"):
-        buf.add_many_arrays({**common, "policy_target": compact})
+    buf.add_many_arrays({**common, "policy_target": compact})
+
+    batch = buf.sample_batch_arrays(1, wdl_balance=False)
+    assert batch["policy_target"].shape == (1, COMPACT_POLICY_SIZE)

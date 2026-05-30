@@ -27,10 +27,16 @@ def sample_action_with_temperature(
     if temperature <= 0:
         return int(actions[argmax_idx])
     p = np.maximum(np.asarray(weights, dtype=np.float64), 0.0)
-    if temperature != 1.0:
-        p = np.power(p, 1.0 / float(temperature))
     ps = float(p.sum())
     if not np.isfinite(ps) or ps <= 0:
         return int(actions[argmax_idx])
     p /= ps
+    if temperature != 1.0:
+        logits = np.log(np.maximum(p, np.finfo(np.float64).tiny)) / float(temperature)
+        logits -= float(np.max(logits))
+        p = np.exp(logits)
+        ps = float(p.sum())
+        if not np.isfinite(ps) or ps <= 0:
+            return int(actions[argmax_idx])
+        p /= ps
     return int(actions[rng.choice(actions.size, p=p)])

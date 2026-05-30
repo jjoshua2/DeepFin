@@ -323,6 +323,7 @@ def _build_trial_model_config(tc: TrialConfig) -> ModelConfig:
         qkv_projection=tc.qkv_projection,
         use_deepnorm=tc.use_deepnorm,
         policy_encoding=tc.policy_encoding,
+        input_history_encoding=tc.input_history_encoding,
         input_global_embedding=tc.input_global_embedding,
         input_global_embedding_channels=tc.input_global_embedding_channels,
         input_square_embedding=tc.input_square_embedding,

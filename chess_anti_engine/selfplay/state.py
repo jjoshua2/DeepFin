@@ -33,7 +33,7 @@ from chess_anti_engine.selfplay.config import (
     SearchConfig,
     TemperatureConfig,
 )
-from chess_anti_engine.selfplay.opening import OpeningConfig, make_starting_board
+from chess_anti_engine.selfplay.opening import OpeningConfig, sample_starting_board
 from chess_anti_engine.stockfish.pool import StockfishPool
 from chess_anti_engine.stockfish.uci import StockfishUCI
 from chess_anti_engine.tablebase import SyzygyProbe
@@ -92,6 +92,29 @@ class BatchStats:
     sf_eval_delta6: float = 0.0
     sf_eval_delta6_n: int = 0
 
+    diff_focus_records: int = 0
+    diff_focus_kept: int = 0
+    diff_focus_keep_prob_sum: float = 0.0
+    diff_focus_keep_limited: int = 0
+    diff_focus_sample_weight_sum: float = 0.0
+    diff_focus_sample_weight_limited: int = 0
+    diff_focus_priority_sum: float = 0.0
+    diff_focus_priority_sq_sum: float = 0.0
+    diff_focus_priority_min: float = 0.0
+    diff_focus_priority_max: float = 0.0
+    gumbel_policy_diag_n: int = 0
+    gumbel_policy_top_prob_sum: float = 0.0
+    gumbel_policy_action_prob_sum: float = 0.0
+    gumbel_policy_entropy_sum: float = 0.0
+    gumbel_policy_eff_moves_sum: float = 0.0
+    gumbel_policy_candidate_mass_sum: float = 0.0
+    gumbel_policy_non_candidate_top_prob_sum: float = 0.0
+    gumbel_policy_argmax_is_candidate_sum: int = 0
+    gumbel_policy_argmax_is_action_sum: int = 0
+    gumbel_policy_legal_count_sum: int = 0
+    gumbel_policy_candidate_count_sum: int = 0
+    outcome_stats: dict[str, int] = field(default_factory=dict)
+
 
 @dataclass
 class CompletedGameBatch:
@@ -128,23 +151,47 @@ class CompletedGameBatch:
     # sf_eval_delta6 mean reported in TensorBoard.
     sf_d6_sum: float = 0.0
     sf_d6_n: int = 0
+    diff_focus_records: int = 0
+    diff_focus_kept: int = 0
+    diff_focus_keep_prob_sum: float = 0.0
+    diff_focus_keep_limited: int = 0
+    diff_focus_sample_weight_sum: float = 0.0
+    diff_focus_sample_weight_limited: int = 0
+    diff_focus_priority_sum: float = 0.0
+    diff_focus_priority_sq_sum: float = 0.0
+    diff_focus_priority_min: float = 0.0
+    diff_focus_priority_max: float = 0.0
+    gumbel_policy_diag_n: int = 0
+    gumbel_policy_top_prob_sum: float = 0.0
+    gumbel_policy_action_prob_sum: float = 0.0
+    gumbel_policy_entropy_sum: float = 0.0
+    gumbel_policy_eff_moves_sum: float = 0.0
+    gumbel_policy_candidate_mass_sum: float = 0.0
+    gumbel_policy_non_candidate_top_prob_sum: float = 0.0
+    gumbel_policy_argmax_is_candidate_sum: int = 0
+    gumbel_policy_argmax_is_action_sum: int = 0
+    gumbel_policy_legal_count_sum: int = 0
+    gumbel_policy_candidate_count_sum: int = 0
+    outcome_stats: dict[str, int] = field(default_factory=dict)
 
 
 class _NetRecord:
     """Per-ply sample record.  Uses ``__slots__`` to avoid dict overhead."""
     __slots__ = (
         "x", "policy_probs", "net_wdl_est", "search_wdl_est",
+        "x_lc0_root",
         "pov_color", "ply_index", "has_policy", "priority",
         "priority_policy_kl", "priority_q_delta",
         "sample_weight", "keep_prob", "legal_mask",
         "sf_policy_target", "sf_move_index", "sf_wdl",
-        "sf_legal_mask",
+        "sf_legal_mask", "gumbel_policy_diag",
     )
 
     x: np.ndarray
     policy_probs: np.ndarray
     net_wdl_est: np.ndarray
     search_wdl_est: np.ndarray
+    x_lc0_root: np.ndarray | None
     pov_color: bool
     ply_index: int
     has_policy: bool
@@ -158,18 +205,22 @@ class _NetRecord:
     sf_move_index: int | None
     sf_wdl: np.ndarray | None
     sf_legal_mask: np.ndarray | None
+    gumbel_policy_diag: dict[str, float] | None
 
     def __init__(
         self, x, policy_probs, net_wdl_est, search_wdl_est,
         pov_color, ply_index, has_policy, priority,
         sample_weight, keep_prob, legal_mask=None,
         sf_policy_target=None, sf_move_index=None, sf_wdl=None,
+        x_lc0_root=None,
         priority_policy_kl=None, priority_q_delta=None,
+        gumbel_policy_diag=None,
     ):
         self.x = x
         self.policy_probs = policy_probs
         self.net_wdl_est = net_wdl_est
         self.search_wdl_est = search_wdl_est
+        self.x_lc0_root = x_lc0_root
         self.pov_color = pov_color
         self.ply_index = ply_index
         self.has_policy = has_policy
@@ -183,6 +234,7 @@ class _NetRecord:
         self.sf_move_index = sf_move_index
         self.sf_wdl = sf_wdl
         self.sf_legal_mask = None
+        self.gumbel_policy_diag = gumbel_policy_diag
 
 
 @dataclass
@@ -216,6 +268,28 @@ class _StatsAcc:
     # Log-only volatility metric: SF winrate delta across 6 plies.
     sf_d6_sum: float = 0.0
     sf_d6_n: int = 0
+    diff_focus_records: int = 0
+    diff_focus_kept: int = 0
+    diff_focus_keep_prob_sum: float = 0.0
+    diff_focus_keep_limited: int = 0
+    diff_focus_sample_weight_sum: float = 0.0
+    diff_focus_sample_weight_limited: int = 0
+    diff_focus_priority_sum: float = 0.0
+    diff_focus_priority_sq_sum: float = 0.0
+    diff_focus_priority_min: float = 0.0
+    diff_focus_priority_max: float = 0.0
+    gumbel_policy_diag_n: int = 0
+    gumbel_policy_top_prob_sum: float = 0.0
+    gumbel_policy_action_prob_sum: float = 0.0
+    gumbel_policy_entropy_sum: float = 0.0
+    gumbel_policy_eff_moves_sum: float = 0.0
+    gumbel_policy_candidate_mass_sum: float = 0.0
+    gumbel_policy_non_candidate_top_prob_sum: float = 0.0
+    gumbel_policy_argmax_is_candidate_sum: int = 0
+    gumbel_policy_argmax_is_action_sum: int = 0
+    gumbel_policy_legal_count_sum: int = 0
+    gumbel_policy_candidate_count_sum: int = 0
+    outcome_stats: dict[str, int] = field(default_factory=dict)
 
     def to_batch_stats(
         self, *, games: int, positions: int, sf_nodes: int | None,
@@ -257,6 +331,30 @@ class _StatsAcc:
             pid_ema_winrate=None,
             sf_eval_delta6=mean_sf_d6,
             sf_eval_delta6_n=int(self.sf_d6_n),
+            diff_focus_records=int(self.diff_focus_records),
+            diff_focus_kept=int(self.diff_focus_kept),
+            diff_focus_keep_prob_sum=float(self.diff_focus_keep_prob_sum),
+            diff_focus_keep_limited=int(self.diff_focus_keep_limited),
+            diff_focus_sample_weight_sum=float(self.diff_focus_sample_weight_sum),
+            diff_focus_sample_weight_limited=int(self.diff_focus_sample_weight_limited),
+            diff_focus_priority_sum=float(self.diff_focus_priority_sum),
+            diff_focus_priority_sq_sum=float(self.diff_focus_priority_sq_sum),
+            diff_focus_priority_min=float(self.diff_focus_priority_min),
+            diff_focus_priority_max=float(self.diff_focus_priority_max),
+            gumbel_policy_diag_n=int(self.gumbel_policy_diag_n),
+            gumbel_policy_top_prob_sum=float(self.gumbel_policy_top_prob_sum),
+            gumbel_policy_action_prob_sum=float(self.gumbel_policy_action_prob_sum),
+            gumbel_policy_entropy_sum=float(self.gumbel_policy_entropy_sum),
+            gumbel_policy_eff_moves_sum=float(self.gumbel_policy_eff_moves_sum),
+            gumbel_policy_candidate_mass_sum=float(self.gumbel_policy_candidate_mass_sum),
+            gumbel_policy_non_candidate_top_prob_sum=float(
+                self.gumbel_policy_non_candidate_top_prob_sum,
+            ),
+            gumbel_policy_argmax_is_candidate_sum=int(self.gumbel_policy_argmax_is_candidate_sum),
+            gumbel_policy_argmax_is_action_sum=int(self.gumbel_policy_argmax_is_action_sum),
+            gumbel_policy_legal_count_sum=int(self.gumbel_policy_legal_count_sum),
+            gumbel_policy_candidate_count_sum=int(self.gumbel_policy_candidate_count_sum),
+            outcome_stats=dict(self.outcome_stats),
         )
 
 
@@ -463,6 +561,7 @@ class SelfplayState:
     starting_boards: list[chess.Board] | None
     move_idx_history: list[list[int]]
     samples_per_game: list[list[Any]]  # list[_NetRecord]; avoid import cycle
+    opening_source_arr: list[str]
     consecutive_low_winrate: list[int]
     last_net_full: list[bool]
     root_ids: list[int]
@@ -525,7 +624,9 @@ class SelfplayState:
                 raise ValueError("play_batch requires model or evaluator")
             evaluator = LocalModelEvaluator(model, device=device)
 
-        boards = [make_starting_board(rng=rng, cfg=opening) for _ in range(batch_size)]
+        starts = [sample_starting_board(rng=rng, cfg=opening) for _ in range(batch_size)]
+        boards = [start.board for start in starts]
+        opening_source_arr = [start.source for start in starts]
         # Use from_board (not from_raw) to preserve ply count + history from openings.
         cboards = [_CBoard.from_board(b) for b in boards]
         starting_boards = [b.copy() for b in boards] if game.syzygy_path else None
@@ -577,6 +678,7 @@ class SelfplayState:
             starting_boards=starting_boards,
             move_idx_history=[[] for _ in range(batch_size)],
             samples_per_game=[[] for _ in range(batch_size)],
+            opening_source_arr=opening_source_arr,
             consecutive_low_winrate=[0] * batch_size,
             last_net_full=[True] * batch_size,
             root_ids=[-1] * batch_size,
@@ -700,7 +802,9 @@ class SelfplayState:
         # Local import mirrors create() above.
         from chess_anti_engine.encoding._lc0_ext import CBoard as _CBoard
 
-        self.boards[i] = make_starting_board(rng=self.rng, cfg=self.opening)
+        opening_start = sample_starting_board(rng=self.rng, cfg=self.opening)
+        self.boards[i] = opening_start.board
+        self.opening_source_arr[i] = opening_start.source
         self.cboards[i] = _CBoard.from_board(self.boards[i])
         if self.starting_boards is not None:
             self.starting_boards[i] = self.boards[i].copy()

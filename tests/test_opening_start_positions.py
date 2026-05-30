@@ -7,6 +7,7 @@ from chess_anti_engine.selfplay.opening import (
     OpeningConfig,
     _load_pgn_opening_sequences,
     make_starting_board,
+    sample_starting_board,
     warm_opening_book_cache,
 )
 
@@ -44,6 +45,15 @@ def test_make_starting_board_random_plies():
     assert b.is_valid()
 
 
+def test_sample_starting_board_reports_random_source():
+    rng = np.random.default_rng(0)
+    cfg = OpeningConfig(opening_book_path=None, random_start_plies=3)
+    start = sample_starting_board(rng=rng, cfg=cfg)
+    assert start.source == "random"
+    assert len(start.board.move_stack) == 3
+    assert start.board.is_valid()
+
+
 def test_make_starting_board_pgn(tmp_path):
     pgn_path = tmp_path / "book.pgn"
     _write_test_pgn(pgn_path)
@@ -59,6 +69,23 @@ def test_make_starting_board_pgn(tmp_path):
     b = make_starting_board(rng=rng, cfg=cfg)
     assert 1 <= len(b.move_stack) <= 4
     assert b.move_stack[0].uci() in {"e2e4", "d2d4"}
+
+
+def test_sample_starting_board_reports_book_source(tmp_path):
+    pgn_path = tmp_path / "book.pgn"
+    _write_test_pgn(pgn_path)
+
+    rng = np.random.default_rng(123)
+    cfg = OpeningConfig(
+        opening_book_path=str(pgn_path),
+        opening_book_prob=1.0,
+        opening_book_max_plies=4,
+        opening_book_max_games=10,
+        random_start_plies=0,
+    )
+    start = sample_starting_board(rng=rng, cfg=cfg)
+    assert start.source == "book1"
+    assert 1 <= len(start.board.move_stack) <= 4
 
 
 def test_make_starting_board_pgn_zip(tmp_path):

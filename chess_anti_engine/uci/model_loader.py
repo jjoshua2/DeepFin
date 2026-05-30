@@ -11,7 +11,7 @@ subprocess with nothing but the package importable.
 from __future__ import annotations
 
 import json
-from dataclasses import fields
+from dataclasses import fields, replace
 from pathlib import Path
 
 import torch
@@ -175,10 +175,22 @@ def load_model_from_checkpoint(
         _history_encoding_from_mapping(params)
         or input_history_encoding
     )
+    model_config = replace(
+        model_config,
+        input_history_encoding=normalize_lc0_history_encoding(
+            getattr(model_config, "input_history_encoding", input_history_encoding),
+        ),
+    )
+    if params is not None and "input_history_encoding" in params:
+        model_config = replace(model_config, input_history_encoding=input_history_encoding)
 
     model = build_model(model_config)
     state = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
     load_state_dict_tolerant(model, state, label="uci-load")
-    setattr(model, "input_history_encoding", input_history_encoding)
+    setattr(
+        model,
+        "input_history_encoding",
+        model_config.input_history_encoding,
+    )
     model.to(device).eval()
     return model

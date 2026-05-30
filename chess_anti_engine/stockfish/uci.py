@@ -21,6 +21,12 @@ import numpy as np
 _DEFAULT_READ_TIMEOUT_S = 60.0
 
 
+def _stockfish_child_nice(current_nice: int, configured_nice: int) -> int:
+    """Return the absolute child nice value without raising process priority."""
+    target_nice = min(19, max(0, int(configured_nice)))
+    return max(int(current_nice), target_nice)
+
+
 class StockfishTimeoutError(RuntimeError):
     """Raised when Stockfish stdout doesn't deliver a line within the deadline."""
 
@@ -99,6 +105,7 @@ class StockfishUCI:
         multipv: int = 1,
         hash_mb: int | None = None,
         syzygy_path: str | None = None,
+        nice: int = 0,
         read_timeout_s: float = _DEFAULT_READ_TIMEOUT_S,
     ):
         self.path = path
@@ -106,6 +113,7 @@ class StockfishUCI:
         self.multipv = int(multipv)
         self.hash_mb = None if hash_mb is None else max(1, int(hash_mb))
         self.syzygy_path = syzygy_path or None
+        self.nice = min(19, max(0, int(nice)))
         self.read_timeout_s = float(read_timeout_s)
         self._lock = threading.Lock()
 
@@ -127,6 +135,11 @@ class StockfishUCI:
             stdout=slave_fd,
             stderr=subprocess.DEVNULL,
         )
+        if self.nice > 0:
+            current_nice = os.getpriority(os.PRIO_PROCESS, self.proc.pid)
+            target_nice = _stockfish_child_nice(current_nice, self.nice)
+            if target_nice > current_nice:
+                os.setpriority(os.PRIO_PROCESS, self.proc.pid, target_nice)
         os.close(slave_fd)
 
         try:

@@ -10,11 +10,12 @@ from chess_anti_engine.inference import _policy_output
 from chess_anti_engine.mcts.gumbel import (
     GumbelConfig,
     _completed_q,
+    _select_top_m_with_gumbel,
     run_gumbel_root_many,
 )
 from chess_anti_engine.mcts.puct import Node, _select_child
 from chess_anti_engine.model import ModelConfig, build_model
-from chess_anti_engine.moves import POLICY_SIZE, legal_move_mask
+from chess_anti_engine.moves import POLICY_ENCODING_LC0_1858, POLICY_SIZE, legal_move_mask, policy_batch_to_encoding
 
 try:
     from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
@@ -25,6 +26,48 @@ except ImportError:  # pragma: no cover - extension absent
 def _require_run_gumbel_root_many_c():
     assert run_gumbel_root_many_c is not None
     return run_gumbel_root_many_c
+
+
+def test_gumbel_scale_zero_matches_noise_disabled() -> None:
+    legal = np.array([1, 2, 3, 4], dtype=np.int64)
+    pri = np.zeros(POLICY_SIZE, dtype=np.float64)
+    pri[legal] = np.array([0.1, 0.2, 0.3, 0.4], dtype=np.float64)
+
+    with_noise_zero, g_zero = _select_top_m_with_gumbel(
+        legal=legal,
+        pri=pri,
+        sim_budget=8,
+        topk=2,
+        add_noise=True,
+        gumbel_scale=0.0,
+        rng=np.random.default_rng(1),
+    )
+    no_noise, g_off = _select_top_m_with_gumbel(
+        legal=legal,
+        pri=pri,
+        sim_budget=8,
+        topk=2,
+        add_noise=False,
+        gumbel_scale=1.0,
+        rng=np.random.default_rng(2),
+    )
+
+    assert with_noise_zero == no_noise
+    assert all(v == 0.0 for v in g_zero.values())
+    assert all(v == 0.0 for v in g_off.values())
+
+
+def test_gumbel_root_many_empty_diagnostics_shape() -> None:
+    result = run_gumbel_root_many(
+        None,
+        [],
+        device="cpu",
+        rng=np.random.default_rng(0),
+        cfg=GumbelConfig(),
+        return_diagnostics=True,
+    )
+
+    assert result == ([], [], [], [], [])
 
 
 def _tiny_model() -> torch.nn.Module:
@@ -41,6 +84,20 @@ def _tiny_model() -> torch.nn.Module:
     )
     model.eval()
     return model
+
+
+class _ZeroEvaluator:
+    def evaluate_encoded(self, xs: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        n = int(xs.shape[0])
+        return np.zeros((n, POLICY_SIZE), dtype=np.float32), np.zeros((n, 3), dtype=np.float32)
+
+
+class _CompactZeroEvaluator:
+    def evaluate_encoded(self, xs: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        n = int(xs.shape[0])
+        full = np.zeros((n, POLICY_SIZE), dtype=np.float32)
+        compact = policy_batch_to_encoding(full, policy_encoding=POLICY_ENCODING_LC0_1858)
+        return compact, np.zeros((n, 3), dtype=np.float32)
 
 
 def test_gumbel_root_many_returns_values_for_edge_cases():
@@ -156,6 +213,61 @@ def test_gumbel_root_many_precomputed_logits_matches_direct_path():
         assert np.count_nonzero(p0[~m0]) == 0
 
 
+def test_gumbel_root_many_accepts_compact_precomputed_logits():
+    board = chess.Board()
+    full_pol = np.zeros((1, POLICY_SIZE), dtype=np.float32)
+    compact_pol = policy_batch_to_encoding(full_pol, policy_encoding=POLICY_ENCODING_LC0_1858)
+    pre_wdl = np.zeros((1, 3), dtype=np.float32)
+
+    probs, actions, values, masks = run_gumbel_root_many(
+        None,
+        [board],
+        device="cpu",
+        rng=np.random.default_rng(123),
+        cfg=GumbelConfig(
+            simulations=1,
+            topk=8,
+            temperature=0.0,
+            add_noise=False,
+            policy_encoding=POLICY_ENCODING_LC0_1858,
+        ),
+        evaluator=cast(Any, _ZeroEvaluator()),
+        pre_pol_logits=compact_pol,
+        pre_wdl_logits=pre_wdl,
+    )
+
+    assert len(actions) == 1
+    assert len(values) == 1
+    assert probs[0].shape == (POLICY_SIZE,)
+    assert np.array_equal(masks[0], legal_move_mask(board))
+    assert np.count_nonzero(probs[0][~masks[0]]) == 0
+
+
+def test_gumbel_root_many_honors_per_game_simulation_budgets():
+    boards = [chess.Board(), chess.Board()]
+    pre_pol = np.zeros((2, POLICY_SIZE), dtype=np.float32)
+    pre_wdl = np.zeros((2, 3), dtype=np.float32)
+
+    result = run_gumbel_root_many(
+        None,
+        boards,
+        device="cpu",
+        rng=np.random.default_rng(123),
+        cfg=GumbelConfig(simulations=8, topk=8, temperature=0.0, add_noise=False),
+        evaluator=cast(Any, _ZeroEvaluator()),
+        pre_pol_logits=pre_pol,
+        pre_wdl_logits=pre_wdl,
+        per_game_simulations=[1, 8],
+        return_diagnostics=True,
+    )
+
+    _probs, _actions, _values, _masks, diagnostics = result
+    assert diagnostics[0] is not None
+    assert diagnostics[1] is not None
+    assert diagnostics[0]["candidate_count"] == 1.0
+    assert diagnostics[1]["candidate_count"] == 4.0
+
+
 class _FakeRootTbProbe:
     max_pieces = 32
 
@@ -227,6 +339,88 @@ def test_gumbel_c_can_skip_cached_tb_root_override():
     assert probe.root_calls == 0
     assert probe.leaf_calls == 0
     assert values[0] == 0.0
+
+
+@pytest.mark.skipif(run_gumbel_root_many_c is None, reason="C tree extension not available")
+def test_gumbel_c_accepts_compact_precomputed_logits():
+    board = chess.Board()
+    full_pol = np.zeros((1, POLICY_SIZE), dtype=np.float32)
+    compact_pol = policy_batch_to_encoding(full_pol, policy_encoding=POLICY_ENCODING_LC0_1858)
+    pre_wdl = np.zeros((1, 3), dtype=np.float32)
+
+    run_gumbel_root_many_c = _require_run_gumbel_root_many_c()
+    probs, actions, values, masks = run_gumbel_root_many_c(
+        None,
+        [board],
+        device="cpu",
+        rng=np.random.default_rng(123),
+        cfg=GumbelConfig(
+            simulations=1,
+            topk=8,
+            temperature=0.0,
+            add_noise=False,
+            policy_encoding=POLICY_ENCODING_LC0_1858,
+        ),
+        evaluator=cast(Any, _ZeroEvaluator()),
+        pre_pol_logits=compact_pol,
+        pre_wdl_logits=pre_wdl,
+    )[:4]
+
+    assert len(actions) == 1
+    assert len(values) == 1
+    assert probs[0].shape == (POLICY_SIZE,)
+    assert np.array_equal(masks[0], legal_move_mask(board))
+    assert np.count_nonzero(probs[0][~masks[0]]) == 0
+
+
+def test_gumbel_python_widens_compact_evaluator_logits():
+    board = chess.Board()
+
+    probs, actions, values, masks = run_gumbel_root_many(
+        None,
+        [board],
+        device="cpu",
+        rng=np.random.default_rng(123),
+        cfg=GumbelConfig(
+            simulations=1,
+            topk=8,
+            temperature=0.0,
+            add_noise=False,
+            policy_encoding=POLICY_ENCODING_LC0_1858,
+        ),
+        evaluator=cast(Any, _CompactZeroEvaluator()),
+    )
+
+    assert len(actions) == 1
+    assert len(values) == 1
+    assert probs[0].shape == (POLICY_SIZE,)
+    assert np.array_equal(masks[0], legal_move_mask(board))
+
+
+@pytest.mark.skipif(run_gumbel_root_many_c is None, reason="C tree extension not available")
+def test_gumbel_c_widens_compact_evaluator_logits():
+    board = chess.Board()
+
+    run_gumbel_root_many_c = _require_run_gumbel_root_many_c()
+    probs, actions, values, masks = run_gumbel_root_many_c(
+        None,
+        [board],
+        device="cpu",
+        rng=np.random.default_rng(123),
+        cfg=GumbelConfig(
+            simulations=1,
+            topk=8,
+            temperature=0.0,
+            add_noise=False,
+            policy_encoding=POLICY_ENCODING_LC0_1858,
+        ),
+        evaluator=cast(Any, _CompactZeroEvaluator()),
+    )[:4]
+
+    assert len(actions) == 1
+    assert len(values) == 1
+    assert probs[0].shape == (POLICY_SIZE,)
+    assert np.array_equal(masks[0], legal_move_mask(board))
 
 
 def test_completed_q_uses_parent_perspective_for_visited_child():
