@@ -224,7 +224,18 @@ def select_input_history_samples(
         return samples
 
     legacy_x = np.stack([np.asarray(s.x) for s in samples], axis=0)
-    arrs: dict[str, np.ndarray] = {"x": legacy_x}
+    arrs: dict[str, np.ndarray] = {
+        "x": legacy_x,
+        INPUT_HISTORY_ENCODING_ARRAY_KEY: np.asarray(
+            [
+                normalize_lc0_history_encoding(sample.input_history_encoding)
+                if sample.input_history_encoding
+                else ""
+                for sample in samples
+            ],
+            dtype=object,
+        ),
+    }
     if any(s.x_lc0_root is not None for s in samples):
         recorded = np.zeros_like(legacy_x)
         has = np.zeros((len(samples),), dtype=np.uint8)

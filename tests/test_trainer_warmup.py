@@ -160,6 +160,25 @@ def test_select_input_history_samples_uses_recorded_lc0_root() -> None:
     np.testing.assert_array_equal(sample.x, legacy[0])
 
 
+def test_select_input_history_samples_preserves_already_root_samples() -> None:
+    root = np.zeros((146, 8, 8), dtype=np.float32)
+    root[104, :, :] = 5.0
+    sample = ReplaySample(
+        x=root,
+        policy_target=np.zeros((4672,), dtype=np.float32),
+        wdl_target=1,
+        input_history_encoding="lc0_root",
+    )
+
+    out = select_input_history_samples(
+        [sample],
+        input_history_encoding="lc0_root",
+    )
+
+    assert out[0].input_history_encoding == "lc0_root"
+    np.testing.assert_array_equal(out[0].x, root)
+
+
 def test_selected_input_history_samples_serialize_history_metadata() -> None:
     legacy = np.zeros((1, 146, 8, 8), dtype=np.float32)
     root = np.zeros_like(legacy)
