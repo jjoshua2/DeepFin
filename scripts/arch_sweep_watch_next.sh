@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd /home/josh/projects/chess
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "${script_dir}/.." && pwd)"
+cd "${repo_root}"
 
 deadline_s="${1:-2700}"
 poll_s="${POLL_S:-60}"
 stamp="20260512"
-replay_dir="/home/josh/projects/chess/runs/pbt2_small/replay/train_trial_d3156_00000_0_lr=0.0003_2026-04-29_10-58-04/replay_shards"
+replay_dir="${repo_root}/runs/pbt2_small/replay/train_trial_d3156_00000_0_lr=0.0003_2026-04-29_10-58-04/replay_shards"
 watch_log="/tmp/offline_replay_epoch_arch_watch_next.log"
 
 current_runs=(
@@ -64,7 +66,7 @@ launch_run() {
     return
   fi
   tmux new-session -d -s "${session}" \
-    "cd /home/josh/projects/chess && ${common_args[*]} --out-dir ${out_dir} $* 2>&1 | tee ${log_path}"
+    "cd \"${repo_root}\" && ${common_args[*]} --out-dir ${out_dir} $* 2>&1 | tee ${log_path}"
   log "launched ${session}: ${out_dir}"
 }
 
