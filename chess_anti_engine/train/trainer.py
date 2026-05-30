@@ -220,7 +220,20 @@ def select_input_history_samples(
 ) -> list[ReplaySample]:
     """Select configured input planes for in-memory replay samples."""
     hist_enc = normalize_lc0_history_encoding(input_history_encoding)
-    if not samples or not uses_lc0_root_history(hist_enc):
+    if not samples:
+        return samples
+    if not uses_lc0_root_history(hist_enc):
+        root_samples = [
+            sample
+            for sample in samples
+            if sample.input_history_encoding
+            and uses_lc0_root_history(sample.input_history_encoding)
+        ]
+        if root_samples:
+            raise ValueError(
+                f"replay samples contain {len(root_samples)} rows stored as LC0-root, "
+                f"cannot train {hist_enc!r} input"
+            )
         return samples
 
     legacy_x = np.stack([np.asarray(s.x) for s in samples], axis=0)

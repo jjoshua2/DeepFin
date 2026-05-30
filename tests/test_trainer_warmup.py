@@ -179,6 +179,21 @@ def test_select_input_history_samples_preserves_already_root_samples() -> None:
     np.testing.assert_array_equal(out[0].x, root)
 
 
+def test_select_input_history_samples_rejects_root_samples_for_legacy_model() -> None:
+    sample = ReplaySample(
+        x=np.zeros((146, 8, 8), dtype=np.float32),
+        policy_target=np.zeros((4672,), dtype=np.float32),
+        wdl_target=1,
+        input_history_encoding="lc0_root",
+    )
+
+    try:
+        select_input_history_samples([sample], input_history_encoding="legacy")
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert "cannot train" in str(exc)
+
+
 def test_selected_input_history_samples_serialize_history_metadata() -> None:
     legacy = np.zeros((1, 146, 8, 8), dtype=np.float32)
     root = np.zeros_like(legacy)
