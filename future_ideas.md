@@ -34,6 +34,17 @@ Ideas:
 - Probe BT4 raw policy sharpness on the same replay/start positions and compare top move probability, top-5 mass, entropy, and effective legal moves against our main search target, soft policy target, and SF-policy target.
 - Recheck whether `sf_policy_label_smooth` should remain legal-set smoothing or become uncovered-legal smoothing after `multipv=40`; current live setting is intentionally small at 1%.
 
+## Compact policy simplification backlog
+Goal: make `lc0_1858` the normal live-training policy path now that compact output tested well, while keeping old `az_4672` data/checkpoints loadable.
+
+Ideas:
+- Make `policy_encoding: lc0_1858` the production/default config path once the stacked replay/model/runtime PRs are merged.
+- Keep `az_4672` as a legacy import, conversion, and checkpoint-migration path rather than a first-class live training mode.
+- Require each shard to declare `policy_encoding`, validate every policy-space array against that encoding, and reject mixed encodings inside one replay buffer unless an explicit conversion step runs.
+- Store `sf_move_index` in the shard's own policy encoding, or store a move identity and derive the index at load time. Avoid implicit "full index with compact target" conventions.
+- Remove the misleading `lc0_4672` name from manifests and helpers. Full 4672 should be `az_4672`; LC0 should mean the compact 1858 move encoding.
+- Keep conversion helpers for old replay/checkpoints, but keep the hot training path branch-light once a run has chosen its encoding.
+
 ## Offline architecture sweep backlog
 Goal: test architecture changes on fixed replay snapshots before risking live selfplay.
 

@@ -108,7 +108,7 @@ def _restore_from_ray_checkpoint(
 def _restore_from_salvage_pool(
     *, config: dict, trainer, device: str, trial_id: str, trial_dir: Path,
     rr: RestoreResult,
-) -> None:
+) -> dict | None:
     """Load weights + optional optimizer/PID from a salvage seed slot."""
     seed_pool_dir = Path(str(config.get("salvage_seed_pool_dir"))).expanduser()
     if not seed_pool_dir.is_dir():
@@ -125,6 +125,15 @@ def _restore_from_salvage_pool(
     maybe = Path(picked_dir) / "trainer.pt"
     if not maybe.exists():
         raise RuntimeError(f"salvage seed missing trainer.pt: {maybe}")
+
+    restored_rng_state = load_optional_json(Path(picked_dir) / SIDECAR_RNG_STATE)
+    restored_trial_meta = load_optional_json(Path(picked_dir) / SIDECAR_TRIAL_META)
+    if isinstance(restored_trial_meta, dict):
+        rr.global_iter = int(restored_trial_meta.get("global_iter", rr.global_iter))
+        rr.restored_window = int(restored_trial_meta.get("current_window", rr.restored_window))
+        rr.restored_owner_trial_dir = str(
+            restored_trial_meta.get("owner_trial_dir", rr.restored_owner_trial_dir)
+        )
 
     rr.startup_source = "salvage"
     rr.seed_warmstart_used = True
@@ -172,6 +181,7 @@ def _restore_from_salvage_pool(
         )
         if pid_manifest_overrides:
             print("[trial] salvage PID overrides from manifest row: " + ", ".join(pid_manifest_overrides))
+    return restored_rng_state
 
 
 def _apply_donor_config_overlay(config: dict, donor_cfg: dict, trainer) -> None:
@@ -269,7 +279,7 @@ def _restore_checkpoint_or_salvage(
             trial_id=trial_id, rr=rr,
         )
     elif isinstance(config.get("salvage_seed_pool_dir"), str) and str(config.get("salvage_seed_pool_dir", "")).strip():
-        _restore_from_salvage_pool(
+        restored_rng_state = _restore_from_salvage_pool(
             config=config, trainer=trainer, device=device,
             trial_id=trial_id, trial_dir=trial_dir, rr=rr,
         )

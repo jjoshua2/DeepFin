@@ -117,6 +117,25 @@ def _choose_curriculum_opponent_move(
     return acceptable[int(rng.integers(len(acceptable)))]
 
 
+def _sf_played_move_diagnostics(
+    played_idx: int,
+    cand_idxs: list[int],
+    cand_scores: list[float],
+) -> tuple[int | None, float | None]:
+    if not cand_idxs or not cand_scores:
+        return None, None
+    played_score = None
+    for idx, score in zip(cand_idxs, cand_scores, strict=False):
+        if int(idx) == int(played_idx):
+            played_score = float(score)
+            break
+    if played_score is None:
+        return None, None
+    best_score = max(float(score) for score in cand_scores)
+    rank = 1 + sum(1 for score in cand_scores if float(score) > played_score + 1e-12)
+    return int(rank), max(0.0, best_score - played_score)
+
+
 def _eff_sf_nodes(state: SelfplayState, idx: int, *, for_move: bool = False) -> int | None:
     """Return the per-slot SF node budget, scaled down after fast-sim plies."""
     base_nodes = int(state.base_nodes)
@@ -598,6 +617,12 @@ def _push_curriculum_opponent_move(
         cand_scores=cand_scores,
         regret_limit=regret_limit,
     )
+    if state.samples_per_game[idx]:
+        rank, regret = _sf_played_move_diagnostics(opp_move_idx, cand_idxs, cand_scores)
+        rec = state.samples_per_game[idx][-1]
+        rec.sf_played_move_index = int(opp_move_idx)
+        rec.sf_played_rank = rank
+        rec.sf_played_regret = regret
     state.cboards[idx].push_index(opp_move_idx)
     state.move_idx_history[idx].append(opp_move_idx)
     if state.mcts_tree is not None and state.root_ids[idx] >= 0:

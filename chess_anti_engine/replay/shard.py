@@ -8,6 +8,7 @@ import shutil
 import tarfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
@@ -70,14 +71,30 @@ _POLICY_SHAPE: tuple[int, ...] = (POLICY_SIZE,)
 _F16: np.dtype = np.dtype(np.float16)
 _U8_DT: np.dtype = np.dtype(np.uint8)
 _I32_DT: np.dtype = np.dtype(np.int32)
+_I64_DT: np.dtype = np.dtype(np.int64)
 
 _OPTIONAL_FIELD_SPECS: tuple[_OptFieldSpec, ...] = (
     _OptFieldSpec("x_lc0_root",           "has_x_lc0_root",        (146, 8, 8),   _F16),
     _OptFieldSpec("priority_policy_kl",   "has_priority_policy_kl",(),            _F16),
     _OptFieldSpec("priority_q_delta",     "has_priority_q_delta",  (),            _F16),
     _OptFieldSpec("priority_sf_search_gap","has_priority_sf_search_gap", (),       _F16),
+    _OptFieldSpec("game_id",              "has_game_id",           (),            _I64_DT),
+    _OptFieldSpec("ply_index",            "has_ply_index",         (),            _I32_DT),
     _OptFieldSpec("sf_wdl",               "has_sf_wdl",            (3,),          _F16),
     _OptFieldSpec("sf_move_index",        "has_sf_move",           (),            _I32_DT),
+    _OptFieldSpec("sf_played_move_index", "has_sf_played_move",    (),            _I32_DT),
+    _OptFieldSpec("sf_played_rank",       "has_sf_played_rank",    (),            _I32_DT),
+    _OptFieldSpec("sf_played_regret",     "has_sf_played_regret",  (),            _F16),
+    _OptFieldSpec("future_sf_regret_sum", "has_future_sf_regret_sum", (),         _F16),
+    _OptFieldSpec("future_sf_regret_d95", "has_future_sf_regret_d95", (),         _F16),
+    _OptFieldSpec("future_sf_regret_d98", "has_future_sf_regret_d98", (),         _F16),
+    _OptFieldSpec("future_sf_regret_max", "has_future_sf_regret_max", (),         _F16),
+    _OptFieldSpec("future_sf_regret_h4",  "has_future_sf_regret_h4",  (),         _F16),
+    _OptFieldSpec("future_sf_regret_h6",  "has_future_sf_regret_h6",  (),         _F16),
+    _OptFieldSpec("future_sf_regret_h12", "has_future_sf_regret_h12", (),         _F16),
+    _OptFieldSpec("future_sf_regret_h24", "has_future_sf_regret_h24", (),         _F16),
+    _OptFieldSpec("future_sf_regret_h50", "has_future_sf_regret_h50", (),         _F16),
+    _OptFieldSpec("future_sf_regret_count", "has_future_sf_regret_count", (),     _I32_DT),
     _OptFieldSpec("sf_policy_target",     "has_sf_policy",         _POLICY_SHAPE, _F16),
     _OptFieldSpec("moves_left",           "has_moves_left",        (),            _F16),
     _OptFieldSpec("is_network_turn",      "has_is_network_turn",   (),            _U8_DT),
@@ -556,7 +573,52 @@ _SCALAR_FIELDS: tuple[tuple[str, str, str, "object"], ...] = (
         "priority_sf_search_gap", "priority_sf_search_gap", "has_priority_sf_search_gap",
         lambda v: np.float16(float(v)),
     ),
+    ("game_id",           "game_id",            "has_game_id",           int),
+    ("ply_index",         "ply_index",          "has_ply_index",         int),
     ("sf_move_index",     "sf_move_index",  "has_sf_move",          int),
+    ("sf_played_move_index", "sf_played_move_index", "has_sf_played_move", int),
+    ("sf_played_rank",    "sf_played_rank",     "has_sf_played_rank",    int),
+    (
+        "sf_played_regret", "sf_played_regret", "has_sf_played_regret",
+        lambda v: np.float16(float(v)),
+    ),
+    (
+        "future_sf_regret_sum", "future_sf_regret_sum", "has_future_sf_regret_sum",
+        lambda v: np.float16(float(v)),
+    ),
+    (
+        "future_sf_regret_d95", "future_sf_regret_d95", "has_future_sf_regret_d95",
+        lambda v: np.float16(float(v)),
+    ),
+    (
+        "future_sf_regret_d98", "future_sf_regret_d98", "has_future_sf_regret_d98",
+        lambda v: np.float16(float(v)),
+    ),
+    (
+        "future_sf_regret_max", "future_sf_regret_max", "has_future_sf_regret_max",
+        lambda v: np.float16(float(v)),
+    ),
+    (
+        "future_sf_regret_h4", "future_sf_regret_h4", "has_future_sf_regret_h4",
+        lambda v: np.float16(float(v)),
+    ),
+    (
+        "future_sf_regret_h6", "future_sf_regret_h6", "has_future_sf_regret_h6",
+        lambda v: np.float16(float(v)),
+    ),
+    (
+        "future_sf_regret_h12", "future_sf_regret_h12", "has_future_sf_regret_h12",
+        lambda v: np.float16(float(v)),
+    ),
+    (
+        "future_sf_regret_h24", "future_sf_regret_h24", "has_future_sf_regret_h24",
+        lambda v: np.float16(float(v)),
+    ),
+    (
+        "future_sf_regret_h50", "future_sf_regret_h50", "has_future_sf_regret_h50",
+        lambda v: np.float16(float(v)),
+    ),
+    ("future_sf_regret_count", "future_sf_regret_count", "has_future_sf_regret_count", int),
     ("moves_left",        "moves_left",     "has_moves_left",       lambda v: np.float16(float(v))),
     ("is_network_turn",   "is_network_turn","has_is_network_turn",  lambda v: 1 if bool(v) else 0),
     ("is_selfplay",       "is_selfplay",    "has_is_selfplay",      lambda v: 1 if bool(v) else 0),
@@ -826,10 +888,40 @@ def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
             s.priority_q_delta = float(opt["priority_q_delta"][i])
         if opt["has_priority_sf_search_gap"][i]:
             s.priority_sf_search_gap = float(opt["priority_sf_search_gap"][i])
+        if opt["has_game_id"][i]:
+            s.game_id = int(opt["game_id"][i])
+        if opt["has_ply_index"][i]:
+            s.ply_index = int(opt["ply_index"][i])
         if opt["has_sf_wdl"][i]:
             s.sf_wdl = _copy_row(opt["sf_wdl"], i)
         if opt["has_sf_move"][i]:
             s.sf_move_index = int(opt["sf_move_index"][i])
+        if opt["has_sf_played_move"][i]:
+            s.sf_played_move_index = int(opt["sf_played_move_index"][i])
+        if opt["has_sf_played_rank"][i]:
+            s.sf_played_rank = int(opt["sf_played_rank"][i])
+        if opt["has_sf_played_regret"][i]:
+            s.sf_played_regret = float(opt["sf_played_regret"][i])
+        if opt["has_future_sf_regret_sum"][i]:
+            s.future_sf_regret_sum = float(opt["future_sf_regret_sum"][i])
+        if opt["has_future_sf_regret_d95"][i]:
+            s.future_sf_regret_d95 = float(opt["future_sf_regret_d95"][i])
+        if opt["has_future_sf_regret_d98"][i]:
+            s.future_sf_regret_d98 = float(opt["future_sf_regret_d98"][i])
+        if opt["has_future_sf_regret_max"][i]:
+            s.future_sf_regret_max = float(opt["future_sf_regret_max"][i])
+        if opt["has_future_sf_regret_h4"][i]:
+            s.future_sf_regret_h4 = float(opt["future_sf_regret_h4"][i])
+        if opt["has_future_sf_regret_h6"][i]:
+            s.future_sf_regret_h6 = float(opt["future_sf_regret_h6"][i])
+        if opt["has_future_sf_regret_h12"][i]:
+            s.future_sf_regret_h12 = float(opt["future_sf_regret_h12"][i])
+        if opt["has_future_sf_regret_h24"][i]:
+            s.future_sf_regret_h24 = float(opt["future_sf_regret_h24"][i])
+        if opt["has_future_sf_regret_h50"][i]:
+            s.future_sf_regret_h50 = float(opt["future_sf_regret_h50"][i])
+        if opt["has_future_sf_regret_count"][i]:
+            s.future_sf_regret_count = int(opt["future_sf_regret_count"][i])
         if opt["has_sf_policy"][i]:
             s.sf_policy_target = _copy_row(opt["sf_policy_target"], i)
         if opt["has_moves_left"][i]:
@@ -877,8 +969,8 @@ def save_npz(
     p.parent.mkdir(parents=True, exist_ok=True)
     stored = prune_storage_arrays(samples_to_arrays(samples))
     meta_json = json.dumps(_meta_dict(meta, positions=int(np.asarray(stored["x"]).shape[0])), sort_keys=True)
-    saver = np.savez_compressed if compress else np.savez
-    saver(str(p), **stored, meta_json=np.array(meta_json)) # numpy's savez stubs reject dict[str, ndarray] splat
+    saver: Callable[..., Any] = np.savez_compressed if compress else np.savez
+    saver(str(p), **stored, meta_json=np.array(meta_json))
     return p
 
 

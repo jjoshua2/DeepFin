@@ -9,6 +9,7 @@ tagging on each row).
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -496,6 +497,89 @@ def _compute_volatility_and_sf_delta(
     return vol_targets, sf_vol_targets
 
 
+@dataclass(frozen=True, slots=True)
+class _SfRegretSuffix:
+    total: float
+    d95: float
+    d98: float
+    max_single: float
+    h4: float
+    h6: float
+    h12: float
+    h24: float
+    h50: float
+    count: int
+
+
+def _suffix_sf_regret_features(
+    records: list[_NetRecord],
+    *,
+    is_selfplay: bool,
+) -> list[_SfRegretSuffix]:
+    """Future opponent-SF loss summaries from each network-turn sample to game end."""
+    zero = _SfRegretSuffix(
+        total=0.0,
+        d95=0.0,
+        d98=0.0,
+        max_single=0.0,
+        h4=0.0,
+        h6=0.0,
+        h12=0.0,
+        h24=0.0,
+        h50=0.0,
+        count=0,
+    )
+    if is_selfplay:
+        return [zero for _ in records]
+    out = [zero for _ in records]
+    regrets = [
+        max(0.0, float(rec.sf_played_regret))
+        if rec.sf_played_regret is not None and np.isfinite(float(rec.sf_played_regret))
+        else 0.0
+        for rec in records
+    ]
+
+    def _horizon_sum(start: int, horizon: int) -> float:
+        end_ply = int(records[start].ply_index) + int(horizon)
+        total = 0.0
+        for j in range(start, len(records)):
+            if int(records[j].ply_index) >= end_ply:
+                break
+            total += regrets[j]
+        return total
+
+    running_sum = 0.0
+    running_d95 = 0.0
+    running_d98 = 0.0
+    running_max = 0.0
+    running_count = 0
+    for t in range(len(records) - 1, -1, -1):
+        regret = records[t].sf_played_regret
+        if regret is not None and np.isfinite(float(regret)):
+            value = max(0.0, float(regret))
+            running_sum += value
+            running_d95 = value + 0.95 * running_d95
+            running_d98 = value + 0.98 * running_d98
+            running_max = max(running_max, value)
+            running_count += 1
+        else:
+            running_d95 *= 0.95
+            running_d98 *= 0.98
+        out[t] = _SfRegretSuffix(
+            total=running_sum,
+            d95=running_d95,
+            d98=running_d98,
+            max_single=running_max,
+            h4=_horizon_sum(t, 4),
+            h6=_horizon_sum(t, 6),
+            h12=_horizon_sum(t, 12),
+            h24=_horizon_sum(t, 24),
+            h50=_horizon_sum(t, 50),
+            count=running_count,
+        )
+    return out
+
+
 def _build_replay_samples(
     state: SelfplayState,
     i: int,
@@ -518,6 +602,16 @@ def _build_replay_samples(
     """
     out: list[ReplaySample] = []
     is_selfplay_slot = bool(state.selfplay_arr[i])
+    starting_boards = state.starting_boards
+    start_board = None if starting_boards is None else starting_boards[i]
+    start_fen = start_board.fen() if start_board is not None else ""
+    move_trace = ",".join(str(int(m)) for m in state.move_idx_history[i])
+    game_key = f"{start_fen}|{move_trace}|{result}|{int(total_plies_played)}"
+    game_id = (
+        int.from_bytes(hashlib.blake2b(game_key.encode("utf-8"), digest_size=8).digest(), "big")
+        & ((1 << 63) - 1)
+    )
+    suffix_sf_regret = _suffix_sf_regret_features(records, is_selfplay=is_selfplay_slot)
 
     for t, rec in enumerate(records):
         if float(rec.sample_weight) < 1.0 and state.rng.random() > float(rec.sample_weight):
@@ -535,6 +629,7 @@ def _build_replay_samples(
         )
 
         scalar_v = 1.0 if wdl == 0 else (0.0 if wdl == 1 else -1.0)
+        suffix_regret = suffix_sf_regret[t]
         cat = hlgauss_target(
             scalar_v,
             num_bins=state.game.categorical_bins,
@@ -597,6 +692,8 @@ def _build_replay_samples(
                     None if rec.priority_q_delta is None else float(rec.priority_q_delta)
                 ),
                 priority_sf_search_gap=sf_search_gap,
+                game_id=game_id,
+                ply_index=int(rec.ply_index),
                 has_policy=bool(rec.has_policy),
                 sf_wdl=rec.sf_wdl,
                 sf_move_index=(
@@ -606,6 +703,29 @@ def _build_replay_samples(
                         policy_encoding=state.game.policy_encoding,
                     )
                 ),
+                sf_played_move_index=(
+                    None if rec.sf_played_move_index is None else
+                    policy_index_for_encoding(
+                        int(rec.sf_played_move_index),
+                        policy_encoding=state.game.policy_encoding,
+                    )
+                ),
+                sf_played_rank=(
+                    None if rec.sf_played_rank is None else int(rec.sf_played_rank)
+                ),
+                sf_played_regret=(
+                    None if rec.sf_played_regret is None else float(rec.sf_played_regret)
+                ),
+                future_sf_regret_sum=suffix_regret.total,
+                future_sf_regret_d95=suffix_regret.d95,
+                future_sf_regret_d98=suffix_regret.d98,
+                future_sf_regret_max=suffix_regret.max_single,
+                future_sf_regret_h4=suffix_regret.h4,
+                future_sf_regret_h6=suffix_regret.h6,
+                future_sf_regret_h12=suffix_regret.h12,
+                future_sf_regret_h24=suffix_regret.h24,
+                future_sf_regret_h50=suffix_regret.h50,
+                future_sf_regret_count=suffix_regret.count,
                 sf_policy_target=sf_policy_target,
                 moves_left=moves_left,
                 is_network_turn=True,

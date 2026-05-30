@@ -168,6 +168,8 @@ _TRAIN_KEYS = (
     "use_compile", "compile_mode", "log_level", "swa_start", "swa_freq",
     *TRAINER_WEIGHT_KEYS,
     "sf_wdl_frac_floor", "sf_wdl_floor_at_regret",
+    "use_adjusted_wdl_target", "adjusted_wdl_regret_source",
+    "adjusted_wdl_regret_scale", "adjusted_wdl_regret_cap",
 )
 
 # tune section: all 1:1 passthrough.

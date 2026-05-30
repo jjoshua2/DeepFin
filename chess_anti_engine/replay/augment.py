@@ -120,6 +120,16 @@ def mirror_sample(s: ReplaySample, *, input_history_encoding: str | None = None)
     out.has_sf_volatility = getattr(s, "has_sf_volatility", None)
 
     out.search_wdl = None if getattr(s, "search_wdl", None) is None else np.asarray(s.search_wdl, dtype=np.float32)
+    out.future_sf_regret_sum = getattr(s, "future_sf_regret_sum", None)
+    out.future_sf_regret_d95 = getattr(s, "future_sf_regret_d95", None)
+    out.future_sf_regret_d98 = getattr(s, "future_sf_regret_d98", None)
+    out.future_sf_regret_max = getattr(s, "future_sf_regret_max", None)
+    out.future_sf_regret_h4 = getattr(s, "future_sf_regret_h4", None)
+    out.future_sf_regret_h6 = getattr(s, "future_sf_regret_h6", None)
+    out.future_sf_regret_h12 = getattr(s, "future_sf_regret_h12", None)
+    out.future_sf_regret_h24 = getattr(s, "future_sf_regret_h24", None)
+    out.future_sf_regret_h50 = getattr(s, "future_sf_regret_h50", None)
+    out.future_sf_regret_count = getattr(s, "future_sf_regret_count", None)
 
     for name in LEGAL_MASK_FIELDS:
         v = getattr(s, name, None)

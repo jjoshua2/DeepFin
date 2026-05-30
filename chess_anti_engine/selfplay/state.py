@@ -185,6 +185,7 @@ class _NetRecord:
         "priority_policy_kl", "priority_q_delta",
         "sample_weight", "keep_prob", "legal_mask",
         "sf_policy_target", "sf_move_index", "sf_wdl",
+        "sf_played_move_index", "sf_played_rank", "sf_played_regret",
         "sf_legal_mask", "gumbel_policy_diag",
     )
 
@@ -205,6 +206,9 @@ class _NetRecord:
     sf_policy_target: np.ndarray | None
     sf_move_index: int | None
     sf_wdl: np.ndarray | None
+    sf_played_move_index: int | None
+    sf_played_rank: int | None
+    sf_played_regret: float | None
     sf_legal_mask: np.ndarray | None
     gumbel_policy_diag: dict[str, float] | None
 
@@ -234,6 +238,9 @@ class _NetRecord:
         self.sf_policy_target = sf_policy_target
         self.sf_move_index = sf_move_index
         self.sf_wdl = sf_wdl
+        self.sf_played_move_index = None
+        self.sf_played_rank = None
+        self.sf_played_regret = None
         self.sf_legal_mask = None
         self.gumbel_policy_diag = gumbel_policy_diag
 

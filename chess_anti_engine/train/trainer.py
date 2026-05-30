@@ -661,6 +661,10 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         sf_wdl_temperature=_f("sf_wdl_temperature", 1.0),
         sf_search_dampen_sf_low=_f("sf_search_dampen_sf_low", 0.0),
         sf_search_dampen_sf_high=_f("sf_search_dampen_sf_high", 0.0),
+        use_adjusted_wdl_target=bool(config.get("use_adjusted_wdl_target", False)),
+        adjusted_wdl_regret_source=str(config.get("adjusted_wdl_regret_source", "sum")),
+        adjusted_wdl_regret_scale=_f("adjusted_wdl_regret_scale", 1.0),
+        adjusted_wdl_regret_cap=_f("adjusted_wdl_regret_cap", 0.0),
     )
     if log_dir is not None:
         kw["log_dir"] = log_dir
@@ -738,6 +742,10 @@ class Trainer:
         sf_wdl_temperature: float = 1.0,
         sf_search_dampen_sf_low: float = 0.0,
         sf_search_dampen_sf_high: float = 0.0,
+        use_adjusted_wdl_target: bool = False,
+        adjusted_wdl_regret_source: str = "sum",
+        adjusted_wdl_regret_scale: float = 1.0,
+        adjusted_wdl_regret_cap: float = 0.0,
         tb_log_interval: int = 10,
         prefetch_batches: bool = True,
         model_config: ModelConfig | None = None,
@@ -1086,6 +1094,10 @@ class Trainer:
         self.sf_wdl_temperature = float(sf_wdl_temperature)
         self.sf_search_dampen_sf_low = float(sf_search_dampen_sf_low)
         self.sf_search_dampen_sf_high = float(sf_search_dampen_sf_high)
+        self.use_adjusted_wdl_target = bool(use_adjusted_wdl_target)
+        self.adjusted_wdl_regret_source = str(adjusted_wdl_regret_source)
+        self.adjusted_wdl_regret_scale = float(adjusted_wdl_regret_scale)
+        self.adjusted_wdl_regret_cap = float(adjusted_wdl_regret_cap)
 
   # Data augmentation: mirror positions left-right (files) with given probability.
         self.mirror_prob = float(mirror_prob)
@@ -1183,7 +1195,7 @@ class Trainer:
         return total_norm, stats
 
     @property
-    def _loss_kwargs(self) -> dict[str, float]:
+    def _loss_kwargs(self) -> dict[str, Any]:
         return dict(
             w_policy=self.w_policy, w_soft=self.w_soft, w_future=self.w_future,
             w_wdl=self.w_wdl, w_sf_move=self.w_sf_move, w_sf_eval=self.w_sf_eval,
@@ -1195,6 +1207,10 @@ class Trainer:
             sf_wdl_temperature=self.sf_wdl_temperature,
             sf_search_dampen_sf_low=self.sf_search_dampen_sf_low,
             sf_search_dampen_sf_high=self.sf_search_dampen_sf_high,
+            use_adjusted_wdl_target=self.use_adjusted_wdl_target,
+            adjusted_wdl_regret_source=self.adjusted_wdl_regret_source,
+            adjusted_wdl_regret_scale=self.adjusted_wdl_regret_scale,
+            adjusted_wdl_regret_cap=self.adjusted_wdl_regret_cap,
         )
 
     def _amp_context(self):
@@ -1762,7 +1778,7 @@ class Trainer:
     def load(self, path: Path) -> None:
         from chess_anti_engine.model import load_state_dict_tolerant
 
-        ckpt = torch.load(str(path), map_location=self.device)
+        ckpt = torch.load(str(path), map_location=self.device, weights_only=False)
         load_state_dict_tolerant(self.model, ckpt["model"], label="resume")
         fresh_opt_state = self.opt.state_dict()
         fresh_scheduler_state = self._scheduler.state_dict()

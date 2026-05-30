@@ -168,6 +168,33 @@ def _normalize_sf_wdl_probs(
     return p / p.sum(dim=-1, keepdim=True).clamp_min(1e-8)
 
 
+def _q_to_wdl_probs(q: torch.Tensor) -> torch.Tensor:
+    q_clamped = q.clamp(-1.0, 1.0)
+    win = q_clamped.clamp_min(0.0)
+    loss = (-q_clamped).clamp_min(0.0)
+    draw = (1.0 - win - loss).clamp_min(0.0)
+    return torch.stack((win, draw, loss), dim=1)
+
+
+def _future_regret_tensor(batch: dict[str, torch.Tensor], source: str) -> tuple[torch.Tensor, torch.Tensor]:
+    key_by_source = {
+        "sum": ("future_sf_regret_sum", "has_future_sf_regret_sum"),
+        "d95": ("future_sf_regret_d95", "has_future_sf_regret_d95"),
+        "d98": ("future_sf_regret_d98", "has_future_sf_regret_d98"),
+        "max": ("future_sf_regret_max", "has_future_sf_regret_max"),
+        "h4": ("future_sf_regret_h4", "has_future_sf_regret_h4"),
+        "h6": ("future_sf_regret_h6", "has_future_sf_regret_h6"),
+        "h12": ("future_sf_regret_h12", "has_future_sf_regret_h12"),
+        "h24": ("future_sf_regret_h24", "has_future_sf_regret_h24"),
+        "h50": ("future_sf_regret_h50", "has_future_sf_regret_h50"),
+    }
+    key, has_key = key_by_source.get(str(source), key_by_source["sum"])
+    return (
+        _get_mask(batch, key).to(torch.float32),
+        _get_mask(batch, has_key).to(torch.float32),
+    )
+
+
 def _phase_split_masks(
     *,
     has_is_selfplay: torch.Tensor,
@@ -211,6 +238,10 @@ def compute_loss(
     sf_wdl_temperature: float = 1.0,
     sf_search_dampen_sf_low: float = 0.0,
     sf_search_dampen_sf_high: float = 0.0,
+    use_adjusted_wdl_target: bool = False,
+    adjusted_wdl_regret_source: str = "sum",
+    adjusted_wdl_regret_scale: float = 1.0,
+    adjusted_wdl_regret_cap: float = 0.0,
 ) -> dict[str, torch.Tensor]:
     """Compute multi-head training loss."""
     net_mask = _get_mask(batch, "is_network_turn", default=1.0).to(torch.float32)
@@ -279,6 +310,17 @@ def compute_loss(
 
     wdl_t = batch["wdl_t"].to(torch.int64)
     game_oh = F.one_hot(wdl_t, 3).float()
+    if bool(use_adjusted_wdl_target):
+        future_regret, has_future_regret = _future_regret_tensor(batch, adjusted_wdl_regret_source)
+        correction = 2.0 * max(0.0, float(adjusted_wdl_regret_scale)) * future_regret.clamp_min(0.0)
+        if float(adjusted_wdl_regret_cap) > 0.0:
+            correction = correction.clamp_max(float(adjusted_wdl_regret_cap))
+        game_q = game_oh[:, 0] - game_oh[:, 2]
+        adjusted_wdl_probs = _q_to_wdl_probs(game_q - correction)
+        has_adjusted_wdl = has_future_regret.unsqueeze(1)
+        game_target = has_adjusted_wdl * adjusted_wdl_probs + (1.0 - has_adjusted_wdl) * game_oh
+    else:
+        game_target = game_oh
     sf_wdl_frac_f = max(0.0, float(sf_wdl_frac))
     search_wdl_frac_f = max(0.0, float(search_wdl_frac))
     blend_sum = sf_wdl_frac_f + search_wdl_frac_f
@@ -288,7 +330,7 @@ def compute_loss(
         game_frac = 0.0
     else:
         game_frac = 1.0 - blend_sum
-    target = game_frac * game_oh
+    target = game_frac * game_target
     sf_available = has_sf_wdl.float()
     search_available = has_search_wdl.float()
 
@@ -330,17 +372,17 @@ def compute_loss(
     sf_effective_b = sf_effective.unsqueeze(1)
     if sf_wdl_probs is not None:
         target += sf_wdl_frac_f * (
-            sf_effective_b * sf_wdl_probs + (1.0 - sf_effective_b) * game_oh
+            sf_effective_b * sf_wdl_probs + (1.0 - sf_effective_b) * game_target
         )
     else:
-        target += sf_wdl_frac_f * game_oh
+        target += sf_wdl_frac_f * game_target
     search_available_b = search_available.unsqueeze(1)
     if search_wdl_probs is not None:
         target += search_wdl_frac_f * (
-            search_available_b * search_wdl_probs + (1.0 - search_available_b) * game_oh
+            search_available_b * search_wdl_probs + (1.0 - search_available_b) * game_target
         )
     else:
-        target += search_wdl_frac_f * game_oh
+        target += search_wdl_frac_f * game_target
     blended_wdl_ce = soft_cross_entropy(outputs["wdl"], target.detach())
 
     has_moves_left = _get_mask(batch, "has_moves_left")

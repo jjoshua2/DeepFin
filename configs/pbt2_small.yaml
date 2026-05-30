@@ -58,7 +58,7 @@ model:
   input_pos_encoding: arc_adapter  # Zero-init square geometry adapter; safe warmstart from current best.
   qkv_projection: split  # Split fused QKV for Aurora scope control; tolerant loader migrates old fused weights.
   use_deepnorm: true  # Epoch-4 candidate topology.
-  policy_encoding: az_4672  # Keep production auto-resume compatible with the existing 4672 replay/checkpoint stream.
+  policy_encoding: lc0_1858  # Keep production auto-resume compatible with the live compact-policy checkpoint stream.
   input_history_encoding: lc0_root_legacy_meta  # Switched live to epoch-6 candidate input; replay keeps recorded LC0-root planes.
   gradient_checkpointing: false
 
@@ -73,7 +73,7 @@ stockfish:
   # Keep SF at full strength for labels and sample from MultiPV for easier played moves.
 
   sf_pid_enabled: true
-  sf_pid_target_winrate: 0.58
+  sf_pid_target_winrate: 0.575  # 2026-05-29: 0.58→0.575 to gently bias toward harder SF play without jumping straight to 56%.
   sf_pid_ema_alpha: 0.05      # 2026-04-29: 0.20→0.10→0.05. Offline bake-off (200 episodes × ~30 candidates against a logit-fit plant β=2.18, drift=-0.0064/iter, walk_std=0.31) shows raw_wr behavior is invariant across α (raw_rmse=0.264 universally) — controller is already raw-driven via the inverse fit's history; ema only gates a deadband that almost never fires. Lower α earns a cleaner ema dashboard (settle 50.8 vs 54.4 iters) and a measurably bigger raw-vs-ema lead (~14 iter half-life vs 6.6) which matches the "trust raw, treat ema as stale" intuition. Live-reloadable.
   sf_pid_min_games_between_adjust: 200  # Higher than games_per_iter so only the forced iteration-boundary adjust fires.
   sf_pid_min_nodes: 50000        # 2026-04-28: 1→50000. Going back to high-nodes regret-controlled training (stage 1). 50k nodes gives clean WDL labels + sharp sf_policy targets even when SF play is regret-handicapped. Difficulty knob is regret, not nodes. Construction-only knob — restart required.
@@ -259,8 +259,12 @@ train:
   w_sf_volatility: 0.05
   w_moves_left: 0.02
   sf_wdl_frac: 0.50         # Fraction of WDL target blended from SF labels when available.
-  sf_wdl_frac_floor: 0.15   # 2026-05-28: raise objective SF correction in main WDL at tight regret.
-  search_wdl_frac: 0.50     # Fraction of WDL target blended from MCTS-averaged WDL when available.
+  sf_wdl_frac_floor: 0.30   # Low-regret mix is 30% SF / 40% search / 30% final; reduce search dominance while preserving final anchor.
+  search_wdl_frac: 0.40     # Fraction of WDL target blended from MCTS-averaged WDL when available.
+  use_adjusted_wdl_target: false  # Opt-in only; do not stack adjusted-final behavior onto the live 30/40/30 blend test.
+  adjusted_wdl_regret_source: sum  # sum|d95|d98|max|h4|h6|h12|h24|h50; stored separately for horizon retunes.
+  adjusted_wdl_regret_scale: 1.0
+  adjusted_wdl_regret_cap: 0.0     # Q-units; 0 disables cap.
   sf_wdl_conf_power: 1.0    # Confidence damping: scale SF-WDL by (1-draw_prob)^power.
   sf_wdl_draw_scale: 0.55   # Pinned low-to-mid based on the healthier late-run settings.
   sf_wdl_floor_at_regret: 0.10  # Regret value at which SF WDL fraction hits the floor.
