@@ -12,7 +12,12 @@ from typing import Any
 import numpy as np
 import torch
 
-from chess_anti_engine.replay.shard import load_shard_arrays, shard_index, shard_positions
+from chess_anti_engine.replay.shard import (
+    INPUT_HISTORY_ENCODING_ARRAY_KEY,
+    load_shard_arrays,
+    shard_index,
+    shard_positions,
+)
 from chess_anti_engine.train.trainer import select_input_history_arrays
 from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
@@ -246,6 +251,12 @@ def _predict_heads(
                 row_batch = rows[start:start + batch_size]
                 ref_batch = sorted_indices[start:start + batch_size]
                 batch_arrs: dict[str, np.ndarray] = {"x": np.asarray(arrs["x"][row_batch])}
+                if INPUT_HISTORY_ENCODING_ARRAY_KEY in arrs:
+                    stored_history = np.asarray(arrs[INPUT_HISTORY_ENCODING_ARRAY_KEY])
+                    batch_arrs[INPUT_HISTORY_ENCODING_ARRAY_KEY] = (
+                        np.asarray(stored_history[row_batch])
+                        if stored_history.ndim > 0 else stored_history
+                    )
                 if "x_lc0_root" in arrs:
                     batch_arrs["x_lc0_root"] = np.asarray(arrs["x_lc0_root"][row_batch])
                 if "has_x_lc0_root" in arrs:
