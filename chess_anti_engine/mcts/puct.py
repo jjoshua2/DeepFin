@@ -14,7 +14,7 @@ from chess_anti_engine.inference import (
     _policy_output_full,
 )
 from chess_anti_engine.mcts.sampling import sample_action_with_temperature
-from chess_anti_engine.moves import POLICY_ENCODING_LC0_1858, POLICY_SIZE, policy_batch_to_full
+from chess_anti_engine.moves import POLICY_ENCODING_AZ_4672, POLICY_SIZE, policy_batch_to_full_if_needed
 from chess_anti_engine.moves.encode import index_to_move_fast, legal_move_indices
 from chess_anti_engine.utils.amp import inference_autocast
 from chess_anti_engine.utils.numpy_helpers import softmax_1d
@@ -52,6 +52,7 @@ class MCTSConfig:
     fpu_reduction: float = 1.2  # Non-root nodes (LC0 default)
     fpu_at_root: float = 1.0  # Root node (typically lower — root has Dirichlet noise)
     input_history_encoding: str = "legacy"
+    policy_encoding: str = POLICY_ENCODING_AZ_4672
 
   # Inference AMP: used in selfplay / evaluation for throughput.
   # dtype='auto' => bf16 if supported else fp16.
@@ -311,12 +312,11 @@ def run_mcts_many(
 
     if pre_pol_logits is not None and pre_wdl_logits is not None:
         pol_logits_all = np.asarray(pre_pol_logits, dtype=np.float32)
-        if pol_logits_all.ndim == 2 and int(pol_logits_all.shape[1]) != int(POLICY_SIZE):
-            pol_logits_all = policy_batch_to_full(
-                pol_logits_all,
-                policy_encoding=POLICY_ENCODING_LC0_1858,
-                fill_value=-1e9,
-            )
+        pol_logits_all = policy_batch_to_full_if_needed(
+            pol_logits_all,
+            policy_encoding=cfg.policy_encoding,
+            fill_value=-1e9,
+        )
         roots = [
             _init_root_from_logits(
                 b, pol_logits=pol_logits_all[i], wdl_logits=pre_wdl_logits[i],

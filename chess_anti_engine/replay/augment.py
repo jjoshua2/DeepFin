@@ -3,8 +3,6 @@ from __future__ import annotations
 import numpy as np
 
 from chess_anti_engine.moves.encode import (
-    COMPACT_MIRROR_POLICY_MAP,
-    COMPACT_POLICY_SIZE,
     MIRROR_POLICY_MAP,
     mirror_policy,
     mirror_policy_batch,
@@ -28,10 +26,6 @@ def mirror_x(x: np.ndarray) -> np.ndarray:
     return arr[:, :, ::-1].copy()
 
 
-def _uses_compact_policy_width(policy: np.ndarray) -> bool:
-    return np.asarray(policy).shape[-1:] == (COMPACT_POLICY_SIZE,)
-
-
 def mirror_sample(s: ReplaySample) -> ReplaySample:
     """Create the left-right mirrored version of a ReplaySample."""
     x_m = mirror_x(s.x)
@@ -52,8 +46,6 @@ def mirror_sample(s: ReplaySample) -> ReplaySample:
     out.sf_wdl = None if s.sf_wdl is None else np.asarray(s.sf_wdl, dtype=np.float32)
     if s.sf_move_index is None:
         out.sf_move_index = None
-    elif _uses_compact_policy_width(s.policy_target):
-        out.sf_move_index = int(COMPACT_MIRROR_POLICY_MAP[int(s.sf_move_index)])
     else:
         out.sf_move_index = int(mirror_policy_index(int(s.sf_move_index)))
     out.sf_policy_target = None if s.sf_policy_target is None else mirror_policy(s.sf_policy_target)
@@ -140,9 +132,6 @@ def maybe_mirror_batch_arrays(
     if "sf_move_index" in arrs:
         out["sf_move_index"] = np.array(arrs["sf_move_index"], copy=True, order="C")
         idx = out["sf_move_index"][mask].astype(np.int64, copy=False)
-        if _uses_compact_policy_width(arrs["policy_target"]):
-            out["sf_move_index"][mask] = COMPACT_MIRROR_POLICY_MAP[idx].astype(out["sf_move_index"].dtype, copy=False)
-        else:
-            out["sf_move_index"][mask] = MIRROR_POLICY_MAP[idx].astype(out["sf_move_index"].dtype, copy=False)
+        out["sf_move_index"][mask] = MIRROR_POLICY_MAP[idx].astype(out["sf_move_index"].dtype, copy=False)
 
     return out

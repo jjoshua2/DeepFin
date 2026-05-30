@@ -316,7 +316,8 @@ class DiskReplayBuffer:
                 continue
             gathered.append(_slice_array_batch(chunk, np.arange(remaining, dtype=np.int64)))
             for name, value in list(chunk.items()):
-                chunk[name] = value[remaining:]
+                arr = np.asarray(value)
+                chunk[name] = arr if arr.ndim == 0 else arr[remaining:]
             self._write_buf_sizes[0] = first_n - remaining
             self._write_buf_rows -= remaining
             remaining = 0

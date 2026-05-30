@@ -229,15 +229,9 @@ def _append_records_via_c(
         float(diff_focus.pol_scale), float(diff_focus.min_keep), float(diff_focus.slope),
         _c_input_history_mode(state.game.input_history_encoding),
     )
-    if len(c_result) >= 12:
-        (c_x, c_probs, c_wdl_net, c_wdl_search, c_priority,
-         c_priority_policy_kl, c_priority_q_delta,
-         c_keep, c_mask, c_ply, c_pov, c_over) = c_result
-    else:
-        (c_x, c_probs, c_wdl_net, c_wdl_search, c_priority,
-         c_keep, c_mask, c_ply, c_pov, c_over) = c_result
-        c_priority_policy_kl = [None] * n
-        c_priority_q_delta = [None] * n
+    (c_x, c_probs, c_wdl_net, c_wdl_search, c_priority,
+     c_priority_policy_kl, c_priority_q_delta,
+     c_keep, c_mask, c_ply, c_pov, c_over) = c_result
 
     # Pre-extract Python scalars from numpy arrays (batch conversion is cheaper
     # than per-element conversion in the loop).
@@ -476,6 +470,7 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
                     temperature=1.0,
                     add_noise=True,
                     input_history_encoding=state.game.input_history_encoding,
+                    policy_encoding=state.game.policy_encoding,
                 ),
                 evaluator=eval_impl,
                 pre_pol_logits=sub_pol,
@@ -511,6 +506,7 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
                     fpu_reduction=float(search.fpu_reduction),
                     fpu_at_root=float(search.fpu_at_root),
                     input_history_encoding=state.game.input_history_encoding,
+                    policy_encoding=state.game.policy_encoding,
                 ),
                 evaluator=eval_impl,
                 pre_pol_logits=sub_pol,

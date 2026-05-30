@@ -9,6 +9,7 @@ import struct
 import threading
 import time
 from dataclasses import dataclass, replace as dataclass_replace
+from functools import lru_cache
 from multiprocessing import resource_tracker
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
@@ -52,6 +53,17 @@ def _policy_output(out: dict[str, torch.Tensor]) -> torch.Tensor:
     return out["policy"] if "policy" in out else out["policy_own"]
 
 
+@lru_cache(maxsize=16)
+def _compact_to_full_index(device_type: str, device_index: int | None) -> torch.Tensor:
+    device = torch.device(device_type, device_index) if device_index is not None else torch.device(device_type)
+    return torch.as_tensor(COMPACT_TO_FULL_POLICY, dtype=torch.long, device=device)
+
+
+def _compact_to_full_index_for(tensor: torch.Tensor) -> torch.Tensor:
+    device = tensor.device
+    return _compact_to_full_index(device.type, device.index)
+
+
 def _policy_output_full(out: dict[str, torch.Tensor]) -> torch.Tensor:
     """Return dense 4672 policy logits for search-time consumers.
 
@@ -65,8 +77,7 @@ def _policy_output_full(out: dict[str, torch.Tensor]) -> torch.Tensor:
     if int(pol.shape[-1]) != int(COMPACT_POLICY_SIZE):
         raise ValueError(f"unexpected policy output width {int(pol.shape[-1])}")
     full = pol.new_full((*pol.shape[:-1], _POLICY_SIZE), -1e9)
-    idx = torch.as_tensor(COMPACT_TO_FULL_POLICY, dtype=torch.long, device=pol.device)
-    full.index_copy_(-1, idx, pol)
+    full.index_copy_(-1, _compact_to_full_index_for(pol), pol)
     return full
 
 

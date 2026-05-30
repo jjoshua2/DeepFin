@@ -58,7 +58,7 @@ from chess_anti_engine.mcts.gumbel import (
     _softmax,
     _wdl_to_q,
 )
-from chess_anti_engine.moves import POLICY_ENCODING_LC0_1858, POLICY_SIZE, policy_batch_to_full
+from chess_anti_engine.moves import POLICY_SIZE, policy_batch_to_full_if_needed
 
 
 def _input_history_mode(input_history_encoding: str | None) -> int:
@@ -181,12 +181,11 @@ def run_gumbel_root_many_c(
 
     if pre_pol_logits is not None and pre_wdl_logits is not None:
         pol_logits_batch = np.asarray(pre_pol_logits, dtype=np.float32)
-        if pol_logits_batch.ndim == 2 and int(pol_logits_batch.shape[1]) != int(POLICY_SIZE):
-            pol_logits_batch = policy_batch_to_full(
-                pol_logits_batch,
-                policy_encoding=POLICY_ENCODING_LC0_1858,
-                fill_value=-1e9,
-            )
+        pol_logits_batch = policy_batch_to_full_if_needed(
+            pol_logits_batch,
+            policy_encoding=cfg.policy_encoding,
+            fill_value=-1e9,
+        )
         wdl_logits_batch = np.asarray(pre_wdl_logits, dtype=np.float32)
     elif _inplace:
         batch_enc, batch_enc_bf16 = _batch_encoders(cfg.input_history_encoding)

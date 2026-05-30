@@ -33,7 +33,7 @@ from chess_anti_engine.mcts.puct import (
     _terminal_value,
     _value_scalar_from_wdl_logits,
 )
-from chess_anti_engine.moves import POLICY_ENCODING_LC0_1858, POLICY_SIZE, policy_batch_to_full
+from chess_anti_engine.moves import POLICY_SIZE, policy_batch_to_full_if_needed
 from chess_anti_engine.moves.encode import index_to_move_fast, legal_move_indices
 
 try:
@@ -127,12 +127,11 @@ def run_mcts_many_c(
 
     if pre_pol_logits is not None and pre_wdl_logits is not None:
         pol_logits_all = np.asarray(pre_pol_logits, dtype=np.float32)
-        if pol_logits_all.ndim == 2 and int(pol_logits_all.shape[1]) != int(POLICY_SIZE):
-            pol_logits_all = policy_batch_to_full(
-                pol_logits_all,
-                policy_encoding=POLICY_ENCODING_LC0_1858,
-                fill_value=-1e9,
-            )
+        pol_logits_all = policy_batch_to_full_if_needed(
+            pol_logits_all,
+            policy_encoding=cfg.policy_encoding,
+            fill_value=-1e9,
+        )
         wdl_logits_all = np.asarray(pre_wdl_logits, dtype=np.float32)
     elif _inplace and root_cboards is not None:
         root_buf = eval_impl.get_input_buffer(n_boards, slot=0)  # pyright: ignore[reportAttributeAccessIssue]

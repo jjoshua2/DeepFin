@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from functools import lru_cache
+
 import torch
 import torch.nn.functional as F
 
@@ -13,6 +15,17 @@ from chess_anti_engine.moves import COMPACT_POLICY_SIZE, COMPACT_TO_FULL_POLICY,
 # (or the inline grep in trainable_phases) when the distribution drifts.
 _PHASE_OPEN_THRESHOLD = 0.45
 _PHASE_END_THRESHOLD = 0.31
+
+
+@lru_cache(maxsize=16)
+def _compact_to_full_index(device_type: str, device_index: int | None) -> torch.Tensor:
+    device = torch.device(device_type, device_index) if device_index is not None else torch.device(device_type)
+    return torch.as_tensor(COMPACT_TO_FULL_POLICY, dtype=torch.long, device=device)
+
+
+def _compact_to_full_index_for(tensor: torch.Tensor) -> torch.Tensor:
+    device = tensor.device
+    return _compact_to_full_index(device.type, device.index)
 
 
 def masked_mean(x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
@@ -64,13 +77,11 @@ def align_policy_target(target: torch.Tensor, width: int) -> torch.Tensor:
     if src_width == dst_width:
         return target
     if src_width == POLICY_SIZE and dst_width == COMPACT_POLICY_SIZE:
-        idx = torch.as_tensor(COMPACT_TO_FULL_POLICY, dtype=torch.long, device=target.device)
-        out = target.index_select(-1, idx)
+        out = target.index_select(-1, _compact_to_full_index_for(target))
         return out / out.sum(dim=-1, keepdim=True).clamp_min(1e-8)
     if src_width == COMPACT_POLICY_SIZE and dst_width == POLICY_SIZE:
-        idx = torch.as_tensor(COMPACT_TO_FULL_POLICY, dtype=torch.long, device=target.device)
         out = target.new_zeros((*target.shape[:-1], POLICY_SIZE))
-        out.index_copy_(-1, idx, target)
+        out.index_copy_(-1, _compact_to_full_index_for(target), target)
         return out
     raise ValueError(f"policy target width {src_width} is incompatible with logits width {dst_width}")
 
@@ -82,12 +93,10 @@ def align_policy_mask(mask: torch.Tensor, width: int) -> torch.Tensor:
     if src_width == dst_width:
         return mask
     if src_width == POLICY_SIZE and dst_width == COMPACT_POLICY_SIZE:
-        idx = torch.as_tensor(COMPACT_TO_FULL_POLICY, dtype=torch.long, device=mask.device)
-        return mask.index_select(-1, idx)
+        return mask.index_select(-1, _compact_to_full_index_for(mask))
     if src_width == COMPACT_POLICY_SIZE and dst_width == POLICY_SIZE:
-        idx = torch.as_tensor(COMPACT_TO_FULL_POLICY, dtype=torch.long, device=mask.device)
         out = mask.new_zeros((*mask.shape[:-1], POLICY_SIZE))
-        out.index_copy_(-1, idx, mask)
+        out.index_copy_(-1, _compact_to_full_index_for(mask), mask)
         return out
     raise ValueError(f"policy mask width {src_width} is incompatible with logits width {dst_width}")
 
