@@ -4,6 +4,7 @@ import numpy as np
 
 from chess_anti_engine.moves import COMPACT_TO_FULL_POLICY, FULL_TO_COMPACT_POLICY
 from scripts.offline_replay_epoch import (
+    _concat,
     _convert_policy_targets,
     _select_configured_input_history,
     _select_recorded_input_history,
@@ -132,3 +133,36 @@ def test_convert_policy_targets_expands_compact_targets_for_az() -> None:
         FULL_TO_COMPACT_POLICY[out["sf_move_index"]],
         arrs["sf_move_index"],
     )
+
+
+def test_concat_preserves_optional_eval_targets_when_some_chunks_lack_them() -> None:
+    policy_a = np.zeros((1, 1858), dtype=np.float32)
+    policy_b = np.zeros((2, 1858), dtype=np.float32)
+    full = {
+        "x": np.zeros((1, 146, 8, 8), dtype=np.float32),
+        "policy_target": policy_a,
+        "wdl_target": np.zeros((1,), dtype=np.int8),
+        "priority": np.ones((1,), dtype=np.float32),
+        "has_policy": np.ones((1,), dtype=np.uint8),
+        "sf_wdl": np.ones((1, 3), dtype=np.float16),
+        "has_sf_wdl": np.ones((1,), dtype=np.uint8),
+        "future_policy_target": policy_a.copy(),
+        "has_future": np.ones((1,), dtype=np.uint8),
+        "_policy_size": np.array(1858, dtype=np.int32),
+    }
+    minimal = {
+        "x": np.zeros((2, 146, 8, 8), dtype=np.float32),
+        "policy_target": policy_b,
+        "wdl_target": np.zeros((2,), dtype=np.int8),
+        "priority": np.ones((2,), dtype=np.float32),
+        "has_policy": np.ones((2,), dtype=np.uint8),
+        "_policy_size": np.array(1858, dtype=np.int32),
+    }
+
+    out = _concat([full, minimal])
+
+    assert out["sf_wdl"].shape == (3, 3)
+    assert out["future_policy_target"].shape == (3, 1858)
+    np.testing.assert_array_equal(out["has_sf_wdl"], np.array([1, 0, 0], dtype=np.uint8))
+    np.testing.assert_array_equal(out["has_future"], np.array([1, 0, 0], dtype=np.uint8))
+    assert int(out["_policy_size"].item()) == 1858

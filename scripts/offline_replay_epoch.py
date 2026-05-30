@@ -36,7 +36,16 @@ from chess_anti_engine.moves import (
     policy_batch_to_full,
 )
 from chess_anti_engine.replay.dataset import LEGAL_MASK_FIELDS
-from chess_anti_engine.replay.shard import iter_shard_paths, load_shard_arrays, shard_positions
+from chess_anti_engine.replay.shard import (
+    DEFAULT_CATEGORICAL_BINS,
+    INPUT_HISTORY_ENCODING_ARRAY_KEY,
+    _REQUIRED_STORAGE_FIELDS,
+    _SHARD_FIELDS,
+    iter_shard_paths,
+    load_shard_arrays,
+    shard_positions,
+    zeros_for_storage_field,
+)
 from chess_anti_engine.train.trainer import (
     Trainer,
     TrainMetrics,
@@ -423,14 +432,61 @@ def _select_configured_input_history(
 
 
 def _concat(chunks: list[dict[str, np.ndarray]]) -> dict[str, np.ndarray]:
-    keys = set.intersection(*(set(c.keys()) for c in chunks))
+    if not chunks:
+        raise ValueError("cannot concatenate empty eval chunk list")
+
+    present_keys = set().union(*(set(c.keys()) for c in chunks))
+    keys = [
+        name for name in _SHARD_FIELDS
+        if name in _REQUIRED_STORAGE_FIELDS or name in present_keys
+    ]
+    categorical_bins = next(
+        (int(np.asarray(c["categorical_target"]).shape[1]) for c in chunks if "categorical_target" in c),
+        DEFAULT_CATEGORICAL_BINS,
+    )
     out: dict[str, np.ndarray] = {}
-    for key in sorted(keys):
-        first = np.asarray(chunks[0][key])
-        if first.ndim == 0:
-            out[key] = np.array(first, copy=True)
-        else:
-            out[key] = np.concatenate([np.asarray(c[key]) for c in chunks], axis=0)
+    for key in keys:
+        parts: list[np.ndarray] = []
+        for chunk in chunks:
+            if key in chunk:
+                parts.append(np.asarray(chunk[key]))
+                continue
+            parts.append(
+                zeros_for_storage_field(
+                    key,
+                    n=int(np.asarray(chunk["x"]).shape[0]),
+                    policy_size=int(np.asarray(chunk["policy_target"]).shape[1]),
+                    x_planes=int(np.asarray(chunk["x"]).shape[1]),
+                    categorical_bins=categorical_bins,
+                )
+            )
+        out[key] = np.concatenate(parts, axis=0)
+
+    for key in sorted(present_keys - set(keys)):
+        values = [np.asarray(chunk[key]) for chunk in chunks if key in chunk]
+        if not values:
+            continue
+        if all(value.ndim == 0 for value in values):
+            if len(values) != len(chunks):
+                raise ValueError(f"metadata field {key!r} missing from some eval chunks")
+            first = values[0].item()
+            if any(value.item() != first for value in values[1:]):
+                raise ValueError(f"mixed eval metadata for {key!r}")
+            out[key] = np.array(values[0], copy=True)
+            continue
+        if key == INPUT_HISTORY_ENCODING_ARRAY_KEY:
+            parts = []
+            for chunk in chunks:
+                n = int(np.asarray(chunk["x"]).shape[0])
+                if key not in chunk:
+                    parts.append(np.full((n,), "", dtype=object))
+                    continue
+                arr = np.asarray(chunk[key])
+                if arr.ndim == 0:
+                    parts.append(np.full((n,), arr.item(), dtype=object))
+                else:
+                    parts.append(arr)
+            out[key] = np.concatenate(parts, axis=0)
     return out
 
 
