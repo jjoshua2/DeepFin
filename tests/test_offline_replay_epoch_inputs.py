@@ -1,9 +1,17 @@
 from __future__ import annotations
 
-import numpy as np
+from types import SimpleNamespace
 
+import numpy as np
+import pytest
+
+from chess_anti_engine.model import ModelConfig, build_model
 from chess_anti_engine.moves import COMPACT_TO_FULL_POLICY, FULL_TO_COMPACT_POLICY
+from chess_anti_engine.replay.shard import local_shard_path, save_local_shard_arrays
+from chess_anti_engine.train.trainer import Trainer
 from scripts.offline_replay_epoch import (
+    _LiveShardSampler,
+    _calibrate_global_board_adapter_init,
     _concat,
     _convert_policy_targets,
     _select_configured_input_history,
@@ -166,3 +174,115 @@ def test_concat_preserves_optional_eval_targets_when_some_chunks_lack_them() -> 
     np.testing.assert_array_equal(out["has_sf_wdl"], np.array([1, 0, 0], dtype=np.uint8))
     np.testing.assert_array_equal(out["has_future"], np.array([1, 0, 0], dtype=np.uint8))
     assert int(out["_policy_size"].item()) == 1858
+
+
+def test_live_shard_sampler_rescans_and_samples_new_shards(tmp_path) -> None:
+    def arrays(n: int) -> dict[str, np.ndarray]:
+        policy = np.zeros((n, 4672), dtype=np.float32)
+        policy[:, 0] = 1.0
+        return {
+            "x": np.zeros((n, 146, 8, 8), dtype=np.float32),
+            "policy_target": policy,
+            "wdl_target": np.zeros((n,), dtype=np.int8),
+            "priority": np.ones((n,), dtype=np.float32),
+            "has_policy": np.ones((n,), dtype=np.uint8),
+        }
+
+    save_local_shard_arrays(local_shard_path(tmp_path, 0), arrs=arrays(3), meta={"positions": 3})
+    sampler = _LiveShardSampler(
+        replay_dir=tmp_path,
+        model_cfg=ModelConfig(kind="transformer"),
+        rng=np.random.default_rng(1),
+        prefer_recorded_lc0_root=False,
+        synthetic_lc0_root_history=False,
+        lc0_root_legacy_meta=False,
+        cache_shards=1,
+    )
+
+    assert sampler.rescan() == 3
+    assert sampler.total_positions == 3
+    batch = sampler.sample_batch_arrays(2)
+    assert batch["x"].shape == (2, 146, 8, 8)
+
+    save_local_shard_arrays(local_shard_path(tmp_path, 1), arrs=arrays(4), meta={"positions": 4})
+    assert sampler.rescan() == 4
+    assert sampler.total_positions == 7
+
+
+def test_calibrate_global_board_adapter_hits_requested_rms_ratio(tmp_path) -> None:
+    model_cfg = ModelConfig(
+        kind="transformer",
+        embed_dim=32,
+        num_layers=1,
+        num_heads=4,
+        ffn_mult=1.0,
+        input_global_embedding="bt4_board_adapter",
+        input_global_embedding_channels=2,
+        use_smolgen=False,
+    )
+    model = build_model(model_cfg)
+    trainer = Trainer(
+        model,
+        device="cpu",
+        lr=1e-4,
+        use_amp=False,
+        optimizer="adamw",
+        prefetch_batches=False,
+        model_config=model_cfg,
+        log_dir=tmp_path,
+    )
+    args = SimpleNamespace(
+        global_board_adapter_init_rms_ratio=0.2,
+        init_checkpoint=None,
+        global_board_adapter_init_batch_size=3,
+        seed=123,
+    )
+    eval_arrs = {"x": np.random.default_rng(1).normal(size=(4, 146, 8, 8)).astype(np.float32)}
+    trainer.model.train()
+
+    stats = _calibrate_global_board_adapter_init(
+        trainer=trainer,
+        eval_arrs=eval_arrs,
+        args=args,
+    )
+
+    assert trainer.model.training is True
+    assert stats["global_board_adapter_init_batch_size"] == 3
+    assert stats["global_board_adapter_init_weight_rms"] > 0.0
+    assert stats["global_board_adapter_init_actual_ratio"] == pytest.approx(0.2, rel=1e-4)
+
+
+def test_calibrate_global_board_adapter_rejects_checkpoint_init(tmp_path) -> None:
+    model_cfg = ModelConfig(
+        kind="transformer",
+        embed_dim=32,
+        num_layers=1,
+        num_heads=4,
+        ffn_mult=1.0,
+        input_global_embedding="bt4_board_adapter",
+        input_global_embedding_channels=2,
+        use_smolgen=False,
+    )
+    trainer = Trainer(
+        build_model(model_cfg),
+        device="cpu",
+        lr=1e-4,
+        use_amp=False,
+        optimizer="adamw",
+        prefetch_batches=False,
+        model_config=model_cfg,
+        log_dir=tmp_path,
+    )
+    args = SimpleNamespace(
+        global_board_adapter_init_rms_ratio=0.2,
+        init_checkpoint="/tmp/model.pt",
+        global_board_adapter_init_batch_size=1,
+        seed=123,
+    )
+
+    with pytest.raises(ValueError, match="fresh-init"):
+        _calibrate_global_board_adapter_init(
+            trainer=trainer,
+            eval_arrs={"x": np.zeros((1, 146, 8, 8), dtype=np.float32)},
+            args=args,
+        )

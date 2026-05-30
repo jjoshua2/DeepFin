@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import logging
 import math
 import shutil
 import subprocess
@@ -72,6 +73,8 @@ from chess_anti_engine.tune.trial_config import (
     TrialConfig,
 )
 from chess_anti_engine.utils.atomic import atomic_write_text
+
+log = logging.getLogger(__name__)
 
 
 def _gate_check(
@@ -481,7 +484,10 @@ def _export_selfplay_shards_for_siblings(
             except Exception:
                 pass
         if export_batches:
-            save_local_shard_arrays(export_path, arrs=_concat_array_batches(export_batches))
+            try:
+                save_local_shard_arrays(export_path, arrs=_concat_array_batches(export_batches))
+            except ValueError as exc:
+                log.warning("Skipping sibling selfplay shard export for mixed/incompatible replay metadata: %s", exc)
 
     for old in iter_shard_paths(selfplay_shards_dir)[:-keep_iters]:
         try:

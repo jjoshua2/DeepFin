@@ -76,6 +76,6 @@ def test_active_trials_ignores_scheduler_paused_trials(tmp_path: Path) -> None:
 
 
 def test_required_paused_count_accepts_deprecated_wait_arg() -> None:
-    assert _required_paused_count(4, 0) == 4
+    assert _required_paused_count(4, 1) == 1
     assert _required_paused_count(4, 2) == 2
     assert _required_paused_count(1, 3) == 1

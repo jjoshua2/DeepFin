@@ -139,6 +139,7 @@ def load_model_from_checkpoint(
     ckpt = torch.load(trainer_pt, map_location=device, weights_only=True)
     params_path = _find_params_json(trainer_pt)
     params: dict | None = None
+    explicit_model_config = model_config is not None
 
     def _load_params() -> dict | None:
         nonlocal params
@@ -148,10 +149,12 @@ def load_model_from_checkpoint(
         return params
 
     input_history_encoding = LC0_HISTORY_LEGACY
+    arch_history_encoding: str | None = None
     if isinstance(ckpt, dict):
+        arch_history_encoding = _history_encoding_from_mapping(ckpt.get("arch"))
         input_history_encoding = (
             _history_encoding_from_mapping(ckpt)
-            or _history_encoding_from_mapping(ckpt.get("arch"))
+            or arch_history_encoding
             or input_history_encoding
         )
 
@@ -170,8 +173,11 @@ def load_model_from_checkpoint(
             assert params is not None
             model_config = _model_config_from_params(params)
 
+    params_history_encoding = None if explicit_model_config else _history_encoding_from_mapping(_load_params())
     input_history_encoding = normalize_lc0_history_encoding(
-        getattr(model_config, "input_history_encoding", input_history_encoding),
+        arch_history_encoding
+        or params_history_encoding
+        or getattr(model_config, "input_history_encoding", input_history_encoding),
     )
     model_config = replace(model_config, input_history_encoding=input_history_encoding)
 

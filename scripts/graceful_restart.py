@@ -6,7 +6,8 @@ Usage:
     python3 scripts/graceful_restart.py                  # pause, wait, restart (default)
     python3 scripts/graceful_restart.py --no-auto-kill   # pause and print status only
     python3 scripts/graceful_restart.py --timeout-secs 1800
-    python3 scripts/graceful_restart.py --wait 3         # deprecated: wait for 3 active trials
+    python3 scripts/graceful_restart.py --wait 3         # wait for 3 active trials
+    python3 scripts/graceful_restart.py --wait-all       # wait for every active trial
     python3 scripts/graceful_restart.py --tune-dir runs/pbt2_small/tune
     python3 scripts/graceful_restart.py --resume-cmd "custom restart command"
 
@@ -21,9 +22,10 @@ What it does:
     manually verifying the pause was created exactly at an iteration boundary;
     otherwise a long in-flight iteration can look indistinguishable from a
     boundary pause.
-  3. Once all active trials are paused, sends SIGTERM to the tuner, removes
-     all pause markers, and runs the resume command. Deprecated --wait N keeps
-     old automation working by requiring only N active trials. Pass
+  3. Once enough active trials are paused, sends SIGTERM to the tuner, removes
+     all pause markers, and runs the resume command. By default this keeps old
+     automation semantics by requiring one active trial; pass --wait-all to
+     require every active trial. Pass
      --no-auto-kill to skip this and just print status instead.
 """
 from __future__ import annotations
@@ -176,8 +178,10 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--tune-dir", default="runs/pbt2_small/tune",
                     help="Path to the Ray Tune experiment directory")
-    ap.add_argument("--wait", type=int, default=0,
-                    help="Deprecated compatibility alias: require N active trials paused; default waits for all.")
+    ap.add_argument("--wait", type=int, default=1,
+                    help="Require N active trials paused. Default 1 preserves old no-arg behavior.")
+    ap.add_argument("--wait-all", action="store_true",
+                    help="Require all active trials to pause before restarting.")
     ap.add_argument("--timeout-secs", type=int, default=0,
                     help="Maximum seconds to wait before failing. Default 0 waits indefinitely.")
     ap.add_argument("--grace-secs", type=int, default=-1,
@@ -209,12 +213,8 @@ def main() -> None:
     if not tune_dir.is_dir():
         print(f"ERROR: tune dir not found: {args.tune_dir}", file=sys.stderr)
         sys.exit(1)
-    if args.wait > 0:
-        print(
-            "[graceful_restart] WARNING: --wait is deprecated; omit it to wait "
-            "for all active trials.",
-            file=sys.stderr,
-        )
+    if args.wait_all and args.wait != 1:
+        raise SystemExit("--wait-all cannot be combined with --wait")
 
     pause_file = tune_dir / "pause.txt"
     auto_kill = args.auto_kill
@@ -236,7 +236,8 @@ def main() -> None:
             print(f"[graceful_restart] Created {target}")
     print("[graceful_restart] Trials will pause after their current iteration.")
 
-    print("[graceful_restart] Waiting for all active trials to stop appending rows to progress.csv...")
+    wait_desc = "all active trials" if args.wait_all else f"{int(args.wait)} active trial(s)"
+    print(f"[graceful_restart] Waiting for {wait_desc} to stop appending rows to progress.csv...")
     print()
 
     pause_created_ts = pause_file.stat().st_mtime if pause_file.exists() else time.time()
@@ -279,8 +280,8 @@ def main() -> None:
 
         # Print status
         elapsed = int(time.time() - start)
-        required_paused = _required_paused_count(len(csvs), int(args.wait))
-        need_label = str(required_paused) if args.wait > 0 else "all"
+        required_paused = len(csvs) if args.wait_all else _required_paused_count(len(csvs), int(args.wait))
+        need_label = "all" if args.wait_all else str(required_paused)
         print(f"[{elapsed:4d}s] {len(idle_trials)}/{len(csvs)} trials paused "
               f"(need {need_label}):")
         for csv, snap, rc, state in observations:
