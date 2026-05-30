@@ -126,17 +126,19 @@ def infer_input_planes() -> int:
     return int(x.shape[0])
 
 
+def _attach_runtime_model_metadata(model: torch.nn.Module, cfg: ModelConfig) -> torch.nn.Module:
+    setattr(model, "policy_encoding", normalize_policy_encoding(cfg.policy_encoding))
+    setattr(model, "input_history_encoding", normalize_lc0_history_encoding(cfg.input_history_encoding))
+    return model
+
+
 def build_model(cfg: ModelConfig) -> torch.nn.Module:
     policy_encoding = normalize_policy_encoding(cfg.policy_encoding)
-    input_history_encoding = normalize_lc0_history_encoding(cfg.input_history_encoding)
     in_planes = infer_input_planes()
     if cfg.kind == "tiny":
         if policy_encoding != POLICY_ENCODING_AZ_4672:
             raise ValueError("tiny model only supports policy_encoding='az_4672'")
-        model = TinyNet(in_planes=in_planes)
-        setattr(model, "policy_encoding", policy_encoding)
-        setattr(model, "input_history_encoding", input_history_encoding)
-        return model
+        return _attach_runtime_model_metadata(TinyNet(in_planes=in_planes), cfg)
     if cfg.kind == "transformer":
         tcfg = TransformerConfig(
             in_planes=in_planes,
@@ -164,10 +166,7 @@ def build_model(cfg: ModelConfig) -> torch.nn.Module:
             smolgen_relation_coeff_norm=str(cfg.smolgen_relation_coeff_norm),
             smolgen_relation_scale=str(cfg.smolgen_relation_scale),
         )
-        model = ChessNet(tcfg)
-        setattr(model, "policy_encoding", policy_encoding)
-        setattr(model, "input_history_encoding", input_history_encoding)
-        return model
+        return _attach_runtime_model_metadata(ChessNet(tcfg), cfg)
     raise ValueError(f"Unknown model kind: {cfg.kind}")
 
 

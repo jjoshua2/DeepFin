@@ -269,14 +269,24 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None) -> None:
             k.removeprefix("pb2_bounds_")
             for k in config if k.startswith("pb2_bounds_")
         }
+        missing = object()
         for k, v in fresh.items():
             if k in searched or k.startswith("pb2_bounds_"):
                 continue
-            if k in _TOPOLOGY_KEYS and k in config and config[k] != v:
-                log.warning(
-                    "YAML reload: %s changed (%s -> %s) but requires restart — skipping",
-                    k, config[k], v,
-                )
+            if k in _TOPOLOGY_KEYS:
+                current = config.get(k, missing)
+                if current is missing:
+                    log.warning(
+                        "YAML reload: %s is absent from restored config but requires restart — skipping",
+                        k,
+                    )
+                    continue
+                if current != v:
+                    log.warning(
+                        "YAML reload: %s changed (%s -> %s) but requires restart — skipping",
+                        k, current, v,
+                    )
+                    continue
                 continue
             config[k] = v
     except Exception as exc:

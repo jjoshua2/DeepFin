@@ -183,6 +183,8 @@ class _BufferedUploadAccumulator:
     gumbel_policy_candidate_count_sum: int = 0
     outcome_stats: dict[str, int] = field(default_factory=dict)
     model_step: int | None = None
+    input_history_encoding: str | None = None
+    input_history_unknown_seen: bool = False
     # Disk-resident extracted shards that contributed to this accumulator and
     # have NOT yet been folded into a compacted shard. Deleted only after the
     # compacted shard has been written to disk so a crash mid-flush leaves the
@@ -221,6 +223,28 @@ class _BufferedUploadAccumulator:
         step_raw = meta.get("model_step")
         if step_raw is not None:
             self.model_step = int(step_raw)
+        history_raw = meta.get("input_history_encoding")
+        if history_raw is None:
+            if self.input_history_encoding is not None:
+                raise ValueError(
+                    "cannot compact uploads with missing input_history_encoding "
+                    f"and {self.input_history_encoding!r}"
+                )
+            self.input_history_unknown_seen = True
+        else:
+            history = str(history_raw)
+            if self.input_history_unknown_seen:
+                raise ValueError(
+                    "cannot compact uploads with missing input_history_encoding "
+                    f"and {history!r}"
+                )
+            if self.input_history_encoding is None:
+                self.input_history_encoding = history
+            elif self.input_history_encoding != history:
+                raise ValueError(
+                    "cannot compact uploads with mixed input_history_encoding "
+                    f"{self.input_history_encoding!r} and {history!r}"
+                )
         _merge_outcome_stats(self.outcome_stats, meta.get("outcome_stats"))
         self.last_update_unix = float(now_unix)
 
@@ -258,6 +282,7 @@ def _flush_buffered_upload_to_inbox(
         generated_at_unix=int(now_unix),
         model_sha256=str(acc.model_sha256) or None,
         model_step=acc.model_step,
+        input_history_encoding=acc.input_history_encoding,
         games=int(acc.games),
         positions=int(acc.positions),
         wins=int(acc.wins),
@@ -399,7 +424,7 @@ def create_app(
     leases_root.mkdir(parents=True, exist_ok=True)
     compact_target_positions = max(1, int(upload_compact_shard_size))
     compact_max_age_seconds = max(1.0, float(upload_compact_max_age_seconds))
-    upload_accumulators: dict[tuple[str | None, str], _BufferedUploadAccumulator] = {}
+    upload_accumulators: dict[tuple[str | None, str, str], _BufferedUploadAccumulator] = {}
     recent_upload_shas: dict[tuple[str | None, str], float] = {}
     upload_lock = threading.Lock()
     queued_games_cache: dict[str | None, tuple[float, dict[str, int]]] = {}
@@ -445,6 +470,10 @@ def create_app(
     def _arena_inbox_root(trial_id: str | None) -> Path:
         tid = _normalize_trial_id(trial_id)
         return arena_inbox if tid is None else (_trial_root(tid) / "arena_inbox")
+
+    def _upload_history_acc_key(meta: dict[str, Any]) -> str:
+        raw = meta.get("input_history_encoding")
+        return "<missing>" if raw is None else str(raw)
 
     def _invalidate_queued_games_cache(trial_id: str | None) -> None:
         with queued_games_cache_lock:
@@ -556,9 +585,9 @@ def create_app(
             for key in stale_seen:
                 recent_upload_shas.pop(key, None)
 
-            ready_keys: list[tuple[str | None, str]] = []
+            ready_keys: list[tuple[str | None, str, str]] = []
             for key, acc in upload_accumulators.items():
-                trial_key, _model_sha = key
+                trial_key, _model_sha, _history_key = key
                 if normalized_trial_id is not None and trial_key != normalized_trial_id:
                     continue
                 if force_all:
@@ -624,7 +653,7 @@ def create_app(
                     return dict(cached_totals)
         totals: dict[str, int] = {}
         with upload_lock:
-            for (acc_tid, acc_sha), acc in upload_accumulators.items():
+            for (acc_tid, acc_sha, _history_key), acc in upload_accumulators.items():
                 if acc_tid != tid:
                     continue
                 sha = str(acc_sha or "")
@@ -1275,7 +1304,7 @@ def create_app(
         with upload_lock:
             if upload_seen_key not in recent_upload_shas:
                 model_sha = str(meta.get("model_sha256") or sha)
-                acc_key = (trial_key, model_sha)
+                acc_key = (trial_key, model_sha, _upload_history_acc_key(meta))
                 acc = upload_accumulators.get(acc_key)
                 if acc is None:
                     acc = _BufferedUploadAccumulator(
@@ -1571,7 +1600,12 @@ def create_app(
             return None
         return candidate
 
-    def _recover_in_flight_dirs(*, in_flight_root: Path, compacted_dir: Path) -> None:
+    def _recover_in_flight_dirs(
+        *,
+        in_flight_root: Path,
+        compacted_dir: Path,
+        trial_key: str | None,
+    ) -> None:
         if not in_flight_root.is_dir():
             return
         for token_dir in sorted(in_flight_root.iterdir()):
@@ -1584,7 +1618,19 @@ def create_app(
             )
             if committed:
                 # Compacted shard exists for this token → samples already
-                # durable; just clean up the staging dir.
+                # durable. Backfill upload-sha dedupe keys before cleanup so
+                # a worker retry after restart cannot be accepted again.
+                for entry in sorted(token_dir.iterdir()):
+                    if not entry.name.endswith(LOCAL_SHARD_SUFFIX):
+                        continue
+                    upload_sha = _parse_pending_sha(entry.name)
+                    if upload_sha is None:
+                        continue
+                    try:
+                        mtime = float(entry.stat().st_mtime)
+                    except OSError:
+                        mtime = float(time.time())
+                    recent_upload_shas[(trial_key, upload_sha)] = mtime
                 delete_shard_path(token_dir)
                 continue
             # No matching compacted shard → flush never committed. Move
@@ -1645,7 +1691,7 @@ def create_app(
                 mtime = float(entry.stat().st_mtime)
             except OSError:
                 mtime = float(time.time())
-            acc_key = (trial_key, model_sha)
+            acc_key = (trial_key, model_sha, _upload_history_acc_key(meta_dict))
             acc = upload_accumulators.get(acc_key)
             if acc is None:
                 acc = _BufferedUploadAccumulator(
@@ -1668,6 +1714,7 @@ def create_app(
             _recover_in_flight_dirs(
                 in_flight_root=inbox / _IN_FLIGHT_DIR_NAME,
                 compacted_dir=inbox / "_compacted",
+                trial_key=None,
             )
         except Exception:
             log.exception("in-flight recovery (default inbox) failed")
@@ -1692,6 +1739,7 @@ def create_app(
                     _recover_in_flight_dirs(
                         in_flight_root=trial_inbox / _IN_FLIGHT_DIR_NAME,
                         compacted_dir=trial_inbox / "_compacted",
+                        trial_key=trial_dir.name,
                     )
                 except Exception:
                     log.exception("in-flight recovery for trial %s failed", trial_key)

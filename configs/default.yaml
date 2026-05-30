@@ -18,7 +18,12 @@ model:
   num_heads: 24
   ffn_mult: 1.5
   use_smolgen: true
+  smolgen_mode: shared  # shared | per_layer; per_layer is BT4-style and startup-only
   use_nla: false
+  input_pos_encoding: none  # none | arc | arc_adapter; startup-only LC0-style square relation channels
+  use_deepnorm: false       # startup-only; LC0-style post-norm residual branch scaling
+  policy_encoding: az_4672  # az_4672 | lc0_1858; startup-only policy target/output encoding
+  input_history_encoding: legacy  # legacy | lc0_root; startup-only 112-plane history layout
   gradient_checkpointing: false  # ~50% less VRAM, ~20% slower
 
 stockfish:
@@ -66,6 +71,11 @@ selfplay:
   mcts_simulations: 100
   playout_cap_fraction: 0.25
   fast_simulations: 8
+  gumbel_topk: 16
+  gumbel_scale: 1.0
+  gumbel_scale_after: 0.0
+  gumbel_scale_decay_start_move: 0
+  gumbel_scale_decay_moves: 0
 
   # SF-policy shaping (used on SF turns)
   sf_policy_temp: 0.25
@@ -91,7 +101,11 @@ selfplay:
   hlgauss_sigma: 0.04    # Gaussian spread (tunable)
 
 train:
-  optimizer: nadamw   # nadamw | adamw | soap
+  optimizer: nadamw   # nadamw | adamw | muon | aurora | cosmos | cosmos_fast | soap
+  matrix_optimizer_scope: default  # default | block_all | mlp_only | mlp_out | mlp_attn_all
+  matrix_lr_multiplier: 20.0
+  matrix_weight_decay: 0.0001
+  aux_weight_decay: 0.0001
   lr: 0.0003
   batch_size: 128
   train_steps: 200

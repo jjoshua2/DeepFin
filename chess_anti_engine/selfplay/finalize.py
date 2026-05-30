@@ -701,12 +701,14 @@ def _emit_completed_game_batch(
     sf_d6_sum: float, sf_d6_n: int,
     diff_focus: _DiffFocusGameStats,
     gumbel_policy: _GumbelPolicyGameStats,
+    input_history_encoding: str,
     on_game_complete: Callable[[CompletedGameBatch], None],
 ) -> None:
     """Build + dispatch CompletedGameBatch for one finalized game."""
     on_game_complete(
         CompletedGameBatch(
             samples=samples,
+            input_history_encoding=input_history_encoding,
             positions=len(samples),
             w=counters.w,
             d=counters.d,
@@ -837,6 +839,7 @@ def finalize_game(
                 sf_d6_sum=game_sf_d6_sum, sf_d6_n=game_sf_d6_n,
                 diff_focus=diff_focus_stats,
                 gumbel_policy=gumbel_policy_stats,
+                input_history_encoding=state.game.input_history_encoding,
                 on_game_complete=on_game_complete,
             )
     else:

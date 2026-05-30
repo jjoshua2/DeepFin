@@ -19,7 +19,12 @@ import argparse
 import sys
 from pathlib import Path
 
-from chess_anti_engine.replay.shard import iter_shard_paths
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from scripts.diagnose_replay import sample_replay_arrays
+
+from chess_anti_engine.replay.shard import INPUT_HISTORY_ENCODING_ARRAY_KEY, iter_shard_paths
 from chess_anti_engine.tune.replay_exchange import _trial_replay_shard_dir
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 
@@ -81,8 +86,8 @@ def main() -> None:
     import torch
 
     from chess_anti_engine.model import ModelConfig, build_model
-    from chess_anti_engine.replay import DiskReplayBuffer
     from chess_anti_engine.train import Trainer, trainer_kwargs_from_config
+    from chess_anti_engine.train.trainer import select_input_history_arrays
 
     trial_dir = _resolve_trial_dir(args)
     print(f"Trial: {trial_dir.name}")
@@ -100,7 +105,26 @@ def main() -> None:
         num_layers=int(cfg.get("num_layers", 9)),
         num_heads=int(cfg.get("num_heads", 8)),
         ffn_mult=float(cfg.get("ffn_mult", 2.0)),
-        use_smolgen=not bool(cfg.get("no_smolgen", False)),
+        use_smolgen=bool(cfg.get("use_smolgen", not bool(cfg.get("no_smolgen", False)))),
+        use_nla=bool(cfg.get("use_nla", False)),
+        use_qk_rmsnorm=bool(cfg.get("use_qk_rmsnorm", False)),
+        use_gradient_checkpointing=bool(cfg.get("gradient_checkpointing", False)),
+        input_pos_encoding=str(cfg.get("input_pos_encoding", "none")),
+        qkv_projection=str(cfg.get("qkv_projection", "fused")),
+        use_deepnorm=bool(cfg.get("use_deepnorm", False)),
+        policy_encoding=str(cfg.get("policy_encoding", "az_4672")),
+        input_history_encoding=str(cfg.get("input_history_encoding", "legacy")),
+        input_global_embedding=str(cfg.get("input_global_embedding", "none")),
+        input_global_embedding_channels=int(cfg.get("input_global_embedding_channels", 0)),
+        input_square_embedding=str(cfg.get("input_square_embedding", "none")),
+        smolgen_mode=str(cfg.get("smolgen_mode", "shared")),
+        smolgen_bias_scale=str(cfg.get("smolgen_bias_scale", "none")),
+        smolgen_bias_norm=str(cfg.get("smolgen_bias_norm", "none")),
+        arc_attention_bias=str(cfg.get("arc_attention_bias", "none")),
+        smolgen_relation_basis=bool(cfg.get("smolgen_relation_basis", False)),
+        smolgen_relation_norm=str(cfg.get("smolgen_relation_norm", "none")),
+        smolgen_relation_coeff_norm=str(cfg.get("smolgen_relation_coeff_norm", "none")),
+        smolgen_relation_scale=str(cfg.get("smolgen_relation_scale", "none")),
     )
     model = build_model(model_cfg)
     trainer_kw = trainer_kwargs_from_config(
@@ -114,10 +138,19 @@ def main() -> None:
 
     shard_dir = _resolve_replay_dir(args, cfg=cfg, trial_dir=trial_dir)
     print(f"Replay: {shard_dir}")
-    buf = DiskReplayBuffer(capacity=200_000, shard_dir=shard_dir, rng=np.random.default_rng(42))
-    n = min(int(args.n), len(buf))
+    arrs, total_positions, shard_count = sample_replay_arrays(
+        shard_dir,
+        int(args.n),
+        rng=np.random.default_rng(42),
+        fields=("x", "x_lc0_root", "has_x_lc0_root", INPUT_HISTORY_ENCODING_ARRAY_KEY),
+    )
+    n = int(arrs["x"].shape[0])
+    print(f"Replay size: {total_positions:,} positions across {shard_count:,} shards")
     print(f"Sampling {n} positions...")
-    arrs = buf.sample_batch_arrays(n, wdl_balance=False)
+    arrs = select_input_history_arrays(
+        arrs,
+        input_history_encoding=model_cfg.input_history_encoding,
+    )
     x = torch.from_numpy(np.asarray(arrs["x"], dtype=np.float32)).to(device)
 
     # --- hook embed output, every block's (input, output, attn-head-output) ---

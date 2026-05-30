@@ -12,6 +12,7 @@ import pytest
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.shard import (
     ShardMeta,
+    extract_uploaded_shard_tar,
     pack_shard_for_upload,
     samples_to_arrays,
     save_local_shard_arrays,
@@ -49,13 +50,25 @@ def _default_headers() -> dict[str, str]:
     return {"X-CAE-Worker-Version": "0.0.0", "X-CAE-Protocol-Version": "1"}
 
 
-def _build_valid_zarr_tar(tmp_path: Path, *, samples: list[ReplaySample]) -> bytes:
+def _build_valid_zarr_tar(
+    tmp_path: Path,
+    *,
+    samples: list[ReplaySample],
+    input_history_encoding: str | None = None,
+) -> bytes:
     """Write a valid zarr shard and tar it using the production packer so
     this test actually exercises the worker→server wire format."""
     tmp_path.mkdir(parents=True, exist_ok=True)
     zp = tmp_path / "valid.zarr"
     arrs = samples_to_arrays(samples)
-    meta = ShardMeta(username="u", games=1, positions=len(samples), model_sha256="abc1234567", model_step=0)
+    meta = ShardMeta(
+        username="u",
+        games=1,
+        positions=len(samples),
+        model_sha256="abc1234567",
+        model_step=0,
+        input_history_encoding=input_history_encoding,
+    )
     save_local_shard_arrays(zp, arrs=arrs, meta=meta)
     _, buf = pack_shard_for_upload(zp)
     return buf.getvalue()
@@ -186,6 +199,55 @@ def test_zarr_tar_upload_happy_path(tmp_path) -> None:
     body = r.json()
     assert body.get("stored") is True
     assert body.get("positions") == 3
+
+
+def test_zarr_tar_upload_keeps_missing_and_tagged_history_accumulators_separate(tmp_path) -> None:
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+    client = _build_client(server_root, upload_compact_shard_size=100)
+    legacy_tar = _build_valid_zarr_tar(tmp_path / "legacy", samples=[_sample(0)])
+    root_tar = _build_valid_zarr_tar(
+        tmp_path / "root",
+        samples=[_sample(1)],
+        input_history_encoding="lc0_root",
+    )
+
+    first = client.post(
+        "/v1/upload_shard",
+        auth=("u", "p"),
+        files={"file": ("legacy.zarr.tar", legacy_tar, "application/x-tar")},
+        headers=_default_headers(),
+    )
+    second = client.post(
+        "/v1/upload_shard",
+        auth=("u", "p"),
+        files={"file": ("root.zarr.tar", root_tar, "application/x-tar")},
+        headers=_default_headers(),
+    )
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert first.json().get("stored") is True
+    assert second.json().get("stored") is True
+
+
+def test_zarr_tar_extract_falls_back_without_filter_kw(tmp_path, monkeypatch) -> None:
+    tar_bytes = _build_valid_zarr_tar(tmp_path / "src", samples=[_sample(i) for i in range(2)])
+    tar_path = tmp_path / "shard.zarr.tar"
+    tar_path.write_bytes(tar_bytes)
+    original = tarfile.TarFile.extractall
+
+    def legacy_extractall(self, path=".", members=None, *, numeric_owner=False, filter=None):  # noqa: A002
+        if filter is not None:
+            raise TypeError("extractall() got an unexpected keyword argument 'filter'")
+        return original(self, path=path, members=members, numeric_owner=numeric_owner)
+
+    monkeypatch.setattr(tarfile.TarFile, "extractall", legacy_extractall)
+
+    extracted = extract_uploaded_shard_tar(tar_path, tmp_path / "extract")
+
+    assert (extracted / ".zgroup").exists()
 
 
 def test_zarr_tar_upload_rejects_position_cap_before_ingest(tmp_path) -> None:

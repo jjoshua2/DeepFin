@@ -69,6 +69,7 @@ def cosmos(
     ratio: float,
     gamma: float,
     nesterov: bool,
+    use_cosmos: bool,
 ) -> None:
     for i, param in enumerate(params):
         grad = grads[i] if not maximize else -grads[i]
@@ -82,7 +83,7 @@ def cosmos(
         bias_correction1 = (1 - beta1 ** step) / (1 - beta1)
         bias_correction2 = 1 - beta2 ** step
 
-        if len(param.size()) == 2 and param.size(0) <= 10000:
+        if use_cosmos and len(param.size()) == 2 and param.size(0) <= 10000:
             exp_avg.mul_(beta1).add_(grad)
 
             if step == 1:
@@ -196,7 +197,15 @@ class COSMOS(Optimizer):
             raise ValueError(f"Invalid beta parameter at index 1: {betas[1]}")
         if not weight_decay >= 0.0:
             raise ValueError(f"Invalid weight_decay value: {weight_decay}")
-        defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay, amsgrad=amsgrad, maximize=maximize)
+        defaults = dict(
+            lr=lr,
+            betas=betas,
+            eps=eps,
+            weight_decay=weight_decay,
+            amsgrad=amsgrad,
+            maximize=maximize,
+            use_cosmos=True,
+        )
         super().__init__(params, defaults)
         self.lr_ratio = lr_ratio
         self.rank = rank
@@ -208,6 +217,7 @@ class COSMOS(Optimizer):
         for group in self.param_groups:
             group.setdefault('amsgrad', False)
             group.setdefault('maximize', False)
+            group.setdefault('use_cosmos', True)
 
     @torch.no_grad()
     def step(self, closure: Callable[[], float] | None = None) -> float | None:  # type: ignore[override]
@@ -226,6 +236,7 @@ class COSMOS(Optimizer):
             max_exp_avg_sqs = []
             state_steps = []
             beta1, beta2 = group['betas']
+            use_cosmos = bool(group.get('use_cosmos', True))
 
             for p in group['params']:
                 if p.grad is None:
@@ -239,7 +250,7 @@ class COSMOS(Optimizer):
                 if len(state) == 0:
                     state['step'] = 0
                     state['exp_avg'] = torch.zeros_like(p, memory_format=torch.preserve_format)
-                    if len(p.size()) == 2 and p.size(0) <= 10000:
+                    if use_cosmos and len(p.size()) == 2 and p.size(0) <= 10000:
                         eff_rank = min(int(self.rank), int(p.size(0)), int(p.size(1)))
                         state['exp_avg_GG'] = torch.zeros(eff_rank, eff_rank, dtype=p.dtype, device=p.device)
                         state['exp_avg_P'] = torch.zeros(p.size(1), eff_rank, dtype=p.dtype, device=p.device)
@@ -280,6 +291,7 @@ class COSMOS(Optimizer):
                 ratio=self.lr_ratio,
                 gamma=self.gamma,
                 nesterov=self.nesterov,
+                use_cosmos=use_cosmos,
             )
 
         return loss

@@ -12,6 +12,7 @@ from chess_anti_engine.tune.distributed_runtime import (
     _worker_launch_signature,
 )
 from chess_anti_engine.tune.harness import (
+    _prepare_distributed_worker_auth,
     _patch_experiment_state_for_resume,
 )
 from chess_anti_engine.tune._utils import (
@@ -46,6 +47,22 @@ def test_build_distributed_worker_cmd_pins_trial_id() -> None:
 
     assert "--trial-id" in cmd
     assert cmd[cmd.index("--trial-id") + 1] == "trial_00000"
+
+
+def test_prepare_distributed_worker_auth_reads_password_from_env(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("CHESS_TEST_WORKER_PASSWORD", "secret-from-env")
+
+    username, password_file = _prepare_distributed_worker_auth(
+        server_root=tmp_path,
+        config={
+            "distributed_worker_username": "worker",
+            "distributed_worker_password": None,
+            "distributed_worker_password_env": "CHESS_TEST_WORKER_PASSWORD",
+        },
+    )
+
+    assert username == "worker"
+    assert password_file.read_text().strip() == "secret-from-env"
 
 
 def test_build_distributed_worker_cmd_passes_stockfish_nice() -> None:

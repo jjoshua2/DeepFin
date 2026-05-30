@@ -78,7 +78,7 @@ python -m chess_anti_engine.run \
 
 Override the config with `TRAIN_CONFIG=configs/other.yaml ./scripts/train.sh start`.
 
-**Graceful pause before a restart.** `python3 scripts/graceful_restart.py --wait N` creates `pause.txt` in the tune dir so each trial finishes its current iteration before holding. Useful when you want to restart PBT without orphaning mid-iteration trials.
+**Graceful pause before a restart.** `python3 scripts/graceful_restart.py` creates `pause.txt` in the tune dir so each active trial finishes its current iteration before holding. Useful when you want to restart PBT without orphaning mid-iteration trials.
 
 **Salvage: warm-start fresh trials from past checkpoints.** When a PBT run has regressed or you want to rebase on an earlier high-water-mark checkpoint, export a salvage pool (top-N trials' `trainer.pt` + `pid_state.json` + replay shards) and restart pointing at it:
 

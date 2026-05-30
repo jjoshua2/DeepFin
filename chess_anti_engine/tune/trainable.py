@@ -107,6 +107,7 @@ def _make_stockfish_uci(tc: TrialConfig, *, nodes: int, multipv: int) -> Stockfi
         tc.stockfish_path, nodes=nodes, multipv=multipv,
         hash_mb=tc.sf_hash_mb,
         syzygy_path=tc.stockfish_syzygy_path or tc.syzygy_path,
+        nice=tc.sf_nice,
     )
 
 
@@ -120,6 +121,7 @@ def _init_local_stockfish(tc: TrialConfig) -> StockfishUCI | StockfishPool | Non
             num_workers=tc.sf_workers, multipv=tc.sf_multipv,
             hash_mb=tc.sf_hash_mb,
             syzygy_path=tc.stockfish_syzygy_path or tc.syzygy_path,
+            nice=tc.sf_nice,
         )
     return _make_stockfish_uci(tc, nodes=tc.sf_nodes, multipv=tc.sf_multipv)
 

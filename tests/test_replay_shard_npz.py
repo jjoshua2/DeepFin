@@ -2,6 +2,7 @@ import numpy as np
 
 from chess_anti_engine.replay import ReplaySample
 from chess_anti_engine.replay.shard import (
+    INPUT_HISTORY_ENCODING_ARRAY_KEY,
     LOCAL_SHARD_SUFFIX,
     ShardMeta,
     iter_shard_paths,
@@ -128,6 +129,43 @@ def test_local_zarr_shard_roundtrip(tmp_path):
     eager_arrs, eager_meta = load_shard_arrays(out_path, lazy=False)
     assert eager_meta["positions"] == 2
     assert eager_arrs["policy_target"].shape == (2, 4672)
+
+
+def test_zarr_shard_roundtrips_input_history_encoding_metadata(tmp_path):
+    samples = [_sample(), _sample()]
+    arrs = samples_to_arrays(samples)
+
+    path = local_shard_path(tmp_path / "replay", 4)
+    out_path = save_local_shard_arrays(
+        path,
+        arrs=arrs,
+        meta=ShardMeta(
+            positions=len(samples),
+            input_history_encoding="lc0_root_legacy_meta",
+        ),
+    )
+
+    eager_arrs, eager_meta = load_shard_arrays(out_path, lazy=False)
+    lazy_arrs, lazy_meta = load_shard_arrays(out_path, lazy=True)
+
+    assert eager_meta["input_history_encoding"] == "lc0_root_legacy_meta"
+    assert lazy_meta["input_history_encoding"] == "lc0_root_legacy_meta"
+    assert str(eager_arrs[INPUT_HISTORY_ENCODING_ARRAY_KEY].item()) == "lc0_root_legacy_meta"
+    assert str(lazy_arrs[INPUT_HISTORY_ENCODING_ARRAY_KEY].item()) == "lc0_root_legacy_meta"
+
+
+def test_zarr_shard_promotes_input_history_encoding_sidecar_to_metadata(tmp_path):
+    samples = [_sample(), _sample()]
+    arrs = samples_to_arrays(samples)
+    arrs[INPUT_HISTORY_ENCODING_ARRAY_KEY] = np.asarray("lc0_root")
+
+    path = local_shard_path(tmp_path / "replay", 5)
+    out_path = save_local_shard_arrays(path, arrs=arrs, meta=ShardMeta(positions=len(samples)))
+
+    loaded, meta = load_shard_arrays(out_path, lazy=False)
+
+    assert meta["input_history_encoding"] == "lc0_root"
+    assert str(loaded[INPUT_HISTORY_ENCODING_ARRAY_KEY].item()) == "lc0_root"
 
 
 def test_save_prunes_unset_optional_arrays(tmp_path):

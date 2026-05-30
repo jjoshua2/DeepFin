@@ -37,7 +37,7 @@ python -m chess_anti_engine.run --config configs/default.yaml --mode train
 ./scripts/train.sh log
 ```
 - `./scripts/train.sh start` auto-resumes when `$WORK_DIR/tune/experiment_state-*.json` exists. Without that resume path, a restart can silently drop the running trial and spawn a random-init one. Use `--fresh` only when intentionally abandoning the prior Tune state; do not remove the Tune directory while a run is live.
-- Before stopping or restarting PBT, prefer `python3 scripts/graceful_restart.py --wait N` so trials finish the current iteration and pause cleanly.
+- Before stopping or restarting PBT, prefer `python3 scripts/graceful_restart.py` so active trials finish the current iteration and pause cleanly before the restart.
 - Salvage workflows are CLI-driven: `./scripts/train.sh salvage-export ...` and `./scripts/train.sh salvage-restart <pool_dir>`. Do not edit `configs/pbt2_small.yaml` just to activate or disable salvage.
 - `configs/pbt2_small.yaml` is the production config for active training. `configs/default.yaml` is the larger reference config.
 

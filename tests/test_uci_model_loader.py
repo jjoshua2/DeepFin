@@ -27,6 +27,21 @@ def _write_tiny_checkpoint(root: Path, *, params: dict | None, include_arch: boo
     return ckpt_dir
 
 
+def _write_tiny_checkpoint_with_legacy_arch(root: Path, *, params: dict | None = None) -> Path:
+    ckpt_dir = root / "checkpoint_000001"
+    ckpt_dir.mkdir()
+    cfg = ModelConfig(kind="tiny")
+    model = build_model(cfg)
+    arch = {
+        "_schema_version": ARCH_SCHEMA_VERSION,
+        "kind": "tiny",
+    }
+    torch.save({"model": model.state_dict(), "step": 0, "arch": arch}, ckpt_dir / "trainer.pt")
+    if params is not None:
+        (root / "params.json").write_text(json.dumps(params), encoding="utf-8")
+    return ckpt_dir
+
+
 def _write_tiny_checkpoint_with_cfg(root: Path, cfg: ModelConfig, *, params: dict | None = None) -> Path:
     ckpt_dir = root / "checkpoint_000001"
     ckpt_dir.mkdir()
@@ -59,7 +74,7 @@ def test_uci_loader_reads_history_encoding_from_params_json(tmp_path: Path) -> N
     ckpt = _write_tiny_checkpoint(
         tmp_path,
         params={"model": "tiny", "input_history_encoding": "lc0_root_legacy_meta"},
-        include_arch=True,
+        include_arch=False,
     )
 
     model = load_model_from_checkpoint(ckpt, device="cpu")
@@ -71,6 +86,29 @@ def test_uci_loader_reads_history_encoding_from_embedded_arch(tmp_path: Path) ->
     ckpt = _write_tiny_checkpoint_with_cfg(
         tmp_path,
         ModelConfig(kind="tiny", input_history_encoding="lc0_root"),
+    )
+
+    model = load_model_from_checkpoint(ckpt, device="cpu")
+
+    assert getattr(model, "input_history_encoding") == "lc0_root"
+
+
+def test_uci_loader_uses_params_history_when_embedded_arch_is_legacy_schema(tmp_path: Path) -> None:
+    ckpt = _write_tiny_checkpoint_with_legacy_arch(
+        tmp_path,
+        params={"model": "tiny", "input_history_encoding": "lc0_root_legacy_meta"},
+    )
+
+    model = load_model_from_checkpoint(ckpt, device="cpu")
+
+    assert getattr(model, "input_history_encoding") == "lc0_root_legacy_meta"
+
+
+def test_uci_loader_embedded_arch_wins_over_stale_params_json(tmp_path: Path) -> None:
+    ckpt = _write_tiny_checkpoint_with_cfg(
+        tmp_path,
+        ModelConfig(kind="tiny", input_history_encoding="lc0_root"),
+        params={"model": "tiny", "input_history_encoding": "legacy"},
     )
 
     model = load_model_from_checkpoint(ckpt, device="cpu")

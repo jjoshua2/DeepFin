@@ -29,19 +29,20 @@ def test_transformer_forward_shapes():
 
 
 def test_build_model_attaches_runtime_encoding_metadata():
-    model = build_model(
+    m = build_model(
         ModelConfig(
             kind="transformer",
             embed_dim=64,
             num_layers=1,
             num_heads=4,
+            use_smolgen=False,
             policy_encoding="lc0_1858",
-            input_history_encoding="lc0_root_legacy_meta",
+            input_history_encoding="root_meta",
         )
     )
 
-    assert getattr(model, "policy_encoding") == "lc0_1858"
-    assert getattr(model, "input_history_encoding") == "lc0_root_legacy_meta"
+    assert getattr(m, "policy_encoding") == "lc0_1858"
+    assert getattr(m, "input_history_encoding") == "lc0_root_legacy_meta"
 
 
 def test_transformer_per_layer_smolgen_shapes_and_shares_gen_projection():

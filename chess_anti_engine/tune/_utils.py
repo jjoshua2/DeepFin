@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from chess_anti_engine.replay.shard import (
+    INPUT_HISTORY_ENCODING_ARRAY_KEY,
     _REQUIRED_STORAGE_FIELDS,
     _SHARD_FIELDS,
     zeros_for_storage_field,
@@ -75,7 +76,7 @@ def concat_array_batches(batches: list[dict[str, np.ndarray]]) -> dict[str, np.n
         name for name in _SHARD_FIELDS
         if name in _REQUIRED_STORAGE_FIELDS or name in present_keys
     ]
-    return {
+    out = {
         k: np.concatenate(
             [
                 np.asarray(batch[k]) if k in batch else _zeros_for_missing(k, batch)
@@ -85,6 +86,22 @@ def concat_array_batches(batches: list[dict[str, np.ndarray]]) -> dict[str, np.n
         )
         for k in keys
     }
+    history_values: list[object] = []
+    missing_history = False
+    for batch in batches:
+        if INPUT_HISTORY_ENCODING_ARRAY_KEY not in batch:
+            missing_history = True
+            continue
+        arr = np.asarray(batch[INPUT_HISTORY_ENCODING_ARRAY_KEY])
+        if arr.ndim != 0:
+            raise ValueError(f"{INPUT_HISTORY_ENCODING_ARRAY_KEY} must be scalar metadata")
+        history_values.append(arr.item())
+    if history_values:
+        first = history_values[0]
+        if missing_history or any(v != first for v in history_values[1:]):
+            raise ValueError(f"mixed replay metadata for {INPUT_HISTORY_ENCODING_ARRAY_KEY}")
+        out[INPUT_HISTORY_ENCODING_ARRAY_KEY] = np.asarray(first)
+    return out
 
 
 def to_nonnegative_int(v: object, default: int = 0) -> int:

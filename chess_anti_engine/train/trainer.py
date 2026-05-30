@@ -6,6 +6,7 @@ import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -33,15 +34,26 @@ except Exception:  # pragma: no cover
 
     _SummaryWriter = _FallbackSummaryWriter
 
-from chess_anti_engine.encoding.lc0 import LC0_FULL
+from chess_anti_engine.encoding.lc0 import (
+    LC0_FULL,
+    normalize_lc0_history_encoding,
+    uses_lc0_root_history,
+    uses_lc0_root_legacy_meta,
+)
 from chess_anti_engine.model import ARCH_SCHEMA_VERSION, ModelConfig
-from chess_anti_engine.moves import COMPACT_POLICY_SIZE, FULL_TO_COMPACT_POLICY, POLICY_SIZE
+from chess_anti_engine.moves import (
+    COMPACT_POLICY_SIZE,
+    COMPACT_TO_FULL_POLICY,
+    FULL_TO_COMPACT_POLICY,
+    POLICY_SIZE,
+)
 from chess_anti_engine.replay.augment import (
     maybe_mirror_batch_arrays,
     maybe_mirror_samples,
 )
-from chess_anti_engine.replay.buffer import ReplayBuffer
+from chess_anti_engine.replay.buffer import ReplayBuffer, ReplaySample
 from chess_anti_engine.replay.dataset import collate, collate_arrays
+from chess_anti_engine.replay.shard import INPUT_HISTORY_ENCODING_ARRAY_KEY
 
 from .aurora import AuroraWithAuxAdam
 from .compile_probe import CompileProbe, apply_compile
@@ -55,8 +67,318 @@ from .losses import (
     wdl_calibration_stats,
 )
 from .muon import MuonWithAuxAdam
+from .soda import SODAWeightDecayWrapper, mark_soda_weight_decay_groups
 
 SummaryWriter = _SummaryWriter  # skylos: ignore (used via runtime fallback)
+
+_LC0_HISTORY_STEPS = 8
+_LC0_PIECE_PLANES = 12
+_INPUT_HISTORY_SELECTED_KEY = "_input_history_encoding_selected"
+
+
+@lru_cache(maxsize=16)
+def _policy_index_lut(
+    lut_name: str,
+    *,
+    device_type: str,
+    device_index: int | None,
+) -> torch.Tensor:
+    if lut_name == "full_to_compact":
+        values = FULL_TO_COMPACT_POLICY
+    elif lut_name == "compact_to_full":
+        values = COMPACT_TO_FULL_POLICY
+    else:
+        raise ValueError(f"unknown policy index LUT {lut_name!r}")
+    device = torch.device(device_type) if device_index is None else torch.device(device_type, device_index)
+    return torch.as_tensor(values, dtype=torch.long, device=device)
+
+
+def _policy_index_lut_for(target: torch.Tensor, lut_name: str) -> torch.Tensor:
+    return _policy_index_lut(
+        lut_name,
+        device_type=target.device.type,
+        device_index=target.device.index,
+    )
+
+
+def _metadata_strings(
+    arrs: dict[str, np.ndarray],
+    key: str,
+    *,
+    n: int | None = None,
+) -> np.ndarray | None:
+    value = arrs.get(key)
+    if value is None:
+        return None
+    array = np.asarray(value)
+    if array.size == 0:
+        return None
+    flat = array.reshape(-1).astype(str)
+    if n is not None:
+        if flat.size == 1:
+            return np.full((n,), str(flat[0]), dtype=object)
+        if flat.size != n:
+            raise ValueError(f"replay metadata {key} has {flat.size} values for {n} rows")
+    return flat.astype(object, copy=False)
+
+
+def _single_metadata_string(arrs: dict[str, np.ndarray], key: str) -> str | None:
+    flat = _metadata_strings(arrs, key)
+    if flat is None:
+        return None
+    first = str(flat[0])
+    if any(str(item) != first for item in flat[1:]):
+        raise ValueError(f"mixed replay metadata {key}: {sorted({str(item) for item in flat})}")
+    return first
+
+
+def _legacy_x_to_synthetic_lc0_root(x: np.ndarray) -> np.ndarray:
+    """Best-effort LC0-root history remap for legacy replay tensors."""
+    src = np.asarray(x)
+    out = np.array(src, copy=True, order="C")
+    out[:, :112, :, :] = 0
+    for hist_idx in range(_LC0_HISTORY_STEPS):
+        legacy_start = hist_idx * _LC0_PIECE_PLANES
+        root_start = hist_idx * (_LC0_PIECE_PLANES + 1)
+        planes = src[:, legacy_start:legacy_start + _LC0_PIECE_PLANES, :, :]
+        if hist_idx % 2 == 0:
+            out[:, root_start:root_start + _LC0_PIECE_PLANES, :, :] = planes
+        else:
+            out[:, root_start:root_start + 6, :, :] = planes[:, 6:12, ::-1, :]
+            out[:, root_start + 6:root_start + 12, :, :] = planes[:, 0:6, ::-1, :]
+        rep_plane = 103 + hist_idx
+        if rep_plane < 111:
+            out[:, root_start + 12, :, :] = src[:, rep_plane, :, :]
+    out[:, 104, :, :] = src[:, 97, :, :]
+    out[:, 105, :, :] = src[:, 96, :, :]
+    out[:, 106, :, :] = src[:, 99, :, :]
+    out[:, 107, :, :] = src[:, 98, :, :]
+    out[:, 108, :, :] = 0
+    out[:, 109, :, :] = src[:, 102, :, :]
+    out[:, 110, :, :] = 0
+    out[:, 111, :, :] = src[:, 111, :, :]
+    return out
+
+
+def _apply_lc0_root_legacy_meta(root_x: np.ndarray, legacy_x: np.ndarray) -> np.ndarray:
+    root = np.array(root_x, copy=True, order="C")
+    legacy = np.asarray(legacy_x)
+    root[:, 109, :, :] = legacy[:, 102, :, :].astype(root.dtype, copy=False)
+    root[:, 110, :, :] = legacy[:, 100, :, :].astype(root.dtype, copy=False)
+    return root
+
+
+def select_input_history_arrays(
+    arrs: dict[str, np.ndarray],
+    *,
+    input_history_encoding: str,
+) -> dict[str, np.ndarray]:
+    """Select the replay input tensor matching the model's configured history layout."""
+    hist_enc = normalize_lc0_history_encoding(input_history_encoding)
+    n = int(np.asarray(arrs["x"]).shape[0])
+    stored_value = arrs.get(INPUT_HISTORY_ENCODING_ARRAY_KEY)
+    if stored_value is not None:
+        stored_array = np.asarray(stored_value)
+        flat_stored = stored_array.reshape(-1)
+        if flat_stored.size == 1 or (
+            flat_stored.size == n
+            and bool(np.all(flat_stored == flat_stored[0]))
+        ):
+            text = str(flat_stored[0]).strip()
+            scalar_enc = normalize_lc0_history_encoding(text) if text else ""
+            if not uses_lc0_root_history(hist_enc):
+                if scalar_enc and uses_lc0_root_history(scalar_enc):
+                    raise ValueError(
+                        "replay x contains rows stored as LC0-root, "
+                        f"cannot train {hist_enc!r} input"
+                    )
+                return arrs
+            selected_enc = _single_metadata_string(arrs, _INPUT_HISTORY_SELECTED_KEY)
+            if selected_enc is not None:
+                if selected_enc != hist_enc:
+                    raise ValueError(
+                        f"replay input history already selected as {selected_enc!r}, "
+                        f"cannot reselect as {hist_enc!r}"
+                    )
+                return arrs
+            if scalar_enc == hist_enc:
+                out = dict(arrs)
+                out[_INPUT_HISTORY_SELECTED_KEY] = np.asarray(hist_enc)
+                return out
+            if scalar_enc and uses_lc0_root_history(scalar_enc):
+                raise ValueError(f"replay x contains incompatible stored history encodings: {[scalar_enc]}")
+    elif not uses_lc0_root_history(hist_enc):
+        return arrs
+
+    stored_raw = _metadata_strings(arrs, INPUT_HISTORY_ENCODING_ARRAY_KEY, n=n)
+    stored_enc = np.full((n,), "", dtype=object)
+    if stored_raw is not None:
+        for i, raw in enumerate(stored_raw):
+            text = str(raw).strip()
+            stored_enc[i] = normalize_lc0_history_encoding(text) if text else ""
+    if not uses_lc0_root_history(hist_enc):
+        root_rows = np.array(
+            [uses_lc0_root_history(str(enc)) if str(enc) else False for enc in stored_enc],
+            dtype=bool,
+        )
+        if bool(np.any(root_rows)):
+            raise ValueError(
+                f"replay x contains {int(root_rows.sum())} rows stored as LC0-root, "
+                f"cannot train {hist_enc!r} input"
+            )
+        return arrs
+    selected_enc = _single_metadata_string(arrs, _INPUT_HISTORY_SELECTED_KEY)
+    if selected_enc is not None:
+        if selected_enc != hist_enc:
+            raise ValueError(
+                f"replay input history already selected as {selected_enc!r}, "
+                f"cannot reselect as {hist_enc!r}"
+            )
+        return arrs
+    already_root = stored_enc == hist_enc
+    mismatched_root = np.array(
+        [
+            bool(enc) and enc != hist_enc and uses_lc0_root_history(str(enc))
+            for enc in stored_enc
+        ],
+        dtype=bool,
+    )
+    if bool(np.any(mismatched_root)):
+        bad = sorted({str(enc) for enc in stored_enc[mismatched_root]})
+        raise ValueError(f"replay x contains incompatible stored history encodings: {bad}")
+    if bool(np.all(already_root)):
+        out = dict(arrs)
+        out[_INPUT_HISTORY_SELECTED_KEY] = np.asarray(hist_enc)
+        return out
+    out = dict(arrs)
+    legacy_x = np.asarray(out["x"])
+    convert_rows = ~already_root
+    root_x = np.array(legacy_x, copy=True, order="C")
+    if bool(np.any(convert_rows)):
+        root_x[convert_rows] = _legacy_x_to_synthetic_lc0_root(legacy_x[convert_rows])
+    if "x_lc0_root" in out:
+        recorded = np.asarray(out["x_lc0_root"])
+        has = np.asarray(out.get("has_x_lc0_root", np.ones((legacy_x.shape[0],), dtype=np.uint8))) != 0
+        if recorded.shape == legacy_x.shape and has.shape == (legacy_x.shape[0],):
+            use_recorded = has & convert_rows
+            root_x[use_recorded] = recorded[use_recorded]
+    if uses_lc0_root_legacy_meta(hist_enc):
+        if bool(np.any(convert_rows)):
+            patched = _apply_lc0_root_legacy_meta(root_x[convert_rows], legacy_x[convert_rows])
+            root_x[convert_rows] = patched
+    out["x"] = root_x
+    out[_INPUT_HISTORY_SELECTED_KEY] = np.asarray(hist_enc)
+    out[INPUT_HISTORY_ENCODING_ARRAY_KEY] = np.full((n,), hist_enc, dtype=object)
+    return out
+
+
+def select_input_history_samples(
+    samples: list[ReplaySample],
+    *,
+    input_history_encoding: str,
+) -> list[ReplaySample]:
+    """Select configured input planes for in-memory replay samples."""
+    hist_enc = normalize_lc0_history_encoding(input_history_encoding)
+    if not samples:
+        return samples
+    if not uses_lc0_root_history(hist_enc):
+        root_samples = [
+            sample
+            for sample in samples
+            if sample.input_history_encoding
+            and uses_lc0_root_history(sample.input_history_encoding)
+        ]
+        if root_samples:
+            raise ValueError(
+                f"replay samples contain {len(root_samples)} rows stored as LC0-root, "
+                f"cannot train {hist_enc!r} input"
+            )
+        return samples
+
+    legacy_x = np.stack([np.asarray(s.x) for s in samples], axis=0)
+    arrs: dict[str, np.ndarray] = {
+        "x": legacy_x,
+        INPUT_HISTORY_ENCODING_ARRAY_KEY: np.asarray(
+            [
+                normalize_lc0_history_encoding(sample.input_history_encoding)
+                if sample.input_history_encoding
+                else ""
+                for sample in samples
+            ],
+            dtype=object,
+        ),
+    }
+    if any(s.x_lc0_root is not None for s in samples):
+        recorded = np.zeros_like(legacy_x)
+        has = np.zeros((len(samples),), dtype=np.uint8)
+        for i, sample in enumerate(samples):
+            if sample.x_lc0_root is not None:
+                recorded[i] = np.asarray(sample.x_lc0_root)
+                has[i] = 1
+        arrs["x_lc0_root"] = recorded
+        arrs["has_x_lc0_root"] = has
+
+    selected = select_input_history_arrays(arrs, input_history_encoding=hist_enc)["x"]
+    return [
+        dataclasses.replace(sample, x=selected[i], input_history_encoding=hist_enc)
+        for i, sample in enumerate(samples)
+    ]
+
+
+class _ChainedOptimizer(torch.optim.Optimizer):
+    """Expose multiple optimizers as one optimizer for trainer scheduling."""
+
+    def __init__(self, optimizers: list[torch.optim.Optimizer]) -> None:
+        params = [
+            param
+            for opt in optimizers
+            for group in opt.param_groups
+            for param in group["params"]
+        ]
+        self._initializing = True
+        super().__init__(params, defaults={})
+        self._initializing = False
+        self.optimizers = optimizers
+        self.param_groups = [
+            group
+            for opt in optimizers
+            for group in opt.param_groups
+        ]
+        self.state.clear()
+
+    def add_param_group(self, param_group: dict[str, Any]) -> None:  # type: ignore[override]
+        if getattr(self, "_initializing", False):
+            torch.optim.Optimizer.add_param_group(self, param_group)
+            return
+        del param_group
+        raise NotImplementedError(
+            "_ChainedOptimizer cannot route add_param_group() to a child optimizer; "
+            "add new parameters to the intended child optimizer directly."
+        )
+
+    def zero_grad(self, set_to_none: bool = True) -> None:  # type: ignore[override]
+        for opt in self.optimizers:
+            opt.zero_grad(set_to_none=set_to_none)
+
+    def step(self, closure: Callable[[], float] | None = None) -> float:  # type: ignore[override]  # pyright: ignore[reportIncompatibleMethodOverride]
+        loss = 0.0
+        for i, opt in enumerate(self.optimizers):
+            loss_i = opt.step(closure if i == 0 else None)
+            if loss_i is not None:
+                loss = float(loss_i)
+        return loss
+
+    def state_dict(self) -> dict[str, Any]:  # type: ignore[override]
+        return {"optimizers": [opt.state_dict() for opt in self.optimizers]}
+
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:  # type: ignore[override]
+        for opt, opt_state in zip(self.optimizers, state_dict["optimizers"], strict=True):
+            opt.load_state_dict(opt_state)
+        self.param_groups = [
+            group
+            for opt in self.optimizers
+            for group in opt.param_groups
+        ]
 
 
 def _split_decay_groups(
@@ -89,6 +411,31 @@ def _split_decay_groups(
         else:
             aux_decay.append(param)
     return hidden_decay, hidden_no_decay, aux_decay, aux_no_decay
+
+
+def _extract_named_params(
+    groups: tuple[list, ...],
+    model: torch.nn.Module,
+    predicate: Callable[[str, torch.nn.Parameter], bool],
+) -> list:
+    """Remove matching parameters from ``groups`` and return them in model order."""
+    wanted_ids = {
+        id(param)
+        for name, param in model.named_parameters()
+        if param.requires_grad and predicate(name, param)
+    }
+    if not wanted_ids:
+        return []
+    extracted: list = []
+    for group in groups:
+        kept = []
+        for param in group:
+            if id(param) in wanted_ids:
+                extracted.append(param)
+            else:
+                kept.append(param)
+        group[:] = kept
+    return extracted
 
 
 def _matrix_optimizer_filter(
@@ -124,11 +471,11 @@ def _matrix_optimizer_filter(
         return lambda name, p: _is_block_matrix(name, p) and _is_ffn(name)
     if scope in ("mlp_out", "mlp_o", "mlp_attn_o", "mlp_attention_o"):
         return lambda name, p: _is_block_matrix(name, p) and (_is_ffn(name) or _is_attn_out(name))
-    if scope in ("mlp_out_v", "mlp_attn_o_v", "mlp_attention_o_v"):
+    if scope in ("mlp_out_v", "mlp_v_out", "mlp_attn_ov", "mlp_attention_ov"):
         return lambda name, p: _is_block_matrix(name, p) and (
             _is_ffn(name) or _is_attn_out(name) or _is_attn_v(name)
         )
-    if scope in ("mlp_attention_all", "attn_mlp", "all_attention_mlp"):
+    if scope in ("mlp_attn_all", "mlp_attention_all", "attn_mlp", "all_attention_mlp"):
         return lambda name, p: _is_block_matrix(name, p) and (
             _is_ffn(name) or _is_attn_out(name) or _is_attn_input(name)
         )
@@ -153,6 +500,7 @@ class TrainMetrics:
     sf_volatility_loss: float
     moves_left_loss: float
     blended_wdl_loss: float = 0.0
+    channel_balance: float = 0.0
     sf_search_agree_frac: float = 0.0
     sf_search_disagree_sf_low_frac: float = 0.0
     sf_search_disagree_sf_high_frac: float = 0.0
@@ -165,6 +513,16 @@ class TrainMetrics:
     opt_step_time_s: float = 0.0
     train_steps_done: int = 0
     train_samples_seen: int = 0
+    aurora_uw_floor: float = 0.0
+    aurora_uw_count: float = 0.0
+    aurora_uw_ratio_min: float = 0.0
+    aurora_uw_ratio_p10: float = 0.0
+    aurora_uw_ratio_median: float = 0.0
+    aurora_uw_ratio_p90: float = 0.0
+    aurora_uw_scale_max: float = 0.0
+    aurora_uw_floored_frac: float = 0.0
+    aurora_uw_effective_ratio_min: float = 0.0
+    aurora_uw_effective_ratio_median: float = 0.0
   # Per-source loss split (observation-only; only meaningful once shards carry is_selfplay).
     policy_loss_selfplay: float = 0.0
     policy_loss_curriculum: float = 0.0
@@ -229,10 +587,10 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
     def _f(key: str, default: float, typ: type = float) -> Any:
         return typ(config.get(key, default))
 
-  # Handle grad_clip → zclip_max_norm alias
-    zclip_max_norm = float(config.get(
-        "zclip_max_norm", config.get("grad_clip", 1.0)
-    ))
+  # Handle grad_clip -> zclip_max_norm alias. None disables the fixed hard cap
+  # while leaving adaptive z-score clipping active.
+    zclip_max_norm_raw = config.get("zclip_max_norm", config.get("grad_clip", 1.0))
+    zclip_max_norm = None if zclip_max_norm_raw is None else float(zclip_max_norm_raw)
 
   # w_sf_volatility falls back to w_volatility if not explicitly set
     w_volatility = _f("w_volatility", 0.05)
@@ -244,6 +602,7 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         lr=_f("lr", 3e-4),
         zclip_z_thresh=_f("zclip_z_thresh", 2.5),
         zclip_alpha=_f("zclip_alpha", 0.97),
+        zclip_clip_factor=_f("zclip_clip_factor", 1.0),
         zclip_max_norm=zclip_max_norm,
         use_amp=bool(config.get("use_amp", True)),
         feature_dropout_p=_f("feature_dropout_p", 0.3),
@@ -253,6 +612,8 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         fdp_mobility=config.get("fdp_mobility"),
         fdp_outposts=config.get("fdp_outposts"),
         w_volatility=w_volatility,
+        resid_channel_dropout=_f("resid_channel_dropout", 0.0),
+        resid_channel_balance_weight=_f("resid_channel_balance_weight", 0.0),
         accum_steps=_f("accum_steps", 1, int),
         warmup_steps=_f("warmup_steps", 1500, int),
         warmup_lr_start=config.get("warmup_lr_start"),
@@ -266,6 +627,13 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         matrix_lr_multiplier=_f("matrix_lr_multiplier", 20.0),
         matrix_weight_decay=_f("matrix_weight_decay", 1e-4),
         aux_weight_decay=_f("aux_weight_decay", 1e-4),
+        global_board_preprocess_lr_multiplier=_f("global_board_preprocess_lr_multiplier", 1.0),
+        global_board_preprocess_weight_decay=_f("global_board_preprocess_weight_decay", 0.0),
+        global_board_adapter_lr_multiplier=_f("global_board_adapter_lr_multiplier", 1.0),
+        global_board_adapter_weight_decay=_f("global_board_adapter_weight_decay", 0.0),
+        weight_decay_mode=str(config.get("weight_decay_mode", "weight_decay")),
+        soda_scope=str(config.get("soda_scope", "decay")),
+        soda_start_step=_f("soda_start_step", 0, int),
         aurora_uw_floor=_f("aurora_uw_floor", 0.0),
         aurora_pp_iterations=_f("aurora_pp_iterations", 2, int),
         aurora_pp_beta=_f("aurora_pp_beta", 0.5),
@@ -308,7 +676,8 @@ class Trainer:
         lr: float,
         zclip_z_thresh: float = 2.5,
         zclip_alpha: float = 0.97,
-        zclip_max_norm: float = 1.0,
+        zclip_clip_factor: float = 1.0,
+        zclip_max_norm: float | None = 1.0,
         log_dir: Path | None = None,
         use_amp: bool = True,
         feature_dropout_p: float = 0.3,
@@ -331,6 +700,13 @@ class Trainer:
         matrix_lr_multiplier: float = 20.0,
         matrix_weight_decay: float = 1e-4,
         aux_weight_decay: float = 1e-4,
+        global_board_preprocess_lr_multiplier: float = 1.0,
+        global_board_preprocess_weight_decay: float = 0.0,
+        global_board_adapter_lr_multiplier: float = 1.0,
+        global_board_adapter_weight_decay: float = 0.0,
+        weight_decay_mode: str = "weight_decay",
+        soda_scope: str = "decay",
+        soda_start_step: int = 0,
         aurora_uw_floor: float = 0.0,
         aurora_pp_iterations: int = 2,
         aurora_pp_beta: float = 0.5,
@@ -351,6 +727,8 @@ class Trainer:
         w_sf_move: float = 0.15,
         w_sf_eval: float = 0.15,
         w_categorical: float = 0.10,
+        resid_channel_dropout: float = 0.0,
+        resid_channel_balance_weight: float = 0.0,
         w_sf_volatility: float | None = None,
         w_moves_left: float = 0.02,
         sf_wdl_frac: float = 0.0,
@@ -375,30 +753,109 @@ class Trainer:
   # a sibling params.json. Kept optional for backward compatibility
   # with direct Trainer() construction in tests.
         self._model_config = model_config
+        self._input_history_encoding = normalize_lc0_history_encoding(
+            model_config.input_history_encoding if model_config is not None else None
+        )
 
         optimizer = str(optimizer).lower()
         matrix_optimizer_scope = str(matrix_optimizer_scope).lower()
-        if optimizer in ("muon", "aurora"):
-            hidden_filter = _matrix_optimizer_filter(
-                matrix_optimizer_scope,
-                include_embed_default=(optimizer == "muon"),
+        weight_decay_mode = str(weight_decay_mode).lower()
+        if weight_decay_mode not in ("weight_decay", "soda"):
+            raise ValueError(
+                f"Unknown weight_decay_mode {weight_decay_mode!r}. "
+                "Supported: weight_decay, soda"
             )
+        soda_scope = str(soda_scope or "decay").lower()
+        soda_scope_aliases = {
+            "decay": "decay",
+            "weight_decay": "decay",
+            "nonzero_decay": "decay",
+            "hidden_matrix_only": "hidden_matrix_only",
+        }
+        if soda_scope not in soda_scope_aliases:
+            raise ValueError(
+                f"Unknown soda_scope {soda_scope!r}. "
+                "Supported: decay, hidden_matrix_only "
+                "(aliases: weight_decay, nonzero_decay)"
+            )
+        soda_scope = soda_scope_aliases[soda_scope]
+        soda_start_step = max(0, int(soda_start_step))
+        use_soda_weight_decay = False
+
+        def _mark_soda(param_groups: list[dict], *, hidden_group_indices: tuple[int, ...] = (0,)) -> bool:
+            if weight_decay_mode != "soda":
+                return False
+            if soda_scope == "decay":
+                return mark_soda_weight_decay_groups(param_groups, start_step=soda_start_step)
+            for group in param_groups:
+                group["weight_decay"] = 0.0
+            marked = False
+            for idx in hidden_group_indices:
+                if 0 <= idx < len(param_groups):
+                    marked = (
+                        mark_soda_weight_decay_groups(
+                            [param_groups[idx]],
+                            start_step=soda_start_step,
+                            force=True,
+                        )
+                        or marked
+                    )
+            return marked
+
+        if optimizer in ("muon", "aurora"):
+            if optimizer == "muon":
+                hidden_filter = _matrix_optimizer_filter(matrix_optimizer_scope, include_embed_default=True)
+            else:
+                hidden_filter = _matrix_optimizer_filter(matrix_optimizer_scope, include_embed_default=False)
             hd, hnd, ad, and_ = _split_decay_groups(
                 self.model,
                 hidden_filter=hidden_filter,
+            )
+            global_board_preprocess_params = _extract_named_params(
+                (hd, hnd, ad, and_),
+                self.model,
+                lambda name, _param: name.startswith("global_board_preprocess."),
+            )
+            global_board_adapter_params = _extract_named_params(
+                (hd, hnd, ad, and_),
+                self.model,
+                lambda name, _param: name.startswith("global_board_adapter."),
             )
   # Muon/Aurora trunk gets a larger LR than the AdamW fallback for heads/norms.
   # Keep one Tune-search LR and derive trunk LR so search stays simple.
             matrix_lr = float(lr) * float(matrix_lr_multiplier)
             matrix_wd = float(matrix_weight_decay)
             aux_wd = float(aux_weight_decay)
+            branch_groups = []
+            if global_board_preprocess_params:
+                branch_groups.append(
+                    {
+                        "params": global_board_preprocess_params,
+                        "weight_decay": float(global_board_preprocess_weight_decay),
+                        "use_muon": False,
+                        "use_aurora": False,
+                        "lr": float(lr) * float(global_board_preprocess_lr_multiplier),
+                    }
+                )
+            if global_board_adapter_params:
+                branch_groups.append(
+                    {
+                        "params": global_board_adapter_params,
+                        "weight_decay": float(global_board_adapter_weight_decay),
+                        "use_muon": False,
+                        "use_aurora": False,
+                        "lr": float(lr) * float(global_board_adapter_lr_multiplier),
+                    }
+                )
             if optimizer == "muon":
                 param_groups = [
                     {"params": hd, "weight_decay": matrix_wd, "use_muon": True, "lr": matrix_lr},
                     {"params": hnd, "weight_decay": 0.0, "use_muon": True, "lr": matrix_lr},
                     {"params": ad, "weight_decay": aux_wd, "use_muon": False, "lr": float(lr)},
                     {"params": and_, "weight_decay": 0.0, "use_muon": False, "lr": float(lr)},
+                    *branch_groups,
                 ]
+                use_soda_weight_decay = _mark_soda(param_groups)
                 self.opt = MuonWithAuxAdam(param_groups)
             else:
                 param_groups = [
@@ -412,7 +869,9 @@ class Trainer:
                     {"params": hnd, "weight_decay": 0.0, "use_aurora": False, "lr": float(lr)},
                     {"params": ad, "weight_decay": aux_wd, "use_aurora": False, "lr": float(lr)},
                     {"params": and_, "weight_decay": 0.0, "use_aurora": False, "lr": float(lr)},
+                    *branch_groups,
                 ]
+                use_soda_weight_decay = _mark_soda(param_groups)
                 self.opt = AuroraWithAuxAdam(
                     param_groups,
                     aurora_pp_iterations=int(aurora_pp_iterations),
@@ -425,28 +884,67 @@ class Trainer:
         elif optimizer == "cosmos_fast":
             hd, hnd, ad, and_ = _split_decay_groups(
                 self.model,
-                hidden_filter=lambda name, p: p.ndim == 2 and name.startswith("blocks."),
+                hidden_filter=_matrix_optimizer_filter(matrix_optimizer_scope, include_embed_default=False),
             )
+            matrix_wd = float(matrix_weight_decay)
+            aux_wd = float(aux_weight_decay)
             param_groups = [
-                {"params": hd, "weight_decay": 1e-4, "use_cosmos_fast": True},
+                {"params": hd, "weight_decay": matrix_wd, "use_cosmos_fast": True},
                 {"params": hnd, "weight_decay": 0.0, "use_cosmos_fast": True},
-                {"params": ad, "weight_decay": 1e-4, "use_cosmos_fast": False},
+                {"params": ad, "weight_decay": aux_wd, "use_cosmos_fast": False},
                 {"params": and_, "weight_decay": 0.0, "use_cosmos_fast": False},
             ]
+            use_soda_weight_decay = _mark_soda(param_groups)
             self.opt = COSMOSFast(
                 param_groups,
                 lr=lr,
-                weight_decay=1e-4,
+                rank=int(cosmos_rank),
+                gamma=float(cosmos_gamma),
+            )
+        elif optimizer == "cosmos" and matrix_optimizer_scope not in ("default", "", "legacy"):
+            hd, hnd, ad, and_ = _split_decay_groups(
+                self.model,
+                hidden_filter=_matrix_optimizer_filter(matrix_optimizer_scope, include_embed_default=False),
+            )
+            matrix_wd = float(matrix_weight_decay)
+            aux_wd = float(aux_weight_decay)
+            param_groups = [
+                {"params": hd, "weight_decay": matrix_wd, "use_cosmos": True},
+                {"params": hnd, "weight_decay": 0.0, "use_cosmos": False},
+                {"params": ad, "weight_decay": aux_wd, "use_cosmos": False},
+                {"params": and_, "weight_decay": 0.0, "use_cosmos": False},
+            ]
+            use_soda_weight_decay = _mark_soda(param_groups)
+            self.opt = COSMOS(
+                param_groups,
+                lr=lr,
                 rank=int(cosmos_rank),
                 gamma=float(cosmos_gamma),
             )
         else:
   # Selective weight decay: apply only to non-bias, non-LayerNorm parameters.
-            _, _, decay_params, no_decay_params = _split_decay_groups(self.model)
-            param_groups = [
-                {"params": decay_params, "weight_decay": 1e-4},
-                {"params": no_decay_params, "weight_decay": 0.0},
-            ]
+            if weight_decay_mode == "soda" and soda_scope == "hidden_matrix_only":
+                hd, hnd, ad, and_ = _split_decay_groups(
+                    self.model,
+                    hidden_filter=_matrix_optimizer_filter(
+                        matrix_optimizer_scope,
+                        include_embed_default=False,
+                    ),
+                )
+                param_groups = [
+                    {"params": hd, "weight_decay": 0.0},
+                    {"params": hnd, "weight_decay": 0.0},
+                    {"params": ad, "weight_decay": 0.0},
+                    {"params": and_, "weight_decay": 0.0},
+                ]
+                use_soda_weight_decay = _mark_soda(param_groups)
+            else:
+                _, _, decay_params, no_decay_params = _split_decay_groups(self.model)
+                param_groups = [
+                    {"params": decay_params, "weight_decay": 1e-4},
+                    {"params": no_decay_params, "weight_decay": 0.0},
+                ]
+                use_soda_weight_decay = _mark_soda(param_groups)
 
         if optimizer == "nadamw":
   # NAdam with decoupled weight decay (spec: β1=0.9, β2=0.98, ε=1e-7).
@@ -463,7 +961,12 @@ class Trainer:
         elif optimizer == "aurora":
             pass
         elif optimizer == "cosmos":
-            self.opt = COSMOS(param_groups, lr=lr, weight_decay=1e-4)
+            if matrix_optimizer_scope in ("default", "", "legacy"):
+                self.opt = COSMOS(
+                    param_groups,
+                    lr=lr,
+                    weight_decay=0.0 if weight_decay_mode == "soda" else 1e-4,
+                )
         elif optimizer == "cosmos_fast":
             pass
         elif optimizer == "soap":
@@ -482,15 +985,58 @@ class Trainer:
                         "or the `pytorch-optimizer` package. "
                         "Install with: pip install pytorch-optimizer"
                     ) from exc
-            try:
-                self.opt = SOAP(param_groups, lr=lr)
-            except TypeError:
-                self.opt = SOAP(self.model.parameters(), lr=lr)
+            if matrix_optimizer_scope in ("default", "", "legacy"):
+                try:
+                    self.opt = SOAP(param_groups, lr=lr)
+                except TypeError:
+                    self.opt = SOAP(self.model.parameters(), lr=lr)
+            else:
+                hd, hnd, ad, and_ = _split_decay_groups(
+                    self.model,
+                    hidden_filter=_matrix_optimizer_filter(matrix_optimizer_scope, include_embed_default=False),
+                )
+                matrix_wd = float(matrix_weight_decay)
+                aux_wd = float(aux_weight_decay)
+                soap_groups = [{"params": hd, "weight_decay": matrix_wd}]
+                adam_groups = [
+                    {"params": hnd, "weight_decay": 0.0, "lr": float(lr)},
+                    {"params": ad, "weight_decay": aux_wd, "lr": float(lr)},
+                    {"params": and_, "weight_decay": 0.0, "lr": float(lr)},
+                ]
+                if weight_decay_mode == "soda" and soda_scope == "hidden_matrix_only":
+                    for group in adam_groups:
+                        group["weight_decay"] = 0.0
+                    use_soda_weight_decay = mark_soda_weight_decay_groups(
+                        soap_groups,
+                        start_step=soda_start_step,
+                        force=True,
+                    )
+                else:
+                    soap_soda = _mark_soda(soap_groups)
+                    adam_soda = _mark_soda(adam_groups, hidden_group_indices=())
+                    use_soda_weight_decay = soap_soda or adam_soda
+                self.opt = _ChainedOptimizer(
+                    [
+                        SOAP(soap_groups, lr=lr, weight_decay=0.0),
+                        torch.optim.AdamW(adam_groups, lr=lr),
+                    ]
+                )
         else:
             raise ValueError(
                 f"Unknown optimizer {optimizer!r}. Supported: nadamw, adamw, muon, aurora, cosmos, cosmos_fast, soap"
             )
-        self.zclip = ZClip(mode="zscore", alpha=float(zclip_alpha), z_thresh=float(zclip_z_thresh), max_grad_norm=float(zclip_max_norm), warmup_steps=25)
+
+        if use_soda_weight_decay:
+            self.opt = SODAWeightDecayWrapper(self.opt)
+        max_grad_norm = None if zclip_max_norm is None else float(zclip_max_norm)
+        self.zclip = ZClip(
+            mode="zscore",
+            alpha=float(zclip_alpha),
+            z_thresh=float(zclip_z_thresh),
+            max_grad_norm=max_grad_norm,  # pyright: ignore[reportArgumentType] # zclip accepts None to disable the hard cap.
+            clip_factor=float(zclip_clip_factor),
+            warmup_steps=25,
+        )
         self.writer = SummaryWriter(log_dir=str(log_dir or "tb"))
         self.step = 0
         self._tb_log_interval = max(1, int(tb_log_interval))
@@ -525,6 +1071,12 @@ class Trainer:
         self.w_sf_eval = float(w_sf_eval)
         self.w_categorical = float(w_categorical)
         self.w_volatility = float(w_volatility)
+        self.resid_channel_dropout = max(0.0, min(0.95, float(resid_channel_dropout)))
+        if hasattr(self.model, "resid_channel_dropout"):
+            setattr(self.model, "resid_channel_dropout", self.resid_channel_dropout)
+        self.resid_channel_balance_weight = max(0.0, float(resid_channel_balance_weight))
+        if hasattr(self.model, "resid_channel_balance_weight"):
+            setattr(self.model, "resid_channel_balance_weight", self.resid_channel_balance_weight)
         self.w_sf_volatility = float(w_sf_volatility) if w_sf_volatility is not None else float(w_volatility)
         self.w_moves_left = float(w_moves_left)
         self.sf_wdl_frac = float(sf_wdl_frac)
@@ -585,6 +1137,50 @@ class Trainer:
 
     def _should_log_step_scalars(self) -> bool:
         return (self.step % self._tb_log_interval) == 0
+
+    def _zclip_step(self, *, collect_stats: bool) -> tuple[float, dict[str, float] | None]:
+        if not collect_stats:
+            return float(self.zclip.step(self.model)), None
+
+        was_initialized = bool(getattr(self.zclip, "initialized", False))
+        mean_raw = getattr(self.zclip, "mean", 0.0)
+        var_raw = getattr(self.zclip, "var", 0.0)
+        mean = float(mean_raw if mean_raw is not None else 0.0)
+        var = float(var_raw if var_raw is not None else 0.0)
+        total_norm = float(self.zclip.step(self.model))
+        clip_val = None
+        if was_initialized:
+            std = var ** 0.5
+            mode = str(getattr(self.zclip, "mode", "zscore"))
+            z_thresh = float(getattr(self.zclip, "z_thresh", 0.0))
+            if mode == "percentile":
+                threshold = mean + z_thresh * std
+                if total_norm > threshold:
+                    clip_val = threshold
+            elif mode == "zscore":
+                z_score = (total_norm - mean) / (std + float(getattr(self.zclip, "eps", 1e-8)))
+                if z_score > z_thresh:
+                    clip_option = str(getattr(self.zclip, "clip_option", "adaptive_scaling"))
+                    if clip_option == "adaptive_scaling":
+                        eta = z_score / z_thresh
+                        clip_val = (mean + (z_thresh * std) / eta) * float(getattr(self.zclip, "clip_factor", 1.0))
+                    elif clip_option == "mean":
+                        clip_val = mean
+        adaptive_clip = float(clip_val) if clip_val is not None else total_norm
+        max_grad_norm = getattr(self.zclip, "max_grad_norm", None)
+        effective_clip = adaptive_clip
+        if max_grad_norm is not None:
+            effective_clip = min(effective_clip, float(max_grad_norm))
+
+        clipped = effective_clip < total_norm
+        stats = {
+            "total_norm": total_norm,
+            "effective_clip": float(effective_clip),
+            "adaptive_clip": 1.0 if clip_val is not None and adaptive_clip < total_norm else 0.0,
+            "hard_clip": 1.0 if max_grad_norm is not None and clipped and effective_clip == float(max_grad_norm) else 0.0,
+            "clipped": 1.0 if clipped else 0.0,
+        }
+        return total_norm, stats
 
     @property
     def _loss_kwargs(self) -> dict[str, float]:
@@ -668,24 +1264,29 @@ class Trainer:
         batch_size: int,
         mirror_prob: float,
     ) -> dict[str, np.ndarray] | list:
-        input_history_encoding = (
-            None if self._model_config is None else self._model_config.input_history_encoding
-        )
         if hasattr(buf, "sample_batch_arrays"):
             arrs = buf.sample_batch_arrays(batch_size)
+            arrs = select_input_history_arrays(
+                arrs,
+                input_history_encoding=self._input_history_encoding,
+            )
             return maybe_mirror_batch_arrays(
                 arrs,
                 rng=buf.rng,
                 prob=mirror_prob,
-                input_history_encoding=input_history_encoding,
+                input_history_encoding=self._input_history_encoding,
             )
 
         samples = buf.sample_batch(batch_size)
+        samples = select_input_history_samples(
+            samples,
+            input_history_encoding=self._input_history_encoding,
+        )
         return maybe_mirror_samples(
             samples,
             rng=buf.rng,
             prob=mirror_prob,
-            input_history_encoding=input_history_encoding,
+            input_history_encoding=self._input_history_encoding,
         )
 
     def _host_batch_to_tensors(self, batch: dict[str, np.ndarray] | list) -> dict[str, torch.Tensor]:
@@ -727,6 +1328,12 @@ class Trainer:
                         mirror_prob=mirror_prob,
                     )
                 yield self._host_batch_to_tensors(host_batch)
+
+    def reset_optimizer_reference_weights(self) -> None:
+        """Refresh optimizer reference weights after model-only loads."""
+        reset_anchors = getattr(self.opt, "reset_anchors", None)
+        if callable(reset_anchors):
+            reset_anchors()
 
     def _base_lrs(self) -> list[float]:
         base_lrs = list(getattr(self._scheduler, "base_lrs", []))
@@ -867,23 +1474,38 @@ class Trainer:
                 for k in k_values
             }
 
-        def _align_target_index(target: torch.Tensor, width: int) -> torch.Tensor:
-            if int(width) != int(COMPACT_POLICY_SIZE):
-                return target
-            full_to_compact = torch.as_tensor(
-                FULL_TO_COMPACT_POLICY,
-                dtype=torch.long,
-                device=target.device,
-            )
-            target = target.clamp(0, POLICY_SIZE - 1).to(torch.long)
-            return full_to_compact.index_select(0, target)
+        def _align_index(
+            target: torch.Tensor, *, source_width: int, dst_width: int,
+        ) -> tuple[torch.Tensor, torch.Tensor]:
+            if source_width == dst_width:
+                return target, torch.ones_like(target, dtype=torch.bool)
+            if source_width == POLICY_SIZE and dst_width == COMPACT_POLICY_SIZE:
+                lut = _policy_index_lut_for(target, "full_to_compact")
+                valid = (target >= 0) & (target < POLICY_SIZE)
+                safe_target = target.clamp(0, POLICY_SIZE - 1).to(torch.long)
+                mapped = lut.index_select(0, safe_target)
+                return mapped, valid & (mapped >= 0)
+            if source_width == COMPACT_POLICY_SIZE and dst_width == POLICY_SIZE:
+                lut = _policy_index_lut_for(target, "compact_to_full")
+                valid = (target >= 0) & (target < COMPACT_POLICY_SIZE)
+                safe_target = target.clamp(0, COMPACT_POLICY_SIZE - 1).to(torch.long)
+                mapped = lut.index_select(0, safe_target)
+                return mapped, valid
+            raise ValueError(f"policy index width {source_width} is incompatible with logits width {dst_width}")
+
+        def _policy_width_from_batch(*keys: str) -> int:
+            for key in keys:
+                value = batch.get(key)
+                if value is not None and value.ndim >= 2:
+                    return int(value.shape[-1])
+            return POLICY_SIZE
 
         pol_logits = out.get("policy") if "policy" in out else out.get("policy_own")
         pol_target = batch.get("policy_t")
         has_policy = batch.get("has_policy")
         if pol_logits is not None and pol_target is not None and has_policy is not None:
             logits = apply_policy_mask_to_logits(pol_logits.detach(), batch, "legal_mask", "has_legal_mask")
-            tgt = torch.argmax(align_policy_target(pol_target, int(logits.shape[-1])), dim=-1)
+            tgt = torch.argmax(align_policy_target(pol_target, int(pol_logits.shape[-1])), dim=-1)
             tk = _topk(logits, tgt, has_policy.to(torch.float32), (1, 5))
             stats["policy_own_acc_top1"] = tk[1]
             stats["policy_own_acc_top5"] = tk[5]
@@ -891,10 +1513,11 @@ class Trainer:
         sf_logits = out.get("policy_sf")
         has_sf_move = batch.get("has_sf_move")
         if sf_logits is not None and has_sf_move is not None and "sf_move_index" in batch:
+            dst_width = int(sf_logits.shape[-1])
             logits = apply_policy_mask_to_logits(sf_logits.detach(), batch, "sf_legal_mask", "has_sf_legal_mask")
-            sf_idx = _align_target_index(batch["sf_move_index"], int(logits.shape[-1]))
-            valid = (sf_idx >= 0).to(torch.float32) * has_sf_move.to(torch.float32)
-            tk = _topk(logits, sf_idx.clamp_min(0), valid, (1, 5))
+            source_width = _policy_width_from_batch("sf_legal_mask", "sf_policy_t", "policy_t")
+            tgt, valid_idx = _align_index(batch["sf_move_index"], source_width=source_width, dst_width=dst_width)
+            tk = _topk(logits, tgt, has_sf_move.to(torch.float32) * valid_idx.to(torch.float32), (1, 5))
             stats["sf_move_acc"] = tk[1]
             stats["sf_move_acc_top5"] = tk[5]
 
@@ -903,7 +1526,7 @@ class Trainer:
         has_future = batch.get("has_future")
         if fut_logits is not None and fut_target is not None and has_future is not None:
             logits = apply_policy_mask_to_logits(fut_logits.detach(), batch, "future_legal_mask", "has_future_legal_mask")
-            tgt = torch.argmax(align_policy_target(fut_target, int(logits.shape[-1])), dim=-1)
+            tgt = torch.argmax(align_policy_target(fut_target, int(fut_logits.shape[-1])), dim=-1)
             tk = _topk(logits, tgt, has_future.to(torch.float32), (1, 5))
             stats["policy_future_acc_top1"] = tk[1]
             stats["policy_future_acc_top5"] = tk[5]
@@ -987,6 +1610,10 @@ class Trainer:
             with self._amp_context():
                 out = self.model(batch["x"])
                 losses = compute_loss(out, batch, **self._loss_kwargs)
+                balance_loss = getattr(self.model, "_last_channel_balance_loss", None)
+                if balance_loss is not None and self.resid_channel_balance_weight > 0.0:
+                    losses["channel_balance"] = balance_loss
+                    losses["total"] = losses["total"] + self.resid_channel_balance_weight * balance_loss
                 loss = losses["total"] / self.accum_steps
             loss.backward()
 
@@ -1002,9 +1629,16 @@ class Trainer:
 
             step_n_micro += 1
 
-        grad_norm = self.zclip.step(self.model)
-        if self._should_log_step_scalars():
+        should_log = self._should_log_step_scalars()
+        grad_norm, zclip_stats = self._zclip_step(collect_stats=should_log)
+        if should_log:
             self.writer.add_scalar("train/grad_norm", float(grad_norm), self.step)
+            if zclip_stats is not None:
+                self.writer.add_scalar("zclip/total_norm", zclip_stats["total_norm"], self.step)
+                self.writer.add_scalar("zclip/effective_clip", zclip_stats["effective_clip"], self.step)
+                self.writer.add_scalar("zclip/adaptive_clipped", zclip_stats["adaptive_clip"], self.step)
+                self.writer.add_scalar("zclip/hard_clipped", zclip_stats["hard_clip"], self.step)
+                self.writer.add_scalar("zclip/clipped", zclip_stats["clipped"], self.step)
         opt_step_start = time.perf_counter()
         self.opt.step()
         opt_step_time_s = time.perf_counter() - opt_step_start
@@ -1073,6 +1707,7 @@ class Trainer:
             opt_step_time_s=float(opt_step_time_s),
             train_steps_done=int(train_steps_done),
             train_samples_seen=int(train_samples_seen),
+            **getattr(self.opt, "last_uw_stats", {}),
         )
         self._log_metrics(metrics, "train_avg")
 
@@ -1130,16 +1765,28 @@ class Trainer:
         ckpt = torch.load(str(path), map_location=self.device)
         load_state_dict_tolerant(self.model, ckpt["model"], label="resume")
         fresh_opt_state = self.opt.state_dict()
+        fresh_scheduler_state = self._scheduler.state_dict()
+        optimizer_state_loaded = True
         try:
             self.opt.load_state_dict(ckpt["opt"])
         except (ValueError, KeyError, RuntimeError) as exc:
+            optimizer_state_loaded = False
             logging.getLogger(__name__).warning(
                 "Optimizer state incompatible with new model layout, "
                 "reinitialising optimizer: %s", exc,
             )
             self.opt.load_state_dict(fresh_opt_state)
-        if "scheduler" in ckpt:
-            self._scheduler.load_state_dict(ckpt["scheduler"])
+            self._scheduler.load_state_dict(fresh_scheduler_state)
+            self.reset_optimizer_reference_weights()
+        if "scheduler" in ckpt and optimizer_state_loaded:
+            try:
+                self._scheduler.load_state_dict(ckpt["scheduler"])
+            except (ValueError, KeyError, RuntimeError) as exc:
+                logging.getLogger(__name__).warning(
+                    "Scheduler state incompatible with current optimizer layout, "
+                    "reinitialising scheduler: %s", exc,
+                )
+                self._scheduler.load_state_dict(fresh_scheduler_state)
         if "peak_lr" in ckpt:
             self._peak_lr = float(ckpt["peak_lr"])
         else:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from chess_anti_engine.replay import ReplaySample
 from chess_anti_engine.replay.shard import arrays_to_samples, load_shard_arrays
@@ -126,6 +127,40 @@ def test_server_compactor_age_flushes_partial_buffer() -> None:
         target_positions=2000,
         max_age_s=90.0,
     )
+
+
+def test_server_compactor_rejects_missing_and_concrete_history_mix() -> None:
+    acc = _BufferedUploadAccumulator(
+        trial_id="trial_0003",
+        model_sha256="deadbeef",
+        created_at_unix=1.0,
+        last_update_unix=1.0,
+    )
+    acc.add_upload(samples=[_sample()], meta={"positions": 1}, now_unix=1.0)
+
+    with pytest.raises(ValueError, match="missing input_history_encoding"):
+        acc.add_upload(
+            samples=[_sample()],
+            meta={"positions": 1, "input_history_encoding": "lc0_root"},
+            now_unix=2.0,
+        )
+
+
+def test_server_compactor_rejects_concrete_and_missing_history_mix() -> None:
+    acc = _BufferedUploadAccumulator(
+        trial_id="trial_0004",
+        model_sha256="deadbeef",
+        created_at_unix=1.0,
+        last_update_unix=1.0,
+    )
+    acc.add_upload(
+        samples=[_sample()],
+        meta={"positions": 1, "input_history_encoding": "lc0_root"},
+        now_unix=1.0,
+    )
+
+    with pytest.raises(ValueError, match="missing input_history_encoding"):
+        acc.add_upload(samples=[_sample()], meta={"positions": 1}, now_unix=2.0)
 
 
 def test_server_compactor_atomically_replaces_temp_path(tmp_path) -> None:

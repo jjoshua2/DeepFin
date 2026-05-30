@@ -39,7 +39,7 @@ Use `scripts/train.sh` to drive training; it manages the PID file, log, and Ray 
 
 `start` auto-passes `--resume` when `$WORK_DIR/tune/experiment_state-*.json` exists. Without that behavior, restarting after a stop silently drops the running trial and spawns a random-init one. If you want to abandon the current trial's state, either pass `--fresh` or use `salvage-restart` from a good pool; never `rm` the tune dir while a run is live.
 
-**Graceful pause before killing PBT**: `python3 scripts/graceful_restart.py --wait N` creates `pause.txt` in the tune dir; trials finish the current iteration then hold. Useful before a restart that would otherwise orphan a mid-iteration trial.
+**Graceful pause before killing PBT**: `python3 scripts/graceful_restart.py` creates `pause.txt` in the tune dir; active trials finish the current iteration, hold, and then the script restarts cleanly. Useful before a restart that would otherwise orphan a mid-iteration trial.
 
 **Salvage** (warm-start fresh trials from past checkpoints + replay):
 

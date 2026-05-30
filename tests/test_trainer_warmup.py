@@ -2,9 +2,19 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import torch
 
-from chess_anti_engine.train.trainer import Trainer
+from chess_anti_engine.replay.buffer import ReplaySample
+from chess_anti_engine.replay.shard import INPUT_HISTORY_ENCODING_ARRAY_KEY, samples_to_arrays
+from chess_anti_engine.train.soda import SODAWeightDecayWrapper
+from chess_anti_engine.train.trainer import (
+    Trainer,
+    _ChainedOptimizer,
+    select_input_history_arrays,
+    select_input_history_samples,
+    trainer_kwargs_from_config,
+)
 
 
 class _TinyMuonModel(torch.nn.Module):
@@ -22,12 +32,302 @@ class _TinyMuonModel(torch.nn.Module):
         }
 
 
+def test_select_input_history_arrays_uses_recorded_lc0_root_and_legacy_meta() -> None:
+    legacy = np.zeros((2, 146, 8, 8), dtype=np.float32)
+    legacy[:, 100, :, :] = 0.5
+    legacy[:, 102, :, :] = 0.37
+    recorded = np.zeros_like(legacy)
+    recorded[0, 3, :, :] = 7.0
+
+    out = select_input_history_arrays(
+        {
+            "x": legacy,
+            "x_lc0_root": recorded,
+            "has_x_lc0_root": np.array([1, 0], dtype=np.uint8),
+        },
+        input_history_encoding="lc0_root_legacy_meta",
+    )
+
+    assert np.all(out["x"][0, 3] == 7.0)
+    assert np.all(out["x"][:, 109] == 0.37)
+    assert np.all(out["x"][:, 110] == 0.5)
+
+
+def test_select_input_history_arrays_is_idempotent() -> None:
+    legacy = np.zeros((1, 146, 8, 8), dtype=np.float32)
+    legacy[:, 0, :, :] = 1.0
+
+    once = select_input_history_arrays(
+        {"x": legacy},
+        input_history_encoding="lc0_root",
+    )
+    twice = select_input_history_arrays(
+        once,
+        input_history_encoding="lc0_root",
+    )
+
+    assert twice is once
+    np.testing.assert_array_equal(twice["x"], once["x"])
+
+
+def test_select_input_history_arrays_respects_stored_lc0_root_metadata() -> None:
+    root = np.zeros((1, 146, 8, 8), dtype=np.float32)
+    root[:, 13, :, :] = 9.0
+
+    out = select_input_history_arrays(
+        {
+            "x": root,
+            "_input_history_encoding": np.asarray("lc0_root"),
+        },
+        input_history_encoding="lc0_root",
+    )
+
+    np.testing.assert_array_equal(out["x"], root)
+    assert str(np.asarray(out["_input_history_encoding_selected"]).item()) == "lc0_root"
+
+
+def test_select_input_history_arrays_handles_mixed_legacy_and_root_rows() -> None:
+    legacy = np.zeros((2, 146, 8, 8), dtype=np.float32)
+    legacy[0, 0, :, :] = 1.0
+    root = np.zeros_like(legacy)
+    root[1, 13, :, :] = 9.0
+    mixed = legacy.copy()
+    mixed[1] = root[1]
+
+    out = select_input_history_arrays(
+        {
+            "x": mixed,
+            "_input_history_encoding": np.asarray(["", "lc0_root"], dtype=object),
+        },
+        input_history_encoding="lc0_root",
+    )
+
+    assert np.all(out["x"][0, 0] == 1.0)
+    assert np.all(out["x"][1, 13] == 9.0)
+    assert np.all(np.asarray(out["_input_history_encoding"]) == "lc0_root")
+
+
+def test_select_input_history_arrays_rejects_root_reselect_mismatch() -> None:
+    root = np.zeros((1, 146, 8, 8), dtype=np.float32)
+
+    try:
+        select_input_history_arrays(
+            {
+                "x": root,
+                "_input_history_encoding": np.asarray("lc0_root"),
+            },
+            input_history_encoding="lc0_root_legacy_meta",
+        )
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert "incompatible stored history encodings" in str(exc)
+
+
+def test_select_input_history_arrays_rejects_root_storage_for_legacy_model() -> None:
+    root = np.zeros((1, 146, 8, 8), dtype=np.float32)
+
+    try:
+        select_input_history_arrays(
+            {
+                "x": root,
+                "_input_history_encoding": np.asarray("lc0_root"),
+            },
+            input_history_encoding="legacy",
+        )
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert "cannot train" in str(exc)
+
+
+def test_select_input_history_arrays_fast_path_handles_uniform_metadata() -> None:
+    root = np.zeros((2, 146, 8, 8), dtype=np.float32)
+    root[:, 13, :, :] = 4.0
+
+    out = select_input_history_arrays(
+        {
+            "x": root,
+            "_input_history_encoding": np.asarray(["lc0_root", "lc0_root"], dtype=object),
+        },
+        input_history_encoding="lc0_root",
+    )
+
+    np.testing.assert_array_equal(out["x"], root)
+    assert str(np.asarray(out["_input_history_encoding_selected"]).item()) == "lc0_root"
+
+
+def test_select_input_history_samples_uses_recorded_lc0_root() -> None:
+    legacy = np.zeros((1, 146, 8, 8), dtype=np.float32)
+    root = np.zeros_like(legacy)
+    root[:, 7, :, :] = 3.0
+    sample = ReplaySample(
+        x=legacy[0],
+        x_lc0_root=root[0],
+        policy_target=np.zeros((4672,), dtype=np.float32),
+        wdl_target=1,
+    )
+
+    out = select_input_history_samples(
+        [sample],
+        input_history_encoding="lc0_root",
+    )
+
+    assert out[0] is not sample
+    assert out[0].input_history_encoding == "lc0_root"
+    np.testing.assert_array_equal(out[0].x, root[0])
+    np.testing.assert_array_equal(sample.x, legacy[0])
+
+
+def test_select_input_history_samples_preserves_already_root_samples() -> None:
+    root = np.zeros((146, 8, 8), dtype=np.float32)
+    root[104, :, :] = 5.0
+    sample = ReplaySample(
+        x=root,
+        policy_target=np.zeros((4672,), dtype=np.float32),
+        wdl_target=1,
+        input_history_encoding="lc0_root",
+    )
+
+    out = select_input_history_samples(
+        [sample],
+        input_history_encoding="lc0_root",
+    )
+
+    assert out[0].input_history_encoding == "lc0_root"
+    np.testing.assert_array_equal(out[0].x, root)
+
+
+def test_select_input_history_samples_rejects_root_samples_for_legacy_model() -> None:
+    sample = ReplaySample(
+        x=np.zeros((146, 8, 8), dtype=np.float32),
+        policy_target=np.zeros((4672,), dtype=np.float32),
+        wdl_target=1,
+        input_history_encoding="lc0_root",
+    )
+
+    try:
+        select_input_history_samples([sample], input_history_encoding="legacy")
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert "cannot train" in str(exc)
+
+
+def test_selected_input_history_samples_serialize_history_metadata() -> None:
+    legacy = np.zeros((1, 146, 8, 8), dtype=np.float32)
+    root = np.zeros_like(legacy)
+    root[:, 7, :, :] = 3.0
+    sample = ReplaySample(
+        x=legacy[0],
+        x_lc0_root=root[0],
+        policy_target=np.eye(1, 4672, 0, dtype=np.float32)[0],
+        wdl_target=1,
+    )
+
+    selected = select_input_history_samples([sample], input_history_encoding="lc0_root")
+    arrs = samples_to_arrays(selected)
+
+    assert str(np.asarray(arrs[INPUT_HISTORY_ENCODING_ARRAY_KEY]).item()) == "lc0_root"
+
+
+class _TinyScopedModel(torch.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.embed = torch.nn.Embedding(8, 4)
+        self.blocks = torch.nn.ModuleList(
+            [
+                torch.nn.ModuleDict(
+                    {
+                        "ffn": torch.nn.Linear(4, 4),
+                        "q_proj": torch.nn.Linear(4, 4),
+                        "k_proj": torch.nn.Linear(4, 4),
+                        "v_proj": torch.nn.Linear(4, 4),
+                        "out_proj": torch.nn.Linear(4, 4),
+                    }
+                )
+            ]
+        )
+        self.head = torch.nn.Linear(4, 3)
+
+    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+        del x
+        return {
+            "policy": self.head.weight[:1],
+            "wdl": torch.zeros((1, 3), dtype=torch.float32, device=self.head.weight.device),
+        }
+
+
 def _make_trainer(tmp_path: Path) -> Trainer:
     return Trainer(
         _TinyMuonModel(),
         device="cpu",
         lr=1e-3,
         optimizer="muon",
+        warmup_steps=10,
+        warmup_lr_start=1e-5,
+        use_amp=False,
+        log_dir=tmp_path,
+        tb_log_interval=1000,
+        prefetch_batches=False,
+    )
+
+
+def _make_aurora_trainer(tmp_path: Path) -> Trainer:
+    return Trainer(
+        _TinyMuonModel(),
+        device="cpu",
+        lr=1e-3,
+        optimizer="aurora",
+        warmup_steps=10,
+        warmup_lr_start=1e-5,
+        use_amp=False,
+        log_dir=tmp_path,
+        tb_log_interval=1000,
+        prefetch_batches=False,
+    )
+
+
+def _make_custom_aurora_trainer(tmp_path: Path) -> Trainer:
+    return Trainer(
+        _TinyMuonModel(),
+        device="cpu",
+        lr=1e-3,
+        optimizer="aurora",
+        matrix_lr_multiplier=12.0,
+        matrix_weight_decay=3e-5,
+        aux_weight_decay=7e-5,
+        warmup_steps=10,
+        warmup_lr_start=1e-5,
+        use_amp=False,
+        log_dir=tmp_path,
+        tb_log_interval=1000,
+        prefetch_batches=False,
+    )
+
+
+def _make_muon_scope_trainer(tmp_path: Path, scope: str) -> Trainer:
+    return Trainer(
+        _TinyMuonModel(),
+        device="cpu",
+        lr=1e-3,
+        optimizer="muon",
+        matrix_optimizer_scope=scope,
+        warmup_steps=10,
+        warmup_lr_start=1e-5,
+        use_amp=False,
+        log_dir=tmp_path,
+        tb_log_interval=1000,
+        prefetch_batches=False,
+    )
+
+
+def _make_scoped_trainer(tmp_path: Path, optimizer: str, scope: str) -> Trainer:
+    return Trainer(
+        _TinyScopedModel(),
+        device="cpu",
+        lr=1e-3,
+        optimizer=optimizer,
+        matrix_optimizer_scope=scope,
+        matrix_weight_decay=3e-5,
+        aux_weight_decay=7e-5,
         warmup_steps=10,
         warmup_lr_start=1e-5,
         use_amp=False,
@@ -78,3 +378,283 @@ def test_muon_load_restores_peak_lr_from_search_lr(tmp_path: Path) -> None:
 
     assert loaded._peak_lr == 1e-3
     assert loaded._base_lrs()[0] == loaded._base_lrs()[2] * 20.0
+
+
+def test_aurora_uses_matrix_lr_and_adam_fallback_lr(tmp_path: Path) -> None:
+    trainer = _make_aurora_trainer(tmp_path)
+    aurora_groups = [pg for pg in trainer.opt.param_groups if pg.get("use_aurora", False)]
+    fallback_groups = [pg for pg in trainer.opt.param_groups if not pg.get("use_aurora", False)]
+    named_params = dict(trainer.model.named_parameters())
+    aurora_param_ids = {id(param) for pg in aurora_groups for param in pg["params"]}
+    fallback_param_ids = {id(param) for pg in fallback_groups for param in pg["params"]}
+
+    assert len(aurora_groups) == 1
+    assert all(param.ndim == 2 for param in aurora_groups[0]["params"])
+    assert float(aurora_groups[0]["lr"]) == float(fallback_groups[0]["lr"]) * 20.0
+    assert id(named_params["blocks.0.weight"]) in aurora_param_ids
+    assert id(named_params["embed.weight"]) in fallback_param_ids
+
+
+def test_aurora_accepts_matrix_lr_multiplier_and_weight_decay(tmp_path: Path) -> None:
+    trainer = _make_custom_aurora_trainer(tmp_path)
+    aurora_groups = [pg for pg in trainer.opt.param_groups if pg.get("use_aurora", False)]
+    fallback_decay_groups = [
+        pg for pg in trainer.opt.param_groups
+        if not pg.get("use_aurora", False) and float(pg.get("weight_decay", 0.0)) > 0.0
+    ]
+
+    assert float(aurora_groups[0]["lr"]) == float(fallback_decay_groups[0]["lr"]) * 12.0
+    assert float(aurora_groups[0]["weight_decay"]) == 3e-5
+    assert float(fallback_decay_groups[0]["weight_decay"]) == 7e-5
+
+
+def test_load_resets_scheduler_when_optimizer_state_is_incompatible(tmp_path: Path) -> None:
+    src = Trainer(
+        _TinyMuonModel(),
+        device="cpu",
+        lr=1e-3,
+        optimizer="adamw",
+        warmup_steps=10,
+        warmup_lr_start=1e-5,
+        use_amp=False,
+        log_dir=tmp_path / "src",
+        tb_log_interval=1000,
+        prefetch_batches=False,
+    )
+    ckpt = tmp_path / "adamw.pt"
+    src.save(ckpt)
+
+    loaded = _make_aurora_trainer(tmp_path / "dst")
+    loaded.load(ckpt)
+
+    assert len(loaded._scheduler.base_lrs) == len(loaded.opt.param_groups)
+    assert loaded._base_lrs()[0] == loaded._base_lrs()[2] * 20.0
+
+
+def test_soda_weight_decay_mode_replaces_only_decay_groups(tmp_path: Path) -> None:
+    trainer = Trainer(
+        _TinyMuonModel(),
+        device="cpu",
+        lr=1e-3,
+        optimizer="aurora",
+        matrix_lr_multiplier=12.0,
+        matrix_weight_decay=3e-5,
+        aux_weight_decay=7e-5,
+        weight_decay_mode="soda",
+        warmup_steps=10,
+        warmup_lr_start=1e-5,
+        use_amp=False,
+        log_dir=tmp_path,
+        tb_log_interval=1000,
+        prefetch_batches=False,
+    )
+
+    assert isinstance(trainer.opt, SODAWeightDecayWrapper)
+    soda_groups = [pg for pg in trainer.opt.param_groups if pg.get("soda_regularize", False)]
+    no_soda_groups = [pg for pg in trainer.opt.param_groups if not pg.get("soda_regularize", False)]
+
+    assert len(soda_groups) == 2
+    assert all(float(pg.get("weight_decay", 0.0)) == 0.0 for pg in soda_groups)
+    assert sorted(float(pg["soda_replaced_weight_decay"]) for pg in soda_groups) == [3e-5, 7e-5]
+    assert all(float(pg.get("weight_decay", 0.0)) == 0.0 for pg in no_soda_groups)
+
+
+def test_soda_wrapper_applies_anchor_average_after_base_step() -> None:
+    param = torch.nn.Parameter(torch.tensor([1.0]))
+    base = torch.optim.SGD([
+        {"params": [param], "lr": 0.1, "weight_decay": 0.0, "soda_regularize": True}
+    ])
+    opt = SODAWeightDecayWrapper(base)
+
+    param.grad = torch.tensor([1.0])
+    opt.step()
+    assert torch.allclose(param, torch.tensor([0.9]))
+
+    param.grad = torch.tensor([1.0])
+    opt.step()
+    assert torch.allclose(param, torch.tensor([0.8333333]), atol=1e-6)
+
+
+def test_chained_optimizer_rejects_unroutable_param_group() -> None:
+    p0 = torch.nn.Parameter(torch.tensor([1.0]))
+    p1 = torch.nn.Parameter(torch.tensor([2.0]))
+    opt = _ChainedOptimizer([
+        torch.optim.SGD([p0], lr=0.1),
+        torch.optim.SGD([p1], lr=0.1),
+    ])
+
+    try:
+        opt.add_param_group({"params": [torch.nn.Parameter(torch.tensor([3.0]))]})
+        assert False, "expected NotImplementedError"
+    except NotImplementedError as exc:
+        assert "cannot route" in str(exc)
+
+
+def test_muon_matrix_scope_can_target_mlp_without_embed(tmp_path: Path) -> None:
+    trainer = _make_muon_scope_trainer(tmp_path, "mlp_only")
+    muon_groups = [pg for pg in trainer.opt.param_groups if pg.get("use_muon", False)]
+    fallback_groups = [pg for pg in trainer.opt.param_groups if not pg.get("use_muon", False)]
+    named_params = dict(trainer.model.named_parameters())
+    muon_param_ids = {id(param) for pg in muon_groups for param in pg["params"]}
+    fallback_param_ids = {id(param) for pg in fallback_groups for param in pg["params"]}
+
+    assert id(named_params["blocks.0.weight"]) not in muon_param_ids
+    assert id(named_params["embed.weight"]) in fallback_param_ids
+
+
+def test_cosmos_fast_matrix_scope_can_target_mlp_with_adam_fallback(tmp_path: Path) -> None:
+    trainer = _make_scoped_trainer(tmp_path, "cosmos_fast", "mlp_only")
+    cosmos_groups = [pg for pg in trainer.opt.param_groups if pg.get("use_cosmos_fast", False)]
+    fallback_groups = [pg for pg in trainer.opt.param_groups if not pg.get("use_cosmos_fast", False)]
+    named_params = dict(trainer.model.named_parameters())
+    cosmos_param_ids = {id(param) for pg in cosmos_groups for param in pg["params"]}
+    fallback_param_ids = {id(param) for pg in fallback_groups for param in pg["params"]}
+
+    assert id(named_params["blocks.0.ffn.weight"]) in cosmos_param_ids
+    assert id(named_params["blocks.0.out_proj.weight"]) in fallback_param_ids
+    assert id(named_params["head.weight"]) in fallback_param_ids
+    assert float(cosmos_groups[0]["weight_decay"]) == 3e-5
+    assert any(float(pg["weight_decay"]) == 7e-5 for pg in fallback_groups)
+
+
+def test_aurora_matrix_scope_can_target_mlp_out_v_without_qk(tmp_path: Path) -> None:
+    trainer = _make_scoped_trainer(tmp_path, "aurora", "mlp_out_v")
+    aurora_groups = [pg for pg in trainer.opt.param_groups if pg.get("use_aurora", False)]
+    fallback_groups = [pg for pg in trainer.opt.param_groups if not pg.get("use_aurora", False)]
+    named_params = dict(trainer.model.named_parameters())
+    aurora_param_ids = {id(param) for pg in aurora_groups for param in pg["params"]}
+    fallback_param_ids = {id(param) for pg in fallback_groups for param in pg["params"]}
+
+    assert id(named_params["blocks.0.ffn.weight"]) in aurora_param_ids
+    assert id(named_params["blocks.0.out_proj.weight"]) in aurora_param_ids
+    assert id(named_params["blocks.0.v_proj.weight"]) in aurora_param_ids
+    assert id(named_params["blocks.0.q_proj.weight"]) in fallback_param_ids
+    assert id(named_params["blocks.0.k_proj.weight"]) in fallback_param_ids
+
+
+def test_cosmos_matrix_scope_can_target_mlp_with_adam_fallback(tmp_path: Path) -> None:
+    trainer = _make_scoped_trainer(tmp_path, "cosmos", "mlp_only")
+    cosmos_groups = [pg for pg in trainer.opt.param_groups if pg.get("use_cosmos", True)]
+    fallback_groups = [pg for pg in trainer.opt.param_groups if not pg.get("use_cosmos", True)]
+    named_params = dict(trainer.model.named_parameters())
+    cosmos_param_ids = {id(param) for pg in cosmos_groups for param in pg["params"]}
+    fallback_param_ids = {id(param) for pg in fallback_groups for param in pg["params"]}
+
+    assert id(named_params["blocks.0.ffn.weight"]) in cosmos_param_ids
+    assert id(named_params["blocks.0.out_proj.weight"]) in fallback_param_ids
+    assert id(named_params["head.weight"]) in fallback_param_ids
+    assert float(cosmos_groups[0]["weight_decay"]) == 3e-5
+    assert any(float(pg["weight_decay"]) == 7e-5 for pg in fallback_groups)
+
+
+def test_soap_matrix_scope_can_target_mlp_with_adam_fallback(tmp_path: Path) -> None:
+    trainer = _make_scoped_trainer(tmp_path, "soap", "mlp_only")
+    named_params = dict(trainer.model.named_parameters())
+    soap_param_ids = {id(param) for param in trainer.opt.param_groups[0]["params"]}
+    fallback_param_ids = {
+        id(param)
+        for pg in trainer.opt.param_groups[1:]
+        for param in pg["params"]
+    }
+
+    assert id(named_params["blocks.0.ffn.weight"]) in soap_param_ids
+    assert id(named_params["blocks.0.out_proj.weight"]) in fallback_param_ids
+    assert id(named_params["head.weight"]) in fallback_param_ids
+    assert float(trainer.opt.param_groups[0]["weight_decay"]) == 3e-5
+    assert any(float(pg["weight_decay"]) == 7e-5 for pg in trainer.opt.param_groups[1:])
+
+
+def test_soap_soda_marks_matrix_and_adam_fallback_decay_groups(tmp_path: Path) -> None:
+    trainer = Trainer(
+        _TinyScopedModel(),
+        device="cpu",
+        lr=1e-3,
+        optimizer="soap",
+        matrix_optimizer_scope="mlp_only",
+        matrix_weight_decay=3e-5,
+        aux_weight_decay=7e-5,
+        weight_decay_mode="soda",
+        warmup_steps=10,
+        warmup_lr_start=1e-5,
+        use_amp=False,
+        log_dir=tmp_path,
+        tb_log_interval=1000,
+        prefetch_batches=False,
+    )
+
+    assert isinstance(trainer.opt, SODAWeightDecayWrapper)
+    soda_groups = [pg for pg in trainer.opt.param_groups if pg.get("soda_regularize", False)]
+
+    assert len(soda_groups) == 2
+    assert sorted(float(pg["soda_replaced_weight_decay"]) for pg in soda_groups) == [3e-5, 7e-5]
+    assert all(float(pg.get("weight_decay", 0.0)) == 0.0 for pg in trainer.opt.param_groups)
+
+
+def test_zclip_max_norm_can_be_disabled_from_config(tmp_path: Path) -> None:
+    kwargs = trainer_kwargs_from_config(
+        {"zclip_max_norm": None, "zclip_clip_factor": 0.75},
+        log_dir=tmp_path,
+    )
+    assert kwargs["zclip_max_norm"] is None
+    assert kwargs["zclip_clip_factor"] == 0.75
+
+    trainer = Trainer(
+        _TinyMuonModel(),
+        device="cpu",
+        lr=1e-3,
+        zclip_max_norm=kwargs["zclip_max_norm"],
+        zclip_clip_factor=kwargs["zclip_clip_factor"],
+        use_amp=False,
+        log_dir=tmp_path,
+        tb_log_interval=1000,
+        prefetch_batches=False,
+    )
+
+    assert trainer.zclip.max_grad_norm is None
+    assert trainer.zclip.clip_factor == 0.75
+
+
+def test_zclip_step_reports_hard_and_adaptive_clipping(tmp_path: Path) -> None:
+    trainer = Trainer(
+        _TinyMuonModel(),
+        device="cpu",
+        lr=1e-3,
+        zclip_z_thresh=2.0,
+        zclip_max_norm=1.0,
+        use_amp=False,
+        log_dir=tmp_path,
+        tb_log_interval=1000,
+        prefetch_batches=False,
+    )
+    for param in trainer.model.parameters():
+        param.grad = torch.ones_like(param)
+
+    _grad_norm, stats = trainer._zclip_step(collect_stats=True)
+
+    assert stats is not None
+    assert stats["hard_clip"] == 1.0
+    assert stats["clipped"] == 1.0
+
+    trainer = Trainer(
+        _TinyMuonModel(),
+        device="cpu",
+        lr=1e-3,
+        zclip_z_thresh=2.0,
+        zclip_max_norm=None,
+        use_amp=False,
+        log_dir=tmp_path,
+        tb_log_interval=1000,
+        prefetch_batches=False,
+    )
+    trainer.zclip.initialized = True
+    trainer.zclip.mean = 1.0
+    trainer.zclip.var = 0.01
+    for param in trainer.model.parameters():
+        param.grad = torch.ones_like(param)
+
+    _grad_norm, stats = trainer._zclip_step(collect_stats=True)
+
+    assert stats is not None
+    assert stats["adaptive_clip"] == 1.0
+    assert stats["hard_clip"] == 0.0
+    assert stats["clipped"] == 1.0

@@ -33,6 +33,27 @@ AUTO_BEST_REGRET_DIR="${TRAIN_AUTO_BEST_REGRET_DIR:-data/best_regret_checkpoints
 
 cd "$(dirname "$0")/.."
 
+clear_pause_markers() {
+    if [ "${TRAIN_KEEP_PAUSE_MARKERS:-0}" = "1" ]; then
+        return 0
+    fi
+    local tune_dir="$WORK_DIR/tune"
+    [ -d "$tune_dir" ] || return 0
+
+    local ts
+    ts="$(date +%Y%m%d_%H%M%S)"
+    local cleared=0
+    local marker
+    for marker in "$tune_dir/pause.txt" "$tune_dir"/train_trial_*/pause.txt; do
+        [ -f "$marker" ] || continue
+        mv "$marker" "$marker.cleared_$ts"
+        cleared=$((cleared + 1))
+    done
+    if [ "$cleared" -gt 0 ]; then
+        echo "Cleared $cleared stale pause marker(s) under $tune_dir."
+    fi
+}
+
 start() {
     if running; then
         echo "Already running (PID $(cat "$PIDFILE"))"
@@ -58,6 +79,7 @@ start() {
             extra_args+=("--resume")
         fi
     fi
+    clear_pause_markers
     echo "Starting training with $CONFIG ${extra_args[*]:+(extra: ${extra_args[*]})}..."
     # Inductor compile parallelism — without these, autotune is single-threaded
     # and uses ~6% of available CPU. COMPILE_THREADS parallelizes codegen

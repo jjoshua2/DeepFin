@@ -24,6 +24,7 @@ LOCAL_SHARD_SUFFIX = ".zarr"
 LEGACY_SHARD_SUFFIX = ".npz"
 DEFAULT_MAX_SHARD_POSITIONS = 50_000
 DEFAULT_MAX_SHARD_UNCOMPRESSED_BYTES = 1024 * 1024 * 1024
+INPUT_HISTORY_ENCODING_ARRAY_KEY = "_input_history_encoding"
 
 # Server-managed staging dir for crash-recoverable uploads. Lives at
 # ``inbox_root/_pending`` and is replayed by ``server.app.create_app`` on
@@ -288,6 +289,7 @@ class ShardMeta:
     generated_at_unix: int | None = None
     model_sha256: str | None = None
     model_step: int | None = None
+    input_history_encoding: str | None = None
     games: int | None = None
     positions: int | None = None
     wins: int | None = None
@@ -381,6 +383,8 @@ def prune_storage_arrays(arrs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
             out[flag_name] = flag
             if value_name in arrs:
                 out[value_name] = np.asarray(arrs[value_name])
+    if INPUT_HISTORY_ENCODING_ARRAY_KEY in arrs:
+        out[INPUT_HISTORY_ENCODING_ARRAY_KEY] = np.asarray(arrs[INPUT_HISTORY_ENCODING_ARRAY_KEY])
     return out
 
 
@@ -523,7 +527,13 @@ def extract_uploaded_shard_tar(
                     raise ValueError(
                         f"tar declared payload too large: {declared_bytes} > {int(max_extract_bytes)} bytes"
                     )
-        tf.extractall(str(dest), filter="data")
+        try:
+            tf.extractall(str(dest), filter="data")
+        except TypeError:
+            # Python 3.10.12 and newer patched tarfile support ``filter``.
+            # Some supported 3.11 patch releases may not; the explicit member
+            # prewalk above already rejects links, device nodes, and traversal.
+            tf.extractall(str(dest))
     entries = list(dest.iterdir())
     if len(entries) == 1 and entries[0].is_dir() and (entries[0] / ".zgroup").exists():
         return entries[0]
@@ -593,6 +603,16 @@ def samples_to_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
             [1 if getattr(s, "has_policy", True) else 0 for s in samples], dtype=np.uint8,
         )),
     }
+    history_values = [
+        str(v)
+        for s in samples
+        if (v := getattr(s, "input_history_encoding", None)) is not None and str(v)
+    ]
+    if history_values:
+        first_history = history_values[0]
+        if len(history_values) != n or any(v != first_history for v in history_values[1:]):
+            raise ValueError("mixed ReplaySample input_history_encoding values")
+        arrs[INPUT_HISTORY_ENCODING_ARRAY_KEY] = np.asarray(first_history)
     for spec in _OPTIONAL_FIELD_SPECS:
         shape = (policy_size,) if spec.arr in POLICY_SIZED_FIELDS else spec.shape
         arrs[spec.arr] = np.zeros((n, *shape), dtype=spec.dtype)
@@ -774,6 +794,11 @@ def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
 
     priority = np.asarray(arrs.get("priority", np.ones((n,), dtype=np.float32)), dtype=np.float32)
     has_policy = np.asarray(arrs.get("has_policy", np.ones((n,), dtype=np.uint8)), dtype=np.uint8)
+    input_history = np.asarray(arrs.get(INPUT_HISTORY_ENCODING_ARRAY_KEY, np.asarray("")))
+    if input_history.ndim not in (0, 1):
+        raise ValueError(f"{INPUT_HISTORY_ENCODING_ARRAY_KEY} must be scalar or (N,)")
+    if input_history.ndim == 1 and input_history.shape != (n,):
+        raise ValueError(f"{INPUT_HISTORY_ENCODING_ARRAY_KEY} must be scalar or (N,)")
 
     opt: dict[str, np.ndarray] = {}
     for spec in _OPTIONAL_FIELD_SPECS:
@@ -790,6 +815,9 @@ def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
             priority=float(priority[i]),
             has_policy=bool(has_policy[i]),
         )
+        hist_value = input_history.item() if input_history.ndim == 0 else input_history[i]
+        if str(hist_value):
+            s.input_history_encoding = str(hist_value)
         if opt["has_x_lc0_root"][i]:
             s.x_lc0_root = _copy_row(opt["x_lc0_root"], i)
         if opt["has_priority_policy_kl"][i]:
@@ -879,10 +907,19 @@ def save_local_shard_arrays(
     try:
         g = zarr.open_group(str(tmp), mode="w")
         attrs = _meta_dict(meta, positions=int(np.asarray(stored["x"]).shape[0]))
+        if (
+            attrs.get("input_history_encoding") is None
+            and INPUT_HISTORY_ENCODING_ARRAY_KEY in arrs
+        ):
+            hist_arr = np.asarray(arrs[INPUT_HISTORY_ENCODING_ARRAY_KEY])
+            if hist_arr.size:
+                attrs["input_history_encoding"] = str(hist_arr.reshape(-1)[0])
         attrs["policy_size"] = int(np.asarray(arrs["policy_target"]).shape[1])
         g.attrs.update(attrs)
         compressor = Blosc(cname="zstd", clevel=3, shuffle=Blosc.SHUFFLE)
         for name, value in stored.items():
+            if str(name).startswith("_"):
+                continue
             arr = np.asarray(value)
             g.create_dataset(name, data=arr, chunks=_local_chunks(arr), compressor=compressor, overwrite=True)
   # Atomic replace: remove old, rename new.
@@ -913,19 +950,25 @@ def load_shard_arrays(
             arrs = {k: np.array(z[k], copy=False) for k in z.files if k != "meta_json"}
             meta_json = z["meta_json"].item() if "meta_json" in z.files else "{}"
         meta = json.loads(str(meta_json)) if meta_json else {}
+        if meta.get("input_history_encoding") is not None:
+            arrs[INPUT_HISTORY_ENCODING_ARRAY_KEY] = np.asarray(str(meta["input_history_encoding"]))
         validate_arrays(arrs)
         return arrs, meta
     g = zarr.open_group(str(p), mode="r")
     meta = dict(g.attrs.asdict())
     if lazy:
-        arrs = {name: g[name] for name in _SHARD_FIELDS if name in g}
+        arrs: dict[str, Any] = {name: g[name] for name in _SHARD_FIELDS if name in g}
         if "policy_size" in meta:
             # zarr group arrays and scalar sidecar metadata intentionally share this dict.
-            arrs["_policy_size"] = np.array(int(meta["policy_size"]), dtype=np.int32)  # pyright: ignore[reportArgumentType]
+            arrs["_policy_size"] = np.array(int(meta["policy_size"]), dtype=np.int32)
+        if meta.get("input_history_encoding") is not None:
+            arrs[INPUT_HISTORY_ENCODING_ARRAY_KEY] = np.asarray(str(meta["input_history_encoding"]))
         return arrs, meta
     arrs = {name: np.asarray(g[name]) for name in _SHARD_FIELDS if name in g}
     if "policy_size" in meta:
         arrs["_policy_size"] = np.array(int(meta["policy_size"]), dtype=np.int32)
+    if meta.get("input_history_encoding") is not None:
+        arrs[INPUT_HISTORY_ENCODING_ARRAY_KEY] = np.asarray(str(meta["input_history_encoding"]))
     validate_arrays(arrs)
     return arrs, meta
 
