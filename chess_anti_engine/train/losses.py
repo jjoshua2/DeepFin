@@ -6,7 +6,7 @@ import torch
 import torch.nn.functional as F
 
 from chess_anti_engine.moves import COMPACT_POLICY_SIZE, COMPACT_TO_FULL_POLICY, POLICY_SIZE
-from chess_anti_engine.train.constants import REGRET_TO_Q_SCALE
+from chess_anti_engine.train.constants import REGRET_TO_Q_SCALE, future_regret_field_names
 
 # Phase buckets for per-phase loss reporting. `moves_left` is plies-remaining /
 # max_plies so 1.0 = opening, 0.0 = endgame. Thresholds calibrated from
@@ -161,24 +161,7 @@ def _q_to_wdl_probs(q: torch.Tensor) -> torch.Tensor:
 
 
 def _future_regret_tensor(batch: dict[str, torch.Tensor], source: str) -> tuple[torch.Tensor, torch.Tensor]:
-    key_by_source = {
-        "sum": ("future_sf_regret_sum", "has_future_sf_regret_sum"),
-        "d95": ("future_sf_regret_d95", "has_future_sf_regret_d95"),
-        "d98": ("future_sf_regret_d98", "has_future_sf_regret_d98"),
-        "max": ("future_sf_regret_max", "has_future_sf_regret_max"),
-        "h4": ("future_sf_regret_h4", "has_future_sf_regret_h4"),
-        "h6": ("future_sf_regret_h6", "has_future_sf_regret_h6"),
-        "h12": ("future_sf_regret_h12", "has_future_sf_regret_h12"),
-        "h24": ("future_sf_regret_h24", "has_future_sf_regret_h24"),
-        "h50": ("future_sf_regret_h50", "has_future_sf_regret_h50"),
-    }
-    source_key = str(source)
-    if source_key not in key_by_source:
-        allowed = ", ".join(key_by_source)
-        raise ValueError(
-            f"unknown adjusted_wdl_regret_source {source_key!r}; expected one of: {allowed}"
-        )
-    key, has_key = key_by_source[source_key]
+    key, has_key = future_regret_field_names(source)
     return (
         _get_mask(batch, key).to(torch.float32),
         _get_mask(batch, has_key).to(torch.float32),
