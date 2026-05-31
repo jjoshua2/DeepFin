@@ -13,10 +13,10 @@ from typing import Any
 import numpy as np
 
 from chess_anti_engine.replay.shard import load_shard_arrays, shard_positions
+from scripts.diagnostic_replay_utils import record_skipped_shard as _record_skipped_shard
 
 
 DEFAULT_RUN = Path("runs/pbt2_small")
-_OUTCOME = ("W", "D", "L")
 MAX_BUCKETS = 20
 
 
@@ -69,10 +69,12 @@ def _shard_num(path: Path) -> int:
     return int(match.group(1)) if match else -1
 
 
-def _newest_window_slices(replay_dir: Path, max_positions: int) -> list[ShardSlice]:
+def _newest_window_slices(replay_dir: Path, max_positions: int, max_shards: int = 0) -> list[ShardSlice]:
     total = 0
     out: list[ShardSlice] = []
     for shard in sorted(replay_dir.glob("shard_*.zarr"), key=_shard_num, reverse=True):
+        if int(max_shards) > 0 and len(out) >= int(max_shards):
+            break
         n = int(shard_positions(shard))
         if n <= 0:
             continue
@@ -311,6 +313,7 @@ def main() -> None:
     parser.add_argument("--run-dir", type=Path, default=DEFAULT_RUN)
     parser.add_argument("--trial-dir", type=Path, default=None)
     parser.add_argument("--replay-dir", type=Path, default=None)
+    parser.add_argument("--max-shards", type=int, default=0, help="newest shards to scan; 0 scans all")
     parser.add_argument("--window-positions", type=int, default=2_000_000)
     parser.add_argument("--buckets", type=int, default=5, help="oldest-to-newest age buckets")
     parser.add_argument(
@@ -342,7 +345,9 @@ def main() -> None:
         replay_dir = _replay_dir_for_trial(args.run_dir, trial_dir)
     latest = _latest_result(trial_dir) if trial_dir is not None else {}
     cfg = _load_loss_config(latest, args)
-    slices = _newest_window_slices(replay_dir, int(args.window_positions))
+    if int(args.max_shards) < 0:
+        parser.error("--max-shards must be non-negative")
+    slices = _newest_window_slices(replay_dir, int(args.window_positions), int(args.max_shards))
     total_positions = sum(s.take for s in slices)
     if total_positions <= 0:
         raise SystemExit("no replay positions found")
@@ -356,11 +361,26 @@ def main() -> None:
     policy_seen: list[dict[str, int]] = [
         {"policy": 0, "soft_policy": 0, "sf_policy": 0} for _ in range(bucket_count)
     ]
-    sf_grid = {(sf_frac, damp): _empty_wdl_stats() for sf_frac in (0.0, 0.1, 0.15, 0.25, 0.5) for damp in (0.0, 0.25, 0.5, 1.0)}
+    sf_grid = {
+        (sf_frac, damp_low, damp_high): _empty_wdl_stats()
+        for sf_frac in (0.0, 0.1, 0.15, 0.25, 0.5)
+        for damp_low in (0.0, 0.25, 0.5, 1.0)
+        for damp_high in (0.0, 0.25, 0.5, 1.0)
+    }
+    scan: dict[str, Any] = {
+        "skipped_shards": [],
+        "skipped_shards_omitted": 0,
+    }
 
     pos = 0
     for spec in slices:
-        arrs, _meta = load_shard_arrays(spec.path, lazy=True)
+        try:
+            arrs, _meta = load_shard_arrays(spec.path, lazy=True)
+        except Exception as exc:  # noqa: BLE001
+            # Keep age-bucket diagnostics usable while live replay shards are being written.
+            _record_skipped_shard(scan, spec.path, exc)
+            pos += spec.take
+            continue
         row0 = spec.start
         local_pos = 0
         while local_pos < spec.take:
@@ -393,15 +413,15 @@ def main() -> None:
                         dampen_sf_high=cfg["sf_search_dampen_sf_high"],
                     )
                     _add_wdl_stats(wdl_by_bucket[bucket], outcome=y, sf=sf, search=search, blend=blend)
-                    for (sf_frac, damp), dst in sf_grid.items():
+                    for (sf_frac, damp_low, damp_high), dst in sf_grid.items():
                         grid_blend = _blend_wdl(
                             y,
                             sf,
                             search,
                             sf_frac=sf_frac,
                             search_frac=cfg["search_wdl_frac"],
-                            dampen_sf_low=damp,
-                            dampen_sf_high=cfg["sf_search_dampen_sf_high"],
+                            dampen_sf_low=damp_low,
+                            dampen_sf_high=damp_high,
                         )
                         _add_wdl_stats(dst, outcome=y, sf=sf, search=search, blend=grid_blend)
 
@@ -450,6 +470,9 @@ def main() -> None:
     print(f"- trial: `{None if trial_dir is None else trial_dir.name}`")
     print(f"- replay: `{replay_dir}`")
     print(f"- scanned newest positions: `{total_positions}`")
+    if scan["skipped_shards"]:
+        skipped = len(scan["skipped_shards"]) + int(scan["skipped_shards_omitted"])
+        print(f"- skipped shards: `{skipped}` ({len(scan['skipped_shards'])} shown)")
     print(
         "- current blend: "
         f"sf_wdl_frac={cfg['sf_wdl_frac']:.3f}, search_wdl_frac={cfg['search_wdl_frac']:.3f}, "
@@ -463,22 +486,30 @@ def main() -> None:
 
     print("## SF Fraction / Dampening Counterfactuals")
     print()
-    print("| sf_frac | search_frac | game_frac | dampen_sf_low | blend CE to outcome | blend Brier to outcome | blend WDL |")
-    print("|---:|---:|---:|---:|---:|---|")
+    print("| sf_frac | search_frac | game_frac | dampen_sf_low | dampen_sf_high | blend CE to outcome | blend Brier to outcome | blend WDL |")
+    print("|---:|---:|---:|---:|---:|---:|---:|---|")
     rows = []
-    for (sf_frac, damp), raw in sf_grid.items():
+    for (sf_frac, damp_low, damp_high), raw in sf_grid.items():
         stats = _finish_wdl_stats(raw)
         if int(stats.get("n", 0)) <= 0:
             continue
-        rows.append((stats["blend_ce"], stats["blend_brier"], sf_frac, damp, stats))
+        rows.append((stats["blend_ce"], stats["blend_brier"], sf_frac, damp_low, damp_high, stats))
     for row in sorted(rows):
         sf_frac = row[2]
-        damp = row[3]
-        stats = row[4]
-        marker = " *" if abs(sf_frac - cfg["sf_wdl_frac"]) < 1e-9 and abs(damp - cfg["sf_search_dampen_sf_low"]) < 1e-9 else ""
+        damp_low = row[3]
+        damp_high = row[4]
+        stats = row[5]
+        marker = (
+            " *"
+            if abs(sf_frac - cfg["sf_wdl_frac"]) < 1e-9
+            and abs(damp_low - cfg["sf_search_dampen_sf_low"]) < 1e-9
+            and abs(damp_high - cfg["sf_search_dampen_sf_high"]) < 1e-9
+            else ""
+        )
         game_frac = max(0.0, 1.0 - sf_frac - cfg["search_wdl_frac"])
         print(
-            f"| {sf_frac:.2f}{marker} | {cfg['search_wdl_frac']:.2f} | {game_frac:.2f} | {damp:.2f} | "
+            f"| {sf_frac:.2f}{marker} | {cfg['search_wdl_frac']:.2f} | {game_frac:.2f} | "
+            f"{damp_low:.2f} | {damp_high:.2f} | "
             f"{stats['blend_ce']:.4f} | {stats['blend_brier']:.4f} | `{_fmt_wdl(stats['mean_blend_wdl'])}` |"
         )
 

@@ -12,12 +12,21 @@ from typing import Any
 
 import numpy as np
 
-from chess_anti_engine.replay.shard import load_shard_arrays, shard_index, shard_positions
+from chess_anti_engine.replay.shard import load_shard_arrays, shard_positions
+from scripts.diagnostic_replay_utils import (
+    bool_field as _bool_field,
+    corr as _corr,
+    latest_replay_dir as _latest_replay_dir,
+    normalize_wdl as _normalize_wdl,
+    optional_float_array_with_mask as _optional_float_field,
+    record_skipped_shard as _record_skipped_shard,
+    rmse as _rmse,
+    select_shards as _select_shards,
+)
 
 
 DEFAULT_RUN_DIR = Path("runs/pbt2_small")
 MAX_HORIZONS = 12
-MAX_SKIPPED_SHARDS = 20
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,58 +65,6 @@ class FitRow:
     search_corr: float
     path_regret_mean: float = math.nan
     path_regret_p90: float = math.nan
-
-
-def _latest_replay_dir(run_dir: Path) -> Path:
-    replay_dirs = [p for p in (run_dir / "replay").glob("train_trial_*/replay_shards") if p.is_dir()]
-    if not replay_dirs:
-        raise FileNotFoundError(f"No replay shard directories under {run_dir / 'replay'}")
-    return max(replay_dirs, key=lambda p: p.stat().st_mtime)
-
-
-def _select_shards(replay_dir: Path, max_shards: int) -> list[Path]:
-    shards = sorted(replay_dir.glob("shard_*.zarr"), key=shard_index)
-    return shards if max_shards <= 0 else shards[-max_shards:]
-
-
-def _record_skipped_shard(scan: dict[str, Any], shard: Path, exc: Exception) -> None:
-    if len(scan["skipped_shards"]) < MAX_SKIPPED_SHARDS:
-        scan["skipped_shards"].append({"shard": str(shard), "reason": repr(exc)})
-    else:
-        scan["skipped_shards_omitted"] += 1
-
-
-def _normalize_wdl(arr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    wdl = np.asarray(arr, dtype=np.float64)
-    finite = np.isfinite(wdl).all(axis=1)
-    non_negative = (wdl >= 0.0).all(axis=1)
-    sums = wdl.sum(axis=1)
-    valid = finite & non_negative & (sums > 1e-12)
-    out = np.zeros_like(wdl, dtype=np.float64)
-    out[valid] = wdl[valid] / sums[valid, None]
-    return out, valid
-
-
-def _bool_field(arrs: dict[str, Any], name: str, n: int) -> np.ndarray:
-    if name not in arrs:
-        return np.zeros((n,), dtype=bool)
-    return np.asarray(arrs[name], dtype=bool)
-
-
-def _optional_float_field(
-    arrs: dict[str, Any],
-    value_name: str,
-    has_name: str,
-    n: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    values = np.full((n,), math.nan, dtype=np.float64)
-    has = np.zeros((n,), dtype=bool)
-    if value_name not in arrs:
-        return values, has
-    raw = np.asarray(arrs[value_name], dtype=np.float64)
-    has = _bool_field(arrs, has_name, n) if has_name in arrs else np.isfinite(raw)
-    values[has] = raw[has]
-    return values, has
 
 
 def _load_samples(replay_dir: Path, max_shards: int) -> tuple[dict[int, list[Sample]], dict[str, Any]]:
@@ -222,27 +179,10 @@ def _future_pairs(
     )
 
 
-def _rmse(pred: np.ndarray, target: np.ndarray) -> float:
-    if target.size == 0:
-        return math.nan
-    return float(np.sqrt(np.mean((pred - target) ** 2)))
-
-
 def _mae(pred: np.ndarray, target: np.ndarray) -> float:
     if target.size == 0:
         return math.nan
     return float(np.mean(np.abs(pred - target)))
-
-
-def _corr(a: np.ndarray, b: np.ndarray) -> float:
-    if a.size < 2:
-        return math.nan
-    a0 = a - float(np.mean(a))
-    b0 = b - float(np.mean(b))
-    denom = float(np.sqrt(np.sum(a0 * a0) * np.sum(b0 * b0)))
-    if denom <= 1e-12:
-        return math.nan
-    return float(np.sum(a0 * b0) / denom)
 
 
 def _fit_weight(

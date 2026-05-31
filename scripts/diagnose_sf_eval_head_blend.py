@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import torch
 
 from chess_anti_engine.replay.shard import (
     INPUT_HISTORY_ENCODING_ARRAY_KEY,
@@ -19,13 +18,21 @@ from chess_anti_engine.replay.shard import (
     shard_index,
     shard_positions,
 )
-from chess_anti_engine.train.trainer import select_input_history_arrays
-from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
+from scripts.diagnostic_replay_utils import (
+    bool_field as _bool_field,
+    corr as _corr,
+    final_q_from_wdl_target as _final_q_from_wdl_target,
+    fit_simplex as _fit_simplex,
+    latest_replay_dir as _latest_replay_dir,
+    normalize_wdl as _normalize_wdl,
+    record_skipped_shard as _record_skipped_shard,
+    rmse as _rmse,
+    select_shards as _select_shards,
+)
 
 
 DEFAULT_RUN_DIR = Path("runs/pbt2_small")
 MAX_HORIZONS = 12
-MAX_SKIPPED_SHARDS = 20
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,17 +77,6 @@ def _latest_trial_dir(run_dir: Path) -> Path:
     return trials[-1]
 
 
-def _latest_replay_dir(run_dir: Path, trial_dir: Path | None = None) -> Path:
-    if trial_dir is not None:
-        replay_dir = run_dir / "replay" / trial_dir.name / "replay_shards"
-        if replay_dir.is_dir():
-            return replay_dir
-    replay_dirs = [p for p in (run_dir / "replay").glob("train_trial_*/replay_shards") if p.is_dir()]
-    if not replay_dirs:
-        raise FileNotFoundError(f"No replay shard directories under {run_dir / 'replay'}")
-    return max(replay_dirs, key=lambda p: p.stat().st_mtime)
-
-
 def _latest_checkpoint(trial_dir: Path) -> Path:
     direct = trial_dir / "ckpt" / "trainer.pt"
     if direct.is_file():
@@ -93,40 +89,6 @@ def _latest_checkpoint(trial_dir: Path) -> Path:
     if checkpoints:
         return max(checkpoints, key=lambda p: p.stat().st_mtime)
     raise FileNotFoundError(f"No checkpoint trainer.pt under {trial_dir}")
-
-
-def _select_shards(replay_dir: Path, max_shards: int) -> list[Path]:
-    shards = sorted(replay_dir.glob("shard_*.zarr"), key=shard_index)
-    return shards if max_shards <= 0 else shards[-max_shards:]
-
-
-def _record_skipped_shard(scan: dict[str, Any], shard: Path, exc: Exception) -> None:
-    if len(scan["skipped_shards"]) < MAX_SKIPPED_SHARDS:
-        scan["skipped_shards"].append({"shard": str(shard), "reason": repr(exc)})
-    else:
-        scan["skipped_shards_omitted"] += 1
-
-
-def _normalize_wdl(arr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    wdl = np.asarray(arr, dtype=np.float64)
-    finite = np.isfinite(wdl).all(axis=1)
-    non_negative = (wdl >= 0.0).all(axis=1)
-    sums = wdl.sum(axis=1)
-    valid = finite & non_negative & (sums > 1e-12)
-    out = np.zeros_like(wdl, dtype=np.float64)
-    out[valid] = wdl[valid] / sums[valid, None]
-    return out, valid
-
-
-def _bool_field(arrs: dict[str, Any], name: str, n: int) -> np.ndarray:
-    if name not in arrs:
-        return np.zeros((n,), dtype=bool)
-    return np.asarray(arrs[name], dtype=bool)
-
-
-def _final_q_from_wdl_target(wdl_target: np.ndarray) -> np.ndarray:
-    target = np.asarray(wdl_target, dtype=np.int64)
-    return np.where(target == 0, 1.0, np.where(target == 1, 0.0, -1.0)).astype(np.float64)
 
 
 def _load_samples(
@@ -249,6 +211,13 @@ def _predict_heads(
     device: str,
     batch_size: int,
 ) -> dict[tuple[str, int], tuple[float, float]]:
+    if not refs:
+        return {}
+    import torch
+
+    from chess_anti_engine.train.trainer import select_input_history_arrays
+    from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
+
     model = load_model_from_checkpoint(checkpoint, device=device)
     input_history_encoding = str(getattr(model, "input_history_encoding", "legacy"))
     by_shard: dict[Path, list[int]] = defaultdict(list)
@@ -294,58 +263,6 @@ def _predict_heads(
                         float(sf_eval_q[local_i]),
                     )
     return preds
-
-
-def _rmse(pred: np.ndarray, target: np.ndarray) -> float:
-    if target.size == 0:
-        return math.nan
-    return float(np.sqrt(np.mean((pred - target) ** 2)))
-
-
-def _corr(a: np.ndarray, b: np.ndarray) -> float:
-    if a.size < 2:
-        return math.nan
-    aa = a - float(np.mean(a))
-    bb = b - float(np.mean(b))
-    denom = float(np.sqrt(np.dot(aa, aa) * np.dot(bb, bb)))
-    if denom <= 1e-12:
-        return math.nan
-    return float(np.dot(aa, bb) / denom)
-
-
-def _fit_simplex(features: np.ndarray, target: np.ndarray) -> np.ndarray:
-    n_features = int(features.shape[1])
-    best_w = np.full((n_features,), 1.0 / max(1, n_features), dtype=np.float64)
-    best_err = math.inf
-    for mask in range(1, 1 << n_features):
-        active = [i for i in range(n_features) if (mask >> i) & 1]
-        x = features[:, active]
-        if len(active) == 1:
-            w_active = np.ones((1,), dtype=np.float64)
-        else:
-            gram = x.T @ x
-            rhs = x.T @ target
-            ones = np.ones((len(active), 1), dtype=np.float64)
-            kkt = np.block([[gram, ones], [ones.T, np.zeros((1, 1), dtype=np.float64)]])
-            vec = np.concatenate([rhs, np.ones((1,), dtype=np.float64)])
-            try:
-                sol = np.linalg.solve(kkt, vec)
-            except np.linalg.LinAlgError:
-                sol = np.linalg.lstsq(kkt, vec, rcond=None)[0]
-            w_active = sol[: len(active)]
-        if np.any(w_active < -1e-9):
-            continue
-        w = np.zeros((n_features,), dtype=np.float64)
-        w[np.asarray(active, dtype=np.int64)] = np.maximum(0.0, w_active)
-        total = float(w.sum())
-        if total <= 1e-12:
-            continue
-        w /= total
-        err = float(np.mean((features @ w - target) ** 2))
-        if err < best_err:
-            best_err = err
-            best_w = w
-    return best_w
 
 
 def _summarize_fit(
@@ -460,6 +377,16 @@ def _try_latest_trial_dir(run_dir: Path) -> Path | None:
         return None
 
 
+def _resolve_device(device_arg: str) -> str:
+    if device_arg != "auto":
+        return device_arg
+    try:
+        import torch
+    except Exception:  # noqa: BLE001
+        return "cpu"
+    return "cuda" if torch.cuda.is_available() else "cpu"
+
+
 def _normalize_horizons(values: list[int]) -> list[int]:
     out = [int(value) for value in values]
     if not out:
@@ -492,9 +419,7 @@ def main() -> None:
     except argparse.ArgumentTypeError as exc:
         parser.error(str(exc))
 
-    device = "cuda" if args.device == "auto" and torch.cuda.is_available() else args.device
-    if device == "auto":
-        device = "cpu"
+    device = _resolve_device(str(args.device))
 
     trial_dir = _try_latest_trial_dir(args.run_dir)
     if args.checkpoint is None and trial_dir is None:

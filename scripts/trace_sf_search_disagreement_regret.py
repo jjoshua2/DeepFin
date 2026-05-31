@@ -12,13 +12,23 @@ from typing import Any
 
 import numpy as np
 
-from chess_anti_engine.replay.shard import load_shard_arrays, shard_index, shard_positions
+from chess_anti_engine.replay.shard import load_shard_arrays, shard_positions
+from scripts.diagnostic_replay_utils import (
+    bool_field as _bool_field,
+    float_field as _float_field,
+    int_field as _int_field,
+    latest_replay_dir as _latest_replay_dir,
+    normalize_wdl as _normalize_wdl,
+    optional_float_array as _optional_float_field,
+    optional_int_array as _optional_int_field,
+    record_skipped_shard as _record_skipped_shard,
+    select_shards as _select_shards,
+)
 
 
 DEFAULT_RUN_DIR = Path("runs/pbt2_small")
 DEFAULT_MIN_GAP_REDUCTION = 0.02
 MAX_JSON_TRACES = 50
-MAX_SKIPPED_SHARDS = 20
 MAX_TOP = 50
 
 
@@ -74,86 +84,6 @@ class Trace:
     row: int
 
 
-def _latest_replay_dir(run_dir: Path) -> Path:
-    replay_dirs = [p for p in (run_dir / "replay").glob("train_trial_*/replay_shards") if p.is_dir()]
-    if not replay_dirs:
-        raise FileNotFoundError(f"No replay shard directories under {run_dir / 'replay'}")
-    return max(replay_dirs, key=lambda p: p.stat().st_mtime)
-
-
-def _select_shards(replay_dir: Path, max_shards: int) -> list[Path]:
-    shards = sorted(replay_dir.glob("shard_*.zarr"), key=shard_index)
-    if max_shards > 0:
-        return shards[-max_shards:]
-    return shards
-
-
-def _record_skipped_shard(stats: dict[str, Any], shard: Path, exc: Exception) -> None:
-    if len(stats["skipped_shards"]) < MAX_SKIPPED_SHARDS:
-        stats["skipped_shards"].append({"shard": str(shard), "reason": repr(exc)})
-    else:
-        stats["skipped_shards_omitted"] += 1
-
-
-def _bool_field(arrs: dict[str, Any], name: str, n: int) -> np.ndarray:
-    if name not in arrs:
-        return np.zeros((n,), dtype=bool)
-    return np.asarray(arrs[name], dtype=bool)
-
-
-def _float_field(arrs: dict[str, Any], name: str, n: int, default: float = math.nan) -> np.ndarray:
-    if name not in arrs:
-        return np.full((n,), default, dtype=np.float64)
-    return np.asarray(arrs[name], dtype=np.float64)
-
-
-def _int_field(arrs: dict[str, Any], name: str, n: int, default: int = -1) -> np.ndarray:
-    if name not in arrs:
-        return np.full((n,), default, dtype=np.int64)
-    return np.asarray(arrs[name], dtype=np.int64)
-
-
-def _optional_float_field(
-    arrs: dict[str, Any],
-    value_name: str,
-    has_name: str,
-    n: int,
-) -> np.ndarray:
-    out = np.full((n,), math.nan, dtype=np.float64)
-    if value_name not in arrs:
-        return out
-    values = np.asarray(arrs[value_name], dtype=np.float64)
-    mask = _bool_field(arrs, has_name, n) if has_name in arrs else np.isfinite(values)
-    out[mask] = values[mask]
-    return out
-
-
-def _optional_int_field(
-    arrs: dict[str, Any],
-    value_name: str,
-    has_name: str,
-    n: int,
-) -> np.ndarray:
-    out = np.full((n,), -1, dtype=np.int64)
-    if value_name not in arrs:
-        return out
-    values = np.asarray(arrs[value_name], dtype=np.int64)
-    mask = _bool_field(arrs, has_name, n) if has_name in arrs else values >= 0
-    out[mask] = values[mask]
-    return out
-
-
-def _normalize_wdl(arr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    wdl = np.asarray(arr, dtype=np.float64)
-    finite = np.isfinite(wdl).all(axis=1)
-    non_negative = (wdl >= 0.0).all(axis=1)
-    sums = wdl.sum(axis=1)
-    valid = finite & non_negative & (sums > 1e-12)
-    out = np.zeros_like(wdl, dtype=np.float64)
-    out[valid] = wdl[valid] / sums[valid, None]
-    return out, valid
-
-
 def _quantiles(values: list[float] | np.ndarray) -> dict[str, float]:
     arr = np.asarray(values, dtype=np.float64)
     arr = arr[np.isfinite(arr)]
@@ -167,29 +97,36 @@ def _quantiles(values: list[float] | np.ndarray) -> dict[str, float]:
     }
 
 
+def _q_in_trigger_pov(trigger: Sample, sample: Sample) -> tuple[float, float]:
+    sign = 1.0 if (int(sample.ply) - int(trigger.ply)) % 2 == 0 else -1.0
+    return sign * sample.sf_q, sign * sample.search_q
+
+
 def _classify(
     trigger: Sample,
     after: Sample | None,
     *,
     min_gap_reduction: float,
-) -> tuple[str, float | None, float | None, float | None]:
+) -> tuple[str, float | None, float | None, float | None, float | None, float | None]:
     if after is None:
-        return "no_after_sample", None, None, None
+        return "no_after_sample", None, None, None, None, None
     direction = 1.0 if trigger.gap > 0.0 else -1.0
-    search_toward_sf = -direction * (after.search_q - trigger.search_q)
-    sf_toward_search = direction * (after.sf_q - trigger.sf_q)
-    gap_reduction = trigger.abs_gap - after.abs_gap
+    after_sf_q, after_search_q = _q_in_trigger_pov(trigger, after)
+    after_gap = after_search_q - after_sf_q
+    search_toward_sf = -direction * (after_search_q - trigger.search_q)
+    sf_toward_search = direction * (after_sf_q - trigger.sf_q)
+    gap_reduction = trigger.abs_gap - abs(after_gap)
     if gap_reduction <= float(min_gap_reduction):
-        return "still_split", gap_reduction, search_toward_sf, sf_toward_search
+        return "still_split", gap_reduction, search_toward_sf, sf_toward_search, after_sf_q, after_search_q
     search_pos = max(0.0, search_toward_sf)
     sf_pos = max(0.0, sf_toward_search)
     if search_pos <= 1e-9 and sf_pos <= 1e-9:
-        return "gap_reduced_by_crossing", gap_reduction, search_toward_sf, sf_toward_search
+        return "gap_reduced_by_crossing", gap_reduction, search_toward_sf, sf_toward_search, after_sf_q, after_search_q
     if search_pos > sf_pos * 1.25:
-        return "search_moved_toward_sf", gap_reduction, search_toward_sf, sf_toward_search
+        return "search_moved_toward_sf", gap_reduction, search_toward_sf, sf_toward_search, after_sf_q, after_search_q
     if sf_pos > search_pos * 1.25:
-        return "sf_moved_toward_search", gap_reduction, search_toward_sf, sf_toward_search
-    return "both_moved", gap_reduction, search_toward_sf, sf_toward_search
+        return "sf_moved_toward_search", gap_reduction, search_toward_sf, sf_toward_search, after_sf_q, after_search_q
+    return "both_moved", gap_reduction, search_toward_sf, sf_toward_search, after_sf_q, after_search_q
 
 
 def _load_samples(replay_dir: Path, max_shards: int) -> tuple[dict[int, list[Sample]], dict[str, Any]]:
@@ -277,11 +214,14 @@ def _build_trace(
     *,
     min_gap_reduction: float,
 ) -> Trace:
-    verdict, gap_reduction, search_toward_sf, sf_toward_search = _classify(
+    verdict, gap_reduction, search_toward_sf, sf_toward_search, after_sf_q, after_search_q = _classify(
         trigger,
         after,
         min_gap_reduction=min_gap_reduction,
     )
+    event_sf_q, event_search_q = _q_in_trigger_pov(trigger, event)
+    event_gap = event_search_q - event_sf_q
+    after_gap = None if after_sf_q is None or after_search_q is None else after_search_q - after_sf_q
     direction = "search_high" if trigger.gap > 0.0 else "search_low"
     return Trace(
         game_id=trigger.game_id,
@@ -291,17 +231,17 @@ def _build_trace(
         direction=direction,
         verdict=verdict,
         initial_gap=trigger.gap,
-        event_gap=event.gap,
-        after_gap=None if after is None else after.gap,
+        event_gap=event_gap,
+        after_gap=after_gap,
         gap_reduction=gap_reduction,
         search_toward_sf=search_toward_sf,
         sf_toward_search=sf_toward_search,
         trigger_sf_q=trigger.sf_q,
         trigger_search_q=trigger.search_q,
-        event_sf_q=event.sf_q,
-        event_search_q=event.search_q,
-        after_sf_q=None if after is None else after.sf_q,
-        after_search_q=None if after is None else after.search_q,
+        event_sf_q=event_sf_q,
+        event_search_q=event_search_q,
+        after_sf_q=after_sf_q,
+        after_search_q=after_search_q,
         regret=event.regret,
         rank=event.rank,
         priority=trigger.priority,
@@ -413,7 +353,10 @@ def _print_report(report: dict[str, Any], traces: list[Trace], top: int) -> None
         f"sf_played_regret >= {report['regret_threshold']:.4f}, "
         f"within {report['max_trace_plies']} plies"
     )
-    print("- note: regret is recorded on the network-turn sample before the SF reply; verdict uses the next sample.")
+    print(
+        "- note: regret is recorded on the network-turn sample before the SF reply; "
+        "event/after Q values are normalized to the trigger ply POV."
+    )
     print(
         "- found: "
         f"{trigger['triggers']} disagreement triggers, "
