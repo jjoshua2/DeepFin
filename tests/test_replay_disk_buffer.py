@@ -11,6 +11,7 @@ from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer, _concat_sparse_batches
 from chess_anti_engine.replay.shard import (
     INPUT_HISTORY_ENCODING_ARRAY_KEY,
+    POLICY_ENCODING_ARRAY_KEY,
     delete_shard_path,
     iter_shard_paths,
     load_shard_arrays,
@@ -82,6 +83,27 @@ def test_concat_sparse_batches_keeps_matching_history_metadata() -> None:
 
     assert out["x"].shape[0] == 2
     assert str(out[INPUT_HISTORY_ENCODING_ARRAY_KEY].item()) == "lc0_root"
+
+
+def test_concat_sparse_batches_rejects_missing_and_concrete_policy_metadata() -> None:
+    legacy = _arrays(4672, n=1)
+    tagged = _arrays(4672, n=1)
+    tagged[POLICY_ENCODING_ARRAY_KEY] = np.asarray("az_4672")
+
+    with pytest.raises(ValueError, match="mixed replay metadata"):
+        _concat_sparse_batches([legacy, tagged])
+
+
+def test_concat_sparse_batches_keeps_matching_policy_metadata() -> None:
+    first = _arrays(4672, n=1)
+    second = _arrays(4672, n=1)
+    first[POLICY_ENCODING_ARRAY_KEY] = np.asarray("az_4672")
+    second[POLICY_ENCODING_ARRAY_KEY] = np.asarray("az_4672")
+
+    out = _concat_sparse_batches([first, second])
+
+    assert out["x"].shape[0] == 2
+    assert str(out[POLICY_ENCODING_ARRAY_KEY].item()) == "az_4672"
 
 
 def test_shuffle_buffer_capped_by_capacity(tmp_path) -> None:

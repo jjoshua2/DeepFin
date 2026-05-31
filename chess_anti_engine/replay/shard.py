@@ -15,7 +15,14 @@ import numpy as np
 import zarr
 from numcodecs import Blosc
 
-from chess_anti_engine.moves import COMPACT_POLICY_SIZE, POLICY_SIZE
+from chess_anti_engine.moves import (
+    COMPACT_POLICY_SIZE,
+    POLICY_ENCODING_AZ_4672,
+    POLICY_ENCODING_LC0_1858,
+    POLICY_SIZE,
+    normalize_policy_encoding,
+    policy_size_for_encoding,
+)
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 
 from .buffer import ReplaySample
@@ -26,6 +33,7 @@ LEGACY_SHARD_SUFFIX = ".npz"
 DEFAULT_MAX_SHARD_POSITIONS = 50_000
 DEFAULT_MAX_SHARD_UNCOMPRESSED_BYTES = 1024 * 1024 * 1024
 INPUT_HISTORY_ENCODING_ARRAY_KEY = "_input_history_encoding"
+POLICY_ENCODING_ARRAY_KEY = "_policy_encoding"
 
 # Server-managed staging dir for crash-recoverable uploads. Lives at
 # ``inbox_root/_pending`` and is replayed by ``server.app.create_app`` on
@@ -186,6 +194,99 @@ LEGAL_MASK_HAS_FIELDS: tuple[str, ...] = ("has_legal_mask", "has_sf_legal_mask",
 
 POLICY_SPACE_FIELDS = ("policy_target", "sf_policy_target", "policy_soft_target", "future_policy_target")
 POLICY_SIZED_FIELDS = frozenset((*POLICY_SPACE_FIELDS, *LEGAL_MASK_FIELDS))
+POLICY_INDEX_FIELDS: tuple[tuple[str, str], ...] = (
+    ("sf_move_index", "has_sf_move"),
+    ("sf_played_move_index", "has_sf_played_move"),
+)
+
+
+def _policy_encoding_for_size(policy_size: int) -> str:
+    size = int(policy_size)
+    if size == int(COMPACT_POLICY_SIZE):
+        return POLICY_ENCODING_LC0_1858
+    if size == int(POLICY_SIZE):
+        return POLICY_ENCODING_AZ_4672
+    raise ValueError(
+        f"policy size must be {POLICY_SIZE} or {COMPACT_POLICY_SIZE}, got {size}",
+    )
+
+
+def _scalar_metadata_string(arrs: dict[str, Any], key: str) -> str | None:
+    if key not in arrs:
+        return None
+    arr = np.asarray(arrs[key])
+    if arr.ndim > 1:
+        raise ValueError(f"{key} must be scalar or (N,)")
+    values = [str(v) for v in arr.reshape(-1).tolist() if str(v)]
+    if not values:
+        return None
+    first = values[0]
+    if any(value != first for value in values[1:]):
+        labels = sorted(set(values))
+        raise ValueError(f"mixed replay metadata {key}: {labels}")
+    return first
+
+
+def _policy_metadata_from_arrays(arrs: dict[str, Any]) -> tuple[str, int]:
+    policy_shape = _shape_of(arrs["policy_target"])
+    if len(policy_shape) != 2:
+        raise ValueError(f"policy_target must be (N,A); got {policy_shape}")
+    policy_size = int(policy_shape[1])
+    declared = _scalar_metadata_string(arrs, POLICY_ENCODING_ARRAY_KEY)
+    policy_encoding = (
+        normalize_policy_encoding(declared)
+        if declared is not None
+        else _policy_encoding_for_size(policy_size)
+    )
+    expected_size = int(policy_size_for_encoding(policy_encoding))
+    if expected_size != policy_size:
+        raise ValueError(
+            f"{POLICY_ENCODING_ARRAY_KEY}={policy_encoding!r} expects policy width "
+            f"{expected_size}, got {policy_size}",
+        )
+    return policy_encoding, policy_size
+
+
+def _attach_policy_metadata(arrs: dict[str, Any], meta: dict[str, Any]) -> None:
+    policy_encoding, policy_size = _policy_metadata_from_arrays(arrs)
+    declared = meta.get("policy_encoding")
+    if declared is not None:
+        meta_encoding = normalize_policy_encoding(str(declared))
+        if meta_encoding != policy_encoding:
+            raise ValueError(
+                f"policy_encoding mismatch: metadata has {meta_encoding!r}, "
+                f"arrays have {policy_encoding!r}",
+            )
+        policy_encoding = meta_encoding
+    if "policy_size" in meta and int(meta["policy_size"]) != policy_size:
+        raise ValueError(
+            f"policy_size mismatch: metadata has {int(meta['policy_size'])}, "
+            f"policy_target has {policy_size}",
+        )
+    meta["policy_encoding"] = policy_encoding
+    meta["policy_size"] = policy_size
+    arrs[POLICY_ENCODING_ARRAY_KEY] = np.asarray(policy_encoding)
+    arrs["_policy_size"] = np.array(policy_size, dtype=np.int32)
+
+
+def _meta_with_policy(meta: ShardMeta | dict[str, Any] | None, *, arrs: dict[str, Any]) -> dict[str, Any]:
+    attrs = _meta_dict(meta, positions=int(_shape_of(arrs["x"])[0]))
+    policy_encoding, policy_size = _policy_metadata_from_arrays(arrs)
+    if attrs.get("policy_encoding") is not None:
+        policy_encoding = normalize_policy_encoding(str(attrs["policy_encoding"]))
+        expected_size = int(policy_size_for_encoding(policy_encoding))
+        if expected_size != policy_size:
+            raise ValueError(
+                f"policy_encoding {policy_encoding!r} expects policy width "
+                f"{expected_size}, got {policy_size}",
+            )
+    if attrs.get("policy_size") is not None and int(attrs["policy_size"]) != policy_size:
+        raise ValueError(
+            f"policy_size {int(attrs['policy_size'])} does not match policy width {policy_size}",
+        )
+    attrs["policy_encoding"] = policy_encoding
+    attrs["policy_size"] = policy_size
+    return attrs
 
 
 def _padded_positions(nnz: np.ndarray, rows: np.ndarray, N: int) -> np.ndarray:
@@ -232,8 +333,14 @@ def _densify_policy(vals: np.ndarray, cols: np.ndarray, nnz: np.ndarray,
 def sparsify_chunk(arrs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
     """Convert dense policy arrays in a chunk dict to padded-sparse format."""
     out = dict(arrs)
-    if "_policy_size" not in out and "policy_target" in out and np.asarray(out["policy_target"]).ndim == 2:
-        out["_policy_size"] = np.array(int(np.asarray(out["policy_target"]).shape[1]), dtype=np.int32)
+    if (
+        "policy_target" in out
+        and np.asarray(out["policy_target"]).ndim == 2
+        and ("_policy_size" not in out or POLICY_ENCODING_ARRAY_KEY not in out)
+    ):
+        policy_encoding, policy_size = _policy_metadata_from_arrays(out)
+        out["_policy_size"] = np.array(policy_size, dtype=np.int32)
+        out[POLICY_ENCODING_ARRAY_KEY] = np.asarray(policy_encoding)
     for key in POLICY_SPACE_FIELDS:
         if key not in out:
             continue
@@ -307,6 +414,8 @@ class ShardMeta:
     model_sha256: str | None = None
     model_step: int | None = None
     input_history_encoding: str | None = None
+    policy_encoding: str | None = None
+    policy_size: int | None = None
     games: int | None = None
     positions: int | None = None
     wins: int | None = None
@@ -402,6 +511,9 @@ def prune_storage_arrays(arrs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
                 out[value_name] = np.asarray(arrs[value_name])
     if INPUT_HISTORY_ENCODING_ARRAY_KEY in arrs:
         out[INPUT_HISTORY_ENCODING_ARRAY_KEY] = np.asarray(arrs[INPUT_HISTORY_ENCODING_ARRAY_KEY])
+    policy_encoding, policy_size = _policy_metadata_from_arrays(out)
+    out[POLICY_ENCODING_ARRAY_KEY] = np.asarray(policy_encoding)
+    out["_policy_size"] = np.array(policy_size, dtype=np.int32)
     return out
 
 
@@ -748,6 +860,7 @@ def validate_array_declarations(
             f"policy_target A mismatch: expected {POLICY_SIZE} or {COMPACT_POLICY_SIZE}, "
             f"got {policy_shape[1]}",
         )
+    _policy_metadata_from_arrays(arrs)
     if len(wdl_shape) != 1 or wdl_shape[0] != x_shape[0]:
         raise ValueError("wdl_target must be (N,) matching x")
     if "_policy_size" in arrs:
@@ -811,6 +924,22 @@ def validate_arrays(arrs: dict[str, np.ndarray]) -> None:
         raise ValueError("wdl_target out of range")
 
     n = int(x.shape[0])
+    for value_name, flag_name in POLICY_INDEX_FIELDS:
+        if value_name not in arrs:
+            continue
+        idx = np.asarray(arrs[value_name]).astype(np.int64, copy=False)
+        if idx.shape != (n,):
+            raise ValueError(f"{value_name} must be (N,) matching x")
+        if flag_name in arrs:
+            active_rows = np.asarray(arrs[flag_name]) != 0
+        else:
+            active_rows = np.ones((n,), dtype=np.bool_)
+        if np.any(active_rows):
+            active_idx = idx[active_rows]
+            if ((active_idx < 0) | (active_idx >= policy_size)).any():
+                raise ValueError(
+                    f"{value_name} active rows out of range for policy width {policy_size}",
+                )
     for spec in _OPTIONAL_FIELD_SPECS:
         flag_present = spec.flag in arrs
         value_present = spec.arr in arrs
@@ -968,7 +1097,7 @@ def save_npz(
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     stored = prune_storage_arrays(samples_to_arrays(samples))
-    meta_json = json.dumps(_meta_dict(meta, positions=int(np.asarray(stored["x"]).shape[0])), sort_keys=True)
+    meta_json = json.dumps(_meta_with_policy(meta, arrs=stored), sort_keys=True)
     saver: Callable[..., Any] = np.savez_compressed if compress else np.savez
     saver(str(p), **stored, meta_json=np.array(meta_json))
     return p
@@ -998,7 +1127,7 @@ def save_local_shard_arrays(
     tmp = p.with_name(f"._tmp_{os.getpid()}_{secrets.token_hex(8)}_{p.name}")
     try:
         g = zarr.open_group(str(tmp), mode="w")
-        attrs = _meta_dict(meta, positions=int(np.asarray(stored["x"]).shape[0]))
+        attrs = _meta_with_policy(meta, arrs=stored)
         if (
             attrs.get("input_history_encoding") is None
             and INPUT_HISTORY_ENCODING_ARRAY_KEY in arrs
@@ -1006,7 +1135,6 @@ def save_local_shard_arrays(
             hist_arr = np.asarray(arrs[INPUT_HISTORY_ENCODING_ARRAY_KEY])
             if hist_arr.size:
                 attrs["input_history_encoding"] = str(hist_arr.reshape(-1)[0])
-        attrs["policy_size"] = int(np.asarray(arrs["policy_target"]).shape[1])
         g.attrs.update(attrs)
         compressor = Blosc(cname="zstd", clevel=3, shuffle=Blosc.SHUFFLE)
         for name, value in stored.items():
@@ -1044,23 +1172,28 @@ def load_shard_arrays(
         meta = json.loads(str(meta_json)) if meta_json else {}
         if meta.get("input_history_encoding") is not None:
             arrs[INPUT_HISTORY_ENCODING_ARRAY_KEY] = np.asarray(str(meta["input_history_encoding"]))
+        if meta.get("policy_encoding") is not None:
+            arrs[POLICY_ENCODING_ARRAY_KEY] = np.asarray(str(meta["policy_encoding"]))
+        _attach_policy_metadata(arrs, meta)
         validate_arrays(arrs)
         return arrs, meta
     g = zarr.open_group(str(p), mode="r")
     meta = dict(g.attrs.asdict())
     if lazy:
         arrs: dict[str, Any] = {name: g[name] for name in _SHARD_FIELDS if name in g}
-        if "policy_size" in meta:
-            # zarr group arrays and scalar sidecar metadata intentionally share this dict.
-            arrs["_policy_size"] = np.array(int(meta["policy_size"]), dtype=np.int32)
         if meta.get("input_history_encoding") is not None:
             arrs[INPUT_HISTORY_ENCODING_ARRAY_KEY] = np.asarray(str(meta["input_history_encoding"]))
+        if meta.get("policy_encoding") is not None:
+            arrs[POLICY_ENCODING_ARRAY_KEY] = np.asarray(str(meta["policy_encoding"]))
+        _attach_policy_metadata(arrs, meta)
+        validate_array_declarations(arrs)
         return arrs, meta
     arrs = {name: np.asarray(g[name]) for name in _SHARD_FIELDS if name in g}
-    if "policy_size" in meta:
-        arrs["_policy_size"] = np.array(int(meta["policy_size"]), dtype=np.int32)
     if meta.get("input_history_encoding") is not None:
         arrs[INPUT_HISTORY_ENCODING_ARRAY_KEY] = np.asarray(str(meta["input_history_encoding"]))
+    if meta.get("policy_encoding") is not None:
+        arrs[POLICY_ENCODING_ARRAY_KEY] = np.asarray(str(meta["policy_encoding"]))
+    _attach_policy_metadata(arrs, meta)
     validate_arrays(arrs)
     return arrs, meta
 

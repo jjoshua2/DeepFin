@@ -4,6 +4,7 @@ from chess_anti_engine.replay import ReplaySample
 from chess_anti_engine.replay.shard import (
     INPUT_HISTORY_ENCODING_ARRAY_KEY,
     LOCAL_SHARD_SUFFIX,
+    POLICY_ENCODING_ARRAY_KEY,
     ShardMeta,
     iter_shard_paths,
     load_npz,
@@ -146,9 +147,44 @@ def test_zarr_shard_accepts_compact_policy_size(tmp_path):
 
     p = local_shard_path(tmp_path, 0)
     out_path = save_local_shard_arrays(p, arrs=arrs, meta=ShardMeta(username="alice", positions=len(samples)))
-    loaded, _ = load_shard_arrays(out_path)
+    loaded, meta = load_shard_arrays(out_path)
+    lazy_loaded, lazy_meta = load_shard_arrays(out_path, lazy=True)
 
     assert loaded["policy_target"].shape == (2, 1858)
+    assert meta["policy_encoding"] == "lc0_1858"
+    assert meta["policy_size"] == 1858
+    assert str(loaded[POLICY_ENCODING_ARRAY_KEY].item()) == "lc0_1858"
+    assert int(lazy_loaded["policy_target"].shape[1]) == 1858
+    assert lazy_meta["policy_encoding"] == "lc0_1858"
+    assert str(lazy_loaded[POLICY_ENCODING_ARRAY_KEY].item()) == "lc0_1858"
+
+
+def test_zarr_shard_rejects_policy_encoding_width_mismatch(tmp_path):
+    samples = [_sample(policy_size=1858), _sample(policy_size=1858)]
+    arrs = samples_to_arrays(samples)
+
+    with np.testing.assert_raises_regex(ValueError, "policy_encoding"):
+        save_local_shard_arrays(
+            local_shard_path(tmp_path, 0),
+            arrs=arrs,
+            meta=ShardMeta(policy_encoding="az_4672", positions=len(samples)),
+        )
+
+
+def test_load_shard_arrays_infers_legacy_missing_policy_encoding(tmp_path):
+    samples = [_sample(policy_size=1858), _sample(policy_size=1858)]
+    arrs = samples_to_arrays(samples)
+    arrs.pop(POLICY_ENCODING_ARRAY_KEY, None)
+    arrs.pop("_policy_size", None)
+    path = tmp_path / "legacy_missing_policy_encoding.npz"
+    payload = {**arrs, "meta_json": np.array("{}")}
+    getattr(np, "savez_compressed")(path, **payload)
+
+    loaded, meta = load_shard_arrays(path)
+
+    assert loaded["policy_target"].shape == (2, 1858)
+    assert meta["policy_encoding"] == "lc0_1858"
+    assert int(meta["policy_size"]) == 1858
 
 
 def test_local_zarr_shard_roundtrip(tmp_path):
