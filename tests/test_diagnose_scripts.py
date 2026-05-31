@@ -490,6 +490,49 @@ def test_target_calibration_adjusted_game_target_changes_blend() -> None:
     np.testing.assert_allclose(blend, game_target, atol=1e-8)
 
 
+def test_target_calibration_interpolate_can_use_raw_game_fallback() -> None:
+    game_target = np.asarray([[0.6, 0.4, 0.0]], dtype=np.float64)
+    raw_game = np.asarray([[1.0, 0.0, 0.0]], dtype=np.float64)
+    sf = np.asarray([[0.0, 0.0, 1.0]], dtype=np.float64)
+    search = np.asarray([[1.0, 0.0, 0.0]], dtype=np.float64)
+
+    blend = _blend_wdl(
+        game_target,
+        sf,
+        search,
+        raw_game_target=raw_game,
+        fallback_target=raw_game,
+        sf_frac=1.0,
+        search_frac=0.0,
+        dampen_sf_low=1.0,
+        dampen_sf_high=0.0,
+        blend_mode="interpolate",
+    )
+
+    np.testing.assert_allclose(blend, raw_game, atol=1e-8)
+
+
+def test_target_calibration_renormalize_shifts_dampened_weight_to_search() -> None:
+    raw_game = np.asarray([[0.0, 1.0, 0.0]], dtype=np.float64)
+    sf = np.asarray([[0.0, 0.0, 1.0]], dtype=np.float64)
+    search = np.asarray([[1.0, 0.0, 0.0]], dtype=np.float64)
+
+    blend = _blend_wdl(
+        raw_game,
+        sf,
+        search,
+        raw_game_target=raw_game,
+        fallback_target=raw_game,
+        sf_frac=0.5,
+        search_frac=0.5,
+        dampen_sf_low=1.0,
+        dampen_sf_high=0.0,
+        blend_mode="renormalize",
+    )
+
+    np.testing.assert_allclose(blend, search, atol=1e-8)
+
+
 def test_disagreement_trace_normalizes_after_sample_to_trigger_pov() -> None:
     trigger = TraceSample(
         game_id=1,
