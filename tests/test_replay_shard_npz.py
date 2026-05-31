@@ -24,9 +24,24 @@ def _sample(policy_size: int = 4672) -> ReplaySample:
     s.priority_policy_kl = 0.75
     s.priority_q_delta = -0.125
     s.priority_sf_search_gap = 0.375
+    s.game_id = 123456789
+    s.ply_index = 18
     s.has_policy = True
     s.sf_wdl = np.array([0.2, 0.7, 0.1], dtype=np.float32)
     s.sf_move_index = 123
+    s.sf_played_move_index = 456
+    s.sf_played_rank = 3
+    s.sf_played_regret = 0.0125
+    s.future_sf_regret_sum = 0.25
+    s.future_sf_regret_d95 = 0.20
+    s.future_sf_regret_d98 = 0.23
+    s.future_sf_regret_max = 0.05
+    s.future_sf_regret_h4 = 0.11
+    s.future_sf_regret_h6 = 0.12
+    s.future_sf_regret_h12 = 0.13
+    s.future_sf_regret_h24 = 0.14
+    s.future_sf_regret_h50 = 0.15
+    s.future_sf_regret_count = 7
     s.moves_left = 0.5
     s.is_network_turn = True
     s.categorical_target = np.ones((32,), dtype=np.float32) / 32.0
@@ -59,8 +74,33 @@ def test_npz_shard_roundtrip(tmp_path):
     assert np.isclose(s0.priority_q_delta, -0.125)
     assert s0.priority_sf_search_gap is not None
     assert np.isclose(s0.priority_sf_search_gap, 0.375)
+    assert s0.game_id == 123456789
+    assert s0.ply_index == 18
     assert s0.sf_wdl is not None
     assert s0.sf_move_index is not None
+    assert s0.sf_played_move_index == 456
+    assert s0.sf_played_rank == 3
+    assert s0.sf_played_regret is not None
+    assert np.isclose(s0.sf_played_regret, 0.0125, atol=1e-4)
+    assert s0.future_sf_regret_sum is not None
+    assert np.isclose(s0.future_sf_regret_sum, 0.25, atol=1e-4)
+    assert s0.future_sf_regret_d95 is not None
+    assert np.isclose(s0.future_sf_regret_d95, 0.20, atol=1e-4)
+    assert s0.future_sf_regret_d98 is not None
+    assert np.isclose(s0.future_sf_regret_d98, 0.23, atol=1e-4)
+    assert s0.future_sf_regret_max is not None
+    assert np.isclose(s0.future_sf_regret_max, 0.05, atol=1e-4)
+    assert s0.future_sf_regret_h4 is not None
+    assert np.isclose(s0.future_sf_regret_h4, 0.11, atol=1e-4)
+    assert s0.future_sf_regret_h6 is not None
+    assert np.isclose(s0.future_sf_regret_h6, 0.12, atol=1e-4)
+    assert s0.future_sf_regret_h12 is not None
+    assert np.isclose(s0.future_sf_regret_h12, 0.13, atol=1e-4)
+    assert s0.future_sf_regret_h24 is not None
+    assert np.isclose(s0.future_sf_regret_h24, 0.14, atol=1e-4)
+    assert s0.future_sf_regret_h50 is not None
+    assert np.isclose(s0.future_sf_regret_h50, 0.15, atol=1e-4)
+    assert s0.future_sf_regret_count == 7
     assert s0.moves_left is not None
     assert s0.is_network_turn is not None
     assert s0.categorical_target is not None

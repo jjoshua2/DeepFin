@@ -10,13 +10,18 @@ end-to-end.  This file pins the small, easy-to-test units:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import Mock
 
+import chess
 import numpy as np
 import pytest
 
+from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.selfplay.finalize import (
     _compute_volatility_and_sf_delta,
+    _build_replay_samples,
     _sf_terminal_result,
 )
 from chess_anti_engine.selfplay.state import _NetRecord, _StatsAcc
@@ -156,6 +161,7 @@ class TestComputeVolatilityAndSfDelta:
         # so the diff should come from those values (not net_wdl).
         assert vol[0] == pytest.approx([0.6, 0.1, 0.5])
 
+
     def test_sf_delta6_sums_absolute_winrate_deltas(self):
         state = self._mk_state()
         # Pair at ply=0 with ply=6. SF winrate-like = W + 0.5 * D.
@@ -178,3 +184,50 @@ class TestComputeVolatilityAndSfDelta:
         ]
         _compute_volatility_and_sf_delta(state, records, {int(rec.ply_index): idx for idx, rec in enumerate(records)})
         assert state.stats.sf_d6_n == 0
+
+
+def test_build_replay_samples_records_producer_input_history_encoding() -> None:
+    policy = np.zeros((POLICY_SIZE,), dtype=np.float32)
+    policy[0] = 1.0
+    record = _NetRecord(
+        x=np.zeros((146, 8, 8), dtype=np.float32),
+        policy_probs=policy,
+        net_wdl_est=np.array([0.0, 1.0, 0.0], dtype=np.float32),
+        search_wdl_est=np.array([0.0, 1.0, 0.0], dtype=np.float32),
+        pov_color=chess.WHITE,
+        ply_index=0,
+        has_policy=True,
+        priority=1.0,
+        sample_weight=1.0,
+        keep_prob=1.0,
+    )
+    state = cast(Any, SimpleNamespace(
+        selfplay_arr=[False],
+        starting_boards=[chess.Board()],
+        opening_source_arr=["unit"],
+        move_idx_history=[[]],
+        rng=np.random.default_rng(1),
+        game=SimpleNamespace(
+            categorical_bins=32,
+            hlgauss_sigma=0.04,
+            max_plies=240,
+            policy_encoding="az_4672",
+            soft_policy_temp=1.0,
+            input_history_encoding="lc0_root_legacy_meta",
+        ),
+    ))
+
+    samples = _build_replay_samples(
+        state,
+        0,
+        [record],
+        result="1-0",
+        tb_policy_overrides={},
+        vol_targets=[None],
+        sf_vol_targets=[None],
+        total_plies_played=1,
+        ply_to_index={0: 0},
+    )
+
+    assert len(samples) == 1
+    assert samples[0].input_history_encoding == "lc0_root_legacy_meta"

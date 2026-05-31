@@ -184,6 +184,108 @@ def test_absent_optional_heads_produce_zero_loss():
     assert losses["moves_left"].item() == 0.0
 
 
+def test_adjusted_wdl_target_replaces_game_component():
+    batch = _minimal_batch(1)
+    batch["wdl_t"] = torch.tensor([0])
+    batch["future_sf_regret_sum"] = torch.ones((1,))
+    batch["has_future_sf_regret_sum"] = torch.ones((1,))
+
+    outputs = _fake_outputs(1)
+    outputs["wdl"] = torch.tensor([[-4.0, 0.0, 4.0]])
+
+    adjusted = compute_loss(
+        outputs,
+        batch,
+        sf_wdl_frac=0.0,
+        search_wdl_frac=0.0,
+        use_adjusted_wdl_target=True,
+    )
+
+    raw_batch = _minimal_batch(1)
+    raw_batch["wdl_t"] = torch.tensor([0])
+    raw = compute_loss(outputs, raw_batch, sf_wdl_frac=0.0, search_wdl_frac=0.0)
+
+    assert adjusted["blended_wdl_ce"].item() < raw["blended_wdl_ce"].item()
+
+
+def test_adjusted_wdl_target_is_opt_in():
+    batch = _minimal_batch(1)
+    batch["wdl_t"] = torch.tensor([0])
+    batch["future_sf_regret_sum"] = torch.ones((1,))
+    batch["has_future_sf_regret_sum"] = torch.ones((1,))
+
+    outputs = _fake_outputs(1)
+    outputs["wdl"] = torch.tensor([[-4.0, 0.0, 4.0]])
+
+    disabled = compute_loss(outputs, batch, sf_wdl_frac=0.0, search_wdl_frac=0.0)
+
+    raw_batch = _minimal_batch(1)
+    raw_batch["wdl_t"] = torch.tensor([0])
+    raw = compute_loss(outputs, raw_batch, sf_wdl_frac=0.0, search_wdl_frac=0.0)
+
+    assert disabled["blended_wdl_ce"].item() == raw["blended_wdl_ce"].item()
+
+
+def test_adjusted_wdl_target_can_use_discounted_source():
+    batch = _minimal_batch(1)
+    batch["wdl_t"] = torch.tensor([0])
+    batch["future_sf_regret_sum"] = torch.zeros((1,))
+    batch["has_future_sf_regret_sum"] = torch.ones((1,))
+    batch["future_sf_regret_d95"] = torch.ones((1,))
+    batch["has_future_sf_regret_d95"] = torch.ones((1,))
+
+    outputs = _fake_outputs(1)
+    outputs["wdl"] = torch.tensor([[-4.0, 0.0, 4.0]])
+
+    from_sum = compute_loss(
+        outputs,
+        batch,
+        sf_wdl_frac=0.0,
+        search_wdl_frac=0.0,
+        use_adjusted_wdl_target=True,
+    )
+    from_d95 = compute_loss(
+        outputs,
+        batch,
+        sf_wdl_frac=0.0,
+        search_wdl_frac=0.0,
+        use_adjusted_wdl_target=True,
+        adjusted_wdl_regret_source="d95",
+    )
+
+    assert from_d95["blended_wdl_ce"].item() < from_sum["blended_wdl_ce"].item()
+
+
+def test_adjusted_wdl_target_can_use_horizon_source():
+    batch = _minimal_batch(1)
+    batch["wdl_t"] = torch.tensor([0])
+    batch["future_sf_regret_sum"] = torch.zeros((1,))
+    batch["has_future_sf_regret_sum"] = torch.ones((1,))
+    batch["future_sf_regret_h12"] = torch.ones((1,))
+    batch["has_future_sf_regret_h12"] = torch.ones((1,))
+
+    outputs = _fake_outputs(1)
+    outputs["wdl"] = torch.tensor([[-4.0, 0.0, 4.0]])
+
+    from_sum = compute_loss(
+        outputs,
+        batch,
+        sf_wdl_frac=0.0,
+        search_wdl_frac=0.0,
+        use_adjusted_wdl_target=True,
+    )
+    from_h12 = compute_loss(
+        outputs,
+        batch,
+        sf_wdl_frac=0.0,
+        search_wdl_frac=0.0,
+        use_adjusted_wdl_target=True,
+        adjusted_wdl_regret_source="h12",
+    )
+
+    assert from_h12["blended_wdl_ce"].item() < from_sum["blended_wdl_ce"].item()
+
+
 def test_has_flag_masking():
     """Only samples with has_* = 1 should contribute to their respective head."""
     b = 4

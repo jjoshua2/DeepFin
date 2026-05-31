@@ -31,8 +31,22 @@ Goal: keep policy/WDL supervision tunable without throwing away replay.
 Ideas:
 - Store sparse Stockfish policy labels as MultiPV move indices + raw scores + candidate count, then build dense or sparse CE targets at train time. Main benefit is retuning `sf_policy_temp` and `sf_policy_label_smooth` over old replay; disk savings are secondary because dense `sf_policy_target` compresses well.
 - For the sparse SF-policy path, keep dense `sf_policy_target` for a transition period and add parity tests for current temp/smoothing. Preferred final loss is sparse CE over gathered log-probs, with smoothing handled analytically.
+- Consolidate optional replay metadata declarations after the adjusted-WDL target path settles. PR #14 added matching field lists in shard storage, dataset collation, and loss-source selection; keep the explicit behavior for now, but eventually move the future-regret field names/dtypes/has-flags to one small shared spec so future target metadata does not require hand-updating three places.
+- Before live-enabling `use_adjusted_wdl_target`, explicitly decide whether the adjusted outcome should remain the fallback anchor for missing SF/search WDL blend components, or whether adjustment should apply only to the pure game-outcome fraction. Current PR #14 behavior uses the adjusted target consistently as the anchor everywhere once the feature is enabled.
+- If start-position metadata ever matters for memory or API clarity, replace `SelfplayState.starting_boards` with a smaller start-FEN string array plus a syzygy-only replay-board copy path. PR #14 keeps full board copies because existing syzygy replay code already consumes them and batch-size memory cost is negligible.
 - Probe BT4 raw policy sharpness on the same replay/start positions and compare top move probability, top-5 mass, entropy, and effective legal moves against our main search target, soft policy target, and SF-policy target.
 - Recheck whether `sf_policy_label_smooth` should remain legal-set smoothing or become uncovered-legal smoothing after `multipv=40`; current live setting is intentionally small at 1%.
+
+## Compact policy simplification backlog
+Goal: make `lc0_1858` the normal live-training policy path now that compact output tested well, while keeping old `az_4672` data/checkpoints loadable.
+
+Ideas:
+- Make `policy_encoding: lc0_1858` the production/default config path once the stacked replay/model/runtime PRs are merged.
+- Keep `az_4672` as a legacy import, conversion, and checkpoint-migration path rather than a first-class live training mode.
+- Require each shard to declare `policy_encoding`, validate every policy-space array against that encoding, and reject mixed encodings inside one replay buffer unless an explicit conversion step runs.
+- Store `sf_move_index` in the shard's own policy encoding, or store a move identity and derive the index at load time. Avoid implicit "full index with compact target" conventions.
+- Remove the misleading `lc0_4672` name from manifests and helpers. Full 4672 should be `az_4672`; LC0 should mean the compact 1858 move encoding.
+- Keep conversion helpers for old replay/checkpoints, but keep the hot training path branch-light once a run has chosen its encoding.
 
 ## Offline architecture sweep backlog
 Goal: test architecture changes on fixed replay snapshots before risking live selfplay.

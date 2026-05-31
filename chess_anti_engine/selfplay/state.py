@@ -185,6 +185,7 @@ class _NetRecord:
         "priority_policy_kl", "priority_q_delta",
         "sample_weight", "keep_prob", "legal_mask",
         "sf_policy_target", "sf_move_index", "sf_wdl",
+        "sf_played_move_index", "sf_played_rank", "sf_played_regret",
         "sf_legal_mask", "gumbel_policy_diag",
     )
 
@@ -205,6 +206,9 @@ class _NetRecord:
     sf_policy_target: np.ndarray | None
     sf_move_index: int | None
     sf_wdl: np.ndarray | None
+    sf_played_move_index: int | None
+    sf_played_rank: int | None
+    sf_played_regret: float | None
     sf_legal_mask: np.ndarray | None
     gumbel_policy_diag: dict[str, float] | None
 
@@ -234,6 +238,9 @@ class _NetRecord:
         self.sf_policy_target = sf_policy_target
         self.sf_move_index = sf_move_index
         self.sf_wdl = sf_wdl
+        self.sf_played_move_index = None
+        self.sf_played_rank = None
+        self.sf_played_regret = None
         self.sf_legal_mask = None
         self.gumbel_policy_diag = gumbel_policy_diag
 
@@ -630,7 +637,7 @@ class SelfplayState:
         opening_source_arr = [start.source for start in starts]
         # Use from_board (not from_raw) to preserve ply count + history from openings.
         cboards = [_CBoard.from_board(b) for b in boards]
-        starting_boards = [b.copy() for b in boards] if game.syzygy_path else None
+        starting_boards = [b.copy() for b in boards]
 
         net_color_arr, selfplay_arr = _init_color_and_selfplay_arrays(
             batch_size, rng=rng, selfplay_fraction=game.selfplay_fraction,

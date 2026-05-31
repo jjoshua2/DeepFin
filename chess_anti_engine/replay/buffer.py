@@ -19,6 +19,8 @@ class ReplaySample:
     priority_policy_kl: float | None = None
     priority_q_delta: float | None = None
     priority_sf_search_gap: float | None = None
+    game_id: int | None = None
+    ply_index: int | None = None
     has_policy: bool = True
     x_lc0_root: np.ndarray | None = None  # Optional alternate LC0-root input planes.
     input_history_encoding: str | None = None
@@ -30,8 +32,21 @@ class ReplaySample:
   # network's move and the evaluation after that reply.
     sf_wdl: np.ndarray | None = None  # (3,) float32
     sf_move_index: int | None = None  # action index for SF chosen move
+    sf_played_move_index: int | None = None  # regret-sampled curriculum reply, if different from best
+    sf_played_rank: int | None = None  # 1=best among MultiPV candidates
+    sf_played_regret: float | None = None  # best_score - played_score in WDL winrate units
     sf_policy_target: np.ndarray | None = None  # (POLICY_SIZE,) float32 SF reply distribution
     search_wdl: np.ndarray | None = None  # (3,) float32 — MCTS-improved value head prediction
+    future_sf_regret_sum: float | None = None  # cumulative future SF reply regret in expected-score units
+    future_sf_regret_d95: float | None = None
+    future_sf_regret_d98: float | None = None
+    future_sf_regret_max: float | None = None
+    future_sf_regret_h4: float | None = None
+    future_sf_regret_h6: float | None = None
+    future_sf_regret_h12: float | None = None
+    future_sf_regret_h24: float | None = None
+    future_sf_regret_h50: float | None = None
+    future_sf_regret_count: int | None = None
     moves_left: float | None = None
     is_network_turn: bool | None = None
     is_selfplay: bool | None = None

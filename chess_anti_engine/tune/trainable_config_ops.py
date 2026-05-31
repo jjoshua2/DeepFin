@@ -327,6 +327,14 @@ def _apply_lr_gamma_weights(trainer: Trainer, config: dict, *, rescale_current_l
             setattr(trainer, wk, float(config[wk]))
     if "w_sf_volatility" not in config and "w_volatility" in config:
         trainer.w_sf_volatility = float(config["w_volatility"])
+    if "use_adjusted_wdl_target" in config:
+        trainer.use_adjusted_wdl_target = bool(config["use_adjusted_wdl_target"])
+    if "adjusted_wdl_regret_source" in config:
+        trainer.adjusted_wdl_regret_source = str(config["adjusted_wdl_regret_source"])
+    if "adjusted_wdl_regret_scale" in config:
+        trainer.adjusted_wdl_regret_scale = float(config["adjusted_wdl_regret_scale"])
+    if "adjusted_wdl_regret_cap" in config:
+        trainer.adjusted_wdl_regret_cap = float(config["adjusted_wdl_regret_cap"])
     if "resid_channel_dropout" in config:
         drop = max(0.0, min(0.95, float(config["resid_channel_dropout"])))
         trainer.resid_channel_dropout = drop
