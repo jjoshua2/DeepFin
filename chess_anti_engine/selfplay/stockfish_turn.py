@@ -130,6 +130,7 @@ def _sf_played_move_diagnostics(
             played_score = float(score)
             break
     if played_score is None:
+        # Regret is measured only against the sampled MultiPV set; outside-set moves are missing diagnostics.
         return None, None
     best_score = max(float(score) for score in cand_scores)
     rank = 1 + sum(1 for score in cand_scores if float(score) > played_score + 1e-12)

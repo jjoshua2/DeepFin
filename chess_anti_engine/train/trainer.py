@@ -1778,6 +1778,8 @@ class Trainer:
     def load(self, path: Path) -> None:
         from chess_anti_engine.model import load_state_dict_tolerant
 
+        # Trainer checkpoints include optimizer/scheduler/RNG pickles, so resume needs the
+        # full trusted checkpoint payload rather than PyTorch's weights-only loader.
         ckpt = torch.load(str(path), map_location=self.device, weights_only=False)
         load_state_dict_tolerant(self.model, ckpt["model"], label="resume")
         fresh_opt_state = self.opt.state_dict()

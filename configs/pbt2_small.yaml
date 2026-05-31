@@ -262,9 +262,9 @@ train:
   sf_wdl_frac_floor: 0.30   # Low-regret mix is 30% SF / 40% search / 30% final; reduce search dominance while preserving final anchor.
   search_wdl_frac: 0.40     # Fraction of WDL target blended from MCTS-averaged WDL when available.
   use_adjusted_wdl_target: false  # Opt-in only; do not stack adjusted-final behavior onto the live 30/40/30 blend test.
-  adjusted_wdl_regret_source: sum  # sum|d95|d98|max|h4|h6|h12|h24|h50; stored separately for horizon retunes.
-  adjusted_wdl_regret_scale: 1.0
-  adjusted_wdl_regret_cap: 0.0     # Q-units; 0 disables cap.
+  adjusted_wdl_regret_source: sum  # sum|d95|d98|max|h4|h6|h12|h24|h50; sum can be aggressive without a cap.
+  adjusted_wdl_regret_scale: 1.0   # If enabling source=sum, prefer a smaller scale, discounted source, or positive cap.
+  adjusted_wdl_regret_cap: 0.0     # Q-units; 0 disables cap and can saturate suffix-sum targets.
   sf_wdl_conf_power: 1.0    # Confidence damping: scale SF-WDL by (1-draw_prob)^power.
   sf_wdl_draw_scale: 0.55   # Pinned low-to-mid based on the healthier late-run settings.
   sf_wdl_floor_at_regret: 0.10  # Regret value at which SF WDL fraction hits the floor.
