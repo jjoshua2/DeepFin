@@ -25,6 +25,7 @@ from chess_anti_engine.encoding.cboard_encode import encode_cboard
 from chess_anti_engine.encoding.lc0 import (
     LC0_HISTORY_ROOT,
     LC0_HISTORY_ROOT_LEGACY_META,
+    c_input_history_mode,
     normalize_lc0_history_encoding,
     uses_lc0_root_history,
 )
@@ -65,15 +66,6 @@ from chess_anti_engine.selfplay.temperature import temperature_for_ply
 
 # torch.compile shape-stability buckets.
 _ROOT_BUCKETS: tuple[int, ...] = (32, 64, 128, 256, 512)
-
-
-def _c_input_history_mode(input_history_encoding: str | None) -> int:
-    hist_enc = normalize_lc0_history_encoding(input_history_encoding)
-    if hist_enc == LC0_HISTORY_ROOT_LEGACY_META:
-        return 2
-    if hist_enc == LC0_HISTORY_ROOT:
-        return 1
-    return 0
 
 
 def _batch_encoder_pair(state: SelfplayState):
@@ -372,7 +364,7 @@ def _append_records_via_c(
         actions_arr, values_arr, probs_arr,
         int(diff_focus.enabled), float(diff_focus.q_weight),
         float(diff_focus.pol_scale), float(diff_focus.min_keep), float(diff_focus.slope),
-        _c_input_history_mode(state.game.input_history_encoding),
+        c_input_history_mode(state.game.input_history_encoding),
     )
     (c_x, c_probs, c_wdl_net, c_wdl_search, c_priority,
      c_priority_policy_kl, c_priority_q_delta,

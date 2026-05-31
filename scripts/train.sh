@@ -54,6 +54,13 @@ clear_pause_markers() {
     fi
 }
 
+check_c_extensions() {
+    if [ "${TRAIN_SKIP_C_EXT_CHECK:-0}" = "1" ]; then
+        return 0
+    fi
+    PYTHONPATH=. python3 scripts/check_c_extensions_fresh.py --quiet
+}
+
 start() {
     if running; then
         echo "Already running (PID $(cat "$PIDFILE"))"
@@ -79,6 +86,7 @@ start() {
             extra_args+=("--resume")
         fi
     fi
+    check_c_extensions
     clear_pause_markers
     echo "Starting training with $CONFIG ${extra_args[*]:+(extra: ${extra_args[*]})}..."
     # Inductor compile parallelism — without these, autotune is single-threaded

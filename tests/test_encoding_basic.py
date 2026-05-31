@@ -4,6 +4,10 @@ import numpy as np
 from chess_anti_engine.encoding import encode_position
 from chess_anti_engine.encoding.lc0 import (
     LC0_HISTORY_ROOT_LEGACY_META,
+    LC0_HISTORY_MODE_LEGACY,
+    LC0_HISTORY_MODE_ROOT,
+    LC0_HISTORY_MODE_ROOT_LEGACY_META,
+    c_input_history_mode,
     normalize_lc0_history_encoding,
 )
 
@@ -90,6 +94,13 @@ def test_lc0_root_legacy_meta_patches_rule50_and_ep():
     assert np.all(meta[110, :, 4] == 1.0)
     assert float(meta[110].sum()) == 8.0
     assert np.all(meta[111] == 1.0)
+
+
+def test_c_input_history_mode_ids_are_stable():
+    assert c_input_history_mode(None) == LC0_HISTORY_MODE_LEGACY
+    assert c_input_history_mode("legacy") == LC0_HISTORY_MODE_LEGACY
+    assert c_input_history_mode("lc0_root") == LC0_HISTORY_MODE_ROOT
+    assert c_input_history_mode("root_meta") == LC0_HISTORY_MODE_ROOT_LEGACY_META
 
 
 def test_orientation_side_to_move_flips_ranks_for_black():

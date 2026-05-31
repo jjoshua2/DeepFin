@@ -92,6 +92,10 @@ LC0_FULL = LC0FullPlaneSpec()
 LC0_HISTORY_LEGACY = "legacy"
 LC0_HISTORY_ROOT = "lc0_root"
 LC0_HISTORY_ROOT_LEGACY_META = "lc0_root_legacy_meta"
+# Passed into C extension mode switches; keep these values stable.
+LC0_HISTORY_MODE_LEGACY = 0
+LC0_HISTORY_MODE_ROOT = 1
+LC0_HISTORY_MODE_ROOT_LEGACY_META = 2
 
 
 def normalize_lc0_history_encoding(input_history_encoding: str | None) -> str:
@@ -131,6 +135,16 @@ def uses_lc0_root_history(input_history_encoding: str | None) -> bool:
 def uses_lc0_root_legacy_meta(input_history_encoding: str | None) -> bool:
     """Return True for LC0 root history with legacy EP/rule50 metadata."""
     return normalize_lc0_history_encoding(input_history_encoding) == LC0_HISTORY_ROOT_LEGACY_META
+
+
+def c_input_history_mode(input_history_encoding: str | None) -> int:
+    """Return the C fast-path mode id for an input history encoding."""
+    hist_enc = normalize_lc0_history_encoding(input_history_encoding)
+    if hist_enc == LC0_HISTORY_ROOT_LEGACY_META:
+        return LC0_HISTORY_MODE_ROOT_LEGACY_META
+    if hist_enc == LC0_HISTORY_ROOT:
+        return LC0_HISTORY_MODE_ROOT
+    return LC0_HISTORY_MODE_LEGACY
 
 
 def apply_lc0_root_legacy_meta_planes(out: np.ndarray, board: chess.Board) -> None:

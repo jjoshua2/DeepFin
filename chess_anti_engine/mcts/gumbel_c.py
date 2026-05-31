@@ -23,8 +23,8 @@ import torch
 
 from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.encoding.lc0 import (
-    LC0_HISTORY_ROOT,
     LC0_HISTORY_ROOT_LEGACY_META,
+    c_input_history_mode,
     normalize_lc0_history_encoding,
     uses_lc0_root_history,
 )
@@ -71,15 +71,6 @@ GumbelManyCDiagnosticsResult = tuple[
     list[int],
     list[dict[str, float] | None],
 ]
-
-
-def _input_history_mode(input_history_encoding: str | None) -> int:
-    hist_enc = normalize_lc0_history_encoding(input_history_encoding)
-    if hist_enc == LC0_HISTORY_ROOT_LEGACY_META:
-        return 2
-    if hist_enc == LC0_HISTORY_ROOT:
-        return 1
-    return 0
 
 
 def _batch_encoders(input_history_encoding: str | None):
@@ -488,7 +479,8 @@ def run_gumbel_root_many_c(
             _n_leaves[g] = _trees[g].start_gumbel_sims(
                 _cb_g, _rid_g, _rem_g, _gum_g, _pri_g, _bud_g, _rqs_g,
                 _c_scale, _c_visit, _c_puct, _fpu_reduction, _full_tree,
-                _enc_bufs[g], 0, int(target_batch), _input_history_mode(cfg.input_history_encoding),
+                _enc_bufs[g], 0, int(target_batch),
+                c_input_history_mode(cfg.input_history_encoding),
             )
         _t_prepare += _time.perf_counter() - _tp0
 
@@ -707,7 +699,8 @@ def run_gumbel_root_many_c(
             cast("list[np.ndarray]", root_pri),
             _budget_arr, _root_qs_arr,
             _c_scale, _c_visit, _c_puct, _fpu_reduction, _full_tree,
-            cast(np.ndarray, _enc_buf), 0, int(target_batch), _input_history_mode(cfg.input_history_encoding),
+            cast(np.ndarray, _enc_buf), 0, int(target_batch),
+            c_input_history_mode(cfg.input_history_encoding),
         )
         _t_prepare += _time.perf_counter() - _tp0
 
