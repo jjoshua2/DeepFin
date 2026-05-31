@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from chess_anti_engine.replay.shard import validate_array_declarations, validate_arrays
+from chess_anti_engine.replay.shard import POLICY_ENCODING_ARRAY_KEY, validate_array_declarations, validate_arrays
 
 
 class _DeclaredArray:
@@ -65,6 +65,23 @@ def test_validate_rejects_policy_size_attr_mismatch():
     arrs["_policy_size"] = np.array(999_999, dtype=np.int32)
 
     with pytest.raises(ValueError, match="_policy_size mismatch"):
+        validate_arrays(arrs)
+
+
+def test_validate_rejects_policy_encoding_width_mismatch():
+    arrs = _minimal_valid_arrays()
+    arrs[POLICY_ENCODING_ARRAY_KEY] = np.asarray("lc0_1858")
+
+    with pytest.raises(ValueError, match="_policy_encoding"):
+        validate_arrays(arrs)
+
+
+def test_validate_rejects_policy_index_out_of_declared_range():
+    arrs = _minimal_valid_arrays()
+    arrs["sf_move_index"] = np.array([4672, 999999], dtype=np.int32)
+    arrs["has_sf_move"] = np.array([1, 0], dtype=np.uint8)
+
+    with pytest.raises(ValueError, match="sf_move_index active rows out of range"):
         validate_arrays(arrs)
 
 

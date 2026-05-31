@@ -9,6 +9,7 @@ import numpy as np
 
 from chess_anti_engine.replay.shard import (
     INPUT_HISTORY_ENCODING_ARRAY_KEY,
+    POLICY_ENCODING_ARRAY_KEY,
     _REQUIRED_STORAGE_FIELDS,
     _SHARD_FIELDS,
     zeros_for_storage_field,
@@ -86,21 +87,22 @@ def concat_array_batches(batches: list[dict[str, np.ndarray]]) -> dict[str, np.n
         )
         for k in keys
     }
-    history_values: list[object] = []
-    missing_history = False
-    for batch in batches:
-        if INPUT_HISTORY_ENCODING_ARRAY_KEY not in batch:
-            missing_history = True
-            continue
-        arr = np.asarray(batch[INPUT_HISTORY_ENCODING_ARRAY_KEY])
-        if arr.ndim != 0:
-            raise ValueError(f"{INPUT_HISTORY_ENCODING_ARRAY_KEY} must be scalar metadata")
-        history_values.append(arr.item())
-    if history_values:
-        first = history_values[0]
-        if missing_history or any(v != first for v in history_values[1:]):
-            raise ValueError(f"mixed replay metadata for {INPUT_HISTORY_ENCODING_ARRAY_KEY}")
-        out[INPUT_HISTORY_ENCODING_ARRAY_KEY] = np.asarray(first)
+    for metadata_key in (INPUT_HISTORY_ENCODING_ARRAY_KEY, POLICY_ENCODING_ARRAY_KEY):
+        values: list[object] = []
+        missing = False
+        for batch in batches:
+            if metadata_key not in batch:
+                missing = True
+                continue
+            arr = np.asarray(batch[metadata_key])
+            if arr.ndim != 0:
+                raise ValueError(f"{metadata_key} must be scalar metadata")
+            values.append(arr.item())
+        if values:
+            first = values[0]
+            if missing or any(v != first for v in values[1:]):
+                raise ValueError(f"mixed replay metadata for {metadata_key}")
+            out[metadata_key] = np.asarray(first)
     return out
 
 
