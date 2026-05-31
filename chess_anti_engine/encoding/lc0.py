@@ -92,6 +92,7 @@ LC0_FULL = LC0FullPlaneSpec()
 LC0_HISTORY_LEGACY = "legacy"
 LC0_HISTORY_ROOT = "lc0_root"
 LC0_HISTORY_ROOT_LEGACY_META = "lc0_root_legacy_meta"
+# Passed into C extension mode switches; keep these values stable.
 LC0_HISTORY_MODE_LEGACY = 0
 LC0_HISTORY_MODE_ROOT = 1
 LC0_HISTORY_MODE_ROOT_LEGACY_META = 2

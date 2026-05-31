@@ -23,6 +23,7 @@ def _write_all_sources(root: Path, *, mtime_ns: int = 10) -> None:
         "chess_anti_engine/encoding/_features_ext.c",
         "chess_anti_engine/encoding/_lc0_ext.c",
         "chess_anti_engine/encoding/_cboard_impl.h",
+        "chess_anti_engine/encoding/_features_impl.h",
         "chess_anti_engine/mcts/_mcts_tree.c",
     ):
         _write(root / rel, mtime_ns=mtime_ns)
@@ -63,3 +64,24 @@ def test_check_extensions_treats_shared_header_as_dependency(tmp_path: Path):
 
     assert "chess_anti_engine.encoding._lc0_ext is older than chess_anti_engine/encoding/_cboard_impl.h" in issues
     assert "chess_anti_engine.mcts._mcts_tree is older than chess_anti_engine/encoding/_cboard_impl.h" in issues
+
+
+def test_check_extensions_treats_feature_header_as_dependency(tmp_path: Path):
+    _write_all_sources(tmp_path, mtime_ns=10)
+    _write_all_extensions(tmp_path, mtime_ns=20)
+    _write(tmp_path / "chess_anti_engine/encoding/_features_impl.h", mtime_ns=30)
+
+    issues = check_extensions(tmp_path)
+
+    assert (
+        "chess_anti_engine.encoding._features_ext is older than "
+        "chess_anti_engine/encoding/_features_impl.h"
+    ) in issues
+    assert (
+        "chess_anti_engine.encoding._lc0_ext is older than "
+        "chess_anti_engine/encoding/_features_impl.h"
+    ) in issues
+    assert (
+        "chess_anti_engine.mcts._mcts_tree is older than "
+        "chess_anti_engine/encoding/_features_impl.h"
+    ) in issues

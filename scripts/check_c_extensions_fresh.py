@@ -18,13 +18,17 @@ class ExtensionSpec:
 EXTENSION_SPECS: tuple[ExtensionSpec, ...] = (
     ExtensionSpec(
         "chess_anti_engine.encoding._features_ext",
-        ("chess_anti_engine/encoding/_features_ext.c",),
+        (
+            "chess_anti_engine/encoding/_features_ext.c",
+            "chess_anti_engine/encoding/_features_impl.h",
+        ),
     ),
     ExtensionSpec(
         "chess_anti_engine.encoding._lc0_ext",
         (
             "chess_anti_engine/encoding/_lc0_ext.c",
             "chess_anti_engine/encoding/_cboard_impl.h",
+            "chess_anti_engine/encoding/_features_impl.h",
         ),
     ),
     ExtensionSpec(
@@ -32,6 +36,7 @@ EXTENSION_SPECS: tuple[ExtensionSpec, ...] = (
         (
             "chess_anti_engine/mcts/_mcts_tree.c",
             "chess_anti_engine/encoding/_cboard_impl.h",
+            "chess_anti_engine/encoding/_features_impl.h",
         ),
     ),
 )
