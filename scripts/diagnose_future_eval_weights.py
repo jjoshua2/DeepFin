@@ -344,7 +344,7 @@ def main() -> None:
     parser.add_argument("--run-dir", type=Path, default=DEFAULT_RUN_DIR)
     parser.add_argument("--replay-dir", type=Path, default=None)
     parser.add_argument("--max-shards", type=int, default=256, help="newest shards to scan; 0 scans all")
-    parser.add_argument("--horizons", type=_parse_horizons, default="2,4,6")
+    parser.add_argument("--horizons", type=_parse_horizons, default=_parse_horizons("2,4,6"))
     parser.add_argument("--gap-threshold", type=float, default=0.15)
     parser.add_argument(
         "--include-regret-adjusted",

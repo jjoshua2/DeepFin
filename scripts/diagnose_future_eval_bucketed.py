@@ -411,11 +411,15 @@ def main() -> None:
     parser.add_argument("--run-dir", type=Path, default=DEFAULT_RUN_DIR)
     parser.add_argument("--replay-dir", type=Path, default=None)
     parser.add_argument("--max-shards", type=int, default=0, help="newest shards to scan; 0 scans all")
-    parser.add_argument("--horizons", type=_parse_horizons, default="2,4,6,8,10,12,16,20,24")
+    parser.add_argument(
+        "--horizons",
+        type=_parse_horizons,
+        default=_parse_horizons("2,4,6,8,10,12,16,20,24"),
+    )
     parser.add_argument(
         "--eval-bins",
         type=_parse_eval_bins,
-        default=",".join(str(value) for value in DEFAULT_EVAL_BINS),
+        default=_parse_eval_bins(",".join(str(value) for value in DEFAULT_EVAL_BINS)),
         help=f"strictly increasing comma-separated eval buckets, capped at {MAX_EVAL_BINS} cut points",
     )
     parser.add_argument("--near-even", type=float, default=0.10)

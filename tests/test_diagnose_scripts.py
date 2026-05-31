@@ -276,8 +276,8 @@ def test_wdl_age_sampler_broadcasts_history_metadata_per_shard() -> None:
 @pytest.mark.parametrize(
     ("script", "extra", "needle"),
     [
-        ("diagnose_future_eval_bucketed.py", ("--horizons", "2"), "row_all"),
-        ("diagnose_future_eval_weights.py", ("--horizons", "2"), "future_avg_q_regret_adjusted"),
+        ("diagnose_future_eval_bucketed.py", (), "row_all"),
+        ("diagnose_future_eval_weights.py", (), "future_avg_q_regret_adjusted"),
         (
             "diagnose_sf_eval_head_blend.py",
             ("--checkpoint", "missing-checkpoint.pt", "--horizons", "2", "--device", "cpu"),
