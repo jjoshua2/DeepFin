@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Fit future-eval blend weights using replay labels and model eval heads."""
 from __future__ import annotations
 
 import argparse
@@ -23,7 +24,7 @@ from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
 
 DEFAULT_RUN_DIR = Path("runs/pbt2_small")
-MAX_HORIZONS = 32
+MAX_HORIZONS = 12
 MAX_SKIPPED_SHARDS = 20
 
 
@@ -151,6 +152,7 @@ def _load_samples(
         try:
             arrs, _meta = load_shard_arrays(shard, lazy=True)
         except Exception as exc:  # noqa: BLE001
+            # A diagnostic run should report and skip bad live replay shards instead of aborting.
             _record_skipped_shard(scan, shard, exc)
             continue
 
@@ -464,8 +466,10 @@ def _normalize_horizons(values: list[int]) -> list[int]:
         raise argparse.ArgumentTypeError("at least one horizon is required")
     if any(value <= 0 for value in out):
         raise argparse.ArgumentTypeError("horizons must be positive")
+    if any(value % 2 != 0 for value in out):
+        raise argparse.ArgumentTypeError("horizons must be even ply offsets")
     if len(out) > MAX_HORIZONS:
-        raise argparse.ArgumentTypeError(f"horizons supports at most {MAX_HORIZONS} values")
+        raise argparse.ArgumentTypeError(f"at most {MAX_HORIZONS} horizons are allowed")
     return out
 
 

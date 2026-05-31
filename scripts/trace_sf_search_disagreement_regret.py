@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Trace Stockfish/search WDL disagreements through later regretful replies."""
 from __future__ import annotations
 
 import argparse
@@ -15,9 +16,10 @@ from chess_anti_engine.replay.shard import load_shard_arrays, shard_index, shard
 
 
 DEFAULT_RUN_DIR = Path("runs/pbt2_small")
-MAX_JSON_TRACES = 1_000
+DEFAULT_MIN_GAP_REDUCTION = 0.02
+MAX_JSON_TRACES = 50
 MAX_SKIPPED_SHARDS = 20
-MAX_TOP = 200
+MAX_TOP = 50
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,14 +167,19 @@ def _quantiles(values: list[float] | np.ndarray) -> dict[str, float]:
     }
 
 
-def _classify(trigger: Sample, after: Sample | None) -> tuple[str, float | None, float | None, float | None]:
+def _classify(
+    trigger: Sample,
+    after: Sample | None,
+    *,
+    min_gap_reduction: float,
+) -> tuple[str, float | None, float | None, float | None]:
     if after is None:
         return "no_after_sample", None, None, None
     direction = 1.0 if trigger.gap > 0.0 else -1.0
     search_toward_sf = -direction * (after.search_q - trigger.search_q)
     sf_toward_search = direction * (after.sf_q - trigger.sf_q)
     gap_reduction = trigger.abs_gap - after.abs_gap
-    if gap_reduction <= 0.02:
+    if gap_reduction <= float(min_gap_reduction):
         return "still_split", gap_reduction, search_toward_sf, sf_toward_search
     search_pos = max(0.0, search_toward_sf)
     sf_pos = max(0.0, sf_toward_search)
@@ -204,6 +211,7 @@ def _load_samples(replay_dir: Path, max_shards: int) -> tuple[dict[int, list[Sam
         try:
             arrs, _meta = load_shard_arrays(shard, lazy=True)
         except Exception as exc:  # noqa: BLE001
+            # Live diagnostics should keep scanning around partially written or corrupt shards.
             _record_skipped_shard(stats, shard, exc)
             continue
 
@@ -266,8 +274,14 @@ def _build_trace(
     trigger: Sample,
     event: Sample,
     after: Sample | None,
+    *,
+    min_gap_reduction: float,
 ) -> Trace:
-    verdict, gap_reduction, search_toward_sf, sf_toward_search = _classify(trigger, after)
+    verdict, gap_reduction, search_toward_sf, sf_toward_search = _classify(
+        trigger,
+        after,
+        min_gap_reduction=min_gap_reduction,
+    )
     direction = "search_high" if trigger.gap > 0.0 else "search_low"
     return Trace(
         game_id=trigger.game_id,
@@ -305,6 +319,7 @@ def _trace_games(
     regret_threshold: float,
     max_trace_plies: int,
     include_trigger_regret: bool,
+    min_gap_reduction: float,
 ) -> tuple[list[Trace], dict[str, Any]]:
     traces: list[Trace] = []
     trigger_gaps: list[float] = []
@@ -331,7 +346,7 @@ def _trace_games(
             after = samples[event_idx + 1] if event_idx + 1 < len(samples) else None
             if after is not None and after.ply - trigger.ply > max_trace_plies:
                 after = None
-            traces.append(_build_trace(trigger, event, after))
+            traces.append(_build_trace(trigger, event, after, min_gap_reduction=min_gap_reduction))
     summary: dict[str, Any] = {
         "triggers": len(trigger_gaps),
         "trigger_gap_quantiles": _quantiles(trigger_gaps),
@@ -451,6 +466,12 @@ def main() -> None:
     parser.add_argument("--gap-threshold", type=float, default=0.15)
     parser.add_argument("--regret-threshold", type=float, default=0.005)
     parser.add_argument("--max-trace-plies", type=int, default=80)
+    parser.add_argument(
+        "--min-gap-reduction",
+        type=float,
+        default=DEFAULT_MIN_GAP_REDUCTION,
+        help="minimum after-sample absolute-gap reduction to count as progress",
+    )
     parser.add_argument("--top", type=int, default=20)
     parser.add_argument("--json-out", type=Path, default=None)
     parser.add_argument("--json-trace-limit", type=int, default=MAX_JSON_TRACES)
@@ -473,6 +494,7 @@ def main() -> None:
         regret_threshold=float(args.regret_threshold),
         max_trace_plies=int(args.max_trace_plies),
         include_trigger_regret=not bool(args.exclude_trigger_regret),
+        min_gap_reduction=float(args.min_gap_reduction),
     )
     report: dict[str, Any] = {
         "replay_dir": str(replay_dir),
@@ -480,6 +502,7 @@ def main() -> None:
         "gap_threshold": float(args.gap_threshold),
         "regret_threshold": float(args.regret_threshold),
         "max_trace_plies": int(args.max_trace_plies),
+        "min_gap_reduction": float(args.min_gap_reduction),
         "scan": scan,
         "trigger_summary": trigger_summary,
         "trace_summary": _summarize_traces(traces),

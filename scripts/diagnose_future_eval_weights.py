@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Fit future-eval blend weights from replay SF/search labels."""
 from __future__ import annotations
 
 import argparse
@@ -15,7 +16,7 @@ from chess_anti_engine.replay.shard import load_shard_arrays, shard_index, shard
 
 
 DEFAULT_RUN_DIR = Path("runs/pbt2_small")
-MAX_HORIZONS = 32
+MAX_HORIZONS = 12
 MAX_SKIPPED_SHARDS = 20
 
 
@@ -128,6 +129,7 @@ def _load_samples(replay_dir: Path, max_shards: int) -> tuple[dict[int, list[Sam
         try:
             arrs, _meta = load_shard_arrays(shard, lazy=True)
         except Exception as exc:  # noqa: BLE001
+            # Replay diagnostics should summarize bad live shards and continue scanning.
             _record_skipped_shard(scan, shard, exc)
             continue
         required = ("game_id", "ply_index", "sf_wdl", "search_wdl")
@@ -397,8 +399,10 @@ def _parse_horizons(raw: str) -> list[int]:
         raise argparse.ArgumentTypeError("at least one horizon is required")
     if any(h <= 0 for h in out):
         raise argparse.ArgumentTypeError("horizons must be positive")
+    if any(h % 2 != 0 for h in out):
+        raise argparse.ArgumentTypeError("horizons must be even ply offsets")
     if len(out) > MAX_HORIZONS:
-        raise argparse.ArgumentTypeError(f"horizons supports at most {MAX_HORIZONS} values")
+        raise argparse.ArgumentTypeError(f"at most {MAX_HORIZONS} horizons are allowed")
     return out
 
 

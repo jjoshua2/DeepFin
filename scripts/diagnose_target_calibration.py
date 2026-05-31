@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Report replay target calibration and policy sharpness over recent positions."""
 from __future__ import annotations
 
 import argparse
@@ -470,7 +471,10 @@ def main() -> None:
         if int(stats.get("n", 0)) <= 0:
             continue
         rows.append((stats["blend_ce"], stats["blend_brier"], sf_frac, damp, stats))
-    for _ce, _brier, sf_frac, damp, stats in sorted(rows):
+    for row in sorted(rows):
+        sf_frac = row[2]
+        damp = row[3]
+        stats = row[4]
         marker = " *" if abs(sf_frac - cfg["sf_wdl_frac"]) < 1e-9 and abs(damp - cfg["sf_search_dampen_sf_low"]) < 1e-9 else ""
         game_frac = max(0.0, 1.0 - sf_frac - cfg["search_wdl_frac"])
         print(

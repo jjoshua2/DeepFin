@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Fit future-eval blend weights after game and eval-bucket averaging."""
 from __future__ import annotations
 
 import argparse
@@ -15,7 +16,9 @@ from chess_anti_engine.replay.shard import load_shard_arrays, shard_index, shard
 
 
 DEFAULT_RUN_DIR = Path("runs/pbt2_small")
-MAX_HORIZONS = 32
+DEFAULT_EVAL_BINS = (-0.75, -0.50, -0.25, -0.10, -0.03, 0.03, 0.10, 0.25, 0.50, 0.75)
+MAX_HORIZONS = 12
+MAX_EVAL_BINS = 25
 MAX_SKIPPED_SHARDS = 20
 
 
@@ -117,6 +120,7 @@ def _load_samples(
         try:
             arrs, _meta = load_shard_arrays(shard, lazy=True)
         except Exception as exc:  # noqa: BLE001
+            # Replay scans should continue past partially written or corrupt live shards.
             _record_skipped_shard(scan, shard, exc)
             continue
         required = ("game_id", "ply_index", "sf_wdl", "search_wdl", "wdl_target")
@@ -231,9 +235,10 @@ def _rmse(pred: np.ndarray, target: np.ndarray, weights: np.ndarray | None = Non
     return float(np.sqrt(np.average(err, weights=weights)))
 
 
-def _bucket_ids(mid_q: np.ndarray) -> np.ndarray:
-    bins = np.asarray([-0.75, -0.50, -0.25, -0.10, -0.03, 0.03, 0.10, 0.25, 0.50, 0.75])
-    return np.digitize(mid_q, bins).astype(np.int16)
+def _bucket_ids(mid_q: np.ndarray, bins: list[float]) -> np.ndarray:
+    bins_arr = np.asarray(bins, dtype=np.float64)
+    bins_arr = bins_arr[np.isfinite(bins_arr)]
+    return np.digitize(mid_q, bins_arr).astype(np.int16)
 
 
 def _equal_bucket_weights(bucket: np.ndarray) -> np.ndarray:
@@ -312,6 +317,7 @@ def _pairs_for_horizon(
     *,
     horizon: int,
     missing_regret_impute: float,
+    eval_bins: list[float],
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     game_ids: list[int] = []
     features: list[tuple[float, float, float]] = []
@@ -347,7 +353,7 @@ def _pairs_for_horizon(
         np.asarray(game_ids, dtype=np.int64),
         np.asarray(features, dtype=np.float64),
         np.asarray(targets, dtype=np.float64),
-        _bucket_ids(np.asarray(mid_q, dtype=np.float64)),
+        _bucket_ids(np.asarray(mid_q, dtype=np.float64), eval_bins),
         np.asarray(path_regret, dtype=np.float64),
     )
 
@@ -436,8 +442,21 @@ def _parse_horizons(raw: str) -> list[int]:
     values = [int(part.strip()) for part in raw.split(",") if part.strip()]
     if not values or any(value <= 0 for value in values):
         raise argparse.ArgumentTypeError("horizons must be positive comma-separated integers")
+    if any(value % 2 != 0 for value in values):
+        raise argparse.ArgumentTypeError("horizons must be even ply offsets")
     if len(values) > MAX_HORIZONS:
-        raise argparse.ArgumentTypeError(f"horizons supports at most {MAX_HORIZONS} values")
+        raise argparse.ArgumentTypeError(f"at most {MAX_HORIZONS} horizons are allowed")
+    return values
+
+
+def _parse_eval_bins(raw: str) -> list[float]:
+    values = [float(part.strip()) for part in raw.split(",") if part.strip()]
+    if len(values) > MAX_EVAL_BINS:
+        raise argparse.ArgumentTypeError(f"at most {MAX_EVAL_BINS} eval bins are allowed")
+    if any(not math.isfinite(value) for value in values):
+        raise argparse.ArgumentTypeError("eval bins must be finite numbers")
+    if any(right <= left for left, right in zip(values, values[1:], strict=False)):
+        raise argparse.ArgumentTypeError("eval bins must be strictly increasing")
     return values
 
 
@@ -451,7 +470,11 @@ def _format_cell(value: Any) -> str:
 
 def _print_table(rows: list[FitRow]) -> None:
     cols = ["horizon", "mode", "n_test", "w_sf", "w_search", "w_final", "rmse_test", "weighted_rmse_test"]
-    widths = {col: max(len(col), *(len(_format_cell(getattr(row, col))) for row in rows)) for col in cols}
+    widths: dict[str, int] = {}
+    for col in cols:
+        width_candidates = [len(col)]
+        width_candidates.extend(len(_format_cell(getattr(row, col))) for row in rows)
+        widths[col] = max(width_candidates)
     print(" ".join(col.rjust(widths[col]) for col in cols))
     print(" ".join("-" * widths[col] for col in cols))
     for row in rows:
@@ -464,6 +487,12 @@ def main() -> None:
     parser.add_argument("--replay-dir", type=Path, default=None)
     parser.add_argument("--max-shards", type=int, default=0, help="newest shards to scan; 0 scans all")
     parser.add_argument("--horizons", type=_parse_horizons, default="2,4,6,8,10,12,16,20,24")
+    parser.add_argument(
+        "--eval-bins",
+        type=_parse_eval_bins,
+        default=",".join(str(value) for value in DEFAULT_EVAL_BINS),
+        help=f"strictly increasing comma-separated eval buckets, capped at {MAX_EVAL_BINS} cut points",
+    )
     parser.add_argument("--near-even", type=float, default=0.10)
     parser.add_argument("--json-out", type=Path, default=None)
     args = parser.parse_args()
@@ -478,6 +507,7 @@ def main() -> None:
             games,
             horizon=int(horizon),
             missing_regret_impute=mean_observed_regret,
+            eval_bins=[float(value) for value in args.eval_bins],
         )
         pair_counts[int(horizon)] = int(target.size)
         path_regret_mean[int(horizon)] = float(np.mean(path_regret)) if path_regret.size else math.nan
@@ -498,6 +528,7 @@ def main() -> None:
         "replay_dir": str(replay_dir),
         "scan": scan,
         "horizons": [int(h) for h in args.horizons],
+        "eval_bins": [float(value) for value in args.eval_bins],
         "pair_counts": pair_counts,
         "path_regret_mean": path_regret_mean,
         "rows": [asdict(row) for row in rows],
