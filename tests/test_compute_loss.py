@@ -209,6 +209,30 @@ def test_adjusted_wdl_target_replaces_game_component():
     assert adjusted["blended_wdl_ce"].item() < raw["blended_wdl_ce"].item()
 
 
+def test_adjusted_wdl_target_does_not_replace_missing_sf_fallback():
+    batch = _minimal_batch(1)
+    batch["wdl_t"] = torch.tensor([0])
+    batch["future_sf_regret_sum"] = torch.ones((1,))
+    batch["has_future_sf_regret_sum"] = torch.ones((1,))
+
+    outputs = _fake_outputs(1)
+    outputs["wdl"] = torch.tensor([[4.0, 0.0, -4.0]])
+
+    adjusted = compute_loss(
+        outputs,
+        batch,
+        sf_wdl_frac=1.0,
+        search_wdl_frac=0.0,
+        use_adjusted_wdl_target=True,
+    )
+
+    raw_batch = _minimal_batch(1)
+    raw_batch["wdl_t"] = torch.tensor([0])
+    raw = compute_loss(outputs, raw_batch, sf_wdl_frac=1.0, search_wdl_frac=0.0)
+
+    assert adjusted["blended_wdl_ce"].item() == raw["blended_wdl_ce"].item()
+
+
 def test_adjusted_wdl_target_is_opt_in():
     batch = _minimal_batch(1)
     batch["wdl_t"] = torch.tensor([0])

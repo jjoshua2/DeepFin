@@ -300,6 +300,10 @@ def compute_loss(
         game_target = has_adjusted_wdl * adjusted_wdl_probs + (1.0 - has_adjusted_wdl) * game_oh
     else:
         game_target = game_oh
+    # Regret adjustment is a heuristic on the game-outcome component only.
+    # Missing/dampened SF/search WDL labels fall back to the raw result so the
+    # adjusted target does not silently expand beyond ``game_frac``.
+    blend_fallback_target = game_oh
     sf_wdl_frac_f = max(0.0, float(sf_wdl_frac))
     search_wdl_frac_f = max(0.0, float(search_wdl_frac))
     blend_sum = sf_wdl_frac_f + search_wdl_frac_f
@@ -351,17 +355,17 @@ def compute_loss(
     sf_effective_b = sf_effective.unsqueeze(1)
     if sf_wdl_probs is not None:
         target += sf_wdl_frac_f * (
-            sf_effective_b * sf_wdl_probs + (1.0 - sf_effective_b) * game_target
+            sf_effective_b * sf_wdl_probs + (1.0 - sf_effective_b) * blend_fallback_target
         )
     else:
-        target += sf_wdl_frac_f * game_target
+        target += sf_wdl_frac_f * blend_fallback_target
     search_available_b = search_available.unsqueeze(1)
     if search_wdl_probs is not None:
         target += search_wdl_frac_f * (
-            search_available_b * search_wdl_probs + (1.0 - search_available_b) * game_target
+            search_available_b * search_wdl_probs + (1.0 - search_available_b) * blend_fallback_target
         )
     else:
-        target += search_wdl_frac_f * game_target
+        target += search_wdl_frac_f * blend_fallback_target
     blended_wdl_ce = soft_cross_entropy(outputs["wdl"], target.detach())
 
     has_moves_left = _get_mask(batch, "has_moves_left")
