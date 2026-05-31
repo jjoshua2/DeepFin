@@ -100,6 +100,12 @@ def optional_int_array(
     return out
 
 
+def game_fold_masks(game_ids: np.ndarray, *, fold: int = 0, modulo: int = 5) -> tuple[np.ndarray, np.ndarray]:
+    ids = np.asarray(game_ids, dtype=np.int64)
+    test = (ids % int(modulo)) == int(fold)
+    return ~test, test
+
+
 def normalize_wdl(arr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     wdl = np.asarray(arr, dtype=np.float64)
     finite = np.isfinite(wdl).all(axis=1)

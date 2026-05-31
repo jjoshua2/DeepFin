@@ -24,6 +24,7 @@ from scripts.diagnostic_replay_utils import (
     corr as _corr,
     final_q_from_wdl_target as _final_q_from_wdl_target,
     fit_simplex as _fit_simplex,
+    game_fold_masks as _game_fold_masks,
     latest_replay_dir as _latest_replay_dir,
     normalize_wdl as _normalize_wdl,
     record_skipped_shard as _record_skipped_shard,
@@ -275,8 +276,7 @@ def _summarize_fit(
     game_ids: np.ndarray,
     fold: int,
 ) -> dict[str, Any]:
-    test = (np.asarray(game_ids, dtype=np.int64) % 5) == int(fold)
-    train = ~test
+    train, test = _game_fold_masks(game_ids, fold=int(fold))
     if int(test.sum()) < max(20, len(feature_names) * 4) or int(train.sum()) < max(20, len(feature_names) * 4):
         train = np.ones_like(test, dtype=bool)
         test = np.ones_like(test, dtype=bool)

@@ -18,6 +18,7 @@ from scripts.diagnostic_replay_utils import (
     bool_field as _bool_field,
     final_q_from_wdl_target as _final_q_from_wdl_target,
     fit_simplex as _fit_simplex,
+    game_fold_masks as _game_fold_masks,
     latest_replay_dir as _latest_replay_dir,
     normalize_wdl as _normalize_wdl,
     record_skipped_shard as _record_skipped_shard,
@@ -213,8 +214,7 @@ def _fit_row(
 ) -> FitRow | None:
     if target.size < 20:
         return None
-    test = (np.asarray(game_ids, dtype=np.int64) % 5) == 0
-    train = ~test
+    train, test = _game_fold_masks(game_ids)
     if int(test.sum()) < 20 or int(train.sum()) < 20:
         return None
     train_weights = None if fit_weights is None else fit_weights[train]

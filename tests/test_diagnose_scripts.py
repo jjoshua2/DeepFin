@@ -23,6 +23,7 @@ from scripts import (
     diagnose_arch,
     diagnose_future_eval_bucketed,
     diagnose_future_eval_weights,
+    diagnose_future_value_targets,
     diagnose_sf_eval_head_blend,
 )
 from scripts.diagnostic_replay_utils import (
@@ -292,6 +293,20 @@ def test_wdl_age_sampler_broadcasts_history_metadata_per_shard() -> None:
             ("--window-positions", "200", "--buckets", "2", "--policy-sample-per-bucket", "2"),
             "# Target Calibration Diagnostics",
         ),
+        (
+            "diagnose_future_value_targets.py",
+            (
+                "--horizons",
+                "2,4",
+                "--taus",
+                "2,4",
+                "--sources",
+                "avg",
+                "--max-offset",
+                "4",
+            ),
+            "# Future Value Target Diagnostics",
+        ),
         ("trace_sf_search_disagreement_regret.py", ("--top", "1"), "# SF/search disagreement -> regret trace"),
     ],
 )
@@ -419,6 +434,116 @@ def test_future_eval_bucketed_does_not_impute_unknown_selfplay_state() -> None:
     by_game = {int(game_id): float(regret) for game_id, regret in zip(game_ids, path_regret, strict=True)}
     assert by_game[1] == 0.0
     assert by_game[2] == 0.5
+
+
+def test_future_value_suffix_rows_use_all_future_same_pov_values() -> None:
+    def sample(
+        ply: int,
+        sf_q: float,
+        search_q: float,
+        regret: float,
+    ) -> diagnose_future_eval_bucketed.Sample:
+        return diagnose_future_eval_bucketed.Sample(
+            game_id=1,
+            ply=ply,
+            sf_q=sf_q,
+            search_q=search_q,
+            final_q=1.0,
+            sf_played_regret=regret,
+            has_sf_played_regret=True,
+            is_selfplay=False,
+        )
+
+    games = {
+        1: [
+            sample(0, 0.0, 0.0, 0.10),
+            sample(2, 0.2, 0.4, 0.05),
+            sample(4, 0.6, 0.8, 0.00),
+        ],
+    }
+
+    raw_spec = ("avg", None, False)
+    adjusted_spec = ("avg", None, True)
+    rows = diagnose_future_value_targets._suffix_rows_by_spec(
+        games,
+        specs=[raw_spec, adjusted_spec],
+        min_offset=2,
+        max_offset=4,
+        missing_regret_impute=0.0,
+    )
+    game_ids, features, raw_target = rows[raw_spec]
+    _game_ids, _features, adjusted_target = rows[adjusted_spec]
+
+    assert game_ids.tolist() == [1, 1]
+    np.testing.assert_allclose(features[0], np.asarray([0.0, 0.0, 1.0]))
+    # Ply 0 uses both future same-POV values: avg_q(ply2)=0.3 and avg_q(ply4)=0.7.
+    np.testing.assert_allclose(raw_target[0], 0.5)
+    # Regret adjustment subtracts current regret from ply2, and current+ply2 regret from ply4.
+    np.testing.assert_allclose(adjusted_target[0], ((0.3 - 2.0 * 0.10) + (0.7 - 2.0 * 0.15)) / 2.0)
+
+
+def test_future_value_grid_candidates_select_on_train_split() -> None:
+    train_ids = np.asarray([i for i in range(1, 26) if i % 5 != 0], dtype=np.int64)
+    test_ids = np.asarray([5 * i for i in range(20)], dtype=np.int64)
+    game_ids = np.concatenate([train_ids, test_ids])
+    features = np.vstack(
+        [
+            np.tile(np.asarray([[1.0, 0.0, 0.0]], dtype=np.float64), (train_ids.size, 1)),
+            np.tile(np.asarray([[0.0, 1.0, 0.0]], dtype=np.float64), (test_ids.size, 1)),
+        ],
+    )
+    target = np.ones((game_ids.size,), dtype=np.float64)
+
+    candidates = diagnose_future_value_targets._grid_candidates({2: (game_ids, features, target)})
+    best_avg = next(candidate for candidate in candidates if candidate.name == "grid_best_avg")
+
+    assert best_avg.w_sf == 1.0
+    assert best_avg.w_search == 0.0
+
+
+def test_future_value_latest_trial_uses_result_json_mtime(tmp_path: Path) -> None:
+    old_trial = tmp_path / "tune" / "train_trial_old"
+    active_trial = tmp_path / "tune" / "train_trial_active"
+    old_trial.mkdir(parents=True)
+    active_trial.mkdir(parents=True)
+    old_result = old_trial / "result.json"
+    active_result = active_trial / "result.json"
+    old_result.write_text('{"sf_wdl_frac": 0.10}\n')
+    active_result.write_text('{"sf_wdl_frac": 0.35}\n')
+
+    os.utime(old_trial, (3000.0, 3000.0))
+    os.utime(active_trial, (1000.0, 1000.0))
+    os.utime(old_result, (1000.0, 1000.0))
+    os.utime(active_result, (3000.0, 3000.0))
+
+    assert diagnose_future_value_targets._latest_trial_dir(tmp_path) == active_trial
+
+
+def test_future_value_current_candidates_use_selected_replay_trial(tmp_path: Path) -> None:
+    other_trial = tmp_path / "tune" / "train_trial_other"
+    selected_trial = tmp_path / "tune" / "train_trial_selected"
+    other_trial.mkdir(parents=True)
+    selected_trial.mkdir(parents=True)
+    other_result = other_trial / "result.json"
+    selected_result = selected_trial / "result.json"
+    other_result.write_text('{"sf_wdl_frac": 0.90, "search_wdl_frac": 0.05}\n')
+    selected_result.write_text('{"sf_wdl_frac": 0.35, "search_wdl_frac": 0.35}\n')
+    os.utime(other_result, (3000.0, 3000.0))
+    os.utime(selected_result, (1000.0, 1000.0))
+    replay_dir = tmp_path / "replay" / selected_trial.name / "replay_shards"
+    replay_dir.mkdir(parents=True)
+
+    trial_dir = diagnose_future_value_targets._trial_dir_for_replay(tmp_path, replay_dir)
+    rows = diagnose_future_value_targets._current_candidates(
+        tmp_path,
+        tmp_path / "missing.yaml",
+        trial_dir=trial_dir,
+    )
+
+    assert trial_dir == selected_trial
+    assert rows[0].name == "reported_live"
+    assert rows[0].w_sf == 0.35
+    assert rows[0].w_search == 0.35
 
 
 def test_sf_eval_head_blend_smoke_exercises_fit_rows(tmp_path: Path) -> None:
