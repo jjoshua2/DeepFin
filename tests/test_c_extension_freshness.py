@@ -13,9 +13,9 @@ def _write(path: Path, *, mtime_ns: int) -> None:
     os.utime(path, ns=(mtime_ns, mtime_ns))
 
 
-def _extension_output(root: Path, module: str) -> Path:
+def _extension_output(root: Path, module: str, suffix: str | None = None) -> Path:
     base = root.joinpath(*module.split("."))
-    return base.with_name(base.name + importlib.machinery.EXTENSION_SUFFIXES[0])
+    return base.with_name(base.name + (suffix or importlib.machinery.EXTENSION_SUFFIXES[0]))
 
 
 def _write_all_sources(root: Path, *, mtime_ns: int = 10) -> None:
@@ -85,3 +85,18 @@ def test_check_extensions_treats_feature_header_as_dependency(tmp_path: Path):
         "chess_anti_engine.mcts._mcts_tree is older than "
         "chess_anti_engine/encoding/_features_impl.h"
     ) in issues
+
+
+def test_check_extensions_uses_python_import_suffix_order(tmp_path: Path):
+    suffixes = importlib.machinery.EXTENSION_SUFFIXES
+    assert len(suffixes) >= 2
+    module = "chess_anti_engine.encoding._features_ext"
+    source = "chess_anti_engine/encoding/_features_ext.c"
+    _write_all_sources(tmp_path, mtime_ns=20)
+    _write_all_extensions(tmp_path, mtime_ns=30)
+    _write(_extension_output(tmp_path, module, suffixes[0]), mtime_ns=10)
+    _write(_extension_output(tmp_path, module, suffixes[1]), mtime_ns=40)
+
+    issues = check_extensions(tmp_path)
+
+    assert f"{module} is older than {source}" in issues
