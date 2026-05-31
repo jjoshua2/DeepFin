@@ -41,7 +41,7 @@ class Sample:
     final_q: float
     sf_played_regret: float
     has_sf_played_regret: bool
-    is_selfplay: bool
+    is_selfplay: bool | None
 
     @property
     def avg_q(self) -> float:
@@ -75,8 +75,10 @@ def _load_samples(
         "valid_samples": 0,
         "samples_with_regret": 0,
         "selfplay_samples": 0,
+        "unknown_selfplay_samples": 0,
         "selfplay_missing_regret": 0,
         "nonselfplay_missing_regret": 0,
+        "unknown_selfplay_missing_regret": 0,
         "skipped_shards": [],
         "skipped_shards_omitted": 0,
     }
@@ -118,13 +120,19 @@ def _load_samples(
         final_q = _final_q_from_wdl_target(np.asarray(arrs["wdl_target"]))
         has_regret = _bool_field(arrs, "has_sf_played_regret", n)
         regret = np.asarray(arrs.get("sf_played_regret", np.full((n,), np.nan)), dtype=np.float64)
-        is_selfplay = _bool_field(arrs, "has_is_selfplay", n) & _bool_field(arrs, "is_selfplay", n)
+        has_is_selfplay = _bool_field(arrs, "has_is_selfplay", n)
+        is_selfplay = _bool_field(arrs, "is_selfplay", n)
+        known_selfplay = has_is_selfplay & is_selfplay
+        known_nonselfplay = has_is_selfplay & ~is_selfplay
+        unknown_selfplay = ~has_is_selfplay
 
         scan["valid_samples"] += int(rows.size)
         scan["samples_with_regret"] += int(has_regret[rows].sum())
-        scan["selfplay_samples"] += int(is_selfplay[rows].sum())
-        scan["selfplay_missing_regret"] += int((is_selfplay[rows] & ~has_regret[rows]).sum())
-        scan["nonselfplay_missing_regret"] += int((~is_selfplay[rows] & ~has_regret[rows]).sum())
+        scan["selfplay_samples"] += int(known_selfplay[rows].sum())
+        scan["unknown_selfplay_samples"] += int(unknown_selfplay[rows].sum())
+        scan["selfplay_missing_regret"] += int((known_selfplay[rows] & ~has_regret[rows]).sum())
+        scan["nonselfplay_missing_regret"] += int((known_nonselfplay[rows] & ~has_regret[rows]).sum())
+        scan["unknown_selfplay_missing_regret"] += int((unknown_selfplay[rows] & ~has_regret[rows]).sum())
         observed_regrets.extend(np.maximum(0.0, regret[rows][has_regret[rows]]).tolist())
 
         for row_i in rows:
@@ -138,7 +146,7 @@ def _load_samples(
                     final_q=float(final_q[row]),
                     sf_played_regret=float(regret[row]) if bool(has_regret[row]) else math.nan,
                     has_sf_played_regret=bool(has_regret[row]),
-                    is_selfplay=bool(is_selfplay[row]),
+                    is_selfplay=bool(is_selfplay[row]) if bool(has_is_selfplay[row]) else None,
                 ),
             )
     for samples in games.values():
@@ -241,7 +249,9 @@ def _pairs_for_horizon(
     path_regret: list[float] = []
     for samples in games.values():
         by_ply = {s.ply: s for s in samples}
-        game_selfplay = sum(1 for s in samples if s.is_selfplay) > (len(samples) // 2)
+        known_nonselfplay = sum(1 for s in samples if s.is_selfplay is False)
+        known_selfplay = sum(1 for s in samples if s.is_selfplay is True)
+        game_known_nonselfplay = known_nonselfplay > known_selfplay
         for current in samples:
             future = by_ply.get(current.ply + horizon)
             if future is None:
@@ -250,12 +260,12 @@ def _pairs_for_horizon(
             for offset in range(0, int(horizon), 2):
                 path_sample = by_ply.get(current.ply + offset)
                 if path_sample is None:
-                    if not game_selfplay:
+                    if game_known_nonselfplay:
                         regret_sum += missing_regret_impute
                     continue
                 if path_sample.has_sf_played_regret:
                     regret_sum += max(0.0, float(path_sample.sf_played_regret))
-                elif not path_sample.is_selfplay:
+                elif path_sample.is_selfplay is False:
                     regret_sum += missing_regret_impute
             raw_target = future.avg_q
             target = float(np.clip(raw_target - _REGRET_TO_Q_SCALE * regret_sum, -1.0, 1.0))

@@ -358,6 +358,36 @@ def test_future_eval_bucketed_smoke_exercises_grouped_fit(tmp_path: Path) -> Non
     assert {"row_all", "game_mean", "game_eval_bucket_mean"} <= {row.mode for row in rows}
 
 
+def test_future_eval_bucketed_does_not_impute_unknown_selfplay_state() -> None:
+    def sample(game_id: int, ply: int, is_selfplay: bool | None) -> diagnose_future_eval_bucketed.Sample:
+        return diagnose_future_eval_bucketed.Sample(
+            game_id=game_id,
+            ply=ply,
+            sf_q=0.2,
+            search_q=0.4,
+            final_q=1.0,
+            sf_played_regret=float("nan"),
+            has_sf_played_regret=False,
+            is_selfplay=is_selfplay,
+        )
+
+    games = {
+        1: [sample(1, 0, None), sample(1, 2, None)],
+        2: [sample(2, 0, False), sample(2, 2, False)],
+    }
+
+    game_ids, _features, _target, _bucket, path_regret = diagnose_future_eval_bucketed._pairs_for_horizon(
+        games,
+        horizon=2,
+        missing_regret_impute=0.5,
+        eval_bins=[],
+    )
+
+    by_game = {int(game_id): float(regret) for game_id, regret in zip(game_ids, path_regret, strict=True)}
+    assert by_game[1] == 0.0
+    assert by_game[2] == 0.5
+
+
 def test_sf_eval_head_blend_smoke_exercises_fit_rows(tmp_path: Path) -> None:
     replay_dir = _write_multiply_diagnostic_replay(tmp_path)
     games, _scan = diagnose_sf_eval_head_blend._load_samples(replay_dir, max_shards=1)
