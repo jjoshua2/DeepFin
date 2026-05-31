@@ -51,18 +51,15 @@ def _extension_outputs(root: Path, module: str) -> list[Path]:
     return [base.with_name(base.name + suffix) for suffix in importlib.machinery.EXTENSION_SUFFIXES]
 
 
-def _newest_existing(paths: list[Path]) -> Path | None:
-    existing = [path for path in paths if path.exists()]
-    if not existing:
-        return None
-    return max(existing, key=lambda path: path.stat().st_mtime_ns)
+def _first_existing(paths: list[Path]) -> Path | None:
+    return next((path for path in paths if path.exists()), None)
 
 
 def check_extensions(root: Path) -> list[str]:
     """Return actionable freshness problems for in-place C extensions."""
     issues: list[str] = []
     for spec in EXTENSION_SPECS:
-        output = _newest_existing(_extension_outputs(root, spec.module))
+        output = _first_existing(_extension_outputs(root, spec.module))
         if output is None:
             issues.append(f"{spec.module} is missing")
             continue
