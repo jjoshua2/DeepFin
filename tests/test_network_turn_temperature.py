@@ -6,6 +6,7 @@ from chess_anti_engine.selfplay.config import SearchConfig
 from chess_anti_engine.moves import COMPACT_TO_FULL_POLICY, POLICY_SIZE, policy_batch_to_encoding
 from chess_anti_engine.selfplay.network_turn import (
     _expand_policy_logits_for_ply,
+    _refresh_gumbel_action_diag,
     _resample_actions_with_temperature,
     _scheduled_gumbel_scale,
 )
@@ -80,6 +81,25 @@ def test_gumbel_positive_temperature_resamples_from_policy() -> None:
     )
 
     assert actions == [3]
+
+
+def test_gumbel_diagnostics_refresh_after_temperature_resample() -> None:
+    probs = np.zeros((4672,), dtype=np.float32)
+    probs[3] = 0.8
+    probs[7] = 0.2
+    diag = {
+        "action_prob": 0.2,
+        "argmax_is_action": 0.0,
+        "top_prob": 0.8,
+    }
+
+    out = _refresh_gumbel_action_diag(diag, probs, 3)
+
+    assert out is not None
+    assert out is not diag
+    assert np.isclose(out["action_prob"], 0.8)
+    assert out["argmax_is_action"] == 1.0
+    assert out["top_prob"] == 0.8
 
 
 def test_low_positive_temperature_is_numerically_stable() -> None:

@@ -705,6 +705,7 @@ def _build_replay_samples(
                 policy_target=eff_probs,
                 wdl_target=int(wdl),
                 x_lc0_root=rec.x_lc0_root,
+                input_history_encoding=state.game.input_history_encoding,
                 priority=float(rec.priority),
                 priority_policy_kl=(
                     None if rec.priority_policy_kl is None else float(rec.priority_policy_kl)
