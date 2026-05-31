@@ -19,6 +19,7 @@ from chess_anti_engine.replay.shard import (
     shard_positions,
 )
 from scripts.diagnostic_replay_utils import (
+    REGRET_TO_Q_SCALE as _REGRET_TO_Q_SCALE,
     bool_field as _bool_field,
     corr as _corr,
     final_q_from_wdl_target as _final_q_from_wdl_target,
@@ -187,7 +188,7 @@ def _build_pairs(games: dict[int, list[Sample]], horizons: list[int]) -> list[Pa
                 if not path_known:
                     continue
                 target_raw = future.avg_q
-                target_adjusted = float(np.clip(target_raw - 2.0 * path_regret, -1.0, 1.0))
+                target_adjusted = float(np.clip(target_raw - _REGRET_TO_Q_SCALE * path_regret, -1.0, 1.0))
                 out.append(
                     PairRow(
                         horizon=int(horizon),

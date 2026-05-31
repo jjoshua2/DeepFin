@@ -13,7 +13,13 @@ from typing import Any
 import numpy as np
 
 from chess_anti_engine.replay.shard import load_shard_arrays, shard_positions
-from scripts.diagnostic_replay_utils import record_skipped_shard as _record_skipped_shard
+from scripts.diagnostic_replay_utils import (
+    FUTURE_REGRET_FIELDS,
+    adjusted_wdl_game_target as _adjusted_wdl_game_target,
+    future_regret_field_names as _future_regret_field_names,
+    record_skipped_shard as _record_skipped_shard,
+    wdl_one_hot as _wdl_one_hot,
+)
 
 
 DEFAULT_RUN = Path("runs/pbt2_small")
@@ -98,10 +104,7 @@ def _normalize(p: np.ndarray, *, temperature: float = 1.0) -> np.ndarray:
 
 
 def _one_hot(outcome: np.ndarray) -> np.ndarray:
-    y = np.asarray(outcome, dtype=np.int64)
-    oh = np.zeros((y.size, 3), dtype=np.float64)
-    oh[np.arange(y.size), y] = 1.0
-    return oh
+    return _wdl_one_hot(outcome)
 
 
 def _ce_to_outcome(p: np.ndarray, outcome: np.ndarray) -> float:
@@ -122,7 +125,7 @@ def _signal(p: np.ndarray) -> np.ndarray:
 
 
 def _blend_wdl(
-    outcome: np.ndarray,
+    game_target: np.ndarray,
     sf: np.ndarray,
     search: np.ndarray,
     *,
@@ -140,7 +143,8 @@ def _blend_wdl(
         game_weight = 0.0
     else:
         game_weight = 1.0 - total
-    game = _one_hot(outcome)
+    game = np.asarray(game_target, dtype=np.float64)
+    game = game / np.maximum(game.sum(axis=1, keepdims=True), 1e-12)
     sf_sig = _signal(sf)
     search_sig = _signal(search)
     sf_low = (sf_sig < 0.0) & (search_sig > 0.0)
@@ -178,18 +182,11 @@ def _entropy_stats(p: np.ndarray, legal: np.ndarray | None = None) -> dict[str, 
     }
 
 
-def _soft_ce(target: np.ndarray, pred: np.ndarray) -> float:
-    if target.size == 0:
-        return math.nan
-    t = _normalize(target)
-    p = _normalize(pred)
-    return float((-(t * np.log(np.clip(p, 1e-9, 1.0))).sum(axis=1)).mean())
-
-
 def _empty_wdl_stats() -> dict[str, Any]:
     return {
         "n": 0,
         "outcome": np.zeros((3,), dtype=np.int64),
+        "game_target_sum": np.zeros((3,), dtype=np.float64),
         "sf_sum": np.zeros((3,), dtype=np.float64),
         "search_sum": np.zeros((3,), dtype=np.float64),
         "blend_sum": np.zeros((3,), dtype=np.float64),
@@ -205,7 +202,15 @@ def _empty_wdl_stats() -> dict[str, Any]:
     }
 
 
-def _add_wdl_stats(dst: dict[str, Any], *, outcome: np.ndarray, sf: np.ndarray, search: np.ndarray, blend: np.ndarray) -> None:
+def _add_wdl_stats(
+    dst: dict[str, Any],
+    *,
+    outcome: np.ndarray,
+    game_target: np.ndarray,
+    sf: np.ndarray,
+    search: np.ndarray,
+    blend: np.ndarray,
+) -> None:
     n = int(outcome.size)
     if n <= 0:
         return
@@ -213,6 +218,7 @@ def _add_wdl_stats(dst: dict[str, Any], *, outcome: np.ndarray, sf: np.ndarray, 
     search_sig = _signal(search)
     dst["n"] += n
     dst["outcome"] += np.bincount(outcome, minlength=3).astype(np.int64)
+    dst["game_target_sum"] += game_target.sum(axis=0)
     dst["sf_sum"] += sf.sum(axis=0)
     dst["search_sum"] += search.sum(axis=0)
     dst["blend_sum"] += blend.sum(axis=0)
@@ -234,6 +240,7 @@ def _finish_wdl_stats(raw: dict[str, Any]) -> dict[str, Any]:
     return {
         "n": n,
         "outcome_wdl": (raw["outcome"] / n).tolist(),
+        "mean_game_target_wdl": (raw["game_target_sum"] / n).tolist(),
         "mean_sf_wdl": (raw["sf_sum"] / n).tolist(),
         "mean_search_wdl": (raw["search_sum"] / n).tolist(),
         "mean_blend_wdl": (raw["blend_sum"] / n).tolist(),
@@ -249,7 +256,7 @@ def _finish_wdl_stats(raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _load_loss_config(latest: dict[str, Any], args: argparse.Namespace) -> dict[str, float]:
+def _load_loss_config(latest: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
     raw_cfg = latest.get("config")
     cfg: dict[str, Any] = raw_cfg if isinstance(raw_cfg, dict) else {}
 
@@ -258,13 +265,47 @@ def _load_loss_config(latest: dict[str, Any], args: argparse.Namespace) -> dict[
         value = override if override is not None else latest.get(name, cfg.get(name, default))
         return float(value)
 
+    def pick_bool(name: str, default: bool) -> bool:
+        override = getattr(args, name, None)
+        value = override if override is not None else latest.get(name, cfg.get(name, default))
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
+
+    def pick_str(name: str, default: str) -> str:
+        override = getattr(args, name, None)
+        value = override if override is not None else latest.get(name, cfg.get(name, default))
+        return str(value)
+
     return {
         "sf_wdl_frac": pick("sf_wdl_frac", 0.5),
         "search_wdl_frac": pick("search_wdl_frac", 0.5),
         "sf_wdl_temperature": pick("sf_wdl_temperature", 1.0),
         "sf_search_dampen_sf_low": pick("sf_search_dampen_sf_low", 0.0),
         "sf_search_dampen_sf_high": pick("sf_search_dampen_sf_high", 0.0),
+        "use_adjusted_wdl_target": pick_bool("use_adjusted_wdl_target", False),
+        "adjusted_wdl_regret_source": pick_str("adjusted_wdl_regret_source", "sum"),
+        "adjusted_wdl_regret_scale": pick("adjusted_wdl_regret_scale", 1.0),
+        "adjusted_wdl_regret_cap": pick("adjusted_wdl_regret_cap", 0.0),
     }
+
+
+def _future_regret_slice(
+    arrs: dict[str, Any],
+    row_slice: slice,
+    source: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    n = int(row_slice.stop - row_slice.start)
+    value_name, has_name = _future_regret_field_names(source)
+    values = np.zeros((n,), dtype=np.float64)
+    if value_name not in arrs:
+        return values, np.zeros((n,), dtype=bool)
+    values = np.asarray(arrs[value_name][row_slice], dtype=np.float64)
+    if has_name in arrs:
+        has = np.asarray(arrs[has_name][row_slice], dtype=bool)
+    else:
+        has = np.isfinite(values)
+    return values, has & np.isfinite(values)
 
 
 def _fmt_wdl(vals: list[float] | np.ndarray) -> str:
@@ -275,14 +316,18 @@ def _fmt_wdl(vals: list[float] | np.ndarray) -> str:
 def _print_wdl_table(title: str, stats: list[dict[str, Any]]) -> None:
     print(f"## {title}")
     print()
-    print("| Bucket | n | outcome W/D/L | SF WDL | search WDL | blend WDL | CE sf/search/blend | Brier sf/search/blend | disagree low/high |")
-    print("|---:|---:|---|---|---|---|---|---|---|")
+    print(
+        "| Bucket | n | outcome W/D/L | game target WDL | SF WDL | search WDL | blend WDL | "
+        "CE sf/search/blend | Brier sf/search/blend | disagree low/high |"
+    )
+    print("|---:|---:|---|---|---|---|---|---|---|---|")
     for i, raw in enumerate(stats, start=1):
         s = _finish_wdl_stats(raw)
         if int(s.get("n", 0)) <= 0:
             continue
         print(
-            f"| {i} | {s['n']} | `{_fmt_wdl(s['outcome_wdl'])}` | `{_fmt_wdl(s['mean_sf_wdl'])}` | "
+            f"| {i} | {s['n']} | `{_fmt_wdl(s['outcome_wdl'])}` | "
+            f"`{_fmt_wdl(s['mean_game_target_wdl'])}` | `{_fmt_wdl(s['mean_sf_wdl'])}` | "
             f"`{_fmt_wdl(s['mean_search_wdl'])}` | `{_fmt_wdl(s['mean_blend_wdl'])}` | "
             f"`{s['sf_ce']:.3f}/{s['search_ce']:.3f}/{s['blend_ce']:.3f}` | "
             f"`{s['sf_brier']:.3f}/{s['search_brier']:.3f}/{s['blend_brier']:.3f}` | "
@@ -328,6 +373,14 @@ def main() -> None:
     parser.add_argument("--sf-wdl-temperature", type=float, default=None)
     parser.add_argument("--sf-search-dampen-sf-low", type=float, default=None)
     parser.add_argument("--sf-search-dampen-sf-high", type=float, default=None)
+    parser.add_argument("--use-adjusted-wdl-target", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument(
+        "--adjusted-wdl-regret-source",
+        choices=sorted(FUTURE_REGRET_FIELDS),
+        default=None,
+    )
+    parser.add_argument("--adjusted-wdl-regret-scale", type=float, default=None)
+    parser.add_argument("--adjusted-wdl-regret-cap", type=float, default=None)
     args = parser.parse_args()
     if int(args.buckets) < 1 or int(args.buckets) > MAX_BUCKETS:
         parser.error(f"--buckets must be between 1 and {MAX_BUCKETS}")
@@ -370,6 +423,8 @@ def main() -> None:
     scan: dict[str, Any] = {
         "skipped_shards": [],
         "skipped_shards_omitted": 0,
+        "adjusted_wdl_target_rows": 0,
+        "adjusted_wdl_target_missing_rows": 0,
     }
 
     pos = 0
@@ -403,8 +458,26 @@ def main() -> None:
                     )
                     search = _normalize(np.asarray(arrs["search_wdl"][sl], dtype=np.float64)[both])
                     y = outcome[both]
+                    game_target = _one_hot(y)
+                    if bool(cfg["use_adjusted_wdl_target"]):
+                        future_regret, has_future_regret = _future_regret_slice(
+                            arrs,
+                            sl,
+                            str(cfg["adjusted_wdl_regret_source"]),
+                        )
+                        future_regret = future_regret[both]
+                        has_future_regret = has_future_regret[both]
+                        scan["adjusted_wdl_target_rows"] += int(has_future_regret.sum())
+                        scan["adjusted_wdl_target_missing_rows"] += int((~has_future_regret).sum())
+                        game_target = _adjusted_wdl_game_target(
+                            y,
+                            future_regret,
+                            has_future_regret,
+                            regret_scale=float(cfg["adjusted_wdl_regret_scale"]),
+                            regret_cap=float(cfg["adjusted_wdl_regret_cap"]),
+                        )
                     blend = _blend_wdl(
-                        y,
+                        game_target,
                         sf,
                         search,
                         sf_frac=cfg["sf_wdl_frac"],
@@ -412,10 +485,17 @@ def main() -> None:
                         dampen_sf_low=cfg["sf_search_dampen_sf_low"],
                         dampen_sf_high=cfg["sf_search_dampen_sf_high"],
                     )
-                    _add_wdl_stats(wdl_by_bucket[bucket], outcome=y, sf=sf, search=search, blend=blend)
+                    _add_wdl_stats(
+                        wdl_by_bucket[bucket],
+                        outcome=y,
+                        game_target=game_target,
+                        sf=sf,
+                        search=search,
+                        blend=blend,
+                    )
                     for (sf_frac, damp_low, damp_high), dst in sf_grid.items():
                         grid_blend = _blend_wdl(
-                            y,
+                            game_target,
                             sf,
                             search,
                             sf_frac=sf_frac,
@@ -423,7 +503,14 @@ def main() -> None:
                             dampen_sf_low=damp_low,
                             dampen_sf_high=damp_high,
                         )
-                        _add_wdl_stats(dst, outcome=y, sf=sf, search=search, blend=grid_blend)
+                        _add_wdl_stats(
+                            dst,
+                            outcome=y,
+                            game_target=game_target,
+                            sf=sf,
+                            search=search,
+                            blend=grid_blend,
+                        )
 
             for out_name, target_name, has_name, legal_name in (
                 ("policy", "policy_target", "has_policy", "legal_mask"),
@@ -480,6 +567,17 @@ def main() -> None:
         f"dampen_sf_low={cfg['sf_search_dampen_sf_low']:.3f}, "
         f"dampen_sf_high={cfg['sf_search_dampen_sf_high']:.3f}"
     )
+    if bool(cfg["use_adjusted_wdl_target"]):
+        print(
+            "- adjusted game target: "
+            f"source={cfg['adjusted_wdl_regret_source']}, "
+            f"scale={cfg['adjusted_wdl_regret_scale']:.3f}, "
+            f"cap={cfg['adjusted_wdl_regret_cap']:.3f}, "
+            f"rows={scan['adjusted_wdl_target_rows']}, "
+            f"missing={scan['adjusted_wdl_target_missing_rows']}"
+        )
+    else:
+        print("- adjusted game target: disabled")
     print()
     _print_wdl_table("WDL Calibration By Age, Oldest To Newest", wdl_by_bucket)
     _print_policy_table("Policy Target Sharpness By Age, Oldest To Newest", policy_by_bucket)

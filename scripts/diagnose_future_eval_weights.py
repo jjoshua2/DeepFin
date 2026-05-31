@@ -14,6 +14,7 @@ import numpy as np
 
 from chess_anti_engine.replay.shard import load_shard_arrays, shard_positions
 from scripts.diagnostic_replay_utils import (
+    REGRET_TO_Q_SCALE as _REGRET_TO_Q_SCALE,
     bool_field as _bool_field,
     corr as _corr,
     latest_replay_dir as _latest_replay_dir,
@@ -37,14 +38,6 @@ class Sample:
     search_q: float
     sf_played_regret: float
     has_sf_played_regret: bool
-
-    @property
-    def avg_q(self) -> float:
-        return 0.5 * (self.sf_q + self.search_q)
-
-    @property
-    def gap(self) -> float:
-        return self.search_q - self.sf_q
 
 
 @dataclass(frozen=True, slots=True)
@@ -269,7 +262,7 @@ def _rows_for_horizon(
         )
         if path_regret.size > 0:
             adj_future_avg = 0.5 * (adj_future_sf + adj_future_search)
-            adjusted = np.clip(adj_future_avg - 2.0 * path_regret, -1.0, 1.0)
+            adjusted = np.clip(adj_future_avg - _REGRET_TO_Q_SCALE * path_regret, -1.0, 1.0)
             adj_targets = {
                 "future_avg_q_known_regret_raw": adj_future_avg,
                 "future_avg_q_regret_adjusted": adjusted,

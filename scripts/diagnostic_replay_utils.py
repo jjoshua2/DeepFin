@@ -11,6 +11,18 @@ from chess_anti_engine.replay.shard import shard_index
 
 
 MAX_SKIPPED_SHARD_DETAILS = 20
+REGRET_TO_Q_SCALE = 2.0
+FUTURE_REGRET_FIELDS = {
+    "sum": ("future_sf_regret_sum", "has_future_sf_regret_sum"),
+    "d95": ("future_sf_regret_d95", "has_future_sf_regret_d95"),
+    "d98": ("future_sf_regret_d98", "has_future_sf_regret_d98"),
+    "max": ("future_sf_regret_max", "has_future_sf_regret_max"),
+    "h4": ("future_sf_regret_h4", "has_future_sf_regret_h4"),
+    "h6": ("future_sf_regret_h6", "has_future_sf_regret_h6"),
+    "h12": ("future_sf_regret_h12", "has_future_sf_regret_h12"),
+    "h24": ("future_sf_regret_h24", "has_future_sf_regret_h24"),
+    "h50": ("future_sf_regret_h50", "has_future_sf_regret_h50"),
+}
 
 
 def latest_replay_dir(run_dir: Path, trial_dir: Path | None = None) -> Path:
@@ -109,6 +121,46 @@ def normalize_wdl(arr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 def final_q_from_wdl_target(wdl_target: np.ndarray) -> np.ndarray:
     target = np.asarray(wdl_target, dtype=np.int64)
     return np.where(target == 0, 1.0, np.where(target == 1, 0.0, -1.0)).astype(np.float64)
+
+
+def wdl_one_hot(wdl_target: np.ndarray) -> np.ndarray:
+    target = np.asarray(wdl_target, dtype=np.int64)
+    out = np.zeros((target.size, 3), dtype=np.float64)
+    out[np.arange(target.size), target] = 1.0
+    return out
+
+
+def q_to_wdl_probs(q: np.ndarray) -> np.ndarray:
+    q_clamped = np.clip(np.asarray(q, dtype=np.float64), -1.0, 1.0)
+    win = np.clip(q_clamped, 0.0, None)
+    loss = np.clip(-q_clamped, 0.0, None)
+    draw = np.clip(1.0 - win - loss, 0.0, None)
+    return np.stack((win, draw, loss), axis=1)
+
+
+def adjusted_wdl_game_target(
+    outcome: np.ndarray,
+    future_regret: np.ndarray,
+    has_future_regret: np.ndarray,
+    *,
+    regret_scale: float,
+    regret_cap: float,
+) -> np.ndarray:
+    game = wdl_one_hot(outcome)
+    has = np.asarray(has_future_regret, dtype=bool)
+    if not has.any():
+        return game
+    regret = np.asarray(future_regret, dtype=np.float64)
+    correction = REGRET_TO_Q_SCALE * max(0.0, float(regret_scale)) * np.clip(regret, 0.0, None)
+    if float(regret_cap) > 0.0:
+        correction = np.minimum(correction, float(regret_cap))
+    game_q = final_q_from_wdl_target(outcome)
+    adjusted = q_to_wdl_probs(game_q - correction)
+    return np.where(has[:, None], adjusted, game)
+
+
+def future_regret_field_names(source: str) -> tuple[str, str]:
+    return FUTURE_REGRET_FIELDS.get(str(source), FUTURE_REGRET_FIELDS["sum"])
 
 
 def rmse(pred: np.ndarray, target: np.ndarray, weights: np.ndarray | None = None) -> float:

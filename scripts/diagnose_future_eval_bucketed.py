@@ -14,6 +14,7 @@ import numpy as np
 
 from chess_anti_engine.replay.shard import load_shard_arrays, shard_positions
 from scripts.diagnostic_replay_utils import (
+    REGRET_TO_Q_SCALE as _REGRET_TO_Q_SCALE,
     bool_field as _bool_field,
     final_q_from_wdl_target as _final_q_from_wdl_target,
     fit_simplex as _fit_simplex,
@@ -257,7 +258,7 @@ def _pairs_for_horizon(
                 elif not path_sample.is_selfplay:
                     regret_sum += missing_regret_impute
             raw_target = future.avg_q
-            target = float(np.clip(raw_target - 2.0 * regret_sum, -1.0, 1.0))
+            target = float(np.clip(raw_target - _REGRET_TO_Q_SCALE * regret_sum, -1.0, 1.0))
             game_ids.append(current.game_id)
             features.append((current.sf_q, current.search_q, current.final_q))
             targets.append(target)
