@@ -8,13 +8,14 @@ from typing import Any
 import numpy as np
 
 from chess_anti_engine.replay.shard import shard_index
-from chess_anti_engine.train import constants as train_constants
+from chess_anti_engine.train.constants import (
+    FUTURE_REGRET_FIELDS as FUTURE_REGRET_FIELDS,
+    REGRET_TO_Q_SCALE,
+    future_regret_field_names as future_regret_field_names,
+)
 
 
 MAX_SKIPPED_SHARD_DETAILS = 20
-FUTURE_REGRET_FIELDS = train_constants.FUTURE_REGRET_FIELDS
-REGRET_TO_Q_SCALE = train_constants.REGRET_TO_Q_SCALE
-future_regret_field_names = train_constants.future_regret_field_names
 
 
 def latest_replay_dir(run_dir: Path, trial_dir: Path | None = None) -> Path:
