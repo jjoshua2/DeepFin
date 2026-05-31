@@ -516,7 +516,11 @@ def _suffix_sf_regret_features(
     *,
     is_selfplay: bool,
 ) -> list[_SfRegretSuffix]:
-    """Future opponent-SF loss summaries from each network-turn sample to game end."""
+    """Future opponent-SF loss summaries from each network-turn sample to game end.
+
+    Discounted d95/d98 suffixes advance once per network record; h4..h50
+    sources use ply-index windows.
+    """
     zero = _SfRegretSuffix(
         total=0.0,
         d95=0.0,
@@ -532,12 +536,16 @@ def _suffix_sf_regret_features(
     if is_selfplay:
         return [zero for _ in records]
     out = [zero for _ in records]
-    regrets = [
-        max(0.0, float(rec.sf_played_regret))
-        if rec.sf_played_regret is not None and np.isfinite(float(rec.sf_played_regret))
-        else 0.0
-        for rec in records
-    ]
+    regrets: list[float] = []
+    has_regret: list[bool] = []
+    for rec in records:
+        raw = rec.sf_played_regret
+        if raw is not None and np.isfinite(float(raw)):
+            regrets.append(max(0.0, float(raw)))
+            has_regret.append(True)
+        else:
+            regrets.append(0.0)
+            has_regret.append(False)
 
     def _horizon_sum(start: int, horizon: int) -> float:
         end_ply = int(records[start].ply_index) + int(horizon)
@@ -554,9 +562,8 @@ def _suffix_sf_regret_features(
     running_max = 0.0
     running_count = 0
     for t in range(len(records) - 1, -1, -1):
-        regret = records[t].sf_played_regret
-        if regret is not None and np.isfinite(float(regret)):
-            value = max(0.0, float(regret))
+        value = regrets[t]
+        if has_regret[t]:
             running_sum += value
             running_d95 = value + 0.95 * running_d95
             running_d98 = value + 0.98 * running_d98
