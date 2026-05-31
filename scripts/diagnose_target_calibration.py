@@ -24,6 +24,13 @@ from scripts.diagnostic_replay_utils import (
 
 DEFAULT_RUN = Path("runs/pbt2_small")
 MAX_BUCKETS = 20
+WDL_BLEND_MODES = ("interpolate", "renormalize")
+WDL_BLEND_FALLBACKS = ("adjusted_game", "raw_game")
+WDL_BLEND_COUNTERFACTUALS = (
+    ("interpolate_adjusted", "interpolate", "adjusted_game"),
+    ("interpolate_raw", "interpolate", "raw_game"),
+    ("renormalize", "renormalize", "raw_game"),
+)
 
 
 @dataclass(frozen=True)
@@ -129,11 +136,19 @@ def _blend_wdl(
     sf: np.ndarray,
     search: np.ndarray,
     *,
+    raw_game_target: np.ndarray | None = None,
+    fallback_target: np.ndarray | None = None,
+    sf_available: np.ndarray | None = None,
+    search_available: np.ndarray | None = None,
     sf_frac: float,
     search_frac: float,
     dampen_sf_low: float,
     dampen_sf_high: float,
+    blend_mode: str = "interpolate",
 ) -> np.ndarray:
+    mode = str(blend_mode)
+    if mode not in WDL_BLEND_MODES:
+        raise ValueError(f"unknown WDL blend mode {blend_mode!r}; expected one of {WDL_BLEND_MODES}")
     sf_weight = max(0.0, float(sf_frac))
     search_weight = max(0.0, float(search_frac))
     total = sf_weight + search_weight
@@ -145,19 +160,45 @@ def _blend_wdl(
         game_weight = 1.0 - total
     game = np.asarray(game_target, dtype=np.float64)
     game = game / np.maximum(game.sum(axis=1, keepdims=True), 1e-12)
+    raw_game = game if raw_game_target is None else np.asarray(raw_game_target, dtype=np.float64)
+    raw_game = raw_game / np.maximum(raw_game.sum(axis=1, keepdims=True), 1e-12)
+    fallback = game if fallback_target is None else np.asarray(fallback_target, dtype=np.float64)
+    fallback = fallback / np.maximum(fallback.sum(axis=1, keepdims=True), 1e-12)
+    sf_av = (
+        np.ones((game.shape[0],), dtype=bool)
+        if sf_available is None
+        else np.asarray(sf_available, dtype=bool)
+    )
+    search_av = (
+        np.ones((game.shape[0],), dtype=bool)
+        if search_available is None
+        else np.asarray(search_available, dtype=bool)
+    )
     sf_sig = _signal(sf)
     search_sig = _signal(search)
-    sf_low = (sf_sig < 0.0) & (search_sig > 0.0)
-    sf_high = (sf_sig > 0.0) & (search_sig < 0.0)
+    joint = sf_av & search_av
+    sf_low = joint & (sf_sig < 0.0) & (search_sig > 0.0)
+    sf_high = joint & (sf_sig > 0.0) & (search_sig < 0.0)
     keep = (
         1.0
         - float(dampen_sf_low) * sf_low.astype(np.float64)
         - float(dampen_sf_high) * sf_high.astype(np.float64)
     )
     keep = np.clip(keep, 0.0, 1.0)[:, None]
+    sf_keep = sf_av.astype(np.float64)[:, None] * keep
+    search_keep = search_av.astype(np.float64)[:, None]
+    if mode == "renormalize":
+        game_w = np.full((game.shape[0], 1), game_weight, dtype=np.float64)
+        sf_w = sf_weight * sf_keep
+        search_w = search_weight * search_keep
+        denom = game_w + sf_w + search_w
+        weighted = game_w * game + sf_w * sf + search_w * search
+        target = np.where(denom > 1e-12, weighted / np.maximum(denom, 1e-12), raw_game)
+        return _normalize(target)
+
     target = game_weight * game
-    target += sf_weight * (keep * sf + (1.0 - keep) * game)
-    target += search_weight * search
+    target += sf_weight * (sf_keep * sf + (1.0 - sf_keep) * fallback)
+    target += search_weight * (search_keep * search + (1.0 - search_keep) * fallback)
     return _normalize(target)
 
 
@@ -287,6 +328,8 @@ def _load_loss_config(latest: dict[str, Any], args: argparse.Namespace) -> dict[
         "adjusted_wdl_regret_source": pick_str("adjusted_wdl_regret_source", "sum"),
         "adjusted_wdl_regret_scale": pick("adjusted_wdl_regret_scale", 1.0),
         "adjusted_wdl_regret_cap": pick("adjusted_wdl_regret_cap", 0.0),
+        "wdl_blend_mode": pick_str("wdl_blend_mode", "interpolate"),
+        "wdl_blend_fallback": pick_str("wdl_blend_fallback", "adjusted_game"),
     }
 
 
@@ -353,6 +396,33 @@ def _print_policy_table(title: str, stats: list[dict[str, dict[str, float]]]) ->
     print()
 
 
+def _print_blend_mode_table(title: str, stats: dict[str, dict[str, Any]]) -> None:
+    print(f"## {title}")
+    print()
+    print("| mode | n | blend CE to outcome | blend Brier to outcome | blend WDL |")
+    print("|---|---:|---:|---:|---|")
+    rows = []
+    for name, raw in stats.items():
+        s = _finish_wdl_stats(raw)
+        if int(s.get("n", 0)) <= 0:
+            continue
+        rows.append((s["blend_ce"], s["blend_brier"], name, s))
+    for _ce, _brier, name, s in sorted(rows):
+        print(
+            f"| {name} | {s['n']} | {s['blend_ce']:.4f} | "
+            f"{s['blend_brier']:.4f} | `{_fmt_wdl(s['mean_blend_wdl'])}` |"
+        )
+    print()
+
+
+def _fallback_for_mode(name: str, *, raw_game: np.ndarray, game_target: np.ndarray) -> np.ndarray:
+    if name == "raw_game":
+        return raw_game
+    if name == "adjusted_game":
+        return game_target
+    raise ValueError(f"unknown WDL blend fallback {name!r}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-dir", type=Path, default=DEFAULT_RUN)
@@ -381,6 +451,18 @@ def main() -> None:
     )
     parser.add_argument("--adjusted-wdl-regret-scale", type=float, default=None)
     parser.add_argument("--adjusted-wdl-regret-cap", type=float, default=None)
+    parser.add_argument(
+        "--wdl-blend-mode",
+        choices=WDL_BLEND_MODES,
+        default=None,
+        help="How SF/search dampening changes blended WDL targets.",
+    )
+    parser.add_argument(
+        "--wdl-blend-fallback",
+        choices=WDL_BLEND_FALLBACKS,
+        default=None,
+        help="Fallback target for interpolate mode when labels are missing or dampened.",
+    )
     args = parser.parse_args()
     if int(args.buckets) < 1 or int(args.buckets) > MAX_BUCKETS:
         parser.error(f"--buckets must be between 1 and {MAX_BUCKETS}")
@@ -398,6 +480,10 @@ def main() -> None:
         replay_dir = _replay_dir_for_trial(args.run_dir, trial_dir)
     latest = _latest_result(trial_dir) if trial_dir is not None else {}
     cfg = _load_loss_config(latest, args)
+    if cfg["wdl_blend_mode"] not in WDL_BLEND_MODES:
+        parser.error(f"--wdl-blend-mode must be one of {', '.join(WDL_BLEND_MODES)}")
+    if cfg["wdl_blend_fallback"] not in WDL_BLEND_FALLBACKS:
+        parser.error(f"--wdl-blend-fallback must be one of {', '.join(WDL_BLEND_FALLBACKS)}")
     if int(args.max_shards) < 0:
         parser.error("--max-shards must be non-negative")
     slices = _newest_window_slices(replay_dir, int(args.window_positions), int(args.max_shards))
@@ -419,6 +505,10 @@ def main() -> None:
         for sf_frac in (0.0, 0.1, 0.15, 0.25, 0.5)
         for damp_low in (0.0, 0.25, 0.5, 1.0)
         for damp_high in (0.0, 0.25, 0.5, 1.0)
+    }
+    blend_mode_grid = {
+        name: _empty_wdl_stats()
+        for name, _mode, _fallback in WDL_BLEND_COUNTERFACTUALS
     }
     scan: dict[str, Any] = {
         "skipped_shards": [],
@@ -458,7 +548,8 @@ def main() -> None:
                     )
                     search = _normalize(np.asarray(arrs["search_wdl"][sl], dtype=np.float64)[both])
                     y = outcome[both]
-                    game_target = _one_hot(y)
+                    raw_game_target = _one_hot(y)
+                    game_target = raw_game_target
                     if bool(cfg["use_adjusted_wdl_target"]):
                         future_regret, has_future_regret = _future_regret_slice(
                             arrs,
@@ -476,14 +567,22 @@ def main() -> None:
                             regret_scale=float(cfg["adjusted_wdl_regret_scale"]),
                             regret_cap=float(cfg["adjusted_wdl_regret_cap"]),
                         )
+                    fallback_target = _fallback_for_mode(
+                        str(cfg["wdl_blend_fallback"]),
+                        raw_game=raw_game_target,
+                        game_target=game_target,
+                    )
                     blend = _blend_wdl(
                         game_target,
                         sf,
                         search,
+                        raw_game_target=raw_game_target,
+                        fallback_target=fallback_target,
                         sf_frac=cfg["sf_wdl_frac"],
                         search_frac=cfg["search_wdl_frac"],
                         dampen_sf_low=cfg["sf_search_dampen_sf_low"],
                         dampen_sf_high=cfg["sf_search_dampen_sf_high"],
+                        blend_mode=str(cfg["wdl_blend_mode"]),
                     )
                     _add_wdl_stats(
                         wdl_by_bucket[bucket],
@@ -493,15 +592,44 @@ def main() -> None:
                         search=search,
                         blend=blend,
                     )
+                    for name, mode, fallback_name in WDL_BLEND_COUNTERFACTUALS:
+                        mode_fallback = _fallback_for_mode(
+                            fallback_name,
+                            raw_game=raw_game_target,
+                            game_target=game_target,
+                        )
+                        mode_blend = _blend_wdl(
+                            game_target,
+                            sf,
+                            search,
+                            raw_game_target=raw_game_target,
+                            fallback_target=mode_fallback,
+                            sf_frac=cfg["sf_wdl_frac"],
+                            search_frac=cfg["search_wdl_frac"],
+                            dampen_sf_low=cfg["sf_search_dampen_sf_low"],
+                            dampen_sf_high=cfg["sf_search_dampen_sf_high"],
+                            blend_mode=mode,
+                        )
+                        _add_wdl_stats(
+                            blend_mode_grid[name],
+                            outcome=y,
+                            game_target=game_target,
+                            sf=sf,
+                            search=search,
+                            blend=mode_blend,
+                        )
                     for (sf_frac, damp_low, damp_high), dst in sf_grid.items():
                         grid_blend = _blend_wdl(
                             game_target,
                             sf,
                             search,
+                            raw_game_target=raw_game_target,
+                            fallback_target=fallback_target,
                             sf_frac=sf_frac,
                             search_frac=cfg["search_wdl_frac"],
                             dampen_sf_low=damp_low,
                             dampen_sf_high=damp_high,
+                            blend_mode=str(cfg["wdl_blend_mode"]),
                         )
                         _add_wdl_stats(
                             dst,
@@ -565,7 +693,9 @@ def main() -> None:
         f"sf_wdl_frac={cfg['sf_wdl_frac']:.3f}, search_wdl_frac={cfg['search_wdl_frac']:.3f}, "
         f"sf_wdl_temperature={cfg['sf_wdl_temperature']:.3f}, "
         f"dampen_sf_low={cfg['sf_search_dampen_sf_low']:.3f}, "
-        f"dampen_sf_high={cfg['sf_search_dampen_sf_high']:.3f}"
+        f"dampen_sf_high={cfg['sf_search_dampen_sf_high']:.3f}, "
+        f"wdl_blend_mode={cfg['wdl_blend_mode']}, "
+        f"wdl_blend_fallback={cfg['wdl_blend_fallback']}"
     )
     if bool(cfg["use_adjusted_wdl_target"]):
         print(
@@ -580,6 +710,7 @@ def main() -> None:
         print("- adjusted game target: disabled")
     print()
     _print_wdl_table("WDL Calibration By Age, Oldest To Newest", wdl_by_bucket)
+    _print_blend_mode_table("WDL Blend Mode Counterfactuals", blend_mode_grid)
     _print_policy_table("Policy Target Sharpness By Age, Oldest To Newest", policy_by_bucket)
 
     print("## SF Fraction / Dampening Counterfactuals")
