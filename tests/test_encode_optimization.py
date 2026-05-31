@@ -269,3 +269,22 @@ class TestEncodePositionSnapshot:
         batch = np.empty((1, 146, 8, 8), dtype=np.float32)
         batch_encode_146_lc0_root_legacy_meta([cb], batch)
         np.testing.assert_allclose(batch[0], ref, atol=1e-6)
+
+        long_rep = chess.Board()
+        for uci in (
+            "g1f3", "g8f6", "f3g1", "f6g8", "g1f3",
+            "g8f6", "f3g1", "f6g8", "g1f3", "g8f6",
+        ):
+            long_rep.push(chess.Move.from_uci(uci))
+        cb_long_rep = CBoard.from_board(long_rep)
+        ref_long_rep = encode_position(
+            long_rep,
+            add_features=True,
+            input_history_encoding="lc0_root_legacy_meta",
+        )
+        got_long_rep = cb_long_rep.encode_146_lc0_root_legacy_meta()
+        np.testing.assert_allclose(got_long_rep, ref_long_rep, atol=1e-6)
+
+        batch_long = np.empty((1, 146, 8, 8), dtype=np.float32)
+        batch_encode_146_lc0_root_legacy_meta([cb_long_rep], batch_long)
+        np.testing.assert_allclose(batch_long[0], ref_long_rep, atol=1e-6)
