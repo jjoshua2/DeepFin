@@ -39,6 +39,7 @@ from chess_anti_engine.replay.dataset import LEGAL_MASK_FIELDS
 from chess_anti_engine.replay.shard import (
     DEFAULT_CATEGORICAL_BINS,
     INPUT_HISTORY_ENCODING_ARRAY_KEY,
+    POLICY_ENCODING_ARRAY_KEY,
     _REQUIRED_STORAGE_FIELDS,
     _SHARD_FIELDS,
     iter_shard_paths,
@@ -76,8 +77,8 @@ class _FixedBatch:
         self._arrs = arrs
         self.rng = rng
 
-    def sample_batch_arrays(self, _batch_size: int, *, wdl_balance: bool = True) -> dict[str, np.ndarray]:
-        del wdl_balance
+    def sample_batch_arrays(self, batch_size: int, *, wdl_balance: bool = True) -> dict[str, np.ndarray]:
+        del batch_size, wdl_balance
         return self._arrs
 
 
@@ -262,6 +263,7 @@ def _convert_policy_targets(arrs: dict[str, Any], *, policy_encoding: str) -> di
                 out["has_sf_move"] = (
                     np.asarray(out["has_sf_move"], dtype=np.float32) * has.astype(np.float32)
                 )
+        out[POLICY_ENCODING_ARRAY_KEY] = np.asarray(enc)
         out["_policy_size"] = np.array(COMPACT_POLICY_SIZE, dtype=np.int32)
         return out
 
@@ -298,6 +300,7 @@ def _convert_policy_targets(arrs: dict[str, Any], *, policy_encoding: str) -> di
             out["has_sf_move"] = (
                 np.asarray(out["has_sf_move"], dtype=np.float32) * valid.astype(np.float32)
             )
+    out[POLICY_ENCODING_ARRAY_KEY] = np.asarray(enc)
     out["_policy_size"] = np.array(POLICY_SIZE, dtype=np.int32)
     return out
 
@@ -866,8 +869,7 @@ def _train_candidate_live_follow(
         ),
         cache_shards=int(args.live_cache_shards),
     )
-    initial_new = sampler.rescan()
-    del initial_new
+    sampler.rescan()
     min_positions = max(int(args.batch_size), int(args.live_min_positions))
     if sampler.total_positions < min_positions:
         raise SystemExit(

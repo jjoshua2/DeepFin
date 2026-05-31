@@ -1,13 +1,17 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
+from argparse import Namespace
 
 import numpy as np
 import pytest
 
 from chess_anti_engine.model import ModelConfig, build_model
 from chess_anti_engine.moves import COMPACT_TO_FULL_POLICY, FULL_TO_COMPACT_POLICY
-from chess_anti_engine.replay.shard import local_shard_path, save_local_shard_arrays
+from chess_anti_engine.replay.shard import (
+    POLICY_ENCODING_ARRAY_KEY,
+    local_shard_path,
+    save_local_shard_arrays,
+)
 from chess_anti_engine.train.trainer import Trainer
 from scripts.offline_replay_epoch import (
     _LiveShardSampler,
@@ -143,6 +147,30 @@ def test_convert_policy_targets_expands_compact_targets_for_az() -> None:
     )
 
 
+def test_convert_policy_targets_updates_policy_metadata_for_concat() -> None:
+    def chunk(policy_size: int, encoding: str) -> dict[str, np.ndarray]:
+        policy = np.zeros((1, policy_size), dtype=np.float32)
+        policy[0, 0] = 1.0
+        return {
+            "x": np.zeros((1, 146, 8, 8), dtype=np.float32),
+            "policy_target": policy,
+            "wdl_target": np.zeros((1,), dtype=np.int8),
+            "priority": np.ones((1,), dtype=np.float32),
+            "has_policy": np.ones((1,), dtype=np.uint8),
+            "_policy_size": np.array(policy_size, dtype=np.int32),
+            POLICY_ENCODING_ARRAY_KEY: np.asarray(encoding),
+        }
+
+    converted_full = _convert_policy_targets(chunk(4672, "az_4672"), policy_encoding="lc0_1858")
+    converted_compact = _convert_policy_targets(chunk(1858, "lc0_1858"), policy_encoding="lc0_1858")
+
+    out = _concat([converted_full, converted_compact])
+
+    assert int(out["_policy_size"].item()) == 1858
+    assert str(out[POLICY_ENCODING_ARRAY_KEY].item()) == "lc0_1858"
+    assert out["policy_target"].shape == (2, 1858)
+
+
 def test_concat_preserves_optional_eval_targets_when_some_chunks_lack_them() -> None:
     policy_a = np.zeros((1, 1858), dtype=np.float32)
     policy_b = np.zeros((2, 1858), dtype=np.float32)
@@ -231,7 +259,7 @@ def test_calibrate_global_board_adapter_hits_requested_rms_ratio(tmp_path) -> No
         model_config=model_cfg,
         log_dir=tmp_path,
     )
-    args = SimpleNamespace(
+    args = Namespace(
         global_board_adapter_init_rms_ratio=0.2,
         init_checkpoint=None,
         global_board_adapter_init_batch_size=3,
@@ -273,7 +301,7 @@ def test_calibrate_global_board_adapter_rejects_checkpoint_init(tmp_path) -> Non
         model_config=model_cfg,
         log_dir=tmp_path,
     )
-    args = SimpleNamespace(
+    args = Namespace(
         global_board_adapter_init_rms_ratio=0.2,
         init_checkpoint="/tmp/model.pt",
         global_board_adapter_init_batch_size=1,
