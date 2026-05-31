@@ -53,6 +53,18 @@ def _mirror_policy_index_for_width(index: int, width: int) -> int:
     return int(mapping[index])
 
 
+def _mirror_policy_index_array(values: np.ndarray, mask: np.ndarray, *, policy_width: int) -> np.ndarray:
+    out = np.array(values, copy=True, order="C")
+    idx = out[mask].astype(np.int64, copy=False)
+    mirrored_idx = np.array(idx, copy=True)
+    valid = mirrored_idx >= 0
+    if np.any(valid):
+        mirror_map = _mirror_map_for_policy_width(policy_width)
+        mirrored_idx[valid] = mirror_map[mirrored_idx[valid]]
+    out[mask] = mirrored_idx.astype(out.dtype, copy=False)
+    return out
+
+
 def mirror_x(x: np.ndarray, *, input_history_encoding: str | None = None) -> np.ndarray:
     """Mirror an encoded (C,8,8) position tensor left-right (file flip)."""
     arr = np.asarray(x)
@@ -89,19 +101,35 @@ def mirror_sample(s: ReplaySample, *, input_history_encoding: str | None = None)
         policy_target=pol_m,
         wdl_target=int(s.wdl_target),
         priority=float(getattr(s, "priority", 1.0)),
+        priority_policy_kl=getattr(s, "priority_policy_kl", None),
+        priority_q_delta=getattr(s, "priority_q_delta", None),
+        priority_sf_search_gap=getattr(s, "priority_sf_search_gap", None),
+        game_id=getattr(s, "game_id", None),
+        ply_index=getattr(s, "ply_index", None),
         has_policy=bool(getattr(s, "has_policy", True)),
         x_lc0_root=None if x_lc0_root is None else mirror_x(x_lc0_root, input_history_encoding="lc0_root"),
+        input_history_encoding=getattr(s, "input_history_encoding", None),
     )
 
   # Aux targets
     out.sf_wdl = None if s.sf_wdl is None else np.asarray(s.sf_wdl, dtype=np.float32)
+    policy_width = int(np.asarray(s.policy_target).shape[-1])
     if s.sf_move_index is None:
         out.sf_move_index = None
     else:
         out.sf_move_index = _mirror_policy_index_for_width(
             int(s.sf_move_index),
-            int(np.asarray(s.policy_target).shape[-1]),
+            policy_width,
         )
+    if s.sf_played_move_index is None:
+        out.sf_played_move_index = None
+    else:
+        out.sf_played_move_index = _mirror_policy_index_for_width(
+            int(s.sf_played_move_index),
+            policy_width,
+        )
+    out.sf_played_rank = getattr(s, "sf_played_rank", None)
+    out.sf_played_regret = getattr(s, "sf_played_regret", None)
     out.sf_policy_target = None if s.sf_policy_target is None else mirror_policy(s.sf_policy_target)
     out.moves_left = None if s.moves_left is None else float(s.moves_left)
     out.is_network_turn = None if s.is_network_turn is None else bool(s.is_network_turn)
@@ -197,15 +225,13 @@ def maybe_mirror_batch_arrays(
             mirrored = mirror_policy_batch(out[key][mask])
             out[key][mask] = mirrored.astype(src_dtype, copy=False)
 
-    if "sf_move_index" in arrs:
-        out["sf_move_index"] = np.array(arrs["sf_move_index"], copy=True, order="C")
-        idx = out["sf_move_index"][mask].astype(np.int64, copy=False)
-        mirrored_idx = np.array(idx, copy=True)
-        valid = mirrored_idx >= 0
-        if np.any(valid):
-            policy_width = int(np.asarray(arrs["policy_target"]).shape[1])
-            mirror_map = _mirror_map_for_policy_width(policy_width)
-            mirrored_idx[valid] = mirror_map[mirrored_idx[valid]]
-        out["sf_move_index"][mask] = mirrored_idx.astype(out["sf_move_index"].dtype, copy=False)
+    policy_width = int(np.asarray(arrs["policy_target"]).shape[1])
+    for key in ("sf_move_index", "sf_played_move_index"):
+        if key in arrs:
+            out[key] = _mirror_policy_index_array(
+                np.asarray(arrs[key]),
+                mask,
+                policy_width=policy_width,
+            )
 
     return out

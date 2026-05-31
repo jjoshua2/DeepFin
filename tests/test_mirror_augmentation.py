@@ -123,11 +123,20 @@ def test_mirror_sample_is_involution():
         policy_target=p,
         wdl_target=2,
         priority=1.7,
+        priority_policy_kl=0.12,
+        priority_q_delta=-0.08,
+        priority_sf_search_gap=0.04,
+        game_id=123456789,
+        ply_index=18,
         has_policy=True,
         sf_wdl=np.array([0.2, 0.3, 0.5], dtype=np.float32),
         sf_move_index=int(rng.integers(0, POLICY_SIZE)),
+        sf_played_move_index=int(rng.integers(0, POLICY_SIZE)),
+        sf_played_rank=3,
+        sf_played_regret=0.0125,
         moves_left=0.25,
         is_network_turn=True,
+        input_history_encoding="lc0_root_legacy_meta",
         categorical_target=rng.random(size=(32,)).astype(np.float32),
         policy_soft_target=ps,
         future_policy_target=fp,
@@ -136,6 +145,16 @@ def test_mirror_sample_is_involution():
         has_volatility=True,
         sf_volatility_target=np.array([0.04, 0.05, 0.06], dtype=np.float32),
         has_sf_volatility=True,
+        future_sf_regret_sum=0.25,
+        future_sf_regret_d95=0.20,
+        future_sf_regret_d98=0.23,
+        future_sf_regret_max=0.05,
+        future_sf_regret_h4=0.11,
+        future_sf_regret_h6=0.12,
+        future_sf_regret_h12=0.13,
+        future_sf_regret_h24=0.14,
+        future_sf_regret_h50=0.15,
+        future_sf_regret_count=7,
     )
 
     s2 = mirror_sample(mirror_sample(s))
@@ -144,18 +163,38 @@ def test_mirror_sample_is_involution():
     assert np.allclose(s2.policy_target, s.policy_target)
     assert s2.wdl_target == s.wdl_target
     assert float(s2.priority) == float(s.priority)
+    assert s2.priority_policy_kl == s.priority_policy_kl
+    assert s2.priority_q_delta == s.priority_q_delta
+    assert s2.priority_sf_search_gap == s.priority_sf_search_gap
+    assert s2.game_id == s.game_id
+    assert s2.ply_index == s.ply_index
     assert bool(s2.has_policy) == bool(s.has_policy)
+    assert s2.input_history_encoding == s.input_history_encoding
+    assert s2.sf_played_rank == s.sf_played_rank
+    assert s2.sf_played_regret == s.sf_played_regret
+    assert s2.future_sf_regret_sum == s.future_sf_regret_sum
+    assert s2.future_sf_regret_d95 == s.future_sf_regret_d95
+    assert s2.future_sf_regret_d98 == s.future_sf_regret_d98
+    assert s2.future_sf_regret_max == s.future_sf_regret_max
+    assert s2.future_sf_regret_h4 == s.future_sf_regret_h4
+    assert s2.future_sf_regret_h6 == s.future_sf_regret_h6
+    assert s2.future_sf_regret_h12 == s.future_sf_regret_h12
+    assert s2.future_sf_regret_h24 == s.future_sf_regret_h24
+    assert s2.future_sf_regret_h50 == s.future_sf_regret_h50
+    assert s2.future_sf_regret_count == s.future_sf_regret_count
 
     # Narrow the optional fields — the test set all of them, mirror_sample must
     # round-trip all of them. Plain asserts both satisfy pyright and catch a
     # future silent-None regression in mirror_sample. Per-reference (not a
     # loop) because pyright narrowing is per-expression, not transitive.
     assert (s.sf_wdl is not None and s.sf_move_index is not None
+            and s.sf_played_move_index is not None
             and s.moves_left is not None and s.is_network_turn is not None
             and s.categorical_target is not None and s.policy_soft_target is not None
             and s.future_policy_target is not None and s.volatility_target is not None
             and s.sf_volatility_target is not None)
     assert (s2.sf_wdl is not None and s2.sf_move_index is not None
+            and s2.sf_played_move_index is not None
             and s2.moves_left is not None and s2.is_network_turn is not None
             and s2.categorical_target is not None and s2.policy_soft_target is not None
             and s2.future_policy_target is not None and s2.volatility_target is not None
@@ -163,6 +202,7 @@ def test_mirror_sample_is_involution():
 
     assert np.allclose(s2.sf_wdl, s.sf_wdl)
     assert int(s2.sf_move_index) == int(s.sf_move_index)
+    assert int(s2.sf_played_move_index) == int(s.sf_played_move_index)
     assert float(s2.moves_left) == float(s.moves_left)
     assert bool(s2.is_network_turn) == bool(s.is_network_turn)
 
@@ -190,6 +230,7 @@ def test_mirror_batch_arrays_is_involution():
 
     legal_mask = (rng.random(size=(4, POLICY_SIZE)) > 0.5).astype(np.uint8)
     sf_move_index = rng.integers(0, POLICY_SIZE, size=(4,), dtype=np.int32)
+    sf_played_move_index = rng.integers(0, POLICY_SIZE, size=(4,), dtype=np.int32)
 
     batch = {
         "x": x,
@@ -199,6 +240,7 @@ def test_mirror_batch_arrays_is_involution():
         "future_policy_target": soft.copy(),
         "legal_mask": legal_mask,
         "sf_move_index": sf_move_index,
+        "sf_played_move_index": sf_played_move_index,
     }
 
     mirrored = maybe_mirror_batch_arrays(batch, rng=np.random.default_rng(1), prob=1.0)
@@ -219,6 +261,7 @@ def test_mirror_sample_keeps_sf_move_index_in_compact_policy_space():
         policy_target=compact_policy,
         wdl_target=1,
         sf_move_index=compact_idx,
+        sf_played_move_index=compact_idx,
         sf_policy_target=None,
         sf_legal_mask=sf_legal_mask,
     )
@@ -226,6 +269,7 @@ def test_mirror_sample_keeps_sf_move_index_in_compact_policy_space():
     mirrored = mirror_sample(sample)
 
     assert mirrored.sf_move_index == int(COMPACT_MIRROR_POLICY_MAP[compact_idx])
+    assert mirrored.sf_played_move_index == int(COMPACT_MIRROR_POLICY_MAP[compact_idx])
     assert mirrored.sf_legal_mask is not None
     assert mirrored.sf_move_index is not None
     assert int(mirrored.sf_legal_mask[int(mirrored.sf_move_index)]) == 1
@@ -243,11 +287,13 @@ def test_mirror_sample_uses_full_map_from_policy_width_with_compact_sf_policy():
         wdl_target=1,
         sf_policy_target=compact_sf,
         sf_move_index=full_idx,
+        sf_played_move_index=full_idx,
     )
 
     mirrored = mirror_sample(sample)
 
     assert mirrored.sf_move_index == mirror_policy_index(full_idx)
+    assert mirrored.sf_played_move_index == mirror_policy_index(full_idx)
 
 
 def test_mirror_batch_uses_compact_map_from_policy_width_without_sf_policy():
@@ -257,6 +303,7 @@ def test_mirror_batch_uses_compact_map_from_policy_width_without_sf_policy():
         "policy_target": np.zeros((1, COMPACT_POLICY_SIZE), dtype=np.float32),
         "sf_legal_mask": np.zeros((1, COMPACT_POLICY_SIZE), dtype=np.uint8),
         "sf_move_index": np.array([compact_idx], dtype=np.int32),
+        "sf_played_move_index": np.array([compact_idx], dtype=np.int32),
     }
     batch["policy_target"][0, compact_idx] = 1.0
     batch["sf_legal_mask"][0, compact_idx] = 1
@@ -264,6 +311,7 @@ def test_mirror_batch_uses_compact_map_from_policy_width_without_sf_policy():
     mirrored = maybe_mirror_batch_arrays(batch, rng=np.random.default_rng(1), prob=1.0)
 
     assert int(mirrored["sf_move_index"][0]) == int(COMPACT_MIRROR_POLICY_MAP[compact_idx])
+    assert int(mirrored["sf_played_move_index"][0]) == int(COMPACT_MIRROR_POLICY_MAP[compact_idx])
     assert int(mirrored["sf_legal_mask"][0, int(mirrored["sf_move_index"][0])]) == 1
 
 
@@ -274,6 +322,7 @@ def test_mirror_batch_uses_full_map_from_policy_width_with_compact_sf_policy():
         "policy_target": np.zeros((1, POLICY_SIZE), dtype=np.float32),
         "sf_policy_target": np.zeros((1, COMPACT_POLICY_SIZE), dtype=np.float32),
         "sf_move_index": np.array([full_idx], dtype=np.int32),
+        "sf_played_move_index": np.array([full_idx], dtype=np.int32),
     }
     batch["policy_target"][0, full_idx] = 1.0
     batch["sf_policy_target"][0, 10] = 1.0
@@ -281,6 +330,7 @@ def test_mirror_batch_uses_full_map_from_policy_width_with_compact_sf_policy():
     mirrored = maybe_mirror_batch_arrays(batch, rng=np.random.default_rng(1), prob=1.0)
 
     assert int(mirrored["sf_move_index"][0]) == mirror_policy_index(full_idx)
+    assert int(mirrored["sf_played_move_index"][0]) == mirror_policy_index(full_idx)
 
 
 def _build_per_head_masked_batch(n: int = 8, seed: int = 0):
