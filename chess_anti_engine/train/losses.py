@@ -6,8 +6,7 @@ import torch
 import torch.nn.functional as F
 
 from chess_anti_engine.moves import COMPACT_POLICY_SIZE, COMPACT_TO_FULL_POLICY, POLICY_SIZE
-
-REGRET_TO_Q_SCALE = 2.0
+from chess_anti_engine.train.constants import REGRET_TO_Q_SCALE
 
 # Phase buckets for per-phase loss reporting. `moves_left` is plies-remaining /
 # max_plies so 1.0 = opening, 0.0 = endgame. Thresholds calibrated from

@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 
 from chess_anti_engine.replay.shard import shard_index
-from chess_anti_engine.train.losses import REGRET_TO_Q_SCALE
+from chess_anti_engine.train.constants import REGRET_TO_Q_SCALE
 
 
 MAX_SKIPPED_SHARD_DETAILS = 20
