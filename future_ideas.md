@@ -31,6 +31,7 @@ Goal: keep policy/WDL supervision tunable without throwing away replay.
 Ideas:
 - Store sparse Stockfish policy labels as MultiPV move indices + raw scores + candidate count, then build dense or sparse CE targets at train time. Main benefit is retuning `sf_policy_temp` and `sf_policy_label_smooth` over old replay; disk savings are secondary because dense `sf_policy_target` compresses well.
 - For the sparse SF-policy path, keep dense `sf_policy_target` for a transition period and add parity tests for current temp/smoothing. Preferred final loss is sparse CE over gathered log-probs, with smoothing handled analytically.
+- Consolidate optional replay metadata declarations after the adjusted-WDL target path settles. PR #14 added matching field lists in shard storage, dataset collation, and loss-source selection; keep the explicit behavior for now, but eventually move the future-regret field names/dtypes/has-flags to one small shared spec so future target metadata does not require hand-updating three places.
 - Probe BT4 raw policy sharpness on the same replay/start positions and compare top move probability, top-5 mass, entropy, and effective legal moves against our main search target, soft policy target, and SF-policy target.
 - Recheck whether `sf_policy_label_smooth` should remain legal-set smoothing or become uncovered-legal smoothing after `multipv=40`; current live setting is intentionally small at 1%.
 
