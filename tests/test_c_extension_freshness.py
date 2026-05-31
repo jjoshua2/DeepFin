@@ -4,6 +4,8 @@ import importlib.machinery
 import os
 from pathlib import Path
 
+import pytest
+
 from scripts.check_c_extensions_fresh import check_extensions
 
 
@@ -89,7 +91,8 @@ def test_check_extensions_treats_feature_header_as_dependency(tmp_path: Path):
 
 def test_check_extensions_uses_python_import_suffix_order(tmp_path: Path):
     suffixes = importlib.machinery.EXTENSION_SUFFIXES
-    assert len(suffixes) >= 2
+    if len(suffixes) < 2:
+        pytest.skip("needs at least two extension suffixes to verify suffix-order freshness")
     module = "chess_anti_engine.encoding._features_ext"
     source = "chess_anti_engine/encoding/_features_ext.c"
     _write_all_sources(tmp_path, mtime_ns=20)
