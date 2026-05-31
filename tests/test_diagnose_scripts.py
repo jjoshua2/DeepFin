@@ -327,6 +327,30 @@ def test_future_regret_field_names_rejects_unknown_source() -> None:
         future_regret_field_names("d99")
 
 
+def test_diagnostic_replay_utils_import_does_not_load_torch() -> None:
+    env = os.environ.copy()
+    pythonpath = str(ROOT)
+    if env.get("PYTHONPATH"):
+        pythonpath = f"{pythonpath}{os.pathsep}{env['PYTHONPATH']}"
+    env["PYTHONPATH"] = pythonpath
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; import scripts.diagnostic_replay_utils; raise SystemExit('torch' in sys.modules)",
+        ],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_future_eval_weight_smoke_produces_fit_rows(tmp_path: Path) -> None:
     replay_dir = _write_multiply_diagnostic_replay(tmp_path)
     games, scan = diagnose_future_eval_weights._load_samples(replay_dir, max_shards=1)
