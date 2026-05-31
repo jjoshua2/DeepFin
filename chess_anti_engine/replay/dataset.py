@@ -62,7 +62,7 @@ _OPTIONAL_SCALAR_FIELDS: tuple[tuple[str, str, str, np.dtype | type], ...] = (
     ("future_sf_regret_h12", "future_sf_regret_h12", "has_future_sf_regret_h12", np.float32),
     ("future_sf_regret_h24", "future_sf_regret_h24", "has_future_sf_regret_h24", np.float32),
     ("future_sf_regret_h50", "future_sf_regret_h50", "has_future_sf_regret_h50", np.float32),
-    ("future_sf_regret_count", "future_sf_regret_count", "has_future_sf_regret_count", np.float32),
+    ("future_sf_regret_count", "future_sf_regret_count", "has_future_sf_regret_count", np.int32),
 )
 _OPTIONAL_EXPLICIT_HAS_ATTRS: dict[str, str] = {
     "future_policy_target": "has_future",
@@ -118,10 +118,10 @@ def _build_collate_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
             if v is not None and _sample_has_optional(s, src):
                 out[target][i] = v.astype(np.float32, copy=False)
                 out[has][i] = 1.0
-        for src, target, has, _dtype in _OPTIONAL_SCALAR_FIELDS:
+        for src, target, has, dtype in _OPTIONAL_SCALAR_FIELDS:
             v = getattr(s, src, None)
             if v is not None:
-                out[target][i] = float(v)
+                out[target][i] = int(v) if np.issubdtype(np.dtype(dtype), np.integer) else float(v)
                 out[has][i] = 1.0
         if s.sf_move_index is not None:
             out["sf_move_index"][i] = int(s.sf_move_index)
@@ -185,7 +185,7 @@ def collate_arrays(arrs: dict[str, np.ndarray], *, device: str) -> dict[str, tor
         ("has_future_sf_regret_h24", (n,), np.float32, torch.float32),
         ("future_sf_regret_h50", (n,), np.float32, torch.float32),
         ("has_future_sf_regret_h50", (n,), np.float32, torch.float32),
-        ("future_sf_regret_count", (n,), np.float32, torch.float32),
+        ("future_sf_regret_count", (n,), np.int32, torch.int32),
         ("has_future_sf_regret_count", (n,), np.float32, torch.float32),
         ("sf_move_index", (n,), np.int64, torch.int64),
         ("has_sf_move", (n,), np.float32, torch.float32),

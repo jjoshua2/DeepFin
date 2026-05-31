@@ -580,6 +580,24 @@ def _suffix_sf_regret_features(
     return out
 
 
+def _stable_game_id(
+    *,
+    start_fen: str,
+    opening_source: str,
+    move_trace: str,
+    result: str,
+    total_plies_played: int,
+) -> int:
+    game_key = (
+        f"{opening_source}|{start_fen}|{move_trace}|{result}|"
+        f"{int(total_plies_played)}"
+    )
+    return (
+        int.from_bytes(hashlib.blake2b(game_key.encode("utf-8"), digest_size=8).digest(), "big")
+        & ((1 << 63) - 1)
+    )
+
+
 def _build_replay_samples(
     state: SelfplayState,
     i: int,
@@ -605,11 +623,14 @@ def _build_replay_samples(
     starting_boards = state.starting_boards
     start_board = None if starting_boards is None else starting_boards[i]
     start_fen = start_board.fen() if start_board is not None else ""
+    opening_source = str(state.opening_source_arr[i]) if i < len(state.opening_source_arr) else ""
     move_trace = ",".join(str(int(m)) for m in state.move_idx_history[i])
-    game_key = f"{start_fen}|{move_trace}|{result}|{int(total_plies_played)}"
-    game_id = (
-        int.from_bytes(hashlib.blake2b(game_key.encode("utf-8"), digest_size=8).digest(), "big")
-        & ((1 << 63) - 1)
+    game_id = _stable_game_id(
+        start_fen=start_fen,
+        opening_source=opening_source,
+        move_trace=move_trace,
+        result=result,
+        total_plies_played=total_plies_played,
     )
     suffix_sf_regret = _suffix_sf_regret_features(records, is_selfplay=is_selfplay_slot)
 

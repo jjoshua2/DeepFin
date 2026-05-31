@@ -637,7 +637,7 @@ class SelfplayState:
         opening_source_arr = [start.source for start in starts]
         # Use from_board (not from_raw) to preserve ply count + history from openings.
         cboards = [_CBoard.from_board(b) for b in boards]
-        starting_boards = [b.copy() for b in boards] if game.syzygy_path else None
+        starting_boards = [b.copy() for b in boards]
 
         net_color_arr, selfplay_arr = _init_color_and_selfplay_arrays(
             batch_size, rng=rng, selfplay_fraction=game.selfplay_fraction,

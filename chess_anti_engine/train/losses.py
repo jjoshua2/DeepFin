@@ -312,9 +312,11 @@ def compute_loss(
     game_oh = F.one_hot(wdl_t, 3).float()
     if bool(use_adjusted_wdl_target):
         future_regret, has_future_regret = _future_regret_tensor(batch, adjusted_wdl_regret_source)
-        # Regret is stored in winrate units [0, 1], while Q spans [-1, 1], so 2x converts
-        # to Q units. The one-sided shift intentionally discounts W->D and D->L; a drawn
-        # game with future SF mistakes is treated as under-converted anti-engine value.
+        # Individual regrets are stored in winrate units [0, 1], while Q spans [-1, 1].
+        # The 2x scale maps a single regret onto Q units; cumulative sources still need
+        # explicit source/scale/cap choices. The one-sided shift intentionally discounts
+        # W->D and D->L; a drawn game with future SF mistakes is treated as
+        # under-converted anti-engine value.
         # Clamp the scalar config and per-sample tensor separately; they guard different inputs.
         correction = 2.0 * max(0.0, float(adjusted_wdl_regret_scale)) * future_regret.clamp_min(0.0)
         if float(adjusted_wdl_regret_cap) > 0.0:

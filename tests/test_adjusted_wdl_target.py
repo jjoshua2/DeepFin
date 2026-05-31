@@ -3,7 +3,7 @@ from __future__ import annotations
 import chess
 import numpy as np
 
-from chess_anti_engine.selfplay.finalize import _suffix_sf_regret_features
+from chess_anti_engine.selfplay.finalize import _stable_game_id, _suffix_sf_regret_features
 from chess_anti_engine.selfplay.state import _NetRecord
 
 
@@ -40,3 +40,28 @@ def test_suffix_sf_regret_features_summarize_future_opponent_loss():
     selfplay = _suffix_sf_regret_features(records, is_selfplay=True)
     assert np.allclose([f.total for f in selfplay], [0.0, 0.0, 0.0])
     assert np.allclose([f.h12 for f in selfplay], [0.0, 0.0, 0.0])
+
+
+def test_stable_game_id_includes_opening_identity():
+    base = _stable_game_id(
+        start_fen="fen-a",
+        opening_source="book1",
+        move_trace="12,34,56",
+        result="1-0",
+        total_plies_played=42,
+    )
+
+    assert base != _stable_game_id(
+        start_fen="fen-b",
+        opening_source="book1",
+        move_trace="12,34,56",
+        result="1-0",
+        total_plies_played=42,
+    )
+    assert base != _stable_game_id(
+        start_fen="fen-a",
+        opening_source="book2",
+        move_trace="12,34,56",
+        result="1-0",
+        total_plies_played=42,
+    )
