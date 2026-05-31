@@ -8,10 +8,10 @@ from typing import Any
 import numpy as np
 
 from chess_anti_engine.replay.shard import shard_index
+from chess_anti_engine.train.losses import REGRET_TO_Q_SCALE
 
 
 MAX_SKIPPED_SHARD_DETAILS = 20
-REGRET_TO_Q_SCALE = 2.0
 FUTURE_REGRET_FIELDS = {
     "sum": ("future_sf_regret_sum", "has_future_sf_regret_sum"),
     "d95": ("future_sf_regret_d95", "has_future_sf_regret_d95"),
@@ -160,7 +160,13 @@ def adjusted_wdl_game_target(
 
 
 def future_regret_field_names(source: str) -> tuple[str, str]:
-    return FUTURE_REGRET_FIELDS.get(str(source), FUTURE_REGRET_FIELDS["sum"])
+    source_key = str(source)
+    if source_key not in FUTURE_REGRET_FIELDS:
+        allowed = ", ".join(FUTURE_REGRET_FIELDS)
+        raise ValueError(
+            f"unknown adjusted_wdl_regret_source {source_key!r}; expected one of: {allowed}"
+        )
+    return FUTURE_REGRET_FIELDS[source_key]
 
 
 def rmse(pred: np.ndarray, target: np.ndarray, weights: np.ndarray | None = None) -> float:

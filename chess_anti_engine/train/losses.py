@@ -7,6 +7,8 @@ import torch.nn.functional as F
 
 from chess_anti_engine.moves import COMPACT_POLICY_SIZE, COMPACT_TO_FULL_POLICY, POLICY_SIZE
 
+REGRET_TO_Q_SCALE = 2.0
+
 # Phase buckets for per-phase loss reporting. `moves_left` is plies-remaining /
 # max_plies so 1.0 = opening, 0.0 = endgame. Thresholds calibrated from
 # empirical P33/P67 of recent selfplay shards (data is skewed toward shorter
@@ -45,23 +47,6 @@ def soft_cross_entropy(logits: torch.Tensor, target_probs: torch.Tensor) -> torc
     first.
     """
     return -(target_probs * F.log_softmax(logits, dim=-1)).sum(dim=-1)
-
-
-def apply_mask_to_logits(
-    logits: torch.Tensor,
-    batch: dict[str, torch.Tensor],
-    mask_key: str,
-    has_key: str,
-) -> torch.Tensor:
-    """LC0-style illegal-move masking: `(1 - mask) * -1e9` added to logits,
-    gated by `has_key` so rows without a mask pass through unchanged.
-    """
-    mask = batch.get(mask_key)
-    if mask is None:
-        return logits
-    has = batch.get(has_key)
-    active = has.unsqueeze(-1) if has is not None else 1.0
-    return logits + (1.0 - mask) * -1e9 * active
 
 
 def align_policy_target(target: torch.Tensor, width: int) -> torch.Tensor:
@@ -188,7 +173,13 @@ def _future_regret_tensor(batch: dict[str, torch.Tensor], source: str) -> tuple[
         "h24": ("future_sf_regret_h24", "has_future_sf_regret_h24"),
         "h50": ("future_sf_regret_h50", "has_future_sf_regret_h50"),
     }
-    key, has_key = key_by_source.get(str(source), key_by_source["sum"])
+    source_key = str(source)
+    if source_key not in key_by_source:
+        allowed = ", ".join(key_by_source)
+        raise ValueError(
+            f"unknown adjusted_wdl_regret_source {source_key!r}; expected one of: {allowed}"
+        )
+    key, has_key = key_by_source[source_key]
     return (
         _get_mask(batch, key).to(torch.float32),
         _get_mask(batch, has_key).to(torch.float32),
@@ -318,7 +309,7 @@ def compute_loss(
         # W->D and D->L; a drawn game with future SF mistakes is treated as
         # under-converted anti-engine value.
         # Clamp the scalar config and per-sample tensor separately; they guard different inputs.
-        correction = 2.0 * max(0.0, float(adjusted_wdl_regret_scale)) * future_regret.clamp_min(0.0)
+        correction = REGRET_TO_Q_SCALE * max(0.0, float(adjusted_wdl_regret_scale)) * future_regret.clamp_min(0.0)
         if float(adjusted_wdl_regret_cap) > 0.0:
             correction = correction.clamp_max(float(adjusted_wdl_regret_cap))
         game_q = game_oh[:, 0] - game_oh[:, 2]

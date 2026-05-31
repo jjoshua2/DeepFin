@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 import torch
 
 from chess_anti_engine.moves import COMPACT_POLICY_SIZE, COMPACT_TO_FULL_POLICY, POLICY_SIZE
@@ -284,6 +285,18 @@ def test_adjusted_wdl_target_can_use_horizon_source():
     )
 
     assert from_h12["blended_wdl_ce"].item() < from_sum["blended_wdl_ce"].item()
+
+
+def test_adjusted_wdl_target_rejects_unknown_regret_source():
+    batch = _minimal_batch(1)
+
+    with pytest.raises(ValueError, match="adjusted_wdl_regret_source"):
+        compute_loss(
+            _fake_outputs(1),
+            batch,
+            use_adjusted_wdl_target=True,
+            adjusted_wdl_regret_source="d99",
+        )
 
 
 def test_has_flag_masking():

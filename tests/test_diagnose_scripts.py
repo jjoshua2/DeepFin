@@ -25,7 +25,11 @@ from scripts import (
     diagnose_future_eval_weights,
     diagnose_sf_eval_head_blend,
 )
-from scripts.diagnostic_replay_utils import MAX_SKIPPED_SHARD_DETAILS, record_skipped_shard
+from scripts.diagnostic_replay_utils import (
+    MAX_SKIPPED_SHARD_DETAILS,
+    future_regret_field_names,
+    record_skipped_shard,
+)
 from scripts.diagnose_target_calibration import _adjusted_wdl_game_target, _blend_wdl
 from scripts.diagnose_wdl_by_age import _concat_batches as _concat_wdl_age_batches
 from scripts.diagnose_wdl_by_age import _take_rows as _take_wdl_age_rows
@@ -316,6 +320,11 @@ def test_record_skipped_shard_caps_details(tmp_path: Path) -> None:
 
     assert len(scan["skipped_shards"]) == MAX_SKIPPED_SHARD_DETAILS
     assert scan["skipped_shards_omitted"] == 3
+
+
+def test_future_regret_field_names_rejects_unknown_source() -> None:
+    with pytest.raises(ValueError, match="adjusted_wdl_regret_source"):
+        future_regret_field_names("d99")
 
 
 def test_future_eval_weight_smoke_produces_fit_rows(tmp_path: Path) -> None:
