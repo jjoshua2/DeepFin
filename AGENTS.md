@@ -71,6 +71,10 @@ python -m chess_anti_engine.run --config configs/default.yaml --mode train
 - Keep commits focused by subsystem and avoid mixing refactors with logic changes.
 - PRs should include: what changed, why, config/CLI impacts, and test evidence (commands run + brief results).
 - Link related issues when available; include training metric screenshots only when they clarify behavior changes.
+- Open Codex-authored PRs as ready for review by default so review automation runs. Use draft only when explicitly requested or when the branch is intentionally incomplete.
+- After opening a PR, check back after roughly 30 minutes for automated code-review comments and resolve actionable feedback promptly when it is safe to do so.
+- Do not let local changes accumulate across unrelated tasks. If the working tree contains more than one focused change, split work into separate branches/PRs before continuing.
+- Prefer a temporary worktree for PR preparation when the live training checkout has local config edits, so production tuning changes do not leak into unrelated branches.
 
 ## Review Protocol
 - Optimize for the end state rather than the smallest diff. When review surfaces an improvement, either make it or explicitly decide it is not worth doing.
