@@ -491,7 +491,7 @@ class TrialConfig:
 
   # --- Replay buffer ---
             replay_window_start=int(config.get("replay_window_start", 100_000)),
-            replay_window_max=int(config.get("replay_window_max", config.get("replay_capacity", 1_000_000))),
+            replay_window_max=int(config.get("replay_window_max", 1_000_000)),
             replay_window_growth=int(config.get("replay_window_growth", 10_000)),
             replay_window_growth_frac=_optional_unit_fraction(
                 config.get("replay_window_growth_frac", None),

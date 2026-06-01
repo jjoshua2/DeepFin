@@ -9,7 +9,7 @@ work_dir: runs
 # Global runtime
 device: cuda   # or "cpu"
 iterations: 10
-replay_capacity: 200000
+replay_window_max: 200000
 
 model:
   kind: transformer   # transformer | tiny

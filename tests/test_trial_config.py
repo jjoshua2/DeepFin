@@ -165,8 +165,8 @@ def test_fallback_keys() -> None:
     tc = TrialConfig.from_dict({"max_plies": 300, "eval_max_plies": None})
     assert tc.eval_max_plies == 300
 
-    # Same for replay_window_max -> replay_capacity
-    tc = TrialConfig.from_dict({"replay_capacity": 500_000})
+    # replay_window_max is the explicit replay-window ceiling.
+    tc = TrialConfig.from_dict({"replay_window_max": 500_000})
     assert tc.replay_window_max == 500_000
 
     tc = TrialConfig.from_dict({"replay_window_growth_frac": 0.75})
@@ -330,3 +330,11 @@ def test_from_real_config() -> None:
     assert tc.model == "transformer"
     assert tc.sf_pid_enabled is True
     assert tc.embed_dim == 768  # default.yaml uses BT3 scale
+
+
+def test_retired_replay_capacity_key_is_rejected() -> None:
+    """replay_window_max is the sole replay-window ceiling knob."""
+    from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults
+
+    with pytest.raises(ValueError, match="replay_capacity"):
+        flatten_run_config_defaults({"replay_capacity": 500_000})

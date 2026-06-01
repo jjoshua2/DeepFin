@@ -19,7 +19,6 @@ seed: 0
 work_dir: runs/bt4_aurora_asha
 device: cuda
 iterations: 20
-replay_capacity: 5000000   # Hard cap
 replay_window_start: 1500000
 replay_window_max: 1500000
 replay_window_growth: 0
