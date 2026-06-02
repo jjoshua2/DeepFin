@@ -87,7 +87,7 @@ def _pick_moves_for_boards(
         if _HAS_GUMBEL_C:
             result = _run_gumbel_root_many_c(
                 model, sub_boards, device=device, rng=rng, cfg=gumbel_cfg,
-                allow_terminal_root_shortcuts=False,
+                allow_terminal_root_shortcuts=True,
             )
         else:
             result = run_gumbel_root_many(

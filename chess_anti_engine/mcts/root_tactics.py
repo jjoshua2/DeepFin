@@ -77,8 +77,19 @@ def immediate_terminal_cboard_policy_or_draws(
     legal_idx: Iterable[int],
 ) -> tuple[tuple[np.ndarray, int, float] | None, set[int]]:
     """Return an immediate mate policy, or terminal-draw actions when no mate exists."""
+    legal_arr = (
+        np.asarray(legal_idx, dtype=np.int32)
+        if isinstance(legal_idx, np.ndarray)
+        else np.fromiter((int(action) for action in legal_idx), dtype=np.int32)
+    )
+    if hasattr(root_cb, "root_terminal_actions"):
+        mate_action, draw_actions = root_cb.root_terminal_actions(legal_arr)
+        if int(mate_action) >= 0:
+            return one_hot_root_policy(int(mate_action)), set()
+        return None, set(np.asarray(draw_actions, dtype=np.int32).astype(int).tolist())
+
     draws: set[int] = set()
-    for action in legal_idx:
+    for action in legal_arr:
         child = root_cb.copy()
         action_i = int(action)
         child.push_index(action_i)

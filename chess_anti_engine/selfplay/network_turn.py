@@ -674,7 +674,7 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
                     tree=state.mcts_tree,
                     root_node_ids=sub_root_ids,
                     tb_probe=state.tb_probe if state.game.syzygy_in_search else None,
-                    allow_terminal_root_shortcuts=False,
+                    allow_terminal_root_shortcuts=True,
                     return_diagnostics=True,
                 )
             else:
