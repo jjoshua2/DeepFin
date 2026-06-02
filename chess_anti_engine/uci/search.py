@@ -695,12 +695,12 @@ class SearchWorker:
         allow_terminal_shortcuts: bool,
     ) -> float:
         if allowed_root_indices is not None:
-  # `searchmoves` restriction is only threaded through the single-walker
-  # gumbel C path (via allowed_root_indices_batch). The pool / pucv / walker
-  # paths have no such filter, so routing here keeps `searchmoves` correct
-  # even at Threads>1 — at the cost of single-threaded search for that move.
-  # Do NOT "optimize" this back onto the pools without first teaching them to
-  # honor allowed_root_indices, or the restriction is silently ignored.
+            # `searchmoves` restriction is only threaded through the single-walker
+            # gumbel C path (via allowed_root_indices_batch). The pool / pucv / walker
+            # paths have no such filter, so routing here keeps `searchmoves` correct
+            # even at Threads>1 — at the cost of single-threaded search for that move.
+            # Do NOT "optimize" this back onto the pools without first teaching them to
+            # honor allowed_root_indices, or the restriction is silently ignored.
             return self._run_gumbel_chunk(
                 chunk, board, tb_probe, allowed_root_indices,
                 allow_terminal_shortcuts=allow_terminal_shortcuts,
