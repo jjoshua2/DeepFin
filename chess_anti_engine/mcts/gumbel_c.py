@@ -15,6 +15,7 @@ Architecture:
 from __future__ import annotations
 
 import logging as _logging
+from collections.abc import Sequence
 from typing import Literal, cast, overload
 
 import chess
@@ -134,6 +135,7 @@ def run_gumbel_root_many_c(
     cboards: list | None = None,
     tree: MCTSTree | None = None,
     root_node_ids: list[int] | None = None,
+    allowed_root_indices_batch: Sequence[set[int] | None] | None = None,
     tb_probe=None,
     pre_wdl_logits_tb_probed: bool = False,
     target_batch: int = 0,
@@ -158,6 +160,7 @@ def run_gumbel_root_many_c(
     cboards: list | None = None,
     tree: MCTSTree | None = None,
     root_node_ids: list[int] | None = None,
+    allowed_root_indices_batch: Sequence[set[int] | None] | None = None,
     tb_probe=None,
     pre_wdl_logits_tb_probed: bool = False,
     target_batch: int = 0,
@@ -181,6 +184,7 @@ def run_gumbel_root_many_c(
     cboards: list | None = None,
     tree: MCTSTree | None = None,
     root_node_ids: list[int] | None = None,
+    allowed_root_indices_batch: Sequence[set[int] | None] | None = None,
     tb_probe=None,
     pre_wdl_logits_tb_probed: bool = False,
     target_batch: int = 0,
@@ -320,6 +324,14 @@ def run_gumbel_root_many_c(
     for i in range(n_boards):
         root_cb = root_cboards[i]
         legal_idx = root_cb.legal_move_indices()
+        if allowed_root_indices_batch is not None:
+            allowed_root_indices = allowed_root_indices_batch[i]
+            if allowed_root_indices is not None:
+                if allowed_root_indices:
+                    allowed_arr = np.fromiter(allowed_root_indices, dtype=np.int32)
+                    legal_idx = legal_idx[np.isin(legal_idx, allowed_arr)]
+                else:
+                    legal_idx = legal_idx[:0]
 
         if root_cb.is_game_over():
             probs_out[i], actions_out[i], values_out[i], root_pri[i] = (

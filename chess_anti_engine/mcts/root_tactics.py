@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
 import chess
 import numpy as np
 
-from chess_anti_engine.encoding.cboard_encode import CBoard
 from chess_anti_engine.moves import POLICY_SIZE, move_to_index
+
+if TYPE_CHECKING:
+    from chess_anti_engine.encoding.cboard_encode import CBoard
 
 
 def one_hot_root_policy(action: int, *, value: float = 1.0) -> tuple[np.ndarray, int, float]:
@@ -28,6 +31,8 @@ def immediate_mate_move(
     for move in board.legal_moves:
         action = int(move_to_index(move, board))
         if allowed_root_indices is not None and action not in allowed_root_indices:
+            continue
+        if not board.gives_check(move):
             continue
         child = board.copy(stack=False)
         child.push(move)

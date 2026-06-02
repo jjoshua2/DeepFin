@@ -13,6 +13,7 @@ from chess_anti_engine.moves import POLICY_SIZE, move_to_index
 from chess_anti_engine.uci import search as uci_search
 from chess_anti_engine.uci.search import (
     _allowed_root_indices,
+    _board_after,
     _best_move_and_pv,
     SearchWorker,
 )
@@ -91,6 +92,19 @@ def test_result_ponder_failure_does_not_poison_bestmove(
 
     assert result.bestmove_uci == "e2e4"
     assert result.ponder_uci is None
+
+
+def test_board_after_returns_none_when_bestmove_index_cannot_be_pushed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    board = chess.Board()
+
+    def _bad_index_to_move(*_args: object, **_kwargs: object) -> chess.Move:
+        raise ValueError("bad policy index")
+
+    monkeypatch.setattr(uci_search, "index_to_move", _bad_index_to_move)
+
+    assert _board_after(board, 0) is None
 
 
 def test_ponder_is_not_computed_when_not_requested(
@@ -277,3 +291,46 @@ def test_immediate_mate_beats_high_prior_stalemate_root_move() -> None:
     assert result.pv == ("b7b8",)
     assert result.score_mate == 1
     assert evaluator.calls == 0
+
+
+def test_searchmoves_filter_reaches_c_mate_shortcut() -> None:
+    """An out-of-list mate-in-1 must not poison the C-path result value.
+
+    The root has Rb8# available, but UCI restricts the search to Bf7, a
+    stalemating move. The Python pre-check respects ``searchmoves``; the C root
+    shortcut must see the same restricted root set instead of returning the
+    out-of-list mate value.
+    """
+
+    class NeutralEvaluator:
+        def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+            batch = int(x.shape[0])
+            return (
+                np.zeros((batch, POLICY_SIZE), dtype=np.float32),
+                np.zeros((batch, 3), dtype=np.float32),
+            )
+
+    board = chess.Board("5k2/1R6/P4BB1/P7/2P5/8/3K3P/8 w - - 5 70")
+    assert board.san(chess.Move.from_uci("b7b8")) == "Rb8#"
+    after_allowed = board.copy(stack=False)
+    after_allowed.push(chess.Move.from_uci("g6f7"))
+    assert after_allowed.is_stalemate()
+
+    worker = SearchWorker(
+        NeutralEvaluator(),
+        device="cpu",
+        chunk_sims=1,
+        gumbel_cfg=GumbelConfig(simulations=1, topk=1, temperature=0.0, add_noise=False),
+    )
+
+    result = worker.run(
+        board,
+        stop_event=threading.Event(),
+        deadline=Deadline(None),
+        max_nodes=1,
+        root_moves=("g6f7",),
+    )
+
+    assert result.bestmove_uci == "g6f7"
+    assert result.score_mate is None
+    assert result.score_cp == 0

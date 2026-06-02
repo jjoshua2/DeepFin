@@ -46,6 +46,66 @@ def test_run_one_phase_fallback_returns_null_when_searchmoves_have_no_legal_move
     assert "boom" in capsys.readouterr().out
 
 
+def test_run_one_phase_does_not_duplicate_worker_info(capsys) -> None:
+    worker = MagicMock()
+
+    def _run(*_args: Any, **kwargs: Any) -> SearchResult:
+        kwargs["info_cb"](
+            nodes=7,
+            elapsed_ms=5,
+            score_cp=12,
+            pv=("e2e4",),
+            tbhits=0,
+            score_mate=None,
+            multipv=2,
+            wdl=(500, 0, 500),
+        )
+        return SearchResult(
+            bestmove_uci="e2e4",
+            ponder_uci=None,
+            nodes=7,
+            pv=("e2e4",),
+            score_cp=12,
+            tbhits=0,
+        )
+
+    worker.run = _run
+    engine = Engine(worker=worker)
+    board = chess.Board()
+    limits = SearchLimits(deadline_ms=None, max_nodes=None, searchmoves=())
+
+    engine._run_one_phase(limits, is_ponder=False, board=board)  # noqa: SLF001
+
+    lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("info ")]
+    assert len(lines) == 1
+    assert "multipv 2" in lines[0]
+    assert "wdl 500 0 500" in lines[0]
+
+
+def test_run_one_phase_emits_final_info_when_worker_is_silent(capsys) -> None:
+    worker = MagicMock()
+    worker.run = MagicMock(
+        return_value=SearchResult(
+            bestmove_uci="e2e4",
+            ponder_uci=None,
+            nodes=3,
+            pv=("e2e4",),
+            score_cp=8,
+            tbhits=0,
+        ),
+    )
+    engine = Engine(worker=worker)
+    board = chess.Board()
+    limits = SearchLimits(deadline_ms=None, max_nodes=None, searchmoves=())
+
+    engine._run_one_phase(limits, is_ponder=False, board=board)  # noqa: SLF001
+
+    lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("info ")]
+    assert len(lines) == 1
+    assert "nodes 3" in lines[0]
+    assert "pv e2e4" in lines[0]
+
+
 def test_emit_bestmove_omits_ponder_when_option_false(capsys) -> None:
     engine = Engine(worker=MagicMock())
     engine._options.ponder = False  # noqa: SLF001

@@ -179,10 +179,10 @@ class EngineOptions:
   # OS-conventional separators (';' on Windows, ':' elsewhere) per the
   # de-facto UCI convention. Empty means disabled.
     syzygy_path: str = ""
-  # Ponder is a signal to the GUI about whether to issue `go ponder`
-  # commands; the engine itself honors `go ponder` regardless, since
-  # ignoring it would break cutechess/Arena if the user forgets to flip
-  # the option. Default off — safer for fixed-time match play.
+  # Ponder gates whether we compute/emit a `ponder` suffix in `bestmove`.
+  # If a GUI sends `go ponder` anyway, the engine still honors the command;
+  # this option controls advertised ponder metadata, not command parsing.
+  # Default off — safer for fixed-time match play.
     ponder: bool = False
 
 
@@ -709,6 +709,34 @@ class Engine:
         max_nodes = None if is_ponder else limits.max_nodes
         max_depth = None if is_ponder else limits.max_depth
         deadline = Deadline(deadline_ms=deadline_ms)
+        emitted_info = False
+
+        def _phase_info_cb(
+            *,
+            nodes: int,
+            elapsed_ms: int,
+            score_cp: int,
+            pv: tuple[str, ...],
+            tbhits: int,
+            score_mate: int | None,
+            multipv: int | None,
+            wdl: tuple[int, int, int] | None,
+            string: str | None = None,
+        ) -> None:
+            nonlocal emitted_info
+            emitted_info = True
+            self._emit_info(
+                nodes=nodes,
+                elapsed_ms=elapsed_ms,
+                score_cp=score_cp,
+                pv=pv,
+                tbhits=tbhits,
+                score_mate=score_mate,
+                multipv=multipv,
+                wdl=wdl,
+                string=string,
+            )
+
         try:
             result = self._worker.run(
                 board,
@@ -717,10 +745,10 @@ class Engine:
                 max_nodes=max_nodes,
                 max_depth=max_depth,
                 root_moves=limits.searchmoves,
-                info_cb=self._emit_info,
+                info_cb=_phase_info_cb,
                 include_ponder=self._options.ponder,
             )
-            if not is_ponder:
+            if not is_ponder and not emitted_info:
                 self._emit_info(
                     nodes=result.nodes,
                     elapsed_ms=deadline.elapsed_ms(),

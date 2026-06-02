@@ -672,7 +672,12 @@ class SearchWorker:
             self._ensure_pucv_root_expanded(board)
 
     def _run_one_chunk(
-        self, chunk: int, board: chess.Board, stop_event: threading.Event, tb_probe,
+        self,
+        chunk: int,
+        board: chess.Board,
+        stop_event: threading.Event,
+        tb_probe,
+        allowed_root_indices: set[int] | None,
     ) -> float:
         if self._pucv_pool is not None:
             return self._run_pucv_pool_chunk(chunk, stop_event)
@@ -680,7 +685,7 @@ class SearchWorker:
             return self._run_walker_chunk(chunk, stop_event)
         if self._pucv is not None:
             return self._run_pucv_chunk(chunk)
-        return self._run_gumbel_chunk(chunk, board, tb_probe)
+        return self._run_gumbel_chunk(chunk, board, tb_probe, allowed_root_indices)
 
     def _maybe_emit_pv_info(
         self,
@@ -759,7 +764,9 @@ class SearchWorker:
             ponder_idx = None
         if include_ponder and ponder_idx is not None:
             try:
-                ponder = _index_to_uci(_board_after(board, bestmove_idx), ponder_idx)
+                after_bestmove = _board_after(board, bestmove_idx)
+                if after_bestmove is not None:
+                    ponder = _index_to_uci(after_bestmove, ponder_idx)
             except Exception:
                 ponder = None
         return SearchResult(
@@ -877,7 +884,9 @@ class SearchWorker:
                     break
                 chunk = min(chunk, remaining)
 
-            last_value = self._run_one_chunk(chunk, board, stop_event, tb_probe)
+            last_value = self._run_one_chunk(
+                chunk, board, stop_event, tb_probe, allowed_root_indices,
+            )
             total_nodes += int(chunk)
 
             pv_indices, last_info_ms, elapsed = self._maybe_emit_pv_info(
@@ -925,7 +934,11 @@ class SearchWorker:
         return self._tree.node_q(self._root_id)
 
     def _run_gumbel_chunk(
-        self, chunk: int, board: chess.Board, tb_probe,
+        self,
+        chunk: int,
+        board: chess.Board,
+        tb_probe,
+        allowed_root_indices: set[int] | None = None,
     ) -> float:
         gumbel_result = run_gumbel_root_many_c(
             model=None,
@@ -943,6 +956,7 @@ class SearchWorker:
             pre_wdl_logits=self._root_wdl_logits,
             tree=self._tree,
             root_node_ids=[self._root_id] if self._root_id is not None else None,
+            allowed_root_indices_batch=[allowed_root_indices],
             tb_probe=tb_probe,
             pre_wdl_logits_tb_probed=True,
             target_batch=self._minibatch_size,
@@ -1303,10 +1317,13 @@ def _index_to_uci(board: chess.Board, idx: int) -> str:
     return index_to_move(int(idx), board).uci()
 
 
-def _board_after(board: chess.Board, idx: int) -> chess.Board:
+def _board_after(board: chess.Board, idx: int) -> chess.Board | None:
     b = board.copy(stack=False)
     try:
-        b.push(index_to_move(int(idx), board))
+        move = index_to_move(int(idx), board)
     except Exception:
-        pass
+        return None
+    if move not in b.legal_moves:
+        return None
+    b.push(move)
     return b
