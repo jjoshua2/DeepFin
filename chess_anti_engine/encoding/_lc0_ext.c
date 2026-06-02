@@ -519,6 +519,120 @@ static PyObject* PyCBoard_is_stalemate(PyCBoard *self, PyObject *Py_UNUSED(args)
     return PyBool_FromLong(cboard_is_stalemate(&self->board));
 }
 
+static int cboard_can_claim_fifty_moves(const CBoard *b) {
+    if (b->halfmove_clock >= 100) return 1;
+    if (b->halfmove_clock != 99) return 0;
+
+    int replies[256];
+    int n = cboard_legal_move_indices(b, replies, /*sorted=*/0);
+    for (int i = 0; i < n; i++) {
+        CBoard child;
+        memcpy(&child, b, sizeof(CBoard));
+        cboard_push_index(&child, replies[i]);
+        if (child.halfmove_clock >= 100) return 1;
+    }
+    return 0;
+}
+
+static int cboard_has_repeated_history_hash(const CBoard *b) {
+    for (int i = 0; i < b->hash_stack_len; i++) {
+        uint64_t h = b->hash_stack[i];
+        for (int j = i + 1; j < b->hash_stack_len; j++) {
+            if (b->hash_stack[j] == h) return 1;
+        }
+    }
+    return 0;
+}
+
+static int cboard_can_claim_threefold_repetition(const CBoard *b) {
+    if (cboard_is_threefold_repetition(b)) return 1;
+    if (!cboard_has_repeated_history_hash(b)) return 0;
+
+    int replies[256];
+    int n = cboard_legal_move_indices(b, replies, /*sorted=*/0);
+    for (int i = 0; i < n; i++) {
+        CBoard child;
+        memcpy(&child, b, sizeof(CBoard));
+        cboard_push_index(&child, replies[i]);
+        if (cboard_is_threefold_repetition(&child)) return 1;
+    }
+    return 0;
+}
+
+/* root_terminal_actions(legal_indices) -> (mate_action, draw_actions)
+ * Scans root children in one C pass. mate_action is -1 when absent.
+ * Draw actions include immediate stalemate / 50-move / 3-fold / insufficient
+ * material terminals. Mate has priority over draw adjudication, matching the
+ * prior Python helper's is_checkmate() before is_game_over() order. */
+static PyObject* PyCBoard_root_terminal_actions(PyCBoard *self, PyObject *args) {
+    PyObject *legal_obj;
+    if (!PyArg_ParseTuple(args, "O", &legal_obj)) return NULL;
+
+    PyArrayObject *legal_arr = (PyArrayObject*)PyArray_FROM_OTF(
+        legal_obj, NPY_INT32, NPY_ARRAY_IN_ARRAY
+    );
+    if (!legal_arr) return NULL;
+    if (PyArray_NDIM(legal_arr) != 1) {
+        Py_DECREF(legal_arr);
+        PyErr_SetString(PyExc_ValueError, "legal_indices must be a 1-D int32 array");
+        return NULL;
+    }
+
+    npy_intp n = PyArray_SIZE(legal_arr);
+    int32_t *legal = (int32_t*)PyArray_DATA(legal_arr);
+    int32_t draws[256];
+    int draw_n = 0;
+    int mate_action = -1;
+
+    for (npy_intp i = 0; i < n; i++) {
+        int action = (int)legal[i];
+        if (action < 0 || action >= 4672) {
+            Py_DECREF(legal_arr);
+            PyErr_SetString(PyExc_ValueError, "policy index out of range");
+            return NULL;
+        }
+
+        CBoard child;
+        memcpy(&child, &self->board, sizeof(CBoard));
+        cboard_push_index(&child, action);
+
+        int in_check = cboard_in_check(&child);
+        if (in_check && !cboard_has_legal_moves(&child)) {
+            mate_action = action;
+            draw_n = 0;
+            break;
+        }
+
+        if (
+            cboard_can_claim_fifty_moves(&child)
+            || cboard_can_claim_threefold_repetition(&child)
+            || cboard_insufficient_material(&child)
+        ) {
+            if (draw_n < 256) draws[draw_n++] = (int32_t)action;
+            continue;
+        }
+
+        if (!in_check && !cboard_has_legal_moves(&child)) {
+            if (draw_n < 256) draws[draw_n++] = (int32_t)action;
+        }
+    }
+    Py_DECREF(legal_arr);
+
+    npy_intp dims[1] = {draw_n};
+    PyArrayObject *draw_arr = (PyArrayObject*)PyArray_SimpleNew(1, dims, NPY_INT32);
+    if (!draw_arr) return NULL;
+    if (draw_n > 0) memcpy(PyArray_DATA(draw_arr), draws, (size_t)draw_n * sizeof(int32_t));
+
+    PyObject *out = PyTuple_New(2);
+    if (!out) {
+        Py_DECREF(draw_arr);
+        return NULL;
+    }
+    PyTuple_SET_ITEM(out, 0, PyLong_FromLong(mate_action));
+    PyTuple_SET_ITEM(out, 1, (PyObject*)draw_arr);
+    return out;
+}
+
 /* legal_move_indices() -> numpy int32 array */
 static PyObject* PyCBoard_legal_move_indices(PyCBoard *self, PyObject *Py_UNUSED(args)) {
     int indices[256];
@@ -640,6 +754,8 @@ static PyMethodDef PyCBoard_methods[] = {
     {"result", (PyCFunction)PyCBoard_result, METH_NOARGS, "Game result string"},
     {"is_checkmate", (PyCFunction)PyCBoard_is_checkmate, METH_NOARGS, "Check if checkmate"},
     {"is_stalemate", (PyCFunction)PyCBoard_is_stalemate, METH_NOARGS, "Check if stalemate"},
+    {"root_terminal_actions", (PyCFunction)PyCBoard_root_terminal_actions, METH_VARARGS,
+     "Return (mate_action, draw_actions) for legal root policy indices"},
     {"encode_planes", (PyCFunction)PyCBoard_encode_planes, METH_NOARGS,
      "Encode as (112, 8, 8) float32 LC0 planes"},
     {"encode_planes_lc0_root", (PyCFunction)PyCBoard_encode_planes_lc0_root, METH_NOARGS,

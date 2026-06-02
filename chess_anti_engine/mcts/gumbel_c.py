@@ -15,6 +15,7 @@ Architecture:
 from __future__ import annotations
 
 import logging as _logging
+from collections.abc import Sequence
 from typing import Literal, cast, overload
 
 import chess
@@ -59,6 +60,9 @@ from chess_anti_engine.mcts.gumbel import (
     _wdl_to_q,
     gumbel_policy_diagnostics,
 )
+from chess_anti_engine.mcts.root_tactics import (
+    immediate_terminal_cboard_policy_or_draws,
+)
 from chess_anti_engine.moves import POLICY_SIZE, policy_batch_to_full_if_needed
 
 GumbelManyCResult = tuple[list[np.ndarray], list[int], list[float], list[np.ndarray], MCTSTree, list[int]]
@@ -101,6 +105,15 @@ def _zero_root_output(value: float) -> tuple[np.ndarray, int, float, np.ndarray]
     )
 
 
+def _expanded_root_covers_actions(tree: MCTSTree, root_id: int, actions: np.ndarray) -> bool:
+    if actions.size == 0:
+        return True
+    child_actions, _visits = tree.get_children_visits(root_id)
+    if child_actions.size < actions.size:
+        return False
+    return bool(np.isin(actions, child_actions).all())
+
+
 def _tb_override(tree: MCTSTree | None, probe, wdl: np.ndarray) -> None:
     if probe is None or tree is None:
         return
@@ -133,6 +146,8 @@ def run_gumbel_root_many_c(
     cboards: list | None = None,
     tree: MCTSTree | None = None,
     root_node_ids: list[int] | None = None,
+    allowed_root_indices_batch: Sequence[set[int] | None] | None = None,
+    allow_terminal_root_shortcuts: bool = True,
     tb_probe=None,
     pre_wdl_logits_tb_probed: bool = False,
     target_batch: int = 0,
@@ -157,6 +172,8 @@ def run_gumbel_root_many_c(
     cboards: list | None = None,
     tree: MCTSTree | None = None,
     root_node_ids: list[int] | None = None,
+    allowed_root_indices_batch: Sequence[set[int] | None] | None = None,
+    allow_terminal_root_shortcuts: bool = True,
     tb_probe=None,
     pre_wdl_logits_tb_probed: bool = False,
     target_batch: int = 0,
@@ -180,6 +197,8 @@ def run_gumbel_root_many_c(
     cboards: list | None = None,
     tree: MCTSTree | None = None,
     root_node_ids: list[int] | None = None,
+    allowed_root_indices_batch: Sequence[set[int] | None] | None = None,
+    allow_terminal_root_shortcuts: bool = True,
     tb_probe=None,
     pre_wdl_logits_tb_probed: bool = False,
     target_batch: int = 0,
@@ -299,6 +318,7 @@ def run_gumbel_root_many_c(
 
     root_ids: list[int] = [-1] * n_boards  # node IDs in C tree
     root_legal: list[np.ndarray | None] = [None] * n_boards
+    root_search_legal: list[np.ndarray | None] = [None] * n_boards
     root_pri: list[np.ndarray | None] = [None] * n_boards
     candidates_per_board: list[list[int] | None] = [None] * n_boards
     remaining_per_board: list[list[int] | None] = [None] * n_boards
@@ -319,6 +339,14 @@ def run_gumbel_root_many_c(
     for i in range(n_boards):
         root_cb = root_cboards[i]
         legal_idx = root_cb.legal_move_indices()
+        if allowed_root_indices_batch is not None:
+            allowed_root_indices = allowed_root_indices_batch[i]
+            if allowed_root_indices is not None:
+                if allowed_root_indices:
+                    allowed_arr = np.fromiter(allowed_root_indices, dtype=np.int32)
+                    legal_idx = legal_idx[np.isin(legal_idx, allowed_arr)]
+                else:
+                    legal_idx = legal_idx[:0]
 
         if root_cb.is_game_over():
             probs_out[i], actions_out[i], values_out[i], root_pri[i] = (
@@ -334,6 +362,21 @@ def run_gumbel_root_many_c(
             continue
 
         root_legal[i] = legal_idx
+
+        terminal_mate = None
+        terminal_draws: set[int] = set()
+        if allow_terminal_root_shortcuts:
+            terminal_mate, terminal_draws = immediate_terminal_cboard_policy_or_draws(
+                root_cb, legal_idx,
+            )
+
+        if float(root_qs[i]) > 0.0 and legal_idx.size > 1:
+            if terminal_draws:
+                draw_arr = np.fromiter(terminal_draws, dtype=np.int32)
+                keep = ~np.isin(legal_idx, draw_arr)
+                if keep.any():
+                    legal_idx = legal_idx[keep]
+        root_search_legal[i] = legal_idx
 
   # Softmax priors
         ll = pol_logits_batch[i][legal_idx].astype(np.float64)
@@ -352,7 +395,10 @@ def run_gumbel_root_many_c(
             _reused = False
             if root_node_ids is not None and root_node_ids[i] >= 0:
                 rid = root_node_ids[i]
-                if tree.is_expanded(rid):
+                if tree.is_expanded(rid) and (
+                    allowed_root_indices_batch is None
+                    or _expanded_root_covers_actions(tree, rid, legal_idx)
+                ):
                     root_ids[i] = rid
                     _reused = True
 
@@ -360,6 +406,11 @@ def run_gumbel_root_many_c(
                 rid = tree.add_root(1, float(root_qs[i]))
                 root_ids[i] = rid
                 tree.expand(rid, legal_idx.astype(np.int32), priors)
+
+        if terminal_mate is not None:
+            probs_out[i], actions_out[i], values_out[i] = terminal_mate
+            root_qs[i] = values_out[i]
+            continue
 
         if legal_idx.size == 1:
             a0 = int(legal_idx[0])
@@ -450,7 +501,7 @@ def run_gumbel_root_many_c(
         for g in range(2):
             for i in _grp[g]:
                 _pri_i = root_pri[i]
-                _legal_i = root_legal[i]
+                _legal_i = root_search_legal[i]
                 if _pri_i is None or _legal_i is None:
                     _sub_root_ids[g].append(-1)
                     continue

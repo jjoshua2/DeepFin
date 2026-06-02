@@ -253,6 +253,74 @@ def test_uci_gumbel_chunk_forces_deterministic_temperature(monkeypatch: pytest.M
     assert worker._last_gumbel_action_idx == 0  # noqa: SLF001
 
 
+def test_uci_gumbel_chunk_threads_terminal_shortcut_gate_to_c(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen_flags: list[bool] = []
+
+    def fake_run_gumbel_root_many_c(**kwargs: Any):
+        seen_flags.append(bool(kwargs["allow_terminal_root_shortcuts"]))
+        return ([], [0], [0.0], [], object(), [0])
+
+    monkeypatch.setattr(uci_search, "run_gumbel_root_many_c", fake_run_gumbel_root_many_c)
+    worker = SearchWorker(
+        _ZeroEvaluator(),
+        device="cpu",
+        chunk_sims=4,
+        gumbel_cfg=GumbelConfig(simulations=4, topk=4, temperature=1.0, add_noise=True),
+    )
+
+    worker._run_gumbel_chunk(  # noqa: SLF001
+        4, chess.Board(), tb_probe=None, allow_terminal_shortcuts=False,
+    )
+
+    assert seen_flags == [False]
+
+
+def test_uci_searchmoves_uses_filtered_gumbel_path_with_walkers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    board = chess.Board()
+    allowed = {int(move_to_index(chess.Move.from_uci("e2e4"), board))}
+    calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
+    worker = SearchWorker(
+        _ZeroEvaluator(),
+        device="cpu",
+        chunk_sims=4,
+        n_walkers=2,
+        gumbel_cfg=GumbelConfig(simulations=4, topk=4, temperature=1.0, add_noise=True),
+    )
+
+    def fake_gumbel(*args: Any, **kwargs: Any) -> float:
+        calls.append(("gumbel", args, kwargs))
+        return 0.25
+
+    def fake_walker(*args: Any, **kwargs: Any) -> float:
+        calls.append(("walker", args, kwargs))
+        return -0.25
+
+    monkeypatch.setattr(worker, "_run_gumbel_chunk", fake_gumbel)
+    monkeypatch.setattr(worker, "_run_walker_chunk", fake_walker)
+
+    value = worker._run_one_chunk(  # noqa: SLF001
+        4,
+        board,
+        threading.Event(),
+        None,
+        allowed,
+        True,
+    )
+
+    assert value == 0.25
+    assert calls == [
+        (
+            "gumbel",
+            (4, board, None, allowed),
+            {"allow_terminal_shortcuts": True},
+        ),
+    ]
+
+
 def test_uci_build_engine_threads_policy_encoding_into_gumbel_config() -> None:
     from chess_anti_engine.uci.__main__ import _build_engine
 
@@ -363,3 +431,32 @@ def test_uci_advance_root_reuses_tree_and_preserves_new_root_contract() -> None:
     mask = np.zeros((POLICY_SIZE,), dtype=np.bool_)
     mask[actions] = True
     assert np.array_equal(mask, _expected_root_mask(board))
+
+
+def test_uci_advance_root_refuses_reuse_when_tree_above_half_memory_cap() -> None:
+    board = chess.Board()
+    worker = SearchWorker(
+        _ZeroEvaluator(),
+        device="cpu",
+        chunk_sims=16,
+        gumbel_cfg=GumbelConfig(simulations=16, topk=8, temperature=0.0, add_noise=False),
+    )
+
+    first = worker.run(
+        board,
+        stop_event=threading.Event(),
+        deadline=Deadline(None),
+        max_nodes=16,
+    )
+    first_move = chess.Move.from_uci(first.bestmove_uci)
+    assert worker._tree is not None  # noqa: SLF001
+    assert worker._root_id is not None  # noqa: SLF001
+    tree = worker._tree  # noqa: SLF001
+    old_root = int(worker._root_id)  # noqa: SLF001
+
+    worker._max_tree_bytes = max(1, int(tree.memory_bytes()) * 2)  # noqa: SLF001
+
+    assert not worker.advance_root(board, [first_move])
+    assert worker._tree is tree  # noqa: SLF001
+    assert worker._root_id == old_root  # noqa: SLF001
+    assert worker._tree_fen == board.fen()  # noqa: SLF001

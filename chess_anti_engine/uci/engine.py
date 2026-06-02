@@ -12,11 +12,10 @@ from __future__ import annotations
 import sys
 import threading
 from dataclasses import dataclass, replace
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 import chess
 
-from chess_anti_engine.inference import BatchEvaluator
 from chess_anti_engine.tablebase import SyzygyProbe, get_tablebase
 
 from .protocol import (
@@ -42,6 +41,9 @@ from .time_manager import Deadline, SearchLimits, limits_from_go
 
 _ENGINE_NAME = "DeepFin"
 _ENGINE_AUTHOR = "jjosh"
+
+if TYPE_CHECKING:
+    from chess_anti_engine.inference import BatchEvaluator
 
 
 def _attach_log_file(path: str) -> None:
@@ -114,11 +116,14 @@ _JOIN_TIMEOUT_S = 30.0
 
 @dataclass
 class EngineOptions:
-  # Soft cap on MCTS tree memory in MB. Search halts between chunks when
-  # the tree's own allocations exceed this — prevents runaway growth from
-  # pushing the process into swap on long analysis. It is NOT a bounded
-  # transposition table; we stop adding nodes rather than evicting.
-    hash_mb: int = 4096
+  # Soft cap on MCTS tree memory in MB. Allocated lazily — the tree only
+  # grows to what a search actually needs, so this is a ceiling, not a
+  # reservation. Tree reuse refuses to extend a tree past half this value
+  # (see ``advance_root``), rebuilding fresh instead, so memory stays
+  # bounded without the mid-game search collapse that hitting the hard cap
+  # would cause. It is NOT a bounded transposition table; we rebuild rather
+  # than evict.
+    hash_mb: int = 16384
   # Number of MCTS walker threads. 1 = classic Gumbel path; >1 = PUCT
   # walker pool with virtual loss. Set via UCI `Threads`.
     threads: int = 2
@@ -176,10 +181,10 @@ class EngineOptions:
   # OS-conventional separators (';' on Windows, ':' elsewhere) per the
   # de-facto UCI convention. Empty means disabled.
     syzygy_path: str = ""
-  # Ponder is a signal to the GUI about whether to issue `go ponder`
-  # commands; the engine itself honors `go ponder` regardless, since
-  # ignoring it would break cutechess/Arena if the user forgets to flip
-  # the option. Default off — safer for fixed-time match play.
+  # Ponder gates whether we compute/emit a `ponder` suffix in `bestmove`.
+  # If a GUI sends `go ponder` anyway, the engine still honors the command;
+  # this option controls advertised ponder metadata, not command parsing.
+  # Default off — safer for fixed-time match play.
     ponder: bool = False
 
 
@@ -188,9 +193,9 @@ class Engine:
         self,
         worker: SearchWorker,
         *,
-        rebuild_evaluator: "Callable[[int, int], BatchEvaluator] | None" = None,
+        rebuild_evaluator: Callable[[int, int], BatchEvaluator] | None = None,
         rebuild_multi_gpu_pucv_factories: (
-            "Callable[[int, int], list[Callable[[], BatchEvaluator]]] | None"
+            Callable[[int, int], list[Callable[[], BatchEvaluator]]] | None
         ) = None,
         options: EngineOptions | None = None,
     ) -> None:
@@ -706,20 +711,63 @@ class Engine:
         max_nodes = None if is_ponder else limits.max_nodes
         max_depth = None if is_ponder else limits.max_depth
         deadline = Deadline(deadline_ms=deadline_ms)
+        emitted_info = False
+
+        def _phase_info_cb(
+            *,
+            nodes: int,
+            elapsed_ms: int,
+            score_cp: int,
+            pv: tuple[str, ...],
+            tbhits: int,
+            score_mate: int | None,
+            multipv: int | None,
+            wdl: tuple[int, int, int] | None,
+            string: str | None = None,
+        ) -> None:
+            nonlocal emitted_info
+            emitted_info = True
+            self._emit_info(
+                nodes=nodes,
+                elapsed_ms=elapsed_ms,
+                score_cp=score_cp,
+                pv=pv,
+                tbhits=tbhits,
+                score_mate=score_mate,
+                multipv=multipv,
+                wdl=wdl,
+                string=string,
+            )
+
         try:
-            return self._worker.run(
+            result = self._worker.run(
                 board,
                 stop_event=self._stop_event,
                 deadline=deadline,
                 max_nodes=max_nodes,
                 max_depth=max_depth,
                 root_moves=limits.searchmoves,
-                info_cb=self._emit_info,
+                info_cb=_phase_info_cb,
+                include_ponder=self._options.ponder,
+                allow_terminal_shortcuts=not is_ponder and not limits.is_open_ended(),
             )
+            if not is_ponder and not emitted_info:
+                self._emit_info(
+                    nodes=result.nodes,
+                    elapsed_ms=deadline.elapsed_ms(),
+                    score_cp=result.score_cp,
+                    pv=result.pv,
+                    tbhits=result.tbhits,
+                    score_mate=result.score_mate,
+                    multipv=None,
+                    wdl=None,
+                )
+            return result
         except Exception as exc:  # pragma: no cover — UCI crash-safety
             _println(f"info string search error: {exc!r}")
+            fallback = _legal_fallback_move(board, limits.searchmoves)
             return SearchResult(
-                bestmove_uci="0000", ponder_uci=None, nodes=0, pv=(), score_cp=0, tbhits=0,
+                bestmove_uci=fallback, ponder_uci=None, nodes=0, pv=(), score_cp=0, tbhits=0,
             )
 
     def _emit_info(
@@ -744,7 +792,8 @@ class Engine:
         )))
 
     def _emit_bestmove(self, result: SearchResult) -> None:
-        _println(format_bestmove(result.bestmove_uci, ponder=result.ponder_uci))
+        ponder = result.ponder_uci if self._options.ponder else None
+        _println(format_bestmove(result.bestmove_uci, ponder=ponder))
 
     def close(self) -> None:
         """Stop any running search and release the worker's evaluator. Call
@@ -764,6 +813,23 @@ class Engine:
                 _println("info string search stop timed out; thread still running")
             else:
                 self._search_thread = None
+
+
+def _legal_fallback_move(board: chess.Board, searchmoves: tuple[str, ...]) -> str:
+    """Return a legal fallback that respects UCI ``searchmoves`` constraints."""
+    if searchmoves:
+        for uci in searchmoves:
+            try:
+                move = chess.Move.from_uci(str(uci))
+            except ValueError:
+                continue
+            if move in board.legal_moves:
+                return move.uci()
+        return "0000"
+    try:
+        return next(iter(board.legal_moves)).uci()
+    except StopIteration:
+        return "0000"
 
 
 def _println(s: str) -> None:

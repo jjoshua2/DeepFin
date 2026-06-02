@@ -8,6 +8,191 @@ import chess
 
 from chess_anti_engine.uci.engine import Engine, EngineOptions, emit_handshake
 from chess_anti_engine.uci.protocol import CmdPosition, CmdSetOption
+from chess_anti_engine.uci.search import SearchResult
+from chess_anti_engine.uci.time_manager import SearchLimits
+
+
+def test_run_one_phase_falls_back_to_legal_move_on_search_exception(capsys) -> None:
+    worker = MagicMock()
+    worker.run = MagicMock(side_effect=RuntimeError("boom"))
+    engine = Engine(worker=worker)
+    board = chess.Board()
+    limits = SearchLimits(deadline_ms=None, max_nodes=None, searchmoves=())
+    result = engine._run_one_phase(limits, is_ponder=False, board=board)  # noqa: SLF001
+    assert result.bestmove_uci in {m.uci() for m in board.legal_moves}
+    assert result.ponder_uci is None
+    assert "boom" in capsys.readouterr().out
+
+
+def test_run_one_phase_fallback_respects_searchmoves(capsys) -> None:
+    worker = MagicMock()
+    worker.run = MagicMock(side_effect=RuntimeError("boom"))
+    engine = Engine(worker=worker)
+    board = chess.Board()
+    limits = SearchLimits(deadline_ms=None, max_nodes=None, searchmoves=("g1f3",))
+    result = engine._run_one_phase(limits, is_ponder=False, board=board)  # noqa: SLF001
+    assert result.bestmove_uci == "g1f3"
+    assert "boom" in capsys.readouterr().out
+
+
+def test_run_one_phase_fallback_returns_null_when_searchmoves_have_no_legal_move(capsys) -> None:
+    worker = MagicMock()
+    worker.run = MagicMock(side_effect=RuntimeError("boom"))
+    engine = Engine(worker=worker)
+    board = chess.Board()
+    limits = SearchLimits(deadline_ms=None, max_nodes=None, searchmoves=("a1a8",))
+    result = engine._run_one_phase(limits, is_ponder=False, board=board)  # noqa: SLF001
+    assert result.bestmove_uci == "0000"
+    assert "boom" in capsys.readouterr().out
+
+
+def test_run_one_phase_does_not_duplicate_worker_info(capsys) -> None:
+    worker = MagicMock()
+
+    def _run(*_args: Any, **kwargs: Any) -> SearchResult:
+        kwargs["info_cb"](
+            nodes=7,
+            elapsed_ms=5,
+            score_cp=12,
+            pv=("e2e4",),
+            tbhits=0,
+            score_mate=None,
+            multipv=2,
+            wdl=(500, 0, 500),
+        )
+        return SearchResult(
+            bestmove_uci="e2e4",
+            ponder_uci=None,
+            nodes=7,
+            pv=("e2e4",),
+            score_cp=12,
+            tbhits=0,
+        )
+
+    worker.run = _run
+    engine = Engine(worker=worker)
+    board = chess.Board()
+    limits = SearchLimits(deadline_ms=None, max_nodes=None, searchmoves=())
+
+    engine._run_one_phase(limits, is_ponder=False, board=board)  # noqa: SLF001
+
+    lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("info ")]
+    assert len(lines) == 1
+    assert "multipv 2" in lines[0]
+    assert "wdl 500 0 500" in lines[0]
+
+
+def test_run_one_phase_emits_final_info_when_worker_is_silent(capsys) -> None:
+    worker = MagicMock()
+    worker.run = MagicMock(
+        return_value=SearchResult(
+            bestmove_uci="e2e4",
+            ponder_uci=None,
+            nodes=3,
+            pv=("e2e4",),
+            score_cp=8,
+            tbhits=0,
+        ),
+    )
+    engine = Engine(worker=worker)
+    board = chess.Board()
+    limits = SearchLimits(deadline_ms=None, max_nodes=None, searchmoves=())
+
+    engine._run_one_phase(limits, is_ponder=False, board=board)  # noqa: SLF001
+
+    lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("info ")]
+    assert len(lines) == 1
+    assert "nodes 3" in lines[0]
+    assert "pv e2e4" in lines[0]
+
+
+def test_run_one_phase_disables_terminal_shortcuts_during_ponder() -> None:
+    worker = MagicMock()
+    worker.run = MagicMock(
+        return_value=SearchResult(
+            bestmove_uci="e2e4",
+            ponder_uci=None,
+            nodes=1,
+            pv=("e2e4",),
+            score_cp=0,
+            tbhits=0,
+        ),
+    )
+    engine = Engine(worker=worker)
+    board = chess.Board()
+    limits = SearchLimits(deadline_ms=None, max_nodes=None, ponder=True, searchmoves=())
+
+    engine._run_one_phase(limits, is_ponder=True, board=board)  # noqa: SLF001
+
+    assert worker.run.call_args.kwargs["allow_terminal_shortcuts"] is False
+
+
+def test_run_one_phase_allows_terminal_shortcuts_for_normal_search() -> None:
+    worker = MagicMock()
+    worker.run = MagicMock(
+        return_value=SearchResult(
+            bestmove_uci="e2e4",
+            ponder_uci=None,
+            nodes=1,
+            pv=("e2e4",),
+            score_cp=0,
+            tbhits=0,
+        ),
+    )
+    engine = Engine(worker=worker)
+    board = chess.Board()
+    limits = SearchLimits(deadline_ms=1000, max_nodes=None, searchmoves=())
+
+    engine._run_one_phase(limits, is_ponder=False, board=board)  # noqa: SLF001
+
+    assert worker.run.call_args.kwargs["allow_terminal_shortcuts"] is True
+
+
+def test_run_one_phase_disables_terminal_shortcuts_for_open_ended_search() -> None:
+    worker = MagicMock()
+    worker.run = MagicMock(
+        return_value=SearchResult(
+            bestmove_uci="e2e4",
+            ponder_uci=None,
+            nodes=1,
+            pv=("e2e4",),
+            score_cp=0,
+            tbhits=0,
+        ),
+    )
+    engine = Engine(worker=worker)
+    board = chess.Board()
+    limits = SearchLimits(deadline_ms=None, max_nodes=None, max_depth=None, searchmoves=())
+
+    engine._run_one_phase(limits, is_ponder=False, board=board)  # noqa: SLF001
+
+    assert limits.is_open_ended()
+    assert worker.run.call_args.kwargs["allow_terminal_shortcuts"] is False
+
+
+def test_emit_bestmove_omits_ponder_when_option_false(capsys) -> None:
+    engine = Engine(worker=MagicMock())
+    engine._options.ponder = False  # noqa: SLF001
+    result = SearchResult(
+        bestmove_uci="e2e4", ponder_uci="e7e5",
+        nodes=0, pv=(), score_cp=0, tbhits=0,
+    )
+    engine._emit_bestmove(result)  # noqa: SLF001
+    out = capsys.readouterr().out
+    assert "bestmove e2e4" in out
+    assert "ponder" not in out
+
+
+def test_emit_bestmove_includes_ponder_when_option_true(capsys) -> None:
+    engine = Engine(worker=MagicMock())
+    engine._options.ponder = True  # noqa: SLF001
+    result = SearchResult(
+        bestmove_uci="e2e4", ponder_uci="e7e5",
+        nodes=0, pv=(), score_cp=0, tbhits=0,
+    )
+    engine._emit_bestmove(result)  # noqa: SLF001
+    out = capsys.readouterr().out
+    assert "bestmove e2e4 ponder e7e5" in out
 
 
 def test_invalid_position_fen_clears_pending_state() -> None:
