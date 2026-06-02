@@ -11,6 +11,7 @@ from chess_anti_engine.model import (
     build_model,
     load_state_dict_tolerant,
     model_config_from_manifest_dict,
+    normalize_ffn_mult_by_layer,
 )
 from chess_anti_engine.selfplay.match import play_match_batch
 
@@ -43,6 +44,31 @@ def _resolve_from_manifest(manifest_path: Path) -> tuple[dict, Path, Path]:
     return mc, latest_path, best_path
 
 
+def _parse_ffn_mult_by_layer(value: str) -> tuple[float, ...] | None:
+    try:
+        return normalize_ffn_mult_by_layer(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def _model_config_from_cli_args(args: argparse.Namespace) -> dict:
+    return {
+        "kind": str(args.model),
+        "embed_dim": int(args.embed_dim),
+        "num_layers": int(args.num_layers),
+        "num_heads": int(args.num_heads),
+        "ffn_mult": float(args.ffn_mult),
+        "ffn_mult_by_layer": (
+            tuple(float(v) for v in args.ffn_mult_by_layer)
+            if args.ffn_mult_by_layer is not None
+            else None
+        ),
+        "use_smolgen": bool(args.use_smolgen),
+        "use_nla": bool(args.use_nla),
+        "gradient_checkpointing": bool(args.gradient_checkpointing),
+    }
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Arena match: latest vs best")
 
@@ -58,6 +84,12 @@ def main() -> None:
     ap.add_argument("--num-layers", type=int, default=6)
     ap.add_argument("--num-heads", type=int, default=8)
     ap.add_argument("--ffn-mult", type=float, default=2)
+    ap.add_argument(
+        "--ffn-mult-by-layer",
+        type=_parse_ffn_mult_by_layer,
+        default=None,
+        help="Comma-separated FFN multipliers, one per layer; use --manifest for published checkpoints.",
+    )
     ap.add_argument("--use-smolgen", action="store_true")
     ap.add_argument("--use-nla", action="store_true")
     ap.add_argument("--gradient-checkpointing", action="store_true")
@@ -96,16 +128,7 @@ def main() -> None:
         raise SystemExit("Must provide --latest-model and --best-model (or provide --manifest)")
 
     if mc is None:
-        mc = {
-            "kind": str(args.model),
-            "embed_dim": int(args.embed_dim),
-            "num_layers": int(args.num_layers),
-            "num_heads": int(args.num_heads),
-            "ffn_mult": float(args.ffn_mult),
-            "use_smolgen": bool(args.use_smolgen),
-            "use_nla": bool(args.use_nla),
-            "gradient_checkpointing": bool(args.gradient_checkpointing),
-        }
+        mc = _model_config_from_cli_args(args)
 
     model_cfg = model_config_from_manifest_dict(mc)
 
