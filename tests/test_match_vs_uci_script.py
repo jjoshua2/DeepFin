@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import chess
+import chess.engine
 import pytest
 
 
@@ -230,3 +231,155 @@ def test_warmup_engine_uses_external_node_limit(
 
     assert calls == [7]
     assert "nodes=7" in capsys.readouterr().out
+
+
+def test_play_node_limited_preserves_latest_analysis_info() -> None:
+    module = _load_match_vs_uci_module()
+    move = chess.Move.from_uci("e2e4")
+
+    class FakeAnalysis:
+        def __init__(self) -> None:
+            self.stop_calls = 0
+
+        def would_block(self) -> bool:
+            return False
+
+        def get(self) -> dict[str, Any]:
+            return {
+                "nodes": 7,
+                "time": 0.125,
+                "score": chess.engine.PovScore(chess.engine.Cp(23), chess.WHITE),
+                "pv": [move],
+            }
+
+        def stop(self) -> None:
+            self.stop_calls += 1
+
+        def wait(self) -> chess.engine.BestMove:
+            return chess.engine.BestMove(None, None)
+
+    class FakeEngine:
+        def __init__(self) -> None:
+            self.analysis_obj = FakeAnalysis()
+
+        def analysis(
+            self,
+            board: chess.Board,
+            limit: chess.engine.Limit,
+            *,
+            info: chess.engine.Info = chess.engine.INFO_NONE,
+        ) -> FakeAnalysis:
+            assert board == chess.Board()
+            assert limit == chess.engine.Limit()
+            assert info == chess.engine.INFO_ALL
+            return self.analysis_obj
+
+    result = module._play_node_limited(FakeEngine(), chess.Board(), nodes=7)
+
+    assert result.move == move
+    assert result.info["nodes"] == 7
+    assert result.info["time"] == 0.125
+    assert module._score_cp(result.info["score"], white_to_move=True) == 23
+
+
+def test_play_one_game_logs_null_move_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_match_vs_uci_module()
+    callbacks = []
+
+    def fake_play_move(*args: object, **kwargs: object):
+        del args, kwargs
+        return module.MoveResult(None, {"nodes": 3, "time": 0.01})
+
+    monkeypatch.setattr(module, "_play_move", fake_play_move)
+
+    record = module.play_one_game(
+        object(),
+        object(),
+        limit_w=chess.engine.Limit(nodes=1),
+        limit_b=chess.engine.Limit(nodes=1),
+        enforce_nodes_w=False,
+        enforce_nodes_b=False,
+        max_plies=1,
+        move_callback=callbacks.append,
+    )
+
+    assert record.result == "0-1"
+    assert record.termination == "illegal_or_null"
+    assert record.plies == 0
+    assert record.moves == ()
+    assert len(record.move_records) == 1
+    assert record.move_records[0].move == "0000"
+    assert record.move_records[0].nodes == 3
+    assert callbacks == [record.move_records[0]]
+
+
+def test_play_one_game_logs_time_loss_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_match_vs_uci_module()
+    move = chess.Move.from_uci("e2e4")
+
+    def fake_play_move(*args: object, **kwargs: object):
+        del args, kwargs
+        return module.MoveResult(move, {"nodes": 5, "time": 0.2})
+
+    times = iter([10.0, 10.5])
+    monkeypatch.setattr(module, "_play_move", fake_play_move)
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(times))
+
+    record = module.play_one_game(
+        object(),
+        object(),
+        limit_w=chess.engine.Limit(time=1),
+        limit_b=chess.engine.Limit(time=1),
+        enforce_nodes_w=False,
+        enforce_nodes_b=False,
+        clock_base_w_ms=100,
+        clock_base_b_ms=100,
+        max_plies=1,
+    )
+
+    assert record.result == "0-1"
+    assert record.termination == "time"
+    assert record.plies == 0
+    assert record.moves == ()
+    assert len(record.move_records) == 1
+    assert record.move_records[0].move == "e2e4"
+    assert record.move_records[0].nodes == 5
+    assert record.move_records[0].white_clock_before_s == 0.1
+    assert record.move_records[0].white_clock_after_s == pytest.approx(-0.4)
+
+
+def test_main_quits_engine_a_if_engine_b_open_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_match_vs_uci_module()
+    opened = []
+
+    class FakeEngine:
+        id = {"name": "fake"}
+        options: dict[str, object] = {}
+
+        def __init__(self) -> None:
+            self.quit_called = False
+
+        def quit(self) -> None:
+            self.quit_called = True
+
+    def fake_open_engine(spec: str):
+        if spec == "engine-b":
+            raise RuntimeError("engine B failed")
+        engine = FakeEngine()
+        opened.append(engine)
+        return engine
+
+    monkeypatch.setattr(module, "_open_engine", fake_open_engine)
+    monkeypatch.setattr(sys, "argv", ["match_vs_uci.py", "--engine-a", "engine-a", "--engine-b", "engine-b"])
+
+    with pytest.raises(RuntimeError, match="engine B failed"):
+        module.main()
+
+    assert len(opened) == 1
+    assert opened[0].quit_called is True

@@ -392,11 +392,13 @@ def _play_node_limited(
     analysis = eng.analysis(board, chess.engine.Limit(), info=chess.engine.INFO_ALL)
     deadline = time.monotonic() + _node_timeout_s(nodes)
     best_from_pv: chess.Move | None = None
+    latest_info: dict[str, Any] = {}
     nodes_seen = 0
     try:
         while True:
             if not analysis.would_block():
                 info = analysis.get()
+                latest_info.update(info)
                 try:
                     nodes_seen = max(nodes_seen, int(info.get("nodes", 0)))
                 except (TypeError, ValueError):
@@ -421,7 +423,9 @@ def _play_node_limited(
             analysis.stop()
         except chess.engine.EngineError:
             pass
-    return MoveResult(best.move or best_from_pv, dict(getattr(best, "info", {})))
+    if nodes_seen:
+        latest_info["nodes"] = nodes_seen
+    return MoveResult(best.move or best_from_pv, latest_info)
 
 
 def _play_move(
@@ -495,7 +499,37 @@ def play_one_game(
         move_result = _play_move(eng, board, limit, enforce_nodes=enforce_nodes)
         elapsed_s = time.monotonic() - started
         move = move_result.move
+        info = move_result.info
+
+        def append_attempt_record(
+            move_uci: str,
+            *,
+            white_after_s: float | None,
+            black_after_s: float | None,
+        ) -> None:
+            move_record = MoveRecord(
+                ply=plies + 1,
+                color="W" if white_to_move else "B",
+                move=move_uci,
+                elapsed_s=elapsed_s,
+                nodes=_info_int(info.get("nodes")),
+                engine_time_s=_info_float(info.get("time")),
+                score_cp=_score_cp(info.get("score"), white_to_move=white_to_move),
+                white_clock_before_s=white_before,
+                black_clock_before_s=black_before,
+                white_clock_after_s=white_after_s,
+                black_clock_after_s=black_after_s,
+            )
+            move_records.append(move_record)
+            if move_callback is not None:
+                move_callback(move_record)
+
         if move is None or move not in board.legal_moves:
+            append_attempt_record(
+                "0000" if move is None else move.uci(),
+                white_after_s=white_clock_s if clock_mode else None,
+                black_after_s=black_clock_s if clock_mode else None,
+            )
             return GameRecord(
                 result="0-1" if white_to_move else "1-0",
                 plies=plies,
@@ -508,14 +542,23 @@ def play_one_game(
             if white_to_move:
                 white_clock_s -= elapsed_s
                 if white_clock_s < 0.0:
+                    append_attempt_record(
+                        move.uci(),
+                        white_after_s=white_clock_s,
+                        black_after_s=black_clock_s,
+                    )
                     return GameRecord("0-1", plies, initial, tuple(moves), tuple(move_records), "time")
                 white_clock_s += white_inc_s
             else:
                 black_clock_s -= elapsed_s
                 if black_clock_s < 0.0:
+                    append_attempt_record(
+                        move.uci(),
+                        white_after_s=white_clock_s,
+                        black_after_s=black_clock_s,
+                    )
                     return GameRecord("1-0", plies, initial, tuple(moves), tuple(move_records), "time")
                 black_clock_s += black_inc_s
-        info = move_result.info
         move_record = MoveRecord(
             ply=plies + 1,
             color="W" if white_to_move else "B",
@@ -704,84 +747,87 @@ def main() -> None:
     if args.openings_offset < 0:
         raise SystemExit("--openings-offset must be >= 0")
     tb_adjudicator = _open_syzygy_tablebase(args.syzygy_adjudicate_path)
+    eng_a: chess.engine.SimpleEngine | None = None
+    eng_b: chess.engine.SimpleEngine | None = None
     try:
         tb_wdl_count, tb_dtz_count, tb_wdl_max, tb_dtz_max = _validate_syzygy_adjudicator(
             args.syzygy_adjudicate_path,
             tb_adjudicator,
             max_pieces=args.syzygy_adjudicate_max_pieces,
         )
-    except SystemExit:
-        if tb_adjudicator is not None:
-            tb_adjudicator.close()
-        raise
-    enforce_nodes_a = bool(args.enforce_nodes or args.enforce_nodes_a)
-    enforce_nodes_b = bool(args.enforce_nodes or args.enforce_nodes_b)
-    openings = (
-        _load_openings(args.openings, limit=args.openings_limit, offset=args.openings_offset)
-        if args.openings is not None
-        else [chess.Board()]
-    )
-    if args.pgn_out is not None:
-        args.pgn_out.parent.mkdir(parents=True, exist_ok=True)
-    if args.move_log_out is not None:
-        args.move_log_out.parent.mkdir(parents=True, exist_ok=True)
 
-    print(f"[match] opening A: {args.engine_a}")
-    eng_a = _open_engine(args.engine_a)
-    _set_options(eng_a, opts_a)
-    print(f"[match]   id={eng_a.id.get('name', '?')!r}")
-    _warmup_engine(eng_a, nodes=warmup_nodes_a, label=args.label_a)
+        enforce_nodes_a = bool(args.enforce_nodes or args.enforce_nodes_a)
+        enforce_nodes_b = bool(args.enforce_nodes or args.enforce_nodes_b)
+        openings = (
+            _load_openings(args.openings, limit=args.openings_limit, offset=args.openings_offset)
+            if args.openings is not None
+            else [chess.Board()]
+        )
+        if args.pgn_out is not None:
+            args.pgn_out.parent.mkdir(parents=True, exist_ok=True)
+        if args.move_log_out is not None:
+            args.move_log_out.parent.mkdir(parents=True, exist_ok=True)
 
-    print(f"[match] opening B: {args.engine_b}")
-    eng_b = _open_engine(args.engine_b)
-    _set_options(eng_b, opts_b)
-    print(f"[match]   id={eng_b.id.get('name', '?')!r}")
-    _warmup_engine(eng_b, nodes=warmup_nodes_b, label=args.label_b)
-    side_a = EngineSide(
-        label=args.label_a,
-        engine=eng_a,
-        time_ms=time_ms_a,
-        nodes=nodes_a,
-        clock_base_ms=clock_base_a,
-        clock_inc_ms=clock_inc_a,
-        enforce_nodes=enforce_nodes_a,
-    )
-    side_b = EngineSide(
-        label=args.label_b,
-        engine=eng_b,
-        time_ms=time_ms_b,
-        nodes=nodes_b,
-        clock_base_ms=clock_base_b,
-        clock_inc_ms=clock_inc_b,
-        enforce_nodes=enforce_nodes_b,
-    )
+        print(f"[match] opening A: {args.engine_a}")
+        eng_a = _open_engine(args.engine_a)
+        _set_options(eng_a, opts_a)
+        print(f"[match]   id={eng_a.id.get('name', '?')!r}")
+        _warmup_engine(eng_a, nodes=warmup_nodes_a, label=args.label_a)
 
-    a_wins = a_draws = a_losses = 0
-    a_white_count = 0
-    a_black_count = 0
-    total_plies = 0
-    points: list[float] = []
-    t0 = time.time()
-    print(
-        f"[match] playing {args.games} games, "
-        f"A budget={_play_label(time_ms=time_ms_a, nodes=nodes_a, clock_base_ms=clock_base_a, clock_inc_ms=clock_inc_a)}, "
-        f"B budget={_play_label(time_ms=time_ms_b, nodes=nodes_b, clock_base_ms=clock_base_b, clock_inc_ms=clock_inc_b)}, "
-        f"max_plies={args.max_plies}, "
-        f"enforce_nodes=A:{enforce_nodes_a} B:{enforce_nodes_b}, "
-        f"openings={len(openings)}"
-    )
-    if tb_adjudicator is not None:
-        print(
-            f"[match] Syzygy adjudication: path={args.syzygy_adjudicate_path!r} "
-            f"max_pieces={args.syzygy_adjudicate_max_pieces} "
-            f"tables={tb_wdl_count} WDL/{tb_dtz_count} DTZ "
-            f"coverage={tb_wdl_max} WDL/{tb_dtz_max} DTZ",
-            flush=True,
+        print(f"[match] opening B: {args.engine_b}")
+        eng_b = _open_engine(args.engine_b)
+        _set_options(eng_b, opts_b)
+        print(f"[match]   id={eng_b.id.get('name', '?')!r}")
+        _warmup_engine(eng_b, nodes=warmup_nodes_b, label=args.label_b)
+        side_a = EngineSide(
+            label=args.label_a,
+            engine=eng_a,
+            time_ms=time_ms_a,
+            nodes=nodes_a,
+            clock_base_ms=clock_base_a,
+            clock_inc_ms=clock_inc_a,
+            enforce_nodes=enforce_nodes_a,
+        )
+        side_b = EngineSide(
+            label=args.label_b,
+            engine=eng_b,
+            time_ms=time_ms_b,
+            nodes=nodes_b,
+            clock_base_ms=clock_base_b,
+            clock_inc_ms=clock_inc_b,
+            enforce_nodes=enforce_nodes_b,
         )
 
-    try:
+        a_wins = a_draws = a_losses = 0
+        a_white_count = 0
+        a_black_count = 0
+        total_plies = 0
+        points: list[float] = []
+        t0 = time.time()
+        print(
+            f"[match] playing {args.games} games, "
+            f"A budget={_play_label(time_ms=time_ms_a, nodes=nodes_a, clock_base_ms=clock_base_a, clock_inc_ms=clock_inc_a)}, "
+            f"B budget={_play_label(time_ms=time_ms_b, nodes=nodes_b, clock_base_ms=clock_base_b, clock_inc_ms=clock_inc_b)}, "
+            f"max_plies={args.max_plies}, "
+            f"enforce_nodes=A:{enforce_nodes_a} B:{enforce_nodes_b}, "
+            f"openings={len(openings)}"
+        )
+        if tb_adjudicator is not None:
+            print(
+                f"[match] Syzygy adjudication: path={args.syzygy_adjudicate_path!r} "
+                f"max_pieces={args.syzygy_adjudicate_max_pieces} "
+                f"tables={tb_wdl_count} WDL/{tb_dtz_count} DTZ "
+                f"coverage={tb_wdl_max} WDL/{tb_dtz_max} DTZ",
+                flush=True,
+            )
+
         pgn_fh = args.pgn_out.open("w") if args.pgn_out is not None else None
-        move_fh = args.move_log_out.open("w", newline="") if args.move_log_out is not None else None
+        try:
+            move_fh = args.move_log_out.open("w", newline="") if args.move_log_out is not None else None
+        except Exception:
+            if pgn_fh is not None:
+                pgn_fh.close()
+            raise
         move_writer: csv.DictWriter | None = None
         if move_fh is not None:
             move_writer = csv.DictWriter(
@@ -896,8 +942,10 @@ def main() -> None:
     finally:
         if tb_adjudicator is not None:
             tb_adjudicator.close()
-        eng_a.quit()
-        eng_b.quit()
+        if eng_a is not None:
+            eng_a.quit()
+        if eng_b is not None:
+            eng_b.quit()
 
     total = a_wins + a_draws + a_losses
     if total == 0:
