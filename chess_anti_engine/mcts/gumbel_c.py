@@ -366,8 +366,13 @@ def run_gumbel_root_many_c(
         terminal_mate = None
         terminal_draws: set[int] = set()
         if allow_terminal_root_shortcuts:
+  # Draw terminals are only consumed to prune them from a *winning* root
+  # (the block below). Skip the draw scan otherwise so non-winning roots
+  # don't pay for the reply-claim work whose result we'd discard. Mate is
+  # always detected.
+            want_draws = float(root_qs[i]) > 0.0 and legal_idx.size > 1
             terminal_mate, terminal_draws = immediate_terminal_cboard_policy_or_draws(
-                root_cb, legal_idx,
+                root_cb, legal_idx, detect_draws=want_draws,
             )
 
         if float(root_qs[i]) > 0.0 and legal_idx.size > 1:

@@ -75,15 +75,23 @@ def immediate_terminal_draw_indices(
 def immediate_terminal_cboard_policy_or_draws(
     root_cb: CBoard,
     legal_idx: Iterable[int],
+    *,
+    detect_draws: bool = True,
 ) -> tuple[tuple[np.ndarray, int, float] | None, set[int]]:
-    """Return an immediate mate policy, or terminal-draw actions when no mate exists."""
+    """Return an immediate mate policy, or terminal-draw actions when no mate exists.
+
+    ``detect_draws=False`` computes only the mate and returns an empty draw set,
+    skipping the (potentially reply-claim) draw scan. Callers that won't use the
+    draws — a root that isn't winning, where draw terminals are never pruned —
+    pass this to avoid the wasted work.
+    """
     legal_arr = (
         np.asarray(legal_idx, dtype=np.int32)
         if isinstance(legal_idx, np.ndarray)
         else np.fromiter((int(action) for action in legal_idx), dtype=np.int32)
     )
     if hasattr(root_cb, "root_terminal_actions"):
-        mate_action, draw_actions = root_cb.root_terminal_actions(legal_arr)
+        mate_action, draw_actions = root_cb.root_terminal_actions(legal_arr, detect_draws)
         if int(mate_action) >= 0:
             return one_hot_root_policy(int(mate_action)), set()
         return None, set(np.asarray(draw_actions, dtype=np.int32).astype(int).tolist())
@@ -95,6 +103,6 @@ def immediate_terminal_cboard_policy_or_draws(
         child.push_index(action_i)
         if child.is_checkmate():
             return one_hot_root_policy(action_i), set()
-        if child.is_game_over():
+        if detect_draws and child.is_game_over():
             draws.add(action_i)
     return None, draws

@@ -212,3 +212,29 @@ def test_cboard_root_terminal_scan_matches_python_chess(fen: str) -> None:
     else:
         assert mate is None
         assert draws == py_draws, f"draw-action mismatch in {fen}"
+
+
+@pytest.mark.skipif(CBoard is None, reason="CBoard extension not available")
+@pytest.mark.parametrize("fen", _PARITY_FENS)
+def test_detect_draws_false_keeps_mate_but_skips_draws(fen: str) -> None:
+    """``detect_draws=False`` is a pure optimization: identical mate result, no
+    draw scan. Used for non-winning roots where draws would never be pruned.
+    """
+    cboard_cls = _require_cboard()
+    board = chess.Board(fen)
+
+    cb_full = cboard_cls.from_board(board)
+    mate_full, _ = root_tactics.immediate_terminal_cboard_policy_or_draws(
+        cb_full, cb_full.legal_move_indices(), detect_draws=True,
+    )
+    cb_skip = cboard_cls.from_board(board)
+    mate_skip, draws_skip = root_tactics.immediate_terminal_cboard_policy_or_draws(
+        cb_skip, cb_skip.legal_move_indices(), detect_draws=False,
+    )
+
+    # Mate detection is unaffected by detect_draws.
+    assert (mate_skip is None) == (mate_full is None)
+    if mate_full is not None and mate_skip is not None:
+        assert mate_skip[1] == mate_full[1]
+    # Draws are never reported when detection is off.
+    assert draws_skip == set()

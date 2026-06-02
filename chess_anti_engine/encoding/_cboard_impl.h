@@ -770,6 +770,15 @@ static inline int piece_type_at(const CBoard *b, int sq) {
     return -1;
 }
 
+/* Would a legal (from_sq,to_sq) move reset the halfmove clock — i.e. is it a
+ * pawn move or a capture? Mirrors the is_irreversible test inside cboard_push so
+ * the fifty-move claim check can avoid copying + pushing each candidate reply. */
+static inline int cboard_move_is_zeroing(const CBoard *b, int from_sq, int to_sq) {
+    if (piece_type_at(b, from_sq) == PAWN) return 1;        /* pawn move (incl. EP) */
+    if (b->occ[1 - b->turn] & sq_bit(to_sq)) return 1;      /* capture */
+    return 0;
+}
+
 static void cboard_push(CBoard *b, int from_sq, int to_sq, int promotion) {
     int us = b->turn;
     int them = 1 - us;
