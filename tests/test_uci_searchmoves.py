@@ -47,6 +47,43 @@ def test_best_move_is_restricted_to_searchmoves() -> None:
     assert pv == [e2e4]
 
 
+def test_reused_root_info_is_restricted_to_searchmoves() -> None:
+    board = chess.Board()
+    e2e4 = int(move_to_index(chess.Move.from_uci("e2e4"), board))
+    d2d4 = int(move_to_index(chess.Move.from_uci("d2d4"), board))
+    tree = MCTSTree()
+    root = tree.add_root(0, 0.0)
+    tree.expand(
+        root,
+        np.array([e2e4, d2d4], dtype=np.int32),
+        np.array([0.5, 0.5], dtype=np.float64),
+    )
+    tree.backprop(np.array([root, tree.find_child(root, d2d4)], dtype=np.int32), 1.0)
+
+    worker = SearchWorker(MagicMock(), device="cpu", n_walkers=1)
+    worker._tree = tree  # noqa: SLF001
+    worker._root_id = root  # noqa: SLF001
+    seen: list[tuple[str, ...]] = []
+
+    def _info_cb(**kwargs) -> None:
+        seen.append(kwargs["pv"])
+
+    pv_indices, _, _ = worker._maybe_emit_pv_info(  # noqa: SLF001
+        board=board,
+        deadline=Deadline(None),
+        last_value=0.0,
+        total_nodes=1,
+        info_cb=_info_cb,
+        max_depth=1,
+        last_info_ms=-10_000,
+        tb_probe=None,
+        allowed_root_indices={e2e4},
+    )
+
+    assert pv_indices == [e2e4]
+    assert seen == [("e2e4",)]
+
+
 def test_result_ponder_failure_does_not_poison_bestmove(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

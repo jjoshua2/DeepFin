@@ -507,6 +507,8 @@ class SearchWorker:
         total_nodes: int,
         elapsed_ms: int,
         tb_probe,
+        *,
+        allowed_root_indices: set[int] | None = None,
     ) -> None:
         """Emit one or more ``info`` lines, one per top-ranked PV.
 
@@ -517,7 +519,13 @@ class SearchWorker:
         the root's NN draw-rate estimate.
         """
         assert self._tree is not None and self._root_id is not None
-        lines = _multipv_lines(self._tree, self._root_id, self._multi_pv, root_q)
+        lines = _multipv_lines(
+            self._tree,
+            self._root_id,
+            self._multi_pv,
+            root_q,
+            allowed_root_indices=allowed_root_indices,
+        )
         if not lines:
             return
         emit_multipv = self._multi_pv > 1
@@ -694,6 +702,7 @@ class SearchWorker:
         last_value: float, total_nodes: int,
         info_cb: InfoCallback | None, max_depth: int | None,
         last_info_ms: int, tb_probe,
+        allowed_root_indices: set[int] | None,
     ) -> tuple[list[int], int, int]:
         """Extract PV (only when needed) and rate-limited emit-info side effect.
 
@@ -707,11 +716,16 @@ class SearchWorker:
         if not need_pv:
             return [], last_info_ms, elapsed
         assert self._tree is not None and self._root_id is not None
-        _, pv_indices = _best_move_and_pv(self._tree, self._root_id)
+        _, pv_indices = _best_move_and_pv(
+            self._tree,
+            self._root_id,
+            allowed_root_indices=allowed_root_indices,
+        )
         if info_due:
             assert info_cb is not None
             self._emit_pv_info(
                 info_cb, board, float(last_value), total_nodes, elapsed, tb_probe,
+                allowed_root_indices=allowed_root_indices,
             )
             last_info_ms = elapsed
         return pv_indices, last_info_ms, elapsed
@@ -818,6 +832,7 @@ class SearchWorker:
         root_moves: tuple[str, ...] = (),
         info_cb: InfoCallback | None = None,
         include_ponder: bool = False,
+        allow_immediate_mate: bool = True,
     ) -> SearchResult:
         """Search until any of: stop_event set, deadline expired, max_nodes hit,
         PV length ≥ max_depth.
@@ -838,11 +853,12 @@ class SearchWorker:
 
         allowed_root_indices = _allowed_root_indices(board, root_moves)
 
-        mate = _try_immediate_checkmate(
-            board, allowed_root_indices=allowed_root_indices,
-        )
-        if mate is not None:
-            return mate
+        if allow_immediate_mate:
+            mate = _try_immediate_checkmate(
+                board, allowed_root_indices=allowed_root_indices,
+            )
+            if mate is not None:
+                return mate
 
         short = (
             None
@@ -894,6 +910,7 @@ class SearchWorker:
                 last_value=last_value, total_nodes=total_nodes,
                 info_cb=info_cb, max_depth=max_depth,
                 last_info_ms=last_info_ms, tb_probe=tb_probe,
+                allowed_root_indices=allowed_root_indices,
             )
 
             stop_reason = self._should_stop_search(
@@ -909,6 +926,7 @@ class SearchWorker:
                     self._emit_pv_info(
                         info_cb, board, float(last_value),
                         total_nodes, elapsed, tb_probe,
+                        allowed_root_indices=allowed_root_indices,
                     )
                 break
 

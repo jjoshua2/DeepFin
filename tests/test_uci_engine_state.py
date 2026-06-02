@@ -106,6 +106,48 @@ def test_run_one_phase_emits_final_info_when_worker_is_silent(capsys) -> None:
     assert "pv e2e4" in lines[0]
 
 
+def test_run_one_phase_disables_immediate_mate_shortcut_during_ponder() -> None:
+    worker = MagicMock()
+    worker.run = MagicMock(
+        return_value=SearchResult(
+            bestmove_uci="e2e4",
+            ponder_uci=None,
+            nodes=1,
+            pv=("e2e4",),
+            score_cp=0,
+            tbhits=0,
+        ),
+    )
+    engine = Engine(worker=worker)
+    board = chess.Board()
+    limits = SearchLimits(deadline_ms=None, max_nodes=None, ponder=True, searchmoves=())
+
+    engine._run_one_phase(limits, is_ponder=True, board=board)  # noqa: SLF001
+
+    assert worker.run.call_args.kwargs["allow_immediate_mate"] is False
+
+
+def test_run_one_phase_allows_immediate_mate_shortcut_for_normal_search() -> None:
+    worker = MagicMock()
+    worker.run = MagicMock(
+        return_value=SearchResult(
+            bestmove_uci="e2e4",
+            ponder_uci=None,
+            nodes=1,
+            pv=("e2e4",),
+            score_cp=0,
+            tbhits=0,
+        ),
+    )
+    engine = Engine(worker=worker)
+    board = chess.Board()
+    limits = SearchLimits(deadline_ms=None, max_nodes=None, searchmoves=())
+
+    engine._run_one_phase(limits, is_ponder=False, board=board)  # noqa: SLF001
+
+    assert worker.run.call_args.kwargs["allow_immediate_mate"] is True
+
+
 def test_emit_bestmove_omits_ponder_when_option_false(capsys) -> None:
     engine = Engine(worker=MagicMock())
     engine._options.ponder = False  # noqa: SLF001
