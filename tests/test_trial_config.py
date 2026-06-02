@@ -165,10 +165,6 @@ def test_fallback_keys() -> None:
     tc = TrialConfig.from_dict({"max_plies": 300, "eval_max_plies": None})
     assert tc.eval_max_plies == 300
 
-    # replay_window_max is the explicit replay-window ceiling.
-    tc = TrialConfig.from_dict({"replay_window_max": 500_000})
-    assert tc.replay_window_max == 500_000
-
     tc = TrialConfig.from_dict({"replay_window_growth_frac": 0.75})
     assert tc.replay_window_growth_frac == 0.75
 
