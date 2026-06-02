@@ -39,7 +39,7 @@ def load_yaml_file(path: str | Path) -> dict[str, Any]:
 # Keys that pass through 1:1 from a nested section (or flat root) to argparse.
 _CORE_KEYS = (
     "mode", "seed", "device", "iterations", "work_dir",
-    "replay_capacity", "replay_window_start", "replay_window_max", "replay_window_growth",
+    "replay_window_start", "replay_window_max", "replay_window_growth",
     "replay_window_growth_frac",
     "bootstrap_dir", "bootstrap_checkpoint", "bootstrap_zero_policy_heads",
     "bootstrap_reinit_volatility_heads", "worker_wheel_path",

@@ -19,9 +19,8 @@ seed: 0
 work_dir: runs/pbt2_small
 device: cuda
 iterations: 750
-replay_capacity: 5000000   # Hard cap
 replay_window_start: 400000   # 2026-04-22 v4: was 20000 (truncated pool to 10/187 shards). Raised so salvage keeps all pool shards (~374k pos).
-replay_window_max: 2500000   # 2026-05-28: raise cap modestly while keeping fast churn.
+replay_window_max: 3000000   # 2026-06-01: 2.5M→3M. Modest short-term noise reduction while keeping policy/target churn visible.
 replay_window_growth_frac: 0.10   # 2026-05-28: grow slowly; retain ~10% of new positions while flushing most incoming data.
 replay_window_growth: 20000   # Fallback when replay_window_growth_frac is unset.
 
