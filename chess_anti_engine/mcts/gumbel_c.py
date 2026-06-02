@@ -59,6 +59,7 @@ from chess_anti_engine.mcts.gumbel import (
     _wdl_to_q,
     gumbel_policy_diagnostics,
 )
+from chess_anti_engine.mcts.root_tactics import immediate_mate_cboard_policy
 from chess_anti_engine.moves import POLICY_SIZE, policy_batch_to_full_if_needed
 
 GumbelManyCResult = tuple[list[np.ndarray], list[int], list[float], list[np.ndarray], MCTSTree, list[int]]
@@ -360,6 +361,12 @@ def run_gumbel_root_many_c(
                 rid = tree.add_root(1, float(root_qs[i]))
                 root_ids[i] = rid
                 tree.expand(rid, legal_idx.astype(np.int32), priors)
+
+        mate = immediate_mate_cboard_policy(root_cb, legal_idx)
+        if mate is not None:
+            probs_out[i], actions_out[i], values_out[i] = mate
+            root_qs[i] = values_out[i]
+            continue
 
         if legal_idx.size == 1:
             a0 = int(legal_idx[0])

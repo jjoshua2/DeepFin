@@ -4,7 +4,7 @@ Runs ``run_gumbel_root_many_c`` in small sim-chunks so we can check a stop
 event between calls. Threads ``tree`` + ``root_node_ids`` across chunks so
 each chunk continues the previous tree rather than starting over.
 
-The worker is deliberately oblivious to UCI state (pondering, time);
+The worker is deliberately oblivious to UCI time control and ponder protocol;
 ``Engine`` wraps it with the cooperation protocol. This keeps search pure
 and makes the v2 multi-GPU swap a local change.
 """
@@ -23,6 +23,7 @@ from chess_anti_engine.inference import BatchEvaluator
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
 from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
+from chess_anti_engine.mcts.root_tactics import immediate_mate_move
 from chess_anti_engine.mcts.puct import _value_scalar_from_wdl_logits
 from chess_anti_engine.mcts.puct_vl import PucvChunker
 from .multi_gpu_pucv_pool import (
@@ -544,7 +545,7 @@ class SearchWorker:
                 score_cp=q_to_cp(0.5 * (q + 1.0)),
                 pv=uci_pv,
                 tbhits=tbhits,
-                score_mate=_pv_mate_moves(board, pv_idx),
+                score_mate=None,
                 multipv=rank if emit_multipv else None,
                 wdl=wdl,
                 string=pucv_info if rank == 1 else None,
@@ -573,6 +574,15 @@ class SearchWorker:
 
         Returns True if the whole walk succeeded (tree reusable), False if any
         step fell off the expanded tree (caller must call ``reset_tree``).
+
+        Reuse is also refused once the persistent tree grows past half the
+        memory cap. Rerooting only repoints ``self._root_id`` — the C arena
+        never reclaims the discarded sibling subtrees, so ``memory_bytes()``
+        climbs monotonically across a game. Left unchecked it reaches
+        ``_max_tree_bytes`` mid-game, after which every search halts after its
+        first chunk (``stop_reason == "tree_bytes"``) with the clock still
+        full. Forcing a rebuild here keeps each search bounded and fully
+        budgeted, at the cost of dropping cross-move reuse near the cap.
         """
         if self._tree is None or self._root_id is None or self._root_id < 0:
             return False
@@ -584,13 +594,21 @@ class SearchWorker:
             if rid < 0:
                 return False
             b.push(mv)
+        if self._max_tree_bytes > 0 and self._tree.memory_bytes() >= self._max_tree_bytes // 2:
+            return False
         self._root_id = rid
         self._tree_fen = b.fen()
         self._invalidate_root_caches()
         return True
 
     def _try_tb_shortcut(
-        self, board: chess.Board, tb_probe, deadline: Deadline, info_cb: InfoCallback | None,
+        self,
+        board: chess.Board,
+        tb_probe,
+        deadline: Deadline,
+        info_cb: InfoCallback | None,
+        *,
+        include_ponder: bool,
     ) -> SearchResult | None:
         """If TB knows the answer at root, return DTZ-optimal move directly.
 
@@ -600,7 +618,7 @@ class SearchWorker:
         """
         if tb_probe is None:
             return None
-        short = _try_tb_root_bestmove(board, tb_probe)
+        short = _try_tb_root_bestmove(board, tb_probe, include_ponder=include_ponder)
         if short is None:
             return None
         if info_cb is not None:
@@ -700,6 +718,7 @@ class SearchWorker:
         last_value: float,
         tb_probe,
         allowed_root_indices: set[int] | None = None,
+        include_ponder: bool = False,
     ) -> SearchResult:
         """Final snapshot of the searched tree → SearchResult."""
         assert self._tree is not None and self._root_id is not None
@@ -725,22 +744,24 @@ class SearchWorker:
             if gumbel_pv:
                 bestmove_idx = int(self._last_gumbel_action_idx)
                 pv_indices = gumbel_pv
-        ponder_idx = _predicted_opponent_reply(
-            self._tree, self._root_id,
-            allowed_root_indices=allowed_root_indices,
-        )
-        if (
-            self._walker_pool is None
-            and self._pucv is None
-            and self._pucv_pool is None
-            and len(pv_indices) >= 2
-        ):
-            ponder_idx = int(pv_indices[1])
         bestmove = _index_to_uci(board, bestmove_idx)
-        ponder = (
-            _index_to_uci(_board_after(board, bestmove_idx), ponder_idx)
-            if ponder_idx is not None else None
-        )
+        ponder = None
+        if include_ponder:
+            # Ponder must be aligned with the actual bestmove, not with the
+            # most-visited root child (they can differ in Gumbel paths).
+            if len(pv_indices) >= 2:
+                ponder_idx = int(pv_indices[1])
+            else:
+                ponder_idx = _reply_at_child(
+                    self._tree, self._root_id, int(bestmove_idx),
+                )
+        else:
+            ponder_idx = None
+        if include_ponder and ponder_idx is not None:
+            try:
+                ponder = _index_to_uci(_board_after(board, bestmove_idx), ponder_idx)
+            except Exception:
+                ponder = None
         return SearchResult(
             bestmove_uci=bestmove,
             ponder_uci=ponder,
@@ -748,7 +769,7 @@ class SearchWorker:
             pv=_uci_pv(board, pv_indices),
             score_cp=q_to_cp(0.5 * (last_value + 1.0)),
             tbhits=tb_probe.hits if tb_probe is not None else 0,
-            score_mate=_pv_mate_moves(board, pv_indices),
+            score_mate=None,
         )
 
     def _should_stop_search(
@@ -789,6 +810,7 @@ class SearchWorker:
         max_depth: int | None = None,
         root_moves: tuple[str, ...] = (),
         info_cb: InfoCallback | None = None,
+        include_ponder: bool = False,
     ) -> SearchResult:
         """Search until any of: stop_event set, deadline expired, max_nodes hit,
         PV length ≥ max_depth.
@@ -809,10 +831,22 @@ class SearchWorker:
 
         allowed_root_indices = _allowed_root_indices(board, root_moves)
 
+        mate = _try_immediate_checkmate(
+            board, allowed_root_indices=allowed_root_indices,
+        )
+        if mate is not None:
+            return mate
+
         short = (
             None
             if allowed_root_indices is not None
-            else self._try_tb_shortcut(board, tb_probe, deadline, info_cb)
+            else self._try_tb_shortcut(
+                board,
+                tb_probe,
+                deadline,
+                info_cb,
+                include_ponder=include_ponder,
+            )
         )
         if short is not None:
             return short
@@ -873,6 +907,7 @@ class SearchWorker:
             board=board, total_nodes=total_nodes,
             last_value=last_value, tb_probe=tb_probe,
             allowed_root_indices=allowed_root_indices,
+            include_ponder=include_ponder,
         )
 
     def _run_walker_chunk(
@@ -1111,7 +1146,7 @@ def _allowed_root_indices(board: chess.Board, root_moves: tuple[str, ...]) -> se
 
 
 def _try_tb_root_bestmove(
-    board: chess.Board, tb_probe: SyzygyProbe,
+    board: chess.Board, tb_probe: SyzygyProbe, *, include_ponder: bool,
 ) -> SearchResult | None:
     """Return a SearchResult built from the TB's DTZ-optimal move at root,
     or None if the position isn't TB-eligible (or the probe fails)."""
@@ -1132,12 +1167,14 @@ def _try_tb_root_bestmove(
     else:
         score_cp = 0  # draw (includes cursed/blessed in our convention)
 
-  # Ponder move: after our best, what's the opponent's DTZ-optimal reply?
-  # Re-runs try_tb_root_move; still cheap (a few legal-move probes).
-    board_after = board.copy(stack=False)
-    board_after.push(best)
-    ponder = try_tb_root_move(board_after, tb_probe._path)
-    ponder_uci = ponder[0].uci() if ponder is not None else None
+    ponder_uci = None
+    if include_ponder:
+        # Ponder move: after our best, what's the opponent's DTZ-optimal reply?
+        # Re-runs try_tb_root_move; still cheap (a few legal-move probes).
+        board_after = board.copy(stack=False)
+        board_after.push(best)
+        ponder = try_tb_root_move(board_after, tb_probe._path)
+        ponder_uci = ponder[0].uci() if ponder is not None else None
 
     return SearchResult(
         bestmove_uci=best.uci(),
@@ -1150,34 +1187,31 @@ def _try_tb_root_bestmove(
     )
 
 
-def _pv_mate_moves(root_board: chess.Board, pv_indices: list[int]) -> int | None:
-    """If the PV terminates in checkmate, return signed mate-in-N *moves*
-    (UCI convention); otherwise None. Positive = root STM mates, negative
-    = root STM gets mated.
+def _try_immediate_checkmate(
+    board: chess.Board,
+    *,
+    allowed_root_indices: set[int] | None = None,
+) -> SearchResult | None:
+    """Return an immediate mating move before root candidate pruning.
 
-    Walks the PV onto a local copy of the board — O(len(pv)). Only emits
-    mate when the PV actually ends in a checkmate, so the number is real,
-    not a Q-saturation artifact (Syzygy wins still go out as high cp)."""
-    if not pv_indices:
+    Gumbel search only expands its top-k root candidates. If the policy puts
+    a mate-in-1 outside that set, the tree may never discover it and can even
+    prefer a high-prior terminal draw. A legal mate is tactically decisive and
+    cheap to detect directly at the root.
+    """
+    mate = immediate_mate_move(board, allowed_root_indices=allowed_root_indices)
+    if mate is None:
         return None
-    b = root_board.copy(stack=False)
-    for idx in pv_indices:
-        try:
-            mv = index_to_move(int(idx), b)
-        except Exception:
-            return None
-        if mv not in b.legal_moves:
-            return None
-        b.push(mv)
-    if not b.is_checkmate():
-        return None
-  # After pushing all PV moves, b.turn is the side that has no legal moves
-  # (the mated side). Mating side = opposite. Convert plies → UCI moves
-  # with ceil(plies/2) so odd plies (STM delivers mate) round up correctly.
-    plies = len(pv_indices)
-    mating_side = not b.turn
-    moves = (plies + 1) // 2
-    return moves if mating_side == root_board.turn else -moves
+    move, _ = mate
+    return SearchResult(
+        bestmove_uci=move.uci(),
+        ponder_uci=None,
+        nodes=1,
+        pv=(move.uci(),),
+        score_cp=q_to_cp(1.0),
+        tbhits=0,
+        score_mate=1,
+    )
 
 
 def _best_move_and_pv(
@@ -1227,30 +1261,23 @@ def _pv_from_root_action(
     return pv
 
 
-def _predicted_opponent_reply(
+def _reply_at_child(
     tree: MCTSTree,
     root_id: int,
-    allowed_root_indices: set[int] | None = None,
+    action_idx: int,
 ) -> int | None:
-    """Move index the opponent is predicted to play after OUR bestmove.
+    """Most-visited child at the node reached by ``action_idx`` from root.
 
-    This is what we ponder on, not our own alternative — we take the
-    most-visited root child (our bestmove), descend to that node, and
-    return ITS most-visited child (opponent's best reply at that node).
-
-    Distinct from the "root's second-most-visited child" which would be
-    our 2nd-best move from the current position — a different concept.
+    This is the opponent's predicted reply after OUR specific move,
+    not after the globally most-visited root move.
     """
-    lines = _multipv_lines(
-        tree,
-        root_id,
-        root_q_default=0.0,
-        n=1,
-        allowed_root_indices=allowed_root_indices,
-    )
-    if not lines or len(lines[0][2]) < 2:
+    cid = tree.find_child(root_id, int(action_idx))
+    if cid == -1:
         return None
-    return lines[0][2][1]
+    a, vs = tree.get_children_visits(cid)
+    if a.size == 0:
+        return None
+    return int(a[int(np.argmax(vs))])
 
 
 def _uci_pv(root_board: chess.Board, pv_indices: list[int]) -> tuple[str, ...]:

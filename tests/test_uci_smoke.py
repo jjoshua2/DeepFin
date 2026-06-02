@@ -102,7 +102,7 @@ def test_position_fen_and_search(tiny_checkpoint: Path) -> None:
             proc.kill()
 
 
-def test_bestmove_emits_ponder_suffix(tiny_checkpoint: Path) -> None:
+def test_bestmove_omits_ponder_suffix_by_default(tiny_checkpoint: Path) -> None:
     proc = _spawn_engine(tiny_checkpoint)
     reader = _LineReader(proc)
     try:
@@ -117,11 +117,7 @@ def test_bestmove_emits_ponder_suffix(tiny_checkpoint: Path) -> None:
         tokens = bestmove_line.split()
         assert tokens[0] == "bestmove"
         assert len(tokens[1]) >= 4
-        # With 16 sims the tree almost always has at least one grandchild
-        # (opponent's reply), so ponder should be present.
-        if len(tokens) >= 4:
-            assert tokens[2] == "ponder"
-            assert len(tokens[3]) >= 4
+        assert "ponder" not in tokens
         _send(proc, "quit")
         proc.wait(timeout=5)
     finally:

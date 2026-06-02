@@ -114,11 +114,14 @@ _JOIN_TIMEOUT_S = 30.0
 
 @dataclass
 class EngineOptions:
-  # Soft cap on MCTS tree memory in MB. Search halts between chunks when
-  # the tree's own allocations exceed this — prevents runaway growth from
-  # pushing the process into swap on long analysis. It is NOT a bounded
-  # transposition table; we stop adding nodes rather than evicting.
-    hash_mb: int = 4096
+  # Soft cap on MCTS tree memory in MB. Allocated lazily — the tree only
+  # grows to what a search actually needs, so this is a ceiling, not a
+  # reservation. Tree reuse refuses to extend a tree past half this value
+  # (see ``advance_root``), rebuilding fresh instead, so memory stays
+  # bounded without the mid-game search collapse that hitting the hard cap
+  # would cause. It is NOT a bounded transposition table; we rebuild rather
+  # than evict.
+    hash_mb: int = 16384
   # Number of MCTS walker threads. 1 = classic Gumbel path; >1 = PUCT
   # walker pool with virtual loss. Set via UCI `Threads`.
     threads: int = 2
@@ -707,7 +710,7 @@ class Engine:
         max_depth = None if is_ponder else limits.max_depth
         deadline = Deadline(deadline_ms=deadline_ms)
         try:
-            return self._worker.run(
+            result = self._worker.run(
                 board,
                 stop_event=self._stop_event,
                 deadline=deadline,
@@ -715,11 +718,25 @@ class Engine:
                 max_depth=max_depth,
                 root_moves=limits.searchmoves,
                 info_cb=self._emit_info,
+                include_ponder=self._options.ponder,
             )
+            if not is_ponder:
+                self._emit_info(
+                    nodes=result.nodes,
+                    elapsed_ms=deadline.elapsed_ms(),
+                    score_cp=result.score_cp,
+                    pv=result.pv,
+                    tbhits=result.tbhits,
+                    score_mate=result.score_mate,
+                    multipv=None,
+                    wdl=None,
+                )
+            return result
         except Exception as exc:  # pragma: no cover — UCI crash-safety
             _println(f"info string search error: {exc!r}")
+            fallback = _legal_fallback_move(board, limits.searchmoves)
             return SearchResult(
-                bestmove_uci="0000", ponder_uci=None, nodes=0, pv=(), score_cp=0, tbhits=0,
+                bestmove_uci=fallback, ponder_uci=None, nodes=0, pv=(), score_cp=0, tbhits=0,
             )
 
     def _emit_info(
@@ -744,7 +761,8 @@ class Engine:
         )))
 
     def _emit_bestmove(self, result: SearchResult) -> None:
-        _println(format_bestmove(result.bestmove_uci, ponder=result.ponder_uci))
+        ponder = result.ponder_uci if self._options.ponder else None
+        _println(format_bestmove(result.bestmove_uci, ponder=ponder))
 
     def close(self) -> None:
         """Stop any running search and release the worker's evaluator. Call
@@ -764,6 +782,23 @@ class Engine:
                 _println("info string search stop timed out; thread still running")
             else:
                 self._search_thread = None
+
+
+def _legal_fallback_move(board: chess.Board, searchmoves: tuple[str, ...]) -> str:
+    """Return a legal fallback that respects UCI ``searchmoves`` constraints."""
+    if searchmoves:
+        for uci in searchmoves:
+            try:
+                move = chess.Move.from_uci(str(uci))
+            except ValueError:
+                continue
+            if move in board.legal_moves:
+                return move.uci()
+        return "0000"
+    try:
+        return next(iter(board.legal_moves)).uci()
+    except StopIteration:
+        return "0000"
 
 
 def _println(s: str) -> None:

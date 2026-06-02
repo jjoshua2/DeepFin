@@ -8,6 +8,67 @@ import chess
 
 from chess_anti_engine.uci.engine import Engine, EngineOptions, emit_handshake
 from chess_anti_engine.uci.protocol import CmdPosition, CmdSetOption
+from chess_anti_engine.uci.search import SearchResult
+from chess_anti_engine.uci.time_manager import SearchLimits
+
+
+def test_run_one_phase_falls_back_to_legal_move_on_search_exception(capsys) -> None:
+    worker = MagicMock()
+    worker.run = MagicMock(side_effect=RuntimeError("boom"))
+    engine = Engine(worker=worker)
+    board = chess.Board()
+    limits = SearchLimits(deadline_ms=None, max_nodes=None, searchmoves=())
+    result = engine._run_one_phase(limits, is_ponder=False, board=board)  # noqa: SLF001
+    assert result.bestmove_uci in {m.uci() for m in board.legal_moves}
+    assert result.ponder_uci is None
+    assert "boom" in capsys.readouterr().out
+
+
+def test_run_one_phase_fallback_respects_searchmoves(capsys) -> None:
+    worker = MagicMock()
+    worker.run = MagicMock(side_effect=RuntimeError("boom"))
+    engine = Engine(worker=worker)
+    board = chess.Board()
+    limits = SearchLimits(deadline_ms=None, max_nodes=None, searchmoves=("g1f3",))
+    result = engine._run_one_phase(limits, is_ponder=False, board=board)  # noqa: SLF001
+    assert result.bestmove_uci == "g1f3"
+    assert "boom" in capsys.readouterr().out
+
+
+def test_run_one_phase_fallback_returns_null_when_searchmoves_have_no_legal_move(capsys) -> None:
+    worker = MagicMock()
+    worker.run = MagicMock(side_effect=RuntimeError("boom"))
+    engine = Engine(worker=worker)
+    board = chess.Board()
+    limits = SearchLimits(deadline_ms=None, max_nodes=None, searchmoves=("a1a8",))
+    result = engine._run_one_phase(limits, is_ponder=False, board=board)  # noqa: SLF001
+    assert result.bestmove_uci == "0000"
+    assert "boom" in capsys.readouterr().out
+
+
+def test_emit_bestmove_omits_ponder_when_option_false(capsys) -> None:
+    engine = Engine(worker=MagicMock())
+    engine._options.ponder = False  # noqa: SLF001
+    result = SearchResult(
+        bestmove_uci="e2e4", ponder_uci="e7e5",
+        nodes=0, pv=(), score_cp=0, tbhits=0,
+    )
+    engine._emit_bestmove(result)  # noqa: SLF001
+    out = capsys.readouterr().out
+    assert "bestmove e2e4" in out
+    assert "ponder" not in out
+
+
+def test_emit_bestmove_includes_ponder_when_option_true(capsys) -> None:
+    engine = Engine(worker=MagicMock())
+    engine._options.ponder = True  # noqa: SLF001
+    result = SearchResult(
+        bestmove_uci="e2e4", ponder_uci="e7e5",
+        nodes=0, pv=(), score_cp=0, tbhits=0,
+    )
+    engine._emit_bestmove(result)  # noqa: SLF001
+    out = capsys.readouterr().out
+    assert "bestmove e2e4 ponder e7e5" in out
 
 
 def test_invalid_position_fen_clears_pending_state() -> None:

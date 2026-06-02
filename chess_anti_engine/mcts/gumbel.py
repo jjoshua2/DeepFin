@@ -21,7 +21,12 @@ from chess_anti_engine.mcts.puct import (
 from chess_anti_engine.mcts.puct import (
     _value_scalar_from_wdl_logits as _wdl_to_q,
 )
-from chess_anti_engine.moves import POLICY_ENCODING_AZ_4672, POLICY_SIZE, policy_batch_to_full_if_needed
+from chess_anti_engine.mcts.root_tactics import immediate_mate_root_policy
+from chess_anti_engine.moves import (
+    POLICY_ENCODING_AZ_4672,
+    POLICY_SIZE,
+    policy_batch_to_full_if_needed,
+)
 from chess_anti_engine.moves.encode import legal_move_indices
 
 GumbelManyResult = tuple[list[np.ndarray], list[int], list[float], list[np.ndarray]]
@@ -425,6 +430,11 @@ def _init_board_search_state(
     legal = np.nonzero(mask)[0]
     if legal.size == 0:
         return _finish(np.zeros((POLICY_SIZE,), dtype=np.float32), 0, root_q)
+
+    mate = immediate_mate_root_policy(board)
+    if mate is not None:
+        probs, action, value = mate
+        return _finish(probs, action, value)
 
     if legal.size == 1:
         a0 = int(legal[0])

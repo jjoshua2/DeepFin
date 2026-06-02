@@ -119,14 +119,11 @@ def _make_evaluator_factory(
     walker count + gumbel bucket will actually hit.
 
     ``compile_mode`` (e.g. ``"reduce-overhead"``) wraps the model with
-    ``torch.compile`` before warmup. Compile + cudagraph capture happens
-    on whichever thread calls ``_warmup_evaluator`` *through the wrapped
-    evaluator*: walkers=1 → main thread; walkers>1 → BatchCoalescingDispatcher
-    submitter thread (because it intercepts every evaluate_encoded). That
-    keeps cudagraph_trees TLS pinned to the same thread that replays
-    during search, which is load-bearing — the selfplay 2026-04-28 incident
-    (worker compiled on main, dispatched on submitter, fell back to eager
-    at 47ms/forward instead of ~25ms) is the failure mode this avoids.
+    ``torch.compile`` before warmup. Compile + cudagraph capture must happen
+    on the same thread that later replays the graph. In UCI the search itself
+    runs on worker threads, so compiled evaluators use the submitter-thread
+    dispatcher even at walkers=1; eager walkers=1 can keep the direct inplace
+    evaluator path.
     """
     input_history_encoding = str(getattr(models[0], "input_history_encoding", "legacy"))
 
@@ -156,11 +153,11 @@ def _make_evaluator_factory(
   # option can bump walker count at runtime without a race. Lock
   # is uncontended at 1 thread — overhead is ~10ns.
             evaluator = ThreadSafeGPUDispatcher(evaluator)
-  # Coalescer is only a win when there are concurrent callers to
-  # merge; at n_walkers=1 it just adds an Event per call with no
-  # batching benefit (~15-40µs overhead per leaf). Gate on walker
-  # count, not the --no-coalesce flag alone.
-        if coalesce and n_walkers > 1:
+  # The submitter-thread dispatcher is mandatory for compiled evaluators:
+  # CUDA graph capture and replay need to stay on the same thread. For eager
+  # evaluation it is only a batching optimization, so --no-coalesce can still
+  # bypass it when there is no compile mode.
+        if compile_mode is not None or (coalesce and n_walkers > 1):
             evaluator = BatchCoalescingDispatcher(evaluator, max_batch=max_batch)
         if eval_cache_entries > 0:
             evaluator = EncodedEvalCache(

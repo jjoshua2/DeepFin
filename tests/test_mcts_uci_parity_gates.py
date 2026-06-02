@@ -363,3 +363,32 @@ def test_uci_advance_root_reuses_tree_and_preserves_new_root_contract() -> None:
     mask = np.zeros((POLICY_SIZE,), dtype=np.bool_)
     mask[actions] = True
     assert np.array_equal(mask, _expected_root_mask(board))
+
+
+def test_uci_advance_root_refuses_reuse_when_tree_above_half_memory_cap() -> None:
+    board = chess.Board()
+    worker = SearchWorker(
+        _ZeroEvaluator(),
+        device="cpu",
+        chunk_sims=16,
+        gumbel_cfg=GumbelConfig(simulations=16, topk=8, temperature=0.0, add_noise=False),
+    )
+
+    first = worker.run(
+        board,
+        stop_event=threading.Event(),
+        deadline=Deadline(None),
+        max_nodes=16,
+    )
+    first_move = chess.Move.from_uci(first.bestmove_uci)
+    assert worker._tree is not None  # noqa: SLF001
+    assert worker._root_id is not None  # noqa: SLF001
+    tree = worker._tree  # noqa: SLF001
+    old_root = int(worker._root_id)  # noqa: SLF001
+
+    worker._max_tree_bytes = max(1, int(tree.memory_bytes()) * 2)  # noqa: SLF001
+
+    assert not worker.advance_root(board, [first_move])
+    assert worker._tree is tree  # noqa: SLF001
+    assert worker._root_id == old_root  # noqa: SLF001
+    assert worker._tree_fen == board.fen()  # noqa: SLF001
