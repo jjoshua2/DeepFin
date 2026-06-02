@@ -40,6 +40,8 @@ python -m chess_anti_engine.run --config configs/default.yaml --mode train
 - Before stopping or restarting PBT, prefer `python3 scripts/graceful_restart.py` so active trials finish the current iteration and pause cleanly before the restart.
 - Salvage workflows are CLI-driven: `./scripts/train.sh salvage-export ...` and `./scripts/train.sh salvage-restart <pool_dir>`. Do not edit `configs/pbt2_small.yaml` just to activate or disable salvage.
 - `configs/pbt2_small.yaml` is the production config for active training. `configs/default.yaml` is the larger reference config.
+- Production Syzygy uses the same paths as `configs/pbt2_small.yaml`: `/home/josh/projects/chess/data/syzygy_3-4-5:/mnt/e/chess/syzygy_6_dtz`. Despite the local directory name, it contains 3-6 man WDL (`.rtbw`) plus 3-5 man DTZ (`.rtbz`); the 6-man DTZ tables are on the external 8 TB drive mounted at `/mnt/e`.
+- For engine matches or search debugging, pass that full colon-separated path to `SyzygyPath` for both engines when you want production-equivalent tablebase behavior. Do not fall back to `data/syzygy_3-4man` unless the task explicitly wants a small-tablebase smoke test.
 
 ## Coding Style & Naming Conventions
 - Target Python 3.10+, 4-space indentation, and explicit type hints.
