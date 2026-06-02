@@ -523,13 +523,15 @@ static int cboard_can_claim_fifty_moves(const CBoard *b) {
     if (b->halfmove_clock >= 100) return 1;
     if (b->halfmove_clock != 99) return 0;
 
+    /* Claimable at clock 99 iff some legal move is reversible (not a pawn move
+     * or capture): that move would push the clock to 100. Read the move's
+     * from/to from POLICY_LUT and test reversibility directly, instead of
+     * copying + pushing every reply onto a scratch board. */
     int replies[256];
     int n = cboard_legal_move_indices(b, replies, /*sorted=*/0);
     for (int i = 0; i < n; i++) {
-        CBoard child;
-        memcpy(&child, b, sizeof(CBoard));
-        cboard_push_index(&child, replies[i]);
-        if (child.halfmove_clock >= 100) return 1;
+        PolicyMove pm = POLICY_LUT[b->turn][replies[i]];
+        if (!cboard_move_is_zeroing(b, pm.from_sq, pm.to_sq)) return 1;
     }
     return 0;
 }
@@ -559,14 +561,21 @@ static int cboard_can_claim_threefold_repetition(const CBoard *b) {
     return 0;
 }
 
-/* root_terminal_actions(legal_indices) -> (mate_action, draw_actions)
+/* root_terminal_actions(legal_indices, detect_draws=True)
+ *   -> (mate_action, draw_actions)
  * Scans root children in one C pass. mate_action is -1 when absent.
  * Draw actions include immediate stalemate / 50-move / 3-fold / insufficient
  * material terminals. Mate has priority over draw adjudication, matching the
- * prior Python helper's is_checkmate() before is_game_over() order. */
+ * prior Python helper's is_checkmate() before is_game_over() order.
+ *
+ * When detect_draws is false only the mate is computed (draw_actions is empty).
+ * Callers that won't use the draws — e.g. a root that isn't winning, where
+ * draw terminals are never pruned — pass detect_draws=False to skip the
+ * (potentially reply-claim) draw work entirely. */
 static PyObject* PyCBoard_root_terminal_actions(PyCBoard *self, PyObject *args) {
     PyObject *legal_obj;
-    if (!PyArg_ParseTuple(args, "O", &legal_obj)) return NULL;
+    int detect_draws = 1;
+    if (!PyArg_ParseTuple(args, "O|p", &legal_obj, &detect_draws)) return NULL;
 
     PyArrayObject *legal_arr = (PyArrayObject*)PyArray_FROM_OTF(
         legal_obj, NPY_INT32, NPY_ARRAY_IN_ARRAY
@@ -602,6 +611,8 @@ static PyObject* PyCBoard_root_terminal_actions(PyCBoard *self, PyObject *args) 
             draw_n = 0;
             break;
         }
+
+        if (!detect_draws) continue;
 
         if (
             cboard_can_claim_fifty_moves(&child)
