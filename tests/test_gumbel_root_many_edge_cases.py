@@ -166,7 +166,7 @@ def test_gumbel_c_takes_immediate_mate_over_high_prior_stalemate():
 
 
 @pytest.mark.skipif(run_gumbel_root_many_c is None, reason="C tree extension not available")
-def test_gumbel_c_can_disable_immediate_mate_shortcut():
+def test_gumbel_c_can_disable_terminal_root_shortcuts():
     board = chess.Board(_MATE_VS_STALEMATE_FEN)
     pre_pol, pre_wdl, mate_idx, stalemate_idx = _mate_vs_stalemate_logits(board)
 

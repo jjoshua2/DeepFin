@@ -241,8 +241,8 @@ def test_ponder_aligns_with_gumbel_bestmove_not_most_visited_root() -> None:
 def test_sampled_multi_ply_mate_pv_does_not_emit_proven_mate_score() -> None:
     """A Gumbel/MCTS PV can end in mate without proving mate at the root.
 
-    Only direct root proofs such as the immediate mate shortcut should emit
-    UCI ``score mate``. Otherwise sampled PVs can look like definite mate
+    Only direct root proofs such as the terminal shortcut's mate case should
+    emit UCI ``score mate``. Otherwise sampled PVs can look like definite mate
     scores in match logs and then disappear on the next root.
     """
     worker = SearchWorker(MagicMock(), device="cpu", n_walkers=1)

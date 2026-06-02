@@ -747,7 +747,7 @@ class Engine:
                 root_moves=limits.searchmoves,
                 info_cb=_phase_info_cb,
                 include_ponder=self._options.ponder,
-                allow_immediate_mate=not is_ponder,
+                allow_terminal_shortcuts=not is_ponder,
             )
             if not is_ponder and not emitted_info:
                 self._emit_info(

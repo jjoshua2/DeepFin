@@ -106,7 +106,7 @@ def test_run_one_phase_emits_final_info_when_worker_is_silent(capsys) -> None:
     assert "pv e2e4" in lines[0]
 
 
-def test_run_one_phase_disables_immediate_mate_shortcut_during_ponder() -> None:
+def test_run_one_phase_disables_terminal_shortcuts_during_ponder() -> None:
     worker = MagicMock()
     worker.run = MagicMock(
         return_value=SearchResult(
@@ -124,10 +124,10 @@ def test_run_one_phase_disables_immediate_mate_shortcut_during_ponder() -> None:
 
     engine._run_one_phase(limits, is_ponder=True, board=board)  # noqa: SLF001
 
-    assert worker.run.call_args.kwargs["allow_immediate_mate"] is False
+    assert worker.run.call_args.kwargs["allow_terminal_shortcuts"] is False
 
 
-def test_run_one_phase_allows_immediate_mate_shortcut_for_normal_search() -> None:
+def test_run_one_phase_allows_terminal_shortcuts_for_normal_search() -> None:
     worker = MagicMock()
     worker.run = MagicMock(
         return_value=SearchResult(
@@ -145,7 +145,7 @@ def test_run_one_phase_allows_immediate_mate_shortcut_for_normal_search() -> Non
 
     engine._run_one_phase(limits, is_ponder=False, board=board)  # noqa: SLF001
 
-    assert worker.run.call_args.kwargs["allow_immediate_mate"] is True
+    assert worker.run.call_args.kwargs["allow_terminal_shortcuts"] is True
 
 
 def test_emit_bestmove_omits_ponder_when_option_false(capsys) -> None:

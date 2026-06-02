@@ -253,7 +253,7 @@ def test_uci_gumbel_chunk_forces_deterministic_temperature(monkeypatch: pytest.M
     assert worker._last_gumbel_action_idx == 0  # noqa: SLF001
 
 
-def test_uci_gumbel_chunk_threads_immediate_mate_gate_to_c(
+def test_uci_gumbel_chunk_threads_terminal_shortcut_gate_to_c(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen_flags: list[bool] = []
@@ -271,7 +271,7 @@ def test_uci_gumbel_chunk_threads_immediate_mate_gate_to_c(
     )
 
     worker._run_gumbel_chunk(  # noqa: SLF001
-        4, chess.Board(), tb_probe=None, allow_immediate_mate=False,
+        4, chess.Board(), tb_probe=None, allow_terminal_shortcuts=False,
     )
 
     assert seen_flags == [False]
