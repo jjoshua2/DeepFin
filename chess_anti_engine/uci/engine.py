@@ -12,11 +12,10 @@ from __future__ import annotations
 import sys
 import threading
 from dataclasses import dataclass, replace
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 import chess
 
-from chess_anti_engine.inference import BatchEvaluator
 from chess_anti_engine.tablebase import SyzygyProbe, get_tablebase
 
 from .protocol import (
@@ -42,6 +41,9 @@ from .time_manager import Deadline, SearchLimits, limits_from_go
 
 _ENGINE_NAME = "DeepFin"
 _ENGINE_AUTHOR = "jjosh"
+
+if TYPE_CHECKING:
+    from chess_anti_engine.inference import BatchEvaluator
 
 
 def _attach_log_file(path: str) -> None:
@@ -191,9 +193,9 @@ class Engine:
         self,
         worker: SearchWorker,
         *,
-        rebuild_evaluator: "Callable[[int, int], BatchEvaluator] | None" = None,
+        rebuild_evaluator: Callable[[int, int], BatchEvaluator] | None = None,
         rebuild_multi_gpu_pucv_factories: (
-            "Callable[[int, int], list[Callable[[], BatchEvaluator]]] | None"
+            Callable[[int, int], list[Callable[[], BatchEvaluator]]] | None
         ) = None,
         options: EngineOptions | None = None,
     ) -> None:
@@ -747,7 +749,7 @@ class Engine:
                 root_moves=limits.searchmoves,
                 info_cb=_phase_info_cb,
                 include_ponder=self._options.ponder,
-                allow_terminal_shortcuts=not is_ponder,
+                allow_terminal_shortcuts=not is_ponder and not limits.is_open_ended(),
             )
             if not is_ponder and not emitted_info:
                 self._emit_info(

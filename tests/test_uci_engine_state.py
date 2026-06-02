@@ -141,11 +141,33 @@ def test_run_one_phase_allows_terminal_shortcuts_for_normal_search() -> None:
     )
     engine = Engine(worker=worker)
     board = chess.Board()
-    limits = SearchLimits(deadline_ms=None, max_nodes=None, searchmoves=())
+    limits = SearchLimits(deadline_ms=1000, max_nodes=None, searchmoves=())
 
     engine._run_one_phase(limits, is_ponder=False, board=board)  # noqa: SLF001
 
     assert worker.run.call_args.kwargs["allow_terminal_shortcuts"] is True
+
+
+def test_run_one_phase_disables_terminal_shortcuts_for_open_ended_search() -> None:
+    worker = MagicMock()
+    worker.run = MagicMock(
+        return_value=SearchResult(
+            bestmove_uci="e2e4",
+            ponder_uci=None,
+            nodes=1,
+            pv=("e2e4",),
+            score_cp=0,
+            tbhits=0,
+        ),
+    )
+    engine = Engine(worker=worker)
+    board = chess.Board()
+    limits = SearchLimits(deadline_ms=None, max_nodes=None, max_depth=None, searchmoves=())
+
+    engine._run_one_phase(limits, is_ponder=False, board=board)  # noqa: SLF001
+
+    assert limits.is_open_ended()
+    assert worker.run.call_args.kwargs["allow_terminal_shortcuts"] is False
 
 
 def test_emit_bestmove_omits_ponder_when_option_false(capsys) -> None:
