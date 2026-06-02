@@ -240,8 +240,7 @@ def _info_float(value: Any) -> float | None:
         return None
 
 
-def _score_cp(value: Any, *, white_to_move: bool) -> int | None:
-    del white_to_move
+def _score_cp(value: Any) -> int | None:
     try:
         score_obj = value.white() if hasattr(value, "white") else value
         if hasattr(score_obj, "score"):
@@ -294,7 +293,7 @@ def _open_syzygy_tablebase(path: str) -> chess.syzygy.Tablebase | None:
         try:
             tablebase.add_directory(directory)
             added += 1
-        except (OSError, FileNotFoundError):
+        except OSError:
             continue
     if added == 0:
         tablebase.close()
@@ -305,6 +304,8 @@ def _open_syzygy_tablebase(path: str) -> chess.syzygy.Tablebase | None:
 def _syzygy_table_counts(tablebase: Any | None) -> tuple[int, int]:
     if tablebase is None:
         return 0, 0
+    # python-chess exposes loaded Syzygy files through these table dictionaries;
+    # there is no public coverage API, so validation depends on this layout.
     return len(getattr(tablebase, "wdl", ())), len(getattr(tablebase, "dtz", ()))
 
 
@@ -345,6 +346,12 @@ def _tb_adjudicate_result(
     *,
     max_pieces: int,
 ) -> str | None:
+    """Return a WDL tablebase result for covered positions.
+
+    This is theoretical WDL only. The caller checks normal claimable game rules
+    before probing, but WDL does not account for DTZ-vs-halfmove-clock nuance in
+    theoretically won positions close to the fifty-move counter.
+    """
     if tablebase is None:
         return None
     if chess.popcount(board.occupied) > max_pieces:
@@ -397,7 +404,10 @@ def _play_node_limited(
     try:
         while True:
             if not analysis.would_block():
-                info = analysis.get()
+                try:
+                    info = analysis.get()
+                except chess.engine.AnalysisComplete:
+                    break
                 latest_info.update(info)
                 try:
                     nodes_seen = max(nodes_seen, int(info.get("nodes", 0)))
@@ -413,7 +423,8 @@ def _play_node_limited(
                 analysis.stop()
                 raise TimeoutError(
                     f"engine did not report {nodes} nodes within {_node_timeout_s(nodes):.1f}s "
-                    f"(last nodes={nodes_seen})"
+                    f"while externally enforcing nodes (last nodes={nodes_seen}); "
+                    "use native go nodes or a smaller enforced budget for slow engines"
                 )
             else:
                 time.sleep(0.005)
@@ -501,7 +512,7 @@ def play_one_game(
         move = move_result.move
         info = move_result.info
 
-        def append_attempt_record(
+        def append_move_record(
             move_uci: str,
             *,
             white_after_s: float | None,
@@ -514,7 +525,7 @@ def play_one_game(
                 elapsed_s=elapsed_s,
                 nodes=_info_int(info.get("nodes")),
                 engine_time_s=_info_float(info.get("time")),
-                score_cp=_score_cp(info.get("score"), white_to_move=white_to_move),
+                score_cp=_score_cp(info.get("score")),
                 white_clock_before_s=white_before,
                 black_clock_before_s=black_before,
                 white_clock_after_s=white_after_s,
@@ -525,7 +536,7 @@ def play_one_game(
                 move_callback(move_record)
 
         if move is None or move not in board.legal_moves:
-            append_attempt_record(
+            append_move_record(
                 "0000" if move is None else move.uci(),
                 white_after_s=white_clock_s if clock_mode else None,
                 black_after_s=black_clock_s if clock_mode else None,
@@ -542,7 +553,7 @@ def play_one_game(
             if white_to_move:
                 white_clock_s -= elapsed_s
                 if white_clock_s < 0.0:
-                    append_attempt_record(
+                    append_move_record(
                         move.uci(),
                         white_after_s=white_clock_s,
                         black_after_s=black_clock_s,
@@ -552,29 +563,18 @@ def play_one_game(
             else:
                 black_clock_s -= elapsed_s
                 if black_clock_s < 0.0:
-                    append_attempt_record(
+                    append_move_record(
                         move.uci(),
                         white_after_s=white_clock_s,
                         black_after_s=black_clock_s,
                     )
                     return GameRecord("1-0", plies, initial, tuple(moves), tuple(move_records), "time")
                 black_clock_s += black_inc_s
-        move_record = MoveRecord(
-            ply=plies + 1,
-            color="W" if white_to_move else "B",
-            move=move.uci(),
-            elapsed_s=elapsed_s,
-            nodes=_info_int(info.get("nodes")),
-            engine_time_s=_info_float(info.get("time")),
-            score_cp=_score_cp(info.get("score"), white_to_move=white_to_move),
-            white_clock_before_s=white_before,
-            black_clock_before_s=black_before,
-            white_clock_after_s=white_clock_s if clock_mode else None,
-            black_clock_after_s=black_clock_s if clock_mode else None,
+        append_move_record(
+            move.uci(),
+            white_after_s=white_clock_s if clock_mode else None,
+            black_after_s=black_clock_s if clock_mode else None,
         )
-        move_records.append(move_record)
-        if move_callback is not None:
-            move_callback(move_record)
         moves.append(move)
         board.push(move)
         plies += 1

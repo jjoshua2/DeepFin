@@ -279,7 +279,49 @@ def test_play_node_limited_preserves_latest_analysis_info() -> None:
     assert result.move == move
     assert result.info["nodes"] == 7
     assert result.info["time"] == 0.125
-    assert module._score_cp(result.info["score"], white_to_move=True) == 23
+    assert module._score_cp(result.info["score"]) == 23
+
+
+def test_play_node_limited_handles_analysis_complete() -> None:
+    module = _load_match_vs_uci_module()
+    move = chess.Move.from_uci("e2e4")
+
+    class FakeAnalysis:
+        def __init__(self) -> None:
+            self.stop_calls = 0
+
+        def would_block(self) -> bool:
+            return False
+
+        def get(self) -> dict[str, object]:
+            raise chess.engine.AnalysisComplete
+
+        def stop(self) -> None:
+            self.stop_calls += 1
+
+        def wait(self) -> chess.engine.BestMove:
+            return chess.engine.BestMove(move, None)
+
+    class FakeEngine:
+        def __init__(self) -> None:
+            self.analysis_obj = FakeAnalysis()
+
+        def analysis(
+            self,
+            board: chess.Board,
+            limit: chess.engine.Limit,
+            *,
+            info: chess.engine.Info = chess.engine.INFO_NONE,
+        ) -> FakeAnalysis:
+            del board, limit, info
+            return self.analysis_obj
+
+    engine = FakeEngine()
+    result = module._play_node_limited(engine, chess.Board(), nodes=10)
+
+    assert result.move == move
+    assert result.info == {}
+    assert engine.analysis_obj.stop_calls == 1
 
 
 def test_play_one_game_logs_null_move_attempt(
