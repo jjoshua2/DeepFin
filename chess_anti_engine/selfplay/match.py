@@ -78,16 +78,21 @@ def _pick_moves_for_boards(
     input_history_encoding = str(getattr(model, "input_history_encoding", "legacy"))
     policy_encoding = str(getattr(model, "policy_encoding", "az_4672"))
     if str(mcts_type) == "gumbel":
-        gumbel_fn = _run_gumbel_root_many_c if _HAS_GUMBEL_C else run_gumbel_root_many
-        result = gumbel_fn(
-            model, sub_boards, device=device, rng=rng,
-            cfg=GumbelConfig(
-                simulations=int(mcts_simulations), temperature=float(temperature),
-                add_noise=bool(gumbel_add_noise),
-                input_history_encoding=input_history_encoding,
-                policy_encoding=policy_encoding,
-            ),
+        gumbel_cfg = GumbelConfig(
+            simulations=int(mcts_simulations), temperature=float(temperature),
+            add_noise=bool(gumbel_add_noise),
+            input_history_encoding=input_history_encoding,
+            policy_encoding=policy_encoding,
         )
+        if _HAS_GUMBEL_C:
+            result = _run_gumbel_root_many_c(
+                model, sub_boards, device=device, rng=rng, cfg=gumbel_cfg,
+                allow_terminal_root_shortcuts=False,
+            )
+        else:
+            result = run_gumbel_root_many(
+                model, sub_boards, device=device, rng=rng, cfg=gumbel_cfg,
+            )
         _probs, actions, _values, _masks = result[:4]
     else:
         puct_fn = _run_mcts_many_c if _HAS_C_TREE else run_mcts_many
