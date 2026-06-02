@@ -1,0 +1,232 @@
+from __future__ import annotations
+
+import importlib.util
+import sys
+from pathlib import Path
+from typing import Any
+
+import chess
+import pytest
+
+
+def _load_match_vs_uci_module():
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "match_vs_uci.py"
+    spec = importlib.util.spec_from_file_location("match_vs_uci_test_module", script_path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_side_limit_prefers_nodes_over_time() -> None:
+    module = _load_match_vs_uci_module()
+
+    limit = module._side_limit(time_ms=200, nodes=640_000)
+
+    assert limit.nodes == 640_000
+    assert limit.time is None
+
+
+def test_side_limit_uses_time_without_nodes() -> None:
+    module = _load_match_vs_uci_module()
+
+    limit = module._side_limit(time_ms=250, nodes=None)
+
+    assert limit.nodes is None
+    assert limit.time == 0.25
+
+
+def test_clock_limit_sets_both_clocks_and_increments() -> None:
+    module = _load_match_vs_uci_module()
+
+    limit = module._clock_limit(
+        white_clock_s=30.0,
+        black_clock_s=29.5,
+        white_inc_s=0.5,
+        black_inc_s=0.25,
+    )
+
+    assert limit.white_clock == 30.0
+    assert limit.black_clock == 29.5
+    assert limit.white_inc == 0.5
+    assert limit.black_inc == 0.25
+
+
+def test_play_label_prefers_clock_over_fallback_time() -> None:
+    module = _load_match_vs_uci_module()
+
+    assert module._play_label(
+        time_ms=200,
+        nodes=None,
+        clock_base_ms=30_000,
+        clock_inc_ms=500,
+    ) == "30+0.5s"
+
+
+def test_score_for_a_maps_results_by_color() -> None:
+    module = _load_match_vs_uci_module()
+
+    assert module._score_for_a("1-0", a_is_white=True) == 1.0
+    assert module._score_for_a("0-1", a_is_white=True) == 0.0
+    assert module._score_for_a("0-1", a_is_white=False) == 1.0
+    assert module._score_for_a("1-0", a_is_white=False) == 0.0
+    assert module._score_for_a("1/2-1/2", a_is_white=False) == 0.5
+
+
+def test_play_one_pairing_preserves_side_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_match_vs_uci_module()
+    calls = {}
+    white_engine: Any = object()
+    black_engine: Any = object()
+
+    def fake_play_one_game(eng_w: object, eng_b: object, **kwargs):
+        calls["eng_w"] = eng_w
+        calls["eng_b"] = eng_b
+        calls["kwargs"] = kwargs
+        return module.GameRecord("1/2-1/2", 0, chess.Board(), (), ())
+
+    monkeypatch.setattr(module, "play_one_game", fake_play_one_game)
+    white = module.EngineSide(
+        label="A",
+        engine=white_engine,
+        time_ms=100,
+        nodes=11,
+        clock_base_ms=30_000,
+        clock_inc_ms=500,
+        enforce_nodes=True,
+    )
+    black = module.EngineSide(
+        label="B",
+        engine=black_engine,
+        time_ms=250,
+        nodes=None,
+        clock_base_ms=15_000,
+        clock_inc_ms=250,
+        enforce_nodes=False,
+    )
+
+    record = module._play_one_pairing(
+        white=white,
+        black=black,
+        max_plies=3,
+        start_board=chess.Board(),
+        move_callback=None,
+        syzygy_adjudicator=None,
+        syzygy_adjudicate_max_pieces=6,
+    )
+
+    assert record.result == "1/2-1/2"
+    assert calls["eng_w"] is white_engine
+    assert calls["eng_b"] is black_engine
+    assert calls["kwargs"]["limit_w"].nodes == 11
+    assert calls["kwargs"]["limit_b"].time == 0.25
+    assert calls["kwargs"]["enforce_nodes_w"] is True
+    assert calls["kwargs"]["enforce_nodes_b"] is False
+    assert calls["kwargs"]["clock_base_w_ms"] == 30_000
+    assert calls["kwargs"]["clock_base_b_ms"] == 15_000
+    assert calls["kwargs"]["clock_inc_w_ms"] == 500
+    assert calls["kwargs"]["clock_inc_b_ms"] == 250
+    assert calls["kwargs"]["syzygy_adjudicate_max_pieces"] == 6
+
+
+def test_parse_opening_line_accepts_six_field_fen() -> None:
+    module = _load_match_vs_uci_module()
+
+    board = module._parse_opening_line("rn1q1rk1/p1ppbppp/b3pn2/1B6/2PP4/2N2N2/PP3PPP/R1BQR1K1 w - - 3 9")
+
+    assert board is not None
+    assert board.turn is True
+    assert board.fullmove_number == 9
+
+
+def test_parse_opening_line_accepts_four_field_epd() -> None:
+    module = _load_match_vs_uci_module()
+
+    board = module._parse_opening_line("8/8/8/8/8/8/K7/6k1 w - - bm Ka2;")
+
+    assert board is not None
+    assert board.fullmove_number == 1
+
+
+def test_score_ci_and_elo_helpers() -> None:
+    module = _load_match_vs_uci_module()
+
+    ci = module._score_ci([1.0, 0.5, 0.0, 0.5])
+
+    assert ci is not None
+    assert ci[0] < 0.5 < ci[1]
+    assert module._elo_from_score(0.5) == 0.0
+    assert module._elo_from_score(0.0) is None
+
+
+def test_tb_adjudicate_result_maps_wdl_from_side_to_move() -> None:
+    module = _load_match_vs_uci_module()
+
+    class FakeTablebase:
+        def probe_wdl(self, board: chess.Board) -> int:
+            del board
+            return 2
+
+    white_to_move = chess.Board("6k1/8/8/8/8/8/8/KQ6 w - - 0 1")
+    black_to_move = chess.Board("6k1/8/8/8/8/8/8/KQ6 b - - 0 1")
+
+    assert module._tb_adjudicate_result(white_to_move, FakeTablebase(), max_pieces=4) == "1-0"
+    assert module._tb_adjudicate_result(black_to_move, FakeTablebase(), max_pieces=4) == "0-1"
+
+
+def test_validate_syzygy_adjudicator_requires_wdl_tables() -> None:
+    module = _load_match_vs_uci_module()
+
+    class DtzOnlyTablebase:
+        wdl: dict[str, object] = {}
+        dtz = {"KQvK": object()}
+
+    with pytest.raises(SystemExit, match="0 WDL"):
+        module._validate_syzygy_adjudicator("/tb", DtzOnlyTablebase(), max_pieces=6)
+
+
+def test_validate_syzygy_adjudicator_requires_requested_wdl_coverage() -> None:
+    module = _load_match_vs_uci_module()
+
+    class FiveManOnlyTablebase:
+        wdl = {"KQvKRR": object()}
+        dtz: dict[str, object] = {}
+
+    with pytest.raises(SystemExit, match="only has WDL up to 5 pieces"):
+        module._validate_syzygy_adjudicator("/tb", FiveManOnlyTablebase(), max_pieces=6)
+
+
+def test_validate_syzygy_adjudicator_reports_table_coverage() -> None:
+    module = _load_match_vs_uci_module()
+
+    class CoveredTablebase:
+        wdl = {"KQvKR": object(), "KQBNvKP": object()}
+        dtz = {"KQvKRR": object()}
+
+    assert module._validate_syzygy_adjudicator(
+        "/tb",
+        CoveredTablebase(),
+        max_pieces=6,
+    ) == (2, 1, 6, 5)
+
+
+def test_warmup_engine_uses_external_node_limit(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    module = _load_match_vs_uci_module()
+    calls: list[int] = []
+
+    def fake_play_node_limited(eng: object, board: chess.Board, *, nodes: int):
+        del eng
+        assert board == chess.Board()
+        calls.append(nodes)
+        return module.MoveResult(chess.Move.from_uci("e2e4"), {"nodes": nodes})
+
+    monkeypatch.setattr(module, "_play_node_limited", fake_play_node_limited)
+    module._warmup_engine(object(), nodes=7, label="fake")
+
+    assert calls == [7]
+    assert "nodes=7" in capsys.readouterr().out
