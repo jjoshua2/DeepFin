@@ -52,6 +52,26 @@ def immediate_mate_root_policy(
     return one_hot_root_policy(mate[1])
 
 
+def immediate_terminal_draw_indices(
+    board: chess.Board,
+    *,
+    allowed_root_indices: set[int] | None = None,
+) -> set[int]:
+    """Return legal root moves that immediately end the game as a draw."""
+    if board.is_game_over():
+        return set()
+    out: set[int] = set()
+    for move in board.legal_moves:
+        action = int(move_to_index(move, board))
+        if allowed_root_indices is not None and action not in allowed_root_indices:
+            continue
+        child = board.copy(stack=True)
+        child.push(move)
+        if child.is_game_over(claim_draw=True) and not child.is_checkmate():
+            out.add(action)
+    return out
+
+
 def immediate_mate_cboard_policy(
     root_cb: CBoard,
     legal_idx: Iterable[int],
@@ -63,3 +83,35 @@ def immediate_mate_cboard_policy(
         if child.is_checkmate():
             return one_hot_root_policy(action_i)
     return None
+
+
+def immediate_terminal_cboard_policy_or_draws(
+    root_cb: CBoard,
+    legal_idx: Iterable[int],
+) -> tuple[tuple[np.ndarray, int, float] | None, set[int]]:
+    """Return an immediate mate policy, or terminal-draw actions when no mate exists."""
+    draws: set[int] = set()
+    for action in legal_idx:
+        child = root_cb.copy()
+        action_i = int(action)
+        child.push_index(action_i)
+        if child.is_checkmate():
+            return one_hot_root_policy(action_i), set()
+        if child.is_game_over():
+            draws.add(action_i)
+    return None, draws
+
+
+def immediate_terminal_draw_cboard_indices(
+    root_cb: CBoard,
+    legal_idx: Iterable[int],
+) -> set[int]:
+    """Return legal CBoard root actions that immediately draw."""
+    out: set[int] = set()
+    for action in legal_idx:
+        child = root_cb.copy()
+        action_i = int(action)
+        child.push_index(action_i)
+        if child.is_game_over() and not child.is_checkmate():
+            out.add(action_i)
+    return out

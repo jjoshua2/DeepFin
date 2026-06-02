@@ -60,7 +60,9 @@ from chess_anti_engine.mcts.gumbel import (
     _wdl_to_q,
     gumbel_policy_diagnostics,
 )
-from chess_anti_engine.mcts.root_tactics import immediate_mate_cboard_policy
+from chess_anti_engine.mcts.root_tactics import (
+    immediate_terminal_cboard_policy_or_draws,
+)
 from chess_anti_engine.moves import POLICY_SIZE, policy_batch_to_full_if_needed
 
 GumbelManyCResult = tuple[list[np.ndarray], list[int], list[float], list[np.ndarray], MCTSTree, list[int]]
@@ -304,6 +306,7 @@ def run_gumbel_root_many_c(
 
     root_ids: list[int] = [-1] * n_boards  # node IDs in C tree
     root_legal: list[np.ndarray | None] = [None] * n_boards
+    root_search_legal: list[np.ndarray | None] = [None] * n_boards
     root_pri: list[np.ndarray | None] = [None] * n_boards
     candidates_per_board: list[list[int] | None] = [None] * n_boards
     remaining_per_board: list[list[int] | None] = [None] * n_boards
@@ -348,6 +351,18 @@ def run_gumbel_root_many_c(
 
         root_legal[i] = legal_idx
 
+        terminal_mate, terminal_draws = immediate_terminal_cboard_policy_or_draws(
+            root_cb, legal_idx,
+        )
+
+        if float(root_qs[i]) > 0.0 and legal_idx.size > 1:
+            if terminal_draws:
+                draw_arr = np.fromiter(terminal_draws, dtype=np.int32)
+                keep = ~np.isin(legal_idx, draw_arr)
+                if keep.any():
+                    legal_idx = legal_idx[keep]
+        root_search_legal[i] = legal_idx
+
   # Softmax priors
         ll = pol_logits_batch[i][legal_idx].astype(np.float64)
         ll -= ll.max()
@@ -374,9 +389,8 @@ def run_gumbel_root_many_c(
                 root_ids[i] = rid
                 tree.expand(rid, legal_idx.astype(np.int32), priors)
 
-        mate = immediate_mate_cboard_policy(root_cb, legal_idx)
-        if mate is not None:
-            probs_out[i], actions_out[i], values_out[i] = mate
+        if terminal_mate is not None:
+            probs_out[i], actions_out[i], values_out[i] = terminal_mate
             root_qs[i] = values_out[i]
             continue
 
@@ -469,7 +483,7 @@ def run_gumbel_root_many_c(
         for g in range(2):
             for i in _grp[g]:
                 _pri_i = root_pri[i]
-                _legal_i = root_legal[i]
+                _legal_i = root_search_legal[i]
                 if _pri_i is None or _legal_i is None:
                     _sub_root_ids[g].append(-1)
                     continue

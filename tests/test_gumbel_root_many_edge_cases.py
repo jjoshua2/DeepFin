@@ -93,20 +93,21 @@ def _tiny_model() -> torch.nn.Module:
 
 
 class _ZeroEvaluator:
-    def evaluate_encoded(self, xs: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        n = int(xs.shape[0])
+    def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        n = int(x.shape[0])
         return np.zeros((n, POLICY_SIZE), dtype=np.float32), np.zeros((n, 3), dtype=np.float32)
 
 
 class _CompactZeroEvaluator:
-    def evaluate_encoded(self, xs: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        n = int(xs.shape[0])
+    def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        n = int(x.shape[0])
         full = np.zeros((n, POLICY_SIZE), dtype=np.float32)
         compact = policy_batch_to_encoding(full, policy_encoding=POLICY_ENCODING_LC0_1858)
         return compact, np.zeros((n, 3), dtype=np.float32)
 
 
 _MATE_VS_STALEMATE_FEN = "5k2/1R6/P4BB1/P7/2P5/8/3K3P/8 w - - 5 70"
+_STALEMATE_ONLY_FEN = "7k/8/6KP/8/8/8/8/8 w - - 0 1"
 
 
 def _mate_vs_stalemate_logits(board: chess.Board) -> tuple[np.ndarray, np.ndarray, int, int]:
@@ -161,6 +162,101 @@ def test_gumbel_c_takes_immediate_mate_over_high_prior_stalemate():
     assert values == [1.0]
     assert probs[0][mate_idx] == 1.0
     assert probs[0][stalemate_idx] == 0.0
+    assert np.array_equal(masks[0], legal_move_mask(board))
+
+
+def _stalemate_only_logits(
+    board: chess.Board,
+    *,
+    root_wdl_logits: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, int]:
+    stalemate_move = None
+    for move in board.legal_moves:
+        after = board.copy(stack=False)
+        after.push(move)
+        if after.is_stalemate():
+            stalemate_move = move
+            break
+    assert stalemate_move is not None
+    stalemate_idx = int(move_to_index(stalemate_move, board))
+    pre_pol = np.full((1, POLICY_SIZE), -100.0, dtype=np.float32)
+    pre_pol[0, stalemate_idx] = 100.0
+    return pre_pol, root_wdl_logits.astype(np.float32), stalemate_idx
+
+
+def test_gumbel_python_avoids_high_prior_stalemate_when_root_is_winning():
+    board = chess.Board(_STALEMATE_ONLY_FEN)
+    pre_pol, pre_wdl, stalemate_idx = _stalemate_only_logits(
+        board,
+        root_wdl_logits=np.array([[10.0, -10.0, -10.0]], dtype=np.float32),
+    )
+
+    probs, actions, values, masks = run_gumbel_root_many(
+        None,
+        [board],
+        device="cpu",
+        rng=np.random.default_rng(0),
+        cfg=GumbelConfig(simulations=1, topk=1, temperature=0.0, add_noise=False),
+        evaluator=_ZeroEvaluator(),
+        pre_pol_logits=pre_pol,
+        pre_wdl_logits=pre_wdl,
+    )
+
+    assert actions[0] != stalemate_idx
+    assert probs[0][stalemate_idx] == 0.0
+    assert np.isfinite(values[0])
+    assert np.array_equal(masks[0], legal_move_mask(board))
+
+
+@pytest.mark.skipif(run_gumbel_root_many_c is None, reason="C tree extension not available")
+def test_gumbel_c_avoids_high_prior_stalemate_when_root_is_winning():
+    board = chess.Board(_STALEMATE_ONLY_FEN)
+    pre_pol, pre_wdl, stalemate_idx = _stalemate_only_logits(
+        board,
+        root_wdl_logits=np.array([[10.0, -10.0, -10.0]], dtype=np.float32),
+    )
+
+    run_gumbel_root_many_c = _require_run_gumbel_root_many_c()
+    probs, actions, values, masks = run_gumbel_root_many_c(
+        None,
+        [board],
+        device="cpu",
+        rng=np.random.default_rng(0),
+        cfg=GumbelConfig(simulations=1, topk=1, temperature=0.0, add_noise=False),
+        evaluator=_ZeroEvaluator(),
+        pre_pol_logits=pre_pol,
+        pre_wdl_logits=pre_wdl,
+    )[:4]
+
+    assert actions[0] != stalemate_idx
+    assert probs[0][stalemate_idx] == 0.0
+    assert np.isfinite(values[0])
+    assert np.array_equal(masks[0], legal_move_mask(board))
+
+
+@pytest.mark.skipif(run_gumbel_root_many_c is None, reason="C tree extension not available")
+def test_gumbel_c_allows_high_prior_stalemate_when_root_is_losing():
+    board = chess.Board(_STALEMATE_ONLY_FEN)
+    pre_pol, pre_wdl, stalemate_idx = _stalemate_only_logits(
+        board,
+        root_wdl_logits=np.array([[-10.0, -10.0, 10.0]], dtype=np.float32),
+    )
+
+    run_gumbel_root_many_c = _require_run_gumbel_root_many_c()
+    probs, actions, values, masks = run_gumbel_root_many_c(
+        None,
+        [board],
+        device="cpu",
+        rng=np.random.default_rng(0),
+        cfg=GumbelConfig(simulations=1, topk=1, temperature=0.0, add_noise=False),
+        evaluator=cast(Any, object()),
+        pre_pol_logits=pre_pol,
+        pre_wdl_logits=pre_wdl,
+    )[:4]
+
+    assert actions[0] == stalemate_idx
+    assert probs[0][stalemate_idx] == 1.0
+    assert values[0] == pytest.approx(0.0)
     assert np.array_equal(masks[0], legal_move_mask(board))
 
 
