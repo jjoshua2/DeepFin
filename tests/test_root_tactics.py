@@ -81,6 +81,20 @@ def test_immediate_terminal_draw_indices_include_threefold_claim_after_move() ->
     assert draws == {int(move_to_index(repeated, board))}
 
 
+def test_immediate_terminal_draw_indices_include_threefold_claim_after_reply() -> None:
+    board = chess.Board()
+    for move in ["g1f3", "g8f6", "f3g1", "f6g8", "g1f3", "g8f6"]:
+        board.push(chess.Move.from_uci(move))
+    draw_move = chess.Move.from_uci("f3g1")
+    after = board.copy(stack=True)
+    after.push(draw_move)
+    assert after.is_game_over(claim_draw=True)
+
+    draws = root_tactics.immediate_terminal_draw_indices(board)
+
+    assert draws == {int(move_to_index(draw_move, board))}
+
+
 @pytest.mark.skipif(CBoard is None, reason="CBoard extension not available")
 def test_immediate_terminal_cboard_policy_or_draws_include_fifty_move_claim() -> None:
     board = chess.Board("8/8/8/4k3/8/8/3R4/4K3 w - - 99 1")
@@ -123,6 +137,24 @@ def test_immediate_terminal_cboard_policy_or_draws_include_threefold_after_move(
 
     assert mate is None
     assert draws == {repeated_idx}
+
+
+@pytest.mark.skipif(CBoard is None, reason="CBoard extension not available")
+def test_immediate_terminal_cboard_policy_or_draws_include_threefold_after_reply() -> None:
+    board = chess.Board()
+    for move in ["g1f3", "g8f6", "f3g1", "f6g8", "g1f3", "g8f6"]:
+        board.push(chess.Move.from_uci(move))
+    draw_move = chess.Move.from_uci("f3g1")
+    draw_idx = int(move_to_index(draw_move, board))
+    cboard_cls = _require_cboard()
+    cb = cboard_cls.from_board(board)
+
+    mate, draws = root_tactics.immediate_terminal_cboard_policy_or_draws(
+        cb, cb.legal_move_indices(),
+    )
+
+    assert mate is None
+    assert draws == {draw_idx}
 
 
 def _py_root_terminals(board: chess.Board) -> tuple[set[int], set[int]]:

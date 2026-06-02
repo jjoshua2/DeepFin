@@ -534,6 +534,31 @@ static int cboard_can_claim_fifty_moves(const CBoard *b) {
     return 0;
 }
 
+static int cboard_has_repeated_history_hash(const CBoard *b) {
+    for (int i = 0; i < b->hash_stack_len; i++) {
+        uint64_t h = b->hash_stack[i];
+        for (int j = i + 1; j < b->hash_stack_len; j++) {
+            if (b->hash_stack[j] == h) return 1;
+        }
+    }
+    return 0;
+}
+
+static int cboard_can_claim_threefold_repetition(const CBoard *b) {
+    if (cboard_is_threefold_repetition(b)) return 1;
+    if (!cboard_has_repeated_history_hash(b)) return 0;
+
+    int replies[256];
+    int n = cboard_legal_move_indices(b, replies, /*sorted=*/0);
+    for (int i = 0; i < n; i++) {
+        CBoard child;
+        memcpy(&child, b, sizeof(CBoard));
+        cboard_push_index(&child, replies[i]);
+        if (cboard_is_threefold_repetition(&child)) return 1;
+    }
+    return 0;
+}
+
 /* root_terminal_actions(legal_indices) -> (mate_action, draw_actions)
  * Scans root children in one C pass. mate_action is -1 when absent.
  * Draw actions include immediate stalemate / 50-move / 3-fold / insufficient
@@ -580,7 +605,7 @@ static PyObject* PyCBoard_root_terminal_actions(PyCBoard *self, PyObject *args) 
 
         if (
             cboard_can_claim_fifty_moves(&child)
-            || cboard_is_threefold_repetition(&child)
+            || cboard_can_claim_threefold_repetition(&child)
             || cboard_insufficient_material(&child)
         ) {
             if (draw_n < 256) draws[draw_n++] = (int32_t)action;
