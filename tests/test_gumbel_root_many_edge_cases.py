@@ -13,6 +13,7 @@ from chess_anti_engine.mcts.gumbel import (
     _select_top_m_with_gumbel,
     run_gumbel_root_many,
 )
+from chess_anti_engine.mcts._mcts_tree import MCTSTree
 from chess_anti_engine.mcts.puct import Node, _select_child
 from chess_anti_engine.model import ModelConfig, build_model
 from chess_anti_engine.moves import (
@@ -257,6 +258,54 @@ def test_gumbel_c_avoids_high_prior_stalemate_when_root_is_winning():
     assert probs[0][stalemate_idx] == 0.0
     assert np.isfinite(values[0])
     assert np.array_equal(masks[0], legal_move_mask(board))
+
+
+@pytest.mark.skipif(run_gumbel_root_many_c is None, reason="C tree extension not available")
+def test_gumbel_c_rebuilds_reused_root_missing_allowed_action():
+    board = chess.Board(_STALEMATE_ONLY_FEN)
+    pre_pol, pre_wdl, stalemate_idx = _stalemate_only_logits(
+        board,
+        root_wdl_logits=np.array([[10.0, -10.0, -10.0]], dtype=np.float32),
+    )
+    cfg = GumbelConfig(simulations=1, topk=1, temperature=0.0, add_noise=False)
+    tree = MCTSTree()
+
+    run_gumbel_root_many_c = _require_run_gumbel_root_many_c()
+    first = run_gumbel_root_many_c(
+        None,
+        [board],
+        device="cpu",
+        rng=np.random.default_rng(0),
+        cfg=cfg,
+        evaluator=_ZeroEvaluator(),
+        pre_pol_logits=pre_pol,
+        pre_wdl_logits=pre_wdl,
+        tree=tree,
+    )
+    _probs, actions, _values, _masks, tree, root_ids = first[:6]
+    old_root = root_ids[0]
+    assert actions[0] != stalemate_idx
+    assert tree.find_child(old_root, stalemate_idx) == -1
+
+    second = run_gumbel_root_many_c(
+        None,
+        [board],
+        device="cpu",
+        rng=np.random.default_rng(0),
+        cfg=cfg,
+        evaluator=_ZeroEvaluator(),
+        pre_pol_logits=pre_pol,
+        pre_wdl_logits=pre_wdl,
+        tree=tree,
+        root_node_ids=[old_root],
+        allowed_root_indices_batch=[{stalemate_idx}],
+    )
+    _probs, actions, _values, _masks, tree, root_ids = second[:6]
+    new_root = root_ids[0]
+
+    assert actions == [stalemate_idx]
+    assert new_root != old_root
+    assert tree.find_child(new_root, stalemate_idx) != -1
 
 
 @pytest.mark.skipif(run_gumbel_root_many_c is None, reason="C tree extension not available")

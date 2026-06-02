@@ -105,6 +105,15 @@ def _zero_root_output(value: float) -> tuple[np.ndarray, int, float, np.ndarray]
     )
 
 
+def _expanded_root_covers_actions(tree: MCTSTree, root_id: int, actions: np.ndarray) -> bool:
+    if actions.size == 0:
+        return True
+    child_actions, _visits = tree.get_children_visits(root_id)
+    if child_actions.size < actions.size:
+        return False
+    return bool(np.isin(actions, child_actions).all())
+
+
 def _tb_override(tree: MCTSTree | None, probe, wdl: np.ndarray) -> None:
     if probe is None or tree is None:
         return
@@ -386,7 +395,10 @@ def run_gumbel_root_many_c(
             _reused = False
             if root_node_ids is not None and root_node_ids[i] >= 0:
                 rid = root_node_ids[i]
-                if tree.is_expanded(rid):
+                if tree.is_expanded(rid) and (
+                    allowed_root_indices_batch is None
+                    or _expanded_root_covers_actions(tree, rid, legal_idx)
+                ):
                     root_ids[i] = rid
                     _reused = True
 
