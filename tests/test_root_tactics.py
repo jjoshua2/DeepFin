@@ -95,6 +95,19 @@ def test_immediate_terminal_cboard_policy_or_draws_include_fifty_move_claim() ->
 
 
 @pytest.mark.skipif(CBoard is None, reason="CBoard extension not available")
+def test_immediate_terminal_cboard_policy_or_draws_include_fifty_move_reply_claim() -> None:
+    board = chess.Board("8/8/8/4k3/8/8/3R4/4K3 w - - 98 1")
+    cboard_cls = _require_cboard()
+    cb = cboard_cls.from_board(board)
+    legal = cb.legal_move_indices()
+
+    mate, draws = root_tactics.immediate_terminal_cboard_policy_or_draws(cb, legal)
+
+    assert mate is None
+    assert draws == set(np.asarray(legal, dtype=np.int32).astype(int).tolist())
+
+
+@pytest.mark.skipif(CBoard is None, reason="CBoard extension not available")
 def test_immediate_terminal_cboard_policy_or_draws_include_threefold_after_move() -> None:
     board = chess.Board()
     for move in ["g1f3", "g8f6", "f3g1", "f6g8", "g1f3", "g8f6", "f3g1"]:
@@ -122,12 +135,7 @@ def _py_root_terminals(board: chess.Board) -> tuple[set[int], set[int]]:
         child.push(move)
         if child.is_checkmate():
             mates.add(idx)
-        elif (
-            child.is_stalemate()
-            or child.is_insufficient_material()
-            or child.can_claim_threefold_repetition()
-            or child.halfmove_clock >= 100
-        ):
+        elif child.is_game_over(claim_draw=True):
             draws.add(idx)
     return mates, draws
 
@@ -138,6 +146,7 @@ def _py_root_terminals(board: chess.Board) -> tuple[set[int], set[int]]:
 _PARITY_FENS = [
     pytest.param("5k2/1R6/P4BB1/P7/2P5/8/3K3P/8 w - - 5 70", id="mate-in-1"),
     pytest.param("8/8/8/8/8/8/5k2/5K1R w - - 5 1", id="stalemate-move-no-mate"),
+    pytest.param("8/8/8/4k3/8/8/3R4/4K3 w - - 98 1", id="fifty-move-reply-claim"),
     pytest.param("8/8/8/4k3/8/8/3R4/4K3 w - - 99 1", id="fifty-move"),
     pytest.param("8/8/8/4k3/8/8/3bK3/8 w - - 0 1", id="insufficient-material-capture"),
     pytest.param("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", id="no-terminal"),

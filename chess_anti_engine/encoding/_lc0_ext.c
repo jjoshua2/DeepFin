@@ -519,6 +519,21 @@ static PyObject* PyCBoard_is_stalemate(PyCBoard *self, PyObject *Py_UNUSED(args)
     return PyBool_FromLong(cboard_is_stalemate(&self->board));
 }
 
+static int cboard_can_claim_fifty_moves(const CBoard *b) {
+    if (b->halfmove_clock >= 100) return 1;
+    if (b->halfmove_clock != 99) return 0;
+
+    int replies[256];
+    int n = cboard_legal_move_indices(b, replies, /*sorted=*/0);
+    for (int i = 0; i < n; i++) {
+        CBoard child;
+        memcpy(&child, b, sizeof(CBoard));
+        cboard_push_index(&child, replies[i]);
+        if (child.halfmove_clock >= 100) return 1;
+    }
+    return 0;
+}
+
 /* root_terminal_actions(legal_indices) -> (mate_action, draw_actions)
  * Scans root children in one C pass. mate_action is -1 when absent.
  * Draw actions include immediate stalemate / 50-move / 3-fold / insufficient
@@ -564,7 +579,7 @@ static PyObject* PyCBoard_root_terminal_actions(PyCBoard *self, PyObject *args) 
         }
 
         if (
-            child.halfmove_clock >= 100
+            cboard_can_claim_fifty_moves(&child)
             || cboard_is_threefold_repetition(&child)
             || cboard_insufficient_material(&child)
         ) {

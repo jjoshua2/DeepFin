@@ -669,9 +669,15 @@ class SearchWorker:
         self._root_pol_logits = pol_np
         self._root_wdl_logits = wdl_np
 
-    def _pre_expand_root_for_pool(self, board: chess.Board) -> None:
+    def _pre_expand_root_for_pool(
+        self,
+        board: chess.Board,
+        allowed_root_indices: set[int] | None,
+    ) -> None:
         """Pool paths race on the root's first descent so it must be expanded
         upfront. The classic gumbel path does this internally."""
+        if allowed_root_indices is not None:
+            return
         if self._pucv_pool is not None:
             self._ensure_pucv_pool_root_expanded(board)
         elif self._walker_pool is not None:
@@ -688,6 +694,11 @@ class SearchWorker:
         allowed_root_indices: set[int] | None,
         allow_terminal_shortcuts: bool,
     ) -> float:
+        if allowed_root_indices is not None:
+            return self._run_gumbel_chunk(
+                chunk, board, tb_probe, allowed_root_indices,
+                allow_terminal_shortcuts=allow_terminal_shortcuts,
+            )
         if self._pucv_pool is not None:
             return self._run_pucv_pool_chunk(chunk, stop_event)
         if self._walker_pool is not None:
@@ -750,10 +761,7 @@ class SearchWorker:
             allowed_root_indices=allowed_root_indices,
         )
         if (
-            self._walker_pool is None
-            and self._pucv is None
-            and self._pucv_pool is None
-            and self._last_gumbel_action_idx is not None
+            self._last_gumbel_action_idx is not None
             and (
                 allowed_root_indices is None
                 or int(self._last_gumbel_action_idx) in allowed_root_indices
@@ -888,8 +896,9 @@ class SearchWorker:
                 tbhits=tb_probe.hits if tb_probe is not None else 0,
             )
 
+        self._last_gumbel_action_idx = None
         self._ensure_root_eval_cached(board, tb_probe)
-        self._pre_expand_root_for_pool(board)
+        self._pre_expand_root_for_pool(board, allowed_root_indices)
 
         total_nodes = 0
         last_info_ms = -1

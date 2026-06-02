@@ -277,6 +277,50 @@ def test_uci_gumbel_chunk_threads_terminal_shortcut_gate_to_c(
     assert seen_flags == [False]
 
 
+def test_uci_searchmoves_uses_filtered_gumbel_path_with_walkers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    board = chess.Board()
+    allowed = {int(move_to_index(chess.Move.from_uci("e2e4"), board))}
+    calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
+    worker = SearchWorker(
+        _ZeroEvaluator(),
+        device="cpu",
+        chunk_sims=4,
+        n_walkers=2,
+        gumbel_cfg=GumbelConfig(simulations=4, topk=4, temperature=1.0, add_noise=True),
+    )
+
+    def fake_gumbel(*args: Any, **kwargs: Any) -> float:
+        calls.append(("gumbel", args, kwargs))
+        return 0.25
+
+    def fake_walker(*args: Any, **kwargs: Any) -> float:
+        calls.append(("walker", args, kwargs))
+        return -0.25
+
+    monkeypatch.setattr(worker, "_run_gumbel_chunk", fake_gumbel)
+    monkeypatch.setattr(worker, "_run_walker_chunk", fake_walker)
+
+    value = worker._run_one_chunk(  # noqa: SLF001
+        4,
+        board,
+        threading.Event(),
+        None,
+        allowed,
+        True,
+    )
+
+    assert value == 0.25
+    assert calls == [
+        (
+            "gumbel",
+            (4, board, None, allowed),
+            {"allow_terminal_shortcuts": True},
+        ),
+    ]
+
+
 def test_uci_build_engine_threads_policy_encoding_into_gumbel_config() -> None:
     from chess_anti_engine.uci.__main__ import _build_engine
 
