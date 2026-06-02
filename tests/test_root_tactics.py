@@ -82,19 +82,20 @@ def test_immediate_terminal_draw_indices_include_threefold_claim_after_move() ->
 
 
 @pytest.mark.skipif(CBoard is None, reason="CBoard extension not available")
-def test_immediate_terminal_draw_cboard_indices_include_fifty_move_claim() -> None:
+def test_immediate_terminal_cboard_policy_or_draws_include_fifty_move_claim() -> None:
     board = chess.Board("8/8/8/4k3/8/8/3R4/4K3 w - - 99 1")
     cboard_cls = _require_cboard()
     cb = cboard_cls.from_board(board)
     legal = cb.legal_move_indices()
 
-    draws = root_tactics.immediate_terminal_draw_cboard_indices(cb, legal)
+    mate, draws = root_tactics.immediate_terminal_cboard_policy_or_draws(cb, legal)
 
+    assert mate is None
     assert draws == set(np.asarray(legal, dtype=np.int32).astype(int).tolist())
 
 
 @pytest.mark.skipif(CBoard is None, reason="CBoard extension not available")
-def test_immediate_terminal_draw_cboard_indices_include_threefold_after_move() -> None:
+def test_immediate_terminal_cboard_policy_or_draws_include_threefold_after_move() -> None:
     board = chess.Board()
     for move in ["g1f3", "g8f6", "f3g1", "f6g8", "g1f3", "g8f6", "f3g1"]:
         board.push(chess.Move.from_uci(move))
@@ -103,6 +104,9 @@ def test_immediate_terminal_draw_cboard_indices_include_threefold_after_move() -
     cboard_cls = _require_cboard()
     cb = cboard_cls.from_board(board)
 
-    draws = root_tactics.immediate_terminal_draw_cboard_indices(cb, cb.legal_move_indices())
+    mate, draws = root_tactics.immediate_terminal_cboard_policy_or_draws(
+        cb, cb.legal_move_indices(),
+    )
 
+    assert mate is None
     assert draws == {repeated_idx}

@@ -72,19 +72,6 @@ def immediate_terminal_draw_indices(
     return out
 
 
-def immediate_mate_cboard_policy(
-    root_cb: CBoard,
-    legal_idx: Iterable[int],
-) -> tuple[np.ndarray, int, float] | None:
-    for action in legal_idx:
-        child = root_cb.copy()
-        action_i = int(action)
-        child.push_index(action_i)
-        if child.is_checkmate():
-            return one_hot_root_policy(action_i)
-    return None
-
-
 def immediate_terminal_cboard_policy_or_draws(
     root_cb: CBoard,
     legal_idx: Iterable[int],
@@ -100,18 +87,3 @@ def immediate_terminal_cboard_policy_or_draws(
         if child.is_game_over():
             draws.add(action_i)
     return None, draws
-
-
-def immediate_terminal_draw_cboard_indices(
-    root_cb: CBoard,
-    legal_idx: Iterable[int],
-) -> set[int]:
-    """Return legal CBoard root actions that immediately draw."""
-    out: set[int] = set()
-    for action in legal_idx:
-        child = root_cb.copy()
-        action_i = int(action)
-        child.push_index(action_i)
-        if child.is_game_over() and not child.is_checkmate():
-            out.add(action_i)
-    return out
