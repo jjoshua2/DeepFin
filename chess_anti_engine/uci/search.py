@@ -686,6 +686,7 @@ class SearchWorker:
         stop_event: threading.Event,
         tb_probe,
         allowed_root_indices: set[int] | None,
+        allow_immediate_mate: bool,
     ) -> float:
         if self._pucv_pool is not None:
             return self._run_pucv_pool_chunk(chunk, stop_event)
@@ -693,7 +694,10 @@ class SearchWorker:
             return self._run_walker_chunk(chunk, stop_event)
         if self._pucv is not None:
             return self._run_pucv_chunk(chunk)
-        return self._run_gumbel_chunk(chunk, board, tb_probe, allowed_root_indices)
+        return self._run_gumbel_chunk(
+            chunk, board, tb_probe, allowed_root_indices,
+            allow_immediate_mate=allow_immediate_mate,
+        )
 
     def _maybe_emit_pv_info(
         self,
@@ -902,6 +906,7 @@ class SearchWorker:
 
             last_value = self._run_one_chunk(
                 chunk, board, stop_event, tb_probe, allowed_root_indices,
+                allow_immediate_mate=allow_immediate_mate,
             )
             total_nodes += int(chunk)
 
@@ -957,6 +962,7 @@ class SearchWorker:
         board: chess.Board,
         tb_probe,
         allowed_root_indices: set[int] | None = None,
+        allow_immediate_mate: bool = True,
     ) -> float:
         gumbel_result = run_gumbel_root_many_c(
             model=None,
@@ -975,6 +981,7 @@ class SearchWorker:
             tree=self._tree,
             root_node_ids=[self._root_id] if self._root_id is not None else None,
             allowed_root_indices_batch=[allowed_root_indices],
+            allow_terminal_root_shortcuts=allow_immediate_mate,
             tb_probe=tb_probe,
             pre_wdl_logits_tb_probed=True,
             target_batch=self._minibatch_size,

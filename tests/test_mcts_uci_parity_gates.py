@@ -253,6 +253,30 @@ def test_uci_gumbel_chunk_forces_deterministic_temperature(monkeypatch: pytest.M
     assert worker._last_gumbel_action_idx == 0  # noqa: SLF001
 
 
+def test_uci_gumbel_chunk_threads_immediate_mate_gate_to_c(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen_flags: list[bool] = []
+
+    def fake_run_gumbel_root_many_c(**kwargs: Any):
+        seen_flags.append(bool(kwargs["allow_terminal_root_shortcuts"]))
+        return ([], [0], [0.0], [], object(), [0])
+
+    monkeypatch.setattr(uci_search, "run_gumbel_root_many_c", fake_run_gumbel_root_many_c)
+    worker = SearchWorker(
+        _ZeroEvaluator(),
+        device="cpu",
+        chunk_sims=4,
+        gumbel_cfg=GumbelConfig(simulations=4, topk=4, temperature=1.0, add_noise=True),
+    )
+
+    worker._run_gumbel_chunk(  # noqa: SLF001
+        4, chess.Board(), tb_probe=None, allow_immediate_mate=False,
+    )
+
+    assert seen_flags == [False]
+
+
 def test_uci_build_engine_threads_policy_encoding_into_gumbel_config() -> None:
     from chess_anti_engine.uci.__main__ import _build_engine
 

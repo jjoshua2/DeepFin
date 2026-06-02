@@ -165,6 +165,31 @@ def test_gumbel_c_takes_immediate_mate_over_high_prior_stalemate():
     assert np.array_equal(masks[0], legal_move_mask(board))
 
 
+@pytest.mark.skipif(run_gumbel_root_many_c is None, reason="C tree extension not available")
+def test_gumbel_c_can_disable_immediate_mate_shortcut():
+    board = chess.Board(_MATE_VS_STALEMATE_FEN)
+    pre_pol, pre_wdl, mate_idx, stalemate_idx = _mate_vs_stalemate_logits(board)
+
+    run_gumbel_root_many_c = _require_run_gumbel_root_many_c()
+    probs, actions, values, masks = run_gumbel_root_many_c(
+        None,
+        [board],
+        device="cpu",
+        rng=np.random.default_rng(0),
+        cfg=GumbelConfig(simulations=1, topk=1, temperature=0.0, add_noise=False),
+        evaluator=cast(Any, object()),
+        pre_pol_logits=pre_pol,
+        pre_wdl_logits=pre_wdl,
+        allow_terminal_root_shortcuts=False,
+    )[:4]
+
+    assert actions == [stalemate_idx]
+    assert actions[0] != mate_idx
+    assert values[0] != 1.0
+    assert probs[0][stalemate_idx] == 1.0
+    assert np.array_equal(masks[0], legal_move_mask(board))
+
+
 def _stalemate_only_logits(
     board: chess.Board,
     *,

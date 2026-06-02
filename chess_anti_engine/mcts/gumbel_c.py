@@ -138,6 +138,7 @@ def run_gumbel_root_many_c(
     tree: MCTSTree | None = None,
     root_node_ids: list[int] | None = None,
     allowed_root_indices_batch: Sequence[set[int] | None] | None = None,
+    allow_terminal_root_shortcuts: bool = True,
     tb_probe=None,
     pre_wdl_logits_tb_probed: bool = False,
     target_batch: int = 0,
@@ -163,6 +164,7 @@ def run_gumbel_root_many_c(
     tree: MCTSTree | None = None,
     root_node_ids: list[int] | None = None,
     allowed_root_indices_batch: Sequence[set[int] | None] | None = None,
+    allow_terminal_root_shortcuts: bool = True,
     tb_probe=None,
     pre_wdl_logits_tb_probed: bool = False,
     target_batch: int = 0,
@@ -187,6 +189,7 @@ def run_gumbel_root_many_c(
     tree: MCTSTree | None = None,
     root_node_ids: list[int] | None = None,
     allowed_root_indices_batch: Sequence[set[int] | None] | None = None,
+    allow_terminal_root_shortcuts: bool = True,
     tb_probe=None,
     pre_wdl_logits_tb_probed: bool = False,
     target_batch: int = 0,
@@ -351,9 +354,12 @@ def run_gumbel_root_many_c(
 
         root_legal[i] = legal_idx
 
-        terminal_mate, terminal_draws = immediate_terminal_cboard_policy_or_draws(
-            root_cb, legal_idx,
-        )
+        terminal_mate = None
+        terminal_draws: set[int] = set()
+        if allow_terminal_root_shortcuts:
+            terminal_mate, terminal_draws = immediate_terminal_cboard_policy_or_draws(
+                root_cb, legal_idx,
+            )
 
         if float(root_qs[i]) > 0.0 and legal_idx.size > 1:
             if terminal_draws:
