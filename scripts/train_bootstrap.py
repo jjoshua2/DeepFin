@@ -19,7 +19,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from chess_anti_engine.model import ModelConfig, build_model
+from chess_anti_engine.model import ModelConfig, build_model, normalize_ffn_mult_by_layer
 from chess_anti_engine.replay import ReplayBuffer
 from chess_anti_engine.replay.shard import load_npz
 from chess_anti_engine.train import Trainer
@@ -50,12 +50,17 @@ def main() -> None:
     device = str(flat.get("device", "cuda" if torch.cuda.is_available() else "cpu"))
     batch_size = args.batch_size
 
+    num_layers = int(flat.get("num_layers", 4))
     model_cfg = ModelConfig(
         kind=str(flat.get("model", "transformer")),
         embed_dim=int(flat.get("embed_dim", 128)),
-        num_layers=int(flat.get("num_layers", 4)),
+        num_layers=num_layers,
         num_heads=int(flat.get("num_heads", 4)),
         ffn_mult=float(flat.get("ffn_mult", 2)),
+        ffn_mult_by_layer=normalize_ffn_mult_by_layer(
+            flat.get("ffn_mult_by_layer"),
+            num_layers=num_layers,
+        ),
         use_smolgen=bool(flat.get("use_smolgen", not bool(flat.get("no_smolgen", False)))),
         use_nla=bool(flat.get("use_nla", False)),
         use_qk_rmsnorm=bool(flat.get("use_qk_rmsnorm", False)),

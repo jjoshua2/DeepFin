@@ -93,6 +93,24 @@ def test_uci_loader_reads_history_encoding_from_embedded_arch(tmp_path: Path) ->
     assert getattr(model, "input_history_encoding") == "lc0_root"
 
 
+def test_uci_loader_preserves_per_layer_ffn_multipliers_from_embedded_arch(tmp_path: Path) -> None:
+    ckpt = _write_tiny_checkpoint_with_cfg(
+        tmp_path,
+        ModelConfig(
+            embed_dim=32,
+            num_layers=3,
+            num_heads=4,
+            ffn_mult=1.0,
+            ffn_mult_by_layer=(1.0, 1.25, 1.5),
+            use_smolgen=False,
+        ),
+    )
+
+    model = load_model_from_checkpoint(ckpt, device="cpu")
+
+    assert getattr(model, "ffn_mult_by_layer") == (1.0, 1.25, 1.5)
+
+
 def test_uci_loader_uses_params_history_when_embedded_arch_is_legacy_schema(tmp_path: Path) -> None:
     ckpt = _write_tiny_checkpoint_with_legacy_arch(
         tmp_path,

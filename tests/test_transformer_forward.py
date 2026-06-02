@@ -1,11 +1,19 @@
 import warnings
 from typing import Any, cast
 
+import pytest
 import torch
 from torch import nn
 
 from chess_anti_engine.moves import COMPACT_POLICY_SIZE
-from chess_anti_engine.model import ModelConfig, build_model, load_state_dict_tolerant, reinit_volatility_head_parameters_
+from chess_anti_engine.model import (
+    ModelConfig,
+    build_model,
+    load_state_dict_tolerant,
+    model_config_from_manifest_dict,
+    model_config_to_manifest_dict,
+    reinit_volatility_head_parameters_,
+)
 from chess_anti_engine.model.transformer import (
     ChessNet,
     TransformerConfig,
@@ -43,6 +51,68 @@ def test_build_model_attaches_runtime_encoding_metadata():
 
     assert getattr(m, "policy_encoding") == "lc0_1858"
     assert getattr(m, "input_history_encoding") == "lc0_root_legacy_meta"
+
+
+def test_transformer_uses_per_layer_ffn_multipliers():
+    cfg = TransformerConfig(
+        in_planes=146,
+        embed_dim=32,
+        num_layers=3,
+        num_heads=4,
+        ffn_mult=1.0,
+        ffn_mult_by_layer=(1.0, 1.5, 2.0),
+        use_smolgen=False,
+    )
+    m = ChessNet(cfg)
+
+    hidden_dims = [
+        cast(nn.Linear, cast(Any, block).ffn[0]).out_features
+        for block in m.blocks
+    ]
+    assert hidden_dims == [32, 48, 64]
+    assert m.ffn_mult_by_layer == (1.0, 1.5, 2.0)
+
+
+def test_transformer_rejects_invalid_per_layer_ffn_multipliers():
+    with pytest.raises(ValueError, match="length"):
+        ChessNet(
+            TransformerConfig(
+                in_planes=146,
+                embed_dim=32,
+                num_layers=3,
+                num_heads=4,
+                ffn_mult_by_layer=(1.0, 1.5),
+                use_smolgen=False,
+            )
+        )
+
+    with pytest.raises(ValueError, match="positive finite"):
+        ChessNet(
+            TransformerConfig(
+                in_planes=146,
+                embed_dim=32,
+                num_layers=2,
+                num_heads=4,
+                ffn_mult_by_layer=(1.0, 0.0),
+                use_smolgen=False,
+            )
+        )
+
+
+def test_model_config_manifest_round_trips_per_layer_ffn_multipliers():
+    cfg = ModelConfig(
+        embed_dim=32,
+        num_layers=3,
+        num_heads=4,
+        ffn_mult=1.0,
+        ffn_mult_by_layer=(1.0, 1.25, 1.5),
+        use_smolgen=False,
+    )
+
+    manifest = model_config_to_manifest_dict(cfg)
+
+    assert manifest["ffn_mult_by_layer"] == [1.0, 1.25, 1.5]
+    assert model_config_from_manifest_dict(manifest).ffn_mult_by_layer == (1.0, 1.25, 1.5)
 
 
 def test_transformer_per_layer_smolgen_shapes_and_shares_gen_projection():

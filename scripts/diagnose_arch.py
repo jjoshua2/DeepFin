@@ -85,7 +85,7 @@ def main() -> None:
     import numpy as np
     import torch
 
-    from chess_anti_engine.model import ModelConfig, build_model
+    from chess_anti_engine.model import ModelConfig, build_model, normalize_ffn_mult_by_layer
     from chess_anti_engine.train import Trainer, trainer_kwargs_from_config
     from chess_anti_engine.train.trainer import select_input_history_arrays
 
@@ -99,12 +99,17 @@ def main() -> None:
     print(f"Checkpoint: {ckpt_dir.name}")
 
     cfg = flatten_run_config_defaults(load_yaml_file(args.config))
+    num_layers = int(cfg.get("num_layers", 9))
     model_cfg = ModelConfig(
         kind=str(cfg.get("model", "transformer")),
         embed_dim=int(cfg.get("embed_dim", 384)),
-        num_layers=int(cfg.get("num_layers", 9)),
+        num_layers=num_layers,
         num_heads=int(cfg.get("num_heads", 8)),
         ffn_mult=float(cfg.get("ffn_mult", 2.0)),
+        ffn_mult_by_layer=normalize_ffn_mult_by_layer(
+            cfg.get("ffn_mult_by_layer"),
+            num_layers=num_layers,
+        ),
         use_smolgen=bool(cfg.get("use_smolgen", not bool(cfg.get("no_smolgen", False)))),
         use_nla=bool(cfg.get("use_nla", False)),
         use_qk_rmsnorm=bool(cfg.get("use_qk_rmsnorm", False)),

@@ -590,6 +590,7 @@ class TransformerConfig:
     num_layers: int = 6
     num_heads: int = 8
     ffn_mult: float = 2
+    ffn_mult_by_layer: tuple[float, ...] | list[float] | None = None
     dropout: float = 0.0
     use_smolgen: bool = True
     use_nla: bool = False
@@ -611,6 +612,24 @@ class TransformerConfig:
     smolgen_relation_norm: str = "none"
     smolgen_relation_coeff_norm: str = "none"  # none | rms
     smolgen_relation_scale: str = "none"  # none | layer | layer_head
+
+
+def _resolve_ffn_mults(
+    *,
+    scalar: float,
+    by_layer: tuple[float, ...] | list[float] | None,
+    num_layers: int,
+) -> tuple[float, ...]:
+    if by_layer is None:
+        vals = tuple(float(scalar) for _ in range(int(num_layers)))
+    else:
+        vals = tuple(float(v) for v in by_layer)
+    if len(vals) != int(num_layers):
+        raise ValueError(f"ffn_mult_by_layer length {len(vals)} must match num_layers {int(num_layers)}")
+    for val in vals:
+        if not math.isfinite(val) or val <= 0.0:
+            raise ValueError(f"FFN multipliers must be positive finite floats, got {val!r}")
+    return vals
 
 
 class ChessNet(nn.Module):
@@ -687,6 +706,11 @@ class ChessNet(nn.Module):
         self.smolgen_relation_scale = str(cfg.smolgen_relation_scale).lower().strip()
         if self.smolgen_relation_scale not in ("none", "layer", "layer_head"):
             raise ValueError(f"Unsupported smolgen_relation_scale: {cfg.smolgen_relation_scale!r}")
+        self.ffn_mult_by_layer = _resolve_ffn_mults(
+            scalar=float(cfg.ffn_mult),
+            by_layer=cfg.ffn_mult_by_layer,
+            num_layers=int(cfg.num_layers),
+        )
 
   # LC0 BT4 input block: Dense(activation) → mult_gate → add_gate
         embed_in_planes = int(cfg.in_planes) + (
@@ -783,14 +807,14 @@ class ChessNet(nn.Module):
                 TransformerBlock(
                     cfg.embed_dim,
                     cfg.num_heads,
-                    ffn_mult=cfg.ffn_mult,
+                    ffn_mult=self.ffn_mult_by_layer[layer_idx],
                     dropout=cfg.dropout,
                     use_nla=cfg.use_nla,
                     qkv_projection=self.qkv_projection,
                     use_qk_rmsnorm=cfg.use_qk_rmsnorm,
                     residual_branch_scale=residual_branch_scale,
                 )
-                for _ in range(cfg.num_layers)
+                for layer_idx in range(cfg.num_layers)
             ]
         )
         if cfg.use_deepnorm:

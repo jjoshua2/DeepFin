@@ -22,7 +22,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from chess_anti_engine.model import ModelConfig, build_model
+from chess_anti_engine.model import ModelConfig, build_model, normalize_ffn_mult_by_layer
 from chess_anti_engine.encoding.lc0 import uses_lc0_root_history, uses_lc0_root_legacy_meta
 from chess_anti_engine.moves import (
     COMPACT_TO_FULL_POLICY,
@@ -667,13 +667,25 @@ def _parse_bool_choice(value: str) -> bool:
     raise argparse.ArgumentTypeError(f"expected one of on/off/true/false, got {value!r}")
 
 
+def _parse_ffn_mult_by_layer(value: str) -> tuple[float, ...] | None:
+    try:
+        return normalize_ffn_mult_by_layer(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
 def _model_config_from_flat(cfg: dict[str, Any]) -> ModelConfig:
+    num_layers = int(cfg.get("num_layers", 6))
     return ModelConfig(
         kind=str(cfg.get("model", "transformer")),
         embed_dim=int(cfg.get("embed_dim", 256)),
-        num_layers=int(cfg.get("num_layers", 6)),
+        num_layers=num_layers,
         num_heads=int(cfg.get("num_heads", 8)),
         ffn_mult=float(cfg.get("ffn_mult", 2.0)),
+        ffn_mult_by_layer=normalize_ffn_mult_by_layer(
+            cfg.get("ffn_mult_by_layer"),
+            num_layers=num_layers,
+        ),
         use_smolgen=bool(cfg.get("use_smolgen", True)),
         use_nla=bool(cfg.get("use_nla", False)),
         use_qk_rmsnorm=bool(cfg.get("use_qk_rmsnorm", False)),
@@ -1077,6 +1089,12 @@ def main() -> None:
     ap.add_argument("--num-layers", type=int, default=None)
     ap.add_argument("--num-heads", type=int, default=None)
     ap.add_argument("--ffn-mult", type=float, default=None)
+    ap.add_argument(
+        "--ffn-mult-by-layer",
+        type=str,
+        default=None,
+        help="Comma-separated FFN multipliers, one per layer; overrides uniform --ffn-mult per block.",
+    )
     ap.add_argument("--smolgen", type=_parse_bool_choice, default=None, help="Override model.use_smolgen.")
     ap.add_argument("--smolgen-mode", choices=["shared", "per_layer"], default=None)
     ap.add_argument("--smolgen-bias-scale", choices=["none", "layer", "layer_head"], default=None)
@@ -1220,6 +1238,15 @@ def main() -> None:
         cfg["num_heads"] = int(args.num_heads)
     if args.ffn_mult is not None:
         cfg["ffn_mult"] = float(args.ffn_mult)
+    if args.ffn_mult_by_layer is not None:
+        try:
+            schedule = _parse_ffn_mult_by_layer(str(args.ffn_mult_by_layer))
+        except argparse.ArgumentTypeError as exc:
+            raise SystemExit(f"--ffn-mult-by-layer: {exc}") from exc
+        if schedule is None:
+            cfg.pop("ffn_mult_by_layer", None)
+        else:
+            cfg["ffn_mult_by_layer"] = schedule
     if args.input_history_encoding is not None:
         cfg["input_history_encoding"] = str(args.input_history_encoding)
     if args.smolgen is not None:
@@ -1282,6 +1309,12 @@ def main() -> None:
             "candidates": args.candidates,
             "policy_encoding": model_cfg.policy_encoding,
             "input_history_encoding": model_cfg.input_history_encoding,
+            "ffn_mult": model_cfg.ffn_mult,
+            "ffn_mult_by_layer": (
+                list(model_cfg.ffn_mult_by_layer)
+                if model_cfg.ffn_mult_by_layer is not None
+                else None
+            ),
             "input_pos_encoding": model_cfg.input_pos_encoding,
             "qkv_projection": model_cfg.qkv_projection,
             "use_qk_rmsnorm": model_cfg.use_qk_rmsnorm,

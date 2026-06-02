@@ -317,6 +317,7 @@ def _build_trial_model_config(tc: TrialConfig) -> ModelConfig:
         num_layers=tc.num_layers,
         num_heads=tc.num_heads,
         ffn_mult=tc.ffn_mult,
+        ffn_mult_by_layer=tc.ffn_mult_by_layer,
         use_smolgen=tc.use_smolgen,
         use_nla=tc.use_nla,
         use_qk_rmsnorm=tc.use_qk_rmsnorm,

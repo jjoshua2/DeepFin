@@ -98,6 +98,8 @@ def test_from_dict_overrides() -> None:
 
 def test_model_architecture_keys_are_parsed() -> None:
     tc = TrialConfig.from_dict({
+        "num_layers": 3,
+        "ffn_mult_by_layer": [1.0, 1.25, 1.5],
         "policy_encoding": "lc0_1858",
         "input_history_encoding": "lc0_root_legacy_meta",
         "input_pos_encoding": "arc_adapter",
@@ -115,6 +117,8 @@ def test_model_architecture_keys_are_parsed() -> None:
         "smolgen_relation_coeff_norm": "rms",
         "smolgen_relation_scale": "layer",
     })
+    assert tc.num_layers == 3
+    assert tc.ffn_mult_by_layer == (1.0, 1.25, 1.5)
     assert tc.policy_encoding == "lc0_1858"
     assert tc.input_history_encoding == "lc0_root_legacy_meta"
     assert tc.input_pos_encoding == "arc_adapter"
@@ -131,6 +135,11 @@ def test_model_architecture_keys_are_parsed() -> None:
     assert tc.smolgen_relation_norm == "branch_center_rms"
     assert tc.smolgen_relation_coeff_norm == "rms"
     assert tc.smolgen_relation_scale == "layer"
+
+
+def test_model_architecture_rejects_mismatched_ffn_schedule() -> None:
+    with pytest.raises(ValueError, match="length"):
+        TrialConfig.from_dict({"num_layers": 3, "ffn_mult_by_layer": [1.0, 1.25]})
 
 
 def test_fallback_keys() -> None:
