@@ -227,6 +227,7 @@ def test_yaml_reload_does_not_add_missing_topology_keys(tmp_path) -> None:
 model:
   input_history_encoding: lc0_root
   qkv_projection: split
+  ffn_mult_by_layer: [1.0, 1.25, 1.5]
 train:
   lr: 0.0007
 """,
@@ -239,3 +240,23 @@ train:
     assert config["lr"] == 0.0007
     assert "input_history_encoding" not in config
     assert "qkv_projection" not in config
+    assert "ffn_mult_by_layer" not in config
+
+
+def test_yaml_reload_does_not_change_existing_ffn_schedule(tmp_path) -> None:
+    yaml_path = tmp_path / "cfg.yaml"
+    yaml_path.write_text(
+        """
+model:
+  ffn_mult_by_layer: [1.0, 1.25, 1.5]
+train:
+  lr: 0.0007
+""",
+        encoding="utf-8",
+    )
+    config = {"lr": 0.0003, "ffn_mult_by_layer": (1.0, 1.0, 1.0)}
+
+    _reload_yaml_into_config(config, str(yaml_path))
+
+    assert config["lr"] == 0.0007
+    assert config["ffn_mult_by_layer"] == (1.0, 1.0, 1.0)

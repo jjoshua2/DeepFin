@@ -246,6 +246,7 @@ _TOPOLOGY_KEYS = frozenset({
     "smolgen_relation_norm",
     "smolgen_relation_coeff_norm",
     "smolgen_relation_scale",
+    "ffn_mult_by_layer",
 })
 
 
