@@ -248,15 +248,17 @@ def test_yaml_reload_does_not_change_existing_ffn_schedule(tmp_path) -> None:
     yaml_path.write_text(
         """
 model:
+  num_layers: 4
   ffn_mult_by_layer: [1.0, 1.25, 1.5]
 train:
   lr: 0.0007
 """,
         encoding="utf-8",
     )
-    config = {"lr": 0.0003, "ffn_mult_by_layer": (1.0, 1.0, 1.0)}
+    config = {"lr": 0.0003, "num_layers": 3, "ffn_mult_by_layer": (1.0, 1.0, 1.0)}
 
     _reload_yaml_into_config(config, str(yaml_path))
 
     assert config["lr"] == 0.0007
+    assert config["num_layers"] == 3
     assert config["ffn_mult_by_layer"] == (1.0, 1.0, 1.0)
