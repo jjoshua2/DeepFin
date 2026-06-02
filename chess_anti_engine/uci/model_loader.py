@@ -22,6 +22,7 @@ from chess_anti_engine.model import (
     ModelConfig,
     build_model,
     load_state_dict_tolerant,
+    normalize_ffn_mult_by_layer,
 )
 
 
@@ -71,6 +72,11 @@ def _model_config_from_params(params: dict) -> ModelConfig:
   # 'use_smolgen' is stored as the negation 'no_smolgen' in some trials.
     if "no_smolgen" in params and "use_smolgen" not in filtered:
         filtered["use_smolgen"] = not bool(params["no_smolgen"])
+    if "ffn_mult_by_layer" in filtered:
+        filtered["ffn_mult_by_layer"] = normalize_ffn_mult_by_layer(
+            filtered["ffn_mult_by_layer"],
+            num_layers=int(filtered.get("num_layers", 6)),
+        )
     return ModelConfig(**filtered)  # type: ignore[arg-type]
 
 
@@ -101,6 +107,11 @@ def _model_config_from_arch(arch: dict) -> ModelConfig:
             f"embedded arch has unknown keys {sorted(unknown)}; this loader "
             "does not recognise them and would silently default them away. "
             "Upgrade the package or re-save the checkpoint."
+        )
+    if "ffn_mult_by_layer" in payload:
+        payload["ffn_mult_by_layer"] = normalize_ffn_mult_by_layer(
+            payload["ffn_mult_by_layer"],
+            num_layers=int(payload.get("num_layers", 6)),
         )
     return ModelConfig(**payload)  # type: ignore[arg-type]
 

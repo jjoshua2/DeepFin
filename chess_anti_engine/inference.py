@@ -278,7 +278,7 @@ class LocalModelEvaluator:
         event_default.record(torch.cuda.current_stream(self.device))
 
         with torch.cuda.stream(stream):
-            stream.wait_event(event_default) # torch stubs have duplicate Event types
+            stream.wait_event(event_default)  # pyright: ignore[reportArgumentType]  # torch stubs have duplicate Event types
             xt = torch.from_numpy(xb).to(self.device, non_blocking=True)
             out = _forward_no_grad(
                 self.model, xt, device=self.device,
@@ -598,7 +598,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         event_default.record(torch.cuda.current_stream(self.device))
 
         with torch.cuda.stream(stream):
-            stream.wait_event(event_default)  # torch stubs have duplicate Event types
+            stream.wait_event(event_default)  # pyright: ignore[reportArgumentType]  # torch stubs have duplicate Event types
             xt = self._device_input(bsz, slot=slot)
             legal_counts_gpu = torch.as_tensor(legal_counts, dtype=torch.long, device=self.device)
             legal_flat_gpu = torch.as_tensor(legal_flat, dtype=torch.long, device=self.device)
@@ -2122,31 +2122,36 @@ class SharedSlotBroker:
             return trial_id in self._trial_models
 
         mc = manifest.get("model_config") or {}
+        model_cfg = dataclass_replace(
+            model_config_from_manifest_dict(mc),
+            use_gradient_checkpointing=False,
+        )
         config_key = (
-            str(mc.get("kind", "transformer")),
-            int(mc.get("embed_dim", 256)),
-            int(mc.get("num_layers", 6)),
-            int(mc.get("num_heads", 8)),
-            float(mc.get("ffn_mult", 2)),
-            bool(mc.get("use_smolgen", True)),
-            bool(mc.get("use_nla", False)),
-            bool(mc.get("use_qk_rmsnorm", False)),
-            str(mc.get("input_pos_encoding", "none")),
-            bool(mc.get("use_deepnorm", False)),
-            str(mc.get("policy_encoding", "az_4672")),
-            str(mc.get("input_history_encoding", "legacy")),
-            str(mc.get("input_global_embedding", "none")),
-            int(mc.get("input_global_embedding_channels", 0)),
-            str(mc.get("input_square_embedding", "none")),
-            str(mc.get("qkv_projection", "fused")),
-            str(mc.get("smolgen_mode", "shared")),
-            str(mc.get("smolgen_bias_scale", "none")),
-            str(mc.get("smolgen_bias_norm", "none")),
-            str(mc.get("arc_attention_bias", "none")),
-            bool(mc.get("smolgen_relation_basis", False)),
-            str(mc.get("smolgen_relation_norm", "none")),
-            str(mc.get("smolgen_relation_coeff_norm", "none")),
-            str(mc.get("smolgen_relation_scale", "none")),
+            model_cfg.kind,
+            model_cfg.embed_dim,
+            model_cfg.num_layers,
+            model_cfg.num_heads,
+            model_cfg.ffn_mult,
+            model_cfg.ffn_mult_by_layer,
+            model_cfg.use_smolgen,
+            model_cfg.use_nla,
+            model_cfg.use_qk_rmsnorm,
+            model_cfg.input_pos_encoding,
+            model_cfg.use_deepnorm,
+            model_cfg.policy_encoding,
+            model_cfg.input_history_encoding,
+            model_cfg.input_global_embedding,
+            model_cfg.input_global_embedding_channels,
+            model_cfg.input_square_embedding,
+            model_cfg.qkv_projection,
+            model_cfg.smolgen_mode,
+            model_cfg.smolgen_bias_scale,
+            model_cfg.smolgen_bias_norm,
+            model_cfg.arc_attention_bias,
+            model_cfg.smolgen_relation_basis,
+            model_cfg.smolgen_relation_norm,
+            model_cfg.smolgen_relation_coeff_norm,
+            model_cfg.smolgen_relation_scale,
         )
         if self._model_config_key is not None and config_key != self._model_config_key:
             print(
@@ -2162,29 +2167,6 @@ class SharedSlotBroker:
             sd = ckpt.get("model", ckpt)
         except (OSError, RuntimeError, EOFError):
             return False  # checkpoint missing, mid-write, or torch load failed
-
-        model_cfg = ModelConfig(
-            kind=config_key[0], embed_dim=config_key[1],
-            num_layers=config_key[2], num_heads=config_key[3],
-            ffn_mult=config_key[4], use_smolgen=config_key[5],
-            use_nla=config_key[6], use_qk_rmsnorm=config_key[7],
-            input_pos_encoding=config_key[8], use_deepnorm=config_key[9],
-            policy_encoding=config_key[10],
-            input_history_encoding=config_key[11],
-            input_global_embedding=config_key[12],
-            input_global_embedding_channels=config_key[13],
-            input_square_embedding=config_key[14],
-            qkv_projection=config_key[15],
-            smolgen_mode=config_key[16],
-            smolgen_bias_scale=config_key[17],
-            smolgen_bias_norm=config_key[18],
-            arc_attention_bias=config_key[19],
-            smolgen_relation_basis=config_key[20],
-            smolgen_relation_norm=config_key[21],
-            smolgen_relation_coeff_norm=config_key[22],
-            smolgen_relation_scale=config_key[23],
-            use_gradient_checkpointing=False,
-        )
 
         if trial_id not in self._trial_models:
             self._build_trial_model(

@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
+from chess_anti_engine.utils.architecture import normalize_ffn_mult_by_layer
 
 if TYPE_CHECKING:
     from chess_anti_engine.train.trainer import TrainMetrics
@@ -59,6 +60,7 @@ class TrialConfig:
     num_layers: int = 6
     num_heads: int = 8
     ffn_mult: float = 2.0
+    ffn_mult_by_layer: tuple[float, ...] | None = None
     use_smolgen: bool = True
     use_nla: bool = False
     use_qk_rmsnorm: bool = False
@@ -303,6 +305,7 @@ class TrialConfig:
             v = config.get(key)
             return default if v is None else v
 
+        num_layers = int(config.get("num_layers", 6))
         return cls(
   # --- Global ---
             seed=int(config.get("seed", 0)),
@@ -316,9 +319,13 @@ class TrialConfig:
   # --- Model ---
             model=str(config.get("model", "transformer")),
             embed_dim=int(config.get("embed_dim", 256)),
-            num_layers=int(config.get("num_layers", 6)),
+            num_layers=num_layers,
             num_heads=int(config.get("num_heads", 8)),
             ffn_mult=float(config.get("ffn_mult", 2)),
+            ffn_mult_by_layer=normalize_ffn_mult_by_layer(
+                config.get("ffn_mult_by_layer"),
+                num_layers=num_layers,
+            ),
             use_smolgen=bool(config.get("use_smolgen", True)),
             use_nla=bool(config.get("use_nla", False)),
             use_qk_rmsnorm=bool(config.get("use_qk_rmsnorm", False)),

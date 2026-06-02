@@ -141,7 +141,7 @@ _SELFPLAY_KEYS = (
 
 # model section: mostly 1:1 except kind→model and use_smolgen→no_smolgen (inverted).
 _MODEL_PASSTHROUGH = (
-    "embed_dim", "num_layers", "num_heads", "ffn_mult", "use_nla", "gradient_checkpointing",
+    "embed_dim", "num_layers", "num_heads", "ffn_mult", "ffn_mult_by_layer", "use_nla", "gradient_checkpointing",
     "input_pos_encoding", "qkv_projection", "use_deepnorm", "policy_encoding", "input_history_encoding",
     "use_qk_rmsnorm",
     "input_global_embedding", "input_global_embedding_channels", "input_square_embedding",

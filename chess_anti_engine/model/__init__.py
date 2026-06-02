@@ -7,6 +7,7 @@ import torch
 from chess_anti_engine.encoding import encode_position
 from chess_anti_engine.encoding.lc0 import LC0_HISTORY_LEGACY, normalize_lc0_history_encoding
 from chess_anti_engine.moves import POLICY_ENCODING_AZ_4672, normalize_policy_encoding
+from chess_anti_engine.utils.architecture import normalize_ffn_mult_by_layer
 
 from .tiny import TinyNet
 from .transformer import ChessNet, TransformerConfig
@@ -15,7 +16,7 @@ from .transformer import ChessNet, TransformerConfig
 # misrepresent. Trainer embeds this version when saving; the UCI loader
 # rejects checkpoints with a higher version AND rejects unknown keys at
 # the same version — both prevent silent architecture mismatch on skew.
-ARCH_SCHEMA_VERSION = 9
+ARCH_SCHEMA_VERSION = 10
 
 
 @dataclass
@@ -25,6 +26,7 @@ class ModelConfig:
     num_layers: int = 6
     num_heads: int = 8
     ffn_mult: float = 2.0
+    ffn_mult_by_layer: tuple[float, ...] | None = None
     use_smolgen: bool = True
     use_nla: bool = False
     use_qk_rmsnorm: bool = False
@@ -53,12 +55,17 @@ def model_config_from_manifest_dict(mc: dict) -> ModelConfig:
     Manifest field name is ``gradient_checkpointing`` (not ``use_*``) for
     historical reasons; everything else maps 1:1.
     """
+    num_layers = int(mc.get("num_layers", 6))
     return ModelConfig(
         kind=str(mc.get("kind", "transformer")),
         embed_dim=int(mc.get("embed_dim", 256)),
-        num_layers=int(mc.get("num_layers", 6)),
+        num_layers=num_layers,
         num_heads=int(mc.get("num_heads", 8)),
         ffn_mult=float(mc.get("ffn_mult", 2)),
+        ffn_mult_by_layer=normalize_ffn_mult_by_layer(
+            mc.get("ffn_mult_by_layer"),
+            num_layers=num_layers,
+        ),
         use_smolgen=bool(mc.get("use_smolgen", True)),
         use_nla=bool(mc.get("use_nla", False)),
         use_qk_rmsnorm=bool(mc.get("use_qk_rmsnorm", False)),
@@ -88,12 +95,17 @@ def model_config_to_manifest_dict(cfg: ModelConfig) -> dict:
     Use when writing the manifest's ``model_config`` block, so encode and
     decode stay in sync as ModelConfig fields evolve.
     """
+    ffn_mult_by_layer = normalize_ffn_mult_by_layer(
+        cfg.ffn_mult_by_layer,
+        num_layers=int(cfg.num_layers),
+    )
     return {
         "kind": str(cfg.kind),
         "embed_dim": int(cfg.embed_dim),
         "num_layers": int(cfg.num_layers),
         "num_heads": int(cfg.num_heads),
         "ffn_mult": float(cfg.ffn_mult),
+        "ffn_mult_by_layer": list(ffn_mult_by_layer) if ffn_mult_by_layer is not None else None,
         "use_smolgen": bool(cfg.use_smolgen),
         "use_nla": bool(cfg.use_nla),
         "use_qk_rmsnorm": bool(cfg.use_qk_rmsnorm),
@@ -146,6 +158,10 @@ def build_model(cfg: ModelConfig) -> torch.nn.Module:
             num_layers=int(cfg.num_layers),
             num_heads=int(cfg.num_heads),
             ffn_mult=float(cfg.ffn_mult),
+            ffn_mult_by_layer=normalize_ffn_mult_by_layer(
+                cfg.ffn_mult_by_layer,
+                num_layers=int(cfg.num_layers),
+            ),
             use_smolgen=bool(cfg.use_smolgen),
             use_nla=bool(cfg.use_nla),
             use_qk_rmsnorm=bool(cfg.use_qk_rmsnorm),
