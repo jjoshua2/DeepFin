@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import logging
 from typing import cast
 
@@ -20,12 +21,17 @@ def maybe_apply_fp8_inference(model: torch.nn.Module) -> torch.nn.Module:
     non-16-aligned dims (tensor core requirement), tiny output heads.
     Requires torch.compile afterwards for actual speedup.
     """
+    # Optional, runtime-only dependency. Import dynamically so the static
+    # checker never tries to resolve it: a plain ``import`` flags
+    # reportMissingImports where torchao is absent (fresh worktrees, cloud
+    # CI), while an inline ignore flips to an "unnecessary ignore" warning
+    # where it is installed — either way basedpyright fails depending on the
+    # environment. importlib keeps it invisible to pyright in both.
     try:
-        from torchao.quantization import (
-            Float8DynamicActivationFloat8WeightConfig,
-            PerRow,
-            quantize_,
-        )
+        _q = importlib.import_module("torchao.quantization")
+        Float8DynamicActivationFloat8WeightConfig = _q.Float8DynamicActivationFloat8WeightConfig
+        PerRow = _q.PerRow
+        quantize_ = _q.quantize_
     except ImportError:
         return model
 
