@@ -753,3 +753,57 @@ def test_nodes_lever_paused_when_regret_stage_incomplete():
     initial = pid.nodes
     pid.observe(wins=600, draws=0, losses=200, force=True)  # 75% wr
     assert pid.nodes == initial, "nodes must stay pinned while regret stage incomplete"
+
+
+def test_nodes_diagnostics_expose_fit_prediction():
+    pid = _mk_pid_nodes_only(
+        initial_nodes=50_000,
+        target_winrate=0.57,
+        nodes_max_step_frac=0.10,
+        nodes_deadband_sigma=0.0,
+    )
+    pid.nodes_lever.history.clear()
+    pid.nodes_lever.history.extend([
+        (20_000.0, 0.72, 0.018),
+        (40_000.0, 0.64, 0.018),
+        (60_000.0, 0.56, 0.018),
+        (80_000.0, 0.48, 0.018),
+    ])
+    pid.ema_winrate = pid.target
+
+    update = pid.observe(wins=480, draws=0, losses=320, force=True)  # raw_wr=0.60
+
+    diag = update.nodes_diag
+    assert update.nodes_active
+    assert update.regret_diag is None
+    assert diag is not None
+    assert diag.name == "nodes"
+    assert diag.predicted_value is not None
+    assert diag.fit_slope is not None and diag.fit_slope < 0.0
+    assert diag.reason in {"fit", "fit_capped"}
+    assert diag.value_before == 50_000.0
+    assert diag.value_after == pid.nodes_lever.value
+    assert diag.applied_delta > 0.0
+    assert diag.cap == 5_000.0
+    assert diag.history_len == 5
+
+
+def test_deadband_diagnostics_report_hold_without_history_append():
+    pid = _mk_pid_nodes_only(
+        initial_nodes=10_000,
+        target_winrate=0.57,
+        ema_alpha=0.5,
+        nodes_deadband_sigma=2.0,
+    )
+    pid.ema_winrate = 0.57
+    initial_len = len(pid.nodes_lever.history)
+
+    update = pid.observe(wins=456, draws=0, losses=344, force=True)
+
+    diag = update.nodes_diag
+    assert diag is not None
+    assert diag.reason == "deadband"
+    assert not diag.changed
+    assert diag.value_before == diag.value_after == 10_000.0
+    assert diag.history_len == initial_len
+    assert len(pid.nodes_lever.history) == initial_len

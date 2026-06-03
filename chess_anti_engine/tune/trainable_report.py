@@ -340,6 +340,112 @@ def _update_best_regret_checkpoints(
         traceback.print_exc()
 
 
+_PID_REASON_CODES = {
+    "not_active": 0,
+    "deadband": 1,
+    "airbag": 2,
+    "fit": 3,
+    "fit_capped": 4,
+    "degenerate": 5,
+    "raw_override": 6,
+    "tighten_gain": 7,
+    "crash_ease": 8,
+}
+
+
+def _pid_step_diag_dict(prefix: str, diag: Any | None) -> dict:
+    if diag is None:
+        return {
+            f"{prefix}_reason": "not_active",
+            f"{prefix}_reason_code": _PID_REASON_CODES["not_active"],
+        }
+
+    reason = str(getattr(diag, "reason", "not_active"))
+    out = {
+        f"{prefix}_reason": reason,
+        f"{prefix}_reason_code": int(_PID_REASON_CODES.get(reason, -1)),
+        f"{prefix}_changed": int(1 if bool(getattr(diag, "changed", False)) else 0),
+        f"{prefix}_value_before": float(getattr(diag, "value_before", 0.0)),
+        f"{prefix}_value_after": float(getattr(diag, "value_after", 0.0)),
+        f"{prefix}_delta": float(getattr(diag, "applied_delta", 0.0)),
+        f"{prefix}_raw_delta": float(getattr(diag, "raw_delta", 0.0)),
+        f"{prefix}_cap": float(getattr(diag, "cap", 0.0)),
+        f"{prefix}_observation_se": float(getattr(diag, "observation_se", 0.0)),
+        f"{prefix}_raw_deadband": float(getattr(diag, "raw_deadband", 0.0)),
+        f"{prefix}_ema_deadband": float(getattr(diag, "ema_deadband", 0.0)),
+        f"{prefix}_history_len": int(getattr(diag, "history_len", 0)),
+        f"{prefix}_tighten_gain_applied": float(getattr(diag, "tighten_gain_applied", 1.0)),
+        f"{prefix}_crash_ease_applied": int(
+            1 if bool(getattr(diag, "crash_ease_applied", False)) else 0
+        ),
+    }
+    predicted_value = getattr(diag, "predicted_value", None)
+    if predicted_value is not None:
+        out[f"{prefix}_predicted_value"] = float(predicted_value)
+    fit_slope = getattr(diag, "fit_slope", None)
+    if fit_slope is not None:
+        out[f"{prefix}_fit_slope"] = float(fit_slope)
+    return out
+
+
+def _pid_report_dict(pr: PidResult) -> dict:
+    update = pr.pid_update
+    if update is None:
+        return {}
+
+    regret_diag = getattr(update, "regret_diag", None)
+    nodes_diag = getattr(update, "nodes_diag", None)
+    active = []
+    if regret_diag is not None:
+        active.append("regret")
+    if nodes_diag is not None:
+        active.append("nodes")
+
+    return {
+        "pid_active_levers": "+".join(active) if active else "none",
+        "pid_raw_winrate": float(getattr(update, "raw_winrate", 0.0)),
+        "pid_observation_se": float(getattr(update, "observation_se", 0.0)),
+        "pid_regret_frozen": int(1 if bool(getattr(update, "regret_frozen", False)) else 0),
+        "pid_nodes_active": int(1 if bool(getattr(update, "nodes_active", False)) else 0),
+        **_pid_step_diag_dict("pid_regret", regret_diag),
+        **_pid_step_diag_dict("pid_nodes", nodes_diag),
+    }
+
+
+def _log_pid_step_scalars(writer: Any, pr: PidResult, iteration_step: int) -> None:
+    update = pr.pid_update
+    if update is None:
+        return
+
+    writer.add_scalar("difficulty/pid_observation_se", float(getattr(update, "observation_se", 0.0)), iteration_step)
+    writer.add_scalar("difficulty/pid_regret_frozen", float(1 if getattr(update, "regret_frozen", False) else 0), iteration_step)
+    writer.add_scalar("difficulty/pid_nodes_active", float(1 if getattr(update, "nodes_active", False) else 0), iteration_step)
+    for name, diag in (
+        ("pid_regret", getattr(update, "regret_diag", None)),
+        ("pid_nodes", getattr(update, "nodes_diag", None)),
+    ):
+        if diag is None:
+            continue
+        reason = str(getattr(diag, "reason", "not_active"))
+        tag = f"difficulty/{name}"
+        writer.add_scalar(f"{tag}_reason_code", float(_PID_REASON_CODES.get(reason, -1)), iteration_step)
+        writer.add_scalar(f"{tag}_changed", float(1 if getattr(diag, "changed", False) else 0), iteration_step)
+        writer.add_scalar(f"{tag}_value_before", float(getattr(diag, "value_before", 0.0)), iteration_step)
+        writer.add_scalar(f"{tag}_value_after", float(getattr(diag, "value_after", 0.0)), iteration_step)
+        writer.add_scalar(f"{tag}_delta", float(getattr(diag, "applied_delta", 0.0)), iteration_step)
+        writer.add_scalar(f"{tag}_raw_delta", float(getattr(diag, "raw_delta", 0.0)), iteration_step)
+        writer.add_scalar(f"{tag}_cap", float(getattr(diag, "cap", 0.0)), iteration_step)
+        writer.add_scalar(f"{tag}_raw_deadband", float(getattr(diag, "raw_deadband", 0.0)), iteration_step)
+        writer.add_scalar(f"{tag}_ema_deadband", float(getattr(diag, "ema_deadband", 0.0)), iteration_step)
+        writer.add_scalar(f"{tag}_history_len", float(getattr(diag, "history_len", 0)), iteration_step)
+        predicted_value = getattr(diag, "predicted_value", None)
+        if predicted_value is not None:
+            writer.add_scalar(f"{tag}_predicted_value", float(predicted_value), iteration_step)
+        fit_slope = getattr(diag, "fit_slope", None)
+        if fit_slope is not None:
+            writer.add_scalar(f"{tag}_fit_slope", float(fit_slope), iteration_step)
+
+
 def _log_iteration_scalars(
     *,
     writer: Any,
@@ -357,6 +463,7 @@ def _log_iteration_scalars(
         writer.add_scalar("difficulty/pid_ema_winrate", float(pr.pid_ema_wr), iteration_step)
         writer.add_scalar("difficulty/wdl_regret", float(wdl_regret_used), iteration_step)
         writer.add_scalar("difficulty/wdl_regret_next", float(pr.wdl_regret_next), iteration_step)
+        _log_pid_step_scalars(writer, pr, iteration_step)
         if pr.curriculum_winrate_raw is not None:
             writer.add_scalar("difficulty/curriculum_winrate_raw", float(pr.curriculum_winrate_raw), iteration_step)
             writer.add_scalar("selfplay/avg_game_plies", float(pr.avg_game_plies), iteration_step)
@@ -558,6 +665,7 @@ def _build_report_dict(
         f"outcome_{str(k)}": int(v)
         for k, v in sorted(dict(sp.outcome_stats).items())
     }
+    pid_diag_dict = _pid_report_dict(pr)
 
     return {
         "opponent_sf_nodes": int(sf_nodes_used),
@@ -729,6 +837,7 @@ def _build_report_dict(
         "pid_curriculum_w": int(sp.total_w),
         "pid_curriculum_d": int(sp.total_d),
         "pid_curriculum_l": int(sp.total_l),
+        **pid_diag_dict,
         "selfplay_games": int(sp.total_selfplay_games),
         "selfplay_draw_games": int(sp.total_selfplay_draw_games),
         "wdl_regret": float(wdl_regret_used),

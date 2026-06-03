@@ -33,26 +33,20 @@ def _observation_se(wins: int, draws: int, losses: int) -> float:
     return max(raw_se, _OBSERVATION_SE_FLOOR)
 
 
-def _fit_inverse_lever(
+@dataclass(frozen=True)
+class _LeverFitDiagnostics:
+    predicted_value: float
+    intercept: float
+    slope: float
+
+
+def _fit_inverse_lever_diagnostics(
     history: list[tuple[float, float, float]],
     *,
     target_wr: float,
     expected_slope_sign: int,
     recency_half_life: float = 0.0,
-) -> float | None:
-    """Weighted least-squares fit ``winrate = a + b*x``, solve for x* at target.
-
-    History is ``(lever_value, raw_winrate, observation_se)`` entries ordered
-    oldest-first. When ``recency_half_life > 0`` each point is additionally
-    weighted by ``0.5 ** (age / half_life)`` so recent points dominate.
-
-    ``expected_slope_sign`` ±1 is a physics check on b: regret-style levers
-    expect b > 0 (more regret → more wins), nodes-style levers expect b < 0
-    (more nodes → fewer wins). A wrong-sign fit is treated as degenerate.
-
-    Returns the predicted x* at ``target_wr``, or None if degenerate (fewer
-    than 3 points, zero x variance, or wrong-sign slope).
-    """
+) -> _LeverFitDiagnostics | None:
     if len(history) < 3:
         return None
     x_vals = [float(h[0]) for h in history]
@@ -78,7 +72,40 @@ def _fit_inverse_lever(
     # b is O(1e-6/node), so a 1e-4 cutoff would reject every real fit.
     if b * expected_slope_sign <= 1e-12:
         return None
-    return (target_wr - a) / b
+    return _LeverFitDiagnostics(
+        predicted_value=(target_wr - a) / b,
+        intercept=a,
+        slope=b,
+    )
+
+
+def _fit_inverse_lever(
+    history: list[tuple[float, float, float]],
+    *,
+    target_wr: float,
+    expected_slope_sign: int,
+    recency_half_life: float = 0.0,
+) -> float | None:
+    """Weighted least-squares fit ``winrate = a + b*x``, solve for x* at target.
+
+    History is ``(lever_value, raw_winrate, observation_se)`` entries ordered
+    oldest-first. When ``recency_half_life > 0`` each point is additionally
+    weighted by ``0.5 ** (age / half_life)`` so recent points dominate.
+
+    ``expected_slope_sign`` ±1 is a physics check on b: regret-style levers
+    expect b > 0 (more regret → more wins), nodes-style levers expect b < 0
+    (more nodes → fewer wins). A wrong-sign fit is treated as degenerate.
+
+    Returns the predicted x* at ``target_wr``, or None if degenerate (fewer
+    than 3 points, zero x variance, or wrong-sign slope).
+    """
+    fit = _fit_inverse_lever_diagnostics(
+        history,
+        target_wr=target_wr,
+        expected_slope_sign=expected_slope_sign,
+        recency_half_life=recency_half_life,
+    )
+    return None if fit is None else float(fit.predicted_value)
 
 
 @dataclass
@@ -132,6 +159,26 @@ class _Lever:
         self.history = deque(self.history, maxlen=max(3, self.window))
 
 
+@dataclass(frozen=True)
+class LeverStepDiagnostics:
+    name: str
+    value_before: float
+    value_after: float
+    changed: bool
+    reason: str
+    observation_se: float
+    raw_deadband: float
+    ema_deadband: float
+    history_len: int
+    predicted_value: float | None = None
+    fit_slope: float | None = None
+    raw_delta: float = 0.0
+    applied_delta: float = 0.0
+    cap: float = 0.0
+    tighten_gain_applied: float = 1.0
+    crash_ease_applied: bool = False
+
+
 def _tighten_streak(history: list[tuple[float, float, float]], *, ease_sign: int) -> int:
     streak = 0
     for older, newer in zip(reversed(history[:-1]), reversed(history[1:])):
@@ -151,53 +198,48 @@ def _step_lever(
     ema_wr: float,
     ema_alpha: float,
     se: float,
-) -> bool:
-    """Apply one observation to ``lever``; return True if value changed.
-
-    Branches via ``lever.direction``:
-      - airbag (raw_wr < safety_floor): step easier by emergency_ease_step
-        (capped by max_step). Records the data point — extreme low wr is
-        informative for future fits.
-      - dual z-gate deadband: hold AND skip the history append. Appending
-        same-x entries during steady state collapses the next fit's slope
-        (det → 0 → degenerate), forcing blind exploration steps the next
-        time a real disturbance arrives.
-      - else: fit ``wr = a + b·value``, step toward predicted x* capped by
-        abs_max_step (= max_step_frac·value if frac > 0 else max_step).
-        Fit-degenerate → exploration step in raw's direction. Raw vs fit
-        sign disagreement → half-step in raw's direction.
-    """
+) -> LeverStepDiagnostics:
+    """Apply one observation to ``lever`` and return step diagnostics."""
     value_before = lever.value
     ease_sign = -lever.direction  # +1 for regret (up=easier), -1 for nodes
 
     err = target_wr - raw_wr
     ema_err = target_wr - ema_wr
     prior_history = list(lever.history)
-    # EMA's steady-state variance is α/(2-α)·σ²; SE(ema_err) = σ·√(α/(2-α)).
+    # EMA's steady-state variance is alpha/(2-alpha)*sigma^2.
     ema_se_factor = math.sqrt(ema_alpha / max(2.0 - ema_alpha, 1e-9))
     sigma = max(0.0, lever.deadband_sigma)
     raw_deadband = sigma * se
     ema_deadband = raw_deadband * ema_se_factor
     in_deadband = abs(err) <= raw_deadband and abs(ema_err) <= ema_deadband
+    history_len_before = len(lever.history)
 
-    # Airbag fires only when raw_wr is statistically distinguishable from the
-    # floor (1.5σ). Without this, a 77-game iter at 0.435 (SE≈0.057, well within
-    # noise of 0.50) fires the same response as a 665-game iter at 0.413
-    # (SE≈0.019, 4σ below floor). The first is noise; the second is a real
-    # crash. Same trigger → spurious overshoots near equilibrium.
     if raw_wr + 1.5 * se < lever.safety_floor:
         lever.history.append((value_before, raw_wr, se))
-        # Airbag capped by max_step so a runaway ease branch can't break the
-        # user's per-iter movement promise.
         ease_mag = min(lever.emergency_ease_step, lever.max_step)
         delta = ease_sign * ease_mag
         new_value = _clamp(value_before + delta, lever.min_value, lever.max_value)
+        reason = "airbag"
+        predicted_value = None
+        fit_slope = None
+        raw_delta = delta
+        cap = ease_mag
+        tighten_gain_applied = 1.0
+        crash_ease_applied = False
     elif in_deadband:
-        return False  # hold; skip history append (see docstring).
+        return LeverStepDiagnostics(
+            name=lever.name,
+            value_before=value_before,
+            value_after=value_before,
+            changed=False,
+            reason="deadband",
+            observation_se=se,
+            raw_deadband=raw_deadband,
+            ema_deadband=ema_deadband,
+            history_len=history_len_before,
+        )
     else:
         lever.history.append((value_before, raw_wr, se))
-        # frac scales with value so wr-perturbation per step stays roughly
-        # constant as the lever approaches its target.
         abs_tighten_step = (
             lever.max_step_frac * value_before if lever.max_step_frac > 0.0
             else lever.max_step
@@ -206,37 +248,48 @@ def _step_lever(
             lever.ease_step_frac * value_before if lever.ease_step_frac > 0.0
             else abs_tighten_step
         )
-        predicted = _fit_inverse_lever(
+        fit = _fit_inverse_lever_diagnostics(
             list(lever.history),
             target_wr=target_wr,
             expected_slope_sign=ease_sign,
             recency_half_life=lever.recency_half_life,
         )
-        if predicted is not None:
-            raw_delta = predicted - value_before
+        if fit is not None:
+            predicted_value = float(fit.predicted_value)
+            fit_slope = float(fit.slope)
+            raw_delta = predicted_value - value_before
             cap = abs_ease_step if raw_delta * ease_sign >= 0 else abs_tighten_step
             delta = _clamp(raw_delta, -cap, cap)
             if abs(raw_delta) > cap + 1e-12:
                 key = "ease_capped" if raw_delta * ease_sign >= 0 else "tighten_capped"
                 lever.cap_hits[key] = lever.cap_hits.get(key, 0) + 1
-        else:
-            # Fit degenerate: direction known (outside deadband) but magnitude
-            # unknown. Step degen_step_frac of the appropriate cap — still
-            # diversifies the history x-range for the next fit.
-            if err > 0:
-                delta = ease_sign * lever.degen_step_frac * abs_ease_step
+                reason = "fit_capped"
             else:
-                delta = -ease_sign * lever.degen_step_frac * abs_tighten_step
+                reason = "fit"
+        else:
+            predicted_value = None
+            fit_slope = None
+            if err > 0:
+                cap = abs_ease_step
+                delta = ease_sign * lever.degen_step_frac * cap
+            else:
+                cap = abs_tighten_step
+                delta = -ease_sign * lever.degen_step_frac * cap
+            raw_delta = delta
+            reason = "degenerate"
 
-        # Raw is fresh; the fit lags by ~window iters. On sign disagreement
-        # with raw outside its deadband, override delta to half-step in raw's
-        # direction (full step would defeat the fit's magnitude calibration
-        # when signs agree; zero would hold while raw genuinely underperforms).
+        # Raw is fresh; the fit lags by roughly the window length. If signs
+        # disagree outside the raw deadband, use a half-step in raw's direction.
         if err > raw_deadband and delta * ease_sign < -1e-12:
-            delta = ease_sign * 0.5 * abs_ease_step
+            cap = abs_ease_step
+            delta = ease_sign * 0.5 * cap
+            reason = "raw_override"
         elif err < -raw_deadband and delta * ease_sign > 1e-12:
-            delta = -ease_sign * 0.5 * abs_tighten_step
+            cap = abs_tighten_step
+            delta = -ease_sign * 0.5 * cap
+            reason = "raw_override"
 
+        tighten_gain_applied = 1.0
         if delta * ease_sign < -1e-12:
             tighten_gain = lever.tighten_gain
             if (
@@ -246,21 +299,44 @@ def _step_lever(
             ):
                 tighten_gain *= lever.tighten_streak_gain
             delta *= tighten_gain
+            tighten_gain_applied = float(tighten_gain)
+            if tighten_gain < 1.0:
+                reason = "tighten_gain"
 
-        # Crash ease runs after tightening so the safety floor can override a
-        # throttled tighten step when raw regret is outside the crash band.
+        crash_ease_applied = False
         if (
             lever.crash_ease_z > 0.0
             and lever.crash_ease_min_frac > 0.0
             and err > max(raw_deadband, lever.crash_ease_z * se)
         ):
             min_ease = lever.crash_ease_min_frac * abs_ease_step
+            old_delta = delta
             delta = ease_sign * max(delta * ease_sign, min_ease)
+            crash_ease_applied = abs(delta - old_delta) > 1e-12
+            if crash_ease_applied:
+                reason = "crash_ease"
 
         new_value = _clamp(value_before + delta, lever.min_value, lever.max_value)
 
     lever.value = new_value
-    return abs(new_value - value_before) > 1e-12
+    return LeverStepDiagnostics(
+        name=lever.name,
+        value_before=value_before,
+        value_after=new_value,
+        changed=abs(new_value - value_before) > 1e-12,
+        reason=reason,
+        observation_se=se,
+        raw_deadband=raw_deadband,
+        ema_deadband=ema_deadband,
+        history_len=len(lever.history),
+        predicted_value=predicted_value,
+        fit_slope=fit_slope,
+        raw_delta=raw_delta,
+        applied_delta=new_value - value_before,
+        cap=cap,
+        tighten_gain_applied=tighten_gain_applied,
+        crash_ease_applied=crash_ease_applied,
+    )
 
 
 @dataclass
@@ -274,6 +350,12 @@ class PIDUpdate:
     wdl_regret_before: float = -1.0
     wdl_regret_after: float = -1.0
     wdl_regret_changed: bool = False
+    raw_winrate: float = 0.0
+    observation_se: float = 0.0
+    regret_frozen: bool = False
+    nodes_active: bool = False
+    regret_diag: LeverStepDiagnostics | None = None
+    nodes_diag: LeverStepDiagnostics | None = None
 
 
 # Sentinel "no absolute cap" for the nodes lever. The nodes-side
@@ -550,7 +632,15 @@ class DifficultyPID:
         if rgc is not None and self._regret_gate_enabled:
             self._regret_stage_complete = bool(rgc)
 
-    def _no_change_update(self, err: float) -> PIDUpdate:
+    def _no_change_update(
+        self,
+        err: float,
+        *,
+        raw_winrate: float = 0.0,
+        observation_se: float = 0.0,
+        regret_frozen: bool = False,
+        nodes_active: bool = False,
+    ) -> PIDUpdate:
         return PIDUpdate(
             nodes_before=int(self.nodes),
             nodes_after=int(self.nodes),
@@ -560,6 +650,10 @@ class DifficultyPID:
             wdl_regret_before=float(self.wdl_regret),
             wdl_regret_after=float(self.wdl_regret),
             wdl_regret_changed=False,
+            raw_winrate=float(raw_winrate),
+            observation_se=float(observation_se),
+            regret_frozen=bool(regret_frozen),
+            nodes_active=bool(nodes_active),
         )
 
     def observe(self, *, wins: int, draws: int, losses: int, force: bool = False) -> PIDUpdate:
@@ -572,12 +666,16 @@ class DifficultyPID:
 
         self._games_since_adjust += games
         err = self.ema_winrate - self.target
+        se = _observation_se(wins, draws, losses)
         if not force and self._games_since_adjust < self.min_games_between_adjust:
-            return self._no_change_update(err)
+            return self._no_change_update(
+                err,
+                raw_winrate=raw_wr,
+                observation_se=se,
+            )
 
         nodes_before = self.nodes
         regret_before = self.wdl_regret
-        se = _observation_se(wins, draws, losses)
 
         # Regret lever freezes one-way once the stage gate fires; otherwise
         # a stage-2 wr dip would trip its airbag and double-mutate alongside
@@ -586,17 +684,19 @@ class DifficultyPID:
         # no stage-2 channel to handle a winrate drop — unfreeze regret so the
         # controller still has an ease lever instead of wedging.
         regret_changed = False
+        regret_diag = None
         regret_frozen = (
             self._regret_gate_enabled
             and self._regret_stage_complete
             and self.nodes > self.min_nodes
         )
         if self._regret_enabled and not regret_frozen:
-            regret_changed = _step_lever(
+            regret_diag = _step_lever(
                 self.regret_lever,
                 target_wr=self.target, raw_wr=raw_wr,
                 ema_wr=self.ema_winrate, ema_alpha=self.alpha, se=se,
             )
+            regret_changed = bool(regret_diag.changed)
             if self._regret_gate_enabled:
                 regret_end = _clamp(
                     self.wdl_regret_stage_end, self.wdl_regret_min, self.wdl_regret_max
@@ -605,6 +705,7 @@ class DifficultyPID:
                     self._regret_stage_complete = True
 
         nodes_changed = False
+        nodes_diag = None
         # Nodes lever runs when nodes is the active controller — either regret
         # is disabled entirely (initial_wdl_regret<0 → nodes is the only knob)
         # or the stage gate is wired up AND has fired (regret descended to the
@@ -619,11 +720,12 @@ class DifficultyPID:
             or (self._regret_gate_enabled and self._regret_stage_complete)
         )
         if nodes_active:
-            nodes_changed = _step_lever(
+            nodes_diag = _step_lever(
                 self.nodes_lever,
                 target_wr=self.target, raw_wr=raw_wr,
                 ema_wr=self.ema_winrate, ema_alpha=self.alpha, se=se,
             )
+            nodes_changed = bool(nodes_diag.changed)
 
         self._games_since_adjust = 0
         nodes_after = int(self.nodes)
@@ -638,6 +740,12 @@ class DifficultyPID:
             wdl_regret_before=regret_before,
             wdl_regret_after=float(self.wdl_regret),
             wdl_regret_changed=bool(regret_changed),
+            raw_winrate=float(raw_wr),
+            observation_se=float(se),
+            regret_frozen=bool(regret_frozen),
+            nodes_active=bool(nodes_active),
+            regret_diag=regret_diag,
+            nodes_diag=nodes_diag,
         )
 
 
