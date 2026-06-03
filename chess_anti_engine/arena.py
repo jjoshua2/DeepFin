@@ -65,6 +65,9 @@ def _model_config_from_cli_args(args: argparse.Namespace) -> dict:
         ),
         "use_smolgen": bool(args.use_smolgen),
         "smolgen_pooling": str(args.smolgen_pooling),
+        "smolgen_hidden_channels": int(args.smolgen_hidden_channels),
+        "smolgen_hidden_sz": int(args.smolgen_hidden_sz),
+        "smolgen_gen_sz": int(args.smolgen_gen_sz),
         "use_nla": bool(args.use_nla),
         "gradient_checkpointing": bool(args.gradient_checkpointing),
     }
@@ -93,6 +96,9 @@ def main() -> None:
     )
     ap.add_argument("--use-smolgen", action="store_true")
     ap.add_argument("--smolgen-pooling", choices=["flatten", "mean"], default="flatten")
+    ap.add_argument("--smolgen-hidden-channels", type=int, default=32)
+    ap.add_argument("--smolgen-hidden-sz", type=int, default=256)
+    ap.add_argument("--smolgen-gen-sz", type=int, default=256)
     ap.add_argument("--use-nla", action="store_true")
     ap.add_argument("--gradient-checkpointing", action="store_true")
 

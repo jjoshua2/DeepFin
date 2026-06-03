@@ -17,6 +17,10 @@ def test_arena_cli_model_config_preserves_ffn_schedule() -> None:
         ffn_mult=1.0,
         ffn_mult_by_layer=(1.0, 1.25, 1.5),
         use_smolgen=True,
+        smolgen_pooling="flatten",
+        smolgen_hidden_channels=16,
+        smolgen_hidden_sz=128,
+        smolgen_gen_sz=192,
         use_nla=False,
         gradient_checkpointing=False,
     )
@@ -24,6 +28,9 @@ def test_arena_cli_model_config_preserves_ffn_schedule() -> None:
     cfg = model_config_from_manifest_dict(_model_config_from_cli_args(args))
 
     assert cfg.ffn_mult_by_layer == (1.0, 1.25, 1.5)
+    assert cfg.smolgen_hidden_channels == 16
+    assert cfg.smolgen_hidden_sz == 128
+    assert cfg.smolgen_gen_sz == 192
 
 
 def test_arena_ffn_schedule_parser_rejects_nonpositive_values() -> None:

@@ -75,6 +75,9 @@ class TrialConfig:
     input_square_embedding: str = "none"
     smolgen_mode: str = "shared"
     smolgen_pooling: str = "flatten"
+    smolgen_hidden_channels: int = 32
+    smolgen_hidden_sz: int = 256
+    smolgen_gen_sz: int = 256
     smolgen_bias_scale: str = "none"
     smolgen_bias_norm: str = "none"
     arc_attention_bias: str = "none"
@@ -341,6 +344,9 @@ class TrialConfig:
             input_square_embedding=str(config.get("input_square_embedding", "none")),
             smolgen_mode=str(config.get("smolgen_mode", "shared")),
             smolgen_pooling=str(config.get("smolgen_pooling", "flatten")),
+            smolgen_hidden_channels=int(config.get("smolgen_hidden_channels", 32)),
+            smolgen_hidden_sz=int(config.get("smolgen_hidden_sz", 256)),
+            smolgen_gen_sz=int(config.get("smolgen_gen_sz", 256)),
             smolgen_bias_scale=str(config.get("smolgen_bias_scale", "none")),
             smolgen_bias_norm=str(config.get("smolgen_bias_norm", "none")),
             arc_attention_bias=str(config.get("arc_attention_bias", "none")),

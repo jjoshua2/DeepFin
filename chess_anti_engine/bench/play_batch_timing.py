@@ -336,6 +336,9 @@ def main() -> None:
     ap.add_argument("--ffn-mult", type=float, default=2)
     ap.add_argument("--no-smolgen", action="store_true")
     ap.add_argument("--smolgen-pooling", choices=["flatten", "mean"], default="flatten")
+    ap.add_argument("--smolgen-hidden-channels", type=int, default=32)
+    ap.add_argument("--smolgen-hidden-sz", type=int, default=256)
+    ap.add_argument("--smolgen-gen-sz", type=int, default=256)
     ap.add_argument("--use-nla", action="store_true")
 
     ap.add_argument("--sf-nodes", type=int, default=50)
@@ -381,6 +384,9 @@ def main() -> None:
             ffn_mult=float(args.ffn_mult),
             use_smolgen=not bool(args.no_smolgen),
             smolgen_pooling=str(args.smolgen_pooling),
+            smolgen_hidden_channels=int(args.smolgen_hidden_channels),
+            smolgen_hidden_sz=int(args.smolgen_hidden_sz),
+            smolgen_gen_sz=int(args.smolgen_gen_sz),
             use_nla=bool(args.use_nla),
         )
     ).to(device)

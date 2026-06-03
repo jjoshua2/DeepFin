@@ -700,6 +700,9 @@ def _model_config_from_flat(cfg: dict[str, Any]) -> ModelConfig:
         input_square_embedding=str(cfg.get("input_square_embedding", "none")),
         smolgen_mode=str(cfg.get("smolgen_mode", "shared")),
         smolgen_pooling=str(cfg.get("smolgen_pooling", "flatten")),
+        smolgen_hidden_channels=int(cfg.get("smolgen_hidden_channels", 32)),
+        smolgen_hidden_sz=int(cfg.get("smolgen_hidden_sz", 256)),
+        smolgen_gen_sz=int(cfg.get("smolgen_gen_sz", 256)),
         smolgen_bias_scale=str(cfg.get("smolgen_bias_scale", "none")),
         smolgen_bias_norm=str(cfg.get("smolgen_bias_norm", "none")),
         arc_attention_bias=str(cfg.get("arc_attention_bias", "none")),
@@ -1099,6 +1102,9 @@ def main() -> None:
     ap.add_argument("--smolgen", type=_parse_bool_choice, default=None, help="Override model.use_smolgen.")
     ap.add_argument("--smolgen-mode", choices=["shared", "per_layer"], default=None)
     ap.add_argument("--smolgen-pooling", choices=["flatten", "mean"], default=None)
+    ap.add_argument("--smolgen-hidden-channels", type=int, default=None)
+    ap.add_argument("--smolgen-hidden-sz", type=int, default=None)
+    ap.add_argument("--smolgen-gen-sz", type=int, default=None)
     ap.add_argument("--smolgen-bias-scale", choices=["none", "layer", "layer_head"], default=None)
     ap.add_argument("--smolgen-bias-norm", choices=["none", "center", "center_rms"], default=None)
     ap.add_argument("--arc-attention-bias", choices=["none", "basic"], default=None)
@@ -1257,6 +1263,12 @@ def main() -> None:
         cfg["smolgen_mode"] = str(args.smolgen_mode)
     if args.smolgen_pooling is not None:
         cfg["smolgen_pooling"] = str(args.smolgen_pooling)
+    if args.smolgen_hidden_channels is not None:
+        cfg["smolgen_hidden_channels"] = int(args.smolgen_hidden_channels)
+    if args.smolgen_hidden_sz is not None:
+        cfg["smolgen_hidden_sz"] = int(args.smolgen_hidden_sz)
+    if args.smolgen_gen_sz is not None:
+        cfg["smolgen_gen_sz"] = int(args.smolgen_gen_sz)
     if args.smolgen_bias_scale is not None:
         cfg["smolgen_bias_scale"] = str(args.smolgen_bias_scale)
     if args.smolgen_bias_norm is not None:
@@ -1328,6 +1340,9 @@ def main() -> None:
             "use_smolgen": model_cfg.use_smolgen,
             "smolgen_mode": model_cfg.smolgen_mode,
             "smolgen_pooling": model_cfg.smolgen_pooling,
+            "smolgen_hidden_channels": model_cfg.smolgen_hidden_channels,
+            "smolgen_hidden_sz": model_cfg.smolgen_hidden_sz,
+            "smolgen_gen_sz": model_cfg.smolgen_gen_sz,
             "smolgen_bias_scale": model_cfg.smolgen_bias_scale,
             "smolgen_bias_norm": model_cfg.smolgen_bias_norm,
             "arc_attention_bias": model_cfg.arc_attention_bias,
