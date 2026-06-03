@@ -140,6 +140,7 @@ def main() -> None:
         input_global_embedding_channels=int(cfg.get("input_global_embedding_channels", 0)),
         input_square_embedding=str(cfg.get("input_square_embedding", "none")),
         smolgen_mode=str(cfg.get("smolgen_mode", "shared")),
+        smolgen_pooling=str(cfg.get("smolgen_pooling", "flatten")),
         smolgen_bias_scale=str(cfg.get("smolgen_bias_scale", "none")),
         smolgen_bias_norm=str(cfg.get("smolgen_bias_norm", "none")),
         arc_attention_bias=str(cfg.get("arc_attention_bias", "none")),

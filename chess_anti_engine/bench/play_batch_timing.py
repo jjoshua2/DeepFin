@@ -335,6 +335,7 @@ def main() -> None:
     ap.add_argument("--num-heads", type=int, default=4)
     ap.add_argument("--ffn-mult", type=float, default=2)
     ap.add_argument("--no-smolgen", action="store_true")
+    ap.add_argument("--smolgen-pooling", choices=["flatten", "mean"], default="flatten")
     ap.add_argument("--use-nla", action="store_true")
 
     ap.add_argument("--sf-nodes", type=int, default=50)
@@ -379,6 +380,7 @@ def main() -> None:
             num_heads=int(args.num_heads),
             ffn_mult=float(args.ffn_mult),
             use_smolgen=not bool(args.no_smolgen),
+            smolgen_pooling=str(args.smolgen_pooling),
             use_nla=bool(args.use_nla),
         )
     ).to(device)

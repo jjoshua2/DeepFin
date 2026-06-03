@@ -359,11 +359,16 @@ class ScalarHead(nn.Module):
 
 
 class Smolgen(nn.Module):
-    """LC0 BT4 smolgen: per-square compress → flatten → bottleneck MLP → gen weight.
+    """LC0 BT4 smolgen / GAB-style dynamic attention bias.
 
-    BT4 reference: compress to 64×hidden_channels, flatten, project down to
-    hidden_sz bottleneck, then up to H×gen_sz, reshape, and final gen_sz→4096
-    projection per head.  hidden_channels=32, hidden_sz=256, gen_sz=256 in BT4.
+    ``pooling="flatten"`` is the existing BT4 path: compress to
+    64×hidden_channels, flatten, project down to hidden_sz, then up to
+    H×gen_sz.
+
+    ``pooling="mean"`` is a cheaper pooled-GAB variant: average the 64 token
+    embeddings and feed that pooled board vector directly into the generator
+    bottleneck. This preserves the generated per-head 64×64 bias while making
+    the root smolgen input independent of the token count.
     """
 
     def __init__(
@@ -378,10 +383,14 @@ class Smolgen(nn.Module):
         relation_norm: str = "none",
         relation_coeff_norm: str = "none",
         relation_scale: str = "none",
+        pooling: str = "flatten",
     ):
         super().__init__()
         self.num_heads = int(num_heads)
         self.gen_sz = int(gen_sz)
+        self.pooling = str(pooling).lower().strip()
+        if self.pooling not in ("flatten", "mean"):
+            raise ValueError(f"Unsupported smolgen_pooling: {pooling!r}")
         self.relation_norm = str(relation_norm).lower().strip()
         if self.relation_norm not in (
             "none",
@@ -397,11 +406,15 @@ class Smolgen(nn.Module):
         self.relation_scale = str(relation_scale).lower().strip()
         if self.relation_scale not in ("none", "layer", "layer_head"):
             raise ValueError(f"Unsupported smolgen_relation_scale: {relation_scale!r}")
-  # Per-square compression (no bias, matching LC0).
-        self.compress = nn.Linear(embed_dim, hidden_channels, bias=False)
-        flat_dim = 64 * hidden_channels
-  # Bottleneck MLP: flatten → hidden_sz → H*gen_sz (LC0 BT4 topology).
-        self.dense1 = nn.Linear(flat_dim, hidden_sz)
+        self.compress: nn.Linear | None
+        if self.pooling == "flatten":
+            # Per-square compression (no bias, matching LC0).
+            self.compress = nn.Linear(embed_dim, hidden_channels, bias=False)
+            first_dim = 64 * hidden_channels
+        else:
+            self.compress = None
+            first_dim = int(embed_dim)
+        self.dense1 = nn.Linear(first_dim, hidden_sz)
         self.ln1 = nn.LayerNorm(hidden_sz)
         self.dense2 = nn.Linear(hidden_sz, num_heads * gen_sz)
         self.ln2 = nn.LayerNorm(num_heads * gen_sz)
@@ -429,8 +442,13 @@ class Smolgen(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
   # x: (B,64,D) -> bias: (B,H,64,64)
         b = x.shape[0]
-        h = self.compress(x)  # (B, 64, hidden_channels)
-        h = h.flatten(1)  # (B, 64 * hidden_channels)
+        if self.pooling == "flatten":
+            compress = self.compress
+            assert compress is not None
+            h = compress(x)  # (B, 64, hidden_channels)
+            h = h.flatten(1)  # (B, 64 * hidden_channels)
+        else:
+            h = x.mean(dim=1)  # (B, D)
         h = self.ln1(F.silu(self.dense1(h)))  # (B, hidden_sz)
         h = self.ln2(F.silu(self.dense2(h)))  # (B, H * gen_sz)
         h = h.view(b, self.num_heads, self.gen_sz)  # (B, H, gen_sz)
@@ -604,6 +622,7 @@ class TransformerConfig:
     input_global_embedding_channels: int = 0
     input_square_embedding: str = "none"
     smolgen_mode: str = "shared"  # shared | per_layer
+    smolgen_pooling: str = "flatten"  # flatten | mean
     smolgen_bias_scale: str = "none"  # none | layer | layer_head
     smolgen_bias_norm: str = "none"  # none | center | center_rms
     arc_attention_bias: str = "none"  # none | basic
@@ -680,6 +699,9 @@ class ChessNet(nn.Module):
         self.smolgen_mode = str(cfg.smolgen_mode).lower().strip()
         if self.smolgen_mode not in ("shared", "per_layer"):
             raise ValueError(f"Unsupported smolgen_mode: {cfg.smolgen_mode!r}")
+        self.smolgen_pooling = str(cfg.smolgen_pooling).lower().strip()
+        if self.smolgen_pooling not in ("flatten", "mean"):
+            raise ValueError(f"Unsupported smolgen_pooling: {cfg.smolgen_pooling!r}")
         self.smolgen_bias_scale = str(cfg.smolgen_bias_scale).lower().strip()
         if self.smolgen_bias_scale not in ("none", "layer", "layer_head"):
             raise ValueError(f"Unsupported smolgen_bias_scale: {cfg.smolgen_bias_scale!r}")
@@ -787,6 +809,7 @@ class ChessNet(nn.Module):
                         relation_norm=self.smolgen_relation_norm,
                         relation_coeff_norm=self.smolgen_relation_coeff_norm,
                         relation_scale=self.smolgen_relation_scale,
+                        pooling=self.smolgen_pooling,
                     )
                     for _ in range(cfg.num_layers)
                 ]
@@ -800,6 +823,7 @@ class ChessNet(nn.Module):
                 relation_norm=self.smolgen_relation_norm,
                 relation_coeff_norm=self.smolgen_relation_coeff_norm,
                 relation_scale=self.smolgen_relation_scale,
+                pooling=self.smolgen_pooling,
             )
         residual_branch_scale = (2.0 * float(cfg.num_layers)) ** -0.25 if cfg.use_deepnorm else 1.0
         self.blocks = nn.ModuleList(

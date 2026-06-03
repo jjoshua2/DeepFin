@@ -16,7 +16,7 @@ from .transformer import ChessNet, TransformerConfig
 # misrepresent. Trainer embeds this version when saving; the UCI loader
 # rejects checkpoints with a higher version AND rejects unknown keys at
 # the same version — both prevent silent architecture mismatch on skew.
-ARCH_SCHEMA_VERSION = 10
+ARCH_SCHEMA_VERSION = 11
 
 
 @dataclass
@@ -40,6 +40,7 @@ class ModelConfig:
     input_global_embedding_channels: int = 0
     input_square_embedding: str = "none"
     smolgen_mode: str = "shared"
+    smolgen_pooling: str = "flatten"
     smolgen_bias_scale: str = "none"
     smolgen_bias_norm: str = "none"
     arc_attention_bias: str = "none"
@@ -79,6 +80,7 @@ def model_config_from_manifest_dict(mc: dict) -> ModelConfig:
         input_global_embedding_channels=int(mc.get("input_global_embedding_channels", 0)),
         input_square_embedding=str(mc.get("input_square_embedding", "none")),
         smolgen_mode=str(mc.get("smolgen_mode", "shared")),
+        smolgen_pooling=str(mc.get("smolgen_pooling", "flatten")),
         smolgen_bias_scale=str(mc.get("smolgen_bias_scale", "none")),
         smolgen_bias_norm=str(mc.get("smolgen_bias_norm", "none")),
         arc_attention_bias=str(mc.get("arc_attention_bias", "none")),
@@ -119,6 +121,7 @@ def model_config_to_manifest_dict(cfg: ModelConfig) -> dict:
         "input_global_embedding_channels": int(cfg.input_global_embedding_channels),
         "input_square_embedding": str(cfg.input_square_embedding),
         "smolgen_mode": str(cfg.smolgen_mode),
+        "smolgen_pooling": str(cfg.smolgen_pooling),
         "smolgen_bias_scale": str(cfg.smolgen_bias_scale),
         "smolgen_bias_norm": str(cfg.smolgen_bias_norm),
         "arc_attention_bias": str(cfg.arc_attention_bias),
@@ -174,6 +177,7 @@ def build_model(cfg: ModelConfig) -> torch.nn.Module:
             input_global_embedding_channels=int(cfg.input_global_embedding_channels),
             input_square_embedding=str(cfg.input_square_embedding),
             smolgen_mode=str(cfg.smolgen_mode),
+            smolgen_pooling=str(cfg.smolgen_pooling),
             smolgen_bias_scale=str(cfg.smolgen_bias_scale),
             smolgen_bias_norm=str(cfg.smolgen_bias_norm),
             arc_attention_bias=str(cfg.arc_attention_bias),

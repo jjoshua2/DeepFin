@@ -278,7 +278,7 @@ class LocalModelEvaluator:
         event_default.record(torch.cuda.current_stream(self.device))
 
         with torch.cuda.stream(stream):
-            stream.wait_event(event_default)  # pyright: ignore[reportArgumentType]  # torch stubs have duplicate Event types
+            stream.wait_event(event_default)
             xt = torch.from_numpy(xb).to(self.device, non_blocking=True)
             out = _forward_no_grad(
                 self.model, xt, device=self.device,
@@ -571,7 +571,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         event_default.record(torch.cuda.current_stream(self.device))
 
         with torch.cuda.stream(stream):
-            stream.wait_event(event_default)  # pyright: ignore[reportArgumentType]  # torch stubs have duplicate Event types
+            stream.wait_event(event_default)
             xt = self._device_input(bsz, slot=slot)
             out = _forward_no_grad(
                 self.model, xt, device=self.device,
@@ -598,7 +598,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         event_default.record(torch.cuda.current_stream(self.device))
 
         with torch.cuda.stream(stream):
-            stream.wait_event(event_default)  # pyright: ignore[reportArgumentType]  # torch stubs have duplicate Event types
+            stream.wait_event(event_default)
             xt = self._device_input(bsz, slot=slot)
             legal_counts_gpu = torch.as_tensor(legal_counts, dtype=torch.long, device=self.device)
             legal_flat_gpu = torch.as_tensor(legal_flat, dtype=torch.long, device=self.device)
@@ -2145,6 +2145,7 @@ class SharedSlotBroker:
             model_cfg.input_square_embedding,
             model_cfg.qkv_projection,
             model_cfg.smolgen_mode,
+            model_cfg.smolgen_pooling,
             model_cfg.smolgen_bias_scale,
             model_cfg.smolgen_bias_norm,
             model_cfg.arc_attention_bias,

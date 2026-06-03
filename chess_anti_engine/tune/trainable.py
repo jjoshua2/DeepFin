@@ -331,6 +331,7 @@ def _build_trial_model_config(tc: TrialConfig) -> ModelConfig:
         input_global_embedding_channels=tc.input_global_embedding_channels,
         input_square_embedding=tc.input_square_embedding,
         smolgen_mode=tc.smolgen_mode,
+        smolgen_pooling=tc.smolgen_pooling,
         smolgen_bias_scale=tc.smolgen_bias_scale,
         smolgen_bias_norm=tc.smolgen_bias_norm,
         arc_attention_bias=tc.arc_attention_bias,
