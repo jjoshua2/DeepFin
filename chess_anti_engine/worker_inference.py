@@ -21,7 +21,7 @@ def maybe_apply_fp8_inference(model: torch.nn.Module) -> torch.nn.Module:
     Requires torch.compile afterwards for actual speedup.
     """
     try:
-        from torchao.quantization import (  # pyright: ignore[reportMissingImports]  # optional dep
+        from torchao.quantization import (
             Float8DynamicActivationFloat8WeightConfig,
             PerRow,
             quantize_,
