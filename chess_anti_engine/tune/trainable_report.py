@@ -348,9 +348,11 @@ _PID_REASON_CODES = {
     "fit_capped": 4,
     "degenerate": 5,
     "raw_override": 6,
-    "tighten_gain": 7,
-    "crash_ease": 8,
 }
+# Note: `tighten_gain` and `crash_ease` are intentionally absent — they are
+# modifiers applied on top of a magnitude-deciding branch, reported via the
+# dedicated `*_tighten_gain_applied` / `*_crash_ease_applied` fields rather
+# than as a `reason`. Any unmapped reason resolves to code -1 below.
 
 
 def _pid_step_diag_dict(prefix: str, diag: Any | None) -> dict:
@@ -379,12 +381,18 @@ def _pid_step_diag_dict(prefix: str, diag: Any | None) -> dict:
             1 if bool(getattr(diag, "crash_ease_applied", False)) else 0
         ),
     }
+    # Always emit predicted_value/fit_slope so active-step rows share a stable
+    # schema; NaN marks the steps where no fit ran (airbag/degenerate). The
+    # TensorBoard scalars stay guarded against None separately, since NaN
+    # pollutes those plots.
     predicted_value = getattr(diag, "predicted_value", None)
-    if predicted_value is not None:
-        out[f"{prefix}_predicted_value"] = float(predicted_value)
+    out[f"{prefix}_predicted_value"] = (
+        float(predicted_value) if predicted_value is not None else float("nan")
+    )
     fit_slope = getattr(diag, "fit_slope", None)
-    if fit_slope is not None:
-        out[f"{prefix}_fit_slope"] = float(fit_slope)
+    out[f"{prefix}_fit_slope"] = (
+        float(fit_slope) if fit_slope is not None else float("nan")
+    )
     return out
 
 

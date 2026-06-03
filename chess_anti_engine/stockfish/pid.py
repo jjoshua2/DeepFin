@@ -300,8 +300,11 @@ def _step_lever(
                 tighten_gain *= lever.tighten_streak_gain
             delta *= tighten_gain
             tighten_gain_applied = float(tighten_gain)
-            if tighten_gain < 1.0:
-                reason = "tighten_gain"
+            # Don't overwrite `reason`: tighten_gain is a multiplier on top of
+            # the magnitude-deciding branch (fit/fit_capped/degenerate/
+            # raw_override), and it is already reported via
+            # `tighten_gain_applied`. Clobbering `reason` here would hide the
+            # branch that actually chose the step.
 
         crash_ease_applied = False
         if (
@@ -312,9 +315,10 @@ def _step_lever(
             min_ease = lever.crash_ease_min_frac * abs_ease_step
             old_delta = delta
             delta = ease_sign * max(delta * ease_sign, min_ease)
+            # Like tighten_gain, crash_ease is a floor applied on top of the
+            # chosen branch and is already reported via `crash_ease_applied`;
+            # keep `reason` pointing at the magnitude-deciding branch.
             crash_ease_applied = abs(delta - old_delta) > 1e-12
-            if crash_ease_applied:
-                reason = "crash_ease"
 
         new_value = _clamp(value_before + delta, lever.min_value, lever.max_value)
 
