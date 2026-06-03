@@ -109,6 +109,7 @@ def test_model_architecture_keys_are_parsed() -> None:
         "input_global_embedding_channels": 24,
         "input_square_embedding": "add",
         "smolgen_mode": "per_layer",
+        "smolgen_pooling": "mean",
         "smolgen_bias_scale": "layer_head",
         "smolgen_bias_norm": "center_rms",
         "arc_attention_bias": "basic",
@@ -128,6 +129,7 @@ def test_model_architecture_keys_are_parsed() -> None:
     assert tc.input_global_embedding_channels == 24
     assert tc.input_square_embedding == "add"
     assert tc.smolgen_mode == "per_layer"
+    assert tc.smolgen_pooling == "mean"
     assert tc.smolgen_bias_scale == "layer_head"
     assert tc.smolgen_bias_norm == "center_rms"
     assert tc.arc_attention_bias == "basic"

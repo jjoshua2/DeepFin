@@ -145,7 +145,7 @@ _MODEL_PASSTHROUGH = (
     "input_pos_encoding", "qkv_projection", "use_deepnorm", "policy_encoding", "input_history_encoding",
     "use_qk_rmsnorm",
     "input_global_embedding", "input_global_embedding_channels", "input_square_embedding",
-    "smolgen_mode", "smolgen_bias_scale", "smolgen_bias_norm",
+    "smolgen_mode", "smolgen_pooling", "smolgen_bias_scale", "smolgen_bias_norm",
     "arc_attention_bias", "smolgen_relation_basis", "smolgen_relation_norm",
     "smolgen_relation_coeff_norm", "smolgen_relation_scale",
 )

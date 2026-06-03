@@ -64,6 +64,7 @@ def _model_config_from_cli_args(args: argparse.Namespace) -> dict:
             else None
         ),
         "use_smolgen": bool(args.use_smolgen),
+        "smolgen_pooling": str(args.smolgen_pooling),
         "use_nla": bool(args.use_nla),
         "gradient_checkpointing": bool(args.gradient_checkpointing),
     }
@@ -91,6 +92,7 @@ def main() -> None:
         help="Comma-separated FFN multipliers, one per layer; use --manifest for published checkpoints.",
     )
     ap.add_argument("--use-smolgen", action="store_true")
+    ap.add_argument("--smolgen-pooling", choices=["flatten", "mean"], default="flatten")
     ap.add_argument("--use-nla", action="store_true")
     ap.add_argument("--gradient-checkpointing", action="store_true")
 

@@ -107,12 +107,15 @@ def test_model_config_manifest_round_trips_per_layer_ffn_multipliers():
         ffn_mult=1.0,
         ffn_mult_by_layer=(1.0, 1.25, 1.5),
         use_smolgen=False,
+        smolgen_pooling="mean",
     )
 
     manifest = model_config_to_manifest_dict(cfg)
 
     assert manifest["ffn_mult_by_layer"] == [1.0, 1.25, 1.5]
+    assert manifest["smolgen_pooling"] == "mean"
     assert model_config_from_manifest_dict(manifest).ffn_mult_by_layer == (1.0, 1.25, 1.5)
+    assert model_config_from_manifest_dict(manifest).smolgen_pooling == "mean"
 
 
 def test_transformer_per_layer_smolgen_shapes_and_shares_gen_projection():
@@ -134,6 +137,45 @@ def test_transformer_per_layer_smolgen_shapes_and_shares_gen_projection():
     out = m(x)
     assert out["policy_own"].shape == (2, 64 * 73)
     assert out["wdl"].shape == (2, 3)
+
+
+def test_transformer_pooled_smolgen_forward_and_shapes():
+    cfg = TransformerConfig(
+        in_planes=146,
+        embed_dim=64,
+        num_layers=2,
+        num_heads=4,
+        use_smolgen=True,
+        smolgen_mode="per_layer",
+        smolgen_pooling="mean",
+    )
+    m = ChessNet(cfg)
+
+    assert m.layer_smolgens is not None
+    assert len(m.layer_smolgens) == 2
+    assert m.layer_smolgens[0].pooling == "mean"
+    assert m.layer_smolgens[0].compress is None
+    assert cast(nn.Linear, m.layer_smolgens[0].dense1).in_features == 64
+    assert m.layer_smolgens[0].gen_weight is m.layer_smolgens[1].gen_weight
+
+    x = torch.randn(2, 146, 8, 8)
+    out = m(x)
+    assert out["policy_own"].shape == (2, 64 * 73)
+    assert out["wdl"].shape == (2, 3)
+
+
+def test_transformer_rejects_invalid_smolgen_pooling():
+    with pytest.raises(ValueError, match="Unsupported smolgen_pooling"):
+        ChessNet(
+            TransformerConfig(
+                in_planes=146,
+                embed_dim=64,
+                num_layers=1,
+                num_heads=4,
+                use_smolgen=True,
+                smolgen_pooling="max",
+            )
+        )
 
 
 def test_transformer_smolgen_relation_knobs_forward():

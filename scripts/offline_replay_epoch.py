@@ -699,6 +699,7 @@ def _model_config_from_flat(cfg: dict[str, Any]) -> ModelConfig:
         input_global_embedding_channels=int(cfg.get("input_global_embedding_channels", 0)),
         input_square_embedding=str(cfg.get("input_square_embedding", "none")),
         smolgen_mode=str(cfg.get("smolgen_mode", "shared")),
+        smolgen_pooling=str(cfg.get("smolgen_pooling", "flatten")),
         smolgen_bias_scale=str(cfg.get("smolgen_bias_scale", "none")),
         smolgen_bias_norm=str(cfg.get("smolgen_bias_norm", "none")),
         arc_attention_bias=str(cfg.get("arc_attention_bias", "none")),
@@ -1097,6 +1098,7 @@ def main() -> None:
     )
     ap.add_argument("--smolgen", type=_parse_bool_choice, default=None, help="Override model.use_smolgen.")
     ap.add_argument("--smolgen-mode", choices=["shared", "per_layer"], default=None)
+    ap.add_argument("--smolgen-pooling", choices=["flatten", "mean"], default=None)
     ap.add_argument("--smolgen-bias-scale", choices=["none", "layer", "layer_head"], default=None)
     ap.add_argument("--smolgen-bias-norm", choices=["none", "center", "center_rms"], default=None)
     ap.add_argument("--arc-attention-bias", choices=["none", "basic"], default=None)
@@ -1253,6 +1255,8 @@ def main() -> None:
         cfg["use_smolgen"] = bool(args.smolgen)
     if args.smolgen_mode is not None:
         cfg["smolgen_mode"] = str(args.smolgen_mode)
+    if args.smolgen_pooling is not None:
+        cfg["smolgen_pooling"] = str(args.smolgen_pooling)
     if args.smolgen_bias_scale is not None:
         cfg["smolgen_bias_scale"] = str(args.smolgen_bias_scale)
     if args.smolgen_bias_norm is not None:
@@ -1323,6 +1327,7 @@ def main() -> None:
             "input_square_embedding": model_cfg.input_square_embedding,
             "use_smolgen": model_cfg.use_smolgen,
             "smolgen_mode": model_cfg.smolgen_mode,
+            "smolgen_pooling": model_cfg.smolgen_pooling,
             "smolgen_bias_scale": model_cfg.smolgen_bias_scale,
             "smolgen_bias_norm": model_cfg.smolgen_bias_norm,
             "arc_attention_bias": model_cfg.arc_attention_bias,

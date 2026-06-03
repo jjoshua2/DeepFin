@@ -74,6 +74,7 @@ def main() -> None:
         input_global_embedding_channels=int(flat.get("input_global_embedding_channels", 0)),
         input_square_embedding=str(flat.get("input_square_embedding", "none")),
         smolgen_mode=str(flat.get("smolgen_mode", "shared")),
+        smolgen_pooling=str(flat.get("smolgen_pooling", "flatten")),
         smolgen_bias_scale=str(flat.get("smolgen_bias_scale", "none")),
         smolgen_bias_norm=str(flat.get("smolgen_bias_norm", "none")),
         arc_attention_bias=str(flat.get("arc_attention_bias", "none")),

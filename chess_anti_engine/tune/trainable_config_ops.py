@@ -239,6 +239,7 @@ _TOPOLOGY_KEYS = frozenset({
     "input_global_embedding_channels",
     "input_square_embedding",
     "smolgen_mode",
+    "smolgen_pooling",
     "smolgen_bias_scale",
     "smolgen_bias_norm",
     "arc_attention_bias",

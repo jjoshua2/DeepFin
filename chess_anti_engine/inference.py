@@ -2145,6 +2145,7 @@ class SharedSlotBroker:
             model_cfg.input_square_embedding,
             model_cfg.qkv_projection,
             model_cfg.smolgen_mode,
+            model_cfg.smolgen_pooling,
             model_cfg.smolgen_bias_scale,
             model_cfg.smolgen_bias_norm,
             model_cfg.arc_attention_bias,
