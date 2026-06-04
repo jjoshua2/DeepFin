@@ -65,9 +65,12 @@ def normalize_phase_piece_thresholds(value: Any = None) -> tuple[int, int]:
     if len(vals) != 2:
         raise ValueError("phase_piece_thresholds must contain exactly two integers")
     low, high = vals
-    if low < 2 or high > 32 or low >= high:
+    # A full board has 32 pieces, and the open bucket is ``count > high``; high
+    # must stay <= 31 so that bucket is reachable. low >= 2 keeps both kings.
+    if low < 2 or high > 31 or low >= high:
         raise ValueError(
-            "phase_piece_thresholds must be ordered chess piece counts, "
+            "phase_piece_thresholds must be ordered chess piece counts "
+            "(2 <= end_max < mid_max <= 31), "
             f"got {(low, high)!r}"
         )
     return (low, high)

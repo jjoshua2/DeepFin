@@ -12,6 +12,7 @@ from chess_anti_engine.model import (
     load_state_dict_tolerant,
     model_config_from_manifest_dict,
     normalize_ffn_mult_by_layer,
+    normalize_phase_piece_thresholds,
 )
 from chess_anti_engine.selfplay.match import play_match_batch
 
@@ -53,17 +54,9 @@ def _parse_ffn_mult_by_layer(value: str) -> tuple[float, ...] | None:
 
 def _parse_phase_piece_thresholds(value: str) -> tuple[int, int]:
     try:
-        vals = tuple(int(part.strip()) for part in str(value).split(",") if part.strip())
+        return normalize_phase_piece_thresholds(value)
     except ValueError as exc:
-        raise argparse.ArgumentTypeError("phase thresholds must be comma-separated integers") from exc
-    if len(vals) != 2:
-        raise argparse.ArgumentTypeError("phase thresholds must contain exactly two integers")
-    low, high = vals
-    if low < 2 or high > 32 or low >= high:
-        raise argparse.ArgumentTypeError(
-            f"phase thresholds must be ordered chess piece counts, got {(low, high)!r}"
-        )
-    return (low, high)
+        raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
 def _model_config_from_cli_args(args: argparse.Namespace) -> dict:
