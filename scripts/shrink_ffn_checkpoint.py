@@ -198,6 +198,66 @@ def _source_state_dict(ckpt: dict[str, Any]) -> dict[str, torch.Tensor]:
     return cast(dict[str, torch.Tensor], source_state)
 
 
+def _clone_state_value(value: Any) -> Any:
+    if isinstance(value, torch.Tensor):
+        return value.detach().clone()
+    return value
+
+
+def _unwrap_swa_state_dict(state: dict[str, Any]) -> tuple[dict[str, torch.Tensor], dict[str, Any], bool]:
+    """Return prunable model weights plus SWA metadata from a saved SWA state dict."""
+    has_module_prefix = any(str(key).startswith("module.") for key in state)
+    if not has_module_prefix:
+        return cast(dict[str, torch.Tensor], state), {}, False
+
+    model_state: dict[str, torch.Tensor] = {}
+    metadata: dict[str, Any] = {}
+    for key, value in state.items():
+        key_str = str(key)
+        if key_str.startswith("module."):
+            model_key = key_str.removeprefix("module.").removeprefix("_orig_mod.")
+            model_state[model_key] = cast(torch.Tensor, value)
+        else:
+            metadata[key_str] = _clone_state_value(value)
+    return model_state, metadata, True
+
+
+def _rewrap_swa_state_dict(
+    model_state: dict[str, torch.Tensor],
+    *,
+    metadata: dict[str, Any],
+    was_averaged_model: bool,
+) -> dict[str, Any]:
+    if not was_averaged_model:
+        return model_state
+
+    return {
+        **metadata,
+        **{f"module.{key}": value for key, value in model_state.items()},
+    }
+
+
+def _shrink_swa_state_dict(
+    state: dict[str, Any],
+    target_template: dict[str, torch.Tensor],
+    *,
+    target_hidden_sizes: tuple[int, ...],
+    unit_scores_by_layer: dict[int, torch.Tensor] | None,
+) -> dict[str, Any]:
+    source_state, metadata, was_averaged_model = _unwrap_swa_state_dict(state)
+    shrunk_state = shrink_model_state_dict(
+        source_state,
+        target_template,
+        target_hidden_sizes=target_hidden_sizes,
+        unit_scores_by_layer=unit_scores_by_layer,
+    )[0]
+    return _rewrap_swa_state_dict(
+        shrunk_state,
+        metadata=metadata,
+        was_averaged_model=was_averaged_model,
+    )
+
+
 def _device_from_arg(raw: str) -> torch.device:
     value = str(raw).strip().lower()
     if value == "auto":
@@ -670,12 +730,12 @@ def shrink_checkpoint(
     )
     new_ckpt["model"] = new_state
     if isinstance(new_ckpt.get("swa_model"), dict):
-        new_ckpt["swa_model"] = shrink_model_state_dict(
-            cast(dict[str, torch.Tensor], new_ckpt["swa_model"]),
+        new_ckpt["swa_model"] = _shrink_swa_state_dict(
+            new_ckpt["swa_model"],
             target_template,
             target_hidden_sizes=target_hidden_sizes,
             unit_scores_by_layer=unit_scores_by_layer,
-        )[0]
+        )
     new_ckpt["arch"] = {
         "_schema_version": ARCH_SCHEMA_VERSION,
         **dataclasses.asdict(target_cfg),

@@ -212,3 +212,33 @@ def test_shrink_checkpoint_updates_arch_and_drops_optimizer(tmp_path: Path) -> N
     target_model = build_model(target_cfg)
     target_model.load_state_dict(new_ckpt["model"])
     target_model.load_state_dict(new_ckpt["swa_model"])
+
+
+def test_shrink_checkpoint_handles_trainer_swa_state_dict(tmp_path: Path) -> None:
+    module = _load_shrink_module()
+    source_cfg = _small_cfg(ffn_mult_by_layer=(2.0, 1.5))
+    target_schedule = (1.0, 1.0)
+    source_model = build_model(source_cfg)
+    swa_model = torch.optim.swa_utils.AveragedModel(source_model)
+    swa_model.update_parameters(source_model)
+    ckpt = {
+        "model": source_model.state_dict(),
+        "swa_model": swa_model.state_dict(),
+        "arch": {
+            "_schema_version": ARCH_SCHEMA_VERSION,
+            **dataclasses.asdict(source_cfg),
+        },
+    }
+
+    new_ckpt, target_cfg, _stats = module.shrink_checkpoint(
+        ckpt,
+        ckpt_path=tmp_path / "trainer.pt",
+        target_schedule=target_schedule,
+    )
+
+    assert "n_averaged" in new_ckpt["swa_model"]
+    assert "module.embed.weight" in new_ckpt["swa_model"]
+    assert "embed.weight" not in new_ckpt["swa_model"]
+
+    target_swa = torch.optim.swa_utils.AveragedModel(build_model(target_cfg))
+    target_swa.load_state_dict(new_ckpt["swa_model"])
