@@ -85,7 +85,7 @@ def main() -> None:
     import numpy as np
     import torch
 
-    from chess_anti_engine.model import ModelConfig, build_model, normalize_ffn_mult_by_layer
+    from chess_anti_engine.model import build_model, model_config_from_flat_config
     from chess_anti_engine.train import Trainer, trainer_kwargs_from_config
     from chess_anti_engine.train.trainer import select_input_history_arrays
 
@@ -99,39 +99,7 @@ def main() -> None:
     print(f"Checkpoint: {ckpt_dir.name}")
 
     cfg = flatten_run_config_defaults(load_yaml_file(args.config))
-    num_layers = int(cfg.get("num_layers", 9))
-    model_cfg = ModelConfig(
-        kind=str(cfg.get("model", "transformer")),
-        embed_dim=int(cfg.get("embed_dim", 384)),
-        num_layers=num_layers,
-        num_heads=int(cfg.get("num_heads", 8)),
-        ffn_mult=float(cfg.get("ffn_mult", 2.0)),
-        ffn_mult_by_layer=normalize_ffn_mult_by_layer(
-            cfg.get("ffn_mult_by_layer"),
-            num_layers=num_layers,
-        ),
-        use_smolgen=bool(cfg.get("use_smolgen", not bool(cfg.get("no_smolgen", False)))),
-        use_nla=bool(cfg.get("use_nla", False)),
-        use_qk_rmsnorm=bool(cfg.get("use_qk_rmsnorm", False)),
-        use_gradient_checkpointing=bool(cfg.get("gradient_checkpointing", False)),
-        input_pos_encoding=str(cfg.get("input_pos_encoding", "none")),
-        qkv_projection=str(cfg.get("qkv_projection", "fused")),
-        use_deepnorm=bool(cfg.get("use_deepnorm", False)),
-        policy_encoding=str(cfg.get("policy_encoding", "az_4672")),
-        input_history_encoding=str(cfg.get("input_history_encoding", "legacy")),
-        input_global_embedding=str(cfg.get("input_global_embedding", "none")),
-        input_global_embedding_channels=int(cfg.get("input_global_embedding_channels", 0)),
-        input_square_embedding=str(cfg.get("input_square_embedding", "none")),
-        smolgen_mode=str(cfg.get("smolgen_mode", "shared")),
-        smolgen_pooling=str(cfg.get("smolgen_pooling", "flatten")),
-        smolgen_bias_scale=str(cfg.get("smolgen_bias_scale", "none")),
-        smolgen_bias_norm=str(cfg.get("smolgen_bias_norm", "none")),
-        arc_attention_bias=str(cfg.get("arc_attention_bias", "none")),
-        smolgen_relation_basis=bool(cfg.get("smolgen_relation_basis", False)),
-        smolgen_relation_norm=str(cfg.get("smolgen_relation_norm", "none")),
-        smolgen_relation_coeff_norm=str(cfg.get("smolgen_relation_coeff_norm", "none")),
-        smolgen_relation_scale=str(cfg.get("smolgen_relation_scale", "none")),
-    )
+    model_cfg = model_config_from_flat_config(cfg)
     model = build_model(model_cfg)
     trainer_kw = trainer_kwargs_from_config(
         cfg | {"device": args.device}, log_dir=trial_dir / "tb_diag_arch",
