@@ -138,12 +138,56 @@ def _select_units(
     return keep.sort().values
 
 
+def _validate_unit_indices(
+    keep: torch.Tensor,
+    *,
+    layer_idx: int,
+    source_hidden: int,
+    target_hidden: int,
+) -> torch.Tensor:
+    keep = keep.detach().cpu().long().flatten()
+    if target_hidden <= 0:
+        raise ValueError(f"layer {layer_idx}: target hidden must be > 0")
+    if int(keep.numel()) != int(target_hidden):
+        raise ValueError(
+            f"layer {layer_idx}: keep index count {int(keep.numel())} does not match "
+            f"target hidden {int(target_hidden)}"
+        )
+    if int(keep.min().item()) < 0 or int(keep.max().item()) >= int(source_hidden):
+        raise ValueError(
+            f"layer {layer_idx}: keep indices out of range for source hidden {int(source_hidden)}"
+        )
+    if int(torch.unique(keep).numel()) != int(target_hidden):
+        raise ValueError(f"layer {layer_idx}: keep indices must be unique")
+    return keep.sort().values
+
+
+def select_unit_indices_by_layer(
+    state: dict[str, torch.Tensor],
+    *,
+    target_hidden_sizes: tuple[int, ...],
+    unit_scores_by_layer: dict[int, torch.Tensor] | None = None,
+) -> dict[int, torch.Tensor]:
+    """Select source FFN hidden-unit indices once for every layer."""
+    _ffn_hidden_sizes(state, num_layers=len(target_hidden_sizes))
+    return {
+        layer_idx: _select_units(
+            state,
+            layer_idx=layer_idx,
+            target_hidden=int(target_hidden),
+            unit_scores_by_layer=unit_scores_by_layer,
+        )
+        for layer_idx, target_hidden in enumerate(target_hidden_sizes)
+    }
+
+
 def shrink_model_state_dict(
     source: dict[str, torch.Tensor],
     target_template: dict[str, torch.Tensor],
     *,
     target_hidden_sizes: tuple[int, ...],
     unit_scores_by_layer: dict[int, torch.Tensor] | None = None,
+    unit_indices_by_layer: dict[int, torch.Tensor] | None = None,
 ) -> tuple[dict[str, torch.Tensor], list[str]]:
     """Return a target-shaped state dict with FFN hidden units pruned."""
     out = {key: value.detach().clone() for key, value in target_template.items()}
@@ -168,14 +212,24 @@ def shrink_model_state_dict(
         raise ValueError(f"non-FFN parameter mismatch:\n  {joined}")
 
     num_layers = len(target_hidden_sizes)
-    _ffn_hidden_sizes(source, num_layers=num_layers)
+    source_hidden_sizes = _ffn_hidden_sizes(source, num_layers=num_layers)
     for layer_idx, target_hidden in enumerate(target_hidden_sizes):
-        keep = _select_units(
-            source,
-            layer_idx=layer_idx,
-            target_hidden=int(target_hidden),
-            unit_scores_by_layer=unit_scores_by_layer,
-        )
+        if unit_indices_by_layer is None:
+            keep = _select_units(
+                source,
+                layer_idx=layer_idx,
+                target_hidden=int(target_hidden),
+                unit_scores_by_layer=unit_scores_by_layer,
+            )
+        elif layer_idx in unit_indices_by_layer:
+            keep = _validate_unit_indices(
+                unit_indices_by_layer[layer_idx],
+                layer_idx=layer_idx,
+                source_hidden=int(source_hidden_sizes[layer_idx]),
+                target_hidden=int(target_hidden),
+            )
+        else:
+            raise ValueError(f"missing selected FFN unit indices for layer {layer_idx}")
         prefix = f"blocks.{layer_idx}.ffn"
         out[f"{prefix}.0.weight"] = source[f"{prefix}.0.weight"].detach().index_select(0, keep).clone()
         out[f"{prefix}.0.bias"] = source[f"{prefix}.0.bias"].detach().index_select(0, keep).clone()
@@ -243,6 +297,7 @@ def _shrink_swa_state_dict(
     *,
     target_hidden_sizes: tuple[int, ...],
     unit_scores_by_layer: dict[int, torch.Tensor] | None,
+    unit_indices_by_layer: dict[int, torch.Tensor],
 ) -> dict[str, Any]:
     source_state, metadata, was_averaged_model = _unwrap_swa_state_dict(state)
     shrunk_state = shrink_model_state_dict(
@@ -250,6 +305,7 @@ def _shrink_swa_state_dict(
         target_template,
         target_hidden_sizes=target_hidden_sizes,
         unit_scores_by_layer=unit_scores_by_layer,
+        unit_indices_by_layer=unit_indices_by_layer,
     )[0]
     return _rewrap_swa_state_dict(
         shrunk_state,
@@ -720,6 +776,11 @@ def shrink_checkpoint(
     target_hidden_sizes = _ffn_hidden_sizes(target_template, num_layers=target_cfg.num_layers)
 
     source_state = _source_state_dict(ckpt)
+    unit_indices_by_layer = select_unit_indices_by_layer(
+        source_state,
+        target_hidden_sizes=target_hidden_sizes,
+        unit_scores_by_layer=unit_scores_by_layer,
+    )
 
     new_ckpt = dict(ckpt)
     new_state, copied = shrink_model_state_dict(
@@ -727,6 +788,7 @@ def shrink_checkpoint(
         target_template,
         target_hidden_sizes=target_hidden_sizes,
         unit_scores_by_layer=unit_scores_by_layer,
+        unit_indices_by_layer=unit_indices_by_layer,
     )
     new_ckpt["model"] = new_state
     if isinstance(new_ckpt.get("swa_model"), dict):
@@ -735,6 +797,7 @@ def shrink_checkpoint(
             target_template,
             target_hidden_sizes=target_hidden_sizes,
             unit_scores_by_layer=unit_scores_by_layer,
+            unit_indices_by_layer=unit_indices_by_layer,
         )
     new_ckpt["arch"] = {
         "_schema_version": ARCH_SCHEMA_VERSION,

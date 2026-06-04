@@ -242,3 +242,58 @@ def test_shrink_checkpoint_handles_trainer_swa_state_dict(tmp_path: Path) -> Non
 
     target_swa = torch.optim.swa_utils.AveragedModel(build_model(target_cfg))
     target_swa.load_state_dict(new_ckpt["swa_model"])
+
+
+def test_shrink_checkpoint_reuses_main_keep_indices_for_swa(tmp_path: Path) -> None:
+    module = _load_shrink_module()
+    source_cfg = _small_cfg(ffn_mult_by_layer=(2.0, 1.5))
+    target_schedule = (1.0, 1.0)
+    source_model = build_model(source_cfg)
+    swa_model = torch.optim.swa_utils.AveragedModel(source_model)
+    source_state = source_model.state_dict()
+    swa_state = swa_model.state_dict()
+    main_keep = torch.tensor([0, 2, 4, 6, 8, 10, 12, 14], dtype=torch.long)
+    swa_preferred = torch.tensor([1, 3, 5, 7, 9, 11, 13, 15], dtype=torch.long)
+
+    with torch.no_grad():
+        main_up = source_state["blocks.0.ffn.0.weight"]
+        main_bias = source_state["blocks.0.ffn.0.bias"]
+        main_down = source_state["blocks.0.ffn.2.weight"]
+        main_up.zero_()
+        main_bias.zero_()
+        main_down.zero_()
+        for rank, unit in enumerate(main_keep.tolist(), start=1):
+            main_up[unit, 0] = float(rank)
+
+        swa_up = swa_state["module.blocks.0.ffn.0.weight"]
+        swa_bias = swa_state["module.blocks.0.ffn.0.bias"]
+        swa_down = swa_state["module.blocks.0.ffn.2.weight"]
+        swa_up.zero_()
+        swa_bias.zero_()
+        swa_down.zero_()
+        for rank, unit in enumerate(swa_preferred.tolist(), start=1):
+            swa_up[unit, 0] = float(rank)
+
+    ckpt = {
+        "model": source_state,
+        "swa_model": swa_state,
+        "arch": {
+            "_schema_version": ARCH_SCHEMA_VERSION,
+            **dataclasses.asdict(source_cfg),
+        },
+    }
+
+    new_ckpt, _target_cfg, _stats = module.shrink_checkpoint(
+        ckpt,
+        ckpt_path=tmp_path / "trainer.pt",
+        target_schedule=target_schedule,
+    )
+
+    torch.testing.assert_close(
+        new_ckpt["swa_model"]["module.blocks.0.ffn.0.weight"],
+        swa_state["module.blocks.0.ffn.0.weight"].index_select(0, main_keep),
+    )
+    assert not torch.equal(
+        new_ckpt["swa_model"]["module.blocks.0.ffn.0.weight"],
+        swa_state["module.blocks.0.ffn.0.weight"].index_select(0, swa_preferred),
+    )
