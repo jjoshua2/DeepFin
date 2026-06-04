@@ -22,13 +22,17 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from chess_anti_engine.model import ModelConfig, build_model, normalize_ffn_mult_by_layer
+from chess_anti_engine.model import (
+    ModelConfig,
+    build_model,
+    model_config_from_flat_config,
+    normalize_ffn_mult_by_layer,
+)
 from chess_anti_engine.encoding.lc0 import uses_lc0_root_history, uses_lc0_root_legacy_meta
 from chess_anti_engine.moves import (
     COMPACT_TO_FULL_POLICY,
     COMPACT_POLICY_SIZE,
     FULL_TO_COMPACT_POLICY,
-    POLICY_ENCODING_AZ_4672,
     POLICY_ENCODING_LC0_1858,
     POLICY_SIZE,
     normalize_policy_encoding,
@@ -674,42 +678,6 @@ def _parse_ffn_mult_by_layer(value: str) -> tuple[float, ...] | None:
         raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
-def _model_config_from_flat(cfg: dict[str, Any]) -> ModelConfig:
-    num_layers = int(cfg.get("num_layers", 6))
-    return ModelConfig(
-        kind=str(cfg.get("model", "transformer")),
-        embed_dim=int(cfg.get("embed_dim", 256)),
-        num_layers=num_layers,
-        num_heads=int(cfg.get("num_heads", 8)),
-        ffn_mult=float(cfg.get("ffn_mult", 2.0)),
-        ffn_mult_by_layer=normalize_ffn_mult_by_layer(
-            cfg.get("ffn_mult_by_layer"),
-            num_layers=num_layers,
-        ),
-        use_smolgen=bool(cfg.get("use_smolgen", True)),
-        use_nla=bool(cfg.get("use_nla", False)),
-        use_qk_rmsnorm=bool(cfg.get("use_qk_rmsnorm", False)),
-        use_gradient_checkpointing=bool(cfg.get("gradient_checkpointing", False)),
-        input_pos_encoding=str(cfg.get("input_pos_encoding", "none")),
-        qkv_projection=str(cfg.get("qkv_projection", "fused")),
-        use_deepnorm=bool(cfg.get("use_deepnorm", False)),
-        policy_encoding=normalize_policy_encoding(cfg.get("policy_encoding", POLICY_ENCODING_AZ_4672)),
-        input_history_encoding=str(cfg.get("input_history_encoding", "legacy")),
-        input_global_embedding=str(cfg.get("input_global_embedding", "none")),
-        input_global_embedding_channels=int(cfg.get("input_global_embedding_channels", 0)),
-        input_square_embedding=str(cfg.get("input_square_embedding", "none")),
-        smolgen_mode=str(cfg.get("smolgen_mode", "shared")),
-        smolgen_pooling=str(cfg.get("smolgen_pooling", "flatten")),
-        smolgen_bias_scale=str(cfg.get("smolgen_bias_scale", "none")),
-        smolgen_bias_norm=str(cfg.get("smolgen_bias_norm", "none")),
-        arc_attention_bias=str(cfg.get("arc_attention_bias", "none")),
-        smolgen_relation_basis=bool(cfg.get("smolgen_relation_basis", False)),
-        smolgen_relation_norm=str(cfg.get("smolgen_relation_norm", "none")),
-        smolgen_relation_coeff_norm=str(cfg.get("smolgen_relation_coeff_norm", "none")),
-        smolgen_relation_scale=str(cfg.get("smolgen_relation_scale", "none")),
-    )
-
-
 def _train_candidate(
     *,
     candidate: str,
@@ -721,7 +689,7 @@ def _train_candidate(
     run_dir = Path(args.out_dir) / candidate
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    model_cfg = _model_config_from_flat(cfg)
+    model_cfg = model_config_from_flat_config(cfg)
     trainer, optimizer, scope = _build_trainer_for_candidate(
         candidate=candidate,
         cfg=cfg,
@@ -1297,7 +1265,7 @@ def main() -> None:
     cfg["global_board_preprocess_weight_decay"] = float(args.global_board_preprocess_weight_decay)
     cfg["global_board_adapter_lr_multiplier"] = float(args.global_board_adapter_lr_multiplier)
     cfg["global_board_adapter_weight_decay"] = float(args.global_board_adapter_weight_decay)
-    model_cfg = _model_config_from_flat(cfg)
+    model_cfg = model_config_from_flat_config(cfg)
 
     shard_paths = _limit_shards(iter_shard_paths(args.replay_dir), args)
     if not shard_paths:

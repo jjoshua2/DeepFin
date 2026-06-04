@@ -96,8 +96,10 @@ def model_config_from_flat_config(cfg: dict) -> ModelConfig:
 
     Distinct from ``model_config_from_manifest_dict``: the flat run config keys
     the model kind under ``model`` (not ``kind``) and may carry the legacy
-    ``no_smolgen`` negation. Used by offline diagnostic / bootstrap scripts that
-    rebuild a model from a YAML config rather than a publish manifest.
+    ``no_smolgen`` negation. Used by the offline diagnostic / bootstrap / replay
+    scripts that rebuild a model from a YAML config rather than a publish
+    manifest. ``policy_encoding`` / ``input_history_encoding`` are normalized
+    to canonical names, matching ``model_config_from_manifest_dict``.
     """
     num_layers = int(cfg.get("num_layers", 9))
     return ModelConfig(
@@ -117,8 +119,10 @@ def model_config_from_flat_config(cfg: dict) -> ModelConfig:
         input_pos_encoding=str(cfg.get("input_pos_encoding", "none")),
         qkv_projection=str(cfg.get("qkv_projection", "fused")),
         use_deepnorm=bool(cfg.get("use_deepnorm", False)),
-        policy_encoding=str(cfg.get("policy_encoding", "az_4672")),
-        input_history_encoding=str(cfg.get("input_history_encoding", "legacy")),
+        policy_encoding=normalize_policy_encoding(cfg.get("policy_encoding", POLICY_ENCODING_AZ_4672)),
+        input_history_encoding=normalize_lc0_history_encoding(
+            cfg.get("input_history_encoding", LC0_HISTORY_LEGACY)
+        ),
         input_global_embedding=str(cfg.get("input_global_embedding", "none")),
         input_global_embedding_channels=int(cfg.get("input_global_embedding_channels", 0)),
         input_square_embedding=str(cfg.get("input_square_embedding", "none")),
