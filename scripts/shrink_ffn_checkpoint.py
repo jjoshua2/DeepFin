@@ -77,6 +77,14 @@ def _ffn_hidden_sizes(state: dict[str, torch.Tensor], *, num_layers: int) -> tup
     return tuple(sizes)
 
 
+def _hidden_sizes_from_schedule(
+    *,
+    embed_dim: int,
+    schedule: tuple[float, ...],
+) -> tuple[int, ...]:
+    return tuple(int(int(embed_dim) * float(mult)) for mult in schedule)
+
+
 def _weight_unit_scores(state: dict[str, torch.Tensor], *, layer_idx: int) -> torch.Tensor:
     up_w = state[f"blocks.{layer_idx}.ffn.0.weight"].detach().float()
     up_b = state[f"blocks.{layer_idx}.ffn.0.bias"].detach().float()
@@ -554,6 +562,79 @@ def _score_retained_fracs(
     return tuple(fracs)
 
 
+def optimize_target_schedule_by_scores(
+    *,
+    source_hidden_sizes: tuple[int, ...],
+    source_embed_dim: int,
+    budget_schedule: tuple[float, ...],
+    unit_scores_by_layer: dict[int, torch.Tensor],
+    min_ffn_mult: float,
+    hidden_multiple: int,
+) -> tuple[tuple[float, ...], dict[str, Any]]:
+    """Redistribute a target FFN budget to maximize retained unit score."""
+    if len(source_hidden_sizes) != len(budget_schedule):
+        raise ValueError(
+            f"source layers {len(source_hidden_sizes)} != budget schedule layers {len(budget_schedule)}"
+        )
+    multiple = max(1, int(hidden_multiple))
+    embed_dim = int(source_embed_dim)
+    requested_hidden = _hidden_sizes_from_schedule(embed_dim=embed_dim, schedule=budget_schedule)
+    total_budget = int(sum(requested_hidden))
+    min_raw = int(embed_dim * float(min_ffn_mult))
+    min_hidden = tuple(
+        min(int(src), ((max(1, min_raw) + multiple - 1) // multiple) * multiple)
+        for src in source_hidden_sizes
+    )
+    min_budget = int(sum(min_hidden))
+    source_budget = int(sum(source_hidden_sizes))
+    if total_budget < min_budget:
+        raise ValueError(
+            f"target hidden budget {total_budget} is below min budget {min_budget} "
+            f"from min_ffn_mult={min_ffn_mult}"
+        )
+    if total_budget > source_budget:
+        raise ValueError(f"target hidden budget {total_budget} exceeds source hidden budget {source_budget}")
+    if (total_budget - min_budget) % multiple != 0:
+        raise ValueError(
+            f"target budget {total_budget} minus min budget {min_budget} must be divisible by "
+            f"hidden_multiple={multiple}"
+        )
+
+    target_hidden = list(min_hidden)
+    block_candidates: list[tuple[float, int]] = []
+    for layer_idx, source_hidden in enumerate(source_hidden_sizes):
+        score = unit_scores_by_layer.get(layer_idx)
+        if score is None:
+            raise ValueError(f"missing unit scores for layer {layer_idx}")
+        score = _validate_unit_score(score, layer_idx=layer_idx, source_hidden=int(source_hidden))
+        sorted_score = torch.sort(score, descending=True).values
+        for start in range(int(min_hidden[layer_idx]), int(source_hidden), multiple):
+            stop = min(start + multiple, int(source_hidden))
+            if stop - start != multiple:
+                continue
+            gain = float(sorted_score[start:stop].sum().item())
+            block_candidates.append((gain, layer_idx))
+
+    blocks_needed = (total_budget - min_budget) // multiple
+    if blocks_needed > len(block_candidates):
+        raise ValueError(
+            f"need {blocks_needed} hidden blocks but only {len(block_candidates)} are available"
+        )
+    block_candidates.sort(key=lambda item: item[0], reverse=True)
+    for _gain, layer_idx in block_candidates[:blocks_needed]:
+        target_hidden[layer_idx] += multiple
+
+    optimized_schedule = tuple(float(hidden) / float(embed_dim) for hidden in target_hidden)
+    stats = {
+        "optimized_target_hidden": tuple(target_hidden),
+        "optimized_target_ffn_mult_by_layer": optimized_schedule,
+        "optimized_total_hidden_budget": total_budget,
+        "optimized_min_hidden": min_hidden,
+        "optimized_hidden_multiple": multiple,
+    }
+    return optimized_schedule, stats
+
+
 def shrink_checkpoint(
     ckpt: dict[str, Any],
     *,
@@ -636,6 +717,16 @@ def main() -> None:
     ap.add_argument("--calibration-positions", type=int, default=65536)
     ap.add_argument("--calibration-batch-size", type=int, default=512)
     ap.add_argument("--calibration-device", default="auto")
+    ap.add_argument(
+        "--optimize-target-schedule",
+        action="store_true",
+        help=(
+            "Use the requested target schedule only as a total hidden-unit budget, "
+            "then redistribute units across layers by marginal unit score."
+        ),
+    )
+    ap.add_argument("--min-ffn-mult", type=float, default=1.0)
+    ap.add_argument("--target-hidden-multiple", type=int, default=96)
     ap.add_argument("--prefer-recorded-lc0-root", action="store_true")
     ap.add_argument("--synthetic-lc0-root-history", action="store_true")
     ap.add_argument("--lc0-root-legacy-meta", action="store_true")
@@ -685,6 +776,20 @@ def main() -> None:
             synthetic_lc0_root_history=bool(args.synthetic_lc0_root_history),
             lc0_root_legacy_meta=bool(args.lc0_root_legacy_meta),
         )
+    if args.optimize_target_schedule:
+        if unit_scores_by_layer is None:
+            raise SystemExit("--optimize-target-schedule requires activation or Taylor scores")
+        source_cfg = _checkpoint_model_config(ckpt, args.input_checkpoint)
+        source_state = _source_state_dict(ckpt)
+        target_schedule, optimize_stats = optimize_target_schedule_by_scores(
+            source_hidden_sizes=_ffn_hidden_sizes(source_state, num_layers=source_cfg.num_layers),
+            source_embed_dim=int(source_cfg.embed_dim),
+            budget_schedule=target_schedule,
+            unit_scores_by_layer=unit_scores_by_layer,
+            min_ffn_mult=float(args.min_ffn_mult),
+            hidden_multiple=int(args.target_hidden_multiple),
+        )
+        score_stats.update(optimize_stats)
     new_ckpt, target_cfg, stats = shrink_checkpoint(
         ckpt,
         ckpt_path=args.input_checkpoint,
@@ -702,6 +807,12 @@ def main() -> None:
     if score_stats:
         print(f"score_positions={score_stats.get('activation_score_positions', score_stats.get('taylor_score_positions'))}")
         print(f"score_device={score_stats.get('activation_score_device', score_stats.get('taylor_score_device'))}")
+        if "optimized_target_hidden" in score_stats:
+            print(f"optimized_target_hidden={list(score_stats['optimized_target_hidden'])}")
+            print(
+                "optimized_target_ffn_mult_by_layer="
+                f"{[round(float(v), 4) for v in score_stats['optimized_target_ffn_mult_by_layer']]}"
+            )
     retained = stats.get("score_retained_frac")
     if retained is not None:
         print(f"score_retained_frac={[round(float(v), 4) for v in retained]}")

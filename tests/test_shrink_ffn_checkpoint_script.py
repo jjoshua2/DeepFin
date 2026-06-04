@@ -160,6 +160,25 @@ def test_taylor_unit_scores_from_arrays_shapes() -> None:
     assert torch.all(scores[1] >= 0)
 
 
+def test_optimize_target_schedule_by_scores_redistributes_budget() -> None:
+    module = _load_shrink_module()
+    layer0_scores = torch.arange(32, 0, -1, dtype=torch.float32)
+    layer1_scores = torch.ones(32, dtype=torch.float32)
+
+    schedule, stats = module.optimize_target_schedule_by_scores(
+        source_hidden_sizes=(32, 32),
+        source_embed_dim=16,
+        budget_schedule=(1.0, 1.0),
+        unit_scores_by_layer={0: layer0_scores, 1: layer1_scores},
+        min_ffn_mult=0.5,
+        hidden_multiple=8,
+    )
+
+    assert schedule == (1.5, 0.5)
+    assert stats["optimized_target_hidden"] == (24, 8)
+    assert sum(stats["optimized_target_hidden"]) == 32
+
+
 def test_shrink_checkpoint_updates_arch_and_drops_optimizer(tmp_path: Path) -> None:
     module = _load_shrink_module()
     source_cfg = _small_cfg(ffn_mult_by_layer=(2.0, 1.5))
