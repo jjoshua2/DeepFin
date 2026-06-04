@@ -9,6 +9,7 @@ from chess_anti_engine.moves import COMPACT_POLICY_SIZE
 from chess_anti_engine.model import (
     ModelConfig,
     build_model,
+    model_config_from_flat_config,
     load_state_dict_tolerant,
     model_config_from_manifest_dict,
     model_config_to_manifest_dict,
@@ -16,6 +17,7 @@ from chess_anti_engine.model import (
 )
 from chess_anti_engine.model.transformer import (
     ChessNet,
+    Smolgen,
     TransformerConfig,
     VolatilityHead,
     _rmsnorm,
@@ -108,14 +110,113 @@ def test_model_config_manifest_round_trips_per_layer_ffn_multipliers():
         ffn_mult_by_layer=(1.0, 1.25, 1.5),
         use_smolgen=False,
         smolgen_pooling="mean",
+        smolgen_hidden_channels=16,
+        smolgen_hidden_sz=64,
+        smolgen_gen_sz=96,
     )
 
     manifest = model_config_to_manifest_dict(cfg)
 
     assert manifest["ffn_mult_by_layer"] == [1.0, 1.25, 1.5]
     assert manifest["smolgen_pooling"] == "mean"
+    assert manifest["smolgen_hidden_channels"] == 16
+    assert manifest["smolgen_hidden_sz"] == 64
+    assert manifest["smolgen_gen_sz"] == 96
     assert model_config_from_manifest_dict(manifest).ffn_mult_by_layer == (1.0, 1.25, 1.5)
     assert model_config_from_manifest_dict(manifest).smolgen_pooling == "mean"
+    assert model_config_from_manifest_dict(manifest).smolgen_hidden_channels == 16
+    assert model_config_from_manifest_dict(manifest).smolgen_hidden_sz == 64
+    assert model_config_from_manifest_dict(manifest).smolgen_gen_sz == 96
+
+
+def test_flat_model_config_preserves_default_and_script_specific_dimensions():
+    default_cfg = model_config_from_flat_config({})
+
+    assert default_cfg.embed_dim == 384
+    assert default_cfg.num_layers == 9
+    assert default_cfg.num_heads == 8
+
+    bootstrap_cfg = model_config_from_flat_config(
+        {},
+        embed_dim_default=128,
+        num_layers_default=4,
+        num_heads_default=4,
+    )
+
+    assert bootstrap_cfg.embed_dim == 128
+    assert bootstrap_cfg.num_layers == 4
+    assert bootstrap_cfg.num_heads == 4
+
+
+def test_flat_model_config_explicit_dimensions_override_script_defaults():
+    cfg = model_config_from_flat_config(
+        {
+            "embed_dim": 96,
+            "num_layers": 3,
+            "num_heads": 6,
+            "ffn_mult_by_layer": [1.0, 1.25, 1.5],
+            "no_smolgen": True,
+        },
+        embed_dim_default=128,
+        num_layers_default=4,
+        num_heads_default=4,
+    )
+
+    assert cfg.embed_dim == 96
+    assert cfg.num_layers == 3
+    assert cfg.num_heads == 6
+    assert cfg.ffn_mult_by_layer == (1.0, 1.25, 1.5)
+    assert cfg.use_smolgen is False
+
+
+def test_per_layer_smolgen_uses_configured_dimensions():
+    model = ChessNet(
+        TransformerConfig(
+            in_planes=146,
+            embed_dim=32,
+            num_layers=2,
+            num_heads=4,
+            ffn_mult=1.0,
+            use_smolgen=True,
+            smolgen_mode="per_layer",
+            smolgen_pooling="flatten",
+            smolgen_hidden_channels=5,
+            smolgen_hidden_sz=7,
+            smolgen_gen_sz=11,
+            smolgen_relation_basis=True,
+        )
+    )
+
+    assert model.smolgen_hidden_channels == 5
+    assert model.smolgen_hidden_sz == 7
+    assert model.smolgen_gen_sz == 11
+    assert model.layer_smolgens is not None
+    first = cast(Smolgen, model.layer_smolgens[0])
+    second = cast(Smolgen, model.layer_smolgens[1])
+    assert first.compress is not None
+    assert first.compress.out_features == 5
+    assert first.dense1.in_features == 64 * 5
+    assert first.dense1.out_features == 7
+    assert first.dense2.out_features == 4 * 11
+    assert first.gen_weight.in_features == 11
+    assert first.relation_weight is not None
+    assert first.relation_weight.in_features == 11
+    assert first.gen_weight is second.gen_weight
+
+
+def test_transformer_rejects_invalid_smolgen_dimensions():
+    with pytest.raises(ValueError, match="smolgen_hidden_sz must be > 0"):
+        ChessNet(
+            TransformerConfig(
+                in_planes=146,
+                embed_dim=32,
+                num_layers=1,
+                num_heads=4,
+                ffn_mult=1.0,
+                use_smolgen=True,
+                smolgen_hidden_sz=0,
+            )
+        )
 
 
 def test_transformer_per_layer_smolgen_shapes_and_shares_gen_projection():

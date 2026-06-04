@@ -228,6 +228,9 @@ model:
   input_history_encoding: lc0_root
   qkv_projection: split
   ffn_mult_by_layer: [1.0, 1.25, 1.5]
+  smolgen_hidden_channels: 16
+  smolgen_hidden_sz: 128
+  smolgen_gen_sz: 128
 train:
   lr: 0.0007
 """,
@@ -241,6 +244,9 @@ train:
     assert "input_history_encoding" not in config
     assert "qkv_projection" not in config
     assert "ffn_mult_by_layer" not in config
+    assert "smolgen_hidden_channels" not in config
+    assert "smolgen_hidden_sz" not in config
+    assert "smolgen_gen_sz" not in config
 
 
 def test_yaml_reload_does_not_change_existing_ffn_schedule(tmp_path) -> None:

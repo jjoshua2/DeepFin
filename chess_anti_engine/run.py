@@ -460,7 +460,24 @@ def main() -> None:
     ap.add_argument("--num-layers", type=int, default=6)
     ap.add_argument("--num-heads", type=int, default=8)
     ap.add_argument("--ffn-mult", type=float, default=2)
+    ap.add_argument("--ffn-mult-by-layer", type=str, default=None)
     ap.add_argument("--no-smolgen", action="store_true")
+    ap.add_argument("--smolgen-mode", choices=["shared", "per_layer"], default="shared")
+    ap.add_argument("--smolgen-pooling", choices=["flatten", "mean"], default="flatten")
+    ap.add_argument("--smolgen-hidden-channels", type=int, default=32)
+    ap.add_argument("--smolgen-hidden-sz", type=int, default=256)
+    ap.add_argument("--smolgen-gen-sz", type=int, default=256)
+    ap.add_argument("--smolgen-bias-scale", choices=["none", "layer", "layer_head"], default="none")
+    ap.add_argument("--smolgen-bias-norm", choices=["none", "center", "center_rms"], default="none")
+    ap.add_argument("--arc-attention-bias", choices=["none", "basic"], default="none")
+    ap.add_argument("--smolgen-relation-basis", action="store_true")
+    ap.add_argument(
+        "--smolgen-relation-norm",
+        choices=["none", "branch_center", "branch_center_rms", "basis_center", "basis_center_rms"],
+        default="none",
+    )
+    ap.add_argument("--smolgen-relation-coeff-norm", choices=["none", "rms"], default="none")
+    ap.add_argument("--smolgen-relation-scale", choices=["none", "layer", "layer_head"], default="none")
     ap.add_argument("--use-nla", action="store_true")
     ap.add_argument("--gradient-checkpointing", action="store_true",
                     help="Enable gradient checkpointing to reduce VRAM (~50%% less activation memory)")

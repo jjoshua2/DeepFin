@@ -18,6 +18,7 @@ from scripts.offline_replay_epoch import (
     _calibrate_global_board_adapter_init,
     _concat,
     _convert_policy_targets,
+    _model_config_from_offline_config,
     _select_configured_input_history,
     _select_recorded_input_history,
 )
@@ -169,6 +170,26 @@ def test_convert_policy_targets_updates_policy_metadata_for_concat() -> None:
     assert int(out["_policy_size"].item()) == 1858
     assert str(out[POLICY_ENCODING_ARRAY_KEY].item()) == "lc0_1858"
     assert out["policy_target"].shape == (2, 1858)
+
+
+def test_offline_model_config_preserves_legacy_dimension_defaults() -> None:
+    cfg = _model_config_from_offline_config({})
+
+    assert cfg.embed_dim == 256
+    assert cfg.num_layers == 6
+    assert cfg.num_heads == 8
+
+
+def test_offline_model_config_explicit_dimensions_override_defaults() -> None:
+    cfg = _model_config_from_offline_config({
+        "embed_dim": 192,
+        "num_layers": 5,
+        "num_heads": 6,
+    })
+
+    assert cfg.embed_dim == 192
+    assert cfg.num_layers == 5
+    assert cfg.num_heads == 6
 
 
 def test_concat_preserves_optional_eval_targets_when_some_chunks_lack_them() -> None:

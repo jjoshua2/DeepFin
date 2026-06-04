@@ -16,7 +16,7 @@ from .transformer import ChessNet, TransformerConfig
 # misrepresent. Trainer embeds this version when saving; the UCI loader
 # rejects checkpoints with a higher version AND rejects unknown keys at
 # the same version — both prevent silent architecture mismatch on skew.
-ARCH_SCHEMA_VERSION = 11
+ARCH_SCHEMA_VERSION = 12
 
 
 @dataclass
@@ -41,6 +41,9 @@ class ModelConfig:
     input_square_embedding: str = "none"
     smolgen_mode: str = "shared"
     smolgen_pooling: str = "flatten"
+    smolgen_hidden_channels: int = 32
+    smolgen_hidden_sz: int = 256
+    smolgen_gen_sz: int = 256
     smolgen_bias_scale: str = "none"
     smolgen_bias_norm: str = "none"
     arc_attention_bias: str = "none"
@@ -81,6 +84,9 @@ def model_config_from_manifest_dict(mc: dict) -> ModelConfig:
         input_square_embedding=str(mc.get("input_square_embedding", "none")),
         smolgen_mode=str(mc.get("smolgen_mode", "shared")),
         smolgen_pooling=str(mc.get("smolgen_pooling", "flatten")),
+        smolgen_hidden_channels=int(mc.get("smolgen_hidden_channels", 32)),
+        smolgen_hidden_sz=int(mc.get("smolgen_hidden_sz", 256)),
+        smolgen_gen_sz=int(mc.get("smolgen_gen_sz", 256)),
         smolgen_bias_scale=str(mc.get("smolgen_bias_scale", "none")),
         smolgen_bias_norm=str(mc.get("smolgen_bias_norm", "none")),
         arc_attention_bias=str(mc.get("arc_attention_bias", "none")),
@@ -88,6 +94,64 @@ def model_config_from_manifest_dict(mc: dict) -> ModelConfig:
         smolgen_relation_norm=str(mc.get("smolgen_relation_norm", "none")),
         smolgen_relation_coeff_norm=str(mc.get("smolgen_relation_coeff_norm", "none")),
         smolgen_relation_scale=str(mc.get("smolgen_relation_scale", "none")),
+    )
+
+
+def model_config_from_flat_config(
+    cfg: dict,
+    *,
+    embed_dim_default: int = 384,
+    num_layers_default: int = 9,
+    num_heads_default: int = 8,
+) -> ModelConfig:
+    """Build a ModelConfig from a flattened run-config dict (``configs/*.yaml``).
+
+    Distinct from ``model_config_from_manifest_dict``: the flat run config keys
+    the model kind under ``model`` (not ``kind``) and may carry the legacy
+    ``no_smolgen`` negation. Used by the offline diagnostic / bootstrap / replay
+    scripts that rebuild a model from a YAML config rather than a publish
+    manifest. ``policy_encoding`` / ``input_history_encoding`` are normalized
+    to canonical names, matching ``model_config_from_manifest_dict``. The
+    dimension defaults are explicit because a few scripts historically used
+    smaller fallback models when those keys were absent.
+    """
+    num_layers = int(cfg.get("num_layers", num_layers_default))
+    return ModelConfig(
+        kind=str(cfg.get("model", "transformer")),
+        embed_dim=int(cfg.get("embed_dim", embed_dim_default)),
+        num_layers=num_layers,
+        num_heads=int(cfg.get("num_heads", num_heads_default)),
+        ffn_mult=float(cfg.get("ffn_mult", 2.0)),
+        ffn_mult_by_layer=normalize_ffn_mult_by_layer(
+            cfg.get("ffn_mult_by_layer"),
+            num_layers=num_layers,
+        ),
+        use_smolgen=bool(cfg.get("use_smolgen", not bool(cfg.get("no_smolgen", False)))),
+        use_nla=bool(cfg.get("use_nla", False)),
+        use_qk_rmsnorm=bool(cfg.get("use_qk_rmsnorm", False)),
+        use_gradient_checkpointing=bool(cfg.get("gradient_checkpointing", False)),
+        input_pos_encoding=str(cfg.get("input_pos_encoding", "none")),
+        qkv_projection=str(cfg.get("qkv_projection", "fused")),
+        use_deepnorm=bool(cfg.get("use_deepnorm", False)),
+        policy_encoding=normalize_policy_encoding(cfg.get("policy_encoding", POLICY_ENCODING_AZ_4672)),
+        input_history_encoding=normalize_lc0_history_encoding(
+            cfg.get("input_history_encoding", LC0_HISTORY_LEGACY)
+        ),
+        input_global_embedding=str(cfg.get("input_global_embedding", "none")),
+        input_global_embedding_channels=int(cfg.get("input_global_embedding_channels", 0)),
+        input_square_embedding=str(cfg.get("input_square_embedding", "none")),
+        smolgen_mode=str(cfg.get("smolgen_mode", "shared")),
+        smolgen_pooling=str(cfg.get("smolgen_pooling", "flatten")),
+        smolgen_hidden_channels=int(cfg.get("smolgen_hidden_channels", 32)),
+        smolgen_hidden_sz=int(cfg.get("smolgen_hidden_sz", 256)),
+        smolgen_gen_sz=int(cfg.get("smolgen_gen_sz", 256)),
+        smolgen_bias_scale=str(cfg.get("smolgen_bias_scale", "none")),
+        smolgen_bias_norm=str(cfg.get("smolgen_bias_norm", "none")),
+        arc_attention_bias=str(cfg.get("arc_attention_bias", "none")),
+        smolgen_relation_basis=bool(cfg.get("smolgen_relation_basis", False)),
+        smolgen_relation_norm=str(cfg.get("smolgen_relation_norm", "none")),
+        smolgen_relation_coeff_norm=str(cfg.get("smolgen_relation_coeff_norm", "none")),
+        smolgen_relation_scale=str(cfg.get("smolgen_relation_scale", "none")),
     )
 
 
@@ -122,6 +186,9 @@ def model_config_to_manifest_dict(cfg: ModelConfig) -> dict:
         "input_square_embedding": str(cfg.input_square_embedding),
         "smolgen_mode": str(cfg.smolgen_mode),
         "smolgen_pooling": str(cfg.smolgen_pooling),
+        "smolgen_hidden_channels": int(cfg.smolgen_hidden_channels),
+        "smolgen_hidden_sz": int(cfg.smolgen_hidden_sz),
+        "smolgen_gen_sz": int(cfg.smolgen_gen_sz),
         "smolgen_bias_scale": str(cfg.smolgen_bias_scale),
         "smolgen_bias_norm": str(cfg.smolgen_bias_norm),
         "arc_attention_bias": str(cfg.arc_attention_bias),
@@ -178,6 +245,9 @@ def build_model(cfg: ModelConfig) -> torch.nn.Module:
             input_square_embedding=str(cfg.input_square_embedding),
             smolgen_mode=str(cfg.smolgen_mode),
             smolgen_pooling=str(cfg.smolgen_pooling),
+            smolgen_hidden_channels=int(cfg.smolgen_hidden_channels),
+            smolgen_hidden_sz=int(cfg.smolgen_hidden_sz),
+            smolgen_gen_sz=int(cfg.smolgen_gen_sz),
             smolgen_bias_scale=str(cfg.smolgen_bias_scale),
             smolgen_bias_norm=str(cfg.smolgen_bias_norm),
             arc_attention_bias=str(cfg.arc_attention_bias),

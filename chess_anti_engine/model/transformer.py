@@ -387,7 +387,15 @@ class Smolgen(nn.Module):
     ):
         super().__init__()
         self.num_heads = int(num_heads)
+        hidden_channels = int(hidden_channels)
+        hidden_sz = int(hidden_sz)
         self.gen_sz = int(gen_sz)
+        if hidden_channels <= 0:
+            raise ValueError("smolgen hidden_channels must be > 0")
+        if hidden_sz <= 0:
+            raise ValueError("smolgen hidden_sz must be > 0")
+        if self.gen_sz <= 0:
+            raise ValueError("smolgen gen_sz must be > 0")
         self.pooling = str(pooling).lower().strip()
         if self.pooling not in ("flatten", "mean"):
             raise ValueError(f"Unsupported smolgen_pooling: {pooling!r}")
@@ -623,6 +631,9 @@ class TransformerConfig:
     input_square_embedding: str = "none"
     smolgen_mode: str = "shared"  # shared | per_layer
     smolgen_pooling: str = "flatten"  # flatten | mean
+    smolgen_hidden_channels: int = 32
+    smolgen_hidden_sz: int = 256
+    smolgen_gen_sz: int = 256
     smolgen_bias_scale: str = "none"  # none | layer | layer_head
     smolgen_bias_norm: str = "none"  # none | center | center_rms
     arc_attention_bias: str = "none"  # none | basic
@@ -702,6 +713,15 @@ class ChessNet(nn.Module):
         self.smolgen_pooling = str(cfg.smolgen_pooling).lower().strip()
         if self.smolgen_pooling not in ("flatten", "mean"):
             raise ValueError(f"Unsupported smolgen_pooling: {cfg.smolgen_pooling!r}")
+        self.smolgen_hidden_channels = int(cfg.smolgen_hidden_channels)
+        self.smolgen_hidden_sz = int(cfg.smolgen_hidden_sz)
+        self.smolgen_gen_sz = int(cfg.smolgen_gen_sz)
+        if self.smolgen_hidden_channels <= 0:
+            raise ValueError("smolgen_hidden_channels must be > 0")
+        if self.smolgen_hidden_sz <= 0:
+            raise ValueError("smolgen_hidden_sz must be > 0")
+        if self.smolgen_gen_sz <= 0:
+            raise ValueError("smolgen_gen_sz must be > 0")
         self.smolgen_bias_scale = str(cfg.smolgen_bias_scale).lower().strip()
         if self.smolgen_bias_scale not in ("none", "layer", "layer_head"):
             raise ValueError(f"Unsupported smolgen_bias_scale: {cfg.smolgen_bias_scale!r}")
@@ -798,12 +818,15 @@ class ChessNet(nn.Module):
         elif self.smolgen_bias_scale == "layer_head":
             self.smolgen_layer_head_scale = nn.Parameter(torch.ones(cfg.num_layers, cfg.num_heads))
         if cfg.use_smolgen and self.smolgen_mode == "per_layer":
-            shared_gen = nn.Linear(256, 64 * 64, bias=False)
+            shared_gen = nn.Linear(self.smolgen_gen_sz, 64 * 64, bias=False)
             self.layer_smolgens = nn.ModuleList(
                 [
                     Smolgen(
                         cfg.embed_dim,
                         cfg.num_heads,
+                        hidden_channels=self.smolgen_hidden_channels,
+                        hidden_sz=self.smolgen_hidden_sz,
+                        gen_sz=self.smolgen_gen_sz,
                         gen_weight=shared_gen,
                         use_relation_basis=bool(cfg.smolgen_relation_basis),
                         relation_norm=self.smolgen_relation_norm,
@@ -819,6 +842,9 @@ class ChessNet(nn.Module):
             self.smolgen = Smolgen(
                 cfg.embed_dim,
                 cfg.num_heads,
+                hidden_channels=self.smolgen_hidden_channels,
+                hidden_sz=self.smolgen_hidden_sz,
+                gen_sz=self.smolgen_gen_sz,
                 use_relation_basis=bool(cfg.smolgen_relation_basis),
                 relation_norm=self.smolgen_relation_norm,
                 relation_coeff_norm=self.smolgen_relation_coeff_norm,

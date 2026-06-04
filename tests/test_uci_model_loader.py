@@ -120,12 +120,18 @@ def test_uci_loader_preserves_smolgen_pooling_from_embedded_arch(tmp_path: Path)
             num_heads=4,
             use_smolgen=True,
             smolgen_pooling="mean",
+            smolgen_hidden_channels=8,
+            smolgen_hidden_sz=16,
+            smolgen_gen_sz=24,
         ),
     )
 
     model = load_model_from_checkpoint(ckpt, device="cpu")
 
     assert getattr(model, "smolgen_pooling") == "mean"
+    assert getattr(model, "smolgen_hidden_channels") == 8
+    assert getattr(model, "smolgen_hidden_sz") == 16
+    assert getattr(model, "smolgen_gen_sz") == 24
 
 
 def test_uci_loader_uses_params_history_when_embedded_arch_is_legacy_schema(tmp_path: Path) -> None:
