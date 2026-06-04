@@ -8,6 +8,7 @@ from typing import Any
 import torch
 
 from chess_anti_engine.model import ARCH_SCHEMA_VERSION, ModelConfig, build_model
+from chess_anti_engine.moves import POLICY_SIZE
 
 
 def _load_shrink_module() -> Any:
@@ -110,6 +111,46 @@ def test_activation_unit_scores_from_x_shapes() -> None:
 
     assert stats["activation_score_positions"] == 4
     assert stats["activation_score_layers"] == 2
+    assert set(scores) == {0, 1}
+    assert scores[0].shape == (16,)
+    assert scores[1].shape == (12,)
+    assert torch.isfinite(scores[0]).all()
+    assert torch.isfinite(scores[1]).all()
+    assert torch.all(scores[0] >= 0)
+    assert torch.all(scores[1] >= 0)
+
+
+def test_taylor_unit_scores_from_arrays_shapes() -> None:
+    module = _load_shrink_module()
+    source_cfg = _small_cfg(ffn_mult_by_layer=(2.0, 1.5))
+    ckpt = {
+        "model": build_model(source_cfg).state_dict(),
+        "arch": {
+            "_schema_version": ARCH_SCHEMA_VERSION,
+            **dataclasses.asdict(source_cfg),
+        },
+    }
+    n = 3
+    arrs = {
+        "x": torch.randn(n, 146, 8, 8).numpy(),
+        "policy_target": torch.nn.functional.one_hot(
+            torch.zeros(n, dtype=torch.long),
+            num_classes=POLICY_SIZE,
+        ).float().numpy(),
+        "wdl_target": torch.zeros(n, dtype=torch.long).numpy(),
+    }
+
+    scores, stats = module.taylor_unit_scores_from_arrays(
+        ckpt,
+        ckpt_path=Path("trainer.pt"),
+        arrs=arrs,
+        batch_size=2,
+        device=torch.device("cpu"),
+        loss_kwargs={},
+    )
+
+    assert stats["taylor_score_positions"] == n
+    assert stats["taylor_score_layers"] == 2
     assert set(scores) == {0, 1}
     assert scores[0].shape == (16,)
     assert scores[1].shape == (12,)

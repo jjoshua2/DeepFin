@@ -6,9 +6,13 @@ and prunes FFN hidden units by either a deterministic weight-norm score:
 
     score(unit) = ||up[row]||² + ||down[:, col]||² + bias²
 
-or an activation-aware replay calibration score:
+an activation-aware replay calibration score:
 
     score(unit) = E[activation²] * ||down[:, col]||²
+
+or a first-order Taylor score on replay loss:
+
+    score(unit) = E[|activation * dL/dactivation|]
 
 Optimizer and scheduler state are dropped because parameter shapes and optimizer
 slot indices are no longer safe across the architecture change.
@@ -41,6 +45,9 @@ from chess_anti_engine.uci.model_loader import (
     _model_config_from_arch,
     _model_config_from_params,
 )
+from chess_anti_engine.replay.dataset import collate_arrays
+from chess_anti_engine.train.losses import compute_loss
+from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 
 _FFN_PARAM_RE = re.compile(r"^blocks\.(\d+)\.ffn\.(0|2)\.(weight|bias)$")
 
@@ -264,6 +271,90 @@ def activation_unit_scores_from_x(
     return scores, stats
 
 
+def _concat_calibration_chunks(chunks: list[dict[str, np.ndarray]]) -> dict[str, np.ndarray]:
+    if not chunks:
+        raise ValueError("cannot concatenate empty calibration chunks")
+    common = set(chunks[0])
+    for chunk in chunks[1:]:
+        common &= set(chunk)
+    out: dict[str, np.ndarray] = {}
+    for key in sorted(common):
+        values = [np.asarray(chunk[key]) for chunk in chunks]
+        if all(value.ndim == 0 for value in values):
+            first = values[0].item()
+            if all(value.item() == first for value in values[1:]):
+                out[key] = np.asarray(values[0])
+            continue
+        if any(value.ndim == 0 for value in values):
+            continue
+        out[key] = np.concatenate(values, axis=0)
+    return out
+
+
+def _load_calibration_arrays_from_replay(
+    *,
+    source_cfg: ModelConfig,
+    replay_dir: Path,
+    positions: int,
+    prefer_recorded_lc0_root: bool,
+    synthetic_lc0_root_history: bool,
+    lc0_root_legacy_meta: bool,
+) -> dict[str, np.ndarray]:
+    from chess_anti_engine.replay.shard import iter_shard_paths
+    from chess_anti_engine.replay.shard import load_shard_arrays
+    from chess_anti_engine.train.trainer import select_input_history_arrays
+
+    # Kept for CLI parity with offline_replay_epoch. The selector follows the
+    # checkpoint's input_history_encoding and uses recorded lc0-root tensors when
+    # present, matching the sidecar's --prefer-recorded-lc0-root behavior.
+    del prefer_recorded_lc0_root, synthetic_lc0_root_history, lc0_root_legacy_meta
+
+    shard_paths = iter_shard_paths(replay_dir)
+    if not shard_paths:
+        raise ValueError(f"no replay shards found in {replay_dir}")
+    left = max(1, int(positions))
+    chunks: list[dict[str, np.ndarray]] = []
+    for shard_path in shard_paths:
+        if left <= 0:
+            break
+        arrs, _meta = load_shard_arrays(shard_path, lazy=False)
+        arrs = select_input_history_arrays(
+            arrs,
+            input_history_encoding=source_cfg.input_history_encoding,
+        )
+        n_rows = int(np.asarray(arrs["x"]).shape[0])
+        n = min(left, n_rows)
+        if n <= 0:
+            continue
+        idx = np.arange(n, dtype=np.int64)
+        chunks.append({
+            key: np.asarray(value)[idx] if np.asarray(value).ndim > 0 else np.asarray(value)
+            for key, value in arrs.items()
+        })
+        left -= n
+    if not chunks:
+        raise ValueError(f"could not load calibration positions from {replay_dir}")
+    return _concat_calibration_chunks(chunks)
+
+
+def activation_unit_scores_from_arrays(
+    ckpt: dict[str, Any],
+    *,
+    ckpt_path: Path,
+    arrs: dict[str, np.ndarray],
+    batch_size: int,
+    device: torch.device,
+) -> tuple[dict[int, torch.Tensor], dict[str, Any]]:
+    x = torch.as_tensor(arrs["x"], dtype=torch.float32)
+    return activation_unit_scores_from_x(
+        ckpt,
+        ckpt_path=ckpt_path,
+        x=x,
+        batch_size=batch_size,
+        device=device,
+    )
+
+
 def activation_unit_scores_from_replay(
     ckpt: dict[str, Any],
     *,
@@ -276,45 +367,191 @@ def activation_unit_scores_from_replay(
     synthetic_lc0_root_history: bool,
     lc0_root_legacy_meta: bool,
 ) -> tuple[dict[int, torch.Tensor], dict[str, Any]]:
-    from chess_anti_engine.replay.shard import iter_shard_paths
-    from chess_anti_engine.replay.shard import load_shard_arrays
-    from chess_anti_engine.train.trainer import select_input_history_arrays
-
-    # Kept for CLI parity with offline_replay_epoch. The selector follows the
-    # checkpoint's input_history_encoding and uses recorded lc0-root tensors when
-    # present, matching the sidecar's --prefer-recorded-lc0-root behavior.
-    del prefer_recorded_lc0_root, synthetic_lc0_root_history, lc0_root_legacy_meta
-
     source_cfg = _checkpoint_model_config(ckpt, ckpt_path)
-    shard_paths = iter_shard_paths(replay_dir)
-    if not shard_paths:
-        raise ValueError(f"no replay shards found in {replay_dir}")
-    left = max(1, int(positions))
-    chunks: list[np.ndarray] = []
-    for shard_path in shard_paths:
-        if left <= 0:
-            break
-        arrs, _meta = load_shard_arrays(shard_path, lazy=False)
-        arrs = select_input_history_arrays(
-            arrs,
-            input_history_encoding=source_cfg.input_history_encoding,
-        )
-        shard_x = np.asarray(arrs["x"])
-        n = min(left, int(shard_x.shape[0]))
-        if n <= 0:
-            continue
-        chunks.append(np.asarray(shard_x[:n], dtype=np.float32))
-        left -= n
-    if not chunks:
-        raise ValueError(f"could not load calibration positions from {replay_dir}")
-    x = torch.as_tensor(np.concatenate(chunks, axis=0), dtype=torch.float32)
-    return activation_unit_scores_from_x(
+    arrs = _load_calibration_arrays_from_replay(
+        source_cfg=source_cfg,
+        replay_dir=replay_dir,
+        positions=positions,
+        prefer_recorded_lc0_root=prefer_recorded_lc0_root,
+        synthetic_lc0_root_history=synthetic_lc0_root_history,
+        lc0_root_legacy_meta=lc0_root_legacy_meta,
+    )
+    return activation_unit_scores_from_arrays(
         ckpt,
         ckpt_path=ckpt_path,
-        x=x,
+        arrs=arrs,
         batch_size=batch_size,
         device=device,
     )
+
+
+def _loss_kwargs_from_config(config_path: Path | None) -> dict[str, Any]:
+    if config_path is None:
+        return {}
+    cfg = flatten_run_config_defaults(load_yaml_file(config_path))
+    keys = (
+        "w_policy",
+        "w_soft",
+        "w_future",
+        "w_wdl",
+        "w_sf_move",
+        "w_sf_eval",
+        "w_categorical",
+        "w_volatility",
+        "w_sf_volatility",
+        "w_moves_left",
+        "sf_wdl_frac",
+        "search_wdl_frac",
+        "sf_wdl_conf_power",
+        "sf_wdl_draw_scale",
+        "sf_wdl_temperature",
+        "sf_search_dampen_sf_low",
+        "sf_search_dampen_sf_high",
+        "use_adjusted_wdl_target",
+        "adjusted_wdl_regret_source",
+        "adjusted_wdl_regret_scale",
+        "adjusted_wdl_regret_cap",
+    )
+    return {key: cfg[key] for key in keys if key in cfg}
+
+
+def taylor_unit_scores_from_arrays(
+    ckpt: dict[str, Any],
+    *,
+    ckpt_path: Path,
+    arrs: dict[str, np.ndarray],
+    batch_size: int,
+    device: torch.device,
+    loss_kwargs: dict[str, Any] | None = None,
+) -> tuple[dict[int, torch.Tensor], dict[str, Any]]:
+    """Score FFN units by first-order loss sensitivity."""
+    source_cfg = _checkpoint_model_config(ckpt, ckpt_path)
+    source_state = _source_state_dict(ckpt)
+    source_hidden = _ffn_hidden_sizes(source_state, num_layers=source_cfg.num_layers)
+
+    model = build_model(source_cfg)
+    model.load_state_dict(source_state)
+    model.to(device)
+    model.eval()
+
+    sums = [torch.zeros(hidden, dtype=torch.float64) for hidden in source_hidden]
+    counts = [0 for _ in source_hidden]
+    handles: list[Any] = []
+    layer_outputs: list[torch.Tensor | None] = [None for _ in source_hidden]
+
+    blocks = getattr(model, "blocks", None)
+    if blocks is None:
+        raise ValueError("Taylor scoring requires a transformer model with blocks")
+
+    def make_hook(layer_idx: int) -> Any:
+        def hook(_module: torch.nn.Module, _inputs: tuple[Any, ...], output: Any) -> None:
+            if not isinstance(output, torch.Tensor):
+                raise TypeError(f"layer {layer_idx}: expected tensor activation, got {type(output).__name__}")
+            output.retain_grad()
+            layer_outputs[layer_idx] = output
+
+        return hook
+
+    for layer_idx, block in enumerate(blocks):
+        handles.append(block.ffn[1].register_forward_hook(make_hook(layer_idx)))
+
+    try:
+        total = int(np.asarray(arrs["x"]).shape[0])
+        if total <= 0:
+            raise ValueError("calibration arrays are empty")
+        batch = max(1, int(batch_size))
+        loss_kwargs = {} if loss_kwargs is None else dict(loss_kwargs)
+        for start in range(0, total, batch):
+            chunk = {
+                key: np.asarray(value)[start:start + batch]
+                for key, value in arrs.items()
+                if np.asarray(value).ndim > 0 and int(np.asarray(value).shape[0]) == total
+            }
+            model.zero_grad(set_to_none=True)
+            layer_outputs = [None for _ in source_hidden]
+            tensor_batch = collate_arrays(chunk, device=str(device))
+            out = model(tensor_batch["x"])
+            loss = compute_loss(out, tensor_batch, **loss_kwargs)["total"]
+            loss.backward()
+            for layer_idx, activation in enumerate(layer_outputs):
+                if activation is None or activation.grad is None:
+                    raise ValueError(f"layer {layer_idx}: no Taylor activation gradient captured")
+                grad = activation.grad.detach()
+                act = activation.detach()
+                sums[layer_idx] += (act * grad).abs().sum(dim=(0, 1)).cpu().double()
+                counts[layer_idx] += int(act.shape[0]) * int(act.shape[1])
+    finally:
+        for handle in handles:
+            handle.remove()
+
+    scores: dict[int, torch.Tensor] = {}
+    for layer_idx, count in enumerate(counts):
+        if count <= 0:
+            raise ValueError(f"layer {layer_idx}: no Taylor activations captured")
+        scores[layer_idx] = (sums[layer_idx].float() / float(count)).cpu()
+
+    stats = {
+        "taylor_score_positions": int(np.asarray(arrs["x"]).shape[0]),
+        "taylor_score_batch_size": max(1, int(batch_size)),
+        "taylor_score_device": str(device),
+        "taylor_score_layers": len(scores),
+    }
+    return scores, stats
+
+
+def taylor_unit_scores_from_replay(
+    ckpt: dict[str, Any],
+    *,
+    ckpt_path: Path,
+    replay_dir: Path,
+    positions: int,
+    batch_size: int,
+    device: torch.device,
+    config_path: Path | None,
+    prefer_recorded_lc0_root: bool,
+    synthetic_lc0_root_history: bool,
+    lc0_root_legacy_meta: bool,
+) -> tuple[dict[int, torch.Tensor], dict[str, Any]]:
+    source_cfg = _checkpoint_model_config(ckpt, ckpt_path)
+    arrs = _load_calibration_arrays_from_replay(
+        source_cfg=source_cfg,
+        replay_dir=replay_dir,
+        positions=positions,
+        prefer_recorded_lc0_root=prefer_recorded_lc0_root,
+        synthetic_lc0_root_history=synthetic_lc0_root_history,
+        lc0_root_legacy_meta=lc0_root_legacy_meta,
+    )
+    return taylor_unit_scores_from_arrays(
+        ckpt,
+        ckpt_path=ckpt_path,
+        arrs=arrs,
+        batch_size=batch_size,
+        device=device,
+        loss_kwargs=_loss_kwargs_from_config(config_path),
+    )
+
+
+def _score_retained_fracs(
+    unit_scores_by_layer: dict[int, torch.Tensor] | None,
+    *,
+    target_hidden_sizes: tuple[int, ...],
+) -> tuple[float, ...] | None:
+    if unit_scores_by_layer is None:
+        return None
+    fracs: list[float] = []
+    for layer_idx, target_hidden in enumerate(target_hidden_sizes):
+        score = unit_scores_by_layer.get(layer_idx)
+        if score is None:
+            fracs.append(0.0)
+            continue
+        score = score.detach().float().flatten().clamp_min(0)
+        total = float(score.sum().item())
+        if total <= 0.0:
+            fracs.append(0.0)
+            continue
+        keep_sum = float(torch.topk(score, k=int(target_hidden), largest=True, sorted=False).values.sum().item())
+        fracs.append(keep_sum / total)
+    return tuple(fracs)
 
 
 def shrink_checkpoint(
@@ -366,8 +603,13 @@ def shrink_checkpoint(
     stats = {
         "source_hidden": source_hidden,
         "target_hidden": target_hidden_sizes,
+        "cut_hidden": tuple(int(src) - int(dst) for src, dst in zip(source_hidden, target_hidden_sizes, strict=True)),
         "copied_params": len(copied),
         "score_mode": score_mode,
+        "score_retained_frac": _score_retained_fracs(
+            unit_scores_by_layer,
+            target_hidden_sizes=target_hidden_sizes,
+        ),
         "dropped_optimizer": "opt" in ckpt,
         "dropped_scheduler": "scheduler" in ckpt,
     }
@@ -385,10 +627,11 @@ def main() -> None:
     )
     ap.add_argument(
         "--score-mode",
-        choices=("weight", "activation"),
+        choices=("weight", "activation", "taylor"),
         default="weight",
         help="FFN unit scoring method used to choose hidden units to keep.",
     )
+    ap.add_argument("--config", type=Path, help="Training config used for Taylor loss weights.")
     ap.add_argument("--calibration-replay-dir", type=Path)
     ap.add_argument("--calibration-positions", type=int, default=65536)
     ap.add_argument("--calibration-batch-size", type=int, default=512)
@@ -412,11 +655,12 @@ def main() -> None:
     ckpt = torch.load(args.input_checkpoint, map_location="cpu", weights_only=False)
     unit_scores_by_layer: dict[int, torch.Tensor] | None = None
     score_stats: dict[str, Any] = {}
-    if args.score_mode == "activation":
+    if args.score_mode in ("activation", "taylor"):
         if args.calibration_replay_dir is None:
-            raise SystemExit("--score-mode activation requires --calibration-replay-dir")
+            raise SystemExit(f"--score-mode {args.score_mode} requires --calibration-replay-dir")
         if not args.calibration_replay_dir.exists():
             raise SystemExit(f"missing calibration replay dir: {args.calibration_replay_dir}")
+    if args.score_mode == "activation":
         unit_scores_by_layer, score_stats = activation_unit_scores_from_replay(
             ckpt,
             ckpt_path=args.input_checkpoint,
@@ -424,6 +668,19 @@ def main() -> None:
             positions=int(args.calibration_positions),
             batch_size=int(args.calibration_batch_size),
             device=_device_from_arg(args.calibration_device),
+            prefer_recorded_lc0_root=bool(args.prefer_recorded_lc0_root),
+            synthetic_lc0_root_history=bool(args.synthetic_lc0_root_history),
+            lc0_root_legacy_meta=bool(args.lc0_root_legacy_meta),
+        )
+    elif args.score_mode == "taylor":
+        unit_scores_by_layer, score_stats = taylor_unit_scores_from_replay(
+            ckpt,
+            ckpt_path=args.input_checkpoint,
+            replay_dir=args.calibration_replay_dir,
+            positions=int(args.calibration_positions),
+            batch_size=int(args.calibration_batch_size),
+            device=_device_from_arg(args.calibration_device),
+            config_path=args.config,
             prefer_recorded_lc0_root=bool(args.prefer_recorded_lc0_root),
             synthetic_lc0_root_history=bool(args.synthetic_lc0_root_history),
             lc0_root_legacy_meta=bool(args.lc0_root_legacy_meta),
@@ -439,11 +696,15 @@ def main() -> None:
 
     print(f"source_hidden={list(stats['source_hidden'])}")
     print(f"target_hidden={list(stats['target_hidden'])}")
+    print(f"cut_hidden={list(stats['cut_hidden'])}")
     print(f"target_ffn_mult_by_layer={list(target_cfg.ffn_mult_by_layer or ())}")
     print(f"score_mode={stats['score_mode']}")
     if score_stats:
-        print(f"activation_score_positions={score_stats['activation_score_positions']}")
-        print(f"activation_score_device={score_stats['activation_score_device']}")
+        print(f"score_positions={score_stats.get('activation_score_positions', score_stats.get('taylor_score_positions'))}")
+        print(f"score_device={score_stats.get('activation_score_device', score_stats.get('taylor_score_device'))}")
+    retained = stats.get("score_retained_frac")
+    if retained is not None:
+        print(f"score_retained_frac={[round(float(v), 4) for v in retained]}")
     print(f"copied_params={stats['copied_params']}")
     print("dropped optimizer/scheduler state")
 
