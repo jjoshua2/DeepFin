@@ -17,6 +17,7 @@ from chess_anti_engine.model import (
 )
 from chess_anti_engine.model.transformer import (
     ChessNet,
+    PhaseTokenAdapter,
     Smolgen,
     TransformerConfig,
     VolatilityHead,
@@ -113,6 +114,10 @@ def test_model_config_manifest_round_trips_per_layer_ffn_multipliers():
         smolgen_hidden_channels=16,
         smolgen_hidden_sz=64,
         smolgen_gen_sz=96,
+        phase_output_adapter=True,
+        phase_output_adapter_dim=48,
+        phase_smolgen=True,
+        phase_piece_thresholds=(12, 21),
     )
 
     manifest = model_config_to_manifest_dict(cfg)
@@ -122,11 +127,16 @@ def test_model_config_manifest_round_trips_per_layer_ffn_multipliers():
     assert manifest["smolgen_hidden_channels"] == 16
     assert manifest["smolgen_hidden_sz"] == 64
     assert manifest["smolgen_gen_sz"] == 96
+    assert manifest["phase_output_adapter"] is True
+    assert manifest["phase_output_adapter_dim"] == 48
+    assert manifest["phase_smolgen"] is True
+    assert manifest["phase_piece_thresholds"] == [12, 21]
     assert model_config_from_manifest_dict(manifest).ffn_mult_by_layer == (1.0, 1.25, 1.5)
     assert model_config_from_manifest_dict(manifest).smolgen_pooling == "mean"
     assert model_config_from_manifest_dict(manifest).smolgen_hidden_channels == 16
     assert model_config_from_manifest_dict(manifest).smolgen_hidden_sz == 64
     assert model_config_from_manifest_dict(manifest).smolgen_gen_sz == 96
+    assert model_config_from_manifest_dict(manifest).phase_piece_thresholds == (12, 21)
 
 
 def test_flat_model_config_preserves_default_and_script_specific_dimensions():
@@ -217,6 +227,88 @@ def test_transformer_rejects_invalid_smolgen_dimensions():
                 smolgen_hidden_sz=0,
             )
         )
+
+
+def _phase_input(piece_counts: list[int]) -> torch.Tensor:
+    x = torch.zeros(len(piece_counts), 146, 8, 8)
+    for row, count in enumerate(piece_counts):
+        for idx in range(count):
+            x[row, idx // 64, (idx // 8) % 8, idx % 8] = 1.0
+    return x
+
+
+def test_transformer_phase_bucket_indices_from_root_piece_planes():
+    cfg = TransformerConfig(
+        in_planes=146,
+        embed_dim=32,
+        num_layers=1,
+        num_heads=4,
+        use_smolgen=False,
+        phase_output_adapter=True,
+        phase_piece_thresholds=(13, 22),
+    )
+    m = ChessNet(cfg)
+
+    phase = m._phase_indices_from_input(_phase_input([7, 13, 14, 22, 23, 32]))
+
+    assert phase is not None
+    assert phase.tolist() == [0, 0, 1, 1, 2, 2]
+
+
+def test_phase_output_adapter_routes_by_phase_index():
+    adapter = PhaseTokenAdapter(embed_dim=4, hidden_dim=3)
+    with torch.no_grad():
+        adapter.down.weight.zero_()
+        adapter.down.bias.zero_()
+        adapter.phase.weight.copy_(torch.eye(3))
+        adapter.up.weight.copy_(torch.eye(4, 3))
+        adapter.up.bias.zero_()
+
+    out = adapter(torch.zeros(3, 2, 4), torch.tensor([0, 1, 2]))
+
+    assert torch.allclose(out[0, 0, :3], torch.nn.functional.mish(torch.tensor([1.0, 0.0, 0.0])))
+    assert torch.allclose(out[1, 0, :3], torch.nn.functional.mish(torch.tensor([0.0, 1.0, 0.0])))
+    assert torch.allclose(out[2, 0, :3], torch.nn.functional.mish(torch.tensor([0.0, 0.0, 1.0])))
+
+
+def test_transformer_phase_conditioned_outputs_forward_shapes():
+    cfg = TransformerConfig(
+        in_planes=146,
+        embed_dim=64,
+        num_layers=2,
+        num_heads=4,
+        use_smolgen=True,
+        smolgen_mode="per_layer",
+        smolgen_pooling="mean",
+        phase_output_adapter=True,
+        phase_output_adapter_dim=16,
+        phase_smolgen=True,
+    )
+    m = ChessNet(cfg)
+
+    assert m.phase_output_adapter is not None
+    assert m.layer_smolgens is not None
+    assert m.layer_smolgens[0].phase_embedding is not None
+    out = m(_phase_input([8, 16, 32]))
+
+    assert out["policy_own"].shape == (3, 64 * 73)
+    assert out["wdl"].shape == (3, 3)
+
+
+def test_smolgen_phase_conditioning_is_zero_init_noop_then_selective():
+    smolgen = Smolgen(embed_dim=16, num_heads=2, pooling="mean", phase_conditioning=True)
+    x = torch.randn(3, 64, 16)
+    phase = torch.tensor([0, 1, 2])
+
+    baseline = smolgen(x, phase)
+    with torch.no_grad():
+        assert smolgen.phase_embedding is not None
+        smolgen.phase_embedding.weight[1].fill_(0.1)
+    changed = smolgen(x, phase)
+
+    assert baseline.shape == (3, 2, 64, 64)
+    assert torch.allclose(baseline[0], changed[0])
+    assert not torch.allclose(baseline[1], changed[1])
 
 
 def test_transformer_per_layer_smolgen_shapes_and_shares_gen_projection():

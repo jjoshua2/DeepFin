@@ -478,6 +478,25 @@ def main() -> None:
     )
     ap.add_argument("--smolgen-relation-coeff-norm", choices=["none", "rms"], default="none")
     ap.add_argument("--smolgen-relation-scale", choices=["none", "layer", "layer_head"], default="none")
+    ap.add_argument(
+        "--phase-output-adapter",
+        action="store_true",
+        help="Enable a small phase-conditioned adapter before policy/value heads.",
+    )
+    ap.add_argument("--phase-output-adapter-dim", type=int, default=64)
+    ap.add_argument(
+        "--phase-smolgen",
+        action="store_true",
+        help="Condition smolgen/GAB generation on root piece-count phase.",
+    )
+    ap.add_argument(
+        "--phase-piece-thresholds",
+        type=int,
+        nargs=2,
+        default=(13, 22),
+        metavar=("END_MAX", "MID_MAX"),
+        help="Root piece-count thresholds for end/mid/open phase buckets.",
+    )
     ap.add_argument("--use-nla", action="store_true")
     ap.add_argument("--gradient-checkpointing", action="store_true",
                     help="Enable gradient checkpointing to reduce VRAM (~50%% less activation memory)")

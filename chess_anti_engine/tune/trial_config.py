@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
-from chess_anti_engine.utils.architecture import normalize_ffn_mult_by_layer
+from chess_anti_engine.utils.architecture import normalize_ffn_mult_by_layer, normalize_phase_piece_thresholds
 
 if TYPE_CHECKING:
     from chess_anti_engine.train.trainer import TrainMetrics
@@ -85,6 +85,10 @@ class TrialConfig:
     smolgen_relation_norm: str = "none"
     smolgen_relation_coeff_norm: str = "none"
     smolgen_relation_scale: str = "none"
+    phase_output_adapter: bool = False
+    phase_output_adapter_dim: int = 64
+    phase_smolgen: bool = False
+    phase_piece_thresholds: tuple[int, int] = (13, 22)
 
   # --- Training ---
     lr: float = 0.0003
@@ -354,6 +358,12 @@ class TrialConfig:
             smolgen_relation_norm=str(config.get("smolgen_relation_norm", "none")),
             smolgen_relation_coeff_norm=str(config.get("smolgen_relation_coeff_norm", "none")),
             smolgen_relation_scale=str(config.get("smolgen_relation_scale", "none")),
+            phase_output_adapter=bool(config.get("phase_output_adapter", False)),
+            phase_output_adapter_dim=int(config.get("phase_output_adapter_dim", 64)),
+            phase_smolgen=bool(config.get("phase_smolgen", False)),
+            phase_piece_thresholds=normalize_phase_piece_thresholds(
+                config.get("phase_piece_thresholds", (13, 22))
+            ),
 
   # --- Training ---
             lr=float(config["lr"]) if "lr" in config else 0.0003,

@@ -24,6 +24,7 @@ from chess_anti_engine.model import (
     load_state_dict_tolerant,
     normalize_ffn_mult_by_layer,
 )
+from chess_anti_engine.utils.architecture import normalize_phase_piece_thresholds
 
 
 def _resolve_trainer_pt(path: Path) -> Path:
@@ -77,6 +78,10 @@ def _model_config_from_params(params: dict) -> ModelConfig:
             filtered["ffn_mult_by_layer"],
             num_layers=int(filtered.get("num_layers", 6)),
         )
+    if "phase_piece_thresholds" in filtered:
+        filtered["phase_piece_thresholds"] = normalize_phase_piece_thresholds(
+            filtered["phase_piece_thresholds"]
+        )
     return ModelConfig(**filtered)  # type: ignore[arg-type]
 
 
@@ -112,6 +117,10 @@ def _model_config_from_arch(arch: dict) -> ModelConfig:
         payload["ffn_mult_by_layer"] = normalize_ffn_mult_by_layer(
             payload["ffn_mult_by_layer"],
             num_layers=int(payload.get("num_layers", 6)),
+        )
+    if "phase_piece_thresholds" in payload:
+        payload["phase_piece_thresholds"] = normalize_phase_piece_thresholds(
+            payload["phase_piece_thresholds"]
         )
     return ModelConfig(**payload)  # type: ignore[arg-type]
 
