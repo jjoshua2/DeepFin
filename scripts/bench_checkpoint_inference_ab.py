@@ -88,7 +88,10 @@ def timing_to_json(timing: CheckpointTiming) -> dict[str, Any]:
 
 
 def normalize_cuda_device(raw: str) -> torch.device:
-    device = torch.device(str(raw))
+    try:
+        device = torch.device(str(raw))
+    except RuntimeError as exc:
+        raise ValueError(str(exc)) from exc
     if device.type != "cuda":
         raise ValueError("bench_checkpoint_inference_ab.py requires a CUDA device")
     return device

@@ -54,6 +54,13 @@ def test_normalize_cuda_device_rejects_cpu_device() -> None:
         module.normalize_cuda_device("cpu")
 
 
+def test_normalize_cuda_device_rejects_malformed_device() -> None:
+    module = _load_bench_module()
+
+    with pytest.raises(ValueError, match="Invalid device string"):
+        module.normalize_cuda_device("cuda:abc")
+
+
 def test_speedup_pct_reports_candidate_speedup() -> None:
     module = _load_bench_module()
 
