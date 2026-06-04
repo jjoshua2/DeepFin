@@ -23,6 +23,7 @@ import torch
 import torch.nn.functional as F
 
 from chess_anti_engine.model import ModelConfig, build_model, normalize_ffn_mult_by_layer
+from chess_anti_engine.utils.architecture import normalize_phase_piece_thresholds
 from chess_anti_engine.encoding.lc0 import uses_lc0_root_history, uses_lc0_root_legacy_meta
 from chess_anti_engine.moves import (
     COMPACT_TO_FULL_POLICY,
@@ -674,6 +675,13 @@ def _parse_ffn_mult_by_layer(value: str) -> tuple[float, ...] | None:
         raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
+def _parse_phase_piece_thresholds(value: str) -> tuple[int, int]:
+    try:
+        return normalize_phase_piece_thresholds(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
 def _model_config_from_flat(cfg: dict[str, Any]) -> ModelConfig:
     num_layers = int(cfg.get("num_layers", 6))
     return ModelConfig(
@@ -707,6 +715,10 @@ def _model_config_from_flat(cfg: dict[str, Any]) -> ModelConfig:
         smolgen_relation_norm=str(cfg.get("smolgen_relation_norm", "none")),
         smolgen_relation_coeff_norm=str(cfg.get("smolgen_relation_coeff_norm", "none")),
         smolgen_relation_scale=str(cfg.get("smolgen_relation_scale", "none")),
+        phase_output_adapter=bool(cfg.get("phase_output_adapter", False)),
+        phase_output_adapter_dim=int(cfg.get("phase_output_adapter_dim", 64)),
+        phase_smolgen=bool(cfg.get("phase_smolgen", False)),
+        phase_piece_thresholds=normalize_phase_piece_thresholds(cfg.get("phase_piece_thresholds", (13, 22))),
     )
 
 
@@ -1110,6 +1122,15 @@ def main() -> None:
     )
     ap.add_argument("--smolgen-relation-coeff-norm", choices=["none", "rms"], default=None)
     ap.add_argument("--smolgen-relation-scale", choices=["none", "layer", "layer_head"], default=None)
+    ap.add_argument("--phase-output-adapter", type=_parse_bool_choice, default=None)
+    ap.add_argument("--phase-output-adapter-dim", type=int, default=None)
+    ap.add_argument("--phase-smolgen", type=_parse_bool_choice, default=None)
+    ap.add_argument(
+        "--phase-piece-thresholds",
+        type=_parse_phase_piece_thresholds,
+        default=None,
+        help="Comma-separated end/mid root piece thresholds, e.g. 13,22.",
+    )
     ap.add_argument("--input-pos-encoding", choices=["none", "arc", "arc_adapter"], default=None)
     ap.add_argument("--qkv-projection", choices=["fused", "split"], default=None)
     ap.add_argument("--use-qk-rmsnorm", type=_parse_bool_choice, default=None)
@@ -1271,6 +1292,14 @@ def main() -> None:
         cfg["smolgen_relation_coeff_norm"] = str(args.smolgen_relation_coeff_norm)
     if args.smolgen_relation_scale is not None:
         cfg["smolgen_relation_scale"] = str(args.smolgen_relation_scale)
+    if args.phase_output_adapter is not None:
+        cfg["phase_output_adapter"] = bool(args.phase_output_adapter)
+    if args.phase_output_adapter_dim is not None:
+        cfg["phase_output_adapter_dim"] = int(args.phase_output_adapter_dim)
+    if args.phase_smolgen is not None:
+        cfg["phase_smolgen"] = bool(args.phase_smolgen)
+    if args.phase_piece_thresholds is not None:
+        cfg["phase_piece_thresholds"] = args.phase_piece_thresholds
     if args.input_pos_encoding is not None:
         cfg["input_pos_encoding"] = str(args.input_pos_encoding)
     if args.qkv_projection is not None:
@@ -1335,6 +1364,10 @@ def main() -> None:
             "smolgen_relation_norm": model_cfg.smolgen_relation_norm,
             "smolgen_relation_coeff_norm": model_cfg.smolgen_relation_coeff_norm,
             "smolgen_relation_scale": model_cfg.smolgen_relation_scale,
+            "phase_output_adapter": model_cfg.phase_output_adapter,
+            "phase_output_adapter_dim": model_cfg.phase_output_adapter_dim,
+            "phase_smolgen": model_cfg.phase_smolgen,
+            "phase_piece_thresholds": list(model_cfg.phase_piece_thresholds),
             "use_deepnorm": model_cfg.use_deepnorm,
             "synthetic_lc0_root_history": bool(args.synthetic_lc0_root_history),
             "prefer_recorded_lc0_root": bool(args.prefer_recorded_lc0_root),

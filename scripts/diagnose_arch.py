@@ -88,6 +88,7 @@ def main() -> None:
     from chess_anti_engine.model import ModelConfig, build_model, normalize_ffn_mult_by_layer
     from chess_anti_engine.train import Trainer, trainer_kwargs_from_config
     from chess_anti_engine.train.trainer import select_input_history_arrays
+    from chess_anti_engine.utils.architecture import normalize_phase_piece_thresholds
 
     trial_dir = _resolve_trial_dir(args)
     print(f"Trial: {trial_dir.name}")
@@ -131,6 +132,10 @@ def main() -> None:
         smolgen_relation_norm=str(cfg.get("smolgen_relation_norm", "none")),
         smolgen_relation_coeff_norm=str(cfg.get("smolgen_relation_coeff_norm", "none")),
         smolgen_relation_scale=str(cfg.get("smolgen_relation_scale", "none")),
+        phase_output_adapter=bool(cfg.get("phase_output_adapter", False)),
+        phase_output_adapter_dim=int(cfg.get("phase_output_adapter_dim", 64)),
+        phase_smolgen=bool(cfg.get("phase_smolgen", False)),
+        phase_piece_thresholds=normalize_phase_piece_thresholds(cfg.get("phase_piece_thresholds", (13, 22))),
     )
     model = build_model(model_cfg)
     trainer_kw = trainer_kwargs_from_config(

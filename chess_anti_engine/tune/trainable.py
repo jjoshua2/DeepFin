@@ -339,6 +339,10 @@ def _build_trial_model_config(tc: TrialConfig) -> ModelConfig:
         smolgen_relation_norm=tc.smolgen_relation_norm,
         smolgen_relation_coeff_norm=tc.smolgen_relation_coeff_norm,
         smolgen_relation_scale=tc.smolgen_relation_scale,
+        phase_output_adapter=tc.phase_output_adapter,
+        phase_output_adapter_dim=tc.phase_output_adapter_dim,
+        phase_smolgen=tc.phase_smolgen,
+        phase_piece_thresholds=tc.phase_piece_thresholds,
     )
 
 

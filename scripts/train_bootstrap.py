@@ -24,6 +24,7 @@ from chess_anti_engine.replay import ReplayBuffer
 from chess_anti_engine.replay.shard import load_npz
 from chess_anti_engine.train import Trainer
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
+from chess_anti_engine.utils.architecture import normalize_phase_piece_thresholds
 
 
 def _loader_thread(shard_paths: list[str], q: queue.Queue) -> None:
@@ -82,6 +83,10 @@ def main() -> None:
         smolgen_relation_norm=str(flat.get("smolgen_relation_norm", "none")),
         smolgen_relation_coeff_norm=str(flat.get("smolgen_relation_coeff_norm", "none")),
         smolgen_relation_scale=str(flat.get("smolgen_relation_scale", "none")),
+        phase_output_adapter=bool(flat.get("phase_output_adapter", False)),
+        phase_output_adapter_dim=int(flat.get("phase_output_adapter_dim", 64)),
+        phase_smolgen=bool(flat.get("phase_smolgen", False)),
+        phase_piece_thresholds=normalize_phase_piece_thresholds(flat.get("phase_piece_thresholds", (13, 22))),
     )
     model = build_model(model_cfg)
 

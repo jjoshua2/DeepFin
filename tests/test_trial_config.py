@@ -117,6 +117,10 @@ def test_model_architecture_keys_are_parsed() -> None:
         "smolgen_relation_norm": "branch_center_rms",
         "smolgen_relation_coeff_norm": "rms",
         "smolgen_relation_scale": "layer",
+        "phase_output_adapter": True,
+        "phase_output_adapter_dim": 48,
+        "phase_smolgen": True,
+        "phase_piece_thresholds": [12, 21],
     })
     assert tc.num_layers == 3
     assert tc.ffn_mult_by_layer == (1.0, 1.25, 1.5)
@@ -137,6 +141,10 @@ def test_model_architecture_keys_are_parsed() -> None:
     assert tc.smolgen_relation_norm == "branch_center_rms"
     assert tc.smolgen_relation_coeff_norm == "rms"
     assert tc.smolgen_relation_scale == "layer"
+    assert tc.phase_output_adapter is True
+    assert tc.phase_output_adapter_dim == 48
+    assert tc.phase_smolgen is True
+    assert tc.phase_piece_thresholds == (12, 21)
 
 
 def test_model_architecture_rejects_mismatched_ffn_schedule() -> None:
