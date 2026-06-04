@@ -19,10 +19,12 @@ from chess_anti_engine.moves import (
     normalize_policy_encoding,
     policy_size_for_encoding,
 )
+from chess_anti_engine.utils.architecture import normalize_phase_piece_thresholds
 
 _VOLATILITY_HEAD_NEUTRAL_OUTPUT = 0.01
 _ARC_POS_CHANNELS = 64
 _ARC_RELATION_CHANNELS = 5
+_NUM_PHASE_BUCKETS = 3
 
 
 def _softplus_inverse(y: float) -> float:
@@ -291,6 +293,26 @@ class AttentionPolicyHead(nn.Module):
         return torch.where(normal_mask, normal_logits, promo_logits)
 
 
+class PhaseTokenAdapter(nn.Module):
+    """Small phase-conditioned adapter applied only at the output heads."""
+
+    def __init__(self, embed_dim: int, hidden_dim: int):
+        super().__init__()
+        hidden = int(hidden_dim)
+        if hidden <= 0:
+            raise ValueError(f"phase_output_adapter_dim must be positive, got {hidden_dim!r}")
+        self.down = nn.Linear(embed_dim, hidden)
+        self.phase = nn.Embedding(_NUM_PHASE_BUCKETS, hidden)
+        self.up = nn.Linear(hidden, embed_dim)
+        nn.init.zeros_(self.up.weight)
+        nn.init.zeros_(self.up.bias)
+
+    def forward(self, x: torch.Tensor, phase_idx: torch.Tensor) -> torch.Tensor:
+        phase = self.phase(phase_idx.to(device=x.device, dtype=torch.long)).unsqueeze(1)
+        h = F.mish(self.down(x) + phase)
+        return x + self.up(h)
+
+
 class ValueHead(nn.Module):
     """LC0-style value head: per-square projection → flatten → MLP.
 
@@ -384,6 +406,7 @@ class Smolgen(nn.Module):
         relation_coeff_norm: str = "none",
         relation_scale: str = "none",
         pooling: str = "flatten",
+        phase_conditioning: bool = False,
     ):
         super().__init__()
         self.num_heads = int(num_heads)
@@ -422,6 +445,11 @@ class Smolgen(nn.Module):
         else:
             self.compress = None
             first_dim = int(embed_dim)
+        self.phase_conditioning = bool(phase_conditioning)
+        self.phase_embedding: nn.Embedding | None = None
+        if self.phase_conditioning:
+            self.phase_embedding = nn.Embedding(_NUM_PHASE_BUCKETS, first_dim)
+            nn.init.zeros_(self.phase_embedding.weight)
         self.dense1 = nn.Linear(first_dim, hidden_sz)
         self.ln1 = nn.LayerNorm(hidden_sz)
         self.dense2 = nn.Linear(hidden_sz, num_heads * gen_sz)
@@ -447,7 +475,7 @@ class Smolgen(nn.Module):
             persistent=False,
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, phase_idx: torch.Tensor | None = None) -> torch.Tensor:
   # x: (B,64,D) -> bias: (B,H,64,64)
         b = x.shape[0]
         if self.pooling == "flatten":
@@ -457,6 +485,11 @@ class Smolgen(nn.Module):
             h = h.flatten(1)  # (B, 64 * hidden_channels)
         else:
             h = x.mean(dim=1)  # (B, D)
+        phase_embedding = self.phase_embedding
+        if phase_embedding is not None:
+            if phase_idx is None:
+                raise ValueError("phase_idx is required when phase-conditioned smolgen is enabled")
+            h = h + phase_embedding(phase_idx.to(device=x.device, dtype=torch.long))
         h = self.ln1(F.silu(self.dense1(h)))  # (B, hidden_sz)
         h = self.ln2(F.silu(self.dense2(h)))  # (B, H * gen_sz)
         h = h.view(b, self.num_heads, self.gen_sz)  # (B, H, gen_sz)
@@ -642,6 +675,10 @@ class TransformerConfig:
     smolgen_relation_norm: str = "none"
     smolgen_relation_coeff_norm: str = "none"  # none | rms
     smolgen_relation_scale: str = "none"  # none | layer | layer_head
+    phase_output_adapter: bool = False
+    phase_output_adapter_dim: int = 64
+    phase_smolgen: bool = False
+    phase_piece_thresholds: tuple[int, int] | list[int] | str | None = (13, 22)
 
 
 def _resolve_ffn_mults(
@@ -748,6 +785,9 @@ class ChessNet(nn.Module):
         self.smolgen_relation_scale = str(cfg.smolgen_relation_scale).lower().strip()
         if self.smolgen_relation_scale not in ("none", "layer", "layer_head"):
             raise ValueError(f"Unsupported smolgen_relation_scale: {cfg.smolgen_relation_scale!r}")
+        self.phase_output_adapter_enabled = bool(cfg.phase_output_adapter)
+        self.phase_smolgen_enabled = bool(cfg.phase_smolgen)
+        self.phase_piece_thresholds = normalize_phase_piece_thresholds(cfg.phase_piece_thresholds)
         self.ffn_mult_by_layer = _resolve_ffn_mults(
             scalar=float(cfg.ffn_mult),
             by_layer=cfg.ffn_mult_by_layer,
@@ -833,6 +873,7 @@ class ChessNet(nn.Module):
                         relation_coeff_norm=self.smolgen_relation_coeff_norm,
                         relation_scale=self.smolgen_relation_scale,
                         pooling=self.smolgen_pooling,
+                        phase_conditioning=self.phase_smolgen_enabled,
                     )
                     for _ in range(cfg.num_layers)
                 ]
@@ -850,6 +891,7 @@ class ChessNet(nn.Module):
                 relation_coeff_norm=self.smolgen_relation_coeff_norm,
                 relation_scale=self.smolgen_relation_scale,
                 pooling=self.smolgen_pooling,
+                phase_conditioning=self.phase_smolgen_enabled,
             )
         residual_branch_scale = (2.0 * float(cfg.num_layers)) ** -0.25 if cfg.use_deepnorm else 1.0
         self.blocks = nn.ModuleList(
@@ -882,6 +924,12 @@ class ChessNet(nn.Module):
         self.volatility = VolatilityHead(cfg.embed_dim)
         self.sf_volatility = VolatilityHead(cfg.embed_dim)
         self.moves_left = ScalarHead(cfg.embed_dim)
+        self.phase_output_adapter: PhaseTokenAdapter | None = None
+        if self.phase_output_adapter_enabled:
+            self.phase_output_adapter = PhaseTokenAdapter(
+                int(cfg.embed_dim),
+                int(cfg.phase_output_adapter_dim),
+            )
 
     def _apply_deepnorm_init(self) -> None:
         """Scale newly initialized branch weights for DeepNorm-style post-norm runs."""
@@ -945,9 +993,20 @@ class ChessNet(nn.Module):
             bias = arc_bias if bias is None else bias + arc_bias
         return bias
 
+    def _phase_indices_from_input(self, x: torch.Tensor) -> torch.Tensor | None:
+        if not self.phase_output_adapter_enabled and not self.phase_smolgen_enabled:
+            return None
+        low, high = self.phase_piece_thresholds
+        piece_counts = torch.round(x[:, :12].float().sum(dim=(1, 2, 3))).to(torch.long)
+        phase = torch.ones_like(piece_counts)
+        phase = torch.where(piece_counts <= int(low), torch.zeros_like(phase), phase)
+        phase = torch.where(piece_counts > int(high), torch.full_like(phase, 2), phase)
+        return phase
+
     def _encode_tokens(self, x: torch.Tensor) -> torch.Tensor:
         b, c, h, w = x.shape
         assert (h, w) == (8, 8)
+        phase_idx = self._phase_indices_from_input(x)
         tokens = x.reshape(b, c, 64).permute(0, 2, 1).contiguous()  # (B,64,C)
         pos: torch.Tensor | None = None
         if self.input_pos_encoding in ("arc", "arc_adapter"):
@@ -985,13 +1044,13 @@ class ChessNet(nn.Module):
             pos_adapter = self.pos_adapter
             assert pos_adapter is not None
             t = t + pos_adapter(pos.expand(b, -1, -1))
-        shared_smolgen_bias = self.smolgen(t) if self.smolgen is not None else None
+        shared_smolgen_bias = self.smolgen(t, phase_idx) if self.smolgen is not None else None
         balance_terms: list[torch.Tensor] = []
         balance_weight = float(getattr(self, "resid_channel_balance_weight", 0.0) or 0.0)
         for idx, blk in enumerate(self.blocks):
             smolgen_bias = shared_smolgen_bias
             if self.layer_smolgens is not None:
-                smolgen_bias = self.layer_smolgens[idx](t)
+                smolgen_bias = self.layer_smolgens[idx](t, phase_idx)
             smolgen_bias = self._attention_bias_for_layer(
                 idx,
                 smolgen_bias,
@@ -1018,6 +1077,10 @@ class ChessNet(nn.Module):
             if balance_terms
             else None
         )
+        phase_output_adapter = self.phase_output_adapter
+        if phase_output_adapter is not None:
+            assert phase_idx is not None
+            t = phase_output_adapter(t, phase_idx)
         return cast(torch.Tensor, t)
 
     def forward_legal_policy(

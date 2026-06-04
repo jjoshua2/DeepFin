@@ -7,7 +7,7 @@ import torch
 from chess_anti_engine.encoding import encode_position
 from chess_anti_engine.encoding.lc0 import LC0_HISTORY_LEGACY, normalize_lc0_history_encoding
 from chess_anti_engine.moves import POLICY_ENCODING_AZ_4672, normalize_policy_encoding
-from chess_anti_engine.utils.architecture import normalize_ffn_mult_by_layer
+from chess_anti_engine.utils.architecture import normalize_ffn_mult_by_layer, normalize_phase_piece_thresholds
 
 from .tiny import TinyNet
 from .transformer import ChessNet, TransformerConfig
@@ -16,7 +16,7 @@ from .transformer import ChessNet, TransformerConfig
 # misrepresent. Trainer embeds this version when saving; the UCI loader
 # rejects checkpoints with a higher version AND rejects unknown keys at
 # the same version — both prevent silent architecture mismatch on skew.
-ARCH_SCHEMA_VERSION = 12
+ARCH_SCHEMA_VERSION = 13
 
 
 @dataclass
@@ -51,6 +51,10 @@ class ModelConfig:
     smolgen_relation_norm: str = "none"
     smolgen_relation_coeff_norm: str = "none"
     smolgen_relation_scale: str = "none"
+    phase_output_adapter: bool = False
+    phase_output_adapter_dim: int = 64
+    phase_smolgen: bool = False
+    phase_piece_thresholds: tuple[int, int] = (13, 22)
 
 
 def model_config_from_manifest_dict(mc: dict) -> ModelConfig:
@@ -94,6 +98,10 @@ def model_config_from_manifest_dict(mc: dict) -> ModelConfig:
         smolgen_relation_norm=str(mc.get("smolgen_relation_norm", "none")),
         smolgen_relation_coeff_norm=str(mc.get("smolgen_relation_coeff_norm", "none")),
         smolgen_relation_scale=str(mc.get("smolgen_relation_scale", "none")),
+        phase_output_adapter=bool(mc.get("phase_output_adapter", False)),
+        phase_output_adapter_dim=int(mc.get("phase_output_adapter_dim", 64)),
+        phase_smolgen=bool(mc.get("phase_smolgen", False)),
+        phase_piece_thresholds=normalize_phase_piece_thresholds(mc.get("phase_piece_thresholds", (13, 22))),
     )
 
 
@@ -152,6 +160,12 @@ def model_config_from_flat_config(
         smolgen_relation_norm=str(cfg.get("smolgen_relation_norm", "none")),
         smolgen_relation_coeff_norm=str(cfg.get("smolgen_relation_coeff_norm", "none")),
         smolgen_relation_scale=str(cfg.get("smolgen_relation_scale", "none")),
+        phase_output_adapter=bool(cfg.get("phase_output_adapter", False)),
+        phase_output_adapter_dim=int(cfg.get("phase_output_adapter_dim", 64)),
+        phase_smolgen=bool(cfg.get("phase_smolgen", False)),
+        phase_piece_thresholds=normalize_phase_piece_thresholds(
+            cfg.get("phase_piece_thresholds", (13, 22))
+        ),
     )
 
 
@@ -196,6 +210,10 @@ def model_config_to_manifest_dict(cfg: ModelConfig) -> dict:
         "smolgen_relation_norm": str(cfg.smolgen_relation_norm),
         "smolgen_relation_coeff_norm": str(cfg.smolgen_relation_coeff_norm),
         "smolgen_relation_scale": str(cfg.smolgen_relation_scale),
+        "phase_output_adapter": bool(cfg.phase_output_adapter),
+        "phase_output_adapter_dim": int(cfg.phase_output_adapter_dim),
+        "phase_smolgen": bool(cfg.phase_smolgen),
+        "phase_piece_thresholds": list(normalize_phase_piece_thresholds(cfg.phase_piece_thresholds)),
     }
 
 
@@ -255,6 +273,10 @@ def build_model(cfg: ModelConfig) -> torch.nn.Module:
             smolgen_relation_norm=str(cfg.smolgen_relation_norm),
             smolgen_relation_coeff_norm=str(cfg.smolgen_relation_coeff_norm),
             smolgen_relation_scale=str(cfg.smolgen_relation_scale),
+            phase_output_adapter=bool(cfg.phase_output_adapter),
+            phase_output_adapter_dim=int(cfg.phase_output_adapter_dim),
+            phase_smolgen=bool(cfg.phase_smolgen),
+            phase_piece_thresholds=normalize_phase_piece_thresholds(cfg.phase_piece_thresholds),
         )
         return _attach_runtime_model_metadata(ChessNet(tcfg), cfg)
     raise ValueError(f"Unknown model kind: {cfg.kind}")

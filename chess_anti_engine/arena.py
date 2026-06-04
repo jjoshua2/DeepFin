@@ -51,6 +51,21 @@ def _parse_ffn_mult_by_layer(value: str) -> tuple[float, ...] | None:
         raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
+def _parse_phase_piece_thresholds(value: str) -> tuple[int, int]:
+    try:
+        vals = tuple(int(part.strip()) for part in str(value).split(",") if part.strip())
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("phase thresholds must be comma-separated integers") from exc
+    if len(vals) != 2:
+        raise argparse.ArgumentTypeError("phase thresholds must contain exactly two integers")
+    low, high = vals
+    if low < 2 or high > 32 or low >= high:
+        raise argparse.ArgumentTypeError(
+            f"phase thresholds must be ordered chess piece counts, got {(low, high)!r}"
+        )
+    return (low, high)
+
+
 def _model_config_from_cli_args(args: argparse.Namespace) -> dict:
     return {
         "kind": str(args.model),
@@ -68,6 +83,10 @@ def _model_config_from_cli_args(args: argparse.Namespace) -> dict:
         "smolgen_hidden_channels": int(args.smolgen_hidden_channels),
         "smolgen_hidden_sz": int(args.smolgen_hidden_sz),
         "smolgen_gen_sz": int(args.smolgen_gen_sz),
+        "phase_output_adapter": bool(args.phase_output_adapter),
+        "phase_output_adapter_dim": int(args.phase_output_adapter_dim),
+        "phase_smolgen": bool(args.phase_smolgen),
+        "phase_piece_thresholds": tuple(int(v) for v in args.phase_piece_thresholds),
         "use_nla": bool(args.use_nla),
         "gradient_checkpointing": bool(args.gradient_checkpointing),
     }
@@ -99,6 +118,15 @@ def main() -> None:
     ap.add_argument("--smolgen-hidden-channels", type=int, default=32)
     ap.add_argument("--smolgen-hidden-sz", type=int, default=256)
     ap.add_argument("--smolgen-gen-sz", type=int, default=256)
+    ap.add_argument("--phase-output-adapter", action="store_true")
+    ap.add_argument("--phase-output-adapter-dim", type=int, default=64)
+    ap.add_argument("--phase-smolgen", action="store_true")
+    ap.add_argument(
+        "--phase-piece-thresholds",
+        type=_parse_phase_piece_thresholds,
+        default=(13, 22),
+        help="Comma-separated end/mid root piece thresholds, e.g. 13,22.",
+    )
     ap.add_argument("--use-nla", action="store_true")
     ap.add_argument("--gradient-checkpointing", action="store_true")
 
