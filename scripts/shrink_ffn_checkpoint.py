@@ -258,12 +258,22 @@ def _clone_state_value(value: Any) -> Any:
     return value
 
 
-def _unwrap_swa_state_dict(state: dict[str, Any]) -> tuple[dict[str, torch.Tensor], dict[str, Any], bool]:
-    """Return prunable model weights plus SWA metadata from a saved SWA state dict."""
-    has_module_prefix = any(str(key).startswith("module.") for key in state)
-    if not has_module_prefix:
-        return cast(dict[str, torch.Tensor], state), {}, False
+def _unwrap_swa_state_dict(state: dict[str, Any]) -> tuple[dict[str, torch.Tensor], dict[str, Any], str]:
+    """Return prunable model weights, SWA metadata, and the wrapper prefix.
 
+    ``AveragedModel`` wraps the (optionally ``torch.compile``-d) model, so saved
+    SWA keys are ``module.*`` or ``module._orig_mod.*``. We strip the prefix for
+    pruning but return it so ``_rewrap_swa_state_dict`` can restore the exact one
+    — otherwise a compiled+SWA checkpoint would come back as plain ``module.*``,
+    which a compiled ``AveragedModel`` rejects on resume, silently dropping the
+    averaged weights (the same ``_orig_mod.`` prefix-mismatch class that has bitten
+    this repo before).
+    """
+    module_keys = [str(key) for key in state if str(key).startswith("module.")]
+    if not module_keys:
+        return cast(dict[str, torch.Tensor], state), {}, ""
+
+    prefix = "module._orig_mod." if all(k.startswith("module._orig_mod.") for k in module_keys) else "module."
     model_state: dict[str, torch.Tensor] = {}
     metadata: dict[str, Any] = {}
     for key, value in state.items():
@@ -273,21 +283,21 @@ def _unwrap_swa_state_dict(state: dict[str, Any]) -> tuple[dict[str, torch.Tenso
             model_state[model_key] = cast(torch.Tensor, value)
         else:
             metadata[key_str] = _clone_state_value(value)
-    return model_state, metadata, True
+    return model_state, metadata, prefix
 
 
 def _rewrap_swa_state_dict(
     model_state: dict[str, torch.Tensor],
     *,
     metadata: dict[str, Any],
-    was_averaged_model: bool,
+    module_prefix: str,
 ) -> dict[str, Any]:
-    if not was_averaged_model:
+    if not module_prefix:
         return model_state
 
     return {
         **metadata,
-        **{f"module.{key}": value for key, value in model_state.items()},
+        **{f"{module_prefix}{key}": value for key, value in model_state.items()},
     }
 
 
@@ -299,7 +309,7 @@ def _shrink_swa_state_dict(
     unit_scores_by_layer: dict[int, torch.Tensor] | None,
     unit_indices_by_layer: dict[int, torch.Tensor],
 ) -> dict[str, Any]:
-    source_state, metadata, was_averaged_model = _unwrap_swa_state_dict(state)
+    source_state, metadata, module_prefix = _unwrap_swa_state_dict(state)
     shrunk_state = shrink_model_state_dict(
         source_state,
         target_template,
@@ -310,7 +320,7 @@ def _shrink_swa_state_dict(
     return _rewrap_swa_state_dict(
         shrunk_state,
         metadata=metadata,
-        was_averaged_model=was_averaged_model,
+        module_prefix=module_prefix,
     )
 
 

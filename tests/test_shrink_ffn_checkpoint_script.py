@@ -269,6 +269,52 @@ def test_shrink_checkpoint_handles_trainer_swa_state_dict(tmp_path: Path) -> Non
     target_swa.load_state_dict(new_ckpt["swa_model"])
 
 
+def test_shrink_checkpoint_preserves_compiled_swa_prefix(tmp_path: Path) -> None:
+    module = _load_shrink_module()
+    source_cfg = _small_cfg(ffn_mult_by_layer=(2.0, 1.5))
+    target_schedule = (1.0, 1.0)
+    source_model = build_model(source_cfg)
+    swa_model = torch.optim.swa_utils.AveragedModel(source_model)
+    swa_model.update_parameters(source_model)
+
+    # Simulate a checkpoint saved with use_compile=True AND SWA enabled:
+    # AveragedModel wraps the compiled module, so weight keys carry the
+    # module._orig_mod. prefix (n_averaged stays unprefixed).
+    compiled_swa = {
+        (f"module._orig_mod.{key.removeprefix('module.')}" if key.startswith("module.") else key): value
+        for key, value in swa_model.state_dict().items()
+    }
+    assert any(key.startswith("module._orig_mod.") for key in compiled_swa)
+
+    ckpt = {
+        "model": source_model.state_dict(),
+        "swa_model": compiled_swa,
+        "arch": {
+            "_schema_version": ARCH_SCHEMA_VERSION,
+            **dataclasses.asdict(source_cfg),
+        },
+    }
+
+    new_ckpt, target_cfg, _stats = module.shrink_checkpoint(
+        ckpt,
+        ckpt_path=tmp_path / "trainer.pt",
+        target_schedule=target_schedule,
+    )
+
+    out_swa = new_ckpt["swa_model"]
+    weight_keys = [key for key in out_swa if key != "n_averaged"]
+    # Compiled wrapper prefix is preserved (not collapsed to bare module.*).
+    assert weight_keys and all(key.startswith("module._orig_mod.") for key in weight_keys)
+    assert "n_averaged" in out_swa
+    # Pruned tensors still load into the freshly built target architecture.
+    stripped = {
+        key.removeprefix("module._orig_mod."): value
+        for key, value in out_swa.items()
+        if key != "n_averaged"
+    }
+    build_model(target_cfg).load_state_dict(stripped)
+
+
 def test_shrink_checkpoint_reuses_main_keep_indices_for_swa(tmp_path: Path) -> None:
     module = _load_shrink_module()
     source_cfg = _small_cfg(ffn_mult_by_layer=(2.0, 1.5))
