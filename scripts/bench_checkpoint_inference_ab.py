@@ -9,10 +9,11 @@ actually buys enough inference speed to matter.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -86,46 +87,70 @@ def timing_to_json(timing: CheckpointTiming) -> dict[str, Any]:
     }
 
 
+def normalize_cuda_device(raw: str) -> torch.device:
+    device = torch.device(str(raw))
+    if device.type != "cuda":
+        raise ValueError("bench_checkpoint_inference_ab.py requires a CUDA device")
+    return device
+
+
+@contextlib.contextmanager
+def cuda_device_context(device: torch.device) -> Iterator[None]:
+    if device.index is None:
+        yield
+        return
+    with torch.cuda.device(device):
+        yield
+
+
+def cuda_synchronize(device: torch.device) -> None:
+    if device.index is None:
+        torch.cuda.synchronize()
+    else:
+        torch.cuda.synchronize(device)
+
+
 def _profile_batch(
     model: torch.nn.Module,
     *,
     batch: int,
     warmup: int,
     iters: int,
-    device: str,
+    device: torch.device,
     amp_dtype: str,
 ) -> BatchTiming:
     rng = np.random.default_rng(12345 + int(batch))
     x_cpu = rng.standard_normal((int(batch), 146, 8, 8), dtype=np.float32)
-    x = torch.from_numpy(x_cpu).to(device, non_blocking=True)
+    with cuda_device_context(device):
+        x = torch.from_numpy(x_cpu).to(device, non_blocking=True)
 
-    with torch.inference_mode(), inference_autocast(
-        device=device,
-        enabled=amp_dtype != "off",
-        dtype=amp_dtype,
-    ):
-        for _ in range(int(warmup)):
-            _ = model(x)
-            torch.cuda.synchronize()
+        with torch.inference_mode(), inference_autocast(
+            device=str(device),
+            enabled=amp_dtype != "off",
+            dtype=amp_dtype,
+        ):
+            for _ in range(int(warmup)):
+                _ = model(x)
+                cuda_synchronize(device)
 
-    g_start = torch.cuda.Event(enable_timing=True)
-    g_end = torch.cuda.Event(enable_timing=True)
-    wall_times: list[float] = []
-    gpu_times: list[float] = []
-    with torch.inference_mode(), inference_autocast(
-        device=device,
-        enabled=amp_dtype != "off",
-        dtype=amp_dtype,
-    ):
-        for _ in range(int(iters)):
-            torch.cuda.synchronize()
-            t0 = time.perf_counter()
-            g_start.record()
-            _ = model(x)
-            g_end.record()
-            torch.cuda.synchronize()
-            wall_times.append((time.perf_counter() - t0) * 1000.0)
-            gpu_times.append(float(g_start.elapsed_time(g_end)))
+        g_start = torch.cuda.Event(enable_timing=True)
+        g_end = torch.cuda.Event(enable_timing=True)
+        wall_times: list[float] = []
+        gpu_times: list[float] = []
+        with torch.inference_mode(), inference_autocast(
+            device=str(device),
+            enabled=amp_dtype != "off",
+            dtype=amp_dtype,
+        ):
+            for _ in range(int(iters)):
+                cuda_synchronize(device)
+                t0 = time.perf_counter()
+                g_start.record()
+                _ = model(x)
+                g_end.record()
+                cuda_synchronize(device)
+                wall_times.append((time.perf_counter() - t0) * 1000.0)
+                gpu_times.append(float(g_start.elapsed_time(g_end)))
 
     wall = np.asarray(wall_times, dtype=np.float64)
     gpu = np.asarray(gpu_times, dtype=np.float64)
@@ -149,35 +174,36 @@ def profile_checkpoint(
     batches: Sequence[int],
     warmup: int,
     iters: int,
-    device: str,
+    device: torch.device,
     compile_mode: str,
     amp_dtype: str,
 ) -> CheckpointTiming:
     print(f"[load] {label}: {checkpoint}")
-    model = load_model_from_checkpoint(checkpoint, device=device).eval()
-    params = sum(param.numel() for param in model.parameters())
+    with cuda_device_context(device):
+        model = load_model_from_checkpoint(checkpoint, device=str(device)).eval()
+        params = sum(param.numel() for param in model.parameters())
 
-    if compile_mode != "off":
-        print(f"[compile] {label}: mode={compile_mode}")
-        model = cast(torch.nn.Module, torch.compile(model, mode=compile_mode))
+        if compile_mode != "off":
+            print(f"[compile] {label}: mode={compile_mode}")
+            model = cast(torch.nn.Module, torch.compile(model, mode=compile_mode))
 
-    timings: list[BatchTiming] = []
-    for batch in batches:
-        print(f"[bench] {label}: batch={batch} warmup={warmup} iters={iters}")
-        timing = _profile_batch(
-            model,
-            batch=int(batch),
-            warmup=warmup,
-            iters=iters,
-            device=device,
-            amp_dtype=amp_dtype,
-        )
-        timings.append(timing)
-        print(
-            f"  wall={timing.wall_median_ms:.2f}ms "
-            f"gpu={timing.gpu_median_ms:.2f}ms "
-            f"boards/s={timing.boards_per_s:.0f}"
-        )
+        timings: list[BatchTiming] = []
+        for batch in batches:
+            print(f"[bench] {label}: batch={batch} warmup={warmup} iters={iters}")
+            timing = _profile_batch(
+                model,
+                batch=int(batch),
+                warmup=warmup,
+                iters=iters,
+                device=device,
+                amp_dtype=amp_dtype,
+            )
+            timings.append(timing)
+            print(
+                f"  wall={timing.wall_median_ms:.2f}ms "
+                f"gpu={timing.gpu_median_ms:.2f}ms "
+                f"boards/s={timing.boards_per_s:.0f}"
+            )
 
     return CheckpointTiming(
         label=label,
@@ -237,8 +263,10 @@ def main() -> None:
     parser.add_argument("--out", default="", help="optional JSON output path")
     args = parser.parse_args()
 
-    if not str(args.device).startswith("cuda"):
-        raise SystemExit("bench_checkpoint_inference_ab.py requires a CUDA device")
+    try:
+        device = normalize_cuda_device(str(args.device))
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     if not torch.cuda.is_available():
         raise SystemExit("CUDA is not available")
     if args.warmup < 0:
@@ -256,7 +284,7 @@ def main() -> None:
         batches=batches,
         warmup=int(args.warmup),
         iters=int(args.iters),
-        device=str(args.device),
+        device=device,
         compile_mode=str(args.compile_mode),
         amp_dtype=str(args.amp_dtype),
     )
@@ -266,7 +294,7 @@ def main() -> None:
         batches=batches,
         warmup=int(args.warmup),
         iters=int(args.iters),
-        device=str(args.device),
+        device=device,
         compile_mode=str(args.compile_mode),
         amp_dtype=str(args.amp_dtype),
     )

@@ -38,6 +38,22 @@ def test_parse_batches_rejects_non_positive_values() -> None:
         module.parse_batches(680, "256,0")
 
 
+def test_normalize_cuda_device_accepts_indexed_cuda_device() -> None:
+    module = _load_bench_module()
+
+    device = module.normalize_cuda_device("cuda:1")
+
+    assert device.type == "cuda"
+    assert device.index == 1
+
+
+def test_normalize_cuda_device_rejects_cpu_device() -> None:
+    module = _load_bench_module()
+
+    with pytest.raises(ValueError, match="CUDA device"):
+        module.normalize_cuda_device("cpu")
+
+
 def test_speedup_pct_reports_candidate_speedup() -> None:
     module = _load_bench_module()
 
