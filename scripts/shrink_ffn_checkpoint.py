@@ -232,7 +232,8 @@ def activation_unit_scores_from_x(
         raise ValueError("activation scoring requires a transformer model with blocks")
 
     def make_hook(layer_idx: int) -> Any:
-        def hook(_module: torch.nn.Module, _inputs: tuple[Any, ...], output: Any) -> None:
+        def hook(_module: torch.nn.Module, _inputs: tuple[Any, ...], output: Any) -> None:  # skylos: ignore
+            del _module, _inputs
             if not isinstance(output, torch.Tensor):
                 raise TypeError(f"layer {layer_idx}: expected tensor activation, got {type(output).__name__}")
             act = output.detach().float()
@@ -452,7 +453,8 @@ def taylor_unit_scores_from_arrays(
         raise ValueError("Taylor scoring requires a transformer model with blocks")
 
     def make_hook(layer_idx: int) -> Any:
-        def hook(_module: torch.nn.Module, _inputs: tuple[Any, ...], output: Any) -> None:
+        def hook(_module: torch.nn.Module, _inputs: tuple[Any, ...], output: Any) -> None:  # skylos: ignore
+            del _module, _inputs
             if not isinstance(output, torch.Tensor):
                 raise TypeError(f"layer {layer_idx}: expected tensor activation, got {type(output).__name__}")
             output.retain_grad()
@@ -621,7 +623,8 @@ def optimize_target_schedule_by_scores(
             f"need {blocks_needed} hidden blocks but only {len(block_candidates)} are available"
         )
     block_candidates.sort(key=lambda item: item[0], reverse=True)
-    for _gain, layer_idx in block_candidates[:blocks_needed]:
+    for candidate in block_candidates[:blocks_needed]:
+        layer_idx = candidate[1]
         target_hidden[layer_idx] += multiple
 
     optimized_schedule = tuple(float(hidden) / float(embed_dim) for hidden in target_hidden)
