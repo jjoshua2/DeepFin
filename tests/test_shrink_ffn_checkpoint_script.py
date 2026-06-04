@@ -66,6 +66,59 @@ def test_shrink_model_state_dict_prunes_important_ffn_units() -> None:
     torch.testing.assert_close(out["blocks.0.ffn.2.bias"], source_state["blocks.0.ffn.2.bias"])
 
 
+def test_shrink_model_state_dict_can_use_external_unit_scores() -> None:
+    module = _load_shrink_module()
+    source_cfg = _small_cfg(ffn_mult_by_layer=(2.0, 1.5))
+    target_cfg = _small_cfg(ffn_mult_by_layer=(1.0, 1.0))
+    source_state = build_model(source_cfg).state_dict()
+    target_template = build_model(target_cfg).state_dict()
+
+    layer0_scores = torch.zeros(16)
+    keep_units = torch.tensor([0, 2, 4, 6, 8, 10, 12, 14], dtype=torch.long)
+    layer0_scores[keep_units] = torch.arange(1, 9, dtype=torch.float32)
+
+    out, _copied = module.shrink_model_state_dict(
+        source_state,
+        target_template,
+        target_hidden_sizes=(8, 8),
+        unit_scores_by_layer={0: layer0_scores},
+    )
+
+    torch.testing.assert_close(out["blocks.0.ffn.0.weight"], source_state["blocks.0.ffn.0.weight"][keep_units])
+    torch.testing.assert_close(out["blocks.0.ffn.2.weight"], source_state["blocks.0.ffn.2.weight"][:, keep_units])
+
+
+def test_activation_unit_scores_from_x_shapes() -> None:
+    module = _load_shrink_module()
+    source_cfg = _small_cfg(ffn_mult_by_layer=(2.0, 1.5))
+    ckpt = {
+        "model": build_model(source_cfg).state_dict(),
+        "arch": {
+            "_schema_version": ARCH_SCHEMA_VERSION,
+            **dataclasses.asdict(source_cfg),
+        },
+    }
+    x = torch.randn(4, 146, 8, 8)
+
+    scores, stats = module.activation_unit_scores_from_x(
+        ckpt,
+        ckpt_path=Path("trainer.pt"),
+        x=x,
+        batch_size=2,
+        device=torch.device("cpu"),
+    )
+
+    assert stats["activation_score_positions"] == 4
+    assert stats["activation_score_layers"] == 2
+    assert set(scores) == {0, 1}
+    assert scores[0].shape == (16,)
+    assert scores[1].shape == (12,)
+    assert torch.isfinite(scores[0]).all()
+    assert torch.isfinite(scores[1]).all()
+    assert torch.all(scores[0] >= 0)
+    assert torch.all(scores[1] >= 0)
+
+
 def test_shrink_checkpoint_updates_arch_and_drops_optimizer(tmp_path: Path) -> None:
     module = _load_shrink_module()
     source_cfg = _small_cfg(ffn_mult_by_layer=(2.0, 1.5))
