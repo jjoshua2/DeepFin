@@ -9,6 +9,7 @@ from chess_anti_engine.moves import COMPACT_POLICY_SIZE
 from chess_anti_engine.model import (
     ModelConfig,
     build_model,
+    model_config_from_flat_config,
     load_state_dict_tolerant,
     model_config_from_manifest_dict,
     model_config_to_manifest_dict,
@@ -126,6 +127,46 @@ def test_model_config_manifest_round_trips_per_layer_ffn_multipliers():
     assert model_config_from_manifest_dict(manifest).smolgen_hidden_channels == 16
     assert model_config_from_manifest_dict(manifest).smolgen_hidden_sz == 64
     assert model_config_from_manifest_dict(manifest).smolgen_gen_sz == 96
+
+
+def test_flat_model_config_preserves_default_and_script_specific_dimensions():
+    default_cfg = model_config_from_flat_config({})
+
+    assert default_cfg.embed_dim == 384
+    assert default_cfg.num_layers == 9
+    assert default_cfg.num_heads == 8
+
+    bootstrap_cfg = model_config_from_flat_config(
+        {},
+        embed_dim_default=128,
+        num_layers_default=4,
+        num_heads_default=4,
+    )
+
+    assert bootstrap_cfg.embed_dim == 128
+    assert bootstrap_cfg.num_layers == 4
+    assert bootstrap_cfg.num_heads == 4
+
+
+def test_flat_model_config_explicit_dimensions_override_script_defaults():
+    cfg = model_config_from_flat_config(
+        {
+            "embed_dim": 96,
+            "num_layers": 3,
+            "num_heads": 6,
+            "ffn_mult_by_layer": [1.0, 1.25, 1.5],
+            "no_smolgen": True,
+        },
+        embed_dim_default=128,
+        num_layers_default=4,
+        num_heads_default=4,
+    )
+
+    assert cfg.embed_dim == 96
+    assert cfg.num_layers == 3
+    assert cfg.num_heads == 6
+    assert cfg.ffn_mult_by_layer == (1.0, 1.25, 1.5)
+    assert cfg.use_smolgen is False
 
 
 def test_per_layer_smolgen_uses_configured_dimensions():

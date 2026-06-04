@@ -50,7 +50,12 @@ def main() -> None:
     device = str(flat.get("device", "cuda" if torch.cuda.is_available() else "cpu"))
     batch_size = args.batch_size
 
-    model_cfg = model_config_from_flat_config(flat)
+    model_cfg = model_config_from_flat_config(
+        flat,
+        embed_dim_default=128,
+        num_layers_default=4,
+        num_heads_default=4,
+    )
     model = build_model(model_cfg)
 
     trainer = Trainer(

@@ -97,7 +97,13 @@ def model_config_from_manifest_dict(mc: dict) -> ModelConfig:
     )
 
 
-def model_config_from_flat_config(cfg: dict) -> ModelConfig:
+def model_config_from_flat_config(
+    cfg: dict,
+    *,
+    embed_dim_default: int = 384,
+    num_layers_default: int = 9,
+    num_heads_default: int = 8,
+) -> ModelConfig:
     """Build a ModelConfig from a flattened run-config dict (``configs/*.yaml``).
 
     Distinct from ``model_config_from_manifest_dict``: the flat run config keys
@@ -105,14 +111,16 @@ def model_config_from_flat_config(cfg: dict) -> ModelConfig:
     ``no_smolgen`` negation. Used by the offline diagnostic / bootstrap / replay
     scripts that rebuild a model from a YAML config rather than a publish
     manifest. ``policy_encoding`` / ``input_history_encoding`` are normalized
-    to canonical names, matching ``model_config_from_manifest_dict``.
+    to canonical names, matching ``model_config_from_manifest_dict``. The
+    dimension defaults are explicit because a few scripts historically used
+    smaller fallback models when those keys were absent.
     """
-    num_layers = int(cfg.get("num_layers", 9))
+    num_layers = int(cfg.get("num_layers", num_layers_default))
     return ModelConfig(
         kind=str(cfg.get("model", "transformer")),
-        embed_dim=int(cfg.get("embed_dim", 384)),
+        embed_dim=int(cfg.get("embed_dim", embed_dim_default)),
         num_layers=num_layers,
-        num_heads=int(cfg.get("num_heads", 8)),
+        num_heads=int(cfg.get("num_heads", num_heads_default)),
         ffn_mult=float(cfg.get("ffn_mult", 2.0)),
         ffn_mult_by_layer=normalize_ffn_mult_by_layer(
             cfg.get("ffn_mult_by_layer"),
