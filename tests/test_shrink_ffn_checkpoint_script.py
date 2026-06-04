@@ -179,6 +179,31 @@ def test_optimize_target_schedule_by_scores_redistributes_budget() -> None:
     assert sum(stats["optimized_target_hidden"]) == 32
 
 
+def test_optimize_target_schedule_rounds_nonaligned_budget_without_error() -> None:
+    module = _load_shrink_module()
+    layer0_scores = torch.arange(32, 0, -1, dtype=torch.float32)
+    layer1_scores = torch.ones(32, dtype=torch.float32)
+
+    # Requested per-layer hidden = int(16*1.1)=17 and int(16*1.0)=16 -> total 33,
+    # which is NOT on the (min_budget + k*multiple) grid. Previously this raised;
+    # now it snaps to the nearest reachable grid point instead.
+    schedule, stats = module.optimize_target_schedule_by_scores(
+        source_hidden_sizes=(32, 32),
+        source_embed_dim=16,
+        budget_schedule=(1.1, 1.0),
+        unit_scores_by_layer={0: layer0_scores, 1: layer1_scores},
+        min_ffn_mult=0.5,
+        hidden_multiple=8,
+    )
+
+    achieved = int(sum(stats["optimized_target_hidden"]))
+    assert stats["optimized_requested_hidden_budget"] == 33
+    assert stats["optimized_total_hidden_budget"] == achieved
+    assert achieved % 8 == 0  # snapped onto the multiple grid
+    assert abs(achieved - 33) <= 8  # within one block of the request
+    assert schedule == (1.5, 0.5)
+
+
 def test_shrink_checkpoint_updates_arch_and_drops_optimizer(tmp_path: Path) -> None:
     module = _load_shrink_module()
     source_cfg = _small_cfg(ffn_mult_by_layer=(2.0, 1.5))

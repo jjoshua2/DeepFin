@@ -712,11 +712,6 @@ def optimize_target_schedule_by_scores(
         )
     if total_budget > source_budget:
         raise ValueError(f"target hidden budget {total_budget} exceeds source hidden budget {source_budget}")
-    if (total_budget - min_budget) % multiple != 0:
-        raise ValueError(
-            f"target budget {total_budget} minus min budget {min_budget} must be divisible by "
-            f"hidden_multiple={multiple}"
-        )
 
     target_hidden = list(min_hidden)
     block_candidates: list[tuple[float, int]] = []
@@ -733,21 +728,25 @@ def optimize_target_schedule_by_scores(
             gain = float(sorted_score[start:stop].sum().item())
             block_candidates.append((gain, layer_idx))
 
-    blocks_needed = (total_budget - min_budget) // multiple
-    if blocks_needed > len(block_candidates):
-        raise ValueError(
-            f"need {blocks_needed} hidden blocks but only {len(block_candidates)} are available"
-        )
+    # Redistribution can only add whole ``multiple``-sized blocks, so the
+    # requested budget rarely lands exactly on the (min_budget + k*multiple)
+    # grid. Round to the nearest reachable block count (may overshoot the
+    # request by up to half a block) and clamp to the blocks that actually
+    # exist so we never keep more units than the source has.
+    blocks_needed = int(round((total_budget - min_budget) / multiple))
+    blocks_needed = max(0, min(blocks_needed, len(block_candidates)))
     block_candidates.sort(key=lambda item: item[0], reverse=True)
     for candidate in block_candidates[:blocks_needed]:
         layer_idx = candidate[1]
         target_hidden[layer_idx] += multiple
 
+    achieved_budget = int(sum(target_hidden))
     optimized_schedule = tuple(float(hidden) / float(embed_dim) for hidden in target_hidden)
     stats = {
         "optimized_target_hidden": tuple(target_hidden),
         "optimized_target_ffn_mult_by_layer": optimized_schedule,
-        "optimized_total_hidden_budget": total_budget,
+        "optimized_requested_hidden_budget": total_budget,
+        "optimized_total_hidden_budget": achieved_budget,
         "optimized_min_hidden": min_hidden,
         "optimized_hidden_multiple": multiple,
     }
@@ -852,7 +851,7 @@ def main() -> None:
         ),
     )
     ap.add_argument("--min-ffn-mult", type=float, default=1.0)
-    ap.add_argument("--target-hidden-multiple", type=int, default=96)
+    ap.add_argument("--target-hidden-multiple", type=int, default=32)
     ap.add_argument("--prefer-recorded-lc0-root", action="store_true")
     ap.add_argument("--synthetic-lc0-root-history", action="store_true")
     ap.add_argument("--lc0-root-legacy-meta", action="store_true")
