@@ -971,6 +971,9 @@ class ChessNet(nn.Module):
         if not self.phase_output_adapter_enabled and not self.phase_smolgen_enabled:
             return None
         low, high = self.phase_piece_thresholds
+        # Planes 0:12 are the current position's 12 piece-occupancy planes in
+        # every shipping LC0 encoding (legacy and root-history), so summing them
+        # yields the exact root piece count. Assumes that input plane layout.
         piece_counts = torch.round(x[:, :12].float().sum(dim=(1, 2, 3))).to(torch.long)
         phase = torch.ones_like(piece_counts)
         phase = torch.where(piece_counts <= int(low), torch.zeros_like(phase), phase)
