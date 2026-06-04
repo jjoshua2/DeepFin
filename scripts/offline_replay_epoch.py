@@ -678,6 +678,15 @@ def _parse_ffn_mult_by_layer(value: str) -> tuple[float, ...] | None:
         raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
+def _model_config_from_offline_config(cfg: dict[str, Any]) -> ModelConfig:
+    return model_config_from_flat_config(
+        cfg,
+        embed_dim_default=256,
+        num_layers_default=6,
+        num_heads_default=8,
+    )
+
+
 def _train_candidate(
     *,
     candidate: str,
@@ -689,7 +698,7 @@ def _train_candidate(
     run_dir = Path(args.out_dir) / candidate
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    model_cfg = model_config_from_flat_config(cfg)
+    model_cfg = _model_config_from_offline_config(cfg)
     trainer, optimizer, scope = _build_trainer_for_candidate(
         candidate=candidate,
         cfg=cfg,
@@ -1274,7 +1283,7 @@ def main() -> None:
     cfg["global_board_preprocess_weight_decay"] = float(args.global_board_preprocess_weight_decay)
     cfg["global_board_adapter_lr_multiplier"] = float(args.global_board_adapter_lr_multiplier)
     cfg["global_board_adapter_weight_decay"] = float(args.global_board_adapter_weight_decay)
-    model_cfg = model_config_from_flat_config(cfg)
+    model_cfg = _model_config_from_offline_config(cfg)
 
     shard_paths = _limit_shards(iter_shard_paths(args.replay_dir), args)
     if not shard_paths:
