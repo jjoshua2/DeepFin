@@ -107,6 +107,13 @@ class _SqrtReleaseLRScheduler:
         self._last_lr = list(self.base_lrs)
         self.last_epoch = -1
 
+    def _scale_from_progress(self, progress: float) -> float:
+        if self.release_shape == "cosine":
+            tail_scale = 0.5 * (1.0 + math.cos(math.pi * progress))
+        else:
+            tail_scale = 1.0 - math.sqrt(progress)
+        return self.min_scale + (1.0 - self.min_scale) * tail_scale
+
     def _scale_for_epoch(self, epoch: float, *, cycle_steps: int | None = None) -> float:
         effective_cycle_steps = max(1, int(cycle_steps if cycle_steps is not None else self.cycle_steps))
         phase = float(epoch) % float(effective_cycle_steps)
@@ -115,17 +122,35 @@ class _SqrtReleaseLRScheduler:
             return 1.0
         release_len = max(1e-12, float(effective_cycle_steps) - release_start)
         progress = min(1.0, max(0.0, (phase - release_start) / release_len))
-        if self.release_shape == "cosine":
-            tail_scale = 0.5 * (1.0 + math.cos(math.pi * progress))
-        else:
-            tail_scale = 1.0 - math.sqrt(progress)
-        return self.min_scale + (1.0 - self.min_scale) * tail_scale
+        return self._scale_from_progress(progress)
+
+    def _scale_for_window_step(self, local_step: int, *, cycle_steps: int) -> float:
+        effective_cycle_steps = max(1, int(cycle_steps))
+        last_phase = float(max(0, effective_cycle_steps - 1))
+        phase = min(last_phase, max(0.0, float(local_step)))
+        if last_phase <= 0.0 or self.release_start_frac >= 1.0:
+            return 1.0
+        if phase >= last_phase:
+            return self._scale_from_progress(1.0)
+        release_start = float(effective_cycle_steps) * self.release_start_frac
+        if phase <= release_start:
+            return 1.0
+        release_len = max(1e-12, last_phase - release_start)
+        progress = min(1.0, max(0.0, (phase - release_start) / release_len))
+        return self._scale_from_progress(progress)
 
     def step(self, epoch: float | None = None, *, cycle_steps: int | None = None) -> None:
         if epoch is None:
             epoch = float(self.last_epoch + 1)
         self.last_epoch = int(epoch)
         scale = self._scale_for_epoch(float(epoch), cycle_steps=cycle_steps)
+        self._last_lr = [float(base_lr) * scale for base_lr in self.base_lrs]
+        for pg, lr in zip(self.optimizer.param_groups, self._last_lr, strict=True):
+            pg["lr"] = lr
+
+    def step_window(self, local_step: int, *, cycle_steps: int) -> None:
+        self.last_epoch = int(local_step)
+        scale = self._scale_for_window_step(int(local_step), cycle_steps=cycle_steps)
         self._last_lr = [float(base_lr) * scale for base_lr in self.base_lrs]
         for pg, lr in zip(self.optimizer.param_groups, self._last_lr, strict=True):
             pg["lr"] = lr
@@ -1483,7 +1508,7 @@ class Trainer:
 
     def _set_train_window_release_lr(self, *, local_step: int, cycle_steps: int) -> None:
         scheduler: Any = self._scheduler
-        scheduler.step(int(local_step), cycle_steps=max(1, int(cycle_steps)))
+        scheduler.step_window(int(local_step), cycle_steps=max(1, int(cycle_steps)))
 
     def set_lr_release_config(
         self,

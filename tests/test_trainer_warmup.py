@@ -13,6 +13,7 @@ from chess_anti_engine.train.soda import SODAWeightDecayWrapper
 from chess_anti_engine.train.trainer import (
     Trainer,
     _ChainedOptimizer,
+    _SqrtReleaseLRScheduler,
     select_input_history_arrays,
     select_input_history_samples,
     trainer_kwargs_from_config,
@@ -565,10 +566,31 @@ def test_sqrt_release_zero_cycle_uses_train_window(
 
     assert seen_lrs[0] == base_lrs
     assert seen_lrs[85] == base_lrs
-    expected_late_scale = 0.1 + 0.9 * (1.0 - np.sqrt((99 - 85) / 15))
     for got, base_lr in zip(seen_lrs[-1], base_lrs, strict=True):
-        assert abs(got - (base_lr * expected_late_scale)) < 1e-12
+        assert abs(got - (base_lr * 0.1)) < 1e-12
     assert [float(pg["lr"]) for pg in trainer.opt.param_groups] == seen_lrs[-1]
+
+
+def test_sqrt_release_window_step_hits_min_scale_on_final_step() -> None:
+    param = torch.nn.Parameter(torch.ones(()))
+    opt = torch.optim.SGD([param], lr=0.5)
+    scheduler = _SqrtReleaseLRScheduler(
+        opt,
+        cycle_steps=0,
+        release_start_frac=0.8,
+        min_scale=0.1,
+    )
+
+    scheduler.step_window(0, cycle_steps=10)
+    assert float(opt.param_groups[0]["lr"]) == 0.5
+    scheduler.step_window(8, cycle_steps=10)
+    assert float(opt.param_groups[0]["lr"]) == 0.5
+    scheduler.step_window(9, cycle_steps=10)
+    assert float(opt.param_groups[0]["lr"]) == pytest.approx(0.05)
+    scheduler.step_window(4, cycle_steps=5)
+    assert float(opt.param_groups[0]["lr"]) == pytest.approx(0.05)
+    scheduler.step_window(0, cycle_steps=1)
+    assert float(opt.param_groups[0]["lr"]) == 0.5
 
 
 def test_sqrt_release_zero_cycle_switches_after_warmup(
@@ -622,9 +644,8 @@ def test_sqrt_release_zero_cycle_switches_after_warmup(
     assert [update_lr for _, update_lr, _ in seen[10:]] == [False] * 10
     assert seen[10][2] == base_lrs
 
-    expected_late_scale = 0.1 + 0.9 * (1.0 - np.sqrt((19 - 10) / 10))
     for got, base_lr in zip(seen[-1][2], base_lrs, strict=True):
-        assert abs(got - (base_lr * expected_late_scale)) < 1e-12
+        assert abs(got - (base_lr * 0.1)) < 1e-12
 
 
 def test_aurora_uses_matrix_lr_and_adam_fallback_lr(tmp_path: Path) -> None:
