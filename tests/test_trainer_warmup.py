@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
+import pytest
 import torch
 
 from chess_anti_engine.replay.buffer import ReplaySample
@@ -255,9 +257,8 @@ class _TinyScopedModel(torch.nn.Module):
         }
 
 
-def _make_trainer(tmp_path: Path) -> Trainer:
-    return Trainer(
-        _TinyMuonModel(),
+def _make_trainer(tmp_path: Path, **kwargs: Any) -> Trainer:
+    trainer_kwargs: dict[str, Any] = dict(
         device="cpu",
         lr=1e-3,
         optimizer="muon",
@@ -267,6 +268,11 @@ def _make_trainer(tmp_path: Path) -> Trainer:
         log_dir=tmp_path,
         tb_log_interval=1000,
         prefetch_batches=False,
+    )
+    trainer_kwargs.update(kwargs)
+    return Trainer(
+        _TinyMuonModel(),
+        **trainer_kwargs,
     )
 
 
@@ -378,6 +384,247 @@ def test_muon_load_restores_peak_lr_from_search_lr(tmp_path: Path) -> None:
 
     assert loaded._peak_lr == 1e-3
     assert loaded._base_lrs()[0] == loaded._base_lrs()[2] * 20.0
+
+
+def test_sqrt_release_lr_schedule_shape(tmp_path: Path) -> None:
+    trainer = _make_trainer(
+        tmp_path,
+        warmup_steps=0,
+        lr_schedule="sqrt_release",
+        lr_release_cycle_steps=1000,
+        lr_release_start_frac=0.85,
+        lr_release_min_scale=0.1,
+    )
+    base_lrs = trainer._base_lrs()
+
+    def lrs_at(step: int) -> list[float]:
+        trainer.step = step
+        trainer._update_lr()
+        return [float(pg["lr"]) for pg in trainer.opt.param_groups]
+
+    assert lrs_at(0) == base_lrs
+    assert lrs_at(850) == base_lrs
+
+    expected_mid_scale = 0.1 + 0.9 * (1.0 - np.sqrt((925 - 850) / 150))
+    for got, base_lr in zip(lrs_at(925), base_lrs, strict=True):
+        assert abs(got - (base_lr * expected_mid_scale)) < 1e-12
+
+    expected_late_scale = 0.1 + 0.9 * (1.0 - np.sqrt((999 - 850) / 150))
+    for got, base_lr in zip(lrs_at(999), base_lrs, strict=True):
+        assert abs(got - (base_lr * expected_late_scale)) < 1e-12
+
+    assert lrs_at(1000) == base_lrs
+
+
+def test_cosine_lr_schedule_phase_starts_after_warmup(tmp_path: Path) -> None:
+    trainer = _make_trainer(
+        tmp_path,
+        warmup_steps=10,
+        lr_schedule="cosine",
+        lr_T0=100,
+        lr_eta_min=0.0,
+    )
+    base_lrs = trainer._base_lrs()
+
+    trainer.step = 10
+    trainer._update_lr()
+
+    assert [float(pg["lr"]) for pg in trainer.opt.param_groups] == base_lrs
+
+
+def test_sqrt_release_accepts_cosine_tail_shape(tmp_path: Path) -> None:
+    trainer = _make_trainer(
+        tmp_path,
+        warmup_steps=0,
+        lr_schedule="sqrt_release",
+        lr_release_cycle_steps=1000,
+        lr_release_start_frac=0.85,
+        lr_release_min_scale=0.1,
+        lr_release_shape="cosine",
+    )
+    base_lrs = trainer._base_lrs()
+
+    trainer.step = 925
+    trainer._update_lr()
+
+    expected_scale = 0.1 + 0.9 * 0.5 * (1.0 + np.cos(np.pi * ((925 - 850) / 150)))
+    for got, base_lr in zip(
+        [float(pg["lr"]) for pg in trainer.opt.param_groups],
+        base_lrs,
+        strict=True,
+    ):
+        assert abs(got - (base_lr * expected_scale)) < 1e-12
+
+
+def test_sqrt_release_rejects_unknown_tail_shape(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="lr_release_shape"):
+        _make_trainer(
+            tmp_path,
+            warmup_steps=0,
+            lr_schedule="sqrt_release",
+            lr_release_shape="linear",
+        )
+
+
+def test_sqrt_release_live_updates_release_knobs(tmp_path: Path) -> None:
+    trainer = _make_trainer(
+        tmp_path,
+        warmup_steps=0,
+        lr_schedule="sqrt_release",
+        lr_release_cycle_steps=1000,
+        lr_release_start_frac=0.85,
+        lr_release_min_scale=0.1,
+    )
+
+    trainer.set_lr_release_config(
+        cycle_steps=0,
+        release_start_frac=0.5,
+        min_scale=0.2,
+        release_shape="cosine",
+    )
+    scheduler: Any = trainer._scheduler
+
+    assert trainer._lr_release_cycle_steps == 0
+    assert scheduler.cycle_steps == 0
+    assert scheduler.release_start_frac == 0.5
+    assert scheduler.min_scale == 0.2
+    assert scheduler.release_shape == "cosine"
+
+
+def test_sqrt_release_scheduler_accepts_cosine_checkpoint(tmp_path: Path) -> None:
+    src = _make_trainer(tmp_path / "src", lr_schedule="cosine")
+    ckpt = tmp_path / "cosine.pt"
+    src.save(ckpt)
+
+    loaded = _make_trainer(
+        tmp_path / "dst",
+        warmup_steps=0,
+        lr_schedule="sqrt_release",
+        lr_release_cycle_steps=1000,
+        lr_release_start_frac=0.85,
+        lr_release_min_scale=0.1,
+    )
+    loaded.load(ckpt)
+
+    loaded.step = 925
+    loaded._update_lr()
+    expected_scale = 0.1 + 0.9 * (1.0 - np.sqrt((925 - 850) / 150))
+    for got, base_lr in zip(
+        [float(pg["lr"]) for pg in loaded.opt.param_groups],
+        loaded._base_lrs(),
+        strict=True,
+    ):
+        assert abs(got - (base_lr * expected_scale)) < 1e-12
+
+
+def test_sqrt_release_zero_cycle_uses_train_window(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trainer = _make_trainer(
+        tmp_path,
+        warmup_steps=0,
+        lr_schedule="sqrt_release",
+        lr_release_cycle_steps=0,
+        lr_release_start_frac=0.85,
+        lr_release_min_scale=0.1,
+    )
+    base_lrs = trainer._base_lrs()
+    seen_lrs: list[list[float]] = []
+
+    def fake_run_optimizer_step(
+        *,
+        step_sums: dict[str, float],
+        step_acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]],
+        buf: Any,
+        batch_size: int,
+        update_lr: bool = True,
+    ) -> tuple[int, float]:
+        del step_acc_sums, buf, batch_size
+        assert update_lr is False
+        seen_lrs.append([float(pg["lr"]) for pg in trainer.opt.param_groups])
+        for key in (
+            "loss",
+            "policy_loss",
+            "soft_policy_loss",
+            "future_policy_loss",
+            "wdl_loss",
+            "sf_move_loss",
+            "sf_eval_loss",
+            "categorical_loss",
+            "volatility_loss",
+            "sf_volatility_loss",
+            "moves_left_loss",
+        ):
+            step_sums[key] = 0.0
+        return 1, 0.0
+
+    monkeypatch.setattr(trainer, "_run_optimizer_step", fake_run_optimizer_step)
+
+    trainer.train_steps(cast(Any, None), batch_size=1, steps=100)
+
+    assert seen_lrs[0] == base_lrs
+    assert seen_lrs[85] == base_lrs
+    expected_late_scale = 0.1 + 0.9 * (1.0 - np.sqrt((99 - 85) / 15))
+    for got, base_lr in zip(seen_lrs[-1], base_lrs, strict=True):
+        assert abs(got - (base_lr * expected_late_scale)) < 1e-12
+    assert [float(pg["lr"]) for pg in trainer.opt.param_groups] == seen_lrs[-1]
+
+
+def test_sqrt_release_zero_cycle_switches_after_warmup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trainer = _make_trainer(
+        tmp_path,
+        warmup_steps=10,
+        lr_schedule="sqrt_release",
+        lr_release_cycle_steps=0,
+        lr_release_start_frac=0.5,
+        lr_release_min_scale=0.1,
+    )
+    base_lrs = trainer._base_lrs()
+    seen: list[tuple[int, bool, list[float]]] = []
+
+    def fake_run_optimizer_step(
+        *,
+        step_sums: dict[str, float],
+        step_acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]],
+        buf: Any,
+        batch_size: int,
+        update_lr: bool = True,
+    ) -> tuple[int, float]:
+        del step_acc_sums, buf, batch_size
+        seen.append((int(trainer.step), bool(update_lr), [float(pg["lr"]) for pg in trainer.opt.param_groups]))
+        for key in (
+            "loss",
+            "policy_loss",
+            "soft_policy_loss",
+            "future_policy_loss",
+            "wdl_loss",
+            "sf_move_loss",
+            "sf_eval_loss",
+            "categorical_loss",
+            "volatility_loss",
+            "sf_volatility_loss",
+            "moves_left_loss",
+        ):
+            step_sums[key] = 0.0
+        if update_lr:
+            trainer._update_lr()
+        return 1, 0.0
+
+    monkeypatch.setattr(trainer, "_run_optimizer_step", fake_run_optimizer_step)
+
+    trainer.train_steps(cast(Any, None), batch_size=1, steps=20)
+
+    assert [update_lr for _, update_lr, _ in seen[:10]] == [True] * 10
+    assert [update_lr for _, update_lr, _ in seen[10:]] == [False] * 10
+    assert seen[10][2] == base_lrs
+
+    expected_late_scale = 0.1 + 0.9 * (1.0 - np.sqrt((19 - 10) / 10))
+    for got, base_lr in zip(seen[-1][2], base_lrs, strict=True):
+        assert abs(got - (base_lr * expected_late_scale)) < 1e-12
 
 
 def test_aurora_uses_matrix_lr_and_adam_fallback_lr(tmp_path: Path) -> None:
@@ -612,6 +859,16 @@ def test_zclip_max_norm_can_be_disabled_from_config(tmp_path: Path) -> None:
 
     assert trainer.zclip.max_grad_norm is None
     assert trainer.zclip.clip_factor == 0.75
+
+
+def test_sqrt_release_config_defaults_to_train_window_cycle(tmp_path: Path) -> None:
+    kwargs = trainer_kwargs_from_config(
+        {"lr_schedule": "sqrt_release"},
+        log_dir=tmp_path,
+    )
+
+    assert kwargs["lr_release_cycle_steps"] == 0
+    assert kwargs["lr_release_shape"] == "sqrt"
 
 
 def test_zclip_step_reports_hard_and_adaptive_clipping(tmp_path: Path) -> None:

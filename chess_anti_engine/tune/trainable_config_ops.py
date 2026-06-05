@@ -284,6 +284,12 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None) -> None:
         for k, v in fresh.items():
             if k in searched or k.startswith("pb2_bounds_"):
                 continue
+            if k == "lr_schedule" and k in config and config[k] != v:
+                log.warning(
+                    "YAML reload: %s changed (%s -> %s) but requires restart — skipping",
+                    k, config[k], v,
+                )
+                continue
             if k in _TOPOLOGY_KEYS:
                 current = config.get(k, missing)
                 if current is missing:
@@ -314,6 +320,19 @@ def _apply_lr_gamma_weights(trainer: Trainer, config: dict, *, rescale_current_l
     """
     if "lr" in config:
         trainer.set_peak_lr(float(config["lr"]), rescale_current=rescale_current_lr)
+    release_keys = {
+        "lr_release_cycle_steps",
+        "lr_release_start_frac",
+        "lr_release_min_scale",
+        "lr_release_shape",
+    }
+    if release_keys.intersection(config) and hasattr(trainer, "set_lr_release_config"):
+        trainer.set_lr_release_config(
+            cycle_steps=config.get("lr_release_cycle_steps"),
+            release_start_frac=config.get("lr_release_start_frac"),
+            min_scale=config.get("lr_release_min_scale"),
+            release_shape=config.get("lr_release_shape"),
+        )
     if "cosmos_gamma" in config and hasattr(trainer.opt, "gamma"):
         trainer.opt.gamma = float(config["cosmos_gamma"])
     aurora_group_updates: dict[str, object] = {}

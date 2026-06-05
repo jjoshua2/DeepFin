@@ -113,6 +113,26 @@ def test_flatten_run_config_defaults_passes_qk_rmsnorm() -> None:
     assert flat["use_qk_rmsnorm"] is True
 
 
+def test_flatten_run_config_defaults_passes_lr_release_schedule() -> None:
+    cfg = {
+        "train": {
+            "lr_schedule": "sqrt_release",
+            "lr_release_cycle_steps": 0,
+            "lr_release_start_frac": 0.85,
+            "lr_release_min_scale": 0.1,
+            "lr_release_shape": "cosine",
+        }
+    }
+
+    flat = flatten_run_config_defaults(cfg)
+
+    assert flat["lr_schedule"] == "sqrt_release"
+    assert flat["lr_release_cycle_steps"] == 0
+    assert flat["lr_release_start_frac"] == 0.85
+    assert flat["lr_release_min_scale"] == 0.1
+    assert flat["lr_release_shape"] == "cosine"
+
+
 def test_flatten_stockfish_new_style_flat_keys() -> None:
     """New-style YAML: keys inside stockfish: match flat config names directly."""
     cfg = {
