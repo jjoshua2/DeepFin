@@ -2131,6 +2131,7 @@ class SharedSlotBroker:
             model_cfg.embed_dim,
             model_cfg.num_layers,
             model_cfg.num_heads,
+            model_cfg.embed_dim_by_layer,
             model_cfg.ffn_mult,
             model_cfg.ffn_mult_by_layer,
             model_cfg.use_smolgen,

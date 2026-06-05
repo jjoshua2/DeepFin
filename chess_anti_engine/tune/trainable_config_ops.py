@@ -255,6 +255,7 @@ _TOPOLOGY_KEYS = frozenset({
     "phase_smolgen",
     "phase_piece_thresholds",
     "num_layers",
+    "embed_dim_by_layer",
     "ffn_mult_by_layer",
 })
 

@@ -111,6 +111,28 @@ def test_uci_loader_preserves_per_layer_ffn_multipliers_from_embedded_arch(tmp_p
     assert getattr(model, "ffn_mult_by_layer") == (1.0, 1.25, 1.5)
 
 
+def test_uci_loader_preserves_per_layer_embed_dims_from_embedded_arch(tmp_path: Path) -> None:
+    ckpt = _write_tiny_checkpoint_with_cfg(
+        tmp_path,
+        ModelConfig(
+            embed_dim=32,
+            num_layers=3,
+            num_heads=4,
+            embed_dim_by_layer=(32, 48, 40),
+            use_smolgen=True,
+            smolgen_mode="per_layer",
+            smolgen_pooling="mean",
+            smolgen_hidden_channels=8,
+            smolgen_hidden_sz=16,
+            smolgen_gen_sz=24,
+        ),
+    )
+
+    model = load_model_from_checkpoint(ckpt, device="cpu")
+
+    assert getattr(model, "embed_dim_by_layer") == (32, 48, 40)
+
+
 def test_uci_loader_preserves_smolgen_pooling_from_embedded_arch(tmp_path: Path) -> None:
     ckpt = _write_tiny_checkpoint_with_cfg(
         tmp_path,

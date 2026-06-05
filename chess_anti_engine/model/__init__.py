@@ -7,7 +7,11 @@ import torch
 from chess_anti_engine.encoding import encode_position
 from chess_anti_engine.encoding.lc0 import LC0_HISTORY_LEGACY, normalize_lc0_history_encoding
 from chess_anti_engine.moves import POLICY_ENCODING_AZ_4672, normalize_policy_encoding
-from chess_anti_engine.utils.architecture import normalize_ffn_mult_by_layer, normalize_phase_piece_thresholds
+from chess_anti_engine.utils.architecture import (
+    normalize_embed_dim_by_layer,
+    normalize_ffn_mult_by_layer,
+    normalize_phase_piece_thresholds,
+)
 
 from .tiny import TinyNet
 from .transformer import ChessNet, TransformerConfig
@@ -16,7 +20,7 @@ from .transformer import ChessNet, TransformerConfig
 # misrepresent. Trainer embeds this version when saving; the UCI loader
 # rejects checkpoints with a higher version AND rejects unknown keys at
 # the same version — both prevent silent architecture mismatch on skew.
-ARCH_SCHEMA_VERSION = 13
+ARCH_SCHEMA_VERSION = 14
 
 
 @dataclass
@@ -25,6 +29,9 @@ class ModelConfig:
     embed_dim: int = 256
     num_layers: int = 6
     num_heads: int = 8
+    # When set, this schedule defines each trunk layer's width. ``embed_dim``
+    # remains the uniform-width fallback and manifest compatibility field.
+    embed_dim_by_layer: tuple[int, ...] | None = None
     ffn_mult: float = 2.0
     ffn_mult_by_layer: tuple[float, ...] | None = None
     use_smolgen: bool = True
@@ -69,6 +76,10 @@ def model_config_from_manifest_dict(mc: dict) -> ModelConfig:
         embed_dim=int(mc.get("embed_dim", 256)),
         num_layers=num_layers,
         num_heads=int(mc.get("num_heads", 8)),
+        embed_dim_by_layer=normalize_embed_dim_by_layer(
+            mc.get("embed_dim_by_layer"),
+            num_layers=num_layers,
+        ),
         ffn_mult=float(mc.get("ffn_mult", 2)),
         ffn_mult_by_layer=normalize_ffn_mult_by_layer(
             mc.get("ffn_mult_by_layer"),
@@ -129,6 +140,10 @@ def model_config_from_flat_config(
         embed_dim=int(cfg.get("embed_dim", embed_dim_default)),
         num_layers=num_layers,
         num_heads=int(cfg.get("num_heads", num_heads_default)),
+        embed_dim_by_layer=normalize_embed_dim_by_layer(
+            cfg.get("embed_dim_by_layer"),
+            num_layers=num_layers,
+        ),
         ffn_mult=float(cfg.get("ffn_mult", 2.0)),
         ffn_mult_by_layer=normalize_ffn_mult_by_layer(
             cfg.get("ffn_mult_by_layer"),
@@ -179,11 +194,16 @@ def model_config_to_manifest_dict(cfg: ModelConfig) -> dict:
         cfg.ffn_mult_by_layer,
         num_layers=int(cfg.num_layers),
     )
+    embed_dim_by_layer = normalize_embed_dim_by_layer(
+        cfg.embed_dim_by_layer,
+        num_layers=int(cfg.num_layers),
+    )
     return {
         "kind": str(cfg.kind),
         "embed_dim": int(cfg.embed_dim),
         "num_layers": int(cfg.num_layers),
         "num_heads": int(cfg.num_heads),
+        "embed_dim_by_layer": list(embed_dim_by_layer) if embed_dim_by_layer is not None else None,
         "ffn_mult": float(cfg.ffn_mult),
         "ffn_mult_by_layer": list(ffn_mult_by_layer) if ffn_mult_by_layer is not None else None,
         "use_smolgen": bool(cfg.use_smolgen),
@@ -245,6 +265,10 @@ def build_model(cfg: ModelConfig) -> torch.nn.Module:
             embed_dim=int(cfg.embed_dim),
             num_layers=int(cfg.num_layers),
             num_heads=int(cfg.num_heads),
+            embed_dim_by_layer=normalize_embed_dim_by_layer(
+                cfg.embed_dim_by_layer,
+                num_layers=int(cfg.num_layers),
+            ),
             ffn_mult=float(cfg.ffn_mult),
             ffn_mult_by_layer=normalize_ffn_mult_by_layer(
                 cfg.ffn_mult_by_layer,

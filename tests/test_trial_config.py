@@ -99,6 +99,7 @@ def test_from_dict_overrides() -> None:
 def test_model_architecture_keys_are_parsed() -> None:
     tc = TrialConfig.from_dict({
         "num_layers": 3,
+        "embed_dim_by_layer": [256, 384, 320],
         "ffn_mult_by_layer": [1.0, 1.25, 1.5],
         "policy_encoding": "lc0_1858",
         "input_history_encoding": "lc0_root_legacy_meta",
@@ -126,6 +127,7 @@ def test_model_architecture_keys_are_parsed() -> None:
         "phase_piece_thresholds": [12, 21],
     })
     assert tc.num_layers == 3
+    assert tc.embed_dim_by_layer == (256, 384, 320)
     assert tc.ffn_mult_by_layer == (1.0, 1.25, 1.5)
     assert tc.policy_encoding == "lc0_1858"
     assert tc.input_history_encoding == "lc0_root_legacy_meta"
@@ -156,6 +158,11 @@ def test_model_architecture_keys_are_parsed() -> None:
 def test_model_architecture_rejects_mismatched_ffn_schedule() -> None:
     with pytest.raises(ValueError, match="length"):
         TrialConfig.from_dict({"num_layers": 3, "ffn_mult_by_layer": [1.0, 1.25]})
+
+
+def test_model_architecture_rejects_mismatched_embed_schedule() -> None:
+    with pytest.raises(ValueError, match="length"):
+        TrialConfig.from_dict({"num_layers": 3, "embed_dim_by_layer": [256, 384]})
 
 
 def test_fallback_keys() -> None:

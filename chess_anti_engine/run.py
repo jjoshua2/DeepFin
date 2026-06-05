@@ -457,6 +457,7 @@ def main() -> None:
     ap.add_argument("--device", type=str, default=None)
     ap.add_argument("--model", type=str, default="transformer", choices=["tiny", "transformer"])
     ap.add_argument("--embed-dim", type=int, default=256)
+    ap.add_argument("--embed-dim-by-layer", type=str, default=None)
     ap.add_argument("--num-layers", type=int, default=6)
     ap.add_argument("--num-heads", type=int, default=8)
     ap.add_argument("--ffn-mult", type=float, default=2)
