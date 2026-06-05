@@ -107,6 +107,7 @@ def test_model_config_manifest_round_trips_per_layer_ffn_multipliers():
         embed_dim=32,
         num_layers=3,
         num_heads=4,
+        embed_dim_by_layer=(32, 48, 40),
         ffn_mult=1.0,
         ffn_mult_by_layer=(1.0, 1.25, 1.5),
         use_smolgen=False,
@@ -123,6 +124,7 @@ def test_model_config_manifest_round_trips_per_layer_ffn_multipliers():
     manifest = model_config_to_manifest_dict(cfg)
 
     assert manifest["ffn_mult_by_layer"] == [1.0, 1.25, 1.5]
+    assert manifest["embed_dim_by_layer"] == [32, 48, 40]
     assert manifest["smolgen_pooling"] == "mean"
     assert manifest["smolgen_hidden_channels"] == 16
     assert manifest["smolgen_hidden_sz"] == 64
@@ -132,6 +134,7 @@ def test_model_config_manifest_round_trips_per_layer_ffn_multipliers():
     assert manifest["phase_smolgen"] is True
     assert manifest["phase_piece_thresholds"] == [12, 21]
     assert model_config_from_manifest_dict(manifest).ffn_mult_by_layer == (1.0, 1.25, 1.5)
+    assert model_config_from_manifest_dict(manifest).embed_dim_by_layer == (32, 48, 40)
     assert model_config_from_manifest_dict(manifest).smolgen_pooling == "mean"
     assert model_config_from_manifest_dict(manifest).smolgen_hidden_channels == 16
     assert model_config_from_manifest_dict(manifest).smolgen_hidden_sz == 64
@@ -164,6 +167,7 @@ def test_flat_model_config_explicit_dimensions_override_script_defaults():
             "embed_dim": 96,
             "num_layers": 3,
             "num_heads": 6,
+            "embed_dim_by_layer": [96, 120, 84],
             "ffn_mult_by_layer": [1.0, 1.25, 1.5],
             "no_smolgen": True,
         },
@@ -175,8 +179,65 @@ def test_flat_model_config_explicit_dimensions_override_script_defaults():
     assert cfg.embed_dim == 96
     assert cfg.num_layers == 3
     assert cfg.num_heads == 6
+    assert cfg.embed_dim_by_layer == (96, 120, 84)
     assert cfg.ffn_mult_by_layer == (1.0, 1.25, 1.5)
     assert cfg.use_smolgen is False
+
+
+def test_variable_embed_width_forward_with_per_layer_smolgen():
+    cfg = TransformerConfig(
+        in_planes=146,
+        embed_dim=32,
+        num_layers=3,
+        num_heads=4,
+        embed_dim_by_layer=(32, 48, 40),
+        ffn_mult=1.0,
+        use_smolgen=True,
+        smolgen_mode="per_layer",
+        smolgen_pooling="mean",
+        smolgen_hidden_channels=8,
+        smolgen_hidden_sz=24,
+        smolgen_gen_sz=32,
+        use_nla=False,
+    )
+    model = ChessNet(cfg)
+    x = torch.randn(2, 146, 8, 8)
+
+    out = model(x)
+
+    assert model.embed_dim_by_layer == (32, 48, 40)
+    assert out["policy_own"].shape == (2, 4672)
+    assert out["wdl"].shape == (2, 3)
+    assert model.value_wdl.token_proj.in_features == 40
+
+
+def test_variable_embed_width_rejects_shared_smolgen():
+    with pytest.raises(ValueError, match="smolgen_mode='per_layer'"):
+        ChessNet(
+            TransformerConfig(
+                in_planes=146,
+                embed_dim=32,
+                num_layers=2,
+                num_heads=4,
+                embed_dim_by_layer=(32, 48),
+                use_smolgen=True,
+                smolgen_mode="shared",
+            )
+        )
+
+
+def test_variable_embed_width_rejects_non_divisible_heads():
+    with pytest.raises(ValueError, match="divisible by num_heads"):
+        ChessNet(
+            TransformerConfig(
+                in_planes=146,
+                embed_dim=32,
+                num_layers=2,
+                num_heads=4,
+                embed_dim_by_layer=(32, 50),
+                use_smolgen=False,
+            )
+        )
 
 
 def test_per_layer_smolgen_uses_configured_dimensions():

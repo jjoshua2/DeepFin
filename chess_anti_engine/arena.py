@@ -11,6 +11,7 @@ from chess_anti_engine.model import (
     build_model,
     load_state_dict_tolerant,
     model_config_from_manifest_dict,
+    normalize_embed_dim_by_layer,
     normalize_ffn_mult_by_layer,
     normalize_phase_piece_thresholds,
 )
@@ -52,6 +53,13 @@ def _parse_ffn_mult_by_layer(value: str) -> tuple[float, ...] | None:
         raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
+def _parse_embed_dim_by_layer(value: str) -> tuple[int, ...] | None:
+    try:
+        return normalize_embed_dim_by_layer(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
 def _parse_phase_piece_thresholds(value: str) -> tuple[int, int]:
     try:
         return normalize_phase_piece_thresholds(value)
@@ -65,6 +73,11 @@ def _model_config_from_cli_args(args: argparse.Namespace) -> dict:
         "embed_dim": int(args.embed_dim),
         "num_layers": int(args.num_layers),
         "num_heads": int(args.num_heads),
+        "embed_dim_by_layer": (
+            tuple(int(v) for v in args.embed_dim_by_layer)
+            if args.embed_dim_by_layer is not None
+            else None
+        ),
         "ffn_mult": float(args.ffn_mult),
         "ffn_mult_by_layer": (
             tuple(float(v) for v in args.ffn_mult_by_layer)
@@ -97,6 +110,12 @@ def main() -> None:
   # Model config (used if --manifest is not provided)
     ap.add_argument("--model", type=str, default="transformer", choices=["tiny", "transformer"])
     ap.add_argument("--embed-dim", type=int, default=256)
+    ap.add_argument(
+        "--embed-dim-by-layer",
+        type=_parse_embed_dim_by_layer,
+        default=None,
+        help="Comma-separated embedding widths, one per layer; use --manifest for published checkpoints.",
+    )
     ap.add_argument("--num-layers", type=int, default=6)
     ap.add_argument("--num-heads", type=int, default=8)
     ap.add_argument("--ffn-mult", type=float, default=2)

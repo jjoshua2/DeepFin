@@ -5,7 +5,11 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
-from chess_anti_engine.utils.architecture import normalize_ffn_mult_by_layer, normalize_phase_piece_thresholds
+from chess_anti_engine.utils.architecture import (
+    normalize_embed_dim_by_layer,
+    normalize_ffn_mult_by_layer,
+    normalize_phase_piece_thresholds,
+)
 
 if TYPE_CHECKING:
     from chess_anti_engine.train.trainer import TrainMetrics
@@ -59,6 +63,7 @@ class TrialConfig:
     embed_dim: int = 256
     num_layers: int = 6
     num_heads: int = 8
+    embed_dim_by_layer: tuple[int, ...] | None = None
     ffn_mult: float = 2.0
     ffn_mult_by_layer: tuple[float, ...] | None = None
     use_smolgen: bool = True
@@ -329,6 +334,10 @@ class TrialConfig:
             embed_dim=int(config.get("embed_dim", 256)),
             num_layers=num_layers,
             num_heads=int(config.get("num_heads", 8)),
+            embed_dim_by_layer=normalize_embed_dim_by_layer(
+                config.get("embed_dim_by_layer"),
+                num_layers=num_layers,
+            ),
             ffn_mult=float(config.get("ffn_mult", 2)),
             ffn_mult_by_layer=normalize_ffn_mult_by_layer(
                 config.get("ffn_mult_by_layer"),

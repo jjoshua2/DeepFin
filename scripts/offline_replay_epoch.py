@@ -26,6 +26,7 @@ from chess_anti_engine.model import (
     ModelConfig,
     build_model,
     model_config_from_flat_config,
+    normalize_embed_dim_by_layer,
     normalize_ffn_mult_by_layer,
 )
 from chess_anti_engine.utils.architecture import normalize_phase_piece_thresholds
@@ -679,6 +680,13 @@ def _parse_ffn_mult_by_layer(value: str) -> tuple[float, ...] | None:
         raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
+def _parse_embed_dim_by_layer(value: str) -> tuple[int, ...] | None:
+    try:
+        return normalize_embed_dim_by_layer(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
 def _parse_phase_piece_thresholds(value: str) -> tuple[int, int]:
     try:
         return normalize_phase_piece_thresholds(value)
@@ -1072,6 +1080,12 @@ def main() -> None:
     ap.add_argument("--max-shards", type=int, default=0)
     ap.add_argument("--report-every-shards", type=int, default=50)
     ap.add_argument("--embed-dim", type=int, default=None)
+    ap.add_argument(
+        "--embed-dim-by-layer",
+        type=str,
+        default=None,
+        help="Comma-separated embedding widths, one per transformer layer.",
+    )
     ap.add_argument("--num-layers", type=int, default=None)
     ap.add_argument("--num-heads", type=int, default=None)
     ap.add_argument("--ffn-mult", type=float, default=None)
@@ -1235,6 +1249,15 @@ def main() -> None:
         cfg["num_layers"] = int(args.num_layers)
     if args.num_heads is not None:
         cfg["num_heads"] = int(args.num_heads)
+    if args.embed_dim_by_layer is not None:
+        try:
+            schedule = _parse_embed_dim_by_layer(str(args.embed_dim_by_layer))
+        except argparse.ArgumentTypeError as exc:
+            raise SystemExit(f"--embed-dim-by-layer: {exc}") from exc
+        if schedule is None:
+            cfg.pop("embed_dim_by_layer", None)
+        else:
+            cfg["embed_dim_by_layer"] = schedule
     if args.ffn_mult is not None:
         cfg["ffn_mult"] = float(args.ffn_mult)
     if args.ffn_mult_by_layer is not None:
@@ -1324,6 +1347,12 @@ def main() -> None:
             "candidates": args.candidates,
             "policy_encoding": model_cfg.policy_encoding,
             "input_history_encoding": model_cfg.input_history_encoding,
+            "embed_dim": model_cfg.embed_dim,
+            "embed_dim_by_layer": (
+                list(model_cfg.embed_dim_by_layer)
+                if model_cfg.embed_dim_by_layer is not None
+                else None
+            ),
             "ffn_mult": model_cfg.ffn_mult,
             "ffn_mult_by_layer": (
                 list(model_cfg.ffn_mult_by_layer)

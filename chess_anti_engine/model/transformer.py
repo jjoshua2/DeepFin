@@ -648,6 +648,7 @@ class TransformerConfig:
     embed_dim: int = 256
     num_layers: int = 6
     num_heads: int = 8
+    embed_dim_by_layer: tuple[int, ...] | list[int] | None = None
     ffn_mult: float = 2
     ffn_mult_by_layer: tuple[float, ...] | list[float] | None = None
     dropout: float = 0.0
@@ -697,6 +698,50 @@ def _resolve_ffn_mults(
         if not math.isfinite(val) or val <= 0.0:
             raise ValueError(f"FFN multipliers must be positive finite floats, got {val!r}")
     return vals
+
+
+def _resolve_embed_dims(
+    *,
+    scalar: int,
+    by_layer: tuple[int, ...] | list[int] | None,
+    num_layers: int,
+    num_heads: int,
+) -> tuple[int, ...]:
+    def coerce(value: int | float) -> int:
+        if isinstance(value, bool):
+            raise ValueError(f"embed_dim_by_layer values must be positive integers, got {value!r}")
+        if isinstance(value, int):
+            return value
+        if math.isfinite(value) and value.is_integer():
+            return int(value)
+        raise ValueError(f"embed_dim_by_layer values must be positive integers, got {value!r}")
+
+    if by_layer is None:
+        vals = tuple(int(scalar) for _ in range(int(num_layers)))
+    else:
+        vals = tuple(coerce(v) for v in by_layer)
+    if len(vals) != int(num_layers):
+        raise ValueError(f"embed_dim_by_layer length {len(vals)} must match num_layers {int(num_layers)}")
+    for val in vals:
+        if val <= 0:
+            raise ValueError(f"embed_dim_by_layer values must be positive integers, got {val!r}")
+        if val % int(num_heads) != 0:
+            raise ValueError(
+                "each embed_dim_by_layer value must be divisible by num_heads "
+                f"({val} % {int(num_heads)} != 0)"
+            )
+    return vals
+
+
+def _make_width_adapter(in_dim: int, out_dim: int) -> nn.Module:
+    if int(in_dim) == int(out_dim):
+        return nn.Identity()
+    adapter = nn.Linear(int(in_dim), int(out_dim), bias=False)
+    with torch.no_grad():
+        adapter.weight.zero_()
+        diag = min(int(in_dim), int(out_dim))
+        adapter.weight[:diag, :diag].fill_diagonal_(1.0)
+    return adapter
 
 
 class ChessNet(nn.Module):
@@ -788,6 +833,16 @@ class ChessNet(nn.Module):
         self.phase_output_adapter_enabled = bool(cfg.phase_output_adapter)
         self.phase_smolgen_enabled = bool(cfg.phase_smolgen)
         self.phase_piece_thresholds = normalize_phase_piece_thresholds(cfg.phase_piece_thresholds)
+        self.embed_dim_by_layer = _resolve_embed_dims(
+            scalar=int(cfg.embed_dim),
+            by_layer=cfg.embed_dim_by_layer,
+            num_layers=int(cfg.num_layers),
+            num_heads=int(cfg.num_heads),
+        )
+        input_embed_dim = self.embed_dim_by_layer[0]
+        output_embed_dim = self.embed_dim_by_layer[-1]
+        if bool(cfg.use_smolgen) and self.smolgen_mode == "shared" and len(set(self.embed_dim_by_layer)) > 1:
+            raise ValueError("embed_dim_by_layer requires smolgen_mode='per_layer' when smolgen is enabled")
         self.ffn_mult_by_layer = _resolve_ffn_mults(
             scalar=float(cfg.ffn_mult),
             by_layer=cfg.ffn_mult_by_layer,
@@ -809,11 +864,11 @@ class ChessNet(nn.Module):
                 self.global_board_preprocess = nn.Linear(12 * 64, 64 * self.input_global_embedding_channels)
                 self.global_board_adapter = nn.Linear(
                     self.input_global_embedding_channels,
-                    cfg.embed_dim,
+                    input_embed_dim,
                     bias=False,
                 )
             nn.init.zeros_(self.global_board_adapter.weight)
-        self.embed = nn.Linear(embed_in_planes, cfg.embed_dim)
+        self.embed = nn.Linear(embed_in_planes, input_embed_dim)
         self.register_buffer(
             "arc_pos_encoding",
             _make_arc_pos_encoding()
@@ -835,19 +890,19 @@ class ChessNet(nn.Module):
             )
         self.pos_adapter: nn.Linear | None = None
         if self.input_pos_encoding == "arc_adapter":
-            self.pos_adapter = nn.Linear(_ARC_POS_CHANNELS, cfg.embed_dim, bias=False)
+            self.pos_adapter = nn.Linear(_ARC_POS_CHANNELS, input_embed_dim, bias=False)
             nn.init.zeros_(self.pos_adapter.weight)
   # ma_gating: multiplicative gate (init 1, non-negative) then additive gate (init 0)
   # Store raw param; apply softplus in forward to enforce non-negativity (LC0 uses NonNeg constraint).
-        self._embed_gate_mul_raw = nn.Parameter(torch.full((cfg.embed_dim,), _softplus_inverse(1.0)))
-        self.embed_gate_add = nn.Parameter(torch.zeros(cfg.embed_dim))
+        self._embed_gate_mul_raw = nn.Parameter(torch.full((input_embed_dim,), _softplus_inverse(1.0)))
+        self.embed_gate_add = nn.Parameter(torch.zeros(input_embed_dim))
         self.square_embed_gate_mul_raw: nn.Parameter | None = None
         self.square_embed_gate_add: nn.Parameter | None = None
         if self.input_square_embedding in ("add", "ma_gate"):
-            self.square_embed_gate_add = nn.Parameter(torch.zeros(64, cfg.embed_dim))
+            self.square_embed_gate_add = nn.Parameter(torch.zeros(64, input_embed_dim))
         if self.input_square_embedding == "ma_gate":
             self.square_embed_gate_mul_raw = nn.Parameter(
-                torch.full((64, cfg.embed_dim), _softplus_inverse(1.0))
+                torch.full((64, input_embed_dim), _softplus_inverse(1.0))
             )
         self.smolgen: Smolgen | None = None
         self.layer_smolgens: nn.ModuleList | None = None
@@ -862,7 +917,7 @@ class ChessNet(nn.Module):
             self.layer_smolgens = nn.ModuleList(
                 [
                     Smolgen(
-                        cfg.embed_dim,
+                        self.embed_dim_by_layer[layer_idx],
                         cfg.num_heads,
                         hidden_channels=self.smolgen_hidden_channels,
                         hidden_sz=self.smolgen_hidden_sz,
@@ -875,13 +930,13 @@ class ChessNet(nn.Module):
                         pooling=self.smolgen_pooling,
                         phase_conditioning=self.phase_smolgen_enabled,
                     )
-                    for _ in range(cfg.num_layers)
+                    for layer_idx in range(cfg.num_layers)
                 ]
             )
         elif cfg.use_smolgen:
   # Legacy repo mode: one smolgen bias computed once and reused by all layers.
             self.smolgen = Smolgen(
-                cfg.embed_dim,
+                input_embed_dim,
                 cfg.num_heads,
                 hidden_channels=self.smolgen_hidden_channels,
                 hidden_sz=self.smolgen_hidden_sz,
@@ -897,7 +952,7 @@ class ChessNet(nn.Module):
         self.blocks = nn.ModuleList(
             [
                 TransformerBlock(
-                    cfg.embed_dim,
+                    self.embed_dim_by_layer[layer_idx],
                     cfg.num_heads,
                     ffn_mult=self.ffn_mult_by_layer[layer_idx],
                     dropout=cfg.dropout,
@@ -909,25 +964,31 @@ class ChessNet(nn.Module):
                 for layer_idx in range(cfg.num_layers)
             ]
         )
+        self.width_adapters = nn.ModuleList(
+            [
+                _make_width_adapter(self.embed_dim_by_layer[idx], self.embed_dim_by_layer[idx + 1])
+                for idx in range(int(cfg.num_layers) - 1)
+            ]
+        )
         if cfg.use_deepnorm:
             self._apply_deepnorm_init()
 
-        self.policy_own = AttentionPolicyHead(cfg.embed_dim, policy_encoding=self.policy_encoding)
-        self.policy_soft = AttentionPolicyHead(cfg.embed_dim, policy_encoding=self.policy_encoding)
-        self.policy_sf = AttentionPolicyHead(cfg.embed_dim, policy_encoding=self.policy_encoding)
-        self.policy_future = AttentionPolicyHead(cfg.embed_dim, policy_encoding=self.policy_encoding)
+        self.policy_own = AttentionPolicyHead(output_embed_dim, policy_encoding=self.policy_encoding)
+        self.policy_soft = AttentionPolicyHead(output_embed_dim, policy_encoding=self.policy_encoding)
+        self.policy_sf = AttentionPolicyHead(output_embed_dim, policy_encoding=self.policy_encoding)
+        self.policy_future = AttentionPolicyHead(output_embed_dim, policy_encoding=self.policy_encoding)
 
-        self.value_wdl = ValueHead(cfg.embed_dim, 3)
-        self.value_sf_eval = ValueHead(cfg.embed_dim, 3)
-        self.value_categorical = ValueHead(cfg.embed_dim, 32)
+        self.value_wdl = ValueHead(output_embed_dim, 3)
+        self.value_sf_eval = ValueHead(output_embed_dim, 3)
+        self.value_categorical = ValueHead(output_embed_dim, 32)
 
-        self.volatility = VolatilityHead(cfg.embed_dim)
-        self.sf_volatility = VolatilityHead(cfg.embed_dim)
-        self.moves_left = ScalarHead(cfg.embed_dim)
+        self.volatility = VolatilityHead(output_embed_dim)
+        self.sf_volatility = VolatilityHead(output_embed_dim)
+        self.moves_left = ScalarHead(output_embed_dim)
         self.phase_output_adapter: PhaseTokenAdapter | None = None
         if self.phase_output_adapter_enabled:
             self.phase_output_adapter = PhaseTokenAdapter(
-                int(cfg.embed_dim),
+                output_embed_dim,
                 int(cfg.phase_output_adapter_dim),
             )
 
@@ -1075,6 +1136,8 @@ class ChessNet(nn.Module):
                 keep_p = max(1e-6, 1.0 - drop_p)
                 mask = (torch.rand((1, 1, t.shape[-1]), device=t.device) < keep_p).to(t.dtype)
                 t = t * (mask / keep_p)
+            if idx < len(self.width_adapters):
+                t = self.width_adapters[idx](t)
         self._last_channel_balance_loss = (
             torch.stack(balance_terms).mean().to(dtype=t.dtype)
             if balance_terms

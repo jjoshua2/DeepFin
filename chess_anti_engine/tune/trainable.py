@@ -316,6 +316,7 @@ def _build_trial_model_config(tc: TrialConfig) -> ModelConfig:
         embed_dim=tc.embed_dim,
         num_layers=tc.num_layers,
         num_heads=tc.num_heads,
+        embed_dim_by_layer=tc.embed_dim_by_layer,
         ffn_mult=tc.ffn_mult,
         ffn_mult_by_layer=tc.ffn_mult_by_layer,
         use_smolgen=tc.use_smolgen,

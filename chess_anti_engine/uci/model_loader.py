@@ -22,6 +22,7 @@ from chess_anti_engine.model import (
     ModelConfig,
     build_model,
     load_state_dict_tolerant,
+    normalize_embed_dim_by_layer,
     normalize_ffn_mult_by_layer,
 )
 from chess_anti_engine.utils.architecture import normalize_phase_piece_thresholds
@@ -78,6 +79,11 @@ def _model_config_from_params(params: dict) -> ModelConfig:
             filtered["ffn_mult_by_layer"],
             num_layers=int(filtered.get("num_layers", 6)),
         )
+    if "embed_dim_by_layer" in filtered:
+        filtered["embed_dim_by_layer"] = normalize_embed_dim_by_layer(
+            filtered["embed_dim_by_layer"],
+            num_layers=int(filtered.get("num_layers", 6)),
+        )
     if "phase_piece_thresholds" in filtered:
         filtered["phase_piece_thresholds"] = normalize_phase_piece_thresholds(
             filtered["phase_piece_thresholds"]
@@ -116,6 +122,11 @@ def _model_config_from_arch(arch: dict) -> ModelConfig:
     if "ffn_mult_by_layer" in payload:
         payload["ffn_mult_by_layer"] = normalize_ffn_mult_by_layer(
             payload["ffn_mult_by_layer"],
+            num_layers=int(payload.get("num_layers", 6)),
+        )
+    if "embed_dim_by_layer" in payload:
+        payload["embed_dim_by_layer"] = normalize_embed_dim_by_layer(
+            payload["embed_dim_by_layer"],
             num_layers=int(payload.get("num_layers", 6)),
         )
     if "phase_piece_thresholds" in payload:

@@ -227,6 +227,7 @@ def test_yaml_reload_does_not_add_missing_topology_keys(tmp_path) -> None:
 model:
   input_history_encoding: lc0_root
   qkv_projection: split
+  embed_dim_by_layer: [256, 384, 320]
   ffn_mult_by_layer: [1.0, 1.25, 1.5]
   smolgen_hidden_channels: 16
   smolgen_hidden_sz: 128
@@ -243,28 +244,36 @@ train:
     assert config["lr"] == 0.0007
     assert "input_history_encoding" not in config
     assert "qkv_projection" not in config
+    assert "embed_dim_by_layer" not in config
     assert "ffn_mult_by_layer" not in config
     assert "smolgen_hidden_channels" not in config
     assert "smolgen_hidden_sz" not in config
     assert "smolgen_gen_sz" not in config
 
 
-def test_yaml_reload_does_not_change_existing_ffn_schedule(tmp_path) -> None:
+def test_yaml_reload_does_not_change_existing_layer_schedules(tmp_path) -> None:
     yaml_path = tmp_path / "cfg.yaml"
     yaml_path.write_text(
         """
 model:
   num_layers: 4
+  embed_dim_by_layer: [256, 384, 384, 320]
   ffn_mult_by_layer: [1.0, 1.25, 1.5]
 train:
   lr: 0.0007
 """,
         encoding="utf-8",
     )
-    config = {"lr": 0.0003, "num_layers": 3, "ffn_mult_by_layer": (1.0, 1.0, 1.0)}
+    config = {
+        "lr": 0.0003,
+        "num_layers": 3,
+        "embed_dim_by_layer": (256, 256, 256),
+        "ffn_mult_by_layer": (1.0, 1.0, 1.0),
+    }
 
     _reload_yaml_into_config(config, str(yaml_path))
 
     assert config["lr"] == 0.0007
     assert config["num_layers"] == 3
+    assert config["embed_dim_by_layer"] == (256, 256, 256)
     assert config["ffn_mult_by_layer"] == (1.0, 1.0, 1.0)

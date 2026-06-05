@@ -185,11 +185,13 @@ def test_offline_model_config_explicit_dimensions_override_defaults() -> None:
         "embed_dim": 192,
         "num_layers": 5,
         "num_heads": 6,
+        "embed_dim_by_layer": [192, 216, 240, 216, 192],
     })
 
     assert cfg.embed_dim == 192
     assert cfg.num_layers == 5
     assert cfg.num_heads == 6
+    assert cfg.embed_dim_by_layer == (192, 216, 240, 216, 192)
 
 
 def test_concat_preserves_optional_eval_targets_when_some_chunks_lack_them() -> None:
