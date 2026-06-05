@@ -211,19 +211,26 @@ def test_variable_embed_width_forward_with_per_layer_smolgen():
     assert model.value_wdl.token_proj.in_features == 40
 
 
-def test_variable_embed_width_rejects_shared_smolgen():
-    with pytest.raises(ValueError, match="smolgen_mode='per_layer'"):
-        ChessNet(
-            TransformerConfig(
-                in_planes=146,
-                embed_dim=32,
-                num_layers=2,
-                num_heads=4,
-                embed_dim_by_layer=(32, 48),
-                use_smolgen=True,
-                smolgen_mode="shared",
-            )
+def test_variable_embed_width_forward_with_shared_smolgen():
+    model = ChessNet(
+        TransformerConfig(
+            in_planes=146,
+            embed_dim=32,
+            num_layers=2,
+            num_heads=4,
+            embed_dim_by_layer=(32, 48),
+            ffn_mult=1.0,
+            use_smolgen=True,
+            smolgen_mode="shared",
         )
+    )
+    out = model(torch.randn(2, 146, 8, 8))
+
+    assert model.smolgen is not None
+    assert model.layer_smolgens is None
+    assert model.value_wdl.token_proj.in_features == 48
+    assert out["policy_own"].shape == (2, 4672)
+    assert out["wdl"].shape == (2, 3)
 
 
 def test_variable_embed_width_rejects_non_divisible_heads():

@@ -841,8 +841,6 @@ class ChessNet(nn.Module):
         )
         input_embed_dim = self.embed_dim_by_layer[0]
         output_embed_dim = self.embed_dim_by_layer[-1]
-        if bool(cfg.use_smolgen) and self.smolgen_mode == "shared" and len(set(self.embed_dim_by_layer)) > 1:
-            raise ValueError("embed_dim_by_layer requires smolgen_mode='per_layer' when smolgen is enabled")
         self.ffn_mult_by_layer = _resolve_ffn_mults(
             scalar=float(cfg.ffn_mult),
             by_layer=cfg.ffn_mult_by_layer,

@@ -29,6 +29,8 @@ class ModelConfig:
     embed_dim: int = 256
     num_layers: int = 6
     num_heads: int = 8
+    # When set, this schedule defines each trunk layer's width. ``embed_dim``
+    # remains the uniform-width fallback and manifest compatibility field.
     embed_dim_by_layer: tuple[int, ...] | None = None
     ffn_mult: float = 2.0
     ffn_mult_by_layer: tuple[float, ...] | None = None
