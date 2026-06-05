@@ -552,7 +552,7 @@ def train_trial(config: dict):
             iter_t0 = time.monotonic()
 
   # Live-reload YAML config each iteration so changes apply without restart.
-            _reload_yaml_into_config(config, _yaml_path)
+            _reload_yaml_into_config(config, _yaml_path, live_reload=True)
             tc = TrialConfig.from_dict(config)
 
             shard_prefetcher, async_test_eval = _lazy_construct_iter_helpers(

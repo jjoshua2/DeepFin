@@ -260,11 +260,13 @@ _TOPOLOGY_KEYS = frozenset({
 })
 
 
-def _reload_yaml_into_config(config: dict, yaml_path: str | None) -> None:
+def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload: bool = False) -> None:
     """Overlay YAML values into *config*, preserving PB2-searched keys.
 
     Topology keys that require a broker/worker restart are detected and
     logged as warnings instead of being silently applied.
+    ``lr_schedule`` is restart-only for a live trainer, but may be updated
+    during trial startup/resume before the trainer is constructed.
 
     PB2-searched keys are determined from the *existing* config (which has
     the baked-in bounds from trial creation), not from the YAML being loaded.
@@ -284,7 +286,7 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None) -> None:
         for k, v in fresh.items():
             if k in searched or k.startswith("pb2_bounds_"):
                 continue
-            if k == "lr_schedule" and k in config and config[k] != v:
+            if live_reload and k == "lr_schedule" and k in config and config[k] != v:
                 log.warning(
                     "YAML reload: %s changed (%s -> %s) but requires restart — skipping",
                     k, config[k], v,

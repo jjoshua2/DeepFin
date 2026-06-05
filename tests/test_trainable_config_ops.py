@@ -322,7 +322,28 @@ train:
     assert config["ffn_mult_by_layer"] == (1.0, 1.0, 1.0)
 
 
-def test_yaml_reload_does_not_change_existing_lr_schedule(tmp_path) -> None:
+def test_live_yaml_reload_does_not_change_existing_lr_schedule(tmp_path) -> None:
+    yaml_path = tmp_path / "cfg.yaml"
+    yaml_path.write_text(
+        """
+train:
+  lr_schedule: sqrt_release
+  lr_release_cycle_steps: 0
+""",
+        encoding="utf-8",
+    )
+    config = {
+        "lr_schedule": "cosine",
+        "lr_release_cycle_steps": 1000,
+    }
+
+    _reload_yaml_into_config(config, str(yaml_path), live_reload=True)
+
+    assert config["lr_schedule"] == "cosine"
+    assert config["lr_release_cycle_steps"] == 0
+
+
+def test_startup_yaml_reload_can_change_existing_lr_schedule(tmp_path) -> None:
     yaml_path = tmp_path / "cfg.yaml"
     yaml_path.write_text(
         """
@@ -339,7 +360,7 @@ train:
 
     _reload_yaml_into_config(config, str(yaml_path))
 
-    assert config["lr_schedule"] == "cosine"
+    assert config["lr_schedule"] == "sqrt_release"
     assert config["lr_release_cycle_steps"] == 0
 
 
