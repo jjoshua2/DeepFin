@@ -622,6 +622,26 @@ def main() -> None:
     ap.add_argument("--lr-eta-min", type=float, default=1e-5, help="Cosine schedule min LR")
     ap.add_argument("--lr-T0", type=int, default=5000, help="Cosine schedule T_0")
     ap.add_argument("--lr-T-mult", type=int, default=2, help="Cosine schedule T_mult")
+    ap.add_argument(
+        "--lr-schedule",
+        type=str,
+        default="cosine",
+        choices=["cosine", "sqrt_release"],
+        help="Post-warmup LR schedule: cosine warm restarts or flat WSD release cycle.",
+    )
+    ap.add_argument("--lr-release-cycle-steps", type=int, default=0,
+                    help="sqrt_release cycle length in optimizer steps; <=0 uses each train_steps window.")
+    ap.add_argument("--lr-release-start-frac", type=float, default=0.85,
+                    help="sqrt_release fraction where the release tail starts.")
+    ap.add_argument("--lr-release-min-scale", type=float, default=0.1,
+                    help="sqrt_release minimum LR scale at the end of the release tail.")
+    ap.add_argument(
+        "--lr-release-shape",
+        type=str,
+        default="sqrt",
+        choices=["sqrt", "cosine"],
+        help="sqrt_release tail shape.",
+    )
     ap.add_argument("--grad-clip", type=float, default=10.0, help="Gradient clipping max norm")
     ap.add_argument("--use-compile", action="store_true", help="Enable torch.compile for training")
     ap.add_argument("--swa-start", type=int, default=0, help="Step to start SWA averaging (0=disabled)")

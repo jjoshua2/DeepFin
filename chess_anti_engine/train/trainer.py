@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import math
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -74,6 +75,104 @@ SummaryWriter = _SummaryWriter  # skylos: ignore (used via runtime fallback)
 _LC0_HISTORY_STEPS = 8
 _LC0_PIECE_PLANES = 12
 _INPUT_HISTORY_SELECTED_KEY = "_input_history_encoding_selected"
+
+
+class _SqrtReleaseLRScheduler:
+    """Flat LR cycle with a configurable WSD release tail.
+
+    This is a WSD-style release schedule for indefinite training: hold each
+    param group's base LR for most of the cycle, then decay to ``min_scale`` in
+    the final tail before restarting. ``cycle_steps <= 0`` means callers supply
+    the effective cycle length at ``step()`` time. ``release_shape`` controls
+    only the tail curve; ``sqrt`` keeps the original behavior.
+    """
+
+    def __init__(
+        self,
+        optimizer: Any,
+        *,
+        cycle_steps: int,
+        release_start_frac: float,
+        min_scale: float,
+        release_shape: str = "sqrt",
+    ) -> None:
+        self.optimizer = optimizer
+        self.cycle_steps = int(cycle_steps)
+        self.release_start_frac = min(1.0, max(0.0, float(release_start_frac)))
+        self.min_scale = min(1.0, max(0.0, float(min_scale)))
+        self.release_shape = str(release_shape).lower()
+        if self.release_shape not in ("sqrt", "cosine"):
+            raise ValueError(f"Unsupported lr_release_shape {release_shape!r}; expected sqrt or cosine")
+        self.base_lrs = [float(pg.get("lr", 0.0)) for pg in optimizer.param_groups]
+        self._last_lr = list(self.base_lrs)
+        self.last_epoch = -1
+
+    def _scale_from_progress(self, progress: float) -> float:
+        if self.release_shape == "cosine":
+            tail_scale = 0.5 * (1.0 + math.cos(math.pi * progress))
+        else:
+            tail_scale = 1.0 - math.sqrt(progress)
+        return self.min_scale + (1.0 - self.min_scale) * tail_scale
+
+    def _scale_for_epoch(self, epoch: float, *, cycle_steps: int | None = None) -> float:
+        effective_cycle_steps = max(1, int(cycle_steps if cycle_steps is not None else self.cycle_steps))
+        phase = float(epoch) % float(effective_cycle_steps)
+        release_start = float(effective_cycle_steps) * self.release_start_frac
+        if phase <= release_start:
+            return 1.0
+        release_len = max(1e-12, float(effective_cycle_steps) - release_start)
+        progress = min(1.0, max(0.0, (phase - release_start) / release_len))
+        return self._scale_from_progress(progress)
+
+    def _scale_for_window_step(self, local_step: int, *, cycle_steps: int) -> float:
+        effective_cycle_steps = max(1, int(cycle_steps))
+        last_phase = float(max(0, effective_cycle_steps - 1))
+        phase = min(last_phase, max(0.0, float(local_step)))
+        if last_phase <= 0.0 or self.release_start_frac >= 1.0:
+            return 1.0
+        if phase >= last_phase:
+            return self._scale_from_progress(1.0)
+        release_start = float(effective_cycle_steps) * self.release_start_frac
+        if phase <= release_start:
+            return 1.0
+        release_len = max(1e-12, last_phase - release_start)
+        progress = min(1.0, max(0.0, (phase - release_start) / release_len))
+        return self._scale_from_progress(progress)
+
+    def step(self, epoch: float | None = None, *, cycle_steps: int | None = None) -> None:
+        if epoch is None:
+            epoch = float(self.last_epoch + 1)
+        self.last_epoch = int(epoch)
+        scale = self._scale_for_epoch(float(epoch), cycle_steps=cycle_steps)
+        self._last_lr = [float(base_lr) * scale for base_lr in self.base_lrs]
+        for pg, lr in zip(self.optimizer.param_groups, self._last_lr, strict=True):
+            pg["lr"] = lr
+
+    def step_window(self, local_step: int, *, cycle_steps: int) -> None:
+        self.last_epoch = int(local_step)
+        scale = self._scale_for_window_step(int(local_step), cycle_steps=cycle_steps)
+        self._last_lr = [float(base_lr) * scale for base_lr in self.base_lrs]
+        for pg, lr in zip(self.optimizer.param_groups, self._last_lr, strict=True):
+            pg["lr"] = lr
+
+    def state_dict(self) -> dict[str, Any]:
+        return {
+            "base_lrs": list(self.base_lrs),
+            "_last_lr": list(self._last_lr),
+            "last_epoch": int(self.last_epoch),
+        }
+
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
+        base_lrs = [float(v) for v in state_dict.get("base_lrs", self.base_lrs)]
+        if len(base_lrs) != len(self.optimizer.param_groups):
+            raise ValueError(
+                f"loaded scheduler has {len(base_lrs)} param groups, "
+                f"expected {len(self.optimizer.param_groups)}"
+            )
+        self.base_lrs = base_lrs
+        last_lr = [float(v) for v in state_dict.get("_last_lr", base_lrs)]
+        self._last_lr = last_lr if len(last_lr) == len(base_lrs) else list(base_lrs)
+        self.last_epoch = int(state_dict.get("last_epoch", self.last_epoch))
 
 
 @lru_cache(maxsize=16)
@@ -620,6 +719,11 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         lr_eta_min=_f("lr_eta_min", 1e-5),
         lr_T0=_f("lr_T0", 5000, int),
         lr_T_mult=_f("lr_T_mult", 2, int),
+        lr_schedule=str(config.get("lr_schedule", "cosine")),
+        lr_release_cycle_steps=_f("lr_release_cycle_steps", 0, int),
+        lr_release_start_frac=_f("lr_release_start_frac", 0.85),
+        lr_release_min_scale=_f("lr_release_min_scale", 0.1),
+        lr_release_shape=str(config.get("lr_release_shape", "sqrt")),
         use_compile=bool(config.get("use_compile", False)),
         compile_mode=str(config.get("compile_mode", "reduce-overhead")),
         optimizer=str(config.get("optimizer", "nadamw")),
@@ -697,6 +801,11 @@ class Trainer:
         lr_eta_min: float = 1e-5,
         lr_T0: int = 5000,
         lr_T_mult: int = 2,
+        lr_schedule: str = "cosine",
+        lr_release_cycle_steps: int = 0,
+        lr_release_start_frac: float = 0.85,
+        lr_release_min_scale: float = 0.1,
+        lr_release_shape: str = "sqrt",
         use_compile: bool = False,
         compile_mode: str = "reduce-overhead",
         optimizer: str = "nadamw",
@@ -1117,16 +1226,33 @@ class Trainer:
   # Gradient accumulation
         self.accum_steps = max(1, int(accum_steps))
 
-  # LR schedule: linear warmup then cosine annealing with warm restarts
+  # LR schedule: linear warmup, then either cosine restarts or a WSD-style
+  # release cycle that stays flat until the final tail.
         self._peak_lr = float(lr)
         self._warmup_steps = int(warmup_steps)
         if warmup_lr_start is None:
             self._warmup_lr_start = max(0.0, float(lr_eta_min))
         else:
             self._warmup_lr_start = max(0.0, float(warmup_lr_start))
-        self._scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            self.opt, T_0=int(lr_T0), T_mult=int(lr_T_mult), eta_min=float(lr_eta_min),
-        )
+        self._lr_schedule = str(lr_schedule).lower()
+        self._lr_release_cycle_steps = int(lr_release_cycle_steps)
+        if self._lr_schedule in ("cosine", "cosine_warm_restarts", "warm_restarts"):
+            self._scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                self.opt, T_0=int(lr_T0), T_mult=int(lr_T_mult), eta_min=float(lr_eta_min),
+            )
+        elif self._lr_schedule in ("sqrt_release", "wsd_sqrt", "wsd_sqrt_release"):
+            self._scheduler = _SqrtReleaseLRScheduler(
+                self.opt,
+                cycle_steps=int(lr_release_cycle_steps),
+                release_start_frac=float(lr_release_start_frac),
+                min_scale=float(lr_release_min_scale),
+                release_shape=str(lr_release_shape),
+            )
+        else:
+            raise ValueError(
+                f"Unknown lr_schedule {lr_schedule!r}. "
+                "Supported: cosine, sqrt_release"
+            )
         self._set_initial_lrs()
 
   # Stochastic Weight Averaging (SWA): maintain a running average of model
@@ -1373,8 +1499,47 @@ class Trainer:
         for pg, base_lr in zip(self.opt.param_groups, self._base_lrs(), strict=True):
             pg["lr"] = self._warmup_start_lr_for(float(base_lr))
 
+    def _uses_train_window_release_cycle(self) -> bool:
+        return (
+            self._lr_schedule in ("sqrt_release", "wsd_sqrt", "wsd_sqrt_release")
+            and self._lr_release_cycle_steps <= 0
+            and self.step >= self._warmup_steps
+        )
+
+    def _set_train_window_release_lr(self, *, local_step: int, cycle_steps: int) -> None:
+        scheduler: Any = self._scheduler
+        scheduler.step_window(int(local_step), cycle_steps=max(1, int(cycle_steps)))
+
+    def set_lr_release_config(
+        self,
+        *,
+        cycle_steps: Any | None = None,
+        release_start_frac: Any | None = None,
+        min_scale: Any | None = None,
+        release_shape: Any | None = None,
+    ) -> None:
+        """Live-update WSD release knobs without rebuilding optimizer state.
+
+        Switching scheduler families still requires a trainer restart; this only
+        mutates the release scheduler that is already active.
+        """
+        if not isinstance(self._scheduler, _SqrtReleaseLRScheduler):
+            return
+        if cycle_steps is not None:
+            self._lr_release_cycle_steps = int(cycle_steps)
+            self._scheduler.cycle_steps = int(cycle_steps)
+        if release_start_frac is not None:
+            self._scheduler.release_start_frac = min(1.0, max(0.0, float(release_start_frac)))
+        if min_scale is not None:
+            self._scheduler.min_scale = min(1.0, max(0.0, float(min_scale)))
+        if release_shape is not None:
+            shape = str(release_shape).lower()
+            if shape not in ("sqrt", "cosine"):
+                raise ValueError(f"Unsupported lr_release_shape {release_shape!r}; expected sqrt or cosine")
+            self._scheduler.release_shape = shape
+
     def _update_lr(self) -> None:
-        """Apply linear warmup, then hand off to cosine schedule."""
+        """Apply linear warmup, then hand off to the post-warmup scheduler."""
         if self.step < self._warmup_steps:
   # Called after optimizer.step(); set the LR for the *next* training step.
             next_frac = min(1.0, float(self.step + 1) / max(1, self._warmup_steps))
@@ -1437,12 +1602,13 @@ class Trainer:
         self._peak_lr = new_peak
 
   # Keep scheduler phase but rebase amplitude.
-        if hasattr(self._scheduler, "base_lrs"):
-            self._scheduler.base_lrs = list(new_bases)
-        if hasattr(self._scheduler, "_last_lr"):
-            last_lrs = self._scheduler._last_lr
+        scheduler: Any = self._scheduler
+        if hasattr(scheduler, "base_lrs"):
+            scheduler.base_lrs = list(new_bases)
+        if hasattr(scheduler, "_last_lr"):
+            last_lrs = scheduler._last_lr
             if last_lrs:
-                self._scheduler._last_lr = [float(v) * scale for v in last_lrs]
+                scheduler._last_lr = [float(v) * scale for v in last_lrs]
 
   # Keep optimizer param-group metadata aligned.
         for pg, ob, nb in zip(self.opt.param_groups, old_bases, new_bases, strict=True):
@@ -1610,7 +1776,12 @@ class Trainer:
                 x[:, base + g_off : base + g_off + g_len, :, :] *= (1.0 - drop)
 
     def _run_optimizer_step(
-        self, *, step_sums: dict[str, float], step_acc_sums: dict, buf: ReplayBuffer, batch_size: int,
+        self, *,
+        step_sums: dict[str, float],
+        step_acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]],
+        buf: ReplayBuffer,
+        batch_size: int,
+        update_lr: bool = True,
     ) -> tuple[int, float]:
         """Run accum_steps microbatches, do zclip + opt.step + lr update.
 
@@ -1658,7 +1829,8 @@ class Trainer:
         opt_step_start = time.perf_counter()
         self.opt.step()
         opt_step_time_s = time.perf_counter() - opt_step_start
-        self._update_lr()
+        if update_lr:
+            self._update_lr()
         return step_n_micro, opt_step_time_s
 
     def train_steps(self, buf: ReplayBuffer, *, batch_size: int, steps: int) -> TrainMetrics:
@@ -1673,14 +1845,24 @@ class Trainer:
 
         _log = logging.getLogger(__name__)
 
-        for _ in range(int(steps)):
+        requested_steps = int(steps)
+        effective_cycle_steps = max(1, requested_steps)
+
+        for _ in range(requested_steps):
           for _attempt in range(3):
             step_sums: dict[str, float] = {}
             step_acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
             try:
+                local_release_cycle = self._uses_train_window_release_cycle()
+                if local_release_cycle:
+                    self._set_train_window_release_lr(
+                        local_step=train_steps_done,
+                        cycle_steps=effective_cycle_steps,
+                    )
                 step_n_micro, this_opt_time = self._run_optimizer_step(
                     step_sums=step_sums, step_acc_sums=step_acc_sums,
                     buf=buf, batch_size=batch_size,
+                    update_lr=not local_release_cycle,
                 )
                 opt_step_time_s += this_opt_time
             except RuntimeError as exc:

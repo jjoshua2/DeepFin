@@ -47,9 +47,27 @@ class _FakeTrainer:
         self.sf_search_dampen_sf_high = 0.0
         self.resid_channel_dropout = 0.0
         self.resid_channel_balance_weight = 0.0
+        self.lr_release_calls: list[dict[str, object | None]] = []
 
     def set_peak_lr(self, value: float, *, rescale_current: bool) -> None:
         self.peak_lr_calls.append((value, rescale_current))
+
+    def set_lr_release_config(
+        self,
+        *,
+        cycle_steps: object | None = None,
+        release_start_frac: object | None = None,
+        min_scale: object | None = None,
+        release_shape: object | None = None,
+    ) -> None:
+        self.lr_release_calls.append(
+            {
+                "cycle_steps": cycle_steps,
+                "release_start_frac": release_start_frac,
+                "min_scale": min_scale,
+                "release_shape": release_shape,
+            }
+        )
 
 
 def test_play_batch_kwargs_preserves_syzygy_adjudication_knobs() -> None:
@@ -174,6 +192,31 @@ def test_apply_lr_gamma_weights_syncs_all_trainer_loss_kwargs() -> None:
     assert trainer.sf_search_dampen_sf_high == 2.7
 
 
+def test_apply_lr_gamma_weights_syncs_lr_release_knobs() -> None:
+    trainer = _FakeTrainer()
+
+    _apply_lr_gamma_weights(
+        trainer,
+        {
+            "lr_schedule": "sqrt_release",
+            "lr_release_cycle_steps": 0,
+            "lr_release_start_frac": 0.8,
+            "lr_release_min_scale": 0.2,
+            "lr_release_shape": "cosine",
+        },
+        rescale_current_lr=False,
+    )
+
+    assert trainer.lr_release_calls == [
+        {
+            "cycle_steps": 0,
+            "release_start_frac": 0.8,
+            "min_scale": 0.2,
+            "release_shape": "cosine",
+        }
+    ]
+
+
 def test_apply_lr_gamma_weights_preserves_sf_volatility_fallback() -> None:
     trainer = _FakeTrainer()
 
@@ -277,3 +320,61 @@ train:
     assert config["num_layers"] == 3
     assert config["embed_dim_by_layer"] == (256, 256, 256)
     assert config["ffn_mult_by_layer"] == (1.0, 1.0, 1.0)
+
+
+def test_live_yaml_reload_does_not_change_existing_lr_schedule(tmp_path) -> None:
+    yaml_path = tmp_path / "cfg.yaml"
+    yaml_path.write_text(
+        """
+train:
+  lr_schedule: sqrt_release
+  lr_release_cycle_steps: 0
+""",
+        encoding="utf-8",
+    )
+    config = {
+        "lr_schedule": "cosine",
+        "lr_release_cycle_steps": 1000,
+    }
+
+    _reload_yaml_into_config(config, str(yaml_path), live_reload=True)
+
+    assert config["lr_schedule"] == "cosine"
+    assert config["lr_release_cycle_steps"] == 0
+
+
+def test_startup_yaml_reload_can_change_existing_lr_schedule(tmp_path) -> None:
+    yaml_path = tmp_path / "cfg.yaml"
+    yaml_path.write_text(
+        """
+train:
+  lr_schedule: sqrt_release
+  lr_release_cycle_steps: 0
+""",
+        encoding="utf-8",
+    )
+    config = {
+        "lr_schedule": "cosine",
+        "lr_release_cycle_steps": 1000,
+    }
+
+    _reload_yaml_into_config(config, str(yaml_path))
+
+    assert config["lr_schedule"] == "sqrt_release"
+    assert config["lr_release_cycle_steps"] == 0
+
+
+def test_yaml_reload_can_add_missing_lr_schedule_for_resume(tmp_path) -> None:
+    yaml_path = tmp_path / "cfg.yaml"
+    yaml_path.write_text(
+        """
+train:
+  lr_schedule: sqrt_release
+""",
+        encoding="utf-8",
+    )
+    config: dict[str, object] = {}
+
+    _reload_yaml_into_config(config, str(yaml_path))
+
+    assert config["lr_schedule"] == "sqrt_release"

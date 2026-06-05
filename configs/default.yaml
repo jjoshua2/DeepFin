@@ -133,6 +133,11 @@ train:
   lr_eta_min: 0.00001
   lr_T0: 5000
   lr_T_mult: 2
+  lr_schedule: cosine
+  lr_release_cycle_steps: 0
+  lr_release_start_frac: 0.85
+  lr_release_min_scale: 0.1
+  lr_release_shape: sqrt
 
   # torch.compile for ~75% training throughput boost (requires CUDA)
   use_compile: false
