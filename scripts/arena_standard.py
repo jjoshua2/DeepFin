@@ -1,0 +1,584 @@
+#!/usr/bin/env python3
+"""Standardized paired-opening arena for strength measurement.
+
+This is THE script every architecture / training-target candidate is judged
+with (see docs/eval_protocol.md). It plays a candidate checkpoint against a
+reference checkpoint over paired openings — each opening is played twice with
+colors swapped, and the PAIR (not the game) is the unit of analysis. Results
+are summarized as pentanomial counts with an Elo estimate and 95% CI computed
+from the pentanomial variance (paired games are correlated, so the trinomial
+W/D/L variance would understate the CI), then appended as one JSON line to
+``runs/arena_results.jsonl``.
+
+Two budget modes:
+
+- ``matched_sims``: in-process batched MCTS via the same gumbel path as
+  selfplay matches (``chess_anti_engine/selfplay/match.py``). Isolates policy
+  /value quality at a fixed search budget — model latency does not matter.
+- ``matched_time``: each side runs as a real UCI engine subprocess
+  (``python -m chess_anti_engine.uci``), i.e. the same batched-inference path
+  the engine ships with, at a fixed per-move wall clock. Model latency
+  differences ARE part of the result.
+
+Usage::
+
+    PYTHONPATH=. python3 scripts/arena_standard.py \\
+        --candidate runs/candidate/trainer.pt --reference runs/ref/trainer.pt \\
+        --games 1000 --mode matched_sims --sims 64
+
+    PYTHONPATH=. python3 scripts/arena_standard.py \\
+        --candidate ... --reference ... --mode matched_time --ms-per-move 100
+"""
+from __future__ import annotations
+
+import argparse
+import datetime
+import hashlib
+import json
+import math
+import subprocess
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+
+import chess
+import numpy as np
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+PRODUCTION_CONFIG = REPO_ROOT / "configs" / "pbt2_small.yaml"
+DEFAULT_RESULTS_PATH = REPO_ROOT / "runs" / "arena_results.jsonl"
+
+# Pentanomial bins from the candidate's point of view, by pair score
+# (candidate points over the two games of one opening pair).
+PAIR_SCORES = (2.0, 1.5, 1.0, 0.5, 0.0)
+PAIR_LABELS = ("WW", "WD_DW", "DD_WL", "LD_DL", "LL")
+
+
+# ---------------------------------------------------------------------------
+# Pentanomial bookkeeping + Elo math
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class PentanomialSummary:
+    """Pentanomial match summary from the candidate's point of view."""
+
+    counts: tuple[int, int, int, int, int]  # WW, WD/DW, DD+WL, LD/DL, LL
+    pairs: int
+    games: int
+    score: float           # mean per-game score in [0, 1]
+    score_se: float        # standard error of the mean per-game score
+    elo: float | None
+    elo_ci95: tuple[float | None, float | None]
+
+
+def game_scores_to_pair_scores(game_scores: list[float]) -> list[float]:
+    """Collapse per-game candidate scores (1/0.5/0) into per-pair scores.
+
+    Games must be ordered so that ``game_scores[2*i]`` and
+    ``game_scores[2*i + 1]`` are the two colorings of opening pair ``i``.
+    """
+    if len(game_scores) % 2 != 0:
+        raise ValueError(f"need an even number of games, got {len(game_scores)}")
+    for s in game_scores:
+        if s not in (0.0, 0.5, 1.0):
+            raise ValueError(f"per-game score must be 0, 0.5 or 1, got {s}")
+    return [
+        game_scores[i] + game_scores[i + 1]
+        for i in range(0, len(game_scores), 2)
+    ]
+
+
+def pentanomial_counts(pair_scores: list[float]) -> tuple[int, int, int, int, int]:
+    """Bin pair scores into (WW, WD/DW, DD+WL, LD/DL, LL) counts."""
+    counts = [0, 0, 0, 0, 0]
+    for s in pair_scores:
+        try:
+            counts[PAIR_SCORES.index(s)] += 1
+        except ValueError:
+            raise ValueError(f"pair score must be one of {PAIR_SCORES}, got {s}") from None
+    return (counts[0], counts[1], counts[2], counts[3], counts[4])
+
+
+def _elo_from_score(score: float) -> float | None:
+    if not 0.0 < score < 1.0:
+        return None
+    return -400.0 * math.log10(1.0 / score - 1.0) + 0.0  # +0.0 normalizes -0.0
+
+
+def summarize_pentanomial(
+    counts: tuple[int, int, int, int, int], *, z: float = 1.96,
+) -> PentanomialSummary:
+    """Elo point estimate + CI from pentanomial pair counts.
+
+    The pair is the sampling unit: per-pair normalized scores are
+    x in {1, 0.75, 0.5, 0.25, 0} and the CI uses the empirical variance of x
+    across pairs. This correctly accounts for the within-pair correlation
+    that a trinomial (per-game W/D/L) variance would miss.
+    """
+    n = sum(counts)
+    if n <= 0:
+        raise ValueError("no pairs")
+    xs = tuple(s / 2.0 for s in PAIR_SCORES)
+    mu = sum(c * x for c, x in zip(counts, xs)) / n
+    if n > 1:
+        var = sum(c * (x - mu) ** 2 for c, x in zip(counts, xs)) / (n - 1)
+    else:
+        var = 0.0
+    se = math.sqrt(var / n)
+    lo = mu - z * se
+    hi = mu + z * se
+    return PentanomialSummary(
+        counts=counts,
+        pairs=n,
+        games=2 * n,
+        score=mu,
+        score_se=se,
+        elo=_elo_from_score(mu),
+        elo_ci95=(_elo_from_score(lo), _elo_from_score(hi)),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Openings
+# ---------------------------------------------------------------------------
+
+def default_openings_path() -> Path:
+    """The 8-move UHO book from the production config (opening_book_path_2)."""
+    import yaml
+
+    cfg = yaml.safe_load(PRODUCTION_CONFIG.read_text())
+    selfplay = cfg.get("selfplay", {}) if isinstance(cfg, dict) else {}
+    book = selfplay.get("opening_book_path_2") or selfplay.get("opening_book_path")
+    if not book:
+        raise SystemExit(
+            f"no opening_book_path(_2) in {PRODUCTION_CONFIG}; pass --openings"
+        )
+    return Path(str(book))
+
+
+def load_paired_openings(
+    path: Path, *, n_pairs: int, max_plies: int, rng: np.random.Generator,
+) -> list[chess.Board]:
+    """Sample ``n_pairs`` opening boards from a PGN(.zip)/Polyglot book.
+
+    Sampling is weighted by book frequency (same as selfplay) and seeded, so
+    a fixed --seed reproduces the exact opening set. Duplicate positions are
+    rejected until the book runs out of variety.
+    """
+    from chess_anti_engine.selfplay.opening import OpeningConfig, sample_starting_board
+
+    cfg = OpeningConfig(
+        opening_book_path=str(path),
+        opening_book_max_plies=int(max_plies),
+        opening_book_prob=1.0,
+    )
+    boards: list[chess.Board] = []
+    seen: set[str] = set()
+    attempts = 0
+    max_attempts = max(1000, 50 * n_pairs)
+    while len(boards) < n_pairs:
+        board = sample_starting_board(rng=rng, cfg=cfg).board
+        attempts += 1
+        key = board.epd()
+        if key in seen and attempts < max_attempts:
+            continue
+        seen.add(key)
+        boards.append(board)
+    return boards
+
+
+# ---------------------------------------------------------------------------
+# Game play — matched sims (in-process batched MCTS)
+# ---------------------------------------------------------------------------
+
+def play_paired_games_matched_sims(
+    model_candidate,
+    model_reference,
+    openings: list[chess.Board],
+    *,
+    device: str,
+    rng: np.random.Generator,
+    sims_candidate: int,
+    sims_reference: int,
+    max_plies: int,
+    temperature: float,
+    gumbel_add_noise: bool,
+) -> list[float]:
+    """Play each opening twice (colors swapped) and return per-pair scores.
+
+    Reuses the selfplay match helpers so search behavior (gumbel MCTS, the
+    model's own input_history_encoding / policy_encoding, including the
+    compact lc0_1858 path) is identical to ``play_match_batch``; this loop
+    only differs in pinning the starting boards and keeping per-game results.
+    """
+    from chess_anti_engine.selfplay.match import (
+        _apply_actions_to_boards,
+        _pick_moves_for_boards,
+        _result_from_a_pov,
+        _split_active_by_side_to_move,
+    )
+
+    boards: list[chess.Board] = []
+    a_plays_white: list[bool] = []
+    for opening in openings:
+        boards.append(opening.copy())
+        a_plays_white.append(True)
+        boards.append(opening.copy())
+        a_plays_white.append(False)
+
+    g = len(boards)
+    done = [False] * g
+    for _ply in range(int(max_plies)):
+        for i in range(g):
+            if not done[i] and boards[i].is_game_over(claim_draw=True):
+                done[i] = True
+        active = [i for i in range(g) if not done[i]]
+        if not active:
+            break
+        a_to_move, b_to_move = _split_active_by_side_to_move(
+            active, boards, a_plays_white,
+        )
+        for model, idxs, sims in (
+            (model_candidate, a_to_move, sims_candidate),
+            (model_reference, b_to_move, sims_reference),
+        ):
+            if not idxs:
+                continue
+            actions = _pick_moves_for_boards(
+                model, [boards[i] for i in idxs],
+                device=device, rng=rng,
+                mcts_type="gumbel", mcts_simulations=int(sims),
+                temperature=float(temperature), c_puct=2.5,
+                gumbel_add_noise=bool(gumbel_add_noise),
+            )
+            _apply_actions_to_boards(boards, idxs, actions)
+
+    game_scores = [
+        {1: 1.0, 0: 0.5, -1: 0.0}[
+            _result_from_a_pov(
+                boards[i].result(claim_draw=True),
+                a_is_white=bool(a_plays_white[i]),
+            )
+        ]
+        for i in range(g)
+    ]
+    return game_scores_to_pair_scores(game_scores)
+
+
+# ---------------------------------------------------------------------------
+# Game play — matched time (real UCI engine subprocesses)
+# ---------------------------------------------------------------------------
+
+def play_paired_games_matched_time(
+    candidate_ckpt: str,
+    reference_ckpt: str,
+    openings: list[chess.Board],
+    *,
+    device: str,
+    ms_per_move: int,
+    max_plies: int,
+    uci_args: str,
+) -> list[float]:
+    """Pair-by-pair UCI match using the production engine inference path."""
+    import chess.engine
+
+    from scripts.match_vs_uci import _open_engine, _score_for_a, play_one_game
+
+    limit = chess.engine.Limit(time=float(ms_per_move) / 1000.0)
+
+    def engine_cmd(ckpt: str) -> str:
+        cmd = f"{sys.executable} -m chess_anti_engine.uci --checkpoint {ckpt} --device {device}"
+        if uci_args:
+            cmd = f"{cmd} {uci_args}"
+        return cmd
+
+    eng_a = eng_b = None
+    pair_scores: list[float] = []
+    try:
+        print(f"[arena] starting candidate engine: {engine_cmd(candidate_ckpt)}")
+        eng_a = _open_engine(engine_cmd(candidate_ckpt), cwd=str(REPO_ROOT))
+        print(f"[arena] starting reference engine: {engine_cmd(reference_ckpt)}")
+        eng_b = _open_engine(engine_cmd(reference_ckpt), cwd=str(REPO_ROOT))
+        for pair_idx, opening in enumerate(openings):
+            scores: list[float] = []
+            for a_is_white in (True, False):
+                eng_w, eng_b_side = (eng_a, eng_b) if a_is_white else (eng_b, eng_a)
+                record = play_one_game(
+                    eng_w, eng_b_side,
+                    limit_w=limit, limit_b=limit,
+                    enforce_nodes_w=False, enforce_nodes_b=False,
+                    max_plies=int(max_plies),
+                    start_board=opening,
+                )
+                scores.append(_score_for_a(record.result, a_is_white=a_is_white))
+            pair_scores.append(scores[0] + scores[1])
+            print(
+                f"[arena] pair {pair_idx + 1}/{len(openings)}: "
+                f"pair_score={pair_scores[-1]:.1f} "
+                f"running_score={sum(pair_scores) / (2 * len(pair_scores)):.3f}",
+                flush=True,
+            )
+    finally:
+        for eng in (eng_a, eng_b):
+            if eng is not None:
+                eng.quit()
+    return pair_scores
+
+
+# ---------------------------------------------------------------------------
+# Result record + JSONL log
+# ---------------------------------------------------------------------------
+
+def git_sha() -> str:
+    try:
+        return subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=REPO_ROOT,
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+
+
+def production_config_hash() -> str:
+    try:
+        return hashlib.sha256(PRODUCTION_CONFIG.read_bytes()).hexdigest()[:12]
+    except OSError:
+        return "unknown"
+
+
+def build_result_record(
+    summary: PentanomialSummary,
+    *,
+    mode: str,
+    candidate: str,
+    reference: str,
+    openings_path: str,
+    opening_plies: int,
+    sims_candidate: int | None,
+    sims_reference: int | None,
+    ms_per_move: int | None,
+    temperature: float,
+    gumbel_add_noise: bool,
+    max_plies: int,
+    seed: int,
+    device: str,
+    duration_s: float,
+    label: str | None = None,
+) -> dict:
+    elo_lo, elo_hi = summary.elo_ci95
+    return {
+        "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+        "git_sha": git_sha(),
+        "config_hash": production_config_hash(),
+        "mode": mode,
+        "label": label,
+        "candidate": candidate,
+        "reference": reference,
+        "games": summary.games,
+        "pairs": summary.pairs,
+        "openings": openings_path,
+        "opening_plies": opening_plies,
+        "sims_candidate": sims_candidate,
+        "sims_reference": sims_reference,
+        "ms_per_move": ms_per_move,
+        "temperature": temperature,
+        "gumbel_add_noise": gumbel_add_noise,
+        "max_plies": max_plies,
+        "seed": seed,
+        "device": device,
+        "pentanomial": dict(zip(PAIR_LABELS, summary.counts)),
+        "score": round(summary.score, 5),
+        "score_se": round(summary.score_se, 5),
+        "elo": None if summary.elo is None else round(summary.elo, 2),
+        "elo_ci95": [
+            None if elo_lo is None else round(elo_lo, 2),
+            None if elo_hi is None else round(elo_hi, 2),
+        ],
+        "duration_s": round(duration_s, 1),
+        "argv": sys.argv,
+    }
+
+
+def append_result(record: dict, out_path: Path) -> None:
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("a") as fh:
+        fh.write(json.dumps(record) + "\n")
+
+
+def print_summary(summary: PentanomialSummary) -> None:
+    counts = dict(zip(PAIR_LABELS, summary.counts))
+    elo_lo, elo_hi = summary.elo_ci95
+
+    def fmt(v: float | None) -> str:
+        return "n/a" if v is None else f"{v:+.1f}"
+
+    print()
+    print(f"[arena] {summary.games} games ({summary.pairs} opening pairs)")
+    print(f"[arena] pentanomial (candidate POV): {counts}")
+    print(f"[arena] score: {summary.score:.4f} +/- {summary.score_se:.4f} (SE)")
+    print(f"[arena] Elo: {fmt(summary.elo)}  95% CI: [{fmt(elo_lo)}, {fmt(elo_hi)}]")
+
+
+# ---------------------------------------------------------------------------
+# Orchestration
+# ---------------------------------------------------------------------------
+
+def run_arena(
+    *,
+    candidate: str,
+    reference: str,
+    games: int,
+    openings_path: Path,
+    opening_plies: int,
+    mode: str,
+    sims_candidate: int,
+    sims_reference: int,
+    ms_per_move: int,
+    max_plies: int,
+    temperature: float,
+    gumbel_add_noise: bool,
+    device: str,
+    seed: int,
+    out_path: Path | None,
+    uci_args: str = "",
+    label: str | None = None,
+) -> dict:
+    """Run one standardized arena and return (and optionally log) the record."""
+    if games < 2 or games % 2 != 0:
+        raise SystemExit("--games must be even and >= 2 (paired openings)")
+    n_pairs = games // 2
+    rng = np.random.default_rng(seed)
+
+    print(f"[arena] sampling {n_pairs} openings from {openings_path} (seed={seed})")
+    openings = load_paired_openings(
+        openings_path, n_pairs=n_pairs, max_plies=opening_plies, rng=rng,
+    )
+
+    t0 = time.time()
+    if mode == "matched_sims":
+        from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
+
+        print(f"[arena] loading candidate: {candidate}")
+        model_candidate = load_model_from_checkpoint(candidate, device=device)
+        print(f"[arena] loading reference: {reference}")
+        model_reference = load_model_from_checkpoint(reference, device=device)
+        print(
+            f"[arena] matched_sims: candidate={sims_candidate} sims/move, "
+            f"reference={sims_reference} sims/move, temp={temperature}, "
+            f"noise={gumbel_add_noise}"
+        )
+        pair_scores = play_paired_games_matched_sims(
+            model_candidate, model_reference, openings,
+            device=device, rng=rng,
+            sims_candidate=sims_candidate, sims_reference=sims_reference,
+            max_plies=max_plies, temperature=temperature,
+            gumbel_add_noise=gumbel_add_noise,
+        )
+    elif mode == "matched_time":
+        print(f"[arena] matched_time: {ms_per_move}ms/move per side")
+        pair_scores = play_paired_games_matched_time(
+            candidate, reference, openings,
+            device=device, ms_per_move=ms_per_move, max_plies=max_plies,
+            uci_args=uci_args,
+        )
+    else:
+        raise SystemExit(f"unknown mode {mode!r}")
+    duration_s = time.time() - t0
+
+    summary = summarize_pentanomial(pentanomial_counts(pair_scores))
+    print_summary(summary)
+
+    record = build_result_record(
+        summary,
+        mode=mode,
+        candidate=candidate,
+        reference=reference,
+        openings_path=str(openings_path),
+        opening_plies=opening_plies,
+        sims_candidate=sims_candidate if mode == "matched_sims" else None,
+        sims_reference=sims_reference if mode == "matched_sims" else None,
+        ms_per_move=ms_per_move if mode == "matched_time" else None,
+        temperature=temperature,
+        gumbel_add_noise=gumbel_add_noise,
+        max_plies=max_plies,
+        seed=seed,
+        device=device,
+        duration_s=duration_s,
+        label=label,
+    )
+    if out_path is not None:
+        append_result(record, out_path)
+        print(f"[arena] result appended to {out_path}")
+    return record
+
+
+def add_common_args(p: argparse.ArgumentParser) -> None:
+    """Arena knobs shared with scripts/elo_vs_sims.py."""
+    p.add_argument("--games", type=int, default=1000,
+                   help="total games; must be even — games/2 opening pairs (default: 1000)")
+    p.add_argument("--openings", type=Path, default=None,
+                   help="PGN(.zip)/Polyglot opening book "
+                   "(default: the 8-move UHO book from configs/pbt2_small.yaml)")
+    p.add_argument("--opening-plies", type=int, default=16,
+                   help="book plies to apply per opening (default: 16 = 8 moves)")
+    p.add_argument("--max-plies", type=int, default=300,
+                   help="adjudicate as draw after this many plies (default: 300)")
+    p.add_argument("--temperature", type=float, default=0.1,
+                   help="move-selection temperature for matched_sims (default: 0.1)")
+    p.add_argument("--no-gumbel-noise", action="store_true",
+                   help="disable root Gumbel noise in matched_sims (fully deterministic; "
+                   "self-play pairs then carry zero information)")
+    p.add_argument("--device", default="cuda")
+    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--out", type=Path, default=DEFAULT_RESULTS_PATH,
+                   help=f"JSONL results log (default: {DEFAULT_RESULTS_PATH})")
+
+
+def main() -> None:
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("--candidate", required=True, help="candidate checkpoint (trainer.pt or dir)")
+    p.add_argument("--reference", required=True, help="reference checkpoint (trainer.pt or dir)")
+    p.add_argument("--mode", choices=["matched_sims", "matched_time"],
+                   default="matched_sims")
+    p.add_argument("--sims", type=int, default=64,
+                   help="MCTS sims/move for both sides in matched_sims (default: 64)")
+    p.add_argument("--sims-candidate", type=int, default=None,
+                   help="override candidate sims/move (defaults to --sims)")
+    p.add_argument("--sims-reference", type=int, default=None,
+                   help="override reference sims/move (defaults to --sims)")
+    p.add_argument("--ms-per-move", type=int, default=100,
+                   help="per-move wall clock for matched_time (default: 100)")
+    p.add_argument("--uci-args", default="",
+                   help="extra args appended to both UCI engine commands in matched_time "
+                   "(e.g. '--no-compile')")
+    p.add_argument("--label", default=None, help="free-form tag stored in the JSONL record")
+    add_common_args(p)
+    args = p.parse_args()
+
+    openings_path = args.openings if args.openings is not None else default_openings_path()
+    run_arena(
+        candidate=args.candidate,
+        reference=args.reference,
+        games=args.games,
+        openings_path=openings_path,
+        opening_plies=args.opening_plies,
+        mode=args.mode,
+        sims_candidate=int(args.sims if args.sims_candidate is None else args.sims_candidate),
+        sims_reference=int(args.sims if args.sims_reference is None else args.sims_reference),
+        ms_per_move=args.ms_per_move,
+        max_plies=args.max_plies,
+        temperature=args.temperature,
+        gumbel_add_noise=not args.no_gumbel_noise,
+        device=args.device,
+        seed=args.seed,
+        out_path=args.out,
+        uci_args=args.uci_args,
+        label=args.label,
+    )
+
+
+if __name__ == "__main__":
+    main()
