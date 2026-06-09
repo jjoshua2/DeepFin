@@ -20,6 +20,8 @@ from typing import Any, cast
 import chess
 import numpy as np
 
+from chess_anti_engine.encoding import input_plane_count
+from chess_anti_engine.encoding.features import extra_feature_plane_count
 from chess_anti_engine.encoding import encode_position
 from chess_anti_engine.encoding.cboard_encode import encode_cboard
 from chess_anti_engine.encoding.lc0 import (
@@ -276,7 +278,9 @@ def _evaluate_root_batch(
         xs_batch: np.ndarray | None = None
     else:
         dtype = np.uint16 if use_bf16_input else np.float32
-        xs_batch = np.empty((bsz, 146, 8, 8), dtype=dtype)
+        xs_batch = np.empty(
+            (bsz, input_plane_count(state.game.input_extra_features), 8, 8), dtype=dtype,
+        )
         if use_bf16_input:
             assert batch_enc_bf16 is not None
             batch_enc_bf16(cb_encode_list, xs_batch)
@@ -287,6 +291,7 @@ def _evaluate_root_batch(
                 xs_batch[j] = encode_cboard(
                     state.cboards[idx],
                     input_history_encoding=hist_enc,
+                    input_extra_features=state.game.input_extra_features,
                 )
         if padded_bsz > bsz:
             pad = np.zeros((padded_bsz - bsz, *xs_batch.shape[1:]), dtype=xs_batch.dtype)
@@ -358,13 +363,15 @@ def _append_records_via_c(
         bool(state.game.record_lc0_root_input)
         and not uses_lc0_root_history(state.game.input_history_encoding)
     ):
-        alt_lc0_root_xs = [cb.encode_146_lc0_root() for cb in cb_encode_list]
+        _n_extra = extra_feature_plane_count(state.game.input_extra_features)
+        alt_lc0_root_xs = [cb.encode_full(1, _n_extra) for cb in cb_encode_list]
     c_result = state.c_process_ply(
         cb_encode_list, pol_logits_full[:n], wdl_logits_raw[:n],
         actions_arr, values_arr, probs_arr,
         int(diff_focus.enabled), float(diff_focus.q_weight),
         float(diff_focus.pol_scale), float(diff_focus.min_keep), float(diff_focus.slope),
         c_input_history_mode(state.game.input_history_encoding),
+        extra_feature_plane_count(state.game.input_extra_features),
     )
     (c_x, c_probs, c_wdl_net, c_wdl_search, c_priority,
      c_priority_policy_kl, c_priority_q_delta,
@@ -454,7 +461,11 @@ def _append_records_via_python(
         ply_index = int(len(board_before.move_stack))
         pov_color = board_before.turn
         x_lc0_root = (
-            encode_position(board_before, add_features=True, input_history_encoding=LC0_HISTORY_ROOT)
+            encode_position(
+                board_before, add_features=True,
+                input_history_encoding=LC0_HISTORY_ROOT,
+                input_extra_features=state.game.input_extra_features,
+            )
             if (
                 bool(state.game.record_lc0_root_input)
                 and not uses_lc0_root_history(state.game.input_history_encoding)
@@ -652,6 +663,7 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
                 add_noise=True,
                 gumbel_scale=1.0,
                 input_history_encoding=state.game.input_history_encoding,
+                input_extra_features=state.game.input_extra_features,
                 policy_encoding=state.game.policy_encoding,
             )
             if _HAS_GUMBEL_C:
@@ -723,6 +735,7 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
                     fpu_reduction=float(search.fpu_reduction),
                     fpu_at_root=float(search.fpu_at_root),
                     input_history_encoding=state.game.input_history_encoding,
+                    input_extra_features=state.game.input_extra_features,
                     policy_encoding=state.game.policy_encoding,
                 ),
                 evaluator=eval_impl,

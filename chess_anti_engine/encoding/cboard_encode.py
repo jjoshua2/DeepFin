@@ -7,6 +7,7 @@ import chess
 import numpy as np
 
 from chess_anti_engine.encoding._lc0_ext import CBoard
+from chess_anti_engine.encoding.features import extra_feature_plane_count
 from chess_anti_engine.encoding.lc0 import (
     LC0_HISTORY_ROOT_LEGACY_META,
     normalize_lc0_history_encoding,
@@ -62,22 +63,31 @@ if TYPE_CHECKING:
     )
 
 
-def encode_cboard(cb: CBoard, *, input_history_encoding: str | None = None) -> np.ndarray:
-    """Encode a CBoard into (146, 8, 8) float32.
+def lc0_root_history_mode(input_history_encoding: str | None) -> int:
+    """Map a history encoding to the C hist_mode int (0/1/2)."""
+    hist_enc = normalize_lc0_history_encoding(input_history_encoding)
+    if hist_enc == LC0_HISTORY_ROOT_LEGACY_META:
+        return 2
+    return 1 if uses_lc0_root_history(hist_enc) else 0
 
-    Prefer the fused CBoard.encode_146() path when available. Fall back to
+
+def encode_cboard(
+    cb: CBoard,
+    *,
+    input_history_encoding: str | None = None,
+    input_extra_features: str | None = None,
+) -> np.ndarray:
+    """Encode a CBoard into (C, 8, 8) float32 (C = 146 v1 / 175 v2_threats).
+
+    Prefer the fused CBoard.encode_full() path when available. Fall back to
     CBoard.encode_planes() + the existing features extension otherwise.
     """
     hist_enc = normalize_lc0_history_encoding(input_history_encoding)
     use_lc0_root = uses_lc0_root_history(hist_enc)
-    method_name = (
-        "encode_146_lc0_root_legacy_meta"
-        if hist_enc == LC0_HISTORY_ROOT_LEGACY_META
-        else ("encode_146_lc0_root" if use_lc0_root else "encode_146")
-    )
-    encode_146 = getattr(cb, method_name, None)
-    if encode_146 is not None:
-        return encode_146()
+    n_extra = extra_feature_plane_count(input_extra_features)
+    encode_full = getattr(cb, "encode_full", None)
+    if encode_full is not None:
+        return encode_full(lc0_root_history_mode(hist_enc), n_extra)
 
   # LC0 112 planes — all in C
     lc0 = (cb.encode_planes_lc0_root() if use_lc0_root else cb.encode_planes())
@@ -86,7 +96,7 @@ def encode_cboard(cb: CBoard, *, input_history_encoding: str | None = None) -> n
 
     if not _HAS_FEATURES_C:
   # No features C ext — return LC0 only with zero features
-        out = np.zeros((146, 8, 8), dtype=np.float32)
+        out = np.zeros((112 + n_extra, 8, 8), dtype=np.float32)
         out[:112] = lc0
         return out
 
@@ -118,6 +128,6 @@ def encode_cboard(cb: CBoard, *, input_history_encoding: str | None = None) -> n
     ep_square = -1 if cb.ep_square is None else cb.ep_square
 
     feat = _c_compute(pieces_us, pieces_them, occupied,
-                      king_sq_us, king_sq_them, is_white, ep_square)
+                      king_sq_us, king_sq_them, is_white, ep_square, n_extra)
 
     return np.concatenate([lc0, feat], axis=0)

@@ -67,10 +67,10 @@ static inline uint16_t float_to_bf16_bits(float f) {
  * for cache indexing only: callers that need collision-proof identity should
  * still verify against stored encoded bytes on hits. */
 static inline void encoded_row_fingerprint128(
-    const float *row, uint64_t *out0, uint64_t *out1
+    const float *row, int n_planes, uint64_t *out0, uint64_t *out1
 ) {
     const unsigned char *p = (const unsigned char *)row;
-    const size_t n = (size_t)146 * 64 * sizeof(float);
+    const size_t n = (size_t)n_planes * 64 * sizeof(float);
     uint64_t h0 = UINT64_C(1469598103934665603);
     uint64_t h1 = UINT64_C(1099511628211) ^ (uint64_t)n;
     for (size_t i = 0; i < n; i++) {
@@ -982,12 +982,13 @@ static inline int32_t stored_append_leaf(StoredPrepState *s, TreeData *t,
 static int32_t tree_gumbel_collect_leaf(const TreeData *t, int32_t root_id,
     int32_t forced_action, const GumbelSelectParams *sel,
     int32_t *path_buf, int32_t path_cap);
-static void cboard_encode_146_into(const CBoard *b, float * restrict out);
-static void cboard_encode_146_lc0_root_into(const CBoard *b, float * restrict out);
-static void cboard_encode_146_lc0_root_legacy_meta_into(const CBoard *b, float * restrict out);
-static void cboard_encode_146_bf16_into(const CBoard *b, uint16_t * restrict out);
-static void cboard_encode_146_lc0_root_bf16_into(const CBoard *b, uint16_t * restrict out);
-static void cboard_encode_146_lc0_root_legacy_meta_bf16_into(const CBoard *b, uint16_t * restrict out);
+static void cboard_encode_planes_into(const CBoard *b, float * restrict out, int n_extra);
+static void cboard_encode_planes_into_ex(const CBoard *b, float * restrict out, int n_extra, int feat_prezeroed);
+static void cboard_encode_planes_lc0_root_into(const CBoard *b, float * restrict out, int n_extra);
+static void cboard_encode_planes_lc0_root_legacy_meta_into(const CBoard *b, float * restrict out, int n_extra);
+static void cboard_encode_planes_bf16_into(const CBoard *b, uint16_t * restrict out, int n_extra);
+static void cboard_encode_planes_lc0_root_bf16_into(const CBoard *b, uint16_t * restrict out, int n_extra);
+static void cboard_encode_planes_lc0_root_legacy_meta_bf16_into(const CBoard *b, uint16_t * restrict out, int n_extra);
 static void softmax_inplace(double *arr, int n);
 
 /* Store a CBoard into the tree's per-node cache slot, growing if needed. */
@@ -1061,6 +1062,7 @@ typedef struct {
     void *enc_data;
     int enc_is_bf16;
     int input_history_lc0_root;
+    int n_extra_planes;          /* 34 (v1) or 63 (v2_threats); from enc buffer dim 1 */
     int32_t enc_capacity;
     PyObject *enc_arr_ref;       /* Strong ref to keep enc buffer alive */
 
@@ -1423,22 +1425,24 @@ static int32_t gss_prepare_batch(
 #endif
         for (int32_t i = 0; i < n_to_encode; i++) {
             int32_t li = base + i;
+            int n_extra = g->n_extra_planes;
+            size_t row = (size_t)li * (size_t)(112 + n_extra) * 64;
             if (g->enc_is_bf16) {
                 uint16_t *out = (uint16_t *)enc_data;
                 if (g->input_history_lc0_root == 2)
-                    cboard_encode_146_lc0_root_legacy_meta_bf16_into(&s->leaf_cboards[li], out + li * 146 * 64);
+                    cboard_encode_planes_lc0_root_legacy_meta_bf16_into(&s->leaf_cboards[li], out + row, n_extra);
                 else if (g->input_history_lc0_root)
-                    cboard_encode_146_lc0_root_bf16_into(&s->leaf_cboards[li], out + li * 146 * 64);
+                    cboard_encode_planes_lc0_root_bf16_into(&s->leaf_cboards[li], out + row, n_extra);
                 else
-                    cboard_encode_146_bf16_into(&s->leaf_cboards[li], out + li * 146 * 64);
+                    cboard_encode_planes_bf16_into(&s->leaf_cboards[li], out + row, n_extra);
             } else {
                 float *out = (float *)enc_data;
                 if (g->input_history_lc0_root == 2)
-                    cboard_encode_146_lc0_root_legacy_meta_into(&s->leaf_cboards[li], out + li * 146 * 64);
+                    cboard_encode_planes_lc0_root_legacy_meta_into(&s->leaf_cboards[li], out + row, n_extra);
                 else if (g->input_history_lc0_root)
-                    cboard_encode_146_lc0_root_into(&s->leaf_cboards[li], out + li * 146 * 64);
+                    cboard_encode_planes_lc0_root_into(&s->leaf_cboards[li], out + row, n_extra);
                 else
-                    cboard_encode_146_into(&s->leaf_cboards[li], out + li * 146 * 64);
+                    cboard_encode_planes_into(&s->leaf_cboards[li], out + row, n_extra);
             }
         }
     }
@@ -1933,13 +1937,15 @@ static PyObject *MCTSTree_walker_descend_puct(MCTSTreeObject *self, PyObject *ar
     PyArrayObject *enc_arr = FROMANY_4D_RW(enc_obj, NPY_FLOAT32);
     if (!enc_arr) return NULL;
     if (PyArray_DIM(enc_arr, 0) < 1 ||
-        PyArray_DIM(enc_arr, 1) != 146 ||
+        (PyArray_DIM(enc_arr, 1) != 112 + FEAT_EXTRA_V1 &&
+         PyArray_DIM(enc_arr, 1) != 112 + FEAT_EXTRA_V2) ||
         PyArray_DIM(enc_arr, 2) != 8 ||
         PyArray_DIM(enc_arr, 3) != 8) {
         Py_DECREF(enc_arr);
-        PyErr_SetString(PyExc_ValueError, "enc_out must be shape (>=1, 146, 8, 8) float32");
+        PyErr_SetString(PyExc_ValueError, "enc_out must be shape (>=1, 146 or 175, 8, 8) float32");
         return NULL;
     }
+    int enc_n_extra = (int)PyArray_DIM(enc_arr, 1) - 112;
     float *enc_data = (float *)PyArray_DATA(enc_arr);
 
     /* Descend. */
@@ -2026,7 +2032,7 @@ static PyObject *MCTSTree_walker_descend_puct(MCTSTreeObject *self, PyObject *ar
     }
 
     /* Encode into enc_out[0]. */
-    cboard_encode_146_into(&cb, enc_data);
+    cboard_encode_planes_into(&cb, enc_data, enc_n_extra);
     Py_DECREF(enc_arr);
 
     /* Legal move indices at the leaf (caller needs them for softmax). */
@@ -2217,7 +2223,8 @@ static PyObject *MCTSTree_batch_descend_puct(MCTSTreeObject *self, PyObject *arg
         return NULL;
     }
     if (PyArray_DIM(enc_arr, 0) < n_leaves ||
-        PyArray_DIM(enc_arr, 1) != 146 ||
+        (PyArray_DIM(enc_arr, 1) != 112 + FEAT_EXTRA_V1 &&
+         PyArray_DIM(enc_arr, 1) != 112 + FEAT_EXTRA_V2) ||
         PyArray_DIM(enc_arr, 2) != 8 ||
         PyArray_DIM(enc_arr, 3) != 8 ||
         PyArray_DIM(leaf_ids_arr, 0) < n_leaves ||
@@ -2240,6 +2247,8 @@ static PyObject *MCTSTree_batch_descend_puct(MCTSTreeObject *self, PyObject *arg
         return NULL;
     }
 
+    int enc_n_extra = (int)PyArray_DIM(enc_arr, 1) - 112;
+    size_t enc_row = (size_t)(112 + enc_n_extra) * 64;
     float *enc_data = (float *)PyArray_DATA(enc_arr);
     int32_t *leaf_ids = (int32_t *)PyArray_DATA(leaf_ids_arr);
     int32_t *path_data = (int32_t *)PyArray_DATA(path_arr);
@@ -2282,7 +2291,7 @@ static PyObject *MCTSTree_batch_descend_puct(MCTSTreeObject *self, PyObject *arg
             legal_lens[i] = 0;
             /* Zero out enc slot so a buggy caller that submits this row
              * to GPU anyway gets a benign forward instead of UB. */
-            memset(enc_data + (size_t)i * 146 * 64, 0, 146 * 64 * sizeof(float));
+            memset(enc_data + (size_t)i * enc_row, 0, enc_row * sizeof(float));
             if (cache_keys) {
                 cache_keys[(size_t)i * 2] = 0;
                 cache_keys[(size_t)i * 2 + 1] = 0;
@@ -2296,10 +2305,11 @@ static PyObject *MCTSTree_batch_descend_puct(MCTSTreeObject *self, PyObject *arg
         if (vloss_weight > 0) {
             tree_apply_vloss_path(t, path_i, path_len);
         }
-        cboard_encode_146_into(&cb, enc_data + (size_t)i * 146 * 64);
+        cboard_encode_planes_into(&cb, enc_data + (size_t)i * enc_row, enc_n_extra);
         if (cache_keys) {
             encoded_row_fingerprint128(
-                enc_data + (size_t)i * 146 * 64,
+                enc_data + (size_t)i * enc_row,
+                112 + enc_n_extra,
                 &cache_keys[(size_t)i * 2],
                 &cache_keys[(size_t)i * 2 + 1]);
         }
@@ -3118,11 +3128,14 @@ static PyObject *MCTSTree_batch_wdl_to_q(MCTSTreeObject *self, PyObject *args) {
 
 
 /*
- * Encode a CBoard into 146 float32 planes (112 LC0 + 34 features).
+ * Encode a CBoard into (112 + n_extra) float32 planes (112 LC0 + extra
+ * features; n_extra = 34 for v1 or 63 for v2_threats).
  * Writes into a pre-allocated buffer — no Python/numpy allocation.
  */
-static void cboard_encode_146_into(const CBoard *b, float * restrict out) {
-    /* Targeted zeroing instead of full 146-plane memset.
+#define ENC_PLANES_MAX (112 + FEAT_EXTRA_V2)
+
+static void cboard_encode_planes_into_ex(const CBoard *b, float * restrict out, int n_extra, int feat_prezeroed) {
+    /* Targeted zeroing instead of a full memset.
      * Planes 0-11: overwritten by bitboard_to_plane (handles zero BBs internally)
      * Planes 12..12+hist*12-1: overwritten by history encoder
      * Planes 12+hist*12..95: unused history — need zeroing
@@ -3130,7 +3143,7 @@ static void cboard_encode_146_into(const CBoard *b, float * restrict out) {
      * Plane 100: en-passant plane — need zeroing (conditional fill)
      * Planes 101-102,111: overwritten by fill_lc0_112
      * Planes 103-110: repetition planes — need zeroing (only 103 may be set)
-     * Planes 112-145: feature planes — need zeroing (feat_bb_to_plane adds 1.0f) */
+     * Planes 112..: feature planes — need zeroing (feat_bb_to_plane adds 1.0f) */
     int hist = b->hist_len < CBOARD_HISTORY_MAX ? b->hist_len : CBOARD_HISTORY_MAX;
     int first_unused_hist = (1 + hist) * 12;  /* plane index of first unused history */
     if (first_unused_hist < 96) {
@@ -3141,46 +3154,55 @@ static void cboard_encode_146_into(const CBoard *b, float * restrict out) {
     memset(out + 96 * 64, 0, 5 * 64 * sizeof(float));
     /* Repetition planes 103-110 (8 planes) */
     memset(out + 103 * 64, 0, 8 * 64 * sizeof(float));
-    /* Feature planes 112-145 (34 planes) */
-    memset(out + 112 * 64, 0, 34 * 64 * sizeof(float));
+    /* Feature planes 112.. — skip when the caller hands us a freshly
+     * zeroed buffer (PyArray_ZEROS / bulk memset), the common batch case. */
+    if (!feat_prezeroed)
+        memset(out + 112 * 64, 0, (size_t)n_extra * 64 * sizeof(float));
 
     cboard_fill_lc0_112(b, out);
-    cboard_compute_features_34(b, out + 112 * 64);
+    cboard_compute_features_ext(b, out + 112 * 64, n_extra);
 }
 
-static void cboard_encode_146_lc0_root_into(const CBoard *b, float * restrict out) {
-    memset(out, 0, 146 * 64 * sizeof(float));
+static void cboard_encode_planes_into(const CBoard *b, float * restrict out, int n_extra) {
+    cboard_encode_planes_into_ex(b, out, n_extra, /*feat_prezeroed=*/0);
+}
+
+static void cboard_encode_planes_lc0_root_into(const CBoard *b, float * restrict out, int n_extra) {
+    memset(out, 0, (size_t)(112 + n_extra) * 64 * sizeof(float));
     cboard_fill_lc0_112_root(b, out);
-    cboard_compute_features_34(b, out + 112 * 64);
+    cboard_compute_features_ext(b, out + 112 * 64, n_extra);
 }
 
-static void cboard_encode_146_lc0_root_legacy_meta_into(const CBoard *b, float * restrict out) {
-    memset(out, 0, 146 * 64 * sizeof(float));
+static void cboard_encode_planes_lc0_root_legacy_meta_into(const CBoard *b, float * restrict out, int n_extra) {
+    memset(out, 0, (size_t)(112 + n_extra) * 64 * sizeof(float));
     cboard_fill_lc0_112_root_legacy_meta(b, out);
-    cboard_compute_features_34(b, out + 112 * 64);
+    cboard_compute_features_ext(b, out + 112 * 64, n_extra);
 }
 
-static void cboard_encode_146_bf16_into(const CBoard *b, uint16_t * restrict out) {
-    float tmp[146 * 64];
-    memset(tmp, 0, sizeof(tmp));
-    cboard_encode_146_into(b, tmp);
-    for (int32_t i = 0; i < 146 * 64; i++) {
+static void cboard_encode_planes_bf16_into(const CBoard *b, uint16_t * restrict out, int n_extra) {
+    float tmp[ENC_PLANES_MAX * 64];
+    int n = (112 + n_extra) * 64;
+    memset(tmp, 0, (size_t)n * sizeof(float));
+    cboard_encode_planes_into_ex(b, tmp, n_extra, /*feat_prezeroed=*/1);
+    for (int32_t i = 0; i < n; i++) {
         out[i] = float_to_bf16_bits(tmp[i]);
     }
 }
 
-static void cboard_encode_146_lc0_root_bf16_into(const CBoard *b, uint16_t * restrict out) {
-    float tmp[146 * 64];
-    cboard_encode_146_lc0_root_into(b, tmp);
-    for (int32_t i = 0; i < 146 * 64; i++) {
+static void cboard_encode_planes_lc0_root_bf16_into(const CBoard *b, uint16_t * restrict out, int n_extra) {
+    float tmp[ENC_PLANES_MAX * 64];
+    int n = (112 + n_extra) * 64;
+    cboard_encode_planes_lc0_root_into(b, tmp, n_extra);
+    for (int32_t i = 0; i < n; i++) {
         out[i] = float_to_bf16_bits(tmp[i]);
     }
 }
 
-static void cboard_encode_146_lc0_root_legacy_meta_bf16_into(const CBoard *b, uint16_t * restrict out) {
-    float tmp[146 * 64];
-    cboard_encode_146_lc0_root_legacy_meta_into(b, tmp);
-    for (int32_t i = 0; i < 146 * 64; i++) {
+static void cboard_encode_planes_lc0_root_legacy_meta_bf16_into(const CBoard *b, uint16_t * restrict out, int n_extra) {
+    float tmp[ENC_PLANES_MAX * 64];
+    int n = (112 + n_extra) * 64;
+    cboard_encode_planes_lc0_root_legacy_meta_into(b, tmp, n_extra);
+    for (int32_t i = 0; i < n; i++) {
         out[i] = float_to_bf16_bits(tmp[i]);
     }
 }
@@ -3272,15 +3294,17 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
             "root_ids/budget/root_qs must have at least n_boards elements");
         return NULL;
     }
-    if (PyArray_DIM(enc_arr, 1) != 146 ||
+    if ((PyArray_DIM(enc_arr, 1) != 112 + FEAT_EXTRA_V1 &&
+         PyArray_DIM(enc_arr, 1) != 112 + FEAT_EXTRA_V2) ||
         PyArray_DIM(enc_arr, 2) != 8 ||
         PyArray_DIM(enc_arr, 3) != 8) {
         Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
         Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
         PyErr_SetString(PyExc_ValueError,
-            "enc_buf must have shape (>=N, 146, 8, 8)");
+            "enc_buf must have shape (>=N, 146 or 175, 8, 8)");
         return NULL;
     }
+    int n_extra_planes = (int)PyArray_DIM(enc_arr, 1) - 112;
 
     /* Free previous sim state */
     GumbelSimState *g = &self->gsim;
@@ -3446,6 +3470,7 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
     g->enc_data = PyArray_DATA(enc_arr);
     g->enc_is_bf16 = enc_is_bf16;
     g->input_history_lc0_root = input_history_lc0_root;
+    g->n_extra_planes = n_extra_planes;
     g->enc_capacity = (int32_t)PyArray_DIM(enc_arr, 0);
     Py_INCREF(enc_arr);
     g->enc_arr_ref = (PyObject *)enc_arr;
@@ -3928,14 +3953,21 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
     PyObject *mcts_probs_obj;
     int df_enabled;
     int input_history_lc0_root = 0;
+    int n_extra = FEAT_EXTRA_V1;
     double df_q_weight, df_pol_scale, df_min, df_slope;
 
-    if (!PyArg_ParseTuple(args, "OOOOOOidddd|i",
+    if (!PyArg_ParseTuple(args, "OOOOOOidddd|ii",
                           &cboards_list, &pol_obj, &wdl_obj, &actions_obj,
                           &values_obj, &mcts_probs_obj,
                           &df_enabled, &df_q_weight, &df_pol_scale, &df_min, &df_slope,
-                          &input_history_lc0_root))
+                          &input_history_lc0_root, &n_extra))
         return NULL;
+    if (n_extra != FEAT_EXTRA_V1 && n_extra != FEAT_EXTRA_V2) {
+        PyErr_Format(PyExc_ValueError,
+                     "n_extra must be %d (v1) or %d (v2_threats), got %d",
+                     FEAT_EXTRA_V1, FEAT_EXTRA_V2, n_extra);
+        return NULL;
+    }
 
     PyArrayObject *pol_arr = FROMANY_2D(pol_obj, NPY_FLOAT32);
     PyArrayObject *wdl_arr = FROMANY_2D(wdl_obj, NPY_FLOAT32);
@@ -3994,7 +4026,7 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
     if (extract_cboards(cboards_list, n, boards, NULL) < 0) goto fail;
 
     /* Allocate output arrays */
-    npy_intp dims_x[4] = {n, 146, 8, 8};
+    npy_intp dims_x[4] = {n, 112 + n_extra, 8, 8};
     npy_intp dims_p[2] = {n, 4672};
     npy_intp dims_w[2] = {n, 3};
     npy_intp dims_n[1] = {n};
@@ -4144,11 +4176,11 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
 
         /* Encode position BEFORE pushing move */
         if (input_history_lc0_root == 2)
-            cboard_encode_146_lc0_root_legacy_meta_into(cb, x_data + i * 146 * 64);
+            cboard_encode_planes_lc0_root_legacy_meta_into(cb, x_data + (size_t)i * (112 + n_extra) * 64, n_extra);
         else if (input_history_lc0_root)
-            cboard_encode_146_lc0_root_into(cb, x_data + i * 146 * 64);
+            cboard_encode_planes_lc0_root_into(cb, x_data + (size_t)i * (112 + n_extra) * 64, n_extra);
         else
-            cboard_encode_146_into(cb, x_data + i * 146 * 64);
+            cboard_encode_planes_into_ex(cb, x_data + (size_t)i * (112 + n_extra) * 64, n_extra, /*feat_prezeroed=*/1);
 
         /* Push move */
         cboard_push_index(cb, action);
@@ -4203,13 +4235,17 @@ static PyObject *py_batch_encode_146(PyObject *self, PyObject *args) {
     if (n <= 0) { Py_DECREF(out_arr); Py_RETURN_NONE; }
 
     /* Verify output array is large enough */
-    if (PyArray_DIM(out_arr, 0) < n || PyArray_DIM(out_arr, 1) != 146 ||
+    if (PyArray_DIM(out_arr, 0) < n ||
+        (PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V1 &&
+         PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V2) ||
         PyArray_DIM(out_arr, 2) != 8 || PyArray_DIM(out_arr, 3) != 8) {
         Py_DECREF(out_arr);
         PyErr_SetString(PyExc_ValueError,
-            "out_array must have shape (>=N, 146, 8, 8)");
+            "out_array must have shape (>=N, 146 or 175, 8, 8)");
         return NULL;
     }
+    int n_extra = (int)PyArray_DIM(out_arr, 1) - 112;
+    size_t enc_row = (size_t)(112 + n_extra) * 64;
 
     /* Pre-extract CBoard structs (validated) */
     CBoard *boards = (CBoard *)malloc(n * sizeof(CBoard));
@@ -4223,9 +4259,9 @@ static PyObject *py_batch_encode_146(PyObject *self, PyObject *args) {
     Py_BEGIN_ALLOW_THREADS
     /* Zero entire buffer first — cboard_encode_146_into uses targeted zeroing
      * that assumes some planes are pre-zeroed (current piece planes 0-11). */
-    memset(out_data, 0, (size_t)n * 146 * 64 * sizeof(float));
+    memset(out_data, 0, (size_t)n * enc_row * sizeof(float));
     for (int32_t i = 0; i < n; i++) {
-        cboard_encode_146_into(&boards[i], out_data + i * 146 * 64);
+        cboard_encode_planes_into_ex(&boards[i], out_data + i * enc_row, n_extra, /*feat_prezeroed=*/1);
     }
     Py_END_ALLOW_THREADS
 
@@ -4254,13 +4290,17 @@ static PyObject *py_batch_encode_146_lc0_root(PyObject *self, PyObject *args) {
     int32_t n = (int32_t)PyList_Size(cboards_list);
     if (n <= 0) { Py_DECREF(out_arr); Py_RETURN_NONE; }
 
-    if (PyArray_DIM(out_arr, 0) < n || PyArray_DIM(out_arr, 1) != 146 ||
+    if (PyArray_DIM(out_arr, 0) < n ||
+        (PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V1 &&
+         PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V2) ||
         PyArray_DIM(out_arr, 2) != 8 || PyArray_DIM(out_arr, 3) != 8) {
         Py_DECREF(out_arr);
         PyErr_SetString(PyExc_ValueError,
-            "out_array must have shape (>=N, 146, 8, 8)");
+            "out_array must have shape (>=N, 146 or 175, 8, 8)");
         return NULL;
     }
+    int n_extra = (int)PyArray_DIM(out_arr, 1) - 112;
+    size_t enc_row = (size_t)(112 + n_extra) * 64;
 
     CBoard *boards = (CBoard *)malloc(n * sizeof(CBoard));
     if (!boards) { Py_DECREF(out_arr); return PyErr_NoMemory(); }
@@ -4275,7 +4315,7 @@ static PyObject *py_batch_encode_146_lc0_root(PyObject *self, PyObject *args) {
     #pragma omp parallel for schedule(static) if(n > 64)
 #endif
     for (int32_t i = 0; i < n; i++) {
-        cboard_encode_146_lc0_root_into(&boards[i], out_data + i * 146 * 64);
+        cboard_encode_planes_lc0_root_into(&boards[i], out_data + i * enc_row, n_extra);
     }
     Py_END_ALLOW_THREADS
 
@@ -4302,13 +4342,17 @@ static PyObject *py_batch_encode_146_lc0_root_legacy_meta(PyObject *self, PyObje
     int32_t n = (int32_t)PyList_Size(cboards_list);
     if (n <= 0) { Py_DECREF(out_arr); Py_RETURN_NONE; }
 
-    if (PyArray_DIM(out_arr, 0) < n || PyArray_DIM(out_arr, 1) != 146 ||
+    if (PyArray_DIM(out_arr, 0) < n ||
+        (PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V1 &&
+         PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V2) ||
         PyArray_DIM(out_arr, 2) != 8 || PyArray_DIM(out_arr, 3) != 8) {
         Py_DECREF(out_arr);
         PyErr_SetString(PyExc_ValueError,
-            "out_array must have shape (>=N, 146, 8, 8)");
+            "out_array must have shape (>=N, 146 or 175, 8, 8)");
         return NULL;
     }
+    int n_extra = (int)PyArray_DIM(out_arr, 1) - 112;
+    size_t enc_row = (size_t)(112 + n_extra) * 64;
 
     CBoard *boards = (CBoard *)malloc(n * sizeof(CBoard));
     if (!boards) { Py_DECREF(out_arr); return PyErr_NoMemory(); }
@@ -4323,7 +4367,7 @@ static PyObject *py_batch_encode_146_lc0_root_legacy_meta(PyObject *self, PyObje
     #pragma omp parallel for schedule(static) if(n > 64)
 #endif
     for (int32_t i = 0; i < n; i++) {
-        cboard_encode_146_lc0_root_legacy_meta_into(&boards[i], out_data + i * 146 * 64);
+        cboard_encode_planes_lc0_root_legacy_meta_into(&boards[i], out_data + i * enc_row, n_extra);
     }
     Py_END_ALLOW_THREADS
 
@@ -4353,13 +4397,17 @@ static PyObject *py_batch_encode_146_bf16(PyObject *self, PyObject *args) {
     int32_t n = (int32_t)PyList_Size(cboards_list);
     if (n <= 0) { Py_DECREF(out_arr); Py_RETURN_NONE; }
 
-    if (PyArray_DIM(out_arr, 0) < n || PyArray_DIM(out_arr, 1) != 146 ||
+    if (PyArray_DIM(out_arr, 0) < n ||
+        (PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V1 &&
+         PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V2) ||
         PyArray_DIM(out_arr, 2) != 8 || PyArray_DIM(out_arr, 3) != 8) {
         Py_DECREF(out_arr);
         PyErr_SetString(PyExc_ValueError,
-            "out_array must have shape (>=N, 146, 8, 8)");
+            "out_array must have shape (>=N, 146 or 175, 8, 8)");
         return NULL;
     }
+    int n_extra = (int)PyArray_DIM(out_arr, 1) - 112;
+    size_t enc_row = (size_t)(112 + n_extra) * 64;
 
     CBoard *boards = (CBoard *)malloc(n * sizeof(CBoard));
     if (!boards) { Py_DECREF(out_arr); return PyErr_NoMemory(); }
@@ -4374,7 +4422,7 @@ static PyObject *py_batch_encode_146_bf16(PyObject *self, PyObject *args) {
     #pragma omp parallel for schedule(static) if(n > 64)
 #endif
     for (int32_t i = 0; i < n; i++) {
-        cboard_encode_146_bf16_into(&boards[i], out_data + i * 146 * 64);
+        cboard_encode_planes_bf16_into(&boards[i], out_data + i * enc_row, n_extra);
     }
     Py_END_ALLOW_THREADS
 
@@ -4401,13 +4449,17 @@ static PyObject *py_batch_encode_146_lc0_root_bf16(PyObject *self, PyObject *arg
     int32_t n = (int32_t)PyList_Size(cboards_list);
     if (n <= 0) { Py_DECREF(out_arr); Py_RETURN_NONE; }
 
-    if (PyArray_DIM(out_arr, 0) < n || PyArray_DIM(out_arr, 1) != 146 ||
+    if (PyArray_DIM(out_arr, 0) < n ||
+        (PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V1 &&
+         PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V2) ||
         PyArray_DIM(out_arr, 2) != 8 || PyArray_DIM(out_arr, 3) != 8) {
         Py_DECREF(out_arr);
         PyErr_SetString(PyExc_ValueError,
-            "out_array must have shape (>=N, 146, 8, 8)");
+            "out_array must have shape (>=N, 146 or 175, 8, 8)");
         return NULL;
     }
+    int n_extra = (int)PyArray_DIM(out_arr, 1) - 112;
+    size_t enc_row = (size_t)(112 + n_extra) * 64;
 
     CBoard *boards = (CBoard *)malloc(n * sizeof(CBoard));
     if (!boards) { Py_DECREF(out_arr); return PyErr_NoMemory(); }
@@ -4422,7 +4474,7 @@ static PyObject *py_batch_encode_146_lc0_root_bf16(PyObject *self, PyObject *arg
     #pragma omp parallel for schedule(static) if(n > 64)
 #endif
     for (int32_t i = 0; i < n; i++) {
-        cboard_encode_146_lc0_root_bf16_into(&boards[i], out_data + i * 146 * 64);
+        cboard_encode_planes_lc0_root_bf16_into(&boards[i], out_data + i * enc_row, n_extra);
     }
     Py_END_ALLOW_THREADS
 
@@ -4449,13 +4501,17 @@ static PyObject *py_batch_encode_146_lc0_root_legacy_meta_bf16(PyObject *self, P
     int32_t n = (int32_t)PyList_Size(cboards_list);
     if (n <= 0) { Py_DECREF(out_arr); Py_RETURN_NONE; }
 
-    if (PyArray_DIM(out_arr, 0) < n || PyArray_DIM(out_arr, 1) != 146 ||
+    if (PyArray_DIM(out_arr, 0) < n ||
+        (PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V1 &&
+         PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V2) ||
         PyArray_DIM(out_arr, 2) != 8 || PyArray_DIM(out_arr, 3) != 8) {
         Py_DECREF(out_arr);
         PyErr_SetString(PyExc_ValueError,
-            "out_array must have shape (>=N, 146, 8, 8)");
+            "out_array must have shape (>=N, 146 or 175, 8, 8)");
         return NULL;
     }
+    int n_extra = (int)PyArray_DIM(out_arr, 1) - 112;
+    size_t enc_row = (size_t)(112 + n_extra) * 64;
 
     CBoard *boards = (CBoard *)malloc(n * sizeof(CBoard));
     if (!boards) { Py_DECREF(out_arr); return PyErr_NoMemory(); }
@@ -4470,7 +4526,7 @@ static PyObject *py_batch_encode_146_lc0_root_legacy_meta_bf16(PyObject *self, P
     #pragma omp parallel for schedule(static) if(n > 64)
 #endif
     for (int32_t i = 0; i < n; i++) {
-        cboard_encode_146_lc0_root_legacy_meta_bf16_into(&boards[i], out_data + i * 146 * 64);
+        cboard_encode_planes_lc0_root_legacy_meta_bf16_into(&boards[i], out_data + i * enc_row, n_extra);
     }
     Py_END_ALLOW_THREADS
 

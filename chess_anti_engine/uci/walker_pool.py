@@ -58,6 +58,8 @@ class WalkerPoolConfig:
   # diversifies across walkers. Lc0's canonical default is 8; we keep
   # 1 to preserve the classic one-leaf-per-call shape.
     gather: int = 1
+  # Input channel count (146 v1 / 175 v2_threats); sized from the model.
+    input_planes: int = 146
 
 
 @dataclass
@@ -175,7 +177,7 @@ class WalkerPool:
         fpu_red = cfg.fpu_reduction
         vloss = cfg.vloss_weight
         gather = max(1, int(cfg.gather))
-        enc = np.empty((gather, 146, 8, 8), dtype=np.float32)
+        enc = np.empty((gather, int(cfg.input_planes), 8, 8), dtype=np.float32)
         my_wake = self._wakes[idx]
 
         while True:

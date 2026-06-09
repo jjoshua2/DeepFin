@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 from torch.export import Dim
 
+from chess_anti_engine.encoding import input_plane_count
 from chess_anti_engine.inference import _policy_output
 
 
@@ -50,7 +51,8 @@ def export_onnx(model: nn.Module, *, out_path: Path, device: str = "cpu", cfg: O
     wrapper = _OnnxWrapper(model).to(device)
     wrapper.eval()
 
-    dummy = torch.randn(1, 146, 8, 8, device=device)
+    in_planes = input_plane_count(getattr(model, "input_extra_features", None))
+    dummy = torch.randn(1, in_planes, 8, 8, device=device)
 
     batch = Dim("batch", min=1)
     torch.onnx.export(

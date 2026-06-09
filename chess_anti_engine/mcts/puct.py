@@ -8,6 +8,7 @@ import numpy as np
 import torch
 
 from chess_anti_engine.encoding import encode_position, encode_positions_batch
+from chess_anti_engine.encoding.features import EXTRA_FEATURES_V1
 from chess_anti_engine.encoding.lc0 import LC0_HISTORY_LEGACY
 from chess_anti_engine.inference import (
     BatchEvaluator,
@@ -57,6 +58,7 @@ class MCTSConfig:
     use_amp: bool = True
     amp_dtype: str = "auto"
     input_history_encoding: str = LC0_HISTORY_LEGACY
+    input_extra_features: str = EXTRA_FEATURES_V1
     policy_encoding: str = POLICY_ENCODING_AZ_4672
 
 
@@ -194,7 +196,7 @@ def _init_root_from_logits(
 
 def _init_root(model: torch.nn.Module, board: chess.Board, *, device: str, rng: np.random.Generator, cfg: MCTSConfig) -> Node:
     """Create root node by running a forward pass then delegating to _init_root_from_logits."""
-    x0 = encode_position(board, add_features=True, input_history_encoding=cfg.input_history_encoding)
+    x0 = encode_position(board, add_features=True, input_history_encoding=cfg.input_history_encoding, input_extra_features=cfg.input_extra_features)
     xt = torch.from_numpy(x0[None, ...]).to(device)
     with inference_autocast(device=device, enabled=bool(cfg.use_amp), dtype=str(cfg.amp_dtype)):
         out = model(xt)
@@ -239,6 +241,7 @@ def _expand_and_backprop_leaves(
         [n.board for n in leaf_nodes],
         add_features=True,
         input_history_encoding=cfg.input_history_encoding,
+        input_extra_features=cfg.input_extra_features,
     )
     pol_logits_batch, wdl_logits_batch = eval_impl.evaluate_encoded(leaf_x)
     for node, path, pol_logits, wdl_logits in zip(

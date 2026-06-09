@@ -1179,6 +1179,9 @@ class Trainer:
             (16, 8, _resolve_fdp(fdp_pawns)),
             (24, 6, _resolve_fdp(fdp_mobility)),
             (30, 4, _resolve_fdp(fdp_outposts)),
+  # v2_threats block [34:63]. On v1 inputs (146 planes) the slice past
+  # x.shape[1] is empty, so this entry is a no-op there.
+            (34, 29, _fdp),
         ]
         self.w_policy = float(w_policy)
         self.w_soft = float(w_soft)

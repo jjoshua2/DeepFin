@@ -19,7 +19,12 @@ from .lc0 import (
 
 if TYPE_CHECKING or _HAS_LC0_C_EXT:
     from .lc0 import encode_lc0_full_c
-from .features import _HAS_C_EXT, extra_feature_planes_fast
+from .features import (
+    _HAS_C_EXT,
+    extra_feature_plane_count,
+    extra_feature_planes_fast,
+    normalize_extra_features_encoding,
+)
 
 if TYPE_CHECKING or _HAS_C_EXT:
     from .features import extra_feature_planes_c
@@ -44,8 +49,17 @@ def _encode_lc0_planes(
     return encode_lc0_reduced(board)
 
 
-def _extra_feature_planes(board: chess.Board) -> np.ndarray:
-    return extra_feature_planes_c(board) if _HAS_C_EXT else extra_feature_planes_fast(board)
+def input_plane_count(input_extra_features: str | None = None) -> int:
+    """Total input channels: 112 LC0 planes + the extra-feature block."""
+    return 112 + extra_feature_plane_count(input_extra_features)
+
+
+def _extra_feature_planes(
+    board: chess.Board, *, input_extra_features: str | None = None,
+) -> np.ndarray:
+    if _HAS_C_EXT:
+        return extra_feature_planes_c(board, version=input_extra_features)
+    return extra_feature_planes_fast(board, version=input_extra_features)
 
 
 def _apply_feature_dropout(
@@ -70,18 +84,20 @@ def encode_position(
     rng: np.random.Generator | None = None,
     use_full_lc0: bool = True,
     input_history_encoding: str | None = None,
+    input_extra_features: str | None = None,
 ) -> np.ndarray:
     """Encode a position into (C, 8, 8) float32.
 
     By default this produces the spec target shape:
     - LC0 full 112-plane input (8 history steps)
-    - plus 34 additional classical feature planes
-    => total 146 planes.
+    - plus the extra classical feature planes (34 for v1, 63 for v2_threats)
+    => total 146 (v1) or 175 (v2_threats) planes.
 
     `use_full_lc0=False` keeps the earlier reduced encoder for debugging.
 
     Parameters
     - feature_dropout_p: probability of zeroing ALL extra feature planes.
+    - input_extra_features: extra-feature version ("v1" default, "v2_threats").
     """
     base = _encode_lc0_planes(
         board,
@@ -91,7 +107,7 @@ def encode_position(
     if not add_features:
         return base
 
-    feat_arr = _extra_feature_planes(board)
+    feat_arr = _extra_feature_planes(board, input_extra_features=input_extra_features)
     _apply_feature_dropout(
         feat_arr,
         feature_dropout_p=feature_dropout_p,
@@ -110,8 +126,10 @@ def encode_position_into(
     rng: np.random.Generator | None = None,
     use_full_lc0: bool = True,
     input_history_encoding: str | None = None,
+    input_extra_features: str | None = None,
 ) -> None:
-    """Encode a position directly into a pre-allocated (146, 8, 8) buffer.
+    """Encode a position directly into a pre-allocated (C, 8, 8) buffer
+    (C = 146 for v1, 175 for v2_threats).
 
     Avoids intermediate allocations and np.concatenate.  When C extensions
     are available, extracts bitboards once and passes them to both the LC0
@@ -120,6 +138,7 @@ def encode_position_into(
     out[...] = 0.0
 
     hist_enc = normalize_lc0_history_encoding(input_history_encoding)
+    extra_version = normalize_extra_features_encoding(input_extra_features)
     if (
         use_full_lc0
         and not uses_lc0_root_history(hist_enc)
@@ -128,7 +147,8 @@ def encode_position_into(
         and add_features
     ):
   # Fast fused path: extract bitboards once, pass to both C extensions.
-        _encode_fused_c(board, out, feature_dropout_p=feature_dropout_p, rng=rng)
+        _encode_fused_c(board, out, feature_dropout_p=feature_dropout_p, rng=rng,
+                        input_extra_features=extra_version)
         return
 
   # Fallback: delegate to existing functions, copy into out.
@@ -143,7 +163,7 @@ def encode_position_into(
     if not add_features:
         return
 
-    feat = _extra_feature_planes(board)
+    feat = _extra_feature_planes(board, input_extra_features=extra_version)
     _apply_feature_dropout(
         feat,
         feature_dropout_p=feature_dropout_p,
@@ -153,10 +173,13 @@ def encode_position_into(
     out[base_planes:base_planes + feat.shape[0]] = feat
 
 
-def encode_position_fused(board: chess.Board) -> np.ndarray:
+def encode_position_fused(
+    board: chess.Board, *, input_extra_features: str | None = None,
+) -> np.ndarray:
     """Fused encode_position: single allocation, no concatenate."""
-    out = np.zeros((146, 8, 8), dtype=np.float32)
-    encode_position_into(board, out, add_features=True)
+    out = np.zeros((input_plane_count(input_extra_features), 8, 8), dtype=np.float32)
+    encode_position_into(board, out, add_features=True,
+                         input_extra_features=input_extra_features)
     return out
 
 
@@ -167,23 +190,26 @@ def encode_positions_batch(
     feature_dropout_p: float = 0.0,
     rng: np.random.Generator | None = None,
     input_history_encoding: str | None = None,
+    input_extra_features: str | None = None,
 ) -> np.ndarray:
     """Encode multiple positions into a single pre-allocated (N, C, 8, 8) array.
 
     Avoids N per-position allocations + np.stack overhead.
     """
     n = len(boards)
-    c = 146 if add_features else 112
+    c = input_plane_count(input_extra_features) if add_features else 112
     out = np.zeros((n, c, 8, 8), dtype=np.float32)
     for i, b in enumerate(boards):
-        if add_features and c == 146:
+        if add_features:
             encode_position_into(b, out[i], add_features=True,
                                  feature_dropout_p=feature_dropout_p, rng=rng,
-                                 input_history_encoding=input_history_encoding)
+                                 input_history_encoding=input_history_encoding,
+                                 input_extra_features=input_extra_features)
         else:
             out[i] = encode_position(b, add_features=add_features,
                                      feature_dropout_p=feature_dropout_p, rng=rng,
-                                     input_history_encoding=input_history_encoding)
+                                     input_history_encoding=input_history_encoding,
+                                     input_extra_features=input_extra_features)
     return out
 
 
@@ -193,10 +219,11 @@ def _encode_fused_c(
     *,
     feature_dropout_p: float = 0.0,
     rng: np.random.Generator | None = None,
+    input_extra_features: str | None = None,
 ) -> None:
     """Fused C-accelerated encoding: extract bitboards once for both LC0 + features.
 
-    Writes 146 planes into out (must be (146, 8, 8) float32).
+    Writes 112 + n_extra planes into out (must be (C, 8, 8) float32).
     """
     turn = board.turn
     us = turn
@@ -279,7 +306,8 @@ def _encode_fused_c(
     ep_sq_int = ep_square if ep_square is not None else -1
 
     feat = _c_compute(pieces_us, pieces_them, occupied,
-                      king_sq_us, king_sq_them, turn_white, ep_sq_int)
+                      king_sq_us, king_sq_them, turn_white, ep_sq_int,
+                      extra_feature_plane_count(input_extra_features))
 
     _apply_feature_dropout(
         feat,

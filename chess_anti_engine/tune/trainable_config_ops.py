@@ -203,6 +203,7 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
             hlgauss_sigma=tc.hlgauss_sigma,
             policy_encoding=tc.policy_encoding,
             input_history_encoding=tc.input_history_encoding,
+            input_extra_features=tc.input_extra_features,
             record_lc0_root_input=tc.record_lc0_root_input,
         ),
     )
@@ -235,6 +236,7 @@ _TOPOLOGY_KEYS = frozenset({
     "use_deepnorm",
     "policy_encoding",
     "input_history_encoding",
+    "input_extra_features",
     "input_global_embedding",
     "input_global_embedding_channels",
     "input_square_embedding",

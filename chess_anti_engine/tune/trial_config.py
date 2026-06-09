@@ -75,6 +75,7 @@ class TrialConfig:
     use_deepnorm: bool = False
     policy_encoding: str = "az_4672"
     input_history_encoding: str = "legacy"
+    input_extra_features: str = "v1"
     input_global_embedding: str = "none"
     input_global_embedding_channels: int = 0
     input_square_embedding: str = "none"
@@ -352,6 +353,7 @@ class TrialConfig:
             use_deepnorm=bool(config.get("use_deepnorm", False)),
             policy_encoding=str(config.get("policy_encoding", "az_4672")),
             input_history_encoding=str(config.get("input_history_encoding", "legacy")),
+            input_extra_features=str(config.get("input_extra_features", "v1")),
             input_global_embedding=str(config.get("input_global_embedding", "none")),
             input_global_embedding_channels=int(config.get("input_global_embedding_channels", 0)),
             input_square_embedding=str(config.get("input_square_embedding", "none")),

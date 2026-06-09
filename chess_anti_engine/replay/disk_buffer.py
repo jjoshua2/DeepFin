@@ -135,9 +135,15 @@ class DiskReplayBuffer:
         refresh_shards: int = 3,
         draw_cap_frac: float = 0.90,
         wl_max_ratio: float = 1.5,
+        input_planes: int | None = None,
     ):
         self.capacity = int(capacity)
         self.rng = rng
+  # When set, shards stored with FEWER x planes (e.g. v1 146-plane shards
+  # in a v2_threats 175-plane run) are zero-padded on load — never
+  # re-encoded. Zero extra planes match the feature_dropout_p convention
+  # of zeroing the whole extra block.
+        self._input_planes = None if input_planes is None else int(input_planes)
         self._shard_dir = Path(shard_dir)
         self._shard_dir.mkdir(parents=True, exist_ok=True)
 
@@ -225,7 +231,39 @@ class DiskReplayBuffer:
     def _shuffle_len(self) -> int:
         return int(self._shuffle_size_total)
 
+    def _pad_x_planes(self, arrs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+        """Zero-pad stored x (and x_lc0_root) up to the configured plane count.
+
+        Gated by the stored channel count: older shards encoded with fewer
+        extra-feature planes gain zero planes at the end of the extra block;
+        shards with MORE planes than the model expects are a config error.
+        """
+        target = self._input_planes
+        if target is None:
+            return arrs
+        out = arrs
+        for key in ("x", "x_lc0_root"):
+            v = out.get(key)
+            if v is None:
+                continue
+            stored = int(np.asarray(v).shape[1])
+            if stored == target:
+                continue
+            if stored > target:
+                raise ValueError(
+                    f"shard stores {stored} input planes but the model expects "
+                    f"{target}; refusing to truncate encoded inputs"
+                )
+            pad = np.zeros(
+                (v.shape[0], target - stored, *v.shape[2:]), dtype=v.dtype,
+            )
+            if out is arrs:
+                out = dict(arrs)
+            out[key] = np.concatenate([np.asarray(v), pad], axis=1)
+        return out
+
     def _append_shuffle_arrays(self, arrs: dict[str, np.ndarray]) -> None:
+        arrs = self._pad_x_planes(arrs)
         n, _, _ = _batch_dims(arrs)
         if n <= 0:
             return

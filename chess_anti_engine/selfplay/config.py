@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from chess_anti_engine.encoding.features import EXTRA_FEATURES_V1
 from chess_anti_engine.encoding.lc0 import LC0_HISTORY_LEGACY
 from chess_anti_engine.moves import POLICY_ENCODING_AZ_4672
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
@@ -93,6 +94,7 @@ class GameConfig:
     hlgauss_sigma: float = 0.04
     policy_encoding: str = POLICY_ENCODING_AZ_4672
     input_history_encoding: str = LC0_HISTORY_LEGACY
+    input_extra_features: str = EXTRA_FEATURES_V1
     record_lc0_root_input: bool = False
 
 

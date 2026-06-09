@@ -18,6 +18,7 @@ from typing import Any, Protocol
 import chess
 import numpy as np
 
+from chess_anti_engine.encoding import input_plane_count
 from chess_anti_engine.encoding.cboard_encode import CBoard, encode_cboard
 from chess_anti_engine.inference import BatchEvaluator
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
@@ -224,6 +225,7 @@ class SearchWorker:
                 fpu_reduction=float(self._cfg.fpu_reduction),
                 vloss_weight=self._vloss_weight,
                 gather=self._walker_gather,
+                input_planes=input_plane_count(self._cfg.input_extra_features),
             ),
             self._evaluator,
         )
@@ -294,6 +296,7 @@ class SearchWorker:
             vloss_weight=self._vloss_weight,
             vloss_mode=self._pucv_vloss_mode,
             eval_cache_entries=self._eval_cache_entries,
+            input_planes=input_plane_count(self._cfg.input_extra_features),
         )
         if as_factories:
             self._pucv_pool = MultiGpuPucvPool(
@@ -387,6 +390,7 @@ class SearchWorker:
             vloss_weight=self._vloss_weight,
             vloss_mode=self._pucv_vloss_mode,
             eval_cache_entries=self._eval_cache_entries,
+            input_planes=input_plane_count(self._cfg.input_extra_features),
         )
 
     def set_eval_cache_entries(self, n: int) -> None:
@@ -653,11 +657,15 @@ class SearchWorker:
         """
         if self._root_pol_logits is not None and self._root_wdl_logits is not None:
             return
-        xs = np.empty((1, 146, 8, 8), dtype=np.float32)
+        xs = np.empty(
+            (1, input_plane_count(self._cfg.input_extra_features), 8, 8),
+            dtype=np.float32,
+        )
         root_cb = CBoard.from_board(board)
         xs[0] = encode_cboard(
             root_cb,
             input_history_encoding=self._cfg.input_history_encoding,
+            input_extra_features=self._cfg.input_extra_features,
         )
         pol, wdl = self._evaluator.evaluate_encoded(xs)
         pol_np = np.asarray(pol, dtype=np.float32)

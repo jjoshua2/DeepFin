@@ -5,6 +5,10 @@ from dataclasses import dataclass
 import torch
 
 from chess_anti_engine.encoding import encode_position
+from chess_anti_engine.encoding.features import (
+    EXTRA_FEATURES_V1,
+    normalize_extra_features_encoding,
+)
 from chess_anti_engine.encoding.lc0 import LC0_HISTORY_LEGACY, normalize_lc0_history_encoding
 from chess_anti_engine.moves import POLICY_ENCODING_AZ_4672, normalize_policy_encoding
 from chess_anti_engine.utils.architecture import (
@@ -20,7 +24,7 @@ from .transformer import ChessNet, TransformerConfig
 # misrepresent. Trainer embeds this version when saving; the UCI loader
 # rejects checkpoints with a higher version AND rejects unknown keys at
 # the same version — both prevent silent architecture mismatch on skew.
-ARCH_SCHEMA_VERSION = 14
+ARCH_SCHEMA_VERSION = 15
 
 
 @dataclass
@@ -43,6 +47,7 @@ class ModelConfig:
     use_deepnorm: bool = False
     policy_encoding: str = POLICY_ENCODING_AZ_4672
     input_history_encoding: str = LC0_HISTORY_LEGACY
+    input_extra_features: str = EXTRA_FEATURES_V1
     input_global_embedding: str = "none"
     input_global_embedding_channels: int = 0
     input_square_embedding: str = "none"
@@ -94,6 +99,7 @@ def model_config_from_manifest_dict(mc: dict) -> ModelConfig:
         use_deepnorm=bool(mc.get("use_deepnorm", False)),
         policy_encoding=normalize_policy_encoding(mc.get("policy_encoding", POLICY_ENCODING_AZ_4672)),
         input_history_encoding=normalize_lc0_history_encoding(mc.get("input_history_encoding", LC0_HISTORY_LEGACY)),
+        input_extra_features=normalize_extra_features_encoding(mc.get("input_extra_features", EXTRA_FEATURES_V1)),
         input_global_embedding=str(mc.get("input_global_embedding", "none")),
         input_global_embedding_channels=int(mc.get("input_global_embedding_channels", 0)),
         input_square_embedding=str(mc.get("input_square_embedding", "none")),
@@ -160,6 +166,9 @@ def model_config_from_flat_config(
         input_history_encoding=normalize_lc0_history_encoding(
             cfg.get("input_history_encoding", LC0_HISTORY_LEGACY)
         ),
+        input_extra_features=normalize_extra_features_encoding(
+            cfg.get("input_extra_features", EXTRA_FEATURES_V1)
+        ),
         input_global_embedding=str(cfg.get("input_global_embedding", "none")),
         input_global_embedding_channels=int(cfg.get("input_global_embedding_channels", 0)),
         input_square_embedding=str(cfg.get("input_square_embedding", "none")),
@@ -215,6 +224,7 @@ def model_config_to_manifest_dict(cfg: ModelConfig) -> dict:
         "use_deepnorm": bool(cfg.use_deepnorm),
         "policy_encoding": normalize_policy_encoding(cfg.policy_encoding),
         "input_history_encoding": normalize_lc0_history_encoding(cfg.input_history_encoding),
+        "input_extra_features": normalize_extra_features_encoding(cfg.input_extra_features),
         "input_global_embedding": str(cfg.input_global_embedding),
         "input_global_embedding_channels": int(cfg.input_global_embedding_channels),
         "input_square_embedding": str(cfg.input_square_embedding),
@@ -237,24 +247,25 @@ def model_config_to_manifest_dict(cfg: ModelConfig) -> dict:
     }
 
 
-def infer_input_planes() -> int:
+def infer_input_planes(input_extra_features: str | None = None) -> int:
   # Use startpos to infer plane count.
     import chess
 
     b = chess.Board()
-    x = encode_position(b, add_features=True)
+    x = encode_position(b, add_features=True, input_extra_features=input_extra_features)
     return int(x.shape[0])
 
 
 def _attach_runtime_model_metadata(model: torch.nn.Module, cfg: ModelConfig) -> torch.nn.Module:
     setattr(model, "policy_encoding", normalize_policy_encoding(cfg.policy_encoding))
     setattr(model, "input_history_encoding", normalize_lc0_history_encoding(cfg.input_history_encoding))
+    setattr(model, "input_extra_features", normalize_extra_features_encoding(cfg.input_extra_features))
     return model
 
 
 def build_model(cfg: ModelConfig) -> torch.nn.Module:
     policy_encoding = normalize_policy_encoding(cfg.policy_encoding)
-    in_planes = infer_input_planes()
+    in_planes = infer_input_planes(cfg.input_extra_features)
     if cfg.kind == "tiny":
         if policy_encoding != POLICY_ENCODING_AZ_4672:
             raise ValueError("tiny model only supports policy_encoding='az_4672'")
@@ -427,6 +438,53 @@ def _normalize_orig_mod_prefix(ckpt_state: dict, *, model_state: dict) -> dict:
     return ckpt_state
 
 
+_V1_INPUT_PLANES = 146   # 112 LC0 + 34 v1 extra planes
+_V2_EXTRA_DELTA = 29     # v2_threats planes appended at index 146
+
+
+def _migrate_input_plane_columns(
+    ckpt_state: dict, *, model_state: dict, label: str,
+) -> dict:
+    """Zero-init the v2_threats input columns when warm-starting from v1.
+
+    A v1 checkpoint's input projection has 146 input channels; a v2_threats
+    model has 175. The new planes sit at indices [146:175] (any appended
+    channels like arc position encodings come after the plane block), so the
+    checkpoint tensor is split there and 29 zero columns are inserted. Zero
+    weights make the new planes exact no-ops: the warm-started model is
+    bit-identical to the v1 model at step 0.
+    """
+    out = dict(ckpt_state)
+    migrated = 0
+    for k, mv in model_state.items():
+        cv = out.get(k)
+        if cv is None or not hasattr(cv, "shape"):
+            continue
+        if cv.shape == mv.shape or cv.ndim != mv.ndim:
+            continue
+        diff_dims = [d for d in range(cv.ndim) if cv.shape[d] != mv.shape[d]]
+        if len(diff_dims) != 1:
+            continue
+        d = diff_dims[0]
+        if mv.shape[d] - cv.shape[d] != _V2_EXTRA_DELTA or cv.shape[d] < _V1_INPUT_PLANES:
+            continue
+        pad_shape = list(cv.shape)
+        pad_shape[d] = _V2_EXTRA_DELTA
+        head = cv.narrow(d, 0, _V1_INPUT_PLANES)
+        tail = cv.narrow(d, _V1_INPUT_PLANES, cv.shape[d] - _V1_INPUT_PLANES)
+        out[k] = torch.cat(
+            [head, torch.zeros(pad_shape, dtype=cv.dtype, device=cv.device), tail],
+            dim=d,
+        )
+        migrated += 1
+    if migrated:
+        print(
+            f"[{label}] Zero-initialized {_V2_EXTRA_DELTA} v2_threats input "
+            f"columns on {migrated} tensor(s) (v1 -> v2 warm start)"
+        )
+    return out
+
+
 def _filter_shape_mismatches(ckpt_state: dict, model_state: dict) -> tuple[dict, list[str]]:
     """Drop keys whose checkpoint shape differs from the model. Returns (filtered, skipped)."""
     filtered: dict = {}
@@ -455,6 +513,7 @@ def load_state_dict_tolerant(
     model_state = model.state_dict()
     ckpt_state = _normalize_orig_mod_prefix(ckpt_state, model_state=model_state)
     ckpt_state = _migrate_qkv_keys(ckpt_state, model_state=model_state, label=label)
+    ckpt_state = _migrate_input_plane_columns(ckpt_state, model_state=model_state, label=label)
     filtered, skipped = _filter_shape_mismatches(ckpt_state, model_state)
 
     missing, unexpected = model.load_state_dict(filtered, strict=False)

@@ -76,12 +76,14 @@ def _pick_moves_for_boards(
 ) -> list[int]:
     """Run gumbel- or PUCT-MCTS for one model on a list of boards."""
     input_history_encoding = str(getattr(model, "input_history_encoding", "legacy"))
+    input_extra_features = str(getattr(model, "input_extra_features", "v1"))
     policy_encoding = str(getattr(model, "policy_encoding", "az_4672"))
     if str(mcts_type) == "gumbel":
         gumbel_cfg = GumbelConfig(
             simulations=int(mcts_simulations), temperature=float(temperature),
             add_noise=bool(gumbel_add_noise),
             input_history_encoding=input_history_encoding,
+            input_extra_features=input_extra_features,
             policy_encoding=policy_encoding,
         )
         if _HAS_GUMBEL_C:
@@ -102,6 +104,7 @@ def _pick_moves_for_boards(
                 simulations=int(mcts_simulations), temperature=float(temperature),
                 c_puct=float(c_puct), dirichlet_eps=0.0,
                 input_history_encoding=input_history_encoding,
+                input_extra_features=input_extra_features,
                 policy_encoding=policy_encoding,
             ),
         )

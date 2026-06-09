@@ -13,7 +13,7 @@ import chess
 import numpy as np
 import torch
 
-from chess_anti_engine.encoding import encode_positions_batch
+from chess_anti_engine.encoding import encode_positions_batch, input_plane_count
 from chess_anti_engine.encoding.lc0 import (
     LC0_HISTORY_ROOT_LEGACY_META,
     normalize_lc0_history_encoding,
@@ -139,13 +139,14 @@ def run_mcts_many_c(
         pol_logits_all, wdl_logits_all = eval_impl.evaluate_inplace(n_boards, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
     else:
         if use_cboard and root_cboards is not None:
-            xs = np.empty((n_boards, 146, 8, 8), dtype=np.float32)
+            xs = np.empty((n_boards, input_plane_count(cfg.input_extra_features), 8, 8), dtype=np.float32)
             batch_encode(root_cboards, xs)
         else:
             xs = encode_positions_batch(
                 boards,
                 add_features=True,
                 input_history_encoding=cfg.input_history_encoding,
+                input_extra_features=cfg.input_extra_features,
             )
         pol_logits_all, wdl_logits_all = eval_impl.evaluate_encoded(xs)
 
@@ -260,7 +261,7 @@ def run_mcts_many_c(
             pol_batch, wdl_batch = eval_impl.evaluate_inplace(n_leaves, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
         else:
             if use_cboard:
-                leaf_xs = np.empty((n_leaves, 146, 8, 8), dtype=np.float32)
+                leaf_xs = np.empty((n_leaves, input_plane_count(cfg.input_extra_features), 8, 8), dtype=np.float32)
                 _leaf_cbs2: list[CBoard] = []
                 for ld in leaf_data:
                     cb = ld[3]
@@ -272,6 +273,7 @@ def run_mcts_many_c(
                     [ld[2] for ld in leaf_data],
                     add_features=True,
                     input_history_encoding=cfg.input_history_encoding,
+                    input_extra_features=cfg.input_extra_features,
                 )
             pol_batch, wdl_batch = eval_impl.evaluate_encoded(leaf_xs)
         q_values = tree.batch_wdl_to_q(wdl_batch.reshape(-1, 3))

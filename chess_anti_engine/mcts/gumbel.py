@@ -10,6 +10,7 @@ import torch
 
 from chess_anti_engine.encoding.lc0 import LC0_HISTORY_LEGACY
 from chess_anti_engine.encoding import encode_positions_batch
+from chess_anti_engine.encoding.features import EXTRA_FEATURES_V1
 from chess_anti_engine.inference import BatchEvaluator, LocalModelEvaluator
 from chess_anti_engine.mcts.puct import (
     Node,
@@ -61,6 +62,7 @@ class GumbelConfig:
     add_noise: bool = True  # Backward-compatible gate; use gumbel_scale for partial noise.
     gumbel_scale: float = 1.0
     input_history_encoding: str = LC0_HISTORY_LEGACY
+    input_extra_features: str = EXTRA_FEATURES_V1
     policy_encoding: str = POLICY_ENCODING_AZ_4672
 
 
@@ -330,6 +332,7 @@ def _resolve_root_logits(
         boards,
         add_features=True,
         input_history_encoding=cfg.input_history_encoding,
+        input_extra_features=cfg.input_extra_features,
     )
     pol, wdl = eval_impl.evaluate_encoded(xs)
     pol = _policy_logits_to_full(pol, cfg=cfg)
@@ -351,6 +354,7 @@ def _evaluate_and_backprop_leaves(
         [node.board for node in leaf_nodes],
         add_features=True,
         input_history_encoding=cfg.input_history_encoding,
+        input_extra_features=cfg.input_extra_features,
     )
     pol_logits_leaf, wdl_logits_leaf = leaf_eval.evaluate_encoded(leaf_xs)
     pol_logits_leaf = _policy_logits_to_full(pol_logits_leaf, cfg=cfg)

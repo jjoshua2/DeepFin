@@ -428,7 +428,13 @@ def run_policy_sequence_eval(
         picks: list[chess.Move] = []
         for start in range(0, len(boards), batch_size):
             chunk = boards[start:start + batch_size]
-            xs = np.stack([encode_position(b) for b in chunk])
+            xs = np.stack([
+                encode_position(
+                    b,
+                    input_extra_features=getattr(model, "input_extra_features", None),
+                )
+                for b in chunk
+            ])
             x = torch.from_numpy(xs).to(device, non_blocking=True)
             out = model(x)
             pol_logits = (out["policy_own"] if isinstance(out, dict) and "policy_own" in out
@@ -515,7 +521,10 @@ def run_value_head_puzzle_eval(
         legal_per_puzzle.append(legal)
         for mv in legal:
             puzzle.board.push(mv)
-            flat_x.append(encode_position(puzzle.board))
+            flat_x.append(encode_position(
+                puzzle.board,
+                input_extra_features=getattr(model, "input_extra_features", None),
+            ))
             puzzle.board.pop()
             flat_moves.append(mv)
         flat_groups.append((len(flat_idx), len(legal)))

@@ -82,6 +82,9 @@ _I32_DT: np.dtype = np.dtype(np.int32)
 _I64_DT: np.dtype = np.dtype(np.int64)
 
 _OPTIONAL_FIELD_SPECS: tuple[_OptFieldSpec, ...] = (
+    # x_lc0_root's stored plane count follows x (146 v1 / 175 v2_threats);
+    # zeros_for_storage_field special-cases it on x_planes. The spec shape is
+    # the v1 fallback for paths that don't know the runtime plane count.
     _OptFieldSpec("x_lc0_root",           "has_x_lc0_root",        (146, 8, 8),   _F16),
     _OptFieldSpec("priority_policy_kl",   "has_priority_policy_kl",(),            _F16),
     _OptFieldSpec("priority_q_delta",     "has_priority_q_delta",  (),            _F16),
@@ -159,7 +162,7 @@ def zeros_for_storage_field(
     ``_OPTIONAL_FIELD_SPECS`` so mixed-schema shard concatenation stays in sync
     with validation and serialization.
     """
-    if name == "x":
+    if name in ("x", "x_lc0_root"):
         return np.zeros((n, x_planes, 8, 8), dtype=np.float16)
     if name == "policy_target":
         return np.zeros((n, policy_size), dtype=np.float16)

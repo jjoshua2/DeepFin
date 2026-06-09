@@ -202,40 +202,36 @@ static PyObject* py_legal_move_policy_indices(PyObject *self, PyObject *args) {
  * CBoard Python encoding wrappers (require NumPy)
  * ================================================================ */
 
-static PyObject* cboard_encode_146(const CBoard *b) {
-    npy_intp dims[3] = {146, 8, 8};
+/* hist_mode: 0 = full history, 1 = lc0_root, 2 = lc0_root_legacy_meta
+ * (same convention as input_history_lc0_root in _mcts_tree.c).
+ * n_extra: 34 (v1) or 63 (v2_threats) extra feature planes. */
+static PyObject* cboard_encode_full(const CBoard *b, int hist_mode, int n_extra) {
+    npy_intp dims[3] = {112 + n_extra, 8, 8};
     PyArrayObject *arr = (PyArrayObject*)PyArray_ZEROS(3, dims, NPY_FLOAT32, 0);
     if (!arr) return NULL;
     float *out = (float*)PyArray_DATA(arr);
 
-    cboard_fill_lc0_112(b, out);
-    cboard_compute_features_34(b, out + 112 * 64);
+    if (hist_mode == 2)
+        cboard_fill_lc0_112_root_legacy_meta(b, out);
+    else if (hist_mode == 1)
+        cboard_fill_lc0_112_root(b, out);
+    else
+        cboard_fill_lc0_112(b, out);
+    cboard_compute_features_ext(b, out + 112 * 64, n_extra);
 
     return (PyObject*)arr;
+}
+
+static PyObject* cboard_encode_146(const CBoard *b) {
+    return cboard_encode_full(b, 0, FEAT_EXTRA_V1);
 }
 
 static PyObject* cboard_encode_146_lc0_root(const CBoard *b) {
-    npy_intp dims[3] = {146, 8, 8};
-    PyArrayObject *arr = (PyArrayObject*)PyArray_ZEROS(3, dims, NPY_FLOAT32, 0);
-    if (!arr) return NULL;
-    float *out = (float*)PyArray_DATA(arr);
-
-    cboard_fill_lc0_112_root(b, out);
-    cboard_compute_features_34(b, out + 112 * 64);
-
-    return (PyObject*)arr;
+    return cboard_encode_full(b, 1, FEAT_EXTRA_V1);
 }
 
 static PyObject* cboard_encode_146_lc0_root_legacy_meta(const CBoard *b) {
-    npy_intp dims[3] = {146, 8, 8};
-    PyArrayObject *arr = (PyArrayObject*)PyArray_ZEROS(3, dims, NPY_FLOAT32, 0);
-    if (!arr) return NULL;
-    float *out = (float*)PyArray_DATA(arr);
-
-    cboard_fill_lc0_112_root_legacy_meta(b, out);
-    cboard_compute_features_34(b, out + 112 * 64);
-
-    return (PyObject*)arr;
+    return cboard_encode_full(b, 2, FEAT_EXTRA_V1);
 }
 
 /* Full LC0 112-plane encoding for MCTS boards (no history).
@@ -677,11 +673,57 @@ static PyObject* PyCBoard_encode_146_lc0_root_legacy_meta(PyCBoard *self, PyObje
     return cboard_encode_146_lc0_root_legacy_meta(&self->board);
 }
 
+/* Shared validation for the parameterized encode entry points. */
+static int parse_encode_full_args(PyObject *args, int *hist_mode, int *n_extra) {
+    *hist_mode = 0;
+    *n_extra = FEAT_EXTRA_V1;
+    if (!PyArg_ParseTuple(args, "|ii", hist_mode, n_extra))
+        return 0;
+    if (*hist_mode < 0 || *hist_mode > 2) {
+        PyErr_Format(PyExc_ValueError, "hist_mode must be 0..2, got %d", *hist_mode);
+        return 0;
+    }
+    if (*n_extra != FEAT_EXTRA_V1 && *n_extra != FEAT_EXTRA_V2) {
+        PyErr_Format(PyExc_ValueError,
+                     "n_extra must be %d (v1) or %d (v2_threats), got %d",
+                     FEAT_EXTRA_V1, FEAT_EXTRA_V2, *n_extra);
+        return 0;
+    }
+    return 1;
+}
+
+/* encode_full(hist_mode=0, n_extra=34) -> numpy (112+n_extra, 8, 8) float32 */
+static PyObject* PyCBoard_encode_full(PyCBoard *self, PyObject *args) {
+    int hist_mode, n_extra;
+    if (!parse_encode_full_args(args, &hist_mode, &n_extra)) return NULL;
+    return cboard_encode_full(&self->board, hist_mode, n_extra);
+}
+
 /* encode_146_and_legal() -> (numpy(146,8,8), numpy(N,) int32)
  * Fused encode + legal move generation: one Python->C call instead of two,
  * avoids redundant cboard_to_boardstate construction. */
 static PyObject* PyCBoard_encode_146_and_legal(PyCBoard *self, PyObject *Py_UNUSED(args)) {
     PyObject *enc = cboard_encode_146(&self->board);
+    if (!enc) return NULL;
+    int indices[256];
+    int count = cboard_legal_move_indices(&self->board, indices, /*sorted=*/1);
+    npy_intp dims[1] = {count};
+    PyArrayObject *legal = (PyArrayObject*)PyArray_SimpleNew(1, dims, NPY_INT32);
+    if (!legal) { Py_DECREF(enc); return NULL; }
+    if (count > 0)
+        memcpy(PyArray_DATA(legal), indices, count * sizeof(int));
+    PyObject *result = PyTuple_Pack(2, enc, (PyObject*)legal);
+    Py_DECREF(enc);
+    Py_DECREF(legal);
+    return result;
+}
+
+/* encode_full_and_legal(hist_mode=0, n_extra=34)
+ * -> (numpy(112+n_extra,8,8), numpy(N,) int32) */
+static PyObject* PyCBoard_encode_full_and_legal(PyCBoard *self, PyObject *args) {
+    int hist_mode, n_extra;
+    if (!parse_encode_full_args(args, &hist_mode, &n_extra)) return NULL;
+    PyObject *enc = cboard_encode_full(&self->board, hist_mode, n_extra);
     if (!enc) return NULL;
     int indices[256];
     int count = cboard_legal_move_indices(&self->board, indices, /*sorted=*/1);
@@ -779,6 +821,12 @@ static PyMethodDef PyCBoard_methods[] = {
      "Encode as (146, 8, 8) LC0 root-history with legacy EP/rule50 metadata + feature planes"},
     {"encode_146_and_legal", (PyCFunction)PyCBoard_encode_146_and_legal, METH_NOARGS,
      "Encode (146,8,8) and return legal move indices in one call"},
+    {"encode_full", (PyCFunction)PyCBoard_encode_full, METH_VARARGS,
+     "encode_full(hist_mode=0, n_extra=34) -> (112+n_extra, 8, 8) float32. "
+     "hist_mode: 0=full history, 1=lc0_root, 2=lc0_root_legacy_meta; "
+     "n_extra: 34 (v1) or 63 (v2_threats)"},
+    {"encode_full_and_legal", (PyCFunction)PyCBoard_encode_full_and_legal, METH_VARARGS,
+     "encode_full_and_legal(hist_mode=0, n_extra=34) -> (planes, legal_indices)"},
     {NULL}
 };
 

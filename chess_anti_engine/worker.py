@@ -23,6 +23,7 @@ import torch
 if TYPE_CHECKING:
     import requests
 
+from chess_anti_engine.encoding import input_plane_count
 from chess_anti_engine.inference import (
     AOTEvaluator,
     DirectGPUEvaluator,
@@ -462,6 +463,9 @@ def main() -> None:
                     help="Shared-memory slot name for slot-based inference broker.")
     ap.add_argument("--inference-slot-max-batch", type=int, default=256,
                     help="Max batch size for inference slot (must match broker).")
+    ap.add_argument("--inference-slot-input-planes", type=int, default=146,
+                    help="Input channel count for inference slot (must match broker; "
+                    "146 for v1, 175 for v2_threats).")
     ap.add_argument(
         "--compile-inference",
         action="store_true",
@@ -912,10 +916,12 @@ class WorkerSession:
                 return SlotInferenceClient(
                     slot_name=slot_names[0],
                     max_batch=int(self.args.inference_slot_max_batch),
+                    input_planes=int(self.args.inference_slot_input_planes),
                 )
             return MultiSlotInferenceClient(
                 slot_names=slot_names,
                 max_batch=int(self.args.inference_slot_max_batch),
+                input_planes=int(self.args.inference_slot_input_planes),
             )
         return None
 
@@ -1662,8 +1668,14 @@ class WorkerSession:
                         f"policy_encoding mismatch: compact size requires lc0_1858, "
                         f"server={enc.get('policy_encoding')}",
                     )
-        if "input_planes" in enc and int(enc.get("input_planes") or 0) != 146:
-            raise SystemExit(f"input_planes mismatch: worker expects 146, server={enc.get('input_planes')}")
+        if "input_planes" in enc:
+            expected = input_plane_count(enc.get("input_extra_features"))
+            if int(enc.get("input_planes") or 0) != expected:
+                raise SystemExit(
+                    f"input_planes mismatch: worker expects {expected} "
+                    f"(input_extra_features={enc.get('input_extra_features', 'v1')!r}), "
+                    f"server={enc.get('input_planes')}"
+                )
         return _ManifestCompat(
             protocol_mismatch=protocol_mismatch, version_too_old=version_too_old,
             req_proto=req_proto, min_worker_version=min_v,
@@ -2068,7 +2080,7 @@ class WorkerSession:
         # an unrelated key changes. Flagged by Codex adversarial review.
         "syzygy_path", "stockfish_syzygy_path", "syzygy_rescore_policy",
         "syzygy_adjudicate", "syzygy_adjudicate_fraction", "syzygy_in_search",
-        "policy_encoding", "input_history_encoding",
+        "policy_encoding", "input_history_encoding", "input_extra_features",
     )
 
     def _build_selfplay_configs(self, reco: dict) -> tuple[dict, tuple]:
@@ -2163,6 +2175,7 @@ class WorkerSession:
                 syzygy_in_search=bool(reco.get("syzygy_in_search", False)),
                 policy_encoding=normalize_policy_encoding(reco.get("policy_encoding", "az_4672")),
                 input_history_encoding=str(reco.get("input_history_encoding", "legacy")),
+                input_extra_features=str(reco.get("input_extra_features", "v1")),
                 record_lc0_root_input=bool(reco.get("record_lc0_root_input", False)),
             ),
         }

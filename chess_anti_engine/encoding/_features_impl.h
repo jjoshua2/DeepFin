@@ -1,12 +1,42 @@
 /*
- * _features_impl.h — Pure C implementation of 34 extra feature planes.
+ * _features_impl.h — Pure C implementation of the extra feature planes.
  *
  * Shared between _features_ext.c (Python binding) and _lc0_ext.c (CBoard
- * fused encode_146 path).  All functions are static to avoid ODR issues.
+ * fused encode path).  All functions are static to avoid ODR issues.
  *
  * Usage: #include this header AFTER defining the standard bitboard macros
  * (popcount64, lsb64, sq_bit, sq_file, sq_rank, make_sq, FOR_EACH_BIT)
  * and after calling import_array() / init_tables_features().
+ *
+ * Two versions exist (model.input_extra_features): v1 = 34 planes,
+ * v2_threats = 63 planes (v1 + 29 threat planes appended after index 34;
+ * existing planes are never reordered). Layout — the Python twin of this
+ * table lives in features.py's module docstring; keep both in sync:
+ *
+ *   [0:10]  king-zone safety (v1)  per side: king zone + N/B/R/Q overlaps
+ *   [10:16] pins (v1)              per side: pinned, pin rays, discovered
+ *   [16:24] pawn structure (v1)    per side: passed/isolated/backward/connected
+ *   [24:30] mobility (v1)          per type: normalized move counts at source
+ *   [30:34] outposts (v1)          per side: outposts, space control
+ *   [34]    attacked-by-us (v2)    union over piece types
+ *   [35]    attacked-by-them (v2)
+ *   [36:42] attack maps us (v2)    P, N, B, R, Q, K
+ *   [42:48] attack maps them (v2)  P, N, B, R, Q, K
+ *   [48]    attacker count us (v2)   /4, clamped to 1
+ *   [49]    attacker count them (v2) /4, clamped to 1
+ *   [50]    hanging us (v2)        attacked by them, undefended by us
+ *   [51]    hanging them (v2)
+ *   [52]    cheaper-attacked us (v2)   P→N/B/R/Q, minor→R/Q, R→Q
+ *   [53]    cheaper-attacked them (v2)
+ *   [54:58] safe checks (v2)       side to move: N, B, R, Q
+ *   [58]    control margin (v2)    (us − them attackers)/4, clamp [-1,1]
+ *   [59]    pawn tension us (v2)   our pawns that can capture an enemy pawn
+ *   [60]    pawn tension them (v2)
+ *   [61]    pawn storm vs us (v2)  enemy pawns near OUR king, 1 − rank_dist/7
+ *   [62]    pawn storm vs them (v2)
+ *
+ * Attack maps / counts are direct attacks at current occupancy (no x-rays);
+ * pawn attacks are capture squares only (no en passant).
  */
 
 #ifndef FEATURES_IMPL_H
@@ -494,16 +524,184 @@ static uint64_t feat_connected_pawns(uint64_t own_pawns) {
 }
 
 /* ================================================================
- * Main: compute all 34 feature planes into pre-allocated buffer
- *
- * out must point to 34*64 floats, pre-zeroed.
+ * v2 threat planes
  * ================================================================ */
 
-static void compute_features_34(
+#define FEAT_EXTRA_V1 34
+#define FEAT_EXTRA_V2 63
+
+/* Attack maps + per-square attacker counts, harvested from the mobility
+ * pass (index 0 = us, 1 = them; piece order P,N,B,R,Q,K).
+ *
+ * Counts are kept as carry-save bitboard counters (3 bits per square,
+ * saturating at 7) so accumulating one attack map costs a handful of
+ * bitwise ops instead of a per-set-bit loop. 7 is far above the /4 clamp
+ * used by the count planes, and the control-margin plane clamps at ±4, so
+ * saturation is observationally lossless for the planes we emit. The
+ * Python reference applies min(count, 7) for exact parity. */
+typedef struct {
+    uint64_t by_type[2][6];
+    uint64_t cnt[2][3];   /* per-square 3-bit saturating counter planes */
+} FeatThreatAccum;
+
+static inline void feat_accum_add(
+    FeatThreatAccum *acc, int side, int pt, uint64_t attacks
+) {
+    acc->by_type[side][pt] |= attacks;
+    uint64_t *c = acc->cnt[side];
+    uint64_t carry0 = c[0] & attacks;
+    c[0] ^= attacks;
+    uint64_t carry1 = c[1] & carry0;
+    c[1] ^= carry0;
+    uint64_t overflow = c[2] & carry1;  /* 7 + 1 → clamp back to 7 */
+    c[2] |= carry1;
+    c[0] |= overflow;
+    c[1] |= overflow;
+}
+
+static inline int feat_accum_count(const FeatThreatAccum *acc, int side, int sq) {
+    return (int)((acc->cnt[side][0] >> sq) & 1)
+         | ((int)((acc->cnt[side][1] >> sq) & 1) << 1)
+         | ((int)((acc->cnt[side][2] >> sq) & 1) << 2);
+}
+
+/* Write a per-square float value plane with side-to-move orientation. */
+static inline void feat_value_to_plane_sq(
+    float *plane, int sq, float value, int turn_white
+) {
+    int f = (sq & 7), r = (sq >> 3);
+    int row = turn_white ? r : (7 - r);
+    plane[row * 8 + f] = value;
+}
+
+/* Threat planes [34:63] of the extra block. ``out`` is the extra-block
+ * base pointer (planes are written at out + 34*64 onward, pre-zeroed). */
+static void compute_features_threats(
+    uint64_t us_pieces[6], uint64_t them_pieces[6],
+    uint64_t us_occ, uint64_t them_occ, uint64_t occupied,
+    int king_sq_us, int king_sq_them,
+    int turn_white, const FeatThreatAccum *acc,
+    float * restrict out
+) {
+    uint64_t all_us = 0, all_them = 0;
+    for (int pt = 0; pt < 6; pt++) {
+        all_us |= acc->by_type[0][pt];
+        all_them |= acc->by_type[1][pt];
+    }
+
+    int plane_idx = 34;
+
+    /* [34:36] union attack maps, [36:48] per-type attack maps */
+    feat_bb_to_plane(&out[plane_idx++ * 64], all_us, turn_white);
+    feat_bb_to_plane(&out[plane_idx++ * 64], all_them, turn_white);
+    for (int side = 0; side < 2; side++)
+        for (int pt = 0; pt < 6; pt++)
+            feat_bb_to_plane(&out[plane_idx++ * 64], acc->by_type[side][pt], turn_white);
+
+    /* [48:50] attacker counts (/4, clamped to 1) */
+    for (int side = 0; side < 2; side++) {
+        float *plane = &out[plane_idx++ * 64];
+        for (int sq = 0; sq < 64; sq++) {
+            float v = (float)feat_accum_count(acc, side, sq) / 4.0f;
+            if (v > 1.0f) v = 1.0f;
+            if (v != 0.0f)
+                feat_value_to_plane_sq(plane, sq, v, turn_white);
+        }
+    }
+
+    /* [50:52] hanging: attacked by the enemy, undefended by the owner */
+    feat_bb_to_plane(&out[plane_idx++ * 64], us_occ & all_them & ~all_us, turn_white);
+    feat_bb_to_plane(&out[plane_idx++ * 64], them_occ & all_us & ~all_them, turn_white);
+
+    /* [52:54] attacked by a strictly cheaper piece:
+     * pawn → N/B/R/Q, minor → R/Q, rook → Q */
+    for (int side = 0; side < 2; side++) {
+        uint64_t *victims = side == 0 ? us_pieces : them_pieces;
+        const uint64_t *att = acc->by_type[1 - side];
+        uint64_t cheap =
+            ((victims[1] | victims[2] | victims[3] | victims[4]) & att[0])
+            | ((victims[3] | victims[4]) & (att[1] | att[2]))
+            | (victims[4] & att[3]);
+        feat_bb_to_plane(&out[plane_idx++ * 64], cheap, turn_white);
+    }
+
+    /* [54:58] safe checks for the side to move (Stockfish semantics):
+     * squares an N/B/R/Q could check the enemy king from, not attacked
+     * by the enemy and not occupied by us. */
+    uint64_t check_n = 0, check_b = 0, check_r = 0, check_q = 0;
+    if (king_sq_them >= 0 && king_sq_them < 64) {
+        check_n = FEAT_KNIGHT_ATTACKS[king_sq_them];
+        check_b = feat_bishop_attacks(king_sq_them, occupied);
+        check_r = feat_rook_attacks(king_sq_them, occupied);
+        check_q = check_b | check_r;
+    }
+    uint64_t safe = ~all_them & ~us_occ;
+    feat_bb_to_plane(&out[plane_idx++ * 64], check_n & safe, turn_white);
+    feat_bb_to_plane(&out[plane_idx++ * 64], check_b & safe, turn_white);
+    feat_bb_to_plane(&out[plane_idx++ * 64], check_r & safe, turn_white);
+    feat_bb_to_plane(&out[plane_idx++ * 64], check_q & safe, turn_white);
+
+    /* [58] control margin: (us − them attackers)/4, clamped to [-1, 1] */
+    {
+        float *plane = &out[plane_idx++ * 64];
+        for (int sq = 0; sq < 64; sq++) {
+            float v = ((float)feat_accum_count(acc, 0, sq)
+                       - (float)feat_accum_count(acc, 1, sq)) / 4.0f;
+            if (v > 1.0f) v = 1.0f;
+            if (v < -1.0f) v = -1.0f;
+            if (v != 0.0f)
+                feat_value_to_plane_sq(plane, sq, v, turn_white);
+        }
+    }
+
+    /* [59:61] pawn tension: pawns that can capture an enemy pawn (no EP) */
+    int us_color = turn_white ? 1 : 0;
+    int them_color = 1 - us_color;
+    for (int side = 0; side < 2; side++) {
+        int c = side == 0 ? us_color : them_color;
+        uint64_t own_pawns = (side == 0 ? us_pieces : them_pieces)[0];
+        uint64_t enemy_pawns = (side == 0 ? them_pieces : us_pieces)[0];
+        uint64_t tension = 0;
+        for (uint64_t m = own_pawns; m; m &= m - 1) {
+            int sq = __builtin_ctzll(m);
+            if (FEAT_PAWN_CAPTURE_MASKS[c][sq] & enemy_pawns)
+                tension |= ((uint64_t)1 << sq);
+        }
+        feat_bb_to_plane(&out[plane_idx++ * 64], tension, turn_white);
+    }
+
+    /* [61:63] pawn storm: enemy pawns on the defender-king file ±1,
+     * scaled by rank closeness to the king (1 − rank_dist/7). */
+    for (int side = 0; side < 2; side++) {
+        float *plane = &out[plane_idx++ * 64];
+        int ksq = side == 0 ? king_sq_us : king_sq_them;
+        if (ksq < 0 || ksq > 63) continue;
+        uint64_t enemy_pawns = (side == 0 ? them_pieces : us_pieces)[0];
+        int kf = (ksq & 7), kr = (ksq >> 3);
+        for (uint64_t m = enemy_pawns; m; m &= m - 1) {
+            int sq = __builtin_ctzll(m);
+            int f = (sq & 7), r = (sq >> 3);
+            if (abs(f - kf) > 1) continue;
+            float v = 1.0f - (float)abs(r - kr) / 7.0f;
+            if (v != 0.0f)
+                feat_value_to_plane_sq(plane, sq, v, turn_white);
+        }
+    }
+}
+
+/* ================================================================
+ * Main: compute all extra feature planes into pre-allocated buffer
+ *
+ * out must point to n_extra*64 floats, pre-zeroed.
+ * n_extra is FEAT_EXTRA_V1 (34) or FEAT_EXTRA_V2 (63).
+ * ================================================================ */
+
+static void compute_features_ext(
     uint64_t us_pieces[6], uint64_t them_pieces[6],
     uint64_t occupied,
     int king_sq_us, int king_sq_them,
     int turn_white, int ep_square,
+    int n_extra,
     float * restrict out
 ) {
     init_tables_features();
@@ -590,6 +788,12 @@ static void compute_features_34(
 
     uint64_t ep_mask = (ep_square >= 0 && ep_square < 64) ? ((uint64_t)1 << ep_square) : 0;
 
+    /* v2_threats: harvest the per-piece attack masks this pass already
+     * computes instead of recomputing them for the threat planes. */
+    FeatThreatAccum acc;
+    int want_threats = (n_extra >= FEAT_EXTRA_V2);
+    if (want_threats) memset(&acc, 0, sizeof(acc));
+
     for (int mi = 0; mi < 6; mi++) {
         float *plane = &out[plane_idx * 64];
         int pt = MOB_PT[mi];
@@ -599,6 +803,7 @@ static void compute_features_34(
             uint64_t *cp = (c == us_color) ? us_pieces : them_pieces;
             uint64_t own_occ = (c == us_color) ? us_occ : them_occ;
             uint64_t opp_occ = (c == us_color) ? them_occ : us_occ;
+            int si = (c == us_color) ? 0 : 1;
             int sq;
 
             for (uint64_t _bb = cp[pt]; _bb; _bb &= _bb - 1) {
@@ -617,9 +822,13 @@ static void compute_features_34(
                     mobility += __builtin_popcountll(cap & opp_occ);
                     if (ep_mask && (cap & ep_mask))
                         mobility++;
+                    if (want_threats)
+                        feat_accum_add(&acc, si, 0, cap);
                 } else {
                     uint64_t att = feat_piece_attacks(sq, pt, occupied);
                     mobility = __builtin_popcountll(att & ~own_occ);
+                    if (want_threats)
+                        feat_accum_add(&acc, si, pt, att);
                 }
 
                 int f = (sq & 7), r = (sq >> 3);
@@ -665,12 +874,21 @@ static void compute_features_34(
         feat_bb_to_plane(&out[plane_idx * 64], space, turn_white);
         plane_idx++;
     }
+
+    /* ---- v2 threats: 29 planes [34:63] ---- */
+    if (want_threats)
+        compute_features_threats(us_pieces, them_pieces,
+                                 us_occ, them_occ, occupied,
+                                 king_sq_us, king_sq_them,
+                                 turn_white, &acc, out);
 }
 
-/* CBoard → 34 feature planes. Only available when _cboard_impl.h was also
+/* CBoard → extra feature planes. Only available when _cboard_impl.h was also
  * included beforehand (i.e., in _lc0_ext.c / _mcts_tree.c, not _features_ext.c). */
 #ifdef _CBOARD_IMPL_H
-static inline void cboard_compute_features_34(const CBoard *b, float * restrict out) {
+static inline void cboard_compute_features_ext(
+    const CBoard *b, float * restrict out, int n_extra
+) {
     int us = b->turn, them = 1 - us;
     uint64_t us_pieces[6], them_pieces[6];
     for (int i = 0; i < 6; i++) {
@@ -683,9 +901,13 @@ static inline void cboard_compute_features_34(const CBoard *b, float * restrict 
     int king_sq_them = them_king ? lsb64(them_king) : -1;
     uint64_t occupied = b->occ[0] | b->occ[1];
     int turn_white = (b->turn == WHITE_C) ? 1 : 0;
-    compute_features_34(us_pieces, them_pieces, occupied,
-                        king_sq_us, king_sq_them, turn_white,
-                        (int)b->ep_square, out);
+    compute_features_ext(us_pieces, them_pieces, occupied,
+                         king_sq_us, king_sq_them, turn_white,
+                         (int)b->ep_square, n_extra, out);
+}
+
+static inline void cboard_compute_features_34(const CBoard *b, float * restrict out) {
+    cboard_compute_features_ext(b, out, FEAT_EXTRA_V1);
 }
 #endif  /* _CBOARD_IMPL_H */
 

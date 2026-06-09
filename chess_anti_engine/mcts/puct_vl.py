@@ -35,7 +35,7 @@ _MAX_LEGAL = 256
 _PLANES = 146
 
 
-def _alloc_buffers(gather: int) -> dict[str, np.ndarray]:
+def _alloc_buffers(gather: int, planes: int = _PLANES) -> dict[str, np.ndarray]:
     return {
         "leaf_ids": np.empty(gather, dtype=np.int32),
         "path_buf": np.empty(gather * _MAX_PATH, dtype=np.int32),
@@ -45,7 +45,7 @@ def _alloc_buffers(gather: int) -> dict[str, np.ndarray]:
         "term_qs": np.empty(gather, dtype=np.float64),
         "is_term": np.empty(gather, dtype=np.int8),
         "cache_keys": np.empty((gather, 2), dtype=np.uint64),
-        "enc_rows": np.empty((gather, _PLANES, 8, 8), dtype=np.float32),
+        "enc_rows": np.empty((gather, planes, 8, 8), dtype=np.float32),
     }
 
 
@@ -68,6 +68,7 @@ class PucvChunker:
         vloss_weight: int = 3,
         vloss_mode: int = 0,
         eval_cache_entries: int = 0,
+        input_planes: int = _PLANES,
     ) -> None:
         if not hasattr(evaluator, "evaluate_inplace_async"):
             raise TypeError(
@@ -91,7 +92,11 @@ class PucvChunker:
         )
   # Ping-pong CPU metadata buffer sets, one per slot. Encoding for slot
   # k goes into ev.get_input_buffer(_, slot=k); we don't dual that.
-        self._bufs = [_alloc_buffers(self._gather), _alloc_buffers(self._gather)]
+        self._planes = int(input_planes)
+        self._bufs = [
+            _alloc_buffers(self._gather, self._planes),
+            _alloc_buffers(self._gather, self._planes),
+        ]
 
     def cache_stats(self) -> PucvEvalCacheStats | None:
         return None if self._cache is None else self._cache.stats()
@@ -129,7 +134,7 @@ class PucvChunker:
                 )
                 inp = ev.get_input_buffer(n, slot=next_slot)
                 inp_np = inp.numpy() if hasattr(inp, "numpy") else inp
-                enc_view = np.asarray(inp_np).reshape(n, _PLANES, 8, 8)
+                enc_view = np.asarray(inp_np).reshape(n, self._planes, 8, 8)
                 b = self._bufs[next_buf_idx]
                 tree.batch_descend_puct(
                     root_id, root_cboard, n,
