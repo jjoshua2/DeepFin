@@ -30,6 +30,7 @@ from chess_anti_engine.moves.encode import uci_to_policy_index
 from chess_anti_engine.selfplay.state import SelfplayState, _NetRecord
 from chess_anti_engine.stockfish.pool import StockfishPool
 from chess_anti_engine.stockfish.wdl import cp_to_wdl as _cp_to_wdl
+from chess_anti_engine.replay.shard import SF_CP_SENTINEL, SF_MULTIPV_RAW_MAX
 
 
 from chess_anti_engine.utils.numpy_helpers import softmax_1d as _softmax_np  # noqa: E402
@@ -361,6 +362,57 @@ def _pv_wdl_score(
     return w_sf + 0.5 * d_sf
 
 
+def _collect_sparse_pv_rows(res, *, turn: bool, legal_set: set[int]) -> np.ndarray | None:
+    """Raw MultiPV rows (K, 5) int16 in FULL policy space, rank order.
+
+    Same legality filter + ordering as ``_collect_sf_pv_candidates`` so
+    train-time target rebuilds (train/target_builder.py) see exactly the
+    candidate set the live targets were built from. Columns documented at
+    replay/shard.py::SF_MULTIPV_RAW_MAX. Indices are converted to the shard's
+    policy encoding in finalize, like ``sf_move_index``.
+    """
+    rows: list[tuple[int, int, int, int, int]] = []
+    for pv in getattr(res, "pvs", None) or []:
+        a = uci_to_policy_index(pv.move_uci, turn)
+        if a < 0 or a not in legal_set:
+            continue
+        cp = SF_CP_SENTINEL if pv.cp is None else int(np.clip(int(pv.cp), -32000, 32000))
+        mate = 0 if pv.mate is None else int(np.clip(int(pv.mate), -127, 127))
+        if pv.wdl is None:
+            w = d = -1
+        else:
+            w, d = int(round(float(pv.wdl[0]))), int(round(float(pv.wdl[1])))
+        rows.append((a, cp, mate, w, d))
+        if len(rows) >= SF_MULTIPV_RAW_MAX:
+            break
+    if not rows:
+        return None
+    return np.array(rows, dtype=np.int16)
+
+
+def _collect_sf_label_meta(res) -> np.ndarray:
+    """Record-level SF eval metadata (6,) int32; layout in replay/shard.py."""
+    nodes = getattr(res, "nodes", None)
+    depth = getattr(res, "depth", None)
+    cp = SF_CP_SENTINEL if res.cp is None else int(np.clip(int(res.cp), -32000, 32000))
+    mate = 0 if res.mate is None else int(np.clip(int(res.mate), -127, 127))
+    if res.wdl is None:
+        w = d = -1
+    else:
+        w, d = int(round(float(res.wdl[0]))), int(round(float(res.wdl[1])))
+    return np.array(
+        [nodes if nodes is not None else -1,
+         depth if depth is not None else -1,
+         cp, mate, w, d],
+        dtype=np.int32,
+    )
+
+
+def _stamp_sparse_sf_labels(rec, res, *, turn: bool, legal_set: set[int]) -> None:
+    rec.sf_multipv_raw = _collect_sparse_pv_rows(res, turn=turn, legal_set=legal_set)
+    rec.sf_label_meta = _collect_sf_label_meta(res)
+
+
 def _collect_sf_pv_candidates(
     res,
     *,
@@ -416,6 +468,7 @@ def _build_sf_policy_target(
 def _attach_sf_target_to_last_record(
     state: SelfplayState, idx: int,
     *, p_sf: np.ndarray, a_idx: int, res, legal_indices: np.ndarray,
+    turn: bool | None = None,
     sf_wdl_use_cp_logistic: bool = False,
     sf_wdl_cp_slope: float = 0.010,
     sf_wdl_cp_draw_width: float = 60.0,
@@ -435,6 +488,10 @@ def _attach_sf_target_to_last_record(
         sf_wdl_cp_slope=sf_wdl_cp_slope,
         sf_wdl_cp_draw_width=sf_wdl_cp_draw_width,
     )
+    if turn is not None:
+        _stamp_sparse_sf_labels(
+            rec, res, turn=bool(turn), legal_set={int(x) for x in legal_indices},
+        )
     _sf_mask = np.zeros((POLICY_SIZE,), dtype=np.uint8)
     _sf_mask[legal_indices] = 1
     rec.sf_legal_mask = _sf_mask
@@ -447,6 +504,7 @@ def _attach_sf_target_to_record(
     a_idx: int,
     res,
     legal_indices: np.ndarray,
+    turn: bool | None = None,
     sf_wdl_use_cp_logistic: bool = False,
     sf_wdl_cp_slope: float = 0.010,
     sf_wdl_cp_draw_width: float = 60.0,
@@ -461,6 +519,10 @@ def _attach_sf_target_to_record(
         sf_wdl_cp_slope=sf_wdl_cp_slope,
         sf_wdl_cp_draw_width=sf_wdl_cp_draw_width,
     )
+    if turn is not None:
+        _stamp_sparse_sf_labels(
+            rec, res, turn=bool(turn), legal_set={int(x) for x in legal_indices},
+        )
     _sf_mask = np.zeros((POLICY_SIZE,), dtype=np.uint8)
     _sf_mask[legal_indices] = 1
     rec.sf_legal_mask = _sf_mask
@@ -502,6 +564,7 @@ def _process_sf_label_result_for_record(
     )
     _attach_sf_target_to_record(
         rec, p_sf=p_sf, a_idx=a_idx, res=res, legal_indices=legal_indices,
+        turn=bool(turn),
         sf_wdl_use_cp_logistic=bool(state.game.sf_wdl_use_cp_logistic),
         sf_wdl_cp_slope=float(state.game.sf_wdl_cp_slope),
         sf_wdl_cp_draw_width=float(state.game.sf_wdl_cp_draw_width),
@@ -696,6 +759,7 @@ def _process_sf_results(
             )
             _attach_sf_target_to_last_record(
                 state, idx, p_sf=p_sf, a_idx=a_idx, res=res, legal_indices=legal_indices,
+                turn=_turn,
                 sf_wdl_use_cp_logistic=sf_wdl_use_cp_logistic,
                 sf_wdl_cp_slope=sf_wdl_cp_slope,
                 sf_wdl_cp_draw_width=sf_wdl_cp_draw_width,

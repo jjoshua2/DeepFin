@@ -46,6 +46,8 @@ class StockfishResult:
     pvs: list[StockfishPV]
     cp: int | None = None    # PV1 raw centipawn score
     mate: int | None = None  # PV1 raw mate-in-N
+    nodes: int | None = None  # nodes searched (last info line)
+    depth: int | None = None  # depth reached (last info line)
 
 
 def _int_after(parts: list[str], token: str) -> int | None:
@@ -250,6 +252,8 @@ class StockfishUCI:
             wdl_pv1 = None
             cp_pv1: int | None = None
             mate_pv1: int | None = None
+            nodes_seen: int | None = None
+            depth_seen: int | None = None
             pvs: dict[int, StockfishPV] = {}
             deadline = time.monotonic() + self.read_timeout_s
 
@@ -261,6 +265,13 @@ class StockfishUCI:
 
   # multipv index (default 1 if absent)
                     mpv = _int_after(parts, "multipv") or 1
+
+                    nodes_val = _int_after(parts, "nodes")
+                    if nodes_val is not None:
+                        nodes_seen = nodes_val
+                    depth_val = _int_after(parts, "depth")
+                    if depth_val is not None:
+                        depth_seen = max(depth_seen or 0, depth_val)
 
   # parse score (cp / mate) if present
                     cp_val, mate_val = _parse_score(parts)
@@ -298,4 +309,6 @@ class StockfishUCI:
                 pvs=pv_list,
                 cp=cp_pv1,
                 mate=mate_pv1,
+                nodes=nodes_seen,
+                depth=depth_seen,
             )

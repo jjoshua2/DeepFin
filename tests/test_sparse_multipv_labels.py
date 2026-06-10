@@ -1,0 +1,291 @@
+"""Sparse MultiPV label storage + train-time target rebuild.
+
+Parity contract: with params equal to the capture-time config, targets
+rebuilt from sf_multipv_raw/sf_label_meta match the stored ones to 1e-5.
+Default behavior (rebuild_sf_targets=False) is bitwise-unchanged.
+"""
+from __future__ import annotations
+
+import os
+
+from typing import Any, cast
+
+import numpy as np
+import pytest
+import torch
+
+from chess_anti_engine.replay.buffer import ReplaySample
+from chess_anti_engine.replay.shard import (
+    SF_CP_SENTINEL,
+    SF_MULTIPV_RAW_MAX,
+    arrays_to_samples,
+    samples_to_arrays,
+    validate_array_declarations,
+)
+from chess_anti_engine.train.target_builder import (
+    SfTargetParams,
+    rebuild_sf_policy_target,
+    rebuild_sf_targets_in_arrays,
+    rebuild_sf_wdl,
+)
+
+SF_CANDIDATES = [
+    "/home/josh/projects/chess/e2e_server/publish/stockfish",
+    "/usr/bin/stockfish",
+    "/usr/games/stockfish",
+]
+
+
+def _find_stockfish() -> str | None:
+    for p in SF_CANDIDATES:
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    return None
+
+
+SF_PATH = _find_stockfish()
+
+
+def test_shard_roundtrip_preserves_exact_ints():
+    pol = np.zeros(4672, np.float32)
+    pol[0] = 1.0
+    raw = np.full((SF_MULTIPV_RAW_MAX, 5), -1, np.int16)
+    raw[:, 1] = SF_CP_SENTINEL
+    raw[:, 2] = 0
+    raw[0] = (1857, 31999, 0, 870, 100)   # large cp must survive exactly
+    raw[1] = (12, SF_CP_SENTINEL, -5, -1, -1)
+    meta = np.array([50000, 24, -31999, 0, 870, 100], np.int32)
+    samples = [
+        ReplaySample(x=np.zeros((146, 8, 8), np.float32), policy_target=pol,
+                     wdl_target=0, sf_multipv_raw=raw, sf_label_meta=meta),
+        ReplaySample(x=np.zeros((146, 8, 8), np.float32), policy_target=pol,
+                     wdl_target=1),   # old-style sample: fields absent
+    ]
+    arrs = samples_to_arrays(samples)
+    validate_array_declarations(arrs)
+    back = arrays_to_samples(arrs)
+    assert back[0].sf_multipv_raw is not None
+    np.testing.assert_array_equal(back[0].sf_multipv_raw, raw)
+    assert back[0].sf_label_meta is not None
+    np.testing.assert_array_equal(back[0].sf_label_meta, meta)
+    assert back[1].sf_multipv_raw is None
+    assert back[1].sf_label_meta is None
+
+
+def _synthetic_rows() -> np.ndarray:
+    rows = np.full((SF_MULTIPV_RAW_MAX, 5), -1, np.int16)
+    rows[:, 1] = SF_CP_SENTINEL
+    rows[:, 2] = 0
+    rows[0] = (100, 50, 0, 600, 300)
+    rows[1] = (200, -20, 0, 450, 320)
+    rows[2] = (300, SF_CP_SENTINEL, 4, 990, 10)   # mate-in-4 line
+    return rows
+
+
+@pytest.mark.parametrize("use_logistic", [False, True])
+def test_rebuild_matches_live_construction_synthetic(use_logistic):
+    """Synthetic rows through both score paths must equal the live builder."""
+    from chess_anti_engine.selfplay.stockfish_turn import (
+        _build_sf_policy_target,
+        _pv_wdl_score,
+    )
+    from chess_anti_engine.stockfish.uci import StockfishPV
+
+    params = SfTargetParams(
+        sf_policy_temp=0.012, sf_policy_label_smooth=0.01,
+        sf_wdl_use_cp_logistic=use_logistic,
+        sf_wdl_cp_slope=0.010, sf_wdl_cp_draw_width=60.0,
+    )
+    rows = _synthetic_rows()
+    legal = np.array([100, 200, 300, 400], dtype=np.int64)
+
+    # live path: build pvs and run the production functions
+    cand_idxs, cand_scores = [], []
+    for move_idx, cp, mate, w, d in rows[rows[:, 0] >= 0].tolist():
+        pv = StockfishPV(
+            move_uci="0000",
+            wdl=None if w < 0 else np.array([w, d, 1000 - w - d], np.float32),
+            cp=None if cp == SF_CP_SENTINEL else int(cp),
+            mate=None if mate == 0 else int(mate),
+        )
+        score = _pv_wdl_score(
+            pv, sf_wdl_use_cp_logistic=use_logistic,
+            sf_wdl_cp_slope=0.010, sf_wdl_cp_draw_width=60.0,
+        )
+        assert score is not None
+        cand_idxs.append(int(move_idx))
+        cand_scores.append(score)
+    live = _build_sf_policy_target(
+        cand_idxs, cand_scores, legal_indices=legal,
+        sf_policy_temp=0.012, sf_policy_label_smooth=0.01,
+    )
+
+    rebuilt = rebuild_sf_policy_target(
+        rows, legal_indices=legal, policy_size=4672, params=params,
+    )
+    assert rebuilt is not None
+    np.testing.assert_allclose(rebuilt, live, atol=1e-5)
+
+
+def test_rebuild_sf_wdl_matches_live():
+    from chess_anti_engine.selfplay.stockfish_turn import _sf_result_wdl_for_record
+    from chess_anti_engine.stockfish.uci import StockfishResult
+
+    for use_logistic in (False, True):
+        params = SfTargetParams(sf_wdl_use_cp_logistic=use_logistic)
+        res = StockfishResult(
+            bestmove_uci="e2e4",
+            wdl=np.array([700, 200, 100], np.float32),
+            pvs=[], cp=35, mate=None,
+        )
+        live = _sf_result_wdl_for_record(
+            res, sf_wdl_use_cp_logistic=use_logistic,
+            sf_wdl_cp_slope=0.010, sf_wdl_cp_draw_width=60.0,
+        )
+        meta = np.array([1000, 10, 35, 0, 700, 200], np.int32)
+        rebuilt = rebuild_sf_wdl(meta, params)
+        assert live is not None and rebuilt is not None
+        np.testing.assert_allclose(rebuilt, live, atol=1e-5)
+
+
+@pytest.mark.skipif(SF_PATH is None, reason="Stockfish not found")
+def test_parity_through_real_stockfish_turn_path():
+    """Generate samples through the real selfplay+SF path (tiny nodes) and
+    assert stored targets == rebuilt targets with the capture params."""
+    from chess_anti_engine.model import ModelConfig, build_model
+    from chess_anti_engine.selfplay import play_batch
+    from chess_anti_engine.selfplay.config import (
+        DiffFocusConfig,
+        GameConfig,
+        SearchConfig,
+        TemperatureConfig,
+    )
+    from chess_anti_engine.stockfish import StockfishUCI
+
+    torch.manual_seed(0)
+    model = build_model(ModelConfig(
+        embed_dim=32, num_layers=1, num_heads=2, use_smolgen=False,
+    )).eval()
+    game = GameConfig(
+        max_plies=24, sf_policy_temp=0.012, sf_policy_label_smooth=0.01,
+        sf_wdl_use_cp_logistic=True, sf_wdl_cp_slope=0.010, sf_wdl_cp_draw_width=60.0,
+        categorical_bins=32, hlgauss_sigma=0.04,
+        selfplay_fraction=0.0,   # curriculum games => SF labels on every sample
+    )
+    assert SF_PATH is not None
+    sf = StockfishUCI(SF_PATH, nodes=100, multipv=4)
+    try:
+        samples, _stats = play_batch(
+            model, device="cpu", rng=np.random.default_rng(0), stockfish=sf, games=2,
+            temp=TemperatureConfig(temperature=1.0),
+            search=SearchConfig(simulations=4, mcts_type="gumbel"),
+            diff_focus=DiffFocusConfig(min_keep=1.0),
+            game=game,
+        )
+    finally:
+        sf.close()
+
+    params = SfTargetParams(
+        sf_policy_temp=game.sf_policy_temp,
+        sf_policy_label_smooth=game.sf_policy_label_smooth,
+        sf_wdl_use_cp_logistic=game.sf_wdl_use_cp_logistic,
+        sf_wdl_cp_slope=game.sf_wdl_cp_slope,
+        sf_wdl_cp_draw_width=game.sf_wdl_cp_draw_width,
+    )
+    checked_policy = 0
+    checked_wdl = 0
+    for s in samples:
+        if s.sf_multipv_raw is not None and s.sf_policy_target is not None:
+            assert s.sf_legal_mask is not None
+            rebuilt = rebuild_sf_policy_target(
+                s.sf_multipv_raw,
+                legal_indices=np.flatnonzero(s.sf_legal_mask),
+                policy_size=int(s.sf_policy_target.shape[0]),
+                params=params,
+            )
+            assert rebuilt is not None
+            np.testing.assert_allclose(rebuilt, s.sf_policy_target, atol=1e-5)
+            checked_policy += 1
+        if s.sf_label_meta is not None and s.sf_wdl is not None:
+            rebuilt_wdl = rebuild_sf_wdl(s.sf_label_meta, params)
+            assert rebuilt_wdl is not None
+            np.testing.assert_allclose(rebuilt_wdl, s.sf_wdl, atol=1e-5)
+            checked_wdl += 1
+    assert checked_policy >= 3, f"too few SF-labeled samples ({checked_policy})"
+    assert checked_wdl >= 3
+
+
+def test_arrays_rebuild_only_touches_sparse_rows():
+    pol = np.zeros((2, 4672), np.float16)
+    pol[0, 100] = 1.0
+    pol[1, 7] = 1.0
+    legal = np.zeros((2, 4672), np.uint8)
+    legal[0, [100, 200]] = 1
+    raw = np.full((2, SF_MULTIPV_RAW_MAX, 5), -1, np.int16)
+    raw[:, :, 1] = SF_CP_SENTINEL
+    raw[0, 0] = (100, 30, 0, 600, 300)
+    raw[0, 1] = (200, -10, 0, 500, 300)
+    arrs = {
+        "sf_policy_target": pol,
+        "sf_legal_mask": legal,
+        "sf_multipv_raw": raw,
+        "has_sf_multipv_raw": np.array([1, 0], np.uint8),
+        "sf_wdl": np.zeros((2, 3), np.float16),
+        "sf_label_meta": np.zeros((2, 6), np.int32),
+        "has_sf_label_meta": np.array([0, 0], np.uint8),
+    }
+    before_row1 = arrs["sf_policy_target"][1].copy()
+    out = rebuild_sf_targets_in_arrays(arrs, params=SfTargetParams(sf_policy_temp=0.012))
+    assert float(out["sf_policy_target"][0].astype(np.float32).sum()) == pytest.approx(1.0, abs=1e-3)
+    assert not np.array_equal(out["sf_policy_target"][0], pol[0])  # rebuilt
+    np.testing.assert_array_equal(out["sf_policy_target"][1], before_row1)  # untouched
+
+
+def test_trainer_default_is_bitwise_unchanged(monkeypatch):
+    """rebuild_sf_targets=False must never call the rebuilder, and the
+    sampled batch must be byte-identical to the pre-flag pipeline."""
+    from chess_anti_engine.model import ModelConfig, build_model
+    from chess_anti_engine.train import trainer as trainer_mod
+
+    calls = {"n": 0}
+
+    def _spy(arrs, *, params):  # noqa: ARG001 — signature mirrors the real fn
+        del params
+        calls["n"] += 1
+        return arrs
+
+    monkeypatch.setattr(trainer_mod, "rebuild_sf_targets_in_arrays", _spy)
+
+    torch.manual_seed(0)
+    model = build_model(ModelConfig(embed_dim=32, num_layers=1, num_heads=2, use_smolgen=False))
+    t = trainer_mod.Trainer(model, device="cpu", lr=1e-3)
+    assert t.rebuild_sf_targets is False
+
+    class _Buf:
+        rng = np.random.default_rng(0)
+
+        def sample_batch_arrays(self, batch_size, *, wdl_balance=True):
+            del wdl_balance
+            pol = np.zeros((batch_size, 4672), np.float16)
+            pol[:, 0] = 1.0
+            return {
+                "x": np.zeros((batch_size, 146, 8, 8), np.float16),
+                "policy_target": pol,
+                "wdl_target": np.zeros((batch_size,), np.int8),
+                "priority": np.ones((batch_size,), np.float32),
+                "has_policy": np.ones((batch_size,), np.uint8),
+            }
+
+    buf = cast(Any, _Buf())
+    out_default = t._sample_batch_host(buf, batch_size=2, mirror_prob=0.0)
+    assert calls["n"] == 0   # never invoked at the default
+
+    t.rebuild_sf_targets = True
+    t._sample_batch_host(buf, batch_size=2, mirror_prob=0.0)
+    assert calls["n"] == 1   # invoked exactly when enabled
+
+    t.rebuild_sf_targets = False
+    out_again = t._sample_batch_host(buf, batch_size=2, mirror_prob=0.0)
+    assert isinstance(out_default, dict) and isinstance(out_again, dict)
+    for k in out_default:
+        np.testing.assert_array_equal(out_default[k], out_again[k])

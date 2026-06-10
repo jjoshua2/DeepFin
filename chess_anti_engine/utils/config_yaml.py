@@ -165,7 +165,7 @@ _TRAIN_KEYS = (
     "aurora_polar_method", "aurora_polar_dtype", "aurora_polar_safety",
     "cosmos_rank", "cosmos_gamma",
     "lr", "batch_size", "train_steps", "train_window_fraction",
-    "no_amp", "feature_dropout_p",
+    "no_amp", "feature_dropout_p", "rebuild_sf_targets",
     "resid_channel_dropout", "resid_channel_balance_weight",
     "fdp_king_safety", "fdp_pins", "fdp_pawns", "fdp_mobility", "fdp_outposts",
     "w_volatility",

@@ -27,7 +27,27 @@ from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 
 from .buffer import ReplaySample
 
-SHARD_VERSION = 1
+SHARD_VERSION = 2  # v2: sparse MultiPV label storage (sf_multipv_raw/sf_label_meta)
+
+# Sparse MultiPV raw-label layout. Per SF-labeled sample we keep the exact
+# candidate list the targets were built from, so sf_policy_temp /
+# label-smoothing / cp->WDL params can be re-tuned offline
+# (train/target_builder.py) without a fresh live run.
+#   sf_multipv_raw: (SF_MULTIPV_RAW_MAX, 5) int16, one row per legal MultiPV
+#     line in rank order, padded with SF_MULTIPV_PAD_ROW:
+#       col 0: move policy index in the SHARD's policy encoding (-1 = pad)
+#       col 1: raw cp score clamped to +/-32000 (SF_CP_SENTINEL = no cp)
+#       col 2: mate distance, clamped to +/-127 (0 = no mate)
+#       col 3: native SF wdl W permille (-1 = absent)
+#       col 4: native SF wdl D permille (-1 = absent; L = 1000 - W - D)
+#   sf_label_meta: (6,) int32 for the record-level eval:
+#       [nodes (-1 unknown), depth (-1 unknown), eval_cp (SF_CP_SENTINEL),
+#        eval_mate (0 = none), eval_wdl_w (-1), eval_wdl_d (-1)]
+SF_MULTIPV_RAW_MAX = 48   # production sf_multipv is 40; cap with headroom
+SF_MULTIPV_RAW_COLS = 5
+SF_LABEL_META_LEN = 6
+SF_CP_SENTINEL = -32768
+SF_MULTIPV_PAD_ROW = (-1, SF_CP_SENTINEL, 0, -1, -1)
 LOCAL_SHARD_SUFFIX = ".zarr"
 LEGACY_SHARD_SUFFIX = ".npz"
 DEFAULT_MAX_SHARD_POSITIONS = 50_000
@@ -109,6 +129,9 @@ _OPTIONAL_FIELD_SPECS: tuple[_OptFieldSpec, ...] = (
     _OptFieldSpec("future_sf_regret_h50", "has_future_sf_regret_h50", (),         _F16),
     _OptFieldSpec("future_sf_regret_count", "has_future_sf_regret_count", (),     _I32_DT),
     _OptFieldSpec("sf_policy_target",     "has_sf_policy",         _POLICY_SHAPE, _F16),
+    _OptFieldSpec("sf_multipv_raw",       "has_sf_multipv_raw",
+                  (SF_MULTIPV_RAW_MAX, SF_MULTIPV_RAW_COLS), np.dtype(np.int16)),
+    _OptFieldSpec("sf_label_meta",        "has_sf_label_meta",     (SF_LABEL_META_LEN,), _I32_DT),
     _OptFieldSpec("moves_left",           "has_moves_left",        (),            _F16),
     _OptFieldSpec("is_network_turn",      "has_is_network_turn",   (),            _U8_DT),
     _OptFieldSpec("is_selfplay",          "has_is_selfplay",       (),            _U8_DT),
@@ -752,6 +775,13 @@ _VECTOR_FIELDS: tuple[tuple[str, str, str], ...] = (
     ("sf_volatility_target", "sf_volatility_target", "has_sf_volatility"),
     ("search_wdl",           "search_wdl",           "has_search_wdl"),
 )
+# Integer-valued vector fields keep their exact dtype (the generic
+# _VECTOR_FIELDS loop casts through float16, which corrupts ints > 2048).
+_INT_VECTOR_FIELDS: tuple[tuple[str, str, str], ...] = (
+    ("sf_multipv_raw", "sf_multipv_raw", "has_sf_multipv_raw"),
+    ("sf_label_meta",  "sf_label_meta",  "has_sf_label_meta"),
+)
+
 _VECTOR_EXPLICIT_HAS_ATTRS: dict[str, str] = {
     "future_policy_target": "has_future",
     "volatility_target": "has_volatility",
@@ -815,6 +845,11 @@ def samples_to_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
             v = getattr(s, src, None)
             if v is not None and _sample_has_vector_field(s, src):
                 arrs[target][i] = np.asarray(v, dtype=np.float16)
+                arrs[has][i] = 1
+        for src, target, has in _INT_VECTOR_FIELDS:
+            v = getattr(s, src, None)
+            if v is not None:
+                arrs[target][i] = np.asarray(v, dtype=arrs[target].dtype)
                 arrs[has][i] = 1
         for mk, hk in zip(LEGAL_MASK_FIELDS, LEGAL_MASK_HAS_FIELDS, strict=True):
             v = getattr(s, mk, None)
@@ -1048,6 +1083,10 @@ def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
             s.ply_index = int(opt["ply_index"][i])
         if opt["has_sf_wdl"][i]:
             s.sf_wdl = _copy_row(opt["sf_wdl"], i)
+        if opt["has_sf_multipv_raw"][i]:
+            s.sf_multipv_raw = _copy_row(opt["sf_multipv_raw"], i)
+        if opt["has_sf_label_meta"][i]:
+            s.sf_label_meta = _copy_row(opt["sf_label_meta"], i)
         if opt["has_sf_move"][i]:
             s.sf_move_index = int(opt["sf_move_index"][i])
         if opt["has_sf_played_move"][i]:
