@@ -42,6 +42,7 @@ def _warmup_evaluator(
     walker_gather: int = 1,
     input_history_encoding: str = "legacy",
     input_extra_features: str | None = None,
+    compute_relations: bool = False,
 ) -> None:
     """Trigger torch.compile + CUDA graph capture for the shapes the UCI
     search will actually hit, so the first `go` doesn't pay compile
@@ -71,10 +72,17 @@ def _warmup_evaluator(
     else:
   # Gumbel path: root eval at 1, bucket flushes at 128.
         batches = [1, 128]
+    rel_row = cb.compute_relations() if compute_relations else None
     for batch in batches:
         xs = np.broadcast_to(encoded, (batch, *encoded.shape)).astype(np.float32, copy=True)
         try:
-            evaluator.evaluate_encoded(xs)
+            if rel_row is None:
+                evaluator.evaluate_encoded(xs)
+            else:
+  # Warm WITH relations so compile/cudagraph captures the graph the
+  # real search will replay (relations change the traced forward).
+                rels = np.broadcast_to(rel_row, (batch, *rel_row.shape)).copy()
+                evaluator.evaluate_encoded(xs, relations=rels)
         except Exception:
             break
 
@@ -85,6 +93,7 @@ def _warmup_pucv_evaluator(
     gather: int,
     input_history_encoding: str = "legacy",
     input_extra_features: str | None = None,
+    compute_relations: bool = False,
 ) -> None:
     """Warm the exact inplace-async shapes used by MultiGpuPucvPool."""
     cb = CBoard.from_board(chess.Board())
@@ -93,13 +102,20 @@ def _warmup_pucv_evaluator(
         input_history_encoding=input_history_encoding,
         input_extra_features=input_extra_features,
     )
+    rel_row = cb.compute_relations() if compute_relations else None
     batches = sorted({1, max(1, int(gather))})
     for batch in batches:
         for slot in range(min(2, int(getattr(evaluator, "n_slots", 1)))):
             try:
                 buf = evaluator.get_input_buffer(batch, slot=slot)
                 buf[:] = np.broadcast_to(encoded, (batch, *encoded.shape))
-                _pol, _wdl, event = evaluator.evaluate_inplace_async(batch, slot=slot)
+                if rel_row is None:
+                    _pol, _wdl, event = evaluator.evaluate_inplace_async(batch, slot=slot)
+                else:
+                    rels = np.broadcast_to(rel_row, (batch, *rel_row.shape)).copy()
+                    _pol, _wdl, event = evaluator.evaluate_inplace_async(
+                        batch, slot=slot, relations=rels,
+                    )
                 if event is not None:
                     event.synchronize()
             except Exception:
@@ -137,6 +153,7 @@ def _make_evaluator_factory(
     """
     input_history_encoding = str(getattr(models[0], "input_history_encoding", "legacy"))
     input_extra_features = str(getattr(models[0], "input_extra_features", "v1"))
+    use_relations = bool(getattr(models[0], "use_dynamic_relations", False))
 
     def build(max_batch: int, eval_cache_entries: int = 0):
         if compile_mode:
@@ -178,6 +195,7 @@ def _make_evaluator_factory(
             evaluator, n_walkers=n_walkers, walker_gather=walker_gather,
             input_history_encoding=input_history_encoding,
             input_extra_features=input_extra_features,
+            compute_relations=use_relations,
         )
         return evaluator
     return build
@@ -196,6 +214,7 @@ def _make_multi_gpu_pucv_factory_builder(
     """
     input_history_encoding = str(getattr(models[0], "input_history_encoding", "legacy"))
     input_extra_features = str(getattr(models[0], "input_extra_features", "v1"))
+    use_relations = bool(getattr(models[0], "use_dynamic_relations", False))
 
     def build(max_batch: int, gather: int):
         effective_gather = min(max(1, int(gather)), int(max_batch))
@@ -219,6 +238,7 @@ def _make_multi_gpu_pucv_factory_builder(
                     gather=effective_gather,
                     input_history_encoding=input_history_encoding,
                     input_extra_features=input_extra_features,
+                    compute_relations=use_relations,
                 )
                 return evaluator
 
@@ -245,6 +265,7 @@ def _build_engine(
     input_history_encoding: str = "legacy",
     input_extra_features: str = "v1",
     policy_encoding: str = "az_4672",
+    compute_relations: bool = False,
     rebuild_evaluator=None,
     rebuild_multi_gpu_pucv_factories=None,
     options: EngineOptions | None = None,
@@ -259,6 +280,7 @@ def _build_engine(
             input_history_encoding=input_history_encoding,
             input_extra_features=input_extra_features,
             policy_encoding=policy_encoding,
+            compute_relations=compute_relations,
         ),
         chunk_sims=chunk_sims,
         n_walkers=n_walkers,
@@ -432,13 +454,11 @@ def main() -> int:
             input_history_encoding = str(getattr(models[0], "input_history_encoding", "legacy"))
             input_extra_features = str(getattr(models[0], "input_extra_features", "v1"))
             policy_encoding = str(getattr(models[0], "policy_encoding", "az_4672"))
-            if bool(getattr(models[0], "use_dynamic_relations", False)):
-  # UCI search paths don't transport relation matrices yet; the
-  # bias term is skipped (zero contribution). Evals therefore
-  # differ from training/selfplay forward passes.
+            use_dynamic_relations = bool(getattr(models[0], "use_dynamic_relations", False))
+            if use_dynamic_relations:
                 print(
-                    "info string WARNING: model uses dynamic relations; UCI "
-                    "search evaluates WITHOUT the relation bias",
+                    "info string model uses dynamic relations; transporting "
+                    "relation matrices through search",
                     flush=True,
                 )
             compile_mode = str(args.compile_mode) if args.compile else None
@@ -471,6 +491,7 @@ def main() -> int:
                 input_history_encoding=input_history_encoding,
                 input_extra_features=input_extra_features,
                 policy_encoding=policy_encoding,
+                compute_relations=use_dynamic_relations,
                 rebuild_evaluator=build_eval,
                 rebuild_multi_gpu_pucv_factories=build_pucv_factories,
                 options=startup_options,

@@ -486,3 +486,171 @@ def test_transport_check_rejects_puct_and_aot():
         check_dynamic_relations_transport(
             {"record_relations": True, "mcts": "gumbel",
              "distributed_worker_threaded": True})
+
+
+# ---------------------------------------------------------------------------
+# UCI search-path transport (PucvChunker / WalkerPool / MultiGpuPucvPool /
+# SearchWorker root eval)
+# ---------------------------------------------------------------------------
+
+
+class _RelRecordingInplaceEvaluator:
+    """Inplace-async fake that records the relations passed per submit."""
+
+    n_slots = 2
+
+    def __init__(self, max_batch: int = 64) -> None:
+        self.relations_seen: list[np.ndarray | None] = []
+        self._bufs = [
+            np.zeros((max_batch, 146, 8, 8), dtype=np.float32),
+            np.zeros((max_batch, 146, 8, 8), dtype=np.float32),
+        ]
+
+    def get_input_buffer(self, bsz: int, slot: int = 0) -> np.ndarray:
+        return self._bufs[slot][:bsz]
+
+    def evaluate_inplace_async(
+        self, bsz: int, *, slot: int = 0, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray, None]:
+        del slot
+        self.relations_seen.append(None if relations is None else relations.copy())
+        pol = np.zeros((bsz, 4672), dtype=np.float32)
+        wdl = np.zeros((bsz, 3), dtype=np.float32)
+        return pol, wdl, None
+
+
+class _RelRecordingEncodedEvaluator:
+    """evaluate_encoded fake that records the relations kwarg."""
+
+    def __init__(self) -> None:
+        self.relations_seen: list[np.ndarray | None] = []
+
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        self.relations_seen.append(None if relations is None else relations.copy())
+        n = int(np.asarray(x).shape[0])
+        return (
+            np.zeros((n, 4672), dtype=np.float32),
+            np.zeros((n, 3), dtype=np.float32),
+        )
+
+
+def _seeded_tree():
+    from chess_anti_engine.encoding._lc0_ext import CBoard
+    from chess_anti_engine.mcts._mcts_tree import MCTSTree
+
+    tree = MCTSTree()
+    tree.reserve(1024, 8192)
+    cb = CBoard.from_board(chess.Board())
+    rid = tree.add_root(0, 0.0)
+    legal = cb.legal_move_indices().astype(np.int32)
+    priors = np.full(legal.size, 1.0 / legal.size, dtype=np.float64)
+    tree.expand(rid, legal, priors)
+    return tree, rid, cb
+
+
+def test_pucv_chunker_transports_relations():
+    from chess_anti_engine.mcts.puct_vl import PucvChunker
+
+    ev = _RelRecordingInplaceEvaluator()
+    tree, rid, cb = _seeded_tree()
+    chunker = PucvChunker(ev, gather=8, compute_relations=True)
+    n = chunker.run(tree, rid, cb, 16)
+    assert n == 16
+    assert ev.relations_seen, "no NN submits recorded"
+    root_rel = cb.compute_relations()
+    saw_root_row = False
+    for rel in ev.relations_seen:
+        assert rel is not None, "submit without relations on relations-enabled chunker"
+        assert rel.shape[1:] == (RELATION_COUNT, 64, 64)
+        assert rel.dtype == np.uint8
+        # Depth-1 leaves of the startpos root: every leaf is one ply in, and
+        # the first batch's first descent lands on a child of the root, so at
+        # least one row must be a real (nonzero) relations matrix.
+        if any(np.asarray(r).any() for r in rel):
+            saw_root_row = True
+    assert saw_root_row
+    del root_rel
+
+
+def test_walker_pool_transports_relations():
+    import threading
+
+    from chess_anti_engine.uci.walker_pool import WalkerPool, WalkerPoolConfig
+
+    ev = _RelRecordingEncodedEvaluator()
+    tree, rid, cb = _seeded_tree()
+    pool = WalkerPool(
+        WalkerPoolConfig(
+            n_walkers=2, c_puct=1.4, fpu_at_root=0.0, fpu_reduction=0.2,
+            gather=4, compute_relations=True,
+        ),
+        ev,
+    )
+    try:
+        pool.run(
+            tree=tree, root_id=rid, root_cboard=cb,
+            target_sims=16, stop_event=threading.Event(),
+        )
+    finally:
+        pool.close()
+    assert ev.relations_seen
+    for rel in ev.relations_seen:
+        assert rel is not None
+        assert rel.shape[1:] == (RELATION_COUNT, 64, 64)
+        assert rel.dtype == np.uint8
+        assert np.asarray(rel).any()  # depth>=1 startpos leaves all have relations
+
+
+def test_multi_gpu_pucv_pool_transports_relations():
+    import threading
+
+    from chess_anti_engine.uci.multi_gpu_pucv_pool import (
+        MultiGpuPucvConfig,
+        MultiGpuPucvPool,
+    )
+
+    evs = [_RelRecordingInplaceEvaluator(), _RelRecordingInplaceEvaluator()]
+    tree, rid, cb = _seeded_tree()
+    pool = MultiGpuPucvPool(
+        MultiGpuPucvConfig(n_gpus=2, gather=8, compute_relations=True),
+        evaluators=evs,
+    )
+    try:
+        pool.run(
+            tree=tree, root_id=rid, root_cboard=cb,
+            target_sims=32, stop_event=threading.Event(),
+        )
+    finally:
+        pool.close()
+    seen = [rel for ev in evs for rel in ev.relations_seen]
+    assert seen
+    for rel in seen:
+        assert rel is not None
+        assert rel.shape[1:] == (RELATION_COUNT, 64, 64)
+        assert rel.dtype == np.uint8
+
+
+def test_search_worker_root_eval_passes_relations():
+    from chess_anti_engine.encoding._lc0_ext import CBoard
+    from chess_anti_engine.mcts.gumbel import GumbelConfig
+    from chess_anti_engine.uci.search import SearchWorker
+
+    ev = _RelRecordingEncodedEvaluator()
+    worker = SearchWorker(
+        ev,  # type: ignore[arg-type] — duck-typed fake
+        device="cpu",
+        gumbel_cfg=GumbelConfig(
+            simulations=4, add_noise=False, temperature=0.0,
+            compute_relations=True,
+        ),
+    )
+    board = chess.Board()
+    worker._ensure_root_eval_cached(board, None)  # noqa: SLF001
+    assert len(ev.relations_seen) == 1
+    rel = ev.relations_seen[0]
+    assert rel is not None and rel.shape == (1, RELATION_COUNT, 64, 64)
+    np.testing.assert_array_equal(
+        rel[0], CBoard.from_board(board).compute_relations(),
+    )

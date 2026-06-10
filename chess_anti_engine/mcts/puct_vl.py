@@ -26,6 +26,7 @@ from typing import Any
 import numpy as np
 
 from chess_anti_engine.encoding._lc0_ext import CBoard as _CBoard
+from chess_anti_engine.encoding.features import RELATION_COUNT
 from chess_anti_engine.inference_cache import PucvEvalCache, PucvEvalCacheStats
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
 
@@ -35,8 +36,10 @@ _MAX_LEGAL = 256
 _PLANES = 146
 
 
-def _alloc_buffers(gather: int, planes: int = _PLANES) -> dict[str, np.ndarray]:
-    return {
+def _alloc_buffers(
+    gather: int, planes: int = _PLANES, *, with_relations: bool = False,
+) -> dict[str, np.ndarray]:
+    bufs: dict[str, np.ndarray] = {
         "leaf_ids": np.empty(gather, dtype=np.int32),
         "path_buf": np.empty(gather * _MAX_PATH, dtype=np.int32),
         "path_lens": np.empty(gather, dtype=np.int32),
@@ -47,6 +50,13 @@ def _alloc_buffers(gather: int, planes: int = _PLANES) -> dict[str, np.ndarray]:
         "cache_keys": np.empty((gather, 2), dtype=np.uint64),
         "enc_rows": np.empty((gather, planes, 8, 8), dtype=np.float32),
     }
+    if with_relations:
+        # zeros (not empty): batch_descend_puct zeroes terminal rows itself,
+        # but a fresh buffer should never carry garbage into the model.
+        bufs["rel"] = np.zeros(
+            (gather, RELATION_COUNT, 64, 64), dtype=np.uint8,
+        )
+    return bufs
 
 
 class PucvChunker:
@@ -69,6 +79,7 @@ class PucvChunker:
         vloss_mode: int = 0,
         eval_cache_entries: int = 0,
         input_planes: int = _PLANES,
+        compute_relations: bool = False,
     ) -> None:
         if not hasattr(evaluator, "evaluate_inplace_async"):
             raise TypeError(
@@ -93,9 +104,10 @@ class PucvChunker:
   # Ping-pong CPU metadata buffer sets, one per slot. Encoding for slot
   # k goes into ev.get_input_buffer(_, slot=k); we don't dual that.
         self._planes = int(input_planes)
+        self._relations = bool(compute_relations)
         self._bufs = [
-            _alloc_buffers(self._gather, self._planes),
-            _alloc_buffers(self._gather, self._planes),
+            _alloc_buffers(self._gather, self._planes, with_relations=self._relations),
+            _alloc_buffers(self._gather, self._planes, with_relations=self._relations),
         ]
 
     def cache_stats(self) -> PucvEvalCacheStats | None:
@@ -136,6 +148,7 @@ class PucvChunker:
                 inp_np = inp.numpy() if hasattr(inp, "numpy") else inp
                 enc_view = np.asarray(inp_np).reshape(n, self._planes, 8, 8)
                 b = self._bufs[next_buf_idx]
+                rel = b["rel"] if self._relations else None
                 tree.batch_descend_puct(
                     root_id, root_cboard, n,
                     self._c_puct, self._fpu_root, self._fpu_red, self._vloss,
@@ -144,15 +157,19 @@ class PucvChunker:
                     b["legal_buf"], b["legal_lens"],
                     b["term_qs"], b["is_term"], self._vloss_mode,
                     b["cache_keys"] if self._cache is not None else None,
+                    rel,
                 )
                 if self._cache is None:
-                    next_handle = (
-                        "gpu_full", next_buf_idx, n,
-                        ev.evaluate_inplace_async(n, slot=next_slot),
-                    )
+                    if rel is None:
+                        handle = ev.evaluate_inplace_async(n, slot=next_slot)
+                    else:
+                        handle = ev.evaluate_inplace_async(
+                            n, slot=next_slot, relations=rel[:n],
+                        )
+                    next_handle = ("gpu_full", next_buf_idx, n, handle)
                 else:
                     next_handle = self._prepare_cached_submit(
-                        ev, next_slot, next_buf_idx, n, enc_view, b,
+                        ev, next_slot, next_buf_idx, n, enc_view, b, rel,
                     )
             else:
                 next_slot = -1
@@ -192,6 +209,7 @@ class PucvChunker:
         n: int,
         enc_view: np.ndarray,
         b: dict[str, np.ndarray],
+        rel: np.ndarray | None,
     ) -> tuple[Any, ...]:
         cache = self._cache
         assert cache is not None
@@ -213,7 +231,16 @@ class PucvChunker:
         miss_n = int(miss_idx.size)
         b["enc_rows"][:n] = enc_view[:n]
         enc_view[:miss_n] = enc_view[miss_idx]
-        handle = ev.evaluate_inplace_async(miss_n, slot=slot)
+        if rel is None:
+            handle = ev.evaluate_inplace_async(miss_n, slot=slot)
+        else:
+            # Compact relation rows alongside the encoding rows. Cache hits
+            # stay valid: relations are a pure function of the position, so
+            # position-keyed cached outputs already include the bias effect.
+            rel[:miss_n] = rel[miss_idx]
+            handle = ev.evaluate_inplace_async(
+                miss_n, slot=slot, relations=rel[:miss_n],
+            )
         return ("gpu_miss", buf_idx, n, miss_idx, hit_values, handle)
 
     def _finish_pending(

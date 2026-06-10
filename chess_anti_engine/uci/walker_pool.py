@@ -35,6 +35,7 @@ from typing import Protocol
 import numpy as np
 
 from chess_anti_engine.encoding._lc0_ext import CBoard as _CBoard
+from chess_anti_engine.encoding.features import RELATION_COUNT
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
 
 _log = logging.getLogger(__name__)
@@ -42,7 +43,7 @@ _log = logging.getLogger(__name__)
 
 class _Evaluator(Protocol):
     def evaluate_encoded(
-        self, x: np.ndarray,
+        self, x: np.ndarray, relations: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]: ...
 
 
@@ -60,6 +61,8 @@ class WalkerPoolConfig:
     gather: int = 1
   # Input channel count (146 v1 / 175 v2_threats); sized from the model.
     input_planes: int = 146
+  # Transport dynamic board-relation matrices per leaf (model.use_dynamic_relations).
+    compute_relations: bool = False
 
 
 @dataclass
@@ -178,6 +181,10 @@ class WalkerPool:
         vloss = cfg.vloss_weight
         gather = max(1, int(cfg.gather))
         enc = np.empty((gather, int(cfg.input_planes), 8, 8), dtype=np.float32)
+        rel = (
+            np.zeros((gather, RELATION_COUNT, 64, 64), dtype=np.uint8)
+            if cfg.compute_relations else None
+        )
         my_wake = self._wakes[idx]
 
         while True:
@@ -190,7 +197,7 @@ class WalkerPool:
                 continue
             try:
                 self._descend_until_done(
-                    job, enc, gather, c_puct, fpu_root, fpu_red, vloss,
+                    job, enc, rel, gather, c_puct, fpu_root, fpu_red, vloss,
                 )
             except Exception as exc:
                 _log.exception("walker thread raised; requesting pool stop")
@@ -199,7 +206,7 @@ class WalkerPool:
             self._done.wait()
 
     def _descend_until_done(
-        self, job: _Job, enc: np.ndarray, gather: int,
+        self, job: _Job, enc: np.ndarray, rel: np.ndarray | None, gather: int,
         c_puct: float, fpu_root: float, fpu_red: float, vloss: int,
     ) -> None:
         tree = job.tree
@@ -223,6 +230,7 @@ class WalkerPool:
                 _, path, legal, term_q = tree.walker_descend_puct(
                     root_id, root_cb, c_puct, fpu_root, fpu_red, vloss,
                     enc[i:i+1],
+                    rel[i:i+1] if rel is not None else None,
                 )
                 if term_q is not None:
                     tree.backprop(path, float(term_q))
@@ -239,9 +247,14 @@ class WalkerPool:
             n_pending = len(pending_slots)
             if n_pending == gather:
                 xs = enc[:n_pending]
+                rels = rel[:n_pending] if rel is not None else None
             else:
                 xs = enc[pending_slots]
-            pol, wdl_arr = evaluator.evaluate_encoded(xs)
+                rels = rel[pending_slots] if rel is not None else None
+            if rels is None:
+                pol, wdl_arr = evaluator.evaluate_encoded(xs)
+            else:
+                pol, wdl_arr = evaluator.evaluate_encoded(xs, relations=rels)
             for k in range(n_pending):
                 tree.walker_integrate_leaf(
                     pending_paths[k], pending_legals[k],

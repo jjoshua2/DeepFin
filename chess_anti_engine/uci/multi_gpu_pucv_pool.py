@@ -31,6 +31,7 @@ from typing import Any, Callable
 import numpy as np
 
 from chess_anti_engine.encoding._lc0_ext import CBoard as _CBoard
+from chess_anti_engine.encoding.features import RELATION_COUNT
 from chess_anti_engine.inference_cache import PucvEvalCache, PucvEvalCacheStats
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
 
@@ -53,6 +54,8 @@ class MultiGpuPucvConfig:
     eval_cache_entries: int = 0
   # Input channel count (146 v1 / 175 v2_threats); sized from the model.
     input_planes: int = _PLANES
+  # Transport dynamic board-relation matrices per leaf (model.use_dynamic_relations).
+    compute_relations: bool = False
 
 
 @dataclass(frozen=True)
@@ -115,8 +118,10 @@ class _Job:
     stop_event: threading.Event
 
 
-def _alloc_buffers(gather: int, planes: int = _PLANES) -> dict[str, np.ndarray]:
-    return {
+def _alloc_buffers(
+    gather: int, planes: int = _PLANES, *, with_relations: bool = False,
+) -> dict[str, np.ndarray]:
+    bufs: dict[str, np.ndarray] = {
         "leaf_ids": np.empty(gather, dtype=np.int32),
         "path_buf": np.empty(gather * _MAX_PATH, dtype=np.int32),
         "path_lens": np.empty(gather, dtype=np.int32),
@@ -127,6 +132,11 @@ def _alloc_buffers(gather: int, planes: int = _PLANES) -> dict[str, np.ndarray]:
         "cache_keys": np.empty((gather, 2), dtype=np.uint64),
         "enc_rows": np.empty((gather, planes, 8, 8), dtype=np.float32),
     }
+    if with_relations:
+        bufs["rel"] = np.zeros(
+            (gather, RELATION_COUNT, 64, 64), dtype=np.uint8,
+        )
+    return bufs
 
 
 class MultiGpuPucvPool:
@@ -360,8 +370,14 @@ class MultiGpuPucvPool:
   # Per-worker buffer ping-pong (one set per slot). Encoding lands
   # directly in the evaluator's pinned input via get_input_buffer.
         bufs = [
-            _alloc_buffers(gather, int(cfg.input_planes)),
-            _alloc_buffers(gather, int(cfg.input_planes)),
+            _alloc_buffers(
+                gather, int(cfg.input_planes),
+                with_relations=bool(cfg.compute_relations),
+            ),
+            _alloc_buffers(
+                gather, int(cfg.input_planes),
+                with_relations=bool(cfg.compute_relations),
+            ),
         ]
         my_wake = self._wakes[idx]
 
@@ -425,6 +441,7 @@ class MultiGpuPucvPool:
                 inp_np = inp.numpy() if hasattr(inp, "numpy") else inp
                 enc_view = np.asarray(inp_np).reshape(n, int(cfg.input_planes), 8, 8)
                 b = bufs[next_local]
+                rel = b["rel"] if cfg.compute_relations else None
                 tree.batch_descend_puct(
                     root_id, root_cb, n, c_puct, fpu_root, fpu_red, vloss,
                     enc_view,
@@ -432,13 +449,14 @@ class MultiGpuPucvPool:
                     b["legal_buf"], b["legal_lens"],
                     b["term_qs"], b["is_term"], vloss_mode,
                     b["cache_keys"] if self._cache is not None else None,
+                    rel,
                 )
                 batches += 1
                 leaves += n
                 max_batch = max(max_batch, n)
                 terminal_leaves += int(b["is_term"][:n].sum())
                 next_handle = self._prepare_submit(
-                    evaluator, next_slot, next_local, n, enc_view, b,
+                    evaluator, next_slot, next_local, n, enc_view, b, rel,
                 )
             else:
                 next_handle = None
@@ -476,14 +494,17 @@ class MultiGpuPucvPool:
         n: int,
         enc_view: np.ndarray,
         b: dict[str, np.ndarray],
+        rel: np.ndarray | None,
     ) -> tuple[Any, ...]:
         cache = self._cache
         if cache is None:
-            return (
-                "gpu_full", buf_idx, n,
-                evaluator.evaluate_inplace_async(n, slot=slot),
-                time.perf_counter(),
-            )
+            if rel is None:
+                handle = evaluator.evaluate_inplace_async(n, slot=slot)
+            else:
+                handle = evaluator.evaluate_inplace_async(
+                    n, slot=slot, relations=rel[:n],
+                )
+            return ("gpu_full", buf_idx, n, handle, time.perf_counter())
 
         hit_values: dict[int, tuple[np.ndarray, np.ndarray]] = {}
         miss_indices: list[int] = []
@@ -503,9 +524,19 @@ class MultiGpuPucvPool:
         miss_n = int(miss_idx.size)
         b["enc_rows"][:n] = enc_view[:n]
         enc_view[:miss_n] = enc_view[miss_idx]
+        if rel is None:
+            handle = evaluator.evaluate_inplace_async(miss_n, slot=slot)
+        else:
+            # Compact relation rows alongside the encoding rows. Cache hits
+            # stay valid: relations are a pure function of the position, so
+            # position-keyed cached outputs already include the bias effect.
+            rel[:miss_n] = rel[miss_idx]
+            handle = evaluator.evaluate_inplace_async(
+                miss_n, slot=slot, relations=rel[:miss_n],
+            )
         return (
             "gpu_miss", buf_idx, n, miss_idx, hit_values,
-            evaluator.evaluate_inplace_async(miss_n, slot=slot),
+            handle,
             time.perf_counter(),
         )
 
