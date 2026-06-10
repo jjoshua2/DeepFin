@@ -36,6 +36,7 @@ import datetime
 import hashlib
 import json
 import math
+import shlex
 import subprocess
 import sys
 import time
@@ -176,15 +177,24 @@ def load_paired_openings(
     boards: list[chess.Board] = []
     seen: set[str] = set()
     attempts = 0
+    duplicates = 0
     max_attempts = max(1000, 50 * n_pairs)
     while len(boards) < n_pairs:
         board = sample_starting_board(rng=rng, cfg=cfg).board
         attempts += 1
         key = board.epd()
-        if key in seen and attempts < max_attempts:
-            continue
+        if key in seen:
+            if attempts < max_attempts:
+                continue
+            duplicates += 1
         seen.add(key)
         boards.append(board)
+    if duplicates:
+        print(
+            f"[arena] WARNING: opening book ran out of unique openings; "
+            f"{duplicates}/{n_pairs} pairs reuse an opening. Duplicate pairs "
+            f"are correlated samples, so the reported CI is overconfident."
+        )
     return boards
 
 
@@ -213,10 +223,10 @@ def play_paired_games_matched_sims(
     only differs in pinning the starting boards and keeping per-game results.
     """
     from chess_anti_engine.selfplay.match import (
-        _apply_actions_to_boards,
-        _pick_moves_for_boards,
-        _result_from_a_pov,
-        _split_active_by_side_to_move,
+        apply_actions_to_boards,
+        pick_moves_for_boards,
+        result_from_a_pov,
+        split_active_by_side_to_move,
     )
 
     boards: list[chess.Board] = []
@@ -229,14 +239,21 @@ def play_paired_games_matched_sims(
 
     g = len(boards)
     done = [False] * g
-    for _ply in range(int(max_plies)):
+    t0 = time.time()
+    for ply in range(int(max_plies)):
         for i in range(g):
             if not done[i] and boards[i].is_game_over(claim_draw=True):
                 done[i] = True
         active = [i for i in range(g) if not done[i]]
         if not active:
             break
-        a_to_move, b_to_move = _split_active_by_side_to_move(
+        if ply and ply % 20 == 0:
+            print(
+                f"[arena] ply {ply}: {g - len(active)}/{g} games finished "
+                f"({time.time() - t0:.0f}s)",
+                flush=True,
+            )
+        a_to_move, b_to_move = split_active_by_side_to_move(
             active, boards, a_plays_white,
         )
         for model, idxs, sims in (
@@ -245,18 +262,18 @@ def play_paired_games_matched_sims(
         ):
             if not idxs:
                 continue
-            actions = _pick_moves_for_boards(
+            actions = pick_moves_for_boards(
                 model, [boards[i] for i in idxs],
                 device=device, rng=rng,
                 mcts_type="gumbel", mcts_simulations=int(sims),
                 temperature=float(temperature), c_puct=2.5,
                 gumbel_add_noise=bool(gumbel_add_noise),
             )
-            _apply_actions_to_boards(boards, idxs, actions)
+            apply_actions_to_boards(boards, idxs, actions)
 
     game_scores = [
         {1: 1.0, 0: 0.5, -1: 0.0}[
-            _result_from_a_pov(
+            result_from_a_pov(
                 boards[i].result(claim_draw=True),
                 a_is_white=bool(a_plays_white[i]),
             )
@@ -288,7 +305,11 @@ def play_paired_games_matched_time(
     limit = chess.engine.Limit(time=float(ms_per_move) / 1000.0)
 
     def engine_cmd(ckpt: str) -> str:
-        cmd = f"{sys.executable} -m chess_anti_engine.uci --checkpoint {ckpt} --device {device}"
+  # _open_engine shlex-splits the command, so quote anything path-like.
+        cmd = (
+            f"{shlex.quote(sys.executable)} -m chess_anti_engine.uci "
+            f"--checkpoint {shlex.quote(ckpt)} --device {shlex.quote(device)}"
+        )
         if uci_args:
             cmd = f"{cmd} {uci_args}"
         return cmd
@@ -310,6 +331,7 @@ def play_paired_games_matched_time(
                     enforce_nodes_w=False, enforce_nodes_b=False,
                     max_plies=int(max_plies),
                     start_board=opening,
+                    game=(pair_idx, a_is_white),
                 )
                 scores.append(_score_for_a(record.result, a_is_white=a_is_white))
             pair_scores.append(scores[0] + scores[1])
@@ -322,7 +344,10 @@ def play_paired_games_matched_time(
     finally:
         for eng in (eng_a, eng_b):
             if eng is not None:
-                eng.quit()
+                try:
+                    eng.quit()
+                except chess.engine.EngineError:
+                    pass  # already dead (e.g. crashed mid-match); keep closing the other
     return pair_scores
 
 

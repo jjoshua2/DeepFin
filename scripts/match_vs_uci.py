@@ -395,8 +395,9 @@ def _play_node_limited(
     board: chess.Board,
     *,
     nodes: int,
+    game: object = None,
 ) -> MoveResult:
-    analysis = eng.analysis(board, chess.engine.Limit(), info=chess.engine.INFO_ALL)
+    analysis = eng.analysis(board, chess.engine.Limit(), game=game, info=chess.engine.INFO_ALL)
     deadline = time.monotonic() + _node_timeout_s(nodes)
     best_from_pv: chess.Move | None = None
     latest_info: dict[str, Any] = {}
@@ -445,10 +446,11 @@ def _play_move(
     limit: chess.engine.Limit,
     *,
     enforce_nodes: bool,
+    game: object = None,
 ) -> MoveResult:
     if enforce_nodes and limit.nodes is not None:
-        return _play_node_limited(eng, board, nodes=int(limit.nodes))
-    result = eng.play(board, limit, info=chess.engine.INFO_ALL)
+        return _play_node_limited(eng, board, nodes=int(limit.nodes), game=game)
+    result = eng.play(board, limit, game=game, info=chess.engine.INFO_ALL)
     return MoveResult(result.move, dict(result.info))
 
 
@@ -469,8 +471,14 @@ def play_one_game(
     move_callback: Callable[[MoveRecord], None] | None = None,
     syzygy_adjudicator: Any | None = None,
     syzygy_adjudicate_max_pieces: int = 7,
+    game: object = None,
 ) -> GameRecord:
-    """Play one game. Result string is in {"1-0","0-1","1/2-1/2"}."""
+    """Play one game. Result string is in {"1-0","0-1","1/2-1/2"}.
+
+    ``game`` is the python-chess game identifier: a new value triggers
+    ``ucinewgame`` on both engines, so hash/tree state doesn't leak between
+    games of a match.
+    """
     board = chess.Board() if start_board is None else start_board.copy(stack=False)
     initial = board.copy(stack=False)
     clock_mode = clock_base_w_ms is not None or clock_base_b_ms is not None
@@ -507,7 +515,7 @@ def play_one_game(
             limit = limit_w if white_to_move else limit_b
             enforce_nodes = enforce_nodes_w if white_to_move else enforce_nodes_b
         started = time.monotonic()
-        move_result = _play_move(eng, board, limit, enforce_nodes=enforce_nodes)
+        move_result = _play_move(eng, board, limit, enforce_nodes=enforce_nodes, game=game)
         elapsed_s = time.monotonic() - started
         move = move_result.move
         info = move_result.info
@@ -592,6 +600,7 @@ def _play_one_pairing(
     move_callback: Callable[[MoveRecord], None] | None,
     syzygy_adjudicator: Any | None,
     syzygy_adjudicate_max_pieces: int,
+    game: object = None,
 ) -> GameRecord:
     return play_one_game(
         white.engine,
@@ -609,6 +618,7 @@ def _play_one_pairing(
         move_callback=move_callback,
         syzygy_adjudicator=syzygy_adjudicator,
         syzygy_adjudicate_max_pieces=syzygy_adjudicate_max_pieces,
+        game=game,
     )
 
 
@@ -898,6 +908,7 @@ def main() -> None:
                     ),
                     syzygy_adjudicator=tb_adjudicator,
                     syzygy_adjudicate_max_pieces=args.syzygy_adjudicate_max_pieces,
+                    game=i + 1,
                 )
                 result = record.result
                 plies = record.plies
