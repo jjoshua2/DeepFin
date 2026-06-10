@@ -18,6 +18,7 @@ from typing import Any, Protocol, cast
 import numpy as np
 import torch
 
+from chess_anti_engine.encoding import input_plane_count
 from chess_anti_engine.model import (
     ModelConfig,
     build_model,
@@ -28,6 +29,17 @@ from chess_anti_engine.moves import COMPACT_POLICY_SIZE, COMPACT_TO_FULL_POLICY
 from chess_anti_engine.utils.amp import inference_autocast
 
 log = logging.getLogger(__name__)
+
+# Input/output tensor shape constants shared by evaluators, slot layouts and
+# pinned buffers. _CHANNELS is the v1 default (146 = 112 LC0 + 34 extra);
+# v2_threats paths pass their own channel count explicitly.
+_CHANNELS = 146
+_BOARD_H = 8
+_BOARD_W = 8
+_POLICY_SIZE = 4672
+_WDL_SIZE = 3
+_F32 = np.float32
+_F32_BYTES = 4
 
 # ---------------------------------------------------------------------------
 # Protocol
@@ -324,16 +336,17 @@ class DirectGPUEvaluator(LocalModelEvaluator):
 
         _pin = self._use_cuda
         self._input_bf16 = bool(input_bf16 and self._use_cuda and use_amp)
+        _channels = input_plane_count(getattr(model, "input_extra_features", None))
         self._pinned_inputs: list[torch.Tensor] = [
             torch.empty(
-                (self._max_batch, _CHANNELS, _BOARD_H, _BOARD_W),
+                (self._max_batch, _channels, _BOARD_H, _BOARD_W),
                 dtype=torch.float32, pin_memory=_pin,
             ) for _ in range(self._n_slots)
         ]
         self._pinned_inputs_bf16: list[torch.Tensor] | None = (
             [
                 torch.empty(
-                    (self._max_batch, _CHANNELS, _BOARD_H, _BOARD_W),
+                    (self._max_batch, _channels, _BOARD_H, _BOARD_W),
                     dtype=torch.bfloat16, pin_memory=True,
                 ) for _ in range(self._n_slots)
             ]
@@ -861,9 +874,11 @@ class AOTEvaluator:
         *,
         device: str = "cuda",
         max_batch: int = 512,
+        input_planes: int = _CHANNELS,
     ) -> None:
         self.device = str(device)
         self._max_batch = int(max_batch)
+        self._input_planes = int(input_planes)
         aot_dir = Path(aot_dir)
 
   # Load compiled models in parallel (CUDA driver is thread-safe for loading).
@@ -889,11 +904,11 @@ class AOTEvaluator:
   # Pre-allocate pinned buffers
         _pin = self.device.startswith("cuda")
         self._pinned_input = torch.empty(
-            (self._max_batch, _CHANNELS, _BOARD_H, _BOARD_W),
+            (self._max_batch, self._input_planes, _BOARD_H, _BOARD_W),
             dtype=torch.bfloat16, pin_memory=_pin,
         )
         self._pinned_input_np = np.empty(
-            (self._max_batch, _CHANNELS, _BOARD_H, _BOARD_W),
+            (self._max_batch, self._input_planes, _BOARD_H, _BOARD_W),
             dtype=np.float32,
         )
 
@@ -994,13 +1009,6 @@ _MODE_DENSE_F32 = 0
 _MODE_DENSE_BF16 = 1
 _MODE_LEGAL_BF16 = 2
 
-_CHANNELS = 146
-_BOARD_H = 8
-_BOARD_W = 8
-_POLICY_SIZE = 4672
-_WDL_SIZE = 3
-_F32 = np.float32
-_F32_BYTES = 4
 
 _HEADER_BYTES = 8  # 1 byte state + 1 byte mode + 2 pad + 4 byte batch_size
 
@@ -1008,6 +1016,7 @@ _HEADER_BYTES = 8  # 1 byte state + 1 byte mode + 2 pad + 4 byte batch_size
 @dataclass(frozen=True)
 class _SlotLayout:
     max_batch: int
+    channels: int
     input_offset: int
     input_bytes: int
     policy_offset: int
@@ -1017,8 +1026,8 @@ class _SlotLayout:
     total_bytes: int
 
     @staticmethod
-    def compute(max_batch: int) -> _SlotLayout:
-        ib = max_batch * _CHANNELS * _BOARD_H * _BOARD_W * _F32_BYTES
+    def compute(max_batch: int, channels: int = _CHANNELS) -> _SlotLayout:
+        ib = max_batch * channels * _BOARD_H * _BOARD_W * _F32_BYTES
         pb = max_batch * _POLICY_SIZE * _F32_BYTES
         wb = max_batch * _WDL_SIZE * _F32_BYTES
         io = _HEADER_BYTES
@@ -1026,6 +1035,7 @@ class _SlotLayout:
         wo = po + pb
         return _SlotLayout(
             max_batch=max_batch,
+            channels=channels,
             input_offset=io,
             input_bytes=ib,
             policy_offset=po,
@@ -1052,13 +1062,13 @@ class _InferenceSlot:
         assert shm.buf is not None  # attached SharedMemory always has a buffer
         self._buf = shm.buf
         self.input: np.ndarray = np.ndarray(
-            (layout.max_batch, _CHANNELS, _BOARD_H, _BOARD_W),
+            (layout.max_batch, layout.channels, _BOARD_H, _BOARD_W),
             dtype=_F32,
             buffer=self._buf,
             offset=layout.input_offset,
         )
         self.input_bf16_bits: np.ndarray = np.ndarray(
-            (layout.max_batch, _CHANNELS, _BOARD_H, _BOARD_W),
+            (layout.max_batch, layout.channels, _BOARD_H, _BOARD_W),
             dtype=np.uint16,
             buffer=self._buf,
             offset=layout.input_offset,
@@ -1152,6 +1162,7 @@ class SlotBroker:
         batch_wait_ms: float,
         slot_prefix: str,
         compile_mode: str = "reduce-overhead",
+        input_planes: int = _CHANNELS,
     ) -> None:
         self.publish_dir = Path(publish_dir)
         self.device = str(device)
@@ -1166,7 +1177,7 @@ class SlotBroker:
         self._manifest_cache_sig: tuple[int, int] | None = None
         self._timing_metrics: dict[str, float] | None = None
 
-        self._layout = _SlotLayout.compute(max_batch_per_slot)
+        self._layout = _SlotLayout.compute(max_batch_per_slot, int(input_planes))
         self._slots: list[_InferenceSlot] = []
         self._slot_names: list[str] = []
 
@@ -1174,11 +1185,11 @@ class SlotBroker:
         _total_cap = num_slots * max_batch_per_slot
         _pin = "cuda" in self.device and torch.cuda.is_available()
         self._pinned_input = torch.empty(
-            (_total_cap, _CHANNELS, _BOARD_H, _BOARD_W),
+            (_total_cap, int(input_planes), _BOARD_H, _BOARD_W),
             dtype=torch.float32, pin_memory=_pin,
         )
         self._pinned_input_bf16 = torch.empty(
-            (_total_cap, _CHANNELS, _BOARD_H, _BOARD_W),
+            (_total_cap, int(input_planes), _BOARD_H, _BOARD_W),
             dtype=torch.bfloat16, pin_memory=_pin,
         )
         self._pinned_pol = torch.empty(
@@ -1623,9 +1634,10 @@ class SlotInferenceClient:
         slot_name: str,
         max_batch: int,
         request_timeout_s: float = 30.0,
+        input_planes: int = _CHANNELS,
     ) -> None:
         self._slot_name = str(slot_name)
-        self._layout = _SlotLayout.compute(max_batch)
+        self._layout = _SlotLayout.compute(max_batch, int(input_planes))
         self._shm: SharedMemory | None = None
         self._slot: _InferenceSlot | None = None
         self._request_timeout_s = max(0.001, float(request_timeout_s))
@@ -1670,7 +1682,7 @@ class SlotInferenceClient:
         with self._lock:
             return self._evaluate_encoded_locked(x)
 
-    def _evaluate_encoded_locked(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def _evaluate_encoded_locked(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:  # skylos: ignore — called from evaluate_encoded above
         if x.dtype == np.uint16:
             xb = _coerce_bf16_bits_batch(x)
             request_mode = _MODE_DENSE_BF16
@@ -1816,6 +1828,7 @@ class MultiSlotInferenceClient:
         slot_names: list[str],
         max_batch: int,
         request_timeout_s: float = 30.0,
+        input_planes: int = _CHANNELS,
     ) -> None:
         names = [str(n).strip() for n in slot_names if str(n).strip()]
         if not names:
@@ -1825,6 +1838,7 @@ class MultiSlotInferenceClient:
                 slot_name=name,
                 max_batch=max_batch,
                 request_timeout_s=request_timeout_s,
+                input_planes=input_planes,
             )
             for name in names
         ]
@@ -1971,6 +1985,7 @@ class SharedSlotBroker:
         compile_inference: bool,
         batch_wait_ms: float,
         compile_mode: str = "reduce-overhead",
+        input_planes: int = _CHANNELS,
     ) -> None:
         self.server_root = Path(server_root)
         self.slots_per_trial = int(slots_per_trial)
@@ -1980,7 +1995,7 @@ class SharedSlotBroker:
         self.batch_wait_ms = float(batch_wait_ms)
         self._stop = False
 
-        self._layout = _SlotLayout.compute(max_batch_per_slot)
+        self._layout = _SlotLayout.compute(max_batch_per_slot, int(input_planes))
 
   # Per-trial model instances on separate CUDA streams for parallel execution.
   # All share one CUDA context + compiled kernel cache (~13GB total)
@@ -2342,6 +2357,7 @@ def main() -> int:
         ap.add_argument("--batch-wait-ms", type=float, default=0.0)
         ap.add_argument("--slots-per-trial", type=int, default=2)
         ap.add_argument("--max-batch-per-slot", type=int, default=256)
+        ap.add_argument("--input-planes", type=int, default=_CHANNELS)
         ap.add_argument("--shared-cache-dir", type=str, default=None)
         args = ap.parse_args()
     else:
@@ -2354,6 +2370,7 @@ def main() -> int:
         ap.add_argument("--num-slots", type=int, default=2)
         ap.add_argument("--max-batch-per-slot", type=int, default=256)
         ap.add_argument("--slot-prefix", type=str, required=True)
+        ap.add_argument("--input-planes", type=int, default=_CHANNELS)
         ap.add_argument("--shared-cache-dir", type=str, default=None)
         args = ap.parse_args()
         args.mode = "per-trial"
@@ -2371,6 +2388,7 @@ def main() -> int:
             compile_inference=bool(args.compile_inference),
             batch_wait_ms=float(args.batch_wait_ms),
             compile_mode=str(args.compile_mode),
+            input_planes=int(args.input_planes),
         )
         try:
             broker.serve_forever()
@@ -2390,6 +2408,7 @@ def main() -> int:
         batch_wait_ms=float(args.batch_wait_ms),
         slot_prefix=str(args.slot_prefix),
         compile_mode=str(args.compile_mode),
+        input_planes=int(args.input_planes),
     )
 
     manifest_path = Path(args.publish_dir).expanduser() / "broker_slots.json"

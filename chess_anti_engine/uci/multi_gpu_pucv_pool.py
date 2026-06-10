@@ -51,6 +51,8 @@ class MultiGpuPucvConfig:
     vloss_weight: int = 3
     vloss_mode: int = 0
     eval_cache_entries: int = 0
+  # Input channel count (146 v1 / 175 v2_threats); sized from the model.
+    input_planes: int = _PLANES
 
 
 @dataclass(frozen=True)
@@ -113,7 +115,7 @@ class _Job:
     stop_event: threading.Event
 
 
-def _alloc_buffers(gather: int) -> dict[str, np.ndarray]:
+def _alloc_buffers(gather: int, planes: int = _PLANES) -> dict[str, np.ndarray]:
     return {
         "leaf_ids": np.empty(gather, dtype=np.int32),
         "path_buf": np.empty(gather * _MAX_PATH, dtype=np.int32),
@@ -123,7 +125,7 @@ def _alloc_buffers(gather: int) -> dict[str, np.ndarray]:
         "term_qs": np.empty(gather, dtype=np.float64),
         "is_term": np.empty(gather, dtype=np.int8),
         "cache_keys": np.empty((gather, 2), dtype=np.uint64),
-        "enc_rows": np.empty((gather, _PLANES, 8, 8), dtype=np.float32),
+        "enc_rows": np.empty((gather, planes, 8, 8), dtype=np.float32),
     }
 
 
@@ -357,7 +359,10 @@ class MultiGpuPucvPool:
 
   # Per-worker buffer ping-pong (one set per slot). Encoding lands
   # directly in the evaluator's pinned input via get_input_buffer.
-        bufs = [_alloc_buffers(gather), _alloc_buffers(gather)]
+        bufs = [
+            _alloc_buffers(gather, int(cfg.input_planes)),
+            _alloc_buffers(gather, int(cfg.input_planes)),
+        ]
         my_wake = self._wakes[idx]
 
         while True:
@@ -418,7 +423,7 @@ class MultiGpuPucvPool:
                 next_slot = next_local  # slot 0/1 on this worker's evaluator
                 inp = evaluator.get_input_buffer(n, slot=next_slot)
                 inp_np = inp.numpy() if hasattr(inp, "numpy") else inp
-                enc_view = np.asarray(inp_np).reshape(n, _PLANES, 8, 8)
+                enc_view = np.asarray(inp_np).reshape(n, int(cfg.input_planes), 8, 8)
                 b = bufs[next_local]
                 tree.batch_descend_puct(
                     root_id, root_cb, n, c_puct, fpu_root, fpu_red, vloss,

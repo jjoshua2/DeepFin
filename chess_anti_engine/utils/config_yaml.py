@@ -144,6 +144,7 @@ _MODEL_PASSTHROUGH = (
     "embed_dim", "num_layers", "num_heads", "embed_dim_by_layer", "ffn_mult", "ffn_mult_by_layer",
     "use_nla", "gradient_checkpointing",
     "input_pos_encoding", "qkv_projection", "use_deepnorm", "policy_encoding", "input_history_encoding",
+    "input_extra_features",
     "use_qk_rmsnorm",
     "input_global_embedding", "input_global_embedding_channels", "input_square_embedding",
     "smolgen_mode", "smolgen_pooling", "smolgen_hidden_channels", "smolgen_hidden_sz",

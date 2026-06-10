@@ -11,4 +11,5 @@ def compute_extra_features(
     king_sq_them: int,
     turn_white: bool | int,
     ep_square: int,
+    n_extra: int = 34,
 ) -> NDArray[np.float32]: ...

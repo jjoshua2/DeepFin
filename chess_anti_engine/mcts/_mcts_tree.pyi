@@ -121,6 +121,7 @@ def batch_process_ply(
     df_min: float,
     df_slope: float,
     input_history_lc0_root: int = ...,
+    n_extra: int = ...,
 ) -> tuple[
     NDArray[np.float32],  # x
     NDArray[np.float32],  # probs

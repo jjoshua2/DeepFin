@@ -23,6 +23,7 @@ import numpy as np
 import torch
 
 from chess_anti_engine.encoding._lc0_ext import CBoard
+from chess_anti_engine.encoding import input_plane_count
 from chess_anti_engine.encoding.lc0 import (
     LC0_HISTORY_ROOT_LEGACY_META,
     c_input_history_mode,
@@ -282,12 +283,13 @@ def run_gumbel_root_many_c(
         wdl_logits_batch = wdl_t.numpy()
     else:
         batch_enc, batch_enc_bf16 = _batch_encoders(cfg.input_history_encoding)
+        _n_planes = input_plane_count(cfg.input_extra_features)
         if _has_input_bf16 and hasattr(eval_impl, "evaluate_encoded"):
             assert batch_enc_bf16 is not None
-            xs = np.empty((n_boards, 146, 8, 8), dtype=np.uint16)
+            xs = np.empty((n_boards, _n_planes, 8, 8), dtype=np.uint16)
             batch_enc_bf16(root_cboards, xs)
         else:
-            xs = np.empty((n_boards, 146, 8, 8), dtype=np.float32)
+            xs = np.empty((n_boards, _n_planes, 8, 8), dtype=np.float32)
             batch_enc(root_cboards, xs)
         if _has_async:
             pol_t, wdl_t, event = _async_eval.evaluate_encoded_async(xs)
@@ -497,7 +499,7 @@ def run_gumbel_root_many_c(
             ]
         else:
             _enc_bufs = [
-                np.empty((_leaf_cap, 146, 8, 8), dtype=np.float32)
+                np.empty((_leaf_cap, input_plane_count(cfg.input_extra_features), 8, 8), dtype=np.float32)
                 for _ in range(2)
             ]
 
@@ -742,7 +744,10 @@ def run_gumbel_root_many_c(
                 _enc_buf = eval_impl.get_input_buffer(_cap, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
         else:
             _enc_dtype = np.uint16 if _use_input_bf16 else np.float32
-            _enc_buf = np.empty((_max_leaves_per_rep * 2, 146, 8, 8), dtype=_enc_dtype)
+            _enc_buf = np.empty(
+                (_max_leaves_per_rep * 2, input_plane_count(cfg.input_extra_features), 8, 8),
+                dtype=_enc_dtype,
+            )
         _root_ids_arr = np.array(root_ids, dtype=np.int32)
         _budget_arr = np.array(budget_remaining, dtype=np.int32)
         _root_qs_arr = np.array(root_qs, dtype=np.float64)

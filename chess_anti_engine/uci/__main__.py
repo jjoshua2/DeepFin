@@ -41,6 +41,7 @@ def _warmup_evaluator(
     n_walkers: int = 1,
     walker_gather: int = 1,
     input_history_encoding: str = "legacy",
+    input_extra_features: str | None = None,
 ) -> None:
     """Trigger torch.compile + CUDA graph capture for the shapes the UCI
     search will actually hit, so the first `go` doesn't pay compile
@@ -57,7 +58,11 @@ def _warmup_evaluator(
     same error and surface it there.
     """
     cb = CBoard.from_board(chess.Board())
-    encoded = encode_cboard(cb, input_history_encoding=input_history_encoding)
+    encoded = encode_cboard(
+        cb,
+        input_history_encoding=input_history_encoding,
+        input_extra_features=input_extra_features,
+    )
     if n_walkers > 1:
   # batch=1 covers the pre-gather single-descent phase (e.g. when
   # budget runs out mid-gather). walker_gather is the per-walker
@@ -67,7 +72,7 @@ def _warmup_evaluator(
   # Gumbel path: root eval at 1, bucket flushes at 128.
         batches = [1, 128]
     for batch in batches:
-        xs = np.broadcast_to(encoded, (batch, 146, 8, 8)).astype(np.float32, copy=True)
+        xs = np.broadcast_to(encoded, (batch, *encoded.shape)).astype(np.float32, copy=True)
         try:
             evaluator.evaluate_encoded(xs)
         except Exception:
@@ -79,16 +84,21 @@ def _warmup_pucv_evaluator(
     *,
     gather: int,
     input_history_encoding: str = "legacy",
+    input_extra_features: str | None = None,
 ) -> None:
     """Warm the exact inplace-async shapes used by MultiGpuPucvPool."""
     cb = CBoard.from_board(chess.Board())
-    encoded = encode_cboard(cb, input_history_encoding=input_history_encoding)
+    encoded = encode_cboard(
+        cb,
+        input_history_encoding=input_history_encoding,
+        input_extra_features=input_extra_features,
+    )
     batches = sorted({1, max(1, int(gather))})
     for batch in batches:
         for slot in range(min(2, int(getattr(evaluator, "n_slots", 1)))):
             try:
                 buf = evaluator.get_input_buffer(batch, slot=slot)
-                buf[:] = np.broadcast_to(encoded, (batch, 146, 8, 8))
+                buf[:] = np.broadcast_to(encoded, (batch, *encoded.shape))
                 _pol, _wdl, event = evaluator.evaluate_inplace_async(batch, slot=slot)
                 if event is not None:
                     event.synchronize()
@@ -126,6 +136,7 @@ def _make_evaluator_factory(
     evaluator path.
     """
     input_history_encoding = str(getattr(models[0], "input_history_encoding", "legacy"))
+    input_extra_features = str(getattr(models[0], "input_extra_features", "v1"))
 
     def build(max_batch: int, eval_cache_entries: int = 0):
         if compile_mode:
@@ -166,6 +177,7 @@ def _make_evaluator_factory(
         _warmup_evaluator(
             evaluator, n_walkers=n_walkers, walker_gather=walker_gather,
             input_history_encoding=input_history_encoding,
+            input_extra_features=input_extra_features,
         )
         return evaluator
     return build
@@ -183,6 +195,7 @@ def _make_multi_gpu_pucv_factory_builder(
     worker thread that will replay cudagraphs during search.
     """
     input_history_encoding = str(getattr(models[0], "input_history_encoding", "legacy"))
+    input_extra_features = str(getattr(models[0], "input_extra_features", "v1"))
 
     def build(max_batch: int, gather: int):
         effective_gather = min(max(1, int(gather)), int(max_batch))
@@ -205,6 +218,7 @@ def _make_multi_gpu_pucv_factory_builder(
                     evaluator,
                     gather=effective_gather,
                     input_history_encoding=input_history_encoding,
+                    input_extra_features=input_extra_features,
                 )
                 return evaluator
 
@@ -229,6 +243,7 @@ def _build_engine(
     eval_cache_entries: int,
     use_multi_gpu_pucv: bool,
     input_history_encoding: str = "legacy",
+    input_extra_features: str = "v1",
     policy_encoding: str = "az_4672",
     rebuild_evaluator=None,
     rebuild_multi_gpu_pucv_factories=None,
@@ -242,6 +257,7 @@ def _build_engine(
             topk=topk,
             add_noise=False,
             input_history_encoding=input_history_encoding,
+            input_extra_features=input_extra_features,
             policy_encoding=policy_encoding,
         ),
         chunk_sims=chunk_sims,
@@ -414,6 +430,7 @@ def main() -> int:
             walker_gather = max(1, int(args.walker_gather))
             models = _load_models(args.checkpoint, devices)
             input_history_encoding = str(getattr(models[0], "input_history_encoding", "legacy"))
+            input_extra_features = str(getattr(models[0], "input_extra_features", "v1"))
             policy_encoding = str(getattr(models[0], "policy_encoding", "az_4672"))
             compile_mode = str(args.compile_mode) if args.compile else None
             build_eval = _make_evaluator_factory(
@@ -443,6 +460,7 @@ def main() -> int:
                 eval_cache_entries=startup_options.eval_cache_entries,
                 use_multi_gpu_pucv=use_multi_gpu_pucv,
                 input_history_encoding=input_history_encoding,
+                input_extra_features=input_extra_features,
                 policy_encoding=policy_encoding,
                 rebuild_evaluator=build_eval,
                 rebuild_multi_gpu_pucv_factories=build_pucv_factories,

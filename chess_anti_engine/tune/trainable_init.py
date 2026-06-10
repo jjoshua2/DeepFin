@@ -14,6 +14,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from chess_anti_engine.encoding import input_plane_count
 from chess_anti_engine.model import (
     load_state_dict_tolerant,
     reinit_volatility_head_parameters_,
@@ -506,6 +507,7 @@ def _init_replay_buffers(
         current_window,
         shard_dir=replay_shard_dir,
         rng=rng,
+        input_planes=input_plane_count(tc.input_extra_features),
         shuffle_cap=tc.shuffle_buffer_size,
         shard_size=tc.shard_size,
         refresh_interval=tc.shuffle_refresh_interval,

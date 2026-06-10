@@ -1,3 +1,52 @@
+"""Extra (non-LC0) input feature planes.
+
+Two versions exist, selected by ``model.input_extra_features``:
+
+- ``v1``: the original 34 planes (positional half of a Stockfish-style eval)
+- ``v2_threats``: v1 plus 29 threat-family planes appended AFTER index 34.
+  Existing planes are never reordered or renumbered.
+
+Plane layout (indices within the extra block; absolute index = 112 + idx):
+
+| idx     | family                | contents                                          |
+|---------|-----------------------|---------------------------------------------------|
+| [0:10]  | king-zone safety (v1) | per side: king zone + N/B/R/Q attacker overlaps   |
+| [10:16] | pins (v1)             | per side: pinned, pin rays, discovered attackers  |
+| [16:24] | pawn structure (v1)   | per side: passed, isolated, backward, connected   |
+| [24:30] | mobility (v1)         | per piece type: normalized move counts at source  |
+| [30:34] | outposts (v1)         | per side: outpost squares, space control          |
+| [34]    | attacks (v2)          | all squares attacked by us (union over types)     |
+| [35]    | attacks (v2)          | all squares attacked by them                      |
+| [36:42] | attacks (v2)          | squares attacked by our P, N, B, R, Q, K          |
+| [42:48] | attacks (v2)          | squares attacked by their P, N, B, R, Q, K        |
+| [48]    | attackers (v2)        | our attacker count per square (/4, clamped to 1)  |
+| [49]    | attackers (v2)        | their attacker count per square (/4, clamped)     |
+| [50]    | hanging (v2)          | our pieces attacked by them and undefended by us  |
+| [51]    | hanging (v2)          | their pieces attacked by us and undefended        |
+| [52]    | threats (v2)          | our N/B/R/Q attacked by a strictly cheaper piece  |
+| [53]    | threats (v2)          | their N/B/R/Q attacked by a strictly cheaper piece|
+| [54:58] | safe checks (v2)      | side to move: safe N, B, R, Q check-origin squares|
+| [58]    | control (v2)          | (our − their attacker count)/4, clamped to [-1,1] |
+| [59]    | pawn tension (v2)     | our pawns that can capture an enemy pawn          |
+| [60]    | pawn tension (v2)     | their pawns that can capture one of our pawns     |
+| [61]    | pawn storm (v2)       | enemy pawns on files around OUR king, scaled by   |
+|         |                       | rank closeness to the king (1 − rank_dist/7)      |
+| [62]    | pawn storm (v2)       | our pawns storming THEIR king, same scaling       |
+
+Semantics notes:
+- All planes are side-to-move oriented (``bitboards_to_planes(..., turn)``).
+- Attack maps / attacker counts are direct attacks at current occupancy
+  (no x-rays); pawn attacks are capture squares only (no en passant).
+- "Defended" in the hanging planes means attacked by any friendly piece.
+- Cheaper-attacker classes: pawn → N/B/R/Q, minor → R/Q, rook → Q.
+- Safe checks follow Stockfish semantics: squares a piece of ours could
+  check the enemy king from (slider attacks from the king square at current
+  occupancy) that are neither attacked by the enemy nor occupied by us.
+  Computed for the side to move only.
+
+The C twin of this layout lives in ``_features_impl.h`` — keep both tables
+in sync (tests/test_threat_planes.py enforces value parity).
+"""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -6,6 +55,34 @@ import chess
 import numpy as np
 
 from chess_anti_engine.utils.bitboards import bitboards_to_planes
+
+EXTRA_FEATURES_V1 = "v1"
+EXTRA_FEATURES_V2_THREATS = "v2_threats"
+EXTRA_FEATURE_VERSIONS = (EXTRA_FEATURES_V1, EXTRA_FEATURES_V2_THREATS)
+
+_EXTRA_FEATURE_PLANES = {
+    EXTRA_FEATURES_V1: 34,
+    EXTRA_FEATURES_V2_THREATS: 63,
+}
+
+
+def normalize_extra_features_encoding(value: str | None) -> str:
+    """Map a config value to a canonical extra-features version (default v1)."""
+    if value is None:
+        return EXTRA_FEATURES_V1
+    v = str(value).strip().lower()
+    if v in ("", "v1", "legacy"):
+        return EXTRA_FEATURES_V1
+    if v in ("v2", "v2_threats"):
+        return EXTRA_FEATURES_V2_THREATS
+    raise ValueError(
+        f"unknown input_extra_features {value!r}; expected one of {EXTRA_FEATURE_VERSIONS}"
+    )
+
+
+def extra_feature_plane_count(version: str | None = None) -> int:
+    """Number of extra feature planes for a (possibly unnormalized) version."""
+    return _EXTRA_FEATURE_PLANES[normalize_extra_features_encoding(version)]
 
 try:
     from chess_anti_engine.encoding._features_ext import (
@@ -339,14 +416,17 @@ _MOBILITY_MAX = {
 
 
 
-def extra_feature_planes_c(board: chess.Board) -> np.ndarray:
-    """C-accelerated version: returns (34, 8, 8) float32 directly.
+def extra_feature_planes_c(
+    board: chess.Board, *, version: str | None = None,
+) -> np.ndarray:
+    """C-accelerated version: returns (n_extra, 8, 8) float32 directly.
 
-    Extracts bitboards from python-chess Board and delegates all 34 planes
+    Extracts bitboards from python-chess Board and delegates all planes
     to the native C extension.
     """
     turn = board.turn
     us, them = turn, not turn
+    n_extra = extra_feature_plane_count(version)
 
   # Build uint64[6] arrays for each side: PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING
     piece_types = (chess.PAWN, chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN, chess.KING)
@@ -365,7 +445,10 @@ def extra_feature_planes_c(board: chess.Board) -> np.ndarray:
     turn_white = turn == chess.WHITE
     ep_square = board.ep_square if board.ep_square is not None else -1
 
-    return _c_compute(pieces_us, pieces_them, occupied, king_sq_us, king_sq_them, turn_white, ep_square)
+    return _c_compute(
+        pieces_us, pieces_them, occupied, king_sq_us, king_sq_them,
+        turn_white, ep_square, n_extra,
+    )
 
 
 def _collect_king_safety_bitboards(board: chess.Board, us: bool, them: bool) -> list[int]:
@@ -418,9 +501,48 @@ def _pawn_mobility_count(
     return mobility
 
 
-def _fill_mobility_planes(board: chess.Board, *, turn: chess.Color, out: np.ndarray) -> None:
+class _AttackAccum:
+    """Per-color attack maps + per-square attacker counts.
+
+    Harvested from the mobility pass so the v2 threat planes reuse the
+    attack computations instead of recomputing them.
+    """
+
+    __slots__ = ("by_type", "counts")
+
+    def __init__(self) -> None:
+        self.by_type: dict[chess.Color, dict[chess.PieceType, int]] = {
+            chess.WHITE: {pt: 0 for pt in chess.PIECE_TYPES},
+            chess.BLACK: {pt: 0 for pt in chess.PIECE_TYPES},
+        }
+        self.counts: dict[chess.Color, np.ndarray] = {
+            chess.WHITE: np.zeros(64, dtype=np.int32),
+            chess.BLACK: np.zeros(64, dtype=np.int32),
+        }
+
+    def add(self, color: chess.Color, pt: chess.PieceType, attacks: int) -> None:
+        self.by_type[color][pt] |= attacks
+        counts = self.counts[color]
+        for sq in chess.scan_forward(attacks):
+            counts[sq] += 1
+
+    def union(self, color: chess.Color) -> int:
+        bb = 0
+        for mask in self.by_type[color].values():
+            bb |= mask
+        return bb
+
+
+def _fill_mobility_planes(
+    board: chess.Board, *, turn: chess.Color, out: np.ndarray,
+    attack_accum: _AttackAccum | None = None,
+) -> None:
     """Fill out[24:30] in place. Each piece type's plane carries that piece's
-    move-count (normalized by _MOBILITY_MAX[pt]) at its source square."""
+    move-count (normalized by _MOBILITY_MAX[pt]) at its source square.
+
+    When ``attack_accum`` is given (v2_threats), the per-piece attack masks
+    this pass already computes are also ORed into the accumulator.
+    """
     orient_coords = _ORIENT_COORDS[turn]
     occ = int(board.occupied)
     ep_mask = int(chess.BB_SQUARES[board.ep_square]) if board.ep_square is not None else 0
@@ -433,11 +555,15 @@ def _fill_mobility_planes(board: chess.Board, *, turn: chess.Color, out: np.ndar
             opp_occ = int(board.occupied_co[not color])
             for sq in chess.scan_forward(int(board.pieces_mask(pt, color))):
                 if pt == chess.PAWN:
+                    attacks = int(chess.BB_PAWN_ATTACKS[color][sq])
                     mobility = _pawn_mobility_count(
                         sq, color=color, occ=occ, opp_occ=opp_occ, ep_mask=ep_mask,
                     )
                 else:
-                    mobility = chess.popcount(board.attacks_mask(sq) & ~own_occ)
+                    attacks = int(board.attacks_mask(sq))
+                    mobility = chess.popcount(attacks & ~own_occ)
+                if attack_accum is not None:
+                    attack_accum.add(color, pt, attacks)
                 row, col = orient_coords[sq]
                 plane[row, col] = np.float32(float(mobility) / max_m)
 
@@ -469,17 +595,147 @@ def _collect_outpost_bitboards(board: chess.Board, us: bool, them: bool) -> list
     return bbs
 
 
-def extra_feature_planes_fast(board: chess.Board) -> np.ndarray:
-    """Optimized version: returns (34, 8, 8) float32 directly.
+def _slider_attacks(sq: int, occ: int, *, diagonal: bool) -> int:
+    if diagonal:
+        return int(chess.BB_DIAG_ATTACKS[sq][chess.BB_DIAG_MASKS[sq] & occ])
+    return int(
+        chess.BB_RANK_ATTACKS[sq][chess.BB_RANK_MASKS[sq] & occ]
+        | chess.BB_FILE_ATTACKS[sq][chess.BB_FILE_MASKS[sq] & occ]
+    )
+
+
+def _oriented_value_plane(values: np.ndarray, *, turn: chess.Color) -> np.ndarray:
+    """(64,) per-square values → side-to-move oriented (8, 8) float32."""
+    plane = values.reshape(8, 8).astype(np.float32)
+    if turn == chess.WHITE:
+        return plane
+    return plane[::-1, :].copy()
+
+
+def _pawn_tension(board: chess.Board, color: chess.Color) -> int:
+    """Pawns of ``color`` that can capture an enemy pawn (no en passant)."""
+    enemy_pawns = int(board.pieces_mask(chess.PAWN, not color))
+    tension = 0
+    for sq in chess.scan_forward(int(board.pieces_mask(chess.PAWN, color))):
+        if chess.BB_PAWN_ATTACKS[color][sq] & enemy_pawns:
+            tension |= chess.BB_SQUARES[sq]
+    return tension
+
+
+def _pawn_storm_values(board: chess.Board, defender: chess.Color) -> np.ndarray:
+    """Per-square value of enemy pawns storming ``defender``'s king.
+
+    Enemy pawns on the king file ±1 score ``1 − rank_dist(pawn, king)/7``;
+    everything else is 0.
+    """
+    values = np.zeros(64, dtype=np.float32)
+    king_sq = board.king(defender)
+    if king_sq is None:
+        return values
+    kf = chess.square_file(king_sq)
+    kr = chess.square_rank(king_sq)
+    for sq in chess.scan_forward(int(board.pieces_mask(chess.PAWN, not defender))):
+        if abs(chess.square_file(sq) - kf) <= 1:
+            values[sq] = 1.0 - abs(chess.square_rank(sq) - kr) / 7.0
+    return values
+
+
+def _fill_threat_planes(
+    board: chess.Board, *, turn: chess.Color, out: np.ndarray, accum: _AttackAccum,
+) -> None:
+    """Fill the v2 threat planes out[34:63] from the mobility-pass attacks."""
+    us, them = turn, not turn
+    by_us = accum.by_type[us]
+    by_them = accum.by_type[them]
+    all_us = accum.union(us)
+    all_them = accum.union(them)
+    us_occ = int(board.occupied_co[us])
+    them_occ = int(board.occupied_co[them])
+    occ = int(board.occupied)
+
+    att_order = (chess.PAWN, chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN, chess.KING)
+    out[34:48] = bitboards_to_planes(
+        [all_us, all_them]
+        + [by_us[pt] for pt in att_order]
+        + [by_them[pt] for pt in att_order],
+        turn=turn,
+    )
+
+  # min(count, 7) mirrors the C path's 3-bit saturating counters; the count
+  # planes clamp at 4 and the margin at ±4, so the cap is lossless there.
+    counts_us = np.minimum(accum.counts[us], 7).astype(np.float32)
+    counts_them = np.minimum(accum.counts[them], 7).astype(np.float32)
+    out[48] = _oriented_value_plane(np.clip(counts_us / 4.0, 0.0, 1.0), turn=turn)
+    out[49] = _oriented_value_plane(np.clip(counts_them / 4.0, 0.0, 1.0), turn=turn)
+
+    def pieces(pt: chess.PieceType, color: chess.Color) -> int:
+        return int(board.pieces_mask(pt, color))
+
+    def cheaper_attacked(victim_color: chess.Color, attacker_maps: dict) -> int:
+        n = pieces(chess.KNIGHT, victim_color)
+        b = pieces(chess.BISHOP, victim_color)
+        r = pieces(chess.ROOK, victim_color)
+        q = pieces(chess.QUEEN, victim_color)
+        return (
+            ((n | b | r | q) & attacker_maps[chess.PAWN])
+            | ((r | q) & (attacker_maps[chess.KNIGHT] | attacker_maps[chess.BISHOP]))
+            | (q & attacker_maps[chess.ROOK])
+        )
+
+    hanging_us = us_occ & all_them & ~all_us
+    hanging_them = them_occ & all_us & ~all_them
+    out[50:54] = bitboards_to_planes(
+        [
+            hanging_us,
+            hanging_them,
+            cheaper_attacked(us, by_them),
+            cheaper_attacked(them, by_us),
+        ],
+        turn=turn,
+    )
+
+  # Safe checks for the side to move: squares an N/B/R/Q of ours could check
+  # the enemy king from (attacks projected FROM the king square at current
+  # occupancy), excluding squares the enemy attacks or that we occupy.
+    king_sq_them = board.king(them)
+    if king_sq_them is None:
+        check_n = check_b = check_r = check_q = 0
+    else:
+        check_n = int(chess.BB_KNIGHT_ATTACKS[king_sq_them])
+        check_b = _slider_attacks(king_sq_them, occ, diagonal=True)
+        check_r = _slider_attacks(king_sq_them, occ, diagonal=False)
+        check_q = check_b | check_r
+    safe = ~all_them & ~us_occ & chess.BB_ALL
+    out[54:58] = bitboards_to_planes(
+        [check_n & safe, check_b & safe, check_r & safe, check_q & safe],
+        turn=turn,
+    )
+
+    out[58] = _oriented_value_plane(
+        np.clip((counts_us - counts_them) / 4.0, -1.0, 1.0), turn=turn,
+    )
+
+    out[59:61] = bitboards_to_planes(
+        [_pawn_tension(board, us), _pawn_tension(board, them)], turn=turn,
+    )
+
+    out[61] = _oriented_value_plane(_pawn_storm_values(board, us), turn=turn)
+    out[62] = _oriented_value_plane(_pawn_storm_values(board, them), turn=turn)
+
+
+def extra_feature_planes_fast(
+    board: chess.Board, *, version: str | None = None,
+) -> np.ndarray:
+    """Optimized version: returns (n_extra, 8, 8) float32 directly.
 
     Collects all bitboard masks first, converts in a single batch operation,
-    then fills in the mobility planes (float values) separately.
-
-    Layout: [0:10] king safety, [10:16] pins, [16:24] pawns, [24:30] mobility, [30:34] outpost
+    then fills in the mobility planes (float values) separately. See the
+    module docstring for the plane layout.
     """
     turn = board.turn
     us, them = turn, not turn
-    out = np.zeros((34, 8, 8), dtype=np.float32)
+    n_extra = extra_feature_plane_count(version)
+    out = np.zeros((n_extra, 8, 8), dtype=np.float32)
 
     bbs: list[int] = []
     bbs.extend(_collect_king_safety_bitboards(board, us, them))
@@ -492,6 +748,10 @@ def extra_feature_planes_fast(board: chess.Board) -> np.ndarray:
     assert len(bbs) == 24
     out[:24] = bitboards_to_planes(bbs, turn=turn)
 
-    _fill_mobility_planes(board, turn=turn, out=out)
+    accum = _AttackAccum() if n_extra > 34 else None
+    _fill_mobility_planes(board, turn=turn, out=out, attack_accum=accum)
     out[30:34] = bitboards_to_planes(_collect_outpost_bitboards(board, us, them), turn=turn)
+
+    if accum is not None:
+        _fill_threat_planes(board, turn=turn, out=out, accum=accum)
     return out

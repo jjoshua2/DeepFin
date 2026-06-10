@@ -14,6 +14,7 @@ from typing import Any
 
 import numpy as np
 
+from chess_anti_engine.encoding import input_plane_count
 from chess_anti_engine.model import ModelConfig, model_config_to_manifest_dict
 from chess_anti_engine.moves import policy_size_for_encoding
 from chess_anti_engine.replay import ArrayReplayBuffer, DiskReplayBuffer
@@ -333,6 +334,7 @@ def _publish_distributed_trial_state(
         "sf_policy_label_smooth": float(config.get("sf_policy_label_smooth", 0.05)),
         "policy_encoding": str(model_cfg.policy_encoding),
         "input_history_encoding": str(config.get("input_history_encoding", "legacy")),
+        "input_extra_features": str(model_cfg.input_extra_features),
         "record_lc0_root_input": bool(config.get("record_lc0_root_input", False)),
         "sf_wdl_use_cp_logistic": bool(config.get("sf_wdl_use_cp_logistic", False)),
         "sf_wdl_cp_slope": float(config.get("sf_wdl_cp_slope", 0.010)),
@@ -379,10 +381,11 @@ def _publish_distributed_trial_state(
         },
         "recommended_worker": recommended_worker,
         "encoding": {
-            "input_planes": 146,
+            "input_planes": int(input_plane_count(model_cfg.input_extra_features)),
             "policy_size": int(policy_size_for_encoding(model_cfg.policy_encoding)),
             "policy_encoding": str(model_cfg.policy_encoding),
             "input_history_encoding": str(config.get("input_history_encoding", "legacy")),
+            "input_extra_features": str(model_cfg.input_extra_features),
         },
         "model": {
             "sha256": str(model_sha),
@@ -635,6 +638,8 @@ def _build_distributed_worker_cmd(
                 str(slot_name),
                 "--inference-slot-max-batch",
                 str(max_batch),
+                "--inference-slot-input-planes",
+                str(input_plane_count(config.get("input_extra_features"))),
             ]
         )
 
@@ -752,6 +757,7 @@ def _launch_inference_broker(
             * _resolve_slots_per_worker(config)
         ),
         "--max-batch-per-slot", str(_resolve_max_batch_per_slot(config)),
+        "--input-planes", str(input_plane_count(config.get("input_extra_features"))),
         "--device", str(config.get("distributed_worker_device") or config.get("device", "cpu")),
         "--batch-wait-ms", str(float(config.get("distributed_inference_batch_wait_ms", 5.0))),
         "--compile-mode", _resolve_inference_compile_mode(config),
@@ -811,6 +817,7 @@ def launch_shared_inference_broker(
             * _resolve_slots_per_worker(config)
         ),
         "--max-batch-per-slot", str(_resolve_max_batch_per_slot(config)),
+        "--input-planes", str(input_plane_count(config.get("input_extra_features"))),
         "--device", str(config.get("distributed_worker_device") or config.get("device", "cpu")),
         "--batch-wait-ms", str(float(config.get("distributed_inference_batch_wait_ms", 0.0))),
         "--compile-mode", _resolve_inference_compile_mode(config),
