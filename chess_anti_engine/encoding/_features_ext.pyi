@@ -13,3 +13,12 @@ def compute_extra_features(
     ep_square: int,
     n_extra: int = 34,
 ) -> NDArray[np.float32]: ...
+
+def compute_relation_matrices(
+    pieces_us: NDArray[np.uint64],
+    pieces_them: NDArray[np.uint64],
+    occupied: int,
+    king_sq_us: int,
+    king_sq_them: int,
+    turn_white: bool | int,
+) -> NDArray[np.uint8]: ...

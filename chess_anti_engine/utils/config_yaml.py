@@ -137,6 +137,7 @@ _SELFPLAY_KEYS = (
     "diff_focus_slope", "diff_focus_min",
     "categorical_bins", "hlgauss_sigma",
     "record_lc0_root_input",
+    "record_relations",
 )
 
 # model section: mostly 1:1 except kind→model and use_smolgen→no_smolgen (inverted).
@@ -145,6 +146,7 @@ _MODEL_PASSTHROUGH = (
     "use_nla", "gradient_checkpointing",
     "input_pos_encoding", "qkv_projection", "use_deepnorm", "policy_encoding", "input_history_encoding",
     "input_extra_features",
+    "use_dynamic_relations", "dynamic_relation_count", "policy_dynamic_relations",
     "use_qk_rmsnorm",
     "input_global_embedding", "input_global_embedding_channels", "input_square_embedding",
     "smolgen_mode", "smolgen_pooling", "smolgen_hidden_channels", "smolgen_hidden_sz",

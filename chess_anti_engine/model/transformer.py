@@ -198,11 +198,15 @@ class AttentionPolicyHead(nn.Module):
         self.register_buffer("promo_from", promo_from, persistent=False)
         self.promo_from = cast(torch.Tensor, self._buffers["promo_from"])
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, ft_bias: torch.Tensor | None = None) -> torch.Tensor:
         b = x.shape[0]
         q = self.q(x)
         k = self.k(x)
         logits_ft = (q @ k.transpose(-1, -2)) * self.scale * torch.exp(self.log_temp)  # (B,64,64)
+        if ft_bias is not None:
+  # Dynamic-relation bias on the raw from->to logits (zero-init weights
+  # upstream keep warm starts bit-identical).
+            logits_ft = logits_ft + ft_bias.to(dtype=logits_ft.dtype)
 
         gather_idx = self.to_sq.unsqueeze(0).expand(b, -1, -1)
         logits_64 = torch.gather(logits_ft, dim=-1, index=gather_idx)  # (B,64,64)
@@ -229,6 +233,7 @@ class AttentionPolicyHead(nn.Module):
         x: torch.Tensor,
         legal_flat: torch.Tensor,
         legal_counts: torch.Tensor,
+        ft_bias: torch.Tensor | None = None,
     ) -> torch.Tensor:
         if legal_flat.ndim != 1:
             raise ValueError(f"legal_flat must be 1D, got {legal_flat.ndim}D")
@@ -249,13 +254,14 @@ class AttentionPolicyHead(nn.Module):
         )
         if rows.shape[0] != legal_flat.shape[0]:
             raise ValueError("legal_flat len must equal sum(legal_counts)")
-        return self.forward_legal_rows(x, legal_flat, rows)
+        return self.forward_legal_rows(x, legal_flat, rows, ft_bias=ft_bias)
 
     def forward_legal_rows(
         self,
         x: torch.Tensor,
         legal_flat: torch.Tensor,
         legal_rows: torch.Tensor,
+        ft_bias: torch.Tensor | None = None,
     ) -> torch.Tensor:
         if legal_flat.ndim != 1:
             raise ValueError(f"legal_flat must be 1D, got {legal_flat.ndim}D")
@@ -282,6 +288,8 @@ class AttentionPolicyHead(nn.Module):
         normal_valid = normal_mask & self.to_valid[from_sq, normal_plane]
         normal_logits = (q[rows, from_sq] * k[rows, to_sq]).sum(dim=-1)
         normal_logits = normal_logits * self.scale * torch.exp(self.log_temp)
+        if ft_bias is not None:
+            normal_logits = normal_logits + ft_bias.to(dtype=normal_logits.dtype)[rows, from_sq, to_sq]
         normal_logits = torch.where(normal_valid, normal_logits, neg_inf)
 
         up = self.underpromo(x)
@@ -660,6 +668,11 @@ class TransformerConfig:
     qkv_projection: str = "fused"
     use_deepnorm: bool = False
     policy_encoding: str = POLICY_ENCODING_AZ_4672
+  # Dynamic board-relation attention bias (exact board relations computed in
+  # C alongside the feature planes; see features.relation_matrices).
+    use_dynamic_relations: bool = False
+    dynamic_relation_count: int = 5
+    policy_dynamic_relations: bool = False
     input_global_embedding: str = "none"
     input_global_embedding_channels: int = 0
     input_square_embedding: str = "none"
@@ -886,6 +899,24 @@ class ChessNet(nn.Module):
             self.arc_attention_weight = nn.Parameter(
                 torch.zeros(cfg.num_layers, cfg.num_heads, _ARC_RELATION_CHANNELS)
             )
+  # Dynamic board relations: per-layer, per-head scalar weight per relation,
+  # zero-init so warm-started checkpoints are bit-identical at step 0. The
+  # bias term is skipped entirely when no relations tensor is supplied
+  # (old shards / paths that don't transport relations).
+        self.dynamic_relation_count = int(cfg.dynamic_relation_count)
+        self.dynamic_relation_weight: nn.Parameter | None = None
+        if bool(cfg.use_dynamic_relations):
+            self.dynamic_relation_weight = nn.Parameter(
+                torch.zeros(cfg.num_layers, cfg.num_heads, self.dynamic_relation_count)
+            )
+  # Policy relation bias applies to policy_own ONLY (the head MCTS uses);
+  # the soft/sf/future heads train unbiased. Intentional: the experiment
+  # measures search-relevant marginal value first.
+        self.policy_relation_weight: nn.Parameter | None = None
+        if bool(cfg.policy_dynamic_relations):
+            self.policy_relation_weight = nn.Parameter(
+                torch.zeros(self.dynamic_relation_count)
+            )
         self.pos_adapter: nn.Linear | None = None
         if self.input_pos_encoding == "arc_adapter":
             self.pos_adapter = nn.Linear(_ARC_POS_CHANNELS, input_embed_dim, bias=False)
@@ -1065,7 +1096,20 @@ class ChessNet(nn.Module):
         phase = torch.where(piece_counts > int(high), torch.full_like(phase, 2), phase)
         return phase
 
-    def _encode_tokens(self, x: torch.Tensor) -> torch.Tensor:
+    def _relations_to_float(self, relations: torch.Tensor | None, *, dtype: torch.dtype, device: torch.device) -> torch.Tensor | None:
+        """(B, K, 64, 64) uint8/bool/float -> float on the compute device."""
+        if relations is None:
+            return None
+        if self.dynamic_relation_weight is None and self.policy_relation_weight is None:
+            return None
+        rel = relations.to(device=device)
+        if rel.dtype != dtype:
+            rel = rel.to(dtype=dtype)
+        return rel
+
+    def _encode_tokens(
+        self, x: torch.Tensor, relations: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
         b, c, h, w = x.shape
         assert (h, w) == (8, 8)
         phase_idx = self._phase_indices_from_input(x)
@@ -1106,6 +1150,7 @@ class ChessNet(nn.Module):
             pos_adapter = self.pos_adapter
             assert pos_adapter is not None
             t = t + pos_adapter(pos.expand(b, -1, -1))
+        relations_f = self._relations_to_float(relations, dtype=t.dtype, device=t.device)
         shared_smolgen_bias = self.smolgen(t, phase_idx) if self.smolgen is not None else None
         balance_terms: list[torch.Tensor] = []
         balance_weight = float(getattr(self, "resid_channel_balance_weight", 0.0) or 0.0)
@@ -1119,6 +1164,13 @@ class ChessNet(nn.Module):
                 dtype=t.dtype,
                 device=t.device,
             )
+            if self.dynamic_relation_weight is not None and relations_f is not None:
+                dyn = torch.einsum(
+                    "hk,bkft->bhft",
+                    self.dynamic_relation_weight[idx].to(dtype=t.dtype),
+                    relations_f,
+                )
+                smolgen_bias = dyn if smolgen_bias is None else smolgen_bias + dyn
             t_in = t
             if self._use_grad_ckpt and self.training:
                 t = cast(torch.Tensor, grad_checkpoint(blk, t_in, smolgen_bias, use_reentrant=False))
@@ -1145,17 +1197,25 @@ class ChessNet(nn.Module):
         if phase_output_adapter is not None:
             assert phase_idx is not None
             t = phase_output_adapter(t, phase_idx)
-        return cast(torch.Tensor, t)
+        return cast(torch.Tensor, t), relations_f
 
     def forward_legal_policy(
         self,
         x: torch.Tensor,
         legal_flat: torch.Tensor,
         legal_counts: torch.Tensor,
+        relations: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
-        t = self._encode_tokens(x)
+        t, relations_f = self._encode_tokens(x, relations)
+        pol_ft_bias: torch.Tensor | None = None
+        if self.policy_relation_weight is not None and relations_f is not None:
+            pol_ft_bias = torch.einsum(
+                "k,bkft->bft",
+                self.policy_relation_weight.to(dtype=relations_f.dtype),
+                relations_f,
+            )
         return {
-            "policy_own": self.policy_own.forward_legal(t, legal_flat, legal_counts),
+            "policy_own": self.policy_own.forward_legal(t, legal_flat, legal_counts, ft_bias=pol_ft_bias),
             "wdl": self.value_wdl(t),
         }
 
@@ -1164,10 +1224,18 @@ class ChessNet(nn.Module):
         x: torch.Tensor,
         legal_flat: torch.Tensor,
         legal_rows: torch.Tensor,
+        relations: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
-        t = self._encode_tokens(x)
+        t, relations_f = self._encode_tokens(x, relations)
+        pol_ft_bias: torch.Tensor | None = None
+        if self.policy_relation_weight is not None and relations_f is not None:
+            pol_ft_bias = torch.einsum(
+                "k,bkft->bft",
+                self.policy_relation_weight.to(dtype=relations_f.dtype),
+                relations_f,
+            )
         return {
-            "policy_own": self.policy_own.forward_legal_rows(t, legal_flat, legal_rows),
+            "policy_own": self.policy_own.forward_legal_rows(t, legal_flat, legal_rows, ft_bias=pol_ft_bias),
             "wdl": self.value_wdl(t),
         }
 
@@ -1177,26 +1245,34 @@ class ChessNet(nn.Module):
         legal_flat: torch.Tensor | None = None,
         legal_counts: torch.Tensor | None = None,
         legal_rows: torch.Tensor | None = None,
+        relations: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         if legal_flat is not None or legal_counts is not None or legal_rows is not None:
             if legal_flat is None:
                 raise ValueError("legal_flat must be provided for legal policy forward")
             if legal_rows is not None:
-                return self.forward_legal_policy_rows(x, legal_flat, legal_rows)
+                return self.forward_legal_policy_rows(x, legal_flat, legal_rows, relations=relations)
             if legal_counts is None:
                 raise ValueError("legal_counts must be provided with legal_flat")
-            return self.forward_legal_policy(x, legal_flat, legal_counts)
+            return self.forward_legal_policy(x, legal_flat, legal_counts, relations=relations)
 
-        t = self._encode_tokens(x)
+        t, relations_f = self._encode_tokens(x, relations)
+        pol_ft_bias: torch.Tensor | None = None
+        if self.policy_relation_weight is not None and relations_f is not None:
+            pol_ft_bias = torch.einsum(
+                "k,bkft->bft",
+                self.policy_relation_weight.to(dtype=relations_f.dtype),
+                relations_f,
+            )
 
         if self._inference_only:
             return {
-                "policy_own": self.policy_own(t),
+                "policy_own": self.policy_own(t, ft_bias=pol_ft_bias),
                 "wdl": self.value_wdl(t),
             }
 
         return {
-            "policy_own": self.policy_own(t),
+            "policy_own": self.policy_own(t, ft_bias=pol_ft_bias),
             "policy_soft": self.policy_soft(t),
             "policy_sf": self.policy_sf(t),
             "policy_future": self.policy_future(t),

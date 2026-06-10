@@ -60,6 +60,9 @@ class MCTSConfig:
     input_history_encoding: str = LC0_HISTORY_LEGACY
     input_extra_features: str = EXTRA_FEATURES_V1
     policy_encoding: str = POLICY_ENCODING_AZ_4672
+  # PUCT paths do not transport dynamic relations; setting this raises so a
+  # relations model can't silently search without its bias (fail loud).
+    compute_relations: bool = False
 
 
 class Node:
@@ -304,6 +307,11 @@ def run_mcts_many(
     - root Q value
     - legal move mask (POLICY_SIZE,) bool
     """
+    if getattr(cfg, "compute_relations", False):
+        raise NotImplementedError(
+            "dynamic relations are not transported on the PUCT search path; "
+            "use mcts_type=gumbel (see check_dynamic_relations_transport)"
+        )
     eval_impl = evaluator
     if eval_impl is None:
         if model is None:

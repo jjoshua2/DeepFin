@@ -2089,6 +2089,7 @@ class WorkerSession:
         "syzygy_path", "stockfish_syzygy_path", "syzygy_rescore_policy",
         "syzygy_adjudicate", "syzygy_adjudicate_fraction", "syzygy_in_search",
         "policy_encoding", "input_history_encoding", "input_extra_features",
+        "use_dynamic_relations", "record_relations",
     )
 
     def _build_selfplay_configs(self, reco: dict) -> tuple[dict, tuple]:
@@ -2185,6 +2186,9 @@ class WorkerSession:
                 input_history_encoding=str(reco.get("input_history_encoding", "legacy")),
                 input_extra_features=str(reco.get("input_extra_features", "v1")),
                 record_lc0_root_input=bool(reco.get("record_lc0_root_input", False)),
+                record_relations=bool(
+                    reco.get("record_relations", reco.get("use_dynamic_relations", False))
+                ),
             ),
         }
         sf_args = (

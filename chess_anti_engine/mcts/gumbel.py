@@ -10,7 +10,7 @@ import torch
 
 from chess_anti_engine.encoding.lc0 import LC0_HISTORY_LEGACY
 from chess_anti_engine.encoding import encode_positions_batch
-from chess_anti_engine.encoding.features import EXTRA_FEATURES_V1
+from chess_anti_engine.encoding.features import EXTRA_FEATURES_V1, relation_matrices
 from chess_anti_engine.inference import BatchEvaluator, LocalModelEvaluator
 from chess_anti_engine.mcts.puct import (
     Node,
@@ -64,6 +64,9 @@ class GumbelConfig:
     input_history_encoding: str = LC0_HISTORY_LEGACY
     input_extra_features: str = EXTRA_FEATURES_V1
     policy_encoding: str = POLICY_ENCODING_AZ_4672
+  # Compute dynamic board-relation matrices per eval and pass them to the
+  # evaluator as attention-bias input (model.use_dynamic_relations).
+    compute_relations: bool = False
 
 
 def _policy_logits_to_full(pol_logits: np.ndarray, *, cfg: GumbelConfig) -> np.ndarray:
@@ -334,7 +337,11 @@ def _resolve_root_logits(
         input_history_encoding=cfg.input_history_encoding,
         input_extra_features=cfg.input_extra_features,
     )
-    pol, wdl = eval_impl.evaluate_encoded(xs)
+    if cfg.compute_relations:
+        rel = np.stack([relation_matrices(b) for b in boards], axis=0)
+        pol, wdl = eval_impl.evaluate_encoded(xs, relations=rel)
+    else:
+        pol, wdl = eval_impl.evaluate_encoded(xs)
     pol = _policy_logits_to_full(pol, cfg=cfg)
     return pol, wdl, eval_impl
 
@@ -356,7 +363,11 @@ def _evaluate_and_backprop_leaves(
         input_history_encoding=cfg.input_history_encoding,
         input_extra_features=cfg.input_extra_features,
     )
-    pol_logits_leaf, wdl_logits_leaf = leaf_eval.evaluate_encoded(leaf_xs)
+    if cfg.compute_relations:
+        leaf_rel = np.stack([relation_matrices(node.board) for node in leaf_nodes], axis=0)
+        pol_logits_leaf, wdl_logits_leaf = leaf_eval.evaluate_encoded(leaf_xs, relations=leaf_rel)
+    else:
+        pol_logits_leaf, wdl_logits_leaf = leaf_eval.evaluate_encoded(leaf_xs)
     pol_logits_leaf = _policy_logits_to_full(pol_logits_leaf, cfg=cfg)
     for node, path, pol_logits, wdl_logits in zip(
         leaf_nodes, leaf_paths, pol_logits_leaf, wdl_logits_leaf, strict=True,

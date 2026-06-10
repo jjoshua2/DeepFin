@@ -65,6 +65,24 @@ def _mirror_policy_index_array(values: np.ndarray, mask: np.ndarray, *, policy_w
     return out
 
 
+_FILE_FLIP_SQUARES = np.arange(64) ^ 7  # a1<->h1 etc.; ranks unchanged
+
+
+def mirror_relations(rel: np.ndarray) -> np.ndarray:
+    """File-flip dynamic relation matrices on BOTH square axes.
+
+    Relations are side-to-move oriented (rank flips already baked in), so a
+    left-right board mirror permutes from- and to-squares with sq ^ 7.
+    Accepts (..., K, 64, 64).
+    """
+    arr = np.asarray(rel)
+    if arr.shape[-2:] != (64, 64):
+        raise ValueError(f"relations must end with (64, 64); got {arr.shape}")
+    return np.ascontiguousarray(
+        arr[..., _FILE_FLIP_SQUARES, :][..., :, _FILE_FLIP_SQUARES]
+    )
+
+
 def mirror_x(x: np.ndarray, *, input_history_encoding: str | None = None) -> np.ndarray:
     """Mirror an encoded (C,8,8) position tensor left-right (file flip)."""
     arr = np.asarray(x)
@@ -108,6 +126,10 @@ def mirror_sample(s: ReplaySample, *, input_history_encoding: str | None = None)
         ply_index=getattr(s, "ply_index", None),
         has_policy=bool(getattr(s, "has_policy", True)),
         x_lc0_root=None if x_lc0_root is None else mirror_x(x_lc0_root, input_history_encoding="lc0_root"),
+        relations=(
+            None if getattr(s, "relations", None) is None
+            else mirror_relations(np.asarray(s.relations))
+        ),
         input_history_encoding=getattr(s, "input_history_encoding", None),
     )
 
@@ -224,6 +246,10 @@ def maybe_mirror_batch_arrays(
             out[key] = np.array(arrs[key], copy=True, order="C")
             mirrored = mirror_policy_batch(out[key][mask])
             out[key][mask] = mirrored.astype(src_dtype, copy=False)
+
+    if "relations" in arrs:
+        out["relations"] = np.array(arrs["relations"], copy=True, order="C")
+        out["relations"][mask] = mirror_relations(out["relations"][mask])
 
     policy_width = int(np.asarray(arrs["policy_target"]).shape[1])
     for key in ("sf_move_index", "sf_played_move_index"):

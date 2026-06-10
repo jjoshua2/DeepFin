@@ -913,4 +913,170 @@ static inline void cboard_compute_features_34(const CBoard *b, float * restrict 
 }
 #endif  /* _CBOARD_IMPL_H */
 
+
+/* ================================================================
+ * Dynamic board relations (attention-bias input)
+ *
+ * FEAT_RELATION_COUNT binary 64x64 matrices, side-to-move oriented
+ * exactly like the feature planes (rank flip when black to move),
+ * row = from-square, col = to-square:
+ *
+ *   R0 attacks(from, to)          piece on `from` attacks square `to`
+ *                                 (pawns: capture squares only, no EP)
+ *   R1 defends(from, to)          R0 restricted to `to` occupied by a
+ *                                 same-color piece
+ *   R2 pinned_by(from, to)        piece on `from` is absolutely pinned to
+ *                                 its own king by the enemy slider on `to`
+ *   R3 shares_open_line(from, to) both squares occupied, aligned on a file
+ *                                 or diagonal, all squares strictly between
+ *                                 empty (symmetric; ranks intentionally
+ *                                 excluded)
+ *   R4 pawn_tension(from, to)     pawn on `from` can capture the enemy
+ *                                 pawn on `to`
+ *
+ * The Python twin is features.relation_matrices(); keep both in sync
+ * (tests/test_dynamic_relations.py enforces value parity).
+ * ================================================================ */
+
+#define FEAT_RELATION_COUNT 5
+
+static inline void feat_rel_mark(
+    uint8_t * restrict out, int k, int from_o, int to_o
+) {
+    out[(size_t)k * 4096 + (size_t)from_o * 64 + to_o] = 1;
+}
+
+/* out must point to FEAT_RELATION_COUNT*64*64 uint8; zeroed here. */
+static void compute_relations(
+    uint64_t us_pieces[6], uint64_t them_pieces[6],
+    uint64_t occupied,
+    int king_sq_us, int king_sq_them,
+    int turn_white,
+    uint8_t * restrict out
+) {
+    init_tables_features();
+    memset(out, 0, (size_t)FEAT_RELATION_COUNT * 4096);
+
+    uint64_t us_occ = 0, them_occ = 0;
+    for (int i = 0; i < 6; i++) {
+        us_occ |= us_pieces[i];
+        them_occ |= them_pieces[i];
+    }
+    int us_color = turn_white ? 1 : 0;
+    int flip = turn_white ? 0 : 56;  /* sq ^ 56 flips ranks */
+
+    /* R0 attacks + R1 defends */
+    for (int side = 0; side < 2; side++) {
+        uint64_t *pieces = side == 0 ? us_pieces : them_pieces;
+        uint64_t own_occ = side == 0 ? us_occ : them_occ;
+        int c = side == 0 ? us_color : 1 - us_color;
+        for (int pt = 0; pt < 6; pt++) {
+            for (uint64_t m = pieces[pt]; m; m &= m - 1) {
+                int sq = __builtin_ctzll(m);
+                uint64_t att = (pt == 0)
+                    ? FEAT_PAWN_CAPTURE_MASKS[c][sq]
+                    : feat_piece_attacks(sq, pt, occupied);
+                int from_o = sq ^ flip;
+                for (uint64_t a = att; a; a &= a - 1) {
+                    int to = __builtin_ctzll(a);
+                    feat_rel_mark(out, 0, from_o, to ^ flip);
+                }
+                for (uint64_t a = att & own_occ; a; a &= a - 1) {
+                    int to = __builtin_ctzll(a);
+                    feat_rel_mark(out, 1, from_o, to ^ flip);
+                }
+            }
+        }
+    }
+
+    /* R2 pinned_by: walk the 8 rays from each king; pattern is
+     * king .. own-blocker .. matching enemy slider with nothing between. */
+    static const int rel_df[8] = {1, -1, 0, 0, 1, 1, -1, -1};
+    static const int rel_dr[8] = {0, 0, 1, -1, 1, -1, 1, -1};
+    for (int side = 0; side < 2; side++) {
+        int ksq = side == 0 ? king_sq_us : king_sq_them;
+        if (ksq < 0 || ksq > 63) continue;
+        uint64_t own_occ = side == 0 ? us_occ : them_occ;
+        uint64_t *opp = side == 0 ? them_pieces : us_pieces;
+        int kf = ksq & 7, kr = ksq >> 3;
+        for (int d = 0; d < 8; d++) {
+            uint64_t sliders = d < 4 ? (opp[3] | opp[4]) : (opp[2] | opp[4]);
+            if (!sliders) continue;
+            int blocker = -1;
+            for (int dist = 1; dist <= 7; dist++) {
+                int f = kf + rel_df[d] * dist;
+                int r = kr + rel_dr[d] * dist;
+                if (f < 0 || f > 7 || r < 0 || r > 7) break;
+                int sq = r * 8 + f;
+                uint64_t bit = (uint64_t)1 << sq;
+                if (!(occupied & bit)) continue;
+                if (own_occ & bit) {
+                    if (blocker >= 0) break;  /* two own pieces: no pin */
+                    blocker = sq;
+                } else {
+                    if (blocker >= 0 && (sliders & bit))
+                        feat_rel_mark(out, 2, blocker ^ flip, sq ^ flip);
+                    break;
+                }
+            }
+        }
+    }
+
+    /* R3 shares_open_line: files + diagonals only, first occupied square in
+     * each direction. Marking one direction per pair covers both because
+     * every occupied square is iterated. */
+    static const int line_df[6] = {0, 0, 1, 1, -1, -1};
+    static const int line_dr[6] = {1, -1, 1, -1, 1, -1};
+    for (uint64_t m = occupied; m; m &= m - 1) {
+        int sq = __builtin_ctzll(m);
+        int f0 = sq & 7, r0 = sq >> 3;
+        int from_o = sq ^ flip;
+        for (int d = 0; d < 6; d++) {
+            for (int dist = 1; dist <= 7; dist++) {
+                int f = f0 + line_df[d] * dist;
+                int r = r0 + line_dr[d] * dist;
+                if (f < 0 || f > 7 || r < 0 || r > 7) break;
+                int to = r * 8 + f;
+                if (occupied & ((uint64_t)1 << to)) {
+                    feat_rel_mark(out, 3, from_o, to ^ flip);
+                    break;
+                }
+            }
+        }
+    }
+
+    /* R4 pawn_tension */
+    for (int side = 0; side < 2; side++) {
+        uint64_t own_pawns = (side == 0 ? us_pieces : them_pieces)[0];
+        uint64_t enemy_pawns = (side == 0 ? them_pieces : us_pieces)[0];
+        int c = side == 0 ? us_color : 1 - us_color;
+        for (uint64_t m = own_pawns; m; m &= m - 1) {
+            int sq = __builtin_ctzll(m);
+            uint64_t caps = FEAT_PAWN_CAPTURE_MASKS[c][sq] & enemy_pawns;
+            int from_o = sq ^ flip;
+            for (uint64_t a = caps; a; a &= a - 1) {
+                int to = __builtin_ctzll(a);
+                feat_rel_mark(out, 4, from_o, to ^ flip);
+            }
+        }
+    }
+}
+
+#ifdef _CBOARD_IMPL_H
+static inline void cboard_compute_relations(const CBoard *b, uint8_t * restrict out) {
+    int us = b->turn, them = 1 - us;
+    uint64_t us_pieces[6], them_pieces[6];
+    for (int i = 0; i < 6; i++) {
+        us_pieces[i] = b->bb[i] & b->occ[us];
+        them_pieces[i] = b->bb[i] & b->occ[them];
+    }
+    uint64_t us_king = b->bb[KING] & b->occ[us];
+    uint64_t them_king = b->bb[KING] & b->occ[them];
+    compute_relations(us_pieces, them_pieces, b->occ[0] | b->occ[1],
+                      us_king ? lsb64(us_king) : -1,
+                      them_king ? lsb64(them_king) : -1,
+                      (b->turn == WHITE_C) ? 1 : 0, out);
+}
+#endif  /* _CBOARD_IMPL_H */
+
 #endif /* FEATURES_IMPL_H */

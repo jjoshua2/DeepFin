@@ -226,6 +226,7 @@ class SearchWorker:
                 vloss_weight=self._vloss_weight,
                 gather=self._walker_gather,
                 input_planes=input_plane_count(self._cfg.input_extra_features),
+                compute_relations=bool(self._cfg.compute_relations),
             ),
             self._evaluator,
         )
@@ -297,6 +298,7 @@ class SearchWorker:
             vloss_mode=self._pucv_vloss_mode,
             eval_cache_entries=self._eval_cache_entries,
             input_planes=input_plane_count(self._cfg.input_extra_features),
+            compute_relations=bool(self._cfg.compute_relations),
         )
         if as_factories:
             self._pucv_pool = MultiGpuPucvPool(
@@ -391,6 +393,7 @@ class SearchWorker:
             vloss_mode=self._pucv_vloss_mode,
             eval_cache_entries=self._eval_cache_entries,
             input_planes=input_plane_count(self._cfg.input_extra_features),
+            compute_relations=bool(self._cfg.compute_relations),
         )
 
     def set_eval_cache_entries(self, n: int) -> None:
@@ -667,7 +670,11 @@ class SearchWorker:
             input_history_encoding=self._cfg.input_history_encoding,
             input_extra_features=self._cfg.input_extra_features,
         )
-        pol, wdl = self._evaluator.evaluate_encoded(xs)
+        if self._cfg.compute_relations:
+            rels = root_cb.compute_relations()[None, ...]
+            pol, wdl = self._evaluator.evaluate_encoded(xs, relations=rels)
+        else:
+            pol, wdl = self._evaluator.evaluate_encoded(xs)
         pol_np = np.asarray(pol, dtype=np.float32)
         wdl_np = np.asarray(wdl, dtype=np.float32).copy()
   # Probe at root so score_cp reflects TB truth on the very first chunk's

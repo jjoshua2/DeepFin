@@ -87,6 +87,11 @@ def run_mcts_many_c(
 
     Same API as `run_mcts_many` — drop-in replacement.
     """
+    if getattr(cfg, "compute_relations", False):
+        raise NotImplementedError(
+            "dynamic relations are not transported on the PUCT search path; "
+            "use mcts_type=gumbel (see check_dynamic_relations_transport)"
+        )
     n_boards = len(boards)
     if n_boards == 0:
         return [], [], [], []

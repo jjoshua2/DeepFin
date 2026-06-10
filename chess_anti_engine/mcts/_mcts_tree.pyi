@@ -36,6 +36,7 @@ class MCTSTree:
         vloss_weight: int = ...,
         target_batch: int = ...,
         input_history_lc0_root: int = ...,
+        rel_buf: NDArray[np.uint8] | None = ...,
     ) -> int | None: ...
     def continue_gumbel_sims(self, pol: NDArray[np.float32], wdl: NDArray[np.float32]) -> int | None: ...
     def continue_gumbel_sims_legal_bf16(self, pol_bf16_bits: NDArray[np.uint16], wdl: NDArray[np.float32]) -> int | None: ...
@@ -66,6 +67,7 @@ class MCTSTree:
         fpu_reduction: float,
         vloss_weight: int,
         enc_out: NDArray[np.float32],
+        rel_out: NDArray[np.uint8] | None = ...,
     ) -> tuple[int, NDArray[np.int32], NDArray[np.int32], float | None]: ...
     def walker_integrate_leaf(
         self,
@@ -94,6 +96,7 @@ class MCTSTree:
         is_term: NDArray[np.int8],
         vloss_mode: int = ...,
         cache_keys: NDArray[np.uint64] | None = ...,
+        rel_buf: NDArray[np.uint8] | None = ...,
     ) -> int: ...
     def batch_integrate_leaves(
         self,
@@ -122,20 +125,13 @@ def batch_process_ply(
     df_slope: float,
     input_history_lc0_root: int = ...,
     n_extra: int = ...,
-) -> tuple[
-    NDArray[np.float32],  # x
-    NDArray[np.float32],  # probs
-    NDArray[np.float32],  # wdl_net
-    NDArray[np.float32],  # wdl_search
-    NDArray[np.float64],  # priority
-    NDArray[np.float64],  # priority_policy_kl
-    NDArray[np.float64],  # priority_q_delta
-    NDArray[np.float64],  # keep_prob
-    NDArray[np.int32],    # legal_mask
-    NDArray[np.int32],    # ply
-    NDArray[np.int32],    # pov
-    NDArray[np.int32],    # game_over
-]: ...
+    with_relations: int = ...,
+) -> tuple[NDArray[Any], ...]: ...
+
+def batch_compute_relations(
+    cboards: list[CBoard],
+    out: NDArray[np.uint8],
+) -> None: ...
 
 def batch_encode_146(
     cboards: list[CBoard],

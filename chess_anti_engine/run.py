@@ -74,6 +74,8 @@ def main() -> None:
     if pre_args.config:
         cfg = load_yaml_file(pre_args.config)
         cfg_defaults = flatten_run_config_defaults(cfg)
+    from chess_anti_engine.tune.distributed_runtime import check_dynamic_relations_transport
+    check_dynamic_relations_transport(cfg_defaults)
 
     ap = argparse.ArgumentParser(parents=[pre])
 
