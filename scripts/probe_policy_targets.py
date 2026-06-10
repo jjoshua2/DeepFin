@@ -109,7 +109,9 @@ def _collect(
         if not has_soft.any():
             continue
         used_shards += 1
-        n = int(np.asarray(arrs["x"]).shape[0])
+        # .shape on the lazy zarr array is metadata-only; np.asarray here would
+        # materialize the full x array just to read its length.
+        n = int(arrs["x"].shape[0])
         for start in range(0, n, chunk_rows):
             stop = min(n, start + chunk_rows)
             sel = has_soft[start:stop]

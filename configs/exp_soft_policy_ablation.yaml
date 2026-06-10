@@ -3,9 +3,11 @@
 # Rationale: policy_soft_target is a deterministic retempering of
 # policy_target (p^(1/soft_policy_temp), see scripts/probe_policy_targets.py
 # docstring + runs/probe_policy_targets.json for the measured overlap). If the
-# probe on production replay shows mean TV < 0.02 overall, the soft head's
-# gradient duplicates the main policy CE and this ablation should be
-# Elo-neutral while freeing gradient + compute.
+# probe on production replay shows mean TV < 0.02 overall, the trunk
+# gradient through the soft CE largely duplicates the main policy CE (the
+# policy_soft head itself is a separate AttentionPolicyHead whose only
+# training signal this is, but nothing outside training reads that head)
+# and this ablation should be Elo-neutral while freeing gradient + compute.
 #
 # Protocol (docs/eval_protocol.md): fixed-budget train, then
 # scripts/arena_standard.py matched_sims vs the unablated checkpoint.

@@ -9,7 +9,13 @@ import numpy as np
 import pytest
 import torch
 
-from chess_anti_engine.train.losses import compute_loss
+from chess_anti_engine.train.losses import (
+    align_policy_target,
+    apply_policy_mask_to_logits,
+    compute_loss,
+    masked_mean,
+    soft_cross_entropy,
+)
 from scripts.probe_policy_targets import _row_metrics, _summarize
 
 
@@ -77,13 +83,35 @@ def _loss_batch(*, divergent_soft_row1: bool) -> tuple[dict, dict]:
     return outputs, batch
 
 
+def _reference_soft_policy_ce(outputs: dict, batch: dict) -> torch.Tensor:
+    """Frozen replica of the pre-soft_policy_min_tv soft-CE path (main @ db850e1).
+
+    Built from the same primitives compute_loss uses so the comparison is
+    bitwise, but composed here independently: if compute_loss ever masks or
+    reorders the soft term unconditionally, this reference will NOT move with
+    it and the test below fails.
+    """
+    soft_logits = outputs["policy_soft"]
+    ce = soft_cross_entropy(
+        apply_policy_mask_to_logits(soft_logits, batch, "legal_mask", "has_legal_mask"),
+        align_policy_target(batch["policy_soft_t"], int(soft_logits.shape[-1])),
+    )
+    # No is_network_turn in the test batch -> net_mask defaults to all-ones.
+    net_mask = torch.ones(ce.shape[0], dtype=torch.float32)
+    return masked_mean(ce, net_mask * batch["has_policy_soft"])
+
+
 def test_loss_bitwise_unchanged_at_default():
     outputs, batch = _loss_batch(divergent_soft_row1=True)
+    expected = _reference_soft_policy_ce(outputs, batch)
     base = compute_loss(outputs, batch)
     flagged = compute_loss(outputs, batch, soft_policy_min_tv=0.0)
+    assert torch.equal(base["soft_policy_ce"], expected), "default path diverged from the frozen pre-flag soft CE"
     assert base.keys() == flagged.keys()
     for k in base:
         assert torch.equal(base[k], flagged[k]), f"{k} changed at default flag value"
+    # Mask observability: nothing masked at the default.
+    assert float(base["soft_mask_kept_frac"]) == pytest.approx(1.0)
 
 
 def test_min_tv_masks_only_near_identical_rows():
@@ -93,11 +121,13 @@ def test_min_tv_masks_only_near_identical_rows():
     # row 0 (TV=0) is dropped, row 1 (TV=0.2) kept -> soft CE becomes the
     # row-1-only mean, which differs from the two-row mean.
     assert not torch.equal(base["soft_policy_ce"], masked["soft_policy_ce"])
+    assert float(masked["soft_mask_kept_frac"]) == pytest.approx(0.5)
 
     # with BOTH rows identical, the soft loss masks to zero entirely
     outputs2, batch2 = _loss_batch(divergent_soft_row1=False)
     fully_masked = compute_loss(outputs2, batch2, soft_policy_min_tv=0.01)
     assert float(fully_masked["soft_policy_ce"]) == pytest.approx(0.0, abs=1e-9)
+    assert float(fully_masked["soft_mask_kept_frac"]) == pytest.approx(0.0)
 
     # and a threshold above the divergence masks everything
     all_masked = compute_loss(outputs, batch, soft_policy_min_tv=0.5)

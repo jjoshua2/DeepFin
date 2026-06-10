@@ -248,14 +248,18 @@ def compute_loss(
         )
         if soft_target is not None else zero_loss
     )
+    soft_mask_kept_frac = torch.ones((), device=pol_ce.device, dtype=torch.float32)
     if float(soft_policy_min_tv) > 0.0 and soft_target is not None:
-  # Drop the soft loss where the targets are effectively the hard target
-  # re-tempered to (nearly) itself: TV(p, q) below the threshold means the
-  # gradient duplicates the main policy CE. Strictly off at the default 0.0.
+        # Drop the soft loss where TV(hard, soft) is below the threshold: there
+        # the soft target is a retempering of (nearly) the same distribution, so
+        # for the trunk the gradient largely duplicates the main policy CE (the
+        # policy_soft head itself still loses its only signal on masked rows).
+        # Strictly off at the default 0.0.
         _soft_aligned = align_policy_target(soft_target, int(base_policy_logits.shape[-1]))
-        _pol_aligned = align_policy_target(batch["policy_t"], int(base_policy_logits.shape[-1]))
-        _tv = 0.5 * (_pol_aligned.float() - _soft_aligned.float()).abs().sum(dim=-1)
-        has_soft = has_soft * (_tv >= float(soft_policy_min_tv)).to(has_soft.dtype)
+        _tv = 0.5 * (pol_target.float() - _soft_aligned.float()).abs().sum(dim=-1)
+        _keep = (_tv >= float(soft_policy_min_tv)).to(has_soft.dtype)
+        soft_mask_kept_frac = masked_mean(_keep, net_mask * has_soft)
+        has_soft = has_soft * _keep
 
   # Future policy (t+2): target and legal mask are in the t+2 move space.
     has_future = _get_mask(batch, "has_future")
@@ -472,6 +476,7 @@ def compute_loss(
         "wdl_ce": m_wdl,
         "blended_wdl_ce": m_blended_wdl,
         "soft_policy_ce": m_soft,
+        "soft_mask_kept_frac": soft_mask_kept_frac,
         "future_policy_ce": m_future,
         "sf_move_ce": m_sf_move,
         "sf_eval_ce": m_sf_eval,

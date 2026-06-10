@@ -1,7 +1,9 @@
 # EXPERIMENTAL: soft-policy loss masked on near-identical samples.
 # Copy of pbt2_small.yaml + train.soft_policy_min_tv: 0.01 — keeps w_soft but
 # zeroes the soft CE on samples whose soft target is within TV < 0.01 of the
-# hard target (where the gradient is a pure duplicate). Motivated by the
+# hard target (where the trunk gradient largely duplicates the policy CE;
+# the separate policy_soft head loses its only signal on masked rows, which
+# is acceptable since nothing outside training reads it). Motivated by the
 # probe (scripts/probe_policy_targets.py / runs/probe_policy_targets.json)
 # showing a divergent subpopulation alongside near-identical samples; only
 # meaningful if the PRODUCTION probe confirms that split. Judge per

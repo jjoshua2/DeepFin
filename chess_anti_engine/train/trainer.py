@@ -629,6 +629,8 @@ class TrainMetrics:
     wdl_loss_curriculum: float = 0.0
     frac_is_selfplay: float = 0.0
     frac_tagged: float = 0.0
+  # Fraction of soft-policy rows surviving the soft_policy_min_tv mask (1.0 when off).
+    soft_mask_kept_frac: float = 1.0
   # Per-game-phase loss split (bucketed by moves_left).
     policy_loss_open: float = 0.0
     policy_loss_mid: float = 0.0
