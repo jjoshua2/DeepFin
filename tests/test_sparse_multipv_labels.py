@@ -359,25 +359,27 @@ def test_trainer_default_is_bitwise_unchanged(monkeypatch):
 
 
 def _sparse_ce_batch(
-    *, policy_size: int, shard_width: int, use_logistic: bool, smooth: float,
+    *, use_logistic: bool, smooth: float,
 ) -> tuple[torch.Tensor, dict, SfTargetParams, np.ndarray]:
     """Random logits + a 3-row batch: scored rows / fallback row / no labels.
 
-    Returns (masked_logits, batch, params, dense_targets) where dense_targets
-    holds the live-equivalent dense vectors (shard width) for rows 0..1.
+    Shard space is full 4672 (the only width capture writes for az_4672
+    shards; the compact-logits projection is exercised separately). Returns
+    (masked_logits, batch, params, dense_targets) where dense_targets holds
+    the live-equivalent dense vectors for rows 0..1. Legal indices are picked
+    from COMPACT_TO_FULL_POLICY so the same batch works against compact
+    logits.
     """
     from chess_anti_engine.selfplay.stockfish_turn import _build_sf_policy_target
     from chess_anti_engine.moves import COMPACT_TO_FULL_POLICY
 
+    shard_width = 4672
     params = SfTargetParams(
         sf_policy_temp=0.012, sf_policy_label_smooth=smooth,
         sf_wdl_use_cp_logistic=use_logistic,
         sf_wdl_cp_slope=0.010, sf_wdl_cp_draw_width=60.0,
     )
-    if shard_width == 4672:
-        legal_full = np.asarray(COMPACT_TO_FULL_POLICY, dtype=np.int64)[[100, 200, 300, 400]]
-    else:
-        legal_full = np.array([100, 200, 300, 400], dtype=np.int64)
+    legal_full = np.asarray(COMPACT_TO_FULL_POLICY, dtype=np.int64)[[100, 200, 300, 400]]
 
     raw = np.full((3, SF_MULTIPV_RAW_MAX, 5), -1, np.int16)
     raw[:, :, 1] = SF_CP_SENTINEL
@@ -402,13 +404,11 @@ def _sparse_ce_batch(
         [int(legal_full[1])], [0.0], legal_indices=legal_full,
         sf_policy_temp=params.sf_policy_temp,
         sf_policy_label_smooth=params.sf_policy_label_smooth,
-    )[:shard_width] if shard_width == 4672 else _compact_onehot_target(
-        int(legal_full[1]), legal_full, params, shard_width,
     )
     dense[2, legal_full[0]] = 1.0  # arbitrary stored target for the no-label row
 
     torch.manual_seed(0)
-    logits = torch.randn(3, policy_size)
+    logits = torch.randn(3, shard_width)
     batch = {
         "sf_multipv_raw": torch.from_numpy(raw.astype(np.int32)),
         "has_sf_multipv_raw": torch.tensor([1.0, 1.0, 0.0]),
@@ -420,22 +420,6 @@ def _sparse_ce_batch(
     return logits, batch, params, dense
 
 
-def _compact_onehot_target(
-    idx: int, legal: np.ndarray, params: SfTargetParams, width: int,
-) -> np.ndarray:
-    from chess_anti_engine.selfplay.stockfish_turn import _build_sf_policy_target
-
-    full = _build_sf_policy_target(
-        [idx], [0.0], legal_indices=legal,
-        sf_policy_temp=params.sf_policy_temp,
-        sf_policy_label_smooth=params.sf_policy_label_smooth,
-    )
-    out = np.zeros(width, np.float32)
-    nz = np.flatnonzero(full)
-    out[nz] = full[nz]
-    return out
-
-
 @pytest.mark.parametrize("use_logistic", [False, True])
 @pytest.mark.parametrize("smooth", [0.0, 0.01])
 def test_sparse_ce_matches_dense_soft_ce(use_logistic, smooth):
@@ -444,11 +428,12 @@ def test_sparse_ce_matches_dense_soft_ce(use_logistic, smooth):
     from chess_anti_engine.train.sparse_sf_ce import sparse_sf_policy_ce
 
     logits, batch, params, dense = _sparse_ce_batch(
-        policy_size=4672, shard_width=4672,
         use_logistic=use_logistic, smooth=smooth,
     )
     dense_ce = soft_cross_entropy(logits, torch.from_numpy(dense))
-    sparse_ce, ok = sparse_sf_policy_ce(logits, batch, params=params)
+    sparse_ce, ok = sparse_sf_policy_ce(
+        logits, batch, params=params, legal_aligned=batch["sf_legal_mask"],
+    )
     assert ok.tolist() == [1.0, 1.0, 0.0]
     torch.testing.assert_close(sparse_ce[:2], dense_ce[:2], atol=1e-5, rtol=1e-5)
     assert float(sparse_ce[2]) == 0.0
@@ -458,18 +443,22 @@ def test_sparse_ce_compact_logits_over_full_shard():
     """Production projection: full-4672 shard rows against compact-1858 logits
     must equal the dense path's align_policy_target projection."""
     from chess_anti_engine.moves import COMPACT_POLICY_SIZE, FULL_TO_COMPACT_POLICY
-    from chess_anti_engine.train.losses import align_policy_target, soft_cross_entropy
+    from chess_anti_engine.train.losses import (
+        align_policy_mask,
+        align_policy_target,
+        soft_cross_entropy,
+    )
     from chess_anti_engine.train.sparse_sf_ce import sparse_sf_policy_ce
 
-    logits_full, batch, params, dense = _sparse_ce_batch(
-        policy_size=4672, shard_width=4672, use_logistic=True, smooth=0.01,
-    )
-    del logits_full
+    _, batch, params, dense = _sparse_ce_batch(use_logistic=True, smooth=0.01)
     torch.manual_seed(1)
     logits = torch.randn(3, COMPACT_POLICY_SIZE)
     dense_aligned = align_policy_target(torch.from_numpy(dense), COMPACT_POLICY_SIZE)
     dense_ce = soft_cross_entropy(logits, dense_aligned)
-    sparse_ce, ok = sparse_sf_policy_ce(logits, batch, params=params)
+    sparse_ce, ok = sparse_sf_policy_ce(
+        logits, batch, params=params,
+        legal_aligned=align_policy_mask(batch["sf_legal_mask"], COMPACT_POLICY_SIZE),
+    )
     assert ok.tolist() == [1.0, 1.0, 0.0]
     torch.testing.assert_close(sparse_ce[:2], dense_ce[:2], atol=1e-5, rtol=1e-5)
     assert int(FULL_TO_COMPACT_POLICY[int(batch["sf_move_index"][0])]) >= 0
@@ -479,7 +468,7 @@ def test_compute_loss_sparse_flag_only_touches_sf_move_ce():
     from chess_anti_engine.train.losses import compute_loss
 
     logits, sparse_batch, params, dense = _sparse_ce_batch(
-        policy_size=4672, shard_width=4672, use_logistic=False, smooth=0.01,
+        use_logistic=False, smooth=0.01,
     )
     n = 3
     torch.manual_seed(2)
@@ -650,3 +639,21 @@ def test_record_dense_sf_policy_false_trains_via_sparse_ce():
     losses = compute_loss(outputs, batch, sf_sparse_params=params)
     assert torch.isfinite(losses["sf_move_ce"]).all()
     assert float(losses["sf_move_ce"]) > 0.0
+
+
+def test_config_rejects_dense_off_without_sparse_ce():
+    """record_dense_sf_policy: false without sf_policy_sparse_ce: true would
+    silently drop policy_sf supervision — must fail loudly at config load."""
+    from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults
+
+    bad = {"selfplay": {"record_dense_sf_policy": False}}
+    with pytest.raises(ValueError, match="sf_policy_sparse_ce"):
+        flatten_run_config_defaults(bad)
+
+    ok = {
+        "selfplay": {"record_dense_sf_policy": False},
+        "train": {"sf_policy_sparse_ce": True},
+    }
+    flat = flatten_run_config_defaults(ok)
+    assert flat["record_dense_sf_policy"] is False
+    assert flat["sf_policy_sparse_ce"] is True

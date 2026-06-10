@@ -701,9 +701,7 @@ def _build_replay_samples(
                 search_sig = float(search_arr[0] - search_arr[2])
                 sf_search_gap = abs(sf_sig - search_sig)
         sf_policy_target = None
-        if rec.sf_policy_target is not None and bool(
-            getattr(state.game, "record_dense_sf_policy", True)
-        ):
+        if rec.sf_policy_target is not None and state.game.record_dense_sf_policy:
             sf_policy_target = policy_vector_to_encoding(
                 rec.sf_policy_target,
                 policy_encoding=state.game.policy_encoding,

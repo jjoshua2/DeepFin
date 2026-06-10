@@ -32,8 +32,12 @@ shards the indices are remapped through ``FULL_TO_COMPACT_POLICY`` (all
 candidates are real moves, so the dense path's compact renormalization is a
 no-op for this target and equality survives the projection). The reverse
 (full logits over compact shards) widens through ``COMPACT_TO_FULL_POLICY``.
+The caller supplies ``legal_aligned`` (the SF legal mask already in logits
+width, via ``losses.align_policy_mask``) so mask alignment has one home.
 """
 from __future__ import annotations
+
+from functools import lru_cache
 
 import torch
 
@@ -44,20 +48,25 @@ from chess_anti_engine.moves import (
     POLICY_SIZE,
 )
 from chess_anti_engine.replay.shard import SF_CP_SENTINEL
+from chess_anti_engine.stockfish.wdl import (
+    _MATE_BASE_CP,
+    _MATE_DEPTH_BONUS_CP,
+)
 from chess_anti_engine.train.target_builder import SfTargetParams
 
-# Mirrors stockfish/wdl.py::mate_to_effective_cp.
-_MATE_BASE_CP = 1500.0
-_MATE_DEPTH_BONUS_CP = 20.0
 
-
-def _index_remap_table(
-    src_width: int, dst_width: int, device: torch.device,
+@lru_cache(maxsize=8)
+def _remap_table_for(
+    src_width: int, dst_width: int, device_type: str, device_index: int | None,
 ) -> torch.Tensor | None:
-    """Lookup table mapping shard-space indices to logits-space, or None
-    when the widths already agree. Raises on unknown width pairs."""
+    """Cached lookup table mapping shard-space indices to logits-space, or
+    None when the widths already agree. Raises on unknown width pairs."""
     if src_width == dst_width:
         return None
+    device = (
+        torch.device(device_type, device_index)
+        if device_index is not None else torch.device(device_type)
+    )
     if src_width == POLICY_SIZE and dst_width == COMPACT_POLICY_SIZE:
         return torch.as_tensor(FULL_TO_COMPACT_POLICY, dtype=torch.long, device=device)
     if src_width == COMPACT_POLICY_SIZE and dst_width == POLICY_SIZE:
@@ -65,6 +74,12 @@ def _index_remap_table(
     raise ValueError(
         f"shard policy width {src_width} is incompatible with logits width {dst_width}"
     )
+
+
+def _index_remap_table(
+    src_width: int, dst_width: int, device: torch.device,
+) -> torch.Tensor | None:
+    return _remap_table_for(src_width, dst_width, device.type, device.index)
 
 
 def _row_scores(
@@ -109,14 +124,16 @@ def sparse_sf_policy_ce(
     batch: dict[str, torch.Tensor],
     *,
     params: SfTargetParams,
+    legal_aligned: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Per-sample sparse SF-policy CE and its availability mask, both (B,).
 
     ``masked_logits`` must be the SAME legal-masked logits the dense soft CE
-    consumes (the -1e9 mask shifts the log-softmax denominator). Rows are
-    eligible when they carry sparse labels AND the SF legal mask (needed for
-    the analytic smoothing term). Ineligible rows return 0 with mask 0 —
-    callers keep the dense CE there.
+    consumes (the -1e9 mask shifts the log-softmax denominator), and
+    ``legal_aligned`` the SF legal mask already aligned to logits width
+    (``losses.align_policy_mask``). Rows are eligible when they carry sparse
+    labels AND the SF legal mask (needed for the analytic smoothing term).
+    Ineligible rows return 0 with mask 0 — callers keep the dense CE there.
     """
     raw = batch.get("sf_multipv_raw")
     has_raw = batch.get("has_sf_multipv_raw")
@@ -174,27 +191,12 @@ def sparse_sf_policy_ce(
         fallback_ok = ~has_cand & fb_valid
         cand_term = torch.where(fallback_ok, fb_term, cand_term)
 
-    # Analytic smoothing term over the legal set.
+    # Analytic smoothing term over the (pre-aligned) legal set.
     smooth = float(params.sf_policy_label_smooth)
-    legal_aligned = legal.float()
-    if remap is not None:
-        if src_width == POLICY_SIZE:
-            full_idx = torch.as_tensor(
-                COMPACT_TO_FULL_POLICY, dtype=torch.long, device=masked_logits.device,
-            )
-            legal_aligned = legal_aligned.index_select(-1, full_idx)
-        else:
-            widened = legal_aligned.new_zeros((legal_aligned.shape[0], dst_width))
-            compact_to_full = torch.as_tensor(
-                COMPACT_TO_FULL_POLICY, dtype=torch.long, device=masked_logits.device,
-            )
-            widened.index_copy_(
-                -1, compact_to_full, legal_aligned,
-            )
-            legal_aligned = widened
-    legal_count = legal_aligned.sum(dim=-1)
+    legal_f = legal_aligned.float()
+    legal_count = legal_f.sum(dim=-1)
     if smooth > 0.0:
-        smooth_sum = (legal_aligned * lsm).sum(dim=-1)
+        smooth_sum = (legal_f * lsm).sum(dim=-1)
         smooth_term = smooth * smooth_sum / legal_count.clamp_min(1.0)
         ce = -(1.0 - smooth) * cand_term - smooth_term
     else:

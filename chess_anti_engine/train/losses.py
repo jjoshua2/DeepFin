@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 import torch
 import torch.nn.functional as F
 
+from chess_anti_engine.train.sparse_sf_ce import sparse_sf_policy_ce
+
 if TYPE_CHECKING:
     from chess_anti_engine.train.target_builder import SfTargetParams
 
@@ -304,11 +306,11 @@ def compute_loss(
             )
             if sf_policy_target is not None else zero_loss
         )
-        if sf_sparse_params is not None and "sf_multipv_raw" in batch:
-            from chess_anti_engine.train.sparse_sf_ce import sparse_sf_policy_ce
-
+        sf_legal = batch.get("sf_legal_mask")
+        if sf_sparse_params is not None and "sf_multipv_raw" in batch and sf_legal is not None:
             sparse_ce, sparse_ok = sparse_sf_policy_ce(
                 masked_sf_logits, batch, params=sf_sparse_params,
+                legal_aligned=align_policy_mask(sf_legal, int(sf_pol_logits.shape[-1])),
             )
             keep_sparse = sparse_ok > 0
             sf_move_ce = torch.where(keep_sparse, sparse_ce, sf_move_ce)
