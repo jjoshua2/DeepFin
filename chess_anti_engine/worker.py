@@ -833,7 +833,15 @@ class WorkerSession:
         if self.args.threaded_selfplay:
             return ThreadedBatchEvaluator(model, device=device, max_batch=4096, min_batch=256)
         if self.args.aot_dir:
-            aot = AOTEvaluator(self.args.aot_dir, device=device, max_batch=4096)
+  # AOT .pt2 artifacts are compiled for a fixed input width; size the
+  # pinned buffers from the model so a v2_threats net fails loud at
+  # weight load instead of corrupting a 146-channel buffer.
+            aot = AOTEvaluator(
+                self.args.aot_dir, device=device, max_batch=4096,
+                input_planes=input_plane_count(
+                    getattr(model, "input_extra_features", None),
+                ),
+            )
             aot.load_weights(model.state_dict())
             return aot
         return DirectGPUEvaluator(model, device=device, max_batch=4096, n_slots=2)

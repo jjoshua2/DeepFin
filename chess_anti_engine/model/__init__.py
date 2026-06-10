@@ -442,47 +442,87 @@ _V1_INPUT_PLANES = 146   # 112 LC0 + 34 v1 extra planes
 _V2_EXTRA_DELTA = 29     # v2_threats planes appended at index 146
 
 
+def _pad_v1_input_columns(value: torch.Tensor, target_shape: torch.Size) -> torch.Tensor | None:
+    """Insert 29 zero input columns at index 146 if the shapes match the
+    v1 -> v2_threats migration pattern; return None otherwise.
+
+    The new planes sit at indices [146:175] (any appended channels like arc
+    position encodings come after the plane block), so the tensor is split
+    there. Zeros are exact: zero weights make the new planes no-ops, and zero
+    AdamW moments are the exact continuation for zero-initialized weights.
+    """
+    if value.shape == target_shape or value.ndim != len(target_shape):
+        return None
+    diff_dims = [d for d in range(value.ndim) if value.shape[d] != target_shape[d]]
+    if len(diff_dims) != 1:
+        return None
+    d = diff_dims[0]
+    if target_shape[d] - value.shape[d] != _V2_EXTRA_DELTA or value.shape[d] < _V1_INPUT_PLANES:
+        return None
+    pad_shape = list(value.shape)
+    pad_shape[d] = _V2_EXTRA_DELTA
+    head = value.narrow(d, 0, _V1_INPUT_PLANES)
+    tail = value.narrow(d, _V1_INPUT_PLANES, value.shape[d] - _V1_INPUT_PLANES)
+    return torch.cat(
+        [head, torch.zeros(pad_shape, dtype=value.dtype, device=value.device), tail],
+        dim=d,
+    )
+
+
 def _migrate_input_plane_columns(
     ckpt_state: dict, *, model_state: dict, label: str,
 ) -> dict:
     """Zero-init the v2_threats input columns when warm-starting from v1.
 
     A v1 checkpoint's input projection has 146 input channels; a v2_threats
-    model has 175. The new planes sit at indices [146:175] (any appended
-    channels like arc position encodings come after the plane block), so the
-    checkpoint tensor is split there and 29 zero columns are inserted. Zero
-    weights make the new planes exact no-ops: the warm-started model is
+    model has 175 — see _pad_v1_input_columns. The warm-started model is
     bit-identical to the v1 model at step 0.
     """
     out = dict(ckpt_state)
     migrated = 0
     for k, mv in model_state.items():
         cv = out.get(k)
-        if cv is None or not hasattr(cv, "shape"):
+        if cv is None or not torch.is_tensor(cv):
             continue
-        if cv.shape == mv.shape or cv.ndim != mv.ndim:
-            continue
-        diff_dims = [d for d in range(cv.ndim) if cv.shape[d] != mv.shape[d]]
-        if len(diff_dims) != 1:
-            continue
-        d = diff_dims[0]
-        if mv.shape[d] - cv.shape[d] != _V2_EXTRA_DELTA or cv.shape[d] < _V1_INPUT_PLANES:
-            continue
-        pad_shape = list(cv.shape)
-        pad_shape[d] = _V2_EXTRA_DELTA
-        head = cv.narrow(d, 0, _V1_INPUT_PLANES)
-        tail = cv.narrow(d, _V1_INPUT_PLANES, cv.shape[d] - _V1_INPUT_PLANES)
-        out[k] = torch.cat(
-            [head, torch.zeros(pad_shape, dtype=cv.dtype, device=cv.device), tail],
-            dim=d,
-        )
-        migrated += 1
+        padded = _pad_v1_input_columns(cv, mv.shape)
+        if padded is not None:
+            out[k] = padded
+            migrated += 1
     if migrated:
         print(
             f"[{label}] Zero-initialized {_V2_EXTRA_DELTA} v2_threats input "
             f"columns on {migrated} tensor(s) (v1 -> v2 warm start)"
         )
     return out
+
+
+def migrate_optimizer_input_plane_state(optimizer: torch.optim.Optimizer) -> int:
+    """Zero-pad per-parameter optimizer state after a v1 -> v2 warm start.
+
+    ``Optimizer.load_state_dict`` restores moment tensors by parameter order
+    without shape validation, so a v1 checkpoint's exp_avg/exp_avg_sq for the
+    input projection silently keeps 146 columns under a 175-column parameter
+    and crashes at the first ``step()``. Zero moments are the exact AdamW
+    continuation for the zero-initialized new weight columns.
+
+    Only tensors matching the v1 -> v2 pattern are touched — optimizers with
+    legitimately param-shape-mismatched state (factored preconditioners)
+    pass through untouched. Returns the number of migrated tensors.
+    """
+    migrated = 0
+    for group in optimizer.param_groups:
+        for param in group["params"]:
+            state = optimizer.state.get(param)
+            if not state:
+                continue
+            for key, value in list(state.items()):
+                if not torch.is_tensor(value):
+                    continue
+                padded = _pad_v1_input_columns(value, param.shape)
+                if padded is not None:
+                    state[key] = padded
+                    migrated += 1
+    return migrated
 
 
 def _filter_shape_mismatches(ckpt_state: dict, model_state: dict) -> tuple[dict, list[str]]:

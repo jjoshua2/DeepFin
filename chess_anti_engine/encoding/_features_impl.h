@@ -535,10 +535,12 @@ static uint64_t feat_connected_pawns(uint64_t own_pawns) {
  *
  * Counts are kept as carry-save bitboard counters (3 bits per square,
  * saturating at 7) so accumulating one attack map costs a handful of
- * bitwise ops instead of a per-set-bit loop. 7 is far above the /4 clamp
- * used by the count planes, and the control-margin plane clamps at ±4, so
- * saturation is observationally lossless for the planes we emit. The
- * Python reference applies min(count, 7) for exact parity. */
+ * bitwise ops instead of a per-set-bit loop. 7 is above the /4 clamp used
+ * by the count planes, so those are exact. The control-margin plane can
+ * underestimate when one side has >7 attackers on a square AND the other
+ * has >=4 (a capped 7-vs-5 margin reads 0.5 instead of the true 1.0) —
+ * an extreme pile-up we accept for the cheap accumulate. The Python
+ * reference applies min(count, 7) for exact C parity either way. */
 typedef struct {
     uint64_t by_type[2][6];
     uint64_t cnt[2][3];   /* per-square 3-bit saturating counter planes */

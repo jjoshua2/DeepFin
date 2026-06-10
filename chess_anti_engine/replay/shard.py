@@ -790,8 +790,15 @@ def samples_to_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
         if len(history_values) != n or any(v != first_history for v in history_values[1:]):
             raise ValueError("mixed ReplaySample input_history_encoding values")
         arrs[INPUT_HISTORY_ENCODING_ARRAY_KEY] = np.asarray(first_history)
+    x_planes = int(arrs["x"].shape[1])
     for spec in _OPTIONAL_FIELD_SPECS:
-        shape = (policy_size,) if spec.arr in POLICY_SIZED_FIELDS else spec.shape
+        if spec.arr == "x_lc0_root":
+  # Alternate-input planes follow x's width (146 v1 / 175 v2_threats).
+            shape: tuple[int, ...] = (x_planes, 8, 8)
+        elif spec.arr in POLICY_SIZED_FIELDS:
+            shape = (policy_size,)
+        else:
+            shape = spec.shape
         arrs[spec.arr] = np.zeros((n, *shape), dtype=spec.dtype)
         arrs[spec.flag] = np.zeros((n,), dtype=np.uint8)
 
@@ -894,7 +901,12 @@ def validate_array_declarations(
         if spec.flag in arrs and _shape_of(arrs[spec.flag]) != (n,):
             raise ValueError(f"{spec.flag} must be (N,) matching x")
         if spec.arr in arrs:
-            expected_tail = (policy_size,) if spec.arr in POLICY_SIZED_FIELDS else spec.shape
+            if spec.arr == "x_lc0_root":
+                expected_tail: tuple[int, ...] = (int(x_shape[1]), 8, 8)
+            elif spec.arr in POLICY_SIZED_FIELDS:
+                expected_tail = (policy_size,)
+            else:
+                expected_tail = spec.shape
             expected_shape = (n, *expected_tail)
             value_shape = _shape_of(arrs[spec.arr])
             if value_shape != expected_shape:

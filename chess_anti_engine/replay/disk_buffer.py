@@ -544,7 +544,10 @@ class DiskReplayBuffer:
 
     def add_many_arrays(self, arrs: dict[str, np.ndarray]) -> None:
         """Add array-backed samples without materializing ReplaySample objects."""
-        sparse = prune_storage_arrays(arrs)
+  # Pad before the write buffer too — a stale narrower chunk landing in
+  # the same write accumulator as current-width chunks would otherwise
+  # fail at shard-flush concatenation.
+        sparse = prune_storage_arrays(self._pad_x_planes(arrs))
         n = int(sparse["x"].shape[0])
         if n <= 0:
             return

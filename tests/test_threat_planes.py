@@ -289,3 +289,186 @@ def test_v2_shards_into_v1_buffer_rejected(tmp_path):
             buf.add_many_arrays(chunk)
     finally:
         buf.close()
+
+
+# ---------------------------------------------------------------------------
+# Production-surface coverage at 175 planes (review follow-up)
+# ---------------------------------------------------------------------------
+
+def _midgame_board() -> chess.Board:
+    b = chess.Board()
+    for san in ("e4", "c5", "Nf3", "d6", "d4", "cxd4", "Nxd4", "Nf6"):
+        b.push_san(san)
+    return b
+
+
+def test_cboard_encode_full_v2_and_v1_compat():
+    from chess_anti_engine.encoding.cboard_encode import cboard_from_board_fast
+
+    b = _midgame_board()
+    cb = cboard_from_board_fast(b)
+    x2 = cb.encode_full(0, 63)
+    assert x2.shape == (175, 8, 8)
+    np.testing.assert_allclose(
+        x2[112:], extra_feature_planes_fast(b, version="v2_threats"), atol=1e-6,
+    )
+    # v1 path stays byte-identical to the legacy method.
+    np.testing.assert_array_equal(cb.encode_full(0, 34), cb.encode_146())
+    np.testing.assert_array_equal(x2[:112], cb.encode_146()[:112])
+
+
+def test_batch_encode_at_175_planes():
+    from chess_anti_engine.encoding.cboard_encode import cboard_from_board_fast
+    from chess_anti_engine.mcts._mcts_tree import batch_encode_146, batch_encode_146_bf16
+
+    b = _midgame_board()
+    cbs = [cboard_from_board_fast(b) for _ in range(3)]
+    ref = cbs[0].encode_full(0, 63)
+
+    out = np.empty((3, 175, 8, 8), dtype=np.float32)
+    batch_encode_146(cbs, out)
+    for i in range(3):
+        np.testing.assert_allclose(out[i], ref, atol=1e-6)
+
+    out16 = np.empty((3, 175, 8, 8), dtype=np.uint16)
+    batch_encode_146_bf16(cbs, out16)
+    as_f32 = np.frombuffer(
+        (out16[0].astype(np.uint32) << 16).tobytes(), dtype=np.float32,
+    ).reshape(175, 8, 8)
+    np.testing.assert_allclose(as_f32, ref, atol=0.01)  # bf16 precision
+
+
+def test_batch_process_ply_v2_planes():
+    from chess_anti_engine.encoding.cboard_encode import cboard_from_board_fast
+    from chess_anti_engine.mcts._mcts_tree import batch_process_ply
+
+    b = _midgame_board()
+    cbs = [cboard_from_board_fast(b) for _ in range(2)]
+    expected_feat = extra_feature_planes_fast(b, version="v2_threats")
+    legal = cbs[0].legal_move_indices()
+    action = int(legal[0])
+    n = 2
+    pol = np.zeros((n, 4672), dtype=np.float32)
+    wdl = np.zeros((n, 3), dtype=np.float32)
+    actions = np.full((n,), action, dtype=np.int32)
+    values = np.zeros((n,), dtype=np.float64)
+    probs = np.zeros((n, 4672), dtype=np.float32)
+    probs[:, action] = 1.0
+
+    result = batch_process_ply(
+        cbs, pol, wdl, actions, values, probs,
+        0, 0.0, 0.0, 1.0, 0.0,   # diff-focus disabled
+        0,                        # full-history encoding
+        63,                       # n_extra: v2_threats
+    )
+    x = result[0]
+    assert x.shape == (n, 175, 8, 8)
+    np.testing.assert_allclose(x[0, 112:], expected_feat, atol=1e-6)
+
+
+def test_warm_start_bit_identical_with_arc_pos_encoding():
+    """Arc pos-encoding appends channels AFTER the plane block; the zero-column
+    insertion at 146 must leave those columns aligned."""
+    def cfg(version: str) -> ModelConfig:
+        return ModelConfig(
+            embed_dim=32, num_layers=1, num_heads=2, use_smolgen=False,
+            input_pos_encoding="arc", input_extra_features=version,
+        )
+
+    torch.manual_seed(3)
+    v1 = build_model(cfg("v1")).eval()
+    v2 = build_model(cfg("v2_threats")).eval()
+    load_state_dict_tolerant(v2, v1.state_dict(), label="test-arc-warmstart")
+
+    b = _midgame_board()
+    x1 = torch.from_numpy(encode_position(b)).unsqueeze(0)
+    x2 = torch.from_numpy(
+        encode_position(b, input_extra_features="v2_threats")
+    ).unsqueeze(0)
+    with torch.no_grad():
+        o1 = v1(x1)
+        o2 = v2(x2)
+    for key in o1:
+        assert torch.equal(o1[key], o2[key]), f"head {key} not bit-identical (arc)"
+
+
+def test_optimizer_state_migrates_v1_to_v2():
+    """A v1 trainer checkpoint's AdamW moments must zero-pad into a v2 model
+    so the first opt.step() after warm-start doesn't shape-crash."""
+    from chess_anti_engine.model import migrate_optimizer_input_plane_state
+
+    torch.manual_seed(4)
+    v1 = build_model(_tiny_cfg("v1"))
+    opt1 = torch.optim.AdamW(v1.parameters(), lr=1e-3)
+    b = _midgame_board()
+    x1 = torch.from_numpy(encode_position(b)).unsqueeze(0)
+    out = v1(x1)
+    torch.stack([v.float().sum() for v in out.values()]).sum().backward()
+    opt1.step()
+
+    v2 = build_model(_tiny_cfg("v2_threats"))
+    load_state_dict_tolerant(v2, v1.state_dict(), label="test-opt-warmstart")
+    opt2 = torch.optim.AdamW(v2.parameters(), lr=1e-3)
+    # torch accepts the mismatched moment tensors silently...
+    opt2.load_state_dict(opt1.state_dict())
+    migrated = migrate_optimizer_input_plane_state(opt2)
+    assert migrated >= 2  # exp_avg + exp_avg_sq of the input embed
+
+    x2 = torch.from_numpy(
+        encode_position(b, input_extra_features="v2_threats")
+    ).unsqueeze(0)
+    out2 = v2(x2)
+    torch.stack([v.float().sum() for v in out2.values()]).sum().backward()
+    opt2.step()  # ...and without migration this raises a 146-vs-175 RuntimeError
+
+
+def test_x_lc0_root_width_follows_x():
+    from chess_anti_engine.replay.buffer import ReplaySample
+    from chess_anti_engine.replay.shard import samples_to_arrays, validate_array_declarations
+
+    rng = np.random.default_rng(0)
+    pol = np.zeros(4672, dtype=np.float32)
+    pol[0] = 1.0
+    samples = [
+        ReplaySample(
+            x=rng.random((175, 8, 8)).astype(np.float32),
+            policy_target=pol,
+            wdl_target=1,
+            x_lc0_root=rng.random((175, 8, 8)).astype(np.float32),
+        )
+        for _ in range(2)
+    ]
+    arrs = samples_to_arrays(samples)
+    assert arrs["x_lc0_root"].shape == (2, 175, 8, 8)
+    validate_array_declarations(arrs)  # must accept the v2 width
+
+
+def test_write_buffer_accepts_mixed_width_chunks(tmp_path):
+    from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
+
+    rng = np.random.default_rng(0)
+    buf = DiskReplayBuffer(
+        1000, shard_dir=tmp_path, rng=rng, input_planes=175,
+        shuffle_cap=100, shard_size=8,
+    )
+    try:
+        def chunk(planes: int, n: int) -> dict:
+            policy = np.zeros((n, 4672), dtype=np.float16)
+            policy[:, 0] = 1.0
+            return {
+                "x": rng.random((n, planes, 8, 8)).astype(np.float16),
+                "policy_target": policy,
+                "wdl_target": np.zeros((n,), dtype=np.int8),
+                "priority": np.ones((n,), dtype=np.float32),
+                "has_policy": np.ones((n,), dtype=np.uint8),
+            }
+
+        # A stale v1-width chunk and a v2-width chunk land in the same write
+        # accumulator; the flush at shard_size=8 must concatenate cleanly.
+        buf.add_many_arrays(chunk(146, 5))
+        buf.add_many_arrays(chunk(175, 5))
+        assert len(buf) >= 8
+        out = buf.sample_batch_arrays(4, wdl_balance=False)
+        assert out["x"].shape[1] == 175
+    finally:
+        buf.close()

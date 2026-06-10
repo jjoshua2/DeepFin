@@ -1961,7 +1961,10 @@ class Trainer:
         atomic_write(path, lambda tmp: torch.save(state, str(tmp)))
 
     def load(self, path: Path) -> None:
-        from chess_anti_engine.model import load_state_dict_tolerant
+        from chess_anti_engine.model import (
+            load_state_dict_tolerant,
+            migrate_optimizer_input_plane_state,
+        )
 
         # Trainer checkpoints include optimizer/scheduler/RNG pickles, so resume needs the
         # full trusted checkpoint payload rather than PyTorch's weights-only loader.
@@ -1972,6 +1975,15 @@ class Trainer:
         optimizer_state_loaded = True
         try:
             self.opt.load_state_dict(ckpt["opt"])
+  # torch restores moment tensors without shape validation, so a v1
+  # checkpoint under a v2_threats model would crash at the first
+  # opt.step() instead of here. Pad the input-plane columns to match.
+            migrated = migrate_optimizer_input_plane_state(self.opt)
+            if migrated:
+                logging.getLogger(__name__).info(
+                    "Zero-padded %d optimizer state tensor(s) for the "
+                    "v1 -> v2_threats input-plane migration", migrated,
+                )
         except (ValueError, KeyError, RuntimeError) as exc:
             optimizer_state_loaded = False
             logging.getLogger(__name__).warning(
