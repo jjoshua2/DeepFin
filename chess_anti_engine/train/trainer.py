@@ -629,6 +629,8 @@ class TrainMetrics:
     wdl_loss_curriculum: float = 0.0
     frac_is_selfplay: float = 0.0
     frac_tagged: float = 0.0
+  # Fraction of soft-policy rows surviving the soft_policy_min_tv mask (1.0 when off).
+    soft_mask_kept_frac: float = 1.0
   # Per-game-phase loss split (bucketed by moves_left).
     policy_loss_open: float = 0.0
     policy_loss_mid: float = 0.0
@@ -751,6 +753,7 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         swa_freq=_f("swa_freq", 50, int),
         w_policy=_f("w_policy", 1.0),
         w_soft=_f("w_soft", 0.5),
+        soft_policy_min_tv=_f("soft_policy_min_tv", 0.0),
         w_future=_f("w_future", 0.15),
         w_wdl=_f("w_wdl", 1.0),
         w_sf_move=_f("w_sf_move", 0.15),
@@ -835,6 +838,7 @@ class Trainer:
   # Loss weights (all tunable for Ray Tune ablations)
         w_policy: float = 1.0,
         w_soft: float = 0.5,
+        soft_policy_min_tv: float = 0.0,
         w_future: float = 0.15,
         w_wdl: float = 1.0,
         w_sf_move: float = 0.15,
@@ -1185,6 +1189,7 @@ class Trainer:
         ]
         self.w_policy = float(w_policy)
         self.w_soft = float(w_soft)
+        self.soft_policy_min_tv = float(soft_policy_min_tv)
         self.w_future = float(w_future)
         self.w_wdl = float(w_wdl)
         self.w_sf_move = float(w_sf_move)
@@ -1327,6 +1332,7 @@ class Trainer:
     def _loss_kwargs(self) -> dict[str, Any]:
         return dict(
             w_policy=self.w_policy, w_soft=self.w_soft, w_future=self.w_future,
+            soft_policy_min_tv=self.soft_policy_min_tv,
             w_wdl=self.w_wdl, w_sf_move=self.w_sf_move, w_sf_eval=self.w_sf_eval,
             w_categorical=self.w_categorical, w_volatility=self.w_volatility,
             w_sf_volatility=self.w_sf_volatility, w_moves_left=self.w_moves_left,

@@ -215,8 +215,15 @@ def compute_loss(
     adjusted_wdl_regret_source: str = "sum",
     adjusted_wdl_regret_scale: float = 1.0,
     adjusted_wdl_regret_cap: float = 0.0,
+    soft_policy_min_tv: float = 0.0,
 ) -> dict[str, torch.Tensor]:
-    """Compute multi-head training loss."""
+    """Compute multi-head training loss.
+
+    ``soft_policy_min_tv`` masks the soft-policy loss to zero on samples
+    whose soft target is within that total-variation distance of the hard
+    target (they're a deterministic retempering of the same distribution —
+    see scripts/probe_policy_targets.py). 0.0 keeps current behavior exactly.
+    """
     net_mask = _get_mask(batch, "is_network_turn", default=1.0).to(torch.float32)
 
     def _apply_legal_mask(logits: torch.Tensor) -> torch.Tensor:
@@ -241,6 +248,18 @@ def compute_loss(
         )
         if soft_target is not None else zero_loss
     )
+    soft_mask_kept_frac = torch.ones((), device=pol_ce.device, dtype=torch.float32)
+    if float(soft_policy_min_tv) > 0.0 and soft_target is not None:
+        # Drop the soft loss where TV(hard, soft) is below the threshold: there
+        # the soft target is a retempering of (nearly) the same distribution, so
+        # for the trunk the gradient largely duplicates the main policy CE (the
+        # policy_soft head itself still loses its only signal on masked rows).
+        # Strictly off at the default 0.0.
+        _soft_aligned = align_policy_target(soft_target, int(base_policy_logits.shape[-1]))
+        _tv = 0.5 * (pol_target.float() - _soft_aligned.float()).abs().sum(dim=-1)
+        _keep = (_tv >= float(soft_policy_min_tv)).to(has_soft.dtype)
+        soft_mask_kept_frac = masked_mean(_keep, net_mask * has_soft)
+        has_soft = has_soft * _keep
 
   # Future policy (t+2): target and legal mask are in the t+2 move space.
     has_future = _get_mask(batch, "has_future")
@@ -457,6 +476,7 @@ def compute_loss(
         "wdl_ce": m_wdl,
         "blended_wdl_ce": m_blended_wdl,
         "soft_policy_ce": m_soft,
+        "soft_mask_kept_frac": soft_mask_kept_frac,
         "future_policy_ce": m_future,
         "sf_move_ce": m_sf_move,
         "sf_eval_ce": m_sf_eval,
