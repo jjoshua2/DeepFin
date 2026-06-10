@@ -140,9 +140,15 @@ def sparse_sf_policy_ce(
         idx = mapped
 
     # Candidate term: softmax(scores/T) over scoreable rows, gathered
-    # log-probs. float64 like the live _softmax_np — at T ~= 0.012 the
-    # z-magnitudes reach ~1e5 and fp32 rounding there moves the probs by
-    # ~1%, which would break the 1e-5 dense-parity contract.
+    # log-probs. The probs are computed in float64 to mirror the live
+    # builder exactly (stockfish_turn._build_sf_policy_target casts scores
+    # to np.float64) — NOT for training precision: this is (B, K) scalars
+    # of target construction, never model tensors; the logits/log-softmax/
+    # CE math stays fp32/autocast like the dense path. Measured fp32
+    # deviation is <=7e-6 CE across both score modes and temps 0.006-0.25,
+    # which would silently consume ~70% of the 1e-5 dense-parity test
+    # budget; float64 keeps that margin for catching real bugs, at the
+    # cost of ~12K double ops per 256-batch (unmeasurable).
     temp = max(1e-6, float(params.sf_policy_temp))
     z = torch.where(ok, scores.double() / temp, scores.new_full((), -torch.inf, dtype=torch.float64))
     z = z - z.amax(dim=-1, keepdim=True).clamp_min(-1e30)  # stable even for all-masked rows
