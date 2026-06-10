@@ -909,6 +909,9 @@ class ChessNet(nn.Module):
             self.dynamic_relation_weight = nn.Parameter(
                 torch.zeros(cfg.num_layers, cfg.num_heads, self.dynamic_relation_count)
             )
+  # Policy relation bias applies to policy_own ONLY (the head MCTS uses);
+  # the soft/sf/future heads train unbiased. Intentional: the experiment
+  # measures search-relevant marginal value first.
         self.policy_relation_weight: nn.Parameter | None = None
         if bool(cfg.policy_dynamic_relations):
             self.policy_relation_weight = nn.Parameter(

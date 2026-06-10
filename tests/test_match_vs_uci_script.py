@@ -267,8 +267,10 @@ def test_play_node_limited_preserves_latest_analysis_info() -> None:
             board: chess.Board,
             limit: chess.engine.Limit,
             *,
+            game: object = None,
             info: chess.engine.Info = chess.engine.INFO_NONE,
         ) -> FakeAnalysis:
+            del game
             assert board == chess.Board()
             assert limit == chess.engine.Limit()
             assert info == chess.engine.INFO_ALL
@@ -311,9 +313,10 @@ def test_play_node_limited_handles_analysis_complete() -> None:
             board: chess.Board,
             limit: chess.engine.Limit,
             *,
+            game: object = None,
             info: chess.engine.Info = chess.engine.INFO_NONE,
         ) -> FakeAnalysis:
-            del board, limit, info
+            del board, limit, info, game
             return self.analysis_obj
 
     engine = FakeEngine()

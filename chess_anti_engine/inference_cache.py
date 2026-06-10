@@ -104,7 +104,10 @@ class EncodedEvalCache:
         self, x: np.ndarray, relations: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
   # Relations are a pure function of the position, which the encoded row
-  # already determines — cache hits stay valid with or without them.
+  # determines — so a hit can only be wrong if the SAME cache instance is
+  # fed mixed with/without-relations traffic for the same rows. All current
+  # construction sites use the cache on a single search path with a fixed
+  # relations mode, so the row key is sufficient.
         xb = _coerce_encoded_batch(x)
         bsz = int(xb.shape[0])
         if bsz == 0:

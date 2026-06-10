@@ -752,7 +752,10 @@ def check_dynamic_relations_transport(config: dict) -> None:
     in-process gumbel-C path. Not yet wired: the shared-memory slot broker
     and the threaded worker dispatcher.
     """
-    if not bool(config.get("use_dynamic_relations", False)):
+    if not (
+        bool(config.get("use_dynamic_relations", False))
+        or bool(config.get("record_relations", False))
+    ):
         return
     offenders = [
         key for key in (
@@ -762,10 +765,15 @@ def check_dynamic_relations_transport(config: dict) -> None:
         )
         if bool(config.get(key, False))
     ]
+    if str(config.get("distributed_worker_aot_dir") or "").strip():
+        offenders.append("distributed_worker_aot_dir")
+    if str(config.get("mcts", "puct")).lower() != "gumbel":
+        offenders.append("mcts != gumbel (PUCT paths don't transport relations)")
     if offenders:
         raise ValueError(
-            "use_dynamic_relations=true requires worker-local direct inference; "
-            f"disable {offenders} (relations are not transported on those paths yet)"
+            "dynamic relations require worker-local direct inference on the "
+            f"gumbel path; offending config: {offenders} "
+            "(relations are not transported on those paths yet)"
         )
 
 

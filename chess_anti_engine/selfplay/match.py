@@ -108,6 +108,7 @@ def pick_moves_for_boards(
                 input_history_encoding=input_history_encoding,
                 input_extra_features=input_extra_features,
                 policy_encoding=policy_encoding,
+                compute_relations=use_dynamic_relations,
             ),
         )
     return [int(a) for a in actions]

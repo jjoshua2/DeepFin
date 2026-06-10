@@ -770,7 +770,9 @@ def run_gumbel_root_many_c(
         _root_qs_arr = np.array(root_qs, dtype=np.float64)
 
         _rel_buf = (
-            np.empty((len(_enc_buf), 5, 64, 64), dtype=np.uint8)
+  # zeros (not empty): padding rows go through the forward like the
+  # zeroed enc-buffer rows; uninitialized bytes would be UB-ish noise.
+            np.zeros((len(_enc_buf), 5, 64, 64), dtype=np.uint8)
             if cfg.compute_relations else None
         )
         _tp0 = _time.perf_counter()

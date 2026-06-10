@@ -1963,6 +1963,57 @@ class Trainer:
   # file (matches the export_swa path; previously diverged).
         atomic_write(path, lambda tmp: torch.save(state, str(tmp)))
 
+    _FRESH_PARAM_NAME_SUFFIXES = ("dynamic_relation_weight", "policy_relation_weight")
+
+    def _remap_optimizer_state_for_new_params(self, ckpt_opt: dict) -> dict | None:
+        """Remap a donor optimizer state dict around newly added parameters.
+
+        Warm-starting a dynamic-relations model from a checkpoint without
+        those (zero-init) parameters leaves the donor param groups one or two
+        entries short; ``Optimizer.load_state_dict`` then raises on the group
+        size mismatch and the caller's fallback would reinitialize ALL
+        moments + the scheduler. Instead, splice fresh (state-less) slots in
+        at the new parameters' positions so every donor moment lands on the
+        parameter it belongs to. Returns None when the mismatch isn't
+        explained by exactly the known fresh parameters (caller falls back
+        to the existing reinit path).
+        """
+        fresh_ids = {
+            id(param)
+            for name, param in self.model.named_parameters()
+            if name.endswith(self._FRESH_PARAM_NAME_SUFFIXES)
+        }
+        groups_ckpt = ckpt_opt.get("param_groups", [])
+        groups_new = self.opt.param_groups
+        if not fresh_ids or len(groups_ckpt) != len(groups_new):
+            return None
+        state_remap: dict[int, int] = {}
+        out_groups: list[dict] = []
+        new_idx = 0
+        for g_new, g_ckpt in zip(groups_new, groups_ckpt):
+            ckpt_params = list(g_ckpt.get("params", []))
+            n_fresh = sum(1 for param in g_new["params"] if id(param) in fresh_ids)
+            if len(g_new["params"]) != len(ckpt_params) + n_fresh:
+                return None
+            donor_iter = iter(ckpt_params)
+            new_param_ids: list[int] = []
+            for param in g_new["params"]:
+                if id(param) not in fresh_ids:
+                    state_remap[next(donor_iter)] = new_idx
+                new_param_ids.append(new_idx)
+                new_idx += 1
+            out_group = {k: v for k, v in g_ckpt.items() if k != "params"}
+            out_group["params"] = new_param_ids
+            out_groups.append(out_group)
+        return {
+            "state": {
+                state_remap[k]: v
+                for k, v in ckpt_opt.get("state", {}).items()
+                if k in state_remap
+            },
+            "param_groups": out_groups,
+        }
+
     def load(self, path: Path) -> None:
         from chess_anti_engine.model import (
             load_state_dict_tolerant,
@@ -1977,7 +2028,19 @@ class Trainer:
         fresh_scheduler_state = self._scheduler.state_dict()
         optimizer_state_loaded = True
         try:
-            self.opt.load_state_dict(ckpt["opt"])
+            opt_state = ckpt["opt"]
+            n_ckpt_params = sum(len(g.get("params", ())) for g in opt_state.get("param_groups", []))
+            n_model_params = sum(len(g["params"]) for g in self.opt.param_groups)
+            if n_ckpt_params < n_model_params:
+                remapped = self._remap_optimizer_state_for_new_params(opt_state)
+                if remapped is not None:
+                    logging.getLogger(__name__).info(
+                        "Spliced %d fresh parameter slot(s) into the donor "
+                        "optimizer state (zero-init warm start)",
+                        n_model_params - n_ckpt_params,
+                    )
+                    opt_state = remapped
+            self.opt.load_state_dict(opt_state)
   # torch restores moment tensors without shape validation, so a v1
   # checkpoint under a v2_threats model would crash at the first
   # opt.step() instead of here. Pad the input-plane columns to match.

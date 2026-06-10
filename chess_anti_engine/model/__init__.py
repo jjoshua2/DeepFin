@@ -7,6 +7,7 @@ import torch
 from chess_anti_engine.encoding import encode_position
 from chess_anti_engine.encoding.features import (
     EXTRA_FEATURES_V1,
+    RELATION_COUNT,
     normalize_extra_features_encoding,
 )
 from chess_anti_engine.encoding.lc0 import LC0_HISTORY_LEGACY, normalize_lc0_history_encoding
@@ -277,6 +278,17 @@ def _attach_runtime_model_metadata(model: torch.nn.Module, cfg: ModelConfig) -> 
 
 
 def build_model(cfg: ModelConfig) -> torch.nn.Module:
+    if (cfg.use_dynamic_relations or cfg.policy_dynamic_relations) and (
+        int(cfg.dynamic_relation_count) != RELATION_COUNT
+    ):
+  # The relation count is baked into the C computation, the shard field
+  # shape, and every transport buffer — reject mismatches at build time
+  # instead of failing at the first einsum.
+        raise ValueError(
+            f"dynamic_relation_count must be {RELATION_COUNT} "
+            f"(got {cfg.dynamic_relation_count}); the relation set is fixed "
+            "by the C extension / shard schema"
+        )
     policy_encoding = normalize_policy_encoding(cfg.policy_encoding)
     in_planes = infer_input_planes(cfg.input_extra_features)
     if cfg.kind == "tiny":

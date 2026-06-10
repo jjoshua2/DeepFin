@@ -3541,7 +3541,11 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
         uint8_t *rel_data = NULL;
         if (!parse_relations_buffer(rel_buf_obj, (int)PyArray_DIM(enc_arr, 0),
                                     &rel_arr, &rel_data)) {
-            /* enc_arr_ref already owned by g; gss_free on next start cleans up */
+            /* We still own the PyArray_FROMANY ref on enc_arr here (the
+             * strong ref into g is only taken below), and g->enc_data was
+             * already set — clear it so a half-initialized g can't be used. */
+            g->enc_data = NULL;
+            Py_DECREF(enc_arr);
             return NULL;
         }
         g->rel_data = rel_data;

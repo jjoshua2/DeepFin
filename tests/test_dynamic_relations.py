@@ -302,3 +302,187 @@ def test_batch_process_ply_returns_relations():
     rel = result[12]
     assert rel.shape == (1, 5, 64, 64)
     np.testing.assert_array_equal(rel[0], expected)
+
+
+# ---------------------------------------------------------------------------
+# Review follow-ups: mirroring, optimizer continuation, fail-loud paths
+# ---------------------------------------------------------------------------
+
+def test_mirror_relations_matches_flipped_board():
+    from chess_anti_engine.replay.augment import mirror_relations
+
+    rng = random.Random(11)
+    checked = 0
+    for _ in range(30):
+        b = chess.Board("r2q1rk1/pp2bppp/2n1pn2/3p4/3P1B2/2P1PN2/PP3PPP/RN1Q1RK1 w - - 0 9")
+        for _ in range(rng.randint(0, 30)):
+            moves = list(b.legal_moves)
+            if not moves:
+                break
+            b.push(rng.choice(moves))
+        if b.is_game_over():
+            continue
+        m = b.transform(chess.flip_horizontal)
+        np.testing.assert_array_equal(
+            mirror_relations(relation_matrices(b)), relation_matrices(m),
+            err_msg=b.fen(),
+        )
+        checked += 1
+    assert checked >= 20
+
+
+def test_batch_mirror_keeps_relations_consistent_with_x():
+    """maybe_mirror_batch_arrays must mirror relations alongside x — mirrored
+    rows' relations equal the flipped board's relations."""
+    from chess_anti_engine.replay.augment import maybe_mirror_batch_arrays
+
+    b = chess.Board()
+    b.push_san("e4")
+    b.push_san("c5")
+    pol = np.zeros((2, 4672), np.float16)
+    pol[:, 0] = 1.0
+    rel = relation_matrices(b)
+    arrs = {
+        "x": np.stack([encode_position(b, input_extra_features="v2_threats")] * 2).astype(np.float16),
+        "policy_target": pol,
+        "wdl_target": np.zeros((2,), np.int8),
+        "relations": np.stack([rel] * 2),
+        "has_relations": np.ones((2,), np.uint8),
+    }
+    out = maybe_mirror_batch_arrays(
+        arrs, rng=np.random.default_rng(0), prob=1.0,
+        input_history_encoding="lc0_root_legacy_meta",
+    )
+    expected = relation_matrices(b.transform(chess.flip_horizontal))
+    np.testing.assert_array_equal(out["relations"][0], expected)
+    np.testing.assert_array_equal(out["relations"][1], expected)
+    # x really was mirrored too (changed) — relations stayed in sync with it
+    assert not np.array_equal(out["x"], arrs["x"])
+
+
+def test_sample_mirror_preserves_relations():
+    from chess_anti_engine.replay.augment import mirror_relations, mirror_sample
+    from chess_anti_engine.replay.buffer import ReplaySample
+
+    b = chess.Board()
+    b.push_san("d4")
+    pol = np.zeros(4672, np.float32)
+    pol[0] = 1.0
+    s = ReplaySample(
+        x=encode_position(b, input_extra_features="v2_threats"),
+        policy_target=pol, wdl_target=1, relations=relation_matrices(b),
+    )
+    m = mirror_sample(s, input_history_encoding="lc0_root_legacy_meta")
+    assert m.relations is not None  # previously silently dropped
+    assert s.relations is not None
+    np.testing.assert_array_equal(m.relations, mirror_relations(s.relations))
+
+
+def test_optimizer_state_splices_fresh_relation_params(tmp_path):
+    """Warm-starting from a v2_threats trainer checkpoint must preserve the
+    donor optimizer moments + scheduler instead of reinitializing them."""
+    from chess_anti_engine.train.trainer import Trainer
+
+    def cfg(dyn: bool) -> ModelConfig:
+        return ModelConfig(
+            embed_dim=32, num_layers=1, num_heads=2, use_smolgen=False,
+            input_extra_features="v2_threats",
+            use_dynamic_relations=dyn, policy_dynamic_relations=dyn,
+        )
+
+    torch.manual_seed(0)
+    base = build_model(cfg(False))
+    t1 = Trainer(base, device="cpu", lr=1e-3, model_config=cfg(False))
+    b = chess.Board()
+    b.push_san("e4")
+    x = torch.from_numpy(
+        encode_position(b, input_extra_features="v2_threats")
+    ).unsqueeze(0)
+    out = base(x)
+    torch.stack([v.float().sum() for v in out.values()]).sum().backward()
+    t1.opt.step()
+    t1.step = 7
+    ckpt = tmp_path / "trainer.pt"
+    t1.save(ckpt)
+
+    dyn_model = build_model(cfg(True))
+    t2 = Trainer(dyn_model, device="cpu", lr=1e-3, model_config=cfg(True))
+    t2.load(ckpt)
+    assert t2.step == 7
+    named = dict(dyn_model.named_parameters())
+    donor_state = t2.opt.state.get(named["embed.weight"])
+    assert donor_state and float(donor_state["exp_avg"].abs().sum()) > 0
+    assert not t2.opt.state.get(named["dynamic_relation_weight"])  # fresh slot
+    out2 = dyn_model(x)
+    torch.stack([v.float().sum() for v in out2.values()]).sum().backward()
+    t2.opt.step()  # must not shape-crash
+
+
+def test_puct_paths_raise_with_relations():
+    from chess_anti_engine.mcts.puct import MCTSConfig, run_mcts_many
+    from chess_anti_engine.mcts.puct_c import run_mcts_many_c
+
+    m = _model(use_relations=True)
+    cfg = MCTSConfig(simulations=1, compute_relations=True)
+    for fn in (run_mcts_many, run_mcts_many_c):
+        with pytest.raises(NotImplementedError, match="PUCT"):
+            fn(m, [chess.Board()], device="cpu", rng=np.random.default_rng(0), cfg=cfg)
+
+
+def test_python_gumbel_fallback_transports_relations():
+    """The no-C gumbel fallback must pass relations to the evaluator."""
+    from chess_anti_engine.mcts.gumbel import GumbelConfig, run_gumbel_root_many
+
+    torch.manual_seed(6)
+    m = build_model(ModelConfig(
+        embed_dim=32, num_layers=1, num_heads=2, use_smolgen=False,
+        input_extra_features="v2_threats", use_dynamic_relations=True,
+    )).eval()
+    _fill_param(m, "dynamic_relation_weight", 0.05)
+    b = chess.Board()
+    cfg = GumbelConfig(
+        simulations=4, temperature=0.5, add_noise=False,
+        input_extra_features="v2_threats", compute_relations=True,
+    )
+    probs, actions, _values, _masks = run_gumbel_root_many(
+        m, [b], device="cpu", rng=np.random.default_rng(0), cfg=cfg,
+    )[:4]
+    del _values, _masks
+    assert len(actions) == 1
+
+    cfg_off = GumbelConfig(
+        simulations=4, temperature=0.5, add_noise=False,
+        input_extra_features="v2_threats", compute_relations=False,
+    )
+    probs_off, *_ = run_gumbel_root_many(
+        m, [b], device="cpu", rng=np.random.default_rng(0), cfg=cfg_off,
+    )
+    # nonzero bias + relations transported => different root policy
+    assert not np.allclose(probs[0], probs_off[0])
+
+
+def test_dynamic_relation_count_validated():
+    with pytest.raises(ValueError, match="dynamic_relation_count"):
+        build_model(ModelConfig(
+            embed_dim=32, num_layers=1, num_heads=2, use_smolgen=False,
+            use_dynamic_relations=True, dynamic_relation_count=7,
+        ))
+
+
+def test_transport_check_rejects_puct_and_aot():
+    from chess_anti_engine.tune.distributed_runtime import check_dynamic_relations_transport
+
+    base = {"use_dynamic_relations": True, "mcts": "gumbel"}
+    check_dynamic_relations_transport(dict(base))  # ok
+    with pytest.raises(ValueError, match="mcts"):
+        check_dynamic_relations_transport({**base, "mcts": "puct"})
+    with pytest.raises(ValueError, match="aot"):
+        check_dynamic_relations_transport({**base, "distributed_worker_aot_dir": "/x"})
+    with pytest.raises(ValueError, match="broker"):
+        check_dynamic_relations_transport(
+            {**base, "distributed_inference_broker_enabled": True})
+    # record_relations alone (no model flag) is guarded too
+    with pytest.raises(ValueError):
+        check_dynamic_relations_transport(
+            {"record_relations": True, "mcts": "gumbel",
+             "distributed_worker_threaded": True})

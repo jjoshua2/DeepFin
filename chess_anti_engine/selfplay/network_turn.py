@@ -755,6 +755,7 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
                     input_history_encoding=state.game.input_history_encoding,
                     input_extra_features=state.game.input_extra_features,
                     policy_encoding=state.game.policy_encoding,
+                    compute_relations=bool(state.game.record_relations),
                 ),
                 evaluator=eval_impl,
                 pre_pol_logits=sub_pol,
