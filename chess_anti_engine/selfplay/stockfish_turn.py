@@ -38,6 +38,26 @@ from chess_anti_engine.utils.numpy_helpers import softmax_1d as _softmax_np  # n
 
 _LOG = logging.getLogger("chess_anti_engine.selfplay")
 
+_multipv_truncation_warned = False
+
+
+def _warn_multipv_truncated() -> None:
+    """Warn once: sf_multipv > SF_MULTIPV_RAW_MAX breaks the rebuild parity contract.
+
+    The live target uses ALL legal MultiPV candidates while the stored sparse
+    rows are capped, so train-time rebuilds (train/target_builder.py) would
+    diverge from the stored dense targets for these records.
+    """
+    global _multipv_truncation_warned
+    if not _multipv_truncation_warned:
+        _multipv_truncation_warned = True
+        _LOG.warning(
+            "sparse MultiPV capture truncated at %d rows; live targets use all "
+            "candidates, so rebuilt SF targets will diverge from stored ones. "
+            "Raise SF_MULTIPV_RAW_MAX (replay/shard.py) or lower sf_multipv.",
+            SF_MULTIPV_RAW_MAX,
+        )
+
 
 @dataclass
 class _PendingSfLabel:
@@ -372,10 +392,14 @@ def _collect_sparse_pv_rows(res, *, turn: bool, legal_set: set[int]) -> np.ndarr
     policy encoding in finalize, like ``sf_move_index``.
     """
     rows: list[tuple[int, int, int, int, int]] = []
+    truncated = False
     for pv in getattr(res, "pvs", None) or []:
         a = uci_to_policy_index(pv.move_uci, turn)
         if a < 0 or a not in legal_set:
             continue
+        if len(rows) >= SF_MULTIPV_RAW_MAX:
+            truncated = True
+            break
         cp = SF_CP_SENTINEL if pv.cp is None else int(np.clip(int(pv.cp), -32000, 32000))
         mate = 0 if pv.mate is None else int(np.clip(int(pv.mate), -127, 127))
         if pv.wdl is None:
@@ -383,8 +407,8 @@ def _collect_sparse_pv_rows(res, *, turn: bool, legal_set: set[int]) -> np.ndarr
         else:
             w, d = int(round(float(pv.wdl[0]))), int(round(float(pv.wdl[1])))
         rows.append((a, cp, mate, w, d))
-        if len(rows) >= SF_MULTIPV_RAW_MAX:
-            break
+    if truncated:
+        _warn_multipv_truncated()
     if not rows:
         return None
     return np.array(rows, dtype=np.int16)
@@ -400,9 +424,11 @@ def _collect_sf_label_meta(res) -> np.ndarray:
         w = d = -1
     else:
         w, d = int(round(float(res.wdl[0]))), int(round(float(res.wdl[1])))
+    # nodes/depth are config-driven; clamp so a huge budget can't overflow the
+    # int32 field and raise out of _process_sf_results mid-selfplay.
     return np.array(
-        [nodes if nodes is not None else -1,
-         depth if depth is not None else -1,
+        [min(int(nodes), 2**31 - 1) if nodes is not None else -1,
+         min(int(depth), 2**31 - 1) if depth is not None else -1,
          cp, mate, w, d],
         dtype=np.int32,
     )

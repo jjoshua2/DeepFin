@@ -15,6 +15,14 @@ Overridable param keys: sf_policy_temp, sf_policy_label_smooth,
 sf_wdl_use_cp_logistic, sf_wdl_cp_slope, sf_wdl_cp_draw_width
 (anything else in the flat config also works, e.g. lr).
 
+Every variant retrains from a COLD optimizer: only the checkpoint's model
+weights are restored; optimizer moments / scheduler / step counters are
+deliberately discarded so all variants share the identical fresh-AdamW
+starting point (warmup per the config). The deltas between variants stay
+meaningful, but the absolute trajectories differ from what a live retune
+that kept the optimizer state would produce. Each variant is seeded
+identically so dropout/sampling noise doesn't pollute the A/B.
+
 Usage::
 
     PYTHONPATH=. python3 scripts/retarget_retrain.py \\
@@ -78,9 +86,13 @@ def _run_variant(
     config["rebuild_sf_targets"] = True
     config.update(overrides)
 
+    import torch
+
+    # Identical seed per variant: the only difference between runs is the
+    # target params, not dropout masks or replay sampling order.
+    torch.manual_seed(int(config.get("seed", 0)))
     model_cfg = model_config_from_flat_config(config)
     model = build_model(model_cfg)
-    import torch
 
     ckpt = torch.load(str(checkpoint), map_location=device, weights_only=False)
     state = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt

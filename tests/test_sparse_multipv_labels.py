@@ -6,8 +6,6 @@ Default behavior (rebuild_sf_targets=False) is bitwise-unchanged.
 """
 from __future__ import annotations
 
-import os
-
 from typing import Any, cast
 
 import numpy as np
@@ -29,21 +27,9 @@ from chess_anti_engine.train.target_builder import (
     rebuild_sf_wdl,
 )
 
-SF_CANDIDATES = [
-    "/home/josh/projects/chess/e2e_server/publish/stockfish",
-    "/usr/bin/stockfish",
-    "/usr/games/stockfish",
-]
+from tests.stockfish_binary import find_stockfish
 
-
-def _find_stockfish() -> str | None:
-    for p in SF_CANDIDATES:
-        if os.path.isfile(p) and os.access(p, os.X_OK):
-            return p
-    return None
-
-
-SF_PATH = _find_stockfish()
+SF_PATH = find_stockfish()
 
 
 def test_shard_roundtrip_preserves_exact_ints():
@@ -125,6 +111,82 @@ def test_rebuild_matches_live_construction_synthetic(use_logistic):
     )
     assert rebuilt is not None
     np.testing.assert_allclose(rebuilt, live, atol=1e-5)
+
+
+@pytest.mark.parametrize("use_logistic", [False, True])
+def test_rebuild_parity_compact_lc0_1858(use_logistic):
+    """Production policy encoding: rebuild in compact shard space must equal
+    the live full-space target converted exactly like finalize converts it
+    (policy_vector_to_encoding for the dense target, policy_index_for_encoding
+    for sparse rows + legal mask)."""
+    from chess_anti_engine.moves.encode import (
+        policy_index_for_encoding,
+        policy_size_for_encoding,
+        policy_vector_to_encoding,
+    )
+    from chess_anti_engine.selfplay.stockfish_turn import (
+        _build_sf_policy_target,
+        _pv_wdl_score,
+    )
+    from chess_anti_engine.stockfish.uci import StockfishPV
+
+    from chess_anti_engine.moves import COMPACT_TO_FULL_POLICY
+
+    enc = "lc0_1858"
+    compact_size = policy_size_for_encoding(enc)
+    params = SfTargetParams(
+        sf_policy_temp=0.012, sf_policy_label_smooth=0.01,
+        sf_wdl_use_cp_logistic=use_logistic,
+        sf_wdl_cp_slope=0.010, sf_wdl_cp_draw_width=60.0,
+    )
+    # Full-space indices that exist in the compact mapping (arbitrary picks).
+    legal_full = np.asarray(COMPACT_TO_FULL_POLICY, dtype=np.int64)[[100, 200, 300, 400]]
+    rows_full = np.full((SF_MULTIPV_RAW_MAX, 5), -1, np.int16)
+    rows_full[:, 1] = SF_CP_SENTINEL
+    rows_full[:, 2] = 0
+    rows_full[0] = (legal_full[0], 50, 0, 600, 300)
+    rows_full[1] = (legal_full[1], -20, 0, 450, 320)
+    rows_full[2] = (legal_full[2], SF_CP_SENTINEL, 4, 990, 10)   # mate-in-4 line
+
+    cand_idxs, cand_scores = [], []
+    for move_idx, cp, mate, w, d in rows_full[rows_full[:, 0] >= 0].tolist():
+        pv = StockfishPV(
+            move_uci="0000",
+            wdl=None if w < 0 else np.array([w, d, 1000 - w - d], np.float32),
+            cp=None if cp == SF_CP_SENTINEL else int(cp),
+            mate=None if mate == 0 else int(mate),
+        )
+        score = _pv_wdl_score(
+            pv, sf_wdl_use_cp_logistic=use_logistic,
+            sf_wdl_cp_slope=0.010, sf_wdl_cp_draw_width=60.0,
+        )
+        assert score is not None
+        cand_idxs.append(int(move_idx))
+        cand_scores.append(score)
+    live_full = _build_sf_policy_target(
+        cand_idxs, cand_scores, legal_indices=legal_full,
+        sf_policy_temp=0.012, sf_policy_label_smooth=0.01,
+    )
+    live_compact = policy_vector_to_encoding(live_full, policy_encoding=enc)
+
+    rows_compact = rows_full.copy()
+    for j in range(rows_compact.shape[0]):
+        if rows_compact[j, 0] >= 0:
+            rows_compact[j, 0] = policy_index_for_encoding(
+                int(rows_compact[j, 0]), policy_encoding=enc,
+            )
+    legal_compact = np.array(
+        [policy_index_for_encoding(int(i), policy_encoding=enc) for i in legal_full],
+        dtype=np.int64,
+    )
+    assert (legal_compact >= 0).all()
+
+    rebuilt = rebuild_sf_policy_target(
+        rows_compact, legal_indices=legal_compact,
+        policy_size=int(compact_size), params=params,
+    )
+    assert rebuilt is not None
+    np.testing.assert_allclose(rebuilt, live_compact, atol=1e-5)
 
 
 def test_rebuild_sf_wdl_matches_live():

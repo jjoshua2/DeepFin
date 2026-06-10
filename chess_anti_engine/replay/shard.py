@@ -37,7 +37,9 @@ SHARD_VERSION = 2  # v2: sparse MultiPV label storage (sf_multipv_raw/sf_label_m
 #     line in rank order, padded with SF_MULTIPV_PAD_ROW:
 #       col 0: move policy index in the SHARD's policy encoding (-1 = pad)
 #       col 1: raw cp score clamped to +/-32000 (SF_CP_SENTINEL = no cp)
-#       col 2: mate distance, clamped to +/-127 (0 = no mate)
+#       col 2: mate distance, clamped to +/-127 (0 = no mate; collides with
+#         UCI "score mate 0", which is unreachable here because labels are
+#         only requested for positions that still have legal moves)
 #       col 3: native SF wdl W permille (-1 = absent)
 #       col 4: native SF wdl D permille (-1 = absent; L = 1000 - W - D)
 #   sf_label_meta: (6,) int32 for the record-level eval:

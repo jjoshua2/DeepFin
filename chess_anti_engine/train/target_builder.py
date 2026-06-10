@@ -143,6 +143,12 @@ def rebuild_sf_targets_in_arrays(
     Only rows carrying sparse labels are rebuilt; rows without them (old
     shards) keep their stored targets. Returns ``arrs`` (mutated in place on
     fresh copies of the touched fields).
+
+    Cost boundary: this is a per-row Python loop (~16.6 ms per 256-row batch
+    at policy width 1858). Acceptable for the stated offline use — flag-gated
+    and overlapped by the host-side prefetch thread — but it must be
+    vectorized before ``rebuild_sf_targets`` could ever become a live-training
+    default.
     """
     has_raw = np.asarray(arrs.get("has_sf_multipv_raw", ()), dtype=bool)
     if has_raw.size and has_raw.any() and "sf_multipv_raw" in arrs and "sf_policy_target" in arrs:
