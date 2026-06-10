@@ -21,6 +21,7 @@ import chess
 import numpy as np
 
 from chess_anti_engine.encoding import input_plane_count
+from chess_anti_engine.mcts._mcts_tree import batch_compute_relations
 from chess_anti_engine.encoding.features import extra_feature_plane_count
 from chess_anti_engine.encoding import encode_position
 from chess_anti_engine.encoding.cboard_encode import encode_cboard
@@ -272,9 +273,16 @@ def _evaluate_root_batch(
             buf = eval_impl.get_input_buffer(padded_bsz)  # pyright: ignore[reportAttributeAccessIssue]
             assert batch_enc is not None
             batch_enc(cb_encode_list, buf)
-        pol_padded, wdl_padded = eval_impl.evaluate_inplace(  # pyright: ignore[reportAttributeAccessIssue]
-            padded_bsz, copy_out=True,
-        )
+        if state.game.record_relations:
+            _rel = np.zeros((padded_bsz, 5, 64, 64), dtype=np.uint8)
+            batch_compute_relations(cb_encode_list, _rel)
+            pol_padded, wdl_padded = eval_impl.evaluate_inplace(  # pyright: ignore[reportAttributeAccessIssue]
+                padded_bsz, copy_out=True, relations=_rel,
+            )
+        else:
+            pol_padded, wdl_padded = eval_impl.evaluate_inplace(  # pyright: ignore[reportAttributeAccessIssue]
+                padded_bsz, copy_out=True,
+            )
         xs_batch: np.ndarray | None = None
     else:
         dtype = np.uint16 if use_bf16_input else np.float32
@@ -298,7 +306,12 @@ def _evaluate_root_batch(
             xs_padded = np.concatenate([xs_batch, pad], axis=0)
         else:
             xs_padded = xs_batch
-        pol_padded, wdl_padded = eval_impl.evaluate_encoded(xs_padded)
+        if state.game.record_relations:
+            _rel = np.zeros((padded_bsz, 5, 64, 64), dtype=np.uint8)
+            batch_compute_relations(cb_encode_list, _rel)
+            pol_padded, wdl_padded = eval_impl.evaluate_encoded(xs_padded, relations=_rel)
+        else:
+            pol_padded, wdl_padded = eval_impl.evaluate_encoded(xs_padded)
         if use_bf16_input:
             xs_batch = None
 
@@ -365,6 +378,7 @@ def _append_records_via_c(
     ):
         _n_extra = extra_feature_plane_count(state.game.input_extra_features)
         alt_lc0_root_xs = [cb.encode_full(1, _n_extra) for cb in cb_encode_list]
+    _want_rel = bool(state.game.record_relations)
     c_result = state.c_process_ply(
         cb_encode_list, pol_logits_full[:n], wdl_logits_raw[:n],
         actions_arr, values_arr, probs_arr,
@@ -372,10 +386,12 @@ def _append_records_via_c(
         float(diff_focus.pol_scale), float(diff_focus.min_keep), float(diff_focus.slope),
         c_input_history_mode(state.game.input_history_encoding),
         extra_feature_plane_count(state.game.input_extra_features),
+        int(_want_rel),
     )
+    c_rel = c_result[12] if _want_rel else None
     (c_x, c_probs, c_wdl_net, c_wdl_search, c_priority,
      c_priority_policy_kl, c_priority_q_delta,
-     c_keep, c_mask, c_ply, c_pov, c_over) = c_result
+     c_keep, c_mask, c_ply, c_pov, c_over) = c_result[:12]
 
     # Pre-extract Python scalars from numpy arrays (batch conversion is cheaper
     # than per-element conversion in the loop).
@@ -413,6 +429,7 @@ def _append_records_via_c(
                 c_priority_list[j], sample_weights[j], c_keep_list[j],
                 c_mask[j],
                 x_lc0_root=(None if alt_lc0_root_xs is None else alt_lc0_root_xs[j]),
+                relations=(None if c_rel is None else c_rel[j]),
                 priority_policy_kl=c_priority_policy_kl_list[j],
                 priority_q_delta=c_priority_q_delta_list[j],
                 gumbel_policy_diag=gumbel_diags[j],
@@ -665,6 +682,7 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
                 input_history_encoding=state.game.input_history_encoding,
                 input_extra_features=state.game.input_extra_features,
                 policy_encoding=state.game.policy_encoding,
+                compute_relations=bool(state.game.record_relations),
             )
             if _HAS_GUMBEL_C:
                 # Map group indices to game-level root IDs for tree reuse.

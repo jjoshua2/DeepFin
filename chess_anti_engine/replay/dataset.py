@@ -100,11 +100,21 @@ def _build_collate_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
         "is_selfplay": np.zeros((n,), dtype=np.bool_),
         "has_is_selfplay": np.zeros((n,), dtype=np.float32),
     }
+    if any(getattr(s, "relations", None) is not None for s in samples):
+        rel = np.zeros((n, 5, 64, 64), dtype=np.uint8)
+        has_rel = np.zeros((n,), dtype=np.float32)
+        for i, s_ in enumerate(samples):
+            r = getattr(s_, "relations", None)
+            if r is not None:
+                rel[i] = np.asarray(r, dtype=np.uint8)
+                has_rel[i] = 1.0
+        out["relations"] = rel
+        out["has_relations"] = has_rel
     for src, target, has, shape in _OPTIONAL_FLOAT_FIELDS:
         shape = (policy_size,) if shape == _POLICY_SHAPE else shape
         out[target] = np.zeros((n, *shape), dtype=np.float32)
         out[has] = np.zeros((n,), dtype=np.float32)
-    for _src, target, has, dtype in _OPTIONAL_SCALAR_FIELDS:
+    for _src, target, has, dtype in _OPTIONAL_SCALAR_FIELDS:  # skylos: ignore — spec tuple unpack
         out[target] = np.zeros((n,), dtype=dtype)
         out[has] = np.zeros((n,), dtype=np.float32)
     for k in LEGAL_MASK_FIELDS:
@@ -161,6 +171,11 @@ def collate_arrays(arrs: dict[str, np.ndarray], *, device: str) -> dict[str, tor
     }
     if "has_policy" in arrs:
         out["has_policy"] = _to_tensor(np.asarray(arrs["has_policy"], dtype=np.float32), device=device)
+  # Dynamic relation matrices ride along as uint8; the model casts on device.
+  # Rows without relations are zero matrices == zero bias, so a mixed batch
+  # (old shards + new) degrades exactly like the absent-tensor case.
+    if "relations" in arrs and "has_relations" in arrs and bool(np.any(np.asarray(arrs["has_relations"]))):
+        out["relations"] = _to_tensor(np.asarray(arrs["relations"], dtype=np.uint8), device=device)
 
     optional_specs = (
         ("sf_wdl", (n, 3), np.float32, torch.float32),

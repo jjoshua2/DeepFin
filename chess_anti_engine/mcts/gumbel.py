@@ -64,6 +64,9 @@ class GumbelConfig:
     input_history_encoding: str = LC0_HISTORY_LEGACY
     input_extra_features: str = EXTRA_FEATURES_V1
     policy_encoding: str = POLICY_ENCODING_AZ_4672
+  # Compute dynamic board-relation matrices per eval and pass them to the
+  # evaluator as attention-bias input (model.use_dynamic_relations).
+    compute_relations: bool = False
 
 
 def _policy_logits_to_full(pol_logits: np.ndarray, *, cfg: GumbelConfig) -> np.ndarray:

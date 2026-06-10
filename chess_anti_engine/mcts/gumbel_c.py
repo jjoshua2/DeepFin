@@ -24,6 +24,7 @@ import torch
 
 from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.encoding import input_plane_count
+from chess_anti_engine.mcts._mcts_tree import batch_compute_relations
 from chess_anti_engine.encoding.lc0 import (
     LC0_HISTORY_ROOT_LEGACY_META,
     c_input_history_mode,
@@ -248,7 +249,7 @@ def run_gumbel_root_many_c(
     )
   # All async-capable evaluators conform to the protocol; _has_async is the runtime check.
     _async_eval = cast("AsyncBatchEvaluator", eval_impl)
-    _use_pipeline = _has_async and n_boards >= 64
+    _use_pipeline = _has_async and n_boards >= 64 and not cfg.compute_relations  # relations ride the single-loop fallback path
 
   # Zero-copy path: when the evaluator exposes get_input_buffer + evaluate_inplace_async
   # (DirectGPUEvaluator with n_slots>=needed), we route the C tree walks to write
@@ -276,7 +277,12 @@ def run_gumbel_root_many_c(
         else:
             root_buf = eval_impl.get_input_buffer(n_boards, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
             batch_enc(root_cboards, root_buf)
-        pol_t, wdl_t, event = eval_impl.evaluate_inplace_async(n_boards, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
+        if cfg.compute_relations:
+            _root_rel = np.empty((n_boards, 5, 64, 64), dtype=np.uint8)
+            batch_compute_relations(root_cboards, _root_rel)
+            pol_t, wdl_t, event = eval_impl.evaluate_inplace_async(n_boards, slot=0, relations=_root_rel)  # pyright: ignore[reportAttributeAccessIssue]
+        else:
+            pol_t, wdl_t, event = eval_impl.evaluate_inplace_async(n_boards, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
         if event is not None:
             event.synchronize()
         pol_logits_batch = pol_t.numpy()
@@ -291,14 +297,24 @@ def run_gumbel_root_many_c(
         else:
             xs = np.empty((n_boards, _n_planes, 8, 8), dtype=np.float32)
             batch_enc(root_cboards, xs)
+        root_rel = None
+        if cfg.compute_relations:
+            root_rel = np.empty((n_boards, 5, 64, 64), dtype=np.uint8)
+            batch_compute_relations(root_cboards, root_rel)
         if _has_async:
-            pol_t, wdl_t, event = _async_eval.evaluate_encoded_async(xs)
+            pol_t, wdl_t, event = (
+                _async_eval.evaluate_encoded_async(xs, relations=root_rel)
+                if root_rel is not None else _async_eval.evaluate_encoded_async(xs)
+            )
             if event is not None:
                 event.synchronize()
             pol_logits_batch = pol_t.numpy()
             wdl_logits_batch = wdl_t.numpy()
         else:
-            pol_logits_batch, wdl_logits_batch = eval_impl.evaluate_encoded(xs)
+            pol_logits_batch, wdl_logits_batch = (
+                eval_impl.evaluate_encoded(xs, relations=root_rel)
+                if root_rel is not None else eval_impl.evaluate_encoded(xs)
+            )
     pol_logits_batch = _policy_logits_to_full(pol_logits_batch, cfg=cfg)
 
   # Override root wdl_logits before root_qs is derived (root_qs seeds FPU
@@ -731,6 +747,7 @@ def run_gumbel_root_many_c(
   # Non-pipelined fallback (small batches or no async)
         _use_legal_bf16 = (
             _has_legal_bf16
+            and not cfg.compute_relations  # compact-legal eval path has no relations input
             and hasattr(tree, "get_pending_legal_indices")
             and hasattr(tree, "continue_gumbel_sims_legal_bf16")
         )
@@ -752,6 +769,10 @@ def run_gumbel_root_many_c(
         _budget_arr = np.array(budget_remaining, dtype=np.int32)
         _root_qs_arr = np.array(root_qs, dtype=np.float64)
 
+        _rel_buf = (
+            np.empty((len(_enc_buf), 5, 64, 64), dtype=np.uint8)
+            if cfg.compute_relations else None
+        )
         _tp0 = _time.perf_counter()
         n_leaves = tree.start_gumbel_sims(
             root_cboards, _root_ids_arr,
@@ -762,6 +783,7 @@ def run_gumbel_root_many_c(
             _c_scale, _c_visit, _c_puct, _fpu_reduction, _full_tree,
             cast(np.ndarray, _enc_buf), 0, int(target_batch),
             c_input_history_mode(cfg.input_history_encoding),
+            _rel_buf,
         )
         _t_prepare += _time.perf_counter() - _tp0
 
@@ -775,19 +797,32 @@ def run_gumbel_root_many_c(
                     _enc_buf[:n_leaves], legal_flat, legal_counts,
                 )
             elif _inplace:
-                pol_t, wdl_t, event = eval_impl.evaluate_inplace_async(padded, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
+                if _rel_buf is not None:
+                    pol_t, wdl_t, event = eval_impl.evaluate_inplace_async(  # pyright: ignore[reportAttributeAccessIssue]
+                        padded, slot=0, relations=_rel_buf[:padded],
+                    )
+                else:
+                    pol_t, wdl_t, event = eval_impl.evaluate_inplace_async(padded, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
                 if event is not None:
                     event.synchronize()
                 pol_all = pol_t[:n_leaves].numpy()
                 wdl_all = wdl_t[:n_leaves].numpy()
             elif _has_async:
-                pol_t, wdl_t, event = _async_eval.evaluate_encoded_async(_enc_buf[:padded])
+                pol_t, wdl_t, event = (
+                    _async_eval.evaluate_encoded_async(_enc_buf[:padded], relations=_rel_buf[:padded])
+                    if _rel_buf is not None
+                    else _async_eval.evaluate_encoded_async(_enc_buf[:padded])
+                )
                 if event is not None:
                     event.synchronize()
                 pol_all = pol_t[:n_leaves].numpy()
                 wdl_all = wdl_t[:n_leaves].numpy()
             else:
-                pol_all, wdl_all = eval_impl.evaluate_encoded(_enc_buf[:padded])
+                pol_all, wdl_all = (
+                    eval_impl.evaluate_encoded(_enc_buf[:padded], relations=_rel_buf[:padded])
+                    if _rel_buf is not None
+                    else eval_impl.evaluate_encoded(_enc_buf[:padded])
+                )
                 pol_all = pol_all[:n_leaves]
                 wdl_all = wdl_all[:n_leaves]
             _t_gpu += _time.perf_counter() - _tg0

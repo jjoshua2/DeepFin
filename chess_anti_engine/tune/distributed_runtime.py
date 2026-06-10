@@ -335,6 +335,10 @@ def _publish_distributed_trial_state(
         "policy_encoding": str(model_cfg.policy_encoding),
         "input_history_encoding": str(config.get("input_history_encoding", "legacy")),
         "input_extra_features": str(model_cfg.input_extra_features),
+        "use_dynamic_relations": bool(model_cfg.use_dynamic_relations),
+        "record_relations": bool(
+            config.get("record_relations", model_cfg.use_dynamic_relations)
+        ),
         "record_lc0_root_input": bool(config.get("record_lc0_root_input", False)),
         "sf_wdl_use_cp_logistic": bool(config.get("sf_wdl_use_cp_logistic", False)),
         "sf_wdl_cp_slope": float(config.get("sf_wdl_cp_slope", 0.010)),
@@ -386,6 +390,7 @@ def _publish_distributed_trial_state(
             "policy_encoding": str(model_cfg.policy_encoding),
             "input_history_encoding": str(config.get("input_history_encoding", "legacy")),
             "input_extra_features": str(model_cfg.input_extra_features),
+            "use_dynamic_relations": bool(model_cfg.use_dynamic_relations),
         },
         "model": {
             "sha256": str(model_sha),
@@ -735,6 +740,33 @@ def _spawn_with_reap(
         )
     finally:
         out_fh.close()
+
+
+def check_dynamic_relations_transport(config: dict) -> None:
+    """Fail loud when dynamic relations are enabled on a transport that
+    can't carry them. The model tolerates absent relations (zero bias), but
+    a silently bias-less selfplay stream would invalidate the experiment.
+
+    Supported: worker-local DirectGPUEvaluator (with the thread-safe /
+    coalescing / multi-GPU dispatchers and the eval cache) and the
+    in-process gumbel-C path. Not yet wired: the shared-memory slot broker
+    and the threaded worker dispatcher.
+    """
+    if not bool(config.get("use_dynamic_relations", False)):
+        return
+    offenders = [
+        key for key in (
+            "distributed_inference_broker_enabled",
+            "distributed_inference_shared_broker",
+            "distributed_worker_threaded",
+        )
+        if bool(config.get(key, False))
+    ]
+    if offenders:
+        raise ValueError(
+            "use_dynamic_relations=true requires worker-local direct inference; "
+            f"disable {offenders} (relations are not transported on those paths yet)"
+        )
 
 
 def _launch_inference_broker(

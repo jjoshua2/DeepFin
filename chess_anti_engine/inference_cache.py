@@ -100,7 +100,11 @@ class EncodedEvalCache:
             self._inner_calls = 0
             self._rows_submitted = 0
 
-    def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+  # Relations are a pure function of the position, which the encoded row
+  # already determines — cache hits stay valid with or without them.
         xb = _coerce_encoded_batch(x)
         bsz = int(xb.shape[0])
         if bsz == 0:
@@ -110,6 +114,7 @@ class EncodedEvalCache:
         cached: list[_CacheValue | None] = [None] * bsz
         miss_first_pos: dict[_CacheKey, int] = {}
         miss_rows: list[np.ndarray] = []
+        miss_rels: list[np.ndarray] = []
 
         with self._lock:
             for i, key in enumerate(keys):
@@ -123,11 +128,19 @@ class EncodedEvalCache:
                 if key not in miss_first_pos:
                     miss_first_pos[key] = len(miss_rows)
                     miss_rows.append(xb[i])
+                    if relations is not None:
+                        miss_rels.append(relations[i])
 
         miss_values: dict[_CacheKey, _CacheValue] = {}
         if miss_rows:
             miss_batch = np.ascontiguousarray(np.stack(miss_rows, axis=0), dtype=np.float32)
-            pol_miss, wdl_miss = self._inner.evaluate_encoded(miss_batch)
+            if miss_rels:
+                pol_miss, wdl_miss = self._inner.evaluate_encoded(
+                    miss_batch,
+                    relations=np.ascontiguousarray(np.stack(miss_rels, axis=0)),
+                )
+            else:
+                pol_miss, wdl_miss = self._inner.evaluate_encoded(miss_batch)
             if pol_miss.shape[0] != len(miss_rows) or wdl_miss.shape[0] != len(miss_rows):
                 raise ValueError(
                     "inner evaluator returned mismatched batch dimensions: "

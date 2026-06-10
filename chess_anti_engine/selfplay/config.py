@@ -96,6 +96,9 @@ class GameConfig:
     input_history_encoding: str = LC0_HISTORY_LEGACY
     input_extra_features: str = EXTRA_FEATURES_V1
     record_lc0_root_input: bool = False
+  # Compute + store dynamic board-relation matrices: search evals get them as
+  # attention-bias input, and samples carry them into shards for training.
+    record_relations: bool = False
 
 
 __all__ = [

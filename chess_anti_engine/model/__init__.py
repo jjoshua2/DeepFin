@@ -24,7 +24,7 @@ from .transformer import ChessNet, TransformerConfig
 # misrepresent. Trainer embeds this version when saving; the UCI loader
 # rejects checkpoints with a higher version AND rejects unknown keys at
 # the same version — both prevent silent architecture mismatch on skew.
-ARCH_SCHEMA_VERSION = 15
+ARCH_SCHEMA_VERSION = 16
 
 
 @dataclass
@@ -48,6 +48,9 @@ class ModelConfig:
     policy_encoding: str = POLICY_ENCODING_AZ_4672
     input_history_encoding: str = LC0_HISTORY_LEGACY
     input_extra_features: str = EXTRA_FEATURES_V1
+    use_dynamic_relations: bool = False
+    dynamic_relation_count: int = 5
+    policy_dynamic_relations: bool = False
     input_global_embedding: str = "none"
     input_global_embedding_channels: int = 0
     input_square_embedding: str = "none"
@@ -100,6 +103,9 @@ def model_config_from_manifest_dict(mc: dict) -> ModelConfig:
         policy_encoding=normalize_policy_encoding(mc.get("policy_encoding", POLICY_ENCODING_AZ_4672)),
         input_history_encoding=normalize_lc0_history_encoding(mc.get("input_history_encoding", LC0_HISTORY_LEGACY)),
         input_extra_features=normalize_extra_features_encoding(mc.get("input_extra_features", EXTRA_FEATURES_V1)),
+        use_dynamic_relations=bool(mc.get("use_dynamic_relations", False)),
+        dynamic_relation_count=int(mc.get("dynamic_relation_count", 5)),
+        policy_dynamic_relations=bool(mc.get("policy_dynamic_relations", False)),
         input_global_embedding=str(mc.get("input_global_embedding", "none")),
         input_global_embedding_channels=int(mc.get("input_global_embedding_channels", 0)),
         input_square_embedding=str(mc.get("input_square_embedding", "none")),
@@ -169,6 +175,9 @@ def model_config_from_flat_config(
         input_extra_features=normalize_extra_features_encoding(
             cfg.get("input_extra_features", EXTRA_FEATURES_V1)
         ),
+        use_dynamic_relations=bool(cfg.get("use_dynamic_relations", False)),
+        dynamic_relation_count=int(cfg.get("dynamic_relation_count", 5)),
+        policy_dynamic_relations=bool(cfg.get("policy_dynamic_relations", False)),
         input_global_embedding=str(cfg.get("input_global_embedding", "none")),
         input_global_embedding_channels=int(cfg.get("input_global_embedding_channels", 0)),
         input_square_embedding=str(cfg.get("input_square_embedding", "none")),
@@ -225,6 +234,9 @@ def model_config_to_manifest_dict(cfg: ModelConfig) -> dict:
         "policy_encoding": normalize_policy_encoding(cfg.policy_encoding),
         "input_history_encoding": normalize_lc0_history_encoding(cfg.input_history_encoding),
         "input_extra_features": normalize_extra_features_encoding(cfg.input_extra_features),
+        "use_dynamic_relations": bool(cfg.use_dynamic_relations),
+        "dynamic_relation_count": int(cfg.dynamic_relation_count),
+        "policy_dynamic_relations": bool(cfg.policy_dynamic_relations),
         "input_global_embedding": str(cfg.input_global_embedding),
         "input_global_embedding_channels": int(cfg.input_global_embedding_channels),
         "input_square_embedding": str(cfg.input_square_embedding),
@@ -260,6 +272,7 @@ def _attach_runtime_model_metadata(model: torch.nn.Module, cfg: ModelConfig) -> 
     setattr(model, "policy_encoding", normalize_policy_encoding(cfg.policy_encoding))
     setattr(model, "input_history_encoding", normalize_lc0_history_encoding(cfg.input_history_encoding))
     setattr(model, "input_extra_features", normalize_extra_features_encoding(cfg.input_extra_features))
+    setattr(model, "use_dynamic_relations", bool(cfg.use_dynamic_relations))
     return model
 
 
@@ -293,6 +306,9 @@ def build_model(cfg: ModelConfig) -> torch.nn.Module:
             qkv_projection=str(cfg.qkv_projection),
             use_deepnorm=bool(cfg.use_deepnorm),
             policy_encoding=policy_encoding,
+            use_dynamic_relations=bool(cfg.use_dynamic_relations),
+            dynamic_relation_count=int(cfg.dynamic_relation_count),
+            policy_dynamic_relations=bool(cfg.policy_dynamic_relations),
             input_global_embedding=str(cfg.input_global_embedding),
             input_global_embedding_channels=int(cfg.input_global_embedding_channels),
             input_square_embedding=str(cfg.input_square_embedding),

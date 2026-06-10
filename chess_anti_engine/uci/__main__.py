@@ -432,6 +432,15 @@ def main() -> int:
             input_history_encoding = str(getattr(models[0], "input_history_encoding", "legacy"))
             input_extra_features = str(getattr(models[0], "input_extra_features", "v1"))
             policy_encoding = str(getattr(models[0], "policy_encoding", "az_4672"))
+            if bool(getattr(models[0], "use_dynamic_relations", False)):
+  # UCI search paths don't transport relation matrices yet; the
+  # bias term is skipped (zero contribution). Evals therefore
+  # differ from training/selfplay forward passes.
+                print(
+                    "info string WARNING: model uses dynamic relations; UCI "
+                    "search evaluates WITHOUT the relation bias",
+                    flush=True,
+                )
             compile_mode = str(args.compile_mode) if args.compile else None
             build_eval = _make_evaluator_factory(
                 models, devices, coalesce=bool(args.coalesce),

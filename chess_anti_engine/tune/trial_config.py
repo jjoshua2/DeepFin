@@ -76,6 +76,9 @@ class TrialConfig:
     policy_encoding: str = "az_4672"
     input_history_encoding: str = "legacy"
     input_extra_features: str = "v1"
+    use_dynamic_relations: bool = False
+    dynamic_relation_count: int = 5
+    policy_dynamic_relations: bool = False
     input_global_embedding: str = "none"
     input_global_embedding_channels: int = 0
     input_square_embedding: str = "none"
@@ -354,6 +357,9 @@ class TrialConfig:
             policy_encoding=str(config.get("policy_encoding", "az_4672")),
             input_history_encoding=str(config.get("input_history_encoding", "legacy")),
             input_extra_features=str(config.get("input_extra_features", "v1")),
+            use_dynamic_relations=bool(config.get("use_dynamic_relations", False)),
+            dynamic_relation_count=int(config.get("dynamic_relation_count", 5)),
+            policy_dynamic_relations=bool(config.get("policy_dynamic_relations", False)),
             input_global_embedding=str(config.get("input_global_embedding", "none")),
             input_global_embedding_channels=int(config.get("input_global_embedding_channels", 0)),
             input_square_embedding=str(config.get("input_square_embedding", "none")),

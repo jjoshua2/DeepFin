@@ -61,7 +61,43 @@ static PyObject* py_compute_features(PyObject *self, PyObject *args) {
     return out_arr;
 }
 
+static PyObject* py_compute_relations(PyObject *self, PyObject *args) {
+    PyArrayObject *pieces_us_arr, *pieces_them_arr;
+    uint64_t occupied;
+    int king_sq_us, king_sq_them, turn_white;
+
+    if (!PyArg_ParseTuple(args, "O!O!Kiip",
+            &PyArray_Type, &pieces_us_arr,
+            &PyArray_Type, &pieces_them_arr,
+            &occupied,
+            &king_sq_us, &king_sq_them,
+            &turn_white))
+        return NULL;
+
+    uint64_t *pus = (uint64_t *)PyArray_DATA(pieces_us_arr);
+    uint64_t *pthem = (uint64_t *)PyArray_DATA(pieces_them_arr);
+    uint64_t us_pieces[6], them_pieces[6];
+    for (int i = 0; i < 6; i++) {
+        us_pieces[i] = pus[i];
+        them_pieces[i] = pthem[i];
+    }
+
+    npy_intp dims[3] = {FEAT_RELATION_COUNT, 64, 64};
+    PyArrayObject *out_arr = (PyArrayObject *)PyArray_SimpleNew(3, dims, NPY_UINT8);
+    if (!out_arr) return NULL;
+
+    compute_relations(us_pieces, them_pieces, occupied,
+                      king_sq_us, king_sq_them, turn_white,
+                      (uint8_t *)PyArray_DATA(out_arr));
+    return (PyObject *)out_arr;
+}
+
 static PyMethodDef methods[] = {
+    {"compute_relation_matrices", py_compute_relations, METH_VARARGS,
+     "Compute dynamic board-relation matrices from bitboard data.\n\n"
+     "Args: pieces_us(uint64[6]), pieces_them(uint64[6]), occupied(uint64),\n"
+     "      king_sq_us(int), king_sq_them(int), turn_white(bool)\n"
+     "Returns: ndarray (5, 64, 64) uint8"},
     {"compute_extra_features", py_compute_features, METH_VARARGS,
      "Compute extra feature planes from bitboard data.\n\n"
      "Args: pieces_us(uint64[6]), pieces_them(uint64[6]), occupied(uint64),\n"

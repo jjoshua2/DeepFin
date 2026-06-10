@@ -47,7 +47,9 @@ _F32_BYTES = 4
 
 
 class BatchEvaluator(Protocol):
-    def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
         ...
 
 
@@ -55,7 +57,7 @@ class AsyncBatchEvaluator(BatchEvaluator, Protocol):
     """Evaluators that also expose a non-blocking GPU path (for MCTS pipelining)."""
 
     def evaluate_encoded_async(
-        self, x: np.ndarray,
+        self, x: np.ndarray, relations: np.ndarray | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
         ...
 
@@ -100,16 +102,30 @@ def _forward_no_grad(
     device: str,
     use_amp: bool = True,
     amp_dtype: str = "auto",
+    relations_t: torch.Tensor | None = None,
 ) -> dict[str, torch.Tensor]:
     """Run a single forward pass under no_grad + inference_autocast.
 
     Centralizes the ``with torch.no_grad(): with inference_autocast(...): ...``
     pattern so every evaluator path uses the same autocast policy. Eleven
-    sites used to reimplement this inline.
+    sites used to reimplement this inline. ``relations_t`` is forwarded only
+    when present so models without the kwarg (TinyNet, AOT nets) still work.
     """
     with torch.no_grad():
         with inference_autocast(device=device, enabled=use_amp, dtype=amp_dtype):
+            if relations_t is not None:
+                return model(xt, relations=relations_t)
             return model(xt)
+
+
+def _relations_to_device(
+    relations: np.ndarray | None, *, device: str, bsz: int | None = None,
+) -> torch.Tensor | None:
+    """(N, 5, 64, 64) uint8 numpy -> device tensor (or None)."""
+    if relations is None:
+        return None
+    rel = np.ascontiguousarray(relations if bsz is None else relations[:bsz])
+    return torch.from_numpy(rel).to(device)
 
 
 def _supports_legal_policy_forward(model: torch.nn.Module) -> bool:
@@ -242,12 +258,15 @@ class LocalModelEvaluator:
   # Lazy-initialized on first evaluate_encoded_async call on CUDA.
         self._stream: torch.cuda.Stream | None = None
 
-    def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
         xb = _coerce_input_batch(x)
         xt = torch.from_numpy(xb).to(self.device)
         out = _forward_no_grad(
             self.model, xt, device=self.device,
             use_amp=self._use_amp, amp_dtype=self._amp_dtype,
+            relations_t=_relations_to_device(relations, device=self.device),
         )
         policy_out = _policy_output_full(out)
         _cpu_f32 = torch.float32
@@ -258,6 +277,7 @@ class LocalModelEvaluator:
     def evaluate_encoded_async(
         self,
         x: np.ndarray,
+        relations: np.ndarray | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
         """Launch GPU forward pass and non-blocking D2H transfer.
 
@@ -275,6 +295,7 @@ class LocalModelEvaluator:
             out = _forward_no_grad(
                 self.model, xt, device=self.device,
                 use_amp=self._use_amp, amp_dtype=self._amp_dtype,
+                relations_t=_relations_to_device(relations, device=self.device),
             )
             policy_out = _policy_output_full(out)
             pol = policy_out.detach().float()
@@ -295,6 +316,7 @@ class LocalModelEvaluator:
             out = _forward_no_grad(
                 self.model, xt, device=self.device,
                 use_amp=self._use_amp, amp_dtype=self._amp_dtype,
+                relations_t=_relations_to_device(relations, device=self.device),
             )
             policy_out = _policy_output_full(out)
             pol = policy_out.detach().to(dtype=torch.float32, device="cpu", non_blocking=True)
@@ -425,6 +447,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
 
     def evaluate_inplace(
         self, bsz: int, *, copy_out: bool = True, slot: int = 0,
+        relations: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Run inference on data already written to ``get_input_buffer(slot)``."""
         if bsz <= 0:
@@ -433,10 +456,10 @@ class DirectGPUEvaluator(LocalModelEvaluator):
             raise ValueError(f"batch {bsz} > max {self._max_batch}")
         if not 0 <= slot < self._n_slots:
             raise ValueError(f"slot {slot} out of range [0, {self._n_slots})")
-        return self._run_forward(bsz, copy_out=copy_out, slot=slot)
+        return self._run_forward(bsz, copy_out=copy_out, slot=slot, relations=relations)
 
     def evaluate_encoded(
-        self, x: np.ndarray, *, copy_out: bool = True,
+        self, x: np.ndarray, relations: np.ndarray | None = None, *, copy_out: bool = True,
     ) -> tuple[np.ndarray, np.ndarray]:
         if x.ndim != 4:
             raise ValueError(f"expected 4D input, got {x.ndim}D")
@@ -454,19 +477,22 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         else:
             self._pinned_inputs_np[0][:bsz] = x
             self._slot_input_bf16[0] = False
-        return self._run_forward(bsz, copy_out=copy_out, slot=0)
+        return self._run_forward(bsz, copy_out=copy_out, slot=0, relations=relations)
 
     def _run_forward(
         self, bsz: int, *, copy_out: bool = True, slot: int = 0,
+        relations: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         pin_in = self._pinned_inputs[slot]
         pin_pol = self._pinned_pols[slot]
         pin_wdl = self._pinned_wdls[slot]
+        rel_t = _relations_to_device(relations, device=self.device, bsz=bsz)
         if not self._use_cuda:
             xt = pin_in[:bsz]
             out = _forward_no_grad(
                 self.model, xt, device=self.device,
                 use_amp=self._use_amp, amp_dtype=self._amp_dtype,
+                relations_t=rel_t,
             )
             return _policy_output_full(out).detach().float().numpy(), out["wdl"].detach().float().numpy()
 
@@ -474,6 +500,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         out = _forward_no_grad(
             self.model, xt, device=self.device,
             use_amp=self._use_amp, amp_dtype=self._amp_dtype,
+            relations_t=rel_t,
         )
         pin_pol[:bsz].copy_(_policy_output_full(out).detach().float(), non_blocking=True)
         pin_wdl[:bsz].copy_(out["wdl"].detach().float(), non_blocking=True)
@@ -490,6 +517,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
     def evaluate_encoded_async(
         self,
         x: np.ndarray,
+        relations: np.ndarray | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
         """Pinned-memory async eval: H2D via DMA, non-blocking D2H."""
         if x.ndim != 4:
@@ -499,7 +527,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
             raise ValueError(f"batch {bsz} > max {self._max_batch}")
 
         if not self._use_cuda:
-            return super().evaluate_encoded_async(x)
+            return super().evaluate_encoded_async(x, relations=relations)
 
         if x.dtype == np.uint16:
             if self._pinned_inputs_bf16_bits_np is not None:
@@ -511,10 +539,10 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         else:
             self._pinned_inputs_np[0][:bsz] = x
             self._slot_input_bf16[0] = False
-        return self._async_forward(bsz, slot=0)
+        return self._async_forward(bsz, slot=0, relations=relations)
 
     def evaluate_inplace_async(
-        self, bsz: int, *, slot: int = 0,
+        self, bsz: int, *, slot: int = 0, relations: np.ndarray | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
         """Async forward on data already written to ``get_input_buffer(slot)``.
 
@@ -530,8 +558,8 @@ class DirectGPUEvaluator(LocalModelEvaluator):
             raise ValueError(f"slot {slot} out of range [0, {self._n_slots})")
         if not self._use_cuda:
             xb = self._pinned_inputs_np[slot][:bsz]
-            return super().evaluate_encoded_async(xb)
-        return self._async_forward(bsz, slot=slot)
+            return super().evaluate_encoded_async(xb, relations=relations)
+        return self._async_forward(bsz, slot=slot, relations=relations)
 
     def evaluate_inplace_legal_bf16_async(
         self, bsz: int, legal_flat: np.ndarray, legal_counts: np.ndarray, *, slot: int = 0,
@@ -571,7 +599,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         return self._async_forward_legal_bf16(bsz, flat, counts, n_legal, slot=slot)
 
     def _async_forward(
-        self, bsz: int, *, slot: int,
+        self, bsz: int, *, slot: int, relations: np.ndarray | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
         pin_pol = self._pinned_pols[slot]
         pin_wdl = self._pinned_wdls[slot]
@@ -589,6 +617,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
             out = _forward_no_grad(
                 self.model, xt, device=self.device,
                 use_amp=self._use_amp, amp_dtype=self._amp_dtype,
+                relations_t=_relations_to_device(relations, device=self.device, bsz=bsz),
             )
             pin_pol[:bsz].copy_(_policy_output_full(out).detach().float(), non_blocking=True)
             pin_wdl[:bsz].copy_(out["wdl"].detach().float(), non_blocking=True)
@@ -714,7 +743,15 @@ class ThreadedBatchEvaluator:
         self._gpu_thread.start()
         self._gpu_ready.wait()  # Block until GPU eval is initialized
 
-    def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        if relations is not None:
+            raise NotImplementedError(
+                "dynamic relations are not transported on the ThreadedBatchEvaluator path; "
+                "use worker-local direct inference (see "
+                "check_dynamic_relations_transport)"
+            )
         """Submit a batch from a selfplay thread, block until GPU results ready."""
         if not self._gpu_thread.is_alive():
             raise RuntimeError("GPU thread died")
@@ -928,7 +965,15 @@ class AOTEvaluator:
                 return b
         return self._sorted_buckets[-1]
 
-    def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        if relations is not None:
+            raise NotImplementedError(
+                "dynamic relations are not transported on the AOTEvaluator path; "
+                "use worker-local direct inference (see "
+                "check_dynamic_relations_transport)"
+            )
         if x.ndim != 4:
             raise ValueError(f"expected 4D input, got {x.ndim}D")
         bsz = x.shape[0]
@@ -1678,7 +1723,15 @@ class SlotInferenceClient:
     def supports_input_bf16_bits(self) -> bool:
         return True
 
-    def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        if relations is not None:
+            raise NotImplementedError(
+                "dynamic relations are not transported on the SlotInferenceClient path; "
+                "use worker-local direct inference (see "
+                "check_dynamic_relations_transport)"
+            )
         with self._lock:
             return self._evaluate_encoded_locked(x)
 
@@ -1859,7 +1912,15 @@ class MultiSlotInferenceClient:
         self._slot_wait_s = [0.0 for _ in self._clients]
         self._slot_roundtrip_s = [0.0 for _ in self._clients]
 
-    def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        if relations is not None:
+            raise NotImplementedError(
+                "dynamic relations are not transported on the MultiSlotInferenceClient path; "
+                "use worker-local direct inference (see "
+                "check_dynamic_relations_transport)"
+            )
         idx, client, wait_s = self._acquire_client()
         t0 = time.perf_counter()
         try:

@@ -78,6 +78,7 @@ def pick_moves_for_boards(
     input_history_encoding = str(getattr(model, "input_history_encoding", "legacy"))
     input_extra_features = str(getattr(model, "input_extra_features", "v1"))
     policy_encoding = str(getattr(model, "policy_encoding", "az_4672"))
+    use_dynamic_relations = bool(getattr(model, "use_dynamic_relations", False))
     if str(mcts_type) == "gumbel":
         gumbel_cfg = GumbelConfig(
             simulations=int(mcts_simulations), temperature=float(temperature),
@@ -85,6 +86,7 @@ def pick_moves_for_boards(
             input_history_encoding=input_history_encoding,
             input_extra_features=input_extra_features,
             policy_encoding=policy_encoding,
+            compute_relations=use_dynamic_relations,
         )
         if _HAS_GUMBEL_C:
             result = _run_gumbel_root_many_c(

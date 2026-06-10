@@ -86,6 +86,8 @@ _OPTIONAL_FIELD_SPECS: tuple[_OptFieldSpec, ...] = (
     # zeros_for_storage_field special-cases it on x_planes. The spec shape is
     # the v1 fallback for paths that don't know the runtime plane count.
     _OptFieldSpec("x_lc0_root",           "has_x_lc0_root",        (146, 8, 8),   _F16),
+    # Dynamic board-relation matrices (model.use_dynamic_relations); binary.
+    _OptFieldSpec("relations",            "has_relations",         (5, 64, 64),   _U8_DT),
     _OptFieldSpec("priority_policy_kl",   "has_priority_policy_kl",(),            _F16),
     _OptFieldSpec("priority_q_delta",     "has_priority_q_delta",  (),            _F16),
     _OptFieldSpec("priority_sf_search_gap","has_priority_sf_search_gap", (),       _F16),
@@ -740,6 +742,7 @@ _SCALAR_FIELDS: tuple[tuple[str, str, str, "object"], ...] = (
 )
 _VECTOR_FIELDS: tuple[tuple[str, str, str], ...] = (
     ("x_lc0_root",           "x_lc0_root",           "has_x_lc0_root"),
+    ("relations",            "relations",            "has_relations"),
     ("sf_wdl",               "sf_wdl",               "has_sf_wdl"),
     ("sf_policy_target",     "sf_policy_target",     "has_sf_policy"),
     ("categorical_target",   "categorical_target",   "has_categorical"),
@@ -1031,6 +1034,8 @@ def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
             s.input_history_encoding = str(hist_value)
         if opt["has_x_lc0_root"][i]:
             s.x_lc0_root = _copy_row(opt["x_lc0_root"], i)
+        if opt["has_relations"][i]:
+            s.relations = _copy_row(opt["relations"], i)
         if opt["has_priority_policy_kl"][i]:
             s.priority_policy_kl = float(opt["priority_policy_kl"][i])
         if opt["has_priority_q_delta"][i]:

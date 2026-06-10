@@ -38,8 +38,12 @@ class ThreadSafeGPUDispatcher:
         self._eval = evaluator
         self._lock = threading.Lock()
 
-    def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
         with self._lock:
+            if relations is not None:
+                return self._eval.evaluate_encoded(x, relations=relations)
             return self._eval.evaluate_encoded(x)
 
     @property
@@ -62,22 +66,31 @@ class ThreadSafeGPUDispatcher:
 
     def evaluate_inplace(
         self, bsz: int, *, copy_out: bool = True, slot: int = 0,
+        relations: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         with self._lock:
+            if relations is not None:
+                return self._eval.evaluate_inplace(  # pyright: ignore[reportAttributeAccessIssue]
+                    bsz, copy_out=copy_out, slot=slot, relations=relations,
+                )
             return self._eval.evaluate_inplace(  # pyright: ignore[reportAttributeAccessIssue]
                 bsz, copy_out=copy_out, slot=slot,
             )
 
     def evaluate_inplace_async(
-        self, bsz: int, *, slot: int = 0,
+        self, bsz: int, *, slot: int = 0, relations: np.ndarray | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
         with self._lock:
+            if relations is not None:
+                return self._eval.evaluate_inplace_async(bsz, slot=slot, relations=relations)  # pyright: ignore[reportAttributeAccessIssue]
             return self._eval.evaluate_inplace_async(bsz, slot=slot)  # pyright: ignore[reportAttributeAccessIssue]
 
     def evaluate_encoded_async(
-        self, x: np.ndarray,
+        self, x: np.ndarray, relations: np.ndarray | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
         with self._lock:
+            if relations is not None:
+                return self._eval.evaluate_encoded_async(x, relations=relations)  # pyright: ignore[reportAttributeAccessIssue]
             return self._eval.evaluate_encoded_async(x)  # pyright: ignore[reportAttributeAccessIssue]
 
 
@@ -109,7 +122,7 @@ class BatchCoalescingDispatcher:
         self._inner = inner
         self._max_batch = int(max_batch)
         self._lock = threading.Lock()
-        self._pending: list[tuple[np.ndarray, threading.Event, list]] = []
+        self._pending: list[tuple[np.ndarray, np.ndarray | None, threading.Event, list]] = []
         self._wake = threading.Event()
         self._shutdown = threading.Event()
   # Daemon so tests / scripts that forget ``close()`` don't hang at
@@ -144,7 +157,7 @@ class BatchCoalescingDispatcher:
             stranded = self._pending
             self._pending = []
         err = RuntimeError("BatchCoalescingDispatcher is closed")
-        for _, ev, res in stranded:
+        for _, _, ev, res in stranded:
             res[0] = err
             ev.set()
         self._wake.set()
@@ -158,7 +171,9 @@ class BatchCoalescingDispatcher:
         except Exception:
             pass
 
-    def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
   # Fail fast on single requests that can never be dispatched. Without
   # this, an oversize lone request would sit in pending and eventually
   # be forwarded to the inner evaluator (which raises), which is
@@ -175,7 +190,7 @@ class BatchCoalescingDispatcher:
   # a submitter thread that's about to exit.
             if self._shutdown.is_set():
                 raise RuntimeError("BatchCoalescingDispatcher is closed")
-            self._pending.append((x, done, result))
+            self._pending.append((x, relations, done, result))
         self._wake.set()
         done.wait()
         got = result[0]
@@ -214,24 +229,40 @@ class BatchCoalescingDispatcher:
                     batch = self._pending[:cut]
                     self._pending = self._pending[cut:]
                 xs = np.concatenate([entry[0] for entry in batch], axis=0)
+  # Relations coalesce exactly like x: all-or-nothing per submit.
+  # Mixed submits zero-fill the missing rows (zero matrices == zero
+  # bias, identical to the absent-tensor semantics).
+                rels = None
+                if any(entry[1] is not None for entry in batch):
+                    rels = np.zeros((xs.shape[0], 5, 64, 64), dtype=np.uint8)
+                    off = 0
+                    for entry in batch:
+                        n_rows = entry[0].shape[0]
+                        if entry[1] is not None:
+                            rels[off:off + n_rows] = entry[1]
+                        off += n_rows
                 try:
-                    pol, wdl = self._inner.evaluate_encoded(xs)
+                    pol, wdl = (
+                        self._inner.evaluate_encoded(xs, relations=rels)
+                        if rels is not None
+                        else self._inner.evaluate_encoded(xs)
+                    )
                 except BaseException as exc:
   # Wake every waiter with the exception so no walker
   # hangs, then drain anything that arrived during the
   # failed submit too.
-                    for _, ev, res in batch:
+                    for _, _, ev, res in batch:
                         res[0] = exc
                         ev.set()
                     with self._lock:
                         pending = self._pending
                         self._pending = []
-                    for _, ev, res in pending:
+                    for _, _, ev, res in pending:
                         res[0] = exc
                         ev.set()
                     continue
                 offset = 0
-                for x, ev, res in batch:
+                for x, _, ev, res in batch:
                     n = x.shape[0]
                     res[0] = (pol[offset:offset + n], wdl[offset:offset + n])
                     ev.set()
@@ -267,10 +298,14 @@ class MultiGPUDispatcher:
         self._select_lock = threading.Lock()
         self._rr = 0  # round-robin tiebreaker cursor
 
-    def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
         idx = self._pick_device()
         try:
             with self._locks[idx]:
+                if relations is not None:
+                    return self._evals[idx].evaluate_encoded(x, relations=relations)
                 return self._evals[idx].evaluate_encoded(x)
         finally:
             with self._select_lock:

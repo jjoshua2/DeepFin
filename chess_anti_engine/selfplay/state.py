@@ -180,7 +180,7 @@ class _NetRecord:
     """Per-ply sample record.  Uses ``__slots__`` to avoid dict overhead."""
     __slots__ = (
         "x", "policy_probs", "net_wdl_est", "search_wdl_est",
-        "x_lc0_root",
+        "x_lc0_root", "relations",
         "pov_color", "ply_index", "has_policy", "priority",
         "priority_policy_kl", "priority_q_delta",
         "sample_weight", "keep_prob", "legal_mask",
@@ -194,6 +194,7 @@ class _NetRecord:
     net_wdl_est: np.ndarray
     search_wdl_est: np.ndarray
     x_lc0_root: np.ndarray | None
+    relations: np.ndarray | None
     pov_color: bool
     ply_index: int
     has_policy: bool
@@ -217,7 +218,7 @@ class _NetRecord:
         pov_color, ply_index, has_policy, priority,
         sample_weight, keep_prob, legal_mask=None,
         sf_policy_target=None, sf_move_index=None, sf_wdl=None,
-        x_lc0_root=None,
+        x_lc0_root=None, relations=None,
         priority_policy_kl=None, priority_q_delta=None,
         gumbel_policy_diag=None,
     ):
@@ -226,6 +227,7 @@ class _NetRecord:
         self.net_wdl_est = net_wdl_est
         self.search_wdl_est = search_wdl_est
         self.x_lc0_root = x_lc0_root
+        self.relations = relations
         self.pov_color = pov_color
         self.ply_index = ply_index
         self.has_policy = has_policy

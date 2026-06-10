@@ -197,7 +197,15 @@ class ThreadedDispatcher:
             self._cond.notify()
         return future
 
-    def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        if relations is not None:
+            raise NotImplementedError(
+                "dynamic relations are not transported on the ThreadedDispatcher path; "
+                "use worker-local direct inference (see "
+                "check_dynamic_relations_transport)"
+            )
         return self.evaluate(x).result()
 
     def evaluate_legal_bf16(

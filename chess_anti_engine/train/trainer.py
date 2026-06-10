@@ -1741,7 +1741,8 @@ class Trainer:
             buf, batch_size=batch_size, mirror_prob=mirror_p, count=int(steps),
         ):
             with self._amp_context():
-                out = eval_model(batch["x"])
+                _rel = batch.get("relations")
+                out = eval_model(batch["x"], relations=_rel) if _rel is not None else eval_model(batch["x"])
                 losses = compute_loss(out, batch, **self._loss_kwargs)
 
             scalars = self._extract_loss_scalars(losses)
@@ -1798,7 +1799,9 @@ class Trainer:
         ):
             self._apply_feature_group_dropout(batch["x"])
             with self._amp_context():
-                out = self.model(batch["x"])
+                _rel = batch.get("relations")
+  # kwarg only when present: TinyNet's forward has no relations param.
+                out = self.model(batch["x"], relations=_rel) if _rel is not None else self.model(batch["x"])
                 losses = compute_loss(out, batch, **self._loss_kwargs)
                 balance_loss = getattr(self.model, "_last_channel_balance_loss", None)
                 if balance_loss is not None and self.resid_channel_balance_weight > 0.0:

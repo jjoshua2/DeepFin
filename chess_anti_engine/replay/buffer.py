@@ -23,6 +23,7 @@ class ReplaySample:
     ply_index: int | None = None
     has_policy: bool = True
     x_lc0_root: np.ndarray | None = None  # Optional alternate LC0-root input planes.
+    relations: np.ndarray | None = None  # Optional (5,64,64) uint8 dynamic relation matrices.
     input_history_encoding: str | None = None
 
   # Optional auxiliary targets (for spec completeness; not all are trained yet)

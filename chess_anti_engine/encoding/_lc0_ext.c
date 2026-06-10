@@ -692,6 +692,15 @@ static int parse_encode_full_args(PyObject *args, int *hist_mode, int *n_extra) 
     return 1;
 }
 
+/* compute_relations() -> numpy (5, 64, 64) uint8 dynamic relation matrices */
+static PyObject* PyCBoard_compute_relations(PyCBoard *self, PyObject *Py_UNUSED(args)) {
+    npy_intp dims[3] = {FEAT_RELATION_COUNT, 64, 64};
+    PyArrayObject *arr = (PyArrayObject*)PyArray_SimpleNew(3, dims, NPY_UINT8);
+    if (!arr) return NULL;
+    cboard_compute_relations(&self->board, (uint8_t*)PyArray_DATA(arr));
+    return (PyObject*)arr;
+}
+
 /* encode_full(hist_mode=0, n_extra=34) -> numpy (112+n_extra, 8, 8) float32 */
 static PyObject* PyCBoard_encode_full(PyCBoard *self, PyObject *args) {
     int hist_mode, n_extra;
@@ -827,6 +836,8 @@ static PyMethodDef PyCBoard_methods[] = {
      "n_extra: 34 (v1) or 63 (v2_threats)"},
     {"encode_full_and_legal", (PyCFunction)PyCBoard_encode_full_and_legal, METH_VARARGS,
      "encode_full_and_legal(hist_mode=0, n_extra=34) -> (planes, legal_indices)"},
+    {"compute_relations", (PyCFunction)PyCBoard_compute_relations, METH_NOARGS,
+     "Dynamic board-relation matrices as (5, 64, 64) uint8"},
     {NULL}
 };
 

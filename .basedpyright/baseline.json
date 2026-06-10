@@ -18,14 +18,6 @@
                     "endColumn": 0,
                     "lineCount": 1
                 }
-            },
-            {
-                "code": "reportArgumentType",
-                "range": {
-                    "startColumn": 16,
-                    "endColumn": 19,
-                    "lineCount": 1
-                }
             }
         ],
         "./chess_anti_engine/replay/shard.py": [

@@ -712,6 +712,7 @@ def _build_replay_samples(
                 policy_target=eff_probs,
                 wdl_target=int(wdl),
                 x_lc0_root=rec.x_lc0_root,
+                relations=getattr(rec, "relations", None),
                 input_history_encoding=state.game.input_history_encoding,
                 priority=float(rec.priority),
                 priority_policy_kl=(

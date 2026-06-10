@@ -989,6 +989,35 @@ static void cboard_encode_planes_lc0_root_legacy_meta_into(const CBoard *b, floa
 static void cboard_encode_planes_bf16_into(const CBoard *b, uint16_t * restrict out, int n_extra);
 static void cboard_encode_planes_lc0_root_bf16_into(const CBoard *b, uint16_t * restrict out, int n_extra);
 static void cboard_encode_planes_lc0_root_legacy_meta_bf16_into(const CBoard *b, uint16_t * restrict out, int n_extra);
+
+/* Coerce + validate an optional (>=N, 5, 64, 64) uint8 relations buffer.
+ * Returns 1 on success (out_arr/out_data set; NULL when obj is None),
+ * 0 on error with a Python exception set. */
+static int parse_relations_buffer(
+    PyObject *obj, int n_rows,
+    PyArrayObject **out_arr, uint8_t **out_data
+) {
+    *out_arr = NULL;
+    *out_data = NULL;
+    if (obj == NULL || obj == Py_None) return 1;
+    PyArrayObject *arr = (PyArrayObject *)PyArray_FROMANY(
+        obj, NPY_UINT8, 4, 4, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE);
+    if (!arr) return 0;
+    if (PyArray_DIM(arr, 0) < n_rows ||
+        PyArray_DIM(arr, 1) != FEAT_RELATION_COUNT ||
+        PyArray_DIM(arr, 2) != 64 || PyArray_DIM(arr, 3) != 64) {
+        Py_DECREF(arr);
+        PyErr_SetString(PyExc_ValueError,
+            "relations buffer must be (>=N, 5, 64, 64) uint8");
+        return 0;
+    }
+    *out_arr = arr;
+    *out_data = (uint8_t *)PyArray_DATA(arr);
+    return 1;
+}
+
+#define REL_ROW_BYTES ((size_t)FEAT_RELATION_COUNT * 4096)
+
 static void softmax_inplace(double *arr, int n);
 
 /* Store a CBoard into the tree's per-node cache slot, growing if needed. */
@@ -1065,6 +1094,8 @@ typedef struct {
     int n_extra_planes;          /* 34 (v1) or 63 (v2_threats); from enc buffer dim 1 */
     int32_t enc_capacity;
     PyObject *enc_arr_ref;       /* Strong ref to keep enc buffer alive */
+    uint8_t *rel_data;           /* Optional (cap,5,64,64) u8 relations buffer */
+    PyObject *rel_arr_ref;       /* Strong ref for rel_data */
 
     /* Query arrays for prepare_and_store (owned) */
     int32_t *q_board_idx;
@@ -1092,6 +1123,7 @@ static void gss_free(GumbelSimState *g) {
     free(g->active);
     free(g->q_board_idx); free(g->q_root_ids); free(g->q_forced);
     Py_XDECREF(g->enc_arr_ref);
+    Py_XDECREF(g->rel_arr_ref);
     memset(g, 0, sizeof(*g));
 }
 
@@ -1444,6 +1476,9 @@ static int32_t gss_prepare_batch(
                 else
                     cboard_encode_planes_into(&s->leaf_cboards[li], out + row, n_extra);
             }
+            if (g->rel_data)
+                cboard_compute_relations(&s->leaf_cboards[li],
+                                         g->rel_data + (size_t)li * REL_ROW_BYTES);
         }
     }
 
@@ -1905,12 +1940,13 @@ static PyObject *MCTSTree_backprop(MCTSTreeObject *self, PyObject *args) {
 static PyObject *MCTSTree_walker_descend_puct(MCTSTreeObject *self, PyObject *args) {
     int root_id;
     PyObject *root_cb_obj, *enc_obj;
+    PyObject *rel_obj = Py_None;
     double c_puct, fpu_root, fpu_reduction;
     int vloss_weight;
-    if (!PyArg_ParseTuple(args, "iOdddiO",
+    if (!PyArg_ParseTuple(args, "iOdddiO|O",
                           &root_id, &root_cb_obj,
                           &c_puct, &fpu_root, &fpu_reduction,
-                          &vloss_weight, &enc_obj))
+                          &vloss_weight, &enc_obj, &rel_obj))
         return NULL;
 
     TreeData *t = &self->tree;
@@ -1947,6 +1983,12 @@ static PyObject *MCTSTree_walker_descend_puct(MCTSTreeObject *self, PyObject *ar
     }
     int enc_n_extra = (int)PyArray_DIM(enc_arr, 1) - 112;
     float *enc_data = (float *)PyArray_DATA(enc_arr);
+    PyArrayObject *rel_arr = NULL;
+    uint8_t *rel_data = NULL;
+    if (!parse_relations_buffer(rel_obj, 1, &rel_arr, &rel_data)) {
+        Py_DECREF(enc_arr);
+        return NULL;
+    }
 
     /* Descend. */
     int32_t path_buf[MCTS_MAX_PATH];
@@ -1974,7 +2016,7 @@ static PyObject *MCTSTree_walker_descend_puct(MCTSTreeObject *self, PyObject *ar
     /* Build path output array (shared by terminal + non-terminal branches). */
     npy_intp pdims[1] = {path_len};
     PyObject *node_path = PyArray_SimpleNew(1, pdims, NPY_INT32);
-    if (!node_path) { Py_DECREF(enc_arr); return NULL; }
+    if (!node_path) { Py_XDECREF(rel_arr); Py_DECREF(enc_arr); return NULL; }
     memcpy(PyArray_DATA((PyArrayObject *)node_path), path_buf,
            path_len * sizeof(int32_t));
 
@@ -1985,6 +2027,7 @@ static PyObject *MCTSTree_walker_descend_puct(MCTSTreeObject *self, PyObject *ar
             /* Terminal: no vloss (caller backprops immediately), no encoding,
              * empty legal array. Also mark the leaf solved and propagate up.
              * Includes LC0-style 2-fold-as-draw inside the search tree. */
+            Py_XDECREF(rel_arr);
             Py_DECREF(enc_arr);
             npy_intp ldims[1] = {0};
             PyObject *legal_arr = PyArray_SimpleNew(1, ldims, NPY_INT32);
@@ -2000,6 +2043,7 @@ static PyObject *MCTSTree_walker_descend_puct(MCTSTreeObject *self, PyObject *ar
      * above; if we collapse, rebuild it. */
     if (try_forced_collapse(t, &leaf_id, &cb, path_buf, &path_len, 16)) {
         /* Chain hit terminal: same shape as the cboard_is_game_over branch. */
+        Py_XDECREF(rel_arr);
         Py_DECREF(enc_arr);
         Py_DECREF(node_path);
         npy_intp pdims2[1] = {path_len};
@@ -2019,7 +2063,7 @@ static PyObject *MCTSTree_walker_descend_puct(MCTSTreeObject *self, PyObject *ar
         Py_DECREF(node_path);
         npy_intp pdims2[1] = {path_len};
         node_path = PyArray_SimpleNew(1, pdims2, NPY_INT32);
-        if (!node_path) { Py_DECREF(enc_arr); return NULL; }
+        if (!node_path) { Py_XDECREF(rel_arr); Py_DECREF(enc_arr); return NULL; }
         memcpy(PyArray_DATA((PyArrayObject *)node_path), path_buf,
                path_len * sizeof(int32_t));
     }
@@ -2033,6 +2077,9 @@ static PyObject *MCTSTree_walker_descend_puct(MCTSTreeObject *self, PyObject *ar
 
     /* Encode into enc_out[0]. */
     cboard_encode_planes_into(&cb, enc_data, enc_n_extra);
+    if (rel_data)
+        cboard_compute_relations(&cb, rel_data);
+    Py_XDECREF(rel_arr);
     Py_DECREF(enc_arr);
 
     /* Legal move indices at the leaf (caller needs them for softmax). */
@@ -2166,13 +2213,14 @@ static PyObject *MCTSTree_batch_descend_puct(MCTSTreeObject *self, PyObject *arg
     PyObject *enc_obj, *leaf_ids_obj, *path_obj, *path_lens_obj;
     PyObject *legal_obj, *legal_lens_obj, *term_qs_obj, *is_term_obj;
     PyObject *cache_keys_obj = Py_None;
+    PyObject *rel_obj = Py_None;
     double c_puct, fpu_root, fpu_reduction;
-    if (!PyArg_ParseTuple(args, "iOidddiOOOOOOOO|iO",
+    if (!PyArg_ParseTuple(args, "iOidddiOOOOOOOO|iOO",
                           &root_id, &root_cb_obj, &n_leaves,
                           &c_puct, &fpu_root, &fpu_reduction, &vloss_weight,
                           &enc_obj, &leaf_ids_obj, &path_obj, &path_lens_obj,
                           &legal_obj, &legal_lens_obj, &term_qs_obj, &is_term_obj,
-                          &vloss_mode, &cache_keys_obj))
+                          &vloss_mode, &cache_keys_obj, &rel_obj))
         return NULL;
     if (vloss_mode != VLOSS_MODE_LEGACY && vloss_mode != VLOSS_MODE_VIRTUAL_MEAN) {
         PyErr_SetString(PyExc_ValueError, "vloss_mode must be 0 (legacy) or 1 (virtual_mean)");
@@ -2249,6 +2297,16 @@ static PyObject *MCTSTree_batch_descend_puct(MCTSTreeObject *self, PyObject *arg
 
     int enc_n_extra = (int)PyArray_DIM(enc_arr, 1) - 112;
     size_t enc_row = (size_t)(112 + enc_n_extra) * 64;
+    PyArrayObject *rel_arr = NULL;
+    uint8_t *rel_data = NULL;
+    if (!parse_relations_buffer(rel_obj, n_leaves, &rel_arr, &rel_data)) {
+        Py_DECREF(enc_arr); Py_DECREF(leaf_ids_arr);
+        Py_DECREF(path_arr); Py_DECREF(path_lens_arr);
+        Py_DECREF(legal_arr); Py_DECREF(legal_lens_arr);
+        Py_DECREF(term_qs_arr); Py_DECREF(is_term_arr);
+        Py_XDECREF(cache_keys_arr);
+        return NULL;
+    }
     float *enc_data = (float *)PyArray_DATA(enc_arr);
     int32_t *leaf_ids = (int32_t *)PyArray_DATA(leaf_ids_arr);
     int32_t *path_data = (int32_t *)PyArray_DATA(path_arr);
@@ -2292,6 +2350,8 @@ static PyObject *MCTSTree_batch_descend_puct(MCTSTreeObject *self, PyObject *arg
             /* Zero out enc slot so a buggy caller that submits this row
              * to GPU anyway gets a benign forward instead of UB. */
             memset(enc_data + (size_t)i * enc_row, 0, enc_row * sizeof(float));
+            if (rel_data)
+                memset(rel_data + (size_t)i * REL_ROW_BYTES, 0, REL_ROW_BYTES);
             if (cache_keys) {
                 cache_keys[(size_t)i * 2] = 0;
                 cache_keys[(size_t)i * 2 + 1] = 0;
@@ -2306,6 +2366,8 @@ static PyObject *MCTSTree_batch_descend_puct(MCTSTreeObject *self, PyObject *arg
             tree_apply_vloss_path(t, path_i, path_len);
         }
         cboard_encode_planes_into(&cb, enc_data + (size_t)i * enc_row, enc_n_extra);
+        if (rel_data)
+            cboard_compute_relations(&cb, rel_data + (size_t)i * REL_ROW_BYTES);
         if (cache_keys) {
             encoded_row_fingerprint128(
                 enc_data + (size_t)i * enc_row,
@@ -2324,6 +2386,7 @@ static PyObject *MCTSTree_batch_descend_puct(MCTSTreeObject *self, PyObject *arg
     }
     Py_END_ALLOW_THREADS
 
+    Py_XDECREF(rel_arr);
     Py_DECREF(enc_arr); Py_DECREF(leaf_ids_arr);
     Py_DECREF(path_arr); Py_DECREF(path_lens_arr);
     Py_DECREF(legal_arr); Py_DECREF(legal_lens_arr);
@@ -3232,12 +3295,14 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
     int vloss_weight = 0;
     int target_batch = 0;  /* 0 => use GSS_GPU_BATCH default in gss_step */
     int input_history_lc0_root = 0;
+    PyObject *rel_buf_obj = Py_None;
 
-    if (!PyArg_ParseTuple(args, "OOOOOOOddddpO|iii",
+    if (!PyArg_ParseTuple(args, "OOOOOOOddddpO|iiiO",
                           &root_cbs_list, &root_ids_obj, &remaining_list,
                           &gumbels_list, &priors_list, &budget_obj, &root_qs_obj,
                           &c_scale, &c_visit, &c_puct, &fpu_reduction, &full_tree,
-                          &enc_buf_obj, &vloss_weight, &target_batch, &input_history_lc0_root))
+                          &enc_buf_obj, &vloss_weight, &target_batch, &input_history_lc0_root,
+                          &rel_buf_obj))
         return NULL;
 
     /* Validate list args before any indexing — PyList_GET_ITEM has no
@@ -3471,6 +3536,17 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
     g->enc_is_bf16 = enc_is_bf16;
     g->input_history_lc0_root = input_history_lc0_root;
     g->n_extra_planes = n_extra_planes;
+    {
+        PyArrayObject *rel_arr = NULL;
+        uint8_t *rel_data = NULL;
+        if (!parse_relations_buffer(rel_buf_obj, (int)PyArray_DIM(enc_arr, 0),
+                                    &rel_arr, &rel_data)) {
+            /* enc_arr_ref already owned by g; gss_free on next start cleans up */
+            return NULL;
+        }
+        g->rel_data = rel_data;
+        g->rel_arr_ref = (PyObject *)rel_arr;  /* may be NULL (no relations) */
+    }
     g->enc_capacity = (int32_t)PyArray_DIM(enc_arr, 0);
     Py_INCREF(enc_arr);
     g->enc_arr_ref = (PyObject *)enc_arr;
@@ -3954,13 +4030,14 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
     int df_enabled;
     int input_history_lc0_root = 0;
     int n_extra = FEAT_EXTRA_V1;
+    int with_relations = 0;
     double df_q_weight, df_pol_scale, df_min, df_slope;
 
-    if (!PyArg_ParseTuple(args, "OOOOOOidddd|ii",
+    if (!PyArg_ParseTuple(args, "OOOOOOidddd|iii",
                           &cboards_list, &pol_obj, &wdl_obj, &actions_obj,
                           &values_obj, &mcts_probs_obj,
                           &df_enabled, &df_q_weight, &df_pol_scale, &df_min, &df_slope,
-                          &input_history_lc0_root, &n_extra))
+                          &input_history_lc0_root, &n_extra, &with_relations))
         return NULL;
     if (n_extra != FEAT_EXTRA_V1 && n_extra != FEAT_EXTRA_V2) {
         PyErr_Format(PyExc_ValueError,
@@ -4032,6 +4109,11 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
     npy_intp dims_n[1] = {n};
     npy_intp dims_m[2] = {n, 4672};
 
+    npy_intp dims_rel[4] = {n, FEAT_RELATION_COUNT, 64, 64};
+    PyArrayObject *out_rel = with_relations
+        ? (PyArrayObject *)PyArray_SimpleNew(4, dims_rel, NPY_UINT8)
+        : NULL;
+    if (with_relations && !out_rel) goto fail;
     PyArrayObject *out_x = (PyArrayObject *)PyArray_ZEROS(4, dims_x, NPY_FLOAT32, 0);
     PyArrayObject *out_probs = (PyArrayObject *)PyArray_SimpleNew(2, dims_p, NPY_FLOAT32);
     PyArrayObject *out_wdl_net = (PyArrayObject *)PyArray_SimpleNew(2, dims_w, NPY_FLOAT32);
@@ -4048,6 +4130,7 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
     if (!out_x || !out_probs || !out_wdl_net || !out_wdl_search ||
         !out_priority || !out_priority_policy_kl || !out_priority_q_delta ||
         !out_keep || !out_mask || !out_ply || !out_pov || !out_over) {
+        Py_XDECREF(out_rel);
         Py_XDECREF(out_x); Py_XDECREF(out_probs); Py_XDECREF(out_wdl_net);
         Py_XDECREF(out_wdl_search); Py_XDECREF(out_priority);
         Py_XDECREF(out_priority_policy_kl); Py_XDECREF(out_priority_q_delta);
@@ -4057,6 +4140,7 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
     }
 
     float *x_data = (float *)PyArray_DATA(out_x);
+    uint8_t *rel_out_data = out_rel ? (uint8_t *)PyArray_DATA(out_rel) : NULL;
     float *probs_out = (float *)PyArray_DATA(out_probs);
     float *wdl_net_out = (float *)PyArray_DATA(out_wdl_net);
     float *wdl_search_out = (float *)PyArray_DATA(out_wdl_search);
@@ -4181,6 +4265,8 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
             cboard_encode_planes_lc0_root_into(cb, x_data + (size_t)i * (112 + n_extra) * 64, n_extra);
         else
             cboard_encode_planes_into_ex(cb, x_data + (size_t)i * (112 + n_extra) * 64, n_extra, /*feat_prezeroed=*/1);
+        if (rel_out_data)
+            cboard_compute_relations(cb, rel_out_data + (size_t)i * REL_ROW_BYTES);
 
         /* Push move */
         cboard_push_index(cb, action);
@@ -4201,6 +4287,11 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
     Py_DECREF(pol_arr); Py_DECREF(wdl_arr); Py_DECREF(act_arr);
     Py_DECREF(val_arr); Py_DECREF(probs_arr);
 
+    if (with_relations)
+        return Py_BuildValue("(NNNNNNNNNNNNN)",
+            out_x, out_probs, out_wdl_net, out_wdl_search,
+            out_priority, out_priority_policy_kl, out_priority_q_delta,
+            out_keep, out_mask, out_ply, out_pov, out_over, out_rel);
     return Py_BuildValue("(NNNNNNNNNNNN)",
         out_x, out_probs, out_wdl_net, out_wdl_search,
         out_priority, out_priority_policy_kl, out_priority_q_delta,
@@ -4211,6 +4302,45 @@ fail:
     Py_XDECREF(pol_arr); Py_XDECREF(wdl_arr); Py_XDECREF(act_arr);
     Py_XDECREF(val_arr); Py_XDECREF(probs_arr);
     return NULL;
+}
+
+/* batch_compute_relations(cboards_list, out_array)
+ * Fill a pre-allocated (>=N, 5, 64, 64) uint8 array with dynamic relation
+ * matrices. GIL released. */
+static PyObject *py_batch_compute_relations(PyObject *self, PyObject *args) {
+    PyObject *cboards_list, *out_obj;
+    if (!PyArg_ParseTuple(args, "OO", &cboards_list, &out_obj))
+        return NULL;
+    if (!PyList_Check(cboards_list)) {
+        PyErr_SetString(PyExc_TypeError, "cboards_list must be a list");
+        return NULL;
+    }
+    int32_t n = (int32_t)PyList_Size(cboards_list);
+    if (n <= 0) Py_RETURN_NONE;
+    PyArrayObject *rel_arr;
+    uint8_t *rel_data;
+    if (!parse_relations_buffer(out_obj, n, &rel_arr, &rel_data))
+        return NULL;
+    if (rel_arr == NULL) {
+        PyErr_SetString(PyExc_ValueError, "out_array must not be None");
+        return NULL;
+    }
+    CBoard *boards = (CBoard *)malloc(n * sizeof(CBoard));
+    if (!boards) { Py_DECREF(rel_arr); return PyErr_NoMemory(); }
+    if (extract_cboards(cboards_list, n, boards, NULL) < 0) {
+        free(boards); Py_DECREF(rel_arr); return NULL;
+    }
+    Py_BEGIN_ALLOW_THREADS
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static) if(n > 64)
+#endif
+    for (int32_t i = 0; i < n; i++) {
+        cboard_compute_relations(&boards[i], rel_data + (size_t)i * REL_ROW_BYTES);
+    }
+    Py_END_ALLOW_THREADS
+    free(boards);
+    Py_DECREF(rel_arr);
+    Py_RETURN_NONE;
 }
 
 /* batch_encode_146(cboards_list, out_array)
@@ -4803,6 +4933,9 @@ static PyMethodDef module_methods[] = {
      "batch_process_ply(cboards, pol, wdl, actions, values, probs, "
      "df_enabled, df_q_w, df_pol_s, df_min, df_slope, "
      "[input_history_lc0_root]) -> tuple of arrays"},
+    {"batch_compute_relations", py_batch_compute_relations, METH_VARARGS,
+     "batch_compute_relations(cboards, out[N,5,64,64] u8) -> None. "
+     "Dynamic board-relation matrices; GIL released."},
     {"batch_encode_146", py_batch_encode_146, METH_VARARGS,
      "batch_encode_146(cboards_list, out_array) -> None. "
      "Encode CBoards into pre-allocated (N,146,8,8) float32 array. GIL released."},

@@ -84,9 +84,127 @@ def extra_feature_plane_count(version: str | None = None) -> int:
     """Number of extra feature planes for a (possibly unnormalized) version."""
     return _EXTRA_FEATURE_PLANES[normalize_extra_features_encoding(version)]
 
+
+RELATION_COUNT = 5
+
+
+def relation_matrices(board: chess.Board) -> np.ndarray:
+    """Dynamic board-relation matrices: (RELATION_COUNT, 64, 64) uint8.
+
+    Side-to-move oriented exactly like the feature planes (rank flip when
+    black to move), row = from-square, col = to-square:
+
+      R0 attacks(from, to)          piece on ``from`` attacks square ``to``
+                                    (pawns: capture squares only, no EP)
+      R1 defends(from, to)          R0 restricted to ``to`` occupied by a
+                                    same-color piece
+      R2 pinned_by(from, to)        piece on ``from`` is absolutely pinned to
+                                    its own king by the enemy slider on ``to``
+      R3 shares_open_line(from, to) both squares occupied, aligned on a file
+                                    or diagonal, all squares strictly between
+                                    empty (symmetric; ranks excluded)
+      R4 pawn_tension(from, to)     pawn on ``from`` can capture the enemy
+                                    pawn on ``to``
+
+    python-chess reference implementation; the C twin is
+    ``compute_relations`` in ``_features_impl.h`` (parity-tested).
+    """
+    out = np.zeros((RELATION_COUNT, 64, 64), dtype=np.uint8)
+    flip = 0 if board.turn == chess.WHITE else 56
+
+    occ = int(board.occupied)
+    for sq, piece in board.piece_map().items():
+        if piece.piece_type == chess.PAWN:
+            att = int(chess.BB_PAWN_ATTACKS[piece.color][sq])
+        else:
+            att = int(board.attacks_mask(sq))
+        own_occ = int(board.occupied_co[piece.color])
+        f = sq ^ flip
+        for to in chess.scan_forward(att):
+            out[0, f, to ^ flip] = 1
+        for to in chess.scan_forward(att & own_occ):
+            out[1, f, to ^ flip] = 1
+
+  # R2: walk the 8 rays from each king (king .. own blocker .. enemy slider).
+    for color in (chess.WHITE, chess.BLACK):
+        king_sq = board.king(color)
+        if king_sq is None:
+            continue
+        own_occ = int(board.occupied_co[color])
+        opp = not color
+        kf, kr = chess.square_file(king_sq), chess.square_rank(king_sq)
+        for d, (df, dr) in enumerate(
+            ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1))
+        ):
+            sliders = int(
+                board.pieces_mask(chess.QUEEN, opp)
+                | board.pieces_mask(chess.ROOK if d < 4 else chess.BISHOP, opp)
+            )
+            blocker = -1
+            for dist in range(1, 8):
+                ff, rr = kf + df * dist, kr + dr * dist
+                if not (0 <= ff <= 7 and 0 <= rr <= 7):
+                    break
+                cur = chess.square(ff, rr)
+                bit = int(chess.BB_SQUARES[cur])
+                if not occ & bit:
+                    continue
+                if own_occ & bit:
+                    if blocker >= 0:
+                        break
+                    blocker = cur
+                else:
+                    if blocker >= 0 and sliders & bit:
+                        out[2, blocker ^ flip, cur ^ flip] = 1
+                    break
+
+  # R3: first occupied square along files and diagonals.
+    for sq in chess.scan_forward(occ):
+        f0, r0 = chess.square_file(sq), chess.square_rank(sq)
+        for df, dr in ((0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)):
+            for dist in range(1, 8):
+                ff, rr = f0 + df * dist, r0 + dr * dist
+                if not (0 <= ff <= 7 and 0 <= rr <= 7):
+                    break
+                to = chess.square(ff, rr)
+                if occ & int(chess.BB_SQUARES[to]):
+                    out[3, sq ^ flip, to ^ flip] = 1
+                    break
+
+  # R4: mutual pawn-capture pairs (each direction marked from its mover).
+    for color in (chess.WHITE, chess.BLACK):
+        enemy_pawns = int(board.pieces_mask(chess.PAWN, not color))
+        for sq in chess.scan_forward(int(board.pieces_mask(chess.PAWN, color))):
+            for to in chess.scan_forward(int(chess.BB_PAWN_ATTACKS[color][sq]) & enemy_pawns):
+                out[4, sq ^ flip, to ^ flip] = 1
+
+    return out
+
+
+def relation_matrices_c(board: chess.Board) -> np.ndarray:
+    """C-accelerated twin of :func:`relation_matrices`."""
+    turn = board.turn
+    us, them = turn, not turn
+    piece_types = (chess.PAWN, chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN, chess.KING)
+    pieces_us = np.array(
+        [int(board.pieces_mask(pt, us)) for pt in piece_types], dtype=np.uint64
+    )
+    pieces_them = np.array(
+        [int(board.pieces_mask(pt, them)) for pt in piece_types], dtype=np.uint64
+    )
+    _ks_us = board.king(us)
+    _ks_them = board.king(them)
+    return _c_compute_relations(
+        pieces_us, pieces_them, int(board.occupied),
+        _ks_us if _ks_us is not None else -1,
+        _ks_them if _ks_them is not None else -1,
+        turn == chess.WHITE,
+    )
+
 try:
     from chess_anti_engine.encoding._features_ext import (
         compute_extra_features as _c_compute,
+        compute_relation_matrices as _c_compute_relations,
     )
     _HAS_C_EXT = True
 except ImportError:
@@ -95,6 +213,7 @@ except ImportError:
 if TYPE_CHECKING:
     from chess_anti_engine.encoding._features_ext import (
         compute_extra_features as _c_compute,  # noqa: F401,F811
+        compute_relation_matrices as _c_compute_relations,  # noqa: F401,F811
     )
 
 
