@@ -138,6 +138,7 @@ _SELFPLAY_KEYS = (
     "categorical_bins", "hlgauss_sigma",
     "record_lc0_root_input",
     "record_relations",
+    "record_dense_sf_policy",
 )
 
 # model section: mostly 1:1 except kind→model and use_smolgen→no_smolgen (inverted).
@@ -165,7 +166,7 @@ _TRAIN_KEYS = (
     "aurora_polar_method", "aurora_polar_dtype", "aurora_polar_safety",
     "cosmos_rank", "cosmos_gamma",
     "lr", "batch_size", "train_steps", "train_window_fraction",
-    "no_amp", "feature_dropout_p", "rebuild_sf_targets",
+    "no_amp", "feature_dropout_p", "rebuild_sf_targets", "sf_policy_sparse_ce",
     "resid_channel_dropout", "resid_channel_balance_weight",
     "fdp_king_safety", "fdp_pins", "fdp_pawns", "fdp_mobility", "fdp_outposts",
     "w_volatility",

@@ -351,3 +351,302 @@ def test_trainer_default_is_bitwise_unchanged(monkeypatch):
     assert isinstance(out_default, dict) and isinstance(out_again, dict)
     for k in out_default:
         np.testing.assert_array_equal(out_default[k], out_again[k])
+
+
+# ---------------------------------------------------------------------------
+# Sparse CE over gathered log-probs (train/sparse_sf_ce.py)
+# ---------------------------------------------------------------------------
+
+
+def _sparse_ce_batch(
+    *, policy_size: int, shard_width: int, use_logistic: bool, smooth: float,
+) -> tuple[torch.Tensor, dict, SfTargetParams, np.ndarray]:
+    """Random logits + a 3-row batch: scored rows / fallback row / no labels.
+
+    Returns (masked_logits, batch, params, dense_targets) where dense_targets
+    holds the live-equivalent dense vectors (shard width) for rows 0..1.
+    """
+    from chess_anti_engine.selfplay.stockfish_turn import _build_sf_policy_target
+    from chess_anti_engine.moves import COMPACT_TO_FULL_POLICY
+
+    params = SfTargetParams(
+        sf_policy_temp=0.012, sf_policy_label_smooth=smooth,
+        sf_wdl_use_cp_logistic=use_logistic,
+        sf_wdl_cp_slope=0.010, sf_wdl_cp_draw_width=60.0,
+    )
+    if shard_width == 4672:
+        legal_full = np.asarray(COMPACT_TO_FULL_POLICY, dtype=np.int64)[[100, 200, 300, 400]]
+    else:
+        legal_full = np.array([100, 200, 300, 400], dtype=np.int64)
+
+    raw = np.full((3, SF_MULTIPV_RAW_MAX, 5), -1, np.int16)
+    raw[:, :, 1] = SF_CP_SENTINEL
+    raw[0, 0] = (legal_full[0], 50, 0, 600, 300)
+    raw[0, 1] = (legal_full[1], -20, 0, 450, 320)
+    raw[0, 2] = (legal_full[2], SF_CP_SENTINEL, 4, 990, 10)
+    # row 1: candidates present but none scoreable -> live one-hot fallback
+    raw[1, 0] = (legal_full[1], SF_CP_SENTINEL, 0, -1, -1)
+    # row 2: no sparse labels at all
+
+    legal = np.zeros((3, shard_width), np.float32)
+    legal[:, legal_full] = 1.0
+
+    # Dense reference targets, built exactly like the live path.
+    dense = np.zeros((3, shard_width), np.float32)
+    rebuilt = rebuild_sf_policy_target(
+        raw[0], legal_indices=legal_full, policy_size=shard_width, params=params,
+    )
+    assert rebuilt is not None
+    dense[0] = rebuilt
+    dense[1] = _build_sf_policy_target(
+        [int(legal_full[1])], [0.0], legal_indices=legal_full,
+        sf_policy_temp=params.sf_policy_temp,
+        sf_policy_label_smooth=params.sf_policy_label_smooth,
+    )[:shard_width] if shard_width == 4672 else _compact_onehot_target(
+        int(legal_full[1]), legal_full, params, shard_width,
+    )
+    dense[2, legal_full[0]] = 1.0  # arbitrary stored target for the no-label row
+
+    torch.manual_seed(0)
+    logits = torch.randn(3, policy_size)
+    batch = {
+        "sf_multipv_raw": torch.from_numpy(raw.astype(np.int32)),
+        "has_sf_multipv_raw": torch.tensor([1.0, 1.0, 0.0]),
+        "sf_legal_mask": torch.from_numpy(legal),
+        "has_sf_legal_mask": torch.ones(3),
+        "sf_move_index": torch.tensor([int(legal_full[0]), int(legal_full[1]), -1]),
+        "has_sf_move": torch.tensor([1.0, 1.0, 0.0]),
+    }
+    return logits, batch, params, dense
+
+
+def _compact_onehot_target(
+    idx: int, legal: np.ndarray, params: SfTargetParams, width: int,
+) -> np.ndarray:
+    from chess_anti_engine.selfplay.stockfish_turn import _build_sf_policy_target
+
+    full = _build_sf_policy_target(
+        [idx], [0.0], legal_indices=legal,
+        sf_policy_temp=params.sf_policy_temp,
+        sf_policy_label_smooth=params.sf_policy_label_smooth,
+    )
+    out = np.zeros(width, np.float32)
+    nz = np.flatnonzero(full)
+    out[nz] = full[nz]
+    return out
+
+
+@pytest.mark.parametrize("use_logistic", [False, True])
+@pytest.mark.parametrize("smooth", [0.0, 0.01])
+def test_sparse_ce_matches_dense_soft_ce(use_logistic, smooth):
+    """Same-width case: sparse CE must equal soft CE against the dense target."""
+    from chess_anti_engine.train.losses import soft_cross_entropy
+    from chess_anti_engine.train.sparse_sf_ce import sparse_sf_policy_ce
+
+    logits, batch, params, dense = _sparse_ce_batch(
+        policy_size=4672, shard_width=4672,
+        use_logistic=use_logistic, smooth=smooth,
+    )
+    dense_ce = soft_cross_entropy(logits, torch.from_numpy(dense))
+    sparse_ce, ok = sparse_sf_policy_ce(logits, batch, params=params)
+    assert ok.tolist() == [1.0, 1.0, 0.0]
+    torch.testing.assert_close(sparse_ce[:2], dense_ce[:2], atol=1e-5, rtol=1e-5)
+    assert float(sparse_ce[2]) == 0.0
+
+
+def test_sparse_ce_compact_logits_over_full_shard():
+    """Production projection: full-4672 shard rows against compact-1858 logits
+    must equal the dense path's align_policy_target projection."""
+    from chess_anti_engine.moves import COMPACT_POLICY_SIZE, FULL_TO_COMPACT_POLICY
+    from chess_anti_engine.train.losses import align_policy_target, soft_cross_entropy
+    from chess_anti_engine.train.sparse_sf_ce import sparse_sf_policy_ce
+
+    logits_full, batch, params, dense = _sparse_ce_batch(
+        policy_size=4672, shard_width=4672, use_logistic=True, smooth=0.01,
+    )
+    del logits_full
+    torch.manual_seed(1)
+    logits = torch.randn(3, COMPACT_POLICY_SIZE)
+    dense_aligned = align_policy_target(torch.from_numpy(dense), COMPACT_POLICY_SIZE)
+    dense_ce = soft_cross_entropy(logits, dense_aligned)
+    sparse_ce, ok = sparse_sf_policy_ce(logits, batch, params=params)
+    assert ok.tolist() == [1.0, 1.0, 0.0]
+    torch.testing.assert_close(sparse_ce[:2], dense_ce[:2], atol=1e-5, rtol=1e-5)
+    assert int(FULL_TO_COMPACT_POLICY[int(batch["sf_move_index"][0])]) >= 0
+
+
+def test_compute_loss_sparse_flag_only_touches_sf_move_ce():
+    from chess_anti_engine.train.losses import compute_loss
+
+    logits, sparse_batch, params, dense = _sparse_ce_batch(
+        policy_size=4672, shard_width=4672, use_logistic=False, smooth=0.01,
+    )
+    n = 3
+    torch.manual_seed(2)
+    outputs = {
+        "policy_own": torch.randn(n, 4672),
+        "policy_sf": logits,
+        "wdl": torch.randn(n, 3),
+    }
+    pol = torch.zeros(n, 4672)
+    pol[:, 5] = 1.0
+    batch = {
+        "x": torch.zeros(n, 1),
+        "policy_t": pol,
+        "wdl_t": torch.tensor([0, 1, 2]),
+        "sf_policy_t": torch.from_numpy(dense),
+        "has_sf_policy": torch.tensor([1.0, 1.0, 1.0]),
+        **sparse_batch,
+    }
+    base = compute_loss(outputs, batch)
+    flagged = compute_loss(outputs, batch, sf_sparse_params=params)
+    # Sparse CE equals the dense CE on these rows, so the aggregate must agree
+    # to fp tolerance; everything else is bitwise identical.
+    torch.testing.assert_close(flagged["sf_move_ce"], base["sf_move_ce"], atol=1e-5, rtol=1e-5)
+    for k in base:
+        if k in ("sf_move_ce", "total"):
+            continue
+        assert torch.equal(base[k], flagged[k]), f"{k} changed under sparse CE"
+
+
+def test_mirror_batch_arrays_mirrors_sparse_rows():
+    from chess_anti_engine.moves.encode import MIRROR_POLICY_MAP
+    from chess_anti_engine.replay.augment import maybe_mirror_batch_arrays
+
+    raw = np.full((2, SF_MULTIPV_RAW_MAX, 5), -1, np.int16)
+    raw[:, :, 1] = SF_CP_SENTINEL
+    raw[0, 0] = (100, 30, 0, 600, 300)
+    raw[1, 0] = (200, -10, 2, 500, 300)
+    arrs = {
+        "x": np.zeros((2, 146, 8, 8), np.float16),
+        "policy_target": np.zeros((2, 4672), np.float16),
+        "sf_multipv_raw": raw.copy(),
+    }
+    rng = np.random.default_rng(0)
+    out = maybe_mirror_batch_arrays(arrs, rng=rng, prob=1.0)
+    got = np.asarray(out["sf_multipv_raw"])
+    assert int(got[0, 0, 0]) == int(MIRROR_POLICY_MAP[100])
+    assert int(got[1, 0, 0]) == int(MIRROR_POLICY_MAP[200])
+    # non-index columns and pad rows untouched
+    np.testing.assert_array_equal(got[0, 0, 1:], raw[0, 0, 1:])
+    np.testing.assert_array_equal(got[:, 1:], raw[:, 1:])
+
+
+def test_mirror_sample_carries_sparse_fields():
+    from chess_anti_engine.moves.encode import MIRROR_POLICY_MAP
+    from chess_anti_engine.replay.augment import mirror_sample
+
+    raw = np.full((SF_MULTIPV_RAW_MAX, 5), -1, np.int16)
+    raw[:, 1] = SF_CP_SENTINEL
+    raw[0] = (100, 30, 0, 600, 300)
+    meta = np.array([1000, 10, 35, 0, 700, 200], np.int32)
+    pol = np.zeros(4672, np.float32)
+    pol[0] = 1.0
+    s = ReplaySample(
+        x=np.zeros((146, 8, 8), np.float32), policy_target=pol, wdl_target=0,
+        sf_multipv_raw=raw, sf_label_meta=meta,
+    )
+    m = mirror_sample(s)
+    assert m.sf_multipv_raw is not None
+    assert int(m.sf_multipv_raw[0, 0]) == int(MIRROR_POLICY_MAP[100])
+    assert m.sf_label_meta is not None
+    np.testing.assert_array_equal(m.sf_label_meta, meta)
+
+
+def test_trainer_drops_sparse_fields_unless_enabled():
+    from chess_anti_engine.model import ModelConfig, build_model
+    from chess_anti_engine.train import trainer as trainer_mod
+
+    torch.manual_seed(0)
+    model = build_model(ModelConfig(embed_dim=32, num_layers=1, num_heads=2, use_smolgen=False))
+    t = trainer_mod.Trainer(model, device="cpu", lr=1e-3)
+    assert t.sf_policy_sparse_ce is False
+
+    class _Buf:
+        rng = np.random.default_rng(0)
+
+        def sample_batch_arrays(self, batch_size, *, wdl_balance=True):
+            del wdl_balance
+            pol = np.zeros((batch_size, 4672), np.float16)
+            pol[:, 0] = 1.0
+            return {
+                "x": np.zeros((batch_size, 146, 8, 8), np.float16),
+                "policy_target": pol,
+                "wdl_target": np.zeros((batch_size,), np.int8),
+                "priority": np.ones((batch_size,), np.float32),
+                "has_policy": np.ones((batch_size,), np.uint8),
+                "sf_multipv_raw": np.full((batch_size, SF_MULTIPV_RAW_MAX, 5), -1, np.int16),
+                "has_sf_multipv_raw": np.zeros((batch_size,), np.uint8),
+            }
+
+    buf = cast(Any, _Buf())
+    out = t._sample_batch_host(buf, batch_size=2, mirror_prob=0.0)
+    assert isinstance(out, dict)
+    assert "sf_multipv_raw" not in out
+
+    t.sf_policy_sparse_ce = True
+    out2 = t._sample_batch_host(buf, batch_size=2, mirror_prob=0.0)
+    assert isinstance(out2, dict)
+    assert "sf_multipv_raw" in out2
+
+
+@pytest.mark.skipif(SF_PATH is None, reason="Stockfish not found")
+def test_record_dense_sf_policy_false_trains_via_sparse_ce():
+    """End-to-end: dense target writing off -> samples carry only sparse
+    labels, and compute_loss(sf_sparse_params=...) still supervises policy_sf."""
+    from chess_anti_engine.model import ModelConfig, build_model
+    from chess_anti_engine.replay.dataset import collate_arrays
+    from chess_anti_engine.replay.shard import samples_to_arrays
+    from chess_anti_engine.selfplay import play_batch
+    from chess_anti_engine.selfplay.config import (
+        DiffFocusConfig,
+        GameConfig,
+        SearchConfig,
+        TemperatureConfig,
+    )
+    from chess_anti_engine.stockfish import StockfishUCI
+    from chess_anti_engine.train.losses import compute_loss
+
+    torch.manual_seed(0)
+    model = build_model(ModelConfig(
+        embed_dim=32, num_layers=1, num_heads=2, use_smolgen=False,
+    )).eval()
+    game = GameConfig(
+        max_plies=24, sf_policy_temp=0.012, sf_policy_label_smooth=0.01,
+        sf_wdl_use_cp_logistic=True, sf_wdl_cp_slope=0.010, sf_wdl_cp_draw_width=60.0,
+        categorical_bins=32, hlgauss_sigma=0.04,
+        selfplay_fraction=0.0,
+        record_dense_sf_policy=False,
+    )
+    assert SF_PATH is not None
+    sf = StockfishUCI(SF_PATH, nodes=100, multipv=4)
+    try:
+        samples, _stats = play_batch(
+            model, device="cpu", rng=np.random.default_rng(0), stockfish=sf, games=2,
+            temp=TemperatureConfig(temperature=1.0),
+            search=SearchConfig(simulations=4, mcts_type="gumbel"),
+            diff_focus=DiffFocusConfig(min_keep=1.0),
+            game=game,
+        )
+    finally:
+        sf.close()
+
+    labeled = [s for s in samples if s.sf_multipv_raw is not None]
+    assert labeled, "no SF-labeled samples produced"
+    assert all(s.sf_policy_target is None for s in samples)
+
+    arrs = samples_to_arrays(samples)
+    assert "sf_policy_target" not in arrs or not np.asarray(arrs.get("has_sf_policy", ())).any()
+    batch = collate_arrays(
+        {k: np.asarray(v) for k, v in arrs.items()}, device="cpu",
+    )
+    n = batch["x"].shape[0]
+    outputs = {
+        "policy_own": torch.randn(n, 4672),
+        "policy_sf": torch.randn(n, 4672),
+        "wdl": torch.randn(n, 3),
+    }
+    params = SfTargetParams(sf_policy_temp=0.012, sf_policy_label_smooth=0.01)
+    losses = compute_loss(outputs, batch, sf_sparse_params=params)
+    assert torch.isfinite(losses["sf_move_ce"]).all()
+    assert float(losses["sf_move_ce"]) > 0.0
