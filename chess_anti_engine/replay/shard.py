@@ -968,7 +968,12 @@ def validate_arrays(arrs: dict[str, np.ndarray]) -> None:
 
         if value_present:
             value = np.asarray(arrs[spec.arr])
-            expected_tail = (policy_size,) if spec.arr in POLICY_SIZED_FIELDS else spec.shape
+            if spec.arr == "x_lc0_root":
+                expected_tail: tuple[int, ...] = (int(x.shape[1]), 8, 8)
+            elif spec.arr in POLICY_SIZED_FIELDS:
+                expected_tail = (policy_size,)
+            else:
+                expected_tail = spec.shape
             expected_shape = (n, *expected_tail)
             if value.shape != expected_shape:
                 raise ValueError(
