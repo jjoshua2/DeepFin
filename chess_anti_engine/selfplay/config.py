@@ -99,6 +99,12 @@ class GameConfig:
   # Compute + store dynamic board-relation matrices: search evals get them as
   # attention-bias input, and samples carry them into shards for training.
     record_relations: bool = False
+  # Write the dense sf_policy_target alongside the sparse MultiPV rows.
+  # Flip to False only once (a) the full replay window carries sparse labels
+  # AND (b) training runs with train.sf_policy_sparse_ce: true — the sparse
+  # CE is then the sole policy_sf supervision and the dense vector is dead
+  # weight in the shard.
+    record_dense_sf_policy: bool = True
 
 
 __all__ = [

@@ -4,7 +4,12 @@ import numpy as np
 import torch
 
 from .buffer import ReplaySample
-from .shard import LEGAL_MASK_FIELDS, LEGAL_MASK_HAS_FIELDS
+from .shard import (
+    LEGAL_MASK_FIELDS,
+    LEGAL_MASK_HAS_FIELDS,
+    SF_MULTIPV_RAW_COLS,
+    SF_MULTIPV_RAW_MAX,
+)
 
 
 def _to_tensor(arr: np.ndarray, *, device: str) -> torch.Tensor:
@@ -204,6 +209,11 @@ def collate_arrays(arrs: dict[str, np.ndarray], *, device: str) -> dict[str, tor
         ("has_future_sf_regret_count", (n,), np.float32, torch.float32),
         ("sf_move_index", (n,), np.int64, torch.int64),
         ("has_sf_move", (n,), np.float32, torch.float32),
+        # Sparse MultiPV rows: only present when the trainer requests them
+        # (train.sf_policy_sparse_ce) — _sample_batch_host drops them
+        # otherwise so the default H2D payload is unchanged.
+        ("sf_multipv_raw", (n, SF_MULTIPV_RAW_MAX, SF_MULTIPV_RAW_COLS), np.int32, torch.int32),
+        ("has_sf_multipv_raw", (n,), np.float32, torch.float32),
         ("sf_policy_t", (n, policy_t.shape[1]), np.float32, torch.float32, "sf_policy_target"),
         ("has_sf_policy", (n,), np.float32, torch.float32),
         ("moves_left", (n,), np.float32, torch.float32),

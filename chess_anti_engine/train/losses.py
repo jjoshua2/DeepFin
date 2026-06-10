@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import TYPE_CHECKING
 
 import torch
 import torch.nn.functional as F
+
+from chess_anti_engine.train.sparse_sf_ce import sparse_sf_policy_ce
+
+if TYPE_CHECKING:
+    from chess_anti_engine.train.target_builder import SfTargetParams
 
 from chess_anti_engine.moves import COMPACT_POLICY_SIZE, COMPACT_TO_FULL_POLICY, POLICY_SIZE
 from chess_anti_engine.train.constants import REGRET_TO_Q_SCALE, future_regret_field_names
@@ -216,6 +222,7 @@ def compute_loss(
     adjusted_wdl_regret_scale: float = 1.0,
     adjusted_wdl_regret_cap: float = 0.0,
     soft_policy_min_tv: float = 0.0,
+    sf_sparse_params: SfTargetParams | None = None,
 ) -> dict[str, torch.Tensor]:
     """Compute multi-head training loss.
 
@@ -223,6 +230,11 @@ def compute_loss(
     whose soft target is within that total-variation distance of the hard
     target (they're a deterministic retempering of the same distribution —
     see scripts/probe_policy_targets.py). 0.0 keeps current behavior exactly.
+
+    ``sf_sparse_params`` switches the ``policy_sf`` loss to sparse CE over
+    gathered log-probs (train/sparse_sf_ce.py) for rows carrying sparse
+    MultiPV labels; rows without them keep the dense soft CE. None (the
+    default) leaves the dense path untouched.
     """
     net_mask = _get_mask(batch, "is_network_turn", default=1.0).to(torch.float32)
 
@@ -281,13 +293,33 @@ def compute_loss(
 
     sf_pol_logits = outputs.get("policy_sf")
     sf_policy_target = batch.get("sf_policy_t")
-    if sf_pol_logits is None or sf_policy_target is None:
+    if sf_pol_logits is None:
         sf_move_ce = zero_loss
     else:
-        sf_move_ce = soft_cross_entropy(
-            apply_policy_mask_to_logits(sf_pol_logits, batch, "sf_legal_mask", "has_sf_legal_mask"),
-            align_policy_target(sf_policy_target, int(sf_pol_logits.shape[-1])),
+        masked_sf_logits = apply_policy_mask_to_logits(
+            sf_pol_logits, batch, "sf_legal_mask", "has_sf_legal_mask",
         )
+        sf_move_ce = (
+            soft_cross_entropy(
+                masked_sf_logits,
+                align_policy_target(sf_policy_target, int(sf_pol_logits.shape[-1])),
+            )
+            if sf_policy_target is not None else zero_loss
+        )
+        sf_legal = batch.get("sf_legal_mask")
+        if sf_sparse_params is not None and "sf_multipv_raw" in batch and sf_legal is not None:
+            sparse_ce, sparse_ok = sparse_sf_policy_ce(
+                masked_sf_logits, batch, params=sf_sparse_params,
+                legal_aligned=align_policy_mask(sf_legal, int(sf_pol_logits.shape[-1])),
+            )
+            keep_sparse = sparse_ok > 0
+            sf_move_ce = torch.where(keep_sparse, sparse_ce, sf_move_ce)
+            # Rows whose shards no longer carry a dense target (the
+            # record_dense_sf_policy=false transition) still train via the
+            # sparse path; widen the head mask to include them.
+            has_sf_policy = torch.maximum(
+                has_sf_policy.to(torch.float32), sparse_ok.to(torch.float32),
+            )
 
     has_sf_wdl = _get_mask(batch, "has_sf_wdl")
     sf_wdl_probs = _normalize_sf_wdl_probs(batch.get("sf_wdl"), temperature=sf_wdl_temperature)

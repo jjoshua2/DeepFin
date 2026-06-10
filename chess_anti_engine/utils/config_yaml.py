@@ -138,6 +138,7 @@ _SELFPLAY_KEYS = (
     "categorical_bins", "hlgauss_sigma",
     "record_lc0_root_input",
     "record_relations",
+    "record_dense_sf_policy",
 )
 
 # model section: mostly 1:1 except kind→model and use_smolgen→no_smolgen (inverted).
@@ -165,7 +166,7 @@ _TRAIN_KEYS = (
     "aurora_polar_method", "aurora_polar_dtype", "aurora_polar_safety",
     "cosmos_rank", "cosmos_gamma",
     "lr", "batch_size", "train_steps", "train_window_fraction",
-    "no_amp", "feature_dropout_p",
+    "no_amp", "feature_dropout_p", "rebuild_sf_targets", "sf_policy_sparse_ce",
     "resid_channel_dropout", "resid_channel_balance_weight",
     "fdp_king_safety", "fdp_pins", "fdp_pawns", "fdp_mobility", "fdp_outposts",
     "w_volatility",
@@ -391,4 +392,24 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
     if isinstance(tune, dict):
         _apply_tune_section(out, tune)
 
-    return {k: v for k, v in out.items() if v is not None}
+    flat = {k: v for k, v in out.items() if v is not None}
+    _check_sparse_sf_policy_flags(flat)
+    return flat
+
+
+def _check_sparse_sf_policy_flags(flat: dict[str, Any]) -> None:
+    """Reject the silent-supervision-loss flag combination.
+
+    With ``selfplay.record_dense_sf_policy: false`` new shards carry only
+    sparse MultiPV labels; unless ``train.sf_policy_sparse_ce`` is also on,
+    compute_loss has neither a dense target nor the sparse path for those
+    rows and the policy_sf head silently stops training on them.
+    """
+    if flat.get("record_dense_sf_policy", True):
+        return
+    if not flat.get("sf_policy_sparse_ce", False):
+        raise ValueError(
+            "selfplay.record_dense_sf_policy: false requires "
+            "train.sf_policy_sparse_ce: true — without it, samples written "
+            "with only sparse MultiPV labels get NO policy_sf supervision."
+        )

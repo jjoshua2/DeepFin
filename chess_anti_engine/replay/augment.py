@@ -189,6 +189,18 @@ def mirror_sample(s: ReplaySample, *, input_history_encoding: str | None = None)
             mirrored = mirror_policy(np.asarray(v, dtype=np.float32))
             setattr(out, name, mirrored.astype(np.asarray(v).dtype, copy=False))
 
+  # Sparse MultiPV labels: move-index column mirrors with policy space,
+  # scores/wdl and the record-level meta are mirror-invariant.
+    raw = getattr(s, "sf_multipv_raw", None)
+    if raw is not None:
+        out.sf_multipv_raw = _mirror_sparse_multipv(
+            np.asarray(raw)[None, ...],
+            np.array([True]),
+            policy_width=policy_width,
+        )[0]
+    meta = getattr(s, "sf_label_meta", None)
+    out.sf_label_meta = None if meta is None else np.array(meta, copy=True)
+
     return out
 
 
@@ -260,4 +272,29 @@ def maybe_mirror_batch_arrays(
                 policy_width=policy_width,
             )
 
+    if "sf_multipv_raw" in arrs:
+        out["sf_multipv_raw"] = _mirror_sparse_multipv(
+            np.asarray(arrs["sf_multipv_raw"]), mask, policy_width=policy_width,
+        )
+
+    return out
+
+
+def _mirror_sparse_multipv(
+    raw: np.ndarray, mask: np.ndarray, *, policy_width: int,
+) -> np.ndarray:
+    """Remap sparse MultiPV move indices (col 0) under the mirror permutation.
+
+    Scores/wdl columns are mirror-invariant; only the move index column
+    lives in policy space. Pad rows (idx -1) pass through.
+    """
+    out = np.array(raw, copy=True, order="C")
+    rows = out[mask]
+    idx = rows[..., 0].astype(np.int64)
+    valid = idx >= 0
+    if np.any(valid):
+        mirror_map = _mirror_map_for_policy_width(policy_width)
+        idx[valid] = mirror_map[idx[valid]]
+        rows[..., 0] = idx.astype(rows.dtype, copy=False)
+        out[mask] = rows
     return out

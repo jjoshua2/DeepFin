@@ -42,6 +42,7 @@ from chess_anti_engine.encoding.lc0 import (
     uses_lc0_root_legacy_meta,
 )
 from chess_anti_engine.model import ARCH_SCHEMA_VERSION, ModelConfig
+from chess_anti_engine.train.target_builder import SfTargetParams, rebuild_sf_targets_in_arrays
 from chess_anti_engine.moves import (
     COMPACT_POLICY_SIZE,
     COMPACT_TO_FULL_POLICY,
@@ -707,6 +708,15 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         zclip_max_norm=zclip_max_norm,
         use_amp=bool(config.get("use_amp", True)),
         feature_dropout_p=_f("feature_dropout_p", 0.3),
+        rebuild_sf_targets=bool(config.get("rebuild_sf_targets", False)),
+        sf_policy_sparse_ce=bool(config.get("sf_policy_sparse_ce", False)),
+        sf_target_params=SfTargetParams(
+            sf_policy_temp=_f("sf_policy_temp", 0.25),
+            sf_policy_label_smooth=_f("sf_policy_label_smooth", 0.05),
+            sf_wdl_use_cp_logistic=bool(config.get("sf_wdl_use_cp_logistic", False)),
+            sf_wdl_cp_slope=_f("sf_wdl_cp_slope", 0.010),
+            sf_wdl_cp_draw_width=_f("sf_wdl_cp_draw_width", 60.0),
+        ),
         fdp_king_safety=config.get("fdp_king_safety"),
         fdp_pins=config.get("fdp_pins"),
         fdp_pawns=config.get("fdp_pawns"),
@@ -792,6 +802,9 @@ class Trainer:
         log_dir: Path | None = None,
         use_amp: bool = True,
         feature_dropout_p: float = 0.3,
+        rebuild_sf_targets: bool = False,
+        sf_policy_sparse_ce: bool = False,
+        sf_target_params: SfTargetParams | None = None,
         fdp_king_safety: float | None = None,
         fdp_pins: float | None = None,
         fdp_pawns: float | None = None,
@@ -1167,6 +1180,12 @@ class Trainer:
         self._amp_dtype = torch.bfloat16 if device.startswith("cuda") else None
 
         self.feature_dropout_p = float(feature_dropout_p)
+  # Rebuild SF targets from sparse MultiPV labels at sample time (offline
+  # target-retuning experiments). False = use stored targets, bitwise
+  # identical to the pre-flag pipeline.
+        self.rebuild_sf_targets = bool(rebuild_sf_targets)
+        self.sf_policy_sparse_ce = bool(sf_policy_sparse_ce)
+        self.sf_target_params = sf_target_params or SfTargetParams()
         self._base_input_planes = int(LC0_FULL.num_planes)
   # Per-group dropout: (start_offset_from_base, num_planes, dropout_prob)
   # Groups: king_safety(10), pins(6), pawns(8), mobility(6), outposts(4).
@@ -1346,6 +1365,7 @@ class Trainer:
             adjusted_wdl_regret_source=self.adjusted_wdl_regret_source,
             adjusted_wdl_regret_scale=self.adjusted_wdl_regret_scale,
             adjusted_wdl_regret_cap=self.adjusted_wdl_regret_cap,
+            sf_sparse_params=self.sf_target_params if self.sf_policy_sparse_ce else None,
         )
 
     def _amp_context(self):
@@ -1417,6 +1437,15 @@ class Trainer:
     ) -> dict[str, np.ndarray] | list:
         if hasattr(buf, "sample_batch_arrays"):
             arrs = buf.sample_batch_arrays(batch_size)
+            if self.rebuild_sf_targets:
+                arrs = rebuild_sf_targets_in_arrays(arrs, params=self.sf_target_params)
+            if not self.sf_policy_sparse_ce:
+                # Keep the default H2D payload identical to the pre-sparse-CE
+                # pipeline: the int rows only ride to the GPU when the sparse
+                # loss consumes them. (Dropped AFTER the rebuild hook, which
+                # also reads them.)
+                arrs.pop("sf_multipv_raw", None)
+                arrs.pop("has_sf_multipv_raw", None)
             arrs = select_input_history_arrays(
                 arrs,
                 input_history_encoding=self._input_history_encoding,

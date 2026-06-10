@@ -23,27 +23,13 @@ import numpy as np
 import pytest
 import torch
 
+from tests.stockfish_binary import find_stockfish
+
 # ---------------------------------------------------------------------------
 # Stockfish fixture — skip entire module if binary missing
 # ---------------------------------------------------------------------------
 
-SF_CANDIDATES = [
-    "/home/josh/projects/chess/e2e_server/publish/stockfish",
-    "/usr/bin/stockfish",
-    "/usr/games/stockfish",
-]
-
-def _find_stockfish() -> str | None:
-    import os
-    import sys
-    if sys.platform != "linux":
-        return None  # E2E tests only run inside WSL/Linux
-    for p in SF_CANDIDATES:
-        if os.path.isfile(p) and os.access(p, os.X_OK):
-            return p
-    return None
-
-SF_PATH = _find_stockfish()
+SF_PATH = find_stockfish()
 pytestmark = pytest.mark.skipif(SF_PATH is None, reason="Stockfish not found (run inside WSL)")
 
 

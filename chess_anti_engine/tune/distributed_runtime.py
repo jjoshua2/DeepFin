@@ -340,6 +340,7 @@ def _publish_distributed_trial_state(
             config.get("record_relations", model_cfg.use_dynamic_relations)
         ),
         "record_lc0_root_input": bool(config.get("record_lc0_root_input", False)),
+        "record_dense_sf_policy": bool(config.get("record_dense_sf_policy", True)),
         "sf_wdl_use_cp_logistic": bool(config.get("sf_wdl_use_cp_logistic", False)),
         "sf_wdl_cp_slope": float(config.get("sf_wdl_cp_slope", 0.010)),
         "sf_wdl_cp_draw_width": float(config.get("sf_wdl_cp_draw_width", 60.0)),

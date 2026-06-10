@@ -37,6 +37,7 @@ from chess_anti_engine.selfplay.stockfish_turn import (
     flush_async_sf_labels_for_records,
 )
 from chess_anti_engine.selfplay.temperature import apply_policy_temperature
+from chess_anti_engine.replay.shard import SF_MULTIPV_PAD_ROW, SF_MULTIPV_RAW_MAX
 from chess_anti_engine.stockfish.pool import StockfishPool
 from chess_anti_engine.stockfish.uci import StockfishResult
 from chess_anti_engine.tablebase import (
@@ -700,7 +701,7 @@ def _build_replay_samples(
                 search_sig = float(search_arr[0] - search_arr[2])
                 sf_search_gap = abs(sf_sig - search_sig)
         sf_policy_target = None
-        if rec.sf_policy_target is not None:
+        if rec.sf_policy_target is not None and state.game.record_dense_sf_policy:
             sf_policy_target = policy_vector_to_encoding(
                 rec.sf_policy_target,
                 policy_encoding=state.game.policy_encoding,
@@ -726,6 +727,11 @@ def _build_replay_samples(
                 ply_index=int(rec.ply_index),
                 has_policy=bool(rec.has_policy),
                 sf_wdl=rec.sf_wdl,
+                sf_multipv_raw=_padded_sparse_multipv(
+                    getattr(rec, "sf_multipv_raw", None),
+                    policy_encoding=state.game.policy_encoding,
+                ),
+                sf_label_meta=getattr(rec, "sf_label_meta", None),
                 sf_move_index=(
                     None if rec.sf_move_index is None else
                     policy_index_for_encoding(
@@ -906,6 +912,25 @@ def _emit_completed_game_batch(
             outcome_stats=dict(counters.outcome_stats or {}),
         ),
     )
+
+
+def _padded_sparse_multipv(
+    rows: np.ndarray | None, *, policy_encoding: str,
+) -> np.ndarray | None:
+    """Pad raw MultiPV rows to the shard's fixed width and convert the move
+    column from full policy space to the shard's policy encoding (same
+    convention as ``sf_move_index``)."""
+    if rows is None:
+        return None
+    out = np.empty((SF_MULTIPV_RAW_MAX, rows.shape[1]), dtype=np.int16)
+    out[:] = np.asarray(SF_MULTIPV_PAD_ROW, dtype=np.int16)
+    k = min(int(rows.shape[0]), SF_MULTIPV_RAW_MAX)
+    out[:k] = rows[:k]
+    for j in range(k):
+        out[j, 0] = policy_index_for_encoding(
+            int(rows[j, 0]), policy_encoding=policy_encoding,
+        )
+    return out
 
 
 def finalize_game(
