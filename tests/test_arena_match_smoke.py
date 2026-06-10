@@ -53,7 +53,7 @@ def test_pick_moves_uses_model_input_history_encoding(monkeypatch):
     monkeypatch.setattr(match_mod, "_HAS_GUMBEL_C", False)
     monkeypatch.setattr(match_mod, "run_gumbel_root_many", fake_gumbel)
 
-    match_mod._pick_moves_for_boards(
+    match_mod.pick_moves_for_boards(
         model,
         [__import__("chess").Board()],
         device="cpu",
@@ -81,7 +81,7 @@ def test_pick_moves_uses_model_policy_encoding_for_puct(monkeypatch):
     monkeypatch.setattr(match_mod, "_HAS_C_TREE", False)
     monkeypatch.setattr(match_mod, "run_mcts_many", fake_puct)
 
-    match_mod._pick_moves_for_boards(
+    match_mod.pick_moves_for_boards(
         model,
         [__import__("chess").Board()],
         device="cpu",

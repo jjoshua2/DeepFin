@@ -50,7 +50,7 @@ class MatchStats:
     a_as_black: int
 
 
-def _result_from_a_pov(result: str, *, a_is_white: bool) -> int:
+def result_from_a_pov(result: str, *, a_is_white: bool) -> int:
     """Map game result to model-a outcome.
 
     Returns:
@@ -68,7 +68,7 @@ def _result_from_a_pov(result: str, *, a_is_white: bool) -> int:
     return 1 if a_won else -1
 
 
-def _pick_moves_for_boards(
+def pick_moves_for_boards(
     model: torch.nn.Module, sub_boards: list[chess.Board], *,
     device: str, rng: np.random.Generator,
     mcts_type: str, mcts_simulations: int, temperature: float, c_puct: float,
@@ -108,7 +108,7 @@ def _pick_moves_for_boards(
     return [int(a) for a in actions]
 
 
-def _apply_actions_to_boards(
+def apply_actions_to_boards(
     boards: list[chess.Board], idxs: list[int], actions: list[int],
 ) -> None:
     """Push each chosen action onto its board (fall back to first legal if illegal)."""
@@ -119,7 +119,7 @@ def _apply_actions_to_boards(
         boards[i].push(mv)
 
 
-def _split_active_by_side_to_move(
+def split_active_by_side_to_move(
     active: list[int], boards: list[chess.Board], a_plays_white: list[bool],
 ) -> tuple[list[int], list[int]]:
     """Partition active slots by which model (a/b) is to move."""
@@ -141,7 +141,7 @@ def _tally_match_results(
     """Count (a_win, a_draw, a_loss) over the finished boards."""
     a_win = a_draw = a_loss = 0
     for i, b in enumerate(boards):
-        outcome = _result_from_a_pov(
+        outcome = result_from_a_pov(
             b.result(claim_draw=True), a_is_white=bool(a_plays_white[i]),
         )
         if outcome == 0:
@@ -199,7 +199,7 @@ def play_match_batch(
     def _pick(model: torch.nn.Module, idxs: list[int], *, sims: int) -> list[int]:
         if not idxs:
             return []
-        return _pick_moves_for_boards(
+        return pick_moves_for_boards(
             model, [boards[i] for i in idxs],
             device=device, rng=rng,
             mcts_type=mcts_type, mcts_simulations=sims,
@@ -215,11 +215,11 @@ def play_match_batch(
         if not active:
             break
 
-        a_to_move, b_to_move = _split_active_by_side_to_move(
+        a_to_move, b_to_move = split_active_by_side_to_move(
             active, boards, a_plays_white,
         )
-        _apply_actions_to_boards(boards, a_to_move, _pick(model_a, a_to_move, sims=sims_a))
-        _apply_actions_to_boards(boards, b_to_move, _pick(model_b, b_to_move, sims=sims_b))
+        apply_actions_to_boards(boards, a_to_move, _pick(model_a, a_to_move, sims=sims_a))
+        apply_actions_to_boards(boards, b_to_move, _pick(model_b, b_to_move, sims=sims_b))
 
     a_win, a_draw, a_loss = _tally_match_results(boards, a_plays_white)
 
