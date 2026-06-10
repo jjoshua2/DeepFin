@@ -1977,6 +1977,14 @@ class Trainer:
         parameter it belongs to. Returns None when the mismatch isn't
         explained by exactly the known fresh parameters (caller falls back
         to the existing reinit path).
+
+        Order assumption: within each param group, the donor's parameters
+        appear in the SAME relative order as the new model's non-fresh
+        parameters -- true as long as fresh params are only APPENDED to the
+        module registration order (the relation weights register after the
+        trunk). A refactor that moves them earlier would silently splice
+        donor moments onto the wrong slots; the per-group length check
+        below cannot catch reordering.
         """
         fresh_ids = {
             id(param)

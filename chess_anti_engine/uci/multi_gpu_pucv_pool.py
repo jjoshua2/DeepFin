@@ -31,15 +31,11 @@ from typing import Any, Callable
 import numpy as np
 
 from chess_anti_engine.encoding._lc0_ext import CBoard as _CBoard
-from chess_anti_engine.encoding.features import RELATION_COUNT
 from chess_anti_engine.inference_cache import PucvEvalCache, PucvEvalCacheStats
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
+from chess_anti_engine.mcts.puct_vl import _PLANES, _alloc_buffers
 
 _log = logging.getLogger(__name__)
-
-_MAX_PATH = 512
-_MAX_LEGAL = 256
-_PLANES = 146
 
 
 @dataclass
@@ -116,27 +112,6 @@ class _Job:
     root_cboard: _CBoard
     budget: threading.Semaphore
     stop_event: threading.Event
-
-
-def _alloc_buffers(
-    gather: int, planes: int = _PLANES, *, with_relations: bool = False,
-) -> dict[str, np.ndarray]:
-    bufs: dict[str, np.ndarray] = {
-        "leaf_ids": np.empty(gather, dtype=np.int32),
-        "path_buf": np.empty(gather * _MAX_PATH, dtype=np.int32),
-        "path_lens": np.empty(gather, dtype=np.int32),
-        "legal_buf": np.empty(gather * _MAX_LEGAL, dtype=np.int32),
-        "legal_lens": np.empty(gather, dtype=np.int32),
-        "term_qs": np.empty(gather, dtype=np.float64),
-        "is_term": np.empty(gather, dtype=np.int8),
-        "cache_keys": np.empty((gather, 2), dtype=np.uint64),
-        "enc_rows": np.empty((gather, planes, 8, 8), dtype=np.float32),
-    }
-    if with_relations:
-        bufs["rel"] = np.zeros(
-            (gather, RELATION_COUNT, 64, 64), dtype=np.uint8,
-        )
-    return bufs
 
 
 class MultiGpuPucvPool:
