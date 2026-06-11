@@ -39,6 +39,18 @@ _PENDING_DIR_NAME = PENDING_DIR_NAME
 _IN_FLIGHT_DIR_NAME = IN_FLIGHT_DIR_NAME
 
 
+def _compacted_token_suffix(flush_token: str) -> str:
+    """Trailing filename segment linking a compacted shard to its flush token.
+
+    Single source of truth for the commit witness: the flush path names the
+    compacted shard with this suffix, and startup recovery matches on it to
+    decide whether an ``_in_flight/<token>/`` group already committed. A
+    silent drift between the two sides would make recovery re-seed committed
+    samples (duplicates in replay).
+    """
+    return f"_{flush_token}{LOCAL_SHARD_SUFFIX}"
+
+
 def resolve_publish_artifact_path(publish_root: Path, filename: str) -> Path | None:
     """Return a publish-root-contained artifact path, or None on escape."""
     root = Path(publish_root).resolve()
@@ -337,8 +349,8 @@ def _flush_buffered_upload_to_inbox(
     # token in ``_compacted/*`` to decide whether the in-flight group has
     # already committed.
     final = compacted_dir / (
-        f"{int(now_unix)}_{str(acc.model_sha256)[:8]}_{int(acc.games)}g_{int(acc.positions)}p_"
-        f"{flush_token}{LOCAL_SHARD_SUFFIX}"
+        f"{int(now_unix)}_{str(acc.model_sha256)[:8]}_{int(acc.games)}g_{int(acc.positions)}p"
+        f"{_compacted_token_suffix(flush_token)}"
     )
     arrs = samples_to_arrays(samples)
     save_local_shard_arrays(final, arrs=arrs, meta=meta)
@@ -493,7 +505,10 @@ def create_app(
 
         Returning False on a flush error leaves the acc in memory and
         moves the in-flight zarrs back to ``_pending`` so the next attempt
-        starts from the same on-disk state.
+        starts from the same on-disk state. If any rename-back fails, the
+        in-flight group is left in place instead (never deleted) with
+        ``pending_paths`` pointing at the surviving locations; recovery
+        re-seeds such orphaned groups on the next startup.
         """
         flush_token = secrets.token_hex(8)
         in_flight_dir = inbox_root / _IN_FLIGHT_DIR_NAME / flush_token
@@ -527,8 +542,9 @@ def create_app(
                     log.exception("rollback rename failed for %s -> %s", target, original)
                     rollback_failed = True
                     rolled_back.append(target)  # data is still at the in-flight path
+            moved_originals = {orig for orig, _ in moved}
             acc.pending_paths = rolled_back + [
-                p for p in acc.pending_paths if p not in {orig for orig, _ in moved}
+                p for p in acc.pending_paths if p not in moved_originals
             ]
             if rollback_failed:
                 # Do NOT delete the in-flight dir: it still holds zarrs whose
@@ -1639,7 +1655,7 @@ def create_app(
                 continue
             token = token_dir.name
             committed = compacted_dir.is_dir() and any(
-                p.name.endswith(f"_{token}{LOCAL_SHARD_SUFFIX}")
+                p.name.endswith(_compacted_token_suffix(token))
                 for p in compacted_dir.iterdir()
             )
             if committed:
@@ -1663,6 +1679,7 @@ def create_app(
             # every shard back to ``_pending`` for phase 2 to re-seed.
             pending_dir = in_flight_root.parent / _PENDING_DIR_NAME
             pending_dir.mkdir(parents=True, exist_ok=True)
+            restore_failed = False
             for entry in sorted(token_dir.iterdir()):
                 if not entry.name.endswith(LOCAL_SHARD_SUFFIX):
                     continue
@@ -1673,7 +1690,17 @@ def create_app(
                         "failed to restore in-flight shard %s to pending; leaving in place",
                         entry,
                     )
-            delete_shard_path(token_dir)
+                    restore_failed = True
+            if restore_failed:
+                # Same contract as the live flush paths: the token dir still
+                # holds shards whose restore rename failed — deleting it would
+                # destroy them. Leave it for the next startup recovery pass.
+                log.error(
+                    "leaving %s in place (partial restore) for a later recovery",
+                    token_dir,
+                )
+            else:
+                delete_shard_path(token_dir)
 
     def _scan_pending_dir(*, pending_dir: Path, trial_key: str | None) -> int:
         if not pending_dir.is_dir():
@@ -1765,7 +1792,7 @@ def create_app(
                     _recover_in_flight_dirs(
                         in_flight_root=trial_inbox / _IN_FLIGHT_DIR_NAME,
                         compacted_dir=trial_inbox / "_compacted",
-                        trial_key=trial_dir.name,
+                        trial_key=trial_key,
                     )
                 except Exception:
                     log.exception("in-flight recovery for trial %s failed", trial_key)

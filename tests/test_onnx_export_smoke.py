@@ -3,14 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-import pytest
+import onnxruntime as ort
+import torch
 
 
 def test_onnx_export_and_parity_cpu(tmp_path: Path):
-    torch = pytest.importorskip("torch")
-    ort = pytest.importorskip("onnxruntime")
-    pytest.importorskip("onnx")
-
     from chess_anti_engine.model import ModelConfig, build_model
     from chess_anti_engine.onnx import export_onnx
 
@@ -43,9 +40,9 @@ def test_onnx_export_and_parity_cpu(tmp_path: Path):
         str(onnx_path),
         providers=["CPUExecutionProvider"],
     )
-    ort_policy, ort_wdl, ort_moves_left = sess.run(
-        None,
-        {"input_planes": x.cpu().numpy()},
+    ort_policy, ort_wdl, ort_moves_left = (
+        np.asarray(out)
+        for out in sess.run(None, {"input_planes": x.cpu().numpy()})
     )
 
     np.testing.assert_allclose(ort_policy, policy, rtol=1e-3, atol=1e-3)

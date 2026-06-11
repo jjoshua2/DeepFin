@@ -3,12 +3,18 @@ name = "chess-anti-engine"
 version = "0.0.1"
 description = "Chess anti-engine training framework (Phase 1: Python pipeline)"
 requires-python = ">=3.10.12"
+# Core deps are the LITE baseline — exactly what the selfplay client needs
+# (worker.py import graph: chess, numpy, torch, yaml, zarr; requests comes
+# from the [worker] extra). Anything training- or server-side goes in an
+# extra; keep this list as small as possible.
 dependencies = [
   "python-chess>=1.10",
   "numpy>=1.24",
   "torch>=2.0",
   "pyyaml>=6.0",
-  "zarr>=2.18",
+  # zarr 3 removed the v2 Group.create_dataset(data=...) API used by
+  # replay/shard.py — keep the v2 series until the shard I/O is ported.
+  "zarr>=2.18,<3",
 ]
 
 [project.scripts]
@@ -25,9 +31,20 @@ exclude = ["runs*", "tests*"]
 [project.optional-dependencies]
 train = [
   "tensorboard>=2.0",
+  # Unconditional import in train/trainer.py (gradient z-clip).
+  "zclip>=1.0",
+  # SOAP optimizer backend (trainer also accepts a local soap.py module).
+  "pytorch-optimizer>=3.0",
 ]
 
+# Full test/server environment: the suite hard-requires its dependencies
+# (no optional-dep skips), so dev pulls in every extra the tests exercise.
+# The lite client install is `pip install -e ".[worker]"`.
 dev = [
+  "chess-anti-engine[server,train,tune,onnx]",
+  # tests/test_harness_sync_exclude.py drives pyarrow.fs directly (also a
+  # transitive ray dep, pinned here because the test imports it itself).
+  "pyarrow>=14.0",
   "pytest>=7.0",
   "pytest-cov>=5.0",
   "diff-cover>=8.0",

@@ -546,6 +546,47 @@ def test_recovery_drops_orphan_duplicate_pending_with_same_sha(tmp_path) -> None
     assert arrs["x"].shape[0] == 5, f"orphan was re-seeded: {arrs['x'].shape[0]}"
 
 
+def test_startup_recovery_partial_restore_preserves_in_flight(tmp_path) -> None:
+    """Review fix: startup recovery of an orphaned in-flight group must not
+    delete the token dir when any shard's restore rename to ``_pending``
+    fails — that shard only exists inside the token dir. Trigger the failure
+    with a same-named non-empty ``_pending`` entry: zarr shards are
+    directories, so the rename refuses to overwrite it."""
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+
+    token = "ab" * 8
+    staging = _in_flight_dir(server_root) / token
+    staging.mkdir(parents=True)
+    name_conflict = f"100_{'a' * 64}_{'1' * 16}{LOCAL_SHARD_SUFFIX}"
+    name_ok = f"101_{'b' * 64}_{'2' * 16}{LOCAL_SHARD_SUFFIX}"
+    for name, sample_idx in ((name_conflict, 0), (name_ok, 1)):
+        save_local_shard_arrays(
+            staging / name,
+            arrs=samples_to_arrays([_sample(sample_idx)]),
+            meta=ShardMeta(username="u", games=1, positions=1, model_sha256="abcd1234"),
+        )
+    pending_dir = _pending_dir(server_root)
+    pending_dir.mkdir(parents=True)
+    save_local_shard_arrays(
+        pending_dir / name_conflict,
+        arrs=samples_to_arrays([_sample(2)]),
+        meta=ShardMeta(username="u", games=1, positions=1, model_sha256="abcd1234"),
+    )
+
+    # Startup recovery runs inside create_app. No compacted shard matches the
+    # token, so it tries to move both staged shards back to _pending; the
+    # conflicting one fails.
+    _build_app(server_root, upload_compact_shard_size=2000)
+
+    # The shard whose restore failed must survive in the token dir (old code
+    # rmtree'd the whole dir here); the other one moved to _pending.
+    assert (staging / name_conflict).is_dir(), "un-restored in-flight shard was deleted"
+    assert (pending_dir / name_ok).is_dir()
+    assert not (staging / name_ok).exists()
+
+
 def test_failed_compaction_with_failed_restore_preserves_in_flight(tmp_path, monkeypatch) -> None:
     """Audit fix: when the compaction write fails AND a restore rename back to
     _pending also fails, the in-flight dir must be LEFT IN PLACE (startup

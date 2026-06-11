@@ -9,8 +9,10 @@ Chess anti-engine training framework — trains a transformer neural network to 
 ## Commands
 
 ```bash
-pip install -e ".[dev]"     # Install package with test dependencies
-                             # (.[tune] for Ray Tune, .[onnx] for ONNX export)
+pip install -e ".[dev]"     # Full server/test environment — includes the
+                             # server, train, tune, and onnx extras; the test
+                             # suite hard-requires all of them (no skips)
+pip install -e ".[worker]"  # Lite selfplay-client install (core deps + requests)
 
 python -m pytest            # Run all tests
 python -m pytest tests/test_transformer_forward.py  # Run single test file
