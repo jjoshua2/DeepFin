@@ -9,6 +9,7 @@ consumers of the move encoding never import torch.
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import cast
 
 import torch
 
@@ -33,7 +34,9 @@ def _cached_table(name: str, device_type: str, device_index: int | None) -> torc
 def _device_key(device: torch.device) -> tuple[str, int | None]:
     """Cache key for a device. torch.device("cuda") and ("cuda", 0) are the
     same physical device — normalize so they share one cached tensor."""
-    index = device.index
+    # torch's stubs type device.index as int, but it is None at runtime for
+    # unindexed devices like torch.device("cuda").
+    index = cast("int | None", device.index)
     if index is None and device.type == "cuda":
         index = torch.cuda.current_device() if torch.cuda.is_available() else 0
     return device.type, index
