@@ -1,5 +1,5 @@
 # chess-anti-engine
-A Python/PyTorch self-play training loop for a transformer chess model that trains primarily vs Stockfish ("anti-engine" style), with LC0-style 4672-move policy encoding.
+A Python/PyTorch self-play training loop for a transformer chess model that trains primarily vs Stockfish ("anti-engine" style). Production uses the compact LC0 `lc0_1858` policy encoding (the legacy AlphaZero-style 4672 space remains supported for old shards/checkpoints).
 
 ## Status: how close is this to a self-improving pipeline?
 The core **self-improving loop is working end-to-end**:
@@ -9,7 +9,7 @@ The core **self-improving loop is working end-to-end**:
 4) repeat for N outer iterations, checkpointing along the way
 
 It also includes several spec-critical stabilizers:
-- LC0-style `POLICY_SIZE=4672` move encoding (+ legal-move masking)
+- compact LC0 `lc0_1858` policy encoding in production (+ legal-move masking); legacy `az_4672` import/conversion paths retained
 - soft-target losses for Stockfish WDL + MultiPV-derived soft policy targets
 - adaptive Stockfish difficulty PID controller (changes SF node budget by winrate)
 - opening diversification: optional opening book (`.bin` / `.pgn` / `.pgn.zip`) and/or random-start plies
