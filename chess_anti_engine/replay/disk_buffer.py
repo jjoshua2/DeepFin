@@ -436,6 +436,11 @@ class DiskReplayBuffer:
         stop_event: threading.Event,
         request_event: threading.Event,
     ) -> None:
+  # NOTE: the loop deliberately refills whenever the prefetched slot is
+  # empty — including on plain timeout ticks with no request — so a chunk
+  # is always warm for the next refresh. The request event only shortens
+  # the wakeup latency after a consume; it is not the load trigger. The
+  # loop body is sequential (single thread), so loads can never overlap.
         while not stop_event.is_set():
             request_event.wait(timeout=0.1)
             if stop_event.is_set():
@@ -763,8 +768,6 @@ class DiskReplayBuffer:
         n_draw_cap = int(np.floor(self.draw_cap_frac * bs))
         n_draw = min(n_draw, n_draw_cap)
         n_draw = max(0, min(bs, n_draw))
-        if draw_idx.size == 0:
-            n_draw = 0
 
         bs_decisive = bs - n_draw
         n_win = 0

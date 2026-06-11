@@ -1116,8 +1116,8 @@ class Trainer:
                 except ImportError:
                     raise ImportError(
                         "SOAP optimizer requires either a local `soap.py` module "
-                        "or the `pytorch-optimizer` package. "
-                        "Install with: pip install pytorch-optimizer"
+                        "or the `pytorch-optimizer` package (ships in the "
+                        "`train` extra: pip install -e '.[train]')"
                     ) from exc
             if matrix_optimizer_scope in ("default", "", "legacy"):
                 try:

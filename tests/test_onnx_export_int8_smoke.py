@@ -3,15 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-import pytest
+import onnxruntime as ort
+import torch
 
 
 def test_onnx_export_int8_smoke_cpu(tmp_path: Path):
-    torch = pytest.importorskip("torch")
-    ort = pytest.importorskip("onnxruntime")
-    pytest.importorskip("onnx")
-    pytest.importorskip("onnxruntime.quantization")
-
     from chess_anti_engine.model import ModelConfig, build_model
     from chess_anti_engine.onnx import export_onnx, export_onnx_int8
 
@@ -43,8 +39,8 @@ def test_onnx_export_int8_smoke_cpu(tmp_path: Path):
     sess_fp32 = ort.InferenceSession(str(fp32_path), providers=["CPUExecutionProvider"])
     sess_int8 = ort.InferenceSession(str(int8_path), providers=["CPUExecutionProvider"])
 
-    out_fp32 = sess_fp32.run(None, {"input_planes": x_np})
-    out_int8 = sess_int8.run(None, {"input_planes": x_np})
+    out_fp32 = [np.asarray(out) for out in sess_fp32.run(None, {"input_planes": x_np})]
+    out_int8 = [np.asarray(out) for out in sess_int8.run(None, {"input_planes": x_np})]
 
     assert len(out_fp32) == len(out_int8) == 3
 
