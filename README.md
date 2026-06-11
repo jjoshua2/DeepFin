@@ -16,8 +16,20 @@ It also includes several spec-critical stabilizers:
 - AlphaZero/LC0-style temperature sampling from MCTS visits, with optional linear decay schedule
 - ONNX export + parity smoke test
 
-What’s still missing for a more "production" self-improving pipeline:
-- richer evaluation policies (currently a simple **latest vs best** arena gate is available in distributed mode)
+Evaluation and experiment tooling (see `docs/eval_protocol.md` for the full
+protocol — every training-target candidate is audited there FIRST):
+- `scripts/arena_standard.py` — standardized paired-opening arena with
+  pentanomial Elo + CI, JSONL result log (matched_sims / matched_time)
+- `scripts/build_audit_set.py` + `scripts/audit_targets.py` — frozen
+  deep-Stockfish audit set and a direct target-quality scorer (expected
+  deep-SF regret per phase/source; WDL Brier/ECE)
+- `scripts/probe_policy_targets.py`, `scripts/retarget_retrain.py` — replay
+  target diagnostics and offline SF-target retuning (sparse MultiPV labels)
+- flag-gated, default-off research bets with their own `configs/exp_*.yaml`:
+  v2_threats input planes, dynamic board-relation attention bias,
+  soft-policy ablation, sparse SF-policy CE, volatility-aware Gumbel search
+
+What's still missing for a more "production" self-improving pipeline:
 - distributed hardening (quotas, manifests/versioning, arenas vs multiple baselines, etc.)
 
 See `future_ideas.md` for longer-term ideas like opponent mixing / league training.

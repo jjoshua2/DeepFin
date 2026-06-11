@@ -9,7 +9,6 @@ import struct
 import threading
 import time
 from dataclasses import dataclass, replace as dataclass_replace
-from functools import lru_cache
 from multiprocessing import resource_tracker
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
@@ -25,7 +24,8 @@ from chess_anti_engine.model import (
     load_state_dict_tolerant,
     model_config_from_manifest_dict,
 )
-from chess_anti_engine.moves import COMPACT_POLICY_SIZE, COMPACT_TO_FULL_POLICY
+from chess_anti_engine.moves import COMPACT_POLICY_SIZE
+from chess_anti_engine.moves.torch_maps import compact_to_full_index_for as _compact_to_full_index_for
 from chess_anti_engine.utils.amp import inference_autocast
 
 log = logging.getLogger(__name__)
@@ -65,17 +65,6 @@ class AsyncBatchEvaluator(BatchEvaluator, Protocol):
 def _policy_output(out: dict[str, torch.Tensor]) -> torch.Tensor:
     """Extract policy tensor from model output (handles both key conventions)."""
     return out["policy"] if "policy" in out else out["policy_own"]
-
-
-@lru_cache(maxsize=16)
-def _compact_to_full_index(device_type: str, device_index: int | None) -> torch.Tensor:
-    device = torch.device(device_type, device_index) if device_index is not None else torch.device(device_type)
-    return torch.as_tensor(COMPACT_TO_FULL_POLICY, dtype=torch.long, device=device)
-
-
-def _compact_to_full_index_for(tensor: torch.Tensor) -> torch.Tensor:
-    device = tensor.device
-    return _compact_to_full_index(device.type, device.index)
 
 
 def _policy_output_full(out: dict[str, torch.Tensor]) -> torch.Tensor:

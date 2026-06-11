@@ -358,6 +358,14 @@ def test_prefetched_refresh_is_consumed_before_sync_refresh(tmp_path) -> None:
     buf.add_many([_sample() for _ in range(6)])
     buf.flush()
 
+    # The background prefetch loop autonomously refills _prefetched_refresh
+    # whenever it is empty (within ~0.1s), so the final is-None assertion
+    # would race it under cross-test CPU contention. This test is about the
+    # CONSUME path only: stop the thread and keep it stopped so the injected
+    # chunk and the post-sample state are fully deterministic.
+    buf.close()
+    buf._ensure_prefetch_thread = lambda: None  # type: ignore[method-assign]
+
     first_shard = iter_shard_paths(shard_dir)[0]
     arrs, _ = load_shard_arrays(first_shard, lazy=False)
     buf._prefetched_refresh = [arrs]
