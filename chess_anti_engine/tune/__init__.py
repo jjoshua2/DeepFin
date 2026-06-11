@@ -1,1 +1,1 @@
-# Ray Tune harness (install with `pip install -e ".[tune]"`).
+# Ray Tune harness (ray ships in the `tune` extra; `.[dev]` includes it).
