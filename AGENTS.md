@@ -67,6 +67,9 @@ python -m chess_anti_engine.run --config configs/default.yaml --mode train
 - The `wdl` head is the only value head used by MCTS. `sf_eval` and `categorical` are auxiliary and should not be substituted into search casually.
 - `policy_sf` trains on a soft distribution over Stockfish MultiPV candidate WDL scores. `sf_move_index` is for top-1 accuracy metrics, not a one-hot training target.
 - `w_sf_wdl` is load-bearing supervision on the main WDL head, not an accidental conflicting target. Do not remove or zero it as a cleanup without training evidence.
+- Evaluation protocol: `docs/eval_protocol.md`. Standardized arenas run through `scripts/arena_standard.py` (paired openings, pentanomial Elo+CI); training-target candidates are scored against the frozen deep-SF audit set (`scripts/audit_targets.py`) BEFORE training compute is spent.
+- Flag-gated experiments live in `configs/exp_*.yaml` with all flags default-off; `configs/pbt2_small.yaml` is never edited to run an experiment. Current flag families: `model.use_dynamic_relations`, `train.soft_policy_min_tv`, `train.sf_policy_sparse_ce` + `selfplay.record_dense_sf_policy` (config load refuses the dense-off/sparse-off combination), and `selfplay.volatility_*` (forces the Python Gumbel path with a logged warning — the C fast path does not implement it).
+- Shared device-cached policy lookup tensors live in `chess_anti_engine/moves/torch_maps.py`; do not re-add per-module `lru_cache` copies of `COMPACT_TO_FULL_POLICY`/`FULL_TO_COMPACT_POLICY`.
 
 ## Commit & Pull Request Guidelines
 - Follow the existing commit style: short, imperative subjects (for example, `Fix network-turn alignment...`, `Lazy-load Trainer...`).

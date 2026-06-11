@@ -37,49 +37,15 @@ width, via ``losses.align_policy_mask``) so mask alignment has one home.
 """
 from __future__ import annotations
 
-from functools import lru_cache
-
 import torch
 
-from chess_anti_engine.moves import (
-    COMPACT_POLICY_SIZE,
-    COMPACT_TO_FULL_POLICY,
-    FULL_TO_COMPACT_POLICY,
-    POLICY_SIZE,
-)
+from chess_anti_engine.moves.torch_maps import policy_index_remap_table
 from chess_anti_engine.replay.shard import SF_CP_SENTINEL
 from chess_anti_engine.stockfish.wdl import (
     _MATE_BASE_CP,
     _MATE_DEPTH_BONUS_CP,
 )
 from chess_anti_engine.train.target_builder import SfTargetParams
-
-
-@lru_cache(maxsize=8)
-def _remap_table_for(
-    src_width: int, dst_width: int, device_type: str, device_index: int | None,
-) -> torch.Tensor | None:
-    """Cached lookup table mapping shard-space indices to logits-space, or
-    None when the widths already agree. Raises on unknown width pairs."""
-    if src_width == dst_width:
-        return None
-    device = (
-        torch.device(device_type, device_index)
-        if device_index is not None else torch.device(device_type)
-    )
-    if src_width == POLICY_SIZE and dst_width == COMPACT_POLICY_SIZE:
-        return torch.as_tensor(FULL_TO_COMPACT_POLICY, dtype=torch.long, device=device)
-    if src_width == COMPACT_POLICY_SIZE and dst_width == POLICY_SIZE:
-        return torch.as_tensor(COMPACT_TO_FULL_POLICY, dtype=torch.long, device=device)
-    raise ValueError(
-        f"shard policy width {src_width} is incompatible with logits width {dst_width}"
-    )
-
-
-def _index_remap_table(
-    src_width: int, dst_width: int, device: torch.device,
-) -> torch.Tensor | None:
-    return _remap_table_for(src_width, dst_width, device.type, device.index)
 
 
 def _row_scores(
@@ -146,7 +112,7 @@ def sparse_sf_policy_ce(
     lsm = torch.log_softmax(masked_logits.float(), dim=-1)
     dst_width = int(masked_logits.shape[-1])
     src_width = int(legal.shape[-1])
-    remap = _index_remap_table(src_width, dst_width, masked_logits.device)
+    remap = policy_index_remap_table(src_width, dst_width, masked_logits.device)
 
     raw = raw.to(torch.long)
     idx = raw[..., 0]

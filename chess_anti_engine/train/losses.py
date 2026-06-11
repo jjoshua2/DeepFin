@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from functools import lru_cache
 from typing import TYPE_CHECKING
 
 import torch
@@ -11,7 +10,8 @@ from chess_anti_engine.train.sparse_sf_ce import sparse_sf_policy_ce
 if TYPE_CHECKING:
     from chess_anti_engine.train.target_builder import SfTargetParams
 
-from chess_anti_engine.moves import COMPACT_POLICY_SIZE, COMPACT_TO_FULL_POLICY, POLICY_SIZE
+from chess_anti_engine.moves import COMPACT_POLICY_SIZE, POLICY_SIZE
+from chess_anti_engine.moves.torch_maps import compact_to_full_index_for as _compact_to_full_index_for
 from chess_anti_engine.train.constants import REGRET_TO_Q_SCALE, future_regret_field_names
 
 # Phase buckets for per-phase loss reporting. `moves_left` is plies-remaining /
@@ -22,17 +22,6 @@ from chess_anti_engine.train.constants import REGRET_TO_Q_SCALE, future_regret_f
 # (or the inline grep in trainable_phases) when the distribution drifts.
 _PHASE_OPEN_THRESHOLD = 0.45
 _PHASE_END_THRESHOLD = 0.31
-
-
-@lru_cache(maxsize=16)
-def _compact_to_full_index(device_type: str, device_index: int | None) -> torch.Tensor:
-    device = torch.device(device_type, device_index) if device_index is not None else torch.device(device_type)
-    return torch.as_tensor(COMPACT_TO_FULL_POLICY, dtype=torch.long, device=device)
-
-
-def _compact_to_full_index_for(tensor: torch.Tensor) -> torch.Tensor:
-    device = tensor.device
-    return _compact_to_full_index(device.type, device.index)
 
 
 def masked_mean(x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:

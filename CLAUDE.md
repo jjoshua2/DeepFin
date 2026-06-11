@@ -60,6 +60,34 @@ Salvage is driven entirely by CLI flags (`--salvage-seed-pool-dir`, `--salvage-r
 - `configs/pbt2_small.yaml` — **Production config.** 384-dim, 9-layer model (~15M params). Distributed selfplay with shared inference broker, PID difficulty controller, PBT/GPBT hyperparameter search. All active training uses this.
 - `configs/default.yaml` — Reference config with BT3-scale model (768-dim, 15-layer, ~105M params). For future larger-model training.
 
+## Evaluation & experiments
+
+`docs/eval_protocol.md` is the decision protocol. The audit-first rule: every
+training-target candidate is scored against the frozen deep-SF audit set
+BEFORE any training compute — a candidate that loses the direct audit is
+killed without training. Tooling:
+
+- `scripts/arena_standard.py` — standardized paired-opening arena
+  (pentanomial Elo + 95% CI, JSONL log with git SHA). `matched_sims` for
+  search/target changes; `matched_time` only when the change ships in the
+  fast C path (Python-path features would be under-credited).
+- `scripts/build_audit_set.py` / `scripts/audit_targets.py` — frozen
+  deep-SF audit set (>=1M nodes, MultiPV >=10, side-to-move canonical) and
+  the direct scorer (expected/top-1 deep-SF regret per phase+source; WDL
+  Brier/ECE). The set FREEZES after generation; new sampling = new version.
+- `scripts/probe_policy_targets.py` — policy vs soft-policy divergence
+  probe. `scripts/retarget_retrain.py` — offline SF-target retuning from
+  the sparse MultiPV shard labels (shard schema v2), no live run needed.
+- Flag-gated research bets live in `configs/exp_*.yaml` (each header has
+  the sweep plan + kill threshold); ALL flags default off and
+  `configs/pbt2_small.yaml` stays untouched until a bet clears its bar.
+  Current bets: v2_threats input planes, dynamic board-relation attention
+  bias (`model.use_dynamic_relations`), soft-policy ablation
+  (`train.soft_policy_min_tv`), sparse SF-policy CE
+  (`train.sf_policy_sparse_ce` + `selfplay.record_dense_sf_policy`), and
+  volatility-aware Gumbel search (`selfplay.volatility_*`, Python search
+  path only — any non-zero flag forces it with a logged warning).
+
 ## Architecture
 
 **Data flow per iteration:** distributed selfplay (MCTS games vs Stockfish) → shard upload → ingest into disk-backed replay buffer → training step → checkpoint → publish model to workers.
@@ -91,7 +119,7 @@ Implementation details:
 `TinyNet` in `tiny.py` is a small reference model for testing.
 
 ### Move Encoding (`moves/`)
-4672-plane LC0 policy encoding mapping (square, direction) pairs to policy indices.
+4672-plane LC0 policy encoding mapping (square, direction) pairs to policy indices. Production uses the compact `lc0_1858` policy encoding; conversion maps live in `moves/encode.py` and the shared device-cached torch lookup tensors in `moves/torch_maps.py` (use these — don't add per-module `lru_cache` copies).
 
 ### MCTS (`mcts/`)
 Gumbel MCTS with sequential halving (primary) and PUCT (legacy). C-accelerated tree operations in `_mcts_tree.c` — fused tree traversal + CBoard replay + encoding. `gumbel_c.py` orchestrates the simulation loop with GPU inference pipelining.

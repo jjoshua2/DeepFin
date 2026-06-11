@@ -125,3 +125,42 @@ def test_pin_planes_non_empty():
     # pin planes start at offset 112+10 = 122, and for 'us' we add pinned, ray, discovered.
     pinned_us = x[122]
     assert pinned_us.sum() >= 1.0
+
+
+def test_batch_encoder_selection_matches_python_per_mode():
+    """Pin the name -> C-encoder selection against the Python encoders.
+
+    The mode mapping has one home (lc0.c_input_history_mode) consumed by both
+    gumbel_c._batch_encoders and the C state machine; this test catches a
+    silent drift where a mode id starts selecting the wrong plane layout —
+    the failure would otherwise be plausible-looking play on wrong inputs.
+    """
+    import random
+
+    from chess_anti_engine.encoding.cboard_encode import CBoard, encode_cboard
+    from chess_anti_engine.mcts.gumbel_c import _batch_encoders
+
+    rng = random.Random(5)
+    boards = []
+    for _ in range(4):
+        b = chess.Board()
+        for _ in range(rng.randrange(0, 30)):
+            moves = list(b.legal_moves)
+            if not moves or b.is_game_over():
+                break
+            b.push(rng.choice(moves))
+        boards.append(b)
+
+    for name in ("legacy", "lc0_root", "lc0_root_legacy_meta"):
+        enc_f32, _enc_bf16 = _batch_encoders(name)
+        cbs = [CBoard.from_board(b) for b in boards]
+        out = np.zeros((len(cbs), 146, 8, 8), dtype=np.float32)
+        enc_f32(cbs, out)
+        for i, cb in enumerate(cbs):
+            expect = encode_cboard(
+                cb, input_history_encoding=name, input_extra_features="v1",
+            )
+            np.testing.assert_array_equal(
+                out[i], expect,
+                err_msg=f"encoder for {name!r} diverged from encode_cboard",
+            )
