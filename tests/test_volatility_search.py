@@ -341,3 +341,18 @@ def test_match_picker_forces_python_path(monkeypatch, caplog):
         )
     assert called == {"c": 1, "py": 1}
     assert any("Python search path" in r.message for r in caplog.records)
+
+
+def test_c_entry_rejects_volatility_flags():
+    """A direct caller reaching run_gumbel_root_many_c with volatility flags
+    on has bypassed the dispatcher guards — fail loud, never silently search
+    without the bias."""
+    from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
+
+    model = _tiny_model()
+    cfg = GumbelConfig(simulations=4, add_noise=False, volatility_fpu=0.5)
+    with pytest.raises(ValueError, match="Python-path only"):
+        run_gumbel_root_many_c(
+            model, [chess.Board()], device="cpu",
+            rng=np.random.default_rng(0), cfg=cfg,
+        )
