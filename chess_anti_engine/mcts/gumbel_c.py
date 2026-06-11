@@ -61,6 +61,7 @@ from chess_anti_engine.mcts.gumbel import (
     _softmax,
     _wdl_to_q,
     gumbel_policy_diagnostics,
+    volatility_search_enabled,
 )
 from chess_anti_engine.mcts.root_tactics import (
     immediate_terminal_cboard_policy_or_draws,
@@ -210,6 +211,17 @@ def run_gumbel_root_many_c(
 
     Same API as ``run_gumbel_root_many`` -- drop-in replacement.
     """
+    if volatility_search_enabled(cfg):
+        # Fail loud rather than silently searching without the volatility
+        # bias: this entry point does not implement volatility_q_scale /
+        # volatility_fpu. The dispatchers (selfplay network_turn, match
+        # pick_moves_for_boards) route to run_gumbel_root_many when any
+        # flag is on; a direct caller reaching here has bypassed them.
+        raise ValueError(
+            "volatility-aware Gumbel search is Python-path only; call "
+            "run_gumbel_root_many (mcts/gumbel.py) when volatility_q_scale/"
+            "volatility_fpu are non-zero"
+        )
     import time as _time
     _t_init = 0.0
     _t_prepare = 0.0

@@ -214,8 +214,15 @@ def play_paired_games_matched_sims(
     max_plies: int,
     temperature: float,
     gumbel_add_noise: bool,
+    volatility_candidate: dict[str, float] | None = None,
 ) -> list[float]:
     """Play each opening twice (colors swapped) and return per-pair scores.
+
+    ``volatility_candidate`` (volatility_q_scale / volatility_fpu /
+    volatility_anchor) applies volatility-aware Gumbel search to the
+    CANDIDATE side only — the reference keeps today's search, which is the
+    A/B the experiment needs. Non-zero flags force the Python search path
+    (mcts/gumbel.py), so matched_sims is the honest mode.
 
     Reuses the selfplay match helpers so search behavior (gumbel MCTS, the
     model's own input_history_encoding / policy_encoding, including the
@@ -256,9 +263,10 @@ def play_paired_games_matched_sims(
         a_to_move, b_to_move = split_active_by_side_to_move(
             active, boards, a_plays_white,
         )
-        for model, idxs, sims in (
-            (model_candidate, a_to_move, sims_candidate),
-            (model_reference, b_to_move, sims_reference),
+        vol_kwargs = dict(volatility_candidate or {})
+        for model, idxs, sims, extra in (
+            (model_candidate, a_to_move, sims_candidate, vol_kwargs),
+            (model_reference, b_to_move, sims_reference, {}),
         ):
             if not idxs:
                 continue
@@ -268,6 +276,7 @@ def play_paired_games_matched_sims(
                 mcts_type="gumbel", mcts_simulations=int(sims),
                 temperature=float(temperature), c_puct=2.5,
                 gumbel_add_noise=bool(gumbel_add_noise),
+                **extra,
             )
             apply_actions_to_boards(boards, idxs, actions)
 
@@ -390,6 +399,7 @@ def build_result_record(
     device: str,
     duration_s: float,
     label: str | None = None,
+    volatility_candidate: dict[str, float] | None = None,
 ) -> dict:
     elo_lo, elo_hi = summary.elo_ci95
     return {
@@ -398,6 +408,7 @@ def build_result_record(
         "config_hash": production_config_hash(),
         "mode": mode,
         "label": label,
+        "volatility_candidate": volatility_candidate,
         "candidate": candidate,
         "reference": reference,
         "games": summary.games,
@@ -468,6 +479,7 @@ def run_arena(
     out_path: Path | None,
     uci_args: str = "",
     label: str | None = None,
+    volatility_candidate: dict[str, float] | None = None,
 ) -> dict:
     """Run one standardized arena and return (and optionally log) the record."""
     if games < 2 or games % 2 != 0:
@@ -499,6 +511,7 @@ def run_arena(
             sims_candidate=sims_candidate, sims_reference=sims_reference,
             max_plies=max_plies, temperature=temperature,
             gumbel_add_noise=gumbel_add_noise,
+            volatility_candidate=volatility_candidate,
         )
     elif mode == "matched_time":
         print(f"[arena] matched_time: {ms_per_move}ms/move per side")
@@ -531,6 +544,7 @@ def run_arena(
         device=device,
         duration_s=duration_s,
         label=label,
+        volatility_candidate=volatility_candidate,
     )
     if out_path is not None:
         append_result(record, out_path)
@@ -560,6 +574,24 @@ def add_common_args(p: argparse.ArgumentParser) -> None:
                    help=f"JSONL results log (default: {DEFAULT_RESULTS_PATH})")
 
 
+def _volatility_kwargs_from_args(args) -> dict[str, float] | None:
+    """CANDIDATE-side volatility search kwargs, or None when all flags are off."""
+    if float(args.volatility_q_scale) == 0.0 and float(args.volatility_fpu) == 0.0:
+        return None
+    if args.mode != "matched_sims":
+        raise SystemExit(
+            "--volatility-* flags require --mode matched_sims (the Python "
+            "search path is slower, so matched_time would under-credit it)"
+        )
+    out = {
+        "volatility_q_scale": float(args.volatility_q_scale),
+        "volatility_fpu": float(args.volatility_fpu),
+    }
+    if args.volatility_anchor is not None:
+        out["volatility_anchor"] = float(args.volatility_anchor)
+    return out
+
+
 def main() -> None:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -580,6 +612,13 @@ def main() -> None:
                    help="extra args appended to both UCI engine commands in matched_time "
                    "(e.g. '--no-compile')")
     p.add_argument("--label", default=None, help="free-form tag stored in the JSONL record")
+    p.add_argument("--volatility-q-scale", type=float, default=0.0,
+                   help="CANDIDATE-side volatility-aware sigma(q) exponent "
+                        "(matched_sims only; forces the Python search path)")
+    p.add_argument("--volatility-fpu", type=float, default=0.0,
+                   help="CANDIDATE-side pessimistic FPU coefficient (matched_sims only)")
+    p.add_argument("--volatility-anchor", type=float, default=None,
+                   help="dataset-mean volatility anchor override (see exp_volatility_search.yaml)")
     add_common_args(p)
     args = p.parse_args()
 
@@ -602,6 +641,7 @@ def main() -> None:
         out_path=args.out,
         uci_args=args.uci_args,
         label=args.label,
+        volatility_candidate=_volatility_kwargs_from_args(args),
     )
 
 

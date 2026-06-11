@@ -162,6 +162,9 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
             curriculum_gumbel_scale_after=tc.curriculum_gumbel_scale_after,
             curriculum_gumbel_scale_decay_start_move=tc.curriculum_gumbel_scale_decay_start_move,
             curriculum_gumbel_scale_decay_moves=tc.curriculum_gumbel_scale_decay_moves,
+            volatility_q_scale=tc.volatility_q_scale,
+            volatility_fpu=tc.volatility_fpu,
+            volatility_anchor=tc.volatility_anchor,
         ),
         opening=OpeningConfig(
             opening_book_path=tc.opening_book_path,

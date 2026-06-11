@@ -66,7 +66,7 @@ class MCTSConfig:
 
 
 class Node:
-    __slots__ = ("_board", "_move", "_action_idx", "parent", "prior", "N", "W", "children", "expanded", "to_play")
+    __slots__ = ("_board", "_move", "_action_idx", "parent", "prior", "N", "W", "children", "expanded", "to_play", "vol")
 
     _board: chess.Board | None
     _move: chess.Move | None
@@ -78,6 +78,9 @@ class Node:
     children: dict[int, Node]
     expanded: bool
     to_play: chess.Color
+  # Predicted position volatility at this node's NN eval (scalar summary of
+  # the volatility head). 0.0 unless volatility-aware Gumbel search is on.
+    vol: float
 
     def __init__(
         self,
@@ -93,6 +96,7 @@ class Node:
         self._action_idx = action_idx
         self.parent = parent
         self.prior = float(prior)
+        self.vol = 0.0
         self.N = 0
         self.W = 0.0
         self.children = {}

@@ -49,6 +49,12 @@ from chess_anti_engine.mcts.sampling import sample_action_with_temperature  # no
 from chess_anti_engine.utils.numpy_helpers import softmax_1d as _softmax  # noqa: E402
 
 
+# Dataset-mean default for the volatility anchor; re-derive per experiment
+# (see configs/exp_volatility_search.yaml) — this is the single source the
+# SearchConfig/TrialConfig/worker plumbing defaults mirror.
+DEFAULT_VOLATILITY_ANCHOR = 0.05
+
+
 @dataclass
 class GumbelConfig:
     simulations: int = 50
@@ -67,6 +73,24 @@ class GumbelConfig:
   # Compute dynamic board-relation matrices per eval and pass them to the
   # evaluator as attention-bias input (model.use_dynamic_relations).
     compute_relations: bool = False
+  # ── Volatility-aware search (Python path only; both default OFF) ────────
+  # volatility_q_scale: exponent scaling the sigma(q) value-transform
+  # constant per node by predicted volatility. The effective scale is
+  #   c_scale * (volatility_anchor / vol)^volatility_q_scale
+  # clipped to [1/volatility_factor_clip, volatility_factor_clip] x c_scale,
+  # so at vol == anchor the behavior is IDENTICAL to today. High predicted
+  # volatility -> smaller sigma -> flatter value transform -> candidates
+  # survive halving longer; low volatility -> trust the value sooner.
+    volatility_q_scale: float = 0.0
+  # volatility_fpu: pessimistic first-play urgency — unvisited children's
+  # completed value becomes mixed_value - volatility_fpu * vol (Q units).
+    volatility_fpu: float = 0.0
+  # Dataset-mean anchor for the volatility head's scalar summary (mean of
+  # the 3 head components). Derive from a recent shard window before an
+  # experiment (see configs/exp_volatility_search.yaml) and pin it here —
+  # the normalization must stay frozen within an arena sweep.
+    volatility_anchor: float = DEFAULT_VOLATILITY_ANCHOR
+    volatility_factor_clip: float = 4.0
 
 
 def _policy_logits_to_full(pol_logits: np.ndarray, *, cfg: GumbelConfig) -> np.ndarray:
@@ -154,6 +178,59 @@ def _sigma_scale(*, max_visit: int, cfg: GumbelConfig) -> float:
     return float(cfg.c_scale) * (float(cfg.c_visit) + float(max_visit))
 
 
+def volatility_search_enabled(cfg: GumbelConfig) -> bool:
+    """True when any volatility-aware search mechanism is switched on."""
+    return float(cfg.volatility_q_scale) != 0.0 or float(cfg.volatility_fpu) != 0.0
+
+
+_volatility_python_path_warned = False
+
+
+def warn_volatility_python_path() -> None:
+    """Warn once per process: volatility flags force the Python search path.
+
+    The C fast path (mcts/gumbel_c.py) does not implement
+    volatility_q_scale/volatility_fpu; callers that would normally take it
+    must drop to run_gumbel_root_many and say so in the log. Porting to C is
+    a follow-up gated on the arena clearing the Elo bar.
+    """
+    global _volatility_python_path_warned
+    if not _volatility_python_path_warned:
+        _volatility_python_path_warned = True
+        import logging
+
+        logging.getLogger("chess_anti_engine.mcts").warning(
+            "volatility-aware Gumbel search enabled: forcing the (slower) "
+            "Python search path - the C fast path does not implement "
+            "volatility_q_scale/volatility_fpu. Use matched_sims, not "
+            "matched_time, when comparing against the C path."
+        )
+
+
+def _volatility_sigma_factor(vol: float, cfg: GumbelConfig) -> float:
+    """Multiplier on the sigma(q) scale for a node with predicted ``vol``.
+
+    For positive ``volatility_q_scale``: 1.0 when the mechanism is off or
+    vol equals the anchor; <1 (flatter) above the anchor, >1 (sharper)
+    below it. A NEGATIVE exponent deliberately inverts that mapping (high
+    volatility -> sharper) — only use it to sweep the opposite hypothesis.
+    Clipped so a wild head output cannot collapse or explode the transform.
+    """
+    k = float(cfg.volatility_q_scale)
+    if k == 0.0:
+        return 1.0
+    anchor = max(1e-9, float(cfg.volatility_anchor))
+    ratio = anchor / max(1e-9, float(vol))
+    clip = max(1.0, float(cfg.volatility_factor_clip))
+    return float(np.clip(ratio ** k, 1.0 / clip, clip))
+
+
+def _volatility_fpu_penalty(vol: float, cfg: GumbelConfig) -> float:
+    """Pessimistic unvisited-child value offset (Q units, subtracted)."""
+    k = float(cfg.volatility_fpu)
+    return k * float(vol) if k != 0.0 else 0.0
+
+
 def _completed_q_transform(
     *,
     actions: list[int] | np.ndarray,
@@ -163,8 +240,15 @@ def _completed_q_transform(
     raw_value: float,
     cfg: GumbelConfig,
     epsilon: float = 1e-8,
+    sigma_factor: float = 1.0,
+    fpu_penalty: float = 0.0,
 ) -> np.ndarray:
-    """DeepMind mctx completed-by-mix-value Q transform for Gumbel scores."""
+    """DeepMind mctx completed-by-mix-value Q transform for Gumbel scores.
+
+    ``sigma_factor`` scales the sigma(q) constant (volatility_q_scale) and
+    ``fpu_penalty`` is subtracted from the unvisited-children mix value
+    (volatility_fpu). Both default to the exact legacy behavior.
+    """
     actions_arr = np.asarray(actions, dtype=np.int64)
     visits_f = np.asarray(visits, dtype=np.float64)
     q = np.asarray(qvalues, dtype=np.float64)
@@ -182,12 +266,12 @@ def _completed_q_transform(
         weighted_q = float(raw_value)
     mixed_value = (float(raw_value) + sum_visits * weighted_q) / (sum_visits + 1.0)
 
-    completed = np.where(visited, q, mixed_value)
+    completed = np.where(visited, q, mixed_value - float(fpu_penalty))
     min_q = float(completed.min())
     max_q = float(completed.max())
     completed = (completed - min_q) / max(max_q - min_q, float(epsilon))
     max_visit = int(visits_f.max(initial=0.0))
-    return _sigma_scale(max_visit=max_visit, cfg=cfg) * completed
+    return float(sigma_factor) * _sigma_scale(max_visit=max_visit, cfg=cfg) * completed
 
 
 def _completed_q(*, root_q: float, root: Node, action: int) -> float:
@@ -229,6 +313,8 @@ def _improved_policy_probs(
         qvalues=qvalues,
         raw_value=float(v_pi),
         cfg=cfg,
+        sigma_factor=_volatility_sigma_factor(node.vol, cfg),
+        fpu_penalty=_volatility_fpu_penalty(node.vol, cfg),
     )
     probs = _softmax(logits + q_logits)
     return actions, probs
@@ -302,6 +388,37 @@ def _collect_forced_leaf(
     return node, path, None
 
 
+def _eval_with_optional_volatility(
+    eval_impl: BatchEvaluator,
+    xs: np.ndarray,
+    *,
+    relations: np.ndarray | None,
+    cfg: GumbelConfig,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+    """Evaluate a batch; include the volatility head when the search needs it.
+
+    Volatility-aware search is Python-path-only and requires an evaluator
+    exposing ``evaluate_encoded_with_volatility`` (LocalModelEvaluator) —
+    fail loud rather than silently searching with vol=0 everywhere.
+    """
+    if not volatility_search_enabled(cfg):
+        if relations is not None:
+            pol, wdl = eval_impl.evaluate_encoded(xs, relations=relations)
+        else:
+            pol, wdl = eval_impl.evaluate_encoded(xs)
+        return pol, wdl, None
+    fn = getattr(eval_impl, "evaluate_encoded_with_volatility", None)
+    if fn is None:
+        raise ValueError(
+            "volatility-aware Gumbel search needs an evaluator with "
+            "evaluate_encoded_with_volatility (LocalModelEvaluator); got "
+            f"{type(eval_impl).__name__}"
+        )
+    if relations is not None:
+        return fn(xs, relations=relations)
+    return fn(xs)
+
+
 def _resolve_root_logits(
     boards: list[chess.Board],
     *,
@@ -311,20 +428,23 @@ def _resolve_root_logits(
     cfg: GumbelConfig,
     pre_pol_logits: np.ndarray | None,
     pre_wdl_logits: np.ndarray | None,
-) -> tuple[np.ndarray, np.ndarray, BatchEvaluator | None]:
-    """Phase 1: get root pol/wdl logits + a leaf evaluator for later phases.
+) -> tuple[np.ndarray, np.ndarray, BatchEvaluator | None, np.ndarray | None]:
+    """Phase 1: root pol/wdl logits (+ volatility) + a leaf evaluator.
 
     Reuses caller-provided ``pre_*_logits`` (one forward pass saved per ply
     when called from selfplay). Always resolves a ``leaf_eval`` for use by
     sequential halving — even when pre-logits short-circuit phase 1.
+    With volatility-aware search enabled the pre-logits shortcut is skipped
+    (they don't carry the volatility head) and the roots are re-evaluated.
     """
-    if pre_pol_logits is not None and pre_wdl_logits is not None:
+    vol_on = volatility_search_enabled(cfg)
+    if pre_pol_logits is not None and pre_wdl_logits is not None and not vol_on:
         pol = _policy_logits_to_full(pre_pol_logits, cfg=cfg)
         wdl = np.asarray(pre_wdl_logits, dtype=np.float32)
         leaf_eval = evaluator if evaluator is not None else (
             LocalModelEvaluator(model, device=device) if model is not None else None
         )
-        return pol, wdl, leaf_eval
+        return pol, wdl, leaf_eval, None
 
     eval_impl = evaluator
     if eval_impl is None:
@@ -337,13 +457,13 @@ def _resolve_root_logits(
         input_history_encoding=cfg.input_history_encoding,
         input_extra_features=cfg.input_extra_features,
     )
-    if cfg.compute_relations:
-        rel = np.stack([relation_matrices(b) for b in boards], axis=0)
-        pol, wdl = eval_impl.evaluate_encoded(xs, relations=rel)
-    else:
-        pol, wdl = eval_impl.evaluate_encoded(xs)
+    rel = (
+        np.stack([relation_matrices(b) for b in boards], axis=0)
+        if cfg.compute_relations else None
+    )
+    pol, wdl, vol = _eval_with_optional_volatility(eval_impl, xs, relations=rel, cfg=cfg)
     pol = _policy_logits_to_full(pol, cfg=cfg)
-    return pol, wdl, eval_impl
+    return pol, wdl, eval_impl, vol
 
 
 def _evaluate_and_backprop_leaves(
@@ -363,15 +483,19 @@ def _evaluate_and_backprop_leaves(
         input_history_encoding=cfg.input_history_encoding,
         input_extra_features=cfg.input_extra_features,
     )
-    if cfg.compute_relations:
-        leaf_rel = np.stack([relation_matrices(node.board) for node in leaf_nodes], axis=0)
-        pol_logits_leaf, wdl_logits_leaf = leaf_eval.evaluate_encoded(leaf_xs, relations=leaf_rel)
-    else:
-        pol_logits_leaf, wdl_logits_leaf = leaf_eval.evaluate_encoded(leaf_xs)
+    leaf_rel = (
+        np.stack([relation_matrices(node.board) for node in leaf_nodes], axis=0)
+        if cfg.compute_relations else None
+    )
+    pol_logits_leaf, wdl_logits_leaf, vol_leaf = _eval_with_optional_volatility(
+        leaf_eval, leaf_xs, relations=leaf_rel, cfg=cfg,
+    )
     pol_logits_leaf = _policy_logits_to_full(pol_logits_leaf, cfg=cfg)
-    for node, path, pol_logits, wdl_logits in zip(
+    for li, (node, path, pol_logits, wdl_logits) in enumerate(zip(
         leaf_nodes, leaf_paths, pol_logits_leaf, wdl_logits_leaf, strict=True,
-    ):
+    )):
+        if vol_leaf is not None:
+            node.vol = float(vol_leaf[li])
         pri, _, legal_idx = _masked_priors(pol_logits, node.board)
         if legal_idx.size > 0:
             _expand_sparse(node, legal_idx, pri[legal_idx])
@@ -539,6 +663,8 @@ def _halve_remaining_for_board(
         qvalues=qvalues,
         raw_value=float(root_q),
         cfg=cfg,
+        sigma_factor=_volatility_sigma_factor(root.vol, cfg),
+        fpu_penalty=_volatility_fpu_penalty(root.vol, cfg),
     )
     q_by_action = {int(a): float(q_logits[i]) for i, a in enumerate(legal.tolist())}
     rem.sort(
@@ -581,6 +707,8 @@ def _build_improved_policy_for_board(
         qvalues=qvalues,
         raw_value=float(root_q),
         cfg=cfg,
+        sigma_factor=_volatility_sigma_factor(root.vol, cfg),
+        fpu_penalty=_volatility_fpu_penalty(root.vol, cfg),
     )
     imp_all = _softmax(logits_imp)
     probs = np.zeros((POLICY_SIZE,), dtype=np.float32)
@@ -682,7 +810,7 @@ def run_gumbel_root_many(
         budget_remaining = [sim_budget] * n_boards
 
   # ── 1. Batch root evaluation + resolve leaf evaluator for phase 3 ────────
-    pol_logits_batch, wdl_logits_batch, leaf_eval = _resolve_root_logits(
+    pol_logits_batch, wdl_logits_batch, leaf_eval, root_vols = _resolve_root_logits(
         boards,
         model=model, evaluator=evaluator, device=device,
         cfg=cfg,
@@ -702,16 +830,17 @@ def run_gumbel_root_many(
                 else float(cfg.gumbel_scale)
             ),
         )
-        states.append(
-            _init_board_search_state(
-                b,
-                pol_logits=pol_logits_batch[i],
-                root_q=float(root_qs[i]),
-                sim_budget=budget_remaining[i],
-                cfg=board_cfg,
-                rng=rng,
-            )
+        st = _init_board_search_state(
+            b,
+            pol_logits=pol_logits_batch[i],
+            root_q=float(root_qs[i]),
+            sim_budget=budget_remaining[i],
+            cfg=board_cfg,
+            rng=rng,
         )
+        if root_vols is not None:
+            st.root.vol = float(root_vols[i])
+        states.append(st)
 
   # ── 3. Sequential halving with real subtree simulations ──────────────────
     while True:
