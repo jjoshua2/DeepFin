@@ -340,7 +340,6 @@ def _flush_buffered_upload_to_inbox(
         f"{int(now_unix)}_{str(acc.model_sha256)[:8]}_{int(acc.games)}g_{int(acc.positions)}p_"
         f"{flush_token}{LOCAL_SHARD_SUFFIX}"
     )
-    compacted_dir.mkdir(parents=True, exist_ok=True)
     arrs = samples_to_arrays(samples)
     save_local_shard_arrays(final, arrs=arrs, meta=meta)
     return final
@@ -518,15 +517,30 @@ def create_app(
                 "failed to stage pending shards into %s; rolling back",
                 in_flight_dir,
             )
+            rolled_back: list[Path] = []
+            rollback_failed = False
             for original, target in moved:
                 try:
                     target.replace(original)
+                    rolled_back.append(original)
                 except Exception:
                     log.exception("rollback rename failed for %s -> %s", target, original)
-            acc.pending_paths = [original for original, _ in moved] + [
+                    rollback_failed = True
+                    rolled_back.append(target)  # data is still at the in-flight path
+            acc.pending_paths = rolled_back + [
                 p for p in acc.pending_paths if p not in {orig for orig, _ in moved}
             ]
-            delete_shard_path(in_flight_dir)
+            if rollback_failed:
+                # Do NOT delete the in-flight dir: it still holds zarrs whose
+                # rollback rename failed. Startup recovery re-seeds orphaned
+                # in-flight groups (no matching compacted shard) to _pending,
+                # so leaving the dir is safe; deleting it would lose samples.
+                log.error(
+                    "leaving %s in place (partial rollback) for startup recovery",
+                    in_flight_dir,
+                )
+            else:
+                delete_shard_path(in_flight_dir)
             return False
 
         try:
@@ -545,15 +559,27 @@ def create_app(
             # path (and any later recovery) operates on the same state as
             # before the flush attempt.
             restored: list[Path] = []
+            restore_failed = False
             for original, target in moved:
                 try:
                     target.replace(original)
                     restored.append(original)
                 except Exception:
                     log.exception("restore rename failed for %s -> %s", target, original)
-                    restored.append(target)
+                    restore_failed = True
+                    restored.append(target)  # data is still at the in-flight path
             acc.pending_paths = restored
-            delete_shard_path(in_flight_dir)
+            if restore_failed:
+                # Same rationale as the staging rollback above: the in-flight
+                # dir still holds zarrs that pending_paths now references —
+                # deleting it here would destroy them. Startup recovery
+                # handles orphaned in-flight groups.
+                log.error(
+                    "leaving %s in place (partial restore) for startup recovery",
+                    in_flight_dir,
+                )
+            else:
+                delete_shard_path(in_flight_dir)
             return False
 
         if compacted_path is not None:
@@ -1613,7 +1639,7 @@ def create_app(
                 continue
             token = token_dir.name
             committed = compacted_dir.is_dir() and any(
-                p.name.endswith(LOCAL_SHARD_SUFFIX) and token in p.name
+                p.name.endswith(f"_{token}{LOCAL_SHARD_SUFFIX}")
                 for p in compacted_dir.iterdir()
             )
             if committed:

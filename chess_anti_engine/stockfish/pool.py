@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import itertools
+
 from concurrent.futures import Future, ThreadPoolExecutor
 
 from .uci import StockfishResult, StockfishUCI
@@ -43,7 +45,10 @@ class StockfishPool:
             )
             for _ in range(self.num_workers)
         ]
-        self._next = 0
+  # itertools.count: next() is atomic in CPython, so concurrent submit()
+  # callers can't both observe the same engine index (a bare int
+  # read-modify-write could, skewing the round-robin distribution).
+        self._next = itertools.count()
 
     def close(self) -> None:
         for e in self._engines:
@@ -60,7 +65,5 @@ class StockfishPool:
         syzygy_path: str | None = None,
     ) -> Future[StockfishResult]:
   # Round-robin assignment
-        idx = self._next
-        self._next = (self._next + 1) % self.num_workers
-        engine = self._engines[idx]
+        engine = self._engines[next(self._next) % self.num_workers]
         return self._exec.submit(engine.search, fen, nodes=nodes, syzygy_path=syzygy_path)

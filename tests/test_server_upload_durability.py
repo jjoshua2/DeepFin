@@ -544,3 +544,76 @@ def test_recovery_drops_orphan_duplicate_pending_with_same_sha(tmp_path) -> None
     # 2 (recovered original) + 3 (trigger upload). The orphan's 2 samples
     # must not have been re-seeded.
     assert arrs["x"].shape[0] == 5, f"orphan was re-seeded: {arrs['x'].shape[0]}"
+
+
+def test_failed_compaction_with_failed_restore_preserves_in_flight(tmp_path, monkeypatch) -> None:
+    """Audit fix: when the compaction write fails AND a restore rename back to
+    _pending also fails, the in-flight dir must be LEFT IN PLACE (startup
+    recovery re-seeds it) — deleting it would destroy the samples."""
+    import chess_anti_engine.server.app as app_mod
+
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+
+    # Threshold 4: the first 2-sample upload stays pending; the second
+    # crosses it and triggers the flush inline.
+    client = _build_client(server_root, upload_compact_shard_size=4)
+    tar_bytes = _build_zarr_tar(
+        tmp_path / "u1",
+        samples=[_sample(0), _sample(1)],
+        model_sha256="dddd4444",
+    )
+    r = client.post(
+        "/v1/upload_shard",
+        auth=("u", "p"),
+        files={"file": ("shard.zarr.tar", tar_bytes, "application/x-tar")},
+        headers=_default_headers(),
+    )
+    assert r.status_code == 200, r.text
+    pending_before = list(_pending_dir(server_root).glob(f"*{LOCAL_SHARD_SUFFIX}"))
+    assert len(pending_before) == 1
+
+    # Force the next flush to hit the worst case: the compaction write blows
+    # up AND the restore rename back to _pending fails (e.g. dir vanished).
+    def _boom(**_kwargs):
+        raise RuntimeError("simulated compaction failure")
+
+    monkeypatch.setattr(app_mod, "_flush_buffered_upload_to_inbox", _boom)
+    real_replace = Path.replace
+
+    def _failing_replace(self, target):
+        # Only the RESTORE direction (in-flight -> pending) fails; uploads
+        # staging into _pending and the pending -> in-flight move both work.
+        if "_in_flight" in str(self) and "_pending" in str(target):
+            raise OSError("simulated restore failure")
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", _failing_replace)
+    try:
+        # The second upload crosses the per-key sample threshold and
+        # triggers the flush inline; the endpoint logs the failure and keeps
+        # the accumulator, so the request itself succeeds.
+        client.post(
+            "/v1/upload_shard",
+            auth=("u", "p"),
+            files={"file": ("shard2.zarr.tar", _build_zarr_tar(
+                tmp_path / "u2",
+                samples=[_sample(2), _sample(3), _sample(4)],
+                model_sha256="dddd4444",
+            ), "application/x-tar")},
+            headers=_default_headers(),
+        )
+    finally:
+        monkeypatch.setattr(Path, "replace", real_replace)
+
+    # The staged samples must still exist SOMEWHERE on disk: either restored
+    # to _pending or preserved in an in-flight group — never deleted.
+    in_flight_root = server_root / "inbox" / "_in_flight"
+    surviving = list(_pending_dir(server_root).glob(f"*{LOCAL_SHARD_SUFFIX}"))
+    if in_flight_root.is_dir():
+        surviving += [
+            p for d in in_flight_root.iterdir() if d.is_dir()
+            for p in d.glob(f"*{LOCAL_SHARD_SUFFIX}")
+        ]
+    assert surviving, "staged shard was deleted on failed flush + failed restore"
