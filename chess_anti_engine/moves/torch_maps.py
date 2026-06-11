@@ -30,19 +30,28 @@ def _cached_table(name: str, device_type: str, device_index: int | None) -> torc
     return torch.as_tensor(src, dtype=torch.long, device=device)
 
 
+def _device_key(device: torch.device) -> tuple[str, int | None]:
+    """Cache key for a device. torch.device("cuda") and ("cuda", 0) are the
+    same physical device — normalize so they share one cached tensor."""
+    index = device.index
+    if index is None and device.type == "cuda":
+        index = torch.cuda.current_device() if torch.cuda.is_available() else 0
+    return device.type, index
+
+
 def compact_to_full_index(device: torch.device) -> torch.Tensor:
     """(1858,) long tensor mapping compact indices to full-4672 indices."""
-    return _cached_table("c2f", device.type, device.index)
+    return _cached_table("c2f", *_device_key(device))
 
 
 def compact_to_full_index_for(tensor: torch.Tensor) -> torch.Tensor:
     """Same as :func:`compact_to_full_index`, keyed on a tensor's device."""
-    return _cached_table("c2f", tensor.device.type, tensor.device.index)
+    return _cached_table("c2f", *_device_key(tensor.device))
 
 
 def full_to_compact_index(device: torch.device) -> torch.Tensor:
     """(4672,) long tensor mapping full indices to compact (-1 = no move)."""
-    return _cached_table("f2c", device.type, device.index)
+    return _cached_table("f2c", *_device_key(device))
 
 
 def policy_index_remap_table(
