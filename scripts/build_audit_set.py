@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -54,15 +53,7 @@ from chess_anti_engine.replay.shard import (
     load_shard_arrays,
 )
 from chess_anti_engine.stockfish.uci import StockfishUCI
-
-
-def _git_sha() -> str:
-    try:
-        return subprocess.run(
-            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True,
-        ).stdout.strip()
-    except (OSError, subprocess.CalledProcessError):
-        return "unknown"
+from chess_anti_engine.utils.git_meta import git_sha
 
 
 def _iter_shard_paths(replay_dirs: list[Path]) -> list[Path]:
@@ -105,26 +96,34 @@ def _sample_manifest(
         n = int(arrs["x"].shape[0])
         has_src = np.asarray(arrs.get("has_is_selfplay", np.zeros(n))).astype(bool)
         is_sp = np.asarray(arrs.get("is_selfplay", np.zeros(n))).astype(bool)
-        order = rng.permutation(n)
-        for i in order:
-            if not has_src[i]:
-                continue
-            src = 0 if is_sp[i] else 1
-            x = np.asarray(arrs["x"][int(i)], dtype=np.float32)
-            piece_count = int(round(float(x[:12].sum())))
-            ph = phase_bucket(piece_count)
-            if len(strata[(ph, src)]) >= cap:
-                continue
-            board = decode_board_from_planes(x, input_history_encoding=hist)
-            if board is None or board.is_game_over():
-                continue
-            key = position_key(board)
-            if key in seen:
-                continue
-            seen.add(key)
-            strata[(ph, src)].append({
-                "key": key, "fen": board.fen(), "phase": ph, "source": src,
-            })
+        # Read x in sequential chunks (zarr-friendly) but visit chunks and
+        # rows-within-chunk in random order, so the subsample stays unbiased
+        # without per-row random access thrashing the chunk cache.
+        chunk_rows = 1024
+        chunk_starts = rng.permutation(np.arange(0, n, chunk_rows))
+        for start in chunk_starts:
+            stop = min(n, int(start) + chunk_rows)
+            xs_chunk = np.asarray(arrs["x"][int(start):stop], dtype=np.float32)
+            for j in rng.permutation(stop - int(start)):
+                i = int(start) + int(j)
+                if not has_src[i]:
+                    continue
+                src = 0 if is_sp[i] else 1
+                x = xs_chunk[int(j)]
+                piece_count = int(round(float(x[:12].sum())))
+                ph = phase_bucket(piece_count)
+                if len(strata[(ph, src)]) >= cap:
+                    continue
+                board = decode_board_from_planes(x, input_history_encoding=hist)
+                if board is None or board.is_game_over():
+                    continue
+                key = position_key(board)
+                if key in seen:
+                    continue
+                seen.add(key)
+                strata[(ph, src)].append({
+                    "key": key, "fen": board.fen(), "phase": ph, "source": src,
+                })
 
     manifest: list[dict] = []
     leftovers: list[dict] = []
@@ -230,7 +229,7 @@ def main() -> None:
     print(f"[label] {len(labeled)} done, {len(todo)} to go "
           f"(nodes={args.nodes}, multipv={args.multipv}, workers={args.sf_workers})")
 
-    sha = _git_sha()
+    sha = git_sha()
     config_desc = (
         f"positions={args.positions} seed={args.seed} nodes={args.nodes} "
         f"multipv={args.multipv} hash_mb={args.hash_mb} stockfish={args.stockfish}"

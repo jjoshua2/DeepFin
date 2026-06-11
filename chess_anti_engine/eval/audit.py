@@ -173,7 +173,12 @@ def parse_audit_record(line: str) -> AuditPosition:
     for row in d["multipv"]:
         cp = row.get("cp")
         mate = row.get("mate")
-        eff = float(mate_to_effective_cp(int(mate))) if mate else float(cp)
+        if mate:
+            eff = float(mate_to_effective_cp(int(mate)))
+        elif cp is not None:
+            eff = float(cp)
+        else:
+            continue  # unscoreable line (no cp, no mate) — skip, don't crash
         # First (best-ranked) listing of a move wins on duplicates.
         move_cp.setdefault(str(row["move"]), eff)
     if not move_cp:
@@ -207,6 +212,26 @@ def load_audit_set(path: str | Path) -> list[AuditPosition]:
 # ---------------------------------------------------------------------------
 # Scoring
 # ---------------------------------------------------------------------------
+
+
+def legal_full_indices(board: chess.Board) -> tuple[list[str], np.ndarray]:
+    """Legal moves as (uci list, full-4672 policy indices).
+
+    Audit boards are side-to-move canonical (white to move), so the
+    encoding turn flag is always True. Lives here, next to the schema, so
+    scorers and tests share one definition.
+    """
+    from chess_anti_engine.moves.encode import uci_to_policy_index
+
+    ucis: list[str] = []
+    idxs: list[int] = []
+    for mv in board.legal_moves:
+        uci = mv.uci()
+        a = uci_to_policy_index(uci, True)
+        if a >= 0:
+            ucis.append(uci)
+            idxs.append(a)
+    return ucis, np.asarray(idxs, dtype=np.int64)
 
 
 def move_regrets(

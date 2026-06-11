@@ -39,7 +39,6 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
-import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -53,13 +52,15 @@ from chess_anti_engine.eval.audit import (
     PHASE_NAMES,
     SOURCE_NAMES,
     expected_and_top1_regret,
+    legal_full_indices,
     load_audit_set,
     move_regrets,
     wdl_brier,
     wdl_ece,
 )
-from chess_anti_engine.moves import POLICY_SIZE
+from chess_anti_engine.moves import COMPACT_TO_FULL_POLICY, POLICY_SIZE, policy_batch_to_full_if_needed
 from chess_anti_engine.moves.encode import uci_to_policy_index
+from chess_anti_engine.utils.git_meta import git_sha
 from chess_anti_engine.selfplay.stockfish_turn import (
     _build_sf_policy_target,
     _pv_wdl_score,
@@ -83,16 +84,6 @@ _VALUE_NAMES = {
 }
 
 
-def _git_sha() -> str:
-    try:
-        return subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True, text=True, check=True,
-        ).stdout.strip()
-    except (OSError, subprocess.CalledProcessError):
-        return "unknown"
-
-
 def _q_to_wdl(q: float) -> np.ndarray:
     """Root Q in [-1, 1] -> (W, D, L), mirroring losses._q_to_wdl_probs."""
     qc = max(-1.0, min(1.0, float(q)))
@@ -100,20 +91,6 @@ def _q_to_wdl(q: float) -> np.ndarray:
     loss = max(0.0, -qc)
     draw = max(0.0, 1.0 - win - loss)
     return np.array([win, draw, loss], dtype=np.float64)
-
-
-def _legal_full_indices(board: chess.Board) -> tuple[list[str], np.ndarray]:
-    """Legal moves as (uci list, full-4672 policy indices). Boards are
-    side-to-move canonical (white to move), so turn is always True."""
-    ucis: list[str] = []
-    idxs: list[int] = []
-    for mv in board.legal_moves:
-        uci = mv.uci()
-        a = uci_to_policy_index(uci, True)
-        if a >= 0:
-            ucis.append(uci)
-            idxs.append(a)
-    return ucis, np.asarray(idxs, dtype=np.int64)
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +151,6 @@ def _net_candidates(
                 pol_logits, _wdl = evaluator.evaluate_encoded(xs, relations=rels)
         pol_logits = np.asarray(pol_logits, dtype=np.float32)
         if pol_logits.shape[1] != POLICY_SIZE:
-            from chess_anti_engine.moves import policy_batch_to_full_if_needed
             pol_logits = policy_batch_to_full_if_needed(pol_logits, policy_encoding=pol_enc, fill_value=-1e9)
 
         probs_b, _actions, values, _masks, _tree, _ids = run_gumbel_root_many_c(
@@ -182,7 +158,7 @@ def _net_candidates(
             evaluator=evaluator,
         )
         for j, board in enumerate(chunk):
-            _, idxs = _legal_full_indices(board)
+            _, idxs = legal_full_indices(board)
             logits = pol_logits[j, idxs].astype(np.float64)
             logits -= logits.max()
             e = np.exp(logits)
@@ -190,7 +166,6 @@ def _net_candidates(
             visit = np.asarray(probs_b[j], dtype=np.float64)
             if visit.shape[0] != POLICY_SIZE:
                 full = np.zeros(POLICY_SIZE, dtype=np.float64)
-                from chess_anti_engine.moves import COMPACT_TO_FULL_POLICY
                 full[COMPACT_TO_FULL_POLICY] = visit
                 visit = full
             search_out.append(visit[idxs])
@@ -301,7 +276,7 @@ class _PvLike:
 
 
 def _sf_soft_distribution(
-    rec: dict, board: chess.Board, legal_idxs: np.ndarray, *, params: _SfSoftParams,
+    rec: dict, legal_idxs: np.ndarray, *, params: _SfSoftParams,
 ) -> np.ndarray:
     legal_set = {int(i) for i in legal_idxs}
     cand_idxs: list[int] = []
@@ -329,7 +304,6 @@ def _sf_soft_distribution(
         sf_policy_temp=params.sf_policy_temp,
         sf_policy_label_smooth=params.sf_policy_label_smooth,
     )
-    del board
     return full[legal_idxs].astype(np.float64)
 
 
@@ -427,7 +401,7 @@ def main() -> None:
     kept_positions: list[AuditPosition] = []
     outcome_idx: list[int] = []
     for i, (pos, board) in enumerate(zip(positions, boards, strict=True)):
-        legal_ucis, legal_idxs = _legal_full_indices(board)
+        legal_ucis, legal_idxs = legal_full_indices(board)
         if not legal_ucis:
             continue
         regrets = move_regrets(pos, legal_ucis)
@@ -446,7 +420,7 @@ def main() -> None:
                 ).astype(np.float64)
             ),
             "sf_soft": _sf_soft_distribution(
-                shallow[pos.key], board, legal_idxs, params=sf_params,
+                shallow[pos.key], legal_idxs, params=sf_params,
             ),
         }
         for cand, probs in cands.items():
@@ -515,7 +489,7 @@ def main() -> None:
             oc_cell = "— (0)"
         value_lines.append(f"| {label} | {brier:.4f} | {ece:.4f} | {oc_cell} |")
 
-    sha = _git_sha()
+    sha = git_sha(short=True)
     out_path = args.out_dir / f"target_audit_{sha}.md"
     args.out_dir.mkdir(parents=True, exist_ok=True)
     headline_search = agg.get(("overall", "search"))
