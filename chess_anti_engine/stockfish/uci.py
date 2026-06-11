@@ -194,6 +194,10 @@ class StockfishUCI:
         self.syzygy_path = str(syzygy_path)
 
     def _send(self, cmd: str) -> None:
+        if "\n" in cmd or "\r" in cmd:
+            # A stray newline (e.g. from a corrupted FEN) would silently
+            # desync the UCI session; fail loud instead.
+            raise ValueError(f"UCI command contains a newline: {cmd!r}")
         os.write(self._tty_fd, (cmd + "\n").encode("utf-8"))
 
     def _readline_with_deadline(self, deadline: float) -> str:
@@ -229,7 +233,9 @@ class StockfishUCI:
         deadline = time.monotonic() + self.read_timeout_s
         while True:
             line = self._readline_with_deadline(deadline)
-            if token in line:
+            # Token match, not substring: an `info string` line that merely
+            # mentions the token must not satisfy the handshake.
+            if token in line.split():
                 return
 
     def search(
