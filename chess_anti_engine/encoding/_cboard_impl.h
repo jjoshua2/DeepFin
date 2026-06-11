@@ -786,6 +786,14 @@ static void cboard_push(CBoard *b, int from_sq, int to_sq, int promotion) {
     uint64_t to_bit = sq_bit(to_sq);
 
     int moving_piece = piece_type_at(b, from_sq);
+    if (moving_piece < 0) {
+        /* No piece on the source square — a malformed push (e.g. an index
+         * decoded against the wrong position). Indexing ZOBRIST_PIECE with
+         * the -1 sentinel is undefined behaviour, so bail out instead. The
+         * Python boundary (PyCBoard_push_index) validates and raises before
+         * reaching here; this is the C-level UB floor for any other caller. */
+        return;
+    }
     int is_capture = (b->occ[them] & to_bit) != 0;
     int is_ep = (moving_piece == PAWN && to_sq == b->ep_square && b->ep_square >= 0);
     int is_pawn_move = (moving_piece == PAWN);

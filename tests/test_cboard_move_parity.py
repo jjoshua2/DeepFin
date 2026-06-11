@@ -253,3 +253,45 @@ def test_fast_cboard_constructor_can_seed_push_index_contract(fen: str, uci: str
 
     _assert_cboard_current_fields_match_board(cb, board)
     assert set(map(int, cb.legal_move_indices())) == _expected_legal_indices(board)
+
+
+def test_cboard_rejects_direct_construction():
+    """CBoard(...) must raise, not silently return a zeroed (empty) board.
+
+    ``tp_new`` is ``PyType_GenericNew`` with no ``tp_init``, so before the
+    guard ``CBoard("anything")`` accepted and ignored the argument and handed
+    back an all-empty board that looked parsed but wasn't (UBSAN-found via the
+    differential fuzzer). Only ``from_board`` / ``from_raw`` may construct.
+    """
+    with pytest.raises(TypeError):
+        CBoard("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+    with pytest.raises(TypeError):
+        CBoard()
+    # The supported path still works and is populated.
+    cb = CBoard.from_board(chess.Board())
+    assert bin(int(cb.occ_white) | int(cb.occ_black)).count("1") == 32
+
+
+def test_push_index_rejects_move_from_empty_square():
+    """push_index of an index whose source square is empty must raise.
+
+    Previously this indexed the Zobrist table with the ``piece_type_at == -1``
+    sentinel (UBSAN: negative index into ``uint64_t[12][64]``). Now it raises
+    ValueError at the Python boundary instead of corrupting the board.
+    """
+    cb = CBoard.from_board(chess.Board())
+    legal = {int(i) for i in cb.legal_move_indices()}
+    # Find an index that decodes to an empty source square for the start pos.
+    # Indices over the back two ranks for white's side-to-move that aren't legal
+    # and whose from-square is empty (e.g. a move originating from rank 3-6).
+    raised = False
+    for idx in range(4672):
+        if idx in legal:
+            continue
+        probe = CBoard.from_board(chess.Board())
+        try:
+            probe.push_index(idx)
+        except ValueError:
+            raised = True
+            break
+    assert raised, "expected at least one index to decode to an empty source square"
