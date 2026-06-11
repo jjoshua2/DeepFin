@@ -422,6 +422,9 @@ def main() -> None:
     policy_rows: list[dict] = []
     value_rows: dict[str, list[np.ndarray]] = {k: [] for k in _VALUE_NAMES}
     deep_wdls: list[np.ndarray] = []
+    # Rows can be skipped (no encodable legal moves); every per-row list below
+    # must stay aligned with kept_positions, NOT with the input order.
+    kept_positions: list[AuditPosition] = []
     outcome_idx: list[int] = []
     for i, (pos, board) in enumerate(zip(positions, boards, strict=True)):
         legal_ucis, legal_idxs = _legal_full_indices(board)
@@ -486,6 +489,7 @@ def main() -> None:
         value_rows["blend"].append(blend / max(1e-9, blend.sum()))
         value_rows["search_root"].append(search_root)
         deep_wdls.append(np.asarray(pos.deep_wdl, dtype=np.float64))
+        kept_positions.append(pos)
         if pos.outcome is not None:
             outcome_idx.append(len(deep_wdls) - 1)
 
@@ -503,7 +507,7 @@ def main() -> None:
         ece = wdl_ece(preds, deep)
         if outcome_idx:
             oc = [
-                wdl_brier(preds[i], np.eye(3)[positions[i].outcome])  # type: ignore[index]
+                wdl_brier(preds[i], np.eye(3)[kept_positions[i].outcome])  # type: ignore[index]
                 for i in outcome_idx
             ]
             oc_cell = f"{float(np.mean(oc)):.4f} ({len(outcome_idx)})"
