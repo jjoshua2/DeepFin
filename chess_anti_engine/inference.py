@@ -258,20 +258,23 @@ class LocalModelEvaluator:
   # Lazy-initialized on first evaluate_encoded_async call on CUDA.
         self._stream: torch.cuda.Stream | None = None
 
-    def evaluate_encoded(
-        self, x: np.ndarray, relations: np.ndarray | None = None,
-    ) -> tuple[np.ndarray, np.ndarray]:
+    def _forward_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None,
+    ) -> dict[str, torch.Tensor]:
         xb = _coerce_input_batch(x)
         xt = torch.from_numpy(xb).to(self.device)
-        out = _forward_no_grad(
+        return _forward_no_grad(
             self.model, xt, device=self.device,
             use_amp=self._use_amp, amp_dtype=self._amp_dtype,
             relations_t=_relations_to_device(relations, device=self.device),
         )
-        policy_out = _policy_output_full(out)
-        _cpu_f32 = torch.float32
-        pol = policy_out.detach().to(dtype=_cpu_f32, device="cpu").numpy()
-        wdl = out["wdl"].detach().to(dtype=_cpu_f32, device="cpu").numpy()
+
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        out = self._forward_encoded(x, relations)
+        pol = _policy_output_full(out).detach().to(dtype=torch.float32, device="cpu").numpy()
+        wdl = out["wdl"].detach().to(dtype=torch.float32, device="cpu").numpy()
         return pol, wdl
 
     def evaluate_encoded_with_volatility(
@@ -285,23 +288,15 @@ class LocalModelEvaluator:
         is computed by every forward anyway, so this just stops discarding
         it; the default-off search path never calls this method.
         """
-        xb = _coerce_input_batch(x)
-        xt = torch.from_numpy(xb).to(self.device)
-        out = _forward_no_grad(
-            self.model, xt, device=self.device,
-            use_amp=self._use_amp, amp_dtype=self._amp_dtype,
-            relations_t=_relations_to_device(relations, device=self.device),
-        )
-        policy_out = _policy_output_full(out)
-        _cpu_f32 = torch.float32
-        pol = policy_out.detach().to(dtype=_cpu_f32, device="cpu").numpy()
-        wdl = out["wdl"].detach().to(dtype=_cpu_f32, device="cpu").numpy()
+        out = self._forward_encoded(x, relations)
+        pol = _policy_output_full(out).detach().to(dtype=torch.float32, device="cpu").numpy()
+        wdl = out["wdl"].detach().to(dtype=torch.float32, device="cpu").numpy()
         vol_out = out.get("volatility")
         if vol_out is None:
             vol = np.zeros((pol.shape[0],), dtype=np.float32)
         else:
             vol = (
-                vol_out.detach().to(dtype=_cpu_f32, device="cpu").numpy()
+                vol_out.detach().to(dtype=torch.float32, device="cpu").numpy()
                 .reshape(pol.shape[0], -1).mean(axis=1)
             )
         return pol, wdl, vol

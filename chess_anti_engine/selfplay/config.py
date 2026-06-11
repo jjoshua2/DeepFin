@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from chess_anti_engine.encoding.features import EXTRA_FEATURES_V1
+from chess_anti_engine.mcts.gumbel import DEFAULT_VOLATILITY_ANCHOR
 from chess_anti_engine.encoding.lc0 import LC0_HISTORY_LEGACY
 from chess_anti_engine.moves import POLICY_ENCODING_AZ_4672
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
@@ -49,7 +50,7 @@ class SearchConfig:
   # Any non-zero value forces the Python search path with a logged warning.
     volatility_q_scale: float = 0.0
     volatility_fpu: float = 0.0
-    volatility_anchor: float = 0.05
+    volatility_anchor: float = DEFAULT_VOLATILITY_ANCHOR
 
 
 @dataclass(frozen=True)

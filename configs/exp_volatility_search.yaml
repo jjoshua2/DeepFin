@@ -10,7 +10,9 @@
 #     longer; low volatility -> trust the value sooner.
 #   volatility_fpu — pessimistic first-play urgency: unvisited children's
 #     mix value gets -volatility_fpu * vol (Q units) in sharp positions.
-# Sweep ONE mechanism at a time (the other at 0.0).
+# Sweep ONE mechanism at a time (the other at 0.0). A NEGATIVE
+# volatility_q_scale deliberately inverts the mapping (high volatility ->
+# sharper); only use it to sweep the opposite hypothesis.
 #
 # volatility_anchor MUST be re-derived from a recent shard window before the
 # sweep and pinned here (frozen within a sweep). Derivation (mean of the

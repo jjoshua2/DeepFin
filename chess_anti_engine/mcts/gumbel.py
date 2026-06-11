@@ -49,6 +49,12 @@ from chess_anti_engine.mcts.sampling import sample_action_with_temperature  # no
 from chess_anti_engine.utils.numpy_helpers import softmax_1d as _softmax  # noqa: E402
 
 
+# Dataset-mean default for the volatility anchor; re-derive per experiment
+# (see configs/exp_volatility_search.yaml) — this is the single source the
+# SearchConfig/TrialConfig/worker plumbing defaults mirror.
+DEFAULT_VOLATILITY_ANCHOR = 0.05
+
+
 @dataclass
 class GumbelConfig:
     simulations: int = 50
@@ -83,7 +89,7 @@ class GumbelConfig:
   # the 3 head components). Derive from a recent shard window before an
   # experiment (see configs/exp_volatility_search.yaml) and pin it here —
   # the normalization must stay frozen within an arena sweep.
-    volatility_anchor: float = 0.05
+    volatility_anchor: float = DEFAULT_VOLATILITY_ANCHOR
     volatility_factor_clip: float = 4.0
 
 
@@ -204,9 +210,11 @@ def warn_volatility_python_path() -> None:
 def _volatility_sigma_factor(vol: float, cfg: GumbelConfig) -> float:
     """Multiplier on the sigma(q) scale for a node with predicted ``vol``.
 
-    1.0 when the mechanism is off or vol equals the anchor; <1 (flatter)
-    above the anchor, >1 (sharper) below it. Clipped so a wild head output
-    cannot collapse or explode the transform.
+    For positive ``volatility_q_scale``: 1.0 when the mechanism is off or
+    vol equals the anchor; <1 (flatter) above the anchor, >1 (sharper)
+    below it. A NEGATIVE exponent deliberately inverts that mapping (high
+    volatility -> sharper) — only use it to sweep the opposite hypothesis.
+    Clipped so a wild head output cannot collapse or explode the transform.
     """
     k = float(cfg.volatility_q_scale)
     if k == 0.0:
