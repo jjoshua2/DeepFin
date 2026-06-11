@@ -79,3 +79,40 @@ the encoding stored in the checkpoint itself.
 | date | candidate | reference | Δ test_policy_loss | Δ test_wdl_loss | Elo (matched_sims) | Elo (matched_time) | notes |
 |---|---|---|---|---|---|---|---|
 | _(append one row per candidate)_ | | | | | | | |
+
+## Target audit: every training-target candidate is audited here FIRST
+
+The arena gates above price a candidate AFTER spending training compute. The
+target audit prices it BEFORE: a frozen, deeply-labeled position set
+(`data/audit_set_v1.jsonl`, built once by `scripts/build_audit_set.py` with
+unhandicapped Stockfish at >=1M nodes, MultiPV >= 10) and a scorer
+(`scripts/audit_targets.py`) that evaluates any policy or value target
+DIRECTLY against it.
+
+**The rule: a target that loses the direct audit — higher expected deep-SF
+regret, or worse Brier/ECE calibration than the incumbent — is killed
+without training.** No fixed-budget run, no arena, no tracking-table row.
+Only candidates that win or tie the audit graduate to the
+training-then-arena pipeline above.
+
+Mechanics:
+
+- The audit set is FROZEN after generation (the build script refuses to
+  overwrite; new sampling = new version `audit_set_v2...`). All candidates,
+  forever, are scored against the same positions — phase-stratified
+  (endgame/middlegame/opening by piece count), source-stratified
+  (selfplay/curriculum), deduplicated, side-to-move canonical.
+- Policy candidates are scored as expected deep-SF regret in cp of a move
+  sampled from the distribution (plus top-1 regret), per phase and per
+  source. Value candidates are scored as Brier + ECE against the deep-SF
+  WDL, and separately against full-strength game outcomes where available.
+- `scripts/audit_targets.py` reports the current production lineup as the
+  incumbent baseline in every run: net raw policy, net+search at production
+  sims, the SF MultiPV soft target at production label settings, the actual
+  blended training target, and all four WDL components/blends. Reports land
+  in `runs/target_audit_<sha>.md`.
+- Two standing numbers to watch on each report: (search-policy regret) vs
+  (SF-soft-target regret) per phase — when search wins everywhere, the
+  50k-node MultiPV-40 labeling is no longer worth its CPU bill — and
+  (production WDL blend) vs its best single component — when a single
+  component matches the blend, the blend weights are dead complexity.
