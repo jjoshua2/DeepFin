@@ -45,6 +45,11 @@ class SearchConfig:
     curriculum_gumbel_scale_after: float = 0.0
     curriculum_gumbel_scale_decay_start_move: int = 0
     curriculum_gumbel_scale_decay_moves: int = 0
+  # Volatility-aware Gumbel search (Python path only; see mcts/gumbel.py).
+  # Any non-zero value forces the Python search path with a logged warning.
+    volatility_q_scale: float = 0.0
+    volatility_fpu: float = 0.0
+    volatility_anchor: float = 0.05
 
 
 @dataclass(frozen=True)

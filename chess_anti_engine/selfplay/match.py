@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import dataclasses
+
+
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -8,7 +11,11 @@ import numpy as np
 import torch
 
 from chess_anti_engine.mcts import GumbelConfig, MCTSConfig
-from chess_anti_engine.mcts.gumbel import run_gumbel_root_many
+from chess_anti_engine.mcts.gumbel import (
+    run_gumbel_root_many,
+    volatility_search_enabled,
+    warn_volatility_python_path,
+)
 from chess_anti_engine.mcts.puct import run_mcts_many
 from chess_anti_engine.moves import index_to_move
 from chess_anti_engine.selfplay.opening import OpeningConfig, make_starting_board
@@ -73,8 +80,17 @@ def pick_moves_for_boards(
     device: str, rng: np.random.Generator,
     mcts_type: str, mcts_simulations: int, temperature: float, c_puct: float,
     gumbel_add_noise: bool,
+    volatility_q_scale: float = 0.0,
+    volatility_fpu: float = 0.0,
+    volatility_anchor: float | None = None,
 ) -> list[int]:
-    """Run gumbel- or PUCT-MCTS for one model on a list of boards."""
+    """Run gumbel- or PUCT-MCTS for one model on a list of boards.
+
+    Non-zero ``volatility_q_scale``/``volatility_fpu`` switch on
+    volatility-aware Gumbel search, which forces the Python search path
+    (logged once). ``volatility_anchor`` overrides the GumbelConfig default
+    dataset-mean anchor when given.
+    """
     input_history_encoding = str(getattr(model, "input_history_encoding", "legacy"))
     input_extra_features = str(getattr(model, "input_extra_features", "v1"))
     policy_encoding = str(getattr(model, "policy_encoding", "az_4672"))
@@ -87,8 +103,16 @@ def pick_moves_for_boards(
             input_extra_features=input_extra_features,
             policy_encoding=policy_encoding,
             compute_relations=use_dynamic_relations,
+            volatility_q_scale=float(volatility_q_scale),
+            volatility_fpu=float(volatility_fpu),
         )
-        if _HAS_GUMBEL_C:
+        if volatility_anchor is not None:
+            gumbel_cfg = dataclasses.replace(
+                gumbel_cfg, volatility_anchor=float(volatility_anchor),
+            )
+        if volatility_search_enabled(gumbel_cfg):
+            warn_volatility_python_path()
+        if _HAS_GUMBEL_C and not volatility_search_enabled(gumbel_cfg):
             result = _run_gumbel_root_many_c(
                 model, sub_boards, device=device, rng=rng, cfg=gumbel_cfg,
                 allow_terminal_root_shortcuts=True,

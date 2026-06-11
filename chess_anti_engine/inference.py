@@ -274,6 +274,38 @@ class LocalModelEvaluator:
         wdl = out["wdl"].detach().to(dtype=_cpu_f32, device="cpu").numpy()
         return pol, wdl
 
+    def evaluate_encoded_with_volatility(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """(pol, wdl, volatility) — volatility is a (B,) scalar summary.
+
+        The volatility head emits 3 non-negative components per position
+        (VolatilityHead in model/transformer.py); search consumes their mean.
+        Used only by volatility-aware Gumbel search (Python path) — the head
+        is computed by every forward anyway, so this just stops discarding
+        it; the default-off search path never calls this method.
+        """
+        xb = _coerce_input_batch(x)
+        xt = torch.from_numpy(xb).to(self.device)
+        out = _forward_no_grad(
+            self.model, xt, device=self.device,
+            use_amp=self._use_amp, amp_dtype=self._amp_dtype,
+            relations_t=_relations_to_device(relations, device=self.device),
+        )
+        policy_out = _policy_output_full(out)
+        _cpu_f32 = torch.float32
+        pol = policy_out.detach().to(dtype=_cpu_f32, device="cpu").numpy()
+        wdl = out["wdl"].detach().to(dtype=_cpu_f32, device="cpu").numpy()
+        vol_out = out.get("volatility")
+        if vol_out is None:
+            vol = np.zeros((pol.shape[0],), dtype=np.float32)
+        else:
+            vol = (
+                vol_out.detach().to(dtype=_cpu_f32, device="cpu").numpy()
+                .reshape(pol.shape[0], -1).mean(axis=1)
+            )
+        return pol, wdl, vol
+
     def evaluate_encoded_async(
         self,
         x: np.ndarray,

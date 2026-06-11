@@ -33,7 +33,11 @@ from chess_anti_engine.encoding.lc0 import (
     uses_lc0_root_history,
 )
 from chess_anti_engine.mcts import GumbelConfig, MCTSConfig
-from chess_anti_engine.mcts.gumbel import run_gumbel_root_many
+from chess_anti_engine.mcts.gumbel import (
+    run_gumbel_root_many,
+    volatility_search_enabled,
+    warn_volatility_python_path,
+)
 from chess_anti_engine.mcts.puct import run_mcts_many
 from chess_anti_engine.mcts.sampling import sample_action_with_temperature
 
@@ -683,8 +687,14 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
                 input_extra_features=state.game.input_extra_features,
                 policy_encoding=state.game.policy_encoding,
                 compute_relations=bool(state.game.record_relations),
+                volatility_q_scale=float(search.volatility_q_scale),
+                volatility_fpu=float(search.volatility_fpu),
+                volatility_anchor=float(search.volatility_anchor),
             )
-            if _HAS_GUMBEL_C:
+            if volatility_search_enabled(gumbel_cfg):
+                warn_volatility_python_path()
+            used_gumbel_c = _HAS_GUMBEL_C and not volatility_search_enabled(gumbel_cfg)
+            if used_gumbel_c:
                 # Map group indices to game-level root IDs for tree reuse.
                 sub_root_ids = [state.root_ids[net_idxs[j]] for j in group] if state.mcts_tree is not None else None
                 gumbel_c_fn = cast(Any, _run_gumbel_root_many_c)
@@ -725,9 +735,9 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
                 )
             # C diagnostics return tree/root ids before diagnostics; Python diagnostics do not.
             p_sub, a_sub, v_sub, m_sub = _gumbel_result[:4]
-            if _HAS_GUMBEL_C and len(_gumbel_result) >= 7:
+            if used_gumbel_c and len(_gumbel_result) >= 7:
                 diag_sub = cast(list[dict[str, float] | None], _gumbel_result[6])
-            elif (not _HAS_GUMBEL_C) and len(_gumbel_result) >= 5:
+            elif (not used_gumbel_c) and len(_gumbel_result) >= 5:
                 diag_sub = cast(list[dict[str, float] | None], _gumbel_result[4])
             else:
                 diag_sub = [None] * len(group)

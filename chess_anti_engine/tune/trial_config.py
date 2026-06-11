@@ -134,6 +134,9 @@ class TrialConfig:
     fpu_reduction: float = 1.2
     fpu_at_root: float = 1.0
     gumbel_topk: int = 16
+    volatility_q_scale: float = 0.0
+    volatility_fpu: float = 0.0
+    volatility_anchor: float = 0.05
     gumbel_c_scale: float = 0.1
     gumbel_scale: float = 1.0
     gumbel_scale_after: float = 0.0
@@ -418,6 +421,9 @@ class TrialConfig:
             fpu_reduction=float(config.get("fpu_reduction", 1.2)),
             fpu_at_root=float(config.get("fpu_at_root", 1.0)),
             gumbel_topk=max(1, int(config.get("gumbel_topk", 16))),
+            volatility_q_scale=float(config.get("volatility_q_scale", 0.0)),
+            volatility_fpu=float(config.get("volatility_fpu", 0.0)),
+            volatility_anchor=float(config.get("volatility_anchor", 0.05)),
             gumbel_c_scale=_nonnegative_float(config.get("gumbel_c_scale", 0.1), name="gumbel_c_scale"),
             gumbel_scale=_nonnegative_float(config.get("gumbel_scale", 1.0), name="gumbel_scale"),
             gumbel_scale_after=_nonnegative_float(
