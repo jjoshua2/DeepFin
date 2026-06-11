@@ -36,11 +36,9 @@ See `future_ideas.md` for longer-term ideas like opponent mixing / league traini
 
 ## Setup
 ```bash
-pip install -e .
-pip install -e ".[train]"    # tensorboard for local training logs
-pip install -e ".[dev]"      # pytest
-pip install -e ".[tune]"     # ray[tune] + optuna (default harness)
-pip install -e ".[onnx]"     # onnx + onnxruntime (optional)
+pip install -e ".[dev]"      # full server/test env (server+train+tune+onnx);
+                             # the test suite hard-requires all of them (no skips)
+pip install -e ".[worker]"   # lite selfplay-client install (core deps + requests)
 ```
 
 Common minimal installs:

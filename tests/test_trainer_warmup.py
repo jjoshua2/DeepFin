@@ -816,9 +816,6 @@ def test_cosmos_matrix_scope_can_target_mlp_with_adam_fallback(tmp_path: Path) -
 
 
 def test_soap_matrix_scope_can_target_mlp_with_adam_fallback(tmp_path: Path) -> None:
-    # Trainer also accepts a local soap.py module, but the installable form
-    # of the SOAP dependency is pytorch-optimizer.
-    pytest.importorskip("pytorch_optimizer")
     trainer = _make_scoped_trainer(tmp_path, "soap", "mlp_only")
     named_params = dict(trainer.model.named_parameters())
     soap_param_ids = {id(param) for param in trainer.opt.param_groups[0]["params"]}
@@ -836,7 +833,6 @@ def test_soap_matrix_scope_can_target_mlp_with_adam_fallback(tmp_path: Path) -> 
 
 
 def test_soap_soda_marks_matrix_and_adam_fallback_decay_groups(tmp_path: Path) -> None:
-    pytest.importorskip("pytorch_optimizer")
     trainer = Trainer(
         _TinyScopedModel(),
         device="cpu",

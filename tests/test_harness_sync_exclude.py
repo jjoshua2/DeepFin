@@ -18,9 +18,6 @@ from chess_anti_engine.tune.harness import (
     _patch_ray_artifact_sync_excludes,
 )
 
-# The patch under test wraps Ray's uploader at call time (.[tune] extra).
-pytest.importorskip("ray")
-
 
 def _stage_shards(tmp_path: Path) -> Path:
     """Fake selfplay_shards dir + a sibling file that should still sync.

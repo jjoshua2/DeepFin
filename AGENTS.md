@@ -10,10 +10,9 @@
 
 ## Build, Test, and Development Commands
 ```bash
-pip install -e .
-pip install -e ".[dev]"      # pytest extras
-pip install -e ".[tune]"     # Ray Tune + Optuna
-pip install -e ".[onnx]"     # ONNX export/runtime support
+pip install -e ".[dev]"      # full server/test env (server+train+tune+onnx);
+                             # the suite hard-requires all of them (no skips)
+pip install -e ".[worker]"   # lite selfplay-client install
 ```
 ```bash
 python -m pytest
