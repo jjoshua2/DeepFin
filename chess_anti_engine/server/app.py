@@ -1663,6 +1663,7 @@ def create_app(
             # every shard back to ``_pending`` for phase 2 to re-seed.
             pending_dir = in_flight_root.parent / _PENDING_DIR_NAME
             pending_dir.mkdir(parents=True, exist_ok=True)
+            restore_failed = False
             for entry in sorted(token_dir.iterdir()):
                 if not entry.name.endswith(LOCAL_SHARD_SUFFIX):
                     continue
@@ -1673,7 +1674,17 @@ def create_app(
                         "failed to restore in-flight shard %s to pending; leaving in place",
                         entry,
                     )
-            delete_shard_path(token_dir)
+                    restore_failed = True
+            if restore_failed:
+                # Same contract as the live flush paths: the token dir still
+                # holds shards whose restore rename failed — deleting it would
+                # destroy them. Leave it for the next startup recovery pass.
+                log.error(
+                    "leaving %s in place (partial restore) for a later recovery",
+                    token_dir,
+                )
+            else:
+                delete_shard_path(token_dir)
 
     def _scan_pending_dir(*, pending_dir: Path, trial_key: str | None) -> int:
         if not pending_dir.is_dir():
