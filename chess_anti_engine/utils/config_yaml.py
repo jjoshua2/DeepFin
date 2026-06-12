@@ -169,6 +169,7 @@ _TRAIN_KEYS = (
     "cosmos_rank", "cosmos_gamma",
     "lr", "batch_size", "train_steps", "train_window_fraction",
     "no_amp", "feature_dropout_p", "rebuild_sf_targets", "sf_policy_sparse_ce",
+    "replay_upgrade_v1_planes",
     "resid_channel_dropout", "resid_channel_balance_weight",
     "fdp_king_safety", "fdp_pins", "fdp_pawns", "fdp_mobility", "fdp_outposts",
     "w_volatility",

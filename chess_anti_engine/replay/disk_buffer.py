@@ -37,6 +37,11 @@ from .shard import (
     sparsify_chunk,
     zeros_for_storage_field,
 )
+from .threat_upgrade import (
+    V1_INPUT_PLANES,
+    V2_INPUT_PLANES,
+    upgrade_arrays_to_v2_threats,
+)
 
 _ARRAY_FIELD_ORDER = _SHARD_FIELDS
 _SCALAR_METADATA_FIELDS = (
@@ -143,14 +148,20 @@ class DiskReplayBuffer:
         draw_cap_frac: float = 0.90,
         wl_max_ratio: float = 1.5,
         input_planes: int | None = None,
+        upgrade_v1_planes: bool = False,
     ):
         self.capacity = int(capacity)
         self.rng = rng
   # When set, shards stored with FEWER x planes (e.g. v1 146-plane shards
-  # in a v2_threats 175-plane run) are zero-padded on load — never
-  # re-encoded. Zero extra planes match the feature_dropout_p convention
-  # of zeroing the whole extra block.
+  # in a v2_threats 175-plane run) are normalized on load — never
+  # re-encoded. With upgrade_v1_planes the 29 threat planes are
+  # recomputed from the stored planes (replay/threat_upgrade.py);
+  # otherwise (or if a chunk fails the recompute's validation) the
+  # missing planes are zero-padded, matching the feature_dropout_p
+  # convention of zeroing the whole extra block.
         self._input_planes = None if input_planes is None else int(input_planes)
+        self._upgrade_v1_planes = bool(upgrade_v1_planes)
+        self._upgrade_failures = 0
         self._shard_dir = Path(shard_dir)
         self._shard_dir.mkdir(parents=True, exist_ok=True)
 
@@ -238,17 +249,46 @@ class DiskReplayBuffer:
     def _shuffle_len(self) -> int:
         return int(self._shuffle_size_total)
 
+    def _upgrade_x_planes(self, arrs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+        """Recompute the v2 threat planes for a stored v1 chunk (opt-in).
+
+        Also repairs 175-plane chunks whose threat block was zero-padded by
+        the pre-upgrade load path and then re-persisted. Validation failure
+        (a chunk the decoder can't faithfully reconstruct) falls back to the
+        zero-pad path below instead of killing the prefetch thread — old
+        data trains as before, just without threat-plane signal for that
+        chunk.
+        """
+        if not self._upgrade_v1_planes or self._input_planes != V2_INPUT_PLANES:
+            return arrs
+        if int(np.asarray(arrs["x"]).shape[1]) not in (V1_INPUT_PLANES, V2_INPUT_PLANES):
+            return arrs
+        try:
+            upgraded, _stats = upgrade_arrays_to_v2_threats(arrs)
+        except ValueError as exc:
+            self._upgrade_failures += 1
+            # Log the first few in full, then a periodic cumulative count so a
+            # systematic decode failure stays visible instead of going quiet.
+            if self._upgrade_failures <= 3 or self._upgrade_failures % 50 == 0:
+                print(
+                    f"[replay] v2_threats upgrade failed "
+                    f"({self._upgrade_failures} chunk(s) so far), zero-padding: {exc}"
+                )
+            return arrs
+        return upgraded
+
     def _pad_x_planes(self, arrs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
-        """Zero-pad stored x (and x_lc0_root) up to the configured plane count.
+        """Normalize stored x (and x_lc0_root) up to the configured plane count.
 
         Gated by the stored channel count: older shards encoded with fewer
-        extra-feature planes gain zero planes at the end of the extra block;
-        shards with MORE planes than the model expects are a config error.
+        extra-feature planes are upgraded (when enabled) or gain zero planes
+        at the end of the extra block; shards with MORE planes than the
+        model expects are a config error.
         """
         target = self._input_planes
         if target is None:
             return arrs
-        out = arrs
+        out = self._upgrade_x_planes(arrs)
         for key in ("x", "x_lc0_root"):
             v = out.get(key)
             if v is None:

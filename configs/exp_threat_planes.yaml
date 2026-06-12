@@ -4,7 +4,12 @@
 # Evaluation protocol (docs/eval_protocol.md):
 #   1. Warm-start from the live v1 checkpoint (the tolerant loader zero-inits the
 #      29 new input-embed columns, so step-0 outputs are bit-identical to v1).
-#      Old replay shards load unchanged — missing planes are zero-padded.
+#      Old replay shards load unchanged — with train.replay_upgrade_v1_planes the
+#      29 threat planes are recomputed from the stored planes at load time
+#      (replay/threat_upgrade.py); shards a decode can't validate fall back to
+#      zero-padding. For a permanent window switch, convert shards on disk once:
+#        PYTHONPATH=. python3 scripts/convert_shards_v2_threats.py <replay dir>
+#      (idempotent, atomic per shard; run while the consuming run is stopped).
 #   2. Train for a FIXED budget (same iterations as the v1 baseline window).
 #   3. Judge with scripts/arena_standard.py in matched_time mode vs the
 #      pre-change checkpoint (1000 games), plus matched_sims for the search-free
@@ -255,6 +260,7 @@ train:
   # With ~10k new positions/iter and buffer growing by 2500/iter, each position
   # survives ~50 iters in the buffer and gets trained ~5 times before eviction.
   no_amp: false
+  replay_upgrade_v1_planes: true  # Recompute (not zero-pad) the 29 threat planes for old 146-plane shards at load. Construction-only knob — restart required.
   feature_dropout_p: 0.10  # Fixed at 0.10 (not searched).
   resid_channel_dropout: 0.0  # Keep channel spreading on the explicit balance regularizer; dropout cost more eval loss offline.
   resid_channel_balance_weight: 0.0  # Disabled: offline sidecar .001/.003 did not improve loss or WDL.
