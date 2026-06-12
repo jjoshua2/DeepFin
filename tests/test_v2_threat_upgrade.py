@@ -159,6 +159,75 @@ def test_upgrade_noop_on_v2_chunk_and_rejects_unknown_widths():
         upgrade_arrays_to_v2_threats(bad)
 
 
+def _zero_pad_to_v2(x_v1: np.ndarray) -> np.ndarray:
+    """Mimic the pre-upgrade load path: 146 -> 175 by appending zero planes."""
+    pad = np.zeros((x_v1.shape[0], V2_INPUT_PLANES - V1_INPUT_PLANES, 8, 8), dtype=x_v1.dtype)
+    return np.concatenate([x_v1, pad], axis=1)
+
+
+def test_upgrade_repairs_previously_zero_padded_v2_rows():
+    boards = _game_positions()
+    enc = LC0_HISTORY_LEGACY
+    x_padded = _zero_pad_to_v2(_encode_rows(boards, enc, "v1"))
+    x_v2 = _encode_rows(boards, enc, "v2_threats")
+    root_padded = _zero_pad_to_v2(_encode_rows(boards, LC0_HISTORY_ROOT, "v1"))
+    root_v2 = _encode_rows(boards, LC0_HISTORY_ROOT, "v2_threats")
+    has = np.ones((len(boards),), dtype=np.uint8)
+    has[1] = 0
+    root_padded[1] = 0
+    root_v2[1] = 0
+    # mix in one already-native v2 row: must pass through bit-identical
+    x_padded[3] = x_v2[3]
+    root_padded[3] = root_v2[3]
+    chunk = _chunk(x_padded, enc)
+    chunk["x_lc0_root"] = root_padded
+    chunk["has_x_lc0_root"] = has
+    out, stats = upgrade_arrays_to_v2_threats(chunk)
+    assert stats.upgraded_rows == len(boards) - 1  # native row not recomputed
+    np.testing.assert_array_equal(out["x"], x_v2)
+    np.testing.assert_array_equal(out["x_lc0_root"], root_v2)
+    # repaired chunk is now fully native: rerun is a no-op
+    out2, stats2 = upgrade_arrays_to_v2_threats(out)
+    assert out2 is out and stats2.upgraded_rows == 0
+
+
+def test_disk_buffer_repairs_zero_padded_v2_shard(tmp_path):
+    boards = _game_positions()
+    enc = LC0_HISTORY_LEGACY
+    x_padded = _zero_pad_to_v2(_encode_rows(boards, enc, "v1"))
+    x_v2 = _encode_rows(boards, enc, "v2_threats")
+    save_local_shard_arrays(
+        tmp_path / "shard_000000.zarr", arrs=_chunk(x_padded, enc),
+        meta={"input_history_encoding": enc},
+    )
+    buf = DiskReplayBuffer(
+        10_000, shard_dir=tmp_path, rng=np.random.default_rng(0),
+        input_planes=V2_INPUT_PLANES, upgrade_v1_planes=True,
+        refresh_interval=0, refresh_shards=1,
+    )
+    batch = np.asarray(buf.sample_batch_arrays(len(boards))["x"], dtype=np.float16)
+    threat_rows = {bytes(r) for r in batch[:, V1_INPUT_PLANES:]}
+    assert threat_rows and threat_rows <= {bytes(r) for r in x_v2[:, V1_INPUT_PLANES:]}
+
+
+def test_converter_script_repairs_padded_shard_and_persists_encoding_override(tmp_path):
+    mod = load_script_module("convert_shards_v2_threats.py")
+    boards = _game_positions()
+    enc = LC0_HISTORY_ROOT
+    x_padded = _zero_pad_to_v2(_encode_rows(boards, enc, "v1"))
+    x_v2 = _encode_rows(boards, enc, "v2_threats")
+    chunk = _chunk(x_padded, enc)
+    del chunk["_input_history_encoding"]  # shard written without the attr
+    save_local_shard_arrays(tmp_path / "shard_000000.zarr", arrs=chunk, meta=None)
+    assert mod.main(
+        [str(tmp_path), "--workers", "1", "--history-encoding", enc],
+    ) == 0
+    arrs, meta = load_shard_arrays(tmp_path / "shard_000000.zarr")
+    assert meta["input_history_encoding"] == enc  # override persisted
+    np.testing.assert_array_equal(np.asarray(arrs["x"]), x_v2)
+    assert mod.main([str(tmp_path), "--workers", "1"]) == 0  # idempotent rerun
+
+
 def test_upgrade_handles_empty_chunk():
     x = np.zeros((0, V1_INPUT_PLANES, 8, 8), dtype=np.float16)
     out, stats = upgrade_arrays_to_v2_threats(

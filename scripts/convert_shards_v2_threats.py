@@ -5,7 +5,9 @@ threat planes from the stored input planes (no FENs needed — see
 chess_anti_engine/encoding/plane_decode.py). Every shard is validated:
 the 34 recomputed v1 extra planes must match the stored ones, so a
 decode problem aborts that shard instead of writing corrupt planes.
-Already-175-plane shards are skipped, so reruns are idempotent.
+175-plane shards are scanned for rows the pre-upgrade load path
+zero-padded and repaired; shards with nothing to fix are skipped, so
+reruns are idempotent.
 
 Usage:
   PYTHONPATH=. python3 scripts/convert_shards_v2_threats.py DIR [DIR|SHARD.zarr ...] \
@@ -27,6 +29,7 @@ from pathlib import Path
 
 import zarr
 
+from chess_anti_engine.encoding.lc0 import normalize_lc0_history_encoding
 from chess_anti_engine.replay.shard import (
     ShardMeta,
     iter_shard_paths,
@@ -72,18 +75,30 @@ def convert_shard(
     out_path: Path | None = None,
     history_encoding: str | None = None,
 ) -> dict[str, object]:
-    """Convert one shard; returns a summary row for the run report."""
+    """Convert one shard; returns a summary row for the run report.
+
+    175-plane shards are loaded and scanned too: rows zero-padded by the
+    pre-upgrade load path get their threat planes recomputed (native v2
+    rows are untouched, so reruns stay idempotent).
+    """
     dst = out_path if out_path is not None else path
     try:
-        if _stored_planes(path) == V2_INPUT_PLANES:
-            if out_path is not None and not out_path.exists():
-                arrs, meta = load_shard_arrays(path)
-                save_local_shard_arrays(dst, arrs=arrs, meta=_filter_meta(meta))
-            return {"path": str(path), "status": "skipped", "rows": 0}
         arrs, meta = load_shard_arrays(path)
+        meta_changed = False
+        if history_encoding is not None:
+            # Persist the override: the rewritten shard must self-describe,
+            # or later loads fall back to the old/missing attr and decode
+            # the LC0 history planes under the wrong layout.
+            history_encoding = normalize_lc0_history_encoding(history_encoding)
+            meta_changed = meta.get("input_history_encoding") != history_encoding
+            meta["input_history_encoding"] = history_encoding
         upgraded, stats = upgrade_arrays_to_v2_threats(
             arrs, history_encoding=history_encoding,
         )
+        if stats.upgraded_rows == 0 and not meta_changed:
+            if out_path is not None and not out_path.exists():
+                save_local_shard_arrays(dst, arrs=arrs, meta=_filter_meta(meta))
+            return {"path": str(path), "status": "skipped", "rows": 0}
         save_local_shard_arrays(dst, arrs=upgraded, meta=_filter_meta(meta))
         return {
             "path": str(path),
@@ -142,7 +157,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         for p in shards:
             planes = _stored_planes(p)
-            verb = "skip (already v2)" if planes == V2_INPUT_PLANES else "convert"
+            verb = "scan (repair zero-padded rows)" if planes == V2_INPUT_PLANES else "convert"
             print(f"{verb}: {p} ({planes} planes)")
         return 0
 

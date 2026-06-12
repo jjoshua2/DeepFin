@@ -84,6 +84,62 @@ def _validated_threat_block(
     return block, live
 
 
+def _zero_padded_rows(arr: np.ndarray) -> np.ndarray:
+    """Rows whose v1 extra block is live but whose threat block is all zero.
+
+    The threat block of any live position contains the nonzero attack-union
+    planes (both kings always attack something), so live-v1/zero-threat rows
+    can only come from the earlier zero-pad load path — never from a native
+    v2_threats encode.
+    """
+    v1_live = np.any(arr[:, _LC0_PLANES:V1_INPUT_PLANES], axis=(1, 2, 3))
+    threats_zero = ~np.any(arr[:, V1_INPUT_PLANES:V2_INPUT_PLANES], axis=(1, 2, 3))
+    return v1_live & threats_zero
+
+
+def _repair_zero_padded_v2(
+    arrs: dict[str, np.ndarray],
+    history_encoding: str | None,
+) -> tuple[dict[str, np.ndarray], UpgradeStats]:
+    """Recompute threat planes for 175-plane rows that were zero-padded.
+
+    Chunks that went through the pre-upgrade zero-pad path may have been
+    re-persisted at 175 planes with empty threat blocks; the width gate
+    alone would treat them as native v2 forever.
+    """
+    x = np.asarray(arrs["x"])
+    n = int(x.shape[0])
+    x_pad = _zero_padded_rows(x)
+    x_root = arrs.get("x_lc0_root")
+    root_pad = None
+    if x_root is not None:
+        x_root = np.asarray(x_root)
+        root_pad = _zero_padded_rows(x_root)
+    need = x_pad if root_pad is None else (x_pad | root_pad)
+    if not need.any():
+        return arrs, UpgradeStats(rows=n, upgraded_rows=0, dropout_rows=0)
+
+    idx = np.flatnonzero(need)
+    # plane_decode only reads planes below 146, so 175-wide rows decode fine.
+    recomputed = recompute_extra_planes(x[idx], history_encoding)
+    out = dict(arrs)
+    block, _ = _validated_threat_block(x[idx], recomputed, label="x (pad repair)")
+    sel_x = x_pad[idx]
+    if sel_x.any():
+        new_x = np.array(x, copy=True)
+        new_x[idx[sel_x], V1_INPUT_PLANES:] = block[sel_x]
+        out["x"] = new_x
+    if root_pad is not None and root_pad[idx].any():
+        root_block, _ = _validated_threat_block(
+            np.asarray(x_root)[idx], recomputed, label="x_lc0_root (pad repair)",
+        )
+        sel_r = root_pad[idx]
+        new_root = np.array(x_root, copy=True)
+        new_root[idx[sel_r], V1_INPUT_PLANES:] = root_block[sel_r]
+        out["x_lc0_root"] = new_root
+    return out, UpgradeStats(rows=n, upgraded_rows=int(idx.size), dropout_rows=0)
+
+
 def upgrade_arrays_to_v2_threats(
     arrs: dict[str, np.ndarray],
     *,
@@ -91,20 +147,22 @@ def upgrade_arrays_to_v2_threats(
 ) -> tuple[dict[str, np.ndarray], UpgradeStats]:
     """Return a chunk dict with ``x`` (and ``x_lc0_root``) at 175 planes.
 
-    Chunks already at 175 planes pass through unchanged; anything other
-    than 146/175 is a hard error. The input dict is never mutated.
+    146-plane chunks gain recomputed threat planes; 175-plane chunks are
+    scanned for previously zero-padded rows and repaired (native v2 rows
+    pass through untouched). Anything other than 146/175 is a hard error.
+    The input dict is never mutated.
     """
     x = np.asarray(arrs["x"])
     planes = int(x.shape[1])
+    if history_encoding is None:
+        history_encoding = chunk_history_encoding(arrs)
     if planes == V2_INPUT_PLANES:
-        return arrs, UpgradeStats(rows=int(x.shape[0]), upgraded_rows=0, dropout_rows=0)
+        return _repair_zero_padded_v2(arrs, history_encoding)
     if planes != V1_INPUT_PLANES:
         raise ValueError(
             f"cannot upgrade chunk with {planes} input planes to v2_threats; "
             f"expected {V1_INPUT_PLANES} or {V2_INPUT_PLANES}"
         )
-    if history_encoding is None:
-        history_encoding = chunk_history_encoding(arrs)
 
     recomputed = recompute_extra_planes(x, history_encoding)
     x_block, x_live = _validated_threat_block(x, recomputed, label="x")

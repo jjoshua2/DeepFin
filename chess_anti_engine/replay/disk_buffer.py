@@ -252,14 +252,16 @@ class DiskReplayBuffer:
     def _upgrade_x_planes(self, arrs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
         """Recompute the v2 threat planes for a stored v1 chunk (opt-in).
 
-        Validation failure (a chunk the decoder can't faithfully
-        reconstruct) falls back to the zero-pad path below instead of
-        killing the prefetch thread — old data trains as before, just
-        without threat-plane signal for that chunk.
+        Also repairs 175-plane chunks whose threat block was zero-padded by
+        the pre-upgrade load path and then re-persisted. Validation failure
+        (a chunk the decoder can't faithfully reconstruct) falls back to the
+        zero-pad path below instead of killing the prefetch thread — old
+        data trains as before, just without threat-plane signal for that
+        chunk.
         """
         if not self._upgrade_v1_planes or self._input_planes != V2_INPUT_PLANES:
             return arrs
-        if int(np.asarray(arrs["x"]).shape[1]) != V1_INPUT_PLANES:
+        if int(np.asarray(arrs["x"]).shape[1]) not in (V1_INPUT_PLANES, V2_INPUT_PLANES):
             return arrs
         try:
             upgraded, _stats = upgrade_arrays_to_v2_threats(arrs)
