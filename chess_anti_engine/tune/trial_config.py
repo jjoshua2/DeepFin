@@ -230,6 +230,9 @@ class TrialConfig:
     replay_window_growth_frac: float | None = None
     shuffle_buffer_size: int = 20_000
     shard_size: int = 1000
+    # Recompute the 29 v2 threat planes for stored 146-plane chunks instead
+    # of zero-padding (only acts when input_extra_features is v2_threats).
+    replay_upgrade_v1_planes: bool = False
     shuffle_refresh_interval: int = 5
     shuffle_refresh_shards: int = 3
     shuffle_draw_cap_frac: float = 0.90
@@ -552,6 +555,7 @@ class TrialConfig:
             ),
             shuffle_buffer_size=int(config.get("shuffle_buffer_size", 20_000)),
             shard_size=int(config.get("shard_size", 1000)),
+            replay_upgrade_v1_planes=bool(config.get("replay_upgrade_v1_planes", False)),
             shuffle_refresh_interval=int(config.get("shuffle_refresh_interval", 5)),
             shuffle_refresh_shards=int(config.get("shuffle_refresh_shards", 3)),
             shuffle_draw_cap_frac=float(config.get("shuffle_draw_cap_frac", 0.90)),

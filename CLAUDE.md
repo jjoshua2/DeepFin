@@ -80,6 +80,12 @@ killed without training. Tooling:
 - `scripts/probe_policy_targets.py` — policy vs soft-policy divergence
   probe. `scripts/retarget_retrain.py` — offline SF-target retuning from
   the sparse MultiPV shard labels (shard schema v2), no live run needed.
+- `scripts/convert_shards_v2_threats.py` — offline v1→v2_threats shard
+  converter: recomputes the 29 threat planes from the stored input planes
+  (no FENs; `encoding/plane_decode.py` decodes step-0 bitboards, the
+  stored 34 v1 extra planes validate the decode). Idempotent, atomic
+  per shard. The on-the-fly twin is `train.replay_upgrade_v1_planes`
+  (DiskReplayBuffer recomputes at shard load instead of zero-padding).
 - Flag-gated research bets live in `configs/exp_*.yaml` (each header has
   the sweep plan + kill threshold); ALL flags default off and
   `configs/pbt2_small.yaml` stays untouched until a bet clears its bar.

@@ -508,6 +508,7 @@ def _init_replay_buffers(
         shard_dir=replay_shard_dir,
         rng=rng,
         input_planes=input_plane_count(tc.input_extra_features),
+        upgrade_v1_planes=tc.replay_upgrade_v1_planes,
         shuffle_cap=tc.shuffle_buffer_size,
         shard_size=tc.shard_size,
         refresh_interval=tc.shuffle_refresh_interval,
