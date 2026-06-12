@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from chess_anti_engine.replay.shard import (
+    HISTORY_REP_FIX_ARRAY_KEY,
     INPUT_HISTORY_ENCODING_ARRAY_KEY,
     POLICY_ENCODING_ARRAY_KEY,
     _REQUIRED_STORAGE_FIELDS,
@@ -87,7 +88,11 @@ def concat_array_batches(batches: list[dict[str, np.ndarray]]) -> dict[str, np.n
         )
         for k in keys
     }
-    for metadata_key in (INPUT_HISTORY_ENCODING_ARRAY_KEY, POLICY_ENCODING_ARRAY_KEY):
+    for metadata_key in (
+        INPUT_HISTORY_ENCODING_ARRAY_KEY,
+        POLICY_ENCODING_ARRAY_KEY,
+        HISTORY_REP_FIX_ARRAY_KEY,
+    ):
         values: list[object] = []
         missing = False
         for batch in batches:

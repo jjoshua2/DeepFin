@@ -715,6 +715,7 @@ def _build_replay_samples(
                 x_lc0_root=rec.x_lc0_root,
                 relations=getattr(rec, "relations", None),
                 input_history_encoding=state.game.input_history_encoding,
+                history_rep_fix=bool(state.game.history_rep_fix),
                 priority=float(rec.priority),
                 priority_policy_kl=(
                     None if rec.priority_policy_kl is None else float(rec.priority_policy_kl)

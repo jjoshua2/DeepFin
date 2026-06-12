@@ -214,6 +214,7 @@ def test_build_replay_samples_records_producer_input_history_encoding() -> None:
             policy_encoding="az_4672",
             soft_policy_temp=1.0,
             input_history_encoding="lc0_root_legacy_meta",
+            history_rep_fix=False,
         ),
     ))
 

@@ -680,6 +680,13 @@ typedef struct {
     uint64_t hist_occ[CBOARD_HISTORY_MAX][2];  /* color occupancy */
     int8_t hist_turn[CBOARD_HISTORY_MAX];      /* side to move */
     uint8_t hist_castling[CBOARD_HISTORY_MAX]; /* castling rights */
+    uint64_t hist_hash[CBOARD_HISTORY_MAX];    /* hist_hash of each snapshot,
+                                                * recorded while it was the
+                                                * live position. Lets the
+                                                * current-repetition check see
+                                                * the kept window even after
+                                                * hash_stack saturation,
+                                                * without recomputing hashes. */
     int8_t hist_was_rep[CBOARD_HISTORY_MAX];   /* was this snapshot a repetition
                                                 * when it was the live position?
                                                 * Recorded at push time (full
@@ -858,7 +865,21 @@ static void cboard_push(CBoard *b, int from_sq, int to_sq, int promotion) {
          * build), so paying the hash_stack scan with the flag off — every
          * push of every MCTS tree replay — would be pure waste. The slot is
          * still zeroed so a later flag flip can't read a stale value. */
-        b->hist_was_rep[slot] = (int8_t)(g_history_rep_fix ? cboard_is_repetition(b) : 0);
+        int was_rep = 0;
+        if (g_history_rep_fix) {
+            was_rep = cboard_is_repetition(b);
+            /* hash_stack saturation supplement: the stack stops appending
+             * when full (reachable only by pushing past a claimable 50-move
+             * draw, e.g. a GUI-replayed shuffle), so also check the kept
+             * window's recorded hashes. Repeats farther back than the window
+             * inside a saturated run stay undetected — bounded, and confined
+             * to positions already drawn by rule. */
+            for (int k = 0; !was_rep && k < b->hist_len; k++) {
+                if (b->hist_hash[k] == b->hash) was_rep = 1;
+            }
+        }
+        b->hist_was_rep[slot] = (int8_t)was_rep;
+        b->hist_hash[slot] = b->hash;
         b->hist_head = (slot + 1) % CBOARD_HISTORY_MAX;
         if (b->hist_len < CBOARD_HISTORY_MAX)
             b->hist_len++;
@@ -1342,9 +1363,16 @@ static void cboard_fill_lc0_112_root(const CBoard *b, float * restrict out) {
             }
         }
     }
-    /* Current-position repetition (plane 12) is always exact: the live
-     * hash_stack is valid for the current ply regardless of the fix flag. */
-    if (cboard_is_repetition(b)) {
+    /* Current-position repetition (plane 12), identical for both paths.
+     * The live hash_stack covers the reversible run; the kept window's
+     * recorded hashes supplement it for runs that saturated the stack
+     * (the stack stops appending when full), matching the pre-refactor
+     * default path, which also checked the reconstructed window hashes. */
+    int cur_rep = cboard_is_repetition(b);
+    for (int k = 0; !cur_rep && k < b->hist_len; k++) {
+        if (b->hist_hash[k] == b->hash) cur_rep = 1;
+    }
+    if (cur_rep) {
         for (int i = 0; i < 64; i++) out[12*64 + i] = 1.0f;
     }
 

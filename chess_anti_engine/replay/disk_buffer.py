@@ -18,6 +18,7 @@ from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 
 from .buffer import ReplaySample
 from .shard import (
+    HISTORY_REP_FIX_ARRAY_KEY,
     INPUT_HISTORY_ENCODING_ARRAY_KEY,
     POLICY_ENCODING_ARRAY_KEY,
     _OPTIONAL_STORAGE_PAIRS,
@@ -38,7 +39,13 @@ from .shard import (
 )
 
 _ARRAY_FIELD_ORDER = _SHARD_FIELDS
-_SCALAR_METADATA_FIELDS = (INPUT_HISTORY_ENCODING_ARRAY_KEY, POLICY_ENCODING_ARRAY_KEY)
+_SCALAR_METADATA_FIELDS = (
+    INPUT_HISTORY_ENCODING_ARRAY_KEY,
+    POLICY_ENCODING_ARRAY_KEY,
+    # Same encoding name can carry different repetition planes; refuse to
+    # concatenate legacy and rep-fix chunks into one training window.
+    HISTORY_REP_FIX_ARRAY_KEY,
+)
 
 # Lookup: value field name → has-flag field name (derived from shard.py's canonical pairs).
 _VALUE_TO_FLAG = {value: flag for value, flag in _OPTIONAL_STORAGE_PAIRS}

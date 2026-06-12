@@ -191,6 +191,80 @@ def test_server_accumulator_rejects_mixed_history_rep_fix():
         acc.add_upload(samples=[], meta={**meta, "history_rep_fix": False}, now_unix=0.0)
 
 
+def _replay_sample(flag: bool):
+    from chess_anti_engine.replay.buffer import ReplaySample
+
+    return ReplaySample(
+        x=np.zeros((146, 8, 8), dtype=np.float32),
+        policy_target=np.full(4672, 1.0 / 4672, dtype=np.float32),
+        wdl_target=1,
+        input_history_encoding="lc0_root_legacy_meta",
+        history_rep_fix=flag,
+    )
+
+
+def test_replay_arrays_carry_history_rep_fix(tmp_path):
+    """Replay identity: the flag rides the chunk arrays, refuses to mix in
+    the buffer merge, and survives the shard save/load round trip."""
+    from chess_anti_engine.replay.disk_buffer import _concat_sparse_batches
+    from chess_anti_engine.replay.shard import (
+        HISTORY_REP_FIX_ARRAY_KEY,
+        ShardMeta,
+        arrays_to_samples,
+        load_shard_arrays,
+        samples_to_arrays,
+        save_local_shard_arrays,
+    )
+
+    on = samples_to_arrays([_replay_sample(True), _replay_sample(True)])
+    off = samples_to_arrays([_replay_sample(False)])
+    assert str(np.asarray(on[HISTORY_REP_FIX_ARRAY_KEY]).item()) == "true"
+    assert str(np.asarray(off[HISTORY_REP_FIX_ARRAY_KEY]).item()) == "false"
+    with pytest.raises(ValueError, match="mixed ReplaySample history_rep_fix"):
+        samples_to_arrays([_replay_sample(True), _replay_sample(False)])
+
+    # The replay-buffer merge refuses to concatenate legacy and rep-fix chunks.
+    with pytest.raises(ValueError, match="mixed replay metadata"):
+        _concat_sparse_batches([on, off])
+
+    # Disk round trip: persisted as the shard attr, rematerialized on load,
+    # restored onto samples.
+    p = save_local_shard_arrays(
+        tmp_path / "s.zarr", arrs=on,
+        meta=ShardMeta(positions=2, history_rep_fix=True),
+    )
+    arrs, meta = load_shard_arrays(p)
+    assert meta["history_rep_fix"] is True
+    assert all(s.history_rep_fix for s in arrays_to_samples(arrs))
+    # Legacy shard without the attr loads as off.
+    p2 = save_local_shard_arrays(
+        tmp_path / "s2.zarr", arrs=off, meta=ShardMeta(positions=1),
+    )
+    arrs2, _meta2 = load_shard_arrays(p2)
+    assert not any(s.history_rep_fix for s in arrays_to_samples(arrs2))
+
+
+def test_pick_moves_applies_model_rep_fix_flag(monkeypatch):
+    """Same-process arenas alternate models, so each model's flag must be
+    applied before its own moves are encoded — not just at load time."""
+    from chess_anti_engine.model import ModelConfig, build_model
+    from chess_anti_engine.selfplay import match as match_mod
+
+    applied: list[bool] = []
+    monkeypatch.setattr(match_mod.rep_fix, "apply", lambda v: applied.append(bool(v)))
+
+    rng = np.random.default_rng(0)
+    for flag in (True, False):
+        model = build_model(ModelConfig(kind="tiny", history_rep_fix=flag)).eval()
+        applied.clear()  # build_model also applies; isolate the search-time call
+        match_mod.pick_moves_for_boards(
+            model, [chess.Board()], device="cpu", rng=rng,
+            mcts_type="gumbel", mcts_simulations=2, temperature=1.0,
+            c_puct=2.5, gumbel_add_noise=False,
+        )
+        assert applied == [flag]
+
+
 def test_from_board_with_history_sets_per_slot_flags():
     """from_board (opening with move history) must also produce fix-on parity,
     exercising the from_board per-slot population path rather than push."""
