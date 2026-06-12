@@ -17,14 +17,20 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from chess_anti_engine.encoding import input_plane_count
+from chess_anti_engine.encoding.features import (
+    EXTRA_FEATURES_V1,
+    EXTRA_FEATURES_V2_THREATS,
+    extra_feature_plane_count,
+)
 from chess_anti_engine.encoding.plane_decode import recompute_extra_planes
 
 from .shard import INPUT_HISTORY_ENCODING_ARRAY_KEY
 
-V1_INPUT_PLANES = 146
-V2_INPUT_PLANES = 175
-_V1_EXTRA = 34
-_LC0_PLANES = 112
+V1_INPUT_PLANES = input_plane_count(EXTRA_FEATURES_V1)          # 146
+V2_INPUT_PLANES = input_plane_count(EXTRA_FEATURES_V2_THREATS)  # 175
+_V1_EXTRA = extra_feature_plane_count(EXTRA_FEATURES_V1)        # 34
+_LC0_PLANES = V1_INPUT_PLANES - _V1_EXTRA                       # 112
 # fp16 storage quantizes the float32 extra planes; every plane value lies
 # in [-1, 1] where fp16 spacing is <= 2^-10, so 2e-3 passes round-trip
 # noise while any decode error (wrong square/POV/EP) lands far outside.
@@ -51,18 +57,19 @@ def _validated_threat_block(
     recomputed: np.ndarray,
     *,
     label: str,
-) -> np.ndarray:
+) -> tuple[np.ndarray, np.ndarray]:
     """Append-block for one array, validated against its stored v1 planes.
 
     Rows whose stored extra block is all-zero (encode-time feature dropout
     in ancient shards, or unflagged all-zero optional rows) get an
     all-zero threat block — matching the dropout convention of zeroing
-    the whole extra block — and are excluded from validation.
+    the whole extra block — and are excluded from validation. Returns
+    ``(block, live_row_mask)``.
     """
     stored_v1 = np.asarray(stored[:, _LC0_PLANES:V1_INPUT_PLANES], dtype=np.float32)
-    live = stored_v1.reshape(stored_v1.shape[0], -1).any(axis=1)
+    live = np.any(stored_v1, axis=(1, 2, 3))
     diff = np.abs(recomputed[:, :_V1_EXTRA] - stored_v1)
-    bad = live & (diff.reshape(diff.shape[0], -1).max(axis=1) > _VALIDATE_ATOL)
+    bad = live & (np.max(diff, axis=(1, 2, 3), initial=0.0) > _VALIDATE_ATOL)
     if bad.any():
         row = int(np.flatnonzero(bad)[0])
         plane = int(np.unravel_index(np.argmax(diff[row]), diff[row].shape)[0])
@@ -74,7 +81,7 @@ def _validated_threat_block(
         )
     block = recomputed[:, _V1_EXTRA:].astype(stored.dtype)
     block[~live] = 0
-    return block
+    return block, live
 
 
 def upgrade_arrays_to_v2_threats(
@@ -100,11 +107,10 @@ def upgrade_arrays_to_v2_threats(
         history_encoding = chunk_history_encoding(arrs)
 
     recomputed = recompute_extra_planes(x, history_encoding)
-    x_block = _validated_threat_block(x, recomputed, label="x")
+    x_block, x_live = _validated_threat_block(x, recomputed, label="x")
     out = dict(arrs)
     out["x"] = np.concatenate([x, x_block], axis=1)
-    stored_v1 = x[:, _LC0_PLANES:V1_INPUT_PLANES]
-    dropout_rows = int(np.sum(~stored_v1.reshape(stored_v1.shape[0], -1).any(axis=1)))
+    dropout_rows = int(np.sum(~x_live))
 
     x_root = arrs.get("x_lc0_root")
     if x_root is not None:
@@ -117,7 +123,7 @@ def upgrade_arrays_to_v2_threats(
         # Same position, same side-to-move frame ⇒ same extra block; the
         # recompute from x carries over. Unflagged rows are stored as
         # zeros and keep a zero threat block via the all-zero gate.
-        root_block = _validated_threat_block(x_root, recomputed, label="x_lc0_root")
+        root_block, _ = _validated_threat_block(x_root, recomputed, label="x_lc0_root")
         out["x_lc0_root"] = np.concatenate([x_root, root_block], axis=1)
 
     return out, UpgradeStats(

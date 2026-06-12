@@ -265,8 +265,13 @@ class DiskReplayBuffer:
             upgraded, _stats = upgrade_arrays_to_v2_threats(arrs)
         except ValueError as exc:
             self._upgrade_failures += 1
-            if self._upgrade_failures <= 3:
-                print(f"[replay] v2_threats upgrade failed, zero-padding chunk: {exc}")
+            # Log the first few in full, then a periodic cumulative count so a
+            # systematic decode failure stays visible instead of going quiet.
+            if self._upgrade_failures <= 3 or self._upgrade_failures % 50 == 0:
+                print(
+                    f"[replay] v2_threats upgrade failed "
+                    f"({self._upgrade_failures} chunk(s) so far), zero-padding: {exc}"
+                )
             return arrs
         return upgraded
 

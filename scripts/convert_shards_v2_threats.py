@@ -124,12 +124,6 @@ def main(argv: list[str] | None = None) -> int:
 
     shards = _collect_shards(args.inputs)
     if args.out is not None:
-        args.out.mkdir(parents=True, exist_ok=True)
-    tasks = [
-        (p, (args.out / p.name) if args.out is not None else None, args.history_encoding)
-        for p in shards
-    ]
-    if args.out is not None:
         # Distinct inputs (e.g. several replay dirs) reuse basenames like
         # shard_000000.zarr; flattening them into one --out dir would
         # silently overwrite earlier conversions. Refuse instead.
@@ -140,6 +134,11 @@ def main(argv: list[str] | None = None) -> int:
                 f"({', '.join(sorted(dupes)[:3])}{', ...' if len(dupes) > 3 else ''}); "
                 f"convert one input directory per --out run"
             )
+        args.out.mkdir(parents=True, exist_ok=True)
+    tasks = [
+        (p, (args.out / p.name) if args.out is not None else None, args.history_encoding)
+        for p in shards
+    ]
     if args.dry_run:
         for p in shards:
             planes = _stored_planes(p)

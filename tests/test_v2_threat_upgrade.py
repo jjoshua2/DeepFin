@@ -159,6 +159,16 @@ def test_upgrade_noop_on_v2_chunk_and_rejects_unknown_widths():
         upgrade_arrays_to_v2_threats(bad)
 
 
+def test_upgrade_handles_empty_chunk():
+    x = np.zeros((0, V1_INPUT_PLANES, 8, 8), dtype=np.float16)
+    out, stats = upgrade_arrays_to_v2_threats(
+        {"x": x, "x_lc0_root": x, "_input_history_encoding": np.asarray(LC0_HISTORY_LEGACY)},
+    )
+    assert out["x"].shape == (0, V2_INPUT_PLANES, 8, 8)
+    assert out["x_lc0_root"].shape == (0, V2_INPUT_PLANES, 8, 8)
+    assert stats.upgraded_rows == 0 and stats.dropout_rows == 0
+
+
 def test_upgrade_validation_rejects_corrupted_planes():
     boards = _game_positions()[:4]
     x = _encode_rows(boards, LC0_HISTORY_LEGACY, "v1")
