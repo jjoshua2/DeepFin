@@ -478,6 +478,15 @@ static PyObject* PyCBoard_push_index(PyCBoard *self, PyObject *args) {
         return NULL;
     }
     PolicyMove pm = POLICY_LUT[self->board.turn][policy_index];
+    if (pm.from_sq < 0 || pm.from_sq > 63 || pm.to_sq < 0 || pm.to_sq > 63) {
+        /* Unused LUT slot (memset to -1): the move points off-board, so
+         * probing occupancy with it would shift by a negative square. */
+        PyErr_Format(
+            PyExc_ValueError,
+            "policy_index %d does not decode to an on-board move for side %d",
+            policy_index, self->board.turn);
+        return NULL;
+    }
     if (piece_type_at(&self->board, pm.from_sq) < 0) {
         PyErr_Format(
             PyExc_ValueError,
