@@ -23,6 +23,7 @@ class _BufferedUpload:
     model_sha: str | None = None
     model_step: int | None = None
     input_history_encoding: str | None = None
+    history_rep_fix: bool | None = None
     games: int = 0
     positions: int = 0
     w: int = 0
@@ -134,6 +135,7 @@ def _buffer_add_completed_game(
             int(buf.positions), new_positions, int(max_positions),
         )
         return
+    incoming_rep_fix = bool(getattr(game_batch, "history_rep_fix", False))
     if buf.positions > 0:
         game_input_history = getattr(game_batch, "input_history_encoding", None)
         incoming_history = (
@@ -149,16 +151,23 @@ def _buffer_add_completed_game(
                 and buf.input_history_encoding is not None
                 and str(buf.input_history_encoding) != incoming_history
             )
+            or (
+                buf.history_rep_fix is not None
+                and bool(buf.history_rep_fix) != incoming_rep_fix
+            )
         ):
             raise ValueError("buffered upload model metadata mismatch")
         if incoming_history is not None and buf.input_history_encoding is None:
             buf.input_history_encoding = incoming_history
+        if buf.history_rep_fix is None:
+            buf.history_rep_fix = incoming_rep_fix
     else:
         buf.model_sha = str(model_sha)
         buf.model_step = int(model_step)
         game_input_history = getattr(game_batch, "input_history_encoding", None)
         if game_input_history is not None:
             buf.input_history_encoding = normalize_lc0_history_encoding(str(game_input_history))
+        buf.history_rep_fix = incoming_rep_fix
     if buf.first_buffered_at_s is None:
         buf.first_buffered_at_s = float(now_s)
     buf.samples.extend(game_batch.samples)
@@ -264,6 +273,7 @@ def _flush_upload_buffer_to_pending(
         model_sha256=str(model_sha),
         model_step=int(buf.model_step),
         input_history_encoding=buf.input_history_encoding,
+        history_rep_fix=bool(buf.history_rep_fix or False),
         games=int(buf.games),
         positions=int(buf.positions),
         wins=int(buf.w),

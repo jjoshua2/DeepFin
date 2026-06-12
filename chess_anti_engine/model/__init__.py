@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import torch
 
 from chess_anti_engine.encoding import encode_position
+from chess_anti_engine.encoding import rep_fix
 from chess_anti_engine.encoding.features import (
     EXTRA_FEATURES_V1,
     RELATION_COUNT,
@@ -25,7 +26,9 @@ from .transformer import ChessNet, TransformerConfig
 # misrepresent. Trainer embeds this version when saving; the UCI loader
 # rejects checkpoints with a higher version AND rejects unknown keys at
 # the same version — both prevent silent architecture mismatch on skew.
-ARCH_SCHEMA_VERSION = 16
+# v17: history_rep_fix (defaulting it would silently feed a rep-fix-trained
+# model legacy repetition planes at eval time).
+ARCH_SCHEMA_VERSION = 17
 
 
 @dataclass
@@ -48,6 +51,11 @@ class ModelConfig:
     use_deepnorm: bool = False
     policy_encoding: str = POLICY_ENCODING_AZ_4672
     input_history_encoding: str = LC0_HISTORY_LEGACY
+    # Gated candidate (see encoding/rep_fix.py): the model was trained on
+    # corrected lc0-root repetition planes, so eval-time encoding must apply
+    # the same fix. Part of checkpoint/manifest identity — a legacy default
+    # would silently feed such a model legacy planes.
+    history_rep_fix: bool = False
     input_extra_features: str = EXTRA_FEATURES_V1
     use_dynamic_relations: bool = False
     dynamic_relation_count: int = 5
@@ -103,6 +111,7 @@ def model_config_from_manifest_dict(mc: dict) -> ModelConfig:
         use_deepnorm=bool(mc.get("use_deepnorm", False)),
         policy_encoding=normalize_policy_encoding(mc.get("policy_encoding", POLICY_ENCODING_AZ_4672)),
         input_history_encoding=normalize_lc0_history_encoding(mc.get("input_history_encoding", LC0_HISTORY_LEGACY)),
+        history_rep_fix=bool(mc.get("history_rep_fix", False)),
         input_extra_features=normalize_extra_features_encoding(mc.get("input_extra_features", EXTRA_FEATURES_V1)),
         use_dynamic_relations=bool(mc.get("use_dynamic_relations", False)),
         dynamic_relation_count=int(mc.get("dynamic_relation_count", 5)),
@@ -173,6 +182,7 @@ def model_config_from_flat_config(
         input_history_encoding=normalize_lc0_history_encoding(
             cfg.get("input_history_encoding", LC0_HISTORY_LEGACY)
         ),
+        history_rep_fix=bool(cfg.get("history_rep_fix", False)),
         input_extra_features=normalize_extra_features_encoding(
             cfg.get("input_extra_features", EXTRA_FEATURES_V1)
         ),
@@ -234,6 +244,7 @@ def model_config_to_manifest_dict(cfg: ModelConfig) -> dict:
         "use_deepnorm": bool(cfg.use_deepnorm),
         "policy_encoding": normalize_policy_encoding(cfg.policy_encoding),
         "input_history_encoding": normalize_lc0_history_encoding(cfg.input_history_encoding),
+        "history_rep_fix": bool(cfg.history_rep_fix),
         "input_extra_features": normalize_extra_features_encoding(cfg.input_extra_features),
         "use_dynamic_relations": bool(cfg.use_dynamic_relations),
         "dynamic_relation_count": int(cfg.dynamic_relation_count),
@@ -272,8 +283,16 @@ def infer_input_planes(input_extra_features: str | None = None) -> int:
 def _attach_runtime_model_metadata(model: torch.nn.Module, cfg: ModelConfig) -> torch.nn.Module:
     setattr(model, "policy_encoding", normalize_policy_encoding(cfg.policy_encoding))
     setattr(model, "input_history_encoding", normalize_lc0_history_encoding(cfg.input_history_encoding))
+    setattr(model, "history_rep_fix", bool(cfg.history_rep_fix))
     setattr(model, "input_extra_features", normalize_extra_features_encoding(cfg.input_extra_features))
     setattr(model, "use_dynamic_relations", bool(cfg.use_dynamic_relations))
+    # The repetition-plane fix is process-global in the C encoders, so apply
+    # it here — the one chokepoint every loader (trainer, worker, UCI, arena,
+    # inference) passes through. Selfplay re-applies per batch from
+    # GameConfig with the same trial value. Two models with different flag
+    # values cannot share a process; cross-encoding arenas already run each
+    # side as its own engine subprocess.
+    rep_fix.apply(bool(cfg.history_rep_fix))
     return model
 
 

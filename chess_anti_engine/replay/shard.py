@@ -444,6 +444,10 @@ class ShardMeta:
     model_sha256: str | None = None
     model_step: int | None = None
     input_history_encoding: str | None = None
+    # Whether the gated repetition-plane fix was active during encoding.
+    # Absent in shards from before the field existed, which provably means
+    # off — readers should treat None as False.
+    history_rep_fix: bool | None = None
     policy_encoding: str | None = None
     policy_size: int | None = None
     games: int | None = None

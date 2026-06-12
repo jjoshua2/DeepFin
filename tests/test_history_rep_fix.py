@@ -7,6 +7,7 @@ positions where an irreversible move cleared the C hash_stack.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Any, cast
 
 import chess
 import numpy as np
@@ -97,6 +98,95 @@ def test_fix_on_matches_python_over_random_games():
                 c = encode_cboard(cb, input_history_encoding=mode, input_extra_features="v1")
                 p = encode_position(b, input_history_encoding=mode, input_extra_features="v1")
                 assert np.array_equal(c, p), f"g{g} ply{ply} {mode}: fix-on diverged"
+
+
+def test_exp_config_passes_yaml_selfplay_allowlist():
+    """configs/exp_repetition_fix.yaml must flatten — history_rep_fix has to be
+    in the selfplay: key allowlist or the advertised gated config can't run."""
+    from pathlib import Path
+
+    from chess_anti_engine.utils.config_yaml import (
+        flatten_run_config_defaults,
+        load_yaml_file,
+    )
+
+    cfg_path = Path(__file__).resolve().parent.parent / "configs" / "exp_repetition_fix.yaml"
+    flat = flatten_run_config_defaults(load_yaml_file(str(cfg_path)))
+    assert flat["history_rep_fix"] is True
+
+
+def test_model_config_persists_history_rep_fix():
+    """The flag is model identity: it must survive the manifest round trip and
+    be applied to the process-global encoder state when the model is built."""
+    from chess_anti_engine.model import (
+        ModelConfig,
+        build_model,
+        model_config_from_manifest_dict,
+        model_config_to_manifest_dict,
+    )
+
+    cfg = ModelConfig(kind="tiny", history_rep_fix=True)
+    md = model_config_to_manifest_dict(cfg)
+    assert md["history_rep_fix"] is True
+    assert model_config_from_manifest_dict(md).history_rep_fix is True
+    # Absent key (pre-fix manifest) means off.
+    assert model_config_from_manifest_dict({}).history_rep_fix is False
+
+    model = build_model(cfg)
+    assert model.history_rep_fix is True
+    # build_model must have applied the flag to the C encoders, so a
+    # rep-fix-trained checkpoint evaluates on the planes it was trained on.
+    cb, b = _build(_DEEP_REP_GAME)
+    c = encode_cboard(cb, input_history_encoding="lc0_root_legacy_meta", input_extra_features="v1")
+    p = encode_position(b, input_history_encoding="lc0_root_legacy_meta", input_extra_features="v1")
+    assert np.array_equal(c, p), "build_model did not apply history_rep_fix"
+
+
+def test_shard_meta_and_upload_buffer_persist_history_rep_fix():
+    """Shard identity: the flag is recorded in ShardMeta and mixed-flag game
+    batches must not silently merge into one upload buffer."""
+    from chess_anti_engine.replay.shard import ShardMeta
+    from chess_anti_engine.selfplay.state import CompletedGameBatch
+    from chess_anti_engine.worker_buffer import (
+        _buffer_add_completed_game,
+        _BufferedUpload,
+    )
+
+    assert ShardMeta(history_rep_fix=True).history_rep_fix is True
+    # Pre-field shard dicts load with the flag unset (provably off).
+    legacy_meta: dict[str, Any] = {"positions": 1}
+    assert ShardMeta(**legacy_meta).history_rep_fix is None
+
+    def batch(flag: bool) -> CompletedGameBatch:
+        return CompletedGameBatch(
+            samples=cast("list[Any]", [object()]),  # only len() is used
+            input_history_encoding="lc0_root_legacy_meta",
+            history_rep_fix=flag,
+            positions=1,
+        )
+
+    buf = _BufferedUpload()
+    _buffer_add_completed_game(
+        buf=buf, game_batch=batch(True), now_s=0.0, model_sha="sha", model_step=1,
+    )
+    assert buf.history_rep_fix is True
+    with pytest.raises(ValueError, match="metadata mismatch"):
+        _buffer_add_completed_game(
+            buf=buf, game_batch=batch(False), now_s=0.0, model_sha="sha", model_step=1,
+        )
+
+
+def test_server_accumulator_rejects_mixed_history_rep_fix():
+    from chess_anti_engine.server.app import _BufferedUploadAccumulator
+
+    acc = _BufferedUploadAccumulator(
+        trial_id=None, model_sha256="sha", created_at_unix=0.0, last_update_unix=0.0,
+    )
+    meta = {"input_history_encoding": "lc0_root_legacy_meta", "history_rep_fix": True}
+    acc.add_upload(samples=[], meta=meta, now_unix=0.0)
+    assert acc.history_rep_fix is True
+    with pytest.raises(ValueError, match="mixed history_rep_fix"):
+        acc.add_upload(samples=[], meta={**meta, "history_rep_fix": False}, now_unix=0.0)
 
 
 def test_from_board_with_history_sets_per_slot_flags():

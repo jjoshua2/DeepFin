@@ -241,6 +241,7 @@ _TOPOLOGY_KEYS = frozenset({
     "use_deepnorm",
     "policy_encoding",
     "input_history_encoding",
+    "history_rep_fix",
     "input_extra_features",
     "use_dynamic_relations",
     "dynamic_relation_count",

@@ -143,6 +143,23 @@ def test_build_selfplay_configs_uses_manifest_policy_and_history_encoding() -> N
     assert game_cfg.input_history_encoding == "lc0_root_legacy_meta"
 
 
+def test_build_selfplay_configs_consumes_history_rep_fix() -> None:
+    """The published history_rep_fix flag must reach the worker GameConfig —
+    otherwise external workers silently record legacy repetition planes."""
+    session = _bare_worker_session()
+
+    cfgs, _sf_args = WorkerSession._build_selfplay_configs(
+        session, {"history_rep_fix": True},
+    )
+    assert cfgs["game"].history_rep_fix is True
+
+    cfgs, _sf_args = WorkerSession._build_selfplay_configs(session, {})
+    assert cfgs["game"].history_rep_fix is False
+
+    # Flipping the flag must restart the selfplay session.
+    assert "history_rep_fix" in WorkerSession._RECO_RESTART_KEYS
+
+
 def test_encoding_recommendation_changes_restart_selfplay_session() -> None:
     session = _bare_worker_session()
     old = {

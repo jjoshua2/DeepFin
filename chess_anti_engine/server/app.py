@@ -197,6 +197,9 @@ class _BufferedUploadAccumulator:
     model_step: int | None = None
     input_history_encoding: str | None = None
     input_history_unknown_seen: bool = False
+    # None until the first upload; absent in shard meta means the flag
+    # predates the field, which provably means off.
+    history_rep_fix: bool | None = None
     # Disk-resident extracted shards that contributed to this accumulator and
     # have NOT yet been folded into a compacted shard. Deleted only after the
     # compacted shard has been written to disk so a crash mid-flush leaves the
@@ -257,6 +260,14 @@ class _BufferedUploadAccumulator:
                     "cannot compact uploads with mixed input_history_encoding "
                     f"{self.input_history_encoding!r} and {history!r}"
                 )
+        rep_fix = bool(meta.get("history_rep_fix") or False)
+        if self.history_rep_fix is None:
+            self.history_rep_fix = rep_fix
+        elif bool(self.history_rep_fix) != rep_fix:
+            raise ValueError(
+                "cannot compact uploads with mixed history_rep_fix "
+                f"{bool(self.history_rep_fix)} and {rep_fix}"
+            )
         _merge_outcome_stats(self.outcome_stats, meta.get("outcome_stats"))
         self.last_update_unix = float(now_unix)
 
@@ -295,6 +306,7 @@ def _flush_buffered_upload_to_inbox(
         model_sha256=str(acc.model_sha256) or None,
         model_step=acc.model_step,
         input_history_encoding=acc.input_history_encoding,
+        history_rep_fix=bool(acc.history_rep_fix or False),
         games=int(acc.games),
         positions=int(acc.positions),
         wins=int(acc.wins),
@@ -484,7 +496,10 @@ def create_app(
 
     def _upload_history_acc_key(meta: dict[str, Any]) -> str:
         raw = meta.get("input_history_encoding")
-        return "<missing>" if raw is None else str(raw)
+        history = "<missing>" if raw is None else str(raw)
+        # history_rep_fix changes the encoded planes under the same history
+        # mode, so it is part of compaction identity (absent means off).
+        return f"{history}|repfix={bool(meta.get('history_rep_fix') or False)}"
 
     def _invalidate_queued_games_cache(trial_id: str | None) -> None:
         with queued_games_cache_lock:
