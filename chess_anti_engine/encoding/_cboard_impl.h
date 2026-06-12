@@ -780,6 +780,14 @@ static inline int cboard_move_is_zeroing(const CBoard *b, int from_sq, int to_sq
 }
 
 static void cboard_push(CBoard *b, int from_sq, int to_sq, int promotion) {
+    if (from_sq < 0 || from_sq > 63 || to_sq < 0 || to_sq > 63) {
+        /* Off-board square — e.g. the -1 sentinel from an unused POLICY_LUT
+         * slot. sq_bit's shift on it is undefined behaviour, so bail before
+         * touching either square. The Python boundary (PyCBoard_push_index)
+         * validates and raises before reaching here; this is the C-level UB
+         * floor for any other caller. */
+        return;
+    }
     int us = b->turn;
     int them = 1 - us;
     uint64_t from_bit = sq_bit(from_sq);
@@ -789,9 +797,7 @@ static void cboard_push(CBoard *b, int from_sq, int to_sq, int promotion) {
     if (moving_piece < 0) {
         /* No piece on the source square — a malformed push (e.g. an index
          * decoded against the wrong position). Indexing ZOBRIST_PIECE with
-         * the -1 sentinel is undefined behaviour, so bail out instead. The
-         * Python boundary (PyCBoard_push_index) validates and raises before
-         * reaching here; this is the C-level UB floor for any other caller. */
+         * the -1 sentinel is undefined behaviour, so bail out instead. */
         return;
     }
     int is_capture = (b->occ[them] & to_bit) != 0;
