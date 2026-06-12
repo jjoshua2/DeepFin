@@ -298,6 +298,26 @@ def test_push_index_rejects_move_from_empty_square():
     assert raised, "expected at least one index to decode to an empty source square"
 
 
+def test_from_raw_sanitizes_out_of_range_ep_square():
+    """from_raw must normalize ep_square to the documented -1/0..63 invariant.
+
+    Several C paths shift by ``ep_square`` after only an ``>= 0`` check (e.g.
+    ``1ULL << ep`` in FEN emission), so storing an out-of-range value like 100
+    verbatim — the old behavior — was undefined behaviour downstream. Such
+    values now collapse to "no ep square" at the boundary.
+    """
+    b = chess.Board()
+    for bad_ep in (64, 100, 127, -5):
+        cb = CBoard.from_raw(
+            int(b.pawns), int(b.knights), int(b.bishops),
+            int(b.rooks), int(b.queens), int(b.kings),
+            int(b.occupied_co[chess.WHITE]), int(b.occupied_co[chess.BLACK]),
+            1, 0xF, bad_ep, 0,
+        )
+        assert cb.ep_square is None
+        assert cb.fen().split()[3] == "-"
+
+
 def test_push_index_rejects_unused_lut_slot():
     """push_index of an unused POLICY_LUT slot (off-board move) must raise.
 

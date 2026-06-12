@@ -449,7 +449,7 @@ static PyObject* PyCBoard_from_raw(PyTypeObject *type, PyObject *args) {
     b->occ[BLACK_C] = occ_b;
     b->turn = turn_int ? WHITE_C : BLACK_C;
     b->castling = (uint8_t)castling_int;
-    b->ep_square = (int8_t)ep_sq;
+    b->ep_square = cboard_sanitize_ep(ep_sq);
     b->halfmove_clock = (uint8_t)(hmc > 255 ? 255 : hmc);
 
     b->hash = cboard_compute_hash(b);

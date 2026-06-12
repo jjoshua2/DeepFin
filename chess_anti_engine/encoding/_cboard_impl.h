@@ -685,6 +685,14 @@ typedef struct {
     uint16_t ply;                              /* total half-moves from game start */
 } CBoard;
 
+/* Normalize an untrusted ep-square to the CBoard invariant (-1 or 0..63).
+ * Several paths shift by ep_square after only an `>= 0` check, so an
+ * out-of-range value (e.g. 64..127 through from_raw's int8 cast) would be
+ * undefined behaviour downstream; enforce the invariant at construction. */
+static inline int8_t cboard_sanitize_ep(int sq) {
+    return (int8_t)((sq >= 0 && sq < 64) ? sq : -1);
+}
+
 /* Reverse LUT: policy_index -> (from_sq, to_sq, promotion) in real coordinates.
  * Built once at init time. */
 typedef struct { int8_t from_sq, to_sq, promotion; } PolicyMove;
