@@ -9,7 +9,15 @@ at encode time, making the C encoding bit-identical to python-chess.
 The flag lives as a global in each compiled extension (``_lc0_ext`` for the
 single-board encode path, ``_mcts_tree`` for the batch encoders), so it must be
 set in every loaded module. ``apply`` does that idempotently; selfplay calls it
-from ``play_batch`` based on ``GameConfig.history_rep_fix`` (default off).
+from ``play_batch`` based on ``GameConfig.history_rep_fix`` (default off), and
+``build_model`` applies the checkpoint's value for eval/loading paths.
+
+Ordering contract: apply BEFORE constructing or pushing boards. With the flag
+on, per-slot repetition flags are recorded at push/construction time; that
+recording is skipped while the flag is off (zero cost on the default path) and
+is not retroactively recomputed, so a board built before a flip would encode
+all-clear history repetition planes. Every current call site (batch start,
+model build) precedes board construction.
 """
 from __future__ import annotations
 

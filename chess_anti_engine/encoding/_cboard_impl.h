@@ -852,8 +852,13 @@ static void cboard_push(CBoard *b, int from_sq, int to_sq, int promotion) {
         /* Record whether the position now entering history is a repetition.
          * The live hash_stack is still valid for this position (the current
          * hash is pushed below), so the look-back is complete here — unlike
-         * the encoder's after-the-fact reconstruction. */
-        b->hist_was_rep[slot] = (int8_t)cboard_is_repetition(b);
+         * the encoder's after-the-fact reconstruction. Gated: the flags are
+         * only read when the fix is enabled, and the flag is applied before
+         * boards are constructed (rep_fix.apply at batch start / model
+         * build), so paying the hash_stack scan with the flag off — every
+         * push of every MCTS tree replay — would be pure waste. The slot is
+         * still zeroed so a later flag flip can't read a stale value. */
+        b->hist_was_rep[slot] = (int8_t)(g_history_rep_fix ? cboard_is_repetition(b) : 0);
         b->hist_head = (slot + 1) % CBOARD_HISTORY_MAX;
         if (b->hist_len < CBOARD_HISTORY_MAX)
             b->hist_len++;
@@ -1280,6 +1285,13 @@ static void cboard_fill_lc0_112(const CBoard *b, float * restrict out) {
     for (int i = 0; i < 64; i++) out[111*64 + i] = 1.0f;
 }
 
+/* Set the repetition plane for history step hi (1-based from the current
+ * position). Shared by both encoder paths so the plane math cannot drift. */
+static inline void cboard_set_hist_rep_plane(float * restrict out, int hi) {
+    int plane = (hi + 1) * 13 + 12;
+    for (int i = 0; i < 64; i++) out[plane*64 + i] = 1.0f;
+}
+
 static void cboard_fill_lc0_112_root(const CBoard *b, float * restrict out) {
     /* Planes 0-103: 8 history slots of 12 piece planes + 1 repetition plane. */
     cboard_encode_piece_planes(b, out);
@@ -1299,10 +1311,8 @@ static void cboard_fill_lc0_112_root(const CBoard *b, float * restrict out) {
          * cleared the hash_stack. */
         for (int hi = hist_n - 1; hi >= 0; hi--) {
             int idx = (b->hist_head - 1 - hi + CBOARD_HISTORY_MAX) % CBOARD_HISTORY_MAX;
-            if (b->hist_was_rep[idx]) {
-                int plane = (hi + 1) * 13 + 12;
-                for (int i = 0; i < 64; i++) out[plane*64 + i] = 1.0f;
-            }
+            if (b->hist_was_rep[idx])
+                cboard_set_hist_rep_plane(out, hi);
         }
     } else {
         /* Default path: reconstruct from hash_stack + history hashes. Under-
@@ -1325,10 +1335,8 @@ static void cboard_fill_lc0_112_root(const CBoard *b, float * restrict out) {
             for (int j = 0; j < seen_n; j++) {
                 if (seen[j] == h) { repeated = 1; break; }
             }
-            if (repeated) {
-                int plane = (hi + 1) * 13 + 12;
-                for (int i = 0; i < 64; i++) out[plane*64 + i] = 1.0f;
-            }
+            if (repeated)
+                cboard_set_hist_rep_plane(out, hi);
             if (seen_n < (int)(sizeof(seen) / sizeof(seen[0]))) {
                 seen[seen_n++] = h;
             }

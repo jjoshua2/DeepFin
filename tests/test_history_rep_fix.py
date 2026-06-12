@@ -80,6 +80,9 @@ def test_fix_on_matches_python_on_deep_repetition():
 def test_fix_on_matches_python_over_random_games():
     import random
 
+    # Before any boards exist: per-slot recording follows the ordering
+    # contract (apply before construction/push), like the production paths.
+    rep_fix.apply(True)
     rng = random.Random(2024)
     for g in range(30):
         b = chess.Board()
@@ -94,7 +97,6 @@ def test_fix_on_matches_python_over_random_games():
             if ply % 5:
                 continue
             for mode in PROD_MODES:
-                rep_fix.apply(True)
                 c = encode_cboard(cb, input_history_encoding=mode, input_extra_features="v1")
                 p = encode_position(b, input_history_encoding=mode, input_extra_features="v1")
                 assert np.array_equal(c, p), f"g{g} ply{ply} {mode}: fix-on diverged"

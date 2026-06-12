@@ -422,24 +422,37 @@ static PyObject* PyCBoard_from_board(PyTypeObject *type, PyObject *args) {
          * has the same reversible-state hash; irreversible moves change the
          * piece bitboards permanently, so equal hist-hashes always lie within
          * one reversible run and no halfmove-boundary check is needed. Slots
-         * filled later by cboard_push get their flag recorded there instead. */
-        for (int i = 0; i < n_hist; i++) {
-            uint64_t slot_hash = cboard_hist_hash(
-                b->hist_bb[i], b->hist_occ[i], b->hist_turn[i], b->hist_castling[i]);
-            Py_ssize_t si = stack_len - n_hist + i;  /* this slot's _stack index */
-            int repeated = 0;
-            for (Py_ssize_t j = si - 1; j >= 0 && !repeated; j--) {
-                PyObject *e = PyList_GetItem(stack, j); /* borrowed */
-                if (!e) break;
-                uint64_t e_bb[6], e_occ[2];
-                int e_turn;
-                py_read_hist_bitboards(e, e_bb, e_occ, &e_turn);
-                uint8_t e_cast = 0;
-                if (py_read_castling_mask(e, &e_cast) < 0) PyErr_Clear();
-                if (cboard_hist_hash(e_bb, e_occ, e_turn, e_cast) == slot_hash)
-                    repeated = 1;
+         * filled later by cboard_push get their flag recorded there instead.
+         * Gated like the push-time recording: the flags are only read with
+         * the fix enabled, and the flag is applied before construction, so
+         * with it off this Python-attribute walk is pure waste. Each stack
+         * entry is hashed once (a slot's hash is its own entry's hash) rather
+         * than re-walking the stack per slot. hist_was_rep is already zeroed
+         * by tp_alloc, so the off path leaves valid (all-clear) flags. */
+        if (g_history_rep_fix && n_hist > 0) {
+            uint64_t *stack_hashes =
+                (uint64_t *)malloc((size_t)stack_len * sizeof(uint64_t));
+            if (stack_hashes) {
+                for (Py_ssize_t j = 0; j < stack_len; j++) {
+                    PyObject *e = PyList_GetItem(stack, j); /* borrowed */
+                    uint64_t e_bb[6], e_occ[2];
+                    int e_turn;
+                    uint8_t e_cast = 0;
+                    if (!e) { stack_hashes[j] = 0; continue; }
+                    py_read_hist_bitboards(e, e_bb, e_occ, &e_turn);
+                    if (py_read_castling_mask(e, &e_cast) < 0) PyErr_Clear();
+                    stack_hashes[j] = cboard_hist_hash(e_bb, e_occ, e_turn, e_cast);
+                }
+                for (int i = 0; i < n_hist; i++) {
+                    Py_ssize_t si = stack_len - n_hist + i;  /* slot's _stack index */
+                    int repeated = 0;
+                    for (Py_ssize_t j = si - 1; j >= 0; j--) {
+                        if (stack_hashes[j] == stack_hashes[si]) { repeated = 1; break; }
+                    }
+                    b->hist_was_rep[i] = (int8_t)repeated;
+                }
+                free(stack_hashes);
             }
-            b->hist_was_rep[i] = (int8_t)repeated;
         }
     }
     Py_XDECREF(stack);
