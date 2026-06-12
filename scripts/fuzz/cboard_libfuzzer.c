@@ -104,9 +104,9 @@ static void raw_board(const uint8_t *data, size_t size) {
     b.hash = cboard_compute_hash(&b);
 
     int indices[256];
+    /* Movegen on garbage state is the target; the results are unused. */
     int n = cboard_legal_move_indices(&b, indices, 1);
-    for (int k = 0; k < n && k < 8; k++)
-        ; /* movegen on garbage state is the target; results are unused */
+    (void)n;
     exercise_queries(&b);
     /* Push a handful of self-reported-legal moves on the garbage board. */
     for (size_t i = 68; i + 1 < size && i < 88; i += 2) {
