@@ -318,6 +318,21 @@ def test_from_raw_sanitizes_out_of_range_ep_square():
         assert cb.fen().split()[3] == "-"
 
 
+def test_from_board_sanitizes_out_of_range_ep_square():
+    """from_board must apply the same ep invariant as from_raw.
+
+    python-chess does not validate ``Board.ep_square`` (it is a plain
+    attribute), so a buggy or adversarial caller can hand from_board a board
+    with ep_square=100 and reach the same downstream shifts.
+    """
+    for bad_ep in (64, 100, -5):
+        b = chess.Board()
+        b.ep_square = bad_ep
+        cb = CBoard.from_board(b)
+        assert cb.ep_square is None
+        assert cb.fen().split()[3] == "-"
+
+
 def test_push_index_rejects_unused_lut_slot():
     """push_index of an unused POLICY_LUT slot (off-board move) must raise.
 

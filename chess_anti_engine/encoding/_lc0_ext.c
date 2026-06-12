@@ -333,7 +333,9 @@ static PyObject* PyCBoard_from_board(PyTypeObject *type, PyObject *args) {
     } else {
         long ep = PyLong_AsLong(val);
         if (ep == -1 && PyErr_Occurred()) { Py_DECREF(val); Py_DECREF(self); return NULL; }
-        b->ep_square = (int8_t)ep;
+        /* python-chess does not validate ep_square; enforce the -1/0..63
+         * invariant here like from_raw, or downstream shifts are UB. */
+        b->ep_square = cboard_sanitize_ep((int)ep);
     }
     Py_DECREF(val);
 
