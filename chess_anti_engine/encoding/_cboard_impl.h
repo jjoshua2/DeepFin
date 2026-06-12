@@ -9,6 +9,7 @@
 #define _CBOARD_IMPL_H
 
 #include <stdint.h>
+#include <stdio.h>   /* snprintf in cboard_to_fen */
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
@@ -383,8 +384,17 @@ typedef struct {
     int king_sq;
 } BoardState;
 
+/* Max legal moves any caller's ``indices`` buffer must hold. A real chess
+ * position has at most 218 legal moves, so this never truncates a reachable
+ * position; it is the buffer size every caller uses (``int indices[256]``)
+ * and the hard cap the generator must not write past. The cap matters only
+ * for non-chess bitboards reaching the generator via ``from_raw`` (arbitrary
+ * Python input), where an unbounded write would overflow the caller stack. */
+#define CBOARD_MAX_LEGAL_MOVES 256
+
 /* Generate all pseudo-legal moves and filter by legality.
- * Writes policy indices to `indices`, returns count. */
+ * Writes policy indices to `indices` (capacity CBOARD_MAX_LEGAL_MOVES),
+ * returns count. */
 static int generate_legal_move_indices(const BoardState *bs, int *indices) {
     int count = 0;
     int is_white = bs->turn;
@@ -401,7 +411,7 @@ static int generate_legal_move_indices(const BoardState *bs, int *indices) {
     int _from_o = orient_sq(from_sq, is_white); \
     int _to_o = orient_sq(to_sq, is_white); \
     int _idx = move_to_policy_index(_from_o, _to_o, promo); \
-    if (_idx >= 0) indices[count++] = _idx; \
+    if (_idx >= 0 && count < CBOARD_MAX_LEGAL_MOVES) indices[count++] = _idx; \
 } while(0)
 
     /* Test if king would be in check after moving piece from `from` to `to`.
@@ -674,6 +684,14 @@ typedef struct {
     int8_t hist_head;                          /* circular buffer write index */
     uint16_t ply;                              /* total half-moves from game start */
 } CBoard;
+
+/* Normalize an untrusted ep-square to the CBoard invariant (-1 or 0..63).
+ * Several paths shift by ep_square after only an `>= 0` check, so an
+ * out-of-range value (e.g. 64..127 through from_raw's int8 cast) would be
+ * undefined behaviour downstream; enforce the invariant at construction. */
+static inline int8_t cboard_sanitize_ep(int sq) {
+    return (int8_t)((sq >= 0 && sq < 64) ? sq : -1);
+}
 
 /* Reverse LUT: policy_index -> (from_sq, to_sq, promotion) in real coordinates.
  * Built once at init time. */

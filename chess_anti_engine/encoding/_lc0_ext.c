@@ -333,7 +333,9 @@ static PyObject* PyCBoard_from_board(PyTypeObject *type, PyObject *args) {
     } else {
         long ep = PyLong_AsLong(val);
         if (ep == -1 && PyErr_Occurred()) { Py_DECREF(val); Py_DECREF(self); return NULL; }
-        b->ep_square = (int8_t)ep;
+        /* python-chess does not validate ep_square; enforce the -1/0..63
+         * invariant here like from_raw, or downstream shifts are UB. */
+        b->ep_square = cboard_sanitize_ep((int)ep);
     }
     Py_DECREF(val);
 
@@ -449,7 +451,7 @@ static PyObject* PyCBoard_from_raw(PyTypeObject *type, PyObject *args) {
     b->occ[BLACK_C] = occ_b;
     b->turn = turn_int ? WHITE_C : BLACK_C;
     b->castling = (uint8_t)castling_int;
-    b->ep_square = (int8_t)ep_sq;
+    b->ep_square = cboard_sanitize_ep(ep_sq);
     b->halfmove_clock = (uint8_t)(hmc > 255 ? 255 : hmc);
 
     b->hash = cboard_compute_hash(b);
