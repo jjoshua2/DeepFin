@@ -83,6 +83,19 @@ def _check_state(cb: CBoard, b: chess.Board, ctx: str, moves: list[str]) -> Fail
         ), moves)
     if bool(cb.is_checkmate()) != b.is_checkmate() or bool(cb.is_stalemate()) != b.is_stalemate():
         return Failure(ctx, f"terminal flag mismatch fen={b.fen()}", moves)
+    # Full game-over parity, not just mate/stalemate: the C board treats
+    # reached claimable draws (50-move counter at 100, third repetition on the
+    # board, insufficient material) as terminal for search/selfplay. NOT
+    # b.is_game_over(claim_draw=True): that includes python's claim-by-move
+    # lookahead (a legal move that WOULD create the third repetition), which
+    # the C terminal deliberately lacks — only realized state counts.
+    c_over = bool(cb.is_game_over())
+    py_over = b.is_game_over() or b.is_repetition(3) or b.is_fifty_moves()
+    if c_over != py_over:
+        return Failure(ctx, (
+            f"is_game_over mismatch fen={b.fen()} c={c_over} py={py_over} "
+            f"(py = is_game_over or is_repetition(3) or is_fifty_moves)"
+        ), moves)
     return None
 
 
