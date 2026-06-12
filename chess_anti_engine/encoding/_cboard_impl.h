@@ -680,6 +680,21 @@ typedef struct {
     uint64_t hist_occ[CBOARD_HISTORY_MAX][2];  /* color occupancy */
     int8_t hist_turn[CBOARD_HISTORY_MAX];      /* side to move */
     uint8_t hist_castling[CBOARD_HISTORY_MAX]; /* castling rights */
+    uint64_t hist_hash[CBOARD_HISTORY_MAX];    /* hist_hash of each snapshot,
+                                                * recorded while it was the
+                                                * live position. Lets the
+                                                * current-repetition check see
+                                                * the kept window even after
+                                                * hash_stack saturation,
+                                                * without recomputing hashes. */
+    int8_t hist_was_rep[CBOARD_HISTORY_MAX];   /* was this snapshot a repetition
+                                                * when it was the live position?
+                                                * Recorded at push time (full
+                                                * look-back valid then) so the
+                                                * encoder need not reconstruct it
+                                                * from the since-cleared
+                                                * hash_stack. Used only when
+                                                * g_history_rep_fix is enabled. */
     int8_t hist_len;                           /* 0..7 valid history entries */
     int8_t hist_head;                          /* circular buffer write index */
     uint16_t ply;                              /* total half-moves from game start */
@@ -797,6 +812,17 @@ static inline int cboard_move_is_zeroing(const CBoard *b, int from_sq, int to_sq
     return 0;
 }
 
+/* Gated candidate flag (default off → byte-identical encoding). When enabled,
+ * cboard_fill_lc0_112_root reads per-slot repetition flags recorded at push
+ * time instead of reconstructing them from the hash_stack, which is cleared on
+ * irreversible moves and so under-reports repetitions older than the kept
+ * window. Set per-process via each module's ``set_history_rep_fix`` hook; every
+ * .so including this header keeps its own copy. */
+static int g_history_rep_fix = 0;
+
+/* Defined further down; cboard_push records repetition status before mutating. */
+static int cboard_is_repetition(const CBoard *b);
+
 static void cboard_push(CBoard *b, int from_sq, int to_sq, int promotion) {
     if (from_sq < 0 || from_sq > 63 || to_sq < 0 || to_sq > 63) {
         /* Off-board square — e.g. the -1 sentinel from an unused POLICY_LUT
@@ -830,6 +856,30 @@ static void cboard_push(CBoard *b, int from_sq, int to_sq, int promotion) {
         memcpy(b->hist_occ[slot], b->occ, 2 * sizeof(uint64_t));
         b->hist_turn[slot] = b->turn;
         b->hist_castling[slot] = b->castling;
+        /* Record whether the position now entering history is a repetition.
+         * The live hash_stack is still valid for this position (the current
+         * hash is pushed below), so the look-back is complete here — unlike
+         * the encoder's after-the-fact reconstruction. Gated: the flags are
+         * only read when the fix is enabled, and the flag is applied before
+         * boards are constructed (rep_fix.apply at batch start / model
+         * build), so paying the hash_stack scan with the flag off — every
+         * push of every MCTS tree replay — would be pure waste. The slot is
+         * still zeroed so a later flag flip can't read a stale value. */
+        int was_rep = 0;
+        if (g_history_rep_fix) {
+            was_rep = cboard_is_repetition(b);
+            /* hash_stack saturation supplement: the stack stops appending
+             * when full (reachable only by pushing past a claimable 50-move
+             * draw, e.g. a GUI-replayed shuffle), so also check the kept
+             * window's recorded hashes. Repeats farther back than the window
+             * inside a saturated run stay undetected — bounded, and confined
+             * to positions already drawn by rule. */
+            for (int k = 0; !was_rep && k < b->hist_len; k++) {
+                if (b->hist_hash[k] == b->hash) was_rep = 1;
+            }
+        }
+        b->hist_was_rep[slot] = (int8_t)was_rep;
+        b->hist_hash[slot] = b->hash;
         b->hist_head = (slot + 1) % CBOARD_HISTORY_MAX;
         if (b->hist_len < CBOARD_HISTORY_MAX)
             b->hist_len++;
@@ -1256,6 +1306,13 @@ static void cboard_fill_lc0_112(const CBoard *b, float * restrict out) {
     for (int i = 0; i < 64; i++) out[111*64 + i] = 1.0f;
 }
 
+/* Set the repetition plane for history step hi (1-based from the current
+ * position). Shared by both encoder paths so the plane math cannot drift. */
+static inline void cboard_set_hist_rep_plane(float * restrict out, int hi) {
+    int plane = (hi + 1) * 13 + 12;
+    for (int i = 0; i < 64; i++) out[plane*64 + i] = 1.0f;
+}
+
 static void cboard_fill_lc0_112_root(const CBoard *b, float * restrict out) {
     /* Planes 0-103: 8 history slots of 12 piece planes + 1 repetition plane. */
     cboard_encode_piece_planes(b, out);
@@ -1267,41 +1324,55 @@ static void cboard_fill_lc0_112_root(const CBoard *b, float * restrict out) {
                                        b->turn, dest);
     }
 
-    /* Repetition planes: process the kept history window from oldest to newest.
-     * Seed from hash_stack entries before the kept encoding window so a kept
-     * slot that repeats an older reversible position matches Python
-     * _check_repetitions(). */
-    uint64_t seen[CBOARD_HASH_STACK_MAX + CBOARD_HISTORY_MAX + 1];
-    int seen_n = 0;
     int hist_n = b->hist_len < CBOARD_HISTORY_MAX ? b->hist_len : CBOARD_HISTORY_MAX;
-    int seed_n = b->hash_stack_len - hist_n;
-    if (seed_n < 0) seed_n = 0;
-    for (int i = 0; i < seed_n && seen_n < (int)(sizeof(seen) / sizeof(seen[0])); i++) {
-        seen[seen_n++] = b->hash_stack[i];
-    }
-    for (int hi = hist_n - 1; hi >= 0; hi--) {
-        int idx = (b->hist_head - 1 - hi + CBOARD_HISTORY_MAX) % CBOARD_HISTORY_MAX;
-        uint64_t h = cboard_hist_hash(
-            b->hist_bb[idx], b->hist_occ[idx], b->hist_turn[idx], b->hist_castling[idx]
-        );
-        int repeated = 0;
-        for (int j = 0; j < seen_n; j++) {
-            if (seen[j] == h) { repeated = 1; break; }
+    if (g_history_rep_fix) {
+        /* Candidate path: per-slot repetition flags were recorded at push time
+         * with the full look-back available, so they match Python
+         * _check_repetitions() even across irreversible-move boundaries that
+         * cleared the hash_stack. */
+        for (int hi = hist_n - 1; hi >= 0; hi--) {
+            int idx = (b->hist_head - 1 - hi + CBOARD_HISTORY_MAX) % CBOARD_HISTORY_MAX;
+            if (b->hist_was_rep[idx])
+                cboard_set_hist_rep_plane(out, hi);
         }
-        if (repeated) {
-            int plane = (hi + 1) * 13 + 12;
-            for (int i = 0; i < 64; i++) out[plane*64 + i] = 1.0f;
+    } else {
+        /* Default path: reconstruct from hash_stack + history hashes. Under-
+         * reports slots whose repetition predates a cleared hash_stack window;
+         * preserved as the byte-identical default until the candidate clears
+         * its arena gate. */
+        uint64_t seen[CBOARD_HASH_STACK_MAX + CBOARD_HISTORY_MAX + 1];
+        int seen_n = 0;
+        int seed_n = b->hash_stack_len - hist_n;
+        if (seed_n < 0) seed_n = 0;
+        for (int i = 0; i < seed_n && seen_n < (int)(sizeof(seen) / sizeof(seen[0])); i++) {
+            seen[seen_n++] = b->hash_stack[i];
         }
-        if (seen_n < (int)(sizeof(seen) / sizeof(seen[0]))) {
-            seen[seen_n++] = h;
+        for (int hi = hist_n - 1; hi >= 0; hi--) {
+            int idx = (b->hist_head - 1 - hi + CBOARD_HISTORY_MAX) % CBOARD_HISTORY_MAX;
+            uint64_t h = cboard_hist_hash(
+                b->hist_bb[idx], b->hist_occ[idx], b->hist_turn[idx], b->hist_castling[idx]
+            );
+            int repeated = 0;
+            for (int j = 0; j < seen_n; j++) {
+                if (seen[j] == h) { repeated = 1; break; }
+            }
+            if (repeated)
+                cboard_set_hist_rep_plane(out, hi);
+            if (seen_n < (int)(sizeof(seen) / sizeof(seen[0]))) {
+                seen[seen_n++] = h;
+            }
         }
     }
-    uint64_t cur_hash = cboard_compute_hash(b);
-    int cur_repeated = cboard_is_repetition(b);
-    for (int j = 0; !cur_repeated && j < seen_n; j++) {
-        if (seen[j] == cur_hash) cur_repeated = 1;
+    /* Current-position repetition (plane 12), identical for both paths.
+     * The live hash_stack covers the reversible run; the kept window's
+     * recorded hashes supplement it for runs that saturated the stack
+     * (the stack stops appending when full), matching the pre-refactor
+     * default path, which also checked the reconstructed window hashes. */
+    int cur_rep = cboard_is_repetition(b);
+    for (int k = 0; !cur_rep && k < b->hist_len; k++) {
+        if (b->hist_hash[k] == b->hash) cur_rep = 1;
     }
-    if (cur_repeated) {
+    if (cur_rep) {
         for (int i = 0; i < 64; i++) out[12*64 + i] = 1.0f;
     }
 

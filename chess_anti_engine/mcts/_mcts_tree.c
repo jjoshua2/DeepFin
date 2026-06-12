@@ -4932,7 +4932,21 @@ static PyObject *py_temperature_resample(PyObject *self, PyObject *args) {
 }
 
 
+/* set_history_rep_fix(enabled: bool) -> None. Gated candidate toggle for the
+ * batch encoders' per-slot repetition planes; see g_history_rep_fix in
+ * _cboard_impl.h. Keep in sync with the _lc0_ext setter (each .so has its own
+ * copy of the flag). */
+static PyObject *py_set_history_rep_fix(PyObject *Py_UNUSED(self), PyObject *arg) {
+    int v = PyObject_IsTrue(arg);
+    if (v < 0) return NULL;
+    g_history_rep_fix = v;
+    Py_RETURN_NONE;
+}
+
 static PyMethodDef module_methods[] = {
+    {"set_history_rep_fix", py_set_history_rep_fix, METH_O,
+     "set_history_rep_fix(enabled) -> None. Toggle the lc0-root per-slot "
+     "repetition-plane fix in the batch encoders (gated candidate; default off)."},
     {"batch_process_ply", py_batch_process_ply, METH_VARARGS,
      "batch_process_ply(cboards, pol, wdl, actions, values, probs, "
      "df_enabled, df_q_w, df_pol_s, df_min, df_slope, "

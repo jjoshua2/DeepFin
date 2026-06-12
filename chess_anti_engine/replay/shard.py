@@ -56,6 +56,16 @@ DEFAULT_MAX_SHARD_POSITIONS = 50_000
 DEFAULT_MAX_SHARD_UNCOMPRESSED_BYTES = 1024 * 1024 * 1024
 INPUT_HISTORY_ENCODING_ARRAY_KEY = "_input_history_encoding"
 POLICY_ENCODING_ARRAY_KEY = "_policy_encoding"
+# Scalar "true"/"false" marker (string, so the buffer's str()-based scalar
+# merge compares it safely). Always materialized by samples_to_arrays and
+# load_shard_arrays; a missing shard attr provably means the flag was off.
+HISTORY_REP_FIX_ARRAY_KEY = "_history_rep_fix"
+
+
+def history_rep_fix_from_arrays(arrs: dict[str, Any]) -> bool:
+    """Read the history_rep_fix marker from a chunk dict (absent = off)."""
+    raw = np.asarray(arrs.get(HISTORY_REP_FIX_ARRAY_KEY, np.asarray("false")))
+    return bool(raw.size) and str(raw.reshape(-1)[0]).strip().lower() == "true"
 
 # Server-managed staging dir for crash-recoverable uploads. Lives at
 # ``inbox_root/_pending`` and is replayed by ``server.app.create_app`` on
@@ -277,6 +287,22 @@ def _policy_metadata_from_arrays(arrs: dict[str, Any]) -> tuple[str, int]:
     return policy_encoding, policy_size
 
 
+def _attach_identity_meta_arrays(arrs: dict[str, Any], meta: dict[str, Any]) -> None:
+    """Materialize shard-attr encoding-identity fields as scalar chunk arrays.
+
+    ``history_rep_fix`` is materialized unconditionally (a missing attr
+    provably means off), so every loaded chunk carries the marker and the
+    replay buffer's scalar-metadata merge can hard-fail on mixed encodings.
+    """
+    if meta.get("input_history_encoding") is not None:
+        arrs[INPUT_HISTORY_ENCODING_ARRAY_KEY] = np.asarray(str(meta["input_history_encoding"]))
+    if meta.get("policy_encoding") is not None:
+        arrs[POLICY_ENCODING_ARRAY_KEY] = np.asarray(str(meta["policy_encoding"]))
+    arrs[HISTORY_REP_FIX_ARRAY_KEY] = np.asarray(
+        "true" if bool(meta.get("history_rep_fix") or False) else "false"
+    )
+
+
 def _attach_policy_metadata(arrs: dict[str, Any], meta: dict[str, Any]) -> None:
     policy_encoding, policy_size = _policy_metadata_from_arrays(arrs)
     declared = meta.get("policy_encoding")
@@ -444,6 +470,10 @@ class ShardMeta:
     model_sha256: str | None = None
     model_step: int | None = None
     input_history_encoding: str | None = None
+    # Whether the gated repetition-plane fix was active during encoding.
+    # Absent in shards from before the field existed, which provably means
+    # off — readers should treat None as False.
+    history_rep_fix: bool | None = None
     policy_encoding: str | None = None
     policy_size: int | None = None
     games: int | None = None
@@ -825,6 +855,15 @@ def samples_to_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
         if len(history_values) != n or any(v != first_history for v in history_values[1:]):
             raise ValueError("mixed ReplaySample input_history_encoding values")
         arrs[INPUT_HISTORY_ENCODING_ARRAY_KEY] = np.asarray(first_history)
+    # history_rep_fix is replay identity (same encoding name, different
+    # planes). Always materialized — absent on a sample provably means off —
+    # so the buffer's scalar-metadata merge can hard-fail on mixed chunks.
+    rep_fix_values = {bool(getattr(s, "history_rep_fix", False)) for s in samples}
+    if len(rep_fix_values) > 1:
+        raise ValueError("mixed ReplaySample history_rep_fix values")
+    arrs[HISTORY_REP_FIX_ARRAY_KEY] = np.asarray(
+        "true" if (rep_fix_values and rep_fix_values.pop()) else "false"
+    )
     x_planes = int(arrs["x"].shape[1])
     for spec in _OPTIONAL_FIELD_SPECS:
         if spec.arr == "x_lc0_root":
@@ -1050,6 +1089,7 @@ def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
         raise ValueError(f"{INPUT_HISTORY_ENCODING_ARRAY_KEY} must be scalar or (N,)")
     if input_history.ndim == 1 and input_history.shape != (n,):
         raise ValueError(f"{INPUT_HISTORY_ENCODING_ARRAY_KEY} must be scalar or (N,)")
+    rep_fix_flag = history_rep_fix_from_arrays(arrs)
 
     opt: dict[str, np.ndarray] = {}
     for spec in _OPTIONAL_FIELD_SPECS:
@@ -1069,6 +1109,7 @@ def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
         hist_value = input_history.item() if input_history.ndim == 0 else input_history[i]
         if str(hist_value):
             s.input_history_encoding = str(hist_value)
+        s.history_rep_fix = rep_fix_flag
         if opt["has_x_lc0_root"][i]:
             s.x_lc0_root = _copy_row(opt["x_lc0_root"], i)
         if opt["has_relations"][i]:
@@ -1201,6 +1242,10 @@ def save_local_shard_arrays(
             hist_arr = np.asarray(arrs[INPUT_HISTORY_ENCODING_ARRAY_KEY])
             if hist_arr.size:
                 attrs["input_history_encoding"] = str(hist_arr.reshape(-1)[0])
+        if attrs.get("history_rep_fix") is None and HISTORY_REP_FIX_ARRAY_KEY in arrs:
+            # Buffer-written window shards carry the marker as a chunk array;
+            # persist it as the attr so reloads rematerialize it.
+            attrs["history_rep_fix"] = history_rep_fix_from_arrays(arrs)
         g.attrs.update(attrs)
         compressor = Blosc(cname="zstd", clevel=3, shuffle=Blosc.SHUFFLE)
         for name, value in stored.items():
@@ -1236,10 +1281,7 @@ def load_shard_arrays(
             arrs = {k: np.array(z[k], copy=False) for k in z.files if k != "meta_json"}
             meta_json = z["meta_json"].item() if "meta_json" in z.files else "{}"
         meta = json.loads(str(meta_json)) if meta_json else {}
-        if meta.get("input_history_encoding") is not None:
-            arrs[INPUT_HISTORY_ENCODING_ARRAY_KEY] = np.asarray(str(meta["input_history_encoding"]))
-        if meta.get("policy_encoding") is not None:
-            arrs[POLICY_ENCODING_ARRAY_KEY] = np.asarray(str(meta["policy_encoding"]))
+        _attach_identity_meta_arrays(arrs, meta)
         _attach_policy_metadata(arrs, meta)
         validate_arrays(arrs)
         return arrs, meta
@@ -1247,18 +1289,12 @@ def load_shard_arrays(
     meta = dict(g.attrs.asdict())
     if lazy:
         arrs: dict[str, Any] = {name: g[name] for name in _SHARD_FIELDS if name in g}
-        if meta.get("input_history_encoding") is not None:
-            arrs[INPUT_HISTORY_ENCODING_ARRAY_KEY] = np.asarray(str(meta["input_history_encoding"]))
-        if meta.get("policy_encoding") is not None:
-            arrs[POLICY_ENCODING_ARRAY_KEY] = np.asarray(str(meta["policy_encoding"]))
+        _attach_identity_meta_arrays(arrs, meta)
         _attach_policy_metadata(arrs, meta)
         validate_array_declarations(arrs)
         return arrs, meta
     arrs = {name: np.asarray(g[name]) for name in _SHARD_FIELDS if name in g}
-    if meta.get("input_history_encoding") is not None:
-        arrs[INPUT_HISTORY_ENCODING_ARRAY_KEY] = np.asarray(str(meta["input_history_encoding"]))
-    if meta.get("policy_encoding") is not None:
-        arrs[POLICY_ENCODING_ARRAY_KEY] = np.asarray(str(meta["policy_encoding"]))
+    _attach_identity_meta_arrays(arrs, meta)
     _attach_policy_metadata(arrs, meta)
     validate_arrays(arrs)
     return arrs, meta

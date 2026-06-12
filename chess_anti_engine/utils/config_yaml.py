@@ -137,6 +137,7 @@ _SELFPLAY_KEYS = (
     "diff_focus_slope", "diff_focus_min",
     "categorical_bins", "hlgauss_sigma",
     "record_lc0_root_input",
+    "history_rep_fix",
     "volatility_q_scale", "volatility_fpu", "volatility_anchor",
     "record_relations",
     "record_dense_sf_policy",

@@ -25,6 +25,10 @@ class ReplaySample:
     x_lc0_root: np.ndarray | None = None  # Optional alternate LC0-root input planes.
     relations: np.ndarray | None = None  # Optional (5,64,64) uint8 dynamic relation matrices.
     input_history_encoding: str | None = None
+  # Whether the gated repetition-plane fix was active when x was encoded.
+  # Part of replay identity alongside input_history_encoding: same encoding
+  # name, different planes. Default False matches every pre-fix sample.
+    history_rep_fix: bool = False
 
   # Optional auxiliary targets (for spec completeness; not all are trained yet)
   #

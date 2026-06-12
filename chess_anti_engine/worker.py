@@ -2083,7 +2083,8 @@ class WorkerSession:
         "selfplay_temperature_decay_start_move", "selfplay_temperature_decay_moves",
         "selfplay_temperature_endgame",
         "sf_wdl_use_cp_logistic", "sf_wdl_cp_slope", "sf_wdl_cp_draw_width",
-        "input_history_encoding", "record_lc0_root_input", "record_dense_sf_policy",
+        "input_history_encoding", "record_lc0_root_input", "history_rep_fix",
+        "record_dense_sf_policy",
         # Syzygy knobs affect adjudication + in-search overrides — without a
         # restart, workers keep producing shards under stale TB settings until
         # an unrelated key changes. Flagged by Codex adversarial review.
@@ -2190,6 +2191,7 @@ class WorkerSession:
                 input_history_encoding=str(reco.get("input_history_encoding", "legacy")),
                 input_extra_features=str(reco.get("input_extra_features", "v1")),
                 record_lc0_root_input=bool(reco.get("record_lc0_root_input", False)),
+                history_rep_fix=bool(reco.get("history_rep_fix", False)),
                 record_relations=bool(
                     reco.get("record_relations", reco.get("use_dynamic_relations", False))
                 ),

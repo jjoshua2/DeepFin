@@ -328,6 +328,7 @@ def _build_trial_model_config(tc: TrialConfig) -> ModelConfig:
         use_deepnorm=tc.use_deepnorm,
         policy_encoding=tc.policy_encoding,
         input_history_encoding=tc.input_history_encoding,
+        history_rep_fix=tc.history_rep_fix,
         input_extra_features=tc.input_extra_features,
         use_dynamic_relations=tc.use_dynamic_relations,
         dynamic_relation_count=tc.dynamic_relation_count,

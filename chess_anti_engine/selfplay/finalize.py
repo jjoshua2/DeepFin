@@ -715,6 +715,7 @@ def _build_replay_samples(
                 x_lc0_root=rec.x_lc0_root,
                 relations=getattr(rec, "relations", None),
                 input_history_encoding=state.game.input_history_encoding,
+                history_rep_fix=bool(state.game.history_rep_fix),
                 priority=float(rec.priority),
                 priority_policy_kl=(
                     None if rec.priority_policy_kl is None else float(rec.priority_policy_kl)
@@ -858,6 +859,7 @@ def _emit_completed_game_batch(
     diff_focus: _DiffFocusGameStats,
     gumbel_policy: _GumbelPolicyGameStats,
     input_history_encoding: str,
+    history_rep_fix: bool,
     on_game_complete: Callable[[CompletedGameBatch], None],
 ) -> None:
     """Build + dispatch CompletedGameBatch for one finalized game."""
@@ -865,6 +867,7 @@ def _emit_completed_game_batch(
         CompletedGameBatch(
             samples=samples,
             input_history_encoding=input_history_encoding,
+            history_rep_fix=bool(history_rep_fix),
             positions=len(samples),
             w=counters.w,
             d=counters.d,
@@ -1015,6 +1018,7 @@ def finalize_game(
                 diff_focus=diff_focus_stats,
                 gumbel_policy=gumbel_policy_stats,
                 input_history_encoding=state.game.input_history_encoding,
+                history_rep_fix=bool(state.game.history_rep_fix),
                 on_game_complete=on_game_complete,
             )
     else:

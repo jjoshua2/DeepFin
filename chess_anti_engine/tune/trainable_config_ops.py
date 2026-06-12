@@ -208,6 +208,7 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
             input_history_encoding=tc.input_history_encoding,
             input_extra_features=tc.input_extra_features,
             record_lc0_root_input=tc.record_lc0_root_input,
+            history_rep_fix=tc.history_rep_fix,
             record_dense_sf_policy=tc.record_dense_sf_policy,
         ),
     )
@@ -240,6 +241,7 @@ _TOPOLOGY_KEYS = frozenset({
     "use_deepnorm",
     "policy_encoding",
     "input_history_encoding",
+    "history_rep_fix",
     "input_extra_features",
     "use_dynamic_relations",
     "dynamic_relation_count",

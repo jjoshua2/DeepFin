@@ -102,6 +102,11 @@ class GameConfig:
     input_history_encoding: str = LC0_HISTORY_LEGACY
     input_extra_features: str = EXTRA_FEATURES_V1
     record_lc0_root_input: bool = False
+  # Gated candidate: correct the lc0-root per-slot repetition planes. The C
+  # encoder otherwise under-reports repetitions older than the cleared
+  # hash_stack window (see encoding/rep_fix.py). Changes net inputs, so it is
+  # warm-start + arena gated — default off keeps the encoding byte-identical.
+    history_rep_fix: bool = False
   # Compute + store dynamic board-relation matrices: search evals get them as
   # attention-bias input, and samples carry them into shards for training.
     record_relations: bool = False

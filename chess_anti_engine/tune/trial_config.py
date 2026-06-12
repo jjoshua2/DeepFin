@@ -189,6 +189,7 @@ class TrialConfig:
     categorical_bins: int = DEFAULT_CATEGORICAL_BINS
     hlgauss_sigma: float = 0.04
     record_lc0_root_input: bool = False
+    history_rep_fix: bool = False
     record_dense_sf_policy: bool = True
 
   # --- Diff focus ---
@@ -507,6 +508,7 @@ class TrialConfig:
             categorical_bins=int(config.get("categorical_bins", DEFAULT_CATEGORICAL_BINS)),
             hlgauss_sigma=float(config.get("hlgauss_sigma", 0.04)),
             record_lc0_root_input=bool(config.get("record_lc0_root_input", False)),
+            history_rep_fix=bool(config.get("history_rep_fix", False)),
             record_dense_sf_policy=bool(config.get("record_dense_sf_policy", True)),
 
   # --- Diff focus ---

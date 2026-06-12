@@ -131,6 +131,7 @@ def mirror_sample(s: ReplaySample, *, input_history_encoding: str | None = None)
             else mirror_relations(np.asarray(s.relations))
         ),
         input_history_encoding=getattr(s, "input_history_encoding", None),
+        history_rep_fix=bool(getattr(s, "history_rep_fix", False)),
     )
 
   # Aux targets

@@ -10,6 +10,7 @@ import chess
 import numpy as np
 import torch
 
+from chess_anti_engine.encoding import rep_fix
 from chess_anti_engine.mcts import GumbelConfig, MCTSConfig
 from chess_anti_engine.mcts.gumbel import (
     run_gumbel_root_many,
@@ -95,6 +96,12 @@ def pick_moves_for_boards(
     input_extra_features = str(getattr(model, "input_extra_features", "v1"))
     policy_encoding = str(getattr(model, "policy_encoding", "az_4672"))
     use_dynamic_relations = bool(getattr(model, "use_dynamic_relations", False))
+    # The repetition-plane fix is process-global in the C encoders, so apply
+    # THIS model's value before encoding its moves: same-process arenas
+    # (scripts/arena_standard.py matched_sims) alternate models per move
+    # cycle, and the last build_model otherwise wins for both sides.
+    # Idempotent and cheap when unchanged.
+    rep_fix.apply(bool(getattr(model, "history_rep_fix", False)))
     if str(mcts_type) == "gumbel":
         gumbel_cfg = GumbelConfig(
             simulations=int(mcts_simulations), temperature=float(temperature),

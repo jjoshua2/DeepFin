@@ -127,6 +127,9 @@ class CompletedGameBatch:
 
     samples: list[ReplaySample]
     input_history_encoding: str | None = None
+    # Whether the gated repetition-plane fix was active when these samples
+    # were encoded — part of shard identity alongside input_history_encoding.
+    history_rep_fix: bool = False
     games: int = 1
     positions: int = 0
     w: int = 0
