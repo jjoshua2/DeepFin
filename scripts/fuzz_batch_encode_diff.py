@@ -1,0 +1,203 @@
+"""Differential fuzzer: _mcts_tree batch encoders vs the single-board oracle.
+
+The production inference path encodes positions through the batch encoders in
+``chess_anti_engine/mcts/_mcts_tree.c`` (``batch_encode_146*`` for selfplay
+network turns, ``batch_compute_relations`` for the dynamic-relations bet).
+Those share the pure-C encode implementation with ``_lc0_ext``, but each .so
+carries its own copies of the buffer-layout loops and module globals (e.g. the
+``history_rep_fix`` flag), so batch/single parity is an invariant worth
+fuzzing, not an identity.
+
+Plays random games and, every ``--check-every`` plies, snapshots a batch of
+boards with deliberately mixed provenance (push-built, ``from_board``
+reconstructions, copies of earlier positions) and asserts:
+
+  - each ``batch_encode_146{,_lc0_root,_lc0_root_legacy_meta}`` row is
+    bit-identical to ``encode_cboard`` for that board (the single-board path,
+    itself verified bit-identical to python-chess by fuzz_cboard_diff.py);
+  - each bf16 variant equals the fp32 batch output converted with the same
+    round-to-nearest-even rule the C uses;
+  - each ``batch_compute_relations`` row equals the python
+    ``relation_matrices`` oracle.
+
+Both ``history_rep_fix`` phases are exercised (the flag is applied before any
+board in the phase is constructed, per the rep_fix ordering contract).
+
+Run under the sanitized extension build for memory/UB coverage via
+``scripts/fuzz/run_fuzz.sh batch [games]``. Exits non-zero with the UCI move
+list needed to reproduce the first divergence.
+"""
+from __future__ import annotations
+
+import argparse
+import random
+import sys
+from dataclasses import dataclass, field
+
+import chess
+import numpy as np
+
+from chess_anti_engine.encoding import rep_fix
+from chess_anti_engine.encoding._lc0_ext import CBoard
+from chess_anti_engine.encoding.cboard_encode import encode_cboard
+from chess_anti_engine.encoding.features import relation_matrices
+from chess_anti_engine.mcts._mcts_tree import (
+    batch_compute_relations,
+    batch_encode_146,
+    batch_encode_146_bf16,
+    batch_encode_146_lc0_root,
+    batch_encode_146_lc0_root_bf16,
+    batch_encode_146_lc0_root_legacy_meta,
+    batch_encode_146_lc0_root_legacy_meta_bf16,
+)
+from chess_anti_engine.moves import move_to_index
+
+# (history mode for the single-board oracle, fp32 batch fn, bf16 batch fn).
+# The deprecated "legacy"/None mode is the plain batch_encode_146 pair.
+_MODES = (
+    (None, batch_encode_146, batch_encode_146_bf16),
+    ("lc0_root", batch_encode_146_lc0_root, batch_encode_146_lc0_root_bf16),
+    (
+        "lc0_root_legacy_meta",
+        batch_encode_146_lc0_root_legacy_meta,
+        batch_encode_146_lc0_root_legacy_meta_bf16,
+    ),
+)
+
+
+def _f32_to_bf16_bits(a: np.ndarray) -> np.ndarray:
+    """Round-to-nearest-even fp32 -> bf16 bits, matching float_to_bf16_bits."""
+    u = np.ascontiguousarray(a, dtype=np.float32).view(np.uint32)
+    lsb = (u >> np.uint32(16)) & np.uint32(1)
+    u = u + np.uint32(0x7FFF) + lsb
+    return (u >> np.uint32(16)).astype(np.uint16)
+
+
+@dataclass
+class Failure:
+    context: str
+    detail: str
+    moves: list[str] = field(default_factory=list)
+
+    def __str__(self) -> str:
+        repro = " ".join(self.moves)
+        return f"{self.context}: {self.detail}\n  repro (UCI from startpos): {repro}"
+
+
+@dataclass
+class _PoolEntry:
+    cb: CBoard
+    board: chess.Board
+    label: str  # provenance, for failure messages
+
+
+def _check_batch(entries: list[_PoolEntry], ctx: str, moves: list[str]) -> Failure | None:
+    cbs = [e.cb for e in entries]
+    n = len(cbs)
+
+    for mode, fn32, fn16 in _MODES:
+        out = np.empty((n, 146, 8, 8), dtype=np.float32)
+        fn32(cbs, out)
+        for i, e in enumerate(entries):
+            want = encode_cboard(
+                e.cb, input_history_encoding=mode, input_extra_features="v1"
+            )
+            if not np.array_equal(out[i], want):
+                bad = np.argwhere(out[i] != want)
+                return Failure(ctx, (
+                    f"batch row diverges from encode_cboard mode={mode!r} "
+                    f"board#{i} ({e.label}) fen={e.board.fen()} "
+                    f"first diff plane={int(bad[0][0])} ({len(bad)} cells)"
+                ), moves)
+
+        out16 = np.empty((n, 146, 8, 8), dtype=np.uint16)
+        fn16(cbs, out16)
+        want16 = _f32_to_bf16_bits(out)
+        if not np.array_equal(out16, want16):
+            bad = np.argwhere(out16 != want16)
+            i = int(bad[0][0])
+            return Failure(ctx, (
+                f"bf16 batch diverges from RNE(fp32 batch) mode={mode!r} "
+                f"board#{i} ({entries[i].label}) fen={entries[i].board.fen()} "
+                f"({len(bad)} cells)"
+            ), moves)
+
+    rel = np.zeros((n, 5, 64, 64), dtype=np.uint8)
+    batch_compute_relations(cbs, rel)
+    for i, e in enumerate(entries):
+        want_rel = relation_matrices(e.board)
+        if not np.array_equal(rel[i], want_rel):
+            return Failure(ctx, (
+                f"batch_compute_relations diverges from relation_matrices "
+                f"board#{i} ({e.label}) fen={e.board.fen()}"
+            ), moves)
+    return None
+
+
+def run(
+    *, games: int, seed: int, max_plies: int, check_every: int,
+    batch_cap: int, history_rep_fix: bool,
+) -> Failure | None:
+    """Play random games; batch-encode mixed-provenance snapshots and compare."""
+    rep_fix.apply(bool(history_rep_fix))
+    rng = random.Random(seed)
+    tag = f"repfix={int(history_rep_fix)}"
+    for g in range(games):
+        b = chess.Board()
+        cb = CBoard.from_board(b)
+        moves: list[str] = []
+        pool: list[_PoolEntry] = [_PoolEntry(cb.copy(), b.copy(), "startpos")]
+        for ply in range(1, rng.randrange(2, max_plies + 1)):
+            legal = list(b.legal_moves)
+            if not legal:
+                break
+            m = rng.choice(legal)
+            cb.push_index(move_to_index(m, b))
+            b.push(m)
+            moves.append(m.uci())
+            if ply % check_every:
+                continue
+            # Same position, three history-construction paths: the live
+            # push-built board, a copy of it, and a from_board rebuild whose
+            # history comes from python's _stack instead of C pushes.
+            pool.append(_PoolEntry(cb.copy(), b.copy(), f"push@{ply}"))
+            pool.append(_PoolEntry(CBoard.from_board(b), b.copy(), f"from_board@{ply}"))
+            if len(pool) > batch_cap:
+                del pool[: len(pool) - batch_cap]
+            order = list(range(len(pool)))
+            rng.shuffle(order)
+            entries = [pool[i] for i in order]
+            fail = _check_batch(entries, f"{tag} game{g} ply{ply}", moves)
+            if fail is not None:
+                return fail
+    return None
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--games", type=int, default=120)
+    parser.add_argument("--seed", type=int, default=0xBA7C4)
+    parser.add_argument("--max-plies", type=int, default=200)
+    parser.add_argument("--check-every", type=int, default=8)
+    parser.add_argument("--batch-cap", type=int, default=48)
+    args = parser.parse_args()
+    for flag in (False, True):
+        fail = run(
+            games=args.games, seed=args.seed, max_plies=args.max_plies,
+            check_every=args.check_every, batch_cap=args.batch_cap,
+            history_rep_fix=flag,
+        )
+        if fail is not None:
+            print(f"DIVERGENCE FOUND\n{fail}", file=sys.stderr)
+            return 1
+    rep_fix.apply(False)
+    print(
+        f"OK: {args.games} games x both history_rep_fix phases "
+        f"(seed={args.seed:#x}, batch cap {args.batch_cap}) — "
+        "batch encoders match the single-board oracle"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

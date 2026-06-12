@@ -4,6 +4,8 @@
 #   ./scripts/fuzz/run_fuzz.sh libfuzzer [seconds]   # coverage-guided C fuzz (clang)
 #   ./scripts/fuzz/run_fuzz.sh diff [games]          # differential vs python-chess,
 #                                                    # under ASAN/UBSAN-built extensions
+#   ./scripts/fuzz/run_fuzz.sh batch [games]         # _mcts_tree batch encoders vs the
+#                                                    # single-board oracle, sanitized
 #
 # libFuzzer crashes land in scripts/fuzz/corpus/crash-*; reproduce with
 #   ./scripts/fuzz/cboard_fuzz <crash-file>
@@ -11,6 +13,17 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 MODE="${1:-libfuzzer}"
+
+run_sanitized_py() {
+  CAE_EXT_SANITIZE=address,undefined python3 setup.py build_ext --inplace --force
+  local LIBASAN
+  LIBASAN="$(gcc -print-file-name=libasan.so)"
+  LD_PRELOAD="$LIBASAN" ASAN_OPTIONS=detect_leaks=0 \
+    UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+    PYTHONPATH=. python3 "$@"
+  echo "NOTE: extensions are still sanitizer-built; rebuild for normal use:"
+  echo "  python3 setup.py build_ext --inplace --force"
+}
 
 case "$MODE" in
   libfuzzer)
@@ -25,16 +38,14 @@ case "$MODE" in
     ;;
   diff)
     GAMES="${2:-500}"
-    CAE_EXT_SANITIZE=address,undefined python3 setup.py build_ext --inplace --force
-    LIBASAN="$(gcc -print-file-name=libasan.so)"
-    LD_PRELOAD="$LIBASAN" ASAN_OPTIONS=detect_leaks=0 \
-      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
-      PYTHONPATH=. python3 scripts/fuzz_cboard_diff.py --games "$GAMES"
-    echo "NOTE: extensions are still sanitizer-built; rebuild for normal use:"
-    echo "  python3 setup.py build_ext --inplace --force"
+    run_sanitized_py scripts/fuzz_cboard_diff.py --games "$GAMES"
+    ;;
+  batch)
+    GAMES="${2:-120}"
+    run_sanitized_py scripts/fuzz_batch_encode_diff.py --games "$GAMES"
     ;;
   *)
-    echo "usage: $0 {libfuzzer [seconds] | diff [games]}" >&2
+    echo "usage: $0 {libfuzzer [seconds] | diff [games] | batch [games]}" >&2
     exit 2
     ;;
 esac
