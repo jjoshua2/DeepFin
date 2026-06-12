@@ -9,6 +9,7 @@ import chess
 import numpy as np
 import torch
 
+from chess_anti_engine.encoding import rep_fix
 from chess_anti_engine.inference import BatchEvaluator
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.selfplay.config import (
@@ -229,6 +230,10 @@ def play_batch(
     batch_size = min(requested_batch, target)
     if batch_size <= 0:
         raise ValueError("play_batch requires at least one game")
+
+    # Apply the gated repetition-plane fix (process-global in the C encoders)
+    # to match the configured value before any encoding happens this batch.
+    rep_fix.apply(bool(game.history_rep_fix))
 
     state = SelfplayState.create(
         model=model,

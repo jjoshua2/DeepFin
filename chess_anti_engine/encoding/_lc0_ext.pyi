@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import NDArray
 
+def set_history_rep_fix(enabled: bool, /) -> None: ...
 def encode_piece_planes(
     bitboards: NDArray[np.uint64],
     turns: NDArray[np.int32],

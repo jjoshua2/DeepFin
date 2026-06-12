@@ -414,6 +414,31 @@ static PyObject* PyCBoard_from_board(PyTypeObject *type, PyObject *args) {
             b->hash_stack[i] = b->hash_stack[j];
             b->hash_stack[j] = tmp;
         }
+
+        /* Per-slot repetition flags for the candidate encoder path
+         * (g_history_rep_fix). A kept slot repeats iff an earlier _stack entry
+         * has the same reversible-state hash; irreversible moves change the
+         * piece bitboards permanently, so equal hist-hashes always lie within
+         * one reversible run and no halfmove-boundary check is needed. Slots
+         * filled later by cboard_push get their flag recorded there instead. */
+        for (int i = 0; i < n_hist; i++) {
+            uint64_t slot_hash = cboard_hist_hash(
+                b->hist_bb[i], b->hist_occ[i], b->hist_turn[i], b->hist_castling[i]);
+            Py_ssize_t si = stack_len - n_hist + i;  /* this slot's _stack index */
+            int repeated = 0;
+            for (Py_ssize_t j = si - 1; j >= 0 && !repeated; j--) {
+                PyObject *e = PyList_GetItem(stack, j); /* borrowed */
+                if (!e) break;
+                uint64_t e_bb[6], e_occ[2];
+                int e_turn;
+                py_read_hist_bitboards(e, e_bb, e_occ, &e_turn);
+                uint8_t e_cast = 0;
+                if (py_read_castling_mask(e, &e_cast) < 0) PyErr_Clear();
+                if (cboard_hist_hash(e_bb, e_occ, e_turn, e_cast) == slot_hash)
+                    repeated = 1;
+            }
+            b->hist_was_rep[i] = (int8_t)repeated;
+        }
     }
     Py_XDECREF(stack);
 
@@ -901,7 +926,20 @@ static PyTypeObject PyCBoardType = {
  * Module definition
  * ================================================================ */
 
+/* set_history_rep_fix(enabled: bool) -> None. Gated candidate toggle; see
+ * g_history_rep_fix in _cboard_impl.h. Must be set identically in every C
+ * module that encodes (also _mcts_tree for the batch path). */
+static PyObject* py_set_history_rep_fix(PyObject *Py_UNUSED(self), PyObject *arg) {
+    int v = PyObject_IsTrue(arg);
+    if (v < 0) return NULL;
+    g_history_rep_fix = v;
+    Py_RETURN_NONE;
+}
+
 static PyMethodDef methods[] = {
+    {"set_history_rep_fix", py_set_history_rep_fix, METH_O,
+     "set_history_rep_fix(enabled) -> None. Toggle the lc0-root per-slot "
+     "repetition-plane fix (gated candidate; default off)."},
     {"encode_piece_planes", py_encode_piece_planes, METH_VARARGS,
      "Convert bitboards to oriented piece planes. "
      "encode_piece_planes(bitboards_u64, turns_i32, n_steps) -> float32(n_steps*12, 8, 8)"},
