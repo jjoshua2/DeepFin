@@ -57,3 +57,9 @@ prompt2
 prompt.md.*
 spec2
 spec.md.*
+
+# Fuzzing build artifacts
+scripts/fuzz/cboard_fuzz
+scripts/fuzz/corpus/
+scripts/fuzz/crash-*
+crash-*
