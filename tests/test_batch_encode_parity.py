@@ -8,23 +8,13 @@ live in scripts/fuzz/run_fuzz.sh (mode: batch).
 """
 from __future__ import annotations
 
-import importlib.util
-import sys
-from pathlib import Path
-
 import numpy as np
 import pytest
 
 from chess_anti_engine.encoding import rep_fix
+from tests.script_loading import load_script_module
 
-_SPEC = importlib.util.spec_from_file_location(
-    "fuzz_batch_encode_diff",
-    Path(__file__).resolve().parent.parent / "scripts" / "fuzz_batch_encode_diff.py",
-)
-assert _SPEC is not None and _SPEC.loader is not None
-_MOD = importlib.util.module_from_spec(_SPEC)
-sys.modules["fuzz_batch_encode_diff"] = _MOD
-_SPEC.loader.exec_module(_MOD)
+_MOD = load_script_module("fuzz_batch_encode_diff.py")
 
 
 @pytest.fixture(autouse=True)
