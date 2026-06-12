@@ -233,9 +233,10 @@ class StockfishUCI:
         deadline = time.monotonic() + self.read_timeout_s
         while True:
             line = self._readline_with_deadline(deadline)
-            # Token match, not substring: an `info string` line that merely
-            # mentions the token must not satisfy the handshake.
-            if token in line.split():
+            # uciok/readyok are standalone engine->GUI messages in the UCI
+            # protocol, so require the whole line: an `info string` line that
+            # merely mentions the token must not satisfy the handshake.
+            if line.strip() == token:
                 return
 
     def search(

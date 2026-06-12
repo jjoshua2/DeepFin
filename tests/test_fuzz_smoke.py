@@ -1,8 +1,9 @@
 """Smoke-run the CBoard differential fuzzer (scripts/fuzz_cboard_diff.py).
 
-A handful of lockstep games with the encode oracle enabled — enough to catch
-gross C-vs-Python divergence regressions in CI without fuzz-scale runtime.
-The real budgets live in scripts/fuzz/run_fuzz.sh.
+A handful of lockstep games asserting state parity — enough to catch gross
+C-vs-Python divergence regressions in CI without fuzz-scale runtime. The
+encode oracle stays off (see the test docstring). The real budgets live in
+scripts/fuzz/run_fuzz.sh.
 """
 from __future__ import annotations
 

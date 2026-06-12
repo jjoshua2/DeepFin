@@ -474,7 +474,7 @@ static PyObject* PyCBoard_from_raw(PyTypeObject *type, PyObject *args) {
     b->occ[BLACK_C] = occ_b;
     b->turn = turn_int ? WHITE_C : BLACK_C;
     b->castling = (uint8_t)castling_int;
-    b->ep_square = (int8_t)ep_sq;
+    b->ep_square = cboard_sanitize_ep(ep_sq);
     b->halfmove_clock = (uint8_t)(hmc > 255 ? 255 : hmc);
 
     b->hash = cboard_compute_hash(b);
@@ -503,6 +503,15 @@ static PyObject* PyCBoard_push_index(PyCBoard *self, PyObject *args) {
         return NULL;
     }
     PolicyMove pm = POLICY_LUT[self->board.turn][policy_index];
+    if (pm.from_sq < 0 || pm.from_sq > 63 || pm.to_sq < 0 || pm.to_sq > 63) {
+        /* Unused LUT slot (memset to -1): the move points off-board, so
+         * probing occupancy with it would shift by a negative square. */
+        PyErr_Format(
+            PyExc_ValueError,
+            "policy_index %d does not decode to an on-board move for side %d",
+            policy_index, self->board.turn);
+        return NULL;
+    }
     if (piece_type_at(&self->board, pm.from_sq) < 0) {
         PyErr_Format(
             PyExc_ValueError,

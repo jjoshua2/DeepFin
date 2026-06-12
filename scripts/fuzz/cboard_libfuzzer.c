@@ -10,8 +10,9 @@
  *           repetition/terminal logic, and FEN emission along realistic
  *           game trajectories.
  *
- *   odd  -> RAW BOARD: interpret the next 52 bytes as arbitrary bitboards +
- *           state, exactly what ``CBoard.from_raw`` accepts from Python.
+ *   odd  -> RAW BOARD: interpret the next 68 bytes as arbitrary bitboards +
+ *           state, exactly what ``CBoard.from_raw`` accepts from Python
+ *           (six piece bitboards plus independent occ_white/occ_black).
  *           The C layer must be memory-safe (no ASAN/UBSAN findings) on any
  *           such input even when it is not a reachable chess position.
  *
@@ -81,23 +82,25 @@ static void legal_walk(const uint8_t *data, size_t size) {
 }
 
 static void raw_board(const uint8_t *data, size_t size) {
-    if (size < 52)
+    if (size < 68)
         return;
     CBoard b;
     memset(&b, 0, sizeof(CBoard));
-    uint64_t v[6];
-    memcpy(v, data, 48);
+    uint64_t v[8];
+    memcpy(v, data, 64);
     for (int p = 0; p < 6; p++)
         b.bb[p] = v[p];
-    /* occ derived from data so white/black overlap arbitrarily, as from_raw
-     * allows. */
-    b.occ[WHITE_C] = v[0] ^ v[2] ^ v[4];
-    b.occ[BLACK_C] = v[1] ^ v[3] ^ v[5];
-    b.turn = (data[48] & 1) ? WHITE_C : BLACK_C;
-    b.castling = (uint8_t)(data[49] & 0xF);
-    int ep = (int)data[50];
-    b.ep_square = (int8_t)(ep < 64 ? ep : -1);
-    b.halfmove_clock = data[51];
+    /* occ_white/occ_black are independent from_raw arguments, so fuzz them
+     * independently too: occupied squares with no piece bit, overlapping
+     * colors, piece bits outside both occupancies — all reachable states. */
+    b.occ[WHITE_C] = v[6];
+    b.occ[BLACK_C] = v[7];
+    b.turn = (data[64] & 1) ? WHITE_C : BLACK_C;
+    b.castling = (uint8_t)(data[65] & 0xF);
+    /* Feed the signed byte through the same normalization from_raw applies,
+     * so out-of-range inputs (64..127, negatives) exercise the boundary. */
+    b.ep_square = cboard_sanitize_ep((int8_t)data[66]);
+    b.halfmove_clock = data[67];
     b.hash = cboard_compute_hash(&b);
 
     int indices[256];
@@ -106,7 +109,7 @@ static void raw_board(const uint8_t *data, size_t size) {
         ; /* movegen on garbage state is the target; results are unused */
     exercise_queries(&b);
     /* Push a handful of self-reported-legal moves on the garbage board. */
-    for (size_t i = 52; i + 1 < size && i < 72; i += 2) {
+    for (size_t i = 68; i + 1 < size && i < 88; i += 2) {
         n = cboard_legal_move_indices(&b, indices, 0);
         if (n <= 0)
             break;

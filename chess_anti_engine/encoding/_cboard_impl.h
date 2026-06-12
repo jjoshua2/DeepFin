@@ -693,6 +693,14 @@ typedef struct {
     uint16_t ply;                              /* total half-moves from game start */
 } CBoard;
 
+/* Normalize an untrusted ep-square to the CBoard invariant (-1 or 0..63).
+ * Several paths shift by ep_square after only an `>= 0` check, so an
+ * out-of-range value (e.g. 64..127 through from_raw's int8 cast) would be
+ * undefined behaviour downstream; enforce the invariant at construction. */
+static inline int8_t cboard_sanitize_ep(int sq) {
+    return (int8_t)((sq >= 0 && sq < 64) ? sq : -1);
+}
+
 /* Reverse LUT: policy_index -> (from_sq, to_sq, promotion) in real coordinates.
  * Built once at init time. */
 typedef struct { int8_t from_sq, to_sq, promotion; } PolicyMove;
@@ -809,6 +817,14 @@ static int g_history_rep_fix = 0;
 static int cboard_is_repetition(const CBoard *b);
 
 static void cboard_push(CBoard *b, int from_sq, int to_sq, int promotion) {
+    if (from_sq < 0 || from_sq > 63 || to_sq < 0 || to_sq > 63) {
+        /* Off-board square — e.g. the -1 sentinel from an unused POLICY_LUT
+         * slot. sq_bit's shift on it is undefined behaviour, so bail before
+         * touching either square. The Python boundary (PyCBoard_push_index)
+         * validates and raises before reaching here; this is the C-level UB
+         * floor for any other caller. */
+        return;
+    }
     int us = b->turn;
     int them = 1 - us;
     uint64_t from_bit = sq_bit(from_sq);
@@ -818,9 +834,7 @@ static void cboard_push(CBoard *b, int from_sq, int to_sq, int promotion) {
     if (moving_piece < 0) {
         /* No piece on the source square — a malformed push (e.g. an index
          * decoded against the wrong position). Indexing ZOBRIST_PIECE with
-         * the -1 sentinel is undefined behaviour, so bail out instead. The
-         * Python boundary (PyCBoard_push_index) validates and raises before
-         * reaching here; this is the C-level UB floor for any other caller. */
+         * the -1 sentinel is undefined behaviour, so bail out instead. */
         return;
     }
     int is_capture = (b->occ[them] & to_bit) != 0;

@@ -36,6 +36,28 @@ for line in sys.stdin:
     # 'go' and everything else: read but never respond.
 """
 
+_SPOOFING_ENGINE = """\
+import sys
+for line in sys.stdin:
+    line = line.strip()
+    if line == 'uci':
+        print('info string uciok', flush=True)
+    elif line == 'isready':
+        print('info string readyok', flush=True)
+"""
+
+_CHATTY_ENGINE = """\
+import sys
+for line in sys.stdin:
+    line = line.strip()
+    if line == 'uci':
+        print('info string uciok is on its way', flush=True)
+        print('uciok', flush=True)
+    elif line == 'isready':
+        print('info string readyok pending', flush=True)
+        print('readyok', flush=True)
+"""
+
 
 def _make_engine_wrapper(tmp_path, body: str, name: str) -> str:
     py = tmp_path / f"{name}.py"
@@ -79,6 +101,24 @@ for _line in sys.stdin:
             return
         time.sleep(0.05)
     raise AssertionError(f"Stockfish subprocess {pid} survived constructor timeout")
+
+
+def test_handshake_rejects_info_string_spoof(tmp_path) -> None:
+    """``info string uciok``/``readyok`` lines must not satisfy the handshake.
+
+    uciok/readyok are standalone engine-to-GUI messages in the UCI protocol;
+    ``_wait_for`` requires the whole line, so an ``info string`` that merely
+    mentions the token times out instead of letting setup continue early.
+    """
+    engine = _make_engine_wrapper(tmp_path, _SPOOFING_ENGINE, "spoof")
+    with pytest.raises(StockfishTimeoutError):
+        StockfishUCI(engine, nodes=1, read_timeout_s=0.3)
+
+
+def test_handshake_accepts_ack_after_info_chatter(tmp_path) -> None:
+    engine = _make_engine_wrapper(tmp_path, _CHATTY_ENGINE, "chatty")
+    sf = StockfishUCI(engine, nodes=1, read_timeout_s=2.0)
+    sf.close()
 
 
 def test_search_times_out_when_engine_hangs_after_go(tmp_path) -> None:

@@ -264,7 +264,8 @@ def test_cboard_rejects_direct_construction():
     differential fuzzer). Only ``from_board`` / ``from_raw`` may construct.
     """
     with pytest.raises(TypeError):
-        CBoard("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+        # Deliberate misuse: the stub (correctly) exposes no constructor args.
+        CBoard("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")  # pyright: ignore[reportCallIssue]
     with pytest.raises(TypeError):
         CBoard()
     # The supported path still works and is populated.
@@ -295,3 +296,41 @@ def test_push_index_rejects_move_from_empty_square():
             raised = True
             break
     assert raised, "expected at least one index to decode to an empty source square"
+
+
+def test_from_raw_sanitizes_out_of_range_ep_square():
+    """from_raw must normalize ep_square to the documented -1/0..63 invariant.
+
+    Several C paths shift by ``ep_square`` after only an ``>= 0`` check (e.g.
+    ``1ULL << ep`` in FEN emission), so storing an out-of-range value like 100
+    verbatim — the old behavior — was undefined behaviour downstream. Such
+    values now collapse to "no ep square" at the boundary.
+    """
+    b = chess.Board()
+    for bad_ep in (64, 100, 127, -5):
+        cb = CBoard.from_raw(
+            int(b.pawns), int(b.knights), int(b.bishops),
+            int(b.rooks), int(b.queens), int(b.kings),
+            int(b.occupied_co[chess.WHITE]), int(b.occupied_co[chess.BLACK]),
+            1, 0xF, bad_ep, 0,
+        )
+        assert cb.ep_square is None
+        assert cb.fen().split()[3] == "-"
+
+
+def test_push_index_rejects_unused_lut_slot():
+    """push_index of an unused POLICY_LUT slot (off-board move) must raise.
+
+    Unused slots keep the ``memset(-1)`` sentinel, so ``from_sq == -1``.
+    Previously the empty-square guard probed occupancy with that square first
+    (UBSAN: shift by -1 in ``sq_bit``). Now the decoded squares are
+    bounds-checked before any occupancy probe.
+    """
+    # Underpromotion planes (64-72) always step toward rank +1 in oriented
+    # coordinates, so from the oriented 8th rank (square 56 = a8) the target
+    # rank is off-board and the LUT slot is never filled, for either side.
+    idx = 56 * 73 + 65  # straight-push knight underpromotion from a8
+    for board in (chess.Board(), chess.Board("k7/8/8/8/8/8/8/K7 b - - 0 1")):
+        cb = CBoard.from_board(board)
+        with pytest.raises(ValueError, match="on-board"):
+            cb.push_index(idx)
