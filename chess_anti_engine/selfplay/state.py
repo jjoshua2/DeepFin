@@ -852,6 +852,12 @@ class SelfplayState:
         the opening position and we replay ``self.move_idx_history[i]``.
         In the Python fallback the board has already been mutated in place,
         so it's returned as-is.
+
+        The replayed board's move stack starts at the opening position, so
+        repetition claims spanning the opening boundary are not visible to
+        consumers (``outcome(claim_draw=True)``, search-root repetition
+        checks). This matches the C play path, which also tracks history
+        from the opening position; the position itself is always exact.
         """
         from chess_anti_engine.moves import index_to_move
 

@@ -477,6 +477,24 @@ static PyObject* PyCBoard_push_index(PyCBoard *self, PyObject *args) {
         PyErr_SetString(PyExc_ValueError, "policy_index out of range");
         return NULL;
     }
+    PolicyMove pm = POLICY_LUT[self->board.turn][policy_index];
+    if (pm.from_sq < 0 || pm.from_sq > 63 || pm.to_sq < 0 || pm.to_sq > 63) {
+        /* Unused LUT slot (memset to -1): the move points off-board, so
+         * probing occupancy with it would shift by a negative square. */
+        PyErr_Format(
+            PyExc_ValueError,
+            "policy_index %d does not decode to an on-board move for side %d",
+            policy_index, self->board.turn);
+        return NULL;
+    }
+    if (piece_type_at(&self->board, pm.from_sq) < 0) {
+        PyErr_Format(
+            PyExc_ValueError,
+            "policy_index %d decodes to %d->%d for side %d, but the source "
+            "square is empty (move illegal for this position)",
+            policy_index, pm.from_sq, pm.to_sq, self->board.turn);
+        return NULL;
+    }
     cboard_push_index(&self->board, policy_index);
     Py_RETURN_NONE;
 }
@@ -861,6 +879,20 @@ static PyGetSetDef PyCBoard_getset[] = {
     {NULL}
 };
 
+/* Reject direct construction. ``PyType_GenericNew`` would otherwise accept
+ * and silently ignore any args (e.g. ``CBoard(fen)``), handing back a zeroed
+ * board whose squares are all empty — a footgun that looks like a parsed
+ * position but isn't. Callers must use the ``from_board`` / ``from_raw``
+ * classmethods. */
+static int PyCBoard_init(PyObject *Py_UNUSED(self), PyObject *Py_UNUSED(args),
+                         PyObject *Py_UNUSED(kwds)) {
+    PyErr_SetString(
+        PyExc_TypeError,
+        "CBoard cannot be constructed directly; use CBoard.from_board(board) "
+        "or CBoard.from_raw(...)");
+    return -1;
+}
+
 static PyTypeObject PyCBoardType = {
     PyVarObject_HEAD_INIT(NULL, 0)
     .tp_name = "_lc0_ext.CBoard",
@@ -870,6 +902,7 @@ static PyTypeObject PyCBoardType = {
     .tp_methods = PyCBoard_methods,
     .tp_getset = PyCBoard_getset,
     .tp_new = PyType_GenericNew,
+    .tp_init = PyCBoard_init,
 };
 
 
