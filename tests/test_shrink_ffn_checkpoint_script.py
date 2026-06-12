@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import dataclasses
-import importlib.util
 from pathlib import Path
 from typing import Any
 
@@ -9,16 +8,11 @@ import torch
 
 from chess_anti_engine.model import ARCH_SCHEMA_VERSION, ModelConfig, build_model
 from chess_anti_engine.moves import POLICY_SIZE
+from tests.script_loading import load_script_module
 
 
 def _load_shrink_module() -> Any:
-    script_path = Path(__file__).resolve().parents[1] / "scripts" / "shrink_ffn_checkpoint.py"
-    spec = importlib.util.spec_from_file_location("shrink_ffn_checkpoint_test_module", script_path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return load_script_module("shrink_ffn_checkpoint.py", "shrink_ffn_checkpoint_test_module")
 
 
 def _small_cfg(*, ffn_mult_by_layer: tuple[float, ...]) -> ModelConfig:

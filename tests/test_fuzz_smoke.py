@@ -7,18 +7,9 @@ scripts/fuzz/run_fuzz.sh.
 """
 from __future__ import annotations
 
-import importlib.util
-import sys
-from pathlib import Path
+from tests.script_loading import load_script_module
 
-_SPEC = importlib.util.spec_from_file_location(
-    "fuzz_cboard_diff",
-    Path(__file__).resolve().parent.parent / "scripts" / "fuzz_cboard_diff.py",
-)
-assert _SPEC is not None and _SPEC.loader is not None
-_MOD = importlib.util.module_from_spec(_SPEC)
-sys.modules["fuzz_cboard_diff"] = _MOD
-_SPEC.loader.exec_module(_MOD)
+_MOD = load_script_module("fuzz_cboard_diff.py")
 
 
 def test_differential_fuzz_state_parity_smoke() -> None:

@@ -1,20 +1,15 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 from pathlib import Path
 
 import pytest
 
+from tests.script_loading import load_script_module
+
 
 def _load_reinit_module():
-    script_path = Path(__file__).resolve().parents[1] / "scripts" / "reinit_value_heads.py"
-    spec = importlib.util.spec_from_file_location("reinit_value_heads_test_module", script_path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return load_script_module("reinit_value_heads.py", "reinit_value_heads_test_module")
 
 
 def test_checkpoint_model_config_uses_embedded_arch(tmp_path: Path) -> None:

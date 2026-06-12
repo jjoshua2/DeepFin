@@ -1,22 +1,16 @@
 from __future__ import annotations
 
-import importlib.util
-import sys
-from pathlib import Path
 from typing import Any
 
 import pytest
 
+from tests.script_loading import load_script_module
+
 
 def _load_bench_module() -> Any:
-    script_path = Path(__file__).resolve().parents[1] / "scripts" / "bench_checkpoint_inference_ab.py"
-    spec = importlib.util.spec_from_file_location("bench_checkpoint_inference_ab_test_module", script_path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return load_script_module(
+        "bench_checkpoint_inference_ab.py", "bench_checkpoint_inference_ab_test_module"
+    )
 
 
 def test_parse_batches_uses_default_batch() -> None:

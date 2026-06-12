@@ -1,22 +1,16 @@
 from __future__ import annotations
 
-import importlib.util
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults
+from tests.script_loading import load_script_module
 
 
 def _load_profile_module() -> Any:
-    script_path = Path(__file__).resolve().parents[1] / "scripts" / "profile_distributed.py"
-    spec = importlib.util.spec_from_file_location("profile_distributed_test_module", script_path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return load_script_module("profile_distributed.py", "profile_distributed_test_module")
 
 
 def test_default_base_config_exists() -> None:
