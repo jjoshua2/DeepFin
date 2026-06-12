@@ -23,6 +23,16 @@ reconstructions, copies of earlier positions) and asserts:
 Both ``history_rep_fix`` phases are exercised (the flag is applied before any
 board in the phase is constructed, per the rep_fix ordering contract).
 
+Output buffers are poisoned (NaN / sentinel bytes) before every batch call, so
+a row or plane the C side fails to write reads as a divergence instead of
+accidentally matching a zero init (zero is the correct value for most cells).
+
+Residual gap: the tree-internal leaf encodes (``start_gumbel_sims``,
+``batch_process_ply``) reach the shared kernel via ``cboard_encode_planes_into``
+(``feat_prezeroed=0``), whose feature-plane memset branch the public batch
+wrappers (``feat_prezeroed=1``) skip. That single branch is the only encode
+code this fuzzer cannot reach; everything downstream of it is covered.
+
 Run under the sanitized extension build for memory/UB coverage via
 ``scripts/fuzz/run_fuzz.sh batch [games]``. Exits non-zero with the UCI move
 list needed to reproduce the first divergence.
@@ -32,7 +42,7 @@ from __future__ import annotations
 import argparse
 import random
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import chess
 import numpy as np
@@ -77,7 +87,7 @@ def _f32_to_bf16_bits(a: np.ndarray) -> np.ndarray:
 class Failure:
     context: str
     detail: str
-    moves: list[str] = field(default_factory=list)
+    moves: list[str]
 
     def __str__(self) -> str:
         repro = " ".join(self.moves)
@@ -89,6 +99,21 @@ class _PoolEntry:
     cb: CBoard
     board: chess.Board
     label: str  # provenance, for failure messages
+    want: dict[str | None, np.ndarray]  # per-mode single-board oracle planes
+    want_rel: np.ndarray
+
+
+def _make_entry(cb: CBoard, board: chess.Board, label: str) -> _PoolEntry:
+    # Oracle outputs are computed once per entry: the snapshots are immutable,
+    # so re-encoding them at every later checkpoint would only re-verify the
+    # oracle against itself. Caching the creation-time truth also catches a
+    # batch encoder that mutates its input CBoard — later batch rows would
+    # drift from it, where a freshly recomputed oracle would drift along.
+    want = {
+        mode: encode_cboard(cb, input_history_encoding=mode, input_extra_features="v1")
+        for mode, _, _ in _MODES
+    }
+    return _PoolEntry(cb, board, label, want, relation_matrices(board))
 
 
 def _check_batch(entries: list[_PoolEntry], ctx: str, moves: list[str]) -> Failure | None:
@@ -96,12 +121,10 @@ def _check_batch(entries: list[_PoolEntry], ctx: str, moves: list[str]) -> Failu
     n = len(cbs)
 
     for mode, fn32, fn16 in _MODES:
-        out = np.empty((n, 146, 8, 8), dtype=np.float32)
+        out = np.full((n, 146, 8, 8), np.nan, dtype=np.float32)
         fn32(cbs, out)
         for i, e in enumerate(entries):
-            want = encode_cboard(
-                e.cb, input_history_encoding=mode, input_extra_features="v1"
-            )
+            want = e.want[mode]
             if not np.array_equal(out[i], want):
                 bad = np.argwhere(out[i] != want)
                 return Failure(ctx, (
@@ -110,7 +133,7 @@ def _check_batch(entries: list[_PoolEntry], ctx: str, moves: list[str]) -> Failu
                     f"first diff plane={int(bad[0][0])} ({len(bad)} cells)"
                 ), moves)
 
-        out16 = np.empty((n, 146, 8, 8), dtype=np.uint16)
+        out16 = np.full((n, 146, 8, 8), 0xFFFF, dtype=np.uint16)
         fn16(cbs, out16)
         want16 = _f32_to_bf16_bits(out)
         if not np.array_equal(out16, want16):
@@ -122,11 +145,10 @@ def _check_batch(entries: list[_PoolEntry], ctx: str, moves: list[str]) -> Failu
                 f"({len(bad)} cells)"
             ), moves)
 
-    rel = np.zeros((n, 5, 64, 64), dtype=np.uint8)
+    rel = np.full((n, 5, 64, 64), 0xAA, dtype=np.uint8)
     batch_compute_relations(cbs, rel)
     for i, e in enumerate(entries):
-        want_rel = relation_matrices(e.board)
-        if not np.array_equal(rel[i], want_rel):
+        if not np.array_equal(rel[i], e.want_rel):
             return Failure(ctx, (
                 f"batch_compute_relations diverges from relation_matrices "
                 f"board#{i} ({e.label}) fen={e.board.fen()}"
@@ -146,7 +168,7 @@ def run(
         b = chess.Board()
         cb = CBoard.from_board(b)
         moves: list[str] = []
-        pool: list[_PoolEntry] = [_PoolEntry(cb.copy(), b.copy(), "startpos")]
+        pool: list[_PoolEntry] = [_make_entry(cb.copy(), b.copy(), "startpos")]
         for ply in range(1, rng.randrange(2, max_plies + 1)):
             legal = list(b.legal_moves)
             if not legal:
@@ -160,13 +182,12 @@ def run(
             # Same position, three history-construction paths: the live
             # push-built board, a copy of it, and a from_board rebuild whose
             # history comes from python's _stack instead of C pushes.
-            pool.append(_PoolEntry(cb.copy(), b.copy(), f"push@{ply}"))
-            pool.append(_PoolEntry(CBoard.from_board(b), b.copy(), f"from_board@{ply}"))
+            pool.append(_make_entry(cb.copy(), b.copy(), f"push@{ply}"))
+            pool.append(_make_entry(CBoard.from_board(b), b.copy(), f"from_board@{ply}"))
             if len(pool) > batch_cap:
                 del pool[: len(pool) - batch_cap]
-            order = list(range(len(pool)))
-            rng.shuffle(order)
-            entries = [pool[i] for i in order]
+            entries = list(pool)
+            rng.shuffle(entries)
             fail = _check_batch(entries, f"{tag} game{g} ply{ply}", moves)
             if fail is not None:
                 return fail
@@ -181,16 +202,21 @@ def main() -> int:
     parser.add_argument("--check-every", type=int, default=8)
     parser.add_argument("--batch-cap", type=int, default=48)
     args = parser.parse_args()
-    for flag in (False, True):
-        fail = run(
-            games=args.games, seed=args.seed, max_plies=args.max_plies,
-            check_every=args.check_every, batch_cap=args.batch_cap,
-            history_rep_fix=flag,
-        )
-        if fail is not None:
-            print(f"DIVERGENCE FOUND\n{fail}", file=sys.stderr)
-            return 1
-    rep_fix.apply(False)
+    try:
+        for flag in (False, True):
+            fail = run(
+                games=args.games, seed=args.seed, max_plies=args.max_plies,
+                check_every=args.check_every, batch_cap=args.batch_cap,
+                history_rep_fix=flag,
+            )
+            if fail is not None:
+                print(f"DIVERGENCE FOUND\n{fail}", file=sys.stderr)
+                return 1
+    finally:
+        # Restore the process-wide flag even on a divergence return or an
+        # exception — in-process callers (the pytest smoke) must not inherit
+        # a stale history_rep_fix=True.
+        rep_fix.apply(False)
     print(
         f"OK: {args.games} games x both history_rep_fix phases "
         f"(seed={args.seed:#x}, batch cap {args.batch_cap}) — "
