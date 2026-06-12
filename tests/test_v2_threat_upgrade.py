@@ -230,6 +230,24 @@ def test_converter_script_in_place_and_idempotent(tmp_path):
     )
 
 
+def test_converter_script_rejects_out_name_collisions(tmp_path):
+    mod = load_script_module("convert_shards_v2_threats.py")
+    boards = _game_positions()[:3]
+    x_v1 = _encode_rows(boards, LC0_HISTORY_LEGACY, "v1")
+    for src in ("a", "b"):
+        save_local_shard_arrays(
+            tmp_path / src / "shard_000000.zarr",
+            arrs=_chunk(x_v1, LC0_HISTORY_LEGACY),
+            meta={"input_history_encoding": LC0_HISTORY_LEGACY},
+        )
+    with pytest.raises(SystemExit):
+        mod.main([
+            str(tmp_path / "a"), str(tmp_path / "b"),
+            "--out", str(tmp_path / "dst"), "--workers", "1",
+        ])
+    assert not list((tmp_path / "dst").glob("*.zarr"))  # nothing written
+
+
 def test_converter_script_out_dir(tmp_path):
     mod = load_script_module("convert_shards_v2_threats.py")
     src = tmp_path / "src"

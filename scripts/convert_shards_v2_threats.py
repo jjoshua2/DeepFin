@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import fields
 from pathlib import Path
@@ -128,6 +129,17 @@ def main(argv: list[str] | None = None) -> int:
         (p, (args.out / p.name) if args.out is not None else None, args.history_encoding)
         for p in shards
     ]
+    if args.out is not None:
+        # Distinct inputs (e.g. several replay dirs) reuse basenames like
+        # shard_000000.zarr; flattening them into one --out dir would
+        # silently overwrite earlier conversions. Refuse instead.
+        dupes = [name for name, k in Counter(p.name for p in shards).items() if k > 1]
+        if dupes:
+            parser.error(
+                f"--out would merge {len(shards)} shards with duplicate names "
+                f"({', '.join(sorted(dupes)[:3])}{', ...' if len(dupes) > 3 else ''}); "
+                f"convert one input directory per --out run"
+            )
     if args.dry_run:
         for p in shards:
             planes = _stored_planes(p)
