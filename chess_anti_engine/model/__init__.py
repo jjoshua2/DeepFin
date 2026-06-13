@@ -4,10 +4,11 @@ from dataclasses import dataclass
 
 import torch
 
-from chess_anti_engine.encoding import encode_position
+from chess_anti_engine.encoding import encode_position, input_plane_count
 from chess_anti_engine.encoding import rep_fix
 from chess_anti_engine.encoding.features import (
     EXTRA_FEATURES_V1,
+    EXTRA_FEATURES_V2_THREATS,
     RELATION_COUNT,
     normalize_extra_features_encoding,
 )
@@ -485,8 +486,10 @@ def _normalize_orig_mod_prefix(ckpt_state: dict, *, model_state: dict) -> dict:
     return ckpt_state
 
 
-_V1_INPUT_PLANES = 146   # 112 LC0 + 34 v1 extra planes
-_V2_EXTRA_DELTA = 29     # v2_threats planes appended at index 146
+# Derived from the canonical plane counts so a future extra-feature version
+# can't leave these literals stale (see encoding/features.py).
+_V1_INPUT_PLANES = input_plane_count(EXTRA_FEATURES_V1)            # 146 = 112 LC0 + 34 v1 extra
+_V2_EXTRA_DELTA = input_plane_count(EXTRA_FEATURES_V2_THREATS) - _V1_INPUT_PLANES  # 29
 
 
 def _pad_v1_input_columns(value: torch.Tensor, target_shape: torch.Size) -> torch.Tensor | None:
