@@ -238,6 +238,8 @@ def _legacy_x_to_synthetic_lc0_root(x: np.ndarray) -> np.ndarray:
     out = np.array(src, copy=True, order="C")
     out[:, :LC0_FULL.num_planes, :, :] = 0
     half = _LC0_PIECE_PLANES // 2  # per-color split within a piece-plane slot
+    rep_base = LC0_FULL.legacy_repetition_base
+    ones_plane = LC0_FULL.ones_plane
     for hist_idx in range(_LC0_HISTORY_STEPS):
         legacy_start = hist_idx * _LC0_PIECE_PLANES
         root_start = hist_idx * (_LC0_PIECE_PLANES + 1)
@@ -247,8 +249,8 @@ def _legacy_x_to_synthetic_lc0_root(x: np.ndarray) -> np.ndarray:
         else:
             out[:, root_start:root_start + half, :, :] = planes[:, half:_LC0_PIECE_PLANES, ::-1, :]
             out[:, root_start + half:root_start + _LC0_PIECE_PLANES, :, :] = planes[:, 0:half, ::-1, :]
-        rep_plane = LC0_FULL.legacy_repetition_base + hist_idx
-        if rep_plane < LC0_FULL.ones_plane:
+        rep_plane = rep_base + hist_idx
+        if rep_plane < ones_plane:
             out[:, root_start + _LC0_PIECE_PLANES, :, :] = src[:, rep_plane, :, :]
     # Per-board metadata: legacy castling order is (K,Q) per side, root is (Q,K).
     meta = LC0_FULL.metadata_base
@@ -260,7 +262,7 @@ def _legacy_x_to_synthetic_lc0_root(x: np.ndarray) -> np.ndarray:
     out[:, root_meta + 4, :, :] = 0                        # side-to-move flag
     out[:, root_meta + 5, :, :] = src[:, meta + 6, :, :]  # rule50
     out[:, root_meta + 6, :, :] = 0                        # legacy movecount (zero)
-    out[:, LC0_FULL.ones_plane, :, :] = src[:, LC0_FULL.ones_plane, :, :]  # all-ones bias
+    out[:, ones_plane, :, :] = src[:, ones_plane, :, :]  # all-ones bias
     return out
 
 
