@@ -23,6 +23,9 @@ from pathlib import Path
 
 import torch
 
+from chess_anti_engine.encoding.lc0 import LC0_FULL
+from chess_anti_engine.moves import COMPACT_POLICY_SIZE, POLICY_SIZE
+
 
 class OnnxChessNet(torch.nn.Module):
     """Adapter: ``onnxruntime`` session ↔ our 146-plane / 4672-policy contract.
@@ -57,7 +60,7 @@ class OnnxChessNet(torch.nn.Module):
         wdl_output_name: str,
         policy_4672_to_1858: torch.Tensor,
         providers: Sequence[str] = ("CUDAExecutionProvider", "CPUExecutionProvider"),
-        plane_count: int = 112,
+        plane_count: int = LC0_FULL.num_planes,
     ) -> None:
         super().__init__()
         # Local import — onnxruntime is heavy and only needed when this class is used.
@@ -70,9 +73,9 @@ class OnnxChessNet(torch.nn.Module):
         self._wdl_out = wdl_output_name
         self._plane_count = plane_count
 
-        if policy_4672_to_1858.shape != (4672,):
+        if policy_4672_to_1858.shape != (POLICY_SIZE,):
             raise ValueError(
-                f"policy_4672_to_1858 must be shape (4672,), got {tuple(policy_4672_to_1858.shape)}"
+                f"policy_4672_to_1858 must be shape ({POLICY_SIZE},), got {tuple(policy_4672_to_1858.shape)}"
             )
         self.register_buffer("_remap", policy_4672_to_1858.to(torch.int64), persistent=False)
 
@@ -98,18 +101,18 @@ class OnnxChessNet(torch.nn.Module):
         )
         # Remap policy 1858 → 4672. -1 entries become -inf so legal-mask filters them.
         pol_1858 = torch.from_numpy(out_pol_1858)
-        if pol_1858.shape[-1] != 1858:
-            raise ValueError(f"expected policy shape (B, 1858), got {tuple(pol_1858.shape)}")
+        if pol_1858.shape[-1] != COMPACT_POLICY_SIZE:
+            raise ValueError(f"expected policy shape (B, {COMPACT_POLICY_SIZE}), got {tuple(pol_1858.shape)}")
         # Pad with a sentinel column so gather of -1 grabs -inf safely.
         sentinel = torch.full((pol_1858.shape[0], 1), float("-inf"), dtype=pol_1858.dtype)
-        padded = torch.cat([pol_1858, sentinel], dim=1)  # shape (B, 1859)
-        # _remap stores -1 for missing — translate to the sentinel index 1858.
+        padded = torch.cat([pol_1858, sentinel], dim=1)  # shape (B, COMPACT_POLICY_SIZE + 1)
+        # _remap stores -1 for missing — translate to the sentinel index COMPACT_POLICY_SIZE.
         # nn.Module buffer typing widens to Tensor|Module; cast back since
         # register_buffer above only takes a Tensor.
         remap = self._remap
         assert isinstance(remap, torch.Tensor)
         gather_idx = remap.clone()
-        gather_idx[gather_idx < 0] = 1858
+        gather_idx[gather_idx < 0] = COMPACT_POLICY_SIZE
         # Broadcast gather across batch.
         idx = gather_idx.unsqueeze(0).expand(pol_1858.shape[0], -1)
         pol_4672 = torch.gather(padded, 1, idx)

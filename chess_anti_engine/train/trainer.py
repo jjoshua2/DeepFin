@@ -73,8 +73,8 @@ from .soda import SODAWeightDecayWrapper, mark_soda_weight_decay_groups
 
 SummaryWriter = _SummaryWriter  # skylos: ignore (used via runtime fallback)
 
-_LC0_HISTORY_STEPS = 8
-_LC0_PIECE_PLANES = 12
+_LC0_HISTORY_STEPS = LC0_FULL.history_len
+_LC0_PIECE_PLANES = LC0_FULL.piece_planes_per_history
 _INPUT_HISTORY_SELECTED_KEY = "_input_history_encoding_selected"
 
 
@@ -236,7 +236,8 @@ def _legacy_x_to_synthetic_lc0_root(x: np.ndarray) -> np.ndarray:
     """Best-effort LC0-root history remap for legacy replay tensors."""
     src = np.asarray(x)
     out = np.array(src, copy=True, order="C")
-    out[:, :112, :, :] = 0
+    out[:, :LC0_FULL.num_planes, :, :] = 0
+    half = _LC0_PIECE_PLANES // 2  # per-color split within a piece-plane slot
     for hist_idx in range(_LC0_HISTORY_STEPS):
         legacy_start = hist_idx * _LC0_PIECE_PLANES
         root_start = hist_idx * (_LC0_PIECE_PLANES + 1)
@@ -244,27 +245,34 @@ def _legacy_x_to_synthetic_lc0_root(x: np.ndarray) -> np.ndarray:
         if hist_idx % 2 == 0:
             out[:, root_start:root_start + _LC0_PIECE_PLANES, :, :] = planes
         else:
-            out[:, root_start:root_start + 6, :, :] = planes[:, 6:12, ::-1, :]
-            out[:, root_start + 6:root_start + 12, :, :] = planes[:, 0:6, ::-1, :]
-        rep_plane = 103 + hist_idx
-        if rep_plane < 111:
-            out[:, root_start + 12, :, :] = src[:, rep_plane, :, :]
-    out[:, 104, :, :] = src[:, 97, :, :]
-    out[:, 105, :, :] = src[:, 96, :, :]
-    out[:, 106, :, :] = src[:, 99, :, :]
-    out[:, 107, :, :] = src[:, 98, :, :]
-    out[:, 108, :, :] = 0
-    out[:, 109, :, :] = src[:, 102, :, :]
-    out[:, 110, :, :] = 0
-    out[:, 111, :, :] = src[:, 111, :, :]
+            out[:, root_start:root_start + half, :, :] = planes[:, half:_LC0_PIECE_PLANES, ::-1, :]
+            out[:, root_start + half:root_start + _LC0_PIECE_PLANES, :, :] = planes[:, 0:half, ::-1, :]
+        rep_plane = LC0_FULL.legacy_repetition_base + hist_idx
+        if rep_plane < LC0_FULL.ones_plane:
+            out[:, root_start + _LC0_PIECE_PLANES, :, :] = src[:, rep_plane, :, :]
+    # Per-board metadata: legacy castling order is (K,Q) per side, root is (Q,K).
+    meta = LC0_FULL.metadata_base
+    root_meta = LC0_FULL.root_metadata_base
+    out[:, root_meta + 0, :, :] = src[:, meta + 1, :, :]  # castle Q us
+    out[:, root_meta + 1, :, :] = src[:, meta + 0, :, :]  # castle K us
+    out[:, root_meta + 2, :, :] = src[:, meta + 3, :, :]  # castle Q them
+    out[:, root_meta + 3, :, :] = src[:, meta + 2, :, :]  # castle K them
+    out[:, root_meta + 4, :, :] = 0                        # side-to-move flag
+    out[:, root_meta + 5, :, :] = src[:, meta + 6, :, :]  # rule50
+    out[:, root_meta + 6, :, :] = 0                        # legacy movecount (zero)
+    out[:, LC0_FULL.ones_plane, :, :] = src[:, LC0_FULL.ones_plane, :, :]  # all-ones bias
     return out
 
 
 def _apply_lc0_root_legacy_meta(root_x: np.ndarray, legacy_x: np.ndarray) -> np.ndarray:
     root = np.array(root_x, copy=True, order="C")
     legacy = np.asarray(legacy_x)
-    root[:, 109, :, :] = legacy[:, 102, :, :].astype(root.dtype, copy=False)
-    root[:, 110, :, :] = legacy[:, 100, :, :].astype(root.dtype, copy=False)
+    root_rule50 = LC0_FULL.root_metadata_base + 5
+    root_movecount = LC0_FULL.root_metadata_base + 6
+    legacy_rule50 = LC0_FULL.metadata_base + 6
+    legacy_ep = LC0_FULL.metadata_base + 4
+    root[:, root_rule50, :, :] = legacy[:, legacy_rule50, :, :].astype(root.dtype, copy=False)
+    root[:, root_movecount, :, :] = legacy[:, legacy_ep, :, :].astype(root.dtype, copy=False)
     return root
 
 

@@ -34,6 +34,7 @@ from typing import Protocol
 
 import numpy as np
 
+from chess_anti_engine.encoding import input_plane_count
 from chess_anti_engine.encoding._lc0_ext import CBoard as _CBoard
 from chess_anti_engine.encoding.features import RELATION_COUNT
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
@@ -60,7 +61,7 @@ class WalkerPoolConfig:
   # 1 to preserve the classic one-leaf-per-call shape.
     gather: int = 1
   # Input channel count (146 v1 / 175 v2_threats); sized from the model.
-    input_planes: int = 146
+    input_planes: int = input_plane_count()
   # Transport dynamic board-relation matrices per leaf (model.use_dynamic_relations).
     compute_relations: bool = False
 
