@@ -2,7 +2,59 @@ from __future__ import annotations
 
 import torch
 
-from chess_anti_engine.train.losses import compute_loss
+from chess_anti_engine.train.losses import compute_loss, soft_cross_entropy
+
+
+def test_soft_cross_entropy_renormalizes_target_rows() -> None:
+    """Soft CE must be invariant to a positive rescaling of the target row.
+
+    The loss is linear in the target, so an un-normalized row would scale the
+    sample's loss/gradient. After renormalization a row and twice that row
+    must give the same loss.
+    """
+    torch.manual_seed(0)
+    logits = torch.randn(4, 16)
+    target = torch.rand(4, 16)
+    target = target / target.sum(dim=-1, keepdim=True)
+
+    base = soft_cross_entropy(logits, target)
+    scaled = soft_cross_entropy(logits, target * 2.0)
+    torch.testing.assert_close(base, scaled)
+
+
+def test_soft_cross_entropy_corrects_rowsum_drift() -> None:
+    """Soft CE recovers the normalized loss when target rows do not sum to
+    exactly 1 (as happens after the float16 round-trip in replay shards)."""
+    torch.manual_seed(1)
+    width = 1858  # production lc0_1858 policy width
+    logits = torch.randn(8, width)
+    target = torch.rand(8, width).pow(4.0)
+    target = target / target.sum(dim=-1, keepdim=True)
+
+    ce_norm = soft_cross_entropy(logits, target)
+
+    # A target whose rows sum to ~1.01 must give the same loss (a 1% scaling
+    # of the loss/gradient without the renorm).
+    drifted = target * 1.01
+    torch.testing.assert_close(soft_cross_entropy(logits, drifted), ce_norm)
+
+    # A realistic float16 round-trip recovers the float32 loss within f16 error.
+    target_f16 = target.to(torch.float16).to(torch.float32)
+    torch.testing.assert_close(
+        soft_cross_entropy(logits, target_f16), ce_norm, atol=2e-3, rtol=2e-3,
+    )
+
+
+def test_soft_cross_entropy_all_zero_rows_are_finite_zero() -> None:
+    """Missing/masked targets are all-zero rows; they must contribute 0, not NaN."""
+    logits = torch.randn(3, 8)
+    target = torch.zeros(3, 8)
+    target[1] = torch.tensor([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+
+    ce = soft_cross_entropy(logits, target)
+    assert torch.isfinite(ce).all()
+    assert float(ce[0]) == 0.0
+    assert float(ce[2]) == 0.0
 
 
 def _base_batch(*, batch_size: int = 2, actions: int = 3) -> dict[str, torch.Tensor]:

@@ -34,12 +34,23 @@ def masked_mean(x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
 def soft_cross_entropy(logits: torch.Tensor, target_probs: torch.Tensor) -> torch.Tensor:
     """Cross-entropy with a soft target distribution.
 
-    ``target_probs`` must already be normalized along the last axis (rows
-    summing to 1 — true for ``policy_t``, ``policy_soft_t``,
-    ``future_policy_t``, ``categorical_t``, and the post-clamp
-    ``sf_wdl_probs``). Callers working from raw counts must normalize
-    first.
+    Soft targets are *meant* to be normalized along the last axis, but the
+    replay shards persist them as float16 (``policy_t``, ``policy_soft_t``,
+    ``future_policy_t``, ``categorical_t``, ``sf_policy_t``). Round-tripping a
+    distribution through f16 leaves each row summing to ``1 ± O(width * 2**-11)``
+    instead of exactly 1 (smaller on peaked visit distributions, up to ~1e-3 on
+    flatter targets like ``categorical_t`` / smoothed ``sf_policy_t``). Because
+    soft CE is *linear* in the target, that residual row-sum scales the whole
+    sample's loss and gradient, most impactfully on the main policy head
+    (``w_policy = 1.0``). Renormalizing here removes that f16 bias and makes the
+    documented invariant true for every soft-CE head.
+
+    It is a no-op (within fp error) for already-normalized targets such as the
+    post-clamp ``sf_wdl_probs`` and the convex WDL blend, and all-zero rows
+    (missing/masked targets) stay zero — ``clamp_min`` keeps the division
+    finite so they contribute 0 loss rather than NaN.
     """
+    target_probs = target_probs / target_probs.sum(dim=-1, keepdim=True).clamp_min(1e-8)
     return -(target_probs * F.log_softmax(logits, dim=-1)).sum(dim=-1)
 
 
