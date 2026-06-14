@@ -40,7 +40,7 @@
 #   150 games × ~20-30 pos = ~3k-5k new samples → up to 15 training steps (256 batch)
 
 seed: 0
-work_dir: runs/pbt2_small
+work_dir: runs/exp_categorical_continuous  # Own work dir: never share tune/auto-resume state with production.
 device: cuda
 iterations: 750
 replay_window_start: 400000   # 2026-04-22 v4: was 20000 (truncated pool to 10/187 shards). Raised so salvage keeps all pool shards (~374k pos).

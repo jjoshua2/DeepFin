@@ -160,6 +160,24 @@ def test_build_selfplay_configs_consumes_history_rep_fix() -> None:
     assert "history_rep_fix" in WorkerSession._RECO_RESTART_KEYS
 
 
+def test_build_selfplay_configs_consumes_categorical_blend_frac() -> None:
+    """The published categorical_blend_frac must reach the worker GameConfig —
+    otherwise distributed workers silently emit legacy ternary categorical
+    targets and the experiment measures the control."""
+    session = _bare_worker_session()
+
+    cfgs, _sf_args = WorkerSession._build_selfplay_configs(
+        session, {"categorical_blend_frac": 0.5},
+    )
+    assert cfgs["game"].categorical_blend_frac == 0.5
+
+    cfgs, _sf_args = WorkerSession._build_selfplay_configs(session, {})
+    assert cfgs["game"].categorical_blend_frac == 0.0
+
+    # Flipping the flag mid-session must restart selfplay so it takes effect.
+    assert "categorical_blend_frac" in WorkerSession._RECO_RESTART_KEYS
+
+
 def test_encoding_recommendation_changes_restart_selfplay_session() -> None:
     session = _bare_worker_session()
     old = {
