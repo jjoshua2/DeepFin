@@ -23,16 +23,6 @@ if TYPE_CHECKING:
     )
 
 
-PIECE_TYPES = [
-    chess.PAWN,
-    chess.KNIGHT,
-    chess.BISHOP,
-    chess.ROOK,
-    chess.QUEEN,
-    chess.KING,
-]
-
-
 @dataclass(frozen=True)
 class LC0ReducedPlaneSpec:
     """Plane layout for the initial reduced LC0 baseline."""
@@ -199,7 +189,7 @@ def _write_piece_planes(board: chess.Board, out: np.ndarray, start: int) -> int:
     raw_bytes = b''.join(
         int(board.pieces_mask(pt, color)).to_bytes(8, 'big')
         for color in (us, them)
-        for pt in PIECE_TYPES
+        for pt in chess.PIECE_TYPES
     )
     raw = np.unpackbits(np.frombuffer(raw_bytes, dtype=np.uint8)).reshape(12, 8, 8)
     if turn == chess.WHITE:

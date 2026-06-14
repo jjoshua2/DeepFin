@@ -35,10 +35,6 @@ PHASE_THRESHOLDS = (13, 22)
 PHASE_NAMES = ("endgame", "middlegame", "opening")
 SOURCE_NAMES = ("selfplay", "curriculum")
 
-_PIECE_TYPES = (
-    chess.PAWN, chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN, chess.KING,
-)
-
 
 def phase_bucket(piece_count: int) -> int:
     """0=endgame, 1=middlegame, 2=opening — same thresholds as the probe."""
@@ -109,7 +105,7 @@ def decode_board_from_planes(
     board.clear()
     board.turn = chess.WHITE
     for slot, color in ((0, chess.WHITE), (6, chess.BLACK)):
-        for i, pt in enumerate(_PIECE_TYPES):
+        for i, pt in enumerate(chess.PIECE_TYPES):
             for row, col in np.argwhere(arr[slot + i] > 0.5):
                 sq = chess.square(int(col), int(row))
                 if board.piece_at(sq) is not None:

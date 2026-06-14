@@ -21,7 +21,6 @@ from chess_anti_engine.replay.shard import load_shard_arrays, shard_positions
 
 
 DEFAULT_RUN = Path("runs/pbt2_small")
-_PIECE_TYPES = (chess.PAWN, chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN, chess.KING)
 _OUTCOME = ("W", "D", "L")
 _DAMPEN_VALUES = (0.0, 0.25, 0.5, 1.0)
 
@@ -277,7 +276,7 @@ def _decode_current_board(x: np.ndarray) -> chess.Board:
     board = chess.Board(None)
     board.turn = turn
     for base, color in ((0, turn), (6, not turn)):
-        for off, piece_type in enumerate(_PIECE_TYPES):
+        for off, piece_type in enumerate(chess.PIECE_TYPES):
             for y, col in np.argwhere(x[base + off] > 0.5):
                 board.set_piece_at(inv[(int(y), int(col))], chess.Piece(piece_type, color))
 
