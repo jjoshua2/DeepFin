@@ -42,7 +42,13 @@ from chess_anti_engine.encoding.lc0 import (
     uses_lc0_root_legacy_meta,
 )
 from chess_anti_engine.model import ARCH_SCHEMA_VERSION, ModelConfig
-from chess_anti_engine.train.target_builder import SfTargetParams, rebuild_sf_targets_in_arrays
+from chess_anti_engine.train.target_builder import (
+    DEFAULT_CATEGORICAL_BINS,
+    CategoricalTargetParams,
+    SfTargetParams,
+    rebuild_categorical_target_in_arrays,
+    rebuild_sf_targets_in_arrays,
+)
 from chess_anti_engine.moves import (
     COMPACT_POLICY_SIZE,
     COMPACT_TO_FULL_POLICY,
@@ -727,6 +733,12 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
             sf_wdl_cp_slope=_f("sf_wdl_cp_slope", 0.010),
             sf_wdl_cp_draw_width=_f("sf_wdl_cp_draw_width", 60.0),
         ),
+        rebuild_categorical_target=bool(config.get("rebuild_categorical_target", False)),
+        categorical_target_params=CategoricalTargetParams(
+            blend_frac=_f("categorical_blend_frac", 0.0),
+            num_bins=int(config.get("categorical_bins", DEFAULT_CATEGORICAL_BINS)),
+            sigma=_f("hlgauss_sigma", 0.04),
+        ),
         fdp_king_safety=config.get("fdp_king_safety"),
         fdp_pins=config.get("fdp_pins"),
         fdp_pawns=config.get("fdp_pawns"),
@@ -815,6 +827,8 @@ class Trainer:
         rebuild_sf_targets: bool = False,
         sf_policy_sparse_ce: bool = False,
         sf_target_params: SfTargetParams | None = None,
+        rebuild_categorical_target: bool = False,
+        categorical_target_params: CategoricalTargetParams | None = None,
         fdp_king_safety: float | None = None,
         fdp_pins: float | None = None,
         fdp_pawns: float | None = None,
@@ -1196,6 +1210,11 @@ class Trainer:
         self.rebuild_sf_targets = bool(rebuild_sf_targets)
         self.sf_policy_sparse_ce = bool(sf_policy_sparse_ce)
         self.sf_target_params = sf_target_params or SfTargetParams()
+  # Offline-only: recompute categorical_target from stored outcome + sf_wdl so
+  # categorical_blend_frac can be screened on existing shards (sidecar). Default
+  # off = stored targets used unchanged.
+        self.rebuild_categorical_target = bool(rebuild_categorical_target)
+        self.categorical_target_params = categorical_target_params or CategoricalTargetParams()
         self._base_input_planes = int(LC0_FULL.num_planes)
   # Per-group dropout: (start_offset_from_base, num_planes, dropout_prob)
   # Groups: king_safety(10), pins(6), pawns(8), mobility(6), outposts(4).
@@ -1449,6 +1468,10 @@ class Trainer:
             arrs = buf.sample_batch_arrays(batch_size)
             if self.rebuild_sf_targets:
                 arrs = rebuild_sf_targets_in_arrays(arrs, params=self.sf_target_params)
+            if self.rebuild_categorical_target:
+                arrs = rebuild_categorical_target_in_arrays(
+                    arrs, params=self.categorical_target_params,
+                )
             if not self.sf_policy_sparse_ce:
                 # Keep the default H2D payload identical to the pre-sparse-CE
                 # pipeline: the int rows only ride to the GPU when the sparse

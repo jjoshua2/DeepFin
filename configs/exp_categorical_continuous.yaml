@@ -17,6 +17,11 @@
 # it is auxiliary, so the only risk is wasted gradient if it's Elo-neutral.
 #
 # Sweep: categorical_blend_frac in {0.3, 0.5, 0.7}.
+# Offline screen first (cheap): the categorical target is rebuildable from the
+# stored hard outcome + sf_wdl, so set train.rebuild_categorical_target: true
+# (plus the categorical_blend_frac under test) in an offline_replay_epoch run to
+# recompute it on existing shards without fresh selfplay. Use that to screen out
+# losers, then live-run + arena the survivor (loss != Elo for an anti-engine).
 # Protocol (docs/eval_protocol.md): fixed-budget train, then
 # scripts/arena_standard.py --matched_sims vs the unblended checkpoint.
 # KEEP iff arena lands >= +5 Elo (95% CI excludes 0); KILL if within +/-5 Elo
