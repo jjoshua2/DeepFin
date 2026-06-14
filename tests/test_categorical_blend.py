@@ -31,6 +31,21 @@ def test_blend_falls_back_to_outcome_without_sf_eval() -> None:
     assert categorical_target_value(1.0, None, blend_frac=0.5) == 1.0
     bad_shape = np.array([0.5, 0.5], dtype=np.float32)
     assert categorical_target_value(-1.0, bad_shape, blend_frac=0.5) == -1.0
+    # All-zero row (no usable eval) must not divide-by-zero.
+    assert categorical_target_value(1.0, np.zeros(3, dtype=np.float32), blend_frac=0.5) == 1.0
+
+
+def test_blend_is_scale_invariant_normalized_vs_permille() -> None:
+    """sf_wdl may be normalized probs (cp-logistic) or SF's raw permille
+    (native / after rebuild_sf_targets); (W-L)/(W+D+L) must give the same
+    blended value either way, so the offline rebuild matches finalize even when
+    rebuild_sf_targets repopulated sf_wdl in permille."""
+    norm = np.array([0.6, 0.3, 0.1], dtype=np.float32)
+    permille = np.array([600.0, 300.0, 100.0], dtype=np.float32)
+    for scalar_v in (1.0, 0.0, -1.0):
+        a = categorical_target_value(scalar_v, norm, blend_frac=0.5)
+        b = categorical_target_value(scalar_v, permille, blend_frac=0.5)
+        assert abs(a - b) < 1e-6
 
 
 def test_blended_target_uses_interior_bins_unlike_ternary() -> None:
