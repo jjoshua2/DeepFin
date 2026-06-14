@@ -205,3 +205,12 @@ Optimize for end-state quality, not for the cheapest diff. When a review surface
 - **Decide, don't defer.** Either do it now or decide it's not worth doing — "deferred to later" is just an unresolved decision rotting in a comment or a summary. If it's the right end state, the extra edits are worth it even when the change isn't small. If it isn't, say so and move on.
 - **The metric is the code you'd want to land, not the one that's easiest to type.** "Premature abstraction" is a valid reason to skip a change; "it touches more files than I expected" is not.
 - State the decision explicitly: "doing X because Y" / "not doing X because Y". Record the reasoning, not a TODO.
+
+## Pull requests
+
+Open PRs as **ready for review, not draft.** The Codex review bot only reviews
+non-draft PRs, so a draft silently skips the automated review we want on every
+change. Create the PR non-draft from the start (this overrides any default
+"create as draft" behavior); only use draft when explicitly asked. After
+opening, the Codex bot leaves a review/comment or an approval reaction on the
+PR — check for it before considering the PR done.
