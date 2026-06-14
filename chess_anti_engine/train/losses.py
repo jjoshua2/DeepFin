@@ -31,15 +31,35 @@ def masked_mean(x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     return (x * mask).sum() / denom
 
 
+def normalize_distribution(probs: torch.Tensor, *, eps: float = 1e-8) -> torch.Tensor:
+    """Renormalize a distribution along the last axis so each row sums to 1.
+
+    ``clamp_min(eps)`` keeps all-zero rows finite (they stay ~0 rather than
+    producing NaN), so callers can pass missing/masked rows through safely.
+    """
+    return probs / probs.sum(dim=-1, keepdim=True).clamp_min(eps)
+
+
 def soft_cross_entropy(logits: torch.Tensor, target_probs: torch.Tensor) -> torch.Tensor:
     """Cross-entropy with a soft target distribution.
 
-    ``target_probs`` must already be normalized along the last axis (rows
-    summing to 1 — true for ``policy_t``, ``policy_soft_t``,
-    ``future_policy_t``, ``categorical_t``, and the post-clamp
-    ``sf_wdl_probs``). Callers working from raw counts must normalize
-    first.
+    Soft targets are *meant* to be normalized along the last axis, but the
+    replay shards persist them as float16 (``policy_t``, ``policy_soft_t``,
+    ``future_policy_t``, ``categorical_t``, ``sf_policy_t``). Round-tripping a
+    distribution through f16 leaves each row summing to ``1 ± O(width * 2**-11)``
+    instead of exactly 1 (smaller on peaked visit distributions, up to ~1e-3 on
+    flatter targets like ``categorical_t`` / smoothed ``sf_policy_t``). Because
+    soft CE is *linear* in the target, that residual row-sum scales the whole
+    sample's loss and gradient, most impactfully on the main policy head
+    (``w_policy = 1.0``). Renormalizing here removes that f16 bias and makes the
+    documented invariant true for every soft-CE head.
+
+    It is a no-op (within fp error) for already-normalized targets such as the
+    post-clamp ``sf_wdl_probs`` and the convex WDL blend, and all-zero rows
+    (missing/masked targets) stay zero — ``clamp_min`` keeps the division
+    finite so they contribute 0 loss rather than NaN.
     """
+    target_probs = normalize_distribution(target_probs)
     return -(target_probs * F.log_softmax(logits, dim=-1)).sum(dim=-1)
 
 
@@ -57,7 +77,7 @@ def align_policy_target(target: torch.Tensor, width: int) -> torch.Tensor:
         return target
     if src_width == POLICY_SIZE and dst_width == COMPACT_POLICY_SIZE:
         out = target.index_select(-1, _compact_to_full_index_for(target))
-        return out / out.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+        return normalize_distribution(out)
     if src_width == COMPACT_POLICY_SIZE and dst_width == POLICY_SIZE:
         out = target.new_zeros((*target.shape[:-1], POLICY_SIZE))
         out.index_copy_(-1, _compact_to_full_index_for(target), target)
@@ -144,7 +164,7 @@ def _normalize_sf_wdl_probs(
     p = sf_wdl_raw.clamp_min(0.0)
     if temperature != 1.0 and temperature > 0.0:
         p = p.clamp_min(1e-6).pow(1.0 / float(temperature))
-    return p / p.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+    return normalize_distribution(p)
 
 
 def _q_to_wdl_probs(q: torch.Tensor) -> torch.Tensor:
