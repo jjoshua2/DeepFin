@@ -343,7 +343,7 @@ tune:
   distributed_prefetch_shards: true
   distributed_async_test_eval: true
   distributed_async_test_eval_timeout_s: 120.0
-  distributed_worker_shared_cache_dir: /home/josh/projects/chess/runs/pbt2_small/server/worker_cache
+  distributed_worker_shared_cache_dir: /home/josh/projects/chess/runs/exp_dynamic_relations/server/worker_cache
   distributed_min_workers_per_trial: 1
   distributed_max_worker_delta_per_rebalance: 1
   distributed_wait_timeout_seconds: 720  # 2026-05-19: 600->720 to give current-model selfplay more time after lowering stale backlog target.
@@ -353,8 +353,8 @@ tune:
   distributed_server_port: 45453
   distributed_server_host: 0.0.0.0
   distributed_server_public_url: http://192.168.1.212:45453
-  distributed_server_root_override: /home/josh/projects/chess/runs/pbt2_small/server
-  tune_replay_root_override: /home/josh/projects/chess/runs/pbt2_small/replay
+  distributed_server_root_override: /home/josh/projects/chess/runs/exp_dynamic_relations/server
+  tune_replay_root_override: /home/josh/projects/chess/runs/exp_dynamic_relations/replay
 
   # Disk-backed replay buffer: keeps ~1 GB per trial instead of ~10 GB
   shuffle_buffer_size: 25000  # In-memory shuffle buffer (run26 value)
