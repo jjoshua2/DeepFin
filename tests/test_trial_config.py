@@ -13,6 +13,7 @@ def test_from_empty_dict() -> None:
     """All defaults should work with an empty config dict."""
     tc = TrialConfig.from_dict({})
     assert tc.model == "transformer"
+    assert tc.categorical_blend_frac == 0.0  # off by default
     assert tc.embed_dim == 256
     assert tc.lr == 0.0003
     assert tc.optimizer == "nadamw"
@@ -68,6 +69,7 @@ def test_from_dict_overrides() -> None:
         "syzygy_adjudicate": True,
         "syzygy_adjudicate_fraction": 0.25,
         "syzygy_in_search": True,
+        "categorical_blend_frac": 0.5,
     })
     assert tc.lr == 0.001
     assert tc.sf_nodes == 5000
@@ -91,6 +93,7 @@ def test_from_dict_overrides() -> None:
     assert tc.syzygy_adjudicate is True
     assert tc.syzygy_adjudicate_fraction == 0.25
     assert tc.syzygy_in_search is True
+    assert tc.categorical_blend_frac == 0.5
     # Unset values still get defaults
     assert tc.model == "transformer"
     assert tc.sf_pid_enabled is True

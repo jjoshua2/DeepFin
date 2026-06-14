@@ -2196,6 +2196,7 @@ class WorkerSession:
                     reco.get("record_relations", reco.get("use_dynamic_relations", False))
                 ),
                 record_dense_sf_policy=bool(reco.get("record_dense_sf_policy", True)),
+                categorical_blend_frac=float(reco.get("categorical_blend_frac", 0.0)),
             ),
         }
         sf_args = (
