@@ -464,7 +464,7 @@ def main() -> None:
                     help="Shared-memory slot name for slot-based inference broker.")
     ap.add_argument("--inference-slot-max-batch", type=int, default=256,
                     help="Max batch size for inference slot (must match broker).")
-    ap.add_argument("--inference-slot-input-planes", type=int, default=146,
+    ap.add_argument("--inference-slot-input-planes", type=int, default=input_plane_count(),
                     help="Input channel count for inference slot (must match broker; "
                     "146 for v1, 175 for v2_threats).")
     ap.add_argument(

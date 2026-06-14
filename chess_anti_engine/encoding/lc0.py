@@ -23,16 +23,6 @@ if TYPE_CHECKING:
     )
 
 
-PIECE_TYPES = [
-    chess.PAWN,
-    chess.KNIGHT,
-    chess.BISHOP,
-    chess.ROOK,
-    chess.QUEEN,
-    chess.KING,
-]
-
-
 @dataclass(frozen=True)
 class LC0ReducedPlaneSpec:
     """Plane layout for the initial reduced LC0 baseline."""
@@ -85,6 +75,35 @@ class LC0FullPlaneSpec:
             + self.num_repetition_planes
             + self.num_ones_planes
         )
+
+    @property
+    def metadata_base(self) -> int:
+        """First plane of the legacy per-board metadata block (right after the
+        piece planes): castling, EP, turn, rule50 in that order."""
+        return self.num_piece_planes  # 96
+
+    @property
+    def legacy_repetition_base(self) -> int:
+        """First repetition plane in the legacy layout (after the metadata block)."""
+        return (
+            self.metadata_base
+            + self.num_castling_planes
+            + self.num_ep_planes
+            + self.num_turn_planes
+            + self.num_rule50_planes
+        )  # 103
+
+    @property
+    def root_metadata_base(self) -> int:
+        """First metadata plane in the root layout, which interleaves one
+        repetition plane into each history slot (piece_planes_per_history + 1
+        planes per slot) rather than appending them all at the end."""
+        return self.history_len * (self.piece_planes_per_history + 1)  # 104
+
+    @property
+    def ones_plane(self) -> int:
+        """Index of the trailing all-ones bias plane (shared by both layouts)."""
+        return self.num_planes - self.num_ones_planes  # 111
 
 
 LC0_REDUCED = LC0ReducedPlaneSpec()
@@ -148,11 +167,13 @@ def c_input_history_mode(input_history_encoding: str | None) -> int:
 
 
 def apply_lc0_root_legacy_meta_planes(out: np.ndarray, board: chess.Board) -> None:
-    """Patch LC0-root planes 109/110 to match the legacy metadata scale."""
-    out[109, :, :] = min(float(board.halfmove_clock), 100.0) / 100.0
-    out[110, :, :] = 0.0
+    """Patch the LC0-root rule50/movecount planes to match the legacy metadata scale."""
+    rule50 = LC0_FULL.root_metadata_base + 5
+    movecount = LC0_FULL.root_metadata_base + 6
+    out[rule50, :, :] = min(float(board.halfmove_clock), 100.0) / 100.0
+    out[movecount, :, :] = 0.0
     if board.ep_square is not None:
-        out[110, :, chess.square_file(board.ep_square)] = 1.0
+        out[movecount, :, chess.square_file(board.ep_square)] = 1.0
 
 
 def _write_piece_planes(board: chess.Board, out: np.ndarray, start: int) -> int:
@@ -168,7 +189,7 @@ def _write_piece_planes(board: chess.Board, out: np.ndarray, start: int) -> int:
     raw_bytes = b''.join(
         int(board.pieces_mask(pt, color)).to_bytes(8, 'big')
         for color in (us, them)
-        for pt in PIECE_TYPES
+        for pt in chess.PIECE_TYPES
     )
     raw = np.unpackbits(np.frombuffer(raw_bytes, dtype=np.uint8)).reshape(12, 8, 8)
     if turn == chess.WHITE:
@@ -257,7 +278,7 @@ def encode_lc0_full(
             apply_lc0_root_legacy_meta_planes(out, board)
         return out
 
-    out = np.zeros((112, 8, 8), dtype=np.float32)
+    out = np.zeros((LC0_FULL.num_planes, 8, 8), dtype=np.float32)
 
     stack = board._stack
     stack_len = len(stack)
@@ -313,7 +334,7 @@ def encode_lc0_full(
 
   # Repetition planes — check only the 8 history positions, not entire stack.
   # Build keys only for positions within the history window + scan backward.
-    rep_base = 103  # 96 piece + 4 castling + 1 EP + 1 turn + 1 rule50
+    rep_base = LC0_FULL.legacy_repetition_base
     _check_repetitions(board, stack, stack_len, n_steps, out, rep_base)
 
     _write_metadata_planes(out, board)
@@ -335,7 +356,7 @@ def encode_lc0_full_root(board: chess.Board, *, history_len: int = 8) -> np.ndar
     side-to-move POV. That keeps "us"/"them" and board orientation stable
     across the temporal stack.
     """
-    out = np.zeros((112, 8, 8), dtype=np.float32)
+    out = np.zeros((LC0_FULL.num_planes, 8, 8), dtype=np.float32)
     root_turn = board.turn
     stack = board._stack
     stack_len = len(stack)
@@ -387,7 +408,7 @@ def _write_metadata_planes(out: np.ndarray, board: chess.Board) -> None:
     turn = board.turn
     us = turn
     them = not turn
-    meta_idx = 96
+    meta_idx = LC0_FULL.metadata_base
 
     for has in (
         board.has_kingside_castling_rights(us),
@@ -409,7 +430,7 @@ def _write_metadata_planes(out: np.ndarray, board: chess.Board) -> None:
     out[meta_idx, :, :] = min(float(board.halfmove_clock), 100.0) / 100.0
     meta_idx += 1
 
-    out[111, :, :] = 1.0  # all-ones bias
+    out[LC0_FULL.ones_plane, :, :] = 1.0  # all-ones bias
 
 
 def _write_metadata_planes_root(out: np.ndarray, board: chess.Board) -> None:
@@ -417,7 +438,7 @@ def _write_metadata_planes_root(out: np.ndarray, board: chess.Board) -> None:
     turn = board.turn
     us = turn
     them = not turn
-    meta_idx = 104
+    meta_idx = LC0_FULL.root_metadata_base
 
     for has in (
         board.has_queenside_castling_rights(us),
@@ -434,7 +455,7 @@ def _write_metadata_planes_root(out: np.ndarray, board: chess.Board) -> None:
     meta_idx += 1
 
     out[meta_idx, :, :] = float(board.halfmove_clock)
-    out[111, :, :] = 1.0
+    out[LC0_FULL.ones_plane, :, :] = 1.0
 
 
 def encode_lc0_full_c(
@@ -456,7 +477,7 @@ def encode_lc0_full_c(
             apply_lc0_root_legacy_meta_planes(out, board)
         return out
 
-    out = np.zeros((112, 8, 8), dtype=np.float32)
+    out = np.zeros((LC0_FULL.num_planes, 8, 8), dtype=np.float32)
 
     stack = board._stack
     stack_len = len(stack)
@@ -501,7 +522,7 @@ def encode_lc0_full_c(
     out[:n_steps * 12] = planes
 
   # Repetition planes
-    rep_base = 103
+    rep_base = LC0_FULL.legacy_repetition_base
     _check_repetitions(board, stack, stack_len, n_steps, out, rep_base)
 
     _write_metadata_planes(out, board)
@@ -510,7 +531,7 @@ def encode_lc0_full_c(
 
 def _encode_lc0_full_root_c(board: chess.Board, *, history_len: int = 8) -> np.ndarray:
     """C-assisted bitboard conversion for the root-POV 13-plane history layout."""
-    out = np.zeros((112, 8, 8), dtype=np.float32)
+    out = np.zeros((LC0_FULL.num_planes, 8, 8), dtype=np.float32)
     root_turn = board.turn
     stack = board._stack
     stack_len = len(stack)

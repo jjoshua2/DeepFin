@@ -24,7 +24,7 @@ from chess_anti_engine.model import (
     load_state_dict_tolerant,
     model_config_from_manifest_dict,
 )
-from chess_anti_engine.moves import COMPACT_POLICY_SIZE
+from chess_anti_engine.moves import COMPACT_POLICY_SIZE, POLICY_SIZE
 from chess_anti_engine.moves.torch_maps import compact_to_full_index_for as _compact_to_full_index_for
 from chess_anti_engine.utils.amp import inference_autocast
 
@@ -33,10 +33,10 @@ log = logging.getLogger(__name__)
 # Input/output tensor shape constants shared by evaluators, slot layouts and
 # pinned buffers. _CHANNELS is the v1 default (146 = 112 LC0 + 34 extra);
 # v2_threats paths pass their own channel count explicitly.
-_CHANNELS = 146
+_CHANNELS = input_plane_count()  # 146 = 112 LC0 + 34 v1 extra
 _BOARD_H = 8
 _BOARD_W = 8
-_POLICY_SIZE = 4672
+_POLICY_SIZE = POLICY_SIZE
 _WDL_SIZE = 3
 _F32 = np.float32
 _F32_BYTES = 4

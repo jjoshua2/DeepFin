@@ -155,3 +155,17 @@ def test_feature_dropout_can_be_disabled(tmp_path):
     base = int(LC0_FULL.num_planes)
     assert np.allclose(x[:base], 2.0)
     assert np.allclose(x[base:], 3.0)
+
+
+def test_lc0_full_plane_offsets_are_stable():
+    """Pin the LC0 layout anchors that the encoders and the legacy->root replay
+    remap derive from (encoding/lc0.py, train/trainer.py). If a spec field is
+    edited and silently shifts these, the warm-start input-column migration and
+    the metadata remap would corrupt planes without any other test noticing."""
+    assert LC0_FULL.num_planes == 112
+    assert LC0_FULL.history_len == 8
+    assert LC0_FULL.piece_planes_per_history == 12
+    assert LC0_FULL.metadata_base == 96            # legacy castling/EP/turn/rule50 start
+    assert LC0_FULL.legacy_repetition_base == 103  # legacy repetition planes start
+    assert LC0_FULL.root_metadata_base == 104      # root-layout metadata start
+    assert LC0_FULL.ones_plane == 111              # trailing all-ones bias

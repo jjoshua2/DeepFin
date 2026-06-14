@@ -185,12 +185,11 @@ def relation_matrices_c(board: chess.Board) -> np.ndarray:
     """C-accelerated twin of :func:`relation_matrices`."""
     turn = board.turn
     us, them = turn, not turn
-    piece_types = (chess.PAWN, chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN, chess.KING)
     pieces_us = np.array(
-        [int(board.pieces_mask(pt, us)) for pt in piece_types], dtype=np.uint64
+        [int(board.pieces_mask(pt, us)) for pt in chess.PIECE_TYPES], dtype=np.uint64
     )
     pieces_them = np.array(
-        [int(board.pieces_mask(pt, them)) for pt in piece_types], dtype=np.uint64
+        [int(board.pieces_mask(pt, them)) for pt in chess.PIECE_TYPES], dtype=np.uint64
     )
     _ks_us = board.king(us)
     _ks_them = board.king(them)
@@ -547,13 +546,12 @@ def extra_feature_planes_c(
     us, them = turn, not turn
     n_extra = extra_feature_plane_count(version)
 
-  # Build uint64[6] arrays for each side: PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING
-    piece_types = (chess.PAWN, chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN, chess.KING)
+  # Build uint64[6] piece-bitboard arrays for each side.
     pieces_us = np.array(
-        [int(board.pieces_mask(pt, us)) for pt in piece_types], dtype=np.uint64
+        [int(board.pieces_mask(pt, us)) for pt in chess.PIECE_TYPES], dtype=np.uint64
     )
     pieces_them = np.array(
-        [int(board.pieces_mask(pt, them)) for pt in piece_types], dtype=np.uint64
+        [int(board.pieces_mask(pt, them)) for pt in chess.PIECE_TYPES], dtype=np.uint64
     )
 
     occupied = int(board.occupied)
@@ -772,11 +770,10 @@ def _fill_threat_planes(
     them_occ = int(board.occupied_co[them])
     occ = int(board.occupied)
 
-    att_order = (chess.PAWN, chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN, chess.KING)
     out[34:48] = bitboards_to_planes(
         [all_us, all_them]
-        + [by_us[pt] for pt in att_order]
-        + [by_them[pt] for pt in att_order],
+        + [by_us[pt] for pt in chess.PIECE_TYPES]
+        + [by_them[pt] for pt in chess.PIECE_TYPES],
         turn=turn,
     )
 
