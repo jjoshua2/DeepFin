@@ -342,6 +342,7 @@ def _publish_distributed_trial_state(
         "record_lc0_root_input": bool(config.get("record_lc0_root_input", False)),
         "history_rep_fix": bool(config.get("history_rep_fix", False)),
         "record_dense_sf_policy": bool(config.get("record_dense_sf_policy", True)),
+        "categorical_blend_frac": float(config.get("categorical_blend_frac", 0.0)),
         "sf_wdl_use_cp_logistic": bool(config.get("sf_wdl_use_cp_logistic", False)),
         "sf_wdl_cp_slope": float(config.get("sf_wdl_cp_slope", 0.010)),
         "sf_wdl_cp_draw_width": float(config.get("sf_wdl_cp_draw_width", 60.0)),

@@ -204,6 +204,7 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
             syzygy_in_search=tc.syzygy_in_search,
             categorical_bins=tc.categorical_bins,
             hlgauss_sigma=tc.hlgauss_sigma,
+            categorical_blend_frac=tc.categorical_blend_frac,
             policy_encoding=tc.policy_encoding,
             input_history_encoding=tc.input_history_encoding,
             input_extra_features=tc.input_extra_features,

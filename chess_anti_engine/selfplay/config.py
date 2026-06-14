@@ -98,6 +98,12 @@ class GameConfig:
     syzygy_in_search: bool = False
     categorical_bins: int = DEFAULT_CATEGORICAL_BINS
     hlgauss_sigma: float = 0.04
+    # Research bet (default 0.0 = off, byte-identical to the ternary target):
+    # blend the categorical (HL-Gauss) value target toward SF's objective eval
+    # expected score so the 32-bin distributional head trains on a continuous
+    # value instead of three {-1,0,+1} spikes. See
+    # configs/exp_categorical_continuous.yaml.
+    categorical_blend_frac: float = 0.0
     policy_encoding: str = POLICY_ENCODING_AZ_4672
     input_history_encoding: str = LC0_HISTORY_LEGACY
     input_extra_features: str = EXTRA_FEATURES_V1

@@ -1,0 +1,440 @@
+# EXPERIMENTAL: continuous categorical value target — copy of pbt2_small.yaml
+# with selfplay.categorical_blend_frac > 0.
+#
+# Rationale: the value_categorical head (32-bin HL-Gauss) is an auxiliary
+# distributional value channel (it does NOT feed MCTS — only `wdl` does). It is
+# currently trained on the ternary game outcome (scalar_v in {-1,0,+1},
+# finalize.py), so HL-Gauss degenerates to ~3 spikes and the head is largely
+# redundant with the `wdl` hard-outcome target while still drawing w_categorical
+# = 0.30 of the gradient. Blending the target toward SF's objective eval
+# expected score (W - L) makes it a genuinely continuous target that uses the 32
+# bins and carries a search-horizon signal distinct from the raw outcome
+# (the same intuition behind blending sf_wdl into the `wdl` head, which is
+# load-bearing per CLAUDE.md).
+#
+# categorical_blend_frac = (1 - f)*outcome + f*sf_expected, default f = 0.0 (off,
+# byte-identical). This file sets f = 0.5; the head can't regress search because
+# it is auxiliary, so the only risk is wasted gradient if it's Elo-neutral.
+#
+# Sweep: categorical_blend_frac in {0.3, 0.5, 0.7}.
+# Protocol (docs/eval_protocol.md): fixed-budget train, then
+# scripts/arena_standard.py --matched_sims vs the unblended checkpoint.
+# KEEP iff arena lands >= +5 Elo (95% CI excludes 0); KILL if within +/-5 Elo
+# (no point spending gradient on a neutral auxiliary) or negative.
+#
+# PBT2 (PB2) search config — small model, 10 parallel trials on RTX 5090 (32 GB)
+#
+# Run 8: Raise w_wdl/w_soft defaults to PBT-converged values; expand high bounds.
+#   Run 7: PBT converged: w_wdl→0.95-0.98, w_soft→1.2 (ceiling). Gumbel values_out
+#   bug fixed (search Q now returned instead of stale root Q), enabling real diff-focus.
+#   New plateau: os≈278-280 (rmp≈0.27) vs old 222-224. Both weights hit upper bounds.
+#
+# What PB2 searches now:
+#   lr, w_wdl, w_soft, w_sf_move, sf_wdl_frac, diff_focus_q_weight
+#
+# What is pinned:
+#   diff_focus_* (medians of top-5), temperature, playout_cap_fraction,
+#   sf_policy_temp, sf_policy_label_smooth, feature_dropout_p, w_future, soft_policy_temp
+#
+# Data flow per iteration:
+#   150 games × ~20-30 pos = ~3k-5k new samples → up to 15 training steps (256 batch)
+
+seed: 0
+work_dir: runs/exp_categorical_continuous  # Own work dir: never share tune/auto-resume state with production.
+device: cuda
+iterations: 750
+replay_window_start: 400000   # 2026-04-22 v4: was 20000 (truncated pool to 10/187 shards). Raised so salvage keeps all pool shards (~374k pos).
+replay_window_max: 3000000   # 2026-06-01: 2.5M→3M. Modest short-term noise reduction while keeping policy/target churn visible.
+replay_window_growth_frac: 0.10   # 2026-05-28: grow slowly; retain ~10% of new positions while flushing most incoming data.
+replay_window_growth: 20000   # Fallback when replay_window_growth_frac is unset.
+
+# Bootstrap: train initial net on all random games, then discard from window
+bootstrap_dir: data/bootstrap
+bootstrap_checkpoint: /home/josh/projects/chess/data/bootstrap/bootstrap_net_v5_iter239.pt  # os=334, reg=0.375
+bootstrap_zero_policy_heads: true  # Bootstrap trained value/trunk only; start policy heads near-uniform on fresh runs.
+worker_wheel_path: null  # Optional: built wheel to publish for remote worker self-update.
+bootstrap_max_positions: 0   # 0 = load ALL positions (14.2M) — used by scripts/train_bootstrap.py
+bootstrap_train_steps: 0     # 0 = auto: train 1 epoch — used by scripts/train_bootstrap.py
+shared_shards_dir: null  # Disabled: start trials from bootstrap weights + fresh selfplay window
+# salvage_seed_pool_dir: intentionally omitted — set via CLI --salvage-seed-pool-dir.
+# If set here, the live YAML reload at trainable.py:68 clobbers any CLI-provided value.
+salvage_restore_donor_config: false   # Disabled: use GPBT-sampled LR (0.0003) not donor's 0.001
+salvage_restore_full_trainer_state: true  # Full optimizer + scheduler + step state
+salvage_restore_pid_state: true  # Copy PID controller state (regret, ema_winrate)
+salvage_reinit_volatility_heads: false  # Keep volatility heads from trial 3
+
+model:
+  kind: transformer
+  embed_dim: 384     # ~15M params, ~0.7 GB optimizer state for 4 trials in 32 GB VRAM
+  num_layers: 11  # Epoch-4 candidate topology; direct match beat live checkpoint_000673 21-7-4 at 64 sims.
+  num_heads: 12
+  ffn_mult: 1.5
+  use_smolgen: true  # Pin to true (we know smolgen helps from spec)
+  smolgen_mode: per_layer  # Epoch-4 candidate topology: per-layer dynamic attention bias.
+  smolgen_bias_scale: layer_head
+  smolgen_bias_norm: center_rms
+  smolgen_relation_basis: true
+  smolgen_relation_norm: none
+  smolgen_relation_coeff_norm: none
+  smolgen_relation_scale: none
+  use_nla: false
+  input_pos_encoding: arc_adapter  # Zero-init square geometry adapter; safe warmstart from current best.
+  qkv_projection: split  # Split fused QKV for Aurora scope control; tolerant loader migrates old fused weights.
+  use_deepnorm: true  # Epoch-4 candidate topology.
+  policy_encoding: lc0_1858  # Keep production auto-resume compatible with the live compact-policy checkpoint stream.
+  input_history_encoding: lc0_root_legacy_meta  # Switched live to epoch-6 candidate input; replay keeps recorded LC0-root planes.
+  gradient_checkpointing: false
+
+stockfish:
+  stockfish_path: /home/josh/projects/chess/e2e_server/publish/stockfish
+  sf_nodes: 5000           # 5k nodes: wider WDL spread so regret actually filters moves (was 1k where all 12 passed)
+  sf_move_nodes: 0          # 0 = curriculum moves use the PID-controlled sf_nodes; don't weaken played SF moves by default.
+  sf_workers: 4
+  sf_nice: 19              # Run SF at lowest CPU priority so search/dispatch/GPU batching wins contention.
+  sf_multipv: 40            # Bumped from 20 (2026-04-29) to enrich sf_policy_t targets — measurement showed regret≤0.47 saturated top-20; multipv=40 widens tail for richer training distribution. Difficulty implication: opponent gets slightly weaker since more sub-optimal moves enter the regret-filter pool; PID will compensate via regret/nodes.
+  sf_hash_mb: 16           # Larger TT helps at higher node counts
+  # Keep SF at full strength for labels and sample from MultiPV for easier played moves.
+
+  sf_pid_enabled: true
+  sf_pid_target_winrate: 0.575  # 2026-05-29: 0.58→0.575 to gently bias toward harder SF play without jumping straight to 56%.
+  sf_pid_ema_alpha: 0.05      # 2026-04-29: 0.20→0.10→0.05. Offline bake-off (200 episodes × ~30 candidates against a logit-fit plant β=2.18, drift=-0.0064/iter, walk_std=0.31) shows raw_wr behavior is invariant across α (raw_rmse=0.264 universally) — controller is already raw-driven via the inverse fit's history; ema only gates a deadband that almost never fires. Lower α earns a cleaner ema dashboard (settle 50.8 vs 54.4 iters) and a measurably bigger raw-vs-ema lead (~14 iter half-life vs 6.6) which matches the "trust raw, treat ema as stale" intuition. Live-reloadable.
+  sf_pid_min_games_between_adjust: 200  # Higher than games_per_iter so only the forced iteration-boundary adjust fires.
+  sf_pid_min_nodes: 50000        # 2026-04-28: 1→50000. Going back to high-nodes regret-controlled training (stage 1). 50k nodes gives clean WDL labels + sharp sf_policy targets even when SF play is regret-handicapped. Difficulty knob is regret, not nodes. Construction-only knob — restart required.
+  sf_pid_max_nodes: 1000000      # 2026-04-23: raise ceiling to 1M. Compute cap, not control. Construction-only knob — restart required.
+  sf_pid_wdl_regret_start: 0.20       # Construction-only; only matters on fresh PID restart.
+  sf_pid_wdl_regret_min: 0.01         # Live-reloaded. Stage 1 regret-lever can drop all the way to 0.01 (full SF strength); stage 2 only takes over after regret hits stage_end below.
+  sf_pid_wdl_regret_max: 0.70         # 2026-04-29: 0.50→0.70. Joint-fit plant on iters 5-83 says wr at regret=0.50 is only ≈0.43 (current model is too weak vs SF@50k); regret=0.70 brings predicted wr to ≈0.55 — finally inside the airbag-free band. Bake-off across 17 controllers shows ceiling-bump is the single biggest win (RMSE 0.259→0.226, airbag rate 0.61→0.52). Live-reloadable. The airbag still catches real crashes; widening the ceiling just stops capping the lever's authority before it can compensate the model's degraded plant.
+  sf_pid_wdl_regret_stage_end: 0.01   # 2026-04-28: -1 → 0.01 (re-enabled). Disabled-gate path turned out to silently activate the nodes lever (stage_complete=True set unconditionally → nodes lever ran every iter), ratcheting nodes from 50k → 79k while regret was also tightening — dual-knob "make harder" without telling us. pid.py:501 now requires gate_enabled too, so re-enabling the gate gives the original "regret descends in stage 1, nodes takes over after floor" semantic. Wedge bug fix at pid.py:486 (regret unfreezes when nodes <= min_nodes) prevents the original day-1 wedge.
+
+  # Regret + nodes inverse-fit levers: each fits observed (lever, winrate)
+  # history via weighted least squares and steps toward the value that
+  # predicts target winrate. Weights are 1/SE² where SE comes from the W/D/L
+  # distribution per iter. Regret moves first; nodes only move once regret
+  # has settled at stage_end. Both stages share the same step / dual z-gate /
+  # raw-vs-fit-disagreement code (chess_anti_engine/stockfish/pid.py:_step_lever).
+  sf_pid_regret_window: 20            # rolling history length (construction-only)
+  sf_pid_regret_max_step: 0.10             # 2026-04-28: 0.02→0.10. Was clamping emergency-ease to 0.02 even when emergency_ease_step was higher (airbag uses min(ease_step, max_step)). Raised to 0.10 so a real airbag actually rescues the model in 1-2 fires instead of 10+. Live-reloadable.
+  sf_pid_regret_max_step_frac: 0.03        # 2026-04-28: 0.10→0.05. 2026-05-02: 0.05→0.03. Model oscillating at regret 0.30-0.32 for ~12 iters; slowing tighten step to ~0.009/iter at regret=0.30 to force longer dwell before pushing lower. Live-reloadable.
+  sf_pid_regret_ease_step_frac: 0.03       # 2026-05-14: 0.06->0.03; normal ease matched to tighten cap after overshooting loose at 1500 games/iter. Emergency airbag unchanged.
+  sf_pid_regret_tighten_streak_after: 2    # 2026-05-09: damp only repeated hardening. Audit on iters 620-685: streak3/0.5 helped 3, hurt 1, neutral 5; avoids blanket under-hardening.
+  sf_pid_regret_tighten_streak_gain: 0.5   # 2026-05-26: re-enable repeated-tighten damping now that raw winrate is near balance; avoid overtightening after success streaks.
+  sf_pid_regret_crash_ease_z: 2.0          # 2026-05-09: if raw score is >2σ below target, require a minimum normal ease response even when the inverse fit is stale.
+  sf_pid_regret_crash_ease_min_frac: 0.5   # 2026-05-09: minimum 50% of normal ease cap on >2σ underperformance; softer than point-estimate raw<0.50 airbag.
+  sf_pid_regret_safety_floor: 0.50         # below this raw winrate → emergency ease
+  sf_pid_regret_emergency_ease_step: 0.05  # 2026-04-28: 0.10→0.05. 0.10 was overshooting equilibrium — single-iter dip 0.27→raw=0.46 (2.3σ below 0.50 floor) airbagged to 0.37, double the actual handicap shortfall. 0.05 still rescues real crashes in 2-3 fires while halving overshoot near equilibrium. max_step kept at 0.10 (caps airbag); airbag effective step is now min(0.05, 0.10)=0.05. Live-reloadable.
+  sf_pid_regret_recency_half_life: 1.0     # 2026-04-29: 2.0→0.5. 2026-05-01: 0.5→1.0. Backtest on 65 post-restart iters showed hl=0.5 produced 10/65 degenerate fallbacks (fit collapsed to <3 effective points) vs 7/65 at hl=1.0, with better prediction RMSE (0.0544 vs 0.0558). Salvage-stale-data concern no longer applies — history is 65 iters of fresh current-run observations. Live-reloadable.
+  sf_pid_regret_deadband_sigma: 1.0  # 2026-05-29: 0.75→1.0 to reduce near-target twitch on noisy raw winrate while keeping the separate safety-floor airbag. Live-reloadable.
+  sf_pid_regret_degen_step_frac: 0.5  # Fraction of abs_max_step taken when the inverse fit is degenerate (slope wrong-sign or det≈0). Direction is known but magnitude is not — a full step would be overconfident. Start at 0.5; tune down if oscillation persists, up if convergence is too slow. Live-reloadable.
+
+  # Nodes lever (stage 2). Same inverse-fit mechanism as regret but with
+  # direction=+1 (raising nodes makes Stockfish stronger). Once stage 2 is
+  # entered, the regret lever freezes for good — wr crashes are handled
+  # entirely by the nodes airbag below, which can drop nodes all the way
+  # to min_nodes=1 if needed. Single-knob-per-regime keeps cause and
+  # effect attributable.
+  #
+  # NOTE: regret-side knobs were tuned via the 168-iter walk-forward
+  # backtest; nodes-side knobs are mirrored from regret as a starting
+  # point and have not been calibrated against real data. Expect to
+  # revisit once the controller has spent meaningful time in stage 2.
+  sf_pid_nodes_window: 20                 # construction-only
+  sf_pid_nodes_max_step_frac: 0.10        # 2026-04-27: 0.05→0.10 — at 0.05 the normal-step cap (~330 @ 6700 nodes) couldn't drop nodes fast enough when raw_wr sagged, so we kept hitting the 0.50 airbag (8 fires by iter 334). Restoring the original cap; airbag is a worse outcome than oscillation. Live-reloadable.
+  sf_pid_nodes_deadband_sigma: 2.0        # 2026-04-27: 1.5→2.0. Gives raw=±12.4%, ema=±2.8% (at se≈0.062, α=0.10). Just under the ±3% target; matched the user's "maybe 2 is good" call. Holds the lever through normal slow EMA drift, only acts on persistent >2.8% bias from target. Live-reloadable.
+  sf_pid_nodes_recency_half_life: 3.0     # mirror regret-side half-life.
+  sf_pid_nodes_degen_step_frac: 0.5      # same semantics as regret-side; half-step when fit is degenerate. Live-reloadable.
+  sf_pid_nodes_safety_floor: 0.50         # raw_wr < floor → airbag drops nodes by emergency_ease_step.
+  sf_pid_nodes_emergency_ease_step: 1000  # absolute nodes drop on airbag fire.
+  # sf_pid_nodes_max_step intentionally unset: the frac cap (above) is the
+  # only normal-step bound; an absolute cap would silently override frac at
+  # high node counts (10% of 500k = 50k > 5k absolute) and create operator
+  # surprise. Airbag step is bounded by emergency_ease_step alone.
+
+selfplay:
+  games_per_iter: 3520   # 2026-05-28: +10% for steadier per-iter signal while replay grows slowly.
+  games_per_iter_start: 3520   # match games_per_iter; ramp disabled. Live-reloadable.
+  games_per_iter_ramp_iters: 0
+  selfplay_fraction: 0.30  # 2026-04-24: 0.50→0.25; 2026-05-04: 0.25→0.30 (30% selfplay / 70% SF curriculum). test_policy_loss drifted 2.25→2.55 at iter 272-285; past runs at 75% SF worked better. Revert if regret/winrate stop moving or policy_loss doesn't recover.
+  selfplay_batch: 256   # Concurrent game slots per worker (always full via continuous recycling).
+  max_plies: 450
+
+  temperature: 0.0       # 2026-05-17: root audit found even tiny final-action temp worsened SF regret; keep exploration in Gumbel/root noise instead.
+  temperature_drop_plies: 0
+  temperature_after: 0.0
+  temperature_decay_start_move: 20
+  temperature_decay_moves: 0
+  temperature_endgame: 0.0
+  selfplay_temperature: 0.0  # 2026-05-18: reverted early selfplay sampling after it correlated with regret drift from ~0.18 back toward ~0.19.
+  selfplay_temperature_decay_start_move: 1
+  selfplay_temperature_decay_moves: 60
+  selfplay_temperature_endgame: 0.0
+
+  opening_book_path: /home/josh/projects/chess/data/opening_books/2moves_v2_no8overlap_uho060110.pgn.zip
+  opening_book_max_plies: 4
+  opening_book_max_games: 200000
+  opening_book_prob: 1.0
+  opening_book_path_2: /home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip
+  opening_book_max_plies_2: 16
+  opening_book_max_games_2: 200000
+  opening_book_mix_prob_2: 0.95  # 2026-05-28: favor the stronger/deeper 8-move UHO book; keep 5% shallow 2-move diversity.
+  random_start_plies: 2   # Fallback if book unavailable
+
+  mcts: gumbel
+  mcts_simulations: 256
+  mcts_start_simulations: 256  # Full budget from start (KataGo-style: 75% full, 25% fast)
+  playout_cap_fraction: 0.25  # 25% get full sims, 75% get fast
+  fast_simulations: 32
+  gumbel_topk: 16
+  gumbel_scale: 0.75     # Full selfplay root Gumbel noise scale before decay. mctx default is 1.0; final action temp stays 0.
+  gumbel_scale_after: 0.0
+  gumbel_scale_decay_start_move: 12
+  gumbel_scale_decay_moves: 3
+  curriculum_gumbel_scale: 0.25  # Full SF-curriculum root Gumbel noise; weaker than selfplay to keep labels less noisy.
+  curriculum_gumbel_scale_after: 0.0
+  curriculum_gumbel_scale_decay_start_move: 12
+  curriculum_gumbel_scale_decay_moves: 3
+  fpu_reduction: 1.2    # LC0/KataGo FPU for non-root nodes
+  fpu_at_root: 1.0      # FPU for legacy PUCT root; current Gumbel path uses gumbel_scale root noise.
+
+  sf_policy_temp: 0.012      # 2026-05-23: keep SF-policy sharpness after softening the underlying cp->WDL scores.
+  sf_policy_label_smooth: 0.01  # 2026-05-27: multipv=40 covers most good moves; keep only light legal-tail smoothing.
+  sf_wdl_use_cp_logistic: true   # Replace SF's UCI_ShowWDL (72% one-hot) with own logistic on cp score.
+  sf_wdl_cp_slope: 0.0060        # 2026-05-23: move toward replay-fit slope (~0.0045-0.0055) while staying conservative.
+  sf_wdl_cp_draw_width: 120.0    # Half-width of draw zone in cp; moved toward current-regret replay fit (~130-145).
+  soft_policy_temp: 3.0     # Temperature for soft policy target (LC0 uses 3, was hardcoded 2)
+
+  syzygy_path: /home/josh/projects/chess/data/syzygy_3-4-5:/mnt/e/chess/syzygy_6_dtz
+  # Ordinary high-volume Stockfish curriculum searches stay on local SSD TBs.
+  # Non-adjudicated <=6-piece play-through roots temporarily switch to
+  # syzygy_path above so Stockfish can use E-drive DTZ for conversion play.
+  stockfish_syzygy_path: /home/josh/projects/chess/data/syzygy_3-4-5
+  # End games at the first TB-eligible position and use the TB-proven result
+  # as the outcome. Skips MCTS compute on the endgame tail (~25% of replay
+  # positions are in <=7-man range — see the piece-count audit).
+  syzygy_adjudicate: true
+  # Fraction of games that actually adjudicate. 0.99 leaves 1% playing
+  # through the endgame so the NN keeps generating endgame samples with
+  # its own labels — guards against losing endgame skill entirely.
+  syzygy_adjudicate_fraction: 0.99
+  # Override NN wdl logits at MCTS leaves when TB-eligible (UCI-style
+  # in-tree probing). Pins Q to TB truth for endgame leaves.
+  syzygy_in_search: true
+  # Override policy targets with DTZ-optimal moves at TB-eligible positions.
+  # Disabled 2026-04-25: redundant with syzygy_in_search (MCTS already gets
+  # TB-correct moves at eligible leaves) + syzygy_adjudicate (games end at
+  # the TB position, so the rare past-TB tail isn't worth the post-game
+  # rescore path. The path also corrupted ~0.09% of policy_targets when
+  # combined with the 1-legal-move shortcut in run_network_turn (forced
+  # plies were pushed but produced no record, so the syzygy replay's
+  # sample_idx counter overshot the records list, stamping K+P-endgame
+  # overrides on unrelated records). finalize.py was fixed to align by
+  # ply_index, but the simpler answer is to leave the path off.
+  syzygy_rescore_policy: false
+
+  # Stockfish WDL confidence required to adjudicate max_plies timeouts as decisive.
+  timeout_adjudication_threshold: 0.99
+
+  diff_focus_enabled: true
+  diff_focus_q_weight: 4.8   # Pinned: top-5 median from Run 4
+  diff_focus_pol_scale: 3.8   # Pinned: top-5 median from Run 4
+  diff_focus_slope: 4.0       # Pinned: top-5 median from Run 4
+  diff_focus_min: 0.09        # Pinned: top-5 median from Run 4
+
+  categorical_bins: 32
+  hlgauss_sigma: 0.04
+  categorical_blend_frac: 0.5  # EXPERIMENT: blend categorical target toward SF eval (W-L). 0.0 in production.
+  record_lc0_root_input: true  # Store alternate LC0-root x in new shards for later LC0-input fine-tune tests.
+
+train:
+  optimizer: aurora
+  matrix_optimizer_scope: mlp_out  # Aurora on FFN + attention output; Q/K/V stay AdamW.
+  matrix_lr_multiplier: 20
+  matrix_weight_decay: 0
+  aux_weight_decay: 0.0001
+  aurora_uw_floor: 0.0
+  aurora_pp_iterations: 3
+  aurora_pp_beta: 0.25
+  aurora_polar_steps: 8
+  aurora_polar_method: polar_express
+  aurora_polar_dtype: fp16
+  aurora_polar_safety: 1.01
+  lr: 0.0003        # Base LR; Aurora matrix params use matrix_lr_multiplier.
+  batch_size: 512   # Aurora/arc-split run matches offline probe batch size; fits VRAM on 5090.
+  train_steps: 800  # Raised for 2M buffer; window_fraction gives ~781 steps at full size.
+  train_window_fraction: 0.04  # Train on 4% of active replay cap; slow replay growth limits extra reuse while refilling.
+  # With ~10k new positions/iter and buffer growing by 2500/iter, each position
+  # survives ~50 iters in the buffer and gets trained ~5 times before eviction.
+  no_amp: false
+  feature_dropout_p: 0.10  # Fixed at 0.10 (not searched).
+  resid_channel_dropout: 0.0  # Keep channel spreading on the explicit balance regularizer; dropout cost more eval loss offline.
+  resid_channel_balance_weight: 0.0  # Disabled: offline sidecar .001/.003 did not improve loss or WDL.
+  zclip_z_thresh: 2.0  # was 2.5; tighten top grad tail during flat-loss plateau (Apr 20). Last-100 median grad norm 1.81, max 3.65 — hard cap 5.0 inert, z-clip ~1% → ~5-8% of steps at 2.0.
+  zclip_alpha: 0.97
+  zclip_clip_factor: 1.0
+  zclip_max_norm: 5.0  # was 1.0; raised because raw grad norms median ~2.2 meant every step was hard-clipped, dampening effective LR by ~55%. Z-score clipping still handles outliers.
+
+  w_policy: 1.0             # Pinned: anchor for all other weights
+  w_soft: 1.0               # Conservative soft-policy auxiliary weight while testing plateau behavior.
+  w_future: 0.01            # Keep a tiny auxiliary weight; low-risk compared with full disable.
+  w_wdl: 1.0                # Keep WDL pressure balanced with main policy during target-mix test.
+  w_sf_move: 0.02           # Slightly strengthen SF-policy auxiliary signal without dominating policy.
+  w_sf_eval: 0.10           # Pinned: top-5 median from Run 4
+  w_categorical: 0.30       # Run 26 default.
+  w_volatility: 0.10        # Pinned: top-5 median from Run 4
+  w_sf_volatility: 0.05
+  w_moves_left: 0.02
+  sf_wdl_frac: 0.50         # Fraction of WDL target blended from SF labels when available.
+  sf_wdl_frac_floor: 0.35   # Low-regret mix is 35% SF / 35% search / 30% final; first small step toward offline future-value fits.
+  search_wdl_frac: 0.35     # Fraction of WDL target blended from MCTS-averaged WDL when available.
+  use_adjusted_wdl_target: false  # Opt-in only; regret adjustment applies to the game-outcome fraction, not missing SF/search fallbacks.
+  adjusted_wdl_regret_source: sum  # sum|d95|d98|max|h4|h6|h12|h24|h50; d95/d98 are per network record, h* are ply windows.
+  adjusted_wdl_regret_scale: 1.0   # For sum/fp16 suffixes, prefer a smaller scale, discounted/horizon source, or positive cap.
+  adjusted_wdl_regret_cap: 0.0     # Q-units; 0 disables cap and can saturate suffix-sum targets.
+  sf_wdl_conf_power: 1.0    # Confidence damping: scale SF-WDL by (1-draw_prob)^power.
+  sf_wdl_draw_scale: 0.55   # Pinned low-to-mid based on the healthier late-run settings.
+  sf_wdl_floor_at_regret: 0.10  # Regret value at which SF WDL fraction hits the floor.
+  sf_wdl_temperature: 1.0   # Keep training-time labels unchanged; tune softness in stored cp->WDL formula instead.
+  sf_search_dampen_sf_low: 0.0  # Trust objective SF-low labels when search says winning; final outcomes can reflect curriculum weakness.
+  sf_search_dampen_sf_high: 0.0  # Damping (0..1) on SF target when SF says STM winning but search says STM losing. Live-tunable.
+
+  accum_steps: 1    # More gradient steps per iteration; effective batch = 256.
+  warmup_steps: 72   # Run 26 default.
+  lr_eta_min: 0.00001
+  lr_T0: 999999        # Ignored while lr_schedule=sqrt_release; kept for cosine fallback.
+  lr_T_mult: 1
+  lr_schedule: sqrt_release
+  lr_release_cycle_steps: 0
+  lr_release_start_frac: 0.80
+  lr_release_min_scale: 0.1
+  lr_release_shape: sqrt
+  use_compile: true    # 2026-04-27: re-enabled with max-autotune. The earlier "compile destroys trainer" diagnosis turned out to be a prefix bug, not a compile-backward bug — saving under compile created `_orig_mod.`-prefixed checkpoints, then a later unwrapped load silently dropped all 192 keys (no warning) leaving the trainer fresh-init. Workers running max-autotune have been stable through trial f2f58 (raw_wr 0.81/0.59/0.57 across iters 1-3). Both bugs in the chain are now fixed: Trainer.save() strips the prefix, and load_state_dict_tolerant raises on <50% load.
+  compile_mode: max-autotune
+  log_level: INFO    # Keep dispatcher/train stats without per-search DEBUG gumbel-profile log overhead.
+  swa_start: -1  # Disabled: SWA averaging hurts early training. Enable after model stabilizes.
+  swa_freq: 50
+
+puzzle_epd: null
+puzzle_interval: 0     # Disabled — too slow for many parallel trials
+
+tune:
+  min_replay_size: 0  # Tune path trains when replay >= batch_size; keep 0 for no extra floor
+
+  # Disk usage controls
+  # NOTE: PB2/PBT needs older checkpoints to be available for cloning/exploit.
+  # Keeping too few checkpoints can cause missing-checkpoint restore errors.
+  tune_num_to_keep: 6               # keep last 6 checkpoints per trial (disk space)
+  tune_keep_last_experiments: 2     # keep last 2 experiments under work_dir/tune
+
+  tune_scheduler: gpbt_pl
+  gpbt_inertia_weight: 1.0
+  gpbt_winner_weight: 1.0
+  gpbt_quantile_fraction: 0.25
+  gpbt_resample_probability: 0.20
+  num_samples: 1
+  max_concurrent_trials: 1
+  cpus_per_trial: 1
+  gpus_per_trial: 1.0
+  distributed_workers_per_trial: 4  # Shared broker needs more producers to keep the single GPU queue fed.
+  distributed_worker_sf_workers: 4  # 2026-05-23: restore label parallelism; sf_nice keeps SF from preempting search/dispatch.
+  distributed_worker_min_games_per_batch: 200  # Bigger forwards: better GPU util + lower per-gumbel overhead
+  distributed_worker_max_games_per_batch: 512
+  distributed_worker_username: josh
+  distributed_worker_password: chess_worker_2026
+  distributed_worker_use_compile: true   # Worker compile (max-autotune) has been stable for many iters of training. Was briefly disabled 2026-04-27 to test whether compile was producing wrong outputs after a bad salvage; it wasn't — actual root cause was a corrupted pid_state.json in the iter 403 pool I'd manually built (had iter 408-era values rather than iter 403's).
+  distributed_worker_compile_mode: max-autotune
+  distributed_worker_inference_fp8: false  # FP8 quantized inference (RTX 5090 native)
+  distributed_worker_threaded: true   # 2026-04-29: enable threaded selfplay so the new dispatcher actually engages. Bench at N=16 producers showed 36k leaves/s vs ~7k for the prior path (5x). Old comment "AOT threading slower in prod" referred to the AOT-compiled threading path; this is the compiled+dispatcher path which is structurally different.
+  distributed_worker_selfplay_threads: 32
+  distributed_worker_threaded_dispatcher: true   # 2-slot async pipeline (2026-04-29 refactor): +5.9x over ThreadedBatchEvaluator at N=16 producers, parity tests at 1e-5 vs DirectGPUEvaluator. Was false based on 2026-04-28 A/B which used a pre-refactor sync dispatcher AND a bench with main-thread compile that broke cudagraph TLS — both fixed.
+  distributed_worker_dispatcher_batch_wait_ms: 2.0
+  distributed_worker_dispatcher_max_batch: 1190
+  distributed_worker_dispatcher_target_batch: 680  # Live producers underfill 340; 680 has been the best current steady compromise.
+  # distributed_worker_aot_dir: data/aot_models  # Auto-detected by _worker_inference_args when threaded=true
+  distributed_inference_broker_enabled: true
+  distributed_inference_shared_broker: false
+  distributed_inference_batch_wait_ms: 2.0
+  distributed_inference_max_batch_per_slot: 1190
+  distributed_inference_slots_per_worker: 4
+  distributed_inference_use_compile: true
+  distributed_inference_compile_mode: max-autotune
+  distributed_pause_selfplay_during_training: false  # Compile done; overlap for speed
+  # 2026-04-29: enable shard prefetch + 1-iter-lagged async test eval. Both
+  # overlap iter-boundary work onto the prior iter's selfplay phase. Saves
+  # ~80-150s/iter (zarr decode) + ~30-50s/iter (test eval). Snapshot in
+  # async_eval reuses trainer's compile mode so shared inductor cache hits.
+  distributed_prefetch_shards: true
+  distributed_async_test_eval: true
+  distributed_async_test_eval_timeout_s: 120.0
+  distributed_worker_shared_cache_dir: /home/josh/projects/chess/runs/exp_categorical_continuous/server/worker_cache
+  distributed_min_workers_per_trial: 1
+  distributed_max_worker_delta_per_rebalance: 1
+  distributed_wait_timeout_seconds: 720  # 2026-05-19: 600->720 to give current-model selfplay more time after lowering stale backlog target.
+  distributed_prev_model_max_fraction: 0.60  # 2026-05-19: raise 50%->60% to reduce alternating stale-discard timeout rows while keeping most data current-model.
+  distributed_stale_pause_target_games: 1870  # 2026-05-28: scale with 3520 games/iter target.
+  distributed_min_games_fraction: 0.90  # 2026-05-28: wait for 90% of target games before timing out.
+  distributed_server_port: 45453
+  distributed_server_host: 0.0.0.0
+  distributed_server_public_url: http://192.168.1.212:45453
+  distributed_server_root_override: /home/josh/projects/chess/runs/exp_categorical_continuous/server  # Isolated from production pbt2_small server/replay state.
+  tune_replay_root_override: /home/josh/projects/chess/runs/exp_categorical_continuous/replay
+
+  # Disk-backed replay buffer: keeps ~1 GB per trial instead of ~10 GB
+  shuffle_buffer_size: 25000  # In-memory shuffle buffer (run26 value)
+  shuffle_refresh_interval: 1
+  shuffle_refresh_shards: 5
+  shard_size: 2000            # Samples per on-disk shard (~1 MB compressed)
+  # On PB2 exploit (cross-trial restore), replace most recent local bad data and
+  # import only latest-generation shards from strong sibling trials.
+  exploit_replay_refresh_enabled: true   # Flush old data + copy donor data on exploit
+  exploit_replay_skip_newest: 0
+  exploit_replay_donor_shards: -1          # -1 = copy ALL donor shards; 0 = disabled; N = last N shards
+  exploit_replay_share_top_enabled: true
+  exploit_replay_top_k_trials: 3
+  exploit_replay_top_within_best_frac: 0.05
+  exploit_replay_top_min_metric: 0.0
+  exploit_replay_max_unseen_iters_per_source: 1
+  exploit_replay_share_fraction: 0.5
+  exploit_replay_local_keep_recent_fraction: 0.0   # Flush ALL old data on exploit
+  exploit_replay_local_keep_older_fraction: 0.0    # Flush ALL old data on exploit
+
+  # PB2: exploit+explore every X iterations (was 20).
+  pb2_perturbation_interval: 8
+
+  tune_metric: opponent_strength_ema
+  tune_mode: max
+
+  # Net gating: DISABLED — gate was using 1-sim (raw policy) while selfplay
+  # uses 64-sim MCTS, causing systematic rejection of every training step.
+  # The model was frozen at iter 2-3 weights with no learning happening.
+  # TODO: re-enable once gate uses same sim count as selfplay, or compare
+  # new model vs old model instead of new model vs Stockfish.
+  gate_games: 0           # 0 = disabled
+  gate_threshold: 0.50
+  gate_interval: 1
+  gate_mcts_sims: 1
+
+  # For eval: run fixed-strength eval games to get a cleaner metric than train_loss.
+  # Disabled by default to keep the small-model run fast.
+  eval_games: 0
+  eval_sf_nodes: 500
+  eval_mcts_simulations: 32
+
+  holdout_fraction: 0.02
+  holdout_capacity: 2000
+  test_steps: 5
+
+  freeze_holdout_at: 0
+  reset_holdout_on_drift: false
+  drift_threshold: 0.0
+  drift_sample_size: 128
+
+  # Binary dimensions: keep pinned during small-model search.
+  search_smolgen: false
+  search_nla: false
+  search_optimizer: false
+  search_optimizer_choices: [cosmos_fast]
+
+  # Expanded PB2 search: opponent_strength stagnated at ~18.7 for 80+ iters
+  # with only lr + w_wdl searched. Open up more dimensions to break plateau.
+  #
+  # Only pb2_bounds_* keys present here are searched; everything else is pinned.
+  pb2_bounds_lr: [0.0003, 0.0003]  # Pinned at 0.0003 for AdamW
