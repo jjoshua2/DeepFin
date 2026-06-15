@@ -20,6 +20,11 @@ import numpy as np
 
 from chess_anti_engine.replay.shard import SF_CP_SENTINEL
 from chess_anti_engine.stockfish.wdl import cp_to_wdl
+from chess_anti_engine.train.targets import (
+    DEFAULT_CATEGORICAL_BINS,
+    categorical_target_value,
+    hlgauss_target,
+)
 
 
 @dataclass(frozen=True)
@@ -32,6 +37,16 @@ class SfTargetParams:
     sf_wdl_use_cp_logistic: bool = False
     sf_wdl_cp_slope: float = 0.010
     sf_wdl_cp_draw_width: float = 60.0
+
+
+@dataclass(frozen=True)
+class CategoricalTargetParams:
+    """Knobs of the categorical (HL-Gauss) value target (mirror the selfplay
+    ``categorical_*`` / ``hlgauss_sigma`` config; defaults match GameConfig)."""
+
+    blend_frac: float = 0.0
+    num_bins: int = DEFAULT_CATEGORICAL_BINS
+    sigma: float = 0.04
 
 
 def _softmax(x: np.ndarray) -> np.ndarray:
@@ -178,4 +193,51 @@ def rebuild_sf_targets_in_arrays(
             if rebuilt_wdl is not None:
                 wdl[i] = rebuilt_wdl.astype(wdl.dtype, copy=False)
         arrs["sf_wdl"] = wdl
+    return arrs
+
+
+def rebuild_categorical_target_in_arrays(
+    arrs: dict[str, np.ndarray], *, params: CategoricalTargetParams,
+) -> dict[str, np.ndarray]:
+    """Recompute ``categorical_target`` in a sampled batch from the stored hard
+    outcome (``wdl_target``) blended with SF's eval (``sf_wdl``).
+
+    Mirrors selfplay/finalize (``categorical_target_value`` + ``hlgauss_target``)
+    so the offline sidecar can screen ``categorical_blend_frac`` on stored shards
+    — the live finalize path bakes this target at capture time, so without a
+    rebuild an offline replay of old shards would always measure the control.
+    Rows without an SF eval (``has_sf_wdl == 0`` / missing) fall back to the
+    ternary outcome. No-op when ``blend_frac <= 0`` (the stored target already
+    equals the ternary HL-Gauss) or when the required fields are absent.
+
+    Cost boundary: per-row numpy HL-Gauss, same as the live finalize path.
+    Acceptable for the flag-gated offline use (overlapped by the host prefetch
+    thread); vectorize before it could become a live-training default.
+    """
+    if float(params.blend_frac) <= 0.0:
+        return arrs
+    if "categorical_target" not in arrs or "wdl_target" not in arrs:
+        return arrs
+    wdl = np.asarray(arrs["wdl_target"]).reshape(-1)
+    n = int(wdl.shape[0])
+    cat = np.array(arrs["categorical_target"], copy=True)
+    if n == 0 or cat.ndim != 2:
+        return arrs
+    num_bins = int(cat.shape[1])  # match stored width so the head's shape holds
+    sf_wdl = arrs.get("sf_wdl")
+    has_sf = np.asarray(
+        arrs.get("has_sf_wdl", np.zeros((n,), dtype=np.float32))
+    ).reshape(-1)
+    for i in range(n):
+        scalar_v = 1.0 if int(wdl[i]) == 0 else (0.0 if int(wdl[i]) == 1 else -1.0)
+        row = (
+            np.asarray(sf_wdl[i])
+            if sf_wdl is not None and i < has_sf.shape[0] and bool(has_sf[i])
+            else None
+        )
+        value = categorical_target_value(scalar_v, row, blend_frac=params.blend_frac)
+        cat[i] = hlgauss_target(
+            value, num_bins=num_bins, sigma=params.sigma,
+        ).astype(cat.dtype, copy=False)
+    arrs["categorical_target"] = cat
     return arrs

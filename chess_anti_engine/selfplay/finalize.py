@@ -45,7 +45,7 @@ from chess_anti_engine.tablebase import (
     probe_best_move,
     rescore_game_samples,
 )
-from chess_anti_engine.train.targets import hlgauss_target
+from chess_anti_engine.train.targets import categorical_target_value, hlgauss_target
 
 if TYPE_CHECKING:
     from chess_anti_engine.encoding._lc0_ext import CBoard
@@ -606,31 +606,6 @@ def _stable_game_id(
     )
 
 
-def _categorical_target_value(
-    scalar_v: float,
-    sf_wdl: np.ndarray | None,
-    *,
-    blend_frac: float,
-) -> float:
-    """Continuous value for the categorical (HL-Gauss) value head.
-
-    Default (``blend_frac == 0``) returns the ternary game outcome unchanged so
-    the stored target is byte-identical to the legacy behaviour. With
-    ``blend_frac > 0`` the value is pulled toward SF's objective eval expected
-    score ``W - L`` (same side-to-move POV as ``scalar_v``), giving the 32-bin
-    distributional head a continuous target that uses its bins instead of three
-    spikes at {-1, 0, +1}. Falls back to the outcome when no SF eval is present.
-    """
-    frac = float(blend_frac)
-    if frac <= 0.0 or sf_wdl is None:
-        return float(scalar_v)
-    sf_arr = np.asarray(sf_wdl, dtype=np.float32)
-    if sf_arr.shape != (3,):
-        return float(scalar_v)
-    sf_expected = float(sf_arr[0]) - float(sf_arr[2])
-    return (1.0 - frac) * float(scalar_v) + frac * sf_expected
-
-
 def _build_replay_samples(
     state: SelfplayState,
     i: int,
@@ -685,7 +660,7 @@ def _build_replay_samples(
         scalar_v = 1.0 if wdl == 0 else (0.0 if wdl == 1 else -1.0)
         suffix_regret = suffix_sf_regret[t]
         cat = hlgauss_target(
-            _categorical_target_value(
+            categorical_target_value(
                 scalar_v, rec.sf_wdl,
                 blend_frac=getattr(state.game, "categorical_blend_frac", 0.0),
             ),

@@ -39,3 +39,38 @@ def hlgauss_target(
 
     probs = probs / s
     return probs.astype(np.float32, copy=False)
+
+
+def categorical_target_value(
+    scalar_v: float,
+    sf_wdl: np.ndarray | None,
+    *,
+    blend_frac: float,
+) -> float:
+    """Continuous value for the categorical (HL-Gauss) value head.
+
+    Default (``blend_frac == 0``) returns the ternary game outcome unchanged so
+    the stored target is byte-identical to the legacy behaviour. With
+    ``blend_frac > 0`` the value is pulled toward SF's objective eval expected
+    score ``(W - L) / (W + D + L)`` (same side-to-move POV as ``scalar_v``),
+    giving the 32-bin distributional head a continuous target that uses its bins
+    instead of three spikes at {-1, 0, +1}. Dividing by the row sum makes the
+    score scale-invariant, so it is correct whether ``sf_wdl`` is normalized
+    probabilities (cp-logistic path) or SF's raw permille ``UCI_ShowWDL`` (native
+    path / after ``rebuild_sf_targets``). Falls back to the outcome when no SF
+    eval is present or the row is empty.
+
+    Shared by the live finalize path (``selfplay/finalize.py``) and the offline
+    rebuild (``train/target_builder.py``) so the two produce identical targets.
+    """
+    frac = float(blend_frac)
+    if frac <= 0.0 or sf_wdl is None:
+        return float(scalar_v)
+    sf_arr = np.asarray(sf_wdl, dtype=np.float32)
+    if sf_arr.shape != (3,):
+        return float(scalar_v)
+    total = float(sf_arr[0]) + float(sf_arr[1]) + float(sf_arr[2])
+    if total <= 0.0:
+        return float(scalar_v)
+    sf_expected = (float(sf_arr[0]) - float(sf_arr[2])) / total
+    return (1.0 - frac) * float(scalar_v) + frac * sf_expected
