@@ -374,6 +374,7 @@ def _normalize_x_planes_to_target(
     *,
     target_planes: int,
     upgrade_v1_planes: bool,
+    history_encoding: str | None = None,
 ) -> dict[str, np.ndarray]:
     """Bring stored ``x``/``x_lc0_root`` up to the model's input-plane count.
 
@@ -390,6 +391,13 @@ def _normalize_x_planes_to_target(
     recompute's validation-failure fallback also zero-pads, by design. Shards
     storing MORE planes than the model expects are a hard error (never
     truncated).
+
+    ``history_encoding`` is the configured ``input_history_encoding`` resolved by
+    the caller; it is threaded into ``upgrade_arrays_to_planes`` so the EP-plane
+    decode reads from the slot the run actually uses. Without it, older shards
+    that lack a stored ``_input_history_encoding`` fall back to legacy EP decoding
+    inside the recompute, fail the v1-prefix validation, and get the whole chunk
+    zero-padded (silent signal loss for v3 training).
     """
     target = int(target_planes)
     if target <= V1_INPUT_PLANES:
@@ -404,7 +412,9 @@ def _normalize_x_planes_to_target(
     # gate), so route stored <= target through it.
     if upgrade_v1_planes and stored <= target and _is_known_version_width(target):
         try:
-            out, _stats = upgrade_arrays_to_planes(arrs, target)
+            out, _stats = upgrade_arrays_to_planes(
+                arrs, target, history_encoding=history_encoding,
+            )
         except ValueError as exc:
             print(json.dumps({
                 "event": "plane_upgrade_failed",
@@ -461,6 +471,7 @@ def _select_configured_input_history(
             out,
             target_planes=int(target_input_planes),
             upgrade_v1_planes=bool(upgrade_v1_planes),
+            history_encoding=input_history_encoding,
         )
     return out
 

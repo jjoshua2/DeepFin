@@ -18,7 +18,8 @@ No training. Runs on existing replay shards + a frozen checkpoint. Three modes:
 Candidate feature for the predictors: the NEW planes a candidate extra-features
 version adds beyond the base it extends, recomputed offline from stored planes
 (encoding/plane_decode.py). Selectable via ``--candidate-version`` (default
-v2_threats; also v3_checks / v3_xray). Calibrate against v2_threats first — that
+v2_threats; also v3_checks / v3_xray / v3_see / v3_passers). Calibrate against
+v2_threats first — that
 sidecar is a KNOWN win, so a trustworthy pre-screen must score it high-relevance
 / low-redundancy. Then point it at new v3 bundles.
 
@@ -62,14 +63,21 @@ FAMILIES_V2 = {
     "v2_pawn_tension": (171, 173),
     "v2_pawn_storm": (173, 175),
 }
-# v3 families: appended after the v2 block. v3_checks and v3_xray are SEPARATE
-# versions that both START at absolute plane 175 (extra-block idx 63) — keyed
-# off the net's total plane count (179 = v3_checks, 181 = v3_xray).
+# v3 families: appended after the v2 block. v3_checks / v3_xray / v3_see /
+# v3_passers are SEPARATE versions that all START at absolute plane 175
+# (extra-block idx 63) — keyed off the net's total plane count (179 = v3_checks,
+# 181 = v3_xray, 177 = v3_see, 183 = v3_passers).
 FAMILIES_V3_CHECKS = {
     "v3_opp_safe_checks": (175, 179),
 }
 FAMILIES_V3_XRAY = {
     "v3_xray_attacks": (175, 181),
+}
+FAMILIES_V3_SEE = {
+    "v3_see": (175, 177),
+}
+FAMILIES_V3_PASSERS = {
+    "v3_passers": (175, 183),
 }
 
 # One-shot guard so the policy-width-mismatch warning prints once, not per call.
@@ -225,6 +233,8 @@ _CANDIDATE_BLOCKS = {
     "v2_threats": (FAMILIES_V2, 34, "v1"),
     "v3_checks": (FAMILIES_V3_CHECKS, 63, "v2_threats"),
     "v3_xray": (FAMILIES_V3_XRAY, 63, "v2_threats"),
+    "v3_see": (FAMILIES_V3_SEE, 63, "v2_threats"),
+    "v3_passers": (FAMILIES_V3_PASSERS, 63, "v2_threats"),
 }
 
 
@@ -308,16 +318,21 @@ def _normalize_arrs_to_model_planes(
 ) -> dict[str, np.ndarray]:
     """Recompute stored ``x`` to the model's expected input-plane width.
 
-    Mirrors the replay-buffer load path: stored width == target passes through;
-    stored < target recomputes the extra block from the 112 LC0 base (never
-    zero-pads across versions); stored > target is a hard error. Keeps
-    ``model(x)`` from crashing on a channel mismatch (e.g. 146-plane shards into
-    a 175/179/181-plane net).
+    Mirrors the replay-buffer load path (``DiskReplayBuffer._upgrade_x_planes``):
+    stored width <= target is routed through ``upgrade_arrays_to_planes``, which
+    recomputes the extra block from the 112 LC0 base for a narrower stored chunk
+    (never zero-pads across versions) AND repairs an equal-width chunk whose
+    post-v1 block is all-zero — the signature of the pre-upgrade zero-pad path
+    persisting a v1 chunk at the target width. Routing the equal-width case
+    through the helper (rather than early-returning) means a zero-padded shard is
+    fixed before it reaches the model, so ablation/relevance never run on
+    corrupted inputs (native chunks pass through cheaply via the helper's
+    all-zero gate). stored > target stays a hard error. Keeps ``model(x)`` from
+    crashing on a channel mismatch (e.g. 146-plane shards into a 175/179/181-plane
+    net).
     """
     stored = int(np.asarray(arrs["x"]).shape[1])
     target = int(target_planes)
-    if stored == target:
-        return arrs
     if stored > target:
         raise SystemExit(
             f"shards store {stored} input planes but the model expects {target}; "
@@ -382,10 +397,14 @@ def main() -> None:
     families.update(FAMILIES_V1)
     if n_planes >= 175:
         families.update(FAMILIES_V2)
-    if n_planes == 179:
+    if n_planes == 177:
+        families.update(FAMILIES_V3_SEE)
+    elif n_planes == 179:
         families.update(FAMILIES_V3_CHECKS)
     elif n_planes == 181:
         families.update(FAMILIES_V3_XRAY)
+    elif n_planes == 183:
+        families.update(FAMILIES_V3_PASSERS)
 
     if args.mode in ("ablation", "all"):
         run_ablation(model, x, batch, families)
