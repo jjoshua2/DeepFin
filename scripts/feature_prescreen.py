@@ -76,8 +76,23 @@ FAMILIES_V3_XRAY = {
 _WARNED_POLICY_WIDTH = {"done": False}
 
 
-def load_sample(shard_dir: str, n: int, rng: np.random.Generator):
-    """Concatenate shards until >= n rows, then subsample n. Returns (arrs, meta)."""
+def load_sample(
+    shard_dir: str,
+    n: int,
+    rng: np.random.Generator,
+    target_planes: int,
+    history_encoding: str | None,
+):
+    """Concatenate shards until >= n rows, then subsample n. Returns (arrs, meta).
+
+    Shards under one dir can mix plane widths (146 v1 / 175 v2 / 179 v3_checks /
+    181 v3_xray …) and the random shard order makes which widths land together
+    nondeterministic, so each chunk is normalized to the model's ``target_planes``
+    width BEFORE the x-concat — otherwise numpy raises a dim mismatch on the
+    first cross-width pair. Per-chunk normalization mirrors the replay-buffer
+    load path (recompute the extra block from the 112 LC0 base, never zero-pad
+    across versions).
+    """
     paths = list(iter_shard_paths(Path(shard_dir)))
     if not paths:
         raise SystemExit(f"no shards under {shard_dir}")
@@ -87,6 +102,7 @@ def load_sample(shard_dir: str, n: int, rng: np.random.Generator):
     got = 0
     for p in paths:
         arrs, meta = load_shard_arrays(p)
+        arrs = _normalize_arrs_to_model_planes(arrs, target_planes, history_encoding)
         chunks.append(arrs)
         got += int(arrs["x"].shape[0])
         if got >= n:
@@ -325,7 +341,14 @@ def main() -> None:
     )
     p.add_argument("-n", "--n-positions", type=int, default=4096)
     p.add_argument("--device", default="cuda")
-    p.add_argument("--history-encoding", default="legacy")
+    p.add_argument(
+        "--history-encoding",
+        default=None,
+        help="LC0 history encoding for plane decode (legacy / lc0_root / "
+             "lc0_root_legacy_meta). Default: inferred from the loaded "
+             "checkpoint's input_history_encoding (current nets use "
+             "lc0_root_legacy_meta) so EP planes decode from the right slot.",
+    )
     p.add_argument("--seed", type=int, default=42)
     args = p.parse_args()
 
@@ -335,14 +358,20 @@ def main() -> None:
     model.eval()
     net_planes = _model_input_planes(model)
 
+    # Resolve history encoding: an explicit flag wins; otherwise infer from the
+    # loaded net (its input_history_encoding attr) so the decode reads EP from
+    # the slot the checkpoint actually used, falling back to the legacy default.
+    history_encoding = args.history_encoding
+    if history_encoding is None:
+        history_encoding = str(getattr(model, "input_history_encoding", "legacy"))
+        print(f"[prescreen] history-encoding inferred from checkpoint: {history_encoding}")
+
     print(f"[prescreen] sampling {args.n_positions} positions from {args.shard_dir}")
-    arrs, _meta = load_sample(args.shard_dir, args.n_positions, rng)
-    stored_planes = int(arrs["x"].shape[1])
-    arrs = _normalize_arrs_to_model_planes(arrs, net_planes, args.history_encoding)
+    # load_sample normalizes each chunk to net_planes before concat (shards may
+    # mix widths), so arrs["x"] is already at the model width here.
+    arrs, _meta = load_sample(args.shard_dir, args.n_positions, rng, net_planes, history_encoding)
     n_planes = int(arrs["x"].shape[1])
-    if stored_planes != n_planes:
-        print(f"[prescreen] recomputed stored {stored_planes}-plane x -> model width {n_planes}")
-    print(f"[prescreen] {arrs['x'].shape[0]} positions, x has {n_planes} planes")
+    print(f"[prescreen] {arrs['x'].shape[0]} positions, x has {n_planes} planes (model width {net_planes})")
 
     batch = to_tensors({k: v for k, v in arrs.items() if k != "x"}, args.device)
     x = torch.from_numpy(np.ascontiguousarray(arrs["x"].astype(np.float32))).to(args.device)
@@ -361,9 +390,9 @@ def main() -> None:
     if args.mode in ("ablation", "all"):
         run_ablation(model, x, batch, families)
     if args.mode in ("redundancy", "all"):
-        run_redundancy(model, x, arrs, args.history_encoding, args.candidate_version)
+        run_redundancy(model, x, arrs, history_encoding, args.candidate_version)
     if args.mode in ("relevance", "all"):
-        run_relevance(model, x, batch, arrs, args.history_encoding, args.candidate_version)
+        run_relevance(model, x, batch, arrs, history_encoding, args.candidate_version)
 
 
 if __name__ == "__main__":

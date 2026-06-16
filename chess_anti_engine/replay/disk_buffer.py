@@ -277,9 +277,11 @@ class DiskReplayBuffer:
         This is the only correct cross-version path — zero-padding a stored
         block of a DIFFERENT version into the target's extra slots is silent
         input corruption (the stored extra planes are never a prefix of the
-        target's beyond the 34 v1 planes). Stored-width == target passes
-        through untouched. Also repairs 175-plane chunks whose threat block was
-        zero-padded by the pre-upgrade load path and then re-persisted.
+        target's beyond the 34 v1 planes). Stored-width == target normally
+        passes through untouched, but a chunk the pre-upgrade zero-pad path
+        persisted at the target width with an all-zero extra block is repaired
+        in place (recomputed only for those rows) — covering both 175-plane v2
+        chunks and any wider recognized version.
         Validation failure (a chunk the decoder can't faithfully reconstruct)
         falls back to the zero-pad path in ``_pad_x_planes`` instead of killing
         the prefetch thread — old data trains as before, just without
@@ -292,10 +294,16 @@ class DiskReplayBuffer:
         if version is None:
             return arrs
         stored = int(np.asarray(arrs["x"]).shape[1])
-        if stored == target_planes or stored > target_planes:
-            # Equal width needs no recompute; wider-than-target is a config
-            # error handled (raised) by _pad_x_planes after this returns.
+        if stored > target_planes:
+            # Wider-than-target is a config error handled (raised) by
+            # _pad_x_planes after this returns.
             return arrs
+        # Equal width is NOT an unconditional passthrough: a chunk persisted at
+        # the target width by the pre-upgrade zero-pad path carries an all-zero
+        # extra block that must be repaired. upgrade_arrays_to_planes recomputes
+        # only those rows (native chunks pass through cheaply via its all-zero
+        # gate), so route equal-width through it too. stored < target_planes
+        # gets the full cross-version recompute.
         try:
             upgraded, _stats = upgrade_arrays_to_planes(arrs, target_planes)
         except ValueError as exc:

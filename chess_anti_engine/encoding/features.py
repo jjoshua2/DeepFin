@@ -11,6 +11,13 @@ Two versions exist, selected by ``model.input_extra_features``:
 - ``v3_xray``: v2_threats plus 6 per-slider-type x-ray attack planes appended
   AFTER index 63. SEPARATE v3 family from ``v3_checks`` (it does NOT include
   the opponent-safe-check planes). Existing planes are never reordered.
+- ``v3_see``: v2_threats plus 2 graded Static-Exchange-Evaluation planes
+  appended AFTER index 63 (the continuous replacement for v2's binary
+  cheaper-attacked planes [52:53]). SEPARATE v3 family. Existing planes are
+  never reordered.
+- ``v3_passers``: v2_threats plus 8 passed-pawn-quality planes appended AFTER
+  index 63 (4 per side). SEPARATE v3 family. Existing planes are never
+  reordered.
 
 Plane layout (indices within the extra block; absolute index = 112 + idx):
 
@@ -44,6 +51,17 @@ Plane layout (indices within the extra block; absolute index = 112 + idx):
 |         |                       | THROUGH the first blocker on each ray): our B, R, |
 |         |                       | Q then their B, R, Q. SEPARATE v3 family from     |
 |         |                       | v3_checks — same start index, different version.  |
+| [63:65] | SEE (v3_see)          | graded Static Exchange Evaluation, normalized     |
+|         |                       | clip(see_cp/8, -1, 1): [63] our pieces' SEE when  |
+|         |                       | the OPPONENT initiates a capture (<=0 = we lose   |
+|         |                       | material); [64] their pieces' SEE when WE initiate|
+|         |                       | (>=0 = we win material). SEPARATE v3 family.      |
+| [63:71] | passers (v3_passers)  | passed-pawn quality, 4 planes per side (us 63-66, |
+|         |                       | them 67-70): rank-advancement (rel-rank/7), safe  |
+|         |                       | passer (stop square unattacked & empty), blocked  |
+|         |                       | passer (any piece on stop square), promotion path |
+|         |                       | controlled by enemy (any file-ahead square the    |
+|         |                       | enemy attacks). SEPARATE v3 family.               |
 
 Semantics notes:
 - All planes are side-to-move oriented (``bitboards_to_planes(..., turn)``).
@@ -78,11 +96,15 @@ EXTRA_FEATURES_V1 = "v1"
 EXTRA_FEATURES_V2_THREATS = "v2_threats"
 EXTRA_FEATURES_V3_CHECKS = "v3_checks"
 EXTRA_FEATURES_V3_XRAY = "v3_xray"
+EXTRA_FEATURES_V3_SEE = "v3_see"
+EXTRA_FEATURES_V3_PASSERS = "v3_passers"
 EXTRA_FEATURE_VERSIONS = (
     EXTRA_FEATURES_V1,
     EXTRA_FEATURES_V2_THREATS,
     EXTRA_FEATURES_V3_CHECKS,
     EXTRA_FEATURES_V3_XRAY,
+    EXTRA_FEATURES_V3_SEE,
+    EXTRA_FEATURES_V3_PASSERS,
 )
 
 _EXTRA_FEATURE_PLANES = {
@@ -90,7 +112,17 @@ _EXTRA_FEATURE_PLANES = {
     EXTRA_FEATURES_V2_THREATS: 63,
     EXTRA_FEATURES_V3_CHECKS: 67,
     EXTRA_FEATURES_V3_XRAY: 69,
+    EXTRA_FEATURES_V3_SEE: 65,
+    EXTRA_FEATURES_V3_PASSERS: 71,
 }
+
+# Distinct plane counts are load-bearing: version_for_input_planes maps a total
+# plane count back to a version by first match, so two versions sharing a count
+# would silently collide. Fail loudly here if a future addition reuses a count.
+assert len(set(_EXTRA_FEATURE_PLANES.values())) == len(_EXTRA_FEATURE_PLANES), (
+    "EXTRA_FEATURE_PLANES values must be unique (version_for_input_planes "
+    f"collides otherwise): {_EXTRA_FEATURE_PLANES}"
+)
 
 
 def normalize_extra_features_encoding(value: str | None) -> str:
@@ -106,6 +138,10 @@ def normalize_extra_features_encoding(value: str | None) -> str:
         return EXTRA_FEATURES_V3_CHECKS
     if v in ("v3_xray", "xray"):
         return EXTRA_FEATURES_V3_XRAY
+    if v in ("v3_see", "see"):
+        return EXTRA_FEATURES_V3_SEE
+    if v in ("v3_passers", "passers", "v3_passed"):
+        return EXTRA_FEATURES_V3_PASSERS
     raise ValueError(
         f"unknown input_extra_features {value!r}; expected one of {EXTRA_FEATURE_VERSIONS}"
     )
@@ -948,6 +984,174 @@ def _fill_xray_planes(
     )
 
 
+# Static-exchange-evaluation piece values (pawns). King is "large" so it is
+# never voluntarily traded into a losing recapture but can still deliver the
+# final capture in the swap-off. Indexed by python-chess PieceType (1..6).
+_SEE_PIECE_VALUE = {
+    chess.PAWN: 1,
+    chess.KNIGHT: 3,
+    chess.BISHOP: 3,
+    chess.ROOK: 5,
+    chess.QUEEN: 9,
+    chess.KING: 1000,
+}
+
+
+def _least_valuable_attacker(
+    board: chess.Board, square: int, side: chess.Color,
+) -> int | None:
+    """Square of ``side``'s least-valued piece attacking ``square`` (or None).
+
+    Direct attackers at current occupancy only — the simplified swap-off does
+    not discover x-ray re-attackers revealed once a front attacker is removed.
+    """
+    best_sq = None
+    best_val = None
+    for sq in chess.scan_forward(int(board.attackers_mask(side, square))):
+        piece = board.piece_at(sq)
+        if piece is None:
+            continue
+        val = _SEE_PIECE_VALUE[piece.piece_type]
+        if best_val is None or val < best_val:
+            best_val = val
+            best_sq = sq
+    return best_sq
+
+
+def _see_capture(board: chess.Board, square: int, initiator: chess.Color) -> int:
+    """Static exchange evaluation (pawns) for ``initiator`` capturing on ``square``.
+
+    Standard iterative swap-off: the initiator captures the piece on ``square``
+    with its least-valuable attacker, then sides alternate recapturing with
+    their least-valuable attacker; each side stops recapturing once continuing
+    would worsen its own balance (the usual ``max(0, ...)`` negamax pruning).
+    Returns the value the initiator nets, in pawns (>= 0).
+
+    Simplification: attackers are enumerated at current occupancy via
+    ``board.attackers_mask`` after removing the pieces already captured. This
+    captures sliders revealed once a closer same-line attacker is consumed
+    (board state is mutated), but not x-ray batteries that require recomputing
+    through a removed enemy attacker on the SAME square — i.e. the common
+    "rook behind rook on the file" battery IS handled (the removed piece sat on
+    a different square), while a fully general SEE is not strictly guaranteed.
+    Good enough for a graded threat signal; documented for parity.
+    """
+    target = board.piece_at(square)
+    if target is None:
+        return 0
+
+    work = board.copy(stack=False)
+    # Classic swap-off list (Chess Programming Wiki SEE). gain[0] is the value
+    # of the piece captured by the initiator. gain[d] = value[attacker_d] −
+    # gain[d-1], where attacker_d is the least-valuable piece of the side to
+    # move that captures on ``square`` at step d. Removing each attacker from
+    # the working occupancy reveals rear sliders along its ray.
+    gain: list[int] = [_SEE_PIECE_VALUE[target.piece_type]]
+    side = initiator
+
+    while True:
+        att_sq = _least_valuable_attacker(work, square, side)
+        if att_sq is None:
+            break
+        attacker = work.piece_at(att_sq)
+        assert attacker is not None
+        gain.append(_SEE_PIECE_VALUE[attacker.piece_type] - gain[-1])
+        work.remove_piece_at(att_sq)
+        side = not side
+
+    # Negamax fold-back (CPW: ``while (--d) gain[d-1] = -max(-gain[d-1],
+    # gain[d])``): each side declines a recapture that would worsen its own
+    # outcome. With d_max = len(gain)-1 captures, fold i from d_max-2 down to 0
+    # — the deepest capture (gain[-1]) stands; a lone capture (d_max==1) is
+    # never folded, so an undefended piece nets its full value.
+    for i in range(len(gain) - 3, -1, -1):
+        gain[i] = -max(-gain[i], gain[i + 1])
+    return gain[0]
+
+
+def _fill_see_planes(
+    board: chess.Board, *, turn: chess.Color, out: np.ndarray,
+) -> None:
+    """Fill the v3_see planes out[63:65] — graded SEE, side-to-move oriented.
+
+    [63] OUR pieces' SEE-when-captured: for each of our occupied squares with an
+         enemy attacker, the value the OPPONENT nets if THEY initiate, expressed
+         from OUR perspective (negated; <= 0 when we lose material).
+    [64] THEIR pieces' SEE-when-captured: same for their pieces if WE initiate
+         (>= 0 when we win material).
+    Both normalized clip(see/8, -1, 1).
+    """
+    us, them = turn, not turn
+    vals_us = np.zeros(64, dtype=np.float32)
+    vals_them = np.zeros(64, dtype=np.float32)
+
+    for sq in chess.scan_forward(int(board.occupied_co[us])):
+        if not board.attackers_mask(them, sq):
+            continue
+        # Opponent initiates a capture on our piece; we net the negation.
+        see = _see_capture(board, sq, them)
+        vals_us[sq] = np.clip(-see / 8.0, -1.0, 1.0)
+
+    for sq in chess.scan_forward(int(board.occupied_co[them])):
+        if not board.attackers_mask(us, sq):
+            continue
+        see = _see_capture(board, sq, us)
+        vals_them[sq] = np.clip(see / 8.0, -1.0, 1.0)
+
+    out[63] = _oriented_value_plane(vals_us, turn=turn)
+    out[64] = _oriented_value_plane(vals_them, turn=turn)
+
+
+def _fill_passer_planes(
+    board: chess.Board, *, turn: chess.Color, out: np.ndarray,
+) -> None:
+    """Fill the v3_passers planes out[63:71] — passed-pawn quality.
+
+    4 planes per side (us 63:67, them 67:71), each side-to-move oriented:
+      +0 rank-advancement      = (relative rank advanced)/7 in [0, 1]
+      +1 safe passer           = stop square not enemy-attacked and not occupied
+      +2 blocked passer        = any piece on the stop square
+      +3 promo-path enemy ctrl = any file-ahead square is enemy-attacked
+    """
+    occ = int(board.occupied)
+    for side_idx, color in enumerate((turn, not turn)):
+        base = 63 + 4 * side_idx
+        enemy = not color
+        direction = 1 if color == chess.WHITE else -1
+        passers = _passed_pawns(board, color)
+        rank_vals = np.zeros(64, dtype=np.float32)
+        safe = 0
+        blocked = 0
+        promo_ctrl = 0
+        for sq in chess.scan_forward(int(passers)):
+            f = chess.square_file(sq)
+            r = chess.square_rank(sq)
+            rel_rank = r if color == chess.WHITE else 7 - r
+            rank_vals[sq] = rel_rank / 7.0
+
+            stop_r = r + direction
+            if 0 <= stop_r <= 7:
+                stop_sq = chess.square(f, stop_r)
+                stop_bit = int(chess.BB_SQUARES[stop_sq])
+                if occ & stop_bit:
+                    blocked |= int(chess.BB_SQUARES[sq])
+                elif not board.is_attacked_by(enemy, stop_sq):
+                    safe |= int(chess.BB_SQUARES[sq])
+
+            rr = r + direction
+            while 0 <= rr <= 7:
+                ahead_sq = chess.square(f, rr)
+                if board.is_attacked_by(enemy, ahead_sq):
+                    promo_ctrl |= int(chess.BB_SQUARES[sq])
+                    break
+                rr += direction
+
+        out[base] = _oriented_value_plane(rank_vals, turn=turn)
+        out[base + 1:base + 4] = bitboards_to_planes(
+            [safe, blocked, promo_ctrl], turn=turn,
+        )
+
+
 def extra_feature_planes_fast(
     board: chess.Board, *, version: str | None = None,
 ) -> np.ndarray:
@@ -983,4 +1187,8 @@ def extra_feature_planes_fast(
             _fill_opponent_safe_check_planes(board, turn=turn, out=out, accum=accum)
         elif n_extra == 69:  # v3_xray: per-slider x-ray attacks at [63:69]
             _fill_xray_planes(board, turn=turn, out=out)
+        elif n_extra == 65:  # v3_see: graded SEE at [63:65]
+            _fill_see_planes(board, turn=turn, out=out)
+        elif n_extra == 71:  # v3_passers: passed-pawn quality at [63:71]
+            _fill_passer_planes(board, turn=turn, out=out)
     return out

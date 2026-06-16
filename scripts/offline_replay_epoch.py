@@ -379,9 +379,12 @@ def _normalize_x_planes_to_target(
 
     Mirrors ``DiskReplayBuffer._upgrade_x_planes`` + ``_pad_x_planes``: when the
     model expects a multi-version width (>146), ``upgrade_v1_planes`` is set, and
-    the stored width differs from the target, the extra block is recomputed from
-    the stored 112 LC0 base planes (``upgrade_arrays_to_planes``) — for ANY
-    cross-version mismatch, not just v1/v2. Zero-padding a stored block of a
+    the stored width is <= the target, the extra block is recomputed from the
+    stored 112 LC0 base planes (``upgrade_arrays_to_planes``) — for ANY
+    cross-version mismatch, not just v1/v2. Equal width is NOT a passthrough:
+    rows the pre-upgrade zero-pad path persisted at the target width with an
+    all-zero extra block are repaired in place (native chunks pass through
+    cheaply via the helper's all-zero gate). Zero-padding a stored block of a
     DIFFERENT version into the target's extra slots is silent input corruption,
     so the only routine zero-pad is up from a width with NO extra block; the
     recompute's validation-failure fallback also zero-pads, by design. Shards
@@ -395,7 +398,11 @@ def _normalize_x_planes_to_target(
     out = arrs
     stored = int(np.asarray(arrs["x"]).shape[1])
     # stored > target is a config error handled (raised) by the pad loop below.
-    if upgrade_v1_planes and stored < target and _is_known_version_width(target):
+    # Equal width is NOT a passthrough: upgrade_arrays_to_planes repairs rows
+    # the pre-upgrade zero-pad path persisted at the target width with an
+    # all-zero extra block (native chunks pass through cheaply via its all-zero
+    # gate), so route stored <= target through it.
+    if upgrade_v1_planes and stored <= target and _is_known_version_width(target):
         try:
             out, _stats = upgrade_arrays_to_planes(arrs, target)
         except ValueError as exc:

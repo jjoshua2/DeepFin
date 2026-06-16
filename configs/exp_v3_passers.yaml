@@ -1,14 +1,13 @@
-# EXPERIMENTAL: v3_xray input planes — copy of pbt2_small.yaml with
-# model.input_extra_features: v3_xray (181 input planes = 112 LC0 + 69 extra).
-# v3_xray = v2_threats (63 extra) + 6 per-slider-type x-ray attack planes [63:69]
-# (squares each slider sees THROUGH the first blocker on every ray — pin/skewer/
-# discovered-threat potential the v2 direct-attack maps miss). Order: our B, R, Q
-# x-ray then their B, R, Q x-ray. SEPARATE v3 family from v3_checks — does NOT
-# include the opponent-safe-check planes.
+# EXPERIMENTAL: v3_passers input planes — copy of pbt2_small.yaml with
+# model.input_extra_features: v3_passers (183 input planes = 112 LC0 + 71 extra).
+# v3_passers = v2_threats (63 extra) + 8 passed-pawn-quality planes [63:71]
+# (4 per side; us 63:67, them 67:71): rank-advancement (rel-rank/7), safe passer
+# (stop square unattacked & empty), blocked passer (any piece on stop square),
+# and promotion-path-controlled-by-enemy (any file-ahead square enemy-attacked).
 #
 # Evaluation protocol (docs/eval_protocol.md):
 #   1. Warm-start from the live v1 checkpoint (the tolerant loader zero-inits the
-#      35 new input-embed columns, so step-0 outputs are bit-identical to v1).
+#      33 new input-embed columns, so step-0 outputs are bit-identical to v1).
 #      Old replay shards load unchanged — with train.replay_upgrade_v1_planes the
 #      extra planes are recomputed from the stored planes at load time
 #      (replay/threat_upgrade.py); shards a decode can't validate fall back to
@@ -51,7 +50,7 @@
 #   150 games × ~20-30 pos = ~3k-5k new samples → up to 15 training steps (256 batch)
 
 seed: 0
-work_dir: runs/exp_v3_xray  # Own work dir: never share tune/auto-resume state with the production run.
+work_dir: runs/exp_v3_passers  # Own work dir: never share tune/auto-resume state with the production run.
 device: cuda
 iterations: 750
 replay_window_start: 400000   # 2026-04-22 v4: was 20000 (truncated pool to 10/187 shards). Raised so salvage keeps all pool shards (~374k pos).
@@ -93,7 +92,7 @@ model:
   qkv_projection: split  # Split fused QKV for Aurora scope control; tolerant loader migrates old fused weights.
   use_deepnorm: true  # Epoch-4 candidate topology.
   policy_encoding: lc0_1858  # Keep production auto-resume compatible with the live compact-policy checkpoint stream.
-  input_extra_features: v3_xray  # EXPERIMENT: v2_threats (+29 threat planes) plus +6 per-slider-type x-ray attack planes [63:69].
+  input_extra_features: v3_passers  # EXPERIMENT: v2_threats (+29 threat planes) plus +8 passed-pawn-quality planes [63:71].
   input_history_encoding: lc0_root_legacy_meta  # Switched live to epoch-6 candidate input; replay keeps recorded LC0-root planes.
   gradient_checkpointing: false
 
@@ -376,7 +375,7 @@ tune:
   distributed_prefetch_shards: true
   distributed_async_test_eval: true
   distributed_async_test_eval_timeout_s: 120.0
-  distributed_worker_shared_cache_dir: /home/josh/projects/chess/runs/exp_v3_xray/server/worker_cache
+  distributed_worker_shared_cache_dir: /home/josh/projects/chess/runs/exp_v3_passers/server/worker_cache
   distributed_min_workers_per_trial: 1
   distributed_max_worker_delta_per_rebalance: 1
   distributed_wait_timeout_seconds: 720  # 2026-05-19: 600->720 to give current-model selfplay more time after lowering stale backlog target.
@@ -386,8 +385,8 @@ tune:
   distributed_server_port: 45453
   distributed_server_host: 0.0.0.0
   distributed_server_public_url: http://192.168.1.212:45453
-  distributed_server_root_override: /home/josh/projects/chess/runs/exp_v3_xray/server
-  tune_replay_root_override: /home/josh/projects/chess/runs/exp_v3_xray/replay
+  distributed_server_root_override: /home/josh/projects/chess/runs/exp_v3_passers/server
+  tune_replay_root_override: /home/josh/projects/chess/runs/exp_v3_passers/replay
 
   # Disk-backed replay buffer: keeps ~1 GB per trial instead of ~10 GB
   shuffle_buffer_size: 25000  # In-memory shuffle buffer (run26 value)

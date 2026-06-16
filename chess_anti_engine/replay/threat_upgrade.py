@@ -191,6 +191,69 @@ def upgrade_arrays_to_v2_threats(
     )
 
 
+def _zero_padded_rows_to(arr: np.ndarray, target_planes: int) -> np.ndarray:
+    """Version-general twin of :func:`_zero_padded_rows`.
+
+    Rows whose v1 extra block is live but whose *entire* post-v1 extra block
+    ``[146:target]`` is all zero — the signature of the pre-upgrade zero-pad
+    load path persisting a v1 chunk at ``target`` width. A native encode at any
+    recognized version always fills attack-union planes for a live position, so
+    a live-v1/zero-extra row can only be a zero-pad artifact, never real data.
+    """
+    v1_live = np.any(arr[:, _LC0_PLANES:V1_INPUT_PLANES], axis=(1, 2, 3))
+    extra_zero = ~np.any(arr[:, V1_INPUT_PLANES:target_planes], axis=(1, 2, 3))
+    return v1_live & extra_zero
+
+
+def _repair_zero_padded_extra(
+    arrs: dict[str, np.ndarray],
+    target_planes: int,
+    version: str,
+    history_encoding: str | None,
+) -> tuple[dict[str, np.ndarray], UpgradeStats]:
+    """Recompute the extra block for equal-width rows that were zero-padded.
+
+    Version-general twin of :func:`_repair_zero_padded_v2` for any recognized
+    multi-version ``target_planes`` (179 v3_checks, 181 v3_xray, …). A stored
+    chunk already at the target width is normally native and passes through
+    untouched (cheap — only the all-zero gate scan runs); only rows that the
+    pre-upgrade zero-pad path left with an empty extra block get recomputed,
+    validated against their stored v1 prefix exactly like the cross-version
+    path. ``x`` width is unchanged.
+    """
+    x = np.asarray(arrs["x"])
+    n = int(x.shape[0])
+    x_pad = _zero_padded_rows_to(x, target_planes)
+    x_root = arrs.get("x_lc0_root")
+    root_pad = None
+    if x_root is not None:
+        x_root = np.asarray(x_root)
+        root_pad = _zero_padded_rows_to(x_root, target_planes)
+    need = x_pad if root_pad is None else (x_pad | root_pad)
+    if not need.any():
+        return arrs, UpgradeStats(rows=n, upgraded_rows=0, dropout_rows=0)
+
+    idx = np.flatnonzero(need)
+    # plane_decode reads only planes below 146, so wider rows decode fine.
+    recomputed = recompute_extra_planes(x[idx], history_encoding, version=version)
+    out = dict(arrs)
+    block, _ = _validated_extra_block(x[idx], recomputed, label="x (pad repair)")
+    sel_x = x_pad[idx]
+    if sel_x.any():
+        new_x = np.array(x, copy=True)
+        new_x[idx[sel_x], _LC0_PLANES:] = block[sel_x]
+        out["x"] = new_x
+    if root_pad is not None and root_pad[idx].any():
+        root_block, _ = _validated_extra_block(
+            np.asarray(x_root)[idx], recomputed, label="x_lc0_root (pad repair)",
+        )
+        sel_r = root_pad[idx]
+        new_root = np.array(x_root, copy=True)
+        new_root[idx[sel_r], _LC0_PLANES:] = root_block[sel_r]
+        out["x_lc0_root"] = new_root
+    return out, UpgradeStats(rows=n, upgraded_rows=int(idx.size), dropout_rows=0)
+
+
 def _validated_extra_block(
     stored: np.ndarray,
     recomputed: np.ndarray,
@@ -247,8 +310,13 @@ def upgrade_arrays_to_planes(
     convention and ``x_lc0_root`` handling match the v2 path. The input dict is
     never mutated.
 
-    A 175-plane target delegates to :func:`upgrade_arrays_to_v2_threats` so the
-    zero-padded-row repair path stays intact for backward compatibility.
+    When the stored width already equals the target, native chunks pass through
+    untouched, but rows that the pre-upgrade zero-pad path persisted at the
+    target width with an all-zero extra block are repaired in place (recomputed
+    only for those rows) — so an equal-width load is NOT an unconditional
+    passthrough. A 175-plane target delegates to
+    :func:`upgrade_arrays_to_v2_threats` so the zero-padded-row repair path
+    stays intact for backward compatibility.
     """
     target = int(target_planes)
     if target == V2_INPUT_PLANES:
@@ -270,6 +338,12 @@ def upgrade_arrays_to_planes(
         ) from exc
     if history_encoding is None:
         history_encoding = chunk_history_encoding(arrs)
+
+    if planes == target:
+        # Equal width: native chunks pass through untouched (only the all-zero
+        # gate scan runs); rows the pre-upgrade zero-pad path left empty get
+        # their extra block recomputed in place. Mirrors the v2 repair path.
+        return _repair_zero_padded_extra(arrs, target, version, history_encoding)
 
     recomputed = recompute_extra_planes(x, history_encoding, version=version)
     x_block, x_live = _validated_extra_block(x, recomputed, label="x")

@@ -13,7 +13,11 @@
  * v3_checks = 67 planes (v2_threats + 4 opponent-safe-check planes appended
  * after index 63), v3_xray = 69 planes (v2_threats + 6 per-slider-type x-ray
  * attack planes appended after index 63 — a SEPARATE v3 family from v3_checks,
- * NOT including the opponent-safe-check planes). Existing planes are never
+ * NOT including the opponent-safe-check planes), v3_see = 65 planes
+ * (v2_threats + 2 graded-SEE planes appended after index 63), v3_passers = 71
+ * planes (v2_threats + 8 passed-pawn-quality planes, 4 per side, appended
+ * after index 63). All v3 families are SEPARATE — they share the [63:] start
+ * index and are selected by n_extra/version. Existing planes are never
  * reordered. Layout — the Python twin of this table lives in features.py's
  * module docstring; keep both in sync:
  *
@@ -45,6 +49,15 @@
  *                                 our B, R, Q then their B, R, Q. SEPARATE
  *                                 v3 family from v3_checks — same start index,
  *                                 selected by n_extra/version.
+ *   [63:65] SEE (v3_see)          graded Static Exchange Evaluation, normalized
+ *                                 clip(see/8, -1, 1): [63] our pieces' SEE when
+ *                                 the OPPONENT initiates (<=0 = we lose), [64]
+ *                                 their pieces' SEE when WE initiate (>=0 = we
+ *                                 win). SEPARATE v3 family.
+ *   [63:71] passers (v3_passers)  passed-pawn quality, 4 per side (us 63:67,
+ *                                 them 67:71): rank-advancement, safe passer,
+ *                                 blocked passer, promo-path enemy-controlled.
+ *                                 SEPARATE v3 family.
  *
  * Attack maps / counts are direct attacks at current occupancy (no x-rays);
  * pawn attacks are capture squares only (no en passant). The v3_xray planes
@@ -556,6 +569,8 @@ static uint64_t feat_connected_pawns(uint64_t own_pawns) {
 #define FEAT_EXTRA_V2 63
 #define FEAT_EXTRA_V3_CHECKS 67
 #define FEAT_EXTRA_V3_XRAY 69
+#define FEAT_EXTRA_V3_SEE 65
+#define FEAT_EXTRA_V3_PASSERS 71
 
 /* Attack maps + per-square attacker counts, harvested from the mobility
  * pass (index 0 = us, 1 = them; piece order P,N,B,R,Q,K).
@@ -601,6 +616,121 @@ static inline void feat_value_to_plane_sq(
     int f = (sq & 7), r = (sq >> 3);
     int row = turn_white ? r : (7 - r);
     plane[row * 8 + f] = value;
+}
+
+/* ================================================================
+ * v3_see: graded Static Exchange Evaluation
+ * ================================================================ */
+
+/* SEE piece values in pawns, indexed by bitboard piece slot
+ * (0=P,1=N,2=B,3=R,4=Q,5=K). King "large" so it is never voluntarily traded
+ * into a losing recapture but can deliver the final capture. */
+static const int FEAT_SEE_VALUE[6] = {1, 3, 3, 5, 9, 1000};
+
+/* Square of ``side``'s least-valuable piece attacking ``target_sq`` at the
+ * given occupancy, with the per-side piece bitboards in pieces[6]. Returns -1
+ * if no attacker. Direct attackers only (no x-ray re-attacker discovery beyond
+ * what removing pieces from ``occ`` between calls already reveals). */
+static int feat_least_valuable_attacker(
+    const uint64_t pieces[6], uint64_t occ, int color_idx, int target_sq
+) {
+    int best_sq = -1, best_val = 0;
+    /* Pawns (cheapest), then knight, bishop, rook, queen, king. */
+    uint64_t pawn_att = FEAT_PAWN_ATTACKERS_TO_SQ[color_idx][target_sq] & pieces[0];
+    if (pawn_att) return __builtin_ctzll(pawn_att);
+
+    uint64_t cand;
+    cand = FEAT_KNIGHT_ATTACKS[target_sq] & pieces[1];
+    if (cand) { best_sq = __builtin_ctzll(cand); best_val = FEAT_SEE_VALUE[1]; }
+
+    uint64_t diag = feat_bishop_attacks(target_sq, occ);
+    uint64_t orth = feat_rook_attacks(target_sq, occ);
+    cand = diag & pieces[2];
+    if (cand && (best_sq < 0 || FEAT_SEE_VALUE[2] < best_val)) {
+        best_sq = __builtin_ctzll(cand); best_val = FEAT_SEE_VALUE[2];
+    }
+    cand = orth & pieces[3];
+    if (cand && (best_sq < 0 || FEAT_SEE_VALUE[3] < best_val)) {
+        best_sq = __builtin_ctzll(cand); best_val = FEAT_SEE_VALUE[3];
+    }
+    cand = (diag | orth) & pieces[4];
+    if (cand && (best_sq < 0 || FEAT_SEE_VALUE[4] < best_val)) {
+        best_sq = __builtin_ctzll(cand); best_val = FEAT_SEE_VALUE[4];
+    }
+    cand = FEAT_KING_ATTACKS[target_sq] & pieces[5];
+    if (cand && (best_sq < 0 || FEAT_SEE_VALUE[5] < best_val)) {
+        best_sq = __builtin_ctzll(cand);
+    }
+    return best_sq;
+}
+
+/* Find which piece-type slot occupies ``sq`` in pieces[6]; -1 if none. */
+static int feat_piece_type_at(const uint64_t pieces[6], int sq) {
+    uint64_t bit = (uint64_t)1 << sq;
+    for (int pt = 0; pt < 6; pt++)
+        if (pieces[pt] & bit) return pt;
+    return -1;
+}
+
+/* Static exchange evaluation (pawns) for ``initiator`` capturing on ``square``.
+ * Iterative least-valuable-attacker swap-off with negamax fold-back. Mutates
+ * local copies of the piece bitboards / occupancy as pieces are consumed (so
+ * sliders revealed once a closer same-line attacker is removed ARE counted),
+ * but does not recompute x-ray batteries through a same-square removed enemy
+ * attacker — see the Python twin's docstring. ``init_pieces``/``other_pieces``
+ * are the initiator's and victim's per-side bitboards. */
+static int feat_see_capture(
+    uint64_t init_pieces[6], uint64_t other_pieces[6], uint64_t occ,
+    int init_color_idx, int square
+) {
+    int victim_pt = feat_piece_type_at(other_pieces, square);
+    if (victim_pt < 0) return 0;
+
+    uint64_t side_pieces[2][6];
+    for (int pt = 0; pt < 6; pt++) {
+        side_pieces[0][pt] = init_pieces[pt];   /* side 0 = initiator */
+        side_pieces[1][pt] = other_pieces[pt];  /* side 1 = victim's owner */
+    }
+    int side_color[2] = {init_color_idx, 1 - init_color_idx};
+
+    int gain[40];
+    int depth = 0;
+    /* Classic swap-off (Chess Programming Wiki SEE). gain[0] = value of the
+     * piece captured by the initiator; gain[d] = value[attacker_d] −
+     * gain[d-1]. Remove the standing victim from occupancy so its owner's
+     * sliders behind it can be revealed as the swap-off continues. */
+    gain[0] = FEAT_SEE_VALUE[victim_pt];
+    occ &= ~((uint64_t)1 << square);
+    side_pieces[1][victim_pt] &= ~((uint64_t)1 << square);
+
+    int side = 0;  /* initiator moves first */
+    while (depth + 1 < 40) {
+        int att_sq = feat_least_valuable_attacker(
+            side_pieces[side], occ, side_color[side], square
+        );
+        if (att_sq < 0) break;
+        int att_pt = feat_piece_type_at(side_pieces[side], att_sq);
+        if (att_pt < 0) break;  /* defensive: should not happen */
+        depth++;
+        gain[depth] = FEAT_SEE_VALUE[att_pt] - gain[depth - 1];
+        /* The attacker leaves att_sq (revealing rear sliders along its ray).
+         * What stands on ``square`` does not affect attacker enumeration of
+         * ``square``, so we only clear the attacker's origin. */
+        side_pieces[side][att_pt] &= ~((uint64_t)1 << att_sq);
+        occ &= ~((uint64_t)1 << att_sq);
+        side = 1 - side;
+    }
+
+    /* Negamax fold-back (CPW: while (--d) gain[d-1] = -max(-gain[d-1],
+     * gain[d])). With ``depth`` captures, fold i from depth-2 down to 0 — the
+     * deepest capture stands; a lone capture (depth==1) is never folded, so an
+     * undefended piece nets its full value. */
+    for (int i = depth - 2; i >= 0; i--) {
+        int a = -gain[i];
+        int b = gain[i + 1];
+        gain[i] = -(a > b ? a : b);
+    }
+    return gain[0];
 }
 
 /* Threat planes [34:63] of the extra block. ``out`` is the extra-block
@@ -756,6 +886,90 @@ static void compute_features_threats(
             feat_bb_to_plane(&out[plane_idx++ * 64], xr_b, turn_white);
             feat_bb_to_plane(&out[plane_idx++ * 64], xr_r, turn_white);
             feat_bb_to_plane(&out[plane_idx++ * 64], xr_q, turn_white);
+        }
+    } else if (n_extra == FEAT_EXTRA_V3_SEE) {
+        /* [63:65] v3_see: graded SEE, normalized clip(see/8, -1, 1).
+         * [63] our pieces' SEE when the OPPONENT initiates a capture (negated
+         *      to our perspective; <= 0 = we lose material).
+         * [64] their pieces' SEE when WE initiate (>= 0 = we win material). */
+        float *plane_us = &out[plane_idx++ * 64];
+        float *plane_them = &out[plane_idx++ * 64];
+        /* [63] iterate our occupied squares with an enemy attacker. */
+        for (uint64_t m = us_occ; m; m &= m - 1) {
+            int sq = __builtin_ctzll(m);
+            if (!(feat_is_attacked_by(them_pieces, them_color, occupied, sq)))
+                continue;
+            int see = feat_see_capture(them_pieces, us_pieces, occupied,
+                                       them_color, sq);
+            float v = (float)(-see) / 8.0f;
+            if (v > 1.0f) v = 1.0f;
+            if (v < -1.0f) v = -1.0f;
+            if (v != 0.0f)
+                feat_value_to_plane_sq(plane_us, sq, v, turn_white);
+        }
+        /* [64] iterate their occupied squares with one of our attackers. */
+        for (uint64_t m = them_occ; m; m &= m - 1) {
+            int sq = __builtin_ctzll(m);
+            if (!(feat_is_attacked_by(us_pieces, us_color, occupied, sq)))
+                continue;
+            int see = feat_see_capture(us_pieces, them_pieces, occupied,
+                                       us_color, sq);
+            float v = (float)see / 8.0f;
+            if (v > 1.0f) v = 1.0f;
+            if (v < -1.0f) v = -1.0f;
+            if (v != 0.0f)
+                feat_value_to_plane_sq(plane_them, sq, v, turn_white);
+        }
+    } else if (n_extra == FEAT_EXTRA_V3_PASSERS) {
+        /* [63:71] v3_passers: passed-pawn quality, 4 planes per side
+         * (us 63:67, them 67:71): rank-advancement, safe passer, blocked
+         * passer, promotion-path-controlled-by-enemy. */
+        for (int side = 0; side < 2; side++) {
+            uint64_t *own = side == 0 ? us_pieces : them_pieces;
+            uint64_t *enemy_p = side == 0 ? them_pieces : us_pieces;
+            uint64_t own_pawns = own[0];
+            uint64_t enemy_pawns = enemy_p[0];
+            int c = side == 0 ? us_color : them_color;
+            int enemy_color = 1 - c;
+            int direction = c ? 1 : -1;
+            uint64_t passers = feat_passed_pawns(own_pawns, enemy_pawns, c);
+
+            float *plane_rank = &out[(plane_idx + 0) * 64];
+            uint64_t safe_pass = 0, blocked = 0, promo_ctrl = 0;
+            for (uint64_t m = passers; m; m &= m - 1) {
+                int sq = __builtin_ctzll(m);
+                int f = (sq & 7), r = (sq >> 3);
+                int rel_rank = c ? r : 7 - r;
+                feat_value_to_plane_sq(plane_rank, sq,
+                                       (float)rel_rank / 7.0f, turn_white);
+
+                int stop_r = r + direction;
+                if (stop_r >= 0 && stop_r <= 7) {
+                    int stop_sq = stop_r * 8 + f;
+                    uint64_t stop_bit = (uint64_t)1 << stop_sq;
+                    if (occupied & stop_bit) {
+                        blocked |= (uint64_t)1 << sq;
+                    } else if (!feat_is_attacked_by(enemy_p, enemy_color,
+                                                    occupied, stop_sq)) {
+                        safe_pass |= (uint64_t)1 << sq;
+                    }
+                }
+
+                int rr = r + direction;
+                while (rr >= 0 && rr <= 7) {
+                    int ahead_sq = rr * 8 + f;
+                    if (feat_is_attacked_by(enemy_p, enemy_color,
+                                            occupied, ahead_sq)) {
+                        promo_ctrl |= (uint64_t)1 << sq;
+                        break;
+                    }
+                    rr += direction;
+                }
+            }
+            feat_bb_to_plane(&out[(plane_idx + 1) * 64], safe_pass, turn_white);
+            feat_bb_to_plane(&out[(plane_idx + 2) * 64], blocked, turn_white);
+            feat_bb_to_plane(&out[(plane_idx + 3) * 64], promo_ctrl, turn_white);
+            plane_idx += 4;
         }
     }
 }
