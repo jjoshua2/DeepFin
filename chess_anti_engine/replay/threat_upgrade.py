@@ -236,11 +236,16 @@ def upgrade_arrays_to_planes(
     Version-general twin of :func:`upgrade_arrays_to_v2_threats`: the target
     extra-features version is derived from ``target_planes`` (175→v2_threats,
     179→v3_checks, …). The full extra block is recomputed from the stored 112
-    LC0 base planes — which works whether the stored shard is 146 (v1) or 175
-    (v2) wide — and validated against the stored v1 planes before the LC0 base
-    and recomputed extra block are concatenated to ``target_planes``. The
-    all-zero-row dropout convention and ``x_lc0_root`` handling match the v2
-    path. The input dict is never mutated.
+    LC0 base planes — which works for ANY recognized stored width, since the
+    recompute reads only the step-0/EP planes (all < 146) and validates against
+    the stored v1 block ``[112:146]`` (a true prefix preserved across every
+    version). The stored extra block beyond v1 is never read, so a 146 (v1),
+    175 (v2_threats), 179 (v3_checks) or 181 (v3_xray) shard can all be
+    recomputed to the target version — crucially, this is the correct path for
+    cross-version mismatches (e.g. a stored 179 chunk loaded by a 181 model),
+    which must NOT fall through to zero-padding. The all-zero-row dropout
+    convention and ``x_lc0_root`` handling match the v2 path. The input dict is
+    never mutated.
 
     A 175-plane target delegates to :func:`upgrade_arrays_to_v2_threats` so the
     zero-padded-row repair path stays intact for backward compatibility.
@@ -252,11 +257,17 @@ def upgrade_arrays_to_planes(
 
     x = np.asarray(arrs["x"])
     planes = int(x.shape[1])
-    if planes not in (V1_INPUT_PLANES, V2_INPUT_PLANES):
+    # Accept any recognized stored width: the recompute + v1 validation read
+    # only planes below 146 (preserved identically across every version), so a
+    # 146/175/179/181 stored chunk all recompute correctly. An unrecognized
+    # width has no trustworthy v1 prefix to validate against.
+    try:
+        version_for_input_planes(planes)
+    except ValueError as exc:
         raise ValueError(
             f"cannot upgrade chunk with {planes} input planes to {version} "
-            f"({target} planes); expected {V1_INPUT_PLANES} or {V2_INPUT_PLANES}"
-        )
+            f"({target} planes): stored width is not a recognized version"
+        ) from exc
     if history_encoding is None:
         history_encoding = chunk_history_encoding(arrs)
 

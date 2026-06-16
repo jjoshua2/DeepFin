@@ -15,10 +15,12 @@ No training. Runs on existing replay shards + a frozen checkpoint. Three modes:
              (CE of the net's value/policy vs the stored Stockfish labels). High
              => the feature fires where the net is wrong => likely to help.
 
-Candidate feature for the predictors: the v2_threats block, recomputed offline
-from stored planes (encoding/plane_decode.py). Calibrate against it first — the
-v2_threats sidecar is a KNOWN win, so a trustworthy pre-screen must score it
-high-relevance / low-redundancy. Then point it at new v3 bundles.
+Candidate feature for the predictors: the NEW planes a candidate extra-features
+version adds beyond the base it extends, recomputed offline from stored planes
+(encoding/plane_decode.py). Selectable via ``--candidate-version`` (default
+v2_threats; also v3_checks / v3_xray). Calibrate against v2_threats first — that
+sidecar is a KNOWN win, so a trustworthy pre-screen must score it high-relevance
+/ low-redundancy. Then point it at new v3 bundles.
 
   PYTHONPATH=. python3 scripts/feature_prescreen.py --checkpoint X.pt \
       --shard-dir runs/pbt2_small/replay_shards --mode ablation -n 4096
@@ -34,6 +36,7 @@ import torch.nn.functional as F
 
 from chess_anti_engine.encoding.plane_decode import recompute_extra_planes
 from chess_anti_engine.replay.shard import iter_shard_paths, load_shard_arrays
+from chess_anti_engine.replay.threat_upgrade import upgrade_arrays_to_planes
 from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
 # Absolute plane-index ranges per family (see encoding/features.py).
@@ -59,6 +62,18 @@ FAMILIES_V2 = {
     "v2_pawn_tension": (171, 173),
     "v2_pawn_storm": (173, 175),
 }
+# v3 families: appended after the v2 block. v3_checks and v3_xray are SEPARATE
+# versions that both START at absolute plane 175 (extra-block idx 63) — keyed
+# off the net's total plane count (179 = v3_checks, 181 = v3_xray).
+FAMILIES_V3_CHECKS = {
+    "v3_opp_safe_checks": (175, 179),
+}
+FAMILIES_V3_XRAY = {
+    "v3_xray_attacks": (175, 181),
+}
+
+# One-shot guard so the policy-width-mismatch warning prints once, not per call.
+_WARNED_POLICY_WIDTH = {"done": False}
 
 
 def load_sample(shard_dir: str, n: int, rng: np.random.Generator):
@@ -116,8 +131,17 @@ def eval_losses(model, x: torch.Tensor, batch: dict[str, torch.Tensor]) -> dict[
     pol = out["policy_own"]
     if "legal_mask" in batch and batch["legal_mask"].shape[-1] == pol.shape[-1]:
         pol = pol.masked_fill(batch["legal_mask"] <= 0, -1e9)
-    if "policy_target" in batch and batch["policy_target"].shape[-1] == pol.shape[-1]:
-        res["policy_ce"] = soft_ce(pol, batch["policy_target"])
+    if "policy_target" in batch:
+        if batch["policy_target"].shape[-1] == pol.shape[-1]:
+            res["policy_ce"] = soft_ce(pol, batch["policy_target"])
+        elif not _WARNED_POLICY_WIDTH["done"]:
+            _WARNED_POLICY_WIDTH["done"] = True
+            print(
+                f"WARNING: skipping policy_ce — stored policy_target width "
+                f"{int(batch['policy_target'].shape[-1])} != model policy width "
+                f"{int(pol.shape[-1])} (1858 vs 4672 encoding mismatch); "
+                f"policy losses/ablation deltas will be value-only."
+            )
     if "wdl_target" in batch:
         res["wdl_ce"] = F.cross_entropy(out["wdl"], batch["wdl_target"].long(), reduction="none")
     # SF-regret (relevance target): net vs stored Stockfish labels.
@@ -177,20 +201,50 @@ def _ridge_r2(feats: np.ndarray, target: np.ndarray, lam: float = 1.0) -> float:
     return 1.0 - ss_res / ss_tot
 
 
+# Candidate version -> (families dict for the NEW planes beyond the base
+# version, base extra-plane count). The candidate recompute returns the full
+# extra block for ``version``; we score only the planes ADDED on top of the
+# base version it extends (v2 extends v1; v3_* extend v2).
+_CANDIDATE_BLOCKS = {
+    "v2_threats": (FAMILIES_V2, 34, "v1"),
+    "v3_checks": (FAMILIES_V3_CHECKS, 63, "v2_threats"),
+    "v3_xray": (FAMILIES_V3_XRAY, 63, "v2_threats"),
+}
+
+
 @torch.no_grad()
-def candidate_v2_threats(arrs: dict[str, np.ndarray], history_encoding: str | None) -> np.ndarray:
-    """The 29 v2 threat planes recomputed from stored planes — per-family spatial means -> (N,9)."""
-    extra = recompute_extra_planes(arrs["x"].astype(np.float32), history_encoding, version="v2_threats")
-    threat = extra[:, 34:]  # (N,29,8,8) — the v2 block beyond the v1 34
-    # summarize each v2 family to one scalar (spatial+plane mean) -> (N, n_families)
+def candidate_feature_block(
+    arrs: dict[str, np.ndarray],
+    history_encoding: str | None,
+    version: str,
+) -> tuple[np.ndarray, list[str]]:
+    """Recompute ``version``'s extra block and summarize the NEW planes per family.
+
+    Returns ``(cols, family_names)`` where ``cols`` is ``(N, n_families)`` — each
+    column the spatial+plane mean of one family of planes ADDED by ``version``
+    beyond the base version it extends (e.g. v3_checks vs v2 base => the 4 planes
+    [175:179]). So redundancy/relevance screen the ACTUAL candidate, not always
+    v2_threats.
+    """
+    if version not in _CANDIDATE_BLOCKS:
+        raise SystemExit(
+            f"--candidate-version {version!r} not screenable; "
+            f"expected one of {sorted(_CANDIDATE_BLOCKS)}"
+        )
+    families, base_extra, _base_version = _CANDIDATE_BLOCKS[version]
+    extra = recompute_extra_planes(arrs["x"].astype(np.float32), history_encoding, version=version)
+    block = extra[:, base_extra:]  # planes beyond the base version's extra block
+    # Family ranges are absolute plane indices; the recomputed extra block starts
+    # at absolute 112, and ``block`` starts at absolute 112 + base_extra.
+    base_abs = 112 + base_extra
     cols = []
-    for _name, (s, e) in FAMILIES_V2.items():
-        ls, le = s - 146, e - 146
-        cols.append(threat[:, ls:le].mean(axis=(1, 2, 3)))
-    return np.stack(cols, axis=1)  # (N, 9)
+    for _name, (s, e) in families.items():
+        ls, le = s - base_abs, e - base_abs
+        cols.append(block[:, ls:le].mean(axis=(1, 2, 3)))
+    return np.stack(cols, axis=1), list(families.keys())
 
 
-def run_redundancy(model, x, arrs, history_encoding):
+def run_redundancy(model, x, arrs, history_encoding, candidate_version):
     box, restore = _capture_trunk(model)
     trunks = []
     try:
@@ -201,26 +255,60 @@ def run_redundancy(model, x, arrs, history_encoding):
     finally:
         restore()
     trunk = torch.cat(trunks, dim=0).numpy()  # (N, D)
-    feat = candidate_v2_threats(arrs, history_encoding)  # (N, 9)
+    feat, _names = candidate_feature_block(arrs, history_encoding, candidate_version)  # (N, n_families)
     r2 = _ridge_r2(trunk, feat)
-    print(f"\n=== REDUNDANCY — trunk -> v2_threats(family-summary) held-out R^2 = {r2:.3f} ===")
+    print(f"\n=== REDUNDANCY — trunk -> {candidate_version}(family-summary) held-out R^2 = {r2:.3f} ===")
     print("high R^2 (>~0.7) => net already encodes it => redundant; low => novel")
 
 
-def run_relevance(model, x, batch, arrs, history_encoding):
+def run_relevance(model, x, batch, arrs, history_encoding, candidate_version):
     losses = eval_losses(model, x, batch)
     regret_key = "sf_wdl_regret" if "sf_wdl_regret" in losses else ("policy_ce" if "policy_ce" in losses else "wdl_ce")
     regret = losses[regret_key].float().cpu().numpy()  # (N,)
-    feat = candidate_v2_threats(arrs, history_encoding)  # (N, 9)
-    print(f"\n=== RELEVANCE — corr(v2 family activation, net regret[{regret_key}]) ===")
-    for name, col in zip(FAMILIES_V2.keys(), feat.T):
+    feat, names = candidate_feature_block(arrs, history_encoding, candidate_version)  # (N, n_families)
+    print(f"\n=== RELEVANCE — corr({candidate_version} family activation, net regret[{regret_key}]) ===")
+    for name, col in zip(names, feat.T):
         if col.std() < 1e-9:
             r = float("nan")
         else:
             r = float(np.corrcoef(col, regret)[0, 1])
         print(f"  {name.ljust(20)} r={r:+.3f}")
     r2_all = _ridge_r2(feat, regret.reshape(-1, 1))
-    print(f"  [all v2 families -> regret] held-out R^2 = {r2_all:.3f}  (higher = more relevant to errors)")
+    print(f"  [all {candidate_version} families -> regret] held-out R^2 = {r2_all:.3f}  (higher = more relevant to errors)")
+
+
+def _model_input_planes(model) -> int:
+    """Input-plane count the model expects (from its TransformerConfig)."""
+    cfg = getattr(model, "cfg", None)
+    if cfg is not None and getattr(cfg, "in_planes", None) is not None:
+        return int(cfg.in_planes)
+    raise SystemExit("could not determine model input-plane count (no cfg.in_planes)")
+
+
+def _normalize_arrs_to_model_planes(
+    arrs: dict[str, np.ndarray],
+    target_planes: int,
+    history_encoding: str | None,
+) -> dict[str, np.ndarray]:
+    """Recompute stored ``x`` to the model's expected input-plane width.
+
+    Mirrors the replay-buffer load path: stored width == target passes through;
+    stored < target recomputes the extra block from the 112 LC0 base (never
+    zero-pads across versions); stored > target is a hard error. Keeps
+    ``model(x)`` from crashing on a channel mismatch (e.g. 146-plane shards into
+    a 175/179/181-plane net).
+    """
+    stored = int(np.asarray(arrs["x"]).shape[1])
+    target = int(target_planes)
+    if stored == target:
+        return arrs
+    if stored > target:
+        raise SystemExit(
+            f"shards store {stored} input planes but the model expects {target}; "
+            f"refusing to truncate encoded inputs"
+        )
+    out, _stats = upgrade_arrays_to_planes(arrs, target, history_encoding=history_encoding)
+    return out
 
 
 def main() -> None:
@@ -228,6 +316,13 @@ def main() -> None:
     p.add_argument("--checkpoint", required=True)
     p.add_argument("--shard-dir", default="runs/pbt2_small/replay_shards")
     p.add_argument("--mode", choices=["ablation", "redundancy", "relevance", "all"], default="ablation")
+    p.add_argument(
+        "--candidate-version",
+        choices=sorted(_CANDIDATE_BLOCKS),
+        default="v2_threats",
+        help="extra-features version whose NEW planes the redundancy/relevance "
+             "screens score (default v2_threats — a known win, for calibration).",
+    )
     p.add_argument("-n", "--n-positions", type=int, default=4096)
     p.add_argument("--device", default="cuda")
     p.add_argument("--history-encoding", default="legacy")
@@ -238,26 +333,37 @@ def main() -> None:
     print(f"[prescreen] loading {args.checkpoint}")
     model = load_model_from_checkpoint(args.checkpoint, device=args.device)
     model.eval()
+    net_planes = _model_input_planes(model)
 
     print(f"[prescreen] sampling {args.n_positions} positions from {args.shard_dir}")
     arrs, _meta = load_sample(args.shard_dir, args.n_positions, rng)
+    stored_planes = int(arrs["x"].shape[1])
+    arrs = _normalize_arrs_to_model_planes(arrs, net_planes, args.history_encoding)
     n_planes = int(arrs["x"].shape[1])
+    if stored_planes != n_planes:
+        print(f"[prescreen] recomputed stored {stored_planes}-plane x -> model width {n_planes}")
     print(f"[prescreen] {arrs['x'].shape[0]} positions, x has {n_planes} planes")
 
     batch = to_tensors({k: v for k, v in arrs.items() if k != "x"}, args.device)
     x = torch.from_numpy(np.ascontiguousarray(arrs["x"].astype(np.float32))).to(args.device)
 
+    # Ablation families key off the NET's plane count (== x width after
+    # normalization), not the stored shard width.
     families = dict(FAMILIES_LC0)
     families.update(FAMILIES_V1)
     if n_planes >= 175:
         families.update(FAMILIES_V2)
+    if n_planes == 179:
+        families.update(FAMILIES_V3_CHECKS)
+    elif n_planes == 181:
+        families.update(FAMILIES_V3_XRAY)
 
     if args.mode in ("ablation", "all"):
         run_ablation(model, x, batch, families)
     if args.mode in ("redundancy", "all"):
-        run_redundancy(model, x, arrs, args.history_encoding)
+        run_redundancy(model, x, arrs, args.history_encoding, args.candidate_version)
     if args.mode in ("relevance", "all"):
-        run_relevance(model, x, batch, arrs, args.history_encoding)
+        run_relevance(model, x, batch, arrs, args.history_encoding, args.candidate_version)
 
 
 if __name__ == "__main__":

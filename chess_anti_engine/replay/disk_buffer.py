@@ -40,7 +40,6 @@ from .shard import (
 )
 from .threat_upgrade import (
     V1_INPUT_PLANES,
-    V2_INPUT_PLANES,
     upgrade_arrays_to_planes,
 )
 
@@ -269,16 +268,22 @@ class DiskReplayBuffer:
             return None
 
     def _upgrade_x_planes(self, arrs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
-        """Recompute the extra-feature planes for a stored v1/v2 chunk (opt-in).
+        """Recompute the extra-feature planes for a stored chunk (opt-in).
 
-        Generalizes the v1→v2_threats upgrade to any registered multi-version
-        width (e.g. v3_checks at 179 planes): the full extra block is
-        recomputed from the stored 112 LC0 base planes. Also repairs 175-plane
-        chunks whose threat block was zero-padded by the pre-upgrade load path
-        and then re-persisted. Validation failure (a chunk the decoder can't
-        faithfully reconstruct) falls back to the zero-pad path below instead
-        of killing the prefetch thread — old data trains as before, just
-        without recomputed extra-plane signal for that chunk.
+        Generalizes the v1→v2_threats upgrade to ANY cross-version width
+        mismatch (e.g. v3_checks 179 → v3_xray 181): the full extra block is
+        recomputed from the stored 112 LC0 base planes whenever the stored
+        width differs from the target and the target is a recognized version.
+        This is the only correct cross-version path — zero-padding a stored
+        block of a DIFFERENT version into the target's extra slots is silent
+        input corruption (the stored extra planes are never a prefix of the
+        target's beyond the 34 v1 planes). Stored-width == target passes
+        through untouched. Also repairs 175-plane chunks whose threat block was
+        zero-padded by the pre-upgrade load path and then re-persisted.
+        Validation failure (a chunk the decoder can't faithfully reconstruct)
+        falls back to the zero-pad path in ``_pad_x_planes`` instead of killing
+        the prefetch thread — old data trains as before, just without
+        recomputed extra-plane signal for that chunk.
         """
         if not self._upgrade_v1_planes or self._input_planes is None:
             return arrs
@@ -286,7 +291,10 @@ class DiskReplayBuffer:
         version = self._upgrade_target_version()
         if version is None:
             return arrs
-        if int(np.asarray(arrs["x"]).shape[1]) not in (V1_INPUT_PLANES, V2_INPUT_PLANES):
+        stored = int(np.asarray(arrs["x"]).shape[1])
+        if stored == target_planes or stored > target_planes:
+            # Equal width needs no recompute; wider-than-target is a config
+            # error handled (raised) by _pad_x_planes after this returns.
             return arrs
         try:
             upgraded, _stats = upgrade_arrays_to_planes(arrs, target_planes)

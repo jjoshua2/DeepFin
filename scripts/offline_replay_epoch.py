@@ -30,11 +30,10 @@ from chess_anti_engine.model import (
     normalize_ffn_mult_by_layer,
 )
 from chess_anti_engine.utils.architecture import normalize_phase_piece_thresholds
-from chess_anti_engine.encoding import input_plane_count
+from chess_anti_engine.encoding import input_plane_count, version_for_input_planes
 from chess_anti_engine.encoding.lc0 import uses_lc0_root_history, uses_lc0_root_legacy_meta
 from chess_anti_engine.replay.threat_upgrade import (
     V1_INPUT_PLANES,
-    V2_INPUT_PLANES,
     upgrade_arrays_to_planes,
 )
 from chess_anti_engine.moves import (
@@ -361,6 +360,15 @@ def _select_recorded_input_history(
     return out
 
 
+def _is_known_version_width(planes: int) -> bool:
+    """True if ``planes`` is the input-plane count of a registered version."""
+    try:
+        version_for_input_planes(int(planes))
+    except ValueError:
+        return False
+    return True
+
+
 def _normalize_x_planes_to_target(
     arrs: dict[str, np.ndarray],
     *,
@@ -370,11 +378,15 @@ def _normalize_x_planes_to_target(
     """Bring stored ``x``/``x_lc0_root`` up to the model's input-plane count.
 
     Mirrors ``DiskReplayBuffer._upgrade_x_planes`` + ``_pad_x_planes``: when the
-    model expects a multi-version width (>146) and ``upgrade_v1_planes`` is set,
-    the extra block is recomputed from the stored 112 LC0 base planes
-    (``upgrade_arrays_to_planes``); otherwise — or on a recompute validation
-    failure — the missing planes are zero-padded. Shards storing MORE planes
-    than the model expects are a hard error (never truncated).
+    model expects a multi-version width (>146), ``upgrade_v1_planes`` is set, and
+    the stored width differs from the target, the extra block is recomputed from
+    the stored 112 LC0 base planes (``upgrade_arrays_to_planes``) — for ANY
+    cross-version mismatch, not just v1/v2. Zero-padding a stored block of a
+    DIFFERENT version into the target's extra slots is silent input corruption,
+    so the only routine zero-pad is up from a width with NO extra block; the
+    recompute's validation-failure fallback also zero-pads, by design. Shards
+    storing MORE planes than the model expects are a hard error (never
+    truncated).
     """
     target = int(target_planes)
     if target <= V1_INPUT_PLANES:
@@ -382,7 +394,8 @@ def _normalize_x_planes_to_target(
         upgrade_v1_planes = False
     out = arrs
     stored = int(np.asarray(arrs["x"]).shape[1])
-    if upgrade_v1_planes and stored in (V1_INPUT_PLANES, V2_INPUT_PLANES) and stored != target:
+    # stored > target is a config error handled (raised) by the pad loop below.
+    if upgrade_v1_planes and stored < target and _is_known_version_width(target):
         try:
             out, _stats = upgrade_arrays_to_planes(arrs, target)
         except ValueError as exc:
