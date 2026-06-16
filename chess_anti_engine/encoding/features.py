@@ -5,6 +5,12 @@ Two versions exist, selected by ``model.input_extra_features``:
 - ``v1``: the original 34 planes (positional half of a Stockfish-style eval)
 - ``v2_threats``: v1 plus 29 threat-family planes appended AFTER index 34.
   Existing planes are never reordered or renumbered.
+- ``v3_checks``: v2_threats plus 4 opponent-safe-check planes appended AFTER
+  index 63 (the mirror of the side-to-move safe-checks family [54:58]).
+  Existing planes are never reordered or renumbered.
+- ``v3_xray``: v2_threats plus 6 per-slider-type x-ray attack planes appended
+  AFTER index 63. SEPARATE v3 family from ``v3_checks`` (it does NOT include
+  the opponent-safe-check planes). Existing planes are never reordered.
 
 Plane layout (indices within the extra block; absolute index = 112 + idx):
 
@@ -32,11 +38,23 @@ Plane layout (indices within the extra block; absolute index = 112 + idx):
 | [61]    | pawn storm (v2)       | enemy pawns on files around OUR king, scaled by   |
 |         |                       | rank closeness to the king (1 − rank_dist/7)      |
 | [62]    | pawn storm (v2)       | our pawns storming THEIR king, same scaling       |
+| [63:67] | opp safe checks (v3_checks) | opponent's safe N, B, R, Q check-origin       |
+|         |                       | squares against OUR king (mirror of [54:58])      |
+| [63:69] | x-ray attacks (v3_xray) | per-slider-type x-ray attacks (squares seen     |
+|         |                       | THROUGH the first blocker on each ray): our B, R, |
+|         |                       | Q then their B, R, Q. SEPARATE v3 family from     |
+|         |                       | v3_checks — same start index, different version.  |
 
 Semantics notes:
 - All planes are side-to-move oriented (``bitboards_to_planes(..., turn)``).
 - Attack maps / attacker counts are direct attacks at current occupancy
   (no x-rays); pawn attacks are capture squares only (no en passant).
+- X-ray (v3_xray) of a slider at square ``s`` with occupancy ``occ`` is the
+  set of squares revealed beyond the FIRST blocker on each ray:
+  ``direct ^ att(s, occ ^ (direct & occ))`` where ``direct = att(s, occ)``.
+  These squares are disjoint from the direct-attack squares by construction.
+  Unioned per side over each slider type (bishop, rook, queen). Queen x-ray
+  is bishop-xray(from queen sq) | rook-xray(from queen sq).
 - "Defended" in the hanging planes means attacked by any friendly piece.
 - Cheaper-attacker classes: pawn → N/B/R/Q, minor → R/Q, rook → Q.
 - Safe checks follow Stockfish semantics: squares a piece of ours could
@@ -58,11 +76,20 @@ from chess_anti_engine.utils.bitboards import bitboards_to_planes
 
 EXTRA_FEATURES_V1 = "v1"
 EXTRA_FEATURES_V2_THREATS = "v2_threats"
-EXTRA_FEATURE_VERSIONS = (EXTRA_FEATURES_V1, EXTRA_FEATURES_V2_THREATS)
+EXTRA_FEATURES_V3_CHECKS = "v3_checks"
+EXTRA_FEATURES_V3_XRAY = "v3_xray"
+EXTRA_FEATURE_VERSIONS = (
+    EXTRA_FEATURES_V1,
+    EXTRA_FEATURES_V2_THREATS,
+    EXTRA_FEATURES_V3_CHECKS,
+    EXTRA_FEATURES_V3_XRAY,
+)
 
 _EXTRA_FEATURE_PLANES = {
     EXTRA_FEATURES_V1: 34,
     EXTRA_FEATURES_V2_THREATS: 63,
+    EXTRA_FEATURES_V3_CHECKS: 67,
+    EXTRA_FEATURES_V3_XRAY: 69,
 }
 
 
@@ -75,6 +102,10 @@ def normalize_extra_features_encoding(value: str | None) -> str:
         return EXTRA_FEATURES_V1
     if v in ("v2", "v2_threats"):
         return EXTRA_FEATURES_V2_THREATS
+    if v in ("v3", "v3_checks"):
+        return EXTRA_FEATURES_V3_CHECKS
+    if v in ("v3_xray", "xray"):
+        return EXTRA_FEATURES_V3_XRAY
     raise ValueError(
         f"unknown input_extra_features {value!r}; expected one of {EXTRA_FEATURE_VERSIONS}"
     )
@@ -839,6 +870,84 @@ def _fill_threat_planes(
     out[62] = _oriented_value_plane(_pawn_storm_values(board, them), turn=turn)
 
 
+def _fill_opponent_safe_check_planes(
+    board: chess.Board, *, turn: chess.Color, out: np.ndarray, accum: _AttackAccum,
+) -> None:
+    """Fill the v3_checks planes out[63:67] — the OPPONENT's safe checks.
+
+    The mirror of the side-to-move safe-checks block in :func:`_fill_threat_planes`:
+    squares an N/B/R/Q of THEIRS could check OUR king from (attacks projected
+    FROM our king square at current occupancy), excluding squares we attack or
+    that they occupy. Side-to-move oriented like everything else.
+    """
+    us, them = turn, not turn
+    all_us = accum.union(us)
+    them_occ = int(board.occupied_co[them])
+    occ = int(board.occupied)
+
+    king_sq_us = board.king(us)
+    if king_sq_us is None:
+        check_n = check_b = check_r = check_q = 0
+    else:
+        check_n = int(chess.BB_KNIGHT_ATTACKS[king_sq_us])
+        check_b = _slider_attacks(king_sq_us, occ, diagonal=True)
+        check_r = _slider_attacks(king_sq_us, occ, diagonal=False)
+        check_q = check_b | check_r
+    safe_opp = ~all_us & ~them_occ & chess.BB_ALL
+    out[63:67] = bitboards_to_planes(
+        [check_n & safe_opp, check_b & safe_opp, check_r & safe_opp, check_q & safe_opp],
+        turn=turn,
+    )
+
+
+def _slider_xray(sq: int, occ: int, *, diagonal: bool) -> int:
+    """X-ray of one slider: squares seen THROUGH the first blocker on each ray.
+
+    ``direct ^ att(s, occ ^ (direct & occ))`` — remove the squares the slider
+    currently attacks-and-are-occupied (i.e. each ray's first blocker), recompute
+    the attack, and XOR with the direct attack. The result is the squares beyond
+    the first blocker on each ray, disjoint from the direct-attack squares.
+    """
+    direct = _slider_attacks(sq, occ, diagonal=diagonal)
+    occ_xray = occ ^ (direct & occ)
+    return direct ^ _slider_attacks(sq, occ_xray, diagonal=diagonal)
+
+
+def _xray_union(board: chess.Board, color: chess.Color, occ: int) -> tuple[int, int, int]:
+    """Per-type x-ray unions for ``color``: (bishop, rook, queen).
+
+    Queen x-ray = bishop-xray(from queen sq) | rook-xray(from queen sq).
+    """
+    bishop = 0
+    for sq in board.pieces(chess.BISHOP, color):
+        bishop |= _slider_xray(sq, occ, diagonal=True)
+    rook = 0
+    for sq in board.pieces(chess.ROOK, color):
+        rook |= _slider_xray(sq, occ, diagonal=False)
+    queen = 0
+    for sq in board.pieces(chess.QUEEN, color):
+        queen |= _slider_xray(sq, occ, diagonal=True) | _slider_xray(sq, occ, diagonal=False)
+    return bishop, rook, queen
+
+
+def _fill_xray_planes(
+    board: chess.Board, *, turn: chess.Color, out: np.ndarray,
+) -> None:
+    """Fill the v3_xray planes out[63:69] — per-slider-type x-ray attacks.
+
+    Order: our bishop/rook/queen x-ray, then their bishop/rook/queen x-ray.
+    Side-to-move oriented like everything else.
+    """
+    us, them = turn, not turn
+    occ = int(board.occupied)
+    us_b, us_r, us_q = _xray_union(board, us, occ)
+    them_b, them_r, them_q = _xray_union(board, them, occ)
+    out[63:69] = bitboards_to_planes(
+        [us_b, us_r, us_q, them_b, them_r, them_q],
+        turn=turn,
+    )
+
+
 def extra_feature_planes_fast(
     board: chess.Board, *, version: str | None = None,
 ) -> np.ndarray:
@@ -870,4 +979,8 @@ def extra_feature_planes_fast(
 
     if accum is not None:
         _fill_threat_planes(board, turn=turn, out=out, accum=accum)
+        if n_extra == 67:  # v3_checks: opponent safe checks at [63:67]
+            _fill_opponent_safe_check_planes(board, turn=turn, out=out, accum=accum)
+        elif n_extra == 69:  # v3_xray: per-slider x-ray attacks at [63:69]
+            _fill_xray_planes(board, turn=turn, out=out)
     return out

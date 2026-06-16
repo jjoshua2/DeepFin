@@ -13,6 +13,7 @@ from pathlib import Path
 
 import numpy as np
 
+from chess_anti_engine.encoding import version_for_input_planes
 from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 
@@ -40,7 +41,7 @@ from .shard import (
 from .threat_upgrade import (
     V1_INPUT_PLANES,
     V2_INPUT_PLANES,
-    upgrade_arrays_to_v2_threats,
+    upgrade_arrays_to_planes,
 )
 
 _ARRAY_FIELD_ORDER = _SHARD_FIELDS
@@ -249,29 +250,53 @@ class DiskReplayBuffer:
     def _shuffle_len(self) -> int:
         return int(self._shuffle_size_total)
 
-    def _upgrade_x_planes(self, arrs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
-        """Recompute the v2 threat planes for a stored v1 chunk (opt-in).
+    def _upgrade_target_version(self) -> str | None:
+        """Extra-features version to upgrade stored chunks to, or None.
 
-        Also repairs 175-plane chunks whose threat block was zero-padded by
-        the pre-upgrade load path and then re-persisted. Validation failure
-        (a chunk the decoder can't faithfully reconstruct) falls back to the
-        zero-pad path below instead of killing the prefetch thread — old
-        data trains as before, just without threat-plane signal for that
-        chunk.
+        Returns the registered version whose total input-plane count equals
+        the configured ``_input_planes`` (v2_threats=175, v3_checks=179, …)
+        when it exceeds the v1 base — i.e. the configured width carries an
+        extra-feature block worth recomputing. A v1 (146) or unrecognized
+        width disables the recompute path (the plane-count guard in
+        ``_pad_x_planes`` still handles those).
         """
-        if not self._upgrade_v1_planes or self._input_planes != V2_INPUT_PLANES:
+        target = self._input_planes
+        if target is None or int(target) <= V1_INPUT_PLANES:
+            return None
+        try:
+            return version_for_input_planes(int(target))
+        except ValueError:
+            return None
+
+    def _upgrade_x_planes(self, arrs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+        """Recompute the extra-feature planes for a stored v1/v2 chunk (opt-in).
+
+        Generalizes the v1→v2_threats upgrade to any registered multi-version
+        width (e.g. v3_checks at 179 planes): the full extra block is
+        recomputed from the stored 112 LC0 base planes. Also repairs 175-plane
+        chunks whose threat block was zero-padded by the pre-upgrade load path
+        and then re-persisted. Validation failure (a chunk the decoder can't
+        faithfully reconstruct) falls back to the zero-pad path below instead
+        of killing the prefetch thread — old data trains as before, just
+        without recomputed extra-plane signal for that chunk.
+        """
+        if not self._upgrade_v1_planes or self._input_planes is None:
+            return arrs
+        target_planes = int(self._input_planes)
+        version = self._upgrade_target_version()
+        if version is None:
             return arrs
         if int(np.asarray(arrs["x"]).shape[1]) not in (V1_INPUT_PLANES, V2_INPUT_PLANES):
             return arrs
         try:
-            upgraded, _stats = upgrade_arrays_to_v2_threats(arrs)
+            upgraded, _stats = upgrade_arrays_to_planes(arrs, target_planes)
         except ValueError as exc:
             self._upgrade_failures += 1
             # Log the first few in full, then a periodic cumulative count so a
             # systematic decode failure stays visible instead of going quiet.
             if self._upgrade_failures <= 3 or self._upgrade_failures % 50 == 0:
                 print(
-                    f"[replay] v2_threats upgrade failed "
+                    f"[replay] {version} plane upgrade failed "
                     f"({self._upgrade_failures} chunk(s) so far), zero-padding: {exc}"
                 )
             return arrs

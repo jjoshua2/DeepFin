@@ -30,7 +30,13 @@ from chess_anti_engine.model import (
     normalize_ffn_mult_by_layer,
 )
 from chess_anti_engine.utils.architecture import normalize_phase_piece_thresholds
+from chess_anti_engine.encoding import input_plane_count
 from chess_anti_engine.encoding.lc0 import uses_lc0_root_history, uses_lc0_root_legacy_meta
+from chess_anti_engine.replay.threat_upgrade import (
+    V1_INPUT_PLANES,
+    V2_INPUT_PLANES,
+    upgrade_arrays_to_planes,
+)
 from chess_anti_engine.moves import (
     COMPACT_TO_FULL_POLICY,
     COMPACT_POLICY_SIZE,
@@ -112,6 +118,7 @@ class _LiveShardSampler:
         prefer_recorded_lc0_root: bool,
         synthetic_lc0_root_history: bool,
         lc0_root_legacy_meta: bool,
+        upgrade_v1_planes: bool = False,
         cache_shards: int = 4,
     ) -> None:
         self.replay_dir = Path(replay_dir)
@@ -123,6 +130,8 @@ class _LiveShardSampler:
             bool(lc0_root_legacy_meta)
             or uses_lc0_root_legacy_meta(model_cfg.input_history_encoding)
         )
+        self.upgrade_v1_planes = bool(upgrade_v1_planes)
+        self.target_input_planes = input_plane_count(model_cfg.input_extra_features)
         self.cache_shards = max(0, int(cache_shards))
         self._paths: list[Path] = []
         self._positions: np.ndarray = np.zeros((0,), dtype=np.int64)
@@ -176,6 +185,8 @@ class _LiveShardSampler:
             prefer_recorded_lc0_root=self.prefer_recorded_lc0_root,
             synthetic_lc0_root_history=self.synthetic_lc0_root_history,
             lc0_root_legacy_meta=self.lc0_root_legacy_meta,
+            target_input_planes=self.target_input_planes,
+            upgrade_v1_planes=self.upgrade_v1_planes,
         )
         prepared = _convert_policy_targets(arrs, policy_encoding=self.model_cfg.policy_encoding)
         if self.cache_shards > 0:
@@ -350,6 +361,57 @@ def _select_recorded_input_history(
     return out
 
 
+def _normalize_x_planes_to_target(
+    arrs: dict[str, np.ndarray],
+    *,
+    target_planes: int,
+    upgrade_v1_planes: bool,
+) -> dict[str, np.ndarray]:
+    """Bring stored ``x``/``x_lc0_root`` up to the model's input-plane count.
+
+    Mirrors ``DiskReplayBuffer._upgrade_x_planes`` + ``_pad_x_planes``: when the
+    model expects a multi-version width (>146) and ``upgrade_v1_planes`` is set,
+    the extra block is recomputed from the stored 112 LC0 base planes
+    (``upgrade_arrays_to_planes``); otherwise — or on a recompute validation
+    failure — the missing planes are zero-padded. Shards storing MORE planes
+    than the model expects are a hard error (never truncated).
+    """
+    target = int(target_planes)
+    if target <= V1_INPUT_PLANES:
+        # v1 model: nothing to recompute; pad below handles narrower shards.
+        upgrade_v1_planes = False
+    out = arrs
+    stored = int(np.asarray(arrs["x"]).shape[1])
+    if upgrade_v1_planes and stored in (V1_INPUT_PLANES, V2_INPUT_PLANES) and stored != target:
+        try:
+            out, _stats = upgrade_arrays_to_planes(arrs, target)
+        except ValueError as exc:
+            print(json.dumps({
+                "event": "plane_upgrade_failed",
+                "target_planes": target,
+                "stored_planes": stored,
+                "error": str(exc),
+            }), flush=True)
+            out = arrs
+    result = dict(out)
+    for key in ("x", "x_lc0_root"):
+        v = result.get(key)
+        if v is None:
+            continue
+        v = np.asarray(v)
+        cur = int(v.shape[1])
+        if cur == target:
+            continue
+        if cur > target:
+            raise ValueError(
+                f"shard stores {cur} input planes but the model expects {target}; "
+                f"refusing to truncate encoded inputs"
+            )
+        pad = np.zeros((v.shape[0], target - cur, *v.shape[2:]), dtype=v.dtype)
+        result[key] = np.concatenate([v, pad], axis=1)
+    return result
+
+
 def _select_configured_input_history(
     arrs: dict[str, Any],
     *,
@@ -357,20 +419,30 @@ def _select_configured_input_history(
     prefer_recorded_lc0_root: bool,
     synthetic_lc0_root_history: bool,
     lc0_root_legacy_meta: bool,
+    target_input_planes: int | None = None,
+    upgrade_v1_planes: bool = False,
 ) -> dict[str, np.ndarray]:
     if uses_lc0_root_history(input_history_encoding):
-        return select_input_history_arrays(arrs, input_history_encoding=input_history_encoding)
-    out = _select_recorded_input_history(
-        arrs,
-        input_history_encoding=input_history_encoding,
-        prefer_recorded_lc0_root=prefer_recorded_lc0_root,
-        lc0_root_legacy_meta=lc0_root_legacy_meta,
-    )
-    return _maybe_synthetic_history(
-        out,
-        synthetic_lc0_root_history=synthetic_lc0_root_history,
-        lc0_root_legacy_meta=lc0_root_legacy_meta,
-    )
+        out = select_input_history_arrays(arrs, input_history_encoding=input_history_encoding)
+    else:
+        recorded = _select_recorded_input_history(
+            arrs,
+            input_history_encoding=input_history_encoding,
+            prefer_recorded_lc0_root=prefer_recorded_lc0_root,
+            lc0_root_legacy_meta=lc0_root_legacy_meta,
+        )
+        out = _maybe_synthetic_history(
+            recorded,
+            synthetic_lc0_root_history=synthetic_lc0_root_history,
+            lc0_root_legacy_meta=lc0_root_legacy_meta,
+        )
+    if target_input_planes is not None:
+        out = _normalize_x_planes_to_target(
+            out,
+            target_planes=int(target_input_planes),
+            upgrade_v1_planes=bool(upgrade_v1_planes),
+        )
+    return out
 
 
 def _concat(chunks: list[dict[str, np.ndarray]]) -> dict[str, np.ndarray]:
@@ -647,6 +719,8 @@ def _load_eval_arrs(
                 bool(args.lc0_root_legacy_meta)
                 or uses_lc0_root_legacy_meta(model_cfg.input_history_encoding)
             ),
+            target_input_planes=input_plane_count(model_cfg.input_extra_features),
+            upgrade_v1_planes=bool(args.replay_upgrade_v1_planes),
         )
         arrs = _convert_policy_targets(arrs, policy_encoding=model_cfg.policy_encoding)
         n = min(eval_left, int(np.asarray(arrs["x"]).shape[0]))
@@ -756,6 +830,8 @@ def _train_candidate(
                 bool(args.lc0_root_legacy_meta)
                 or uses_lc0_root_legacy_meta(model_cfg.input_history_encoding)
             ),
+            target_input_planes=input_plane_count(model_cfg.input_extra_features),
+            upgrade_v1_planes=bool(args.replay_upgrade_v1_planes),
         )
         arrs = _convert_policy_targets(arrs, policy_encoding=model_cfg.policy_encoding)
         n = int(np.asarray(arrs["x"]).shape[0])
@@ -873,6 +949,7 @@ def _train_candidate_live_follow(
             bool(args.lc0_root_legacy_meta)
             or uses_lc0_root_legacy_meta(model_cfg.input_history_encoding)
         ),
+        upgrade_v1_planes=bool(args.replay_upgrade_v1_planes),
         cache_shards=int(args.live_cache_shards),
     )
     sampler.rescan()
@@ -1131,6 +1208,19 @@ def main() -> None:
     ap.add_argument("--policy-encoding", default=None)
     ap.add_argument("--input-history-encoding", default=None)
     ap.add_argument(
+        "--input-extra-features",
+        default=None,
+        help="Override model.input_extra_features (v1 / v2_threats / v3_checks). "
+        "Sets the model's input-plane count and the on-load upgrade target.",
+    )
+    ap.add_argument(
+        "--replay-upgrade-v1-planes",
+        type=_parse_bool_choice,
+        default=None,
+        help="Recompute the extra-feature block on shard load instead of zero-padding "
+        "narrower shards up to the model's plane count. Defaults to the config value.",
+    )
+    ap.add_argument(
         "--synthetic-lc0-root-history",
         action="store_true",
         help="Approximate LC0 root-history planes by remapping stored legacy replay x tensors.",
@@ -1271,6 +1361,10 @@ def main() -> None:
             cfg["ffn_mult_by_layer"] = schedule
     if args.input_history_encoding is not None:
         cfg["input_history_encoding"] = str(args.input_history_encoding)
+    if args.input_extra_features is not None:
+        cfg["input_extra_features"] = str(args.input_extra_features)
+    if args.replay_upgrade_v1_planes is None:
+        args.replay_upgrade_v1_planes = bool(cfg.get("replay_upgrade_v1_planes", False))
     if args.smolgen is not None:
         cfg["use_smolgen"] = bool(args.smolgen)
     if args.smolgen_mode is not None:
@@ -1386,6 +1480,9 @@ def main() -> None:
             "synthetic_lc0_root_history": bool(args.synthetic_lc0_root_history),
             "prefer_recorded_lc0_root": bool(args.prefer_recorded_lc0_root),
             "lc0_root_legacy_meta": bool(args.lc0_root_legacy_meta),
+            "input_extra_features": model_cfg.input_extra_features,
+            "input_planes": input_plane_count(model_cfg.input_extra_features),
+            "replay_upgrade_v1_planes": bool(args.replay_upgrade_v1_planes),
             "weight_decay_mode": str(args.weight_decay_mode),
             "soda_scope": str(args.soda_scope),
             "soda_start_step": int(args.soda_start_step),

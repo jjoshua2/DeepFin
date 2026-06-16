@@ -8,10 +8,14 @@
  * (popcount64, lsb64, sq_bit, sq_file, sq_rank, make_sq, FOR_EACH_BIT)
  * and after calling import_array() / init_tables_features().
  *
- * Two versions exist (model.input_extra_features): v1 = 34 planes,
- * v2_threats = 63 planes (v1 + 29 threat planes appended after index 34;
- * existing planes are never reordered). Layout — the Python twin of this
- * table lives in features.py's module docstring; keep both in sync:
+ * Versions exist (model.input_extra_features): v1 = 34 planes,
+ * v2_threats = 63 planes (v1 + 29 threat planes appended after index 34),
+ * v3_checks = 67 planes (v2_threats + 4 opponent-safe-check planes appended
+ * after index 63), v3_xray = 69 planes (v2_threats + 6 per-slider-type x-ray
+ * attack planes appended after index 63 — a SEPARATE v3 family from v3_checks,
+ * NOT including the opponent-safe-check planes). Existing planes are never
+ * reordered. Layout — the Python twin of this table lives in features.py's
+ * module docstring; keep both in sync:
  *
  *   [0:10]  king-zone safety (v1)  per side: king zone + N/B/R/Q overlaps
  *   [10:16] pins (v1)              per side: pinned, pin rays, discovered
@@ -34,9 +38,17 @@
  *   [60]    pawn tension them (v2)
  *   [61]    pawn storm vs us (v2)  enemy pawns near OUR king, 1 − rank_dist/7
  *   [62]    pawn storm vs them (v2)
+ *   [63:67] opp safe checks (v3_checks)  opponent's N, B, R, Q safe checks vs
+ *                                 OUR king (mirror of [54:58])
+ *   [63:69] x-ray attacks (v3_xray)  per-slider-type x-ray attacks (squares
+ *                                 seen THROUGH the first blocker on each ray):
+ *                                 our B, R, Q then their B, R, Q. SEPARATE
+ *                                 v3 family from v3_checks — same start index,
+ *                                 selected by n_extra/version.
  *
  * Attack maps / counts are direct attacks at current occupancy (no x-rays);
- * pawn attacks are capture squares only (no en passant).
+ * pawn attacks are capture squares only (no en passant). The v3_xray planes
+ * are the only x-ray feature: per slider, direct ^ att(s, occ ^ (direct&occ)).
  */
 
 #ifndef FEATURES_IMPL_H
@@ -261,6 +273,19 @@ static uint64_t feat_piece_attacks(int sq, int piece_type, uint64_t occ) {
         case 5: return FEAT_KING_ATTACKS[sq];
         default: return 0;
     }
+}
+
+/* X-ray of one slider ray family (diagonal=bishop, else=rook): the squares
+ * seen THROUGH the first blocker on each ray. direct ^ att(s, occ ^
+ * (direct & occ)) — remove each ray's first blocker from occupancy, recompute
+ * the attack, XOR with the direct attack. Disjoint from the direct attack. */
+static uint64_t feat_slider_xray(int sq, uint64_t occ, int diagonal) {
+    uint64_t direct = diagonal ? feat_bishop_attacks(sq, occ)
+                               : feat_rook_attacks(sq, occ);
+    uint64_t occ_xray = occ ^ (direct & occ);
+    uint64_t through = diagonal ? feat_bishop_attacks(sq, occ_xray)
+                                : feat_rook_attacks(sq, occ_xray);
+    return direct ^ through;
 }
 
 /* ================================================================
@@ -529,6 +554,8 @@ static uint64_t feat_connected_pawns(uint64_t own_pawns) {
 
 #define FEAT_EXTRA_V1 34
 #define FEAT_EXTRA_V2 63
+#define FEAT_EXTRA_V3_CHECKS 67
+#define FEAT_EXTRA_V3_XRAY 69
 
 /* Attack maps + per-square attacker counts, harvested from the mobility
  * pass (index 0 = us, 1 = them; piece order P,N,B,R,Q,K).
@@ -582,7 +609,7 @@ static void compute_features_threats(
     uint64_t us_pieces[6], uint64_t them_pieces[6],
     uint64_t us_occ, uint64_t them_occ, uint64_t occupied,
     int king_sq_us, int king_sq_them,
-    int turn_white, const FeatThreatAccum *acc,
+    int turn_white, int n_extra, const FeatThreatAccum *acc,
     float * restrict out
 ) {
     uint64_t all_us = 0, all_them = 0;
@@ -689,13 +716,56 @@ static void compute_features_threats(
                 feat_value_to_plane_sq(plane, sq, v, turn_white);
         }
     }
+
+    /* v3 families: both append at [63:...] but are SELECTED by n_extra/version.
+     * v3_checks (67) writes opponent-safe-checks [63:67]; v3_xray (69) writes
+     * per-slider x-ray attacks [63:69]. Exactly one runs (or neither for v2). */
+    if (n_extra == FEAT_EXTRA_V3_CHECKS) {
+        /* [63:67] v3_checks: opponent's safe checks against OUR king (mirror of
+         * [54:58]). Squares an N/B/R/Q of THEIRS could check our king from
+         * (attacks projected from our king square at current occupancy), not
+         * attacked by us and not occupied by them. */
+        uint64_t ocheck_n = 0, ocheck_b = 0, ocheck_r = 0, ocheck_q = 0;
+        if (king_sq_us >= 0 && king_sq_us < 64) {
+            ocheck_n = FEAT_KNIGHT_ATTACKS[king_sq_us];
+            ocheck_b = feat_bishop_attacks(king_sq_us, occupied);
+            ocheck_r = feat_rook_attacks(king_sq_us, occupied);
+            ocheck_q = ocheck_b | ocheck_r;
+        }
+        uint64_t safe_opp = ~all_us & ~them_occ;
+        feat_bb_to_plane(&out[plane_idx++ * 64], ocheck_n & safe_opp, turn_white);
+        feat_bb_to_plane(&out[plane_idx++ * 64], ocheck_b & safe_opp, turn_white);
+        feat_bb_to_plane(&out[plane_idx++ * 64], ocheck_r & safe_opp, turn_white);
+        feat_bb_to_plane(&out[plane_idx++ * 64], ocheck_q & safe_opp, turn_white);
+    } else if (n_extra == FEAT_EXTRA_V3_XRAY) {
+        /* [63:69] v3_xray: per-slider-type x-ray attacks (squares seen THROUGH
+         * the first blocker on each ray). Order: our B, R, Q then their B, R, Q.
+         * Queen x-ray = bishop-xray(queen sq) | rook-xray(queen sq). */
+        for (int side = 0; side < 2; side++) {
+            uint64_t *cp = side == 0 ? us_pieces : them_pieces;
+            uint64_t xr_b = 0, xr_r = 0, xr_q = 0;
+            for (uint64_t m = cp[2]; m; m &= m - 1)  /* bishops */
+                xr_b |= feat_slider_xray(__builtin_ctzll(m), occupied, 1);
+            for (uint64_t m = cp[3]; m; m &= m - 1)  /* rooks */
+                xr_r |= feat_slider_xray(__builtin_ctzll(m), occupied, 0);
+            for (uint64_t m = cp[4]; m; m &= m - 1) {  /* queens */
+                int sq = __builtin_ctzll(m);
+                xr_q |= feat_slider_xray(sq, occupied, 1)
+                      | feat_slider_xray(sq, occupied, 0);
+            }
+            feat_bb_to_plane(&out[plane_idx++ * 64], xr_b, turn_white);
+            feat_bb_to_plane(&out[plane_idx++ * 64], xr_r, turn_white);
+            feat_bb_to_plane(&out[plane_idx++ * 64], xr_q, turn_white);
+        }
+    }
 }
 
 /* ================================================================
  * Main: compute all extra feature planes into pre-allocated buffer
  *
  * out must point to n_extra*64 floats, pre-zeroed.
- * n_extra is FEAT_EXTRA_V1 (34) or FEAT_EXTRA_V2 (63).
+ * n_extra is FEAT_EXTRA_V1 (34), FEAT_EXTRA_V2 (63),
+ * FEAT_EXTRA_V3_CHECKS (67), or FEAT_EXTRA_V3_XRAY (69).
  * ================================================================ */
 
 static void compute_features_ext(
@@ -877,12 +947,12 @@ static void compute_features_ext(
         plane_idx++;
     }
 
-    /* ---- v2 threats: 29 planes [34:63] ---- */
+    /* ---- v2 threats: 29 planes [34:63] (+ v3 opp safe checks [63:67]) ---- */
     if (want_threats)
         compute_features_threats(us_pieces, them_pieces,
                                  us_occ, them_occ, occupied,
                                  king_sq_us, king_sq_them,
-                                 turn_white, &acc, out);
+                                 turn_white, n_extra, &acc, out);
 }
 
 /* CBoard → extra feature planes. Only available when _cboard_impl.h was also

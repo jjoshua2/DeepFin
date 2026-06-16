@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from chess_anti_engine.encoding import input_plane_count
+from chess_anti_engine.encoding import input_plane_count, version_for_input_planes
 from chess_anti_engine.encoding.features import (
     EXTRA_FEATURES_V1,
     EXTRA_FEATURES_V2_THREATS,
@@ -183,6 +183,102 @@ def upgrade_arrays_to_v2_threats(
         # zeros and keep a zero threat block via the all-zero gate.
         root_block, _ = _validated_threat_block(x_root, recomputed, label="x_lc0_root")
         out["x_lc0_root"] = np.concatenate([x_root, root_block], axis=1)
+
+    return out, UpgradeStats(
+        rows=int(x.shape[0]),
+        upgraded_rows=int(x.shape[0]),
+        dropout_rows=dropout_rows,
+    )
+
+
+def _validated_extra_block(
+    stored: np.ndarray,
+    recomputed: np.ndarray,
+    *,
+    label: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Full extra block (v1 + threats + checks), validated against stored v1.
+
+    Like :func:`_validated_threat_block`, but returns the *entire* recomputed
+    extra block (from index 0) rather than only the planes appended after v1.
+    The first 34 recomputed planes are validated against the stored v1 block
+    exactly as before — the v1 planes are version-independent, so any decode
+    error lands far outside ``_VALIDATE_ATOL``. Rows whose stored v1 block is
+    all-zero (encode-time dropout) get an all-zero extra block and are excluded
+    from validation. Returns ``(block, live_row_mask)``.
+    """
+    stored_v1 = np.asarray(stored[:, _LC0_PLANES:V1_INPUT_PLANES], dtype=np.float32)
+    live = np.any(stored_v1, axis=(1, 2, 3))
+    diff = np.abs(recomputed[:, :_V1_EXTRA] - stored_v1)
+    bad = live & (np.max(diff, axis=(1, 2, 3), initial=0.0) > _VALIDATE_ATOL)
+    if bad.any():
+        row = int(np.flatnonzero(bad)[0])
+        plane = int(np.unravel_index(np.argmax(diff[row]), diff[row].shape)[0])
+        raise ValueError(
+            f"{label}: recomputed v1 extra planes disagree with stored planes "
+            f"on {int(bad.sum())}/{stored.shape[0]} rows (first: row {row}, "
+            f"extra plane {plane}, max |diff| {float(diff[row].max()):.4f}) — "
+            f"refusing to append extra planes from a bad decode"
+        )
+    block = recomputed.astype(stored.dtype)
+    block[~live] = 0
+    return block, live
+
+
+def upgrade_arrays_to_planes(
+    arrs: dict[str, np.ndarray],
+    target_planes: int,
+    *,
+    history_encoding: str | None = None,
+) -> tuple[dict[str, np.ndarray], UpgradeStats]:
+    """Return a chunk dict with ``x`` (and ``x_lc0_root``) at ``target_planes``.
+
+    Version-general twin of :func:`upgrade_arrays_to_v2_threats`: the target
+    extra-features version is derived from ``target_planes`` (175→v2_threats,
+    179→v3_checks, …). The full extra block is recomputed from the stored 112
+    LC0 base planes — which works whether the stored shard is 146 (v1) or 175
+    (v2) wide — and validated against the stored v1 planes before the LC0 base
+    and recomputed extra block are concatenated to ``target_planes``. The
+    all-zero-row dropout convention and ``x_lc0_root`` handling match the v2
+    path. The input dict is never mutated.
+
+    A 175-plane target delegates to :func:`upgrade_arrays_to_v2_threats` so the
+    zero-padded-row repair path stays intact for backward compatibility.
+    """
+    target = int(target_planes)
+    if target == V2_INPUT_PLANES:
+        return upgrade_arrays_to_v2_threats(arrs, history_encoding=history_encoding)
+    version = version_for_input_planes(target)
+
+    x = np.asarray(arrs["x"])
+    planes = int(x.shape[1])
+    if planes not in (V1_INPUT_PLANES, V2_INPUT_PLANES):
+        raise ValueError(
+            f"cannot upgrade chunk with {planes} input planes to {version} "
+            f"({target} planes); expected {V1_INPUT_PLANES} or {V2_INPUT_PLANES}"
+        )
+    if history_encoding is None:
+        history_encoding = chunk_history_encoding(arrs)
+
+    recomputed = recompute_extra_planes(x, history_encoding, version=version)
+    x_block, x_live = _validated_extra_block(x, recomputed, label="x")
+    out = dict(arrs)
+    out["x"] = np.concatenate([x[:, :_LC0_PLANES], x_block], axis=1)
+    dropout_rows = int(np.sum(~x_live))
+
+    x_root = arrs.get("x_lc0_root")
+    if x_root is not None:
+        x_root = np.asarray(x_root)
+        if int(x_root.shape[1]) != planes:
+            raise ValueError(
+                f"x_lc0_root stores {int(x_root.shape[1])} planes but x stores "
+                f"{planes}; shard schema guarantees they match"
+            )
+        # Same position, same side-to-move frame ⇒ same extra block; the
+        # recompute from x carries over. Unflagged rows are stored as zeros
+        # and keep a zero extra block via the all-zero live gate.
+        root_block, _ = _validated_extra_block(x_root, recomputed, label="x_lc0_root")
+        out["x_lc0_root"] = np.concatenate([x_root[:, :_LC0_PLANES], root_block], axis=1)
 
     return out, UpgradeStats(
         rows=int(x.shape[0]),
