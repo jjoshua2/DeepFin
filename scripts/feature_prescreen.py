@@ -35,10 +35,11 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from chess_anti_engine.encoding.lc0 import uses_lc0_root_legacy_meta
 from chess_anti_engine.encoding.plane_decode import recompute_extra_planes
 from chess_anti_engine.replay.shard import iter_shard_paths, load_shard_arrays
-from chess_anti_engine.replay.threat_upgrade import upgrade_arrays_to_planes
 from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
+from scripts.offline_replay_epoch import _select_configured_input_history
 
 # Absolute plane-index ranges per family (see encoding/features.py).
 FAMILIES_LC0 = {
@@ -287,11 +288,76 @@ def run_redundancy(model, x, arrs, history_encoding, candidate_version):
     print("high R^2 (>~0.7) => net already encodes it => redundant; low => novel")
 
 
+# SF-derived regret targets carry a stored has-label flag; the regret value is
+# all-zero (CE vs an all-zero target) on rows WITHOUT the label, so those rows
+# must be masked out before correlating with the candidate feature. Any SF
+# target added to ``_REGRET_PREFERENCE`` MUST map its has-flag here so the mask
+# applies (e.g. ``sf_pol_regret`` would map to ``has_sf_policy``).
+_REGRET_LABEL_FIELD = {
+    "sf_wdl_regret": "has_sf_wdl",
+}
+# Min labeled rows below which an SF-regret target is untrustworthy and we fall
+# back to a label-free regret (policy_ce / wdl_ce, defined over every row).
+_MIN_LABELED_ROWS = 64
+# Preference order for the relevance regret target. SF-derived targets here are
+# label-masked via _REGRET_LABEL_FIELD; label-free CE targets cover every row.
+# (sf_pol_regret is computed in eval_losses but intentionally NOT a relevance
+# target — sf_wdl_regret is the value-side SF signal the screen calibrates on.)
+_REGRET_PREFERENCE = ("sf_wdl_regret", "policy_ce", "wdl_ce")
+
+
+def _label_mask(arrs: dict[str, np.ndarray], field: str, n: int) -> np.ndarray:
+    """Bool mask of rows whose ``field`` has-flag is set (default all-true)."""
+    raw = arrs.get(field)
+    if raw is None:
+        return np.ones((n,), dtype=bool)
+    return np.asarray(raw).reshape(-1)[:n].astype(bool)
+
+
+def _select_relevance_regret(
+    loss_keys: set[str], arrs: dict[str, np.ndarray], n: int,
+) -> tuple[str, np.ndarray]:
+    """Pick the relevance regret target + row mask (FIX 2).
+
+    Returns ``(regret_key, mask)``. For an SF-derived target (``sf_wdl_regret`` /
+    ``sf_pol_regret``) the mask keeps only rows that actually carry the SF label
+    (``has_sf_wdl`` / ``has_sf_policy``) — unlabeled rows carry an all-zero
+    ``sf_wdl`` / ``sf_policy_target`` and so look like zero-regret, which would
+    bias the candidate-feature correlations/R^2. If too few labeled rows remain
+    (< ``_MIN_LABELED_ROWS``) the SF target is skipped (with a printed note) in
+    favor of a label-free regret (``policy_ce`` / ``wdl_ce``), which is defined
+    over every row.
+    """
+    for key in _REGRET_PREFERENCE:
+        if key not in loss_keys:
+            continue
+        label_field = _REGRET_LABEL_FIELD.get(key)
+        if label_field is None:
+            return key, np.ones((n,), dtype=bool)
+        cand_mask = _label_mask(arrs, label_field, n)
+        n_labeled = int(cand_mask.sum())
+        if n_labeled >= _MIN_LABELED_ROWS:
+            if n_labeled < n:
+                print(
+                    f"[relevance] masking {key} to {n_labeled}/{n} rows with "
+                    f"{label_field}=1 (unlabeled rows carry all-zero targets)."
+                )
+            return key, cand_mask
+        print(
+            f"[relevance] only {n_labeled}/{n} rows carry {label_field}; "
+            f"too few for {key} — falling back to a label-free regret target."
+        )
+    raise SystemExit("no usable relevance regret target (no policy_ce/wdl_ce/sf_wdl_regret)")
+
+
 def run_relevance(model, x, batch, arrs, history_encoding, candidate_version):
     losses = eval_losses(model, x, batch)
-    regret_key = "sf_wdl_regret" if "sf_wdl_regret" in losses else ("policy_ce" if "policy_ce" in losses else "wdl_ce")
-    regret = losses[regret_key].float().cpu().numpy()  # (N,)
-    feat, names = candidate_feature_block(arrs, history_encoding, candidate_version)  # (N, n_families)
+    n = int(x.shape[0])
+    regret_key, mask = _select_relevance_regret(set(losses), arrs, n)
+
+    regret = losses[regret_key].float().cpu().numpy()[mask]  # (N_labeled,)
+    feat, names = candidate_feature_block(arrs, history_encoding, candidate_version)
+    feat = feat[mask]  # (N_labeled, n_families)
     print(f"\n=== RELEVANCE — corr({candidate_version} family activation, net regret[{regret_key}]) ===")
     for name, col in zip(names, feat.T):
         if col.std() < 1e-9:
@@ -316,20 +382,28 @@ def _normalize_arrs_to_model_planes(
     target_planes: int,
     history_encoding: str | None,
 ) -> dict[str, np.ndarray]:
-    """Recompute stored ``x`` to the model's expected input-plane width.
+    """Select the checkpoint's history tensor, THEN recompute to its plane width.
 
-    Mirrors the replay-buffer load path (``DiskReplayBuffer._upgrade_x_planes``):
-    stored width <= target is routed through ``upgrade_arrays_to_planes``, which
-    recomputes the extra block from the 112 LC0 base for a narrower stored chunk
-    (never zero-pads across versions) AND repairs an equal-width chunk whose
-    post-v1 block is all-zero — the signature of the pre-upgrade zero-pad path
-    persisting a v1 chunk at the target width. Routing the equal-width case
-    through the helper (rather than early-returning) means a zero-padded shard is
-    fixed before it reaches the model, so ablation/relevance never run on
-    corrupted inputs (native chunks pass through cheaply via the helper's
-    all-zero gate). stored > target stays a hard error. Keeps ``model(x)`` from
-    crashing on a channel mismatch (e.g. 146-plane shards into a 175/179/181-plane
-    net).
+    Mirrors the replay/eval load path (``offline_replay_epoch.
+    _select_configured_input_history``, which the trainer's
+    ``select_input_history_arrays`` + ``DiskReplayBuffer._upgrade_x_planes``
+    underpin). Two ordered steps the prescreen previously skipped the first of:
+
+    1. **History selection (NEW, FIX 1).** For an ``lc0_root_legacy_meta`` (or
+       any LC0-root) checkpoint sampled against older legacy shards that ALSO
+       carry a recorded ``x_lc0_root`` field, ``arrs["x"]`` is the stored
+       *legacy* 112-LC0 history layout. The training path runs
+       ``select_input_history_arrays`` FIRST to swap in the checkpoint's
+       history representation (recorded ``x_lc0_root`` when present, else a
+       synthetic root + legacy-meta patch). Without this the model saw the
+       WRONG history planes (legacy slots into a root net). Threading the
+       model's ``input_history_encoding`` here fixes that so the 112 LC0 planes
+       match what the checkpoint expects.
+    2. **Plane-width normalization (unchanged).** stored width <= target is
+       recomputed from the 112 LC0 base (never zero-pads across versions) and
+       an equal-width all-zero extra block is repaired in place; stored > target
+       stays a hard error. Keeps ``model(x)`` from crashing on a channel
+       mismatch (e.g. 146-plane shards into a 175/179/181-plane net).
     """
     stored = int(np.asarray(arrs["x"]).shape[1])
     target = int(target_planes)
@@ -338,8 +412,20 @@ def _normalize_arrs_to_model_planes(
             f"shards store {stored} input planes but the model expects {target}; "
             f"refusing to truncate encoded inputs"
         )
-    out, _stats = upgrade_arrays_to_planes(arrs, target, history_encoding=history_encoding)
-    return out
+    hist_enc = history_encoding or "legacy"
+    return _select_configured_input_history(
+        arrs,
+        input_history_encoding=hist_enc,
+        # Prefer a recorded x_lc0_root over a synthesized one when the shard has
+        # it; for a pure-legacy net these flags are inert (root branch unused).
+        prefer_recorded_lc0_root=True,
+        synthetic_lc0_root_history=False,
+        lc0_root_legacy_meta=uses_lc0_root_legacy_meta(hist_enc),
+        target_input_planes=target,
+        # Match the prescreen's prior behavior of always recomputing the extra
+        # block from the 112 LC0 base (== DiskReplayBuffer upgrade path).
+        upgrade_v1_planes=True,
+    )
 
 
 def main() -> None:
