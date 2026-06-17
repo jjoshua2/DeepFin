@@ -376,9 +376,15 @@ def run_puzzle_eval(
         def _search(bs: list[chess.Board]):
             return run_gumbel_root_many_c(model, bs, device=device, rng=rng, cfg=g_cfg)[1]
 
-        # run_gumbel_root_many_c returns action indices in the search's policy
-        # encoding (lc0_1858 for production nets), so decode in that space.
-        action_encoding = g_cfg.policy_encoding
+        # The C gumbel tree operates entirely in full az_4672 space: the model's
+        # (possibly compact lc0_1858) logits are scattered to POLICY_SIZE=4672 via
+        # _policy_logits_to_full BEFORE any tree work, and run_gumbel_root_many_c
+        # returns 4672-space action indices regardless of the model's
+        # policy_encoding. (See the production decode in selfplay/match.py, which
+        # uses plain index_to_move for these same actions.) Decode in az_4672 —
+        # decoding in g_cfg.policy_encoding would crash (idx >= 1858) or pick the
+        # wrong move for an lc0_1858 net.
+        action_encoding = None
     else:
         cfg = MCTSConfig(simulations=mcts_simulations, temperature=0.0)
 
