@@ -366,6 +366,12 @@ def run_puzzle_eval(
                 getattr(model, "input_history_encoding", None) or gumbel_cfg.input_history_encoding),
             policy_encoding=(
                 getattr(model, "policy_encoding", None) or gumbel_cfg.policy_encoding),
+            # Dynamic-relation checkpoints need the relation tensors fed to the C
+            # evaluator; without this the gumbel puzzle path silently drops a
+            # trained input and the scores aren't comparable to selfplay/arena.
+            compute_relations=(
+                bool(getattr(model, "use_dynamic_relations", False))
+                or gumbel_cfg.compute_relations),
         )
 
         def _search(bs: list[chess.Board]):

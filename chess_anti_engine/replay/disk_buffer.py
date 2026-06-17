@@ -254,13 +254,15 @@ class DiskReplayBuffer:
 
         Returns the registered version whose total input-plane count equals
         the configured ``_input_planes`` (v2_threats=175, v3_checks=179, …)
-        when it exceeds the v1 base — i.e. the configured width carries an
-        extra-feature block worth recomputing. A v1 (146) or unrecognized
-        width disables the recompute path (the plane-count guard in
-        ``_pad_x_planes`` still handles those).
+        when it carries an extra-feature block worth recomputing. Only the
+        exact v1 width (146) disables the recompute path — a width BELOW 146
+        is not necessarily v1 (v2_lean is 143, a real version that still needs
+        the cross-version recompute), so the gate keys on the exact v1 count,
+        not ``<= 146``. An unrecognized width disables it too (the plane-count
+        guard in ``_pad_x_planes`` still handles those).
         """
         target = self._input_planes
-        if target is None or int(target) <= V1_INPUT_PLANES:
+        if target is None or int(target) == V1_INPUT_PLANES:
             return None
         try:
             return version_for_input_planes(int(target))
@@ -271,21 +273,24 @@ class DiskReplayBuffer:
         """Recompute the extra-feature planes for a stored chunk (opt-in).
 
         Generalizes the v1→v2_threats upgrade to ANY cross-version width
-        mismatch (e.g. v3_checks 179 → v3_xray 181): the full extra block is
-        recomputed from the stored 112 LC0 base planes whenever the stored
-        width differs from the target and the target is a recognized version.
-        This is the only correct cross-version path — zero-padding a stored
-        block of a DIFFERENT version into the target's extra slots is silent
-        input corruption (the stored extra planes are never a prefix of the
-        target's beyond the 34 v1 planes). Stored-width == target normally
-        passes through untouched, but a chunk the pre-upgrade zero-pad path
-        persisted at the target width with an all-zero extra block is repaired
-        in place (recomputed only for those rows) — covering both 175-plane v2
-        chunks and any wider recognized version.
+        mismatch (e.g. v3_checks 179 → v3_xray 181, or a 146/175 chunk
+        DOWNGRADED to v2_lean's 143): the full extra block is recomputed from
+        the stored 112 LC0 base planes whenever the target is a recognized
+        version. This is the only correct cross-version path — zero-padding a
+        stored block of a DIFFERENT version into the target's extra slots is
+        silent input corruption (the stored extra planes are never a prefix of
+        the target's beyond the 34 v1 planes), and downgrading by truncation
+        would slice the wrong planes. Stored-width == target normally passes
+        through untouched, but a chunk the pre-upgrade zero-pad path persisted
+        at the target width with an all-zero extra block is repaired in place
+        (recomputed only for those rows) — covering both 175-plane v2 chunks
+        and any wider recognized version.
         Validation failure (a chunk the decoder can't faithfully reconstruct)
         falls back to the zero-pad path in ``_pad_x_planes`` instead of killing
         the prefetch thread — old data trains as before, just without
-        recomputed extra-plane signal for that chunk.
+        recomputed extra-plane signal for that chunk (a wider-than-target chunk
+        that fails recompute then hits the hard truncation guard, since there
+        is no safe pad-down).
         """
         if not self._upgrade_v1_planes or self._input_planes is None:
             return arrs
@@ -293,17 +298,14 @@ class DiskReplayBuffer:
         version = self._upgrade_target_version()
         if version is None:
             return arrs
-        stored = int(np.asarray(arrs["x"]).shape[1])
-        if stored > target_planes:
-            # Wider-than-target is a config error handled (raised) by
-            # _pad_x_planes after this returns.
-            return arrs
-        # Equal width is NOT an unconditional passthrough: a chunk persisted at
-        # the target width by the pre-upgrade zero-pad path carries an all-zero
-        # extra block that must be repaired. upgrade_arrays_to_planes recomputes
-        # only those rows (native chunks pass through cheaply via its all-zero
-        # gate), so route equal-width through it too. stored < target_planes
-        # gets the full cross-version recompute.
+        # Route every width (narrower, wider, AND equal) through the recompute
+        # when the target is recognized. Wider-than-target (e.g. 175→143 for
+        # v2_lean) is a real downgrade the recompute handles by rebuilding the
+        # target block from the LC0 base, not by truncation. Equal width is NOT
+        # an unconditional passthrough either: a chunk persisted at the target
+        # width by the pre-upgrade zero-pad path carries an all-zero extra block
+        # that must be repaired (native chunks pass through cheaply via the
+        # all-zero gate inside upgrade_arrays_to_planes).
         try:
             upgraded, _stats = upgrade_arrays_to_planes(arrs, target_planes)
         except ValueError as exc:
@@ -323,8 +325,11 @@ class DiskReplayBuffer:
 
         Gated by the stored channel count: older shards encoded with fewer
         extra-feature planes are upgraded (when enabled) or gain zero planes
-        at the end of the extra block; shards with MORE planes than the
-        model expects are a config error.
+        at the end of the extra block. ``_upgrade_x_planes`` already resolves
+        legitimate wider-than-target downgrades (e.g. 175→143 for v2_lean) by
+        recompute; a chunk that is still wider here is one the recompute could
+        not produce, which is a config error (truncation would slice the wrong
+        planes).
         """
         target = self._input_planes
         if target is None:

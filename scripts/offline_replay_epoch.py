@@ -416,7 +416,7 @@ def _normalize_x_planes_to_target(
     # it never truncates. Equal width is also routed (repairs zero-padded rows).
     # Only a mismatch the upgrade can't resolve falls to the truncation guard /
     # pad loop below.
-    if upgrade_v1_planes and stored != target and _is_known_version_width(target):
+    if upgrade_v1_planes and _is_known_version_width(target):
         try:
             out, _stats = upgrade_arrays_to_planes(
                 arrs, target, history_encoding=history_encoding,
