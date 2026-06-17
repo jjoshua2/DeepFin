@@ -215,6 +215,10 @@ def play_paired_games_matched_sims(
     temperature: float,
     gumbel_add_noise: bool,
     volatility_candidate: dict[str, float] | None = None,
+    syzygy_tablebase: object | None = None,
+    tb_max_pieces: int = 6,
+    gumbel_candidate: dict[str, float] | None = None,
+    gumbel_reference: dict[str, float] | None = None,
 ) -> list[float]:
     """Play each opening twice (colors swapped) and return per-pair scores.
 
@@ -235,6 +239,7 @@ def play_paired_games_matched_sims(
         result_from_a_pov,
         split_active_by_side_to_move,
     )
+    from scripts.match_vs_uci import _tb_adjudicate_result
 
     boards: list[chess.Board] = []
     a_plays_white: list[bool] = []
@@ -246,11 +251,21 @@ def play_paired_games_matched_sims(
 
     g = len(boards)
     done = [False] * g
+    adjudicated: list[str | None] = [None] * g  # Syzygy-adjudicated result per game
     t0 = time.time()
     for ply in range(int(max_plies)):
         for i in range(g):
-            if not done[i] and boards[i].is_game_over(claim_draw=True):
+            if done[i]:
+                continue
+            if boards[i].is_game_over(claim_draw=True):
                 done[i] = True
+            elif syzygy_tablebase is not None:
+                # Adjudicate the instant a game reaches a covered (<=N-man) position
+                # — kills long endgame tails. Reuses match_vs_uci's WDL probe.
+                _tb = _tb_adjudicate_result(boards[i], syzygy_tablebase, max_pieces=tb_max_pieces)
+                if _tb is not None:
+                    adjudicated[i] = _tb
+                    done[i] = True
         active = [i for i in range(g) if not done[i]]
         if not active:
             break
@@ -264,9 +279,9 @@ def play_paired_games_matched_sims(
             active, boards, a_plays_white,
         )
         vol_kwargs = dict(volatility_candidate or {})
-        for model, idxs, sims, extra in (
-            (model_candidate, a_to_move, sims_candidate, vol_kwargs),
-            (model_reference, b_to_move, sims_reference, {}),
+        for model, idxs, sims, extra, gov in (
+            (model_candidate, a_to_move, sims_candidate, vol_kwargs, gumbel_candidate),
+            (model_reference, b_to_move, sims_reference, {}, gumbel_reference),
         ):
             if not idxs:
                 continue
@@ -276,20 +291,163 @@ def play_paired_games_matched_sims(
                 mcts_type="gumbel", mcts_simulations=int(sims),
                 temperature=float(temperature), c_puct=2.5,
                 gumbel_add_noise=bool(gumbel_add_noise),
+                gumbel_overrides=gov,
                 **extra,
             )
             apply_actions_to_boards(boards, idxs, actions)
 
-    game_scores = [
-        {1: 1.0, 0: 0.5, -1: 0.0}[
-            result_from_a_pov(
-                boards[i].result(claim_draw=True),
-                a_is_white=bool(a_plays_white[i]),
-            )
+    def _game_score(i: int) -> float:
+        res = adjudicated[i] or boards[i].result(claim_draw=True)
+        if res == "*":  # unfinished at max_plies, not TB-covered: adjudicate as draw
+            return 0.5
+        return {1: 1.0, 0: 0.5, -1: 0.0}[
+            result_from_a_pov(res, a_is_white=bool(a_plays_white[i]))
         ]
-        for i in range(g)
-    ]
+
+    game_scores = [_game_score(i) for i in range(g)]
     return game_scores_to_pair_scores(game_scores)
+
+
+def play_paired_games_matched_sims_rolling(
+    model_candidate,
+    model_reference,
+    openings: list[chess.Board],
+    *,
+    device: str,
+    rng: np.random.Generator,
+    sims_candidate: int,
+    sims_reference: int,
+    max_plies: int,
+    temperature: float,
+    gumbel_add_noise: bool,
+    volatility_candidate: dict[str, float] | None = None,
+    syzygy_tablebase: object | None = None,
+    tb_max_pieces: int = 6,
+    pool_size: int = 256,
+    gumbel_candidate: dict[str, float] | None = None,
+    gumbel_reference: dict[str, float] | None = None,
+) -> list[float]:
+    """Rolling-pool variant: keep ``pool_size`` games active at all times, starting
+    a fresh game the instant one finishes (like production selfplay), instead of
+    playing fixed chunks to completion.
+
+    Two wins over the chunked path: (1) the GPU never drains until the very end
+    (no per-chunk tail), and (2) the active-game count — hence the batched-inference
+    shape — stays FIXED at ``pool_size`` while the queue lasts, so torch.compile
+    compiles once and reuses it (no per-shape recompile thrash). Only the final
+    drain (last ~pool_size games) has shrinking shapes.
+
+    Each opening is still played twice (colors swapped) and scored as a pair;
+    game_id ``2k``/``2k+1`` are the white/black halves of opening ``k``, so the
+    flat ``game_scores`` reassemble into the same pairs as the lockstep path.
+    """
+    from chess_anti_engine.selfplay.match import (
+        apply_actions_to_boards,
+        pick_moves_for_boards,
+        result_from_a_pov,
+        split_active_by_side_to_move,
+    )
+    from scripts.match_vs_uci import _tb_adjudicate_result
+
+    queue: list[tuple[int, chess.Board, bool]] = []
+    for k, opening in enumerate(openings):
+        queue.append((2 * k, opening, True))
+        queue.append((2 * k + 1, opening, False))
+    n_games = len(queue)
+    queue.reverse()  # pop() from the end
+    game_scores: list[float | None] = [None] * n_games
+
+    boards: list[chess.Board] = []
+    gids: list[int] = []
+    awhite: list[bool] = []
+    gplies: list[int] = []
+
+    def _refill() -> None:
+        while len(boards) < pool_size and queue:
+            gid, opening, aw = queue.pop()
+            boards.append(opening.copy())
+            gids.append(gid)
+            awhite.append(aw)
+            gplies.append(0)
+
+    def _record(j: int, res: str) -> None:
+        if res == "*":
+            game_scores[gids[j]] = 0.5
+        else:
+            game_scores[gids[j]] = {1: 1.0, 0: 0.5, -1: 0.0}[
+                result_from_a_pov(res, a_is_white=bool(awhite[j]))
+            ]
+
+    t0 = time.time()
+    done = 0
+    last_report = 0
+    while queue or boards:
+        _refill()
+        # Reap finished / adjudicated / over-cap games, compacting the pool.
+        kb: list[chess.Board] = []
+        kg: list[int] = []
+        ka: list[bool] = []
+        kp: list[int] = []
+        for j in range(len(boards)):
+            b = boards[j]
+            res: str | None = None
+            if b.is_game_over(claim_draw=True):
+                res = b.result(claim_draw=True)
+            elif syzygy_tablebase is not None:
+                res = _tb_adjudicate_result(b, syzygy_tablebase, max_pieces=tb_max_pieces)
+            if res is None and gplies[j] >= int(max_plies):
+                res = "*"  # not naturally decided and not TB-covered: adjudicate draw
+            if res is not None:
+                _record(j, res)
+                done += 1
+            else:
+                kb.append(b)
+                kg.append(gids[j])
+                ka.append(awhite[j])
+                kp.append(gplies[j])
+        boards[:], gids[:], awhite[:], gplies[:] = kb, kg, ka, kp
+        _refill()  # backfill the slots the reaped games freed — keep the pool full
+        if not boards:
+            break
+        if done - last_report >= 64:
+            print(
+                f"[arena] rolling: {done}/{n_games} games done, "
+                f"{len(boards)} active ({time.time() - t0:.0f}s)",
+                flush=True,
+            )
+            # Running Elo over the pairs that have BOTH colorings finished so far,
+            # so the standings stream in instead of only printing at the end.
+            ready: list[float] = []
+            for k in range(n_games // 2):
+                w, blk = game_scores[2 * k], game_scores[2 * k + 1]
+                if w is not None and blk is not None:
+                    ready.append(w + blk)
+            if ready:
+                print(f"[arena] RUNNING Elo after {len(ready)} complete pairs:", flush=True)
+                print_summary(summarize_pentanomial(pentanomial_counts(ready)))
+            last_report = done
+        active = list(range(len(boards)))
+        a_to_move, b_to_move = split_active_by_side_to_move(active, boards, awhite)
+        for model, idxs, sims, extra, gov in (
+            (model_candidate, a_to_move, sims_candidate, dict(volatility_candidate or {}), gumbel_candidate),
+            (model_reference, b_to_move, sims_reference, {}, gumbel_reference),
+        ):
+            if not idxs:
+                continue
+            actions = pick_moves_for_boards(
+                model, [boards[i] for i in idxs],
+                device=device, rng=rng,
+                mcts_type="gumbel", mcts_simulations=int(sims),
+                temperature=float(temperature), c_puct=2.5,
+                gumbel_add_noise=bool(gumbel_add_noise),
+                gumbel_overrides=gov,
+                **extra,
+            )
+            apply_actions_to_boards(boards, idxs, actions)
+        for i in active:
+            gplies[i] += 1
+
+    return game_scores_to_pair_scores([s if s is not None else 0.5 for s in game_scores])
 
 
 # ---------------------------------------------------------------------------
@@ -480,6 +638,13 @@ def run_arena(
     uci_args: str = "",
     label: str | None = None,
     volatility_candidate: dict[str, float] | None = None,
+    max_concurrent_games: int = 128,
+    syzygy_path: str | None = None,
+    tb_max_pieces: int = 6,
+    compile_models: bool = True,
+    rolling: bool = True,
+    gumbel_candidate: dict[str, float] | None = None,
+    gumbel_reference: dict[str, float] | None = None,
 ) -> dict:
     """Run one standardized arena and return (and optionally log) the record."""
     if games < 2 or games % 2 != 0:
@@ -500,19 +665,83 @@ def run_arena(
         model_candidate = load_model_from_checkpoint(candidate, device=device)
         print(f"[arena] loading reference: {reference}")
         model_reference = load_model_from_checkpoint(reference, device=device)
+        if compile_models:
+            import torch
+            # Plain inductor compile (NOT reduce-overhead/cudagraphs, which recompile
+            # per batch shape and OOM'd us). Auto-dynamic batch: a couple of warmup
+            # recompiles in chunk 1, then cached + reused across the shrinking batch
+            # sizes and into chunk 2.
+            model_candidate = torch.compile(model_candidate)
+            model_reference = torch.compile(model_reference)
+            print("[arena] torch.compile ON (inductor, auto-dynamic batch)", flush=True)
         print(
             f"[arena] matched_sims: candidate={sims_candidate} sims/move, "
             f"reference={sims_reference} sims/move, temp={temperature}, "
             f"noise={gumbel_add_noise}"
         )
-        pair_scores = play_paired_games_matched_sims(
-            model_candidate, model_reference, openings,
-            device=device, rng=rng,
-            sims_candidate=sims_candidate, sims_reference=sims_reference,
-            max_plies=max_plies, temperature=temperature,
-            gumbel_add_noise=gumbel_add_noise,
-            volatility_candidate=volatility_candidate,
-        )
+        # Syzygy adjudication: end each game the instant it reaches a covered
+        # (<=N-man) position, so long endgame tails don't dominate the wall clock
+        # (reuses match_vs_uci's WDL probe). Opened once, shared across chunks.
+        syzygy_tb = None
+        if syzygy_path:
+            from scripts.match_vs_uci import _open_syzygy_tablebase
+            try:
+                syzygy_tb = _open_syzygy_tablebase(syzygy_path)
+            except Exception as exc:  # noqa: BLE001
+                syzygy_tb = None
+                print(f"[arena] WARNING: syzygy open failed ({exc})", flush=True)
+            print(
+                f"[arena] syzygy adjudication {'ON' if syzygy_tb is not None else 'OFF'} "
+                f"(<={tb_max_pieces}-man, {syzygy_path})",
+                flush=True,
+            )
+        if rolling:
+            # Rolling pool: fixed active-game count => fixed batch shape => compile
+            # reuses one graph (no per-shape thrash), and the GPU never drains until
+            # the very end (no per-chunk tail).
+            print(
+                f"[arena] ROLLING pool: keep {max_concurrent_games} games active, "
+                f"start a fresh one as each finishes",
+                flush=True,
+            )
+            pair_scores = play_paired_games_matched_sims_rolling(
+                model_candidate, model_reference, openings,
+                device=device, rng=rng,
+                sims_candidate=sims_candidate, sims_reference=sims_reference,
+                max_plies=max_plies, temperature=temperature,
+                gumbel_add_noise=gumbel_add_noise,
+                volatility_candidate=volatility_candidate,
+                syzygy_tablebase=syzygy_tb, tb_max_pieces=tb_max_pieces,
+                pool_size=int(max_concurrent_games),
+                gumbel_candidate=gumbel_candidate, gumbel_reference=gumbel_reference,
+            )
+        else:
+            # Chunked: plays each chunk of `max_concurrent_games` to completion
+            # (drains per chunk). Numerically identical (pair scores concatenate).
+            chunk_pairs = max(1, int(max_concurrent_games) // 2)
+            n_chunks = (len(openings) + chunk_pairs - 1) // chunk_pairs
+            pair_scores = []
+            for ci in range(0, len(openings), chunk_pairs):
+                sub = openings[ci:ci + chunk_pairs]
+                print(
+                    f"[arena] matched_sims chunk {ci // chunk_pairs + 1}/{n_chunks}: "
+                    f"{len(sub)} pairs ({2 * len(sub)} games)",
+                    flush=True,
+                )
+                pair_scores.extend(play_paired_games_matched_sims(
+                    model_candidate, model_reference, sub,
+                    device=device, rng=rng,
+                    sims_candidate=sims_candidate, sims_reference=sims_reference,
+                    max_plies=max_plies, temperature=temperature,
+                    gumbel_add_noise=gumbel_add_noise,
+                    volatility_candidate=volatility_candidate,
+                    syzygy_tablebase=syzygy_tb, tb_max_pieces=tb_max_pieces,
+                    gumbel_candidate=gumbel_candidate, gumbel_reference=gumbel_reference,
+                ))
+                print(f"[arena] RUNNING Elo after {2 * len(pair_scores)} games:", flush=True)
+                print_summary(summarize_pentanomial(pentanomial_counts(pair_scores)))
+        if syzygy_tb is not None:
+            syzygy_tb.close()
     elif mode == "matched_time":
         print(f"[arena] matched_time: {ms_per_move}ms/move per side")
         pair_scores = play_paired_games_matched_time(
@@ -606,6 +835,25 @@ def main() -> None:
                    help="override candidate sims/move (defaults to --sims)")
     p.add_argument("--sims-reference", type=int, default=None,
                    help="override reference sims/move (defaults to --sims)")
+    p.add_argument("--max-concurrent-games", type=int, default=128,
+                   help="matched_sims: cap simultaneous games per batch to bound "
+                        "GPU memory; total --games still played in chunks "
+                        "(default: 128). Lower if you OOM on a small card.")
+    p.add_argument("--syzygy", default=None,
+                   help="matched_sims: colon-separated Syzygy dir(s) to adjudicate "
+                        "games the instant they reach a covered position (kills "
+                        "long endgame tails). e.g. data/syzygy_3-4-5")
+    p.add_argument("--syzygy-max-pieces", type=int, default=6,
+                   help="adjudicate positions with <= this many men (default: 6)")
+    p.add_argument("--no-compile", action="store_true",
+                   help="matched_sims: disable torch.compile of the nets (on by "
+                        "default — inductor, auto-dynamic batch, ~2-4x inference)")
+    p.add_argument("--no-rolling", action="store_true",
+                   help="matched_sims: disable the rolling pool and use fixed chunks "
+                        "instead. Rolling (on by default) keeps a fixed pool of "
+                        "--max-concurrent-games active, starting a fresh game as each "
+                        "finishes => fixed batch shape so compile reuses one graph + "
+                        "no per-chunk drain tail.")
     p.add_argument("--ms-per-move", type=int, default=100,
                    help="per-move wall clock for matched_time (default: 100)")
     p.add_argument("--uci-args", default="",
@@ -619,6 +867,13 @@ def main() -> None:
                    help="CANDIDATE-side pessimistic FPU coefficient (matched_sims only)")
     p.add_argument("--volatility-anchor", type=float, default=None,
                    help="dataset-mean volatility anchor override (see exp_volatility_search.yaml)")
+    p.add_argument("--cand-gumbel", default=None,
+                   help="candidate gumbel knob overrides as k=v,k=v "
+                        "(c_scale,c_visit,c_visit_root,topk,c_puct,fpu_reduction,halving_div). "
+                        "Use the SAME checkpoint for --candidate/--reference + differing "
+                        "gumbel here = a pure search-config Swiss (matched_sims).")
+    p.add_argument("--ref-gumbel", default=None,
+                   help="reference gumbel knob overrides (same k=v,k=v format as --cand-gumbel)")
     add_common_args(p)
     args = p.parse_args()
 
@@ -627,6 +882,11 @@ def main() -> None:
         candidate=args.candidate,
         reference=args.reference,
         games=args.games,
+        max_concurrent_games=args.max_concurrent_games,
+        syzygy_path=args.syzygy,
+        tb_max_pieces=args.syzygy_max_pieces,
+        compile_models=not args.no_compile,
+        rolling=not args.no_rolling,
         openings_path=openings_path,
         opening_plies=args.opening_plies,
         mode=args.mode,
@@ -642,7 +902,32 @@ def main() -> None:
         uci_args=args.uci_args,
         label=args.label,
         volatility_candidate=_volatility_kwargs_from_args(args),
+        gumbel_candidate=_parse_gumbel_overrides(args.cand_gumbel),
+        gumbel_reference=_parse_gumbel_overrides(args.ref_gumbel),
     )
+
+
+_GUMBEL_INT_KEYS = {"topk", "halving_div", "simulations"}
+
+
+def _parse_gumbel_overrides(spec: str | None) -> dict[str, float] | None:
+    """Parse 'c_scale=0.025,c_visit=50,c_visit_root=900,topk=32' -> dict.
+
+    int-coerces topk/halving_div/simulations; everything else is a float. Keys
+    must be GumbelConfig fields (applied via dataclasses.replace downstream)."""
+    if not spec:
+        return None
+    out: dict[str, float] = {}
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "=" not in part:
+            raise SystemExit(f"--*-gumbel: expected k=v pairs, got {part!r}")
+        k, v = part.split("=", 1)
+        k = k.strip()
+        out[k] = int(v) if k in _GUMBEL_INT_KEYS else float(v)
+    return out or None
 
 
 if __name__ == "__main__":

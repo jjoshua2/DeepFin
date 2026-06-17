@@ -21,6 +21,9 @@ import csv
 import datetime as _dt
 import time
 from pathlib import Path
+from typing import cast
+
+import torch
 
 from chess_anti_engine.eval import (
     load_epd,
@@ -44,7 +47,7 @@ def _parse_buckets(spec: str) -> tuple[tuple[int, int], ...]:
 
 
 def _parse_modes(spec: str) -> tuple[str, ...]:
-    valid = {"policy", "value", "search"}
+    valid = {"policy", "value", "search", "gumbel"}
     parts = tuple(p.strip() for p in spec.split(",") if p.strip())
     bad = [p for p in parts if p not in valid]
     if not parts or bad:
@@ -123,6 +126,35 @@ def main() -> None:
         help='Comma-separated bucket edges, default 2200,2400,2600,2800',
     )
     p.add_argument("--device", default="cuda")
+    p.add_argument("--compile", action="store_true",
+                   help="torch.compile the model forward (speeds up high-sim search; "
+                        "~30-60s warmup). Run at most ONE compiled eval per GPU concurrently "
+                        "— concurrent compiles contend on the inductor cache / GPU.")
+    # search/gumbel knobs (used by --mode search|gumbel)
+    p.add_argument("--sims", type=int, default=200, help="MCTS simulations per puzzle (search/gumbel modes)")
+    p.add_argument("--gumbel-c-scale", type=float, default=0.1, help="gumbel value-transform scale (mode gumbel)")
+    p.add_argument("--gumbel-c-visit", type=float, default=50.0, help="gumbel c_visit depth-ramp base (mode gumbel)")
+    p.add_argument("--gumbel-topk", type=int, default=32, help="gumbel root candidates (mode gumbel)")
+    p.add_argument("--gumbel-c-puct", type=float, default=2.5, help="gumbel c_puct (mode gumbel)")
+    p.add_argument("--gumbel-fpu", type=float, default=1.2, help="gumbel fpu_reduction (mode gumbel)")
+    p.add_argument("--gumbel-qexp", type=float, default=1.0,
+                   help="gumbel q_visit_exp: exponent on max_visit in q_scale=c_scale*(c_visit+max_visit^exp). "
+                        "1.0=linear (default); <1=sublinear (less sim-count-dependent optimum)")
+    p.add_argument("--gumbel-global-scale", action="store_true",
+                   help="gumbel descent scales q_scale by the ROOT max_visit (global) instead of "
+                        "per-node local max_visit; pairs with --gumbel-qexp<1 for sim-invariance")
+    p.add_argument("--gumbel-qfloor", type=float, default=-1.0,
+                   help="gumbel decoupled (additive) value-transform floor: when >=0, "
+                        "q_scale=qfloor+c_scale*max_visit^qexp (floor independent of c_scale). "
+                        "<0 (default) = legacy coupled floor c_scale*(c_visit+max_visit^qexp)")
+    p.add_argument("--gumbel-halving-div", type=int, default=2,
+                   help="gumbel sequential-halving divisor: each round keeps ceil(n/div). "
+                        "2 (default) = standard halving (top half); 3/4 = more aggressive "
+                        "elimination (fewer rounds, visits concentrate on survivors sooner)")
+    p.add_argument("--gumbel-cvisit-root", type=float, default=-1.0,
+                   help="gumbel root-halving c_visit override (value-transform floor at the "
+                        "root site only; descent keeps --gumbel-c-visit). >=0 sets the root "
+                        "floor (~670 fits all sim counts); <0 (default) = use c_visit at both")
     p.add_argument(
         "--mode",
         type=_parse_modes,
@@ -139,6 +171,16 @@ def main() -> None:
     print(f"[puzzle] loading model: {args.checkpoint}")
     t0 = time.time()
     model = load_model_from_checkpoint(args.checkpoint, device=args.device)
+    if args.compile:
+        _dev = torch.device(args.device)
+        if _dev.type == "cuda":
+            # bootstrap cudagraph TLS on this proc; set_device needs an index.
+            # torch's stub types device.index as int, but it IS None for a
+            # device with no explicit index (e.g. "cuda"), so the guard is real.
+            dev_index = _dev.index
+            torch.cuda.set_device(dev_index if dev_index is not None else 0)  # pyright: ignore[reportUnnecessaryComparison]
+        model = cast("torch.nn.Module", torch.compile(model))
+        print("[puzzle] torch.compile enabled (forward); first batch pays warmup")
     print(f"[puzzle] loaded in {time.time()-t0:.1f}s")
 
     if args.puzzle_epd:
@@ -181,19 +223,36 @@ def main() -> None:
                 rating_buckets=args.rating_buckets,
             )
             sims_label = "value-only push-eval"
-        else:  # search — kept for back-compat; not in default
+        else:  # "search" (PUCT) or "gumbel" — MCTS move-selection accuracy
             from chess_anti_engine.eval import run_puzzle_eval  # local: avoids MCTS import on the common path
             import numpy as np
             rng = np.random.default_rng(42)
+            gcfg = None
+            if mode == "gumbel":
+                from chess_anti_engine.mcts.gumbel import GumbelConfig
+                gcfg = GumbelConfig(
+                    topk=args.gumbel_topk, c_scale=args.gumbel_c_scale,
+                    c_visit=args.gumbel_c_visit, c_puct=args.gumbel_c_puct,
+                    fpu_reduction=args.gumbel_fpu, q_visit_exp=args.gumbel_qexp,
+                    q_global_scale=args.gumbel_global_scale,
+                    q_visit_floor=args.gumbel_qfloor,
+                    halving_div=args.gumbel_halving_div,
+                    c_visit_root=args.gumbel_cvisit_root,
+                )
             result = run_puzzle_eval(
                 model, suite,
                 device=args.device,
-                mcts_simulations=200,
+                mcts_simulations=args.sims,
                 batch_size=args.batch_size,
                 rng=rng,
                 rating_buckets=args.rating_buckets,
+                gumbel_cfg=gcfg,
             )
-            sims_label = "200 sims"
+            if mode == "gumbel":
+                sims_label = (f"{args.sims} sims gumbel c_scale={args.gumbel_c_scale} "
+                              f"c_visit={args.gumbel_c_visit} topk={args.gumbel_topk}")
+            else:
+                sims_label = f"{args.sims} sims puct"
         _print(f"puzzle:{mode}", result, time.time() - t0, sims_label=sims_label)
         if log_path is not None:
             _append_log(

@@ -226,6 +226,11 @@ def _node_timeout_s(nodes: int) -> float:
     return max(30.0, min(600.0, nodes / 10_000.0))
 
 
+# Off-clock warmup deadline: must comfortably exceed the one-time torch.compile
+# (max-autotune) of a neural engine, which can take well over a minute cold.
+_WARMUP_TIMEOUT_S = 300.0
+
+
 def _info_int(value: Any) -> int | None:
     try:
         return None if value is None else int(value)
@@ -260,12 +265,17 @@ def _open_engine(spec: str, cwd: str | None = None) -> chess.engine.SimpleEngine
     parts = shlex.split(spec)
     if not parts:
         raise ValueError(f"empty engine spec: {spec!r}")
+    # Generous per-command timeout: a neural engine's first command may pay a cold
+    # torch.compile (max-autotune, up to a few minutes). python-chess defaults to
+    # 10s, which aborts mid-compile (asyncio TimeoutError in analysis/play setup),
+    # so the off-clock warmup is meant to absorb it. 300s is a finite backstop that
+    # still catches a genuinely hung engine.
     if len(parts) == 1 and Path(parts[0]).is_file():
         binary = Path(parts[0]).resolve()
         return chess.engine.SimpleEngine.popen_uci(
-            str(binary), cwd=cwd or str(binary.parent),
+            str(binary), cwd=cwd or str(binary.parent), timeout=300.0,
         )
-    return chess.engine.SimpleEngine.popen_uci(parts, cwd=cwd)
+    return chess.engine.SimpleEngine.popen_uci(parts, cwd=cwd, timeout=300.0)
 
 
 def _set_options(eng: chess.engine.SimpleEngine, opts: dict[str, str]) -> None:
@@ -377,9 +387,11 @@ def _warmup_engine(
 ) -> None:
     if nodes is None:
         return
-    print(f"[match] warming {label}: {nodes} nodes", flush=True)
+    print(f"[match] warming {label}: {nodes} nodes (off-clock)", flush=True)
     started = time.monotonic()
-    result = _play_node_limited(eng, chess.Board(), nodes=nodes)
+    # Generous timeout: the warmup's first search pays the one-time torch.compile
+    # (max-autotune, ~15-60s+); the node-derived deadline would cancel it and crash.
+    result = _play_node_limited(eng, chess.Board(), nodes=nodes, timeout_s=_WARMUP_TIMEOUT_S)
     elapsed = time.monotonic() - started
     info = result.info
     nodes_seen = _info_int(info.get("nodes"))
@@ -396,9 +408,14 @@ def _play_node_limited(
     *,
     nodes: int,
     game: object = None,
+    timeout_s: float | None = None,
 ) -> MoveResult:
+    # timeout_s overrides the node-derived deadline — used by the off-clock warmup,
+    # whose first search may pay a long one-time torch.compile that the default
+    # _node_timeout_s(nodes) would prematurely cancel (then crash on the late readyok).
+    eff_timeout = _node_timeout_s(nodes) if timeout_s is None else float(timeout_s)
     analysis = eng.analysis(board, chess.engine.Limit(), game=game, info=chess.engine.INFO_ALL)
-    deadline = time.monotonic() + _node_timeout_s(nodes)
+    deadline = time.monotonic() + eff_timeout
     best_from_pv: chess.Move | None = None
     latest_info: dict[str, Any] = {}
     nodes_seen = 0
@@ -423,7 +440,7 @@ def _play_node_limited(
             elif time.monotonic() >= deadline:
                 analysis.stop()
                 raise TimeoutError(
-                    f"engine did not report {nodes} nodes within {_node_timeout_s(nodes):.1f}s "
+                    f"engine did not report {nodes} nodes within {eff_timeout:.1f}s "
                     f"while externally enforcing nodes (last nodes={nodes_seen}); "
                     "use native go nodes or a smaller enforced budget for slow engines"
                 )
@@ -466,6 +483,7 @@ def play_one_game(
     clock_base_b_ms: int | None = None,
     clock_inc_w_ms: int = 0,
     clock_inc_b_ms: int = 0,
+    clock_grace_ms: int = 0,
     max_plies: int,
     start_board: chess.Board | None = None,
     move_callback: Callable[[MoveRecord], None] | None = None,
@@ -488,6 +506,12 @@ def play_one_game(
     black_clock_s = 0.0 if clock_base_b_ms is None else clock_base_b_ms / 1000.0
     white_inc_s = max(0, int(clock_inc_w_ms)) / 1000.0
     black_inc_s = max(0, int(clock_inc_b_ms)) / 1000.0
+    # Grace buffer: tolerate a small per-move overrun (e.g. GPU/IPC jitter) instead
+    # of forfeiting the instant the clock dips below zero. The overrun is NOT
+    # forgiven — the clock is left negative and the increment is added on top, so
+    # the debt carries into (is subtracted from) the next move. Forfeit only if a
+    # move drives the clock past -grace.
+    clock_grace_s = max(0, int(clock_grace_ms)) / 1000.0
     plies = 0
     moves: list[chess.Move] = []
     move_records: list[MoveRecord] = []
@@ -560,7 +584,7 @@ def play_one_game(
         if clock_mode:
             if white_to_move:
                 white_clock_s -= elapsed_s
-                if white_clock_s < 0.0:
+                if white_clock_s < -clock_grace_s:
                     append_move_record(
                         move.uci(),
                         white_after_s=white_clock_s,
@@ -570,7 +594,7 @@ def play_one_game(
                 white_clock_s += white_inc_s
             else:
                 black_clock_s -= elapsed_s
-                if black_clock_s < 0.0:
+                if black_clock_s < -clock_grace_s:
                     append_move_record(
                         move.uci(),
                         white_after_s=white_clock_s,
@@ -600,6 +624,7 @@ def _play_one_pairing(
     move_callback: Callable[[MoveRecord], None] | None,
     syzygy_adjudicator: Any | None,
     syzygy_adjudicate_max_pieces: int,
+    clock_grace_ms: int = 0,
     game: object = None,
 ) -> GameRecord:
     return play_one_game(
@@ -613,6 +638,7 @@ def _play_one_pairing(
         clock_base_b_ms=black.clock_base_ms,
         clock_inc_w_ms=white.clock_inc_ms,
         clock_inc_b_ms=black.clock_inc_ms,
+        clock_grace_ms=clock_grace_ms,
         max_plies=max_plies,
         start_board=start_board,
         move_callback=move_callback,
@@ -694,6 +720,11 @@ def main() -> None:
     p.add_argument("--clock-inc-ms", type=int, default=0, help="increment for both engines (ms)")
     p.add_argument("--clock-inc-ms-a", type=int, default=None, help="increment for engine A (ms)")
     p.add_argument("--clock-inc-ms-b", type=int, default=None, help="increment for engine B (ms)")
+    p.add_argument("--clock-grace-ms", type=int, default=0,
+                   help="clock mode: tolerate up to this per-move overrun instead of "
+                        "forfeiting the instant the clock hits 0 (the overrun carries "
+                        "as debt into the next move). Absorbs GPU/IPC jitter. Default 0 "
+                        "(strict). E.g. 100 for a 100ms grace.")
     p.add_argument(
         "--enforce-nodes",
         action="store_true",
@@ -908,6 +939,7 @@ def main() -> None:
                     ),
                     syzygy_adjudicator=tb_adjudicator,
                     syzygy_adjudicate_max_pieces=args.syzygy_adjudicate_max_pieces,
+                    clock_grace_ms=args.clock_grace_ms,
                     game=i + 1,
                 )
                 result = record.result
