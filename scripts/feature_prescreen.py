@@ -133,6 +133,12 @@ def _is_per_row(arr: np.ndarray, rows: int) -> bool:
     return getattr(arr, "ndim", 0) >= 1 and arr.shape[0] == rows
 
 
+# Optional label value↔has-flag pairs the screen relies on (a subset of
+# replay/shard.py's _OPTIONAL_FIELD_SPECS). A has-flag is meaningless without
+# its paired value array present in the SAME chunk — see _concat_chunks_union.
+_PAIRED_VALUE_FOR_FLAG = {"has_sf_wdl": "sf_wdl", "has_sf_policy": "sf_policy_target"}
+
+
 def _concat_chunks_union(chunks: list[dict[str, np.ndarray]]) -> dict[str, np.ndarray]:
     """Row-concatenate chunks over the UNION of per-row keys, zero-filling gaps.
 
@@ -180,10 +186,18 @@ def _concat_chunks_union(chunks: list[dict[str, np.ndarray]]) -> dict[str, np.nd
             continue
         shape = next(iter(trailing))
         dtype = present[0][0][k].dtype
-        parts = [
-            c[k] if (k in c and _is_per_row(c[k], r)) else np.zeros((r, *shape), dtype=dtype)
-            for c, r in zip(chunks, rows)
-        ]
+        # A has-flag is only real when its paired value array is present in the
+        # SAME chunk. The union zero-fills a missing value to 0; if we kept
+        # flag=1 there (the value/flag pairing CAN be broken upstream —
+        # prune_storage_arrays writes the flag on np.any() but the value array
+        # only when present), those rows would look SF-labeled with an all-zero
+        # target and bias relevance. So zero a flag wherever its value is absent.
+        value_key = _PAIRED_VALUE_FOR_FLAG.get(k)
+        parts: list[np.ndarray] = []
+        for c, r in zip(chunks, rows):
+            has_flag = k in c and _is_per_row(c[k], r)
+            has_value = value_key is None or (value_key in c and _is_per_row(c[value_key], r))
+            parts.append(c[k] if (has_flag and has_value) else np.zeros((r, *shape), dtype=dtype))
         cat[k] = np.concatenate(parts, axis=0)
     return cat
 
