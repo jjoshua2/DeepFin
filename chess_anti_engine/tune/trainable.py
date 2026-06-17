@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from chess_anti_engine.model import ModelConfig, build_model
+from chess_anti_engine.model import ModelConfig, build_model, resume_model_config_from_arch
 from chess_anti_engine.stockfish import StockfishPool, StockfishUCI, pid_from_config
 from chess_anti_engine.train import Trainer, trainer_kwargs_from_config
 from chess_anti_engine.tune._utils import (
@@ -44,6 +44,7 @@ from chess_anti_engine.tune.trainable_init import (
     _init_replay_buffers,
     _maybe_load_bootstrap,
     _restore_checkpoint_or_salvage,
+    peek_checkpoint_arch,
 )
 from chess_anti_engine.tune.trainable_metrics import _compute_drift_metrics
 from chess_anti_engine.tune.trainable_phases import (
@@ -403,7 +404,27 @@ def train_trial(config: dict):
         torch.cuda.manual_seed_all(active_seed)
 
     device = tc.device
-    model_cfg = _build_trial_model_config(tc)
+    config_model_cfg = _build_trial_model_config(tc)
+  # On resume, rebuild the model at the CHECKPOINT's topology, not the trial
+  # config's. The trial config can drift from the saved model (e.g. a
+  # variable-width FFN schedule that the config no longer carries); building
+  # from config then loading tolerantly silently drops the mismatched blocks
+  # and crashes the optimizer at the first step(). Topology follows the saved
+  # arch; the four encoding keys (input_extra_features / policy_encoding /
+  # input_history_encoding / history_rep_fix) stay config-driven so a
+  # deliberate warm-start migration (v1 -> v2_threats) is still honored. No
+  # checkpoint / older checkpoint without arch / salvage -> config-driven.
+    ckpt = _tune_get_checkpoint()
+    ckpt_arch = peek_checkpoint_arch(ckpt)
+    if ckpt_arch is not None:
+        model_cfg = resume_model_config_from_arch(ckpt_arch, config_model_cfg)
+        if model_cfg != config_model_cfg:
+            print(
+                "[trial] resume: rebuilding model from checkpoint arch "
+                "(topology from checkpoint, encoding from config)"
+            )
+    else:
+        model_cfg = config_model_cfg
     model = build_model(model_cfg)
 
   # Use Ray-provided trial directory for ALL per-trial state (checkpoints,
@@ -432,7 +453,6 @@ def train_trial(config: dict):
     )
     trainer = Trainer(model, model_config=model_cfg, **trainer_ctor)
 
-    ckpt = _tune_get_checkpoint()
     restore, rng = _restore_checkpoint_or_salvage(
         config=config, trainer=trainer, device=device,
         trial_id=trial_id, trial_dir=trial_dir,

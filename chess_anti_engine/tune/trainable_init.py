@@ -63,6 +63,38 @@ def _load_model_only(maybe: Path, trainer, *, device: str, label: str) -> None:
     del ckpt
 
 
+def peek_checkpoint_arch(ckpt) -> dict | None:
+    """Read just the ``arch`` topology dict from a Ray checkpoint's trainer.pt.
+
+    Returns the saved ModelConfig dict (as written by ``Trainer.save``) so the
+    model can be rebuilt at the checkpoint's tensor shapes BEFORE the tolerant
+    loader runs — otherwise a topology drift (e.g. variable-width FFN) silently
+    drops the mismatched blocks and the optimizer moments crash at ``step()``.
+
+    ``mmap=True`` keeps the (large) model/optimizer tensors on disk; only the
+    small ``arch`` dict is materialized. Returns None when there is no
+    checkpoint, no trainer.pt, or no embedded ``arch`` (older checkpoints) —
+    callers then fall back to the config-driven build.
+    """
+    if ckpt is None:
+        return None
+    try:
+        ckpt_dir = Path(ckpt.to_directory())
+    except Exception as exc:
+        log.warning("[trial] could not materialize checkpoint dir to peek arch: %s", exc)
+        return None
+    maybe = ckpt_dir / "trainer.pt"
+    if not maybe.exists():
+        return None
+    try:
+        payload = torch.load(str(maybe), map_location="cpu", mmap=True, weights_only=False)
+    except Exception as exc:
+        log.warning("[trial] could not read checkpoint arch from %s: %s", maybe, exc)
+        return None
+    arch = payload.get("arch") if isinstance(payload, dict) else None
+    return arch if isinstance(arch, dict) else None
+
+
 def _restore_from_ray_checkpoint(
     *, ckpt, trainer, config: dict, device: str, trial_id: str, rr: RestoreResult,
 ) -> tuple[dict | None, dict | None]:
