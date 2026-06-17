@@ -39,6 +39,11 @@ class MCTSTree:
         target_batch: int = ...,
         input_history_lc0_root: int = ...,
         rel_buf: NDArray[np.uint8] | None = ...,
+        q_visit_exp: float = ...,
+        q_global_scale: int = ...,
+        q_visit_floor: float = ...,
+        halving_div: int = ...,
+        c_visit_root: float = ...,
     ) -> int | None: ...
     def continue_gumbel_sims(self, pol: NDArray[np.float32], wdl: NDArray[np.float32]) -> int | None: ...
     def continue_gumbel_sims_legal_bf16(self, pol_bf16_bits: NDArray[np.uint16], wdl: NDArray[np.float32]) -> int | None: ...
