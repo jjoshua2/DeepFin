@@ -736,6 +736,7 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         rebuild_categorical_target=bool(config.get("rebuild_categorical_target", False)),
         categorical_target_params=CategoricalTargetParams(
             blend_frac=_f("categorical_blend_frac", 0.0),
+            search_blend_frac=_f("categorical_search_blend_frac", 0.0),
             num_bins=int(config.get("categorical_bins", DEFAULT_CATEGORICAL_BINS)),
             sigma=_f("hlgauss_sigma", 0.04),
         ),

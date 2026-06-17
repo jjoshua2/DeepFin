@@ -48,6 +48,45 @@ def test_blend_is_scale_invariant_normalized_vs_permille() -> None:
         assert abs(a - b) < 1e-6
 
 
+def test_three_way_blend_mirrors_wdl_head() -> None:
+    """search_blend_frac adds the net's own-search WDL as a 3rd source, like the
+    main value head: game_frac*v + sf_frac*E[sf] + search_frac*E[search]."""
+    win = np.array([1.0, 0.0, 0.0], dtype=np.float32)   # E = +1
+    loss = np.array([0.0, 0.0, 1.0], dtype=np.float32)  # E = -1
+    # 3-way: outcome win, SF says loss, search says win, 0.25 each.
+    # 0.5*(+1) + 0.25*(-1) + 0.25*(+1) = 0.5
+    assert categorical_target_value(
+        1.0, loss, blend_frac=0.25, search_wdl=win, search_blend_frac=0.25,
+    ) == 0.5
+    # search-only blend (sf weight 0): -1 outcome pulled halfway to search win.
+    assert categorical_target_value(
+        -1.0, None, blend_frac=0.0, search_wdl=win, search_blend_frac=0.5,
+    ) == 0.0
+
+
+def test_three_way_blend_renormalizes_when_sum_exceeds_one() -> None:
+    """sf_frac + search_frac > 1 renormalizes (game_frac -> 0), same rule as the
+    WDL head's blend_sum clamp."""
+    win = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+    loss = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+    # 0.75 + 0.75 -> 0.5/0.5, game_frac 0: 0.5*(-1) + 0.5*(+1) = 0.
+    assert categorical_target_value(
+        1.0, loss, blend_frac=0.75, search_wdl=win, search_blend_frac=0.75,
+    ) == 0.0
+
+
+def test_missing_search_row_drops_only_that_component() -> None:
+    """A missing/empty search row drops the search component without
+    redistributing its weight — the blend leans on SF + outcome."""
+    loss = np.array([0.0, 0.0, 1.0], dtype=np.float32)  # E = -1
+    # search requested but absent -> behaves as sf-only at frac 0.5: 0.5*1 + 0.5*(-1) = 0
+    assert categorical_target_value(
+        1.0, loss, blend_frac=0.5, search_wdl=None, search_blend_frac=0.5,
+    ) == 0.0
+    # both fracs 0 stays byte-identical to the ternary outcome.
+    assert categorical_target_value(1.0, loss, blend_frac=0.0, search_blend_frac=0.0) == 1.0
+
+
 def test_blended_target_uses_interior_bins_unlike_ternary() -> None:
     """The point of the bet: a continuous value lands on interior HL-Gauss bins
     instead of spiking at the {-1,0,+1} extremes."""
