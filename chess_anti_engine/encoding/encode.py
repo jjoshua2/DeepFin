@@ -21,6 +21,7 @@ if TYPE_CHECKING or _HAS_LC0_C_EXT:
     from .lc0 import encode_lc0_full_c
 from .features import (
     _HAS_C_EXT,
+    EXTRA_FEATURE_VERSIONS,
     extra_feature_plane_count,
     extra_feature_planes_fast,
     normalize_extra_features_encoding,
@@ -52,6 +53,24 @@ def _encode_lc0_planes(
 def input_plane_count(input_extra_features: str | None = None) -> int:
     """Total input channels: 112 LC0 planes + the extra-feature block."""
     return 112 + extra_feature_plane_count(input_extra_features)
+
+
+def version_for_input_planes(n: int) -> str:
+    """Reverse of :func:`input_plane_count`: the extra-features version at ``n`` planes.
+
+    Searches the registered ``EXTRA_FEATURE_VERSIONS`` for the one whose total
+    input-plane count equals ``n`` (146→v1, 175→v2_threats, 179→v3_checks).
+    Raises ``ValueError`` for any plane count no registered version produces.
+    """
+    target = int(n)
+    for version in EXTRA_FEATURE_VERSIONS:
+        if input_plane_count(version) == target:
+            return version
+    known = {input_plane_count(v): v for v in EXTRA_FEATURE_VERSIONS}
+    raise ValueError(
+        f"no extra-features version has {target} input planes; "
+        f"known counts {known}"
+    )
 
 
 def _extra_feature_planes(

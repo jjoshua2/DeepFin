@@ -13,6 +13,7 @@ from pathlib import Path
 
 import numpy as np
 
+from chess_anti_engine.encoding import version_for_input_planes
 from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 
@@ -39,8 +40,7 @@ from .shard import (
 )
 from .threat_upgrade import (
     V1_INPUT_PLANES,
-    V2_INPUT_PLANES,
-    upgrade_arrays_to_v2_threats,
+    upgrade_arrays_to_planes,
 )
 
 _ARRAY_FIELD_ORDER = _SHARD_FIELDS
@@ -249,29 +249,70 @@ class DiskReplayBuffer:
     def _shuffle_len(self) -> int:
         return int(self._shuffle_size_total)
 
-    def _upgrade_x_planes(self, arrs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
-        """Recompute the v2 threat planes for a stored v1 chunk (opt-in).
+    def _upgrade_target_version(self) -> str | None:
+        """Extra-features version to upgrade stored chunks to, or None.
 
-        Also repairs 175-plane chunks whose threat block was zero-padded by
-        the pre-upgrade load path and then re-persisted. Validation failure
-        (a chunk the decoder can't faithfully reconstruct) falls back to the
-        zero-pad path below instead of killing the prefetch thread — old
-        data trains as before, just without threat-plane signal for that
-        chunk.
+        Returns the registered version whose total input-plane count equals
+        the configured ``_input_planes`` (v2_threats=175, v3_checks=179, …)
+        when it exceeds the v1 base — i.e. the configured width carries an
+        extra-feature block worth recomputing. A v1 (146) or unrecognized
+        width disables the recompute path (the plane-count guard in
+        ``_pad_x_planes`` still handles those).
         """
-        if not self._upgrade_v1_planes or self._input_planes != V2_INPUT_PLANES:
-            return arrs
-        if int(np.asarray(arrs["x"]).shape[1]) not in (V1_INPUT_PLANES, V2_INPUT_PLANES):
-            return arrs
+        target = self._input_planes
+        if target is None or int(target) <= V1_INPUT_PLANES:
+            return None
         try:
-            upgraded, _stats = upgrade_arrays_to_v2_threats(arrs)
+            return version_for_input_planes(int(target))
+        except ValueError:
+            return None
+
+    def _upgrade_x_planes(self, arrs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+        """Recompute the extra-feature planes for a stored chunk (opt-in).
+
+        Generalizes the v1→v2_threats upgrade to ANY cross-version width
+        mismatch (e.g. v3_checks 179 → v3_xray 181): the full extra block is
+        recomputed from the stored 112 LC0 base planes whenever the stored
+        width differs from the target and the target is a recognized version.
+        This is the only correct cross-version path — zero-padding a stored
+        block of a DIFFERENT version into the target's extra slots is silent
+        input corruption (the stored extra planes are never a prefix of the
+        target's beyond the 34 v1 planes). Stored-width == target normally
+        passes through untouched, but a chunk the pre-upgrade zero-pad path
+        persisted at the target width with an all-zero extra block is repaired
+        in place (recomputed only for those rows) — covering both 175-plane v2
+        chunks and any wider recognized version.
+        Validation failure (a chunk the decoder can't faithfully reconstruct)
+        falls back to the zero-pad path in ``_pad_x_planes`` instead of killing
+        the prefetch thread — old data trains as before, just without
+        recomputed extra-plane signal for that chunk.
+        """
+        if not self._upgrade_v1_planes or self._input_planes is None:
+            return arrs
+        target_planes = int(self._input_planes)
+        version = self._upgrade_target_version()
+        if version is None:
+            return arrs
+        stored = int(np.asarray(arrs["x"]).shape[1])
+        if stored > target_planes:
+            # Wider-than-target is a config error handled (raised) by
+            # _pad_x_planes after this returns.
+            return arrs
+        # Equal width is NOT an unconditional passthrough: a chunk persisted at
+        # the target width by the pre-upgrade zero-pad path carries an all-zero
+        # extra block that must be repaired. upgrade_arrays_to_planes recomputes
+        # only those rows (native chunks pass through cheaply via its all-zero
+        # gate), so route equal-width through it too. stored < target_planes
+        # gets the full cross-version recompute.
+        try:
+            upgraded, _stats = upgrade_arrays_to_planes(arrs, target_planes)
         except ValueError as exc:
             self._upgrade_failures += 1
             # Log the first few in full, then a periodic cumulative count so a
             # systematic decode failure stays visible instead of going quiet.
             if self._upgrade_failures <= 3 or self._upgrade_failures % 50 == 0:
                 print(
-                    f"[replay] v2_threats upgrade failed "
+                    f"[replay] {version} plane upgrade failed "
                     f"({self._upgrade_failures} chunk(s) so far), zero-padding: {exc}"
                 )
             return arrs

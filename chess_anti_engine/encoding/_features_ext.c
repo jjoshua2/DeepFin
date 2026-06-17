@@ -1,6 +1,7 @@
 /*
  * _features_ext.c — Python binding for the extra feature planes
- * (34 for v1, 63 for v2_threats).
+ * (34 for v1, 63 for v2_threats, 67 for v3_checks, 69 for v3_xray,
+ * 65 for v3_see, 71 for v3_passers).
  *
  * All bitboard tables, attack helpers, pin/pawn-structure logic, and the
  * compute_features_ext() driver live in _features_impl.h (shared with
@@ -33,10 +34,15 @@ static PyObject* py_compute_features(PyObject *self, PyObject *args) {
             &n_extra))
         return NULL;
 
-    if (n_extra != FEAT_EXTRA_V1 && n_extra != FEAT_EXTRA_V2) {
+    if (n_extra != FEAT_EXTRA_V1 && n_extra != FEAT_EXTRA_V2
+            && n_extra != FEAT_EXTRA_V3_CHECKS && n_extra != FEAT_EXTRA_V3_XRAY
+            && n_extra != FEAT_EXTRA_V3_SEE && n_extra != FEAT_EXTRA_V3_PASSERS) {
         PyErr_Format(PyExc_ValueError,
-                     "n_extra must be %d (v1) or %d (v2_threats), got %d",
-                     FEAT_EXTRA_V1, FEAT_EXTRA_V2, n_extra);
+                     "n_extra must be %d (v1), %d (v2_threats), %d (v3_checks), "
+                     "%d (v3_xray), %d (v3_see), or %d (v3_passers), got %d",
+                     FEAT_EXTRA_V1, FEAT_EXTRA_V2, FEAT_EXTRA_V3_CHECKS,
+                     FEAT_EXTRA_V3_XRAY, FEAT_EXTRA_V3_SEE, FEAT_EXTRA_V3_PASSERS,
+                     n_extra);
         return NULL;
     }
 
@@ -102,7 +108,8 @@ static PyMethodDef methods[] = {
      "Compute extra feature planes from bitboard data.\n\n"
      "Args: pieces_us(uint64[6]), pieces_them(uint64[6]), occupied(uint64),\n"
      "      king_sq_us(int), king_sq_them(int), turn_white(bool), ep_square(int)\n"
-     "      [, n_extra(int) = 34 (v1) or 63 (v2_threats)]\n"
+     "      [, n_extra(int) = 34 (v1), 63 (v2_threats), 67 (v3_checks),\n"
+     "         69 (v3_xray), 65 (v3_see), or 71 (v3_passers)]\n"
      "Returns: ndarray (n_extra, 8, 8) float32"},
     {NULL, NULL, 0, NULL}
 };

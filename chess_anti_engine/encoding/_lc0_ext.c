@@ -743,10 +743,11 @@ static int parse_encode_full_args(PyObject *args, int *hist_mode, int *n_extra) 
         PyErr_Format(PyExc_ValueError, "hist_mode must be 0..2, got %d", *hist_mode);
         return 0;
     }
-    if (*n_extra != FEAT_EXTRA_V1 && *n_extra != FEAT_EXTRA_V2) {
+    if (*n_extra != FEAT_EXTRA_V1 && *n_extra != FEAT_EXTRA_V2
+            && *n_extra != FEAT_EXTRA_V3_CHECKS) {
         PyErr_Format(PyExc_ValueError,
-                     "n_extra must be %d (v1) or %d (v2_threats), got %d",
-                     FEAT_EXTRA_V1, FEAT_EXTRA_V2, *n_extra);
+                     "n_extra must be %d (v1), %d (v2_threats), or %d (v3_checks), got %d",
+                     FEAT_EXTRA_V1, FEAT_EXTRA_V2, FEAT_EXTRA_V3_CHECKS, *n_extra);
         return 0;
     }
     return 1;
