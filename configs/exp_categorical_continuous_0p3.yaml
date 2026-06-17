@@ -246,7 +246,7 @@ selfplay:
 
   categorical_bins: 32
   hlgauss_sigma: 0.04
-  categorical_blend_frac: 0.5  # EXPERIMENT: blend categorical target toward SF eval (W-L). 0.0 in production.
+  categorical_blend_frac: 0.3  # EXPERIMENT: blend categorical target toward SF eval (W-L). 0.0 in production.
   record_lc0_root_input: true  # Store alternate LC0-root x in new shards for later LC0-input fine-tune tests.
 
 train:

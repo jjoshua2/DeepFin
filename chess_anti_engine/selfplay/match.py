@@ -84,6 +84,7 @@ def pick_moves_for_boards(
     volatility_q_scale: float = 0.0,
     volatility_fpu: float = 0.0,
     volatility_anchor: float | None = None,
+    gumbel_overrides: dict[str, float] | None = None,
 ) -> list[int]:
     """Run gumbel- or PUCT-MCTS for one model on a list of boards.
 
@@ -117,6 +118,10 @@ def pick_moves_for_boards(
             gumbel_cfg = dataclasses.replace(
                 gumbel_cfg, volatility_anchor=float(volatility_anchor),
             )
+        if gumbel_overrides:
+            # Per-side gumbel knob overrides for config sweeps (arena_standard):
+            # c_scale, c_visit, c_visit_root, topk, c_puct, fpu_reduction, etc.
+            gumbel_cfg = dataclasses.replace(gumbel_cfg, **gumbel_overrides)
         if volatility_search_enabled(gumbel_cfg):
             warn_volatility_python_path()
         if _HAS_GUMBEL_C and not volatility_search_enabled(gumbel_cfg):

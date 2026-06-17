@@ -159,6 +159,11 @@ selfplay:
   mcts_start_simulations: 256  # Full budget from start (KataGo-style: 75% full, 25% fast)
   playout_cap_fraction: 0.25  # 25% get full sims, 75% get fast
   fast_simulations: 32
+  gumbel_c_scale: 0.1    # 2026-06-16: KEEP 0.1 for selfplay (default). The 0.025 value was +270 Elo for UCI
+                         # play (high sims), but a 256-sim screen (selfplay regime, topk 16) shows 0.1 is the
+                         # optimum HERE: 0.1->0.688 vs 0.05->0.652, 0.025->0.598. At low sims q_scale stays
+                         # small so 0.1 doesn't over-trust the value head; lowering it HURTS selfplay. The
+                         # c_scale fix is high-sim-specific (UCI default is 0.025). Don't lower for RL.
   gumbel_topk: 16
   gumbel_scale: 0.75     # Full selfplay root Gumbel noise scale before decay. mctx default is 1.0; final action temp stays 0.
   gumbel_scale_after: 0.0

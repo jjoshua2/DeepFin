@@ -20,7 +20,9 @@ import numpy as np
 from chess_anti_engine.encoding import input_plane_count, version_for_input_planes
 from chess_anti_engine.encoding.features import (
     EXTRA_FEATURES_V1,
+    EXTRA_FEATURES_V2_LEAN,
     EXTRA_FEATURES_V2_THREATS,
+    _V2_LEAN_KEEP,
     extra_feature_plane_count,
 )
 from chess_anti_engine.encoding.plane_decode import recompute_extra_planes
@@ -288,6 +290,23 @@ def _validated_extra_block(
     return block, live
 
 
+def _gather_v2_lean_block(v2_arrs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    """Select v2_lean planes from a full-v2 (175-plane) chunk: the 112 LC0 base
+    + the kept extra planes (``_V2_LEAN_KEEP``). ``x`` and ``x_lc0_root`` are
+    gathered identically; all other keys pass through. Input dict is not mutated.
+    """
+    out = dict(v2_arrs)
+    for key in ("x", "x_lc0_root"):
+        v = out.get(key)
+        if v is None:
+            continue
+        v = np.asarray(v)
+        out[key] = np.concatenate(
+            [v[:, :_LC0_PLANES], v[:, _LC0_PLANES:][:, _V2_LEAN_KEEP]], axis=1
+        )
+    return out
+
+
 def upgrade_arrays_to_planes(
     arrs: dict[str, np.ndarray],
     target_planes: int,
@@ -338,6 +357,25 @@ def upgrade_arrays_to_planes(
         ) from exc
     if history_encoding is None:
         history_encoding = chunk_history_encoding(arrs)
+
+    if version == EXTRA_FEATURES_V2_LEAN:
+        # v2_lean is a strict SUBSET of v2 — its block is NOT a v1 superset, so it
+        # can't be validated against the stored v1 prefix directly (the validation
+        # in _validated_extra_block assumes recomputed[:34] == stored v1 block).
+        # Upgrade to the full v2 block (which validates the v1 prefix + recomputes
+        # the 63-plane block from the decoded base for ANY recognized stored
+        # width), then GATHER the kept lean planes. Mirrors the compute side
+        # exactly (features.py computes full v2 then gathers via _V2_LEAN_KEEP).
+        if planes == target:
+            # Native v2_lean chunk: stored extra block is already lean. The v2
+            # validation path can't run (its stored [112:146] is not a v1 block),
+            # so pass through untouched. v2_lean is new, so no zero-padded-row
+            # repair is owed (no pre-upgrade path ever wrote v2_lean-width rows).
+            return dict(arrs), UpgradeStats(
+                rows=int(x.shape[0]), upgraded_rows=0, dropout_rows=0
+            )
+        v2_out, stats = upgrade_arrays_to_v2_threats(arrs, history_encoding=history_encoding)
+        return _gather_v2_lean_block(v2_out), stats
 
     if planes == target:
         # Equal width: native chunks pass through untouched (only the all-zero

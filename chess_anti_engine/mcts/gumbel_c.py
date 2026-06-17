@@ -567,6 +567,11 @@ def run_gumbel_root_many_c(
                 _c_scale, _c_visit, _c_puct, _fpu_reduction, _full_tree,
                 _enc_bufs[g], 0, int(target_batch),
                 c_input_history_mode(cfg.input_history_encoding),
+                None, float(cfg.q_visit_exp),
+                1 if cfg.q_global_scale else 0,
+                float(cfg.q_visit_floor),
+                int(cfg.halving_div),
+                float(cfg.c_visit_root),
             )
         _t_prepare += _time.perf_counter() - _tp0
 
@@ -798,6 +803,11 @@ def run_gumbel_root_many_c(
             cast(np.ndarray, _enc_buf), 0, int(target_batch),
             c_input_history_mode(cfg.input_history_encoding),
             _rel_buf,
+            float(cfg.q_visit_exp),
+            1 if cfg.q_global_scale else 0,
+            float(cfg.q_visit_floor),
+            int(cfg.halving_div),
+            float(cfg.c_visit_root),
         )
         _t_prepare += _time.perf_counter() - _tp0
 

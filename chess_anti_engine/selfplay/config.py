@@ -104,6 +104,9 @@ class GameConfig:
     # value instead of three {-1,0,+1} spikes. See
     # configs/exp_categorical_continuous.yaml.
     categorical_blend_frac: float = 0.0
+    # Optional 3rd blend source for the categorical target: the net's own search
+    # WDL (mirrors the main value head's search_wdl_frac). 0.0 = SF-only blend.
+    categorical_search_blend_frac: float = 0.0
     policy_encoding: str = POLICY_ENCODING_AZ_4672
     input_history_encoding: str = LC0_HISTORY_LEGACY
     input_extra_features: str = EXTRA_FEATURES_V1

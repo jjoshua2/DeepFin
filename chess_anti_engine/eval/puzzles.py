@@ -25,7 +25,9 @@ import torch
 
 from chess_anti_engine.encoding import encode_position
 from chess_anti_engine.mcts import MCTSConfig, run_mcts_many
-from chess_anti_engine.moves import index_to_move, move_to_index
+from chess_anti_engine.mcts.gumbel import GumbelConfig
+from chess_anti_engine.moves import index_to_move
+from chess_anti_engine.moves.encode import move_to_index_for_encoding
 
 # Default rating buckets for Lichess-style evaluation, matching the LC0 blog
 # (https://lczero.org/blog/2024/02/...) coarse buckets.
@@ -315,6 +317,7 @@ def run_puzzle_eval(
     batch_size: int = 32,
     rng: np.random.Generator | None = None,
     rating_buckets: tuple[tuple[int, int], ...] = DEFAULT_RATING_BUCKETS,
+    gumbel_cfg: GumbelConfig | None = None,
 ) -> PuzzleResult:
     """Evaluate the model on a puzzle suite.
 
@@ -341,7 +344,37 @@ def run_puzzle_eval(
         rng = np.random.default_rng(42)
 
     model.eval()
-    cfg = MCTSConfig(simulations=mcts_simulations, temperature=0.0)
+    # Gumbel search (uses the c_scale/c_visit/topk/c_puct/fpu knobs) when a
+    # GumbelConfig is supplied; else the legacy PUCT path. Both return actions at
+    # result[1]. Force deterministic move selection (temp 0, no root noise) so the
+    # screen measures strength, not exploration.
+    if gumbel_cfg is not None:
+        import dataclasses
+        from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
+        # Thread the model's own encoding from the checkpoint so the C tree
+        # encodes the right plane count (v1/v2/v3 widths), history layout, and
+        # policy-head size (1858 vs 4672). Without this the cfg falls back to
+        # v1/legacy/az_4672 defaults and the encode/logit shapes mismatch the
+        # net. Fall back to whatever the caller's cfg already had when an
+        # attribute is absent.
+        g_cfg = dataclasses.replace(
+            gumbel_cfg, simulations=int(mcts_simulations),
+            temperature=0.0, add_noise=False,
+            input_extra_features=(
+                getattr(model, "input_extra_features", None) or gumbel_cfg.input_extra_features),
+            input_history_encoding=(
+                getattr(model, "input_history_encoding", None) or gumbel_cfg.input_history_encoding),
+            policy_encoding=(
+                getattr(model, "policy_encoding", None) or gumbel_cfg.policy_encoding),
+        )
+
+        def _search(bs: list[chess.Board]):
+            return run_gumbel_root_many_c(model, bs, device=device, rng=rng, cfg=g_cfg)[1]
+    else:
+        cfg = MCTSConfig(simulations=mcts_simulations, temperature=0.0)
+
+        def _search(bs: list[chess.Board]):
+            return run_mcts_many(model, bs, device=device, rng=rng, cfg=cfg)[1]
 
     total = len(suite)
     correct_flags = [False] * total
@@ -351,9 +384,7 @@ def run_puzzle_eval(
         batch_puzzles = suite.puzzles[start:end]
         boards = [p.board.copy() for p in batch_puzzles]
 
-        _, actions, *_ = run_mcts_many(
-            model, boards, device=device, rng=rng, cfg=cfg,
-        )
+        actions = _search(boards)
 
         for offset, (puzzle, action_idx) in enumerate(zip(batch_puzzles, actions)):
             chosen = index_to_move(int(action_idx), puzzle.board)
@@ -421,6 +452,9 @@ def run_policy_sequence_eval(
         for i, p in enumerate(suite.puzzles)
         if p.solution_sequence or p.best_moves
     ]
+    # Legal-move indices must match the model's policy head width (compact
+    # lc0_1858 vs az_4672); using the wrong encoding indexes out of bounds.
+    _pol_enc = getattr(model, "policy_encoding", None)
 
     while active:
         # Forward all active boards in batches; pick legal-argmax move per board.
@@ -441,7 +475,7 @@ def run_policy_sequence_eval(
                           else out["policy"]).float().cpu().numpy()
             for j, b in enumerate(chunk):
                 legal = list(b.legal_moves)
-                legal_idxs = [move_to_index(m, b) for m in legal]
+                legal_idxs = [move_to_index_for_encoding(m, b, policy_encoding=_pol_enc) for m in legal]
                 picks.append(legal[int(np.argmax(pol_logits[j, legal_idxs]))])
 
         next_active: list[tuple[int, chess.Board, int]] = []

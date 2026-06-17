@@ -571,6 +571,50 @@ static uint64_t feat_connected_pawns(uint64_t own_pawns) {
 #define FEAT_EXTRA_V3_XRAY 69
 #define FEAT_EXTRA_V3_SEE 65
 #define FEAT_EXTRA_V3_PASSERS 71
+/* v3_attackmaps (75): v2_threats + checks(4) [63:67] + xray(6) [67:73] +
+ * see(2) [73:75] — the union of the three already-implemented v3 families,
+ * each written into its own offset by the shared helpers below. */
+#define FEAT_EXTRA_V3_ATTACKMAPS 75
+/* v3_kingshelter (68): v2_threats + 5 king-safety planes [63:68]:
+ * [63] our king pawn-shield holes, [64] their king pawn-shield holes,
+ * [65] our king on/adjacent open file (king-zone squares set),
+ * [66] enemy R/Q bearing on our king's file/adjacent files,
+ * [67] friendly R/Q bearing on their king's file/adjacent files. */
+#define FEAT_EXTRA_V3_KINGSHELTER 68
+/* v2_lean (31): strict subset of v2_threats — pins [10:16] + the attack/threat
+ * families attacks_all..control [34:59]. Computed by gathering kept planes from
+ * the full v2 block (see V2_LEAN_KEEP / compute_features_ext), so it is
+ * bit-identical to the corresponding v2 planes. Drops kingzone/pawnstruct/
+ * mobility/outposts + pawn_tension/pawn_storm (8-net ablation audit 2026-06-16). */
+#define FEAT_EXTRA_V2_LEAN 31
+
+/* Widest registered extra-feature width (v3_attackmaps). Used to size the
+ * fixed encode stack buffers so they fit every version. Bump this if a wider
+ * version is added below. */
+#define FEAT_EXTRA_MAX 75
+
+/* Single source of truth for "is this extra-feature plane count a registered
+ * version?". The live/MCTS encode path and all Python bindings gate on this so
+ * a new version is accepted everywhere by adding it to the OR-chain here only. */
+static inline int feat_extra_is_supported(int n_extra) {
+    return n_extra == FEAT_EXTRA_V1
+        || n_extra == FEAT_EXTRA_V2
+        || n_extra == FEAT_EXTRA_V3_CHECKS
+        || n_extra == FEAT_EXTRA_V3_XRAY
+        || n_extra == FEAT_EXTRA_V3_SEE
+        || n_extra == FEAT_EXTRA_V3_PASSERS
+        || n_extra == FEAT_EXTRA_V3_ATTACKMAPS
+        || n_extra == FEAT_EXTRA_V3_KINGSHELTER
+        || n_extra == FEAT_EXTRA_V2_LEAN;
+}
+
+/* Extra-block indices kept by v2_lean, gathered from the full 63-plane v2 block.
+ * MUST stay identical to _V2_LEAN_KEEP in encoding/features.py (Python twin). */
+static const int V2_LEAN_KEEP[FEAT_EXTRA_V2_LEAN] = {
+    10, 11, 12, 13, 14, 15,                          /* pins [10:16] */
+    34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45,  /* attacks_all+typed [34:48] */
+    46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58,  /* ..attacker_counts/hanging/cheaper/safe_checks/control [48:59] */
+};
 
 /* Attack maps + per-square attacker counts, harvested from the mobility
  * pass (index 0 = us, 1 = them; piece order P,N,B,R,Q,K).
@@ -733,6 +777,181 @@ static int feat_see_capture(
     return gain[0];
 }
 
+/* ================================================================
+ * v3 family fillers — each writes its block starting at ``base``.
+ * Shared by the single-family versions (base == 63) and the
+ * v3_attackmaps bundle (checks@63, xray@67, see@73).
+ * ================================================================ */
+
+/* v3_checks: 4 opponent-safe-check planes [base:base+4]. Mirror of the
+ * side-to-move safe checks [54:58]: squares an N/B/R/Q of THEIRS could check
+ * OUR king from, not attacked by us and not occupied by them. */
+static void feat_fill_opp_safe_checks(
+    uint64_t us_pieces[6], uint64_t them_occ, uint64_t occupied,
+    uint64_t all_us, int king_sq_us, int turn_white, int base,
+    float * restrict out
+) {
+    (void)us_pieces;
+    uint64_t ocheck_n = 0, ocheck_b = 0, ocheck_r = 0, ocheck_q = 0;
+    if (king_sq_us >= 0 && king_sq_us < 64) {
+        ocheck_n = FEAT_KNIGHT_ATTACKS[king_sq_us];
+        ocheck_b = feat_bishop_attacks(king_sq_us, occupied);
+        ocheck_r = feat_rook_attacks(king_sq_us, occupied);
+        ocheck_q = ocheck_b | ocheck_r;
+    }
+    uint64_t safe_opp = ~all_us & ~them_occ;
+    feat_bb_to_plane(&out[(base + 0) * 64], ocheck_n & safe_opp, turn_white);
+    feat_bb_to_plane(&out[(base + 1) * 64], ocheck_b & safe_opp, turn_white);
+    feat_bb_to_plane(&out[(base + 2) * 64], ocheck_r & safe_opp, turn_white);
+    feat_bb_to_plane(&out[(base + 3) * 64], ocheck_q & safe_opp, turn_white);
+}
+
+/* v3_xray: 6 per-slider-type x-ray attack planes [base:base+6]. Order:
+ * our B, R, Q then their B, R, Q. Queen x-ray = bishop-xray | rook-xray. */
+static void feat_fill_xray(
+    uint64_t us_pieces[6], uint64_t them_pieces[6], uint64_t occupied,
+    int turn_white, int base, float * restrict out
+) {
+    int idx = base;
+    for (int side = 0; side < 2; side++) {
+        uint64_t *cp = side == 0 ? us_pieces : them_pieces;
+        uint64_t xr_b = 0, xr_r = 0, xr_q = 0;
+        for (uint64_t m = cp[2]; m; m &= m - 1)  /* bishops */
+            xr_b |= feat_slider_xray(__builtin_ctzll(m), occupied, 1);
+        for (uint64_t m = cp[3]; m; m &= m - 1)  /* rooks */
+            xr_r |= feat_slider_xray(__builtin_ctzll(m), occupied, 0);
+        for (uint64_t m = cp[4]; m; m &= m - 1) {  /* queens */
+            int sq = __builtin_ctzll(m);
+            xr_q |= feat_slider_xray(sq, occupied, 1)
+                  | feat_slider_xray(sq, occupied, 0);
+        }
+        feat_bb_to_plane(&out[(idx++) * 64], xr_b, turn_white);
+        feat_bb_to_plane(&out[(idx++) * 64], xr_r, turn_white);
+        feat_bb_to_plane(&out[(idx++) * 64], xr_q, turn_white);
+    }
+}
+
+/* v3_see: 2 graded-SEE planes [base:base+2], normalized clip(see/8, -1, 1).
+ * [base] our pieces' SEE when the OPPONENT initiates (negated; <=0 = we lose),
+ * [base+1] their pieces' SEE when WE initiate (>=0 = we win). */
+static void feat_fill_see(
+    uint64_t us_pieces[6], uint64_t them_pieces[6],
+    uint64_t us_occ, uint64_t them_occ, uint64_t occupied,
+    int us_color, int them_color, int turn_white, int base,
+    float * restrict out
+) {
+    float *plane_us = &out[(base + 0) * 64];
+    float *plane_them = &out[(base + 1) * 64];
+    for (uint64_t m = us_occ; m; m &= m - 1) {
+        int sq = __builtin_ctzll(m);
+        if (!(feat_is_attacked_by(them_pieces, them_color, occupied, sq)))
+            continue;
+        int see = feat_see_capture(them_pieces, us_pieces, occupied,
+                                   them_color, sq);
+        float v = (float)(-see) / 8.0f;
+        if (v > 1.0f) v = 1.0f;
+        if (v < -1.0f) v = -1.0f;
+        if (v != 0.0f)
+            feat_value_to_plane_sq(plane_us, sq, v, turn_white);
+    }
+    for (uint64_t m = them_occ; m; m &= m - 1) {
+        int sq = __builtin_ctzll(m);
+        if (!(feat_is_attacked_by(us_pieces, us_color, occupied, sq)))
+            continue;
+        int see = feat_see_capture(us_pieces, them_pieces, occupied,
+                                   us_color, sq);
+        float v = (float)see / 8.0f;
+        if (v > 1.0f) v = 1.0f;
+        if (v < -1.0f) v = -1.0f;
+        if (v != 0.0f)
+            feat_value_to_plane_sq(plane_them, sq, v, turn_white);
+    }
+}
+
+/* v3_kingshelter: 5 king-safety planes [base:base+5], side-to-move oriented.
+ * Reuses feat_king_zone for the king-zone span and FEAT_BB_FILES for files.
+ *
+ *   [base+0] our king pawn-shield holes: the 3-file zone (king file ±1) one
+ *            rank ahead of our king (toward the enemy, clamped) lacking a
+ *            friendly pawn.
+ *   [base+1] their king pawn-shield holes (mirror).
+ *   [base+2] our king on an open / semi-open file or adjacent open file (no
+ *            friendly pawn on the king file or an adjacent file): king-zone
+ *            squares set when any of the three files is pawn-free.
+ *   [base+3] enemy heavy piece (R/Q) on our king's file or an adjacent file:
+ *            those rook/queen squares set.
+ *   [base+4] friendly heavy piece (R/Q) bearing on their king's file/adjacent
+ *            (mirror).
+ */
+static uint64_t feat_king_shield_holes(int king_sq, int color, uint64_t own_pawns) {
+    if (king_sq < 0 || king_sq > 63) return 0;
+    int kf = king_sq & 7, kr = king_sq >> 3;
+    int r1 = kr + (color ? 1 : -1);
+    if (r1 < 0 || r1 > 7) return 0;
+    uint64_t holes = 0;
+    for (int df = -1; df <= 1; df++) {
+        int f = kf + df;
+        if (f < 0 || f > 7) continue;
+        uint64_t bit = (uint64_t)1 << (r1 * 8 + f);
+        if (!(own_pawns & bit)) holes |= bit;
+    }
+    return holes;
+}
+
+/* File mask spanning the king file and its adjacent files (king-zone files). */
+static uint64_t feat_king_file_band(int king_sq) {
+    if (king_sq < 0 || king_sq > 63) return 0;
+    int kf = king_sq & 7;
+    uint64_t band = FEAT_BB_FILES[kf];
+    if (kf > 0) band |= FEAT_BB_FILES[kf - 1];
+    if (kf < 7) band |= FEAT_BB_FILES[kf + 1];
+    return band;
+}
+
+static void feat_fill_kingshelter(
+    uint64_t us_pieces[6], uint64_t them_pieces[6],
+    int king_sq_us, int king_sq_them,
+    int us_color, int them_color, int turn_white, int base,
+    float * restrict out
+) {
+    uint64_t us_pawns = us_pieces[0];
+    uint64_t them_pawns = them_pieces[0];
+
+    /* [base+0], [base+1] pawn-shield holes (us, them). */
+    feat_bb_to_plane(&out[(base + 0) * 64],
+                     feat_king_shield_holes(king_sq_us, us_color, us_pawns),
+                     turn_white);
+    feat_bb_to_plane(&out[(base + 1) * 64],
+                     feat_king_shield_holes(king_sq_them, them_color, them_pawns),
+                     turn_white);
+
+    /* [base+2] our king on/adjacent open file: set the king-zone squares when
+     * the king file or either adjacent file has no friendly pawn. */
+    uint64_t our_open = 0;
+    if (king_sq_us >= 0 && king_sq_us < 64) {
+        int kf = king_sq_us & 7;
+        int open_file = !(FEAT_BB_FILES[kf] & us_pawns);
+        if (kf > 0 && !(FEAT_BB_FILES[kf - 1] & us_pawns)) open_file = 1;
+        if (kf < 7 && !(FEAT_BB_FILES[kf + 1] & us_pawns)) open_file = 1;
+        if (open_file)
+            our_open = feat_king_zone(king_sq_us, us_color);
+    }
+    feat_bb_to_plane(&out[(base + 2) * 64], our_open, turn_white);
+
+    /* [base+3] enemy R/Q on our king's file/adjacent files (those R/Q squares). */
+    uint64_t them_heavy = them_pieces[3] | them_pieces[4];
+    feat_bb_to_plane(&out[(base + 3) * 64],
+                     them_heavy & feat_king_file_band(king_sq_us),
+                     turn_white);
+
+    /* [base+4] friendly R/Q on their king's file/adjacent files (mirror). */
+    uint64_t us_heavy = us_pieces[3] | us_pieces[4];
+    feat_bb_to_plane(&out[(base + 4) * 64],
+                     us_heavy & feat_king_file_band(king_sq_them),
+                     turn_white);
+    (void)them_color;
+}
+
 /* Threat planes [34:63] of the extra block. ``out`` is the extra-block
  * base pointer (planes are written at out + 34*64 onward, pre-zeroed). */
 static void compute_features_threats(
@@ -847,79 +1066,34 @@ static void compute_features_threats(
         }
     }
 
-    /* v3 families: both append at [63:...] but are SELECTED by n_extra/version.
-     * v3_checks (67) writes opponent-safe-checks [63:67]; v3_xray (69) writes
-     * per-slider x-ray attacks [63:69]. Exactly one runs (or neither for v2). */
+    /* v3 families: all append at [63:...] but are SELECTED by n_extra/version.
+     * The single-family versions write one block at base 63; the v3_attackmaps
+     * bundle (75) writes checks@63, xray@67, see@73. Exactly one branch runs
+     * (or none for v2). The block fillers are shared helpers above. */
     if (n_extra == FEAT_EXTRA_V3_CHECKS) {
-        /* [63:67] v3_checks: opponent's safe checks against OUR king (mirror of
-         * [54:58]). Squares an N/B/R/Q of THEIRS could check our king from
-         * (attacks projected from our king square at current occupancy), not
-         * attacked by us and not occupied by them. */
-        uint64_t ocheck_n = 0, ocheck_b = 0, ocheck_r = 0, ocheck_q = 0;
-        if (king_sq_us >= 0 && king_sq_us < 64) {
-            ocheck_n = FEAT_KNIGHT_ATTACKS[king_sq_us];
-            ocheck_b = feat_bishop_attacks(king_sq_us, occupied);
-            ocheck_r = feat_rook_attacks(king_sq_us, occupied);
-            ocheck_q = ocheck_b | ocheck_r;
-        }
-        uint64_t safe_opp = ~all_us & ~them_occ;
-        feat_bb_to_plane(&out[plane_idx++ * 64], ocheck_n & safe_opp, turn_white);
-        feat_bb_to_plane(&out[plane_idx++ * 64], ocheck_b & safe_opp, turn_white);
-        feat_bb_to_plane(&out[plane_idx++ * 64], ocheck_r & safe_opp, turn_white);
-        feat_bb_to_plane(&out[plane_idx++ * 64], ocheck_q & safe_opp, turn_white);
+        /* [63:67] v3_checks: opponent's safe checks against OUR king. */
+        feat_fill_opp_safe_checks(us_pieces, them_occ, occupied, all_us,
+                                  king_sq_us, turn_white, 63, out);
     } else if (n_extra == FEAT_EXTRA_V3_XRAY) {
-        /* [63:69] v3_xray: per-slider-type x-ray attacks (squares seen THROUGH
-         * the first blocker on each ray). Order: our B, R, Q then their B, R, Q.
-         * Queen x-ray = bishop-xray(queen sq) | rook-xray(queen sq). */
-        for (int side = 0; side < 2; side++) {
-            uint64_t *cp = side == 0 ? us_pieces : them_pieces;
-            uint64_t xr_b = 0, xr_r = 0, xr_q = 0;
-            for (uint64_t m = cp[2]; m; m &= m - 1)  /* bishops */
-                xr_b |= feat_slider_xray(__builtin_ctzll(m), occupied, 1);
-            for (uint64_t m = cp[3]; m; m &= m - 1)  /* rooks */
-                xr_r |= feat_slider_xray(__builtin_ctzll(m), occupied, 0);
-            for (uint64_t m = cp[4]; m; m &= m - 1) {  /* queens */
-                int sq = __builtin_ctzll(m);
-                xr_q |= feat_slider_xray(sq, occupied, 1)
-                      | feat_slider_xray(sq, occupied, 0);
-            }
-            feat_bb_to_plane(&out[plane_idx++ * 64], xr_b, turn_white);
-            feat_bb_to_plane(&out[plane_idx++ * 64], xr_r, turn_white);
-            feat_bb_to_plane(&out[plane_idx++ * 64], xr_q, turn_white);
-        }
+        /* [63:69] v3_xray: per-slider-type x-ray attacks. */
+        feat_fill_xray(us_pieces, them_pieces, occupied, turn_white, 63, out);
     } else if (n_extra == FEAT_EXTRA_V3_SEE) {
-        /* [63:65] v3_see: graded SEE, normalized clip(see/8, -1, 1).
-         * [63] our pieces' SEE when the OPPONENT initiates a capture (negated
-         *      to our perspective; <= 0 = we lose material).
-         * [64] their pieces' SEE when WE initiate (>= 0 = we win material). */
-        float *plane_us = &out[plane_idx++ * 64];
-        float *plane_them = &out[plane_idx++ * 64];
-        /* [63] iterate our occupied squares with an enemy attacker. */
-        for (uint64_t m = us_occ; m; m &= m - 1) {
-            int sq = __builtin_ctzll(m);
-            if (!(feat_is_attacked_by(them_pieces, them_color, occupied, sq)))
-                continue;
-            int see = feat_see_capture(them_pieces, us_pieces, occupied,
-                                       them_color, sq);
-            float v = (float)(-see) / 8.0f;
-            if (v > 1.0f) v = 1.0f;
-            if (v < -1.0f) v = -1.0f;
-            if (v != 0.0f)
-                feat_value_to_plane_sq(plane_us, sq, v, turn_white);
-        }
-        /* [64] iterate their occupied squares with one of our attackers. */
-        for (uint64_t m = them_occ; m; m &= m - 1) {
-            int sq = __builtin_ctzll(m);
-            if (!(feat_is_attacked_by(us_pieces, us_color, occupied, sq)))
-                continue;
-            int see = feat_see_capture(us_pieces, them_pieces, occupied,
-                                       us_color, sq);
-            float v = (float)see / 8.0f;
-            if (v > 1.0f) v = 1.0f;
-            if (v < -1.0f) v = -1.0f;
-            if (v != 0.0f)
-                feat_value_to_plane_sq(plane_them, sq, v, turn_white);
-        }
+        /* [63:65] v3_see: graded SEE. */
+        feat_fill_see(us_pieces, them_pieces, us_occ, them_occ, occupied,
+                      us_color, them_color, turn_white, 63, out);
+    } else if (n_extra == FEAT_EXTRA_V3_ATTACKMAPS) {
+        /* [63:75] v3_attackmaps bundle = checks[63:67] + xray[67:73] +
+         * see[73:75]. The union of the three single-family v3 blocks, each
+         * written into its own offset via the shared fillers. */
+        feat_fill_opp_safe_checks(us_pieces, them_occ, occupied, all_us,
+                                  king_sq_us, turn_white, 63, out);
+        feat_fill_xray(us_pieces, them_pieces, occupied, turn_white, 67, out);
+        feat_fill_see(us_pieces, them_pieces, us_occ, them_occ, occupied,
+                      us_color, them_color, turn_white, 73, out);
+    } else if (n_extra == FEAT_EXTRA_V3_KINGSHELTER) {
+        /* [63:68] v3_kingshelter: 5 king-safety planes. */
+        feat_fill_kingshelter(us_pieces, them_pieces, king_sq_us, king_sq_them,
+                              us_color, them_color, turn_white, 63, out);
     } else if (n_extra == FEAT_EXTRA_V3_PASSERS) {
         /* [63:71] v3_passers: passed-pawn quality, 4 planes per side
          * (us 63:67, them 67:71): rank-advancement, safe passer, blocked
@@ -991,6 +1165,21 @@ static void compute_features_ext(
     float * restrict out
 ) {
     init_tables_features();
+
+    /* v2_lean: compute the full v2 block into a temp buffer, then gather the
+     * kept planes. Bit-identical to the corresponding v2 planes; reuses the
+     * tested v2 path verbatim (mirrors features.py's _V2_LEAN_KEEP gather). */
+    if (n_extra == FEAT_EXTRA_V2_LEAN) {
+        float tmp[FEAT_EXTRA_V2 * 64];
+        memset(tmp, 0, sizeof(tmp));
+        compute_features_ext(us_pieces, them_pieces, occupied,
+                             king_sq_us, king_sq_them, turn_white, ep_square,
+                             FEAT_EXTRA_V2, tmp);
+        for (int i = 0; i < FEAT_EXTRA_V2_LEAN; i++) {
+            memcpy(&out[i * 64], &tmp[V2_LEAN_KEEP[i] * 64], 64 * sizeof(float));
+        }
+        return;
+    }
 
     uint64_t us_occ = 0, them_occ = 0;
     for (int i = 0; i < 6; i++) {

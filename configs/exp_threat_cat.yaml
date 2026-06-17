@@ -1,31 +1,22 @@
-# EXPERIMENTAL: continuous categorical value target — copy of pbt2_small.yaml
-# with selfplay.categorical_blend_frac > 0.
+# EXPERIMENTAL: threat-family input planes (v2_threats) — copy of pbt2_small.yaml
+# with model.input_extra_features: v2_threats (175 input planes = 112 LC0 + 63 extra).
 #
-# Rationale: the value_categorical head (32-bin HL-Gauss) is an auxiliary
-# distributional value channel (it does NOT feed MCTS — only `wdl` does). It is
-# currently trained on the ternary game outcome (scalar_v in {-1,0,+1},
-# finalize.py), so HL-Gauss degenerates to ~3 spikes and the head is largely
-# redundant with the `wdl` hard-outcome target while still drawing w_categorical
-# = 0.30 of the gradient. Blending the target toward SF's objective eval
-# expected score (W - L) makes it a genuinely continuous target that uses the 32
-# bins and carries a search-horizon signal distinct from the raw outcome
-# (the same intuition behind blending sf_wdl into the `wdl` head, which is
-# load-bearing per CLAUDE.md).
+# Evaluation protocol (docs/eval_protocol.md):
+#   1. Warm-start from the live v1 checkpoint (the tolerant loader zero-inits the
+#      29 new input-embed columns, so step-0 outputs are bit-identical to v1).
+#      Old replay shards load unchanged — with train.replay_upgrade_v1_planes the
+#      29 threat planes are recomputed from the stored planes at load time
+#      (replay/threat_upgrade.py); shards a decode can't validate fall back to
+#      zero-padding. For a permanent window switch, convert shards on disk once:
+#        PYTHONPATH=. python3 scripts/convert_shards_v2_threats.py <replay dir>
+#      (idempotent, atomic per shard; run while the consuming run is stopped).
+#   2. Train for a FIXED budget (same iterations as the v1 baseline window).
+#   3. Judge with scripts/arena_standard.py in matched_time mode vs the
+#      pre-change checkpoint (1000 games), plus matched_sims for the search-free
+#      delta. KILL THRESHOLD: < +15 Elo in matched_time → revert to v1.
 #
-# categorical_blend_frac = (1 - f)*outcome + f*sf_expected, default f = 0.0 (off,
-# byte-identical). This file sets f = 0.5; the head can't regress search because
-# it is auxiliary, so the only risk is wasted gradient if it's Elo-neutral.
-#
-# Sweep: categorical_blend_frac in {0.3, 0.5, 0.7}.
-# Offline screen first (cheap): the categorical target is rebuildable from the
-# stored hard outcome + sf_wdl, so set train.rebuild_categorical_target: true
-# (plus the categorical_blend_frac under test) in an offline_replay_epoch run to
-# recompute it on existing shards without fresh selfplay. Use that to screen out
-# losers, then live-run + arena the survivor (loss != Elo for an anti-engine).
-# Protocol (docs/eval_protocol.md): fixed-budget train, then
-# scripts/arena_standard.py --matched_sims vs the unblended checkpoint.
-# KEEP iff arena lands >= +5 Elo (95% CI excludes 0); KILL if within +/-5 Elo
-# (no point spending gradient on a neutral auxiliary) or negative.
+# Do NOT point production auto-resume at this config; the live checkpoint
+# stream stays v1 until the arena gate passes.
 #
 # PBT2 (PB2) search config — small model, 10 parallel trials on RTX 5090 (32 GB)
 #
@@ -45,7 +36,7 @@
 #   150 games × ~20-30 pos = ~3k-5k new samples → up to 15 training steps (256 batch)
 
 seed: 0
-work_dir: runs/exp_categorical_continuous  # Own work dir: never share tune/auto-resume state with production.
+work_dir: runs/exp_threat_planes  # Own work dir: never share tune/auto-resume state with the production run.
 device: cuda
 iterations: 750
 replay_window_start: 400000   # 2026-04-22 v4: was 20000 (truncated pool to 10/187 shards). Raised so salvage keeps all pool shards (~374k pos).
@@ -87,6 +78,7 @@ model:
   qkv_projection: split  # Split fused QKV for Aurora scope control; tolerant loader migrates old fused weights.
   use_deepnorm: true  # Epoch-4 candidate topology.
   policy_encoding: lc0_1858  # Keep production auto-resume compatible with the live compact-policy checkpoint stream.
+  input_extra_features: v2_threats  # EXPERIMENT: +29 threat planes appended after the v1 extra block.
   input_history_encoding: lc0_root_legacy_meta  # Switched live to epoch-6 candidate input; replay keeps recorded LC0-root planes.
   gradient_checkpointing: false
 
@@ -155,6 +147,7 @@ stockfish:
   # surprise. Airbag step is bounded by emergency_ease_step alone.
 
 selfplay:
+  categorical_blend_frac: 0.7
   games_per_iter: 3520   # 2026-05-28: +10% for steadier per-iter signal while replay grows slowly.
   games_per_iter_start: 3520   # match games_per_iter; ramp disabled. Live-reloadable.
   games_per_iter_ramp_iters: 0
@@ -246,7 +239,6 @@ selfplay:
 
   categorical_bins: 32
   hlgauss_sigma: 0.04
-  categorical_blend_frac: 0.5  # EXPERIMENT: blend categorical target toward SF eval (W-L). 0.0 in production.
   record_lc0_root_input: true  # Store alternate LC0-root x in new shards for later LC0-input fine-tune tests.
 
 train:
@@ -270,6 +262,7 @@ train:
   # With ~10k new positions/iter and buffer growing by 2500/iter, each position
   # survives ~50 iters in the buffer and gets trained ~5 times before eviction.
   no_amp: false
+  replay_upgrade_v1_planes: true  # Recompute (not zero-pad) the 29 threat planes for old 146-plane shards at load. Construction-only knob — restart required.
   feature_dropout_p: 0.10  # Fixed at 0.10 (not searched).
   resid_channel_dropout: 0.0  # Keep channel spreading on the explicit balance regularizer; dropout cost more eval loss offline.
   resid_channel_balance_weight: 0.0  # Disabled: offline sidecar .001/.003 did not improve loss or WDL.
@@ -370,7 +363,7 @@ tune:
   distributed_prefetch_shards: true
   distributed_async_test_eval: true
   distributed_async_test_eval_timeout_s: 120.0
-  distributed_worker_shared_cache_dir: /home/josh/projects/chess/runs/exp_categorical_continuous/server/worker_cache
+  distributed_worker_shared_cache_dir: /home/josh/projects/chess/runs/exp_threat_planes/server/worker_cache
   distributed_min_workers_per_trial: 1
   distributed_max_worker_delta_per_rebalance: 1
   distributed_wait_timeout_seconds: 720  # 2026-05-19: 600->720 to give current-model selfplay more time after lowering stale backlog target.
@@ -380,8 +373,8 @@ tune:
   distributed_server_port: 45453
   distributed_server_host: 0.0.0.0
   distributed_server_public_url: http://192.168.1.212:45453
-  distributed_server_root_override: /home/josh/projects/chess/runs/exp_categorical_continuous/server  # Isolated from production pbt2_small server/replay state.
-  tune_replay_root_override: /home/josh/projects/chess/runs/exp_categorical_continuous/replay
+  distributed_server_root_override: /home/josh/projects/chess/runs/exp_threat_planes/server
+  tune_replay_root_override: /home/josh/projects/chess/runs/exp_threat_planes/replay
 
   # Disk-backed replay buffer: keeps ~1 GB per trial instead of ~10 GB
   shuffle_buffer_size: 25000  # In-memory shuffle buffer (run26 value)

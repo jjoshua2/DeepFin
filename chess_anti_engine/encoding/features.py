@@ -18,6 +18,13 @@ Two versions exist, selected by ``model.input_extra_features``:
 - ``v3_passers``: v2_threats plus 8 passed-pawn-quality planes appended AFTER
   index 63 (4 per side). SEPARATE v3 family. Existing planes are never
   reordered.
+- ``v3_attackmaps``: v2_threats plus the UNION of three already-implemented v3
+  families — checks(4) [63:67] + xray(6) [67:73] + see(2) [73:75] = 12 extra
+  planes (75 total). Tests synergy of the three blocks; computed by calling the
+  exact same helpers as the standalone versions at the right offsets.
+- ``v3_kingshelter``: v2_threats plus 5 king-safety planes appended AFTER
+  index 63 (68 total): pawn-shield holes (us/them), king-on-open-file, and
+  enemy/friendly heavy-piece pressure on king files. SEPARATE v3 family.
 
 Plane layout (indices within the extra block; absolute index = 112 + idx):
 
@@ -62,6 +69,16 @@ Plane layout (indices within the extra block; absolute index = 112 + idx):
 |         |                       | passer (any piece on stop square), promotion path |
 |         |                       | controlled by enemy (any file-ahead square the    |
 |         |                       | enemy attacks). SEPARATE v3 family.               |
+| [63:75] | attackmaps bundle     | UNION of v3_checks [63:67] + v3_xray [67:73] +    |
+|         | (v3_attackmaps)       | v3_see [73:75]. Each sub-block is identical to    |
+|         |                       | the corresponding standalone v3 version's block.  |
+| [63:68] | king shelter          | side-to-move king safety: [63] our pawn-shield    |
+|         | (v3_kingshelter)      | holes (3-file zone 1 rank ahead, no friendly      |
+|         |                       | pawn), [64] their pawn-shield holes (mirror),     |
+|         |                       | [65] our king on/adjacent open file (king-zone    |
+|         |                       | squares set), [66] enemy R/Q on our king's        |
+|         |                       | file/adjacent, [67] friendly R/Q on their king's  |
+|         |                       | file/adjacent. SEPARATE v3 family.                |
 
 Semantics notes:
 - All planes are side-to-move oriented (``bitboards_to_planes(..., turn)``).
@@ -98,6 +115,15 @@ EXTRA_FEATURES_V3_CHECKS = "v3_checks"
 EXTRA_FEATURES_V3_XRAY = "v3_xray"
 EXTRA_FEATURES_V3_SEE = "v3_see"
 EXTRA_FEATURES_V3_PASSERS = "v3_passers"
+EXTRA_FEATURES_V3_ATTACKMAPS = "v3_attackmaps"
+EXTRA_FEATURES_V3_KINGSHELTER = "v3_kingshelter"
+# v2_lean: efficiency variant of v2_threats. Strict SUBSET of the v2 block —
+# keeps pins + the whole attack/threat block, drops the dead-weight classical
+# families (kingzone/pawnstruct/mobility/outposts) and the near-zero v2 pawn
+# planes (pawn_tension/pawn_storm). Validated unanimously by the 8-net ablation
+# audit (2026-06-16). Computed by gathering kept planes from the full v2 block,
+# so it is bit-identical to the corresponding v2 planes (see _V2_LEAN_KEEP).
+EXTRA_FEATURES_V2_LEAN = "v2_lean"
 EXTRA_FEATURE_VERSIONS = (
     EXTRA_FEATURES_V1,
     EXTRA_FEATURES_V2_THREATS,
@@ -105,6 +131,9 @@ EXTRA_FEATURE_VERSIONS = (
     EXTRA_FEATURES_V3_XRAY,
     EXTRA_FEATURES_V3_SEE,
     EXTRA_FEATURES_V3_PASSERS,
+    EXTRA_FEATURES_V3_ATTACKMAPS,
+    EXTRA_FEATURES_V3_KINGSHELTER,
+    EXTRA_FEATURES_V2_LEAN,
 )
 
 _EXTRA_FEATURE_PLANES = {
@@ -114,7 +143,16 @@ _EXTRA_FEATURE_PLANES = {
     EXTRA_FEATURES_V3_XRAY: 69,
     EXTRA_FEATURES_V3_SEE: 65,
     EXTRA_FEATURES_V3_PASSERS: 71,
+    EXTRA_FEATURES_V3_ATTACKMAPS: 75,
+    EXTRA_FEATURES_V3_KINGSHELTER: 68,
+    EXTRA_FEATURES_V2_LEAN: 31,
 }
+
+# Extra-block indices kept by v2_lean, gathered from the full 63-plane v2 block:
+# pins [10:16] + the v2 attack/threat families attacks_all..control [34:59].
+# MUST stay identical to V2_LEAN_KEEP in encoding/_features_impl.h (C twin).
+_V2_LEAN_KEEP = np.array(list(range(10, 16)) + list(range(34, 59)), dtype=np.intp)
+assert _V2_LEAN_KEEP.size == _EXTRA_FEATURE_PLANES[EXTRA_FEATURES_V2_LEAN]
 
 # Distinct plane counts are load-bearing: version_for_input_planes maps a total
 # plane count back to a version by first match, so two versions sharing a count
@@ -134,6 +172,8 @@ def normalize_extra_features_encoding(value: str | None) -> str:
         return EXTRA_FEATURES_V1
     if v in ("v2", "v2_threats"):
         return EXTRA_FEATURES_V2_THREATS
+    if v in ("v2_lean", "lean"):
+        return EXTRA_FEATURES_V2_LEAN
     if v in ("v3", "v3_checks"):
         return EXTRA_FEATURES_V3_CHECKS
     if v in ("v3_xray", "xray"):
@@ -142,6 +182,10 @@ def normalize_extra_features_encoding(value: str | None) -> str:
         return EXTRA_FEATURES_V3_SEE
     if v in ("v3_passers", "passers", "v3_passed"):
         return EXTRA_FEATURES_V3_PASSERS
+    if v in ("v3_attackmaps", "attackmaps", "v3_bundle", "v3_all"):
+        return EXTRA_FEATURES_V3_ATTACKMAPS
+    if v in ("v3_kingshelter", "kingshelter", "king_shelter", "v3_shelter"):
+        return EXTRA_FEATURES_V3_KINGSHELTER
     raise ValueError(
         f"unknown input_extra_features {value!r}; expected one of {EXTRA_FEATURE_VERSIONS}"
     )
@@ -908,13 +952,15 @@ def _fill_threat_planes(
 
 def _fill_opponent_safe_check_planes(
     board: chess.Board, *, turn: chess.Color, out: np.ndarray, accum: _AttackAccum,
+    base: int = 63,
 ) -> None:
-    """Fill the v3_checks planes out[63:67] — the OPPONENT's safe checks.
+    """Fill the v3_checks planes out[base:base+4] — the OPPONENT's safe checks.
 
     The mirror of the side-to-move safe-checks block in :func:`_fill_threat_planes`:
     squares an N/B/R/Q of THEIRS could check OUR king from (attacks projected
     FROM our king square at current occupancy), excluding squares we attack or
-    that they occupy. Side-to-move oriented like everything else.
+    that they occupy. Side-to-move oriented like everything else. ``base`` lets
+    the v3_attackmaps bundle place this block at an offset other than 63.
     """
     us, them = turn, not turn
     all_us = accum.union(us)
@@ -930,7 +976,7 @@ def _fill_opponent_safe_check_planes(
         check_r = _slider_attacks(king_sq_us, occ, diagonal=False)
         check_q = check_b | check_r
     safe_opp = ~all_us & ~them_occ & chess.BB_ALL
-    out[63:67] = bitboards_to_planes(
+    out[base:base + 4] = bitboards_to_planes(
         [check_n & safe_opp, check_b & safe_opp, check_r & safe_opp, check_q & safe_opp],
         turn=turn,
     )
@@ -967,18 +1013,19 @@ def _xray_union(board: chess.Board, color: chess.Color, occ: int) -> tuple[int, 
 
 
 def _fill_xray_planes(
-    board: chess.Board, *, turn: chess.Color, out: np.ndarray,
+    board: chess.Board, *, turn: chess.Color, out: np.ndarray, base: int = 63,
 ) -> None:
-    """Fill the v3_xray planes out[63:69] — per-slider-type x-ray attacks.
+    """Fill the v3_xray planes out[base:base+6] — per-slider-type x-ray attacks.
 
     Order: our bishop/rook/queen x-ray, then their bishop/rook/queen x-ray.
-    Side-to-move oriented like everything else.
+    Side-to-move oriented like everything else. ``base`` lets the v3_attackmaps
+    bundle place this block at an offset other than 63.
     """
     us, them = turn, not turn
     occ = int(board.occupied)
     us_b, us_r, us_q = _xray_union(board, us, occ)
     them_b, them_r, them_q = _xray_union(board, them, occ)
-    out[63:69] = bitboards_to_planes(
+    out[base:base + 6] = bitboards_to_planes(
         [us_b, us_r, us_q, them_b, them_r, them_q],
         turn=turn,
     )
@@ -1070,16 +1117,17 @@ def _see_capture(board: chess.Board, square: int, initiator: chess.Color) -> int
 
 
 def _fill_see_planes(
-    board: chess.Board, *, turn: chess.Color, out: np.ndarray,
+    board: chess.Board, *, turn: chess.Color, out: np.ndarray, base: int = 63,
 ) -> None:
-    """Fill the v3_see planes out[63:65] — graded SEE, side-to-move oriented.
+    """Fill the v3_see planes out[base:base+2] — graded SEE, side-to-move oriented.
 
-    [63] OUR pieces' SEE-when-captured: for each of our occupied squares with an
-         enemy attacker, the value the OPPONENT nets if THEY initiate, expressed
-         from OUR perspective (negated; <= 0 when we lose material).
-    [64] THEIR pieces' SEE-when-captured: same for their pieces if WE initiate
+    [base+0] OUR pieces' SEE-when-captured: for each of our occupied squares with
+         an enemy attacker, the value the OPPONENT nets if THEY initiate,
+         expressed from OUR perspective (negated; <= 0 when we lose material).
+    [base+1] THEIR pieces' SEE-when-captured: same for their pieces if WE initiate
          (>= 0 when we win material).
-    Both normalized clip(see/8, -1, 1).
+    Both normalized clip(see/8, -1, 1). ``base`` lets the v3_attackmaps bundle
+    place this block at an offset other than 63.
     """
     us, them = turn, not turn
     vals_us = np.zeros(64, dtype=np.float32)
@@ -1098,8 +1146,8 @@ def _fill_see_planes(
         see = _see_capture(board, sq, us)
         vals_them[sq] = np.clip(see / 8.0, -1.0, 1.0)
 
-    out[63] = _oriented_value_plane(vals_us, turn=turn)
-    out[64] = _oriented_value_plane(vals_them, turn=turn)
+    out[base] = _oriented_value_plane(vals_us, turn=turn)
+    out[base + 1] = _oriented_value_plane(vals_them, turn=turn)
 
 
 def _fill_passer_planes(
@@ -1152,6 +1200,102 @@ def _fill_passer_planes(
         )
 
 
+def _fill_attackmaps_planes(
+    board: chess.Board, *, turn: chess.Color, out: np.ndarray, accum: _AttackAccum,
+) -> None:
+    """Fill the v3_attackmaps bundle planes out[63:75] — the union of the three
+    already-implemented v3 families, each written into its own offset:
+
+      [63:67] v3_checks  opponent's safe N/B/R/Q checks against OUR king
+      [67:73] v3_xray    per-slider-type x-ray attacks (us B/R/Q, them B/R/Q)
+      [73:75] v3_see     graded SEE (our pieces captured, their pieces captured)
+
+    These call the exact same helpers as the standalone v3_checks / v3_xray /
+    v3_see versions, so the bundle is by construction the union of those blocks.
+    """
+    _fill_opponent_safe_check_planes(board, turn=turn, out=out, accum=accum, base=63)
+    _fill_xray_planes(board, turn=turn, out=out, base=67)
+    _fill_see_planes(board, turn=turn, out=out, base=73)
+
+
+def _king_shield_holes(board: chess.Board, color: chess.Color) -> int:
+    """Squares in the 3-file zone one rank ahead of ``color``'s king that lack a
+    friendly pawn (clamped to the board). The pawn-shield "holes"."""
+    king_sq = board.king(color)
+    if king_sq is None:
+        return 0
+    kf = chess.square_file(king_sq)
+    kr = chess.square_rank(king_sq)
+    r1 = kr + (1 if color == chess.WHITE else -1)
+    if not (0 <= r1 <= 7):
+        return 0
+    own_pawns = int(board.pieces_mask(chess.PAWN, color))
+    holes = 0
+    for df in (-1, 0, 1):
+        f = kf + df
+        if not (0 <= f <= 7):
+            continue
+        bit = int(chess.BB_SQUARES[chess.square(f, r1)])
+        if not (own_pawns & bit):
+            holes |= bit
+    return holes
+
+
+def _king_file_band(king_sq: int | None) -> int:
+    """File mask spanning the king file and its adjacent files (king-zone files)."""
+    if king_sq is None:
+        return 0
+    kf = chess.square_file(king_sq)
+    band = int(chess.BB_FILES[kf])
+    if kf > 0:
+        band |= int(chess.BB_FILES[kf - 1])
+    if kf < 7:
+        band |= int(chess.BB_FILES[kf + 1])
+    return band
+
+
+def _fill_kingshelter_planes(
+    board: chess.Board, *, turn: chess.Color, out: np.ndarray,
+) -> None:
+    """Fill the v3_kingshelter planes out[63:68] — 5 king-safety planes,
+    side-to-move oriented:
+
+      [63] our king pawn-shield holes (3-file zone one rank ahead, no friendly pawn)
+      [64] their king pawn-shield holes (mirror)
+      [65] our king on/adjacent open file: king-zone squares set when the king
+           file or an adjacent file has no friendly pawn
+      [66] enemy R/Q on our king's file or adjacent file (those R/Q squares)
+      [67] friendly R/Q on their king's file or adjacent file (mirror)
+    """
+    us, them = turn, not turn
+
+    holes_us = _king_shield_holes(board, us)
+    holes_them = _king_shield_holes(board, them)
+
+    king_us = board.king(us)
+    own_open = 0
+    if king_us is not None:
+        kf = chess.square_file(king_us)
+        us_pawns = int(board.pieces_mask(chess.PAWN, us))
+        open_file = not (int(chess.BB_FILES[kf]) & us_pawns)
+        if kf > 0 and not (int(chess.BB_FILES[kf - 1]) & us_pawns):
+            open_file = True
+        if kf < 7 and not (int(chess.BB_FILES[kf + 1]) & us_pawns):
+            open_file = True
+        if open_file:
+            own_open = _king_zone(board, us)
+
+    them_heavy = int(board.pieces_mask(chess.ROOK, them) | board.pieces_mask(chess.QUEEN, them))
+    us_heavy = int(board.pieces_mask(chess.ROOK, us) | board.pieces_mask(chess.QUEEN, us))
+    enemy_on_our_king = them_heavy & _king_file_band(board.king(us))
+    friendly_on_their_king = us_heavy & _king_file_band(board.king(them))
+
+    out[63:68] = bitboards_to_planes(
+        [holes_us, holes_them, own_open, enemy_on_our_king, friendly_on_their_king],
+        turn=turn,
+    )
+
+
 def extra_feature_planes_fast(
     board: chess.Board, *, version: str | None = None,
 ) -> np.ndarray:
@@ -1164,6 +1308,14 @@ def extra_feature_planes_fast(
     turn = board.turn
     us, them = turn, not turn
     n_extra = extra_feature_plane_count(version)
+
+    # v2_lean is a strict subset of v2: compute the full (tested) v2 block, then
+    # gather the kept planes. Guarantees bit-parity with the v2 planes and reuses
+    # the v2 compute path verbatim — no separate feature math to keep in sync.
+    if n_extra == 31:  # v2_lean
+        full_v2 = extra_feature_planes_fast(board, version=EXTRA_FEATURES_V2_THREATS)
+        return np.ascontiguousarray(full_v2[_V2_LEAN_KEEP])
+
     out = np.zeros((n_extra, 8, 8), dtype=np.float32)
 
     bbs: list[int] = []
@@ -1191,4 +1343,8 @@ def extra_feature_planes_fast(
             _fill_see_planes(board, turn=turn, out=out)
         elif n_extra == 71:  # v3_passers: passed-pawn quality at [63:71]
             _fill_passer_planes(board, turn=turn, out=out)
+        elif n_extra == 75:  # v3_attackmaps: checks+xray+see bundle at [63:75]
+            _fill_attackmaps_planes(board, turn=turn, out=out, accum=accum)
+        elif n_extra == 68:  # v3_kingshelter: king-safety planes at [63:68]
+            _fill_kingshelter_planes(board, turn=turn, out=out)
     return out

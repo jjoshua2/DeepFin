@@ -64,6 +64,36 @@ class GumbelConfig:
     c_scale: float = 0.1
     c_puct: float = 2.5
     fpu_reduction: float = 1.2
+    # Exponent on max_visit in the value-transform scale q_scale =
+    # c_scale*(c_visit + max_visit**q_visit_exp). 1.0 = standard linear Gumbel
+    # (default). <1 makes search-Q trust grow sublinearly with depth so the
+    # optimal c_scale is less sim-count-dependent (linear over-trusts at high sims).
+    q_visit_exp: float = 1.0
+    # When True, the per-node descent value-transform scales by the ROOT's max
+    # child-visit (global/search-size) instead of the local node's max_visit, so
+    # q_scale is uniform across the tree. Pairs with q_visit_exp<1 to make the
+    # optimal c_scale sim-invariant (avoids the low-visit-node floor inflation).
+    # C path only (run_gumbel_root_many_c); default False = legacy local behavior.
+    q_global_scale: bool = False
+    # Decoupled (additive) value-transform floor. When >= 0:
+    #   q_scale = q_visit_floor + c_scale * max_visit**q_visit_exp
+    # instead of the legacy   c_scale * (c_visit + max_visit**q_visit_exp),
+    # whose floor (c_scale*c_visit) scales WITH c_scale. Decoupling lets us raise
+    # c_scale (to enable sublinear q_visit_exp) without inflating the early-round
+    # floor that over-trusts noisy Q at high sims. C path only; < 0 = legacy.
+    q_visit_floor: float = -1.0
+    # Sequential-halving divisor: each round keeps ceil(n_cands/halving_div).
+    # 2 = standard halving (keep top half; default). 3/4 = more aggressive
+    # elimination (fewer rounds, visits concentrate on survivors sooner).
+    # C path only (run_gumbel_root_many_c).
+    halving_div: int = 2
+    # Root-halving c_visit override (value-transform floor at the root sequential-
+    # halving site only; descent keeps c_visit). Root and descent want different
+    # floors: a large root floor (~670) makes one c_scale fit every sim count's
+    # root q_scale, while a small descent floor (c_visit~50) keeps deep subtrees
+    # from over-trusting Q. >= 0 sets the root floor; < 0 (default) = use c_visit
+    # at both sites (legacy). C path only (run_gumbel_root_many_c).
+    c_visit_root: float = -1.0
     full_tree: bool = True
     add_noise: bool = True  # Backward-compatible gate; use gumbel_scale for partial noise.
     gumbel_scale: float = 1.0

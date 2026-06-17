@@ -1,0 +1,12 @@
+2026/06/15 21:24:22.091 WARNING Config file cheese.ini not found, using default parameters
+2026/06/15 21:24:22.091 INFO Cheese 3.2.1 64 bits popcount pext 
+2026/06/15 21:24:22.091 INFO Compiled on Feb  3 2024 at 11:12:41
+2026/06/15 21:24:22.091 INFO Compiled by GCC 11.4.0
+2026/06/15 21:24:22.092 INFO using YBWC
+2026/06/15 21:24:22.092 INFO using protocol UCI
+2026/06/15 21:24:22.092 INFO main hash table size : 32 Mb
+2026/06/15 21:24:22.109 INFO Pawns hash table size : 2048 Kb by thread
+2026/06/15 21:24:22.111 INFO set engine strength to maximum
+2026/06/15 21:24:22.111 INFO Using 1 threads
+2026/06/15 21:24:22.113 INFO tablebases not used
+2026/06/15 21:24:22.116 INFO End.

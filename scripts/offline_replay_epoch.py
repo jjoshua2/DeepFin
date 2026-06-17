@@ -400,17 +400,23 @@ def _normalize_x_planes_to_target(
     zero-padded (silent signal loss for v3 training).
     """
     target = int(target_planes)
-    if target <= V1_INPUT_PLANES:
-        # v1 model: nothing to recompute; pad below handles narrower shards.
+    if target == V1_INPUT_PLANES:
+        # v1 model (exactly 146): nothing to recompute; pad below handles
+        # narrower shards. NOTE: a target BELOW 146 is not necessarily v1 —
+        # v2_lean is 143 yet a real version that DOES need the extra-block
+        # recompute, so only the exact v1 width disables it (the upgrade itself
+        # is still gated on _is_known_version_width(target) below).
         upgrade_v1_planes = False
     out = arrs
     stored = int(np.asarray(arrs["x"]).shape[1])
-    # stored > target is a config error handled (raised) by the pad loop below.
-    # Equal width is NOT a passthrough: upgrade_arrays_to_planes repairs rows
-    # the pre-upgrade zero-pad path persisted at the target width with an
-    # all-zero extra block (native chunks pass through cheaply via its all-zero
-    # gate), so route stored <= target through it.
-    if upgrade_v1_planes and stored <= target and _is_known_version_width(target):
+    # Route any width MISMATCH through upgrade_arrays_to_planes when the target is
+    # a known version: it recomputes the extra block from the 112 LC0 base (reads
+    # only planes < 146), so it handles BOTH upgrades (stored < target, e.g.
+    # 146->175) AND downgrades (stored > target, e.g. 146/175->143 for v2_lean) —
+    # it never truncates. Equal width is also routed (repairs zero-padded rows).
+    # Only a mismatch the upgrade can't resolve falls to the truncation guard /
+    # pad loop below.
+    if upgrade_v1_planes and stored != target and _is_known_version_width(target):
         try:
             out, _stats = upgrade_arrays_to_planes(
                 arrs, target, history_encoding=history_encoding,

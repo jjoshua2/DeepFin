@@ -961,6 +961,36 @@ typedef struct {
     double c_visit;
     double c_puct;
     double fpu_reduction;
+    /* Exponent on max_visit in the value-transform scale:
+     *   q_scale = c_scale * (c_visit + max_visit^q_visit_exp)
+     * 1.0 = the standard linear Gumbel form (default, bit-identical). <1 makes
+     * the search-Q trust grow SUBLINEARLY with depth, so the optimal c_scale is
+     * less sim-count-dependent (the linear form over-trusts Q at high sims). */
+    double q_visit_exp;
+    /* When 1, the per-node DESCENT value-transform scales by the ROOT's max
+     * child-visit (a global/search-size quantity) instead of the local node's
+     * max_visit, so q_scale is uniform across the tree (set by search depth, not
+     * local visit count). Removes the low-visit-node floor inflation that breaks
+     * sim-invariance when c_scale is raised under sublinear q_visit_exp. 0 =
+     * legacy per-node-local behavior (default). Root scoring is unaffected. */
+    int q_global_scale;
+    /* Root-halving c_visit override. The value-transform floor (c_scale*c_visit)
+     * at the ROOT sequential-halving site (gss_score_and_halve) only — descent
+     * keeps the plain c_visit. The root and descent want DIFFERENT floors: the
+     * root needs a large floor so low-sim / early-round candidate selection
+     * trusts the value head (one c_visit_root fits every sim count's root
+     * q_scale), while descent wants a small floor so deep subtrees aren't
+     * over-trusted. >= 0 sets the root floor; < 0 (default) = use c_visit at
+     * both sites (legacy, bit-identical). */
+    double c_visit_root;
+    /* Decoupled (additive) value-transform floor. When >= 0:
+     *   q_scale = q_visit_floor + c_scale * max_visit^q_visit_exp
+     * instead of the legacy   c_scale * (c_visit + max_visit^q_visit_exp),
+     * whose floor (c_scale*c_visit) scales WITH c_scale. Decoupling lets us
+     * raise c_scale (to enable sublinear q_visit_exp) without inflating the
+     * early-round / low-visit floor that over-trusts noisy Q. < 0 = legacy
+     * coupled-floor behavior (default). */
+    double q_visit_floor;
     int full_tree;
     /* Virtual-loss weight: when >0, in-flight walkers along a node's path
      * are treated as visits with a penalty (N += vl, W += vl per unit). Keeps
@@ -1063,6 +1093,12 @@ typedef struct {
     /* Configuration */
     int32_t n_boards;
     GumbelSelectParams sel;
+    /* Sequential-halving divisor: each round keeps ceil(n_cands / halving_div)
+     * candidates and rounds_left counts reductions-to-1 by the same divisor.
+     * 2 = standard halving (keep top half; default). 3/4 = more aggressive
+     * elimination (keep top 1/3, 1/4) — fewer rounds, visits concentrate on
+     * survivors sooner, which also reshapes the root max_visit profile. */
+    int32_t halving_div;
 
     /* Per-board state (owned by this struct) */
     int32_t *root_ids;           /* [n_boards] */
@@ -1147,9 +1183,10 @@ static int32_t gss_begin_round(GumbelSimState *g, const TreeData *t) {
         if (rem_count <= 1) {
             g->visits_per_action[i] = g->budget_remaining[i];
         } else {
+            int32_t div = g->halving_div;
             int32_t rounds_left = 0;
             int32_t tmp = rem_count;
-            while (tmp > 1) { rounds_left++; tmp = (tmp + 1) / 2; }
+            while (tmp > 1) { rounds_left++; tmp = (tmp + div - 1) / div; }
             int32_t vpa = g->budget_remaining[i] / (rem_count * rounds_left);
             if (vpa < 1) vpa = 1;
             g->visits_per_action[i] = vpa;
@@ -1222,7 +1259,12 @@ static void gss_score_and_halve(GumbelSimState *g, TreeData *t) {
             if (q > max_q) max_q = q;
         }
         double q_denom = fmax(max_q - min_q, 1e-8);
-        double q_scale = g->sel.c_scale * (g->sel.c_visit + (double)max_visit);
+        double mv_term = (g->sel.q_visit_exp == 1.0)
+            ? (double)max_visit : pow((double)max_visit, g->sel.q_visit_exp);
+        double cvr = (g->sel.c_visit_root >= 0.0) ? g->sel.c_visit_root : g->sel.c_visit;
+        double q_scale = (g->sel.q_visit_floor >= 0.0)
+            ? (g->sel.q_visit_floor + g->sel.c_scale * mv_term)
+            : g->sel.c_scale * (cvr + mv_term);
 
         int32_t coff = g->cands_offset[bi];
         double scores_buf[GSS_MAX_CANDS];
@@ -1242,9 +1284,12 @@ static void gss_score_and_halve(GumbelSimState *g, TreeData *t) {
             scores[ci] = g->gumbels[bi * GSS_POLICY_SIZE + action] + log_prior + q_transformed;
         }
 
-        /* Simple selection sort to find top half (n_cands is small, <=12) */
-        int32_t keep = (n_cands + 1) / 2;
+        /* Selection sort for the top 1/halving_div (n_cands is small, <=12).
+         * div=2 => top half (standard sequential halving). */
+        int32_t div = g->halving_div;
+        int32_t keep = (n_cands + div - 1) / div;
         if (keep < 1) keep = 1;
+        if (keep >= n_cands) keep = n_cands - 1;  /* guarantee progress */
         for (int32_t k = 0; k < keep; k++) {
             int32_t best = k;
             for (int32_t j = k + 1; j < n_cands; j++) {
@@ -1973,12 +2018,11 @@ static PyObject *MCTSTree_walker_descend_puct(MCTSTreeObject *self, PyObject *ar
     PyArrayObject *enc_arr = FROMANY_4D_RW(enc_obj, NPY_FLOAT32);
     if (!enc_arr) return NULL;
     if (PyArray_DIM(enc_arr, 0) < 1 ||
-        (PyArray_DIM(enc_arr, 1) != 112 + FEAT_EXTRA_V1 &&
-         PyArray_DIM(enc_arr, 1) != 112 + FEAT_EXTRA_V2) ||
+        !feat_extra_is_supported((int)PyArray_DIM(enc_arr, 1) - 112) ||
         PyArray_DIM(enc_arr, 2) != 8 ||
         PyArray_DIM(enc_arr, 3) != 8) {
         Py_DECREF(enc_arr);
-        PyErr_SetString(PyExc_ValueError, "enc_out must be shape (>=1, 146 or 175, 8, 8) float32");
+        PyErr_SetString(PyExc_ValueError, "enc_out must be shape (>=1, 112 + a supported extra-feature width, 8, 8) float32");
         return NULL;
     }
     int enc_n_extra = (int)PyArray_DIM(enc_arr, 1) - 112;
@@ -2271,8 +2315,7 @@ static PyObject *MCTSTree_batch_descend_puct(MCTSTreeObject *self, PyObject *arg
         return NULL;
     }
     if (PyArray_DIM(enc_arr, 0) < n_leaves ||
-        (PyArray_DIM(enc_arr, 1) != 112 + FEAT_EXTRA_V1 &&
-         PyArray_DIM(enc_arr, 1) != 112 + FEAT_EXTRA_V2) ||
+        !feat_extra_is_supported((int)PyArray_DIM(enc_arr, 1) - 112) ||
         PyArray_DIM(enc_arr, 2) != 8 ||
         PyArray_DIM(enc_arr, 3) != 8 ||
         PyArray_DIM(leaf_ids_arr, 0) < n_leaves ||
@@ -2563,7 +2606,8 @@ static void softmax_inplace(double *arr, int n) {
  * penalty on Q) so concurrent walkers diverge. */
 static int32_t tree_gumbel_select_child(const TreeData *t, int32_t node_id,
                                          double c_scale, double c_visit,
-                                         int vloss_weight) {
+                                         double q_visit_exp, int32_t global_max_visit,
+                                         double q_visit_floor, int vloss_weight) {
     int32_t n_ch = t->num_children[node_id];
     int32_t off = t->children_offset[node_id];
     if (n_ch <= 0) return 0;
@@ -2655,7 +2699,15 @@ static int32_t tree_gumbel_select_child(const TreeData *t, int32_t node_id,
         if (cq > max_q) max_q = cq;
     }
     double q_denom = fmax(max_q - min_q, 1e-8);
-    double q_scale = c_scale * (c_visit + (double)max_visit);
+    /* Global-scale mode: use the root's max-visit (passed in) instead of this
+     * node's local max_visit, so deep low-visit nodes don't collapse to the
+     * c_scale*c_visit floor. global_max_visit<=0 keeps legacy local behavior. */
+    int32_t mv_eff = (global_max_visit > 0) ? global_max_visit : max_visit;
+    double mv_term = (q_visit_exp == 1.0)
+        ? (double)mv_eff : pow((double)mv_eff, q_visit_exp);
+    double q_scale = (q_visit_floor >= 0.0)
+        ? (q_visit_floor + c_scale * mv_term)
+        : c_scale * (c_visit + mv_term);
     double inv_total = 1.0 / (1.0 + (double)total_visits);
 
     /* Fuse score-compute with softmax-max tracking. Excluded slots get
@@ -2716,6 +2768,15 @@ static int32_t tree_gumbel_collect_leaf(const TreeData *t, int32_t root_id,
 
     int32_t n_ch = t->num_children[root_id];
     int32_t off = t->children_offset[root_id];
+    /* Global-scale mode: the ROOT's max child-visit, fed to every descent node's
+     * value-transform so q_scale is uniform across the tree (search-size driven). */
+    int32_t root_max_visit = 0;
+    if (sel->q_global_scale) {
+        for (int32_t i = 0; i < n_ch; i++) {
+            int32_t cn = t->N[t->child_node[off + i]];
+            if (cn > root_max_visit) root_max_visit = cn;
+        }
+    }
     int32_t child_id = -1;
     for (int32_t i = 0; i < n_ch; i++) {
         if (t->child_action[off + i] == forced_action) {
@@ -2760,7 +2821,9 @@ static int32_t tree_gumbel_collect_leaf(const TreeData *t, int32_t root_id,
             slot = best_prior_slot;
         } else if (sel->full_tree) {
             slot = tree_gumbel_select_child(t, node, sel->c_scale, sel->c_visit,
-                                            sel->vloss_weight);
+                                            sel->q_visit_exp,
+                                            sel->q_global_scale ? root_max_visit : 0,
+                                            sel->q_visit_floor, sel->vloss_weight);
         } else {
             slot = tree_select_child(t, node, sel->c_puct, sel->fpu_reduction,
                                      sel->vloss_weight, VLOSS_MODE_LEGACY);
@@ -3195,7 +3258,7 @@ static PyObject *MCTSTree_batch_wdl_to_q(MCTSTreeObject *self, PyObject *args) {
  * features; n_extra = 34 for v1 or 63 for v2_threats).
  * Writes into a pre-allocated buffer — no Python/numpy allocation.
  */
-#define ENC_PLANES_MAX (112 + FEAT_EXTRA_V2)
+#define ENC_PLANES_MAX (112 + FEAT_EXTRA_MAX)
 
 static void cboard_encode_planes_into_ex(const CBoard *b, float * restrict out, int n_extra, int feat_prezeroed) {
     /* Targeted zeroing instead of a full memset.
@@ -3296,13 +3359,19 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
     int target_batch = 0;  /* 0 => use GSS_GPU_BATCH default in gss_step */
     int input_history_lc0_root = 0;
     PyObject *rel_buf_obj = Py_None;
+    double q_visit_exp = 1.0;  /* optional; 1.0 = standard linear Gumbel value-transform */
+    int q_global_scale = 0;    /* optional; 1 = descent scales by root max_visit, not local */
+    double q_visit_floor = -1.0; /* optional; >=0 = additive decoupled floor (see GumbelSelectParams) */
+    int halving_div = 2;         /* optional; sequential-halving divisor (2 = keep top half) */
+    double c_visit_root = -1.0;  /* optional; >=0 = root-halving c_visit override (see GumbelSelectParams) */
 
-    if (!PyArg_ParseTuple(args, "OOOOOOOddddpO|iiiO",
+    if (!PyArg_ParseTuple(args, "OOOOOOOddddpO|iiiOdidid",
                           &root_cbs_list, &root_ids_obj, &remaining_list,
                           &gumbels_list, &priors_list, &budget_obj, &root_qs_obj,
                           &c_scale, &c_visit, &c_puct, &fpu_reduction, &full_tree,
                           &enc_buf_obj, &vloss_weight, &target_batch, &input_history_lc0_root,
-                          &rel_buf_obj))
+                          &rel_buf_obj, &q_visit_exp, &q_global_scale, &q_visit_floor,
+                          &halving_div, &c_visit_root))
         return NULL;
 
     /* Validate list args before any indexing — PyList_GET_ITEM has no
@@ -3359,14 +3428,13 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
             "root_ids/budget/root_qs must have at least n_boards elements");
         return NULL;
     }
-    if ((PyArray_DIM(enc_arr, 1) != 112 + FEAT_EXTRA_V1 &&
-         PyArray_DIM(enc_arr, 1) != 112 + FEAT_EXTRA_V2) ||
+    if (!feat_extra_is_supported((int)PyArray_DIM(enc_arr, 1) - 112) ||
         PyArray_DIM(enc_arr, 2) != 8 ||
         PyArray_DIM(enc_arr, 3) != 8) {
         Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
         Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
         PyErr_SetString(PyExc_ValueError,
-            "enc_buf must have shape (>=N, 146 or 175, 8, 8)");
+            "enc_buf must have shape (>=N, 112 + a supported extra-feature width, 8, 8)");
         return NULL;
     }
     int n_extra_planes = (int)PyArray_DIM(enc_arr, 1) - 112;
@@ -3381,8 +3449,13 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
     g->sel.c_visit = c_visit;
     g->sel.c_puct = c_puct;
     g->sel.fpu_reduction = fpu_reduction;
+    g->sel.q_visit_exp = (q_visit_exp > 0.0) ? q_visit_exp : 1.0;
+    g->sel.q_global_scale = q_global_scale ? 1 : 0;
+    g->sel.q_visit_floor = q_visit_floor;
+    g->sel.c_visit_root = c_visit_root;
     g->sel.full_tree = full_tree;
     g->sel.vloss_weight = (vloss_weight > 0) ? vloss_weight : 0;
+    g->halving_div = (halving_div >= 2) ? halving_div : 2;
     g->allocated = 1;
 
     g->root_ids = (int32_t *)malloc(n_boards * sizeof(int32_t));
@@ -4043,10 +4116,11 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
                           &df_enabled, &df_q_weight, &df_pol_scale, &df_min, &df_slope,
                           &input_history_lc0_root, &n_extra, &with_relations))
         return NULL;
-    if (n_extra != FEAT_EXTRA_V1 && n_extra != FEAT_EXTRA_V2) {
+    if (!feat_extra_is_supported(n_extra)) {
         PyErr_Format(PyExc_ValueError,
-                     "n_extra must be %d (v1) or %d (v2_threats), got %d",
-                     FEAT_EXTRA_V1, FEAT_EXTRA_V2, n_extra);
+                     "n_extra must be a supported extra-feature width "
+                     "(one of the registered FEAT_EXTRA_* versions), got %d",
+                     n_extra);
         return NULL;
     }
 
@@ -4370,12 +4444,11 @@ static PyObject *py_batch_encode_146(PyObject *self, PyObject *args) {
 
     /* Verify output array is large enough */
     if (PyArray_DIM(out_arr, 0) < n ||
-        (PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V1 &&
-         PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V2) ||
+        !feat_extra_is_supported((int)PyArray_DIM(out_arr, 1) - 112) ||
         PyArray_DIM(out_arr, 2) != 8 || PyArray_DIM(out_arr, 3) != 8) {
         Py_DECREF(out_arr);
         PyErr_SetString(PyExc_ValueError,
-            "out_array must have shape (>=N, 146 or 175, 8, 8)");
+            "out_array must have shape (>=N, 112 + a supported extra-feature width, 8, 8)");
         return NULL;
     }
     int n_extra = (int)PyArray_DIM(out_arr, 1) - 112;
@@ -4425,12 +4498,11 @@ static PyObject *py_batch_encode_146_lc0_root(PyObject *self, PyObject *args) {
     if (n <= 0) { Py_DECREF(out_arr); Py_RETURN_NONE; }
 
     if (PyArray_DIM(out_arr, 0) < n ||
-        (PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V1 &&
-         PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V2) ||
+        !feat_extra_is_supported((int)PyArray_DIM(out_arr, 1) - 112) ||
         PyArray_DIM(out_arr, 2) != 8 || PyArray_DIM(out_arr, 3) != 8) {
         Py_DECREF(out_arr);
         PyErr_SetString(PyExc_ValueError,
-            "out_array must have shape (>=N, 146 or 175, 8, 8)");
+            "out_array must have shape (>=N, 112 + a supported extra-feature width, 8, 8)");
         return NULL;
     }
     int n_extra = (int)PyArray_DIM(out_arr, 1) - 112;
@@ -4477,12 +4549,11 @@ static PyObject *py_batch_encode_146_lc0_root_legacy_meta(PyObject *self, PyObje
     if (n <= 0) { Py_DECREF(out_arr); Py_RETURN_NONE; }
 
     if (PyArray_DIM(out_arr, 0) < n ||
-        (PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V1 &&
-         PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V2) ||
+        !feat_extra_is_supported((int)PyArray_DIM(out_arr, 1) - 112) ||
         PyArray_DIM(out_arr, 2) != 8 || PyArray_DIM(out_arr, 3) != 8) {
         Py_DECREF(out_arr);
         PyErr_SetString(PyExc_ValueError,
-            "out_array must have shape (>=N, 146 or 175, 8, 8)");
+            "out_array must have shape (>=N, 112 + a supported extra-feature width, 8, 8)");
         return NULL;
     }
     int n_extra = (int)PyArray_DIM(out_arr, 1) - 112;
@@ -4532,12 +4603,11 @@ static PyObject *py_batch_encode_146_bf16(PyObject *self, PyObject *args) {
     if (n <= 0) { Py_DECREF(out_arr); Py_RETURN_NONE; }
 
     if (PyArray_DIM(out_arr, 0) < n ||
-        (PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V1 &&
-         PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V2) ||
+        !feat_extra_is_supported((int)PyArray_DIM(out_arr, 1) - 112) ||
         PyArray_DIM(out_arr, 2) != 8 || PyArray_DIM(out_arr, 3) != 8) {
         Py_DECREF(out_arr);
         PyErr_SetString(PyExc_ValueError,
-            "out_array must have shape (>=N, 146 or 175, 8, 8)");
+            "out_array must have shape (>=N, 112 + a supported extra-feature width, 8, 8)");
         return NULL;
     }
     int n_extra = (int)PyArray_DIM(out_arr, 1) - 112;
@@ -4584,12 +4654,11 @@ static PyObject *py_batch_encode_146_lc0_root_bf16(PyObject *self, PyObject *arg
     if (n <= 0) { Py_DECREF(out_arr); Py_RETURN_NONE; }
 
     if (PyArray_DIM(out_arr, 0) < n ||
-        (PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V1 &&
-         PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V2) ||
+        !feat_extra_is_supported((int)PyArray_DIM(out_arr, 1) - 112) ||
         PyArray_DIM(out_arr, 2) != 8 || PyArray_DIM(out_arr, 3) != 8) {
         Py_DECREF(out_arr);
         PyErr_SetString(PyExc_ValueError,
-            "out_array must have shape (>=N, 146 or 175, 8, 8)");
+            "out_array must have shape (>=N, 112 + a supported extra-feature width, 8, 8)");
         return NULL;
     }
     int n_extra = (int)PyArray_DIM(out_arr, 1) - 112;
@@ -4636,12 +4705,11 @@ static PyObject *py_batch_encode_146_lc0_root_legacy_meta_bf16(PyObject *self, P
     if (n <= 0) { Py_DECREF(out_arr); Py_RETURN_NONE; }
 
     if (PyArray_DIM(out_arr, 0) < n ||
-        (PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V1 &&
-         PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V2) ||
+        !feat_extra_is_supported((int)PyArray_DIM(out_arr, 1) - 112) ||
         PyArray_DIM(out_arr, 2) != 8 || PyArray_DIM(out_arr, 3) != 8) {
         Py_DECREF(out_arr);
         PyErr_SetString(PyExc_ValueError,
-            "out_array must have shape (>=N, 146 or 175, 8, 8)");
+            "out_array must have shape (>=N, 112 + a supported extra-feature width, 8, 8)");
         return NULL;
     }
     int n_extra = (int)PyArray_DIM(out_arr, 1) - 112;
