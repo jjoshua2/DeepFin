@@ -131,3 +131,67 @@ def test_resume_with_matching_config_is_identical() -> None:
     out = resume_model_config_from_arch(arch, cfg)
 
     assert out == cfg
+
+
+def test_resume_preserves_gradient_checkpointing_from_arch() -> None:
+    """Trainer.save writes dataclasses.asdict(), so the arch key is
+    ``use_gradient_checkpointing``; the manifest loader historically only read
+    ``gradient_checkpointing``. The arch value must survive resume (else large
+    runs rebuild with checkpointing OFF and can OOM)."""
+    arch_cfg = ModelConfig(
+        embed_dim=384,
+        num_layers=9,
+        use_gradient_checkpointing=True,
+        input_extra_features="v1",
+    )
+    arch = {"_schema_version": 17, **dataclasses.asdict(arch_cfg)}
+    assert "use_gradient_checkpointing" in arch
+    assert "gradient_checkpointing" not in arch  # asdict spelling only
+
+    # Config does not request checkpointing; topology (incl. this memory knob)
+    # must still follow the checkpoint.
+    config_cfg = model_config_from_flat_config(
+        {"embed_dim": 384, "num_layers": 9, "input_extra_features": "v2_threats"}
+    )
+    assert config_cfg.use_gradient_checkpointing is False
+
+    out = resume_model_config_from_arch(arch, config_cfg)
+
+    assert out.use_gradient_checkpointing is True
+
+
+def test_resume_enables_dynamic_relations_from_config() -> None:
+    """A deliberate restart that turns ON a zero-init dynamic-relations
+    experiment must build the NEW topology (params exist for the optimizer
+    splice to warm-start), not silently rebuild the donor's relations-off arch."""
+    # Donor checkpoint predates the experiment: relations OFF.
+    arch_cfg = ModelConfig(
+        embed_dim=384,
+        num_layers=9,
+        use_dynamic_relations=False,
+        policy_dynamic_relations=False,
+        dynamic_relation_count=5,
+        input_extra_features="v1",
+    )
+    arch = {"_schema_version": 17, **dataclasses.asdict(arch_cfg)}
+    # Restart config enables the experiment with a specific relation count.
+    config_cfg = model_config_from_flat_config(
+        {
+            "embed_dim": 384,
+            "num_layers": 9,
+            "use_dynamic_relations": True,
+            "policy_dynamic_relations": True,
+            "dynamic_relation_count": 7,
+            "input_extra_features": "v1",
+        }
+    )
+
+    out = resume_model_config_from_arch(arch, config_cfg)
+
+    # Experiment flags + their coupled shape follow CONFIG so the params exist.
+    assert out.use_dynamic_relations is True
+    assert out.policy_dynamic_relations is True
+    assert out.dynamic_relation_count == 7
+    # But unrelated topology still follows the checkpoint.
+    assert out.num_layers == 9
+    assert out.embed_dim == 384

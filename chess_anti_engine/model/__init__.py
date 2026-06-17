@@ -87,7 +87,11 @@ def model_config_from_manifest_dict(mc: dict) -> ModelConfig:
     """Build a ModelConfig from the ``model_config`` block of a publish manifest.
 
     Manifest field name is ``gradient_checkpointing`` (not ``use_*``) for
-    historical reasons; everything else maps 1:1.
+    historical reasons; everything else maps 1:1. The resume path also feeds
+    this with ``dataclasses.asdict(ModelConfig)`` (what ``Trainer.save`` embeds
+    as ``arch``), where the field is spelled ``use_gradient_checkpointing`` — so
+    accept either spelling, preferring the dataclass key, else the model would
+    silently rebuild with checkpointing OFF on resume and large runs could OOM.
     """
     num_layers = int(mc.get("num_layers", 6))
     return ModelConfig(
@@ -107,7 +111,9 @@ def model_config_from_manifest_dict(mc: dict) -> ModelConfig:
         use_smolgen=bool(mc.get("use_smolgen", True)),
         use_nla=bool(mc.get("use_nla", False)),
         use_qk_rmsnorm=bool(mc.get("use_qk_rmsnorm", False)),
-        use_gradient_checkpointing=bool(mc.get("gradient_checkpointing", False)),
+        use_gradient_checkpointing=bool(
+            mc.get("use_gradient_checkpointing", mc.get("gradient_checkpointing", False))
+        ),
         input_pos_encoding=str(mc.get("input_pos_encoding", "none")),
         qkv_projection=str(mc.get("qkv_projection", "fused")),
         use_deepnorm=bool(mc.get("use_deepnorm", False)),
@@ -140,17 +146,35 @@ def model_config_from_manifest_dict(mc: dict) -> ModelConfig:
     )
 
 
-# Encoding identity that a deliberate warm-start migration changes on resume
-# (e.g. v1 -> v2_threats input planes, or a policy-format switch). These MUST
-# follow the run config, not the donor checkpoint's saved arch, so the tolerant
-# loader can zero-init the new input-embed columns / remap heads. Everything
-# else in ModelConfig is SHAPE/topology and must follow the checkpoint, so the
-# rebuilt model matches the saved tensors and the optimizer moments load.
+# Fields a deliberate warm-start migration changes on resume. These MUST follow
+# the run config, not the donor checkpoint's saved arch, so the model is built
+# with the NEW layout and the tolerant loader / optimizer remap can zero-init
+# the added tensors. Everything else in ModelConfig is SHAPE/topology and must
+# follow the checkpoint, so the rebuilt model matches the saved tensors and the
+# optimizer moments load.
+#
+# Two classes live here:
+#   * Input/output encoding identity (e.g. v1 -> v2_threats input planes, or a
+#     policy-format switch): the tolerant loader zero-inits the new input-embed
+#     columns / remaps heads (Trainer.load -> migrate_optimizer_input_plane_state).
+#   * Zero-init experiment flags whose freshly added parameters are handled by
+#     Trainer._remap_optimizer_state_for_new_params (the dynamic_relation_weight
+#     / policy_relation_weight splice). If these followed the donor arch instead,
+#     enabling the experiment on resume would silently rebuild the OLD topology
+#     and drop the requested experiment.
+# input_pos_encoding=arc_adapter is deliberately NOT here: its pos_adapter param
+# has no remap machinery, so it is treated as a topology change (checkpoint-owned).
 _RESUME_CONFIG_OWNED_ENCODING_KEYS = (
     "input_extra_features",
     "policy_encoding",
     "input_history_encoding",
     "history_rep_fix",
+    "use_dynamic_relations",
+    "policy_dynamic_relations",
+    # Shape of the (zero-init) relation weights, so a freshly enabled
+    # use_dynamic_relations builds them at the config's count rather than the
+    # donor's stale default.
+    "dynamic_relation_count",
 )
 
 
@@ -161,15 +185,18 @@ def resume_model_config_from_arch(arch: dict, config_cfg: ModelConfig) -> ModelC
     On resume, the rebuilt model must match the checkpoint's saved tensor
     shapes (else the tolerant loader silently drops the mismatched blocks and
     the optimizer moments crash at ``step()`` — the variable-width-FFN resume
-    bug). So every shape/topology field comes from ``arch``. The four encoding
-    keys in ``_RESUME_CONFIG_OWNED_ENCODING_KEYS`` stay config-driven so a
-    deliberate input/output-encoding migration (v1 -> v2_threats warm start)
-    still works: the model is built with the NEW plane count and the tolerant
-    loader zero-inits the added input-embed columns.
+    bug). So every shape/topology field comes from ``arch``. The keys in
+    ``_RESUME_CONFIG_OWNED_ENCODING_KEYS`` stay config-driven so a deliberate
+    warm-start migration (v1 -> v2_threats input planes, or enabling a
+    dynamic-relations experiment) still works: the model is built with the NEW
+    layout and the tolerant loader / optimizer remap zero-inits the added
+    tensors.
 
-    ``arch`` is the dict written by ``Trainer.save`` (``model_config_to_*`` /
-    ``dataclasses.asdict(ModelConfig)`` plus a ``_schema_version`` tag), which
-    ``model_config_from_manifest_dict`` already round-trips.
+    ``arch`` is the dict written by ``Trainer.save`` (``dataclasses.asdict(
+    ModelConfig)`` plus a ``_schema_version`` tag), which
+    ``model_config_from_manifest_dict`` round-trips — including the
+    ``use_gradient_checkpointing`` field that the manifest spells
+    ``gradient_checkpointing``.
     """
     topo = model_config_from_manifest_dict(arch)
     overrides = {k: getattr(config_cfg, k) for k in _RESUME_CONFIG_OWNED_ENCODING_KEYS}
