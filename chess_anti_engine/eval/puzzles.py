@@ -26,8 +26,7 @@ import torch
 from chess_anti_engine.encoding import encode_position
 from chess_anti_engine.mcts import MCTSConfig, run_mcts_many
 from chess_anti_engine.mcts.gumbel import GumbelConfig
-from chess_anti_engine.moves import index_to_move
-from chess_anti_engine.moves.encode import move_to_index_for_encoding
+from chess_anti_engine.moves.encode import index_to_move_for_encoding, move_to_index_for_encoding
 
 # Default rating buckets for Lichess-style evaluation, matching the LC0 blog
 # (https://lczero.org/blog/2024/02/...) coarse buckets.
@@ -376,11 +375,18 @@ def run_puzzle_eval(
 
         def _search(bs: list[chess.Board]):
             return run_gumbel_root_many_c(model, bs, device=device, rng=rng, cfg=g_cfg)[1]
+
+        # run_gumbel_root_many_c returns action indices in the search's policy
+        # encoding (lc0_1858 for production nets), so decode in that space.
+        action_encoding = g_cfg.policy_encoding
     else:
         cfg = MCTSConfig(simulations=mcts_simulations, temperature=0.0)
 
         def _search(bs: list[chess.Board]):
             return run_mcts_many(model, bs, device=device, rng=rng, cfg=cfg)[1]
+
+        # The legacy PUCT path returns full az_4672 indices.
+        action_encoding = None
 
     total = len(suite)
     correct_flags = [False] * total
@@ -393,7 +399,8 @@ def run_puzzle_eval(
         actions = _search(boards)
 
         for offset, (puzzle, action_idx) in enumerate(zip(batch_puzzles, actions)):
-            chosen = index_to_move(int(action_idx), puzzle.board)
+            chosen = index_to_move_for_encoding(
+                int(action_idx), puzzle.board, policy_encoding=action_encoding)
             if chosen in puzzle.best_moves:
                 correct_flags[start + offset] = True
 

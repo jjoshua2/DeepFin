@@ -266,7 +266,13 @@ train:
   # survives ~50 iters in the buffer and gets trained ~5 times before eviction.
   no_amp: false
   replay_upgrade_v1_planes: true  # Recompute (not zero-pad) the 29 threat planes for old 146-plane shards at load. Construction-only knob — restart required.
-  feature_dropout_p: 0.10  # Fixed at 0.10 (not searched).
+  feature_dropout_p: 0.0  # DISABLED for v2_lean: Trainer._feature_group_dropout
+  # uses hard-coded v1/v2 plane offsets from base+112 (king_safety [0:10], pins
+  # [10:16], pawns [16:24], mobility [24:30], outposts [30:34], threats [34:63]).
+  # v2_lean's extra block is the GATHERED lean subset (pins now at [6:12], no
+  # king_safety/pawns/mobility/outposts families at all), so nonzero dropout here
+  # would zero the wrong lean planes — never the same semantic block — and
+  # confound the efficiency screen. Re-enable only with a lean-specific group map.
   resid_channel_dropout: 0.0  # Keep channel spreading on the explicit balance regularizer; dropout cost more eval loss offline.
   resid_channel_balance_weight: 0.0  # Disabled: offline sidecar .001/.003 did not improve loss or WDL.
   zclip_z_thresh: 2.0  # was 2.5; tighten top grad tail during flat-loss plateau (Apr 20). Last-100 median grad norm 1.81, max 3.65 — hard cap 5.0 inert, z-clip ~1% → ~5-8% of steps at 2.0.
