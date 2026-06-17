@@ -50,6 +50,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 PRODUCTION_CONFIG = REPO_ROOT / "configs" / "pbt2_small.yaml"
 DEFAULT_RESULTS_PATH = REPO_ROOT / "runs" / "arena_results.jsonl"
 
+# matched_sims --compile=auto threshold: compile only when the run does enough
+# inference work to amortize the ~2-4 min torch.compile cost. games*sims is a
+# proxy for total forward passes; 12800 ~= 50 games at 256 sims. Below this the
+# compile overhead dwarfs the per-call speedup, so eager is faster wall-clock.
+AUTO_COMPILE_WORK_THRESHOLD = 12800
+
 # Pentanomial bins from the candidate's point of view, by pair score
 # (candidate points over the two games of one opening pair).
 PAIR_SCORES = (2.0, 1.5, 1.0, 0.5, 0.0)
@@ -156,6 +162,77 @@ def default_openings_path() -> Path:
             f"no opening_book_path(_2) in {PRODUCTION_CONFIG}; pass --openings"
         )
     return Path(str(book))
+
+
+def _find_nested(cfg: object, key: str) -> object | None:
+    """Return the first value of ``key`` anywhere in a nested dict, else None."""
+    if isinstance(cfg, dict):
+        if key in cfg:
+            return cfg[key]
+        for v in cfg.values():
+            found = _find_nested(v, key)
+            if found is not None:
+                return found
+    return None
+
+
+def default_compile_cache_dir() -> Path:
+    """The production worker's shared torch.compile/triton cache root.
+
+    Mirrors ``tune.distributed_runtime._resolve_shared_cache_root``: the
+    explicit ``distributed_worker_shared_cache_dir`` from the production config
+    wins (that is exactly the dir the live workers populate), otherwise we fall
+    back to ``<work_dir>/server/worker_cache``. Pointing the arena's compile at
+    this reuses the autotuned kernels + FX graphs that training already baked,
+    so an arena run skips most of its cold-compile cost.
+
+    Falls back to the documented literal ``runs/pbt2_small/server/worker_cache``
+    (the production worker cache) if the config can't be read; an absent dir is
+    harmless (just no reuse that run). Always returns an absolute path.
+    """
+    fallback = REPO_ROOT / "runs" / "pbt2_small" / "server" / "worker_cache"
+    try:
+        import yaml
+
+        cfg = yaml.safe_load(PRODUCTION_CONFIG.read_text())
+    except (OSError, ValueError):
+        return fallback
+    explicit = _find_nested(cfg, "distributed_worker_shared_cache_dir")
+    if explicit and str(explicit).strip():
+        return Path(str(explicit).strip()).expanduser().resolve()
+    work_dir = _find_nested(cfg, "work_dir")
+    if work_dir and str(work_dir).strip():
+        root = Path(str(work_dir).strip()).expanduser()
+        if not root.is_absolute():
+            root = REPO_ROOT / root
+        return (root / "server" / "worker_cache").resolve()
+    return fallback
+
+
+def _configure_shared_compile_cache(cache_dir: Path) -> None:
+    """Point TorchInductor/Triton at ``cache_dir`` for cross-run kernel reuse.
+
+    Mirrors ``worker._configure_shared_compile_cache`` so the arena hits the
+    same on-disk cache layout the training workers populate. Uses
+    ``os.environ.setdefault`` so an explicitly-exported env var still wins, and
+    must be called BEFORE any ``torch.compile`` (i.e. before run_arena loads
+    torch). Creating the dirs is harmless when they don't exist yet.
+    """
+    import os
+
+    compile_cache_root = cache_dir / "compile_cache"
+    inductor_dir = compile_cache_root / "torchinductor"
+    triton_dir = compile_cache_root / "triton"
+    inductor_dir.mkdir(parents=True, exist_ok=True)
+    triton_dir.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("TORCHINDUCTOR_CACHE_DIR", str(inductor_dir))
+    os.environ.setdefault("TRITON_CACHE_DIR", str(triton_dir))
+    os.environ.setdefault("TORCHINDUCTOR_FX_GRAPH_CACHE", "1")
+    print(
+        f"[arena] compile cache: {inductor_dir} "
+        f"(reusing training kernels if present)",
+        flush=True,
+    )
 
 
 def load_paired_openings(
@@ -845,9 +922,19 @@ def main() -> None:
                         "long endgame tails). e.g. data/syzygy_3-4-5")
     p.add_argument("--syzygy-max-pieces", type=int, default=6,
                    help="adjudicate positions with <= this many men (default: 6)")
+    p.add_argument("--compile", choices=["auto", "on", "off"], default="auto",
+                   help="matched_sims torch.compile policy (default: auto). "
+                        "on=always compile; off=eager; auto=compile only when "
+                        f"games*sims >= {AUTO_COMPILE_WORK_THRESHOLD} (else the "
+                        "~2-4 min compile cost isn't worth it for a quick run).")
     p.add_argument("--no-compile", action="store_true",
-                   help="matched_sims: disable torch.compile of the nets (on by "
-                        "default — inductor, auto-dynamic batch, ~2-4x inference)")
+                   help="matched_sims: back-compat alias for --compile off "
+                        "(disables torch.compile regardless of --compile).")
+    p.add_argument("--compile-cache-dir", type=Path, default=None,
+                   help="matched_sims: torch.compile/triton cache root to reuse "
+                        "(default: the production worker cache, so arena reuses "
+                        "the kernels training already baked). Overridable; an "
+                        "absent dir just means no reuse that run.")
     p.add_argument("--no-rolling", action="store_true",
                    help="matched_sims: disable the rolling pool and use fixed chunks "
                         "instead. Rolling (on by default) keeps a fixed pool of "
@@ -878,6 +965,50 @@ def main() -> None:
     args = p.parse_args()
 
     openings_path = args.openings if args.openings is not None else default_openings_path()
+
+    # Resolve the matched_sims torch.compile decision (matched_time is a UCI
+    # subprocess and unaffected). --no-compile is the back-compat "off" alias and
+    # wins over --compile. auto compiles only when the run does enough inference
+    # work to amortize the ~2-4 min compile cost.
+    sims_cand = int(args.sims if args.sims_candidate is None else args.sims_candidate)
+    sims_ref = int(args.sims if args.sims_reference is None else args.sims_reference)
+    effective_sims = max(sims_cand, sims_ref)
+    compile_mode = "off" if args.no_compile else args.compile
+    if compile_mode == "off":
+        compile_models = False
+        if args.mode == "matched_sims":
+            print("[arena] compile=off -> EAGER", flush=True)
+    elif compile_mode == "on":
+        compile_models = True
+        if args.mode == "matched_sims":
+            print("[arena] compile=on -> COMPILE", flush=True)
+    else:  # auto
+        work = int(args.games) * int(effective_sims)
+        compile_models = work >= AUTO_COMPILE_WORK_THRESHOLD
+        if args.mode == "matched_sims":
+            if compile_models:
+                print(
+                    f"[arena] compile=auto -> COMPILE "
+                    f"(games*sims={work} >= {AUTO_COMPILE_WORK_THRESHOLD})",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"[arena] compile=auto -> EAGER (games*sims={work} < "
+                    f"{AUTO_COMPILE_WORK_THRESHOLD}; compile overhead not worth it)",
+                    flush=True,
+                )
+
+    # Point inductor/triton at the shared training cache BEFORE torch is imported
+    # in run_arena, so the compile (when on) reuses already-baked kernels.
+    if compile_models and args.mode == "matched_sims":
+        cache_dir = (
+            args.compile_cache_dir.expanduser().resolve()
+            if args.compile_cache_dir is not None
+            else default_compile_cache_dir()
+        )
+        _configure_shared_compile_cache(cache_dir)
+
     run_arena(
         candidate=args.candidate,
         reference=args.reference,
@@ -885,13 +1016,13 @@ def main() -> None:
         max_concurrent_games=args.max_concurrent_games,
         syzygy_path=args.syzygy,
         tb_max_pieces=args.syzygy_max_pieces,
-        compile_models=not args.no_compile,
+        compile_models=compile_models,
         rolling=not args.no_rolling,
         openings_path=openings_path,
         opening_plies=args.opening_plies,
         mode=args.mode,
-        sims_candidate=int(args.sims if args.sims_candidate is None else args.sims_candidate),
-        sims_reference=int(args.sims if args.sims_reference is None else args.sims_reference),
+        sims_candidate=sims_cand,
+        sims_reference=sims_ref,
         ms_per_move=args.ms_per_move,
         max_plies=args.max_plies,
         temperature=args.temperature,
