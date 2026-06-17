@@ -308,6 +308,17 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload
             if k in _TOPOLOGY_KEYS:
                 current = config.get(k, missing)
                 if current is missing:
+                    if not live_reload:
+                        # Startup/resume: the broker + workers are (re)built
+                        # from this config *after* the overlay, so a topology
+                        # key absent from an older restored config (introduced
+                        # after that checkpoint was saved) must be applied from
+                        # yaml — otherwise it silently defaults off. Safe here
+                        # because no component is running yet; model-topology
+                        # keys are reconciled separately by the checkpoint arch
+                        # (resume_model_config_from_arch).
+                        config[k] = v
+                        continue
                     log.warning(
                         "YAML reload: %s is absent from restored config but requires restart — skipping",
                         k,
