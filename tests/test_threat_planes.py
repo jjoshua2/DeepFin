@@ -18,6 +18,7 @@ from chess_anti_engine.encoding import (
     input_plane_count,
 )
 from chess_anti_engine.encoding.features import (
+    EXTRA_FEATURE_VERSIONS,
     EXTRA_FEATURES_V1,
     EXTRA_FEATURES_V2_THREATS,
     extra_feature_plane_count,
@@ -83,6 +84,30 @@ def test_c_python_parity_random_positions():
         np.testing.assert_allclose(
             py, cc, atol=1e-6,
             err_msg=f"parity mismatch at position {i}: {b.fen()}",
+        )
+
+
+@pytest.mark.parametrize("version", EXTRA_FEATURE_VERSIONS)
+def test_c_python_parity_all_versions(version):
+    """C-accelerated recompute must match the pure-Python recompute for EVERY
+    supported extra-feature version (v1, v2_threats, and the v3 families:
+    v3_see, v3_checks, v3_xray, v3_passers).
+
+    Mirrors ``test_c_python_parity_random_positions`` but parametrized over the
+    full version list — this catches per-version C/Python divergences such as
+    the SEE least-valuable-attacker tie-break (knight vs equal-valued bishop).
+    """
+    rng = random.Random(20260617)
+    n_planes = extra_feature_plane_count(version)
+    for i in range(220):
+        b = _random_board(rng, rng.randint(0, 100))
+        py = extra_feature_planes_fast(b, version=version)
+        cc = extra_feature_planes_c(b, version=version)
+        assert py.shape == (n_planes, 8, 8)
+        assert cc.shape == (n_planes, 8, 8)
+        np.testing.assert_allclose(
+            py, cc, atol=1e-6,
+            err_msg=f"parity mismatch ({version}) at position {i}: {b.fen()}",
         )
 
 

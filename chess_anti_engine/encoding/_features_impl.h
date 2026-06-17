@@ -635,31 +635,37 @@ static int feat_least_valuable_attacker(
     const uint64_t pieces[6], uint64_t occ, int color_idx, int target_sq
 ) {
     int best_sq = -1, best_val = 0;
-    /* Pawns (cheapest), then knight, bishop, rook, queen, king. */
+    /* Pawns (cheapest), then knight, bishop, rook, queen, king.
+     * Parity with the Python twin ``_least_valuable_attacker``: among
+     * equal-valued attackers pick the LOWEST square. The Python side scans
+     * ``attackers_mask`` in ascending-square order and keeps the strict
+     * minimum value, so the first (lowest-square) instance of a tied value
+     * wins; we replicate that here with a ``val < best_val ||
+     * (val == best_val && cand_sq < best_sq)`` tie-break per piece type. */
     uint64_t pawn_att = FEAT_PAWN_ATTACKERS_TO_SQ[color_idx][target_sq] & pieces[0];
+    /* Pawn is uniquely the cheapest (value 1), so its lowest-square instance
+     * always wins outright — matches Python's lowest-square minimum. */
     if (pawn_att) return __builtin_ctzll(pawn_att);
-
-    uint64_t cand;
-    cand = FEAT_KNIGHT_ATTACKS[target_sq] & pieces[1];
-    if (cand) { best_sq = __builtin_ctzll(cand); best_val = FEAT_SEE_VALUE[1]; }
 
     uint64_t diag = feat_bishop_attacks(target_sq, occ);
     uint64_t orth = feat_rook_attacks(target_sq, occ);
-    cand = diag & pieces[2];
-    if (cand && (best_sq < 0 || FEAT_SEE_VALUE[2] < best_val)) {
-        best_sq = __builtin_ctzll(cand); best_val = FEAT_SEE_VALUE[2];
-    }
-    cand = orth & pieces[3];
-    if (cand && (best_sq < 0 || FEAT_SEE_VALUE[3] < best_val)) {
-        best_sq = __builtin_ctzll(cand); best_val = FEAT_SEE_VALUE[3];
-    }
-    cand = (diag | orth) & pieces[4];
-    if (cand && (best_sq < 0 || FEAT_SEE_VALUE[4] < best_val)) {
-        best_sq = __builtin_ctzll(cand); best_val = FEAT_SEE_VALUE[4];
-    }
-    cand = FEAT_KING_ATTACKS[target_sq] & pieces[5];
-    if (cand && (best_sq < 0 || FEAT_SEE_VALUE[5] < best_val)) {
-        best_sq = __builtin_ctzll(cand);
+    uint64_t cands[5] = {
+        FEAT_KNIGHT_ATTACKS[target_sq] & pieces[1],  /* knight (3) */
+        diag & pieces[2],                            /* bishop (3) */
+        orth & pieces[3],                            /* rook (5)   */
+        (diag | orth) & pieces[4],                   /* queen (9)  */
+        FEAT_KING_ATTACKS[target_sq] & pieces[5],    /* king (1000) */
+    };
+    /* pt index into FEAT_SEE_VALUE for each candidate slot above. */
+    static const int cand_pt[5] = {1, 2, 3, 4, 5};
+    for (int i = 0; i < 5; i++) {
+        if (!cands[i]) continue;
+        int cand_sq = __builtin_ctzll(cands[i]);
+        int val = FEAT_SEE_VALUE[cand_pt[i]];
+        if (best_sq < 0 || val < best_val
+                || (val == best_val && cand_sq < best_sq)) {
+            best_sq = cand_sq; best_val = val;
+        }
     }
     return best_sq;
 }

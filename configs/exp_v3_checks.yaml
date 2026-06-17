@@ -10,9 +10,11 @@
 #      Old replay shards load unchanged — with train.replay_upgrade_v1_planes the
 #      extra planes are recomputed from the stored planes at load time
 #      (replay/threat_upgrade.py); shards a decode can't validate fall back to
-#      zero-padding. For a permanent window switch, convert shards on disk once:
-#        PYTHONPATH=. python3 scripts/convert_shards_v2_threats.py <replay dir>
-#      (idempotent, atomic per shard; run while the consuming run is stopped).
+#      zero-padding. NOTE: there is NO on-disk v3 converter —
+#      scripts/convert_shards_v2_threats.py only ever writes v2_threats
+#      (175-plane) shards, so it canNOT bake a v3 width onto disk. v3's extra
+#      block is re-derived on every load via the recompute path above; that
+#      on-load recompute IS the window switch for v3.
 #   2. Train for a FIXED budget (same iterations as the v1 baseline window).
 #   3. Judge with scripts/arena_standard.py in matched_time mode vs the
 #      pre-change checkpoint (1000 games), plus matched_sims for the search-free
@@ -24,12 +26,16 @@
 # SCOPE — OFFLINE SIDECAR EVALUATION ONLY. This config is for the offline
 # replay-epoch sidecar (scripts/offline_replay_epoch.py), whose recompute path
 # rebuilds the >175-plane extra block from stored shards. LIVE `train` / `tune`
-# distributed selfplay at >175 input planes is NOT yet supported: the C encoders
-# cap the extra block at v2_threats (175). Production readiness is a tracked
-# follow-up requiring version-general extension of the C plane guards in
-# encoding/_lc0_ext.c (encode_full) and mcts/_mcts_tree.c (batch encode +
-# batch_process_ply), a raised ENC_PLANES_MAX, and the warm-start input-column
-# migration in model/__init__.py. Until those land, use only the offline sidecar.
+# distributed selfplay at >175 input planes is NOT yet supported. The single-
+# position encode_full path in encoding/_lc0_ext.c already ACCEPTS v3 widths
+# (n_extra up to 67 = v3_checks), so the offline sidecar encodes v3 fine — but
+# the LIVE MCTS batch encoder in mcts/_mcts_tree.c (batch encode +
+# batch_process_ply) still rejects anything other than 146 (v1) / 175
+# (v2_threats), which is the real cap that keeps v3 offline-only. Production
+# readiness is a tracked follow-up requiring version-general extension of the
+# mcts/_mcts_tree.c plane guards, a raised ENC_PLANES_MAX, and the warm-start
+# input-column migration in model/__init__.py. Until those land, use only the
+# offline sidecar.
 #
 # PBT2 (PB2) search config — small model, 10 parallel trials on RTX 5090 (32 GB)
 #

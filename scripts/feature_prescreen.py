@@ -83,6 +83,8 @@ FAMILIES_V3_PASSERS = {
 
 # One-shot guard so the policy-width-mismatch warning prints once, not per call.
 _WARNED_POLICY_WIDTH = {"done": False}
+# One-shot guard for the mixed-schema ragged-trailing-shape (dropped-key) warning.
+_WARNED_RAGGED_KEY = {"done": False}
 
 
 def load_sample(
@@ -116,19 +118,74 @@ def load_sample(
         got += int(arrs["x"].shape[0])
         if got >= n:
             break
-    keys = set(chunks[0])
-    for c in chunks[1:]:
-        keys &= set(c)
-    # Keep only per-row arrays (ndim>=1, leading dim == that chunk's row count);
-    # drops scalar/metadata fields that can't be row-concatenated.
-    row_keys = [
-        k for k in keys
-        if all(getattr(c[k], "ndim", 0) >= 1 and c[k].shape[0] == c["x"].shape[0] for c in chunks)
-    ]
-    cat = {k: np.concatenate([c[k] for c in chunks], axis=0) for k in row_keys}
+    cat = _concat_chunks_union(chunks)
     total = int(cat["x"].shape[0])
     idx = rng.choice(total, size=min(n, total), replace=False)
     return {k: v[idx] for k, v in cat.items()}, meta
+
+
+def _chunk_rows(chunk: dict[str, np.ndarray]) -> int:
+    return int(chunk["x"].shape[0])
+
+
+def _is_per_row(arr: np.ndarray, rows: int) -> bool:
+    """Per-row array: ndim>=1 and leading dim == that chunk's row count."""
+    return getattr(arr, "ndim", 0) >= 1 and arr.shape[0] == rows
+
+
+def _concat_chunks_union(chunks: list[dict[str, np.ndarray]]) -> dict[str, np.ndarray]:
+    """Row-concatenate chunks over the UNION of per-row keys, zero-filling gaps.
+
+    Two mixed-schema hazards the prior key-INTERSECTION couldn't handle:
+
+    * Optional label fields (``sf_wdl``/``has_sf_wdl``, ``sf_policy_target``/
+      ``has_sf_policy``, …) are PAIRED in ``replay/shard.py``: a chunk missing
+      the value also misses its has-flag. Intersection dropped the whole field
+      whenever ANY chunk lacked it, so relevance mode could never use
+      ``sf_wdl_regret`` and silently fell back to ``policy_ce``/``wdl_ce``. We
+      instead keep the field and ZERO-FILL the chunks that lack it; those rows
+      get ``has_sf_wdl=0`` and the existing ``_select_relevance_regret`` mask
+      already excludes them.
+    * ``policy_target``/``legal_mask`` trailing width can differ across chunks
+      (1858 vs 4672 policy encoding); ``np.concatenate`` raises a dim mismatch
+      nondeterministically (shard order is randomized). A key whose trailing
+      shape disagrees across chunks is DROPPED with a one-time warning —
+      ``eval_losses`` already guards on policy-width mismatch, so this is safe.
+
+    Behaviour is identical to the old intersection path when every chunk shares
+    the same keys + trailing shapes.
+    """
+    rows = [_chunk_rows(c) for c in chunks]
+    # Union of per-row keys across all chunks (drops scalar/metadata fields).
+    keys: list[str] = []
+    seen: set[str] = set()
+    for c, r in zip(chunks, rows):
+        for k, v in c.items():
+            if k not in seen and _is_per_row(v, r):
+                seen.add(k)
+                keys.append(k)
+
+    cat: dict[str, np.ndarray] = {}
+    for k in keys:
+        present = [(c, r) for c, r in zip(chunks, rows) if k in c and _is_per_row(c[k], r)]
+        trailing = {c[k].shape[1:] for c, _ in present}
+        if len(trailing) > 1:
+            if not _WARNED_RAGGED_KEY["done"]:
+                _WARNED_RAGGED_KEY["done"] = True
+                print(
+                    f"WARNING: dropping field {k!r} — inconsistent trailing shape "
+                    f"across shards {sorted(trailing)} (e.g. 1858 vs 4672 policy "
+                    f"width); it can't be row-concatenated cleanly."
+                )
+            continue
+        shape = next(iter(trailing))
+        dtype = present[0][0][k].dtype
+        parts = [
+            c[k] if (k in c and _is_per_row(c[k], r)) else np.zeros((r, *shape), dtype=dtype)
+            for c, r in zip(chunks, rows)
+        ]
+        cat[k] = np.concatenate(parts, axis=0)
+    return cat
 
 
 def to_tensors(arrs: dict[str, np.ndarray], device: str) -> dict[str, torch.Tensor]:

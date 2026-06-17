@@ -12,9 +12,11 @@
 #      Old replay shards load unchanged — with train.replay_upgrade_v1_planes the
 #      extra planes are recomputed from the stored planes at load time
 #      (replay/threat_upgrade.py); shards a decode can't validate fall back to
-#      zero-padding. For a permanent window switch, convert shards on disk once:
-#        PYTHONPATH=. python3 scripts/convert_shards_v2_threats.py <replay dir>
-#      (idempotent, atomic per shard; run while the consuming run is stopped).
+#      zero-padding. NOTE: there is NO on-disk v3 converter —
+#      scripts/convert_shards_v2_threats.py only ever writes v2_threats
+#      (175-plane) shards, so it canNOT bake a v3 width onto disk. v3's extra
+#      block is re-derived on every load via the recompute path above; that
+#      on-load recompute IS the window switch for v3.
 #   2. Train for a FIXED budget (same iterations as the v1 baseline window).
 #   3. Judge with scripts/arena_standard.py in matched_time mode vs the
 #      pre-change checkpoint (1000 games), plus matched_sims for the search-free
