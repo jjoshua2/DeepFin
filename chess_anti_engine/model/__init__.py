@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 
 import torch
@@ -137,6 +138,42 @@ def model_config_from_manifest_dict(mc: dict) -> ModelConfig:
         phase_smolgen=bool(mc.get("phase_smolgen", False)),
         phase_piece_thresholds=normalize_phase_piece_thresholds(mc.get("phase_piece_thresholds", (13, 22))),
     )
+
+
+# Encoding identity that a deliberate warm-start migration changes on resume
+# (e.g. v1 -> v2_threats input planes, or a policy-format switch). These MUST
+# follow the run config, not the donor checkpoint's saved arch, so the tolerant
+# loader can zero-init the new input-embed columns / remap heads. Everything
+# else in ModelConfig is SHAPE/topology and must follow the checkpoint, so the
+# rebuilt model matches the saved tensors and the optimizer moments load.
+_RESUME_CONFIG_OWNED_ENCODING_KEYS = (
+    "input_extra_features",
+    "policy_encoding",
+    "input_history_encoding",
+    "history_rep_fix",
+)
+
+
+def resume_model_config_from_arch(arch: dict, config_cfg: ModelConfig) -> ModelConfig:
+    """Pick a resume ModelConfig: topology from the checkpoint ``arch`` dict,
+    encoding identity from the run config.
+
+    On resume, the rebuilt model must match the checkpoint's saved tensor
+    shapes (else the tolerant loader silently drops the mismatched blocks and
+    the optimizer moments crash at ``step()`` — the variable-width-FFN resume
+    bug). So every shape/topology field comes from ``arch``. The four encoding
+    keys in ``_RESUME_CONFIG_OWNED_ENCODING_KEYS`` stay config-driven so a
+    deliberate input/output-encoding migration (v1 -> v2_threats warm start)
+    still works: the model is built with the NEW plane count and the tolerant
+    loader zero-inits the added input-embed columns.
+
+    ``arch`` is the dict written by ``Trainer.save`` (``model_config_to_*`` /
+    ``dataclasses.asdict(ModelConfig)`` plus a ``_schema_version`` tag), which
+    ``model_config_from_manifest_dict`` already round-trips.
+    """
+    topo = model_config_from_manifest_dict(arch)
+    overrides = {k: getattr(config_cfg, k) for k in _RESUME_CONFIG_OWNED_ENCODING_KEYS}
+    return dataclasses.replace(topo, **overrides)
 
 
 def model_config_from_flat_config(
