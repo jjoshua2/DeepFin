@@ -254,6 +254,10 @@ def _build_engine(
     primary_device: str,
     chunk_sims: int,
     topk: int,
+    c_scale: float = 0.025,  # UCI/high-sim tuned default (was 0.1); see --c-scale help
+    c_visit: float = 50.0,
+    c_puct: float = 2.5,
+    fpu_reduction: float = 1.2,
     n_walkers: int,
     vloss_weight: int,
     walker_gather: int,
@@ -276,6 +280,10 @@ def _build_engine(
         gumbel_cfg=GumbelConfig(
             simulations=chunk_sims,
             topk=topk,
+            c_scale=c_scale,
+            c_visit=c_visit,
+            c_puct=c_puct,
+            fpu_reduction=fpu_reduction,
             add_noise=False,
             input_history_encoding=input_history_encoding,
             input_extra_features=input_extra_features,
@@ -332,6 +340,15 @@ def main() -> int:
     p.add_argument("--chunk-sims", type=int, default=512,
                    help="sims per start_gumbel_sims call (default: 512). Higher = fewer Python-C roundtrips, coarser stop latency.")
     p.add_argument("--topk", type=int, default=32, help="Gumbel root candidates (default: 32)")
+    p.add_argument("--c-scale", type=float, default=0.025,
+                   help="Gumbel value-transform scale in sigma(q): lower leans on the prior "
+                        "policy, higher trusts the search Q more. Default 0.025 — tuned "
+                        "2026-06-16 (was 0.1; +270 Elo). q_scale=c_scale*(c_visit+max_visit) "
+                        "explodes at high sims, so 0.1 over-trusted the overconfident value head.")
+    p.add_argument("--c-visit", type=float, default=50.0, help="Gumbel c_visit constant (default: 50.0)")
+    p.add_argument("--c-puct", type=float, default=2.5, help="PUCT exploration constant (default: 2.5)")
+    p.add_argument("--fpu-reduction", type=float, default=1.2,
+                   help="first-play-urgency reduction for unvisited children (default: 1.2)")
     p.add_argument("--max-batch", type=int, default=1024,
                    help="DirectGPUEvaluator max batch (default: 1024). Must be >= expected leaf count per wavefront.")
     p.add_argument("--eval-cache-entries", type=int, default=0,
@@ -450,6 +467,17 @@ def main() -> int:
         try:
             n_walkers = max(1, int(args.walkers))
             walker_gather = max(1, int(args.walker_gather))
+  # c_scale / c_visit shape the Gumbel sigma(q) value transform; the PUCT
+  # walker pool (n_walkers > 1, the --walkers/Threads default) selects on
+  # raw Q and never reads them, so the tuned c_scale=0.025 win only lands on
+  # the classic Gumbel path. Warn so the inert tuning isn't silent.
+            if n_walkers > 1:
+                print(
+                    "info string c-scale/c-visit are Gumbel-only and ignored at "
+                    f"walkers={n_walkers} (PUCT walker pool); set Threads/--walkers 1 "
+                    "for the c_scale-tuned classic Gumbel path",
+                    flush=True,
+                )
             models = _load_models(args.checkpoint, devices)
             input_history_encoding = str(getattr(models[0], "input_history_encoding", "legacy"))
             input_extra_features = str(getattr(models[0], "input_extra_features", "v1"))
@@ -481,6 +509,8 @@ def main() -> int:
             engine_ref[0] = _build_engine(
                 evaluator=evaluator, primary_device=devices[0],
                 chunk_sims=args.chunk_sims, topk=args.topk,
+                c_scale=args.c_scale, c_visit=args.c_visit,
+                c_puct=args.c_puct, fpu_reduction=args.fpu_reduction,
                 n_walkers=n_walkers, vloss_weight=int(args.vloss_weight),
                 walker_gather=walker_gather,
                 pucv_vloss_mode=1 if args.pucv_pending_mode == "virtual-mean" else 0,
