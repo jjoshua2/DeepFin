@@ -467,6 +467,17 @@ def main() -> int:
         try:
             n_walkers = max(1, int(args.walkers))
             walker_gather = max(1, int(args.walker_gather))
+  # c_scale / c_visit shape the Gumbel sigma(q) value transform; the PUCT
+  # walker pool (n_walkers > 1, the --walkers/Threads default) selects on
+  # raw Q and never reads them, so the tuned c_scale=0.025 win only lands on
+  # the classic Gumbel path. Warn so the inert tuning isn't silent.
+            if n_walkers > 1:
+                print(
+                    "info string c-scale/c-visit are Gumbel-only and ignored at "
+                    f"walkers={n_walkers} (PUCT walker pool); set Threads/--walkers 1 "
+                    "for the c_scale-tuned classic Gumbel path",
+                    flush=True,
+                )
             models = _load_models(args.checkpoint, devices)
             input_history_encoding = str(getattr(models[0], "input_history_encoding", "legacy"))
             input_extra_features = str(getattr(models[0], "input_extra_features", "v1"))

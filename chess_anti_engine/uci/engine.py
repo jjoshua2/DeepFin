@@ -471,6 +471,14 @@ class Engine:
             f"info string Threads set to {n} "
             f"({'walker pool' if n > 1 else 'classic Gumbel path'})"
         )
+  # The walker pool selects on raw Q and never reads c_scale/c_visit (Gumbel
+  # sigma(q) only), so switching to Threads>1 silently drops the tuned
+  # c_scale value. Surface it; Threads=1 restores the c_scale-tuned path.
+        if n > 1:
+            _println(
+                "info string note: c_scale/c_visit are inactive on the walker pool; "
+                "Threads=1 uses the c_scale-tuned classic Gumbel path"
+            )
 
     def _set_leaf_gather(self, value: str) -> None:
         n = self._parse_clamped_int(value, lo=1)
