@@ -2085,6 +2085,7 @@ class WorkerSession:
         "sf_wdl_use_cp_logistic", "sf_wdl_cp_slope", "sf_wdl_cp_draw_width",
         "input_history_encoding", "record_lc0_root_input", "history_rep_fix",
         "record_dense_sf_policy", "categorical_blend_frac",
+        "categorical_search_blend_frac",
         # Syzygy knobs affect adjudication + in-search overrides — without a
         # restart, workers keep producing shards under stale TB settings until
         # an unrelated key changes. Flagged by Codex adversarial review.
@@ -2197,6 +2198,9 @@ class WorkerSession:
                 ),
                 record_dense_sf_policy=bool(reco.get("record_dense_sf_policy", True)),
                 categorical_blend_frac=float(reco.get("categorical_blend_frac", 0.0)),
+                categorical_search_blend_frac=float(
+                    reco.get("categorical_search_blend_frac", 0.0)
+                ),
             ),
         }
         sf_args = (

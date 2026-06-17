@@ -41,36 +41,68 @@ def hlgauss_target(
     return probs.astype(np.float32, copy=False)
 
 
+def _wdl_expected_score(row: np.ndarray | None) -> float | None:
+    """Side-to-move expected score ``(W - L) / (W + D + L)`` for a 3-vector WDL
+    row, or ``None`` when the row is missing / ill-shaped / empty. Scale-invariant
+    (works for normalized probs or SF's raw permille ``UCI_ShowWDL``)."""
+    if row is None:
+        return None
+    arr = np.asarray(row, dtype=np.float32)
+    if arr.shape != (3,):
+        return None
+    total = float(arr[0]) + float(arr[1]) + float(arr[2])
+    if total <= 0.0:
+        return None
+    return (float(arr[0]) - float(arr[2])) / total
+
+
 def categorical_target_value(
     scalar_v: float,
     sf_wdl: np.ndarray | None,
     *,
     blend_frac: float,
+    search_wdl: np.ndarray | None = None,
+    search_blend_frac: float = 0.0,
 ) -> float:
     """Continuous value for the categorical (HL-Gauss) value head.
 
-    Default (``blend_frac == 0``) returns the ternary game outcome unchanged so
-    the stored target is byte-identical to the legacy behaviour. With
-    ``blend_frac > 0`` the value is pulled toward SF's objective eval expected
-    score ``(W - L) / (W + D + L)`` (same side-to-move POV as ``scalar_v``),
-    giving the 32-bin distributional head a continuous target that uses its bins
-    instead of three spikes at {-1, 0, +1}. Dividing by the row sum makes the
-    score scale-invariant, so it is correct whether ``sf_wdl`` is normalized
-    probabilities (cp-logistic path) or SF's raw permille ``UCI_ShowWDL`` (native
-    path / after ``rebuild_sf_targets``). Falls back to the outcome when no SF
-    eval is present or the row is empty.
+    Default (both fracs ``== 0``) returns the ternary game outcome unchanged so
+    the stored target is byte-identical to the legacy behaviour. Otherwise the
+    value is a convex blend of up to three side-to-move expected scores, mirroring
+    the main WDL head's target (see ``train/losses.py``)::
+
+        game_frac * scalar_v + sf_frac * E[sf_wdl] + search_frac * E[search_wdl]
+
+    Each expected score is ``(W - L) / (W + D + L)`` (scale-invariant, so it works
+    for normalized probs or raw permille). ``sf_frac`` / ``search_frac`` come from
+    ``blend_frac`` / ``search_blend_frac``; if their sum exceeds 1 they are
+    renormalized and ``game_frac`` drops to 0 (same rule as the WDL head). A
+    component whose row is missing/empty is dropped — its weight is NOT
+    redistributed, so the blend simply leans on the remaining sources / the
+    outcome (matching the WDL head's per-sample availability handling).
 
     Shared by the live finalize path (``selfplay/finalize.py``) and the offline
     rebuild (``train/target_builder.py``) so the two produce identical targets.
     """
-    frac = float(blend_frac)
-    if frac <= 0.0 or sf_wdl is None:
+    sf_frac = max(0.0, float(blend_frac))
+    search_frac = max(0.0, float(search_blend_frac))
+    sf_e = _wdl_expected_score(sf_wdl) if sf_frac > 0.0 else None
+    search_e = _wdl_expected_score(search_wdl) if search_frac > 0.0 else None
+    if sf_e is None:
+        sf_frac = 0.0
+    if search_e is None:
+        search_frac = 0.0
+    blend_sum = sf_frac + search_frac
+    if blend_sum <= 0.0:
         return float(scalar_v)
-    sf_arr = np.asarray(sf_wdl, dtype=np.float32)
-    if sf_arr.shape != (3,):
-        return float(scalar_v)
-    total = float(sf_arr[0]) + float(sf_arr[1]) + float(sf_arr[2])
-    if total <= 0.0:
-        return float(scalar_v)
-    sf_expected = (float(sf_arr[0]) - float(sf_arr[2])) / total
-    return (1.0 - frac) * float(scalar_v) + frac * sf_expected
+    if blend_sum > 1.0:
+        sf_frac /= blend_sum
+        search_frac /= blend_sum
+        game_frac = 0.0
+    else:
+        game_frac = 1.0 - blend_sum
+    return (
+        game_frac * float(scalar_v)
+        + sf_frac * float(sf_e or 0.0)
+        + search_frac * float(search_e or 0.0)
+    )

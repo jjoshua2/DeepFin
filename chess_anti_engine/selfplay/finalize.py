@@ -663,6 +663,8 @@ def _build_replay_samples(
             categorical_target_value(
                 scalar_v, rec.sf_wdl,
                 blend_frac=getattr(state.game, "categorical_blend_frac", 0.0),
+                search_wdl=getattr(rec, "search_wdl_est", None),
+                search_blend_frac=getattr(state.game, "categorical_search_blend_frac", 0.0),
             ),
             num_bins=state.game.categorical_bins,
             sigma=state.game.hlgauss_sigma,

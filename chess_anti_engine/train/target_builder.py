@@ -45,6 +45,7 @@ class CategoricalTargetParams:
     ``categorical_*`` / ``hlgauss_sigma`` config; defaults match GameConfig)."""
 
     blend_frac: float = 0.0
+    search_blend_frac: float = 0.0
     num_bins: int = DEFAULT_CATEGORICAL_BINS
     sigma: float = 0.04
 
@@ -214,7 +215,7 @@ def rebuild_categorical_target_in_arrays(
     Acceptable for the flag-gated offline use (overlapped by the host prefetch
     thread); vectorize before it could become a live-training default.
     """
-    if float(params.blend_frac) <= 0.0:
+    if float(params.blend_frac) <= 0.0 and float(params.search_blend_frac) <= 0.0:
         return arrs
     if "categorical_target" not in arrs or "wdl_target" not in arrs:
         return arrs
@@ -228,6 +229,10 @@ def rebuild_categorical_target_in_arrays(
     has_sf = np.asarray(
         arrs.get("has_sf_wdl", np.zeros((n,), dtype=np.float32))
     ).reshape(-1)
+    search_wdl = arrs.get("search_wdl")
+    has_search = np.asarray(
+        arrs.get("has_search_wdl", np.zeros((n,), dtype=np.float32))
+    ).reshape(-1)
     for i in range(n):
         scalar_v = 1.0 if int(wdl[i]) == 0 else (0.0 if int(wdl[i]) == 1 else -1.0)
         row = (
@@ -235,7 +240,17 @@ def rebuild_categorical_target_in_arrays(
             if sf_wdl is not None and i < has_sf.shape[0] and bool(has_sf[i])
             else None
         )
-        value = categorical_target_value(scalar_v, row, blend_frac=params.blend_frac)
+        srow = (
+            np.asarray(search_wdl[i])
+            if search_wdl is not None and i < has_search.shape[0] and bool(has_search[i])
+            else None
+        )
+        value = categorical_target_value(
+            scalar_v, row,
+            blend_frac=params.blend_frac,
+            search_wdl=srow,
+            search_blend_frac=params.search_blend_frac,
+        )
         cat[i] = hlgauss_target(
             value, num_bins=num_bins, sigma=params.sigma,
         ).astype(cat.dtype, copy=False)
