@@ -1112,6 +1112,17 @@ def _fill_passer_planes(
       +1 safe passer           = stop square not enemy-attacked and not occupied
       +2 blocked passer        = any piece on the stop square
       +3 promo-path enemy ctrl = any file-ahead square is enemy-attacked
+
+    KNOWN LIMITATION (documented, intentionally not fixed): the safe/promo-path
+    attack tests use the CURRENT occupancy, with the passer still on its origin.
+    Self-blocking can therefore mark a push "safe" that becomes attacked once the
+    origin is vacated (e.g. a white passer on e4 screens a black rook on e1 from
+    e5; after e4-e5 the rook attacks e5). Recomputing enemy attacks with the
+    passer removed from its origin is the correct semantics, but v3_passers is a
+    confirmed-negative experiment (+0.036 eval_loss vs v2) we will not promote,
+    and the C twin in ``_features_impl.h`` shares this exact behavior — fixing
+    only Python would break the parity test for a feature we are dropping. Left
+    as-is to keep C/Python parity; revisit only if v3_passers is ever revived.
     """
     occ = int(board.occupied)
     for side_idx, color in enumerate((turn, not turn)):

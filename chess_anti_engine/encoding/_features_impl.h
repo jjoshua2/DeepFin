@@ -923,7 +923,13 @@ static void compute_features_threats(
     } else if (n_extra == FEAT_EXTRA_V3_PASSERS) {
         /* [63:71] v3_passers: passed-pawn quality, 4 planes per side
          * (us 63:67, them 67:71): rank-advancement, safe passer, blocked
-         * passer, promotion-path-controlled-by-enemy. */
+         * passer, promotion-path-controlled-by-enemy.
+         * KNOWN LIMITATION (matches features.py:_fill_passer_planes): the
+         * safe/promo-path attack tests use the current occupancy with the
+         * passer still on its origin, so self-blocking can mark a push "safe"
+         * that becomes attacked once the origin is vacated. Left as-is to keep
+         * C/Python parity; v3_passers is a confirmed-negative experiment we are
+         * not promoting. Revisit (both twins) only if v3_passers is revived. */
         for (int side = 0; side < 2; side++) {
             uint64_t *own = side == 0 ? us_pieces : them_pieces;
             uint64_t *enemy_p = side == 0 ? them_pieces : us_pieces;
