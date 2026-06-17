@@ -1,6 +1,60 @@
 # Future ideas
 This file is for longer-term roadmap items that are intentionally out-of-scope for the minimal “working end-to-end” pipeline.
 
+## RL re-entry plan + sidecar test queue (added 2026-06-17)
+
+Context: the last live RL (PBT) run was ~commit `bbec81c` (PR #40, 2026-06-05), **before** v2_threats
+(#42) and ~22 merged PRs since. Per-PR audit (bbec81c..main): only **PR #59** (soft-CE target
+renormalization — small always-on numeric fix across all soft-CE heads) and **PR #49** (server shard
+durability — only matters under I/O failure) change live-RL behavior on the default config. Everything
+else is flag-gated-OFF or non-behavioral tooling/refactor. Production `configs/pbt2_small.yaml` is
+untouched (v1 planes, lr_schedule=sqrt_release).
+
+### Re-entry sequence
+1. **Plain RL baseline** — current `main`, `pbt2_small.yaml` as-is (v1, all feature flags off). This is
+   "plain RL + bugfixes" (gets #59 + #49 for free). Run it; confirm winrate/regret/eval are
+   neutral-or-better vs the 2026-06-05 run and nothing regressed. Establishes a clean anchor.
+2. **Add v2_threats via warm-start (NO restart needed)** — set `model.input_extra_features: v2_threats`
+   (175 planes). PR #42 zero-inits the 29 new input-embed columns so step-0 output is bit-identical to
+   the v1 checkpoint; replay shards recompute the threat planes on load (`train.replay_upgrade_v1_planes:
+   true`, or convert on disk once via `scripts/convert_shards_v2_threats.py`). v2_threats is the one
+   sidecar-PROVEN, never-been-live gainer (clear win both sweep windows; uniquely makes search scale —
+   +0.016 puzzle acc 32→256 sims vs v1 flat). Add only after step-1 anchor is established.
+
+### Bugfix validation
+- **history_rep_fix (PR #53, `selfplay.history_rep_fix`, default off): ENABLE in live — proper, ~free.**
+  NOT sidecar-testable (it records per-slot repetition flags at push time; the bug is repetitions older
+  than the stored history window, lost at encode time and not reconstructable from shards). Correctness
+  is already parity-test-covered; affects ~0.2% of positions (measured earlier) so it won't move Elo
+  measurably, but it's the correct encoding (bit-identical to python-chess). SPEED measured 2026-06-17
+  (CPU microbench, avg hash_stack 2.9): push-only +0.004 us/push (+4.3% of a tiny number); push+encode
+  net −5.9% (FASTER — the stored-flag read beats reconstructing rep planes at encode). Real games have
+  longer hash_stacks so the per-push scan costs a bit more, but it's O(hash_stack), dominated by the
+  encode saving, push is ~4% of encode, and selfplay is GPU-bound — no path to a meaningful slowdown.
+  → enable it (no offline screen needed). The other recent bugfixes (#59 soft-CE, #49 durability) are
+  always-on / non-gated.
+
+### Re-test queue — AFTER a new + stronger window exists
+These were screened on the current (weaker, v1-era) window; re-screen on a fresh window from a stronger
+net before judging:
+- **v3 input planes** (`input_extra_features: v3_*`) — all 6 conclusively negative on the 2026-06 window
+  (redundant w/ v2; see MEMORY v3_feature_add_conclusive_negative). Re-try only if a stronger window
+  changes the redundancy picture.
+- **dynamic board-relation attention bias** (`model.use_dynamic_relations`) — was ≡ v2_threats
+  (redundant) → shelved; re-try standalone on a fresh window.
+- **soft-policy ablation mask** (`train.soft_policy_min_tv`) — mildly positive in screening; revisit.
+- **sparse SF-policy CE** (`train.sf_policy_sparse_ce` + `selfplay.record_dense_sf_policy: false`) — no-op
+  on old shards; needs a window that CARRIES sparse MultiPV labels (shard schema v2) before it can be
+  judged. Sequencing matters (flip the writer flag only after a full window has sparse labels).
+- **continuous categorical value blend** (`selfplay.categorical_blend_frac`) — negative this round
+  (offline, aux head, no trunk transfer); re-try on a stronger window if desired, but low priority.
+
+### Do NOT re-queue (concluded)
+- v2_lean / feature REMOVAL — negative (+0.0217 eval_loss; ablation-reliance != training-value).
+- w_sf_move upweight / forcing policy toward SF — negative (degraded net+search play; breaks the
+  self-play loop). The net+search-vs-SF-soft regret gap is a net-strength gap, not a fixable target bug.
+- variable-width / non-uniform embed — conclusive negative (older).
+
 ## Opponent mixing / league training
 Goal: avoid overspecializing to Stockfish by mixing opponents.
 
