@@ -18,7 +18,11 @@ from __future__ import annotations
 
 import dataclasses
 
+import pytest
+
+from chess_anti_engine.encoding.features import RELATION_COUNT
 from chess_anti_engine.model import (
+    ARCH_SCHEMA_VERSION,
     ModelConfig,
     model_config_from_flat_config,
     resume_model_config_from_arch,
@@ -164,24 +168,30 @@ def test_resume_enables_dynamic_relations_from_config() -> None:
     """A deliberate restart that turns ON a zero-init dynamic-relations
     experiment must build the NEW topology (params exist for the optimizer
     splice to warm-start), not silently rebuild the donor's relations-off arch."""
-    # Donor checkpoint predates the experiment: relations OFF.
+    # Donor checkpoint predates the experiment: relations OFF. Its stored count
+    # is the dataclass default, which differs from RELATION_COUNT only if the
+    # default ever drifts — pin it explicitly so the assertion below proves the
+    # count came from CONFIG, not the arch.
     arch_cfg = ModelConfig(
         embed_dim=384,
         num_layers=9,
         use_dynamic_relations=False,
         policy_dynamic_relations=False,
-        dynamic_relation_count=5,
+        dynamic_relation_count=RELATION_COUNT,
         input_extra_features="v1",
     )
     arch = {"_schema_version": 17, **dataclasses.asdict(arch_cfg)}
-    # Restart config enables the experiment with a specific relation count.
+    # Restart config enables the experiment. RELATION_COUNT is the only value
+    # build_model() accepts when relations are on (the count is baked into the C
+    # extension / shard schema), so it is the only outcome this resume path can
+    # legitimately produce — assert it rather than a count that can never build.
     config_cfg = model_config_from_flat_config(
         {
             "embed_dim": 384,
             "num_layers": 9,
             "use_dynamic_relations": True,
             "policy_dynamic_relations": True,
-            "dynamic_relation_count": 7,
+            "dynamic_relation_count": RELATION_COUNT,
             "input_extra_features": "v1",
         }
     )
@@ -191,7 +201,40 @@ def test_resume_enables_dynamic_relations_from_config() -> None:
     # Experiment flags + their coupled shape follow CONFIG so the params exist.
     assert out.use_dynamic_relations is True
     assert out.policy_dynamic_relations is True
-    assert out.dynamic_relation_count == 7
+    assert out.dynamic_relation_count == RELATION_COUNT
     # But unrelated topology still follows the checkpoint.
     assert out.num_layers == 9
     assert out.embed_dim == 384
+
+
+def test_resume_rejects_newer_arch_schema() -> None:
+    """A checkpoint written by a newer build must fail loudly rather than have
+    its unknown shape fields silently defaulted (mirrors the UCI loader)."""
+    cfg = ModelConfig(embed_dim=384, num_layers=9, input_extra_features="v1")
+    arch = {"_schema_version": ARCH_SCHEMA_VERSION + 1, **dataclasses.asdict(cfg)}
+
+    with pytest.raises(ValueError, match="newer than this build"):
+        resume_model_config_from_arch(arch, cfg)
+
+
+def test_resume_rejects_unknown_arch_keys() -> None:
+    """An unrecognised ModelConfig key (a future topology field) must fail loudly
+    so the tolerant loader can't quietly skip the matching tensors."""
+    cfg = ModelConfig(embed_dim=384, num_layers=9, input_extra_features="v1")
+    arch = {"_schema_version": ARCH_SCHEMA_VERSION, **dataclasses.asdict(cfg)}
+    arch["some_future_topology_field"] = 42
+
+    with pytest.raises(ValueError, match="unknown ModelConfig keys"):
+        resume_model_config_from_arch(arch, cfg)
+
+
+def test_resume_tolerates_missing_schema_version() -> None:
+    """Older checkpoints predate the ``_schema_version`` tag; resume must still
+    work for them (config-driven fallback), so a missing tag is not an error."""
+    cfg = ModelConfig(embed_dim=384, num_layers=9, input_extra_features="v1")
+    arch = dataclasses.asdict(cfg)  # no _schema_version
+    assert "_schema_version" not in arch
+
+    out = resume_model_config_from_arch(arch, cfg)
+
+    assert out == cfg

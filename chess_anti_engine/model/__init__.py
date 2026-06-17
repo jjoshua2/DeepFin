@@ -153,10 +153,19 @@ def model_config_from_manifest_dict(mc: dict) -> ModelConfig:
 # follow the checkpoint, so the rebuilt model matches the saved tensors and the
 # optimizer moments load.
 #
-# Two classes live here:
-#   * Input/output encoding identity (e.g. v1 -> v2_threats input planes, or a
-#     policy-format switch): the tolerant loader zero-inits the new input-embed
-#     columns / remaps heads (Trainer.load -> migrate_optimizer_input_plane_state).
+# Three classes live here:
+#   * Input encoding identity (e.g. v1 -> v2_threats input planes): the tolerant
+#     loader keeps the rebuilt model's zero-init columns for the widened input
+#     projection, and Trainer.load -> migrate_optimizer_input_plane_state
+#     zero-pads the matching optimizer moments. This IS a warm start.
+#   * policy_encoding: config must win on the output policy format, but there is
+#     NO warm-start remap for it (migrate_optimizer_input_plane_state only pads
+#     INPUT planes). A format switch (e.g. az_4672 -> lc0_1858) changes the
+#     policy-head output width, so the tolerant loader drops those heads as shape
+#     mismatches and they fresh-init; the now wrong-shaped policy-head optimizer
+#     moments fail load_state_dict and the whole optimizer is reinitialised. It
+#     stays config-owned so the model is at least built at the requested format
+#     (config wins), not so the heads carry over.
 #   * Zero-init experiment flags whose freshly added parameters are handled by
 #     Trainer._remap_optimizer_state_for_new_params (the dynamic_relation_weight
 #     / policy_relation_weight splice). If these followed the donor arch instead,
@@ -197,10 +206,43 @@ def resume_model_config_from_arch(arch: dict, config_cfg: ModelConfig) -> ModelC
     ``model_config_from_manifest_dict`` round-trips — including the
     ``use_gradient_checkpointing`` field that the manifest spells
     ``gradient_checkpointing``.
+
+    Like the UCI loader (``uci.model_loader._model_config_from_arch``), reject a
+    checkpoint whose ``_schema_version`` is newer than this build or that carries
+    unknown topology keys, instead of letting ``model_config_from_manifest_dict``
+    silently default them and hide the drift behind the tolerant state-dict
+    loader — the exact silent partial-load this arch-peek path exists to prevent.
     """
+    _reject_incompatible_arch_schema(arch)
     topo = model_config_from_manifest_dict(arch)
     overrides = {k: getattr(config_cfg, k) for k in _RESUME_CONFIG_OWNED_ENCODING_KEYS}
     return dataclasses.replace(topo, **overrides)
+
+
+def _reject_incompatible_arch_schema(arch: dict) -> None:
+    """Fail loudly on a forward-incompatible resume ``arch`` (mirrors the UCI loader).
+
+    A missing/non-int ``_schema_version`` is tolerated (older checkpoints predate
+    the tag and ``peek_checkpoint_arch`` returns them for the config-driven
+    fallback); a NEWER version or an unknown ModelConfig key is not, because
+    ``model_config_from_manifest_dict`` would otherwise default the unknown shape
+    fields and the tolerant loader would skip the new tensors — reintroducing the
+    silent topology/optimizer-state mismatch this path prevents.
+    """
+    version = arch.get("_schema_version")
+    if isinstance(version, int) and version > ARCH_SCHEMA_VERSION:
+        raise ValueError(
+            f"checkpoint arch schema v{version} is newer than this build "
+            f"(v{ARCH_SCHEMA_VERSION}); upgrade chess_anti_engine before resuming"
+        )
+    valid = {f.name for f in dataclasses.fields(ModelConfig)}
+    unknown = {k for k in arch if k != "_schema_version"} - valid
+    if unknown:
+        raise ValueError(
+            f"checkpoint arch has unknown ModelConfig keys {sorted(unknown)}; this "
+            "build would silently default them away on resume — upgrade the package "
+            "or re-save the checkpoint"
+        )
 
 
 def model_config_from_flat_config(
