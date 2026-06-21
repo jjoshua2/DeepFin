@@ -617,17 +617,24 @@ class DifficultyPID:
             )
 
         # Node bounds are live so the operator can ratchet the fixed (stage-1)
-        # node count up without a restart. After updating the bounds, re-clamp
-        # the current node count so a raised min_nodes drags it up immediately.
+        # node count up without a restart. Only act when a bound VALUE actually
+        # changes — the flattened live config always carries these keys, so
+        # re-clamping every iter would rewrite the nodes lever's fractional
+        # accumulator through the ceil-based `nodes` property and defeat the
+        # sub-integer float accumulation the nodes PID relies on.
         nodes_bounds_changed = False
         if "sf_pid_min_nodes" in config:
-            self.min_nodes = int(config["sf_pid_min_nodes"])
-            self.nodes_lever.min_value = float(self.min_nodes)
-            nodes_bounds_changed = True
+            new_min = int(config["sf_pid_min_nodes"])
+            if new_min != self.min_nodes:
+                self.min_nodes = new_min
+                self.nodes_lever.min_value = float(self.min_nodes)
+                nodes_bounds_changed = True
         if "sf_pid_max_nodes" in config:
-            self.max_nodes = int(config["sf_pid_max_nodes"])
-            self.nodes_lever.max_value = float(self.max_nodes)
-            nodes_bounds_changed = True
+            new_max = int(config["sf_pid_max_nodes"])
+            if new_max != self.max_nodes:
+                self.max_nodes = new_max
+                self.nodes_lever.max_value = float(self.max_nodes)
+                nodes_bounds_changed = True
         if nodes_bounds_changed:
             # Normalize inverted live bounds (operator error: floor above ceiling)
             # so the clamp can't strand nodes above max_nodes. Floor yields to the

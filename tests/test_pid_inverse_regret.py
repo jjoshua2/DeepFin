@@ -143,6 +143,17 @@ def test_metric_node_bounds_survive_ratchet_and_resume():
     assert legacy.metric_min_nodes == 650_000
 
 
+def test_unchanged_node_bounds_preserve_lever_float():
+    # Codex review: the flattened live config always carries sf_pid_min/max_nodes,
+    # so a no-op refresh (bounds unchanged) must NOT re-clamp — that would rewrite
+    # the nodes lever's fractional accumulator through the ceil-based property and
+    # defeat the sub-integer accumulation the nodes PID relies on.
+    pid = _mk_pid(initial_nodes=5000, min_nodes=1, max_nodes=25000)
+    pid.nodes_lever.value = 1.4  # sub-integer accumulation
+    pid.refresh_live_params({"sf_pid_min_nodes": 1, "sf_pid_max_nodes": 25000})  # unchanged
+    assert pid.nodes_lever.value == 1.4  # preserved, not rewritten to ceil(1.4)=2.0
+
+
 def test_observation_se_matches_known_distribution():
     # Pure win: raw variance 0 but SE is floored to prevent infinite weight.
     # (See Codex adversarial-review finding #2.)
