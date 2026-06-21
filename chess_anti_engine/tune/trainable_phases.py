@@ -426,8 +426,11 @@ def _run_pid_and_eval(
     opp_strength = _opponent_strength(
         sf_nodes=int(sf_nodes_used),
         ema_winrate=float(pid_ema_wr),
-        min_nodes=int(getattr(pid, "min_nodes", 50)) if pid is not None else 50,
-        max_nodes=int(getattr(pid, "max_nodes", 50000)) if pid is not None else 50000,
+        # Frozen construction-time bounds, not the live-ratcheted min/max_nodes:
+        # the strength normalizer must stay stable so a node-floor bump doesn't
+        # zero out the search-depth contribution (Codex review #2).
+        min_nodes=int(getattr(pid, "metric_min_nodes", getattr(pid, "min_nodes", 50))) if pid is not None else 50,
+        max_nodes=int(getattr(pid, "metric_max_nodes", getattr(pid, "max_nodes", 50000))) if pid is not None else 50000,
         pid_target_winrate=tc.sf_pid_target_winrate,
         wdl_regret=float(wdl_regret_used),
         wdl_regret_max=tc.sf_pid_wdl_regret_max,

@@ -136,6 +136,7 @@ class _Lever:
     ease_step_frac: float = 0.0
     safety_floor: float = 0.50
     emergency_ease_step: float = 0.01
+    emergency_ease_mult: float = 2.0
     recency_half_life: float = 0.0
     deadband_sigma: float = 1.0
     degen_step_frac: float = 0.5
@@ -214,9 +215,33 @@ def _step_lever(
     in_deadband = abs(err) <= raw_deadband and abs(ema_err) <= ema_deadband
     history_len_before = len(lever.history)
 
+    # Per-iter step caps (the "typical drop limit"): fractional when a
+    # *_step_frac is set, else the absolute max_step. Hoisted above the airbag
+    # so the emergency ease can size itself relative to a normal step.
+    abs_tighten_step = (
+        lever.max_step_frac * value_before if lever.max_step_frac > 0.0
+        else lever.max_step
+    )
+    abs_ease_step = (
+        lever.ease_step_frac * value_before if lever.ease_step_frac > 0.0
+        else abs_tighten_step
+    )
+
     if raw_wr + 1.5 * se < lever.safety_floor:
         lever.history.append((value_before, raw_wr, se))
-        ease_mag = min(lever.emergency_ease_step, lever.max_step)
+        # Emergency ease optionally scales with the normal ease cap via
+        # emergency_ease_mult. Default: mult=2 for NODES (auto-tracks node
+        # growth instead of a fixed step) and mult=0 for REGRET (legacy: just
+        # emergency_ease_step), so existing regret-airbag tuning is unchanged
+        # even for configs with a nonzero regret ease_step_frac. The
+        # emergency_ease_step floor keeps a meaningful jump for small-valued
+        # levers; the absolute max_step still caps it (sentinel for nodes so 2x
+        # scales freely, a real cap for regret so one noisy batch can't
+        # over-loosen).
+        ease_mag = min(
+            max(lever.emergency_ease_mult * abs_ease_step, lever.emergency_ease_step),
+            lever.max_step,
+        )
         delta = ease_sign * ease_mag
         new_value = _clamp(value_before + delta, lever.min_value, lever.max_value)
         reason = "airbag"
@@ -240,14 +265,6 @@ def _step_lever(
         )
     else:
         lever.history.append((value_before, raw_wr, se))
-        abs_tighten_step = (
-            lever.max_step_frac * value_before if lever.max_step_frac > 0.0
-            else lever.max_step
-        )
-        abs_ease_step = (
-            lever.ease_step_frac * value_before if lever.ease_step_frac > 0.0
-            else abs_tighten_step
-        )
         fit = _fit_inverse_lever_diagnostics(
             list(lever.history),
             target_wr=target_wr,
@@ -363,9 +380,10 @@ class PIDUpdate:
 
 
 # Sentinel "no absolute cap" for the nodes lever. The nodes-side
-# max_step_frac (default 10%) is the real per-iter cap; the absolute
-# max_step bound only matters for the airbag. Set high so the airbag's
-# min(emergency_ease_step, max_step) cap is governed by emergency_ease_step.
+# max_step_frac (default 10%) is the real per-iter cap; this absolute fallback
+# only matters if max_step_frac is unset. Set high so it never caps the airbag
+# (emergency_ease_mult * abs_ease_step), letting the fractional emergency ease
+# scale with node count.
 _NODES_MAX_STEP_DEFAULT = 1_000_000_000.0
 
 
@@ -375,6 +393,7 @@ _LEVER_LIVE_FIELDS = (
     "ease_step_frac",
     "safety_floor",
     "emergency_ease_step",
+    "emergency_ease_mult",
     "recency_half_life",
     "deadband_sigma",
     "degen_step_frac",
@@ -387,7 +406,7 @@ _LEVER_LIVE_FIELDS = (
 # Fields where negative values are physically meaningless; clamp at 0.
 _LEVER_NONNEG_FIELDS: frozenset[str] = frozenset({
     "max_step", "max_step_frac", "ease_step_frac",
-    "emergency_ease_step", "recency_half_life", "deadband_sigma",
+    "emergency_ease_step", "emergency_ease_mult", "recency_half_life", "deadband_sigma",
     "degen_step_frac", "tighten_gain", "tighten_streak_after",
     "tighten_streak_gain", "crash_ease_z", "crash_ease_min_frac",
 })
@@ -429,6 +448,7 @@ class DifficultyPID:
         regret_ease_step_frac: float = 0.0,
         regret_safety_floor: float = 0.50,
         regret_emergency_ease_step: float = 0.01,
+        regret_emergency_ease_mult: float = 0.0,  # 0 = legacy regret airbag; nodes default 2.0
         regret_recency_half_life: float = 0.0,
         regret_deadband_sigma: float = 1.0,
         regret_degen_step_frac: float = 0.5,
@@ -444,6 +464,7 @@ class DifficultyPID:
         nodes_ease_step_frac: float = 0.0,
         nodes_safety_floor: float = 0.0,
         nodes_emergency_ease_step: float = 0.0,
+        nodes_emergency_ease_mult: float = 2.0,
         nodes_recency_half_life: float = 0.0,
         nodes_deadband_sigma: float = 0.0,
         nodes_degen_step_frac: float = 0.5,
@@ -460,6 +481,13 @@ class DifficultyPID:
         self.min_games_between_adjust = int(min_games_between_adjust)
         self.min_nodes = int(min_nodes)
         self.max_nodes = int(max_nodes)
+        # Frozen reference bounds for the opponent_strength metric normalizer.
+        # min/max_nodes are live-reloadable (operator ratchets the floor up), but
+        # the metric must normalize against a STABLE range — otherwise a floor
+        # bump makes the higher node count score as the new "minimum"
+        # (contribution 0), depressing the Tune metric / best-regret ranking.
+        self.metric_min_nodes = int(min_nodes)
+        self.metric_max_nodes = int(max_nodes)
 
         self._regret_enabled = float(initial_wdl_regret) >= 0.0
         self._regret_gate_enabled = self._regret_enabled and float(wdl_regret_stage_end) >= 0.0
@@ -493,6 +521,7 @@ class DifficultyPID:
             ease_step_frac=float(regret_ease_step_frac),
             safety_floor=float(regret_safety_floor),
             emergency_ease_step=float(regret_emergency_ease_step),
+            emergency_ease_mult=float(regret_emergency_ease_mult),
             recency_half_life=float(regret_recency_half_life),
             deadband_sigma=float(regret_deadband_sigma),
             degen_step_frac=float(regret_degen_step_frac),
@@ -515,6 +544,7 @@ class DifficultyPID:
             ease_step_frac=float(nodes_ease_step_frac),
             safety_floor=float(nodes_safety_floor),
             emergency_ease_step=float(nodes_emergency_ease_step),
+            emergency_ease_mult=float(nodes_emergency_ease_mult),
             recency_half_life=float(nodes_recency_half_life),
             deadband_sigma=float(nodes_deadband_sigma),
             degen_step_frac=float(nodes_degen_step_frac),
@@ -556,10 +586,17 @@ class DifficultyPID:
     def refresh_live_params(self, config: dict) -> None:
         """Re-read live-reloadable knobs from a flat config dict.
 
-        Construction-time fields (``min_nodes``, ``max_nodes``, lever
-        ``window``, regret enable/gate flags) stay pinned. Everything else is
-        a scalar attr that can be safely overwritten each iteration so
-        live-reloaded yaml takes effect.
+        Construction-time fields (lever ``window``, regret enable/gate flags)
+        stay pinned. Everything else is a scalar attr that can be safely
+        overwritten each iteration so live-reloaded yaml takes effect.
+
+        ``min_nodes``/``max_nodes`` ARE live (2026-06-20): raising
+        ``sf_pid_min_nodes`` ratchets the (stage-1-frozen) node count up with no
+        restart — the intended "bump nodes as regret dips" workflow. Coupling to
+        be aware of: in stage 2, raising ``min_nodes`` up to the *current* node
+        count makes ``nodes == min_nodes``, which trips the no-ease-headroom guard
+        and unfreezes the regret lever — so that one edit both ramps nodes AND
+        re-activates the regret knob (a deliberate dual-knob regime, not a bug).
         """
         if "sf_pid_target_winrate" in config:
             self.target = float(config["sf_pid_target_winrate"])
@@ -579,6 +616,34 @@ class DifficultyPID:
                 self.wdl_regret_min, self.wdl_regret_max,
             )
 
+        # Node bounds are live so the operator can ratchet the fixed (stage-1)
+        # node count up without a restart. Only act when a bound VALUE actually
+        # changes — the flattened live config always carries these keys, so
+        # re-clamping every iter would rewrite the nodes lever's fractional
+        # accumulator through the ceil-based `nodes` property and defeat the
+        # sub-integer float accumulation the nodes PID relies on.
+        nodes_bounds_changed = False
+        if "sf_pid_min_nodes" in config:
+            new_min = int(config["sf_pid_min_nodes"])
+            if new_min != self.min_nodes:
+                self.min_nodes = new_min
+                self.nodes_lever.min_value = float(self.min_nodes)
+                nodes_bounds_changed = True
+        if "sf_pid_max_nodes" in config:
+            new_max = int(config["sf_pid_max_nodes"])
+            if new_max != self.max_nodes:
+                self.max_nodes = new_max
+                self.nodes_lever.max_value = float(self.max_nodes)
+                nodes_bounds_changed = True
+        if nodes_bounds_changed:
+            # Normalize inverted live bounds (operator error: floor above ceiling)
+            # so the clamp can't strand nodes above max_nodes. Floor yields to the
+            # ceiling — the tightest valid range.
+            if self.min_nodes > self.max_nodes:
+                self.min_nodes = self.max_nodes
+                self.nodes_lever.min_value = float(self.min_nodes)
+            self.nodes = int(_clamp(int(self.nodes), self.min_nodes, self.max_nodes))
+
         _refresh_lever_from_config(self.regret_lever, config, "sf_pid_regret_")
         _refresh_lever_from_config(self.nodes_lever, config, "sf_pid_nodes_")
 
@@ -597,6 +662,10 @@ class DifficultyPID:
                 [float(x), float(w), float(s)]
                 for (x, w, s) in self.nodes_lever.history
             ],
+            # Frozen so the opponent_strength normalizer survives resumes even
+            # after a live node-floor ratchet (see load_state_dict).
+            "metric_min_nodes": int(self.metric_min_nodes),
+            "metric_max_nodes": int(self.metric_max_nodes),
         }
 
     def load_state_dict(self, state: dict) -> None:
@@ -610,6 +679,14 @@ class DifficultyPID:
             )
 
         self.ema_winrate = float(state.get("ema_winrate", self.ema_winrate))
+
+        # Restore the ORIGINAL frozen metric bounds. The PID is rebuilt from the
+        # current (possibly node-ratcheted) yaml before this runs, so re-reading
+        # them from the checkpoint keeps opponent_strength normalized against the
+        # construction-time range across resumes (Codex review #2 follow-up).
+        # Legacy checkpoints without these keys fall back to the just-built value.
+        self.metric_min_nodes = int(state.get("metric_min_nodes", self.metric_min_nodes))
+        self.metric_max_nodes = int(state.get("metric_max_nodes", self.metric_max_nodes))
 
         # `inverse_history` is the pre-2026-04-26-rename key. Drop the
         # fallback once no live training run still has a checkpoint with it
@@ -812,6 +889,7 @@ def pid_from_config(config: dict) -> DifficultyPID:
         regret_ease_step_frac=float(config.get("sf_pid_regret_ease_step_frac", 0.0)),
         regret_safety_floor=float(config.get("sf_pid_regret_safety_floor", 0.50)),
         regret_emergency_ease_step=float(config.get("sf_pid_regret_emergency_ease_step", 0.01)),
+        regret_emergency_ease_mult=float(config.get("sf_pid_regret_emergency_ease_mult", 0.0)),
         regret_recency_half_life=float(config.get("sf_pid_regret_recency_half_life", 0.0)),
         regret_deadband_sigma=float(config.get("sf_pid_regret_deadband_sigma", 1.0)),
         regret_degen_step_frac=float(config.get("sf_pid_regret_degen_step_frac", 0.5)),
@@ -827,6 +905,7 @@ def pid_from_config(config: dict) -> DifficultyPID:
         nodes_ease_step_frac=float(config.get("sf_pid_nodes_ease_step_frac", 0.0)),
         nodes_safety_floor=float(config.get("sf_pid_nodes_safety_floor", 0.0)),
         nodes_emergency_ease_step=float(config.get("sf_pid_nodes_emergency_ease_step", 0.0)),
+        nodes_emergency_ease_mult=float(config.get("sf_pid_nodes_emergency_ease_mult", 2.0)),
         nodes_recency_half_life=float(config.get("sf_pid_nodes_recency_half_life", 0.0)),
         nodes_deadband_sigma=float(config.get("sf_pid_nodes_deadband_sigma", 0.0)),
         nodes_degen_step_frac=float(config.get("sf_pid_nodes_degen_step_frac", 0.5)),

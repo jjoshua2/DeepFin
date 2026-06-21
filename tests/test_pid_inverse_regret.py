@@ -51,6 +51,109 @@ def _feed_observations(pid: DifficultyPID, pairs: list[tuple[float, float]], n_g
         pid.observe(wins=w, draws=d, losses=losses, force=True)
 
 
+def test_min_max_nodes_live_reload_ratchets_node_count():
+    # 2026-06-20: node bounds are now live so the operator can ratchet the
+    # stage-1-frozen node count up without a restart (regret-lever regime).
+    pid = _mk_pid(
+        initial_nodes=500_000, min_nodes=500_000, max_nodes=1_000_000,
+        initial_wdl_regret=0.08, wdl_regret_min=0.0075, wdl_regret_max=0.7,
+    )
+    assert pid.nodes == 500_000
+    # Raise the floor live → node count drags up to it (the "bump nodes" workflow).
+    pid.refresh_live_params({"sf_pid_min_nodes": 650_000})
+    assert pid.min_nodes == 650_000
+    assert pid.nodes == 650_000
+    # Raise the ceiling live → bounds update, node count unchanged (within range).
+    pid.refresh_live_params({"sf_pid_max_nodes": 800_000})
+    assert pid.max_nodes == 800_000
+    assert pid.nodes == 650_000
+
+    # Lowering the ceiling below the current count (still >= floor) clamps it down.
+    pid2 = _mk_pid(
+        initial_nodes=900_000, min_nodes=500_000, max_nodes=1_000_000,
+        initial_wdl_regret=0.08, wdl_regret_min=0.0075, wdl_regret_max=0.7,
+    )
+    assert pid2.nodes == 900_000
+    pid2.refresh_live_params({"sf_pid_max_nodes": 600_000})
+    assert pid2.max_nodes == 600_000
+    assert pid2.nodes == 600_000
+
+
+def test_regret_airbag_mult_defaults_to_legacy():
+    # Codex review #1: the emergency-ease multiplier is a NODES feature; the
+    # regret lever must default to the legacy fixed airbag (mult=0) so configs
+    # with a nonzero regret ease_step_frac keep their tuned airbag size.
+    pid = _mk_pid()
+    assert pid.regret_lever.emergency_ease_mult == 0.0
+    assert pid.nodes_lever.emergency_ease_mult == 2.0
+
+
+def test_inverted_live_node_bounds_normalized():
+    # Codex review #3: a live edit dropping max below the current min must not
+    # strand nodes above max — the floor yields to the ceiling.
+    pid = _mk_pid(
+        initial_nodes=900_000, min_nodes=500_000, max_nodes=1_000_000,
+        initial_wdl_regret=0.08, wdl_regret_min=0.0075, wdl_regret_max=0.7,
+    )
+    pid.refresh_live_params({"sf_pid_max_nodes": 400_000})  # below current min 500k
+    assert pid.max_nodes == 400_000
+    assert pid.min_nodes == 400_000          # floor clamped down to the ceiling
+    assert pid.nodes == 400_000              # not stranded above max
+    assert pid.min_nodes <= pid.max_nodes
+
+
+def test_metric_node_bounds_frozen_across_ratchet():
+    # Codex review #2: ratcheting the live node floor must NOT move the
+    # opponent_strength metric normalizer (else the higher node count scores as
+    # the new minimum, zeroing the search-depth credit).
+    pid = _mk_pid(
+        initial_nodes=500_000, min_nodes=500_000, max_nodes=1_000_000,
+        initial_wdl_regret=0.08, wdl_regret_min=0.0075, wdl_regret_max=0.7,
+    )
+    assert pid.metric_min_nodes == 500_000
+    assert pid.metric_max_nodes == 1_000_000
+    pid.refresh_live_params({"sf_pid_min_nodes": 650_000})
+    assert pid.min_nodes == 650_000           # live clamp bound moves
+    assert pid.metric_min_nodes == 500_000    # metric baseline stays frozen
+    assert pid.metric_max_nodes == 1_000_000
+
+
+def test_metric_node_bounds_survive_ratchet_and_resume():
+    # Codex review #2 follow-up: a live node-floor ratchet then a checkpoint/
+    # resume (the PID is rebuilt from the ratcheted yaml before load_state_dict)
+    # must keep the ORIGINAL metric bounds, else opponent_strength drifts.
+    pid = _mk_pid(
+        initial_nodes=500_000, min_nodes=500_000, max_nodes=1_000_000,
+        initial_wdl_regret=0.08, wdl_regret_min=0.0075, wdl_regret_max=0.7,
+    )
+    pid.refresh_live_params({"sf_pid_min_nodes": 650_000})  # ratchet the floor up
+    state = pid.state_dict()
+    # Resume: rebuild from the now-ratcheted yaml (min_nodes=650k), then restore.
+    resumed = _mk_pid(
+        initial_nodes=650_000, min_nodes=650_000, max_nodes=1_000_000,
+        initial_wdl_regret=0.08, wdl_regret_min=0.0075, wdl_regret_max=0.7,
+    )
+    assert resumed.metric_min_nodes == 650_000   # construction picks up ratcheted value
+    resumed.load_state_dict(state)
+    assert resumed.metric_min_nodes == 500_000   # restored to the original frozen baseline
+    assert resumed.metric_max_nodes == 1_000_000
+    # Legacy checkpoint (no metric keys) falls back to the construction value.
+    legacy = _mk_pid(initial_nodes=650_000, min_nodes=650_000, max_nodes=1_000_000)
+    legacy.load_state_dict({"nodes": 650_000})
+    assert legacy.metric_min_nodes == 650_000
+
+
+def test_unchanged_node_bounds_preserve_lever_float():
+    # Codex review: the flattened live config always carries sf_pid_min/max_nodes,
+    # so a no-op refresh (bounds unchanged) must NOT re-clamp — that would rewrite
+    # the nodes lever's fractional accumulator through the ceil-based property and
+    # defeat the sub-integer accumulation the nodes PID relies on.
+    pid = _mk_pid(initial_nodes=5000, min_nodes=1, max_nodes=25000)
+    pid.nodes_lever.value = 1.4  # sub-integer accumulation
+    pid.refresh_live_params({"sf_pid_min_nodes": 1, "sf_pid_max_nodes": 25000})  # unchanged
+    assert pid.nodes_lever.value == 1.4  # preserved, not rewritten to ceil(1.4)=2.0
+
+
 def test_observation_se_matches_known_distribution():
     # Pure win: raw variance 0 but SE is floored to prevent infinite weight.
     # (See Codex adversarial-review finding #2.)
@@ -707,6 +810,40 @@ def test_nodes_airbag_recovers_at_min_nodes():
         f"nodes lever should ramp from floor when winning, got "
         f"{floor_value}→{pid.nodes_lever.value}"
     )
+
+
+def test_nodes_airbag_scales_with_node_count():
+    # The airbag eases by emergency_ease_mult x the normal ease cap
+    # (max_step_frac x nodes), so it auto-scales with node count instead of a
+    # fixed absolute step. At 100k nodes that is 2 x 0.10 x 100k = 20k, not the
+    # legacy ~1000-node fixed drop (which was weaker than a routine step at
+    # high node counts — backwards for an emergency).
+    pid = _mk_pid_nodes_only(
+        initial_nodes=100_000,
+        nodes_safety_floor=0.50,
+        nodes_emergency_ease_step=0.0,   # no absolute floor → purely fractional
+        nodes_emergency_ease_mult=2.0,
+        nodes_max_step_frac=0.10,
+    )
+    before = pid.nodes
+    pid.observe(wins=0, draws=0, losses=800, force=True)  # raw_wr=0 → airbag
+    drop = before - pid.nodes
+    assert 19_000 < drop < 21_000, (
+        f"expected ~20k (2x10% of 100k) fractional airbag drop, got {drop}"
+    )
+    # The emergency_ease_step floor still governs when it exceeds the fractional
+    # step (small node counts): 2x10% of 3000 = 600 < 1000 floor → drop 1000.
+    pid2 = _mk_pid_nodes_only(
+        initial_nodes=3_000,
+        min_nodes=1,
+        nodes_safety_floor=0.50,
+        nodes_emergency_ease_step=1000.0,
+        nodes_emergency_ease_mult=2.0,
+        nodes_max_step_frac=0.10,
+    )
+    b2 = pid2.nodes
+    pid2.observe(wins=0, draws=0, losses=800, force=True)
+    assert b2 - pid2.nodes == 1000, f"floor should govern small N, got {b2 - pid2.nodes}"
 
 
 def test_nodes_lever_max_step_unset_uses_frac_only():
