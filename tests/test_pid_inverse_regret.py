@@ -79,6 +79,45 @@ def test_min_max_nodes_live_reload_ratchets_node_count():
     assert pid2.nodes == 600_000
 
 
+def test_regret_airbag_mult_defaults_to_legacy():
+    # Codex review #1: the emergency-ease multiplier is a NODES feature; the
+    # regret lever must default to the legacy fixed airbag (mult=0) so configs
+    # with a nonzero regret ease_step_frac keep their tuned airbag size.
+    pid = _mk_pid()
+    assert pid.regret_lever.emergency_ease_mult == 0.0
+    assert pid.nodes_lever.emergency_ease_mult == 2.0
+
+
+def test_inverted_live_node_bounds_normalized():
+    # Codex review #3: a live edit dropping max below the current min must not
+    # strand nodes above max — the floor yields to the ceiling.
+    pid = _mk_pid(
+        initial_nodes=900_000, min_nodes=500_000, max_nodes=1_000_000,
+        initial_wdl_regret=0.08, wdl_regret_min=0.0075, wdl_regret_max=0.7,
+    )
+    pid.refresh_live_params({"sf_pid_max_nodes": 400_000})  # below current min 500k
+    assert pid.max_nodes == 400_000
+    assert pid.min_nodes == 400_000          # floor clamped down to the ceiling
+    assert pid.nodes == 400_000              # not stranded above max
+    assert pid.min_nodes <= pid.max_nodes
+
+
+def test_metric_node_bounds_frozen_across_ratchet():
+    # Codex review #2: ratcheting the live node floor must NOT move the
+    # opponent_strength metric normalizer (else the higher node count scores as
+    # the new minimum, zeroing the search-depth credit).
+    pid = _mk_pid(
+        initial_nodes=500_000, min_nodes=500_000, max_nodes=1_000_000,
+        initial_wdl_regret=0.08, wdl_regret_min=0.0075, wdl_regret_max=0.7,
+    )
+    assert pid.metric_min_nodes == 500_000
+    assert pid.metric_max_nodes == 1_000_000
+    pid.refresh_live_params({"sf_pid_min_nodes": 650_000})
+    assert pid.min_nodes == 650_000           # live clamp bound moves
+    assert pid.metric_min_nodes == 500_000    # metric baseline stays frozen
+    assert pid.metric_max_nodes == 1_000_000
+
+
 def test_observation_se_matches_known_distribution():
     # Pure win: raw variance 0 but SE is floored to prevent infinite weight.
     # (See Codex adversarial-review finding #2.)

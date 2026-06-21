@@ -229,12 +229,15 @@ def _step_lever(
 
     if raw_wr + 1.5 * se < lever.safety_floor:
         lever.history.append((value_before, raw_wr, se))
-        # Emergency ease scales with the normal ease cap (default 2x) so it
-        # auto-tracks node growth instead of a fixed absolute step; the
+        # Emergency ease optionally scales with the normal ease cap via
+        # emergency_ease_mult. Default: mult=2 for NODES (auto-tracks node
+        # growth instead of a fixed step) and mult=0 for REGRET (legacy: just
+        # emergency_ease_step), so existing regret-airbag tuning is unchanged
+        # even for configs with a nonzero regret ease_step_frac. The
         # emergency_ease_step floor keeps a meaningful jump for small-valued
-        # levers (regret) where the fractional step is negligible. Still bounded
-        # by the absolute max_step: unset/sentinel for nodes so 2x scales
-        # freely, a real cap for regret so one noisy batch can't over-loosen.
+        # levers; the absolute max_step still caps it (sentinel for nodes so 2x
+        # scales freely, a real cap for regret so one noisy batch can't
+        # over-loosen).
         ease_mag = min(
             max(lever.emergency_ease_mult * abs_ease_step, lever.emergency_ease_step),
             lever.max_step,
@@ -445,7 +448,7 @@ class DifficultyPID:
         regret_ease_step_frac: float = 0.0,
         regret_safety_floor: float = 0.50,
         regret_emergency_ease_step: float = 0.01,
-        regret_emergency_ease_mult: float = 2.0,
+        regret_emergency_ease_mult: float = 0.0,  # 0 = legacy regret airbag; nodes default 2.0
         regret_recency_half_life: float = 0.0,
         regret_deadband_sigma: float = 1.0,
         regret_degen_step_frac: float = 0.5,
@@ -478,6 +481,13 @@ class DifficultyPID:
         self.min_games_between_adjust = int(min_games_between_adjust)
         self.min_nodes = int(min_nodes)
         self.max_nodes = int(max_nodes)
+        # Frozen reference bounds for the opponent_strength metric normalizer.
+        # min/max_nodes are live-reloadable (operator ratchets the floor up), but
+        # the metric must normalize against a STABLE range — otherwise a floor
+        # bump makes the higher node count score as the new "minimum"
+        # (contribution 0), depressing the Tune metric / best-regret ranking.
+        self.metric_min_nodes = int(min_nodes)
+        self.metric_max_nodes = int(max_nodes)
 
         self._regret_enabled = float(initial_wdl_regret) >= 0.0
         self._regret_gate_enabled = self._regret_enabled and float(wdl_regret_stage_end) >= 0.0
@@ -619,6 +629,12 @@ class DifficultyPID:
             self.nodes_lever.max_value = float(self.max_nodes)
             nodes_bounds_changed = True
         if nodes_bounds_changed:
+            # Normalize inverted live bounds (operator error: floor above ceiling)
+            # so the clamp can't strand nodes above max_nodes. Floor yields to the
+            # ceiling — the tightest valid range.
+            if self.min_nodes > self.max_nodes:
+                self.min_nodes = self.max_nodes
+                self.nodes_lever.min_value = float(self.min_nodes)
             self.nodes = int(_clamp(int(self.nodes), self.min_nodes, self.max_nodes))
 
         _refresh_lever_from_config(self.regret_lever, config, "sf_pid_regret_")
@@ -854,7 +870,7 @@ def pid_from_config(config: dict) -> DifficultyPID:
         regret_ease_step_frac=float(config.get("sf_pid_regret_ease_step_frac", 0.0)),
         regret_safety_floor=float(config.get("sf_pid_regret_safety_floor", 0.50)),
         regret_emergency_ease_step=float(config.get("sf_pid_regret_emergency_ease_step", 0.01)),
-        regret_emergency_ease_mult=float(config.get("sf_pid_regret_emergency_ease_mult", 2.0)),
+        regret_emergency_ease_mult=float(config.get("sf_pid_regret_emergency_ease_mult", 0.0)),
         regret_recency_half_life=float(config.get("sf_pid_regret_recency_half_life", 0.0)),
         regret_deadband_sigma=float(config.get("sf_pid_regret_deadband_sigma", 1.0)),
         regret_degen_step_frac=float(config.get("sf_pid_regret_degen_step_frac", 0.5)),
