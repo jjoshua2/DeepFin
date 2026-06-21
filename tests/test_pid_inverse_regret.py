@@ -118,6 +118,31 @@ def test_metric_node_bounds_frozen_across_ratchet():
     assert pid.metric_max_nodes == 1_000_000
 
 
+def test_metric_node_bounds_survive_ratchet_and_resume():
+    # Codex review #2 follow-up: a live node-floor ratchet then a checkpoint/
+    # resume (the PID is rebuilt from the ratcheted yaml before load_state_dict)
+    # must keep the ORIGINAL metric bounds, else opponent_strength drifts.
+    pid = _mk_pid(
+        initial_nodes=500_000, min_nodes=500_000, max_nodes=1_000_000,
+        initial_wdl_regret=0.08, wdl_regret_min=0.0075, wdl_regret_max=0.7,
+    )
+    pid.refresh_live_params({"sf_pid_min_nodes": 650_000})  # ratchet the floor up
+    state = pid.state_dict()
+    # Resume: rebuild from the now-ratcheted yaml (min_nodes=650k), then restore.
+    resumed = _mk_pid(
+        initial_nodes=650_000, min_nodes=650_000, max_nodes=1_000_000,
+        initial_wdl_regret=0.08, wdl_regret_min=0.0075, wdl_regret_max=0.7,
+    )
+    assert resumed.metric_min_nodes == 650_000   # construction picks up ratcheted value
+    resumed.load_state_dict(state)
+    assert resumed.metric_min_nodes == 500_000   # restored to the original frozen baseline
+    assert resumed.metric_max_nodes == 1_000_000
+    # Legacy checkpoint (no metric keys) falls back to the construction value.
+    legacy = _mk_pid(initial_nodes=650_000, min_nodes=650_000, max_nodes=1_000_000)
+    legacy.load_state_dict({"nodes": 650_000})
+    assert legacy.metric_min_nodes == 650_000
+
+
 def test_observation_se_matches_known_distribution():
     # Pure win: raw variance 0 but SE is floored to prevent infinite weight.
     # (See Codex adversarial-review finding #2.)

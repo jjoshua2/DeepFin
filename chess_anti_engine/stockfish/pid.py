@@ -655,6 +655,10 @@ class DifficultyPID:
                 [float(x), float(w), float(s)]
                 for (x, w, s) in self.nodes_lever.history
             ],
+            # Frozen so the opponent_strength normalizer survives resumes even
+            # after a live node-floor ratchet (see load_state_dict).
+            "metric_min_nodes": int(self.metric_min_nodes),
+            "metric_max_nodes": int(self.metric_max_nodes),
         }
 
     def load_state_dict(self, state: dict) -> None:
@@ -668,6 +672,14 @@ class DifficultyPID:
             )
 
         self.ema_winrate = float(state.get("ema_winrate", self.ema_winrate))
+
+        # Restore the ORIGINAL frozen metric bounds. The PID is rebuilt from the
+        # current (possibly node-ratcheted) yaml before this runs, so re-reading
+        # them from the checkpoint keeps opponent_strength normalized against the
+        # construction-time range across resumes (Codex review #2 follow-up).
+        # Legacy checkpoints without these keys fall back to the just-built value.
+        self.metric_min_nodes = int(state.get("metric_min_nodes", self.metric_min_nodes))
+        self.metric_max_nodes = int(state.get("metric_max_nodes", self.metric_max_nodes))
 
         # `inverse_history` is the pre-2026-04-26-rename key. Drop the
         # fallback once no live training run still has a checkpoint with it
