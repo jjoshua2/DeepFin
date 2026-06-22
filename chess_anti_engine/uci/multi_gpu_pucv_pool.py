@@ -233,6 +233,11 @@ class MultiGpuPucvPool:
     def __exit__(self, *_args) -> None:
         self.close()
 
+    @property
+    def n_devices(self) -> int:
+        """Number of GPU worker evaluators driving the shared tree."""
+        return self._cfg.n_gpus
+
     def close(self) -> None:
         if self._shutdown.is_set():
             return

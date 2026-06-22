@@ -58,6 +58,30 @@ _DEFAULT_CHUNK_SIMS = 32
 # gets noisy fast. PV extraction (tree walks) runs only on the tick.
 _INFO_EMIT_INTERVAL_MS = 1000
 
+# --- shared-tree concurrency: pre-grow to avoid mid-chunk realloc ------------
+# The walker / multi-GPU pucv pools mutate one MCTSTree from N threads. The C
+# extension reads node/child arrays lock-free during descent, and `_mcts_tree.c`
+# documents that a `tree_grow_*` realloc mid-descent can hand a concurrent
+# reader a stale (freed) base pointer — a use-after-free. Its contract: callers
+# "MUST call MCTSTree.reserve(max_nodes) upfront so no realloc fires during
+# concurrent descent." A real-game search has no node cap (it runs to the time
+# deadline), so node_count climbs past any fixed reserve and the arena reallocs
+# mid-chunk. We instead reserve just-in-time *between* chunks — a quiescent
+# point where the pool has joined its barrier and no worker is descending —
+# sized to the next chunk's worst-case growth. reserve() grows via the same
+# internal doubling the mid-chunk realloc would have used, so node_cap /
+# memory_bytes() (and thus the byte-cap and advance_root half-cap behavior) are
+# unchanged: we only move the realloc to a safe point.
+#
+# One sim expands one leaf, which eagerly creates up to `b` child nodes
+# (b = legal-move count). A chunk of S sims therefore adds at most
+# S * _TREE_MAX_LEAF_BRANCHING nodes (and the same number of child edges, since
+# #edges == #nodes-1 in a tree). 256 > 218, the absolute maximum number of
+# legal moves in any chess position, so the bound holds even in pathological
+# high-mobility positions.
+_TREE_MAX_LEAF_BRANCHING = 256
+_TREE_GROW_MARGIN_NODES = 4096
+
 
 @dataclass
 class SearchResult:
@@ -854,6 +878,44 @@ class SearchWorker:
             return "tree_bytes"
         return None
 
+    def _multi_gpu_pucv_devices(self) -> int:
+        return self._pucv_pool.n_devices if self._pucv_pool is not None else 1
+
+    def _is_shared_tree_path(self, allowed_root_indices: set[int] | None) -> bool:
+        """True when the active chunk path mutates the shared tree from multiple
+        threads (walker pool or multi-GPU pucv pool). ``searchmoves`` forces the
+        single-thread gumbel path, so it is never shared-tree."""
+        if allowed_root_indices is not None:
+            return False
+        return self._pucv_pool is not None or self._walker_pool is not None
+
+    def _chunk_budget(self, allowed_root_indices: set[int] | None) -> int:
+        """Sims to request from the active path for one chunk.
+
+        The multi-GPU pucv pool splits a single ``run()``'s budget across all
+        GPU workers via one shared semaphore. At the single-GPU stop-latency
+        chunk (``_chunk_sims``) the first worker to wake drains the whole budget
+        and the rest idle, so the pool collapses to ~one GPU per chunk. Scaling
+        the per-run budget by device count gives every worker a full share; the
+        pool still polls ``stop_event`` between batches, so stop latency stays
+        ~one batch rather than ~one (now larger) chunk.
+        """
+        if allowed_root_indices is None and self._pucv_pool is not None:
+            return self._chunk_sims * max(1, self._multi_gpu_pucv_devices())
+        return self._chunk_sims
+
+    def _ensure_shared_tree_headroom(self, upcoming_sims: int) -> None:
+        """Pre-grow the shared tree so the next concurrent chunk cannot trigger a
+        ``tree_grow_*`` realloc mid-descent. See ``_TREE_MAX_LEAF_BRANCHING``."""
+        tree = self._tree
+        if tree is None:
+            return
+        headroom = int(upcoming_sims) * _TREE_MAX_LEAF_BRANCHING + _TREE_GROW_MARGIN_NODES
+        needed = tree.node_count() + headroom
+  # child edges grow 1:1 with nodes (#edges == #nodes-1), so the same target
+  # bounds the child pool too.
+        tree.reserve(needed, needed)
+
     def run(
         self,
         board: chess.Board,
@@ -927,12 +989,18 @@ class SearchWorker:
         pv_indices: list[int] = []
         elapsed = 0
         while True:
-            chunk = self._chunk_sims
+            chunk = self._chunk_budget(allowed_root_indices)
             if max_nodes is not None:
                 remaining = max_nodes - total_nodes
                 if remaining <= 0:
                     break
                 chunk = min(chunk, remaining)
+
+  # Shared-tree (walker / multi-GPU pucv) chunks descend lock-free from N
+  # threads; grow the arena now, while quiescent, so the chunk can't realloc
+  # mid-descent (use-after-free). See _ensure_shared_tree_headroom.
+            if self._is_shared_tree_path(allowed_root_indices):
+                self._ensure_shared_tree_headroom(chunk)
 
             last_value = self._run_one_chunk(
                 chunk, board, stop_event, tb_probe, allowed_root_indices,

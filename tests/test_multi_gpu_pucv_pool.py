@@ -227,6 +227,54 @@ def test_searchworker_install_multi_gpu_pucv_produces_bestmove() -> None:
     worker.close()
 
 
+def test_shared_tree_headroom_pregrows_arena_past_fixed_reserve() -> None:
+    """_ensure_shared_tree_headroom must pre-grow the arena for the next chunk's
+    worst-case node growth (chunk * branching), well past the old fixed
+    reserve(50_000, ...). This is what keeps a concurrent chunk from triggering
+    a tree_grow_* realloc mid-descent (use-after-free per _mcts_tree.c)."""
+    ev = _make_evaluator()
+    worker = SearchWorker(
+        ev, device="cpu",
+        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        chunk_sims=512, n_walkers=1,
+    )
+    try:
+        tree = MCTSTree()
+        tree.reserve(64, 256)  # tiny, like a freshly created tree
+        tree.add_root(0, 0.0)
+        worker._tree = tree  # noqa: SLF001
+        before = tree.memory_bytes()
+        worker._ensure_shared_tree_headroom(512)  # noqa: SLF001
+        after = tree.memory_bytes()
+        assert after > before
+  # 512 sims * 256 max branching = 131072 nodes of headroom; per-node node +
+  # child arrays are ~50 bytes, so capacity now far exceeds the old 50k reserve.
+        assert after >= 512 * 256 * 50
+    finally:
+        worker.close()
+
+
+def test_searchworker_multi_gpu_pucv_multi_chunk_search() -> None:
+    """A pool search spanning several chunks exercises the per-chunk headroom
+    growth in run()'s loop and must complete with a legal bestmove. The budget
+    is scaled by device count, so node growth crosses the initial reserve."""
+    primary = _make_evaluator(max_batch=64)
+    worker = SearchWorker(
+        primary, device="cpu",
+        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        chunk_sims=64, n_walkers=1,
+    )
+    p0 = _make_evaluator(max_batch=64)
+    p1 = _make_evaluator(max_batch=64)
+    worker.install_multi_gpu_pucv([p0, p1], gather=8, as_factories=False)
+  # 2 devices -> chunk budget 128; max_nodes 400 -> several chunks.
+    result = worker.run(chess.Board(), stop_event=threading.Event(),
+                        deadline=Deadline(5_000), max_nodes=400)
+    assert len(result.bestmove_uci) >= 4
+    assert result.nodes >= 256
+    worker.close()
+
+
 def test_searchworker_clear_multi_gpu_pucv_reverts() -> None:
     """install_multi_gpu_pucv → clear_multi_gpu_pucv must drop the pool and
     leave subsequent searches running through the gumbel/walker path."""
