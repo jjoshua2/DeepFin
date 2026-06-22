@@ -29,7 +29,7 @@ from chess_anti_engine.inference_dispatcher import (
 )
 from chess_anti_engine.mcts.gumbel import GumbelConfig
 
-from .engine import Engine, EngineOptions, emit_handshake
+from .engine import Engine, EngineOptions, _println, emit_handshake
 from .model_loader import load_model_from_checkpoint
 from .protocol import CmdQuit, CmdUci, parse_command
 from .search import SearchWorker
@@ -485,11 +485,10 @@ def main() -> int:
   # raw Q and never reads them, so the tuned c_scale=0.025 win only lands on
   # the classic Gumbel path. Warn so the inert tuning isn't silent.
             if n_walkers > 1:
-                print(
+                _println(
                     "info string c-scale/c-visit are Gumbel-only and ignored at "
                     f"walkers={n_walkers} (PUCT walker pool); set Threads/--walkers 1 "
-                    "for the c_scale-tuned classic Gumbel path",
-                    flush=True,
+                    "for the c_scale-tuned classic Gumbel path"
                 )
             models = _load_models(args.checkpoint, devices)
             input_history_encoding = str(getattr(models[0], "input_history_encoding", "legacy"))
@@ -497,10 +496,9 @@ def main() -> int:
             policy_encoding = str(getattr(models[0], "policy_encoding", "az_4672"))
             use_dynamic_relations = bool(getattr(models[0], "use_dynamic_relations", False))
             if use_dynamic_relations:
-                print(
+                _println(
                     "info string model uses dynamic relations; transporting "
-                    "relation matrices through search",
-                    flush=True,
+                    "relation matrices through search"
                 )
             compile_mode = str(args.compile_mode) if args.compile else None
             build_eval = _make_evaluator_factory(
@@ -557,7 +555,7 @@ def main() -> int:
             if not engine_ready.is_set():
                 engine_ready.wait()
             if engine_error[0] is not None:
-                print(f"info string engine load failed: {engine_error[0]!r}", flush=True)
+                _println(f"info string engine load failed: {engine_error[0]!r}")
                 raise engine_error[0]
             engine = engine_ref[0]
             assert engine is not None

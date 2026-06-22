@@ -862,6 +862,18 @@ def _legal_fallback_move(board: chess.Board, searchmoves: tuple[str, ...]) -> st
         return "0000"
 
 
+# UCI stdout is written from several threads: the main loop (handshake,
+# readyok, bestmove), the background model-load thread in __main__ (startup
+# `info string`s), and the search thread (`info` lines). A bare `print()`
+# emits text and newline as separate writes, so without serialization a
+# concurrent line can be spliced mid-line into another — observed as a startup
+# `info string` swallowing the `id name` handshake line and breaking the UCI
+# handshake. Hold a lock across the write+flush so every logical line is atomic
+# on stdout; all UCI output (including __main__'s startup prints) routes here.
+_PRINT_LOCK = threading.Lock()
+
+
 def _println(s: str) -> None:
-    sys.stdout.write(s + "\n")
-    sys.stdout.flush()
+    with _PRINT_LOCK:
+        sys.stdout.write(s + "\n")
+        sys.stdout.flush()
