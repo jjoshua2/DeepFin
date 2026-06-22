@@ -103,6 +103,7 @@ class InfoCallback(Protocol):
         nodes: int, elapsed_ms: int, score_cp: int, pv: tuple[str, ...],
         tbhits: int, score_mate: int | None, multipv: int | None,
         wdl: tuple[int, int, int] | None, string: str | None = None,
+        hashfull: int | None = None, seldepth: int | None = None,
     ) -> None:
         ...
 
@@ -237,6 +238,10 @@ class SearchWorker:
   # evaluation (all lines share the same draw rate — they're
   # different continuations of the same root position).
         self._show_wdl: bool = False
+  # Selective depth: the deepest principal-variation length observed during
+  # the current search (monotonic max, reset per `run()`). A real, climbing
+  # number that GUIs/TCEC spectators expect alongside `depth`.
+        self._seldepth: int = 0
 
     def _build_walker_pool(self, n: int) -> WalkerPool | None:
         if n <= 1:
@@ -258,6 +263,17 @@ class SearchWorker:
     def set_show_wdl(self, enabled: bool) -> None:
         """Toggle WDL emission on info lines. Takes effect next emit."""
         self._show_wdl = bool(enabled)
+
+    def _hashfull_permille(self) -> int | None:
+        """Tree-memory fill as per-mille of the soft cap (UCI ``hashfull``).
+
+        The cap is ``set_max_tree_mb`` (UCI ``Hash``); ``memory_bytes()`` is the
+        arena's allocated size, the same quantity the byte-cap stop checks. None
+        when the cap is disabled (0) or no tree exists yet."""
+        if self._max_tree_bytes <= 0 or self._tree is None:
+            return None
+        used = int(self._tree.memory_bytes())
+        return max(0, min(1000, used * 1000 // self._max_tree_bytes))
 
     def set_multi_pv(self, n: int) -> None:
         """Number of top-ranked lines to emit per info tick. 1 = classic
@@ -575,6 +591,12 @@ class SearchWorker:
                 self.last_single_pucv_cache_stats(),
                 pending_mode=self._pucv_vloss_mode,
             )
+        hashfull = self._hashfull_permille()
+  # seldepth is the deepest PV any emitted line reaches, kept monotonic across
+  # the search so it climbs like a real selective-depth counter.
+        self._seldepth = max(
+            self._seldepth, max((len(pv_idx) for _, _, pv_idx in lines), default=0),
+        )
         for rank, q, pv_idx in lines:
             uci_pv = _uci_pv(board, pv_idx)
             wdl = _q_to_wdl_permille(q, draw_rate) if self._show_wdl else None
@@ -588,6 +610,8 @@ class SearchWorker:
                 multipv=rank if emit_multipv else None,
                 wdl=wdl,
                 string=pucv_info if rank == 1 else None,
+                hashfull=hashfull,
+                seldepth=self._seldepth,
             )
 
     def set_max_tree_mb(self, mb: int) -> None:
@@ -672,6 +696,9 @@ class SearchWorker:
                 score_mate=short.score_mate,
                 multipv=1 if self._multi_pv > 1 else None,
                 wdl=None,
+  # TB shortcut bypasses MCTS, so there is no tree to report fill for.
+                hashfull=None,
+                seldepth=len(short.pv),
             )
         return short
 
@@ -980,6 +1007,7 @@ class SearchWorker:
             )
 
         self._last_gumbel_action_idx = None
+        self._seldepth = 0
         self._ensure_root_eval_cached(board, tb_probe)
         self._pre_expand_root_for_pool(board, allowed_root_indices)
 

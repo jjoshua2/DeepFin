@@ -732,6 +732,8 @@ class Engine:
             multipv: int | None,
             wdl: tuple[int, int, int] | None,
             string: str | None = None,
+            hashfull: int | None = None,
+            seldepth: int | None = None,
         ) -> None:
             nonlocal emitted_info
             emitted_info = True
@@ -745,6 +747,8 @@ class Engine:
                 multipv=multipv,
                 wdl=wdl,
                 string=string,
+                hashfull=hashfull,
+                seldepth=seldepth,
             )
 
         try:
@@ -783,10 +787,12 @@ class Engine:
         nodes: int, elapsed_ms: int, score_cp: int, pv: tuple[str, ...],
         tbhits: int, score_mate: int | None, multipv: int | None,
         wdl: tuple[int, int, int] | None, string: str | None = None,
+        hashfull: int | None = None, seldepth: int | None = None,
     ) -> None:
         nps = int(nodes * 1000 / max(1, elapsed_ms))
         _println(format_info(InfoFields(
             depth=len(pv),
+            seldepth=seldepth,
             multipv=multipv,
             nodes=nodes,
             nps=nps,
@@ -794,6 +800,7 @@ class Engine:
             score_cp=score_cp,
             score_mate=score_mate,
             pv=pv,
+            hashfull_per_mille=hashfull,
             tbhits=tbhits,
             wdl=wdl,
             string=string,

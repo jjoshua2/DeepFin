@@ -275,6 +275,36 @@ def test_searchworker_multi_gpu_pucv_multi_chunk_search() -> None:
     worker.close()
 
 
+def test_search_emit_info_reports_hashfull_and_seldepth() -> None:
+    """Info lines must carry hashfull (tree fill vs Hash cap) and a climbing
+    seldepth — both expected by GUIs/TCEC spectators and previously never set."""
+    ev = _make_evaluator()
+    worker = SearchWorker(
+        ev, device="cpu",
+        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        chunk_sims=64, n_walkers=1,
+    )
+    try:
+        worker.set_max_tree_mb(16)
+        tree, rid, _ = _seed_tree()
+        worker._tree = tree  # noqa: SLF001
+        worker._root_id = rid  # noqa: SLF001
+        captured: list[dict[str, Any]] = []
+        worker._emit_pv_info(  # noqa: SLF001
+            lambda **kw: captured.append(kw),
+            chess.Board(), 0.0, 64, 100, None,
+        )
+        assert captured
+        kw = captured[0]
+        assert kw["seldepth"] is not None and kw["seldepth"] >= 1
+        assert kw["hashfull"] is not None and 0 <= kw["hashfull"] <= 1000
+  # Disabling the Hash cap drops hashfull rather than dividing by zero.
+        worker.set_max_tree_mb(0)
+        assert worker._hashfull_permille() is None  # noqa: SLF001
+    finally:
+        worker.close()
+
+
 def test_searchworker_clear_multi_gpu_pucv_reverts() -> None:
     """install_multi_gpu_pucv → clear_multi_gpu_pucv must drop the pool and
     leave subsequent searches running through the gumbel/walker path."""
