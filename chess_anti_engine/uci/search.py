@@ -944,26 +944,63 @@ class SearchWorker:
             return self._chunk_sims * max(1, self._multi_gpu_pucv_devices())
         return self._chunk_sims
 
-    def _ensure_shared_tree_headroom(self, upcoming_sims: int) -> None:
-        """Pre-grow the shared tree so the next concurrent chunk cannot trigger a
-        ``tree_grow_*`` realloc mid-descent. See ``_TREE_MAX_LEAF_BRANCHING``."""
+    def _ensure_shared_tree_headroom(self, upcoming_sims: int) -> int:
+        """Pre-grow the shared tree for the next concurrent chunk and return the
+        sim budget that actually fits under the Hash cap (0 = stop the search).
+
+        Reserving the chunk's worst-case growth between chunks is what stops a
+        ``tree_grow_*`` realloc mid-descent (use-after-free; see
+        ``_TREE_MAX_LEAF_BRANCHING``). But the pre-grow must not push
+        ``memory_bytes()`` past ``_max_tree_bytes`` — the user's Hash cap — before
+        ``_should_stop_search`` gets a chance to halt between chunks. Near the cap
+        the chunk is shrunk to the headroom that still fits, using the live
+        bytes-per-node ratio (which folds in the child pool, CBoard cache, and
+        hash table); 0 is returned once nothing fits. ``reserve()`` still rounds
+        capacity up by doubling, so the cap stays *soft* — but we never grow past
+        it on purpose, which was the prior behavior's failure mode."""
         tree = self._tree
         if tree is None:
-            return
-        headroom = int(upcoming_sims) * _TREE_MAX_LEAF_BRANCHING + _TREE_GROW_MARGIN_NODES
-        needed = tree.node_count() + headroom
+            return int(upcoming_sims)
+        sims = max(0, int(upcoming_sims))
+        node_count = tree.node_count()
+        if self._max_tree_bytes > 0 and node_count > 0:
+            used = int(tree.memory_bytes())
+            remaining = self._max_tree_bytes - used
+            if remaining <= 0:
+                return 0
+            bytes_per_node = max(1, used // node_count)
+            fit_sims = int(remaining // bytes_per_node) // _TREE_MAX_LEAF_BRANCHING
+            sims = min(sims, max(0, fit_sims))
+            if sims <= 0:
+                return 0
+        headroom = sims * _TREE_MAX_LEAF_BRANCHING + _TREE_GROW_MARGIN_NODES
+        needed = node_count + headroom
   # child edges grow 1:1 with nodes (#edges == #nodes-1), so the same target
   # bounds the child pool too.
         tree.reserve(needed, needed)
+        return sims
 
     def _current_best_root_action(
         self, allowed_root_indices: set[int] | None,
     ) -> int:
-        """Most-visited legal root action right now, or -1 if none. Cheaper than
-        a full PV extraction — just the argmax visit at the root — so it is fine
-        to poll once per chunk for the soft-stop stability check."""
+        """The action final bestmove selection would emit right now, or -1 if
+        none. Cheap (no full PV walk) so it can be polled once per chunk for the
+        soft-stop stability check.
+
+        Mirrors ``_build_final_search_result``: the Gumbel path plays the
+        sequential-halving survivor (``_last_gumbel_action_idx``) when it has a
+        child, not the visit leader, so the soft-stop must judge stability on the
+        same move that will actually be played. Other paths (walker / pucv pool)
+        leave the survivor unset and select by visits."""
         if self._tree is None or self._root_id is None:
             return -1
+        gi = self._last_gumbel_action_idx
+        if (
+            gi is not None
+            and (allowed_root_indices is None or int(gi) in allowed_root_indices)
+            and self._tree.find_child(self._root_id, int(gi)) != -1
+        ):
+            return int(gi)
         actions, visits = self._tree.get_children_visits(self._root_id)
         if actions.size == 0:
             return -1
@@ -1085,9 +1122,19 @@ class SearchWorker:
 
   # Shared-tree (walker / multi-GPU pucv) chunks descend lock-free from N
   # threads; grow the arena now, while quiescent, so the chunk can't realloc
-  # mid-descent (use-after-free). See _ensure_shared_tree_headroom.
+  # mid-descent (use-after-free). The pre-grow is bounded by the Hash cap and
+  # returns the sims that fit; 0 means we're at the cap, so stop (same final
+  # info as the tree_bytes stop) rather than grow past the user's setting.
             if self._is_shared_tree_path(allowed_root_indices):
-                self._ensure_shared_tree_headroom(chunk)
+                chunk = self._ensure_shared_tree_headroom(chunk)
+                if chunk <= 0:
+                    if info_cb is not None and self._root_id is not None:
+                        self._emit_pv_info(
+                            info_cb, board, float(last_value), total_nodes,
+                            deadline.elapsed_ms(), tb_probe,
+                            allowed_root_indices=allowed_root_indices,
+                        )
+                    break
 
             last_value = self._run_one_chunk(
                 chunk, board, stop_event, tb_probe, allowed_root_indices,

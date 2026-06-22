@@ -254,6 +254,61 @@ def test_shared_tree_headroom_pregrows_arena_past_fixed_reserve() -> None:
         worker.close()
 
 
+def test_shared_tree_headroom_respects_hash_cap() -> None:
+    """The pre-grow must not push memory_bytes() past the Hash cap: it returns
+    the sims that fit and 0 (no growth) once the tree is at the cap."""
+    ev = _make_evaluator()
+    worker = SearchWorker(
+        ev, device="cpu",
+        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        chunk_sims=512, n_walkers=1,
+    )
+    try:
+        tree, rid, _ = _seed_tree()
+        worker._tree = tree  # noqa: SLF001
+        worker._root_id = rid  # noqa: SLF001
+  # Cap disabled -> no bounding, full budget granted (and arena grows).
+        worker.set_max_tree_mb(0)
+        assert worker._ensure_shared_tree_headroom(512) == 512  # noqa: SLF001
+  # Generous cap -> still the full budget.
+        worker.set_max_tree_mb(100_000)
+        assert worker._ensure_shared_tree_headroom(512) == 512  # noqa: SLF001
+  # Cap already below current usage -> 0 sims and no further growth.
+        worker.set_max_tree_mb(1)
+        before = tree.memory_bytes()
+        assert worker._ensure_shared_tree_headroom(512) == 0  # noqa: SLF001
+        assert tree.memory_bytes() == before
+    finally:
+        worker.close()
+
+
+def test_current_best_root_action_tracks_emitted_move() -> None:
+    """Soft-stop stability must judge the move final selection will emit: the
+    Gumbel survivor when set+legal, else the visit leader (walker/pucv paths)."""
+    ev = _make_evaluator()
+    worker = SearchWorker(
+        ev, device="cpu",
+        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        chunk_sims=64, n_walkers=1,
+    )
+    try:
+        tree, rid, cb = _seed_tree()
+        worker._tree = tree  # noqa: SLF001
+        worker._root_id = rid  # noqa: SLF001
+        legal = cb.legal_move_indices().astype(np.int32)
+        survivor = int(legal[1])
+  # Gumbel survivor set + legal -> returned even though visits are all zero.
+        worker._last_gumbel_action_idx = survivor  # noqa: SLF001
+        assert worker._current_best_root_action(None) == survivor  # noqa: SLF001
+  # searchmoves excludes the survivor -> fall back to a visit-leader in-set.
+        assert worker._current_best_root_action({int(legal[0])}) == int(legal[0])  # noqa: SLF001
+  # No survivor (walker / pucv paths) -> a legal visit-leader.
+        worker._last_gumbel_action_idx = None  # noqa: SLF001
+        assert worker._current_best_root_action(None) in set(legal.tolist())  # noqa: SLF001
+    finally:
+        worker.close()
+
+
 def test_searchworker_multi_gpu_pucv_multi_chunk_search() -> None:
     """A pool search spanning several chunks exercises the per-chunk headroom
     growth in run()'s loop and must complete with a legal bestmove. The budget
