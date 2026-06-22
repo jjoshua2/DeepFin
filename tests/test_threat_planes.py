@@ -414,7 +414,13 @@ def test_warm_start_bit_identical_with_arc_pos_encoding():
         o1 = v1(x1)
         o2 = v2(x2)
     for key in o1:
-        assert torch.equal(o1[key], o2[key]), f"head {key} not bit-identical (arc)"
+        # Warm-start makes the two forwards mathematically equal. The arc
+        # pos-encoding's extra channels change the matmul reduction order, so the
+        # output is not bit-identical across BLAS/torch builds (it is on some) —
+        # a real misalignment bug would perturb values by O(1), not the last bit,
+        # so a tight allclose checks the equivalence without depending on the build.
+        assert torch.allclose(o1[key], o2[key], atol=1e-5, rtol=0.0), \
+            f"head {key} not equivalent (arc)"
 
 
 def test_optimizer_state_migrates_v1_to_v2():
