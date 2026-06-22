@@ -238,6 +238,11 @@ class MultiGpuPucvPool:
         """Number of GPU worker evaluators driving the shared tree."""
         return self._cfg.n_gpus
 
+    @property
+    def gather(self) -> int:
+        """Per-worker leaf gather: the most tokens a worker grabs per batch."""
+        return max(1, int(self._cfg.gather))
+
     def close(self) -> None:
         if self._shutdown.is_set():
             return

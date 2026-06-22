@@ -80,7 +80,6 @@ _INFO_EMIT_INTERVAL_MS = 1000
 # legal moves in any chess position, so the bound holds even in pathological
 # high-mobility positions.
 _TREE_MAX_LEAF_BRANCHING = 256
-_TREE_GROW_MARGIN_NODES = 4096
 
 # Visit-margin early abort (Lc0 "smart pruning"). Once past the optimum budget
 # the search stops as soon as the move it would play has any visit lead; before
@@ -931,16 +930,39 @@ class SearchWorker:
         """Sims to request from the active path for one chunk.
 
         The multi-GPU pucv pool splits a single ``run()``'s budget across all
-        GPU workers via one shared semaphore. At the single-GPU stop-latency
-        chunk (``_chunk_sims``) the first worker to wake drains the whole budget
-        and the rest idle, so the pool collapses to ~one GPU per chunk. Scaling
-        the per-run budget by device count gives every worker a full share; the
-        pool still polls ``stop_event`` between batches, so stop latency stays
-        ~one batch rather than ~one (now larger) chunk.
+        GPU workers via one shared semaphore. Each worker greedily grabs up to
+        ``gather`` tokens, so the per-device share must be at least ``gather``;
+        otherwise (e.g. ``VLGather`` > ``--chunk-sims``) a few workers drain the
+        whole budget and the rest idle — the very starvation this scaling fixes.
+        Use ``max(chunk_sims, gather)`` per device. The pool still polls
+        ``stop_event`` between batches, so stop latency stays ~one batch rather
+        than ~one (now larger) chunk.
         """
         if allowed_root_indices is None and self._pucv_pool is not None:
-            return self._chunk_sims * max(1, self._multi_gpu_pucv_devices())
+            per_device = max(self._chunk_sims, self._pucv_pool.gather)
+            return per_device * max(1, self._pucv_pool.n_devices)
         return self._chunk_sims
+
+    def _time_capped_chunk(
+        self, chunk: int, deadline: Deadline, total_nodes: int,
+    ) -> int:
+        """Shrink ``chunk`` to the sims that fit in the remaining deadline.
+
+        The hard deadline is only checked between chunks and the pucv pool isn't
+        handed the deadline, so a big scaled multi-GPU chunk could run past the
+        time budget. Once an nps estimate exists (after the first chunk), cap the
+        chunk at ``nps * remaining_ms``; floor it at ``_chunk_sims`` so the base
+        single-GPU granularity (whose overrun is ~one base chunk = negligible) is
+        never reduced. No-op for open-ended / first-chunk searches."""
+        remaining_ms = deadline.remaining_ms()
+        if remaining_ms is None or total_nodes <= 0:
+            return chunk
+        elapsed = deadline.elapsed_ms()
+        if elapsed <= 0:
+            return chunk
+        nps = total_nodes / elapsed
+        time_cap = int(nps * remaining_ms)
+        return min(chunk, max(self._chunk_sims, time_cap))
 
     def _ensure_shared_tree_headroom(self, upcoming_sims: int) -> int:
         """Pre-grow the shared tree for the next concurrent chunk and return the
@@ -948,40 +970,45 @@ class SearchWorker:
 
         Reserving the chunk's worst-case growth between chunks is what stops a
         ``tree_grow_*`` realloc mid-descent (use-after-free; see
-        ``_TREE_MAX_LEAF_BRANCHING``). But the pre-grow must not push
-        ``memory_bytes()`` past ``_max_tree_bytes`` — the user's Hash cap — before
-        ``_should_stop_search`` gets a chance to halt between chunks. Near the cap
-        the chunk is shrunk to the headroom that still fits, using the live
-        bytes-per-node ratio (which folds in the child pool, CBoard cache, and
-        hash table); 0 is returned once nothing fits. ``reserve()`` still rounds
-        capacity up by doubling, so the cap stays *soft* — but we never grow past
-        it on purpose, which was the prior behavior's failure mode."""
+        ``_TREE_MAX_LEAF_BRANCHING``). Two bounds:
+
+        - Slots already reserved but unused (``node_capacity - node_count``) can
+          be filled without any realloc and without changing ``memory_bytes()``,
+          so they are always free to use — even when the tree already sits at the
+          Hash cap. This is what keeps a small ``Hash`` from starving the very
+          first chunk to an unvisited root.
+        - Growing *beyond* the reservation raises ``memory_bytes()``, so that part
+          is capped by the remaining Hash budget. Per-node cost is sized from
+          *capacity* (``memory_bytes()`` is capacity-based); dividing by the live
+          ``node_count`` would over-estimate hugely right after the initial
+          reserve. ``reserve()`` still rounds capacity up by doubling, so the cap
+          stays *soft*, but we never grow past it on purpose."""
         tree = self._tree
         if tree is None:
             return int(upcoming_sims)
         sims = max(0, int(upcoming_sims))
         node_count = tree.node_count()
-        if self._max_tree_bytes > 0 and node_count > 0:
+        node_cap = tree.node_capacity()
+        free = max(0, node_cap - node_count)
+  # One sim expands one leaf into up to _TREE_MAX_LEAF_BRANCHING nodes (256 >
+  # 218, the absolute max legal moves), so a chunk adds at most this many nodes.
+        need = sims * _TREE_MAX_LEAF_BRANCHING
+        if self._max_tree_bytes > 0 and need > free:
             used = int(tree.memory_bytes())
             remaining = self._max_tree_bytes - used
-            if remaining <= 0:
-                return 0
-            bytes_per_node = max(1, used // node_count)
-  # Take the fixed margin out of the budget *before* sizing the chunk, so
-  # neither the margin nor the per-sim worst case grows the intended arena
-  # past the cap. (reserve() still rounds capacity up by doubling — inherent
-  # soft-cap slack, identical to the pre-PR allocator behavior — but we no
-  # longer target past _max_tree_bytes on purpose.)
-            node_budget = int(remaining // bytes_per_node) - _TREE_GROW_MARGIN_NODES
-            fit_sims = node_budget // _TREE_MAX_LEAF_BRANCHING if node_budget > 0 else 0
-            sims = min(sims, max(0, fit_sims))
+            bytes_per_cap_node = max(1, used // max(1, node_cap))
+            growable = int(remaining // bytes_per_cap_node) if remaining > 0 else 0
+  # Usable slots = already-reserved free slots (no memory growth) + what we can
+  # still grow into under the cap. Free slots are usable even at/over the cap.
+            budget = free + max(0, growable)
+            sims = min(sims, budget // _TREE_MAX_LEAF_BRANCHING)
             if sims <= 0:
                 return 0
-        headroom = sims * _TREE_MAX_LEAF_BRANCHING + _TREE_GROW_MARGIN_NODES
-        needed = node_count + headroom
+            need = sims * _TREE_MAX_LEAF_BRANCHING
   # child edges grow 1:1 with nodes (#edges == #nodes-1), so the same target
-  # bounds the child pool too.
-        tree.reserve(needed, needed)
+  # bounds the child pool too. No-op when `need` already fits in `free`; the
+  # doubling allocator supplies the slack that keeps re-reserves infrequent.
+        tree.reserve(node_count + need, node_count + need)
         return sims
 
     def _current_best_root_action(
@@ -1052,23 +1079,29 @@ class SearchWorker:
         allowed_root_indices: set[int] | None,
         abort_factor: float,
     ) -> bool:
-        """Lc0-style visit-margin early abort. Once the optimum budget is spent
-        the search stops (the optimum is the normal per-move allocation); before
-        that it can also stop early if the move it would play already has a visit
-        lead the runner-up cannot overcome within the remaining optimum budget
-        (``lead > factor * remaining_sims``). Returns False (keep searching) when
-        no optimum is set, so node/movetime/infinite searches and the hard
-        ``deadline`` are unaffected."""
+        """Lc0-style visit-margin early abort. Stops only when the move final
+        selection would play is *settled* — it leads the runner-up on visits:
+
+        - past the optimum budget, a settled move banks the remaining clock;
+        - before the optimum, a settled move can still bank early if its lead is
+          one the runner-up cannot overcome within the remaining optimum budget
+          (``lead > factor * remaining_sims``).
+
+        While the move is unsettled (the Gumbel survivor trails the visit leader,
+        or the choice is otherwise still moving) it keeps searching toward the
+        hard ``deadline`` — the extension the time-manager allocates for hard
+        positions. Returns False when no optimum is set, so node/movetime/infinite
+        searches and the hard ``deadline`` are unaffected."""
         if optimum_ms is None:
+            return False
+        best, lead = self._root_visit_lead(allowed_root_indices)
+        if best < 0 or lead <= 0:
+  # Unsettled (or no move): extend toward the hard deadline.
             return False
         elapsed = deadline.elapsed_ms()
         remaining_ms = optimum_ms - elapsed
         if remaining_ms <= 0:
             return True
-  # Before the optimum: only bail if the played move is already decided.
-        best, lead = self._root_visit_lead(allowed_root_indices)
-        if best < 0 or lead <= 0:
-            return False
         nps = total_nodes / max(1, elapsed)
         remaining_sims = nps * remaining_ms
         return lead > abort_factor * remaining_sims
@@ -1156,6 +1189,12 @@ class SearchWorker:
                 if remaining <= 0:
                     break
                 chunk = min(chunk, remaining)
+  # The deadline is only checked *between* chunks, and the pucv pool receives
+  # stop_event but not the deadline, so a large scaled multi-GPU chunk could
+  # otherwise run well past the time budget. Cap it to the sims that fit in the
+  # remaining time (estimated from the running nps), but never below the base
+  # chunk so single-GPU stop latency is unchanged.
+            chunk = self._time_capped_chunk(chunk, deadline, total_nodes)
 
   # Shared-tree (walker / multi-GPU pucv) chunks descend lock-free from N
   # threads; grow the arena now, while quiescent, so the chunk can't realloc

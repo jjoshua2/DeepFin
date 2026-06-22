@@ -282,13 +282,59 @@ def test_shared_tree_headroom_respects_hash_cap() -> None:
         worker.set_max_tree_mb(100_000)
         assert worker._ensure_shared_tree_headroom(512) == 512  # noqa: SLF001
   # Cap already below current usage -> 0 sims and no further growth.
+  # Cap below current usage: only already-reserved free slots are usable, so
+  # the chunk shrinks to them but must NOT grow memory past the cap (and must
+  # not starve to 0 — that would play an unvisited root).
         tree = _fresh()
         worker.set_max_tree_mb(1)
         before = tree.memory_bytes()
-        assert worker._ensure_shared_tree_headroom(512) == 0  # noqa: SLF001
+        sims = worker._ensure_shared_tree_headroom(512)  # noqa: SLF001
+        assert 0 < sims <= 512
         assert tree.memory_bytes() == before
     finally:
         worker.close()
+
+
+def test_shared_tree_headroom_uses_free_slots_at_tiny_hash() -> None:
+    """A Hash cap below the already-reserved arena must not starve the chunk to
+    0 (which would play an unvisited root): the free reserved slots are usable
+    without growing memory, so the search still runs."""
+    ev = _make_evaluator()
+    worker = SearchWorker(
+        ev, device="cpu",
+        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        chunk_sims=512, n_walkers=1,
+    )
+    try:
+  # Production-sized initial reserve (lots of free slots), then a Hash cap
+  # below current usage so `growable` is 0 and only free slots remain.
+        tree = MCTSTree()
+        tree.reserve(50_000, 500_000)
+        tree.add_root(0, 0.0)
+        worker._tree = tree  # noqa: SLF001
+        worker._root_id = int(tree.node_count()) - 1  # noqa: SLF001
+        worker.set_max_tree_mb(1)
+        sims = worker._ensure_shared_tree_headroom(512)  # noqa: SLF001
+        assert sims > 0
+    finally:
+        worker.close()
+
+
+def test_chunk_budget_scales_by_gather_and_devices() -> None:
+    """When VLGather exceeds --chunk-sims, the per-device share must be at least
+    the gather size or workers starve again."""
+    primary = _make_evaluator(max_batch=64)
+    worker = SearchWorker(
+        primary, device="cpu",
+        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        chunk_sims=64, n_walkers=1,
+    )
+    p0 = _make_evaluator(max_batch=64)
+    p1 = _make_evaluator(max_batch=64)
+  # gather 128 > chunk_sims 64 -> per-device budget must use the gather.
+    worker.install_multi_gpu_pucv([p0, p1], gather=128, as_factories=False)
+    assert worker._chunk_budget(None) == 128 * 2  # noqa: SLF001
+    worker.close()
 
 
 def test_current_best_root_action_tracks_emitted_move() -> None:
@@ -369,11 +415,33 @@ def test_search_emit_info_reports_hashfull_and_seldepth() -> None:
         worker.close()
 
 
-def test_abort_disabled_without_optimum_and_fires_past_optimum() -> None:
-    """The visit-margin abort is a no-op without an optimum; past the optimum it
-    fires once the move that will be played leads on visits, and it does not fire
-    prematurely under the provable factor when the runner-up could still catch
-    up within a large remaining budget."""
+def test_root_visit_lead_returns_emitted_move_margin() -> None:
+    """_root_visit_lead reports the emitted move and a real visit margin."""
+    ev = _make_evaluator()
+    worker = SearchWorker(
+        ev, device="cpu",
+        gumbel_cfg=GumbelConfig(simulations=32, add_noise=False),
+        chunk_sims=32, n_walkers=1,
+    )
+    try:
+        worker.run(chess.Board(), stop_event=threading.Event(),
+                   deadline=Deadline(5_000), max_nodes=256)
+        best, lead = worker._root_visit_lead(None)  # noqa: SLF001
+        assert best >= 0
+        assert isinstance(lead, int)
+    finally:
+        worker.close()
+
+
+def test_abort_ready_branches() -> None:
+    """_abort_ready, with the visit margin controlled directly:
+      - no optimum                -> never aborts;
+      - past optimum + settled    -> banks;
+      - past optimum + unsettled  -> extends (keeps searching to the deadline);
+      - past optimum + no move    -> extends;
+      - before optimum + settled  -> waits under the provable factor, banks once
+        the lead exceeds the remaining budget (and aggressive factor banks
+        sooner)."""
     import time as _time
 
     ev = _make_evaluator()
@@ -383,28 +451,28 @@ def test_abort_disabled_without_optimum_and_fires_past_optimum() -> None:
         chunk_sims=32, n_walkers=1,
     )
     try:
-  # Real search so the root carries real visit counts with a leader.
-        worker.run(chess.Board(), stop_event=threading.Event(),
-                   deadline=Deadline(5_000), max_nodes=256)
-        best, lead = worker._root_visit_lead(None)  # noqa: SLF001
-        assert best >= 0
-        assert lead >= -256  # sanity: a real margin was computed
-  # No optimum -> abort disabled regardless of elapsed/lead.
         past = Deadline(deadline_ms=60_000, now=_time.monotonic() - 5.0)  # elapsed ~5s
+        worker._root_visit_lead = lambda _allowed: (5, 100)  # type: ignore[method-assign]  # noqa: SLF001
         assert worker._abort_ready(None, past, 256, None, 1.0) is False  # noqa: SLF001
-  # Optimum already spent -> stop (the optimum is the normal allocation).
         assert worker._abort_ready(1, past, 256, None, 1.0) is True  # noqa: SLF001
-  # Fresh clock, huge remaining optimum, provable factor -> not yet (the
-  # runner-up could still catch up within the budget).
-        early = Deadline(deadline_ms=60_000)
-        assert worker._abort_ready(60_000, early, 256, None, 1.0) is False  # noqa: SLF001
+  # Unsettled / no move past the optimum -> extend toward the hard deadline.
+        worker._root_visit_lead = lambda _allowed: (5, 0)  # type: ignore[method-assign]  # noqa: SLF001
+        assert worker._abort_ready(1, past, 256, None, 1.0) is False  # noqa: SLF001
+        worker._root_visit_lead = lambda _allowed: (-1, 0)  # type: ignore[method-assign]  # noqa: SLF001
+        assert worker._abort_ready(1, past, 256, None, 1.0) is False  # noqa: SLF001
+  # Before the optimum: elapsed ~500ms of a 1000ms optimum, nps ~2 -> ~1000
+  # remaining sims. lead 2000 clears the provable factor but not factor 3.
+        mid = Deadline(deadline_ms=10_000, now=_time.monotonic() - 0.5)
+        worker._root_visit_lead = lambda _allowed: (5, 2000)  # type: ignore[method-assign]  # noqa: SLF001
+        assert worker._abort_ready(1000, mid, 1000, None, 1.0) is True  # noqa: SLF001
+        assert worker._abort_ready(1000, mid, 1000, None, 3.0) is False  # noqa: SLF001
     finally:
         worker.close()
 
 
-def test_search_abort_banks_time_on_decided_position() -> None:
-    """With a tiny optimum and a huge hard deadline, a decided position must
-    early-exit far before the deadline rather than burning the whole budget."""
+def test_search_abort_terminates_with_legal_move() -> None:
+    """A tiny optimum + bounded hard deadline must return a legal move promptly:
+    banking when the move is settled, extending to the deadline when it is not."""
     import time as _time
 
     ev = _make_evaluator()
@@ -417,12 +485,38 @@ def test_search_abort_banks_time_on_decided_position() -> None:
         t0 = _time.monotonic()
         result = worker.run(
             chess.Board(), stop_event=threading.Event(),
-            deadline=Deadline(30_000), max_nodes=None, optimum_ms=1,
+            deadline=Deadline(3_000), max_nodes=None, optimum_ms=1,
         )
         elapsed = _time.monotonic() - t0
         assert len(result.bestmove_uci) >= 4
-  # The abort must bank the clock; nowhere near the 30s hard deadline.
-        assert elapsed < 10.0
+  # Bounded by the 3s hard deadline (plus a little warmup slack).
+        assert elapsed < 8.0
+    finally:
+        worker.close()
+
+
+def test_time_capped_chunk_shrinks_to_remaining_time() -> None:
+    """A scaled chunk is capped to the sims that fit in the remaining deadline,
+    floored at the base chunk; open-ended / first-chunk searches are uncapped."""
+    import time as _time
+
+    ev = _make_evaluator()
+    worker = SearchWorker(
+        ev, device="cpu",
+        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        chunk_sims=64, n_walkers=1,
+    )
+    try:
+  # elapsed ~1000ms, nps = 1000/1000 = 1; ~500ms remaining -> cap ~500.
+        d = Deadline(deadline_ms=1500, now=_time.monotonic() - 1.0)
+        capped = worker._time_capped_chunk(4096, d, total_nodes=1000)  # noqa: SLF001
+        assert 64 <= capped < 4096
+  # Almost no time left -> floor at the base chunk (its overrun is negligible).
+        d2 = Deadline(deadline_ms=1001, now=_time.monotonic() - 1.0)
+        assert worker._time_capped_chunk(4096, d2, total_nodes=1000) == 64  # noqa: SLF001
+  # Open-ended deadline and the first chunk (no nps yet) are uncapped.
+        assert worker._time_capped_chunk(4096, Deadline(None), 1000) == 4096  # noqa: SLF001
+        assert worker._time_capped_chunk(4096, d, total_nodes=0) == 4096  # noqa: SLF001
     finally:
         worker.close()
 
