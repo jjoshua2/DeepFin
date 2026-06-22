@@ -452,18 +452,18 @@ def test_abort_ready_branches() -> None:
     )
     try:
         past = Deadline(deadline_ms=60_000, now=_time.monotonic() - 5.0)  # elapsed ~5s
-        worker._root_visit_lead = lambda _allowed: (5, 100)  # type: ignore[method-assign]  # noqa: SLF001
+        worker._root_visit_lead = lambda allowed_root_indices: (5, 100)  # noqa: SLF001
         assert worker._abort_ready(None, past, 256, None, 1.0) is False  # noqa: SLF001
         assert worker._abort_ready(1, past, 256, None, 1.0) is True  # noqa: SLF001
   # Unsettled / no move past the optimum -> extend toward the hard deadline.
-        worker._root_visit_lead = lambda _allowed: (5, 0)  # type: ignore[method-assign]  # noqa: SLF001
+        worker._root_visit_lead = lambda allowed_root_indices: (5, 0)  # noqa: SLF001
         assert worker._abort_ready(1, past, 256, None, 1.0) is False  # noqa: SLF001
-        worker._root_visit_lead = lambda _allowed: (-1, 0)  # type: ignore[method-assign]  # noqa: SLF001
+        worker._root_visit_lead = lambda allowed_root_indices: (-1, 0)  # noqa: SLF001
         assert worker._abort_ready(1, past, 256, None, 1.0) is False  # noqa: SLF001
   # Before the optimum: elapsed ~500ms of a 1000ms optimum, nps ~2 -> ~1000
   # remaining sims. lead 2000 clears the provable factor but not factor 3.
         mid = Deadline(deadline_ms=10_000, now=_time.monotonic() - 0.5)
-        worker._root_visit_lead = lambda _allowed: (5, 2000)  # type: ignore[method-assign]  # noqa: SLF001
+        worker._root_visit_lead = lambda allowed_root_indices: (5, 2000)  # noqa: SLF001
         assert worker._abort_ready(1000, mid, 1000, None, 1.0) is True  # noqa: SLF001
         assert worker._abort_ready(1000, mid, 1000, None, 3.0) is False  # noqa: SLF001
     finally:
