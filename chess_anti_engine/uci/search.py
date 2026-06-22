@@ -73,13 +73,20 @@ _INFO_EMIT_INTERVAL_MS = 1000
 # memory_bytes() (and thus the byte-cap and advance_root half-cap behavior) are
 # unchanged: we only move the realloc to a safe point.
 #
-# One sim expands one leaf, which eagerly creates up to `b` child nodes
-# (b = legal-move count). A chunk of S sims therefore adds at most
-# S * _TREE_MAX_LEAF_BRANCHING nodes (and the same number of child edges, since
-# #edges == #nodes-1 in a tree). 256 > 218, the absolute maximum number of
-# legal moves in any chess position, so the bound holds even in pathological
-# high-mobility positions.
+# Worst-case nodes a single concurrent sim adds to the arena, so a chunk of S
+# sims adds at most S * _TREE_MAX_LEAF_BRANCHING nodes (and the same number of
+# child edges, since #edges == #nodes-1 in a tree). Two contributions:
+#   - the leaf expansion eagerly creates one child per legal move, up to
+#     _MAX_LEGAL_MOVES (the absolute maximum in any chess position); plus
+#   - on the walker path, walker_descend_puct first runs try_forced_collapse for
+#     up to _FORCED_COLLAPSE_DEPTH plies, each expanding one forced single-child
+#     node along the descent (the pucv pool's batch_descend_puct omits forced
+#     collapse, so only the leaf expansion applies there).
+# 256 covers the worst case (218 + 16 = 234) with margin.
+_MAX_LEGAL_MOVES = 218
+_FORCED_COLLAPSE_DEPTH = 16  # try_forced_collapse depth cap in walker_descend_puct
 _TREE_MAX_LEAF_BRANCHING = 256
+assert _TREE_MAX_LEAF_BRANCHING >= _MAX_LEGAL_MOVES + _FORCED_COLLAPSE_DEPTH
 
 # Visit-margin early abort (Lc0 "smart pruning"). Once past the optimum budget
 # the search stops as soon as the move it would play has any visit lead; before
@@ -915,9 +922,6 @@ class SearchWorker:
             return "tree_bytes"
         return None
 
-    def _multi_gpu_pucv_devices(self) -> int:
-        return self._pucv_pool.n_devices if self._pucv_pool is not None else 1
-
     def _is_shared_tree_path(self, allowed_root_indices: set[int] | None) -> bool:
         """True when the active chunk path mutates the shared tree from multiple
         threads (walker pool or multi-GPU pucv pool). ``searchmoves`` forces the
@@ -1011,37 +1015,55 @@ class SearchWorker:
         tree.reserve(node_count + need, node_count + need)
         return sims
 
-    def _current_best_root_action(
+    def _filtered_root_visits(
         self, allowed_root_indices: set[int] | None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Root child ``(actions, visits)``, restricted to ``allowed_root_indices``
+        when a ``searchmoves`` filter is active. Empty arrays when there is no
+        tree/root or nothing survives the filter. One C read + one filter, shared
+        by the best-action and visit-margin helpers (polled once per chunk)."""
+        if self._tree is None or self._root_id is None:
+            empty = np.empty(0, dtype=np.int32)
+            return empty, empty
+        actions, visits = self._tree.get_children_visits(self._root_id)
+        if actions.size == 0 or allowed_root_indices is None:
+            return actions, visits
+        keep = np.isin(actions, np.fromiter(allowed_root_indices, dtype=np.int32))
+        return actions[keep], visits[keep]
+
+    def _emitted_action(
+        self,
+        actions: np.ndarray,
+        visits: np.ndarray,
+        allowed_root_indices: set[int] | None,
     ) -> int:
-        """The action final bestmove selection would emit right now, or -1 if
-        none. Cheap (no full PV walk) so it can be polled once per chunk for the
-        soft-stop stability check.
+        """The action final bestmove selection would emit given pre-fetched root
+        ``(actions, visits)``, or -1 if none.
 
         Mirrors ``_build_final_search_result``: the Gumbel path plays the
-        sequential-halving survivor (``_last_gumbel_action_idx``) when it has a
-        child, not the visit leader, so the soft-stop must judge stability on the
-        same move that will actually be played. Other paths (walker / pucv pool)
+        sequential-halving survivor (``_last_gumbel_action_idx``) when it is a
+        legal root child, not the visit leader; other paths (walker / pucv pool)
         leave the survivor unset and select by visits."""
-        if self._tree is None or self._root_id is None:
+        if actions.size == 0:
             return -1
         gi = self._last_gumbel_action_idx
         if (
             gi is not None
+            and self._tree is not None
+            and self._root_id is not None
             and (allowed_root_indices is None or int(gi) in allowed_root_indices)
             and self._tree.find_child(self._root_id, int(gi)) != -1
         ):
             return int(gi)
-        actions, visits = self._tree.get_children_visits(self._root_id)
-        if actions.size == 0:
-            return -1
-        if allowed_root_indices is not None:
-            keep = np.isin(actions, np.fromiter(allowed_root_indices, dtype=np.int32))
-            actions = actions[keep]
-            visits = visits[keep]
-            if actions.size == 0:
-                return -1
         return int(actions[int(np.argmax(visits))])
+
+    def _current_best_root_action(
+        self, allowed_root_indices: set[int] | None,
+    ) -> int:
+        """The action final bestmove selection would emit right now, or -1 if
+        none. Cheap (no full PV walk) so it can be polled once per chunk."""
+        actions, visits = self._filtered_root_visits(allowed_root_indices)
+        return self._emitted_action(actions, visits, allowed_root_indices)
 
     def _root_visit_lead(
         self, allowed_root_indices: set[int] | None,
@@ -1051,18 +1073,10 @@ class SearchWorker:
         runner-up's. ``lead`` can be negative when the played move (a Gumbel
         survivor) is not the visit leader — the abort treats that as "not
         decided" and keeps searching. ``(-1, 0)`` when there is no move."""
-        best = self._current_best_root_action(allowed_root_indices)
-        if best < 0 or self._tree is None or self._root_id is None:
+        actions, visits = self._filtered_root_visits(allowed_root_indices)
+        best = self._emitted_action(actions, visits, allowed_root_indices)
+        if best < 0:
             return -1, 0
-        actions, visits = self._tree.get_children_visits(self._root_id)
-        if actions.size == 0:
-            return -1, 0
-        if allowed_root_indices is not None:
-            keep = np.isin(actions, np.fromiter(allowed_root_indices, dtype=np.int32))
-            actions = actions[keep]
-            visits = visits[keep]
-            if actions.size == 0:
-                return -1, 0
         best_mask = actions == best
         if not bool(best_mask.any()):
             return -1, 0

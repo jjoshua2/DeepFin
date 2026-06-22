@@ -460,8 +460,12 @@ def main() -> int:
         vl_gather=max(32, int(args.vl_gather)),
         max_batch=max(64, int(args.max_batch)),
         eval_cache_entries=max(0, int(args.eval_cache_entries)),
-        abort_factor=float(args.abort_factor),
-        time_budget_scale=float(args.time_budget_scale),
+  # Clamp the time knobs (like the spin options above): a non-positive
+  # time_budget_scale would collapse every move to the 20ms floor, and a
+  # negative abort_factor would abort the instant the move leads. 0.0 is the
+  # maximally-aggressive-but-valid abort_factor (stop on any positive lead).
+        abort_factor=max(0.0, float(args.abort_factor)),
+        time_budget_scale=max(0.1, float(args.time_budget_scale)),
     )
 
   # Background-build so `uci` can be answered before model load finishes.
