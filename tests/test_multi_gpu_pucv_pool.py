@@ -369,35 +369,41 @@ def test_search_emit_info_reports_hashfull_and_seldepth() -> None:
         worker.close()
 
 
-def test_soft_stop_fires_after_optimum_when_best_is_stable() -> None:
-    """_soft_stop_ready holds until the optimum elapses, then needs the best
-    move to repeat for _SOFT_STOP_STABLE_CHUNKS consecutive checks."""
+def test_abort_disabled_without_optimum_and_fires_past_optimum() -> None:
+    """The visit-margin abort is a no-op without an optimum; past the optimum it
+    fires once the move that will be played leads on visits, and it does not fire
+    prematurely under the provable factor when the runner-up could still catch
+    up within a large remaining budget."""
     import time as _time
 
     ev = _make_evaluator()
     worker = SearchWorker(
         ev, device="cpu",
-        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
-        chunk_sims=64, n_walkers=1,
+        gumbel_cfg=GumbelConfig(simulations=32, add_noise=False),
+        chunk_sims=32, n_walkers=1,
     )
     try:
-        tree, rid, _ = _seed_tree()
-        worker._tree = tree  # noqa: SLF001
-        worker._root_id = rid  # noqa: SLF001
-  # elapsed ~5000ms relative to a start 5s in the past.
-        deadline = Deadline(deadline_ms=60_000, now=_time.monotonic() - 5.0)
-  # No optimum -> never soft-stops; before the optimum -> not ready.
-        assert worker._soft_stop_ready(None, deadline, None) is False  # noqa: SLF001
-        assert worker._soft_stop_ready(10_000_000, deadline, None) is False  # noqa: SLF001
-  # Past optimum: first check arms, second confirms (2 consecutive stable).
-        assert worker._soft_stop_ready(1, deadline, None) is False  # noqa: SLF001
-        assert worker._soft_stop_ready(1, deadline, None) is True  # noqa: SLF001
+  # Real search so the root carries real visit counts with a leader.
+        worker.run(chess.Board(), stop_event=threading.Event(),
+                   deadline=Deadline(5_000), max_nodes=256)
+        best, lead = worker._root_visit_lead(None)  # noqa: SLF001
+        assert best >= 0
+        assert lead >= -256  # sanity: a real margin was computed
+  # No optimum -> abort disabled regardless of elapsed/lead.
+        past = Deadline(deadline_ms=60_000, now=_time.monotonic() - 5.0)  # elapsed ~5s
+        assert worker._abort_ready(None, past, 256, None, 1.0) is False  # noqa: SLF001
+  # Optimum already spent -> stop (the optimum is the normal allocation).
+        assert worker._abort_ready(1, past, 256, None, 1.0) is True  # noqa: SLF001
+  # Fresh clock, huge remaining optimum, provable factor -> not yet (the
+  # runner-up could still catch up within the budget).
+        early = Deadline(deadline_ms=60_000)
+        assert worker._abort_ready(60_000, early, 256, None, 1.0) is False  # noqa: SLF001
     finally:
         worker.close()
 
 
-def test_search_soft_stop_banks_time_on_stable_position() -> None:
-    """With a tiny optimum and a huge hard deadline, a stable position must
+def test_search_abort_banks_time_on_decided_position() -> None:
+    """With a tiny optimum and a huge hard deadline, a decided position must
     early-exit far before the deadline rather than burning the whole budget."""
     import time as _time
 
@@ -415,7 +421,7 @@ def test_search_soft_stop_banks_time_on_stable_position() -> None:
         )
         elapsed = _time.monotonic() - t0
         assert len(result.bestmove_uci) >= 4
-  # Soft-stop must bank the clock; nowhere near the 30s hard deadline.
+  # The abort must bank the clock; nowhere near the 30s hard deadline.
         assert elapsed < 10.0
     finally:
         worker.close()

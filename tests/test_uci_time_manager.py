@@ -88,10 +88,53 @@ def test_clock_ceiling_caps_half_remaining() -> None:
     assert lim.deadline_ms == 5000
 
 
-def test_movetime_optimum_equals_deadline() -> None:
-    # movetime is an explicit instruction: spend it all, no soft early-exit.
+def test_movetime_has_no_optimum_so_it_searches_exactly() -> None:
+    # movetime is "search exactly this long": no soft optimum, so the abort is
+    # disabled and the search runs to the movetime deadline.
     lim = limits_from_go(GoArgs(movetime_ms=500), side_to_move_is_white=True)
-    assert lim.optimum_ms == lim.deadline_ms == 500
+    assert lim.deadline_ms == 500
+    assert lim.optimum_ms is None
+
+
+def test_time_budget_scale_raises_budget_below_ceiling() -> None:
+    # With plenty of moves left the budget is under the 50% ceiling, so the
+    # scale multiplies the hard deadline directly.
+    base = limits_from_go(GoArgs(wtime_ms=60000, movestogo=40), side_to_move_is_white=True)
+    scaled = limits_from_go(
+        GoArgs(wtime_ms=60000, movestogo=40), side_to_move_is_white=True,
+        time_budget_scale=2.0,
+    )
+    assert base.deadline_ms == 1500
+    assert scaled.deadline_ms == 3000
+
+
+def test_time_budget_scale_still_capped_at_half_remaining() -> None:
+    # Even a large scale cannot exceed the 50%-of-remaining ceiling.
+    lim = limits_from_go(
+        GoArgs(wtime_ms=10000, movestogo=1), side_to_move_is_white=True,
+        time_budget_scale=10.0,
+    )
+    assert lim.deadline_ms == 5000
+
+
+def test_time_allocation_never_flags_over_a_game() -> None:
+    # Time-control honesty: play out a long increment game where every move
+    # spends its full hard deadline. The 50%-of-remaining ceiling must keep the
+    # clock positive forever, even at an aggressive time_budget_scale.
+    for scale in (1.0, 2.0, 8.0):
+        remaining = 60_000
+        inc = 1000
+        for _ in range(400):
+            lim = limits_from_go(
+                GoArgs(wtime_ms=remaining, winc_ms=inc),
+                side_to_move_is_white=True, move_overhead_ms=30,
+                time_budget_scale=scale,
+            )
+            spend = lim.deadline_ms
+            assert spend is not None and spend >= 1
+            assert spend < remaining, f"would flag: spend={spend} remaining={remaining}"
+            remaining = remaining - spend + inc
+            assert remaining > 0
 
 
 def test_clock_optimum_is_fraction_below_hard_deadline() -> None:

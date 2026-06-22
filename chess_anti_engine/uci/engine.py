@@ -186,6 +186,16 @@ class EngineOptions:
   # this option controls advertised ponder metadata, not command parsing.
   # Default off — safer for fixed-time match play.
     ponder: bool = False
+  # Visit-margin early-abort aggressiveness (Lc0 smart-pruning factor). 1.0 is
+  # the ~provable bound (stop only when the runner-up cannot catch up given
+  # every remaining sim); < 1.0 stops earlier on the bet that it won't, banking
+  # time. The clock backstop (deadline) is unaffected. Tuning knob — sweep it.
+    abort_factor: float = 1.0
+  # Per-move time-budget multiplier. > 1.0 schedules more time per move, relying
+  # on the abort to bank it back on easy moves; the 50%-of-remaining ceiling
+  # still caps each move. 1.0 keeps the conservative allocation. Off by default
+  # until validated by a real time-control gauntlet.
+    time_budget_scale: float = 1.0
 
 
 class Engine:
@@ -366,6 +376,7 @@ class Engine:
             cmd.args,
             side_to_move_is_white=(search_board.turn == chess.WHITE),
             move_overhead_ms=overhead,
+            time_budget_scale=self._options.time_budget_scale,
         )
         self._stop_event = threading.Event()
         self._ponderhit_event = threading.Event()
@@ -385,6 +396,7 @@ class Engine:
                 replace(cmd.args, ponder=False),
                 side_to_move_is_white=(real_board.turn == chess.WHITE),
                 move_overhead_ms=overhead,
+                time_budget_scale=self._options.time_budget_scale,
             )
         else:
             self._pending_real_limits = None
@@ -760,6 +772,7 @@ class Engine:
                 max_nodes=max_nodes,
                 max_depth=max_depth,
                 optimum_ms=optimum_ms,
+                abort_factor=self._options.abort_factor,
                 root_moves=limits.searchmoves,
                 info_cb=_phase_info_cb,
                 include_ponder=self._options.ponder,

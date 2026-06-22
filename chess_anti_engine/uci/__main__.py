@@ -353,6 +353,13 @@ def main() -> int:
                    help="DirectGPUEvaluator max batch (default: 1024). Must be >= expected leaf count per wavefront.")
     p.add_argument("--eval-cache-entries", type=int, default=0,
                    help="LRU entries for encoded eval caches, including single-thread PUCV (default: 0/off)")
+    p.add_argument("--abort-factor", type=float, default=1.0,
+                   help="visit-margin early-abort aggressiveness (Lc0 smart-pruning factor): "
+                        "1.0 = ~provable bound (default); < 1.0 aborts earlier to bank time")
+    p.add_argument("--time-budget-scale", type=float, default=1.0,
+                   help="per-move time-budget multiplier (default: 1.0). > 1.0 schedules more "
+                        "time per move, relying on --abort-factor to bank it back on easy moves; "
+                        "still capped at 50%% of remaining time so it cannot flag.")
     p.add_argument("--log-level", default="WARNING",
                    help="stderr log level (DEBUG|INFO|WARNING). DEBUG enables per-search gumbel profile with GPU-calls/avg-batch.")
   # --walkers > 1 switches from the Gumbel-chunked path to a PUCT walker
@@ -453,6 +460,8 @@ def main() -> int:
         vl_gather=max(32, int(args.vl_gather)),
         max_batch=max(64, int(args.max_batch)),
         eval_cache_entries=max(0, int(args.eval_cache_entries)),
+        abort_factor=float(args.abort_factor),
+        time_budget_scale=float(args.time_budget_scale),
     )
 
   # Background-build so `uci` can be answered before model load finishes.

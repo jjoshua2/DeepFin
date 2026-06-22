@@ -52,6 +52,7 @@ def limits_from_go(
     args: GoArgs, *,
     side_to_move_is_white: bool,
     move_overhead_ms: int = 0,
+    time_budget_scale: float = 1.0,
 ) -> SearchLimits:
     if args.infinite:
         return SearchLimits(infinite=True, searchmoves=tuple(args.searchmoves))
@@ -74,7 +75,11 @@ def limits_from_go(
         remaining, inc = _select_clock(args, side_to_move_is_white)
         if remaining is not None:
             moves_left = args.movestogo if args.movestogo and args.movestogo > 0 else _DEFAULT_MOVES_REMAINING
-            budget = remaining / moves_left + (inc or 0)
+  # time_budget_scale lets the engine schedule more time per move on the bet
+  # that the visit-margin abort banks most of it back on easy moves; the
+  # 50%-of-remaining ceiling still caps any single move, so the clock cannot be
+  # flagged regardless of scale.
+            budget = time_budget_scale * (remaining / moves_left + (inc or 0))
             ceiling = remaining * _MAX_FRACTION_OF_REMAINING
             deadline_ms = max(_MIN_DEADLINE_MS, int(min(budget, ceiling)))
 
@@ -83,16 +88,14 @@ def limits_from_go(
     if deadline_ms is not None and move_overhead_ms > 0:
         deadline_ms = max(_MIN_DEADLINE_MS, deadline_ms - int(move_overhead_ms))
 
-  # Soft target. `movetime` is an explicit instruction — use the whole budget
-  # (optimum == deadline, no banking). Clock-based searches aim for a fraction
-  # of the hard budget and extend toward `deadline_ms` only while the best move
-  # keeps changing (see SearchWorker soft-stop).
+  # Soft target the visit-margin abort aims for. `movetime` is an explicit
+  # "search exactly this long" instruction, so it gets no optimum: the abort is
+  # disabled and the search runs to the movetime deadline. Clock games target a
+  # fraction of the hard budget and extend toward `deadline_ms` on unsettled
+  # positions.
     optimum_ms: int | None = None
-    if deadline_ms is not None:
-        optimum_ms = (
-            deadline_ms if is_movetime
-            else max(_MIN_DEADLINE_MS, int(deadline_ms * _OPTIMUM_FRACTION))
-        )
+    if deadline_ms is not None and not is_movetime:
+        optimum_ms = max(_MIN_DEADLINE_MS, int(deadline_ms * _OPTIMUM_FRACTION))
 
     return SearchLimits(
         deadline_ms=deadline_ms,

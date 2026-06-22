@@ -82,12 +82,16 @@ _INFO_EMIT_INTERVAL_MS = 1000
 _TREE_MAX_LEAF_BRANCHING = 256
 _TREE_GROW_MARGIN_NODES = 4096
 
-# Soft time-stop: once past the optimum budget, the best root move must repeat
-# for this many consecutive post-optimum chunk checks before we bank the
-# remaining time. >= 2 ignores a single noisy chunk; the checks run only after
-# the optimum has elapsed, so the extra chunks cost ~a couple of chunk
-# durations (negligible vs the move budget).
-_SOFT_STOP_STABLE_CHUNKS = 2
+# Visit-margin early abort (Lc0 "smart pruning"). Once past the optimum budget
+# the search stops as soon as the move it would play has any visit lead; before
+# the optimum it can also stop early if that lead is large enough that the
+# runner-up cannot overtake it within the remaining optimum budget. The default
+# factor 1.0 is the (approximately) provable bound — the runner-up would need
+# *every* remaining sim to catch up; factor < 1.0 is the aggressive Lc0-style
+# bet that it won't, banking more time for harder moves. The move whose lead is
+# measured is the one final selection emits (Gumbel survivor or visit leader),
+# so on the Gumbel production path the abort tracks the played move.
+_DEFAULT_ABORT_FACTOR = 1.0
 
 
 @dataclass
@@ -249,12 +253,6 @@ class SearchWorker:
   # the current search (monotonic max, reset per `run()`). A real, climbing
   # number that GUIs/TCEC spectators expect alongside `depth`.
         self._seldepth: int = 0
-  # Soft-stop bookkeeping (reset per `run()`): the last best root action seen
-  # after the optimum budget elapsed, and how many consecutive post-optimum
-  # chunks have agreed on it. -2 is a sentinel that no valid action (>= 0)
-  # or "no move" (-1) can equal.
-        self._soft_stop_last_best: int = -2
-        self._soft_stop_stable: int = 0
 
     def _build_walker_pool(self, n: int) -> WalkerPool | None:
         if n <= 1:
@@ -1018,28 +1016,62 @@ class SearchWorker:
                 return -1
         return int(actions[int(np.argmax(visits))])
 
-    def _soft_stop_ready(
+    def _root_visit_lead(
+        self, allowed_root_indices: set[int] | None,
+    ) -> tuple[int, int]:
+        """``(emitted_action, lead)`` where ``emitted_action`` is the move final
+        selection would play right now and ``lead`` is its visit count minus the
+        runner-up's. ``lead`` can be negative when the played move (a Gumbel
+        survivor) is not the visit leader — the abort treats that as "not
+        decided" and keeps searching. ``(-1, 0)`` when there is no move."""
+        best = self._current_best_root_action(allowed_root_indices)
+        if best < 0 or self._tree is None or self._root_id is None:
+            return -1, 0
+        actions, visits = self._tree.get_children_visits(self._root_id)
+        if actions.size == 0:
+            return -1, 0
+        if allowed_root_indices is not None:
+            keep = np.isin(actions, np.fromiter(allowed_root_indices, dtype=np.int32))
+            actions = actions[keep]
+            visits = visits[keep]
+            if actions.size == 0:
+                return -1, 0
+        best_mask = actions == best
+        if not bool(best_mask.any()):
+            return -1, 0
+        best_visits = int(visits[best_mask].max())
+        others = visits[~best_mask]
+        runner_up = int(others.max()) if others.size else 0
+        return best, best_visits - runner_up
+
+    def _abort_ready(
         self,
         optimum_ms: int | None,
         deadline: Deadline,
+        total_nodes: int,
         allowed_root_indices: set[int] | None,
+        abort_factor: float,
     ) -> bool:
-        """True once the search has both passed the soft (optimum) budget and
-        held the same best root move for ``_SOFT_STOP_STABLE_CHUNKS`` consecutive
-        post-optimum chunks. Returns False (keeps searching) when no optimum is
-        set or the budget has not yet elapsed, so the hard ``deadline`` still
-        bounds the worst case."""
-        if optimum_ms is None or deadline.elapsed_ms() < optimum_ms:
+        """Lc0-style visit-margin early abort. Once the optimum budget is spent
+        the search stops (the optimum is the normal per-move allocation); before
+        that it can also stop early if the move it would play already has a visit
+        lead the runner-up cannot overcome within the remaining optimum budget
+        (``lead > factor * remaining_sims``). Returns False (keep searching) when
+        no optimum is set, so node/movetime/infinite searches and the hard
+        ``deadline`` are unaffected."""
+        if optimum_ms is None:
             return False
-        best = self._current_best_root_action(allowed_root_indices)
-        if best < 0:
+        elapsed = deadline.elapsed_ms()
+        remaining_ms = optimum_ms - elapsed
+        if remaining_ms <= 0:
+            return True
+  # Before the optimum: only bail if the played move is already decided.
+        best, lead = self._root_visit_lead(allowed_root_indices)
+        if best < 0 or lead <= 0:
             return False
-        if best == self._soft_stop_last_best:
-            self._soft_stop_stable += 1
-        else:
-            self._soft_stop_last_best = best
-            self._soft_stop_stable = 1
-        return self._soft_stop_stable >= _SOFT_STOP_STABLE_CHUNKS
+        nps = total_nodes / max(1, elapsed)
+        remaining_sims = nps * remaining_ms
+        return lead > abort_factor * remaining_sims
 
     def run(
         self,
@@ -1050,14 +1082,15 @@ class SearchWorker:
         max_nodes: int | None,
         max_depth: int | None = None,
         optimum_ms: int | None = None,
+        abort_factor: float = _DEFAULT_ABORT_FACTOR,
         root_moves: tuple[str, ...] = (),
         info_cb: InfoCallback | None = None,
         include_ponder: bool = False,
         allow_terminal_shortcuts: bool = True,
     ) -> SearchResult:
         """Search until any of: stop_event set, deadline expired, max_nodes hit,
-        PV length ≥ max_depth, or (``optimum_ms`` set) the best move is stable
-        past the soft budget.
+        PV length ≥ max_depth, or (``optimum_ms`` set) the visit-margin abort
+        fires (see ``_abort_ready``).
 
         Returns when at least one chunk has run (so bestmove is always
         backed by MCTS data, never a raw priors pick).
@@ -1108,8 +1141,6 @@ class SearchWorker:
 
         self._last_gumbel_action_idx = None
         self._seldepth = 0
-        self._soft_stop_last_best = -2
-        self._soft_stop_stable = 0
         self._ensure_root_eval_cached(board, tb_probe)
         self._pre_expand_root_for_pool(board, allowed_root_indices)
 
@@ -1173,11 +1204,13 @@ class SearchWorker:
                     )
                 break
 
-  # Soft stop: past the optimum budget with a stable best move → bank the
-  # rest of the clock. Checked after the hard stop reasons so the deadline /
-  # node / depth bounds always win, and skipped entirely when no optimum is
-  # set (movetime uses optimum == deadline, so it never early-exits here).
-            if self._soft_stop_ready(optimum_ms, deadline, allowed_root_indices):
+  # Visit-margin abort: bank the clock once the move we would play is decided
+  # for the remaining optimum budget. Checked after the hard stop reasons so
+  # the deadline / node / depth bounds always win, and a no-op when no optimum
+  # is set (node / movetime / infinite searches).
+            if self._abort_ready(
+                optimum_ms, deadline, total_nodes, allowed_root_indices, abort_factor,
+            ):
                 break
 
         return self._build_final_search_result(
