@@ -256,24 +256,33 @@ def test_shared_tree_headroom_pregrows_arena_past_fixed_reserve() -> None:
 
 def test_shared_tree_headroom_respects_hash_cap() -> None:
     """The pre-grow must not push memory_bytes() past the Hash cap: it returns
-    the sims that fit and 0 (no growth) once the tree is at the cap."""
+    the sims that fit and 0 (no growth) once the tree is at the cap. A fresh tree
+    per case keeps node_count ~ node_cap (as it is in a live search, where each
+    chunk fills the prior reservation before the next cap check)."""
     ev = _make_evaluator()
     worker = SearchWorker(
         ev, device="cpu",
         gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
         chunk_sims=512, n_walkers=1,
     )
-    try:
+
+    def _fresh() -> MCTSTree:
         tree, rid, _ = _seed_tree()
         worker._tree = tree  # noqa: SLF001
         worker._root_id = rid  # noqa: SLF001
+        return tree
+
+    try:
   # Cap disabled -> no bounding, full budget granted (and arena grows).
+        _fresh()
         worker.set_max_tree_mb(0)
         assert worker._ensure_shared_tree_headroom(512) == 512  # noqa: SLF001
   # Generous cap -> still the full budget.
+        _fresh()
         worker.set_max_tree_mb(100_000)
         assert worker._ensure_shared_tree_headroom(512) == 512  # noqa: SLF001
   # Cap already below current usage -> 0 sims and no further growth.
+        tree = _fresh()
         worker.set_max_tree_mb(1)
         before = tree.memory_bytes()
         assert worker._ensure_shared_tree_headroom(512) == 0  # noqa: SLF001

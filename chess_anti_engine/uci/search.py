@@ -969,7 +969,13 @@ class SearchWorker:
             if remaining <= 0:
                 return 0
             bytes_per_node = max(1, used // node_count)
-            fit_sims = int(remaining // bytes_per_node) // _TREE_MAX_LEAF_BRANCHING
+  # Take the fixed margin out of the budget *before* sizing the chunk, so
+  # neither the margin nor the per-sim worst case grows the intended arena
+  # past the cap. (reserve() still rounds capacity up by doubling — inherent
+  # soft-cap slack, identical to the pre-PR allocator behavior — but we no
+  # longer target past _max_tree_bytes on purpose.)
+            node_budget = int(remaining // bytes_per_node) - _TREE_GROW_MARGIN_NODES
+            fit_sims = node_budget // _TREE_MAX_LEAF_BRANCHING if node_budget > 0 else 0
             sims = min(sims, max(0, fit_sims))
             if sims <= 0:
                 return 0
