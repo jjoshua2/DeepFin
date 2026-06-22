@@ -88,13 +88,21 @@ def limits_from_go(
     if deadline_ms is not None and move_overhead_ms > 0:
         deadline_ms = max(_MIN_DEADLINE_MS, deadline_ms - int(move_overhead_ms))
 
-  # Soft target the visit-margin abort aims for. `movetime` is an explicit
-  # "search exactly this long" instruction, so it gets no optimum: the abort is
-  # disabled and the search runs to the movetime deadline. Clock games target a
+  # Soft target the visit-margin abort aims for. Only pure clock searches get
+  # one: `movetime` is an explicit "search exactly this long" instruction, and
+  # an explicit `nodes`/`depth` bound means the caller (a benchmark or GUI that
+  # also keeps the clocks populated) wants a fixed-work search — the soft abort
+  # must not stop it early before that bound is reached. Clock games target a
   # fraction of the hard budget and extend toward `deadline_ms` on unsettled
-  # positions.
+  # positions. The hard `deadline_ms` still applies as a safety bound in all
+  # cases so the engine cannot flag.
     optimum_ms: int | None = None
-    if deadline_ms is not None and not is_movetime:
+    if (
+        deadline_ms is not None
+        and not is_movetime
+        and args.nodes is None
+        and args.depth is None
+    ):
         optimum_ms = max(_MIN_DEADLINE_MS, int(deadline_ms * _OPTIMUM_FRACTION))
 
     return SearchLimits(

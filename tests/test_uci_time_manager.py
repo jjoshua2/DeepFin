@@ -158,6 +158,27 @@ def test_optimum_none_without_time_budget() -> None:
     ).optimum_ms is None
 
 
+def test_explicit_node_or_depth_bound_with_clock_disables_soft_abort() -> None:
+    # A benchmark/GUI that sends explicit nodes/depth but also keeps the clocks
+    # populated wants a fixed-work search; the soft optimum (which drives the
+    # early abort) must stay off so it isn't cut short before the node/depth
+    # bound. The hard deadline still applies as a safety bound.
+    nodes = limits_from_go(
+        GoArgs(nodes=1_000_000, wtime_ms=60000, winc_ms=500),
+        side_to_move_is_white=True,
+    )
+    assert nodes.max_nodes == 1_000_000
+    assert nodes.deadline_ms is not None  # clock still bounds it
+    assert nodes.optimum_ms is None       # but no early-abort soft target
+
+    depth = limits_from_go(
+        GoArgs(depth=20, wtime_ms=60000),
+        side_to_move_is_white=True,
+    )
+    assert depth.max_depth == 20
+    assert depth.optimum_ms is None
+
+
 def test_deadline_tracking() -> None:
     d = Deadline(deadline_ms=500, now=100.0)
     # Floating-point subtraction at ms precision can round down by 1 ms; allow it.
