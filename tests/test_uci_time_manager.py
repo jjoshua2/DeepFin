@@ -88,6 +88,33 @@ def test_clock_ceiling_caps_half_remaining() -> None:
     assert lim.deadline_ms == 5000
 
 
+def test_movetime_optimum_equals_deadline() -> None:
+    # movetime is an explicit instruction: spend it all, no soft early-exit.
+    lim = limits_from_go(GoArgs(movetime_ms=500), side_to_move_is_white=True)
+    assert lim.optimum_ms == lim.deadline_ms == 500
+
+
+def test_clock_optimum_is_fraction_below_hard_deadline() -> None:
+    lim = limits_from_go(
+        GoArgs(wtime_ms=30000, winc_ms=500), side_to_move_is_white=True,
+    )
+    # Hard bound unchanged (~30000/30 + 500 = 1500); optimum is a fraction of it.
+    assert lim.deadline_ms == 1500
+    assert lim.optimum_ms is not None
+    assert lim.optimum_ms < lim.deadline_ms
+    assert lim.optimum_ms == int(1500 * 0.7)
+
+
+def test_optimum_none_without_time_budget() -> None:
+    # Pure node/depth/infinite searches have no clock, so no soft target.
+    assert limits_from_go(GoArgs(nodes=250), side_to_move_is_white=True).optimum_ms is None
+    assert limits_from_go(GoArgs(depth=8), side_to_move_is_white=True).optimum_ms is None
+    assert limits_from_go(GoArgs(infinite=True), side_to_move_is_white=True).optimum_ms is None
+    assert limits_from_go(
+        GoArgs(ponder=True, wtime_ms=10000), side_to_move_is_white=True,
+    ).optimum_ms is None
+
+
 def test_deadline_tracking() -> None:
     d = Deadline(deadline_ms=500, now=100.0)
     # Floating-point subtraction at ms precision can round down by 1 ms; allow it.

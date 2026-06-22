@@ -82,6 +82,13 @@ _INFO_EMIT_INTERVAL_MS = 1000
 _TREE_MAX_LEAF_BRANCHING = 256
 _TREE_GROW_MARGIN_NODES = 4096
 
+# Soft time-stop: once past the optimum budget, the best root move must repeat
+# for this many consecutive post-optimum chunk checks before we bank the
+# remaining time. >= 2 ignores a single noisy chunk; the checks run only after
+# the optimum has elapsed, so the extra chunks cost ~a couple of chunk
+# durations (negligible vs the move budget).
+_SOFT_STOP_STABLE_CHUNKS = 2
+
 
 @dataclass
 class SearchResult:
@@ -242,6 +249,12 @@ class SearchWorker:
   # the current search (monotonic max, reset per `run()`). A real, climbing
   # number that GUIs/TCEC spectators expect alongside `depth`.
         self._seldepth: int = 0
+  # Soft-stop bookkeeping (reset per `run()`): the last best root action seen
+  # after the optimum budget elapsed, and how many consecutive post-optimum
+  # chunks have agreed on it. -2 is a sentinel that no valid action (>= 0)
+  # or "no move" (-1) can equal.
+        self._soft_stop_last_best: int = -2
+        self._soft_stop_stable: int = 0
 
     def _build_walker_pool(self, n: int) -> WalkerPool | None:
         if n <= 1:
@@ -943,6 +956,48 @@ class SearchWorker:
   # bounds the child pool too.
         tree.reserve(needed, needed)
 
+    def _current_best_root_action(
+        self, allowed_root_indices: set[int] | None,
+    ) -> int:
+        """Most-visited legal root action right now, or -1 if none. Cheaper than
+        a full PV extraction — just the argmax visit at the root — so it is fine
+        to poll once per chunk for the soft-stop stability check."""
+        if self._tree is None or self._root_id is None:
+            return -1
+        actions, visits = self._tree.get_children_visits(self._root_id)
+        if actions.size == 0:
+            return -1
+        if allowed_root_indices is not None:
+            keep = np.isin(actions, np.fromiter(allowed_root_indices, dtype=np.int32))
+            actions = actions[keep]
+            visits = visits[keep]
+            if actions.size == 0:
+                return -1
+        return int(actions[int(np.argmax(visits))])
+
+    def _soft_stop_ready(
+        self,
+        optimum_ms: int | None,
+        deadline: Deadline,
+        allowed_root_indices: set[int] | None,
+    ) -> bool:
+        """True once the search has both passed the soft (optimum) budget and
+        held the same best root move for ``_SOFT_STOP_STABLE_CHUNKS`` consecutive
+        post-optimum chunks. Returns False (keeps searching) when no optimum is
+        set or the budget has not yet elapsed, so the hard ``deadline`` still
+        bounds the worst case."""
+        if optimum_ms is None or deadline.elapsed_ms() < optimum_ms:
+            return False
+        best = self._current_best_root_action(allowed_root_indices)
+        if best < 0:
+            return False
+        if best == self._soft_stop_last_best:
+            self._soft_stop_stable += 1
+        else:
+            self._soft_stop_last_best = best
+            self._soft_stop_stable = 1
+        return self._soft_stop_stable >= _SOFT_STOP_STABLE_CHUNKS
+
     def run(
         self,
         board: chess.Board,
@@ -951,13 +1006,15 @@ class SearchWorker:
         deadline: Deadline,
         max_nodes: int | None,
         max_depth: int | None = None,
+        optimum_ms: int | None = None,
         root_moves: tuple[str, ...] = (),
         info_cb: InfoCallback | None = None,
         include_ponder: bool = False,
         allow_terminal_shortcuts: bool = True,
     ) -> SearchResult:
         """Search until any of: stop_event set, deadline expired, max_nodes hit,
-        PV length ≥ max_depth.
+        PV length ≥ max_depth, or (``optimum_ms`` set) the best move is stable
+        past the soft budget.
 
         Returns when at least one chunk has run (so bestmove is always
         backed by MCTS data, never a raw priors pick).
@@ -1008,6 +1065,8 @@ class SearchWorker:
 
         self._last_gumbel_action_idx = None
         self._seldepth = 0
+        self._soft_stop_last_best = -2
+        self._soft_stop_stable = 0
         self._ensure_root_eval_cached(board, tb_probe)
         self._pre_expand_root_for_pool(board, allowed_root_indices)
 
@@ -1059,6 +1118,13 @@ class SearchWorker:
                         total_nodes, elapsed, tb_probe,
                         allowed_root_indices=allowed_root_indices,
                     )
+                break
+
+  # Soft stop: past the optimum budget with a stable best move → bank the
+  # rest of the clock. Checked after the hard stop reasons so the deadline /
+  # node / depth bounds always win, and skipped entirely when no optimum is
+  # set (movetime uses optimum == deadline, so it never early-exits here).
+            if self._soft_stop_ready(optimum_ms, deadline, allowed_root_indices):
                 break
 
         return self._build_final_search_result(

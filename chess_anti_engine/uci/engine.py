@@ -718,6 +718,7 @@ class Engine:
         deadline_ms = None if is_ponder else limits.deadline_ms
         max_nodes = None if is_ponder else limits.max_nodes
         max_depth = None if is_ponder else limits.max_depth
+        optimum_ms = None if is_ponder else limits.optimum_ms
         deadline = Deadline(deadline_ms=deadline_ms)
         emitted_info = False
 
@@ -758,6 +759,7 @@ class Engine:
                 deadline=deadline,
                 max_nodes=max_nodes,
                 max_depth=max_depth,
+                optimum_ms=optimum_ms,
                 root_moves=limits.searchmoves,
                 info_cb=_phase_info_cb,
                 include_ponder=self._options.ponder,

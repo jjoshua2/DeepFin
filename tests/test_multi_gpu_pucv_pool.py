@@ -305,6 +305,58 @@ def test_search_emit_info_reports_hashfull_and_seldepth() -> None:
         worker.close()
 
 
+def test_soft_stop_fires_after_optimum_when_best_is_stable() -> None:
+    """_soft_stop_ready holds until the optimum elapses, then needs the best
+    move to repeat for _SOFT_STOP_STABLE_CHUNKS consecutive checks."""
+    import time as _time
+
+    ev = _make_evaluator()
+    worker = SearchWorker(
+        ev, device="cpu",
+        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        chunk_sims=64, n_walkers=1,
+    )
+    try:
+        tree, rid, _ = _seed_tree()
+        worker._tree = tree  # noqa: SLF001
+        worker._root_id = rid  # noqa: SLF001
+  # elapsed ~5000ms relative to a start 5s in the past.
+        deadline = Deadline(deadline_ms=60_000, now=_time.monotonic() - 5.0)
+  # No optimum -> never soft-stops; before the optimum -> not ready.
+        assert worker._soft_stop_ready(None, deadline, None) is False  # noqa: SLF001
+        assert worker._soft_stop_ready(10_000_000, deadline, None) is False  # noqa: SLF001
+  # Past optimum: first check arms, second confirms (2 consecutive stable).
+        assert worker._soft_stop_ready(1, deadline, None) is False  # noqa: SLF001
+        assert worker._soft_stop_ready(1, deadline, None) is True  # noqa: SLF001
+    finally:
+        worker.close()
+
+
+def test_search_soft_stop_banks_time_on_stable_position() -> None:
+    """With a tiny optimum and a huge hard deadline, a stable position must
+    early-exit far before the deadline rather than burning the whole budget."""
+    import time as _time
+
+    ev = _make_evaluator()
+    worker = SearchWorker(
+        ev, device="cpu",
+        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        chunk_sims=64, n_walkers=1,
+    )
+    try:
+        t0 = _time.monotonic()
+        result = worker.run(
+            chess.Board(), stop_event=threading.Event(),
+            deadline=Deadline(30_000), max_nodes=None, optimum_ms=1,
+        )
+        elapsed = _time.monotonic() - t0
+        assert len(result.bestmove_uci) >= 4
+  # Soft-stop must bank the clock; nowhere near the 30s hard deadline.
+        assert elapsed < 10.0
+    finally:
+        worker.close()
+
+
 def test_searchworker_clear_multi_gpu_pucv_reverts() -> None:
     """install_multi_gpu_pucv → clear_multi_gpu_pucv must drop the pool and
     leave subsequent searches running through the gumbel/walker path."""

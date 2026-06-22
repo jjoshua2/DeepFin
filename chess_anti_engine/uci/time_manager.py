@@ -18,6 +18,13 @@ _MIN_DEADLINE_MS = 20
 _MAX_FRACTION_OF_REMAINING = 0.5
 # Default divisor when movestogo is not specified (classic Leela/SF-lite).
 _DEFAULT_MOVES_REMAINING = 30
+# Soft target as a fraction of the hard budget for clock-based searches. The
+# search aims to finish around here and stops early once the best move is
+# stable, banking the rest; if the move is still changing it keeps going up to
+# the hard `deadline_ms`. Because the soft stop only fires *before* the hard
+# bound, it can never flag where the old (always-spend-the-budget) code did not.
+# This is the main time-management tuning knob — sweep with arena validation.
+_OPTIMUM_FRACTION = 0.7
 
 
 @dataclass(frozen=True)
@@ -27,7 +34,8 @@ class SearchLimits:
     ``None`` on every field means "infinite" — the search runs until an
     external ``stop`` / ``ponderhit`` arrives.
     """
-    deadline_ms: int | None = None  # wall-clock budget in ms
+    deadline_ms: int | None = None  # hard wall-clock budget in ms
+    optimum_ms: int | None = None  # soft target; early-exit on a stable best move
     max_nodes: int | None = None  # total MCTS sims
     max_depth: int | None = None  # treat UCI depth as sims (coarse v1)
     infinite: bool = False
@@ -58,8 +66,10 @@ def limits_from_go(
         )
 
     deadline_ms: int | None = None
-    if args.movetime_ms is not None:
-        deadline_ms = max(_MIN_DEADLINE_MS, int(args.movetime_ms))
+    movetime_ms = args.movetime_ms
+    is_movetime = movetime_ms is not None
+    if movetime_ms is not None:
+        deadline_ms = max(_MIN_DEADLINE_MS, int(movetime_ms))
     else:
         remaining, inc = _select_clock(args, side_to_move_is_white)
         if remaining is not None:
@@ -73,8 +83,20 @@ def limits_from_go(
     if deadline_ms is not None and move_overhead_ms > 0:
         deadline_ms = max(_MIN_DEADLINE_MS, deadline_ms - int(move_overhead_ms))
 
+  # Soft target. `movetime` is an explicit instruction — use the whole budget
+  # (optimum == deadline, no banking). Clock-based searches aim for a fraction
+  # of the hard budget and extend toward `deadline_ms` only while the best move
+  # keeps changing (see SearchWorker soft-stop).
+    optimum_ms: int | None = None
+    if deadline_ms is not None:
+        optimum_ms = (
+            deadline_ms if is_movetime
+            else max(_MIN_DEADLINE_MS, int(deadline_ms * _OPTIMUM_FRACTION))
+        )
+
     return SearchLimits(
         deadline_ms=deadline_ms,
+        optimum_ms=optimum_ms,
         max_nodes=args.nodes,
         max_depth=args.depth,
         searchmoves=tuple(args.searchmoves),
