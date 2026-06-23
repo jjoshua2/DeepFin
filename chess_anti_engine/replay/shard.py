@@ -150,6 +150,7 @@ _OPTIONAL_FIELD_SPECS: tuple[_OptFieldSpec, ...] = (
     _OptFieldSpec("categorical_target",   "has_categorical",       (DEFAULT_CATEGORICAL_BINS,), _F16),
     _OptFieldSpec("policy_soft_target",   "has_policy_soft",       _POLICY_SHAPE, _F16),
     _OptFieldSpec("future_policy_target", "has_future",            _POLICY_SHAPE, _F16),
+    _OptFieldSpec("sf_p0_policy_target",  "has_sf_p0",             _POLICY_SHAPE, _F16),
     _OptFieldSpec("volatility_target",    "has_volatility",        (3,),          _F16),
     _OptFieldSpec("sf_volatility_target", "has_sf_volatility",     (3,),          _F16),
     _OptFieldSpec("search_wdl",           "has_search_wdl",        (3,),          _F16),
@@ -232,7 +233,7 @@ LEGAL_MASK_HAS_FIELDS: tuple[str, ...] = ("has_legal_mask", "has_sf_legal_mask",
 # Storing as padded-sparse (values + column indices + lengths) saves ~10x
 # memory per policy field in the shuffle buffer.
 
-POLICY_SPACE_FIELDS = ("policy_target", "sf_policy_target", "policy_soft_target", "future_policy_target")
+POLICY_SPACE_FIELDS = ("policy_target", "sf_policy_target", "policy_soft_target", "future_policy_target", "sf_p0_policy_target")
 POLICY_SIZED_FIELDS = frozenset((*POLICY_SPACE_FIELDS, *LEGAL_MASK_FIELDS))
 POLICY_INDEX_FIELDS: tuple[tuple[str, str], ...] = (
     ("sf_move_index", "has_sf_move"),
@@ -803,6 +804,7 @@ _VECTOR_FIELDS: tuple[tuple[str, str, str], ...] = (
     ("categorical_target",   "categorical_target",   "has_categorical"),
     ("policy_soft_target",   "policy_soft_target",   "has_policy_soft"),
     ("future_policy_target", "future_policy_target", "has_future"),
+    ("sf_p0_policy_target",  "sf_p0_policy_target",  "has_sf_p0"),
     ("volatility_target",    "volatility_target",    "has_volatility"),
     ("sf_volatility_target", "sf_volatility_target", "has_sf_volatility"),
     ("search_wdl",           "search_wdl",           "has_search_wdl"),
@@ -816,6 +818,7 @@ _INT_VECTOR_FIELDS: tuple[tuple[str, str, str], ...] = (
 
 _VECTOR_EXPLICIT_HAS_ATTRS: dict[str, str] = {
     "future_policy_target": "has_future",
+    "sf_p0_policy_target": "has_sf_p0",
     "volatility_target": "has_volatility",
     "sf_volatility_target": "has_sf_volatility",
 }
@@ -1173,6 +1176,9 @@ def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
         if opt["has_future"][i]:
             s.future_policy_target = _copy_row(opt["future_policy_target"], i)
             s.has_future = True
+        if opt["has_sf_p0"][i]:
+            s.sf_p0_policy_target = _copy_row(opt["sf_p0_policy_target"], i)
+            s.has_sf_p0 = True
         if opt["has_volatility"][i]:
             s.volatility_target = _copy_row(opt["volatility_target"], i)
             s.has_volatility = True

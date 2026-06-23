@@ -135,6 +135,11 @@ class GameConfig:
   # CE is then the sole policy_sf supervision and the dense vector is dead
   # weight in the shard.
     record_dense_sf_policy: bool = True
+  # Research bet: record the P0 own-move SF teacher (the prior full ply's
+  # sf_policy) on eligible selfplay rows, so policy_own can be taught toward
+  # SF's recommended move for its own position (not just its own MCTS visits).
+  # Default off (adds a policy-sized shard field). Pairs with train.w_sf_own.
+    record_sf_p0_policy: bool = False
 
 
 __all__ = [

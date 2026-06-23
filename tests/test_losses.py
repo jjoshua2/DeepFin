@@ -195,3 +195,42 @@ def test_compute_loss_optional_heads_produce_gradients_when_targets_present() ->
         grad = outputs[key].grad
         assert grad is not None, key
         assert torch.count_nonzero(grad).item() > 0, key
+
+
+def test_compute_loss_sf_own_teaches_policy_own_head_masked() -> None:
+    """w_sf_own adds a P0 SF-recommendation CE on the SAME head as policy_own
+    (the search prior), masked to has_sf_p0 rows, in the current legal space."""
+    outputs = {
+        "policy": torch.tensor([[4.0, -1.0, -2.0]], requires_grad=True),
+        "wdl": torch.tensor([[2.0, -1.0, -2.0]], requires_grad=True),
+    }
+    batch = _base_batch(batch_size=1)
+    batch["policy_t"] = torch.tensor([[1.0, 0.0, 0.0]], dtype=torch.float32)
+    # SF recommends a DIFFERENT move than the net's own visits (index 2).
+    batch["sf_p0_policy_t"] = torch.tensor([[0.0, 0.0, 1.0]], dtype=torch.float32)
+    batch["has_sf_p0"] = torch.tensor([1.0], dtype=torch.float32)
+
+    # Off by default (w_sf_own=0): no contribution.
+    off = compute_loss(outputs, batch, w_wdl=0.0)
+    assert off["sf_own_ce"].detach().item() > 0.0  # ce is computed...
+    base_total = compute_loss(outputs, batch, w_wdl=0.0, w_sf_own=0.0)["total"].detach().item()
+
+    # On: the term enters the total and pushes the policy_own head toward index 2.
+    on = compute_loss(outputs, batch, w_wdl=0.0, w_sf_own=0.5)
+    on["total"].backward()
+    assert on["total"].detach().item() > base_total
+    # gradient on the shared "policy" head should pull mass toward index 2.
+    assert outputs["policy"].grad is not None
+    assert outputs["policy"].grad[0, 2].item() < 0.0  # increasing logit[2] lowers loss
+
+
+def test_compute_loss_sf_own_zero_when_unmasked() -> None:
+    outputs = {
+        "policy": torch.tensor([[4.0, -1.0, -2.0]], requires_grad=True),
+        "wdl": torch.tensor([[2.0, -1.0, -2.0]], requires_grad=True),
+    }
+    batch = _base_batch(batch_size=1)
+    batch["sf_p0_policy_t"] = torch.tensor([[0.0, 0.0, 1.0]], dtype=torch.float32)
+    batch["has_sf_p0"] = torch.tensor([0.0], dtype=torch.float32)  # masked out
+    m = compute_loss(outputs, batch, w_wdl=0.0, w_sf_own=0.5)
+    assert m["sf_own_ce"].detach().item() == 0.0
