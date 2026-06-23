@@ -176,6 +176,7 @@ _OPTIONAL_DISTRIBUTION_FIELDS = frozenset({
     "categorical_target",
     "policy_soft_target",
     "future_policy_target",
+    "sf_p0_policy_target",
     "search_wdl",
 })
 
@@ -876,8 +877,16 @@ def samples_to_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
             shape = (policy_size,)
         else:
             shape = spec.shape
-        arrs[spec.arr] = np.zeros((n, *shape), dtype=spec.dtype)
         arrs[spec.flag] = np.zeros((n,), dtype=np.uint8)
+        # Skip the (often policy-sized) dense allocation when no sample carries
+        # the field. A default-off optional field (e.g. sf_p0_policy_target)
+        # otherwise allocates a full N*policy_size zero array per batch only to
+        # be dropped — prune_storage_arrays (run by every writer, incl. inside
+        # save_local_shard_arrays) and the loader both tolerate a missing dense
+        # array, keying presence off the flag. The populate loops below only
+        # write arrs[spec.arr] when a sample's value is not None (=> allocated).
+        if any(getattr(s, spec.arr, None) is not None for s in samples):
+            arrs[spec.arr] = np.zeros((n, *shape), dtype=spec.dtype)
 
     for i, s in enumerate(samples):
         for src, target, has, cast in _SCALAR_FIELDS:

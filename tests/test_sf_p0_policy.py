@@ -49,3 +49,23 @@ def test_legacy_sample_without_sf_p0_has_flag_zero() -> None:
     )
     arrs = samples_to_arrays([s])
     assert arrs["has_sf_p0"].tolist() == [0]
+
+
+def test_absent_sf_p0_allocates_no_dense_array() -> None:
+    """Default-off (no sample carries sf_p0): samples_to_arrays must NOT allocate
+    the policy-sized dense zero array (only the cheap flag), so the experiment
+    imposes no per-batch memory cost when disabled."""
+    from chess_anti_engine.replay.shard import samples_to_arrays
+
+    samples = [
+        ReplaySample(
+            x=np.zeros((1, 8, 8), dtype=np.float32),
+            policy_target=np.zeros((_W,), dtype=np.float32),
+            wdl_target=0,
+        )
+        for _ in range(4)
+    ]
+    arrs = samples_to_arrays(samples)
+    assert "sf_p0_policy_target" not in arrs  # dense array skipped
+    assert "has_sf_p0" in arrs  # cheap flag still present
+    assert int(arrs["has_sf_p0"].sum()) == 0
