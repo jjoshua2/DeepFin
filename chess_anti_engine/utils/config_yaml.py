@@ -58,7 +58,8 @@ _CORE_KEYS = (
 # stockfish section: 1:1 passthrough (YAML key == flat config key).
 # The section is just visual grouping — keys use the same names as code.
 _STOCKFISH_KEYS = (
-    "stockfish_path", "sf_nodes", "sf_move_nodes", "sf_workers", "sf_multipv", "sf_hash_mb", "sf_nice",
+    "stockfish_path", "sf_nodes", "sf_move_nodes", "sf_fast_ply_node_scale",
+    "sf_workers", "sf_multipv", "sf_hash_mb", "sf_nice",
     "sf_pid_enabled",
     "sf_pid_target_winrate", "sf_pid_ema_alpha",
     "sf_pid_min_games_between_adjust",

@@ -133,6 +133,7 @@ def test_build_selfplay_configs_uses_manifest_policy_and_history_encoding() -> N
     cfgs, _sf_args = WorkerSession._build_selfplay_configs(
         session,
         {
+            "sf_nodes": 5000,
             "policy_encoding": "lc0_1858",
             "input_history_encoding": "lc0_root_legacy_meta",
         },
@@ -149,11 +150,11 @@ def test_build_selfplay_configs_consumes_history_rep_fix() -> None:
     session = _bare_worker_session()
 
     cfgs, _sf_args = WorkerSession._build_selfplay_configs(
-        session, {"history_rep_fix": True},
+        session, {"sf_nodes": 5000, "history_rep_fix": True},
     )
     assert cfgs["game"].history_rep_fix is True
 
-    cfgs, _sf_args = WorkerSession._build_selfplay_configs(session, {})
+    cfgs, _sf_args = WorkerSession._build_selfplay_configs(session, {"sf_nodes": 5000})
     assert cfgs["game"].history_rep_fix is False
 
     # Flipping the flag must restart the selfplay session.
@@ -167,11 +168,11 @@ def test_build_selfplay_configs_consumes_categorical_blend_frac() -> None:
     session = _bare_worker_session()
 
     cfgs, _sf_args = WorkerSession._build_selfplay_configs(
-        session, {"categorical_blend_frac": 0.5},
+        session, {"sf_nodes": 5000, "categorical_blend_frac": 0.5},
     )
     assert cfgs["game"].categorical_blend_frac == 0.5
 
-    cfgs, _sf_args = WorkerSession._build_selfplay_configs(session, {})
+    cfgs, _sf_args = WorkerSession._build_selfplay_configs(session, {"sf_nodes": 5000})
     assert cfgs["game"].categorical_blend_frac == 0.0
 
     # Flipping the flag mid-session must restart selfplay so it takes effect.
@@ -394,3 +395,38 @@ def test_completed_game_metadata_mismatch_flushes_before_retry(monkeypatch, tmp_
     assert session.upload_buf.positions == 2
     assert session._completion_games == 1
     assert session._completion_positions == 2
+
+
+def test_require_reco_raises_when_sf_nodes_set_nowhere() -> None:
+    session = _bare_worker_session()  # args is an empty namespace
+    with pytest.raises(worker_mod._MissingRequiredReco):
+        WorkerSession._require_reco(session, {}, "sf_nodes", int)
+
+
+def test_require_reco_reads_from_reco() -> None:
+    session = _bare_worker_session()
+    assert WorkerSession._require_reco(session, {"sf_nodes": 5000}, "sf_nodes", int) == 5000
+
+
+def test_require_reco_cli_overrides_reco() -> None:
+    session = _bare_worker_session()
+    session.args = SimpleNamespace(sf_nodes=5000)
+    assert WorkerSession._require_reco(session, {"sf_nodes": 9999}, "sf_nodes", int) == 5000
+
+
+def test_build_selfplay_configs_requires_sf_nodes() -> None:
+    """No fail-weak 2000 default: a manifest without sf_nodes must refuse to
+    build SF rather than silently run the opponent at a guessed budget."""
+    session = _bare_worker_session()
+    with pytest.raises(worker_mod._MissingRequiredReco):
+        WorkerSession._build_selfplay_configs(session, {})
+    # Present (and positive) -> resolves normally.
+    _cfgs, sf_args = WorkerSession._build_selfplay_configs(session, {"sf_nodes": 5000})
+    assert sf_args[0] == 5000
+
+
+def test_sf_fast_ply_node_scale_triggers_session_restart() -> None:
+    """The GameConfig is built once per session, so changing the published
+    sf_fast_ply_node_scale must restart selfplay to take effect — i.e. it must
+    be in the reco-restart key set (same as sf_nodes / sf_move_nodes)."""
+    assert "sf_fast_ply_node_scale" in WorkerSession._RECO_RESTART_KEYS

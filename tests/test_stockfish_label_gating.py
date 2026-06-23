@@ -15,6 +15,7 @@ from chess_anti_engine.selfplay.config import OpponentConfig
 from chess_anti_engine.selfplay.state import _NetRecord
 from chess_anti_engine.selfplay.stockfish_turn import (
     _collect_sf_pv_candidates,
+    _eff_sf_nodes,
     _process_sf_results,
     flush_async_sf_labels_for_records,
     finish_pending_curriculum_moves,
@@ -300,3 +301,57 @@ def test_cp_logistic_policy_scores_do_not_change_curriculum_regret_choice() -> N
     assert state.cboards[0].pushed == [native_best_idx]
     assert rec.sf_policy_target is not None
     assert rec.sf_policy_target[logistic_best_idx] > rec.sf_policy_target[native_best_idx]
+
+
+def _eff_state(
+    base_nodes: int, *, last_full: bool, sf_move_nodes: int = 0, fast_scale: float = 0.25,
+) -> Any:
+    """Minimal stand-in exposing just what _eff_sf_nodes reads."""
+    return SimpleNamespace(
+        base_nodes=base_nodes,
+        game=SimpleNamespace(
+            sf_move_nodes=sf_move_nodes, sf_fast_ply_node_scale=fast_scale,
+        ),
+        last_net_full=[last_full],
+    )
+
+
+def test_eff_sf_nodes_full_ply_uses_full_budget():
+    """Full-sim plies (last_net_full True) always use the configured budget,
+    for both the played move and labels. Labels only ever attach to full plies,
+    so this is the path every training label takes."""
+    assert _eff_sf_nodes(_eff_state(500_000, last_full=True), 0, for_move=True) == 500_000
+    assert _eff_sf_nodes(_eff_state(500_000, last_full=True), 0, for_move=False) == 500_000
+
+
+def test_eff_sf_nodes_fast_ply_scaled_by_knob():
+    """Fast-sim plies scale by sf_fast_ply_node_scale. Default 0.25 is the
+    long-standing intended value (opponent plays cheaply on throwaway plies);
+    the knob lets it be raised toward 1.0 for a more consistent opponent."""
+    # Default 0.25 -> 125000.
+    assert _eff_sf_nodes(_eff_state(500_000, last_full=False), 0, for_move=True) == 125_000
+    assert _eff_sf_nodes(_eff_state(500_000, last_full=False), 0, for_move=False) == 125_000
+    # Knob honored: 0.5 doubles the fast-ply budget...
+    assert _eff_sf_nodes(
+        _eff_state(500_000, last_full=False, fast_scale=0.5), 0, for_move=True
+    ) == 250_000
+    # ...and 1.0 fully decouples (full strength even on fast plies).
+    assert _eff_sf_nodes(
+        _eff_state(500_000, last_full=False, fast_scale=1.0), 0, for_move=False
+    ) == 500_000
+
+
+def test_eff_sf_nodes_move_node_override_then_scaled():
+    """sf_move_nodes overrides the base for moves, then the fast-ply scale still
+    applies (the move budget is the thing being scaled)."""
+    assert _eff_sf_nodes(
+        _eff_state(500_000, last_full=False, sf_move_nodes=20_000), 0, for_move=True
+    ) == 5_000  # 20000 * 0.25
+    assert _eff_sf_nodes(
+        _eff_state(500_000, last_full=True, sf_move_nodes=20_000), 0, for_move=True
+    ) == 20_000
+
+
+def test_eff_sf_nodes_zero_budget_returns_none():
+    assert _eff_sf_nodes(_eff_state(0, last_full=True), 0, for_move=True) is None
+    assert _eff_sf_nodes(_eff_state(0, last_full=False), 0, for_move=False) is None

@@ -111,6 +111,11 @@ def _trial_server_dirs(*, server_root: Path, trial_id: str) -> dict[str, Path]:
 _is_tmp_shard_name = is_tmp_shard_name
 _PENDING_DIR_NAME = PENDING_DIR_NAME
 _IN_FLIGHT_DIR_NAME = IN_FLIGHT_DIR_NAME
+# Server's post-flush archive dir (``inbox_root / "_compacted"`` in app.py).
+# Unlike per-user upload dirs it is continuously appended while retaining old
+# shards, so its own mtime is always fresh — the mtime-gate fast path below
+# must NOT short-circuit it or its old shards never age out.
+_COMPACTED_DIR_NAME = "_compacted"
 
 
 def _iter_shard_paths_nested(root: Path) -> list[Path]:
@@ -214,7 +219,10 @@ def _prune_processed_shards(
         try:
   # If the user-dir's own mtime is fresh, every shard inside is
   # also fresh (mtime is updated on add). Skip the per-shard scan.
-            if user_dir.stat().st_mtime >= cutoff:
+  # The ``_compacted`` archive is exempt: it is continuously appended
+  # while retaining old shards, so its mtime is always fresh and this
+  # short-circuit would leak its aged-out shards forever.
+            if user_dir.name != _COMPACTED_DIR_NAME and user_dir.stat().st_mtime >= cutoff:
                 continue
             entries = list(user_dir.iterdir())
         except FileNotFoundError:
@@ -329,6 +337,7 @@ def _publish_distributed_trial_state(
         "selfplay_fraction": float(config.get("selfplay_fraction", 0.0)),
         "sf_nodes": int(sf_nodes),
         "sf_move_nodes": int(config.get("sf_move_nodes", 0)),
+        "sf_fast_ply_node_scale": float(config.get("sf_fast_ply_node_scale", 0.25)),
         "sf_multipv": int(config.get("sf_multipv", 1)),
         "sf_policy_temp": float(config.get("sf_policy_temp", 0.25)),
         "sf_policy_label_smooth": float(config.get("sf_policy_label_smooth", 0.05)),
