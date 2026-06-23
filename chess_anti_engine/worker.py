@@ -89,6 +89,17 @@ from chess_anti_engine.worker_inference import (
 
 _ResolveT = TypeVar("_ResolveT")
 
+
+class _MissingRequiredReco(RuntimeError):
+    """A safety-critical worker config (e.g. sf_nodes) was set neither on the
+    CLI nor in the server ``recommended_worker`` manifest.
+
+    Raised instead of falling back to a guessed default that would run
+    Stockfish at the wrong strength and silently poison training data (this is
+    what produced the ~100% curriculum-winrate batches). The main loop catches
+    it, skips the session, and re-polls for a complete manifest.
+    """
+
   # Wire-protocol values sent in X-CAE-Worker-State; tests assert on them
   # (tests/test_distributed_selfplay_backpressure.py).
 _MANIFEST_STATE_ACTIVE = "active"
@@ -868,7 +879,17 @@ class WorkerSession:
                 if task_type == "arena":
                     self._run_arena(manifest, task)
                 else:
-                    self._run_selfplay(manifest)
+                    try:
+                        self._run_selfplay(manifest)
+                    except _MissingRequiredReco as exc:
+                        # Fail closed: never generate games with a guessed SF
+                        # strength. Warn loudly + re-poll for a complete manifest.
+                        self.log.warning(
+                            "skipping selfplay session: %s; re-polling for a "
+                            "complete recommended_worker manifest", exc,
+                        )
+                        time.sleep(float(self.args.poll_seconds))
+                        continue
         finally:
             self._cleanup()
 
@@ -1086,6 +1107,22 @@ class WorkerSession:
         """CLI overrides server recommendation; fall back to reco then default."""
         v = getattr(self.args, key, None)
         return cast(v) if v is not None else cast(reco.get(key, default))
+
+    def _require_reco(self, reco: dict, key: str, cast: Callable[[Any], Any] = float) -> Any:
+        """Like ``_resolve_reco`` but with NO default — raise ``_MissingRequiredReco``
+        if ``key`` is set neither on the CLI nor in the reco.
+
+        For safety-critical knobs (``sf_nodes``) where a silent fallback would
+        run the opponent at the wrong strength rather than refuse to play.
+        """
+        v = getattr(self.args, key, None)
+        if v is None:
+            v = reco.get(key)
+        if v is None:
+            raise _MissingRequiredReco(
+                f"'{key}' is set on neither the CLI nor the recommended_worker manifest",
+            )
+        return cast(v)
 
     def _reco_changed(self, manifest: dict, *, source_tag: str) -> bool:
         """Return True (and request session restart) if reco knobs differ from active."""
@@ -2176,6 +2213,9 @@ class WorkerSession:
                 max_plies=self._resolve_reco(reco, "max_plies", 240, int),
                 selfplay_fraction=float(reco.get("selfplay_fraction", 0.0)),
                 sf_move_nodes=self._resolve_reco(reco, "sf_move_nodes", 0, int),
+                sf_fast_ply_node_scale=self._resolve_reco(
+                    reco, "sf_fast_ply_node_scale", 0.25,
+                ),
                 sf_policy_temp=self._resolve_reco(reco, "sf_policy_temp", 0.25),
                 sf_policy_label_smooth=self._resolve_reco(reco, "sf_policy_label_smooth", 0.05),
                 sf_wdl_use_cp_logistic=bool(reco.get("sf_wdl_use_cp_logistic", False)),
@@ -2203,8 +2243,14 @@ class WorkerSession:
                 ),
             ),
         }
+        # sf_nodes is required, never defaulted: a fail-weak fallback (the old
+        # 2000) silently runs Stockfish far below the configured strength and
+        # poisons curriculum games. Missing => skip the session and re-poll.
+        sf_nodes = self._require_reco(reco, "sf_nodes", int)
+        if sf_nodes <= 0:
+            raise _MissingRequiredReco(f"sf_nodes must be a positive budget, got {sf_nodes}")
         sf_args = (
-            self._resolve_reco(reco, "sf_nodes", 2000, int),
+            sf_nodes,
             self._resolve_reco(reco, "sf_multipv", 5, int),
             stockfish_syzygy_path or syzygy_path,
         )
