@@ -212,6 +212,7 @@ def compute_loss(
     w_policy: float = 1.0,
     w_soft: float = 0.5,
     w_future: float = 0.15,
+    w_sf_own: float = 0.0,
     w_wdl: float = 1.0,
     w_sf_move: float = 0.15,
     w_sf_eval: float = 0.15,
@@ -293,6 +294,21 @@ def compute_loss(
         )
     else:
         future_ce = zero_loss
+
+    # P0 own-move SF teacher on policy_own (the head MCTS reads as the search
+    # prior). Unlike policy_sf (a separate, search-invisible head trained on the
+    # opponent reply), this blends SF's recommended move for THIS position into
+    # the prior itself. Same legal space as the main policy. Masked to the ~15%
+    # eligible selfplay rows (has_sf_p0).
+    has_sf_p0 = _get_mask(batch, "has_sf_p0")
+    sf_p0_target = batch.get("sf_p0_policy_t")
+    if sf_p0_target is not None:
+        sf_p0_ce = soft_cross_entropy(
+            _apply_legal_mask(base_policy_logits),
+            align_policy_target(sf_p0_target, int(base_policy_logits.shape[-1])),
+        )
+    else:
+        sf_p0_ce = zero_loss
 
     wdl_ce = F.cross_entropy(outputs["wdl"], batch["wdl_t"], reduction="none")
 
@@ -475,6 +491,7 @@ def compute_loss(
     m_policy = masked_mean(pol_ce, pol_base)
     m_soft = masked_mean(soft_ce, net_mask * has_soft)
     m_future = masked_mean(future_ce, net_mask * has_future)
+    m_sf_own = masked_mean(sf_p0_ce, net_mask * has_sf_p0)
     m_wdl = masked_mean(wdl_ce, net_mask)
     m_blended_wdl = masked_mean(blended_wdl_ce, net_mask)
     m_sf_move = masked_mean(sf_move_ce, net_mask * has_sf_policy)
@@ -502,6 +519,7 @@ def compute_loss(
         float(w_policy) * m_policy
         + float(w_soft) * m_soft
         + float(w_future) * m_future
+        + float(w_sf_own) * m_sf_own
         + float(w_wdl) * m_blended_wdl
         + float(w_sf_move) * m_sf_move
         + float(w_sf_eval) * m_sf_eval
@@ -519,6 +537,7 @@ def compute_loss(
         "soft_policy_ce": m_soft,
         "soft_mask_kept_frac": soft_mask_kept_frac,
         "future_policy_ce": m_future,
+        "sf_own_ce": m_sf_own,
         "sf_move_ce": m_sf_move,
         "sf_eval_ce": m_sf_eval,
         "categorical_ce": m_cat,

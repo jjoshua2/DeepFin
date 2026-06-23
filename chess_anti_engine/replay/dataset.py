@@ -54,6 +54,7 @@ _OPTIONAL_FLOAT_FIELDS: tuple[tuple[str, str, str, tuple[int, ...]], ...] = (
     ("categorical_target",  "categorical_t",   "has_categorical",  (32,)),
     ("policy_soft_target",  "policy_soft_t",   "has_policy_soft",  _POLICY_SHAPE),
     ("future_policy_target","future_policy_t", "has_future",       _POLICY_SHAPE),
+    ("sf_p0_policy_target", "sf_p0_policy_t",  "has_sf_p0",        _POLICY_SHAPE),
     ("volatility_target",   "volatility_t",    "has_volatility",   (3,)),
     ("sf_volatility_target","sf_volatility_t", "has_sf_volatility",(3,)),
 )
@@ -71,6 +72,7 @@ _OPTIONAL_SCALAR_FIELDS: tuple[tuple[str, str, str, np.dtype | type], ...] = (
 )
 _OPTIONAL_EXPLICIT_HAS_ATTRS: dict[str, str] = {
     "future_policy_target": "has_future",
+    "sf_p0_policy_target": "has_sf_p0",
     "volatility_target": "has_volatility",
     "sf_volatility_target": "has_sf_volatility",
 }
@@ -227,6 +229,8 @@ def collate_arrays(arrs: dict[str, np.ndarray], *, device: str) -> dict[str, tor
         ("has_policy_soft", (n,), np.float32, torch.float32),
         ("future_policy_t", (n, policy_t.shape[1]), np.float32, torch.float32, "future_policy_target"),
         ("has_future", (n,), np.float32, torch.float32),
+        ("sf_p0_policy_t", (n, policy_t.shape[1]), np.float32, torch.float32, "sf_p0_policy_target"),
+        ("has_sf_p0", (n,), np.float32, torch.float32),
         ("volatility_t", (n, 3), np.float32, torch.float32, "volatility_target"),
         ("has_volatility", (n,), np.float32, torch.float32),
         ("sf_volatility_t", (n, 3), np.float32, torch.float32, "sf_volatility_target"),

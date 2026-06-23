@@ -163,6 +163,8 @@ def mirror_sample(s: ReplaySample, *, input_history_encoding: str | None = None)
     out.policy_soft_target = None if s.policy_soft_target is None else mirror_policy(s.policy_soft_target)
     out.future_policy_target = None if s.future_policy_target is None else mirror_policy(s.future_policy_target)
     out.has_future = getattr(s, "has_future", None)
+    out.sf_p0_policy_target = None if s.sf_p0_policy_target is None else mirror_policy(s.sf_p0_policy_target)
+    out.has_sf_p0 = getattr(s, "has_sf_p0", None)
 
     out.volatility_target = None if s.volatility_target is None else np.asarray(s.volatility_target, dtype=np.float32)
     out.has_volatility = getattr(s, "has_volatility", None)

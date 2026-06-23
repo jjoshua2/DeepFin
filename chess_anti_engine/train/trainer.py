@@ -788,6 +788,7 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         w_soft=_f("w_soft", 0.5),
         soft_policy_min_tv=_f("soft_policy_min_tv", 0.0),
         w_future=_f("w_future", 0.15),
+        w_sf_own=_f("w_sf_own", 0.0),
         w_wdl=_f("w_wdl", 1.0),
         w_sf_move=_f("w_sf_move", 0.15),
         w_sf_eval=_f("w_sf_eval", 0.15),
@@ -878,6 +879,7 @@ class Trainer:
         w_soft: float = 0.5,
         soft_policy_min_tv: float = 0.0,
         w_future: float = 0.15,
+        w_sf_own: float = 0.0,
         w_wdl: float = 1.0,
         w_sf_move: float = 0.15,
         w_sf_eval: float = 0.15,
@@ -1240,6 +1242,7 @@ class Trainer:
         self.w_soft = float(w_soft)
         self.soft_policy_min_tv = float(soft_policy_min_tv)
         self.w_future = float(w_future)
+        self.w_sf_own = float(w_sf_own)
         self.w_wdl = float(w_wdl)
         self.w_sf_move = float(w_sf_move)
         self.w_sf_eval = float(w_sf_eval)
@@ -1381,6 +1384,7 @@ class Trainer:
     def _loss_kwargs(self) -> dict[str, Any]:
         return dict(
             w_policy=self.w_policy, w_soft=self.w_soft, w_future=self.w_future,
+            w_sf_own=self.w_sf_own,
             soft_policy_min_tv=self.soft_policy_min_tv,
             w_wdl=self.w_wdl, w_sf_move=self.w_sf_move, w_sf_eval=self.w_sf_eval,
             w_categorical=self.w_categorical, w_volatility=self.w_volatility,

@@ -351,6 +351,7 @@ def _publish_distributed_trial_state(
         "record_lc0_root_input": bool(config.get("record_lc0_root_input", False)),
         "history_rep_fix": bool(config.get("history_rep_fix", False)),
         "record_dense_sf_policy": bool(config.get("record_dense_sf_policy", True)),
+        "record_sf_p0_policy": bool(config.get("record_sf_p0_policy", False)),
         "categorical_blend_frac": float(config.get("categorical_blend_frac", 0.0)),
         "categorical_search_blend_frac": float(
             config.get("categorical_search_blend_frac", 0.0)

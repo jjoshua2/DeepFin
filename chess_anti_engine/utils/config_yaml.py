@@ -145,6 +145,7 @@ _SELFPLAY_KEYS = (
     "volatility_q_scale", "volatility_fpu", "volatility_anchor",
     "record_relations",
     "record_dense_sf_policy",
+    "record_sf_p0_policy",
 )
 
 # model section: mostly 1:1 except kind→model and use_smolgen→no_smolgen (inverted).

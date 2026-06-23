@@ -213,6 +213,7 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
             record_lc0_root_input=tc.record_lc0_root_input,
             history_rep_fix=tc.history_rep_fix,
             record_dense_sf_policy=tc.record_dense_sf_policy,
+            record_sf_p0_policy=tc.record_sf_p0_policy,
         ),
     )
 

@@ -150,6 +150,7 @@ _OPTIONAL_FIELD_SPECS: tuple[_OptFieldSpec, ...] = (
     _OptFieldSpec("categorical_target",   "has_categorical",       (DEFAULT_CATEGORICAL_BINS,), _F16),
     _OptFieldSpec("policy_soft_target",   "has_policy_soft",       _POLICY_SHAPE, _F16),
     _OptFieldSpec("future_policy_target", "has_future",            _POLICY_SHAPE, _F16),
+    _OptFieldSpec("sf_p0_policy_target",  "has_sf_p0",             _POLICY_SHAPE, _F16),
     _OptFieldSpec("volatility_target",    "has_volatility",        (3,),          _F16),
     _OptFieldSpec("sf_volatility_target", "has_sf_volatility",     (3,),          _F16),
     _OptFieldSpec("search_wdl",           "has_search_wdl",        (3,),          _F16),
@@ -175,6 +176,7 @@ _OPTIONAL_DISTRIBUTION_FIELDS = frozenset({
     "categorical_target",
     "policy_soft_target",
     "future_policy_target",
+    "sf_p0_policy_target",
     "search_wdl",
 })
 
@@ -232,7 +234,7 @@ LEGAL_MASK_HAS_FIELDS: tuple[str, ...] = ("has_legal_mask", "has_sf_legal_mask",
 # Storing as padded-sparse (values + column indices + lengths) saves ~10x
 # memory per policy field in the shuffle buffer.
 
-POLICY_SPACE_FIELDS = ("policy_target", "sf_policy_target", "policy_soft_target", "future_policy_target")
+POLICY_SPACE_FIELDS = ("policy_target", "sf_policy_target", "policy_soft_target", "future_policy_target", "sf_p0_policy_target")
 POLICY_SIZED_FIELDS = frozenset((*POLICY_SPACE_FIELDS, *LEGAL_MASK_FIELDS))
 POLICY_INDEX_FIELDS: tuple[tuple[str, str], ...] = (
     ("sf_move_index", "has_sf_move"),
@@ -803,6 +805,7 @@ _VECTOR_FIELDS: tuple[tuple[str, str, str], ...] = (
     ("categorical_target",   "categorical_target",   "has_categorical"),
     ("policy_soft_target",   "policy_soft_target",   "has_policy_soft"),
     ("future_policy_target", "future_policy_target", "has_future"),
+    ("sf_p0_policy_target",  "sf_p0_policy_target",  "has_sf_p0"),
     ("volatility_target",    "volatility_target",    "has_volatility"),
     ("sf_volatility_target", "sf_volatility_target", "has_sf_volatility"),
     ("search_wdl",           "search_wdl",           "has_search_wdl"),
@@ -816,6 +819,7 @@ _INT_VECTOR_FIELDS: tuple[tuple[str, str, str], ...] = (
 
 _VECTOR_EXPLICIT_HAS_ATTRS: dict[str, str] = {
     "future_policy_target": "has_future",
+    "sf_p0_policy_target": "has_sf_p0",
     "volatility_target": "has_volatility",
     "sf_volatility_target": "has_sf_volatility",
 }
@@ -873,8 +877,16 @@ def samples_to_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
             shape = (policy_size,)
         else:
             shape = spec.shape
-        arrs[spec.arr] = np.zeros((n, *shape), dtype=spec.dtype)
         arrs[spec.flag] = np.zeros((n,), dtype=np.uint8)
+        # Skip the (often policy-sized) dense allocation when no sample carries
+        # the field. A default-off optional field (e.g. sf_p0_policy_target)
+        # otherwise allocates a full N*policy_size zero array per batch only to
+        # be dropped — prune_storage_arrays (run by every writer, incl. inside
+        # save_local_shard_arrays) and the loader both tolerate a missing dense
+        # array, keying presence off the flag. The populate loops below only
+        # write arrs[spec.arr] when a sample's value is not None (=> allocated).
+        if any(getattr(s, spec.arr, None) is not None for s in samples):
+            arrs[spec.arr] = np.zeros((n, *shape), dtype=spec.dtype)
 
     for i, s in enumerate(samples):
         for src, target, has, cast in _SCALAR_FIELDS:
@@ -1093,9 +1105,19 @@ def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
 
     opt: dict[str, np.ndarray] = {}
     for spec in _OPTIONAL_FIELD_SPECS:
-        shape = (int(policy.shape[1]),) if spec.arr in POLICY_SIZED_FIELDS else spec.shape
-        opt[spec.arr] = np.asarray(arrs.get(spec.arr, np.zeros((n, *shape), dtype=spec.dtype)))
-        opt[spec.flag] = np.asarray(arrs.get(spec.flag, np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
+        flag = np.asarray(arrs.get(spec.flag, np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
+        opt[spec.flag] = flag
+        # The per-sample loop only reads ``opt[spec.arr]`` inside ``if flag[i]``,
+        # so when the shard omits the dense array AND no row is active, skip the
+        # (often policy-sized) zero allocation entirely — a default-off optional
+        # field (e.g. sf_p0_policy_target) otherwise zero-fills N*policy_size f16
+        # per read just to never touch it. Synthesize zeros only if a row is
+        # active but the dense array is somehow missing.
+        if spec.arr in arrs:
+            opt[spec.arr] = np.asarray(arrs[spec.arr])
+        elif flag.any():
+            shape = (int(policy.shape[1]),) if spec.arr in POLICY_SIZED_FIELDS else spec.shape
+            opt[spec.arr] = np.zeros((n, *shape), dtype=spec.dtype)
 
     out: list[ReplaySample] = []
     for i in range(n):
@@ -1173,6 +1195,9 @@ def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
         if opt["has_future"][i]:
             s.future_policy_target = _copy_row(opt["future_policy_target"], i)
             s.has_future = True
+        if opt["has_sf_p0"][i]:
+            s.sf_p0_policy_target = _copy_row(opt["sf_p0_policy_target"], i)
+            s.has_sf_p0 = True
         if opt["has_volatility"][i]:
             s.volatility_target = _copy_row(opt["volatility_target"], i)
             s.has_volatility = True

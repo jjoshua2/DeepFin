@@ -712,6 +712,24 @@ def _build_replay_samples(
                 policy_encoding=state.game.policy_encoding,
             )
 
+        # P0 own-move teacher for policy_own: SF's analysis of THIS position is
+        # the *prior* ply's sf_policy (SF labels run at P1 = after a move). Only
+        # valid when the immediately-preceding ply is a stored full record with
+        # an SF label — i.e. two consecutive full plies, which only happens in
+        # selfplay (the net plays every ply). See replay/buffer.py.
+        sf_p0_policy_target = None
+        if getattr(state.game, "record_sf_p0_policy", False) and is_selfplay_slot:
+            prev_idx = ply_to_index.get(int(rec.ply_index) - 1)
+            prev_sf = (
+                records[prev_idx].sf_policy_target
+                if prev_idx is not None and records[prev_idx].has_policy
+                else None
+            )
+            if prev_sf is not None:
+                sf_p0_policy_target = policy_vector_to_encoding(
+                    prev_sf, policy_encoding=state.game.policy_encoding,
+                )
+
         out.append(
             ReplaySample(
                 x=rec.x,
@@ -769,6 +787,8 @@ def _build_replay_samples(
                 future_sf_regret_h50=suffix_regret.h50,
                 future_sf_regret_count=suffix_regret.count,
                 sf_policy_target=sf_policy_target,
+                sf_p0_policy_target=sf_p0_policy_target,
+                has_sf_p0=(sf_p0_policy_target is not None),
                 moves_left=moves_left,
                 is_network_turn=True,
                 categorical_target=cat,
