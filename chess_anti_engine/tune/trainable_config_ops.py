@@ -188,6 +188,7 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
             max_plies=tc.max_plies,
             selfplay_fraction=tc.selfplay_fraction,
             sf_move_nodes=tc.sf_move_nodes,
+            sf_fast_ply_node_scale=tc.sf_fast_ply_node_scale,
             sf_policy_temp=tc.sf_policy_temp,
             sf_policy_label_smooth=tc.sf_policy_label_smooth,
             sf_wdl_use_cp_logistic=tc.sf_wdl_use_cp_logistic,
