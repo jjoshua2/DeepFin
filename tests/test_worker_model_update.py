@@ -423,3 +423,10 @@ def test_build_selfplay_configs_requires_sf_nodes() -> None:
     # Present (and positive) -> resolves normally.
     _cfgs, sf_args = WorkerSession._build_selfplay_configs(session, {"sf_nodes": 5000})
     assert sf_args[0] == 5000
+
+
+def test_sf_fast_ply_node_scale_triggers_session_restart() -> None:
+    """The GameConfig is built once per session, so changing the published
+    sf_fast_ply_node_scale must restart selfplay to take effect — i.e. it must
+    be in the reco-restart key set (same as sf_nodes / sf_move_nodes)."""
+    assert "sf_fast_ply_node_scale" in WorkerSession._RECO_RESTART_KEYS

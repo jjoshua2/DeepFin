@@ -2108,7 +2108,7 @@ class WorkerSession:
   # Fields in recommended_worker that affect gameplay and should trigger
   # a session restart when the trainer updates them between iterations.
     _RECO_RESTART_KEYS = (
-        "sf_nodes", "sf_move_nodes",
+        "sf_nodes", "sf_move_nodes", "sf_fast_ply_node_scale",
         "opponent_wdl_regret_limit", "mcts_simulations", "fast_simulations",
         "gumbel_topk", "gumbel_c_scale", "gumbel_scale", "gumbel_scale_after",
         "gumbel_scale_decay_start_move", "gumbel_scale_decay_moves",
