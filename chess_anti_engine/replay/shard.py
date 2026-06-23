@@ -1105,9 +1105,19 @@ def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
 
     opt: dict[str, np.ndarray] = {}
     for spec in _OPTIONAL_FIELD_SPECS:
-        shape = (int(policy.shape[1]),) if spec.arr in POLICY_SIZED_FIELDS else spec.shape
-        opt[spec.arr] = np.asarray(arrs.get(spec.arr, np.zeros((n, *shape), dtype=spec.dtype)))
-        opt[spec.flag] = np.asarray(arrs.get(spec.flag, np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
+        flag = np.asarray(arrs.get(spec.flag, np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
+        opt[spec.flag] = flag
+        # The per-sample loop only reads ``opt[spec.arr]`` inside ``if flag[i]``,
+        # so when the shard omits the dense array AND no row is active, skip the
+        # (often policy-sized) zero allocation entirely — a default-off optional
+        # field (e.g. sf_p0_policy_target) otherwise zero-fills N*policy_size f16
+        # per read just to never touch it. Synthesize zeros only if a row is
+        # active but the dense array is somehow missing.
+        if spec.arr in arrs:
+            opt[spec.arr] = np.asarray(arrs[spec.arr])
+        elif flag.any():
+            shape = (int(policy.shape[1]),) if spec.arr in POLICY_SIZED_FIELDS else spec.shape
+            opt[spec.arr] = np.zeros((n, *shape), dtype=spec.dtype)
 
     out: list[ReplaySample] = []
     for i in range(n):

@@ -69,3 +69,45 @@ def test_absent_sf_p0_allocates_no_dense_array() -> None:
     assert "sf_p0_policy_target" not in arrs  # dense array skipped
     assert "has_sf_p0" in arrs  # cheap flag still present
     assert int(arrs["has_sf_p0"].sum()) == 0
+
+
+def _valid_sample(sf_p0: np.ndarray | None) -> ReplaySample:
+    policy = np.zeros((_W,), dtype=np.float32)
+    policy[0] = 1.0  # valid distribution (passes prune validation)
+    return ReplaySample(
+        x=np.zeros((1, 8, 8), dtype=np.float32),
+        policy_target=policy,
+        wdl_target=0,
+        sf_p0_policy_target=sf_p0,
+        has_sf_p0=(sf_p0 is not None),
+    )
+
+
+def test_sf_p0_full_write_prune_read_roundtrip() -> None:
+    from chess_anti_engine.replay.shard import (
+        arrays_to_samples,
+        prune_storage_arrays,
+        samples_to_arrays,
+    )
+
+    tgt = np.zeros((_W,), dtype=np.float32)
+    tgt[9] = 1.0
+    arrs = prune_storage_arrays(samples_to_arrays([_valid_sample(tgt)]))
+    out = arrays_to_samples(arrs)
+    assert out[0].sf_p0_policy_target is not None
+    assert float(out[0].sf_p0_policy_target[9]) == 1.0
+
+
+def test_sf_p0_absent_reader_no_alloc_and_none() -> None:
+    """Reading an experiment-off shard: no dense sf_p0 array on disk, and
+    arrays_to_samples returns sf_p0=None without allocating a policy-sized zero."""
+    from chess_anti_engine.replay.shard import (
+        arrays_to_samples,
+        prune_storage_arrays,
+        samples_to_arrays,
+    )
+
+    arrs = prune_storage_arrays(samples_to_arrays([_valid_sample(None)]))
+    assert "sf_p0_policy_target" not in arrs  # not persisted
+    out = arrays_to_samples(arrs)
+    assert out[0].sf_p0_policy_target is None
