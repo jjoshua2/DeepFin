@@ -141,6 +141,13 @@ class GameConfig:
   # Default off (adds a policy-sized shard field). Pairs with train.w_sf_own.
     record_sf_p0_policy: bool = False
 
+  # Research bet: record the P0 own-move SF cp-regret vector (per-move
+  # normalized regret at the net's own position, from the prior full ply's raw
+  # MultiPV) on eligible selfplay rows, so policy_own can be trained to minimize
+  # expected SF regret directly. Default off (policy-sized shard field). Pairs
+  # with train.w_sf_own_regret.
+    record_sf_p0_regret: bool = False
+
 
 __all__ = [
     "DiffFocusConfig",
