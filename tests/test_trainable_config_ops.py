@@ -349,6 +349,9 @@ model:
   embed_dim_by_layer: [512, 512]
   ffn_mult_by_layer: [4, 4]
   qkv_projection: split
+  embed_dim: 512
+  num_heads: 8
+  use_smolgen: true
 train:
   lr: 0.0007
 """,
@@ -363,12 +366,15 @@ train:
     assert config["lr"] == 0.0007
     # The safe worker/selfplay flag still propagates (no shape change).
     assert config["history_rep_fix"] is True
-    # Neither encoding identity NOR shape-schedule model keys are injected —
-    # left absent so the checkpoint arch / model defaults stay authoritative.
+    # Neither encoding identity NOR shape model keys are injected — left absent
+    # so the checkpoint arch / model defaults stay authoritative. Includes the
+    # bare scalar shape fields (embed_dim/num_heads/use_smolgen) that are
+    # ModelConfig fields but NOT in _TOPOLOGY_KEYS, so they would otherwise fall
+    # through the gate to the unconditional overlay.
     for key in ("policy_encoding", "input_extra_features",
                 "input_history_encoding", "use_dynamic_relations",
                 "num_layers", "embed_dim_by_layer", "ffn_mult_by_layer",
-                "qkv_projection"):
+                "qkv_projection", "embed_dim", "num_heads", "use_smolgen"):
         assert key not in config, f"{key} must not be auto-filled on resume"
 
 
