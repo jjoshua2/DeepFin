@@ -263,7 +263,7 @@ def test_apply_lr_gamma_weights_syncs_aurora_and_channel_knobs() -> None:
     assert trainer.model.resid_channel_balance_weight == 0.001
 
 
-def test_yaml_reload_does_not_add_missing_topology_keys(tmp_path) -> None:
+def test_live_yaml_reload_does_not_add_missing_topology_keys(tmp_path) -> None:
     yaml_path = tmp_path / "cfg.yaml"
     yaml_path.write_text(
         """
@@ -282,7 +282,9 @@ train:
     )
     config = {"lr": 0.0003}
 
-    _reload_yaml_into_config(config, str(yaml_path))
+    # Live mid-run reload: a running broker/worker would be out of sync, so
+    # topology keys absent from the config must NOT be applied.
+    _reload_yaml_into_config(config, str(yaml_path), live_reload=True)
 
     assert config["lr"] == 0.0007
     assert "input_history_encoding" not in config
@@ -292,6 +294,128 @@ train:
     assert "smolgen_hidden_channels" not in config
     assert "smolgen_hidden_sz" not in config
     assert "smolgen_gen_sz" not in config
+
+
+def test_startup_yaml_reload_propagates_new_worker_topology_flag(tmp_path) -> None:
+    yaml_path = tmp_path / "cfg.yaml"
+    yaml_path.write_text(
+        """
+selfplay:
+  history_rep_fix: true
+distributed_inference_slots_per_worker: 3
+train:
+  lr: 0.0007
+""",
+        encoding="utf-8",
+    )
+    # An older restored config that predates history_rep_fix (and the infra key)
+    # and pins an existing topology key to a different value.
+    config = {"lr": 0.0003, "input_history_encoding": "lc0"}
+
+    # Startup/resume: the broker + workers are (re)built from this config after
+    # the overlay, so a worker/infra/selfplay topology key absent from the
+    # restored config must be applied from yaml — otherwise a flag introduced
+    # after the checkpoint was saved silently defaults off.
+    _reload_yaml_into_config(config, str(yaml_path))
+
+    assert config["lr"] == 0.0007
+    # The selfplay flag (shape-neutral) and the infra key both propagate.
+    assert config["history_rep_fix"] is True
+    assert config["distributed_inference_slots_per_worker"] == 3
+    # An existing topology key keeps its restored value (the current != v skip
+    # is unchanged): yaml does not have it, so it is untouched here.
+    assert config["input_history_encoding"] == "lc0"
+
+
+def test_startup_yaml_reload_does_not_inject_model_topology_keys(tmp_path) -> None:
+    # A model-topology key (shape schedule OR encoding identity) absent from an
+    # OLDER restored config must NOT be auto-filled from yaml on resume: arch
+    # resume (or a no-arch salvage warm-start) would otherwise rebuild the model
+    # at the yaml layout — different from the checkpoint tensors (policy
+    # 4672<->1858, input 146<->175, a different layer/width schedule) — and the
+    # tolerant loader zero-inits the mismatch. They require a deliberate
+    # migration, not a silent resume-fill.
+    yaml_path = tmp_path / "cfg.yaml"
+    yaml_path.write_text(
+        """
+selfplay:
+  history_rep_fix: true
+model:
+  policy_encoding: lc0_1858
+  input_extra_features: v2_threats
+  input_history_encoding: lc0_root
+  use_dynamic_relations: true
+  num_layers: 16
+  embed_dim_by_layer: [512, 512]
+  ffn_mult_by_layer: [4, 4]
+  qkv_projection: split
+  embed_dim: 512
+  num_heads: 8
+  use_smolgen: true
+train:
+  lr: 0.0007
+""",
+        encoding="utf-8",
+    )
+    # Restored config predates every model key above (e.g. a legacy az_4672 / v1
+    # / legacy-history / narrower checkpoint).
+    config = {"lr": 0.0003}
+
+    _reload_yaml_into_config(config, str(yaml_path))
+
+    assert config["lr"] == 0.0007
+    # The safe worker/selfplay flag still propagates (no shape change).
+    assert config["history_rep_fix"] is True
+    # Neither encoding identity NOR shape model keys are injected — left absent
+    # so the checkpoint arch / model defaults stay authoritative. Includes the
+    # bare scalar shape fields (embed_dim/num_heads/use_smolgen) that are
+    # ModelConfig fields but NOT in _TOPOLOGY_KEYS, so they would otherwise fall
+    # through the gate to the unconditional overlay.
+    for key in ("policy_encoding", "input_extra_features",
+                "input_history_encoding", "use_dynamic_relations",
+                "num_layers", "embed_dim_by_layer", "ffn_mult_by_layer",
+                "qkv_projection", "embed_dim", "num_heads", "use_smolgen"):
+        assert key not in config, f"{key} must not be auto-filled on resume"
+
+
+def test_live_yaml_reload_does_not_propagate_new_worker_topology_flag(tmp_path) -> None:
+    yaml_path = tmp_path / "cfg.yaml"
+    yaml_path.write_text(
+        """
+selfplay:
+  history_rep_fix: true
+train:
+  lr: 0.0007
+""",
+        encoding="utf-8",
+    )
+    config = {"lr": 0.0003}
+
+    _reload_yaml_into_config(config, str(yaml_path), live_reload=True)
+
+    assert config["lr"] == 0.0007
+    assert "history_rep_fix" not in config
+
+
+def test_yaml_reload_does_not_overwrite_existing_topology_key_in_either_mode(tmp_path) -> None:
+    yaml_path = tmp_path / "cfg.yaml"
+    yaml_path.write_text(
+        """
+selfplay:
+  history_rep_fix: true
+""",
+        encoding="utf-8",
+    )
+
+    # The existing value differs from yaml; the current != v skip must hold for
+    # both startup and live reload.
+    startup_config = {"history_rep_fix": False}
+    _reload_yaml_into_config(startup_config, str(yaml_path))
+    assert startup_config["history_rep_fix"] is False
+
+    live_config = {"history_rep_fix": False}
+    _reload_yaml_into_config(live_config, str(yaml_path), live_reload=True)
+    assert live_config["history_rep_fix"] is False
 
 
 def test_yaml_reload_does_not_change_existing_layer_schedules(tmp_path) -> None:

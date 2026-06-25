@@ -78,9 +78,9 @@ stockfish:
   sf_pid_min_nodes: 50000        # 2026-04-28: 1→50000. Going back to high-nodes regret-controlled training (stage 1). 50k nodes gives clean WDL labels + sharp sf_policy targets even when SF play is regret-handicapped. Difficulty knob is regret, not nodes. Live-reloaded: refresh_live_params re-clamps the node count into [min,max] each iter (was construction-only before the node-bounds live-reload).
   sf_pid_max_nodes: 1000000      # 2026-04-23: raise ceiling to 1M. Compute cap, not control. Live-reloaded: refresh_live_params re-clamps the node count into [min,max] each iter (was construction-only before the node-bounds live-reload).
   sf_pid_wdl_regret_start: 0.20       # Construction-only; only matters on fresh PID restart.
-  sf_pid_wdl_regret_min: 0.01         # Live-reloaded. Stage 1 regret-lever can drop all the way to 0.01 (full SF strength); stage 2 only takes over after regret hits stage_end below.
+  sf_pid_wdl_regret_min: 0.0075       # 2026-06-17: 0.01 → 0.0075. Live-reloaded. Stage 1 regret-lever can drop all the way to 0.0075 (full SF strength); stage 2 only takes over after regret hits stage_end below.
   sf_pid_wdl_regret_max: 0.70         # 2026-04-29: 0.50→0.70. Joint-fit plant on iters 5-83 says wr at regret=0.50 is only ≈0.43 (current model is too weak vs SF@50k); regret=0.70 brings predicted wr to ≈0.55 — finally inside the airbag-free band. Bake-off across 17 controllers shows ceiling-bump is the single biggest win (RMSE 0.259→0.226, airbag rate 0.61→0.52). Live-reloadable. The airbag still catches real crashes; widening the ceiling just stops capping the lever's authority before it can compensate the model's degraded plant.
-  sf_pid_wdl_regret_stage_end: 0.01   # 2026-04-28: -1 → 0.01 (re-enabled). Disabled-gate path turned out to silently activate the nodes lever (stage_complete=True set unconditionally → nodes lever ran every iter), ratcheting nodes from 50k → 79k while regret was also tightening — dual-knob "make harder" without telling us. pid.py:501 now requires gate_enabled too, so re-enabling the gate gives the original "regret descends in stage 1, nodes takes over after floor" semantic. Wedge bug fix at pid.py:486 (regret unfreezes when nodes <= min_nodes) prevents the original day-1 wedge.
+  sf_pid_wdl_regret_stage_end: 0.0075 # 2026-06-17: 0.01 → 0.0075 (tracks regret_min). 2026-04-28: -1 → 0.01 (re-enabled). Disabled-gate path turned out to silently activate the nodes lever (stage_complete=True set unconditionally → nodes lever ran every iter), ratcheting nodes from 50k → 79k while regret was also tightening — dual-knob "make harder" without telling us. pid.py:501 now requires gate_enabled too, so re-enabling the gate gives the original "regret descends in stage 1, nodes takes over after floor" semantic. Wedge bug fix at pid.py:486 (regret unfreezes when nodes <= min_nodes) prevents the original day-1 wedge.
 
   # Regret + nodes inverse-fit levers: each fits observed (lever, winrate)
   # history via weighted least squares and steps toward the value that
@@ -132,6 +132,7 @@ selfplay:
   selfplay_fraction: 0.30  # 2026-04-24: 0.50→0.25; 2026-05-04: 0.25→0.30 (30% selfplay / 70% SF curriculum). test_policy_loss drifted 2.25→2.55 at iter 272-285; past runs at 75% SF worked better. Revert if regret/winrate stop moving or policy_loss doesn't recover.
   selfplay_batch: 256   # Concurrent game slots per worker (always full via continuous recycling).
   max_plies: 450
+  history_rep_fix: true  # 2026-06-17: lc0-root repetition-plane correctness fix; affects ~0.2% of positions; net-neutral-to-faster. Propagates as the replay window refills.
 
   temperature: 0.0       # 2026-05-17: root audit found even tiny final-action temp worsened SF regret; keep exploration in Gumbel/root noise instead.
   temperature_drop_plies: 0

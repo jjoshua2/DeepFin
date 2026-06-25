@@ -22,7 +22,7 @@ model:
   use_nla: false
   input_pos_encoding: none  # none | arc | arc_adapter; startup-only LC0-style square relation channels
   use_deepnorm: false       # startup-only; LC0-style post-norm residual branch scaling
-  policy_encoding: az_4672  # az_4672 | lc0_1858; startup-only policy target/output encoding
+  policy_encoding: lc0_1858  # az_4672 | lc0_1858; startup-only policy target/output encoding. 2026-06-17: az_4672 → lc0_1858 to match production (no config ships the legacy 4672 model output).
   input_history_encoding: legacy  # legacy | lc0_root; startup-only 112-plane history layout
   gradient_checkpointing: false  # ~50% less VRAM, ~20% slower
 

@@ -6,11 +6,13 @@ the pause-marker primitives used by the outer loop.
 """
 from __future__ import annotations
 
+import dataclasses
 import logging
 import time
 from pathlib import Path
 
 from chess_anti_engine.config_keys import TRAINER_WEIGHT_KEYS
+from chess_anti_engine.model import ModelConfig
 from chess_anti_engine.selfplay.budget import progressive_mcts_simulations
 from chess_anti_engine.selfplay.config import (
     DiffFocusConfig,
@@ -275,6 +277,28 @@ _TOPOLOGY_KEYS = frozenset({
     "ffn_mult_by_layer",
 })
 
+# Every key that feeds the model build = ModelConfig's own fields. On resume
+# these come from the checkpoint arch (resume_model_config_from_arch) or, on a
+# no-arch / salvage warm-start, directly from config (trainable.py builds the
+# model from config_model_cfg when there is no arch). NOTE these are a distinct
+# set from _TOPOLOGY_KEYS: core shape fields (embed_dim, num_heads, ffn_mult,
+# use_smolgen, ...) are ModelConfig fields but are NOT in _TOPOLOGY_KEYS, so the
+# gate below keys off _MODEL_BUILD_KEYS too — otherwise they would fall through
+# to the unconditional overlay.
+_MODEL_BUILD_KEYS = frozenset(f.name for f in dataclasses.fields(ModelConfig))
+# Model keys that must NOT be startup-auto-filled from YAML: injecting one that
+# is absent from an older restored config would rebuild the model at a layout
+# the checkpoint tensors don't match — shape schedule (num_layers, embed_dim,
+# ffn_mult, smolgen sizes, qkv_projection) or encoding identity
+# (policy/input/history) — and the tolerant loader then zero-inits the mismatch,
+# crashing the optimizer at step() (the variable-width-FFN resume corruption).
+# An encoding/shape migration must be deliberate (donor/salvage config).
+# history_rep_fix is the sole exception: a ModelConfig flag that changes NO
+# tensor shape (only the selfplay rep-plane encoding) and is exactly the
+# worker/selfplay flag this fill exists to propagate. Derived from ModelConfig,
+# so every current AND future model field is covered automatically.
+_MODEL_TOPOLOGY_FILL_BLOCKED = frozenset(k for k in _MODEL_BUILD_KEYS if k != "history_rep_fix")
+
 
 def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload: bool = False) -> None:
     """Overlay YAML values into *config*, preserving PB2-searched keys.
@@ -308,9 +332,27 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload
                     k, config[k], v,
                 )
                 continue
-            if k in _TOPOLOGY_KEYS:
+            if k in _TOPOLOGY_KEYS or k in _MODEL_BUILD_KEYS:
                 current = config.get(k, missing)
                 if current is missing:
+                    if not live_reload and k not in _MODEL_TOPOLOGY_FILL_BLOCKED:
+                        # Startup/resume: the broker + workers are (re)built
+                        # from this config *after* the overlay, so a worker/
+                        # infra/selfplay topology key absent from an older
+                        # restored config (introduced after that checkpoint was
+                        # saved) must be applied from yaml — otherwise it
+                        # silently defaults off. Safe here because no component
+                        # is running yet. Model-topology keys are EXCLUDED
+                        # (_MODEL_TOPOLOGY_FILL_BLOCKED): auto-filling a shape or
+                        # encoding key from yaml would rebuild the model away
+                        # from the checkpoint it must match (see that set's
+                        # note). Log so a silent startup change leaves a trail.
+                        log.info(
+                            "YAML startup reload: applying %s=%r (absent from restored config)",
+                            k, v,
+                        )
+                        config[k] = v
+                        continue
                     log.warning(
                         "YAML reload: %s is absent from restored config but requires restart — skipping",
                         k,
