@@ -61,6 +61,14 @@ POLICY_ENCODING_ARRAY_KEY = "_policy_encoding"
 # load_shard_arrays; a missing shard attr provably means the flag was off.
 HISTORY_REP_FIX_ARRAY_KEY = "_history_rep_fix"
 
+# Scalar encoding-identity markers that travel with the arrays. They are tiny
+# and the loader keys model-encoding identity off them, so prune_storage_arrays
+# must preserve every one — dropping a marker makes pruned shards reload with it
+# defaulted off (e.g. history_rep_fix=False, silently mixing fixed/unfixed
+# repetition planes). One tuple so a newly-added marker can't be lost by one
+# site. (POLICY_ENCODING_ARRAY_KEY is synthesized fresh by prune, not copied.)
+_ENCODING_METADATA_ARRAY_KEYS = (INPUT_HISTORY_ENCODING_ARRAY_KEY, HISTORY_REP_FIX_ARRAY_KEY)
+
 
 def history_rep_fix_from_arrays(arrs: dict[str, Any]) -> bool:
     """Read the history_rep_fix marker from a chunk dict (absent = off)."""
@@ -569,15 +577,13 @@ def prune_storage_arrays(arrs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
             out[flag_name] = flag
             if value_name in arrs:
                 out[value_name] = np.asarray(arrs[value_name])
-    if INPUT_HISTORY_ENCODING_ARRAY_KEY in arrs:
-        out[INPUT_HISTORY_ENCODING_ARRAY_KEY] = np.asarray(arrs[INPUT_HISTORY_ENCODING_ARRAY_KEY])
-    # The rep-fix marker is part of the same encoding identity as the history
-    # encoding above; preserve it too, else pruned shards reload as
-    # history_rep_fix=False and silently mix fixed/unfixed repetition planes
-    # across a training window (the mixed-value guard in samples_to_arrays only
-    # fires when SOME rows still carry the marker).
-    if HISTORY_REP_FIX_ARRAY_KEY in arrs:
-        out[HISTORY_REP_FIX_ARRAY_KEY] = np.asarray(arrs[HISTORY_REP_FIX_ARRAY_KEY])
+    # Preserve every scalar encoding-identity marker (history encoding, rep-fix);
+    # dropping one makes pruned shards reload with the flag defaulted off and
+    # silently mix encodings across a training window (the mixed-value guard in
+    # samples_to_arrays only fires when SOME rows still carry the marker).
+    for key in _ENCODING_METADATA_ARRAY_KEYS:
+        if key in arrs:
+            out[key] = np.asarray(arrs[key])
     policy_encoding, policy_size = _policy_metadata_from_arrays(out)
     out[POLICY_ENCODING_ARRAY_KEY] = np.asarray(policy_encoding)
     out["_policy_size"] = np.array(policy_size, dtype=np.int32)

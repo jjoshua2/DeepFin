@@ -6,12 +6,13 @@ the pause-marker primitives used by the outer loop.
 """
 from __future__ import annotations
 
+import dataclasses
 import logging
 import time
 from pathlib import Path
 
 from chess_anti_engine.config_keys import TRAINER_WEIGHT_KEYS
-from chess_anti_engine.model import _RESUME_CONFIG_OWNED_ENCODING_KEYS
+from chess_anti_engine.model import ModelConfig
 from chess_anti_engine.selfplay.budget import progressive_mcts_simulations
 from chess_anti_engine.selfplay.config import (
     DiffFocusConfig,
@@ -273,17 +274,26 @@ _TOPOLOGY_KEYS = frozenset({
     "ffn_mult_by_layer",
 })
 
-# Topology keys that are model-ENCODING identity and change tensor shapes /
-# input semantics. resume_model_config_from_arch resolves these from the run
-# config (not the checkpoint arch), so silently filling an absent one from YAML
-# on resume would rebuild the model with a different layout than the checkpoint
-# was trained with — the tolerant loader then zero-inits the mismatched tensors
-# (a broken/degraded resume). They must come from a DELIBERATE migration
-# (donor/salvage config), never the startup auto-fill below. history_rep_fix is
-# excluded on purpose: it carries no shape change (only the selfplay rep-plane
-# encoding), so propagating it on resume is safe and is what the fill is for.
-_RESUME_SHAPE_ENCODING_KEYS = frozenset(
-    k for k in _RESUME_CONFIG_OWNED_ENCODING_KEYS if k != "history_rep_fix"
+# Topology keys that feed the model build (i.e. ModelConfig fields). On resume
+# these come from the checkpoint arch (resume_model_config_from_arch) or, on a
+# no-arch / salvage warm-start, directly from config (trainable.py builds the
+# model from config_model_cfg when there is no arch). Either way, silently
+# injecting one from YAML when it is absent from an older restored config would
+# rebuild the model at a layout the checkpoint tensors don't match — both the
+# shape schedule (num_layers, embed_dim_by_layer, ffn_mult_by_layer, smolgen
+# sizes, qkv_projection) and the encoding identity (policy/input/history) — and
+# the tolerant loader then zero-inits the mismatch, crashing the optimizer at
+# step() (the variable-width-FFN resume corruption). So model-topology keys are
+# NOT startup-auto-filled; an encoding/shape migration must be deliberate
+# (donor/salvage config). history_rep_fix is the sole exception: it is a
+# ModelConfig flag that changes NO tensor shape (only the selfplay rep-plane
+# encoding) and is exactly the worker/selfplay flag this fill exists to
+# propagate. Derived from ModelConfig so a newly-added shape field is protected
+# automatically (a future shape-NEUTRAL flag is conservatively blocked too —
+# it just won't auto-propagate until added here, the safe direction).
+_MODEL_TOPOLOGY_FILL_BLOCKED = frozenset(
+    f.name for f in dataclasses.fields(ModelConfig)
+    if f.name in _TOPOLOGY_KEYS and f.name != "history_rep_fix"
 )
 
 
@@ -322,20 +332,22 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload
             if k in _TOPOLOGY_KEYS:
                 current = config.get(k, missing)
                 if current is missing:
-                    if not live_reload and k not in _RESUME_SHAPE_ENCODING_KEYS:
+                    if not live_reload and k not in _MODEL_TOPOLOGY_FILL_BLOCKED:
                         # Startup/resume: the broker + workers are (re)built
                         # from this config *after* the overlay, so a worker/
-                        # selfplay topology key absent from an older restored
-                        # config (introduced after that checkpoint was saved)
-                        # must be applied from yaml — otherwise it silently
-                        # defaults off. Safe here because no component is running
-                        # yet, and non-encoding model-topology keys are
-                        # reconciled from the checkpoint arch by
-                        # resume_model_config_from_arch. Shape/semantic encoding
-                        # keys are EXCLUDED (_RESUME_SHAPE_ENCODING_KEYS): for
-                        # those, arch-resume takes the value from THIS config, so
-                        # auto-filling from yaml would silently migrate the
-                        # model's encoding away from the checkpoint it must match.
+                        # infra/selfplay topology key absent from an older
+                        # restored config (introduced after that checkpoint was
+                        # saved) must be applied from yaml — otherwise it
+                        # silently defaults off. Safe here because no component
+                        # is running yet. Model-topology keys are EXCLUDED
+                        # (_MODEL_TOPOLOGY_FILL_BLOCKED): auto-filling a shape or
+                        # encoding key from yaml would rebuild the model away
+                        # from the checkpoint it must match (see that set's
+                        # note). Log so a silent startup change leaves a trail.
+                        log.info(
+                            "YAML startup reload: applying %s=%r (absent from restored config)",
+                            k, v,
+                        )
                         config[k] = v
                         continue
                     log.warning(

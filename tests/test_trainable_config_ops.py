@@ -302,38 +302,39 @@ def test_startup_yaml_reload_propagates_new_worker_topology_flag(tmp_path) -> No
         """
 selfplay:
   history_rep_fix: true
-model:
-  qkv_projection: split
+distributed_inference_slots_per_worker: 3
 train:
   lr: 0.0007
 """,
         encoding="utf-8",
     )
-    # An older restored config that predates history_rep_fix (and qkv_projection)
+    # An older restored config that predates history_rep_fix (and the infra key)
     # and pins an existing topology key to a different value.
     config = {"lr": 0.0003, "input_history_encoding": "lc0"}
 
     # Startup/resume: the broker + workers are (re)built from this config after
-    # the overlay, so a topology key absent from the restored config must be
-    # applied from yaml — otherwise a flag introduced after the checkpoint was
-    # saved silently defaults off.
+    # the overlay, so a worker/infra/selfplay topology key absent from the
+    # restored config must be applied from yaml — otherwise a flag introduced
+    # after the checkpoint was saved silently defaults off.
     _reload_yaml_into_config(config, str(yaml_path))
 
     assert config["lr"] == 0.0007
+    # The selfplay flag (shape-neutral) and the infra key both propagate.
     assert config["history_rep_fix"] is True
-    assert config["qkv_projection"] == "split"
+    assert config["distributed_inference_slots_per_worker"] == 3
     # An existing topology key keeps its restored value (the current != v skip
     # is unchanged): yaml does not have it, so it is untouched here.
     assert config["input_history_encoding"] == "lc0"
 
 
-def test_startup_yaml_reload_does_not_inject_shape_encoding_keys(tmp_path) -> None:
-    # A shape/semantic model-encoding key absent from an OLDER restored config
-    # must NOT be auto-filled from yaml on resume: resume_model_config_from_arch
-    # resolves these from the run config, so injecting the current yaml value
-    # would rebuild the model with a different layout than the checkpoint was
-    # trained with (policy 4672<->1858, input 146<->175). They require a
-    # deliberate migration, not a silent resume-fill.
+def test_startup_yaml_reload_does_not_inject_model_topology_keys(tmp_path) -> None:
+    # A model-topology key (shape schedule OR encoding identity) absent from an
+    # OLDER restored config must NOT be auto-filled from yaml on resume: arch
+    # resume (or a no-arch salvage warm-start) would otherwise rebuild the model
+    # at the yaml layout — different from the checkpoint tensors (policy
+    # 4672<->1858, input 146<->175, a different layer/width schedule) — and the
+    # tolerant loader zero-inits the mismatch. They require a deliberate
+    # migration, not a silent resume-fill.
     yaml_path = tmp_path / "cfg.yaml"
     yaml_path.write_text(
         """
@@ -344,13 +345,17 @@ model:
   input_extra_features: v2_threats
   input_history_encoding: lc0_root
   use_dynamic_relations: true
+  num_layers: 16
+  embed_dim_by_layer: [512, 512]
+  ffn_mult_by_layer: [4, 4]
+  qkv_projection: split
 train:
   lr: 0.0007
 """,
         encoding="utf-8",
     )
-    # Restored config predates every model-encoding key above (e.g. a legacy
-    # az_4672 / v1 / legacy-history checkpoint).
+    # Restored config predates every model key above (e.g. a legacy az_4672 / v1
+    # / legacy-history / narrower checkpoint).
     config = {"lr": 0.0003}
 
     _reload_yaml_into_config(config, str(yaml_path))
@@ -358,10 +363,12 @@ train:
     assert config["lr"] == 0.0007
     # The safe worker/selfplay flag still propagates (no shape change).
     assert config["history_rep_fix"] is True
-    # The shape/semantic encoding keys are NOT injected — left absent so the
-    # checkpoint arch / model defaults stay authoritative.
+    # Neither encoding identity NOR shape-schedule model keys are injected —
+    # left absent so the checkpoint arch / model defaults stay authoritative.
     for key in ("policy_encoding", "input_extra_features",
-                "input_history_encoding", "use_dynamic_relations"):
+                "input_history_encoding", "use_dynamic_relations",
+                "num_layers", "embed_dim_by_layer", "ffn_mult_by_layer",
+                "qkv_projection"):
         assert key not in config, f"{key} must not be auto-filled on resume"
 
 
