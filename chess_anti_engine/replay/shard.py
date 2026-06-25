@@ -571,6 +571,13 @@ def prune_storage_arrays(arrs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
                 out[value_name] = np.asarray(arrs[value_name])
     if INPUT_HISTORY_ENCODING_ARRAY_KEY in arrs:
         out[INPUT_HISTORY_ENCODING_ARRAY_KEY] = np.asarray(arrs[INPUT_HISTORY_ENCODING_ARRAY_KEY])
+    # The rep-fix marker is part of the same encoding identity as the history
+    # encoding above; preserve it too, else pruned shards reload as
+    # history_rep_fix=False and silently mix fixed/unfixed repetition planes
+    # across a training window (the mixed-value guard in samples_to_arrays only
+    # fires when SOME rows still carry the marker).
+    if HISTORY_REP_FIX_ARRAY_KEY in arrs:
+        out[HISTORY_REP_FIX_ARRAY_KEY] = np.asarray(arrs[HISTORY_REP_FIX_ARRAY_KEY])
     policy_encoding, policy_size = _policy_metadata_from_arrays(out)
     out[POLICY_ENCODING_ARRAY_KEY] = np.asarray(policy_encoding)
     out["_policy_size"] = np.array(policy_size, dtype=np.int32)
