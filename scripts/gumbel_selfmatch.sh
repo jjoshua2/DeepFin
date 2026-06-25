@@ -11,6 +11,9 @@
 #   SIMS=8000  GAMES=40
 #   CSA=0.4 CVA=10 TOPKA=32 CPA=2.5 FPUA=1.2     # candidate A
 #   CSB=0.1 CVB=50 TOPKB=32 CPB=2.5 FPUB=1.2     # reference B
+# Gumbel #68 root/descent split — candidate A only, all legacy by default so an
+# unset A reproduces the pre-#68 behavior (B is always legacy). Set to A/B it:
+#   C_VISIT_ROOT=-1  Q_VISIT_FLOOR=-1  Q_VISIT_EXP=1.0  Q_GLOBAL_SCALE=0
 set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; repo_root="$(cd "${script_dir}/.." && pwd)"; cd "${repo_root}"
 py=".venv/bin/python"
@@ -22,14 +25,19 @@ ts="$(date +%Y%m%d_%H%M%S)"
 sims="${SIMS:-8000}"; games="${GAMES:-40}"
 csa="${CSA:-0.4}"; cva="${CVA:-10}"; topka="${TOPKA:-32}"; cpa="${CPA:-2.5}"; fpua="${FPUA:-1.2}"
 csb="${CSB:-0.1}"; cvb="${CVB:-50}"; topkb="${TOPKB:-32}"; cpb="${CPB:-2.5}"; fpub="${FPUB:-1.2}"
+# #68 root/descent split (candidate A only; legacy = no effect). Built into a
+# single extra-flag string appended to the A engine command.
+cvr="${C_VISIT_ROOT:--1}"; qvf="${Q_VISIT_FLOOR:--1}"; qve="${Q_VISIT_EXP:-1.0}"; qgs="${Q_GLOBAL_SCALE:-0}"
+splita="--c-visit-root ${cvr} --q-visit-floor ${qvf} --q-visit-exp ${qve}"
+[[ "${qgs}" != "0" ]] && splita="${splita} --q-global-scale"
 la="A_cs${csa}cv${cva}tk${topka}"; lb="B_cs${csb}cv${cvb}tk${topkb}"
 out_base="runs/matches/gumbel_selfmatch_${ts}_${la}_vs_${lb}"
 log="${out_base}.log"; pgn="${out_base}.pgn"
 
-mk_engine() { # cs cv topk cpuct fpu
+mk_engine() { # cs cv topk cpuct fpu [extra-flags]
   echo "${py} -u -m chess_anti_engine.uci --checkpoint ${ckpt} --device cuda \
 --walkers 1 --chunk-sims 512 --max-batch 1024 --compile-mode max-autotune \
---c-scale $1 --c-visit $2 --topk $3 --c-puct $4 --fpu-reduction $5 \
+--c-scale $1 --c-visit $2 --topk $3 --c-puct $4 --fpu-reduction $5 ${6:-} \
 --compile-cache-dir runs/pbt2_small/server/worker_cache"
 }
 
@@ -47,7 +55,8 @@ if [[ "$cmd" == plan ]]; then
   echo "Gumbel self-match: ${la}  vs  ${lb}"
   echo "  sims=${sims} (fixed, no clock)  games=${games}  syzygy=${syzygy} (both + adjudicate<=5)"
   echo "  A: c_scale=${csa} c_visit=${cva} topk=${topka} c_puct=${cpa} fpu=${fpua}"
-  echo "  B: c_scale=${csb} c_visit=${cvb} topk=${topkb} c_puct=${cpb} fpu=${fpub}"
+  echo "     split (#68): ${splita}"
+  echo "  B: c_scale=${csb} c_visit=${cvb} topk=${topkb} c_puct=${cpb} fpu=${fpub} (legacy split)"
   echo "  out: ${log}"
   exit 0
 fi
@@ -57,7 +66,7 @@ if reason="$(gpu_busy)"; then echo "REFUSING: GPU busy (${reason})." >&2; exit 3
 mkdir -p "$(dirname "${out_base}")"
 echo "[selfmatch] ${la} vs ${lb} — ${games} games @ ${sims} sims — $(date)" | tee "${log}"
 PYTHONPATH=. "${py}" scripts/match_vs_uci.py \
-  --engine-a "$(mk_engine "${csa}" "${cva}" "${topka}" "${cpa}" "${fpua}")" --label-a "${la}" \
+  --engine-a "$(mk_engine "${csa}" "${cva}" "${topka}" "${cpa}" "${fpua}" "${splita}")" --label-a "${la}" \
   --engine-b "$(mk_engine "${csb}" "${cvb}" "${topkb}" "${cpb}" "${fpub}")" --label-b "${lb}" \
   --option-a "SyzygyPath=${syzygy}" --option-b "SyzygyPath=${syzygy}" \
   --nodes-a "${sims}" --nodes-b "${sims}" \
