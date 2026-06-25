@@ -126,6 +126,12 @@ def main() -> None:
         help='Comma-separated bucket edges, default 2200,2400,2600,2800',
     )
     p.add_argument("--device", default="cuda")
+    p.add_argument("--gpu-mem-fraction", type=float, default=None,
+                   help="Cap this process to a fraction of total GPU memory "
+                        "(torch.cuda.set_per_process_memory_fraction). Use when running "
+                        "CONCURRENT with a live trainer: it makes the eval fail-fast with an "
+                        "OOM inside its own process instead of faulting the shared GPU context "
+                        "and killing the trainer's inference broker. e.g. 0.4 on a 32GB card.")
     p.add_argument("--compile", action="store_true",
                    help="torch.compile the model forward (speeds up high-sim search; "
                         "~30-60s warmup). Run at most ONE compiled eval per GPU concurrently "
@@ -167,6 +173,14 @@ def main() -> None:
         help=f"Append per-mode results here (default {DEFAULT_LOG}); pass empty string to disable",
     )
     args = p.parse_args()
+
+    if args.gpu_mem_fraction is not None and str(args.device).startswith("cuda"):
+        # `.index or 0` maps device "cuda" (index None) -> 0 while preserving an
+        # explicit "cuda:N"; avoids the `is not None` check torch's stub flags.
+        torch.cuda.set_per_process_memory_fraction(
+            float(args.gpu_mem_fraction), torch.device(args.device).index or 0)
+        print(f"[puzzle] GPU memory capped at fraction {args.gpu_mem_fraction} "
+              "(fail-fast OOM instead of faulting a concurrent trainer)")
 
     print(f"[puzzle] loading model: {args.checkpoint}")
     t0 = time.time()

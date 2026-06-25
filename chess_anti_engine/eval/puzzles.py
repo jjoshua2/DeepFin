@@ -386,7 +386,24 @@ def run_puzzle_eval(
         # wrong move for an lc0_1858 net.
         action_encoding = None
     else:
-        cfg = MCTSConfig(simulations=mcts_simulations, temperature=0.0)
+        # Thread the checkpoint's own encoding into the PUCT config for the same
+        # reason the gumbel branch does (above): MCTSConfig defaults to v1/legacy/
+        # az_4672, so a v2_threats (175-plane), compact-1858, or non-legacy-history
+        # net would otherwise be encoded with the wrong plane count and crash at the
+        # embed matmul (175x384 vs 64x146). Fall back to the cfg defaults per field.
+        cfg = MCTSConfig(
+            simulations=mcts_simulations,
+            temperature=0.0,
+            input_extra_features=(
+                getattr(model, "input_extra_features", None) or MCTSConfig.input_extra_features),
+            input_history_encoding=(
+                getattr(model, "input_history_encoding", None) or MCTSConfig.input_history_encoding),
+            # PUCT can't transport dynamic relations; carry the model's flag so a
+            # relation-aware checkpoint trips run_mcts_many's fail-loud guard
+            # instead of being silently scored without its trained relation bias
+            # (the gumbel branch handles relations explicitly above).
+            compute_relations=bool(getattr(model, "use_dynamic_relations", False)),
+        )
 
         def _search(bs: list[chess.Board]):
             return run_mcts_many(model, bs, device=device, rng=rng, cfg=cfg)[1]
@@ -409,6 +426,14 @@ def run_puzzle_eval(
                 int(action_idx), puzzle.board, policy_encoding=action_encoding)
             if chosen in puzzle.best_moves:
                 correct_flags[start + offset] = True
+
+        # Release the batch's reserved CUDA blocks back to the driver. Gumbel/PUCT
+        # trees allocate variable-size buffers (per-position legal-move count), so
+        # without this the caching allocator's reserved pool creeps upward across
+        # batches via fragmentation — at high sims on the full suite it eventually
+        # collides with a concurrently-running trainer and OOMs the shared GPU.
+        if device.startswith("cuda"):
+            torch.cuda.empty_cache()
 
     correct = sum(correct_flags)
     accuracy = float(correct) / max(1, total)
