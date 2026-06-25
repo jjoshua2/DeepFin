@@ -72,6 +72,12 @@ class ReplaySample:
     sf_p0_policy_target: np.ndarray | None = None  # (POLICY_SIZE,) float32
     has_sf_p0: bool | None = None
 
+  # Per-move normalized SF cp-regret at THIS position (P0), same one-ply shift
+  # as sf_p0_policy_target. Value vector in [0,1] (best move 0.0), NOT a
+  # distribution. Drives the regret-weighted SF teacher (train.w_sf_own_regret).
+    sf_p0_regret: np.ndarray | None = None  # (POLICY_SIZE,) float32
+    has_sf_p0_regret: bool | None = None
+
     volatility_target: np.ndarray | None = None  # (3,) float32
     has_volatility: bool | None = None
 

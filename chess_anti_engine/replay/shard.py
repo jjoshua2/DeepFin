@@ -151,6 +151,7 @@ _OPTIONAL_FIELD_SPECS: tuple[_OptFieldSpec, ...] = (
     _OptFieldSpec("policy_soft_target",   "has_policy_soft",       _POLICY_SHAPE, _F16),
     _OptFieldSpec("future_policy_target", "has_future",            _POLICY_SHAPE, _F16),
     _OptFieldSpec("sf_p0_policy_target",  "has_sf_p0",             _POLICY_SHAPE, _F16),
+    _OptFieldSpec("sf_p0_regret",         "has_sf_p0_regret",      _POLICY_SHAPE, _F16),
     _OptFieldSpec("volatility_target",    "has_volatility",        (3,),          _F16),
     _OptFieldSpec("sf_volatility_target", "has_sf_volatility",     (3,),          _F16),
     _OptFieldSpec("search_wdl",           "has_search_wdl",        (3,),          _F16),
@@ -235,7 +236,12 @@ LEGAL_MASK_HAS_FIELDS: tuple[str, ...] = ("has_legal_mask", "has_sf_legal_mask",
 # memory per policy field in the shuffle buffer.
 
 POLICY_SPACE_FIELDS = ("policy_target", "sf_policy_target", "policy_soft_target", "future_policy_target", "sf_p0_policy_target")
-POLICY_SIZED_FIELDS = frozenset((*POLICY_SPACE_FIELDS, *LEGAL_MASK_FIELDS))
+# Policy-sized per-action VALUE vectors (not sparse distributions). sf_p0_regret
+# defaults to 1.0 (max regret) on unlisted moves, so it is dense -> sparsifying
+# it would store vals+cols for ~every entry (~2x bloat). Keep dense, but it is
+# still policy-sized (allocation) and lives in move space (mirror augmentation).
+POLICY_DENSE_VALUE_FIELDS = ("sf_p0_regret",)
+POLICY_SIZED_FIELDS = frozenset((*POLICY_SPACE_FIELDS, *POLICY_DENSE_VALUE_FIELDS, *LEGAL_MASK_FIELDS))
 POLICY_INDEX_FIELDS: tuple[tuple[str, str], ...] = (
     ("sf_move_index", "has_sf_move"),
     ("sf_played_move_index", "has_sf_played_move"),
@@ -806,6 +812,7 @@ _VECTOR_FIELDS: tuple[tuple[str, str, str], ...] = (
     ("policy_soft_target",   "policy_soft_target",   "has_policy_soft"),
     ("future_policy_target", "future_policy_target", "has_future"),
     ("sf_p0_policy_target",  "sf_p0_policy_target",  "has_sf_p0"),
+    ("sf_p0_regret",         "sf_p0_regret",         "has_sf_p0_regret"),
     ("volatility_target",    "volatility_target",    "has_volatility"),
     ("sf_volatility_target", "sf_volatility_target", "has_sf_volatility"),
     ("search_wdl",           "search_wdl",           "has_search_wdl"),
@@ -820,6 +827,7 @@ _INT_VECTOR_FIELDS: tuple[tuple[str, str, str], ...] = (
 _VECTOR_EXPLICIT_HAS_ATTRS: dict[str, str] = {
     "future_policy_target": "has_future",
     "sf_p0_policy_target": "has_sf_p0",
+    "sf_p0_regret": "has_sf_p0_regret",
     "volatility_target": "has_volatility",
     "sf_volatility_target": "has_sf_volatility",
 }
@@ -1198,6 +1206,9 @@ def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
         if opt["has_sf_p0"][i]:
             s.sf_p0_policy_target = _copy_row(opt["sf_p0_policy_target"], i)
             s.has_sf_p0 = True
+        if opt["has_sf_p0_regret"][i]:
+            s.sf_p0_regret = _copy_row(opt["sf_p0_regret"], i)
+            s.has_sf_p0_regret = True
         if opt["has_volatility"][i]:
             s.volatility_target = _copy_row(opt["volatility_target"], i)
             s.has_volatility = True

@@ -8,6 +8,7 @@ TRAINER_WEIGHT_KEYS: tuple[str, ...] = (
     "w_soft",
     "w_future",
     "w_sf_own",
+    "w_sf_own_regret",
     "w_wdl",
     "w_sf_move",
     "w_sf_eval",

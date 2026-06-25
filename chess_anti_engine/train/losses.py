@@ -100,6 +100,17 @@ def align_policy_mask(mask: torch.Tensor, width: int) -> torch.Tensor:
     raise ValueError(f"policy mask width {src_width} is incompatible with logits width {dst_width}")
 
 
+def align_action_values(values: torch.Tensor, width: int) -> torch.Tensor:
+    """Reindex a per-action VALUE vector (e.g. cp-regret) to the logits' width.
+
+    Unlike :func:`align_policy_target`, this does NOT renormalize: the vector is
+    not a probability distribution, so a 4672->1858 compact projection must
+    gather the valid actions and leave their magnitudes untouched. The reindex
+    is identical to a legal-mask reindex, so we delegate to that path.
+    """
+    return align_policy_mask(values, width)
+
+
 def apply_policy_mask_to_logits(
     logits: torch.Tensor,
     batch: dict[str, torch.Tensor],
@@ -213,6 +224,7 @@ def compute_loss(
     w_soft: float = 0.5,
     w_future: float = 0.15,
     w_sf_own: float = 0.0,
+    w_sf_own_regret: float = 0.0,
     w_wdl: float = 1.0,
     w_sf_move: float = 0.15,
     w_sf_eval: float = 0.15,
@@ -309,6 +321,21 @@ def compute_loss(
         )
     else:
         sf_p0_ce = zero_loss
+
+    # Regret-weighted SF teacher on policy_own: minimize the net's EXPECTED SF
+    # cp-regret = sum_m p_own(m) * regret(m), where regret(m) in [0,1] is the
+    # normalized cp loss vs SF's best move at THIS (P0) position. Pushes mass
+    # toward low-regret moves; auto-weighted by how much each position matters
+    # (flat positions have tiny regrets -> tiny gradient). Same legal-masked
+    # policy_own head as sf_p0_ce, masked to eligible selfplay rows.
+    has_sf_p0_regret = _get_mask(batch, "has_sf_p0_regret")
+    sf_p0_regret_t = batch.get("sf_p0_regret_t")
+    if sf_p0_regret_t is not None:
+        po_probs = torch.softmax(_apply_legal_mask(base_policy_logits), dim=-1)
+        reg_vec = align_action_values(sf_p0_regret_t, int(base_policy_logits.shape[-1]))
+        sf_own_regret = (po_probs * reg_vec).sum(-1)
+    else:
+        sf_own_regret = zero_loss
 
     wdl_ce = F.cross_entropy(outputs["wdl"], batch["wdl_t"], reduction="none")
 
@@ -492,6 +519,7 @@ def compute_loss(
     m_soft = masked_mean(soft_ce, net_mask * has_soft)
     m_future = masked_mean(future_ce, net_mask * has_future)
     m_sf_own = masked_mean(sf_p0_ce, net_mask * has_sf_p0)
+    m_sf_own_regret = masked_mean(sf_own_regret, net_mask * has_sf_p0_regret)
     m_wdl = masked_mean(wdl_ce, net_mask)
     m_blended_wdl = masked_mean(blended_wdl_ce, net_mask)
     m_sf_move = masked_mean(sf_move_ce, net_mask * has_sf_policy)
@@ -520,6 +548,7 @@ def compute_loss(
         + float(w_soft) * m_soft
         + float(w_future) * m_future
         + float(w_sf_own) * m_sf_own
+        + float(w_sf_own_regret) * m_sf_own_regret
         + float(w_wdl) * m_blended_wdl
         + float(w_sf_move) * m_sf_move
         + float(w_sf_eval) * m_sf_eval
@@ -538,6 +567,7 @@ def compute_loss(
         "soft_mask_kept_frac": soft_mask_kept_frac,
         "future_policy_ce": m_future,
         "sf_own_ce": m_sf_own,
+        "sf_own_regret": m_sf_own_regret,
         "sf_move_ce": m_sf_move,
         "sf_eval_ce": m_sf_eval,
         "categorical_ce": m_cat,

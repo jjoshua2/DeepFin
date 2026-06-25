@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import numpy as np
 import torch
 
 from chess_anti_engine.train.losses import compute_loss, soft_cross_entropy
@@ -234,3 +235,54 @@ def test_compute_loss_sf_own_zero_when_unmasked() -> None:
     batch["has_sf_p0"] = torch.tensor([0.0], dtype=torch.float32)  # masked out
     m = compute_loss(outputs, batch, w_wdl=0.0, w_sf_own=0.5)
     assert m["sf_own_ce"].detach().item() == 0.0
+
+
+def test_compute_loss_sf_own_regret_minimizes_expected_regret_on_policy_own() -> None:
+    """w_sf_own_regret adds expected SF cp-regret = sum_m p_own(m)*regret(m) on
+    the policy_own head, masked to has_sf_p0_regret rows. Move 2 has zero regret
+    (SF best), moves 0/1 are maximally bad; the loss must drop as policy_own mass
+    moves toward move 2."""
+    # regret(m): index 0 and 1 are maximally bad (1.0), index 2 is SF's best (0.0).
+    reg = torch.tensor([[1.0, 1.0, 0.0]], dtype=torch.float32)
+
+    def _metric(logits: list[float], *, masked: bool) -> float:
+        outputs = {
+            "policy": torch.tensor([logits], requires_grad=True),
+            "wdl": torch.tensor([[2.0, -1.0, -2.0]], requires_grad=True),
+        }
+        batch = _base_batch(batch_size=1)
+        batch["sf_p0_regret_t"] = reg
+        batch["has_sf_p0_regret"] = torch.tensor(
+            [1.0 if masked else 0.0], dtype=torch.float32,
+        )
+        m = compute_loss(outputs, batch, w_wdl=0.0, w_sf_own_regret=0.5)
+        return m["sf_own_regret"].detach().item()
+
+    # policy_own favoring the high-regret move 0 vs the low-regret move 2.
+    bad = _metric([4.0, -1.0, -2.0], masked=True)   # mass on move 0 (regret 1.0)
+    good = _metric([-2.0, -1.0, 4.0], masked=True)  # mass on move 2 (regret 0.0)
+    assert np.isfinite(bad) and np.isfinite(good)
+    assert good < bad  # shifting mass to the low-regret move lowers the loss
+
+    # Masked out: contributes ~0 regardless of the logits.
+    assert _metric([4.0, -1.0, -2.0], masked=False) == 0.0
+
+    # The term flows into the total and its gradient pulls mass toward move 2.
+    outputs = {
+        "policy": torch.tensor([[4.0, -1.0, -2.0]], requires_grad=True),
+        "wdl": torch.tensor([[2.0, -1.0, -2.0]], requires_grad=True),
+    }
+    batch = _base_batch(batch_size=1)
+    batch["sf_p0_regret_t"] = reg
+    batch["has_sf_p0_regret"] = torch.tensor([1.0], dtype=torch.float32)
+    base_total = compute_loss(
+        outputs, batch, w_policy=0.0, w_wdl=0.0, w_sf_own_regret=0.0,
+    )["total"].detach().item()
+    # Isolate the regret head (w_policy=0) so its gradient sign is unambiguous —
+    # the default policy CE pulls toward the net's own move (index 0) and would
+    # otherwise dominate the shared policy_own logits.
+    on = compute_loss(outputs, batch, w_policy=0.0, w_wdl=0.0, w_sf_own_regret=0.5)
+    on["total"].backward()
+    assert on["total"].detach().item() > base_total
+    assert outputs["policy"].grad is not None
+    assert outputs["policy"].grad[0, 2].item() < 0.0  # raising logit[2] lowers expected regret

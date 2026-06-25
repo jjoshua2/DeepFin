@@ -194,6 +194,7 @@ class TrialConfig:
     history_rep_fix: bool = False
     record_dense_sf_policy: bool = True
     record_sf_p0_policy: bool = False
+    record_sf_p0_regret: bool = False
 
   # --- Diff focus ---
     diff_focus_enabled: bool = True
@@ -522,6 +523,7 @@ class TrialConfig:
             history_rep_fix=bool(config.get("history_rep_fix", False)),
             record_dense_sf_policy=bool(config.get("record_dense_sf_policy", True)),
             record_sf_p0_policy=bool(config.get("record_sf_p0_policy", False)),
+            record_sf_p0_regret=bool(config.get("record_sf_p0_regret", False)),
 
   # --- Diff focus ---
             diff_focus_enabled=bool(config.get("diff_focus_enabled", True)),
