@@ -7,6 +7,7 @@ thousands of ``ReplaySample`` Python objects.
 """
 from __future__ import annotations
 
+import logging
 import threading
 from collections import deque
 from pathlib import Path
@@ -42,6 +43,8 @@ from .threat_upgrade import (
     V1_INPUT_PLANES,
     upgrade_arrays_to_planes,
 )
+
+log = logging.getLogger(__name__)
 
 _ARRAY_FIELD_ORDER = _SHARD_FIELDS
 _SCALAR_METADATA_FIELDS = (
@@ -122,13 +125,29 @@ def _concat_sparse_batches(chunks: list[dict[str, np.ndarray]]) -> dict[str, np.
         concrete = [value for value in values if value is not None]
         if not concrete:
             continue
-        if len(concrete) != len(values):
-            labels = sorted({"<missing>" if value is None else str(value) for value in values})
-            raise ValueError(f"mixed replay metadata {name}: {labels}")
-        first = concrete[0]
-        if any(value != first for value in concrete):
-            raise ValueError(f"mixed replay metadata {name}: {sorted({str(v) for v in concrete})}")
-        out[name] = np.asarray(first)
+        some_missing = len(concrete) != len(values)
+        disagree = any(value != concrete[0] for value in concrete)
+        if not (some_missing or disagree):
+            out[name] = np.asarray(concrete[0])
+            continue
+        # Mixed across shards. rep-fix is benign to mix (the corrected lc0-root
+        # repetition planes differ from legacy on only ~0.2% of positions, and
+        # the change is net-neutral), unlike the shape/semantic encodings. A
+        # window straddling a rep-fix rollout (old shards reload "false", new
+        # ones "true") would otherwise crash the buffer here. Tolerate it,
+        # resolving toward "true" since the run is migrating to fixed planes,
+        # and log. NOTE this DOES durably relabel the few legacy rows as "true"
+        # in the re-written window shard — acceptable because the mislabel is
+        # confined to the transition window (which ages out) and rep-fix is
+        # net-neutral; a hard-fail here would instead crash a live restart.
+        if name == HISTORY_REP_FIX_ARRAY_KEY:
+            label_set = sorted({"<missing>" if v is None else v for v in values})
+            log.warning("replay window mixes %s across shards (%s) — tolerating (rep-fix is benign)",
+                        name, label_set)
+            out[name] = np.asarray("true" if "true" in concrete else concrete[0])
+            continue
+        labels = sorted({"<missing>" if value is None else str(value) for value in values})
+        raise ValueError(f"mixed replay metadata {name}: {labels}")
     return out
 
 

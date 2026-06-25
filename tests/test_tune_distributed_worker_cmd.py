@@ -423,6 +423,56 @@ def test_patch_experiment_state_for_resume_overlays_selected_keys(tmp_path: Path
     assert saved_trial["config"]["distributed_inference_broker_enabled"] is True
 
 
+def test_patch_experiment_state_for_resume_never_touches_construction_bound_keys(tmp_path: Path) -> None:
+    # Model-encoding (policy_encoding) and optimizer-construction (optimizer)
+    # keys are config-owned at model/optimizer build time, and the trainer is
+    # built from config before checkpoint restore. So the resume overlay must
+    # neither overwrite a present one nor inject an absent one — else the model/
+    # optimizer is rebuilt away from the checkpoint the saved state fits. Safe
+    # selfplay/infra keys still propagate.
+    state_file = tmp_path / "experiment_state-2026-03-29.json"
+    state_file.write_text(
+        json.dumps(
+            {
+                "trial_data": [
+                    [
+                        json.dumps(
+                            {"config": {"seed": 7, "policy_encoding": "az_4672", "optimizer": "nadamw"}}
+                        ),
+                        {"meta": "ignored"},
+                    ],
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    added, _skipped, saved_keys = _patch_experiment_state_for_resume(
+        state_file=state_file,
+        param_space={
+            "seed": 7,
+            "policy_encoding": "lc0_1858",  # construction-bound, PRESENT -> must NOT overwrite
+            "optimizer": "aurora",          # construction-bound, PRESENT -> must NOT overwrite
+            "embed_dim": 999,               # construction-bound, ABSENT  -> must NOT inject
+            "history_rep_fix": True,        # safe selfplay flag, ABSENT  -> should propagate
+            "num_samples": 4,               # safe infra key, ABSENT      -> should propagate
+        },
+        overlay_keys={"policy_encoding", "optimizer", "embed_dim", "history_rep_fix", "num_samples"},
+    )
+
+    cfg = json.loads(json.loads(state_file.read_text(encoding="utf-8"))["trial_data"][0][0])["config"]
+    # construction-bound keys: present ones keep checkpoint value, absent ones not injected
+    assert cfg["policy_encoding"] == "az_4672"
+    assert cfg["optimizer"] == "nadamw"
+    assert "embed_dim" not in cfg
+    assert "embed_dim" not in added and "embed_dim" not in saved_keys
+    assert "policy_encoding" not in added and "optimizer" not in added
+    # safe keys propagate
+    assert cfg["history_rep_fix"] is True
+    assert cfg["num_samples"] == 4
+    assert {"history_rep_fix", "num_samples"} <= added
+
+
 def test_patch_experiment_state_for_resume_skips_non_jsonable_keys(tmp_path: Path) -> None:
     state_file = tmp_path / "experiment_state-2026-03-29.json"
     state_file.write_text(

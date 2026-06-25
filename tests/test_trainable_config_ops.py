@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from chess_anti_engine.tune.trainable_config_ops import (
+    _OPTIMIZER_CONSTRUCTION_KEYS,
     _apply_lr_gamma_weights,
     _play_batch_kwargs,
     _reload_yaml_into_config,
@@ -375,6 +376,58 @@ train:
                 "input_history_encoding", "use_dynamic_relations",
                 "num_layers", "embed_dim_by_layer", "ffn_mult_by_layer",
                 "qkv_projection", "embed_dim", "num_heads", "use_smolgen"):
+        assert key not in config, f"{key} must not be auto-filled on resume"
+
+
+def test_optimizer_construction_keys_cover_structural() -> None:
+    # Lock the structural-vs-value split so a newly-added optimizer STRUCTURE
+    # knob can't silently slip back into the resume-fillable set (drift trap).
+    # Structural keys (change optimizer class / param grouping / moment shape)
+    # MUST be blocked; per-group value knobs (lr/wd multipliers) must NOT be —
+    # changing those on resume is as safe as changing lr.
+    structural = {
+        "optimizer", "matrix_optimizer_scope", "weight_decay_mode",
+        "soda_scope", "soda_start_step", "cosmos_rank",
+    }
+    value_only = {
+        "matrix_lr_multiplier", "matrix_weight_decay", "aux_weight_decay",
+        "global_board_preprocess_lr_multiplier", "global_board_preprocess_weight_decay",
+        "global_board_adapter_lr_multiplier", "global_board_adapter_weight_decay",
+    }
+    assert structural <= _OPTIMIZER_CONSTRUCTION_KEYS
+    assert not (value_only & _OPTIMIZER_CONSTRUCTION_KEYS)
+    # cosmos_rank in particular changes low-rank moment shapes -> must block.
+    assert "cosmos_rank" in _OPTIMIZER_CONSTRUCTION_KEYS
+
+
+def test_startup_yaml_reload_does_not_inject_optimizer_construction_keys(tmp_path) -> None:
+    # The Trainer/optimizer is built from config BEFORE checkpoint restore, so
+    # backfilling optimizer-construction keys absent from an older restored
+    # config would build a different optimizer than the saved moments fit ->
+    # Trainer.load reinitializes state. They must not be startup-auto-filled.
+    yaml_path = tmp_path / "cfg.yaml"
+    yaml_path.write_text(
+        """
+optimizer: aurora
+matrix_optimizer_scope: mlp_out
+weight_decay_mode: decoupled
+cosmos_rank: 128
+num_samples: 4
+train:
+  lr: 0.0007
+""",
+        encoding="utf-8",
+    )
+    config = {"lr": 0.0003}
+
+    _reload_yaml_into_config(config, str(yaml_path))
+
+    assert config["lr"] == 0.0007
+    # Safe infra key still propagates.
+    assert config["num_samples"] == 4
+    # Optimizer-construction keys are NOT injected (incl. cosmos_rank, which
+    # changes low-rank moment shapes).
+    for key in ("optimizer", "matrix_optimizer_scope", "weight_decay_mode", "cosmos_rank"):
         assert key not in config, f"{key} must not be auto-filled on resume"
 
 
