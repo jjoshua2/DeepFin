@@ -300,13 +300,22 @@ _MODEL_BUILD_KEYS = frozenset(f.name for f in dataclasses.fields(ModelConfig))
 
 # Optimizer-construction keys: the Trainer (and its optimizer) is built from
 # config BEFORE the checkpoint is restored (trainable.py: Trainer(...) precedes
-# _restore_checkpoint_or_salvage). So force-applying one of these on resume
-# builds a different optimizer than the saved state fits — Trainer.load() then
-# rejects/reinitializes the moments + scheduler. Like model keys, they must come
-# from the checkpoint's own config, not a resume-time YAML overlay.
+# _restore_checkpoint_or_salvage). These are the ones that change the optimizer
+# STRUCTURE — which optimizer, how params are grouped, or moment-tensor shapes —
+# so force-applying one on resume builds an optimizer the saved state can't load
+# into; Trainer.load() then rejects/reinitializes the moments + scheduler. They
+# must come from the checkpoint's own config, not a resume-time YAML overlay.
+#
+# NOT included (deliberately): the per-group VALUE knobs read alongside these in
+# trainer_kwargs_from_config — matrix_lr_multiplier, matrix_weight_decay,
+# aux_weight_decay, global_board_*_lr_multiplier/weight_decay. Those only set the
+# lr/weight-decay of an already-fixed param group (the grouping is decided by
+# matrix_optimizer_scope), so changing one on resume is as safe as changing `lr`
+# — no state-shape mismatch. test_optimizer_construction_keys_cover_structural
+# locks this split so a newly-added STRUCTURE knob can't silently slip back in.
 _OPTIMIZER_CONSTRUCTION_KEYS = frozenset({
     "optimizer", "matrix_optimizer_scope", "weight_decay_mode",
-    "soda_scope", "soda_start_step",
+    "soda_scope", "soda_start_step", "cosmos_rank",
 })
 
 # Construction-bound keys: changing one on resume rebuilds the model OR the
@@ -352,7 +361,7 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload
                     k, config[k], v,
                 )
                 continue
-            if k in _TOPOLOGY_KEYS or k in _MODEL_BUILD_KEYS:
+            if k in _TOPOLOGY_KEYS or k in _RESUME_CONSTRUCTION_BOUND_KEYS:
                 current = config.get(k, missing)
                 if current is missing:
                     if not live_reload and k not in _RESUME_CONSTRUCTION_BOUND_KEYS:
