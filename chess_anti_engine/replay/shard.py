@@ -235,8 +235,13 @@ LEGAL_MASK_HAS_FIELDS: tuple[str, ...] = ("has_legal_mask", "has_sf_legal_mask",
 # Storing as padded-sparse (values + column indices + lengths) saves ~10x
 # memory per policy field in the shuffle buffer.
 
-POLICY_SPACE_FIELDS = ("policy_target", "sf_policy_target", "policy_soft_target", "future_policy_target", "sf_p0_policy_target", "sf_p0_regret")
-POLICY_SIZED_FIELDS = frozenset((*POLICY_SPACE_FIELDS, *LEGAL_MASK_FIELDS))
+POLICY_SPACE_FIELDS = ("policy_target", "sf_policy_target", "policy_soft_target", "future_policy_target", "sf_p0_policy_target")
+# Policy-sized per-action VALUE vectors (not sparse distributions). sf_p0_regret
+# defaults to 1.0 (max regret) on unlisted moves, so it is dense -> sparsifying
+# it would store vals+cols for ~every entry (~2x bloat). Keep dense, but it is
+# still policy-sized (allocation) and lives in move space (mirror augmentation).
+POLICY_DENSE_VALUE_FIELDS = ("sf_p0_regret",)
+POLICY_SIZED_FIELDS = frozenset((*POLICY_SPACE_FIELDS, *POLICY_DENSE_VALUE_FIELDS, *LEGAL_MASK_FIELDS))
 POLICY_INDEX_FIELDS: tuple[tuple[str, str], ...] = (
     ("sf_move_index", "has_sf_move"),
     ("sf_played_move_index", "has_sf_played_move"),

@@ -100,6 +100,17 @@ def align_policy_mask(mask: torch.Tensor, width: int) -> torch.Tensor:
     raise ValueError(f"policy mask width {src_width} is incompatible with logits width {dst_width}")
 
 
+def align_action_values(values: torch.Tensor, width: int) -> torch.Tensor:
+    """Reindex a per-action VALUE vector (e.g. cp-regret) to the logits' width.
+
+    Unlike :func:`align_policy_target`, this does NOT renormalize: the vector is
+    not a probability distribution, so a 4672->1858 compact projection must
+    gather the valid actions and leave their magnitudes untouched. The reindex
+    is identical to a legal-mask reindex, so we delegate to that path.
+    """
+    return align_policy_mask(values, width)
+
+
 def apply_policy_mask_to_logits(
     logits: torch.Tensor,
     batch: dict[str, torch.Tensor],
@@ -321,7 +332,7 @@ def compute_loss(
     sf_p0_regret_t = batch.get("sf_p0_regret_t")
     if sf_p0_regret_t is not None:
         po_probs = torch.softmax(_apply_legal_mask(base_policy_logits), dim=-1)
-        reg_vec = align_policy_target(sf_p0_regret_t, int(base_policy_logits.shape[-1]))
+        reg_vec = align_action_values(sf_p0_regret_t, int(base_policy_logits.shape[-1]))
         sf_own_regret = (po_probs * reg_vec).sum(-1)
     else:
         sf_own_regret = zero_loss

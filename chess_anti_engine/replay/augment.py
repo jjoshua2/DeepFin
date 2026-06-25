@@ -14,11 +14,12 @@ from chess_anti_engine.moves.encode import (
 )
 
 from .buffer import ReplaySample
-from .shard import LEGAL_MASK_FIELDS, POLICY_SPACE_FIELDS
+from .shard import LEGAL_MASK_FIELDS, POLICY_DENSE_VALUE_FIELDS, POLICY_SPACE_FIELDS
 
 # Fields whose rows live in POLICY_SIZE move space and must be remapped under
-# the mirror permutation. Includes all policy-like targets and legal masks.
-_MIRROR_POLICY_FIELDS = (*POLICY_SPACE_FIELDS, *LEGAL_MASK_FIELDS)
+# the mirror permutation. Includes all policy-like targets, dense per-action
+# value vectors (e.g. sf_p0_regret), and legal masks.
+_MIRROR_POLICY_FIELDS = (*POLICY_SPACE_FIELDS, *POLICY_DENSE_VALUE_FIELDS, *LEGAL_MASK_FIELDS)
 _LEGACY_CASTLING_SWAP_PAIRS = ((96, 97), (98, 99))
 _LC0_ROOT_CASTLING_SWAP_PAIRS = ((104, 105), (106, 107))
 
