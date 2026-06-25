@@ -308,6 +308,22 @@ def test_zarr_shard_roundtrip_preserves_history_rep_fix(tmp_path):
     assert history_rep_fix_from_arrays(ld_arrs) is True
 
 
+def test_npz_roundtrip_preserves_history_rep_fix(tmp_path):
+    # Legacy NPZ path: save_npz must persist history_rep_fix into meta_json,
+    # because load_shard_arrays -> _attach_identity_meta_arrays rematerializes
+    # the marker array FROM meta (overwriting any stored array). Without the
+    # meta promotion, a rep-fixed bootstrap/archive shard reloads as False.
+    s = _sample()
+    s.history_rep_fix = True
+
+    path = tmp_path / "rep.npz"
+    save_npz(path, samples=[s], meta={"positions": 1})
+
+    out, _meta = load_npz(path)
+    assert len(out) == 1
+    assert out[0].history_rep_fix is True
+
+
 def test_samples_to_arrays_respects_explicit_false_optional_flags():
     s = _sample()
     s.has_future = False

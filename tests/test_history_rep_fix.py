@@ -204,8 +204,9 @@ def _replay_sample(flag: bool):
 
 
 def test_replay_arrays_carry_history_rep_fix(tmp_path):
-    """Replay identity: the flag rides the chunk arrays, refuses to mix in
-    the buffer merge, and survives the shard save/load round trip."""
+    """Replay identity: the flag rides the chunk arrays, refuses to mix within a
+    single sample batch, TOLERATES a cross-shard window mix (benign), and
+    survives the shard save/load round trip."""
     from chess_anti_engine.replay.disk_buffer import _concat_sparse_batches
     from chess_anti_engine.replay.shard import (
         HISTORY_REP_FIX_ARRAY_KEY,
@@ -223,9 +224,11 @@ def test_replay_arrays_carry_history_rep_fix(tmp_path):
     with pytest.raises(ValueError, match="mixed ReplaySample history_rep_fix"):
         samples_to_arrays([_replay_sample(True), _replay_sample(False)])
 
-    # The replay-buffer merge refuses to concatenate legacy and rep-fix chunks.
-    with pytest.raises(ValueError, match="mixed replay metadata"):
-        _concat_sparse_batches([on, off])
+    # The cross-shard buffer merge TOLERATES a rep-fix mix (a window straddling
+    # a rep-fix rollout would otherwise crash; the planes differ on ~0.2% of
+    # positions and the change is net-neutral). It resolves toward "true".
+    merged = _concat_sparse_batches([on, off])
+    assert str(np.asarray(merged[HISTORY_REP_FIX_ARRAY_KEY]).item()) == "true"
 
     # Disk round trip: persisted as the shard attr, rematerialized on load,
     # restored onto samples.

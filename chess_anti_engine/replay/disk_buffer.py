@@ -7,6 +7,7 @@ thousands of ``ReplaySample`` Python objects.
 """
 from __future__ import annotations
 
+import logging
 import threading
 from collections import deque
 from pathlib import Path
@@ -42,6 +43,8 @@ from .threat_upgrade import (
     V1_INPUT_PLANES,
     upgrade_arrays_to_planes,
 )
+
+log = logging.getLogger(__name__)
 
 _ARRAY_FIELD_ORDER = _SHARD_FIELDS
 _SCALAR_METADATA_FIELDS = (
@@ -121,6 +124,21 @@ def _concat_sparse_batches(chunks: list[dict[str, np.ndarray]]) -> dict[str, np.
             values.append(str(arr.reshape(-1)[0]) if arr.size else None)
         concrete = [value for value in values if value is not None]
         if not concrete:
+            continue
+        mixed = len(concrete) != len(values) or any(v != concrete[0] for v in concrete)
+        if mixed and name == HISTORY_REP_FIX_ARRAY_KEY:
+            # rep-fix is benign to mix (the corrected lc0-root repetition planes
+            # differ from legacy on only ~0.2% of positions, and the change is
+            # net-neutral), unlike the shape/semantic encodings below. A window
+            # straddling a rep-fix rollout (old shards reload "false", new ones
+            # "true") would otherwise crash the buffer here. Tolerate it: keep
+            # the marker present (so downstream still hard-fails on a genuine
+            # ENCODING mix) and resolve toward "true" since the run is migrating
+            # to fixed planes — but log so the transition is visible.
+            label_set = sorted({"<missing>" if v is None else v for v in values})
+            log.warning("replay window mixes %s across shards (%s) — tolerating (rep-fix is benign)",
+                        name, label_set)
+            out[name] = np.asarray("true" if "true" in concrete else concrete[0])
             continue
         if len(concrete) != len(values):
             labels = sorted({"<missing>" if value is None else str(value) for value in values})

@@ -297,7 +297,27 @@ _MODEL_BUILD_KEYS = frozenset(f.name for f in dataclasses.fields(ModelConfig))
 # tensor shape (only the selfplay rep-plane encoding) and is exactly the
 # worker/selfplay flag this fill exists to propagate. Derived from ModelConfig,
 # so every current AND future model field is covered automatically.
-_MODEL_TOPOLOGY_FILL_BLOCKED = frozenset(k for k in _MODEL_BUILD_KEYS if k != "history_rep_fix")
+
+# Optimizer-construction keys: the Trainer (and its optimizer) is built from
+# config BEFORE the checkpoint is restored (trainable.py: Trainer(...) precedes
+# _restore_checkpoint_or_salvage). So force-applying one of these on resume
+# builds a different optimizer than the saved state fits — Trainer.load() then
+# rejects/reinitializes the moments + scheduler. Like model keys, they must come
+# from the checkpoint's own config, not a resume-time YAML overlay.
+_OPTIMIZER_CONSTRUCTION_KEYS = frozenset({
+    "optimizer", "matrix_optimizer_scope", "weight_decay_mode",
+    "soda_scope", "soda_start_step",
+})
+
+# Construction-bound keys: changing one on resume rebuilds the model OR the
+# optimizer away from the checkpoint (state then reinits/crashes). Neither the
+# startup fill below NOR the experiment-state resume overlay
+# (_patch_experiment_state_for_resume) may propagate these from YAML — only a
+# deliberate migration (donor/salvage config) changes them. history_rep_fix is
+# excluded (shape-neutral selfplay flag, safe + intended to propagate).
+_RESUME_CONSTRUCTION_BOUND_KEYS = frozenset(
+    k for k in (_MODEL_BUILD_KEYS | _OPTIMIZER_CONSTRUCTION_KEYS) if k != "history_rep_fix"
+)
 
 
 def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload: bool = False) -> None:
@@ -335,18 +355,19 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload
             if k in _TOPOLOGY_KEYS or k in _MODEL_BUILD_KEYS:
                 current = config.get(k, missing)
                 if current is missing:
-                    if not live_reload and k not in _MODEL_TOPOLOGY_FILL_BLOCKED:
+                    if not live_reload and k not in _RESUME_CONSTRUCTION_BOUND_KEYS:
                         # Startup/resume: the broker + workers are (re)built
                         # from this config *after* the overlay, so a worker/
                         # infra/selfplay topology key absent from an older
                         # restored config (introduced after that checkpoint was
                         # saved) must be applied from yaml — otherwise it
                         # silently defaults off. Safe here because no component
-                        # is running yet. Model-topology keys are EXCLUDED
-                        # (_MODEL_TOPOLOGY_FILL_BLOCKED): auto-filling a shape or
-                        # encoding key from yaml would rebuild the model away
-                        # from the checkpoint it must match (see that set's
-                        # note). Log so a silent startup change leaves a trail.
+                        # is running yet. Construction-bound keys are EXCLUDED
+                        # (_RESUME_CONSTRUCTION_BOUND_KEYS): auto-filling a model
+                        # shape/encoding key OR an optimizer-construction key
+                        # would rebuild the model/optimizer away from the
+                        # checkpoint it must match (see that set's note). Log so
+                        # a silent startup change leaves a trail.
                         log.info(
                             "YAML startup reload: applying %s=%r (absent from restored config)",
                             k, v,

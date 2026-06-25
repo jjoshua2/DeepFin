@@ -358,6 +358,18 @@ def _meta_with_policy(meta: ShardMeta | dict[str, Any] | None, *, arrs: dict[str
         )
     attrs["policy_encoding"] = policy_encoding
     attrs["policy_size"] = policy_size
+    # Promote the scalar encoding-identity markers from the arrays into the meta
+    # so BOTH save paths persist them: zarr via group attrs, and the legacy NPZ
+    # path via meta_json. On load, _attach_identity_meta_arrays rematerializes
+    # the marker arrays FROM this meta (overwriting any stored array), so a
+    # marker that lives only in the arrays would otherwise be lost on the NPZ
+    # round trip — reverting history_rep_fix to False.
+    if attrs.get("input_history_encoding") is None and INPUT_HISTORY_ENCODING_ARRAY_KEY in arrs:
+        hist = np.asarray(arrs[INPUT_HISTORY_ENCODING_ARRAY_KEY])
+        if hist.size:
+            attrs["input_history_encoding"] = str(hist.reshape(-1)[0])
+    if attrs.get("history_rep_fix") is None and HISTORY_REP_FIX_ARRAY_KEY in arrs:
+        attrs["history_rep_fix"] = history_rep_fix_from_arrays(arrs)
     return attrs
 
 
@@ -1283,18 +1295,11 @@ def save_local_shard_arrays(
     tmp = p.with_name(f"._tmp_{os.getpid()}_{secrets.token_hex(8)}_{p.name}")
     try:
         g = zarr.open_group(str(tmp), mode="w")
+        # _meta_with_policy promotes the encoding-identity markers (history
+        # encoding, rep-fix) from the pruned arrays into attrs; prune preserves
+        # those markers, so no separate fallback off the un-pruned arrs is
+        # needed.
         attrs = _meta_with_policy(meta, arrs=stored)
-        if (
-            attrs.get("input_history_encoding") is None
-            and INPUT_HISTORY_ENCODING_ARRAY_KEY in arrs
-        ):
-            hist_arr = np.asarray(arrs[INPUT_HISTORY_ENCODING_ARRAY_KEY])
-            if hist_arr.size:
-                attrs["input_history_encoding"] = str(hist_arr.reshape(-1)[0])
-        if attrs.get("history_rep_fix") is None and HISTORY_REP_FIX_ARRAY_KEY in arrs:
-            # Buffer-written window shards carry the marker as a chunk array;
-            # persist it as the attr so reloads rematerialize it.
-            attrs["history_rep_fix"] = history_rep_fix_from_arrays(arrs)
         g.attrs.update(attrs)
         compressor = Blosc(cname="zstd", clevel=3, shuffle=Blosc.SHUFFLE)
         for name, value in stored.items():

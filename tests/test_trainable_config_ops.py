@@ -378,6 +378,35 @@ train:
         assert key not in config, f"{key} must not be auto-filled on resume"
 
 
+def test_startup_yaml_reload_does_not_inject_optimizer_construction_keys(tmp_path) -> None:
+    # The Trainer/optimizer is built from config BEFORE checkpoint restore, so
+    # backfilling optimizer-construction keys absent from an older restored
+    # config would build a different optimizer than the saved moments fit ->
+    # Trainer.load reinitializes state. They must not be startup-auto-filled.
+    yaml_path = tmp_path / "cfg.yaml"
+    yaml_path.write_text(
+        """
+optimizer: aurora
+matrix_optimizer_scope: mlp_out
+weight_decay_mode: decoupled
+num_samples: 4
+train:
+  lr: 0.0007
+""",
+        encoding="utf-8",
+    )
+    config = {"lr": 0.0003}
+
+    _reload_yaml_into_config(config, str(yaml_path))
+
+    assert config["lr"] == 0.0007
+    # Safe infra key still propagates.
+    assert config["num_samples"] == 4
+    # Optimizer-construction keys are NOT injected.
+    for key in ("optimizer", "matrix_optimizer_scope", "weight_decay_mode"):
+        assert key not in config, f"{key} must not be auto-filled on resume"
+
+
 def test_live_yaml_reload_does_not_propagate_new_worker_topology_flag(tmp_path) -> None:
     yaml_path = tmp_path / "cfg.yaml"
     yaml_path.write_text(
