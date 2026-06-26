@@ -121,14 +121,30 @@ class OnnxChessNet(torch.nn.Module):
 
 
 def build_lc0_policy_remap() -> torch.Tensor:
-    """Build the 4672 → 1858 lookup. NOT YET IMPLEMENTED.
+    """Build the 4672 → 1858 lookup.
 
-    Will enumerate the LC0 1858 move list in canonical order and, for each
-    of our 4672 (square, direction) slots, find the matching index (or -1).
-    Requires the LC0 move enumeration, typically loaded from python-chess +
-    the LC0 ordering rules.
+    For each of our 4672 (square, direction) move slots, store the matching
+    canonical LC0/Leela 1858 policy slot, or -1 if our encoding has no move
+    there. Built from the verbatim lc0 ``kMoveStrs`` table (White-POV) and
+    verified against the BT4 ONNX policy head (startpos → Nf3/d4, back-rank →
+    mate, audit positions → deep-SF bestmove).
+
+    Caveat — the 22 promotion-rank squares (e.g. ``a7a8``/``a7a8q``): Leela
+    keeps SEPARATE slots for a piece sliding to the back rank vs a pawn
+    promoting to a queen, while our AZ-4672 conflates them into one direction
+    plane. We deliberately map that shared slot to the queen-PROMOTION leela
+    index (the common case); the bare back-rank-slide index is then only
+    reachable through its own distinct from-squares. This is position-disjoint
+    under legal masking (a 7th-rank pawn always promotes; a piece on the 7th
+    never does), so 1836/1858 of our slots map uniquely and the remaining 22
+    are unambiguous in any real position.
     """
-    raise NotImplementedError(
-        "build_lc0_policy_remap not yet wired — fill in once a Ceres ONNX "
-        "file is available so we can verify against its actual policy layout."
-    )
+    from chess_anti_engine.moves.encode import uci_to_policy_index
+    from chess_anti_engine.moves.lc0_1858_movestrs import LC0_1858_MOVE_STRS
+
+    remap = torch.full((POLICY_SIZE,), -1, dtype=torch.int64)
+    for leela_idx, uci in enumerate(LC0_1858_MOVE_STRS):
+        our = uci_to_policy_index(uci, True)
+        if our >= 0:
+            remap[int(our)] = leela_idx
+    return remap
