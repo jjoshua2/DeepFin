@@ -153,10 +153,18 @@ def main() -> None:
     pol = np.empty((len(boards), COMPACT_POLICY_SIZE), dtype=np.float32)
     wdl = np.empty((len(boards), 3), dtype=np.float32)
     bs = int(args.batch_size)
+    pol_idx = wdl_idx = -1
     for s in range(0, len(boards), bs):
-        out = sess.run(None, {in_name: feats[s:s + bs]})
-        pol[s:s + bs] = np.asarray(out[0])[:, :COMPACT_POLICY_SIZE]
-        wdl[s:s + bs] = np.asarray(out[1])
+        out = [np.asarray(o) for o in sess.run(None, {in_name: feats[s:s + bs]})]
+        if pol_idx < 0:
+            # Pick outputs by width, not position: some LC0/BT4 ONNX graphs emit
+            # WDL (3-wide) before policy (1858-wide), so out[0] is not always
+            # the policy tensor.
+            widths = [a.shape[-1] for a in out]
+            pol_idx = int(np.argmax(widths))
+            wdl_idx = next(i for i, w in enumerate(widths) if w == 3)
+        pol[s:s + bs] = out[pol_idx][:, :COMPACT_POLICY_SIZE]
+        wdl[s:s + bs] = out[wdl_idx]
         if s % (bs * 8) == 0:
             print(f"[bt4] {s + min(bs, len(boards) - s)}/{len(boards)}")
 

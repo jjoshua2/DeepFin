@@ -21,10 +21,30 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
+import numpy as np
 import torch
 
 from chess_anti_engine.encoding.lc0 import LC0_FULL
 from chess_anti_engine.moves import COMPACT_POLICY_SIZE, POLICY_SIZE
+
+_LC0_HISTORY_FRAMES = 8
+_LC0_PLANES_PER_FRAME = 13  # 6 our + 6 their piece planes + 1 repetition
+
+
+def _fill_lc0_history_repeat(planes: np.ndarray) -> np.ndarray:
+    """Replicate lc0's empty-history fill (encoder.cc: ``history[idx<0?0:idx]``)
+    on a ``(B, P, 8, 8)`` batch: any all-zero history frame is filled from the
+    live frame (frame 0), per sample. LC0's 112-plane input is 8 history frames
+    × 13 planes; frames with real content (every real position has both kings)
+    are left untouched, so mid-game inputs are unaffected. In place; idempotent."""
+    f = _LC0_PLANES_PER_FRAME
+    b = planes.shape[0]
+    for s in range(1, _LC0_HISTORY_FRAMES):
+        frame = planes[:, f * s:f * s + f]
+        empty = frame.reshape(b, -1).sum(axis=1) == 0.0
+        if empty.any():
+            planes[empty, f * s:f * s + f] = planes[empty, 0:f]
+    return planes
 
 
 class OnnxChessNet(torch.nn.Module):
@@ -40,7 +60,9 @@ class OnnxChessNet(torch.nn.Module):
     policy_output_name:
         Name of the policy logits output. Shape ``(B, 1858)`` expected.
     wdl_output_name:
-        Name of the WDL logits output. Shape ``(B, 3)`` expected.
+        Name of the WDL output. Shape ``(B, 3)`` expected. LC0/Ceres value
+        heads emit softmaxed PROBABILITIES here; ``forward`` returns them as
+        log-probs so the search value path's softmax recovers the distribution.
     policy_4672_to_1858:
         Length-4672 ``int64`` tensor mapping our move index → LC0 1858 slot,
         or -1 if absent. Use ``build_lc0_policy_remap()`` to construct.
@@ -94,7 +116,15 @@ class OnnxChessNet(torch.nn.Module):
                 f"input has {x.shape[1]} planes, ONNX model needs >= {self._plane_count}"
             )
         # ORT wants numpy float32 on the CPU ingress; the session moves to CUDA itself.
-        np_in = x_in.detach().to(dtype=torch.float32, device="cpu").numpy()
+        # .copy() so the LC0 history fill below never writes through to the
+        # caller's tensor (numpy() can alias an already-CPU/float32 input).
+        np_in = x_in.detach().to(dtype=torch.float32, device="cpu").numpy().copy()
+        # LC0/Ceres nets read history-sensitively and break on zero-filled
+        # history (e.g. a rootless UCI `position fen ...` or a debug position).
+        # Replicate the live frame into any all-zero history frame, exactly as
+        # bt4_audit.py does; real-history inputs have non-empty frames and are
+        # left untouched.
+        np_in = _fill_lc0_history_repeat(np_in)
         out_pol_1858, out_wdl = self._session.run(
             [self._policy_out, self._wdl_out],
             {self._input_name: np_in},
@@ -116,7 +146,12 @@ class OnnxChessNet(torch.nn.Module):
         # Broadcast gather across batch.
         idx = gather_idx.unsqueeze(0).expand(pol_1858.shape[0], -1)
         pol_4672 = torch.gather(padded, 1, idx)
-        wdl = torch.from_numpy(out_wdl)
+        # LC0/Ceres value heads emit WDL PROBABILITIES (softmaxed). The search
+        # value path (_value_scalar_from_wdl_logits) softmaxes `wdl` again, which
+        # would crush a near-certain [1,0,0] to ~0.58. Hand back log-probs so the
+        # downstream softmax recovers the original distribution.
+        wdl_probs = torch.from_numpy(out_wdl).to(torch.float32)
+        wdl = torch.log(wdl_probs.clamp_min(1e-9))
         return {"policy_own": pol_4672, "policy": pol_4672, "wdl": wdl}
 
 
