@@ -764,6 +764,12 @@ def run_gumbel_root_many_c(
             and not cfg.compute_relations  # compact-legal eval path has no relations input
             and hasattr(tree, "get_pending_legal_indices")
             and hasattr(tree, "continue_gumbel_sims_legal_bf16")
+            # The legal-BF16 leaf path softmaxes raw BF16 logits in C with no
+            # temperature hook; policy_temp!=1 would leave those leaf priors
+            # untempered while root/dense priors are tempered. policy_temp is a
+            # rare experiment knob (production=1.0), so fall back to the
+            # tempering-aware path when it's set rather than re-pack BF16.
+            and float(getattr(cfg, "policy_temp", 1.0)) == 1.0
         )
         _use_input_bf16 = _has_input_bf16 and _use_legal_bf16
         if _inplace:
