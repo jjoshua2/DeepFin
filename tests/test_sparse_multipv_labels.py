@@ -657,3 +657,27 @@ def test_config_rejects_dense_off_without_sparse_ce():
     flat = flatten_run_config_defaults(ok)
     assert flat["record_dense_sf_policy"] is False
     assert flat["sf_policy_sparse_ce"] is True
+
+
+def test_sf_policy_label_smoothing_only_when_uncovered() -> None:
+    """Label smoothing is applied only when SF's candidates don't cover every
+    legal move. Fully covered -> pure softmax (no flattening); uncovered -> the
+    uncovered legal moves get a floor strictly below every covered move."""
+    from chess_anti_engine.selfplay.stockfish_turn import _build_sf_policy_target
+
+    legal = np.array([0, 1, 2], dtype=np.int64)
+    # Fully covered: all 3 legal moves are candidates -> no smoothing.
+    p_full = _build_sf_policy_target(
+        [0, 1, 2], [3.0, 1.0, 0.0], legal_indices=legal,
+        sf_policy_temp=1.0, sf_policy_label_smooth=0.1,
+    )
+    raw = np.exp(np.array([3.0, 1.0, 0.0])); raw /= raw.sum()
+    assert np.allclose([p_full[0], p_full[1], p_full[2]], raw, atol=1e-5)
+
+    # Uncovered: only 2 of 3 legal moves scored -> smoothing on; idx2 gets a floor.
+    p_unc = _build_sf_policy_target(
+        [0, 1], [3.0, 1.0], legal_indices=legal,
+        sf_policy_temp=1.0, sf_policy_label_smooth=0.1,
+    )
+    assert p_unc[2] > 0.0
+    assert p_unc[0] > p_unc[2] and p_unc[1] > p_unc[2]

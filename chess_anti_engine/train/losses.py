@@ -267,8 +267,14 @@ def compute_loss(
     if base_policy_logits is None:
         raise KeyError("Model outputs must include either 'policy' or 'policy_own'.")
 
+    # Legal-masked base logits, computed once and reused by the main policy CE,
+    # the sf_p0 CE, and the sf_own_regret softmax below (all train policy_own /
+    # policy in the same legal space) — the mask is a full-width align+fill, so
+    # recomputing it per term wastes work every training step.
+    masked_base = _apply_legal_mask(base_policy_logits)
+
     pol_target = align_policy_target(batch["policy_t"], int(base_policy_logits.shape[-1]))
-    pol_ce = soft_cross_entropy(_apply_legal_mask(base_policy_logits), pol_target)
+    pol_ce = soft_cross_entropy(masked_base, pol_target)
     zero_loss = torch.zeros_like(pol_ce)
     has_policy = _get_mask(batch, "has_policy", default=1.0)
 
@@ -316,7 +322,7 @@ def compute_loss(
     sf_p0_target = batch.get("sf_p0_policy_t")
     if sf_p0_target is not None:
         sf_p0_ce = soft_cross_entropy(
-            _apply_legal_mask(base_policy_logits),
+            masked_base,
             align_policy_target(sf_p0_target, int(base_policy_logits.shape[-1])),
         )
     else:
@@ -331,7 +337,7 @@ def compute_loss(
     has_sf_p0_regret = _get_mask(batch, "has_sf_p0_regret")
     sf_p0_regret_t = batch.get("sf_p0_regret_t")
     if sf_p0_regret_t is not None:
-        po_probs = torch.softmax(_apply_legal_mask(base_policy_logits), dim=-1)
+        po_probs = torch.softmax(masked_base, dim=-1)
         reg_vec = align_action_values(sf_p0_regret_t, int(base_policy_logits.shape[-1]))
         sf_own_regret = (po_probs * reg_vec).sum(-1)
     else:
