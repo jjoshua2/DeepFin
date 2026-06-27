@@ -26,6 +26,9 @@ def _bare_worker_session() -> WorkerSession:
     session._stop_selfplay = False
     session._active_reco = {k: None for k in WorkerSession._RECO_RESTART_KEYS}
     session._active_reco["sf_nodes"] = 100
+  # Test manifests carry no stockfish/opening-book assets, so the session-start
+  # fingerprint is all-None; match it so the asset-change gate stays quiet.
+    session._active_assets = (None, None, None)
     session._last_manifest_poll_s = time.time()
     session._manifest_mtime = None
     session.model_sha = "old-sha"
@@ -531,7 +534,10 @@ def test_every_reco_field_is_watched() -> None:
     _RECO_RESTART_KEYS. Otherwise a mid-run change to it silently never reaches
     workers now that the PID levers are live (no incidental restart to flush it)."""
     import inspect
+    # Scan both the config builder and the session-start path (games_per_batch
+    # is read in _run_selfplay, not _build_selfplay_configs).
     src = inspect.getsource(WorkerSession._build_selfplay_configs)
+    src += inspect.getsource(WorkerSession._run_selfplay)
     keys: set[str] = set()
     for pat in (
         r'reco\.get\(\s*["\']([a-z0-9_]+)["\']',
@@ -583,6 +589,29 @@ def test_sf_multipv_change_triggers_restart() -> None:
     changed = WorkerSession._reco_changed(
         session,
         {"recommended_worker": {"sf_nodes": 6000, "sf_multipv": 10}},
+        source_tag="test",
+    )
+
+    assert changed is True
+    assert session._stop_selfplay is True
+
+
+def test_session_asset_change_triggers_restart() -> None:
+    """Codex review: a session-start asset change (SF binary / opening-book SHA)
+    bundled with only live reco keys cannot be live-applied to the running
+    engine/book, so it must restart instead of being silently ignored."""
+    session = _bare_worker_session()
+    session.args = SimpleNamespace(sf_nodes=None, stockfish_from_server=True)
+    session._active_reco = session._snapshot_reco({"sf_nodes": 5000})
+    session._active_assets = ("sha_old", None, None)
+    session._active_state = _live_state()
+
+    changed = WorkerSession._reco_changed(
+        session,
+        {
+            "stockfish": {"sha256": "sha_NEW"},
+            "recommended_worker": {"sf_nodes": 6000},  # only a live key changed
+        },
         source_tag="test",
     )
 

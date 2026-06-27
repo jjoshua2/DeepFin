@@ -826,6 +826,9 @@ class WorkerSession:
         self._manifest_path: Path | None = None
         self._manifest_mtime: float | None = None
         self._active_reco: dict | None = None
+  # Session-start asset SHAs (SF binary, opening books) — a mid-run change to
+  # these can't be live-applied, so it forces a restart. Set in _run_selfplay.
+        self._active_assets: tuple | None = None
   # Reference to the live SelfplayState during a continuous session, used to
   # apply live-safe reco changes (selfplay_fraction / regret / SF nodes) in
   # place without bouncing the session. None between sessions / threaded mode.
@@ -1132,6 +1135,18 @@ class WorkerSession:
         """Snapshot every watched reco key (restart + live) for change detection."""
         return {k: reco.get(k) for k in self._RECO_WATCH_KEYS}
 
+    def _asset_fingerprint(self, manifest: dict) -> tuple:
+        """Published SHAs of the session-start assets that a live reco-apply
+        cannot swap on a running session (SF binary — only when served — and the
+        opening books). Compared against the session-start snapshot so an asset
+        change forces a restart instead of being silently ignored."""
+        def _sha(key: str) -> str | None:
+            rec = manifest.get(key)
+            return str(rec.get("sha256")) if isinstance(rec, dict) and rec.get("sha256") else None
+        from_server = bool(getattr(self.args, "stockfish_from_server", False))
+        sf_sha = _sha("stockfish") if from_server else None
+        return (sf_sha, _sha("opening_book"), _sha("opening_book_2"))
+
     def _reco_changed(self, manifest: dict, *, source_tag: str) -> bool:
         """Return True (and request session restart) if reco knobs differ from active.
 
@@ -1151,10 +1166,15 @@ class WorkerSession:
         live_changed = any(
             new_reco.get(k) != active.get(k) for k in self._RECO_LIVE_KEYS
         )
-        if not restart_changed and not live_changed:
+  # Session-start assets (SF binary, opening books) are applied only when a new
+  # session starts — _sync_stockfish / the OpeningConfig bake them in. If they
+  # changed alongside only live reco keys, the live path would keep the stale
+  # engine/book, so treat an asset change as a restart trigger too.
+        assets_changed = self._asset_fingerprint(manifest) != getattr(self, "_active_assets", None)
+        if not restart_changed and not live_changed and not assets_changed:
             return False
   # Live-only change: apply in place if a session is running, no restart.
-        if not restart_changed and self._apply_live_reco(new_reco):
+        if not restart_changed and not assets_changed and self._apply_live_reco(new_reco):
             self._active_reco = self._snapshot_reco(new_reco)
             self.log.info("recommended_worker live-applied (%s), no session restart", source_tag)
             return False
@@ -2207,6 +2227,10 @@ class WorkerSession:
   # be set live like sf_nodes), so a change must restart — otherwise the worker
   # keeps producing labels at the old PV count until an unrelated restart.
         "sf_multipv",
+  # games_per_batch is consumed at session start in _run_selfplay (play_batch
+  # slot count) and cannot be resized on a running SelfplayState, so a change
+  # must restart.
+        "games_per_batch",
         "mcts_simulations", "fast_simulations",
         "gumbel_topk", "gumbel_c_scale", "gumbel_scale", "gumbel_scale_after",
         "gumbel_scale_decay_start_move", "gumbel_scale_decay_moves",
@@ -2544,6 +2568,7 @@ class WorkerSession:
         self._last_manifest_poll_s = time.time()
         reco = manifest.get("recommended_worker") or {}
         self._active_reco = self._snapshot_reco(reco)
+        self._active_assets = self._asset_fingerprint(manifest)
         model_sha = self.model_sha
 
         need_local_model = self.inference_client is None
