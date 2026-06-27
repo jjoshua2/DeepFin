@@ -149,10 +149,17 @@ def build_lc0_policy_remap() -> torch.Tensor:
     correct remap would require per-move board/piece context at gather time.
     """
     from chess_anti_engine.moves.encode import uci_to_policy_index
-    from chess_anti_engine.moves.lc0_1858_movestrs import LC0_1858_MOVE_STRS
+    from chess_anti_engine.moves.lc0_1858_movestrs import LC0_1858_UCI_TO_IDX
 
+    # Iterate the alias dict (not the bare table) so the "...n" knight-promotion
+    # UCIs are mapped too: LC0 has no knight-promo slot (it reuses the bare
+    # from/to entry), but AZ-4672 keeps a DISTINCT knight-underpromotion plane,
+    # so without this the OnnxChessNet gather returns -inf for legal knight
+    # promotions and masks them from search. Insertion order (bare/q/r/b first,
+    # then the appended "...n" aliases) preserves the queen-promo-wins choice for
+    # the shared slot while filling the otherwise-unmapped knight slots.
     remap = torch.full((POLICY_SIZE,), -1, dtype=torch.int64)
-    for leela_idx, uci in enumerate(LC0_1858_MOVE_STRS):
+    for uci, leela_idx in LC0_1858_UCI_TO_IDX.items():
         our = uci_to_policy_index(uci, True)
         if our >= 0:
             remap[int(our)] = leela_idx
