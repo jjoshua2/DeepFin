@@ -117,7 +117,12 @@ def rebuild_sf_policy_target(
 
     smooth = float(params.sf_policy_label_smooth)
     legal = np.asarray(legal_indices, dtype=np.int64)
-    if smooth > 0.0 and legal.size > 0:
+    # Smooth only when candidates don't cover every legal move — mirrors the
+    # live builder (stockfish_turn._build_sf_policy_target) so rebuilt targets
+    # match the dense ones recorded by selfplay.
+    n_covered = len({int(a) for a in idxs} & {int(x) for x in legal})
+    has_uncovered = n_covered < int(legal.size)
+    if smooth > 0.0 and legal.size > 0 and has_uncovered:
         p_sf *= 1.0 - smooth
         p_sf[legal] += smooth / float(legal.size)
 

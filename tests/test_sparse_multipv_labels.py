@@ -279,7 +279,11 @@ def test_parity_through_real_stockfish_turn_path():
 
 def test_arrays_rebuild_only_touches_sparse_rows():
     pol = np.zeros((2, 4672), np.float16)
-    pol[0, 100] = 1.0
+    # Row 0 is fully covered (both legal moves are candidates), so the rebuild
+    # applies NO label smoothing -> a sharp-temp ~one-hot at the better move
+    # (100). Seed the init at the WORSE move (200) so "rebuilt != init" stays a
+    # meaningful check now that smoothing no longer perturbs a fully-covered row.
+    pol[0, 200] = 1.0
     pol[1, 7] = 1.0
     legal = np.zeros((2, 4672), np.uint8)
     legal[0, [100, 200]] = 1
