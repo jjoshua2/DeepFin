@@ -772,6 +772,9 @@ class WorkerSession:
         self.sf: StockfishPool | StockfishUCI | None = None
         self.sf_multipv_active: int | None = None
         self.sf_syzygy_path_active: str | None = None
+  # Resolved binary path the live engine was built with; re-init on change so a
+  # hot-swapped Stockfish (new SHA -> new cached path) is actually loaded.
+        self.sf_path_active: str | None = None
 
         self.last_model_sha = None
         self.last_ob_sha: str | None = None
@@ -826,6 +829,13 @@ class WorkerSession:
         self._manifest_path: Path | None = None
         self._manifest_mtime: float | None = None
         self._active_reco: dict | None = None
+  # Session-start asset SHAs (SF binary, opening books) — a mid-run change to
+  # these can't be live-applied, so it forces a restart. Set in _run_selfplay.
+        self._active_assets: tuple | None = None
+  # Reference to the live SelfplayState during a continuous session, used to
+  # apply live-safe reco changes (selfplay_fraction / regret / SF nodes) in
+  # place without bouncing the session. None between sessions / threaded mode.
+        self._active_state: Any | None = None
         self._evaluator_model_id: int | None = None
 
     def _build_evaluator(
@@ -1124,17 +1134,114 @@ class WorkerSession:
             )
         return cast(v)
 
+    def _snapshot_reco(self, reco: dict) -> dict:
+        """Snapshot every watched reco key (restart + live) for change detection."""
+        return {k: reco.get(k) for k in self._RECO_WATCH_KEYS}
+
+    def _asset_fingerprint(self, manifest: dict) -> tuple:
+        """Published SHAs of the session-start assets that a live reco-apply
+        cannot swap on a running session (SF binary — only when served — and the
+        opening books). Compared against the session-start snapshot so an asset
+        change forces a restart instead of being silently ignored."""
+        def _sha(key: str) -> str | None:
+            rec = manifest.get(key)
+            return str(rec.get("sha256")) if isinstance(rec, dict) and rec.get("sha256") else None
+        from_server = bool(getattr(self.args, "stockfish_from_server", False))
+        sf_sha = _sha("stockfish") if from_server else None
+        return (sf_sha, _sha("opening_book"), _sha("opening_book_2"))
+
     def _reco_changed(self, manifest: dict, *, source_tag: str) -> bool:
-        """Return True (and request session restart) if reco knobs differ from active."""
+        """Return True (and request session restart) if reco knobs differ from active.
+
+        Restart keys force a full session rebuild. Live keys (selfplay_fraction,
+        opponent regret, SF node budgets) are applied to the running session in
+        place when possible — every consumer reads them fresh per step/move/
+        recycle, so a restart (which abandons the 256 in-flight games and
+        collapses curriculum throughput for ~2 iters) is unnecessary.
+        """
         new_reco = manifest.get("recommended_worker") or {}
         active = getattr(self, "_active_reco", None)
         if active is None:
             return False
-        new_snap = {k: new_reco.get(k) for k in self._RECO_RESTART_KEYS}
-        if new_snap == active:
+  # A CLI-pinned games_per_batch wins over reco (see _run_selfplay), so a
+  # server-side change to it would otherwise force a no-op restart. Drop it from
+  # restart detection when pinned.
+        restart_keys = self._RECO_RESTART_KEYS
+        if getattr(self, "games_per_batch_local", None) is not None:
+            restart_keys = tuple(k for k in restart_keys if k != "games_per_batch")
+        restart_changed = any(
+            new_reco.get(k) != active.get(k) for k in restart_keys
+        )
+        live_changed = any(
+            new_reco.get(k) != active.get(k) for k in self._RECO_LIVE_KEYS
+        )
+  # Session-start assets (SF binary, opening books) are applied only when a new
+  # session starts — _sync_stockfish / the OpeningConfig bake them in. If they
+  # changed alongside only live reco keys, the live path would keep the stale
+  # engine/book, so treat an asset change as a restart trigger too.
+        assets_changed = self._asset_fingerprint(manifest) != getattr(self, "_active_assets", None)
+        if not restart_changed and not live_changed and not assets_changed:
+            return False
+  # Live-only change: apply in place if a session is running, no restart.
+        if not restart_changed and not assets_changed and self._apply_live_reco(new_reco):
+            self._active_reco = self._snapshot_reco(new_reco)
+            self.log.info("recommended_worker live-applied (%s), no session restart", source_tag)
             return False
         self.log.info("recommended_worker changed (%s), restarting selfplay session", source_tag)
         self._stop_selfplay = True
+        return True
+
+    def _set_active_state(self, state: Any) -> None:
+        """play_batch on_state_ready hook: stash the live state for live reco."""
+        self._active_state = state
+
+    def _apply_live_reco(self, reco: dict) -> bool:
+        """Swap live-safe config onto the running SelfplayState. Returns False if
+        no live session is active (caller falls back to a session restart)."""
+        state = getattr(self, "_active_state", None)
+        if state is None:
+            return False
+        try:
+            cfgs, (sf_nodes, _sf_multipv, _sz) = self._build_selfplay_configs(reco)
+        except _MissingRequiredReco:
+  # Incomplete reco (e.g. sf_nodes dropped) — restart will re-poll cleanly.
+            return False
+        except Exception as exc:
+  # A malformed reco field can make config construction raise. Don't let the
+  # caller's broad except swallow it silently (which would pin the worker at
+  # the old config with no restart): log and fall back to a restart, whose
+  # bring-up re-parses the reco and surfaces/handles the error as before.
+            self.log.warning(
+                "live reco apply failed to build configs (%s); falling back to restart",
+                exc, exc_info=True,
+            )
+            return False
+  # Transplant ONLY the live-safe fields onto the running config — never the
+  # whole rebuilt config. Other GameConfig fields (max_plies, sf_policy_temp,
+  # ...) are built from the same reco but are session-fixed; swapping the whole
+  # object would let an untracked field change take effect mid-session purely
+  # because a live key changed in the same publish. The live-field set here must
+  # stay in sync with _RECO_LIVE_KEYS (asserted by
+  # test_every_live_key_is_transplanted). recycle_slot / the stockfish turn read
+  # these refs fresh, so the swap takes effect immediately.
+        new_game, new_opp = cfgs["game"], cfgs["opponent"]
+        game = dataclasses.replace(
+            state.game,
+            selfplay_fraction=new_game.selfplay_fraction,
+            sf_fast_ply_node_scale=new_game.sf_fast_ply_node_scale,
+        )
+        opponent = dataclasses.replace(
+            state.opponent, wdl_regret_limit=new_opp.wdl_regret_limit,
+        )
+        state.apply_live_overrides(game=game, opponent=opponent, base_nodes=sf_nodes)
+        self._set_sf_nodes(sf_nodes)
+        self.log.info(
+            "live reco: selfplay_fraction=%.3f regret=%s sf_nodes=%d",
+            float(state.game.selfplay_fraction),
+            ("%.4f" % state.opponent.wdl_regret_limit)
+            if state.opponent.wdl_regret_limit is not None else "none",
+            int(sf_nodes),
+        )
         return True
 
     def _periodic_manifest_poll(self) -> None:
@@ -1184,6 +1291,22 @@ class WorkerSession:
             return manifest_path
         except Exception:
             return None
+
+    def _resync_evaluator_to_model(self) -> None:
+        """Point the DirectGPU evaluator at the current self.model if it drifted.
+        Single source of truth for the post-model-swap sync (the swap path, the
+        poll/_sync_model path, and session start all call this). Idempotent and a
+        no-op before the evaluator exists. Callers that mutate shared inference
+        state concurrently (threaded selfplay) must hold the upload-buffer lock —
+        the swap path does; the non-production threaded poll path is the only one
+        that doesn't, and threaded selfplay is not used in production."""
+        if (
+            self._direct_evaluator is not None
+            and self.model is not None
+            and self._evaluator_model_id != id(self.model)
+        ):
+            _sync_evaluator_to_model(self._direct_evaluator, self.model)
+            self._evaluator_model_id = id(self.model)
 
     def _swap_model_from_manifest(self, manifest: dict) -> None:
         """Tier 2 inner: download new SHA if changed, hot-swap model, flush old shards."""
@@ -1236,9 +1359,7 @@ class WorkerSession:
                 )
                 flushed_elapsed_s = float(elapsed_s)
             self.model = new_model
-            if self._direct_evaluator is not None:
-                _sync_evaluator_to_model(self._direct_evaluator, self.model)
-                self._evaluator_model_id = id(self.model)
+            self._resync_evaluator_to_model()
             self.model_sha = new_sha
             self.model_step = model_step
             self.last_model_sha = new_sha
@@ -1903,6 +2024,12 @@ class WorkerSession:
         self.model = self._load_and_compile_model(
             model_path, model_cfg, label="worker-model", sha_short=str(model_sha)[:8],
         )
+  # Keep the running evaluator pointed at the new model. Without this a mid-
+  # session model swap on the poll path (remote workers, or a model change that
+  # rode the live-reco path with no restart) would leave play_batch using the
+  # old model while shards are tagged with the new SHA. No-op before the
+  # evaluator exists (session start syncs it itself).
+        self._resync_evaluator_to_model()
 
         if self.last_model_sha is not None and not self.fixed_trial_id:
   # Reconsider assignment at natural model-boundary checkpoints.
@@ -1959,11 +2086,15 @@ class WorkerSession:
             self.last_sf_sha = sf_sha
             stockfish_path = str(sf_cached)
 
-  # (Re)initialize engine if multipv or syzygy path changed (both must be set at init time)
+  # (Re)initialize engine if the binary path/SHA, multipv, or syzygy path
+  # changed (all must be set at init time). The binary check is what makes the
+  # asset-fingerprint restart actually swap a hot-swapped Stockfish: without it
+  # a new SHA downloads to a new path but the running engine keeps the old one.
         sz_path = syzygy_path or None
         multipv_changed = self.sf_multipv_active is None or int(self.sf_multipv_active) != int(sf_multipv)
         syzygy_changed = self.sf_syzygy_path_active != sz_path
-        if self.sf is None or multipv_changed or syzygy_changed:
+        binary_changed = self.sf_path_active != stockfish_path
+        if self.sf is None or multipv_changed or syzygy_changed or binary_changed:
             if self.sf is not None:
                 try:
                     self.sf.close()
@@ -1989,12 +2120,18 @@ class WorkerSession:
                 )
             self.sf_multipv_active = int(sf_multipv)
             self.sf_syzygy_path_active = sz_path
+            self.sf_path_active = stockfish_path
         else:
-  # update nodes dynamically
-            if hasattr(self.sf, "set_nodes"):
-                self.sf.set_nodes(int(sf_nodes))
+  # update nodes dynamically (same live-update used by _apply_live_reco)
+            self._set_sf_nodes(sf_nodes)
 
         return stockfish_path
+
+    def _set_sf_nodes(self, sf_nodes: int) -> None:
+        """Push a new SF node budget to the live engine, if it supports it.
+        Shared by _sync_stockfish (restart path) and _apply_live_reco (live)."""
+        if self.sf is not None and hasattr(self.sf, "set_nodes"):
+            self.sf.set_nodes(int(sf_nodes))
 
     def _run_arena(self, manifest: dict, task: dict) -> None:
         """Arena match logic."""
@@ -2105,16 +2242,38 @@ class WorkerSession:
 
         time.sleep(0.1)
 
+  # Live-tunable fields: the trainer/PID changes these between iterations during
+  # a normal run (difficulty levers + the selfplay/curriculum mix). Every
+  # consumer reads them fresh per step/move/recycle, so they are applied to the
+  # running session in place (see _apply_live_reco) instead of restarting it.
+  # Restarting bounces SF, abandons the 256 in-flight games, and collapses
+  # curriculum throughput for ~2 iters (small-sample winrate spike).
+    _RECO_LIVE_KEYS = (
+        "selfplay_fraction", "opponent_wdl_regret_limit",
+        "sf_nodes", "sf_fast_ply_node_scale",
+    )
+
   # Fields in recommended_worker that affect gameplay and should trigger
   # a session restart when the trainer updates them between iterations.
     _RECO_RESTART_KEYS = (
-        "sf_nodes", "sf_move_nodes", "sf_fast_ply_node_scale",
-        "opponent_wdl_regret_limit", "mcts_simulations", "fast_simulations",
+  # sf_multipv is applied only at engine (re)init in _sync_stockfish (it can't
+  # be set live like sf_nodes), so a change must restart — otherwise the worker
+  # keeps producing labels at the old PV count until an unrelated restart.
+        "sf_multipv",
+  # games_per_batch is consumed at session start in _run_selfplay (play_batch
+  # slot count) and cannot be resized on a running SelfplayState, so a change
+  # must restart.
+        "games_per_batch",
+  # sf_move_nodes gates the curriculum SF query path: lowering it to 0 mid-flight
+  # would make pending move-futures (submitted at the old positive budget) get
+  # reused as full-strength label futures, writing low-node SF targets to replay.
+  # It's a static knob, so make it restart-only rather than drain futures live.
+        "sf_move_nodes",
+        "mcts_simulations", "fast_simulations",
         "gumbel_topk", "gumbel_c_scale", "gumbel_scale", "gumbel_scale_after",
         "gumbel_scale_decay_start_move", "gumbel_scale_decay_moves",
         "curriculum_gumbel_scale", "curriculum_gumbel_scale_after",
         "curriculum_gumbel_scale_decay_start_move", "curriculum_gumbel_scale_decay_moves",
-        "selfplay_fraction",
         "temperature", "temperature_decay_start_move", "temperature_decay_moves",
         "temperature_endgame", "selfplay_temperature",
         "selfplay_temperature_decay_start_move", "selfplay_temperature_decay_moves",
@@ -2129,9 +2288,25 @@ class WorkerSession:
         # an unrelated key changes. Flagged by Codex adversarial review.
         "syzygy_path", "stockfish_syzygy_path", "syzygy_rescore_policy",
         "syzygy_adjudicate", "syzygy_adjudicate_fraction", "syzygy_in_search",
-        "policy_encoding", "input_history_encoding", "input_extra_features",
+        "policy_encoding", "input_extra_features",
         "use_dynamic_relations", "record_relations",
+  # Remaining session-fixed fields built from reco. They used to propagate only
+  # incidentally — when the PID happened to move a (then-restart-keyed) sf_nodes
+  # /regret lever that iteration, the rebuild flushed them. Now those levers are
+  # live (no restart), so without listing these a mid-run change to a label knob
+  # (sf_policy_temp / sf_policy_label_smooth), gameplay structure (max_plies,
+  # mcts, playout_cap_fraction, random_start_plies, timeout_adjudication_threshold),
+  # opening sampling, or the volatility-search knobs would silently never reach
+  # workers. test_every_reco_field_is_watched guards completeness.
+        "sf_policy_temp", "sf_policy_label_smooth", "timeout_adjudication_threshold",
+        "max_plies", "mcts", "playout_cap_fraction", "random_start_plies",
+        "opening_book_prob", "opening_book_max_plies", "opening_book_max_games",
+        "opening_book_max_plies_2", "opening_book_max_games_2", "opening_book_mix_prob_2",
+        "volatility_q_scale", "volatility_fpu", "volatility_anchor",
     )
+
+  # Every reco key worth tracking for change detection (restart + live).
+    _RECO_WATCH_KEYS = _RECO_LIVE_KEYS + _RECO_RESTART_KEYS
 
     def _build_selfplay_configs(self, reco: dict) -> tuple[dict, tuple]:
         """Unpack manifest.recommended_worker into the 5 frozen config dataclasses.
@@ -2314,7 +2489,17 @@ class WorkerSession:
         return BatchStats(**agg)
 
     def _run_selfplay_threaded(self, *, games_per_batch: int, sf, eval_, cfgs: dict) -> BatchStats:
-        """Multi-threaded selfplay: N threads share one GPU evaluator."""
+        """Multi-threaded selfplay: N threads share one GPU evaluator.
+
+        Intentionally does NOT wire on_state_ready: there are N independent
+        SelfplayStates and on_step runs on only one thread, so live-applying to a
+        single state would leave the others on stale config. _active_state stays
+        None, so live reco changes correctly fall back to a full restart here
+        (same as pre-live-apply). Threaded selfplay is not the production path
+        (1 continuous worker per GPU; threading is always slower), so the
+        restart-churn this avoids elsewhere is not worth a thread-safe N-state
+        live-apply.
+        """
         n_threads = min(int(self.args.selfplay_threads), games_per_batch)
         base_games, remainder = divmod(games_per_batch, n_threads)
         thread_games = [base_games + (1 if i < remainder else 0) for i in range(n_threads)]
@@ -2360,17 +2545,23 @@ class WorkerSession:
   # Continuous selfplay: 256 slots always full, games recycled on completion.
   # Runs until _stop_selfplay is set (task change, pause, or shutdown).
   # Samples flow via _on_completed_game.
-            _samples, stats = play_batch(
-                self.model if (need_local_model and _eval is None) else None,
-                device=str(self.device), rng=self.rng,
-                stockfish=self.sf, evaluator=_eval,
-                games=int(games_per_batch),
-                on_game_complete=self._on_completed_game,
-                on_timing=self._record_selfplay_phase_timing,
-                on_step=self._check_model_update,
-                stop_fn=self._stop_fn,
-                **cfgs,
-            )
+            try:
+                _samples, stats = play_batch(
+                    self.model if (need_local_model and _eval is None) else None,
+                    device=str(self.device), rng=self.rng,
+                    stockfish=self.sf, evaluator=_eval,
+                    games=int(games_per_batch),
+                    on_game_complete=self._on_completed_game,
+                    on_timing=self._record_selfplay_phase_timing,
+                    on_step=self._check_model_update,
+                    on_state_ready=self._set_active_state,
+                    stop_fn=self._stop_fn,
+                    **cfgs,
+                )
+            finally:
+  # Drop the reference so a between-session reco poll restarts cleanly
+  # rather than mutating a dead state.
+                self._active_state = None
             return stats
         except StockfishTimeoutError as exc:
   # Stockfish went silent (DTZ load latency, GPU pressure, etc.).  Kill
@@ -2414,7 +2605,8 @@ class WorkerSession:
         self._stop_selfplay = False
         self._last_manifest_poll_s = time.time()
         reco = manifest.get("recommended_worker") or {}
-        self._active_reco = {k: reco.get(k) for k in self._RECO_RESTART_KEYS}
+        self._active_reco = self._snapshot_reco(reco)
+        self._active_assets = self._asset_fingerprint(manifest)
         model_sha = self.model_sha
 
         need_local_model = self.inference_client is None
@@ -2427,9 +2619,7 @@ class WorkerSession:
             assert self.model is not None
             if self._direct_evaluator is None:
                 self._direct_evaluator = self._build_evaluator(self.model)
-            if self._evaluator_model_id != id(self.model):
-                _sync_evaluator_to_model(self._direct_evaluator, self.model)
-                self._evaluator_model_id = id(self.model)
+            self._resync_evaluator_to_model()
 
         games_per_batch = (
             int(self.games_per_batch_local)
