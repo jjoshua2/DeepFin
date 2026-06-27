@@ -60,6 +60,9 @@ class GumbelConfig:
     simulations: int = 50
     topk: int = 16
     temperature: float = 1.0
+    # Prior temperature on the policy-head logits before they seed the tree
+    # (logits/policy_temp). >1 softens the prior, <1 sharpens it; 1.0 = no-op.
+    policy_temp: float = 1.0
     c_visit: float = 50.0
     c_scale: float = 0.1
     c_puct: float = 2.5

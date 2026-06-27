@@ -476,9 +476,13 @@ def main() -> None:
                 "expected": exp_r, "top1": top1_r,
             })
             top_i = int(np.argmax(probs))
+            pv = np.asarray(probs, dtype=np.float64)
+            pv = pv / max(1e-12, pv.sum())
+            entropy = float(-(pv[pv > 0] * np.log(pv[pv > 0])).sum())
             per_cand[cand] = {
                 "exp": exp_r, "top1": top1_r,
                 "move": legal_ucis[top_i], "p": float(probs[top_i]),
+                "entropy": entropy,
             }
         if args.dump_per_position is not None:
             # Criticality = deep-SF gap between the best and 2nd-best listed

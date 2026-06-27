@@ -90,8 +90,16 @@ def _batch_encoders(input_history_encoding: str | None):
 
 
 def _policy_logits_to_full(pol_logits: np.ndarray, *, cfg: GumbelConfig) -> np.ndarray:
+    pol = np.asarray(pol_logits, dtype=np.float32)
+    # Prior temperature: scale the model's policy logits before they enter the
+    # tree as the root prior. T>1 softens (more exploratory prior), T<1 sharpens
+    # (trusts the policy head more). Default 1.0 = no-op. Applied to the raw
+    # logits so the downstream softmax sees logits/T.
+    pt = float(getattr(cfg, "policy_temp", 1.0))
+    if pt > 0.0 and pt != 1.0:
+        pol = pol / pt
     return policy_batch_to_full_if_needed(
-        np.asarray(pol_logits, dtype=np.float32),
+        pol,
         policy_encoding=cfg.policy_encoding,
         fill_value=-1e9,
     )
