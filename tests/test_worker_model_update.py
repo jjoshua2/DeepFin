@@ -425,8 +425,60 @@ def test_build_selfplay_configs_requires_sf_nodes() -> None:
     assert sf_args[0] == 5000
 
 
-def test_sf_fast_ply_node_scale_triggers_session_restart() -> None:
-    """The GameConfig is built once per session, so changing the published
-    sf_fast_ply_node_scale must restart selfplay to take effect — i.e. it must
-    be in the reco-restart key set (same as sf_nodes / sf_move_nodes)."""
-    assert "sf_fast_ply_node_scale" in WorkerSession._RECO_RESTART_KEYS
+def test_sf_node_knobs_are_live_applied_not_restart() -> None:
+    """SF node budgets + the selfplay/curriculum mix are read fresh per
+    move/recycle, so the worker now applies them to the running SelfplayState
+    in place (no session restart that would abandon the in-flight games)."""
+    for key in ("sf_fast_ply_node_scale", "sf_nodes", "sf_move_nodes",
+                "selfplay_fraction", "opponent_wdl_regret_limit"):
+        assert key in WorkerSession._RECO_LIVE_KEYS
+        assert key not in WorkerSession._RECO_RESTART_KEYS
+
+
+def test_live_reco_change_applies_without_restart() -> None:
+    """A live-only reco change (selfplay_fraction) on an active session swaps
+    the state config in place and does NOT request a session restart."""
+    session = _bare_worker_session()
+    session.args = SimpleNamespace(sf_nodes=None)
+    old = {"sf_nodes": 5000, "selfplay_fraction": 0.30}
+    session._active_reco = session._snapshot_reco(old)
+
+    captured: dict[str, Any] = {}
+
+    class _FakeState:
+        game = SimpleNamespace(selfplay_fraction=0.30)
+        opponent = SimpleNamespace(wdl_regret_limit=0.04)
+        base_nodes = 5000
+        terminal_eval_nodes = 25000
+
+    session._active_state = _FakeState()
+    cast(Any, session).sf = SimpleNamespace(set_nodes=lambda n: captured.update(nodes=n))
+
+    changed = WorkerSession._reco_changed(
+        session,
+        {"recommended_worker": {"sf_nodes": 5000, "selfplay_fraction": 0.50}},
+        source_tag="test",
+    )
+
+    assert changed is False
+    assert session._stop_selfplay is False
+    assert session._active_state.game.selfplay_fraction == 0.50
+    assert session._active_reco["selfplay_fraction"] == 0.50
+
+
+def test_live_reco_change_without_active_state_restarts() -> None:
+    """A live-key change with no running session (threaded mode / between
+    sessions) must fall back to a session restart so the change isn't lost."""
+    session = _bare_worker_session()
+    session.args = SimpleNamespace(sf_nodes=None)
+    session._active_reco = session._snapshot_reco({"sf_nodes": 5000, "selfplay_fraction": 0.30})
+    session._active_state = None
+
+    changed = WorkerSession._reco_changed(
+        session,
+        {"recommended_worker": {"sf_nodes": 5000, "selfplay_fraction": 0.50}},
+        source_tag="test",
+    )
+
+    assert changed is True
+    assert session._stop_selfplay is True
