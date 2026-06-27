@@ -152,7 +152,16 @@ def main() -> None:
                     f"{widths}. Pass an LC0/Ceres net with a WDL value head."
                 )
         pol[s:s + bs] = out[pol_idx][:, :COMPACT_POLICY_SIZE]
-        wdl[s:s + bs] = out[wdl_idx]
+        # Cache WDL as a probability distribution so the downstream Brier/ECE are
+        # valid. LC0/Ceres value heads emit softmaxed probs (rows sum to ~1); if a
+        # net instead emits raw logits, softmax them — mirrors the probs-vs-logits
+        # handling in OnnxChessNet so the audit numbers aren't meaningless.
+        w = out[wdl_idx].astype(np.float64)
+        if not np.allclose(w.sum(axis=1), 1.0, atol=1e-2):
+            w = w - w.max(axis=1, keepdims=True)
+            w = np.exp(w)
+            w /= w.sum(axis=1, keepdims=True)
+        wdl[s:s + bs] = w
         if s % (bs * 8) == 0:
             print(f"[bt4] {s + min(bs, len(boards) - s)}/{len(boards)}")
 
