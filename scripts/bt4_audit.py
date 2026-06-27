@@ -134,6 +134,17 @@ def main() -> None:
     boards = [chess.Board(p.fen) for p in positions]
 
     def _enc(b: chess.Board) -> np.ndarray:
+        # `lc0_root` emits LC0-canonical metadata in planes 104..111 — verified
+        # directly against LC0's layout: side-relative castling (us-Q, us-K,
+        # them-Q, them-K, flipped for black-to-move), side-to-move flag (108),
+        # raw rule50 count (109), zeros (110), ones (111). It writes NO
+        # en-passant plane, which is correct: BT4's T-format has no EP plane and
+        # conveys en passant through the move history. The single caveat is that
+        # `_fill_history_repeat` fakes the 7 empty history frames, so for the
+        # ~1% of audit FENs whose key move is an en-passant capture, BT4 can't
+        # see the double-push that would make it available (a single-FEN
+        # limitation, not a metadata bug). The `*_legacy_meta` variant DOES pack
+        # an EP file into plane 110 and must NOT be used here.
         e = encode_position(b, add_features=False, input_history_encoding=args.history)
         return _fill_history_repeat(e) if args.history_fill == "repeat" else e
 

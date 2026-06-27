@@ -132,12 +132,21 @@ def build_lc0_policy_remap() -> torch.Tensor:
     Caveat — the 22 promotion-rank squares (e.g. ``a7a8``/``a7a8q``): Leela
     keeps SEPARATE slots for a piece sliding to the back rank vs a pawn
     promoting to a queen, while our AZ-4672 conflates them into one direction
-    plane. We deliberately map that shared slot to the queen-PROMOTION leela
-    index (the common case); the bare back-rank-slide index is then only
-    reachable through its own distinct from-squares. This is position-disjoint
-    under legal masking (a 7th-rank pawn always promotes; a piece on the 7th
-    never does), so 1836/1858 of our slots map uniquely and the remaining 22
-    are unambiguous in any real position.
+    plane. A static 4672->1858 lookup therefore CANNOT disambiguate them
+    without board context. We map the shared slot to the queen-PROMOTION leela
+    index because that is the overwhelmingly common case for that square pair.
+
+    Known bounded inaccuracy (flagged by Codex on #80): a NON-pawn piece sliding
+    to the back rank (e.g. a rook on a7 playing ``a7a8``) reuses that same
+    AZ-4672 slot, so ``OnnxChessNet`` would gather the LC0 queen-promotion logit
+    for it. This is reachable only through ``OnnxChessNet`` (running an LC0/BT4
+    net via our 4672 interface) and only in the rare position where a piece —
+    not a pawn — moves onto the 8th/1st rank; legal masking keeps the two move
+    families position-disjoint so nothing is double-counted, but the logit read
+    for such a slide is the queen-promo logit, not the slide's. The BT4 *audit*
+    path is unaffected: ``bt4_audit.py`` gathers in 1858 space directly from the
+    legal UCIs (board-aware), never through this lossy 4672 remap. A fully
+    correct remap would require per-move board/piece context at gather time.
     """
     from chess_anti_engine.moves.encode import uci_to_policy_index
     from chess_anti_engine.moves.lc0_1858_movestrs import LC0_1858_MOVE_STRS

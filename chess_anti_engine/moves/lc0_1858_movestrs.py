@@ -247,5 +247,26 @@ LC0_1858_MOVE_STRS: tuple[str, ...] = (
 
 assert len(LC0_1858_MOVE_STRS) == 1858
 
-LC0_1858_UCI_TO_IDX: dict[str, int] = {m: i for i, m in enumerate(LC0_1858_MOVE_STRS)}
+def _build_uci_to_idx() -> dict[str, int]:
+    """UCI -> 1858 slot, with knight-promotion aliases.
+
+    LC0 encodes knight promotion as the BARE from/to slot (no suffix) — the
+    table only carries explicit q/r/b promotion suffixes. python-chess instead
+    emits an explicit "...n" UCI for a knight promotion, so without an alias
+    those legal moves miss the dict and resolve to -1 (BT4 silently can't score
+    the move). Point every "...n" promotion at its bare slot. That bare slot is
+    shared with a non-pawn slide to the same square, but that is
+    position-disjoint under legal masking (a 7th-rank pawn promotes; a piece
+    there slides) — see onnx/load.py::build_lc0_policy_remap.
+    """
+    idx = {m: i for i, m in enumerate(LC0_1858_MOVE_STRS)}
+    for m in LC0_1858_MOVE_STRS:
+        if len(m) == 5 and m[4] == "q":  # a queen-suffix entry marks a promotion pair
+            bare = m[:4]
+            if bare in idx:
+                idx[bare + "n"] = idx[bare]
+    return idx
+
+
+LC0_1858_UCI_TO_IDX: dict[str, int] = _build_uci_to_idx()
 
