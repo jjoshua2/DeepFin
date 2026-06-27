@@ -139,15 +139,15 @@ class OnnxChessNet(torch.nn.Module):
         # The search value path (_value_scalar_from_wdl_logits) softmaxes `wdl`,
         # so it must receive logits. LC0/Ceres value heads emit softmaxed
         # PROBABILITIES; feeding those through unchanged would crush a near-certain
-        # [1,0,0] to ~0.58. Auto-detect: if the rows already sum to ~1 they are
-        # probabilities → return log-probs (softmax recovers them); otherwise the
-        # net already emits raw logits → pass through unchanged.
+        # [1,0,0] to ~0.58. Auto-detect by the two signals that separate probs
+        # from logits: probabilities are non-negative AND sum to ~1 (a loose
+        # tolerance so fp16/quantized rows summing to e.g. 0.98 still qualify);
+        # raw logits are unbounded and ~never both. Probs -> log-probs (softmax
+        # recovers them); logits pass through unchanged.
         wdl_raw = torch.from_numpy(out_wdl).to(torch.float32)
         row_sums = wdl_raw.sum(dim=-1)
-        if torch.allclose(row_sums, torch.ones_like(row_sums), atol=1e-2):
-            wdl = torch.log(wdl_raw.clamp_min(1e-9))
-        else:
-            wdl = wdl_raw
+        is_probs = bool((wdl_raw >= -1e-4).all()) and bool((row_sums - 1.0).abs().lt(0.1).all())
+        wdl = torch.log(wdl_raw.clamp_min(1e-9)) if is_probs else wdl_raw
         return {"policy_own": pol_4672, "policy": pol_4672, "wdl": wdl}
 
 

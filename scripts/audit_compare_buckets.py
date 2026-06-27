@@ -25,6 +25,7 @@ import numpy as np
 
 from chess_anti_engine.eval.audit import (
     CRITICALITY_BUCKET_NAMES,
+    PHASE_NAMES,
     criticality_bucket,
     parse_audit_record,
     wdl_brier,
@@ -157,7 +158,7 @@ def main() -> None:
     print("|---|---|---|---|")
     brier = float(np.mean([wdl_brier(p, t) for p, t in zip(preds_all_a, tgts_all_a, strict=True)]))
     print(f"| overall | {brier:.4f} | {wdl_ece(preds_all_a, tgts_all_a):.4f} | {len(preds_all_a)} |")
-    for ph, name in {0: "endgame", 1: "middlegame", 2: "opening"}.items():
+    for ph, name in enumerate(PHASE_NAMES):
         ks = [k for k in by_phase[ph] if "wdl" in bt4[k] and k in deep_wdl]
         if not ks:
             continue
