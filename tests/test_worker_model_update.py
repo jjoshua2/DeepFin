@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 from pathlib import Path
@@ -438,10 +439,16 @@ def test_sf_node_knobs_are_live_applied_not_restart() -> None:
 def _live_state() -> Any:
     """A minimal stand-in for the live SelfplayState with real config
     dataclasses (so `dataclasses.replace` works) carrying a distinctive,
-    session-fixed `max_plies` to prove untracked fields are not transplanted."""
+    session-fixed `max_plies` to prove untracked fields are not transplanted.
+    Binds the REAL SelfplayState.apply_live_overrides / terminal_eval_nodes_for
+    so the live-apply path is exercised against the actual implementation."""
     from chess_anti_engine.selfplay.config import GameConfig, OpponentConfig
+    from chess_anti_engine.selfplay.state import SelfplayState
 
     class _FakeState:
+        apply_live_overrides = SelfplayState.apply_live_overrides
+        terminal_eval_nodes_for = staticmethod(SelfplayState.terminal_eval_nodes_for)
+
         def __init__(self) -> None:
             self.game = GameConfig(selfplay_fraction=0.30, max_plies=137)
             self.opponent = OpponentConfig(wdl_regret_limit=0.04)
@@ -477,27 +484,91 @@ def test_live_reco_change_applies_without_restart() -> None:
     assert session._active_reco["selfplay_fraction"] == 0.50
 
 
-def test_live_apply_does_not_transplant_untracked_fields() -> None:
-    """Codex #81: when a live key and an untracked GameConfig field
-    (max_plies) change in the same publish, only the live field is applied —
-    the untracked one stays at the session's value."""
+def test_apply_live_reco_transplants_only_live_fields() -> None:
+    """_apply_live_reco swaps ONLY the live-safe fields onto the running config,
+    never the whole rebuilt config — so even a (restart-keyed) session-fixed
+    field like max_plies present in the reco never mutates the session value.
+    Tested directly (not via _reco_changed) since a max_plies change now routes
+    to a restart, not the live path."""
     session = _bare_worker_session()
     session.args = SimpleNamespace(sf_nodes=None)
-    session._active_reco = session._snapshot_reco({"sf_nodes": 5000, "selfplay_fraction": 0.30})
     session._active_state = _live_state()  # max_plies=137
     cast(Any, session).sf = SimpleNamespace(set_nodes=lambda _n: None)
 
-    changed = WorkerSession._reco_changed(
+    applied = WorkerSession._apply_live_reco(
         session,
-        # selfplay_fraction is live; max_plies is in neither watch set.
-        {"recommended_worker": {"sf_nodes": 5000, "selfplay_fraction": 0.50, "max_plies": 999}},
-        source_tag="test",
+        {"sf_nodes": 5000, "selfplay_fraction": 0.50, "max_plies": 999},
     )
 
-    assert changed is False
+    assert applied is True
     st = cast(Any, session._active_state)
     assert st.game.selfplay_fraction == 0.50  # live field applied
-    assert st.game.max_plies == 137  # untracked field preserved
+    assert st.game.max_plies == 137  # session-fixed field preserved
+
+
+def test_apply_live_reco_falls_back_to_restart_on_build_error(caplog: Any) -> None:
+    """Codex review: a malformed reco that makes config construction raise must
+    NOT be swallowed silently — _apply_live_reco logs and returns False so the
+    caller restarts (re-parsing the reco at bring-up), rather than pinning the
+    worker at the old config."""
+    session = _bare_worker_session()
+    session.args = SimpleNamespace(sf_nodes=None)
+    session._active_state = _live_state()
+    cast(Any, session).sf = SimpleNamespace(set_nodes=lambda _n: None)
+
+    # mcts_simulations must be int(); a non-numeric string raises ValueError.
+    with caplog.at_level(logging.WARNING):
+        applied = WorkerSession._apply_live_reco(
+            session, {"sf_nodes": 5000, "mcts_simulations": "not-a-number"},
+        )
+    assert applied is False
+    assert any("falling back to restart" in r.message for r in caplog.records)
+
+
+def test_every_reco_field_is_watched() -> None:
+    """Completeness guard (Codex review): every recommended_worker field that
+    _build_selfplay_configs consumes must be in _RECO_LIVE_KEYS or
+    _RECO_RESTART_KEYS. Otherwise a mid-run change to it silently never reaches
+    workers now that the PID levers are live (no incidental restart to flush it)."""
+    import inspect
+    src = inspect.getsource(WorkerSession._build_selfplay_configs)
+    keys: set[str] = set()
+    for pat in (
+        r'reco\.get\(\s*["\']([a-z0-9_]+)["\']',
+        r'_resolve_reco\(reco,\s*["\']([a-z0-9_]+)["\']',
+        r'_optional_reco\(\s*["\']([a-z0-9_]+)["\']',
+        r'_require_reco\(reco,\s*["\']([a-z0-9_]+)["\']',
+    ):
+        keys |= set(re.findall(pat, src))
+    watched = set(WorkerSession._RECO_LIVE_KEYS) | set(WorkerSession._RECO_RESTART_KEYS)
+    unwatched = sorted(keys - watched)
+    assert not unwatched, f"reco fields neither live nor restart-keyed: {unwatched}"
+
+
+def test_every_live_key_is_transplanted() -> None:
+    """Drift guard (Codex review): every _RECO_LIVE_KEYS entry must actually
+    land on the live SelfplayState when changed — catches a live key added to
+    the tuple but forgotten in _apply_live_reco's transplant body."""
+    # key -> (baseline value, changed value, accessor on the live state)
+    cases: dict[str, tuple[Any, Any, Any]] = {
+        "selfplay_fraction": (0.30, 0.55, lambda st: st.game.selfplay_fraction),
+        "sf_move_nodes": (0, 321, lambda st: st.game.sf_move_nodes),
+        "sf_fast_ply_node_scale": (0.25, 0.6, lambda st: st.game.sf_fast_ply_node_scale),
+        "opponent_wdl_regret_limit": (0.04, 0.02, lambda st: st.opponent.wdl_regret_limit),
+        "sf_nodes": (5000, 7000, lambda st: st.base_nodes),
+    }
+    assert set(cases) == set(WorkerSession._RECO_LIVE_KEYS), (
+        "update test_every_live_key_is_transplanted for the new live key(s)"
+    )
+    for key, (base, changed, get) in cases.items():
+        session = _bare_worker_session()
+        session.args = SimpleNamespace(sf_nodes=None)
+        session._active_state = _live_state()
+        cast(Any, session).sf = SimpleNamespace(set_nodes=lambda _n: None)
+        baseline = {"sf_nodes": 5000, key: base}
+        applied = WorkerSession._apply_live_reco(session, {**baseline, key: changed})
+        assert applied is True
+        assert get(cast(Any, session._active_state)) == changed, f"live key {key} not transplanted"
 
 
 def test_sf_multipv_change_triggers_restart() -> None:

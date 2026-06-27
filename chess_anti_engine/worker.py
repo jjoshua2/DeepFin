@@ -1177,27 +1177,36 @@ class WorkerSession:
         except _MissingRequiredReco:
   # Incomplete reco (e.g. sf_nodes dropped) — restart will re-poll cleanly.
             return False
+        except Exception as exc:
+  # A malformed reco field can make config construction raise. Don't let the
+  # caller's broad except swallow it silently (which would pin the worker at
+  # the old config with no restart): log and fall back to a restart, whose
+  # bring-up re-parses the reco and surfaces/handles the error as before.
+            self.log.warning(
+                "live reco apply failed to build configs (%s); falling back to restart",
+                exc, exc_info=True,
+            )
+            return False
   # Transplant ONLY the live-safe fields onto the running config — never the
   # whole rebuilt config. Other GameConfig fields (max_plies, sf_policy_temp,
   # ...) are built from the same reco but are session-fixed; swapping the whole
   # object would let an untracked field change take effect mid-session purely
-  # because a live key changed in the same publish. SelfplayState is mutable and
-  # recycle_slot / the stockfish turn read these references fresh, so a
-  # dataclasses.replace takes effect immediately.
+  # because a live key changed in the same publish. The live-field set here must
+  # stay in sync with _RECO_LIVE_KEYS (asserted by
+  # test_every_live_key_is_transplanted). recycle_slot / the stockfish turn read
+  # these refs fresh, so the swap takes effect immediately.
         new_game, new_opp = cfgs["game"], cfgs["opponent"]
-        state.game = dataclasses.replace(
+        game = dataclasses.replace(
             state.game,
             selfplay_fraction=new_game.selfplay_fraction,
             sf_move_nodes=new_game.sf_move_nodes,
             sf_fast_ply_node_scale=new_game.sf_fast_ply_node_scale,
         )
-        state.opponent = dataclasses.replace(
+        opponent = dataclasses.replace(
             state.opponent, wdl_regret_limit=new_opp.wdl_regret_limit,
         )
-        if self.sf is not None and hasattr(self.sf, "set_nodes"):
-            self.sf.set_nodes(int(sf_nodes))
-        state.base_nodes = int(sf_nodes)
-        state.terminal_eval_nodes = (5 * int(sf_nodes)) if int(sf_nodes) > 0 else 1000
+        state.apply_live_overrides(game=game, opponent=opponent, base_nodes=sf_nodes)
+        self._set_sf_nodes(sf_nodes)
         self.log.info(
             "live reco: selfplay_fraction=%.3f regret=%s sf_nodes=%d",
             float(state.game.selfplay_fraction),
@@ -2060,11 +2069,16 @@ class WorkerSession:
             self.sf_multipv_active = int(sf_multipv)
             self.sf_syzygy_path_active = sz_path
         else:
-  # update nodes dynamically
-            if hasattr(self.sf, "set_nodes"):
-                self.sf.set_nodes(int(sf_nodes))
+  # update nodes dynamically (same live-update used by _apply_live_reco)
+            self._set_sf_nodes(sf_nodes)
 
         return stockfish_path
+
+    def _set_sf_nodes(self, sf_nodes: int) -> None:
+        """Push a new SF node budget to the live engine, if it supports it.
+        Shared by _sync_stockfish (restart path) and _apply_live_reco (live)."""
+        if self.sf is not None and hasattr(self.sf, "set_nodes"):
+            self.sf.set_nodes(int(sf_nodes))
 
     def _run_arena(self, manifest: dict, task: dict) -> None:
         """Arena match logic."""
@@ -2214,6 +2228,19 @@ class WorkerSession:
         "syzygy_adjudicate", "syzygy_adjudicate_fraction", "syzygy_in_search",
         "policy_encoding", "input_history_encoding", "input_extra_features",
         "use_dynamic_relations", "record_relations",
+  # Remaining session-fixed fields built from reco. They used to propagate only
+  # incidentally — when the PID happened to move a (then-restart-keyed) sf_nodes
+  # /regret lever that iteration, the rebuild flushed them. Now those levers are
+  # live (no restart), so without listing these a mid-run change to a label knob
+  # (sf_policy_temp / sf_policy_label_smooth), gameplay structure (max_plies,
+  # mcts, playout_cap_fraction, random_start_plies, timeout_adjudication_threshold),
+  # opening sampling, or the volatility-search knobs would silently never reach
+  # workers. test_every_reco_field_is_watched guards completeness.
+        "sf_policy_temp", "sf_policy_label_smooth", "timeout_adjudication_threshold",
+        "max_plies", "mcts", "playout_cap_fraction", "random_start_plies",
+        "opening_book_prob", "opening_book_max_plies", "opening_book_max_games",
+        "opening_book_max_plies_2", "opening_book_max_games_2", "opening_book_mix_prob_2",
+        "volatility_q_scale", "volatility_fpu", "volatility_anchor",
     )
 
   # Every reco key worth tracking for change detection (restart + live).
@@ -2400,7 +2427,17 @@ class WorkerSession:
         return BatchStats(**agg)
 
     def _run_selfplay_threaded(self, *, games_per_batch: int, sf, eval_, cfgs: dict) -> BatchStats:
-        """Multi-threaded selfplay: N threads share one GPU evaluator."""
+        """Multi-threaded selfplay: N threads share one GPU evaluator.
+
+        Intentionally does NOT wire on_state_ready: there are N independent
+        SelfplayStates and on_step runs on only one thread, so live-applying to a
+        single state would leave the others on stale config. _active_state stays
+        None, so live reco changes correctly fall back to a full restart here
+        (same as pre-live-apply). Threaded selfplay is not the production path
+        (1 continuous worker per GPU; threading is always slower), so the
+        restart-churn this avoids elsewhere is not worth a thread-safe N-state
+        live-apply.
+        """
         n_threads = min(int(self.args.selfplay_threads), games_per_batch)
         base_games, remainder = divmod(games_per_batch, n_threads)
         thread_games = [base_games + (1 if i < remainder else 0) for i in range(n_threads)]
