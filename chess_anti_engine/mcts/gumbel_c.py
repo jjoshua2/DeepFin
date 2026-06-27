@@ -272,7 +272,10 @@ def run_gumbel_root_many_c(
     )
 
     if pre_pol_logits is not None and pre_wdl_logits is not None:
-        pol_logits_batch = _policy_logits_to_full(pre_pol_logits, cfg=cfg)
+        # Raw assignment only — the unconditional _policy_logits_to_full below
+        # converts to full + applies policy_temp once for every path. Applying it
+        # here too would divide cached root logits by policy_temp TWICE (T^2).
+        pol_logits_batch = np.asarray(pre_pol_logits, dtype=np.float32)
         wdl_logits_batch = np.asarray(pre_wdl_logits, dtype=np.float32)
     elif _inplace:
         batch_enc, batch_enc_bf16 = _batch_encoders(cfg.input_history_encoding)
