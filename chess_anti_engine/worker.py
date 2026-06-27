@@ -772,6 +772,9 @@ class WorkerSession:
         self.sf: StockfishPool | StockfishUCI | None = None
         self.sf_multipv_active: int | None = None
         self.sf_syzygy_path_active: str | None = None
+  # Resolved binary path the live engine was built with; re-init on change so a
+  # hot-swapped Stockfish (new SHA -> new cached path) is actually loaded.
+        self.sf_path_active: str | None = None
 
         self.last_model_sha = None
         self.last_ob_sha: str | None = None
@@ -1160,8 +1163,14 @@ class WorkerSession:
         active = getattr(self, "_active_reco", None)
         if active is None:
             return False
+  # A CLI-pinned games_per_batch wins over reco (see _run_selfplay), so a
+  # server-side change to it would otherwise force a no-op restart. Drop it from
+  # restart detection when pinned.
+        restart_keys = self._RECO_RESTART_KEYS
+        if getattr(self, "games_per_batch_local", None) is not None:
+            restart_keys = tuple(k for k in restart_keys if k != "games_per_batch")
         restart_changed = any(
-            new_reco.get(k) != active.get(k) for k in self._RECO_RESTART_KEYS
+            new_reco.get(k) != active.get(k) for k in restart_keys
         )
         live_changed = any(
             new_reco.get(k) != active.get(k) for k in self._RECO_LIVE_KEYS
@@ -2058,11 +2067,15 @@ class WorkerSession:
             self.last_sf_sha = sf_sha
             stockfish_path = str(sf_cached)
 
-  # (Re)initialize engine if multipv or syzygy path changed (both must be set at init time)
+  # (Re)initialize engine if the binary path/SHA, multipv, or syzygy path
+  # changed (all must be set at init time). The binary check is what makes the
+  # asset-fingerprint restart actually swap a hot-swapped Stockfish: without it
+  # a new SHA downloads to a new path but the running engine keeps the old one.
         sz_path = syzygy_path or None
         multipv_changed = self.sf_multipv_active is None or int(self.sf_multipv_active) != int(sf_multipv)
         syzygy_changed = self.sf_syzygy_path_active != sz_path
-        if self.sf is None or multipv_changed or syzygy_changed:
+        binary_changed = self.sf_path_active != stockfish_path
+        if self.sf is None or multipv_changed or syzygy_changed or binary_changed:
             if self.sf is not None:
                 try:
                     self.sf.close()
@@ -2088,6 +2101,7 @@ class WorkerSession:
                 )
             self.sf_multipv_active = int(sf_multipv)
             self.sf_syzygy_path_active = sz_path
+            self.sf_path_active = stockfish_path
         else:
   # update nodes dynamically (same live-update used by _apply_live_reco)
             self._set_sf_nodes(sf_nodes)
@@ -2250,7 +2264,7 @@ class WorkerSession:
         # an unrelated key changes. Flagged by Codex adversarial review.
         "syzygy_path", "stockfish_syzygy_path", "syzygy_rescore_policy",
         "syzygy_adjudicate", "syzygy_adjudicate_fraction", "syzygy_in_search",
-        "policy_encoding", "input_history_encoding", "input_extra_features",
+        "policy_encoding", "input_extra_features",
         "use_dynamic_relations", "record_relations",
   # Remaining session-fixed fields built from reco. They used to propagate only
   # incidentally — when the PID happened to move a (then-restart-keyed) sf_nodes

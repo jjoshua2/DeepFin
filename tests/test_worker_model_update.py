@@ -619,6 +619,77 @@ def test_session_asset_change_triggers_restart() -> None:
     assert session._stop_selfplay is True
 
 
+def test_sync_stockfish_reinits_on_binary_change(monkeypatch: Any) -> None:
+    """Codex review: a hot-swapped SF binary (new resolved path) must re-init the
+    engine — otherwise the asset-fingerprint restart downloads the new binary but
+    keeps running the old one."""
+    session = _bare_worker_session()
+    session.args = SimpleNamespace(
+        stockfish_path="sf_v1", stockfish_from_server=False, sf_workers=1, sf_nice=0,
+    )
+    cast(Any, session).sf = None
+    session.sf_multipv_active = None
+    session.sf_syzygy_path_active = None
+    session.sf_path_active = None
+
+    built: list[str] = []
+
+    class _FakeSF:
+        def __init__(self, path: str, **_kw: Any) -> None:
+            built.append(path)
+
+        def close(self) -> None:
+            pass
+
+        def set_nodes(self, _n: int) -> None:
+            pass
+
+    monkeypatch.setattr(worker_mod, "StockfishUCI", _FakeSF)
+
+    WorkerSession._sync_stockfish(session, {}, 5000, 5)
+    WorkerSession._sync_stockfish(session, {}, 5000, 5)  # same path -> no rebuild
+    assert built == ["sf_v1"]
+    session.args.stockfish_path = "sf_v2"  # binary hot-swap
+    WorkerSession._sync_stockfish(session, {}, 5000, 5)
+    assert built == ["sf_v1", "sf_v2"]
+
+
+def test_pinned_games_per_batch_does_not_restart() -> None:
+    """Codex review: when games_per_batch is CLI-pinned, the pin wins over reco,
+    so a server-side change to it must NOT force a (no-op) restart."""
+    session = _bare_worker_session()
+    session.args = SimpleNamespace(sf_nodes=None)
+    session.games_per_batch_local = 64
+    session._active_reco = session._snapshot_reco({"sf_nodes": 5000, "games_per_batch": 8})
+
+    changed = WorkerSession._reco_changed(
+        session,
+        {"recommended_worker": {"sf_nodes": 5000, "games_per_batch": 16}},
+        source_tag="test",
+    )
+    assert changed is False
+    assert session._stop_selfplay is False
+
+    # Without the pin, the same change restarts (games_per_batch resizes slots).
+    session2 = _bare_worker_session()
+    session2.args = SimpleNamespace(sf_nodes=None)
+    session2.games_per_batch_local = None
+    session2._active_reco = session2._snapshot_reco({"sf_nodes": 5000, "games_per_batch": 8})
+    changed2 = WorkerSession._reco_changed(
+        session2,
+        {"recommended_worker": {"sf_nodes": 5000, "games_per_batch": 16}},
+        source_tag="test",
+    )
+    assert changed2 is True
+
+
+def test_reco_restart_keys_have_no_duplicates() -> None:
+    """The hand-maintained key tuples must stay duplicate-free and disjoint."""
+    restart = WorkerSession._RECO_RESTART_KEYS
+    assert len(restart) == len(set(restart)), "duplicate in _RECO_RESTART_KEYS"
+    assert not (set(WorkerSession._RECO_LIVE_KEYS) & set(restart)), "live/restart overlap"
+
+
 def test_live_reco_change_without_active_state_restarts() -> None:
     """A live-key change with no running session (threaded mode / between
     sessions) must fall back to a session restart so the change isn't lost."""
