@@ -538,7 +538,9 @@ class SelfplayState:
     * **Stats** — see ``_StatsAcc``.
     """
 
-    # ── Config (frozen, not mutated) ─────────────────────────────────────────
+    # ── Config (session-fixed; the live-reco subset — game, opponent,
+    #    base_nodes, terminal_eval_nodes — is reassigned by apply_live_overrides
+    #    so PID/difficulty changes apply without a session restart) ────────────
     device: str
     rng: np.random.Generator
     stockfish: StockfishUCI | StockfishPool
@@ -664,7 +666,7 @@ class SelfplayState:
             vs = "raw"
 
         base_nodes = int(getattr(stockfish, "nodes", 0) or 0)
-        terminal_eval_nodes = (5 * base_nodes) if base_nodes > 0 else 1000
+        terminal_eval_nodes = cls.terminal_eval_nodes_for(base_nodes)
 
         return cls(
             device=device,
@@ -809,6 +811,33 @@ class SelfplayState:
         self._mark_timed_out_slots(active_idxs)
         net_idxs, sp_idxs, cur_idxs = self._classify_live_slots_python()
         return net_idxs, sp_idxs, cur_idxs, False
+
+    @staticmethod
+    def terminal_eval_nodes_for(base_nodes: int) -> int:
+        """SF node budget for terminal-position eval, derived from the opponent
+        node budget. Single source of truth for create() and the live-reco
+        path (apply_live_overrides) so the two never drift."""
+        return (5 * int(base_nodes)) if int(base_nodes) > 0 else 1000
+
+    def apply_live_overrides(
+        self,
+        *,
+        game: GameConfig,
+        opponent: OpponentConfig,
+        base_nodes: int,
+    ) -> None:
+        """Reassign the live-reco config subset on a running session.
+
+        The caller (worker._apply_live_reco) has already transplanted only the
+        live-safe fields onto ``game``/``opponent``; here we swap those refs and
+        re-derive the node budgets. recycle_slot / the stockfish turn read these
+        fresh each step, so the change takes effect immediately without a
+        restart. The Stockfish engine's own node count is updated separately by
+        the caller (set_nodes)."""
+        self.game = game
+        self.opponent = opponent
+        self.base_nodes = int(base_nodes)
+        self.terminal_eval_nodes = self.terminal_eval_nodes_for(base_nodes)
 
     def recycle_slot(self, i: int) -> None:
         """Reset slot ``i`` to a fresh opening position.

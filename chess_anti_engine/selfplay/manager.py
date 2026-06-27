@@ -200,6 +200,7 @@ def play_batch(
     on_game_complete: Callable[[CompletedGameBatch], None] | None = None,
     on_timing: Callable[[str, float], None] | None = None,
     on_step: Callable[[], None] | None = None,
+    on_state_ready: Callable[[SelfplayState], None] | None = None,
     stop_fn: Callable[[], bool] | None = None,
     # Config groups (frozen dataclasses with sensible defaults).
     opponent: OpponentConfig = OpponentConfig(),
@@ -251,6 +252,13 @@ def play_batch(
         diff_focus=diff_focus,
         game=game,
     )
+
+    # Hand the live state to the caller so it can apply live-safe reco changes
+    # (selfplay_fraction, opponent regret, SF node budgets) by swapping the
+    # config dataclasses in place — every consumer reads them fresh per
+    # step/move/recycle, so no session restart is needed.
+    if on_state_ready is not None:
+        on_state_ready(state)
 
     all_samples: list[ReplaySample] = []
 
