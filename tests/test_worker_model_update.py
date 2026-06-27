@@ -435,35 +435,88 @@ def test_sf_node_knobs_are_live_applied_not_restart() -> None:
         assert key not in WorkerSession._RECO_RESTART_KEYS
 
 
-def test_live_reco_change_applies_without_restart() -> None:
-    """A live-only reco change (selfplay_fraction) on an active session swaps
-    the state config in place and does NOT request a session restart."""
-    session = _bare_worker_session()
-    session.args = SimpleNamespace(sf_nodes=None)
-    old = {"sf_nodes": 5000, "selfplay_fraction": 0.30}
-    session._active_reco = session._snapshot_reco(old)
-
-    captured: dict[str, Any] = {}
+def _live_state() -> Any:
+    """A minimal stand-in for the live SelfplayState with real config
+    dataclasses (so `dataclasses.replace` works) carrying a distinctive,
+    session-fixed `max_plies` to prove untracked fields are not transplanted."""
+    from chess_anti_engine.selfplay.config import GameConfig, OpponentConfig
 
     class _FakeState:
-        game = SimpleNamespace(selfplay_fraction=0.30)
-        opponent = SimpleNamespace(wdl_regret_limit=0.04)
-        base_nodes = 5000
-        terminal_eval_nodes = 25000
+        def __init__(self) -> None:
+            self.game = GameConfig(selfplay_fraction=0.30, max_plies=137)
+            self.opponent = OpponentConfig(wdl_regret_limit=0.04)
+            self.base_nodes = 5000
+            self.terminal_eval_nodes = 25000
 
-    session._active_state = _FakeState()
+    return _FakeState()
+
+
+def test_live_reco_change_applies_without_restart() -> None:
+    """A live-only reco change (selfplay_fraction + sf_nodes) on an active
+    session swaps the live fields in place and does NOT request a restart."""
+    session = _bare_worker_session()
+    session.args = SimpleNamespace(sf_nodes=None)
+    session._active_reco = session._snapshot_reco({"sf_nodes": 5000, "selfplay_fraction": 0.30})
+
+    captured: dict[str, Any] = {}
+    session._active_state = _live_state()
     cast(Any, session).sf = SimpleNamespace(set_nodes=lambda n: captured.update(nodes=n))
 
     changed = WorkerSession._reco_changed(
         session,
-        {"recommended_worker": {"sf_nodes": 5000, "selfplay_fraction": 0.50}},
+        {"recommended_worker": {"sf_nodes": 6000, "selfplay_fraction": 0.50}},
         source_tag="test",
     )
 
     assert changed is False
     assert session._stop_selfplay is False
-    assert session._active_state.game.selfplay_fraction == 0.50
+    st = cast(Any, session._active_state)
+    assert st.game.selfplay_fraction == 0.50
+    assert st.base_nodes == 6000
+    assert captured == {"nodes": 6000}
     assert session._active_reco["selfplay_fraction"] == 0.50
+
+
+def test_live_apply_does_not_transplant_untracked_fields() -> None:
+    """Codex #81: when a live key and an untracked GameConfig field
+    (max_plies) change in the same publish, only the live field is applied —
+    the untracked one stays at the session's value."""
+    session = _bare_worker_session()
+    session.args = SimpleNamespace(sf_nodes=None)
+    session._active_reco = session._snapshot_reco({"sf_nodes": 5000, "selfplay_fraction": 0.30})
+    session._active_state = _live_state()  # max_plies=137
+    cast(Any, session).sf = SimpleNamespace(set_nodes=lambda _n: None)
+
+    changed = WorkerSession._reco_changed(
+        session,
+        # selfplay_fraction is live; max_plies is in neither watch set.
+        {"recommended_worker": {"sf_nodes": 5000, "selfplay_fraction": 0.50, "max_plies": 999}},
+        source_tag="test",
+    )
+
+    assert changed is False
+    st = cast(Any, session._active_state)
+    assert st.game.selfplay_fraction == 0.50  # live field applied
+    assert st.game.max_plies == 137  # untracked field preserved
+
+
+def test_sf_multipv_change_triggers_restart() -> None:
+    """Codex #81: sf_multipv is applied only at engine (re)init, so a change
+    must restart even when bundled with a live-only sf_nodes update."""
+    assert "sf_multipv" in WorkerSession._RECO_RESTART_KEYS
+    session = _bare_worker_session()
+    session.args = SimpleNamespace(sf_nodes=None)
+    session._active_reco = session._snapshot_reco({"sf_nodes": 5000, "sf_multipv": 5})
+    session._active_state = _live_state()
+
+    changed = WorkerSession._reco_changed(
+        session,
+        {"recommended_worker": {"sf_nodes": 6000, "sf_multipv": 10}},
+        source_tag="test",
+    )
+
+    assert changed is True
+    assert session._stop_selfplay is True
 
 
 def test_live_reco_change_without_active_state_restarts() -> None:

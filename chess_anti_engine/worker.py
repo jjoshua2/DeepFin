@@ -1177,11 +1177,23 @@ class WorkerSession:
         except _MissingRequiredReco:
   # Incomplete reco (e.g. sf_nodes dropped) — restart will re-poll cleanly.
             return False
-  # GameConfig holds selfplay_fraction + SF per-move node knobs; OpponentConfig
-  # holds wdl_regret_limit. SelfplayState is mutable; recycle_slot / stockfish
-  # turn read these references fresh, so swapping them takes effect immediately.
-        state.game = cfgs["game"]
-        state.opponent = cfgs["opponent"]
+  # Transplant ONLY the live-safe fields onto the running config — never the
+  # whole rebuilt config. Other GameConfig fields (max_plies, sf_policy_temp,
+  # ...) are built from the same reco but are session-fixed; swapping the whole
+  # object would let an untracked field change take effect mid-session purely
+  # because a live key changed in the same publish. SelfplayState is mutable and
+  # recycle_slot / the stockfish turn read these references fresh, so a
+  # dataclasses.replace takes effect immediately.
+        new_game, new_opp = cfgs["game"], cfgs["opponent"]
+        state.game = dataclasses.replace(
+            state.game,
+            selfplay_fraction=new_game.selfplay_fraction,
+            sf_move_nodes=new_game.sf_move_nodes,
+            sf_fast_ply_node_scale=new_game.sf_fast_ply_node_scale,
+        )
+        state.opponent = dataclasses.replace(
+            state.opponent, wdl_regret_limit=new_opp.wdl_regret_limit,
+        )
         if self.sf is not None and hasattr(self.sf, "set_nodes"):
             self.sf.set_nodes(int(sf_nodes))
         state.base_nodes = int(sf_nodes)
@@ -2177,6 +2189,10 @@ class WorkerSession:
   # Fields in recommended_worker that affect gameplay and should trigger
   # a session restart when the trainer updates them between iterations.
     _RECO_RESTART_KEYS = (
+  # sf_multipv is applied only at engine (re)init in _sync_stockfish (it can't
+  # be set live like sf_nodes), so a change must restart — otherwise the worker
+  # keeps producing labels at the old PV count until an unrelated restart.
+        "sf_multipv",
         "mcts_simulations", "fast_simulations",
         "gumbel_topk", "gumbel_c_scale", "gumbel_scale", "gumbel_scale_after",
         "gumbel_scale_decay_start_move", "gumbel_scale_decay_moves",
