@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import chess
 import numpy as np
@@ -37,6 +38,8 @@ from chess_anti_engine.encoding import encode_position
 from chess_anti_engine.encoding.lc0 import fill_lc0_history_repeat
 from chess_anti_engine.eval.audit import (
     CRITICALITY_BUCKET_NAMES,
+    PHASE_NAMES,
+    SOURCE_NAMES,
     criticality_bucket,
     criticality_gap,
     expected_and_top1_regret,
@@ -46,9 +49,6 @@ from chess_anti_engine.eval.audit import (
 )
 from chess_anti_engine.moves.encode import COMPACT_POLICY_SIZE
 from chess_anti_engine.moves.lc0_1858_movestrs import LC0_1858_UCI_TO_IDX
-
-PHASE_NAMES = {0: "endgame", 1: "middlegame", 2: "opening"}
-SOURCE_NAMES = {0: "selfplay", 1: "curriculum"}
 
 
 def _mirror_uci(uci: str) -> str:
@@ -70,7 +70,7 @@ def _leela_idxs(board: chess.Board, ucis: list[str]) -> np.ndarray:
     return out
 
 
-def _session(onnx: str, gpu_mem_gb: float):
+def _session(onnx: str, gpu_mem_gb: float) -> tuple[Any, str]:
     import onnxruntime as ort
 
     providers: list = []
@@ -201,7 +201,7 @@ def main() -> None:
             fh.write(json.dumps(r) + "\n")
     print(f"[bt4] cache → {args.cache_out} ({len(cache_rows)} rows)")
 
-    groups = (["overall", *PHASE_NAMES.values(), *SOURCE_NAMES.values(), *bucket_names])
+    groups = (["overall", *PHASE_NAMES, *SOURCE_NAMES, *bucket_names])
     lines = [f"# BT4 audit @ {args.onnx}", "",
              f"- audit set: {args.audit_set} ({len(cache_rows)} scored)",
              f"- input history: {args.history}; policy mapped 1858→legal",

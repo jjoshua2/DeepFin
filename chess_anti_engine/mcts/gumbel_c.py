@@ -58,16 +58,16 @@ from chess_anti_engine.mcts.gumbel import (
     GumbelConfig,
     _completed_q_transform,
     _gumbel,
+    _policy_logits_to_full,
     _softmax,
     _wdl_to_q,
-    apply_policy_temp,
     gumbel_policy_diagnostics,
     volatility_search_enabled,
 )
 from chess_anti_engine.mcts.root_tactics import (
     immediate_terminal_cboard_policy_or_draws,
 )
-from chess_anti_engine.moves import POLICY_SIZE, policy_batch_to_full_if_needed
+from chess_anti_engine.moves import POLICY_SIZE
 
 GumbelManyCResult = tuple[list[np.ndarray], list[int], list[float], list[np.ndarray], MCTSTree, list[int]]
 GumbelManyCDiagnosticsResult = tuple[
@@ -89,14 +89,6 @@ def _batch_encoders(input_history_encoding: str | None):
         return batch_encode_146_lc0_root, batch_encode_146_lc0_root_bf16
     return batch_encode_146, batch_encode_146_bf16
 
-
-def _policy_logits_to_full(pol_logits: np.ndarray, *, cfg: GumbelConfig) -> np.ndarray:
-    pol = apply_policy_temp(np.asarray(pol_logits, dtype=np.float32), cfg=cfg)
-    return policy_batch_to_full_if_needed(
-        pol,
-        policy_encoding=cfg.policy_encoding,
-        fill_value=-1e9,
-    )
 
 _log = _logging.getLogger(__name__)
 
