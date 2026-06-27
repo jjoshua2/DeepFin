@@ -23,17 +23,20 @@ from pathlib import Path
 
 import numpy as np
 
-from chess_anti_engine.eval.audit import parse_audit_record, wdl_brier, wdl_ece
+from chess_anti_engine.eval.audit import (
+    CRITICALITY_BUCKET_NAMES,
+    criticality_bucket,
+    parse_audit_record,
+    wdl_brier,
+    wdl_ece,
+)
 
-GAP_EDGES = [20.0, 50.0, 100.0]
-BUCKETS = ["quiet(<20)", "soft(20-50)", "sharp(50-100)", "decisive(>=100)"]
+BUCKETS = list(CRITICALITY_BUCKET_NAMES)
 
 
 def bucket(gap: float) -> str:
-    for i, e in enumerate(GAP_EDGES):
-        if gap < e:
-            return BUCKETS[i]
-    return BUCKETS[-1]
+    """Bucket name for a precomputed best-vs-2nd cp gap (shared edges)."""
+    return CRITICALITY_BUCKET_NAMES[criticality_bucket(gap)]
 
 
 def _load(path: Path) -> dict[str, dict]:
@@ -87,22 +90,27 @@ def main() -> None:
         a(b, "sf_top1", n["cand"]["sf_soft"]["top1"])
         db = deep_best.get(key)
         a(b, "net_eq_bt4", float(nraw["move"] == t["best_move"]))
-        a(b, "net_eq_deep", float(db is not None and nraw["move"] == db))
-        a(b, "bt4_eq_deep", float(db is not None and t["best_move"] == db))
-        a(b, "srch_eq_deep", float(db is not None and nsrch["move"] == db))
+        # deep_cnt is the denominator for the *_eq_deep fractions: positions with
+        # no deep-SF bestmove must not count as disagreements (that understates
+        # agreement). net_eq_bt4 keeps the full cnt (BT4 best is always present).
+        a(b, "deep_cnt", float(db is not None))
+        if db is not None:
+            a(b, "net_eq_deep", float(nraw["move"] == db))
+            a(b, "bt4_eq_deep", float(t["best_move"] == db))
+            a(b, "srch_eq_deep", float(nsrch["move"] == db))
 
     hdr = "| metric | " + " | ".join(f"{b} (n={int(acc.get(b, {}).get('cnt', 0))})" for b in BUCKETS) + " | overall |"
     print(hdr)
     print("|" + "---|" * (len(BUCKETS) + 2))
 
-    def mean(b: str, k: str) -> float:
+    def mean(b: str, k: str, denom: str = "cnt") -> float:
         d = acc.get(b, {})
-        c = d.get("cnt", 0)
+        c = d.get(denom, 0)
         return d.get(k, 0.0) / c if c else float("nan")
 
-    def omean(k: str) -> float:
+    def omean(k: str, denom: str = "cnt") -> float:
         num = sum(acc[b].get(k, 0.0) for b in acc)
-        den = sum(acc[b].get("cnt", 0) for b in acc)
+        den = sum(acc[b].get(denom, 0) for b in acc)
         return num / den if den else float("nan")
 
     rows = [
@@ -118,14 +126,14 @@ def main() -> None:
     print("\n### Top-1 move agreement (fraction)\n")
     print(hdr)
     print("|" + "---|" * (len(BUCKETS) + 2))
-    for label, k in [
-        ("net argmax == deep-SF best", "net_eq_deep"),
-        ("net+search == deep-SF best", "srch_eq_deep"),
-        ("BT4 argmax == deep-SF best", "bt4_eq_deep"),
-        ("net argmax == BT4 argmax", "net_eq_bt4"),
+    for label, k, denom in [
+        ("net argmax == deep-SF best", "net_eq_deep", "deep_cnt"),
+        ("net+search == deep-SF best", "srch_eq_deep", "deep_cnt"),
+        ("BT4 argmax == deep-SF best", "bt4_eq_deep", "deep_cnt"),
+        ("net argmax == BT4 argmax", "net_eq_bt4", "cnt"),
     ]:
-        cells = " | ".join(f"{mean(b, k):.2f}" for b in BUCKETS)
-        print(f"| {label} | {cells} | {omean(k):.2f} |")
+        cells = " | ".join(f"{mean(b, k, denom):.2f}" for b in BUCKETS)
+        print(f"| {label} | {cells} | {omean(k, denom):.2f} |")
 
     # BT4 value-head (WDL) calibration vs deep-SF, overall + per phase. The net's
     # own value calibration lives in the audit_targets report (it isn't dumped
@@ -139,6 +147,10 @@ def main() -> None:
         by_phase[net[key]["phase"]].append(key)
         preds_all.append(np.asarray(bt4[key]["wdl"], dtype=np.float64))
         tgts_all.append(np.asarray(deep_wdl[key], dtype=np.float64))
+    if not preds_all:
+        print("(no positions carry both a BT4 'wdl' and a deep-SF WDL — "
+              "skipping BT4 calibration; pass a --bt4 cache produced by bt4_audit.py)")
+        return
     preds_all_a = np.stack(preds_all)
     tgts_all_a = np.stack(tgts_all)
     print("| group | BT4 Brier | BT4 ECE | n |")

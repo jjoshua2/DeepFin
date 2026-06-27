@@ -126,15 +126,18 @@ class GumbelConfig:
     volatility_factor_clip: float = 4.0
 
 
-def _policy_logits_to_full(pol_logits: np.ndarray, *, cfg: GumbelConfig) -> np.ndarray:
-    pol = np.asarray(pol_logits, dtype=np.float32)
-    # Prior temperature: scale the policy logits before they enter the tree as
-    # the root prior. T>1 softens, T<1 sharpens, 1.0 = no-op. Mirrors the C path
-    # (gumbel_c._policy_logits_to_full) so the Python search (volatility-enabled
-    # runs, or when the C extension is unavailable) honors policy_temp too.
+def apply_policy_temp(pol: np.ndarray, *, cfg: GumbelConfig) -> np.ndarray:
+    """Scale policy logits by the prior temperature before they seed the tree.
+    T>1 softens the prior, T<1 sharpens it, 1.0 (or <=0) = no-op. Shared by the
+    Python and C (gumbel_c) search paths so both honor policy_temp identically."""
     pt = float(getattr(cfg, "policy_temp", 1.0))
     if pt > 0.0 and pt != 1.0:
-        pol = pol / pt
+        return pol / pt
+    return pol
+
+
+def _policy_logits_to_full(pol_logits: np.ndarray, *, cfg: GumbelConfig) -> np.ndarray:
+    pol = apply_policy_temp(np.asarray(pol_logits, dtype=np.float32), cfg=cfg)
     return policy_batch_to_full_if_needed(
         pol,
         policy_encoding=cfg.policy_encoding,

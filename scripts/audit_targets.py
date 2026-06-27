@@ -52,6 +52,7 @@ from chess_anti_engine.eval.audit import (
     AuditPosition,
     PHASE_NAMES,
     SOURCE_NAMES,
+    criticality_gap,
     expected_and_top1_regret,
     legal_full_indices,
     load_audit_set,
@@ -197,6 +198,7 @@ def _shallow_sf_records(
 ) -> dict[str, dict]:
     """Shallow (production-strength) SF search per position, JSONL-cached."""
     cache: dict[str, dict] = {}
+    other_node_counts: set[int] = set()
     if cache_path.exists():
         with open(cache_path, encoding="utf-8") as f:
             for line in f:
@@ -205,11 +207,24 @@ def _shallow_sf_records(
                     d = json.loads(line)
                     if int(d.get("nodes_requested", 0)) == nodes and int(d.get("multipv", 0)) == multipv:
                         cache[str(d["key"])] = d
+                    elif int(d.get("multipv", 0)) == multipv:
+                        other_node_counts.add(int(d.get("nodes_requested", 0)))
     todo = [p for p in positions if p.key not in cache]
     if todo and stockfish is None:
-        raise SystemExit(
-            f"{len(todo)} positions lack shallow-SF cache entries; pass --stockfish"
-        )
+        hint = "pass --stockfish to populate the cache"
+        if other_node_counts and not cache:
+  # The cache is fully populated but at a different node budget — the audit
+  # default is now --sf-effort=low (500k) to match production, so an older 50k
+  # cache no longer matches. Point the user at the mismatch instead of a bare
+  # "pass --stockfish".
+            have = ",".join(f"{n:_}" for n in sorted(other_node_counts))
+            hint = (
+                f"the cache has entries only at {have} nodes, but this run wants "
+                f"{nodes:_} (default --sf-effort=low=500k). Re-run with "
+                f"--sf-soft-nodes {sorted(other_node_counts)[0]} (or matching "
+                "--sf-effort) to reuse it, or pass --stockfish to regenerate"
+            )
+        raise SystemExit(f"{len(todo)} positions lack shallow-SF cache entries; {hint}")
     if not todo:
         return cache
 
@@ -485,11 +500,11 @@ def main() -> None:
                 "entropy": entropy,
             }
         if args.dump_per_position is not None:
-            # Criticality = deep-SF gap between the best and 2nd-best listed
-            # line (cp). Small gap = quiet position where SF's "best" is near-
-            # arbitrary among near-equal moves; large gap = decision-critical.
-            listed = sorted(pos.move_cp.values(), reverse=True)
-            gap = float(listed[0] - listed[1]) if len(listed) >= 2 else float("inf")
+            # Criticality = deep-SF gap between the best and 2nd-best listed line
+            # (cp). Small gap = quiet position where SF's "best" is near-arbitrary
+            # among near-equal moves; large gap = decision-critical. Shared with
+            # bt4_audit / audit_compare_buckets so the joined comparison agrees.
+            gap = criticality_gap(pos.move_cp)
             per_pos_dump.append({
                 "key": pos.key, "phase": pos.phase, "source": pos.source,
                 "gap_cp": gap, "n_legal": len(legal_ucis),

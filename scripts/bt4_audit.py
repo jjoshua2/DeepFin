@@ -14,9 +14,10 @@ on the same audit positions gives two things:
 
 Input encoding is canonical-LC0 (`--history lc0_root`, validated: startpos →
 sensible openings + correct WDL). Audit FENs are side-to-move canonical
-(white to move), so no mirroring is needed. BT4's 1858 policy is mapped to the
-4672 full space via COMPACT_TO_FULL_POLICY and gathered at the legal indices —
-the same move space the net audit uses.
+(white to move), so no mirroring is needed. BT4's 1858 policy is gathered
+directly in 1858 space at the legal moves via the canonical Leela index map
+(``LC0_1858_UCI_TO_IDX`` / ``_leela_idxs``) — NOT through the project's compact
+1858 ordering, which differs from Leela's on nearly every index.
 
 Usage:
   PYTHONPATH=. python3 scripts/bt4_audit.py \
@@ -33,7 +34,11 @@ import chess
 import numpy as np
 
 from chess_anti_engine.encoding import encode_position
+from chess_anti_engine.encoding.lc0 import fill_lc0_history_repeat
 from chess_anti_engine.eval.audit import (
+    CRITICALITY_BUCKET_NAMES,
+    criticality_bucket,
+    criticality_gap,
     expected_and_top1_regret,
     legal_full_indices,
     move_regrets,
@@ -77,28 +82,6 @@ def _session(onnx: str, gpu_mem_gb: float):
     providers.append("CPUExecutionProvider")
     sess = ort.InferenceSession(onnx, providers=providers)
     return sess, sess.get_inputs()[0].name
-
-
-def _criticality(move_cp: dict[str, float]) -> float:
-    listed = sorted(move_cp.values(), reverse=True)
-    return float(listed[0] - listed[1]) if len(listed) >= 2 else float("inf")
-
-
-def _fill_history_repeat(enc: np.ndarray) -> np.ndarray:
-    """Replicate lc0's empty-history fill (encoder.cc: ``history[idx<0?0:idx]``).
-
-    For a single FEN with no move history, lc0 repeats the CURRENT position into
-    every empty history slot — identically, NOT with an alternating per-ply
-    perspective flip (verified: identical-repeat → WDL Brier 0.026 vs deep-SF;
-    zeroed → 1.08; alternating-flip → 0.83). The value head is history-sensitive
-    and reads garbage from a zeroed history; policy is more robust but uses the
-    same input. Planes 0..103 are 8 slots × 13 (12 piece + 1 repetition); slot 0
-    is the live position. Metadata planes 104..111 are untouched.
-    """
-    out = enc.copy()
-    for s in range(1, 8):
-        out[13 * s:13 * s + 13] = enc[0:13]
-    return out
 
 
 def main() -> None:
@@ -146,7 +129,7 @@ def main() -> None:
         # limitation, not a metadata bug). The `*_legacy_meta` variant DOES pack
         # an EP file into plane 110 and must NOT be used here.
         e = encode_position(b, add_features=False, input_history_encoding=args.history)
-        return _fill_history_repeat(e) if args.history_fill == "repeat" else e
+        return fill_lc0_history_repeat(e) if args.history_fill == "repeat" else e
 
     feats = np.stack([_enc(b) for b in boards]).astype(np.float32)
 
@@ -162,21 +145,19 @@ def main() -> None:
             # the policy tensor.
             widths = [a.shape[-1] for a in out]
             pol_idx = int(np.argmax(widths))
-            wdl_idx = next(i for i, w in enumerate(widths) if w == 3)
+            wdl_idx = next((i for i, w in enumerate(widths) if w == 3), -1)
+            if wdl_idx < 0:
+                raise SystemExit(
+                    "no 3-wide WDL output found; ONNX outputs have widths "
+                    f"{widths}. Pass an LC0/Ceres net with a WDL value head."
+                )
         pol[s:s + bs] = out[pol_idx][:, :COMPACT_POLICY_SIZE]
         wdl[s:s + bs] = out[wdl_idx]
         if s % (bs * 8) == 0:
             print(f"[bt4] {s + min(bs, len(boards) - s)}/{len(boards)}")
 
-    # Aggregate by group; also keep per-criticality-bucket regret.
-    GAP_EDGES = [20.0, 50.0, 100.0]  # cp: quiet < 20 <= soft < 50 <= sharp < 100 <= decisive
-    bucket_names = ["quiet(<20)", "soft(20-50)", "sharp(50-100)", "decisive(>=100)"]
-
-    def bucket(gap: float) -> int:
-        for i, e in enumerate(GAP_EDGES):
-            if gap < e:
-                return i
-        return len(GAP_EDGES)
+    # Aggregate by group; also keep per-criticality-bucket regret (shared edges).
+    bucket_names = list(CRITICALITY_BUCKET_NAMES)
 
     sums: dict[str, list[float]] = {}
     cnts: dict[str, int] = {}
@@ -200,8 +181,8 @@ def main() -> None:
         p = p / p.sum()
         exp_r, top1_r = expected_and_top1_regret(p, regrets)
 
-        gap = _criticality(pos.move_cp)
-        bname = bucket_names[bucket(gap)]
+        gap = criticality_gap(pos.move_cp)
+        bname = bucket_names[criticality_bucket(gap)]
         for g in ("overall", PHASE_NAMES[pos.phase], SOURCE_NAMES[pos.source], bname):
             add(g, exp_r, top1_r)
 
