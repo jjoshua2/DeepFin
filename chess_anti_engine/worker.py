@@ -1292,6 +1292,22 @@ class WorkerSession:
         except Exception:
             return None
 
+    def _resync_evaluator_to_model(self) -> None:
+        """Point the DirectGPU evaluator at the current self.model if it drifted.
+        Single source of truth for the post-model-swap sync (the swap path, the
+        poll/_sync_model path, and session start all call this). Idempotent and a
+        no-op before the evaluator exists. Callers that mutate shared inference
+        state concurrently (threaded selfplay) must hold the upload-buffer lock —
+        the swap path does; the non-production threaded poll path is the only one
+        that doesn't, and threaded selfplay is not used in production."""
+        if (
+            self._direct_evaluator is not None
+            and self.model is not None
+            and self._evaluator_model_id != id(self.model)
+        ):
+            _sync_evaluator_to_model(self._direct_evaluator, self.model)
+            self._evaluator_model_id = id(self.model)
+
     def _swap_model_from_manifest(self, manifest: dict) -> None:
         """Tier 2 inner: download new SHA if changed, hot-swap model, flush old shards."""
         new_sha = str(manifest.get("model", {}).get("sha256", ""))
@@ -1343,9 +1359,7 @@ class WorkerSession:
                 )
                 flushed_elapsed_s = float(elapsed_s)
             self.model = new_model
-            if self._direct_evaluator is not None:
-                _sync_evaluator_to_model(self._direct_evaluator, self.model)
-                self._evaluator_model_id = id(self.model)
+            self._resync_evaluator_to_model()
             self.model_sha = new_sha
             self.model_step = model_step
             self.last_model_sha = new_sha
@@ -2015,9 +2029,7 @@ class WorkerSession:
   # rode the live-reco path with no restart) would leave play_batch using the
   # old model while shards are tagged with the new SHA. No-op before the
   # evaluator exists (session start syncs it itself).
-        if self._direct_evaluator is not None and self._evaluator_model_id != id(self.model):
-            _sync_evaluator_to_model(self._direct_evaluator, self.model)
-            self._evaluator_model_id = id(self.model)
+        self._resync_evaluator_to_model()
 
         if self.last_model_sha is not None and not self.fixed_trial_id:
   # Reconsider assignment at natural model-boundary checkpoints.
@@ -2607,9 +2619,7 @@ class WorkerSession:
             assert self.model is not None
             if self._direct_evaluator is None:
                 self._direct_evaluator = self._build_evaluator(self.model)
-            if self._evaluator_model_id != id(self.model):
-                _sync_evaluator_to_model(self._direct_evaluator, self.model)
-                self._evaluator_model_id = id(self.model)
+            self._resync_evaluator_to_model()
 
         games_per_batch = (
             int(self.games_per_batch_local)

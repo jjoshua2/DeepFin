@@ -290,6 +290,7 @@ def test_threaded_local_model_swap_keeps_buffer_metadata_atomic(monkeypatch, tmp
     new_model = torch.nn.Identity()
     evaluator = SimpleNamespace(model="old-model")
     cast(Any, session)._direct_evaluator = evaluator
+    session._evaluator_model_id = None  # _resync_evaluator_to_model reads this
 
     session._server_url_for = lambda endpoint: f"http://server{endpoint}"
     session._load_and_compile_model = lambda *_args, **_kwargs: new_model
@@ -549,11 +550,14 @@ def test_every_reco_field_is_watched() -> None:
     src = inspect.getsource(WorkerSession._build_selfplay_configs)
     src += inspect.getsource(WorkerSession._run_selfplay)
     keys: set[str] = set()
+    # \s* after each "(" so wrapped calls like `_resolve_reco(\n    reco, "key"...)`
+    # are caught too (\s matches the newline) — otherwise a multi-line knob could
+    # be silently unwatched while passing this guard.
     for pat in (
         r'reco\.get\(\s*["\']([a-z0-9_]+)["\']',
-        r'_resolve_reco\(reco,\s*["\']([a-z0-9_]+)["\']',
+        r'_resolve_reco\(\s*reco,\s*["\']([a-z0-9_]+)["\']',
         r'_optional_reco\(\s*["\']([a-z0-9_]+)["\']',
-        r'_require_reco\(reco,\s*["\']([a-z0-9_]+)["\']',
+        r'_require_reco\(\s*reco,\s*["\']([a-z0-9_]+)["\']',
     ):
         keys |= set(re.findall(pat, src))
     watched = set(WorkerSession._RECO_LIVE_KEYS) | set(WorkerSession._RECO_RESTART_KEYS)
