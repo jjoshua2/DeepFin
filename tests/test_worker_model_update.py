@@ -431,12 +431,22 @@ def test_build_selfplay_configs_requires_sf_nodes() -> None:
 
 def test_sf_node_knobs_are_live_applied_not_restart() -> None:
     """SF node budgets + the selfplay/curriculum mix are read fresh per
-    move/recycle, so the worker now applies them to the running SelfplayState
-    in place (no session restart that would abandon the in-flight games)."""
-    for key in ("sf_fast_ply_node_scale", "sf_nodes", "sf_move_nodes",
+    move/recycle, so the worker applies them to the running SelfplayState in
+    place (no session restart that would abandon the in-flight games). NOTE:
+    sf_move_nodes is intentionally restart-only — see
+    test_sf_move_nodes_is_restart_only_not_live."""
+    for key in ("sf_fast_ply_node_scale", "sf_nodes",
                 "selfplay_fraction", "opponent_wdl_regret_limit"):
         assert key in WorkerSession._RECO_LIVE_KEYS
         assert key not in WorkerSession._RECO_RESTART_KEYS
+
+
+def test_sf_move_nodes_is_restart_only_not_live() -> None:
+    """sf_move_nodes gates the curriculum SF query path (the 0-boundary switches
+    move-futures into label-futures), so it must restart rather than live-apply
+    to avoid writing low-node SF targets for in-flight positions."""
+    assert "sf_move_nodes" in WorkerSession._RECO_RESTART_KEYS
+    assert "sf_move_nodes" not in WorkerSession._RECO_LIVE_KEYS
 
 
 def _live_state() -> Any:
@@ -558,7 +568,6 @@ def test_every_live_key_is_transplanted() -> None:
     # key -> (baseline value, changed value, accessor on the live state)
     cases: dict[str, tuple[Any, Any, Any]] = {
         "selfplay_fraction": (0.30, 0.55, lambda st: st.game.selfplay_fraction),
-        "sf_move_nodes": (0, 321, lambda st: st.game.sf_move_nodes),
         "sf_fast_ply_node_scale": (0.25, 0.6, lambda st: st.game.sf_fast_ply_node_scale),
         "opponent_wdl_regret_limit": (0.04, 0.02, lambda st: st.opponent.wdl_regret_limit),
         "sf_nodes": (5000, 7000, lambda st: st.base_nodes),
@@ -652,6 +661,38 @@ def test_sync_stockfish_reinits_on_binary_change(monkeypatch: Any) -> None:
     session.args.stockfish_path = "sf_v2"  # binary hot-swap
     WorkerSession._sync_stockfish(session, {}, 5000, 5)
     assert built == ["sf_v1", "sf_v2"]
+
+
+def test_sync_model_resyncs_evaluator(monkeypatch: Any) -> None:
+    """Codex review: a mid-session model swap on the poll path must re-point the
+    running evaluator at the new model — otherwise play_batch keeps using the old
+    model while shards are tagged with the new SHA."""
+    session = _bare_worker_session()
+    session.args = SimpleNamespace(username="t")
+    session.inference_client = None
+    session.last_model_sha = "old"
+    session.model_sha = ""
+    session.model_step = 0
+    session.fixed_trial_id = "trial_00000"  # skip the lease-reset branch
+    session.model_cfg_active = None
+    cast(Any, session)._direct_evaluator = object()
+    session._evaluator_model_id = 999
+
+    new_model = object()
+    synced: list[object] = []
+    monkeypatch.setattr(session, "_flush_pre_swap_buffer_if_stale", lambda **_k: None)
+    monkeypatch.setattr(session, "_ensure_local_model_at_sha", lambda **_k: Path("m.pt"))
+    monkeypatch.setattr(session, "_load_and_compile_model", lambda *_a, **_k: new_model)
+    monkeypatch.setattr(worker_mod, "model_config_from_manifest_dict", lambda _d: ModelConfig())
+    monkeypatch.setattr(worker_mod, "_sync_evaluator_to_model", lambda _ev, m: synced.append(m))
+
+    WorkerSession._sync_model(
+        session, {"model": {"sha256": "new"}, "trainer_step": 1, "model_config": {}},
+    )
+
+    assert session.model is new_model
+    assert synced == [new_model]
+    assert session._evaluator_model_id == id(new_model)
 
 
 def test_pinned_games_per_batch_does_not_restart() -> None:

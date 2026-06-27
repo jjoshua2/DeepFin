@@ -1228,7 +1228,6 @@ class WorkerSession:
         game = dataclasses.replace(
             state.game,
             selfplay_fraction=new_game.selfplay_fraction,
-            sf_move_nodes=new_game.sf_move_nodes,
             sf_fast_ply_node_scale=new_game.sf_fast_ply_node_scale,
         )
         opponent = dataclasses.replace(
@@ -2011,6 +2010,14 @@ class WorkerSession:
         self.model = self._load_and_compile_model(
             model_path, model_cfg, label="worker-model", sha_short=str(model_sha)[:8],
         )
+  # Keep the running evaluator pointed at the new model. Without this a mid-
+  # session model swap on the poll path (remote workers, or a model change that
+  # rode the live-reco path with no restart) would leave play_batch using the
+  # old model while shards are tagged with the new SHA. No-op before the
+  # evaluator exists (session start syncs it itself).
+        if self._direct_evaluator is not None and self._evaluator_model_id != id(self.model):
+            _sync_evaluator_to_model(self._direct_evaluator, self.model)
+            self._evaluator_model_id = id(self.model)
 
         if self.last_model_sha is not None and not self.fixed_trial_id:
   # Reconsider assignment at natural model-boundary checkpoints.
@@ -2231,7 +2238,7 @@ class WorkerSession:
   # curriculum throughput for ~2 iters (small-sample winrate spike).
     _RECO_LIVE_KEYS = (
         "selfplay_fraction", "opponent_wdl_regret_limit",
-        "sf_nodes", "sf_move_nodes", "sf_fast_ply_node_scale",
+        "sf_nodes", "sf_fast_ply_node_scale",
     )
 
   # Fields in recommended_worker that affect gameplay and should trigger
@@ -2245,6 +2252,11 @@ class WorkerSession:
   # slot count) and cannot be resized on a running SelfplayState, so a change
   # must restart.
         "games_per_batch",
+  # sf_move_nodes gates the curriculum SF query path: lowering it to 0 mid-flight
+  # would make pending move-futures (submitted at the old positive budget) get
+  # reused as full-strength label futures, writing low-node SF targets to replay.
+  # It's a static knob, so make it restart-only rather than drain futures live.
+        "sf_move_nodes",
         "mcts_simulations", "fast_simulations",
         "gumbel_topk", "gumbel_c_scale", "gumbel_scale", "gumbel_scale_after",
         "gumbel_scale_decay_start_move", "gumbel_scale_decay_moves",
