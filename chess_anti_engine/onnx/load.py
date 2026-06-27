@@ -75,6 +75,16 @@ class OnnxChessNet(torch.nn.Module):
         self._wdl_out = wdl_output_name
         self._plane_count = plane_count
 
+        # Declare the LC0-canonical input contract so the UCI/match/evaluator
+        # helpers (which read these off the model, defaulting to legacy/v1/
+        # az_4672) encode positions the way an LC0/Ceres net + the lc0_root
+        # history fill in forward() expect — otherwise they'd feed legacy
+        # 112-plane inputs and the fill would corrupt them.
+        self.input_history_encoding = "lc0_root"
+        self.input_extra_features = "v1"  # extras past plane 112 are sliced off
+        self.use_dynamic_relations = False
+        self.policy_encoding = "az_4672"  # forward() returns 4672-wide policy
+
         if policy_4672_to_1858.shape != (POLICY_SIZE,):
             raise ValueError(
                 f"policy_4672_to_1858 must be shape ({POLICY_SIZE},), got {tuple(policy_4672_to_1858.shape)}"
