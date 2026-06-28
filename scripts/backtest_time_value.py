@@ -73,6 +73,7 @@ class _Searcher:
     def __init__(
         self, checkpoint: str, device: str, *, topk: int, policy_temp: float,
         c_scale: float, c_visit: float, c_visit_root: float,
+        q_visit_exp: float = 1.0, q_global_scale: bool = False, q_visit_floor: float = -1.0,
     ) -> None:
         import torch
 
@@ -86,6 +87,9 @@ class _Searcher:
         self._c_scale = float(c_scale)
         self._c_visit = float(c_visit)
         self._c_visit_root = float(c_visit_root)
+        self._q_visit_exp = float(q_visit_exp)
+        self._q_global_scale = bool(q_global_scale)
+        self._q_visit_floor = float(q_visit_floor)
         model = load_model_from_checkpoint(checkpoint, device=device)
         model.eval()
         self._hist = str(getattr(model, "input_history_encoding", "legacy"))
@@ -106,7 +110,8 @@ class _Searcher:
             policy_encoding=self._pol_enc, compute_relations=self._use_rel,
             policy_temp=self._policy_temp, topk=self._topk,
             c_scale=self._c_scale, c_visit=self._c_visit,
-            c_visit_root=self._c_visit_root,
+            c_visit_root=self._c_visit_root, q_visit_exp=self._q_visit_exp,
+            q_global_scale=self._q_global_scale, q_visit_floor=self._q_visit_floor,
         )
         rng = np.random.default_rng(seed)
   # The Gumbel runner encodes the boards itself (relations included, via cfg).
@@ -219,6 +224,15 @@ def main() -> None:
                     help="root-halving c_visit floor (the root/descent c_scale SPLIT that fixes "
                          "scaling): a large root floor (~900) makes one c_scale fit every sim count "
                          "at the root while descent keeps c_visit~50. -1 = legacy (no split).")
+    ap.add_argument("--q-visit-exp", type=float, default=1.0,
+                    help="descent value-transform exponent on max_visit. 1.0=linear (q_scale grows "
+                         "with visits -> over-trusts the value head at high sims); <1=sublinear "
+                         "(sim-invariant). Test for high-sim scaling past the plateau.")
+    ap.add_argument("--q-global-scale", action="store_true",
+                    help="descent scales q_scale by the ROOT max_visit (uniform across the tree); "
+                         "pairs with --q-visit-exp<1 for sim-invariance.")
+    ap.add_argument("--q-visit-floor", type=float, default=-1.0,
+                    help="decoupled additive floor: q_scale=floor+c_scale*max_visit^exp when >=0.")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", type=Path, default=Path("runs/backtest/time_value.jsonl"))
     args = ap.parse_args()
@@ -247,9 +261,12 @@ def main() -> None:
     searcher = _Searcher(
         args.checkpoint, args.device, topk=args.gumbel_topk, policy_temp=args.policy_temp,
         c_scale=args.c_scale, c_visit=args.c_visit, c_visit_root=args.c_visit_root,
+        q_visit_exp=args.q_visit_exp, q_global_scale=bool(args.q_global_scale),
+        q_visit_floor=args.q_visit_floor,
     )
-    print(f"[backtest] c_scale={args.c_scale} c_visit={args.c_visit} "
-          f"c_visit_root={args.c_visit_root} topk={args.gumbel_topk} policy_temp={args.policy_temp}")
+    print(f"[backtest] c_scale={args.c_scale} c_visit_root={args.c_visit_root} "
+          f"q_visit_exp={args.q_visit_exp} q_global_scale={args.q_global_scale} "
+          f"topk={args.gumbel_topk} policy_temp={args.policy_temp}")
     # snapshot[pos_idx][budget] = features; fill by running each budget over all boards.
     per_pos: list[dict[int, dict]] = [{} for _ in positions]
     bs = int(args.batch_size)
