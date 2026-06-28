@@ -454,7 +454,14 @@ def test_abort_ready_branches() -> None:
         past = Deadline(deadline_ms=60_000, now=_time.monotonic() - 5.0)  # elapsed ~5s
         worker._root_visit_lead = lambda allowed_root_indices: (5, 100)  # noqa: SLF001
         assert worker._abort_ready(None, past, 256, None, 1.0) is False  # noqa: SLF001
-        assert worker._abort_ready(1, past, 256, None, 1.0) is True  # noqa: SLF001
+  # Complexity gate: a move that leads on visits but has not yet been stable for
+  # _ABORT_MIN_STABLE_CHUNKS does NOT bank even past the optimum — it reads as a
+  # still-moving (hard) position and keeps searching. It banks once it stabilises.
+        worker._abort_last_best = -1  # noqa: SLF001
+        worker._abort_stable_chunks = 0  # noqa: SLF001
+        assert worker._abort_ready(1, past, 256, None, 1.0) is False  # noqa: SLF001 — not yet stable
+        assert worker._abort_ready(1, past, 256, None, 1.0) is False  # noqa: SLF001 — stable=1
+        assert worker._abort_ready(1, past, 256, None, 1.0) is True  # noqa: SLF001 — stable=2 (tree=None -> value OK)
   # Unsettled / no move past the optimum -> extend toward the hard deadline.
         worker._root_visit_lead = lambda allowed_root_indices: (5, 0)  # noqa: SLF001
         assert worker._abort_ready(1, past, 256, None, 1.0) is False  # noqa: SLF001

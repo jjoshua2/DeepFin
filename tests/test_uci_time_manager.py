@@ -294,3 +294,36 @@ def test_time_capped_chunk_bounds_unbounded_first_chunk() -> None:
     # Open-ended search (no deadline) -> never capped, even on the first chunk.
     d_open = Deadline(deadline_ms=None, now=0.0)
     assert w._time_capped_chunk(8192, d_open, 0) == 8192
+
+
+def test_value_is_decisive_margin() -> None:
+    import numpy as np
+
+    from chess_anti_engine.uci.search import _value_is_decisive
+
+    actions = np.array([3, 7, 9], dtype=np.int32)
+    # move 3 leads the best alternative (0.40) by 0.20 >= 0.10 -> decisive.
+    qs_clear = np.array([0.60, 0.40, 0.10], dtype=np.float64)
+    assert _value_is_decisive(actions, qs_clear, 3, 0.10) is True
+    # move 3 leads by only 0.05 < 0.10 -> a near-tie, NOT decisive (hard position).
+    qs_close = np.array([0.60, 0.55, 0.10], dtype=np.float64)
+    assert _value_is_decisive(actions, qs_close, 3, 0.10) is False
+    # a single legal move is trivially decisive; an absent best action is not.
+    assert _value_is_decisive(np.array([4]), np.array([0.1]), 4, 0.10) is True
+    assert _value_is_decisive(actions, qs_clear, 99, 0.10) is False
+
+
+def test_move_is_decided_requires_stability() -> None:
+    from chess_anti_engine.uci.search import SearchWorker
+
+    w = object.__new__(SearchWorker)
+    w._abort_last_best = -1
+    w._abort_stable_chunks = 0
+    w._tree = None  # value check short-circuits to True once stable
+    w._root_id = None
+    # Needs _ABORT_MIN_STABLE_CHUNKS (2) consecutive chunks on the same move.
+    assert w._move_is_decided(5, None) is False  # first sighting
+    assert w._move_is_decided(5, None) is False  # stable=1, still below floor
+    assert w._move_is_decided(5, None) is True   # stable=2 -> decided
+    # A flip resets the counter -> not decided until it restabilises.
+    assert w._move_is_decided(7, None) is False

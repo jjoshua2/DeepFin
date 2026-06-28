@@ -98,6 +98,33 @@ assert _TREE_MAX_LEAF_BRANCHING >= _MAX_LEGAL_MOVES + _FORCED_COLLAPSE_DEPTH
 # measured is the one final selection emits (Gumbel survivor or visit leader),
 # so on the Gumbel production path the abort tracks the played move.
 _DEFAULT_ABORT_FACTOR = 1.0
+# Complexity gate on the early abort (when to bank vs "use it all"). The aggressive
+# Lc0-style allocation over-budgets and relies on the abort to reclaim the slack on
+# EASY moves; these decide which moves count as easy. A move banks only when it is
+# also value-decisive (its root Q leads the best alternative by >= the margin) AND
+# stable (the played move repeated for a few consecutive chunks). Hard positions
+# (top moves within the margin, or a still-flipping choice) keep searching toward
+# the hard deadline instead. Flag-safe: the allocation already bounds a single
+# move's spend, so suppressing the abort only spends budget already deemed safe.
+# First-cut thresholds (Q is on the [-1, 1] value scale) — sweep with arena games.
+_ABORT_Q_DECISIVE_MARGIN = 0.10
+_ABORT_MIN_STABLE_CHUNKS = 2
+
+
+def _value_is_decisive(
+    actions: np.ndarray, qs: np.ndarray, best_action: int, q_margin: float,
+) -> bool:
+    """True when ``best_action``'s root Q leads every alternative by ``q_margin``
+    (so the move is clearly best by value, not just by visit count). Single-move
+    positions are trivially decisive; a best_action absent from ``actions`` is not."""
+    mask = actions == best_action
+    if not bool(mask.any()):
+        return False
+    q_best = float(qs[mask].max())
+    others = qs[~mask]
+    if others.size == 0:
+        return True
+    return (q_best - float(others.max())) >= q_margin
 
 
 @dataclass
@@ -243,6 +270,10 @@ class SearchWorker:
         self._root_pol_logits: np.ndarray | None = None
         self._root_wdl_logits: np.ndarray | None = None
         self._last_gumbel_action_idx: int | None = None
+  # Best-move stability across chunks, for the complexity gate on the early abort
+  # (see ``_abort_ready``). Reset at the start of every search.
+        self._abort_last_best: int = -1
+        self._abort_stable_chunks: int = 0
   # Optional Syzygy probe. When set, MCTS leaves in the TB range get
   # their NN wdl overridden with the TB-truth distribution.
         self._tb_probe = None
@@ -1102,6 +1133,40 @@ class SearchWorker:
         runner_up = int(others.max()) if others.size else 0
         return best, best_visits - runner_up
 
+    def _move_is_decided(
+        self, best_action: int, allowed_root_indices: set[int] | None,
+    ) -> bool:
+        """Complexity gate deciding *easy vs hard*: the played move is "decided"
+        (safe to bank) only when it is BOTH stable — the same move for
+        ``_ABORT_MIN_STABLE_CHUNKS`` consecutive chunks — AND value-decisive — its
+        root Q leads the best explored alternative by ``_ABORT_Q_DECISIVE_MARGIN``.
+        A still-flipping choice or a near-tie in value reads as a hard position, so
+        the search keeps going and uses the (over-allocated) budget. Must be called
+        once per chunk: it advances the stability counter."""
+        if best_action == self._abort_last_best:
+            self._abort_stable_chunks += 1
+        else:
+            self._abort_last_best = best_action
+            self._abort_stable_chunks = 0
+        if self._abort_stable_chunks < _ABORT_MIN_STABLE_CHUNKS:
+            return False
+        if self._tree is None or self._root_id is None:
+            return True
+        actions, visits, qs = self._tree.get_children_q(
+            self._root_id, self._tree.node_q(self._root_id),
+        )
+        if actions.size == 0:
+            return True
+        if allowed_root_indices is not None:
+            keep = np.isin(actions, np.fromiter(allowed_root_indices, dtype=np.int32))
+            actions, visits, qs = actions[keep], visits[keep], qs[keep]
+  # Compare value only over explored alternatives (unvisited children carry the
+  # default Q and would distort the margin).
+        explored = visits > 0
+        if bool(explored.any()):
+            actions, qs = actions[explored], qs[explored]
+        return _value_is_decisive(actions, qs, best_action, _ABORT_Q_DECISIVE_MARGIN)
+
     def _abort_ready(
         self,
         optimum_ms: int | None,
@@ -1110,24 +1175,25 @@ class SearchWorker:
         allowed_root_indices: set[int] | None,
         abort_factor: float,
     ) -> bool:
-        """Lc0-style visit-margin early abort. Stops only when the move final
-        selection would play is *settled* — it leads the runner-up on visits:
+        """Lc0-style early abort with a complexity gate. Banks the clock only when
+        the move final selection would play is *settled* on three signals:
 
-        - past the optimum budget, a settled move banks the remaining clock;
-        - before the optimum, a settled move can still bank early if its lead is
-          one the runner-up cannot overcome within the remaining optimum budget
-          (``lead > factor * remaining_sims``).
+        - it leads the runner-up on visits (``_root_visit_lead``);
+        - it is value-decisive and stable (``_move_is_decided`` — root Q margin +
+          best-move stability across chunks); and
+        - the optimum budget is spent, OR (before it) the visit lead is already
+          insurmountable within the remaining optimum (``lead > factor * sims``).
 
-        While the move is unsettled (the Gumbel survivor trails the visit leader,
-        or the choice is otherwise still moving) it keeps searching toward the
-        hard ``deadline`` — the extension the time-manager allocates for hard
-        positions. Returns False when no optimum is set, so node/movetime/infinite
-        searches and the hard ``deadline`` are unaffected."""
+        A hard position (still-flipping choice, near-tie in value, or trailing
+        survivor) fails the gate and keeps searching toward the hard ``deadline``
+        — "use it all" on the moves that matter, which is what makes the aggressive
+        over-allocation pay off. Returns False when no optimum is set, so
+        node/movetime/infinite searches and the hard ``deadline`` are unaffected."""
         if optimum_ms is None:
             return False
         best, lead = self._root_visit_lead(allowed_root_indices)
-        if best < 0 or lead <= 0:
-  # Unsettled (or no move): extend toward the hard deadline.
+        if best < 0 or lead <= 0 or not self._move_is_decided(best, allowed_root_indices):
+  # Hard / unsettled (or no move): keep searching toward the hard deadline.
             return False
         elapsed = deadline.elapsed_ms()
         remaining_ms = optimum_ms - elapsed
@@ -1165,6 +1231,10 @@ class SearchWorker:
             self._root_id = None
             self._tree_fen = fen
             self._invalidate_root_caches()
+  # Fresh best-move stability tracking for this move's abort gate (tree may be
+  # reused across the game, so reset here rather than only on a new position).
+        self._abort_last_best = -1
+        self._abort_stable_chunks = 0
 
         tb_probe = self._tb_probe
         if tb_probe is not None:
