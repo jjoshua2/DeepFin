@@ -157,14 +157,28 @@ def sparse_sf_policy_ce(
         fallback_ok = ~has_cand & fb_valid
         cand_term = torch.where(fallback_ok, fb_term, cand_term)
 
-    # Analytic smoothing term over the (pre-aligned) legal set.
+    # Analytic smoothing term over the (pre-aligned) legal set. Gated PER ROW on
+    # "candidates don't cover every legal move" — mirrors the live builder
+    # (stockfish_turn._build_sf_policy_target), which gates on
+    # len(set(cand) & set(legal)). n_covered must therefore count candidates that
+    # are BOTH scoreable AND in the legal set (a candidate mapping outside
+    # legal_aligned would otherwise inflate the count and flip the gate vs dense);
+    # the empty-cand fallback covers exactly its one bestmove.
     smooth = float(params.sf_policy_label_smooth)
     legal_f = legal_aligned.float()
     legal_count = legal_f.sum(dim=-1)
     if smooth > 0.0:
+        cand_is_legal = legal_f.gather(1, idx.clamp(0, dst_width - 1)) > 0
+        n_covered = (ok & cand_is_legal).sum(dim=-1).to(legal_count.dtype)
+        n_covered = torch.where(fallback_ok, torch.ones_like(n_covered), n_covered)
+        smooth_row = torch.where(
+            (n_covered < legal_count) & (legal_count > 0),
+            legal_count.new_full((), smooth),
+            legal_count.new_zeros(()),
+        )
         smooth_sum = (legal_f * lsm).sum(dim=-1)
-        smooth_term = smooth * smooth_sum / legal_count.clamp_min(1.0)
-        ce = -(1.0 - smooth) * cand_term - smooth_term
+        smooth_term = smooth_row * smooth_sum / legal_count.clamp_min(1.0)
+        ce = -(1.0 - smooth_row) * cand_term - smooth_term
     else:
         ce = -cand_term
 

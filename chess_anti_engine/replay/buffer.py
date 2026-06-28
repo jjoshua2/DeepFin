@@ -64,6 +64,20 @@ class ReplaySample:
     future_policy_target: np.ndarray | None = None  # (POLICY_SIZE,) float32
     has_future: bool | None = None
 
+  # SF's recommended move for THIS position (P0 teacher for policy_own).
+  # Only the prior ply's sf_policy_target is SF's analysis of *this* position
+  # (SF labels run at P1 = after a move). In selfplay the net plays every ply,
+  # so two consecutive full plies let the earlier record's sf_policy serve as
+  # this record's own-move teacher. None except on those eligible rows.
+    sf_p0_policy_target: np.ndarray | None = None  # (POLICY_SIZE,) float32
+    has_sf_p0: bool | None = None
+
+  # Per-move normalized SF cp-regret at THIS position (P0), same one-ply shift
+  # as sf_p0_policy_target. Value vector in [0,1] (best move 0.0), NOT a
+  # distribution. Drives the regret-weighted SF teacher (train.w_sf_own_regret).
+    sf_p0_regret: np.ndarray | None = None  # (POLICY_SIZE,) float32
+    has_sf_p0_regret: bool | None = None
+
     volatility_target: np.ndarray | None = None  # (3,) float32
     has_volatility: bool | None = None
 
@@ -122,7 +136,7 @@ def balance_wdl(
             idxs = rng.choice(len(bucket), size=cap, replace=False)
             out.extend([bucket[int(i)] for i in idxs])
 
-    rng.shuffle(out)  # type: ignore[arg-type] # numpy expects ArrayLike; list[dataclass] works at runtime
+    rng.shuffle(out)  # pyright: ignore[reportArgumentType] # numpy expects ArrayLike; list[dataclass] works at runtime
     return out
 
 

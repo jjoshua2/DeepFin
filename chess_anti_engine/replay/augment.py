@@ -14,11 +14,12 @@ from chess_anti_engine.moves.encode import (
 )
 
 from .buffer import ReplaySample
-from .shard import LEGAL_MASK_FIELDS, POLICY_SPACE_FIELDS
+from .shard import LEGAL_MASK_FIELDS, POLICY_DENSE_VALUE_FIELDS, POLICY_SPACE_FIELDS
 
 # Fields whose rows live in POLICY_SIZE move space and must be remapped under
-# the mirror permutation. Includes all policy-like targets and legal masks.
-_MIRROR_POLICY_FIELDS = (*POLICY_SPACE_FIELDS, *LEGAL_MASK_FIELDS)
+# the mirror permutation. Includes all policy-like targets, dense per-action
+# value vectors (e.g. sf_p0_regret), and legal masks.
+_MIRROR_POLICY_FIELDS = (*POLICY_SPACE_FIELDS, *POLICY_DENSE_VALUE_FIELDS, *LEGAL_MASK_FIELDS)
 _LEGACY_CASTLING_SWAP_PAIRS = ((96, 97), (98, 99))
 _LC0_ROOT_CASTLING_SWAP_PAIRS = ((104, 105), (106, 107))
 
@@ -163,6 +164,11 @@ def mirror_sample(s: ReplaySample, *, input_history_encoding: str | None = None)
     out.policy_soft_target = None if s.policy_soft_target is None else mirror_policy(s.policy_soft_target)
     out.future_policy_target = None if s.future_policy_target is None else mirror_policy(s.future_policy_target)
     out.has_future = getattr(s, "has_future", None)
+    out.sf_p0_policy_target = None if s.sf_p0_policy_target is None else mirror_policy(s.sf_p0_policy_target)
+    out.has_sf_p0 = getattr(s, "has_sf_p0", None)
+  # Per-move value vector: same move-index permutation as a policy under reflection.
+    out.sf_p0_regret = None if s.sf_p0_regret is None else mirror_policy(s.sf_p0_regret)
+    out.has_sf_p0_regret = getattr(s, "has_sf_p0_regret", None)
 
     out.volatility_target = None if s.volatility_target is None else np.asarray(s.volatility_target, dtype=np.float32)
     out.has_volatility = getattr(s, "has_volatility", None)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 from pathlib import Path
@@ -25,6 +26,9 @@ def _bare_worker_session() -> WorkerSession:
     session._stop_selfplay = False
     session._active_reco = {k: None for k in WorkerSession._RECO_RESTART_KEYS}
     session._active_reco["sf_nodes"] = 100
+  # Test manifests carry no stockfish/opening-book assets, so the session-start
+  # fingerprint is all-None; match it so the asset-change gate stays quiet.
+    session._active_assets = (None, None, None)
     session._last_manifest_poll_s = time.time()
     session._manifest_mtime = None
     session.model_sha = "old-sha"
@@ -133,6 +137,7 @@ def test_build_selfplay_configs_uses_manifest_policy_and_history_encoding() -> N
     cfgs, _sf_args = WorkerSession._build_selfplay_configs(
         session,
         {
+            "sf_nodes": 5000,
             "policy_encoding": "lc0_1858",
             "input_history_encoding": "lc0_root_legacy_meta",
         },
@@ -149,11 +154,11 @@ def test_build_selfplay_configs_consumes_history_rep_fix() -> None:
     session = _bare_worker_session()
 
     cfgs, _sf_args = WorkerSession._build_selfplay_configs(
-        session, {"history_rep_fix": True},
+        session, {"sf_nodes": 5000, "history_rep_fix": True},
     )
     assert cfgs["game"].history_rep_fix is True
 
-    cfgs, _sf_args = WorkerSession._build_selfplay_configs(session, {})
+    cfgs, _sf_args = WorkerSession._build_selfplay_configs(session, {"sf_nodes": 5000})
     assert cfgs["game"].history_rep_fix is False
 
     # Flipping the flag must restart the selfplay session.
@@ -167,11 +172,11 @@ def test_build_selfplay_configs_consumes_categorical_blend_frac() -> None:
     session = _bare_worker_session()
 
     cfgs, _sf_args = WorkerSession._build_selfplay_configs(
-        session, {"categorical_blend_frac": 0.5},
+        session, {"sf_nodes": 5000, "categorical_blend_frac": 0.5},
     )
     assert cfgs["game"].categorical_blend_frac == 0.5
 
-    cfgs, _sf_args = WorkerSession._build_selfplay_configs(session, {})
+    cfgs, _sf_args = WorkerSession._build_selfplay_configs(session, {"sf_nodes": 5000})
     assert cfgs["game"].categorical_blend_frac == 0.0
 
     # Flipping the flag mid-session must restart selfplay so it takes effect.
@@ -285,6 +290,7 @@ def test_threaded_local_model_swap_keeps_buffer_metadata_atomic(monkeypatch, tmp
     new_model = torch.nn.Identity()
     evaluator = SimpleNamespace(model="old-model")
     cast(Any, session)._direct_evaluator = evaluator
+    session._evaluator_model_id = None  # _resync_evaluator_to_model reads this
 
     session._server_url_for = lambda endpoint: f"http://server{endpoint}"
     session._load_and_compile_model = lambda *_args, **_kwargs: new_model
@@ -394,3 +400,354 @@ def test_completed_game_metadata_mismatch_flushes_before_retry(monkeypatch, tmp_
     assert session.upload_buf.positions == 2
     assert session._completion_games == 1
     assert session._completion_positions == 2
+
+
+def test_require_reco_raises_when_sf_nodes_set_nowhere() -> None:
+    session = _bare_worker_session()  # args is an empty namespace
+    with pytest.raises(worker_mod._MissingRequiredReco):
+        WorkerSession._require_reco(session, {}, "sf_nodes", int)
+
+
+def test_require_reco_reads_from_reco() -> None:
+    session = _bare_worker_session()
+    assert WorkerSession._require_reco(session, {"sf_nodes": 5000}, "sf_nodes", int) == 5000
+
+
+def test_require_reco_cli_overrides_reco() -> None:
+    session = _bare_worker_session()
+    session.args = SimpleNamespace(sf_nodes=5000)
+    assert WorkerSession._require_reco(session, {"sf_nodes": 9999}, "sf_nodes", int) == 5000
+
+
+def test_build_selfplay_configs_requires_sf_nodes() -> None:
+    """No fail-weak 2000 default: a manifest without sf_nodes must refuse to
+    build SF rather than silently run the opponent at a guessed budget."""
+    session = _bare_worker_session()
+    with pytest.raises(worker_mod._MissingRequiredReco):
+        WorkerSession._build_selfplay_configs(session, {})
+    # Present (and positive) -> resolves normally.
+    _cfgs, sf_args = WorkerSession._build_selfplay_configs(session, {"sf_nodes": 5000})
+    assert sf_args[0] == 5000
+
+
+def test_sf_node_knobs_are_live_applied_not_restart() -> None:
+    """SF node budgets + the selfplay/curriculum mix are read fresh per
+    move/recycle, so the worker applies them to the running SelfplayState in
+    place (no session restart that would abandon the in-flight games). NOTE:
+    sf_move_nodes is intentionally restart-only — see
+    test_sf_move_nodes_is_restart_only_not_live."""
+    for key in ("sf_fast_ply_node_scale", "sf_nodes",
+                "selfplay_fraction", "opponent_wdl_regret_limit"):
+        assert key in WorkerSession._RECO_LIVE_KEYS
+        assert key not in WorkerSession._RECO_RESTART_KEYS
+
+
+def test_sf_move_nodes_is_restart_only_not_live() -> None:
+    """sf_move_nodes gates the curriculum SF query path (the 0-boundary switches
+    move-futures into label-futures), so it must restart rather than live-apply
+    to avoid writing low-node SF targets for in-flight positions."""
+    assert "sf_move_nodes" in WorkerSession._RECO_RESTART_KEYS
+    assert "sf_move_nodes" not in WorkerSession._RECO_LIVE_KEYS
+
+
+def _live_state() -> Any:
+    """A minimal stand-in for the live SelfplayState with real config
+    dataclasses (so `dataclasses.replace` works) carrying a distinctive,
+    session-fixed `max_plies` to prove untracked fields are not transplanted.
+    Binds the REAL SelfplayState.apply_live_overrides / terminal_eval_nodes_for
+    so the live-apply path is exercised against the actual implementation."""
+    from chess_anti_engine.selfplay.config import GameConfig, OpponentConfig
+    from chess_anti_engine.selfplay.state import SelfplayState
+
+    class _FakeState:
+        apply_live_overrides = SelfplayState.apply_live_overrides
+        terminal_eval_nodes_for = staticmethod(SelfplayState.terminal_eval_nodes_for)
+
+        def __init__(self) -> None:
+            self.game = GameConfig(selfplay_fraction=0.30, max_plies=137)
+            self.opponent = OpponentConfig(wdl_regret_limit=0.04)
+            self.base_nodes = 5000
+            self.terminal_eval_nodes = 25000
+
+    return _FakeState()
+
+
+def test_live_reco_change_applies_without_restart() -> None:
+    """A live-only reco change (selfplay_fraction + sf_nodes) on an active
+    session swaps the live fields in place and does NOT request a restart."""
+    session = _bare_worker_session()
+    session.args = SimpleNamespace(sf_nodes=None)
+    session._active_reco = session._snapshot_reco({"sf_nodes": 5000, "selfplay_fraction": 0.30})
+
+    captured: dict[str, Any] = {}
+    session._active_state = _live_state()
+    cast(Any, session).sf = SimpleNamespace(set_nodes=lambda n: captured.update(nodes=n))
+
+    changed = WorkerSession._reco_changed(
+        session,
+        {"recommended_worker": {"sf_nodes": 6000, "selfplay_fraction": 0.50}},
+        source_tag="test",
+    )
+
+    assert changed is False
+    assert session._stop_selfplay is False
+    st = cast(Any, session._active_state)
+    assert st.game.selfplay_fraction == 0.50
+    assert st.base_nodes == 6000
+    assert captured == {"nodes": 6000}
+    assert session._active_reco["selfplay_fraction"] == 0.50
+
+
+def test_apply_live_reco_transplants_only_live_fields() -> None:
+    """_apply_live_reco swaps ONLY the live-safe fields onto the running config,
+    never the whole rebuilt config — so even a (restart-keyed) session-fixed
+    field like max_plies present in the reco never mutates the session value.
+    Tested directly (not via _reco_changed) since a max_plies change now routes
+    to a restart, not the live path."""
+    session = _bare_worker_session()
+    session.args = SimpleNamespace(sf_nodes=None)
+    session._active_state = _live_state()  # max_plies=137
+    cast(Any, session).sf = SimpleNamespace(set_nodes=lambda _n: None)
+
+    applied = WorkerSession._apply_live_reco(
+        session,
+        {"sf_nodes": 5000, "selfplay_fraction": 0.50, "max_plies": 999},
+    )
+
+    assert applied is True
+    st = cast(Any, session._active_state)
+    assert st.game.selfplay_fraction == 0.50  # live field applied
+    assert st.game.max_plies == 137  # session-fixed field preserved
+
+
+def test_apply_live_reco_falls_back_to_restart_on_build_error(caplog: Any) -> None:
+    """Codex review: a malformed reco that makes config construction raise must
+    NOT be swallowed silently — _apply_live_reco logs and returns False so the
+    caller restarts (re-parsing the reco at bring-up), rather than pinning the
+    worker at the old config."""
+    session = _bare_worker_session()
+    session.args = SimpleNamespace(sf_nodes=None)
+    session._active_state = _live_state()
+    cast(Any, session).sf = SimpleNamespace(set_nodes=lambda _n: None)
+
+    # mcts_simulations must be int(); a non-numeric string raises ValueError.
+    with caplog.at_level(logging.WARNING):
+        applied = WorkerSession._apply_live_reco(
+            session, {"sf_nodes": 5000, "mcts_simulations": "not-a-number"},
+        )
+    assert applied is False
+    assert any("falling back to restart" in r.message for r in caplog.records)
+
+
+def test_every_reco_field_is_watched() -> None:
+    """Completeness guard (Codex review): every recommended_worker field that
+    _build_selfplay_configs consumes must be in _RECO_LIVE_KEYS or
+    _RECO_RESTART_KEYS. Otherwise a mid-run change to it silently never reaches
+    workers now that the PID levers are live (no incidental restart to flush it)."""
+    import inspect
+    # Scan both the config builder and the session-start path (games_per_batch
+    # is read in _run_selfplay, not _build_selfplay_configs).
+    src = inspect.getsource(WorkerSession._build_selfplay_configs)
+    src += inspect.getsource(WorkerSession._run_selfplay)
+    keys: set[str] = set()
+    # \s* after each "(" so wrapped calls like `_resolve_reco(\n    reco, "key"...)`
+    # are caught too (\s matches the newline) — otherwise a multi-line knob could
+    # be silently unwatched while passing this guard.
+    for pat in (
+        r'reco\.get\(\s*["\']([a-z0-9_]+)["\']',
+        r'_resolve_reco\(\s*reco,\s*["\']([a-z0-9_]+)["\']',
+        r'_optional_reco\(\s*["\']([a-z0-9_]+)["\']',
+        r'_require_reco\(\s*reco,\s*["\']([a-z0-9_]+)["\']',
+    ):
+        keys |= set(re.findall(pat, src))
+    watched = set(WorkerSession._RECO_LIVE_KEYS) | set(WorkerSession._RECO_RESTART_KEYS)
+    unwatched = sorted(keys - watched)
+    assert not unwatched, f"reco fields neither live nor restart-keyed: {unwatched}"
+
+
+def test_every_live_key_is_transplanted() -> None:
+    """Drift guard (Codex review): every _RECO_LIVE_KEYS entry must actually
+    land on the live SelfplayState when changed — catches a live key added to
+    the tuple but forgotten in _apply_live_reco's transplant body."""
+    # key -> (baseline value, changed value, accessor on the live state)
+    cases: dict[str, tuple[Any, Any, Any]] = {
+        "selfplay_fraction": (0.30, 0.55, lambda st: st.game.selfplay_fraction),
+        "sf_fast_ply_node_scale": (0.25, 0.6, lambda st: st.game.sf_fast_ply_node_scale),
+        "opponent_wdl_regret_limit": (0.04, 0.02, lambda st: st.opponent.wdl_regret_limit),
+        "sf_nodes": (5000, 7000, lambda st: st.base_nodes),
+    }
+    assert set(cases) == set(WorkerSession._RECO_LIVE_KEYS), (
+        "update test_every_live_key_is_transplanted for the new live key(s)"
+    )
+    for key, (base, changed, get) in cases.items():
+        session = _bare_worker_session()
+        session.args = SimpleNamespace(sf_nodes=None)
+        session._active_state = _live_state()
+        cast(Any, session).sf = SimpleNamespace(set_nodes=lambda _n: None)
+        baseline = {"sf_nodes": 5000, key: base}
+        applied = WorkerSession._apply_live_reco(session, {**baseline, key: changed})
+        assert applied is True
+        assert get(cast(Any, session._active_state)) == changed, f"live key {key} not transplanted"
+
+
+def test_sf_multipv_change_triggers_restart() -> None:
+    """Codex #81: sf_multipv is applied only at engine (re)init, so a change
+    must restart even when bundled with a live-only sf_nodes update."""
+    assert "sf_multipv" in WorkerSession._RECO_RESTART_KEYS
+    session = _bare_worker_session()
+    session.args = SimpleNamespace(sf_nodes=None)
+    session._active_reco = session._snapshot_reco({"sf_nodes": 5000, "sf_multipv": 5})
+    session._active_state = _live_state()
+
+    changed = WorkerSession._reco_changed(
+        session,
+        {"recommended_worker": {"sf_nodes": 6000, "sf_multipv": 10}},
+        source_tag="test",
+    )
+
+    assert changed is True
+    assert session._stop_selfplay is True
+
+
+def test_session_asset_change_triggers_restart() -> None:
+    """Codex review: a session-start asset change (SF binary / opening-book SHA)
+    bundled with only live reco keys cannot be live-applied to the running
+    engine/book, so it must restart instead of being silently ignored."""
+    session = _bare_worker_session()
+    session.args = SimpleNamespace(sf_nodes=None, stockfish_from_server=True)
+    session._active_reco = session._snapshot_reco({"sf_nodes": 5000})
+    session._active_assets = ("sha_old", None, None)
+    session._active_state = _live_state()
+
+    changed = WorkerSession._reco_changed(
+        session,
+        {
+            "stockfish": {"sha256": "sha_NEW"},
+            "recommended_worker": {"sf_nodes": 6000},  # only a live key changed
+        },
+        source_tag="test",
+    )
+
+    assert changed is True
+    assert session._stop_selfplay is True
+
+
+def test_sync_stockfish_reinits_on_binary_change(monkeypatch: Any) -> None:
+    """Codex review: a hot-swapped SF binary (new resolved path) must re-init the
+    engine — otherwise the asset-fingerprint restart downloads the new binary but
+    keeps running the old one."""
+    session = _bare_worker_session()
+    session.args = SimpleNamespace(
+        stockfish_path="sf_v1", stockfish_from_server=False, sf_workers=1, sf_nice=0,
+    )
+    cast(Any, session).sf = None
+    session.sf_multipv_active = None
+    session.sf_syzygy_path_active = None
+    session.sf_path_active = None
+
+    built: list[str] = []
+
+    class _FakeSF:
+        def __init__(self, path: str, **_kw: Any) -> None:
+            built.append(path)
+
+        def close(self) -> None:
+            pass
+
+        def set_nodes(self, _n: int) -> None:
+            pass
+
+    monkeypatch.setattr(worker_mod, "StockfishUCI", _FakeSF)
+
+    WorkerSession._sync_stockfish(session, {}, 5000, 5)
+    WorkerSession._sync_stockfish(session, {}, 5000, 5)  # same path -> no rebuild
+    assert built == ["sf_v1"]
+    session.args.stockfish_path = "sf_v2"  # binary hot-swap
+    WorkerSession._sync_stockfish(session, {}, 5000, 5)
+    assert built == ["sf_v1", "sf_v2"]
+
+
+def test_sync_model_resyncs_evaluator(monkeypatch: Any) -> None:
+    """Codex review: a mid-session model swap on the poll path must re-point the
+    running evaluator at the new model — otherwise play_batch keeps using the old
+    model while shards are tagged with the new SHA."""
+    session = _bare_worker_session()
+    session.args = SimpleNamespace(username="t")
+    session.inference_client = None
+    session.last_model_sha = "old"
+    session.model_sha = ""
+    session.model_step = 0
+    session.fixed_trial_id = "trial_00000"  # skip the lease-reset branch
+    session.model_cfg_active = None
+    cast(Any, session)._direct_evaluator = object()
+    session._evaluator_model_id = 999
+
+    new_model = object()
+    synced: list[object] = []
+    monkeypatch.setattr(session, "_flush_pre_swap_buffer_if_stale", lambda **_k: None)
+    monkeypatch.setattr(session, "_ensure_local_model_at_sha", lambda **_k: Path("m.pt"))
+    monkeypatch.setattr(session, "_load_and_compile_model", lambda *_a, **_k: new_model)
+    monkeypatch.setattr(worker_mod, "model_config_from_manifest_dict", lambda _d: ModelConfig())
+    monkeypatch.setattr(worker_mod, "_sync_evaluator_to_model", lambda _ev, m: synced.append(m))
+
+    WorkerSession._sync_model(
+        session, {"model": {"sha256": "new"}, "trainer_step": 1, "model_config": {}},
+    )
+
+    assert session.model is new_model
+    assert synced == [new_model]
+    assert session._evaluator_model_id == id(new_model)
+
+
+def test_pinned_games_per_batch_does_not_restart() -> None:
+    """Codex review: when games_per_batch is CLI-pinned, the pin wins over reco,
+    so a server-side change to it must NOT force a (no-op) restart."""
+    session = _bare_worker_session()
+    session.args = SimpleNamespace(sf_nodes=None)
+    session.games_per_batch_local = 64
+    session._active_reco = session._snapshot_reco({"sf_nodes": 5000, "games_per_batch": 8})
+
+    changed = WorkerSession._reco_changed(
+        session,
+        {"recommended_worker": {"sf_nodes": 5000, "games_per_batch": 16}},
+        source_tag="test",
+    )
+    assert changed is False
+    assert session._stop_selfplay is False
+
+    # Without the pin, the same change restarts (games_per_batch resizes slots).
+    session2 = _bare_worker_session()
+    session2.args = SimpleNamespace(sf_nodes=None)
+    session2.games_per_batch_local = None
+    session2._active_reco = session2._snapshot_reco({"sf_nodes": 5000, "games_per_batch": 8})
+    changed2 = WorkerSession._reco_changed(
+        session2,
+        {"recommended_worker": {"sf_nodes": 5000, "games_per_batch": 16}},
+        source_tag="test",
+    )
+    assert changed2 is True
+
+
+def test_reco_restart_keys_have_no_duplicates() -> None:
+    """The hand-maintained key tuples must stay duplicate-free and disjoint."""
+    restart = WorkerSession._RECO_RESTART_KEYS
+    assert len(restart) == len(set(restart)), "duplicate in _RECO_RESTART_KEYS"
+    assert not (set(WorkerSession._RECO_LIVE_KEYS) & set(restart)), "live/restart overlap"
+
+
+def test_live_reco_change_without_active_state_restarts() -> None:
+    """A live-key change with no running session (threaded mode / between
+    sessions) must fall back to a session restart so the change isn't lost."""
+    session = _bare_worker_session()
+    session.args = SimpleNamespace(sf_nodes=None)
+    session._active_reco = session._snapshot_reco({"sf_nodes": 5000, "selfplay_fraction": 0.30})
+    session._active_state = None
+
+    changed = WorkerSession._reco_changed(
+        session,
+        {"recommended_worker": {"sf_nodes": 5000, "selfplay_fraction": 0.50}},
+        source_tag="test",
+    )
+
+    assert changed is True
+    assert session._stop_selfplay is True

@@ -61,6 +61,14 @@ POLICY_ENCODING_ARRAY_KEY = "_policy_encoding"
 # load_shard_arrays; a missing shard attr provably means the flag was off.
 HISTORY_REP_FIX_ARRAY_KEY = "_history_rep_fix"
 
+# Scalar encoding-identity markers that travel with the arrays. They are tiny
+# and the loader keys model-encoding identity off them, so prune_storage_arrays
+# must preserve every one — dropping a marker makes pruned shards reload with it
+# defaulted off (e.g. history_rep_fix=False, silently mixing fixed/unfixed
+# repetition planes). One tuple so a newly-added marker can't be lost by one
+# site. (POLICY_ENCODING_ARRAY_KEY is synthesized fresh by prune, not copied.)
+_ENCODING_METADATA_ARRAY_KEYS = (INPUT_HISTORY_ENCODING_ARRAY_KEY, HISTORY_REP_FIX_ARRAY_KEY)
+
 
 def history_rep_fix_from_arrays(arrs: dict[str, Any]) -> bool:
     """Read the history_rep_fix marker from a chunk dict (absent = off)."""
@@ -150,6 +158,8 @@ _OPTIONAL_FIELD_SPECS: tuple[_OptFieldSpec, ...] = (
     _OptFieldSpec("categorical_target",   "has_categorical",       (DEFAULT_CATEGORICAL_BINS,), _F16),
     _OptFieldSpec("policy_soft_target",   "has_policy_soft",       _POLICY_SHAPE, _F16),
     _OptFieldSpec("future_policy_target", "has_future",            _POLICY_SHAPE, _F16),
+    _OptFieldSpec("sf_p0_policy_target",  "has_sf_p0",             _POLICY_SHAPE, _F16),
+    _OptFieldSpec("sf_p0_regret",         "has_sf_p0_regret",      _POLICY_SHAPE, _F16),
     _OptFieldSpec("volatility_target",    "has_volatility",        (3,),          _F16),
     _OptFieldSpec("sf_volatility_target", "has_sf_volatility",     (3,),          _F16),
     _OptFieldSpec("search_wdl",           "has_search_wdl",        (3,),          _F16),
@@ -175,6 +185,7 @@ _OPTIONAL_DISTRIBUTION_FIELDS = frozenset({
     "categorical_target",
     "policy_soft_target",
     "future_policy_target",
+    "sf_p0_policy_target",
     "search_wdl",
 })
 
@@ -232,8 +243,14 @@ LEGAL_MASK_HAS_FIELDS: tuple[str, ...] = ("has_legal_mask", "has_sf_legal_mask",
 # Storing as padded-sparse (values + column indices + lengths) saves ~10x
 # memory per policy field in the shuffle buffer.
 
-POLICY_SPACE_FIELDS = ("policy_target", "sf_policy_target", "policy_soft_target", "future_policy_target")
-POLICY_SIZED_FIELDS = frozenset((*POLICY_SPACE_FIELDS, *LEGAL_MASK_FIELDS))
+POLICY_SPACE_FIELDS = ("policy_target", "sf_policy_target", "policy_soft_target", "future_policy_target", "sf_p0_policy_target")
+# Policy-sized per-action VALUE vectors (not sparse distributions). sf_p0_regret
+# fills unlisted moves with a non-zero default (the midpoint between the worst
+# scored regret and 1.0), so it is dense -> sparsifying it would store vals+cols
+# for ~every entry (~2x bloat). Keep dense, but it is still policy-sized
+# (allocation) and lives in move space (mirror augmentation).
+POLICY_DENSE_VALUE_FIELDS = ("sf_p0_regret",)
+POLICY_SIZED_FIELDS = frozenset((*POLICY_SPACE_FIELDS, *POLICY_DENSE_VALUE_FIELDS, *LEGAL_MASK_FIELDS))
 POLICY_INDEX_FIELDS: tuple[tuple[str, str], ...] = (
     ("sf_move_index", "has_sf_move"),
     ("sf_played_move_index", "has_sf_played_move"),
@@ -342,6 +359,18 @@ def _meta_with_policy(meta: ShardMeta | dict[str, Any] | None, *, arrs: dict[str
         )
     attrs["policy_encoding"] = policy_encoding
     attrs["policy_size"] = policy_size
+    # Promote the scalar encoding-identity markers from the arrays into the meta
+    # so BOTH save paths persist them: zarr via group attrs, and the legacy NPZ
+    # path via meta_json. On load, _attach_identity_meta_arrays rematerializes
+    # the marker arrays FROM this meta (overwriting any stored array), so a
+    # marker that lives only in the arrays would otherwise be lost on the NPZ
+    # round trip — reverting history_rep_fix to False.
+    if attrs.get("input_history_encoding") is None and INPUT_HISTORY_ENCODING_ARRAY_KEY in arrs:
+        hist = np.asarray(arrs[INPUT_HISTORY_ENCODING_ARRAY_KEY])
+        if hist.size:
+            attrs["input_history_encoding"] = str(hist.reshape(-1)[0])
+    if attrs.get("history_rep_fix") is None and HISTORY_REP_FIX_ARRAY_KEY in arrs:
+        attrs["history_rep_fix"] = history_rep_fix_from_arrays(arrs)
     return attrs
 
 
@@ -569,8 +598,13 @@ def prune_storage_arrays(arrs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
             out[flag_name] = flag
             if value_name in arrs:
                 out[value_name] = np.asarray(arrs[value_name])
-    if INPUT_HISTORY_ENCODING_ARRAY_KEY in arrs:
-        out[INPUT_HISTORY_ENCODING_ARRAY_KEY] = np.asarray(arrs[INPUT_HISTORY_ENCODING_ARRAY_KEY])
+    # Preserve every scalar encoding-identity marker (history encoding, rep-fix);
+    # dropping one makes pruned shards reload with the flag defaulted off and
+    # silently mix encodings across a training window (the mixed-value guard in
+    # samples_to_arrays only fires when SOME rows still carry the marker).
+    for key in _ENCODING_METADATA_ARRAY_KEYS:
+        if key in arrs:
+            out[key] = np.asarray(arrs[key])
     policy_encoding, policy_size = _policy_metadata_from_arrays(out)
     out[POLICY_ENCODING_ARRAY_KEY] = np.asarray(policy_encoding)
     out["_policy_size"] = np.array(policy_size, dtype=np.int32)
@@ -803,6 +837,8 @@ _VECTOR_FIELDS: tuple[tuple[str, str, str], ...] = (
     ("categorical_target",   "categorical_target",   "has_categorical"),
     ("policy_soft_target",   "policy_soft_target",   "has_policy_soft"),
     ("future_policy_target", "future_policy_target", "has_future"),
+    ("sf_p0_policy_target",  "sf_p0_policy_target",  "has_sf_p0"),
+    ("sf_p0_regret",         "sf_p0_regret",         "has_sf_p0_regret"),
     ("volatility_target",    "volatility_target",    "has_volatility"),
     ("sf_volatility_target", "sf_volatility_target", "has_sf_volatility"),
     ("search_wdl",           "search_wdl",           "has_search_wdl"),
@@ -816,6 +852,8 @@ _INT_VECTOR_FIELDS: tuple[tuple[str, str, str], ...] = (
 
 _VECTOR_EXPLICIT_HAS_ATTRS: dict[str, str] = {
     "future_policy_target": "has_future",
+    "sf_p0_policy_target": "has_sf_p0",
+    "sf_p0_regret": "has_sf_p0_regret",
     "volatility_target": "has_volatility",
     "sf_volatility_target": "has_sf_volatility",
 }
@@ -873,8 +911,16 @@ def samples_to_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
             shape = (policy_size,)
         else:
             shape = spec.shape
-        arrs[spec.arr] = np.zeros((n, *shape), dtype=spec.dtype)
         arrs[spec.flag] = np.zeros((n,), dtype=np.uint8)
+        # Skip the (often policy-sized) dense allocation when no sample carries
+        # the field. A default-off optional field (e.g. sf_p0_policy_target)
+        # otherwise allocates a full N*policy_size zero array per batch only to
+        # be dropped — prune_storage_arrays (run by every writer, incl. inside
+        # save_local_shard_arrays) and the loader both tolerate a missing dense
+        # array, keying presence off the flag. The populate loops below only
+        # write arrs[spec.arr] when a sample's value is not None (=> allocated).
+        if any(getattr(s, spec.arr, None) is not None for s in samples):
+            arrs[spec.arr] = np.zeros((n, *shape), dtype=spec.dtype)
 
     for i, s in enumerate(samples):
         for src, target, has, cast in _SCALAR_FIELDS:
@@ -1093,9 +1139,19 @@ def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
 
     opt: dict[str, np.ndarray] = {}
     for spec in _OPTIONAL_FIELD_SPECS:
-        shape = (int(policy.shape[1]),) if spec.arr in POLICY_SIZED_FIELDS else spec.shape
-        opt[spec.arr] = np.asarray(arrs.get(spec.arr, np.zeros((n, *shape), dtype=spec.dtype)))
-        opt[spec.flag] = np.asarray(arrs.get(spec.flag, np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
+        flag = np.asarray(arrs.get(spec.flag, np.zeros((n,), dtype=np.uint8)), dtype=np.uint8)
+        opt[spec.flag] = flag
+        # The per-sample loop only reads ``opt[spec.arr]`` inside ``if flag[i]``,
+        # so when the shard omits the dense array AND no row is active, skip the
+        # (often policy-sized) zero allocation entirely — a default-off optional
+        # field (e.g. sf_p0_policy_target) otherwise zero-fills N*policy_size f16
+        # per read just to never touch it. Synthesize zeros only if a row is
+        # active but the dense array is somehow missing.
+        if spec.arr in arrs:
+            opt[spec.arr] = np.asarray(arrs[spec.arr])
+        elif flag.any():
+            shape = (int(policy.shape[1]),) if spec.arr in POLICY_SIZED_FIELDS else spec.shape
+            opt[spec.arr] = np.zeros((n, *shape), dtype=spec.dtype)
 
     out: list[ReplaySample] = []
     for i in range(n):
@@ -1173,6 +1229,12 @@ def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
         if opt["has_future"][i]:
             s.future_policy_target = _copy_row(opt["future_policy_target"], i)
             s.has_future = True
+        if opt["has_sf_p0"][i]:
+            s.sf_p0_policy_target = _copy_row(opt["sf_p0_policy_target"], i)
+            s.has_sf_p0 = True
+        if opt["has_sf_p0_regret"][i]:
+            s.sf_p0_regret = _copy_row(opt["sf_p0_regret"], i)
+            s.has_sf_p0_regret = True
         if opt["has_volatility"][i]:
             s.volatility_target = _copy_row(opt["volatility_target"], i)
             s.has_volatility = True
@@ -1234,18 +1296,11 @@ def save_local_shard_arrays(
     tmp = p.with_name(f"._tmp_{os.getpid()}_{secrets.token_hex(8)}_{p.name}")
     try:
         g = zarr.open_group(str(tmp), mode="w")
+        # _meta_with_policy promotes the encoding-identity markers (history
+        # encoding, rep-fix) from the pruned arrays into attrs; prune preserves
+        # those markers, so no separate fallback off the un-pruned arrs is
+        # needed.
         attrs = _meta_with_policy(meta, arrs=stored)
-        if (
-            attrs.get("input_history_encoding") is None
-            and INPUT_HISTORY_ENCODING_ARRAY_KEY in arrs
-        ):
-            hist_arr = np.asarray(arrs[INPUT_HISTORY_ENCODING_ARRAY_KEY])
-            if hist_arr.size:
-                attrs["input_history_encoding"] = str(hist_arr.reshape(-1)[0])
-        if attrs.get("history_rep_fix") is None and HISTORY_REP_FIX_ARRAY_KEY in arrs:
-            # Buffer-written window shards carry the marker as a chunk array;
-            # persist it as the attr so reloads rematerialize it.
-            attrs["history_rep_fix"] = history_rep_fix_from_arrays(arrs)
         g.attrs.update(attrs)
         compressor = Blosc(cname="zstd", clevel=3, shuffle=Blosc.SHUFFLE)
         for name, value in stored.items():

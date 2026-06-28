@@ -2,14 +2,17 @@ import numpy as np
 
 from chess_anti_engine.replay import ReplaySample
 from chess_anti_engine.replay.shard import (
+    HISTORY_REP_FIX_ARRAY_KEY,
     INPUT_HISTORY_ENCODING_ARRAY_KEY,
     LOCAL_SHARD_SUFFIX,
     POLICY_ENCODING_ARRAY_KEY,
     ShardMeta,
+    history_rep_fix_from_arrays,
     iter_shard_paths,
     load_npz,
     load_shard_arrays,
     local_shard_path,
+    prune_storage_arrays,
     save_local_shard_arrays,
     save_npz,
     samples_to_arrays,
@@ -272,6 +275,53 @@ def test_save_prunes_unset_optional_arrays(tmp_path):
     assert len(out) == 1
     assert out[0].sf_wdl is None
     assert out[0].future_policy_target is None
+
+
+def test_prune_storage_arrays_preserves_history_rep_fix_marker():
+    # Rep-fixed selfplay must survive the prune step: dropping the marker makes
+    # shards reload as history_rep_fix=False and silently mix fixed/unfixed
+    # repetition planes across a training window.
+    s = _sample()
+    s.history_rep_fix = True
+    arrs = samples_to_arrays([s])
+    assert history_rep_fix_from_arrays(arrs) is True
+
+    pruned = prune_storage_arrays(arrs)
+
+    assert HISTORY_REP_FIX_ARRAY_KEY in pruned
+    assert history_rep_fix_from_arrays(pruned) is True
+
+
+def test_zarr_shard_roundtrip_preserves_history_rep_fix(tmp_path):
+    # The disk path the live trainer/worker use (save_local_shard_arrays): a
+    # rep-fixed sample must reload as history_rep_fix=True, both as the group
+    # attr and rematerialized into the arrays.
+    s = _sample()
+    s.history_rep_fix = True
+    arrs = samples_to_arrays([s])
+
+    path = tmp_path / "rep.zarr"
+    save_local_shard_arrays(path, arrs=arrs, meta={"positions": 1})
+
+    ld_arrs, ld_meta = load_shard_arrays(path)
+    assert ld_meta.get("history_rep_fix") is True
+    assert history_rep_fix_from_arrays(ld_arrs) is True
+
+
+def test_npz_roundtrip_preserves_history_rep_fix(tmp_path):
+    # Legacy NPZ path: save_npz must persist history_rep_fix into meta_json,
+    # because load_shard_arrays -> _attach_identity_meta_arrays rematerializes
+    # the marker array FROM meta (overwriting any stored array). Without the
+    # meta promotion, a rep-fixed bootstrap/archive shard reloads as False.
+    s = _sample()
+    s.history_rep_fix = True
+
+    path = tmp_path / "rep.npz"
+    save_npz(path, samples=[s], meta={"positions": 1})
+
+    out, _meta = load_npz(path)
+    assert len(out) == 1
+    assert out[0].history_rep_fix is True
 
 
 def test_samples_to_arrays_respects_explicit_false_optional_flags():

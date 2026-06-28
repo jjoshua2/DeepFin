@@ -159,7 +159,18 @@ def _sf_played_move_diagnostics(
 
 
 def _eff_sf_nodes(state: SelfplayState, idx: int, *, for_move: bool = False) -> int | None:
-    """Return the per-slot SF node budget, scaled down after fast-sim plies."""
+    """Return the per-slot SF node budget, scaled down on fast-sim plies.
+
+    On fast (playout-capped) plies the SF budget is scaled by
+    ``game.sf_fast_ply_node_scale`` (full-sim plies always use 1.0). This is an
+    intentional compute optimization, NOT a weakened training target: SF labels
+    only attach to full plies (``has_policy`` <=> ``is_full`` <=>
+    ``last_net_full``; see network_turn.py and the label-reuse guard in
+    ``_slot_latest_record_needs_sf_label``), so every label already runs at full
+    nodes. The scale only makes the opponent play cheaply on the ~75% of fast
+    plies that are not training targets. Default 0.25 (see GameConfig); raise
+    toward 1.0 only for a more consistently strong opponent at extra SF cost.
+    """
     base_nodes = int(state.base_nodes)
     if for_move:
         move_nodes = int(getattr(state.game, "sf_move_nodes", 0) or 0)
@@ -167,8 +178,11 @@ def _eff_sf_nodes(state: SelfplayState, idx: int, *, for_move: bool = False) -> 
             base_nodes = move_nodes
     if base_nodes <= 0:
         return None
-    fast_scale = 1.0 if bool(state.last_net_full[idx]) else 0.25
-    return max(1, int(round(float(base_nodes) * float(fast_scale))))
+    if bool(state.last_net_full[idx]):
+        fast_scale = 1.0
+    else:
+        fast_scale = float(getattr(state.game, "sf_fast_ply_node_scale", 0.25))
+    return max(1, int(round(float(base_nodes) * fast_scale)))
 
 
 def _sf_syzygy_path_for_slot(state: SelfplayState, idx: int) -> str | None:
@@ -481,7 +495,14 @@ def _build_sf_policy_target(
     for a, p in zip(cand_idxs, p_top, strict=False):
         p_sf[int(a)] += float(p)
 
-    if sf_policy_label_smooth > 0.0 and legal_indices.size > 0:
+    # Only smooth when SF's candidates don't already cover every legal move. When
+    # fully covered (the common case — multipv=40 ≥ legal count for ~83% of
+    # positions) the softmax is already a complete distribution and the uniform
+    # floor would just flatten it. When uncovered legal moves exist, the floor
+    # gives them mass strictly below every covered move (covered = floor + share).
+    n_covered = int(np.isin(legal_indices, cand_idxs).sum())  # legal moves SF scored
+    has_uncovered = n_covered < int(legal_indices.size)
+    if sf_policy_label_smooth > 0.0 and legal_indices.size > 0 and has_uncovered:
         p_sf *= 1.0 - sf_policy_label_smooth
         p_sf[legal_indices] += sf_policy_label_smooth / float(legal_indices.size)
 

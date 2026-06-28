@@ -7,7 +7,8 @@ computes candidate POLICY distributions:
   a) net raw policy — single batched forward of --checkpoint
   b) net + Gumbel search at production sims (--sims, default 256)
   c) the SF MultiPV soft target (--sf-soft-nodes / --sf-soft-multipv,
-     production 50k/40), built with the production sf_policy_temp /
+     low=500k / high=2M via --sf-effort, matching the 500k production
+     teacher; default 500k), built with the production sf_policy_temp /
      label-smoothing / cp-logistic params from --config
   d) the production training target: (b) retempered with the production
      move-selection temperature (policy_t IS the visit distribution at that
@@ -51,6 +52,7 @@ from chess_anti_engine.eval.audit import (
     AuditPosition,
     PHASE_NAMES,
     SOURCE_NAMES,
+    criticality_gap,
     expected_and_top1_regret,
     legal_full_indices,
     load_audit_set,
@@ -106,6 +108,8 @@ def _net_candidates(
     batch_size: int,
     sims: int,
     seed: int,
+    policy_temp: float = 1.0,
+    topk: int = 16,
 ) -> tuple[list[np.ndarray], list[np.ndarray], list[float]]:
     """(raw-policy probs over legal, search visit probs over legal, root Q)
     per position. Probs are aligned with _legal_full_indices order."""
@@ -129,6 +133,7 @@ def _net_candidates(
         simulations=int(sims), add_noise=False, temperature=0.0,
         input_history_encoding=hist, input_extra_features=extra,
         policy_encoding=pol_enc, compute_relations=use_rel,
+        policy_temp=float(policy_temp), topk=int(topk),
     )
 
     raw_out: list[np.ndarray] = []
@@ -172,6 +177,12 @@ def _net_candidates(
             root_q.append(float(values[j]))
         done = min(start + batch_size, len(boards))
         print(f"[net] {done}/{len(boards)} positions")
+        # Release the batch's reserved CUDA blocks so the allocator's pool
+        # doesn't creep across batches and collide with a concurrent trainer
+        # (same fragmentation issue fixed in eval/puzzles.py). Matters most at
+        # high sims (256) where per-batch trees are largest.
+        if str(device).startswith("cuda"):
+            torch.cuda.empty_cache()
     return raw_out, search_out, root_q
 
 
@@ -187,6 +198,7 @@ def _shallow_sf_records(
 ) -> dict[str, dict]:
     """Shallow (production-strength) SF search per position, JSONL-cached."""
     cache: dict[str, dict] = {}
+    other_node_counts: set[int] = set()
     if cache_path.exists():
         with open(cache_path, encoding="utf-8") as f:
             for line in f:
@@ -195,11 +207,24 @@ def _shallow_sf_records(
                     d = json.loads(line)
                     if int(d.get("nodes_requested", 0)) == nodes and int(d.get("multipv", 0)) == multipv:
                         cache[str(d["key"])] = d
+                    elif int(d.get("multipv", 0)) == multipv:
+                        other_node_counts.add(int(d.get("nodes_requested", 0)))
     todo = [p for p in positions if p.key not in cache]
     if todo and stockfish is None:
-        raise SystemExit(
-            f"{len(todo)} positions lack shallow-SF cache entries; pass --stockfish"
-        )
+        hint = "pass --stockfish to populate the cache"
+        if other_node_counts and not cache:
+  # The cache is fully populated but at a different node budget — the audit
+  # default is now --sf-effort=low (500k) to match production, so an older 50k
+  # cache no longer matches. Point the user at the mismatch instead of a bare
+  # "pass --stockfish".
+            have = ",".join(f"{n:_}" for n in sorted(other_node_counts))
+            hint = (
+                f"the cache has entries only at {have} nodes, but this run wants "
+                f"{nodes:_} (default --sf-effort=low=500k). Re-run with "
+                f"--sf-soft-nodes {sorted(other_node_counts)[0]} (or matching "
+                "--sf-effort) to reuse it, or pass --stockfish to regenerate"
+            )
+        raise SystemExit(f"{len(todo)} positions lack shallow-SF cache entries; {hint}")
     if not todo:
         return cache
 
@@ -350,17 +375,50 @@ def main() -> None:
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--batch-size", type=int, default=256)
     ap.add_argument("--sims", type=int, default=256)
+    ap.add_argument("--policy-temp", type=float, default=1.0,
+                    help="prior temperature on policy logits before gumbel search "
+                         "(>1 softens prior, <1 sharpens, 1.0=no-op). Measures search-prior "
+                         "calibration on the REAL audit-set distribution (vs puzzle bias).")
+    ap.add_argument("--gumbel-topk", type=int, default=16,
+                    help="Gumbel root candidate count (consideration gate). Selfplay uses 16, "
+                         "UCI/match 32. At 256 sims, ~30 legal moves means topk=32 ≈ all-legal. "
+                         "Wider gate = more candidates considered but fewer sims each.")
+    ap.add_argument("--gpu-mem-fraction", type=float, default=None,
+                    help="cap this process to a fraction of GPU memory "
+                         "(set_per_process_memory_fraction) so a high-sim audit run "
+                         "CONCURRENT with a live trainer fails-fast on its own OOM instead "
+                         "of faulting the shared GPU/broker. e.g. 0.4 on a 32GB card.")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--stockfish", type=str, default=None,
                     help="needed only when the shallow-SF cache is incomplete")
-    ap.add_argument("--sf-soft-nodes", type=int, default=50_000)
+    ap.add_argument("--sf-soft-nodes", type=int, default=None,
+                    help="explicit shallow-SF node count; overrides --sf-effort when set")
+    ap.add_argument("--sf-effort", choices=("low", "high"), default="low",
+                    help="shallow-SF strength tier when --sf-soft-nodes is unset: "
+                         "low=500k (matches the production teacher), high=2M (deeper reference). "
+                         "The 50k default was retired once production moved to 500k nodes. NOTE: "
+                         "the cache is keyed by node count, so switching tiers needs --stockfish to "
+                         "(re)label at the new count.")
     ap.add_argument("--sf-soft-multipv", type=int, default=40)
     ap.add_argument("--sf-workers", type=int, default=4)
     ap.add_argument("--nice", type=int, default=15)
     ap.add_argument("--max-positions", type=int, default=0,
                     help=">0 limits positions (smoke runs)")
+    ap.add_argument("--dump-per-position", type=Path, default=None,
+                    help="if set, write one JSONL record per scored position "
+                         "(phase, source, criticality gap, per-candidate "
+                         "expected/top1 regret) for offline slicing")
     ap.add_argument("--out-dir", type=Path, default=Path("runs"))
     args = ap.parse_args()
+
+    if args.sf_soft_nodes is None:
+        args.sf_soft_nodes = {"low": 500_000, "high": 2_000_000}[args.sf_effort]
+
+    if args.gpu_mem_fraction is not None and str(args.device).startswith("cuda"):
+        import torch
+        torch.cuda.set_per_process_memory_fraction(
+            float(args.gpu_mem_fraction), torch.device(args.device).index or 0)
+        print(f"[audit] GPU memory capped at fraction {args.gpu_mem_fraction}")
 
     flat = flatten_run_config_defaults(load_yaml_file(args.config))
     sf_params = _SfSoftParams(
@@ -391,9 +449,11 @@ def main() -> None:
     raw_probs, search_probs, root_q = _net_candidates(
         boards, checkpoint=args.checkpoint, device=args.device,
         batch_size=int(args.batch_size), sims=int(args.sims), seed=int(args.seed),
+        policy_temp=float(args.policy_temp), topk=int(args.gumbel_topk),
     )
 
     policy_rows: list[dict] = []
+    per_pos_dump: list[dict] = []
     value_rows: dict[str, list[np.ndarray]] = {k: [] for k in _VALUE_NAMES}
     deep_wdls: list[np.ndarray] = []
     # Rows can be skipped (no encodable legal moves); every per-row list below
@@ -423,11 +483,35 @@ def main() -> None:
                 shallow[pos.key], legal_idxs, params=sf_params,
             ),
         }
+        per_cand: dict[str, dict] = {}
         for cand, probs in cands.items():
             exp_r, top1_r = expected_and_top1_regret(probs, regrets)
             policy_rows.append({
                 "cand": cand, "phase": pos.phase, "source": pos.source,
                 "expected": exp_r, "top1": top1_r,
+            })
+            top_i = int(np.argmax(probs))
+            pv = np.asarray(probs, dtype=np.float64)
+            pv = pv / max(1e-12, pv.sum())
+            entropy = float(-(pv[pv > 0] * np.log(pv[pv > 0])).sum())
+            per_cand[cand] = {
+                "exp": exp_r, "top1": top1_r,
+                "move": legal_ucis[top_i], "p": float(probs[top_i]),
+                "entropy": entropy,
+            }
+        if args.dump_per_position is not None:
+            # Criticality = deep-SF gap between the best and 2nd-best listed line
+            # (cp). Small gap = quiet position where SF's "best" is near-arbitrary
+            # among near-equal moves; large gap = decision-critical. Shared with
+            # bt4_audit / audit_compare_buckets so the joined comparison agrees.
+            gap = criticality_gap(pos.move_cp)
+            per_pos_dump.append({
+                "key": pos.key, "phase": pos.phase, "source": pos.source,
+                # null (not inf -> non-standard JSON "Infinity") for <2-move positions
+                "gap_cp": float(gap) if np.isfinite(gap) else None,
+                "n_legal": len(legal_ucis),
+                "n_listed": len(pos.move_cp), "best_cp": float(pos.best_cp),
+                "cand": per_cand,
             })
 
         rec = shallow[pos.key]
@@ -466,6 +550,14 @@ def main() -> None:
         kept_positions.append(pos)
         if pos.outcome is not None:
             outcome_idx.append(len(deep_wdls) - 1)
+
+    if args.dump_per_position is not None:
+        args.dump_per_position.parent.mkdir(parents=True, exist_ok=True)
+        with args.dump_per_position.open("w") as fh:
+            for rec in per_pos_dump:
+                fh.write(json.dumps(rec) + "\n")
+        print(f"[audit] per-position dump → {args.dump_per_position} "
+              f"({len(per_pos_dump)} rows)")
 
     agg = _aggregate(policy_rows, "cand")
     group_names = ["overall", *PHASE_NAMES, *SOURCE_NAMES]

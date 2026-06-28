@@ -193,6 +193,8 @@ class TrialConfig:
     record_lc0_root_input: bool = False
     history_rep_fix: bool = False
     record_dense_sf_policy: bool = True
+    record_sf_p0_policy: bool = False
+    record_sf_p0_regret: bool = False
 
   # --- Diff focus ---
     diff_focus_enabled: bool = True
@@ -205,6 +207,7 @@ class TrialConfig:
     stockfish_path: str = ""
     sf_nodes: int = 500
     sf_move_nodes: int = 0
+    sf_fast_ply_node_scale: float = 0.25
     sf_workers: int = 1
     sf_multipv: int = 1
     sf_hash_mb: int = 16
@@ -519,6 +522,8 @@ class TrialConfig:
             record_lc0_root_input=bool(config.get("record_lc0_root_input", False)),
             history_rep_fix=bool(config.get("history_rep_fix", False)),
             record_dense_sf_policy=bool(config.get("record_dense_sf_policy", True)),
+            record_sf_p0_policy=bool(config.get("record_sf_p0_policy", False)),
+            record_sf_p0_regret=bool(config.get("record_sf_p0_regret", False)),
 
   # --- Diff focus ---
             diff_focus_enabled=bool(config.get("diff_focus_enabled", True)),
@@ -531,6 +536,7 @@ class TrialConfig:
             stockfish_path=str(config.get("stockfish_path", "")),
             sf_nodes=int(config.get("sf_nodes", 500)),
             sf_move_nodes=int(config.get("sf_move_nodes", 0)),
+            sf_fast_ply_node_scale=float(config.get("sf_fast_ply_node_scale", 0.25)),
             sf_workers=int(config.get("sf_workers", 1)),
             sf_multipv=int(config.get("sf_multipv", 1)),
             sf_hash_mb=int(config.get("sf_hash_mb", 16)),

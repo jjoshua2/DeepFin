@@ -6,11 +6,13 @@ the pause-marker primitives used by the outer loop.
 """
 from __future__ import annotations
 
+import dataclasses
 import logging
 import time
 from pathlib import Path
 
 from chess_anti_engine.config_keys import TRAINER_WEIGHT_KEYS
+from chess_anti_engine.model import ModelConfig
 from chess_anti_engine.selfplay.budget import progressive_mcts_simulations
 from chess_anti_engine.selfplay.config import (
     DiffFocusConfig,
@@ -188,6 +190,7 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
             max_plies=tc.max_plies,
             selfplay_fraction=tc.selfplay_fraction,
             sf_move_nodes=tc.sf_move_nodes,
+            sf_fast_ply_node_scale=tc.sf_fast_ply_node_scale,
             sf_policy_temp=tc.sf_policy_temp,
             sf_policy_label_smooth=tc.sf_policy_label_smooth,
             sf_wdl_use_cp_logistic=tc.sf_wdl_use_cp_logistic,
@@ -212,6 +215,8 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
             record_lc0_root_input=tc.record_lc0_root_input,
             history_rep_fix=tc.history_rep_fix,
             record_dense_sf_policy=tc.record_dense_sf_policy,
+            record_sf_p0_policy=tc.record_sf_p0_policy,
+            record_sf_p0_regret=tc.record_sf_p0_regret,
         ),
     )
 
@@ -272,6 +277,57 @@ _TOPOLOGY_KEYS = frozenset({
     "ffn_mult_by_layer",
 })
 
+# Every key that feeds the model build = ModelConfig's own fields. On resume
+# these come from the checkpoint arch (resume_model_config_from_arch) or, on a
+# no-arch / salvage warm-start, directly from config (trainable.py builds the
+# model from config_model_cfg when there is no arch). NOTE these are a distinct
+# set from _TOPOLOGY_KEYS: core shape fields (embed_dim, num_heads, ffn_mult,
+# use_smolgen, ...) are ModelConfig fields but are NOT in _TOPOLOGY_KEYS, so the
+# gate below keys off _MODEL_BUILD_KEYS too — otherwise they would fall through
+# to the unconditional overlay.
+_MODEL_BUILD_KEYS = frozenset(f.name for f in dataclasses.fields(ModelConfig))
+# Model keys that must NOT be startup-auto-filled from YAML: injecting one that
+# is absent from an older restored config would rebuild the model at a layout
+# the checkpoint tensors don't match — shape schedule (num_layers, embed_dim,
+# ffn_mult, smolgen sizes, qkv_projection) or encoding identity
+# (policy/input/history) — and the tolerant loader then zero-inits the mismatch,
+# crashing the optimizer at step() (the variable-width-FFN resume corruption).
+# An encoding/shape migration must be deliberate (donor/salvage config).
+# history_rep_fix is the sole exception: a ModelConfig flag that changes NO
+# tensor shape (only the selfplay rep-plane encoding) and is exactly the
+# worker/selfplay flag this fill exists to propagate. Derived from ModelConfig,
+# so every current AND future model field is covered automatically.
+
+# Optimizer-construction keys: the Trainer (and its optimizer) is built from
+# config BEFORE the checkpoint is restored (trainable.py: Trainer(...) precedes
+# _restore_checkpoint_or_salvage). These are the ones that change the optimizer
+# STRUCTURE — which optimizer, how params are grouped, or moment-tensor shapes —
+# so force-applying one on resume builds an optimizer the saved state can't load
+# into; Trainer.load() then rejects/reinitializes the moments + scheduler. They
+# must come from the checkpoint's own config, not a resume-time YAML overlay.
+#
+# NOT included (deliberately): the per-group VALUE knobs read alongside these in
+# trainer_kwargs_from_config — matrix_lr_multiplier, matrix_weight_decay,
+# aux_weight_decay, global_board_*_lr_multiplier/weight_decay. Those only set the
+# lr/weight-decay of an already-fixed param group (the grouping is decided by
+# matrix_optimizer_scope), so changing one on resume is as safe as changing `lr`
+# — no state-shape mismatch. test_optimizer_construction_keys_cover_structural
+# locks this split so a newly-added STRUCTURE knob can't silently slip back in.
+_OPTIMIZER_CONSTRUCTION_KEYS = frozenset({
+    "optimizer", "matrix_optimizer_scope", "weight_decay_mode",
+    "soda_scope", "soda_start_step", "cosmos_rank",
+})
+
+# Construction-bound keys: changing one on resume rebuilds the model OR the
+# optimizer away from the checkpoint (state then reinits/crashes). Neither the
+# startup fill below NOR the experiment-state resume overlay
+# (_patch_experiment_state_for_resume) may propagate these from YAML — only a
+# deliberate migration (donor/salvage config) changes them. history_rep_fix is
+# excluded (shape-neutral selfplay flag, safe + intended to propagate).
+_RESUME_CONSTRUCTION_BOUND_KEYS = frozenset(
+    k for k in (_MODEL_BUILD_KEYS | _OPTIMIZER_CONSTRUCTION_KEYS) if k != "history_rep_fix"
+)
+
 
 def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload: bool = False) -> None:
     """Overlay YAML values into *config*, preserving PB2-searched keys.
@@ -305,9 +361,28 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload
                     k, config[k], v,
                 )
                 continue
-            if k in _TOPOLOGY_KEYS:
+            if k in _TOPOLOGY_KEYS or k in _RESUME_CONSTRUCTION_BOUND_KEYS:
                 current = config.get(k, missing)
                 if current is missing:
+                    if not live_reload and k not in _RESUME_CONSTRUCTION_BOUND_KEYS:
+                        # Startup/resume: the broker + workers are (re)built
+                        # from this config *after* the overlay, so a worker/
+                        # infra/selfplay topology key absent from an older
+                        # restored config (introduced after that checkpoint was
+                        # saved) must be applied from yaml — otherwise it
+                        # silently defaults off. Safe here because no component
+                        # is running yet. Construction-bound keys are EXCLUDED
+                        # (_RESUME_CONSTRUCTION_BOUND_KEYS): auto-filling a model
+                        # shape/encoding key OR an optimizer-construction key
+                        # would rebuild the model/optimizer away from the
+                        # checkpoint it must match (see that set's note). Log so
+                        # a silent startup change leaves a trail.
+                        log.info(
+                            "YAML startup reload: applying %s=%r (absent from restored config)",
+                            k, v,
+                        )
+                        config[k] = v
+                        continue
                     log.warning(
                         "YAML reload: %s is absent from restored config but requires restart — skipping",
                         k,

@@ -19,6 +19,7 @@ import chess
 import numpy as np
 
 from chess_anti_engine.moves import (
+    POLICY_SIZE,
     move_to_index_for_encoding,
     policy_index_for_encoding,
     policy_mask_to_encoding,
@@ -37,7 +38,7 @@ from chess_anti_engine.selfplay.stockfish_turn import (
     flush_async_sf_labels_for_records,
 )
 from chess_anti_engine.selfplay.temperature import apply_policy_temperature
-from chess_anti_engine.replay.shard import SF_MULTIPV_PAD_ROW, SF_MULTIPV_RAW_MAX
+from chess_anti_engine.replay.shard import SF_CP_SENTINEL, SF_MULTIPV_PAD_ROW, SF_MULTIPV_RAW_MAX
 from chess_anti_engine.stockfish.pool import StockfishPool
 from chess_anti_engine.stockfish.uci import StockfishResult
 from chess_anti_engine.tablebase import (
@@ -52,6 +53,11 @@ if TYPE_CHECKING:
 
 
 _LOG = logging.getLogger("chess_anti_engine.selfplay")
+
+# Max cp-regret used to normalize the per-move SF regret vector (sf_p0_regret).
+# A move 1000+ cp worse than SF's best becomes 1.0 (maximally bad); the best
+# move is 0.0. Legal moves absent from the MultiPV default to 1.0.
+SF_OWN_REGRET_CAP_CP = 1000.0
 
 
 def _sf_terminal_result(
@@ -712,6 +718,42 @@ def _build_replay_samples(
                 policy_encoding=state.game.policy_encoding,
             )
 
+        # P0 own-move teacher for policy_own: SF's analysis of THIS position is
+        # the *prior* ply's sf_policy (SF labels run at P1 = after a move). Only
+        # valid when the immediately-preceding ply is a stored full record with
+        # an SF label — i.e. two consecutive full plies, which only happens in
+        # selfplay (the net plays every ply). See replay/buffer.py.
+        sf_p0_policy_target = None
+        if getattr(state.game, "record_sf_p0_policy", False) and is_selfplay_slot:
+            prev_idx = ply_to_index.get(int(rec.ply_index) - 1)
+            prev_sf = (
+                records[prev_idx].sf_policy_target
+                if prev_idx is not None and records[prev_idx].has_policy
+                else None
+            )
+            if prev_sf is not None:
+                sf_p0_policy_target = policy_vector_to_encoding(
+                    prev_sf, policy_encoding=state.game.policy_encoding,
+                )
+
+        # P0 own-move SF cp-regret vector for policy_own (regret-weighted SF
+        # teacher). Uses the SAME one-ply shift as sf_p0_policy_target: the prior
+        # full ply's raw MultiPV is SF's read of THIS position. Per-move values in
+        # [0,1] (best move -> 0.0), NOT a distribution. See replay/buffer.py.
+        sf_p0_regret = None
+        if getattr(state.game, "record_sf_p0_regret", False) and is_selfplay_slot:
+            prev_idx = ply_to_index.get(int(rec.ply_index) - 1)
+            prev_raw = (
+                getattr(records[prev_idx], "sf_multipv_raw", None)
+                if prev_idx is not None and records[prev_idx].has_policy
+                else None
+            )
+            if prev_raw is not None:
+                sf_p0_regret = _build_sf_p0_regret_vector(
+                    np.asarray(prev_raw),
+                    policy_encoding=state.game.policy_encoding,
+                )
+
         out.append(
             ReplaySample(
                 x=rec.x,
@@ -769,6 +811,10 @@ def _build_replay_samples(
                 future_sf_regret_h50=suffix_regret.h50,
                 future_sf_regret_count=suffix_regret.count,
                 sf_policy_target=sf_policy_target,
+                sf_p0_policy_target=sf_p0_policy_target,
+                has_sf_p0=(sf_p0_policy_target is not None),
+                sf_p0_regret=sf_p0_regret,
+                has_sf_p0_regret=(sf_p0_regret is not None),
                 moves_left=moves_left,
                 is_network_turn=True,
                 categorical_target=cat,
@@ -920,6 +966,76 @@ def _emit_completed_game_batch(
             outcome_stats=dict(counters.outcome_stats or {}),
         ),
     )
+
+
+def _sf_move_score(cp: int, mate: int) -> float | None:
+    """Per-move ordering score for SF regret (higher = better for the mover).
+
+    Mate dominates cp: a forced mate in N is ``100000 - N*100`` (quicker mate
+    scores higher), a mate being delivered against the mover is
+    ``-100000 - N*100``. Otherwise the cp score is used directly; a SENTINEL cp
+    with no mate means the row carries no score and is skipped.
+    """
+    if mate > 0:
+        return 100000.0 - float(mate) * 100.0
+    if mate < 0:
+        return -100000.0 - float(mate) * 100.0
+    if cp == SF_CP_SENTINEL:
+        return None
+    return float(cp)
+
+
+def _build_sf_p0_regret_vector(
+    rows: np.ndarray | None, *, policy_encoding: str,
+) -> np.ndarray | None:
+    """Per-move normalized cp-regret vector from raw MultiPV rows (P0 position).
+
+    ``rows`` are ``(K, 5)`` ``[move_idx, cp, mate, w, d]`` in FULL policy space
+    (the same layout as ``sf_multipv_raw``). Returns a dense value vector in the
+    shard's policy encoding where each present move's entry is
+    ``clamp(best_score - score, 0, CAP) / CAP`` (best move -> 0.0). NOT a
+    distribution: values are independent per-move regrets in [0, 1], never
+    renormalized.
+
+    Legal moves SF surfaced no PV for (legal count > multipv) are worse than
+    every scored move but their true regret is unknown, so they default to the
+    midpoint between the worst scored regret and the max (1.0) — adaptive to the
+    position, parameter-free, and >= every covered move (strictly above it
+    unless a covered move already hit the 1.0 cap, in which case both are 1.0).
+    When all legal moves are scored, only illegal indices carry this default and
+    they are masked out by the legal-masked policy at loss time. (Raise multipv
+    if the uncovered tail ever matters.)
+    """
+    if rows is None:
+        return None
+    scored: list[tuple[int, float]] = []
+    for r in rows.tolist():
+        move_idx = int(r[0])
+        if move_idx < 0:
+            continue
+        score = _sf_move_score(int(r[1]), int(r[2]))
+        if score is None:
+            continue
+        scored.append((move_idx, score))
+    if not scored:
+        return None
+    best = max(score for _, score in scored)
+    # MultiPV move indices are distinct, so a plain list (not a dedup dict) holds
+    # the per-move regrets while we track the worst for the uncovered default.
+    covered: list[tuple[int, np.float32]] = []
+    worst_regret = 0.0
+    for move_idx, score in scored:
+        regret_cp = min(max(best - score, 0.0), SF_OWN_REGRET_CAP_CP)
+        r = regret_cp / SF_OWN_REGRET_CAP_CP
+        covered.append((move_idx, np.float32(r)))
+        worst_regret = max(worst_regret, r)
+    default_regret = np.float32((worst_regret + 1.0) / 2.0)
+    reg_full = np.full((POLICY_SIZE,), default_regret, dtype=np.float32)
+    for move_idx, r in covered:
+        reg_full[move_idx] = r
+    # Remap full -> shard encoding by GATHER only (value vector, never
+    # renormalized — policy_vector_to_encoding would renormalize to sum 1).
+    return policy_mask_to_encoding(reg_full, policy_encoding=policy_encoding)
 
 
 def _padded_sparse_multipv(

@@ -69,6 +69,16 @@ class GameConfig:
     # Optional node budget for blocking curriculum opponent moves. 0 means
     # use the main SF label/eval node budget.
     sf_move_nodes: int = 0
+    # On fast-sim (playout-capped) plies, SF's per-slot node budget is scaled by
+    # this factor (full-sim plies always use 1.0). INTENDED optimization, not a
+    # weakened training target: SF labels (sf_policy/sf_wdl) only attach to full
+    # plies (has_policy <=> is_full <=> last_net_full), which always get full
+    # nodes -- so this never touches a training target. It only lets the
+    # opponent play cheaply on the ~75% throwaway fast plies, saving SF compute.
+    # Default 0.25 preserves the long-standing equilibrated behavior; raise
+    # toward 1.0 only for a more consistently strong opponent (costs SF compute
+    # on fast plies + a PID re-equilibration).
+    sf_fast_ply_node_scale: float = 0.25
     sf_policy_temp: float = 0.25
     sf_policy_label_smooth: float = 0.05
     sf_wdl_use_cp_logistic: bool = False
@@ -125,6 +135,18 @@ class GameConfig:
   # CE is then the sole policy_sf supervision and the dense vector is dead
   # weight in the shard.
     record_dense_sf_policy: bool = True
+  # Research bet: record the P0 own-move SF teacher (the prior full ply's
+  # sf_policy) on eligible selfplay rows, so policy_own can be taught toward
+  # SF's recommended move for its own position (not just its own MCTS visits).
+  # Default off (adds a policy-sized shard field). Pairs with train.w_sf_own.
+    record_sf_p0_policy: bool = False
+
+  # Research bet: record the P0 own-move SF cp-regret vector (per-move
+  # normalized regret at the net's own position, from the prior full ply's raw
+  # MultiPV) on eligible selfplay rows, so policy_own can be trained to minimize
+  # expected SF regret directly. Default off (policy-sized shard field). Pairs
+  # with train.w_sf_own_regret.
+    record_sf_p0_regret: bool = False
 
 
 __all__ = [

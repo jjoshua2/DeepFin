@@ -268,6 +268,8 @@ def _patch_experiment_state_for_resume(
     if not isinstance(trial_data, list):
         return set(), set(), set()
 
+    from chess_anti_engine.tune.trainable_config_ops import _RESUME_CONSTRUCTION_BOUND_KEYS
+
     overlay_keys = overlay_keys or set()
     added_keys: set[str] = set()
     skipped_keys: set[str] = set()
@@ -283,6 +285,18 @@ def _patch_experiment_state_for_resume(
 
         trial_changed = False
         for key, value in param_space.items():
+            # Never inject or force-overwrite a construction-bound key (model
+            # shape/encoding or optimizer build) into a restored trial config.
+            # resume_model_config_from_arch / the no-arch fallback take these
+            # from THIS config, and the Trainer+optimizer are built from it
+            # before checkpoint restore, so overlaying current YAML would
+            # rebuild the model/optimizer away from the checkpoint that the
+            # saved tensors+moments fit. Left absent here -> stripped from
+            # param_space below (not in saved_keys) -> the trial keeps its
+            # checkpoint layout. (This overlay, not _reload_yaml_into_config, is
+            # the dominant resume-time injection vector.)
+            if key in _RESUME_CONSTRUCTION_BOUND_KEYS:
+                continue
             if key in cfg and key not in overlay_keys:
                 continue
             try:

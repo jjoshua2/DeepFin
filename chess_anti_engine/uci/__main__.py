@@ -258,6 +258,11 @@ def _build_engine(
     c_visit: float = 50.0,
     c_puct: float = 2.5,
     fpu_reduction: float = 1.2,
+  # Gumbel root/descent split (legacy defaults; see main()'s --c-visit-root etc.)
+    c_visit_root: float = -1.0,
+    q_visit_floor: float = -1.0,
+    q_visit_exp: float = 1.0,
+    q_global_scale: bool = False,
     n_walkers: int,
     vloss_weight: int,
     walker_gather: int,
@@ -284,6 +289,10 @@ def _build_engine(
             c_visit=c_visit,
             c_puct=c_puct,
             fpu_reduction=fpu_reduction,
+            c_visit_root=c_visit_root,
+            q_visit_floor=q_visit_floor,
+            q_visit_exp=q_visit_exp,
+            q_global_scale=q_global_scale,
             add_noise=False,
             input_history_encoding=input_history_encoding,
             input_extra_features=input_extra_features,
@@ -349,6 +358,29 @@ def main() -> int:
     p.add_argument("--c-puct", type=float, default=2.5, help="PUCT exploration constant (default: 2.5)")
     p.add_argument("--fpu-reduction", type=float, default=1.2,
                    help="first-play-urgency reduction for unvisited children (default: 1.2)")
+  # Gumbel root/descent split params (merged dormant in #68; C path only —
+  # run_gumbel_root_many_c). All default to legacy: a GumbelConfig built with
+  # the defaults below reproduces the pre-#68 single-floor/linear behavior.
+    p.add_argument("--c-visit-root", type=float, default=-1.0,
+                   help="Gumbel root-halving c_visit override (value-transform floor at the "
+                        "root sequential-halving site only; descent keeps --c-visit). A large "
+                        "root floor (~670) makes one c_scale fit every sim count's root q_scale; "
+                        ">=0 sets the root floor, <0 (default) = use --c-visit at both sites (legacy).")
+    p.add_argument("--q-visit-floor", type=float, default=-1.0,
+                   help="Gumbel decoupled (additive) value-transform floor: when >=0, "
+                        "q_scale=q_visit_floor+c_scale*max_visit^exp instead of the legacy "
+                        "c_scale*(c_visit+max_visit^exp) whose floor scales WITH c_scale. "
+                        "Lets c_scale rise (for sublinear --q-visit-exp) without inflating the "
+                        "early-round floor. <0 (default) = legacy coupled floor.")
+    p.add_argument("--q-visit-exp", type=float, default=1.0,
+                   help="Gumbel exponent on max_visit in q_scale=c_scale*(c_visit+max_visit^exp). "
+                        "1.0 = standard linear Gumbel (default). <1 makes search-Q trust grow "
+                        "sublinearly with depth so the optimal c_scale is less sim-count-dependent.")
+    p.add_argument("--q-global-scale", action="store_true",
+                   help="Gumbel descent scales the value-transform by the ROOT max child-visit "
+                        "(global/search-size) instead of the local node's max_visit, so q_scale is "
+                        "uniform across the tree. Pairs with --q-visit-exp<1 for sim-invariance. "
+                        "Default off = legacy local behavior.")
     p.add_argument("--max-batch", type=int, default=1024,
                    help="DirectGPUEvaluator max batch (default: 1024). Must be >= expected leaf count per wavefront.")
     p.add_argument("--eval-cache-entries", type=int, default=0,
@@ -522,6 +554,8 @@ def main() -> int:
                 chunk_sims=args.chunk_sims, topk=args.topk,
                 c_scale=args.c_scale, c_visit=args.c_visit,
                 c_puct=args.c_puct, fpu_reduction=args.fpu_reduction,
+                c_visit_root=args.c_visit_root, q_visit_floor=args.q_visit_floor,
+                q_visit_exp=args.q_visit_exp, q_global_scale=bool(args.q_global_scale),
                 n_walkers=n_walkers, vloss_weight=int(args.vloss_weight),
                 walker_gather=walker_gather,
                 pucv_vloss_mode=1 if args.pucv_pending_mode == "virtual-mean" else 0,
