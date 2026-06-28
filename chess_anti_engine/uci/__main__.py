@@ -363,11 +363,13 @@ def main() -> int:
   # Gumbel root/descent split params (merged dormant in #68; C path only —
   # run_gumbel_root_many_c). All default to legacy: a GumbelConfig built with
   # the defaults below reproduces the pre-#68 single-floor/linear behavior.
-    p.add_argument("--c-visit-root", type=float, default=-1.0,
+    p.add_argument("--c-visit-root", type=float, default=900.0,
                    help="Gumbel root-halving c_visit override (value-transform floor at the "
                         "root sequential-halving site only; descent keeps --c-visit). A large "
-                        "root floor (~670) makes one c_scale fit every sim count's root q_scale; "
-                        ">=0 sets the root floor, <0 (default) = use --c-visit at both sites (legacy).")
+                        "root floor (900, default) makes one c_scale fit every sim count's root "
+                        "q_scale — the root/descent SPLIT that fixes search scaling (avoidable "
+                        "regret +33% vs legacy on the audit set; value scales coherently with "
+                        "depth). <0 = use --c-visit at both sites (legacy, no split).")
     p.add_argument("--q-visit-floor", type=float, default=-1.0,
                    help="Gumbel decoupled (additive) value-transform floor: when >=0, "
                         "q_scale=q_visit_floor+c_scale*max_visit^exp instead of the legacy "

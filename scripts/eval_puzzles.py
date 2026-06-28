@@ -138,7 +138,7 @@ def main() -> None:
                         "— concurrent compiles contend on the inductor cache / GPU.")
     # search/gumbel knobs (used by --mode search|gumbel)
     p.add_argument("--sims", type=int, default=200, help="MCTS simulations per puzzle (search/gumbel modes)")
-    p.add_argument("--gumbel-c-scale", type=float, default=0.1, help="gumbel value-transform scale (mode gumbel)")
+    p.add_argument("--gumbel-c-scale", type=float, default=0.025, help="gumbel value-transform scale (mode gumbel; production-tuned 0.025)")
     p.add_argument("--gumbel-c-visit", type=float, default=50.0, help="gumbel c_visit depth-ramp base (mode gumbel)")
     p.add_argument("--gumbel-topk", type=int, default=32, help="gumbel root candidates (mode gumbel)")
     p.add_argument("--gumbel-c-puct", type=float, default=2.5, help="gumbel c_puct (mode gumbel)")
@@ -157,10 +157,10 @@ def main() -> None:
                    help="gumbel sequential-halving divisor: each round keeps ceil(n/div). "
                         "2 (default) = standard halving (top half); 3/4 = more aggressive "
                         "elimination (fewer rounds, visits concentrate on survivors sooner)")
-    p.add_argument("--gumbel-cvisit-root", type=float, default=-1.0,
+    p.add_argument("--gumbel-cvisit-root", type=float, default=900.0,
                    help="gumbel root-halving c_visit override (value-transform floor at the "
-                        "root site only; descent keeps --gumbel-c-visit). >=0 sets the root "
-                        "floor (~670 fits all sim counts); <0 (default) = use c_visit at both")
+                        "root site only; descent keeps --gumbel-c-visit). 900 (default) = the "
+                        "root/descent SPLIT that fixes scaling; <0 = use c_visit at both (legacy)")
     p.add_argument(
         "--mode",
         type=_parse_modes,

@@ -296,21 +296,20 @@ def test_time_capped_chunk_bounds_unbounded_first_chunk() -> None:
     assert w._time_capped_chunk(8192, d_open, 0) == 8192
 
 
-def test_value_is_decisive_margin() -> None:
+def test_visit_gap() -> None:
     import numpy as np
 
-    from chess_anti_engine.uci.search import _value_is_decisive
+    from chess_anti_engine.uci.search import _visit_gap
 
     actions = np.array([3, 7, 9], dtype=np.int32)
-    # move 3 leads the best alternative (0.40) by 0.20 >= 0.10 -> decisive.
-    qs_clear = np.array([0.60, 0.40, 0.10], dtype=np.float64)
-    assert _value_is_decisive(actions, qs_clear, 3, 0.10) is True
-    # move 3 leads by only 0.05 < 0.10 -> a near-tie, NOT decisive (hard position).
-    qs_close = np.array([0.60, 0.55, 0.10], dtype=np.float64)
-    assert _value_is_decisive(actions, qs_close, 3, 0.10) is False
-    # a single legal move is trivially decisive; an absent best action is not.
-    assert _value_is_decisive(np.array([4]), np.array([0.1]), 4, 0.10) is True
-    assert _value_is_decisive(actions, qs_clear, 99, 0.10) is False
+    # visits 60/30/10 -> shares .6/.3/.1; move 3's gap over the runner-up = .3.
+    assert abs(_visit_gap(actions, np.array([60, 30, 10]), 3) - 0.30) < 1e-9
+    # near-tie 40/38/22 -> gap .02 (a hard position the gate keeps searching).
+    assert abs(_visit_gap(actions, np.array([40, 38, 22]), 3) - 0.02) < 1e-9
+    # single move -> full share; absent best / zero visits -> 0.
+    assert abs(_visit_gap(np.array([4]), np.array([7]), 4) - 1.0) < 1e-9
+    assert _visit_gap(actions, np.array([60, 30, 10]), 99) == 0.0
+    assert _visit_gap(actions, np.array([0, 0, 0]), 3) == 0.0
 
 
 def test_move_is_decided_requires_stability() -> None:

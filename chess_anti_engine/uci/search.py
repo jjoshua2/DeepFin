@@ -101,30 +101,35 @@ _DEFAULT_ABORT_FACTOR = 1.0
 # Complexity gate on the early abort (when to bank vs "use it all"). The aggressive
 # Lc0-style allocation over-budgets and relies on the abort to reclaim the slack on
 # EASY moves; these decide which moves count as easy. A move banks only when it is
-# also value-decisive (its root Q leads the best alternative by >= the margin) AND
-# stable (the played move repeated for a few consecutive chunks). Hard positions
-# (top moves within the margin, or a still-flipping choice) keep searching toward
-# the hard deadline instead. Flag-safe: the allocation already bounds a single
-# move's spend, so suppressing the abort only spends budget already deemed safe.
-# First-cut thresholds (Q is on the [-1, 1] value scale) — sweep with arena games.
-_ABORT_Q_DECISIVE_MARGIN = 0.10
+# both VISIT-decisive (its share of root visits leads the best alternative by >= the
+# margin) AND stable (the played move repeated for a few consecutive chunks). Hard
+# positions (a near-tie in visit share, or a still-flipping choice) keep searching
+# toward the hard deadline. Flag-safe: the allocation already bounds a single move's
+# spend, so suppressing the abort only spends budget already deemed safe.
+#
+# The decisiveness feature is the VISIT-share gap, not the root Q gap: the time-value
+# backtest (scripts/backtest_time_value.py) found visit-gap predicts "more search
+# won't change the move" ~1.5-2x better than the Q gap across the calibrated search
+# configs. First-cut threshold (visit share is in [0, 1]) — sweep with arena games.
+_ABORT_VISIT_GAP_MARGIN = 0.30
 _ABORT_MIN_STABLE_CHUNKS = 2
 
 
-def _value_is_decisive(
-    actions: np.ndarray, qs: np.ndarray, best_action: int, q_margin: float,
-) -> bool:
-    """True when ``best_action``'s root Q leads every alternative by ``q_margin``
-    (so the move is clearly best by value, not just by visit count). Single-move
-    positions are trivially decisive; a best_action absent from ``actions`` is not."""
+def _visit_gap(actions: np.ndarray, visits: np.ndarray, best_action: int) -> float:
+    """``best_action``'s share of the root visits minus the best alternative's share.
+    A large gap means visits have concentrated on the played move (settled); a small
+    gap means the search is still splitting them (hard). Single-move positions return
+    the played move's full share; a best_action absent from ``actions`` returns 0."""
+    total = float(visits.sum())
+    if total <= 0.0 or actions.size == 0:
+        return 0.0
+    shares = visits.astype(np.float64) / total
     mask = actions == best_action
     if not bool(mask.any()):
-        return False
-    q_best = float(qs[mask].max())
-    others = qs[~mask]
-    if others.size == 0:
-        return True
-    return (q_best - float(others.max())) >= q_margin
+        return 0.0
+    best_share = float(shares[mask].max())
+    others = shares[~mask]
+    return best_share - (float(others.max()) if others.size else 0.0)
 
 
 @dataclass
@@ -1138,10 +1143,10 @@ class SearchWorker:
     ) -> bool:
         """Complexity gate deciding *easy vs hard*: the played move is "decided"
         (safe to bank) only when it is BOTH stable — the same move for
-        ``_ABORT_MIN_STABLE_CHUNKS`` consecutive chunks — AND value-decisive — its
-        root Q leads the best explored alternative by ``_ABORT_Q_DECISIVE_MARGIN``.
-        A still-flipping choice or a near-tie in value reads as a hard position, so
-        the search keeps going and uses the (over-allocated) budget. Must be called
+        ``_ABORT_MIN_STABLE_CHUNKS`` consecutive chunks — AND visit-decisive — its
+        share of the root visits leads the best alternative by ``_ABORT_VISIT_GAP_MARGIN``.
+        A still-flipping choice or a near-tie in visit share reads as a hard position,
+        so the search keeps going and uses the (over-allocated) budget. Must be called
         once per chunk: it advances the stability counter."""
         if best_action == self._abort_last_best:
             self._abort_stable_chunks += 1
@@ -1150,22 +1155,10 @@ class SearchWorker:
             self._abort_stable_chunks = 0
         if self._abort_stable_chunks < _ABORT_MIN_STABLE_CHUNKS:
             return False
-        if self._tree is None or self._root_id is None:
+        actions, visits = self._filtered_root_visits(allowed_root_indices)
+        if actions.size < 2:
             return True
-        actions, visits, qs = self._tree.get_children_q(
-            self._root_id, self._tree.node_q(self._root_id),
-        )
-        if actions.size == 0:
-            return True
-        if allowed_root_indices is not None:
-            keep = np.isin(actions, np.fromiter(allowed_root_indices, dtype=np.int32))
-            actions, visits, qs = actions[keep], visits[keep], qs[keep]
-  # Compare value only over explored alternatives (unvisited children carry the
-  # default Q and would distort the margin).
-        explored = visits > 0
-        if bool(explored.any()):
-            actions, qs = actions[explored], qs[explored]
-        return _value_is_decisive(actions, qs, best_action, _ABORT_Q_DECISIVE_MARGIN)
+        return _visit_gap(actions, visits, best_action) >= _ABORT_VISIT_GAP_MARGIN
 
     def _abort_ready(
         self,
@@ -1179,12 +1172,12 @@ class SearchWorker:
         the move final selection would play is *settled* on three signals:
 
         - it leads the runner-up on visits (``_root_visit_lead``);
-        - it is value-decisive and stable (``_move_is_decided`` — root Q margin +
+        - it is visit-decisive and stable (``_move_is_decided`` — visit-share gap +
           best-move stability across chunks); and
         - the optimum budget is spent, OR (before it) the visit lead is already
           insurmountable within the remaining optimum (``lead > factor * sims``).
 
-        A hard position (still-flipping choice, near-tie in value, or trailing
+        A hard position (still-flipping choice, near-tie in visit share, or trailing
         survivor) fails the gate and keeps searching toward the hard ``deadline``
         — "use it all" on the moves that matter, which is what makes the aggressive
         over-allocation pay off. Returns False when no optimum is set, so
