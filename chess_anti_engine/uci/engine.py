@@ -207,10 +207,9 @@ class EngineOptions:
   # visit-margin abort fully off (spend the whole deadline — the pre-time-mgmt
   # baseline). Clamped to (0, 1]. Tuning knob — sweep alongside abort_factor.
     optimum_fraction: float = _OPTIMUM_FRACTION
-  # Expected full-move game length the base reserve is spent to deplete by (a
-  # moves-to-go countdown) when the GUI sends no movestogo: the reserve is drawn
-  # down over the game instead of hoarded, while early moves stay conservative so
-  # the base survives past the middlegame. Ignored when movestogo is present.
+  # Upper cap on the pieces-driven moves estimate (conservatism guard; the
+  # estimate tops out near 30, so this normally does not bind). Ignored when the
+  # GUI sends movestogo. The allocation itself is driven by material, not this.
     moves_horizon: int = _DEFAULT_MOVES_REMAINING
 
 
@@ -395,7 +394,7 @@ class Engine:
             time_budget_scale=self._options.time_budget_scale,
             optimum_fraction=self._options.optimum_fraction,
             moves_horizon=self._options.moves_horizon,
-            ply=search_board.ply(),
+            pieces=chess.popcount(search_board.occupied),
         )
         self._stop_event = threading.Event()
         self._ponderhit_event = threading.Event()
@@ -418,7 +417,7 @@ class Engine:
                 time_budget_scale=self._options.time_budget_scale,
                 optimum_fraction=self._options.optimum_fraction,
                 moves_horizon=self._options.moves_horizon,
-                ply=real_board.ply(),
+                pieces=chess.popcount(real_board.occupied),
             )
         else:
             self._pending_real_limits = None

@@ -56,8 +56,9 @@ def test_clock_white_picks_wtime_winc() -> None:
         GoArgs(wtime_ms=30000, btime_ms=20000, winc_ms=500, binc_ms=300),
         side_to_move_is_white=True,
     )
-    # move 1 (ply 0), default horizon 50: 30000/50 + 500 = 1100
-    assert lim.deadline_ms == 1100
+    # 32 pieces: moves_left=30, reserve=min(9000,10*500=5000)=5000, usable=25000
+    # -> 25000/30 + 0.5*500 = 1083
+    assert lim.deadline_ms == 1083
 
 
 def test_clock_black_picks_btime_binc() -> None:
@@ -65,8 +66,9 @@ def test_clock_black_picks_btime_binc() -> None:
         GoArgs(wtime_ms=30000, btime_ms=20000, winc_ms=500, binc_ms=300),
         side_to_move_is_white=False,
     )
-    # move 1 (ply 0), default horizon 50: 20000/50 + 300 = 700
-    assert lim.deadline_ms == 700
+    # 32 pieces: moves_left=30, reserve=min(6000,3000)=3000, usable=17000
+    # -> 17000/30 + 0.5*300 = 716
+    assert lim.deadline_ms == 716
 
 
 def test_clock_movestogo_overrides_default_divisor() -> None:
@@ -141,11 +143,11 @@ def test_clock_optimum_is_fraction_below_hard_deadline() -> None:
     lim = limits_from_go(
         GoArgs(wtime_ms=30000, winc_ms=500), side_to_move_is_white=True,
     )
-    # Hard bound (ply 0, horizon 50: 30000/50 + 500 = 1100); optimum is a fraction.
-    assert lim.deadline_ms == 1100
+    # Hard bound (32 pieces, reserve 5000: 25000/30 + 250 = 1083); optimum a fraction.
+    assert lim.deadline_ms == 1083
     assert lim.optimum_ms is not None
     assert lim.optimum_ms < lim.deadline_ms
-    assert lim.optimum_ms == int(1100 * 0.7)
+    assert lim.optimum_ms == int(1083 * 0.7)
 
 
 def test_optimum_none_without_time_budget() -> None:
@@ -183,8 +185,8 @@ def test_optimum_fraction_tunes_soft_target() -> None:
     # The soft target scales with optimum_fraction; deadline_ms is unchanged.
     go = GoArgs(wtime_ms=30000, winc_ms=500)
     half = limits_from_go(go, side_to_move_is_white=True, optimum_fraction=0.5)
-    assert half.deadline_ms == 1100
-    assert half.optimum_ms == int(1100 * 0.5)
+    assert half.deadline_ms == 1083
+    assert half.optimum_ms == int(1083 * 0.5)
 
 
 def test_optimum_fraction_zero_disables_soft_abort() -> None:
@@ -192,7 +194,7 @@ def test_optimum_fraction_zero_disables_soft_abort() -> None:
     # the search spends the whole deadline (pre-time-management baseline).
     go = GoArgs(wtime_ms=30000, winc_ms=500)
     off = limits_from_go(go, side_to_move_is_white=True, optimum_fraction=0.0)
-    assert off.deadline_ms == 1100
+    assert off.deadline_ms == 1083
     assert off.optimum_ms is None
     neg = limits_from_go(go, side_to_move_is_white=True, optimum_fraction=-1.0)
     assert neg.optimum_ms is None
@@ -203,38 +205,49 @@ def test_optimum_fraction_clamps_above_one_to_deadline() -> None:
     # (soft target == deadline, so the post-optimum branch never fires early).
     go = GoArgs(wtime_ms=30000, winc_ms=500)
     lim = limits_from_go(go, side_to_move_is_white=True, optimum_fraction=2.5)
-    assert lim.optimum_ms == lim.deadline_ms == 1100
+    assert lim.optimum_ms == lim.deadline_ms == 1083
 
 
-def test_moves_horizon_countdown_draws_down_the_reserve() -> None:
-    # As the game advances, moves-to-go shrinks, so the per-move base allocation
-    # RISES — the reserve is spent down over the game rather than hoarded.
-    go = GoArgs(wtime_ms=60000, winc_ms=1000)
-    early = limits_from_go(go, side_to_move_is_white=True, moves_horizon=50, ply=0)
-    mid = limits_from_go(go, side_to_move_is_white=True, moves_horizon=50, ply=60)
-    assert early.deadline_ms is not None and mid.deadline_ms is not None
-    # ply0: moves_left=50 -> 60000/50+1000=2200; ply60 (30 moves played):
-    # moves_left=50-30=20 -> 60000/20+1000=4000.
-    assert early.deadline_ms == 2200
-    assert mid.deadline_ms == 4000
-    assert mid.deadline_ms > early.deadline_ms
+def test_pieces_drive_aggressive_allocation() -> None:
+    # Fewer pieces -> fewer planned moves -> larger per-move budget (the reserve is
+    # spent down into the harder middlegame). 30+3, default reserve.
+    go = GoArgs(wtime_ms=30000, winc_ms=3000)
+    opening = limits_from_go(go, side_to_move_is_white=True, pieces=32)
+    middle = limits_from_go(go, side_to_move_is_white=True, pieces=20)
+    assert opening.deadline_ms is not None and middle.deadline_ms is not None
+    # reserve=min(9000, 10*3000)=9000; usable=21000.
+    # pieces32: moves_left=round(20*1.5)=30 -> 21000/30 + 1500 = 2200.
+    # pieces20: moves_left=round(8*1.5)=12 -> 21000/12 + 1500 = 3250.
+    assert opening.deadline_ms == 2200
+    assert middle.deadline_ms == 3250
+    assert middle.deadline_ms > opening.deadline_ms
 
 
-def test_moves_horizon_countdown_floors_for_long_games() -> None:
-    # Past the expected length the countdown clamps to the floor (8), so a game
-    # that outlasts the estimate can't dump the whole base into one move.
-    go = GoArgs(wtime_ms=60000, winc_ms=1000)
-    late = limits_from_go(go, side_to_move_is_white=True, moves_horizon=50, ply=200)
-    # 100 moves played >> horizon 50 -> moves_left floored at 8 -> 60000/8+1000=8500
-    # (below the 50%-of-remaining ceiling of 30000).
-    assert late.deadline_ms == 8500
+def test_endgame_pieces_floor_the_estimate() -> None:
+    # At/below the endgame piece count the estimate floors at _MIN_MOVES_REMAINING (8),
+    # so the tail spends down rather than dividing by a near-zero estimate.
+    go = GoArgs(wtime_ms=30000, winc_ms=3000)
+    eg = limits_from_go(go, side_to_move_is_white=True, pieces=8)
+    # est=round((8-12)*1.5)=-6 -> floored at 8; usable=21000 -> 21000/8 + 1500 = 4125.
+    assert eg.deadline_ms == 4125
 
 
-def test_movestogo_overrides_moves_horizon_countdown() -> None:
-    # An explicit GUI movestogo always wins over the countdown (ply ignored).
+def test_reserve_capped_at_short_tc() -> None:
+    # A short base where 10*inc would exceed the clock: reserve is capped at 30% of
+    # remaining so usable stays positive and the move can't flag.
+    go = GoArgs(wtime_ms=10000, winc_ms=5000)
+    lim = limits_from_go(go, side_to_move_is_white=True, pieces=32)
+    # reserve=min(0.3*10000=3000, 10*5000)=3000; usable=7000; moves_left=30 ->
+    # 7000/30 + 0.5*5000 = 233 + 2500 = 2733, below the 5000 ceiling.
+    assert lim.deadline_ms == 2733
+
+
+def test_movestogo_overrides_pieces() -> None:
+    # An explicit GUI movestogo always wins over the pieces estimate.
     go = GoArgs(wtime_ms=60000, winc_ms=1000, movestogo=10)
-    lim = limits_from_go(go, side_to_move_is_white=True, moves_horizon=50, ply=80)
-    assert lim.deadline_ms == 7000  # 60000/10 + 1000
+    lim = limits_from_go(go, side_to_move_is_white=True, pieces=20)
+    # reserve=min(18000, 10000)=10000; usable=50000; 50000/10 + 500 = 5500.
+    assert lim.deadline_ms == 5500
 
 
 def test_deadline_tracking() -> None:

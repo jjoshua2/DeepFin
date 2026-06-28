@@ -16,16 +16,33 @@ _MIN_DEADLINE_MS = 20
 # We never spend more than this fraction of remaining time on a single move,
 # regardless of increment or movestogo claims.
 _MAX_FRACTION_OF_REMAINING = 0.5
-# Expected full-move game length the base reserve is spent to *deplete* by, when
-# the GUI sends no movestogo. Used as a COUNTDOWN (moves_left = horizon - moves
-# played) so the base is actively drawn down over the game instead of a fixed
-# rolling fraction that hoards time forever and ends games with the clock unused.
-_DEFAULT_MOVES_REMAINING = 50
-# Floor on the moves-to-go countdown: never assume fewer than this many moves
-# remain, so a game that outlasts the estimate can't dump the whole base into one
-# move (the increment then carries it). Also bounds how aggressively the tail
-# spends, leaving a small safety margin.
+# Lc0-style allocation: divide the (reserved) base over an AGGRESSIVE estimate of
+# the moves left, planning to deplete it by the hard middlegame, and rely on the
+# visit-margin abort to bank most of that budget back on the many easy/booked
+# moves — so in practice the clock lasts well past the nominal plan (no mid-search
+# extension needed). `moves_left` is driven by PIECES rather than move number:
+# material tracks phase + opening-book length robustly (a 10-move book leaves the
+# board near its start, so it correctly reads as "early, long game ahead"), and it
+# matches where this net is strong vs hard — booked 32->28, hardest middlegame down
+# to ~16, then Syzygy takes over. Estimate ≈ (pieces - _ENDGAME_PIECES) * _MOVES_PER_PIECE.
+_ENDGAME_PIECES = 12      # at/below this the game is ~decided by the endgame/TB; floor the estimate
+_MOVES_PER_PIECE = 1.5    # planned moves remaining per piece above _ENDGAME_PIECES (32 pieces -> ~30)
+# Floor on the moves estimate: never assume fewer than this many moves remain, so a
+# long game can't dump the whole base into one move (the increment then carries it).
 _MIN_MOVES_REMAINING = 8
+# Default upper cap on the moves estimate (a conservatism guard; the pieces formula
+# tops out near 30, so this normally does not bind). Exposed as `moves_horizon`.
+_DEFAULT_MOVES_REMAINING = 50
+# Safety reserve carved off `remaining` before allocating, so the late game/endgame
+# can't flag: max of a few increments and a few move-overheads, but never more than
+# this fraction of remaining (keeps it sane at short TCs where the inc-multiple would
+# otherwise exceed the whole clock). The increment refills it every move.
+_RESERVE_INC_MULT = 10
+_RESERVE_OVERHEAD_MULT = 80
+_MAX_RESERVE_FRACTION = 0.3
+# Fraction of the increment folded into each move's base budget (the rest is left to
+# refill the clock — Lc0 spends only part of the increment up front).
+_INCREMENT_SPEND_FRACTION = 0.5
 # Soft target as a fraction of the hard budget for clock-based searches. The
 # search aims to finish around here and stops early once the best move is
 # stable, banking the rest; if the move is still changing it keeps going up to
@@ -68,7 +85,7 @@ def limits_from_go(
     time_budget_scale: float = 1.0,
     optimum_fraction: float = _OPTIMUM_FRACTION,
     moves_horizon: int = _DEFAULT_MOVES_REMAINING,
-    ply: int = 0,
+    pieces: int = 32,
 ) -> SearchLimits:
     if args.infinite:
         return SearchLimits(infinite=True, searchmoves=tuple(args.searchmoves))
@@ -90,24 +107,30 @@ def limits_from_go(
     else:
         remaining, inc = _select_clock(args, side_to_move_is_white)
         if remaining is not None:
-  # Moves-to-go COUNTDOWN (a real `movestogo` from the GUI always wins). We
-  # divide the current base over the *estimated remaining* moves, which shrinks
-  # as the game goes on, so the per-move base allocation rises and the reserve is
-  # actively spent down — depleting near move `moves_horizon` rather than hoarding
-  # a fixed rolling fraction that leaves the clock unused at game end. The floor
-  # keeps a safety margin (and bounds the tail) if the game outlasts the estimate.
-  # Early on this conserves (large denominator), so the base survives past the
-  # opening/middlegame instead of running into the bare increment too soon.
+  # Pieces-driven AGGRESSIVE allocation (a real `movestogo` from the GUI always
+  # wins). Plan to spend the reserved base down by the hard middlegame; the
+  # visit-margin abort banks most of it on easy moves, so the clock actually
+  # lasts much longer (no extension mechanism needed). See the constants above.
             if args.movestogo and args.movestogo > 0:
                 moves_left = args.movestogo
             else:
-                moves_played = max(0, int(ply)) // 2
-                moves_left = max(_MIN_MOVES_REMAINING, int(moves_horizon) - moves_played)
-  # time_budget_scale lets the engine schedule more time per move on the bet
-  # that the visit-margin abort banks most of it back on easy moves; the
-  # 50%-of-remaining ceiling still caps any single move, so the clock cannot be
-  # flagged regardless of scale.
-            budget = time_budget_scale * (remaining / moves_left + (inc or 0))
+                est = round((max(0, int(pieces)) - _ENDGAME_PIECES) * _MOVES_PER_PIECE)
+                moves_left = min(int(moves_horizon), max(_MIN_MOVES_REMAINING, est))
+  # Carve a safety reserve off the clock first so the endgame can't flag, capped
+  # at a fraction of remaining so it stays sane at short TCs. The increment refills
+  # it each move. Only part of the increment is spent up front (the rest rolls over).
+            inc_v = inc or 0
+            reserve = min(
+                _MAX_RESERVE_FRACTION * remaining,
+                max(_RESERVE_INC_MULT * inc_v, _RESERVE_OVERHEAD_MULT * move_overhead_ms),
+            )
+            usable = max(0.0, remaining - reserve)
+  # time_budget_scale lets the engine schedule more time per move on the bet that
+  # the visit-margin abort banks most of it back; the 50%-of-remaining ceiling
+  # still caps any single move, so the clock cannot be flagged regardless of scale.
+            budget = time_budget_scale * (
+                usable / moves_left + _INCREMENT_SPEND_FRACTION * inc_v
+            )
             ceiling = remaining * _MAX_FRACTION_OF_REMAINING
             deadline_ms = max(_MIN_DEADLINE_MS, int(min(budget, ceiling)))
 

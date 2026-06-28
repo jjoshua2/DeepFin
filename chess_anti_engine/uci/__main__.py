@@ -399,10 +399,9 @@ def main() -> int:
                         "the rest (default: 0.7). 0 turns the visit-margin abort fully off "
                         "(spend the whole deadline — the pre-time-management baseline); clamped to (0, 1].")
     p.add_argument("--moves-horizon", type=int, default=50,
-                   help="expected full-move game length the base reserve is spent to deplete by, as a "
-                        "moves-to-go countdown, when the GUI sends no movestogo (default: 50). Draws the "
-                        "reserve down over the game (no hoarding) while staying conservative early so it "
-                        "survives past the middlegame; ignored when movestogo is present.")
+                   help="upper cap on the pieces-driven moves estimate (default: 50; the material "
+                        "estimate tops out near 30 so this rarely binds). Time allocation is driven by "
+                        "pieces on the board, not move number; ignored when the GUI sends movestogo.")
     p.add_argument("--log-level", default="WARNING",
                    help="stderr log level (DEBUG|INFO|WARNING). DEBUG enables per-search gumbel profile with GPU-calls/avg-batch.")
   # --walkers > 1 switches from the Gumbel-chunked path to a PUCT walker
