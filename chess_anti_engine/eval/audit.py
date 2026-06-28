@@ -263,6 +263,29 @@ def expected_and_top1_regret(
     return float((p * regrets).sum()), float(regrets[int(np.argmax(p))])
 
 
+# Criticality = deep-SF cp gap between the best and 2nd-best listed move. Shared
+# by audit_targets / bt4_audit / audit_compare_buckets so a joined comparison
+# can't put the same position in different buckets.
+CRITICALITY_GAP_EDGES: tuple[float, ...] = (20.0, 50.0, 100.0)
+CRITICALITY_BUCKET_NAMES: tuple[str, ...] = (
+    "quiet(<20)", "soft(20-50)", "sharp(50-100)", "decisive(>=100)",
+)
+
+
+def criticality_gap(move_cp: dict[str, float]) -> float:
+    """cp gap between the best and 2nd-best listed move (inf if <2 moves)."""
+    listed = sorted(move_cp.values(), reverse=True)
+    return float(listed[0] - listed[1]) if len(listed) >= 2 else float("inf")
+
+
+def criticality_bucket(gap: float) -> int:
+    """Index into CRITICALITY_BUCKET_NAMES for a best-vs-2nd cp gap."""
+    for i, edge in enumerate(CRITICALITY_GAP_EDGES):
+        if gap < edge:
+            return i
+    return len(CRITICALITY_GAP_EDGES)
+
+
 def wdl_brier(pred: np.ndarray, target: np.ndarray) -> float:
     """Squared error between two (3,) WDL distributions."""
     pred = np.asarray(pred, dtype=np.float64)

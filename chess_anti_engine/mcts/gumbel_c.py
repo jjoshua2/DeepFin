@@ -58,6 +58,7 @@ from chess_anti_engine.mcts.gumbel import (
     GumbelConfig,
     _completed_q_transform,
     _gumbel,
+    _policy_logits_to_full,
     _softmax,
     _wdl_to_q,
     gumbel_policy_diagnostics,
@@ -66,7 +67,7 @@ from chess_anti_engine.mcts.gumbel import (
 from chess_anti_engine.mcts.root_tactics import (
     immediate_terminal_cboard_policy_or_draws,
 )
-from chess_anti_engine.moves import POLICY_SIZE, policy_batch_to_full_if_needed
+from chess_anti_engine.moves import POLICY_SIZE
 
 GumbelManyCResult = tuple[list[np.ndarray], list[int], list[float], list[np.ndarray], MCTSTree, list[int]]
 GumbelManyCDiagnosticsResult = tuple[
@@ -88,13 +89,6 @@ def _batch_encoders(input_history_encoding: str | None):
         return batch_encode_146_lc0_root, batch_encode_146_lc0_root_bf16
     return batch_encode_146, batch_encode_146_bf16
 
-
-def _policy_logits_to_full(pol_logits: np.ndarray, *, cfg: GumbelConfig) -> np.ndarray:
-    return policy_batch_to_full_if_needed(
-        np.asarray(pol_logits, dtype=np.float32),
-        policy_encoding=cfg.policy_encoding,
-        fill_value=-1e9,
-    )
 
 _log = _logging.getLogger(__name__)
 
@@ -278,7 +272,10 @@ def run_gumbel_root_many_c(
     )
 
     if pre_pol_logits is not None and pre_wdl_logits is not None:
-        pol_logits_batch = _policy_logits_to_full(pre_pol_logits, cfg=cfg)
+        # Raw assignment only — the unconditional _policy_logits_to_full below
+        # converts to full + applies policy_temp once for every path. Applying it
+        # here too would divide cached root logits by policy_temp TWICE (T^2).
+        pol_logits_batch = np.asarray(pre_pol_logits, dtype=np.float32)
         wdl_logits_batch = np.asarray(pre_wdl_logits, dtype=np.float32)
     elif _inplace:
         batch_enc, batch_enc_bf16 = _batch_encoders(cfg.input_history_encoding)
@@ -767,6 +764,12 @@ def run_gumbel_root_many_c(
             and not cfg.compute_relations  # compact-legal eval path has no relations input
             and hasattr(tree, "get_pending_legal_indices")
             and hasattr(tree, "continue_gumbel_sims_legal_bf16")
+            # The legal-BF16 leaf path softmaxes raw BF16 logits in C with no
+            # temperature hook; policy_temp!=1 would leave those leaf priors
+            # untempered while root/dense priors are tempered. policy_temp is a
+            # rare experiment knob (production=1.0), so fall back to the
+            # tempering-aware path when it's set rather than re-pack BF16.
+            and float(getattr(cfg, "policy_temp", 1.0)) == 1.0
         )
         _use_input_bf16 = _has_input_bf16 and _use_legal_bf16
         if _inplace:

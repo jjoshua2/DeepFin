@@ -617,3 +617,33 @@ def _check_repetitions(board, stack, stack_len, n_steps, out, rep_base, *, rep_s
             out[rep_base + hist_idx * rep_stride, :, :] = 1.0
 
         seen.add(key)
+
+
+# LC0 history layout: 8 frames × 13 planes (6 our + 6 their + 1 repetition).
+LC0_HISTORY_FRAMES = 8
+LC0_PLANES_PER_FRAME = 13
+
+
+def fill_lc0_history_repeat(planes: np.ndarray) -> np.ndarray:
+    """Replicate lc0's empty-history fill (``encoder.cc: history[idx<0?0:idx]``).
+
+    Any all-zero history frame is filled from the live frame (frame 0). Accepts a
+    single ``(P, 8, 8)`` position or a ``(B, P, 8, 8)`` batch. Real frames (every
+    position carries both kings, so a real frame is never all-zero) are left
+    untouched, so mid-game inputs are unaffected and only rootless / short-history
+    positions get filled. Single source of truth for the BT4 audit encode path
+    and the OnnxChessNet wrapper. In place; returns ``planes``. This is the
+    load-bearing fix for the zeroed-history gotcha (zeros break the LC0 value
+    head and invert its policy)."""
+    f = LC0_PLANES_PER_FRAME
+    if planes.ndim == 3:  # single (P, 8, 8)
+        for s in range(1, LC0_HISTORY_FRAMES):
+            if not planes[f * s:f * s + f].any():
+                planes[f * s:f * s + f] = planes[0:f]
+        return planes
+    b = planes.shape[0]  # batch (B, P, 8, 8)
+    for s in range(1, LC0_HISTORY_FRAMES):
+        empty = planes[:, f * s:f * s + f].reshape(b, -1).sum(axis=1) == 0.0
+        if empty.any():
+            planes[empty, f * s:f * s + f] = planes[empty, 0:f]
+    return planes

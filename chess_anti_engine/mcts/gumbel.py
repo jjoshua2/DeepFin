@@ -60,6 +60,9 @@ class GumbelConfig:
     simulations: int = 50
     topk: int = 16
     temperature: float = 1.0
+    # Prior temperature on the policy-head logits before they seed the tree
+    # (logits/policy_temp). >1 softens the prior, <1 sharpens it; 1.0 = no-op.
+    policy_temp: float = 1.0
     c_visit: float = 50.0
     c_scale: float = 0.1
     c_puct: float = 2.5
@@ -123,9 +126,20 @@ class GumbelConfig:
     volatility_factor_clip: float = 4.0
 
 
+def apply_policy_temp(pol: np.ndarray, *, cfg: GumbelConfig) -> np.ndarray:
+    """Scale policy logits by the prior temperature before they seed the tree.
+    T>1 softens the prior, T<1 sharpens it, 1.0 (or <=0) = no-op. Shared by the
+    Python and C (gumbel_c) search paths so both honor policy_temp identically."""
+    pt = float(getattr(cfg, "policy_temp", 1.0))
+    if pt > 0.0 and pt != 1.0:
+        return pol / pt
+    return pol
+
+
 def _policy_logits_to_full(pol_logits: np.ndarray, *, cfg: GumbelConfig) -> np.ndarray:
+    pol = apply_policy_temp(np.asarray(pol_logits, dtype=np.float32), cfg=cfg)
     return policy_batch_to_full_if_needed(
-        np.asarray(pol_logits, dtype=np.float32),
+        pol,
         policy_encoding=cfg.policy_encoding,
         fill_value=-1e9,
     )
