@@ -46,6 +46,38 @@ def test_knob_flags_and_engine_cmd_are_deterministic() -> None:
     assert m.build_engine_cmd("/ckpts/t.pt", "cpu", {}).endswith("--device cpu")
 
 
+def test_chunk_sims_is_a_sweepable_knob() -> None:
+    m = _mod()
+    # chunk_sims couples NPS and stop-granularity; the sweep must reach it.
+    assert m.parse_knobs("chunk_sims=2048") == {"chunk_sims": 2048.0}
+    knobs = {"chunk_sims": 2048.0, "optimum_fraction": 0.6}
+    # Int-valued knob renders without a trailing .0 (argparse --chunk-sims is int).
+    assert m.knob_flags(knobs) == [
+        "--chunk-sims", "2048", "--optimum-fraction", "0.6",
+    ]
+
+
+def test_opponent_mode_gates_flag_safety_on_our_side_only() -> None:
+    m = _mod()
+    # Baseline is a fixed external opponent ("opp"); candidate is "cand".
+    # Opponent flags (0-1 + time => White=opp lost on time): not OUR bug.
+    opp_flag = _pgn("opp", "cand", "0-1", termination="time")
+    r = m.aggregate_pgn(
+        opp_flag, label_baseline="opp", label_candidate="cand", opponent_mode=True,
+    )
+    assert r.baseline_flags == 1 and r.candidate_flags == 0
+    assert r.flag_safe is True  # opponent's flag doesn't fail our gate
+    assert m.validation_passed([r]) is True
+
+    # But OUR flag (1-0 + time => Black=cand lost on time) still fails the gate.
+    our_flag = _pgn("opp", "cand", "1-0", termination="time")
+    r2 = m.aggregate_pgn(
+        our_flag, label_baseline="opp", label_candidate="cand", opponent_mode=True,
+    )
+    assert r2.candidate_flags == 1 and r2.flag_safe is False
+    assert m.validation_passed([r2]) is False
+
+
 def test_build_match_argv_wires_clock_and_labels() -> None:
     m = _mod()
     argv = m.build_match_argv(

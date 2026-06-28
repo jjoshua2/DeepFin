@@ -179,6 +179,33 @@ def test_explicit_node_or_depth_bound_with_clock_disables_soft_abort() -> None:
     assert depth.optimum_ms is None
 
 
+def test_optimum_fraction_tunes_soft_target() -> None:
+    # The soft target scales with optimum_fraction; deadline_ms is unchanged.
+    go = GoArgs(wtime_ms=30000, winc_ms=500)
+    half = limits_from_go(go, side_to_move_is_white=True, optimum_fraction=0.5)
+    assert half.deadline_ms == 1500
+    assert half.optimum_ms == int(1500 * 0.5)
+
+
+def test_optimum_fraction_zero_disables_soft_abort() -> None:
+    # 0 (or negative) is the OFF sentinel: no optimum_ms => _abort_ready inert =>
+    # the search spends the whole deadline (pre-time-management baseline).
+    go = GoArgs(wtime_ms=30000, winc_ms=500)
+    off = limits_from_go(go, side_to_move_is_white=True, optimum_fraction=0.0)
+    assert off.deadline_ms == 1500
+    assert off.optimum_ms is None
+    neg = limits_from_go(go, side_to_move_is_white=True, optimum_fraction=-1.0)
+    assert neg.optimum_ms is None
+
+
+def test_optimum_fraction_clamps_above_one_to_deadline() -> None:
+    # A fraction > 1 would put the soft target past the hard bound; clamp to it
+    # (soft target == deadline, so the post-optimum branch never fires early).
+    go = GoArgs(wtime_ms=30000, winc_ms=500)
+    lim = limits_from_go(go, side_to_move_is_white=True, optimum_fraction=2.5)
+    assert lim.optimum_ms == lim.deadline_ms == 1500
+
+
 def test_deadline_tracking() -> None:
     d = Deadline(deadline_ms=500, now=100.0)
     # Floating-point subtraction at ms precision can round down by 1 ms; allow it.

@@ -392,6 +392,10 @@ def main() -> int:
                    help="per-move time-budget multiplier (default: 1.0). > 1.0 schedules more "
                         "time per move, relying on --abort-factor to bank it back on easy moves; "
                         "still capped at 50%% of remaining time so it cannot flag.")
+    p.add_argument("--optimum-fraction", type=float, default=0.7,
+                   help="soft-target fraction of the clock budget at which a settled move banks "
+                        "the rest (default: 0.7). 0 turns the visit-margin abort fully off "
+                        "(spend the whole deadline — the pre-time-management baseline); clamped to (0, 1].")
     p.add_argument("--log-level", default="WARNING",
                    help="stderr log level (DEBUG|INFO|WARNING). DEBUG enables per-search gumbel profile with GPU-calls/avg-batch.")
   # --walkers > 1 switches from the Gumbel-chunked path to a PUCT walker
@@ -498,6 +502,10 @@ def main() -> int:
   # maximally-aggressive-but-valid abort_factor (stop on any positive lead).
         abort_factor=max(0.0, float(args.abort_factor)),
         time_budget_scale=max(0.1, float(args.time_budget_scale)),
+  # <= 0 is the OFF sentinel (preserved through the clamp); positive values are
+  # clamped to (0, 1] inside limits_from_go so an out-of-range soft target can't
+  # exceed the hard deadline.
+        optimum_fraction=min(1.0, float(args.optimum_fraction)),
     )
 
   # Background-build so `uci` can be answered before model load finishes.

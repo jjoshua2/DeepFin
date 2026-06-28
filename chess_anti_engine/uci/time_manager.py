@@ -24,6 +24,11 @@ _DEFAULT_MOVES_REMAINING = 30
 # the hard `deadline_ms`. Because the soft stop only fires *before* the hard
 # bound, it can never flag where the old (always-spend-the-budget) code did not.
 # This is the main time-management tuning knob — sweep with arena validation.
+# A value of 0 (or negative) is the documented OFF sentinel: no `optimum_ms` is
+# set, the visit-margin abort is fully inert, and clock games spend the whole
+# `deadline_ms` exactly like the pre-time-management build. That makes the
+# baseline reachable on one binary so an A/B gauntlet can compare old vs new.
+# Values are clamped to (0, 1]; 1.0 keeps the soft target at the hard deadline.
 _OPTIMUM_FRACTION = 0.7
 
 
@@ -53,6 +58,7 @@ def limits_from_go(
     side_to_move_is_white: bool,
     move_overhead_ms: int = 0,
     time_budget_scale: float = 1.0,
+    optimum_fraction: float = _OPTIMUM_FRACTION,
 ) -> SearchLimits:
     if args.infinite:
         return SearchLimits(infinite=True, searchmoves=tuple(args.searchmoves))
@@ -96,14 +102,21 @@ def limits_from_go(
   # fraction of the hard budget and extend toward `deadline_ms` on unsettled
   # positions. The hard `deadline_ms` still applies as a safety bound in all
   # cases so the engine cannot flag.
+  #
+  # `optimum_fraction <= 0` is the OFF sentinel: leaving `optimum_ms` None makes
+  # `_abort_ready` inert (it returns False with no optimum), so the search spends
+  # the full `deadline_ms` — the pre-time-management baseline, reachable without
+  # a separate binary. Otherwise clamp the fraction to (0, 1].
     optimum_ms: int | None = None
     if (
         deadline_ms is not None
         and not is_movetime
         and args.nodes is None
         and args.depth is None
+        and optimum_fraction > 0.0
     ):
-        optimum_ms = max(_MIN_DEADLINE_MS, int(deadline_ms * _OPTIMUM_FRACTION))
+        frac = min(1.0, optimum_fraction)
+        optimum_ms = max(_MIN_DEADLINE_MS, int(deadline_ms * frac))
 
     return SearchLimits(
         deadline_ms=deadline_ms,

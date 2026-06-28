@@ -181,6 +181,16 @@ class SearchWorker:
         pucv_vloss_mode: int = 0,
         eval_cache_entries: int = 0,
     ) -> None:
+  # Fail fast on a stale compiled extension. The shared-tree headroom guard
+  # (`_ensure_shared_tree_headroom`) calls `MCTSTree.node_capacity()`, added with
+  # this PR; an un-rebuilt `_mcts_tree` lacks it and would otherwise raise
+  # AttributeError mid-search on the first multi-GPU/walker chunk (losing the
+  # game on time). Surface it here, at construction, with the rebuild command.
+        if not hasattr(MCTSTree, "node_capacity"):
+            raise RuntimeError(
+                "compiled _mcts_tree is missing MCTSTree.node_capacity; rebuild "
+                "the C extension: python setup.py build_ext --inplace"
+            )
         self._evaluator = evaluator
         self._device = device
         self._cfg = gumbel_cfg or GumbelConfig(

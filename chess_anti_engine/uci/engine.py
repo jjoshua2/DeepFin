@@ -37,7 +37,7 @@ from .protocol import (
     format_uciok,
 )
 from .search import SearchResult, SearchWorker
-from .time_manager import Deadline, SearchLimits, limits_from_go
+from .time_manager import _OPTIMUM_FRACTION, Deadline, SearchLimits, limits_from_go
 
 _ENGINE_NAME = "DeepFin"
 _ENGINE_AUTHOR = "jjosh"
@@ -196,6 +196,11 @@ class EngineOptions:
   # still caps each move. 1.0 keeps the conservative allocation. Off by default
   # until validated by a real time-control gauntlet.
     time_budget_scale: float = 1.0
+  # Soft-target fraction of the hard clock budget at which a settled move banks
+  # the rest (Lc0 optimum-time). 0.7 is the validated default; 0 turns the
+  # visit-margin abort fully off (spend the whole deadline — the pre-time-mgmt
+  # baseline). Clamped to (0, 1]. Tuning knob — sweep alongside abort_factor.
+    optimum_fraction: float = _OPTIMUM_FRACTION
 
 
 class Engine:
@@ -377,6 +382,7 @@ class Engine:
             side_to_move_is_white=(search_board.turn == chess.WHITE),
             move_overhead_ms=overhead,
             time_budget_scale=self._options.time_budget_scale,
+            optimum_fraction=self._options.optimum_fraction,
         )
         self._stop_event = threading.Event()
         self._ponderhit_event = threading.Event()
@@ -397,6 +403,7 @@ class Engine:
                 side_to_move_is_white=(real_board.turn == chess.WHITE),
                 move_overhead_ms=overhead,
                 time_budget_scale=self._options.time_budget_scale,
+                optimum_fraction=self._options.optimum_fraction,
             )
         else:
             self._pending_real_limits = None
