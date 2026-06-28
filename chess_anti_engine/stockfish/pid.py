@@ -518,6 +518,13 @@ class DifficultyPID:
 
         self.ema_winrate: float = float(target_winrate)
         self._games_since_adjust = 0
+        # Wins/draws/losses accumulated since the last lever step. While the
+        # sample floor (or the cadence gate) holds the levers across iterations,
+        # these pool the held games so the eventual step scores on the COMBINED
+        # sample, not just the iteration that happens to cross the threshold.
+        self._held_wins = 0
+        self._held_draws = 0
+        self._held_losses = 0
 
         self.regret_lever = _Lever(
             name="regret",
@@ -664,6 +671,9 @@ class DifficultyPID:
             "wdl_regret": float(self.wdl_regret),
             "ema_winrate": float(self.ema_winrate),
             "games_since_adjust": int(self._games_since_adjust),
+            "held_wins": int(self._held_wins),
+            "held_draws": int(self._held_draws),
+            "held_losses": int(self._held_losses),
             "regret_stage_complete": bool(self._regret_stage_complete),
             "regret_history": [
                 [float(x), float(w), float(s)]
@@ -719,6 +729,11 @@ class DifficultyPID:
             _seed_lever_history(self.nodes_lever, target_wr=self.target)
 
         self._games_since_adjust = int(state.get("games_since_adjust", self._games_since_adjust))
+        # Pooled held sample (legacy checkpoints lack these → 0, i.e. start the
+        # accumulation fresh; the count above still gates).
+        self._held_wins = int(state.get("held_wins", self._held_wins))
+        self._held_draws = int(state.get("held_draws", self._held_draws))
+        self._held_losses = int(state.get("held_losses", self._held_losses))
 
         rgc = state.get("regret_stage_complete")
         if rgc is not None and self._regret_gate_enabled:
@@ -757,6 +772,9 @@ class DifficultyPID:
         self.ema_winrate = (1.0 - self.alpha) * self.ema_winrate + self.alpha * raw_wr
 
         self._games_since_adjust += games
+        self._held_wins += wins
+        self._held_draws += draws
+        self._held_losses += losses
         err = self.ema_winrate - self.target
         se = _observation_se(wins, draws, losses)
         # Hard sample floor: never step the levers (incl. the airbag) on too few
@@ -773,6 +791,18 @@ class DifficultyPID:
                 raw_winrate=raw_wr,
                 observation_se=se,
             )
+
+        # Step on the POOLED sample accumulated since the last adjust, not just
+        # this iteration's games. Under curriculum starvation the iteration that
+        # finally crosses the floor can itself be a tiny 1-3 game sweep; scoring
+        # the lever (and its airbag, which reads raw_wr — not the EMA) on that
+        # lone sample would let a 0% boundary iter trip the airbag exactly as if
+        # the floor weren't there. The pooled winrate/se are the real signal the
+        # floor promised. (Normal non-starved operation resets every iter, so the
+        # pool is just the current iteration and behavior is unchanged.)
+        held_games = self._held_wins + self._held_draws + self._held_losses
+        step_raw_wr = (self._held_wins + 0.5 * self._held_draws) / held_games
+        step_se = _observation_se(self._held_wins, self._held_draws, self._held_losses)
 
         nodes_before = self.nodes
         regret_before = self.wdl_regret
@@ -793,8 +823,8 @@ class DifficultyPID:
         if self._regret_enabled and not regret_frozen:
             regret_diag = _step_lever(
                 self.regret_lever,
-                target_wr=self.target, raw_wr=raw_wr,
-                ema_wr=self.ema_winrate, ema_alpha=self.alpha, se=se,
+                target_wr=self.target, raw_wr=step_raw_wr,
+                ema_wr=self.ema_winrate, ema_alpha=self.alpha, se=step_se,
             )
             regret_changed = bool(regret_diag.changed)
             if self._regret_gate_enabled:
@@ -822,12 +852,13 @@ class DifficultyPID:
         if nodes_active:
             nodes_diag = _step_lever(
                 self.nodes_lever,
-                target_wr=self.target, raw_wr=raw_wr,
-                ema_wr=self.ema_winrate, ema_alpha=self.alpha, se=se,
+                target_wr=self.target, raw_wr=step_raw_wr,
+                ema_wr=self.ema_winrate, ema_alpha=self.alpha, se=step_se,
             )
             nodes_changed = bool(nodes_diag.changed)
 
         self._games_since_adjust = 0
+        self._held_wins = self._held_draws = self._held_losses = 0
         nodes_after = int(self.nodes)
         adjusted = bool(regret_changed) or bool(nodes_changed) or (nodes_after != nodes_before)
 
@@ -840,8 +871,11 @@ class DifficultyPID:
             wdl_regret_before=regret_before,
             wdl_regret_after=float(self.wdl_regret),
             wdl_regret_changed=bool(regret_changed),
-            raw_winrate=float(raw_wr),
-            observation_se=float(se),
+            # Report the pooled sample the step actually scored on (not just this
+            # iteration's games), so the dashboard's raw_winrate matches the
+            # signal that moved the levers.
+            raw_winrate=float(step_raw_wr),
+            observation_se=float(step_se),
             regret_frozen=bool(regret_frozen),
             nodes_active=bool(nodes_active),
             regret_diag=regret_diag,

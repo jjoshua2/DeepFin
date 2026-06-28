@@ -992,3 +992,44 @@ def test_min_games_for_adjust_live_reloadable():
     pid = _mk_pid(min_games_for_adjust=0)
     pid.refresh_live_params({"sf_pid_min_games_for_adjust": 30})
     assert pid.min_games_for_adjust == 30
+
+
+def test_min_games_for_adjust_pools_held_sample_into_the_step():
+    """Review #83: the held iterations' W/D/L must POOL into the step's
+    winrate/se, not just the count. A healthy accumulated sample whose boundary
+    iter happens to be a tiny 0% sweep must NOT score the levers (or the airbag,
+    which reads raw_wr, not the EMA) on that lone 0% iter. The count-only floor
+    left this open — the crossing iteration's raw_wr alone drove the step."""
+    pid = _mk_pid(min_games_for_adjust=30, initial_wdl_regret=0.15,
+                  regret_safety_floor=0.50)
+
+    # 4 held iters of 6 games at ~67% (4W/2L) = 24 games, all below the 30 floor.
+    for _ in range(4):
+        u = pid.observe(wins=4, draws=0, losses=2, force=True)
+        assert not u.adjusted                          # held, accumulating
+
+    # Boundary iter: 6 games at a 0% sweep pushes the count to 30 and steps.
+    u = pid.observe(wins=0, draws=0, losses=6, force=True)
+    # The step scored the POOLED 16W/14L = 0.533 sample, not the 0% boundary iter.
+    assert abs(u.raw_winrate - 16 / 30) < 1e-9
+    assert u.regret_diag is not None
+    # 0.533 + 1.5*se is well above the 0.50 floor → the airbag did NOT fire.
+    # (On the count-only floor the 0% boundary iter would give reason="airbag".)
+    assert u.regret_diag.reason != "airbag"
+    assert pid._games_since_adjust == 0
+    assert pid._held_wins == 0 and pid._held_losses == 0    # pooled sample reset
+
+
+def test_held_sample_survives_state_dict_roundtrip():
+    """A restart mid-hold must not drop the accumulated sample: held W/D/L round-
+    trip through state_dict so the post-restart step still scores the full pool."""
+    pid = _mk_pid(min_games_for_adjust=30)
+    pid.observe(wins=4, draws=0, losses=2, force=True)   # held; pool = 4/0/2
+    pid.observe(wins=4, draws=0, losses=2, force=True)   # held; pool = 8/0/4
+    state = pid.state_dict()
+    assert state["held_wins"] == 8 and state["held_losses"] == 4
+
+    pid2 = _mk_pid(min_games_for_adjust=30)
+    pid2.load_state_dict(state)
+    assert pid2._held_wins == 8 and pid2._held_losses == 4
+    assert pid2._games_since_adjust == 12
