@@ -159,15 +159,17 @@ def sparse_sf_policy_ce(
 
     # Analytic smoothing term over the (pre-aligned) legal set. Gated PER ROW on
     # "candidates don't cover every legal move" — mirrors the live builder
-    # (stockfish_turn._build_sf_policy_target) so fully-covered rows train against
-    # the same un-flattened target the dense path records. n_covered = distinct
-    # scoreable candidates (MultiPV moves are distinct + legal); the empty-cand
-    # fallback covers exactly its one bestmove.
+    # (stockfish_turn._build_sf_policy_target), which gates on
+    # len(set(cand) & set(legal)). n_covered must therefore count candidates that
+    # are BOTH scoreable AND in the legal set (a candidate mapping outside
+    # legal_aligned would otherwise inflate the count and flip the gate vs dense);
+    # the empty-cand fallback covers exactly its one bestmove.
     smooth = float(params.sf_policy_label_smooth)
     legal_f = legal_aligned.float()
     legal_count = legal_f.sum(dim=-1)
     if smooth > 0.0:
-        n_covered = ok.sum(dim=-1).to(legal_count.dtype)
+        cand_is_legal = legal_f.gather(1, idx.clamp(0, dst_width - 1)) > 0
+        n_covered = (ok & cand_is_legal).sum(dim=-1).to(legal_count.dtype)
         n_covered = torch.where(fallback_ok, torch.ones_like(n_covered), n_covered)
         smooth_row = torch.where(
             (n_covered < legal_count) & (legal_count > 0),

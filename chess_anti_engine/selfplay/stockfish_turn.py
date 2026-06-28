@@ -500,7 +500,7 @@ def _build_sf_policy_target(
     # positions) the softmax is already a complete distribution and the uniform
     # floor would just flatten it. When uncovered legal moves exist, the floor
     # gives them mass strictly below every covered move (covered = floor + share).
-    n_covered = len({int(a) for a in cand_idxs} & {int(x) for x in legal_indices})
+    n_covered = int(np.isin(legal_indices, cand_idxs).sum())  # legal moves SF scored
     has_uncovered = n_covered < int(legal_indices.size)
     if sf_policy_label_smooth > 0.0 and legal_indices.size > 0 and has_uncovered:
         p_sf *= 1.0 - sf_policy_label_smooth

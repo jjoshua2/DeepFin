@@ -82,6 +82,21 @@ def test_sf_p0_regret_uncovered_splits_the_difference() -> None:
     assert float(v[9]) < float(v[0]) < 1.0        # strictly between worst covered and max
 
 
+def test_sf_p0_regret_uncovered_caps_at_one_when_worst_covered_caps() -> None:
+    """When a covered move already hits the regret cap (worst regret == 1.0), the
+    midpoint default is (1+1)/2 = 1.0, so uncovered == worst covered == max. The
+    ordering guarantee is >= (not strictly >) in that capped case."""
+    from chess_anti_engine.selfplay.finalize import _build_sf_p0_regret_vector
+
+    # best=+500, worst covered=-600cp -> raw 1100cp clamps to the 1000cp cap -> 1.0
+    rows = np.array([[5, 500, 0, 0, 0], [9, -600, 0, 0, 0]], dtype=np.float64)
+    v = _build_sf_p0_regret_vector(rows, policy_encoding="az_4672")
+    assert v is not None
+    assert abs(float(v[9]) - 1.0) < 1e-6          # worst covered hit the cap
+    assert abs(float(v[0]) - 1.0) < 1e-6          # uncovered default == 1.0
+    assert float(v[0]) >= float(v[9])             # ordering preserved (>=)
+
+
 def test_legacy_sample_without_sf_p0_regret_has_flag_zero() -> None:
     s = ReplaySample(
         x=np.zeros((1, 8, 8), dtype=np.float32),

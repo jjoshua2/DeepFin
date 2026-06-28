@@ -1000,10 +1000,11 @@ def _build_sf_p0_regret_vector(
     Legal moves SF surfaced no PV for (legal count > multipv) are worse than
     every scored move but their true regret is unknown, so they default to the
     midpoint between the worst scored regret and the max (1.0) — adaptive to the
-    position, ordering-preserving, parameter-free. When all legal moves are
-    scored, only illegal indices carry this default and they are masked out by
-    the legal-masked policy at loss time. (Raise multipv if the uncovered tail
-    ever matters.)
+    position, parameter-free, and >= every covered move (strictly above it
+    unless a covered move already hit the 1.0 cap, in which case both are 1.0).
+    When all legal moves are scored, only illegal indices carry this default and
+    they are masked out by the legal-masked policy at loss time. (Raise multipv
+    if the uncovered tail ever matters.)
     """
     if rows is None:
         return None
@@ -1019,16 +1020,18 @@ def _build_sf_p0_regret_vector(
     if not scored:
         return None
     best = max(score for _, score in scored)
-    covered: dict[int, np.float32] = {}
+    # MultiPV move indices are distinct, so a plain list (not a dedup dict) holds
+    # the per-move regrets while we track the worst for the uncovered default.
+    covered: list[tuple[int, np.float32]] = []
     worst_regret = 0.0
     for move_idx, score in scored:
         regret_cp = min(max(best - score, 0.0), SF_OWN_REGRET_CAP_CP)
         r = regret_cp / SF_OWN_REGRET_CAP_CP
-        covered[move_idx] = np.float32(r)
+        covered.append((move_idx, np.float32(r)))
         worst_regret = max(worst_regret, r)
     default_regret = np.float32((worst_regret + 1.0) / 2.0)
     reg_full = np.full((POLICY_SIZE,), default_regret, dtype=np.float32)
-    for move_idx, r in covered.items():
+    for move_idx, r in covered:
         reg_full[move_idx] = r
     # Remap full -> shard encoding by GATHER only (value vector, never
     # renormalized — policy_vector_to_encoding would renormalize to sum 1).

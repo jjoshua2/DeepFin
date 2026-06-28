@@ -120,7 +120,7 @@ def rebuild_sf_policy_target(
     # Smooth only when candidates don't cover every legal move — mirrors the
     # live builder (stockfish_turn._build_sf_policy_target) so rebuilt targets
     # match the dense ones recorded by selfplay.
-    n_covered = len({int(a) for a in idxs} & {int(x) for x in legal})
+    n_covered = int(np.isin(legal, idxs).sum())  # legal moves with a scored PV
     has_uncovered = n_covered < int(legal.size)
     if smooth > 0.0 and legal.size > 0 and has_uncovered:
         p_sf *= 1.0 - smooth
