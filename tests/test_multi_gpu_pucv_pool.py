@@ -514,9 +514,11 @@ def test_time_capped_chunk_shrinks_to_remaining_time() -> None:
   # Almost no time left -> floor at the base chunk (its overrun is negligible).
         d2 = Deadline(deadline_ms=1001, now=_time.monotonic() - 1.0)
         assert worker._time_capped_chunk(4096, d2, total_nodes=1000) == 64  # noqa: SLF001
-  # Open-ended deadline and the first chunk (no nps yet) are uncapped.
+  # Open-ended deadline (no clock) is uncapped even with an nps estimate.
         assert worker._time_capped_chunk(4096, Deadline(None), 1000) == 4096  # noqa: SLF001
-        assert worker._time_capped_chunk(4096, d, total_nodes=0) == 4096  # noqa: SLF001
+  # First timed chunk (deadline set, no nps yet): bound to the base chunk so a
+  # scaled multi-GPU chunk can't run unbounded past the deadline (move-1 forfeit).
+        assert worker._time_capped_chunk(4096, d, total_nodes=0) == 64  # noqa: SLF001
     finally:
         worker.close()
 
