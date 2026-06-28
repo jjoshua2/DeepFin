@@ -19,11 +19,8 @@ import chess
 import numpy as np
 
 from chess_anti_engine.moves import (
-    COMPACT_TO_FULL_POLICY,
-    POLICY_ENCODING_AZ_4672,
     POLICY_SIZE,
     move_to_index_for_encoding,
-    normalize_policy_encoding,
     policy_index_for_encoding,
     policy_mask_to_encoding,
     policy_size_for_encoding,
@@ -996,10 +993,18 @@ def _build_sf_p0_regret_vector(
     ``rows`` are ``(K, 5)`` ``[move_idx, cp, mate, w, d]`` in FULL policy space
     (the same layout as ``sf_multipv_raw``). Returns a dense value vector in the
     shard's policy encoding where each present move's entry is
-    ``clamp(best_score - score, 0, CAP) / CAP`` (best move -> 0.0) and every
-    other index defaults to 1.0 (= maximally bad). NOT a distribution: values
-    are independent per-move regrets in [0, 1], never renormalized. Illegal
-    indices keep 1.0 but are masked out by the legal-masked policy at loss time.
+    ``clamp(best_score - score, 0, CAP) / CAP`` (best move -> 0.0). NOT a
+    distribution: values are independent per-move regrets in [0, 1], never
+    renormalized.
+
+    Legal moves SF surfaced no PV for (legal count > multipv) are worse than
+    every scored move but their true regret is unknown, so they default to the
+    midpoint between the worst scored regret and the max (1.0) — adaptive to the
+    position, parameter-free, and >= every covered move (strictly above it
+    unless a covered move already hit the 1.0 cap, in which case both are 1.0).
+    When all legal moves are scored, only illegal indices carry this default and
+    they are masked out by the legal-masked policy at loss time. (Raise multipv
+    if the uncovered tail ever matters.)
     """
     if rows is None:
         return None
@@ -1015,16 +1020,22 @@ def _build_sf_p0_regret_vector(
     if not scored:
         return None
     best = max(score for _, score in scored)
-    reg_full = np.ones((POLICY_SIZE,), dtype=np.float32)
+    # MultiPV move indices are distinct, so a plain list (not a dedup dict) holds
+    # the per-move regrets while we track the worst for the uncovered default.
+    covered: list[tuple[int, np.float32]] = []
+    worst_regret = 0.0
     for move_idx, score in scored:
         regret_cp = min(max(best - score, 0.0), SF_OWN_REGRET_CAP_CP)
-        reg_full[move_idx] = np.float32(regret_cp / SF_OWN_REGRET_CAP_CP)
-    # Remap full -> shard encoding by GATHER only (mirrors policy_mask_to_encoding,
-    # NOT policy_vector_to_encoding which renormalizes to sum 1 — wrong for a
-    # value vector). az_4672 stays full-width; compact selects valid indices.
-    if normalize_policy_encoding(policy_encoding) == POLICY_ENCODING_AZ_4672:
-        return reg_full
-    return reg_full[COMPACT_TO_FULL_POLICY].astype(np.float32, copy=False)
+        r = regret_cp / SF_OWN_REGRET_CAP_CP
+        covered.append((move_idx, np.float32(r)))
+        worst_regret = max(worst_regret, r)
+    default_regret = np.float32((worst_regret + 1.0) / 2.0)
+    reg_full = np.full((POLICY_SIZE,), default_regret, dtype=np.float32)
+    for move_idx, r in covered:
+        reg_full[move_idx] = r
+    # Remap full -> shard encoding by GATHER only (value vector, never
+    # renormalized — policy_vector_to_encoding would renormalize to sum 1).
+    return policy_mask_to_encoding(reg_full, policy_encoding=policy_encoding)
 
 
 def _padded_sparse_multipv(

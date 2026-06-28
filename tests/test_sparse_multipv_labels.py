@@ -279,7 +279,11 @@ def test_parity_through_real_stockfish_turn_path():
 
 def test_arrays_rebuild_only_touches_sparse_rows():
     pol = np.zeros((2, 4672), np.float16)
-    pol[0, 100] = 1.0
+    # Row 0 is fully covered (both legal moves are candidates), so the rebuild
+    # applies NO label smoothing -> a sharp-temp ~one-hot at the better move
+    # (100). Seed the init at the WORSE move (200) so "rebuilt != init" stays a
+    # meaningful check now that smoothing no longer perturbs a fully-covered row.
+    pol[0, 200] = 1.0
     pol[1, 7] = 1.0
     legal = np.zeros((2, 4672), np.uint8)
     legal[0, [100, 200]] = 1
@@ -657,3 +661,27 @@ def test_config_rejects_dense_off_without_sparse_ce():
     flat = flatten_run_config_defaults(ok)
     assert flat["record_dense_sf_policy"] is False
     assert flat["sf_policy_sparse_ce"] is True
+
+
+def test_sf_policy_label_smoothing_only_when_uncovered() -> None:
+    """Label smoothing is applied only when SF's candidates don't cover every
+    legal move. Fully covered -> pure softmax (no flattening); uncovered -> the
+    uncovered legal moves get a floor strictly below every covered move."""
+    from chess_anti_engine.selfplay.stockfish_turn import _build_sf_policy_target
+
+    legal = np.array([0, 1, 2], dtype=np.int64)
+    # Fully covered: all 3 legal moves are candidates -> no smoothing.
+    p_full = _build_sf_policy_target(
+        [0, 1, 2], [3.0, 1.0, 0.0], legal_indices=legal,
+        sf_policy_temp=1.0, sf_policy_label_smooth=0.1,
+    )
+    raw = np.exp(np.array([3.0, 1.0, 0.0])); raw /= raw.sum()
+    assert np.allclose([p_full[0], p_full[1], p_full[2]], raw, atol=1e-5)
+
+    # Uncovered: only 2 of 3 legal moves scored -> smoothing on; idx2 gets a floor.
+    p_unc = _build_sf_policy_target(
+        [0, 1], [3.0, 1.0], legal_indices=legal,
+        sf_policy_temp=1.0, sf_policy_label_smooth=0.1,
+    )
+    assert p_unc[2] > 0.0
+    assert p_unc[0] > p_unc[2] and p_unc[1] > p_unc[2]

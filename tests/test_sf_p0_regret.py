@@ -66,6 +66,37 @@ def test_sf_p0_regret_is_not_renormalized() -> None:
     assert float(batch["sf_p0_regret_t"][0][2]) == 1.0
 
 
+def test_sf_p0_regret_uncovered_splits_the_difference() -> None:
+    """Legal moves SF surfaced no PV for default to the midpoint between the
+    worst scored regret and 1.0 — adaptive, ordering-preserving, not a hard 1.0."""
+    from chess_anti_engine.selfplay.finalize import _build_sf_p0_regret_vector
+
+    # rows: [move_idx, cp, mate, w, d]; best=+100, worst covered=-300cp
+    # -> worst regret = 400/1000 = 0.4, uncovered -> (0.4 + 1)/2 = 0.7
+    rows = np.array([[5, 100, 0, 0, 0], [9, -300, 0, 0, 0]], dtype=np.float64)
+    v = _build_sf_p0_regret_vector(rows, policy_encoding="az_4672")
+    assert v is not None
+    assert abs(float(v[5]) - 0.0) < 1e-6          # best move -> 0
+    assert abs(float(v[9]) - 0.4) < 1e-3          # worst covered
+    assert abs(float(v[0]) - 0.7) < 1e-3          # uncovered -> midpoint
+    assert float(v[9]) < float(v[0]) < 1.0        # strictly between worst covered and max
+
+
+def test_sf_p0_regret_uncovered_caps_at_one_when_worst_covered_caps() -> None:
+    """When a covered move already hits the regret cap (worst regret == 1.0), the
+    midpoint default is (1+1)/2 = 1.0, so uncovered == worst covered == max. The
+    ordering guarantee is >= (not strictly >) in that capped case."""
+    from chess_anti_engine.selfplay.finalize import _build_sf_p0_regret_vector
+
+    # best=+500, worst covered=-600cp -> raw 1100cp clamps to the 1000cp cap -> 1.0
+    rows = np.array([[5, 500, 0, 0, 0], [9, -600, 0, 0, 0]], dtype=np.float64)
+    v = _build_sf_p0_regret_vector(rows, policy_encoding="az_4672")
+    assert v is not None
+    assert abs(float(v[9]) - 1.0) < 1e-6          # worst covered hit the cap
+    assert abs(float(v[0]) - 1.0) < 1e-6          # uncovered default == 1.0
+    assert float(v[0]) >= float(v[9])             # ordering preserved (>=)
+
+
 def test_legacy_sample_without_sf_p0_regret_has_flag_zero() -> None:
     s = ReplaySample(
         x=np.zeros((1, 8, 8), dtype=np.float32),

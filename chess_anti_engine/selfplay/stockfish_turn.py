@@ -495,7 +495,14 @@ def _build_sf_policy_target(
     for a, p in zip(cand_idxs, p_top, strict=False):
         p_sf[int(a)] += float(p)
 
-    if sf_policy_label_smooth > 0.0 and legal_indices.size > 0:
+    # Only smooth when SF's candidates don't already cover every legal move. When
+    # fully covered (the common case — multipv=40 ≥ legal count for ~83% of
+    # positions) the softmax is already a complete distribution and the uniform
+    # floor would just flatten it. When uncovered legal moves exist, the floor
+    # gives them mass strictly below every covered move (covered = floor + share).
+    n_covered = int(np.isin(legal_indices, cand_idxs).sum())  # legal moves SF scored
+    has_uncovered = n_covered < int(legal_indices.size)
+    if sf_policy_label_smooth > 0.0 and legal_indices.size > 0 and has_uncovered:
         p_sf *= 1.0 - sf_policy_label_smooth
         p_sf[legal_indices] += sf_policy_label_smooth / float(legal_indices.size)
 
