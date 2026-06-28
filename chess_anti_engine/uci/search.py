@@ -13,6 +13,7 @@ from __future__ import annotations
 import dataclasses
 import threading
 from dataclasses import dataclass
+from collections.abc import Callable
 from typing import Any, Protocol
 
 import chess
@@ -1210,6 +1211,7 @@ class SearchWorker:
         info_cb: InfoCallback | None = None,
         include_ponder: bool = False,
         allow_terminal_shortcuts: bool = True,
+        on_chunk: Callable[[int], None] | None = None,
     ) -> SearchResult:
         """Search until any of: stop_event set, deadline expired, max_nodes hit,
         PV length ≥ max_depth, or (``optimum_ms`` set) the visit-margin abort
@@ -1311,6 +1313,11 @@ class SearchWorker:
                 allow_terminal_shortcuts=allow_terminal_shortcuts,
             )
             total_nodes += int(chunk)
+  # Per-chunk instrumentation hook (offline analysis of the accumulating tree —
+  # the states the abort actually decides between). Fired after each chunk with
+  # the cumulative node count; the callback reads worker root state itself.
+            if on_chunk is not None:
+                on_chunk(total_nodes)
 
             pv_indices, last_info_ms, elapsed = self._maybe_emit_pv_info(
                 board=board, deadline=deadline,
