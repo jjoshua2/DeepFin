@@ -319,6 +319,14 @@ def _run_one(
         args, baseline_knobs,
     )
     engine_candidate = build_engine_cmd(args.checkpoint, args.device, cand_knobs)
+  # Per-config clock-usage CSV (avg move time + min time left at game end) so
+  # the time-curve can be tuned for "spends most of its time then coasts on the
+  # increment" rather than hoarding or flagging.
+    move_log_out = (
+        Path(args.move_log_dir) / f"{label}.csv" if args.move_log_dir else None
+    )
+    if move_log_out is not None:
+        move_log_out.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
         pgn_out = Path(tmp) / "match.pgn"
         argv = build_match_argv(
@@ -333,6 +341,7 @@ def _run_one(
             max_plies=args.max_plies,
             pgn_out=pgn_out,
             openings=args.openings,
+            move_log_out=move_log_out,
         )
         if args.dry_run:
             print("[dry-run] " + " ".join(shlex.quote(a) for a in argv), flush=True)
@@ -376,6 +385,9 @@ def main() -> int:
                    default=Path(__file__).with_name("match_vs_uci.py"),
                    help="path to match_vs_uci.py (default: sibling)")
     p.add_argument("--out", type=Path, default=None, help="append JSONL result records here")
+    p.add_argument("--move-log-dir", type=Path, default=None,
+                   help="write a per-config clock-usage CSV here (<label>.csv): avg move time + "
+                        "min time left at game end, for tuning the time curve / end-clock.")
     p.add_argument("--dry-run", action="store_true",
                    help="print the match commands without running them (no GPU needed)")
     args = p.parse_args()

@@ -56,8 +56,8 @@ def test_clock_white_picks_wtime_winc() -> None:
         GoArgs(wtime_ms=30000, btime_ms=20000, winc_ms=500, binc_ms=300),
         side_to_move_is_white=True,
     )
-    # ~30000/30 + 500 = 1500
-    assert lim.deadline_ms == 1500
+    # move 1 (ply 0), default horizon 50: 30000/50 + 500 = 1100
+    assert lim.deadline_ms == 1100
 
 
 def test_clock_black_picks_btime_binc() -> None:
@@ -65,8 +65,8 @@ def test_clock_black_picks_btime_binc() -> None:
         GoArgs(wtime_ms=30000, btime_ms=20000, winc_ms=500, binc_ms=300),
         side_to_move_is_white=False,
     )
-    # ~20000/30 + 300 = 966
-    assert lim.deadline_ms == 966
+    # move 1 (ply 0), default horizon 50: 20000/50 + 300 = 700
+    assert lim.deadline_ms == 700
 
 
 def test_clock_movestogo_overrides_default_divisor() -> None:
@@ -141,11 +141,11 @@ def test_clock_optimum_is_fraction_below_hard_deadline() -> None:
     lim = limits_from_go(
         GoArgs(wtime_ms=30000, winc_ms=500), side_to_move_is_white=True,
     )
-    # Hard bound unchanged (~30000/30 + 500 = 1500); optimum is a fraction of it.
-    assert lim.deadline_ms == 1500
+    # Hard bound (ply 0, horizon 50: 30000/50 + 500 = 1100); optimum is a fraction.
+    assert lim.deadline_ms == 1100
     assert lim.optimum_ms is not None
     assert lim.optimum_ms < lim.deadline_ms
-    assert lim.optimum_ms == int(1500 * 0.7)
+    assert lim.optimum_ms == int(1100 * 0.7)
 
 
 def test_optimum_none_without_time_budget() -> None:
@@ -183,8 +183,8 @@ def test_optimum_fraction_tunes_soft_target() -> None:
     # The soft target scales with optimum_fraction; deadline_ms is unchanged.
     go = GoArgs(wtime_ms=30000, winc_ms=500)
     half = limits_from_go(go, side_to_move_is_white=True, optimum_fraction=0.5)
-    assert half.deadline_ms == 1500
-    assert half.optimum_ms == int(1500 * 0.5)
+    assert half.deadline_ms == 1100
+    assert half.optimum_ms == int(1100 * 0.5)
 
 
 def test_optimum_fraction_zero_disables_soft_abort() -> None:
@@ -192,7 +192,7 @@ def test_optimum_fraction_zero_disables_soft_abort() -> None:
     # the search spends the whole deadline (pre-time-management baseline).
     go = GoArgs(wtime_ms=30000, winc_ms=500)
     off = limits_from_go(go, side_to_move_is_white=True, optimum_fraction=0.0)
-    assert off.deadline_ms == 1500
+    assert off.deadline_ms == 1100
     assert off.optimum_ms is None
     neg = limits_from_go(go, side_to_move_is_white=True, optimum_fraction=-1.0)
     assert neg.optimum_ms is None
@@ -203,27 +203,38 @@ def test_optimum_fraction_clamps_above_one_to_deadline() -> None:
     # (soft target == deadline, so the post-optimum branch never fires early).
     go = GoArgs(wtime_ms=30000, winc_ms=500)
     lim = limits_from_go(go, side_to_move_is_white=True, optimum_fraction=2.5)
-    assert lim.optimum_ms == lim.deadline_ms == 1500
+    assert lim.optimum_ms == lim.deadline_ms == 1100
 
 
-def test_moves_horizon_front_loads_the_base_reserve() -> None:
-    # A smaller horizon spends a larger slice of the base each move (front-load);
-    # the increment is unchanged, so the per-move budget is strictly larger.
+def test_moves_horizon_countdown_draws_down_the_reserve() -> None:
+    # As the game advances, moves-to-go shrinks, so the per-move base allocation
+    # RISES — the reserve is spent down over the game rather than hoarded.
     go = GoArgs(wtime_ms=60000, winc_ms=1000)
-    wide = limits_from_go(go, side_to_move_is_white=True, moves_horizon=40)
-    narrow = limits_from_go(go, side_to_move_is_white=True, moves_horizon=20)
-    assert wide.deadline_ms is not None and narrow.deadline_ms is not None
-    # horizon 20 -> 60000/20 + 1000 = 4000; horizon 40 -> 60000/40 + 1000 = 2500.
-    assert narrow.deadline_ms == 4000
-    assert wide.deadline_ms == 2500
-    assert narrow.deadline_ms > wide.deadline_ms
+    early = limits_from_go(go, side_to_move_is_white=True, moves_horizon=50, ply=0)
+    mid = limits_from_go(go, side_to_move_is_white=True, moves_horizon=50, ply=60)
+    assert early.deadline_ms is not None and mid.deadline_ms is not None
+    # ply0: moves_left=50 -> 60000/50+1000=2200; ply60 (30 moves played):
+    # moves_left=50-30=20 -> 60000/20+1000=4000.
+    assert early.deadline_ms == 2200
+    assert mid.deadline_ms == 4000
+    assert mid.deadline_ms > early.deadline_ms
 
 
-def test_movestogo_overrides_moves_horizon() -> None:
-    # An explicit GUI movestogo always wins over the rolling horizon.
+def test_moves_horizon_countdown_floors_for_long_games() -> None:
+    # Past the expected length the countdown clamps to the floor (8), so a game
+    # that outlasts the estimate can't dump the whole base into one move.
+    go = GoArgs(wtime_ms=60000, winc_ms=1000)
+    late = limits_from_go(go, side_to_move_is_white=True, moves_horizon=50, ply=200)
+    # 100 moves played >> horizon 50 -> moves_left floored at 8 -> 60000/8+1000=8500
+    # (below the 50%-of-remaining ceiling of 30000).
+    assert late.deadline_ms == 8500
+
+
+def test_movestogo_overrides_moves_horizon_countdown() -> None:
+    # An explicit GUI movestogo always wins over the countdown (ply ignored).
     go = GoArgs(wtime_ms=60000, winc_ms=1000, movestogo=10)
-    lim = limits_from_go(go, side_to_move_is_white=True, moves_horizon=20)
-    assert lim.deadline_ms == 7000  # 60000/10 + 1000, not the horizon-20 value
+    lim = limits_from_go(go, side_to_move_is_white=True, moves_horizon=50, ply=80)
+    assert lim.deadline_ms == 7000  # 60000/10 + 1000
 
 
 def test_deadline_tracking() -> None:

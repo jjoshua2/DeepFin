@@ -207,9 +207,10 @@ class EngineOptions:
   # visit-margin abort fully off (spend the whole deadline — the pre-time-mgmt
   # baseline). Clamped to (0, 1]. Tuning knob — sweep alongside abort_factor.
     optimum_fraction: float = _OPTIMUM_FRACTION
-  # Rolling move count the base reserve is spread over when the GUI sends no
-  # movestogo. The front-loading lever: smaller => spend more of the base early
-  # and coast on the increment later (TCEC curve). Ignored when movestogo is set.
+  # Expected full-move game length the base reserve is spent to deplete by (a
+  # moves-to-go countdown) when the GUI sends no movestogo: the reserve is drawn
+  # down over the game instead of hoarded, while early moves stay conservative so
+  # the base survives past the middlegame. Ignored when movestogo is present.
     moves_horizon: int = _DEFAULT_MOVES_REMAINING
 
 
@@ -394,6 +395,7 @@ class Engine:
             time_budget_scale=self._options.time_budget_scale,
             optimum_fraction=self._options.optimum_fraction,
             moves_horizon=self._options.moves_horizon,
+            ply=search_board.ply(),
         )
         self._stop_event = threading.Event()
         self._ponderhit_event = threading.Event()
@@ -416,6 +418,7 @@ class Engine:
                 time_budget_scale=self._options.time_budget_scale,
                 optimum_fraction=self._options.optimum_fraction,
                 moves_horizon=self._options.moves_horizon,
+                ply=real_board.ply(),
             )
         else:
             self._pending_real_limits = None

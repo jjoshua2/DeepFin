@@ -16,8 +16,16 @@ _MIN_DEADLINE_MS = 20
 # We never spend more than this fraction of remaining time on a single move,
 # regardless of increment or movestogo claims.
 _MAX_FRACTION_OF_REMAINING = 0.5
-# Default divisor when movestogo is not specified (classic Leela/SF-lite).
-_DEFAULT_MOVES_REMAINING = 30
+# Expected full-move game length the base reserve is spent to *deplete* by, when
+# the GUI sends no movestogo. Used as a COUNTDOWN (moves_left = horizon - moves
+# played) so the base is actively drawn down over the game instead of a fixed
+# rolling fraction that hoards time forever and ends games with the clock unused.
+_DEFAULT_MOVES_REMAINING = 50
+# Floor on the moves-to-go countdown: never assume fewer than this many moves
+# remain, so a game that outlasts the estimate can't dump the whole base into one
+# move (the increment then carries it). Also bounds how aggressively the tail
+# spends, leaving a small safety margin.
+_MIN_MOVES_REMAINING = 8
 # Soft target as a fraction of the hard budget for clock-based searches. The
 # search aims to finish around here and stops early once the best move is
 # stable, banking the rest; if the move is still changing it keeps going up to
@@ -60,6 +68,7 @@ def limits_from_go(
     time_budget_scale: float = 1.0,
     optimum_fraction: float = _OPTIMUM_FRACTION,
     moves_horizon: int = _DEFAULT_MOVES_REMAINING,
+    ply: int = 0,
 ) -> SearchLimits:
     if args.infinite:
         return SearchLimits(infinite=True, searchmoves=tuple(args.searchmoves))
@@ -81,14 +90,19 @@ def limits_from_go(
     else:
         remaining, inc = _select_clock(args, side_to_move_is_white)
         if remaining is not None:
-  # `moves_horizon` is the rolling count of moves we spread the *base* reserve
-  # over (a real `movestogo` from the GUI always wins). It is the front-loading
-  # lever: a smaller horizon spends a larger slice of the base each move, so the
-  # bulk of the base is gone by the early/middlegame and later moves coast on the
-  # increment (the TCEC-style "spend it early, then ride the +inc" curve). The
-  # increment is added every move, so once the base is spent the per-move budget
-  # tends to `inc`.
-            moves_left = args.movestogo if args.movestogo and args.movestogo > 0 else max(1, int(moves_horizon))
+  # Moves-to-go COUNTDOWN (a real `movestogo` from the GUI always wins). We
+  # divide the current base over the *estimated remaining* moves, which shrinks
+  # as the game goes on, so the per-move base allocation rises and the reserve is
+  # actively spent down — depleting near move `moves_horizon` rather than hoarding
+  # a fixed rolling fraction that leaves the clock unused at game end. The floor
+  # keeps a safety margin (and bounds the tail) if the game outlasts the estimate.
+  # Early on this conserves (large denominator), so the base survives past the
+  # opening/middlegame instead of running into the bare increment too soon.
+            if args.movestogo and args.movestogo > 0:
+                moves_left = args.movestogo
+            else:
+                moves_played = max(0, int(ply)) // 2
+                moves_left = max(_MIN_MOVES_REMAINING, int(moves_horizon) - moves_played)
   # time_budget_scale lets the engine schedule more time per move on the bet
   # that the visit-margin abort banks most of it back on easy moves; the
   # 50%-of-remaining ceiling still caps any single move, so the clock cannot be

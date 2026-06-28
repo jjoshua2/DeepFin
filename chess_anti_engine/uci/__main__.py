@@ -346,8 +346,10 @@ def main() -> int:
   # chunk=512/topk=32/mb=1024 gave ~7.3x startpos nps vs 32/16/32. Chunk cap
   # of 512 (not the full node budget) keeps `stop` latency under ~400ms on
   # single-game CUDA searches.
-    p.add_argument("--chunk-sims", type=int, default=512,
-                   help="sims per start_gumbel_sims call (default: 512). Higher = fewer Python-C roundtrips, coarser stop latency.")
+    p.add_argument("--chunk-sims", type=int, default=2048,
+                   help="sims per start_gumbel_sims call (default: 2048). Higher = fuller GPU batches "
+                        "(more NPS) at the cost of coarser stop/abort latency; 2048 favours throughput "
+                        "for long time controls while leaving ample chunks per move for the abort.")
     p.add_argument("--topk", type=int, default=32, help="Gumbel root candidates (default: 32)")
     p.add_argument("--c-scale", type=float, default=0.025,
                    help="Gumbel value-transform scale in sigma(q): lower leans on the prior "
@@ -396,10 +398,11 @@ def main() -> int:
                    help="soft-target fraction of the clock budget at which a settled move banks "
                         "the rest (default: 0.7). 0 turns the visit-margin abort fully off "
                         "(spend the whole deadline — the pre-time-management baseline); clamped to (0, 1].")
-    p.add_argument("--moves-horizon", type=int, default=30,
-                   help="rolling move count the base reserve is spread over when the GUI sends no "
-                        "movestogo (default: 30). Smaller front-loads time into the opening/middlegame "
-                        "and coasts on the increment later; ignored when movestogo is present.")
+    p.add_argument("--moves-horizon", type=int, default=50,
+                   help="expected full-move game length the base reserve is spent to deplete by, as a "
+                        "moves-to-go countdown, when the GUI sends no movestogo (default: 50). Draws the "
+                        "reserve down over the game (no hoarding) while staying conservative early so it "
+                        "survives past the middlegame; ignored when movestogo is present.")
     p.add_argument("--log-level", default="WARNING",
                    help="stderr log level (DEBUG|INFO|WARNING). DEBUG enables per-search gumbel profile with GPU-calls/avg-batch.")
   # --walkers > 1 switches from the Gumbel-chunked path to a PUCT walker
