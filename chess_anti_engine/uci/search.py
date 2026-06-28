@@ -1186,8 +1186,20 @@ class SearchWorker:
         if optimum_ms is None:
             return False
         best, lead = self._root_visit_lead(allowed_root_indices)
-        if best < 0 or lead <= 0 or not self._move_is_decided(best, allowed_root_indices):
-  # Hard / unsettled (or no move): keep searching toward the hard deadline.
+        if best < 0:
+  # No legal/root move: nothing to bank, keep searching toward the hard deadline.
+            return False
+  # A forced position (exactly one legal/root move) is decided even with a zero
+  # visit lead: the C Gumbel path returns the sole action WITHOUT visiting its
+  # child, so `lead` is trivially 0 — bank it instead of spending the full
+  # deadline. For the multi-move case a non-positive lead means the survivor isn't
+  # the visit leader (hard/unsettled), so keep searching.
+        if lead <= 0:
+            actions, _ = self._filtered_root_visits(allowed_root_indices)
+            if actions.size != 1:
+                return False
+        if not self._move_is_decided(best, allowed_root_indices):
+  # Still-flipping choice or near-tie in visit share: keep searching.
             return False
         elapsed = deadline.elapsed_ms()
         remaining_ms = optimum_ms - elapsed

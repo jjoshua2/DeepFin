@@ -31,6 +31,7 @@ from chess_anti_engine.eval import (
     run_policy_sequence_eval,
     run_value_head_puzzle_eval,
 )
+from chess_anti_engine.mcts.gumbel import PLAY_SEARCH_DEFAULTS
 from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
 DEFAULT_PUZZLE_CSV = "data/puzzles/lichess_2200_2800_n3000.csv"
@@ -138,11 +139,11 @@ def main() -> None:
                         "— concurrent compiles contend on the inductor cache / GPU.")
     # search/gumbel knobs (used by --mode search|gumbel)
     p.add_argument("--sims", type=int, default=200, help="MCTS simulations per puzzle (search/gumbel modes)")
-    p.add_argument("--gumbel-c-scale", type=float, default=0.025, help="gumbel value-transform scale (mode gumbel; production-tuned 0.025)")
-    p.add_argument("--gumbel-c-visit", type=float, default=50.0, help="gumbel c_visit depth-ramp base (mode gumbel)")
-    p.add_argument("--gumbel-topk", type=int, default=32, help="gumbel root candidates (mode gumbel)")
-    p.add_argument("--gumbel-c-puct", type=float, default=2.5, help="gumbel c_puct (mode gumbel)")
-    p.add_argument("--gumbel-fpu", type=float, default=1.2, help="gumbel fpu_reduction (mode gumbel)")
+    p.add_argument("--gumbel-c-scale", type=float, default=PLAY_SEARCH_DEFAULTS["c_scale"], help="gumbel value-transform scale (mode gumbel; production-tuned 0.025)")
+    p.add_argument("--gumbel-c-visit", type=float, default=PLAY_SEARCH_DEFAULTS["c_visit"], help="gumbel c_visit depth-ramp base (mode gumbel)")
+    p.add_argument("--gumbel-topk", type=int, default=PLAY_SEARCH_DEFAULTS["topk"], help="gumbel root candidates (mode gumbel)")
+    p.add_argument("--gumbel-c-puct", type=float, default=PLAY_SEARCH_DEFAULTS["c_puct"], help="gumbel c_puct (mode gumbel)")
+    p.add_argument("--gumbel-fpu", type=float, default=PLAY_SEARCH_DEFAULTS["fpu_reduction"], help="gumbel fpu_reduction (mode gumbel)")
     p.add_argument("--gumbel-qexp", type=float, default=1.0,
                    help="gumbel q_visit_exp: exponent on max_visit in q_scale=c_scale*(c_visit+max_visit^exp). "
                         "1.0=linear (default); <1=sublinear (less sim-count-dependent optimum)")
@@ -157,10 +158,20 @@ def main() -> None:
                    help="gumbel sequential-halving divisor: each round keeps ceil(n/div). "
                         "2 (default) = standard halving (top half); 3/4 = more aggressive "
                         "elimination (fewer rounds, visits concentrate on survivors sooner)")
-    p.add_argument("--gumbel-cvisit-root", type=float, default=900.0,
+    p.add_argument("--gumbel-cvisit-root", type=float, default=PLAY_SEARCH_DEFAULTS["c_visit_root"],
                    help="gumbel root-halving c_visit override (value-transform floor at the "
                         "root site only; descent keeps --gumbel-c-visit). 900 (default) = the "
                         "root/descent SPLIT that fixes scaling; <0 = use c_visit at both (legacy)")
+    p.add_argument("--gumbel-cscale-root", type=float, default=PLAY_SEARCH_DEFAULTS["c_scale_root"],
+                   help="gumbel ROOT-ONLY c_scale (descent keeps --gumbel-c-scale). Pairs with "
+                        "--gumbel-qexp-root<0 for a LOG root q_scale=c_scale_root*log1p(c_visit_root"
+                        "+max_visit), which needs a large c_scale (~7) vs the tiny descent (~0.025). "
+                        "<0 = use c_scale at the root too (legacy linear)")
+    p.add_argument("--gumbel-qexp-root", type=float, default=PLAY_SEARCH_DEFAULTS["q_visit_exp_root"],
+                   help="gumbel ROOT-ONLY value-transform exponent (descent keeps --gumbel-qexp). "
+                        "-1 (default) = LOG slow-growth: linear root q_scale explodes at high sims "
+                        "and saturates sigma(q); log stays ~100 from 256 to millions of nodes "
+                        "(sim-invariant). >=90 = use --gumbel-qexp at the root too")
     p.add_argument(
         "--mode",
         type=_parse_modes,
@@ -252,6 +263,8 @@ def main() -> None:
                     q_visit_floor=args.gumbel_qfloor,
                     halving_div=args.gumbel_halving_div,
                     c_visit_root=args.gumbel_cvisit_root,
+                    c_scale_root=args.gumbel_cscale_root,
+                    q_visit_exp_root=args.gumbel_qexp_root,
                 )
             result = run_puzzle_eval(
                 model, suite,

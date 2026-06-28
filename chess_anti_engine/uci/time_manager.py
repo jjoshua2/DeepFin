@@ -33,6 +33,11 @@ _MIN_MOVES_REMAINING = 8
 # Default upper cap on the moves estimate (a conservatism guard; the pieces formula
 # tops out near 30, so this normally does not bind). Exposed as `moves_horizon`.
 _DEFAULT_MOVES_REMAINING = 50
+# Fixed divisor used ONLY by the `optimum_fraction <= 0` baseline path, which
+# reproduces the pre-time-management allocation (no reserve, no pieces estimate) so
+# an A/B gauntlet can compare old vs new on one binary. This is the old
+# `_DEFAULT_MOVES_REMAINING`; the new path divides by the pieces-driven estimate.
+_BASELINE_MOVES_REMAINING = 30
 # Safety reserve carved off `remaining` before allocating, so the late game/endgame
 # can't flag: max of a few increments and a few move-overheads, but never more than
 # this fraction of remaining (keeps it sane at short TCs where the inc-multiple would
@@ -107,30 +112,46 @@ def limits_from_go(
     else:
         remaining, inc = _select_clock(args, side_to_move_is_white)
         if remaining is not None:
+            inc_v = inc or 0
+            if optimum_fraction <= 0.0:
+  # OFF sentinel: reproduce the pre-time-management allocation EXACTLY — fixed
+  # divisor, full increment, NO reserve and NO pieces-driven split — so a baseline
+  # binary is a true A/B against the old engine. Skipping only `optimum_ms` (below)
+  # is not enough: the reserve + half-increment would still budget e.g. 2200ms vs
+  # the old 4000ms at 30s+3s. A real `movestogo` from the GUI still wins.
+                moves_left = (
+                    args.movestogo if args.movestogo and args.movestogo > 0
+                    else _BASELINE_MOVES_REMAINING
+                )
+                budget = remaining / moves_left + inc_v
+            else:
   # Pieces-driven AGGRESSIVE allocation (a real `movestogo` from the GUI always
   # wins). Plan to spend the reserved base down by the hard middlegame; the
   # visit-margin abort banks most of it on easy moves, so the clock actually
   # lasts much longer (no extension mechanism needed). See the constants above.
-            if args.movestogo and args.movestogo > 0:
-                moves_left = args.movestogo
-            else:
-                est = round((max(0, int(pieces)) - _ENDGAME_PIECES) * _MOVES_PER_PIECE)
-                moves_left = min(int(moves_horizon), max(_MIN_MOVES_REMAINING, est))
+                if args.movestogo and args.movestogo > 0:
+                    moves_left = args.movestogo
+                else:
+                    est = round((max(0, int(pieces)) - _ENDGAME_PIECES) * _MOVES_PER_PIECE)
+  # Clamp the horizon up to the floor first, so a small `--moves-horizon` (e.g. 1)
+  # can't pull `moves_left` below `_MIN_MOVES_REMAINING` and dump the whole base
+  # into one move; the floor is honored regardless of the horizon cap.
+                    horizon = max(_MIN_MOVES_REMAINING, int(moves_horizon))
+                    moves_left = min(horizon, max(_MIN_MOVES_REMAINING, est))
   # Carve a safety reserve off the clock first so the endgame can't flag, capped
   # at a fraction of remaining so it stays sane at short TCs. The increment refills
   # it each move. Only part of the increment is spent up front (the rest rolls over).
-            inc_v = inc or 0
-            reserve = min(
-                _MAX_RESERVE_FRACTION * remaining,
-                max(_RESERVE_INC_MULT * inc_v, _RESERVE_OVERHEAD_MULT * move_overhead_ms),
-            )
-            usable = max(0.0, remaining - reserve)
+                reserve = min(
+                    _MAX_RESERVE_FRACTION * remaining,
+                    max(_RESERVE_INC_MULT * inc_v, _RESERVE_OVERHEAD_MULT * move_overhead_ms),
+                )
+                usable = max(0.0, remaining - reserve)
   # time_budget_scale lets the engine schedule more time per move on the bet that
   # the visit-margin abort banks most of it back; the 50%-of-remaining ceiling
   # still caps any single move, so the clock cannot be flagged regardless of scale.
-            budget = time_budget_scale * (
-                usable / moves_left + _INCREMENT_SPEND_FRACTION * inc_v
-            )
+                budget = time_budget_scale * (
+                    usable / moves_left + _INCREMENT_SPEND_FRACTION * inc_v
+                )
             ceiling = remaining * _MAX_FRACTION_OF_REMAINING
             deadline_ms = max(_MIN_DEADLINE_MS, int(min(budget, ceiling)))
 

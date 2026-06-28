@@ -54,6 +54,29 @@ from chess_anti_engine.utils.numpy_helpers import softmax_1d as _softmax  # noqa
 # SearchConfig/TrialConfig/worker plumbing defaults mirror.
 DEFAULT_VOLATILITY_ANCHOR = 0.05
 
+# Single source of truth for the production PLAY/EVAL Gumbel search settings (UCI,
+# puzzle eval, the standardized arena, the training-gate match). Reference this
+# from every such entry point so the tuned optimum never drifts across call sites.
+# DISTINCT from SELFPLAY/training search, which is YAML/reco-driven and intentionally
+# keeps c_scale=0.1, no root split, linear root (the c_scale=0.025 win + root-log are
+# high-sim PLAY tunings; for low-sim selfplay they are a no-op-to-sub-significant lever
+# that needs a live A/B, not an offline flip). Search SHAPE only — NOT the sim count
+# (that varies: UCI chunk_sims, puzzle --sims, arena matched_sims). Keys are
+# GumbelConfig fields. Provenance (frozen deep-SF audit, paired regret-vs-sims):
+# c_scale=0.025 +301 Elo @8k; c_visit_root=900 (inert under root-log, kept);
+# c_scale_root=7/q_visit_exp_root=-1 LOG root keeps q_scale ~100 from 256 to millions
+# of nodes instead of exploding (~25000 @1M) and reversing under more search.
+PLAY_SEARCH_DEFAULTS: dict[str, float | int] = {
+    "c_scale": 0.025,
+    "c_visit": 50.0,
+    "c_visit_root": 900.0,
+    "c_scale_root": 7.0,
+    "q_visit_exp_root": -1.0,
+    "topk": 32,
+    "c_puct": 2.5,
+    "fpu_reduction": 1.2,
+}
+
 
 @dataclass
 class GumbelConfig:

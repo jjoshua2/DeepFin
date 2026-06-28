@@ -27,7 +27,7 @@ from chess_anti_engine.inference_dispatcher import (
     MultiGPUDispatcher,
     ThreadSafeGPUDispatcher,
 )
-from chess_anti_engine.mcts.gumbel import GumbelConfig
+from chess_anti_engine.mcts.gumbel import PLAY_SEARCH_DEFAULTS, GumbelConfig
 
 from .engine import Engine, EngineOptions, _println, emit_handshake
 from .model_loader import load_model_from_checkpoint
@@ -361,20 +361,20 @@ def main() -> int:
                    help="sims per start_gumbel_sims call (default: 2048). Higher = fuller GPU batches "
                         "(more NPS) at the cost of coarser stop/abort latency; 2048 favours throughput "
                         "for long time controls while leaving ample chunks per move for the abort.")
-    p.add_argument("--topk", type=int, default=32, help="Gumbel root candidates (default: 32)")
-    p.add_argument("--c-scale", type=float, default=0.025,
+    p.add_argument("--topk", type=int, default=PLAY_SEARCH_DEFAULTS["topk"], help="Gumbel root candidates (default: 32)")
+    p.add_argument("--c-scale", type=float, default=PLAY_SEARCH_DEFAULTS["c_scale"],
                    help="Gumbel value-transform scale in sigma(q): lower leans on the prior "
                         "policy, higher trusts the search Q more. Default 0.025 — tuned "
                         "2026-06-16 (was 0.1; +270 Elo). q_scale=c_scale*(c_visit+max_visit) "
                         "explodes at high sims, so 0.1 over-trusted the overconfident value head.")
-    p.add_argument("--c-visit", type=float, default=50.0, help="Gumbel c_visit constant (default: 50.0)")
-    p.add_argument("--c-puct", type=float, default=2.5, help="PUCT exploration constant (default: 2.5)")
-    p.add_argument("--fpu-reduction", type=float, default=1.2,
+    p.add_argument("--c-visit", type=float, default=PLAY_SEARCH_DEFAULTS["c_visit"], help="Gumbel c_visit constant (default: 50.0)")
+    p.add_argument("--c-puct", type=float, default=PLAY_SEARCH_DEFAULTS["c_puct"], help="PUCT exploration constant (default: 2.5)")
+    p.add_argument("--fpu-reduction", type=float, default=PLAY_SEARCH_DEFAULTS["fpu_reduction"],
                    help="first-play-urgency reduction for unvisited children (default: 1.2)")
   # Gumbel root/descent split params (merged dormant in #68; C path only —
   # run_gumbel_root_many_c). All default to legacy: a GumbelConfig built with
   # the defaults below reproduces the pre-#68 single-floor/linear behavior.
-    p.add_argument("--c-visit-root", type=float, default=900.0,
+    p.add_argument("--c-visit-root", type=float, default=PLAY_SEARCH_DEFAULTS["c_visit_root"],
                    help="Gumbel root-halving c_visit override (value-transform floor at the "
                         "root sequential-halving site only; descent keeps --c-visit). A large "
                         "root floor (900, default) makes one c_scale fit every sim count's root "
@@ -391,12 +391,12 @@ def main() -> int:
                    help="Gumbel exponent on max_visit in q_scale=c_scale*(c_visit+max_visit^exp). "
                         "1.0 = standard linear Gumbel (default). <1 makes search-Q trust grow "
                         "sublinearly with depth so the optimal c_scale is less sim-count-dependent.")
-    p.add_argument("--c-scale-root", type=float, default=7.0,
+    p.add_argument("--c-scale-root", type=float, default=PLAY_SEARCH_DEFAULTS["c_scale_root"],
                    help="ROOT-ONLY c_scale (descent keeps --c-scale). Pairs with "
                         "--q-visit-exp-root<0 for a LOG root q_scale=c_scale_root*log1p(c_visit_root"
                         "+max_visit), which needs a large c_scale (~7) vs the tiny descent (~0.025). "
                         "<0 = use --c-scale at the root too (legacy linear).")
-    p.add_argument("--q-visit-exp-root", type=float, default=-1.0,
+    p.add_argument("--q-visit-exp-root", type=float, default=PLAY_SEARCH_DEFAULTS["q_visit_exp_root"],
                    help="ROOT-ONLY value-transform exponent (descent keeps --q-visit-exp). DEFAULT "
                         "-1 = LOG slow-growth: linear root q_scale explodes ~25000 at 1M nodes and "
                         "saturates sigma(q) (deeper search reverses, +3.8cp@32k audit); log stays "
