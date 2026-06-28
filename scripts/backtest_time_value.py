@@ -74,6 +74,7 @@ class _Searcher:
         self, checkpoint: str, device: str, *, topk: int, policy_temp: float,
         c_scale: float, c_visit: float, c_visit_root: float,
         q_visit_exp: float = 1.0, q_global_scale: bool = False, q_visit_floor: float = -1.0,
+        c_scale_root: float = -1.0, q_visit_exp_root: float = 99.0,
         compile_mode: str | None = None,
     ) -> None:
         import torch
@@ -91,6 +92,8 @@ class _Searcher:
         self._q_visit_exp = float(q_visit_exp)
         self._q_global_scale = bool(q_global_scale)
         self._q_visit_floor = float(q_visit_floor)
+        self._c_scale_root = float(c_scale_root)
+        self._q_visit_exp_root = float(q_visit_exp_root)
         model = load_model_from_checkpoint(checkpoint, device=device)
         model.eval()
         self._hist = str(getattr(model, "input_history_encoding", "legacy"))
@@ -107,7 +110,7 @@ class _Searcher:
                 cache_dir=Path("~/.cache/deepfin/worker_cache").expanduser(),
             )
             model = torch.compile(model, mode=compile_mode)
-        self._evaluator = LocalModelEvaluator(model, device=device)  # type: ignore[arg-type]
+        self._evaluator = LocalModelEvaluator(model, device=device)  # pyright: ignore[reportArgumentType]
 
     def run(
         self, boards: list[chess.Board], sims: int, *, seed: int,
@@ -123,6 +126,7 @@ class _Searcher:
             c_scale=self._c_scale, c_visit=self._c_visit,
             c_visit_root=self._c_visit_root, q_visit_exp=self._q_visit_exp,
             q_global_scale=self._q_global_scale, q_visit_floor=self._q_visit_floor,
+            c_scale_root=self._c_scale_root, q_visit_exp_root=self._q_visit_exp_root,
         )
         rng = np.random.default_rng(seed)
   # The Gumbel runner encodes the boards itself (relations included, via cfg).
@@ -244,6 +248,14 @@ def main() -> None:
                          "pairs with --q-visit-exp<1 for sim-invariance.")
     ap.add_argument("--q-visit-floor", type=float, default=-1.0,
                     help="decoupled additive floor: q_scale=floor+c_scale*max_visit^exp when >=0.")
+    ap.add_argument("--c-scale-root", type=float, default=-1.0,
+                    help="ROOT-ONLY c_scale (descent keeps --c-scale). Pairs with "
+                         "--q-visit-exp-root<0 for a LOG root: log needs a big c_scale (~7) while the "
+                         "descent stays tiny (~0.025). <0 = use --c-scale at the root too (legacy).")
+    ap.add_argument("--q-visit-exp-root", type=float, default=99.0,
+                    help="ROOT-ONLY value-transform exponent (descent keeps --q-visit-exp). <0 = LOG "
+                         "slow-growth at the root (kills the high-sim plateau) while the descent stays "
+                         "linear (preserves good mid-sim regret). >=90 = use --q-visit-exp (legacy).")
     ap.add_argument("--compile", dest="compile_mode", nargs="?", const="max-autotune", default=None,
                     help="torch.compile the model (much faster forward; needs the GPU free). "
                          "Optional mode arg (default max-autotune). Uses the shared engine cache.")
@@ -276,10 +288,13 @@ def main() -> None:
         args.checkpoint, args.device, topk=args.gumbel_topk, policy_temp=args.policy_temp,
         c_scale=args.c_scale, c_visit=args.c_visit, c_visit_root=args.c_visit_root,
         q_visit_exp=args.q_visit_exp, q_global_scale=bool(args.q_global_scale),
-        q_visit_floor=args.q_visit_floor, compile_mode=args.compile_mode,
+        q_visit_floor=args.q_visit_floor,
+        c_scale_root=args.c_scale_root, q_visit_exp_root=args.q_visit_exp_root,
+        compile_mode=args.compile_mode,
     )
     print(f"[backtest] c_scale={args.c_scale} c_visit_root={args.c_visit_root} "
           f"q_visit_exp={args.q_visit_exp} q_global_scale={args.q_global_scale} "
+          f"c_scale_root={args.c_scale_root} q_visit_exp_root={args.q_visit_exp_root} "
           f"topk={args.gumbel_topk} policy_temp={args.policy_temp}")
     # snapshot[pos_idx][budget] = features; fill by running each budget over all boards.
     per_pos: list[dict[int, dict]] = [{} for _ in positions]

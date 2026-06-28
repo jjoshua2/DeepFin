@@ -97,6 +97,16 @@ class GumbelConfig:
     # from over-trusting Q. >= 0 sets the root floor; < 0 (default) = use c_visit
     # at both sites (legacy). C path only (run_gumbel_root_many_c).
     c_visit_root: float = -1.0
+    # Root-halving-ONLY value-transform overrides (root and descent want
+    # DIFFERENT transforms: the high-sim plateau is a root over-trust problem,
+    # but the good mid-sim regret needs a tiny LINEAR descent q_scale). The root
+    # reads c_scale_root / q_visit_exp_root; the descent keeps c_scale /
+    # q_visit_exp. Set q_visit_exp_root<0 for a LOG root (slow-growth, sim-
+    # invariant 256->millions) while leaving q_visit_exp=1 for a linear descent.
+    # Sentinels: c_scale_root<0 -> use c_scale; q_visit_exp_root>=90 -> use
+    # q_visit_exp (legacy bit-identical). C path only (run_gumbel_root_many_c).
+    c_scale_root: float = -1.0
+    q_visit_exp_root: float = 99.0
     full_tree: bool = True
     add_noise: bool = True  # Backward-compatible gate; use gumbel_scale for partial noise.
     gumbel_scale: float = 1.0

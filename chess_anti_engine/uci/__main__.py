@@ -263,6 +263,15 @@ def _build_engine(
     q_visit_floor: float = -1.0,
     q_visit_exp: float = 1.0,
     q_global_scale: bool = False,
+  # Root-ONLY LOG value-transform (UCI default; descent keeps linear q_visit_exp).
+  # Linear root q_scale=c_scale*(c_visit_root+max_visit) EXPLODES with max_visit
+  # (~25000 at 1M nodes) -> the root saturates sigma(q) and blindly trusts the
+  # overconfident value head, so deeper search REVERSES (audit: +3.8cp at 32k).
+  # Log q_scale=c_scale_root*log1p(c_visit_root+max_visit) stays ~100 from 256 to
+  # millions of nodes -> sim-invariant scaling (the TCEC regret curve keeps
+  # dropping). Verified no-op/improvement 256->16k, fixes the 32k reversal.
+    c_scale_root: float = 7.0,
+    q_visit_exp_root: float = -1.0,
     n_walkers: int,
     vloss_weight: int,
     walker_gather: int,
@@ -293,6 +302,8 @@ def _build_engine(
             q_visit_floor=q_visit_floor,
             q_visit_exp=q_visit_exp,
             q_global_scale=q_global_scale,
+            c_scale_root=c_scale_root,
+            q_visit_exp_root=q_visit_exp_root,
             add_noise=False,
             input_history_encoding=input_history_encoding,
             input_extra_features=input_extra_features,
@@ -380,6 +391,16 @@ def main() -> int:
                    help="Gumbel exponent on max_visit in q_scale=c_scale*(c_visit+max_visit^exp). "
                         "1.0 = standard linear Gumbel (default). <1 makes search-Q trust grow "
                         "sublinearly with depth so the optimal c_scale is less sim-count-dependent.")
+    p.add_argument("--c-scale-root", type=float, default=7.0,
+                   help="ROOT-ONLY c_scale (descent keeps --c-scale). Pairs with "
+                        "--q-visit-exp-root<0 for a LOG root q_scale=c_scale_root*log1p(c_visit_root"
+                        "+max_visit), which needs a large c_scale (~7) vs the tiny descent (~0.025). "
+                        "<0 = use --c-scale at the root too (legacy linear).")
+    p.add_argument("--q-visit-exp-root", type=float, default=-1.0,
+                   help="ROOT-ONLY value-transform exponent (descent keeps --q-visit-exp). DEFAULT "
+                        "-1 = LOG slow-growth: linear root q_scale explodes ~25000 at 1M nodes and "
+                        "saturates sigma(q) (deeper search reverses, +3.8cp@32k audit); log stays "
+                        "~100 from 256 to millions of nodes (sim-invariant). >=90 = use --q-visit-exp.")
     p.add_argument("--q-global-scale", action="store_true",
                    help="Gumbel descent scales the value-transform by the ROOT max child-visit "
                         "(global/search-size) instead of the local node's max_visit, so q_scale is "
@@ -573,6 +594,7 @@ def main() -> int:
                 c_puct=args.c_puct, fpu_reduction=args.fpu_reduction,
                 c_visit_root=args.c_visit_root, q_visit_floor=args.q_visit_floor,
                 q_visit_exp=args.q_visit_exp, q_global_scale=bool(args.q_global_scale),
+                c_scale_root=args.c_scale_root, q_visit_exp_root=args.q_visit_exp_root,
                 n_walkers=n_walkers, vloss_weight=int(args.vloss_weight),
                 walker_gather=walker_gather,
                 pucv_vloss_mode=1 if args.pucv_pending_mode == "virtual-mean" else 0,

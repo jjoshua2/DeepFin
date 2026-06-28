@@ -569,6 +569,8 @@ def run_gumbel_root_many_c(
                 float(cfg.q_visit_floor),
                 int(cfg.halving_div),
                 float(cfg.c_visit_root),
+                float(cfg.c_scale_root),
+                float(cfg.q_visit_exp_root),
             )
         _t_prepare += _time.perf_counter() - _tp0
 
@@ -811,6 +813,8 @@ def run_gumbel_root_many_c(
             float(cfg.q_visit_floor),
             int(cfg.halving_div),
             float(cfg.c_visit_root),
+            float(cfg.c_scale_root),
+            float(cfg.q_visit_exp_root),
         )
         _t_prepare += _time.perf_counter() - _tp0
 

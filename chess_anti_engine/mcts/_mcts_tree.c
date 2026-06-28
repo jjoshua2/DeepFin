@@ -991,6 +991,17 @@ typedef struct {
      * early-round / low-visit floor that over-trusts noisy Q. < 0 = legacy
      * coupled-floor behavior (default). */
     double q_visit_floor;
+    /* Root-halving-ONLY value-transform overrides. The root and descent want
+     * DIFFERENT transforms: the high-sim plateau is a ROOT over-trust problem
+     * (root q_scale grows linearly with max_visit), but the good mid-sim regret
+     * depends on a TINY LINEAR descent q_scale. A single shared exponent can't
+     * be log at the root and linear at the descent, so the root reads these:
+     *   c_scale_root   — root's c_scale (log needs ~7 vs descent-linear ~0.025)
+     *   q_visit_exp_root — root's exponent (<0 = log slow-growth; the descent
+     *                      keeps q_visit_exp). Fall back to c_scale/q_visit_exp
+     *                      when unset, so legacy callers stay bit-identical. */
+    double c_scale_root;
+    double q_visit_exp_root;
     int full_tree;
     /* Virtual-loss weight: when >0, in-flight walkers along a node's path
      * are treated as visits with a penalty (N += vl, W += vl per unit). Keeps
@@ -1259,12 +1270,25 @@ static void gss_score_and_halve(GumbelSimState *g, TreeData *t) {
             if (q > max_q) max_q = q;
         }
         double q_denom = fmax(max_q - min_q, 1e-8);
-        double mv_term = (g->sel.q_visit_exp == 1.0)
-            ? (double)max_visit : pow((double)max_visit, g->sel.q_visit_exp);
         double cvr = (g->sel.c_visit_root >= 0.0) ? g->sel.c_visit_root : g->sel.c_visit;
-        double q_scale = (g->sel.q_visit_floor >= 0.0)
-            ? (g->sel.q_visit_floor + g->sel.c_scale * mv_term)
-            : g->sel.c_scale * (cvr + mv_term);
+        double q_scale;
+  /* q_visit_exp < 0 = LOG mode with the floor INSIDE the log:
+   *   q_scale = c_scale * log(1 + floor + max_visit).
+   * The floor (large at the root via c_visit_root, small at descent) sets the
+   * log's BASE while max_visit adds slow growth — so the split AND log coexist
+   * (an additive c_scale*(floor + log) would let the big root floor swamp the
+   * log). Lc0-cpuct-style slow growth: sim-invariant 256->millions. >=0 keeps the
+   * legacy linear (1.0) / constant (0) / sublinear-power (0<exp<1) forms. */
+  /* ROOT site: use the root-only c_scale / exponent (see struct comment). */
+        if (g->sel.q_visit_exp_root < 0.0) {
+            q_scale = g->sel.c_scale_root * log1p(cvr + (double)max_visit);
+        } else {
+            double mv_term = (g->sel.q_visit_exp_root == 1.0)
+                ? (double)max_visit : pow((double)max_visit, g->sel.q_visit_exp_root);
+            q_scale = (g->sel.q_visit_floor >= 0.0)
+                ? (g->sel.q_visit_floor + g->sel.c_scale_root * mv_term)
+                : g->sel.c_scale_root * (cvr + mv_term);
+        }
 
         int32_t coff = g->cands_offset[bi];
         double scores_buf[GSS_MAX_CANDS];
@@ -2705,11 +2729,18 @@ static int32_t tree_gumbel_select_child(const TreeData *t, int32_t node_id,
      * node's local max_visit, so deep low-visit nodes don't collapse to the
      * c_scale*c_visit floor. global_max_visit<=0 keeps legacy local behavior. */
     int32_t mv_eff = (global_max_visit > 0) ? global_max_visit : max_visit;
-    double mv_term = (q_visit_exp == 1.0)
-        ? (double)mv_eff : pow((double)mv_eff, q_visit_exp);
-    double q_scale = (q_visit_floor >= 0.0)
-        ? (q_visit_floor + c_scale * mv_term)
-        : c_scale * (c_visit + mv_term);
+    double q_scale;
+  /* q_visit_exp < 0 = LOG mode, floor inside the log (see the root-halving site):
+   * q_scale = c_scale * log(1 + c_visit + max_visit). */
+    if (q_visit_exp < 0.0) {
+        q_scale = c_scale * log1p((double)c_visit + (double)mv_eff);
+    } else {
+        double mv_term = (q_visit_exp == 1.0)
+            ? (double)mv_eff : pow((double)mv_eff, q_visit_exp);
+        q_scale = (q_visit_floor >= 0.0)
+            ? (q_visit_floor + c_scale * mv_term)
+            : c_scale * (c_visit + mv_term);
+    }
     double inv_total = 1.0 / (1.0 + (double)total_visits);
 
     /* Fuse score-compute with softmax-max tracking. Excluded slots get
@@ -3375,14 +3406,16 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
     double q_visit_floor = -1.0; /* optional; >=0 = additive decoupled floor (see GumbelSelectParams) */
     int halving_div = 2;         /* optional; sequential-halving divisor (2 = keep top half) */
     double c_visit_root = -1.0;  /* optional; >=0 = root-halving c_visit override (see GumbelSelectParams) */
+    double c_scale_root = -1.0;     /* optional; >=0 = root-only c_scale (else use c_scale) */
+    double q_visit_exp_root = 99.0; /* optional; <90 = root-only exponent (else use q_visit_exp) */
 
-    if (!PyArg_ParseTuple(args, "OOOOOOOddddpO|iiiOdidid",
+    if (!PyArg_ParseTuple(args, "OOOOOOOddddpO|iiiOdididdd",
                           &root_cbs_list, &root_ids_obj, &remaining_list,
                           &gumbels_list, &priors_list, &budget_obj, &root_qs_obj,
                           &c_scale, &c_visit, &c_puct, &fpu_reduction, &full_tree,
                           &enc_buf_obj, &vloss_weight, &target_batch, &input_history_lc0_root,
                           &rel_buf_obj, &q_visit_exp, &q_global_scale, &q_visit_floor,
-                          &halving_div, &c_visit_root))
+                          &halving_div, &c_visit_root, &c_scale_root, &q_visit_exp_root))
         return NULL;
 
     /* Validate list args before any indexing — PyList_GET_ITEM has no
@@ -3461,10 +3494,20 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
     g->sel.c_visit = c_visit;
     g->sel.c_puct = c_puct;
     g->sel.fpu_reduction = fpu_reduction;
-    g->sel.q_visit_exp = (q_visit_exp > 0.0) ? q_visit_exp : 1.0;
+  /* No clamp: q_visit_exp <= 0 is meaningful (0 = constant, < 0 = log sentinel).
+   * The Python default is 1.0, so unset callers still get linear. The old
+   * `(>0)?:1.0` silently forced the ROOT halving to linear for any log/constant
+   * config, so those transforms were never actually exercised at the root. */
+    g->sel.q_visit_exp = q_visit_exp;
     g->sel.q_global_scale = q_global_scale ? 1 : 0;
     g->sel.q_visit_floor = q_visit_floor;
     g->sel.c_visit_root = c_visit_root;
+  /* Root-only transform: fall back to the shared c_scale / q_visit_exp when
+   * unset (c_scale_root < 0, q_visit_exp_root >= 90) so legacy callers are
+   * bit-identical; set them to give the root a different (e.g. log) transform
+   * than the descent. */
+    g->sel.c_scale_root = (c_scale_root >= 0.0) ? c_scale_root : c_scale;
+    g->sel.q_visit_exp_root = (q_visit_exp_root < 90.0) ? q_visit_exp_root : q_visit_exp;
     g->sel.full_tree = full_tree;
     g->sel.vloss_weight = (vloss_weight > 0) ? vloss_weight : 0;
     g->halving_div = (halving_div >= 2) ? halving_div : 2;
