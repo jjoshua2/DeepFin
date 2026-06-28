@@ -70,7 +70,10 @@ class _Searcher:
     ``audit_targets._net_candidates`` and reuses its legal-move mapping, but also
     extracts per-child Q (for the top-2 Q gap the abort gate keys on)."""
 
-    def __init__(self, checkpoint: str, device: str, *, topk: int, policy_temp: float) -> None:
+    def __init__(
+        self, checkpoint: str, device: str, *, topk: int, policy_temp: float,
+        c_scale: float, c_visit: float, c_visit_root: float,
+    ) -> None:
         import torch
 
         from chess_anti_engine.inference import LocalModelEvaluator
@@ -80,6 +83,9 @@ class _Searcher:
         self._device = device
         self._topk = int(topk)
         self._policy_temp = float(policy_temp)
+        self._c_scale = float(c_scale)
+        self._c_visit = float(c_visit)
+        self._c_visit_root = float(c_visit_root)
         model = load_model_from_checkpoint(checkpoint, device=device)
         model.eval()
         self._hist = str(getattr(model, "input_history_encoding", "legacy"))
@@ -99,6 +105,8 @@ class _Searcher:
             input_history_encoding=self._hist, input_extra_features=self._extra,
             policy_encoding=self._pol_enc, compute_relations=self._use_rel,
             policy_temp=self._policy_temp, topk=self._topk,
+            c_scale=self._c_scale, c_visit=self._c_visit,
+            c_visit_root=self._c_visit_root,
         )
         rng = np.random.default_rng(seed)
   # The Gumbel runner encodes the boards itself (relations included, via cfg).
@@ -202,6 +210,15 @@ def main() -> None:
     ap.add_argument("--max-positions", type=int, default=0, help="0 = all")
     ap.add_argument("--gumbel-topk", type=int, default=32)
     ap.add_argument("--policy-temp", type=float, default=1.0)
+    ap.add_argument("--c-scale", type=float, default=0.025,
+                    help="Gumbel sigma(q) value-transform scale. PRODUCTION UCI uses 0.025; the "
+                         "GumbelConfig default 0.1 over-trusts the value head at high sims (search "
+                         "collapses -> flat scaling). Sweep this to find what makes search scale.")
+    ap.add_argument("--c-visit", type=float, default=50.0)
+    ap.add_argument("--c-visit-root", type=float, default=900.0,
+                    help="root-halving c_visit floor (the root/descent c_scale SPLIT that fixes "
+                         "scaling): a large root floor (~900) makes one c_scale fit every sim count "
+                         "at the root while descent keeps c_visit~50. -1 = legacy (no split).")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", type=Path, default=Path("runs/backtest/time_value.jsonl"))
     args = ap.parse_args()
@@ -229,7 +246,10 @@ def main() -> None:
 
     searcher = _Searcher(
         args.checkpoint, args.device, topk=args.gumbel_topk, policy_temp=args.policy_temp,
+        c_scale=args.c_scale, c_visit=args.c_visit, c_visit_root=args.c_visit_root,
     )
+    print(f"[backtest] c_scale={args.c_scale} c_visit={args.c_visit} "
+          f"c_visit_root={args.c_visit_root} topk={args.gumbel_topk} policy_temp={args.policy_temp}")
     # snapshot[pos_idx][budget] = features; fill by running each budget over all boards.
     per_pos: list[dict[int, dict]] = [{} for _ in positions]
     bs = int(args.batch_size)
