@@ -2978,6 +2978,15 @@ static PyObject *MCTSTree_node_count(MCTSTreeObject *self, PyObject *Py_UNUSED(a
 }
 
 
+/* node_capacity() -> int. Allocated node slots (node_cap). memory_bytes() is
+ * sized from this, so callers sizing a Hash-cap budget should divide allocated
+ * bytes by capacity (not the live node_count, which can be far smaller right
+ * after a reserve and would wildly overestimate per-node cost). */
+static PyObject *MCTSTree_node_capacity(MCTSTreeObject *self, PyObject *Py_UNUSED(args)) {
+    return PyLong_FromLong(self->tree.node_cap);
+}
+
+
 /* memory_bytes() -> int — rough total bytes allocated for the tree's own
  * buffers. Sums the realloc'd node arrays (sized to node_cap), the children
  * pool (child_cap), the lazy CBoard cache (cb_cache_cap, a big per-entry
@@ -4047,6 +4056,8 @@ static PyMethodDef MCTSTree_methods[] = {
      "memory_bytes() -> int. Approximate total bytes allocated for tree buffers."},
     {"node_count", (PyCFunction)MCTSTree_node_count, METH_NOARGS,
      "node_count() -> int"},
+    {"node_capacity", (PyCFunction)MCTSTree_node_capacity, METH_NOARGS,
+     "node_capacity() -> int. Allocated node slots (node_cap)."},
     {"reset", (PyCFunction)MCTSTree_reset, METH_NOARGS,
      "reset() -> None"},
     {"reset_compact", (PyCFunction)MCTSTree_reset_compact, METH_NOARGS,

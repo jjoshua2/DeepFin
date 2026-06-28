@@ -186,6 +186,16 @@ class EngineOptions:
   # this option controls advertised ponder metadata, not command parsing.
   # Default off — safer for fixed-time match play.
     ponder: bool = False
+  # Visit-margin early-abort aggressiveness (Lc0 smart-pruning factor). 1.0 is
+  # the ~provable bound (stop only when the runner-up cannot catch up given
+  # every remaining sim); < 1.0 stops earlier on the bet that it won't, banking
+  # time. The clock backstop (deadline) is unaffected. Tuning knob — sweep it.
+    abort_factor: float = 1.0
+  # Per-move time-budget multiplier. > 1.0 schedules more time per move, relying
+  # on the abort to bank it back on easy moves; the 50%-of-remaining ceiling
+  # still caps each move. 1.0 keeps the conservative allocation. Off by default
+  # until validated by a real time-control gauntlet.
+    time_budget_scale: float = 1.0
 
 
 class Engine:
@@ -366,6 +376,7 @@ class Engine:
             cmd.args,
             side_to_move_is_white=(search_board.turn == chess.WHITE),
             move_overhead_ms=overhead,
+            time_budget_scale=self._options.time_budget_scale,
         )
         self._stop_event = threading.Event()
         self._ponderhit_event = threading.Event()
@@ -385,6 +396,7 @@ class Engine:
                 replace(cmd.args, ponder=False),
                 side_to_move_is_white=(real_board.turn == chess.WHITE),
                 move_overhead_ms=overhead,
+                time_budget_scale=self._options.time_budget_scale,
             )
         else:
             self._pending_real_limits = None
@@ -718,6 +730,7 @@ class Engine:
         deadline_ms = None if is_ponder else limits.deadline_ms
         max_nodes = None if is_ponder else limits.max_nodes
         max_depth = None if is_ponder else limits.max_depth
+        optimum_ms = None if is_ponder else limits.optimum_ms
         deadline = Deadline(deadline_ms=deadline_ms)
         emitted_info = False
 
@@ -732,6 +745,8 @@ class Engine:
             multipv: int | None,
             wdl: tuple[int, int, int] | None,
             string: str | None = None,
+            hashfull: int | None = None,
+            seldepth: int | None = None,
         ) -> None:
             nonlocal emitted_info
             emitted_info = True
@@ -745,6 +760,8 @@ class Engine:
                 multipv=multipv,
                 wdl=wdl,
                 string=string,
+                hashfull=hashfull,
+                seldepth=seldepth,
             )
 
         try:
@@ -754,6 +771,8 @@ class Engine:
                 deadline=deadline,
                 max_nodes=max_nodes,
                 max_depth=max_depth,
+                optimum_ms=optimum_ms,
+                abort_factor=self._options.abort_factor,
                 root_moves=limits.searchmoves,
                 info_cb=_phase_info_cb,
                 include_ponder=self._options.ponder,
@@ -783,10 +802,12 @@ class Engine:
         nodes: int, elapsed_ms: int, score_cp: int, pv: tuple[str, ...],
         tbhits: int, score_mate: int | None, multipv: int | None,
         wdl: tuple[int, int, int] | None, string: str | None = None,
+        hashfull: int | None = None, seldepth: int | None = None,
     ) -> None:
         nps = int(nodes * 1000 / max(1, elapsed_ms))
         _println(format_info(InfoFields(
             depth=len(pv),
+            seldepth=seldepth,
             multipv=multipv,
             nodes=nodes,
             nps=nps,
@@ -794,6 +815,7 @@ class Engine:
             score_cp=score_cp,
             score_mate=score_mate,
             pv=pv,
+            hashfull_per_mille=hashfull,
             tbhits=tbhits,
             wdl=wdl,
             string=string,
@@ -840,6 +862,18 @@ def _legal_fallback_move(board: chess.Board, searchmoves: tuple[str, ...]) -> st
         return "0000"
 
 
+# UCI stdout is written from several threads: the main loop (handshake,
+# readyok, bestmove), the background model-load thread in __main__ (startup
+# `info string`s), and the search thread (`info` lines). A bare `print()`
+# emits text and newline as separate writes, so without serialization a
+# concurrent line can be spliced mid-line into another — observed as a startup
+# `info string` swallowing the `id name` handshake line and breaking the UCI
+# handshake. Hold a lock across the write+flush so every logical line is atomic
+# on stdout; all UCI output (including __main__'s startup prints) routes here.
+_PRINT_LOCK = threading.Lock()
+
+
 def _println(s: str) -> None:
-    sys.stdout.write(s + "\n")
-    sys.stdout.flush()
+    with _PRINT_LOCK:
+        sys.stdout.write(s + "\n")
+        sys.stdout.flush()

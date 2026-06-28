@@ -213,8 +213,10 @@ def test_warmup_engine_uses_external_node_limit(
     module = _load_match_vs_uci_module()
     calls: list[int] = []
 
-    def fake_play_node_limited(eng: object, board: chess.Board, *, nodes: int):
-        del eng
+    def fake_play_node_limited(
+        eng: object, board: chess.Board, *, nodes: int, timeout_s: float | None = None,
+    ):
+        del eng, timeout_s
         assert board == chess.Board()
         calls.append(nodes)
         return module.MoveResult(chess.Move.from_uci("e2e4"), {"nodes": nodes})

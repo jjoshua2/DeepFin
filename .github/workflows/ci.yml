@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Cancel superseded runs on the same ref (e.g. rapid pushes to a PR branch).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      # CPU torch first so the dev install doesn't pull the large CUDA wheel.
+      - name: Install CPU torch
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      # The suite hard-requires its deps (no optional-dep skips), so [dev] pulls
+      # in every extra; this also builds the C extensions (encoding + mcts).
+      - name: Install package + dev deps
+        run: pip install -e ".[dev]"
+      # GPU-only tests skip on the CPU runner; `slow` stress tests are excluded
+      # from the default run per pyproject's marker.
+      - name: Run tests
+        run: python -m pytest -m "not slow"
+
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so we can diff the PR against its base for the
+          # changed-file checks below.
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install CPU torch
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Install package + dev deps
+        run: pip install -e ".[dev]"
+      # ruff is per-file and deterministic, so it gates the whole repo.
+      - name: ruff (whole repo)
+        run: ruff check chess_anti_engine scripts tests
+      # basedpyright (baseline-aware) and pylint resolve cross-file usage, so we
+      # run them on the PR's changed files — matching the repo's per-file lint
+      # gate. (vulture/skylos are subset-sensitive and their exit codes fold in
+      # advisory circular-dependency notes, so they stay the local
+      # scripts/lint.sh gate rather than a CI blocker.)
+      - name: Type + semantic checks (changed files)
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="origin/${{ github.base_ref }}"
+          else
+            base="HEAD~1"
+          fi
+          changed=$(git diff --name-only "$base"...HEAD -- '*.py' | { grep -v '\.pyi$' || true; })
+          if [ -z "$changed" ]; then
+            echo "No changed .py files to check."
+            exit 0
+          fi
+          echo "Changed files:"; echo "$changed"
+          # shellcheck disable=SC2086
+          basedpyright $changed
+          # shellcheck disable=SC2086
+          pylint $changed

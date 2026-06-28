@@ -58,6 +58,47 @@ _DEFAULT_CHUNK_SIMS = 32
 # gets noisy fast. PV extraction (tree walks) runs only on the tick.
 _INFO_EMIT_INTERVAL_MS = 1000
 
+# --- shared-tree concurrency: pre-grow to avoid mid-chunk realloc ------------
+# The walker / multi-GPU pucv pools mutate one MCTSTree from N threads. The C
+# extension reads node/child arrays lock-free during descent, and `_mcts_tree.c`
+# documents that a `tree_grow_*` realloc mid-descent can hand a concurrent
+# reader a stale (freed) base pointer — a use-after-free. Its contract: callers
+# "MUST call MCTSTree.reserve(max_nodes) upfront so no realloc fires during
+# concurrent descent." A real-game search has no node cap (it runs to the time
+# deadline), so node_count climbs past any fixed reserve and the arena reallocs
+# mid-chunk. We instead reserve just-in-time *between* chunks — a quiescent
+# point where the pool has joined its barrier and no worker is descending —
+# sized to the next chunk's worst-case growth. reserve() grows via the same
+# internal doubling the mid-chunk realloc would have used, so node_cap /
+# memory_bytes() (and thus the byte-cap and advance_root half-cap behavior) are
+# unchanged: we only move the realloc to a safe point.
+#
+# Worst-case nodes a single concurrent sim adds to the arena, so a chunk of S
+# sims adds at most S * _TREE_MAX_LEAF_BRANCHING nodes (and the same number of
+# child edges, since #edges == #nodes-1 in a tree). Two contributions:
+#   - the leaf expansion eagerly creates one child per legal move, up to
+#     _MAX_LEGAL_MOVES (the absolute maximum in any chess position); plus
+#   - on the walker path, walker_descend_puct first runs try_forced_collapse for
+#     up to _FORCED_COLLAPSE_DEPTH plies, each expanding one forced single-child
+#     node along the descent (the pucv pool's batch_descend_puct omits forced
+#     collapse, so only the leaf expansion applies there).
+# 256 covers the worst case (218 + 16 = 234) with margin.
+_MAX_LEGAL_MOVES = 218
+_FORCED_COLLAPSE_DEPTH = 16  # try_forced_collapse depth cap in walker_descend_puct
+_TREE_MAX_LEAF_BRANCHING = 256
+assert _TREE_MAX_LEAF_BRANCHING >= _MAX_LEGAL_MOVES + _FORCED_COLLAPSE_DEPTH
+
+# Visit-margin early abort (Lc0 "smart pruning"). Once past the optimum budget
+# the search stops as soon as the move it would play has any visit lead; before
+# the optimum it can also stop early if that lead is large enough that the
+# runner-up cannot overtake it within the remaining optimum budget. The default
+# factor 1.0 is the (approximately) provable bound — the runner-up would need
+# *every* remaining sim to catch up; factor < 1.0 is the aggressive Lc0-style
+# bet that it won't, banking more time for harder moves. The move whose lead is
+# measured is the one final selection emits (Gumbel survivor or visit leader),
+# so on the Gumbel production path the abort tracks the played move.
+_DEFAULT_ABORT_FACTOR = 1.0
+
 
 @dataclass
 class SearchResult:
@@ -79,6 +120,7 @@ class InfoCallback(Protocol):
         nodes: int, elapsed_ms: int, score_cp: int, pv: tuple[str, ...],
         tbhits: int, score_mate: int | None, multipv: int | None,
         wdl: tuple[int, int, int] | None, string: str | None = None,
+        hashfull: int | None = None, seldepth: int | None = None,
     ) -> None:
         ...
 
@@ -213,6 +255,10 @@ class SearchWorker:
   # evaluation (all lines share the same draw rate — they're
   # different continuations of the same root position).
         self._show_wdl: bool = False
+  # Selective depth: the deepest principal-variation length observed during
+  # the current search (monotonic max, reset per `run()`). A real, climbing
+  # number that GUIs/TCEC spectators expect alongside `depth`.
+        self._seldepth: int = 0
 
     def _build_walker_pool(self, n: int) -> WalkerPool | None:
         if n <= 1:
@@ -234,6 +280,17 @@ class SearchWorker:
     def set_show_wdl(self, enabled: bool) -> None:
         """Toggle WDL emission on info lines. Takes effect next emit."""
         self._show_wdl = bool(enabled)
+
+    def _hashfull_permille(self) -> int | None:
+        """Tree-memory fill as per-mille of the soft cap (UCI ``hashfull``).
+
+        The cap is ``set_max_tree_mb`` (UCI ``Hash``); ``memory_bytes()`` is the
+        arena's allocated size, the same quantity the byte-cap stop checks. None
+        when the cap is disabled (0) or no tree exists yet."""
+        if self._max_tree_bytes <= 0 or self._tree is None:
+            return None
+        used = int(self._tree.memory_bytes())
+        return max(0, min(1000, used * 1000 // self._max_tree_bytes))
 
     def set_multi_pv(self, n: int) -> None:
         """Number of top-ranked lines to emit per info tick. 1 = classic
@@ -551,6 +608,12 @@ class SearchWorker:
                 self.last_single_pucv_cache_stats(),
                 pending_mode=self._pucv_vloss_mode,
             )
+        hashfull = self._hashfull_permille()
+  # seldepth is the deepest PV any emitted line reaches, kept monotonic across
+  # the search so it climbs like a real selective-depth counter.
+        self._seldepth = max(
+            self._seldepth, max((len(pv_idx) for _, _, pv_idx in lines), default=0),
+        )
         for rank, q, pv_idx in lines:
             uci_pv = _uci_pv(board, pv_idx)
             wdl = _q_to_wdl_permille(q, draw_rate) if self._show_wdl else None
@@ -564,6 +627,8 @@ class SearchWorker:
                 multipv=rank if emit_multipv else None,
                 wdl=wdl,
                 string=pucv_info if rank == 1 else None,
+                hashfull=hashfull,
+                seldepth=self._seldepth,
             )
 
     def set_max_tree_mb(self, mb: int) -> None:
@@ -648,6 +713,9 @@ class SearchWorker:
                 score_mate=short.score_mate,
                 multipv=1 if self._multi_pv > 1 else None,
                 wdl=None,
+  # TB shortcut bypasses MCTS, so there is no tree to report fill for.
+                hashfull=None,
+                seldepth=len(short.pv),
             )
         return short
 
@@ -854,6 +922,211 @@ class SearchWorker:
             return "tree_bytes"
         return None
 
+    def _is_shared_tree_path(self, allowed_root_indices: set[int] | None) -> bool:
+        """True when the active chunk path mutates the shared tree from multiple
+        threads (walker pool or multi-GPU pucv pool). ``searchmoves`` forces the
+        single-thread gumbel path, so it is never shared-tree."""
+        if allowed_root_indices is not None:
+            return False
+        return self._pucv_pool is not None or self._walker_pool is not None
+
+    def _chunk_budget(self, allowed_root_indices: set[int] | None) -> int:
+        """Sims to request from the active path for one chunk.
+
+        The multi-GPU pucv pool splits a single ``run()``'s budget across all
+        GPU workers via one shared semaphore. Each worker greedily grabs up to
+        ``gather`` tokens, so the per-device share must be at least ``gather``;
+        otherwise (e.g. ``VLGather`` > ``--chunk-sims``) a few workers drain the
+        whole budget and the rest idle — the very starvation this scaling fixes.
+        Use ``max(chunk_sims, gather)`` per device. The pool still polls
+        ``stop_event`` between batches, so stop latency stays ~one batch rather
+        than ~one (now larger) chunk.
+        """
+        if allowed_root_indices is None and self._pucv_pool is not None:
+            per_device = max(self._chunk_sims, self._pucv_pool.gather)
+            return per_device * max(1, self._pucv_pool.n_devices)
+        return self._chunk_sims
+
+    def _time_capped_chunk(
+        self, chunk: int, deadline: Deadline, total_nodes: int,
+    ) -> int:
+        """Shrink ``chunk`` to the sims that fit in the remaining deadline.
+
+        The hard deadline is only checked between chunks and the pucv pool isn't
+        handed the deadline, so a big scaled multi-GPU chunk could run past the
+        time budget. Once an nps estimate exists (after the first chunk), cap the
+        chunk at ``nps * remaining_ms``; floor it at ``_chunk_sims`` so the base
+        single-GPU granularity (whose overrun is ~one base chunk = negligible) is
+        never reduced. No-op for open-ended (no deadline) searches."""
+        remaining_ms = deadline.remaining_ms()
+        if remaining_ms is None:
+            return chunk
+        if total_nodes <= 0:
+  # First chunk: no nps estimate yet, so a scaled multi-GPU chunk (per_device *
+  # n_devices) could run unbounded past the deadline before the between-chunks
+  # check — a time forfeit on move 1. Bound it to the base single-GPU
+  # granularity (overrun ~one base chunk = negligible); the nps measured from it
+  # then caps every later chunk. Single-GPU is already _chunk_sims, so unchanged.
+            return min(chunk, self._chunk_sims)
+        elapsed = deadline.elapsed_ms()
+        if elapsed <= 0:
+            return chunk
+        nps = total_nodes / elapsed
+        time_cap = int(nps * remaining_ms)
+        return min(chunk, max(self._chunk_sims, time_cap))
+
+    def _ensure_shared_tree_headroom(self, upcoming_sims: int) -> int:
+        """Pre-grow the shared tree for the next concurrent chunk and return the
+        sim budget that actually fits under the Hash cap (0 = stop the search).
+
+        Reserving the chunk's worst-case growth between chunks is what stops a
+        ``tree_grow_*`` realloc mid-descent (use-after-free; see
+        ``_TREE_MAX_LEAF_BRANCHING``). Two bounds:
+
+        - Slots already reserved but unused (``node_capacity - node_count``) can
+          be filled without any realloc and without changing ``memory_bytes()``,
+          so they are always free to use — even when the tree already sits at the
+          Hash cap. This is what keeps a small ``Hash`` from starving the very
+          first chunk to an unvisited root.
+        - Growing *beyond* the reservation raises ``memory_bytes()``, so that part
+          is capped by the remaining Hash budget. Per-node cost is sized from
+          *capacity* (``memory_bytes()`` is capacity-based); dividing by the live
+          ``node_count`` would over-estimate hugely right after the initial
+          reserve. ``reserve()`` still rounds capacity up by doubling, so the cap
+          stays *soft*, but we never grow past it on purpose."""
+        tree = self._tree
+        if tree is None:
+            return int(upcoming_sims)
+        sims = max(0, int(upcoming_sims))
+        node_count = tree.node_count()
+        node_cap = tree.node_capacity()
+        free = max(0, node_cap - node_count)
+  # One sim expands one leaf into up to _TREE_MAX_LEAF_BRANCHING nodes (256 >
+  # 218, the absolute max legal moves), so a chunk adds at most this many nodes.
+        need = sims * _TREE_MAX_LEAF_BRANCHING
+        if self._max_tree_bytes > 0 and need > free:
+            used = int(tree.memory_bytes())
+            remaining = self._max_tree_bytes - used
+            bytes_per_cap_node = max(1, used // max(1, node_cap))
+            growable = int(remaining // bytes_per_cap_node) if remaining > 0 else 0
+  # Usable slots = already-reserved free slots (no memory growth) + what we can
+  # still grow into under the cap. Free slots are usable even at/over the cap.
+            budget = free + max(0, growable)
+            sims = min(sims, budget // _TREE_MAX_LEAF_BRANCHING)
+            if sims <= 0:
+                return 0
+            need = sims * _TREE_MAX_LEAF_BRANCHING
+  # child edges grow 1:1 with nodes (#edges == #nodes-1), so the same target
+  # bounds the child pool too. No-op when `need` already fits in `free`; the
+  # doubling allocator supplies the slack that keeps re-reserves infrequent.
+        tree.reserve(node_count + need, node_count + need)
+        return sims
+
+    def _filtered_root_visits(
+        self, allowed_root_indices: set[int] | None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Root child ``(actions, visits)``, restricted to ``allowed_root_indices``
+        when a ``searchmoves`` filter is active. Empty arrays when there is no
+        tree/root or nothing survives the filter. One C read + one filter, shared
+        by the best-action and visit-margin helpers (polled once per chunk)."""
+        if self._tree is None or self._root_id is None:
+            empty = np.empty(0, dtype=np.int32)
+            return empty, empty
+        actions, visits = self._tree.get_children_visits(self._root_id)
+        if actions.size == 0 or allowed_root_indices is None:
+            return actions, visits
+        keep = np.isin(actions, np.fromiter(allowed_root_indices, dtype=np.int32))
+        return actions[keep], visits[keep]
+
+    def _emitted_action(
+        self,
+        actions: np.ndarray,
+        visits: np.ndarray,
+        allowed_root_indices: set[int] | None,
+    ) -> int:
+        """The action final bestmove selection would emit given pre-fetched root
+        ``(actions, visits)``, or -1 if none.
+
+        Mirrors ``_build_final_search_result``: the Gumbel path plays the
+        sequential-halving survivor (``_last_gumbel_action_idx``) when it is a
+        legal root child, not the visit leader; other paths (walker / pucv pool)
+        leave the survivor unset and select by visits."""
+        if actions.size == 0:
+            return -1
+        gi = self._last_gumbel_action_idx
+        if (
+            gi is not None
+            and self._tree is not None
+            and self._root_id is not None
+            and (allowed_root_indices is None or int(gi) in allowed_root_indices)
+            and self._tree.find_child(self._root_id, int(gi)) != -1
+        ):
+            return int(gi)
+        return int(actions[int(np.argmax(visits))])
+
+    def _current_best_root_action(
+        self, allowed_root_indices: set[int] | None,
+    ) -> int:
+        """The action final bestmove selection would emit right now, or -1 if
+        none. Cheap (no full PV walk) so it can be polled once per chunk."""
+        actions, visits = self._filtered_root_visits(allowed_root_indices)
+        return self._emitted_action(actions, visits, allowed_root_indices)
+
+    def _root_visit_lead(
+        self, allowed_root_indices: set[int] | None,
+    ) -> tuple[int, int]:
+        """``(emitted_action, lead)`` where ``emitted_action`` is the move final
+        selection would play right now and ``lead`` is its visit count minus the
+        runner-up's. ``lead`` can be negative when the played move (a Gumbel
+        survivor) is not the visit leader — the abort treats that as "not
+        decided" and keeps searching. ``(-1, 0)`` when there is no move."""
+        actions, visits = self._filtered_root_visits(allowed_root_indices)
+        best = self._emitted_action(actions, visits, allowed_root_indices)
+        if best < 0:
+            return -1, 0
+        best_mask = actions == best
+        if not bool(best_mask.any()):
+            return -1, 0
+        best_visits = int(visits[best_mask].max())
+        others = visits[~best_mask]
+        runner_up = int(others.max()) if others.size else 0
+        return best, best_visits - runner_up
+
+    def _abort_ready(
+        self,
+        optimum_ms: int | None,
+        deadline: Deadline,
+        total_nodes: int,
+        allowed_root_indices: set[int] | None,
+        abort_factor: float,
+    ) -> bool:
+        """Lc0-style visit-margin early abort. Stops only when the move final
+        selection would play is *settled* — it leads the runner-up on visits:
+
+        - past the optimum budget, a settled move banks the remaining clock;
+        - before the optimum, a settled move can still bank early if its lead is
+          one the runner-up cannot overcome within the remaining optimum budget
+          (``lead > factor * remaining_sims``).
+
+        While the move is unsettled (the Gumbel survivor trails the visit leader,
+        or the choice is otherwise still moving) it keeps searching toward the
+        hard ``deadline`` — the extension the time-manager allocates for hard
+        positions. Returns False when no optimum is set, so node/movetime/infinite
+        searches and the hard ``deadline`` are unaffected."""
+        if optimum_ms is None:
+            return False
+        best, lead = self._root_visit_lead(allowed_root_indices)
+        if best < 0 or lead <= 0:
+  # Unsettled (or no move): extend toward the hard deadline.
+            return False
+        elapsed = deadline.elapsed_ms()
+        remaining_ms = optimum_ms - elapsed
+        if remaining_ms <= 0:
+            return True
+        nps = total_nodes / max(1, elapsed)
+        remaining_sims = nps * remaining_ms
+        return lead > abort_factor * remaining_sims
+
     def run(
         self,
         board: chess.Board,
@@ -862,13 +1135,16 @@ class SearchWorker:
         deadline: Deadline,
         max_nodes: int | None,
         max_depth: int | None = None,
+        optimum_ms: int | None = None,
+        abort_factor: float = _DEFAULT_ABORT_FACTOR,
         root_moves: tuple[str, ...] = (),
         info_cb: InfoCallback | None = None,
         include_ponder: bool = False,
         allow_terminal_shortcuts: bool = True,
     ) -> SearchResult:
         """Search until any of: stop_event set, deadline expired, max_nodes hit,
-        PV length ≥ max_depth.
+        PV length ≥ max_depth, or (``optimum_ms`` set) the visit-margin abort
+        fires (see ``_abort_ready``).
 
         Returns when at least one chunk has run (so bestmove is always
         backed by MCTS data, never a raw priors pick).
@@ -918,6 +1194,7 @@ class SearchWorker:
             )
 
         self._last_gumbel_action_idx = None
+        self._seldepth = 0
         self._ensure_root_eval_cached(board, tb_probe)
         self._pre_expand_root_for_pool(board, allowed_root_indices)
 
@@ -927,12 +1204,34 @@ class SearchWorker:
         pv_indices: list[int] = []
         elapsed = 0
         while True:
-            chunk = self._chunk_sims
+            chunk = self._chunk_budget(allowed_root_indices)
             if max_nodes is not None:
                 remaining = max_nodes - total_nodes
                 if remaining <= 0:
                     break
                 chunk = min(chunk, remaining)
+  # The deadline is only checked *between* chunks, and the pucv pool receives
+  # stop_event but not the deadline, so a large scaled multi-GPU chunk could
+  # otherwise run well past the time budget. Cap it to the sims that fit in the
+  # remaining time (estimated from the running nps), but never below the base
+  # chunk so single-GPU stop latency is unchanged.
+            chunk = self._time_capped_chunk(chunk, deadline, total_nodes)
+
+  # Shared-tree (walker / multi-GPU pucv) chunks descend lock-free from N
+  # threads; grow the arena now, while quiescent, so the chunk can't realloc
+  # mid-descent (use-after-free). The pre-grow is bounded by the Hash cap and
+  # returns the sims that fit; 0 means we're at the cap, so stop (same final
+  # info as the tree_bytes stop) rather than grow past the user's setting.
+            if self._is_shared_tree_path(allowed_root_indices):
+                chunk = self._ensure_shared_tree_headroom(chunk)
+                if chunk <= 0:
+                    if info_cb is not None and self._root_id is not None:
+                        self._emit_pv_info(
+                            info_cb, board, float(last_value), total_nodes,
+                            deadline.elapsed_ms(), tb_probe,
+                            allowed_root_indices=allowed_root_indices,
+                        )
+                    break
 
             last_value = self._run_one_chunk(
                 chunk, board, stop_event, tb_probe, allowed_root_indices,
@@ -963,6 +1262,15 @@ class SearchWorker:
                         total_nodes, elapsed, tb_probe,
                         allowed_root_indices=allowed_root_indices,
                     )
+                break
+
+  # Visit-margin abort: bank the clock once the move we would play is decided
+  # for the remaining optimum budget. Checked after the hard stop reasons so
+  # the deadline / node / depth bounds always win, and a no-op when no optimum
+  # is set (node / movetime / infinite searches).
+            if self._abort_ready(
+                optimum_ms, deadline, total_nodes, allowed_root_indices, abort_factor,
+            ):
                 break
 
         return self._build_final_search_result(

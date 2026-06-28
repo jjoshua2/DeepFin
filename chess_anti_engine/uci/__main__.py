@@ -29,7 +29,7 @@ from chess_anti_engine.inference_dispatcher import (
 )
 from chess_anti_engine.mcts.gumbel import GumbelConfig
 
-from .engine import Engine, EngineOptions, emit_handshake
+from .engine import Engine, EngineOptions, _println, emit_handshake
 from .model_loader import load_model_from_checkpoint
 from .protocol import CmdQuit, CmdUci, parse_command
 from .search import SearchWorker
@@ -385,6 +385,13 @@ def main() -> int:
                    help="DirectGPUEvaluator max batch (default: 1024). Must be >= expected leaf count per wavefront.")
     p.add_argument("--eval-cache-entries", type=int, default=0,
                    help="LRU entries for encoded eval caches, including single-thread PUCV (default: 0/off)")
+    p.add_argument("--abort-factor", type=float, default=1.0,
+                   help="visit-margin early-abort aggressiveness (Lc0 smart-pruning factor): "
+                        "1.0 = ~provable bound (default); < 1.0 aborts earlier to bank time")
+    p.add_argument("--time-budget-scale", type=float, default=1.0,
+                   help="per-move time-budget multiplier (default: 1.0). > 1.0 schedules more "
+                        "time per move, relying on --abort-factor to bank it back on easy moves; "
+                        "still capped at 50%% of remaining time so it cannot flag.")
     p.add_argument("--log-level", default="WARNING",
                    help="stderr log level (DEBUG|INFO|WARNING). DEBUG enables per-search gumbel profile with GPU-calls/avg-batch.")
   # --walkers > 1 switches from the Gumbel-chunked path to a PUCT walker
@@ -485,6 +492,12 @@ def main() -> int:
         vl_gather=max(32, int(args.vl_gather)),
         max_batch=max(64, int(args.max_batch)),
         eval_cache_entries=max(0, int(args.eval_cache_entries)),
+  # Clamp the time knobs (like the spin options above): a non-positive
+  # time_budget_scale would collapse every move to the 20ms floor, and a
+  # negative abort_factor would abort the instant the move leads. 0.0 is the
+  # maximally-aggressive-but-valid abort_factor (stop on any positive lead).
+        abort_factor=max(0.0, float(args.abort_factor)),
+        time_budget_scale=max(0.1, float(args.time_budget_scale)),
     )
 
   # Background-build so `uci` can be answered before model load finishes.
@@ -504,11 +517,10 @@ def main() -> int:
   # raw Q and never reads them, so the tuned c_scale=0.025 win only lands on
   # the classic Gumbel path. Warn so the inert tuning isn't silent.
             if n_walkers > 1:
-                print(
+                _println(
                     "info string c-scale/c-visit are Gumbel-only and ignored at "
                     f"walkers={n_walkers} (PUCT walker pool); set Threads/--walkers 1 "
-                    "for the c_scale-tuned classic Gumbel path",
-                    flush=True,
+                    "for the c_scale-tuned classic Gumbel path"
                 )
             models = _load_models(args.checkpoint, devices)
             input_history_encoding = str(getattr(models[0], "input_history_encoding", "legacy"))
@@ -516,10 +528,9 @@ def main() -> int:
             policy_encoding = str(getattr(models[0], "policy_encoding", "az_4672"))
             use_dynamic_relations = bool(getattr(models[0], "use_dynamic_relations", False))
             if use_dynamic_relations:
-                print(
+                _println(
                     "info string model uses dynamic relations; transporting "
-                    "relation matrices through search",
-                    flush=True,
+                    "relation matrices through search"
                 )
             compile_mode = str(args.compile_mode) if args.compile else None
             build_eval = _make_evaluator_factory(
@@ -578,7 +589,7 @@ def main() -> int:
             if not engine_ready.is_set():
                 engine_ready.wait()
             if engine_error[0] is not None:
-                print(f"info string engine load failed: {engine_error[0]!r}", flush=True)
+                _println(f"info string engine load failed: {engine_error[0]!r}")
                 raise engine_error[0]
             engine = engine_ref[0]
             assert engine is not None

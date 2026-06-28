@@ -227,6 +227,302 @@ def test_searchworker_install_multi_gpu_pucv_produces_bestmove() -> None:
     worker.close()
 
 
+def test_shared_tree_headroom_pregrows_arena_past_fixed_reserve() -> None:
+    """_ensure_shared_tree_headroom must pre-grow the arena for the next chunk's
+    worst-case node growth (chunk * branching), well past the old fixed
+    reserve(50_000, ...). This is what keeps a concurrent chunk from triggering
+    a tree_grow_* realloc mid-descent (use-after-free per _mcts_tree.c)."""
+    ev = _make_evaluator()
+    worker = SearchWorker(
+        ev, device="cpu",
+        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        chunk_sims=512, n_walkers=1,
+    )
+    try:
+        tree = MCTSTree()
+        tree.reserve(64, 256)  # tiny, like a freshly created tree
+        tree.add_root(0, 0.0)
+        worker._tree = tree  # noqa: SLF001
+        before = tree.memory_bytes()
+        worker._ensure_shared_tree_headroom(512)  # noqa: SLF001
+        after = tree.memory_bytes()
+        assert after > before
+  # 512 sims * 256 max branching = 131072 nodes of headroom; per-node node +
+  # child arrays are ~50 bytes, so capacity now far exceeds the old 50k reserve.
+        assert after >= 512 * 256 * 50
+    finally:
+        worker.close()
+
+
+def test_shared_tree_headroom_respects_hash_cap() -> None:
+    """The pre-grow must not push memory_bytes() past the Hash cap: it returns
+    the sims that fit and 0 (no growth) once the tree is at the cap. A fresh tree
+    per case keeps node_count ~ node_cap (as it is in a live search, where each
+    chunk fills the prior reservation before the next cap check)."""
+    ev = _make_evaluator()
+    worker = SearchWorker(
+        ev, device="cpu",
+        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        chunk_sims=512, n_walkers=1,
+    )
+
+    def _fresh() -> MCTSTree:
+        tree, rid, _ = _seed_tree()
+        worker._tree = tree  # noqa: SLF001
+        worker._root_id = rid  # noqa: SLF001
+        return tree
+
+    try:
+  # Cap disabled -> no bounding, full budget granted (and arena grows).
+        _fresh()
+        worker.set_max_tree_mb(0)
+        assert worker._ensure_shared_tree_headroom(512) == 512  # noqa: SLF001
+  # Generous cap -> still the full budget.
+        _fresh()
+        worker.set_max_tree_mb(100_000)
+        assert worker._ensure_shared_tree_headroom(512) == 512  # noqa: SLF001
+  # Cap already below current usage -> 0 sims and no further growth.
+  # Cap below current usage: only already-reserved free slots are usable, so
+  # the chunk shrinks to them but must NOT grow memory past the cap (and must
+  # not starve to 0 — that would play an unvisited root).
+        tree = _fresh()
+        worker.set_max_tree_mb(1)
+        before = tree.memory_bytes()
+        sims = worker._ensure_shared_tree_headroom(512)  # noqa: SLF001
+        assert 0 < sims <= 512
+        assert tree.memory_bytes() == before
+    finally:
+        worker.close()
+
+
+def test_shared_tree_headroom_uses_free_slots_at_tiny_hash() -> None:
+    """A Hash cap below the already-reserved arena must not starve the chunk to
+    0 (which would play an unvisited root): the free reserved slots are usable
+    without growing memory, so the search still runs."""
+    ev = _make_evaluator()
+    worker = SearchWorker(
+        ev, device="cpu",
+        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        chunk_sims=512, n_walkers=1,
+    )
+    try:
+  # Production-sized initial reserve (lots of free slots), then a Hash cap
+  # below current usage so `growable` is 0 and only free slots remain.
+        tree = MCTSTree()
+        tree.reserve(50_000, 500_000)
+        tree.add_root(0, 0.0)
+        worker._tree = tree  # noqa: SLF001
+        worker._root_id = int(tree.node_count()) - 1  # noqa: SLF001
+        worker.set_max_tree_mb(1)
+        sims = worker._ensure_shared_tree_headroom(512)  # noqa: SLF001
+        assert sims > 0
+    finally:
+        worker.close()
+
+
+def test_chunk_budget_scales_by_gather_and_devices() -> None:
+    """When VLGather exceeds --chunk-sims, the per-device share must be at least
+    the gather size or workers starve again."""
+    primary = _make_evaluator(max_batch=64)
+    worker = SearchWorker(
+        primary, device="cpu",
+        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        chunk_sims=64, n_walkers=1,
+    )
+    p0 = _make_evaluator(max_batch=64)
+    p1 = _make_evaluator(max_batch=64)
+  # gather 128 > chunk_sims 64 -> per-device budget must use the gather.
+    worker.install_multi_gpu_pucv([p0, p1], gather=128, as_factories=False)
+    assert worker._chunk_budget(None) == 128 * 2  # noqa: SLF001
+    worker.close()
+
+
+def test_current_best_root_action_tracks_emitted_move() -> None:
+    """Soft-stop stability must judge the move final selection will emit: the
+    Gumbel survivor when set+legal, else the visit leader (walker/pucv paths)."""
+    ev = _make_evaluator()
+    worker = SearchWorker(
+        ev, device="cpu",
+        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        chunk_sims=64, n_walkers=1,
+    )
+    try:
+        tree, rid, cb = _seed_tree()
+        worker._tree = tree  # noqa: SLF001
+        worker._root_id = rid  # noqa: SLF001
+        legal = cb.legal_move_indices().astype(np.int32)
+        survivor = int(legal[1])
+  # Gumbel survivor set + legal -> returned even though visits are all zero.
+        worker._last_gumbel_action_idx = survivor  # noqa: SLF001
+        assert worker._current_best_root_action(None) == survivor  # noqa: SLF001
+  # searchmoves excludes the survivor -> fall back to a visit-leader in-set.
+        assert worker._current_best_root_action({int(legal[0])}) == int(legal[0])  # noqa: SLF001
+  # No survivor (walker / pucv paths) -> a legal visit-leader.
+        worker._last_gumbel_action_idx = None  # noqa: SLF001
+        assert worker._current_best_root_action(None) in set(legal.tolist())  # noqa: SLF001
+    finally:
+        worker.close()
+
+
+def test_searchworker_multi_gpu_pucv_multi_chunk_search() -> None:
+    """A pool search spanning several chunks exercises the per-chunk headroom
+    growth in run()'s loop and must complete with a legal bestmove. The budget
+    is scaled by device count, so node growth crosses the initial reserve."""
+    primary = _make_evaluator(max_batch=64)
+    worker = SearchWorker(
+        primary, device="cpu",
+        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        chunk_sims=64, n_walkers=1,
+    )
+    p0 = _make_evaluator(max_batch=64)
+    p1 = _make_evaluator(max_batch=64)
+    worker.install_multi_gpu_pucv([p0, p1], gather=8, as_factories=False)
+  # 2 devices -> chunk budget 128; max_nodes 400 -> several chunks.
+    result = worker.run(chess.Board(), stop_event=threading.Event(),
+                        deadline=Deadline(5_000), max_nodes=400)
+    assert len(result.bestmove_uci) >= 4
+    assert result.nodes >= 256
+    worker.close()
+
+
+def test_search_emit_info_reports_hashfull_and_seldepth() -> None:
+    """Info lines must carry hashfull (tree fill vs Hash cap) and a climbing
+    seldepth — both expected by GUIs/TCEC spectators and previously never set."""
+    ev = _make_evaluator()
+    worker = SearchWorker(
+        ev, device="cpu",
+        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        chunk_sims=64, n_walkers=1,
+    )
+    try:
+        worker.set_max_tree_mb(16)
+        tree, rid, _ = _seed_tree()
+        worker._tree = tree  # noqa: SLF001
+        worker._root_id = rid  # noqa: SLF001
+        captured: list[dict[str, Any]] = []
+        worker._emit_pv_info(  # noqa: SLF001
+            lambda **kw: captured.append(kw),
+            chess.Board(), 0.0, 64, 100, None,
+        )
+        assert captured
+        kw = captured[0]
+        assert kw["seldepth"] is not None and kw["seldepth"] >= 1
+        assert kw["hashfull"] is not None and 0 <= kw["hashfull"] <= 1000
+  # Disabling the Hash cap drops hashfull rather than dividing by zero.
+        worker.set_max_tree_mb(0)
+        assert worker._hashfull_permille() is None  # noqa: SLF001
+    finally:
+        worker.close()
+
+
+def test_root_visit_lead_returns_emitted_move_margin() -> None:
+    """_root_visit_lead reports the emitted move and a real visit margin."""
+    ev = _make_evaluator()
+    worker = SearchWorker(
+        ev, device="cpu",
+        gumbel_cfg=GumbelConfig(simulations=32, add_noise=False),
+        chunk_sims=32, n_walkers=1,
+    )
+    try:
+        worker.run(chess.Board(), stop_event=threading.Event(),
+                   deadline=Deadline(5_000), max_nodes=256)
+        best, lead = worker._root_visit_lead(None)  # noqa: SLF001
+        assert best >= 0
+        assert isinstance(lead, int)
+    finally:
+        worker.close()
+
+
+def test_abort_ready_branches() -> None:
+    """_abort_ready, with the visit margin controlled directly:
+      - no optimum                -> never aborts;
+      - past optimum + settled    -> banks;
+      - past optimum + unsettled  -> extends (keeps searching to the deadline);
+      - past optimum + no move    -> extends;
+      - before optimum + settled  -> waits under the provable factor, banks once
+        the lead exceeds the remaining budget (and aggressive factor banks
+        sooner)."""
+    import time as _time
+
+    ev = _make_evaluator()
+    worker = SearchWorker(
+        ev, device="cpu",
+        gumbel_cfg=GumbelConfig(simulations=32, add_noise=False),
+        chunk_sims=32, n_walkers=1,
+    )
+    try:
+        past = Deadline(deadline_ms=60_000, now=_time.monotonic() - 5.0)  # elapsed ~5s
+        worker._root_visit_lead = lambda allowed_root_indices: (5, 100)  # noqa: SLF001
+        assert worker._abort_ready(None, past, 256, None, 1.0) is False  # noqa: SLF001
+        assert worker._abort_ready(1, past, 256, None, 1.0) is True  # noqa: SLF001
+  # Unsettled / no move past the optimum -> extend toward the hard deadline.
+        worker._root_visit_lead = lambda allowed_root_indices: (5, 0)  # noqa: SLF001
+        assert worker._abort_ready(1, past, 256, None, 1.0) is False  # noqa: SLF001
+        worker._root_visit_lead = lambda allowed_root_indices: (-1, 0)  # noqa: SLF001
+        assert worker._abort_ready(1, past, 256, None, 1.0) is False  # noqa: SLF001
+  # Before the optimum: elapsed ~500ms of a 1000ms optimum, nps ~2 -> ~1000
+  # remaining sims. lead 2000 clears the provable factor but not factor 3.
+        mid = Deadline(deadline_ms=10_000, now=_time.monotonic() - 0.5)
+        worker._root_visit_lead = lambda allowed_root_indices: (5, 2000)  # noqa: SLF001
+        assert worker._abort_ready(1000, mid, 1000, None, 1.0) is True  # noqa: SLF001
+        assert worker._abort_ready(1000, mid, 1000, None, 3.0) is False  # noqa: SLF001
+    finally:
+        worker.close()
+
+
+def test_search_abort_terminates_with_legal_move() -> None:
+    """A tiny optimum + bounded hard deadline must return a legal move promptly:
+    banking when the move is settled, extending to the deadline when it is not."""
+    import time as _time
+
+    ev = _make_evaluator()
+    worker = SearchWorker(
+        ev, device="cpu",
+        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        chunk_sims=64, n_walkers=1,
+    )
+    try:
+        t0 = _time.monotonic()
+        result = worker.run(
+            chess.Board(), stop_event=threading.Event(),
+            deadline=Deadline(3_000), max_nodes=None, optimum_ms=1,
+        )
+        elapsed = _time.monotonic() - t0
+        assert len(result.bestmove_uci) >= 4
+  # Bounded by the 3s hard deadline (plus a little warmup slack).
+        assert elapsed < 8.0
+    finally:
+        worker.close()
+
+
+def test_time_capped_chunk_shrinks_to_remaining_time() -> None:
+    """A scaled chunk is capped to the sims that fit in the remaining deadline,
+    floored at the base chunk; open-ended / first-chunk searches are uncapped."""
+    import time as _time
+
+    ev = _make_evaluator()
+    worker = SearchWorker(
+        ev, device="cpu",
+        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        chunk_sims=64, n_walkers=1,
+    )
+    try:
+  # elapsed ~1000ms, nps = 1000/1000 = 1; ~500ms remaining -> cap ~500.
+        d = Deadline(deadline_ms=1500, now=_time.monotonic() - 1.0)
+        capped = worker._time_capped_chunk(4096, d, total_nodes=1000)  # noqa: SLF001
+        assert 64 <= capped < 4096
+  # Almost no time left -> floor at the base chunk (its overrun is negligible).
+        d2 = Deadline(deadline_ms=1001, now=_time.monotonic() - 1.0)
+        assert worker._time_capped_chunk(4096, d2, total_nodes=1000) == 64  # noqa: SLF001
+  # Open-ended deadline (no clock) is uncapped even with an nps estimate.
+        assert worker._time_capped_chunk(4096, Deadline(None), 1000) == 4096  # noqa: SLF001
+  # First timed chunk (deadline set, no nps yet): bound to the base chunk so a
+  # scaled multi-GPU chunk can't run unbounded past the deadline (move-1 forfeit).
+        assert worker._time_capped_chunk(4096, d, total_nodes=0) == 64  # noqa: SLF001
+    finally:
+        worker.close()
+
+
 def test_searchworker_clear_multi_gpu_pucv_reverts() -> None:
     """install_multi_gpu_pucv → clear_multi_gpu_pucv must drop the pool and
     leave subsequent searches running through the gumbel/walker path."""

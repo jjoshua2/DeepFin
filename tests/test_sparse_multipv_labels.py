@@ -675,7 +675,8 @@ def test_sf_policy_label_smoothing_only_when_uncovered() -> None:
         [0, 1, 2], [3.0, 1.0, 0.0], legal_indices=legal,
         sf_policy_temp=1.0, sf_policy_label_smooth=0.1,
     )
-    raw = np.exp(np.array([3.0, 1.0, 0.0])); raw /= raw.sum()
+    raw = np.exp(np.array([3.0, 1.0, 0.0]))
+    raw /= raw.sum()
     assert np.allclose([p_full[0], p_full[1], p_full[2]], raw, atol=1e-5)
 
     # Uncovered: only 2 of 3 legal moves scored -> smoothing on; idx2 gets a floor.
