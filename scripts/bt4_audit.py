@@ -153,11 +153,13 @@ def main() -> None:
                 )
         pol[s:s + bs] = out[pol_idx][:, :COMPACT_POLICY_SIZE]
         # Cache WDL as a probability distribution so the downstream Brier/ECE are
-        # valid. LC0/Ceres value heads emit softmaxed probs (rows sum to ~1); if a
-        # net instead emits raw logits, softmax them — mirrors the probs-vs-logits
-        # handling in OnnxChessNet so the audit numbers aren't meaningless.
+        # valid. Probabilities are non-negative AND sum to ~1; a logits net
+        # (negatives, or rows that merely sum near 1 in a tiny smoke run) must
+        # still be softmaxed. Use both signals — mirrors OnnxChessNet — so the
+        # audit numbers aren't computed against invalid distributions.
         w = out[wdl_idx].astype(np.float64)
-        if not np.allclose(w.sum(axis=1), 1.0, atol=1e-2):
+        is_probs = bool((w >= -1e-4).all()) and np.allclose(w.sum(axis=1), 1.0, atol=0.1)
+        if not is_probs:
             w = w - w.max(axis=1, keepdims=True)
             w = np.exp(w)
             w /= w.sum(axis=1, keepdims=True)
@@ -198,7 +200,9 @@ def main() -> None:
         order = np.argsort(-p)[: int(args.topk)]
         cache_rows.append({
             "key": pos.key, "phase": pos.phase, "source": pos.source,
-            "gap_cp": gap, "best_move": legal_ucis[int(np.argmax(p))],
+            # null (not inf -> non-standard JSON "Infinity") for <2-move positions
+            "gap_cp": float(gap) if np.isfinite(gap) else None,
+            "best_move": legal_ucis[int(np.argmax(p))],
             "wdl": [round(float(v), 4) for v in wdl[i]],
             "exp_regret": exp_r, "top1_regret": top1_r,
             "topk": [[legal_ucis[int(o)], round(float(p[int(o)]), 4)] for o in order],

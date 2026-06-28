@@ -507,7 +507,9 @@ def main() -> None:
             gap = criticality_gap(pos.move_cp)
             per_pos_dump.append({
                 "key": pos.key, "phase": pos.phase, "source": pos.source,
-                "gap_cp": gap, "n_legal": len(legal_ucis),
+                # null (not inf -> non-standard JSON "Infinity") for <2-move positions
+                "gap_cp": float(gap) if np.isfinite(gap) else None,
+                "n_legal": len(legal_ucis),
                 "n_listed": len(pos.move_cp), "best_cp": float(pos.best_cp),
                 "cand": per_cand,
             })
