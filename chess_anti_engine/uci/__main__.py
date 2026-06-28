@@ -379,7 +379,7 @@ def main() -> int:
                         "root sequential-halving site only; descent keeps --c-visit). A large "
                         "root floor (900, default) makes one c_scale fit every sim count's root "
                         "q_scale — the root/descent SPLIT that fixes search scaling (avoidable "
-                        "regret +33% vs legacy on the audit set; value scales coherently with "
+                        "regret +33%% vs legacy on the audit set; value scales coherently with "
                         "depth). <0 = use --c-visit at both sites (legacy, no split).")
     p.add_argument("--q-visit-floor", type=float, default=-1.0,
                    help="Gumbel decoupled (additive) value-transform floor: when >=0, "
