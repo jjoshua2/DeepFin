@@ -434,6 +434,7 @@ class DifficultyPID:
         target_winrate: float = 0.60,
         ema_alpha: float = 0.03,
         min_games_between_adjust: int = 30,
+        min_games_for_adjust: int = 0,
         min_nodes: int = 1_000,
         max_nodes: int = 1_000_000,
         # WDL regret bounds + stage gate
@@ -479,6 +480,14 @@ class DifficultyPID:
         self.target = float(target_winrate)
         self.alpha = float(ema_alpha)
         self.min_games_between_adjust = int(min_games_between_adjust)
+        # Hard floor on the curriculum sample required to STEP the levers, applied
+        # even on the forced iteration-boundary call. A 1-2 game raw winrate is
+        # pure noise; when a slow SF opponent starves curriculum-game completion
+        # (e.g. 500k-node SF → only ~1-7 finished curriculum games/iter) it was
+        # tripping the airbag and blowing regret around. Below this floor we hold
+        # the levers and let games_since_adjust accumulate across iterations until
+        # enough signal piles up. 0 = disabled (legacy behavior).
+        self.min_games_for_adjust = int(min_games_for_adjust)
         self.min_nodes = int(min_nodes)
         self.max_nodes = int(max_nodes)
         # Frozen reference bounds for the opponent_strength metric normalizer.
@@ -604,6 +613,8 @@ class DifficultyPID:
             self.alpha = float(config["sf_pid_ema_alpha"])
         if "sf_pid_min_games_between_adjust" in config:
             self.min_games_between_adjust = int(config["sf_pid_min_games_between_adjust"])
+        if "sf_pid_min_games_for_adjust" in config:
+            self.min_games_for_adjust = int(config["sf_pid_min_games_for_adjust"])
         if "sf_pid_wdl_regret_min" in config:
             self.wdl_regret_min = float(config["sf_pid_wdl_regret_min"])
             self.regret_lever.min_value = self.wdl_regret_min
@@ -748,7 +759,15 @@ class DifficultyPID:
         self._games_since_adjust += games
         err = self.ema_winrate - self.target
         se = _observation_se(wins, draws, losses)
-        if not force and self._games_since_adjust < self.min_games_between_adjust:
+        # Hard sample floor: never step the levers (incl. the airbag) on too few
+        # curriculum games, even when forced. Unlike min_games_between_adjust this
+        # is NOT bypassed by force, and the counter is NOT reset below it, so the
+        # sample accumulates across iterations until it's meaningful. The EMA above
+        # still updates every iteration.
+        below_sample_floor = self._games_since_adjust < self.min_games_for_adjust
+        if below_sample_floor or (
+            not force and self._games_since_adjust < self.min_games_between_adjust
+        ):
             return self._no_change_update(
                 err,
                 raw_winrate=raw_wr,
@@ -877,6 +896,7 @@ def pid_from_config(config: dict) -> DifficultyPID:
         target_winrate=float(config.get("sf_pid_target_winrate", 0.60)),
         ema_alpha=float(config.get("sf_pid_ema_alpha", 0.03)),
         min_games_between_adjust=int(config.get("sf_pid_min_games_between_adjust", 10)),
+        min_games_for_adjust=int(config.get("sf_pid_min_games_for_adjust", 0)),
         min_nodes=int(config.get("sf_pid_min_nodes", 100)),
         max_nodes=int(config.get("sf_pid_max_nodes", 50000)),
         initial_wdl_regret=float(config.get("sf_pid_wdl_regret_start", -1.0)),
