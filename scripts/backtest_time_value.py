@@ -74,6 +74,7 @@ class _Searcher:
         self, checkpoint: str, device: str, *, topk: int, policy_temp: float,
         c_scale: float, c_visit: float, c_visit_root: float,
         q_visit_exp: float = 1.0, q_global_scale: bool = False, q_visit_floor: float = -1.0,
+        compile_mode: str | None = None,
     ) -> None:
         import torch
 
@@ -96,7 +97,17 @@ class _Searcher:
         self._extra = str(getattr(model, "input_extra_features", "v1"))
         self._pol_enc = str(getattr(model, "policy_encoding", "az_4672"))
         self._use_rel = bool(getattr(model, "use_dynamic_relations", False))
-        self._evaluator = LocalModelEvaluator(model, device=device)
+        if compile_mode:
+  # Same shared TorchInductor/Triton cache as the engine + training, so repeat
+  # invocations reuse compiled kernels (first config warms, the rest are fast).
+            from pathlib import Path
+
+            from chess_anti_engine.worker import _configure_shared_compile_cache
+            _configure_shared_compile_cache(
+                cache_dir=Path("~/.cache/deepfin/worker_cache").expanduser(),
+            )
+            model = torch.compile(model, mode=compile_mode)
+        self._evaluator = LocalModelEvaluator(model, device=device)  # type: ignore[arg-type]
 
     def run(
         self, boards: list[chess.Board], sims: int, *, seed: int,
@@ -233,6 +244,9 @@ def main() -> None:
                          "pairs with --q-visit-exp<1 for sim-invariance.")
     ap.add_argument("--q-visit-floor", type=float, default=-1.0,
                     help="decoupled additive floor: q_scale=floor+c_scale*max_visit^exp when >=0.")
+    ap.add_argument("--compile", dest="compile_mode", nargs="?", const="max-autotune", default=None,
+                    help="torch.compile the model (much faster forward; needs the GPU free). "
+                         "Optional mode arg (default max-autotune). Uses the shared engine cache.")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", type=Path, default=Path("runs/backtest/time_value.jsonl"))
     args = ap.parse_args()
@@ -262,7 +276,7 @@ def main() -> None:
         args.checkpoint, args.device, topk=args.gumbel_topk, policy_temp=args.policy_temp,
         c_scale=args.c_scale, c_visit=args.c_visit, c_visit_root=args.c_visit_root,
         q_visit_exp=args.q_visit_exp, q_global_scale=bool(args.q_global_scale),
-        q_visit_floor=args.q_visit_floor,
+        q_visit_floor=args.q_visit_floor, compile_mode=args.compile_mode,
     )
     print(f"[backtest] c_scale={args.c_scale} c_visit_root={args.c_visit_root} "
           f"q_visit_exp={args.q_visit_exp} q_global_scale={args.q_global_scale} "
