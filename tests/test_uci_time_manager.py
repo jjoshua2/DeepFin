@@ -203,3 +203,23 @@ def test_deadline_elapsed_monotonic() -> None:
     d = Deadline(deadline_ms=1000, now=50.0)
     assert d.elapsed_ms(now=50.0) == 0
     assert abs(d.elapsed_ms(now=50.123) - 123) <= 1
+
+
+def test_time_capped_chunk_bounds_unbounded_first_chunk() -> None:
+    """First-chunk forfeit guard: with a deadline but no nps estimate yet
+    (total_nodes == 0), a scaled multi-GPU chunk must be bounded to the base
+    single-GPU granularity so it can't run unbounded past the hard deadline
+    (a move-1 time forfeit). Subsequent chunks use the nps-based cap."""
+    from chess_anti_engine.uci.search import SearchWorker
+
+    w = object.__new__(SearchWorker)
+    w._chunk_sims = 512
+
+    d = Deadline(deadline_ms=1000, now=0.0)
+    # Scaled multi-GPU first chunk (per_device * n_devices) -> bounded to base.
+    assert w._time_capped_chunk(8192, d, 0) == 512
+    # Already-base first chunk (single-GPU) -> unchanged.
+    assert w._time_capped_chunk(512, d, 0) == 512
+    # Open-ended search (no deadline) -> never capped, even on the first chunk.
+    d_open = Deadline(deadline_ms=None, now=0.0)
+    assert w._time_capped_chunk(8192, d_open, 0) == 8192

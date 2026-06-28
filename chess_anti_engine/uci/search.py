@@ -957,10 +957,17 @@ class SearchWorker:
         time budget. Once an nps estimate exists (after the first chunk), cap the
         chunk at ``nps * remaining_ms``; floor it at ``_chunk_sims`` so the base
         single-GPU granularity (whose overrun is ~one base chunk = negligible) is
-        never reduced. No-op for open-ended / first-chunk searches."""
+        never reduced. No-op for open-ended (no deadline) searches."""
         remaining_ms = deadline.remaining_ms()
-        if remaining_ms is None or total_nodes <= 0:
+        if remaining_ms is None:
             return chunk
+        if total_nodes <= 0:
+  # First chunk: no nps estimate yet, so a scaled multi-GPU chunk (per_device *
+  # n_devices) could run unbounded past the deadline before the between-chunks
+  # check — a time forfeit on move 1. Bound it to the base single-GPU
+  # granularity (overrun ~one base chunk = negligible); the nps measured from it
+  # then caps every later chunk. Single-GPU is already _chunk_sims, so unchanged.
+            return min(chunk, self._chunk_sims)
         elapsed = deadline.elapsed_ms()
         if elapsed <= 0:
             return chunk
