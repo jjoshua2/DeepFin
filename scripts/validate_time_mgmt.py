@@ -51,6 +51,7 @@ _KNOB_FLAGS: dict[str, str] = {
     "abort_factor": "--abort-factor",
     "time_budget_scale": "--time-budget-scale",
     "optimum_fraction": "--optimum-fraction",
+    "moves_horizon": "--moves-horizon",
   # Not a time knob, but the lever that couples NPS and stop-granularity, so the
   # sweep must reach it; only credited in --opponent-engine (absolute) mode.
     "chunk_sims": "--chunk-sims",

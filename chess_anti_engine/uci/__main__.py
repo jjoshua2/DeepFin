@@ -396,6 +396,10 @@ def main() -> int:
                    help="soft-target fraction of the clock budget at which a settled move banks "
                         "the rest (default: 0.7). 0 turns the visit-margin abort fully off "
                         "(spend the whole deadline — the pre-time-management baseline); clamped to (0, 1].")
+    p.add_argument("--moves-horizon", type=int, default=30,
+                   help="rolling move count the base reserve is spread over when the GUI sends no "
+                        "movestogo (default: 30). Smaller front-loads time into the opening/middlegame "
+                        "and coasts on the increment later; ignored when movestogo is present.")
     p.add_argument("--log-level", default="WARNING",
                    help="stderr log level (DEBUG|INFO|WARNING). DEBUG enables per-search gumbel profile with GPU-calls/avg-batch.")
   # --walkers > 1 switches from the Gumbel-chunked path to a PUCT walker
@@ -506,6 +510,7 @@ def main() -> int:
   # clamped to (0, 1] inside limits_from_go so an out-of-range soft target can't
   # exceed the hard deadline.
         optimum_fraction=min(1.0, float(args.optimum_fraction)),
+        moves_horizon=max(1, int(args.moves_horizon)),
     )
 
   # Background-build so `uci` can be answered before model load finishes.
@@ -579,6 +584,11 @@ def main() -> int:
                 rebuild_multi_gpu_pucv_factories=build_pucv_factories,
                 options=startup_options,
             )
+  # Warm the SEARCH path (not just the evaluator) before reporting ready, so
+  # the first real `go` doesn't pay cudagraph capture mid-move and forfeit on
+  # the clock. readyok gates on engine_ready below, so a GUI that waits for
+  # readyok (the standard handshake) never starts the clock until this returns.
+            engine_ref[0].warmup_search()
         except BaseException as exc:  # pragma: no cover — surfaced via readyok
             engine_error[0] = exc
         finally:

@@ -206,6 +206,26 @@ def test_optimum_fraction_clamps_above_one_to_deadline() -> None:
     assert lim.optimum_ms == lim.deadline_ms == 1500
 
 
+def test_moves_horizon_front_loads_the_base_reserve() -> None:
+    # A smaller horizon spends a larger slice of the base each move (front-load);
+    # the increment is unchanged, so the per-move budget is strictly larger.
+    go = GoArgs(wtime_ms=60000, winc_ms=1000)
+    wide = limits_from_go(go, side_to_move_is_white=True, moves_horizon=40)
+    narrow = limits_from_go(go, side_to_move_is_white=True, moves_horizon=20)
+    assert wide.deadline_ms is not None and narrow.deadline_ms is not None
+    # horizon 20 -> 60000/20 + 1000 = 4000; horizon 40 -> 60000/40 + 1000 = 2500.
+    assert narrow.deadline_ms == 4000
+    assert wide.deadline_ms == 2500
+    assert narrow.deadline_ms > wide.deadline_ms
+
+
+def test_movestogo_overrides_moves_horizon() -> None:
+    # An explicit GUI movestogo always wins over the rolling horizon.
+    go = GoArgs(wtime_ms=60000, winc_ms=1000, movestogo=10)
+    lim = limits_from_go(go, side_to_move_is_white=True, moves_horizon=20)
+    assert lim.deadline_ms == 7000  # 60000/10 + 1000, not the horizon-20 value
+
+
 def test_deadline_tracking() -> None:
     d = Deadline(deadline_ms=500, now=100.0)
     # Floating-point subtraction at ms precision can round down by 1 ms; allow it.

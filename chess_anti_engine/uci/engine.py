@@ -37,7 +37,13 @@ from .protocol import (
     format_uciok,
 )
 from .search import SearchResult, SearchWorker
-from .time_manager import _OPTIMUM_FRACTION, Deadline, SearchLimits, limits_from_go
+from .time_manager import (
+    _DEFAULT_MOVES_REMAINING,
+    _OPTIMUM_FRACTION,
+    Deadline,
+    SearchLimits,
+    limits_from_go,
+)
 
 _ENGINE_NAME = "DeepFin"
 _ENGINE_AUTHOR = "jjosh"
@@ -201,6 +207,10 @@ class EngineOptions:
   # visit-margin abort fully off (spend the whole deadline — the pre-time-mgmt
   # baseline). Clamped to (0, 1]. Tuning knob — sweep alongside abort_factor.
     optimum_fraction: float = _OPTIMUM_FRACTION
+  # Rolling move count the base reserve is spread over when the GUI sends no
+  # movestogo. The front-loading lever: smaller => spend more of the base early
+  # and coast on the increment later (TCEC curve). Ignored when movestogo is set.
+    moves_horizon: int = _DEFAULT_MOVES_REMAINING
 
 
 class Engine:
@@ -383,6 +393,7 @@ class Engine:
             move_overhead_ms=overhead,
             time_budget_scale=self._options.time_budget_scale,
             optimum_fraction=self._options.optimum_fraction,
+            moves_horizon=self._options.moves_horizon,
         )
         self._stop_event = threading.Event()
         self._ponderhit_event = threading.Event()
@@ -404,6 +415,7 @@ class Engine:
                 move_overhead_ms=overhead,
                 time_budget_scale=self._options.time_budget_scale,
                 optimum_fraction=self._options.optimum_fraction,
+                moves_horizon=self._options.moves_horizon,
             )
         else:
             self._pending_real_limits = None
@@ -700,6 +712,35 @@ class Engine:
         )
 
   # -- search thread body ---------------------------------------------------
+
+    def warmup_search(self) -> None:
+        """Run one tiny real search on the start position at startup so the first
+        actual ``go`` doesn't pay torch.compile + cudagraph capture mid-move.
+
+        The forward warmup (``_warmup_evaluator``) only exercises the raw
+        evaluator at batches {1, 128}; the gumbel *search* path submits evals
+        through a different entry, so its cudagraph is captured on the first real
+        search (~3-4s). At a short first-move budget that overruns the clock — a
+        move-1 time forfeit (a real TCEC game's long base time would otherwise
+        hide it). This runs through the same worker + dispatcher a real ``go``
+        uses, so the search-path graphs are captured on the dispatcher's
+        persistent submitter thread and every later move just replays them.
+        One full chunk (the configured ``chunk_sims``) covers the real batch
+        shapes. Best-effort: a real ``go`` surfaces any genuine error."""
+        chunk = int(getattr(self._worker, "_chunk_sims", 512))
+        try:
+            self._worker.run(
+                chess.Board(),
+                stop_event=threading.Event(),
+                deadline=Deadline(deadline_ms=None),
+                max_nodes=max(256, chunk),
+                optimum_ms=None,
+                abort_factor=self._options.abort_factor,
+            )
+        except Exception:  # noqa: BLE001 — warmup is best-effort, never fatal
+            pass
+        finally:
+            self._worker.reset_tree()
 
     def _run_search(self, limits: SearchLimits, gen: int, board: chess.Board) -> None:
   # Ponder search: no deadline yet; runs until ponderhit or stop.

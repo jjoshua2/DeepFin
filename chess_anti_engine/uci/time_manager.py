@@ -59,6 +59,7 @@ def limits_from_go(
     move_overhead_ms: int = 0,
     time_budget_scale: float = 1.0,
     optimum_fraction: float = _OPTIMUM_FRACTION,
+    moves_horizon: int = _DEFAULT_MOVES_REMAINING,
 ) -> SearchLimits:
     if args.infinite:
         return SearchLimits(infinite=True, searchmoves=tuple(args.searchmoves))
@@ -80,7 +81,14 @@ def limits_from_go(
     else:
         remaining, inc = _select_clock(args, side_to_move_is_white)
         if remaining is not None:
-            moves_left = args.movestogo if args.movestogo and args.movestogo > 0 else _DEFAULT_MOVES_REMAINING
+  # `moves_horizon` is the rolling count of moves we spread the *base* reserve
+  # over (a real `movestogo` from the GUI always wins). It is the front-loading
+  # lever: a smaller horizon spends a larger slice of the base each move, so the
+  # bulk of the base is gone by the early/middlegame and later moves coast on the
+  # increment (the TCEC-style "spend it early, then ride the +inc" curve). The
+  # increment is added every move, so once the base is spent the per-move budget
+  # tends to `inc`.
+            moves_left = args.movestogo if args.movestogo and args.movestogo > 0 else max(1, int(moves_horizon))
   # time_budget_scale lets the engine schedule more time per move on the bet
   # that the visit-margin abort banks most of it back on easy moves; the
   # 50%-of-remaining ceiling still caps any single move, so the clock cannot be
