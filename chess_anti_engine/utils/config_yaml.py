@@ -62,7 +62,7 @@ _STOCKFISH_KEYS = (
     "sf_workers", "sf_multipv", "sf_hash_mb", "sf_nice",
     "sf_pid_enabled",
     "sf_pid_target_winrate", "sf_pid_ema_alpha",
-    "sf_pid_min_games_between_adjust",
+    "sf_pid_min_games_between_adjust", "sf_pid_min_games_for_adjust",
     "sf_pid_min_nodes", "sf_pid_max_nodes",
     "sf_pid_wdl_regret_start", "sf_pid_wdl_regret_min", "sf_pid_wdl_regret_max",
     "sf_pid_wdl_regret_stage_end",

@@ -944,3 +944,92 @@ def test_deadband_diagnostics_report_hold_without_history_append():
     assert diag.value_before == diag.value_after == 10_000.0
     assert diag.history_len == initial_len
     assert len(pid.nodes_lever.history) == initial_len
+
+
+def test_min_games_for_adjust_holds_levers_below_sample_floor():
+    """Curriculum-starvation fix: a tiny finished-game sample must NOT step the
+    levers — not even on the forced iteration-boundary adjust — and the sample
+    must accumulate across iters until it clears the floor. A slow SF opponent
+    can finish only ~1-7 curriculum games/iter; a 2-game raw 0% was tripping the
+    airbag and blowing regret around. The EMA still updates every iter."""
+    pid = _mk_pid(
+        min_games_for_adjust=30,
+        initial_wdl_regret=0.15,
+        regret_safety_floor=0.50,
+    )
+    start_regret = pid.wdl_regret
+
+    # 2 finished games at raw 0% — below the 30-game floor: hold + accumulate.
+    pid.observe(wins=0, draws=0, losses=2, force=True)
+    assert pid.wdl_regret == start_regret          # lever held (no airbag)
+    assert pid._games_since_adjust == 2            # counter NOT reset; accumulating
+
+    # More tiny iters keep accumulating without stepping.
+    pid.observe(wins=0, draws=0, losses=3, force=True)
+    assert pid.wdl_regret == start_regret
+    assert pid._games_since_adjust == 5
+
+    # Once the accumulated sample clears the floor the forced adjust fires; a
+    # genuine 0% crash eases regret upward (easier SF) via the airbag.
+    pid.observe(wins=0, draws=0, losses=30, force=True)  # total 35 >= 30
+    assert pid.wdl_regret > start_regret
+    assert pid._games_since_adjust == 0            # reset after a real adjust
+
+
+def test_min_games_for_adjust_zero_is_legacy_behavior():
+    """Default 0 disables the floor: the forced boundary adjust steps on any
+    sample, exactly as before the fix."""
+    pid = _mk_pid(min_games_for_adjust=0, initial_wdl_regret=0.15,
+                  regret_safety_floor=0.50)
+    start_regret = pid.wdl_regret
+    pid.observe(wins=0, draws=0, losses=2, force=True)  # 2 games, raw 0%
+    assert pid.wdl_regret > start_regret           # airbag fires immediately
+
+
+def test_min_games_for_adjust_live_reloadable():
+    """The floor is a live-reload key so the operator can set it without a
+    restart (registered in config_yaml's stockfish key set)."""
+    pid = _mk_pid(min_games_for_adjust=0)
+    pid.refresh_live_params({"sf_pid_min_games_for_adjust": 30})
+    assert pid.min_games_for_adjust == 30
+
+
+def test_min_games_for_adjust_pools_held_sample_into_the_step():
+    """Review #83: the held iterations' W/D/L must POOL into the step's
+    winrate/se, not just the count. A healthy accumulated sample whose boundary
+    iter happens to be a tiny 0% sweep must NOT score the levers (or the airbag,
+    which reads raw_wr, not the EMA) on that lone 0% iter. The count-only floor
+    left this open — the crossing iteration's raw_wr alone drove the step."""
+    pid = _mk_pid(min_games_for_adjust=30, initial_wdl_regret=0.15,
+                  regret_safety_floor=0.50)
+
+    # 4 held iters of 6 games at ~67% (4W/2L) = 24 games, all below the 30 floor.
+    for _ in range(4):
+        u = pid.observe(wins=4, draws=0, losses=2, force=True)
+        assert not u.adjusted                          # held, accumulating
+
+    # Boundary iter: 6 games at a 0% sweep pushes the count to 30 and steps.
+    u = pid.observe(wins=0, draws=0, losses=6, force=True)
+    # The step scored the POOLED 16W/14L = 0.533 sample, not the 0% boundary iter.
+    assert abs(u.raw_winrate - 16 / 30) < 1e-9
+    assert u.regret_diag is not None
+    # 0.533 + 1.5*se is well above the 0.50 floor → the airbag did NOT fire.
+    # (On the count-only floor the 0% boundary iter would give reason="airbag".)
+    assert u.regret_diag.reason != "airbag"
+    assert pid._games_since_adjust == 0
+    assert pid._held_wins == 0 and pid._held_losses == 0    # pooled sample reset
+
+
+def test_held_sample_survives_state_dict_roundtrip():
+    """A restart mid-hold must not drop the accumulated sample: held W/D/L round-
+    trip through state_dict so the post-restart step still scores the full pool."""
+    pid = _mk_pid(min_games_for_adjust=30)
+    pid.observe(wins=4, draws=0, losses=2, force=True)   # held; pool = 4/0/2
+    pid.observe(wins=4, draws=0, losses=2, force=True)   # held; pool = 8/0/4
+    state = pid.state_dict()
+    assert state["held_wins"] == 8 and state["held_losses"] == 4
+
+    pid2 = _mk_pid(min_games_for_adjust=30)
+    pid2.load_state_dict(state)
+    assert pid2._held_wins == 8 and pid2._held_losses == 4
+    assert pid2._games_since_adjust == 12

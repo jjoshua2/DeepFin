@@ -442,6 +442,7 @@ class DifficultyPID:
         target_winrate: float = 0.60,
         ema_alpha: float = 0.03,
         min_games_between_adjust: int = 30,
+        min_games_for_adjust: int = 0,
         min_nodes: int = 1_000,
         max_nodes: int = 1_000_000,
         # WDL regret bounds + stage gate
@@ -487,6 +488,14 @@ class DifficultyPID:
         self.target = float(target_winrate)
         self.alpha = float(ema_alpha)
         self.min_games_between_adjust = int(min_games_between_adjust)
+        # Hard floor on the curriculum sample required to STEP the levers, applied
+        # even on the forced iteration-boundary call. A 1-2 game raw winrate is
+        # pure noise; when a slow SF opponent starves curriculum-game completion
+        # (e.g. 500k-node SF → only ~1-7 finished curriculum games/iter) it was
+        # tripping the airbag and blowing regret around. Below this floor we hold
+        # the levers and let games_since_adjust accumulate across iterations until
+        # enough signal piles up. 0 = disabled (legacy behavior).
+        self.min_games_for_adjust = int(min_games_for_adjust)
         self.min_nodes = int(min_nodes)
         self.max_nodes = int(max_nodes)
         # Frozen reference bounds for the opponent_strength metric normalizer.
@@ -517,6 +526,13 @@ class DifficultyPID:
 
         self.ema_winrate: float = float(target_winrate)
         self._games_since_adjust = 0
+        # Wins/draws/losses accumulated since the last lever step. While the
+        # sample floor (or the cadence gate) holds the levers across iterations,
+        # these pool the held games so the eventual step scores on the COMBINED
+        # sample, not just the iteration that happens to cross the threshold.
+        self._held_wins = 0
+        self._held_draws = 0
+        self._held_losses = 0
 
         self.regret_lever = _Lever(
             name="regret",
@@ -612,6 +628,8 @@ class DifficultyPID:
             self.alpha = float(config["sf_pid_ema_alpha"])
         if "sf_pid_min_games_between_adjust" in config:
             self.min_games_between_adjust = int(config["sf_pid_min_games_between_adjust"])
+        if "sf_pid_min_games_for_adjust" in config:
+            self.min_games_for_adjust = int(config["sf_pid_min_games_for_adjust"])
         if "sf_pid_wdl_regret_min" in config:
             self.wdl_regret_min = float(config["sf_pid_wdl_regret_min"])
             self.regret_lever.min_value = self.wdl_regret_min
@@ -661,6 +679,9 @@ class DifficultyPID:
             "wdl_regret": float(self.wdl_regret),
             "ema_winrate": float(self.ema_winrate),
             "games_since_adjust": int(self._games_since_adjust),
+            "held_wins": int(self._held_wins),
+            "held_draws": int(self._held_draws),
+            "held_losses": int(self._held_losses),
             "regret_stage_complete": bool(self._regret_stage_complete),
             "regret_history": [
                 [float(x), float(w), float(s)]
@@ -716,6 +737,11 @@ class DifficultyPID:
             _seed_lever_history(self.nodes_lever, target_wr=self.target)
 
         self._games_since_adjust = int(state.get("games_since_adjust", self._games_since_adjust))
+        # Pooled held sample (legacy checkpoints lack these → 0, i.e. start the
+        # accumulation fresh; the count above still gates).
+        self._held_wins = int(state.get("held_wins", self._held_wins))
+        self._held_draws = int(state.get("held_draws", self._held_draws))
+        self._held_losses = int(state.get("held_losses", self._held_losses))
 
         rgc = state.get("regret_stage_complete")
         if rgc is not None and self._regret_gate_enabled:
@@ -754,14 +780,37 @@ class DifficultyPID:
         self.ema_winrate = (1.0 - self.alpha) * self.ema_winrate + self.alpha * raw_wr
 
         self._games_since_adjust += games
+        self._held_wins += wins
+        self._held_draws += draws
+        self._held_losses += losses
         err = self.ema_winrate - self.target
         se = _observation_se(wins, draws, losses)
-        if not force and self._games_since_adjust < self.min_games_between_adjust:
+        # Hard sample floor: never step the levers (incl. the airbag) on too few
+        # curriculum games, even when forced. Unlike min_games_between_adjust this
+        # is NOT bypassed by force, and the counter is NOT reset below it, so the
+        # sample accumulates across iterations until it's meaningful. The EMA above
+        # still updates every iteration.
+        below_sample_floor = self._games_since_adjust < self.min_games_for_adjust
+        if below_sample_floor or (
+            not force and self._games_since_adjust < self.min_games_between_adjust
+        ):
             return self._no_change_update(
                 err,
                 raw_winrate=raw_wr,
                 observation_se=se,
             )
+
+        # Step on the POOLED sample accumulated since the last adjust, not just
+        # this iteration's games. Under curriculum starvation the iteration that
+        # finally crosses the floor can itself be a tiny 1-3 game sweep; scoring
+        # the lever (and its airbag, which reads raw_wr — not the EMA) on that
+        # lone sample would let a 0% boundary iter trip the airbag exactly as if
+        # the floor weren't there. The pooled winrate/se are the real signal the
+        # floor promised. (Normal non-starved operation resets every iter, so the
+        # pool is just the current iteration and behavior is unchanged.)
+        held_games = self._held_wins + self._held_draws + self._held_losses
+        step_raw_wr = (self._held_wins + 0.5 * self._held_draws) / held_games
+        step_se = _observation_se(self._held_wins, self._held_draws, self._held_losses)
 
         nodes_before = self.nodes
         regret_before = self.wdl_regret
@@ -782,8 +831,8 @@ class DifficultyPID:
         if self._regret_enabled and not regret_frozen:
             regret_diag = _step_lever(
                 self.regret_lever,
-                target_wr=self.target, raw_wr=raw_wr,
-                ema_wr=self.ema_winrate, ema_alpha=self.alpha, se=se,
+                target_wr=self.target, raw_wr=step_raw_wr,
+                ema_wr=self.ema_winrate, ema_alpha=self.alpha, se=step_se,
             )
             regret_changed = bool(regret_diag.changed)
             if self._regret_gate_enabled:
@@ -811,12 +860,13 @@ class DifficultyPID:
         if nodes_active:
             nodes_diag = _step_lever(
                 self.nodes_lever,
-                target_wr=self.target, raw_wr=raw_wr,
-                ema_wr=self.ema_winrate, ema_alpha=self.alpha, se=se,
+                target_wr=self.target, raw_wr=step_raw_wr,
+                ema_wr=self.ema_winrate, ema_alpha=self.alpha, se=step_se,
             )
             nodes_changed = bool(nodes_diag.changed)
 
         self._games_since_adjust = 0
+        self._held_wins = self._held_draws = self._held_losses = 0
         nodes_after = int(self.nodes)
         adjusted = bool(regret_changed) or bool(nodes_changed) or (nodes_after != nodes_before)
 
@@ -829,8 +879,11 @@ class DifficultyPID:
             wdl_regret_before=regret_before,
             wdl_regret_after=float(self.wdl_regret),
             wdl_regret_changed=bool(regret_changed),
-            raw_winrate=float(raw_wr),
-            observation_se=float(se),
+            # Report the pooled sample the step actually scored on (not just this
+            # iteration's games), so the dashboard's raw_winrate matches the
+            # signal that moved the levers.
+            raw_winrate=float(step_raw_wr),
+            observation_se=float(step_se),
             regret_frozen=bool(regret_frozen),
             nodes_active=bool(nodes_active),
             regret_diag=regret_diag,
@@ -885,6 +938,7 @@ def pid_from_config(config: dict) -> DifficultyPID:
         target_winrate=float(config.get("sf_pid_target_winrate", 0.60)),
         ema_alpha=float(config.get("sf_pid_ema_alpha", 0.03)),
         min_games_between_adjust=int(config.get("sf_pid_min_games_between_adjust", 10)),
+        min_games_for_adjust=int(config.get("sf_pid_min_games_for_adjust", 0)),
         min_nodes=int(config.get("sf_pid_min_nodes", 100)),
         max_nodes=int(config.get("sf_pid_max_nodes", 50000)),
         initial_wdl_regret=float(config.get("sf_pid_wdl_regret_start", -1.0)),
