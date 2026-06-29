@@ -17,7 +17,8 @@ _OBSERVATION_SE_FLOOR = 0.01
 def _observation_se(wins: int, draws: int, losses: int) -> float:
     """Standard error of the mean score for a batch of wins/draws/losses.
 
-    Score per game x_i in {1, 0.5, 0}. Floored at _OBSERVATION_SE_FLOOR.
+    Score per game x_i in {1, 0.5, 0}. Floored at max(_OBSERVATION_SE_FLOOR,
+    0.5/sqrt(n)) — see the sample-size floor note below.
     """
     n = int(wins) + int(draws) + int(losses)
     if n <= 1:
@@ -30,7 +31,14 @@ def _observation_se(wins: int, draws: int, losses: int) -> float:
     )
     sample_var = var_sum / float(n - 1)
     raw_se = math.sqrt(max(sample_var, 0.0) / float(n))
-    return max(raw_se, _OBSERVATION_SE_FLOOR)
+  # Sample-size floor. A tiny batch — especially a UNANIMOUS one, where the observed
+  # sample_var is 0 — has large TRUE uncertainty the observed variance misses: 2
+  # straight losses must not read as a confident 0% and trip the airbag
+  # (raw_wr + 1.5*se < safety_floor). 0.5/sqrt(n) is the widest binomial SE (at
+  # p=0.5), so a small n yields a wide CI (n=2 -> 0.35: the airbag cannot fire on 2
+  # losses) while a large n lets raw_se dominate and real crashes still fire. This
+  # subsumes a hard min-games cutoff and the curriculum-starvation airbag misfire.
+    return max(raw_se, _OBSERVATION_SE_FLOOR, 0.5 / math.sqrt(float(n)))
 
 
 @dataclass(frozen=True)
