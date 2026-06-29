@@ -1,9 +1,22 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from pathlib import Path
 
-from scripts.graceful_restart import _active_trials, _required_paused_count
+from chess_anti_engine.tune.trainable_config_ops import (
+    _clear_pause_acks,
+    _pause_ack_name,
+    _wait_if_paused,
+    _write_pause_acks,
+)
+from scripts.graceful_restart import (
+    _active_trials,
+    _pause_ack_files,
+    _required_paused_count,
+    _trial_is_acked,
+)
 
 
 def _write_progress(path: Path) -> None:
@@ -79,3 +92,71 @@ def test_required_paused_count_accepts_deprecated_wait_arg() -> None:
     assert _required_paused_count(4, 1) == 1
     assert _required_paused_count(4, 2) == 2
     assert _required_paused_count(1, 3) == 1
+
+
+def test_pause_ack_detected_without_progress_row_growth(tmp_path: Path) -> None:
+    """The boundary-hold blind spot: the trial holds before any new progress.csv
+    row, so the row heuristic can't fire — the ack it drops in the tune root must
+    still be detected (this is the bug that left graceful_restart idle for ~1.5h)."""
+    trial = tmp_path / "train_trial_5fac4_00000_0_lr=0.0003"
+    _write_progress(trial / "progress.csv")
+    csv = trial / "progress.csv"
+    # Trial dropped its ack next to the persistent tune-root pause marker.
+    (tmp_path / _pause_ack_name("5fac4_00000")).write_text("trial=5fac4_00000 next_iter=383\n")
+    acks = _pause_ack_files(tmp_path, [csv], since_ts=0.0)
+    assert acks, "ack in the tune root must be discovered"
+    assert _trial_is_acked(csv, acks)
+
+
+def test_pause_ack_in_trial_dir_detected(tmp_path: Path) -> None:
+    trial = tmp_path / "train_trial_abc_00000_0"
+    _write_progress(trial / "progress.csv")
+    csv = trial / "progress.csv"
+    (trial / _pause_ack_name("abc_00000")).write_text("x")
+    assert _trial_is_acked(csv, _pause_ack_files(tmp_path, [csv], since_ts=0.0))
+
+
+def test_pause_ack_stale_is_ignored(tmp_path: Path) -> None:
+    """An ack left by a crashed prior run (older than the pause request) must not
+    be mistaken for a fresh pause."""
+    trial = tmp_path / "train_trial_xyz_00000_0"
+    _write_progress(trial / "progress.csv")
+    csv = trial / "progress.csv"
+    (tmp_path / _pause_ack_name("xyz_00000")).write_text("old")
+    assert _pause_ack_files(tmp_path, [csv], since_ts=time.time() + 10_000) == []
+
+
+def test_write_and_clear_pause_acks_roundtrip(tmp_path: Path) -> None:
+    marker = tmp_path / "pause.txt"
+    marker.write_text("pause")
+    written = _write_pause_acks([marker], trial_id="t_0", iteration=5)
+    assert written == [tmp_path / _pause_ack_name("t_0")]
+    assert written[0].exists()
+    _clear_pause_acks(written)
+    assert not written[0].exists()
+
+
+def test_wait_if_paused_writes_ack_while_held_and_clears_on_resume(tmp_path: Path) -> None:
+    marker = tmp_path / "pause.txt"
+    marker.write_text("pause")
+    ack = tmp_path / _pause_ack_name("trial_held")
+    done = threading.Event()
+
+    def run() -> None:
+        _wait_if_paused(
+            pause_marker_paths=[marker], poll_seconds=1, trial_id="trial_held", iteration=7,
+        )
+        done.set()
+
+    th = threading.Thread(target=run, daemon=True)
+    th.start()
+    for _ in range(50):  # ack should appear promptly while the marker is present
+        if ack.exists():
+            break
+        time.sleep(0.1)
+    assert ack.exists(), "ack must be written while holding"
+    assert not done.is_set(), "must still be holding while the marker is present"
+    marker.unlink()  # resume
+    th.join(timeout=5)
+    assert done.is_set(), "trial must resume once the marker is gone"
+    assert not ack.exists(), "ack must be cleared on resume"

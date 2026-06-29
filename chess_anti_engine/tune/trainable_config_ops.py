@@ -84,6 +84,46 @@ def _resolve_pause_marker_paths(*, tc: TrialConfig, trial_dir: Path) -> list[Pat
     return unique
 
 
+def _pause_ack_name(trial_id: str) -> str:
+    """Filename of the per-trial pause acknowledgement marker."""
+    return f".paused_{trial_id}.ack"
+
+
+def _write_pause_acks(markers: list[Path], *, trial_id: str, iteration: int) -> list[Path]:
+    """Drop a deterministic per-trial ack next to each present pause marker.
+
+    graceful_restart.py otherwise infers "paused" from progress.csv row growth,
+    which structurally can't fire when a trial holds at the iteration boundary
+    *before* appending a post-pause row (it just sits idle until timeout). The
+    ack is an explicit "I am now holding" signal the harness can poll directly.
+    Best-effort: an ack write must never block or break the pause itself.
+    """
+    name = _pause_ack_name(trial_id)
+    written: list[Path] = []
+    seen: set[Path] = set()
+    for m in markers:
+        ack = m.parent / name
+        if ack in seen:
+            continue
+        seen.add(ack)
+        try:
+            ack.write_text(f"trial={trial_id} next_iter={iteration}\n")
+            written.append(ack)
+        except OSError:
+            pass  # ack is advisory; never let it interfere with pausing
+    return written
+
+
+def _clear_pause_acks(ack_paths: list[Path]) -> None:
+    """Remove the acks written by _write_pause_acks (called on resume) so a
+    later graceful restart doesn't see a stale 'paused' signal."""
+    for ack in ack_paths:
+        try:
+            ack.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def _wait_if_paused(
     *,
     pause_marker_paths: list[Path],
@@ -93,24 +133,32 @@ def _wait_if_paused(
 ) -> None:
     poll_s = max(1, int(poll_seconds))
     announced = False
+    ack_paths: list[Path] = []
 
     def _existing_markers() -> list[Path]:
         return [p for p in pause_marker_paths if p.exists()]
 
-    while True:
-        present = _existing_markers()
-        if not present:
-            break
-        if not announced:
-            # flush=True so the message reaches the log even though the
-            # subsequent sleep would otherwise hold it in stdio buffers.
-            print(
-                f"[trial] pause marker(s) detected: {[str(p) for p in present]} "
-                f"(trial={trial_id}, next_iter={iteration})",
-                flush=True,
-            )
-            announced = True
-        time.sleep(float(poll_s))
+    try:
+        while True:
+            present = _existing_markers()
+            if not present:
+                break
+            if not announced:
+                # Write the ack BEFORE announcing so the marker is on disk the
+                # instant the log line appears. flush=True so the message reaches
+                # the log even though the subsequent sleep would otherwise hold
+                # it in stdio buffers.
+                ack_paths = _write_pause_acks(present, trial_id=trial_id, iteration=iteration)
+                print(
+                    f"[trial] pause marker(s) detected: {[str(p) for p in present]} "
+                    f"(trial={trial_id}, next_iter={iteration}, "
+                    f"ack={[str(p) for p in ack_paths]})",
+                    flush=True,
+                )
+                announced = True
+            time.sleep(float(poll_s))
+    finally:
+        _clear_pause_acks(ack_paths)
     if announced:
         print(
             f"[trial] pause marker cleared (trial={trial_id}, resuming_iter={iteration})",
