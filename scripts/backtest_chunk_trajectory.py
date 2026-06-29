@@ -104,7 +104,11 @@ def main() -> None:
             worker.reset_tree()
             snaps: list[dict] = []
 
-            def on_chunk(total_nodes: int, _b=board, _u=ucis, _r=regrets, _s=snaps) -> None:
+            # Default-arg binding captures this iteration's loop vars (avoids
+            # cell-var-from-loop); the list defaults are intentional, not a bug.
+            def on_chunk(  # pylint: disable=dangerous-default-value
+                total_nodes: int, _b=board, _u=ucis, _r=regrets, _s=snaps,
+            ) -> None:
                 actions, visits = worker._filtered_root_visits(None)  # noqa: SLF001
                 if actions.size == 0:
                     return
