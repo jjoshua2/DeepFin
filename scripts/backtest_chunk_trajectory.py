@@ -29,6 +29,7 @@ import chess
 import numpy as np
 
 from chess_anti_engine.eval.audit import legal_full_indices, load_audit_set, move_regrets
+from chess_anti_engine.mcts.gumbel import PLAY_SEARCH_DEFAULTS
 from chess_anti_engine.moves import index_to_move
 from scripts.backtest_time_value import _stratified
 
@@ -49,6 +50,12 @@ def main() -> None:
     ap.add_argument("--c-scale", type=float, default=0.025)
     ap.add_argument("--c-visit", type=float, default=50.0)
     ap.add_argument("--c-visit-root", type=float, default=900.0)
+    ap.add_argument("--c-scale-root", type=float, default=PLAY_SEARCH_DEFAULTS["c_scale_root"],
+                    help="ROOT-ONLY c_scale (descent keeps --c-scale). Default matches the "
+                         "production play search (root-log); <0 = legacy linear root.")
+    ap.add_argument("--q-visit-exp-root", type=float, default=PLAY_SEARCH_DEFAULTS["q_visit_exp_root"],
+                    help="ROOT-ONLY value-transform exponent. Default matches the production play "
+                         "search (root-log); >=90 = legacy linear root.")
     ap.add_argument("--gumbel-topk", type=int, default=32)
     ap.add_argument("--out", type=Path, default=Path("runs/backtest/chunk_trajectory.jsonl"))
     args = ap.parse_args()
@@ -73,6 +80,7 @@ def main() -> None:
         compute_relations=use_rel, topk=int(args.gumbel_topk),
         c_scale=float(args.c_scale), c_visit=float(args.c_visit),
         c_visit_root=float(args.c_visit_root),
+        c_scale_root=float(args.c_scale_root), q_visit_exp_root=float(args.q_visit_exp_root),
     )
     worker = SearchWorker(
         LocalModelEvaluator(model, device=args.device), device=args.device,

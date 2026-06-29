@@ -5136,5 +5136,14 @@ PyMODINIT_FUNC PyInit__mcts_tree(void) {
         return NULL;
     }
 
+    /* Capability marker, bumped whenever the C ABI changes in a way Python must
+     * detect at import (so an un-rebuilt .so fails fast with a clear rebuild error
+     * instead of a cryptic mid-search failure). 1 = node_capacity()/headroom; 2 =
+     * start_gumbel_sims c_scale_root/q_visit_exp_root root-scale args. */
+    if (PyModule_AddIntConstant(m, "ABI_VERSION", 2) < 0) {
+        Py_DECREF(m);
+        return NULL;
+    }
+
     return m;
 }

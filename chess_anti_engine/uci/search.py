@@ -22,7 +22,12 @@ import numpy as np
 from chess_anti_engine.encoding import input_plane_count
 from chess_anti_engine.encoding.cboard_encode import CBoard, encode_cboard
 from chess_anti_engine.inference import BatchEvaluator
+from chess_anti_engine.mcts import _mcts_tree as _mcts_tree_ext
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
+
+# Minimum compiled-extension ABI this module requires (see _mcts_tree.c PyInit /
+# the stale-extension guard in SearchWorker.__init__). Bump in lockstep with the C.
+_REQUIRED_MCTS_ABI = 2
 from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
 from chess_anti_engine.mcts.root_tactics import immediate_mate_move
@@ -214,15 +219,19 @@ class SearchWorker:
         pucv_vloss_mode: int = 0,
         eval_cache_entries: int = 0,
     ) -> None:
-  # Fail fast on a stale compiled extension. The shared-tree headroom guard
-  # (`_ensure_shared_tree_headroom`) calls `MCTSTree.node_capacity()`, added with
-  # this PR; an un-rebuilt `_mcts_tree` lacks it and would otherwise raise
-  # AttributeError mid-search on the first multi-GPU/walker chunk (losing the
-  # game on time). Surface it here, at construction, with the rebuild command.
-        if not hasattr(MCTSTree, "node_capacity"):
+  # Fail fast on a stale compiled extension. Two ABI changes ship here that Python
+  # relies on but can't detect by signature: `MCTSTree.node_capacity()` (used by
+  # `_ensure_shared_tree_headroom`) and the new `start_gumbel_sims` root-scale args
+  # (`c_scale_root`/`q_visit_exp_root`). An un-rebuilt `.so` would otherwise fail
+  # mid-search (losing the game on time), and a node_capacity-only check wouldn't
+  # catch a `.so` built between the two changes. The module ABI_VERSION marker covers
+  # both — check it at construction and surface the rebuild command.
+        _abi = getattr(_mcts_tree_ext, "ABI_VERSION", 0)
+        if _abi < _REQUIRED_MCTS_ABI:
             raise RuntimeError(
-                "compiled _mcts_tree is missing MCTSTree.node_capacity; rebuild "
-                "the C extension: python setup.py build_ext --inplace"
+                f"compiled _mcts_tree ABI_VERSION={_abi} < required {_REQUIRED_MCTS_ABI} "
+                "(missing node_capacity and/or the start_gumbel_sims root-scale args); "
+                "rebuild the C extension: python setup.py build_ext --inplace"
             )
         self._evaluator = evaluator
         self._device = device

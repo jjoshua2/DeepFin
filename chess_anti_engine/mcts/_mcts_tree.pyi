@@ -7,6 +7,9 @@ from numpy.typing import NDArray
 
 from chess_anti_engine.encoding._lc0_ext import CBoard
 
+# C ABI capability marker (see PyInit__mcts_tree); bumped on detect-worthy ABI changes.
+ABI_VERSION: int
+
 def set_history_rep_fix(enabled: bool, /) -> None: ...
 
 class MCTSTree:

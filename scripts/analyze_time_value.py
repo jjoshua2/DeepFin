@@ -41,8 +41,15 @@ _FEATURES = {
     "q_drift": lambda r: float(r.get("q_drift") or 0.0),
     "bestmove_flip": lambda r: 1.0 if r.get("bestmove_flip") else 0.0,
     "mid_pieces": lambda r: -abs(int(r.get("piece_count", 16)) - 20),
-    # the shipped gate: small Q gap OR just-flipped = keep searching.
-    "gate(qgap+flip)": lambda r: (
+    # The SHIPPED gate (SearchWorker._move_is_decided): a move is decided when its
+    # visit-share gap >= 0.30 AND the best move is stable, so "keep searching" =
+    # small visit gap OR just-flipped. (Mirror the production gate, not q_gap — the
+    # q-gap variant below is an experimental baseline, not what ships.)
+    "gate(visitgap+flip)": lambda r: (
+        (1.0 if float(r.get("n_gap_top2", 1.0)) < 0.30 else 0.0)
+        + (1.0 if r.get("bestmove_flip") else 0.0)
+    ),
+    "expt_gate(qgap+flip)": lambda r: (
         (1.0 if (_finite(r.get("q_gap_top2"), 1e9) < 0.10) else 0.0)
         + (1.0 if r.get("bestmove_flip") else 0.0)
     ),

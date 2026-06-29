@@ -123,7 +123,10 @@ def limits_from_go(
                     args.movestogo if args.movestogo and args.movestogo > 0
                     else _BASELINE_MOVES_REMAINING
                 )
-                budget = remaining / moves_left + inc_v
+  # The pre-change allocation scaled the whole budget by time_budget_scale too,
+  # so honor it here — otherwise a sweep like optimum_fraction=0,scale=1.5 would
+  # run the unscaled old budget and not test the no-abort engine at that spend.
+                budget = time_budget_scale * (remaining / moves_left + inc_v)
             else:
   # Pieces-driven AGGRESSIVE allocation (a real `movestogo` from the GUI always
   # wins). Plan to spend the reserved base down by the hard middlegame; the

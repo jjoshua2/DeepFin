@@ -47,6 +47,7 @@ from chess_anti_engine.eval.audit import (
     load_audit_set,
     move_regrets,
 )
+from chess_anti_engine.mcts.gumbel import PLAY_SEARCH_DEFAULTS
 from chess_anti_engine.moves import COMPACT_TO_FULL_POLICY, POLICY_SIZE
 
 # cp -> expected score (logistic). C in cp; ~300 keeps it flat once a side is
@@ -248,14 +249,16 @@ def main() -> None:
                          "pairs with --q-visit-exp<1 for sim-invariance.")
     ap.add_argument("--q-visit-floor", type=float, default=-1.0,
                     help="decoupled additive floor: q_scale=floor+c_scale*max_visit^exp when >=0.")
-    ap.add_argument("--c-scale-root", type=float, default=-1.0,
+    ap.add_argument("--c-scale-root", type=float, default=PLAY_SEARCH_DEFAULTS["c_scale_root"],
                     help="ROOT-ONLY c_scale (descent keeps --c-scale). Pairs with "
                          "--q-visit-exp-root<0 for a LOG root: log needs a big c_scale (~7) while the "
-                         "descent stays tiny (~0.025). <0 = use --c-scale at the root too (legacy).")
-    ap.add_argument("--q-visit-exp-root", type=float, default=99.0,
+                         "descent stays tiny (~0.025). <0 = use --c-scale at the root too (legacy). "
+                         "Default now matches the production play search (root-log).")
+    ap.add_argument("--q-visit-exp-root", type=float, default=PLAY_SEARCH_DEFAULTS["q_visit_exp_root"],
                     help="ROOT-ONLY value-transform exponent (descent keeps --q-visit-exp). <0 = LOG "
                          "slow-growth at the root (kills the high-sim plateau) while the descent stays "
-                         "linear (preserves good mid-sim regret). >=90 = use --q-visit-exp (legacy).")
+                         "linear (preserves good mid-sim regret). >=90 = use --q-visit-exp (legacy). "
+                         "Default now matches the production play search (root-log).")
     ap.add_argument("--compile", dest="compile_mode", nargs="?", const="max-autotune", default=None,
                     help="torch.compile the model (much faster forward; needs the GPU free). "
                          "Optional mode arg (default max-autotune). Uses the shared engine cache.")
