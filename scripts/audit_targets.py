@@ -117,7 +117,7 @@ def _net_candidates(
 
     from chess_anti_engine.encoding.cboard_encode import CBoard, encode_cboard
     from chess_anti_engine.inference import LocalModelEvaluator
-    from chess_anti_engine.mcts.gumbel import GumbelConfig
+    from chess_anti_engine.mcts.gumbel import PLAY_SEARCH_DEFAULTS, GumbelConfig
     from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
     from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
@@ -129,11 +129,18 @@ def _net_candidates(
     use_rel = bool(getattr(model, "use_dynamic_relations", False))
     evaluator = LocalModelEvaluator(model, device=device)
     rng = np.random.default_rng(seed)
+    # Deliberately score candidates with the production PLAY search shape (root-log
+    # c_scale_root/q_visit_exp_root split) so the pre-training audit gate matches how
+    # the net actually plays — not the GumbelConfig legacy linear-root sentinels.
     cfg = GumbelConfig(
         simulations=int(sims), add_noise=False, temperature=0.0,
         input_history_encoding=hist, input_extra_features=extra,
         policy_encoding=pol_enc, compute_relations=use_rel,
         policy_temp=float(policy_temp), topk=int(topk),
+        c_scale=PLAY_SEARCH_DEFAULTS["c_scale"], c_visit=PLAY_SEARCH_DEFAULTS["c_visit"],
+        c_visit_root=PLAY_SEARCH_DEFAULTS["c_visit_root"],
+        c_scale_root=PLAY_SEARCH_DEFAULTS["c_scale_root"],
+        q_visit_exp_root=PLAY_SEARCH_DEFAULTS["q_visit_exp_root"],
     )
 
     raw_out: list[np.ndarray] = []

@@ -54,6 +54,29 @@ from chess_anti_engine.utils.numpy_helpers import softmax_1d as _softmax  # noqa
 # SearchConfig/TrialConfig/worker plumbing defaults mirror.
 DEFAULT_VOLATILITY_ANCHOR = 0.05
 
+# Single source of truth for the production PLAY/EVAL Gumbel search settings (UCI,
+# puzzle eval, the standardized arena, the training-gate match). Reference this
+# from every such entry point so the tuned optimum never drifts across call sites.
+# DISTINCT from SELFPLAY/training search, which is YAML/reco-driven and intentionally
+# keeps c_scale=0.1, no root split, linear root (the c_scale=0.025 win + root-log are
+# high-sim PLAY tunings; for low-sim selfplay they are a no-op-to-sub-significant lever
+# that needs a live A/B, not an offline flip). Search SHAPE only — NOT the sim count
+# (that varies: UCI chunk_sims, puzzle --sims, arena matched_sims). Keys are
+# GumbelConfig fields. Provenance (frozen deep-SF audit, paired regret-vs-sims):
+# c_scale=0.025 +301 Elo @8k; c_visit_root=900 (inert under root-log, kept);
+# c_scale_root=7/q_visit_exp_root=-1 LOG root keeps q_scale ~100 from 256 to millions
+# of nodes instead of exploding (~25000 @1M) and reversing under more search.
+PLAY_SEARCH_DEFAULTS: dict[str, float | int] = {
+    "c_scale": 0.025,
+    "c_visit": 50.0,
+    "c_visit_root": 900.0,
+    "c_scale_root": 7.0,
+    "q_visit_exp_root": -1.0,
+    "topk": 32,
+    "c_puct": 2.5,
+    "fpu_reduction": 1.2,
+}
+
 
 @dataclass
 class GumbelConfig:
@@ -97,6 +120,16 @@ class GumbelConfig:
     # from over-trusting Q. >= 0 sets the root floor; < 0 (default) = use c_visit
     # at both sites (legacy). C path only (run_gumbel_root_many_c).
     c_visit_root: float = -1.0
+    # Root-halving-ONLY value-transform overrides (root and descent want
+    # DIFFERENT transforms: the high-sim plateau is a root over-trust problem,
+    # but the good mid-sim regret needs a tiny LINEAR descent q_scale). The root
+    # reads c_scale_root / q_visit_exp_root; the descent keeps c_scale /
+    # q_visit_exp. Set q_visit_exp_root<0 for a LOG root (slow-growth, sim-
+    # invariant 256->millions) while leaving q_visit_exp=1 for a linear descent.
+    # Sentinels: c_scale_root<0 -> use c_scale; q_visit_exp_root>=90 -> use
+    # q_visit_exp (legacy bit-identical). C path only (run_gumbel_root_many_c).
+    c_scale_root: float = -1.0
+    q_visit_exp_root: float = 99.0
     full_tree: bool = True
     add_noise: bool = True  # Backward-compatible gate; use gumbel_scale for partial noise.
     gumbel_scale: float = 1.0
@@ -222,6 +255,36 @@ def _sigma_scale(*, max_visit: int, cfg: GumbelConfig) -> float:
     return float(cfg.c_scale) * (float(cfg.c_visit) + float(max_visit))
 
 
+def _root_sigma_scale(*, max_visit: int, cfg: GumbelConfig) -> float:
+    """Root-halving sigma(q) scale — mirrors the C root site exactly.
+
+    Must match ``_mcts_tree.c`` ``gss_score_and_halve`` so the final improved
+    policy reconstructed at the searched root uses the SAME q_scale the C
+    halving loop used to eliminate candidates. Otherwise ``probs_out`` and any
+    ``temperature > 0`` sampling (e.g. ``arena_standard`` at 0.1) are scored
+    with the legacy linear transform while the played move came from the
+    root-log transform — two different search shapes for one PLAY config.
+
+    Falls back to the descent knobs when the root-only ones are unset
+    (``c_visit_root``/``c_scale_root`` < 0, ``q_visit_exp_root`` >= 90),
+    matching the C construction-time resolution.
+    """
+    cvr = float(cfg.c_visit_root) if float(cfg.c_visit_root) >= 0.0 else float(cfg.c_visit)
+    csr = float(cfg.c_scale_root) if float(cfg.c_scale_root) >= 0.0 else float(cfg.c_scale)
+    qer = (
+        float(cfg.q_visit_exp_root)
+        if float(cfg.q_visit_exp_root) < 90.0
+        else float(cfg.q_visit_exp)
+    )
+    mv = float(max_visit)
+    if qer < 0.0:
+        return csr * math.log1p(cvr + mv)
+    mv_term = mv if qer == 1.0 else mv**qer
+    if float(cfg.q_visit_floor) >= 0.0:
+        return float(cfg.q_visit_floor) + csr * mv_term
+    return csr * (cvr + mv_term)
+
+
 def volatility_search_enabled(cfg: GumbelConfig) -> bool:
     """True when any volatility-aware search mechanism is switched on."""
     return float(cfg.volatility_q_scale) != 0.0 or float(cfg.volatility_fpu) != 0.0
@@ -286,6 +349,7 @@ def _completed_q_transform(
     epsilon: float = 1e-8,
     sigma_factor: float = 1.0,
     fpu_penalty: float = 0.0,
+    root: bool = False,
 ) -> np.ndarray:
     """DeepMind mctx completed-by-mix-value Q transform for Gumbel scores.
 
@@ -315,7 +379,12 @@ def _completed_q_transform(
     max_q = float(completed.max())
     completed = (completed - min_q) / max(max_q - min_q, float(epsilon))
     max_visit = int(visits_f.max(initial=0.0))
-    return float(sigma_factor) * _sigma_scale(max_visit=max_visit, cfg=cfg) * completed
+    scale = (
+        _root_sigma_scale(max_visit=max_visit, cfg=cfg)
+        if root
+        else _sigma_scale(max_visit=max_visit, cfg=cfg)
+    )
+    return float(sigma_factor) * scale * completed
 
 
 def _completed_q(*, root_q: float, root: Node, action: int) -> float:
@@ -709,6 +778,7 @@ def _halve_remaining_for_board(
         cfg=cfg,
         sigma_factor=_volatility_sigma_factor(root.vol, cfg),
         fpu_penalty=_volatility_fpu_penalty(root.vol, cfg),
+        root=True,
     )
     q_by_action = {int(a): float(q_logits[i]) for i, a in enumerate(legal.tolist())}
     rem.sort(
@@ -753,6 +823,7 @@ def _build_improved_policy_for_board(
         cfg=cfg,
         sigma_factor=_volatility_sigma_factor(root.vol, cfg),
         fpu_penalty=_volatility_fpu_penalty(root.vol, cfg),
+        root=True,
     )
     imp_all = _softmax(logits_imp)
     probs = np.zeros((POLICY_SIZE,), dtype=np.float32)

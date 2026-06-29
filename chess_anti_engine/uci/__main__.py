@@ -27,7 +27,7 @@ from chess_anti_engine.inference_dispatcher import (
     MultiGPUDispatcher,
     ThreadSafeGPUDispatcher,
 )
-from chess_anti_engine.mcts.gumbel import GumbelConfig
+from chess_anti_engine.mcts.gumbel import PLAY_SEARCH_DEFAULTS, GumbelConfig
 
 from .engine import Engine, EngineOptions, _println, emit_handshake
 from .model_loader import load_model_from_checkpoint
@@ -263,6 +263,15 @@ def _build_engine(
     q_visit_floor: float = -1.0,
     q_visit_exp: float = 1.0,
     q_global_scale: bool = False,
+  # Root-ONLY LOG value-transform (UCI default; descent keeps linear q_visit_exp).
+  # Linear root q_scale=c_scale*(c_visit_root+max_visit) EXPLODES with max_visit
+  # (~25000 at 1M nodes) -> the root saturates sigma(q) and blindly trusts the
+  # overconfident value head, so deeper search REVERSES (audit: +3.8cp at 32k).
+  # Log q_scale=c_scale_root*log1p(c_visit_root+max_visit) stays ~100 from 256 to
+  # millions of nodes -> sim-invariant scaling (the TCEC regret curve keeps
+  # dropping). Verified no-op/improvement 256->16k, fixes the 32k reversal.
+    c_scale_root: float = 7.0,
+    q_visit_exp_root: float = -1.0,
     n_walkers: int,
     vloss_weight: int,
     walker_gather: int,
@@ -293,6 +302,8 @@ def _build_engine(
             q_visit_floor=q_visit_floor,
             q_visit_exp=q_visit_exp,
             q_global_scale=q_global_scale,
+            c_scale_root=c_scale_root,
+            q_visit_exp_root=q_visit_exp_root,
             add_noise=False,
             input_history_encoding=input_history_encoding,
             input_extra_features=input_extra_features,
@@ -346,26 +357,30 @@ def main() -> int:
   # chunk=512/topk=32/mb=1024 gave ~7.3x startpos nps vs 32/16/32. Chunk cap
   # of 512 (not the full node budget) keeps `stop` latency under ~400ms on
   # single-game CUDA searches.
-    p.add_argument("--chunk-sims", type=int, default=512,
-                   help="sims per start_gumbel_sims call (default: 512). Higher = fewer Python-C roundtrips, coarser stop latency.")
-    p.add_argument("--topk", type=int, default=32, help="Gumbel root candidates (default: 32)")
-    p.add_argument("--c-scale", type=float, default=0.025,
+    p.add_argument("--chunk-sims", type=int, default=2048,
+                   help="sims per start_gumbel_sims call (default: 2048). Higher = fuller GPU batches "
+                        "(more NPS) at the cost of coarser stop/abort latency; 2048 favours throughput "
+                        "for long time controls while leaving ample chunks per move for the abort.")
+    p.add_argument("--topk", type=int, default=PLAY_SEARCH_DEFAULTS["topk"], help="Gumbel root candidates (default: 32)")
+    p.add_argument("--c-scale", type=float, default=PLAY_SEARCH_DEFAULTS["c_scale"],
                    help="Gumbel value-transform scale in sigma(q): lower leans on the prior "
                         "policy, higher trusts the search Q more. Default 0.025 — tuned "
                         "2026-06-16 (was 0.1; +270 Elo). q_scale=c_scale*(c_visit+max_visit) "
                         "explodes at high sims, so 0.1 over-trusted the overconfident value head.")
-    p.add_argument("--c-visit", type=float, default=50.0, help="Gumbel c_visit constant (default: 50.0)")
-    p.add_argument("--c-puct", type=float, default=2.5, help="PUCT exploration constant (default: 2.5)")
-    p.add_argument("--fpu-reduction", type=float, default=1.2,
+    p.add_argument("--c-visit", type=float, default=PLAY_SEARCH_DEFAULTS["c_visit"], help="Gumbel c_visit constant (default: 50.0)")
+    p.add_argument("--c-puct", type=float, default=PLAY_SEARCH_DEFAULTS["c_puct"], help="PUCT exploration constant (default: 2.5)")
+    p.add_argument("--fpu-reduction", type=float, default=PLAY_SEARCH_DEFAULTS["fpu_reduction"],
                    help="first-play-urgency reduction for unvisited children (default: 1.2)")
   # Gumbel root/descent split params (merged dormant in #68; C path only —
   # run_gumbel_root_many_c). All default to legacy: a GumbelConfig built with
   # the defaults below reproduces the pre-#68 single-floor/linear behavior.
-    p.add_argument("--c-visit-root", type=float, default=-1.0,
+    p.add_argument("--c-visit-root", type=float, default=PLAY_SEARCH_DEFAULTS["c_visit_root"],
                    help="Gumbel root-halving c_visit override (value-transform floor at the "
                         "root sequential-halving site only; descent keeps --c-visit). A large "
-                        "root floor (~670) makes one c_scale fit every sim count's root q_scale; "
-                        ">=0 sets the root floor, <0 (default) = use --c-visit at both sites (legacy).")
+                        "root floor (900, default) makes one c_scale fit every sim count's root "
+                        "q_scale — the root/descent SPLIT that fixes search scaling (avoidable "
+                        "regret +33%% vs legacy on the audit set; value scales coherently with "
+                        "depth). <0 = use --c-visit at both sites (legacy, no split).")
     p.add_argument("--q-visit-floor", type=float, default=-1.0,
                    help="Gumbel decoupled (additive) value-transform floor: when >=0, "
                         "q_scale=q_visit_floor+c_scale*max_visit^exp instead of the legacy "
@@ -376,6 +391,16 @@ def main() -> int:
                    help="Gumbel exponent on max_visit in q_scale=c_scale*(c_visit+max_visit^exp). "
                         "1.0 = standard linear Gumbel (default). <1 makes search-Q trust grow "
                         "sublinearly with depth so the optimal c_scale is less sim-count-dependent.")
+    p.add_argument("--c-scale-root", type=float, default=PLAY_SEARCH_DEFAULTS["c_scale_root"],
+                   help="ROOT-ONLY c_scale (descent keeps --c-scale). Pairs with "
+                        "--q-visit-exp-root<0 for a LOG root q_scale=c_scale_root*log1p(c_visit_root"
+                        "+max_visit), which needs a large c_scale (~7) vs the tiny descent (~0.025). "
+                        "<0 = use --c-scale at the root too (legacy linear).")
+    p.add_argument("--q-visit-exp-root", type=float, default=PLAY_SEARCH_DEFAULTS["q_visit_exp_root"],
+                   help="ROOT-ONLY value-transform exponent (descent keeps --q-visit-exp). DEFAULT "
+                        "-1 = LOG slow-growth: linear root q_scale explodes ~25000 at 1M nodes and "
+                        "saturates sigma(q) (deeper search reverses, +3.8cp@32k audit); log stays "
+                        "~100 from 256 to millions of nodes (sim-invariant). >=90 = use --q-visit-exp.")
     p.add_argument("--q-global-scale", action="store_true",
                    help="Gumbel descent scales the value-transform by the ROOT max child-visit "
                         "(global/search-size) instead of the local node's max_visit, so q_scale is "
@@ -392,6 +417,14 @@ def main() -> int:
                    help="per-move time-budget multiplier (default: 1.0). > 1.0 schedules more "
                         "time per move, relying on --abort-factor to bank it back on easy moves; "
                         "still capped at 50%% of remaining time so it cannot flag.")
+    p.add_argument("--optimum-fraction", type=float, default=0.7,
+                   help="soft-target fraction of the clock budget at which a settled move banks "
+                        "the rest (default: 0.7). 0 turns the visit-margin abort fully off "
+                        "(spend the whole deadline — the pre-time-management baseline); clamped to (0, 1].")
+    p.add_argument("--moves-horizon", type=int, default=50,
+                   help="upper cap on the pieces-driven moves estimate (default: 50; the material "
+                        "estimate tops out near 30 so this rarely binds). Time allocation is driven by "
+                        "pieces on the board, not move number; ignored when the GUI sends movestogo.")
     p.add_argument("--log-level", default="WARNING",
                    help="stderr log level (DEBUG|INFO|WARNING). DEBUG enables per-search gumbel profile with GPU-calls/avg-batch.")
   # --walkers > 1 switches from the Gumbel-chunked path to a PUCT walker
@@ -498,6 +531,11 @@ def main() -> int:
   # maximally-aggressive-but-valid abort_factor (stop on any positive lead).
         abort_factor=max(0.0, float(args.abort_factor)),
         time_budget_scale=max(0.1, float(args.time_budget_scale)),
+  # <= 0 is the OFF sentinel (preserved through the clamp); positive values are
+  # clamped to (0, 1] inside limits_from_go so an out-of-range soft target can't
+  # exceed the hard deadline.
+        optimum_fraction=min(1.0, float(args.optimum_fraction)),
+        moves_horizon=max(1, int(args.moves_horizon)),
     )
 
   # Background-build so `uci` can be answered before model load finishes.
@@ -556,6 +594,7 @@ def main() -> int:
                 c_puct=args.c_puct, fpu_reduction=args.fpu_reduction,
                 c_visit_root=args.c_visit_root, q_visit_floor=args.q_visit_floor,
                 q_visit_exp=args.q_visit_exp, q_global_scale=bool(args.q_global_scale),
+                c_scale_root=args.c_scale_root, q_visit_exp_root=args.q_visit_exp_root,
                 n_walkers=n_walkers, vloss_weight=int(args.vloss_weight),
                 walker_gather=walker_gather,
                 pucv_vloss_mode=1 if args.pucv_pending_mode == "virtual-mean" else 0,
@@ -571,6 +610,11 @@ def main() -> int:
                 rebuild_multi_gpu_pucv_factories=build_pucv_factories,
                 options=startup_options,
             )
+  # Warm the SEARCH path (not just the evaluator) before reporting ready, so
+  # the first real `go` doesn't pay cudagraph capture mid-move and forfeit on
+  # the clock. readyok gates on engine_ready below, so a GUI that waits for
+  # readyok (the standard handshake) never starts the clock until this returns.
+            engine_ref[0].warmup_search()
         except BaseException as exc:  # pragma: no cover — surfaced via readyok
             engine_error[0] = exc
         finally:

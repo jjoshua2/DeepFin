@@ -13,6 +13,7 @@ from __future__ import annotations
 import dataclasses
 import threading
 from dataclasses import dataclass
+from collections.abc import Callable
 from typing import Any, Protocol
 
 import chess
@@ -21,9 +22,10 @@ import numpy as np
 from chess_anti_engine.encoding import input_plane_count
 from chess_anti_engine.encoding.cboard_encode import CBoard, encode_cboard
 from chess_anti_engine.inference import BatchEvaluator
+from chess_anti_engine.mcts import _mcts_tree as _mcts_tree_ext
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
 from chess_anti_engine.mcts.gumbel import GumbelConfig
-from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
+from chess_anti_engine.mcts.gumbel_c import _REQUIRED_MCTS_ABI, run_gumbel_root_many_c
 from chess_anti_engine.mcts.root_tactics import immediate_mate_move
 from chess_anti_engine.mcts.puct import _value_scalar_from_wdl_logits
 from chess_anti_engine.mcts.puct_vl import PucvChunker
@@ -39,6 +41,10 @@ from chess_anti_engine.tablebase import SyzygyProbe, try_tb_root_move
 from .score import q_to_cp
 from .time_manager import Deadline
 from .walker_pool import WalkerPool, WalkerPoolConfig
+
+# _REQUIRED_MCTS_ABI is imported from gumbel_c (canonical owner of the C-path ABI
+# contract), so the SearchWorker construction guard and the run_gumbel_root_many_c
+# entry guard agree on one value.
 
 # Saturated cp for TB-decisive positions. Matches what the NN-backed path
 # naturally emits when Q is pinned to ±1 by the SyzygyProbe's wdl override,
@@ -98,6 +104,50 @@ assert _TREE_MAX_LEAF_BRANCHING >= _MAX_LEGAL_MOVES + _FORCED_COLLAPSE_DEPTH
 # measured is the one final selection emits (Gumbel survivor or visit leader),
 # so on the Gumbel production path the abort tracks the played move.
 _DEFAULT_ABORT_FACTOR = 1.0
+# Complexity gate on the early abort (when to bank vs "use it all"). The aggressive
+# Lc0-style allocation over-budgets and relies on the abort to reclaim the slack on
+# EASY moves; these decide which moves count as easy. A move banks only when it is
+# both VISIT-decisive (its share of root visits leads the best alternative by >= the
+# margin) AND stable (the played move repeated for a few consecutive chunks). Hard
+# positions (a near-tie in visit share, or a still-flipping choice) keep searching
+# toward the hard deadline. Flag-safe: the allocation already bounds a single move's
+# spend, so suppressing the abort only spends budget already deemed safe.
+#
+# The decisiveness feature is the VISIT-share gap, not the root Q gap: the time-value
+# backtest (scripts/backtest_time_value.py) found visit-gap predicts "more search
+# won't change the move" ~1.5-2x better than the Q gap across the calibrated search
+# configs. 0.30 fired rarely in high-branching middlegames (the engine then searched
+# to the deadline on most moves); 0.25 lets the abort bank a touch more readily while
+# the consecutive-stable-chunks requirement still guards against premature banking.
+# Heuristic — sweep with arena games (visit share is in [0, 1]).
+_ABORT_VISIT_GAP_MARGIN = 0.25
+_ABORT_MIN_STABLE_CHUNKS = 2
+
+# First-chunk time bootstrap. Before any chunk has run there's no measured nps, so
+# _time_capped_chunk can't size the first chunk to the budget. Cap it with a
+# CONSERVATIVE nps (well under the ~17.6 sims/ms single-game ceiling, and below a
+# cold first-forward rate) so a tight deadline (e.g. 100ms matched_time) shrinks the
+# first chunk instead of overrunning, while a normal/long budget leaves it at the
+# full _chunk_sims. Lower-bounding nps means we under-spend the budget, never over.
+_BOOTSTRAP_NPS_PER_MS = 6.0
+_MIN_FIRST_CHUNK = 64
+
+
+def _visit_gap(actions: np.ndarray, visits: np.ndarray, best_action: int) -> float:
+    """``best_action``'s share of the root visits minus the best alternative's share.
+    A large gap means visits have concentrated on the played move (settled); a small
+    gap means the search is still splitting them (hard). Single-move positions return
+    the played move's full share; a best_action absent from ``actions`` returns 0."""
+    total = float(visits.sum())
+    if total <= 0.0 or actions.size == 0:
+        return 0.0
+    shares = visits.astype(np.float64) / total
+    mask = actions == best_action
+    if not bool(mask.any()):
+        return 0.0
+    best_share = float(shares[mask].max())
+    others = shares[~mask]
+    return best_share - (float(others.max()) if others.size else 0.0)
 
 
 @dataclass
@@ -181,6 +231,20 @@ class SearchWorker:
         pucv_vloss_mode: int = 0,
         eval_cache_entries: int = 0,
     ) -> None:
+  # Fail fast on a stale compiled extension. Two ABI changes ship here that Python
+  # relies on but can't detect by signature: `MCTSTree.node_capacity()` (used by
+  # `_ensure_shared_tree_headroom`) and the new `start_gumbel_sims` root-scale args
+  # (`c_scale_root`/`q_visit_exp_root`). An un-rebuilt `.so` would otherwise fail
+  # mid-search (losing the game on time), and a node_capacity-only check wouldn't
+  # catch a `.so` built between the two changes. The module ABI_VERSION marker covers
+  # both — check it at construction and surface the rebuild command.
+        _abi = getattr(_mcts_tree_ext, "ABI_VERSION", 0)
+        if _abi < _REQUIRED_MCTS_ABI:
+            raise RuntimeError(
+                f"compiled _mcts_tree ABI_VERSION={_abi} < required {_REQUIRED_MCTS_ABI} "
+                "(missing node_capacity and/or the start_gumbel_sims root-scale args); "
+                "rebuild the C extension: python setup.py build_ext --inplace"
+            )
         self._evaluator = evaluator
         self._device = device
         self._cfg = gumbel_cfg or GumbelConfig(
@@ -233,6 +297,10 @@ class SearchWorker:
         self._root_pol_logits: np.ndarray | None = None
         self._root_wdl_logits: np.ndarray | None = None
         self._last_gumbel_action_idx: int | None = None
+  # Best-move stability across chunks, for the complexity gate on the early abort
+  # (see ``_abort_ready``). Reset at the start of every search.
+        self._abort_last_best: int = -1
+        self._abort_stable_chunks: int = 0
   # Optional Syzygy probe. When set, MCTS leaves in the TB range get
   # their NN wdl overridden with the TB-truth distribution.
         self._tb_probe = None
@@ -962,12 +1030,15 @@ class SearchWorker:
         if remaining_ms is None:
             return chunk
         if total_nodes <= 0:
-  # First chunk: no nps estimate yet, so a scaled multi-GPU chunk (per_device *
+  # First chunk: no nps estimate yet. A scaled multi-GPU chunk (per_device *
   # n_devices) could run unbounded past the deadline before the between-chunks
-  # check — a time forfeit on move 1. Bound it to the base single-GPU
-  # granularity (overrun ~one base chunk = negligible); the nps measured from it
-  # then caps every later chunk. Single-GPU is already _chunk_sims, so unchanged.
-            return min(chunk, self._chunk_sims)
+  # check — a time forfeit on move 1. Bound it to the base single-GPU granularity,
+  # AND to a conservative bootstrap-nps time cap so a tight budget (e.g. 100ms
+  # matched_time, where one full _chunk_sims=2048 chunk would itself overrun)
+  # shrinks the first chunk. A normal/long budget leaves it at _chunk_sims; the
+  # measured nps then caps every later chunk.
+            boot_cap = int(_BOOTSTRAP_NPS_PER_MS * remaining_ms)
+            return min(chunk, self._chunk_sims, max(_MIN_FIRST_CHUNK, boot_cap))
         elapsed = deadline.elapsed_ms()
         if elapsed <= 0:
             return chunk
@@ -1092,6 +1163,28 @@ class SearchWorker:
         runner_up = int(others.max()) if others.size else 0
         return best, best_visits - runner_up
 
+    def _move_is_decided(
+        self, best_action: int, allowed_root_indices: set[int] | None,
+    ) -> bool:
+        """Complexity gate deciding *easy vs hard*: the played move is "decided"
+        (safe to bank) only when it is BOTH stable — the same move for
+        ``_ABORT_MIN_STABLE_CHUNKS`` consecutive chunks — AND visit-decisive — its
+        share of the root visits leads the best alternative by ``_ABORT_VISIT_GAP_MARGIN``.
+        A still-flipping choice or a near-tie in visit share reads as a hard position,
+        so the search keeps going and uses the (over-allocated) budget. Must be called
+        once per chunk: it advances the stability counter."""
+        if best_action == self._abort_last_best:
+            self._abort_stable_chunks += 1
+        else:
+            self._abort_last_best = best_action
+            self._abort_stable_chunks = 0
+        if self._abort_stable_chunks < _ABORT_MIN_STABLE_CHUNKS:
+            return False
+        actions, visits = self._filtered_root_visits(allowed_root_indices)
+        if actions.size < 2:
+            return True
+        return _visit_gap(actions, visits, best_action) >= _ABORT_VISIT_GAP_MARGIN
+
     def _abort_ready(
         self,
         optimum_ms: int | None,
@@ -1100,32 +1193,55 @@ class SearchWorker:
         allowed_root_indices: set[int] | None,
         abort_factor: float,
     ) -> bool:
-        """Lc0-style visit-margin early abort. Stops only when the move final
-        selection would play is *settled* — it leads the runner-up on visits:
+        """Lc0-style early abort with a complexity gate. Banks the clock only when
+        the move final selection would play is *settled* on three signals:
 
-        - past the optimum budget, a settled move banks the remaining clock;
-        - before the optimum, a settled move can still bank early if its lead is
-          one the runner-up cannot overcome within the remaining optimum budget
-          (``lead > factor * remaining_sims``).
+        - it leads the runner-up on visits (``_root_visit_lead``);
+        - it is visit-decisive and stable (``_move_is_decided`` — visit-share gap +
+          best-move stability across chunks); and
+        - the optimum budget is spent, OR (before it) the visit lead is already
+          insurmountable within the remaining optimum (``lead > factor * sims``).
 
-        While the move is unsettled (the Gumbel survivor trails the visit leader,
-        or the choice is otherwise still moving) it keeps searching toward the
-        hard ``deadline`` — the extension the time-manager allocates for hard
-        positions. Returns False when no optimum is set, so node/movetime/infinite
-        searches and the hard ``deadline`` are unaffected."""
+        A hard position (still-flipping choice, near-tie in visit share, or trailing
+        survivor) fails the gate and keeps searching toward the hard ``deadline``
+        — "use it all" on the moves that matter, which is what makes the aggressive
+        over-allocation pay off. Returns False when no optimum is set, so
+        node/movetime/infinite searches and the hard ``deadline`` are unaffected."""
         if optimum_ms is None:
             return False
         best, lead = self._root_visit_lead(allowed_root_indices)
-        if best < 0 or lead <= 0:
-  # Unsettled (or no move): extend toward the hard deadline.
+        if best < 0:
+  # No legal/root move: nothing to bank, keep searching toward the hard deadline.
             return False
+  # A forced position (exactly one legal/root move) is decided even with a zero
+  # visit lead: the C Gumbel path returns the sole action WITHOUT visiting its
+  # child, so `lead` is trivially 0 — bank it instead of spending the full
+  # deadline. For the multi-move case a non-positive lead means the survivor isn't
+  # the visit leader (hard/unsettled), so keep searching.
+        if lead <= 0:
+            actions, _ = self._filtered_root_visits(allowed_root_indices)
+            if actions.size != 1:
+  # Unsettled (the survivor isn't the visit leader). _move_is_decided — the only
+  # updater of the per-chunk stability streak — is skipped on this early return, so
+  # reset the streak here: a flicker (lead>0, then lead<=0, then lead>0 again) must
+  # NOT count as consecutive stable chunks toward the stability-gated abort below.
+                self._abort_stable_chunks = 0
+                return False
         elapsed = deadline.elapsed_ms()
         remaining_ms = optimum_ms - elapsed
-        if remaining_ms <= 0:
-            return True
-        nps = total_nodes / max(1, elapsed)
-        remaining_sims = nps * remaining_ms
-        return lead > abort_factor * remaining_sims
+  # Provable bank: a visit lead the runner-up cannot overtake within the remaining
+  # optimum (lead > factor * projected remaining sims) is decisive on its own — the
+  # played move can't change — so bank it even before the optimum and regardless of
+  # the stability streak.
+        if remaining_ms > 0:
+            nps = total_nodes / max(1, elapsed)
+            if lead > abort_factor * nps * remaining_ms:
+                return True
+  # Not (yet) provable: require the complexity gate — visit-share gap + consecutive
+  # best-move stability — and only bank once the optimum budget is actually spent.
+        if not self._move_is_decided(best, allowed_root_indices):
+            return False
+        return remaining_ms <= 0
 
     def run(
         self,
@@ -1141,6 +1257,7 @@ class SearchWorker:
         info_cb: InfoCallback | None = None,
         include_ponder: bool = False,
         allow_terminal_shortcuts: bool = True,
+        on_chunk: Callable[[int], None] | None = None,
     ) -> SearchResult:
         """Search until any of: stop_event set, deadline expired, max_nodes hit,
         PV length ≥ max_depth, or (``optimum_ms`` set) the visit-margin abort
@@ -1155,6 +1272,10 @@ class SearchWorker:
             self._root_id = None
             self._tree_fen = fen
             self._invalidate_root_caches()
+  # Fresh best-move stability tracking for this move's abort gate (tree may be
+  # reused across the game, so reset here rather than only on a new position).
+        self._abort_last_best = -1
+        self._abort_stable_chunks = 0
 
         tb_probe = self._tb_probe
         if tb_probe is not None:
@@ -1238,6 +1359,11 @@ class SearchWorker:
                 allow_terminal_shortcuts=allow_terminal_shortcuts,
             )
             total_nodes += int(chunk)
+  # Per-chunk instrumentation hook (offline analysis of the accumulating tree —
+  # the states the abort actually decides between). Fired after each chunk with
+  # the cumulative node count; the callback reads worker root state itself.
+            if on_chunk is not None:
+                on_chunk(total_nodes)
 
             pv_indices, last_info_ms, elapsed = self._maybe_emit_pv_info(
                 board=board, deadline=deadline,

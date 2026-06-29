@@ -16,14 +16,49 @@ _MIN_DEADLINE_MS = 20
 # We never spend more than this fraction of remaining time on a single move,
 # regardless of increment or movestogo claims.
 _MAX_FRACTION_OF_REMAINING = 0.5
-# Default divisor when movestogo is not specified (classic Leela/SF-lite).
-_DEFAULT_MOVES_REMAINING = 30
+# Lc0-style allocation: divide the (reserved) base over an AGGRESSIVE estimate of
+# the moves left, planning to deplete it by the hard middlegame, and rely on the
+# visit-margin abort to bank most of that budget back on the many easy/booked
+# moves — so in practice the clock lasts well past the nominal plan (no mid-search
+# extension needed). `moves_left` is driven by PIECES rather than move number:
+# material tracks phase + opening-book length robustly (a 10-move book leaves the
+# board near its start, so it correctly reads as "early, long game ahead"), and it
+# matches where this net is strong vs hard — booked 32->28, hardest middlegame down
+# to ~16, then Syzygy takes over. Estimate ≈ (pieces - _ENDGAME_PIECES) * _MOVES_PER_PIECE.
+_ENDGAME_PIECES = 12      # at/below this the game is ~decided by the endgame/TB; floor the estimate
+_MOVES_PER_PIECE = 1.5    # planned moves remaining per piece above _ENDGAME_PIECES (32 pieces -> ~30)
+# Floor on the moves estimate: never assume fewer than this many moves remain, so a
+# long game can't dump the whole base into one move (the increment then carries it).
+_MIN_MOVES_REMAINING = 8
+# Default upper cap on the moves estimate (a conservatism guard; the pieces formula
+# tops out near 30, so this normally does not bind). Exposed as `moves_horizon`.
+_DEFAULT_MOVES_REMAINING = 50
+# Fixed divisor used ONLY by the `optimum_fraction <= 0` baseline path, which
+# reproduces the pre-time-management allocation (no reserve, no pieces estimate) so
+# an A/B gauntlet can compare old vs new on one binary. This is the old
+# `_DEFAULT_MOVES_REMAINING`; the new path divides by the pieces-driven estimate.
+_BASELINE_MOVES_REMAINING = 30
+# Safety reserve carved off `remaining` before allocating, so the late game/endgame
+# can't flag: max of a few increments and a few move-overheads, but never more than
+# this fraction of remaining (keeps it sane at short TCs where the inc-multiple would
+# otherwise exceed the whole clock). The increment refills it every move.
+_RESERVE_INC_MULT = 10
+_RESERVE_OVERHEAD_MULT = 80
+_MAX_RESERVE_FRACTION = 0.3
+# Fraction of the increment folded into each move's base budget (the rest is left to
+# refill the clock — Lc0 spends only part of the increment up front).
+_INCREMENT_SPEND_FRACTION = 0.5
 # Soft target as a fraction of the hard budget for clock-based searches. The
 # search aims to finish around here and stops early once the best move is
 # stable, banking the rest; if the move is still changing it keeps going up to
 # the hard `deadline_ms`. Because the soft stop only fires *before* the hard
 # bound, it can never flag where the old (always-spend-the-budget) code did not.
 # This is the main time-management tuning knob — sweep with arena validation.
+# A value of 0 (or negative) is the documented OFF sentinel: no `optimum_ms` is
+# set, the visit-margin abort is fully inert, and clock games spend the whole
+# `deadline_ms` exactly like the pre-time-management build. That makes the
+# baseline reachable on one binary so an A/B gauntlet can compare old vs new.
+# Values are clamped to (0, 1]; 1.0 keeps the soft target at the hard deadline.
 _OPTIMUM_FRACTION = 0.7
 
 
@@ -53,6 +88,9 @@ def limits_from_go(
     side_to_move_is_white: bool,
     move_overhead_ms: int = 0,
     time_budget_scale: float = 1.0,
+    optimum_fraction: float = _OPTIMUM_FRACTION,
+    moves_horizon: int = _DEFAULT_MOVES_REMAINING,
+    pieces: int = 32,
 ) -> SearchLimits:
     if args.infinite:
         return SearchLimits(infinite=True, searchmoves=tuple(args.searchmoves))
@@ -74,12 +112,49 @@ def limits_from_go(
     else:
         remaining, inc = _select_clock(args, side_to_move_is_white)
         if remaining is not None:
-            moves_left = args.movestogo if args.movestogo and args.movestogo > 0 else _DEFAULT_MOVES_REMAINING
-  # time_budget_scale lets the engine schedule more time per move on the bet
-  # that the visit-margin abort banks most of it back on easy moves; the
-  # 50%-of-remaining ceiling still caps any single move, so the clock cannot be
-  # flagged regardless of scale.
-            budget = time_budget_scale * (remaining / moves_left + (inc or 0))
+            inc_v = inc or 0
+            if optimum_fraction <= 0.0:
+  # OFF sentinel: reproduce the pre-time-management allocation EXACTLY — fixed
+  # divisor, full increment, NO reserve and NO pieces-driven split — so a baseline
+  # binary is a true A/B against the old engine. Skipping only `optimum_ms` (below)
+  # is not enough: the reserve + half-increment would still budget e.g. 2200ms vs
+  # the old 4000ms at 30s+3s. A real `movestogo` from the GUI still wins.
+                moves_left = (
+                    args.movestogo if args.movestogo and args.movestogo > 0
+                    else _BASELINE_MOVES_REMAINING
+                )
+  # The pre-change allocation scaled the whole budget by time_budget_scale too,
+  # so honor it here — otherwise a sweep like optimum_fraction=0,scale=1.5 would
+  # run the unscaled old budget and not test the no-abort engine at that spend.
+                budget = time_budget_scale * (remaining / moves_left + inc_v)
+            else:
+  # Pieces-driven AGGRESSIVE allocation (a real `movestogo` from the GUI always
+  # wins). Plan to spend the reserved base down by the hard middlegame; the
+  # visit-margin abort banks most of it on easy moves, so the clock actually
+  # lasts much longer (no extension mechanism needed). See the constants above.
+                if args.movestogo and args.movestogo > 0:
+                    moves_left = args.movestogo
+                else:
+                    est = round((max(0, int(pieces)) - _ENDGAME_PIECES) * _MOVES_PER_PIECE)
+  # Clamp the horizon up to the floor first, so a small `--moves-horizon` (e.g. 1)
+  # can't pull `moves_left` below `_MIN_MOVES_REMAINING` and dump the whole base
+  # into one move; the floor is honored regardless of the horizon cap.
+                    horizon = max(_MIN_MOVES_REMAINING, int(moves_horizon))
+                    moves_left = min(horizon, max(_MIN_MOVES_REMAINING, est))
+  # Carve a safety reserve off the clock first so the endgame can't flag, capped
+  # at a fraction of remaining so it stays sane at short TCs. The increment refills
+  # it each move. Only part of the increment is spent up front (the rest rolls over).
+                reserve = min(
+                    _MAX_RESERVE_FRACTION * remaining,
+                    max(_RESERVE_INC_MULT * inc_v, _RESERVE_OVERHEAD_MULT * move_overhead_ms),
+                )
+                usable = max(0.0, remaining - reserve)
+  # time_budget_scale lets the engine schedule more time per move on the bet that
+  # the visit-margin abort banks most of it back; the 50%-of-remaining ceiling
+  # still caps any single move, so the clock cannot be flagged regardless of scale.
+                budget = time_budget_scale * (
+                    usable / moves_left + _INCREMENT_SPEND_FRACTION * inc_v
+                )
             ceiling = remaining * _MAX_FRACTION_OF_REMAINING
             deadline_ms = max(_MIN_DEADLINE_MS, int(min(budget, ceiling)))
 
@@ -96,14 +171,21 @@ def limits_from_go(
   # fraction of the hard budget and extend toward `deadline_ms` on unsettled
   # positions. The hard `deadline_ms` still applies as a safety bound in all
   # cases so the engine cannot flag.
+  #
+  # `optimum_fraction <= 0` is the OFF sentinel: leaving `optimum_ms` None makes
+  # `_abort_ready` inert (it returns False with no optimum), so the search spends
+  # the full `deadline_ms` — the pre-time-management baseline, reachable without
+  # a separate binary. Otherwise clamp the fraction to (0, 1].
     optimum_ms: int | None = None
     if (
         deadline_ms is not None
         and not is_movetime
         and args.nodes is None
         and args.depth is None
+        and optimum_fraction > 0.0
     ):
-        optimum_ms = max(_MIN_DEADLINE_MS, int(deadline_ms * _OPTIMUM_FRACTION))
+        frac = min(1.0, optimum_fraction)
+        optimum_ms = max(_MIN_DEADLINE_MS, int(deadline_ms * frac))
 
     return SearchLimits(
         deadline_ms=deadline_ms,

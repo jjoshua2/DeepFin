@@ -7,6 +7,9 @@ from numpy.typing import NDArray
 
 from chess_anti_engine.encoding._lc0_ext import CBoard
 
+# C ABI capability marker (see PyInit__mcts_tree); bumped on detect-worthy ABI changes.
+ABI_VERSION: int
+
 def set_history_rep_fix(enabled: bool, /) -> None: ...
 
 class MCTSTree:
@@ -44,6 +47,8 @@ class MCTSTree:
         q_visit_floor: float = ...,
         halving_div: int = ...,
         c_visit_root: float = ...,
+        c_scale_root: float = ...,
+        q_visit_exp_root: float = ...,
     ) -> int | None: ...
     def continue_gumbel_sims(self, pol: NDArray[np.float32], wdl: NDArray[np.float32]) -> int | None: ...
     def continue_gumbel_sims_legal_bf16(self, pol_bf16_bits: NDArray[np.uint16], wdl: NDArray[np.float32]) -> int | None: ...

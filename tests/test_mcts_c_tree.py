@@ -431,3 +431,92 @@ def test_cboard_encode_146_matches_encode_position():
         assert fused.shape == (146, 8, 8)
         assert fused.dtype == np.float32
         np.testing.assert_allclose(fused, ref, atol=1e-6)
+
+
+def test_root_log_value_transform_and_abi() -> None:
+    """The root-only LOG value-transform (c_scale_root/q_visit_exp_root, the PR's core
+    search change) threads through the C start_gumbel_sims and yields a valid search;
+    the module ABI marker satisfies the SearchWorker stale-extension guard; and every
+    PLAY_SEARCH_DEFAULTS key is a real GumbelConfig field. (The q_scale MATH itself is
+    validated offline by scripts/backtest_time_value.py; this guards the plumbing.)"""
+    from chess_anti_engine.mcts import _mcts_tree
+    from chess_anti_engine.mcts.gumbel import PLAY_SEARCH_DEFAULTS, GumbelConfig
+    from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
+    from chess_anti_engine.moves import index_to_move
+    from chess_anti_engine.uci.search import _REQUIRED_MCTS_ABI
+
+    # ABI marker present and satisfies the stale-extension guard contract.
+    assert _mcts_tree.ABI_VERSION >= _REQUIRED_MCTS_ABI
+
+    # Every PLAY default is a real GumbelConfig field (guards against a field rename
+    # silently stranding the centralized defaults). The root-log subset is exercised
+    # through the C path below.
+    assert set(PLAY_SEARCH_DEFAULTS) <= set(GumbelConfig.__dataclass_fields__)
+
+    torch.manual_seed(0)
+    m = build_model(ModelConfig(embed_dim=32, num_layers=1, num_heads=2, use_smolgen=False)).eval()
+    board = chess.Board()
+    legal = set(board.legal_moves)
+    # Legacy linear root AND production root-log must each run and pick a legal move
+    # — i.e. the new C args thread through without breaking the search. (Built
+    # explicitly rather than **-unpacked so the kwarg types stay checkable.)
+    cfg_legacy = GumbelConfig(simulations=32, add_noise=False, temperature=0.0)
+    cfg_root_log = GumbelConfig(
+        simulations=32, add_noise=False, temperature=0.0,
+        c_visit_root=900.0, c_scale_root=7.0, q_visit_exp_root=-1.0,
+    )
+    for cfg in (cfg_legacy, cfg_root_log):
+        _probs, actions, *_ = run_gumbel_root_many_c(
+            m, [board], device="cpu", rng=np.random.default_rng(0), cfg=cfg,
+        )
+        assert len(actions) == 1
+        assert index_to_move(int(actions[0]), board) in legal
+
+
+def test_root_sigma_scale_matches_c_and_threads_to_final_policy() -> None:
+    """The final improved policy must be scored with the SAME root-log q_scale the
+    C halving used (else probs_out / temperature>0 sampling drifts to the legacy
+    linear shape — Codex P2 on PR #84). Guards _root_sigma_scale's math, its
+    fallback-to-descent equivalence, and that root=True actually reaches the
+    completed-Q transform."""
+    import math
+
+    from chess_anti_engine.mcts.gumbel import (
+        GumbelConfig,
+        _completed_q_transform,
+        _root_sigma_scale,
+        _sigma_scale,
+    )
+
+    # Production root-log knobs: scale = c_scale_root * log1p(c_visit_root + max_visit),
+    # NOT the legacy linear c_scale*(c_visit+max_visit).
+    cfg = GumbelConfig(c_visit_root=900.0, c_scale_root=7.0, q_visit_exp_root=-1.0)
+    for mv in (1, 8, 256, 1_000_000):
+        assert _root_sigma_scale(max_visit=mv, cfg=cfg) == pytest.approx(7.0 * math.log1p(900.0 + mv))
+    # The whole point: root-log != legacy-linear at a representative visit count.
+    assert _root_sigma_scale(max_visit=256, cfg=cfg) != pytest.approx(_sigma_scale(max_visit=256, cfg=cfg))
+
+    # With the root knobs unset, _root_sigma_scale must fall back to the exact
+    # legacy descent scale (so non-root callers are byte-for-byte unchanged).
+    legacy = GumbelConfig()
+    for mv in (0, 8, 256):
+        assert _root_sigma_scale(max_visit=mv, cfg=legacy) == pytest.approx(_sigma_scale(max_visit=mv, cfg=legacy))
+
+    # root=True must thread the root-log scale into the final completed-Q logits.
+    actions = np.array([0, 1, 2], dtype=np.int64)
+    priors = np.array([0.5, 0.3, 0.2], dtype=np.float64)
+    visits = np.array([10.0, 4.0, 1.0], dtype=np.float64)
+    qvalues = np.array([0.6, 0.2, -0.3], dtype=np.float64)
+    linear = _completed_q_transform(
+        actions=actions, priors=priors, visits=visits, qvalues=qvalues,
+        raw_value=0.1, cfg=cfg, root=False,
+    )
+    root_log = _completed_q_transform(
+        actions=actions, priors=priors, visits=visits, qvalues=qvalues,
+        raw_value=0.1, cfg=cfg, root=True,
+    )
+    # Same normalized completed-Q shape, different magnitude => ratio == scale ratio.
+    nz = np.abs(linear) > 1e-12
+    ratio = root_log[nz] / linear[nz]
+    expected = _root_sigma_scale(max_visit=10, cfg=cfg) / _sigma_scale(max_visit=10, cfg=cfg)
+    assert np.allclose(ratio, expected)

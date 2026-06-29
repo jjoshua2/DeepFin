@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime as _dt
+import hashlib
 import time
 from pathlib import Path
 from typing import cast
@@ -31,6 +32,7 @@ from chess_anti_engine.eval import (
     run_policy_sequence_eval,
     run_value_head_puzzle_eval,
 )
+from chess_anti_engine.mcts.gumbel import PLAY_SEARCH_DEFAULTS
 from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
 DEFAULT_PUZZLE_CSV = "data/puzzles/lichess_2200_2800_n3000.csv"
@@ -68,6 +70,26 @@ def _print(name: str, result, dt: float, *, sims_label: str) -> None:
             print(f"  {f'{low}-{high}':>14}  {total:>6}  {correct:>7}  {acc:>7.4f}")
 
 
+def _resolve_log_target(log_path: Path, fieldnames: list[str]) -> tuple[Path, bool]:
+    """Pick the CSV to append to and whether to write a header first.
+
+    Never append wider rows under a narrower header: if the existing log's
+    header already matches ``fieldnames`` we append in place, but on any schema
+    drift — upgrading to the new ``search`` column, or a different rating-bucket
+    set — we route to a schema-versioned sibling (``<stem>.<hash><suffix>``)
+    instead of corrupting the persistent leaderboard.
+    """
+    if not log_path.exists():
+        return log_path, True
+    with log_path.open(newline="") as fh:
+        existing = next(csv.reader(fh), [])
+    if existing == fieldnames:
+        return log_path, False
+    tag = hashlib.sha1(",".join(fieldnames).encode()).hexdigest()[:8]
+    versioned = log_path.with_name(f"{log_path.stem}.{tag}{log_path.suffix}")
+    return versioned, not versioned.exists()
+
+
 def _append_log(
     log_path: Path,
     *,
@@ -75,21 +97,26 @@ def _append_log(
     suite_name: str,
     mode: str,
     result,
+    search_label: str,
 ) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     by_rating = {f"{low}-{high}": acc for low, high, _, _, acc in result.by_rating}
-    new_file = not log_path.exists()
-    fieldnames = ["timestamp", "checkpoint", "suite", "mode", "n", "correct", "accuracy"]
+  # Record the full search config per row so the accumulating leaderboard stays
+  # comparable across tuning versions — a number generated under the new root-log
+  # play search must not be silently compared to a legacy-config row.
+    fieldnames = ["timestamp", "checkpoint", "suite", "mode", "search", "n", "correct", "accuracy"]
     fieldnames += [f"acc_{k}" for k in sorted(by_rating)]
-    with log_path.open("a", newline="") as fh:
+    target, write_header = _resolve_log_target(log_path, fieldnames)
+    with target.open("a", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=fieldnames, extrasaction="ignore")
-        if new_file:
+        if write_header:
             w.writeheader()
         row = {
             "timestamp": _dt.datetime.now().isoformat(timespec="seconds"),
             "checkpoint": checkpoint,
             "suite": suite_name,
             "mode": mode,
+            "search": search_label,
             "n": result.total,
             "correct": result.correct,
             "accuracy": f"{result.accuracy:.4f}",
@@ -138,11 +165,11 @@ def main() -> None:
                         "— concurrent compiles contend on the inductor cache / GPU.")
     # search/gumbel knobs (used by --mode search|gumbel)
     p.add_argument("--sims", type=int, default=200, help="MCTS simulations per puzzle (search/gumbel modes)")
-    p.add_argument("--gumbel-c-scale", type=float, default=0.1, help="gumbel value-transform scale (mode gumbel)")
-    p.add_argument("--gumbel-c-visit", type=float, default=50.0, help="gumbel c_visit depth-ramp base (mode gumbel)")
-    p.add_argument("--gumbel-topk", type=int, default=32, help="gumbel root candidates (mode gumbel)")
-    p.add_argument("--gumbel-c-puct", type=float, default=2.5, help="gumbel c_puct (mode gumbel)")
-    p.add_argument("--gumbel-fpu", type=float, default=1.2, help="gumbel fpu_reduction (mode gumbel)")
+    p.add_argument("--gumbel-c-scale", type=float, default=PLAY_SEARCH_DEFAULTS["c_scale"], help="gumbel value-transform scale (mode gumbel; production-tuned 0.025)")
+    p.add_argument("--gumbel-c-visit", type=float, default=PLAY_SEARCH_DEFAULTS["c_visit"], help="gumbel c_visit depth-ramp base (mode gumbel)")
+    p.add_argument("--gumbel-topk", type=int, default=PLAY_SEARCH_DEFAULTS["topk"], help="gumbel root candidates (mode gumbel)")
+    p.add_argument("--gumbel-c-puct", type=float, default=PLAY_SEARCH_DEFAULTS["c_puct"], help="gumbel c_puct (mode gumbel)")
+    p.add_argument("--gumbel-fpu", type=float, default=PLAY_SEARCH_DEFAULTS["fpu_reduction"], help="gumbel fpu_reduction (mode gumbel)")
     p.add_argument("--gumbel-qexp", type=float, default=1.0,
                    help="gumbel q_visit_exp: exponent on max_visit in q_scale=c_scale*(c_visit+max_visit^exp). "
                         "1.0=linear (default); <1=sublinear (less sim-count-dependent optimum)")
@@ -157,10 +184,20 @@ def main() -> None:
                    help="gumbel sequential-halving divisor: each round keeps ceil(n/div). "
                         "2 (default) = standard halving (top half); 3/4 = more aggressive "
                         "elimination (fewer rounds, visits concentrate on survivors sooner)")
-    p.add_argument("--gumbel-cvisit-root", type=float, default=-1.0,
+    p.add_argument("--gumbel-cvisit-root", type=float, default=PLAY_SEARCH_DEFAULTS["c_visit_root"],
                    help="gumbel root-halving c_visit override (value-transform floor at the "
-                        "root site only; descent keeps --gumbel-c-visit). >=0 sets the root "
-                        "floor (~670 fits all sim counts); <0 (default) = use c_visit at both")
+                        "root site only; descent keeps --gumbel-c-visit). 900 (default) = the "
+                        "root/descent SPLIT that fixes scaling; <0 = use c_visit at both (legacy)")
+    p.add_argument("--gumbel-cscale-root", type=float, default=PLAY_SEARCH_DEFAULTS["c_scale_root"],
+                   help="gumbel ROOT-ONLY c_scale (descent keeps --gumbel-c-scale). Pairs with "
+                        "--gumbel-qexp-root<0 for a LOG root q_scale=c_scale_root*log1p(c_visit_root"
+                        "+max_visit), which needs a large c_scale (~7) vs the tiny descent (~0.025). "
+                        "<0 = use c_scale at the root too (legacy linear)")
+    p.add_argument("--gumbel-qexp-root", type=float, default=PLAY_SEARCH_DEFAULTS["q_visit_exp_root"],
+                   help="gumbel ROOT-ONLY value-transform exponent (descent keeps --gumbel-qexp). "
+                        "-1 (default) = LOG slow-growth: linear root q_scale explodes at high sims "
+                        "and saturates sigma(q); log stays ~100 from 256 to millions of nodes "
+                        "(sim-invariant). >=90 = use --gumbel-qexp at the root too")
     p.add_argument(
         "--mode",
         type=_parse_modes,
@@ -252,6 +289,8 @@ def main() -> None:
                     q_visit_floor=args.gumbel_qfloor,
                     halving_div=args.gumbel_halving_div,
                     c_visit_root=args.gumbel_cvisit_root,
+                    c_scale_root=args.gumbel_cscale_root,
+                    q_visit_exp_root=args.gumbel_qexp_root,
                 )
             result = run_puzzle_eval(
                 model, suite,
@@ -263,8 +302,12 @@ def main() -> None:
                 gumbel_cfg=gcfg,
             )
             if mode == "gumbel":
-                sims_label = (f"{args.sims} sims gumbel c_scale={args.gumbel_c_scale} "
-                              f"c_visit={args.gumbel_c_visit} topk={args.gumbel_topk}")
+                sims_label = (
+                    f"{args.sims} sims gumbel c_scale={args.gumbel_c_scale} "
+                    f"c_visit={args.gumbel_c_visit} c_visit_root={args.gumbel_cvisit_root} "
+                    f"c_scale_root={args.gumbel_cscale_root} "
+                    f"q_visit_exp_root={args.gumbel_qexp_root} topk={args.gumbel_topk}"
+                )
             else:
                 sims_label = f"{args.sims} sims puct"
         _print(f"puzzle:{mode}", result, time.time() - t0, sims_label=sims_label)
@@ -275,6 +318,7 @@ def main() -> None:
                 suite_name=suite.name,
                 mode=mode,
                 result=result,
+                search_label=sims_label,
             )
 
     if log_path is not None:

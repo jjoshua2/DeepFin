@@ -1041,14 +1041,22 @@ def main() -> None:
 _GUMBEL_INT_KEYS = {"topk", "halving_div", "simulations"}
 
 
-def _parse_gumbel_overrides(spec: str | None) -> dict[str, float] | None:
+def _parse_gumbel_overrides(spec: str | None) -> dict[str, float]:
     """Parse 'c_scale=0.025,c_visit=50,c_visit_root=900,topk=32' -> dict.
 
-    int-coerces topk/halving_div/simulations; everything else is a float. Keys
-    must be GumbelConfig fields (applied via dataclasses.replace downstream)."""
+    Starts from the production PLAY_SEARCH_DEFAULTS optimum so that omitting a
+    flag (or the whole spec) still plays the tuned settings instead of the stale
+    GumbelConfig defaults; any parsed user keys override on top. int-coerces
+    topk/halving_div/simulations; everything else is a float. Keys must be
+    GumbelConfig fields (applied via dataclasses.replace downstream)."""
+    from chess_anti_engine.mcts.gumbel import PLAY_SEARCH_DEFAULTS
+
+    out: dict[str, float] = {
+        k: (int(v) if k in _GUMBEL_INT_KEYS else float(v))
+        for k, v in PLAY_SEARCH_DEFAULTS.items()
+    }
     if not spec:
-        return None
-    out: dict[str, float] = {}
+        return out
     for part in spec.split(","):
         part = part.strip()
         if not part:
@@ -1058,7 +1066,7 @@ def _parse_gumbel_overrides(spec: str | None) -> dict[str, float] | None:
         k, v = part.split("=", 1)
         k = k.strip()
         out[k] = int(v) if k in _GUMBEL_INT_KEYS else float(v)
-    return out or None
+    return out
 
 
 if __name__ == "__main__":

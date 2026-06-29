@@ -45,11 +45,16 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# name -> deepfin CLI flag. The sweep only knows these two; an unknown knob in a
-# --candidate/--baseline spec is rejected so a typo fails loudly.
+# name -> deepfin CLI flag. The sweep only knows these knobs; an unknown knob in
+# a --candidate/--baseline spec is rejected so a typo fails loudly.
 _KNOB_FLAGS: dict[str, str] = {
     "abort_factor": "--abort-factor",
     "time_budget_scale": "--time-budget-scale",
+    "optimum_fraction": "--optimum-fraction",
+    "moves_horizon": "--moves-horizon",
+  # Not a time knob, but the lever that couples NPS and stop-granularity, so the
+  # sweep must reach it; only credited in --opponent-engine (absolute) mode.
+    "chunk_sims": "--chunk-sims",
 }
 
 
@@ -164,6 +169,9 @@ class ConfigResult:
     cand_losses: int = 0
     baseline_flags: int = 0
     candidate_flags: int = 0
+  # When the baseline is a fixed external opponent (absolute-strength mode), an
+  # opponent flag is not OUR bug, so flag-safety gates on the candidate only.
+    opponent_mode: bool = False
     _points: list[float] = field(default_factory=list)
 
     @property
@@ -183,6 +191,8 @@ class ConfigResult:
 
     @property
     def flag_safe(self) -> bool:
+        if self.opponent_mode:
+            return self.candidate_flags == 0
         return self.candidate_flags == 0 and self.baseline_flags == 0
 
 
@@ -199,17 +209,20 @@ def _flagger_label(result: str, white: str, black: str) -> str | None:
 def aggregate_pgn(
     pgn_text: str, *, label_baseline: str, label_candidate: str,
     label: str | None = None, knobs: dict[str, float] | None = None,
+    opponent_mode: bool = False,
 ) -> ConfigResult:
     """Fold a match PGN into a ConfigResult from the candidate's perspective.
 
     Reads each game's White/Black/Result/Termination headers: scores the
     candidate, and on ``Termination == "time"`` attributes the flag to whichever
-    engine lost on the clock."""
+    engine lost on the clock. ``opponent_mode`` marks the baseline as a fixed
+    external opponent so the flag-safety gate ignores its (non-ours) flags."""
     import chess.pgn  # heavy-ish; deferred so --help stays light
 
     res = ConfigResult(
         label=label if label is not None else label_candidate,
         knobs=knobs if knobs is not None else {},
+        opponent_mode=opponent_mode,
     )
     stream = io.StringIO(pgn_text)
     while True:
@@ -285,20 +298,42 @@ def _result_record(r: ConfigResult, *, baseline_label: str) -> dict[str, object]
     }
 
 
+def _baseline_engine_and_label(
+    args: argparse.Namespace, baseline_knobs: dict[str, float],
+) -> tuple[str, str, bool]:
+    """``(engine_cmd, label, opponent_mode)`` for the baseline side. A fixed
+    external opponent (``--opponent-engine``) gives absolute-strength numbers;
+    otherwise the baseline is our own engine at ``baseline_knobs`` (relative)."""
+    if args.opponent_engine:
+        return str(args.opponent_engine), str(args.opponent_label), True
+    return build_engine_cmd(args.checkpoint, args.device, baseline_knobs), \
+        knobs_label(baseline_knobs), False
+
+
 def _run_one(
     args: argparse.Namespace, baseline_knobs: dict[str, float], cand_spec: str,
 ) -> ConfigResult:
     cand_knobs = parse_knobs(cand_spec)
     label = knobs_label(cand_knobs)
-    engine_baseline = build_engine_cmd(args.checkpoint, args.device, baseline_knobs)
+    engine_baseline, baseline_label, opponent_mode = _baseline_engine_and_label(
+        args, baseline_knobs,
+    )
     engine_candidate = build_engine_cmd(args.checkpoint, args.device, cand_knobs)
+  # Per-config clock-usage CSV (avg move time + min time left at game end) so
+  # the time-curve can be tuned for "spends most of its time then coasts on the
+  # increment" rather than hoarding or flagging.
+    move_log_out = (
+        Path(args.move_log_dir) / f"{label}.csv" if args.move_log_dir else None
+    )
+    if move_log_out is not None:
+        move_log_out.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
         pgn_out = Path(tmp) / "match.pgn"
         argv = build_match_argv(
             args.match_script,
             engine_baseline=engine_baseline,
             engine_candidate=engine_candidate,
-            label_baseline=knobs_label(baseline_knobs),
+            label_baseline=baseline_label,
             label_candidate=label,
             clock_base_ms=args.clock_base_ms,
             clock_inc_ms=args.clock_inc_ms,
@@ -306,19 +341,21 @@ def _run_one(
             max_plies=args.max_plies,
             pgn_out=pgn_out,
             openings=args.openings,
+            move_log_out=move_log_out,
         )
         if args.dry_run:
             print("[dry-run] " + " ".join(shlex.quote(a) for a in argv), flush=True)
-            return ConfigResult(label=label, knobs=cand_knobs)
+            return ConfigResult(label=label, knobs=cand_knobs, opponent_mode=opponent_mode)
         print(f"[validate] {label}: running {args.games} paired games…", flush=True)
         subprocess.run(argv, check=True)
         pgn_text = pgn_out.read_text()
     return aggregate_pgn(
         pgn_text,
-        label_baseline=knobs_label(baseline_knobs),
+        label_baseline=baseline_label,
         label_candidate=label,
         label=label,
         knobs=cand_knobs,
+        opponent_mode=opponent_mode,
     )
 
 
@@ -327,7 +364,15 @@ def main() -> int:
     p.add_argument("--checkpoint", required=True, help="path to trainer.pt / checkpoint dir")
     p.add_argument("--device", default="cuda", help="cpu|cuda|cuda:N (default: cuda)")
     p.add_argument("--baseline", default="abort_factor=1.0,time_budget_scale=1.0",
-                   help="baseline knob config (default: the conservative defaults)")
+                   help="baseline knob config for our engine (relative mode; ignored when "
+                        "--opponent-engine is set)")
+    p.add_argument("--opponent-engine", default="",
+                   help="absolute-strength mode: a fixed external opponent command (e.g. a "
+                        "Cheese/SF binary). Each candidate plays THIS opponent, so the score is "
+                        "absolute Elo, not a self-play delta. Required to credit chunk_sims/NPS "
+                        "changes (self-play shares NPS and can't see them).")
+    p.add_argument("--opponent-label", default="opponent",
+                   help="PGN/summary label for the --opponent-engine side (default: opponent)")
     p.add_argument("--candidate", action="append", default=[],
                    help="candidate knob config, e.g. 'abort_factor=0.6,time_budget_scale=1.5' "
                         "(repeatable to sweep)")
@@ -340,6 +385,9 @@ def main() -> int:
                    default=Path(__file__).with_name("match_vs_uci.py"),
                    help="path to match_vs_uci.py (default: sibling)")
     p.add_argument("--out", type=Path, default=None, help="append JSONL result records here")
+    p.add_argument("--move-log-dir", type=Path, default=None,
+                   help="write a per-config clock-usage CSV here (<label>.csv): avg move time + "
+                        "min time left at game end, for tuning the time curve / end-clock.")
     p.add_argument("--dry-run", action="store_true",
                    help="print the match commands without running them (no GPU needed)")
     args = p.parse_args()
@@ -354,7 +402,9 @@ def main() -> int:
     if args.dry_run:
         return 0
 
-    baseline_label = knobs_label(baseline_knobs)
+    baseline_label = (
+        str(args.opponent_label) if args.opponent_engine else knobs_label(baseline_knobs)
+    )
     print("\n" + format_summary(results, baseline_label=baseline_label), flush=True)
     if args.out is not None:
         with args.out.open("a") as fh:
