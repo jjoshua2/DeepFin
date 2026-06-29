@@ -448,18 +448,24 @@ def test_root_log_value_transform_and_abi() -> None:
     # ABI marker present and satisfies the stale-extension guard contract.
     assert _mcts_tree.ABI_VERSION >= _REQUIRED_MCTS_ABI
 
-    # Every PLAY default is a real GumbelConfig field and constructs cleanly.
+    # Every PLAY default is a real GumbelConfig field (guards against a field rename
+    # silently stranding the centralized defaults). The root-log subset is exercised
+    # through the C path below.
     assert set(PLAY_SEARCH_DEFAULTS) <= set(GumbelConfig.__dataclass_fields__)
-    GumbelConfig(simulations=32, **PLAY_SEARCH_DEFAULTS)  # must not raise
 
     torch.manual_seed(0)
     m = build_model(ModelConfig(embed_dim=32, num_layers=1, num_heads=2, use_smolgen=False)).eval()
     board = chess.Board()
     legal = set(board.legal_moves)
-    # Legacy linear root (defaults) AND production root-log must each run and pick a
-    # legal move — i.e. the new C args thread through without breaking the search.
-    for root in ({}, {"c_scale_root": 7.0, "q_visit_exp_root": -1.0, "c_visit_root": 900.0}):
-        cfg = GumbelConfig(simulations=32, add_noise=False, temperature=0.0, **root)
+    # Legacy linear root AND production root-log must each run and pick a legal move
+    # — i.e. the new C args thread through without breaking the search. (Built
+    # explicitly rather than **-unpacked so the kwarg types stay checkable.)
+    cfg_legacy = GumbelConfig(simulations=32, add_noise=False, temperature=0.0)
+    cfg_root_log = GumbelConfig(
+        simulations=32, add_noise=False, temperature=0.0,
+        c_visit_root=900.0, c_scale_root=7.0, q_visit_exp_root=-1.0,
+    )
+    for cfg in (cfg_legacy, cfg_root_log):
         _probs, actions, *_ = run_gumbel_root_many_c(
             m, [board], device="cpu", rng=np.random.default_rng(0), cfg=cfg,
         )

@@ -232,6 +232,13 @@ class Engine:
         self._rebuild_multi_gpu_pucv_factories = rebuild_multi_gpu_pucv_factories
         self._options = options if options is not None else EngineOptions()
         self._worker.set_max_tree_mb(self._options.hash_mb)
+  # Set by setoption handlers that reshape the search path / evaluator
+  # (Threads/UseVL/UseMultiGpuPUCV/LeafGather/VLGather/MaxBatch/
+  # EvalCacheEntries). The build-time ``warmup_search`` runs BEFORE any
+  # setoption is applied, so such a change leaves its cudagraph stale;
+  # ``_handle_isready`` re-warms the configured path before ``readyok``
+  # so the first real ``go`` never pays cold capture on the clock.
+        self._warmup_dirty = False
         self._board = chess.Board()
         self._search_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -295,6 +302,15 @@ class Engine:
         emit_handshake(self._options)
 
     def _handle_isready(self) -> None:
+  # A setoption that reshaped the search path / evaluator since the last
+  # warmup left its cudagraph stale. Re-warm the CONFIGURED path here,
+  # BEFORE readyok, so the first real ``go`` (the clock starts after
+  # readyok in the standard handshake) never pays cold capture. Idempotent:
+  # warmup_search is best-effort and the flag is cleared so we don't warm
+  # again until the next reshaping setoption.
+        if self._warmup_dirty:
+            self._warmup_dirty = False
+            self.warmup_search()
         _println(format_readyok())
 
     def _handle_newgame(self) -> None:
@@ -500,6 +516,7 @@ class Engine:
             return
         self._options.threads = n
         self._worker.set_num_threads(n)
+        self._warmup_dirty = True
         _println(
             f"info string Threads set to {n} "
             f"({'walker pool' if n > 1 else 'classic Gumbel path'})"
@@ -519,12 +536,14 @@ class Engine:
             return
         self._options.leaf_gather = n
         self._worker.set_walker_gather(n)
+        self._warmup_dirty = True
         _println(f"info string LeafGather set to {n}")
 
     def _set_use_vl(self, value: str) -> None:
         enabled = value.strip().lower() == "true"
         self._options.use_vl = enabled
         self._worker.set_use_pucv(enabled, gather=self._options.vl_gather)
+        self._warmup_dirty = True
         _println(
             f"info string UseVL {'on' if enabled else 'off'} "
             f"(gather={self._options.vl_gather}; "
@@ -536,6 +555,7 @@ class Engine:
         self._options.use_multi_gpu_pucv = enabled
         if not enabled:
             self._worker.clear_multi_gpu_pucv()
+            self._warmup_dirty = True
             _println("info string UseMultiGpuPUCV off")
             return
         if self._rebuild_multi_gpu_pucv_factories is None:
@@ -553,6 +573,7 @@ class Engine:
         self._worker.install_multi_gpu_pucv(
             factories, gather=gather, as_factories=True,
         )
+        self._warmup_dirty = True
         _println(
             f"info string UseMultiGpuPUCV on "
             f"(devices={len(factories)} gather={gather})"
@@ -577,6 +598,9 @@ class Engine:
             self._worker.set_use_pucv(True, gather=n)
         if self._options.use_multi_gpu_pucv:
             self._set_use_multi_gpu_pucv("true")
+  # VLGather reshapes the pucv / multi-GPU per-worker batch, the same way
+  # LeafGather reshapes the walker batch — re-warm the configured path.
+        self._warmup_dirty = True
         _println(f"info string VLGather set to {n}")
 
     def _set_multi_pv(self, value: str) -> None:
@@ -637,6 +661,9 @@ class Engine:
         self._worker.set_evaluator(new_eval)
         if self._options.use_multi_gpu_pucv:
             self._set_use_multi_gpu_pucv("true")
+  # The rebuilt evaluator's raw forward is warmed, but the SEARCH-path
+  # cudagraph is captured separately — re-warm it before the clock.
+        self._warmup_dirty = True
         _println(f"info string MaxBatch set to {mb}; evaluator rebuilt + warmed")
 
     def _set_eval_cache_entries(self, value: str) -> None:
@@ -655,6 +682,9 @@ class Engine:
         self._worker.set_evaluator(new_eval)
         if self._options.use_multi_gpu_pucv:
             self._set_use_multi_gpu_pucv("true")
+  # Same as MaxBatch: evaluator rebuilt cold, so the search-path
+  # cudagraph must be re-warmed before the first real ``go``.
+        self._warmup_dirty = True
         _println(f"info string EvalCacheEntries set to {n}; evaluator rebuilt + warmed")
 
     def _set_syzygy_path(self, value: str | None) -> None:
@@ -728,14 +758,31 @@ class Engine:
         uses, so the search-path graphs are captured on the dispatcher's
         persistent submitter thread and every later move just replays them.
         One full chunk (the configured ``chunk_sims``) covers the real batch
-        shapes. Best-effort: a real ``go`` surfaces any genuine error."""
+        shapes. Best-effort: a real ``go`` surfaces any genuine error.
+
+        Multi-GPU PUCV caveat: that pool fans a single ``run`` budget across
+        every GPU worker through one shared semaphore (each greedily grabs up
+        to ``gather`` tokens). A lone ``max(256, chunk)`` chunk can drain
+        before the later workers grab anything, so they never capture their
+        own search-path cudagraph and the first real ``go`` pays cold capture
+        on those devices. When the pool is active, size the warmup to the same
+        per-device budget the real search uses (``search.py:_chunk_budget``:
+        ``max(chunk, gather)`` per device) so every worker gets a full batch."""
         chunk = int(getattr(self._worker, "_chunk_sims", 512))
+        max_nodes = max(256, chunk)
+        pool = getattr(self._worker, "_pucv_pool", None)
+        if pool is not None:
+            n_devices = getattr(pool, "n_devices", None)
+            gather = getattr(pool, "gather", None)
+            if n_devices and gather:
+                per_device = max(chunk, int(gather))
+                max_nodes = max(max_nodes, per_device * int(n_devices))
         try:
             self._worker.run(
                 chess.Board(),
                 stop_event=threading.Event(),
                 deadline=Deadline(deadline_ms=None),
-                max_nodes=max(256, chunk),
+                max_nodes=max_nodes,
                 optimum_ms=None,
                 abort_factor=self._options.abort_factor,
             )
