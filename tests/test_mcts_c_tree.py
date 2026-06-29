@@ -507,9 +507,14 @@ def test_root_sigma_scale_matches_c_and_threads_to_final_policy() -> None:
     priors = np.array([0.5, 0.3, 0.2], dtype=np.float64)
     visits = np.array([10.0, 4.0, 1.0], dtype=np.float64)
     qvalues = np.array([0.6, 0.2, -0.3], dtype=np.float64)
-    kw = {"actions": actions, "priors": priors, "visits": visits, "qvalues": qvalues, "raw_value": 0.1}
-    linear = _completed_q_transform(cfg=cfg, root=False, **kw)
-    root_log = _completed_q_transform(cfg=cfg, root=True, **kw)
+    linear = _completed_q_transform(
+        actions=actions, priors=priors, visits=visits, qvalues=qvalues,
+        raw_value=0.1, cfg=cfg, root=False,
+    )
+    root_log = _completed_q_transform(
+        actions=actions, priors=priors, visits=visits, qvalues=qvalues,
+        raw_value=0.1, cfg=cfg, root=True,
+    )
     # Same normalized completed-Q shape, different magnitude => ratio == scale ratio.
     nz = np.abs(linear) > 1e-12
     ratio = root_log[nz] / linear[nz]
