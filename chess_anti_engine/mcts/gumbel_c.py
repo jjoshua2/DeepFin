@@ -941,6 +941,7 @@ def run_gumbel_root_many_c(
             qvalues=completed_q,
             raw_value=root_q_i,
             cfg=cfg,
+            root=True,
         )
         imp_all = _softmax(logits_imp)
         probs = np.zeros((POLICY_SIZE,), dtype=np.float32)

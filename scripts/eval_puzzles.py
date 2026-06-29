@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime as _dt
+import hashlib
 import time
 from pathlib import Path
 from typing import cast
@@ -69,6 +70,26 @@ def _print(name: str, result, dt: float, *, sims_label: str) -> None:
             print(f"  {f'{low}-{high}':>14}  {total:>6}  {correct:>7}  {acc:>7.4f}")
 
 
+def _resolve_log_target(log_path: Path, fieldnames: list[str]) -> tuple[Path, bool]:
+    """Pick the CSV to append to and whether to write a header first.
+
+    Never append wider rows under a narrower header: if the existing log's
+    header already matches ``fieldnames`` we append in place, but on any schema
+    drift — upgrading to the new ``search`` column, or a different rating-bucket
+    set — we route to a schema-versioned sibling (``<stem>.<hash><suffix>``)
+    instead of corrupting the persistent leaderboard.
+    """
+    if not log_path.exists():
+        return log_path, True
+    with log_path.open(newline="") as fh:
+        existing = next(csv.reader(fh), [])
+    if existing == fieldnames:
+        return log_path, False
+    tag = hashlib.sha1(",".join(fieldnames).encode()).hexdigest()[:8]
+    versioned = log_path.with_name(f"{log_path.stem}.{tag}{log_path.suffix}")
+    return versioned, not versioned.exists()
+
+
 def _append_log(
     log_path: Path,
     *,
@@ -80,15 +101,15 @@ def _append_log(
 ) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     by_rating = {f"{low}-{high}": acc for low, high, _, _, acc in result.by_rating}
-    new_file = not log_path.exists()
   # Record the full search config per row so the accumulating leaderboard stays
   # comparable across tuning versions — a number generated under the new root-log
   # play search must not be silently compared to a legacy-config row.
     fieldnames = ["timestamp", "checkpoint", "suite", "mode", "search", "n", "correct", "accuracy"]
     fieldnames += [f"acc_{k}" for k in sorted(by_rating)]
-    with log_path.open("a", newline="") as fh:
+    target, write_header = _resolve_log_target(log_path, fieldnames)
+    with target.open("a", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=fieldnames, extrasaction="ignore")
-        if new_file:
+        if write_header:
             w.writeheader()
         row = {
             "timestamp": _dt.datetime.now().isoformat(timespec="seconds"),

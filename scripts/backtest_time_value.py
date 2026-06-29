@@ -131,7 +131,7 @@ class _Searcher:
         )
         rng = np.random.default_rng(seed)
   # The Gumbel runner encodes the boards itself (relations included, via cfg).
-        probs_b, _actions, values, _masks, tree, ids = run_gumbel_root_many_c(
+        probs_b, actions, values, _masks, tree, ids = run_gumbel_root_many_c(
             model=None, boards=list(boards), device=self._device, rng=rng, cfg=cfg,
             evaluator=self._evaluator,
         )
@@ -144,6 +144,15 @@ class _Searcher:
                 full = np.zeros(POLICY_SIZE, dtype=np.float64)
                 full[COMPACT_TO_FULL_POLICY] = visit
                 visit = full
+            # The move actually played at temperature=0 is the sequential-halving
+            # survivor returned in `actions`, NOT argmax(visit) — those diverge
+            # (the improved-policy distribution is not the SH winner), so regret /
+            # bestmove-flip features must be labeled with the played move.
+            played_full = (
+                int(COMPACT_TO_FULL_POLICY[int(actions[j])]) if is_compact else int(actions[j])
+            )
+            pos = np.nonzero(np.asarray(idxs) == played_full)[0]
+            chosen_legal = int(pos[0]) if pos.size else int(np.argmax(visit[idxs]))
             root_q = float(values[j])
   # Per-child Q -> full policy -> legal order (default = root Q for unexplored).
             ca, cv, cq = tree.get_children_q(int(ids[j]), root_q)
@@ -158,6 +167,7 @@ class _Searcher:
                 "q": q_full[idxs],             # root Q per legal move
                 "child_visits": v_full[idxs],  # raw child visit counts per legal
                 "root_q": np.float64(root_q),
+                "chosen": chosen_legal,        # legal index of the move actually played
             })
         if str(self._device).startswith("cuda"):
             self._torch.cuda.empty_cache()
@@ -171,7 +181,9 @@ def _features(
     visit = snap["visit"]
     q = snap["q"]
     explored = snap["child_visits"] > 0
-    chosen = int(np.argmax(visit))
+    # Label with the move the search would actually play (SH survivor), falling
+    # back to argmax(visit) only for legacy snapshots without a "chosen" key.
+    chosen = int(snap.get("chosen", int(np.argmax(visit))))
     chosen_uci = legal_ucis[chosen]
     regret_cp = float(regrets[chosen])
     # Score regret: best move vs chosen, in expected score on the cp->score curve

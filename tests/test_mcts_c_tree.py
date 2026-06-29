@@ -471,3 +471,47 @@ def test_root_log_value_transform_and_abi() -> None:
         )
         assert len(actions) == 1
         assert index_to_move(int(actions[0]), board) in legal
+
+
+def test_root_sigma_scale_matches_c_and_threads_to_final_policy() -> None:
+    """The final improved policy must be scored with the SAME root-log q_scale the
+    C halving used (else probs_out / temperature>0 sampling drifts to the legacy
+    linear shape — Codex P2 on PR #84). Guards _root_sigma_scale's math, its
+    fallback-to-descent equivalence, and that root=True actually reaches the
+    completed-Q transform."""
+    import math
+
+    from chess_anti_engine.mcts.gumbel import (
+        GumbelConfig,
+        _completed_q_transform,
+        _root_sigma_scale,
+        _sigma_scale,
+    )
+
+    # Production root-log knobs: scale = c_scale_root * log1p(c_visit_root + max_visit),
+    # NOT the legacy linear c_scale*(c_visit+max_visit).
+    cfg = GumbelConfig(c_visit_root=900.0, c_scale_root=7.0, q_visit_exp_root=-1.0)
+    for mv in (1, 8, 256, 1_000_000):
+        assert _root_sigma_scale(max_visit=mv, cfg=cfg) == pytest.approx(7.0 * math.log1p(900.0 + mv))
+    # The whole point: root-log != legacy-linear at a representative visit count.
+    assert _root_sigma_scale(max_visit=256, cfg=cfg) != pytest.approx(_sigma_scale(max_visit=256, cfg=cfg))
+
+    # With the root knobs unset, _root_sigma_scale must fall back to the exact
+    # legacy descent scale (so non-root callers are byte-for-byte unchanged).
+    legacy = GumbelConfig()
+    for mv in (0, 8, 256):
+        assert _root_sigma_scale(max_visit=mv, cfg=legacy) == pytest.approx(_sigma_scale(max_visit=mv, cfg=legacy))
+
+    # root=True must thread the root-log scale into the final completed-Q logits.
+    actions = np.array([0, 1, 2], dtype=np.int64)
+    priors = np.array([0.5, 0.3, 0.2], dtype=np.float64)
+    visits = np.array([10.0, 4.0, 1.0], dtype=np.float64)
+    qvalues = np.array([0.6, 0.2, -0.3], dtype=np.float64)
+    kw = {"actions": actions, "priors": priors, "visits": visits, "qvalues": qvalues, "raw_value": 0.1}
+    linear = _completed_q_transform(cfg=cfg, root=False, **kw)
+    root_log = _completed_q_transform(cfg=cfg, root=True, **kw)
+    # Same normalized completed-Q shape, different magnitude => ratio == scale ratio.
+    nz = np.abs(linear) > 1e-12
+    ratio = root_log[nz] / linear[nz]
+    expected = _root_sigma_scale(max_visit=10, cfg=cfg) / _sigma_scale(max_visit=10, cfg=cfg)
+    assert np.allclose(ratio, expected)

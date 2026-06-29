@@ -30,6 +30,8 @@ from pathlib import Path
 
 import numpy as np
 
+from chess_anti_engine.uci.search import _ABORT_VISIT_GAP_MARGIN
+
 _ELO_PER_SCORE = 400.0 / math.log(10) / 0.25  # ~695, d(Elo)/d(score) at score=0.5
 
 # feature -> "deserves more search" score (higher = spend more here), read at the
@@ -42,11 +44,13 @@ _FEATURES = {
     "bestmove_flip": lambda r: 1.0 if r.get("bestmove_flip") else 0.0,
     "mid_pieces": lambda r: -abs(int(r.get("piece_count", 16)) - 20),
     # The SHIPPED gate (SearchWorker._move_is_decided): a move is decided when its
-    # visit-share gap >= 0.30 AND the best move is stable, so "keep searching" =
-    # small visit gap OR just-flipped. (Mirror the production gate, not q_gap — the
-    # q-gap variant below is an experimental baseline, not what ships.)
+    # visit-share gap >= _ABORT_VISIT_GAP_MARGIN AND the best move is stable, so
+    # "keep searching" = small visit gap OR just-flipped. Use the shipped constant
+    # (not a hardcoded copy) so this analysis tracks the gate that actually ships.
+    # (Mirror the production gate, not q_gap — the q-gap variant below is an
+    # experimental baseline, not what ships.)
     "gate(visitgap+flip)": lambda r: (
-        (1.0 if float(r.get("n_gap_top2", 1.0)) < 0.30 else 0.0)
+        (1.0 if float(r.get("n_gap_top2", 1.0)) < _ABORT_VISIT_GAP_MARGIN else 0.0)
         + (1.0 if r.get("bestmove_flip") else 0.0)
     ),
     "expt_gate(qgap+flip)": lambda r: (
@@ -73,7 +77,12 @@ def _capture_at(order: list[int], avoidable: np.ndarray, fracs: tuple[float, ...
         return {f: float("nan") for f in fracs}
     cum = np.cumsum(avoidable[order])
     n = len(order)
-    return {f: float(cum[min(n - 1, int(f * n))] / total) for f in fracs}
+    # Spend on the top int(f*n) positions: that count of positions is indices
+    # 0..count-1, so the cumulative index is count-1 (using int(f*n) directly as a
+    # zero-based index would include one extra position, inflating capture@k).
+    return {
+        f: float(cum[min(n - 1, max(1, int(f * n)) - 1)] / total) for f in fracs
+    }
 
 
 def _step_table(rows_by_key: dict, lo: int, hi: int, fracs: tuple[float, ...]) -> dict | None:

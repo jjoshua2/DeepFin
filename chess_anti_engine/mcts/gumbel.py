@@ -255,6 +255,36 @@ def _sigma_scale(*, max_visit: int, cfg: GumbelConfig) -> float:
     return float(cfg.c_scale) * (float(cfg.c_visit) + float(max_visit))
 
 
+def _root_sigma_scale(*, max_visit: int, cfg: GumbelConfig) -> float:
+    """Root-halving sigma(q) scale — mirrors the C root site exactly.
+
+    Must match ``_mcts_tree.c`` ``gss_score_and_halve`` so the final improved
+    policy reconstructed at the searched root uses the SAME q_scale the C
+    halving loop used to eliminate candidates. Otherwise ``probs_out`` and any
+    ``temperature > 0`` sampling (e.g. ``arena_standard`` at 0.1) are scored
+    with the legacy linear transform while the played move came from the
+    root-log transform — two different search shapes for one PLAY config.
+
+    Falls back to the descent knobs when the root-only ones are unset
+    (``c_visit_root``/``c_scale_root`` < 0, ``q_visit_exp_root`` >= 90),
+    matching the C construction-time resolution.
+    """
+    cvr = float(cfg.c_visit_root) if float(cfg.c_visit_root) >= 0.0 else float(cfg.c_visit)
+    csr = float(cfg.c_scale_root) if float(cfg.c_scale_root) >= 0.0 else float(cfg.c_scale)
+    qer = (
+        float(cfg.q_visit_exp_root)
+        if float(cfg.q_visit_exp_root) < 90.0
+        else float(cfg.q_visit_exp)
+    )
+    mv = float(max_visit)
+    if qer < 0.0:
+        return csr * math.log1p(cvr + mv)
+    mv_term = mv if qer == 1.0 else mv**qer
+    if float(cfg.q_visit_floor) >= 0.0:
+        return float(cfg.q_visit_floor) + csr * mv_term
+    return csr * (cvr + mv_term)
+
+
 def volatility_search_enabled(cfg: GumbelConfig) -> bool:
     """True when any volatility-aware search mechanism is switched on."""
     return float(cfg.volatility_q_scale) != 0.0 or float(cfg.volatility_fpu) != 0.0
@@ -319,6 +349,7 @@ def _completed_q_transform(
     epsilon: float = 1e-8,
     sigma_factor: float = 1.0,
     fpu_penalty: float = 0.0,
+    root: bool = False,
 ) -> np.ndarray:
     """DeepMind mctx completed-by-mix-value Q transform for Gumbel scores.
 
@@ -348,7 +379,12 @@ def _completed_q_transform(
     max_q = float(completed.max())
     completed = (completed - min_q) / max(max_q - min_q, float(epsilon))
     max_visit = int(visits_f.max(initial=0.0))
-    return float(sigma_factor) * _sigma_scale(max_visit=max_visit, cfg=cfg) * completed
+    scale = (
+        _root_sigma_scale(max_visit=max_visit, cfg=cfg)
+        if root
+        else _sigma_scale(max_visit=max_visit, cfg=cfg)
+    )
+    return float(sigma_factor) * scale * completed
 
 
 def _completed_q(*, root_q: float, root: Node, action: int) -> float:
@@ -742,6 +778,7 @@ def _halve_remaining_for_board(
         cfg=cfg,
         sigma_factor=_volatility_sigma_factor(root.vol, cfg),
         fpu_penalty=_volatility_fpu_penalty(root.vol, cfg),
+        root=True,
     )
     q_by_action = {int(a): float(q_logits[i]) for i, a in enumerate(legal.tolist())}
     rem.sort(
