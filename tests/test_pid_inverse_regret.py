@@ -155,20 +155,20 @@ def test_unchanged_node_bounds_preserve_lever_float():
 
 
 def test_observation_se_matches_known_distribution():
-    # Pure win: raw variance 0 but SE is floored to prevent infinite weight.
-    # (See Codex adversarial-review finding #2.)
+    # Unanimous batch at modest n: observed variance is 0, so the SAMPLE-SIZE floor
+    # (0.5/sqrt n, the widest binomial SE) dominates — SE is wide, not the old flat
+    # 0.01. (Codex review #2 + the curriculum-starvation airbag misfire on tiny
+    # batches: a small all-same-result sample has large TRUE uncertainty.)
     se_pure = _observation_se(10, 0, 0)
-    assert se_pure > 0.0  # floor applied, no longer 0
-    # 50/50 binary: Bernoulli variance is 0.25, SE = sqrt(0.25 / n).
-    # At n=800 this is ≈ 0.0177, well above the floor of 0.01.
+    assert abs(se_pure - 0.5 / math.sqrt(10)) < 1e-9  # = 0.158, not the 0.01 floor
+    # Small-sample airbag protection: 2 straight losses must NOT read as a confident
+    # 0% that trips the airbag (which fires on raw_wr + 1.5*se < safety_floor=0.50).
+    # se = 0.5/sqrt(2) = 0.354, so 0 + 1.5*0.354 = 0.53 > 0.50 → cannot fire on n=2.
+    assert 1.5 * _observation_se(0, 0, 2) >= 0.50
+    # 50/50 binary at large n: the observed Bernoulli SE (≈0.0177 at n=800) just
+    # clears the sample-size floor, so the real observed SE is used.
     se = _observation_se(400, 0, 400)
-    assert abs(se - math.sqrt(0.25 / 800 * (800 / 799))) < 1e-6
-    # Draw-heavy should have lower raw variance per game than 50/50 wins/losses,
-    # but both exceed the floor at n=800.
-    se_draws = _observation_se(0, 800, 0)  # pure draws → variance 0, floored
-    se_mixed = _observation_se(400, 0, 400)
-    # Floored all-draw SE equals the floor; mixed stays above the floor.
-    assert se_mixed > se_draws
+    assert abs(se - math.sqrt(0.25 / 799)) < 1e-4
 
 
 def test_fit_recovers_linear_relationship():
