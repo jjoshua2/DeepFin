@@ -54,6 +54,31 @@ clear_pause_markers() {
     fi
 }
 
+migrate_stale_progress_csv() {
+    # Ray's CSVLoggerCallback fixes progress.csv's header from the FIRST row and,
+    # on resume, appends rows WITHOUT re-writing the header. After a report-schema
+    # change the resumed rows misalign against the old header. Rotate any trial
+    # progress.csv whose header predates the stable schema (no exact `outcome_stats`
+    # column) so Ray writes a fresh, correct header on resume. Runs while stopped
+    # (no open file handles) and is idempotent — a migrated file already has the
+    # column, so subsequent starts skip it.
+    local tune_dir="$WORK_DIR/tune"
+    [ -d "$tune_dir" ] || return 0
+    local ts moved=0 csv
+    ts="$(date +%Y%m%d_%H%M%S)"
+    for csv in "$tune_dir"/train_trial_*/progress.csv; do
+        [ -f "$csv" ] || continue
+        if head -1 "$csv" 2>/dev/null | tr ',' '\n' | grep -qx 'outcome_stats'; then
+            continue  # already the stable schema
+        fi
+        mv "$csv" "$csv.bak_preschema_$ts"
+        moved=$((moved + 1))
+    done
+    if [ "$moved" -gt 0 ]; then
+        echo "Rotated $moved stale-schema progress.csv file(s); Ray writes a fresh header on resume."
+    fi
+}
+
 check_c_extensions() {
     if [ "${TRAIN_SKIP_C_EXT_CHECK:-0}" = "1" ]; then
         return 0
@@ -88,6 +113,7 @@ start() {
     fi
     check_c_extensions
     clear_pause_markers
+    migrate_stale_progress_csv
     echo "Starting training with $CONFIG ${extra_args[*]:+(extra: ${extra_args[*]})}..."
     # Inductor compile parallelism — without these, autotune is single-threaded
     # and uses ~6% of available CPU. COMPILE_THREADS parallelizes codegen
