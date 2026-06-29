@@ -49,12 +49,15 @@ dev = [
   "pytest-cov>=5.0",
   "diff-cover>=8.0",
   # Static analysis — must match the tools scripts/lint.sh invokes so that a
-  # clean `pip install -e ".[dev]"` can reproduce the documented gate.
-  "ruff>=0.5",
-  "basedpyright>=1.39",
-  "skylos>=4.0",
-  "vulture>=2.0",
-  "pylint>=3.0",
+  # clean `pip install -e ".[dev]"` can reproduce the documented gate. Floors
+  # track the latest releases (CI does a fresh install each run and resolves to
+  # latest, so floors at current-latest keep a drifted local env auto-upgrading
+  # to match on the next `pip install` instead of silently lagging behind CI).
+  "ruff>=0.15.20",
+  "basedpyright>=1.39.9",
+  "skylos>=4.27",
+  "vulture>=2.16",
+  "pylint>=4.0.6",
   # C extension static analysis (pip-installable, no sudo required)
   "cppcheck>=1.5",     # general C static analyzer (bundles cppcheck binary)
   # For deeper interprocedural analysis, install Facebook infer separately:
