@@ -156,11 +156,19 @@ def _ack_trial_id(ack: Path) -> str:
 
 
 def _trial_is_acked(csv: Path, acks: list[Path]) -> bool:
-    """True if some ack belongs to this trial. The ack id is embedded in the
-    trial dir name (``train_trial_<id>_...``), so a substring match is robust
-    to Ray's trial-id vs dir-name formatting."""
+    """True if some ack belongs to this trial. The trial dir is
+    ``train_trial_<trial_id>_<num>_...``, so anchor the id at the start of the
+    post-prefix stem (followed by ``_`` or end) rather than a loose substring.
+    A loose ``in`` match would (a) let a degenerate ``trial_id="trial"`` fallback
+    match EVERY ``train_trial_*`` dir, and (b) let a sibling id that is a prefix
+    of another (non-zero-padded) collide. Anchoring removes both."""
     name = csv.parent.name
-    return any(_ack_trial_id(a) in name for a in acks)
+    stem = name[len("train_trial_"):] if name.startswith("train_trial_") else name
+    for a in acks:
+        tid = _ack_trial_id(a)
+        if stem == tid or stem.startswith(f"{tid}_"):
+            return True
+    return False
 
 
 def _find_tuner_pid() -> int | None:
@@ -385,16 +393,22 @@ def main() -> None:
                     while True:
                         time.sleep(args.poll)
                         csvs2 = _active_trials(tune_dir)
+                        acks2 = _pause_ack_files(tune_dir, csvs2, pause_created_ts)
                         still_idle = 0
                         for c in csvs2:
                             rc = _row_count(c)
                             snap = snapshot_rows.get(c, rc)
                             prev = prev_rows.get(c, snap)
-                            if rc == prev and (
-                                rc > snap
-                                or (
-                                    args.grace_secs >= 0
-                                    and time.time() - pause_created_ts >= args.grace_secs
+                            # Ack is authoritative (matches the main loop); row
+                            # growth + grace remain the fallback for pre-ack code.
+                            if _trial_is_acked(c, acks2) or (
+                                rc == prev
+                                and (
+                                    rc > snap
+                                    or (
+                                        args.grace_secs >= 0
+                                        and time.time() - pause_created_ts >= args.grace_secs
+                                    )
                                 )
                             ):
                                 still_idle += 1

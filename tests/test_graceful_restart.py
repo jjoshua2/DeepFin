@@ -116,6 +116,29 @@ def test_pause_ack_in_trial_dir_detected(tmp_path: Path) -> None:
     assert _trial_is_acked(csv, _pause_ack_files(tmp_path, [csv], since_ts=0.0))
 
 
+def test_pause_ack_generic_trial_id_does_not_match_all(tmp_path: Path) -> None:
+    """A degenerate trial_id fallback ('trial', from `_ctx.get_trial_id() or "trial"`)
+    must NOT match every `train_trial_*` dir via a loose substring."""
+    trial = tmp_path / "train_trial_5fac4_00000_0_lr=0.0003"
+    _write_progress(trial / "progress.csv")
+    csv = trial / "progress.csv"
+    (tmp_path / _pause_ack_name("trial")).write_text("x")
+    assert not _trial_is_acked(csv, _pause_ack_files(tmp_path, [csv], since_ts=0.0))
+
+
+def test_pause_ack_no_sibling_prefix_collision(tmp_path: Path) -> None:
+    """One trial's ack must not be attributed to a sibling whose id it prefixes."""
+    a = tmp_path / "train_trial_run_1_0"
+    b = tmp_path / "train_trial_run_10_0"
+    _write_progress(a / "progress.csv")
+    _write_progress(b / "progress.csv")
+    csv_a, csv_b = a / "progress.csv", b / "progress.csv"
+    (tmp_path / _pause_ack_name("run_1")).write_text("x")  # only trial A paused
+    acks = _pause_ack_files(tmp_path, [csv_a, csv_b], since_ts=0.0)
+    assert _trial_is_acked(csv_a, acks)
+    assert not _trial_is_acked(csv_b, acks)
+
+
 def test_pause_ack_stale_is_ignored(tmp_path: Path) -> None:
     """An ack left by a crashed prior run (older than the pause request) must not
     be mistaken for a fresh pause."""
