@@ -190,11 +190,13 @@ def test_optimum_fraction_tunes_soft_target() -> None:
 
 
 def test_optimum_fraction_zero_disables_soft_abort() -> None:
-    # 0 (or negative) is the OFF sentinel: no optimum_ms => _abort_ready inert =>
-    # the search spends the whole deadline (pre-time-management baseline).
+    # 0 (or negative) is the OFF sentinel: no optimum_ms => _abort_ready inert AND
+    # the allocation reproduces the pre-time-management baseline EXACTLY — no reserve,
+    # no pieces estimate, fixed /30 divisor, FULL increment. So at 30s+0.5s that is
+    # 30000/30 + 500 = 1500 (vs the new normal path's reserved/half-increment 1083).
     go = GoArgs(wtime_ms=30000, winc_ms=500)
     off = limits_from_go(go, side_to_move_is_white=True, optimum_fraction=0.0)
-    assert off.deadline_ms == 1083
+    assert off.deadline_ms == 1500
     assert off.optimum_ms is None
     neg = limits_from_go(go, side_to_move_is_white=True, optimum_fraction=-1.0)
     assert neg.optimum_ms is None

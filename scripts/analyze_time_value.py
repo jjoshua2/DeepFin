@@ -161,7 +161,7 @@ def main() -> None:
               "across search depth; large drift => budget-conditional tuning needed.")
 
 
-def _nan0(x: float) -> float:
+def _nan0(x: float | None) -> float:
     return 0.0 if (x is None or (isinstance(x, float) and math.isnan(x))) else x
 
 
