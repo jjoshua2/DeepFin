@@ -358,7 +358,10 @@ _PID_REASON_CODES = {
 _PID_STEP_DIAG_DEFAULTS: dict[str, float | int] = {
     "reason_code": _PID_REASON_CODES["not_active"],
     "changed": 0, "value_before": 0.0, "value_after": 0.0, "delta": 0.0,
-    "raw_delta": 0.0, "cap": 0.0, "observation_se": 0.0,
+    "raw_delta": 0.0, "cap": 0.0,
+    # observation_se is a MEASUREMENT, not a state — NaN (not 0.0) when the lever
+    # didn't run, so dashboards don't read a skipped step as a perfectly-certain one.
+    "observation_se": float("nan"),
     "raw_deadband": 0.0, "ema_deadband": 0.0, "history_len": 0,
     "tighten_gain_applied": 1.0, "crash_ease_applied": 0,
     "predicted_value": float("nan"), "fit_slope": float("nan"),
@@ -415,11 +418,13 @@ def _pid_report_dict(pr: PidResult) -> dict:
     update = pr.pid_update
     if update is None:
         # Stable schema even when no PID update ran this iteration (e.g. zero
-        # finished games) — emit the full key set with defaults, not {}.
+        # finished games) — emit the full key set with defaults, not {}. The two
+        # OBSERVATION fields are NaN (not 0.0): there was no observation, so a real
+        # "0% winrate, zero SE" would mislead any dashboard charting the stream.
         return {
             "pid_active_levers": "none",
-            "pid_raw_winrate": 0.0,
-            "pid_observation_se": 0.0,
+            "pid_raw_winrate": float("nan"),
+            "pid_observation_se": float("nan"),
             "pid_regret_frozen": 0,
             "pid_nodes_active": 0,
             **_pid_step_diag_dict("pid_regret", None),
@@ -698,10 +703,12 @@ def _build_report_dict(
     # occurred this iteration. Splicing them as individual `outcome_*` columns gave
     # Ray's CSV logger a per-iteration/segment-varying key set, which (header fixed
     # from row 1, resume appends without re-heading) misaligned every later segment.
-    # Emit ONE stable JSON column instead — nothing consumes the individual columns,
-    # and json.dumps is CSV-safe (DictWriter quotes the embedded commas).
-    outcome_stats_json = json.dumps(
-        {str(k): int(v) for k, v in sorted(dict(sp.outcome_stats).items())}
+    # Emit ONE stable, COMMA-FREE column instead (pipe-separated `cat=count`).
+    # Comma-free matters: monitor_pbt.sh parses rows with naive `awk -F','`, so a
+    # value with embedded commas (even CSV-quoted) would shift every later field.
+    # Nothing consumes the individual outcome columns (verified).
+    outcome_stats = "|".join(
+        f"{k}={int(v)}" for k, v in sorted(dict(sp.outcome_stats).items())
     )
     pid_diag_dict = _pid_report_dict(pr)
 
@@ -868,7 +875,7 @@ def _build_report_dict(
         "loss": sp.total_l,
         "sf_eval_delta6": float(sp.total_sf_d6 / max(1, sp.total_sf_d6_n)) if sp.total_sf_d6_n > 0 else 0.0,
         "sf_eval_delta6_n": sp.total_sf_d6_n,
-        "outcome_stats_json": outcome_stats_json,
+        "outcome_stats": outcome_stats,
         "sf_nodes": int(sf_nodes_used),
         "sf_nodes_next": int(pr.sf_nodes_next),
         "pid_ema_winrate": float(pr.pid_ema_wr),
