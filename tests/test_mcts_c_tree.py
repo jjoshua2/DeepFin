@@ -431,3 +431,37 @@ def test_cboard_encode_146_matches_encode_position():
         assert fused.shape == (146, 8, 8)
         assert fused.dtype == np.float32
         np.testing.assert_allclose(fused, ref, atol=1e-6)
+
+
+def test_root_log_value_transform_and_abi() -> None:
+    """The root-only LOG value-transform (c_scale_root/q_visit_exp_root, the PR's core
+    search change) threads through the C start_gumbel_sims and yields a valid search;
+    the module ABI marker satisfies the SearchWorker stale-extension guard; and every
+    PLAY_SEARCH_DEFAULTS key is a real GumbelConfig field. (The q_scale MATH itself is
+    validated offline by scripts/backtest_time_value.py; this guards the plumbing.)"""
+    from chess_anti_engine.mcts import _mcts_tree
+    from chess_anti_engine.mcts.gumbel import PLAY_SEARCH_DEFAULTS, GumbelConfig
+    from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
+    from chess_anti_engine.moves import index_to_move
+    from chess_anti_engine.uci.search import _REQUIRED_MCTS_ABI
+
+    # ABI marker present and satisfies the stale-extension guard contract.
+    assert _mcts_tree.ABI_VERSION >= _REQUIRED_MCTS_ABI
+
+    # Every PLAY default is a real GumbelConfig field and constructs cleanly.
+    assert set(PLAY_SEARCH_DEFAULTS) <= set(GumbelConfig.__dataclass_fields__)
+    GumbelConfig(simulations=32, **PLAY_SEARCH_DEFAULTS)  # must not raise
+
+    torch.manual_seed(0)
+    m = build_model(ModelConfig(embed_dim=32, num_layers=1, num_heads=2, use_smolgen=False)).eval()
+    board = chess.Board()
+    legal = set(board.legal_moves)
+    # Legacy linear root (defaults) AND production root-log must each run and pick a
+    # legal move — i.e. the new C args thread through without breaking the search.
+    for root in ({}, {"c_scale_root": 7.0, "q_visit_exp_root": -1.0, "c_visit_root": 900.0}):
+        cfg = GumbelConfig(simulations=32, add_noise=False, temperature=0.0, **root)
+        _probs, actions, *_ = run_gumbel_root_many_c(
+            m, [board], device="cpu", rng=np.random.default_rng(0), cfg=cfg,
+        )
+        assert len(actions) == 1
+        assert index_to_move(int(actions[0]), board) in legal

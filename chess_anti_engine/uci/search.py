@@ -24,10 +24,6 @@ from chess_anti_engine.encoding.cboard_encode import CBoard, encode_cboard
 from chess_anti_engine.inference import BatchEvaluator
 from chess_anti_engine.mcts import _mcts_tree as _mcts_tree_ext
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
-
-# Minimum compiled-extension ABI this module requires (see _mcts_tree.c PyInit /
-# the stale-extension guard in SearchWorker.__init__). Bump in lockstep with the C.
-_REQUIRED_MCTS_ABI = 2
 from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
 from chess_anti_engine.mcts.root_tactics import immediate_mate_move
@@ -45,6 +41,10 @@ from chess_anti_engine.tablebase import SyzygyProbe, try_tb_root_move
 from .score import q_to_cp
 from .time_manager import Deadline
 from .walker_pool import WalkerPool, WalkerPoolConfig
+
+# Minimum compiled-extension ABI this module requires (see _mcts_tree.c PyInit /
+# the stale-extension guard in SearchWorker.__init__). Bump in lockstep with the C.
+_REQUIRED_MCTS_ABI = 2
 
 # Saturated cp for TB-decisive positions. Matches what the NN-backed path
 # naturally emits when Q is pinned to ±1 by the SyzygyProbe's wdl override,
