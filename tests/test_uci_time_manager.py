@@ -280,19 +280,29 @@ def test_deadline_elapsed_monotonic() -> None:
 
 def test_time_capped_chunk_bounds_unbounded_first_chunk() -> None:
     """First-chunk forfeit guard: with a deadline but no nps estimate yet
-    (total_nodes == 0), a scaled multi-GPU chunk must be bounded to the base
-    single-GPU granularity so it can't run unbounded past the hard deadline
-    (a move-1 time forfeit). Subsequent chunks use the nps-based cap."""
-    from chess_anti_engine.uci.search import SearchWorker
+    (total_nodes == 0), the chunk is bounded to the base single-GPU granularity
+    so a scaled multi-GPU chunk can't run unbounded past the hard deadline (a
+    move-1 forfeit), AND to a conservative bootstrap-nps time cap so a tight
+    budget shrinks the first chunk below the base. Later chunks use the nps cap."""
+    import time as _time
+
+    from chess_anti_engine.uci.search import _BOOTSTRAP_NPS_PER_MS, SearchWorker
 
     w = object.__new__(SearchWorker)
     w._chunk_sims = 512
 
-    d = Deadline(deadline_ms=1000, now=0.0)
-    # Scaled multi-GPU first chunk (per_device * n_devices) -> bounded to base.
+    # Ample time left: scaled multi-GPU first chunk bounded to the base 512.
+    d = Deadline(deadline_ms=10_000, now=_time.monotonic())
     assert w._time_capped_chunk(8192, d, 0) == 512
     # Already-base first chunk (single-GPU) -> unchanged.
     assert w._time_capped_chunk(512, d, 0) == 512
+    # Tight budget (~60ms, e.g. fast matched_time): one full base/default chunk
+    # would risk overrunning before the between-chunks deadline check, so the
+    # bootstrap cap shrinks the first chunk below the base (still >= the floor).
+    d_tight = Deadline(deadline_ms=60, now=_time.monotonic())
+    capped = w._time_capped_chunk(8192, d_tight, 0)
+    assert 64 <= capped < 512
+    assert capped <= int(_BOOTSTRAP_NPS_PER_MS * 60) + 1
     # Open-ended search (no deadline) -> never capped, even on the first chunk.
     d_open = Deadline(deadline_ms=None, now=0.0)
     assert w._time_capped_chunk(8192, d_open, 0) == 8192

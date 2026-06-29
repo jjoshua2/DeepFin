@@ -123,6 +123,15 @@ _DEFAULT_ABORT_FACTOR = 1.0
 _ABORT_VISIT_GAP_MARGIN = 0.25
 _ABORT_MIN_STABLE_CHUNKS = 2
 
+# First-chunk time bootstrap. Before any chunk has run there's no measured nps, so
+# _time_capped_chunk can't size the first chunk to the budget. Cap it with a
+# CONSERVATIVE nps (well under the ~17.6 sims/ms single-game ceiling, and below a
+# cold first-forward rate) so a tight deadline (e.g. 100ms matched_time) shrinks the
+# first chunk instead of overrunning, while a normal/long budget leaves it at the
+# full _chunk_sims. Lower-bounding nps means we under-spend the budget, never over.
+_BOOTSTRAP_NPS_PER_MS = 6.0
+_MIN_FIRST_CHUNK = 64
+
 
 def _visit_gap(actions: np.ndarray, visits: np.ndarray, best_action: int) -> float:
     """``best_action``'s share of the root visits minus the best alternative's share.
@@ -1021,12 +1030,15 @@ class SearchWorker:
         if remaining_ms is None:
             return chunk
         if total_nodes <= 0:
-  # First chunk: no nps estimate yet, so a scaled multi-GPU chunk (per_device *
+  # First chunk: no nps estimate yet. A scaled multi-GPU chunk (per_device *
   # n_devices) could run unbounded past the deadline before the between-chunks
-  # check — a time forfeit on move 1. Bound it to the base single-GPU
-  # granularity (overrun ~one base chunk = negligible); the nps measured from it
-  # then caps every later chunk. Single-GPU is already _chunk_sims, so unchanged.
-            return min(chunk, self._chunk_sims)
+  # check — a time forfeit on move 1. Bound it to the base single-GPU granularity,
+  # AND to a conservative bootstrap-nps time cap so a tight budget (e.g. 100ms
+  # matched_time, where one full _chunk_sims=2048 chunk would itself overrun)
+  # shrinks the first chunk. A normal/long budget leaves it at _chunk_sims; the
+  # measured nps then caps every later chunk.
+            boot_cap = int(_BOOTSTRAP_NPS_PER_MS * remaining_ms)
+            return min(chunk, self._chunk_sims, max(_MIN_FIRST_CHUNK, boot_cap))
         elapsed = deadline.elapsed_ms()
         if elapsed <= 0:
             return chunk

@@ -642,6 +642,10 @@ class Engine:
             return
         self._options.minibatch_size = n
         self._worker.set_minibatch_size(n)
+  # minibatch_size feeds target_batch into start_gumbel_sims, so the search-path
+  # cudagraph captured at build-time warmup is now the wrong shape — re-warm before
+  # the clock or the first real `go` pays cold capture (same contract as MaxBatch).
+        self._warmup_dirty = True
         _println(
             f"info string MinibatchSize set to {n} "
             f"({'default' if n == 0 else f'{n} leaves per GPU flush'})"

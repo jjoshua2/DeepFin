@@ -823,6 +823,7 @@ def _build_improved_policy_for_board(
         cfg=cfg,
         sigma_factor=_volatility_sigma_factor(root.vol, cfg),
         fpu_penalty=_volatility_fpu_penalty(root.vol, cfg),
+        root=True,
     )
     imp_all = _softmax(logits_imp)
     probs = np.zeros((POLICY_SIZE,), dtype=np.float32)
