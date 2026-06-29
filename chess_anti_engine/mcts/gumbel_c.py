@@ -37,6 +37,7 @@ from chess_anti_engine.inference import (  # noqa: F401  # skylos: ignore (Async
     LocalModelEvaluator,
     _COMPILED_BATCH_BUCKETS,
 )
+import chess_anti_engine.mcts._mcts_tree as _mcts_tree_ext
 from chess_anti_engine.mcts._mcts_tree import (
     MCTSTree,
     batch_encode_146,
@@ -68,6 +69,14 @@ from chess_anti_engine.mcts.root_tactics import (
     immediate_terminal_cboard_policy_or_draws,
 )
 from chess_anti_engine.moves import POLICY_SIZE
+
+# Minimum compiled-extension ABI the C search path requires. ABI 2 added the
+# start_gumbel_sims c_scale_root/q_visit_exp_root args; calling an older compiled
+# start_gumbel_sims with them raises a cryptic mid-search TypeError. CANONICAL
+# definition (uci/search.py imports it) so the guard covers EVERY C-path consumer —
+# selfplay/training and eval call run_gumbel_root_many_c directly, not just UCI.
+# See _mcts_tree.c PyInit (ABI_VERSION).
+_REQUIRED_MCTS_ABI = 2
 
 GumbelManyCResult = tuple[list[np.ndarray], list[int], list[float], list[np.ndarray], MCTSTree, list[int]]
 GumbelManyCDiagnosticsResult = tuple[
@@ -205,6 +214,17 @@ def run_gumbel_root_many_c(
 
     Same API as ``run_gumbel_root_many`` -- drop-in replacement.
     """
+  # Fail fast on a stale compiled extension at the shared C-path entry, so EVERY
+  # consumer (selfplay/training + eval call this directly, not just UCI) gets a clear
+  # rebuild message instead of a cryptic mid-search TypeError from start_gumbel_sims'
+  # new c_scale_root/q_visit_exp_root args. Cheap int compare per call.
+    _abi = getattr(_mcts_tree_ext, "ABI_VERSION", 0)
+    if _abi < _REQUIRED_MCTS_ABI:
+        raise RuntimeError(
+            f"compiled _mcts_tree ABI_VERSION={_abi} < required {_REQUIRED_MCTS_ABI} "
+            "(missing the start_gumbel_sims root-scale args); rebuild the C extension: "
+            "python setup.py build_ext --inplace"
+        )
     if volatility_search_enabled(cfg):
         # Fail loud rather than silently searching without the volatility
         # bias: this entry point does not implement volatility_q_scale /

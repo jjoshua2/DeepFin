@@ -76,11 +76,15 @@ def _append_log(
     suite_name: str,
     mode: str,
     result,
+    search_label: str,
 ) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     by_rating = {f"{low}-{high}": acc for low, high, _, _, acc in result.by_rating}
     new_file = not log_path.exists()
-    fieldnames = ["timestamp", "checkpoint", "suite", "mode", "n", "correct", "accuracy"]
+  # Record the full search config per row so the accumulating leaderboard stays
+  # comparable across tuning versions — a number generated under the new root-log
+  # play search must not be silently compared to a legacy-config row.
+    fieldnames = ["timestamp", "checkpoint", "suite", "mode", "search", "n", "correct", "accuracy"]
     fieldnames += [f"acc_{k}" for k in sorted(by_rating)]
     with log_path.open("a", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=fieldnames, extrasaction="ignore")
@@ -91,6 +95,7 @@ def _append_log(
             "checkpoint": checkpoint,
             "suite": suite_name,
             "mode": mode,
+            "search": search_label,
             "n": result.total,
             "correct": result.correct,
             "accuracy": f"{result.accuracy:.4f}",
@@ -276,8 +281,12 @@ def main() -> None:
                 gumbel_cfg=gcfg,
             )
             if mode == "gumbel":
-                sims_label = (f"{args.sims} sims gumbel c_scale={args.gumbel_c_scale} "
-                              f"c_visit={args.gumbel_c_visit} topk={args.gumbel_topk}")
+                sims_label = (
+                    f"{args.sims} sims gumbel c_scale={args.gumbel_c_scale} "
+                    f"c_visit={args.gumbel_c_visit} c_visit_root={args.gumbel_cvisit_root} "
+                    f"c_scale_root={args.gumbel_cscale_root} "
+                    f"q_visit_exp_root={args.gumbel_qexp_root} topk={args.gumbel_topk}"
+                )
             else:
                 sims_label = f"{args.sims} sims puct"
         _print(f"puzzle:{mode}", result, time.time() - t0, sims_label=sims_label)
@@ -288,6 +297,7 @@ def main() -> None:
                 suite_name=suite.name,
                 mode=mode,
                 result=result,
+                search_label=sims_label,
             )
 
     if log_path is not None:

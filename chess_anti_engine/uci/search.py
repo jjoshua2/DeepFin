@@ -25,7 +25,7 @@ from chess_anti_engine.inference import BatchEvaluator
 from chess_anti_engine.mcts import _mcts_tree as _mcts_tree_ext
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
 from chess_anti_engine.mcts.gumbel import GumbelConfig
-from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
+from chess_anti_engine.mcts.gumbel_c import _REQUIRED_MCTS_ABI, run_gumbel_root_many_c
 from chess_anti_engine.mcts.root_tactics import immediate_mate_move
 from chess_anti_engine.mcts.puct import _value_scalar_from_wdl_logits
 from chess_anti_engine.mcts.puct_vl import PucvChunker
@@ -42,9 +42,9 @@ from .score import q_to_cp
 from .time_manager import Deadline
 from .walker_pool import WalkerPool, WalkerPoolConfig
 
-# Minimum compiled-extension ABI this module requires (see _mcts_tree.c PyInit /
-# the stale-extension guard in SearchWorker.__init__). Bump in lockstep with the C.
-_REQUIRED_MCTS_ABI = 2
+# _REQUIRED_MCTS_ABI is imported from gumbel_c (canonical owner of the C-path ABI
+# contract), so the SearchWorker construction guard and the run_gumbel_root_many_c
+# entry guard agree on one value.
 
 # Saturated cp for TB-decisive positions. Matches what the NN-backed path
 # naturally emits when Q is pinned to ±1 by the SyzygyProbe's wdl override,
@@ -116,8 +116,11 @@ _DEFAULT_ABORT_FACTOR = 1.0
 # The decisiveness feature is the VISIT-share gap, not the root Q gap: the time-value
 # backtest (scripts/backtest_time_value.py) found visit-gap predicts "more search
 # won't change the move" ~1.5-2x better than the Q gap across the calibrated search
-# configs. First-cut threshold (visit share is in [0, 1]) — sweep with arena games.
-_ABORT_VISIT_GAP_MARGIN = 0.30
+# configs. 0.30 fired rarely in high-branching middlegames (the engine then searched
+# to the deadline on most moves); 0.25 lets the abort bank a touch more readily while
+# the consecutive-stable-chunks requirement still guards against premature banking.
+# Heuristic — sweep with arena games (visit share is in [0, 1]).
+_ABORT_VISIT_GAP_MARGIN = 0.25
 _ABORT_MIN_STABLE_CHUNKS = 2
 
 
@@ -1206,17 +1209,27 @@ class SearchWorker:
         if lead <= 0:
             actions, _ = self._filtered_root_visits(allowed_root_indices)
             if actions.size != 1:
+  # Unsettled (the survivor isn't the visit leader). _move_is_decided — the only
+  # updater of the per-chunk stability streak — is skipped on this early return, so
+  # reset the streak here: a flicker (lead>0, then lead<=0, then lead>0 again) must
+  # NOT count as consecutive stable chunks toward the stability-gated abort below.
+                self._abort_stable_chunks = 0
                 return False
-        if not self._move_is_decided(best, allowed_root_indices):
-  # Still-flipping choice or near-tie in visit share: keep searching.
-            return False
         elapsed = deadline.elapsed_ms()
         remaining_ms = optimum_ms - elapsed
-        if remaining_ms <= 0:
-            return True
-        nps = total_nodes / max(1, elapsed)
-        remaining_sims = nps * remaining_ms
-        return lead > abort_factor * remaining_sims
+  # Provable bank: a visit lead the runner-up cannot overtake within the remaining
+  # optimum (lead > factor * projected remaining sims) is decisive on its own — the
+  # played move can't change — so bank it even before the optimum and regardless of
+  # the stability streak.
+        if remaining_ms > 0:
+            nps = total_nodes / max(1, elapsed)
+            if lead > abort_factor * nps * remaining_ms:
+                return True
+  # Not (yet) provable: require the complexity gate — visit-share gap + consecutive
+  # best-move stability — and only bank once the optimum budget is actually spent.
+        if not self._move_is_decided(best, allowed_root_indices):
+            return False
+        return remaining_ms <= 0
 
     def run(
         self,

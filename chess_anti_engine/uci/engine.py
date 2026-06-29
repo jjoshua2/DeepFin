@@ -302,13 +302,16 @@ class Engine:
         emit_handshake(self._options)
 
     def _handle_isready(self) -> None:
-  # A setoption that reshaped the search path / evaluator since the last
-  # warmup left its cudagraph stale. Re-warm the CONFIGURED path here,
-  # BEFORE readyok, so the first real ``go`` (the clock starts after
-  # readyok in the standard handshake) never pays cold capture. Idempotent:
-  # warmup_search is best-effort and the flag is cleared so we don't warm
-  # again until the next reshaping setoption.
-        if self._warmup_dirty:
+  # A setoption that reshaped the search path / evaluator since the last warmup
+  # left its cudagraph stale. Re-warm the CONFIGURED path here, BEFORE readyok, so
+  # the first real ``go`` (the clock starts after readyok in the standard handshake)
+  # never pays cold capture. ONLY when idle: warmup_search drives self._worker.run,
+  # so re-warming while a ponder search is live on the same worker would race the
+  # shared tree / eval caches. On an isready mid-ponder, leave _warmup_dirty set and
+  # re-warm on the next idle isready rather than corrupting the live search.
+  # Idempotent: the flag is cleared so we don't warm again until the next reshape.
+        searching = self._search_thread is not None and self._search_thread.is_alive()
+        if self._warmup_dirty and not searching:
             self._warmup_dirty = False
             self.warmup_search()
         _println(format_readyok())
