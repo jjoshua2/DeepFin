@@ -123,10 +123,12 @@ def main() -> None:
 
     if args.gpu_mem_fraction is not None and str(args.device).startswith("cuda"):
         # Cap the SELECTED device (e.g. cuda:1), not just the current default one.
-        torch.cuda.set_per_process_memory_fraction(
-            float(args.gpu_mem_fraction), device=torch.device(args.device))
+        # torch rejects an index-less device, so resolve bare "cuda" -> current index.
+        dev_idx = (int(args.device.split(":", 1)[1]) if ":" in args.device
+                   else torch.cuda.current_device())
+        torch.cuda.set_per_process_memory_fraction(float(args.gpu_mem_fraction), device=dev_idx)
         print(f"[value-regret] GPU memory capped at fraction {args.gpu_mem_fraction} "
-              f"on {args.device}")
+              f"on cuda:{dev_idx}")
 
     positions = load_audit_set(args.audit_set)
     if args.max_positions > 0:
