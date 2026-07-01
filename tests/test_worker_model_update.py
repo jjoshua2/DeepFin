@@ -573,6 +573,7 @@ def test_every_live_key_is_transplanted() -> None:
     cases: dict[str, tuple[Any, Any, Any]] = {
         "selfplay_fraction": (0.30, 0.55, lambda st: st.game.selfplay_fraction),
         "sf_fast_ply_node_scale": (0.25, 0.6, lambda st: st.game.sf_fast_ply_node_scale),
+        "sf_label_nodes_cap": (0, 100_000, lambda st: st.game.sf_label_nodes_cap),
         "opponent_wdl_regret_limit": (0.04, 0.02, lambda st: st.opponent.wdl_regret_limit),
         "sf_nodes": (5000, 7000, lambda st: st.base_nodes),
     }

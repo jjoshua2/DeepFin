@@ -79,6 +79,20 @@ class GameConfig:
     # toward 1.0 only for a more consistently strong opponent (costs SF compute
     # on fast plies + a PID re-equilibration).
     sf_fast_ply_node_scale: float = 0.25
+    # Research bet (default 0 = off): cap the node budget of LABEL-ONLY SF
+    # queries (the selfplay P1 analysis queries) at this value, decoupling
+    # label cost from the PID-controlled OPPONENT budget. The PID ramps
+    # sf_nodes for opponent strength (winrate servo), but labels ride the same
+    # number: at ~700k nodes nearly every recorded selfplay ply pays a ~700k
+    # SF analysis, which dominates iteration wall time. The cp-logistic value
+    # label (sf_wdl_use_cp_logistic, slope ~0.006) can barely distinguish
+    # 100k-node cp from 700k-node cp, so the value anchor loses ~nothing; the
+    # MultiPV POLICY teachers (sf_policy/sf_p0/regret) do get a shallower
+    # teacher — that's the tradeoff to watch (audit teacher regret). Applies
+    # ONLY to label-only queries: curriculum opponent moves keep the full
+    # budget, and curriculum label reuse (free full-strength move futures) is
+    # untouched. See configs/exp_throughput_views.yaml.
+    sf_label_nodes_cap: int = 0
     sf_policy_temp: float = 0.25
     sf_policy_label_smooth: float = 0.05
     sf_wdl_use_cp_logistic: bool = False
@@ -147,6 +161,17 @@ class GameConfig:
   # expected SF regret directly. Default off (policy-sized shard field). Pairs
   # with train.w_sf_own_regret.
     record_sf_p0_regret: bool = False
+
+  # Research bet (default off): keep fast-ply (playout-capped, has_policy=False)
+  # records as VALUE-ONLY training rows instead of dropping them in finalize.
+  # This is the missing half of KataGo's playout-cap randomization: cheap plies
+  # exist to generate more games per compute, and their positions still carry
+  # valid outcome/search-WDL/moves_left targets (~4x value rows per game, zero
+  # extra SF cost — fast plies never get SF label queries). Policy heads stay
+  # masked out via has_policy=0 (losses.py already handles it). Mind the batch
+  # policy-density dilution (~1:4) and the positions-denominated replay window
+  # spanning ~4x fewer games. See configs/exp_throughput_views.yaml.
+    record_fast_ply_value: bool = False
 
 
 __all__ = [

@@ -1229,6 +1229,7 @@ class WorkerSession:
             state.game,
             selfplay_fraction=new_game.selfplay_fraction,
             sf_fast_ply_node_scale=new_game.sf_fast_ply_node_scale,
+            sf_label_nodes_cap=new_game.sf_label_nodes_cap,
         )
         opponent = dataclasses.replace(
             state.opponent, wdl_regret_limit=new_opp.wdl_regret_limit,
@@ -2250,7 +2251,7 @@ class WorkerSession:
   # curriculum throughput for ~2 iters (small-sample winrate spike).
     _RECO_LIVE_KEYS = (
         "selfplay_fraction", "opponent_wdl_regret_limit",
-        "sf_nodes", "sf_fast_ply_node_scale",
+        "sf_nodes", "sf_fast_ply_node_scale", "sf_label_nodes_cap",
     )
 
   # Fields in recommended_worker that affect gameplay and should trigger
@@ -2281,6 +2282,7 @@ class WorkerSession:
         "sf_wdl_use_cp_logistic", "sf_wdl_cp_slope", "sf_wdl_cp_draw_width",
         "input_history_encoding", "record_lc0_root_input", "history_rep_fix",
         "record_dense_sf_policy", "record_sf_p0_policy", "record_sf_p0_regret",
+        "record_fast_ply_value",
         "categorical_blend_frac",
         "categorical_search_blend_frac",
         # Syzygy knobs affect adjudication + in-search overrides — without a
@@ -2392,6 +2394,7 @@ class WorkerSession:
                 sf_fast_ply_node_scale=self._resolve_reco(
                     reco, "sf_fast_ply_node_scale", 0.25,
                 ),
+                sf_label_nodes_cap=self._resolve_reco(reco, "sf_label_nodes_cap", 0, int),
                 sf_policy_temp=self._resolve_reco(reco, "sf_policy_temp", 0.25),
                 sf_policy_label_smooth=self._resolve_reco(reco, "sf_policy_label_smooth", 0.05),
                 sf_wdl_use_cp_logistic=bool(reco.get("sf_wdl_use_cp_logistic", False)),
@@ -2415,6 +2418,7 @@ class WorkerSession:
                 record_dense_sf_policy=bool(reco.get("record_dense_sf_policy", True)),
                 record_sf_p0_policy=bool(reco.get("record_sf_p0_policy", False)),
                 record_sf_p0_regret=bool(reco.get("record_sf_p0_regret", False)),
+                record_fast_ply_value=bool(reco.get("record_fast_ply_value", False)),
                 categorical_blend_frac=float(reco.get("categorical_blend_frac", 0.0)),
                 categorical_search_blend_frac=float(
                     reco.get("categorical_search_blend_frac", 0.0)

@@ -150,6 +150,39 @@ def test_finalize_flush_waits_for_pending_replay_kept_labels() -> None:
     assert rec.sf_wdl is not None
 
 
+def test_label_nodes_cap_applies_to_selfplay_label_queries() -> None:
+    state = _state(has_policy=True, game=GameConfig(sf_label_nodes_cap=40))
+
+    submitted = submit_async_sf_label_queries(state, [0])
+
+    assert submitted == 1
+    assert state.stockfish.calls[0]["nodes"] == 40
+
+
+def test_label_nodes_cap_never_raises_the_budget() -> None:
+    state = _state(has_policy=True, game=GameConfig(sf_label_nodes_cap=10_000))
+
+    submit_async_sf_label_queries(state, [0])
+
+    assert state.stockfish.calls[0]["nodes"] == 100  # min(base, cap)
+
+
+def test_label_nodes_cap_leaves_curriculum_moves_at_full_budget() -> None:
+    state = _state(has_policy=True, game=GameConfig(sf_label_nodes_cap=40))
+
+    submit_async_curriculum_move_queries(state, [0])
+
+    assert state.stockfish.calls[0]["nodes"] == 100
+
+
+def test_label_nodes_cap_off_by_default() -> None:
+    state = _state(has_policy=True)
+
+    submit_async_sf_label_queries(state, [0])
+
+    assert state.stockfish.calls[0]["nodes"] == 100
+
+
 def test_curriculum_move_queries_can_use_separate_low_node_budget() -> None:
     state = _state(has_policy=True, sf_move_nodes=10)
 

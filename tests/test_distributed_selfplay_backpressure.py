@@ -465,6 +465,56 @@ def test_distributed_ingest_budget_uses_matching_positions_not_stale_backlog(tmp
     assert budget["steps"] == 5
 
 
+def test_train_step_budget_views_targeting_overrides_window_fraction() -> None:
+    """train_views_per_position holds samples/ingest fixed instead of tracking
+    the window: budget = views * fresh positions, NOT fraction * replay_size."""
+    budget = _compute_train_step_budget(
+        positions_added=12_000,
+        imported_samples=0,
+        replay_size=1_000_000,
+        batch_size=512,
+        accum_steps=1,
+        base_max_steps=800,
+        train_window_fraction=0.04,   # would give 40_000 samples — must be ignored
+        train_views_per_position=2.5,
+    )
+    assert budget["target_sample_budget"] == 30_000  # 2.5 * 12_000
+    assert budget["steps"] == 59  # ceil(30_000 / 512)
+    # window fraction target still reported for metrics continuity
+    assert budget["window_target_samples"] == 40_000
+
+
+def test_train_step_budget_views_targeting_scales_with_ingest() -> None:
+    """4x more ingest (e.g. fast-ply value rows) -> 4x the step budget at the
+    same views target: the reuse ratio stays invariant."""
+    def budget_for(positions_added: int) -> dict[str, int]:
+        return _compute_train_step_budget(
+            positions_added=positions_added,
+            imported_samples=0, replay_size=1_000_000, batch_size=512,
+            accum_steps=1, base_max_steps=10_000, train_window_fraction=0.04,
+            train_views_per_position=2.5,
+        )
+
+    small = budget_for(12_000)
+    large = budget_for(48_000)
+    assert large["target_sample_budget"] == 4 * small["target_sample_budget"]
+
+
+def test_train_step_budget_views_zero_keeps_window_fraction_behavior() -> None:
+    budget = _compute_train_step_budget(
+        positions_added=2_000,
+        imported_samples=0,
+        replay_size=50_000,
+        batch_size=256,
+        accum_steps=4,
+        base_max_steps=100,
+        train_window_fraction=0.10,
+        train_views_per_position=0.0,
+    )
+    assert budget["target_sample_budget"] == 5_000
+    assert budget["steps"] == 5
+
+
 def test_distributed_ingest_timeout_does_not_wait_for_empty_inbox_after_prev_cap(
     tmp_path: Path,
     monkeypatch,

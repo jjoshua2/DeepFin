@@ -653,7 +653,16 @@ def _build_replay_samples(
             continue
         if float(rec.keep_prob) < 1.0 and state.rng.random() > float(rec.keep_prob):
             continue
-        if not bool(rec.has_policy):
+        if not bool(rec.has_policy) and not bool(
+            getattr(state.game, "record_fast_ply_value", False)
+        ):
+            # Fast-ply (playout-capped) records are dropped by default. With
+            # record_fast_ply_value they become value-only rows (has_policy=0):
+            # outcome/search-WDL/moves_left are valid targets regardless of sim
+            # count, and losses.py masks every policy head by has_policy — the
+            # KataGo playout-cap design trains value on ALL plies for exactly
+            # this reason. Fast plies never get SF label queries either way
+            # (_slot_latest_record_needs_sf_label gates on has_policy).
             continue
 
         wdl = _result_to_wdl(result, pov_white=rec.pov_color == chess.WHITE)

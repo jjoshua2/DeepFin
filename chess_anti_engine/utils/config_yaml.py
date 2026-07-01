@@ -59,6 +59,7 @@ _CORE_KEYS = (
 # The section is just visual grouping — keys use the same names as code.
 _STOCKFISH_KEYS = (
     "stockfish_path", "sf_nodes", "sf_move_nodes", "sf_fast_ply_node_scale",
+    "sf_label_nodes_cap",
     "sf_workers", "sf_multipv", "sf_hash_mb", "sf_nice",
     "sf_pid_enabled",
     "sf_pid_target_winrate", "sf_pid_ema_alpha",
@@ -147,6 +148,7 @@ _SELFPLAY_KEYS = (
     "record_dense_sf_policy",
     "record_sf_p0_policy",
     "record_sf_p0_regret",
+    "record_fast_ply_value",
 )
 
 # model section: mostly 1:1 except kind→model and use_smolgen→no_smolgen (inverted).
@@ -174,6 +176,7 @@ _TRAIN_KEYS = (
     "aurora_polar_method", "aurora_polar_dtype", "aurora_polar_safety",
     "cosmos_rank", "cosmos_gamma",
     "lr", "batch_size", "train_steps", "train_window_fraction",
+    "train_views_per_position",
     "no_amp", "feature_dropout_p", "rebuild_sf_targets", "sf_policy_sparse_ce",
     "rebuild_categorical_target",
     "replay_upgrade_v1_planes",
