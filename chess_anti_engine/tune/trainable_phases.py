@@ -322,6 +322,7 @@ def _run_training_and_gating(
             accum_steps=int(accum_steps),
             base_max_steps=int(tc.train_steps),
             train_window_fraction=float(max(0.0, tc.train_window_fraction)),
+            train_views_per_position=float(max(0.0, tc.train_views_per_position)),
         )
         steps = int(train_budget["steps"])
         target_sample_budget = int(train_budget["target_sample_budget"])

@@ -232,3 +232,80 @@ def test_build_replay_samples_records_producer_input_history_encoding() -> None:
 
     assert len(samples) == 1
     assert samples[0].input_history_encoding == "lc0_root_legacy_meta"
+
+
+def _fastply_record(*, ply_index: int, has_policy: bool) -> _NetRecord:
+    policy = np.zeros((POLICY_SIZE,), dtype=np.float32)
+    policy[0] = 1.0
+    return _NetRecord(
+        x=np.zeros((146, 8, 8), dtype=np.float32),
+        policy_probs=policy,
+        net_wdl_est=np.array([0.0, 1.0, 0.0], dtype=np.float32),
+        search_wdl_est=np.array([0.6, 0.3, 0.1], dtype=np.float32),
+        pov_color=chess.WHITE,
+        ply_index=ply_index,
+        has_policy=has_policy,
+        priority=1.0,
+        sample_weight=1.0,
+        keep_prob=1.0,
+    )
+
+
+def _fastply_state(*, record_fast_ply_value: bool) -> Any:
+    return cast(Any, SimpleNamespace(
+        selfplay_arr=[True],
+        starting_boards=[chess.Board()],
+        opening_source_arr=["unit"],
+        move_idx_history=[[]],
+        rng=np.random.default_rng(1),
+        game=SimpleNamespace(
+            categorical_bins=32,
+            hlgauss_sigma=0.04,
+            max_plies=240,
+            policy_encoding="az_4672",
+            soft_policy_temp=1.0,
+            input_history_encoding="legacy",
+            history_rep_fix=False,
+            record_fast_ply_value=record_fast_ply_value,
+        ),
+    ))
+
+
+def test_build_replay_samples_drops_fast_ply_records_by_default() -> None:
+    records = [
+        _fastply_record(ply_index=0, has_policy=True),
+        _fastply_record(ply_index=1, has_policy=False),
+    ]
+    samples = _build_replay_samples(
+        _fastply_state(record_fast_ply_value=False), 0, records,
+        result="1-0", tb_policy_overrides={},
+        vol_targets=[None, None], sf_vol_targets=[None, None],
+        total_plies_played=2,
+        ply_to_index={0: 0, 1: 1},
+    )
+    assert len(samples) == 1
+    assert samples[0].has_policy is True
+
+
+def test_build_replay_samples_keeps_fast_ply_records_as_value_rows() -> None:
+    records = [
+        _fastply_record(ply_index=0, has_policy=True),
+        _fastply_record(ply_index=1, has_policy=False),
+    ]
+    samples = _build_replay_samples(
+        _fastply_state(record_fast_ply_value=True), 0, records,
+        result="1-0", tb_policy_overrides={},
+        vol_targets=[None, None], sf_vol_targets=[None, None],
+        total_plies_played=2,
+        ply_to_index={0: 0, 1: 1},
+    )
+    assert len(samples) == 2
+    fast = samples[1]
+    assert fast.has_policy is False
+    # Value-side targets are fully populated on the fast row: outcome WDL is
+    # from the fast ply's own POV (white won, black to move at ply 1 -> loss),
+    # search-root WDL is carried, and no SF fields are fabricated.
+    assert fast.wdl_target == 0  # pov_color WHITE in this fixture, result 1-0
+    assert fast.search_wdl is not None
+    assert fast.sf_wdl is None
+    assert fast.moves_left is not None

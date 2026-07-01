@@ -55,13 +55,24 @@ def _compute_train_step_budget(
     accum_steps: int,
     base_max_steps: int,
     train_window_fraction: float,
+    train_views_per_position: float = 0.0,
 ) -> dict[str, int]:
     effective_batch_size = max(1, int(batch_size) * max(1, int(accum_steps)))
     window_target_samples = int(math.ceil(float(train_window_fraction) * max(0, int(replay_size))))
-    target_sample_budget = max(
-        int(positions_added) + int(imported_samples),
-        int(window_target_samples),
-    )
+    fresh_samples = max(0, int(positions_added)) + max(0, int(imported_samples))
+    if float(train_views_per_position) > 0.0:
+        # Views-targeting mode: hold trained-samples-per-ingested-position at a
+        # fixed ratio instead of a fixed fraction of the window. This keeps the
+        # replay-reuse ratio invariant when ingest volume changes (fast-ply
+        # value rows, label-cost cuts, PID node moves all shift games/iter),
+        # where a window fraction silently drifts the reuse ratio. AZ ~1 view,
+        # KataGo ~4; 2-3 is the intended operating range.
+        views_target_samples = int(
+            math.ceil(float(train_views_per_position) * float(fresh_samples))
+        )
+        target_sample_budget = max(fresh_samples, views_target_samples)
+    else:
+        target_sample_budget = max(fresh_samples, int(window_target_samples))
     target_steps = max(1, int(math.ceil(float(target_sample_budget) / float(effective_batch_size))))
     if int(imported_samples) > 0:
         steps = int(target_steps)
