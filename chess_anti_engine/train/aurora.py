@@ -240,22 +240,22 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
         adam_betas: tuple[float, float] = (0.9, 0.95),
         adam_eps: float = 1e-8,
     ) -> None:
-        defaults = dict(
-            lr=0.0,
-            weight_decay=0.0,
-            use_aurora=False,
-            aurora_uw_floor=0.0,
-            betas=adam_betas,
-            eps=float(adam_eps),
-            aurora_momentum=float(aurora_momentum),
-            aurora_nesterov=bool(aurora_nesterov),
-            aurora_pp_iterations=int(aurora_pp_iterations),
-            aurora_pp_beta=float(aurora_pp_beta),
-            aurora_polar_steps=int(aurora_polar_steps),
-            aurora_polar_method=str(aurora_polar_method),
-            aurora_polar_dtype="auto" if aurora_polar_dtype is None else aurora_polar_dtype,
-            aurora_polar_safety=float(aurora_polar_safety),
-        )
+        defaults = {
+            "lr": 0.0,
+            "weight_decay": 0.0,
+            "use_aurora": False,
+            "aurora_uw_floor": 0.0,
+            "betas": adam_betas,
+            "eps": float(adam_eps),
+            "aurora_momentum": float(aurora_momentum),
+            "aurora_nesterov": bool(aurora_nesterov),
+            "aurora_pp_iterations": int(aurora_pp_iterations),
+            "aurora_pp_beta": float(aurora_pp_beta),
+            "aurora_polar_steps": int(aurora_polar_steps),
+            "aurora_polar_method": str(aurora_polar_method),
+            "aurora_polar_dtype": "auto" if aurora_polar_dtype is None else aurora_polar_dtype,
+            "aurora_polar_safety": float(aurora_polar_safety),
+        }
         super().__init__(params, defaults)
         self.last_uw_stats: dict[str, float] = {}
 

@@ -23,16 +23,16 @@ class MuonWithAuxAdam(torch.optim.Optimizer):
         adam_betas: tuple[float, float] = (0.9, 0.95),
         adam_eps: float = 1e-8,
     ) -> None:
-        defaults = dict(
-            lr=0.0,
-            weight_decay=0.0,
-            use_muon=False,
-            betas=adam_betas,
-            eps=float(adam_eps),
-            muon_momentum=float(muon_momentum),
-            muon_nesterov=bool(muon_nesterov),
-            muon_ns_steps=int(muon_ns_steps),
-        )
+        defaults = {
+            "lr": 0.0,
+            "weight_decay": 0.0,
+            "use_muon": False,
+            "betas": adam_betas,
+            "eps": float(adam_eps),
+            "muon_momentum": float(muon_momentum),
+            "muon_nesterov": bool(muon_nesterov),
+            "muon_ns_steps": int(muon_ns_steps),
+        }
         super().__init__(params, defaults)
 
     @staticmethod

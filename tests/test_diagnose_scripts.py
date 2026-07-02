@@ -148,8 +148,7 @@ def _run_diagnostic_script(script: str, replay_dir: Path, *extra: str) -> subpro
         cwd=ROOT,
         env=env,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=False,
         timeout=60,
     )
@@ -357,8 +356,7 @@ def test_diagnostic_replay_utils_import_does_not_load_torch() -> None:
         cwd=ROOT,
         env=env,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=False,
         timeout=30,
     )

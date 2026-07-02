@@ -631,15 +631,15 @@ def run_tune(
         scheduler_name=scheduler_name, base_config=base_config, metric=metric, mode=mode,
     )
 
-    tune_config_kwargs: dict = dict(
-        num_samples=int(num_samples),
-        scheduler=scheduler,
-        max_concurrent_trials=int(base_config.get("max_concurrent_trials", num_samples)),
+    tune_config_kwargs: dict = {
+        "num_samples": int(num_samples),
+        "scheduler": scheduler,
+        "max_concurrent_trials": int(base_config.get("max_concurrent_trials", num_samples)),
   # The tune path uses the function-style trainable API, which does not
   # implement reset_config(). Reusing actors under GPBT/PBT causes Ray to
   # error during perturb/exploit when it attempts an in-place config reset.
-        reuse_actors=False,
-    )
+        "reuse_actors": False,
+    }
     if search_alg is not None:
         tune_config_kwargs["search_alg"] = search_alg
 

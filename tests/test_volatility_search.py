@@ -249,7 +249,7 @@ def test_high_volatility_retains_more_candidates(mechanism):
     del mechanism
     boards = _random_positions(6, seed=21)
     anchor = 0.05
-    kwargs = dict(volatility_q_scale=1.0, volatility_anchor=anchor)
+    kwargs = {"volatility_q_scale": 1.0, "volatility_anchor": anchor}
 
     high = _StubNet(volatility=anchor * 4.0)
     low = _StubNet(volatility=anchor / 4.0)

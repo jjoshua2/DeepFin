@@ -12,7 +12,8 @@ from __future__ import annotations
 import sys
 import threading
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
+from collections.abc import Callable
 
 import chess
 
@@ -82,7 +83,7 @@ def _attach_log_file(path: str) -> None:
     _println(f"info string LogFile attached: {path!r}")
 
 
-def emit_handshake(options: "EngineOptions") -> None:
+def emit_handshake(options: EngineOptions) -> None:
     """Print the UCI `uci` response — id, options, uciok — using ``options``
     defaults. Kept out of the Engine class so ``__main__`` can reply to the
     GUI before model load finishes (standard Lc0 pattern: the handshake is

@@ -26,7 +26,8 @@ import threading
 import time
 from dataclasses import dataclass
 from collections.abc import Sequence
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 import numpy as np
 
@@ -227,7 +228,7 @@ class MultiGpuPucvPool:
             self.close()
             raise self._init_errors[0]
 
-    def __enter__(self) -> "MultiGpuPucvPool":
+    def __enter__(self) -> MultiGpuPucvPool:
         return self
 
     def __exit__(self, *_args) -> None:

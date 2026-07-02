@@ -210,27 +210,27 @@ def main():
     deadline = t_start + args.hours * 3600
     cum_w = cum_d = cum_l = cum_games = cum_plies = 0
 
-    sp_kw: dict[str, Any] = dict(
-        device=device, rng=rng, stockfish=sf,
-        opponent=OpponentConfig(),
-        temp=TemperatureConfig(
+    sp_kw: dict[str, Any] = {
+        "device": device, "rng": rng, "stockfish": sf,
+        "opponent": OpponentConfig(),
+        "temp": TemperatureConfig(
             temperature=1.0, drop_plies=0, after=0.0,
             decay_start_move=20, decay_moves=60, endgame=0.6,
         ),
-        search=SearchConfig(
+        "search": SearchConfig(
             simulations=args.mcts_simulations, mcts_type="gumbel",
             playout_cap_fraction=0.25, fast_simulations=8,
             fpu_reduction=1.2, fpu_at_root=1.0,
         ),
-        opening=OpeningConfig(random_start_plies=4),
-        diff_focus=DiffFocusConfig(),
-        game=GameConfig(
+        "opening": OpeningConfig(random_start_plies=4),
+        "diff_focus": DiffFocusConfig(),
+        "game": GameConfig(
             max_plies=args.max_plies, selfplay_fraction=0.0,
             sf_policy_temp=0.25, sf_policy_label_smooth=0.05,
             timeout_adjudication_threshold=0.995, volatility_source="raw",
             categorical_bins=32, hlgauss_sigma=0.04,
         ),
-    )
+    }
 
     log = []
     try:

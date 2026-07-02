@@ -135,7 +135,7 @@ class GameRecord:
     plies: int
     start_board: chess.Board
     moves: tuple[chess.Move, ...]
-    move_records: tuple["MoveRecord", ...]
+    move_records: tuple[MoveRecord, ...]
     termination: str = "rules"
 
 
@@ -549,17 +549,25 @@ def play_one_game(
             *,
             white_after_s: float | None,
             black_after_s: float | None,
+            # loop values bound at definition time (called same-iteration only;
+            # defaults make that explicit and B023-safe)
+            _ply: int = plies + 1,
+            _color: str = "W" if white_to_move else "B",
+            _elapsed_s: float = elapsed_s,
+            _info: dict = info,
+            _white_before: float | None = white_before,
+            _black_before: float | None = black_before,
         ) -> None:
             move_record = MoveRecord(
-                ply=plies + 1,
-                color="W" if white_to_move else "B",
+                ply=_ply,
+                color=_color,
                 move=move_uci,
-                elapsed_s=elapsed_s,
-                nodes=_info_int(info.get("nodes")),
-                engine_time_s=_info_float(info.get("time")),
-                score_cp=_score_cp(info.get("score")),
-                white_clock_before_s=white_before,
-                black_clock_before_s=black_before,
+                elapsed_s=_elapsed_s,
+                nodes=_info_int(_info.get("nodes")),
+                engine_time_s=_info_float(_info.get("time")),
+                score_cp=_score_cp(_info.get("score")),
+                white_clock_before_s=_white_before,
+                black_clock_before_s=_black_before,
                 white_clock_after_s=white_after_s,
                 black_clock_after_s=black_after_s,
             )

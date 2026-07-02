@@ -126,14 +126,14 @@ class COSMOSFast(Optimizer):
         if ns_steps <= 0:
             raise ValueError(f"ns_steps must be >= 1, got {ns_steps}")
 
-        defaults = dict(
-            lr=lr,
-            betas=betas,
-            eps=eps,
-            weight_decay=weight_decay,
-            maximize=maximize,
-            use_cosmos_fast=False,
-        )
+        defaults = {
+            "lr": lr,
+            "betas": betas,
+            "eps": eps,
+            "weight_decay": weight_decay,
+            "maximize": maximize,
+            "use_cosmos_fast": False,
+        }
         super().__init__(params, defaults)
         self.lr_ratio = float(lr_ratio)
         self.rank = int(rank)

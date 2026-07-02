@@ -696,8 +696,8 @@ class _AttackAccum:
 
     def __init__(self) -> None:
         self.by_type: dict[chess.Color, dict[chess.PieceType, int]] = {
-            chess.WHITE: {pt: 0 for pt in chess.PIECE_TYPES},
-            chess.BLACK: {pt: 0 for pt in chess.PIECE_TYPES},
+            chess.WHITE: dict.fromkeys(chess.PIECE_TYPES, 0),
+            chess.BLACK: dict.fromkeys(chess.PIECE_TYPES, 0),
         }
         self.counts: dict[chess.Color, np.ndarray] = {
             chess.WHITE: np.zeros(64, dtype=np.int32),

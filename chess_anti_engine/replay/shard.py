@@ -95,7 +95,7 @@ def is_tmp_shard_name(name: str) -> bool:
     """In-progress upload staging name: tmp directories the server is mid-write
     on (or the ``._tmp_*`` ``Path.replace`` stems numpy/zarr leave behind).
     """
-    return name.startswith("tmp_") or name.startswith("._tmp_")
+    return name.startswith(("tmp_", "._tmp_"))
 
 
 @dataclass(frozen=True)
@@ -766,7 +766,7 @@ def extract_uploaded_shard_tar(
   # Each entry: (sample_attr, target_arr, has_arr, scalar_caster_or_None_for_array_asarray).
   # ``None`` ⇒ generic ``np.asarray(v, dtype=spec.dtype)`` — used for the float16
   # vector heads. Custom callables handle scalar packing (int/bool/half).
-_SCALAR_FIELDS: tuple[tuple[str, str, str, "object"], ...] = (
+_SCALAR_FIELDS: tuple[tuple[str, str, str, object], ...] = (
     (
         "priority_policy_kl", "priority_policy_kl", "has_priority_policy_kl",
         lambda v: np.float16(float(v)),

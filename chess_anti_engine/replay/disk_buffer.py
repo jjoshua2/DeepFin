@@ -56,7 +56,7 @@ _SCALAR_METADATA_FIELDS = (
 )
 
 # Lookup: value field name → has-flag field name (derived from shard.py's canonical pairs).
-_VALUE_TO_FLAG = {value: flag for value, flag in _OPTIONAL_STORAGE_PAIRS}
+_VALUE_TO_FLAG = dict(_OPTIONAL_STORAGE_PAIRS)
 
 
 def _batch_dims(arrs: dict[str, np.ndarray]) -> tuple[int, int, int]:
