@@ -475,3 +475,90 @@ def test_close_discards_late_prefetch_results(tmp_path) -> None:
 
     assert buf._prefetched_refresh is None
     buf.close()
+
+
+def _shaping_arrays(n_full: int, n_fast: int) -> dict[str, np.ndarray]:
+    """Rows: n_full full plies with sf-gap fields, then n_fast value-only rows.
+
+    Full rows carry priority 5.0 and sf gaps [0.0, 0.5, 1.0, ...]; fast rows
+    carry the neutral priority 1.0 and alternate low/high outcome surprise
+    (search agreed with z / search sign-flipped vs z).
+    """
+    n = n_full + n_fast
+    arrs = _arrays(4672, n=n)
+    arrs["has_policy"][:] = 0
+    arrs["has_policy"][:n_full] = 1
+    arrs["priority"][:n_full] = 5.0
+
+    gap = np.zeros((n,), dtype=np.float16)
+    has_gap = np.zeros((n,), dtype=np.uint8)
+    for i in range(n_full):
+        gap[i] = 0.5 * i
+        has_gap[i] = 1
+    arrs["priority_sf_search_gap"] = gap
+    arrs["has_priority_sf_search_gap"] = has_gap
+
+    search_wdl = np.zeros((n, 3), dtype=np.float16)
+    has_search = np.zeros((n,), dtype=np.uint8)
+    arrs["wdl_target"][:] = 0                      # every game a win (z=+1)
+    for j in range(n_fast):
+        i = n_full + j
+        has_search[i] = 1
+        if j % 2 == 0:
+            search_wdl[i] = (0.9, 0.1, 0.0)        # agrees with z: |1-0.9|=0.1
+        else:
+            search_wdl[i] = (0.0, 0.1, 0.9)        # sign-flip: |1-(-0.9)|=1.9
+    arrs["search_wdl"] = search_wdl
+    arrs["has_search_wdl"] = has_search
+    return arrs
+
+
+def test_shape_shuffle_priority_defaults_are_noop(tmp_path) -> None:
+    buf = DiskReplayBuffer(
+        100, shard_dir=tmp_path / "replay", rng=np.random.default_rng(0),
+        shuffle_cap=100, shard_size=100,
+    )
+    buf.add_many_arrays(_shaping_arrays(n_full=3, n_fast=4))
+    pri = buf._active_shuffle_priority()
+    np.testing.assert_allclose(pri[:3], 5.0)
+    np.testing.assert_allclose(pri[3:], 1.0)
+
+
+def test_shape_shuffle_priority_boosts_full_rows_by_sf_gap(tmp_path) -> None:
+    buf = DiskReplayBuffer(
+        100, shard_dir=tmp_path / "replay", rng=np.random.default_rng(0),
+        shuffle_cap=100, shard_size=100,
+    )
+    buf.sf_gap_priority_weight = 10.0
+    buf.add_many_arrays(_shaping_arrays(n_full=3, n_fast=2))
+    pri = buf._active_shuffle_priority()
+    # gaps 0.0 / 0.5 / 1.0 on stored priority 5.0
+    np.testing.assert_allclose(pri[:3], [5.0, 10.0, 15.0])
+    # fast rows untouched (demotion off)
+    np.testing.assert_allclose(pri[3:], 1.0)
+
+
+def test_shape_shuffle_priority_demotes_low_surprise_fast_rows(tmp_path) -> None:
+    buf = DiskReplayBuffer(
+        100, shard_dir=tmp_path / "replay", rng=np.random.default_rng(0),
+        shuffle_cap=100, shard_size=100,
+    )
+    buf.fast_low_surprise_priority = 0.2
+    buf.add_many_arrays(_shaping_arrays(n_full=2, n_fast=4))
+    pri = buf._active_shuffle_priority()
+    # full rows untouched (gap boost off)
+    np.testing.assert_allclose(pri[:2], 5.0)
+    # fast rows alternate agree/sign-flip: demoted / kept
+    np.testing.assert_allclose(pri[2:], [0.2, 1.0, 0.2, 1.0])
+
+
+def test_shape_shuffle_priority_skips_chunks_missing_fields(tmp_path) -> None:
+    buf = DiskReplayBuffer(
+        100, shard_dir=tmp_path / "replay", rng=np.random.default_rng(0),
+        shuffle_cap=100, shard_size=100,
+    )
+    buf.sf_gap_priority_weight = 10.0
+    buf.fast_low_surprise_priority = 0.2
+    buf.add_many_arrays(_arrays(4672, n=3))       # no gap / search_wdl columns
+    pri = buf._active_shuffle_priority()
+    np.testing.assert_allclose(pri, 1.0)

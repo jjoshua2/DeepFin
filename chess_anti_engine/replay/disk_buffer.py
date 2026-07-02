@@ -224,6 +224,11 @@ class DiskReplayBuffer:
 
   # KataGo-style surprise weighting: 50% uniform, 50% priority.
         self.surprise_mix = 0.5
+  # Surprise-priority shaping applied when rows enter the shuffle buffer
+  # (sampling frequency only — the stored shard arrays are untouched).
+  # Defaults are no-ops; the tune trainable pushes live values each iteration.
+        self.sf_gap_priority_weight = 0.0
+        self.fast_low_surprise_priority = 1.0
         self.draw_cap_frac = float(draw_cap_frac)
         self.wl_max_ratio = float(wl_max_ratio)
 
@@ -384,6 +389,7 @@ class DiskReplayBuffer:
         if bad.any():
             raw_pri = raw_pri.copy()
             raw_pri[bad] = 1.0
+        raw_pri = self._shape_shuffle_priority(arrs, raw_pri)
         self._shuffle_priority_store = np.concatenate(
             [self._shuffle_priority_store, raw_pri], axis=0,
         )
@@ -391,6 +397,52 @@ class DiskReplayBuffer:
             [self._shuffle_wdl_store, np.asarray(arrs["wdl_target"], dtype=np.int8)],
             axis=0,
         )
+
+    def _shape_shuffle_priority(self, arrs: dict[str, np.ndarray], pri: np.ndarray) -> np.ndarray:
+        """Surprise-priority shaping for the sampling store.
+
+        Full rows: boost by the stored ``priority_sf_search_gap`` (|SF value
+        label − own search value|). The diff-focus priority compares the net
+        to its own search, so it reads ~0 exactly where both are blind
+        together; the SF gap is the external signal that still sees those
+        rows.
+        Fast (value-only) rows arrive with a neutral priority of 1.0; demote
+        them to ``fast_low_surprise_priority`` unless the recorded 32-sim
+        search read missed the game outcome by a full point (sign-flip
+        surprise) — keeps low-information rows from crowding the surprise
+        half of sampling while the uniform half preserves coverage.
+        """
+        w_gap = float(self.sf_gap_priority_weight)
+        fast_low = float(self.fast_low_surprise_priority)
+        shape_full = (
+            w_gap > 0.0
+            and "priority_sf_search_gap" in arrs
+            and "has_priority_sf_search_gap" in arrs
+        )
+        shape_fast = (
+            fast_low < 1.0
+            and "search_wdl" in arrs
+            and "has_search_wdl" in arrs
+            and "has_policy" in arrs
+        )
+        if not (shape_full or shape_fast):
+            return pri
+        pri = pri.copy()
+        if shape_full:
+            gap = np.asarray(arrs["priority_sf_search_gap"], dtype=np.float32)
+            has = np.asarray(arrs["has_priority_sf_search_gap"], dtype=bool)
+            np.nan_to_num(gap, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+            pri[has] += w_gap * np.maximum(gap[has], 0.0)
+        if shape_fast:
+            hp = np.asarray(arrs["has_policy"], dtype=bool)
+            hs = np.asarray(arrs["has_search_wdl"], dtype=bool)
+            sw = np.asarray(arrs["search_wdl"], dtype=np.float32)
+            z = np.asarray(arrs["wdl_target"])
+            z_q = np.where(z == 0, 1.0, np.where(z == 2, -1.0, 0.0)).astype(np.float32)
+            zgap = np.abs(z_q - (sw[:, 0] - sw[:, 2]))
+            low = (~hp) & hs & (zgap < 1.0)
+            pri[low] = np.minimum(pri[low], fast_low)
+        return pri
 
     def _drop_oldest_from_shuffle(self, count: int) -> None:
         drop = int(max(0, count))

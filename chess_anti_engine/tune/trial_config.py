@@ -246,6 +246,12 @@ class TrialConfig:
     shuffle_refresh_shards: int = 3
     shuffle_draw_cap_frac: float = 0.90
     shuffle_wl_max_ratio: float = 1.5
+    # Surprise-priority shaping at shuffle append (live-reloadable). Weight
+    # added per unit of stored |SF value label - search value| on full rows;
+    # demotion priority for fast value-only rows whose 32-sim search read
+    # agreed (within a full point) with the game outcome. 0.0 / 1.0 = off.
+    replay_sf_gap_priority_weight: float = 0.0
+    replay_fast_low_surprise_priority: float = 1.0
     shared_shards_dir: str | None = None
 
   # --- Holdout / evaluation ---
@@ -580,6 +586,10 @@ class TrialConfig:
             shuffle_refresh_shards=int(config.get("shuffle_refresh_shards", 3)),
             shuffle_draw_cap_frac=float(config.get("shuffle_draw_cap_frac", 0.90)),
             shuffle_wl_max_ratio=float(config.get("shuffle_wl_max_ratio", 1.5)),
+            replay_sf_gap_priority_weight=float(
+                config.get("replay_sf_gap_priority_weight", 0.0)),
+            replay_fast_low_surprise_priority=float(
+                config.get("replay_fast_low_surprise_priority", 1.0)),
             shared_shards_dir=_get("shared_shards_dir", None),
 
   # --- Holdout / evaluation ---
