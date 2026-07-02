@@ -500,6 +500,25 @@ def test_train_step_budget_views_targeting_scales_with_ingest() -> None:
     assert large["target_sample_budget"] == 4 * small["target_sample_budget"]
 
 
+def test_train_step_budget_views_targeting_is_not_capped_by_base_max_steps() -> None:
+    """Views mode owns the step budget: base_max_steps (train_steps) must not
+    clamp it, or the fixed views/position contract silently breaks exactly
+    when ingest grows. The budget is proportional to fresh ingest, so it is
+    self-limiting."""
+    budget = _compute_train_step_budget(
+        positions_added=200_000,   # > 800*512/2.5 = 163_840 fresh rows
+        imported_samples=0,
+        replay_size=1_000_000,
+        batch_size=512,
+        accum_steps=1,
+        base_max_steps=800,        # exp_throughput_views train_steps
+        train_window_fraction=0.04,
+        train_views_per_position=2.5,
+    )
+    assert budget["target_sample_budget"] == 500_000  # 2.5 * 200_000
+    assert budget["steps"] == 977  # ceil(500_000 / 512), NOT min(977, 800)
+
+
 def test_train_step_budget_views_zero_keeps_window_fraction_behavior() -> None:
     budget = _compute_train_step_budget(
         positions_added=2_000,

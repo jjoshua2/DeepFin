@@ -653,15 +653,19 @@ def _build_replay_samples(
             continue
         if float(rec.keep_prob) < 1.0 and state.rng.random() > float(rec.keep_prob):
             continue
-        if not bool(rec.has_policy) and not bool(
+        row_has_policy = bool(rec.has_policy)
+        if not row_has_policy and not bool(
             getattr(state.game, "record_fast_ply_value", False)
         ):
             # Fast-ply (playout-capped) records are dropped by default. With
             # record_fast_ply_value they become value-only rows (has_policy=0):
             # outcome/search-WDL/moves_left are valid targets regardless of sim
-            # count, and losses.py masks every policy head by has_policy — the
-            # KataGo playout-cap design trains value on ALL plies for exactly
-            # this reason. Fast plies never get SF label queries either way
+            # count — the KataGo playout-cap design trains value on ALL plies
+            # for exactly this reason. losses.py masks only the MAIN policy
+            # head by has_policy; the aux heads use their own flags
+            # (has_policy_soft/has_future/has_sf_p0*), so every policy-head
+            # target is cleared below for fast rows to keep them value-only.
+            # Fast plies never get SF label queries either way
             # (_slot_latest_record_needs_sf_label gates on has_policy).
             continue
 
@@ -689,11 +693,21 @@ def _build_replay_samples(
             t,
             policy_vector_to_encoding(rec.policy_probs, policy_encoding=state.game.policy_encoding),
         )
-        soft = apply_policy_temperature(eff_probs, state.game.soft_policy_temp)
+        # Value-only fast rows (has_policy=0) must not carry aux policy-head
+        # targets: has_policy_soft/has_future are derived from target presence
+        # in the shard, so populating them here would train policy_soft /
+        # policy_future on low-sim visit distributions despite the row being
+        # value-only. Gate every policy-head target on THIS row's has_policy.
+        soft = (
+            apply_policy_temperature(eff_probs, state.game.soft_policy_temp)
+            if row_has_policy else None
+        )
 
         future = None
         future_lmask = None
-        future_idx = ply_to_index.get(int(rec.ply_index) + 2)
+        future_idx = (
+            ply_to_index.get(int(rec.ply_index) + 2) if row_has_policy else None
+        )
         # Don't gate on records[future_idx].has_policy — the future record's
         # MCTS distribution is valid supervision regardless of sim count
         # (fast-sim is noisier than full but still ground truth for "what the
@@ -733,7 +747,11 @@ def _build_replay_samples(
         # an SF label — i.e. two consecutive full plies, which only happens in
         # selfplay (the net plays every ply). See replay/buffer.py.
         sf_p0_policy_target = None
-        if getattr(state.game, "record_sf_p0_policy", False) and is_selfplay_slot:
+        if (
+            row_has_policy
+            and getattr(state.game, "record_sf_p0_policy", False)
+            and is_selfplay_slot
+        ):
             prev_idx = ply_to_index.get(int(rec.ply_index) - 1)
             prev_sf = (
                 records[prev_idx].sf_policy_target
@@ -750,7 +768,11 @@ def _build_replay_samples(
         # full ply's raw MultiPV is SF's read of THIS position. Per-move values in
         # [0,1] (best move -> 0.0), NOT a distribution. See replay/buffer.py.
         sf_p0_regret = None
-        if getattr(state.game, "record_sf_p0_regret", False) and is_selfplay_slot:
+        if (
+            row_has_policy
+            and getattr(state.game, "record_sf_p0_regret", False)
+            and is_selfplay_slot
+        ):
             prev_idx = ply_to_index.get(int(rec.ply_index) - 1)
             prev_raw = (
                 getattr(records[prev_idx], "sf_multipv_raw", None)
@@ -782,7 +804,7 @@ def _build_replay_samples(
                 priority_sf_search_gap=sf_search_gap,
                 game_id=game_id,
                 ply_index=int(rec.ply_index),
-                has_policy=bool(rec.has_policy),
+                has_policy=row_has_policy,
                 sf_wdl=rec.sf_wdl,
                 sf_multipv_raw=_padded_sparse_multipv(
                     getattr(rec, "sf_multipv_raw", None),

@@ -60,7 +60,8 @@ def _compute_train_step_budget(
     effective_batch_size = max(1, int(batch_size) * max(1, int(accum_steps)))
     window_target_samples = int(math.ceil(float(train_window_fraction) * max(0, int(replay_size))))
     fresh_samples = max(0, int(positions_added)) + max(0, int(imported_samples))
-    if float(train_views_per_position) > 0.0:
+    views_mode = float(train_views_per_position) > 0.0
+    if views_mode:
         # Views-targeting mode: hold trained-samples-per-ingested-position at a
         # fixed ratio instead of a fixed fraction of the window. This keeps the
         # replay-reuse ratio invariant when ingest volume changes (fast-ply
@@ -74,7 +75,12 @@ def _compute_train_step_budget(
     else:
         target_sample_budget = max(fresh_samples, int(window_target_samples))
     target_steps = max(1, int(math.ceil(float(target_sample_budget) / float(effective_batch_size))))
-    if int(imported_samples) > 0:
+    if int(imported_samples) > 0 or views_mode:
+        # Views mode owns the step budget: it is already proportional to fresh
+        # ingest (self-limiting), and capping it at base_max_steps would
+        # silently break the fixed views/position contract exactly when ingest
+        # grows — the mode's whole point. base_max_steps only caps the
+        # window-fraction mode.
         steps = int(target_steps)
     else:
         steps = min(int(target_steps), max(1, int(base_max_steps)))

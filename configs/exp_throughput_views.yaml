@@ -19,13 +19,17 @@
 #      risk to watch. Curriculum opponent moves keep the full PID budget.
 #   2. selfplay.record_fast_ply_value: true
 #      ~4x value rows per game at zero SF cost (fast plies never get SF
-#      queries). Policy heads masked via has_policy=0. Mind: policy-row batch
-#      density dilutes to ~1:4; the positions-denominated replay window spans
-#      ~4x fewer games.
+#      queries). Value-only rows: the main policy head is masked via
+#      has_policy=0 and finalize clears every aux policy-head target
+#      (soft/future/sf_p0*) so their presence flags stay 0 too. Mind:
+#      policy-row batch density dilutes to ~1:4; the positions-denominated
+#      replay window spans ~4x fewer games.
 #   3. train.train_views_per_position: 2.5
 #      Replace the window-fraction step budget with a fixed reuse ratio, so
 #      steps scale with ingest and the reuse ratio stays put while 1+2 multiply
-#      ingest volume. 2.5 sits in the user's target band (AZ ~1, KataGo ~4).
+#      ingest volume (train_steps no longer caps steps in this mode — the
+#      views budget is self-limiting). 2.5 sits in the user's target band
+#      (AZ ~1, KataGo ~4).
 #
 # Evaluation protocol (docs/eval_protocol.md):
 #   * Throughput: games/iter and iteration wall time vs the pre-change trend
