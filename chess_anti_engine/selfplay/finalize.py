@@ -291,7 +291,11 @@ def _compute_diff_focus_game_stats(
 
     return _DiffFocusGameStats(
         records=n,
-        kept=len(samples),
+        # Count only policy-bearing samples: with record_fast_ply_value the
+        # samples list also carries value-only fast rows (has_policy=0), which
+        # are not in the diff-focus-eligible denominator above — counting them
+        # would report keep rates > 1.0 and corrupt the replay-filter telemetry.
+        kept=sum(1 for s in samples if bool(s.has_policy)),
         keep_prob_sum=keep_sum,
         keep_limited=keep_limited,
         sample_weight_sum=weight_sum,
@@ -648,12 +652,31 @@ def _build_replay_samples(
     )
     suffix_sf_regret = _suffix_sf_regret_features(records, is_selfplay=is_selfplay_slot)
 
+    keep_fast_plies = bool(getattr(state.game, "record_fast_ply_value", False))
     for t, rec in enumerate(records):
-        if float(rec.sample_weight) < 1.0 and state.rng.random() > float(rec.sample_weight):
-            continue
-        if float(rec.keep_prob) < 1.0 and state.rng.random() > float(rec.keep_prob):
-            continue
-        if not bool(rec.has_policy):
+        row_has_policy = bool(rec.has_policy)
+        if row_has_policy:
+            # sample_weight / diff-focus keep_prob are POLICY-difficulty
+            # subsampling signals (q-surprise/KL of the search vs the prior),
+            # so they only gate policy rows. Value-only fast rows bypass them:
+            # subsampling value rows by policy difficulty would both shrink
+            # the fast-ply value multiplier and bias the kept rows toward
+            # positions where the low-sim search disagreed with the prior.
+            if float(rec.sample_weight) < 1.0 and state.rng.random() > float(rec.sample_weight):
+                continue
+            if float(rec.keep_prob) < 1.0 and state.rng.random() > float(rec.keep_prob):
+                continue
+        if not row_has_policy and not keep_fast_plies:
+            # Fast-ply (playout-capped) records are dropped by default. With
+            # record_fast_ply_value they become value-only rows (has_policy=0):
+            # outcome/search-WDL/moves_left are valid targets regardless of sim
+            # count — the KataGo playout-cap design trains value on ALL plies
+            # for exactly this reason. losses.py masks only the MAIN policy
+            # head by has_policy; the aux heads use their own flags
+            # (has_policy_soft/has_future/has_sf_p0*), so every policy-head
+            # target is cleared below for fast rows to keep them value-only.
+            # Fast plies never get SF label queries either way
+            # (_slot_latest_record_needs_sf_label gates on has_policy).
             continue
 
         wdl = _result_to_wdl(result, pov_white=rec.pov_color == chess.WHITE)
@@ -680,11 +703,21 @@ def _build_replay_samples(
             t,
             policy_vector_to_encoding(rec.policy_probs, policy_encoding=state.game.policy_encoding),
         )
-        soft = apply_policy_temperature(eff_probs, state.game.soft_policy_temp)
+        # Value-only fast rows (has_policy=0) must not carry aux policy-head
+        # targets: has_policy_soft/has_future are derived from target presence
+        # in the shard, so populating them here would train policy_soft /
+        # policy_future on low-sim visit distributions despite the row being
+        # value-only. Gate every policy-head target on THIS row's has_policy.
+        soft = (
+            apply_policy_temperature(eff_probs, state.game.soft_policy_temp)
+            if row_has_policy else None
+        )
 
         future = None
         future_lmask = None
-        future_idx = ply_to_index.get(int(rec.ply_index) + 2)
+        future_idx = (
+            ply_to_index.get(int(rec.ply_index) + 2) if row_has_policy else None
+        )
         # Don't gate on records[future_idx].has_policy — the future record's
         # MCTS distribution is valid supervision regardless of sim count
         # (fast-sim is noisier than full but still ground truth for "what the
@@ -724,7 +757,11 @@ def _build_replay_samples(
         # an SF label — i.e. two consecutive full plies, which only happens in
         # selfplay (the net plays every ply). See replay/buffer.py.
         sf_p0_policy_target = None
-        if getattr(state.game, "record_sf_p0_policy", False) and is_selfplay_slot:
+        if (
+            row_has_policy
+            and getattr(state.game, "record_sf_p0_policy", False)
+            and is_selfplay_slot
+        ):
             prev_idx = ply_to_index.get(int(rec.ply_index) - 1)
             prev_sf = (
                 records[prev_idx].sf_policy_target
@@ -741,7 +778,11 @@ def _build_replay_samples(
         # full ply's raw MultiPV is SF's read of THIS position. Per-move values in
         # [0,1] (best move -> 0.0), NOT a distribution. See replay/buffer.py.
         sf_p0_regret = None
-        if getattr(state.game, "record_sf_p0_regret", False) and is_selfplay_slot:
+        if (
+            row_has_policy
+            and getattr(state.game, "record_sf_p0_regret", False)
+            and is_selfplay_slot
+        ):
             prev_idx = ply_to_index.get(int(rec.ply_index) - 1)
             prev_raw = (
                 getattr(records[prev_idx], "sf_multipv_raw", None)
@@ -763,7 +804,12 @@ def _build_replay_samples(
                 relations=getattr(rec, "relations", None),
                 input_history_encoding=state.game.input_history_encoding,
                 history_rep_fix=bool(state.game.history_rep_fix),
-                priority=float(rec.priority),
+                # Value-only fast rows get a neutral priority: rec.priority is a
+                # difficulty score from the playout-capped (low-sim) search and
+                # is not calibrated against full-ply priorities, so letting it
+                # into the surprise-weighted sampler would systematically skew
+                # the policy/value row mix.
+                priority=float(rec.priority) if row_has_policy else 1.0,
                 priority_policy_kl=(
                     None if rec.priority_policy_kl is None else float(rec.priority_policy_kl)
                 ),
@@ -773,7 +819,7 @@ def _build_replay_samples(
                 priority_sf_search_gap=sf_search_gap,
                 game_id=game_id,
                 ply_index=int(rec.ply_index),
-                has_policy=bool(rec.has_policy),
+                has_policy=row_has_policy,
                 sf_wdl=rec.sf_wdl,
                 sf_multipv_raw=_padded_sparse_multipv(
                     getattr(rec, "sf_multipv_raw", None),

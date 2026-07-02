@@ -55,15 +55,47 @@ def _compute_train_step_budget(
     accum_steps: int,
     base_max_steps: int,
     train_window_fraction: float,
+    train_views_per_position: float = 0.0,
 ) -> dict[str, int]:
     effective_batch_size = max(1, int(batch_size) * max(1, int(accum_steps)))
     window_target_samples = int(math.ceil(float(train_window_fraction) * max(0, int(replay_size))))
-    target_sample_budget = max(
-        int(positions_added) + int(imported_samples),
-        int(window_target_samples),
-    )
+    fresh_samples = max(0, int(positions_added)) + max(0, int(imported_samples))
+    views_mode = float(train_views_per_position) > 0.0
+    if views_mode:
+        # Views-targeting mode: hold trained-samples-per-ingested-position at a
+        # fixed ratio instead of a fixed fraction of the window. This keeps the
+        # replay-reuse ratio invariant when ingest volume changes (fast-ply
+        # value rows, label-cost cuts, PID node moves all shift games/iter),
+        # where a window fraction silently drifts the reuse ratio. AZ ~1 view,
+        # KataGo ~4; 2-3 is the intended operating range.
+        #
+        # Imported (shared/donor-exchange) samples count at ONE view, not the
+        # views multiplier: they are re-used history, and the pre-views budget
+        # also processed an import exactly once. Multiplying an exploit-sized
+        # import by views would produce a single uncapped multi-epoch burst
+        # over stale donor data.
+        views_target_samples = int(
+            math.ceil(
+                float(train_views_per_position) * float(max(0, int(positions_added)))
+            )
+        ) + max(0, int(imported_samples))
+        target_sample_budget = max(fresh_samples, views_target_samples)
+        if fresh_samples < effective_batch_size:
+            # Ingest drought (less than one batch of fresh data, e.g. worker
+            # outage or backpressure trickle): a purely proportional budget
+            # would collapse to ~1 step while iterations keep advancing, so
+            # fall back to the window-fraction floor the pre-views budget
+            # guaranteed. Above one batch, proportionality IS the contract.
+            target_sample_budget = max(target_sample_budget, int(window_target_samples))
+    else:
+        target_sample_budget = max(fresh_samples, int(window_target_samples))
     target_steps = max(1, int(math.ceil(float(target_sample_budget) / float(effective_batch_size))))
-    if int(imported_samples) > 0:
+    if int(imported_samples) > 0 or views_mode:
+        # Views mode owns the step budget: it is already proportional to fresh
+        # ingest (self-limiting), and capping it at base_max_steps would
+        # silently break the fixed views/position contract exactly when ingest
+        # grows — the mode's whole point. base_max_steps only caps the
+        # window-fraction mode.
         steps = int(target_steps)
     else:
         steps = min(int(target_steps), max(1, int(base_max_steps)))

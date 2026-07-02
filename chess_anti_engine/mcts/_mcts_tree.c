@@ -3760,6 +3760,26 @@ static PyObject *MCTSTree_continue_gumbel_sims(MCTSTreeObject *self, PyObject *a
         Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
         return NULL;
     }
+    /* gss_finish_batch indexes rows as li*4672 / li*3 (raw stride assumption),
+     * so column counts must match EXACTLY; a mismatched array would silently
+     * read out of bounds and backprop garbage into the tree. */
+    if (PyArray_DIM(pol_arr, 0) < s->n_leaves ||
+        PyArray_DIM(pol_arr, 1) != GSS_POLICY_SIZE) {
+        PyErr_Format(PyExc_ValueError,
+            "pol must have shape (>=%d, %d); got (%ld, %ld)",
+            s->n_leaves, GSS_POLICY_SIZE,
+            (long)PyArray_DIM(pol_arr, 0), (long)PyArray_DIM(pol_arr, 1));
+        Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
+        return NULL;
+    }
+    if (PyArray_DIM(wdl_arr, 0) < s->n_leaves || PyArray_DIM(wdl_arr, 1) != 3) {
+        PyErr_Format(PyExc_ValueError,
+            "wdl must have shape (>=%d, 3); got (%ld, %ld)",
+            s->n_leaves,
+            (long)PyArray_DIM(wdl_arr, 0), (long)PyArray_DIM(wdl_arr, 1));
+        Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
+        return NULL;
+    }
 
     const float *pol_data = (const float *)PyArray_DATA(pol_arr);
     const float *wdl_data = (const float *)PyArray_DATA(wdl_arr);
@@ -3823,8 +3843,10 @@ static PyObject *MCTSTree_continue_gumbel_sims_legal_bf16(MCTSTreeObject *self, 
             (long)PyArray_DIM(pol_arr, 0), s->legal_flat_used);
         Py_DECREF(pol_arr); Py_DECREF(wdl_arr); return NULL;
     }
-    if (PyArray_DIM(wdl_arr, 0) < s->n_leaves || PyArray_DIM(wdl_arr, 1) < 3) {
-        PyErr_SetString(PyExc_ValueError, "wdl must have shape (n_leaves, >=3)");
+    /* Column count must be exactly 3 — gss_finish_batch_legal_bf16 reads rows
+     * at li*3 (raw stride), so a wider array would silently misalign. */
+    if (PyArray_DIM(wdl_arr, 0) < s->n_leaves || PyArray_DIM(wdl_arr, 1) != 3) {
+        PyErr_SetString(PyExc_ValueError, "wdl must have shape (>=n_leaves, 3)");
         Py_DECREF(pol_arr); Py_DECREF(wdl_arr); return NULL;
     }
 

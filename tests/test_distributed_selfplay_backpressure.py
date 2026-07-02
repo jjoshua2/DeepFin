@@ -30,6 +30,17 @@ from chess_anti_engine.tune.trainable_metrics import (
 from chess_anti_engine.worker import _manifest_poll_headers
 
 
+def _one_hot_policy_rows(n: int) -> np.ndarray:
+    """(n, POLICY_SIZE) rows with all mass on move 0.
+
+    Built by explicit assignment rather than np.pad: newer numpy stubs
+    reject the tuple-of-tuples pad_width overload under basedpyright.
+    """
+    policy = np.zeros((n, POLICY_SIZE), dtype=np.float32)
+    policy[:, 0] = 1.0
+    return policy
+
+
 class _FakeTrainer:
     def export_swa(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -390,10 +401,7 @@ def test_distributed_ingest_budget_uses_matching_positions_not_stale_backlog(tmp
         stale_path,
         arrs={
             "x": np.zeros((2, 146, 8, 8), dtype=np.float32),
-            "policy_target": np.pad(
-                np.ones((2, 1), dtype=np.float32),
-                ((0, 0), (0, 4671)),
-            ),
+            "policy_target": _one_hot_policy_rows(2),
             "wdl_target": np.zeros((2,), dtype=np.int8),
             "priority": np.ones((2,), dtype=np.float32),
             "has_policy": np.ones((2,), dtype=np.uint8),
@@ -409,10 +417,7 @@ def test_distributed_ingest_budget_uses_matching_positions_not_stale_backlog(tmp
         fresh_path,
         arrs={
             "x": np.zeros((2, 146, 8, 8), dtype=np.float32),
-            "policy_target": np.pad(
-                np.ones((2, 1), dtype=np.float32),
-                ((0, 0), (0, 4671)),
-            ),
+            "policy_target": _one_hot_policy_rows(2),
             "wdl_target": np.zeros((2,), dtype=np.int8),
             "priority": np.ones((2,), dtype=np.float32),
             "has_policy": np.ones((2,), dtype=np.uint8),
@@ -465,6 +470,75 @@ def test_distributed_ingest_budget_uses_matching_positions_not_stale_backlog(tmp
     assert budget["steps"] == 5
 
 
+def test_train_step_budget_views_targeting_overrides_window_fraction() -> None:
+    """train_views_per_position holds samples/ingest fixed instead of tracking
+    the window: budget = views * fresh positions, NOT fraction * replay_size."""
+    budget = _compute_train_step_budget(
+        positions_added=12_000,
+        imported_samples=0,
+        replay_size=1_000_000,
+        batch_size=512,
+        accum_steps=1,
+        base_max_steps=800,
+        train_window_fraction=0.04,   # would give 40_000 samples — must be ignored
+        train_views_per_position=2.5,
+    )
+    assert budget["target_sample_budget"] == 30_000  # 2.5 * 12_000
+    assert budget["steps"] == 59  # ceil(30_000 / 512)
+    # window fraction target still reported for metrics continuity
+    assert budget["window_target_samples"] == 40_000
+
+
+def test_train_step_budget_views_targeting_scales_with_ingest() -> None:
+    """4x more ingest (e.g. fast-ply value rows) -> 4x the step budget at the
+    same views target: the reuse ratio stays invariant."""
+    def budget_for(positions_added: int) -> dict[str, int]:
+        return _compute_train_step_budget(
+            positions_added=positions_added,
+            imported_samples=0, replay_size=1_000_000, batch_size=512,
+            accum_steps=1, base_max_steps=10_000, train_window_fraction=0.04,
+            train_views_per_position=2.5,
+        )
+
+    small = budget_for(12_000)
+    large = budget_for(48_000)
+    assert large["target_sample_budget"] == 4 * small["target_sample_budget"]
+
+
+def test_train_step_budget_views_targeting_is_not_capped_by_base_max_steps() -> None:
+    """Views mode owns the step budget: base_max_steps (train_steps) must not
+    clamp it, or the fixed views/position contract silently breaks exactly
+    when ingest grows. The budget is proportional to fresh ingest, so it is
+    self-limiting."""
+    budget = _compute_train_step_budget(
+        positions_added=200_000,   # > 800*512/2.5 = 163_840 fresh rows
+        imported_samples=0,
+        replay_size=1_000_000,
+        batch_size=512,
+        accum_steps=1,
+        base_max_steps=800,        # exp_throughput_views train_steps
+        train_window_fraction=0.04,
+        train_views_per_position=2.5,
+    )
+    assert budget["target_sample_budget"] == 500_000  # 2.5 * 200_000
+    assert budget["steps"] == 977  # ceil(500_000 / 512), NOT min(977, 800)
+
+
+def test_train_step_budget_views_zero_keeps_window_fraction_behavior() -> None:
+    budget = _compute_train_step_budget(
+        positions_added=2_000,
+        imported_samples=0,
+        replay_size=50_000,
+        batch_size=256,
+        accum_steps=4,
+        base_max_steps=100,
+        train_window_fraction=0.10,
+        train_views_per_position=0.0,
+    )
+    assert budget["target_sample_budget"] == 5_000
+    assert budget["steps"] == 5
+
+
 def test_distributed_ingest_timeout_does_not_wait_for_empty_inbox_after_prev_cap(
     tmp_path: Path,
     monkeypatch,
@@ -476,10 +550,7 @@ def test_distributed_ingest_timeout_does_not_wait_for_empty_inbox_after_prev_cap
 
     arrs = {
         "x": np.zeros((2, 146, 8, 8), dtype=np.float32),
-        "policy_target": np.pad(
-            np.ones((2, 1), dtype=np.float32),
-            ((0, 0), (0, 4671)),
-        ),
+        "policy_target": _one_hot_policy_rows(2),
         "wdl_target": np.zeros((2,), dtype=np.int8),
         "priority": np.ones((2,), dtype=np.float32),
         "has_policy": np.ones((2,), dtype=np.uint8),
@@ -536,10 +607,7 @@ def test_prefetched_shard_missing_from_inbox_is_not_reingested(tmp_path: Path) -
     stale_path = inbox_dir / "worker_00" / f"stale{LOCAL_SHARD_SUFFIX}"
     arrs = {
         "x": np.zeros((2, 146, 8, 8), dtype=np.float32),
-        "policy_target": np.pad(
-            np.ones((2, 1), dtype=np.float32),
-            ((0, 0), (0, 4671)),
-        ),
+        "policy_target": _one_hot_policy_rows(2),
         "wdl_target": np.zeros((2,), dtype=np.int8),
         "priority": np.ones((2,), dtype=np.float32),
         "has_policy": np.ones((2,), dtype=np.uint8),
@@ -584,10 +652,7 @@ def test_quarantine_inbox_shards_moves_preexisting_resume_backlog(tmp_path: Path
         shard_path,
         arrs={
             "x": np.zeros((1, 146, 8, 8), dtype=np.float32),
-            "policy_target": np.pad(
-                np.ones((1, 1), dtype=np.float32),
-                ((0, 0), (0, 4671)),
-            ),
+            "policy_target": _one_hot_policy_rows(1),
             "wdl_target": np.zeros((1,), dtype=np.int8),
             "priority": np.ones((1,), dtype=np.float32),
             "has_policy": np.ones((1,), dtype=np.uint8),
@@ -604,3 +669,39 @@ def test_quarantine_inbox_shards_moves_preexisting_resume_backlog(tmp_path: Path
     moved = list((tmp_path / "processed" / "_quarantine").glob(f"checkpoint_resume_*/*/*{LOCAL_SHARD_SUFFIX}"))
     assert len(moved) == 1
     assert not shard_path.exists()
+
+
+def test_train_step_budget_views_drought_falls_back_to_window_floor() -> None:
+    """Trickle ingest (< one batch of fresh data) must not collapse training to
+    ~1 step: the window-fraction floor the pre-views budget guaranteed kicks
+    back in."""
+    budget = _compute_train_step_budget(
+        positions_added=100,
+        imported_samples=0,
+        replay_size=1_000_000,
+        batch_size=512,
+        accum_steps=1,
+        base_max_steps=800,
+        train_window_fraction=0.04,
+        train_views_per_position=2.5,
+    )
+    assert budget["target_sample_budget"] == 40_000  # window floor, not 250
+    assert budget["steps"] == 79
+
+
+def test_train_step_budget_views_counts_imported_samples_at_one_view() -> None:
+    """Imported (shared/donor) samples are re-used history: they get exactly
+    one pass, like the pre-views budget gave them — not views x the import."""
+    budget = _compute_train_step_budget(
+        positions_added=12_000,
+        imported_samples=400_000,
+        replay_size=1_000_000,
+        batch_size=512,
+        accum_steps=1,
+        base_max_steps=800,
+        train_window_fraction=0.04,
+        train_views_per_position=2.5,
+    )
+    # 2.5 * 12_000 fresh + 400_000 imported (1 view), NOT 2.5 * 412_000.
+    assert budget["target_sample_budget"] == 430_000
+    assert budget["steps"] == 840  # uncapped on import iterations, as before

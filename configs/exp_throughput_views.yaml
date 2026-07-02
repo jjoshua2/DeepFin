@@ -1,3 +1,56 @@
+# EXPERIMENTAL: throughput + views-targeting triple — copy of pbt2_small.yaml
+# with three flag-gated changes (all default OFF in code; this file turns them on).
+#
+# The 2026-07-01 pipeline debug found the binding constraint is selfplay
+# throughput x search depth, not targets:
+#   * iter wall time ~40.5 min (was ~6.5 min in April); games/iter fell
+#     3520 (config target) -> ~560 as the PID ramped SF to ~700k nodes and
+#     LABEL queries rode the same budget (~9B SF nodes/iter of pure labeling).
+#   * 75% of net turns (fast plies) were generated, 32-sim searched, then
+#     DISCARDED in finalize — KataGo's playout-cap design keeps them as
+#     value rows (that is the point of the cap).
+#   * training occupies 2.4% of the iteration (91 steps; views/position 3.7).
+#
+# The three knobs (independently flag-gated, designed to compose):
+#   1. stockfish.sf_label_nodes_cap: 150000
+#      Decouple label cost from opponent strength. The cp-logistic value label
+#      (slope 0.006) is ~insensitive to 150k-vs-700k cp; the MultiPV POLICY
+#      teachers (sf_policy/sf_p0/regret) DO get a shallower teacher — the main
+#      risk to watch. Curriculum opponent moves keep the full PID budget.
+#   2. selfplay.record_fast_ply_value: true
+#      ~4x value rows per game at zero SF cost (fast plies never get SF
+#      queries). Value-only rows: the main policy head is masked via
+#      has_policy=0 and finalize clears every aux policy-head target
+#      (soft/future/sf_p0*) so their presence flags stay 0 too. Mind:
+#      policy-row batch density dilutes to ~1:4; the positions-denominated
+#      replay window spans ~4x fewer games.
+#   3. train.train_views_per_position: 2.5
+#      Replace the window-fraction step budget with a fixed reuse ratio, so
+#      steps scale with ingest and the reuse ratio stays put while 1+2 multiply
+#      ingest volume (train_steps no longer caps steps in this mode — the
+#      views budget is self-limiting). 2.5 sits in the user's target band
+#      (AZ ~1, KataGo ~4).
+#
+# Evaluation protocol (docs/eval_protocol.md):
+#   * Throughput: games/iter and iteration wall time vs the pre-change trend
+#     (expect games/iter to recover toward the 3520 target; sf_label_meta
+#     nodes column verifies the cap took).
+#   * Teacher quality guard: audit_targets.py --sims 32 net+search regret vs
+#     the pre-change baseline; SF-soft teacher regret itself will rise with
+#     the shallower label — judge the NET's trend, not the teacher's.
+#   * Value axis: value-head 1-ply regret (scripts/value_regret.py) and
+#     raw Brier/entropy trend over a window refill — this is where the fast-ply
+#     rows should show up.
+#   * Overtraining guard: test_loss vs train_loss gap must not widen at the
+#     held views ratio.
+# KILL THRESHOLDS (per knob, revertable independently):
+#   1. label cap: audit net+search regret worsens >2cp over a window refill
+#      -> raise cap or revert (live-tunable, no restart).
+#   2. fast-ply rows: value 1-ply regret flat AND test/train gap widens
+#      -> flip flag off (restart-gated).
+#   3. views target: test/train gap widens without value/policy gains
+#      -> drop to 2.0 or back to window_fraction (live-tunable).
+#
 # PBT2 (PB2) search config — small model, 10 parallel trials on RTX 5090 (32 GB)
 #
 # Run 8: Raise w_wdl/w_soft defaults to PBT-converged values; expand high bounds.
@@ -16,7 +69,7 @@
 #   150 games × ~20-30 pos = ~3k-5k new samples → up to 15 training steps (256 batch)
 
 seed: 0
-work_dir: runs/pbt2_small
+work_dir: runs/exp_throughput_views  # Isolated from production runs/pbt2_small: train.sh auto-resumes from $WORK_DIR/tune and run.py writes Tune/checkpoint/replay/server state under work_dir, so sharing the production tree would resume the live run with the experiment flags enabled. To warm-start from production, salvage-export a pool and pass --salvage-seed-pool-dir.
 device: cuda
 iterations: 750
 replay_window_start: 400000   # 2026-04-22 v4: was 20000 (truncated pool to 10/187 shards). Raised so salvage keeps all pool shards (~374k pos).
@@ -65,6 +118,7 @@ stockfish:
   stockfish_path: /home/josh/projects/chess/e2e_server/publish/stockfish
   sf_nodes: 5000           # 5k nodes: wider WDL spread so regret actually filters moves (was 1k where all 12 passed)
   sf_move_nodes: 0          # 0 = curriculum moves use the PID-controlled sf_nodes; don't weaken played SF moves by default.
+  sf_label_nodes_cap: 150000  # EXP: cap LABEL-ONLY SF queries (selfplay P1 analysis) at 150k nodes; the PID opponent budget (~700k) is untouched. Live-tunable. Sweep {100k, 150k, 250k}.
   sf_workers: 4
   sf_nice: 19              # Run SF at lowest CPU priority so search/dispatch/GPU batching wins contention.
   sf_multipv: 40            # Bumped from 20 (2026-04-29) to enrich sf_policy_t targets — measurement showed regret≤0.47 saturated top-20; multipv=40 widens tail for richer training distribution. Difficulty implication: opponent gets slightly weaker since more sub-optimal moves enter the regret-filter pool; PID will compensate via regret/nodes.
@@ -131,6 +185,7 @@ selfplay:
   games_per_iter_start: 3520   # match games_per_iter; ramp disabled. Live-reloadable.
   games_per_iter_ramp_iters: 0
   selfplay_fraction: 0.30  # 2026-04-24: 0.50→0.25; 2026-05-04: 0.25→0.30 (30% selfplay / 70% SF curriculum). test_policy_loss drifted 2.25→2.55 at iter 272-285; past runs at 75% SF worked better. Revert if regret/winrate stop moving or policy_loss doesn't recover.
+  record_fast_ply_value: true  # EXP: keep fast-ply records as value-only rows (has_policy=0) — the missing half of KataGo playout-cap randomization. ~4x value rows/game, zero extra SF cost. Restart-gated.
   selfplay_batch: 256   # Concurrent game slots per worker (always full via continuous recycling).
   max_plies: 450
   history_rep_fix: true  # 2026-06-17: lc0-root repetition-plane correctness fix; affects ~0.2% of positions; net-neutral-to-faster. Propagates as the replay window refills.
@@ -237,7 +292,8 @@ train:
   lr: 0.0001        # 2026-07-01: 0.0003→0.0001 flat-lower-LR experiment (user). Base LR; Aurora matrix params use matrix_lr_multiplier.
   batch_size: 512   # Aurora/arc-split run matches offline probe batch size; fits VRAM on 5090.
   train_steps: 800  # Raised for 2M buffer; window_fraction gives ~781 steps at full size.
-  train_window_fraction: 0.04  # Train on 4% of active replay cap; slow replay growth limits extra reuse while refilling.
+  train_window_fraction: 0.04  # INERT while train_views_per_position > 0 (views mode owns the step budget); still used as the ingest-drought floor and by non-views configs.  # Train on 4% of active replay cap; slow replay growth limits extra reuse while refilling.
+  train_views_per_position: 2.5  # EXP: hold trained-samples/ingested-position at 2.5 (AZ ~1, KataGo ~4) instead of a window fraction — steps auto-scale as ingest volume changes, so the reuse ratio can't silently drift when the two knobs above multiply ingest.
   # With ~10k new positions/iter and buffer growing by 2500/iter, each position
   # survives ~50 iters in the buffer and gets trained ~5 times before eviction.
   no_amp: false
@@ -341,18 +397,18 @@ tune:
   distributed_prefetch_shards: true
   distributed_async_test_eval: true
   distributed_async_test_eval_timeout_s: 120.0
-  distributed_worker_shared_cache_dir: /home/josh/projects/chess/runs/pbt2_small/server/worker_cache
+  distributed_worker_shared_cache_dir: /home/josh/projects/chess/runs/exp_throughput_views/server/worker_cache  # Isolated from production (see work_dir).
   distributed_min_workers_per_trial: 1
   distributed_max_worker_delta_per_rebalance: 1
   distributed_wait_timeout_seconds: 720  # 2026-05-19: 600->720 to give current-model selfplay more time after lowering stale backlog target.
   distributed_prev_model_max_fraction: 0.60  # 2026-05-19: raise 50%->60% to reduce alternating stale-discard timeout rows while keeping most data current-model.
   distributed_stale_pause_target_games: 1870  # 2026-05-28: scale with 3520 games/iter target.
   distributed_min_games_fraction: 0.90  # 2026-05-28: wait for 90% of target games before timing out.
-  distributed_server_port: 45453
+  distributed_server_port: 45463  # Distinct from production's 45453 so experiment workers can never hit (or be hit by) a live production server.
   distributed_server_host: 0.0.0.0
-  distributed_server_public_url: http://192.168.1.212:45453
-  distributed_server_root_override: /home/josh/projects/chess/runs/pbt2_small/server
-  tune_replay_root_override: /home/josh/projects/chess/runs/pbt2_small/replay
+  distributed_server_public_url: http://192.168.1.212:45463
+  distributed_server_root_override: /home/josh/projects/chess/runs/exp_throughput_views/server  # Isolated from production (see work_dir).
+  tune_replay_root_override: /home/josh/projects/chess/runs/exp_throughput_views/replay  # Isolated from production (see work_dir).
 
   # Disk-backed replay buffer: keeps ~1 GB per trial instead of ~10 GB
   shuffle_buffer_size: 25000  # In-memory shuffle buffer (run26 value)

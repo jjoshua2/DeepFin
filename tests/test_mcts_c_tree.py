@@ -520,3 +520,58 @@ def test_root_sigma_scale_matches_c_and_threads_to_final_policy() -> None:
     ratio = root_log[nz] / linear[nz]
     expected = _root_sigma_scale(max_visit=10, cfg=cfg) / _sigma_scale(max_visit=10, cfg=cfg)
     assert np.allclose(ratio, expected)
+
+
+def test_continue_gumbel_sims_rejects_mis_shaped_arrays() -> None:
+    """continue_gumbel_sims must reject pol/wdl arrays that don't match the
+    pending leaf batch. gss_finish_batch indexes rows at li*4672 / li*3 (raw
+    stride), so a short or mis-columned array would silently read out of
+    bounds and backprop garbage into the tree instead of erroring."""
+    cboard_cls = _require_cboard()
+    board = chess.Board()
+    cb = cboard_cls.from_board(board)
+    legal = cb.legal_move_indices()
+
+    tree = MCTSTree()
+    rid = tree.add_root(1, 0.0)
+    priors_legal = np.full(legal.size, 1.0 / legal.size, dtype=np.float64)
+    tree.expand(rid, legal.astype(np.int32), priors_legal)
+
+    pri = np.zeros(4672, dtype=np.float64)
+    pri[legal] = priors_legal
+    gum = np.zeros(4672, dtype=np.float64)
+    remaining = [int(legal[0]), int(legal[1])]
+    enc_buf = np.empty((64, 146, 8, 8), dtype=np.float32)
+
+    n_leaves = tree.start_gumbel_sims(
+        [cb], np.array([rid], dtype=np.int32), [remaining], [gum], [pri],
+        np.array([8], dtype=np.int32), np.array([0.0], dtype=np.float64),
+        0.1, 50.0, 2.5, 1.2, True, enc_buf, 0, 0, 0,
+    )
+    assert n_leaves is not None and int(n_leaves) > 0
+    n_leaves = int(n_leaves)
+
+    good_pol = np.zeros((n_leaves, 4672), dtype=np.float32)
+    good_wdl = np.zeros((n_leaves, 3), dtype=np.float32)
+
+    with pytest.raises(ValueError):  # too few policy rows
+        tree.continue_gumbel_sims(good_pol[: n_leaves - 1], good_wdl)
+    with pytest.raises(ValueError):  # wrong policy column count
+        tree.continue_gumbel_sims(good_pol[:, :1858], good_wdl)
+    with pytest.raises(ValueError):  # too few wdl rows
+        tree.continue_gumbel_sims(good_pol, good_wdl[: n_leaves - 1])
+    with pytest.raises(ValueError):  # wdl wider than 3 misaligns the li*3 stride
+        tree.continue_gumbel_sims(good_pol, np.zeros((n_leaves, 4), dtype=np.float32))
+
+    # Failed validation must not consume the pending batch: a well-formed
+    # call afterwards still runs the search to completion.
+    result = tree.continue_gumbel_sims(good_pol, good_wdl)
+    while result is not None:
+        n = int(result)
+        result = tree.continue_gumbel_sims(
+            np.zeros((n, 4672), dtype=np.float32),
+            np.zeros((n, 3), dtype=np.float32),
+        )
+    rem = tree.get_gumbel_remaining()
+    assert len(rem) == 1 and len(rem[0]) >= 1
+    assert all(int(a) in set(remaining) for a in rem[0])

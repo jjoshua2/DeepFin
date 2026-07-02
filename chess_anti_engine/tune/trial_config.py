@@ -108,6 +108,7 @@ class TrialConfig:
     accum_steps: int = 1
     train_steps: int = 25
     train_window_fraction: float = 0.0
+    train_views_per_position: float = 0.0
     test_steps: int = 10
     search_optimizer: bool = False
     feature_dropout_p: float = 0.0
@@ -195,6 +196,7 @@ class TrialConfig:
     record_dense_sf_policy: bool = True
     record_sf_p0_policy: bool = False
     record_sf_p0_regret: bool = False
+    record_fast_ply_value: bool = False
 
   # --- Diff focus ---
     diff_focus_enabled: bool = True
@@ -208,6 +210,7 @@ class TrialConfig:
     sf_nodes: int = 500
     sf_move_nodes: int = 0
     sf_fast_ply_node_scale: float = 0.25
+    sf_label_nodes_cap: int = 0
     sf_workers: int = 1
     sf_multipv: int = 1
     sf_hash_mb: int = 16
@@ -404,6 +407,7 @@ class TrialConfig:
             accum_steps=int(config.get("accum_steps", 1)),
             train_steps=int(config.get("train_steps", 25)),
             train_window_fraction=float(config.get("train_window_fraction", 0.0)),
+            train_views_per_position=float(config.get("train_views_per_position", 0.0)),
             test_steps=int(config.get("test_steps", 10)),
             search_optimizer=bool(config.get("search_optimizer", False)),
             feature_dropout_p=float(config.get("feature_dropout_p", 0.0)),
@@ -524,6 +528,7 @@ class TrialConfig:
             record_dense_sf_policy=bool(config.get("record_dense_sf_policy", True)),
             record_sf_p0_policy=bool(config.get("record_sf_p0_policy", False)),
             record_sf_p0_regret=bool(config.get("record_sf_p0_regret", False)),
+            record_fast_ply_value=bool(config.get("record_fast_ply_value", False)),
 
   # --- Diff focus ---
             diff_focus_enabled=bool(config.get("diff_focus_enabled", True)),
@@ -537,6 +542,7 @@ class TrialConfig:
             sf_nodes=int(config.get("sf_nodes", 500)),
             sf_move_nodes=int(config.get("sf_move_nodes", 0)),
             sf_fast_ply_node_scale=float(config.get("sf_fast_ply_node_scale", 0.25)),
+            sf_label_nodes_cap=int(config.get("sf_label_nodes_cap", 0)),
             sf_workers=int(config.get("sf_workers", 1)),
             sf_multipv=int(config.get("sf_multipv", 1)),
             sf_hash_mb=int(config.get("sf_hash_mb", 16)),

@@ -158,7 +158,9 @@ def _sf_played_move_diagnostics(
     return int(rank), max(0.0, best_score - played_score)
 
 
-def _eff_sf_nodes(state: SelfplayState, idx: int, *, for_move: bool = False) -> int | None:
+def _eff_sf_nodes(
+    state: SelfplayState, idx: int, *, for_move: bool = False, for_label: bool = False,
+) -> int | None:
     """Return the per-slot SF node budget, scaled down on fast-sim plies.
 
     On fast (playout-capped) plies the SF budget is scaled by
@@ -170,12 +172,23 @@ def _eff_sf_nodes(state: SelfplayState, idx: int, *, for_move: bool = False) -> 
     nodes. The scale only makes the opponent play cheaply on the ~75% of fast
     plies that are not training targets. Default 0.25 (see GameConfig); raise
     toward 1.0 only for a more consistently strong opponent at extra SF cost.
+
+    ``for_label`` marks label-only queries (selfplay P1 analysis — never a move
+    the opponent plays). When ``game.sf_label_nodes_cap`` > 0 those are capped
+    at that budget, decoupling label cost from the PID-ramped opponent budget.
+    Curriculum move queries (``for_move=True``) are never capped.
     """
+    if for_move and for_label:
+        raise ValueError("_eff_sf_nodes: a query cannot be both a move and a label")
     base_nodes = int(state.base_nodes)
     if for_move:
         move_nodes = int(getattr(state.game, "sf_move_nodes", 0) or 0)
         if move_nodes > 0:
             base_nodes = move_nodes
+    elif for_label:
+        label_cap = int(getattr(state.game, "sf_label_nodes_cap", 0) or 0)
+        if label_cap > 0:
+            base_nodes = min(base_nodes, label_cap)
     if base_nodes <= 0:
         return None
     if bool(state.last_net_full[idx]):
@@ -233,18 +246,21 @@ def _slot_latest_record_needs_sf_label(state: SelfplayState, idx: int) -> bool:
 
 def submit_sf_queries(
     state: SelfplayState, idxs: list[int], *, for_move: bool = False,
+    for_label: bool = False,
 ) -> dict[int, Any]:
     """Submit SF queries to the pool without blocking; return futures dict.
 
     Only valid when ``state.stockfish`` is a ``StockfishPool``.  The
     caller guards with ``isinstance`` (same pattern as the original
-    nested closure).
+    nested closure). Pass ``for_label=True`` for label-only queries so
+    ``sf_label_nodes_cap`` applies — omitting it silently runs the full
+    (PID-ramped) opponent budget.
     """
     assert isinstance(state.stockfish, StockfishPool)
     return {
         idx: state.stockfish.submit(
             state.cboards[idx].fen(),
-            nodes=_eff_sf_nodes(state, idx, for_move=for_move),
+            nodes=_eff_sf_nodes(state, idx, for_move=for_move, for_label=for_label),
             syzygy_path=_sf_syzygy_path_for_slot(state, idx),
         )
         for idx in idxs
@@ -342,7 +358,9 @@ def finish_sf_annotation_and_moves(
     """Collect SF results (from futures or synchronously), then process."""
     if not idxs:
         return
-    if attach_labels and not play_curriculum_moves:
+    label_pass = attach_labels and not play_curriculum_moves
+    label_only = label_pass and not for_move
+    if label_pass:
         idxs = [idx for idx in idxs if _slot_latest_record_needs_sf_label(state, idx)]
         if not idxs:
             return
@@ -352,7 +370,7 @@ def finish_sf_annotation_and_moves(
         futs = {
             idx: state.stockfish.submit(
                 state.cboards[idx].fen(),
-                nodes=_eff_sf_nodes(state, idx, for_move=for_move),
+                nodes=_eff_sf_nodes(state, idx, for_move=for_move, for_label=label_only),
                 syzygy_path=_sf_syzygy_path_for_slot(state, idx),
             )
             for idx in idxs
@@ -363,7 +381,7 @@ def finish_sf_annotation_and_moves(
             idx: _search_stockfish_sync(
                 state.stockfish,
                 state.cboards[idx].fen(),
-                nodes=_eff_sf_nodes(state, idx, for_move=for_move),
+                nodes=_eff_sf_nodes(state, idx, for_move=for_move, for_label=label_only),
                 syzygy_path=_sf_syzygy_path_for_slot(state, idx),
             )
             for idx in idxs
@@ -640,7 +658,7 @@ def submit_async_sf_label_queries(state: SelfplayState, idxs: list[int]) -> int:
             continue
         fut = state.stockfish.submit(
             state.cboards[idx].fen(),
-            nodes=_eff_sf_nodes(state, idx, for_move=False),
+            nodes=_eff_sf_nodes(state, idx, for_move=False, for_label=True),
             syzygy_path=_sf_syzygy_path_for_slot(state, idx),
         )
         state.pending_sf_labels.append(

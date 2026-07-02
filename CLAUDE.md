@@ -59,7 +59,7 @@ Salvage is driven entirely by CLI flags (`--salvage-seed-pool-dir`, `--salvage-r
 
 ## Configs
 
-- `configs/pbt2_small.yaml` — **Production config.** 384-dim, 9-layer model (~15M params). Distributed selfplay with shared inference broker, PID difficulty controller, PBT/GPBT hyperparameter search. All active training uses this.
+- `configs/pbt2_small.yaml` — **Production config.** 384-dim, 12-layer model (~46M params — per-layer Smolgen + 4 policy heads dominate the count). Distributed selfplay with shared inference broker, PID difficulty controller, PBT/GPBT hyperparameter search. All active training uses this.
 - `configs/default.yaml` — Reference config with BT3-scale model (768-dim, 15-layer, ~105M params). For future larger-model training.
 
 ## Evaluation & experiments
@@ -108,11 +108,11 @@ Transformer encoder-only backbone (`ChessNet` in `transformer.py`). BT4-aligned 
 
 | Head output | Shape | Training target | Target source | Loss | Weight knob |
 |---|---|---|---|---|---|
-| `policy` / `policy_own` | 4672 logits | `policy_t` (soft) | MCTS visit-count distribution at the move-selection temperature (`rec.policy_probs` from gumbel) | CE, legal-masked | `w_policy` |
-| `policy_soft` | 4672 logits | `policy_soft_t` (soft) | Same visit distribution as `policy_t`, retempered via `apply_policy_temperature(soft_policy_temp)` (typically softer) | CE, legal-masked | `w_soft` |
-| `policy_future` | 4672 logits | `future_policy_t` (soft) | The t+2 record's `policy_probs` — visit distribution at position t+2 (predict-own-reply) | CE, **no** mask | `w_future` |
+| `policy` / `policy_own` | 4672 logits | `policy_t` (soft) | Gumbel completed-Q **improved policy** over all legal moves (`rec.policy_probs` = softmax(log prior + σ(completed Q)) at the searched root — the paper's recommended target, NOT raw visit counts). Move-selection temperature affects only the played move, not this target. | CE, legal-masked | `w_policy` |
+| `policy_soft` | 4672 logits | `policy_soft_t` (soft) | Same improved policy as `policy_t`, retempered via `apply_policy_temperature(soft_policy_temp)` (typically softer) | CE, legal-masked | `w_soft` |
+| `policy_future` | 4672 logits | `future_policy_t` (soft) | The t+2 record's `policy_probs` — improved policy at position t+2 (predict-own-reply) | CE, **no** mask | `w_future` |
 | `policy_sf` | 4672 logits | `sf_policy_t` (soft) | Softmax over SF's MultiPV candidate WDL scores + label smoothing. `sf_move_index` is stored as the bestmove index but **not** used as a target — `policy_sf` trains on the soft distribution. **WDL saturation in decided positions can flatten this target**. | CE (soft), no mask | `w_sf_move` |
-| `wdl` | 3 logits | `wdl_t` (hard 0=W/1=D/2=L) + `sf_wdl` (soft SF eval) | Game outcome (hard) blended with SF's WDL eval. Both target the **same** head — load-bearing, see w_sf_wdl note below | CE + soft CE | `w_wdl`, `w_sf_wdl` |
+| `wdl` | 3 logits | three-way soft blend | `game_frac`·game outcome (one-hot) + `sf_wdl_frac`·SF eval + `search_wdl_frac`·own MCTS root WDL (fracs live-tunable; ≈0.30/0.35/0.35 at low regret). `sf_wdl` is a **cp-logistic** label (`sf_wdl_use_cp_logistic`, slope/draw-width in config), soft by construction, not SF's native near-one-hot WDL. See the blend note below | soft CE on the blend | `w_wdl` + the three `*_frac` knobs |
 | `sf_eval` | 3 logits | `sf_wdl` (soft) | SF's WDL eval only (auxiliary, **not** used in MCTS) | Soft CE | `w_sf_eval` |
 | `categorical` | 32 logits | `categorical_t` (HL-Gauss) | Game outcome as 32-bin Gaussian distribution (distributional value) | CE | `w_categorical` |
 | `volatility` | N scalars | `volatility_t` | Net-derived position volatility signal | Huber (δ=0.1) | `w_volatility` |
@@ -146,7 +146,7 @@ Adaptive opponent strength via WDL regret-based difficulty. PID controller targe
 ### Training (`train/`)
 `Trainer` class runs training steps with `torch.amp` (BF16 on CUDA). Multi-component loss computed in `losses.py`. Optimizer is configurable (`nadamw` / `adamw` / `cosmos` / `cosmos_fast`); current production config uses `adamw`. Gradient clipping via z-clip (`zclip_max_norm` hard cap + z-score outlier clip).
 
-**`w_sf_wdl` is load-bearing, not a conflicting dual target.** The main `value_wdl` head is trained on both the hard game-outcome CE (`w_wdl`) and soft CE against Stockfish's WDL eval (`w_sf_wdl`). The two targets disagree often (~63% of samples) because selfplay game outcomes reflect the opponent's handicap level (PID-controlled SF regret), while sf_wdl is SF's objective eval at 5k nodes. That disagreement is the *point*: sf_wdl injects search-horizon bootstrap that pure selfplay outcomes cannot carry. Zeroing `w_sf_wdl` was tried 2026-04-17 (reverted in commit 52ab9c0) — winrate crashed 0.64 → 0.40 in 4 iters. The separate `value_sf_eval` head exists as a weak auxiliary channel (`w_sf_eval`) but does not substitute for main-head SF supervision.
+**The WDL blend's SF component is load-bearing — do not zero it.** The main `value_wdl` head trains on a single soft-CE against a three-way blend built in `losses.py` (`game_frac`·outcome + `sf_wdl_frac`·SF cp-logistic label + `search_wdl_frac`·own search-root WDL; there is no separate `w_sf_wdl` term anymore — that knob was removed when the blend replaced the dual-loss design). The SF component injects search-horizon bootstrap that pure selfplay outcomes cannot carry; removing SF value supervision was tried 2026-04-17 (reverted in commit 52ab9c0) — winrate crashed 0.64 → 0.40 in 4 iters. Verified 2026-07-01: the cp-logistic label (slope 0.006, draw_width 120cp) is approximately *calibrated to actual selfplay outcomes* per cp-bucket, so the head's soft/"hedged" predictions (entropy ~0.72 vs blend-target entropy ~0.717) are an accurate fit to its target, not under-fitting — the head sharpens only as the net's real conversion ability improves. The separate `value_sf_eval` head remains a weak auxiliary channel (`w_sf_eval`) and does not substitute for the main-head blend.
 
 ### Replay Buffer (`replay/`)
 Disk-backed replay buffer (`DiskReplayBuffer`) with zarr shard storage. Growing sliding window: starts small, expands as training progresses. KataGo-style surprise weighting for sampling.
