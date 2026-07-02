@@ -7,7 +7,6 @@ one JSONL row per candidate. It is intended for architecture/optimizer probes
 where generating fresh games would confound the comparison.
 """
 from __future__ import annotations
-# pyright: reportArgumentType=false, reportCallIssue=false, reportOperatorIssue=false, reportOptionalMemberAccess=false, reportUnnecessaryComparison=false
 
 import argparse
 import dataclasses
@@ -16,7 +15,7 @@ import math
 import time
 from collections import OrderedDict
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import torch
@@ -46,6 +45,7 @@ from chess_anti_engine.moves import (
     policy_batch_to_encoding,
     policy_batch_to_full,
 )
+from chess_anti_engine.replay.buffer import ReplayBuffer
 from chess_anti_engine.replay.dataset import LEGAL_MASK_FIELDS
 from chess_anti_engine.replay.shard import (
     DEFAULT_CATEGORICAL_BINS,
@@ -82,6 +82,12 @@ POLICY_FIELDS = (
     "policy_soft_target",
     "future_policy_target",
 )
+
+def _as_replay_buffer(sampler: Any) -> ReplayBuffer:
+    """Duck-typed stand-in: Trainer.train_steps/eval_steps only require
+    sample_batch_arrays + rng (the hasattr fast path in _sample_batch_host)."""
+    return cast(ReplayBuffer, sampler)
+
 
 class _FixedBatch:
     def __init__(self, arrs: dict[str, np.ndarray], rng: np.random.Generator):
@@ -666,7 +672,9 @@ def _calibrate_global_board_adapter_init(
     was_training = model.training
     model.eval()
     with torch.no_grad():
-        devices = [x.device.index] if x.is_cuda and x.device.index is not None else []
+        # torch stubs type .index as int, but a bare "cuda" device has index None.
+        device_index = cast("int | None", x.device.index)
+        devices = [device_index] if x.is_cuda and device_index is not None else []
         with torch.random.fork_rng(devices=devices):
             torch.manual_seed(int(args.seed) + 104729)
             if x.is_cuda:
@@ -678,7 +686,10 @@ def _calibrate_global_board_adapter_init(
             raise ValueError(f"expected x shape (B,C,8,8), got {tuple(x.shape)}")
         tokens = x.reshape(b, c, 64).permute(0, 2, 1).contiguous()
         if getattr(model, "input_pos_encoding", "none") in ("arc", "arc_adapter"):
-            pos = model._buffers["arc_pos_encoding"].to(dtype=tokens.dtype, device=device)
+            arc_pos = model._buffers["arc_pos_encoding"]
+            if arc_pos is None:
+                raise ValueError("arc_pos_encoding buffer missing for input_pos_encoding=arc*")
+            pos = arc_pos.to(dtype=tokens.dtype, device=device)
             if getattr(model, "input_pos_encoding", "none") == "arc":
                 tokens = torch.cat((tokens, pos.expand(b, -1, -1)), dim=-1)
 
@@ -688,14 +699,21 @@ def _calibrate_global_board_adapter_init(
             64,
             int(getattr(model, "input_global_embedding_channels")),
         )
-        token_residual = F.mish(model.embed(tokens))
+        # nn.Module.__getattr__ types dynamic attributes as Tensor | Module;
+        # pin the real types for this experimental-arch access.
+        embed = cast(torch.nn.Module, model.embed)
+        embed_gate_mul_raw = cast(torch.Tensor, model._embed_gate_mul_raw)
+        embed_gate_add = cast(torch.Tensor, model.embed_gate_add)
+        token_residual = F.mish(embed(tokens))
         token_residual = (
-            token_residual * F.softplus(model._embed_gate_mul_raw) + model.embed_gate_add
+            token_residual * F.softplus(embed_gate_mul_raw) + embed_gate_add
         )
-        if getattr(model, "square_embed_gate_mul_raw", None) is not None:
-            token_residual = token_residual * F.softplus(model.square_embed_gate_mul_raw).unsqueeze(0)
-        if getattr(model, "square_embed_gate_add", None) is not None:
-            token_residual = token_residual + model.square_embed_gate_add.unsqueeze(0)
+        square_gate_mul = cast("torch.Tensor | None", getattr(model, "square_embed_gate_mul_raw", None))
+        if square_gate_mul is not None:
+            token_residual = token_residual * F.softplus(square_gate_mul).unsqueeze(0)
+        square_gate_add = cast("torch.Tensor | None", getattr(model, "square_embed_gate_add", None))
+        if square_gate_add is not None:
+            token_residual = token_residual + square_gate_add.unsqueeze(0)
 
         branch = adapter(global_tokens)
         token_rms = token_residual.float().square().mean().sqrt().clamp_min(1e-12)
@@ -870,7 +888,7 @@ def _train_candidate(
         for start in range(0, n, int(args.batch_size)):
             idx = order[start:start + int(args.batch_size)]
             batch = _slice_arrays(arrs, idx)
-            last_metrics = trainer.train_steps(_FixedBatch(batch, rng), batch_size=int(idx.shape[0]), steps=1)
+            last_metrics = trainer.train_steps(_as_replay_buffer(_FixedBatch(batch, rng)), batch_size=int(idx.shape[0]), steps=1)
             steps += 1
             positions += int(idx.shape[0])
         if shard_i % int(args.report_every_shards) == 0:
@@ -912,7 +930,7 @@ def _train_candidate(
 
     eval_steps = max(1, int(args.eval_steps))
     eval_metrics = trainer.eval_steps(
-        _ArraySampler(eval_arrs, np.random.default_rng(int(args.seed) + 999)),
+        _as_replay_buffer(_ArraySampler(eval_arrs, np.random.default_rng(int(args.seed) + 999))),
         batch_size=int(args.batch_size),
         steps=eval_steps,
     )
@@ -1007,7 +1025,6 @@ def _train_candidate_live_follow(
 
     steps = 0
     samples = 0
-    last_metrics = None
     t0 = time.time()
 
     print(json.dumps({
@@ -1054,7 +1071,7 @@ def _train_candidate_live_follow(
             time.sleep(idle_sleep_s)
             continue
 
-        last_metrics = trainer.train_steps(sampler, batch_size=int(args.batch_size), steps=1)
+        last_metrics = trainer.train_steps(_as_replay_buffer(sampler), batch_size=int(args.batch_size), steps=1)
         steps += 1
         samples += int(args.batch_size)
         credit_samples -= int(args.batch_size)
@@ -1071,22 +1088,21 @@ def _train_candidate_live_follow(
                 "positions": sampler.total_positions,
                 "samples_per_s": samples / max(elapsed, 1e-9),
             }
-            if last_metrics is not None:
-                metric_values = dataclasses.asdict(last_metrics)
-                for key in (
-                    "loss",
-                    "policy_loss",
-                    "soft_policy_loss",
-                    "future_policy_loss",
-                    "wdl_loss",
-                    "blended_wdl_loss",
-                    "sf_move_loss",
-                    "sf_move_acc",
-                    "policy_own_acc_top1",
-                    "policy_future_acc_top1",
-                    "channel_balance",
-                ):
-                    row[f"last_{key}"] = metric_values[key]
+            metric_values = dataclasses.asdict(last_metrics)
+            for key in (
+                "loss",
+                "policy_loss",
+                "soft_policy_loss",
+                "future_policy_loss",
+                "wdl_loss",
+                "blended_wdl_loss",
+                "sf_move_loss",
+                "sf_move_acc",
+                "policy_own_acc_top1",
+                "policy_future_acc_top1",
+                "channel_balance",
+            ):
+                row[f"last_{key}"] = metric_values[key]
             print(json.dumps(row), flush=True)
 
         if save_every > 0 and steps % save_every == 0:
@@ -1103,7 +1119,7 @@ def _train_candidate_live_follow(
             eval_paths = _limit_shards(iter_shard_paths(args.replay_dir), args)
             eval_arrs = _load_eval_arrs(shard_paths=eval_paths, model_cfg=model_cfg, args=args)
             eval_metrics = trainer.eval_steps(
-                _ArraySampler(eval_arrs, np.random.default_rng(int(args.seed) + 999 + steps)),
+                _as_replay_buffer(_ArraySampler(eval_arrs, np.random.default_rng(int(args.seed) + 999 + steps))),
                 batch_size=int(args.batch_size),
                 steps=max(1, int(args.eval_steps)),
             )
@@ -1117,7 +1133,7 @@ def _train_candidate_live_follow(
     eval_paths = _limit_shards(iter_shard_paths(args.replay_dir), args)
     eval_arrs = _load_eval_arrs(shard_paths=eval_paths, model_cfg=model_cfg, args=args)
     eval_metrics = trainer.eval_steps(
-        _ArraySampler(eval_arrs, np.random.default_rng(int(args.seed) + 999)),
+        _as_replay_buffer(_ArraySampler(eval_arrs, np.random.default_rng(int(args.seed) + 999))),
         batch_size=int(args.batch_size),
         steps=max(1, int(args.eval_steps)),
     )

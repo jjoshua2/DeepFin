@@ -1134,12 +1134,10 @@ class Trainer:
   # SOAP: Shampoo-like second-order optimizer. Prefer a local
   # `soap.py`; otherwise fall back to pytorch-optimizer's SOAP.
             try:
-                from soap import SOAP  # type: ignore[import] # optional local module
+                from soap import SOAP  # pyright: ignore[reportMissingImports] # optional local module
             except ImportError as exc:
                 try:
-                    from pytorch_optimizer import (
-                        SOAP,  # type: ignore[import] # optional dep
-                    )
+                    from pytorch_optimizer import SOAP
                 except ImportError:
                     raise ImportError(
                         "SOAP optimizer requires either a local `soap.py` module "

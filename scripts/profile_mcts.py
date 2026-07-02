@@ -41,7 +41,10 @@ tree = MCTSTree()
 
 
 class _ModelEvaluator(BatchEvaluator):
-    def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        del relations  # interface conformance for BatchEvaluator
         with torch.no_grad():
             out = model(torch.from_numpy(x))
         return out["policy"].numpy(), out["wdl"].numpy()

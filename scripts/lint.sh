@@ -2,10 +2,11 @@
 # Run the project's static-analysis tools over given paths (or `--changed`).
 #
 # Default GATE: ruff + basedpyright + vulture (wall time ~= basedpyright,
-# a few seconds). The gate is kept at ZERO findings (basedpyright: zero after
-# the package baseline). pylint was removed 2026-07-02 — its narrow checks
-# migrated to ruff rules (ARG/B006/G004/SIM115, see pyproject) and
-# basedpyright's flow checks (reportPossiblyUnboundVariable/reportUnreachable).
+# a few seconds). The gate is kept at ZERO findings repo-wide — no
+# basedpyright baseline (burned down to zero and deleted 2026-07-02).
+# pylint was removed 2026-07-02 — its narrow checks migrated to ruff rules
+# (ARG/B006/G004/SIM115, see pyproject) and basedpyright's flow checks
+# (reportPossiblyUnboundVariable/reportUnreachable).
 # Known false positives are suppressed inline — see CLAUDE.md "Static
 # analysis". When a FP appears on a new symbol, fix or suppress in the same
 # commit.
@@ -104,11 +105,9 @@ start_job() {
 }
 
 run_basedpyright() {
-    # basedpyright scope is defined in pyrightconfig.json (package + tests + scripts). It
-    # also respects .basedpyright/baseline.json so existing package drift doesn't
-    # fail CI; refresh the baseline with `basedpyright --writebaseline` after a fix
-    # campaign. Only override scope when the user explicitly names paths, so ad-hoc
-    # invocations on specific files still work.
+    # basedpyright scope is defined in pyrightconfig.json (package + tests + scripts).
+    # No baseline: the repo is kept at zero findings. Only override scope when the
+    # user explicitly names paths, so ad-hoc invocations on specific files still work.
     if [[ $USER_SET_PATHS -eq 1 ]]; then
         "$(tool basedpyright)" "${PATHS[@]}"
     else

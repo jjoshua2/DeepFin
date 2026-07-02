@@ -45,6 +45,7 @@ try:
     from chess_anti_engine.mcts.puct_c import run_mcts_many_c as _run_mcts_many_c
     _HAS_C_TREE = True
 except ImportError:
+    _run_mcts_many_c = run_mcts_many
     _HAS_C_TREE = False
 
 try:

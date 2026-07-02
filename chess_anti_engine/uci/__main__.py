@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import io
 import logging
 import os
 import sys
@@ -507,10 +508,8 @@ def main() -> int:
 
   # UCI assumes line-buffered I/O. When a GUI pipes stdout, Python defaults
   # to block-buffered, which swallows our responses until the buffer fills.
-    try:
-        sys.stdout.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
-    except AttributeError:
-        pass
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(line_buffering=True)
 
   # --devices wins over --device when set (explicit multi-GPU list).
     if args.devices:

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from typing import Any
 import contextlib
 
 
@@ -98,7 +99,7 @@ _INT_KEYS = {
 
 
 def _parse_go(tokens: list[str]) -> GoArgs:
-    kwargs: dict[str, object] = {}
+    kwargs: dict[str, Any] = {}
     searchmoves: list[str] = []
     i = 0
     while i < len(tokens):
@@ -122,7 +123,7 @@ def _parse_go(tokens: list[str]) -> GoArgs:
             i += 1
     if searchmoves:
         kwargs["searchmoves"] = tuple(searchmoves)
-    return GoArgs(**kwargs)  # type: ignore[arg-type] # dict[str, object] splat — values constructed from validated UCI tokens
+    return GoArgs(**kwargs)
 
 
 _GO_KEYWORDS = frozenset({

@@ -1455,8 +1455,7 @@ class SlotBroker:
         xt = pin_input[:forward_total].to(self.device, non_blocking=True)
 
         first_inf = self._first_inference_pending
-        if first_inf:
-            inf_t0 = time.time()
+        inf_t0 = time.time() if first_inf else 0.0
 
         use_legal_rows_forward = compact_legal and _supports_legal_policy_rows_forward(self._model)
         use_legal_forward = (

@@ -274,7 +274,8 @@ def test_pucv_pending_mode_setoption_updates_worker(capsys) -> None:
 def test_eval_cache_entries_setoption_rebuilds_evaluator(capsys) -> None:
     worker = MagicMock()
     class _DummyEval:
-        def evaluate_encoded(self, x: Any) -> tuple[Any, Any]:
+        def evaluate_encoded(self, x: Any, relations: Any = None) -> tuple[Any, Any]:
+            del relations  # interface conformance for BatchEvaluator
             return x, x
 
     rebuilt = _DummyEval()
@@ -302,7 +303,8 @@ def test_eval_cache_entries_reinstalls_multi_gpu_pucv(capsys) -> None:
     factories: list[Callable[[], Any]] = [object, object]
 
     class _DummyEval:
-        def evaluate_encoded(self, x: Any) -> tuple[Any, Any]:
+        def evaluate_encoded(self, x: Any, relations: Any = None) -> tuple[Any, Any]:
+            del relations  # interface conformance for BatchEvaluator
             return x, x
 
     rebuilt = _DummyEval()

@@ -10,7 +10,10 @@ class _EchoEvaluator:
         self.calls = 0
         self.rows_submitted: list[int] = []
 
-    def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        del relations  # interface conformance for BatchEvaluator
         self.calls += 1
         self.rows_submitted.append(int(x.shape[0]))
         n = int(x.shape[0])

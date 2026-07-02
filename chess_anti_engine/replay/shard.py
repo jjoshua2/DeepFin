@@ -25,7 +25,7 @@ from chess_anti_engine.moves import (
 )
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 
-from .buffer import ReplaySample
+from .sample import ReplaySample
 
 SHARD_VERSION = 2  # v2: sparse MultiPV label storage (sf_multipv_raw/sf_label_meta)
 
@@ -637,7 +637,7 @@ def shard_positions(path: str | Path) -> int:
     p = Path(path)
     try:
         g = zarr.open_group(str(p), mode="r")
-        return int(g["x"].shape[0])  # type: ignore[arg-type,union-attr] # zarr Group item may be Group or Array at type level
+        return _shape_of(g["x"])[0]
     except Exception:
         return 0
 

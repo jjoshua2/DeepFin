@@ -292,7 +292,10 @@ def test_immediate_mate_beats_high_prior_stalemate_root_move() -> None:
             self.calls = 0
             self.stalemate_idx = int(move_to_index(chess.Move.from_uci("g6f7"), board))
 
-        def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        def evaluate_encoded(
+            self, x: np.ndarray, relations: np.ndarray | None = None,
+        ) -> tuple[np.ndarray, np.ndarray]:
+            del relations  # interface conformance for BatchEvaluator
             self.calls += 1
             batch = int(x.shape[0])
             pol = np.full((batch, POLICY_SIZE), -1000.0, dtype=np.float32)
@@ -340,7 +343,10 @@ def test_searchmoves_filter_reaches_c_mate_shortcut() -> None:
     """
 
     class NeutralEvaluator:
-        def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        def evaluate_encoded(
+            self, x: np.ndarray, relations: np.ndarray | None = None,
+        ) -> tuple[np.ndarray, np.ndarray]:
+            del relations  # interface conformance for BatchEvaluator
             batch = int(x.shape[0])
             return (
                 np.zeros((batch, POLICY_SIZE), dtype=np.float32),

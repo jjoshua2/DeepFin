@@ -13,7 +13,7 @@ import contextlib
 import json
 import sys
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Generator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -97,9 +97,14 @@ def normalize_cuda_device(raw: str) -> torch.device:
     return device
 
 
+def _device_index(device: torch.device) -> int | None:
+    # torch stubs type .index as int, but a bare "cuda" device has index None.
+    return cast("int | None", device.index)
+
+
 @contextlib.contextmanager
-def cuda_device_context(device: torch.device) -> Iterator[None]:
-    if device.index is None:
+def cuda_device_context(device: torch.device) -> Generator[None, None, None]:
+    if _device_index(device) is None:
         yield
         return
     with torch.cuda.device(device):
@@ -107,7 +112,7 @@ def cuda_device_context(device: torch.device) -> Iterator[None]:
 
 
 def cuda_synchronize(device: torch.device) -> None:
-    if device.index is None:
+    if _device_index(device) is None:
         torch.cuda.synchronize()
     else:
         torch.cuda.synchronize(device)

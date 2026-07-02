@@ -26,7 +26,10 @@ class _CountingEvaluator:
         self.n_calls = 0
         self._lock = threading.Lock()
 
-    def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        del relations  # interface conformance for BatchEvaluator
         with self._lock:
             self.n_calls += 1
         return (np.zeros((x.shape[0], 4672), dtype=np.float32),

@@ -299,6 +299,7 @@ def run_mcts_many(
     evaluator: BatchEvaluator | None = None,
     pre_pol_logits: np.ndarray | None = None,
     pre_wdl_logits: np.ndarray | None = None,
+    cboards: list | None = None,
 ) -> tuple[list[np.ndarray], list[int], list[float], list[np.ndarray]]:
     """Run PUCT MCTS for multiple root boards, batching leaf evaluations.
 
@@ -311,6 +312,7 @@ def run_mcts_many(
     - root Q value
     - legal move mask (POLICY_SIZE,) bool
     """
+    del cboards  # accepted for run_mcts_many_c API parity; python path replays from boards
     if getattr(cfg, "compute_relations", False):
         raise NotImplementedError(
             "dynamic relations are not transported on the PUCT search path; "

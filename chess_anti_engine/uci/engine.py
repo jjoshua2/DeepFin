@@ -9,6 +9,7 @@ path end-to-end so we can play a game.
 """
 from __future__ import annotations
 
+import logging
 import sys
 import threading
 from dataclasses import dataclass, replace
@@ -53,16 +54,19 @@ if TYPE_CHECKING:
     from chess_anti_engine.inference import BatchEvaluator
 
 
+class _DeepFinLogFileHandler(logging.FileHandler):
+    """Marker subclass so repeat setoption can find and replace our handler."""
+
+
 def _attach_log_file(path: str) -> None:
     """Tee stderr-bound logs into ``path``. Empty path is a no-op (any
     existing FileHandler stays attached — UCI spec has no 'clear' command
     for string options, so we treat empty as 'leave as-is'). Non-empty
     replaces any prior DeepFin file handler."""
-    import logging
     root = logging.getLogger()
-  # Tag our handlers so repeat setoption doesn't stack duplicates.
+  # Our handlers are the marker subclass so repeat setoption doesn't stack duplicates.
     for h in list(root.handlers):
-        if getattr(h, "_deepfin_logfile", False):
+        if isinstance(h, _DeepFinLogFileHandler):
             root.removeHandler(h)
             try:
                 h.close()
@@ -71,14 +75,13 @@ def _attach_log_file(path: str) -> None:
     if not path:
         return
     try:
-        fh = logging.FileHandler(path, mode="a")
+        fh = _DeepFinLogFileHandler(path, mode="a")
     except OSError as exc:
         _println(f"info string LogFile could not open {path!r}: {exc!r}")
         return
     fh.setFormatter(logging.Formatter(
         "%(asctime)s %(name)s %(levelname)s %(message)s"
     ))
-    fh._deepfin_logfile = True  # type: ignore[attr-defined]
     root.addHandler(fh)
     _println(f"info string LogFile attached: {path!r}")
 

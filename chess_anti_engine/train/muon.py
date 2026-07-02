@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
+from typing import overload
 
 import torch
 
@@ -46,8 +47,14 @@ class MuonWithAuxAdam(torch.optim.Optimizer):
         from chess_anti_engine.train.cosmos_fast import _zeropower_via_newton_schulz5
         return _zeropower_via_newton_schulz5(mat, steps=steps)
 
+    @overload
+    def step(self, closure: None = None) -> None: ...
+
+    @overload
+    def step(self, closure: Callable[[], float]) -> float: ...
+
     @torch.no_grad()
-    def step(self, closure: Callable[[], float] | None = None) -> float | None:  # type: ignore[override]
+    def step(self, closure: Callable[[], float] | None = None) -> float | None:
         loss = None
         if closure is not None:
             with torch.enable_grad():

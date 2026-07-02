@@ -26,7 +26,10 @@ class _ZeroEvaluator:
     def __init__(self) -> None:
         self.calls = 0
 
-    def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        del relations  # interface conformance for BatchEvaluator
         self.calls += 1
         batch = int(x.shape[0])
         return (

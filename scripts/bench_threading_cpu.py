@@ -37,7 +37,10 @@ from chess_anti_engine.stockfish.uci import StockfishUCI
 class InstantEvaluator(BatchEvaluator):
     """Returns random policy/WDL logits instantly. No model, no GIL pressure."""
 
-    def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        del relations  # interface conformance for BatchEvaluator
         n = x.shape[0]
         pol = np.random.randn(n, 4672).astype(np.float32) * 0.1
         wdl = np.random.randn(n, 3).astype(np.float32) * 0.1

@@ -180,7 +180,8 @@ def test_equal_width_zero_pad_repaired_to_native(target_v):
     x_padded[3] = x_native[3]
     # Pre-repair: only the seeded native row carries signal beyond v1; all the
     # zero-pad rows have an all-zero extra block.
-    live_extra = x_padded[:, V1_INPUT_PLANES:].any(axis=(1, 2, 3))
+    # asarray pins the ndarray type: newer numpy stubs mis-infer .any(axis=tuple) as a scalar
+    live_extra = np.asarray(x_padded[:, V1_INPUT_PLANES:].any(axis=(1, 2, 3)))
     assert int(live_extra.sum()) == 1
     assert live_extra[3]
 

@@ -340,7 +340,7 @@ def assign_trial_lease(
     *,
     leases_root: Path,
     username: str,
-    worker_info: dict[str, Any],
+    worker_info: object,
     available_trials: list[str],
     manifest_loader,
     trial_throughput_loader=None,

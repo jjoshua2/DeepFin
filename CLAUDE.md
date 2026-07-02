@@ -186,28 +186,27 @@ Ray Tune with GPBT (Gaussian Process Bandit PBT) scheduler. Pairwise velocity-ba
 
 ### Static analysis
 
-Run `./scripts/lint.sh <paths>` after editing. The default GATE is **ruff + basedpyright + vulture** (wall time ≈ basedpyright, a few seconds) and is kept at zero findings; basedpyright uses a baseline file (`.basedpyright/baseline.json`) to suppress the ~1200 pre-existing warnings from its stricter-than-pyright defaults — new code must be clean. pylint was removed 2026-07-02: its checks migrated to ruff rules (`ARG`/`B006`/`G004`/`SIM115`, see `[tool.ruff.lint]`) and basedpyright's flow checks.
+Run `./scripts/lint.sh <paths>` after editing. The default GATE is **ruff + basedpyright + vulture** (wall time ≈ basedpyright, a few seconds) and is kept at **zero findings repo-wide — no baseline** (the old `.basedpyright/baseline.json` was burned down to zero and deleted 2026-07-02; CI gates basedpyright on the whole repo). pylint was removed 2026-07-02: its checks migrated to ruff rules (`ARG`/`B006`/`G004`/`SIM115`, see `[tool.ruff.lint]`) and basedpyright's flow checks.
 
 ```bash
 ./scripts/lint.sh chess_anti_engine/train/trainer.py   # specific files
 ./scripts/lint.sh --changed                            # changed and untracked .py files
 ./scripts/lint.sh --deep [paths...]  # + skylos + ruff cleanup report (advisory, ~40s —
                                      #   run before a cleanup pass, not per edit)
-basedpyright --writebaseline                           # refresh baseline after fixing a batch
 ```
 
 The `--deep` ruff report sweeps the opt-in groups (B, SIM, PERF, NPY, UP, RUF, C4, PIE, PT, PLW) as a cleanup shopping list; promote a group into the pyproject gate once it reaches zero findings.
 
 Configs:
 - `pyproject.toml`: `[tool.ruff.lint]` (gate rule set + rationale), `[tool.vulture]`
-- `pyrightconfig.json`: basedpyright settings — rules we'll never fix are **disabled** (ML-typing noise: `reportAny`, `reportMissingTypeArgument`, annotation-drift rules), so they don't pollute the baseline
-- `.basedpyright/baseline.json`: machine-generated frozen "fix later" queue. Each item is a real signal we just haven't addressed yet
+- `pyrightconfig.json`: basedpyright settings — rules we'll never fix are **disabled** (ML-typing noise: `reportAny`, `reportMissingTypeArgument`, annotation-drift rules)
 
-**Convention for splitting "won't fix" from "fix later":**
-- Disable the rule in `pyrightconfig.json` if we've decided the whole category isn't worth the ceremony (e.g. `dict` without `[K,V]` — 400+ sites, no real signal).
-- Keep the rule enabled + let baseline suppress current instances if it's a real signal and we plan to fix it eventually (e.g. `reportOptionalMemberAccess` — crash risk). New instances in edited code fail, baseline items are the todo list. Run `basedpyright --writebaseline` after a cleanup pass to shrink it.
+**Convention for new findings — fix now or won't-fix, no deferral queue:**
+- Disable the rule in `pyrightconfig.json` if the whole category isn't worth the ceremony (e.g. `dict` without `[K,V]` — 400+ sites, no real signal).
+- Otherwise fix it in the same commit. There is no baseline/"fix later" list anymore; don't recreate one.
+- basedpyright does NOT honor mypy-style `# type: ignore[...]` comments (they're inert here) — use `# pyright: ignore[reportRuleName]`.
 
-Suppression syntax (prefer config/baseline over inline; inline only when refactoring would hurt the code):
+Suppression syntax (prefer a real fix or a config-level disable; inline only when refactoring would hurt the code):
 - basedpyright: `# pyright: ignore[reportRuleName]`
 - Ruff: `# noqa: RULE123`
 - Skylos: `# skylos: ignore`

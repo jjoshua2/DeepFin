@@ -133,10 +133,10 @@ def test_walker_pool_gather_amplifies_batch() -> None:
             self.submit_sizes: list[int] = []
             self._lock = threading.Lock()
 
-        def evaluate_encoded(self, x):
+        def evaluate_encoded(self, x, relations=None):
             with self._lock:
                 self.submit_sizes.append(int(x.shape[0]))
-            return self._inner.evaluate_encoded(x)
+            return self._inner.evaluate_encoded(x, relations)
 
     cfg = ModelConfig(embed_dim=16, num_layers=1, num_heads=2, ffn_mult=2.0)
     model = build_model(cfg)
@@ -186,10 +186,10 @@ def test_walker_pool_gather_default_is_one() -> None:
             self.submit_sizes: list[int] = []
             self._lock = threading.Lock()
 
-        def evaluate_encoded(self, x):
+        def evaluate_encoded(self, x, relations=None):
             with self._lock:
                 self.submit_sizes.append(int(x.shape[0]))
-            return self._inner.evaluate_encoded(x)
+            return self._inner.evaluate_encoded(x, relations)
 
     cfg = ModelConfig(embed_dim=16, num_layers=1, num_heads=2, ffn_mult=2.0)
     model = build_model(cfg)
