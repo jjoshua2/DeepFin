@@ -90,7 +90,7 @@ def test_rebuild_matches_live_construction_synthetic(use_logistic):
     for move_idx, cp, mate, w, d in rows[rows[:, 0] >= 0].tolist():
         pv = StockfishPV(
             move_uci="0000",
-            wdl=None if w < 0 else np.array([w, d, 1000 - w - d], np.float32),
+            wdl=None if w < 0 else np.array([w, d, 1000 - w - d], np.float32) / 1000.0,
             cp=None if cp == SF_CP_SENTINEL else int(cp),
             mate=None if mate == 0 else int(mate),
         )
@@ -152,7 +152,7 @@ def test_rebuild_parity_compact_lc0_1858(use_logistic):
     for move_idx, cp, mate, w, d in rows_full[rows_full[:, 0] >= 0].tolist():
         pv = StockfishPV(
             move_uci="0000",
-            wdl=None if w < 0 else np.array([w, d, 1000 - w - d], np.float32),
+            wdl=None if w < 0 else np.array([w, d, 1000 - w - d], np.float32) / 1000.0,
             cp=None if cp == SF_CP_SENTINEL else int(cp),
             mate=None if mate == 0 else int(mate),
         )
@@ -197,7 +197,7 @@ def test_rebuild_sf_wdl_matches_live():
         params = SfTargetParams(sf_wdl_use_cp_logistic=use_logistic)
         res = StockfishResult(
             bestmove_uci="e2e4",
-            wdl=np.array([700, 200, 100], np.float32),
+            wdl=np.array([700, 200, 100], np.float32) / 1000.0,
             pvs=[], cp=35, mate=None,
         )
         live = _sf_result_wdl_for_record(
@@ -686,3 +686,32 @@ def test_sf_policy_label_smoothing_only_when_uncovered() -> None:
     )
     assert p_unc[2] > 0.0
     assert p_unc[0] > p_unc[2] and p_unc[1] > p_unc[2]
+
+
+def test_native_wdl_stored_as_permille_from_fraction_scale():
+    """_parse_wdl normalizes UCI permille to FRACTIONS; the collectors must
+    rescale to permille per the shard schema. Regression for the dormant bug
+    where int(round(0.87)) stored 0/1 junk in the native-WDL columns."""
+    from types import SimpleNamespace
+
+    from chess_anti_engine.selfplay.stockfish_turn import (
+        _collect_sf_label_meta,
+        _collect_sparse_pv_rows,
+    )
+
+    res = SimpleNamespace(
+        nodes=1000, depth=20, cp=150, mate=None,
+        wdl=np.array([0.87, 0.09, 0.04], np.float32),
+        pvs=[SimpleNamespace(
+            move_uci="e2e4", cp=150, mate=None,
+            wdl=np.array([0.87, 0.09, 0.04], np.float32),
+        )],
+    )
+    meta = _collect_sf_label_meta(res)
+    assert (meta[4], meta[5]) == (870, 90)
+
+    from chess_anti_engine.moves.encode import uci_to_policy_index
+    a = uci_to_policy_index("e2e4", True)
+    rows = _collect_sparse_pv_rows(res, turn=True, legal_set={a})
+    assert rows is not None
+    assert (rows[0][3], rows[0][4]) == (870, 90)

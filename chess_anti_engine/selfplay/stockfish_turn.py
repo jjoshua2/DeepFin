@@ -437,7 +437,9 @@ def _collect_sparse_pv_rows(res, *, turn: bool, legal_set: set[int]) -> np.ndarr
         if pv.wdl is None:
             w = d = -1
         else:
-            w, d = int(round(float(pv.wdl[0]))), int(round(float(pv.wdl[1])))
+            # _parse_wdl normalizes UCI permille to fractions; store permille
+            # per the shard schema (replay/shard.py cols 3-4).
+            w, d = int(round(float(pv.wdl[0]) * 1000)), int(round(float(pv.wdl[1]) * 1000))
         rows.append((a, cp, mate, w, d))
     if truncated:
         _warn_multipv_truncated()
@@ -455,7 +457,9 @@ def _collect_sf_label_meta(res) -> np.ndarray:
     if res.wdl is None:
         w = d = -1
     else:
-        w, d = int(round(float(res.wdl[0]))), int(round(float(res.wdl[1])))
+        # _parse_wdl normalizes UCI permille to fractions; store permille
+        # per the shard schema (replay/shard.py meta layout).
+        w, d = int(round(float(res.wdl[0]) * 1000)), int(round(float(res.wdl[1]) * 1000))
     # nodes/depth are config-driven; clamp so a huge budget can't overflow the
     # int32 field and raise out of _process_sf_results mid-selfplay.
     return np.array(

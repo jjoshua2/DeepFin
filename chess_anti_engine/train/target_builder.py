@@ -61,9 +61,10 @@ def _row_score(
 ) -> float | None:
     """w + 0.5*d for one MultiPV row — mirrors stockfish_turn._pv_wdl_score.
 
-    Logistic path: cp/mate → normalized (w, d, l). Native path: SF's own
-    permille wdl, deliberately NOT rescaled (the live path uses raw permille
-    values; reproducing them exactly is the point).
+    Logistic path: cp/mate → normalized (w, d, l). Native path: the stored
+    permille wdl rescaled to fractions — the live path scores fractions
+    (_parse_wdl normalizes), and sf_policy_temp's softmax is scale-sensitive,
+    so reproducing the live fraction scale exactly is the point.
     """
     has_cp = cp != SF_CP_SENTINEL
     has_mate = mate != 0
@@ -77,7 +78,7 @@ def _row_score(
         return float(wdl[0]) + 0.5 * float(wdl[1])
     if wdl_w < 0 or wdl_d < 0:
         return None
-    return float(wdl_w) + 0.5 * float(wdl_d)
+    return (float(wdl_w) + 0.5 * float(wdl_d)) / 1000.0
 
 
 def rebuild_sf_policy_target(
@@ -150,8 +151,11 @@ def rebuild_sf_wdl(label_meta: np.ndarray, params: SfTargetParams) -> np.ndarray
         return wdl_stm[::-1].copy()  # flip_wdl_pov
     if wdl_w < 0 or wdl_d < 0:
         return None
+    # Fractions, matching the live rec.sf_wdl scale (consumers like
+    # finalize's sf_search_gap read the vector unrenormalized).
     wdl_stm = np.array(
-        [float(wdl_w), float(wdl_d), float(1000 - wdl_w - wdl_d)], dtype=np.float32,
+        [wdl_w / 1000.0, wdl_d / 1000.0, (1000 - wdl_w - wdl_d) / 1000.0],
+        dtype=np.float32,
     )
     return wdl_stm[::-1].copy()
 
