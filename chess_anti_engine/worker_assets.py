@@ -31,7 +31,7 @@ def _download(
     headers: dict[str, str] | None = None,
 ) -> None:
     try:
-        import requests  # type: ignore
+        import requests
     except Exception as e:  # pragma: no cover
         raise RuntimeError("worker requires requests; install with pip install -e '.[worker]' ") from e
 

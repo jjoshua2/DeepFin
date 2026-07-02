@@ -1,0 +1,38 @@
+name: lint-canary
+
+# Weekly non-blocking run of the lint gate on the LATEST tool releases
+# (the PR gate uses the exact pins in pyproject dev extras). When this run
+# goes red, a tool or stub update is about to break the gate — upgrade local,
+# fix whatever it flags, and bump the pins in one commit, on your schedule
+# instead of mid-PR.
+on:
+  schedule:
+    - cron: "17 6 * * 1"  # Mondays 06:17 UTC
+  workflow_dispatch:
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install CPU torch
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Install package + dev deps
+        run: pip install -e ".[dev]"
+      # Override the pins with latest — this is the whole point of the canary.
+      - name: Upgrade lint tools + numpy to latest
+        run: pip install -U ruff basedpyright vulture numpy
+      - name: Tool versions
+        run: |
+          ruff --version
+          basedpyright --version
+          python -c "import numpy; print('numpy', numpy.__version__)"
+      - name: ruff (whole repo, latest)
+        run: ruff check chess_anti_engine scripts tests
+      - name: basedpyright (whole repo, latest)
+        run: basedpyright

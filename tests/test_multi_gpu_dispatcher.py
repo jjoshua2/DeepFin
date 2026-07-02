@@ -9,6 +9,7 @@ model lives.
 from __future__ import annotations
 
 import threading
+import time
 from collections import Counter
 
 import numpy as np
@@ -55,8 +56,21 @@ def test_multi_gpu_distributes_calls() -> None:
         assert n > 0, f"device {name} never selected: {counts}"
 
 
+class _SlowCountingEvaluator(_CountingEvaluator):
+    """Holds each call briefly so concurrent calls overlap. With instant
+    evaluators the in-flight counts are ~always zero and routing degenerates
+    to scheduler-dependent round-robin, which made the balance assertion
+    flaky on 2-core CI runners."""
+
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        time.sleep(0.005)
+        return super().evaluate_encoded(x, relations)
+
+
 def test_multi_gpu_concurrent_callers() -> None:
-    evaluators = [_CountingEvaluator(f"dev{i}") for i in range(4)]
+    evaluators = [_SlowCountingEvaluator(f"dev{i}") for i in range(4)]
     dispatcher = MultiGPUDispatcher(evaluators)
 
     x = np.zeros((1, 146, 8, 8), dtype=np.float32)

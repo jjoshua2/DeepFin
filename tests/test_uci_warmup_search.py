@@ -80,7 +80,7 @@ def test_reshaping_setoption_marks_warmup_dirty_then_isready_rewarms() -> None:
     assert engine._warmup_dirty is True
 
     rewarms: list[int] = []
-    engine.warmup_search = lambda: rewarms.append(1)  # type: ignore[method-assign]
+    engine.warmup_search = lambda: rewarms.append(1)
 
     engine.dispatch(CmdIsReady())
     assert rewarms == [1]

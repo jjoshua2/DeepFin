@@ -52,9 +52,9 @@ try:
         batch_encode_146_lc0_root_legacy_meta_bf16,
     )
 except ImportError:  # pragma: no cover - older local extension fallback
-    batch_encode_146_bf16 = None  # type: ignore[assignment]
-    batch_encode_146_lc0_root_bf16 = None  # type: ignore[assignment]
-    batch_encode_146_lc0_root_legacy_meta_bf16 = None  # type: ignore[assignment]
+    batch_encode_146_bf16 = None
+    batch_encode_146_lc0_root_bf16 = None
+    batch_encode_146_lc0_root_legacy_meta_bf16 = None
 from chess_anti_engine.mcts.gumbel import (
     GumbelConfig,
     _completed_q_transform,

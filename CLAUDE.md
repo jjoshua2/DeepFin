@@ -204,7 +204,9 @@ Configs:
 **Convention for new findings — fix now or won't-fix, no deferral queue:**
 - Disable the rule in `pyrightconfig.json` if the whole category isn't worth the ceremony (e.g. `dict` without `[K,V]` — 400+ sites, no real signal).
 - Otherwise fix it in the same commit. There is no baseline/"fix later" list anymore; don't recreate one.
-- basedpyright does NOT honor mypy-style `# type: ignore[...]` comments (they're inert here) — use `# pyright: ignore[reportRuleName]`.
+- basedpyright does NOT honor mypy-style `# type: ignore[...]` comments (they're inert here) — use `# pyright: ignore[reportRuleName]`. Never add a suppression whose validity depends on the installed numpy/torch version (e.g. numpy-stub complaints) — rewrite the code version-proof instead.
+
+Lint tool versions (ruff/basedpyright/vulture/skylos/dev-numpy) are **exact-pinned** in the dev extras so local and CI agree; the weekly `lint-canary` workflow runs latest tools non-blocking to surface upcoming breakage. To bump: upgrade local, run the gate, commit new pins.
 
 Suppression syntax (prefer a real fix or a config-level disable; inline only when refactoring would hurt the code):
 - basedpyright: `# pyright: ignore[reportRuleName]`

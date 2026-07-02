@@ -18,7 +18,7 @@ def main() -> None:
     args = ap.parse_args()
 
     try:
-        import uvicorn  # type: ignore
+        import uvicorn
     except Exception as e:  # pragma: no cover
         raise RuntimeError("server requires uvicorn; install with pip install -e '.[server]' ") from e
 

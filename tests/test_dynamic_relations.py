@@ -640,7 +640,7 @@ def test_search_worker_root_eval_passes_relations():
 
     ev = _RelRecordingEncodedEvaluator()
     worker = SearchWorker(
-        ev,  # type: ignore[arg-type] — duck-typed fake
+        ev,  # — duck-typed fake
         device="cpu",
         gumbel_cfg=GumbelConfig(
             simulations=4, add_noise=False, temperature=0.0,

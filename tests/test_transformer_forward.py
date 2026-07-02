@@ -694,7 +694,7 @@ def test_tolerant_load_migrates_fused_qkv_into_compiled_split_qkv():
     fused = ChessNet(fused_cfg).eval()
     split = ChessNet(split_cfg).eval()
     compiled_like = nn.Module()
-    compiled_like._orig_mod = split  # type: ignore[attr-defined]
+    compiled_like._orig_mod = split
 
     load_state_dict_tolerant(compiled_like, fused.state_dict(), label="test")
 

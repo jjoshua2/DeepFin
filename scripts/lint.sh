@@ -18,8 +18,10 @@
 #   * skylos (dead code + circular imports; ~40s, grep-verified tables)
 #   * ruff cleanup report over the opt-in groups (B, SIM, PERF, NPY, RUF,
 #     PT, PLW) — a shopping list, not a gate. Promote a group into the
-#     pyproject gate once it reaches zero findings (PIE/UP/C4 + B009/B010/
-#     B023 were promoted 2026-07-02).
+#     pyproject gate once it reaches zero findings (PIE/UP/C4 + B023 were
+#     promoted 2026-07-02; B009/B010 are WON'T-GATE, see pyproject).
+#   * shellcheck over scripts/*.sh when shellcheck is installed (advisory —
+#     the ops scripts are load-bearing but findings need judgment).
 #
 # --slop runs scb-check (verbosity/erosion/clone detection + ast-grep anti-pattern
 # rules). Opt-in because its output is noisy and many findings are style
@@ -207,13 +209,21 @@ if [[ $RUN_DEEP -eq 1 ]]; then
     #     SIM105      try/except/pass in hot worker loops; suppress() adds
     #                 per-iteration overhead and hides intent no better
     #     PLW0603     module-singleton globals (warn-once flags) are deliberate
+    #     B009/B010   getattr/setattr-with-constant is the deliberate idiom for
+    #                 dynamic attrs on torch Modules (WON'T-GATE, see pyproject)
     # The gate rules ride along so RUF100 (unused-noqa) is judged against the
     # REAL rule set — without them every gate-rule noqa reads as "unused".
     start_job 1 "ruff cleanup report (advisory — B,SIM,PERF,NPY,RUF,PT,PLW)" \
         env RUFF_CACHE_DIR="$LINT_TMP/ruff-cache" "$(tool ruff)" check \
         --extend-select B,SIM,PERF,NPY,RUF,PT,PLW \
-        --ignore E741,ARG005,RUF001,RUF002,RUF003,PERF203,PLW2901,SIM105,PLW0603 \
+        --ignore E741,ARG005,RUF001,RUF002,RUF003,PERF203,PLW2901,SIM105,PLW0603,B009,B010 \
         --statistics "${PATHS[@]}"
+
+    # Ops shell scripts (train.sh, salvage, arena drivers) are load-bearing;
+    # shellcheck them when available. Advisory: findings need judgment.
+    if command -v shellcheck >/dev/null 2>&1; then
+        start_job 1 "shellcheck (advisory — scripts/*.sh)" shellcheck scripts/*.sh
+    fi
 fi
 
 if [[ $RUN_SLOP -eq 1 ]]; then

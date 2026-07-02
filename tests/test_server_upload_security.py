@@ -345,7 +345,7 @@ def test_compaction_flush_failure_preserves_accumulator(tmp_path, monkeypatch: p
     original = app_module.save_local_shard_arrays
     calls = {"n": 0}
 
-    def flaky_save(path, *, arrs, meta):  # type: ignore[no-untyped-def]
+    def flaky_save(path, *, arrs, meta):
         # Only flaky for the server compactor's writes (other test setup calls
         # save_local_shard_arrays too, via _build_valid_zarr_tar).
         if str(meta.username) == "server_compactor":

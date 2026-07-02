@@ -73,7 +73,7 @@ def _quantize_dynamic_ort(
     cfg: OnnxQuantizeConfig,
 ) -> None:
     try:
-        from onnxruntime.quantization import QuantType, quantize_dynamic  # type: ignore
+        from onnxruntime.quantization import QuantType, quantize_dynamic
     except Exception as e:  # pragma: no cover
         raise RuntimeError(
             "INT8 quantization requires onnxruntime with quantization support. "
@@ -103,7 +103,7 @@ def _quantize_dynamic_ort(
         pass
 
     try:
-        import onnx  # type: ignore
+        import onnx
 
         model = onnx.load(str(fp32_path))
 

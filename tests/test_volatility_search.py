@@ -167,7 +167,7 @@ def test_flags_off_python_path_bitwise_unchanged_50_positions():
             b = t.shape[0]
             return torch.full((b, 3), float(anchor))
 
-    model.volatility = _ConstVol()  # type: ignore[assignment]
+    model.volatility = _ConstVol()
 
     p_off, a_off, v_off = _search_probs(model, boards, use_c=False, seed=3)
     p_on, a_on, v_on = _search_probs(
@@ -299,7 +299,7 @@ def test_volatility_requires_capable_evaluator():
     with pytest.raises(ValueError, match="evaluate_encoded_with_volatility"):
         run_gumbel_root_many(
             None, boards, device="cpu", rng=np.random.default_rng(0), cfg=cfg,
-            evaluator=_PolWdlOnly(),  # type: ignore[arg-type]
+            evaluator=_PolWdlOnly(),
         )
 
 

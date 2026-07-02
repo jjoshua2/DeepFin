@@ -462,7 +462,7 @@ class _ChainedOptimizer(torch.optim.Optimizer):
         ]
         self.state.clear()
 
-    def add_param_group(self, param_group: dict[str, Any]) -> None:  # type: ignore[override]
+    def add_param_group(self, param_group: dict[str, Any]) -> None:
         if getattr(self, "_initializing", False):
             torch.optim.Optimizer.add_param_group(self, param_group)
             return
@@ -472,7 +472,7 @@ class _ChainedOptimizer(torch.optim.Optimizer):
             "add new parameters to the intended child optimizer directly."
         )
 
-    def zero_grad(self, set_to_none: bool = True) -> None:  # type: ignore[override]
+    def zero_grad(self, set_to_none: bool = True) -> None:
         for opt in self.optimizers:
             opt.zero_grad(set_to_none=set_to_none)
 
@@ -484,10 +484,10 @@ class _ChainedOptimizer(torch.optim.Optimizer):
                 loss = float(loss_i)
         return loss
 
-    def state_dict(self) -> dict[str, Any]:  # type: ignore[override]
+    def state_dict(self) -> dict[str, Any]:
         return {"optimizers": [opt.state_dict() for opt in self.optimizers]}
 
-    def load_state_dict(self, state_dict: dict[str, Any]) -> None:  # type: ignore[override]
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         for opt, opt_state in zip(self.optimizers, state_dict["optimizers"], strict=True):
             opt.load_state_dict(opt_state)
         self.param_groups = [

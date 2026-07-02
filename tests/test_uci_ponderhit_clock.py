@@ -23,8 +23,8 @@ def _make_engine() -> Engine:
     engine = Engine(worker=worker)
     # Swap the search-thread factory so _handle_go doesn't actually launch
     # a search — we only want to inspect what limits it computes.
-    engine._search_thread = None  # type: ignore[attr-defined]
-    engine._state_lock = threading.Lock()  # type: ignore[attr-defined]
+    engine._search_thread = None
+    engine._state_lock = threading.Lock()
     return engine
 
 
@@ -70,7 +70,7 @@ def test_ponderhit_real_limits_use_our_clock_not_opponent() -> None:
     )
     engine._handle_go(CmdGo(args=args))
 
-    real_lim = engine._pending_real_limits  # type: ignore[attr-defined]
+    real_lim = engine._pending_real_limits
     assert real_lim is not None, "ponderhit should have pre-computed real limits"
     # Our side (white) after the ponder move is pushed.
     # Deadline should come from wtime (300), not btime (5000).
@@ -108,7 +108,7 @@ def test_ponderhit_real_limits_use_our_clock_as_black() -> None:
     )
     engine._handle_go(CmdGo(args=args))
 
-    real_lim = engine._pending_real_limits  # type: ignore[attr-defined]
+    real_lim = engine._pending_real_limits
     assert real_lim is not None
     assert real_lim.deadline_ms is not None
     # btime=10000 → ~10000/30 + 0 = 333; wtime=200 → ~200/30 + 0 = 20 (floored).
