@@ -65,7 +65,7 @@ stockfish:
   stockfish_path: /home/josh/projects/chess/e2e_server/publish/stockfish
   sf_nodes: 5000           # 5k nodes: wider WDL spread so regret actually filters moves (was 1k where all 12 passed)
   sf_move_nodes: 0          # 0 = curriculum moves use the PID-controlled sf_nodes; don't weaken played SF moves by default.
-  sf_label_nodes_cap: 150000  # 2026-07-01 (PR #91): cap LABEL-ONLY SF queries (selfplay P1 analysis) at 150k nodes; PID opponent budget untouched. Live-tunable. Watch: iter wall time + games/iter recover; audit net+search regret guard (shallower MultiPV teacher is the tradeoff). Kill: regret worsens >2cp over a window refill -> raise/0.
+  sf_label_nodes_cap: 400000  # 2026-07-02: 150k->400k — label-cap kill criterion fired early (audit net+search 49.6->55.3cp, raw top-1 regret 51.5->60.7 at ~60% window refill; the sf_p0/regret POLICY teacher got too shallow at 150k). 400k keeps ~43% of the label-cost saving. Live-tunable. Next read at full refill: recovered -> hold; still >2cp worse -> 0 (uncapped) and keep only fast-ply+views.
   sf_workers: 4
   sf_nice: 19              # Run SF at lowest CPU priority so search/dispatch/GPU batching wins contention.
   sf_multipv: 40            # Bumped from 20 (2026-04-29) to enrich sf_policy_t targets — measurement showed regret≤0.47 saturated top-20; multipv=40 widens tail for richer training distribution. Difficulty implication: opponent gets slightly weaker since more sub-optimal moves enter the regret-filter pool; PID will compensate via regret/nodes.
