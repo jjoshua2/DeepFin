@@ -705,3 +705,21 @@ def test_train_step_budget_views_counts_imported_samples_at_one_view() -> None:
     # 2.5 * 12_000 fresh + 400_000 imported (1 view), NOT 2.5 * 412_000.
     assert budget["target_sample_budget"] == 430_000
     assert budget["steps"] == 840  # uncapped on import iterations, as before
+
+
+def test_train_step_budget_views_drought_fallback_respects_step_cap() -> None:
+    """Codex P2 (PR #91 post-merge): the drought fallback sizes the budget by
+    window fraction, so it must also take the window-fraction step cap —
+    views mode's cap bypass is only for the proportional (fresh-driven) path."""
+    budget = _compute_train_step_budget(
+        positions_added=100,
+        imported_samples=0,
+        replay_size=1_000_000,
+        batch_size=512,
+        accum_steps=1,
+        base_max_steps=50,   # cap below the 79 steps the window floor implies
+        train_window_fraction=0.04,
+        train_views_per_position=2.5,
+    )
+    assert budget["target_sample_budget"] == 40_000
+    assert budget["steps"] == 50  # capped, not 79
