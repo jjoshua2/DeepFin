@@ -274,8 +274,7 @@ def main() -> None:
     # tune_dir/pause.txt didn't fire its exists() check (root cause never
     # diagnosed; the per-trial marker is the belt-and-suspenders fix).
     pause_targets: list[Path] = [pause_file]
-    for csv in _active_trials(tune_dir):
-        pause_targets.append(csv.parent / "pause.txt")
+    pause_targets.extend(csv.parent / "pause.txt" for csv in _active_trials(tune_dir))
 
     for target in pause_targets:
         if target.exists():

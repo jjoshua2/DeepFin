@@ -27,11 +27,11 @@ def test_game_scores_collapse_to_pair_scores():
 
 
 def test_game_scores_validation():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="even number of games"):
         game_scores_to_pair_scores([1.0])  # odd number of games
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="per-game score must be"):
         game_scores_to_pair_scores([1.0, 0.3])  # not a chess score
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="pair score must be"):
         pentanomial_counts([1.25])  # not a pair score
 
 

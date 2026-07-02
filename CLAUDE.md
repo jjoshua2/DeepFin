@@ -195,7 +195,7 @@ Run `./scripts/lint.sh <paths>` after editing. The default GATE is **ruff + base
                                      #   run before a cleanup pass, not per edit)
 ```
 
-The `--deep` ruff report sweeps the opt-in groups (B, SIM, PERF, NPY, UP, RUF, C4, PIE, PT, PLW) as a cleanup shopping list; promote a group into the pyproject gate once it reaches zero findings.
+The `--deep` ruff report sweeps the not-yet-gated groups (B, NPY) as a cleanup shopping list — after the 2026-07-02 burn-down only the needs-judgment tail remains there (B905 `zip strict=`, B008 call-in-default, NPY002 legacy-RNG — never autofix; NPY002 changes RNG streams). Promote a rule into the pyproject gate once it reaches zero findings.
 
 Configs:
 - `pyproject.toml`: `[tool.ruff.lint]` (gate rule set + rationale), `[tool.vulture]`

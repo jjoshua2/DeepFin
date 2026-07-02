@@ -366,9 +366,7 @@ def _apply_tune_section(out: dict[str, Any], section: dict[str, Any]) -> None:
             "delete them or update to the current names."
         )
     _copy_section_keys(out, section, _TUNE_KEYS)
-    for k, v in section.items():
-        if k.startswith("pb2_bounds_"):
-            out[k] = v
+    out.update({k: v for k, v in section.items() if k.startswith("pb2_bounds_")})
 
 
 def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:

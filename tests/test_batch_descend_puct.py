@@ -163,7 +163,7 @@ def test_batch_integrate_matches_walker_integrate_loop():
     tree_b, rid_b, cb_b, _ = _root(board)
     enc_b = np.empty((1, 146, 8, 8), dtype=np.float32)
     descents = []
-    for i in range(n):
+    for _i in range(n):
         _leaf_id, path, legal, term_q = tree_b.walker_descend_puct(
             rid_b, cb_b, _C_PUCT, _FPU_ROOT, _FPU_RED, _VLOSS, enc_b,
         )

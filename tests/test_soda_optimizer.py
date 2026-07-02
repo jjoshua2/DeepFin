@@ -75,8 +75,5 @@ def test_soda_load_state_requires_anchors_for_marked_params() -> None:
     state = opt.state_dict()
     state["soda_anchors"] = {}
 
-    try:
+    with pytest.raises(ValueError, match="missing anchors"):
         opt.load_state_dict(state)
-        pytest.fail("expected ValueError")
-    except ValueError as exc:
-        assert "missing anchors" in str(exc)

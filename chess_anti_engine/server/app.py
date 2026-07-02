@@ -1535,7 +1535,7 @@ def create_app(
             try:
                 return int(payload[k])
             except Exception:
-                raise HTTPException(status_code=400, detail=f"bad int field {k}")
+                raise HTTPException(status_code=400, detail=f"bad int field {k}") from None
 
         def _req_str(k: str) -> str:
             if k not in payload:

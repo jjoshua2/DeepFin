@@ -16,10 +16,11 @@
 # --deep adds the OCCASIONAL-CLEANUP tier (advisory, slow — run before a
 # cleanup pass, not per edit):
 #   * skylos (dead code + circular imports; ~40s, grep-verified tables)
-#   * ruff cleanup report over the opt-in groups (B, SIM, PERF, NPY, RUF,
-#     PT, PLW) — a shopping list, not a gate. Promote a group into the
-#     pyproject gate once it reaches zero findings (PIE/UP/C4 + B023 were
-#     promoted 2026-07-02; B009/B010 are WON'T-GATE, see pyproject).
+#   * ruff cleanup report over the not-yet-gated groups (B, NPY) — a
+#     shopping list, not a gate. SIM/PERF/RUF/PT/PLW + B007/B904 were burned
+#     to zero and promoted into the pyproject gate 2026-07-02; what remains
+#     here is only the needs-judgment tail (B905/B008/NPY002) and the
+#     B009/B010 WON'T-GATE (see pyproject).
 #   * shellcheck over scripts/*.sh when shellcheck is installed (advisory —
 #     the ops scripts are load-bearing but findings need judgment).
 #
@@ -192,31 +193,20 @@ if [[ $RUN_DEEP -eq 1 ]]; then
     # FPs. Explicitly advisory — do not quietly gate on it.
     start_job 1 "skylos (advisory — dead code + circular imports)" "$(tool skylos)" "${PATHS[@]}"
 
-    # Occasional-cleanup shopping list: opt-in ruff groups, advisory.
-    # Every finding here has ONE of three fates (2026-07-02 triage):
-    #   FIX-OVER-TIME (stays listed; burn down, promote group at zero):
-    #     PT011/PT017 (test quality: raises-match + assert-in-except),
-    #     RUF012 (ClassVar annotations), SIM102/108/117 (structure),
-    #     PERF401/403 (comprehension rewrites), RUF005/007 (misc)
-    #   KNOW-AND-BE-CAREFUL (stays listed; needs judgment, never autofix):
-    #     NPY002 (legacy np.random -> Generator CHANGES RNG STREAMS),
-    #     B905 (zip strict= changes semantics per site),
-    #     B008 (call-in-default: often intentional interface defaults)
-    #   WON'T-FIX (ignored below with reasons; keeps the report signal):
-    #     RUF001/2/3  em-dashes/unicode in strings+comments are house style
-    #     PERF203     try/except-in-loop is deliberate robustness in game loops
-    #     PLW2901     loop-var reassignment (line = line.strip()) is idiom here
-    #     SIM105      try/except/pass in hot worker loops; suppress() adds
-    #                 per-iteration overhead and hides intent no better
-    #     PLW0603     module-singleton globals (warn-once flags) are deliberate
-    #     B009/B010   getattr/setattr-with-constant is the deliberate idiom for
-    #                 dynamic attrs on torch Modules (WON'T-GATE, see pyproject)
-    # The gate rules ride along so RUF100 (unused-noqa) is judged against the
-    # REAL rule set — without them every gate-rule noqa reads as "unused".
-    start_job 1 "ruff cleanup report (advisory — B,SIM,PERF,NPY,RUF,PT,PLW)" \
+    # Occasional-cleanup shopping list: the not-yet-gated ruff groups,
+    # advisory. After the 2026-07-02 burn-down promoted SIM/PERF/RUF/PT/PLW
+    # + B007/B904 into the gate, what remains is only the needs-judgment
+    # tail — never autofix these:
+    #   NPY002 (legacy np.random -> Generator CHANGES RNG STREAMS),
+    #   B905 (zip strict= changes semantics per site),
+    #   B008 (call-in-default: often intentional interface defaults)
+    # WON'T-FIX (ignored below): B009/B010 — getattr/setattr-with-constant
+    # is the deliberate idiom for dynamic attrs on torch Modules (WON'T-GATE,
+    # see pyproject).
+    start_job 1 "ruff cleanup report (advisory — B,NPY judgment tail)" \
         env RUFF_CACHE_DIR="$LINT_TMP/ruff-cache" "$(tool ruff)" check \
-        --extend-select B,SIM,PERF,NPY,RUF,PT,PLW \
-        --ignore E741,ARG005,RUF001,RUF002,RUF003,PERF203,PLW2901,SIM105,PLW0603,B009,B010 \
+        --extend-select B,NPY \
+        --ignore E741,ARG005,SIM105,PERF203,RUF001,RUF002,RUF003,PLW2901,PLW0603,B009,B010 \
         --statistics "${PATHS[@]}"
 
     # Ops shell scripts (train.sh, salvage, arena drivers) are load-bearing;

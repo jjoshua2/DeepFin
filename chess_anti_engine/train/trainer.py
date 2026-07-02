@@ -378,10 +378,9 @@ def select_input_history_arrays(
         if recorded.shape == legacy_x.shape and has.shape == (legacy_x.shape[0],):
             use_recorded = has & convert_rows
             root_x[use_recorded] = recorded[use_recorded]
-    if uses_lc0_root_legacy_meta(hist_enc):
-        if bool(np.any(convert_rows)):
-            patched = _apply_lc0_root_legacy_meta(root_x[convert_rows], legacy_x[convert_rows])
-            root_x[convert_rows] = patched
+    if uses_lc0_root_legacy_meta(hist_enc) and bool(np.any(convert_rows)):
+        patched = _apply_lc0_root_legacy_meta(root_x[convert_rows], legacy_x[convert_rows])
+        root_x[convert_rows] = patched
     out["x"] = root_x
     out[_INPUT_HISTORY_SELECTED_KEY] = np.asarray(hist_enc)
     out[INPUT_HISTORY_ENCODING_ARRAY_KEY] = np.full((n,), hist_enc, dtype=object)

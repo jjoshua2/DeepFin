@@ -19,11 +19,8 @@ def test_validate_rejects_wrong_policy_size():
         "policy_target": np.ones((2, 10), dtype=np.float32),
         "wdl_target": np.array([0, 1], dtype=np.int8),
     }
-    try:
+    with pytest.raises(ValueError, match="A mismatch"):
         validate_arrays(arrs)
-        pytest.fail("expected ValueError")
-    except ValueError as e:
-        assert "A mismatch" in str(e)
 
 
 def test_validate_rejects_negative_policy():
@@ -33,11 +30,8 @@ def test_validate_rejects_negative_policy():
         "wdl_target": np.array([1], dtype=np.int8),
     }
     arrs["policy_target"][0, 0] = -0.1
-    try:
+    with pytest.raises(ValueError, match="negative"):
         validate_arrays(arrs)
-        pytest.fail("expected ValueError")
-    except ValueError as e:
-        assert "negative" in str(e)
 
 
 def _minimal_valid_arrays() -> dict[str, np.ndarray]:
@@ -111,7 +105,7 @@ def test_validate_rejects_present_optional_flag_without_value():
     arrs = _minimal_valid_arrays()
     arrs["has_sf_wdl"] = np.array([1, 0], dtype=np.uint8)
 
-    with pytest.raises(ValueError, match="has_sf_wdl.*sf_wdl"):
+    with pytest.raises(ValueError, match=r"has_sf_wdl.*sf_wdl"):
         validate_arrays(arrs)
 
 

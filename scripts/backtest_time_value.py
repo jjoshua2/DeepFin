@@ -326,7 +326,7 @@ def main() -> None:
     args.out.parent.mkdir(parents=True, exist_ok=True)
     n_rows = 0
     with args.out.open("w") as fh:
-        for j, p in enumerate(positions):
+        for j, _p in enumerate(positions):
             prev_uci: str | None = None
             prev_q: float | None = None
             for sims in budgets:

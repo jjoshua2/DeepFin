@@ -483,7 +483,7 @@ def test_transport_check_rejects_puct_and_aot():
         check_dynamic_relations_transport(
             {**base, "distributed_inference_broker_enabled": True})
     # record_relations alone (no model flag) is guarded too
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="distributed_worker_threaded"):
         check_dynamic_relations_transport(
             {"record_relations": True, "mcts": "gumbel",
              "distributed_worker_threaded": True})

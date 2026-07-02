@@ -185,10 +185,11 @@ def main() -> None:
     print(f"Loaded {len(rows)} iters (1..{rows[-1]['iter']}) from {result_path}")
     print(f"drift_threshold={DRIFT_THRESHOLD}  safety_floor={INVERSE_SAFETY_FLOOR}\n")
 
-    results = []
-    for alpha in ALPHAS:
-        for sigma in SIGMAS:
-            results.append(replay(rows, alpha=alpha, sigma=sigma))
+    results = [
+        replay(rows, alpha=alpha, sigma=sigma)
+        for alpha in ALPHAS
+        for sigma in SIGMAS
+    ]
 
     print(
         f"{'alpha':>6}  {'sigma':>5}  {'acts':>5}  {'driftH':>6}  {'floorH':>6}  "

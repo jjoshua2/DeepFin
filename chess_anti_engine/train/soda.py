@@ -199,7 +199,7 @@ class SODAWeightDecayWrapper(torch.optim.Optimizer):
 
         self.base.step()
 
-        for group, k, prev_map in prev_by_group:
+        for _group, k, prev_map in prev_by_group:
             beta = 1.0 / float(k + 2)
             for param, prev in prev_map.items():
                 anchor = self._soda_anchors.get(param)

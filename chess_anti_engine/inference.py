@@ -101,11 +101,10 @@ def _forward_no_grad(
     sites used to reimplement this inline. ``relations_t`` is forwarded only
     when present so models without the kwarg (TinyNet, AOT nets) still work.
     """
-    with torch.no_grad():
-        with inference_autocast(device=device, enabled=use_amp, dtype=amp_dtype):
-            if relations_t is not None:
-                return model(xt, relations=relations_t)
-            return model(xt)
+    with torch.no_grad(), inference_autocast(device=device, enabled=use_amp, dtype=amp_dtype):
+        if relations_t is not None:
+            return model(xt, relations=relations_t)
+        return model(xt)
 
 
 def _relations_to_device(
@@ -146,12 +145,11 @@ def _forward_legal_no_grad(
     use_amp: bool = True,
     amp_dtype: str = "auto",
 ) -> dict[str, torch.Tensor]:
-    with torch.no_grad():
-        with inference_autocast(device=device, enabled=use_amp, dtype=amp_dtype):
-            if callable(getattr(getattr(model, "_orig_mod", None), "forward_legal_policy", None)):
-                return model(xt, legal_flat=legal_flat, legal_counts=legal_counts)
-            forward_legal = getattr(model, "forward_legal_policy")
-            return forward_legal(xt, legal_flat, legal_counts)
+    with torch.no_grad(), inference_autocast(device=device, enabled=use_amp, dtype=amp_dtype):
+        if callable(getattr(getattr(model, "_orig_mod", None), "forward_legal_policy", None)):
+            return model(xt, legal_flat=legal_flat, legal_counts=legal_counts)
+        forward_legal = getattr(model, "forward_legal_policy")
+        return forward_legal(xt, legal_flat, legal_counts)
 
 
 def _forward_legal_rows_no_grad(
@@ -164,12 +162,11 @@ def _forward_legal_rows_no_grad(
     use_amp: bool = True,
     amp_dtype: str = "auto",
 ) -> dict[str, torch.Tensor]:
-    with torch.no_grad():
-        with inference_autocast(device=device, enabled=use_amp, dtype=amp_dtype):
-            if callable(getattr(getattr(model, "_orig_mod", None), "forward_legal_policy_rows", None)):
-                return model(xt, legal_flat=legal_flat, legal_rows=legal_rows)
-            forward_legal = getattr(model, "forward_legal_policy_rows")
-            return forward_legal(xt, legal_flat, legal_rows)
+    with torch.no_grad(), inference_autocast(device=device, enabled=use_amp, dtype=amp_dtype):
+        if callable(getattr(getattr(model, "_orig_mod", None), "forward_legal_policy_rows", None)):
+            return model(xt, legal_flat=legal_flat, legal_rows=legal_rows)
+        forward_legal = getattr(model, "forward_legal_policy_rows")
+        return forward_legal(xt, legal_flat, legal_rows)
 
 
 def _configure_compile_cache(cache_root: Path) -> None:
@@ -1729,7 +1726,7 @@ class SlotInferenceClient:
                     raise TimeoutError(
                         f"inference broker slot {self._slot_name!r} was not available "
                         f"after {self._request_timeout_s:.3f}s"
-                    )
+                    ) from None
                 time.sleep(0.01)
                 continue
             _detach_attached_shm_from_resource_tracker(shm)
@@ -2336,7 +2333,7 @@ class SharedSlotBroker:
             log.info("shared broker: first parallel inference complete (%d trials)", len(results))
 
   # Scatter results back to slots
-        for trial_id, ready, batch_sizes, pol, wdl in results:
+        for _trial_id, ready, batch_sizes, pol, wdl in results:
             pol_np = pol.numpy()
             wdl_np = wdl.numpy()
             start = 0

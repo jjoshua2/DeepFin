@@ -9,6 +9,7 @@ to drop a defensive .copy()).
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from chess_anti_engine.inference import DirectGPUEvaluator
 from chess_anti_engine.model import ModelConfig, build_model
@@ -77,9 +78,5 @@ def test_inplace_async_independent_slots():
 
 def test_slot_out_of_range_rejected():
     ev = _make_evaluator(n_slots=2)
-    try:
+    with pytest.raises(ValueError, match="slot 2 out of range"):
         ev.get_input_buffer(4, slot=2)
-    except ValueError as e:
-        assert "slot" in str(e)
-    else:  # pragma: no cover — fail
-        raise AssertionError("expected ValueError on slot=2 with n_slots=2")

@@ -555,13 +555,13 @@ def test_continue_gumbel_sims_rejects_mis_shaped_arrays() -> None:
     good_pol = np.zeros((n_leaves, 4672), dtype=np.float32)
     good_wdl = np.zeros((n_leaves, 3), dtype=np.float32)
 
-    with pytest.raises(ValueError):  # too few policy rows
+    with pytest.raises(ValueError, match="pol must have shape"):  # too few policy rows
         tree.continue_gumbel_sims(good_pol[: n_leaves - 1], good_wdl)
-    with pytest.raises(ValueError):  # wrong policy column count
+    with pytest.raises(ValueError, match="pol must have shape"):  # wrong policy column count
         tree.continue_gumbel_sims(good_pol[:, :1858], good_wdl)
-    with pytest.raises(ValueError):  # too few wdl rows
+    with pytest.raises(ValueError, match="wdl must have shape"):  # too few wdl rows
         tree.continue_gumbel_sims(good_pol, good_wdl[: n_leaves - 1])
-    with pytest.raises(ValueError):  # wdl wider than 3 misaligns the li*3 stride
+    with pytest.raises(ValueError, match="wdl must have shape"):  # wdl wider than 3 misaligns the li*3 stride
         tree.continue_gumbel_sims(good_pol, np.zeros((n_leaves, 4), dtype=np.float32))
 
     # Failed validation must not consume the pending batch: a well-formed

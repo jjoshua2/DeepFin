@@ -69,7 +69,7 @@ def test_normalize_and_plane_counts():
     assert extra_feature_plane_count("v2_threats") == 63
     assert input_plane_count("v1") == 146
     assert input_plane_count("v2_threats") == 175
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="unknown input_extra_features"):
         normalize_extra_features_encoding("v3_nope")
 
 

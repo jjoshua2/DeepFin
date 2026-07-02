@@ -392,7 +392,7 @@ def test_eff_sf_nodes_zero_budget_returns_none():
 
 def test_eff_sf_nodes_rejects_move_and_label_combination() -> None:
     state = _state(has_policy=True)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="cannot be both a move and a label"):
         _eff_sf_nodes(state, 0, for_move=True, for_label=True)
 
 

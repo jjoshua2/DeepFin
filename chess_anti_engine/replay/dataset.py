@@ -119,7 +119,7 @@ def _build_collate_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
                 has_rel[i] = 1.0
         out["relations"] = rel
         out["has_relations"] = has_rel
-    for src, target, has, shape in _OPTIONAL_FLOAT_FIELDS:
+    for _src, target, has, shape in _OPTIONAL_FLOAT_FIELDS:  # skylos: ignore — spec tuple unpack
         shape = (policy_size,) if shape == _POLICY_SHAPE else shape
         out[target] = np.zeros((n, *shape), dtype=np.float32)
         out[has] = np.zeros((n,), dtype=np.float32)

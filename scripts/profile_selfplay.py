@@ -184,9 +184,8 @@ def bench_gpu(model: torch.nn.Module, device: str, repeats: int) -> None:
     for bs in [1, 4, 8, 16, 32, 64, 128]:
         x = torch.randn(bs, 146, 8, 8, device=device)
         def _fwd(x=x):
-            with torch.no_grad():
-                with inference_autocast(device=device, enabled=True, dtype="auto"):
-                    return model(x)
+            with torch.no_grad(), inference_autocast(device=device, enabled=True, dtype="auto"):
+                return model(x)
         t = _timer_cuda(_fwd, device, repeats, warmup=3)
         print(f"  batch={bs:4d}: {t*1000:8.2f} ms total  ({t/bs*1000:.3f} ms/pos, {bs/t:.0f} pos/sec)")
 
@@ -368,9 +367,8 @@ def main() -> None:
         # Warmup compile with various batch sizes
         for bs in [1, 4, 16, 64]:
             dummy = torch.randn(bs, 146, 8, 8, device=device)
-            with torch.no_grad():
-                with inference_autocast(device=device, enabled=True, dtype="auto"):
-                    model(dummy)
+            with torch.no_grad(), inference_autocast(device=device, enabled=True, dtype="auto"):
+                model(dummy)
         torch.cuda.synchronize()
         print("Compile warmup done.")
 

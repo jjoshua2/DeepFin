@@ -255,11 +255,8 @@ def expected_and_top1_regret(
     """(expected regret of sampling from probs, regret of argmax move)."""
     p = np.asarray(probs, dtype=np.float64)
     total = float(p.sum())
-    if total <= 0.0:
-        # Degenerate distribution: treat as uniform over legal moves.
-        p = np.full_like(p, 1.0 / max(1, p.size))
-    else:
-        p = p / total
+    # A non-positive total is a degenerate distribution: treat as uniform.
+    p = np.full_like(p, 1.0 / max(1, p.size)) if total <= 0.0 else p / total
     return float((p * regrets).sum()), float(regrets[int(np.argmax(p))])
 
 

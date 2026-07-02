@@ -148,14 +148,15 @@ def _sample_manifest(
 
 def _label_one(eng: StockfishUCI, row: dict, *, nodes: int) -> dict:
     res = eng.search(row["fen"], nodes=nodes)
-    multipv = []
-    for pv in res.pvs or []:
-        multipv.append({
+    multipv = [
+        {
             "move": pv.move_uci,
             "cp": None if pv.cp is None else int(pv.cp),
             "mate": None if pv.mate is None else int(pv.mate),
             "wdl": None if pv.wdl is None else [float(v) for v in pv.wdl],
-        })
+        }
+        for pv in res.pvs or []
+    ]
     if not multipv and res.bestmove_uci:
         multipv.append({"move": res.bestmove_uci, "cp": int(res.cp or 0),
                         "mate": res.mate, "wdl": None})

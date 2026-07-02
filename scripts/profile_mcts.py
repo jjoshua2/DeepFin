@@ -57,7 +57,7 @@ _ = run_gumbel_root_many_c(
 
 # Profile
 times = []
-for ply in range(N_PLIES):
+for _ply in range(N_PLIES):
     t0 = time.perf_counter()
     result = run_gumbel_root_many_c(
         None, boards, device='cpu', rng=rng, cfg=cfg,

@@ -800,12 +800,8 @@ def test_transformer_arc_adapter_starts_checkpoint_compatible():
 
 def test_transformer_rejects_unknown_pos_encoding():
     cfg = TransformerConfig(in_planes=146, input_pos_encoding="bogus")
-    try:
+    with pytest.raises(ValueError, match="input_pos_encoding"):
         ChessNet(cfg)
-    except ValueError as exc:
-        assert "input_pos_encoding" in str(exc)
-    else:
-        raise AssertionError("expected invalid input_pos_encoding to fail")
 
 
 def test_transformer_legal_policy_matches_dense_logits():

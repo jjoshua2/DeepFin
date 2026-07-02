@@ -13,7 +13,7 @@ import logging
 import sys
 import threading
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 from collections.abc import Callable
 
 import chess
@@ -706,7 +706,7 @@ class Engine:
         self._options.syzygy_path = v
         self._install_tablebase(v)
 
-    _SETOPTION_HANDLERS: dict[str, Callable[[Engine, str], None]] = {
+    _SETOPTION_HANDLERS: ClassVar[dict[str, Callable[[Engine, str], None]]] = {
         "hash": _set_hash,
         "ponder": _set_ponder,
         "threads": _set_threads,

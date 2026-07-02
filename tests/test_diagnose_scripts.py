@@ -116,16 +116,16 @@ def _write_multiply_diagnostic_replay(tmp_path: Path) -> Path:
     for game_id in range(100):
         outcome = game_id % 3
         base = ((game_id % 11) - 5) / 10.0
-        for ply in (0, 2, 4):
-            samples.append(
-                _diagnostic_sample(
-                    game_id=game_id,
-                    ply=ply,
-                    sf_q=float(np.clip(base + 0.05 * ply, -0.9, 0.9)),
-                    search_q=float(np.clip(-base + 0.03 * ply, -0.9, 0.9)),
-                    outcome=outcome,
-                ),
+        samples.extend(
+            _diagnostic_sample(
+                game_id=game_id,
+                ply=ply,
+                sf_q=float(np.clip(base + 0.05 * ply, -0.9, 0.9)),
+                search_q=float(np.clip(-base + 0.03 * ply, -0.9, 0.9)),
+                outcome=outcome,
             )
+            for ply in (0, 2, 4)
+        )
     return _write_diagnostic_replay(tmp_path, samples)
 
 

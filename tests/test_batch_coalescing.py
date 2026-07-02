@@ -230,7 +230,9 @@ def test_close_unblocks_pending_waiters() -> None:
     assert not tb.is_alive(), "caller B hung across close — the close-race bug"
     # A completed normally (its forward returned before close drained).
     # B was stranded in pending when close ran; must see RuntimeError.
-    assert len(errors_b) == 1 and isinstance(errors_b[0], RuntimeError), (
+    assert len(errors_b) == 1, (
+        f"caller B should get exactly one error from close(), got {errors_b}")
+    assert isinstance(errors_b[0], RuntimeError), (
         f"caller B should get RuntimeError from close(), got {errors_b}")
 
 

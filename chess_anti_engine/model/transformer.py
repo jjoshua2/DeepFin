@@ -1035,9 +1035,10 @@ class ChessNet(nn.Module):
                         if isinstance(proj, _NLAProjection):
                             modules.extend(m for m in proj.net if isinstance(m, nn.Linear))
                 elif block.qkv_projection == "split":
-                    for proj in (block.q_proj, block.k_proj, block.v_proj):
-                        if isinstance(proj, nn.Linear):
-                            modules.append(proj)
+                    modules.extend(
+                        proj for proj in (block.q_proj, block.k_proj, block.v_proj)
+                        if isinstance(proj, nn.Linear)
+                    )
                 else:
                     modules.append(block.qkv_proj)
                 modules.extend(m for m in block.ffn if isinstance(m, nn.Linear))

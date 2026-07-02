@@ -1815,7 +1815,7 @@ class WorkerSession:
             try:
                 protocol_mismatch = int(req_proto) != int(PROTOCOL_VERSION)
             except Exception:
-                raise SystemExit(f"Bad protocol_version in manifest: {req_proto!r}")
+                raise SystemExit(f"Bad protocol_version in manifest: {req_proto!r}") from None
         min_v = manifest.get("min_worker_version")
         version_too_old = bool(min_v is not None and version_lt(PACKAGE_VERSION, str(min_v)))
         enc = manifest.get("encoding") or {}

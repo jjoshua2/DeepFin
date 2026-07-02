@@ -286,12 +286,12 @@ def main() -> None:
         if "ThreadedBatchEvaluator" in requested_paths:
             paths.append(("ThreadedBatchEvaluator", int(threads), games_per_thread, 0.0, 0))
         if "ThreadedDispatcher" in requested_paths:
-            for wait_ms in wait_values:
-                for target_batch in target_values:
-                    paths.append((
-                        "ThreadedDispatcher", int(threads), games_per_thread,
-                        float(wait_ms), int(target_batch),
-                    ))
+            paths.extend(
+                ("ThreadedDispatcher", int(threads), games_per_thread,
+                 float(wait_ms), int(target_batch))
+                for wait_ms in wait_values
+                for target_batch in target_values
+            )
     results: list[dict[str, Any]] = []
     for name, n_threads, games_per_thread, wait_ms, target_batch in paths:
         print(f"\n=== {name} (threads={n_threads}, games/thread={games_per_thread}, "

@@ -235,7 +235,7 @@ def _finalize_stats(stats: dict[str, Any]) -> dict[str, Any]:
 def _push_example(heap: list[tuple[float, int, ExampleRef]], ref: ExampleRef, *, limit: int) -> None:
     if int(limit) <= 0:
         return
-    global _EXAMPLE_SEQ  # noqa: PLW0603
+    global _EXAMPLE_SEQ
     _EXAMPLE_SEQ += 1
     item = (float(ref.gap), int(_EXAMPLE_SEQ), ref)
     if len(heap) < int(limit):
