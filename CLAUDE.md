@@ -57,6 +57,14 @@ Use `scripts/train.sh` to drive training; it manages the PID file, log, and Ray 
 
 Salvage is driven entirely by CLI flags (`--salvage-seed-pool-dir`, `--salvage-restore-*`), so you don't need to edit `configs/pbt2_small.yaml` to activate or disable it. When to salvage: after a bad exploit, a training run that regressed, or to rebase onto a better-regret checkpoint. A pool is a one-shot seed — once trials are past startup it plays no further role.
 
+**Operational gotchas:**
+
+- After pulling changes to `.c`/`.h` files, rebuild in place: `python3 setup.py build_ext --inplace` (NOT `pip install -e .` — the .venv setuptools lacks PEP 660).
+- Scripts that import the C extensions must run under `/usr/bin/python3` with `PYTHONPATH=.` — the `.venv` numpy ABI mismatches `_mcts_tree`.
+- NEVER run a 256+ sim arena concurrent with training (GPU OOM crashed the live run 2026-06-18). sims-1/32 arenas and `audit_targets`/`value_regret` at small batch + `--gpu-mem-fraction` are safe concurrent.
+- The live YAML is re-read every iteration, and the strict validator rejects the WHOLE reload if it contains a key the running code doesn't know — add new config keys only after restarting onto code that defines them.
+- Live checkpoints get pruned by Ray; before using one as a long-lived reference (arena/audit baseline), copy it out of the tune dir first.
+
 ## Configs
 
 - `configs/pbt2_small.yaml` — **Production config.** 384-dim, 12-layer model (~46M params — per-layer Smolgen + 4 policy heads dominate the count). Distributed selfplay with shared inference broker, PID difficulty controller, PBT/GPBT hyperparameter search. All active training uses this.
@@ -77,41 +85,46 @@ killed without training. Tooling:
   deep-SF audit set (>=1M nodes, MultiPV >=10, side-to-move canonical) and
   the direct scorer (expected/top-1 deep-SF regret per phase+source; WDL
   Brier/ECE). The set FREEZES after generation; new sampling = new version.
+- `scripts/value_regret.py` — value-head 1-ply deep-SF regret: the VALUE
+  yardstick (ranking strength, directly comparable to the policy regret;
+  Brier/ECE are fooled by calibration and must not be used to judge value
+  strength).
 - `scripts/probe_policy_targets.py` — policy vs soft-policy divergence
   probe. `scripts/retarget_retrain.py` — offline SF-target retuning from
-  the sparse MultiPV shard labels (shard schema v2), no live run needed.
+  the sparse MultiPV shard labels, no live run needed.
 - `scripts/convert_shards_v2_threats.py` — offline v1→v2_threats shard
-  converter: recomputes the 29 threat planes from the stored input planes
-  (no FENs; `encoding/plane_decode.py` decodes step-0 bitboards, the
-  stored 34 v1 extra planes validate the decode). Idempotent, atomic
-  per shard. The on-the-fly twin is `train.replay_upgrade_v1_planes`
-  (DiskReplayBuffer recomputes at shard load instead of zero-padding).
+  converter (recomputes the 29 threat planes from stored input planes;
+  idempotent, atomic per shard). On-the-fly twin:
+  `train.replay_upgrade_v1_planes`.
 - Flag-gated research bets live in `configs/exp_*.yaml` (each header has
-  the sweep plan + kill threshold); ALL flags default off and
-  `configs/pbt2_small.yaml` stays untouched until a bet clears its bar.
-  Current bets: v2_threats input planes, dynamic board-relation attention
-  bias (`model.use_dynamic_relations`), soft-policy ablation
-  (`train.soft_policy_min_tv`), sparse SF-policy CE
-  (`train.sf_policy_sparse_ce` + `selfplay.record_dense_sf_policy`), and
-  volatility-aware Gumbel search (`selfplay.volatility_*`, Python search
-  path only — any non-zero flag forces it with a logged warning).
+  the sweep plan + kill threshold); ALL flags default off and only enter
+  `configs/pbt2_small.yaml` once promoted. Promoted to production:
+  v2_threats planes (2026-06-17), the throughput triple — `sf_label_nodes_cap`,
+  `record_fast_ply_value`, `train_views_per_position` (2026-07-01;
+  `configs/exp_throughput_views.yaml` holds the isolated variant + kill
+  thresholds). Open bets: sparse SF-policy CE (`train.sf_policy_sparse_ce`),
+  soft-policy ablation (`train.soft_policy_min_tv`), volatility-aware Gumbel
+  search (`selfplay.volatility_*`, Python search path only). Shelved:
+  dynamic board-relation bias (offline ≡ threat planes).
 
 ## Architecture
 
 **Data flow per iteration:** distributed selfplay (MCTS games vs Stockfish) → shard upload → ingest into disk-backed replay buffer → training step → checkpoint → publish model to workers.
 
 ### Input Encoding (`encoding/`)
-146-plane 8x8 input: 112 LC0 history planes + 34 classical feature planes (king safety, pins/xrays, pawn structure, mobility, outposts). `encode_position()` is the main entry point. C extension `_lc0_ext` provides `CBoard` for fast board operations (push, encode, legal moves).
+Production input is **175 planes** (`input_extra_features: v2_threats`): 112 LC0 history planes + 34 classical feature planes (king safety, pins/xrays, pawn structure, mobility, outposts) + 29 threat planes. Legacy `v1` = 146 planes (no threat planes). `encode_position()` is the main entry point. C extension `_lc0_ext` provides `CBoard` for fast board operations (push, encode, legal moves).
 
 ### Model (`model/`)
 Transformer encoder-only backbone (`ChessNet` in `transformer.py`). BT4-aligned architecture with Smolgen attention bias, gating, configurable embed dim/layers/heads. Multi-task output heads — each head and its training target (see `train/losses.py`):
 
+Policy heads emit policy-size logits — **lc0_1858 compact in production**, legacy az_4672 (see Move Encoding).
+
 | Head output | Shape | Training target | Target source | Loss | Weight knob |
 |---|---|---|---|---|---|
-| `policy` / `policy_own` | 4672 logits | `policy_t` (soft) | Gumbel completed-Q **improved policy** over all legal moves (`rec.policy_probs` = softmax(log prior + σ(completed Q)) at the searched root — the paper's recommended target, NOT raw visit counts). Move-selection temperature affects only the played move, not this target. | CE, legal-masked | `w_policy` |
-| `policy_soft` | 4672 logits | `policy_soft_t` (soft) | Same improved policy as `policy_t`, retempered via `apply_policy_temperature(soft_policy_temp)` (typically softer) | CE, legal-masked | `w_soft` |
-| `policy_future` | 4672 logits | `future_policy_t` (soft) | The t+2 record's `policy_probs` — improved policy at position t+2 (predict-own-reply) | CE, **no** mask | `w_future` |
-| `policy_sf` | 4672 logits | `sf_policy_t` (soft) | Softmax over SF's MultiPV candidate WDL scores + label smoothing. `sf_move_index` is stored as the bestmove index but **not** used as a target — `policy_sf` trains on the soft distribution. **WDL saturation in decided positions can flatten this target**. | CE (soft), no mask | `w_sf_move` |
+| `policy` / `policy_own` | policy logits | `policy_t` (soft) | Gumbel completed-Q **improved policy** over all legal moves (`rec.policy_probs` = softmax(log prior + σ(completed Q)) at the searched root — the paper's recommended target, NOT raw visit counts). Move-selection temperature affects only the played move, not this target. | CE, legal-masked | `w_policy` |
+| `policy_soft` | policy logits | `policy_soft_t` (soft) | Same improved policy as `policy_t`, retempered via `apply_policy_temperature(soft_policy_temp)` (typically softer) | CE, legal-masked | `w_soft` |
+| `policy_future` | policy logits | `future_policy_t` (soft) | The t+2 record's `policy_probs` — improved policy at position t+2 (predict-own-reply) | CE, **no** mask | `w_future` |
+| `policy_sf` | policy logits | `sf_policy_t` (soft) | Softmax over SF's MultiPV candidate WDL scores + label smoothing. SF labels are queried at **P1** (after the net's move), so this is the **opponent's reply distribution**, NOT a move-teacher for the sample's own position — the `sf_p0_*` fields (one-ply shift, selfplay rows) provide that. `sf_move_index` is the stored bestmove pointer, used only by the `sf_move_acc` metric. | CE (soft), no mask | `w_sf_move` |
 | `wdl` | 3 logits | three-way soft blend | `game_frac`·game outcome (one-hot) + `sf_wdl_frac`·SF eval + `search_wdl_frac`·own MCTS root WDL (fracs live-tunable; ≈0.30/0.35/0.35 at low regret). `sf_wdl` is a **cp-logistic** label (`sf_wdl_use_cp_logistic`, slope/draw-width in config), soft by construction, not SF's native near-one-hot WDL. See the blend note below | soft CE on the blend | `w_wdl` + the three `*_frac` knobs |
 | `sf_eval` | 3 logits | `sf_wdl` (soft) | SF's WDL eval only (auxiliary, **not** used in MCTS) | Soft CE | `w_sf_eval` |
 | `categorical` | 32 logits | `categorical_t` (HL-Gauss) | Game outcome as 32-bin Gaussian distribution (distributional value) | CE | `w_categorical` |
@@ -122,7 +135,7 @@ Transformer encoder-only backbone (`ChessNet` in `transformer.py`). BT4-aligned 
 Implementation details:
 - Each of the 4 policy heads is a separate `AttentionPolicyHead` (Q/K/underpromo projections) that shares the trunk. Uses `Q@K^T` with `1/√d` scaling plus a learnable `log_temp` scalar per head (added Apr 2026 — the `1/√d` scale alone squashed output sharpness below what MCTS targets required).
 - `wdl` is the ONLY value head used in MCTS search. `sf_eval` and `categorical` are auxiliary supervision signals that share the trunk but don't feed the search.
-- `sf_move_index` in the shard is the stored "SF's best move" pointer; training does not use it as a 1-hot target — `policy_sf` trains on the soft `sf_policy_t` distribution instead. But it IS used by the `sf_move_acc` metric (top-1 accuracy: `argmax(policy_sf) == sf_move_index`), reported on TensorBoard as `sf_move_acc` / `test_sf_move_acc`. So: train-on-soft, evaluate-top-1-against-bestmove.
+- Rows are recorded per net turn with `has_policy` ⇔ full-sim ply. Only the MAIN policy CE masks by `has_policy`; the aux policy heads mask by their own presence flags, so value-only rows must have those targets cleared at finalize (they are — see `_build_replay_samples`).
 
 `TinyNet` in `tiny.py` is a small reference model for testing.
 
@@ -133,7 +146,7 @@ Implementation details:
 Gumbel MCTS with sequential halving (primary) and PUCT (legacy). C-accelerated tree operations in `_mcts_tree.c` — fused tree traversal + CBoard replay + encoding. `gumbel_c.py` orchestrates the simulation loop with GPU inference pipelining.
 
 ### Selfplay (`selfplay/`)
-`play_batch()` orchestrates games. Network turns use MCTS + temperature sampling; Stockfish turns query engine with MultiPV for soft policy targets.
+`play_batch()` orchestrates games (mostly net-vs-net "selfplay" slots plus a curriculum fraction vs the PID-handicapped SF opponent). Network turns use MCTS + temperature sampling; ~75% of plies are playout-capped "fast" plies (`playout_cap_fraction`/`fast_simulations`), the rest full-sim. `has_policy` ⇔ full ply; with `selfplay.record_fast_ply_value` fast plies are kept as **value-only rows** (the KataGo playout-cap harvest — active in production since 2026-07-01, ~4× rows/game). SF labels (`sf_wdl`/`sf_policy`) attach only to full plies, are queried at P1 (after the net's move) and POV-flipped to the sample; `stockfish.sf_label_nodes_cap` caps label-query nodes independently of the PID opponent budget.
 
 ### Distributed Selfplay (`tune/distributed_runtime.py`, `server/`)
 Workers run as separate processes, each playing game batches via shared inference broker. Broker (`inference.py: SlotBroker/SharedSlotBroker`) uses pre-allocated shared memory slots with pinned CPU buffers for zero-copy GPU transfer. Workers upload shard files to server inbox; trainable ingests them into the replay buffer each iteration.
@@ -144,9 +157,9 @@ Adaptive opponent strength via WDL regret-based difficulty. PID controller targe
 **How regret works:** SF selects randomly among all moves whose WDL loss vs the best move is within `wdl_regret`. Higher regret = wider pool of acceptable moves including bad ones = SF plays weaker = model wins more easily. Lower regret = SF constrained to near-optimal moves = harder. So the controller LOWERS regret to increase difficulty and RAISES it when winrate is too low (airbag). The training target is always best-move based — `policy_sf` trains on the soft distribution over SF's MultiPV candidates by WDL eval, and `sf_wdl` reflects the objective position eval — neither depends on which handicapped move SF actually chose.
 
 ### Training (`train/`)
-`Trainer` class runs training steps with `torch.amp` (BF16 on CUDA). Multi-component loss computed in `losses.py`. Optimizer is configurable (`nadamw` / `adamw` / `cosmos` / `cosmos_fast`); current production config uses `adamw`. Gradient clipping via z-clip (`zclip_max_norm` hard cap + z-score outlier clip).
+`Trainer` class runs training steps with `torch.amp` (BF16 on CUDA). Multi-component loss computed in `losses.py`. Optimizer is configurable (`aurora` / `nadamw` / `adamw` / `cosmos` / ...); production uses **`aurora`** with `matrix_optimizer_scope: mlp_out`. Gradient clipping via z-clip (`zclip_max_norm` hard cap + z-score outlier clip). Per-iteration step budget: production uses **views-targeting** (`train_views_per_position`: trained-samples per ingested position held fixed, so steps scale with ingest volume); `train_window_fraction` is the legacy mode and the ingest-drought floor.
 
-**The WDL blend's SF component is load-bearing — do not zero it.** The main `value_wdl` head trains on a single soft-CE against a three-way blend built in `losses.py` (`game_frac`·outcome + `sf_wdl_frac`·SF cp-logistic label + `search_wdl_frac`·own search-root WDL; there is no separate `w_sf_wdl` term anymore — that knob was removed when the blend replaced the dual-loss design). The SF component injects search-horizon bootstrap that pure selfplay outcomes cannot carry; removing SF value supervision was tried 2026-04-17 (reverted in commit 52ab9c0) — winrate crashed 0.64 → 0.40 in 4 iters. Verified 2026-07-01: the cp-logistic label (slope 0.006, draw_width 120cp) is approximately *calibrated to actual selfplay outcomes* per cp-bucket, so the head's soft/"hedged" predictions (entropy ~0.72 vs blend-target entropy ~0.717) are an accurate fit to its target, not under-fitting — the head sharpens only as the net's real conversion ability improves. The separate `value_sf_eval` head remains a weak auxiliary channel (`w_sf_eval`) and does not substitute for the main-head blend.
+**The WDL blend's SF component is load-bearing — do not zero it.** The main `value_wdl` head trains on one soft-CE against a three-way blend built in `losses.py`: `game_frac`·outcome + `sf_wdl_frac`·SF cp-logistic label + `search_wdl_frac`·own search-root WDL (no separate `w_sf_wdl` knob exists — the blend replaced the old dual loss). Removing SF value supervision crashed winrate 0.64 → 0.40 in 4 iters (2026-04-17, reverted in 52ab9c0). The cp-logistic label is deliberately soft and ~calibrated to actual selfplay outcomes (verified 2026-07-01), so the head's "hedged" predictions are an accurate fit to its target, not under-fitting — the head sharpens only as the net's real conversion ability improves. Don't chase value-head sharpness against a deep-SF ruler; that comparison is a category error. `value_sf_eval` is a weak auxiliary channel, not a substitute.
 
 ### Replay Buffer (`replay/`)
 Disk-backed replay buffer (`DiskReplayBuffer`) with zarr shard storage. Growing sliding window: starts small, expands as training progresses. KataGo-style surprise weighting for sampling.
@@ -196,7 +209,7 @@ Suppression syntax (prefer config/baseline over inline; inline only when refacto
 - Ruff: `# noqa: E741`
 - Skylos: `# skylos: ignore`
 
-Baseline cleanup sequence used to get here: ruff (commits `b1a7cca`), pyright (`55d0dd5`), pylint (`b490310`), skylos (`9220460`), plus the basedpyright migration. Don't let drift accumulate — fix findings in the same commit that introduces them.
+Don't let drift accumulate — fix findings in the same commit that introduces them.
 
 ## Code Review Protocol
 
