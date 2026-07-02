@@ -36,7 +36,7 @@ def build_pool_manifest_dict(
     out: dict[str, object] = {
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "metric": str(metric),
-        "top_n": int(len(entries)),
+        "top_n": len(entries),
         "entries": list(entries),
     }
     if label is not None:

@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 from chess_anti_engine.utils import sha256_file as _sha256_file
+import contextlib
 
 
 def _safe_manifest_filename(value: object, *, default: str) -> str:
@@ -106,10 +107,8 @@ def _download_and_verify_shared(
                     return
                 out_path.unlink(missing_ok=True)
             if time.time() >= deadline:
-                try:
+                with contextlib.suppress(Exception):
                     lock_path.unlink(missing_ok=True)
-                except Exception:
-                    pass
             time.sleep(0.25)
 
     try:
@@ -125,10 +124,8 @@ def _download_and_verify_shared(
             headers=headers,
         )
     finally:
-        try:
+        with contextlib.suppress(Exception):
             lock_path.unlink(missing_ok=True)
-        except Exception:
-            pass
 
 
 def _prune_cached_models(*, cache_dir: Path, keep_shas: set[str]) -> None:

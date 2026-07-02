@@ -41,5 +41,5 @@ def progressive_mcts_simulations(
         exp = 1.0
 
     frac = t**exp
-    sims = int(round(float(s0) + (float(s1) - float(s0)) * frac))
+    sims = round(float(s0) + (float(s1) - float(s0)) * frac)
     return max(1, sims)

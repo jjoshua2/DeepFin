@@ -220,7 +220,7 @@ class ArrayReplayBuffer:
         if k <= 0 or pool.size == 0:
             return np.zeros((0,), dtype=np.int64)
         pool = np.asarray(pool, dtype=np.int64)
-        k_uni = int(round(k * (1.0 - self.surprise_mix)))
+        k_uni = round(k * (1.0 - self.surprise_mix))
         k_pri = k - k_uni
         picks: list[np.ndarray] = []
         if k_uni > 0:
@@ -329,7 +329,7 @@ class ArrayReplayBuffer:
             return self._gather_rows(self._sample_raw_indices(bs))
 
         p_draw = float(draw_idx.size) / float(max(1, self._size))
-        n_draw = int(round(bs * p_draw))
+        n_draw = round(bs * p_draw)
         n_draw = min(n_draw, int(np.floor(draw_cap_frac * bs)))
         n_draw = max(0, min(bs, n_draw))
         if draw_idx.size == 0:
@@ -340,7 +340,7 @@ class ArrayReplayBuffer:
         n_loss = 0
         if bs_decisive > 0:
             p_win = float(win_idx.size) / float(win_idx.size + loss_idx.size)
-            n_win = int(round(bs_decisive * p_win))
+            n_win = round(bs_decisive * p_win)
             n_win = max(0, min(bs_decisive, n_win))
             n_loss = bs_decisive - n_win
             r = float(wl_max_ratio)

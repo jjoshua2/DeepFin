@@ -548,7 +548,8 @@ def test_continue_gumbel_sims_rejects_mis_shaped_arrays() -> None:
         np.array([8], dtype=np.int32), np.array([0.0], dtype=np.float64),
         0.1, 50.0, 2.5, 1.2, True, enc_buf, 0, 0, 0,
     )
-    assert n_leaves is not None and int(n_leaves) > 0
+    assert n_leaves is not None
+    assert int(n_leaves) > 0
     n_leaves = int(n_leaves)
 
     good_pol = np.zeros((n_leaves, 4672), dtype=np.float32)
@@ -573,5 +574,6 @@ def test_continue_gumbel_sims_rejects_mis_shaped_arrays() -> None:
             np.zeros((n, 3), dtype=np.float32),
         )
     rem = tree.get_gumbel_remaining()
-    assert len(rem) == 1 and len(rem[0]) >= 1
+    assert len(rem) == 1
+    assert len(rem[0]) >= 1
     assert all(int(a) in set(remaining) for a in rem[0])

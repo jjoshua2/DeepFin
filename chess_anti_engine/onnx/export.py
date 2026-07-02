@@ -81,10 +81,7 @@ def _quantize_dynamic_ort(
         ) from e
 
     wt = str(cfg.weight_type).lower()
-    if wt == "quint8":
-        weight_type = QuantType.QUInt8
-    else:
-        weight_type = QuantType.QInt8
+    weight_type = QuantType.QUInt8 if wt == "quint8" else QuantType.QInt8
 
     extra_options: dict[str, Any] = {"MatMulConstBOnly": True}
 

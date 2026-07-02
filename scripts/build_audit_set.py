@@ -110,7 +110,7 @@ def _sample_manifest(
                     continue
                 src = 0 if is_sp[i] else 1
                 x = xs_chunk[int(j)]
-                piece_count = int(round(float(x[:12].sum())))
+                piece_count = round(float(x[:12].sum()))
                 ph = phase_bucket(piece_count)
                 if len(strata[(ph, src)]) >= cap:
                     continue

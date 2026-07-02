@@ -290,7 +290,7 @@ def _decode_current_board(x: np.ndarray) -> chess.Board:
             rights |= chess.BB_H1 if color == chess.WHITE else chess.BB_H8
     board.castling_rights = rights
     board.ep_square = None
-    board.halfmove_clock = int(round(float(x[109].mean()) * 100.0))
+    board.halfmove_clock = round(float(x[109].mean()) * 100.0)
     board.fullmove_number = 1
     return board
 

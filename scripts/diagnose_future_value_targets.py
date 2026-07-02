@@ -24,6 +24,7 @@ from scripts.diagnose_future_eval_bucketed import (
     _load_samples,
     _pairs_for_horizon,
 )
+import contextlib
 
 
 DEFAULT_RUN_DIR = Path("runs/pbt2_small")
@@ -160,10 +161,8 @@ def _latest_result(trial_dir: Path | None) -> dict[str, Any]:
         for line in fh:
             if not line.strip():
                 continue
-            try:
+            with contextlib.suppress(json.JSONDecodeError):
                 latest = json.loads(line)
-            except json.JSONDecodeError:
-                pass
     return latest
 
 

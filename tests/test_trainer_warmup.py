@@ -121,7 +121,7 @@ def test_select_input_history_arrays_rejects_root_reselect_mismatch() -> None:
             },
             input_history_encoding="lc0_root_legacy_meta",
         )
-        assert False, "expected ValueError"
+        pytest.fail("expected ValueError")
     except ValueError as exc:
         assert "incompatible stored history encodings" in str(exc)
 
@@ -137,7 +137,7 @@ def test_select_input_history_arrays_rejects_root_storage_for_legacy_model() -> 
             },
             input_history_encoding="legacy",
         )
-        assert False, "expected ValueError"
+        pytest.fail("expected ValueError")
     except ValueError as exc:
         assert "cannot train" in str(exc)
 
@@ -209,7 +209,7 @@ def test_select_input_history_samples_rejects_root_samples_for_legacy_model() ->
 
     try:
         select_input_history_samples([sample], input_history_encoding="legacy")
-        assert False, "expected ValueError"
+        pytest.fail("expected ValueError")
     except ValueError as exc:
         assert "cannot train" in str(exc)
 
@@ -753,7 +753,7 @@ def test_chained_optimizer_rejects_unroutable_param_group() -> None:
 
     try:
         opt.add_param_group({"params": [torch.nn.Parameter(torch.tensor([3.0]))]})
-        assert False, "expected NotImplementedError"
+        pytest.fail("expected NotImplementedError")
     except NotImplementedError as exc:
         assert "cannot route" in str(exc)
 

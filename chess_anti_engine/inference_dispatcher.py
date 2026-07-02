@@ -31,6 +31,7 @@ import numpy as np
 import torch
 
 from chess_anti_engine.inference import BatchEvaluator
+import contextlib
 
 
 class ThreadSafeGPUDispatcher:
@@ -166,10 +167,8 @@ class BatchCoalescingDispatcher:
 
     def __del__(self) -> None:
   # Best-effort close on GC, in case caller forgets.
-        try:
+        with contextlib.suppress(Exception):
             self.close()
-        except Exception:
-            pass
 
     def evaluate_encoded(
         self, x: np.ndarray, relations: np.ndarray | None = None,

@@ -181,7 +181,8 @@ def test_equal_width_zero_pad_repaired_to_native(target_v):
     # Pre-repair: only the seeded native row carries signal beyond v1; all the
     # zero-pad rows have an all-zero extra block.
     live_extra = x_padded[:, V1_INPUT_PLANES:].any(axis=(1, 2, 3))
-    assert int(live_extra.sum()) == 1 and live_extra[3]
+    assert int(live_extra.sum()) == 1
+    assert live_extra[3]
 
     out, stats = upgrade_arrays_to_planes(
         _chunk(x_padded, enc), target_planes=target_width,
@@ -194,7 +195,8 @@ def test_equal_width_zero_pad_repaired_to_native(target_v):
 
     # Repaired chunk is now fully native: a rerun is a no-op passthrough.
     out2, stats2 = upgrade_arrays_to_planes(out, target_planes=target_width)
-    assert out2 is out and stats2.upgraded_rows == 0
+    assert out2 is out
+    assert stats2.upgraded_rows == 0
 
 
 def test_equal_width_native_chunk_passthrough():
@@ -205,7 +207,8 @@ def test_equal_width_native_chunk_passthrough():
     x_native = _encode_rows(boards, enc, EXTRA_FEATURES_V3_XRAY)
     chunk = _chunk(x_native, enc)
     out, stats = upgrade_arrays_to_planes(chunk, target_planes=target_width)
-    assert out is chunk and stats.upgraded_rows == 0
+    assert out is chunk
+    assert stats.upgraded_rows == 0
 
 
 # ---------------------------------------------------------------------------

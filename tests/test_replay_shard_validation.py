@@ -9,7 +9,7 @@ class _DeclaredArray:
         self.shape = shape
         self.dtype = dtype
 
-    def __array__(self):  # noqa: ANN204
+    def __array__(self):
         raise AssertionError("declaration validation should not materialize arrays")
 
 
@@ -21,7 +21,7 @@ def test_validate_rejects_wrong_policy_size():
     }
     try:
         validate_arrays(arrs)
-        assert False, "expected ValueError"
+        pytest.fail("expected ValueError")
     except ValueError as e:
         assert "A mismatch" in str(e)
 
@@ -35,7 +35,7 @@ def test_validate_rejects_negative_policy():
     arrs["policy_target"][0, 0] = -0.1
     try:
         validate_arrays(arrs)
-        assert False, "expected ValueError"
+        pytest.fail("expected ValueError")
     except ValueError as e:
         assert "negative" in str(e)
 

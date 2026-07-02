@@ -27,6 +27,7 @@ from chess_anti_engine.model import (
 from chess_anti_engine.moves import COMPACT_POLICY_SIZE, POLICY_SIZE
 from chess_anti_engine.moves.torch_maps import compact_to_full_index_for as _compact_to_full_index_for
 from chess_anti_engine.utils.amp import inference_autocast
+import contextlib
 
 log = logging.getLogger(__name__)
 
@@ -1111,8 +1112,16 @@ class _InferenceSlot:
     """Numpy-backed view into a pre-allocated shared memory slot."""
 
     __slots__ = (
-        "_shm", "_layout", "_owns", "_buf",
-        "input", "input_bf16_bits", "policy", "policy_i32", "policy_u16", "wdl",
+        "_buf",
+        "_layout",
+        "_owns",
+        "_shm",
+        "input",
+        "input_bf16_bits",
+        "policy",
+        "policy_i32",
+        "policy_u16",
+        "wdl",
     )
     _buf: memoryview
 
@@ -1188,15 +1197,11 @@ class _InferenceSlot:
         return self._shm.name
 
     def close(self) -> None:
-        try:
+        with contextlib.suppress(Exception):
             self._shm.close()
-        except Exception:
-            pass
         if self._owns:
-            try:
+            with contextlib.suppress(Exception):
                 self._shm.unlink()
-            except Exception:
-                pass
 
 
 # ---------------------------------------------------------------------------
@@ -1709,10 +1714,8 @@ class SlotInferenceClient:
         self._slot = None
         self._shm = None
         if shm is not None:
-            try:
+            with contextlib.suppress(Exception):
                 shm.close()
-            except Exception:
-                pass
 
     def _connect(self, *, deadline: float) -> _InferenceSlot:
         while True:
@@ -1855,7 +1858,7 @@ class SlotInferenceClient:
                     pol, wdl = read(slot)
                     slot.state = _STATE_IDLE
                     return pol, wdl
-                if state == _STATE_SHUTDOWN or state == _STATE_IDLE:
+                if state in (_STATE_SHUTDOWN, _STATE_IDLE):
                     retry = True
                     break
                 if state != _STATE_REQUEST:

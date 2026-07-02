@@ -23,6 +23,7 @@ from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
 from chess_anti_engine.train import Trainer
+import contextlib
 
 
 def _make_sample(rng: np.random.Generator) -> ReplaySample:
@@ -211,10 +212,8 @@ def main() -> None:
 
     # Cleanup
     import shutil
-    try:
+    with contextlib.suppress(Exception):
         shutil.rmtree(tmpdir, ignore_errors=True)
-    except Exception:
-        pass
 
 
 if __name__ == "__main__":

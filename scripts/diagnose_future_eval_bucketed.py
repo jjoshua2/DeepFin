@@ -25,6 +25,7 @@ from scripts.diagnostic_replay_utils import (
     rmse as _rmse,
     select_shards as _select_shards,
 )
+import itertools
 
 
 DEFAULT_RUN_DIR = Path("runs/pbt2_small")
@@ -91,7 +92,7 @@ def _load_samples(
         scan["scanned_positions"] += n
         try:
             arrs, _meta = load_shard_arrays(shard, lazy=True)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             # Replay scans should continue past partially written or corrupt live shards.
             _record_skipped_shard(scan, shard, exc)
             continue
@@ -380,7 +381,7 @@ def _parse_eval_bins(raw: str) -> list[float]:
         raise argparse.ArgumentTypeError(f"at most {MAX_EVAL_BINS} eval bins are allowed")
     if any(not math.isfinite(value) for value in values):
         raise argparse.ArgumentTypeError("eval bins must be finite numbers")
-    if any(right <= left for left, right in zip(values, values[1:], strict=False)):
+    if any(right <= left for left, right in itertools.pairwise(values)):
         raise argparse.ArgumentTypeError("eval bins must be strictly increasing")
     return values
 

@@ -160,7 +160,8 @@ def _do_network_turn(
             actions[jj] = a
 
     for j, (idx, probs, a) in enumerate(zip(net_idxs, probs_list, actions, strict=True)):
-        assert probs is not None and a is not None
+        assert probs is not None
+        assert a is not None
         priority = _surprise_priority(pol_logits[j], probs, boards[idx])
         boards[idx].push(index_to_move(int(a), boards[idx]))
         samples_per_game[idx].append(

@@ -19,6 +19,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+import contextlib
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BASE_CONFIG = REPO_ROOT / "configs" / "pbt2_small.yaml"
@@ -77,10 +78,8 @@ def cleanup(
 
     time.sleep(2)
     if stop_ray:
-        try:
-            subprocess.run(["ray", "stop", "--force"], capture_output=True)
-        except FileNotFoundError:
-            pass
+        with contextlib.suppress(FileNotFoundError):
+            subprocess.run(["ray", "stop", "--force"], capture_output=True, check=False)
     time.sleep(3)
     for d in [server_dir, replay_dir]:
         _reset_dir(d)
@@ -141,7 +140,7 @@ def sample_gpu(n_samples: int = GPU_SAMPLES, interval: float = GPU_SAMPLE_INTERV
         time.sleep(interval)
         result = subprocess.run(
             ["nvidia-smi", "--query-gpu=utilization.gpu", "--format=csv,noheader"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, check=False,
         )
         try:
             val = int(result.stdout.strip().replace(" %", "").replace("%", ""))
@@ -154,7 +153,7 @@ def sample_gpu(n_samples: int = GPU_SAMPLES, interval: float = GPU_SAMPLE_INTERV
 def sample_cpu() -> dict:
     """Get CPU load and idle percentage."""
     result = subprocess.run(
-        ["top", "-bn1"], capture_output=True, text=True,
+        ["top", "-bn1"], capture_output=True, text=True, check=False,
     )
     lines = result.stdout.strip().split("\n")
     info = {}
@@ -177,11 +176,11 @@ def count_processes() -> dict:
     """Count stockfish and worker processes."""
     sf = subprocess.run(
         "ps aux | grep stockfish | grep -v grep | wc -l",
-        shell=True, capture_output=True, text=True,
+        shell=True, capture_output=True, text=True, check=False,
     )
     workers = subprocess.run(
         "ps aux | grep 'chess_anti_engine.worker' | grep -v grep | wc -l",
-        shell=True, capture_output=True, text=True,
+        shell=True, capture_output=True, text=True, check=False,
     )
     return {
         "sf_procs": int(sf.stdout.strip()),
@@ -199,10 +198,8 @@ def _terminate_process_tree(proc: subprocess.Popen) -> None:
     try:
         proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
-        try:
+        with contextlib.suppress(ProcessLookupError):
             os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
         proc.wait()
 
 

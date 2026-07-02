@@ -40,6 +40,7 @@ from chess_anti_engine.encoding.plane_decode import recompute_extra_planes
 from chess_anti_engine.replay.shard import iter_shard_paths, load_shard_arrays
 from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 from scripts.offline_replay_epoch import _select_configured_input_history
+import contextlib
 
 # Absolute plane-index ranges per family (see encoding/features.py).
 FAMILIES_LC0 = {
@@ -207,10 +208,8 @@ def to_tensors(arrs: dict[str, np.ndarray], device: str) -> dict[str, torch.Tens
     for k, v in arrs.items():
         if v.dtype == np.float16:
             v = v.astype(np.float32)
-        try:
+        with contextlib.suppress(TypeError):
             out[k] = torch.from_numpy(np.ascontiguousarray(v)).to(device)
-        except TypeError:
-            pass
     return out
 
 
@@ -269,7 +268,7 @@ def run_ablation(model, x, batch, families):
 
 def _capture_trunk(model):
     """Monkeypatch _encode_tokens to stash the trunk tensor (B,64,D)."""
-    orig = model._encode_tokens  # noqa: SLF001
+    orig = model._encode_tokens
     box: dict[str, torch.Tensor] = {}
 
     def patched(x, relations=None):
@@ -277,7 +276,7 @@ def _capture_trunk(model):
         box["t"] = t.detach()
         return t, rel
 
-    model._encode_tokens = patched  # noqa: SLF001
+    model._encode_tokens = patched
     return box, (lambda: setattr(model, "_encode_tokens", orig))
 
 
@@ -336,7 +335,7 @@ def candidate_feature_block(
     # at absolute 112, and ``block`` starts at absolute 112 + base_extra.
     base_abs = 112 + base_extra
     cols = []
-    for _name, (s, e) in families.items():
+    for (s, e) in families.values():
         ls, le = s - base_abs, e - base_abs
         cols.append(block[:, ls:le].mean(axis=(1, 2, 3)))
     return np.stack(cols, axis=1), list(families.keys())
@@ -431,10 +430,7 @@ def run_relevance(model, x, batch, arrs, history_encoding, candidate_version):
     feat = feat[mask]  # (N_labeled, n_families)
     print(f"\n=== RELEVANCE — corr({candidate_version} family activation, net regret[{regret_key}]) ===")
     for name, col in zip(names, feat.T):
-        if col.std() < 1e-9:
-            r = float("nan")
-        else:
-            r = float(np.corrcoef(col, regret)[0, 1])
+        r = float("nan") if col.std() < 1e-09 else float(np.corrcoef(col, regret)[0, 1])
         print(f"  {name.ljust(20)} r={r:+.3f}")
     r2_all = _ridge_r2(feat, regret.reshape(-1, 1))
     print(f"  [all {candidate_version} families -> regret] held-out R^2 = {r2_all:.3f}  (higher = more relevant to errors)")

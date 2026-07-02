@@ -465,8 +465,10 @@ def test_patch_experiment_state_for_resume_never_touches_construction_bound_keys
     assert cfg["policy_encoding"] == "az_4672"
     assert cfg["optimizer"] == "nadamw"
     assert "embed_dim" not in cfg
-    assert "embed_dim" not in added and "embed_dim" not in saved_keys
-    assert "policy_encoding" not in added and "optimizer" not in added
+    assert "embed_dim" not in added
+    assert "embed_dim" not in saved_keys
+    assert "policy_encoding" not in added
+    assert "optimizer" not in added
     # safe keys propagate
     assert cfg["history_rep_fix"] is True
     assert cfg["num_samples"] == 4

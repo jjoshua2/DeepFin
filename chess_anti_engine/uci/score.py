@@ -20,4 +20,4 @@ def q_to_cp(q: float) -> int:
   # tan goes to infinity near q=0 or q=1; clamp arg just shy of ±π/2.
     arg = _CP_K * (2.0 * q - 1.0)
     cp = _CP_A * math.tan(arg)
-    return int(round(cp))
+    return round(cp)

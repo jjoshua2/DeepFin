@@ -22,12 +22,12 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from chess_anti_engine.inference import LocalModelEvaluator  # noqa: E402
-from chess_anti_engine.mcts.gumbel import GumbelConfig  # noqa: E402
-from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c  # noqa: E402
-from chess_anti_engine.moves import index_to_move  # noqa: E402
-from chess_anti_engine.stockfish import StockfishUCI  # noqa: E402
-from chess_anti_engine.uci.model_loader import load_model_from_checkpoint  # noqa: E402
+from chess_anti_engine.inference import LocalModelEvaluator
+from chess_anti_engine.mcts.gumbel import GumbelConfig
+from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
+from chess_anti_engine.moves import index_to_move
+from chess_anti_engine.stockfish import StockfishUCI
+from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
 
 @dataclass

@@ -62,6 +62,7 @@ from chess_anti_engine.tune.trainable_report import (
 from chess_anti_engine.tune.trial_config import DifficultyState, TrialConfig
 
 import re as _re
+import contextlib
 
 _AVG_BATCH_RE = _re.compile(rb"avg=([0-9.]+)")
 
@@ -148,10 +149,8 @@ def _init_pid(tc: TrialConfig, config: dict, restored_pid_state, sf):
   # Keep gate-game SF in lock-step with restored PID nodes so gate plays
   # at the same difficulty distributed workers do. Cosmetic — fail quietly.
     if sf is not None:
-        try:
+        with contextlib.suppress(OSError, ValueError, AttributeError):
             sf.set_nodes(int(pid.nodes))
-        except (OSError, ValueError, AttributeError):
-            pass
     return pid
 
 

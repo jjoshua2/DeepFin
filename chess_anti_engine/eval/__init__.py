@@ -7,9 +7,11 @@ from .puzzles import (
 )
 
 __all__ = [
-    "PuzzleSuite", "PuzzleResult",
-    "load_epd", "load_lichess_csv",
-    "run_puzzle_eval",
+    "PuzzleResult",
+    "PuzzleSuite",
+    "load_epd",
+    "load_lichess_csv",
     "run_policy_sequence_eval",
+    "run_puzzle_eval",
     "run_value_head_puzzle_eval",
 ]

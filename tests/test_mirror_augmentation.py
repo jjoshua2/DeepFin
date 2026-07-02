@@ -187,18 +187,26 @@ def test_mirror_sample_is_involution():
     # round-trip all of them. Plain asserts both satisfy pyright and catch a
     # future silent-None regression in mirror_sample. Per-reference (not a
     # loop) because pyright narrowing is per-expression, not transitive.
-    assert (s.sf_wdl is not None and s.sf_move_index is not None
-            and s.sf_played_move_index is not None
-            and s.moves_left is not None and s.is_network_turn is not None
-            and s.categorical_target is not None and s.policy_soft_target is not None
-            and s.future_policy_target is not None and s.volatility_target is not None
-            and s.sf_volatility_target is not None)
-    assert (s2.sf_wdl is not None and s2.sf_move_index is not None
-            and s2.sf_played_move_index is not None
-            and s2.moves_left is not None and s2.is_network_turn is not None
-            and s2.categorical_target is not None and s2.policy_soft_target is not None
-            and s2.future_policy_target is not None and s2.volatility_target is not None
-            and s2.sf_volatility_target is not None)
+    assert (s.sf_wdl is not None)
+    assert (s.sf_move_index is not None)
+    assert (s.sf_played_move_index is not None)
+    assert (s.moves_left is not None)
+    assert (s.is_network_turn is not None)
+    assert (s.categorical_target is not None)
+    assert (s.policy_soft_target is not None)
+    assert (s.future_policy_target is not None)
+    assert (s.volatility_target is not None)
+    assert (s.sf_volatility_target is not None)
+    assert (s2.sf_wdl is not None)
+    assert (s2.sf_move_index is not None)
+    assert (s2.sf_played_move_index is not None)
+    assert (s2.moves_left is not None)
+    assert (s2.is_network_turn is not None)
+    assert (s2.categorical_target is not None)
+    assert (s2.policy_soft_target is not None)
+    assert (s2.future_policy_target is not None)
+    assert (s2.volatility_target is not None)
+    assert (s2.sf_volatility_target is not None)
 
     assert np.allclose(s2.sf_wdl, s.sf_wdl)
     assert int(s2.sf_move_index) == int(s.sf_move_index)
@@ -437,8 +445,10 @@ def test_mirror_sample_preserves_per_head_mask_alignment():
         has_future=True,
     )
     m = mirror_sample(s)
-    assert m.sf_policy_target is not None and m.sf_legal_mask is not None
-    assert m.future_policy_target is not None and m.future_legal_mask is not None
+    assert m.sf_policy_target is not None
+    assert m.sf_legal_mask is not None
+    assert m.future_policy_target is not None
+    assert m.future_legal_mask is not None
     assert m.sf_move_index is not None
 
     assert (m.policy_target * (m.legal_mask == 0)).sum() == 0

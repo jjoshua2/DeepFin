@@ -31,7 +31,7 @@ from chess_anti_engine.encoding.lc0 import (
     normalize_lc0_history_encoding,
     uses_lc0_root_history,
 )
-from chess_anti_engine.inference import (  # noqa: F401  # skylos: ignore (AsyncBatchEvaluator used via stringified cast)
+from chess_anti_engine.inference import (  # skylos: ignore (AsyncBatchEvaluator used via stringified cast)
     AsyncBatchEvaluator,
     BatchEvaluator,
     LocalModelEvaluator,
@@ -422,12 +422,11 @@ def run_gumbel_root_many_c(
                 root_cb, legal_idx, detect_draws=want_draws,
             )
 
-        if float(root_qs[i]) > 0.0 and legal_idx.size > 1:
-            if terminal_draws:
-                draw_arr = np.fromiter(terminal_draws, dtype=np.int32)
-                keep = ~np.isin(legal_idx, draw_arr)
-                if keep.any():
-                    legal_idx = legal_idx[keep]
+        if float(root_qs[i]) > 0.0 and legal_idx.size > 1 and terminal_draws:
+            draw_arr = np.fromiter(terminal_draws, dtype=np.int32)
+            keep = ~np.isin(legal_idx, draw_arr)
+            if keep.any():
+                legal_idx = legal_idx[keep]
         root_search_legal[i] = legal_idx
 
   # Softmax priors
@@ -639,7 +638,7 @@ def run_gumbel_root_many_c(
   # _pinned_wdl buffers, invalidating any views.
         _pending_g1 = None  # (pol_np, wdl_np) — synced + copied numpy
 
-        _max_iters = n_boards * max(max(budget_remaining), 1) + 100
+        _max_iters = n_boards * max(*budget_remaining, 1) + 100
         for _ in range(_max_iters):
             if _n_leaves[0] is None and _n_leaves[1] is None:
                 break

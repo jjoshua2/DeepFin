@@ -66,7 +66,7 @@ class MCTSConfig:
 
 
 class Node:
-    __slots__ = ("_board", "_move", "_action_idx", "parent", "prior", "N", "W", "children", "expanded", "to_play", "vol")
+    __slots__ = ("N", "W", "_action_idx", "_board", "_move", "children", "expanded", "parent", "prior", "to_play", "vol")
 
     _board: chess.Board | None
     _move: chess.Move | None

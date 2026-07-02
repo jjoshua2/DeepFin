@@ -11,6 +11,7 @@ from __future__ import annotations
 import csv
 import math
 import sys
+import itertools
 from pathlib import Path
 from statistics import mean, stdev
 
@@ -73,7 +74,7 @@ def backtest(rows: list[dict[str, float]], hl: float) -> dict[str, float]:
         return {"hl": hl, "n_valid": len(valid_preds)}
 
     pred_diffs = [
-        abs(p2 - p1) for p1, p2 in zip(valid_preds[:-1], valid_preds[1:])
+        abs(p2 - p1) for p1, p2 in itertools.pairwise(valid_preds)
     ]
     chosen_diffs = [
         abs(actual_chosen[i] - actual_chosen[i - 1]) for i in range(1, len(actual_chosen))

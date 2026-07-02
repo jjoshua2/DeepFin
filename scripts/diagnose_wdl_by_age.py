@@ -73,7 +73,7 @@ def _loss_config(latest: dict[str, Any]) -> dict[str, float]:
     cfg: dict[str, Any] = cfg_raw if isinstance(cfg_raw, dict) else {}
 
     def get_float(key: str, default: float) -> float:
-        value = latest.get(key, None)
+        value = latest.get(key)
         if value is None:
             value = cfg.get(key, default)
         try:
@@ -381,8 +381,8 @@ def main() -> None:
     rows_out: list[dict[str, Any]] = []
     with torch.no_grad():
         for band in bands:
-            lo = int(round(total_positions * band.start_frac))
-            hi = int(round(total_positions * band.end_frac))
+            lo = round(total_positions * band.start_frac)
+            hi = round(total_positions * band.end_frac)
             offsets = _sample_global_offsets(rng, lo=lo, hi=hi, n=args.samples_per_band)
             grouped = _group_offsets_by_shard(offsets, prefix)
             shard_ids = sorted(grouped)

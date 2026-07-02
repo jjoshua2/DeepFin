@@ -117,9 +117,8 @@ def build_book(
             existing_written += 1
 
     raw_seen: set[str] = set()
-    with zipfile.ZipFile(raw_zip) as z:
-        with z.open(raw_member) as f:
-            pgn = io.StringIO(f.read().decode("utf-8", errors="replace"))
+    with zipfile.ZipFile(raw_zip) as z, z.open(raw_member) as f:
+        pgn = io.StringIO(f.read().decode("utf-8", errors="replace"))
     while True:
         game = chess.pgn.read_game(pgn)
         if game is None:

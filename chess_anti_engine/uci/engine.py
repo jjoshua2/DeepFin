@@ -794,7 +794,7 @@ class Engine:
                 optimum_ms=None,
                 abort_factor=self._options.abort_factor,
             )
-        except Exception:  # noqa: BLE001 — warmup is best-effort, never fatal
+        except Exception:
             pass
         finally:
             self._worker.reset_tree()
@@ -819,7 +819,7 @@ class Engine:
   # Defensive: ponder-at-M root-expanded the popped child, so
   # this shouldn't fail. Reset rather than search stale tree.
                     self._worker.reset_tree()
-                self._applied_moves = self._applied_moves + (popped,)
+                self._applied_moves = (*self._applied_moves, popped)
                 real_board.push(popped)
             result = self._run_one_phase(real_limits, is_ponder=False, board=real_board)
   # Gate the emit: if a newer `go` has started, our result is stale

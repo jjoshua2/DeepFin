@@ -238,7 +238,7 @@ def test_zarr_tar_extract_falls_back_without_filter_kw(tmp_path, monkeypatch) ->
     tar_path.write_bytes(tar_bytes)
     original = tarfile.TarFile.extractall
 
-    def legacy_extractall(self, path=".", members=None, *, numeric_owner=False, filter=None):  # noqa: A002
+    def legacy_extractall(self, path=".", members=None, *, numeric_owner=False, filter=None):
         if filter is not None:
             raise TypeError("extractall() got an unexpected keyword argument 'filter'")
         return original(self, path=path, members=members, numeric_owner=numeric_owner)

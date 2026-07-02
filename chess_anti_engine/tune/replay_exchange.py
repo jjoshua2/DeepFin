@@ -22,6 +22,7 @@ from chess_anti_engine.tune._utils import (
     to_nonnegative_int,
 )
 from chess_anti_engine.utils.atomic import atomic_write_text
+import contextlib
 
 log = logging.getLogger(__name__)
 
@@ -150,8 +151,8 @@ def _estimate_recent_shard_count(
     ss = max(1, int(shard_size))
   # Positions entering train replay are roughly (1-holdout_fraction) of total.
     hf = max(0.0, min(0.99, float(holdout_fraction)))
-    train_positions = max(1, int(math.ceil(float(pa) * (1.0 - hf))))
-    return max(1, int(math.ceil(float(train_positions) / float(ss))))
+    train_positions = max(1, math.ceil(float(pa) * (1.0 - hf)))
+    return max(1, math.ceil(float(train_positions) / float(ss)))
 
 
 def _load_shard_arrays_with_retry(
@@ -254,8 +255,8 @@ def _prune_local_shards_keep_fraction(
         local_recent = []
         local_older = local_shards
 
-    keep_recent_n = int(math.ceil(len(local_recent) * keep_recent_fraction))
-    keep_older_n = int(math.ceil(len(local_older) * keep_older_fraction))
+    keep_recent_n = math.ceil(len(local_recent) * keep_recent_fraction)
+    keep_older_n = math.ceil(len(local_older) * keep_older_fraction)
     keep_set = set()
     if keep_recent_n > 0:
         keep_set |= set(local_recent[-keep_recent_n:])
@@ -458,7 +459,7 @@ def _ingest_one_shard(
     if n_samples <= 0:
         return False
     if 0.0 < share_fraction < 1.0:
-        k = max(1, int(round(n_samples * share_fraction)))
+        k = max(1, round(n_samples * share_fraction))
         chosen = buf.rng.choice(n_samples, size=k, replace=False)
         shard_arrs = slice_array_batch(shard_arrs, chosen)
         n_samples = int(np.asarray(shard_arrs["x"]).shape[0])
@@ -567,12 +568,10 @@ def _share_top_replay_each_iteration(
             if imported_iters:
                 import_state[source_key] = max(imported_iters)
 
-    try:
+    with contextlib.suppress(Exception):
         atomic_write_text(
             import_state_path,
             json.dumps(import_state, sort_keys=True, indent=2),
         )
-    except Exception:
-        pass
 
     return summary

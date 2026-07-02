@@ -43,6 +43,7 @@ from .threat_upgrade import (
     V1_INPUT_PLANES,
     upgrade_arrays_to_planes,
 )
+import contextlib
 
 log = logging.getLogger(__name__)
 
@@ -722,7 +723,7 @@ class DiskReplayBuffer:
         if k <= 0 or pool.size == 0:
             return np.zeros((0,), dtype=np.int64)
         pool = np.asarray(pool, dtype=np.int64)
-        k_uni = int(round(k * (1.0 - self.surprise_mix)))
+        k_uni = round(k * (1.0 - self.surprise_mix))
         k_pri = k - k_uni
         picks: list[np.ndarray] = []
         if k_uni > 0:
@@ -752,7 +753,7 @@ class DiskReplayBuffer:
         if bs <= 0 or n <= 0:
             return np.zeros((0,), dtype=np.int64)
 
-        k_uni = int(round(bs * (1.0 - self.surprise_mix)))
+        k_uni = round(bs * (1.0 - self.surprise_mix))
         k_pri = bs - k_uni
         picks: list[np.ndarray] = []
         if k_uni > 0:
@@ -871,7 +872,7 @@ class DiskReplayBuffer:
             return self._sample_raw_arrays(bs)
 
         p_draw = float(draw_idx.size) / float(max(1, n))
-        n_draw = int(round(bs * p_draw))
+        n_draw = round(bs * p_draw)
         n_draw_cap = int(np.floor(self.draw_cap_frac * bs))
         n_draw = min(n_draw, n_draw_cap)
         n_draw = max(0, min(bs, n_draw))
@@ -881,7 +882,7 @@ class DiskReplayBuffer:
         n_loss = 0
         if bs_decisive > 0:
             p_win = float(win_idx.size) / float(win_idx.size + loss_idx.size)
-            n_win = int(round(bs_decisive * p_win))
+            n_win = round(bs_decisive * p_win)
             n_win = max(0, min(bs_decisive, n_win))
             n_loss = bs_decisive - n_win
 
@@ -942,10 +943,8 @@ class DiskReplayBuffer:
         self._write_buf_sizes = []
         self._write_buf_rows = 0
         for p in self._clear_shard_records():
-            try:
+            with contextlib.suppress(Exception):
                 delete_shard_path(p)
-            except Exception:
-                pass
 
     def close(self) -> None:
         t = self._prefetch_thread
@@ -964,7 +963,5 @@ class DiskReplayBuffer:
         self._prefetch_request = threading.Event()
 
     def __del__(self) -> None:
-        try:
+        with contextlib.suppress(Exception):
             self.close()
-        except Exception:
-            pass

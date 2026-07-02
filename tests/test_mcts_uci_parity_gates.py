@@ -246,11 +246,11 @@ def test_uci_gumbel_chunk_forces_deterministic_temperature(monkeypatch: pytest.M
         gumbel_cfg=GumbelConfig(simulations=4, topk=4, temperature=1.0, add_noise=True),
     )
 
-    value = worker._run_gumbel_chunk(4, chess.Board(), tb_probe=None)  # noqa: SLF001
+    value = worker._run_gumbel_chunk(4, chess.Board(), tb_probe=None)
 
     assert value == 0.0
     assert seen_temperatures == [0.0]
-    assert worker._last_gumbel_action_idx == 0  # noqa: SLF001
+    assert worker._last_gumbel_action_idx == 0
 
 
 def test_uci_gumbel_chunk_threads_terminal_shortcut_gate_to_c(
@@ -270,7 +270,7 @@ def test_uci_gumbel_chunk_threads_terminal_shortcut_gate_to_c(
         gumbel_cfg=GumbelConfig(simulations=4, topk=4, temperature=1.0, add_noise=True),
     )
 
-    worker._run_gumbel_chunk(  # noqa: SLF001
+    worker._run_gumbel_chunk(
         4, chess.Board(), tb_probe=None, allow_terminal_shortcuts=False,
     )
 
@@ -302,7 +302,7 @@ def test_uci_searchmoves_uses_filtered_gumbel_path_with_walkers(
     monkeypatch.setattr(worker, "_run_gumbel_chunk", fake_gumbel)
     monkeypatch.setattr(worker, "_run_walker_chunk", fake_walker)
 
-    value = worker._run_one_chunk(  # noqa: SLF001
+    value = worker._run_one_chunk(
         4,
         board,
         threading.Event(),
@@ -340,7 +340,7 @@ def test_uci_build_engine_threads_policy_encoding_into_gumbel_config() -> None:
         policy_encoding=POLICY_ENCODING_LC0_1858,
     )
 
-    assert engine._worker._cfg.policy_encoding == POLICY_ENCODING_LC0_1858  # noqa: SLF001
+    assert engine._worker._cfg.policy_encoding == POLICY_ENCODING_LC0_1858
 
 
 def test_uci_searchmoves_bypass_tb_shortcut_and_filter_bestmove(
@@ -400,10 +400,10 @@ def test_uci_advance_root_reuses_tree_and_preserves_new_root_contract() -> None:
     )
     first_move = chess.Move.from_uci(first.bestmove_uci)
     assert first_move in board.legal_moves
-    assert worker._tree is not None  # noqa: SLF001
-    assert worker._root_id is not None  # noqa: SLF001
-    tree = worker._tree  # noqa: SLF001
-    old_root = int(worker._root_id)  # noqa: SLF001
+    assert worker._tree is not None
+    assert worker._root_id is not None
+    tree = worker._tree
+    old_root = int(worker._root_id)
     first_idx = int(move_to_index(first_move, board))
     child_root = tree.find_child(old_root, first_idx)
     assert child_root >= 0
@@ -411,9 +411,9 @@ def test_uci_advance_root_reuses_tree_and_preserves_new_root_contract() -> None:
 
     assert worker.advance_root(board, [first_move])
     board.push(first_move)
-    assert worker._tree is tree  # noqa: SLF001
-    assert worker._root_id == child_root  # noqa: SLF001
-    assert worker._tree_fen == board.fen()  # noqa: SLF001
+    assert worker._tree is tree
+    assert worker._root_id == child_root
+    assert worker._tree_fen == board.fen()
 
     second = worker.run(
         board,
@@ -424,8 +424,8 @@ def test_uci_advance_root_reuses_tree_and_preserves_new_root_contract() -> None:
     second_move = chess.Move.from_uci(second.bestmove_uci)
     assert second_move in board.legal_moves
     _assert_uci_line_is_legal(board, second.pv)
-    assert worker._tree is tree  # noqa: SLF001
-    assert worker._root_id == child_root  # noqa: SLF001
+    assert worker._tree is tree
+    assert worker._root_id == child_root
 
     actions, _visits = tree.get_children_visits(child_root)
     mask = np.zeros((POLICY_SIZE,), dtype=np.bool_)
@@ -449,14 +449,14 @@ def test_uci_advance_root_refuses_reuse_when_tree_above_half_memory_cap() -> Non
         max_nodes=16,
     )
     first_move = chess.Move.from_uci(first.bestmove_uci)
-    assert worker._tree is not None  # noqa: SLF001
-    assert worker._root_id is not None  # noqa: SLF001
-    tree = worker._tree  # noqa: SLF001
-    old_root = int(worker._root_id)  # noqa: SLF001
+    assert worker._tree is not None
+    assert worker._root_id is not None
+    tree = worker._tree
+    old_root = int(worker._root_id)
 
-    worker._max_tree_bytes = max(1, int(tree.memory_bytes()) * 2)  # noqa: SLF001
+    worker._max_tree_bytes = max(1, int(tree.memory_bytes()) * 2)
 
     assert not worker.advance_root(board, [first_move])
-    assert worker._tree is tree  # noqa: SLF001
-    assert worker._root_id == old_root  # noqa: SLF001
-    assert worker._tree_fen == board.fen()  # noqa: SLF001
+    assert worker._tree is tree
+    assert worker._root_id == old_root
+    assert worker._tree_fen == board.fen()

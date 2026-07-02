@@ -58,7 +58,7 @@ def _compute_train_step_budget(
     train_views_per_position: float = 0.0,
 ) -> dict[str, int]:
     effective_batch_size = max(1, int(batch_size) * max(1, int(accum_steps)))
-    window_target_samples = int(math.ceil(float(train_window_fraction) * max(0, int(replay_size))))
+    window_target_samples = math.ceil(float(train_window_fraction) * max(0, int(replay_size)))
     fresh_samples = max(0, int(positions_added)) + max(0, int(imported_samples))
     views_mode = float(train_views_per_position) > 0.0
     drought_fallback = False
@@ -75,11 +75,9 @@ def _compute_train_step_budget(
         # also processed an import exactly once. Multiplying an exploit-sized
         # import by views would produce a single uncapped multi-epoch burst
         # over stale donor data.
-        views_target_samples = int(
-            math.ceil(
+        views_target_samples = math.ceil(
                 float(train_views_per_position) * float(max(0, int(positions_added)))
-            )
-        ) + max(0, int(imported_samples))
+            ) + max(0, int(imported_samples))
         target_sample_budget = max(fresh_samples, views_target_samples)
         if fresh_samples < effective_batch_size:
             # Ingest drought (less than one batch of fresh data, e.g. worker
@@ -91,7 +89,7 @@ def _compute_train_step_budget(
             drought_fallback = True
     else:
         target_sample_budget = max(fresh_samples, int(window_target_samples))
-    target_steps = max(1, int(math.ceil(float(target_sample_budget) / float(effective_batch_size))))
+    target_steps = max(1, math.ceil(float(target_sample_budget) / float(effective_batch_size)))
     if (int(imported_samples) > 0 or views_mode) and not drought_fallback:
         # Views mode owns the step budget: it is already proportional to fresh
         # ingest (self-limiting), and capping it at base_max_steps would
@@ -211,7 +209,7 @@ def _games_per_iter_for_iteration(tc: TrialConfig, iteration_idx: int) -> int:
 
     frac = float(max(0, iteration_idx - 1)) / float(ramp_iters)
     value = float(start) + (float(target) - float(start)) * frac
-    return max(1, int(round(value)))
+    return max(1, round(value))
 
 
 def _sample_drift_arrays(src_buf: object, n: int) -> dict[str, np.ndarray]:

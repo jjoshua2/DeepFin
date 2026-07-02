@@ -128,10 +128,7 @@ def summarize_pentanomial(
         raise ValueError("no pairs")
     xs = tuple(s / 2.0 for s in PAIR_SCORES)
     mu = sum(c * x for c, x in zip(counts, xs)) / n
-    if n > 1:
-        var = sum(c * (x - mu) ** 2 for c, x in zip(counts, xs)) / (n - 1)
-    else:
-        var = 0.0
+    var = sum(c * (x - mu) ** 2 for c, x in zip(counts, xs)) / (n - 1) if n > 1 else 0.0
     se = math.sqrt(var / n)
     lo = mu - z * se
     hi = mu + z * se
@@ -764,7 +761,7 @@ def run_arena(
             from scripts.match_vs_uci import _open_syzygy_tablebase
             try:
                 syzygy_tb = _open_syzygy_tablebase(syzygy_path)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 syzygy_tb = None
                 print(f"[arena] WARNING: syzygy open failed ({exc})", flush=True)
             print(

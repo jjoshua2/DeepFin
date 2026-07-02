@@ -18,7 +18,8 @@ def load_script_module(filename: str, module_name: str | None = None) -> ModuleT
     """
     name = module_name if module_name is not None else Path(filename).stem
     spec = importlib.util.spec_from_file_location(name, _SCRIPTS_DIR / filename)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     spec.loader.exec_module(module)

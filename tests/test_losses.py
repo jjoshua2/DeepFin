@@ -261,7 +261,8 @@ def test_compute_loss_sf_own_regret_minimizes_expected_regret_on_policy_own() ->
     # policy_own favoring the high-regret move 0 vs the low-regret move 2.
     bad = _metric([4.0, -1.0, -2.0], masked=True)   # mass on move 0 (regret 1.0)
     good = _metric([-2.0, -1.0, 4.0], masked=True)  # mass on move 2 (regret 0.0)
-    assert np.isfinite(bad) and np.isfinite(good)
+    assert np.isfinite(bad)
+    assert np.isfinite(good)
     assert good < bad  # shifting mass to the low-regret move lowers the loss
 
     # Masked out: contributes ~0 regardless of the logits.

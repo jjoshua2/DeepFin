@@ -25,6 +25,7 @@ from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.train import Trainer
 from chess_anti_engine.tune.trainable_metrics import _dynamic_sf_wdl_weight
 from chess_anti_engine.tune.trial_config import DifficultyState, TrialConfig
+import contextlib
 
 log = logging.getLogger(__name__)
 
@@ -118,10 +119,8 @@ def _clear_pause_acks(ack_paths: list[Path]) -> None:
     """Remove the acks written by _write_pause_acks (called on resume) so a
     later graceful restart doesn't see a stale 'paused' signal."""
     for ack in ack_paths:
-        try:
+        with contextlib.suppress(OSError):
             ack.unlink(missing_ok=True)
-        except OSError:
-            pass
 
 
 def _wait_if_paused(

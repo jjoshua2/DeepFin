@@ -242,9 +242,9 @@ def test_shared_tree_headroom_pregrows_arena_past_fixed_reserve() -> None:
         tree = MCTSTree()
         tree.reserve(64, 256)  # tiny, like a freshly created tree
         tree.add_root(0, 0.0)
-        worker._tree = tree  # noqa: SLF001
+        worker._tree = tree
         before = tree.memory_bytes()
-        worker._ensure_shared_tree_headroom(512)  # noqa: SLF001
+        worker._ensure_shared_tree_headroom(512)
         after = tree.memory_bytes()
         assert after > before
   # 512 sims * 256 max branching = 131072 nodes of headroom; per-node node +
@@ -268,19 +268,19 @@ def test_shared_tree_headroom_respects_hash_cap() -> None:
 
     def _fresh() -> MCTSTree:
         tree, rid, _ = _seed_tree()
-        worker._tree = tree  # noqa: SLF001
-        worker._root_id = rid  # noqa: SLF001
+        worker._tree = tree
+        worker._root_id = rid
         return tree
 
     try:
   # Cap disabled -> no bounding, full budget granted (and arena grows).
         _fresh()
         worker.set_max_tree_mb(0)
-        assert worker._ensure_shared_tree_headroom(512) == 512  # noqa: SLF001
+        assert worker._ensure_shared_tree_headroom(512) == 512
   # Generous cap -> still the full budget.
         _fresh()
         worker.set_max_tree_mb(100_000)
-        assert worker._ensure_shared_tree_headroom(512) == 512  # noqa: SLF001
+        assert worker._ensure_shared_tree_headroom(512) == 512
   # Cap already below current usage -> 0 sims and no further growth.
   # Cap below current usage: only already-reserved free slots are usable, so
   # the chunk shrinks to them but must NOT grow memory past the cap (and must
@@ -288,7 +288,7 @@ def test_shared_tree_headroom_respects_hash_cap() -> None:
         tree = _fresh()
         worker.set_max_tree_mb(1)
         before = tree.memory_bytes()
-        sims = worker._ensure_shared_tree_headroom(512)  # noqa: SLF001
+        sims = worker._ensure_shared_tree_headroom(512)
         assert 0 < sims <= 512
         assert tree.memory_bytes() == before
     finally:
@@ -311,10 +311,10 @@ def test_shared_tree_headroom_uses_free_slots_at_tiny_hash() -> None:
         tree = MCTSTree()
         tree.reserve(50_000, 500_000)
         tree.add_root(0, 0.0)
-        worker._tree = tree  # noqa: SLF001
-        worker._root_id = int(tree.node_count()) - 1  # noqa: SLF001
+        worker._tree = tree
+        worker._root_id = int(tree.node_count()) - 1
         worker.set_max_tree_mb(1)
-        sims = worker._ensure_shared_tree_headroom(512)  # noqa: SLF001
+        sims = worker._ensure_shared_tree_headroom(512)
         assert sims > 0
     finally:
         worker.close()
@@ -333,7 +333,7 @@ def test_chunk_budget_scales_by_gather_and_devices() -> None:
     p1 = _make_evaluator(max_batch=64)
   # gather 128 > chunk_sims 64 -> per-device budget must use the gather.
     worker.install_multi_gpu_pucv([p0, p1], gather=128, as_factories=False)
-    assert worker._chunk_budget(None) == 128 * 2  # noqa: SLF001
+    assert worker._chunk_budget(None) == 128 * 2
     worker.close()
 
 
@@ -348,18 +348,18 @@ def test_current_best_root_action_tracks_emitted_move() -> None:
     )
     try:
         tree, rid, cb = _seed_tree()
-        worker._tree = tree  # noqa: SLF001
-        worker._root_id = rid  # noqa: SLF001
+        worker._tree = tree
+        worker._root_id = rid
         legal = cb.legal_move_indices().astype(np.int32)
         survivor = int(legal[1])
   # Gumbel survivor set + legal -> returned even though visits are all zero.
-        worker._last_gumbel_action_idx = survivor  # noqa: SLF001
-        assert worker._current_best_root_action(None) == survivor  # noqa: SLF001
+        worker._last_gumbel_action_idx = survivor
+        assert worker._current_best_root_action(None) == survivor
   # searchmoves excludes the survivor -> fall back to a visit-leader in-set.
-        assert worker._current_best_root_action({int(legal[0])}) == int(legal[0])  # noqa: SLF001
+        assert worker._current_best_root_action({int(legal[0])}) == int(legal[0])
   # No survivor (walker / pucv paths) -> a legal visit-leader.
-        worker._last_gumbel_action_idx = None  # noqa: SLF001
-        assert worker._current_best_root_action(None) in set(legal.tolist())  # noqa: SLF001
+        worker._last_gumbel_action_idx = None
+        assert worker._current_best_root_action(None) in set(legal.tolist())
     finally:
         worker.close()
 
@@ -397,20 +397,22 @@ def test_search_emit_info_reports_hashfull_and_seldepth() -> None:
     try:
         worker.set_max_tree_mb(16)
         tree, rid, _ = _seed_tree()
-        worker._tree = tree  # noqa: SLF001
-        worker._root_id = rid  # noqa: SLF001
+        worker._tree = tree
+        worker._root_id = rid
         captured: list[dict[str, Any]] = []
-        worker._emit_pv_info(  # noqa: SLF001
+        worker._emit_pv_info(
             lambda **kw: captured.append(kw),
             chess.Board(), 0.0, 64, 100, None,
         )
         assert captured
         kw = captured[0]
-        assert kw["seldepth"] is not None and kw["seldepth"] >= 1
-        assert kw["hashfull"] is not None and 0 <= kw["hashfull"] <= 1000
+        assert kw["seldepth"] is not None
+        assert kw["seldepth"] >= 1
+        assert kw["hashfull"] is not None
+        assert 0 <= kw["hashfull"] <= 1000
   # Disabling the Hash cap drops hashfull rather than dividing by zero.
         worker.set_max_tree_mb(0)
-        assert worker._hashfull_permille() is None  # noqa: SLF001
+        assert worker._hashfull_permille() is None
     finally:
         worker.close()
 
@@ -426,7 +428,7 @@ def test_root_visit_lead_returns_emitted_move_margin() -> None:
     try:
         worker.run(chess.Board(), stop_event=threading.Event(),
                    deadline=Deadline(5_000), max_nodes=256)
-        best, lead = worker._root_visit_lead(None)  # noqa: SLF001
+        best, lead = worker._root_visit_lead(None)
         assert best >= 0
         assert isinstance(lead, int)
     finally:
@@ -452,27 +454,27 @@ def test_abort_ready_branches() -> None:
     )
     try:
         past = Deadline(deadline_ms=60_000, now=_time.monotonic() - 5.0)  # elapsed ~5s
-        worker._root_visit_lead = lambda allowed_root_indices: (5, 100)  # noqa: SLF001
-        assert worker._abort_ready(None, past, 256, None, 1.0) is False  # noqa: SLF001
+        worker._root_visit_lead = lambda allowed_root_indices: (5, 100)
+        assert worker._abort_ready(None, past, 256, None, 1.0) is False
   # Complexity gate: a move that leads on visits but has not yet been stable for
   # _ABORT_MIN_STABLE_CHUNKS does NOT bank even past the optimum — it reads as a
   # still-moving (hard) position and keeps searching. It banks once it stabilises.
-        worker._abort_last_best = -1  # noqa: SLF001
-        worker._abort_stable_chunks = 0  # noqa: SLF001
-        assert worker._abort_ready(1, past, 256, None, 1.0) is False  # noqa: SLF001 — not yet stable
-        assert worker._abort_ready(1, past, 256, None, 1.0) is False  # noqa: SLF001 — stable=1
-        assert worker._abort_ready(1, past, 256, None, 1.0) is True  # noqa: SLF001 — stable=2 (tree=None -> value OK)
+        worker._abort_last_best = -1
+        worker._abort_stable_chunks = 0
+        assert worker._abort_ready(1, past, 256, None, 1.0) is False
+        assert worker._abort_ready(1, past, 256, None, 1.0) is False
+        assert worker._abort_ready(1, past, 256, None, 1.0) is True
   # Unsettled / no move past the optimum -> extend toward the hard deadline.
-        worker._root_visit_lead = lambda allowed_root_indices: (5, 0)  # noqa: SLF001
-        assert worker._abort_ready(1, past, 256, None, 1.0) is False  # noqa: SLF001
-        worker._root_visit_lead = lambda allowed_root_indices: (-1, 0)  # noqa: SLF001
-        assert worker._abort_ready(1, past, 256, None, 1.0) is False  # noqa: SLF001
+        worker._root_visit_lead = lambda allowed_root_indices: (5, 0)
+        assert worker._abort_ready(1, past, 256, None, 1.0) is False
+        worker._root_visit_lead = lambda allowed_root_indices: (-1, 0)
+        assert worker._abort_ready(1, past, 256, None, 1.0) is False
   # Before the optimum: elapsed ~500ms of a 1000ms optimum, nps ~2 -> ~1000
   # remaining sims. lead 2000 clears the provable factor but not factor 3.
         mid = Deadline(deadline_ms=10_000, now=_time.monotonic() - 0.5)
-        worker._root_visit_lead = lambda allowed_root_indices: (5, 2000)  # noqa: SLF001
-        assert worker._abort_ready(1000, mid, 1000, None, 1.0) is True  # noqa: SLF001
-        assert worker._abort_ready(1000, mid, 1000, None, 3.0) is False  # noqa: SLF001
+        worker._root_visit_lead = lambda allowed_root_indices: (5, 2000)
+        assert worker._abort_ready(1000, mid, 1000, None, 1.0) is True
+        assert worker._abort_ready(1000, mid, 1000, None, 3.0) is False
     finally:
         worker.close()
 
@@ -516,16 +518,16 @@ def test_time_capped_chunk_shrinks_to_remaining_time() -> None:
     try:
   # elapsed ~1000ms, nps = 1000/1000 = 1; ~500ms remaining -> cap ~500.
         d = Deadline(deadline_ms=1500, now=_time.monotonic() - 1.0)
-        capped = worker._time_capped_chunk(4096, d, total_nodes=1000)  # noqa: SLF001
+        capped = worker._time_capped_chunk(4096, d, total_nodes=1000)
         assert 64 <= capped < 4096
   # Almost no time left -> floor at the base chunk (its overrun is negligible).
         d2 = Deadline(deadline_ms=1001, now=_time.monotonic() - 1.0)
-        assert worker._time_capped_chunk(4096, d2, total_nodes=1000) == 64  # noqa: SLF001
+        assert worker._time_capped_chunk(4096, d2, total_nodes=1000) == 64
   # Open-ended deadline (no clock) is uncapped even with an nps estimate.
-        assert worker._time_capped_chunk(4096, Deadline(None), 1000) == 4096  # noqa: SLF001
+        assert worker._time_capped_chunk(4096, Deadline(None), 1000) == 4096
   # First timed chunk (deadline set, no nps yet): bound to the base chunk so a
   # scaled multi-GPU chunk can't run unbounded past the deadline (move-1 forfeit).
-        assert worker._time_capped_chunk(4096, d, total_nodes=0) == 64  # noqa: SLF001
+        assert worker._time_capped_chunk(4096, d, total_nodes=0) == 64
     finally:
         worker.close()
 

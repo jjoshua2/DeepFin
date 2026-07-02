@@ -601,7 +601,7 @@ class DifficultyPID:
         # node change. With round-down, frac=10% at value≈1 (post-airbag floor)
         # ate every step until cumulative drift cleared 1.0 — recovery from
         # the floor took ~10 winning iters before SF visibly strengthened.
-        return int(math.ceil(float(self.nodes_lever.value)))
+        return math.ceil(float(self.nodes_lever.value))
 
     @nodes.setter
     def nodes(self, value: int) -> None:

@@ -192,16 +192,28 @@ if [[ $RUN_DEEP -eq 1 ]]; then
     start_job 1 "skylos (advisory — dead code + circular imports)" "$(tool skylos)" "${PATHS[@]}"
 
     # Occasional-cleanup shopping list: opt-in ruff groups, advisory.
-    # Promote a group into the pyproject gate once it hits zero findings.
+    # Every finding here has ONE of three fates (2026-07-02 triage):
+    #   FIX-OVER-TIME (stays listed; burn down, promote group at zero):
+    #     PT011/PT017 (test quality: raises-match + assert-in-except),
+    #     RUF012 (ClassVar annotations), SIM102/108/117 (structure),
+    #     PERF401/403 (comprehension rewrites), RUF005/007 (misc)
+    #   KNOW-AND-BE-CAREFUL (stays listed; needs judgment, never autofix):
+    #     NPY002 (legacy np.random -> Generator CHANGES RNG STREAMS),
+    #     B905 (zip strict= changes semantics per site),
+    #     B008 (call-in-default: often intentional interface defaults)
+    #   WON'T-FIX (ignored below with reasons; keeps the report signal):
+    #     RUF001/2/3  em-dashes/unicode in strings+comments are house style
+    #     PERF203     try/except-in-loop is deliberate robustness in game loops
+    #     PLW2901     loop-var reassignment (line = line.strip()) is idiom here
+    #     SIM105      try/except/pass in hot worker loops; suppress() adds
+    #                 per-iteration overhead and hides intent no better
+    #     PLW0603     module-singleton globals (warn-once flags) are deliberate
     # The gate rules ride along so RUF100 (unused-noqa) is judged against the
     # REAL rule set — without them every gate-rule noqa reads as "unused".
-    # Curated won't-fix ignores (documented decisions, keep the report signal):
-    #   RUF001/2/3  em-dashes/unicode in strings+comments are house style
-    #   PERF203     try/except-in-loop is deliberate robustness in game loops
     start_job 1 "ruff cleanup report (advisory — B,SIM,PERF,NPY,RUF,PT,PLW)" \
         env RUFF_CACHE_DIR="$LINT_TMP/ruff-cache" "$(tool ruff)" check \
         --extend-select B,SIM,PERF,NPY,RUF,PT,PLW \
-        --ignore E741,ARG005,RUF001,RUF002,RUF003,PERF203 \
+        --ignore E741,ARG005,RUF001,RUF002,RUF003,PERF203,PLW2901,SIM105,PLW0603 \
         --statistics "${PATHS[@]}"
 fi
 

@@ -19,7 +19,7 @@ except ImportError:
 
 if TYPE_CHECKING:
     from chess_anti_engine.encoding._lc0_ext import (
-        encode_piece_planes as _c_encode_piece_planes,  # noqa: F401,F811
+        encode_piece_planes as _c_encode_piece_planes,
     )
 
 
@@ -608,10 +608,7 @@ def _check_repetitions(board, stack, stack_len, n_steps, out, rep_base, *, rep_s
 
   # Check each history position (from oldest to newest), adding to seen as we go
     for hist_idx in range(n_steps - 1, -1, -1):
-        if hist_idx == 0:
-            key = _bkey()
-        else:
-            key = _skey(stack[stack_len - hist_idx])
+        key = _bkey() if hist_idx == 0 else _skey(stack[stack_len - hist_idx])
 
         if key in seen:
             out[rep_base + hist_idx * rep_stride, :, :] = 1.0

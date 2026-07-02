@@ -47,6 +47,7 @@ import torch
 
 from chess_anti_engine.model import ModelConfig, build_model
 from chess_anti_engine.train.compile_probe import apply_compile
+import contextlib
 
 log = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ log = logging.getLogger(__name__)
 class _Work:
     """Per-iter work item handed to the eval thread."""
 
-    __slots__ = ("snap_state", "trainer", "buf", "batch_size", "steps", "source_iter")
+    __slots__ = ("batch_size", "buf", "snap_state", "source_iter", "steps", "trainer")
 
     def __init__(
         self,
@@ -143,10 +144,8 @@ class AsyncTestEval:
   # written under its work.source_iter (set in _loop), not the new
   # source_iter — so collect() always returns a correctly-labeled
   # result, just possibly an older one.
-                try:
+                with contextlib.suppress(queue.Empty):
                     self._work_q.get_nowait()
-                except queue.Empty:
-                    pass
             self._inflight_iter = int(source_iter)
             self._result = None
             self._exc = None
@@ -177,7 +176,7 @@ class AsyncTestEval:
                 snap, mode=self._init_args["compile_mode"],
                 device=self._init_args["device"],
             )
-        except BaseException as exc:  # noqa: BLE001
+        except BaseException as exc:
             log.exception("AsyncTestEval init failed")
             with self._lock:
                 self._exc = exc
@@ -199,7 +198,7 @@ class AsyncTestEval:
   # cudagraph tree (which key on graph topology, not parameter
   # values) so the next forward just replays the captured graph.
                 load_target.load_state_dict(work.snap_state, strict=True)
-                metrics = work.trainer._compute_metrics(  # noqa: SLF001
+                metrics = work.trainer._compute_metrics(
                     buf=work.buf,
                     batch_size=work.batch_size,
                     steps=work.steps,
@@ -209,7 +208,7 @@ class AsyncTestEval:
                 with self._lock:
                     self._result = metrics
                     self._source_iter = work.source_iter
-            except BaseException as exc:  # noqa: BLE001
+            except BaseException as exc:
                 log.exception("async test eval failed")
                 with self._lock:
                     self._exc = exc
@@ -250,10 +249,8 @@ class AsyncTestEval:
   # Drain any queued work so the sentinel put doesn't block on a
   # full queue (maxsize=1). Worker may still be mid-eval on a
   # previously dequeued item; that's fine — it'll see None next.
-        try:
+        with contextlib.suppress(queue.Empty):
             self._work_q.get_nowait()
-        except queue.Empty:
-            pass
         self._work_q.put(None)
         self._thread.join(timeout=timeout)
         self._thread = None

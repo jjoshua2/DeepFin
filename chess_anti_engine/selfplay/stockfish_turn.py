@@ -33,7 +33,7 @@ from chess_anti_engine.stockfish.wdl import cp_to_wdl as _cp_to_wdl
 from chess_anti_engine.replay.shard import SF_CP_SENTINEL, SF_MULTIPV_RAW_MAX
 
 
-from chess_anti_engine.utils.numpy_helpers import softmax_1d as _softmax_np  # noqa: E402
+from chess_anti_engine.utils.numpy_helpers import softmax_1d as _softmax_np
 
 
 _LOG = logging.getLogger("chess_anti_engine.selfplay")
@@ -195,7 +195,7 @@ def _eff_sf_nodes(
         fast_scale = 1.0
     else:
         fast_scale = float(getattr(state.game, "sf_fast_ply_node_scale", 0.25))
-    return max(1, int(round(float(base_nodes) * fast_scale)))
+    return max(1, round(float(base_nodes) * fast_scale))
 
 
 def _sf_syzygy_path_for_slot(state: SelfplayState, idx: int) -> str | None:
@@ -439,7 +439,7 @@ def _collect_sparse_pv_rows(res, *, turn: bool, legal_set: set[int]) -> np.ndarr
         else:
             # _parse_wdl normalizes UCI permille to fractions; store permille
             # per the shard schema (replay/shard.py cols 3-4).
-            w, d = int(round(float(pv.wdl[0]) * 1000)), int(round(float(pv.wdl[1]) * 1000))
+            w, d = round(float(pv.wdl[0]) * 1000), round(float(pv.wdl[1]) * 1000)
         rows.append((a, cp, mate, w, d))
     if truncated:
         _warn_multipv_truncated()
@@ -459,7 +459,7 @@ def _collect_sf_label_meta(res) -> np.ndarray:
     else:
         # _parse_wdl normalizes UCI permille to fractions; store permille
         # per the shard schema (replay/shard.py meta layout).
-        w, d = int(round(float(res.wdl[0]) * 1000)), int(round(float(res.wdl[1]) * 1000))
+        w, d = round(float(res.wdl[0]) * 1000), round(float(res.wdl[1]) * 1000)
     # nodes/depth are config-driven; clamp so a huge budget can't overflow the
     # int32 field and raise out of _process_sf_results mid-selfplay.
     return np.array(
@@ -843,12 +843,12 @@ def _process_sf_results(
 
 
 __all__ = [
-    "finish_sf_annotation_and_moves",
     "finish_pending_curriculum_moves",
+    "finish_sf_annotation_and_moves",
     "flush_async_sf_labels_for_records",
     "poll_async_sf_labels",
     "submit_async_curriculum_move_queries",
-    "submit_async_sf_labels_from_curriculum_moves",
     "submit_async_sf_label_queries",
+    "submit_async_sf_labels_from_curriculum_moves",
     "submit_sf_queries",
 ]

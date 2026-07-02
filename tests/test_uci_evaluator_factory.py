@@ -14,7 +14,7 @@ from chess_anti_engine.uci import __main__ as uci_main
 class _TinyModule(torch.nn.Module):
     input_history_encoding = "legacy"
 
-    def forward(self, x):  # noqa: ANN001
+    def forward(self, x):
         return x
 
 

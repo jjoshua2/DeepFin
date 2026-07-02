@@ -45,7 +45,7 @@ def _feed_observations(pid: DifficultyPID, pairs: list[tuple[float, float]], n_g
     """Feed a sequence of (regret_to_set, winrate) iters. Appends to history."""
     for target_regret, wr in pairs:
         pid.wdl_regret = float(target_regret)
-        w = int(round(wr * n_games))
+        w = round(wr * n_games)
         d = 0
         losses = n_games - w - d
         pid.observe(wins=w, draws=d, losses=losses, force=True)
@@ -916,7 +916,8 @@ def test_nodes_diagnostics_expose_fit_prediction():
     assert diag is not None
     assert diag.name == "nodes"
     assert diag.predicted_value is not None
-    assert diag.fit_slope is not None and diag.fit_slope < 0.0
+    assert diag.fit_slope is not None
+    assert diag.fit_slope < 0.0
     assert diag.reason in {"fit", "fit_capped"}
     assert diag.value_before == 50_000.0
     assert diag.value_after == pid.nodes_lever.value
@@ -1017,7 +1018,8 @@ def test_min_games_for_adjust_pools_held_sample_into_the_step():
     # (On the count-only floor the 0% boundary iter would give reason="airbag".)
     assert u.regret_diag.reason != "airbag"
     assert pid._games_since_adjust == 0
-    assert pid._held_wins == 0 and pid._held_losses == 0    # pooled sample reset
+    assert pid._held_wins == 0
+    assert pid._held_losses == 0
 
 
 def test_held_sample_survives_state_dict_roundtrip():
@@ -1027,9 +1029,11 @@ def test_held_sample_survives_state_dict_roundtrip():
     pid.observe(wins=4, draws=0, losses=2, force=True)   # held; pool = 4/0/2
     pid.observe(wins=4, draws=0, losses=2, force=True)   # held; pool = 8/0/4
     state = pid.state_dict()
-    assert state["held_wins"] == 8 and state["held_losses"] == 4
+    assert state["held_wins"] == 8
+    assert state["held_losses"] == 4
 
     pid2 = _mk_pid(min_games_for_adjust=30)
     pid2.load_state_dict(state)
-    assert pid2._held_wins == 8 and pid2._held_losses == 4
+    assert pid2._held_wins == 8
+    assert pid2._held_losses == 4
     assert pid2._games_since_adjust == 12

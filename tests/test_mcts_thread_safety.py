@@ -44,7 +44,7 @@ def _build_shallow_tree(seed: int) -> tuple[MCTSTree, list[int]]:
         gactions = np.arange(4, dtype=np.int32) + 100
         gpriors = rng.dirichlet(np.ones(4))
         t.expand(cid, gactions, gpriors)
-    return t, [rid] + children
+    return t, [rid, *children]
 
 
 def test_concurrent_apply_remove_vloss_conserves():

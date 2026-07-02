@@ -59,7 +59,7 @@ except ImportError:
 
 if TYPE_CHECKING:
     from chess_anti_engine.encoding._features_ext import (
-        compute_extra_features as _c_compute,  # noqa: F401,F811
+        compute_extra_features as _c_compute,
     )
 
 

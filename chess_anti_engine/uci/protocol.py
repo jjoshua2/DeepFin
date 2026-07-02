@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+import contextlib
 
 
 @dataclass(frozen=True)
@@ -109,10 +110,8 @@ def _parse_go(tokens: list[str]) -> GoArgs:
             kwargs["infinite"] = True
             i += 1
         elif tok in _INT_KEYS and i + 1 < len(tokens):
-            try:
+            with contextlib.suppress(ValueError):
                 kwargs[_INT_KEYS[tok]] = int(tokens[i + 1])
-            except ValueError:
-                pass
             i += 2
         elif tok == "searchmoves":
             i += 1

@@ -15,6 +15,7 @@ from chess_anti_engine.tune._utils import (
     terminate_process as _terminate_process,
 )
 from chess_anti_engine.utils.atomic import atomic_write_text
+import contextlib
 
 
 def _pick_free_port() -> int:
@@ -167,10 +168,8 @@ def _delete_obsolete_tune_files(*, tune_dir: Path, ts: str) -> None:
     ):
         if p.exists():
             print(f"[run_tune] Pruning old Ray Tune state file: {p}")
-            try:
+            with contextlib.suppress(Exception):
                 p.unlink()
-            except Exception:
-                pass
 
 
 def _prune_orphan_pb2_policy_logs(*, tune_dir: Path) -> None:
@@ -190,10 +189,8 @@ def _prune_orphan_pb2_policy_logs(*, tune_dir: Path) -> None:
         m = re.match(r"^pbt_policy_(?P<prefix>[^_]+)_\d+\.txt$", p.name)
         if m and m.group("prefix") not in live_prefixes:
             print(f"[run_tune] Pruning old PB2 policy log: {p}")
-            try:
+            with contextlib.suppress(Exception):
                 p.unlink()
-            except Exception:
-                pass
 
 
 def _cleanup_old_tune_experiments(*, tune_dir: Path, keep_last: int) -> None:
@@ -310,7 +307,7 @@ def _patch_experiment_state_for_resume(
             added_keys.add(str(key))
             trial_changed = True
 
-        saved_keys.update(str(k) for k in cfg.keys())
+        saved_keys.update(str(k) for k in cfg)
         if not trial_changed:
             continue
         changed = True

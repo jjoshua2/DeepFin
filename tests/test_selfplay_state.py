@@ -168,7 +168,9 @@ def test_classify_active_slots_marks_timed_out():
     # C path and Python fallback both mark timed-out slots done.
     assert all(state.done_arr[i] == 1 for i in range(2))
     # No live slots remain, so all three partitions are empty.
-    assert net_idxs == [] and sp_idxs == [] and cur_idxs == []
+    assert net_idxs == []
+    assert sp_idxs == []
+    assert cur_idxs == []
 
 
 def test_selfplay_state_net_color_accessor():

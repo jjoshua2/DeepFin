@@ -188,7 +188,7 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
                     )
                 proposed = max(float(lo), min(float(hi), float(proposed)))
                 if isinstance(donor_value, int) and not isinstance(donor_value, bool):
-                    proposed = int(round(proposed))
+                    proposed = round(proposed)
                 new_config[param_name] = proposed
                 if "resample" not in operations.get(param_name, ""):
                     operations[param_name] = f"pairwise(gap={gap_scale:.3f})"

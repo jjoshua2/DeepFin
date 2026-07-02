@@ -147,7 +147,7 @@ def _load_samples(replay_dir: Path, max_shards: int) -> tuple[dict[int, list[Sam
         stats["scanned_positions"] += n
         try:
             arrs, _meta = load_shard_arrays(shard, lazy=True)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             # Live diagnostics should keep scanning around partially written or corrupt shards.
             _record_skipped_shard(stats, shard, exc)
             continue

@@ -42,7 +42,7 @@ def apply(enabled: bool) -> None:
     for mod_name in ("chess_anti_engine.encoding._lc0_ext", "chess_anti_engine.mcts._mcts_tree"):
         try:
             mod = __import__(mod_name, fromlist=["set_history_rep_fix"])
-        except Exception:  # noqa: BLE001 - extension may be unavailable in some installs
+        except Exception:
             continue
         setter = getattr(mod, "set_history_rep_fix", None)
         if setter is None:

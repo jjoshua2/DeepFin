@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from chess_anti_engine.replay import ReplaySample
 from chess_anti_engine.replay.shard import (
@@ -118,7 +119,7 @@ def test_npz_shard_rejects_empty(tmp_path):
     p = tmp_path / "empty.npz"
     try:
         save_npz(p, samples=[], meta=None)
-        assert False, "expected ValueError"
+        pytest.fail("expected ValueError")
     except ValueError:
         pass
 

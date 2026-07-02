@@ -198,7 +198,7 @@ def _run_in_subprocess(
             out["timed_dispatcher_pad_ratio"] = timed_forward_rows / max(1, timed_positions)
         shutdown()
         result_q.put(out)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         import traceback
         result_q.put({"name": path, "error": str(exc), "traceback": traceback.format_exc()})
 
@@ -311,7 +311,7 @@ def main() -> None:
             continue
         try:
             r = q.get(timeout=5)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             r = {"name": name, "error": f"no result: {exc}"}
         if "error" in r:
             print(f"  FAILED: {r['error']}")
@@ -347,8 +347,8 @@ def main() -> None:
         pad_ratio = r.get("timed_dispatcher_pad_ratio", 0.0)
         print(
             f"{r['name']:<24} {r['n_threads']:>4} "
-            f"{str(r.get('dispatcher_batch_wait_ms') or ''):>6} "
-            f"{str(r.get('dispatcher_target_batch') or ''):>6} "
+            f"{r.get('dispatcher_batch_wait_ms') or ''!s:>6} "
+            f"{r.get('dispatcher_target_batch') or ''!s:>6} "
             f"{r['iters_per_sec']:>8.2f} {r['games_per_sec']:>10.0f} "
             f"{r['approx_nps']:>10.0f} {leaf_s:>10.0f} {fwd_s:>10.0f} "
             f"{pad_ratio:>5.2f} {r['frames_ok_delta']:>10} "

@@ -472,22 +472,22 @@ class TrialConfig:
             temperature_endgame=float(config.get("temperature_endgame", 0.6)),
             selfplay_temperature=(
                 None
-                if config.get("selfplay_temperature", None) is None
+                if config.get("selfplay_temperature") is None
                 else float(_get("selfplay_temperature", 0.0))
             ),
             selfplay_temperature_decay_start_move=(
                 None
-                if config.get("selfplay_temperature_decay_start_move", None) is None
+                if config.get("selfplay_temperature_decay_start_move") is None
                 else int(_get("selfplay_temperature_decay_start_move", 0))
             ),
             selfplay_temperature_decay_moves=(
                 None
-                if config.get("selfplay_temperature_decay_moves", None) is None
+                if config.get("selfplay_temperature_decay_moves") is None
                 else int(_get("selfplay_temperature_decay_moves", 0))
             ),
             selfplay_temperature_endgame=(
                 None
-                if config.get("selfplay_temperature_endgame", None) is None
+                if config.get("selfplay_temperature_endgame") is None
                 else float(_get("selfplay_temperature_endgame", 0.0))
             ),
 
@@ -568,7 +568,7 @@ class TrialConfig:
             replay_window_max=int(config.get("replay_window_max", 1_000_000)),
             replay_window_growth=int(config.get("replay_window_growth", 10_000)),
             replay_window_growth_frac=_optional_unit_fraction(
-                config.get("replay_window_growth_frac", None),
+                config.get("replay_window_growth_frac"),
                 name="replay_window_growth_frac",
             ),
             shuffle_buffer_size=int(config.get("shuffle_buffer_size", 20_000)),

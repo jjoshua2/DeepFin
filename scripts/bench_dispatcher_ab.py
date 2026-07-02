@@ -133,7 +133,7 @@ def _run_in_subprocess(
             out["dispatcher_full_drains"] = s["lifetime_full_drains"]
         shutdown()
         result_q.put(out)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         import traceback
         result_q.put({"name": path, "error": str(exc), "traceback": traceback.format_exc()})
 
@@ -176,7 +176,7 @@ def main() -> None:
             continue
         try:
             r = q.get(timeout=5)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             r = {"name": name, "error": f"no result from subprocess: {exc}"}
         if "error" in r:
             print(f"  FAILED: {r['error']}")

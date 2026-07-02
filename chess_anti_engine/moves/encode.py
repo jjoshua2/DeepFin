@@ -17,7 +17,7 @@ except ImportError:
     _HAS_LC0_C_EXT = False
 
 if TYPE_CHECKING:
-    from chess_anti_engine.encoding._lc0_ext import (  # noqa: F401,F811
+    from chess_anti_engine.encoding._lc0_ext import (
         legal_move_policy_indices as _c_legal_move_policy_indices,
     )
 

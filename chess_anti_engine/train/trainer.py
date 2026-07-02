@@ -1119,9 +1119,7 @@ class Trainer:
             )
         elif optimizer == "adamw":
             self.opt = torch.optim.AdamW(param_groups, lr=lr)
-        elif optimizer == "muon":
-            pass
-        elif optimizer == "aurora":
+        elif optimizer == "muon" or optimizer == "aurora":
             pass
         elif optimizer == "cosmos":
             if matrix_optimizer_scope in ("default", "", "legacy"):

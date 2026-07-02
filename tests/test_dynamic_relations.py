@@ -411,7 +411,8 @@ def test_optimizer_state_splices_fresh_relation_params(tmp_path):
     assert t2.step == 7
     named = dict(dyn_model.named_parameters())
     donor_state = t2.opt.state.get(named["embed.weight"])
-    assert donor_state and float(donor_state["exp_avg"].abs().sum()) > 0
+    assert donor_state
+    assert float(donor_state["exp_avg"].abs().sum()) > 0
     assert not t2.opt.state.get(named["dynamic_relation_weight"])  # fresh slot
     out2 = dyn_model(x)
     torch.stack([v.float().sum() for v in out2.values()]).sum().backward()
@@ -647,10 +648,11 @@ def test_search_worker_root_eval_passes_relations():
         ),
     )
     board = chess.Board()
-    worker._ensure_root_eval_cached(board, None)  # noqa: SLF001
+    worker._ensure_root_eval_cached(board, None)
     assert len(ev.relations_seen) == 1
     rel = ev.relations_seen[0]
-    assert rel is not None and rel.shape == (1, RELATION_COUNT, 64, 64)
+    assert rel is not None
+    assert rel.shape == (1, RELATION_COUNT, 64, 64)
     np.testing.assert_array_equal(
         rel[0], CBoard.from_board(board).compute_relations(),
     )
