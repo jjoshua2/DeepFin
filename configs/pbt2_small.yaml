@@ -42,7 +42,7 @@ salvage_reinit_volatility_heads: false  # Keep volatility heads from trial 3
 model:
   kind: transformer
   embed_dim: 384     # ~15M params, ~0.7 GB optimizer state for 4 trials in 32 GB VRAM
-  num_layers: 11  # Epoch-4 candidate topology; direct match beat live checkpoint_000673 21-7-4 at 64 sims.
+  num_layers: 12  # Matches the running v2 checkpoint (trial 5fac4). (An 11L epoch-4 candidate was probed separately; not the live topology.)
   num_heads: 12
   ffn_mult: 1.5
   use_smolgen: true  # Pin to true (we know smolgen helps from spec)
@@ -72,9 +72,10 @@ stockfish:
   # Keep SF at full strength for labels and sample from MultiPV for easier played moves.
 
   sf_pid_enabled: true
-  sf_pid_target_winrate: 0.575  # 2026-05-29: 0.58→0.575 to gently bias toward harder SF play without jumping straight to 56%.
+  sf_pid_target_winrate: 0.50  # 2026-06-29: 0.575→0.50 (user). Winrate parked ~0.63 well above the old target with regret settling ~0.050 (NOT heading to the 0.0075 floor); per-iter steps are sub-cap so the cap knobs don't help — the lever is the target. Target=0.50 (even match) spends the headroom to drive regret toward full SF strength, then stage 2 climbs nodes past 698k. Airbag floors dropped to 0.45 to sit below the new target. Live-reloadable. 2026-05-29: 0.58→0.575.
   sf_pid_ema_alpha: 0.05      # 2026-04-29: 0.20→0.10→0.05. Offline bake-off (200 episodes × ~30 candidates against a logit-fit plant β=2.18, drift=-0.0064/iter, walk_std=0.31) shows raw_wr behavior is invariant across α (raw_rmse=0.264 universally) — controller is already raw-driven via the inverse fit's history; ema only gates a deadband that almost never fires. Lower α earns a cleaner ema dashboard (settle 50.8 vs 54.4 iters) and a measurably bigger raw-vs-ema lead (~14 iter half-life vs 6.6) which matches the "trust raw, treat ema as stale" intuition. Live-reloadable.
   sf_pid_min_games_between_adjust: 200  # Higher than games_per_iter so only the forced iteration-boundary adjust fires.
+  sf_pid_min_games_for_adjust: 30  # 2026-06-29 (user, PR #83): hard floor on the FINISHED curriculum sample required to step the levers, NOT bypassed by the forced boundary adjust. At 698k-node SF only ~5-7 curriculum games finish/iter (ingest ~96% selfplay), so a 2-game raw 0% was noise tripping the airbag; below this floor the levers hold and held W/D/L pool across iterations until ≥30 games accumulate, then the step scores on the combined sample. 0 = legacy/off.
   sf_pid_min_nodes: 50000        # 2026-04-28: 1→50000. Going back to high-nodes regret-controlled training (stage 1). 50k nodes gives clean WDL labels + sharp sf_policy targets even when SF play is regret-handicapped. Difficulty knob is regret, not nodes. Live-reloaded: refresh_live_params re-clamps the node count into [min,max] each iter (was construction-only before the node-bounds live-reload).
   sf_pid_max_nodes: 1000000      # 2026-04-23: raise ceiling to 1M. Compute cap, not control. Live-reloaded: refresh_live_params re-clamps the node count into [min,max] each iter (was construction-only before the node-bounds live-reload).
   sf_pid_wdl_regret_start: 0.20       # Construction-only; only matters on fresh PID restart.
@@ -93,10 +94,10 @@ stockfish:
   sf_pid_regret_max_step_frac: 0.03        # 2026-04-28: 0.10→0.05. 2026-05-02: 0.05→0.03. Model oscillating at regret 0.30-0.32 for ~12 iters; slowing tighten step to ~0.009/iter at regret=0.30 to force longer dwell before pushing lower. Live-reloadable.
   sf_pid_regret_ease_step_frac: 0.03       # 2026-05-14: 0.06->0.03; normal ease matched to tighten cap after overshooting loose at 1500 games/iter. Emergency airbag unchanged.
   sf_pid_regret_tighten_streak_after: 2    # 2026-05-09: damp only repeated hardening. Audit on iters 620-685: streak3/0.5 helped 3, hurt 1, neutral 5; avoids blanket under-hardening.
-  sf_pid_regret_tighten_streak_gain: 0.5   # 2026-05-26: re-enable repeated-tighten damping now that raw winrate is near balance; avoid overtightening after success streaks.
+  sf_pid_regret_tighten_streak_gain: 0.5   # 2026-06-30 (user): RE-ENABLED. Turned off earlier same day to accelerate regret tightening (worked: raw_wr 0.63→~0.48 over ~20 iters, regret 0.050→0.0426). Now caught up / slightly past the 0.50 target with raws dipping to 0.44-0.45 (airbag floor), so restore the streak damping to avoid overtightening into airbag fires near balance. Live-reloadable. (off-window: 1.0 for ~iters 390-406.)
   sf_pid_regret_crash_ease_z: 2.0          # 2026-05-09: if raw score is >2σ below target, require a minimum normal ease response even when the inverse fit is stale.
   sf_pid_regret_crash_ease_min_frac: 0.5   # 2026-05-09: minimum 50% of normal ease cap on >2σ underperformance; softer than point-estimate raw<0.50 airbag.
-  sf_pid_regret_safety_floor: 0.50         # below this raw winrate → emergency ease
+  sf_pid_regret_safety_floor: 0.45         # 2026-06-29: 0.50→0.45 (user) — target lowered to 0.50, so the airbag must sit below it; only a real collapse (raw < 0.45) trips emergency ease. below this raw winrate → emergency ease
   sf_pid_regret_emergency_ease_step: 0.05  # 2026-04-28: 0.10→0.05. 0.10 was overshooting equilibrium — single-iter dip 0.27→raw=0.46 (2.3σ below 0.50 floor) airbagged to 0.37, double the actual handicap shortfall. 0.05 still rescues real crashes in 2-3 fires while halving overshoot near equilibrium. max_step kept at 0.10 (caps airbag); airbag effective step is now min(0.05, 0.10)=0.05. Live-reloadable.
   sf_pid_regret_recency_half_life: 1.0     # 2026-04-29: 2.0→0.5. 2026-05-01: 0.5→1.0. Backtest on 65 post-restart iters showed hl=0.5 produced 10/65 degenerate fallbacks (fit collapsed to <3 effective points) vs 7/65 at hl=1.0, with better prediction RMSE (0.0544 vs 0.0558). Salvage-stale-data concern no longer applies — history is 65 iters of fresh current-run observations. Live-reloadable.
   sf_pid_regret_deadband_sigma: 1.0  # 2026-05-29: 0.75→1.0 to reduce near-target twitch on noisy raw winrate while keeping the separate safety-floor airbag. Live-reloadable.
@@ -118,7 +119,7 @@ stockfish:
   sf_pid_nodes_deadband_sigma: 2.0        # 2026-04-27: 1.5→2.0. Gives raw=±12.4%, ema=±2.8% (at se≈0.062, α=0.10). Just under the ±3% target; matched the user's "maybe 2 is good" call. Holds the lever through normal slow EMA drift, only acts on persistent >2.8% bias from target. Live-reloadable.
   sf_pid_nodes_recency_half_life: 3.0     # mirror regret-side half-life.
   sf_pid_nodes_degen_step_frac: 0.5      # same semantics as regret-side; half-step when fit is degenerate. Live-reloadable.
-  sf_pid_nodes_safety_floor: 0.50         # raw_wr < floor → airbag drops nodes by emergency_ease_step.
+  sf_pid_nodes_safety_floor: 0.45         # 2026-06-29: 0.50→0.45 (user), tracks the regret airbag floor below the new 0.50 target. raw_wr < floor → airbag drops nodes by emergency_ease_step.
   sf_pid_nodes_emergency_ease_step: 1000  # absolute nodes drop on airbag fire.
   # sf_pid_nodes_max_step intentionally unset: the frac cap (above) is the
   # only normal-step bound; an absolute cap would silently override frac at
@@ -233,7 +234,7 @@ train:
   aurora_polar_method: polar_express
   aurora_polar_dtype: fp16
   aurora_polar_safety: 1.01
-  lr: 0.0003        # Base LR; Aurora matrix params use matrix_lr_multiplier.
+  lr: 0.0001        # 2026-07-01: 0.0003→0.0001 flat-lower-LR experiment (user). Base LR; Aurora matrix params use matrix_lr_multiplier.
   batch_size: 512   # Aurora/arc-split run matches offline probe batch size; fits VRAM on 5090.
   train_steps: 800  # Raised for 2M buffer; window_fraction gives ~781 steps at full size.
   train_window_fraction: 0.04  # Train on 4% of active replay cap; slow replay growth limits extra reuse while refilling.
@@ -280,7 +281,7 @@ train:
   lr_schedule: sqrt_release
   lr_release_cycle_steps: 0
   lr_release_start_frac: 0.80
-  lr_release_min_scale: 0.1
+  lr_release_min_scale: 1.0   # 2026-07-01: 0.1→1.0 = FLAT (no release drop) for the flat-lower-LR experiment.
   lr_release_shape: sqrt
   use_compile: true    # 2026-04-27: re-enabled with max-autotune. The earlier "compile destroys trainer" diagnosis turned out to be a prefix bug, not a compile-backward bug — saving under compile created `_orig_mod.`-prefixed checkpoints, then a later unwrapped load silently dropped all 192 keys (no warning) leaving the trainer fresh-init. Workers running max-autotune have been stable through trial f2f58 (raw_wr 0.81/0.59/0.57 across iters 1-3). Both bugs in the chain are now fixed: Trainer.save() strips the prefix, and load_state_dict_tolerant raises on <50% load.
   compile_mode: max-autotune
@@ -413,4 +414,4 @@ tune:
   # with only lr + w_wdl searched. Open up more dimensions to break plateau.
   #
   # Only pb2_bounds_* keys present here are searched; everything else is pinned.
-  pb2_bounds_lr: [0.0003, 0.0003]  # Pinned at 0.0003 for AdamW
+  pb2_bounds_lr: [0.0001, 0.0001]  # 2026-07-01: pinned at 0.0001 (flat-lower-LR experiment)

@@ -178,6 +178,8 @@ def _eff_sf_nodes(
     at that budget, decoupling label cost from the PID-ramped opponent budget.
     Curriculum move queries (``for_move=True``) are never capped.
     """
+    if for_move and for_label:
+        raise ValueError("_eff_sf_nodes: a query cannot be both a move and a label")
     base_nodes = int(state.base_nodes)
     if for_move:
         move_nodes = int(getattr(state.game, "sf_move_nodes", 0) or 0)
@@ -244,18 +246,21 @@ def _slot_latest_record_needs_sf_label(state: SelfplayState, idx: int) -> bool:
 
 def submit_sf_queries(
     state: SelfplayState, idxs: list[int], *, for_move: bool = False,
+    for_label: bool = False,
 ) -> dict[int, Any]:
     """Submit SF queries to the pool without blocking; return futures dict.
 
     Only valid when ``state.stockfish`` is a ``StockfishPool``.  The
     caller guards with ``isinstance`` (same pattern as the original
-    nested closure).
+    nested closure). Pass ``for_label=True`` for label-only queries so
+    ``sf_label_nodes_cap`` applies — omitting it silently runs the full
+    (PID-ramped) opponent budget.
     """
     assert isinstance(state.stockfish, StockfishPool)
     return {
         idx: state.stockfish.submit(
             state.cboards[idx].fen(),
-            nodes=_eff_sf_nodes(state, idx, for_move=for_move),
+            nodes=_eff_sf_nodes(state, idx, for_move=for_move, for_label=for_label),
             syzygy_path=_sf_syzygy_path_for_slot(state, idx),
         )
         for idx in idxs
@@ -353,8 +358,9 @@ def finish_sf_annotation_and_moves(
     """Collect SF results (from futures or synchronously), then process."""
     if not idxs:
         return
-    label_only = attach_labels and not play_curriculum_moves and not for_move
-    if attach_labels and not play_curriculum_moves:
+    label_pass = attach_labels and not play_curriculum_moves
+    label_only = label_pass and not for_move
+    if label_pass:
         idxs = [idx for idx in idxs if _slot_latest_record_needs_sf_label(state, idx)]
         if not idxs:
             return

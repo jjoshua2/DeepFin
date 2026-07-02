@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from chess_anti_engine.encoding.features import EXTRA_FEATURES_V1
@@ -7,6 +8,8 @@ from chess_anti_engine.mcts.gumbel import DEFAULT_VOLATILITY_ANCHOR
 from chess_anti_engine.encoding.lc0 import LC0_HISTORY_LEGACY
 from chess_anti_engine.moves import POLICY_ENCODING_AZ_4672
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
+
+_LOG = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -84,9 +87,12 @@ class GameConfig:
     # label cost from the PID-controlled OPPONENT budget. The PID ramps
     # sf_nodes for opponent strength (winrate servo), but labels ride the same
     # number: at ~700k nodes nearly every recorded selfplay ply pays a ~700k
-    # SF analysis, which dominates iteration wall time. The cp-logistic value
-    # label (sf_wdl_use_cp_logistic, slope ~0.006) can barely distinguish
-    # 100k-node cp from 700k-node cp, so the value anchor loses ~nothing; the
+    # SF analysis, which dominates iteration wall time. The value-anchor
+    # rationale assumes sf_wdl_use_cp_logistic=true: the cp-logistic label
+    # (slope ~0.006) can barely distinguish 100k-node cp from 700k-node cp, so
+    # the anchor loses ~nothing. With cp_logistic OFF, capped labels are SF's
+    # native (sharper) WDL at the reduced depth — __post_init__ warns on that
+    # combination because the load-bearing anchor silently degrades. The
     # MultiPV POLICY teachers (sf_policy/sf_p0/regret) do get a shallower
     # teacher — that's the tradeoff to watch (audit teacher regret). Applies
     # ONLY to label-only queries: curriculum opponent moves keep the full
@@ -172,6 +178,17 @@ class GameConfig:
   # policy-density dilution (~1:4) and the positions-denominated replay window
   # spanning ~4x fewer games. See configs/exp_throughput_views.yaml.
     record_fast_ply_value: bool = False
+
+    def __post_init__(self) -> None:
+        if int(self.sf_label_nodes_cap or 0) > 0 and not self.sf_wdl_use_cp_logistic:
+            _LOG.warning(
+                "sf_label_nodes_cap=%d with sf_wdl_use_cp_logistic=false: capped "
+                "label queries produce SF's NATIVE WDL at the reduced depth, "
+                "degrading the load-bearing sf_wdl anchor. The cap's cost-free "
+                "rationale only holds for cp-logistic labels — enable "
+                "sf_wdl_use_cp_logistic or drop the cap.",
+                int(self.sf_label_nodes_cap),
+            )
 
 
 __all__ = [

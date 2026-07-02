@@ -652,15 +652,21 @@ def _build_replay_samples(
     )
     suffix_sf_regret = _suffix_sf_regret_features(records, is_selfplay=is_selfplay_slot)
 
+    keep_fast_plies = bool(getattr(state.game, "record_fast_ply_value", False))
     for t, rec in enumerate(records):
-        if float(rec.sample_weight) < 1.0 and state.rng.random() > float(rec.sample_weight):
-            continue
-        if float(rec.keep_prob) < 1.0 and state.rng.random() > float(rec.keep_prob):
-            continue
         row_has_policy = bool(rec.has_policy)
-        if not row_has_policy and not bool(
-            getattr(state.game, "record_fast_ply_value", False)
-        ):
+        if row_has_policy:
+            # sample_weight / diff-focus keep_prob are POLICY-difficulty
+            # subsampling signals (q-surprise/KL of the search vs the prior),
+            # so they only gate policy rows. Value-only fast rows bypass them:
+            # subsampling value rows by policy difficulty would both shrink
+            # the fast-ply value multiplier and bias the kept rows toward
+            # positions where the low-sim search disagreed with the prior.
+            if float(rec.sample_weight) < 1.0 and state.rng.random() > float(rec.sample_weight):
+                continue
+            if float(rec.keep_prob) < 1.0 and state.rng.random() > float(rec.keep_prob):
+                continue
+        if not row_has_policy and not keep_fast_plies:
             # Fast-ply (playout-capped) records are dropped by default. With
             # record_fast_ply_value they become value-only rows (has_policy=0):
             # outcome/search-WDL/moves_left are valid targets regardless of sim
@@ -798,7 +804,12 @@ def _build_replay_samples(
                 relations=getattr(rec, "relations", None),
                 input_history_encoding=state.game.input_history_encoding,
                 history_rep_fix=bool(state.game.history_rep_fix),
-                priority=float(rec.priority),
+                # Value-only fast rows get a neutral priority: rec.priority is a
+                # difficulty score from the playout-capped (low-sim) search and
+                # is not calibrated against full-ply priorities, so letting it
+                # into the surprise-weighted sampler would systematically skew
+                # the policy/value row mix.
+                priority=float(rec.priority) if row_has_policy else 1.0,
                 priority_policy_kl=(
                     None if rec.priority_policy_kl is None else float(rec.priority_policy_kl)
                 ),

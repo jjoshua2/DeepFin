@@ -38,7 +38,7 @@
 #   * Teacher quality guard: audit_targets.py --sims 32 net+search regret vs
 #     the pre-change baseline; SF-soft teacher regret itself will rise with
 #     the shallower label — judge the NET's trend, not the teacher's.
-#   * Value axis: value-head 1-ply regret (scratchpad/value_regret.py) and
+#   * Value axis: value-head 1-ply regret (scripts/value_regret.py) and
 #     raw Brier/entropy trend over a window refill — this is where the fast-ply
 #     rows should show up.
 #   * Overtraining guard: test_loss vs train_loss gap must not widen at the
@@ -292,7 +292,7 @@ train:
   lr: 0.0001        # 2026-07-01: 0.0003→0.0001 flat-lower-LR experiment (user). Base LR; Aurora matrix params use matrix_lr_multiplier.
   batch_size: 512   # Aurora/arc-split run matches offline probe batch size; fits VRAM on 5090.
   train_steps: 800  # Raised for 2M buffer; window_fraction gives ~781 steps at full size.
-  train_window_fraction: 0.04  # Train on 4% of active replay cap; slow replay growth limits extra reuse while refilling.
+  train_window_fraction: 0.04  # INERT while train_views_per_position > 0 (views mode owns the step budget); still used as the ingest-drought floor and by non-views configs.  # Train on 4% of active replay cap; slow replay growth limits extra reuse while refilling.
   train_views_per_position: 2.5  # EXP: hold trained-samples/ingested-position at 2.5 (AZ ~1, KataGo ~4) instead of a window fraction — steps auto-scale as ingest volume changes, so the reuse ratio can't silently drift when the two knobs above multiply ingest.
   # With ~10k new positions/iter and buffer growing by 2500/iter, each position
   # survives ~50 iters in the buffer and gets trained ~5 times before eviction.

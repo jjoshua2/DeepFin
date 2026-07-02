@@ -388,3 +388,31 @@ def test_eff_sf_nodes_move_node_override_then_scaled():
 def test_eff_sf_nodes_zero_budget_returns_none():
     assert _eff_sf_nodes(_eff_state(0, last_full=True), 0, for_move=True) is None
     assert _eff_sf_nodes(_eff_state(0, last_full=False), 0, for_move=False) is None
+
+
+def test_eff_sf_nodes_rejects_move_and_label_combination() -> None:
+    state = _state(has_policy=True)
+    with pytest.raises(ValueError):
+        _eff_sf_nodes(state, 0, for_move=True, for_label=True)
+
+
+def test_generic_submit_threads_label_cap() -> None:
+    state = _state(has_policy=True, game=GameConfig(sf_label_nodes_cap=40))
+
+    submit_sf_queries(state, [0], for_label=True)
+
+    assert state.stockfish.calls[0]["nodes"] == 40
+
+
+def test_label_cap_warns_when_native_wdl_labels(caplog) -> None:  # noqa: ANN001
+    """The cap's cost-free rationale assumes cp-logistic labels; the config
+    warns when the cap is combined with SF-native WDL labels."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="chess_anti_engine.selfplay.config"):
+        GameConfig(sf_label_nodes_cap=150_000, sf_wdl_use_cp_logistic=False)
+    assert any("sf_label_nodes_cap" in r.message for r in caplog.records)
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="chess_anti_engine.selfplay.config"):
+        GameConfig(sf_label_nodes_cap=150_000, sf_wdl_use_cp_logistic=True)
+    assert not caplog.records

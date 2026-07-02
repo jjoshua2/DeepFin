@@ -241,6 +241,8 @@ def _fastply_record(
     has_policy: bool,
     sf_policy_target: np.ndarray | None = None,
     sf_multipv_raw: np.ndarray | None = None,
+    keep_prob: float = 1.0,
+    priority: float = 1.0,
 ) -> _NetRecord:
     policy = np.zeros((POLICY_SIZE,), dtype=np.float32)
     policy[0] = 1.0
@@ -252,9 +254,9 @@ def _fastply_record(
         pov_color=chess.WHITE,
         ply_index=ply_index,
         has_policy=has_policy,
-        priority=1.0,
+        priority=priority,
         sample_weight=1.0,
-        keep_prob=1.0,
+        keep_prob=keep_prob,
         sf_policy_target=sf_policy_target,
     )
     rec.sf_multipv_raw = sf_multipv_raw
@@ -411,3 +413,42 @@ def test_diff_focus_kept_excludes_fast_ply_value_rows() -> None:
     assert stats.records == 2  # policy-bearing records only
     assert stats.kept == 2  # NOT len(samples) == 4: keep rate stays <= 1.0
     assert stats.kept <= stats.records
+
+
+def test_fast_ply_value_rows_bypass_diff_focus_keep_prob() -> None:
+    """keep_prob is a POLICY-difficulty subsample; value-only rows must not be
+    filtered (or biased) by it — keep_prob=0.0 would drop every policy row but
+    a fast value row must survive."""
+    records = [
+        _fastply_record(ply_index=0, has_policy=True, keep_prob=0.0),
+        _fastply_record(ply_index=1, has_policy=False, keep_prob=0.0),
+    ]
+    samples = _build_replay_samples(
+        _fastply_state(record_fast_ply_value=True), 0, records,
+        result="1-0", tb_policy_overrides={},
+        vol_targets=[None, None], sf_vol_targets=[None, None],
+        total_plies_played=2,
+        ply_to_index={0: 0, 1: 1},
+    )
+    assert len(samples) == 1
+    assert samples[0].has_policy is False  # policy row dropped, value row kept
+
+
+def test_fast_ply_value_rows_get_neutral_priority() -> None:
+    """Fast-row difficulty scores come from the playout-capped search and are
+    not calibrated against full-ply priorities; value-only rows enter the
+    surprise-weighted sampler at a neutral 1.0."""
+    records = [
+        _fastply_record(ply_index=0, has_policy=True, priority=7.5),
+        _fastply_record(ply_index=1, has_policy=False, priority=7.5),
+    ]
+    samples = _build_replay_samples(
+        _fastply_state(record_fast_ply_value=True), 0, records,
+        result="1-0", tb_policy_overrides={},
+        vol_targets=[None, None], sf_vol_targets=[None, None],
+        total_plies_played=2,
+        ply_to_index={0: 0, 1: 1},
+    )
+    assert len(samples) == 2
+    assert samples[0].priority == 7.5   # policy row keeps its difficulty score
+    assert samples[1].priority == 1.0   # value-only row is neutral
