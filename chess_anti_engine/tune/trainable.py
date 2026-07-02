@@ -579,6 +579,11 @@ def train_trial(config: dict):
             _reload_yaml_into_config(config, _yaml_path, live_reload=True)
             tc = TrialConfig.from_dict(config)
 
+  # Surprise-priority shaping knobs apply at shuffle append, so pushing
+  # them before this iteration's ingest makes yaml edits live.
+            buf.sf_gap_priority_weight = tc.replay_sf_gap_priority_weight
+            buf.fast_low_surprise_priority = tc.replay_fast_low_surprise_priority
+
             shard_prefetcher, async_test_eval = _lazy_construct_iter_helpers(
                 shard_prefetcher=shard_prefetcher,
                 async_test_eval=async_test_eval,
