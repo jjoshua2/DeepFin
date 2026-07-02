@@ -219,6 +219,7 @@ _TUNE_KEYS = (
     "distributed_upload_compact_shard_size", "distributed_upload_compact_max_age_seconds",
     "distributed_inference_broker_enabled", "distributed_inference_shared_broker",
     "distributed_inference_batch_wait_ms",
+    "distributed_inference_adaptive_idle_ms",
     "distributed_inference_use_compile", "distributed_inference_compile_mode",
     "distributed_inference_max_batch_per_slot",
     "distributed_inference_slots_per_worker",

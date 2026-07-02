@@ -133,7 +133,7 @@ selfplay:
   games_per_iter_ramp_iters: 0
   selfplay_fraction: 0.30  # 2026-04-24: 0.50→0.25; 2026-05-04: 0.25→0.30 (30% selfplay / 70% SF curriculum). test_policy_loss drifted 2.25→2.55 at iter 272-285; past runs at 75% SF worked better. Revert if regret/winrate stop moving or policy_loss doesn't recover.
   record_fast_ply_value: true  # 2026-07-01 (PR #91): keep fast-ply records as value-only rows (has_policy=0) — KataGo playout-cap value harvest, ~4x value rows/game at zero SF cost. Restart-gated. Watch: positions/game ~22->~90; value 1-ply regret (scripts/value_regret.py) over a window refill. Kill: flip false if value regret flat AND test/train gap widens.
-  selfplay_batch: 256   # Concurrent game slots per worker (always full via continuous recycling).
+  selfplay_batch: 384   # 2026-07-02 arrival-stream POC: 256->384 (fatten ready-pool so broker batches grow; RAM headroom 71G). Revert to 256 if pos/s flat or RAM/latency degrades.
   max_plies: 450
   history_rep_fix: true  # 2026-06-17: lc0-root repetition-plane correctness fix; affects ~0.2% of positions; net-neutral-to-faster. Propagates as the replay window refills.
 
@@ -325,13 +325,14 @@ tune:
   distributed_worker_threaded: true   # 2026-04-29: enable threaded selfplay so the new dispatcher actually engages. Bench at N=16 producers showed 36k leaves/s vs ~7k for the prior path (5x). Old comment "AOT threading slower in prod" referred to the AOT-compiled threading path; this is the compiled+dispatcher path which is structurally different.
   distributed_worker_selfplay_threads: 32
   distributed_worker_threaded_dispatcher: true   # 2-slot async pipeline (2026-04-29 refactor): +5.9x over ThreadedBatchEvaluator at N=16 producers, parity tests at 1e-5 vs DirectGPUEvaluator. Was false based on 2026-04-28 A/B which used a pre-refactor sync dispatcher AND a bench with main-thread compile that broke cudagraph TLS — both fixed.
-  distributed_worker_dispatcher_batch_wait_ms: 2.0
+  distributed_worker_dispatcher_batch_wait_ms: 5.0  # 2026-07-02 sweep WINNER: 2ms 59 pos/batch & 3.5k pos/s, 5ms 129 & 5.0k (+43%), 8ms 83 & 3.8k (overshoot — latency-bound pipeline). Restart-gated.
   distributed_worker_dispatcher_max_batch: 1190
   distributed_worker_dispatcher_target_batch: 680  # Live producers underfill 340; 680 has been the best current steady compromise.
   # distributed_worker_aot_dir: data/aot_models  # Auto-detected by _worker_inference_args when threaded=true
   distributed_inference_broker_enabled: true
   distributed_inference_shared_broker: false
-  distributed_inference_batch_wait_ms: 2.0
+  distributed_inference_batch_wait_ms: 20.0  # 2026-07-02 POC B: hard CAP for adaptive mode (was fixed 5.0 = sweep winner; if adaptive_idle_ms reverts to 0, set this back to 5.0)
+  distributed_inference_adaptive_idle_ms: 2.0  # 2026-07-02 POC B: arrival-adaptive gather — dispatch when no new slot for 2ms (batch_wait_ms above = hard cap). 0 = fixed-window mode.
   distributed_inference_max_batch_per_slot: 1190
   distributed_inference_slots_per_worker: 4
   distributed_inference_use_compile: true
