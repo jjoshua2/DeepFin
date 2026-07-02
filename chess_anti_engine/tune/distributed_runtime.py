@@ -315,6 +315,7 @@ def _publish_distributed_trial_state(
         "mcts": str(config.get("mcts", "puct")),
         "mcts_simulations": int(mcts_simulations),
         "playout_cap_fraction": float(config.get("playout_cap_fraction", 0.25)),
+        "full_ply_pair_fraction": float(config.get("full_ply_pair_fraction", 0.0)),
         "fast_simulations": int(config.get("fast_simulations", 8)),
         "gumbel_topk": int(config.get("gumbel_topk", 16)),
         "gumbel_c_scale": float(config.get("gumbel_c_scale", 0.1)),

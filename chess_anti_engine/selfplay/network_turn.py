@@ -209,6 +209,47 @@ def _scheduled_gumbel_scale(search, *, move_number: int, curriculum: bool = Fals
     )
 
 
+def _draw_is_full(
+    rng: np.random.Generator,
+    net_idxs: list[int],
+    *,
+    playout_cap_fraction: float,
+    pair_fraction: float,
+    force_flags: list[bool],
+) -> np.ndarray:
+    """Full/fast schedule, optionally forcing consecutive full-ply PAIRS.
+
+    pair_fraction=0 reproduces the historical iid draw bit-for-bit-in-law.
+    With pair_fraction p, each base full forces the slot's NEXT net turn full
+    with probability p (forced follow-ups never chain). Base fulls fire at
+    r = f / (1 + p*(1-f)) — the stationary-corrected rate (forced turns
+    displace base-draw opportunities), so the expected full fraction — and
+    the SF-label volume — stays exactly f = playout_cap_fraction. At p=1,
+    f=0.25 the sf_p0 teacher adjacency P(ply t-1 full | ply t full) rises
+    ~0.25 -> ~0.57 (the one-ply label shift needs ply t-1 full; see
+    finalize's sf_p0 block).
+    """
+    n = len(net_idxs)
+    if pair_fraction <= 0.0:
+        return rng.random(size=n) < float(playout_cap_fraction)
+    p_pair = min(1.0, float(pair_fraction))
+    f = float(playout_cap_fraction)
+    base_rate = f / (1.0 + p_pair * (1.0 - f))
+    draws = rng.random(size=n)
+    pair_draws = rng.random(size=n)
+    out = np.zeros(n, dtype=bool)
+    for j, idx in enumerate(net_idxs):
+        if force_flags[idx]:
+            out[j] = True
+            force_flags[idx] = False
+            continue
+        full = bool(draws[j] < base_rate)
+        out[j] = full
+        if full and pair_draws[j] < p_pair:
+            force_flags[idx] = True
+    return out
+
+
 def _apply_forced_moves(state: SelfplayState, net_idxs: list[int]) -> list[int]:
     """Push the only-legal-move for each forced game and return remaining indices.
 
@@ -596,7 +637,12 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
     xs_batch, pol_logits, wdl_logits_raw, wdl_est = _evaluate_root_batch(state, net_idxs)
     _cb_encode_list = [state.cboards[_idx] for _idx in net_idxs]
 
-    is_full = rng.random(size=len(net_idxs)) < float(search.playout_cap_fraction)
+    is_full = _draw_is_full(
+        rng, net_idxs,
+        playout_cap_fraction=float(search.playout_cap_fraction),
+        pair_fraction=float(getattr(search, "full_ply_pair_fraction", 0.0)),
+        force_flags=state.force_full_next,
+    )
     full_sims = int(search.simulations)
     fast_sims = int(search.fast_simulations)
     sample_weights = _compute_resign_weights(state, wdl_est, net_idxs)

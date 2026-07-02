@@ -2302,7 +2302,8 @@ class WorkerSession:
   # opening sampling, or the volatility-search knobs would silently never reach
   # workers. test_every_reco_field_is_watched guards completeness.
         "sf_policy_temp", "sf_policy_label_smooth", "timeout_adjudication_threshold",
-        "max_plies", "mcts", "playout_cap_fraction", "random_start_plies",
+        "max_plies", "mcts", "playout_cap_fraction", "full_ply_pair_fraction",
+        "random_start_plies",
         "opening_book_prob", "opening_book_max_plies", "opening_book_max_games",
         "opening_book_max_plies_2", "opening_book_max_games_2", "opening_book_mix_prob_2",
         "volatility_q_scale", "volatility_fpu", "volatility_anchor",
@@ -2352,6 +2353,9 @@ class WorkerSession:
                 simulations=self._resolve_reco(reco, "mcts_simulations", 50, int),
                 mcts_type=self._resolve_reco(reco, "mcts", "puct", str),
                 playout_cap_fraction=self._resolve_reco(reco, "playout_cap_fraction", 0.25),
+                full_ply_pair_fraction=self._resolve_reco(
+                    reco, "full_ply_pair_fraction", 0.0,
+                ),
                 fast_simulations=self._resolve_reco(reco, "fast_simulations", 8, int),
                 gumbel_topk=self._resolve_reco(reco, "gumbel_topk", 16, int),
                 volatility_q_scale=self._resolve_reco(reco, "volatility_q_scale", 0.0),
