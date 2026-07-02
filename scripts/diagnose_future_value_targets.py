@@ -330,8 +330,8 @@ def _suffix_rows_by_spec(
         known_selfplay = sum(1 for s in samples if s.is_selfplay is True)
         game_known_nonselfplay = known_nonselfplay > known_selfplay
         for current_index, current in enumerate(samples):
-            weighted_sum = {spec: 0.0 for spec in specs}
-            weight_sum = {spec: 0.0 for spec in specs}
+            weighted_sum = dict.fromkeys(specs, 0.0)
+            weight_sum = dict.fromkeys(specs, 0.0)
             path_regret = 0.0
             next_path_ply = int(current.ply)
             for future in samples[current_index + 1:]:

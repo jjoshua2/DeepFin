@@ -259,17 +259,17 @@ class _TinyScopedModel(torch.nn.Module):
 
 
 def _make_trainer(tmp_path: Path, **kwargs: Any) -> Trainer:
-    trainer_kwargs: dict[str, Any] = dict(
-        device="cpu",
-        lr=1e-3,
-        optimizer="muon",
-        warmup_steps=10,
-        warmup_lr_start=1e-5,
-        use_amp=False,
-        log_dir=tmp_path,
-        tb_log_interval=1000,
-        prefetch_batches=False,
-    )
+    trainer_kwargs: dict[str, Any] = {
+        "device": "cpu",
+        "lr": 1e-3,
+        "optimizer": "muon",
+        "warmup_steps": 10,
+        "warmup_lr_start": 1e-5,
+        "use_amp": False,
+        "log_dir": tmp_path,
+        "tb_log_interval": 1000,
+        "prefetch_batches": False,
+    }
     trainer_kwargs.update(kwargs)
     return Trainer(
         _TinyMuonModel(),

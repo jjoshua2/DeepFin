@@ -67,7 +67,7 @@ def _iter_pgn_bytes_from_path(path: Path) -> Iterable[bytes]:
         yield path.read_bytes()
         return
 
-    if suffixes.endswith(".pgn.zip") or suffixes.endswith(".zip"):
+    if suffixes.endswith((".pgn.zip", ".zip")):
         with zipfile.ZipFile(path) as z:
   # Heuristic: read all members ending in .pgn
             pgn_members = [n for n in z.namelist() if n.lower().endswith(".pgn")]
@@ -189,7 +189,7 @@ def _sample_book(*, rng, path: str, max_plies: int, max_games: int) -> chess.Boa
     suffixes = "".join(p.suffixes).lower()
     if suffixes.endswith(".bin"):
         board = _sample_from_polyglot(rng=rng, path=str(p), max_plies=max_plies)
-    elif suffixes.endswith(".pgn") or suffixes.endswith(".pgn.zip") or suffixes.endswith(".zip"):
+    elif suffixes.endswith((".pgn", ".pgn.zip", ".zip")):
         board = _sample_from_pgn(rng=rng, path=str(p), max_plies=max_plies, max_games=max_games)
     else:
         raise ValueError(f"Unknown opening book format: {p}")
@@ -208,7 +208,7 @@ def warm_opening_book_cache(cfg: OpeningConfig) -> None:
         if not path:
             continue
         suffixes = "".join(Path(str(path)).suffixes).lower()
-        if suffixes.endswith(".pgn") or suffixes.endswith(".pgn.zip") or suffixes.endswith(".zip"):
+        if suffixes.endswith((".pgn", ".pgn.zip", ".zip")):
             _load_pgn_opening_sequences(
                 str(path),
                 max_plies=int(max_plies),

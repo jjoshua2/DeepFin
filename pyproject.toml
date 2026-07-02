@@ -129,9 +129,17 @@ skip_covered = false
 # pylint's two flow checks live in basedpyright's active gate:
 # reportPossiblyUnboundVariable and reportUnreachable. F541 (default set)
 # covers f-string-without-interpolation. The occasional-cleanup groups
-# (B, SIM, PERF, NPY, UP, RUF, C4, PIE, PT, PLW) run ADVISORY via
-# `scripts/lint.sh --deep` — promote a group here only at zero findings.
-select = ["E4", "E7", "E9", "F", "ARG", "B006", "G004", "SIM115", "ISC", "PLE"]
+# (B, SIM, PERF, NPY, RUF, PT, PLW) run ADVISORY via `scripts/lint.sh --deep`
+# — promote a group here only at zero findings. Promoted 2026-07-02 after the
+# first cleanup pass: PIE, UP, C4 (whole groups) and B023 (loop-variable
+# capture). WON'T-GATE: B009/B010 — getattr/setattr-with-constant is this
+# codebase's deliberate idiom for dynamic attributes on torch Modules /
+# Popen tagging / duck-typed buffers; rewriting to direct attribute access
+# trades an Any-launder for 21 basedpyright errors (tried and reverted).
+select = [
+  "E4", "E7", "E9", "F", "ARG", "B006", "G004", "SIM115", "ISC", "PLE",
+  "PIE", "UP", "C4", "B023",
+]
 # E741: allow single-letter `l` — we use `w/d/l` for win/draw/loss counters
 #       throughout the stats code, and renaming to `losses` would collide with
 #       loss-function variables.

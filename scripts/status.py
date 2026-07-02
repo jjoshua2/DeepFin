@@ -91,7 +91,7 @@ def _latest_worker_log_line(run_dir: Path, trial_id: str, active_pid: str | None
             mtime = os.path.getmtime(log)
             if mtime < best_time:
                 continue
-            with open(log, "r", errors="replace") as f:
+            with open(log, errors="replace") as f:
                 for line in f:
                     if "batch done" in line:
                         best_line = line.strip()

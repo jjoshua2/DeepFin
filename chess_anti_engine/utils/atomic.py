@@ -11,7 +11,7 @@ import os
 import shutil
 import uuid
 from pathlib import Path
-from typing import Callable
+from collections.abc import Callable
 
 
 def _tmp_path_for(path: Path, *, preserve_suffix: bool = False) -> Path:

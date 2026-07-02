@@ -193,7 +193,7 @@ def run_mcts_many_c(
 
   # Limit cache size: keep root entries + up to 4x simulations of non-root entries.
     _cache_max = n_boards + 4 * int(cfg.simulations)
-    _root_id_set = set(int(root_ids[i]) for i in range(n_boards))
+    _root_id_set = {int(root_ids[i]) for i in range(n_boards)}
 
     for _ in range(int(cfg.simulations)):
   # Select one leaf per root (all in C)

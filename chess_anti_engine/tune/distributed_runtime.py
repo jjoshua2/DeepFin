@@ -154,7 +154,7 @@ def _iter_shard_paths_nested(root: Path) -> list[Path]:
                 name = entry.name
                 if _is_tmp_shard_name(name):
                     continue
-                if name.endswith(LOCAL_SHARD_SUFFIX) or name.endswith(LEGACY_SHARD_SUFFIX):
+                if name.endswith((LOCAL_SHARD_SUFFIX, LEGACY_SHARD_SUFFIX)):
                     paths.append(entry)
         except FileNotFoundError:
             continue
@@ -231,7 +231,7 @@ def _prune_processed_shards(
             name = entry.name
             if _is_tmp_shard_name(name):
                 continue
-            if not (name.endswith(LOCAL_SHARD_SUFFIX) or name.endswith(LEGACY_SHARD_SUFFIX)):
+            if not (name.endswith((LOCAL_SHARD_SUFFIX, LEGACY_SHARD_SUFFIX))):
                 continue
             try:
                 if entry.stat().st_mtime < cutoff:

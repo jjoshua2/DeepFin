@@ -15,9 +15,10 @@
 # --deep adds the OCCASIONAL-CLEANUP tier (advisory, slow — run before a
 # cleanup pass, not per edit):
 #   * skylos (dead code + circular imports; ~40s, grep-verified tables)
-#   * ruff cleanup report over the opt-in groups (B, SIM, PERF, NPY, UP,
-#     RUF, C4, PIE, PT, PLW) — a shopping list, not a gate. Promote a group
-#     into the pyproject gate once it reaches zero findings.
+#   * ruff cleanup report over the opt-in groups (B, SIM, PERF, NPY, RUF,
+#     PT, PLW) — a shopping list, not a gate. Promote a group into the
+#     pyproject gate once it reaches zero findings (PIE/UP/C4 + B009/B010/
+#     B023 were promoted 2026-07-02).
 #
 # --slop runs scb-check (verbosity/erosion/clone detection + ast-grep anti-pattern
 # rules). Opt-in because its output is noisy and many findings are style
@@ -192,9 +193,15 @@ if [[ $RUN_DEEP -eq 1 ]]; then
 
     # Occasional-cleanup shopping list: opt-in ruff groups, advisory.
     # Promote a group into the pyproject gate once it hits zero findings.
-    start_job 1 "ruff cleanup report (advisory — B,SIM,PERF,NPY,UP,RUF,C4,PIE,PT,PLW)" \
+    # The gate rules ride along so RUF100 (unused-noqa) is judged against the
+    # REAL rule set — without them every gate-rule noqa reads as "unused".
+    # Curated won't-fix ignores (documented decisions, keep the report signal):
+    #   RUF001/2/3  em-dashes/unicode in strings+comments are house style
+    #   PERF203     try/except-in-loop is deliberate robustness in game loops
+    start_job 1 "ruff cleanup report (advisory — B,SIM,PERF,NPY,RUF,PT,PLW)" \
         env RUFF_CACHE_DIR="$LINT_TMP/ruff-cache" "$(tool ruff)" check \
-        --select B,SIM,PERF,NPY,UP,RUF,C4,PIE,PT,PLW --ignore E741,ARG005 \
+        --extend-select B,SIM,PERF,NPY,RUF,PT,PLW \
+        --ignore E741,ARG005,RUF001,RUF002,RUF003,PERF203 \
         --statistics "${PATHS[@]}"
 fi
 

@@ -121,7 +121,7 @@ class WalkerPool:
         for th in self._threads:
             th.start()
 
-    def __enter__(self) -> "WalkerPool":
+    def __enter__(self) -> WalkerPool:
         return self
 
     def __exit__(self, *_args) -> None:

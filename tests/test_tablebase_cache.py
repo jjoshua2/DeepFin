@@ -4,7 +4,7 @@ import chess_anti_engine.tablebase as tablebase
 
 
 class _FakeTablebase:
-    instances: list["_FakeTablebase"] = []
+    instances: list[_FakeTablebase] = []
 
     def __init__(self) -> None:
         self.dirs: list[str] = []

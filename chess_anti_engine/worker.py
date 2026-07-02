@@ -15,7 +15,8 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, NamedTuple, TypeVar, overload
+from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar, overload
+from collections.abc import Callable
 
 import numpy as np
 import torch
@@ -906,7 +907,7 @@ class WorkerSession:
   # -- Helper methods -------------------------------------------------------
 
     def _server_url_for(self, endpoint: str) -> str:
-        if endpoint.startswith("http://") or endpoint.startswith("https://"):
+        if endpoint.startswith(("http://", "https://")):
             return endpoint
         if endpoint.startswith("/"):
             return self.server + endpoint
@@ -1239,7 +1240,7 @@ class WorkerSession:
         self.log.info(
             "live reco: selfplay_fraction=%.3f regret=%s sf_nodes=%d",
             float(state.game.selfplay_fraction),
-            ("%.4f" % state.opponent.wdl_regret_limit)
+            (f"{state.opponent.wdl_regret_limit:.4f}")
             if state.opponent.wdl_regret_limit is not None else "none",
             int(sf_nodes),
         )
@@ -2535,7 +2536,7 @@ class WorkerSession:
 
     def _dispatch_selfplay_one_shard(
         self, *, games_per_batch: int, cfgs: dict, need_local_model: bool,
-    ) -> "BatchStats | None":
+    ) -> BatchStats | None:
         """Run one continuous-selfplay session. Returns None on broker errors that
         we recover from via reset (caller exits the iteration); otherwise BatchStats."""
         assert self.sf is not None  # caller (_run_selfplay) calls _sync_stockfish first

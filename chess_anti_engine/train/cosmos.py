@@ -197,15 +197,15 @@ class COSMOS(Optimizer):
             raise ValueError(f"Invalid beta parameter at index 1: {betas[1]}")
         if not weight_decay >= 0.0:
             raise ValueError(f"Invalid weight_decay value: {weight_decay}")
-        defaults = dict(
-            lr=lr,
-            betas=betas,
-            eps=eps,
-            weight_decay=weight_decay,
-            amsgrad=amsgrad,
-            maximize=maximize,
-            use_cosmos=True,
-        )
+        defaults = {
+            'lr': lr,
+            'betas': betas,
+            'eps': eps,
+            'weight_decay': weight_decay,
+            'amsgrad': amsgrad,
+            'maximize': maximize,
+            'use_cosmos': True,
+        }
         super().__init__(params, defaults)
         self.lr_ratio = lr_ratio
         self.rank = rank

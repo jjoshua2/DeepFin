@@ -23,20 +23,20 @@ def _fit_inverse_regret(history, *, target_wr, recency_half_life=0.0):
 
 
 def _mk_pid(**overrides) -> DifficultyPID:
-    defaults: dict = dict(
-        initial_nodes=5000,
-        target_winrate=0.57,
-        ema_alpha=0.5,
-        min_nodes=5000,
-        max_nodes=25000,
-        initial_wdl_regret=0.15,
-        wdl_regret_min=0.02,
-        wdl_regret_max=1.0,
-        regret_window=10,
-        regret_max_step=0.01,
-        regret_safety_floor=0.50,
-        regret_emergency_ease_step=0.01,
-    )
+    defaults: dict = {
+        "initial_nodes": 5000,
+        "target_winrate": 0.57,
+        "ema_alpha": 0.5,
+        "min_nodes": 5000,
+        "max_nodes": 25000,
+        "initial_wdl_regret": 0.15,
+        "wdl_regret_min": 0.02,
+        "wdl_regret_max": 1.0,
+        "regret_window": 10,
+        "regret_max_step": 0.01,
+        "regret_safety_floor": 0.50,
+        "regret_emergency_ease_step": 0.01,
+    }
     defaults.update(overrides)
     return DifficultyPID(**defaults)
 
@@ -588,19 +588,19 @@ def test_inverse_model_handles_noisy_data():
 
 def _mk_pid_nodes_only(**overrides) -> DifficultyPID:
     """PID with regret disabled so the nodes lever runs every iter."""
-    defaults: dict = dict(
-        initial_nodes=10000,
-        target_winrate=0.57,
-        ema_alpha=0.5,
-        min_nodes=2000,
-        max_nodes=200_000,
-        initial_wdl_regret=-1.0,  # disable regret stage; gate stays complete
-        nodes_window=10,
-        nodes_max_step_frac=0.10,
-        nodes_safety_floor=0.0,
-        nodes_emergency_ease_step=0.0,
-        nodes_deadband_sigma=0.0,
-    )
+    defaults: dict = {
+        "initial_nodes": 10000,
+        "target_winrate": 0.57,
+        "ema_alpha": 0.5,
+        "min_nodes": 2000,
+        "max_nodes": 200_000,
+        "initial_wdl_regret": -1.0,  # disable regret stage; gate stays complete
+        "nodes_window": 10,
+        "nodes_max_step_frac": 0.10,
+        "nodes_safety_floor": 0.0,
+        "nodes_emergency_ease_step": 0.0,
+        "nodes_deadband_sigma": 0.0,
+    }
     defaults.update(overrides)
     return DifficultyPID(**defaults)
 

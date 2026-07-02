@@ -182,9 +182,9 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
     wdl_regret_limit: float | None = None
     if ds is not None and float(ds.wdl_regret) >= 0.0:
         wdl_regret_limit = float(ds.wdl_regret)
-    return dict(
-        opponent=OpponentConfig(wdl_regret_limit=wdl_regret_limit),
-        temp=TemperatureConfig(
+    return {
+        "opponent": OpponentConfig(wdl_regret_limit=wdl_regret_limit),
+        "temp": TemperatureConfig(
             temperature=tc.temperature,
             drop_plies=tc.temperature_drop_plies,
             after=tc.temperature_after,
@@ -196,7 +196,7 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
             selfplay_decay_moves=tc.selfplay_temperature_decay_moves,
             selfplay_endgame=tc.selfplay_temperature_endgame,
         ),
-        search=SearchConfig(
+        "search": SearchConfig(
             mcts_type=tc.mcts,
             playout_cap_fraction=tc.playout_cap_fraction,
             fast_simulations=tc.fast_simulations,
@@ -216,7 +216,7 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
             volatility_fpu=tc.volatility_fpu,
             volatility_anchor=tc.volatility_anchor,
         ),
-        opening=OpeningConfig(
+        "opening": OpeningConfig(
             opening_book_path=tc.opening_book_path,
             opening_book_max_plies=tc.opening_book_max_plies,
             opening_book_max_games=tc.opening_book_max_games,
@@ -227,14 +227,14 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
             opening_book_mix_prob_2=tc.opening_book_mix_prob_2,
             random_start_plies=tc.random_start_plies,
         ),
-        diff_focus=DiffFocusConfig(
+        "diff_focus": DiffFocusConfig(
             enabled=tc.diff_focus_enabled,
             q_weight=tc.diff_focus_q_weight,
             pol_scale=tc.diff_focus_pol_scale,
             slope=tc.diff_focus_slope,
             min_keep=tc.diff_focus_min,
         ),
-        game=GameConfig(
+        "game": GameConfig(
             max_plies=tc.max_plies,
             selfplay_fraction=tc.selfplay_fraction,
             sf_move_nodes=tc.sf_move_nodes,
@@ -268,7 +268,7 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
             record_sf_p0_regret=tc.record_sf_p0_regret,
             record_fast_ply_value=tc.record_fast_ply_value,
         ),
-    )
+    }
 
 
 # Keys that affect broker/worker topology — changing these mid-run requires

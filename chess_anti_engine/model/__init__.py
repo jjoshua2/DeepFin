@@ -516,7 +516,7 @@ def _migrate_qkv_keys(ckpt_state: dict, *, model_state: dict, label: str) -> dic
     split_prefixes: set[str] = set()
     for k in original_state:
         for proj in ("q_proj", "k_proj", "v_proj"):
-            if k.endswith(f".{proj}.weight") or k.endswith(f".{proj}.bias"):
+            if k.endswith((f".{proj}.weight", f".{proj}.bias")):
                 prefix = k.rsplit(f".{proj}.", 1)[0]
                 suffix = k.rsplit(f".{proj}.", 1)[1]
                 if (
@@ -552,7 +552,7 @@ def _migrate_qkv_keys(ckpt_state: dict, *, model_state: dict, label: str) -> dic
     migrated_count = 0
     fused_prefixes: set[str] = set()
     for k in original_state:
-        if k.endswith(".qkv_proj.weight") or k.endswith(".qkv_proj.bias"):
+        if k.endswith((".qkv_proj.weight", ".qkv_proj.bias")):
             prefix = k.rsplit(".qkv_proj.", 1)[0]
             suffix = k.rsplit(".qkv_proj.", 1)[1]
             if (
