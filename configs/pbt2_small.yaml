@@ -65,6 +65,7 @@ stockfish:
   stockfish_path: /home/josh/projects/chess/e2e_server/publish/stockfish
   sf_nodes: 5000           # 5k nodes: wider WDL spread so regret actually filters moves (was 1k where all 12 passed)
   sf_move_nodes: 0          # 0 = curriculum moves use the PID-controlled sf_nodes; don't weaken played SF moves by default.
+  sf_label_nodes_cap: 400000  # 2026-07-02: 150k->400k — label-cap kill criterion fired early (audit net+search 49.6->55.3cp, raw top-1 regret 51.5->60.7 at ~60% window refill; the sf_p0/regret POLICY teacher got too shallow at 150k). 400k keeps ~43% of the label-cost saving. Live-tunable. Next read at full refill: recovered -> hold; still >2cp worse -> 0 (uncapped) and keep only fast-ply+views.
   sf_workers: 4
   sf_nice: 19              # Run SF at lowest CPU priority so search/dispatch/GPU batching wins contention.
   sf_multipv: 40            # Bumped from 20 (2026-04-29) to enrich sf_policy_t targets — measurement showed regret≤0.47 saturated top-20; multipv=40 widens tail for richer training distribution. Difficulty implication: opponent gets slightly weaker since more sub-optimal moves enter the regret-filter pool; PID will compensate via regret/nodes.
@@ -131,6 +132,7 @@ selfplay:
   games_per_iter_start: 3520   # match games_per_iter; ramp disabled. Live-reloadable.
   games_per_iter_ramp_iters: 0
   selfplay_fraction: 0.30  # 2026-04-24: 0.50→0.25; 2026-05-04: 0.25→0.30 (30% selfplay / 70% SF curriculum). test_policy_loss drifted 2.25→2.55 at iter 272-285; past runs at 75% SF worked better. Revert if regret/winrate stop moving or policy_loss doesn't recover.
+  record_fast_ply_value: true  # 2026-07-01 (PR #91): keep fast-ply records as value-only rows (has_policy=0) — KataGo playout-cap value harvest, ~4x value rows/game at zero SF cost. Restart-gated. Watch: positions/game ~22->~90; value 1-ply regret (scripts/value_regret.py) over a window refill. Kill: flip false if value regret flat AND test/train gap widens.
   selfplay_batch: 256   # Concurrent game slots per worker (always full via continuous recycling).
   max_plies: 450
   history_rep_fix: true  # 2026-06-17: lc0-root repetition-plane correctness fix; affects ~0.2% of positions; net-neutral-to-faster. Propagates as the replay window refills.
@@ -238,6 +240,7 @@ train:
   batch_size: 512   # Aurora/arc-split run matches offline probe batch size; fits VRAM on 5090.
   train_steps: 800  # Raised for 2M buffer; window_fraction gives ~781 steps at full size.
   train_window_fraction: 0.04  # Train on 4% of active replay cap; slow replay growth limits extra reuse while refilling.
+  train_views_per_position: 2.5  # 2026-07-01 (PR #91): hold trained-samples/ingested-position at 2.5 (AZ ~1, KataGo ~4); steps scale with ingest so the two knobs above can't drift the reuse ratio. Makes train_window_fraction INERT except as the ingest-drought floor. Live-tunable; verify train_steps_used tracks ingest. Kill: drop to 2.0 or 0 (window mode) if test/train gap widens.
   # With ~10k new positions/iter and buffer growing by 2500/iter, each position
   # survives ~50 iters in the buffer and gets trained ~5 times before eviction.
   no_amp: false
